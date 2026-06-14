@@ -30,18 +30,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.notification.push import (
+    build_default_config,
+    EmailConfig,
+    format_report_markdown,
+    load_push_config,
     MAX_DINGTALK_CONTENT,
     MAX_WECOM_CONTENT,
     PUSH_SCHEMA_VERSION,
-    EmailConfig,
     PushChannel,
     PushConfig,
-    build_default_config,
-    format_report_markdown,
-    load_push_config,
     send_push,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_targeted_short_trade_near_miss_release_outcomes import analyze_targeted_short_trade_near_miss_release_outcomes
+from scripts.analyze_targeted_short_trade_near_miss_release_outcomes import (
+    analyze_targeted_short_trade_near_miss_release_outcomes,
+)
 
 
 def test_analyze_targeted_short_trade_near_miss_release_outcomes_merges_promotion_and_returns(tmp_path):

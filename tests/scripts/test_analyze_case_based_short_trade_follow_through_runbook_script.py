@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_case_based_short_trade_follow_through_runbook import analyze_case_based_short_trade_follow_through_runbook
+from scripts.analyze_case_based_short_trade_follow_through_runbook import (
+    analyze_case_based_short_trade_follow_through_runbook,
+)
 
 
 def test_analyze_case_based_short_trade_follow_through_runbook_builds_primary_shadow_control(tmp_path):

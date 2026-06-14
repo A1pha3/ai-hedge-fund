@@ -15,7 +15,6 @@ from src.agents.portfolio_manager import compute_allowed_actions
 from src.agents.risk_manager import calculate_volatility_adjusted_limit
 from src.backtesting.metrics import PerformanceMetricsCalculator
 
-
 # ===========================================================================
 # BUG-1: calculate_volatility_adjusted_limit continuity
 # ===========================================================================

@@ -2,7 +2,11 @@ import pytest
 
 from src.backtesting.portfolio import Portfolio
 from src.backtesting.trader import TradeExecutor
-from src.backtesting.trading_constraints import TradeExecutionInputs, TradingConstraints, resolve_trade_constraints
+from src.backtesting.trading_constraints import (
+    resolve_trade_constraints,
+    TradeExecutionInputs,
+    TradingConstraints,
+)
 
 
 def test_resolve_trade_constraints_tightens_costs_for_crowded_low_capacity_trade():

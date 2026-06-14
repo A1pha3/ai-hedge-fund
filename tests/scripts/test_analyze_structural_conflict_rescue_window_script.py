@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_structural_conflict_rescue_window import analyze_structural_conflict_rescue_window
+from scripts.analyze_structural_conflict_rescue_window import (
+    analyze_structural_conflict_rescue_window,
+)
 
 
 def _write_case(day_dir, *, trade_date: str, ticker: str, candidate_source: str, watchlist_entry: dict, score_target: float) -> None:

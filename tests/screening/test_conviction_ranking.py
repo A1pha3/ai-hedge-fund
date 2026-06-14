@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from src.screening.confidence_calibration import CalibrationSummary, ScoreBucketStats, compute_calibration
+from src.screening.confidence_calibration import (
+    CalibrationSummary,
+    compute_calibration,
+    ScoreBucketStats,
+)
 from src.screening.conviction_ranking import (
-    CONSECUTIVE_FULL_STREAK,
-    DEFAULT_WEIGHTS,
-    ConvictionSummary,
     _component_str,
     _conviction_color,
     _normalize_calibration,
@@ -18,11 +19,13 @@ from src.screening.conviction_ranking import (
     _rank_delta_str,
     compute_conviction_ranking,
     compute_conviction_row,
+    CONSECUTIVE_FULL_STREAK,
+    ConvictionSummary,
+    DEFAULT_WEIGHTS,
     render_conviction_ranking,
 )
 from src.screening.data_quality_audit import STRATEGY_ORDER
 from src.utils.display import Fore, Style
-
 
 # ---------------------------------------------------------------------------
 # Normalizers
@@ -341,10 +344,10 @@ def test_dispatcher_conviction_ranking_accepts_floating_point_sum():
 
 def test_run_conviction_ranking_uses_custom_weights():
     """run_conviction_ranking 接收 weights 参数, 反映在 ConvictionSummary 中。"""
+    from src.screening.confidence_calibration import compute_calibration as _cc
     from src.screening.conviction_ranking import (
         compute_conviction_ranking as _compute_cr,
     )
-    from src.screening.confidence_calibration import compute_calibration as _cc
 
     recs = [_make_rec("000001", 0.8, completeness=0.9, consecutive_days=3)]
     # 自定义: 100% 给 score (其他都 0)

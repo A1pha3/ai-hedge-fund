@@ -10,10 +10,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.screening.data_freshness_guard import (
+    _days_between,
+    _normalize_date,
     apply_freshness_confidence_penalty,
     check_data_freshness,
-    _normalize_date,
-    _days_between,
 )
 
 

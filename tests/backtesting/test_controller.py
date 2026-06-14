@@ -1,7 +1,7 @@
 import pandas as pd
 
-from src.backtesting.engine import BacktestEngine
 from src.backtesting.controller import AgentController
+from src.backtesting.engine import BacktestEngine
 from src.backtesting.engine_agent_mode import execute_agent_mode_trades
 from src.backtesting.engine_market_data import MarketDataLoader
 from src.backtesting.portfolio import Portfolio

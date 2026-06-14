@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_btst_structural_shadow_runbook import analyze_btst_structural_shadow_runbook
+from scripts.analyze_btst_structural_shadow_runbook import (
+    analyze_btst_structural_shadow_runbook,
+)
 
 
 def test_analyze_btst_structural_shadow_runbook_freezes_negative_post_release_case(tmp_path):

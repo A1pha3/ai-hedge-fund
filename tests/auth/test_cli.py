@@ -4,17 +4,17 @@ import io
 import re
 import sys
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.backend.database.connection import Base
-from app.backend.models.user import User, InvitationCode
-from app.backend.auth.utils import hash_password, verify_password
 from app.backend.auth.constants import ADMIN_USERNAME
+from app.backend.auth.utils import hash_password, verify_password
+from app.backend.database.connection import Base
+from app.backend.models.user import InvitationCode, User
 
 
 @pytest.fixture()

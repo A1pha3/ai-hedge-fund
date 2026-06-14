@@ -238,8 +238,8 @@ def test_execute_buy_trade_no_longer_debits_cash_separately(monkeypatch) -> None
 
     We verify by inspecting the call history of adjust_cash: only
     no-fee debit (the all-in cost is debited inside apply_long_buy)."""
-    from src.backtesting.trader_helpers import execute_buy_trade
     from src.backtesting.portfolio import Portfolio
+    from src.backtesting.trader_helpers import execute_buy_trade
 
     p = Portfolio(tickers=["AAPL"], initial_cash=100_000.0, margin_requirement=0.5)
     # Spy on adjust_cash
@@ -276,8 +276,8 @@ def test_execute_sell_trade_no_longer_debits_cash_separately(monkeypatch) -> Non
     """BETA-004 mirror: execute_sell_trade must NOT adjust_cash for
     commission+stamp after the sell — the net proceeds are credited
     inside apply_long_sell at the fee-aware price."""
-    from src.backtesting.trader_helpers import execute_sell_trade
     from src.backtesting.portfolio import Portfolio
+    from src.backtesting.trader_helpers import execute_sell_trade
 
     p = Portfolio(tickers=["AAPL"], initial_cash=100_000.0, margin_requirement=0.5)
     p.apply_long_buy("AAPL", 100, 10.0)

@@ -1,13 +1,14 @@
 from __future__ import annotations
+
 import pytest
 
 from src.execution.models import ExecutionPlan
 from src.execution.signal_decay import (
-    P7GapOverlayConfig,
     _apply_gap_overlay,
     _build_warn_adjusted_order,
     _should_cancel_gap_open,
     apply_signal_decay,
+    P7GapOverlayConfig,
 )
 from src.portfolio.models import PositionPlan
 

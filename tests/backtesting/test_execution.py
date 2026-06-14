@@ -1,8 +1,12 @@
 import pytest
 
 from src.backtesting.portfolio import Portfolio
-from src.backtesting.trader_helpers import _resolve_buy_execution, _resolve_execution_slippage_rate, _resolve_short_open_execution
 from src.backtesting.trader import TradeExecutor, TradingConstraints
+from src.backtesting.trader_helpers import (
+    _resolve_buy_execution,
+    _resolve_execution_slippage_rate,
+    _resolve_short_open_execution,
+)
 
 
 def test_trade_executor_routes_actions(portfolio):

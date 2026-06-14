@@ -21,13 +21,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.data.macro_data import (
-    MacroSnapshot,
     compute_macro_regime,
     fetch_macro_snapshot,
+    MacroSnapshot,
     render_macro_snapshot,
     run_macro_cli,
 )
-
 
 # ---------------------------------------------------------------------------
 # 1. MacroSnapshot 默认值

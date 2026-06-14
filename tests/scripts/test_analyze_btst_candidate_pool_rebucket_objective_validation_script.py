@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 
 import scripts.analyze_btst_candidate_pool_lane_objective_support as lane_script
-from scripts.analyze_btst_candidate_pool_rebucket_objective_validation import analyze_btst_candidate_pool_rebucket_objective_validation
+from scripts.analyze_btst_candidate_pool_rebucket_objective_validation import (
+    analyze_btst_candidate_pool_rebucket_objective_validation,
+)
 
 
 def test_analyze_btst_candidate_pool_rebucket_objective_validation_advances_positive_lane(monkeypatch, tmp_path: Path) -> None:

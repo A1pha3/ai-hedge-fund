@@ -13,7 +13,6 @@ from src.execution.daily_pipeline_prior_utils import (
     historical_prior_int,
 )
 
-
 # ---------------------------------------------------------------------------
 # historical_prior_float
 # ---------------------------------------------------------------------------

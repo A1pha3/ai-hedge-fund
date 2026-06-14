@@ -8,13 +8,12 @@ from pathlib import Path
 import pytest
 
 from src.reporting.pdf_exporter import (
-    PDFReportConfig,
     _decision_color,
     find_latest_report,
     generate_screening_pdf,
     load_report,
+    PDFReportConfig,
 )
-
 
 # ---------------------------------------------------------------------------
 # 测试夹具

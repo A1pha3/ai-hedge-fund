@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_btst_carryover_peer_board import analyze_btst_carryover_peer_board, render_btst_carryover_peer_board_markdown
+from scripts.analyze_btst_carryover_peer_board import (
+    analyze_btst_carryover_peer_board,
+    render_btst_carryover_peer_board_markdown,
+)
 
 
 def test_analyze_btst_carryover_peer_board_classifies_aligned_and_broad_family_candidates(monkeypatch, tmp_path):

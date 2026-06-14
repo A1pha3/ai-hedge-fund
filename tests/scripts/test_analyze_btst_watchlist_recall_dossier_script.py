@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.analyze_btst_watchlist_recall_dossier import analyze_btst_watchlist_recall_dossier, render_btst_watchlist_recall_dossier_markdown
+from scripts.analyze_btst_watchlist_recall_dossier import (
+    analyze_btst_watchlist_recall_dossier,
+    render_btst_watchlist_recall_dossier_markdown,
+)
 
 
 def _write_json(path: Path, payload: object) -> Path:

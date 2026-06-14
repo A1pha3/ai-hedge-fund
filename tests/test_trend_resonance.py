@@ -8,16 +8,15 @@ from typing import Any
 import pytest
 
 from src.screening.trend_resonance import (
-    TrendResonanceEntry,
-    TrendResonanceReport,
     _classify_direction,
     _classify_resonance,
     _extract_score_history,
     _simple_slope,
     compute_trend_resonance,
     render_trend_resonance,
+    TrendResonanceEntry,
+    TrendResonanceReport,
 )
-
 
 # ---------------------------------------------------------------------------
 # Unit: _simple_slope

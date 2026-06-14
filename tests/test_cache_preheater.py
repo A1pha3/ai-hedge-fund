@@ -11,13 +11,12 @@ import pandas as pd
 import pytest
 
 from src.data.cache_preheater import (
-    PreheatStats,
     _execute_preheat_task,
     format_preheat_report,
     get_preheat_tasks,
     preheat_cache,
+    PreheatStats,
 )
-
 
 # ── Helpers ────────────────────────────────────────────────────────
 

@@ -32,12 +32,11 @@ import pytest
 
 from src.screening.watchlist import (
     DEFAULT_WATCHLIST_PATH,
+    format_watchlist_status,
     MAX_SCORE_HISTORY_DAYS,
     Watchlist,
     WatchlistEntry,
-    format_watchlist_status,
 )
-
 
 # ============================================================================
 # 1. 添加 / 重复添加 / 移除

@@ -5,19 +5,19 @@ from fastapi.testclient import TestClient
 
 from app.backend.main import app
 from app.backend.routes.portfolio_simulator import (
-    SimulateAdjustmentRequest,
-    SimulateAdjustmentResponse,
+    _compute_risk_from_state,
     AdjustmentItem,
+    apply_adjustments,
     DecisionInput,
     PositionInput,
-    _compute_risk_from_state,
-    apply_adjustments,
+    SimulateAdjustmentRequest,
+    SimulateAdjustmentResponse,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _sample_request() -> dict:
     """Return a representative simulation request payload."""

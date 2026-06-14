@@ -4,9 +4,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.backend.auth.utils import generate_invitation_code, hash_password
 from app.backend.database.connection import Base
-from app.backend.models.user import User, InvitationCode
-from app.backend.auth.utils import hash_password, generate_invitation_code
+from app.backend.models.user import InvitationCode, User
 
 
 @pytest.fixture()

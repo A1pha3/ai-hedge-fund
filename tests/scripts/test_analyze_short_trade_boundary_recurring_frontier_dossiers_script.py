@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_short_trade_boundary_recurring_frontier_dossiers import analyze_short_trade_boundary_recurring_frontier_dossiers
+from scripts.analyze_short_trade_boundary_recurring_frontier_dossiers import (
+    analyze_short_trade_boundary_recurring_frontier_dossiers,
+)
 
 
 def test_analyze_short_trade_boundary_recurring_frontier_dossiers_joins_outcomes(tmp_path):

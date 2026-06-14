@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_recurring_frontier_ticker_release import analyze_recurring_frontier_ticker_release
+from scripts.analyze_recurring_frontier_ticker_release import (
+    analyze_recurring_frontier_ticker_release,
+)
 
 
 def test_analyze_recurring_frontier_ticker_release_applies_case_specific_rows(tmp_path):

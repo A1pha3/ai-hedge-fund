@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_short_trade_boundary_score_failures import analyze_short_trade_boundary_score_failures
+from scripts.analyze_short_trade_boundary_score_failures import (
+    analyze_short_trade_boundary_score_failures,
+)
 
 
 def test_analyze_short_trade_boundary_score_failures_summarizes_cluster(tmp_path):

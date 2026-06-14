@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from src.portfolio.stock_history_expectation import (
-    StockHistoryExpectation,
     compute_stock_history_expectation,
+    StockHistoryExpectation,
 )
 
 

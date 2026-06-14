@@ -1,19 +1,19 @@
 """Tests for P3-1: verify_recommendations module."""
 import json
-import pytest
 from pathlib import Path
 
+import pytest
+
+from src.screening.recommendation_tracker import _save_history
 from src.screening.verify_recommendations import (
-    VerifySummary,
-    VerifyDay,
-    StrategyAttribution,
-    compute_verify_recommendations,
-    render_verify_recommendations,
     _extract_tracking_returns,
     _load_tracking_history,
+    compute_verify_recommendations,
+    render_verify_recommendations,
+    StrategyAttribution,
+    VerifyDay,
+    VerifySummary,
 )
-from src.screening.recommendation_tracker import _save_history
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -23,10 +23,10 @@ from src.agents.technicals import (
     weighted_signal_combination,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_prices_df(n: int = 200, seed: int = 42) -> pd.DataFrame:
     """Build a synthetic OHLCV DataFrame with *n* rows."""

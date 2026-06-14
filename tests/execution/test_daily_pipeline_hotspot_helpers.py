@@ -25,7 +25,6 @@ from src.execution.daily_pipeline_hotspot_helpers import (
     summarize_shadow_release_historical_support,
 )
 
-
 # ---------------------------------------------------------------------------
 # _execution_quality_support_delta
 # ---------------------------------------------------------------------------

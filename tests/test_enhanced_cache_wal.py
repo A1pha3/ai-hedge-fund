@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed, ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,7 +21,6 @@ import pytest
 from src.data.base_provider import DataResponse, DataType
 from src.data.enhanced_cache import CacheAdapter, DiskCache, EnhancedCache
 from src.data.router import DataRouter
-
 
 # ---------------------------------------------------------------------------
 # DiskCache WAL 模式

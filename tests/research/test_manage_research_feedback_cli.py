@@ -1,7 +1,11 @@
 from argparse import Namespace
 from pathlib import Path
 
-from scripts.manage_research_feedback import _append_command, _resolve_feedback_path, _summarize_command
+from scripts.manage_research_feedback import (
+    _append_command,
+    _resolve_feedback_path,
+    _summarize_command,
+)
 
 
 def test_resolve_feedback_path_from_artifact_dir(tmp_path: Path):

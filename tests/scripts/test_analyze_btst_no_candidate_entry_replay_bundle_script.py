@@ -5,7 +5,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from scripts.analyze_btst_no_candidate_entry_replay_bundle import analyze_btst_no_candidate_entry_replay_bundle
+from scripts.analyze_btst_no_candidate_entry_replay_bundle import (
+    analyze_btst_no_candidate_entry_replay_bundle,
+)
 from src.screening.models import StrategySignal
 from src.targets.router import build_selection_targets
 

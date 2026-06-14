@@ -5,7 +5,11 @@ import json
 import pandas as pd
 import pytest
 
-from scripts.analyze_pre_layer_short_trade_outcomes import _compute_walk_forward_validation, analyze_pre_layer_short_trade_outcomes, render_pre_layer_short_trade_outcomes_markdown
+from scripts.analyze_pre_layer_short_trade_outcomes import (
+    _compute_walk_forward_validation,
+    analyze_pre_layer_short_trade_outcomes,
+    render_pre_layer_short_trade_outcomes_markdown,
+)
 
 
 def test_analyze_pre_layer_short_trade_outcomes_summarizes_next_day_returns(tmp_path, monkeypatch):

@@ -67,6 +67,7 @@ def test_summary_includes_provider_aggregation(tmp_path, monkeypatch) -> None:
     """The new /llm-metrics/summary response includes a `providers` field."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from app.backend.routes.llm_metrics import router
 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
@@ -129,6 +130,7 @@ def test_summary_includes_provider_aggregation(tmp_path, monkeypatch) -> None:
 def test_summary_top_agents_by_cost_sorted_descending(tmp_path, monkeypatch) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from app.backend.routes.llm_metrics import router
 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
@@ -176,6 +178,7 @@ def test_summary_top_agents_by_cost_sorted_descending(tmp_path, monkeypatch) -> 
 def test_summary_top_providers_by_latency_sorted_descending(tmp_path, monkeypatch) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from app.backend.routes.llm_metrics import router
 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
@@ -219,6 +222,7 @@ def test_summary_top_providers_by_latency_sorted_descending(tmp_path, monkeypatc
 def test_summary_daily_provider_heatmap_populated(tmp_path, monkeypatch) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from app.backend.routes.llm_metrics import router
 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
@@ -263,6 +267,7 @@ def test_cost_savings_suggestion_flags_outlier_agents(tmp_path, monkeypatch) -> 
     """An agent whose cost-per-call is >= 2x the median should be flagged."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from app.backend.routes.llm_metrics import router
 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
@@ -316,6 +321,7 @@ def test_cost_savings_suggestion_flags_outlier_agents(tmp_path, monkeypatch) -> 
 def test_cost_savings_suggestion_empty_when_no_outliers(tmp_path, monkeypatch) -> None:
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
     from app.backend.routes.llm_metrics import router
 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))

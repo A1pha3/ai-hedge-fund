@@ -5,8 +5,6 @@ from __future__ import annotations
 import pytest
 
 from src.screening.trend_resonance import (
-    TrendResonanceEntry,
-    TrendResonanceReport,
     _classify_direction,
     _classify_resonance,
     _direction_icon,
@@ -14,9 +12,10 @@ from src.screening.trend_resonance import (
     _resonance_colored,
     _simple_slope,
     render_trend_resonance,
+    TrendResonanceEntry,
+    TrendResonanceReport,
 )
 from src.utils.display import Fore, Style
-
 
 # ---------------------------------------------------------------------------
 # _simple_slope

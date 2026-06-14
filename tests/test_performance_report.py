@@ -27,8 +27,6 @@ from unittest.mock import patch
 import pytest
 
 from src.portfolio.performance_report import (
-    ANNUAL_TRADING_DAYS,
-    PerformanceReport,
     _aggregate_trades,
     _compute_annualized_return,
     _compute_daily_returns,
@@ -41,10 +39,11 @@ from src.portfolio.performance_report import (
     _compute_volatility,
     _find_top_winners_losers,
     _resolve_period_dates,
+    ANNUAL_TRADING_DAYS,
     generate_performance_report,
+    PerformanceReport,
     render_performance_report,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

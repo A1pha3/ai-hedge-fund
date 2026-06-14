@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.backend.routes.llm_metrics import router, _collect_metrics
+from app.backend.routes.llm_metrics import _collect_metrics, router
 
 
 def _make_app() -> FastAPI:

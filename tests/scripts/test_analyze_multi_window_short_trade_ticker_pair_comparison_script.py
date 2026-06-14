@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_multi_window_short_trade_ticker_pair_comparison import analyze_multi_window_short_trade_ticker_pair_comparison
+from scripts.analyze_multi_window_short_trade_ticker_pair_comparison import (
+    analyze_multi_window_short_trade_ticker_pair_comparison,
+)
 
 
 def test_analyze_multi_window_short_trade_ticker_pair_comparison_prefers_close_continuation_sample(tmp_path):

@@ -4,7 +4,9 @@ import json
 
 import pandas as pd
 
-from scripts.analyze_btst_micro_window_regression import analyze_btst_micro_window_regression
+from scripts.analyze_btst_micro_window_regression import (
+    analyze_btst_micro_window_regression,
+)
 
 
 def _write_snapshot(day_dir, *, trade_date: str, ticker: str, decision: str, score_target: float, candidate_source: str) -> None:

@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 
 import scripts.analyze_btst_candidate_pool_lane_objective_support as lane_script
-from scripts.analyze_btst_candidate_pool_lane_objective_support import analyze_btst_candidate_pool_lane_objective_support
+from scripts.analyze_btst_candidate_pool_lane_objective_support import (
+    analyze_btst_candidate_pool_lane_objective_support,
+)
 
 
 def test_analyze_btst_candidate_pool_lane_objective_support_ranks_positive_false_negative_lane(monkeypatch, tmp_path: Path) -> None:

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_recurring_frontier_ticker_release_outcomes import analyze_recurring_frontier_ticker_release_outcomes
+from scripts.analyze_recurring_frontier_ticker_release_outcomes import (
+    analyze_recurring_frontier_ticker_release_outcomes,
+)
 
 
 def test_analyze_recurring_frontier_ticker_release_outcomes_summarizes_promoted_cases(tmp_path):

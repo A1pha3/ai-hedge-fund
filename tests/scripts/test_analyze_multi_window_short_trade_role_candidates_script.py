@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_multi_window_short_trade_role_candidates import analyze_multi_window_short_trade_role_candidates
+from scripts.analyze_multi_window_short_trade_role_candidates import (
+    analyze_multi_window_short_trade_role_candidates,
+)
 
 
 def test_analyze_multi_window_short_trade_role_candidates_marks_emergent_local_baseline(tmp_path):

@@ -26,7 +26,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # ============================================================================
 # Shared fixtures & helpers
 # ============================================================================
@@ -146,10 +145,13 @@ class TestAutoScreeningTrackingDashboard:
     def test_tracking_to_dashboard_pipeline(self, tmp_reports: Path, mock_recommendations_day1: list[dict], mock_recommendations_day2: list[dict]) -> None:
         """写入 2 天 auto_screening 报告 -> update_tracking -> compute_winrate_dashboard。"""
         from src.screening.recommendation_tracker import (
-            update_tracking_history,
             load_pending_recommendations,
+            update_tracking_history,
         )
-        from src.screening.winrate_dashboard import compute_winrate_dashboard, render_winrate_dashboard
+        from src.screening.winrate_dashboard import (
+            compute_winrate_dashboard,
+            render_winrate_dashboard,
+        )
 
         # Day 1: 写入报告
         _write_auto_report(tmp_reports, "20260601", mock_recommendations_day1)
@@ -210,8 +212,11 @@ class TestConsecutiveDecayExplain:
     """
 
     def test_consecutive_decay_explain_pipeline(self, tmp_reports: Path, mock_recommendations_day1: list[dict], mock_recommendations_day2: list[dict], mock_recommendations_day3: list[dict]) -> None:
-        from src.screening.consecutive_recommendation import compute_consecutive_recommendations, RecommendationStatus
-        from src.screening.signal_decay_detector import detect_signal_decay, DecayLevel
+        from src.screening.consecutive_recommendation import (
+            compute_consecutive_recommendations,
+            RecommendationStatus,
+        )
+        from src.screening.signal_decay_detector import DecayLevel, detect_signal_decay
         from src.targets.explainability import derive_confidence, trim_reasons
 
         # 写入 3 天报告
@@ -279,8 +284,8 @@ class TestIndustryRotationCompare:
     """
 
     def test_rotation_then_compare_pipeline(self, tmp_reports: Path) -> None:
-        from src.screening.industry_rotation import calculate_industry_rotation
         from src.screening.compare_tool import compare_tickers
+        from src.screening.industry_rotation import calculate_industry_rotation
 
         # 构造含 2+ 个行业的推荐结果
         recs = [
@@ -336,8 +341,8 @@ class TestWatchlistStockDetail:
     """
 
     def test_watchlist_then_stock_detail(self, tmp_reports: Path, mock_recommendations_day1: list[dict]) -> None:
-        from src.screening.watchlist import Watchlist
         from src.screening.stock_detail import compute_stock_detail, render_stock_detail
+        from src.screening.watchlist import Watchlist
 
         _write_auto_report(tmp_reports, "20260601", mock_recommendations_day1)
 
@@ -387,11 +392,11 @@ class TestConditionalOrdersPDF:
     """
 
     def test_conditional_orders_then_pdf(self, tmp_reports: Path, mock_recommendations_day1: list[dict], tmp_path: Path) -> None:
+        from src.reporting.pdf_exporter import generate_screening_pdf
         from src.screening.conditional_order_advisor import (
             compute_conditional_advice,
             format_conditional_advice_table,
         )
-        from src.reporting.pdf_exporter import generate_screening_pdf
 
         _write_auto_report(tmp_reports, "20260601", mock_recommendations_day1)
 
@@ -455,8 +460,11 @@ class TestCustomWeightsReweightCompare:
     """
 
     def test_reweight_then_compare(self) -> None:
-        from src.screening.custom_weights import StrategyWeights, reweight_recommendations
         from src.screening.compare_tool import compare_tickers
+        from src.screening.custom_weights import (
+            reweight_recommendations,
+            StrategyWeights,
+        )
 
         # 构造 2 只标的, 其中 A 趋势强、B 基本面强
         recs = [
@@ -524,8 +532,14 @@ class TestRebalancePerformanceReport:
     """
 
     def test_rebalance_then_performance_report(self) -> None:
-        from src.portfolio.rebalance_advisor import compute_rebalance_actions, format_rebalance_actions
-        from src.portfolio.performance_report import generate_performance_report, render_performance_report
+        from src.portfolio.performance_report import (
+            generate_performance_report,
+            render_performance_report,
+        )
+        from src.portfolio.rebalance_advisor import (
+            compute_rebalance_actions,
+            format_rebalance_actions,
+        )
 
         portfolio_value = 1_000_000.0
 
@@ -671,12 +685,12 @@ class TestPreheatKeyAlignment:
         # 重置全局单例, 确保从空 BatchDataCache 开始
         reset_global_batch_data_fetcher()
         try:
-            from src.data.cache_preheater import _fetch_daily_basic, _fetch_daily_prices
-
             # Mock 底层 tushare 调用, 返回固定 DataFrame。
             # 必须 patch 在 batch_data_fetcher 模块上 (而非 tushare_api),
             # 因为 batch_data_fetcher 在 import 时已绑定本地引用。
             import pandas as pd
+
+            from src.data.cache_preheater import _fetch_daily_basic, _fetch_daily_prices
 
             sample_basic = pd.DataFrame({"ts_code": ["000001.SZ"], "pe": [10.0], "trade_date": ["20260601"]})
             sample_prices = pd.DataFrame({"ts_code": ["000001.SZ"], "close": [10.0], "trade_date": ["20260601"]})
@@ -714,9 +728,9 @@ class TestPreheatKeyAlignment:
 
         reset_global_batch_data_fetcher()
         try:
-            from src.data.cache_preheater import _fetch_daily_basic
-
             import pandas as pd
+
+            from src.data.cache_preheater import _fetch_daily_basic
 
             sample = pd.DataFrame({"ts_code": ["000001.SZ"], "pe": [10.0], "trade_date": ["20260601"]})
             with patch.object(batch_data_fetcher, "get_daily_basic_batch", return_value=sample):
@@ -751,9 +765,9 @@ class TestPreheatKeyAlignment:
 
         reset_global_batch_data_fetcher()
         try:
-            from src.data.cache_preheater import _fetch_daily_basic
-
             import pandas as pd
+
+            from src.data.cache_preheater import _fetch_daily_basic
 
             sample = pd.DataFrame({"ts_code": ["000001.SZ"], "pe": [10.0], "trade_date": ["20260601"]})
             with patch.object(batch_data_fetcher, "get_daily_basic_batch", return_value=sample):
@@ -781,12 +795,15 @@ class TestCrossModuleEdgeCases:
 
     def test_empty_recommendations_safe(self) -> None:
         """空推荐列表不应导致任何模块崩溃。"""
-        from src.screening.industry_rotation import calculate_industry_rotation
-        from src.screening.compare_tool import compare_tickers
-        from src.screening.signal_decay_detector import detect_signal_decay
-        from src.screening.custom_weights import reweight_recommendations, StrategyWeights
-        from src.portfolio.rebalance_advisor import compute_rebalance_actions
         from src.portfolio.performance_report import generate_performance_report
+        from src.portfolio.rebalance_advisor import compute_rebalance_actions
+        from src.screening.compare_tool import compare_tickers
+        from src.screening.custom_weights import (
+            reweight_recommendations,
+            StrategyWeights,
+        )
+        from src.screening.industry_rotation import calculate_industry_rotation
+        from src.screening.signal_decay_detector import detect_signal_decay
 
         # 全部传空
         assert calculate_industry_rotation([], "20260601") == []
@@ -805,8 +822,8 @@ class TestCrossModuleEdgeCases:
         """NaN / Inf 输入不应跨模块传播。"""
         import math
 
-        from src.screening.conditional_order_advisor import compute_conditional_advice
         from src.portfolio.rebalance_advisor import compute_rebalance_actions
+        from src.screening.conditional_order_advisor import compute_conditional_advice
 
         # 条件单: NaN 价格历史
         advice = compute_conditional_advice(
@@ -827,7 +844,10 @@ class TestCrossModuleEdgeCases:
 
     def test_all_strategy_signals_none(self) -> None:
         """所有 strategy_signals 为 None/dict 缺失时, reweight 回退到原 score_b。"""
-        from src.screening.custom_weights import StrategyWeights, reweight_recommendations
+        from src.screening.custom_weights import (
+            reweight_recommendations,
+            StrategyWeights,
+        )
 
         recs = [
             {"ticker": "300750", "score_b": 0.50, "strategy_signals": None},

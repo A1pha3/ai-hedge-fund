@@ -21,15 +21,26 @@ import math
 import pytest
 
 from src.execution.crisis_handler import evaluate_crisis_response
-from src.portfolio.exit_manager import HARD_STOP_LOSS_PCT, check_exit_signal
-from src.portfolio.limit_handler import process_pending_buy, process_pending_sell, queue_pending_buy, queue_pending_sell
-from src.portfolio.models import ExitSignal, HoldingState
-from src.portfolio.position_calculator import calculate_position, enforce_daily_trade_limit
-from src.portfolio.suspension_handler import can_resume_screening, handle_suspension_emergency
 from src.execution.models import PendingOrder
-
+from src.portfolio.exit_manager import check_exit_signal, HARD_STOP_LOSS_PCT
+from src.portfolio.limit_handler import (
+    process_pending_buy,
+    process_pending_sell,
+    queue_pending_buy,
+    queue_pending_sell,
+)
+from src.portfolio.models import ExitSignal, HoldingState
+from src.portfolio.position_calculator import (
+    calculate_position,
+    enforce_daily_trade_limit,
+)
+from src.portfolio.suspension_handler import (
+    can_resume_screening,
+    handle_suspension_emergency,
+)
 
 # I-1 & I-2: exit signal domain invariants
+
 
 def test_exit_signal_sell_ratio_always_within_unit_interval():
     """I-1: 任何触发条件下的 ExitSignal.sell_ratio 必须 ∈ [0, 1]。

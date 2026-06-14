@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_short_trade_boundary_score_failures_frontier import analyze_short_trade_boundary_score_failures_frontier
+from scripts.analyze_short_trade_boundary_score_failures_frontier import (
+    analyze_short_trade_boundary_score_failures_frontier,
+)
 
 
 def test_analyze_short_trade_boundary_score_failures_frontier_finds_minimal_rescue_rows(tmp_path):

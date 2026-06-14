@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_structural_conflict_rescue import analyze_structural_conflict_rescue
+from scripts.analyze_structural_conflict_rescue import (
+    analyze_structural_conflict_rescue,
+)
 
 
 def test_analyze_structural_conflict_rescue_reports_variant_lift_for_watchlist_case(tmp_path):

@@ -6,12 +6,11 @@ import pytest
 
 from src.screening.models import SubFactor
 from src.screening.strategy_scorer_utils import (
-    aggregate_sub_factors,
-    derive_completeness,
     _make_sub_factor,
     _signal_to_direction,
+    aggregate_sub_factors,
+    derive_completeness,
 )
-
 
 # ---------------------------------------------------------------------------
 # _signal_to_direction

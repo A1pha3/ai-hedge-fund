@@ -20,14 +20,13 @@ import pytest
 from src.data.base_provider import DataResponse
 from src.data.health import (
     DataSourceHealth,
+    get_health_monitor,
     HealthMonitor,
     HealthTracker,
-    SourceStatus,
-    get_health_monitor,
     reset_health_monitor,
+    SourceStatus,
 )
 from src.data.router_helpers import fetch_from_providers
-
 
 # ---------------------------------------------------------------------------
 # Helpers

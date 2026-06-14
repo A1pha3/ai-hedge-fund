@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+
 import pandas as pd
 import pytest
 
@@ -6230,7 +6231,9 @@ def test_build_buy_orders_prioritizes_incremental_theme_cap_when_both_caps_excee
 
 def test_boundary_candidate_score_includes_sector_resonance() -> None:
     """sector_resonance contributes to boundary candidate score and improves ranking when high."""
-    from src.execution.daily_pipeline_upstream_shadow_helpers import _compute_short_trade_boundary_candidate_score
+    from src.execution.daily_pipeline_upstream_shadow_helpers import (
+        _compute_short_trade_boundary_candidate_score,
+    )
 
     base_snapshot = {
         "breakout_freshness": 0.70,
@@ -6250,7 +6253,9 @@ def test_boundary_candidate_score_includes_sector_resonance() -> None:
 
 def test_boundary_candidate_score_weights_sum_to_one() -> None:
     """With all signals at 1.0, boundary score equals 1.0 (weights sum to 1.0)."""
-    from src.execution.daily_pipeline_upstream_shadow_helpers import _compute_short_trade_boundary_candidate_score
+    from src.execution.daily_pipeline_upstream_shadow_helpers import (
+        _compute_short_trade_boundary_candidate_score,
+    )
 
     all_ones = {
         "breakout_freshness": 1.0,
@@ -6266,8 +6271,12 @@ def test_boundary_candidate_score_weights_sum_to_one() -> None:
 
 def test_build_short_trade_boundary_metrics_payload_preserves_sector_resonance() -> None:
     """build_short_trade_boundary_metrics_payload includes sector_resonance in the output."""
-    from src.execution.daily_pipeline_candidate_helpers import build_short_trade_boundary_metrics_payload
-    from src.execution.daily_pipeline_upstream_shadow_helpers import _compute_short_trade_boundary_candidate_score
+    from src.execution.daily_pipeline_candidate_helpers import (
+        build_short_trade_boundary_metrics_payload,
+    )
+    from src.execution.daily_pipeline_upstream_shadow_helpers import (
+        _compute_short_trade_boundary_candidate_score,
+    )
 
     snapshot = {
         "breakout_freshness": 0.70,
@@ -6295,8 +6304,8 @@ def test_build_short_trade_boundary_metrics_payload_preserves_sector_resonance()
 def test_runner_escape_stats_included_in_candidate_diagnostics_payload() -> None:
     """build_short_trade_candidate_diagnostics_payload includes runner_escape_stats."""
     from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
-        build_short_trade_candidate_diagnostics_payload,
         _compute_runner_escape_stats,
+        build_short_trade_candidate_diagnostics_payload,
     )
 
     escaped_entry = {"ticker": "000001", "runner_escape": "pass", "runner_composite_score": 0.82}
@@ -6325,7 +6334,9 @@ def test_runner_escape_stats_included_in_candidate_diagnostics_payload() -> None
 
 def test_runner_escape_stats_escape_rate_zero_when_no_escapes() -> None:
     """escape_rate is 0.0 when no candidates pass runner escape."""
-    from src.execution.daily_pipeline_short_trade_diagnostics_helpers import _compute_runner_escape_stats
+    from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
+        _compute_runner_escape_stats,
+    )
 
     entries = [
         {"ticker": "000001", "runner_escape": "fail", "runner_composite_score": 0.50},
@@ -6340,7 +6351,9 @@ def test_runner_escape_stats_escape_rate_zero_when_no_escapes() -> None:
 
 def test_runner_escape_stats_empty_input() -> None:
     """escape_rate is 0.0 with no candidates at all."""
-    from src.execution.daily_pipeline_short_trade_diagnostics_helpers import _compute_runner_escape_stats
+    from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
+        _compute_runner_escape_stats,
+    )
 
     stats = _compute_runner_escape_stats([])
     assert stats["escaped_count"] == 0

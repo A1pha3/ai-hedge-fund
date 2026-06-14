@@ -5,30 +5,36 @@ from contextlib import contextmanager
 import pytest
 
 import src.execution.daily_pipeline as daily_pipeline_module
-
-from src.execution.daily_pipeline_post_market_helpers import build_plan_target_shell_inputs
-from src.execution.daily_pipeline_post_market_helpers import build_post_market_execution_plan
-from src.execution.daily_pipeline_post_market_helpers import PostMarketCandidateContext
-from src.execution.daily_pipeline_post_market_helpers import PostMarketOrderContext
-from src.execution.daily_pipeline_post_market_helpers import PostMarketSelectionTargetInputs
-from src.execution.daily_pipeline_post_market_helpers import PostMarketWatchlistContext
-from src.execution.daily_pipeline_post_market_helpers import build_selection_target_inputs
-from src.execution.daily_pipeline_post_market_helpers import resolve_post_market_selection_targets
-from src.execution.daily_pipeline import _resolve_effective_short_trade_target_profile_name
-from src.execution.daily_pipeline import _attach_btst_regime_gate_shadow
-from src.execution.daily_pipeline import _serialize_short_trade_target_profile
-from src.execution.daily_pipeline_upstream_shadow_helpers import _build_upstream_shadow_watchlist_entry
+from src.execution.daily_pipeline import (
+    _attach_btst_regime_gate_shadow,
+    _resolve_effective_short_trade_target_profile_name,
+    _serialize_short_trade_target_profile,
+)
+from src.execution.daily_pipeline_post_market_helpers import (
+    build_plan_target_shell_inputs,
+    build_post_market_execution_plan,
+    build_selection_target_inputs,
+    PostMarketCandidateContext,
+    PostMarketOrderContext,
+    PostMarketSelectionTargetInputs,
+    PostMarketWatchlistContext,
+    resolve_post_market_selection_targets,
+)
+from src.execution.daily_pipeline_upstream_shadow_helpers import (
+    _build_upstream_shadow_watchlist_entry,
+)
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
-from src.execution.models import ExecutionPlan
-from src.execution.models import LayerCResult
+from src.execution.models import ExecutionPlan, LayerCResult
 from src.portfolio.models import PositionPlan
 from src.screening.market_state_helpers import classify_btst_regime_gate
-from src.screening.models import FusedScore
-from src.screening.models import MarketState
-from src.screening.models import MarketStateType
-from src.screening.models import StrategySignal
-from src.targets.router import build_selection_targets
+from src.screening.models import (
+    FusedScore,
+    MarketState,
+    MarketStateType,
+    StrategySignal,
+)
 from src.targets.profiles import build_short_trade_target_profile
+from src.targets.router import build_selection_targets
 
 
 def test_classify_btst_regime_gate_marks_risk_off_as_halt() -> None:

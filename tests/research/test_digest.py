@@ -10,16 +10,15 @@ from typing import Any
 import pytest
 
 from src.research.digest import (
-    DailyDigest,
-    DigestResult,
     _compute_std,
     _extract_daily_digest,
     _extract_scores,
     _format_date,
+    DailyDigest,
+    DigestResult,
     format_digest_markdown,
     run_digest,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers for building fixture data

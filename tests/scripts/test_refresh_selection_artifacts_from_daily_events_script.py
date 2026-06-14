@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 import scripts.refresh_selection_artifacts_from_daily_events as refresh_module
-from scripts.refresh_selection_artifacts_from_daily_events import refresh_selection_artifacts_for_report
+from scripts.refresh_selection_artifacts_from_daily_events import (
+    refresh_selection_artifacts_for_report,
+)
 from src.execution.models import ExecutionPlan
 from src.screening.models import StrategySignal
 

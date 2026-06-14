@@ -11,12 +11,12 @@ import pytest
 
 from src.portfolio.return_attribution import (
     AttributionResult,
-    TickerAttribution,
     brinson_attribution,
     brinson_attribution_from_snapshots,
     compute_benchmark_returns_from_equal_weight,
     compute_equal_weight_benchmark,
     compute_portfolio_weights,
+    TickerAttribution,
 )
 
 

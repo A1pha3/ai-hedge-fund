@@ -7,22 +7,22 @@ from datetime import date, datetime
 import pytest
 
 from src.backtesting.signal_trade_comparison import (
-    ComparisonResult,
-    ComparisonSummary,
-    FillStatus,
-    MatchedPair,
-    Signal,
-    SignalDirection,
-    Trade,
     _build_summary,
     _compute_price_diff,
     _parse_date,
     compare_from_events,
     compare_signals_to_trades,
     comparison_result_to_dict,
+    ComparisonResult,
+    ComparisonSummary,
+    FillStatus,
     matched_pair_to_dict,
+    MatchedPair,
+    Signal,
+    SignalDirection,
     signals_from_event_payload,
     summary_to_dict,
+    Trade,
     trades_from_event_payload,
 )
 

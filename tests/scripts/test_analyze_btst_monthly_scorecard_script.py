@@ -6,7 +6,10 @@ from typing import Any
 
 import pandas as pd
 
-from scripts.analyze_btst_monthly_scorecard import analyze_btst_monthly_scorecard, render_btst_monthly_scorecard_markdown
+from scripts.analyze_btst_monthly_scorecard import (
+    analyze_btst_monthly_scorecard,
+    render_btst_monthly_scorecard_markdown,
+)
 
 
 def test_analyze_btst_monthly_scorecard_aggregates_high_confidence(monkeypatch, tmp_path: Path) -> None:

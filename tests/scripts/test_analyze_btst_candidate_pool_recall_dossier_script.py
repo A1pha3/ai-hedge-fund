@@ -6,7 +6,9 @@ from pathlib import Path
 import pandas as pd
 
 import scripts.analyze_btst_candidate_pool_recall_dossier as recall_script
-from scripts.analyze_btst_candidate_pool_recall_dossier import analyze_btst_candidate_pool_recall_dossier
+from scripts.analyze_btst_candidate_pool_recall_dossier import (
+    analyze_btst_candidate_pool_recall_dossier,
+)
 
 
 def _write_json(path: Path, payload: object) -> Path:

@@ -11,16 +11,15 @@ import pytest
 import scripts.optimize_profile as optimize_profile
 from scripts.btst_optimized_profile_manifest_helpers import (
     build_ready_btst_optimized_profile_manifest,
-    derive_latest_replay_trade_date,
     derive_btst_optimized_profile_source_path,
+    derive_latest_replay_trade_date,
     publish_btst_optimized_profile_manifest,
 )
 from scripts.btst_strict_objective_gate import build_strict_btst_objective_gate
-from src.paper_trading.optimized_profile_resolution import resolve_btst_optimized_profile_manifest
 from scripts.optimize_profile import (
     _build_default_checkpoint_path,
-    _build_replay_evaluator,
     _build_recency_decay_map,
+    _build_replay_evaluator,
     _build_staged_ignition_evaluator,
     _build_staged_ignition_shortlist,
     _compute_recency_decay,
@@ -41,6 +40,9 @@ from scripts.optimize_profile import (
     resolve_guardrails,
 )
 from src.backtesting.param_search import SearchObjective, SearchReport, TrialResult
+from src.paper_trading.optimized_profile_resolution import (
+    resolve_btst_optimized_profile_manifest,
+)
 from src.targets import build_short_trade_target_profile
 
 
@@ -943,7 +945,7 @@ def test_btst_runner_probe_grid_params_build_valid_profile() -> None:
     Optimizer-only params (e.g. ``recency_half_life_days``) are excluded from the profile
     build check since they are consumed by the optimizer framework, not the profile constructor.
     """
-    from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID, _OPTIMIZER_ONLY_PARAMS
+    from scripts.optimize_profile import _OPTIMIZER_ONLY_PARAMS, BTST_RUNNER_PROBE_GRID
 
     for param_name, values in BTST_RUNNER_PROBE_GRID.items():
         if param_name in _OPTIMIZER_ONLY_PARAMS:
@@ -3881,7 +3883,10 @@ def test_replay_evaluator_ic_weight_suggestions_empty_when_no_surface_key(monkey
 
 def test_apply_ic_feedback_reduce_drops_top_candidate() -> None:
     """'reduce' suggestion must remove the highest candidate value from the grid (Task 3, Round 13)."""
-    from scripts.optimize_profile import apply_ic_feedback_to_probe_grid, BTST_RUNNER_PROBE_GRID
+    from scripts.optimize_profile import (
+        apply_ic_feedback_to_probe_grid,
+        BTST_RUNNER_PROBE_GRID,
+    )
 
     suggestions = {"breakout_freshness": "reduce"}
     result = apply_ic_feedback_to_probe_grid(suggestions, BTST_RUNNER_PROBE_GRID)
@@ -3900,8 +3905,8 @@ def test_apply_ic_feedback_increase_adds_one_step_above_max() -> None:
     from scripts.optimize_profile import (
         apply_ic_feedback_to_probe_grid,
         BTST_RUNNER_PROBE_GRID,
-        IC_WEIGHT_GRID_STEP,
         IC_WEIGHT_GRID_MAX_UPPER_BOUND,
+        IC_WEIGHT_GRID_STEP,
     )
 
     suggestions = {"trend_acceleration": "increase"}
@@ -3921,7 +3926,10 @@ def test_apply_ic_feedback_increase_adds_one_step_above_max() -> None:
 
 def test_apply_ic_feedback_maintain_leaves_candidates_unchanged() -> None:
     """'maintain' suggestion must not alter the candidate list (Task 3, Round 13)."""
-    from scripts.optimize_profile import apply_ic_feedback_to_probe_grid, BTST_RUNNER_PROBE_GRID
+    from scripts.optimize_profile import (
+        apply_ic_feedback_to_probe_grid,
+        BTST_RUNNER_PROBE_GRID,
+    )
 
     suggestions = {"volume_expansion_quality": "maintain"}
     result = apply_ic_feedback_to_probe_grid(suggestions, BTST_RUNNER_PROBE_GRID)
@@ -3936,7 +3944,10 @@ def test_apply_ic_feedback_maintain_leaves_candidates_unchanged() -> None:
 
 def test_apply_ic_feedback_unknown_factor_is_ignored() -> None:
     """Suggestions for factors not in BTST_FACTOR_TO_PROBE_WEIGHT_KEY must be silently ignored (Task 3, Round 13)."""
-    from scripts.optimize_profile import apply_ic_feedback_to_probe_grid, BTST_RUNNER_PROBE_GRID
+    from scripts.optimize_profile import (
+        apply_ic_feedback_to_probe_grid,
+        BTST_RUNNER_PROBE_GRID,
+    )
 
     suggestions = {"nonexistent_factor": "reduce", "breakout_freshness": "maintain"}
     # Should not raise; should return grid unchanged for the nonexistent factor
@@ -3981,7 +3992,10 @@ def test_apply_ic_feedback_increase_respects_max_upper_bound() -> None:
 
 def test_apply_ic_feedback_does_not_mutate_base_grid() -> None:
     """apply_ic_feedback_to_probe_grid must return a new dict and not modify the input (Task 3, Round 13)."""
-    from scripts.optimize_profile import apply_ic_feedback_to_probe_grid, BTST_RUNNER_PROBE_GRID
+    from scripts.optimize_profile import (
+        apply_ic_feedback_to_probe_grid,
+        BTST_RUNNER_PROBE_GRID,
+    )
 
     original_breakout = list(BTST_RUNNER_PROBE_GRID["runner_composite_score_breakout_weight"])
     suggestions = {"breakout_freshness": "reduce"}
@@ -4063,9 +4077,9 @@ def test_resolve_grid_params_non_btst_runner_probe_ignores_ic_feedback() -> None
 # ---------------------------------------------------------------------------
 
 from scripts.optimize_profile import (
-    COMPARISON_METRICS,
-    COMPARISON_METRIC_LABELS,
     COMPARISON_METRIC_EPSILON,
+    COMPARISON_METRIC_LABELS,
+    COMPARISON_METRICS,
     LOWER_IS_BETTER_COMPARISON_METRICS,
     OPTIONAL_COMPARISON_METRICS,
 )
@@ -4265,7 +4279,7 @@ def test_r20_consecutive_limit_up_rate_is_lower_is_better() -> None:
 
 def test_r20_all_new_metrics_have_labels() -> None:
     """All Round 20 new metrics in COMPARISON_METRICS must have labels (invariant check)."""
-    from scripts.optimize_profile import COMPARISON_METRICS, COMPARISON_METRIC_LABELS
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS, COMPARISON_METRICS
     r20_metrics = ("realized_payoff_ratio", "high_confidence_selection_rate", "score_weighted_win_rate", "score_win_rate_lift", "high_confidence_win_rate", "consecutive_limit_up_rate", "limit_up_win_rate", "non_limit_up_win_rate")
     for metric in r20_metrics:
         assert metric in COMPARISON_METRICS, f"{metric} must be in COMPARISON_METRICS"
@@ -4304,8 +4318,9 @@ def test_r21_compute_surface_metric_correlations_negative_correlation() -> None:
 
 def test_r21_compute_surface_metric_correlations_result_in_range() -> None:
     """All returned correlation values must be in [-1, 1]."""
-    from scripts.btst_analysis_utils import compute_surface_metric_correlations
     import random
+
+    from scripts.btst_analysis_utils import compute_surface_metric_correlations
     random.seed(42)
     summaries = [{"next_close_positive_rate": random.random(), "m1": random.random(), "m2": random.random()} for _ in range(8)]
     result = compute_surface_metric_correlations(summaries)
@@ -4347,7 +4362,10 @@ def test_r21_compute_factor_ic_stability_empty_input_returns_empty() -> None:
 
 def test_r21_compute_factor_ic_stability_single_window_no_std() -> None:
     """Single-window input: std_IC = 0 and IR falls back to mean_IC."""
-    from scripts.btst_analysis_utils import compute_factor_ic_stability, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_ic_stability,
+    )
     factor = BTST_FACTOR_NAMES[0]
     summaries = [{"factor_ic_next_close": {factor: 0.05}}]
     result = compute_factor_ic_stability(summaries)
@@ -4359,7 +4377,10 @@ def test_r21_compute_factor_ic_stability_single_window_no_std() -> None:
 
 def test_r21_compute_factor_ic_stability_ir_computation() -> None:
     """IR = mean / std should be correctly computed for multi-window input."""
-    from scripts.btst_analysis_utils import compute_factor_ic_stability, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_ic_stability,
+    )
     factor = BTST_FACTOR_NAMES[0]
     ic_vals = [0.04, 0.06, 0.05, 0.07, 0.03]
     summaries = [{"factor_ic_next_close": {factor: v}} for v in ic_vals]
@@ -4373,7 +4394,10 @@ def test_r21_compute_factor_ic_stability_ir_computation() -> None:
 
 def test_r21_compute_factor_ic_stability_most_least_stable() -> None:
     """most_stable_factor has highest IR; least_stable_factor has lowest IR."""
-    from scripts.btst_analysis_utils import compute_factor_ic_stability, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_ic_stability,
+    )
     f1, f2 = BTST_FACTOR_NAMES[0], BTST_FACTOR_NAMES[1]
     # f1: constant IC 0.05 → std≈0 → IR = mean = 0.05
     # f2: highly volatile IC → low IR
@@ -4385,7 +4409,10 @@ def test_r21_compute_factor_ic_stability_most_least_stable() -> None:
 
 def test_r21_compute_factor_ic_stability_positive_fraction() -> None:
     """ic_positive_fraction should reflect fraction of windows with IC > 0."""
-    from scripts.btst_analysis_utils import compute_factor_ic_stability, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_ic_stability,
+    )
     factor = BTST_FACTOR_NAMES[0]
     ic_vals = [0.05, -0.02, 0.03, -0.01, 0.04]  # 3 positive out of 5
     summaries = [{"factor_ic_next_close": {factor: v}} for v in ic_vals]
@@ -4502,7 +4529,7 @@ def test_r21_entry_signal_metrics_have_epsilon() -> None:
 
 def test_r21_all_new_metrics_have_labels() -> None:
     """All Round 21 new metrics must be in both COMPARISON_METRICS and COMPARISON_METRIC_LABELS."""
-    from scripts.optimize_profile import COMPARISON_METRICS, COMPARISON_METRIC_LABELS
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS, COMPARISON_METRICS
     r21_metrics = ("open_entry_signal_strength", "execution_timing_confidence")
     for metric in r21_metrics:
         assert metric in COMPARISON_METRICS, f"{metric} must be in COMPARISON_METRICS"
@@ -4525,7 +4552,10 @@ def test_r22_compute_low_impact_probe_axes_empty_inputs_returns_empty_lists() ->
 
 def test_r22_compute_low_impact_probe_axes_low_corr_threshold() -> None:
     """Factor with |corr| < threshold is added to low_impact_axes."""
-    from scripts.optimize_profile import compute_low_impact_probe_axes, BTST_FACTOR_TO_PROBE_WEIGHT_KEY
+    from scripts.optimize_profile import (
+        BTST_FACTOR_TO_PROBE_WEIGHT_KEY,
+        compute_low_impact_probe_axes,
+    )
     factor = next(iter(BTST_FACTOR_TO_PROBE_WEIGHT_KEY))
     probe_key = BTST_FACTOR_TO_PROBE_WEIGHT_KEY[factor]
     result = compute_low_impact_probe_axes({factor: 0.01}, {}, ic_corr_threshold=0.05)
@@ -4535,7 +4565,10 @@ def test_r22_compute_low_impact_probe_axes_low_corr_threshold() -> None:
 
 def test_r22_compute_low_impact_probe_axes_low_ir_threshold() -> None:
     """Factor with IR < threshold is added to low_ir_factors."""
-    from scripts.optimize_profile import compute_low_impact_probe_axes, BTST_FACTOR_TO_PROBE_WEIGHT_KEY
+    from scripts.optimize_profile import (
+        BTST_FACTOR_TO_PROBE_WEIGHT_KEY,
+        compute_low_impact_probe_axes,
+    )
     factor = next(iter(BTST_FACTOR_TO_PROBE_WEIGHT_KEY))
     result = compute_low_impact_probe_axes({}, {f"{factor}_ic_ir": 0.10}, ir_threshold=0.20)
     assert factor in result["low_ir_factors"]
@@ -4544,7 +4577,10 @@ def test_r22_compute_low_impact_probe_axes_low_ir_threshold() -> None:
 
 def test_r22_compute_low_impact_probe_axes_pruning_candidate_requires_both() -> None:
     """pruning_candidates only includes axes where BOTH low-corr AND low-IR hold."""
-    from scripts.optimize_profile import compute_low_impact_probe_axes, BTST_FACTOR_TO_PROBE_WEIGHT_KEY
+    from scripts.optimize_profile import (
+        BTST_FACTOR_TO_PROBE_WEIGHT_KEY,
+        compute_low_impact_probe_axes,
+    )
     factor = next(iter(BTST_FACTOR_TO_PROBE_WEIGHT_KEY))
     probe_key = BTST_FACTOR_TO_PROBE_WEIGHT_KEY[factor]
     result = compute_low_impact_probe_axes(
@@ -4559,7 +4595,10 @@ def test_r22_compute_low_impact_probe_axes_pruning_candidate_requires_both() -> 
 
 def test_r22_compute_low_impact_probe_axes_high_corr_not_flagged() -> None:
     """Factor with |corr| above threshold must NOT appear in low_impact_axes."""
-    from scripts.optimize_profile import compute_low_impact_probe_axes, BTST_FACTOR_TO_PROBE_WEIGHT_KEY
+    from scripts.optimize_profile import (
+        BTST_FACTOR_TO_PROBE_WEIGHT_KEY,
+        compute_low_impact_probe_axes,
+    )
     factor = next(iter(BTST_FACTOR_TO_PROBE_WEIGHT_KEY))
     probe_key = BTST_FACTOR_TO_PROBE_WEIGHT_KEY[factor]
     result = compute_low_impact_probe_axes({factor: 0.30}, {}, ic_corr_threshold=0.05)
@@ -4612,6 +4651,7 @@ def test_r22_compute_optimal_hold_period_t2_optimal() -> None:
 def test_r22_compute_optimal_hold_period_insufficient_data_returns_none_sharpe() -> None:
     """Period with < 5 rows yields None Sharpe."""
     from scripts.btst_analysis_utils import compute_optimal_hold_period
+
     # T+1: 6 rows, T+2: 3 rows (< 5), T+3: 3 rows (< 5)
     t1 = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06]
     t2 = [0.01, 0.02, 0.03]
@@ -4657,6 +4697,7 @@ def _make_tier_rows(score_return_pairs: list[tuple[float, float]]) -> list[dict]
 def test_r22_compute_score_position_tiers_monotone_when_high_scores_win_more() -> None:
     """tier_monotone_win_rate=True when high-score tier has highest win rate."""
     from scripts.btst_analysis_utils import compute_score_position_tiers
+
     # 30 rows: high (0.9) → all positive, mid (0.5) → mixed, low (0.1) → all negative
     pairs = [(0.9, 0.05)] * 10 + [(0.5, 0.01)] * 5 + [(0.5, -0.01)] * 5 + [(0.1, -0.03)] * 10
     rows = _make_tier_rows(pairs)
@@ -4677,6 +4718,7 @@ def test_r22_compute_score_position_tiers_spread_is_positive_when_high_wins_more
 def test_r22_compute_score_position_tiers_too_few_rows_returns_none_tiers() -> None:
     """Tiers with < 3 rows yield None win_rate and payoff."""
     from scripts.btst_analysis_utils import compute_score_position_tiers
+
     # Only 4 rows total → each tier will have < 3
     pairs = [(0.1, 0.01), (0.4, 0.02), (0.6, -0.01), (0.9, 0.03)]
     rows = _make_tier_rows(pairs)
@@ -4745,14 +4787,20 @@ def test_r22_new_metrics_have_epsilon() -> None:
 
 def test_r23_lean_grid_is_subset_of_full_grid() -> None:
     """Every axis in BTST_RUNNER_LEAN_PROBE_GRID must also exist in BTST_RUNNER_PROBE_GRID."""
-    from scripts.optimize_profile import BTST_RUNNER_LEAN_PROBE_GRID, BTST_RUNNER_PROBE_GRID
+    from scripts.optimize_profile import (
+        BTST_RUNNER_LEAN_PROBE_GRID,
+        BTST_RUNNER_PROBE_GRID,
+    )
     for key in BTST_RUNNER_LEAN_PROBE_GRID:
         assert key in BTST_RUNNER_PROBE_GRID, f"lean grid axis '{key}' is absent from full BTST_RUNNER_PROBE_GRID"
 
 
 def test_r23_lean_grid_axis_count_constant() -> None:
     """LEAN_GRID_AXIS_COUNT must equal len(BTST_RUNNER_LEAN_PROBE_GRID)."""
-    from scripts.optimize_profile import BTST_RUNNER_LEAN_PROBE_GRID, LEAN_GRID_AXIS_COUNT
+    from scripts.optimize_profile import (
+        BTST_RUNNER_LEAN_PROBE_GRID,
+        LEAN_GRID_AXIS_COUNT,
+    )
     assert LEAN_GRID_AXIS_COUNT == len(BTST_RUNNER_LEAN_PROBE_GRID)
 
 
@@ -4764,7 +4812,11 @@ def test_r23_full_grid_axis_count_constant() -> None:
 
 def test_r23_lean_mode_true_uses_lean_grid() -> None:
     """resolve_grid_params with lean_mode=True must return only lean-grid axes (no extras from full grid)."""
-    from scripts.optimize_profile import BTST_RUNNER_LEAN_PROBE_GRID, BTST_RUNNER_PROBE_GRID, resolve_grid_params
+    from scripts.optimize_profile import (
+        BTST_RUNNER_LEAN_PROBE_GRID,
+        BTST_RUNNER_PROBE_GRID,
+        resolve_grid_params,
+    )
     lean_result = resolve_grid_params(grid_params=[], preset_grid=True, profile_name="btst_runner_probe", lean_mode=True)
     # All lean axes must be present.
     for key in BTST_RUNNER_LEAN_PROBE_GRID:
@@ -4949,14 +5001,20 @@ def test_r24_ic_temporal_trend_empty_returns_defaults() -> None:
 
 def test_r24_ic_temporal_trend_single_window_returns_defaults() -> None:
     """Single window: insufficient for split, returns minimal defaults."""
-    from scripts.btst_analysis_utils import compute_factor_ic_temporal_trend, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_ic_temporal_trend,
+    )
     result = compute_factor_ic_temporal_trend([{"factor_ic_next_close": {BTST_FACTOR_NAMES[0]: 0.05}}])
     assert result["decaying_factor_count"] == 0
 
 
 def test_r24_ic_temporal_trend_detects_decay() -> None:
     """Factor with early IC=0.10, late IC=0.02 should be flagged as decaying (trend=-0.08<-0.02)."""
-    from scripts.btst_analysis_utils import compute_factor_ic_temporal_trend, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_ic_temporal_trend,
+    )
     factor = BTST_FACTOR_NAMES[0]
     # 8 windows: first 4 (early) have IC=0.10, last 4 (late) have IC=0.02
     summaries = [{"factor_ic_next_close": {factor: 0.10}} for _ in range(4)] + [{"factor_ic_next_close": {factor: 0.02}} for _ in range(4)]
@@ -4969,7 +5027,10 @@ def test_r24_ic_temporal_trend_detects_decay() -> None:
 
 def test_r24_ic_temporal_trend_no_decay_when_stable() -> None:
     """Factor with constant IC across all windows should NOT be flagged as decaying."""
-    from scripts.btst_analysis_utils import compute_factor_ic_temporal_trend, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_ic_temporal_trend,
+    )
     factor = BTST_FACTOR_NAMES[0]
     summaries = [{"factor_ic_next_close": {factor: 0.05}} for _ in range(8)]
     result = compute_factor_ic_temporal_trend(summaries)
@@ -4979,7 +5040,10 @@ def test_r24_ic_temporal_trend_no_decay_when_stable() -> None:
 
 def test_r24_ic_temporal_trend_most_decaying_most_improving() -> None:
     """most_decaying_factor should be the factor with the most negative trend."""
-    from scripts.btst_analysis_utils import compute_factor_ic_temporal_trend, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_ic_temporal_trend,
+    )
     f1, f2 = BTST_FACTOR_NAMES[0], BTST_FACTOR_NAMES[1]
     # f1: strong decay (0.15 → 0.01), f2: improving (0.01 → 0.12)
     # Need ≥3 windows per half — use 6 total (split=3 early, 3 late)
@@ -4994,7 +5058,10 @@ def test_r24_ic_temporal_trend_most_decaying_most_improving() -> None:
 
 def test_r24_ic_temporal_trend_skip_factors_with_insufficient_data() -> None:
     """Factors with fewer than 3 valid IC values in either half get None trend and False decaying."""
-    from scripts.btst_analysis_utils import compute_factor_ic_temporal_trend, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_ic_temporal_trend,
+    )
     factor = BTST_FACTOR_NAMES[0]
     # 4 windows total: split=2 early, 2 late → each half has only 2 valid ICs for this factor → skip
     summaries = [{"factor_ic_next_close": {factor: 0.10}} for _ in range(4)]
@@ -5059,6 +5126,7 @@ def test_r24_verdict_calibration_monotone_false_when_inverted() -> None:
 def test_r24_verdict_calibration_proxy_splits_by_quartile() -> None:
     """When no real verdicts present, uses quartile proxy for categorisation."""
     from scripts.btst_analysis_utils import compute_verdict_calibration
+
     # 8 windows, no 'verdict' field — use proxy
     summaries = [{"next_close_positive_rate": 0.40 + i * 0.04} for i in range(8)]
     result = compute_verdict_calibration(summaries)
@@ -5117,11 +5185,11 @@ def test_r25_floor_suggestions_too_strict_when_floor_above_p75() -> None:
 
 def test_r25_floor_suggestions_calibrated() -> None:
     """A floor that falls between P25*0.80 and P75*1.20 must produce action='calibrated'."""
-    from scripts.optimize_profile import compute_auto_calibrated_floor_suggestions
-
     # next_close_positive_rate floor = 0.54.
     # Feed window values centered around 0.54 so the distribution brackets it nicely.
     import statistics
+
+    from scripts.optimize_profile import compute_auto_calibrated_floor_suggestions
     windows = [{"next_close_positive_rate": 0.48 + i * 0.02} for i in range(9)]  # 0.48…0.64
     result = compute_auto_calibrated_floor_suggestions(windows)
     suggestion = result["floor_suggestions"].get("next_close_positive_rate")
@@ -5144,6 +5212,7 @@ def test_r25_floor_suggestions_empty_input() -> None:
 def test_r25_floor_suggestions_missing_metric_graceful() -> None:
     """Windows missing a metric must yield action='no_data' for that metric."""
     from scripts.optimize_profile import compute_auto_calibrated_floor_suggestions
+
     # Windows contain no 'next_close_positive_rate' field at all
     windows = [{"realized_payoff_ratio": 1.5} for _ in range(5)]
     result = compute_auto_calibrated_floor_suggestions(windows)
@@ -5172,6 +5241,7 @@ def test_r27_return_distribution_symmetric_skewness_near_zero() -> None:
 def test_r27_return_distribution_left_skewed() -> None:
     """Distribution with large losses should be left-skewed (negative skewness)."""
     from scripts.btst_analysis_utils import compute_return_distribution_shape
+
     # Big loss outlier makes distribution left-skewed
     rows = [{"next_close_return": v} for v in [0.01, 0.02, 0.01, 0.01, 0.01, -0.20]]
     result = compute_return_distribution_shape(rows)
@@ -5182,6 +5252,7 @@ def test_r27_return_distribution_left_skewed() -> None:
 def test_r27_return_distribution_win_loss_std_ratio_favourable() -> None:
     """Win/loss std ratio > 1 when upside volatility exceeds downside volatility."""
     from scripts.btst_analysis_utils import compute_return_distribution_shape
+
     # Varied losses (small) and varied large wins → upside_std > downside_std
     rows = [{"next_close_return": v} for v in [-0.01, -0.02, -0.015, -0.005, 0.05, 0.10, 0.15, 0.20]]
     result = compute_return_distribution_shape(rows)
@@ -5193,6 +5264,7 @@ def test_r27_return_distribution_win_loss_std_ratio_favourable() -> None:
 def test_r27_return_distribution_heavy_left_tail_flag() -> None:
     """heavy_left_tail_flag triggers when skewness < -1.0 AND p5 < -0.05."""
     from scripts.btst_analysis_utils import compute_return_distribution_shape
+
     # Extreme loss outliers to force heavy left tail
     rows = [{"next_close_return": v} for v in [0.01, 0.01, 0.01, 0.01, -0.15, -0.20, -0.30, 0.01, 0.01, 0.01]]
     result = compute_return_distribution_shape(rows)
@@ -5410,8 +5482,9 @@ def test_r28_factor_cross_corr_perfectly_negatively_correlated() -> None:
 
 def test_r28_factor_cross_corr_orthogonal_pair_near_zero() -> None:
     """Alternating-sign factor should have near-zero Spearman corr with monotone factor."""
-    from scripts.btst_analysis_utils import compute_factor_cross_correlation
     import math
+
+    from scripts.btst_analysis_utils import compute_factor_cross_correlation
     rows = [{"breakout_freshness": float(i), "close_strength": math.sin(i * math.pi)} for i in range(10)]
     result = compute_factor_cross_correlation(rows)
     assert result["factor_min_correlation"] is not None
@@ -5421,6 +5494,7 @@ def test_r28_factor_cross_corr_orthogonal_pair_near_zero() -> None:
 def test_r28_factor_cross_corr_high_correlation_pairs_filtered() -> None:
     """|corr| > 0.70 threshold should correctly classify high-correlation pairs."""
     from scripts.btst_analysis_utils import compute_factor_cross_correlation
+
     # Create a case where breakout_freshness and close_strength are almost perfectly correlated
     rows = [{"breakout_freshness": float(i), "close_strength": float(i) + 0.01 * (i % 3), "trend_acceleration": float(9 - i)} for i in range(10)]
     result = compute_factor_cross_correlation(rows)
@@ -5431,8 +5505,11 @@ def test_r28_factor_cross_corr_high_correlation_pairs_filtered() -> None:
 
 def test_r28_factor_cross_corr_redundancy_warning_flag_threshold() -> None:
     """redundancy_warning_flag fires only when high_correlation_pair_count > 3."""
-    from scripts.btst_analysis_utils import compute_factor_cross_correlation
-    from scripts.btst_analysis_utils import BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_cross_correlation,
+    )
+
     # Create 4+ factors all perfectly correlated
     base = [float(i) for i in range(10)]
     rows = [{f: base[i] + (0.001 * j) for j, f in enumerate(BTST_FACTOR_NAMES)} for i in range(10)]
@@ -5444,6 +5521,7 @@ def test_r28_factor_cross_corr_redundancy_warning_flag_threshold() -> None:
 def test_r28_factor_cross_corr_redundancy_warning_false_when_few_high_pairs() -> None:
     """redundancy_warning_flag is False when only 1-3 high-correlation pairs."""
     from scripts.btst_analysis_utils import compute_factor_cross_correlation
+
     # Only two factors present — at most 1 pair
     rows = [{"breakout_freshness": float(i), "close_strength": float(i)} for i in range(10)]
     result = compute_factor_cross_correlation(rows)
@@ -5455,6 +5533,7 @@ def test_r28_factor_cross_corr_redundancy_warning_false_when_few_high_pairs() ->
 def test_r28_factor_cross_corr_absent_factor_gracefully_skipped() -> None:
     """Factors with no data in rows (like F11/F12 cross-factors absent) are silently excluded."""
     from scripts.btst_analysis_utils import compute_factor_cross_correlation
+
     # Only provide two factors; all others are absent.
     rows = [{"breakout_freshness": float(i), "trend_acceleration": float(i) * 0.5} for i in range(10)]
     result = compute_factor_cross_correlation(rows)
@@ -5479,6 +5558,7 @@ def test_r28_factor_cross_corr_empty_rows_returns_nulls() -> None:
 def test_r28_regime_alpha_all_positive() -> None:
     """When all domain alphas > 0, all_regimes_positive_alpha must be True."""
     from scripts.btst_analysis_utils import compute_regime_alpha_consistency
+
     # bull days (hs300 > 0.003), bear days (hs300 < -0.003), sideways
     rows = (
         [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)]
@@ -5509,6 +5589,7 @@ def test_r28_regime_alpha_bear_negative() -> None:
 def test_r28_regime_alpha_consistency_score_correct() -> None:
     """alpha_consistency_score = min_alpha / max(|domain_alphas|)."""
     from scripts.btst_analysis_utils import compute_regime_alpha_consistency
+
     # bull alpha = 0.01, bear alpha = 0.005, sideways alpha = 0.008  → min=0.005, max_abs=0.01
     rows = (
         [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)]   # alpha 0.01
@@ -5535,6 +5616,7 @@ def test_r28_regime_alpha_missing_hs300_returns_all_none() -> None:
 def test_r28_regime_alpha_insufficient_domain_samples() -> None:
     """Domain with < 5 samples returns None for that domain's alpha."""
     from scripts.btst_analysis_utils import compute_regime_alpha_consistency
+
     # Only 3 bear days — bear_alpha_avg should be None
     rows = (
         [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)]
@@ -5568,6 +5650,7 @@ def test_r28_regime_alpha_spread_calculation() -> None:
 def test_r28_post_loss_mean_reversion_signal() -> None:
     """T+2 positive rate > 0.55 triggers mean_reversion_signal."""
     from scripts.btst_analysis_utils import compute_post_loss_recovery_analysis
+
     # 7 out of 8 loss rows have T+2 > 0 → positive rate = 0.875
     rows = (
         [{"next_close_return": -0.02, "t_plus_2_close_return": 0.01} for _ in range(7)]
@@ -5596,6 +5679,7 @@ def test_r28_post_loss_momentum_continuation_signal() -> None:
 def test_r28_post_loss_hold_through_loss_beneficial_true() -> None:
     """hold_through_loss_beneficial is True when T+2 avg > |T1 loss avg| × 0.30."""
     from scripts.btst_analysis_utils import compute_post_loss_recovery_analysis
+
     # T1 loss avg = -0.04; need T+2 avg > 0.04 × 0.30 = 0.012
     rows = [{"next_close_return": -0.04, "t_plus_2_close_return": 0.02} for _ in range(6)]
     result = compute_post_loss_recovery_analysis(rows)
@@ -5605,6 +5689,7 @@ def test_r28_post_loss_hold_through_loss_beneficial_true() -> None:
 def test_r28_post_loss_hold_through_loss_beneficial_false() -> None:
     """hold_through_loss_beneficial is False when T+2 avg ≤ |T1 loss avg| × 0.30."""
     from scripts.btst_analysis_utils import compute_post_loss_recovery_analysis
+
     # T1 loss avg = -0.04; T+2 avg = 0.005 < 0.012 threshold
     rows = [{"next_close_return": -0.04, "t_plus_2_close_return": 0.005} for _ in range(6)]
     result = compute_post_loss_recovery_analysis(rows)
@@ -5624,6 +5709,7 @@ def test_r28_post_loss_insufficient_samples_degradation() -> None:
 def test_r28_post_loss_recovery_expected_value() -> None:
     """recovery_expected_value = t1_loss_avg × (1 + t2_avg_return)."""
     from scripts.btst_analysis_utils import compute_post_loss_recovery_analysis
+
     # T1 loss = -0.04, T+2 return = 0.02 → EV = -0.04 × 1.02 = -0.0408
     rows = [{"next_close_return": -0.04, "t_plus_2_close_return": 0.02} for _ in range(6)]
     result = compute_post_loss_recovery_analysis(rows)
@@ -5704,6 +5790,7 @@ def test_r29_pca_fully_correlated_rank1() -> None:
 def test_r29_pca_fully_orthogonal_high_rank() -> None:
     """Fully independent factors → effective_rank ≥ 2 (more PCs needed for 80 %)."""
     import numpy as np
+
     from scripts.btst_analysis_utils import compute_factor_pca_analysis
 
     np.random.seed(42)
@@ -5729,6 +5816,7 @@ def test_r29_pca_too_few_rows_returns_null() -> None:
 def test_r29_pca_diversity_score_in_unit_interval() -> None:
     """pca_diversity_score must always be in (0, 1]."""
     import numpy as np
+
     from scripts.btst_analysis_utils import compute_factor_pca_analysis
 
     np.random.seed(7)
@@ -5743,6 +5831,7 @@ def test_r29_pca_diversity_score_in_unit_interval() -> None:
 def test_r29_pca_pc1_dominant_factors_at_most_3() -> None:
     """pc1_dominant_factors should return at most 3 factor names."""
     import numpy as np
+
     from scripts.btst_analysis_utils import compute_factor_pca_analysis
 
     np.random.seed(13)
@@ -5757,7 +5846,11 @@ def test_r29_pca_pc1_dominant_factors_at_most_3() -> None:
 def test_r29_pca_redundancy_candidates_are_factor_names() -> None:
     """redundancy_reduction_candidates contains valid factor name strings."""
     import numpy as np
-    from scripts.btst_analysis_utils import compute_factor_pca_analysis, BTST_FACTOR_NAMES
+
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_pca_analysis,
+    )
 
     np.random.seed(99)
     n = 30
@@ -5773,6 +5866,7 @@ def test_r29_pca_redundancy_candidates_are_factor_names() -> None:
 def test_r29_pca_absent_f11_f12_graceful_skip() -> None:
     """F11/F12 absent from rows → analysis still works on remaining factors."""
     import numpy as np
+
     from scripts.btst_analysis_utils import compute_factor_pca_analysis
 
     np.random.seed(5)
@@ -5788,6 +5882,7 @@ def test_r29_pca_absent_f11_f12_graceful_skip() -> None:
 def test_r29_pca_explained_variance_sums_to_one() -> None:
     """explained_variance_ratio must sum to ≈ 1.0."""
     import numpy as np
+
     from scripts.btst_analysis_utils import compute_factor_pca_analysis
 
     np.random.seed(21)
@@ -5898,6 +5993,7 @@ def test_r29_oos_gap_missing_date_rows_skipped() -> None:
 def test_r29_weekday_monday_worst() -> None:
     """Monday (0) always negative → worst_weekday = 0."""
     import datetime
+
     from scripts.btst_analysis_utils import compute_weekday_performance_analysis
 
     rows = []
@@ -5915,6 +6011,7 @@ def test_r29_weekday_monday_worst() -> None:
 def test_r29_weekday_friday_worst() -> None:
     """Friday (4) always negative → worst_weekday = 4."""
     import datetime
+
     from scripts.btst_analysis_utils import compute_weekday_performance_analysis
 
     rows = []
@@ -5931,6 +6028,7 @@ def test_r29_weekday_friday_worst() -> None:
 def test_r29_weekday_uniform_no_strong_effect() -> None:
     """Uniform returns → calendar_effect_strong = False (small spread)."""
     import datetime
+
     from scripts.btst_analysis_utils import compute_weekday_performance_analysis
 
     rows = []
@@ -5950,6 +6048,7 @@ def test_r29_weekday_uniform_no_strong_effect() -> None:
 def test_r29_weekday_spread_equals_best_minus_worst() -> None:
     """weekday_win_rate_spread = weekday_best_win_rate - weekday_worst_win_rate."""
     import datetime
+
     from scripts.btst_analysis_utils import compute_weekday_performance_analysis
 
     rows = []
@@ -5969,6 +6068,7 @@ def test_r29_weekday_spread_equals_best_minus_worst() -> None:
 def test_r29_weekday_calendar_effect_strong_flag() -> None:
     """calendar_effect_strong = True when spread > 0.10."""
     import datetime
+
     from scripts.btst_analysis_utils import compute_weekday_performance_analysis
 
     rows = []
@@ -6001,6 +6101,7 @@ def test_r29_weekday_insufficient_samples_per_day_excluded() -> None:
 def test_r29_weekday_best_weekday_identified() -> None:
     """best_weekday = weekday with highest win rate."""
     import datetime
+
     from scripts.btst_analysis_utils import compute_weekday_performance_analysis
 
     rows = []
@@ -6018,6 +6119,7 @@ def test_r29_weekday_best_weekday_identified() -> None:
 def test_r29_weekday_win_rates_keys_are_ints() -> None:
     """weekday_win_rates dict keys must be integers 0–4."""
     import datetime
+
     from scripts.btst_analysis_utils import compute_weekday_performance_analysis
 
     rows = []
@@ -6265,8 +6367,9 @@ def test_r30_monthly_seasonal_effect_strong_flag() -> None:
 
 def test_r30_monthly_insufficient_samples_excluded() -> None:
     """Months with < 5 samples are excluded from spread/best/worst."""
-    from scripts.btst_analysis_utils import compute_monthly_performance_analysis
     import datetime
+
+    from scripts.btst_analysis_utils import compute_monthly_performance_analysis
 
     # Month 1 has only 3 rows (excluded); month 2 has 8 rows
     rows = [{"date": f"2022-01-0{i + 1}", "next_close_return": 0.03} for i in range(3)]
@@ -6304,7 +6407,10 @@ def _make_nonlin_rows(factor_name: str, factor_returns: list[tuple[float, float]
 
 def test_r30_nonlinear_u_shaped_factor_detected() -> None:
     """U-shaped factor (mid worse than extremes) → flagged as nonlinear."""
-    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_nonlinearity,
+    )
 
     factor = BTST_FACTOR_NAMES[0]
     # Low: returns +5%, Mid: returns -5%, High: returns +5% → U-shape
@@ -6321,7 +6427,10 @@ def test_r30_nonlinear_u_shaped_factor_detected() -> None:
 
 def test_r30_nonlinear_monotone_linear_factor_not_flagged() -> None:
     """Strictly monotone linear factor → nonlinearity_ratio ≈ 0, not flagged."""
-    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_nonlinearity,
+    )
 
     factor = BTST_FACTOR_NAMES[0]
     # Linear: low=-0.05, mid=0.0, high=+0.05 → mid is exactly at linear expectation
@@ -6337,7 +6446,10 @@ def test_r30_nonlinear_monotone_linear_factor_not_flagged() -> None:
 
 def test_r30_nonlinearity_ratio_calculation() -> None:
     """nonlinearity_ratio = nonlinear_deviation / max(linear_score, 0.001)."""
-    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_nonlinearity,
+    )
 
     factor = BTST_FACTOR_NAMES[0]
     # Inverted-U: low=0.0, mid=+0.10, high=0.0 → linear_score≈0.0, nonlin large
@@ -6354,7 +6466,10 @@ def test_r30_nonlinearity_ratio_calculation() -> None:
 
 def test_r30_nonlinearity_threshold_0_30() -> None:
     """Factors with ratio > 0.30 are flagged; those ≤ 0.30 are not."""
-    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_nonlinearity,
+    )
 
     factor = BTST_FACTOR_NAMES[0]
     # Weak nonlinearity: mid deviates only 1% from linear expectation
@@ -6371,7 +6486,10 @@ def test_r30_nonlinearity_threshold_0_30() -> None:
 
 def test_r30_nonlinearity_insufficient_samples_skipped() -> None:
     """Factors with < 15 paired rows are skipped (not included in result)."""
-    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_nonlinearity,
+    )
 
     factor = BTST_FACTOR_NAMES[0]
     rows = [{"next_close_return": 0.03, factor: float(i)} for i in range(10)]  # only 10 rows
@@ -6382,7 +6500,10 @@ def test_r30_nonlinearity_insufficient_samples_skipped() -> None:
 
 def test_r30_nonlinearity_most_nonlinear_factor() -> None:
     """most_nonlinear_factor is the factor with the highest nonlinearity_ratio."""
-    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_nonlinearity,
+    )
 
     f0 = BTST_FACTOR_NAMES[0]
     f1 = BTST_FACTOR_NAMES[1] if len(BTST_FACTOR_NAMES) > 1 else None
@@ -6402,7 +6523,10 @@ def test_r30_nonlinearity_most_nonlinear_factor() -> None:
 
 def test_r30_nonlinearity_count_and_avg_correct() -> None:
     """nonlinear_factor_count and avg_nonlinearity_ratio are consistent."""
-    from scripts.btst_analysis_utils import compute_factor_nonlinearity, BTST_FACTOR_NAMES
+    from scripts.btst_analysis_utils import (
+        BTST_FACTOR_NAMES,
+        compute_factor_nonlinearity,
+    )
 
     factor = BTST_FACTOR_NAMES[0]
     n_each = 10
@@ -6663,7 +6787,9 @@ def test_r31_f13_factor_to_probe_weight_key_mapping() -> None:
 
 def test_r31_f13_weight_positive_changes_score() -> None:
     """compute_runner_composite_score changes output when rs_sector_rank weight is non-zero."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     class _ProfileZero:
         runner_composite_score_breakout_weight = 0.40
@@ -7031,9 +7157,9 @@ def test_r32_t3_trade_recommended_threshold() -> None:
 
 def test_r32_t3_score_in_range() -> None:
     """composite_gate_score must always be in [0, 100]."""
-    from scripts.btst_analysis_utils import compute_composite_gate_score
-
     import random
+
+    from scripts.btst_analysis_utils import compute_composite_gate_score
     rng = random.Random(42)
     for _ in range(50):
         surface = {
@@ -8588,9 +8714,9 @@ def test_r37_t3_composite_score_fallback() -> None:
 
 def test_r37_t3_gini_in_unit_interval() -> None:
     """score_gini is always in [0, 1]."""
-    from scripts.btst_analysis_utils import compute_score_gini_coefficient
-
     import random
+
+    from scripts.btst_analysis_utils import compute_score_gini_coefficient
     rng = random.Random(7)
     rows = [{"runner_composite_score": rng.uniform(0.1, 1.0)} for _ in range(30)]
     result = compute_score_gini_coefficient(rows)
@@ -9051,7 +9177,7 @@ def test_r39_t1_floor_registered() -> None:
 
 def test_r39_t1_metric_registered() -> None:
     """recency_win_rate_gap is in COMPARISON_METRICS and has a Chinese label."""
-    from scripts.optimize_profile import COMPARISON_METRICS, COMPARISON_METRIC_LABELS
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS, COMPARISON_METRICS
 
     assert "recency_win_rate_gap" in COMPARISON_METRICS
     assert "近期" in COMPARISON_METRIC_LABELS.get("recency_win_rate_gap", "")
@@ -9143,7 +9269,7 @@ def test_r39_t2_floor_registered() -> None:
 
 def test_r39_t2_metric_registered() -> None:
     """optimal_threshold_lift is in COMPARISON_METRICS with a Chinese label."""
-    from scripts.optimize_profile import COMPARISON_METRICS, COMPARISON_METRIC_LABELS
+    from scripts.optimize_profile import COMPARISON_METRIC_LABELS, COMPARISON_METRICS
 
     assert "optimal_threshold_lift" in COMPARISON_METRICS
     assert "阈值" in COMPARISON_METRIC_LABELS.get("optimal_threshold_lift", "")
@@ -9234,7 +9360,10 @@ def test_r39_t3_floor_registered() -> None:
 
 def test_r39_t3_metric_registered() -> None:
     """recovery_factor and max_drawdown_simulated are in COMPARISON_METRICS."""
-    from scripts.optimize_profile import COMPARISON_METRICS, LOWER_IS_BETTER_COMPARISON_METRICS
+    from scripts.optimize_profile import (
+        COMPARISON_METRICS,
+        LOWER_IS_BETTER_COMPARISON_METRICS,
+    )
 
     assert "recovery_factor" in COMPARISON_METRICS
     assert "max_drawdown_simulated" in COMPARISON_METRICS
@@ -9545,7 +9674,10 @@ def test_r40_t3_cap_registered() -> None:
 
 def test_r40_t3_metric_registered() -> None:
     """factor_drift_score is in COMPARISON_METRICS and LOWER_IS_BETTER_COMPARISON_METRICS."""
-    from scripts.optimize_profile import COMPARISON_METRICS, LOWER_IS_BETTER_COMPARISON_METRICS
+    from scripts.optimize_profile import (
+        COMPARISON_METRICS,
+        LOWER_IS_BETTER_COMPARISON_METRICS,
+    )
 
     assert "factor_drift_score" in COMPARISON_METRICS
     assert "factor_drift_score" in LOWER_IS_BETTER_COMPARISON_METRICS
@@ -10028,9 +10160,9 @@ def test_r42_t1_positive_slope_for_correlated_scores() -> None:
 
 def test_r42_t1_score_priority_runner_composite() -> None:
     """runner_composite_score is preferred over composite_score."""
-    from scripts.btst_analysis_utils import compute_score_calibration_curve
-
     import random as _r
+
+    from scripts.btst_analysis_utils import compute_score_calibration_curve
     rng = _r.Random(42)
     rows = [{"runner_composite_score": rng.uniform(0, 1), "composite_score": None, "next_close_return": rng.uniform(-0.03, 0.03)} for _ in range(20)]
     result = compute_score_calibration_curve(rows)
@@ -10040,9 +10172,9 @@ def test_r42_t1_score_priority_runner_composite() -> None:
 
 def test_r42_t1_fallback_to_composite_score() -> None:
     """Falls back to composite_score when runner_composite_score is absent."""
-    from scripts.btst_analysis_utils import compute_score_calibration_curve
-
     import random as _r
+
+    from scripts.btst_analysis_utils import compute_score_calibration_curve
     rng = _r.Random(5)
     rows = [{"composite_score": rng.uniform(0, 1), "next_close_return": rng.uniform(-0.03, 0.03)} for _ in range(20)]
     result = compute_score_calibration_curve(rows)
@@ -11274,7 +11406,9 @@ def test_r45_top_candidate_consistency_optional_registered() -> None:
 
 def test_r46_vpd_strat_empty_input() -> None:
     """Empty rows -> graceful degradation with vpd_stratification_valid=False."""
-    from scripts.btst_analysis_utils import compute_volume_price_divergence_stratification
+    from scripts.btst_analysis_utils import (
+        compute_volume_price_divergence_stratification,
+    )
     result = compute_volume_price_divergence_stratification([])
     assert result["vpd_stratification_valid"] is False
     assert result["vpd_low_win_rate"] is None
@@ -11285,7 +11419,9 @@ def test_r46_vpd_strat_empty_input() -> None:
 
 def test_r46_vpd_strat_missing_field() -> None:
     """Rows lacking volume_price_divergence -> graceful degradation."""
-    from scripts.btst_analysis_utils import compute_volume_price_divergence_stratification
+    from scripts.btst_analysis_utils import (
+        compute_volume_price_divergence_stratification,
+    )
     rows = [{"next_day_return": 0.01} for _ in range(20)]
     result = compute_volume_price_divergence_stratification(rows)
     assert result["vpd_stratification_valid"] is False
@@ -11294,7 +11430,9 @@ def test_r46_vpd_strat_missing_field() -> None:
 
 def test_r46_vpd_strat_normal_three_tiers() -> None:
     """Normal input with clear low/mid/high tiers -> lift has a value."""
-    from scripts.btst_analysis_utils import compute_volume_price_divergence_stratification
+    from scripts.btst_analysis_utils import (
+        compute_volume_price_divergence_stratification,
+    )
     rows = []
     # low vpd rows: 9 rows returning positive (high win rate in low tier)
     for _ in range(9):
@@ -11316,7 +11454,9 @@ def test_r46_vpd_strat_normal_three_tiers() -> None:
 
 def test_r46_vpd_strat_anti_monotone_logic() -> None:
     """When low > mid > high win rate, vpd_anti_monotone should be True."""
-    from scripts.btst_analysis_utils import compute_volume_price_divergence_stratification
+    from scripts.btst_analysis_utils import (
+        compute_volume_price_divergence_stratification,
+    )
     rows = []
     # low tier: 8/10 win
     for _ in range(8):
@@ -11339,7 +11479,10 @@ def test_r46_vpd_strat_anti_monotone_logic() -> None:
 
 def test_r46_vpd_strat_effective_threshold() -> None:
     """When lift > 0.05 vpd_effective should be True, otherwise False."""
-    from scripts.btst_analysis_utils import compute_volume_price_divergence_stratification
+    from scripts.btst_analysis_utils import (
+        compute_volume_price_divergence_stratification,
+    )
+
     # Build rows where low wins 9/10 and high wins 2/10 -> lift ~ 0.70
     rows = []
     for _ in range(9):
@@ -11418,6 +11561,7 @@ def test_r46_score_moments_too_few_rows() -> None:
 def test_r46_score_moments_near_normal_skewness() -> None:
     """Near-symmetric input -> |skewness| < 0.3."""
     from scripts.btst_analysis_utils import compute_score_distribution_moments
+
     # symmetric around 0: -4 -3 -2 -1 0 1 2 3 4
     rows = [{"score": float(v)} for v in range(-4, 5)]
     result = compute_score_distribution_moments(rows)
@@ -11428,6 +11572,7 @@ def test_r46_score_moments_near_normal_skewness() -> None:
 def test_r46_score_moments_right_skewed() -> None:
     """Right-skewed input -> score_skewness > 0."""
     from scripts.btst_analysis_utils import compute_score_distribution_moments
+
     # Many low values, a few high ones -> right skew
     rows = [{"score": 0.1}] * 15 + [{"score": 5.0}, {"score": 8.0}, {"score": 10.0}]
     result = compute_score_distribution_moments(rows)
@@ -11532,6 +11677,7 @@ def test_r46_gate_consistency_high_variation_grade_d() -> None:
 def test_r46_gate_consistency_grade_b_boundary() -> None:
     """Values close together but not identical -> cv in [0.10, 0.20) -> grade B."""
     from scripts.optimize_profile import compute_cross_window_gate_consistency
+
     # mean ~0.6, std ~0.08 -> cv ~0.13 (grade B)
     summaries = [
         {"gate_high_pct": 0.52},
@@ -12007,6 +12153,7 @@ def test_r48_veq_strat_lift_direction() -> None:
 def test_r48_veq_strat_monotone_logic() -> None:
     """Strictly increasing win rates → veq_monotone=True."""
     from scripts.btst_analysis_utils import compute_veq_stratification
+
     # Low tier: 10 rows, 2 wins (WR=0.2); Mid: 10 rows, 5 wins (WR=0.5); High: 10 rows, 9 wins (WR=0.9)
     rows = []
     for i in range(10):
@@ -12091,6 +12238,7 @@ def test_r48_sr_strat_normal_three_tiers() -> None:
 def test_r48_sr_strat_monotone_logic() -> None:
     """Strictly increasing win rates → sr_monotone=True."""
     from scripts.btst_analysis_utils import compute_sector_resonance_stratification
+
     # Low tier: WR=0.2; Mid: WR=0.5; High: WR=0.9
     rows = []
     for i in range(10):
@@ -12267,6 +12415,7 @@ def test_r49_consensus_all_factors_missing() -> None:
 def test_r49_consensus_normal_with_high_group() -> None:
     """Normal scenario: rows with many strong factors → consensus_lift has value."""
     from scripts.btst_analysis_utils import compute_factor_consensus_analysis
+
     # 10 high-consensus rows (all 7 factors high, win) + 10 low rows
     high_rows = [
         {
@@ -12495,6 +12644,7 @@ def test_r49_sortino_trend_falling_slope_negative() -> None:
 def test_r49_sortino_trend_grade_d_for_steep_decline() -> None:
     """Slope ≤ -0.10 → grade D."""
     from scripts.optimize_profile import compute_cross_window_sortino_trend
+
     # Make a series where OLS slope is clearly below -0.10
     summaries = [{"sortino_ratio": 2.0 - i * 0.5} for i in range(6)]
     result = compute_cross_window_sortino_trend(summaries)
@@ -12582,6 +12732,7 @@ def test_r50_factor_redundancy_all_factors_missing() -> None:
 def test_r50_factor_redundancy_identical_factors_r_is_one() -> None:
     """Two identical factor columns → Spearman |r| == 1.0 for that pair."""
     from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+
     # Need at least 3 factors present — add a third orthogonal factor
     rows = [
         {"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i * 2 + 1)}
@@ -12597,8 +12748,10 @@ def test_r50_factor_redundancy_identical_factors_r_is_one() -> None:
 
 def test_r50_factor_redundancy_independent_factors_r_near_zero() -> None:
     """Two independent random-ish factor columns → |r| well below 0.70."""
-    from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
     import math
+
+    from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+
     # Use deterministic, near-orthogonal sequences
     xs = [math.sin(i * 1.1) for i in range(12)]
     ys = [math.cos(i * 1.7 + 2.3) for i in range(12)]
@@ -12646,6 +12799,7 @@ def test_r50_factor_redundancy_label_registered() -> None:
 def test_r50_factor_redundancy_grade_a_for_low_correlation() -> None:
     """All factor values unique and fully orthogonal → grade A (avg < 0.20)."""
     from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+
     # Build rows where close_strength is identity and other factors are fixed → many pairs will have ~0 corr
     rows = []
     for i in range(12):
@@ -12714,6 +12868,7 @@ def test_r50_extended_holding_t2_data_available() -> None:
 def test_r50_extended_holding_premium_computation() -> None:
     """t2_vs_t1_premium == t2_win_rate - t1_win_rate."""
     from scripts.btst_analysis_utils import compute_extended_holding_period
+
     # t1: all positive → win_rate=1.0; t2: all negative → win_rate=0.0
     rows = [{"next_day_return": 0.01, "t2_return": -0.01} for _ in range(6)]
     result = compute_extended_holding_period(rows)
@@ -12897,8 +13052,9 @@ def test_r51_win_loss_magnitude_all_losses_no_wins() -> None:
 
 def test_r51_win_loss_magnitude_mixed_normal_case() -> None:
     """Normal mixed returns → positive ratio, Kelly in [-1,1]."""
-    from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
     import pytest
+
+    from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
     wins = [0.05, 0.04, 0.06, 0.07, 0.03]
     losses = [-0.02, -0.01, -0.03, -0.02, -0.015]
     rows = [{"next_day_return": r} for r in wins + losses]
@@ -12922,8 +13078,9 @@ def test_r51_win_loss_magnitude_profit_factor_v2_nonneg() -> None:
 
 def test_r51_win_loss_magnitude_floor_registered() -> None:
     """win_loss_magnitude_ratio:1.0 and kelly_fraction:0.0 must be in BTST_QUALITY_FLOORS."""
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     import pytest
+
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "win_loss_magnitude_ratio" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["win_loss_magnitude_ratio"] == pytest.approx(1.0)
     assert "kelly_fraction" in BTST_QUALITY_FLOORS
@@ -13003,8 +13160,9 @@ def test_r51_outlier_robustness_grade_valid_values() -> None:
 
 def test_r51_outlier_robustness_cap_registered() -> None:
     """outlier_dependency_ratio:0.30 must be in BTST_QUALITY_CAPS."""
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
     import pytest
+
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
     assert "outlier_dependency_ratio" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["outlier_dependency_ratio"] == pytest.approx(0.30)
 
@@ -13082,8 +13240,9 @@ def test_r51_pf_trend_steep_decline_grade_d() -> None:
 
 def test_r51_pf_trend_above_one_pct_all_above() -> None:
     """All profit_factor >= 1.0 → pf_above_one_pct == 1.0."""
-    from scripts.optimize_profile import compute_cross_window_profit_factor_trend
     import pytest
+
+    from scripts.optimize_profile import compute_cross_window_profit_factor_trend
     summaries = [{"profit_factor": 1.5 + i * 0.1} for i in range(5)]
     result = compute_cross_window_profit_factor_trend(summaries)
     assert result["pf_above_one_pct"] == pytest.approx(1.0)
@@ -13091,8 +13250,9 @@ def test_r51_pf_trend_above_one_pct_all_above() -> None:
 
 def test_r51_pf_trend_floor_registered() -> None:
     """pf_trend_slope: -0.10 must be in BTST_QUALITY_FLOORS."""
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     import pytest
+
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "pf_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["pf_trend_slope"] == pytest.approx(-0.10)
 
@@ -13187,8 +13347,9 @@ def test_r52_information_ratio_upside_capture_nonneg() -> None:
 
 def test_r52_information_ratio_floor_registered() -> None:
     """information_ratio: 0.0 must be in BTST_QUALITY_FLOORS."""
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     import pytest
+
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "information_ratio" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["information_ratio"] == pytest.approx(0.0)
 
@@ -13234,8 +13395,9 @@ def test_r52_score_concentration_fewer_than_6_rows() -> None:
 
 def test_r52_score_concentration_uniform_sci_near_zero() -> None:
     """Uniform score distribution → score_concentration_index ≈ 0 (three tiers ≈ equal)."""
-    from scripts.btst_analysis_utils import compute_score_concentration_analysis
     import pytest
+
+    from scripts.btst_analysis_utils import compute_score_concentration_analysis
     rows = [{"score": float(i)} for i in range(1, 10)]
     result = compute_score_concentration_analysis(rows)
     assert result["score_concentration_index"] is not None
@@ -13244,8 +13406,9 @@ def test_r52_score_concentration_uniform_sci_near_zero() -> None:
 
 def test_r52_score_concentration_all_same_high_score_pct() -> None:
     """All scores identical → high_score_pct = 1.0 (all are >= P67 = same value)."""
-    from scripts.btst_analysis_utils import compute_score_concentration_analysis
     import pytest
+
+    from scripts.btst_analysis_utils import compute_score_concentration_analysis
     rows = [{"runner_composite_score": 0.9} for _ in range(9)]
     result = compute_score_concentration_analysis(rows)
     assert result["high_score_pct"] is not None
@@ -13277,8 +13440,9 @@ def test_r52_score_concentration_dominant_tier_correct() -> None:
 
 def test_r52_score_concentration_floor_registered() -> None:
     """score_concentration_index: 0.0 must be in BTST_QUALITY_FLOORS."""
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     import pytest
+
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "score_concentration_index" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["score_concentration_index"] == pytest.approx(0.0)
 
@@ -13350,8 +13514,9 @@ def test_r52_kelly_trend_steep_decline_grade_d() -> None:
 
 def test_r52_kelly_trend_positive_windows_pct_correct() -> None:
     """kelly_positive_windows_pct counts fraction of kelly_fraction > 0."""
-    from scripts.optimize_profile import compute_cross_window_kelly_trend
     import pytest
+
+    from scripts.optimize_profile import compute_cross_window_kelly_trend
     summaries = [{"kelly_fraction": 0.1}, {"kelly_fraction": -0.1}, {"kelly_fraction": 0.2}]
     result = compute_cross_window_kelly_trend(summaries)
     assert result["kelly_trend_valid"] is True
@@ -13360,8 +13525,9 @@ def test_r52_kelly_trend_positive_windows_pct_correct() -> None:
 
 def test_r52_kelly_trend_floor_registered() -> None:
     """kelly_trend_slope: -0.05 must be in BTST_QUALITY_FLOORS."""
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     import pytest
+
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "kelly_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["kelly_trend_slope"] == pytest.approx(-0.05)
 
@@ -13428,8 +13594,9 @@ def test_r53_conditional_factor_valid_basic() -> None:
 
 def test_r53_conditional_factor_lift_is_high_minus_low() -> None:
     """conditional_lift = high_signal_win_rate - low_signal_win_rate."""
-    from scripts.btst_analysis_utils import compute_conditional_factor_performance
     import pytest
+
+    from scripts.btst_analysis_utils import compute_conditional_factor_performance
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": 0.03 if i >= 5 else -0.03} for i in range(10)]
     result = compute_conditional_factor_performance(rows)
     assert result["conditional_factor_valid"] is True
@@ -13472,8 +13639,9 @@ def test_r53_conditional_factor_no_factor_fields_returns_null() -> None:
 
 def test_r53_conditional_factor_floor_registered() -> None:
     """conditional_lift must have floor 0.0 in BTST_QUALITY_FLOORS."""
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     import pytest
+
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "conditional_lift" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["conditional_lift"] == pytest.approx(0.0)
 
@@ -13540,8 +13708,9 @@ def test_r53_autocorr_valid_with_8_rows() -> None:
 
 def test_r53_autocorr_lag1_perfect_momentum() -> None:
     """Monotonically increasing series → lag1 should be close to 1.0 (momentum)."""
-    from scripts.btst_analysis_utils import compute_return_autocorrelation
     import pytest
+
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
     rows = [{"next_day_return": float(i)} for i in range(1, 12)]
     result = compute_return_autocorrelation(rows)
     assert result["return_autocorrelation_valid"] is True
@@ -13580,8 +13749,9 @@ def test_r53_autocorr_lag2_present_with_10_rows() -> None:
 
 def test_r53_autocorr_interpretation_random_walk() -> None:
     """lag1 near zero → 'random_walk' interpretation."""
-    from scripts.btst_analysis_utils import compute_return_autocorrelation
     import math
+
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
     rows = [{"next_day_return": math.cos(i * 1.2)} for i in range(12)]
     result = compute_return_autocorrelation(rows)
     assert result["return_autocorrelation_valid"] is True
@@ -13591,8 +13761,9 @@ def test_r53_autocorr_interpretation_random_walk() -> None:
 
 def test_r53_autocorr_persistence_is_abs_lag1_when_no_lag2() -> None:
     """autocorr_persistence = abs(lag1) when lag2 is None (8-9 rows)."""
-    from scripts.btst_analysis_utils import compute_return_autocorrelation
     import pytest
+
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
     rows = [{"next_day_return": float(i)} for i in range(9)]
     result = compute_return_autocorrelation(rows)
     assert result["return_autocorrelation_valid"] is True
@@ -13603,8 +13774,9 @@ def test_r53_autocorr_persistence_is_abs_lag1_when_no_lag2() -> None:
 
 def test_r53_autocorr_persistence_avg_abs_when_lag2_present() -> None:
     """autocorr_persistence = (|lag1| + |lag2|) / 2 when both lags present."""
-    from scripts.btst_analysis_utils import compute_return_autocorrelation
     import pytest
+
+    from scripts.btst_analysis_utils import compute_return_autocorrelation
     rows = [{"next_day_return": float(i)} for i in range(12)]
     result = compute_return_autocorrelation(rows)
     assert result["return_autocorrelation_valid"] is True
@@ -13706,8 +13878,9 @@ def test_r53_ir_trend_grade_d_steep_decline() -> None:
 
 def test_r53_ir_trend_positive_windows_pct_correct() -> None:
     """ir_positive_windows_pct = fraction of windows with IR > 0."""
-    from scripts.optimize_profile import compute_cross_window_ir_trend
     import pytest
+
+    from scripts.optimize_profile import compute_cross_window_ir_trend
     summaries = [{"information_ratio": 0.3}, {"information_ratio": -0.1}, {"information_ratio": 0.5}, {"information_ratio": -0.2}, {"information_ratio": 0.1}]
     result = compute_cross_window_ir_trend(summaries)
     assert result["ir_trend_valid"] is True
@@ -13716,8 +13889,9 @@ def test_r53_ir_trend_positive_windows_pct_correct() -> None:
 
 def test_r53_ir_trend_mean_correct() -> None:
     """ir_trend_mean equals the arithmetic mean of information_ratio values."""
-    from scripts.optimize_profile import compute_cross_window_ir_trend
     import pytest
+
+    from scripts.optimize_profile import compute_cross_window_ir_trend
     vals = [0.2, 0.4, 0.6, 0.8, 1.0]
     summaries = [{"information_ratio": v} for v in vals]
     result = compute_cross_window_ir_trend(summaries)
@@ -13736,8 +13910,9 @@ def test_r53_ir_trend_skips_missing_information_ratio() -> None:
 
 def test_r53_ir_trend_floor_registered() -> None:
     """ir_trend_slope must have floor -0.05 in BTST_QUALITY_FLOORS."""
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     import pytest
+
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "ir_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["ir_trend_slope"] == pytest.approx(-0.05)
 
@@ -13782,8 +13957,9 @@ def test_r53_ir_trend_grade_c_mild_decline() -> None:
 
 def test_r53_ir_trend_min_max_correct() -> None:
     """ir_trend_min and ir_trend_max match the series extremes."""
-    from scripts.optimize_profile import compute_cross_window_ir_trend
     import pytest
+
+    from scripts.optimize_profile import compute_cross_window_ir_trend
     vals = [0.2, -0.1, 0.8, 0.4, 0.6]
     summaries = [{"information_ratio": v} for v in vals]
     result = compute_cross_window_ir_trend(summaries)
@@ -13831,6 +14007,7 @@ def test_r54_tail_risk_valid_basic() -> None:
 def test_r54_var_5pct_matches_5th_percentile() -> None:
     """var_5pct == sorted_rets[int(0.05*(n-1))]."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
     rets = [i * 0.01 for i in range(20)]
     result = compute_tail_risk_analysis(_make_rows(rets))
@@ -13841,6 +14018,7 @@ def test_r54_var_5pct_matches_5th_percentile() -> None:
 def test_r54_right_tail_95_matches_95th_percentile() -> None:
     """right_tail_95 == sorted_rets[int(0.95*(n-1))]."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
     rets = [i * 0.01 for i in range(20)]
     result = compute_tail_risk_analysis(_make_rows(rets))
@@ -13851,6 +14029,7 @@ def test_r54_right_tail_95_matches_95th_percentile() -> None:
 def test_r54_cvar_5pct_is_mean_of_left_rows() -> None:
     """cvar_5pct == mean of returns <= var_5pct."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
     rets = [-0.10, -0.08, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10]
     result = compute_tail_risk_analysis(_make_rows(rets))
@@ -13865,6 +14044,7 @@ def test_r54_cvar_5pct_is_mean_of_left_rows() -> None:
 def test_r54_tail_asymmetry_formula() -> None:
     """tail_asymmetry = right_tail_95 - abs(cvar_5pct)."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
     rets = [-0.10, -0.08, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10]
     result = compute_tail_risk_analysis(_make_rows(rets))
@@ -13885,6 +14065,7 @@ def test_r54_tail_ratio_no_left_tail_clamp() -> None:
 def test_r54_tail_ratio_formula() -> None:
     """tail_ratio = right_tail_pct / left_tail_pct."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
     rets = [-0.05] * 5 + [0.05] * 15
     result = compute_tail_risk_analysis(_make_rows(rets))
@@ -13922,6 +14103,7 @@ def test_r54_tail_asymmetry_guardrail_registered() -> None:
 def test_r54_tail_asymmetry_floor_registered() -> None:
     """tail_asymmetry must have floor 0.0 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "tail_asymmetry" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["tail_asymmetry"] == pytest.approx(0.0)
@@ -13975,6 +14157,7 @@ def test_r54_max_drawdown_valid_basic() -> None:
 def test_r54_max_drawdown_flat_series_zero() -> None:
     """All-zero returns → max_drawdown == 0.0."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_max_drawdown_analysis
     result = compute_max_drawdown_analysis(_make_rows([0.0] * 10))
     assert result["max_drawdown_valid"] is True
@@ -14097,6 +14280,7 @@ def test_r54_conditional_trend_grade_d() -> None:
 def test_r54_conditional_positive_windows_pct() -> None:
     """conditional_positive_windows_pct counts windows where lift > 0."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_conditional_trend
     summaries = [{"conditional_conditional_lift": v} for v in [0.1, -0.1, 0.2, -0.2, 0.3]]
     result = compute_cross_window_conditional_trend(summaries)
@@ -14107,6 +14291,7 @@ def test_r54_conditional_positive_windows_pct() -> None:
 def test_r54_conditional_trend_min_max() -> None:
     """conditional_lift_trend_min and max match series extremes."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_conditional_trend
     vals = [0.05, -0.03, 0.12, 0.07, -0.01]
     summaries = [{"conditional_conditional_lift": v} for v in vals]
@@ -14131,6 +14316,7 @@ def test_r54_conditional_trend_optional() -> None:
 def test_r54_conditional_trend_floor_registered() -> None:
     """conditional_lift_trend_slope must have floor -0.01 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "conditional_lift_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["conditional_lift_trend_slope"] == pytest.approx(-0.01)
@@ -14196,6 +14382,7 @@ def test_r55_factor_decay_valid_flag() -> None:
 def test_r55_factor_decay_spearman_positive_corr() -> None:
     """Perfectly monotone close_strength vs next_day_return → IC ≈ 1.0."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
     rows = [{"close_strength": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
     result = compute_factor_decay_analysis(rows)
@@ -14206,6 +14393,7 @@ def test_r55_factor_decay_spearman_positive_corr() -> None:
 def test_r55_factor_decay_spearman_negative_corr() -> None:
     """Perfectly inverse close_strength vs next_day_return → IC ≈ -1.0."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
     rows = [{"close_strength": float(i), "next_day_return": -float(i) * 0.01} for i in range(20)]
     result = compute_factor_decay_analysis(rows)
@@ -14224,6 +14412,7 @@ def test_r55_factor_decay_missing_factor_none() -> None:
 def test_r55_factor_decay_mean_ic_signed() -> None:
     """mean_ic is signed average, not absolute."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
     rows = [{"close_strength": float(i), "next_day_return": -float(i) * 0.01} for i in range(20)]
     result = compute_factor_decay_analysis(rows)
@@ -14233,8 +14422,9 @@ def test_r55_factor_decay_mean_ic_signed() -> None:
 
 def test_r55_factor_decay_ic_spread_nonnegative() -> None:
     """ic_spread = max|IC| - min|IC| >= 0."""
-    from scripts.btst_analysis_utils import compute_factor_decay_analysis
     import random
+
+    from scripts.btst_analysis_utils import compute_factor_decay_analysis
     random.seed(42)
     rows = [{"close_strength": random.random(), "volume_expansion_quality": random.random(), "next_day_return": random.gauss(0, 0.01)} for _ in range(20)]
     result = compute_factor_decay_analysis(rows)
@@ -14246,6 +14436,7 @@ def test_r55_factor_decay_ic_spread_nonnegative() -> None:
 def test_r55_factor_decay_max_ic_factor() -> None:
     """max_ic_factor points to highest |IC| factor."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i % 3), "next_day_return": float(i) * 0.01} for i in range(20)]
     result = compute_factor_decay_analysis(rows)
@@ -14293,6 +14484,7 @@ def test_r55_factor_decay_in_optional_metrics() -> None:
 def test_r55_factor_decay_floor_registered() -> None:
     """mean_ic must have floor 0.0 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "mean_ic" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["mean_ic"] == pytest.approx(0.0)
@@ -14347,6 +14539,7 @@ def test_r55_time_seg_valid_with_trade_time() -> None:
 def test_r55_time_seg_early_win_rate_correct() -> None:
     """early_session_win_rate from time-based split: all positive → 1.0."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_intraday_time_segmentation
     rows = [{"trade_time": "09:30", "next_day_return": 0.02}] * 10 + [{"trade_time": "11:30", "next_day_return": -0.01}] * 5 + [{"trade_time": "14:00", "next_day_return": 0.01}] * 5
     result = compute_intraday_time_segmentation(rows)
@@ -14364,6 +14557,7 @@ def test_r55_time_seg_best_session() -> None:
 def test_r55_time_seg_session_win_rate_spread() -> None:
     """session_win_rate_spread = max(wr) - min(wr)."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_intraday_time_segmentation
     rows = (
         [{"trade_time": "09:30", "next_day_return": 0.02}] * 10
@@ -14378,6 +14572,7 @@ def test_r55_time_seg_session_win_rate_spread() -> None:
 def test_r55_time_seg_row_index_split_segments() -> None:
     """Row-index split: front segment win_rate = 1.0 when all positive."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_intraday_time_segmentation
     rows = [{"next_day_return": 0.01}] * 5 + [{"next_day_return": -0.01}] * 4 + [{"next_day_return": -0.01}] * 3
     result = compute_intraday_time_segmentation(rows)
@@ -14514,6 +14709,7 @@ def test_r55_drawdown_trend_lower_is_better() -> None:
 def test_r55_drawdown_trend_cap_registered() -> None:
     """drawdown_trend_slope cap must be 0.005 in BTST_QUALITY_CAPS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
     assert "drawdown_trend_slope" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["drawdown_trend_slope"] == pytest.approx(0.005)
@@ -14528,6 +14724,7 @@ def test_r55_drawdown_trend_label() -> None:
 def test_r55_drawdown_trend_min_max() -> None:
     """drawdown_trend_min and max match series extremes."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_drawdown_trend
     vals = [0.05, 0.03, 0.07, 0.02, 0.06]
     summaries = [{"drawdown_max_drawdown": v} for v in vals]
@@ -14564,8 +14761,9 @@ def test_r56_t1_insufficient_rows() -> None:
 
 def test_r56_t1_all_same_sector() -> None:
     """T1 returns diversification_score ≈ 0 when all rows in one sector (HHI = 1)."""
-    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
     import pytest
+
+    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
     rows = [{"sector": "tech"}] * 10
     result = compute_sector_diversification_analysis(rows)
     assert result["sector_diversification_valid"] is True
@@ -14575,8 +14773,9 @@ def test_r56_t1_all_same_sector() -> None:
 
 def test_r56_t1_uniform_sectors_high_score() -> None:
     """T1 gives diversification_score near 1 - 1/n when sectors uniformly distributed."""
-    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
     import pytest
+
+    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
     n = 5
     rows = [{"sector": str(i)} for i in range(n)] * 2
     result = compute_sector_diversification_analysis(rows)
@@ -14611,8 +14810,9 @@ def test_r56_t1_missing_sector_field() -> None:
 
 def test_r56_t1_top_sector_name_and_pct() -> None:
     """top_sector_name is the most common sector; top_sector_pct matches."""
-    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
     import pytest
+
+    from scripts.btst_analysis_utils import compute_sector_diversification_analysis
     rows = [{"sector": "A"}, {"sector": "A"}, {"sector": "A"}, {"sector": "B"}, {"sector": "C"}]
     result = compute_sector_diversification_analysis(rows)
     assert result["top_sector_name"] == "A"
@@ -14662,8 +14862,9 @@ def test_r56_t2_empty_rows() -> None:
 
 def test_r56_t2_perfect_positive_ic() -> None:
     """T2 returns rank_ic ≈ 1.0 for perfectly correlated score and return."""
-    from scripts.btst_analysis_utils import compute_score_rank_stability
     import pytest
+
+    from scripts.btst_analysis_utils import compute_score_rank_stability
     rows = [{"composite_score": float(i), "next_day_return": float(i)} for i in range(1, 15)]
     result = compute_score_rank_stability(rows)
     assert result["rank_ic"] == pytest.approx(1.0, abs=1e-5)
@@ -14672,8 +14873,9 @@ def test_r56_t2_perfect_positive_ic() -> None:
 
 def test_r56_t2_perfect_negative_ic() -> None:
     """T2 returns rank_ic ≈ -1.0 for perfectly anti-correlated score and return."""
-    from scripts.btst_analysis_utils import compute_score_rank_stability
     import pytest
+
+    from scripts.btst_analysis_utils import compute_score_rank_stability
     n = 12
     rows = [{"composite_score": float(i), "next_day_return": float(n - i)} for i in range(1, n + 1)]
     result = compute_score_rank_stability(rows)
@@ -14702,9 +14904,10 @@ def test_r56_t2_score_field_fallback_to_score() -> None:
 
 def test_r56_t2_grade_b_threshold() -> None:
     """Grade B when rank_ic in [0.05, 0.10)."""
-    from scripts.btst_analysis_utils import compute_score_rank_stability
     # Construct slightly positive IC just above 0.05 but below 0.10
     import math
+
+    from scripts.btst_analysis_utils import compute_score_rank_stability
     n = 20
     # Use a rank correlation that gives modest positive IC
     rows = [{"composite_score": float(i) + (0.5 if i % 3 == 0 else 0.0), "next_day_return": float(i)} for i in range(1, n + 1)]
@@ -14762,6 +14965,7 @@ def test_r56_t3_insufficient_windows() -> None:
 def test_r56_t3_min_max_match_series() -> None:
     """ic_trend_min and ic_trend_max match series extremes."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_ic_trend
     vals = [0.02, 0.05, 0.08, 0.01, 0.09]
     summaries = [{"decay_mean_ic": v} for v in vals]
@@ -14773,6 +14977,7 @@ def test_r56_t3_min_max_match_series() -> None:
 def test_r56_t3_mean_value() -> None:
     """ic_trend_mean equals arithmetic mean of ic series."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_ic_trend
     vals = [0.02, 0.04, 0.06, 0.08]
     summaries = [{"decay_mean_ic": v} for v in vals]
@@ -14799,6 +15004,7 @@ def test_r56_t3_grade_d_steep_negative() -> None:
 def test_r56_t3_ic_positive_windows_pct() -> None:
     """ic_positive_windows_pct counts windows with IC > 0."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_ic_trend
     vals = [0.05, -0.02, 0.03, 0.0, 0.08]
     summaries = [{"decay_mean_ic": v} for v in vals]
@@ -14870,6 +15076,7 @@ def test_r56_rank_ic_in_guardrail_keys() -> None:
 def test_r56_diversification_score_floor() -> None:
     """diversification_score floor is 0.0 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "diversification_score" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["diversification_score"] == pytest.approx(0.0)
@@ -14878,6 +15085,7 @@ def test_r56_diversification_score_floor() -> None:
 def test_r56_rank_ic_floor() -> None:
     """rank_ic floor is 0.0 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "rank_ic" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["rank_ic"] == pytest.approx(0.0)
@@ -14897,6 +15105,7 @@ def test_r56_metric_labels_present() -> None:
 def test_r56_t3_ols_slope_constant_series() -> None:
     """Constant IC series gives slope of 0.0."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_ic_trend
     summaries = [{"decay_mean_ic": 0.05}] * 5
     result = compute_cross_window_ic_trend(summaries)
@@ -14906,6 +15115,7 @@ def test_r56_t3_ols_slope_constant_series() -> None:
 def test_r56_t1_diversification_score_plus_hhi_equals_one() -> None:
     """diversification_score + sector_hhi should equal 1.0."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_sector_diversification_analysis
     rows = [{"sector": "A"}, {"sector": "B"}, {"sector": "C"}, {"sector": "A"}, {"sector": "B"}, {"sector": "C"}]
     result = compute_sector_diversification_analysis(rows)
@@ -14949,6 +15159,7 @@ def test_r57_t1_invalid_empty() -> None:
 def test_r57_t1_bull_win_rate_correct() -> None:
     """bull_win_rate computed correctly as fraction of bull group with return > 0."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
     rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
     rows = [{"next_day_return": r} for r in rets]
@@ -14961,6 +15172,7 @@ def test_r57_t1_bull_win_rate_correct() -> None:
 def test_r57_t1_bear_win_rate_correct() -> None:
     """bear_win_rate is fraction of bear group rows with return > 0."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
     rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
     rows = [{"next_day_return": r} for r in rets]
@@ -14972,6 +15184,7 @@ def test_r57_t1_bear_win_rate_correct() -> None:
 def test_r57_t1_regime_adaptability_is_min() -> None:
     """regime_adaptability equals min(bull_win_rate, bear_win_rate)."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
     rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
     rows = [{"next_day_return": r} for r in rets]
@@ -14983,6 +15196,7 @@ def test_r57_t1_regime_adaptability_is_min() -> None:
 def test_r57_t1_bull_bear_spread() -> None:
     """bull_bear_spread equals bull_win_rate minus bear_win_rate."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
     rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
     rows = [{"next_day_return": r} for r in rets]
@@ -14994,6 +15208,7 @@ def test_r57_t1_bull_bear_spread() -> None:
 def test_r57_t1_all_positive_returns() -> None:
     """All positive returns: bull group wins all, bear group wins all too."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
     rets = [0.01 * (i + 1) for i in range(12)]
     rows = [{"next_day_return": r} for r in rets]
@@ -15006,6 +15221,7 @@ def test_r57_t1_all_positive_returns() -> None:
 def test_r57_t1_regime_adaptability_fallback_one_none() -> None:
     """regime_adaptability falls back to non-None value when one group has <3 rows."""
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
+
     # All same value: the bear group will have exactly n//2 rows, bull group exactly n-n//2
     # We need 12 rows with a distribution where one group has < 3
     # All values equal: sorted median = same value; bull_rows = [r for r > median] could be empty
@@ -15019,6 +15235,7 @@ def test_r57_t1_regime_adaptability_fallback_one_none() -> None:
 def test_r57_t1_mean_returns_correct() -> None:
     """bull_mean_return and bear_mean_return are correctly computed."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
     rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
     rows = [{"next_day_return": r} for r in rets]
@@ -15058,6 +15275,7 @@ def test_r57_t1_in_guardrail_keys() -> None:
 def test_r57_t1_floor_value() -> None:
     """regime_adaptability floor is 0.4 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "regime_adaptability" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["regime_adaptability"] == pytest.approx(0.4)
@@ -15102,6 +15320,7 @@ def test_r57_t2_too_few_valid_rows() -> None:
 def test_r57_t2_turnover_efficiency_calc() -> None:
     """turnover_efficiency = high_turnover_win_rate - low_turnover_win_rate."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
     rows = [{"float_turnover_rate": 0.01 * (i + 1), "next_day_return": 0.005 * i - 0.02} for i in range(10)]
     result = compute_turnover_efficiency_analysis(rows)
@@ -15113,6 +15332,7 @@ def test_r57_t2_turnover_efficiency_calc() -> None:
 def test_r57_t2_optimal_turnover_regime_high() -> None:
     """optimal_turnover_regime is 'high' when turnover_efficiency > 0."""
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+
     # High turnover rows all win, low turnover rows all lose
     rows = ([{"float_turnover_rate": 0.1, "next_day_return": 0.05}] * 5 + [{"float_turnover_rate": 0.01, "next_day_return": -0.02}] * 5)
     result = compute_turnover_efficiency_analysis(rows)
@@ -15123,6 +15343,7 @@ def test_r57_t2_optimal_turnover_regime_high() -> None:
 def test_r57_t2_optimal_turnover_regime_low() -> None:
     """optimal_turnover_regime is 'low' when turnover_efficiency <= 0."""
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+
     # Low turnover rows win, high turnover rows lose
     rows = ([{"float_turnover_rate": 0.1, "next_day_return": -0.02}] * 5 + [{"float_turnover_rate": 0.01, "next_day_return": 0.05}] * 5)
     result = compute_turnover_efficiency_analysis(rows)
@@ -15142,6 +15363,7 @@ def test_r57_t2_turnover_ic_spearman_range() -> None:
 def test_r57_t2_turnover_ic_positive_correlation() -> None:
     """turnover_ic is positive when turnover and return are perfectly rank-correlated."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
     rows = [{"float_turnover_rate": float(i), "next_day_return": float(i)} for i in range(10)]
     result = compute_turnover_efficiency_analysis(rows)
@@ -15153,6 +15375,7 @@ def test_r57_t2_turnover_ic_positive_correlation() -> None:
 def test_r57_t2_turnover_ic_negative_correlation() -> None:
     """turnover_ic is negative when turnover and return are inversely rank-correlated."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
     rows = [{"float_turnover_rate": float(i), "next_day_return": float(9 - i)} for i in range(10)]
     result = compute_turnover_efficiency_analysis(rows)
@@ -15219,6 +15442,7 @@ def test_r57_t3_ols_slope_decreasing() -> None:
 def test_r57_t3_ols_slope_constant() -> None:
     """Constant rank IC series gives slope of 0.0."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
     summaries = [{"rnkstab_rank_ic": 0.05}] * 5
     result = compute_cross_window_rank_ic_trend(summaries)
@@ -15252,6 +15476,7 @@ def test_r57_t3_rank_ic_trend_grade_D() -> None:
 def test_r57_t3_rank_ic_positive_windows_pct() -> None:
     """rank_ic_positive_windows_pct is fraction of windows with rank_ic > 0."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
     summaries = [{"rnkstab_rank_ic": 0.05}, {"rnkstab_rank_ic": -0.02}, {"rnkstab_rank_ic": 0.03}, {"rnkstab_rank_ic": -0.01}]
     result = compute_cross_window_rank_ic_trend(summaries)
@@ -15261,6 +15486,7 @@ def test_r57_t3_rank_ic_positive_windows_pct() -> None:
 def test_r57_t3_mean_min_max() -> None:
     """rank_ic_trend_mean/min/max match the series statistics."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
     vals = [0.05, 0.1, 0.03, 0.08, 0.07]
     summaries = [{"rnkstab_rank_ic": v} for v in vals]
@@ -15293,6 +15519,7 @@ def test_r57_t3_in_optional_metrics() -> None:
 def test_r57_t3_floor_value() -> None:
     """rank_ic_trend_slope floor is -0.02 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "rank_ic_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["rank_ic_trend_slope"] == pytest.approx(-0.02)
@@ -15377,6 +15604,7 @@ def test_r58_t1_optimal_threshold_is_valid_pname() -> None:
 def test_r58_t1_all_positive_returns_win_rate_one() -> None:
     """All positive returns → all threshold win rates equal 1.0."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
     rows = _make_r58_scored_rows(30, ret_positive=True)
     result = compute_dynamic_threshold_analysis(rows)
@@ -15386,6 +15614,7 @@ def test_r58_t1_all_positive_returns_win_rate_one() -> None:
 def test_r58_t1_all_negative_returns_win_rate_zero() -> None:
     """All negative returns → all threshold win rates equal 0.0, optimal still set."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
     rows = _make_r58_scored_rows(30, ret_positive=False)
     result = compute_dynamic_threshold_analysis(rows)
@@ -15411,6 +15640,7 @@ def test_r58_t1_score_field_priority_score_fallback() -> None:
 def test_r58_t1_tie_breaking_higher_percentile_wins() -> None:
     """When p70 and p80 have identical win rates, p80 is chosen as optimal_threshold."""
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+
     # Design: all rows have return > 0, so all win_rates = 1.0 → p80 wins tie-break
     rows = [{"runner_composite_score": round(0.1 + i * 0.01, 6), "next_day_return": 0.02} for i in range(40)]
     result = compute_dynamic_threshold_analysis(rows)
@@ -15421,6 +15651,7 @@ def test_r58_t1_tie_breaking_higher_percentile_wins() -> None:
 def test_r58_t1_threshold_monotonicity_computed() -> None:
     """threshold_monotonicity is p80_win_rate - p40_win_rate."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
     rows = _make_r58_scored_rows(30)
     result = compute_dynamic_threshold_analysis(rows)
@@ -15445,6 +15676,7 @@ def test_r58_t1_in_optional_comparison_metrics() -> None:
 def test_r58_t1_floor_value() -> None:
     """optimal_win_rate floor is 0.5 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "optimal_win_rate" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["optimal_win_rate"] == pytest.approx(0.5)
@@ -15523,6 +15755,7 @@ def test_r58_t2_r2_values_in_0_1_range() -> None:
 def test_r58_t2_total_explained_variance_equals_sum() -> None:
     """total_explained_variance equals sum of non-None factor r² values."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_factor_contribution_analysis
     rows = _make_factor_rows(20)
     result = compute_factor_contribution_analysis(rows)
@@ -15568,6 +15801,7 @@ def test_r58_t2_contribution_concentration_in_0_1() -> None:
 def test_r58_t2_missing_factor_returns_none_r2() -> None:
     """Factor with fewer than 5 valid pairs has r² = None."""
     from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+
     # Only 4 rows have close_strength; all others have it None
     rows = _make_factor_rows(20)
     for row in rows:
@@ -15579,6 +15813,7 @@ def test_r58_t2_missing_factor_returns_none_r2() -> None:
 def test_r58_t2_perfect_correlation_r2_is_one() -> None:
     """Perfect linear relationship between factor and return gives r² ≈ 1.0."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_factor_contribution_analysis
     n = 20
     factor_names = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
@@ -15679,7 +15914,9 @@ def test_r58_t3_grade_D_when_slope_below_minus_0_02() -> None:
 def test_r58_t3_regime_above_floor_pct() -> None:
     """regime_above_floor_pct is fraction of windows with value >= 0.4."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_regime_trend
+
     # 3 out of 4 windows are >= 0.4
     summaries = [{"regime_regime_adaptability": v} for v in [0.5, 0.3, 0.6, 0.7]]
     result = compute_cross_window_regime_trend(summaries)
@@ -15689,6 +15926,7 @@ def test_r58_t3_regime_above_floor_pct() -> None:
 def test_r58_t3_mean_min_max_correct() -> None:
     """regime_trend_mean/min/max match series statistics."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_regime_trend
     vals = [0.4, 0.5, 0.6, 0.7, 0.8]
     summaries = [{"regime_regime_adaptability": v} for v in vals]
@@ -15713,6 +15951,7 @@ def test_r58_t3_in_optional_comparison_metrics() -> None:
 def test_r58_t3_floor_value() -> None:
     """regime_trend_slope floor is -0.02 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "regime_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["regime_trend_slope"] == pytest.approx(-0.02)
@@ -15727,6 +15966,7 @@ def test_r58_t3_label_present() -> None:
 def test_r58_t3_constant_series_slope_zero() -> None:
     """Constant regime adaptability series gives slope of 0.0."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_regime_trend
     summaries = [{"regime_regime_adaptability": 0.55}] * 5
     result = compute_cross_window_regime_trend(summaries)
@@ -15765,6 +16005,7 @@ def test_r59_t1_invalid_no_next_day_return() -> None:
 def test_r59_t1_valid_basic() -> None:
     """Returns valid result with >=10 rows."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_return_dist_moments
     rows = [{"next_day_return": 0.01 * i} for i in range(12)]
     result = compute_return_dist_moments(rows)
@@ -15777,6 +16018,7 @@ def test_r59_t1_valid_basic() -> None:
 def test_r59_t1_symmetric_skewness_near_zero() -> None:
     """Symmetric distribution should have skewness near 0."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_return_dist_moments
     returns = [-0.05, -0.04, -0.03, -0.02, -0.01, 0.01, 0.02, 0.03, 0.04, 0.05]
     result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
@@ -15787,6 +16029,7 @@ def test_r59_t1_symmetric_skewness_near_zero() -> None:
 def test_r59_t1_positive_skewness() -> None:
     """Right-skewed distribution should have positive skewness."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_return_dist_moments
     returns = [0.01] * 8 + [0.10, 0.20]  # 10 items, two large positive outliers
     result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
@@ -15797,6 +16040,7 @@ def test_r59_t1_positive_skewness() -> None:
 def test_r59_t1_negative_skewness() -> None:
     """Left-skewed distribution should have negative skewness."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_return_dist_moments
     returns = [-0.20, -0.10] + [0.01] * 8
     result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
@@ -15807,6 +16051,7 @@ def test_r59_t1_negative_skewness() -> None:
 def test_r59_t1_skewness_manual_precision() -> None:
     """Verify skewness formula: population 3rd moment."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_return_dist_moments
     returns = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
     n = len(returns)
@@ -15820,6 +16065,7 @@ def test_r59_t1_skewness_manual_precision() -> None:
 def test_r59_t1_excess_kurtosis_manual_precision() -> None:
     """Verify excess_kurtosis formula: population 4th moment - 3."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_return_dist_moments
     returns = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
     n = len(returns)
@@ -15833,6 +16079,7 @@ def test_r59_t1_excess_kurtosis_manual_precision() -> None:
 def test_r59_t1_jarque_bera_formula() -> None:
     """Verify JB stat = n/6 * (S^2 + K^2/4)."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_return_dist_moments
     returns = [0.01 * i - 0.05 for i in range(10)]
     result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
@@ -15846,6 +16093,7 @@ def test_r59_t1_jarque_bera_formula() -> None:
 def test_r59_t1_normality_violation_true_for_large_jb() -> None:
     """normality_violation is True when JB > 10."""
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     # Extreme distribution: large outliers to drive high JB stat
     returns = [-5.0, -4.0] + [0.01] * 8
     result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
@@ -15867,6 +16115,7 @@ def test_r59_t1_normality_violation_false_for_small_jb() -> None:
 def test_r59_t1_mean_median_divergence() -> None:
     """mean_median_divergence = mean - median."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_return_dist_moments
     returns = list(range(1, 11))  # [1..10]
     result = compute_return_dist_moments([{"next_day_return": float(r)} for r in returns])
@@ -15877,6 +16126,7 @@ def test_r59_t1_mean_median_divergence() -> None:
 def test_r59_t1_distribution_grade_A() -> None:
     """Grade A when skewness > 0.2 and excess_kurtosis < 3."""
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     # Right-skewed with large positive outliers to get skewness > 0.2
     returns = [0.001] * 8 + [0.5, 1.0]
     result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
@@ -15898,6 +16148,7 @@ def test_r59_t1_distribution_grade_D() -> None:
 def test_r59_t1_std_return_uses_n_minus_1() -> None:
     """std_return should use N-1 denominator (sample std)."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_return_dist_moments
     returns = [float(i) for i in range(1, 11)]
     n = len(returns)
@@ -15975,6 +16226,7 @@ def test_r59_t2_weight_normalization_with_extra_dims() -> None:
 def test_r59_t2_quality_grade_A_boundary() -> None:
     """Grade A when composite_quality_score >= 70."""
     from scripts.btst_analysis_utils import compute_composite_quality_score
+
     # All positive returns to get high score
     rows = [{"next_day_return": 0.05}] * 10
     result = compute_composite_quality_score(rows)
@@ -15996,6 +16248,7 @@ def test_r59_t2_quality_grade_D_boundary() -> None:
 def test_r59_t2_quality_grade_ordering() -> None:
     """quality_grade boundaries: A>=70, B>=55, C>=40, D<40."""
     from scripts.btst_analysis_utils import compute_composite_quality_score
+
     # Test the grade lookup is consistent with score
     for ret, expected_min, expected_max in [(0.05, 70, 100), (-0.03, 0, 60)]:
         rows = [{"next_day_return": ret}] * 10
@@ -16028,6 +16281,7 @@ def test_r59_t2_in_optional_comparison_metrics() -> None:
 def test_r59_t2_floor_value() -> None:
     """composite_quality_score floor is 40.0 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "composite_quality_score" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["composite_quality_score"] == pytest.approx(40.0)
@@ -16048,6 +16302,7 @@ def test_r59_t1_in_optional_comparison_metrics() -> None:
 def test_r59_t1_floor_value() -> None:
     """skewness floor is 0.0 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "skewness" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["skewness"] == pytest.approx(0.0)
@@ -16086,6 +16341,7 @@ def test_r59_t3_invalid_no_key() -> None:
 def test_r59_t3_ols_slope_increasing() -> None:
     """OLS slope is positive for monotonically increasing win rates."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_threshold_trend
     summaries = [{"dyn_thresh_optimal_win_rate": 0.5 + 0.05 * i} for i in range(5)]
     result = compute_cross_window_threshold_trend(summaries)
@@ -16119,6 +16375,7 @@ def test_r59_t3_grade_D_when_slope_below_minus_0_02() -> None:
 def test_r59_t3_threshold_above_floor_pct() -> None:
     """threshold_above_floor_pct is fraction of windows with optimal_win_rate >= 0.5."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_threshold_trend
     summaries = [{"dyn_thresh_optimal_win_rate": v} for v in [0.55, 0.45, 0.60, 0.70]]
     result = compute_cross_window_threshold_trend(summaries)
@@ -16128,6 +16385,7 @@ def test_r59_t3_threshold_above_floor_pct() -> None:
 def test_r59_t3_mean_min_max_correct() -> None:
     """threshold_win_rate_trend_mean/min/max match series statistics."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_threshold_trend
     vals = [0.5, 0.55, 0.60, 0.65, 0.70]
     summaries = [{"dyn_thresh_optimal_win_rate": v} for v in vals]
@@ -16152,6 +16410,7 @@ def test_r59_t3_in_optional_comparison_metrics() -> None:
 def test_r59_t3_floor_value() -> None:
     """threshold_win_rate_trend_slope floor is -0.02 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "threshold_win_rate_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["threshold_win_rate_trend_slope"] == pytest.approx(-0.02)
@@ -16166,6 +16425,7 @@ def test_r59_t3_label_present() -> None:
 def test_r59_t3_constant_series_slope_zero() -> None:
     """Constant win-rate series gives slope of 0.0."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_threshold_trend
     summaries = [{"dyn_thresh_optimal_win_rate": 0.60}] * 5
     result = compute_cross_window_threshold_trend(summaries)
@@ -16212,6 +16472,7 @@ def test_r60_t1_high_rows_bucket_populated() -> None:
 def test_r60_t1_lift_is_high_minus_low_win_rate() -> None:
     """signal_consistency_lift equals high_wr minus low_wr."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_signal_consistency_check
     strong = {"close_strength": 1.0, "volume_expansion_quality": 1.0, "sector_resonance": 1.0, "rs_sector_rank": 1.0, "t0_estimated_net_inflow_ratio": 1.0, "breakout_quality_score": 1.0, "momentum_slope_20d": 1.0, "next_day_return": 0.03}
     weak = {"close_strength": 0.0, "volume_expansion_quality": 0.0, "sector_resonance": 0.0, "rs_sector_rank": 0.0, "t0_estimated_net_inflow_ratio": 0.0, "breakout_quality_score": 0.0, "momentum_slope_20d": 0.0, "next_day_return": -0.02}
@@ -16302,6 +16563,7 @@ def test_r60_t2_valid_with_next_day_return() -> None:
 def test_r60_t2_t1_win_rate_correct() -> None:
     """t1_win_rate is fraction of positive next_day_return."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_holding_period_optimization
     rows = [{"next_day_return": 0.02} for _ in range(6)] + [{"next_day_return": -0.01} for _ in range(4)]
     result = compute_holding_period_optimization(rows)
@@ -16311,6 +16573,7 @@ def test_r60_t2_t1_win_rate_correct() -> None:
 def test_r60_t2_t2_win_rate_uses_day2_return() -> None:
     """t2_win_rate uses day2_return field."""
     import pytest
+
     from scripts.btst_analysis_utils import compute_holding_period_optimization
     rows = [{"next_day_return": 0.01, "day2_return": 0.02} for _ in range(6)] + [{"next_day_return": 0.01, "day2_return": -0.01} for _ in range(4)]
     result = compute_holding_period_optimization(rows)
@@ -16431,6 +16694,7 @@ def test_r60_t3_grade_D_when_slope_below_minus_1() -> None:
 def test_r60_t3_quality_above_floor_pct() -> None:
     """quality_above_floor_pct is fraction >= 40.0."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_quality_trend
     summaries = [{"quality_composite_quality_score": v} for v in [45.0, 35.0, 55.0, 65.0]]
     result = compute_cross_window_quality_trend(summaries)
@@ -16440,6 +16704,7 @@ def test_r60_t3_quality_above_floor_pct() -> None:
 def test_r60_t3_mean_min_max_correct() -> None:
     """quality_score_trend_mean/min/max match series."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_quality_trend
     vals = [50.0, 55.0, 60.0, 65.0, 70.0]
     summaries = [{"quality_composite_quality_score": v} for v in vals]
@@ -16470,6 +16735,7 @@ def test_r60_t3_label_present() -> None:
 def test_r60_t3_quality_trend_slope_floor_in_evaluation_bundle() -> None:
     """quality_score_trend_slope floor is -1.0 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "quality_score_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["quality_score_trend_slope"] == pytest.approx(-1.0)
@@ -16478,6 +16744,7 @@ def test_r60_t3_quality_trend_slope_floor_in_evaluation_bundle() -> None:
 def test_r60_t1_signal_consistency_lift_floor_in_evaluation_bundle() -> None:
     """signal_consistency_lift floor is 0.0 in BTST_QUALITY_FLOORS."""
     import pytest
+
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "signal_consistency_lift" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["signal_consistency_lift"] == pytest.approx(0.0)
@@ -16510,6 +16777,7 @@ def test_r60_t1_signal_consistency_lift_label_present() -> None:
 def test_r60_t3_constant_quality_slope_zero() -> None:
     """Constant quality series gives slope of 0.0."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_quality_trend
     summaries = [{"quality_composite_quality_score": 55.0}] * 5
     result = compute_cross_window_quality_trend(summaries)
@@ -16729,6 +16997,7 @@ def test_r61_t3_invalid_too_few() -> None:
 def test_r61_t3_valid_keys() -> None:
     """Valid summaries produce all expected keys."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_consistency_trend
     summaries = [{"sig_consist_signal_consistency_lift": float(i) * 0.01} for i in range(5)]
     result = compute_cross_window_consistency_trend(summaries)
@@ -16757,6 +17026,7 @@ def test_r61_t3_decreasing_series_grade_d() -> None:
 def test_r61_t3_constant_series_slope_zero() -> None:
     """Constant series gives slope of 0."""
     import pytest
+
     from scripts.optimize_profile import compute_cross_window_consistency_trend
     summaries = [{"sig_consist_signal_consistency_lift": 0.05}] * 6
     result = compute_cross_window_consistency_trend(summaries)
@@ -17315,6 +17585,7 @@ def test_r63_sltp_combo_name_format() -> None:
 def test_r63_sltp_improvement_positive_when_clipping_helps() -> None:
     """sl_tp_improvement > 0 when clipping outlier losses improves profit factor."""
     from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+
     # Many moderate wins + one extreme loss → clipping loss should improve PF
     rows = [{"next_day_return": 0.02}] * 8 + [{"next_day_return": -0.10}] * 2
     result = compute_stop_loss_take_profit_analysis(rows)
@@ -17325,6 +17596,7 @@ def test_r63_sltp_improvement_positive_when_clipping_helps() -> None:
 def test_r63_sltp_improvement_can_be_negative() -> None:
     """sl_tp_improvement can be negative if clipping wins hurts PF."""
     from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+
     # Many very large wins capped at TP → clipping wins reduces PF
     rows = [{"next_day_return": 0.10}] * 7 + [{"next_day_return": -0.001}] * 3
     result = compute_stop_loss_take_profit_analysis(rows)
@@ -17432,6 +17704,7 @@ def test_r63_combo_valid_basic() -> None:
 def test_r63_combo_all_none_fallback_to_rank() -> None:
     """When no combo has >= 3 filtered rows, best_combo defaults to 'rank'."""
     from scripts.btst_analysis_utils import compute_factor_combination_score
+
     # All rows with same factor value → above-median filter yields 0 rows
     rows = [{"next_day_return": 0.01, "rs_sector_rank": 1.0, "momentum_slope_20d": 1.0, "breakout_quality_score": 1.0, "volume_expansion_quality": 1.0, "t0_estimated_net_inflow_ratio": 1.0, "close_strength": 1.0, "sector_resonance": 1.0} for _ in range(10)]
     result = compute_factor_combination_score(rows)
@@ -17444,6 +17717,7 @@ def test_r63_combo_all_none_fallback_to_rank() -> None:
 def test_r63_combo_best_selection_by_win_rate() -> None:
     """best_combo is the combo with highest win rate among those with >= 3 rows."""
     from scripts.btst_analysis_utils import compute_factor_combination_score
+
     # Build rows where only rank factor is above median for many
     rows = []
     for i in range(20):
@@ -17466,6 +17740,7 @@ def test_r63_combo_best_selection_by_win_rate() -> None:
 def test_r63_combo_spread_none_with_one_valid() -> None:
     """combo_spread is None when fewer than 2 combos have valid win rates."""
     from scripts.btst_analysis_utils import compute_factor_combination_score
+
     # Same factor values for all multi-factor combos → only rank may pass
     rows = []
     for i in range(20):
@@ -17490,6 +17765,7 @@ def test_r63_combo_spread_none_with_one_valid() -> None:
 def test_r63_combo_and_condition_filtering() -> None:
     """AND condition: only rows where ALL factors > median are included."""
     from scripts.btst_analysis_utils import compute_factor_combination_score
+
     # Make 10 rows where momentum is high but breakout is low → should be excluded for momentum combo
     rows = []
     for i in range(20):
@@ -17857,6 +18133,7 @@ def test_r64_fvw_ic_trend_direction_valid_values() -> None:
 def test_r64_fvw_declining_trend_direction() -> None:
     """Rows where later returns correlate strongly with factor in early segment but not late → may give declining."""
     from scripts.btst_analysis_utils import compute_factor_validity_window
+
     # Build rows where early third has strong IC but late third has reversed correlation
     n = 60
     rows = []
@@ -18946,8 +19223,9 @@ def test_r67_t1_score_win_rate_spread_high_minus_low() -> None:
 
 def test_r67_t1_grade_a_high_cv_high_spread() -> None:
     """compute_score_dispersion_analysis: grade A when cv > 0.3 and spread > 0.1."""
-    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
     import math
+
+    from scripts.btst_analysis_utils import compute_score_dispersion_analysis
     rows = [{"score": float(i * 5), "next_day_return": 0.05 if i > 8 else -0.05} for i in range(1, 17)]
     result = compute_score_dispersion_analysis(rows)
     assert result["score_dispersion_valid"] is True
@@ -19685,6 +19963,7 @@ def test_r69_t1_invalid_all_none_rs() -> None:
 def test_r69_t1_tertile_split_correct() -> None:
     """Three thirds are split correctly by rs_sector_rank value."""
     from scripts.btst_analysis_utils import compute_relative_strength_ranking
+
     # 12 rows: rs_sector_rank 0..11, top third wins all, bottom third loses all
     rows = []
     for i in range(12):
@@ -20101,6 +20380,7 @@ def test_r70_t1_grade_A() -> None:
 def test_r70_t1_grade_D() -> None:
     """price_position_grade=D when spread ≤ 0."""
     from scripts.btst_analysis_utils import compute_price_position_analysis
+
     # Reverse: high close_strength loses, low wins
     rows = []
     for i in range(12):
@@ -20179,6 +20459,7 @@ def test_r70_t2_invalid_too_few_rows() -> None:
 def test_r70_t2_max_win_streak_correct() -> None:
     """max_win_streak correctly identifies the longest win run."""
     from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+
     # 5 consecutive wins in the middle
     outcomes = [False, False, True, True, True, True, True, False, False, False, False]
     rows = _make_r70_streak_rows(outcomes)
@@ -20230,6 +20511,7 @@ def test_r70_t2_loss_after_win_rate_momentum() -> None:
 def test_r70_t2_signal_momentum() -> None:
     """streak_momentum_signal='momentum' for persistent win/loss runs."""
     from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+
     # Long streaks: win_after_loss < 0.4 and loss_after_win < 0.4
     outcomes = [True] * 7 + [False] * 7 + [True] * 6
     rows = _make_r70_streak_rows(outcomes)
@@ -20251,6 +20533,7 @@ def test_r70_t2_signal_mean_reversion() -> None:
 def test_r70_t2_avg_win_streak_correct() -> None:
     """avg_win_streak is the average of individual win run lengths."""
     from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+
     # Two win runs: length 3 and length 1 → avg = 2.0
     outcomes = [True, True, True, False, True, False, False, False, False, False]
     rows = _make_r70_streak_rows(outcomes)
@@ -20497,8 +20780,9 @@ def test_r71_t1_three_equal_tertiles() -> None:
 
 def test_r71_t1_win_spread_precision() -> None:
     """momentum_win_spread = high_momentum_win_rate - low_momentum_win_rate, rounded to 6dp."""
-    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
     import pytest
+
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
     rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.01 if i >= 8 else -0.01} for i in range(12)]
     result = compute_sector_momentum_ranking(rows)
     assert result["sector_momentum_ranking_valid"] is True
@@ -20511,6 +20795,7 @@ def test_r71_t1_win_spread_precision() -> None:
 def test_r71_t1_grade_A() -> None:
     """momentum_rank_grade = A when win_spread > 0.12 and mean_return_spread > 0."""
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+
     # top third all win (return > 0), bottom third all lose
     rows = []
     for i in range(24):
@@ -20541,6 +20826,7 @@ def test_r71_t1_grade_B() -> None:
 def test_r71_t1_grade_C() -> None:
     """momentum_rank_grade = C when win_spread in (0, 0.06]."""
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+
     # top: 6/8 win=0.75, bot: 4/8 win=0.5, spread=0.25 actually grade A
     # let's engineer spread ~0.04
     rows = []
@@ -20561,6 +20847,7 @@ def test_r71_t1_grade_C() -> None:
 def test_r71_t1_grade_D() -> None:
     """momentum_rank_grade = D when win_spread <= 0."""
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+
     # Reverse: low momentum wins more
     rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.01 if i < 4 else -0.01} for i in range(12)]
     result = compute_sector_momentum_ranking(rows)
@@ -20572,6 +20859,7 @@ def test_r71_t1_grade_D() -> None:
 def test_r71_t1_grade_unknown_when_spread_none() -> None:
     """momentum_rank_grade = 'unknown' when groups are too small for win_rate."""
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+
     # Exactly 8 valid rows => tertiles of size 2, 2, 4 → all ≥ 2 so win_rates are computable
     # Use exactly 9 rows: tertiles of size 3, 3, 3
     rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.01} for i in range(9)]
@@ -20583,8 +20871,9 @@ def test_r71_t1_grade_unknown_when_spread_none() -> None:
 
 def test_r71_t1_mean_return_spread_computed() -> None:
     """momentum_mean_return_spread = top group mean return - bot group mean return."""
-    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
     import pytest
+
+    from scripts.btst_analysis_utils import compute_sector_momentum_ranking
     rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.05 * (i - 6) / 12} for i in range(12)]
     result = compute_sector_momentum_ranking(rows)
     assert result["sector_momentum_ranking_valid"] is True
@@ -20674,8 +20963,9 @@ def test_r71_t2_vol_skewness_zero_when_std_zero() -> None:
 
 def test_r71_t2_vol_skewness_manual_formula() -> None:
     """vol_skewness = mean((x-mean)^3) / std^3, using N-1 std."""
-    from scripts.btst_analysis_utils import compute_volume_structure_analysis
     import pytest
+
+    from scripts.btst_analysis_utils import compute_volume_structure_analysis
     vq_vals = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
     rows = [{"volume_expansion_quality": v, "next_day_return": 0.01} for v in vq_vals]
     result = compute_volume_structure_analysis(rows)
@@ -20689,8 +20979,9 @@ def test_r71_t2_vol_skewness_manual_formula() -> None:
 
 def test_r71_t2_vol_positive_pct() -> None:
     """vol_positive_pct = fraction of volume_expansion_quality > 0."""
-    from scripts.btst_analysis_utils import compute_volume_structure_analysis
     import pytest
+
+    from scripts.btst_analysis_utils import compute_volume_structure_analysis
     rows = [{"volume_expansion_quality": float(i - 4), "next_day_return": 0.01} for i in range(12)]
     result = compute_volume_structure_analysis(rows)
     # i-4: negative for i<4, zero for i=4, positive for i>4
@@ -20700,8 +20991,9 @@ def test_r71_t2_vol_positive_pct() -> None:
 
 def test_r71_t2_structure_spread_precision() -> None:
     """vol_structure_spread = high_vol_exp_win_rate - low_vol_exp_win_rate, rounded 6dp."""
-    from scripts.btst_analysis_utils import compute_volume_structure_analysis
     import pytest
+
+    from scripts.btst_analysis_utils import compute_volume_structure_analysis
     rows = _make_r71_volume_rows(12)
     result = compute_volume_structure_analysis(rows)
     assert result["volume_structure_valid"] is True
@@ -20793,8 +21085,9 @@ def test_r71_t3_invalid_all_none() -> None:
 
 def test_r71_t3_ols_slope_positive() -> None:
     """OLS slope is positive for ascending series."""
-    from scripts.optimize_profile import compute_cross_window_price_pos_trend
     import pytest
+
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
     summaries = _make_r71_price_pos_summaries([1.0, 2.0, 3.0, 4.0, 5.0])
     result = compute_cross_window_price_pos_trend(summaries)
     assert result["price_pos_trend_slope"] == pytest.approx(1.0, abs=1e-5)
@@ -20802,8 +21095,9 @@ def test_r71_t3_ols_slope_positive() -> None:
 
 def test_r71_t3_ols_slope_negative() -> None:
     """OLS slope is negative for descending series."""
-    from scripts.optimize_profile import compute_cross_window_price_pos_trend
     import pytest
+
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
     summaries = _make_r71_price_pos_summaries([5.0, 4.0, 3.0, 2.0, 1.0])
     result = compute_cross_window_price_pos_trend(summaries)
     assert result["price_pos_trend_slope"] == pytest.approx(-1.0, abs=1e-5)
@@ -20811,8 +21105,9 @@ def test_r71_t3_ols_slope_negative() -> None:
 
 def test_r71_t3_price_pos_trend_mean() -> None:
     """price_pos_trend_mean equals mean of input values."""
-    from scripts.optimize_profile import compute_cross_window_price_pos_trend
     import pytest
+
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
     vals = [0.1, 0.3, 0.5]
     summaries = _make_r71_price_pos_summaries(vals)
     result = compute_cross_window_price_pos_trend(summaries)
@@ -20821,8 +21116,9 @@ def test_r71_t3_price_pos_trend_mean() -> None:
 
 def test_r71_t3_positive_windows_pct() -> None:
     """price_pos_positive_windows_pct = fraction of vals > 0."""
-    from scripts.optimize_profile import compute_cross_window_price_pos_trend
     import pytest
+
+    from scripts.optimize_profile import compute_cross_window_price_pos_trend
     vals = [0.1, -0.1, 0.2, 0.3, -0.2]  # 3/5 positive
     summaries = _make_r71_price_pos_summaries(vals)
     result = compute_cross_window_price_pos_trend(summaries)
@@ -20832,6 +21128,7 @@ def test_r71_t3_positive_windows_pct() -> None:
 def test_r71_t3_grade_A() -> None:
     """price_pos_trend_grade = A when slope > 0.005."""
     from scripts.optimize_profile import compute_cross_window_price_pos_trend
+
     # slope = 1.0 > 0.005
     summaries = _make_r71_price_pos_summaries([1.0, 2.0, 3.0, 4.0, 5.0])
     result = compute_cross_window_price_pos_trend(summaries)
@@ -20841,6 +21138,7 @@ def test_r71_t3_grade_A() -> None:
 def test_r71_t3_grade_B() -> None:
     """price_pos_trend_grade = B when slope in (0, 0.005]."""
     from scripts.optimize_profile import compute_cross_window_price_pos_trend
+
     # Tiny positive slope
     summaries = _make_r71_price_pos_summaries([0.5, 0.501, 0.502, 0.503, 0.504])
     result = compute_cross_window_price_pos_trend(summaries)
@@ -20858,6 +21156,7 @@ def test_r71_t3_grade_C() -> None:
 def test_r71_t3_grade_D() -> None:
     """price_pos_trend_grade = D when slope <= -0.01."""
     from scripts.optimize_profile import compute_cross_window_price_pos_trend
+
     # Strong negative slope
     summaries = _make_r71_price_pos_summaries([5.0, 4.0, 3.0, 2.0, 1.0])
     result = compute_cross_window_price_pos_trend(summaries)
@@ -20951,6 +21250,7 @@ def test_r72_t1_all_keys_present() -> None:
 def test_r72_t1_zscore_win_spread_none_when_group_too_small() -> None:
     """With only 3 rows per group (1 row each), win_rate=None and spread=None."""
     from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+
     # 3 rows only → valid=False
     result = compute_multifactor_zscore_grouping([_make_mfz_row() for _ in range(3)])
     assert result["zscore_win_spread"] is None
@@ -21083,6 +21383,7 @@ def test_r72_t2_all_keys_present() -> None:
 def test_r72_t2_rolling_3_group_logic() -> None:
     """Rolling 3-day groups are non-overlapping."""
     from scripts.btst_analysis_utils import compute_return_persistence_analysis
+
     # 12 returns → 4 groups of 3, all wins
     returns = [0.01] * 12
     result = compute_return_persistence_analysis(_make_persist_rows(returns))
@@ -21101,6 +21402,7 @@ def test_r72_t2_rolling_consistency_is_1_when_std_0() -> None:
 def test_r72_t2_block_5_logic() -> None:
     """Block-5 groups computed correctly."""
     from scripts.btst_analysis_utils import compute_return_persistence_analysis
+
     # 10 returns: 5 wins then 5 losses → 1 positive block (5 wins), 1 non-positive block
     returns = [0.01, 0.01, 0.01, 0.01, 0.01, -0.01, -0.01, -0.01, -0.01, -0.01]
     result = compute_return_persistence_analysis(_make_persist_rows(returns))
@@ -21111,6 +21413,7 @@ def test_r72_t2_block_5_logic() -> None:
 def test_r72_t2_block_positive_pct_none_when_too_few_blocks() -> None:
     """block_positive_pct=None when fewer than 2 blocks of 5."""
     from scripts.btst_analysis_utils import compute_return_persistence_analysis
+
     # Exactly 10 returns → 2 blocks of 5, but check edge case with 12 (2 blocks of 5 + 2 leftover)
     # Actually with 10 returns, 2 blocks of 5 → block_positive_pct should not be None
     result = compute_return_persistence_analysis(_make_persist_rows([0.01] * 10))
@@ -21369,8 +21672,9 @@ def test_r73_t1_advance_decline_ratio() -> None:
 
 def test_r73_t1_breadth_win_rate_accuracy() -> None:
     """breadth_win_rate = advance / total accurately computed."""
-    from scripts.btst_analysis_utils import compute_market_breadth_indicator
     import pytest
+
+    from scripts.btst_analysis_utils import compute_market_breadth_indicator
     rows = [{"next_day_return": 0.01}] * 6 + [{"next_day_return": -0.01}] * 4
     result = compute_market_breadth_indicator(rows)
     assert result["breadth_win_rate"] == pytest.approx(0.6, rel=1e-4)
@@ -21579,8 +21883,9 @@ def test_r73_t2_label_exists() -> None:
 
 def test_r73_t2_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has ic_consistency_ratio = 0.4."""
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     import pytest
+
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "ic_consistency_ratio" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["ic_consistency_ratio"] == pytest.approx(0.4)
 
@@ -21651,8 +21956,9 @@ def test_r73_t3_grade_D_large_negative_slope() -> None:
 
 def test_r73_t3_zscore_positive_windows_pct_all_positive() -> None:
     """zscore_positive_windows_pct = 1.0 when all spreads > 0."""
-    from scripts.optimize_profile import compute_cross_window_zscore_trend
     import pytest
+
+    from scripts.optimize_profile import compute_cross_window_zscore_trend
     summaries = [{"mfz_zscore_win_spread": 0.1}, {"mfz_zscore_win_spread": 0.2}, {"mfz_zscore_win_spread": 0.05}]
     result = compute_cross_window_zscore_trend(summaries)
     assert result["zscore_positive_windows_pct"] == pytest.approx(1.0)
@@ -21660,8 +21966,9 @@ def test_r73_t3_zscore_positive_windows_pct_all_positive() -> None:
 
 def test_r73_t3_zscore_positive_windows_pct_none_positive() -> None:
     """zscore_positive_windows_pct = 0.0 when all spreads <= 0."""
-    from scripts.optimize_profile import compute_cross_window_zscore_trend
     import pytest
+
+    from scripts.optimize_profile import compute_cross_window_zscore_trend
     summaries = [{"mfz_zscore_win_spread": -0.1}, {"mfz_zscore_win_spread": -0.2}, {"mfz_zscore_win_spread": -0.05}]
     result = compute_cross_window_zscore_trend(summaries)
     assert result["zscore_positive_windows_pct"] == pytest.approx(0.0)
@@ -21696,8 +22003,9 @@ def test_r73_t3_label_exists() -> None:
 
 def test_r73_t3_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has zscore_trend_slope = -0.01."""
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     import pytest
+
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "zscore_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["zscore_trend_slope"] == pytest.approx(-0.01)
 
@@ -21840,6 +22148,7 @@ def test_r74_t1_monotonicity_score_range() -> None:
 def test_r74_t1_grade_A() -> None:
     """Grade A when spread > 0.2 and monotonicity > 0.75."""
     from scripts.btst_analysis_utils import compute_signal_strength_stratification
+
     # Build rows where bottom quintile mostly loses and top quintile mostly wins
     rows = []
     n = 50
@@ -21881,8 +22190,9 @@ def test_r74_t1_label_exists() -> None:
 
 def test_r74_t1_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has stratification_spread = 0.0."""
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     import pytest
+
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "stratification_spread" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["stratification_spread"] == pytest.approx(0.0)
 
@@ -21992,8 +22302,9 @@ def test_r74_t2_label_exists() -> None:
 
 def test_r74_t2_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has conditional_momentum_edge = 0.0."""
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     import pytest
+
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "conditional_momentum_edge" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["conditional_momentum_edge"] == pytest.approx(0.0)
 
@@ -22113,8 +22424,9 @@ def test_r74_t3_label_exists() -> None:
 
 def test_r74_t3_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has breadth_trend_slope = -0.01."""
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     import pytest
+
+    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
     assert "breadth_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["breadth_trend_slope"] == pytest.approx(-0.01)
 
@@ -22220,6 +22532,7 @@ def test_r75_t1_return_mean_precision() -> None:
 def test_r75_t1_sharpe_ratio_formula() -> None:
     """sharpe_ratio = return_mean / return_std (both non-zero)."""
     import math
+
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
     rets = [0.02, 0.01, -0.01, 0.03, 0.005, -0.005, 0.015, 0.025]
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
@@ -22232,6 +22545,7 @@ def test_r75_t1_sharpe_ratio_formula() -> None:
 def test_r75_t1_annualized_sharpe_formula() -> None:
     """annualized_sharpe = sharpe_ratio * sqrt(252)."""
     import math
+
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
     rets = [0.02, 0.01, -0.01, 0.03, 0.005, -0.005, 0.015, 0.025]
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
@@ -22260,6 +22574,7 @@ def test_r75_t1_std_zero_grade_D() -> None:
 def test_r75_t1_grade_A_high_sharpe() -> None:
     """Grade A when annualized_sharpe > 1.0."""
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     # Returns highly positive and very low std → high Sharpe
     rets = [0.02 + i * 0.001 for i in range(20)]
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
@@ -22368,9 +22683,10 @@ def test_r75_t2_high_collinearity_pairs_is_list_valid() -> None:
 
 def test_r75_t2_grade_A_low_collinearity() -> None:
     """Grade A when max_collinearity < 0.5."""
-    from scripts.btst_analysis_utils import compute_factor_collinearity_check
     # Rows with orthogonal (uncorrelated) signals
     import random
+
+    from scripts.btst_analysis_utils import compute_factor_collinearity_check
     random.seed(42)
     n = 30
     rows = [{"close_strength": random.gauss(0, 1), "momentum_slope_20d": random.gauss(0, 1),
@@ -22385,6 +22701,7 @@ def test_r75_t2_grade_A_low_collinearity() -> None:
 def test_r75_t2_grade_D_perfect_collinearity() -> None:
     """Grade D when max_collinearity >= 0.85."""
     from scripts.btst_analysis_utils import compute_factor_collinearity_check
+
     # Perfect linear correlation between close_strength and momentum_slope_20d
     n = 20
     rows = [{"close_strength": float(i), "momentum_slope_20d": float(i),
@@ -22408,6 +22725,7 @@ def test_r75_t2_effective_factor_count_formula() -> None:
 def test_r75_t2_missing_keys_returns_none_correlations() -> None:
     """Pairs with missing keys in rows return None for that pair correlation."""
     from scripts.btst_analysis_utils import compute_factor_collinearity_check
+
     # Rows missing all factor keys → all pairs have < 5 paired values → corr = None
     rows = [{"unrelated": float(i)} for i in range(15)]
     result = compute_factor_collinearity_check(rows)
@@ -22463,6 +22781,7 @@ def test_r75_t3_negative_slope_falling() -> None:
 def test_r75_t3_grade_A_strong_rise() -> None:
     """Grade A when slope > 0.005."""
     from scripts.optimize_profile import compute_cross_window_stratification_trend
+
     # Large step guarantees slope >> 0.005
     vals = [0.1 * i for i in range(1, 8)]
     result = compute_cross_window_stratification_trend(_r75_strat_windows(vals))
@@ -22473,6 +22792,7 @@ def test_r75_t3_grade_A_strong_rise() -> None:
 def test_r75_t3_grade_B_slight_rise() -> None:
     """Grade B when 0 < slope <= 0.005."""
     from scripts.optimize_profile import compute_cross_window_stratification_trend
+
     # Very small positive slope
     vals = [0.001 * i for i in range(1, 8)]
     result = compute_cross_window_stratification_trend(_r75_strat_windows(vals))
@@ -22600,6 +22920,7 @@ def test_r76_t1_valid_with_ten_rows() -> None:
 def test_r76_t1_grade_a_positive_skew_high_glr() -> None:
     """Grade A when skewness>0.3 AND gain_loss_ratio>1.2."""
     from scripts.btst_analysis_utils import compute_return_skew_quality
+
     # Strongly right-skewed: many small negatives, a few large positives
     rows = [{"next_day_return": -0.01}] * 14 + [{"next_day_return": 0.30}] * 6
     result = compute_return_skew_quality(rows)
@@ -22778,8 +23099,9 @@ def test_r76_t2_orthogonality_floor_registered() -> None:
 
 def test_r76_t2_orthogonality_grade_a_high_independence() -> None:
     """Grade A when orthogonality_score > 0.75."""
-    from scripts.btst_analysis_utils import compute_factor_orthogonality_score
     import random
+
+    from scripts.btst_analysis_utils import compute_factor_orthogonality_score
     rng = random.Random(42)
     n = 30
     factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
@@ -22954,6 +23276,7 @@ def test_r77_t1_threshold_win_rates_dict() -> None:
 def test_r77_t1_grade_a_high_lift() -> None:
     """adaptive_threshold_grade is A when threshold_lift > 0.1."""
     from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+
     # High-score rows all win, low-score rows all lose
     rows = [{"score": float(i + 10), "next_day_return": 0.05} for i in range(15)]
     rows += [{"score": float(i), "next_day_return": -0.02} for i in range(15)]
@@ -22966,6 +23289,7 @@ def test_r77_t1_grade_a_high_lift() -> None:
 def test_r77_t1_grade_d_no_lift() -> None:
     """adaptive_threshold_grade is D when threshold_lift <= 0."""
     from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+
     # All rows have same return regardless of score
     rows = [{"score": float(i), "next_day_return": -0.01} for i in range(20)]
     result = compute_adaptive_score_threshold(rows)
@@ -23163,6 +23487,7 @@ def test_r77_t3_valid_result_keys() -> None:
 def test_r77_t3_grade_a_slope_above_001() -> None:
     """skew_trend_grade is A when slope > 0.01."""
     from scripts.optimize_profile import compute_cross_window_skew_trend
+
     # Strongly rising series
     summaries = [{"skew_qual_gain_loss_ratio": float(i)} for i in range(1, 11)]
     result = compute_cross_window_skew_trend(summaries)
@@ -23173,6 +23498,7 @@ def test_r77_t3_grade_a_slope_above_001() -> None:
 def test_r77_t3_grade_d_steep_decline() -> None:
     """skew_trend_grade is D when slope < -0.02."""
     from scripts.optimize_profile import compute_cross_window_skew_trend
+
     # Steeply declining series
     summaries = [{"skew_qual_gain_loss_ratio": 5.0 - i * 0.5} for i in range(10)]
     result = compute_cross_window_skew_trend(summaries)
@@ -23247,6 +23573,7 @@ def test_r77_t3_floor_registered() -> None:
 def test_r77_t3_grade_b_slope_between_0_and_001() -> None:
     """skew_trend_grade is B when 0 < slope <= 0.01."""
     from scripts.optimize_profile import compute_cross_window_skew_trend
+
     # Gently rising: slope ~0.005
     values = [1.0 + 0.005 * i for i in range(8)]
     summaries = [{"skew_qual_gain_loss_ratio": v} for v in values]
@@ -23258,6 +23585,7 @@ def test_r77_t3_grade_b_slope_between_0_and_001() -> None:
 def test_r77_t3_grade_c_mild_decline() -> None:
     """skew_trend_grade is C when -0.02 < slope <= 0."""
     from scripts.optimize_profile import compute_cross_window_skew_trend
+
     # Very gently declining: slope ~-0.01
     values = [1.5 - 0.01 * i for i in range(8)]
     summaries = [{"skew_qual_gain_loss_ratio": v} for v in values]
@@ -23323,6 +23651,7 @@ def test_r78_t1_p75_threshold_correct() -> None:
 def test_r78_t1_hotstock_edge_computed_correctly() -> None:
     """hotstock_edge = hotstock_win_rate - non_hotstock_win_rate."""
     from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+
     # Top-5 scores (15-19) all win; bottom-15 scores (0-14) all lose
     rows = [{"score": float(i), "next_day_return": 0.05 if i >= 15 else -0.05} for i in range(20)]
     result = compute_hotstock_concentration_analysis(rows)
@@ -23334,6 +23663,7 @@ def test_r78_t1_hotstock_edge_computed_correctly() -> None:
 def test_r78_t1_hotstock_edge_none_when_insufficient() -> None:
     """hotstock_edge is None when hotstock_count < 2."""
     from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+
     # Only 1 hotstock (score=19 in top 5%, so 1 out of 20)
     rows = [{"score": float(i), "next_day_return": 0.01} for i in range(20)]
     # Make score so that only 1 row >= p75 is possible by ensuring p75 is very high
@@ -23359,6 +23689,7 @@ def test_r78_t1_hotstock_return_premium_positive() -> None:
 def test_r78_t1_grade_a() -> None:
     """Grade A when hotstock_edge > 0.1 and hotstock_return_premium > 0."""
     from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+
     # Hotstocks (top 5) all win with high returns, rest all lose
     rows = [{"score": float(i), "next_day_return": 0.1 if i >= 15 else -0.01} for i in range(20)]
     result = compute_hotstock_concentration_analysis(rows)
@@ -23370,6 +23701,7 @@ def test_r78_t1_grade_a() -> None:
 def test_r78_t1_grade_d_negative_edge() -> None:
     """Grade D when hotstock_edge <= 0."""
     from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+
     # Hotstocks all lose, non-hotstocks all win
     rows = [{"score": float(i), "next_day_return": -0.05 if i >= 15 else 0.05} for i in range(20)]
     result = compute_hotstock_concentration_analysis(rows)
@@ -23447,6 +23779,7 @@ def test_r78_t2_robustness_ratio_precision() -> None:
 def test_r78_t2_split_half_partition() -> None:
     """First half uses rows[:n//2], second half uses rows[n//2:]."""
     from scripts.btst_analysis_utils import compute_factor_robustness_check
+
     # With monotone increasing data, IC should be positive in both halves for close_strength
     rows = [{"close_strength": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
     result = compute_factor_robustness_check(rows)
@@ -23480,6 +23813,7 @@ def test_r78_t2_grade_a_high_ratio() -> None:
 def test_r78_t2_grade_d_low_ratio() -> None:
     """Grade D when robustness_ratio < 3/7."""
     from scripts.btst_analysis_utils import compute_factor_robustness_check
+
     # Alternating returns make IC inconsistent between halves
     rows = []
     for i in range(20):
@@ -23585,6 +23919,7 @@ def test_r78_t3_positive_windows_pct() -> None:
 def test_r78_t3_grade_a_slope_gt_0005() -> None:
     """Grade A when slope > 0.005."""
     from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+
     # Slope ~0.01 per window
     values = [0.05 + 0.01 * i for i in range(8)]
     summaries = [{"adapt_thr_threshold_lift": v} for v in values]
@@ -23596,6 +23931,7 @@ def test_r78_t3_grade_a_slope_gt_0005() -> None:
 def test_r78_t3_grade_b_slope_small_positive() -> None:
     """Grade B when 0 < slope <= 0.005."""
     from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+
     # Slope ~0.002 per window
     values = [0.05 + 0.002 * i for i in range(8)]
     summaries = [{"adapt_thr_threshold_lift": v} for v in values]
@@ -23606,6 +23942,7 @@ def test_r78_t3_grade_b_slope_small_positive() -> None:
 def test_r78_t3_grade_d_slope_le_neg001() -> None:
     """Grade D when slope <= -0.01."""
     from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+
     # Slope ~-0.02 per window
     values = [0.1 - 0.02 * i for i in range(8)]
     summaries = [{"adapt_thr_threshold_lift": v} for v in values]
@@ -23958,6 +24295,7 @@ def test_r79_t3_falling_trend_negative_slope() -> None:
 def test_r79_t3_grade_a_large_positive_slope() -> None:
     """Slope > 0.01 → grade=A."""
     from scripts.optimize_profile import compute_cross_window_robustness_trend
+
     # Values: 0.0, 0.2, 0.4 → slope = 0.2 per step
     summaries = [{"robust_robustness_ratio": 0.0}, {"robust_robustness_ratio": 0.2}, {"robust_robustness_ratio": 0.4}]
     result = compute_cross_window_robustness_trend(summaries)
@@ -23968,6 +24306,7 @@ def test_r79_t3_grade_a_large_positive_slope() -> None:
 def test_r79_t3_grade_b_small_positive_slope() -> None:
     """0 < slope <= 0.01 → grade=B."""
     from scripts.optimize_profile import compute_cross_window_robustness_trend
+
     # Tiny upward trend
     summaries = [{"robust_robustness_ratio": 0.500}, {"robust_robustness_ratio": 0.505}, {"robust_robustness_ratio": 0.510}]
     result = compute_cross_window_robustness_trend(summaries)
@@ -23979,6 +24318,7 @@ def test_r79_t3_grade_b_small_positive_slope() -> None:
 def test_r79_t3_grade_c_small_negative_slope() -> None:
     """−0.01 < slope <= 0 → grade=C."""
     from scripts.optimize_profile import compute_cross_window_robustness_trend
+
     # Very slight decrease
     summaries = [{"robust_robustness_ratio": 0.510}, {"robust_robustness_ratio": 0.505}, {"robust_robustness_ratio": 0.500}]
     result = compute_cross_window_robustness_trend(summaries)
@@ -24363,6 +24703,7 @@ def test_r80_t3_grade_a_large_positive_slope() -> None:
 def test_r80_t3_grade_b_small_positive_slope() -> None:
     """0 < slope <= 0.005 → grade=B."""
     from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+
     # Very tiny upward trend: slope ~ 0.001
     summaries = [{"entry_qual_quality_entry_edge": 0.500}, {"entry_qual_quality_entry_edge": 0.501}, {"entry_qual_quality_entry_edge": 0.502}]
     result = compute_cross_window_entry_quality_trend(summaries)
@@ -24524,6 +24865,7 @@ def test_r81_t1_missing_actual_return_excluded() -> None:
 def test_r81_t1_ev_spread_positive_when_top_better() -> None:
     """ev_spread should be positive when top group clearly outperforms bottom."""
     from scripts.btst_analysis_utils import compute_expected_value_analysis
+
     # Low scores get losers, high scores get winners
     rows = [{"runner_composite_score": float(i), "actual_return": 0.05 if i >= 20 else -0.03} for i in range(30)]
     result = compute_expected_value_analysis(rows)
@@ -24614,6 +24956,7 @@ def test_r81_t2_missing_inflow_field_invalid() -> None:
 def test_r81_t2_edge_equals_winrate_minus_baseline() -> None:
     """high_inflow_edge must equal high_inflow_win_rate - baseline_win_rate."""
     from scripts.btst_analysis_utils import compute_high_inflow_premium
+
     # All same inflow, mixed returns
     rows = [{"t0_estimated_net_inflow_ratio": float(i) * 0.01, "actual_return": 0.03 if i % 2 == 0 else -0.02} for i in range(30)]
     result = compute_high_inflow_premium(rows)
@@ -24636,6 +24979,7 @@ def test_r81_t2_p75_threshold_correct() -> None:
 def test_r81_t2_high_inflow_too_few_invalid() -> None:
     """If high_inflow_rows < 5, return valid=False."""
     from scripts.btst_analysis_utils import compute_high_inflow_premium
+
     # Most values are the same, P75 threshold would leave very few eligible
     rows = [{"t0_estimated_net_inflow_ratio": 0.1, "actual_return": 0.01} for _ in range(18)]
     rows += [{"t0_estimated_net_inflow_ratio": 0.9, "actual_return": 0.01}]  # only 1 high-inflow row
@@ -24878,6 +25222,7 @@ def test_r82_t1_basic_valid() -> None:
 def test_r82_t1_precision_value() -> None:
     """Precision = TP/(TP+FP) verified manually."""
     from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+
     # 10 rows: scores 0-9, median=(4+5)/2=4.5, high-score = score>4.5 → scores 5,6,7,8,9
     # high_win=True: actual_return>0 for score>=5 (i>=10//2=5), so scores 5..9 win → TP=5, FP=0, FN=0
     rows = _make_r82_score_rows(10, high_win=True)
@@ -25063,6 +25408,7 @@ def test_r82_t2_missing_cs_field() -> None:
 def test_r82_t2_quadrant_with_fewer_than_3_rows_gives_none() -> None:
     """If a quadrant has < 3 rows, its win_rate is None but result is still valid=True."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_filter
+
     # Build rows where vol_diverge quadrant is tiny (< 3 rows)
     rows = []
     # 10 full_confirm rows (vol>=0.5, cs>=0.5)
@@ -25178,6 +25524,7 @@ def test_r82_t3_missing_ev_spread_skipped() -> None:
 def test_r82_t3_grade_a_strong_rising() -> None:
     """Slope > 0.005 → grade A."""
     from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+
     # y=[0, 0.01, 0.02, 0.03, 0.04] → slope = 0.01
     windows = _make_r82_ev_windows([0.0, 0.01, 0.02, 0.03, 0.04])
     result = compute_cross_window_ev_spread_trend(windows)
@@ -25187,6 +25534,7 @@ def test_r82_t3_grade_a_strong_rising() -> None:
 def test_r82_t3_grade_b_mild_rising() -> None:
     """0 < slope <= 0.005 → grade B."""
     from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+
     # y=[0, 0.001, 0.002, 0.003, 0.004] → slope = 0.001
     windows = _make_r82_ev_windows([0.0, 0.001, 0.002, 0.003, 0.004])
     result = compute_cross_window_ev_spread_trend(windows)
@@ -25225,7 +25573,6 @@ def test_r82_t3_label_registered() -> None:
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helper factories
 # ---------------------------------------------------------------------------
@@ -25262,6 +25609,7 @@ def _make_r83_precision_windows(precisions: list[float]) -> list[dict]:
 def test_r83_t1_kelly_formula_verification() -> None:
     """Verify Kelly formula: full_kelly = p - (1-p)*avg_loss/avg_win."""
     from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+
     # 30 rows interleaved: every other win/loss, avg_win=0.03, avg_loss=0.02
     rows = _make_r83_kelly_rows(30, 0.5, 0.03, 0.02)
     result = compute_kelly_criterion_analysis(rows)
@@ -25283,6 +25631,7 @@ def test_r83_t1_kelly_too_few_rows() -> None:
 def test_r83_t1_kelly_exactly_15_rows() -> None:
     """Exactly 15 rows with mixed wins/losses → valid result (not blocked)."""
     from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+
     # Use explicit rows ensuring top group has both wins and losses
     rows = [{"score": float(i), "actual_return": 0.03 if i % 2 == 0 else -0.02} for i in range(15)]
     result = compute_kelly_criterion_analysis(rows)
@@ -25293,6 +25642,7 @@ def test_r83_t1_kelly_exactly_15_rows() -> None:
 def test_r83_t1_kelly_all_wins_in_top_group() -> None:
     """Top group all wins (no losers) → top_kelly=None, valid=False."""
     from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+
     # Make 15 rows where top third are all winners, bot third are all losers
     rows = [{"score": float(i), "actual_return": 0.05 if i >= 10 else -0.02} for i in range(15)]
     result = compute_kelly_criterion_analysis(rows)
@@ -25304,6 +25654,7 @@ def test_r83_t1_kelly_all_wins_in_top_group() -> None:
 def test_r83_t1_kelly_avg_win_zero_returns_none() -> None:
     """avg_win == 0 → kelly returns None for that group."""
     from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+
     # top group: winners with 0 return, losers with -0.02
     rows = []
     for i in range(20):
@@ -25318,6 +25669,7 @@ def test_r83_t1_kelly_avg_win_zero_returns_none() -> None:
 def test_r83_t1_kelly_spread_computed() -> None:
     """kelly_spread = top_kelly - bot_kelly."""
     from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+
     # 30 rows: high scores win more, low scores lose more
     rows = []
     for i in range(10):
@@ -25342,6 +25694,7 @@ def test_r83_t1_kelly_valid_flag_requires_top_kelly() -> None:
 def test_r83_t1_kelly_runner_composite_score_priority() -> None:
     """runner_composite_score is preferred over composite_score and score."""
     from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+
     # Alternate wins/losses across runner_composite_score range
     rows = [{"runner_composite_score": float(i), "composite_score": 0.0, "score": 0.0, "actual_return": 0.03 if i % 2 == 0 else -0.02} for i in range(30)]
     result = compute_kelly_criterion_analysis(rows)
@@ -25359,6 +25712,7 @@ def test_r83_t1_kelly_composite_score_fallback() -> None:
 def test_r83_t1_kelly_none_actual_return_filtered() -> None:
     """Rows with None actual_return are excluded from analysis."""
     from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+
     # Use interleaved rows ensuring top group has both wins and losses
     rows = [{"score": float(i), "actual_return": 0.03 if i % 2 == 0 else -0.02} for i in range(20)]
     rows += [{"score": 99.0, "actual_return": None}] * 5
@@ -25427,6 +25781,7 @@ def test_r83_t2_rpp_too_few_rows() -> None:
 def test_r83_t2_rpp_top_group_too_small() -> None:
     """When top-group has fewer than 5 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_return_percentile_profile
+
     # 15 rows → top third = 5 rows → just on boundary (should pass)
     rows = _make_r83_rpp_rows(15)
     result = compute_return_percentile_profile(rows)
@@ -25458,6 +25813,7 @@ def test_r83_t2_rpp_percentile_ordering() -> None:
 def test_r83_t2_rpp_known_values() -> None:
     """Verify P50 (median) for top group with exact known data."""
     from scripts.btst_analysis_utils import compute_return_percentile_profile
+
     # 30 rows with score 0-29, top third = scores 20-29 (10 rows)
     # returns for top group: 0.01 * (i - 19) for i in 20..29 = [0.01, 0.02, ..., 0.10]
     rows = [{"score": float(i), "actual_return": 0.01 * max(i - 19, 1) if i >= 20 else -0.01} for i in range(30)]
@@ -25729,6 +26085,7 @@ def test_r84_t1_missing_actual_return_filtered() -> None:
 def test_r84_t1_p80_p40_threshold_logic() -> None:
     """P80 and P40 thresholds split correctly into extreme vs moderate groups."""
     from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+
     # 20 rows with momentum 1..20, all wins
     rows = [{"actual_return": 0.05, "momentum_slope_20d": float(i + 1)} for i in range(20)]
     result = compute_momentum_reversal_analysis(rows)
@@ -25750,6 +26107,7 @@ def test_r84_t1_momentum_breadth_effect_formula() -> None:
 def test_r84_t1_extreme_group_all_wins() -> None:
     """If extreme group are all wins, extreme_momentum_win_rate = 1.0."""
     from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+
     # 30 rows: high momentum rows (top 20% = rows 25-30) all win, others alternate
     rows = []
     for i in range(30):
@@ -25852,6 +26210,7 @@ def test_r84_t2_missing_close_strength_filtered() -> None:
 def test_r84_t2_high_cs_rows_less_than_6() -> None:
     """If high_cs_rows < 6 → valid=False."""
     from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+
     # All close_strength = 0.0 except 4 rows with 1.0; P75 will be above most
     rows = [{"actual_return": 0.01, "close_strength": 0.0, "sector_resonance": 0.5} for _ in range(20)]
     rows[0]["close_strength"] = 1.0
@@ -25865,6 +26224,7 @@ def test_r84_t2_high_cs_rows_less_than_6() -> None:
 def test_r84_t2_p75_threshold_logic() -> None:
     """P75 of close_strength is computed correctly."""
     from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+
     # 40 rows, close_strength = 0..1 linearly, sector_resonance varies
     rows = []
     for i in range(40):
@@ -26088,6 +26448,7 @@ def test_r85_t1_empty_rows_invalid() -> None:
 def test_r85_t1_three_equal_batches_n15() -> None:
     """n=15: each batch has exactly 5 rows."""
     from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+
     # b1=5 wins, b2=5 wins, b3=5 wins → all win_rates=1.0
     rows = _make_r85_batch_rows([True] * 15)
     result = compute_batch_consistency_analysis(rows)
@@ -26108,7 +26469,9 @@ def test_r85_t1_consistency_score_perfect() -> None:
 def test_r85_t1_consistency_score_formula() -> None:
     """Verify formula: 1 - std/mean with known values."""
     import math
+
     from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+
     # b1: 5/5=1.0, b2: 3/5=0.6, b3: 1/5=0.2  → mean=0.6, std=sqrt(((0.4^2+0^2+0.4^2)/3))
     rows = _make_r85_batch_rows([True, True, True, True, True, True, True, True, False, False, True, False, False, False, False])
     result = compute_batch_consistency_analysis(rows)
@@ -26131,6 +26494,7 @@ def test_r85_t1_mean_zero_consistency_zero() -> None:
 def test_r85_t1_trend_direction_improving() -> None:
     """b3 win_rate > b1 win_rate → 'improving'."""
     from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+
     # b1: 1/5=0.2, b2: 3/5=0.6, b3: 5/5=1.0
     rows = _make_r85_batch_rows([True, False, False, False, False, True, True, True, False, False, True, True, True, True, True])
     result = compute_batch_consistency_analysis(rows)
@@ -26140,6 +26504,7 @@ def test_r85_t1_trend_direction_improving() -> None:
 def test_r85_t1_trend_direction_declining() -> None:
     """b3 win_rate < b1 win_rate → 'declining'."""
     from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+
     # b1: 5/5=1.0, b2: 3/5=0.6, b3: 1/5=0.2
     rows = _make_r85_batch_rows([True, True, True, True, True, True, True, True, False, False, True, False, False, False, False])
     result = compute_batch_consistency_analysis(rows)
@@ -26149,6 +26514,7 @@ def test_r85_t1_trend_direction_declining() -> None:
 def test_r85_t1_trend_direction_stable() -> None:
     """b3 win_rate == b1 win_rate → 'stable'."""
     from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+
     # b1: 3/5=0.6, b2: 3/5=0.6, b3: 3/5=0.6
     rows = _make_r85_batch_rows([True, True, True, False, False, True, True, True, False, False, True, True, True, False, False])
     result = compute_batch_consistency_analysis(rows)
@@ -26158,6 +26524,7 @@ def test_r85_t1_trend_direction_stable() -> None:
 def test_r85_t1_preserves_temporal_order() -> None:
     """T1 must NOT sort by score; rows processed in given order."""
     from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+
     # b1 has score=10 (wins), b3 has score=1 (losses) — order matters
     rows = [{"actual_return": 0.05, "score": 10}] * 5 + [{"actual_return": 0.01, "score": 5}] * 5 + [{"actual_return": -0.02, "score": 1}] * 5
     result = compute_batch_consistency_analysis(rows)
@@ -26169,6 +26536,7 @@ def test_r85_t1_preserves_temporal_order() -> None:
 def test_r85_t1_consistency_score_can_be_negative() -> None:
     """Consistency score can be negative if std > mean."""
     from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+
     # b1=0/5=0.0, b2=5/5=1.0, b3=0/5=0.0  →  mean=1/3, std is large
     rows = _make_r85_batch_rows([False, False, False, False, False, True, True, True, True, True, False, False, False, False, False])
     result = compute_batch_consistency_analysis(rows)
@@ -26253,6 +26621,7 @@ def test_r85_t2_lw_win_rate_equal_weights() -> None:
 def test_r85_t2_lw_win_rate_weighted() -> None:
     """Higher turnover on winning rows → lw_win_rate > ew_win_rate."""
     from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+
     # 10 wins with turnover=3.0, 5 losses with turnover=1.0
     rows = _make_r85_liq_rows([0.01] * 10 + [-0.01] * 5, [3.0] * 10 + [1.0] * 5)
     result = compute_liquidity_weighted_return_analysis(rows)
@@ -26270,6 +26639,7 @@ def test_r85_t2_liquidity_bias_formula() -> None:
 def test_r85_t2_high_liquidity_win_rate_p75() -> None:
     """high_liquidity_win_rate uses P75 threshold of turnover values."""
     from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+
     # 20 rows: 15 low turnover=1.0, 5 high turnover=10.0; all high-turnover are wins
     rows = _make_r85_liq_rows([-0.01] * 15 + [0.01] * 5, [1.0] * 15 + [10.0] * 5)
     result = compute_liquidity_weighted_return_analysis(rows)
@@ -26460,6 +26830,7 @@ def test_r86_t1_too_few_rows_invalid() -> None:
 def test_r86_t1_all_factors_positive_ic() -> None:
     """Perfectly correlated factors and returns → all ICs > 0, consistency_ratio=1.0."""
     from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+
     # monotone increasing: all factors rank-correlated with return
     rows = _make_r86_frc_rows(list(range(1, 21)), [r * 0.005 for r in range(1, 21)])
     result = compute_factor_rank_correlation_stability(rows)
@@ -26501,6 +26872,7 @@ def test_r86_t1_mean_ic_positive_when_all_positive() -> None:
 def test_r86_t1_missing_factor_skipped() -> None:
     """Rows missing a factor are excluded from that factor's IC computation gracefully."""
     from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+
     # 20 rows, but only close_strength present (others None)
     rows = [{"close_strength": float(i), "actual_return": float(i) * 0.01} for i in range(1, 21)]
     result = compute_factor_rank_correlation_stability(rows)
@@ -26592,6 +26964,7 @@ def test_r86_t2_no_breakout_score_invalid() -> None:
 def test_r86_t2_high_breakout_win_rate_formula() -> None:
     """high_breakout_win_rate = wins among rows with bq >= P75."""
     from scripts.btst_analysis_utils import compute_breakout_quality_premium
+
     # 20 rows, bq=[1..20]; P75=index 15 → bq>=16; top 5 rows all win
     bq_vals = list(range(1, 21))
     returns = [-0.01] * 15 + [0.02] * 5  # top 5 (bq>=16) all win
@@ -26604,6 +26977,7 @@ def test_r86_t2_high_breakout_win_rate_formula() -> None:
 def test_r86_t2_premium_edge_positive_when_high_outperforms() -> None:
     """premium_edge > 0 when high-bq group win_rate exceeds baseline."""
     from scripts.btst_analysis_utils import compute_breakout_quality_premium
+
     # high bq rows mostly win, low bq rows mostly lose
     bq_vals = list(range(1, 21))
     returns = [-0.01] * 14 + [0.02] * 6
@@ -26616,6 +26990,7 @@ def test_r86_t2_premium_edge_positive_when_high_outperforms() -> None:
 def test_r86_t2_premium_edge_negative_when_high_underperforms() -> None:
     """premium_edge < 0 when high-bq group win_rate is below baseline."""
     from scripts.btst_analysis_utils import compute_breakout_quality_premium
+
     # top 5 (high bq) all lose, bottom 15 all win
     bq_vals = list(range(1, 21))
     returns = [0.02] * 15 + [-0.01] * 5
@@ -27205,6 +27580,7 @@ def test_r88_t1_too_few_rows() -> None:
 def test_r88_t1_high_vol_group_small() -> None:
     """When P75 group < 5, returns valid=False."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+
     # 15 rows: P75 index = int(15*0.75)=11, so group is rows with vol >= sorted_vols[11]
     # That leaves 4 rows in high group (indices 11,12,13,14 -> sorted_vols positions)
     # Actually: sorted_vols[11] means indices 11..14 = 4 rows -> < 5
@@ -27462,6 +27838,7 @@ def test_r88_t3_flat_slope() -> None:
 def test_r88_t3_grade_a() -> None:
     """Slope > 0.005 → grade A."""
     from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+
     # slope = 0.1 per window (strong rise)
     windows = [{"sig_signal_persistence_edge": float(i) * 0.1} for i in range(5)]
     result = compute_cross_window_signal_quality_trend(windows)
@@ -27472,6 +27849,7 @@ def test_r88_t3_grade_a() -> None:
 def test_r88_t3_grade_b() -> None:
     """Slope in (0, 0.005] → grade B."""
     from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+
     # slope = 0.001 per window
     windows = [{"sig_signal_persistence_edge": float(i) * 0.001} for i in range(5)]
     result = compute_cross_window_signal_quality_trend(windows)
@@ -27482,6 +27860,7 @@ def test_r88_t3_grade_b() -> None:
 def test_r88_t3_grade_c() -> None:
     """Slope in (-0.01, 0] → grade C."""
     from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+
     # slope = -0.001 per window
     windows = [{"sig_signal_persistence_edge": -float(i) * 0.001} for i in range(5)]
     result = compute_cross_window_signal_quality_trend(windows)
@@ -27492,6 +27871,7 @@ def test_r88_t3_grade_c() -> None:
 def test_r88_t3_grade_d() -> None:
     """Slope <= -0.01 → grade D."""
     from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+
     # slope = -0.05 per window
     windows = [{"sig_signal_persistence_edge": -float(i) * 0.05} for i in range(5)]
     result = compute_cross_window_signal_quality_trend(windows)

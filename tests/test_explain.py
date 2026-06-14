@@ -15,10 +15,10 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_sub_factor(name: str, direction: int, confidence: float, weight: float = 0.2, completeness: float = 1.0, metrics: dict | None = None) -> dict:
     return {
@@ -383,8 +383,9 @@ class TestHelperFunctions:
 
     def test_build_factor_bar_nan_returns_empty(self):
         """GAMMA-008: NaN confidence should not crash and should produce empty bar."""
-        from src.cli.explain_helpers import _build_factor_bar
         import math
+
+        from src.cli.explain_helpers import _build_factor_bar
         result = _build_factor_bar(float("nan"))
         assert result == "░░░░░░░░░░"
 

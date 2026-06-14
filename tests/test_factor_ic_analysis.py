@@ -12,12 +12,6 @@ from pathlib import Path
 import pytest
 
 from src.research.factor_ic_analysis import (
-    FactorICResult,
-    IC_HIGH_THRESHOLD,
-    IC_LOW_THRESHOLD,
-    IC_MEDIUM_THRESHOLD,
-    MIN_FACTORS,
-    MIN_OBSERVATIONS,
     _pearson_correlation,
     _rank_average,
     _safe_stdev,
@@ -25,9 +19,14 @@ from src.research.factor_ic_analysis import (
     classify_significance,
     compute_factor_ic,
     extract_factor_panel_from_history,
+    FactorICResult,
+    IC_HIGH_THRESHOLD,
+    IC_LOW_THRESHOLD,
+    IC_MEDIUM_THRESHOLD,
+    MIN_FACTORS,
+    MIN_OBSERVATIONS,
     render_factor_ic_ranking,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers

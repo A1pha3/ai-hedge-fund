@@ -25,13 +25,13 @@ import math
 import pytest
 
 from src.screening.industry_rotation import (
-    IndustrySignal,
-    MIN_CANDIDATES_PER_INDUSTRY,
-    UNKNOWN_INDUSTRY,
     bottom_weak_industries,
     calculate_industry_rotation,
     format_rotation_block,
+    IndustrySignal,
+    MIN_CANDIDATES_PER_INDUSTRY,
     top_strong_industries,
+    UNKNOWN_INDUSTRY,
 )
 
 # ============================================================================
@@ -613,7 +613,7 @@ def test_lookback_days_gt_1_uses_history_boost(tmp_path):
     reports_dir.mkdir(parents=True)
     
     import json
-    
+
     # 历史报告 1: 20260605 电子强, 计算机弱
     history1 = {
         "mode": "auto_screening",
@@ -680,7 +680,7 @@ def test_partial_history_presence(tmp_path):
     reports_dir.mkdir(parents=True)
     
     import json
-    
+
     # 历史报告 1: 20260605 只有电子
     history1 = {
         "mode": "auto_screening",

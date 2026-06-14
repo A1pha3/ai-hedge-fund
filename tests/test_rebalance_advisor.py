@@ -28,15 +28,14 @@ from pathlib import Path
 import pytest
 
 from src.portfolio.rebalance_advisor import (
+    compute_rebalance_actions,
     DEFAULT_DRIFT_THRESHOLD,
     DEFAULT_MIN_TRADE_AMOUNT,
-    INDUSTRY_HARD_LIMIT,
-    SINGLE_NAME_HARD_LIMIT,
-    RebalanceAction,
-    compute_rebalance_actions,
     format_rebalance_actions,
+    INDUSTRY_HARD_LIMIT,
+    RebalanceAction,
+    SINGLE_NAME_HARD_LIMIT,
 )
-
 
 # ===========================================================================
 # Fixtures
@@ -288,10 +287,10 @@ def test_cli_rebalance_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
 def test_web_endpoint_smoke() -> None:
     """POST /api/portfolio/rebalance 应正确返回 RebalanceResponse。"""
+    from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     from app.backend.routes.risk_metrics import router as risk_router
-    from fastapi import FastAPI
 
     app = FastAPI()
     app.include_router(risk_router, prefix="/api")

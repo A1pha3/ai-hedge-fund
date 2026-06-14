@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_btst_low_sample_penalty_audit import analyze_btst_low_sample_penalty_audit, render_btst_low_sample_penalty_audit_markdown
+from scripts.analyze_btst_low_sample_penalty_audit import (
+    analyze_btst_low_sample_penalty_audit,
+    render_btst_low_sample_penalty_audit_markdown,
+)
 
 
 def test_analyze_btst_low_sample_penalty_audit_flags_penalty_as_protective(monkeypatch, tmp_path):

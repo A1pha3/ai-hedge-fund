@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.analyze_btst_candidate_pool_branch_priority_board import analyze_btst_candidate_pool_branch_priority_board
+from scripts.analyze_btst_candidate_pool_branch_priority_board import (
+    analyze_btst_candidate_pool_branch_priority_board,
+)
 
 
 def test_analyze_btst_candidate_pool_branch_priority_board_prioritizes_rebucket_and_sorts_corridor(tmp_path: Path) -> None:

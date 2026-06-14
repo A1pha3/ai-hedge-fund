@@ -5,15 +5,14 @@ from __future__ import annotations
 import pytest
 
 from src.screening.composite_score import (
-    CompositeEntry,
-    CompositeReport,
     _composite_grade,
     _fmt_adj,
+    CompositeEntry,
+    CompositeReport,
     compute_composite_scores_for_recommendations,
     render_composite_compact,
     render_composite_scores,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -4,7 +4,9 @@ import json
 
 import pandas as pd
 
-from scripts.analyze_btst_candidate_entry_frontier import analyze_btst_candidate_entry_frontier
+from scripts.analyze_btst_candidate_entry_frontier import (
+    analyze_btst_candidate_entry_frontier,
+)
 from src.screening.models import StrategySignal
 from src.targets.router import build_selection_targets
 

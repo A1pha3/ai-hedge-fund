@@ -392,7 +392,9 @@ def test_risk_off_demotion_does_not_mask_zero_position_scale() -> None:
 def test_classify_btst_regime_gate_preserves_zero_breadth_ratio() -> None:
     """R20.16 regression: classify_btst_regime_gate_from_market_state with breadth_ratio=0.0
     should preserve 0.0 (extreme bearish) rather than promoting it to 0.5 (neutral)."""
-    from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state
+    from src.screening.market_state_helpers import (
+        classify_btst_regime_gate_from_market_state,
+    )
 
     result = classify_btst_regime_gate_from_market_state({"breadth_ratio": 0.0, "daily_return": 0.0, "style_dispersion": 0.0, "regime_flip_risk": 0.0})
     assert result is not None
@@ -783,19 +785,25 @@ class TestAnalysisExcludesNeutralMeanReversion:
 
     def test_unset_returns_false(self, monkeypatch):
         monkeypatch.delenv(self.ENV, raising=False)
-        from src.screening.signal_fusion import _analysis_excludes_neutral_mean_reversion
+        from src.screening.signal_fusion import (
+            _analysis_excludes_neutral_mean_reversion,
+        )
 
         assert _analysis_excludes_neutral_mean_reversion() is False
 
     def test_truthy_values(self, monkeypatch):
-        from src.screening.signal_fusion import _analysis_excludes_neutral_mean_reversion
+        from src.screening.signal_fusion import (
+            _analysis_excludes_neutral_mean_reversion,
+        )
 
         for val in ("1", "true", "yes", "on"):
             monkeypatch.setenv(self.ENV, val)
             assert _analysis_excludes_neutral_mean_reversion() is True
 
     def test_falsy_values(self, monkeypatch):
-        from src.screening.signal_fusion import _analysis_excludes_neutral_mean_reversion
+        from src.screening.signal_fusion import (
+            _analysis_excludes_neutral_mean_reversion,
+        )
 
         for val in ("0", "false", "random"):
             monkeypatch.setenv(self.ENV, val)
@@ -803,7 +811,9 @@ class TestAnalysisExcludesNeutralMeanReversion:
 
     def test_whitespace_and_case_normalized(self, monkeypatch):
         monkeypatch.setenv(self.ENV, "  TRUE  ")
-        from src.screening.signal_fusion import _analysis_excludes_neutral_mean_reversion
+        from src.screening.signal_fusion import (
+            _analysis_excludes_neutral_mean_reversion,
+        )
 
         assert _analysis_excludes_neutral_mean_reversion() is True
 
@@ -1008,15 +1018,17 @@ class TestExtractAttentionComponentValues:
         assert _extract_attention_component_values(results, "ret_5d") == {"a": 0.02}
 
     def test_nan_skipped(self):
-        from src.screening.signal_fusion import _extract_attention_component_values
         import math
+
+        from src.screening.signal_fusion import _extract_attention_component_values
 
         results = [self._fused("a", {"v": math.nan}), self._fused("b", {"v": 0.05})]
         assert _extract_attention_component_values(results, "v") == {"b": 0.05}
 
     def test_inf_skipped(self):
-        from src.screening.signal_fusion import _extract_attention_component_values
         import math
+
+        from src.screening.signal_fusion import _extract_attention_component_values
 
         results = [self._fused("a", {"v": math.inf}), self._fused("b", {"v": 0.05})]
         assert _extract_attention_component_values(results, "v") == {"b": 0.05}

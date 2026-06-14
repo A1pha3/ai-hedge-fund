@@ -4,10 +4,8 @@ import pandas as pd
 import pytest
 
 from scripts.btst_analysis_utils import (
-    BTST_FACTOR_NAMES,
     BREAKOUT_FRESHNESS_SIGNAL_THRESHOLD,
-    INTRADAY_HIGH_TIMING_THRESHOLD,
-    OPEN_VS_HIGH_SIGNIFICANT_DISCOUNT_THRESHOLD,
+    BTST_FACTOR_NAMES,
     build_surface_summary,
     compare_reports,
     compute_all_factor_ics,
@@ -19,8 +17,10 @@ from scripts.btst_analysis_utils import (
     compute_sell_timing_analysis,
     compute_t0_bar_metrics,
     compute_t0_tail_strength_stratification,
-    summarize_distribution,
     extract_btst_price_outcome,
+    INTRADAY_HIGH_TIMING_THRESHOLD,
+    OPEN_VS_HIGH_SIGNIFICANT_DISCOUNT_THRESHOLD,
+    summarize_distribution,
 )
 
 
@@ -550,7 +550,11 @@ def test_build_surface_summary_candidate_pool_size_empty() -> None:
 # Round 14 — Task 5: Regime-conditional backtesting
 # ---------------------------------------------------------------------------
 
-from scripts.btst_analysis_utils import build_regime_conditional_stats, REGIME_BULL_DAY_RETURN_THRESHOLD, REGIME_BEAR_DAY_RETURN_THRESHOLD
+from scripts.btst_analysis_utils import (
+    build_regime_conditional_stats,
+    REGIME_BEAR_DAY_RETURN_THRESHOLD,
+    REGIME_BULL_DAY_RETURN_THRESHOLD,
+)
 
 
 def test_build_regime_conditional_stats_empty_rows() -> None:
@@ -691,7 +695,10 @@ def test_build_regime_conditional_stats_rows_without_trade_date_skipped() -> Non
 # Round 15 — Task 4: Stop-loss trigger rate analysis
 # ---------------------------------------------------------------------------
 
-from scripts.btst_analysis_utils import compute_stop_loss_trigger_rates, STOP_LOSS_THRESHOLDS
+from scripts.btst_analysis_utils import (
+    compute_stop_loss_trigger_rates,
+    STOP_LOSS_THRESHOLDS,
+)
 
 
 def test_compute_stop_loss_trigger_rates_empty_returns_none_for_each_threshold() -> None:
@@ -772,7 +779,10 @@ def test_build_surface_summary_stop_loss_rates_none_when_no_drawdown_data() -> N
 # Round 15 — Task 5: Cross-day momentum autocorrelation
 # ---------------------------------------------------------------------------
 
-from scripts.btst_analysis_utils import compute_cross_day_autocorrelation, CROSS_DAY_AUTOCORR_MEAN_REVERSION_THRESHOLD
+from scripts.btst_analysis_utils import (
+    compute_cross_day_autocorrelation,
+    CROSS_DAY_AUTOCORR_MEAN_REVERSION_THRESHOLD,
+)
 
 
 def test_compute_cross_day_autocorrelation_returns_none_when_too_few_rows() -> None:
@@ -859,7 +869,10 @@ def test_build_surface_summary_cross_day_autocorr_none_when_no_t2_data() -> None
 # Round 15 — Task 2: Opening-gap continuation rate
 # ---------------------------------------------------------------------------
 
-from scripts.btst_analysis_utils import compute_gap_continuation_rate, GAP_CONTINUATION_OPEN_THRESHOLD
+from scripts.btst_analysis_utils import (
+    compute_gap_continuation_rate,
+    GAP_CONTINUATION_OPEN_THRESHOLD,
+)
 
 
 def test_compute_gap_continuation_rate_empty_rows_returns_none() -> None:
@@ -957,16 +970,16 @@ def test_build_surface_summary_gap_continuation_rate_none_when_no_open_gap_data(
 # ---------------------------------------------------------------------------
 
 from scripts.btst_analysis_utils import (  # noqa: E402 — grouped import for R16
-    compute_t0_bar_metrics,
     compute_predicted_range_stop_loss_linkage,
-    UP_BAR_PRICE_CHANGE_MIN,
-    UPPER_SHADOW_DIVERGENCE_THRESHOLD,
+    compute_t0_bar_metrics,
     HIGH_VOL_RANGE_THRESHOLD,
     HIGH_VOL_STOP_LOSS_RATE_THRESHOLD,
+    UP_BAR_PRICE_CHANGE_MIN,
+    UPPER_SHADOW_DIVERGENCE_THRESHOLD,
 )
 
-
 # ---- compute_t0_bar_metrics -----------------------------------------------
+
 
 def test_compute_t0_bar_metrics_up_bar_strong() -> None:
     """Up bar that closes near its high → low divergence score, no divergence flag."""
@@ -1651,7 +1664,9 @@ def test_build_surface_summary_t0_tail_strength_stratification_none_when_no_tail
 
 def test_compute_runner_composite_score_net_inflow_weight_zero_is_neutral() -> None:
     """When net_inflow_weight=0, runner_composite_score must be identical to no-new-factor score."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     snap = {
         "breakout_freshness": 0.70,
@@ -1682,7 +1697,9 @@ def test_compute_runner_composite_score_net_inflow_weight_zero_is_neutral() -> N
 
 def test_compute_runner_composite_score_net_inflow_weight_nonzero_affects_score() -> None:
     """When net_inflow_weight > 0, high net_inflow should increase the composite score."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     base_snap = {"breakout_freshness": 0.50, "trend_acceleration": 0.50, "volume_expansion_quality": 0.50, "catalyst_freshness": 0.50, "close_strength": 0.50}
 
@@ -1709,7 +1726,9 @@ def test_compute_runner_composite_score_net_inflow_weight_nonzero_affects_score(
 
 def test_compute_runner_composite_score_t0_tail_weight_nonzero_affects_score() -> None:
     """When t0_tail_weight > 0, high t0_tail_strength should increase the composite score."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     base_snap = {"breakout_freshness": 0.50, "trend_acceleration": 0.50, "volume_expansion_quality": 0.50, "catalyst_freshness": 0.50, "close_strength": 0.50}
 
@@ -1736,7 +1755,9 @@ def test_compute_runner_composite_score_t0_tail_weight_nonzero_affects_score() -
 
 def test_compute_runner_composite_score_vp_divergence_weight_inverts_score() -> None:
     """Low volume_price_divergence_score (clean bar) should yield a higher composite when weight > 0."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     base_snap = {"breakout_freshness": 0.50, "trend_acceleration": 0.50, "volume_expansion_quality": 0.50, "catalyst_freshness": 0.50, "close_strength": 0.50}
 
@@ -1786,7 +1807,6 @@ def test_btst_factor_to_probe_weight_key_includes_r18_factors() -> None:
 def test_btst_runner_probe_grid_r18_weights_build_valid_profile() -> None:
     """Each Round-18 grid weight value must build a valid btst_runner_probe profile (Task 1, Round 18)."""
     from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID
-
     from src.targets.profiles import build_short_trade_target_profile
 
     for param_name in ("runner_composite_score_net_inflow_weight", "runner_composite_score_volume_price_divergence_weight", "runner_composite_score_t0_tail_weight"):
@@ -1943,7 +1963,9 @@ def test_btst_runner_probe_grid_includes_momentum_alignment_weight() -> None:
 
 def test_compute_runner_composite_score_momentum_alignment_weight_zero_is_neutral() -> None:
     """When momentum_alignment_weight=0, presence/absence of multi_period_alignment_score must not change score."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     base_snap = {"breakout_freshness": 0.60, "trend_acceleration": 0.55, "volume_expansion_quality": 0.50, "catalyst_freshness": 0.40, "close_strength": 0.45}
 
@@ -1968,7 +1990,9 @@ def test_compute_runner_composite_score_momentum_alignment_weight_zero_is_neutra
 
 def test_compute_runner_composite_score_high_alignment_beats_low_when_weight_nonzero() -> None:
     """High multi_period_alignment_score must yield higher composite than low when weight > 0 (Task 2, R19)."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     base_snap = {"breakout_freshness": 0.50, "trend_acceleration": 0.50, "volume_expansion_quality": 0.50, "catalyst_freshness": 0.50, "close_strength": 0.50}
 
@@ -1993,7 +2017,9 @@ def test_compute_runner_composite_score_high_alignment_beats_low_when_weight_non
 
 def test_compute_runner_composite_score_missing_alignment_uses_neutral() -> None:
     """Missing multi_period_alignment_score must use neutral 0.5 (no penalty, no bonus) (Task 2, R19)."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     base_snap = {"breakout_freshness": 0.50, "trend_acceleration": 0.50, "volume_expansion_quality": 0.50, "catalyst_freshness": 0.50, "close_strength": 0.50}
 
@@ -2349,7 +2375,10 @@ def test_limit_up_win_rate_none_when_fewer_than_3_samples() -> None:
 # ---------------------------------------------------------------------------
 
 
-from scripts.btst_analysis_utils import compute_kelly_position_fractions, compute_regime_consistency_check
+from scripts.btst_analysis_utils import (
+    compute_kelly_position_fractions,
+    compute_regime_consistency_check,
+)
 
 
 def test_r23_kelly_standard_calculation() -> None:
@@ -2757,7 +2786,9 @@ def test_r26_cross_factor_neutral_when_primary_missing() -> None:
 
 def test_r26_runner_composite_score_supports_new_weights() -> None:
     """compute_runner_composite_score must accept momentum_confirmation and volume_momentum weights."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
     snapshot = {
         "breakout_freshness": 0.8,
         "close_strength": 0.9,
@@ -2790,7 +2821,9 @@ def test_r26_runner_composite_score_supports_new_weights() -> None:
 
 def test_r26_runner_composite_score_zero_new_weights_matches_baseline() -> None:
     """When new F11/F12 weights are 0.0, score must match the weight-normalized baseline."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
     snapshot = {"breakout_freshness": 0.7, "trend_acceleration": 0.5, "volume_expansion_quality": 0.6, "catalyst_freshness": 0.4, "close_strength": 0.8}
 
     class ProfileWithNew:

@@ -3,11 +3,11 @@ import pytest
 from src.execution.models import LayerCResult
 from src.screening.models import StrategySignal
 from src.targets.profiles import get_short_trade_target_profile
-from src.targets.short_trade_target_committee_helpers import _flow_raw_score
 from src.targets.short_trade_target import (
     build_short_trade_target_snapshot_from_entry,
     evaluate_short_trade_rejected_target,
 )
+from src.targets.short_trade_target_committee_helpers import _flow_raw_score
 
 
 def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
@@ -1339,14 +1339,18 @@ def test_runner_composite_score_present_in_committee_output() -> None:
 
 
 def test_runner_composite_score_zero_when_signals_absent() -> None:
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     assert compute_runner_composite_score({}) == 0.0
     assert compute_runner_composite_score({"breakout_freshness": None}) == 0.0
 
 
 def test_runner_composite_score_direct_computation() -> None:
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     # With close_strength absent (defaults to 0.0):
     # raw = 0.40*0.80 + 0.30*0.70 + 0.20*0.60 + 0.10*0.50 + 0.10*0.0 = 0.70
@@ -1364,7 +1368,9 @@ def test_runner_composite_score_direct_computation() -> None:
 
 def test_runner_composite_score_uses_profile_weights() -> None:
     """compute_runner_composite_score reads weight fields from profile when provided."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     class FakeProfile:
         runner_composite_score_breakout_weight = 0.50
@@ -1393,7 +1399,9 @@ def test_runner_composite_score_uses_profile_weights() -> None:
 
 def test_runner_composite_score_normalizes_unnormalized_weights() -> None:
     """Weights not summing to 1.0 are automatically normalized so score stays in [0,1]."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     class HighSumProfile:
         runner_composite_score_breakout_weight = 0.45
@@ -1421,7 +1429,9 @@ def test_runner_composite_score_normalizes_unnormalized_weights() -> None:
 
 def test_runner_composite_score_includes_close_strength() -> None:
     """close_strength contributes to runner composite score and improves it when high."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     base_snapshot = {
         "breakout_freshness": 0.70,
@@ -1446,14 +1456,18 @@ def test_runner_composite_score_includes_close_strength() -> None:
 
 def test_sector_resonance_phase_score_neutral_when_zero() -> None:
     """Raw sector_resonance=0 (absent) → default 0.5 in runner composite, phase function clamps."""
-    from src.targets.short_trade_target_rank_helpers import compute_sector_resonance_phase_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_sector_resonance_phase_score,
+    )
     score = compute_sector_resonance_phase_score(0.0)
     assert score == pytest.approx(0.0)  # phase fn returns 0 for 0 input (neutral handled by caller)
 
 
 def test_sector_resonance_phase_score_strong_alignment_exceeds_linear() -> None:
     """Phase-amplified score for strong sector alignment (>0.65) should exceed the raw linear value."""
-    from src.targets.short_trade_target_rank_helpers import compute_sector_resonance_phase_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_sector_resonance_phase_score,
+    )
     raw = 0.80
     linear_score = raw  # what the old code would return
     phase_score = compute_sector_resonance_phase_score(raw)
@@ -1463,7 +1477,9 @@ def test_sector_resonance_phase_score_strong_alignment_exceeds_linear() -> None:
 
 def test_sector_resonance_phase_score_weak_alignment_below_linear() -> None:
     """Phase-amplified score for weak sector alignment (<0.35) should be below the raw linear value."""
-    from src.targets.short_trade_target_rank_helpers import compute_sector_resonance_phase_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_sector_resonance_phase_score,
+    )
     raw = 0.20
     linear_score = raw
     phase_score = compute_sector_resonance_phase_score(raw)
@@ -1473,14 +1489,18 @@ def test_sector_resonance_phase_score_weak_alignment_below_linear() -> None:
 
 def test_sector_resonance_phase_score_mid_range_unchanged() -> None:
     """Mid-range sector resonance (0.35–0.65) is passed through linearly without amplification."""
-    from src.targets.short_trade_target_rank_helpers import compute_sector_resonance_phase_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_sector_resonance_phase_score,
+    )
     for raw in (0.40, 0.50, 0.60):
         assert compute_sector_resonance_phase_score(raw) == pytest.approx(raw, abs=1e-4), f"Mid-range raw={raw} should be linear"
 
 
 def test_sector_resonance_phase_score_clamped_to_unit_interval() -> None:
     """Phase score must always be in [0.0, 1.0] regardless of input."""
-    from src.targets.short_trade_target_rank_helpers import compute_sector_resonance_phase_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_sector_resonance_phase_score,
+    )
     for raw in (-0.5, 0.0, 0.5, 1.0, 1.5):
         score = compute_sector_resonance_phase_score(raw)
         assert 0.0 <= score <= 1.0, f"Score {score} out of range for raw={raw}"
@@ -1488,7 +1508,9 @@ def test_sector_resonance_phase_score_clamped_to_unit_interval() -> None:
 
 def test_runner_composite_score_phase_amplifies_strong_sector() -> None:
     """Strong sector resonance (0.85) should yield higher composite than mid resonance (0.50) when sr_weight > 0."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     class SectorWeightedProfile:
         runner_composite_score_breakout_weight = 0.30
@@ -1515,7 +1537,9 @@ def test_runner_composite_score_phase_amplifies_strong_sector() -> None:
 
 def test_quiet_breakout_score_disabled_by_default() -> None:
     """When quiet_breakout_weight=0 (default), the composite score is identical to the non-cross case."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     snapshot = {"breakout_freshness": 0.80, "trend_acceleration": 0.65, "volume_expansion_quality": 0.60, "volatility_regime": 0.9, "atr_ratio": 0.04}
     # No profile → default weights used (quiet_breakout_weight defaults to 0.0).
@@ -1537,7 +1561,9 @@ def test_quiet_breakout_score_disabled_by_default() -> None:
 
 def test_quiet_breakout_score_penalises_high_volatility() -> None:
     """A stock with high volatility should score lower on quiet_breakout than an identical low-volatility stock."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     class QbEnabledProfile:
         runner_composite_score_breakout_weight = 0.30
@@ -1566,7 +1592,9 @@ def test_quiet_breakout_score_absent_volatility_defaults_to_breakout() -> None:
     """When no volatility data is present, volatility_risk_factor=0 so quiet_breakout_score equals breakout_freshness.
     Verified by showing that splitting breakout weight between breakout and quiet_breakout yields the same composite
     score as concentrating all weight on breakout — only valid when quiet_breakout == breakout (no vol data)."""
-    from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+    from src.targets.short_trade_target_rank_helpers import (
+        compute_runner_composite_score,
+    )
 
     snapshot = {"breakout_freshness": 0.75, "trend_acceleration": 0.50}
 

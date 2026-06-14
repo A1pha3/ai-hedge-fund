@@ -5,16 +5,20 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
-from fastapi import FastAPI, Depends
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.backend.auth.dependencies import get_current_user, require_admin
+from app.backend.auth.utils import (
+    create_access_token,
+    create_reset_token,
+    hash_password,
+)
 from app.backend.database.connection import Base, get_db
 from app.backend.models.user import User
-from app.backend.auth.dependencies import get_current_user, require_admin
-from app.backend.auth.utils import hash_password, create_access_token, create_reset_token
 
 
 @pytest.fixture()

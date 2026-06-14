@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.run_btst_candidate_pool_rebucket_shadow_pack import run_btst_candidate_pool_rebucket_shadow_pack
+from scripts.run_btst_candidate_pool_rebucket_shadow_pack import (
+    run_btst_candidate_pool_rebucket_shadow_pack,
+)
 
 
 def test_run_btst_candidate_pool_rebucket_shadow_pack_builds_target_pack(tmp_path: Path) -> None:

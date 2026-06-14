@@ -6,7 +6,11 @@ import pytest
 from src.execution.daily_pipeline import _enforce_btst_execution_contract_p5
 from src.execution.models import ExecutionPlan
 from src.portfolio.models import PositionPlan
-from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult
+from src.targets.models import (
+    DualTargetEvaluation,
+    DualTargetSummary,
+    TargetEvaluationResult,
+)
 
 
 def _build_test_plan(

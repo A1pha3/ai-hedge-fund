@@ -6,7 +6,11 @@ import pytest
 
 import src.portfolio.exit_manager as exit_manager_module
 from src.portfolio.exit_manager import check_exit_signal
-from src.portfolio.industry_exposure import calculate_industry_exposures, calculate_portfolio_hhi, get_industry_remaining_quota
+from src.portfolio.industry_exposure import (
+    calculate_industry_exposures,
+    calculate_portfolio_hhi,
+    get_industry_remaining_quota,
+)
 from src.portfolio.models import HoldingState
 from src.portfolio.position_calculator import calculate_position
 

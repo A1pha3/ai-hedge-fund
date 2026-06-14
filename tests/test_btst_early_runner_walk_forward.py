@@ -3,7 +3,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import src.backtesting.early_runner_walk_forward as walk_forward_module
-from src.backtesting.early_runner_walk_forward import build_early_runner_walk_forward_summary
+from src.backtesting.early_runner_walk_forward import (
+    build_early_runner_walk_forward_summary,
+)
 
 
 def test_build_early_runner_walk_forward_summary_handles_no_first_entry_rows() -> None:

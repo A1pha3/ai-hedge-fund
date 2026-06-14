@@ -26,14 +26,14 @@ from typing import Any
 import pytest
 
 from src.screening.conditional_order_advisor import (
-    ConditionalOrderAdvice,
     compute_conditional_advice,
+    ConditionalOrderAdvice,
 )
 from src.screening.conditional_order_export import (
+    advice_to_broker_order,
+    BrokerConditionalOrder,
     DEFAULT_QUANTITY,
     DEFAULT_VALID_DAYS,
-    BrokerConditionalOrder,
-    advice_to_broker_order,
     export_conditional_orders,
     export_from_dicts,
     gtja_adapter,
@@ -41,7 +41,6 @@ from src.screening.conditional_order_export import (
     run_export_conditional_orders_cli,
     ths_adapter,
 )
-
 
 # ===========================================================================
 # Fixtures

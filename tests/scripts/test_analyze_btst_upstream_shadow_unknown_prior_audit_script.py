@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.btst_latest_followup_utils import load_upstream_shadow_followup_rows_for_report
+from scripts.btst_latest_followup_utils import (
+    load_upstream_shadow_followup_rows_for_report,
+)
 
 
 def test_load_upstream_shadow_followup_rows_for_report_returns_rows_with_report_metadata(tmp_path) -> None:
@@ -59,7 +61,9 @@ def test_load_upstream_shadow_followup_rows_for_report_returns_rows_with_report_
 
 
 def test_analyze_btst_upstream_shadow_unknown_prior_audit_splits_attachment_gap_and_low_sample_rows(monkeypatch, tmp_path) -> None:
-    from scripts.analyze_btst_upstream_shadow_unknown_prior_audit import analyze_btst_upstream_shadow_unknown_prior_audit
+    from scripts.analyze_btst_upstream_shadow_unknown_prior_audit import (
+        analyze_btst_upstream_shadow_unknown_prior_audit,
+    )
 
     report_dir = tmp_path / "report-20260520"
     report_dir.mkdir()
@@ -168,7 +172,9 @@ def test_analyze_btst_upstream_shadow_unknown_prior_audit_splits_attachment_gap_
 
 
 def test_analyze_btst_upstream_shadow_unknown_prior_audit_treats_missing_priors_as_attachment_gaps_and_does_not_count_empty_reports(monkeypatch, tmp_path) -> None:
-    from scripts.analyze_btst_upstream_shadow_unknown_prior_audit import analyze_btst_upstream_shadow_unknown_prior_audit
+    from scripts.analyze_btst_upstream_shadow_unknown_prior_audit import (
+        analyze_btst_upstream_shadow_unknown_prior_audit,
+    )
 
     empty_report_dir = tmp_path / "report-20260519"
     empty_report_dir.mkdir()
@@ -225,7 +231,9 @@ def test_analyze_btst_upstream_shadow_unknown_prior_audit_treats_missing_priors_
 
 
 def test_render_btst_upstream_shadow_unknown_prior_audit_markdown_renders_coverage_and_boards() -> None:
-    from scripts.analyze_btst_upstream_shadow_unknown_prior_audit import render_btst_upstream_shadow_unknown_prior_audit_markdown
+    from scripts.analyze_btst_upstream_shadow_unknown_prior_audit import (
+        render_btst_upstream_shadow_unknown_prior_audit_markdown,
+    )
 
     markdown = render_btst_upstream_shadow_unknown_prior_audit_markdown(
         {

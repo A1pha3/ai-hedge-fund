@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_recurring_frontier_release_pair_comparison import analyze_recurring_frontier_release_pair_comparison
+from scripts.analyze_recurring_frontier_release_pair_comparison import (
+    analyze_recurring_frontier_release_pair_comparison,
+)
 
 
 def test_analyze_recurring_frontier_release_pair_comparison_separates_intraday_and_control_roles(tmp_path):

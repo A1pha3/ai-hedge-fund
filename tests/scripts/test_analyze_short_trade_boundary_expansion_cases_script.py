@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_short_trade_boundary_expansion_cases import analyze_short_trade_boundary_expansion_cases
+from scripts.analyze_short_trade_boundary_expansion_cases import (
+    analyze_short_trade_boundary_expansion_cases,
+)
 
 
 def test_analyze_short_trade_boundary_expansion_cases_classifies_added_cases(tmp_path):

@@ -7,15 +7,14 @@ from typing import Any
 
 import pytest
 
+from src.screening.industry_rotation import IndustrySignal
 from src.screening.sector_strength import (
-    SectorStrengthInfo,
-    SectorStrengthReport,
     _build_sector_lookup,
     compute_sector_strength,
     render_sector_strength,
+    SectorStrengthInfo,
+    SectorStrengthReport,
 )
-from src.screening.industry_rotation import IndustrySignal
-
 
 # ---------------------------------------------------------------------------
 # Unit: _build_sector_lookup

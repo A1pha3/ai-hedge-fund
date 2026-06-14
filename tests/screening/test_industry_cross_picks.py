@@ -1,12 +1,11 @@
 """Tests for P3-3: industry_cross_picks module."""
 from src.screening.industry_cross_picks import (
+    _extract_top_picks_for_industry,
+    compute_cross_picks,
     CrossPick,
     IndustryTopPick,
-    compute_cross_picks,
     render_cross_picks,
-    _extract_top_picks_for_industry,
 )
-
 
 SAMPLE_RECS = [
     {"ticker": "000001", "name": "平安银行", "industry_sw": "银行", "score_b": 0.85, "decision": "bullish"},

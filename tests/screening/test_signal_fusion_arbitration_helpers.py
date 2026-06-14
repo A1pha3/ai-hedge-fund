@@ -6,13 +6,13 @@ import pytest
 
 from src.screening.models import DEFAULT_STRATEGY_WEIGHTS, MarketState, StrategySignal
 from src.screening.signal_fusion_arbitration_helpers import (
-    LONG_HOLD_STRATEGIES,
-    SHORT_HOLD_STRATEGIES,
-    ArbitrationState,
     apply_hold_hint,
     apply_hurst_conflict_resolution,
+    ArbitrationState,
     initialize_arbitration_state,
+    LONG_HOLD_STRATEGIES,
     maybe_apply_forced_avoid,
+    SHORT_HOLD_STRATEGIES,
 )
 
 
@@ -277,7 +277,9 @@ class TestMaybeApplyForcedAvoid:
 
 class TestHasBearishFundamentalConsensus:
     def test_consensus_when_fundamental_and_other_bearish(self):
-        from src.screening.signal_fusion_arbitration_helpers import _has_bearish_fundamental_consensus
+        from src.screening.signal_fusion_arbitration_helpers import (
+            _has_bearish_fundamental_consensus,
+        )
 
         fundamental = StrategySignal(direction=-1, confidence=80.0, completeness=1.0, sub_factors={})
         signals = {
@@ -286,7 +288,9 @@ class TestHasBearishFundamentalConsensus:
         assert _has_bearish_fundamental_consensus(signals, fundamental) is True
 
     def test_no_consensus_when_fundamental_not_bearish(self):
-        from src.screening.signal_fusion_arbitration_helpers import _has_bearish_fundamental_consensus
+        from src.screening.signal_fusion_arbitration_helpers import (
+            _has_bearish_fundamental_consensus,
+        )
 
         fundamental = StrategySignal(direction=1, confidence=80.0, completeness=1.0, sub_factors={})
         signals = {
@@ -295,7 +299,9 @@ class TestHasBearishFundamentalConsensus:
         assert _has_bearish_fundamental_consensus(signals, fundamental) is False
 
     def test_no_consensus_when_other_bearish_below_threshold(self):
-        from src.screening.signal_fusion_arbitration_helpers import _has_bearish_fundamental_consensus
+        from src.screening.signal_fusion_arbitration_helpers import (
+            _has_bearish_fundamental_consensus,
+        )
 
         fundamental = StrategySignal(direction=-1, confidence=80.0, completeness=1.0, sub_factors={})
         signals = {
@@ -304,7 +310,9 @@ class TestHasBearishFundamentalConsensus:
         assert _has_bearish_fundamental_consensus(signals, fundamental) is False
 
     def test_no_consensus_when_no_other_bearish(self):
-        from src.screening.signal_fusion_arbitration_helpers import _has_bearish_fundamental_consensus
+        from src.screening.signal_fusion_arbitration_helpers import (
+            _has_bearish_fundamental_consensus,
+        )
 
         fundamental = StrategySignal(direction=-1, confidence=80.0, completeness=1.0, sub_factors={})
         signals = {
@@ -315,33 +323,43 @@ class TestHasBearishFundamentalConsensus:
 
 class TestHasConflictingTrendAndReversion:
     def test_conflict_opposite_directions(self):
-        from src.screening.signal_fusion_arbitration_helpers import _has_conflicting_trend_and_reversion
+        from src.screening.signal_fusion_arbitration_helpers import (
+            _has_conflicting_trend_and_reversion,
+        )
 
         trend = StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={})
         mr = StrategySignal(direction=-1, confidence=60.0, completeness=1.0, sub_factors={})
         assert _has_conflicting_trend_and_reversion(trend, mr) is True
 
     def test_no_conflict_same_direction(self):
-        from src.screening.signal_fusion_arbitration_helpers import _has_conflicting_trend_and_reversion
+        from src.screening.signal_fusion_arbitration_helpers import (
+            _has_conflicting_trend_and_reversion,
+        )
 
         trend = StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={})
         mr = StrategySignal(direction=1, confidence=60.0, completeness=1.0, sub_factors={})
         assert _has_conflicting_trend_and_reversion(trend, mr) is False
 
     def test_no_conflict_when_trend_none(self):
-        from src.screening.signal_fusion_arbitration_helpers import _has_conflicting_trend_and_reversion
+        from src.screening.signal_fusion_arbitration_helpers import (
+            _has_conflicting_trend_and_reversion,
+        )
 
         mr = StrategySignal(direction=-1, confidence=60.0, completeness=1.0, sub_factors={})
         assert _has_conflicting_trend_and_reversion(None, mr) is False
 
     def test_no_conflict_when_mean_reversion_none(self):
-        from src.screening.signal_fusion_arbitration_helpers import _has_conflicting_trend_and_reversion
+        from src.screening.signal_fusion_arbitration_helpers import (
+            _has_conflicting_trend_and_reversion,
+        )
 
         trend = StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={})
         assert _has_conflicting_trend_and_reversion(trend, None) is False
 
     def test_no_conflict_when_neutral_direction(self):
-        from src.screening.signal_fusion_arbitration_helpers import _has_conflicting_trend_and_reversion
+        from src.screening.signal_fusion_arbitration_helpers import (
+            _has_conflicting_trend_and_reversion,
+        )
 
         trend = StrategySignal(direction=0, confidence=70.0, completeness=1.0, sub_factors={})
         mr = StrategySignal(direction=-1, confidence=60.0, completeness=1.0, sub_factors={})
@@ -350,7 +368,9 @@ class TestHasConflictingTrendAndReversion:
 
 class TestExtractHurstExponent:
     def test_extracts_value(self):
-        from src.screening.signal_fusion_arbitration_helpers import _extract_hurst_exponent
+        from src.screening.signal_fusion_arbitration_helpers import (
+            _extract_hurst_exponent,
+        )
 
         mr = StrategySignal(
             direction=-1,
@@ -361,19 +381,25 @@ class TestExtractHurstExponent:
         assert _extract_hurst_exponent(mr) == 0.42
 
     def test_missing_sub_factor_returns_none(self):
-        from src.screening.signal_fusion_arbitration_helpers import _extract_hurst_exponent
+        from src.screening.signal_fusion_arbitration_helpers import (
+            _extract_hurst_exponent,
+        )
 
         mr = StrategySignal(direction=-1, confidence=60.0, completeness=1.0, sub_factors={})
         assert _extract_hurst_exponent(mr) is None
 
     def test_missing_metrics_returns_none(self):
-        from src.screening.signal_fusion_arbitration_helpers import _extract_hurst_exponent
+        from src.screening.signal_fusion_arbitration_helpers import (
+            _extract_hurst_exponent,
+        )
 
         mr = StrategySignal(direction=-1, confidence=60.0, completeness=1.0, sub_factors={"hurst_regime": {}})
         assert _extract_hurst_exponent(mr) is None
 
     def test_missing_key_returns_none(self):
-        from src.screening.signal_fusion_arbitration_helpers import _extract_hurst_exponent
+        from src.screening.signal_fusion_arbitration_helpers import (
+            _extract_hurst_exponent,
+        )
 
         mr = StrategySignal(direction=-1, confidence=60.0, completeness=1.0, sub_factors={"hurst_regime": {"metrics": {}}})
         assert _extract_hurst_exponent(mr) is None

@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 
 from src.screening.consecutive_recommendation import (
-    RecommendationStatus,
-    ConsecutiveStats,
     compute_consecutive_recommendations,
+    ConsecutiveStats,
     enrich_recommendations_with_history,
     load_auto_screening_history,
+    RecommendationStatus,
     resolve_report_dir,
 )
 

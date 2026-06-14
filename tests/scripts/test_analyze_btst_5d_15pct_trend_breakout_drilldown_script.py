@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
-import json
 
 import scripts.analyze_btst_5d_15pct_trend_breakout_drilldown as drilldown_script
 

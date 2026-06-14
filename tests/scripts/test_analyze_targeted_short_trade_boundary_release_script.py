@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_targeted_short_trade_boundary_release import analyze_targeted_short_trade_boundary_release
+from scripts.analyze_targeted_short_trade_boundary_release import (
+    analyze_targeted_short_trade_boundary_release,
+)
 
 
 def test_analyze_targeted_short_trade_boundary_release_changes_only_target_case(tmp_path):

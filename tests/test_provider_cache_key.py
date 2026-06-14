@@ -16,7 +16,6 @@ import src.tools.api as api
 from src.data.base_provider import DataResponse, DataType
 from src.data.router import DataRouter
 
-
 # ---------------------------------------------------------------------------
 # api.py provider-key generation
 # ---------------------------------------------------------------------------

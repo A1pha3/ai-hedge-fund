@@ -8,10 +8,11 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
+import src.screening.candidate_pool as candidate_pool_module
 from src.screening.candidate_pool import (
-    _estimate_trading_days,
-    _estimate_amount_from_daily_basic,
     _enforce_tushare_daily_rate_limit,
+    _estimate_amount_from_daily_basic,
+    _estimate_trading_days,
     _get_avg_amount_20d_map,
     _is_disclosure_window,
     _resolve_avg_amount_20d_from_daily_df,
@@ -23,12 +24,11 @@ from src.screening.candidate_pool import (
     save_cooldown_registry,
 )
 from src.screening.models import CandidateStock
-import src.screening.candidate_pool as candidate_pool_module
-
 
 # ============================================================================
 # Fixtures
 # ============================================================================
+
 
 def _make_stock_basic_df(rows: list[dict]) -> pd.DataFrame:
     """构造 stock_basic 格式的 DataFrame"""
@@ -1963,7 +1963,9 @@ class TestActiveCorridorPrimaryFocusLoader:
     """
 
     def test_loads_primary_ticker_when_pack_is_ready_for_shadow_replay(self, tmp_path):
-        from src.screening.candidate_pool import _load_active_corridor_primary_shadow_focus
+        from src.screening.candidate_pool import (
+            _load_active_corridor_primary_shadow_focus,
+        )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         pack_path.write_text(json.dumps({
@@ -1974,7 +1976,9 @@ class TestActiveCorridorPrimaryFocusLoader:
         assert "300683" in result
 
     def test_loads_primary_ticker_when_pack_is_diagnostic_primary_shadow_replay_only(self, tmp_path):
-        from src.screening.candidate_pool import _load_active_corridor_primary_shadow_focus
+        from src.screening.candidate_pool import (
+            _load_active_corridor_primary_shadow_focus,
+        )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         pack_path.write_text(json.dumps({
@@ -1985,13 +1989,17 @@ class TestActiveCorridorPrimaryFocusLoader:
         assert "300683" in result
 
     def test_returns_empty_set_when_pack_file_is_missing(self, tmp_path):
-        from src.screening.candidate_pool import _load_active_corridor_primary_shadow_focus
+        from src.screening.candidate_pool import (
+            _load_active_corridor_primary_shadow_focus,
+        )
 
         result = _load_active_corridor_primary_shadow_focus(tmp_path / "nonexistent.json")
         assert result == set()
 
     def test_returns_empty_set_when_status_is_not_ready(self, tmp_path):
-        from src.screening.candidate_pool import _load_active_corridor_primary_shadow_focus
+        from src.screening.candidate_pool import (
+            _load_active_corridor_primary_shadow_focus,
+        )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         pack_path.write_text(json.dumps({
@@ -2002,7 +2010,9 @@ class TestActiveCorridorPrimaryFocusLoader:
         assert "300683" not in result
 
     def test_returns_empty_set_when_primary_ticker_is_blank(self, tmp_path):
-        from src.screening.candidate_pool import _load_active_corridor_primary_shadow_focus
+        from src.screening.candidate_pool import (
+            _load_active_corridor_primary_shadow_focus,
+        )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         pack_path.write_text(json.dumps({
@@ -2013,7 +2023,9 @@ class TestActiveCorridorPrimaryFocusLoader:
         assert result == set()
 
     def test_returns_empty_set_when_pack_json_is_invalid(self, tmp_path):
-        from src.screening.candidate_pool import _load_active_corridor_primary_shadow_focus
+        from src.screening.candidate_pool import (
+            _load_active_corridor_primary_shadow_focus,
+        )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         pack_path.write_text("not valid json {{")
@@ -2023,7 +2035,9 @@ class TestActiveCorridorPrimaryFocusLoader:
     @pytest.mark.parametrize("payload", ["null", "[]", '"a string"', "42"])
     def test_returns_empty_set_when_pack_json_is_not_a_dict(self, tmp_path, payload):
         """Non-dict JSON payloads (null, list, string, number) must not raise AttributeError."""
-        from src.screening.candidate_pool import _load_active_corridor_primary_shadow_focus
+        from src.screening.candidate_pool import (
+            _load_active_corridor_primary_shadow_focus,
+        )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         pack_path.write_text(payload)
@@ -2033,7 +2047,9 @@ class TestActiveCorridorPrimaryFocusLoader:
     @pytest.mark.parametrize("bad_value", [["300683"], "300683", 300683, True])
     def test_returns_empty_set_when_primary_shadow_replay_is_truthy_non_dict(self, tmp_path, bad_value):
         """A dict payload with a truthy non-dict primary_shadow_replay must not raise AttributeError."""
-        from src.screening.candidate_pool import _load_active_corridor_primary_shadow_focus
+        from src.screening.candidate_pool import (
+            _load_active_corridor_primary_shadow_focus,
+        )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         pack_path.write_text(json.dumps({
@@ -2046,7 +2062,11 @@ class TestActiveCorridorPrimaryFocusLoader:
     def test_shadow_focus_payload_includes_pack_primary_in_corridor_layer_key(self, tmp_path):
         """When the shadow pack has a ready primary, _shadow_focus_payload must include it
         under the 'layer_a_liquidity_corridor' key so the focus signature changes."""
-        from src.screening.candidate_pool import _shadow_focus_payload, _CORRIDOR_SHADOW_PACK_PATH, _UPSTREAM_REPEAT_SATURATION_BOARD_PATH
+        from src.screening.candidate_pool import (
+            _CORRIDOR_SHADOW_PACK_PATH,
+            _shadow_focus_payload,
+            _UPSTREAM_REPEAT_SATURATION_BOARD_PATH,
+        )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         saturation_board = tmp_path / "repeat_saturation_board.json"
@@ -2070,7 +2090,11 @@ class TestActiveCorridorPrimaryFocusLoader:
     def test_resolve_shadow_focus_tickers_includes_pack_primary_for_corridor_lane(self, tmp_path):
         """_resolve_shadow_focus_tickers for corridor lane must include the pack primary
         so that classify_overflow_candidate applies the focus-relaxed gate to 300683."""
-        from src.screening.candidate_pool import _resolve_shadow_focus_tickers, _CORRIDOR_SHADOW_PACK_PATH, _UPSTREAM_REPEAT_SATURATION_BOARD_PATH
+        from src.screening.candidate_pool import (
+            _CORRIDOR_SHADOW_PACK_PATH,
+            _resolve_shadow_focus_tickers,
+            _UPSTREAM_REPEAT_SATURATION_BOARD_PATH,
+        )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         saturation_board = tmp_path / "repeat_saturation_board.json"
@@ -2088,7 +2112,11 @@ class TestActiveCorridorPrimaryFocusLoader:
 
     def test_resolve_shadow_focus_tickers_includes_diagnostic_pack_primary_for_corridor_lane(self, tmp_path):
         """Diagnostic-only primary replay must still activate the corridor lane focus-relaxed path."""
-        from src.screening.candidate_pool import _resolve_shadow_focus_tickers, _CORRIDOR_SHADOW_PACK_PATH, _UPSTREAM_REPEAT_SATURATION_BOARD_PATH
+        from src.screening.candidate_pool import (
+            _CORRIDOR_SHADOW_PACK_PATH,
+            _resolve_shadow_focus_tickers,
+            _UPSTREAM_REPEAT_SATURATION_BOARD_PATH,
+        )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         saturation_board = tmp_path / "repeat_saturation_board.json"
@@ -2106,7 +2134,10 @@ class TestActiveCorridorPrimaryFocusLoader:
 
     def test_resolve_shadow_focus_tickers_does_not_include_pack_primary_for_rebucket_lane(self, tmp_path):
         """Pack primary focus must not bleed into the rebucket lane's focus set."""
-        from src.screening.candidate_pool import _resolve_shadow_focus_tickers, _CORRIDOR_SHADOW_PACK_PATH
+        from src.screening.candidate_pool import (
+            _CORRIDOR_SHADOW_PACK_PATH,
+            _resolve_shadow_focus_tickers,
+        )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         pack_path.write_text(json.dumps({
@@ -2122,7 +2153,11 @@ class TestActiveCorridorPrimaryFocusLoader:
     def test_shadow_focus_signature_changes_when_pack_primary_is_set(self, tmp_path):
         """Focus signature must differ when the corridor pack has a ready primary so the
         cache path is unique and 300683 gets a fresh shadow pool computation."""
-        from src.screening.candidate_pool import _shadow_focus_signature, _CORRIDOR_SHADOW_PACK_PATH, _UPSTREAM_REPEAT_SATURATION_BOARD_PATH
+        from src.screening.candidate_pool import (
+            _CORRIDOR_SHADOW_PACK_PATH,
+            _shadow_focus_signature,
+            _UPSTREAM_REPEAT_SATURATION_BOARD_PATH,
+        )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         saturation_board = tmp_path / "repeat_saturation_board.json"
@@ -2157,7 +2192,11 @@ class TestActiveCorridorPrimaryFocusLoader:
 
     def test_shadow_focus_signature_changes_when_repeat_saturation_board_changes(self, tmp_path):
         """Changing repeat-saturation blocked tickers must change the focus signature so cached shadow snapshots are invalidated."""
-        from src.screening.candidate_pool import _shadow_focus_signature, _CORRIDOR_SHADOW_PACK_PATH, _UPSTREAM_REPEAT_SATURATION_BOARD_PATH
+        from src.screening.candidate_pool import (
+            _CORRIDOR_SHADOW_PACK_PATH,
+            _shadow_focus_signature,
+            _UPSTREAM_REPEAT_SATURATION_BOARD_PATH,
+        )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
         saturation_board = tmp_path / "repeat_saturation_board.json"

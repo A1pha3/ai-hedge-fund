@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from src.execution.daily_pipeline_candidate_helpers import build_short_trade_boundary_metrics_payload, rank_scored_entries
+from src.execution.daily_pipeline_candidate_helpers import (
+    build_short_trade_boundary_metrics_payload,
+    rank_scored_entries,
+)
 
 
 def test_build_short_trade_boundary_metrics_payload_includes_continuation_and_reversal_from_snapshot() -> None:

@@ -21,13 +21,13 @@ from unittest.mock import patch
 
 from src.cli import dispatcher
 from src.cli.dispatcher import (
-    COMMAND_REGISTRY,
     _get_kv,
     _has_flag,
     _next_arg,
     _normalize_date,
     _parse_float,
     _parse_int,
+    COMMAND_REGISTRY,
     dispatch,
 )
 

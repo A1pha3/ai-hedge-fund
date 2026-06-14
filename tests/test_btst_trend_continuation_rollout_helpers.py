@@ -6,9 +6,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-import scripts.btst_trend_continuation_rollout_helpers as rollout_helpers
 import scripts.btst_trend_continuation_rollout_assessment as trend_continuation_rollout_assessment
-from scripts.btst_trend_continuation_rollout_helpers import build_trend_continuation_rollout_assessment
+import scripts.btst_trend_continuation_rollout_helpers as rollout_helpers
+from scripts.btst_trend_continuation_rollout_helpers import (
+    build_trend_continuation_rollout_assessment,
+)
 
 
 def _build_analysis(

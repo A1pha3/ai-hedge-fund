@@ -6,16 +6,15 @@ import pytest
 from pydantic import ValidationError
 
 from src.screening.models import (
-    DEFAULT_STRATEGY_WEIGHTS,
     ArbitrationAction,
     CandidateStock,
+    DEFAULT_STRATEGY_WEIGHTS,
     FusedScore,
     MarketState,
     MarketStateType,
     StrategySignal,
     SubFactor,
 )
-
 
 # ---------------------------------------------------------------------------
 # SubFactor

@@ -15,16 +15,16 @@ from pathlib import Path
 import pytest
 
 from src.paper_trading.btst_outcome_ledger import (
-    OutcomeCategory,
-    OutcomeDataStatus,
-    OutcomeLedgerHeader,
-    OutcomeVerdict,
-    TickerOutcome,
     build_ledger_header,
     build_ticker_outcome,
     classify_verdict,
     compute_incremental_evidence,
+    OutcomeCategory,
+    OutcomeDataStatus,
+    OutcomeLedgerHeader,
+    OutcomeVerdict,
     read_outcome_ledger,
+    TickerOutcome,
     write_outcome_ledger,
 )
 
@@ -241,7 +241,10 @@ class TestAtomicWrite:
 class TestOutcomeDoesNotModifySummary:
     def test_outcome_ledger_is_independent_from_operator_summary(self, tmp_path: Path) -> None:
         """Writing an outcome ledger must not modify the operator_summary.json."""
-        from src.paper_trading.btst_operator_summary import build_operator_summary, write_operator_summary
+        from src.paper_trading.btst_operator_summary import (
+            build_operator_summary,
+            write_operator_summary,
+        )
 
         summary = build_operator_summary(
             signal_date="20260602",

@@ -1,19 +1,33 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
 
-from src.execution.models import ExecutionPlan
-from src.execution.models import LayerCResult
 from src.execution.daily_pipeline import _serialize_short_trade_target_profile
+from src.execution.models import ExecutionPlan, LayerCResult
+from src.paper_trading.runtime import (
+    _build_dual_target_session_summary,
+    _build_llm_error_digest,
+    _build_llm_observability_summary,
+    _build_llm_route_provenance,
+    _build_paper_trading_engine,
+    _build_reporting_target_session_summary,
+    _build_runtime_recorder_and_engine,
+    _finalize_paper_trading_session,
+    _prepare_session_runtime_context,
+    run_paper_trading_session,
+)
 from src.paper_trading.runtime_session_helpers import build_session_summary
-from src.paper_trading.runtime import _build_dual_target_session_summary, _build_reporting_target_session_summary, _build_llm_error_digest, _build_llm_observability_summary, _build_llm_route_provenance, _build_paper_trading_engine, _build_runtime_recorder_and_engine, _finalize_paper_trading_session, _prepare_session_runtime_context, run_paper_trading_session
 from src.portfolio.models import PositionPlan
-from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult
+from src.targets.models import (
+    DualTargetEvaluation,
+    DualTargetSummary,
+    TargetEvaluationResult,
+)
 from src.targets.profiles import build_short_trade_target_profile
 
 

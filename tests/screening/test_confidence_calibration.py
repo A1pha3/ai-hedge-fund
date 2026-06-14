@@ -8,16 +8,15 @@ from pathlib import Path
 import pytest
 
 from src.screening.confidence_calibration import (
-    DEFAULT_LOOKBACK_DAYS,
-    SCORE_BUCKETS,
-    CalibrationSummary,
-    ScoreBucketStats,
     _find_bucket,
+    CalibrationSummary,
     compute_calibration,
+    DEFAULT_LOOKBACK_DAYS,
     render_calibration_table,
     render_top_n_calibration,
+    SCORE_BUCKETS,
+    ScoreBucketStats,
 )
-
 
 # ---------------------------------------------------------------------------
 # _find_bucket

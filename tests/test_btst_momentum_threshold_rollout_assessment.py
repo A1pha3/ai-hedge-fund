@@ -2,7 +2,10 @@ import json
 
 import pytest
 
-from scripts.btst_momentum_threshold_rollout_assessment import build_momentum_threshold_rollout_assessment, main
+from scripts.btst_momentum_threshold_rollout_assessment import (
+    build_momentum_threshold_rollout_assessment,
+    main,
+)
 
 _PROMOTE_BACKTEST_SUMMARY = {
     "profile_name": "momentum_tuned_governed_v1",

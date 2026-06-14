@@ -4,7 +4,6 @@ import json
 from types import SimpleNamespace
 
 import scripts.export_layer_b_review as export_layer_b_review
-
 from scripts.export_layer_b_review import _load_downstream_map
 
 

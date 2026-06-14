@@ -26,15 +26,15 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.backend.routes.screening import (
-    MAX_TOP_N,
-    MIN_TOP_N,
     _apply_score_threshold,
     _attach_explain,
     _normalize_trade_date,
     _sanitize_nan,
     _validate_strategies,
-    router as screening_router,
+    MAX_TOP_N,
+    MIN_TOP_N,
 )
+from app.backend.routes.screening import router as screening_router
 
 # ---------------------------------------------------------------------------
 # Fixtures

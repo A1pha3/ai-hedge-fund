@@ -5,15 +5,15 @@ import pytest
 
 from src.backtesting.evaluation_bundle import build_canonical_btst_evaluation_bundle
 from src.backtesting.param_search import (
-    ParamSpace,
-    SearchObjective,
-    TrialResult,
     check_guardrails,
     compute_objective_score,
     format_search_report,
+    ParamSpace,
     run_param_search,
     save_search_payload,
     save_search_report,
+    SearchObjective,
+    TrialResult,
 )
 
 

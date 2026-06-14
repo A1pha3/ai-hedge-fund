@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_btst_recurring_shadow_runbook import analyze_btst_recurring_shadow_runbook
+from scripts.analyze_btst_recurring_shadow_runbook import (
+    analyze_btst_recurring_shadow_runbook,
+)
 
 
 def test_analyze_btst_recurring_shadow_runbook_builds_close_and_control_tracks(tmp_path):

@@ -5,16 +5,15 @@ from __future__ import annotations
 import pytest
 
 from src.screening.industry_rotation import (
-    IndustrySignal,
     _aggregate_momentum,
     _extract_momentum_from_signal,
     _resolve_industry_name,
     bottom_weak_industries,
     calculate_industry_rotation,
     format_rotation_block,
+    IndustrySignal,
     top_strong_industries,
 )
-
 
 # ---------------------------------------------------------------------------
 # _extract_momentum_from_signal

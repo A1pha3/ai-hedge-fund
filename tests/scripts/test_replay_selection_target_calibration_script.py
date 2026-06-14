@@ -4,21 +4,24 @@ import pytest
 
 import scripts.replay_selection_target_calibration as replay_selection_target_calibration
 from scripts.replay_selection_target_calibration import (
-    WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES,
-    WATCHLIST_ZERO_CATALYST_GUARD_RELIEF_PROFILE_OVERRIDES,
     _override_short_trade_thresholds,
     analyze_selection_target_candidate_entry_metric_grid,
     analyze_selection_target_combination_grid,
     analyze_selection_target_penalty_grid,
     analyze_selection_target_penalty_threshold_grid,
-    compare_selection_target_replay_inputs,
     analyze_selection_target_replay_inputs,
     analyze_selection_target_structural_variants,
     analyze_selection_target_threshold_grid,
+    compare_selection_target_replay_inputs,
+    WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES,
+    WATCHLIST_ZERO_CATALYST_GUARD_RELIEF_PROFILE_OVERRIDES,
 )
 from src.execution.models import LayerCResult
 from src.screening.models import StrategySignal
-from src.targets import get_active_short_trade_target_profile, get_short_trade_target_profile
+from src.targets import (
+    get_active_short_trade_target_profile,
+    get_short_trade_target_profile,
+)
 from src.targets.router import build_selection_targets
 
 

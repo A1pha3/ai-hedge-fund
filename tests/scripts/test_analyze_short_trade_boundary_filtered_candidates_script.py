@@ -4,7 +4,9 @@ import json
 
 import pandas as pd
 
-from scripts.analyze_short_trade_boundary_filtered_candidates import analyze_short_trade_boundary_filtered_candidates
+from scripts.analyze_short_trade_boundary_filtered_candidates import (
+    analyze_short_trade_boundary_filtered_candidates,
+)
 
 
 def test_analyze_short_trade_boundary_filtered_candidates_ranks_closest_rows(tmp_path, monkeypatch):

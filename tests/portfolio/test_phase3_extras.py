@@ -5,11 +5,22 @@ from __future__ import annotations
 import pandas as pd
 
 from src.execution.models import PendingOrder
-from src.portfolio.correlation_cluster import build_correlation_clusters, correlation_threshold_for_market
-from src.portfolio.limit_handler import process_pending_buy, process_pending_sell, queue_pending_buy, queue_pending_sell
+from src.portfolio.correlation_cluster import (
+    build_correlation_clusters,
+    correlation_threshold_for_market,
+)
+from src.portfolio.limit_handler import (
+    process_pending_buy,
+    process_pending_sell,
+    queue_pending_buy,
+    queue_pending_sell,
+)
 from src.portfolio.models import HoldingState, PositionPlan
 from src.portfolio.position_calculator import enforce_daily_trade_limit
-from src.portfolio.suspension_handler import can_resume_screening, handle_suspension_emergency
+from src.portfolio.suspension_handler import (
+    can_resume_screening,
+    handle_suspension_emergency,
+)
 
 
 def _price_frame(values: list[float]) -> pd.DataFrame:
@@ -103,6 +114,7 @@ def test_pending_buy_expires_after_max_queue_days():
     MAX_PENDING_BUY_QUEUE_DAYS must be auto-removed with reason
     'queue_expired', even if it was never limit-up and no board opened."""
     from src.portfolio.limit_handler import MAX_PENDING_BUY_QUEUE_DAYS
+
     # Walk the order up to the max
     order = queue_pending_buy("000001", 0.5, "20260305")
     for _ in range(MAX_PENDING_BUY_QUEUE_DAYS):

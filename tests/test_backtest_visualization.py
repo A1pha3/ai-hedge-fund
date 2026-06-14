@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
 from app.backend.auth.dependencies import require_write_access
 
 

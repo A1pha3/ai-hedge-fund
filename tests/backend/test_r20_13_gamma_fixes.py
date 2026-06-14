@@ -21,10 +21,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-
 # ===========================================================================
 # Fix 1: attribution.py float() ValueError -> HTTPException 400
 # ===========================================================================
+
 
 def test_attribution_get_returns_400_on_non_numeric_returns():
     """GET /portfolio/attribution with non-numeric 'returns' returns 400, not 500."""
@@ -263,10 +263,9 @@ def test_make_api_request_default_timeout_is_30(monkeypatch):
 
 def test_collect_metrics_caches_result_within_ttl(tmp_path, monkeypatch):
     """_collect_metrics returns cached result within TTL without re-reading files."""
-    from app.backend.routes.llm_metrics import _collect_metrics, _METRICS_CACHE_TTL
-
     # Reset module-level cache state
     import app.backend.routes.llm_metrics as lm_mod
+    from app.backend.routes.llm_metrics import _collect_metrics, _METRICS_CACHE_TTL
     lm_mod._metrics_cache = {}
     lm_mod._metrics_cache_ts = 0.0
 
@@ -345,8 +344,8 @@ def test_show_agent_reasoning_handles_non_json_string(capsys):
 
 def test_data_sources_health_returns_500_on_monitor_failure(monkeypatch):
     """GET /data-sources/health returns 500 when get_health_monitor() fails."""
-    from app.backend.routes.data_sources import router
     import app.backend.routes.data_sources as ds_module
+    from app.backend.routes.data_sources import router
 
     def _boom():
         raise RuntimeError("monitor exploded")
@@ -368,8 +367,8 @@ def test_data_sources_health_returns_500_on_monitor_failure(monkeypatch):
 
 def test_cache_stats_returns_500_on_cache_failure(monkeypatch):
     """GET /cache/stats returns 500 when get_cache_runtime_info() fails."""
-    from app.backend.routes.cache import router
     import app.backend.routes.cache as cache_module
+    from app.backend.routes.cache import router
 
     def _boom():
         raise RuntimeError("cache corrupted")

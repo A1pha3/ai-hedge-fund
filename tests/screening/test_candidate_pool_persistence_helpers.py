@@ -26,7 +26,6 @@ from src.screening.candidate_pool_persistence_helpers import (
 )
 from src.screening.models import CandidateStock
 
-
 # ---------------------------------------------------------------------------
 # load / write candidate_pool_snapshot (non-shadow)
 # ---------------------------------------------------------------------------

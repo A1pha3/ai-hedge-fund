@@ -7,7 +7,6 @@ from pathlib import Path
 
 import scripts.analyze_btst_5d_15pct_trend_top20_gate_diagnostics as gate_script
 
-
 _TICKER_OUTCOMES = {
     # ticker: (hit_15pct, max_future_high_return, next_open_return)
     "TOP_STRONG": (True, 0.20, 0.01),

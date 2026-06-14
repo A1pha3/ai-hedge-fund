@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.generate_btst_early_runner_daily_tables import generate_btst_early_runner_daily_tables
+from scripts.generate_btst_early_runner_daily_tables import (
+    generate_btst_early_runner_daily_tables,
+)
 
 
 def _write_analysis(path: Path) -> None:

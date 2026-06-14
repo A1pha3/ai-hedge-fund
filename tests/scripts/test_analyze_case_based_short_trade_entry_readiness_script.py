@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_case_based_short_trade_entry_readiness import analyze_case_based_short_trade_entry_readiness
+from scripts.analyze_case_based_short_trade_entry_readiness import (
+    analyze_case_based_short_trade_entry_readiness,
+)
 
 
 def test_analyze_case_based_short_trade_entry_readiness_orders_primary_shadow_and_control(tmp_path):

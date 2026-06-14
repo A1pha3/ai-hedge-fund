@@ -1,21 +1,21 @@
 """Tests for progress tracker, LLM helpers, and streaming utilities."""
 
-from src.utils.progress import AgentProgress
 from src.utils.llm import (
+    _compute_retry_delay,
     _is_rate_limit_error,
     _is_transport_error,
-    _compute_retry_delay,
+    _try_json_loads,
     create_default_response,
     extract_json_from_response,
-    _try_json_loads,
 )
 from src.utils.llm_json_helpers import extract_balanced_json_candidates
-from src.utils.numeric import clip, clamp_unit_interval
-
+from src.utils.numeric import clamp_unit_interval, clip
+from src.utils.progress import AgentProgress
 
 # ---------------------------------------------------------------------------
 # Bug 8: progress handler type hint and invocation
 # ---------------------------------------------------------------------------
+
 
 class TestProgressHandlerSignature:
     def test_handler_receives_five_arguments(self):

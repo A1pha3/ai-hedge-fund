@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 from src.execution.daily_pipeline_watchlist_helpers import (
-    WatchlistDiagnosticsConfig,
     _append_ranked_watchlist_shadow_entries,
     _build_ranked_watchlist_shadow_entry,
     _build_watchlist_filtered_entry,
@@ -22,10 +21,11 @@ from src.execution.daily_pipeline_watchlist_helpers import (
     _build_watchlist_released_shadow_summary,
     _build_watchlist_selected_summary,
     _build_watchlist_selection_thresholds,
-    _build_watchlist_ticker_index,
     _build_watchlist_threshold_summaries,
+    _build_watchlist_ticker_index,
     build_merge_approved_watchlist,
     tag_merge_approved_layer_c_results,
+    WatchlistDiagnosticsConfig,
 )
 
 

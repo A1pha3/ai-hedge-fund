@@ -22,7 +22,6 @@ from src.execution.daily_pipeline_merge_approved_wrappers import (
     _merge_approved_arbitration_applied,
 )
 
-
 # ---------------------------------------------------------------------------
 # _merge_approved_arbitration_applied
 # ---------------------------------------------------------------------------

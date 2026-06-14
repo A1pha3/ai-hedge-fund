@@ -6,7 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 P0_BUCKET = "p0_trend_top40_missing_ticker_snapshot_root"
 P1_BUCKET = "p1_trend_top40_missing_future_bar"
 

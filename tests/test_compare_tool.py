@@ -29,19 +29,18 @@ from typing import Any
 import pytest
 
 from src.screening.compare_tool import (
+    compare_tickers,
+    CompareMetric,
+    CompareReport,
     DEFAULT_METRIC_KEYS,
+    load_latest_recommendations,
     MAX_COMPARE_TICKERS,
     METRIC_LABELS_CN,
     MIN_COMPARE_TICKERS,
-    CompareMetric,
-    CompareReport,
-    compare_tickers,
-    load_latest_recommendations,
     render_compare_table,
     render_radar_chart,
     run_compare_cli,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -493,11 +492,11 @@ class TestWebEndpoint:
         report_file = tmp_path / "auto_screening_20260607.json"
         report_file.write_text(json.dumps({"date": "20260607", "recommendations": two_recommendations}, ensure_ascii=False), encoding="utf-8")
         # 用 TestClient 调用
-        from fastapi.testclient import TestClient
-        from app.backend.routes.screening import router
-
         # 简单 app 包装 (避免 import 整个 backend)
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.backend.routes.screening import router
         app = FastAPI()
         app.include_router(router)
         client = TestClient(app)
@@ -520,9 +519,10 @@ class TestWebEndpoint:
         assert "metrics" in body
 
     def test_compare_endpoint_invalid_ticker_count(self) -> None:
-        from fastapi.testclient import TestClient
-        from app.backend.routes.screening import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.backend.routes.screening import router
         app = FastAPI()
         app.include_router(router)
         client = TestClient(app)
@@ -535,9 +535,10 @@ class TestWebEndpoint:
         assert "数量" in resp.json()["detail"]
 
     def test_compare_endpoint_invalid_date_format(self) -> None:
-        from fastapi.testclient import TestClient
-        from app.backend.routes.screening import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.backend.routes.screening import router
         app = FastAPI()
         app.include_router(router)
         client = TestClient(app)

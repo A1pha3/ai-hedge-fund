@@ -1,7 +1,9 @@
 import pytest
 
 from src.targets.profiles import build_short_trade_target_profile
-from src.targets.short_trade_event_catalyst_helpers import build_event_catalyst_assessment
+from src.targets.short_trade_event_catalyst_helpers import (
+    build_event_catalyst_assessment,
+)
 
 
 def test_build_event_catalyst_assessment_scores_fresh_supported_event() -> None:

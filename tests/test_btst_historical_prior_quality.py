@@ -14,13 +14,12 @@ from __future__ import annotations
 
 import pytest
 
-from src.targets.prior_quality import (
-    PriorQualityLabel,
-    classify_prior_quality,
-    apply_p3_prior_quality_gate_to_selection_targets,
-)
 from src.targets.models import DualTargetEvaluation, TargetEvaluationResult
-
+from src.targets.prior_quality import (
+    apply_p3_prior_quality_gate_to_selection_targets,
+    classify_prior_quality,
+    PriorQualityLabel,
+)
 
 # ---------------------------------------------------------------------------
 # classifier unit tests

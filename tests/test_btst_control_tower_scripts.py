@@ -8,8 +8,8 @@ from scripts.analyze_btst_replay_cohort import analyze_btst_replay_cohort
 from scripts.run_btst_nightly_control_tower import (
     _build_carryover_contract_task,
     _build_peer_close_loop_monitor_task,
-    _build_selected_contract_resolution_task,
     _build_selected_contract_monitor_task,
+    _build_selected_contract_resolution_task,
     _prioritize_control_tower_next_actions,
     build_btst_nightly_control_tower_payload,
     build_btst_open_ready_delta_payload,
@@ -17,7 +17,9 @@ from scripts.run_btst_nightly_control_tower import (
     render_btst_nightly_control_tower_markdown,
     render_btst_open_ready_delta_markdown,
 )
-from scripts.validate_btst_governance_consistency import validate_btst_governance_consistency
+from scripts.validate_btst_governance_consistency import (
+    validate_btst_governance_consistency,
+)
 from src.screening.models import StrategySignal
 from src.targets.router import build_selection_targets
 

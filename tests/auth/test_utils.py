@@ -6,20 +6,20 @@ from datetime import timedelta
 import pytest
 
 from app.backend.auth.utils import (
-    hash_password,
-    verify_password,
     create_access_token,
     create_reset_token,
     decode_token,
     generate_invitation_code,
     get_cors_origins,
+    hash_password,
     resolve_admin_bootstrap_password,
     should_auto_init_admin,
     should_show_reset_token,
+    verify_password,
 )
 
-
 # ---- Password Hashing ----
+
 
 class TestPasswordHashing:
     """Tests for hash_password() and verify_password()."""

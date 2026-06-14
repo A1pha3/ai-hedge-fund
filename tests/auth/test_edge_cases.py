@@ -8,23 +8,23 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.backend.database.connection import Base
-from app.backend.models.user import User, InvitationCode
-from app.backend.auth.service import AuthService, _utcnow
+from app.backend.auth.constants import (
+    AccountLockedError,
+    InvalidCredentialsError,
+    InvalidTokenError,
+    WeakPasswordError,
+)
+from app.backend.auth.service import _utcnow, AuthService
 from app.backend.auth.utils import (
-    hash_password,
-    verify_password,
     create_access_token,
     create_reset_token,
     decode_token,
     generate_invitation_code,
+    hash_password,
+    verify_password,
 )
-from app.backend.auth.constants import (
-    InvalidCredentialsError,
-    AccountLockedError,
-    InvalidTokenError,
-    WeakPasswordError,
-)
+from app.backend.database.connection import Base
+from app.backend.models.user import InvitationCode, User
 
 
 @pytest.fixture()

@@ -1,11 +1,13 @@
 import json
 from pathlib import Path
+
 import pytest
 
 from scripts.btst_momentum_active_baseline_bridge import (
     build_bridge,
-    main as bridge_main,
 )
+from scripts.btst_momentum_active_baseline_bridge import main as bridge_main
+
 
 def _make_active_and_source(tmp_path):
     active = {

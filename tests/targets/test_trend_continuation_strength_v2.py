@@ -9,7 +9,9 @@ import pytest
 
 from src.screening.models import StrategySignal
 from src.targets import build_short_trade_target_profile
-from src.targets.short_trade_target_factor_helpers import compute_trend_continuation_strength_adjustment
+from src.targets.short_trade_target_factor_helpers import (
+    compute_trend_continuation_strength_adjustment,
+)
 
 
 def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_short_trade_boundary_recurring_frontier_cases import analyze_short_trade_boundary_recurring_frontier_cases
+from scripts.analyze_short_trade_boundary_recurring_frontier_cases import (
+    analyze_short_trade_boundary_recurring_frontier_cases,
+)
 
 
 def test_analyze_short_trade_boundary_recurring_frontier_cases_groups_repeated_tickers(tmp_path):

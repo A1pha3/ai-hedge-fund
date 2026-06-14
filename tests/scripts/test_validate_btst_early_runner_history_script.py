@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+
 import scripts.validate_btst_early_runner_history as history_script
 
 

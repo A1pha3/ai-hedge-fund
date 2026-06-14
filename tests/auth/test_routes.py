@@ -7,13 +7,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.backend.auth.utils import (
+    create_access_token,
+    create_reset_token,
+    generate_invitation_code,
+    hash_password,
+)
 from app.backend.database.connection import Base, get_db
-from app.backend.models.user import User, InvitationCode
+from app.backend.models.user import InvitationCode, User
 from app.backend.routes.auth import router
-from app.backend.auth.utils import hash_password, generate_invitation_code, create_access_token, create_reset_token
-
 
 # ---- Fixtures ----
+
 
 @pytest.fixture()
 def test_app():

@@ -5,7 +5,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from scripts.analyze_btst_upstream_shadow_repeat_saturation import analyze_upstream_shadow_repeat_saturation
+from scripts.analyze_btst_upstream_shadow_repeat_saturation import (
+    analyze_upstream_shadow_repeat_saturation,
+)
 
 
 def test_analyze_upstream_shadow_repeat_saturation_flags_fn_to_fp_flip(tmp_path: Path) -> None:

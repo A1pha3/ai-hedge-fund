@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.backtesting.rule_variant_compare import build_rule_variants, summarize_portfolio_values, summarize_timing_log
+from src.backtesting.rule_variant_compare import (
+    build_rule_variants,
+    summarize_portfolio_values,
+    summarize_timing_log,
+)
 
 
 def test_build_rule_variants_supports_expected_names():

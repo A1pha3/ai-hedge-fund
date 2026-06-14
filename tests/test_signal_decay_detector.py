@@ -9,15 +9,14 @@ from pathlib import Path
 import pytest
 
 from src.screening.signal_decay_detector import (
+    _classify_decay,
+    _coerce_score_b,
+    _compute_change_pct,
+    build_decay_summary,
     DecayInfo,
     DecayLevel,
-    build_decay_summary,
     detect_signal_decay,
-    _classify_decay,
-    _compute_change_pct,
-    _coerce_score_b,
 )
-
 
 # ============================================================================
 # Helpers

@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.analyze_btst_rollout_governance_board import analyze_btst_rollout_governance_board
+from scripts.analyze_btst_rollout_governance_board import (
+    analyze_btst_rollout_governance_board,
+)
 
 
 def test_analyze_btst_rollout_governance_board_prioritizes_primary_then_recurring_shadow(tmp_path):

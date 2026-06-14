@@ -4,7 +4,9 @@ import json
 
 import pandas as pd
 
-from scripts.analyze_short_trade_boundary_coverage_variants import analyze_short_trade_boundary_coverage_variants
+from scripts.analyze_short_trade_boundary_coverage_variants import (
+    analyze_short_trade_boundary_coverage_variants,
+)
 
 
 def test_analyze_short_trade_boundary_coverage_variants_recommends_relaxed_variant(tmp_path, monkeypatch):

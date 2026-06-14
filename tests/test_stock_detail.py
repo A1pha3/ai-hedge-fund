@@ -22,14 +22,13 @@ from unittest.mock import patch
 import pytest
 
 from src.screening.stock_detail import (
-    StockDetail,
-    _determine_macd_signal,
     _compute_industry_rank,
+    _determine_macd_signal,
     compute_stock_detail,
     render_stock_detail,
     run_stock_detail_cli,
+    StockDetail,
 )
-
 
 # ============================================================================
 # Fixtures
@@ -593,10 +592,10 @@ class TestWebEndpointSmoke:
 
     def test_stock_detail_endpoint(self, report_dir: Path) -> None:
         """验证 GET /api/screening/stock-detail/{ticker} 返回正确的 JSON。"""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
         from app.backend.routes.screening import router
-        from fastapi import FastAPI
 
         app = FastAPI()
         app.include_router(router)
@@ -631,10 +630,10 @@ class TestWebEndpointSmoke:
 
     def test_stock_detail_endpoint_not_found(self, report_dir: Path) -> None:
         """验证无报告时返回 404。"""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
         from app.backend.routes.screening import router
-        from fastapi import FastAPI
 
         app = FastAPI()
         app.include_router(router)

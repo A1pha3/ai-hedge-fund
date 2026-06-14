@@ -5,15 +5,14 @@ from __future__ import annotations
 import pytest
 
 from src.screening.signal_decay_detector import (
-    DecayInfo,
-    DecayLevel,
     _classify_decay,
     _compute_change_pct,
     _parse_date,
     build_decay_summary,
+    DecayInfo,
+    DecayLevel,
     detect_signal_decay,
 )
-
 
 # ---------------------------------------------------------------------------
 # _parse_date
@@ -175,6 +174,7 @@ class TestDetectSignalDecay:
     def test_with_history_decaying(self, tmp_path) -> None:
         """Create a historical report, verify decay detection."""
         import json
+
         # Create a previous day's report
         prev_report = {"recommendations": [{"ticker": "000001", "score_b": 0.5}]}
         (tmp_path / "auto_screening_20260109.json").write_text(

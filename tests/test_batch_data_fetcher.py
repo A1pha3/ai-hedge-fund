@@ -28,10 +28,10 @@ from src.screening.batch_data_fetcher import (
     reset_global_batch_data_fetcher,
 )
 
-
 # ============================================================================
 # BatchDataCache 单元测试
 # ============================================================================
+
 
 class TestBatchDataCache:
     def test_get_returns_none_for_missing_key(self):
@@ -326,6 +326,7 @@ class TestBatchFetcherIntegrationGap:
         When the gap is fixed, this test should be updated/removed.
         """
         import inspect
+
         from src.screening.strategy_scorer import score_batch
 
         sig = inspect.signature(score_batch)
@@ -336,6 +337,7 @@ class TestBatchFetcherIntegrationGap:
     def test_build_candidate_pool_signature_has_no_batch_fetcher_param(self):
         """GAMMA-008: build_candidate_pool() does not accept batch_fetcher."""
         import inspect
+
         from src.screening.candidate_pool import build_candidate_pool
 
         sig = inspect.signature(build_candidate_pool)
@@ -346,6 +348,7 @@ class TestBatchFetcherIntegrationGap:
     def test_fuse_batch_signature_has_no_batch_fetcher_param(self):
         """GAMMA-008: fuse_batch() does not accept batch_fetcher."""
         import inspect
+
         from src.screening.signal_fusion import fuse_batch
 
         sig = inspect.signature(fuse_batch)

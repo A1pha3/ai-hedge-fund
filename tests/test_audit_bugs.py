@@ -20,12 +20,11 @@ from src.agents.aswath_damodaran import (
     estimate_cost_of_equity,
 )
 from src.agents.fundamentals_helpers import _finalize_fundamentals_signal
+from src.agents.portfolio_manager_helpers import _resolve_max_short
 from src.agents.valuation import (
     calculate_intrinsic_value,
     calculate_residual_income_value,
 )
-from src.agents.portfolio_manager_helpers import _resolve_max_short
-
 
 # ---------------------------------------------------------------------------
 # Bug A: calculate_intrinsic_value division by zero

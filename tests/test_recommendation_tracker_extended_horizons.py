@@ -11,13 +11,12 @@ from pathlib import Path
 import pytest
 
 from src.screening.recommendation_tracker import (
-    DEFAULT_HORIZONS,
-    HISTORY_FILENAME,
     _load_history,
+    DEFAULT_HORIZONS,
     fetch_actual_returns,
+    HISTORY_FILENAME,
     update_tracking_history,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test fixtures

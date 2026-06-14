@@ -1,6 +1,10 @@
 import math
 
-from src.agents.technicals import generate_chinese_reasoning, safe_confidence, weighted_signal_combination
+from src.agents.technicals import (
+    generate_chinese_reasoning,
+    safe_confidence,
+    weighted_signal_combination,
+)
 
 
 def test_safe_confidence_replaces_nan_and_clamps_range():

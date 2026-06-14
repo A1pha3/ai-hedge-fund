@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.analyze_btst_carryover_aligned_peer_proof_board import analyze_btst_carryover_aligned_peer_proof_board, render_btst_carryover_aligned_peer_proof_board_markdown
+from scripts.analyze_btst_carryover_aligned_peer_proof_board import (
+    analyze_btst_carryover_aligned_peer_proof_board,
+    render_btst_carryover_aligned_peer_proof_board_markdown,
+)
 
 
 def _write_json(path: Path, payload: object) -> None:

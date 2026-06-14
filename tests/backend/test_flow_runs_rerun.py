@@ -5,7 +5,7 @@ Three test cases:
 2. Rerun of a flow run with no request_data returns 400.
 3. Rerun of a non-existent run returns 404.
 """
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient

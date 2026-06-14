@@ -32,11 +32,10 @@ import pytest
 from src.screening.custom_weights import (
     DEFAULT_WEIGHTS,
     MAX_STRATEGY_SCORE,
+    reweight_recommendations,
     STRATEGY_KEYS,
     StrategyWeights,
-    reweight_recommendations,
 )
-
 
 # ===========================================================================
 # Fixtures

@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 
 from src.screening.data_quality_audit import (
-    DEFAULT_QUALITY_THRESHOLD,
-    STRATEGY_ORDER,
     audit_recommendation,
     audit_recommendations,
     compute_composite_completeness,
+    DEFAULT_QUALITY_THRESHOLD,
     load_latest_recommendations,
     render_audit_report,
+    STRATEGY_ORDER,
 )
 
 

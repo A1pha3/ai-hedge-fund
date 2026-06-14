@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.analyze_btst_execution_contract_eval import analyze_btst_execution_contract_eval
+from scripts.analyze_btst_execution_contract_eval import (
+    analyze_btst_execution_contract_eval,
+)
 
 
 def _write_json(path: Path, payload: object) -> None:

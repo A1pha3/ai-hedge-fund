@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_structural_conflict_blockers import analyze_structural_conflict_blockers
+from scripts.analyze_structural_conflict_blockers import (
+    analyze_structural_conflict_blockers,
+)
 
 
 def test_analyze_structural_conflict_blockers_summarizes_blocked_cluster(tmp_path):

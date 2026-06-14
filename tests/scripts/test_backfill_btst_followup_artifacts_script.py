@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 
 from scripts.backfill_btst_followup_artifacts import _discover_report_dirs
-from src.paper_trading.btst_reporting import generate_and_register_btst_followup_artifacts
+from src.paper_trading.btst_reporting import (
+    generate_and_register_btst_followup_artifacts,
+)
 
 
 def test_backfill_btst_followup_artifacts_supports_report_root_discovery(tmp_path):

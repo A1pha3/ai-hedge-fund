@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_btst_primary_window_validation_runbook import analyze_btst_primary_window_validation_runbook
+from scripts.analyze_btst_primary_window_validation_runbook import (
+    analyze_btst_primary_window_validation_runbook,
+)
 
 
 def test_analyze_btst_primary_window_validation_runbook_flags_missing_new_window(tmp_path):

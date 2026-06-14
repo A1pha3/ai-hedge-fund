@@ -8,12 +8,11 @@ from typing import Any
 import pytest
 
 from src.screening.strategy_report import (
-    StrategyReport,
-    StrategyStats,
     compute_strategy_report,
     render_strategy_report,
+    StrategyReport,
+    StrategyStats,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

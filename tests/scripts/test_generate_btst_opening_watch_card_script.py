@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 
-from scripts.generate_btst_opening_watch_card import generate_btst_opening_watch_card_artifacts
 import src.paper_trading.btst_reporting as btst_reporting
+from scripts.generate_btst_opening_watch_card import (
+    generate_btst_opening_watch_card_artifacts,
+)
 
 
 def test_append_opening_watch_focus_items_markdown_emits_focus_fields():

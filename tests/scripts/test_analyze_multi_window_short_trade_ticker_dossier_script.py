@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_multi_window_short_trade_ticker_dossier import analyze_multi_window_short_trade_ticker_dossier
+from scripts.analyze_multi_window_short_trade_ticker_dossier import (
+    analyze_multi_window_short_trade_ticker_dossier,
+)
 
 
 def test_analyze_multi_window_short_trade_ticker_dossier_extracts_near_miss_candidate(tmp_path):

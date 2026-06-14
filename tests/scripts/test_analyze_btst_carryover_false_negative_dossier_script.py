@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_btst_carryover_false_negative_dossier import analyze_btst_carryover_false_negative_dossier
+from scripts.analyze_btst_carryover_false_negative_dossier import (
+    analyze_btst_carryover_false_negative_dossier,
+)
 
 
 def test_analyze_btst_carryover_false_negative_dossier_profiles_penalty_dominated_cases(monkeypatch, tmp_path):

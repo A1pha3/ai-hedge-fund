@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.run_targeted_short_trade_boundary_experiment_pack import run_targeted_short_trade_boundary_experiment_pack
+from scripts.run_targeted_short_trade_boundary_experiment_pack import (
+    run_targeted_short_trade_boundary_experiment_pack,
+)
 
 
 def test_run_targeted_short_trade_boundary_experiment_pack_builds_release_outcome_and_pack(tmp_path, monkeypatch):

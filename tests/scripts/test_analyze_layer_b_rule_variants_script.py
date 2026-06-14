@@ -5,7 +5,6 @@ import os
 from types import SimpleNamespace
 
 import scripts.analyze_layer_b_rule_variants as analyze_layer_b_rule_variants
-
 from scripts.analyze_layer_b_rule_variants import _run_variant, _temporary_env
 
 

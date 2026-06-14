@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from scripts.analyze_catalyst_theme_frontier import analyze_catalyst_theme_frontier, render_catalyst_theme_frontier_markdown
+from scripts.analyze_catalyst_theme_frontier import (
+    analyze_catalyst_theme_frontier,
+    render_catalyst_theme_frontier_markdown,
+)
 
 
 def _write_json(path: Path, payload: object) -> None:

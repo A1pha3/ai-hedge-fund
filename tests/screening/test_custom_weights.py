@@ -7,16 +7,15 @@ import math
 import pytest
 
 from src.screening.custom_weights import (
-    DEFAULT_WEIGHTS,
-    MAX_STRATEGY_SCORE,
-    STRATEGY_KEYS,
-    WEIGHT_SUM_TOLERANCE,
-    StrategyWeights,
     _compute_weighted_score_b,
     _extract_strategy_score,
+    DEFAULT_WEIGHTS,
+    MAX_STRATEGY_SCORE,
     reweight_recommendations,
+    STRATEGY_KEYS,
+    StrategyWeights,
+    WEIGHT_SUM_TOLERANCE,
 )
-
 
 # ---------------------------------------------------------------------------
 # StrategyWeights

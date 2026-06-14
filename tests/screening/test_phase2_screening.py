@@ -5,15 +5,20 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from tempfile import mkdtemp
+from unittest.mock import patch
 
 import pandas as pd
-from unittest.mock import patch
 
 from src.screening.candidate_pool import load_cooldown_registry, save_cooldown_registry
 from src.screening.market_state import detect_market_state
 from src.screening.market_state_helpers import recommend_short_trade_profile
 from src.screening.models import MarketState, MarketStateType, StrategySignal, SubFactor
-from src.screening.signal_fusion import _normalize_for_available_signals, compute_score_b, fuse_signals_for_ticker, maybe_release_cooldown_early
+from src.screening.signal_fusion import (
+    _normalize_for_available_signals,
+    compute_score_b,
+    fuse_signals_for_ticker,
+    maybe_release_cooldown_early,
+)
 from src.screening.strategy_scorer import aggregate_sub_factors, score_trend_strategy
 from src.screening.strategy_scorer_event_sentiment_helpers import compute_event_decay
 

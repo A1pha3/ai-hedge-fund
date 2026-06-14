@@ -5,16 +5,16 @@ from src.data.adapters.akshare_adapter import AKShareAdapter
 from src.data.adapters.tushare_adapter import TushareAdapter
 from src.data.cleaner import OutlierDetector, SmartDataCleaner
 from src.data.validation_rules import (
+    get_error_rules,
+    get_rule_by_field,
+    get_rules_for_data_type,
+    get_warning_rules,
     PRICE_RULES,
     RULE_NO_FUTURE_DATE,
     RULE_NO_NEGATIVE_PRICE,
     RULE_OHLC_CONSISTENCY,
     RULE_PRICE_REASONABLE_RANGE,
     RULE_VOLUME_NON_NEGATIVE,
-    get_error_rules,
-    get_rule_by_field,
-    get_rules_for_data_type,
-    get_warning_rules,
 )
 from src.data.validator_v2 import EnhancedDataValidator, validate_prices
 from src.data.validator_v2_helpers import _is_invalid_value
@@ -100,7 +100,9 @@ class TestAKShareAdapter:
 
     def test_debt_to_equity_edge_cases(self):
         """GAMMA-017: debt_to_equity 推导的边界条件"""
-        from src.data.adapters.akshare_adapter import _derive_debt_to_equity_from_debt_to_assets
+        from src.data.adapters.akshare_adapter import (
+            _derive_debt_to_equity_from_debt_to_assets,
+        )
 
         # D/A = 0 → None (无负债)
         assert _derive_debt_to_equity_from_debt_to_assets(0.0) is None

@@ -17,9 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from src.data.snapshot import DataSnapshotExporter
 from src.data.models import CompanyNews, FinancialMetrics, LineItem, Price
-from src.data.snapshot import get_snapshot_exporter
+from src.data.snapshot import DataSnapshotExporter, get_snapshot_exporter
 
 _SNAPSHOT_TEST_DIR = Path(__file__).resolve().parent / ".snapshot_manual_workspace"
 _tmp_dir = str(_SNAPSHOT_TEST_DIR)

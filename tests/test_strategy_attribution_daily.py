@@ -28,10 +28,6 @@ import math
 import pytest
 
 from src.screening.strategy_attribution_daily import (
-    DIAGNOSIS_TEMPLATES,
-    KNOWN_STRATEGIES,
-    STRATEGY_DISPLAY_NAMES,
-    StrategyDailyAttribution,
     _build_diagnosis,
     _coerce_strategy,
     _format_currency,
@@ -39,9 +35,12 @@ from src.screening.strategy_attribution_daily import (
     _status_symbol,
     _summary_line,
     compute_strategy_daily_attribution,
+    DIAGNOSIS_TEMPLATES,
+    KNOWN_STRATEGIES,
     render_attribution_report,
+    STRATEGY_DISPLAY_NAMES,
+    StrategyDailyAttribution,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test 1: single strategy 100% winning

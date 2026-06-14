@@ -7,8 +7,11 @@ import math
 import pandas as pd
 import pytest
 
-from src.screening.market_state import _market_breadth_ratio, _normalize_weights, _northbound_streak
-
+from src.screening.market_state import (
+    _market_breadth_ratio,
+    _normalize_weights,
+    _northbound_streak,
+)
 
 # ---------------------------------------------------------------------------
 # _normalize_weights

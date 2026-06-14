@@ -252,8 +252,10 @@ class TestP2RouterLevelExecutionBlocked:
     """P2 enforcement must mark selection_targets as p2_execution_blocked, not only clear buy_orders."""
 
     def test_halt_marks_selection_targets_p2_execution_blocked(self, monkeypatch):
-        from src.targets.router import apply_p2_regime_gate_enforcement_to_selection_targets
         from src.targets.models import DualTargetEvaluation, TargetEvaluationResult
+        from src.targets.router import (
+            apply_p2_regime_gate_enforcement_to_selection_targets,
+        )
         monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
         evaluation = DualTargetEvaluation(
             ticker="000001", trade_date="20260410",
@@ -265,8 +267,10 @@ class TestP2RouterLevelExecutionBlocked:
         assert targets["000001"].p2_execution_block_reason is not None
 
     def test_shadow_only_marks_selection_targets_p2_execution_blocked(self, monkeypatch):
-        from src.targets.router import apply_p2_regime_gate_enforcement_to_selection_targets
         from src.targets.models import DualTargetEvaluation, TargetEvaluationResult
+        from src.targets.router import (
+            apply_p2_regime_gate_enforcement_to_selection_targets,
+        )
         evaluation = DualTargetEvaluation(
             ticker="000001", trade_date="20260410",
             research=TargetEvaluationResult(target_type="research", decision="selected", execution_eligible=True),
@@ -281,8 +285,10 @@ class TestP2RouterLevelExecutionBlocked:
         assert targets["000001"].short_trade.execution_eligible is False
 
     def test_normal_trade_does_not_mark_p2_execution_blocked(self, monkeypatch):
-        from src.targets.router import apply_p2_regime_gate_enforcement_to_selection_targets
         from src.targets.models import DualTargetEvaluation, TargetEvaluationResult
+        from src.targets.router import (
+            apply_p2_regime_gate_enforcement_to_selection_targets,
+        )
         evaluation = DualTargetEvaluation(
             ticker="000001", trade_date="20260410",
             research=TargetEvaluationResult(target_type="research", decision="selected"),
@@ -293,8 +299,10 @@ class TestP2RouterLevelExecutionBlocked:
 
     def test_research_visibility_preserved_after_execution_blocked(self, monkeypatch):
         """Research decision stays 'selected' — only p2_execution_blocked flag changes."""
-        from src.targets.router import apply_p2_regime_gate_enforcement_to_selection_targets
         from src.targets.models import DualTargetEvaluation, TargetEvaluationResult
+        from src.targets.router import (
+            apply_p2_regime_gate_enforcement_to_selection_targets,
+        )
         evaluation = DualTargetEvaluation(
             ticker="000001", trade_date="20260410",
             research=TargetEvaluationResult(target_type="research", decision="selected"),
@@ -306,8 +314,11 @@ class TestP2RouterLevelExecutionBlocked:
 
     def test_dual_target_summary_counts_p2_execution_blocked(self, monkeypatch):
         """DualTargetSummary must expose p2_execution_blocked_count after enforcement."""
-        from src.targets.router import apply_p2_regime_gate_enforcement_to_selection_targets, summarize_selection_targets
         from src.targets.models import DualTargetEvaluation, TargetEvaluationResult
+        from src.targets.router import (
+            apply_p2_regime_gate_enforcement_to_selection_targets,
+            summarize_selection_targets,
+        )
         e1 = DualTargetEvaluation(
             ticker="000001", trade_date="20260410",
             research=TargetEvaluationResult(target_type="research", decision="selected"),
@@ -349,8 +360,9 @@ class TestP2ArtifactConfigPropagation:
 
     def test_pipeline_config_snapshot_includes_p2_flag(self, monkeypatch):
         import os
-        from src.research.artifacts import _build_pipeline_config_snapshot
+
         from src.execution.models import ExecutionPlan
+        from src.research.artifacts import _build_pipeline_config_snapshot
         monkeypatch.setenv("BTST_0422_P1_REGIME_GATE_MODE", "shadow")
         monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
         plan = ExecutionPlan(date="20260410", portfolio_snapshot={})
@@ -360,8 +372,8 @@ class TestP2ArtifactConfigPropagation:
         assert flags["p2_regime_gate_mode"] == "enforce"
 
     def test_pipeline_config_snapshot_p2_flag_is_off_by_default(self, monkeypatch):
-        from src.research.artifacts import _build_pipeline_config_snapshot
         from src.execution.models import ExecutionPlan
+        from src.research.artifacts import _build_pipeline_config_snapshot
         monkeypatch.delenv("BTST_0422_P2_REGIME_GATE_MODE", raising=False)
         plan = ExecutionPlan(date="20260410", portfolio_snapshot={})
         snapshot = _build_pipeline_config_snapshot(plan, None, None)
@@ -379,8 +391,10 @@ class TestP2BlockedGatesSingleSource:
 
     def test_router_and_pipeline_use_identical_blocked_gates(self):
         """Both modules must expose the same set of blocked gates."""
+        from src.execution.daily_pipeline import (
+            _P2_BLOCKED_GATES as pipeline_gates,  # type: ignore[attr-defined]
+        )
         from src.targets.router import _P2_BLOCKED_GATES as router_gates
-        from src.execution.daily_pipeline import _P2_BLOCKED_GATES as pipeline_gates  # type: ignore[attr-defined]
         assert router_gates == pipeline_gates, (
             "_P2_BLOCKED_GATES must have identical values in router and daily_pipeline"
         )
@@ -391,8 +405,10 @@ class TestP2BlockedGatesSingleSource:
         This proves there is a single source of truth — daily_pipeline imports from router
         rather than re-defining the frozenset.
         """
+        from src.execution.daily_pipeline import (
+            _P2_BLOCKED_GATES as pipeline_gates,  # type: ignore[attr-defined]
+        )
         from src.targets.router import _P2_BLOCKED_GATES as router_gates
-        from src.execution.daily_pipeline import _P2_BLOCKED_GATES as pipeline_gates  # type: ignore[attr-defined]
         assert pipeline_gates is router_gates, (
             "daily_pipeline._P2_BLOCKED_GATES must be the same object as router._P2_BLOCKED_GATES "
             "(imported, not redefined)"

@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.analyze_btst_candidate_entry_window_scan import analyze_btst_candidate_entry_window_scan
+from scripts.analyze_btst_candidate_entry_window_scan import (
+    analyze_btst_candidate_entry_window_scan,
+)
 from src.screening.models import StrategySignal
 from src.targets.router import build_selection_targets
 

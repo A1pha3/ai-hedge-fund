@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import pytest
 
+from src.screening.industry_rotation import IndustrySignal
 from src.screening.sector_strength import (
-    SectorStrengthInfo,
-    SectorStrengthReport,
     _build_sector_lookup,
     _strength_label_colored,
     render_sector_strength,
+    SectorStrengthInfo,
+    SectorStrengthReport,
 )
-from src.screening.industry_rotation import IndustrySignal
 from src.utils.display import Fore, Style
-
 
 # ---------------------------------------------------------------------------
 # _build_sector_lookup

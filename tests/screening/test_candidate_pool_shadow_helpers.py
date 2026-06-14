@@ -8,7 +8,6 @@ overflow classification, and summary assembly.
 from __future__ import annotations
 
 from src.screening.candidate_pool_shadow_helpers import (
-    ShadowRankRow,
     _build_source_layer_release_contract,
     _resolve_source_layer_release_stage,
     build_cooldown_review_shadow_payload,
@@ -18,6 +17,7 @@ from src.screening.candidate_pool_shadow_helpers import (
     compute_shadow_share_metrics,
     count_shadow_lanes,
     select_shadow_rows,
+    ShadowRankRow,
 )
 from src.screening.models import CandidateStock
 

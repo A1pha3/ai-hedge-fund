@@ -5,8 +5,8 @@ from src.screening.top_picks import (
     _build_industry_momentum_map,
     _collect_pick_industries,
     _momentum_arrow,
-    _render_sector_rotation,
     _render_factor_attribution,
+    _render_sector_rotation,
 )
 from src.utils.display import Fore, Style
 

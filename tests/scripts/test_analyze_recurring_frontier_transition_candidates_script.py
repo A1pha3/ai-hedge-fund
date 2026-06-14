@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_recurring_frontier_transition_candidates import analyze_recurring_frontier_transition_candidates
+from scripts.analyze_recurring_frontier_transition_candidates import (
+    analyze_recurring_frontier_transition_candidates,
+)
 
 
 def test_analyze_recurring_frontier_transition_candidates_marks_emergent_local_baselines(tmp_path):

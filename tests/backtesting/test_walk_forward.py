@@ -1,17 +1,17 @@
 import pandas as pd
 import pytest
 
+from src.backtesting.promotion_gate import build_promotion_gate_summary
 from src.backtesting.walk_forward import (
-    WalkForwardResult,
-    WalkForwardWindow,
     build_walk_forward_windows,
     classify_runner_rollout_verdict,
     classify_win_rate_first_rollout_verdict,
     run_walk_forward,
     summarize_walk_forward,
+    WalkForwardResult,
+    WalkForwardWindow,
     WindowMode,
 )
-from src.backtesting.promotion_gate import build_promotion_gate_summary
 
 
 def test_build_walk_forward_windows_generates_rolling_ranges():
@@ -896,8 +896,8 @@ def test_classify_win_rate_first_rollout_verdict_prioritizes_blocker_reason_over
 
 from src.backtesting.walk_forward import (
     _compute_walk_forward_recency_weight,
-    WALK_FORWARD_RECENCY_HALF_LIFE_DAYS,
     WALK_FORWARD_RECENCY_DECAY_MIN_FACTOR,
+    WALK_FORWARD_RECENCY_HALF_LIFE_DAYS,
 )
 
 
@@ -1323,7 +1323,11 @@ def test_summarize_walk_forward_kurtosis_multi_window_plain_average() -> None:
 # Round 14 — Task 1: Consecutive Window Consistency (assess_profile_stability)
 # ---------------------------------------------------------------------------
 
-from src.backtesting.walk_forward import assess_profile_stability, PROFILE_STABILITY_NON_PROMOTABLE_STREAK_THRESHOLD, PROFILE_STABILITY_NON_PROMOTABLE_FRACTION_THRESHOLD
+from src.backtesting.walk_forward import (
+    assess_profile_stability,
+    PROFILE_STABILITY_NON_PROMOTABLE_FRACTION_THRESHOLD,
+    PROFILE_STABILITY_NON_PROMOTABLE_STREAK_THRESHOLD,
+)
 
 
 def test_assess_profile_stability_empty_returns_insufficient_data() -> None:
@@ -1473,7 +1477,10 @@ def test_summarize_walk_forward_stable_profile_no_stability_blocker() -> None:
 # Round 14 — Task 2: Candidate Pool Size Adaptive Awareness
 # ---------------------------------------------------------------------------
 
-from src.backtesting.walk_forward import CANDIDATE_POOL_SCARCE_THRESHOLD, CANDIDATE_POOL_ABUNDANT_THRESHOLD
+from src.backtesting.walk_forward import (
+    CANDIDATE_POOL_ABUNDANT_THRESHOLD,
+    CANDIDATE_POOL_SCARCE_THRESHOLD,
+)
 
 
 def test_summarize_walk_forward_includes_pool_size_fields() -> None:

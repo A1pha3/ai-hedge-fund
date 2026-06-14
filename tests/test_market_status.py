@@ -31,7 +31,6 @@ from src.cli.market_status_helpers import (
 from src.main import _is_finite_number, run_market_status
 from src.screening.models import MarketState
 
-
 # ============================================================================
 # Helpers
 # ============================================================================

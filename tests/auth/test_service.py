@@ -6,20 +6,25 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy.orm import Session
 
-from app.backend.auth.service import AuthService, _utcnow, _validate_password
 from app.backend.auth.constants import (
-    ADMIN_USERNAME,
-    InvalidCredentialsError,
     AccountLockedError,
+    ADMIN_USERNAME,
     ForbiddenError,
+    InvalidCredentialsError,
     InvalidTokenError,
     WeakPasswordError,
 )
-from app.backend.auth.utils import hash_password, verify_password, decode_token, create_reset_token
-from app.backend.models.user import User, InvitationCode
-
+from app.backend.auth.service import _utcnow, _validate_password, AuthService
+from app.backend.auth.utils import (
+    create_reset_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
+from app.backend.models.user import InvitationCode, User
 
 # ---- _utcnow helper ----
+
 
 class TestUtcNow:
     """Tests for the _utcnow() helper."""

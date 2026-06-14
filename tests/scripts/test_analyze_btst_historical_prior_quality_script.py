@@ -10,7 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from scripts.analyze_btst_historical_prior_quality import analyze_btst_historical_prior_quality
+from scripts.analyze_btst_historical_prior_quality import (
+    analyze_btst_historical_prior_quality,
+)
 
 
 def _write_json(path: Path, payload: object) -> Path:

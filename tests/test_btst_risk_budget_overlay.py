@@ -5,16 +5,17 @@ from pathlib import Path
 
 import pytest
 
+from src.execution.btst_shadow_promotion_helpers import (
+    resolve_btst_shadow_promotion_payload,
+)
+from src.execution.daily_pipeline import _attach_btst_risk_budget_p6
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
     _enforce_btst_daily_trade_limit,
     _resolve_btst_daily_limit_priority,
     _resolve_btst_position_budget,
     build_buy_orders_with_diagnostics,
 )
-from src.execution.daily_pipeline import _attach_btst_risk_budget_p6
-from src.execution.btst_shadow_promotion_helpers import resolve_btst_shadow_promotion_payload
-from src.execution.models import ExecutionPlan
-from src.execution.models import LayerCResult
+from src.execution.models import ExecutionPlan, LayerCResult
 from src.portfolio.models import PositionPlan
 from src.screening.models import CandidateStock
 from src.targets.models import DualTargetEvaluation, TargetEvaluationResult
@@ -706,7 +707,10 @@ def test_attach_btst_risk_budget_p6_off_does_not_annotate_plan(monkeypatch):
 
 
 def test_analyze_btst_risk_budget_overlay_eval_returns_required_shape(tmp_path: Path) -> None:
-    from scripts.analyze_btst_risk_budget_overlay_eval import analyze_btst_risk_budget_overlay_eval, _render_markdown
+    from scripts.analyze_btst_risk_budget_overlay_eval import (
+        _render_markdown,
+        analyze_btst_risk_budget_overlay_eval,
+    )
 
     report_dir = tmp_path / "paper_trading_window_sample"
     (report_dir / "selection_artifacts" / "2026-04-22").mkdir(parents=True)

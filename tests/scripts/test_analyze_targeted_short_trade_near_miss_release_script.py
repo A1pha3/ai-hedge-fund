@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_targeted_short_trade_near_miss_release import analyze_targeted_short_trade_near_miss_release
+from scripts.analyze_targeted_short_trade_near_miss_release import (
+    analyze_targeted_short_trade_near_miss_release,
+)
 
 
 def test_analyze_targeted_short_trade_near_miss_release_changes_only_target_case(tmp_path):

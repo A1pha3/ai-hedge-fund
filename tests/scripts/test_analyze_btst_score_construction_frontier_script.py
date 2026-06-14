@@ -4,7 +4,9 @@ import json
 
 import pandas as pd
 
-from scripts.analyze_btst_score_construction_frontier import analyze_btst_score_construction_frontier
+from scripts.analyze_btst_score_construction_frontier import (
+    analyze_btst_score_construction_frontier,
+)
 from scripts.btst_profile_replay_utils import analyze_btst_profile_replay_window
 from scripts.replay_selection_target_calibration import (
     WATCHLIST_ZERO_CATALYST_GUARD_PROFILE_OVERRIDES,

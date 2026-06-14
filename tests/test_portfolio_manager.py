@@ -1,4 +1,8 @@
-from src.agents.portfolio_manager import _build_consistent_reasoning, _make_decision_from_signals, compute_allowed_actions
+from src.agents.portfolio_manager import (
+    _build_consistent_reasoning,
+    _make_decision_from_signals,
+    compute_allowed_actions,
+)
 from src.agents.portfolio_manager_helpers import _resolve_max_short
 
 

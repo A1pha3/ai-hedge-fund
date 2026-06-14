@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pytest
 
-from src.research.feedback import append_research_feedback, read_research_feedback, summarize_research_feedback, summarize_research_feedback_directory
+from src.research.feedback import (
+    append_research_feedback,
+    read_research_feedback,
+    summarize_research_feedback,
+    summarize_research_feedback_directory,
+)
 from src.research.models import ResearchFeedbackRecord
 
 

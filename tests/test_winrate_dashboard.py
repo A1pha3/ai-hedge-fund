@@ -27,12 +27,11 @@ from unittest.mock import patch
 import pytest
 
 from src.screening.winrate_dashboard import (
-    DailyWinRate,
-    WinRateSummary,
     compute_winrate_dashboard,
+    DailyWinRate,
     render_winrate_dashboard,
+    WinRateSummary,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -432,12 +431,11 @@ class TestWebEndpointSmoke:
 
     def test_endpoint_returns_summary(self) -> None:
         """Test the endpoint handler with mock data."""
+        # We just check the route exists and is callable via FastAPI
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
         from app.backend.routes.screening import router
-
-        # We just check the route exists and is callable via FastAPI
-        from fastapi import FastAPI
 
         app = FastAPI()
         app.include_router(router)

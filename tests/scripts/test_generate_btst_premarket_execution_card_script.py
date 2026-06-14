@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 
-from scripts.generate_btst_premarket_execution_card import generate_btst_premarket_execution_card_artifacts
 import src.paper_trading.btst_reporting as btst_reporting
+from scripts.generate_btst_premarket_execution_card import (
+    generate_btst_premarket_execution_card_artifacts,
+)
 from src.paper_trading.btst_reporting_utils import _entry_mode_action_guidance
 
 

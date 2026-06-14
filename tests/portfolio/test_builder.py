@@ -2,15 +2,14 @@
 import pytest
 
 from src.portfolio.builder import (
-    PortfolioSummary,
-    PortfolioPosition,
-    compute_portfolio,
-    render_portfolio,
     _allocate_weights,
+    compute_portfolio,
     DEFAULT_INDUSTRY_CAP,
     DEFAULT_POSITION_CAP,
+    PortfolioPosition,
+    PortfolioSummary,
+    render_portfolio,
 )
-
 
 SAMPLE_RECS = [
     {"ticker": "000001", "name": "平安银行", "industry_sw": "银行", "score_b": 0.85},

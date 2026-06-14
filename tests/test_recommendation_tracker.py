@@ -13,9 +13,6 @@ from unittest.mock import patch
 import pytest
 
 from src.screening.recommendation_tracker import (
-    DEFAULT_HORIZONS,
-    HISTORY_FILENAME,
-    TrackingRecord,
     _coerce_recommended_price,
     _extract_sorted_closes,
     _load_history,
@@ -25,13 +22,15 @@ from src.screening.recommendation_tracker import (
     _safe_float,
     _save_history,
     _summarize_history,
+    DEFAULT_HORIZONS,
     fetch_actual_returns,
     get_tracking_summary,
+    HISTORY_FILENAME,
     load_pending_recommendations,
     render_tracking_summary,
+    TrackingRecord,
     update_tracking_history,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

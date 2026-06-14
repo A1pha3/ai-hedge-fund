@@ -9,16 +9,15 @@ from pathlib import Path
 import pytest
 
 from src.screening.winrate_dashboard import (
-    DailyWinRate,
-    WinRateSummary,
     _compute_horizon_stats,
     _determine_trend,
     _format_date_short,
     _parse_date,
     compute_winrate_dashboard,
+    DailyWinRate,
     render_winrate_dashboard,
+    WinRateSummary,
 )
-
 
 # ---------------------------------------------------------------------------
 # _parse_date

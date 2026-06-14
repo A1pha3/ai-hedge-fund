@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 
 import scripts.analyze_short_trade_blockers as blockers_module
-from scripts.analyze_short_trade_blockers import analyze_short_trade_blockers, collect_short_trade_rows
+from scripts.analyze_short_trade_blockers import (
+    analyze_short_trade_blockers,
+    collect_short_trade_rows,
+)
 
 
 def test_analyze_short_trade_blockers_aggregates_decisions_and_sources(tmp_path):

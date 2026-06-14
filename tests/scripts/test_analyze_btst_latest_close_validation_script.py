@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.analyze_btst_latest_close_validation import generate_btst_latest_close_validation_artifacts
+from scripts.analyze_btst_latest_close_validation import (
+    generate_btst_latest_close_validation_artifacts,
+)
 
 
 def test_generate_btst_latest_close_validation_artifact(tmp_path: Path) -> None:

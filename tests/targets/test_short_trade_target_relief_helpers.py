@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from src.targets.short_trade_target_profile_data import SHORT_TRADE_TARGET_PROFILES
-from src.targets.short_trade_target_relief_helpers import resolve_historical_execution_relief
 from src.targets.models import TargetEvaluationInput
+from src.targets.short_trade_target_profile_data import SHORT_TRADE_TARGET_PROFILES
+from src.targets.short_trade_target_relief_helpers import (
+    resolve_historical_execution_relief,
+)
 
 
 def test_historical_execution_relief_recovers_upstream_corridor_source_from_catalyst_theme_bucket() -> None:

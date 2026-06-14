@@ -7,7 +7,6 @@ market regime gates, position scaling, and BTST trading profiles.
 from __future__ import annotations
 
 from src.screening.market_state_helpers import (
-    MarketStateMetrics,
     _compute_regime_flip_risk,
     _compute_style_dispersion,
     _compute_total_volume,
@@ -15,9 +14,9 @@ from src.screening.market_state_helpers import (
     build_market_state_from_metrics,
     classify_btst_regime_gate,
     classify_btst_regime_gate_from_market_state,
+    MarketStateMetrics,
     recommend_short_trade_profile,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

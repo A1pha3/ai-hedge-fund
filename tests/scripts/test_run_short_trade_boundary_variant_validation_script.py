@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.run_short_trade_boundary_variant_validation import run_short_trade_boundary_variant_validation
+from scripts.run_short_trade_boundary_variant_validation import (
+    run_short_trade_boundary_variant_validation,
+)
 
 
 def test_run_short_trade_boundary_variant_validation_builds_expected_commands(tmp_path, monkeypatch):

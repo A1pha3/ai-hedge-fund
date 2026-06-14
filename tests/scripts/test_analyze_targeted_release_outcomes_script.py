@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_targeted_release_outcomes import analyze_targeted_release_outcomes, render_targeted_release_outcomes_markdown
+from scripts.analyze_targeted_release_outcomes import (
+    analyze_targeted_release_outcomes,
+    render_targeted_release_outcomes_markdown,
+)
 
 
 def test_analyze_targeted_release_outcomes_merges_target_cases_and_price_outcomes(tmp_path, monkeypatch):

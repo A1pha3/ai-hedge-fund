@@ -3,20 +3,20 @@
 import pytest
 
 from app.backend.auth.constants import (
+    AccountLockedError,
     ADMIN_USERNAME,
+    AuthError,
+    ForbiddenError,
+    InvalidCredentialsError,
+    InvalidTokenError,
     PASSWORD_MIN_LENGTH,
     PASSWORD_PATTERN,
     PASSWORD_RULES,
-    AuthError,
-    InvalidCredentialsError,
-    AccountLockedError,
-    ForbiddenError,
-    InvalidTokenError,
     WeakPasswordError,
 )
 
-
 # ---- PASSWORD_PATTERN ----
+
 
 class TestPasswordPattern:
     """Tests for PASSWORD_PATTERN regex validation."""

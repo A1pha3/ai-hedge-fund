@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.analyze_btst_carryover_peer_promotion_gate import analyze_btst_carryover_peer_promotion_gate
+from scripts.analyze_btst_carryover_peer_promotion_gate import (
+    analyze_btst_carryover_peer_promotion_gate,
+)
 
 
 def _write_json(path: Path, payload: object) -> None:

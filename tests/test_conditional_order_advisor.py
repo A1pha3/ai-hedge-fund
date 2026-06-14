@@ -30,21 +30,20 @@ from typing import Any
 import pytest
 
 from src.screening.conditional_order_advisor import (
+    attach_conditional_orders_to_payload,
+    compute_advice_from_history,
+    compute_atr,
+    compute_conditional_advice,
+    ConditionalOrderAdvice,
     DEFAULT_ATR_PERIOD,
     DEFAULT_LOOKBACK_SESSIONS,
     DEFAULT_STOP_LOSS_ATR,
     DEFAULT_TAKE_PROFIT_ATR,
     DEFAULT_ZONE_WIDTH_ATR,
-    MIN_PRICE_SESSIONS,
-    ConditionalOrderAdvice,
-    attach_conditional_orders_to_payload,
-    compute_advice_from_history,
-    compute_atr,
-    compute_conditional_advice,
     format_conditional_advice_table,
+    MIN_PRICE_SESSIONS,
     run_conditional_orders_cli,
 )
-
 
 # ===========================================================================
 # Fixtures / helpers
@@ -735,11 +734,11 @@ def test_web_conditional_orders_atr_period_validation() -> None:
 
 def test_compute_auto_screening_payload_contains_conditional_orders_field() -> None:
     """``compute_auto_screening_results`` 返回的 payload 应含 ``conditional_orders`` 字段。"""
-    from src.main import compute_auto_screening_results
-
     # 不实际跑全流水线, 直接 smoke 一下导入路径与公开签名。
     # 这里改成 unit test 验证 payload 字段, 仅 smoke 一下导入路径
     import inspect
+
+    from src.main import compute_auto_screening_results
     sig = inspect.signature(compute_auto_screening_results)
     # 签名包含 trade_date / top_n / selected_strategies — 这是当前 contract
     assert "trade_date" in sig.parameters
@@ -773,14 +772,16 @@ class TestCleanPriceSeries:
         assert _clean_price_series([1.0, 2.5, 3.0]) == [1.0, 2.5, 3.0]
 
     def test_filters_none(self):
-        from src.screening.conditional_order_advisor import _clean_price_series
         import math
+
+        from src.screening.conditional_order_advisor import _clean_price_series
 
         assert _clean_price_series([1.0, None, 2.0]) == [1.0, 2.0]
 
     def test_filters_nan_and_inf(self):
-        from src.screening.conditional_order_advisor import _clean_price_series
         import math
+
+        from src.screening.conditional_order_advisor import _clean_price_series
 
         result = _clean_price_series([1.0, math.nan, math.inf, -math.inf, 2.0])
         assert result == [1.0, 2.0]
@@ -798,8 +799,9 @@ class TestCleanPriceSeries:
         assert _clean_price_series([]) == []
 
     def test_all_invalid_returns_empty(self):
-        from src.screening.conditional_order_advisor import _clean_price_series
         import math
+
+        from src.screening.conditional_order_advisor import _clean_price_series
 
         assert _clean_price_series([None, math.nan, math.inf]) == []
 

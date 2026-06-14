@@ -1,11 +1,12 @@
 import json
 from pathlib import Path
+
 import pytest
 
 from scripts.btst_momentum_rollout_recheck_pack import (
     build_momentum_rollout_recheck_pack,
-    main as rollout_main,
 )
+from scripts.btst_momentum_rollout_recheck_pack import main as rollout_main
 
 
 def make_valid_snapshot():

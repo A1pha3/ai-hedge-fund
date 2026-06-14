@@ -8,14 +8,13 @@ from typing import Any
 import pytest
 
 from src.screening.position_health import (
-    PositionHealth,
-    PositionHealthReport,
     _determine_action,
     _find_ticker_in_history,
     compute_position_health,
+    PositionHealth,
+    PositionHealthReport,
     render_position_health,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

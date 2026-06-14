@@ -4,13 +4,12 @@ import json
 from pathlib import Path
 
 import scripts.generate_reports_manifest as manifest_script
-
 from scripts.generate_reports_manifest import (
     _build_carryover_aligned_peer_harvest_summary,
     _build_carryover_aligned_peer_proof_summary,
+    _build_carryover_multiday_continuation_audit_summary,
     _build_carryover_peer_expansion_summary,
     _build_carryover_peer_promotion_gate_summary,
-    _build_carryover_multiday_continuation_audit_summary,
     _build_continuation_promotion_ready_summary,
     _build_execution_constraint_rollup,
     _build_selected_outcome_refresh_summary,
@@ -21,8 +20,8 @@ from scripts.generate_reports_manifest import (
 )
 from scripts.generate_reports_manifest_candidate_entry_shadow_helpers import (
     _build_corridor_shadow_pack_summary,
-    build_candidate_entry_shadow_paths,
     build_candidate_entry_shadow_initial_state,
+    build_candidate_entry_shadow_paths,
     refresh_candidate_entry_shadow_prerequisites,
 )
 from src.screening.models import StrategySignal
@@ -2864,7 +2863,9 @@ def test_refresh_prerequisites_passes_persistence_dossier_path_to_corridor_shado
     prevent a false ready state from propagating downstream."""
     from unittest.mock import MagicMock, patch
 
-    from scripts.generate_reports_manifest import CANDIDATE_ENTRY_SHADOW_ARTIFACT_FILENAMES
+    from scripts.generate_reports_manifest import (
+        CANDIDATE_ENTRY_SHADOW_ARTIFACT_FILENAMES,
+    )
 
     reports_root = tmp_path
 
@@ -2969,7 +2970,9 @@ def test_refresh_prerequisites_passes_persistence_dossier_path_to_lane_pair_boar
     the fail-open path even when the dossier should block it."""
     from unittest.mock import MagicMock, patch
 
-    from scripts.generate_reports_manifest import CANDIDATE_ENTRY_SHADOW_ARTIFACT_FILENAMES
+    from scripts.generate_reports_manifest import (
+        CANDIDATE_ENTRY_SHADOW_ARTIFACT_FILENAMES,
+    )
 
     reports_root = tmp_path
 

@@ -20,16 +20,13 @@ from src.execution.daily_pipeline_runtime_helpers import (
     _should_preserve_exact_upstream_embedded_prior,
     build_filter_summary,
     default_exit_checker,
+    EXACT_UPSTREAM_SOURCE,
+    EXACT_UPSTREAM_SOURCE_SCOPES,
     historical_prior_value_is_missing,
     load_candidate_pool_bundle,
     load_latest_historical_prior_by_ticker,
     resolve_historical_prior_for_ticker,
 )
-from src.execution.daily_pipeline_runtime_helpers import (
-    EXACT_UPSTREAM_SOURCE,
-    EXACT_UPSTREAM_SOURCE_SCOPES,
-)
-
 
 # ---------------------------------------------------------------------------
 # load_candidate_pool_bundle

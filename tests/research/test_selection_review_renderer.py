@@ -1,6 +1,10 @@
 from src.research.models import RejectedCandidate, SelectedCandidate, SelectionSnapshot
 from src.research.review_renderer import render_selection_review
-from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult
+from src.targets.models import (
+    DualTargetEvaluation,
+    DualTargetSummary,
+    TargetEvaluationResult,
+)
 
 
 def test_render_selection_review_contains_key_sections():

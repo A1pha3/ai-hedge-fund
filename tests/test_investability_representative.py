@@ -10,7 +10,6 @@ from src.screening.investability import (
     select_representative_candidates,
 )
 
-
 # ---------------------------------------------------------------------------
 # Unit: _safe_text
 # ---------------------------------------------------------------------------

@@ -5,15 +5,14 @@ from __future__ import annotations
 import pytest
 
 from src.screening.signal_momentum import (
-    MomentumInfo,
-    MomentumReport,
     _classify_momentum,
     _momentum_label_colored,
     _simple_slope,
+    MomentumInfo,
+    MomentumReport,
     render_signal_momentum,
 )
 from src.utils.display import Fore, Style
-
 
 # ---------------------------------------------------------------------------
 # _simple_slope

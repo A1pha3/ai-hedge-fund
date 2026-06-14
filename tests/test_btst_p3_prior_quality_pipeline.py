@@ -14,9 +14,12 @@ import pytest
 
 from src.execution.models import ExecutionPlan
 from src.portfolio.models import PositionPlan
-from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult
+from src.targets.models import (
+    DualTargetEvaluation,
+    DualTargetSummary,
+    TargetEvaluationResult,
+)
 from src.targets.router_build_helpers import build_dual_target_summary
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -87,7 +90,9 @@ class TestP3PipelineEnforcementExists:
     """_enforce_btst_prior_quality_p3 must be importable and exist in daily_pipeline."""
 
     def test_function_is_importable(self):
-        from src.execution.daily_pipeline import _enforce_btst_prior_quality_p3  # noqa: F401
+        from src.execution.daily_pipeline import (  # noqa: F401
+            _enforce_btst_prior_quality_p3,
+        )
 
     def test_mode_constant_is_defined(self):
         from src.execution.daily_pipeline import (

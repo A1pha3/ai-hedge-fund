@@ -9,18 +9,17 @@ from pathlib import Path
 import pytest
 
 from src.screening.consecutive_recommendation import (
-    DEFAULT_LOOKBACK_DAYS,
-    ConsecutiveStats,
-    RecommendationStatus,
     _classify_status,
     _format_date,
     _parse_date,
     compute_consecutive_recommendations,
+    ConsecutiveStats,
+    DEFAULT_LOOKBACK_DAYS,
     load_auto_screening_history,
     load_tracking_history,
+    RecommendationStatus,
     resolve_report_dir,
 )
-
 
 # ---------------------------------------------------------------------------
 # _parse_date / _format_date

@@ -8,11 +8,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.backend.database.connection import Base, get_db
-from app.backend.models.user import User, InvitationCode
+from app.backend.auth.constants import ADMIN_USERNAME, InvalidTokenError
 from app.backend.auth.service import AuthService
-from app.backend.auth.utils import hash_password, create_reset_token, create_access_token
-from app.backend.auth.constants import InvalidTokenError, ADMIN_USERNAME
+from app.backend.auth.utils import (
+    create_access_token,
+    create_reset_token,
+    hash_password,
+)
+from app.backend.database.connection import Base, get_db
+from app.backend.models.user import InvitationCode, User
 
 
 def _utcnow():

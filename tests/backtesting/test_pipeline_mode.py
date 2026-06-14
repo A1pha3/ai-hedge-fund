@@ -5,8 +5,7 @@ import pytest
 
 from src.backtesting.engine import BacktestEngine, PipelineModeDayState
 from src.execution.models import ExecutionPlan, LayerCResult, PendingOrder
-from src.portfolio.models import ExitSignal
-from src.portfolio.models import PositionPlan
+from src.portfolio.models import ExitSignal, PositionPlan
 from src.research.artifacts import FileSelectionArtifactWriter
 
 
@@ -655,7 +654,9 @@ def test_run_pending_pipeline_plan_merges_applies_and_carries_queue_alerts(monke
     )
 
     def fake_build_intraday_state(**kwargs):
-        from src.backtesting.engine_pending_plan_runner import PendingPipelineIntradayState
+        from src.backtesting.engine_pending_plan_runner import (
+            PendingPipelineIntradayState,
+        )
         return (
             PendingPipelineIntradayState(
                 confirmed_orders=confirmed_orders,

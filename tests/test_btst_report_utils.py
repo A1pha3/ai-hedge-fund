@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.btst_report_utils import discover_nested_report_dirs, discover_report_dirs, load_json, normalize_trade_date, safe_load_json
+from scripts.btst_report_utils import (
+    discover_nested_report_dirs,
+    discover_report_dirs,
+    load_json,
+    normalize_trade_date,
+    safe_load_json,
+)
 from src.paper_trading.btst_reporting_utils import _load_btst_rollout_validation_context
 
 

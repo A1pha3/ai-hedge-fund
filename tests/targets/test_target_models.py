@@ -11,26 +11,32 @@ from src.paper_trading._btst_reporting.entry_mode_utils import (
     _augment_execution_note,
 )
 from src.screening.models import StrategySignal
-from src.targets import build_short_trade_target_profile, get_short_trade_target_profile, use_short_trade_target_profile
-from src.targets.router import build_selection_targets
-from src.targets.short_trade_target_evaluation_helpers import (
-    _preferred_entry_mode_from_historical_prior,
-    _resolve_short_trade_decision,
+from src.targets import (
+    build_short_trade_target_profile,
+    get_short_trade_target_profile,
+    use_short_trade_target_profile,
 )
+from src.targets.router import build_selection_targets
 from src.targets.short_trade_target import (
     _resolve_selected_score_tolerance,
     build_short_trade_target_snapshot_from_entry,
     evaluate_short_trade_rejected_target,
     evaluate_short_trade_selected_target,
 )
-from src.targets.short_trade_target_snapshot_relief_helpers import (
-    _apply_ticker_historical_prior_boost,
+from src.targets.short_trade_target_evaluation_helpers import (
+    _preferred_entry_mode_from_historical_prior,
+    _resolve_short_trade_decision,
 )
 from src.targets.short_trade_target_prior_helpers import (
     calibrate_short_trade_historical_prior,
     score_short_trade_historical_continuation_prior,
 )
-from src.targets.short_trade_target_watchlist_helpers import resolve_short_trade_boundary_selected_only_shrink_impl
+from src.targets.short_trade_target_snapshot_relief_helpers import (
+    _apply_ticker_historical_prior_boost,
+)
+from src.targets.short_trade_target_watchlist_helpers import (
+    resolve_short_trade_boundary_selected_only_shrink_impl,
+)
 
 
 def _make_signal(direction: int, confidence: float, completeness: float = 1.0, sub_factors: dict | None = None) -> StrategySignal:
@@ -509,7 +515,9 @@ def _make_non_catalyst_boundary_decision_probe_entry() -> dict:
 
 
 def test_build_target_input_from_entry_preserves_shadow_focus_release_metadata_in_replay_context() -> None:
-    from src.targets.short_trade_target_input_helpers import build_target_input_from_entry
+    from src.targets.short_trade_target_input_helpers import (
+        build_target_input_from_entry,
+    )
 
     result = build_target_input_from_entry(
         trade_date="20260410",
@@ -539,7 +547,9 @@ def test_build_target_input_preserves_explicit_quality_score_zero_r20_17_regress
 
     0.0 是合法"最低质量"语义, 必须保留; 0.5 是默认值只在 missing 时用。
     """
-    from src.targets.short_trade_target_input_helpers import build_target_input_from_entry
+    from src.targets.short_trade_target_input_helpers import (
+        build_target_input_from_entry,
+    )
 
     # 显式传 0.0 (合法"最低质量")
     result = build_target_input_from_entry(

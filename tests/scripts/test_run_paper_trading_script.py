@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-import os
-from types import SimpleNamespace
-from pathlib import Path
-
 import json
+import os
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
-from src.paper_trading.optimized_profile_resolution import resolve_btst_optimized_profile_manifest
+
 import scripts.run_paper_trading as run_paper_trading_script
+from src.paper_trading.optimized_profile_resolution import (
+    resolve_btst_optimized_profile_manifest,
+)
 
 
 def test_resolve_selected_analysts_defaults_to_none() -> None:

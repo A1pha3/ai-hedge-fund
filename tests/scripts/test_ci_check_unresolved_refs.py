@@ -5,6 +5,7 @@ from pathlib import Path
 # Ensure scripts/ci_check_unresolved_refs is importable as a module
 SCRIPTS_FILE = Path(__file__).parent.parent.parent / "scripts" / "ci_check_unresolved_refs.py"
 import importlib.util
+
 _spec = importlib.util.spec_from_file_location("ci_check_unresolved_refs", SCRIPTS_FILE)
 _module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_module)

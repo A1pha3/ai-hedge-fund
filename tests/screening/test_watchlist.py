@@ -7,14 +7,13 @@ import json
 import pytest
 
 from src.screening.watchlist import (
-    MAX_SCORE_HISTORY_DAYS,
-    Watchlist,
-    WatchlistEntry,
     _dedupe_tags,
     _today_iso,
     format_watchlist_status,
+    MAX_SCORE_HISTORY_DAYS,
+    Watchlist,
+    WatchlistEntry,
 )
-
 
 # ---------------------------------------------------------------------------
 # _dedupe_tags

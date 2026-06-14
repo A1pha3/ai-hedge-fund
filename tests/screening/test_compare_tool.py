@@ -8,7 +8,6 @@ import pytest
 
 from src.screening.compare_tool import _extract_raw_metric, _normalize_minmax
 
-
 # ---------------------------------------------------------------------------
 # _extract_raw_metric
 # ---------------------------------------------------------------------------

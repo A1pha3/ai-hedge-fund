@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from src.targets.short_trade_target_snapshot_payload_helpers import build_short_trade_target_snapshot_payload
+from src.targets.short_trade_target_snapshot_payload_helpers import (
+    build_short_trade_target_snapshot_payload,
+)
 
 
 def test_build_short_trade_target_snapshot_payload_surfaces_continuation_and_reversal_keys() -> None:

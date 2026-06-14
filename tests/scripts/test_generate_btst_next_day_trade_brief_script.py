@@ -4,15 +4,18 @@ import json
 
 import pandas as pd
 
-from scripts.generate_btst_next_day_trade_brief import analyze_btst_next_day_trade_brief, render_btst_next_day_trade_brief_markdown
-import src.paper_trading.btst_reporting as btst_reporting
 import src.paper_trading._btst_reporting.entry_builders as entry_builders
-import src.paper_trading._btst_reporting.pool_classifiers as pool_classifiers
 import src.paper_trading._btst_reporting.historical_prior as historical_prior
 import src.paper_trading._btst_reporting.historical_prior_brief_enrichment as historical_prior_brief_enrichment
 import src.paper_trading._btst_reporting.historical_prior_collection as historical_prior_collection
 import src.paper_trading._btst_reporting.historical_prior_opportunity as historical_prior_opportunity
 import src.paper_trading._btst_reporting.historical_prior_price as historical_prior_price
+import src.paper_trading._btst_reporting.pool_classifiers as pool_classifiers
+import src.paper_trading.btst_reporting as btst_reporting
+from scripts.generate_btst_next_day_trade_brief import (
+    analyze_btst_next_day_trade_brief,
+    render_btst_next_day_trade_brief_markdown,
+)
 from src.paper_trading.btst_reporting import infer_next_trade_date
 from src.targets import use_short_trade_target_profile
 from src.targets.router import build_selection_targets

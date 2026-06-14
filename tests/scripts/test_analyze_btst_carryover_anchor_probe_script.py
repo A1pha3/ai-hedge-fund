@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_btst_carryover_anchor_probe import analyze_btst_carryover_anchor_probe, render_btst_carryover_anchor_probe_markdown
+from scripts.analyze_btst_carryover_anchor_probe import (
+    analyze_btst_carryover_anchor_probe,
+    render_btst_carryover_anchor_probe_markdown,
+)
 
 
 def test_analyze_btst_carryover_anchor_probe_recovers_exact_anchor(monkeypatch, tmp_path):

@@ -1,6 +1,8 @@
 import pytest
 
-from src.targets.short_trade_forward_label_helpers import build_short_trade_forward_labels
+from src.targets.short_trade_forward_label_helpers import (
+    build_short_trade_forward_labels,
+)
 
 
 def test_build_short_trade_forward_labels_surfaces_fast_confirm_retention_and_tail() -> None:

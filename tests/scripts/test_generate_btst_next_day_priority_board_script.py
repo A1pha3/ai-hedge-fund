@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 
 import src.paper_trading.btst_reporting as btst_reporting
-from src.paper_trading.btst_reporting import generate_btst_next_day_priority_board_artifacts
+from src.paper_trading.btst_reporting import (
+    generate_btst_next_day_priority_board_artifacts,
+)
 
 
 def test_render_btst_next_day_priority_board_markdown_emits_sections_and_catalyst_rows():

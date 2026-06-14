@@ -8,7 +8,11 @@ from src.execution.daily_pipeline import (
 )
 from src.execution.models import ExecutionPlan
 from src.portfolio.models import PositionPlan
-from src.targets.models import DualTargetEvaluation, DualTargetSummary, TargetEvaluationResult
+from src.targets.models import (
+    DualTargetEvaluation,
+    DualTargetSummary,
+    TargetEvaluationResult,
+)
 from src.targets.router_build_helpers import build_reporting_target_summary
 
 

@@ -5,15 +5,14 @@ from __future__ import annotations
 import pytest
 
 from src.screening.position_health import (
-    PositionHealth,
-    PositionHealthReport,
     _action_colored,
     _determine_action,
     _find_ticker_in_history,
+    PositionHealth,
+    PositionHealthReport,
     render_position_health,
 )
 from src.utils.display import Fore, Style
-
 
 # ---------------------------------------------------------------------------
 # _determine_action

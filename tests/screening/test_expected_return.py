@@ -9,9 +9,9 @@ from src.screening.confidence_calibration import (
     ScoreBucketStats,
 )
 from src.screening.expected_return import (
+    compute_expected_returns,
     ExpectedReturn,
     ExpectedReturnReport,
-    compute_expected_returns,
     render_expected_returns,
     render_expected_returns_compact,
 )

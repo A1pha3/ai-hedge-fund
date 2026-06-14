@@ -2,7 +2,7 @@ import json
 from types import SimpleNamespace
 
 import src.agents.news_sentiment as news_sentiment_module
-from src.agents.news_sentiment import Sentiment, news_sentiment_agent
+from src.agents.news_sentiment import news_sentiment_agent, Sentiment
 from src.data.models import CompanyNews
 
 

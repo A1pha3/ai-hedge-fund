@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_short_trade_boundary_frontier_ticker_dossier import analyze_short_trade_boundary_frontier_ticker_dossier
+from scripts.analyze_short_trade_boundary_frontier_ticker_dossier import (
+    analyze_short_trade_boundary_frontier_ticker_dossier,
+)
 
 
 def test_analyze_short_trade_boundary_frontier_ticker_dossier_extracts_single_ticker(tmp_path):

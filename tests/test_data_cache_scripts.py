@@ -6,10 +6,20 @@ from types import SimpleNamespace
 
 import pytest
 
-from scripts import benchmark_data_cache_reuse, manage_data_cache, validate_data_cache_reuse
+from scripts import (
+    benchmark_data_cache_reuse,
+    manage_data_cache,
+    validate_data_cache_reuse,
+)
 from src.data import cache_benchmark
 from src.data import enhanced_cache as enhanced_cache_module
-from src.data.enhanced_cache import DiskCache, EnhancedCache, clear_cache, diff_cache_stats, get_cache_runtime_info
+from src.data.enhanced_cache import (
+    clear_cache,
+    diff_cache_stats,
+    DiskCache,
+    EnhancedCache,
+    get_cache_runtime_info,
+)
 
 
 def test_diff_cache_stats_returns_run_delta():

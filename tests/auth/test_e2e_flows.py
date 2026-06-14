@@ -1,15 +1,15 @@
 """End-to-end flow tests covering complete user journeys through the auth system."""
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from fastapi.testclient import TestClient
 
-from app.backend.database.connection import Base, get_db
-from app.backend.models.user import User, InvitationCode
-from app.backend.auth.utils import hash_password
 from app.backend.auth.constants import ADMIN_USERNAME
+from app.backend.auth.utils import hash_password
+from app.backend.database.connection import Base, get_db
+from app.backend.models.user import InvitationCode, User
 
 
 @pytest.fixture()

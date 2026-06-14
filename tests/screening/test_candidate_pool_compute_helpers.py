@@ -21,7 +21,6 @@ from src.screening.candidate_pool_compute_helpers import (
     resolve_cooldown_tickers,
 )
 
-
 # ---------------------------------------------------------------------------
 # apply_cooldown_filter
 # ---------------------------------------------------------------------------

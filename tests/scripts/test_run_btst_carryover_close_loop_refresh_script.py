@@ -3,8 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import scripts.run_btst_carryover_close_loop_refresh as refresh_module
-
-from scripts.run_btst_carryover_close_loop_refresh import refresh_btst_carryover_close_loop_bundle
+from scripts.run_btst_carryover_close_loop_refresh import (
+    refresh_btst_carryover_close_loop_bundle,
+)
 
 
 def test_refresh_btst_carryover_close_loop_bundle_writes_carryover_artifacts(monkeypatch, tmp_path: Path) -> None:

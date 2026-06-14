@@ -8,14 +8,13 @@ from typing import Any
 import pytest
 
 from src.screening.signal_momentum import (
-    MomentumInfo,
-    MomentumReport,
     _classify_momentum,
     _simple_slope,
     compute_signal_momentum,
+    MomentumInfo,
+    MomentumReport,
     render_signal_momentum,
 )
-
 
 # ---------------------------------------------------------------------------
 # Unit: _simple_slope

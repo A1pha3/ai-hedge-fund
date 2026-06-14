@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_targeted_short_trade_near_miss_release_pair_comparison import analyze_targeted_short_trade_near_miss_release_pair_comparison
+from scripts.analyze_targeted_short_trade_near_miss_release_pair_comparison import (
+    analyze_targeted_short_trade_near_miss_release_pair_comparison,
+)
 
 
 def test_analyze_targeted_short_trade_near_miss_release_pair_comparison_prioritizes_lower_cost_close_continuation(tmp_path):

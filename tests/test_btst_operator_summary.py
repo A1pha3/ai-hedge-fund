@@ -15,16 +15,16 @@ from pathlib import Path
 import pytest
 
 from src.paper_trading.btst_operator_summary import (
-    OperatorSummary,
-    SummaryStatus,
-    DecisionPhase,
     ActionabilityStatus,
-    ComparisonScope,
-    IncrementalEvidenceStatus,
-    PointInTimeStatus,
     build_decision_id,
     build_operator_summary,
+    ComparisonScope,
+    DecisionPhase,
+    IncrementalEvidenceStatus,
+    OperatorSummary,
+    PointInTimeStatus,
     read_operator_summary,
+    SummaryStatus,
     write_operator_summary,
 )
 

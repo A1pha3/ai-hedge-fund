@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from src.paper_trading._btst_reporting.payoff_review_lane import build_payoff_review_entries
+from src.paper_trading._btst_reporting.payoff_review_lane import (
+    build_payoff_review_entries,
+)
 
 
 def test_build_payoff_review_entries_ranks_by_proxy_prior_and_reliability(monkeypatch):

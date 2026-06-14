@@ -19,9 +19,6 @@ import pytest
 
 from src.data.models import Price
 from src.research.lookback_audit import (
-    LookbackAuditResult,
-    PriceFetcher,
-    TickerAuditResult,
     _compute_max_drawdown,
     _compute_max_return,
     _extract_top_tickers,
@@ -30,13 +27,16 @@ from src.research.lookback_audit import (
     _parse_date,
     _read_selection_snapshot,
     format_audit_table,
+    LookbackAuditResult,
+    PriceFetcher,
     run_lookback_audit,
+    TickerAuditResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_snapshot(
     trade_date: str = "2026-05-05",
@@ -522,9 +522,10 @@ class TestFormatAuditTable:
 
 class TestCLI:
     def test_cli_parse_args(self) -> None:
-        from src.research.lookback_audit import main
         import io
         from unittest.mock import patch
+
+        from src.research.lookback_audit import main
 
         with patch("sys.argv", ["lookback_audit", "--date", "20260505", "--days", "30", "--json"]):
             # Should not crash; just test arg parsing

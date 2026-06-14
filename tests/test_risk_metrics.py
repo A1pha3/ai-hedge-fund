@@ -16,13 +16,12 @@ from app.backend.routes.risk_metrics import (
     RiskSnapshotResponse,
 )
 from src.portfolio.risk_metrics import (
+    compute_risk_snapshot,
     DRAWDOWN_WARNING_THRESHOLD,
     INDUSTRY_CONCENTRATION_WARNING_THRESHOLD,
-    SINGLE_POSITION_WARNING_THRESHOLD,
     RiskSnapshot,
-    compute_risk_snapshot,
+    SINGLE_POSITION_WARNING_THRESHOLD,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

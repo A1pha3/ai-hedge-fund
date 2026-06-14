@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_short_trade_ticker_role_history import analyze_short_trade_ticker_role_history, discover_report_dirs
+from scripts.analyze_short_trade_ticker_role_history import (
+    analyze_short_trade_ticker_role_history,
+    discover_report_dirs,
+)
 
 
 def test_analyze_short_trade_ticker_role_history_detects_window_local_short_trade_baseline(tmp_path):

@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from src.screening.decision_flow import run_decision_flow, render_decision_flow_summary
+from src.screening.decision_flow import render_decision_flow_summary, run_decision_flow
 
 
 def _make_report(date_str: str, recs: list[dict]) -> dict:

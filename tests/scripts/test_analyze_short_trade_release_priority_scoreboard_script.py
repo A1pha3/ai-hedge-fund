@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_short_trade_release_priority_scoreboard import analyze_short_trade_release_priority_scoreboard
+from scripts.analyze_short_trade_release_priority_scoreboard import (
+    analyze_short_trade_release_priority_scoreboard,
+)
 
 
 def test_analyze_short_trade_release_priority_scoreboard_ranks_lower_cost_stronger_close_first(tmp_path):

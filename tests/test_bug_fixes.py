@@ -29,9 +29,8 @@ from src.agents.charlie_munger_helpers import (
 from src.agents.portfolio_manager import compute_allowed_actions
 from src.agents.risk_manager_helpers import _calculate_total_portfolio_value
 from src.agents.warren_buffett import _calculate_book_value_cagr
-from src.backtesting.portfolio import Portfolio, _EMPTY_POSITION
+from src.backtesting.portfolio import _EMPTY_POSITION, Portfolio
 from src.backtesting.valuation import calculate_portfolio_value
-
 
 # ===========================================================================
 # BUG-1: btst_runtime_metrics missing from get_snapshot / load_snapshot

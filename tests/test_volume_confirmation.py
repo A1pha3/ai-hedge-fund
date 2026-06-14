@@ -8,11 +8,11 @@ from typing import Any
 import pytest
 
 from src.screening.volume_confirmation import (
-    VolumeEntry,
-    VolumeReport,
     _extract_volume_from_rec,
     compute_volume_confirmation,
     render_volume_confirmation,
+    VolumeEntry,
+    VolumeReport,
 )
 
 

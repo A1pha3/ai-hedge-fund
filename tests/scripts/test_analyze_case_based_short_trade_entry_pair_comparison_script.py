@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_case_based_short_trade_entry_pair_comparison import analyze_case_based_short_trade_entry_pair_comparison
+from scripts.analyze_case_based_short_trade_entry_pair_comparison import (
+    analyze_case_based_short_trade_entry_pair_comparison,
+)
 
 
 def test_analyze_case_based_short_trade_entry_pair_comparison_prioritizes_001309_over_300383(tmp_path):

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scripts.rebuild_catalyst_theme_diagnostics_from_frozen_reports import _discover_unique_report_dirs
+from scripts.rebuild_catalyst_theme_diagnostics_from_frozen_reports import (
+    _discover_unique_report_dirs,
+)
 
 
 def test_discover_unique_report_dirs_includes_replayable_reports_without_selection_artifacts(tmp_path: Path) -> None:

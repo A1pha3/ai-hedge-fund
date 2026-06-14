@@ -1,20 +1,19 @@
 """Tests for P3-2: weight_calibration module."""
 import pytest
 
+from src.research.factor_ic_analysis import FactorICResult
 from src.research.weight_calibration import (
-    WeightCalibrationResult,
-    StrategyICSummary,
-    compute_weight_calibration,
-    render_weight_calibration,
-    _infer_strategy,
     _aggregate_strategy_ic,
     _calibrate_weights,
+    _infer_strategy,
+    compute_weight_calibration,
     DEFAULT_EQUAL_WEIGHTS,
-    WEIGHT_FLOOR,
     MIN_OBSERVATIONS_FOR_CALIBRATION,
+    render_weight_calibration,
+    StrategyICSummary,
+    WEIGHT_FLOOR,
+    WeightCalibrationResult,
 )
-from src.research.factor_ic_analysis import FactorICResult
-
 
 # ---------------------------------------------------------------------------
 # Unit tests for helpers

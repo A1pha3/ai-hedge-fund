@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -12,13 +12,13 @@ import pytest
 from src.screening.composite_score import CompositeEntry, CompositeReport
 from src.screening.expected_return import ExpectedReturn, ExpectedReturnReport
 from src.screening.top_picks import (
-    run_top_picks,
     _build_signal_breakdown,
     _consecutive_bonus,
     _load_recommendation_context,
-    _status_icon,
     _render_hit_rate_summary,
     _score_color,
+    _status_icon,
+    run_top_picks,
 )
 from src.utils.display import Fore, Style
 
@@ -847,8 +847,8 @@ class TestStopLossTakeProfit:
             assert result == ""
 
     def test_valid_prices_renders_output(self) -> None:
-        from src.screening.top_picks import _render_stop_loss_take_profit
         from src.data.models import Price
+        from src.screening.top_picks import _render_stop_loss_take_profit
 
         # Create mock price data with enough history for ATR
         prices = [
@@ -885,8 +885,8 @@ class TestScoreTrend:
         assert result == ""
 
     def test_rising_score_shows_up_arrow(self, tmp_path: Path) -> None:
-        from src.screening.top_picks import _render_score_trend
         from src.screening.signal_decay_detector import DecayInfo, DecayLevel
+        from src.screening.top_picks import _render_score_trend
 
         decay_info = DecayInfo(
             ticker="300750",
@@ -903,8 +903,8 @@ class TestScoreTrend:
                 assert "↑↑" in result
 
     def test_falling_score_shows_down_arrow(self, tmp_path: Path) -> None:
-        from src.screening.top_picks import _render_score_trend
         from src.screening.signal_decay_detector import DecayInfo, DecayLevel
+        from src.screening.top_picks import _render_score_trend
 
         decay_info = DecayInfo(
             ticker="300750",
@@ -921,8 +921,8 @@ class TestScoreTrend:
                 assert "↓↓" in result
 
     def test_stable_score_shows_arrow(self, tmp_path: Path) -> None:
-        from src.screening.top_picks import _render_score_trend
         from src.screening.signal_decay_detector import DecayInfo, DecayLevel
+        from src.screening.top_picks import _render_score_trend
 
         decay_info = DecayInfo(
             ticker="300750",
@@ -939,8 +939,8 @@ class TestScoreTrend:
                 assert "→" in result
 
     def test_no_previous_score_returns_empty(self, tmp_path: Path) -> None:
-        from src.screening.top_picks import _render_score_trend
         from src.screening.signal_decay_detector import DecayInfo, DecayLevel
+        from src.screening.top_picks import _render_score_trend
 
         decay_info = DecayInfo(
             ticker="300750",
@@ -1109,24 +1109,27 @@ class TestDataFreshness:
     """Tests for _check_report_freshness (R12)."""
 
     def test_fresh_report_no_warning(self) -> None:
-        from src.screening.top_picks import _check_report_freshness
         from datetime import datetime
+
+        from src.screening.top_picks import _check_report_freshness
 
         today = datetime.now().strftime("%Y%m%d")
         result = _check_report_freshness(today)
         assert result == ""
 
     def test_yesterday_report_no_warning(self) -> None:
-        from src.screening.top_picks import _check_report_freshness
         from datetime import datetime, timedelta
+
+        from src.screening.top_picks import _check_report_freshness
 
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
         result = _check_report_freshness(yesterday)
         assert result == ""
 
     def test_stale_report_shows_warning(self) -> None:
-        from src.screening.top_picks import _check_report_freshness
         from datetime import datetime, timedelta
+
+        from src.screening.top_picks import _check_report_freshness
 
         old = (datetime.now() - timedelta(days=3)).strftime("%Y%m%d")
         result = _check_report_freshness(old)

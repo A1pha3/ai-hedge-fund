@@ -21,11 +21,11 @@ import pytest
 from src.backtesting.param_grid import (
     COMPARISON_METRICS,
     DEFAULT_GRID_MAX_WORKERS,
+    grid_combinations,
     GRID_ENV_VAR,
     ParamGridError,
     ParamGridReport,
     ParamGridTrial,
-    grid_combinations,
     parse_param_grid,
     render_console_table,
     render_markdown_table,
@@ -34,7 +34,6 @@ from src.backtesting.param_grid import (
     save_json_report,
     save_markdown_report,
 )
-
 
 # ---------------------------------------------------------------------------
 # parse_param_grid
@@ -563,7 +562,7 @@ class TestNonFiniteMetricGuards:
     surfacing a corrupt value as the "best" via IEEE-754 sort quirks."""
 
     def test_best_trial_skips_nan_metric(self) -> None:
-        from src.backtesting.param_grid import ParamGridTrial, ParamGridReport
+        from src.backtesting.param_grid import ParamGridReport, ParamGridTrial
 
         finite_trial = ParamGridTrial(
             trial_index=0,
@@ -583,7 +582,7 @@ class TestNonFiniteMetricGuards:
         assert best.trial_index == 0  # the NaN trial must NOT win
 
     def test_best_trial_skips_inf_metric(self) -> None:
-        from src.backtesting.param_grid import ParamGridTrial, ParamGridReport
+        from src.backtesting.param_grid import ParamGridReport, ParamGridTrial
 
         finite_trial = ParamGridTrial(
             trial_index=0,
@@ -603,7 +602,7 @@ class TestNonFiniteMetricGuards:
         assert best.trial_index == 0
 
     def test_best_trial_returns_none_when_all_non_finite(self) -> None:
-        from src.backtesting.param_grid import ParamGridTrial, ParamGridReport
+        from src.backtesting.param_grid import ParamGridReport, ParamGridTrial
 
         nan_trial = ParamGridTrial(
             trial_index=0,
@@ -615,7 +614,7 @@ class TestNonFiniteMetricGuards:
         assert report.best_trial("sharpe_ratio") is None
 
     def test_trials_sorted_by_pushed_nan_to_bottom(self) -> None:
-        from src.backtesting.param_grid import ParamGridTrial, ParamGridReport
+        from src.backtesting.param_grid import ParamGridReport, ParamGridTrial
 
         a = ParamGridTrial(trial_index=0, params={"x": 1}, metrics={"sharpe_ratio": 2.0, "status": "ok"}, duration_seconds=0.1)
         b = ParamGridTrial(trial_index=1, params={"x": 2}, metrics={"sharpe_ratio": float("nan"), "status": "ok"}, duration_seconds=0.1)

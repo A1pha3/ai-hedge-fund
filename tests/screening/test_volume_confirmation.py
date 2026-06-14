@@ -5,14 +5,13 @@ from __future__ import annotations
 import pytest
 
 from src.screening.volume_confirmation import (
-    VolumeEntry,
-    VolumeReport,
     _confirmation_colored,
     _extract_volume_from_rec,
     render_volume_confirmation,
+    VolumeEntry,
+    VolumeReport,
 )
 from src.utils.display import Fore, Style
-
 
 # ---------------------------------------------------------------------------
 # _extract_volume_from_rec

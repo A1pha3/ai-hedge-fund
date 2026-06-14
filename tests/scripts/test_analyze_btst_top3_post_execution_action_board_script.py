@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_btst_top3_post_execution_action_board import analyze_btst_top3_post_execution_action_board
+from scripts.analyze_btst_top3_post_execution_action_board import (
+    analyze_btst_top3_post_execution_action_board,
+)
 
 
 def test_analyze_btst_top3_post_execution_action_board_orders_primary_shadow_and_structural_hold(tmp_path):

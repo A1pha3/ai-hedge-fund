@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Import helper — main.py is large so we import just the function under test.
 # ---------------------------------------------------------------------------

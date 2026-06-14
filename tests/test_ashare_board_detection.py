@@ -3,12 +3,18 @@ from types import SimpleNamespace
 
 import pandas as pd
 
+import src.tools.ashare_data_sources as ashare_data_sources
+import src.tools.tushare_api as tushare_api
 from src.data.providers.akshare_provider import AKShareProvider
 from src.data.providers.tushare_provider import TushareProvider
-import src.tools.ashare_data_sources as ashare_data_sources
-from src.tools.ashare_board_utils import build_beijing_exchange_mask, build_beijing_exchange_mask_from_series, detect_ashare_exchange, to_baostock_code, to_tushare_code
 from src.tools.akshare_api import AShareTicker
-import src.tools.tushare_api as tushare_api
+from src.tools.ashare_board_utils import (
+    build_beijing_exchange_mask,
+    build_beijing_exchange_mask_from_series,
+    detect_ashare_exchange,
+    to_baostock_code,
+    to_tushare_code,
+)
 from src.tools.tushare_api import _to_ts_code
 
 

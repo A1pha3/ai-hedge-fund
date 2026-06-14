@@ -17,7 +17,6 @@ from src.execution.daily_pipeline_historical_prior_attachment import (
 )
 from src.execution.models import LayerCResult
 
-
 # ---------------------------------------------------------------------------
 # _refresh_attached_entry_relief
 # ---------------------------------------------------------------------------

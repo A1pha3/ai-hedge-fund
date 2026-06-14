@@ -1,5 +1,5 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import scripts.analyze_btst_5d_15pct_boundary_contract_fill_path as fill_script
 

@@ -1,5 +1,9 @@
 from src.llm import models as llm_models
-from src.main import _build_analyst_batches, _get_analyst_concurrency_limit, _order_selected_analysts
+from src.main import (
+    _build_analyst_batches,
+    _get_analyst_concurrency_limit,
+    _order_selected_analysts,
+)
 from src.utils import llm as llm_utils
 from src.utils.llm import build_parallel_provider_execution_plan
 

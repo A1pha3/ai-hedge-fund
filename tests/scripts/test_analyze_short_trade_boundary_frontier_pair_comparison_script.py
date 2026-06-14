@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_short_trade_boundary_frontier_pair_comparison import analyze_short_trade_boundary_frontier_pair_comparison
+from scripts.analyze_short_trade_boundary_frontier_pair_comparison import (
+    analyze_short_trade_boundary_frontier_pair_comparison,
+)
 
 
 def test_analyze_short_trade_boundary_frontier_pair_comparison_compares_two_tickers(tmp_path):

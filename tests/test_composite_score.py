@@ -11,8 +11,8 @@ from src.screening.composite_score import (
     CompositeEntry,
     CompositeReport,
     compute_composite_scores,
-    render_composite_scores,
     render_composite_compact,
+    render_composite_scores,
 )
 
 

@@ -30,9 +30,11 @@ from src.portfolio.exit_manager import HoldingState
 from src.portfolio.industry_exposure import calculate_industry_exposures
 from src.portfolio.models import IndustryExposure
 from src.screening.batch_data_fetcher import BatchDataCache
-from src.screening.signal_fusion import _parse_cooldown_date, maybe_release_cooldown_early
 from src.screening.models import StrategySignal
-
+from src.screening.signal_fusion import (
+    _parse_cooldown_date,
+    maybe_release_cooldown_early,
+)
 
 # ============================================================
 # ALPHA-C1: Michael Burry negative-FCF yield

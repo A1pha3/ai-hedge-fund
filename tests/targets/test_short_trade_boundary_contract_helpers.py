@@ -1,16 +1,16 @@
+import src.targets.short_trade_target_evaluation_helpers as short_trade_target_evaluation_helpers
+from src.targets.models import TargetEvaluationInput
 from src.targets.short_trade_boundary_contract_helpers import (
     BOUNDARY_CONTRACT_CORE_KEYS,
     build_boundary_contract_core_payload,
     merge_boundary_contract_core_payload,
 )
-from src.targets.models import TargetEvaluationInput
 from src.targets.short_trade_target_evaluation_helpers import (
+    build_short_trade_target_result,
     ShortTradeEvaluationContext,
     ShortTradeThresholdState,
     ShortTradeVerdict,
-    build_short_trade_target_result,
 )
-import src.targets.short_trade_target_evaluation_helpers as short_trade_target_evaluation_helpers
 
 
 def test_build_boundary_contract_core_payload_prefers_explicit_values() -> None:

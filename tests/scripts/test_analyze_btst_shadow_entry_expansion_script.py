@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
-from scripts.analyze_btst_shadow_entry_expansion import analyze_btst_shadow_entry_expansion
+from scripts.analyze_btst_shadow_entry_expansion import (
+    analyze_btst_shadow_entry_expansion,
+)
 
 
 def test_analyze_btst_shadow_entry_expansion_flags_unique_threshold_only_case(tmp_path):
