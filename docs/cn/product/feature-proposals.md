@@ -27,6 +27,7 @@
 
 1. 默认前门必须围绕 **未来 30 天的可投资性**，而不是让用户手动拼接多个短周期信号。
 2. 用户最终需要的不是"更多指标"，而是 **更少候选、更高确信、更清晰的 Buy / Hold / Avoid 决策**。
+3. 更值得买的目标：胜率、赔率、持续时间，综合最优的候选，而不是单指标最优，比如（能连续5天涨停的，肯定要比能连续3天涨停的更值得买，10天能涨50%的，肯定要比5天涨20%的好）。
 3. 所有新增功能都要服务于这条主线：**更快筛掉低质量候选，更稳保留最值得买的代表票**。
 
 ### 约束
@@ -88,6 +89,7 @@
 | R23 | P3 | ✅ | **投资报告对话框 A股货币符号** | `InvestmentReportDialog` 价格单元格（line 449）从硬编码 `$` 改用 `currencySymbolForTicker(ticker)`，与 R21/R22 一致；扩展 `investment-report-dialog.test.tsx` 增加 A 股 (¥12.34) + 美股 ($150.00) 货币符号 characterization 测试。 |
 | R24 | P3 | ✅ | **StockDetailCard 关闭按钮可访问名** | `StockDetailCard` 的 2 个 `✕` 图标按钮（loading + loaded 状态）补 `aria-label="关闭"`，让屏幕阅读器能识别关闭动作（WCAG 2.1: 图标按钮必须有 accessible name）；新增 a11y 测试断言 `aria-label`。 |
 | R25 | P1 | ✅ | **QUICKSTART 失效文档链接修复** | 全仓 doc-link audit 发现 `docs/cn/product/QUICKSTART.md`（新用户前门）有 7 处失效 markdown 链接（`../` 应为 `./`，`./cli-reference.md` 应为 `./features/cli-reference.md` 等）— 修复后 `docs/cn/**/*.md` 失效链接 = 0。新用户 onboarding 路径不再 404。 |
+| R26 | P2 | ✅ | **过时文件引用修复** | stale-file-reference-audit 发现 3 处文档引用已移动/删除的文件：① 功能矩阵 `MATRIX.md`/`data-infrastructure.md` 仍把已删除的 `src/data/quality_monitor.py` 标 ✅（与 `data-layer.md` 的删除说明矛盾）→ 改标 ⛔ 已移除；② `user-manual.md` 把 `strategy_attribution_daily.py` 误指向 `src/portfolio/`（实际在 `src/screening/`）；③ `README.md` 指向已归档的 `docs/zh-cn/manual/`（实际在 `docs/old-zh-cn/manual/`）。消除"幻影文件"困惑。 |
 
 ### R8 设计细节
 
@@ -230,4 +232,4 @@
 
 ---
 
-> **最后更新**：2026-06-14（R20-S11：R25 QUICKSTART 失效链接全部修复 — 7 处 404 → 0; docs/cn audit clean）
+> **最后更新**：2026-06-14（R20-S12：R26 过时文件引用修复 — quality_monitor 幻影 ✅ / strategy_attribution 路径 / README 归档路径）

@@ -239,7 +239,7 @@
 | 2 | 验证规则集 | ✅ | `src/data/validation_rules.py` |
 | 3 | 数据清洗 | ✅ | `src/data/cleaner.py` |
 | 4 | 健康检查 | ✅ | `src/data/health_checker.py` |
-| 5 | 质量监控 | ✅ | `src/data/quality_monitor.py` |
+| 5 | 质量监控 | ⛔ 已移除 | ~~`src/data/quality_monitor.py`~~（R20 删除：零调用方，详见 [architecture/data-layer.md](../../architecture/data-layer.md)） |
 | 6 | 数据快照 | ✅ | `src/data/snapshot.py` — Markdown + JSON 双格式快照 |
 
 ---

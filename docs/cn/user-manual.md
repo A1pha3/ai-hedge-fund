@@ -273,7 +273,7 @@ uv run python src/main.py --export-pdf --pdf-date 20260607 --pdf-output ./report
 |---|---|---|
 | `/` | 自动选股(全市场一键) | `src/screening/candidate_pool.py` + `signal_fusion.py` |
 | `/risk` | 风险监控(VaR / CVaR / 回撤) | `src/portfolio/risk_metrics.py` |
-| `/attribution` | 归因分析(策略贡献度) | `src/portfolio/strategy_attribution_daily.py` |
+| `/attribution` | 归因分析(策略贡献度) | `src/screening/strategy_attribution_daily.py` |
 | `/lookback` | Lookback 审计(回放) | `src/research/factor_ic_analysis.py` |
 | `/admin` | 后台管理(API keys / 邀请) | `app/backend/routes/admin_audit.py` |
 

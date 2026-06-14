@@ -298,7 +298,7 @@ Interpretation guidelines:
 - `session_summary.json` for paper-trading runs now also records `data_cache`, `data_cache.session_stats`, and `artifacts.data_cache_path` for later inspection.
 - `scripts/run_paper_trading.py` also supports `--cache-benchmark`, so a paper-trading run can automatically emit `data_cache_benchmark.json`, `data_cache_benchmark.md`, and an appended `window_review.md` in the same output directory.
 - `benchmark_data_cache_reuse.py` wraps the first and second runs into one JSON summary, can emit a standalone Markdown snippet, and can append that snippet directly into an existing experiment note.
-- For a Chinese quickstart focused on cache inspection and reuse validation, see `docs/zh-cn/manual/data-cache-reuse-manual.md`.
+- For a Chinese quickstart focused on cache inspection and reuse validation, see `docs/old-zh-cn/manual/data-cache-reuse-manual.md`.
 
 Run a paper-trading session and automatically attach a post-run cache benchmark:
 

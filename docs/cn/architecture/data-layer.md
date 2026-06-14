@@ -211,7 +211,6 @@ CLI 入口 `python src/main.py --preheat --date 20260313`，并发=4。`force=Tr
 - 缓存层：`src/data/enhanced_cache.py`, `src/data/cache.py`
 - 路由：`src/data/router.py`, `src/data/router_helpers.py`, `src/data/base_provider.py`
 - 验证：`src/data/validator_v2.py`, `src/data/validator_v2_helpers.py`, `src/data/validation_rules.py`, `src/data/validator.py`
-- 质量：`src/data/quality_monitor.py`
 - 健康：`src/data/health.py`, `src/data/health_checker.py`
 - 批量：`src/screening/batch_data_fetcher.py`, `src/data/cache_preheater.py`
 - 预热入口：`src/main.py::run_preheat`（line 722）
