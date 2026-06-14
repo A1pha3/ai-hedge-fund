@@ -5,6 +5,7 @@
  * Uses POST /api/portfolio/attribution.
  */
 import React, { useCallback, useState } from "react";
+import { Button } from "@/components/ui/button";
 import {
   type AttributionResponse,
   type AttributionRequest,
@@ -241,13 +242,13 @@ const AttributionPage: React.FC = () => {
         contributions
       </p>
 
-      <button
+      <Button
         onClick={runDemo}
         disabled={loading}
-        className="mb-6 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded text-sm font-medium"
+        className="mb-6"
       >
         {loading ? "Computing…" : "Run Demo Attribution"}
-      </button>
+      </Button>
 
       {error && (
         <div className="bg-red-900/30 border border-red-700 rounded p-3 text-sm text-red-300 mb-4">
