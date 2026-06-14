@@ -105,6 +105,7 @@ function EquityCurveChart({ points }: { points: { date: string; value: number; d
   return (
     <svg
       viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="xMidYMid meet"
       className="w-full h-48"
       role="img"
       aria-label={ariaLabel}
@@ -181,6 +182,7 @@ function DrawdownChart({ points }: { points: { date: string; drawdown: number }[
   return (
     <svg
       viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="xMidYMid meet"
       className="w-full h-24"
       role="img"
       aria-label={drawdownAriaLabel}

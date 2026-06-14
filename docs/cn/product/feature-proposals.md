@@ -93,6 +93,7 @@
 | R27 | P2 | ✅ | **`.env.example` 失效环境变量修复** | config-env-drift audit 发现 `.env.example` 文档化的 `ARK_FALLBACK_MODEL` 在代码中从未被读取 — Volcengine ARK provider 实际读的是 `ARK_MODEL`（见 `provider_registry_defaults.py:100` `model_env_var`）。用户照 `.env.example` 设置 `ARK_FALLBACK_MODEL` 会静默无效。改为正确的 `ARK_MODEL` + 注释说明。dead-env-var audit 1 → 0。 |
 | R28 | P1 | ✅ | **`fpdf2` 依赖缺失声明** | dependency-freshness audit 发现 `src/reporting/pdf_exporter.py` 顶层 `from fpdf import FPDF` 但 `fpdf2` **不在** pyproject.toml / poetry.lock / uv.lock 任何依赖声明中 — 当前仅因开发机 .venv 恰好装了 2.8.7 才能工作。新用户 `uv sync` 后跑 `--export-pdf` 会 `ModuleNotFoundError: fpdf`。在 `[project.dependencies]` 和 `[tool.poetry.dependencies]` 各加 `fpdf2>=2.8.7`，恢复安装可复现性。 |
 | R29 | P3 | ✅ | **AttributionPage 演示按钮主题适配** | UX 研究 ux-best-practices-2025-2026.md V-3 行：`AttributionPage.tsx` 的 "Run Demo Attribution" 触发按钮原来是原生 `<button>` + 硬编码 `bg-blue-600` / `bg-blue-700`，不跟主题切换；改用 shadcn `<Button>`（default variant，落到 `bg-primary` / `text-primary-foreground` design token），自动获得统一的 focus-ring + disabled 样式与亮/暗主题适配。新增 `AttributionPage.test.tsx`（6 个 characterization 测试）锁定可访问名、design-token 类、`bg-blue-600/700` 反退守卫、`focus-visible:ring`、`mb-6` 布局间距、初始 enabled 状态。 |
+| R30 | P3 | ✅ | **回测 SVG 窄屏 aspect-ratio 守卫** | UX 研究 ux-best-practices-2025-2026.md R-4 行：`backtest-equity-curve.tsx` 的 EquityCurveChart 与 DrawdownChart 两个 `<svg>` 固定 `viewBox="0 0 800 200"` 但缺 `preserveAspectRatio`，超窄屏（手机 320px）下浏览器默认行为不一致可能挤压变形。两个 SVG 都补 `preserveAspectRatio="xMidYMid meet"`，并扩展 `backtest-equity-curve.test.tsx` 加 R30 守卫测试断言两个 SVG 都声明此属性。 |
 
 ### R8 设计细节
 

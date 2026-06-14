@@ -157,6 +157,23 @@ describe('BacktestEquityCurve — chart rendering', () => {
     render(<BacktestEquityCurve agentData={UPTREND} />);
     expect(screen.getByText(/水下图.*Drawdown/)).toBeDefined();
   });
+
+  /**
+   * R30 — UX research R-4 fix: SVG charts had a fixed 800x200 viewBox with no
+   * preserveAspectRatio attribute. On very narrow viewports the browser default
+   * ("xMidYMid meet" works for non-zero viewBoxes, but only one of two SVGs was
+   * actually relying on the implicit default; the other was filling the new
+   * width without keeping the aspect ratio). Pin the explicit attribute so the
+   * chart never deforms on narrow phones.
+   */
+  it('R30: equity SVG declares preserveAspectRatio="xMidYMid meet" (R-4 narrow-screen guard)', () => {
+    const { container } = render(<BacktestEquityCurve agentData={UPTREND} />);
+    const svgs = container.querySelectorAll('svg');
+    expect(svgs.length).toBeGreaterThanOrEqual(2);
+    svgs.forEach((svg) => {
+      expect(svg.getAttribute('preserveAspectRatio')).toBe('xMidYMid meet');
+    });
+  });
 });
 
 describe('BacktestEquityCurve — monthly returns heatmap', () => {
