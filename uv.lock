@@ -21,6 +21,7 @@ dependencies = [
     { name = "aiohttp" },
     { name = "akshare" },
     { name = "alembic" },
+    { name = "baostock" },
     { name = "bcrypt" },
     { name = "colorama" },
     { name = "fastapi" },
@@ -65,6 +66,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.11.0" },
     { name = "akshare", specifier = ">=1.18.27" },
     { name = "alembic", specifier = ">=1.12.0" },
+    { name = "baostock", specifier = ">=0.9.2" },
     { name = "bcrypt", specifier = ">=5.0.0" },
     { name = "colorama", specifier = ">=0.4.6" },
     { name = "fastapi", specifier = ">=0.104.0" },
@@ -344,6 +346,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/6b/5c/685e6633917e101e5dcb62b9dd76946cbb57c26e133bae9e0cd36033c0a9/attrs-25.4.0.tar.gz", hash = "sha256:16d5969b87f0859ef33a48b35d55ac1be6e42ae49d5e853b597db70c35c57e11", size = 934251, upload-time = "2025-10-06T13:54:44.725Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/2a/7cc015f5b9f5db42b7d48157e23356022889fc354a2813c15934b7cb5c0e/attrs-25.4.0-py3-none-any.whl", hash = "sha256:adcf7e2a1fb3b36ac48d97835bb6d8ade15b8dcce26aba8bf1d14847b57a3373", size = 67615, upload-time = "2025-10-06T13:54:43.17Z" },
+]
+
+[[package]]
+name = "baostock"
+version = "0.9.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pandas" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fa/2e/32f7c36a6d021b7cb8bf3bd75b4de8d74e2405e21a5ba1bf1e3706b2d34b/baostock-0.9.2.tar.gz", hash = "sha256:7a3fbba3417b308f774e84a62fc10909a70e81384051b3d693cbe54213686544", size = 25513, upload-time = "2026-06-06T12:20:20.783Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/28/b8/ccba7fa0dd4d1809a6244c04e58173b648fbb64d7cb158387b70d6695e7f/baostock-0.9.2-py3-none-any.whl", hash = "sha256:f7aaca22eb010db268a2b8bc3ed1a8743cc6f1989902477c65c1c3c022d2ecbf", size = 47940, upload-time = "2026-06-06T12:20:19.626Z" },
 ]
 
 [[package]]
