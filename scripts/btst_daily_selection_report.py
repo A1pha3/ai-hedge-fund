@@ -210,7 +210,7 @@ def main():
     try:
         limit_df = pro.limit_list(trade_date=trade_date, limit_type='U')
         limit_codes = set(limit_df['ts_code'].tolist()) if limit_df is not None and not limit_df.empty else set()
-    except:
+    except Exception:
         limit_codes = set()
 
     # 获取历史价格
@@ -222,7 +222,7 @@ def main():
             h = pro.daily(ts_code=','.join(batch), start_date='20250601', end_date=trade_date)
             if h is not None and not h.empty:
                 history.append(h)
-        except:
+        except Exception:
             continue
 
     if not history:

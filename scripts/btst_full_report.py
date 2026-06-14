@@ -413,7 +413,7 @@ def main():
     try:
         limit_df = pro.limit_list(trade_date=trade_date, limit_type='U')
         limit_codes = set(limit_df['ts_code'].tolist()) if limit_df is not None and not limit_df.empty else set()
-    except:
+    except Exception:
         limit_codes = set()
     limit_in_pool = len(set(df['ts_code']) & limit_codes)
 
@@ -421,7 +421,7 @@ def main():
     try:
         limit_d = pro.limit_list(trade_date=trade_date, limit_type='D')
         limit_down = len(limit_d) if limit_d is not None else 0
-    except:
+    except Exception:
         limit_down = 0
 
     p(f'  涨停: {limit_in_pool}只  跌停: {limit_down}只')
@@ -441,7 +441,7 @@ def main():
         try:
             h = pro.daily(ts_code=','.join(batch), start_date=history_start_date, end_date=trade_date)
             if h is not None and not h.empty: history.append(h)
-        except: continue
+        except Exception: continue
 
     hist = pd.concat(history, ignore_index=True)
     hist['trade_date'] = pd.to_datetime(hist['trade_date'], format='%Y%m%d')
@@ -601,7 +601,7 @@ def main():
             hd = pro.daily(trade_date=hist_date)
             hn = pro.daily(trade_date=hist_next)
             if hd is None or hn is None or hd.empty or hn.empty: continue
-        except: continue
+        except Exception: continue
 
         hd = hd.merge(sb[['ts_code','name']], on='ts_code', how='left')
         hd = hd[hd['amount'] >= 100000]

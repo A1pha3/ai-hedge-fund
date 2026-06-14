@@ -801,7 +801,7 @@ def main():
         # 获取当日数据
         try:
             df = pro.daily(trade_date=test_date)
-        except:
+        except Exception:
             continue
         if df is None or df.empty:
             continue
@@ -831,14 +831,14 @@ def main():
                 np.nan,
             )
             dfn = dfn_full[["ts_code", "next_ret", "open_to_close_ret", "next_high_pct"]]
-        except:
+        except Exception:
             continue
         df = df.merge(dfn, on="ts_code")
         if next2_date:
             try:
                 dft2 = pro.daily(trade_date=next2_date)[["ts_code", "pct_chg"]].rename(columns={"pct_chg": "tplus2_ret"})
                 df = df.merge(dft2, on="ts_code", how="left")
-            except:
+            except Exception:
                 df["tplus2_ret"] = np.nan
         else:
             df["tplus2_ret"] = np.nan
@@ -846,7 +846,7 @@ def main():
             try:
                 dft3 = pro.daily(trade_date=next3_date)[["ts_code", "pct_chg"]].rename(columns={"pct_chg": "tplus3_ret"})
                 df = df.merge(dft3, on="ts_code", how="left")
-            except:
+            except Exception:
                 df["tplus3_ret"] = np.nan
         else:
             df["tplus3_ret"] = np.nan
@@ -862,7 +862,7 @@ def main():
                 h = pro.daily(ts_code=",".join(batch), start_date="20250601", end_date=test_date)
                 if h is not None and not h.empty:
                     history.append(h)
-            except:
+            except Exception:
                 continue
         if not history:
             continue

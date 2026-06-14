@@ -93,7 +93,7 @@ def main():
         # 获取当日行情
         try:
             df = pro.daily(trade_date=test_date)
-        except:
+        except Exception:
             continue
         if df is None or df.empty:
             continue
@@ -111,7 +111,7 @@ def main():
         # 获取次日收益
         try:
             dfn = pro.daily(trade_date=next_date)[['ts_code', 'pct_chg']].rename(columns={'pct_chg': 'next_ret'})
-        except:
+        except Exception:
             continue
         df = df.merge(dfn, on='ts_code')
 
@@ -124,7 +124,7 @@ def main():
                 h = pro.daily(ts_code=','.join(batch), start_date='20250601', end_date=test_date)
                 if h is not None and not h.empty:
                     history.append(h)
-            except:
+            except Exception:
                 continue
 
         if not history:

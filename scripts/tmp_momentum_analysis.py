@@ -38,7 +38,7 @@ for test_date, label in [('20260408','Apr08'), ('20260410','Apr10')]:
         try:
             h = pro.daily(ts_code=','.join(batch), start_date='20260201', end_date=test_date)
             if h is not None and not h.empty: history.append(h)
-        except: continue
+        except Exception: continue
 
     hist = pd.concat(history, ignore_index=True)
     hist['trade_date'] = pd.to_datetime(hist['trade_date'], format='%Y%m%d')

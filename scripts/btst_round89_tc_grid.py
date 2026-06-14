@@ -113,7 +113,7 @@ def run_all_days(pro, all_dates, test_dates):
                 h = pro.daily(ts_code=",".join(batch), start_date="20250601", end_date=test_date)
                 if h is not None and not h.empty:
                     history.append(h)
-            except:
+            except Exception:
                 continue
         if not history:
             continue

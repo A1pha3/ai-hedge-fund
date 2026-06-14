@@ -148,7 +148,7 @@ def main():
         
         try:
             df = pro.daily(trade_date=test_date)
-        except:
+        except Exception:
             continue
         if df is None or df.empty:
             continue
@@ -165,7 +165,7 @@ def main():
             dfn["open_to_close_ret"] = np.where(dfn["open"] > 0, (dfn["close"] - dfn["open"]) / dfn["open"] * 100, np.nan)
             dfn["next_high_pct"] = np.where(dfn["pre_close"] > 0, (dfn["high"] - dfn["pre_close"]) / dfn["pre_close"] * 100, np.nan)
             dfn = dfn[["ts_code", "next_ret", "open_to_close_ret", "next_high_pct"]]
-        except:
+        except Exception:
             continue
         df = df.merge(dfn, on="ts_code")
         if len(df) < 100:
@@ -180,7 +180,7 @@ def main():
                 h = pro.daily(ts_code=",".join(batch), start_date="20250601", end_date=test_date)
                 if h is not None and not h.empty:
                     history.append(h)
-            except:
+            except Exception:
                 continue
         if not history:
             continue

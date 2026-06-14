@@ -47,7 +47,7 @@ def main():
         # 获取次日收益
         try:
             dfn = pro.daily(trade_date=next_date)[['ts_code', 'pct_chg']].rename(columns={'pct_chg': 'next_ret'})
-        except:
+        except Exception:
             continue
         df = df.merge(dfn, on='ts_code', how='left')
 
