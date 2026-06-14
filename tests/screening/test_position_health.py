@@ -7,10 +7,12 @@ import pytest
 from src.screening.position_health import (
     PositionHealth,
     PositionHealthReport,
+    _action_colored,
     _determine_action,
     _find_ticker_in_history,
     render_position_health,
 )
+from src.utils.display import Fore, Style
 
 
 # ---------------------------------------------------------------------------
@@ -151,3 +153,37 @@ class TestComputePositionHealth:
 
         report = compute_position_health(tickers=["000001"], reports_dir=tmp_path)
         assert report.items == []
+
+
+# ---------------------------------------------------------------------------
+# _action_colored (was 0 direct coverage)
+# ---------------------------------------------------------------------------
+
+
+class TestActionColored:
+    """_action_colored — color-code a position action label."""
+
+    def test_sell_red_bright(self) -> None:
+        result = _action_colored("SELL")
+        assert Fore.RED in result
+        assert Style.BRIGHT in result
+        assert "SELL" in result
+
+    def test_watch_yellow(self) -> None:
+        result = _action_colored("WATCH")
+        assert Fore.YELLOW in result
+        assert "WATCH" in result
+
+    def test_hold_green_default(self) -> None:
+        result = _action_colored("HOLD")
+        assert Fore.GREEN in result
+        assert "HOLD" in result
+
+    def test_unknown_action_defaults_to_hold_green(self) -> None:
+        result = _action_colored("bogus")
+        assert Fore.GREEN in result
+        assert "HOLD" in result
+
+    def test_ends_with_reset(self) -> None:
+        assert _action_colored("SELL").endswith(Style.RESET_ALL)
+        assert _action_colored("WATCH").endswith(Style.RESET_ALL)

@@ -12,6 +12,7 @@ from src.screening.sector_strength import (
     render_sector_strength,
 )
 from src.screening.industry_rotation import IndustrySignal
+from src.utils.display import Fore, Style
 
 
 # ---------------------------------------------------------------------------
@@ -117,3 +118,35 @@ class TestComputeSectorStrength:
 
         report = compute_sector_strength(reports_dir=tmp_path)
         assert report.items == []
+
+
+# ---------------------------------------------------------------------------
+# _strength_label_colored (imported but never directly tested)
+# ---------------------------------------------------------------------------
+
+
+class TestStrengthLabelColored:
+    """_strength_label_colored — color-code a sector strength label."""
+
+    def test_strong_green(self) -> None:
+        result = _strength_label_colored("strong")
+        assert result.startswith(Fore.GREEN)
+        assert "强" in result
+
+    def test_weak_red(self) -> None:
+        result = _strength_label_colored("weak")
+        assert result.startswith(Fore.RED)
+        assert "弱" in result
+
+    def test_neutral_white(self) -> None:
+        result = _strength_label_colored("neutral")
+        assert result.startswith(Fore.WHITE)
+        assert "中性" in result
+
+    def test_unknown_label_white_neutral(self) -> None:
+        result = _strength_label_colored("bogus")
+        assert result.startswith(Fore.WHITE)
+        assert "中性" in result
+
+    def test_ends_with_reset(self) -> None:
+        assert _strength_label_colored("strong").endswith(Style.RESET_ALL)

@@ -11,6 +11,7 @@ from src.screening.watchlist import (
     Watchlist,
     WatchlistEntry,
     _dedupe_tags,
+    _today_iso,
     format_watchlist_status,
 )
 
@@ -246,3 +247,28 @@ class TestFormatWatchlistStatus:
         lookup = {"000001": {"consecutive_days": 5, "status": "3plus"}}
         result = format_watchlist_status(wl, consecutive_lookup=lookup)
         assert "持续 5 天推荐" in result
+
+
+# ---------------------------------------------------------------------------
+# _today_iso (was 0 direct coverage)
+# ---------------------------------------------------------------------------
+
+
+class TestTodayIso:
+    """_today_iso — returns today's date as YYYY-MM-DD."""
+
+    def test_returns_string(self) -> None:
+        result = _today_iso()
+        assert isinstance(result, str)
+
+    def test_format_yyyy_mm_dd(self) -> None:
+        import re
+
+        result = _today_iso()
+        assert re.match(r"^\d{4}-\d{2}-\d{2}$", result), f"unexpected format: {result}"
+
+    def test_matches_actual_today(self) -> None:
+        from datetime import datetime
+
+        result = _today_iso()
+        assert result == datetime.now().strftime("%Y-%m-%d")
