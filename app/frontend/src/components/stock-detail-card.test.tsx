@@ -90,6 +90,14 @@ describe('StockDetailCard', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('close button has accessible name for screen readers (R24 A11y)', () => {
+    // R20-S8 GAMMA: icon-only "✕" button must have aria-label per WCAG 2.1 —
+    // without it, screen readers announce nothing meaningful for the close action.
+    render(<StockDetailCard detail={MOCK_DETAIL} onClose={vi.fn()} />);
+    const closeBtn = screen.getByTestId('stock-detail-close');
+    expect(closeBtn).toHaveAttribute('aria-label', '关闭');
+  });
+
   it('renders null when detail is null and not loading', () => {
     const { container } = render(<StockDetailCard detail={null} onClose={vi.fn()} />);
     expect(container.innerHTML).toBe('');

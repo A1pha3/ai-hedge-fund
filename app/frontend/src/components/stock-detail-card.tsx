@@ -82,7 +82,7 @@ export function StockDetailCard({ detail, isLoading = false, onClose }: StockDet
               <Skeleton className="h-4 w-4" />
               <Skeleton className="h-5 w-32" />
             </div>
-            <button onClick={onClose} className="text-sm text-muted-foreground hover:text-foreground" data-testid="stock-detail-close">✕</button>
+            <button onClick={onClose} className="text-sm text-muted-foreground hover:text-foreground" data-testid="stock-detail-close" aria-label="关闭">✕</button>
           </div>
           <Skeleton className="h-4 w-48" />
         </CardHeader>
@@ -110,7 +110,7 @@ export function StockDetailCard({ detail, isLoading = false, onClose }: StockDet
               {d.name && <span className="ml-2 text-muted-foreground font-normal">{d.name}</span>}
             </CardTitle>
           </div>
-          <button onClick={onClose} className="text-sm text-muted-foreground hover:text-foreground" data-testid="stock-detail-close">✕</button>
+          <button onClick={onClose} className="text-sm text-muted-foreground hover:text-foreground" data-testid="stock-detail-close" aria-label="关闭">✕</button>
         </div>
         <CardDescription className="flex items-center gap-3">
           <span className="font-mono text-foreground">¥{_num(d.price)}</span>
