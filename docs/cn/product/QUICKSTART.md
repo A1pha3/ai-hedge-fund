@@ -92,7 +92,7 @@ open http://localhost:5173
 ## 七、CLI 命令速查表
 
 ### 数据获取与缓存
-- `--preheat` — 缓存预热（5 任务并发）
+- `--preheat` — 缓存预热（5 个任务并行执行，并发度 4）
 - `--preheat --preheat-tasks=daily_basic,daily_prices` — 指定任务
 - `--preheat --force` — 强制刷新
 - `--preheat --list-tasks` — 查看可用任务
