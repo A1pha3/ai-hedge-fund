@@ -79,6 +79,92 @@
 - `--ticker 000001,300750` — 单票分析
 - `--pipeline` — 完整日度流水线
 
+## 环境变量（power-user 调参）
+
+> 以下 **32 个环境变量**用于运行时调优与实验开关，全部带缺省值、可不配置即可运行。**新手配置请看 [`/.env.example`](../../../.env.example)**；本节仅收录进阶调参项。阈值语义以代码常量定义为准（见各表"代码"列）。
+
+### AKShare 运行时调优
+
+| 变量 | 默认 | 类型 | 说明 | 代码 |
+|---|---|---|---|---|
+| `AKSHARE_INTRADAY_TIMEOUT_SECONDS` | `2.5` | float | 分时数据请求超时（秒） | `src/tools/akshare_api.py` |
+| `AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS` | `8` | float | 个股新闻请求超时（秒） | `src/tools/akshare_api.py` |
+| `AKSHARE_SESSION_POOL_SIZE` | `10` | int | HTTP 会话池大小 | `src/tools/akshare_runtime_helpers.py` |
+
+### 候选池调优（`CANDIDATE_POOL_*`）
+
+候选池规模与影子池（shadow pool）阈值。影子池在正式池之外额外追踪 **流动性走廊（liquidity corridor）** 与 **重新分桶（rebucket）** 两条候选轨道，阈值含义见 `src/screening/candidate_pool.py` 顶部常量。
+
+**基础**
+
+| 变量 | 默认 | 类型 | 说明 |
+|---|---|---|---|
+| `MAX_CANDIDATE_POOL_SIZE` | `300` | int | 候选池最大规模 |
+| `CANDIDATE_POOL_BTST_LIQUIDITY_RANK_BUCKET` | `2500` | float | 流动性排名分桶阈值 |
+
+**流动性走廊影子池**
+
+| 变量 | 默认 | 类型 |
+|---|---|---|
+| `CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_MAX_TICKERS` | `4` | int |
+| `CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE` | `3.0` | float |
+| `CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_MAX_CUTOFF_SHARE` | `0.20` | float |
+| `CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE` | `2.5` | float |
+| `CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MAX_CUTOFF_SHARE` | `0.30` | float |
+| `CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE` | `0.075` | float |
+| `CANDIDATE_POOL_SHADOW_LIQUIDITY_CORRIDOR_VISIBILITY_GAP_MAX_CUTOFF_SHARE` | `0.35` | float |
+
+**重新分桶影子池**
+
+| 变量 | 默认 | 类型 |
+|---|---|---|
+| `CANDIDATE_POOL_SHADOW_REBUCKET_MAX_TICKERS` | `1` | int |
+| `CANDIDATE_POOL_SHADOW_REBUCKET_MIN_GATE_SHARE` | `8.0` | float |
+| `CANDIDATE_POOL_SHADOW_REBUCKET_MIN_CUTOFF_SHARE` | `0.35` | float |
+| `CANDIDATE_POOL_SHADOW_REBUCKET_MAX_CUTOFF_SHARE` | `0.80` | float |
+| `CANDIDATE_POOL_SHADOW_REBUCKET_FOCUS_MIN_CUTOFF_SHARE` | `0.25` | float |
+| `CANDIDATE_POOL_SHADOW_REBUCKET_VISIBILITY_GAP_MIN_CUTOFF_SHARE` | `0.25` | float |
+
+**手动关注票覆盖**（逗号分隔的 6 位代码，留空即不覆盖）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `CANDIDATE_POOL_SHADOW_FOCUS_TICKERS` | (空) | 通用关注票 |
+| `CANDIDATE_POOL_SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS` | (空) | 流动性走廊关注票 |
+| `CANDIDATE_POOL_SHADOW_FOCUS_REBUCKET_TICKERS` | (空) | 重新分桶关注票 |
+| `CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_TICKERS` | (空) | 可见性缺口关注票 |
+| `CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS` | (空) | 可见性缺口 × 走廊关注票 |
+| `CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS` | (空) | 可见性缺口 × 重分桶关注票 |
+
+### BTST 策略开关
+
+**行为开关**
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `BTST_EXCLUDE_LIMIT_UP` | (空/off) | 设为 `1`/`true`/`yes`/`on` 时**排除涨停股**；默认**包含**（涨停股 T+1 胜率 53%，优于普通候选池） |
+| `BTST_PAYOFF_REVIEW_LANE_MODE` | (空/off) | 盈亏复核通道模式 |
+
+**0422 实验开关**（默认全部 `off`，仅用于 0422 优化轮回测对照；代码见 `src/research/artifacts.py` + `src/paper_trading/runtime_session_helpers.py`）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `BTST_0422_P1_REGIME_GATE_MODE` | `off` | P1 市场状态门控 |
+| `BTST_0422_P2_REGIME_GATE_MODE` | `off` | P2 市场状态门控 |
+| `BTST_0422_P3_PRIOR_QUALITY_MODE` | `off` | P3 先验质量 |
+| `BTST_0422_P4_PRIOR_SHRINKAGE_MODE` | `off` | P4 先验收缩 |
+| `BTST_0422_P5_EXECUTION_CONTRACT_MODE` | `off` | P5 执行契约 |
+| `BTST_0422_P6_RISK_BUDGET_MODE` | `off` | P6 风险预算 |
+| `BTST_0422_P7_GAP_OVERLAY_MODE` | `off` | P7 缺口叠加 |
+
+**P7 缺口阈值**（仅在 `BTST_0422_P7_GAP_OVERLAY_MODE` 开启时生效）
+
+| 变量 | 默认 | 类型 | 说明 |
+|---|---|---|---|
+| `BTST_0422_P7_GAP_WARN_THRESHOLD` | `0.005` | float | 缺口告警阈值（开盘跳空比例） |
+| `BTST_0422_P7_GAP_HALT_THRESHOLD` | `0.01` | float | 缺口熔断阈值 |
+| `BTST_0422_P7_GAP_WARN_SIZE_DISCOUNT` | `0.5` | float | 告警时仓位折扣 |
+
 ---
 
 **相关章节**: [9. CLI 工具](./cli-tools.md) | [优化功能](./optimizations.md)
