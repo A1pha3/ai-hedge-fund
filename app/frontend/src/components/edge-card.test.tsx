@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { EdgeCard } from './edge-card';
+import { EdgeCard, edgeColor, formatPct, formatRatio, riskBudgetVariant } from './edge-card';
 
 describe('EdgeCard', () => {
   it('renders ticker, edge value, cvar, and risk budget ratio', () => {
@@ -104,5 +104,102 @@ describe('EdgeCard', () => {
     );
 
     expect(screen.getByText('OK')).toBeDefined();
+  });
+});
+
+// ---------- pure helper characterization (R20-S9) ----------
+
+describe('formatPct', () => {
+  it('returns -- for null / undefined', () => {
+    expect(formatPct(null)).toBe('--');
+    expect(formatPct(undefined)).toBe('--');
+  });
+
+  it('adds + sign for positive values', () => {
+    expect(formatPct(7.5)).toBe('+7.50%');
+    expect(formatPct(0.1)).toBe('+0.10%');
+  });
+
+  it('does not add + for zero or negative', () => {
+    expect(formatPct(0)).toBe('0.00%');
+    expect(formatPct(-3.2)).toBe('-3.20%');
+  });
+
+  it('respects custom digits', () => {
+    expect(formatPct(1.2345, 1)).toBe('+1.2%');
+    // note: toFixed(3) on 1.2345 yields "1.234" due to IEEE-754 representation
+    expect(formatPct(1.2345, 3)).toBe('+1.234%');
+  });
+});
+
+describe('formatRatio', () => {
+  it('returns -- for null / undefined', () => {
+    expect(formatRatio(null)).toBe('--');
+    expect(formatRatio(undefined)).toBe('--');
+  });
+
+  it('multiplies by 100 (ratio → percent)', () => {
+    expect(formatRatio(0.08)).toBe('8.00%');
+    expect(formatRatio(1)).toBe('100.00%');
+  });
+
+  it('does NOT add + sign even for positive (unlike formatPct)', () => {
+    expect(formatRatio(0.5)).toBe('50.00%');
+  });
+
+  it('respects custom digits', () => {
+    expect(formatRatio(0.123456, 1)).toBe('12.3%');
+  });
+});
+
+describe('edgeColor', () => {
+  it('returns muted for null / undefined', () => {
+    expect(edgeColor(null)).toBe('text-muted-foreground');
+    expect(edgeColor(undefined)).toBe('text-muted-foreground');
+  });
+
+  it('strong green for edge > 2', () => {
+    expect(edgeColor(3)).toBe('text-green-500');
+    expect(edgeColor(2.01)).toBe('text-green-500');
+  });
+
+  it('light green for 0 < edge <= 2', () => {
+    expect(edgeColor(1)).toBe('text-green-400');
+    expect(edgeColor(0.01)).toBe('text-green-400');
+  });
+
+  it('light red for -2 < edge <= 0', () => {
+    expect(edgeColor(-1)).toBe('text-red-400');
+    expect(edgeColor(0)).toBe('text-red-400');
+    // -2 is NOT > -2, so it falls to strong red
+  });
+
+  it('strong red for edge <= -2', () => {
+    expect(edgeColor(-2)).toBe('text-red-500');
+    expect(edgeColor(-3)).toBe('text-red-500');
+  });
+});
+
+describe('riskBudgetVariant', () => {
+  it('outline for null / undefined', () => {
+    expect(riskBudgetVariant(null)).toBe('outline');
+    expect(riskBudgetVariant(undefined)).toBe('outline');
+  });
+
+  it('destructive for ratio >= 0.9 (budget nearly exhausted)', () => {
+    expect(riskBudgetVariant(0.9)).toBe('destructive');
+    expect(riskBudgetVariant(0.95)).toBe('destructive');
+    expect(riskBudgetVariant(1)).toBe('destructive');
+  });
+
+  it('warning for 0.7 <= ratio < 0.9', () => {
+    expect(riskBudgetVariant(0.7)).toBe('warning');
+    expect(riskBudgetVariant(0.85)).toBe('warning');
+  });
+
+  it('success for ratio < 0.7 (healthy budget)', () => {
+    expect(riskBudgetVariant(0)).toBe('success');
+    expect(riskBudgetVariant(0.5)).toBe('success');
+    expect(riskBudgetVariant(0.69)).toBe('success');
   });
 });

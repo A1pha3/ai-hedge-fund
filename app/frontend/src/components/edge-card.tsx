@@ -24,18 +24,18 @@ interface EdgeCardProps {
   data: EdgeCardData;
 }
 
-function formatPct(value: number | null | undefined, digits = 2): string {
+export function formatPct(value: number | null | undefined, digits = 2): string {
   if (value === null || value === undefined) return '--';
   const sign = value > 0 ? '+' : '';
   return `${sign}${value.toFixed(digits)}%`;
 }
 
-function formatRatio(value: number | null | undefined, digits = 2): string {
+export function formatRatio(value: number | null | undefined, digits = 2): string {
   if (value === null || value === undefined) return '--';
   return `${(value * 100).toFixed(digits)}%`;
 }
 
-function edgeColor(value: number | null | undefined): string {
+export function edgeColor(value: number | null | undefined): string {
   if (value === null || value === undefined) return 'text-muted-foreground';
   if (value > 2) return 'text-green-500';
   if (value > 0) return 'text-green-400';
@@ -43,7 +43,7 @@ function edgeColor(value: number | null | undefined): string {
   return 'text-red-500';
 }
 
-function riskBudgetVariant(
+export function riskBudgetVariant(
   ratio: number | null | undefined,
 ): 'outline' | 'warning' | 'destructive' | 'success' {
   if (ratio === null || ratio === undefined) return 'outline';
