@@ -195,7 +195,7 @@ daily_basic_batch:{trade_date}
 }
 ```
 
-`diff_cache_stats(before, after)` 用于计算单次运行的增量；`get_cache_runtime_info()` 返回 lru_maxsize / redis_available / disk_path / disk_entry_count / disk_file_size_bytes / stats 一站式诊断快照，CLI `--cache-stats` 走这个。
+`diff_cache_stats(before, after)` 用于计算单次运行的增量；`get_cache_runtime_info()` 返回 lru_maxsize / redis_available / disk_path / disk_entry_count / disk_file_size_bytes / stats 一站式诊断快照，`scripts/manage_data_cache.py stats` 走这个。
 
 ## 9. 缓存预热
 
