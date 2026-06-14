@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_STRUCTURAL_WINDOW_REVIEW_PATH = REPORTS_DIR / "p8_structural_conflict_rescue_window_20260330.json"
 DEFAULT_RELEASE_REPORT_PATH = REPORTS_DIR / "300724_structural_conflict_shadow_release_20260330_release.json"

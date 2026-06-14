@@ -9,7 +9,6 @@ from typing import Any
 
 from scripts.btst_data_utils import round_or_none, safe_float
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OPPORTUNITY_POOL_REPORT_PATH = REPORTS_DIR / "btst_tradeable_opportunity_pool_march.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_no_candidate_entry_action_board_latest.json"

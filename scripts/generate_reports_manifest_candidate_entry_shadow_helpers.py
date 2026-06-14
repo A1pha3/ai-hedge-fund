@@ -74,7 +74,6 @@ from scripts.run_btst_candidate_pool_upstream_handoff_board import (
     render_btst_candidate_pool_upstream_handoff_board_markdown,
 )
 
-
 MarkdownRenderer = Callable[[dict[str, Any]], str]
 SummaryBuilder = Callable[[Path], dict[str, Any]]
 

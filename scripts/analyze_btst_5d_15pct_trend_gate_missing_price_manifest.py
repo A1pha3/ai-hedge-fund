@@ -10,23 +10,26 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.analyze_btst_5d_15pct_factor_research_round1 import DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT
+from scripts.analyze_btst_5d_15pct_factor_research_round1 import (
+    DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT,
+)
 from scripts.analyze_btst_5d_15pct_trend_breakout_drilldown import (
-    DEFAULT_REPORTS_ROOT,
     _rows_with_gap_le,
     _summary,
     _top_fraction_rows,
+    DEFAULT_REPORTS_ROOT,
 )
-from scripts.analyze_btst_5d_15pct_trend_gate_oos_validation import DEFAULT_GATE_ID
-from scripts.analyze_btst_5d_15pct_trend_gate_oos_validation import _gate_predicate
+from scripts.analyze_btst_5d_15pct_trend_gate_oos_validation import (
+    _gate_predicate,
+    DEFAULT_GATE_ID,
+)
 from scripts.analyze_btst_5d_15pct_trend_top20_gate_diagnostics import (
-    DEFAULT_REPORT_NAME_CONTAINS,
     _collect_rows,
     _dedupe_signal_rows,
+    DEFAULT_REPORT_NAME_CONTAINS,
 )
 from scripts.btst_analysis_utils import round_or_none as _round_or_none
 from scripts.btst_analysis_utils import safe_float as _safe_float
-
 
 DEFAULT_OUTPUT_JSON = Path("data/reports/btst_5d_15pct_trend_gate_missing_price_manifest_latest.json")
 DEFAULT_OUTPUT_MD = Path("data/reports/btst_5d_15pct_trend_gate_missing_price_manifest_latest.md")

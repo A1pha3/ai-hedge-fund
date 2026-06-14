@@ -6,7 +6,6 @@ from collections import Counter
 from pathlib import Path
 from statistics import mean
 
-
 DEFAULT_SCENARIOS = {
     "current": {"b_weight": 0.4, "c_weight": 0.6, "watchlist_threshold": 0.25, "avoid_score_c_threshold": -0.30},
     "equal_weight": {"b_weight": 0.5, "c_weight": 0.5, "watchlist_threshold": 0.25, "avoid_score_c_threshold": -0.30},

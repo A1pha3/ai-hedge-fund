@@ -1,3 +1,4 @@
+# isort: skip_file
 """BTST profile experiment — walk-forward comparison harness.
 
 P2 phase 1 (2026-06-05): scaffolding for real profile routing experiments.

@@ -6,7 +6,9 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_report_utils import discover_nested_report_dirs as discover_report_dirs
+from scripts.btst_report_utils import (
+    discover_nested_report_dirs as discover_report_dirs,
+)
 
 
 def _load_json(path: Path) -> dict[str, Any]:

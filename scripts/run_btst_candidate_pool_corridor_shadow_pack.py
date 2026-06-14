@@ -8,8 +8,9 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.run_btst_candidate_pool_corridor_validation_pack import analyze_btst_candidate_pool_corridor_validation_pack
-
+from scripts.run_btst_candidate_pool_corridor_validation_pack import (
+    analyze_btst_candidate_pool_corridor_validation_pack,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_CORRIDOR_VALIDATION_PACK_PATH = REPORTS_DIR / "btst_candidate_pool_corridor_validation_pack_latest.json"

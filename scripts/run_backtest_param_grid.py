@@ -37,10 +37,10 @@ if str(_PROJECT_ROOT) not in sys.path:
 from src.backtesting.engine import BacktestEngine  # noqa: E402
 from src.backtesting.param_grid import (  # noqa: E402
     DEFAULT_GRID_MAX_WORKERS,
+    grid_combinations,
     GRID_ENV_VAR,
     ParamGridError,
     ParamGridReport,
-    grid_combinations,
     parse_param_grid,
     render_console_table,
     render_markdown_table,
@@ -214,11 +214,11 @@ def _summarize_walk_forward(args: argparse.Namespace, base_args: dict[str, Any])
     # Imports are deferred so unit tests can mock the engine without
     # paying for the heavy LangGraph import cost.
     from src.backtesting.walk_forward import (
-        WALK_FORWARD_PRESETS,
-        WindowMode,
         build_walk_forward_windows,
         run_walk_forward,
         summarize_walk_forward,
+        WALK_FORWARD_PRESETS,
+        WindowMode,
     )
 
     preset_kwargs: dict[str, Any] = {}

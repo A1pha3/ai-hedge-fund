@@ -4,10 +4,13 @@ import argparse
 from pathlib import Path
 
 from scripts.model_selection import resolve_model_selection
+from src.backtesting.rule_variant_compare import (
+    build_rule_variants,
+    run_rule_variant_backtests,
+    save_rule_variant_backtests,
+)
 from src.project_env import load_project_dotenv
-from src.backtesting.rule_variant_compare import build_rule_variants, run_rule_variant_backtests, save_rule_variant_backtests
 from src.utils.analysts import ANALYST_ORDER
-
 
 load_project_dotenv()
 

@@ -13,7 +13,6 @@ from scripts.analyze_btst_carryover_selected_cohort import (
     _iter_case_rows,
 )
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_carryover_peer_board_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_carryover_peer_board_latest.md"

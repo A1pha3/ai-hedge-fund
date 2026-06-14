@@ -10,8 +10,10 @@ from typing import Any
 from scripts.analyze_btst_5d_15pct_boundary_contract_inspection import (
     analyze_btst_5d_15pct_boundary_contract_inspection,
 )
-from scripts.btst_boundary_missing_core_key_trace_helpers import BOUNDARY_TRACE_KEYS, summarize_boundary_key_trace_statuses
-
+from scripts.btst_boundary_missing_core_key_trace_helpers import (
+    BOUNDARY_TRACE_KEYS,
+    summarize_boundary_key_trace_statuses,
+)
 
 MISSING_SIX_CORE_KEYS = tuple(key for key in BOUNDARY_TRACE_KEYS if key != "t0_tail_strength")
 REPORTS_DIR = Path("data/reports")

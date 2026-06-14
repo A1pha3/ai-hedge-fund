@@ -9,7 +9,6 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
-
 DEFAULT_FAST_SCORE_THRESHOLD = 0.38
 DEFAULT_WATCHLIST_SCORE_THRESHOLD = 0.20
 FROZEN_POST_MARKET_GATE_ENV_KEYS = {

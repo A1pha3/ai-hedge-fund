@@ -3,12 +3,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from src.paper_trading.btst_reporting import (
+from src.paper_trading.btst_reporting import (  # noqa: F401 — re-export for tests
     analyze_btst_next_day_trade_brief,
     generate_and_register_btst_followup_artifacts,
     generate_btst_next_day_trade_brief_artifacts,
     infer_next_trade_date,
-    render_btst_next_day_trade_brief_markdown,  # noqa: F401 — re-export for tests
+    render_btst_next_day_trade_brief_markdown,
 )
 
 

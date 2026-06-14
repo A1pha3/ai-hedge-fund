@@ -5,8 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.generate_btst_tplus2_continuation_expansion_board import generate_btst_tplus2_continuation_expansion_board
-
+from scripts.generate_btst_tplus2_continuation_expansion_board import (
+    generate_btst_tplus2_continuation_expansion_board,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_tplus2_continuation_peer_rollup_latest.json"

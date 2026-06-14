@@ -7,8 +7,12 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-from scripts.analyze_short_trade_boundary_score_failures import analyze_short_trade_boundary_score_failures
-from scripts.analyze_short_trade_boundary_score_failures_frontier import analyze_short_trade_boundary_score_failures_frontier
+from scripts.analyze_short_trade_boundary_score_failures import (
+    analyze_short_trade_boundary_score_failures,
+)
+from scripts.analyze_short_trade_boundary_score_failures_frontier import (
+    analyze_short_trade_boundary_score_failures_frontier,
+)
 
 
 def render_short_trade_boundary_recurring_frontier_markdown(analysis: dict[str, Any]) -> str:

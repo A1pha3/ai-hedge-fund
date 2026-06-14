@@ -5,9 +5,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from src.execution.merge_approved_loader import DEFAULT_BTST_MERGE_APPROVED_EXECUTION_ACTIVE
-from scripts.generate_btst_tplus2_continuation_promotion_review import READY_PROMOTION_REVIEW_VERDICTS
-
+from scripts.generate_btst_tplus2_continuation_promotion_review import (
+    READY_PROMOTION_REVIEW_VERDICTS,
+)
+from src.execution.merge_approved_loader import (
+    DEFAULT_BTST_MERGE_APPROVED_EXECUTION_ACTIVE,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_LANE_RULEPACK_PATH = REPORTS_DIR / "btst_tplus2_continuation_lane_rulepack_latest.json"

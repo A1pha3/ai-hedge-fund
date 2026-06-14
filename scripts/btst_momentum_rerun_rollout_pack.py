@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_COHORT_JSON = Path("data/reports/btst_momentum_rerun_rollout_cohort.json")
 DEFAULT_DECISION_JSON = Path("data/reports/btst_momentum_stability_retune_decision.json")
 DEFAULT_OUTPUT_JSON = Path("data/reports/btst_momentum_rerun_rollout_pack.json")

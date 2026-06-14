@@ -6,11 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from scripts.analyze_btst_candidate_pool_lane_objective_support import (
+    analyze_btst_candidate_pool_lane_objective_support,
     DEFAULT_DOSSIER_PATH,
     DEFAULT_OBJECTIVE_MONITOR_PATH,
-    analyze_btst_candidate_pool_lane_objective_support,
 )
-
 
 DEFAULT_REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = DEFAULT_REPORTS_DIR / "btst_candidate_pool_rebucket_objective_validation_latest.json"

@@ -5,8 +5,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_short_trade_ticker_role_history import analyze_short_trade_ticker_role_history
-from scripts.btst_report_utils import discover_nested_report_dirs as discover_report_dirs
+from scripts.analyze_short_trade_ticker_role_history import (
+    analyze_short_trade_ticker_role_history,
+)
+from scripts.btst_report_utils import (
+    discover_nested_report_dirs as discover_report_dirs,
+)
 
 
 def _load_json(path: str | Path) -> dict[str, Any]:

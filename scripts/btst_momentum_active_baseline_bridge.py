@@ -12,7 +12,6 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-
 REQUIRED_METRICS = [
     "next_close_positive_rate",
     "next_close_payoff_ratio",

@@ -5,7 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_short_trade_ticker_role_history import analyze_short_trade_ticker_role_history
+from scripts.analyze_short_trade_ticker_role_history import (
+    analyze_short_trade_ticker_role_history,
+)
 from scripts.btst_report_utils import discover_nested_report_dirs
 
 REPORTS_DIR = Path("data/reports")

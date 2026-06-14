@@ -14,17 +14,38 @@ import pandas as pd
 
 from scripts.btst_analysis_utils import (
     extract_btst_price_outcome as _extract_btst_price_outcome,
-    iter_selection_snapshots as _iter_selection_snapshots,
-    normalize_trade_date as _normalize_trade_date,
-    round_or_none as _round_or_none,
-    safe_float as _safe_float,
 )
-from scripts.btst_report_utils import discover_nested_report_dirs as discover_report_dirs
-from src.backtesting.early_runner_walk_forward import build_early_runner_walk_forward_summary
-from src.backtesting.trading_constraints import TradeExecutionInputs, TradingConstraints, resolve_trade_constraints
-from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state_metrics
-from src.targets.early_runner_intraday_confirmation import compute_confirm_assessment, compute_confirm_score
-from src.targets.early_runner_runtime_adapter import build_runtime_supplemental_entry, derive_entry_status, derive_failure_reason, resolve_gate_action, select_confirmed_entries
+from scripts.btst_analysis_utils import (
+    iter_selection_snapshots as _iter_selection_snapshots,
+)
+from scripts.btst_analysis_utils import normalize_trade_date as _normalize_trade_date
+from scripts.btst_analysis_utils import round_or_none as _round_or_none
+from scripts.btst_analysis_utils import safe_float as _safe_float
+from scripts.btst_report_utils import (
+    discover_nested_report_dirs as discover_report_dirs,
+)
+from src.backtesting.early_runner_walk_forward import (
+    build_early_runner_walk_forward_summary,
+)
+from src.backtesting.trading_constraints import (
+    resolve_trade_constraints,
+    TradeExecutionInputs,
+    TradingConstraints,
+)
+from src.screening.market_state_helpers import (
+    classify_btst_regime_gate_from_market_state_metrics,
+)
+from src.targets.early_runner_intraday_confirmation import (
+    compute_confirm_assessment,
+    compute_confirm_score,
+)
+from src.targets.early_runner_runtime_adapter import (
+    build_runtime_supplemental_entry,
+    derive_entry_status,
+    derive_failure_reason,
+    resolve_gate_action,
+    select_confirmed_entries,
+)
 from src.targets.early_runner_theme_radar import (
     build_theme_radar_context_by_ticker,
     compute_breakout_proximity,
@@ -44,7 +65,6 @@ from src.tools.tushare_api import (
     get_open_trade_dates,
     get_suspend_list,
 )
-
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_early_runner_v1_latest.json"
@@ -437,7 +457,9 @@ def _vwap_proxy(next_open_to_close_return: float) -> float:
 
 
 def _intraday_volume_rhythm(next_high_return: float, next_close_return: float) -> float:
-    from src.targets.early_runner_intraday_confirmation import compute_intraday_volume_rhythm
+    from src.targets.early_runner_intraday_confirmation import (
+        compute_intraday_volume_rhythm,
+    )
 
     return compute_intraday_volume_rhythm(next_high_return, next_close_return)
 

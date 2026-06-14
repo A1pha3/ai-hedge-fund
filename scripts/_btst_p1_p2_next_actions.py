@@ -8,8 +8,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_top3_runbook_utils import P2_RUNBOOK_JSON_PATH, build_top3_runbook, ensure_inputs
-
+from scripts.btst_top3_runbook_utils import (
+    build_top3_runbook,
+    ensure_inputs,
+    P2_RUNBOOK_JSON_PATH,
+)
 
 REPORTS_DIR = Path("data/reports")
 ARCH_DOC_PATH = Path("docs/zh-cn/product/arch/arch_optimize_implementation.md")

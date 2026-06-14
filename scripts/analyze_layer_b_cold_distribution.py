@@ -5,8 +5,14 @@ import json
 from pathlib import Path
 from statistics import mean, median
 
-from src.execution.daily_pipeline import FAST_AGENT_SCORE_THRESHOLD, WATCHLIST_SCORE_THRESHOLD
-from src.screening.signal_fusion import _get_neutral_mean_reversion_mode, _quality_first_guard_enabled
+from src.execution.daily_pipeline import (
+    FAST_AGENT_SCORE_THRESHOLD,
+    WATCHLIST_SCORE_THRESHOLD,
+)
+from src.screening.signal_fusion import (
+    _get_neutral_mean_reversion_mode,
+    _quality_first_guard_enabled,
+)
 from src.screening.strategy_scorer import (
     EVENT_SENTIMENT_MAX_CANDIDATES,
     FUNDAMENTAL_SCORE_MAX_CANDIDATES,

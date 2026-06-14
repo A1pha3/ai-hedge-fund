@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_DEFAULT_MERGE_REVIEW_PATH = REPORTS_DIR / "btst_default_merge_review_latest.json"
 DEFAULT_OBJECTIVE_MONITOR_PATH = REPORTS_DIR / "btst_tplus1_tplus2_objective_monitor_latest.json"

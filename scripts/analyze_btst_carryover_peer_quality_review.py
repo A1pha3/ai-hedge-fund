@@ -8,7 +8,6 @@ from typing import Any
 
 from scripts.btst_analysis_utils import build_surface_summary
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_ANCHOR_PROBE_JSON = REPORTS_DIR / "btst_carryover_anchor_probe_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_carryover_peer_quality_review_latest.json"

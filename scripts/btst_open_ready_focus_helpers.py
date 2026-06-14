@@ -4,7 +4,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-
 BuildMaterialChangeAnchor = Callable[..., dict[str, Any]]
 AppendOpenReadyMaterialAnchorFocus = Callable[[list[str], dict[str, Any]], None]
 

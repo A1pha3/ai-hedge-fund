@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "p3_top3_post_execution_action_board_20260401.json"
 DEFAULT_PRIMARY_ROLL_FORWARD_PATH = REPORTS_DIR / "p4_primary_roll_forward_validation_001309_20260330.json"

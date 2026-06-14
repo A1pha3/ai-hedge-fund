@@ -10,7 +10,6 @@ from src.execution.merge_approved_loader import (
     is_merge_approved_execution_blocker,
 )
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_LANE_RULEPACK_PATH = REPORTS_DIR / "btst_tplus2_continuation_lane_rulepack_latest.json"
 DEFAULT_WATCHLIST_EXECUTION_PATH = REPORTS_DIR / "btst_tplus2_continuation_watchlist_execution_latest.json"

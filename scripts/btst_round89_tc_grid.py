@@ -4,19 +4,21 @@ Round 89 Task 2: trend_continuation 权重网格搜索
 直接用 btst_20day_backtest 多profile 模式运行，快速对比
 """
 from __future__ import annotations
+
+import itertools
+import json
 import os
 import sys
-import json
-import itertools
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import scripts.btst_20day_backtest as bk
-from src.targets.short_trade_target_profile_data import SHORT_TRADE_TARGET_PROFILES
 from src.targets.profiles import ShortTradeTargetProfile
+from src.targets.short_trade_target_profile_data import SHORT_TRADE_TARGET_PROFILES
 
 # ==== 从 trend_corrected_v1 继承基础设置 ====
 BASE_PROFILE = SHORT_TRADE_TARGET_PROFILES["trend_corrected_v1"]
@@ -195,8 +197,9 @@ def compute_summary(daily_stats: list[dict]) -> dict:
     }
 
 def main():
-    import tushare as ts
     from datetime import datetime, timedelta
+
+    import tushare as ts
     ts.set_token(os.getenv("TUSHARE_TOKEN"))
     pro = ts.pro_api()
     

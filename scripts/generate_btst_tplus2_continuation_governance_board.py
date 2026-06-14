@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OBSERVATION_POOL_PATH = REPORTS_DIR / "btst_tplus2_continuation_observation_pool_latest.json"
 DEFAULT_LANE_RULEPACK_PATH = REPORTS_DIR / "btst_tplus2_continuation_lane_rulepack_latest.json"

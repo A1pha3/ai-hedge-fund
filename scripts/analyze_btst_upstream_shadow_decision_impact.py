@@ -5,7 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_multi_window_profile_validation import analyze_btst_multi_window_profile_validation
+from scripts.analyze_btst_multi_window_profile_validation import (
+    analyze_btst_multi_window_profile_validation,
+)
 
 DEFAULT_REPORTS_ROOT = Path("data/reports")
 DEFAULT_BASELINE_PROFILE = "btst_precision_v2_liquidity_shadow_release_probe"

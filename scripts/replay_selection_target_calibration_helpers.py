@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-
 FilterObservabilityFn = Callable[[list[dict[str, Any]], list[dict[str, Any]], str, str], dict[str, dict[str, int]]]
 ApplyFiltersFn = Callable[[list[dict[str, Any]], list[dict[str, Any]], str, str], tuple[list[dict[str, Any]], list[dict[str, Any]]]]
 MergeReplayEntriesFn = Callable[[dict[str, Any]], tuple[list[dict[str, Any]], list[dict[str, Any]]]]

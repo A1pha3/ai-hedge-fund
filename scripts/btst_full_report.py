@@ -4,14 +4,15 @@ BTST完整分析报告：2026-04-13信号日 → 04-14目标日
 包含：候选池构建、因子评分、行业分析、历史回测验证、Top候选深度分析
 """
 import argparse
-import os
 import json
+import os
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Callable
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from typing import Any, Callable
 
 try:
     from scripts.btst_data_utils import build_beijing_exchange_mask
@@ -231,9 +232,22 @@ def _build_market_state_proxy(
             return None
     elif price_batch is not None and not price_batch.empty:
         try:
-            from src.screening.market_state import _normalize_weights, _northbound_streak, _market_breadth_ratio
-            from src.screening.market_state_helpers import build_market_state_from_metrics, calculate_market_state_metrics, prepare_market_frame
-            from src.tools.tushare_api import get_daily_basic_batch, get_index_daily, get_limit_list, get_northbound_flow
+            from src.screening.market_state import (
+                _market_breadth_ratio,
+                _normalize_weights,
+                _northbound_streak,
+            )
+            from src.screening.market_state_helpers import (
+                build_market_state_from_metrics,
+                calculate_market_state_metrics,
+                prepare_market_frame,
+            )
+            from src.tools.tushare_api import (
+                get_daily_basic_batch,
+                get_index_daily,
+                get_limit_list,
+                get_northbound_flow,
+            )
         except Exception:
             return None
 
@@ -309,7 +323,9 @@ def _build_btst_regime_gate_enforcement_proxy(market_state_proxy: dict[str, Any]
         return None
 
     try:
-        from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state
+        from src.screening.market_state_helpers import (
+            classify_btst_regime_gate_from_market_state,
+        )
     except Exception:
         return None
 

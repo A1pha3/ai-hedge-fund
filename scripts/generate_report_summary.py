@@ -16,7 +16,6 @@ load_project_dotenv()
 
 from src.tools.tushare_api import get_stock_details
 
-
 TABLE_HEADER = "| 代码 | 名称 | 涨幅 | 昨日收盘价 | 今日收盘价 | 地域 | 所属行业 | 市场类型 | 上市日期 | 操作 | 置信度 |"
 TABLE_SEPARATOR = "|------|------|------|-----------|-----------|------|---------|---------|---------|------|--------|"
 OLD_ROW_PATTERN = re.compile(r"\|\s*([0-9]{6})\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|")

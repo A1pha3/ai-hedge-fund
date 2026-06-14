@@ -12,7 +12,6 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 REPLAY_ARTIFACT_ROOT = REPORTS_DIR / "paper_trading_window_20260323_20260326_live_m2_7_dual_target_replay_input_validation_20260329" / "selection_artifacts"
 BRIEF_REPORT_DIR = REPORTS_DIR / "paper_trading_20260327_20260327_live_m2_7_short_trade_only_20260329"

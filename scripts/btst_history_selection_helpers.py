@@ -4,7 +4,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-
 LooksLikeReportDir = Callable[[Path], bool]
 SafeLoadJson = Callable[[str | Path | None], dict[str, Any]]
 NormalizeTradeDate = Callable[[Any], str | None]

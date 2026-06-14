@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 CROSS_WINDOW_METRICS: tuple[str, ...] = (
     "win_rate_window_trend_delta",
     "win_rate_window_volatility_delta",

@@ -5,9 +5,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_tplus2_continuation_peer_rollup import analyze_btst_tplus2_continuation_peer_rollup
-from scripts.generate_btst_tplus2_continuation_governance_board import generate_btst_tplus2_continuation_governance_board
-
+from scripts.analyze_btst_tplus2_continuation_peer_rollup import (
+    analyze_btst_tplus2_continuation_peer_rollup,
+)
+from scripts.generate_btst_tplus2_continuation_governance_board import (
+    generate_btst_tplus2_continuation_governance_board,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_tplus2_continuation_watchboard_latest.json"

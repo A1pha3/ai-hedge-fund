@@ -235,7 +235,9 @@ def run_btst_next_day_package(
     if with_profile_compare and summary_status != "failed":
         step = _new_step("profile_compare")
         try:
-            from scripts.generate_btst_doc_bundle import compare_btst_doc_bundle_profiles
+            from scripts.generate_btst_doc_bundle import (
+                compare_btst_doc_bundle_profiles,
+            )
             compare_result = compare_btst_doc_bundle_profiles(
                 signal_date,
                 profiles=["conservative", "aggressive"],

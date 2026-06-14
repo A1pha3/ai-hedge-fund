@@ -5,7 +5,11 @@ import csv
 import json
 from pathlib import Path
 
-from scripts.analyze_layer_b_rule_variants import VARIANTS, _build_comparison, _run_variant
+from scripts.analyze_layer_b_rule_variants import (
+    _build_comparison,
+    _run_variant,
+    VARIANTS,
+)
 
 
 def _resolve_trade_dates(raw_trade_dates: str) -> list[str]:

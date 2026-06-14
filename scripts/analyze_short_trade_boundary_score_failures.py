@@ -7,7 +7,6 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-
 NEAR_MISS_THRESHOLD = 0.46
 SELECT_THRESHOLD = 0.58
 

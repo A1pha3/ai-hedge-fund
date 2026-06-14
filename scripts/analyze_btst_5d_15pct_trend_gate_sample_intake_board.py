@@ -10,25 +10,26 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.analyze_btst_5d_15pct_factor_research_round1 import DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT
+from scripts.analyze_btst_5d_15pct_factor_research_round1 import (
+    DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT,
+)
 from scripts.analyze_btst_5d_15pct_trend_breakout_drilldown import (
-    DEFAULT_REPORTS_ROOT,
     _summary,
     _top_fraction_rows,
+    DEFAULT_REPORTS_ROOT,
 )
 from scripts.analyze_btst_5d_15pct_trend_gate_oos_validation import (
+    _gate_predicate,
     TARGET_HIT_RATE,
     TARGET_MEAN_RETURN,
-    _gate_predicate,
 )
 from scripts.analyze_btst_5d_15pct_trend_top20_gate_diagnostics import (
-    DEFAULT_REPORT_NAME_CONTAINS,
     _collect_rows,
     _dedupe_signal_rows,
+    DEFAULT_REPORT_NAME_CONTAINS,
 )
 from scripts.btst_analysis_utils import normalize_trade_date as _normalize_trade_date
 from scripts.btst_analysis_utils import safe_float as _safe_float
-
 
 DEFAULT_OUTPUT_JSON = Path("data/reports/btst_5d_15pct_trend_gate_sample_intake_board_latest.json")
 DEFAULT_OUTPUT_MD = Path("data/reports/btst_5d_15pct_trend_gate_sample_intake_board_latest.md")

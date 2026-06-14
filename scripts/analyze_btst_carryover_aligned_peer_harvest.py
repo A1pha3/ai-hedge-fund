@@ -6,7 +6,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_ANCHOR_PROBE_JSON = REPORTS_DIR / "btst_carryover_anchor_probe_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_carryover_aligned_peer_harvest_latest.json"

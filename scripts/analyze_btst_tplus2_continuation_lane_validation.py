@@ -6,10 +6,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_analysis_utils import build_surface_summary
 from scripts.analyze_btst_tplus2_continuation_peer_scan import _collect_rows
-from scripts.generate_btst_tplus2_continuation_observation_pool import generate_btst_tplus2_continuation_observation_pool
-
+from scripts.btst_analysis_utils import build_surface_summary
+from scripts.generate_btst_tplus2_continuation_observation_pool import (
+    generate_btst_tplus2_continuation_observation_pool,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_REPORTS_ROOT = REPORTS_DIR

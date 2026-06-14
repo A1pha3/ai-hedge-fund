@@ -7,208 +7,482 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from scripts.analyze_btst_latest_close_validation import generate_btst_latest_close_validation_artifacts
-from scripts.btst_selected_focus import pick_selected_focus_entry
-from scripts.btst_latest_followup_utils import load_latest_upstream_shadow_followup_summary
-from scripts.btst_nightly_dossier_markdown_helpers import (
-    append_candidate_pool_recall_corridor_details_markdown as _append_candidate_pool_recall_corridor_details_markdown_impl,
-    append_candidate_pool_recall_dossier_markdown as _append_candidate_pool_recall_dossier_markdown_impl,
-    append_candidate_pool_recall_followup_details_markdown as _append_candidate_pool_recall_followup_details_markdown_impl,
-    append_candidate_pool_recall_priority_details_markdown as _append_candidate_pool_recall_priority_details_markdown_impl,
-    append_no_candidate_entry_action_board_markdown as _append_no_candidate_entry_action_board_markdown_impl,
-    append_no_candidate_entry_failure_dossier_markdown as _append_no_candidate_entry_failure_dossier_markdown_impl,
-    append_no_candidate_entry_replay_bundle_markdown as _append_no_candidate_entry_replay_bundle_markdown_impl,
-    append_tradeable_opportunity_pool_markdown as _append_tradeable_opportunity_pool_markdown_impl,
-    append_watchlist_recall_dossier_markdown as _append_watchlist_recall_dossier_markdown_impl,
-)
-from scripts.btst_nightly_artifact_helpers import (
-    generate_btst_nightly_control_tower_artifacts as _generate_btst_nightly_control_tower_artifacts_impl,
-    resolve_nightly_control_tower_output_paths as _resolve_nightly_control_tower_output_paths_impl,
-)
-from scripts.btst_control_tower_snapshot_helpers import extract_control_tower_snapshot as _extract_control_tower_snapshot_impl
-from scripts.btst_carryover_summary_helpers import (
-    extract_carryover_aligned_peer_harvest_summary as _extract_carryover_aligned_peer_harvest_summary_impl,
-    extract_carryover_aligned_peer_proof_summary as _extract_carryover_aligned_peer_proof_summary_impl,
-    extract_carryover_multiday_continuation_audit_summary as _extract_carryover_multiday_continuation_audit_summary_impl,
-    extract_carryover_peer_expansion_summary as _extract_carryover_peer_expansion_summary_impl,
-    extract_carryover_peer_promotion_gate_summary as _extract_carryover_peer_promotion_gate_summary_impl,
-    extract_selected_outcome_refresh_summary as _extract_selected_outcome_refresh_summary_impl,
-    find_focus_entry as _find_focus_entry_impl,
-)
-from scripts.btst_latest_snapshot_helpers import (
-    extract_catalyst_theme_frontier_summary as _extract_catalyst_theme_frontier_summary_impl,
-    extract_latest_btst_snapshot as _extract_latest_btst_snapshot_impl,
-    extract_score_fail_frontier_summary as _extract_score_fail_frontier_summary_impl,
-    extract_tradeable_opportunity_pool_summary as _extract_tradeable_opportunity_pool_summary_impl,
-)
-from scripts.btst_dossier_summary_helpers import (
-    extract_candidate_pool_recall_dossier_summary as _extract_candidate_pool_recall_dossier_summary_impl,
-    extract_no_candidate_entry_action_board_summary as _extract_no_candidate_entry_action_board_summary_impl,
-    extract_no_candidate_entry_failure_dossier_summary as _extract_no_candidate_entry_failure_dossier_summary_impl,
-    extract_no_candidate_entry_replay_bundle_summary as _extract_no_candidate_entry_replay_bundle_summary_impl,
-    extract_watchlist_recall_dossier_summary as _extract_watchlist_recall_dossier_summary_impl,
-)
-from scripts.btst_remaining_summary_helpers import (
-    extract_candidate_pool_corridor_narrow_probe_summary as _extract_candidate_pool_corridor_narrow_probe_summary_impl,
-    extract_candidate_pool_corridor_persistence_dossier_summary as _extract_candidate_pool_corridor_persistence_dossier_summary_impl,
-    extract_candidate_pool_corridor_window_command_board_summary as _extract_candidate_pool_corridor_window_command_board_summary_impl,
-    extract_candidate_pool_corridor_window_diagnostics_summary as _extract_candidate_pool_corridor_window_diagnostics_summary_impl,
-    extract_continuation_merge_candidate_ranking_summary as _extract_continuation_merge_candidate_ranking_summary_impl,
-    extract_default_merge_historical_counterfactual_summary as _extract_default_merge_historical_counterfactual_summary_impl,
-    extract_default_merge_review_summary as _extract_default_merge_review_summary_impl,
-    extract_default_merge_strict_counterfactual_summary as _extract_default_merge_strict_counterfactual_summary_impl,
-    extract_early_runner_summary as _extract_early_runner_summary_impl,
-    extract_merge_replay_validation_summary as _extract_merge_replay_validation_summary_impl,
-    extract_prepared_breakout_cohort_summary as _extract_prepared_breakout_cohort_summary_impl,
-    extract_prepared_breakout_relief_validation_summary as _extract_prepared_breakout_relief_validation_summary_impl,
-    extract_prepared_breakout_residual_surface_summary as _extract_prepared_breakout_residual_surface_summary_impl,
-)
-from scripts.btst_control_tower_task_helpers import (
-    build_candidate_pool_corridor_primary_shadow_task as _build_candidate_pool_corridor_primary_shadow_task_impl,
-    build_lane_priority_task as _build_lane_priority_task_impl,
-    build_recall_priority_task as _build_recall_priority_task_impl,
-    collect_control_tower_priority_candidates as _collect_control_tower_priority_candidates_impl,
-    prioritize_control_tower_next_actions as _prioritize_control_tower_next_actions_impl,
-)
-from scripts.btst_nightly_payload_helpers import (
-    build_nightly_control_tower_analysis as _build_nightly_control_tower_analysis_impl,
-    build_nightly_recommended_reading_order as _build_nightly_recommended_reading_order_impl,
-    build_nightly_source_paths as _build_nightly_source_paths_impl,
-)
-from scripts.btst_open_ready_delta_payload_helpers import (
-    build_btst_open_ready_delta_payload as _build_btst_open_ready_delta_payload_impl,
-    build_open_ready_delta_analysis as _build_open_ready_delta_analysis_impl,
-    build_open_ready_delta_context as _build_open_ready_delta_context_impl,
-    build_open_ready_source_paths as _build_open_ready_source_paths_impl,
-)
-from scripts.btst_history_selection_helpers import (
-    extract_btst_report_candidate as _extract_btst_report_candidate_impl,
-    select_previous_btst_report_snapshot as _select_previous_btst_report_snapshot_impl,
-)
-from scripts.btst_open_ready_context_helpers import (
-    build_material_change_anchor as _build_material_change_anchor_impl,
-    resolve_open_ready_comparison_scope as _resolve_open_ready_comparison_scope_impl,
-    resolve_open_ready_previous_context as _resolve_open_ready_previous_context_impl,
+from scripts.analyze_btst_latest_close_validation import (
+    generate_btst_latest_close_validation_artifacts,
 )
 from scripts.btst_carryover_contract_helpers import (
     build_carryover_contract_next_steps as _build_carryover_contract_next_steps_impl,
+)
+from scripts.btst_carryover_contract_helpers import (
     build_carryover_contract_why_now_parts as _build_carryover_contract_why_now_parts_impl,
+)
+from scripts.btst_carryover_contract_helpers import (
     build_labeled_why_now_segments as _build_labeled_why_now_segments_impl,
+)
+from scripts.btst_carryover_contract_helpers import (
     describe_selected_contract_style as _describe_selected_contract_style_impl,
+)
+from scripts.btst_carryover_contract_helpers import (
     extract_carryover_contract_context as _extract_carryover_contract_context_impl,
+)
+from scripts.btst_carryover_contract_helpers import (
     prioritize_ticker_in_list as _prioritize_ticker_in_list_impl,
 )
-from scripts.btst_open_ready_focus_helpers import (
-    append_open_ready_action_focus as _append_open_ready_action_focus_impl,
-    append_open_ready_basis_focus as _append_open_ready_basis_focus_impl,
-    append_open_ready_frontier_focus as _append_open_ready_frontier_focus_impl,
-    append_open_ready_governance_focus as _append_open_ready_governance_focus_impl,
-    append_open_ready_material_anchor_focus as _append_open_ready_material_anchor_focus_impl,
-    append_open_ready_priority_focus as _append_open_ready_priority_focus_impl,
-    append_open_ready_replay_focus as _append_open_ready_replay_focus_impl,
-    append_open_ready_score_fail_focus as _append_open_ready_score_fail_focus_impl,
-    append_open_ready_stability_focus as _append_open_ready_stability_focus_impl,
-    build_open_ready_material_change_anchor as _build_open_ready_material_change_anchor_impl,
-    build_open_ready_operator_focus as _build_open_ready_operator_focus_impl,
-    resolve_open_ready_overall_delta_verdict as _resolve_open_ready_overall_delta_verdict_impl,
-    should_build_open_ready_material_anchor as _should_build_open_ready_material_anchor_impl,
+from scripts.btst_carryover_summary_helpers import (
+    extract_carryover_aligned_peer_harvest_summary as _extract_carryover_aligned_peer_harvest_summary_impl,
 )
-from scripts.btst_snapshot_section_helpers import (
-    extract_control_tower_snapshot_sections as _extract_control_tower_snapshot_sections_impl,
-    extract_upstream_shadow_overlay_inputs as _extract_upstream_shadow_overlay_inputs_impl,
+from scripts.btst_carryover_summary_helpers import (
+    extract_carryover_aligned_peer_proof_summary as _extract_carryover_aligned_peer_proof_summary_impl,
 )
-from scripts.btst_upstream_shadow_overlay_helpers import (
-    build_upstream_shadow_followup_overlay as _build_upstream_shadow_followup_overlay_impl,
-    ordered_without as _ordered_without_impl,
+from scripts.btst_carryover_summary_helpers import (
+    extract_carryover_multiday_continuation_audit_summary as _extract_carryover_multiday_continuation_audit_summary_impl,
 )
-from scripts.btst_open_ready_diff_helpers import (
-    build_carryover_promotion_gate_field_changes as _build_carryover_promotion_gate_field_changes_impl,
-    build_catalyst_frontier_count_deltas as _build_catalyst_frontier_count_deltas_impl,
-    build_governance_aggregate_deltas as _build_governance_aggregate_deltas_impl,
-    build_governance_lane_delta as _build_governance_lane_delta_impl,
-    build_governance_lane_map as _build_governance_lane_map_impl,
-    build_priority_rows_by_ticker as _build_priority_rows_by_ticker_impl,
-    build_priority_summary_delta as _build_priority_summary_delta_impl,
-    build_rank_map as _build_rank_map_impl,
-    build_score_fail_frontier_count_deltas as _build_score_fail_frontier_count_deltas_impl,
-    collect_governance_lane_changes as _collect_governance_lane_changes_impl,
-    collect_priority_board_membership_changes as _collect_priority_board_membership_changes_impl,
-    collect_priority_board_per_ticker_changes as _collect_priority_board_per_ticker_changes_impl,
-    diff_carryover_peer_proof as _diff_carryover_peer_proof_impl,
-    diff_carryover_promotion_gate as _diff_carryover_promotion_gate_impl,
-    diff_catalyst_frontier as _diff_catalyst_frontier_impl,
-    diff_early_runner as _diff_early_runner_impl,
-    diff_governance as _diff_governance_impl,
-    diff_priority_board as _diff_priority_board_impl,
-    diff_replay as _diff_replay_impl,
-    diff_score_fail_frontier as _diff_score_fail_frontier_impl,
-    diff_selected_outcome_contract as _diff_selected_outcome_contract_impl,
-    diff_ticker_lists as _diff_ticker_lists_impl,
-    diff_top_priority_action as _diff_top_priority_action_impl,
-    extract_score_fail_frontier_summaries as _extract_score_fail_frontier_summaries_impl,
-    has_governance_lane_delta_changes as _has_governance_lane_delta_changes_impl,
-    resolve_catalyst_frontier_previous_summary as _resolve_catalyst_frontier_previous_summary_impl,
+from scripts.btst_carryover_summary_helpers import (
+    extract_carryover_peer_expansion_summary as _extract_carryover_peer_expansion_summary_impl,
+)
+from scripts.btst_carryover_summary_helpers import (
+    extract_carryover_peer_promotion_gate_summary as _extract_carryover_peer_promotion_gate_summary_impl,
+)
+from scripts.btst_carryover_summary_helpers import (
+    extract_selected_outcome_refresh_summary as _extract_selected_outcome_refresh_summary_impl,
+)
+from scripts.btst_carryover_summary_helpers import (
+    find_focus_entry as _find_focus_entry_impl,
+)
+from scripts.btst_control_tower_snapshot_helpers import (
+    extract_control_tower_snapshot as _extract_control_tower_snapshot_impl,
+)
+from scripts.btst_control_tower_task_helpers import (
+    build_candidate_pool_corridor_primary_shadow_task as _build_candidate_pool_corridor_primary_shadow_task_impl,
+)
+from scripts.btst_control_tower_task_helpers import (
+    build_lane_priority_task as _build_lane_priority_task_impl,
+)
+from scripts.btst_control_tower_task_helpers import (
+    build_recall_priority_task as _build_recall_priority_task_impl,
+)
+from scripts.btst_control_tower_task_helpers import (
+    collect_control_tower_priority_candidates as _collect_control_tower_priority_candidates_impl,
+)
+from scripts.btst_control_tower_task_helpers import (
+    prioritize_control_tower_next_actions as _prioritize_control_tower_next_actions_impl,
+)
+from scripts.btst_dossier_summary_helpers import (
+    extract_candidate_pool_recall_dossier_summary as _extract_candidate_pool_recall_dossier_summary_impl,
+)
+from scripts.btst_dossier_summary_helpers import (
+    extract_no_candidate_entry_action_board_summary as _extract_no_candidate_entry_action_board_summary_impl,
+)
+from scripts.btst_dossier_summary_helpers import (
+    extract_no_candidate_entry_failure_dossier_summary as _extract_no_candidate_entry_failure_dossier_summary_impl,
+)
+from scripts.btst_dossier_summary_helpers import (
+    extract_no_candidate_entry_replay_bundle_summary as _extract_no_candidate_entry_replay_bundle_summary_impl,
+)
+from scripts.btst_dossier_summary_helpers import (
+    extract_watchlist_recall_dossier_summary as _extract_watchlist_recall_dossier_summary_impl,
+)
+from scripts.btst_history_selection_helpers import (
+    extract_btst_report_candidate as _extract_btst_report_candidate_impl,
+)
+from scripts.btst_history_selection_helpers import (
+    select_previous_btst_report_snapshot as _select_previous_btst_report_snapshot_impl,
+)
+from scripts.btst_latest_followup_utils import (
+    load_latest_upstream_shadow_followup_summary,
+)
+from scripts.btst_latest_snapshot_helpers import (
+    extract_catalyst_theme_frontier_summary as _extract_catalyst_theme_frontier_summary_impl,
+)
+from scripts.btst_latest_snapshot_helpers import (
+    extract_latest_btst_snapshot as _extract_latest_btst_snapshot_impl,
+)
+from scripts.btst_latest_snapshot_helpers import (
+    extract_score_fail_frontier_summary as _extract_score_fail_frontier_summary_impl,
+)
+from scripts.btst_latest_snapshot_helpers import (
+    extract_tradeable_opportunity_pool_summary as _extract_tradeable_opportunity_pool_summary_impl,
+)
+from scripts.btst_nightly_artifact_helpers import (
+    generate_btst_nightly_control_tower_artifacts as _generate_btst_nightly_control_tower_artifacts_impl,
+)
+from scripts.btst_nightly_artifact_helpers import (
+    resolve_nightly_control_tower_output_paths as _resolve_nightly_control_tower_output_paths_impl,
+)
+from scripts.btst_nightly_dossier_markdown_helpers import (
+    append_candidate_pool_recall_corridor_details_markdown as _append_candidate_pool_recall_corridor_details_markdown_impl,
+)
+from scripts.btst_nightly_dossier_markdown_helpers import (
+    append_candidate_pool_recall_dossier_markdown as _append_candidate_pool_recall_dossier_markdown_impl,
+)
+from scripts.btst_nightly_dossier_markdown_helpers import (
+    append_candidate_pool_recall_followup_details_markdown as _append_candidate_pool_recall_followup_details_markdown_impl,
+)
+from scripts.btst_nightly_dossier_markdown_helpers import (
+    append_candidate_pool_recall_priority_details_markdown as _append_candidate_pool_recall_priority_details_markdown_impl,
+)
+from scripts.btst_nightly_dossier_markdown_helpers import (
+    append_no_candidate_entry_action_board_markdown as _append_no_candidate_entry_action_board_markdown_impl,
+)
+from scripts.btst_nightly_dossier_markdown_helpers import (
+    append_no_candidate_entry_failure_dossier_markdown as _append_no_candidate_entry_failure_dossier_markdown_impl,
+)
+from scripts.btst_nightly_dossier_markdown_helpers import (
+    append_no_candidate_entry_replay_bundle_markdown as _append_no_candidate_entry_replay_bundle_markdown_impl,
+)
+from scripts.btst_nightly_dossier_markdown_helpers import (
+    append_tradeable_opportunity_pool_markdown as _append_tradeable_opportunity_pool_markdown_impl,
+)
+from scripts.btst_nightly_dossier_markdown_helpers import (
+    append_watchlist_recall_dossier_markdown as _append_watchlist_recall_dossier_markdown_impl,
 )
 from scripts.btst_nightly_markdown_core_helpers import (
     append_control_tower_snapshot_markdown as _append_control_tower_snapshot_markdown_impl,
+)
+from scripts.btst_nightly_markdown_core_helpers import (
     append_independent_window_monitor_markdown as _append_independent_window_monitor_markdown_impl,
+)
+from scripts.btst_nightly_markdown_core_helpers import (
     append_latest_upstream_shadow_followup_overlay_markdown as _append_latest_upstream_shadow_followup_overlay_markdown_impl,
+)
+from scripts.btst_nightly_markdown_core_helpers import (
     append_nightly_overview_markdown as _append_nightly_overview_markdown_impl,
+)
+from scripts.btst_nightly_markdown_core_helpers import (
     append_nightly_summary_markdown as _append_nightly_summary_markdown_impl,
+)
+from scripts.btst_nightly_markdown_core_helpers import (
     append_rollout_lanes_markdown as _append_rollout_lanes_markdown_impl,
+)
+from scripts.btst_nightly_markdown_core_helpers import (
     append_tplus1_tplus2_objective_monitor_markdown as _append_tplus1_tplus2_objective_monitor_markdown_impl,
+)
+from scripts.btst_nightly_markdown_core_helpers import (
     build_control_tower_snapshot_header_lines as _build_control_tower_snapshot_header_lines_impl,
+)
+from scripts.btst_nightly_markdown_core_helpers import (
     build_nightly_overview_header_lines as _build_nightly_overview_header_lines_impl,
+)
+from scripts.btst_nightly_markdown_core_helpers import (
     build_nightly_summary_header_lines as _build_nightly_summary_header_lines_impl,
 )
 from scripts.btst_nightly_markdown_tail_helpers import (
     append_catalyst_theme_frontier_markdown as _append_catalyst_theme_frontier_markdown_impl,
-    append_nightly_overview_candidate_pool_continuation_markdown as _append_nightly_overview_candidate_pool_continuation_markdown_impl,
-    append_nightly_overview_candidate_pool_followup_markdown as _append_nightly_overview_candidate_pool_followup_markdown_impl,
-    append_nightly_overview_candidate_pool_followup_tail_markdown as _append_nightly_overview_candidate_pool_followup_tail_markdown_impl,
+)
+from scripts.btst_nightly_markdown_tail_helpers import (
     append_nightly_fast_links_markdown as _append_nightly_fast_links_markdown_impl,
+)
+from scripts.btst_nightly_markdown_tail_helpers import (
     append_nightly_llm_health_markdown as _append_nightly_llm_health_markdown_impl,
+)
+from scripts.btst_nightly_markdown_tail_helpers import (
+    append_nightly_overview_candidate_pool_continuation_markdown as _append_nightly_overview_candidate_pool_continuation_markdown_impl,
+)
+from scripts.btst_nightly_markdown_tail_helpers import (
+    append_nightly_overview_candidate_pool_followup_markdown as _append_nightly_overview_candidate_pool_followup_markdown_impl,
+)
+from scripts.btst_nightly_markdown_tail_helpers import (
+    append_nightly_overview_candidate_pool_followup_tail_markdown as _append_nightly_overview_candidate_pool_followup_tail_markdown_impl,
+)
+from scripts.btst_nightly_markdown_tail_helpers import (
     append_nightly_reading_order_markdown as _append_nightly_reading_order_markdown_impl,
+)
+from scripts.btst_nightly_markdown_tail_helpers import (
     append_priority_board_snapshot_markdown as _append_priority_board_snapshot_markdown_impl,
+)
+from scripts.btst_nightly_markdown_tail_helpers import (
     append_replay_cohort_snapshot_markdown as _append_replay_cohort_snapshot_markdown_impl,
+)
+from scripts.btst_nightly_markdown_tail_helpers import (
     append_score_fail_frontier_queue_markdown as _append_score_fail_frontier_queue_markdown_impl,
+)
+from scripts.btst_nightly_payload_helpers import (
+    build_nightly_control_tower_analysis as _build_nightly_control_tower_analysis_impl,
+)
+from scripts.btst_nightly_payload_helpers import (
+    build_nightly_recommended_reading_order as _build_nightly_recommended_reading_order_impl,
+)
+from scripts.btst_nightly_payload_helpers import (
+    build_nightly_source_paths as _build_nightly_source_paths_impl,
 )
 from scripts.btst_nightly_render_helpers import (
     build_nightly_control_tower_render_context as _build_nightly_control_tower_render_context_impl,
+)
+from scripts.btst_nightly_render_helpers import (
     render_btst_nightly_control_tower_markdown as _render_btst_nightly_control_tower_markdown_impl,
+)
+from scripts.btst_open_ready_context_helpers import (
+    build_material_change_anchor as _build_material_change_anchor_impl,
+)
+from scripts.btst_open_ready_context_helpers import (
+    resolve_open_ready_comparison_scope as _resolve_open_ready_comparison_scope_impl,
+)
+from scripts.btst_open_ready_context_helpers import (
+    resolve_open_ready_previous_context as _resolve_open_ready_previous_context_impl,
 )
 from scripts.btst_open_ready_delta_markdown_helpers import (
     append_carryover_peer_proof_delta_markdown as _append_carryover_peer_proof_delta_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_carryover_promotion_gate_delta_markdown as _append_carryover_promotion_gate_delta_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_catalyst_frontier_delta_markdown as _append_catalyst_frontier_delta_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_catalyst_frontier_delta_summary as _append_catalyst_frontier_delta_summary_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_catalyst_frontier_delta_tickers as _append_catalyst_frontier_delta_tickers_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_governance_delta_markdown as _append_governance_delta_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_material_change_anchor_focus_markdown as _append_material_change_anchor_focus_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_material_change_anchor_markdown as _append_material_change_anchor_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_material_change_anchor_metadata as _append_material_change_anchor_metadata_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_open_ready_fast_links_markdown as _append_open_ready_fast_links_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_open_ready_operator_focus_markdown as _append_open_ready_operator_focus_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_open_ready_overview_fields as _append_open_ready_overview_fields_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_open_ready_overview_markdown as _append_open_ready_overview_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_priority_change_markdown as _append_priority_change_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_priority_delta_list as _append_priority_delta_list_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_priority_delta_markdown as _append_priority_delta_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_priority_guardrail_markdown as _append_priority_guardrail_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_priority_membership_markdown as _append_priority_membership_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_replay_delta_markdown as _append_replay_delta_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_score_fail_frontier_delta_markdown as _append_score_fail_frontier_delta_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_score_fail_frontier_delta_summary as _append_score_fail_frontier_delta_summary_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_score_fail_frontier_delta_tickers as _append_score_fail_frontier_delta_tickers_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_selected_outcome_contract_delta_markdown as _append_selected_outcome_contract_delta_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     append_top_priority_action_delta_markdown as _append_top_priority_action_delta_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     build_governance_lane_delta_markdown as _build_governance_lane_delta_markdown_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     collect_governance_lane_extra_segments as _collect_governance_lane_extra_segments_impl,
+)
+from scripts.btst_open_ready_delta_markdown_helpers import (
     render_btst_open_ready_delta_markdown as _render_btst_open_ready_delta_markdown_impl,
 )
-from scripts.btst_report_utils import load_json as _load_json, looks_like_report_dir as _looks_like_report_dir, normalize_trade_date as _normalize_trade_date, safe_load_json as _safe_load_json
+from scripts.btst_open_ready_delta_payload_helpers import (
+    build_btst_open_ready_delta_payload as _build_btst_open_ready_delta_payload_impl,
+)
+from scripts.btst_open_ready_delta_payload_helpers import (
+    build_open_ready_delta_analysis as _build_open_ready_delta_analysis_impl,
+)
+from scripts.btst_open_ready_delta_payload_helpers import (
+    build_open_ready_delta_context as _build_open_ready_delta_context_impl,
+)
+from scripts.btst_open_ready_delta_payload_helpers import (
+    build_open_ready_source_paths as _build_open_ready_source_paths_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    build_carryover_promotion_gate_field_changes as _build_carryover_promotion_gate_field_changes_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    build_catalyst_frontier_count_deltas as _build_catalyst_frontier_count_deltas_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    build_governance_aggregate_deltas as _build_governance_aggregate_deltas_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    build_governance_lane_delta as _build_governance_lane_delta_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    build_governance_lane_map as _build_governance_lane_map_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    build_priority_rows_by_ticker as _build_priority_rows_by_ticker_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    build_priority_summary_delta as _build_priority_summary_delta_impl,
+)
+from scripts.btst_open_ready_diff_helpers import build_rank_map as _build_rank_map_impl
+from scripts.btst_open_ready_diff_helpers import (
+    build_score_fail_frontier_count_deltas as _build_score_fail_frontier_count_deltas_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    collect_governance_lane_changes as _collect_governance_lane_changes_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    collect_priority_board_membership_changes as _collect_priority_board_membership_changes_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    collect_priority_board_per_ticker_changes as _collect_priority_board_per_ticker_changes_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    diff_carryover_peer_proof as _diff_carryover_peer_proof_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    diff_carryover_promotion_gate as _diff_carryover_promotion_gate_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    diff_catalyst_frontier as _diff_catalyst_frontier_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    diff_early_runner as _diff_early_runner_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    diff_governance as _diff_governance_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    diff_priority_board as _diff_priority_board_impl,
+)
+from scripts.btst_open_ready_diff_helpers import diff_replay as _diff_replay_impl
+from scripts.btst_open_ready_diff_helpers import (
+    diff_score_fail_frontier as _diff_score_fail_frontier_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    diff_selected_outcome_contract as _diff_selected_outcome_contract_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    diff_ticker_lists as _diff_ticker_lists_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    diff_top_priority_action as _diff_top_priority_action_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    extract_score_fail_frontier_summaries as _extract_score_fail_frontier_summaries_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    has_governance_lane_delta_changes as _has_governance_lane_delta_changes_impl,
+)
+from scripts.btst_open_ready_diff_helpers import (
+    resolve_catalyst_frontier_previous_summary as _resolve_catalyst_frontier_previous_summary_impl,
+)
+from scripts.btst_open_ready_focus_helpers import (
+    append_open_ready_action_focus as _append_open_ready_action_focus_impl,
+)
+from scripts.btst_open_ready_focus_helpers import (
+    append_open_ready_basis_focus as _append_open_ready_basis_focus_impl,
+)
+from scripts.btst_open_ready_focus_helpers import (
+    append_open_ready_frontier_focus as _append_open_ready_frontier_focus_impl,
+)
+from scripts.btst_open_ready_focus_helpers import (
+    append_open_ready_governance_focus as _append_open_ready_governance_focus_impl,
+)
+from scripts.btst_open_ready_focus_helpers import (
+    append_open_ready_material_anchor_focus as _append_open_ready_material_anchor_focus_impl,
+)
+from scripts.btst_open_ready_focus_helpers import (
+    append_open_ready_priority_focus as _append_open_ready_priority_focus_impl,
+)
+from scripts.btst_open_ready_focus_helpers import (
+    append_open_ready_replay_focus as _append_open_ready_replay_focus_impl,
+)
+from scripts.btst_open_ready_focus_helpers import (
+    append_open_ready_score_fail_focus as _append_open_ready_score_fail_focus_impl,
+)
+from scripts.btst_open_ready_focus_helpers import (
+    append_open_ready_stability_focus as _append_open_ready_stability_focus_impl,
+)
+from scripts.btst_open_ready_focus_helpers import (
+    build_open_ready_material_change_anchor as _build_open_ready_material_change_anchor_impl,
+)
+from scripts.btst_open_ready_focus_helpers import (
+    build_open_ready_operator_focus as _build_open_ready_operator_focus_impl,
+)
+from scripts.btst_open_ready_focus_helpers import (
+    resolve_open_ready_overall_delta_verdict as _resolve_open_ready_overall_delta_verdict_impl,
+)
+from scripts.btst_open_ready_focus_helpers import (
+    should_build_open_ready_material_anchor as _should_build_open_ready_material_anchor_impl,
+)
+from scripts.btst_remaining_summary_helpers import (
+    extract_candidate_pool_corridor_narrow_probe_summary as _extract_candidate_pool_corridor_narrow_probe_summary_impl,
+)
+from scripts.btst_remaining_summary_helpers import (
+    extract_candidate_pool_corridor_persistence_dossier_summary as _extract_candidate_pool_corridor_persistence_dossier_summary_impl,
+)
+from scripts.btst_remaining_summary_helpers import (
+    extract_candidate_pool_corridor_window_command_board_summary as _extract_candidate_pool_corridor_window_command_board_summary_impl,
+)
+from scripts.btst_remaining_summary_helpers import (
+    extract_candidate_pool_corridor_window_diagnostics_summary as _extract_candidate_pool_corridor_window_diagnostics_summary_impl,
+)
+from scripts.btst_remaining_summary_helpers import (
+    extract_continuation_merge_candidate_ranking_summary as _extract_continuation_merge_candidate_ranking_summary_impl,
+)
+from scripts.btst_remaining_summary_helpers import (
+    extract_default_merge_historical_counterfactual_summary as _extract_default_merge_historical_counterfactual_summary_impl,
+)
+from scripts.btst_remaining_summary_helpers import (
+    extract_default_merge_review_summary as _extract_default_merge_review_summary_impl,
+)
+from scripts.btst_remaining_summary_helpers import (
+    extract_default_merge_strict_counterfactual_summary as _extract_default_merge_strict_counterfactual_summary_impl,
+)
+from scripts.btst_remaining_summary_helpers import (
+    extract_early_runner_summary as _extract_early_runner_summary_impl,
+)
+from scripts.btst_remaining_summary_helpers import (
+    extract_merge_replay_validation_summary as _extract_merge_replay_validation_summary_impl,
+)
+from scripts.btst_remaining_summary_helpers import (
+    extract_prepared_breakout_cohort_summary as _extract_prepared_breakout_cohort_summary_impl,
+)
+from scripts.btst_remaining_summary_helpers import (
+    extract_prepared_breakout_relief_validation_summary as _extract_prepared_breakout_relief_validation_summary_impl,
+)
+from scripts.btst_remaining_summary_helpers import (
+    extract_prepared_breakout_residual_surface_summary as _extract_prepared_breakout_residual_surface_summary_impl,
+)
+from scripts.btst_report_utils import load_json as _load_json
+from scripts.btst_report_utils import looks_like_report_dir as _looks_like_report_dir
+from scripts.btst_report_utils import normalize_trade_date as _normalize_trade_date
+from scripts.btst_report_utils import safe_load_json as _safe_load_json
+from scripts.btst_selected_focus import pick_selected_focus_entry
+from scripts.btst_snapshot_section_helpers import (
+    extract_control_tower_snapshot_sections as _extract_control_tower_snapshot_sections_impl,
+)
+from scripts.btst_snapshot_section_helpers import (
+    extract_upstream_shadow_overlay_inputs as _extract_upstream_shadow_overlay_inputs_impl,
+)
+from scripts.btst_upstream_shadow_overlay_helpers import (
+    build_upstream_shadow_followup_overlay as _build_upstream_shadow_followup_overlay_impl,
+)
+from scripts.btst_upstream_shadow_overlay_helpers import (
+    ordered_without as _ordered_without_impl,
+)
 from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
-
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_nightly_control_tower_latest.json"

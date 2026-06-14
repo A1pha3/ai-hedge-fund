@@ -12,7 +12,6 @@ from scripts.btst_analysis_utils import build_surface_summary
 from scripts.btst_profile_replay_utils import analyze_btst_profile_replay_window
 from scripts.btst_report_utils import discover_report_dirs
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_REPORTS_ROOT = REPORTS_DIR
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_tplus2_continuation_peer_scan_latest.json"

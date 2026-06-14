@@ -5,7 +5,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-
 ResolveOutputPaths = Callable[..., dict[str, Path]]
 GenerateManifestArtifacts = Callable[..., dict[str, Any]]
 BuildNightlyPayload = Callable[[dict[str, Any]], dict[str, Any]]

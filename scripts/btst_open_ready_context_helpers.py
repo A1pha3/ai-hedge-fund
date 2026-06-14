@@ -4,7 +4,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-
 BuildBtstOpenReadyDeltaPayload = Callable[..., dict[str, Any]]
 ListChangedDeltaSections = Callable[[dict[str, Any]], list[str]]
 SelectPreviousBtstReportSnapshot = Callable[..., dict[str, Any]]

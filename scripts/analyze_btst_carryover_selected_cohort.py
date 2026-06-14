@@ -6,8 +6,10 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_analysis_utils import extract_btst_price_outcome, summarize_distribution
-
+from scripts.btst_analysis_utils import (
+    extract_btst_price_outcome,
+    summarize_distribution,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_carryover_selected_cohort_latest.json"

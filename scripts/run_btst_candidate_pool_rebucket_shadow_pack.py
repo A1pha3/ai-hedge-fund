@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 REBUCKET_SHADOW_RELEASE_SCORE_MIN = 0.28
 DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH = Path("data/reports/btst_candidate_pool_upstream_handoff_board_latest.json")
 

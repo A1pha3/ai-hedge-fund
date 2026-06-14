@@ -5,13 +5,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_latest_followup_utils import load_latest_upstream_shadow_followup_by_ticker, load_latest_upstream_shadow_followup_summary
+from scripts.btst_latest_followup_utils import (
+    load_latest_upstream_shadow_followup_by_ticker,
+    load_latest_upstream_shadow_followup_summary,
+)
 from src.screening.candidate_pool import (
     SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,
     SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE,
     SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE,
 )
-
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_FAILURE_DOSSIER_PATH = REPORTS_DIR / "btst_no_candidate_entry_failure_dossier_latest.json"

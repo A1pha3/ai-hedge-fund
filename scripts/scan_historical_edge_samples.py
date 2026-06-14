@@ -6,7 +6,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_REPORTS_DIR = Path("data/reports")
 JSON_GLOBS = ("*.json", "*.jsonl")
 

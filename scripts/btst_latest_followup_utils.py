@@ -7,7 +7,6 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
-
 _HISTORICAL_PRIOR_PAYOFF_KEYS = (
     "next_close_positive_count",
     "next_close_negative_count",

@@ -5,10 +5,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_tplus2_near_cluster_dossier import analyze_btst_tplus2_near_cluster_dossier
-from scripts.generate_btst_tplus2_continuation_promotion_review import _build_promotion_review
-from scripts.generate_btst_tplus2_continuation_expansion_board import generate_btst_tplus2_continuation_expansion_board
-
+from scripts.analyze_btst_tplus2_near_cluster_dossier import (
+    analyze_btst_tplus2_near_cluster_dossier,
+)
+from scripts.generate_btst_tplus2_continuation_expansion_board import (
+    generate_btst_tplus2_continuation_expansion_board,
+)
+from scripts.generate_btst_tplus2_continuation_promotion_review import (
+    _build_promotion_review,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_tplus2_continuation_validation_queue_latest.json"

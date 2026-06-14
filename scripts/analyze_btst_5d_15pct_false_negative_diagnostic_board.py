@@ -7,7 +7,6 @@ from pathlib import Path
 from statistics import mean
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_INPUT_JSON = REPORTS_DIR / "btst_5d_15pct_false_negative_dossier_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_5d_15pct_false_negative_diagnostic_board_latest.json"

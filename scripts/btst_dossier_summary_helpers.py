@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-
 SafeLoadJson = Callable[[str | None], dict[str, Any]]
 EntryById = Callable[[dict[str, Any], str], dict[str, Any]]
 

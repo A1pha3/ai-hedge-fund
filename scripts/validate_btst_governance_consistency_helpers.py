@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from scripts.analyze_btst_candidate_entry_rollout_governance import derive_candidate_entry_shadow_state
+from scripts.analyze_btst_candidate_entry_rollout_governance import (
+    derive_candidate_entry_shadow_state,
+)
 
 
 @dataclass(frozen=True)

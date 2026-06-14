@@ -3,10 +3,9 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import os
-from pathlib import Path
 import subprocess
 import time
-
+from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REPORT_MD = REPO_ROOT / "data/reports/ab_walk_forward_first_pilot.md"

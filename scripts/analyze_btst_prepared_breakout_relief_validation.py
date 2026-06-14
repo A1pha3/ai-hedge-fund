@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_MERGE_REPLAY_VALIDATION_PATH = REPORTS_DIR / "btst_merge_replay_validation_latest.json"
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_prepared_breakout_relief_validation_latest.json"

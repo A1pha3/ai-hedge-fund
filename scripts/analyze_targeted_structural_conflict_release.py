@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from src.execution.models import LayerCResult
-from src.targets.short_trade_target import evaluate_short_trade_rejected_target, evaluate_short_trade_selected_target
+from src.targets.short_trade_target import (
+    evaluate_short_trade_rejected_target,
+    evaluate_short_trade_selected_target,
+)
 
 
 def _load_json(path: Path) -> dict[str, Any]:

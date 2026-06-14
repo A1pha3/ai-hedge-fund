@@ -31,7 +31,10 @@ def _classify_score_b(score_b: float) -> str:
 
 
 def _resolve_blend_weights() -> tuple[float, float]:
-    from src.execution.layer_c_aggregator import LAYER_C_BLEND_B_WEIGHT, LAYER_C_BLEND_C_WEIGHT
+    from src.execution.layer_c_aggregator import (
+        LAYER_C_BLEND_B_WEIGHT,
+        LAYER_C_BLEND_C_WEIGHT,
+    )
 
     b_weight = max(0.0, float(LAYER_C_BLEND_B_WEIGHT))
     c_weight = max(0.0, float(LAYER_C_BLEND_C_WEIGHT))
@@ -159,7 +162,11 @@ def _render_markdown(payload: dict) -> str:
 
 
 def main() -> None:
-    from scripts.analyze_layer_b_rule_variants import VARIANTS, _build_comparison, _run_variant
+    from scripts.analyze_layer_b_rule_variants import (
+        _build_comparison,
+        _run_variant,
+        VARIANTS,
+    )
     from scripts.model_selection import resolve_model_selection
     from src.backtesting.rule_variant_compare import make_pipeline_agent_runner
     from src.execution.layer_c_aggregator import aggregate_layer_c_results

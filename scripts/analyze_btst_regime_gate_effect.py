@@ -7,7 +7,9 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from src.screening.market_state_helpers import classify_btst_regime_gate_from_market_state
+from src.screening.market_state_helpers import (
+    classify_btst_regime_gate_from_market_state,
+)
 
 
 def _load_json(path: Path) -> dict[str, Any]:

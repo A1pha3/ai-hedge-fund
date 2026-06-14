@@ -5,9 +5,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.run_btst_candidate_pool_corridor_shadow_pack import analyze_btst_candidate_pool_corridor_shadow_pack
-from scripts.run_btst_candidate_pool_rebucket_comparison_bundle import analyze_btst_candidate_pool_rebucket_comparison_bundle
-
+from scripts.run_btst_candidate_pool_corridor_shadow_pack import (
+    analyze_btst_candidate_pool_corridor_shadow_pack,
+)
+from scripts.run_btst_candidate_pool_rebucket_comparison_bundle import (
+    analyze_btst_candidate_pool_rebucket_comparison_bundle,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_CORRIDOR_SHADOW_PACK_PATH = REPORTS_DIR / "btst_candidate_pool_corridor_shadow_pack_latest.json"

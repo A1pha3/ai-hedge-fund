@@ -4,7 +4,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-
 EntryById = Callable[[dict[str, Any], str], dict[str, Any]]
 BuildNightlyRefreshStatus = Callable[[dict[str, Any]], dict[str, Any]]
 TimestampFactory = Callable[[], str]

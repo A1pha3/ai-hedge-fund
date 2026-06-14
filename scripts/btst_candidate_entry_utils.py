@@ -1,3 +1,5 @@
-from src.targets.candidate_entry_filters import build_watchlist_avoid_weak_structure_filter
+from src.targets.candidate_entry_filters import (
+    build_watchlist_avoid_weak_structure_filter,
+)
 
 __all__ = ["build_watchlist_avoid_weak_structure_filter"]

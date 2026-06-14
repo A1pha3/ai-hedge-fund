@@ -10,7 +10,6 @@ from src.execution.merge_approved_loader import (
     is_merge_approved_execution_blocker,
 )
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_ELIGIBLE_EXECUTION_PATH = REPORTS_DIR / "btst_tplus2_continuation_eligible_execution_latest.json"
 DEFAULT_EXECUTION_GATE_PATH = REPORTS_DIR / "btst_tplus2_continuation_execution_gate_latest.json"

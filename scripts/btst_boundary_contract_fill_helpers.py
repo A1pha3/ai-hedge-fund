@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from scripts.analyze_btst_5d_15pct_missing_core_features_noise_compression import CORE_EXPLAINABILITY_KEYS
+from scripts.analyze_btst_5d_15pct_missing_core_features_noise_compression import (
+    CORE_EXPLAINABILITY_KEYS,
+)
 
 BOUNDARY_REQUIRED_CORE_KEYS = tuple(sorted(CORE_EXPLAINABILITY_KEYS))
 

@@ -6,7 +6,6 @@ import math
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_COMPARISON_JSON = Path("data/reports/btst_momentum_rollout_recheck_comparison.json")
 DEFAULT_OUTPUT_JSON = Path("data/reports/btst_momentum_rollout_recheck_decision.json")
 DEFAULT_OUTPUT_MD = Path("data/reports/btst_momentum_rollout_recheck_decision.md")

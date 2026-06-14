@@ -4,7 +4,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-
 ExtractSnapshotSections = Callable[[dict[str, Any]], dict[str, Any]]
 ExtractOverlayInputs = Callable[[dict[str, Any]], dict[str, list[Any]]]
 BuildUpstreamShadowFollowupOverlay = Callable[..., dict[str, Any]]

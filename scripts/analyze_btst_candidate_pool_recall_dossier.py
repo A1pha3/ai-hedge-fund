@@ -11,25 +11,29 @@ import pandas as pd
 
 from src.project_env import load_project_dotenv
 from src.screening.candidate_pool import (
-    MAX_CANDIDATE_POOL_SIZE,
-    MIN_AVG_AMOUNT_20D,
-    MIN_ESTIMATED_AMOUNT_1D,
-    SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,
-    SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE,
-    SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE,
-    _load_candidate_pool_shadow_snapshot,
     _estimate_amount_from_daily_basic,
-    MIN_LISTING_DAYS,
     _estimate_trading_days,
     _get_avg_amount_20d,
     _get_avg_amount_20d_map,
     _get_pro,
+    _load_candidate_pool_shadow_snapshot,
     build_beijing_exchange_mask,
     get_cooled_tickers,
     is_beijing_exchange_stock,
+    MAX_CANDIDATE_POOL_SIZE,
+    MIN_AVG_AMOUNT_20D,
+    MIN_ESTIMATED_AMOUNT_1D,
+    MIN_LISTING_DAYS,
+    SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,
+    SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE,
+    SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE,
 )
-from src.tools.tushare_api import get_all_stock_basic, get_daily_basic_batch, get_limit_list, get_suspend_list
-
+from src.tools.tushare_api import (
+    get_all_stock_basic,
+    get_daily_basic_batch,
+    get_limit_list,
+    get_suspend_list,
+)
 
 load_project_dotenv()
 

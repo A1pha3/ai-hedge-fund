@@ -6,7 +6,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_multi_window_profile_validation import analyze_btst_multi_window_profile_validation
+from scripts.analyze_btst_multi_window_profile_validation import (
+    analyze_btst_multi_window_profile_validation,
+)
 from scripts.btst_trend_continuation_activation_delta_diagnostics import (
     build_trend_continuation_activation_delta_diagnostics,
 )

@@ -5,7 +5,6 @@ import json
 from itertools import product
 from pathlib import Path
 
-
 DEFAULT_SCENARIOS = {
     "current": {
         "b_weight": 0.4,

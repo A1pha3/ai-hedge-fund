@@ -7,8 +7,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_catalyst_theme_frontier import generate_catalyst_theme_frontier_artifacts
-from scripts.btst_report_utils import discover_report_dirs as _discover_btst_report_dirs, load_json as _load_json, normalize_trade_date as _normalize_trade_date
+from scripts.analyze_btst_early_runner_v1 import (
+    analyze_btst_early_runner_v1,
+    render_btst_early_runner_v1_markdown,
+)
+from scripts.analyze_btst_governance_synthesis import (
+    analyze_btst_governance_synthesis,
+    render_btst_governance_synthesis_markdown,
+)
+from scripts.analyze_btst_independent_window_monitor import (
+    analyze_btst_independent_window_monitor,
+    render_btst_independent_window_monitor_markdown,
+)
 from scripts.analyze_btst_primary_roll_forward import (
     analyze_btst_primary_roll_forward,
     render_btst_primary_roll_forward_markdown,
@@ -25,36 +35,26 @@ from scripts.analyze_btst_recurring_shadow_runbook import (
     analyze_btst_recurring_shadow_runbook,
     render_btst_recurring_shadow_runbook_markdown,
 )
-from scripts.analyze_btst_governance_synthesis import (
-    analyze_btst_governance_synthesis,
-    render_btst_governance_synthesis_markdown,
+from scripts.analyze_btst_replay_cohort import (
+    analyze_btst_replay_cohort,
+    render_btst_replay_cohort_markdown,
 )
 from scripts.analyze_btst_rollout_governance_board import (
     analyze_btst_rollout_governance_board,
     render_btst_rollout_governance_board_markdown,
 )
-from scripts.analyze_btst_replay_cohort import (
-    analyze_btst_replay_cohort,
-    render_btst_replay_cohort_markdown,
+from scripts.analyze_btst_tplus1_tplus2_objective_monitor import (
+    analyze_btst_tplus1_tplus2_objective_monitor,
+    render_btst_tplus1_tplus2_objective_monitor_markdown,
 )
 from scripts.analyze_btst_tradeable_opportunity_pool import (
     generate_btst_tradeable_opportunity_pool_artifacts,
     load_btst_tradeable_opportunity_artifacts,
     summarize_btst_tradeable_opportunity_artifacts,
 )
-from scripts.analyze_btst_independent_window_monitor import (
-    analyze_btst_independent_window_monitor,
-    render_btst_independent_window_monitor_markdown,
+from scripts.analyze_catalyst_theme_frontier import (
+    generate_catalyst_theme_frontier_artifacts,
 )
-from scripts.analyze_btst_tplus1_tplus2_objective_monitor import (
-    analyze_btst_tplus1_tplus2_objective_monitor,
-    render_btst_tplus1_tplus2_objective_monitor_markdown,
-)
-from scripts.analyze_btst_early_runner_v1 import (
-    analyze_btst_early_runner_v1,
-    render_btst_early_runner_v1_markdown,
-)
-from scripts.generate_btst_early_runner_daily_tables import generate_btst_early_runner_daily_tables
 from scripts.analyze_multi_window_short_trade_role_candidates import (
     analyze_multi_window_short_trade_role_candidates,
     render_multi_window_short_trade_role_candidates_markdown,
@@ -75,6 +75,13 @@ from scripts.analyze_short_trade_boundary_score_failures_frontier import (
     analyze_short_trade_boundary_score_failures_frontier,
     render_short_trade_boundary_score_failure_frontier_markdown,
 )
+from scripts.btst_report_utils import discover_report_dirs as _discover_btst_report_dirs
+from scripts.btst_report_utils import load_json as _load_json
+from scripts.btst_report_utils import normalize_trade_date as _normalize_trade_date
+from scripts.btst_selected_focus import pick_selected_focus_entry
+from scripts.generate_btst_early_runner_daily_tables import (
+    generate_btst_early_runner_daily_tables,
+)
 from scripts.generate_reports_manifest_candidate_entry_shadow_helpers import (
     build_candidate_entry_shadow_initial_state,
     build_candidate_entry_shadow_missing_inputs_summary,
@@ -86,12 +93,10 @@ from scripts.generate_reports_manifest_candidate_entry_shadow_helpers import (
     refresh_candidate_entry_shadow_prerequisites,
     refresh_candidate_entry_shadow_window_artifacts,
 )
-from scripts.btst_selected_focus import pick_selected_focus_entry
 from scripts.validate_btst_governance_consistency import (
     render_btst_governance_validation_markdown,
     validate_btst_governance_consistency,
 )
-
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "report_manifest_latest.json"

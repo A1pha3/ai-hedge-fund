@@ -9,7 +9,6 @@ from typing import Any
 
 from scripts.generate_btst_realized_prices import generate_realized_prices
 
-
 FORMAL_EXECUTION_BLOCK_FLAGS = (
     "p2_execution_blocked",
     "p3_execution_blocked",

@@ -10,29 +10,30 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.analyze_btst_5d_15pct_factor_research_round1 import DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT
+from scripts.analyze_btst_5d_15pct_factor_research_round1 import (
+    DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT,
+)
 from scripts.analyze_btst_5d_15pct_trend_breakout_drilldown import (
-    DEFAULT_REPORTS_ROOT,
     _rows_with_gap_le,
     _top_fraction_rows,
+    DEFAULT_REPORTS_ROOT,
 )
 from scripts.analyze_btst_5d_15pct_trend_gate_oos_validation import (
+    _gate_predicate,
+    _monthly_board,
+    _rolling_splits,
+    _rollout_decision,
+    _summary_with_uniqueness,
     MIN_BETA_TRADEABLE_RATE,
     TARGET_HIT_RATE,
     TARGET_MEAN_RETURN,
-    _gate_predicate,
-    _monthly_board,
-    _rollout_decision,
-    _rolling_splits,
-    _summary_with_uniqueness,
 )
 from scripts.analyze_btst_5d_15pct_trend_top20_gate_diagnostics import (
-    DEFAULT_REPORT_NAME_CONTAINS,
     _collect_rows,
     _dedupe_signal_rows,
+    DEFAULT_REPORT_NAME_CONTAINS,
 )
 from scripts.btst_analysis_utils import round_or_none as _round_or_none
-
 
 DEFAULT_OUTPUT_JSON = Path("data/reports/btst_5d_15pct_trend_gate_threshold_grid_latest.json")
 DEFAULT_OUTPUT_MD = Path("data/reports/btst_5d_15pct_trend_gate_threshold_grid_latest.md")

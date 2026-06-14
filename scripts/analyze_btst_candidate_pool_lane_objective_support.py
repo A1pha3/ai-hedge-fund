@@ -8,7 +8,6 @@ from typing import Any
 
 import scripts.btst_analysis_utils as btst_utils
 
-
 DEFAULT_REPORTS_DIR = Path("data/reports")
 DEFAULT_DOSSIER_PATH = DEFAULT_REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.json"
 DEFAULT_OBJECTIVE_MONITOR_PATH = DEFAULT_REPORTS_DIR / "btst_tplus1_tplus2_objective_monitor_latest.json"

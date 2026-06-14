@@ -10,7 +10,6 @@ from typing import Any
 from scripts.analyze_btst_carryover_selected_cohort import _peer_evidence_status
 from scripts.btst_analysis_utils import extract_btst_price_outcome
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_carryover_false_negative_dossier_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_carryover_false_negative_dossier_latest.md"

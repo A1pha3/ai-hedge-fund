@@ -10,16 +10,17 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.analyze_btst_5d_15pct_factor_research_round1 import DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT
+from scripts.analyze_btst_5d_15pct_factor_research_round1 import (
+    DEFAULT_BOUNDARY_QUARANTINE_ARTIFACT,
+)
 from scripts.analyze_btst_5d_15pct_trend_breakout_drilldown import (
-    DEFAULT_REPORTS_ROOT,
-    SCOPED_PROTOTYPES,
     _collect_round1_rows,
     _round_or_none,
     _safe_float,
     _top_fraction_rows,
+    DEFAULT_REPORTS_ROOT,
+    SCOPED_PROTOTYPES,
 )
-
 
 DEFAULT_OUTPUT_JSON = Path("data/reports/btst_5d_15pct_scoped_missing_price_manifest_latest.json")
 DEFAULT_OUTPUT_MD = Path("data/reports/btst_5d_15pct_scoped_missing_price_manifest_latest.md")

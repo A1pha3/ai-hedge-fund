@@ -5,9 +5,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_candidate_entry_utils import build_watchlist_avoid_weak_structure_filter
+from scripts.btst_candidate_entry_utils import (
+    build_watchlist_avoid_weak_structure_filter,
+)
 from scripts.btst_profile_replay_utils import analyze_btst_profile_replay_window
-
 
 CANDIDATE_ENTRY_VARIANTS: dict[str, dict[str, Any]] = {
     "weak_structure_triplet": {

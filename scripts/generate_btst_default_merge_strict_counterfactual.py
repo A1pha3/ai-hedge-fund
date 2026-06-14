@@ -6,10 +6,13 @@ from pathlib import Path
 from typing import Any
 
 import scripts.btst_analysis_utils as btst_utils
-from scripts.analyze_btst_candidate_pool_lane_objective_support import _build_occurrence_rows
+from scripts.analyze_btst_candidate_pool_lane_objective_support import (
+    _build_occurrence_rows,
+)
 from scripts.analyze_btst_tplus1_tplus2_objective_monitor import _deduplicate_rows
-from scripts.btst_report_utils import discover_nested_report_dirs as discover_report_dirs
-
+from scripts.btst_report_utils import (
+    discover_nested_report_dirs as discover_report_dirs,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_DEFAULT_MERGE_REVIEW_PATH = REPORTS_DIR / "btst_default_merge_review_latest.json"

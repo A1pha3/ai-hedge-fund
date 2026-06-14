@@ -7,8 +7,9 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_short_trade_ticker_role_history import analyze_short_trade_ticker_role_history
-
+from scripts.analyze_short_trade_ticker_role_history import (
+    analyze_short_trade_ticker_role_history,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_CANDIDATE_REPORT_PATH = REPORTS_DIR / "multi_window_short_trade_role_candidates_20260329.json"

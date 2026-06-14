@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_ROLLOUT_PACK_JSON = Path("data/reports/btst_momentum_rollout_recheck_pack.json")
 DEFAULT_SOURCE_JSON = Path("data/reports/param_search_momentum_optimized_apr_may_coarse_v3.json")
 DEFAULT_BASELINE_BRIDGE_JSON = Path("data/reports/btst_momentum_active_baseline_bridge.json")

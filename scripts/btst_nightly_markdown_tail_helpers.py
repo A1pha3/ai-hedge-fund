@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-
 RelativeLink = Callable[[str | Path | None, Path], str | None]
 
 

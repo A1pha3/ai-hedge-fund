@@ -7,7 +7,6 @@ from typing import Any
 
 from scripts.btst_selected_focus import pick_selected_focus_entry
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_HARVEST_JSON = REPORTS_DIR / "btst_carryover_aligned_peer_harvest_latest.json"
 DEFAULT_PEER_EXPANSION_JSON = REPORTS_DIR / "btst_carryover_peer_expansion_latest.json"

@@ -7,9 +7,13 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_report_utils import discover_nested_report_dirs as discover_report_dirs
-from scripts.replay_selection_target_calibration import STRUCTURAL_VARIANTS, analyze_selection_target_structural_variants
-
+from scripts.btst_report_utils import (
+    discover_nested_report_dirs as discover_report_dirs,
+)
+from scripts.replay_selection_target_calibration import (
+    analyze_selection_target_structural_variants,
+    STRUCTURAL_VARIANTS,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_candidate_entry_window_scan_20260330.json"

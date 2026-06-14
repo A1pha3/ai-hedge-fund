@@ -7,7 +7,6 @@ from typing import Any
 
 from scripts.btst_selected_focus import pick_selected_focus_entry
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_PROOF_BOARD_JSON = REPORTS_DIR / "btst_carryover_aligned_peer_proof_board_latest.json"
 DEFAULT_SELECTED_REFRESH_JSON = REPORTS_DIR / "btst_selected_outcome_refresh_board_latest.json"

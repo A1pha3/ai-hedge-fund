@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from scripts.analyze_btst_candidate_pool_corridor_window_diagnostics import (
+    analyze_btst_candidate_pool_corridor_window_diagnostics,
     DEFAULT_CANDIDATE_DOSSIER_PATH,
     DEFAULT_COMMAND_BOARD_PATH,
-    analyze_btst_candidate_pool_corridor_window_diagnostics,
 )
 from src.screening.candidate_pool import (
     SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE,

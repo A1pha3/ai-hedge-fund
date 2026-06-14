@@ -4,6 +4,7 @@ Quick comparison of v2 vs ic_v3 scoring on synthetic inputs.
 Tests how the scoring formula differs between the two profiles.
 """
 import sys
+
 sys.path.insert(0, ".")
 
 from src.targets.profiles import get_short_trade_target_profile

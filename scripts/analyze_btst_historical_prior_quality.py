@@ -21,8 +21,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from src.targets.prior_quality import PriorQualityLabel, classify_prior_quality
-
+from src.targets.prior_quality import classify_prior_quality, PriorQualityLabel
 
 _DEFAULT_REPORT_DIR = Path("data/paper_trading_window_sample")
 _OUTPUT_DIR = Path("data/reports")

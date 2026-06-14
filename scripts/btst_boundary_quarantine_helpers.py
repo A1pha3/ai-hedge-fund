@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from typing import Any
 
-from scripts.btst_missing_core_features_noise_helpers import suggest_missing_core_compression_action
+from scripts.btst_missing_core_features_noise_helpers import (
+    suggest_missing_core_compression_action,
+)
 
 TARGET_BOUNDARY_SOURCES = {"short_trade_boundary", "layer_b_boundary"}
 

@@ -5,8 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_tplus2_continuation_peer_scan import analyze_btst_tplus2_continuation_peer_scan
-
+from scripts.analyze_btst_tplus2_continuation_peer_scan import (
+    analyze_btst_tplus2_continuation_peer_scan,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH = REPORTS_DIR / "btst_candidate_pool_upstream_handoff_board_latest.json"

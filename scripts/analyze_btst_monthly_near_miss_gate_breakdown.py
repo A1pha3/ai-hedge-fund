@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 
-
 def _compact_date(value: str) -> str:
     token = str(value or "").strip()
     if len(token) == 10 and token[4] == "-" and token[7] == "-":

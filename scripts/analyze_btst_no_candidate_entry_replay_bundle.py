@@ -7,10 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_candidate_entry_frontier import analyze_btst_candidate_entry_frontier
-from scripts.analyze_btst_candidate_entry_window_scan import analyze_btst_candidate_entry_window_scan
+from scripts.analyze_btst_candidate_entry_frontier import (
+    analyze_btst_candidate_entry_frontier,
+)
+from scripts.analyze_btst_candidate_entry_window_scan import (
+    analyze_btst_candidate_entry_window_scan,
+)
 from scripts.btst_report_utils import discover_report_dirs
-
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "btst_no_candidate_entry_action_board_latest.json"

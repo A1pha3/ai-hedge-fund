@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-
 AppendOverviewSection = Callable[[list[str], dict[str, Any]], None]
 AppendOverviewFollowup = Callable[[list[str], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]], None]
 

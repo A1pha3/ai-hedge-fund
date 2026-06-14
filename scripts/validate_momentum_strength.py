@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """验证momentum_strength因子的IC，以及ic_optimized profile的改进效果。"""
-import os
 import json
+import os
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 from dotenv import load_dotenv
 
 try:

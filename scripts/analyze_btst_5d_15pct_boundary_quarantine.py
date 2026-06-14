@@ -8,13 +8,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_5d_15pct_boundary_contract_inspection import analyze_btst_5d_15pct_boundary_contract_inspection
+from scripts.analyze_btst_5d_15pct_boundary_contract_inspection import (
+    analyze_btst_5d_15pct_boundary_contract_inspection,
+)
 from scripts.btst_boundary_quarantine_helpers import (
     classify_boundary_quarantine_decision,
     is_boundary_without_explainability_target,
     summarize_boundary_quarantine_rows,
 )
-
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_5d_15pct_boundary_quarantine_latest.json"

@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 LOCAL_GRID = {
     "select_threshold": [-0.04, 0.0, 0.04],
     "recency_half_life_days": [-60, 0, 60],

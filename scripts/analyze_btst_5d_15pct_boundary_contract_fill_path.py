@@ -7,9 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_5d_15pct_boundary_contract_inspection import analyze_btst_5d_15pct_boundary_contract_inspection
-from scripts.btst_boundary_contract_fill_helpers import recommend_boundary_repair_action, repair_boundary_contract_row
-
+from scripts.analyze_btst_5d_15pct_boundary_contract_inspection import (
+    analyze_btst_5d_15pct_boundary_contract_inspection,
+)
+from scripts.btst_boundary_contract_fill_helpers import (
+    recommend_boundary_repair_action,
+    repair_boundary_contract_row,
+)
 
 DEFAULT_REPORTS_ROOT = Path("data/reports")
 DEFAULT_OUTPUT_JSON = DEFAULT_REPORTS_ROOT / "btst_5d_15pct_boundary_contract_fill_path_latest.json"

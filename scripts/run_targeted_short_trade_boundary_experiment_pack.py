@@ -5,7 +5,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_targeted_release_outcomes import analyze_targeted_release_outcomes, render_targeted_release_outcomes_markdown
+from scripts.analyze_targeted_release_outcomes import (
+    analyze_targeted_release_outcomes,
+    render_targeted_release_outcomes_markdown,
+)
 from scripts.analyze_targeted_short_trade_boundary_release import (
     analyze_targeted_short_trade_boundary_release,
     render_targeted_short_trade_boundary_release_markdown,

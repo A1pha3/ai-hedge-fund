@@ -5,8 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.generate_btst_tplus2_continuation_observation_pool import generate_btst_tplus2_continuation_observation_pool
-
+from scripts.generate_btst_tplus2_continuation_observation_pool import (
+    generate_btst_tplus2_continuation_observation_pool,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_REPORTS_ROOT = REPORTS_DIR

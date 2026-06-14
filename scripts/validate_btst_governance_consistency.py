@@ -5,12 +5,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_report_utils import load_json as _load_json, safe_load_json as _safe_load_json
+from scripts.btst_report_utils import load_json as _load_json
+from scripts.btst_report_utils import safe_load_json as _safe_load_json
 from scripts.validate_btst_governance_consistency_helpers import (
     build_governance_check_context,
     collect_governance_checks,
 )
-
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "p3_top3_post_execution_action_board_20260401.json"

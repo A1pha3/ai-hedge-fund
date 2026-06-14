@@ -4,7 +4,9 @@ import argparse
 from pathlib import Path
 
 from scripts.btst_report_utils import discover_report_dirs
-from scripts.refresh_selection_artifacts_from_daily_events import rebuild_catalyst_theme_diagnostics_for_report
+from scripts.refresh_selection_artifacts_from_daily_events import (
+    rebuild_catalyst_theme_diagnostics_for_report,
+)
 
 
 def parse_args() -> argparse.Namespace:

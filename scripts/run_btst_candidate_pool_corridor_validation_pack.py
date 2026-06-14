@@ -5,10 +5,15 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_candidate_pool_corridor_narrow_probe import analyze_btst_candidate_pool_corridor_narrow_probe
-from scripts.analyze_btst_candidate_pool_branch_priority_board import analyze_btst_candidate_pool_branch_priority_board
-from scripts.analyze_btst_candidate_pool_lane_objective_support import analyze_btst_candidate_pool_lane_objective_support
-
+from scripts.analyze_btst_candidate_pool_branch_priority_board import (
+    analyze_btst_candidate_pool_branch_priority_board,
+)
+from scripts.analyze_btst_candidate_pool_corridor_narrow_probe import (
+    analyze_btst_candidate_pool_corridor_narrow_probe,
+)
+from scripts.analyze_btst_candidate_pool_lane_objective_support import (
+    analyze_btst_candidate_pool_lane_objective_support,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_DOSSIER_PATH = REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.json"

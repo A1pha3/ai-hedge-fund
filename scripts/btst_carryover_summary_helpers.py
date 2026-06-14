@@ -4,7 +4,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-
 SafeLoadJson = Callable[[str | Path | None], dict[str, Any]]
 PickSelectedFocusEntry = Callable[[list[dict[str, Any]]], dict[str, Any]]
 

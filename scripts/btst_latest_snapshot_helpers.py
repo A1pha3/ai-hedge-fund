@@ -4,7 +4,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-
 SafeLoadJson = Callable[[str | Path | None], dict[str, Any]]
 ExtractScoreFailFrontierSummary = Callable[[dict[str, Any]], dict[str, Any]]
 ExtractCatalystThemeFrontierSummary = Callable[[dict[str, Any]], dict[str, Any]]

@@ -5,9 +5,9 @@
 
 import os
 
-from src.project_env import load_project_dotenv
 from src.llm.defaults import get_default_model_config
-from src.llm.models import AVAILABLE_MODELS, OLLAMA_MODELS, ModelProvider
+from src.llm.models import AVAILABLE_MODELS, ModelProvider, OLLAMA_MODELS
+from src.project_env import load_project_dotenv
 
 # 加载.env文件中的环境变量
 load_project_dotenv()

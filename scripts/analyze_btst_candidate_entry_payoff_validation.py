@@ -5,15 +5,18 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_candidate_entry_utils import build_watchlist_avoid_weak_structure_filter
 from scripts.btst_analysis_utils import compare_reports as _compare_reports
+from scripts.btst_candidate_entry_utils import (
+    build_watchlist_avoid_weak_structure_filter,
+)
 from scripts.btst_profile_replay_utils import (
+    analyze_btst_profile_replay_window,
     DEFAULT_GUARDRAIL_NEXT_CLOSE_POSITIVE_RATE,
     DEFAULT_GUARDRAIL_NEXT_HIGH_HIT_RATE,
-    analyze_btst_profile_replay_window,
 )
-from scripts.btst_report_utils import discover_nested_report_dirs as discover_report_dirs
-
+from scripts.btst_report_utils import (
+    discover_nested_report_dirs as discover_report_dirs,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_candidate_entry_payoff_validation_20260520.json"

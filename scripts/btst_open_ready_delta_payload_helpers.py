@@ -4,7 +4,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-
 ResolvePreviousContext = Callable[..., tuple[dict[str, Any], dict[str, Any], str, dict[str, Any]]]
 ResolveComparisonScope = Callable[[str, dict[str, Any], dict[str, Any]], str]
 BuildOpenReadyDeltas = Callable[..., dict[str, Any]]

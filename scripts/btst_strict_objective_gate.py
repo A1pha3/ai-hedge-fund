@@ -12,7 +12,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.utils.logging import get_logger
 
-
 _SECTION_PATTERN = re.compile(r"^##\s+(?P<section>.+?)\s*$")
 _ROW_PATTERN = re.compile(r"^-\s+(?P<label>[^:]+):\s*(?P<body>.+)$")
 

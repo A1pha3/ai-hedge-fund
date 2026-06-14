@@ -10,12 +10,16 @@ from typing import Any
 
 import pandas as pd
 
-from src.backtesting.walk_forward import WALK_FORWARD_PRESETS, build_walk_forward_windows
+from src.backtesting.walk_forward import (
+    build_walk_forward_windows,
+    WALK_FORWARD_PRESETS,
+)
 from src.project_env import load_project_dotenv
-from src.targets.short_trade_forward_label_helpers import build_short_trade_forward_labels
-from src.tools.api import get_price_data, prices_to_df
+from src.targets.short_trade_forward_label_helpers import (
+    build_short_trade_forward_labels,
+)
 from src.tools.akshare_api import get_prices_robust
-
+from src.tools.api import get_price_data, prices_to_df
 
 load_project_dotenv()
 

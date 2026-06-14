@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-
 ROUND89_SUMMARY_METRICS = (
     "win_rate",
     "avg_ret",

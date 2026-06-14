@@ -7,9 +7,15 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_prepared_breakout_relief_validation import RELIEF_FIELDS, _build_outcome_support_summary
+from scripts.analyze_btst_prepared_breakout_relief_validation import (
+    _build_outcome_support_summary,
+    RELIEF_FIELDS,
+)
 from scripts.btst_report_utils import discover_nested_report_dirs
-from scripts.replay_selection_target_calibration import analyze_selection_target_replay_sources, load_selection_target_replay_sources
+from scripts.replay_selection_target_calibration import (
+    analyze_selection_target_replay_sources,
+    load_selection_target_replay_sources,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_prepared_breakout_cohort_latest.json"

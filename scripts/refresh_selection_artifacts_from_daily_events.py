@@ -6,21 +6,45 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from scripts.btst_report_utils import discover_report_dirs, normalize_trade_date, safe_load_json
+from scripts.btst_latest_followup_utils import (
+    load_btst_followup_by_ticker_for_report,
+    load_latest_btst_followup_by_ticker,
+)
+from scripts.btst_report_utils import (
+    discover_report_dirs,
+    normalize_trade_date,
+    safe_load_json,
+)
 from scripts.generate_reports_manifest import generate_reports_manifest_artifacts
-from scripts.run_btst_nightly_control_tower import generate_btst_nightly_control_tower_artifacts
-from scripts.btst_latest_followup_utils import load_btst_followup_by_ticker_for_report, load_latest_btst_followup_by_ticker
-from src.execution.daily_pipeline_catalyst_diagnostics_helpers import _build_catalyst_theme_candidate_diagnostics
-from src.execution.daily_pipeline import _build_upstream_shadow_catalyst_relief_config, _build_upstream_shadow_observation_entry, _qualifies_short_trade_boundary_candidate
+from scripts.run_btst_nightly_control_tower import (
+    generate_btst_nightly_control_tower_artifacts,
+)
+from src.execution.daily_pipeline import (
+    _build_upstream_shadow_catalyst_relief_config,
+    _build_upstream_shadow_observation_entry,
+    _qualifies_short_trade_boundary_candidate,
+)
+from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
+    _build_catalyst_theme_candidate_diagnostics,
+)
 from src.execution.models import ExecutionPlan
+from src.paper_trading._btst_reporting.historical_prior import (
+    _build_watch_candidate_historical_prior,
+)
+from src.paper_trading._btst_reporting.historical_prior_collection import (
+    _collect_historical_watch_candidate_rows,
+)
 from src.paper_trading.btst_reporting import (
     generate_and_register_btst_followup_artifacts,
 )
-from src.paper_trading._btst_reporting.historical_prior import _build_watch_candidate_historical_prior
-from src.paper_trading._btst_reporting.historical_prior_collection import _collect_historical_watch_candidate_rows
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
-from src.research.artifacts import FileSelectionArtifactWriter, _merge_supplemental_short_trade_entries
-from src.screening.candidate_pool_frontier_helpers import build_candidate_pool_frontier_entries
+from src.research.artifacts import (
+    _merge_supplemental_short_trade_entries,
+    FileSelectionArtifactWriter,
+)
+from src.screening.candidate_pool_frontier_helpers import (
+    build_candidate_pool_frontier_entries,
+)
 from src.screening.models import FusedScore, MarketState, StrategySignal
 from src.targets.models import DualTargetEvaluation
 from src.targets.router import build_selection_targets, summarize_selection_targets

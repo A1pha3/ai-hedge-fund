@@ -9,7 +9,6 @@ from typing import Any
 
 from scripts.replay_selection_target_calibration import _iter_replay_input_sources
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_TRADEABLE_OPPORTUNITY_POOL_PATH = REPORTS_DIR / "btst_tradeable_opportunity_pool_march.json"
 DEFAULT_ACTION_BOARD_PATH = REPORTS_DIR / "btst_no_candidate_entry_action_board_latest.json"

@@ -6,7 +6,9 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_structural_conflict_rescue import analyze_structural_conflict_rescue
+from scripts.analyze_structural_conflict_rescue import (
+    analyze_structural_conflict_rescue,
+)
 
 
 def _load_json(path: Path) -> dict[str, Any]:

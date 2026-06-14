@@ -5,9 +5,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_tplus2_continuation_clusters import analyze_btst_tplus2_continuation_clusters
-from scripts.analyze_btst_tplus2_continuation_peer_scan import analyze_btst_tplus2_continuation_peer_scan
-
+from scripts.analyze_btst_tplus2_continuation_clusters import (
+    analyze_btst_tplus2_continuation_clusters,
+)
+from scripts.analyze_btst_tplus2_continuation_peer_scan import (
+    analyze_btst_tplus2_continuation_peer_scan,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_REPORTS_ROOT = REPORTS_DIR

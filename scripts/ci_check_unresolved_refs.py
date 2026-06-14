@@ -41,7 +41,6 @@ import builtins
 import sys
 from pathlib import Path
 
-
 _BUILTIN_NAMES = set(dir(builtins))
 
 # 已知误报: ``__all__`` 中可能列出未导入的导出名

@@ -6,11 +6,11 @@ Tests select_threshold, near_miss_threshold, and selected_rank_cap_ratio combina
 
 import os
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
-from pathlib import Path
 
 try:
     from scripts.btst_data_utils import build_beijing_exchange_mask
@@ -21,9 +21,9 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # Import factor computation from 20day backtest
 from btst_20day_backtest import (
+    _apply_rank_caps_to_scored_results,
     compute_factors,
     compute_score,
-    _apply_rank_caps_to_scored_results,
     summarize_return_stats,
 )
 

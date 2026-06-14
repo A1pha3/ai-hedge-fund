@@ -5,12 +5,27 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_top3_runbook_utils import P2_RUNBOOK_JSON_PATH, build_top3_runbook, ensure_inputs
-from scripts.analyze_targeted_release_outcomes import analyze_targeted_release_outcomes, render_targeted_release_outcomes_markdown
-from scripts.analyze_targeted_short_trade_boundary_release import analyze_targeted_short_trade_boundary_release, render_targeted_short_trade_boundary_release_markdown
-from scripts.analyze_targeted_short_trade_near_miss_release import analyze_targeted_short_trade_near_miss_release, render_targeted_short_trade_near_miss_release_markdown
-from scripts.analyze_targeted_structural_conflict_release import analyze_targeted_structural_conflict_release, render_targeted_structural_conflict_release_markdown
-
+from scripts.analyze_targeted_release_outcomes import (
+    analyze_targeted_release_outcomes,
+    render_targeted_release_outcomes_markdown,
+)
+from scripts.analyze_targeted_short_trade_boundary_release import (
+    analyze_targeted_short_trade_boundary_release,
+    render_targeted_short_trade_boundary_release_markdown,
+)
+from scripts.analyze_targeted_short_trade_near_miss_release import (
+    analyze_targeted_short_trade_near_miss_release,
+    render_targeted_short_trade_near_miss_release_markdown,
+)
+from scripts.analyze_targeted_structural_conflict_release import (
+    analyze_targeted_structural_conflict_release,
+    render_targeted_structural_conflict_release_markdown,
+)
+from scripts.btst_top3_runbook_utils import (
+    build_top3_runbook,
+    ensure_inputs,
+    P2_RUNBOOK_JSON_PATH,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "p2_top3_experiment_execution_summary_20260330.json"

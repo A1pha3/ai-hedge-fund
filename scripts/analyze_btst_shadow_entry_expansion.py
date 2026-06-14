@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_EXECUTION_SUMMARY_PATH = REPORTS_DIR / "p2_top3_experiment_execution_summary_20260330.json"
 DEFAULT_FRONTIER_REPORT_PATH = REPORTS_DIR / "short_trade_boundary_score_failures_frontier_catalyst_floor_zero_full_20260329.json"

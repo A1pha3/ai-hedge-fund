@@ -11,7 +11,6 @@ from scripts.analyze_btst_selected_outcome_proof import (
     analyze_btst_selected_outcome_proof,
 )
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_selected_outcome_refresh_board_latest.json"
 DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_selected_outcome_refresh_board_latest.md"

@@ -6,7 +6,6 @@ from typing import Any
 
 from scripts._p0_baseline_stats import main as build_p0_baseline_artifacts
 
-
 REPORTS_DIR = Path("data/reports")
 P0_SAMPLE_TABLE_PATH = REPORTS_DIR / "p0_micro_window_sample_table_20260330.csv"
 P0_BASELINE_JSON_PATH = REPORTS_DIR / "p0_baseline_freeze_20260330.json"

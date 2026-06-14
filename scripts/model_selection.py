@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import os
 
-from src.project_env import load_project_dotenv
 from src.llm.defaults import resolve_model_selection as resolve_default_model_selection
-
+from src.project_env import load_project_dotenv
 
 load_project_dotenv()
 

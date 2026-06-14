@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-
 ExtractPrioritySummary = Callable[[dict[str, Any]], dict[str, int]]
 ResolvePriorityHandoffExperiment = Callable[..., dict[str, Any]]
 BuildPriorityHandoffExperimentWhyNowParts = Callable[[dict[str, Any]], list[str]]

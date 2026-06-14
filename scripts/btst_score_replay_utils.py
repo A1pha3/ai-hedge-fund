@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 DEFAULT_NEAR_MISS_THRESHOLD = 0.46
 DEFAULT_STALE_WEIGHT = 0.12
 DEFAULT_OVERHEAD_WEIGHT = 0.1

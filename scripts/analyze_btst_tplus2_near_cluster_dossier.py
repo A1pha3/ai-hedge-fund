@@ -6,18 +6,19 @@ from pathlib import Path
 from typing import Any
 
 from scripts.analyze_btst_tplus2_continuation_peer_scan import (
-    DEFAULT_TOLERANCES,
-    _classify_recent_tier_verdict,
     _build_anchor_profile,
     _classify_peer_tier,
+    _classify_recent_tier_verdict,
     _collect_rows,
     _row_similarity,
+    DEFAULT_TOLERANCES,
 )
 from scripts.btst_analysis_utils import build_surface_summary
-from scripts.btst_latest_followup_utils import load_upstream_shadow_followup_history_by_ticker
+from scripts.btst_latest_followup_utils import (
+    load_upstream_shadow_followup_history_by_ticker,
+)
 from scripts.btst_report_utils import normalize_trade_date
 from src.paper_trading.frozen_replay import load_frozen_post_market_plans
-
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH = REPORTS_DIR / "btst_candidate_pool_upstream_handoff_board_latest.json"

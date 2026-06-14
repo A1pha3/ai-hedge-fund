@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_SELECT_THRESHOLD = 0.58
 DEFAULT_NEAR_MISS_THRESHOLD = 0.46
 

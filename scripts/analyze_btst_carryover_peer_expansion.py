@@ -6,7 +6,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_HARVEST_JSON = REPORTS_DIR / "btst_carryover_aligned_peer_harvest_latest.json"
 DEFAULT_MULTIDAY_AUDIT_JSON = REPORTS_DIR / "btst_carryover_multiday_continuation_audit_latest.json"

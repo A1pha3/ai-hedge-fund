@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-
 ExtractPrioritySummary = Callable[[dict[str, Any]], dict[str, int]]
 AsFloat = Callable[[Any], float | None]
 

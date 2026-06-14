@@ -4,7 +4,9 @@ import argparse
 from pathlib import Path
 
 from scripts.btst_report_utils import discover_report_dirs as _discover_btst_report_dirs
-from src.paper_trading.btst_reporting import generate_and_register_btst_followup_artifacts
+from src.paper_trading.btst_reporting import (
+    generate_and_register_btst_followup_artifacts,
+)
 
 
 def parse_args() -> argparse.Namespace:

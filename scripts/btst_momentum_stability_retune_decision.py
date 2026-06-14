@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 GUARDRAILS = ("no_manifest_publication", "no_btst_skill_promotion")
 
 

@@ -5,12 +5,11 @@ import json
 from pathlib import Path
 
 from scripts.model_selection import resolve_model_selection
-from src.project_env import load_project_dotenv
 from src.backtesting.rule_variant_compare import make_pipeline_agent_runner
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
+from src.project_env import load_project_dotenv
 from src.screening.models import FusedScore
 from src.utils.analysts import ANALYST_ORDER
-
 
 load_project_dotenv()
 

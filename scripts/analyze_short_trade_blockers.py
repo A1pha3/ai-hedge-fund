@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Iterator, Sequence
 from collections import Counter, defaultdict
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from statistics import mean
 from typing import Any, overload
 
-from scripts.btst_latest_followup_utils import load_btst_followup_by_ticker_for_report, load_latest_btst_historical_prior_by_ticker
+from scripts.btst_latest_followup_utils import (
+    load_btst_followup_by_ticker_for_report,
+    load_latest_btst_historical_prior_by_ticker,
+)
 from src.execution.daily_pipeline import _qualifies_short_trade_boundary_candidate
-
 
 SELECT_THRESHOLD = 0.58
 NEAR_MISS_THRESHOLD = 0.46

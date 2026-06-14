@@ -6,7 +6,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_FRONTIER_REPORT_PATH = REPORTS_DIR / "btst_candidate_entry_frontier_20260330.json"
 DEFAULT_STRUCTURAL_VALIDATION_PATH = REPORTS_DIR / "selection_target_structural_variants_candidate_entry_current_window_20260330.json"

@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
 import importlib
 import json
 import os
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
-from src.paper_trading.optimized_profile_resolution import resolve_btst_optimized_profile_manifest
-
+from src.paper_trading.optimized_profile_resolution import (
+    resolve_btst_optimized_profile_manifest,
+)
 
 AUTO_SHADOW_RECALL_MIN_STRICT_GOAL_CASES = int(os.getenv("AUTO_SHADOW_RECALL_MIN_STRICT_GOAL_CASES", "2"))
 AUTO_SHADOW_CORRIDOR_MIN_GATE_SHARE = float(os.getenv("AUTO_SHADOW_CORRIDOR_MIN_GATE_SHARE", "2.25"))

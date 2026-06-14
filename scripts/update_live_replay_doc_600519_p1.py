@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-
 SECTION_START = "<!-- LIVE_REPLAY_600519_P1:START -->"
 SECTION_END = "<!-- LIVE_REPLAY_600519_P1:END -->"
 DEFAULT_HEADING = "#### 9.11.7 Live Replay 实际结果"

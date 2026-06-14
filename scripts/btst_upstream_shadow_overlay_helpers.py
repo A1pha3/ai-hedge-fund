@@ -4,7 +4,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-
 LoadLatestUpstreamShadowFollowupSummary = Callable[[str | Path], dict[str, Any]]
 
 

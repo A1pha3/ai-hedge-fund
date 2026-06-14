@@ -6,14 +6,20 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from scripts.analyze_btst_candidate_pool_corridor_narrow_probe import analyze_btst_candidate_pool_corridor_narrow_probe
-from scripts.run_btst_candidate_pool_corridor_validation_pack import analyze_btst_candidate_pool_corridor_validation_pack
-from scripts.run_btst_candidate_pool_corridor_shadow_pack import analyze_btst_candidate_pool_corridor_shadow_pack
-from scripts.run_btst_candidate_pool_lane_pair_board import analyze_btst_candidate_pool_lane_pair_board
-
+from scripts.analyze_btst_candidate_pool_corridor_narrow_probe import (
+    analyze_btst_candidate_pool_corridor_narrow_probe,
+)
+from scripts.run_btst_candidate_pool_corridor_shadow_pack import (
+    analyze_btst_candidate_pool_corridor_shadow_pack,
+)
+from scripts.run_btst_candidate_pool_corridor_validation_pack import (
+    analyze_btst_candidate_pool_corridor_validation_pack,
+)
+from scripts.run_btst_candidate_pool_lane_pair_board import (
+    analyze_btst_candidate_pool_lane_pair_board,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_CANDIDATE_POOL_RECALL_DOSSIER_PATH = REPORTS_DIR / "btst_candidate_pool_recall_dossier_latest.json"

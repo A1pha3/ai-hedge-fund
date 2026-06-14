@@ -13,7 +13,6 @@ from scripts.analyze_btst_5d_15pct_scoped_missing_price_manifest import (
     DEFAULT_OUTPUT_JSON as DEFAULT_MANIFEST_JSON,
 )
 
-
 DEFAULT_REPORTS_ROOT = Path("data/reports")
 DEFAULT_LOCAL_SNAPSHOT_ROOT = Path("data/snapshots")
 DEFAULT_OUTPUT_JSON = Path("data/reports/btst_5d_15pct_scoped_price_backfill_latest.json")

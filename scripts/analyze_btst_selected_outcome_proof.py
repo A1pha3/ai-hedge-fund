@@ -5,8 +5,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.btst_analysis_utils import fetch_price_frame, normalize_trade_date, resolve_btst_trade_anchor, round_or_none, safe_float, summarize_distribution
-
+from scripts.btst_analysis_utils import (
+    fetch_price_frame,
+    normalize_trade_date,
+    resolve_btst_trade_anchor,
+    round_or_none,
+    safe_float,
+    summarize_distribution,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_selected_outcome_proof_latest.json"

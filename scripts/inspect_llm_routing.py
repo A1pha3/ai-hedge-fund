@@ -3,12 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 
-from src.project_env import load_project_dotenv
 from src.llm.defaults import get_default_model_config
 from src.llm.models import get_provider_routes
+from src.project_env import load_project_dotenv
 from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
 from src.utils.llm import build_parallel_provider_execution_plan
-
 
 load_project_dotenv()
 

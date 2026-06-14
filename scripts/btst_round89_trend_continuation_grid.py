@@ -8,21 +8,25 @@ Round 89 - trend_continuation 因子权重快速网格搜索
 - 固定其他参数，只搜索 2 个新因子权重
 """
 from __future__ import annotations
+
+import itertools
+import json
 import os
 import sys
-import json
-import itertools
-import numpy as np
-import pandas as pd
 from datetime import datetime, timedelta
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from scripts.btst_20day_backtest import (
-    compute_factors, _load_open_trade_dates, PROFILE_WEIGHT_FIELDS
+    _load_open_trade_dates,
+    compute_factors,
+    PROFILE_WEIGHT_FIELDS,
 )
 from scripts.btst_data_utils import build_beijing_exchange_mask
 from src.targets.short_trade_target_profile_data import SHORT_TRADE_TARGET_PROFILES

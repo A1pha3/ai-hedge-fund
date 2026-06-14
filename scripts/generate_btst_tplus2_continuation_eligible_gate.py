@@ -5,8 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.generate_btst_tplus2_continuation_promotion_review import READY_PROMOTION_REVIEW_VERDICTS
-
+from scripts.generate_btst_tplus2_continuation_promotion_review import (
+    READY_PROMOTION_REVIEW_VERDICTS,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_LANE_RULEPACK_PATH = REPORTS_DIR / "btst_tplus2_continuation_lane_rulepack_latest.json"

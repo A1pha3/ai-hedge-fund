@@ -5,8 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from scripts.analyze_btst_tplus2_near_cluster_dossier import governance_followup_payoff_confirmed
-
+from scripts.analyze_btst_tplus2_near_cluster_dossier import (
+    governance_followup_payoff_confirmed,
+)
 
 REPORTS_DIR = Path("data/reports")
 DEFAULT_MANIFEST_PATH = REPORTS_DIR / "report_manifest_latest.json"

@@ -18,7 +18,6 @@ from scripts.analyze_recurring_frontier_ticker_release_outcomes import (
     render_recurring_frontier_ticker_release_outcomes_markdown,
 )
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_REPORT_DIR = REPORTS_DIR / "paper_trading_window_20260323_20260326_btst_catalyst_floor_zero_refresh"
 DEFAULT_RECURRING_FRONTIER_REPORT = REPORTS_DIR / "short_trade_boundary_recurring_frontier_cases_catalyst_floor_zero_refresh_20260401.json"
