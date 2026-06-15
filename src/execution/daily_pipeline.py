@@ -15,9 +15,6 @@ from scripts.btst_latest_followup_utils import (
     load_latest_btst_historical_prior_by_ticker,
     load_recent_btst_buy_order_cooldowns,
 )
-from src.execution.btst_shadow_promotion_helpers import (
-    resolve_btst_shadow_promotion_payload,
-)
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
     _apply_btst_risk_budget_overlay_to_plan,
@@ -32,18 +29,11 @@ from src.execution.daily_pipeline_buy_diagnostics_helpers import (
 )
 from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
     _build_catalyst_theme_candidate_diagnostics,
+)
+# Re-exported for test access (tests/execution/test_phase4_execution.py).
+from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (  # noqa: F401
     _build_catalyst_theme_entry,
-    _build_catalyst_theme_shadow_entry,
-    _compute_catalyst_theme_candidate_score,
-    _compute_catalyst_theme_threshold_shortfalls,
     _qualifies_catalyst_theme_candidate,
-    _resolve_catalyst_theme_close_momentum_relief,
-    build_catalyst_theme_candidate_diagnostics_payload,
-    build_catalyst_theme_prefilter_thresholds,
-    build_catalyst_theme_ranked_outputs,
-    build_upstream_catalyst_theme_candidates,
-    collect_catalyst_theme_diagnostic_rankings,
-    finalize_catalyst_theme_candidate_diagnostics,
 )
 
 # ── Extracted helper modules (R20.14 Beta refactor) ──────────────────────────
@@ -211,42 +201,25 @@ from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
     build_short_trade_candidate_diagnostics_with_defaults as _build_short_trade_candidate_diagnostics_impl,
 )
 
-# Re-exported for test access (tests/execution/test_phase4_execution.py)
+# Body-used upstream-shadow helpers.
 from src.execution.daily_pipeline_upstream_shadow_helpers import (
-    _build_catalyst_theme_short_trade_carryover_relief_config,
-    _build_upstream_shadow_catalyst_relief_config,
-    _build_upstream_shadow_catalyst_relief_payload_kwargs,
-    _build_upstream_shadow_catalyst_relief_threshold_inputs,
-    _build_upstream_shadow_release_entry,
-    _build_upstream_shadow_watchlist_entry,
-    _build_upstream_shadow_watchlist_reason_codes,
-    _coerce_upstream_shadow_strategy_signal,
-    _compute_short_trade_boundary_candidate_score,
-    _extract_upstream_shadow_catalyst_relief_metrics,
     _mark_upstream_shadow_watchlist_promotions,
     _merge_watchlist_with_upstream_shadow_promotions,
-    _parse_optional_float,
-    _passes_upstream_shadow_catalyst_relief_gates,
-    _passes_upstream_shadow_release_quality_floor,
-    _resolve_upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff,
-    _resolve_upstream_shadow_release_max_tickers,
-    _resolve_upstream_shadow_release_priority_rank,
-    _resolve_upstream_shadow_selected_threshold,
+)
+from src.execution.daily_pipeline_upstream_shadow_helpers import (
+    _select_upstream_shadow_watchlist_entries,
+)
+# Re-exported for test access (tests/execution/test_phase4_execution.py).
+from src.execution.daily_pipeline_upstream_shadow_helpers import (  # noqa: F401
+    _build_catalyst_theme_short_trade_carryover_relief_config,
+    _build_upstream_shadow_catalyst_relief_config,
+    _summarize_upstream_shadow_release_historical_support,
 )
 from src.execution.daily_pipeline_upstream_shadow_helpers import (  # noqa: F401
     _select_upstream_shadow_release_entries as _select_upstream_shadow_release_entries_impl,
 )
 from src.execution.daily_pipeline_upstream_shadow_helpers import (
-    _select_upstream_shadow_watchlist_entries,
-    _should_promote_upstream_shadow_release_to_watchlist,
-)
-from src.execution.daily_pipeline_upstream_shadow_helpers import (
     _should_release_upstream_shadow_candidate as _should_release_upstream_shadow_candidate_impl,
-)
-from src.execution.daily_pipeline_upstream_shadow_helpers import (
-    _summarize_upstream_shadow_release_historical_support,
-    _supports_upstream_shadow_catalyst_relief_history,
-    _upstream_shadow_watchlist_promotion_sort_key,
 )
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
 from src.execution.merge_approved_loader import load_merge_approved_tickers
@@ -276,11 +249,11 @@ from src.targets.profiles import (
     use_short_trade_target_profile,
 )
 from src.targets.router import (
-    _P2_BLOCKED_GATES,
-    apply_p2_regime_gate_enforcement_to_selection_targets,
     build_selection_targets,
     summarize_selection_targets,
 )
+# Re-exported for test access (tests/execution/test_phase4_execution.py).
+from src.targets.router import _P2_BLOCKED_GATES  # noqa: F401
 from src.targets.short_trade_target import (  # noqa: F401 — re-exported for scripts/tests
     build_short_trade_target_snapshot_from_entry,
 )

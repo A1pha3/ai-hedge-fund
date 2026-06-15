@@ -173,9 +173,11 @@
 **现状**：`--top-picks` 展示每只推荐的 T+30 edge，但无组合层面的加权预期收益汇总。
 
 **方案**：
-1. 对所有 BUY 推荐的 T+30 edge 取加权平均（权重 = 等权或 composite_score 归一化）
+1. 对所有 BUY 推荐的 T+30 edge 取等权平均（BUY 门控已要求 `bucket_sample_count >= 20`，低样本票不会进入 BUY 聚合）
 2. 前门底部追加一行：`组合 T+30 预期: +3.2% (加权) | 平均胜率: 58% | BUY 数: 4`
-3. 仅当 ≥2 只 BUY 时展示；样本量 <20 的标的降权 50%（复用 `bucket_sample_count`）
+3. 仅当 ≥2 只 BUY 时展示
+
+> **实现修正（Round 9）**：原方案含「样本量 <20 降权 50%」分支，但该分支为死代码——`build_front_door_verdict` 在所有 regime 下都要求 BUY 满足 `sample_count >= 20`，低样本票永远不可能进入 BUY 聚合。已移除死分支改为等权，并加 `test_low_sample_pick_can_never_be_buy` 守卫钉住这一 finance-quant 安全属性。
 
 **收益**：用户在决定“是否按前门执行”时有组合层面的收益预期，而非逐只估算。
 

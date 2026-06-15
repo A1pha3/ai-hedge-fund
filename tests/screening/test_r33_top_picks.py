@@ -9,7 +9,6 @@ import pytest
 
 from src.screening import top_picks
 from src.screening.top_picks import (
-    _LOW_SAMPLE_THRESHOLD,
     _PORTFOLIO_SUMMARY_MIN_BUYS,
     _render_portfolio_expected_return,
 )
@@ -95,13 +94,23 @@ class TestRenderPortfolioExpectedReturn:
         assert result != ""
         assert Fore.RED in result
 
-    def test_low_sample_halved_weight(self, all_buy) -> None:
-        """Picks with sample_count < 20 get halved weight."""
+    def test_buy_picks_are_equal_weighted(self, all_buy) -> None:
+        """BUY picks are equal-weighted in the portfolio average.
+
+        The portfolio summary aggregates the T+30 edge over BUY picks only.
+        A ``sample_count < 20`` halving scheme was removed because it was
+        unreachable: :func:`build_front_door_verdict` already requires
+        ``sample_count >= 20`` for any BUY classification (see
+        ``test_low_sample_pick_can_never_be_buy``), so a low-sample pick can
+        never enter the BUY aggregate and the halving safeguard could never
+        trigger. Equal weighting now matches the spec's documented
+        "等权或 composite_score 归一化" alternative.
+        """
         high_sample = _pick(ticker="000001", t30=10.0, sample_count=100)
         low_sample = _pick(ticker="000002", t30=0.0, sample_count=5)
         result = _render_portfolio_expected_return([high_sample, low_sample], "normal")
-        # Weight: high=1.0, low=0.5 → total=1.5; edge=(10*1+0*0.5)/1.5=6.67%
-        assert "+6.67%" in result
+        # Equal weight: mean(10.0, 0.0) = 5.00%
+        assert "+5.00%" in result
 
     def test_all_buys_missing_t30_returns_empty(self, all_buy) -> None:
         """When no picks have valid T+30 data → empty."""
@@ -134,5 +143,38 @@ class TestRenderPortfolioExpectedReturn:
 
     def test_thresholds_are_sane(self) -> None:
         assert _PORTFOLIO_SUMMARY_MIN_BUYS >= 2
-        assert _LOW_SAMPLE_THRESHOLD > 0
+
+
+class TestLowSampleNeverBuyGuard:
+    """Finance-quant guard: a pick with sample_count < 20 can never be BUY.
+
+    The front-door verdict gate (``build_front_door_verdict``) requires
+    ``sample_count >= 20`` for BUY in any market regime. This is the safety
+    property that makes any per-BUY low-sample weighting scheme
+    unreachable — and the reason the R33 halving branch was dead code.
+    Pinning it here protects the equal-weighting assumption of
+    ``_render_portfolio_expected_return`` from a future verdict-gate change
+    that silently reintroduces low-sample BUY picks.
+    """
+
+    @pytest.mark.parametrize("regime", ["normal", "cautious", "range", "risk_off", "crisis"])
+    @pytest.mark.parametrize("sample_count", [0, 1, 5, 15, 19])
+    def test_low_sample_pick_can_never_be_buy(self, regime: str, sample_count: int) -> None:
+        from src.screening.investability import build_front_door_verdict
+
+        # Maximal quality everywhere else — only sample_count is low.
+        pick = {
+            "ticker": "000001",
+            "decision": "bullish",
+            "composite_score": 0.99,
+            "expected_returns": {"t30": 10.0},
+            "win_rates": {"t30": 0.9},
+            "bucket_sample_count": sample_count,
+        }
+        verdict = build_front_door_verdict(pick, market_regime=regime)
+        assert verdict["action"] != "BUY", (
+            f"low-sample pick (sample={sample_count}, regime={regime}) became BUY — "
+            "the R33 equal-weighting assumption is broken; a low-sample weighting "
+            "scheme would be needed again"
+        )
 

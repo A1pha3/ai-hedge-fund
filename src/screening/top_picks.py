@@ -235,16 +235,21 @@ def _render_verdict_distribution(picks: list[dict], market_regime: str) -> str:
 
 #: Minimum BUY count to show portfolio summary (single BUY has no portfolio meaning)
 _PORTFOLIO_SUMMARY_MIN_BUYS: int = 2
-#: Bucket sample count below this → weight halved (low statistical confidence)
-_LOW_SAMPLE_THRESHOLD: int = 20
 
 
 def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> str:
-    """R33: Render a one-line weighted T+30 expected return for all BUY picks.
+    """R33: Render a one-line equal-weighted T+30 expected return for all BUY picks.
 
     Reuses the per-pick ``expected_returns.t30`` and ``win_rates.t30`` already
-    attached by :func:`rank_recommendations_by_investability`.  Weight is
-    halved for picks whose bucket sample count < 20 (low confidence).
+    attached by :func:`rank_recommendations_by_investability`.
+
+    The aggregate is equal-weighted. A previous per-pick ``sample_count < 20``
+    halving scheme was removed because it was unreachable:
+    :func:`build_front_door_verdict` requires ``sample_count >= 20`` for any
+    BUY classification, so a low-sample pick can never enter this BUY-only
+    aggregate. Equal weighting matches the spec's documented alternative
+    ("等权或 composite_score 归一化"); see
+    ``test_low_sample_pick_can_never_be_buy`` for the guard that pins this.
 
     Returns empty string when fewer than 2 BUY picks or no T+30 data.
     """
@@ -257,31 +262,25 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
     if len(buy_picks) < _PORTFOLIO_SUMMARY_MIN_BUYS:
         return ""
 
-    weighted_edge = 0.0
-    weighted_winrate = 0.0
-    total_weight = 0.0
-    # Win-rate may be absent on some picks even when the T+30 edge is present
-    # (different calibration fields).  Track its own denominator so the average
-    # is not diluted by picks that have no win-rate data.
-    total_winrate_weight = 0.0
+    # Equal weighting across BUY picks that carry a T+30 edge.
+    edges: list[float] = []
+    winrates: list[float] = []
     for item in buy_picks:
         t30 = (item.get("expected_returns") or {}).get("t30")
+        if isinstance(t30, (int, float)):
+            edges.append(float(t30))
+        # Win-rate may be absent on some picks even when the T+30 edge is present
+        # (different calibration fields).  Track its own denominator so the average
+        # is not diluted by picks that have no win-rate data.
         t30_wr = (item.get("win_rates") or {}).get("t30")
-        if not isinstance(t30, (int, float)):
-            continue
-        sample_count = int(item.get("bucket_sample_count", 0) or 0)
-        weight = 0.5 if sample_count < _LOW_SAMPLE_THRESHOLD else 1.0
-        weighted_edge += float(t30) * weight
-        total_weight += weight
         if isinstance(t30_wr, (int, float)):
-            weighted_winrate += float(t30_wr) * weight
-            total_winrate_weight += weight
+            winrates.append(float(t30_wr))
 
-    if total_weight <= 0:
+    if not edges:
         return ""
 
-    avg_edge = weighted_edge / total_weight
-    avg_winrate = weighted_winrate / total_winrate_weight if total_winrate_weight > 0 else 0.0
+    avg_edge = sum(edges) / len(edges)
+    avg_winrate = sum(winrates) / len(winrates) if winrates else 0.0
     edge_color = Fore.GREEN if avg_edge > 0 else Fore.RED if avg_edge < 0 else Fore.WHITE
     wr_color = Fore.GREEN if avg_winrate >= 0.55 else Fore.YELLOW if avg_winrate >= 0.45 else Fore.RED
 
@@ -1108,6 +1107,23 @@ def _print_top_picks_footer(
 
     _print_high_confidence_summary(representative_picks)
     _print_hit_rate_block(report_dir)
+    _print_decision_flow_hint()
+
+
+def _print_decision_flow_hint() -> None:
+    """Round 9 quality slice: one-line pointer to the deep-analysis command.
+
+    The front door (``--top-picks``) already covers fresh data, verdicts,
+    T+30 edge, factor attribution, and stop-loss advice for most users.
+    Pointing power users at ``--decision-flow`` (rather than leaving them to
+    discover it) serves the "避免前门分裂" product goal: users get a single
+    default entry and a clear escalation path, instead of running both
+    commands. Follows the Round 6 research recommendation
+    (round6-product-analysis.md:15).
+    """
+    print(
+        f"  {Fore.CYAN}💡 深度分析（阈值/一致性/逐因子明细）请运行 --decision-flow{Style.RESET_ALL}"
+    )
 
 
 # ---------------------------------------------------------------------------

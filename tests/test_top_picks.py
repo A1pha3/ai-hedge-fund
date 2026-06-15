@@ -105,6 +105,21 @@ class TestTopPicks:
         # Should show signal breakdown (动量/行业/一致/量价)
         assert "base=" in output
 
+    def test_decision_flow_hint_in_footer(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Round 9 quality slice: --top-picks footer points users to --decision-flow.
+
+        Product goal "用尽可能少的入口" (feature-proposals.md:3) and the
+        "避免前门分裂" constraint are served by telling users the front door
+        already covers the common case, so they don't run both commands.
+        Follows the Round 6 research recommendation (round6-product-analysis.md:15).
+        """
+        recs = [_make_rec("300750", "宁德时代", 0.6)]
+        _write_report(tmp_path, recs, date="20260613")
+        rc = run_top_picks(count=5, reports_dir=tmp_path)
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "--decision-flow" in output
+
 
 class TestExtractedTopPicksHelpers:
     def test_build_signal_breakdown_renders_positive_negative_and_consecutive(self) -> None:
