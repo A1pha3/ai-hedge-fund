@@ -284,5 +284,5 @@ def _render_freshness_summary(fresh: bool, warnings: list[dict[str, Any]]) -> st
             f"{warning['label']}: 最新数据 {warning['latest_date']} "
             f"(过期 {warning['stale_days']} 天, 阈值 {warning['max_stale_days']} 天)"
         )
-    lines.append(f"  → 推荐置信度已按最严重等级施加惩罚 (最高 30%)")
+    lines.append("  → 推荐置信度已按最严重等级施加惩罚 (最高 30%)")
     return "\n".join(lines)
