@@ -122,6 +122,15 @@ _CONSECUTIVE_BONUS: dict[int, float] = {
 }
 _CONSECUTIVE_BONUS_DEFAULT = 0.08  # for 6+ days
 
+# ---------------------------------------------------------------------------
+# R32: Risk label thresholds (ATR / price ratio → 低/中/高)
+# ---------------------------------------------------------------------------
+
+#: ATR/price < this → 低风险
+_RISK_LOW_THRESHOLD: float = 0.03
+#: ATR/price < this (and >= LOW) → 中风险; >= this → 高风险
+_RISK_HIGH_THRESHOLD: float = 0.05
+
 
 def _consecutive_bonus(days: int) -> float:
     """Compute a small ranking bonus for consecutive recommendations."""
@@ -221,6 +230,65 @@ def _render_verdict_distribution(picks: list[dict], market_regime: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# R33: Portfolio expected return summary
+# ---------------------------------------------------------------------------
+
+#: Minimum BUY count to show portfolio summary (single BUY has no portfolio meaning)
+_PORTFOLIO_SUMMARY_MIN_BUYS: int = 2
+#: Bucket sample count below this → weight halved (low statistical confidence)
+_LOW_SAMPLE_THRESHOLD: int = 20
+
+
+def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> str:
+    """R33: Render a one-line weighted T+30 expected return for all BUY picks.
+
+    Reuses the per-pick ``expected_returns.t30`` and ``win_rates.t30`` already
+    attached by :func:`rank_recommendations_by_investability`.  Weight is
+    halved for picks whose bucket sample count < 20 (low confidence).
+
+    Returns empty string when fewer than 2 BUY picks or no T+30 data.
+    """
+    buy_picks: list[dict] = []
+    for item in picks:
+        verdict = build_front_door_verdict(item, market_regime=market_regime)
+        if verdict.get("action") == "BUY":
+            buy_picks.append(item)
+
+    if len(buy_picks) < _PORTFOLIO_SUMMARY_MIN_BUYS:
+        return ""
+
+    weighted_edge = 0.0
+    weighted_winrate = 0.0
+    total_weight = 0.0
+    for item in buy_picks:
+        t30 = (item.get("expected_returns") or {}).get("t30")
+        t30_wr = (item.get("win_rates") or {}).get("t30")
+        if not isinstance(t30, (int, float)):
+            continue
+        sample_count = int(item.get("bucket_sample_count", 0) or 0)
+        weight = 0.5 if sample_count < _LOW_SAMPLE_THRESHOLD else 1.0
+        weighted_edge += float(t30) * weight
+        if isinstance(t30_wr, (int, float)):
+            weighted_winrate += float(t30_wr) * weight
+        total_weight += weight
+
+    if total_weight <= 0:
+        return ""
+
+    avg_edge = weighted_edge / total_weight
+    avg_winrate = weighted_winrate / total_weight
+    edge_color = Fore.GREEN if avg_edge > 0 else Fore.RED if avg_edge < 0 else Fore.WHITE
+    wr_color = Fore.GREEN if avg_winrate >= 0.55 else Fore.YELLOW if avg_winrate >= 0.45 else Fore.RED
+
+    return (
+        f"  {Fore.WHITE}组合 T+30 预期:{Style.RESET_ALL} "
+        f"{edge_color}{avg_edge:+.2f}% (加权){Style.RESET_ALL} | "
+        f"{Fore.WHITE}平均胜率:{Style.RESET_ALL} {wr_color}{avg_winrate:.0%}{Style.RESET_ALL} | "
+        f"{Fore.WHITE}BUY 数:{Style.RESET_ALL} {len(buy_picks)}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Market opportunity index
 # ---------------------------------------------------------------------------
 
@@ -290,8 +358,42 @@ def _render_stop_loss_take_profit(
     Fetches price history via tushare, computes ATR, and returns a compact
     one-line summary.  Returns empty string on any failure (best-effort).
     """
+    advice = _compute_pick_risk_advice(ticker, name, trade_date=trade_date)
+    if advice is None:
+        return ""
+    return _format_stop_loss_take_profit(advice)
+
+
+def _format_stop_loss_take_profit(advice) -> str:
+    """R8: Format a :class:`ConditionalOrderAdvice` as a stop-loss/take-profit line."""
+    sl_pct = ((advice.suggested_stop_loss - advice.current_price) / advice.current_price) * 100
+    tp_pct = ((advice.suggested_take_profit - advice.current_price) / advice.current_price) * 100
+    sl_color = Fore.RED
+    tp_color = Fore.GREEN
+    rr_color = Fore.YELLOW if advice.risk_reward_ratio < 1.5 else Fore.GREEN
+
+    return (
+        f"     {Fore.WHITE}止损止盈:{Style.RESET_ALL} "
+        f"买入={advice.suggested_buy_zone[0]:.2f}-{advice.suggested_buy_zone[1]:.2f}  "
+        f"{sl_color}止损={advice.suggested_stop_loss:.2f}({sl_pct:+.1f}%){Style.RESET_ALL}  "
+        f"{tp_color}止盈={advice.suggested_take_profit:.2f}({tp_pct:+.1f}%){Style.RESET_ALL}  "
+        f"{rr_color}盈亏比={advice.risk_reward_ratio:.1f}{Style.RESET_ALL}"
+    )
+
+
+def _compute_pick_risk_advice(
+    ticker: str,
+    name: str,
+    *,
+    trade_date: str,
+):
+    """R32: Fetch price history and compute conditional advice (shared by R8 + R32).
+
+    Returns the :class:`ConditionalOrderAdvice` or ``None`` on any failure
+    (best-effort — the front door must never crash on data-fetch errors).
+    """
     try:
-        from datetime import datetime, timedelta
+        from datetime import timedelta
 
         from src.tools.tushare_api import get_ashare_prices_with_tushare
 
@@ -301,11 +403,11 @@ def _render_stop_loss_take_profit(
 
         prices = get_ashare_prices_with_tushare(ticker, start_dt, end_str)
         if not prices:
-            return ""
+            return None
 
         close_series = [float(p.close) for p in prices if p.close and p.close > 0]
         if not close_series:
-            return ""
+            return None
 
         current_price = close_series[-1]
         advice = compute_conditional_advice(
@@ -318,23 +420,50 @@ def _render_stop_loss_take_profit(
         )
 
         if advice.degraded or advice.current_price <= 0:
-            return ""
-
-        sl_pct = ((advice.suggested_stop_loss - advice.current_price) / advice.current_price) * 100
-        tp_pct = ((advice.suggested_take_profit - advice.current_price) / advice.current_price) * 100
-        sl_color = Fore.RED
-        tp_color = Fore.GREEN
-        rr_color = Fore.YELLOW if advice.risk_reward_ratio < 1.5 else Fore.GREEN
-
-        return (
-            f"     {Fore.WHITE}止损止盈:{Style.RESET_ALL} "
-            f"买入={advice.suggested_buy_zone[0]:.2f}-{advice.suggested_buy_zone[1]:.2f}  "
-            f"{sl_color}止损={advice.suggested_stop_loss:.2f}({sl_pct:+.1f}%){Style.RESET_ALL}  "
-            f"{tp_color}止盈={advice.suggested_take_profit:.2f}({tp_pct:+.1f}%){Style.RESET_ALL}  "
-            f"{rr_color}盈亏比={advice.risk_reward_ratio:.1f}{Style.RESET_ALL}"
-        )
+            return None
+        return advice
     except Exception:
-        return ""  # Best-effort: failure is non-critical
+        return None  # Best-effort: failure is non-critical
+
+
+def _risk_label_from_advice(advice) -> tuple[str, float]:
+    """R32: Map ATR/price ratio to a (label, ratio) risk level.
+
+    Returns ``("低"/"中"/"高", atr_price_ratio)``.  When ATR or price is
+    unavailable, returns ``("—", 0.0)``.
+    """
+    if advice is None or advice.current_price <= 0 or advice.atr <= 0:
+        return ("—", 0.0)
+    ratio = advice.atr / advice.current_price
+    if ratio < _RISK_LOW_THRESHOLD:
+        return ("低", ratio)
+    if ratio < _RISK_HIGH_THRESHOLD:
+        return ("中", ratio)
+    return ("高", ratio)
+
+
+def _render_reason_and_risk(item: dict, advice) -> str:
+    """R32: Render a one-line reason + risk summary for a pick.
+
+    Combines R15 factor attribution (top-2 factors) with an ATR-based risk
+    label, so the user sees "why buy" and "how risky" in a single glance.
+    Returns empty string when neither reason nor risk is available.
+    """
+    reason = _render_factor_attribution(item).strip()
+    # _render_factor_attribution returns "主因: X + Y" — strip the prefix for compactness
+    if reason.startswith("主因:"):
+        reason = reason[len("主因:"):].strip()
+    elif reason.startswith("主因："):
+        reason = reason[len("主因："):].strip()
+
+    risk_label, risk_ratio = _risk_label_from_advice(advice)
+    risk_color = Fore.GREEN if risk_label == "低" else Fore.YELLOW if risk_label == "中" else Fore.RED if risk_label == "高" else Fore.WHITE
+
+    if not reason and risk_label == "—":
+        return ""
+    reason_part = f"理由: {reason}" if reason else "理由: 数据不足"
+    risk_part = f"风险: {risk_color}{risk_label}({risk_ratio:.1%}){Style.RESET_ALL}" if risk_label != "—" else "风险: 数据不足"
+    return f"     {Fore.WHITE}{reason_part} | {risk_part}{Style.RESET_ALL}"
 
 
 # ---------------------------------------------------------------------------
@@ -787,25 +916,33 @@ def _print_pick_entry_details(
     consecutive-day score trend, and cluster-representative alternatives.
     Each line is independent and only prints when its data is present.
     """
+    ticker = str(item.get("ticker", ""))
+    name = str(item.get("name", "") or "")
+
+    # R32: compute risk advice once, share between R8 (stop-loss) and R32 (reason+risk)
+    advice = None
     if verdict["action"] == "BUY":
-        sl_tp = _render_stop_loss_take_profit(
-            str(item.get("ticker", "")),
-            str(item.get("name", "") or ""),
-            trade_date=context.trade_date,
-        )
-        if sl_tp:
-            print(sl_tp)
+        advice = _compute_pick_risk_advice(ticker, name, trade_date=context.trade_date)
+        if advice is not None:
+            sl_tp = _format_stop_loss_take_profit(advice)
+            if sl_tp:
+                print(sl_tp)
+
+    # R32: one-line reason + risk (shown for all picks, not just BUY)
+    reason_risk = _render_reason_and_risk(item, advice)
+    if reason_risk:
+        print(reason_risk)
 
     if consec_days >= 2:
         trend = _render_score_trend(
-            str(item.get("ticker", "")),
+            ticker,
             report_dir=context.report_dir,
         )
         if trend:
             print(f"     趋势:{trend}")
 
     cluster_size = int(item.get("cluster_size", 1) or 1)
-    alternatives = [str(ticker) for ticker in (item.get("cluster_alternatives") or []) if str(ticker)]
+    alternatives = [str(ticker_alt) for ticker_alt in (item.get("cluster_alternatives") or []) if str(ticker_alt)]
     if cluster_size > 1 and alternatives and bool(item.get("is_cluster_representative")):
         cluster_label = str(item.get("cluster_label", "") or "")
         print(f"     {cluster_label} 代表票， 同簇备选: {', '.join(alternatives[:2])}")
@@ -917,6 +1054,10 @@ def _print_top_picks_footer(
     dist = _render_verdict_distribution(representative_picks, market_regime)
     if dist:
         print(dist)
+
+    portfolio_edge = _render_portfolio_expected_return(representative_picks, market_regime)
+    if portfolio_edge:
+        print(portfolio_edge)
 
     sector_focus = _render_sector_focus(representative_picks)
     if sector_focus:

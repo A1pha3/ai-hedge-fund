@@ -2,7 +2,7 @@
 
 > **目标**：让用户用尽可能少的入口，稳定找到未来 30 天最有投资价值、最值得买入的 A 股标的。
 >
-> **本版调整**：新增 R14-R15 两项前门增强需求，将已有行业轮动和因子归因数据整合到默认前门。
+> **本版调整**：Round 6 产品调研后新增 R32-R33 两项前门信息密度需求（一句话理由+风险标签、组合预期收益汇总）。
 
 ---
 
@@ -95,6 +95,8 @@
 | R29 | P3 | ✅ | **AttributionPage 演示按钮主题适配** | UX 研究 ux-best-practices-2025-2026.md V-3 行：`AttributionPage.tsx` 的 "Run Demo Attribution" 触发按钮原来是原生 `<button>` + 硬编码 `bg-blue-600` / `bg-blue-700`，不跟主题切换；改用 shadcn `<Button>`（default variant，落到 `bg-primary` / `text-primary-foreground` design token），自动获得统一的 focus-ring + disabled 样式与亮/暗主题适配。新增 `AttributionPage.test.tsx`（6 个 characterization 测试）锁定可访问名、design-token 类、`bg-blue-600/700` 反退守卫、`focus-visible:ring`、`mb-6` 布局间距、初始 enabled 状态。 |
 | R30 | P3 | ✅ | **回测 SVG 窄屏 aspect-ratio 守卫** | UX 研究 ux-best-practices-2025-2026.md R-4 行：`backtest-equity-curve.tsx` 的 EquityCurveChart 与 DrawdownChart 两个 `<svg>` 固定 `viewBox="0 0 800 200"` 但缺 `preserveAspectRatio`，超窄屏（手机 320px）下浏览器默认行为不一致可能挤压变形。两个 SVG 都补 `preserveAspectRatio="xMidYMid meet"`，并扩展 `backtest-equity-curve.test.tsx` 加 R30 守卫测试断言两个 SVG 都声明此属性。 |
 | R31 | P2 | ✅ | **CLI 参考补全 6 条缺失命令** | onboarding-command-smoke audit 发现 `src/cli/dispatcher.py` 注册的 6 条 power-user 命令在 `cli-reference.md`（自称的"完整 CLI 命令索引"）中完全缺失：`--daily-gainers`（每日涨幅筛选, MATRIX 已记录但 reference 漏）、`--export-conditional-orders`（券商条件单导出 P1-13）、`--sector-strength`（行业强度排序 P10-2）、`--signal-momentum`（信号动量评分 P10-1）、`--volume-confirm`（量价确认 P11-2）、`--weekly-report`（组合体检周报推送 P2-10）。补全后 dispatcher 注册表与 CLI 参考索引完全对齐（diff = 0），power-user 不再"知道命令存在但找不到文档"。 |
+| R32 | P1 | ✅ | **前门一句话理由 + 风险标签** | `--top-picks` 每只推荐追加一行：`理由: 动量+行业共振 | 风险: 中(ATR 4.2%)`。复用 R15 因子归因（Top-2 因子→中文标签）+ R8 ATR（→ 低/中/高风险等级，阈值 3%/5%）。重构 `_render_stop_loss_take_profit` 提取 `_compute_pick_risk_advice`（R8+R32 共享一次取数）。14 个回归测试。 |
+| R33 | P2 | ✅ | **前门组合预期收益汇总行** | `--top-picks` 底部追加一行：`组合 T+30 预期: +3.2% (加权) | 平均胜率: 58% | BUY 数: 4`。复用 `expected_return.py` 的 T+30 edge 加权平均（样本量 <20 降权 50%），仅当 ≥2 只 BUY 时展示。11 个回归测试。 |
 
 ### R8 设计细节
 
@@ -197,6 +199,29 @@
 
 **收益**：让用户理解"为什么这只票被推荐"，而不仅仅是"分数高"。直接提升推荐可解释性。
 
+### R32 设计细节
+
+**现状**：`--top-picks` 对每只 BUY 推荐展示了复合评分、共振、行业、因子归因（R15），但用户仍需在多条信息中自行综合判断"为什么买"和"风险多大"。
+
+**方案**：
+1. 复用 R15 的 `compute_score_decomposition()` Top-2 因子，生成自然语言一句：如"动量↑ + 行业强"
+2. 复用 R8 的 ATR 值计算风险等级：ATR/价格 < 3% → 低；3-5% → 中；> 5% → 高
+3. 每只推荐在信号行后追加一行：`理由: 动量+行业共振 | 风险: 中(ATR 4.2%)`
+4. 风险阈值定义为模块常量（复用 `market_state_helpers` 集中化模式）；数据不足降级"数据不足"
+
+**收益**：用户一眼理解"为什么买"和"风险多大"，无需跑额外命令。直接提升决策速度。
+
+### R33 设计细节
+
+**现状**：`--top-picks` 展示每只推荐的 T+30 edge，但无组合层面的加权预期收益汇总。
+
+**方案**：
+1. 对所有 BUY 推荐的 T+30 edge 取加权平均（权重 = 等权或 composite_score 归一化）
+2. 前门底部追加一行：`组合 T+30 预期: +3.2% (加权) | 平均胜率: 58% | BUY 数: 4`
+3. 仅当 ≥2 只 BUY 时展示；样本量 <20 的标的降权 50%（复用 `bucket_sample_count`）
+
+**收益**：用户在决定"是否按前门执行"时有组合层面的收益预期，而非逐只估算。
+
 ---
 
 ## 四、已完成能力（主文档只保留结论）
@@ -237,4 +262,4 @@
 
 ---
 
-> **最后更新**：2026-06-14（R20-S12：R26 文件引用 + R27 失效 env var + R28 `fpdf2` 依赖缺失 — 三个正交维度 audit 各发现真实 bug）
+> **最后更新**：2026-06-15（Round 6：R32 前门一句话理由+风险标签 + R33 组合预期收益汇总 — 两项均复用既有 R8/R15/expected_return 能力，零新增数据依赖）
