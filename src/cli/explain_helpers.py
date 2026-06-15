@@ -5,10 +5,7 @@ Round 20.14 抽取: 五个 ``run_explain`` 的私有辅助函数, 约 200 行。
 """
 from __future__ import annotations
 
-# 4 策略的标准展示顺序 — 与 why_not._STRATEGY_ORDER / signal_consistency.strategy_names 一致。
-# TODO(large-refactor): 全仓有 10+ 处重复此 tuple (5 个命名常量 + 5 处 inline),
-# 应统一为单一 canonical 常量; 本轮先消除本文件内 2 处 inline。
-_STRATEGY_ORDER: tuple[str, ...] = ("trend", "mean_reversion", "fundamental", "event_sentiment")
+from src.screening.custom_weights import STRATEGY_KEYS as _STRATEGY_ORDER
 
 # 4 策略的中文展示标签 (长形式) — run_explain Block A 因子明细使用。
 # 注意: strategy_report._STRATEGY_NAMES 用短形式 ("趋势" 而非 "趋势策略"), 语义不同, 不可合并。

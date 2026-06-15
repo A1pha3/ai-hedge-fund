@@ -30,14 +30,16 @@ import math
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
+from src.screening.custom_weights import STRATEGY_KEYS
 from src.utils.numeric import safe_float as _safe_float
 
 # ---------------------------------------------------------------------------
 # Public constants
 # ---------------------------------------------------------------------------
 
-#: 已知策略名集合 (与 ``src/screening/models.py:DEFAULT_STRATEGY_WEIGHTS`` 对齐)。
-KNOWN_STRATEGIES: tuple[str, ...] = ("trend", "mean_reversion", "fundamental", "event_sentiment")
+#: 已知策略名集合 — 复用 ``custom_weights.STRATEGY_KEYS`` 单一来源
+#: (键与 ``src/screening/models.py:DEFAULT_STRATEGY_WEIGHTS`` 对齐)。
+KNOWN_STRATEGIES: tuple[str, ...] = STRATEGY_KEYS
 
 #: 策略名 → 中文显示名 (用于报告渲染)。
 STRATEGY_DISPLAY_NAMES: dict[str, str] = {

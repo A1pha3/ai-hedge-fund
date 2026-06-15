@@ -1136,12 +1136,14 @@ class TestDataFreshness:
         assert result == ""
 
     def test_stale_report_shows_warning(self) -> None:
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
         from src.screening.top_picks import _check_report_freshness
 
-        old = (datetime.now() - timedelta(days=3)).strftime("%Y%m%d")
-        result = _check_report_freshness(old)
+        # A report >= 2 trading days old must warn. Using a deterministic date
+        # (2026-06-12 Fri read 2026-06-17 Wed = 2 elapsed trading days: Mon+Tue)
+        # avoids the weekend-dependent flakiness of the old `now - 3 days` form.
+        result = _check_report_freshness("20260612", now=datetime(2026, 6, 17))
         assert "非最新" in result
         assert "⚠" in result
 
@@ -1157,6 +1159,46 @@ class TestDataFreshness:
         assert _check_report_freshness("") == ""
         assert _check_report_freshness("invalid") == ""
         assert _check_report_freshness("20261301") == ""
+
+    def test_friday_report_read_monday_no_false_stale(self) -> None:
+        """Friday report read on Monday (next trading day) must NOT warn stale.
+
+        2026-06-12 is a Friday; 2026-06-15 is the following Monday. The Friday
+        report is still the latest trading-day data on Monday morning, so the
+        R12 guard must not show a false "非最新" warning (3 calendar days but
+        only 0 business days elapsed). Regression test for the weekend false-
+        positive bug where age_days >= 2 fired on Monday morning.
+        """
+        from datetime import datetime
+
+        from src.screening.top_picks import _check_report_freshness
+
+        result = _check_report_freshness("20260612", now=datetime(2026, 6, 15))
+        assert result == ""
+
+    def test_thursday_report_read_monday_no_false_stale(self) -> None:
+        """Thursday report read Monday = 1 business day elapsed → still fresh.
+
+        2026-06-11 (Thu) read on 2026-06-15 (Mon): covers a weekend, only one
+        business day has passed. This is the normal "ran --auto Thursday,
+        reviewing Monday pre-market" case.
+        """
+        from datetime import datetime
+
+        from src.screening.top_picks import _check_report_freshness
+
+        result = _check_report_freshness("20260611", now=datetime(2026, 6, 15))
+        assert result == ""
+
+    def test_stale_report_2_business_days_warns(self) -> None:
+        """A report 2+ business days old (e.g. Monday read Wed) still warns."""
+        from datetime import datetime
+
+        from src.screening.top_picks import _check_report_freshness
+
+        # 2026-06-12 (Fri) read 2026-06-17 (Wed) = 2 business days elapsed
+        result = _check_report_freshness("20260612", now=datetime(2026, 6, 17))
+        assert "非最新" in result
 
 
 # ---------------------------------------------------------------------------

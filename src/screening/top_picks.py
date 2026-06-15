@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from src.screening.composite_score import (
@@ -381,8 +381,6 @@ def _compute_pick_risk_advice(
     (best-effort — the front door must never crash on data-fetch errors).
     """
     try:
-        from datetime import timedelta
-
         from src.tools.tushare_api import get_ashare_prices_with_tushare
 
         end_dt = datetime.strptime(trade_date, "%Y%m%d") if len(trade_date) == 8 else datetime.now()
@@ -690,12 +688,18 @@ def _compute_factor_reason(item: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _check_report_freshness(report_date: str) -> str:
-    """Return a warning string if the report is stale (>1 trading day old).
+def _check_report_freshness(report_date: str, now: datetime | None = None) -> str:
+    """Return a warning string if the report is stale (>1 *trading* day old).
 
-    Simple heuristic: if the report date is >= 2 calendar days before today,
-    it is considered stale. This covers weekends (Fri report read on Mon = 3
-    calendar days, which is fine) and holidays.
+    Uses business-day age rather than calendar-day age so that the normal
+    "Friday report read on Monday morning" workflow does not trigger a false
+    stale warning. Holidays (which would also be non-trading days) are not
+    modelled here; the weekend approximation covers the dominant false-positive
+    source and degrades gracefully toward the calendar heuristic on long breaks.
+
+    A report is considered stale once >= 2 trading days have elapsed since its
+    date — i.e. one full trading day has passed without a newer report, which
+    means the user has not re-run ``--auto`` and may be trading on stale data.
     """
     if not report_date or len(report_date) != 8 or not report_date.isdigit():
         return ""
@@ -703,16 +707,48 @@ def _check_report_freshness(report_date: str) -> str:
         report_dt = datetime.strptime(report_date, "%Y%m%d")
     except ValueError:
         return ""
-    today = datetime.now()
-    age_days = (today - report_dt).days
-    # A report from today or yesterday is always fresh (covers evenings).
-    # >= 2 days means the report is at least one full trading day old.
-    if age_days >= 2:
+    today = now or datetime.now()
+    elapsed_trading_days = _trading_days_elapsed(report_dt, today)
+    if elapsed_trading_days >= 2:
         formatted = report_dt.strftime("%Y-%m-%d")
         return (
             f"  {Fore.YELLOW}{Style.BRIGHT}⚠ 报告日期: {formatted}（非最新，请先运行 --auto 更新）{Style.RESET_ALL}"
         )
     return ""
+
+
+def _trading_days_between(start: datetime, end: datetime) -> int:
+    """Count Mon-Fri trading days strictly between *start* and *end* (exclusive).
+
+    ``start`` (the report's own trading day) and ``end`` (the review moment) are
+    both excluded: the report's own day is already captured, and *end*'s trading
+    day has not finished yet so its data may not exist. This makes a Friday
+    report read on Monday count as 0 elapsed days (Mon's data is not ready).
+    """
+    if end.date() <= start.date():
+        return 0
+    count = 0
+    current = start.date() + timedelta(days=1)
+    last = end.date() - timedelta(days=1)
+    while current <= last:
+        if current.weekday() < 5:  # 0=Mon .. 4=Fri
+            count += 1
+        current += timedelta(days=1)
+    return count
+
+
+def _trading_days_elapsed(report_dt: datetime, now: datetime) -> int:
+    """Trading days that passed between the report and the latest expected day.
+
+    The "latest expected trading day" rolls *now* back to the most recent
+    weekday (a Saturday/Sunday review is really a review of Friday's data), so
+    reading a Friday report on Saturday/Sunday/Monday all count as 0 elapsed
+    trading days — Monday's data may not exist yet at the time of review.
+    """
+    latest = now
+    while latest.weekday() >= 5:  # roll weekends back to Friday
+        latest -= timedelta(days=1)
+    return _trading_days_between(report_dt, latest)
 
 
 # ---------------------------------------------------------------------------

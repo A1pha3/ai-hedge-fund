@@ -23,6 +23,8 @@ from typing import Any
 
 from colorama import Fore, Style
 
+from src.screening.custom_weights import STRATEGY_KEYS as _STRATEGY_ORDER
+
 DEFAULT_REPORT_DIR = Path("data/reports")
 
 _STRATEGY_CN_LABELS: dict[str, str] = {
@@ -31,8 +33,6 @@ _STRATEGY_CN_LABELS: dict[str, str] = {
     "fundamental": "基本面",
     "event_sentiment": "事件情绪",
 }
-
-_STRATEGY_ORDER: tuple[str, ...] = ("trend", "mean_reversion", "fundamental", "event_sentiment")
 
 # ── A 股板块识别 ────────────────────────────────────────────────────────────
 # 上交所主板: 600/601/603/605; 深交所主板: 000/001/002/003; 创业板: 300/301;

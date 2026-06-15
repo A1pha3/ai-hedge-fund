@@ -164,9 +164,11 @@ class TestCheckReportFreshness:
         assert _check_report_freshness(yesterday) == ""
 
     def test_old_report_warns(self) -> None:
-        from datetime import datetime, timedelta
-        old = (datetime.now() - timedelta(days=3)).strftime("%Y%m%d")
-        result = _check_report_freshness(old)
+        from datetime import datetime
+        # Deterministic: Fri report (2026-06-12) read Wed (2026-06-17) = 2
+        # elapsed trading days (Mon, Tue) → stale. The old `now - 3 days` form
+        # was weekend-flaky (e.g. on Sunday it collapses to a same-week report).
+        result = _check_report_freshness("20260612", now=datetime(2026, 6, 17))
         assert "非最新" in result
 
 

@@ -22,13 +22,16 @@ from pathlib import Path
 from typing import Any
 
 from src.screening.consecutive_recommendation import resolve_report_dir
+# Canonical 4-strategy key order — single source of truth (see custom_weights).
+from src.screening.custom_weights import STRATEGY_KEYS
 from src.utils.display import Fore, Style
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-STRATEGY_ORDER: tuple[str, ...] = ("trend", "mean_reversion", "fundamental", "event_sentiment")
+# Backwards-compatible alias for the public name; STRATEGY_KEYS is canonical.
+STRATEGY_ORDER: tuple[str, ...] = STRATEGY_KEYS
 STRATEGY_LABEL: dict[str, str] = {
     "trend": "趋势",
     "mean_reversion": "均值回归",
