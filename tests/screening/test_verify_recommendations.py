@@ -10,8 +10,6 @@ from src.screening.verify_recommendations import (
     _load_tracking_history,
     compute_verify_recommendations,
     render_verify_recommendations,
-    StrategyAttribution,
-    VerifyDay,
     VerifySummary,
 )
 
@@ -171,6 +169,25 @@ class TestComputeVerifyRecommendations:
         summary = compute_verify_recommendations(reports_dir=tmp_path, lookback_days=30)
         assert summary.total_days == 1
         assert summary.avg_t1_return is None  # No tracking data
+
+    def test_summary_aggregates_benchmark_and_excess_return(self, reports_dir: Path):
+        """Regression (BETA-009): ``benchmark_avg_t1`` and ``excess_return`` are
+        declared schema fields on VerifySummary but were never assigned in the
+        aggregate, so the front-door ``超额收益`` line in top_picks.py was dead
+        code. They must now be populated.
+
+        Per-day cross-section-average "benchmark" (the picks' own mean):
+          20260601: (2.0 + (-1.0)) / 2 = 0.5
+          20260602: 1.5
+        => benchmark_avg_t1 = (0.5 + 1.5) / 2 = 1.0
+        avg_t1_return = (2.0 - 1.0 + 1.5) / 3 = 0.8333
+        => excess_return = 0.8333 - 1.0 = -0.1667
+        """
+        summary = compute_verify_recommendations(reports_dir=reports_dir, lookback_days=30)
+        assert summary.benchmark_avg_t1 is not None
+        assert abs(summary.benchmark_avg_t1 - 1.0) < 0.01
+        assert summary.excess_return is not None
+        assert abs(summary.excess_return - ((2.0 - 1.0 + 1.5) / 3 - 1.0)) < 0.01
 
 
 class TestRenderVerifyRecommendations:

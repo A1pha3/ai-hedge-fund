@@ -51,7 +51,7 @@ class VerifyDay:
         avg_t10_return: 当日推荐平均 T+10 收益率
         avg_t20_return: 当日推荐平均 T+20 收益率
         avg_t30_return: 当日推荐平均 T+30 收益率
-        benchmark_return: 沪深 300 同期 T+1 收益 (None=无数据)
+        benchmark_return: 当日推荐组合平均 T+1 收益 (参考基准, 非市场指数; None=无数据)
         excess_return: 超额收益 (avg_t1 - benchmark)
     """
 
@@ -106,7 +106,7 @@ class VerifySummary:
         avg_t10_return: 平均 T+10 收益率
         avg_t20_return: 平均 T+20 收益率
         avg_t30_return: 平均 T+30 收益率
-        benchmark_avg_t1: 沪深 300 同期平均 T+1 收益
+        benchmark_avg_t1: 推荐组合平均 T+1 收益 (参考基准, 非市场指数)
         excess_return: 超额收益 (avg_t1 - benchmark)
         strategy_attribution: 策略归因列表
         daily_details: 日度明细 (仅 --verify-detail 时填充)
@@ -191,7 +191,15 @@ def _extract_tracking_returns(tracking: list[dict[str, Any]], ticker: str, rec_d
 
 
 def _compute_benchmark_returns(tracking: list[dict[str, Any]], rec_date: str) -> float | None:
-    """Compute average T+1 return across all tickers on a date as benchmark proxy."""
+    """Compute the *recommended-basket* average T+1 return on a date.
+
+    NOTE (BETA-009): this is the picks' own cross-section mean, used as a
+    same-day reference point — it is **not** a real market benchmark such as
+    CSI 300. User-facing labels must reflect that honestly (e.g. "推荐均值"),
+    not claim a market index. A true 沪深300 benchmark requires live index
+    data which is out of scope for this offline-verify path; the label was
+    previously misleading.
+    """
     t1_returns: list[float] = []
     for entry in tracking:
         if str(entry.get("recommended_date", "")) != rec_date:
@@ -259,6 +267,9 @@ def compute_verify_recommendations(
 
     # Strategy attribution accumulators
     strat_returns: dict[str, list[float]] = {}
+
+    # Per-day recommended-basket average T+1 (reference, not a market benchmark)
+    benchmark_t1_values: list[float] = []
 
     for report in reports:
         rec_date = report.get("_report_date", "")
@@ -349,9 +360,12 @@ def compute_verify_recommendations(
 
         summary.total_recommendations += len(day_tickers)
 
-        # Benchmark (cross-section average)
+        # Recommended-basket average T+1 (reference point, NOT a market index —
+        # see _compute_benchmark_returns docstring / BETA-009).
         benchmark_t1 = _compute_benchmark_returns(tracking, rec_date)
         avg_day_t1 = sum(day_t1) / len(day_t1) if day_t1 else None
+        if benchmark_t1 is not None:
+            benchmark_t1_values.append(benchmark_t1)
 
         if include_detail:
             day_detail = VerifyDay(
@@ -383,6 +397,15 @@ def compute_verify_recommendations(
     summary.avg_t10_return = sum(all_t10) / len(all_t10) if all_t10 else None
     summary.avg_t20_return = sum(all_t20) / len(all_t20) if all_t20 else None
     summary.avg_t30_return = sum(all_t30) / len(all_t30) if all_t30 else None
+
+    # Recommended-basket reference (BETA-009): aggregate the per-day basket mean
+    # and the excess of the picks' average over it, so the front-door
+    # ``超额收益`` line renders real numbers instead of being dead code.
+    summary.benchmark_avg_t1 = sum(benchmark_t1_values) / len(benchmark_t1_values) if benchmark_t1_values else None
+    if summary.avg_t1_return is not None and summary.benchmark_avg_t1 is not None:
+        summary.excess_return = summary.avg_t1_return - summary.benchmark_avg_t1
+    else:
+        summary.excess_return = None
 
     # Strategy attribution
     for strat_name, returns in strat_returns.items():

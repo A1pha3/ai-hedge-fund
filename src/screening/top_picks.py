@@ -195,11 +195,12 @@ def _render_hit_rate_summary(verify_summary: object) -> str:
     if ret_parts:
         lines.append("  " + " | ".join(ret_parts))
 
-    # Excess return
+    # Excess return vs the picks' own recommended-basket average (a same-day
+    # reference point, NOT a market index — see verify_recommendations BETA-009).
     excess = getattr(verify_summary, "excess_return", None)
     if excess is not None:
         color = Fore.GREEN if excess > 0 else Fore.RED
-        lines.append(f"  超额收益(vs 沪深300): {color}{excess:+.2f}%{Style.RESET_ALL}")
+        lines.append(f"  超额收益(vs 推荐均值): {color}{excess:+.2f}%{Style.RESET_ALL}")
 
     lines.append(f"  {Fore.WHITE}💡 历史表现不代表未来收益{Style.RESET_ALL}")
     return "\n".join(lines)
