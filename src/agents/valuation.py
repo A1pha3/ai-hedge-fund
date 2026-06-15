@@ -445,14 +445,23 @@ def calculate_enhanced_dcf_value(fcf_history: list[float], growth_metrics: dict,
         fcf_projected = base_fcf * (1 + high_growth) ** year
         pv += fcf_projected / (1 + wacc) ** year
 
-    # Transition stage
+    # Transition stage — growth declines linearly from high_growth toward
+    # terminal_growth across years 4-7. Each year's FCF compounds on the
+    # PREVIOUS year's level (running product), not on the base raised to a
+    # constant rate. The old ``base * (1+rate)^(year-3)`` form re-applied only
+    # the current year's declining rate as if it were constant across all
+    # transition years, which produced a non-monotonic (declining) FCF series
+    # during a positive-growth transition and understated terminal value.
+    # See CAMPAIGN4-BH-9.
+    cumulative_fcf = base_fcf * (1 + high_growth) ** 3
     for year in range(4, 8):
         transition_rate = transition_growth * (8 - year) / 4  # Declining
-        fcf_projected = base_fcf * (1 + high_growth) ** 3 * (1 + transition_rate) ** (year - 3)
-        pv += fcf_projected / (1 + wacc) ** year
+        cumulative_fcf *= (1 + transition_rate)
+        pv += cumulative_fcf / (1 + wacc) ** year
 
-    # Terminal value
-    final_fcf = base_fcf * (1 + high_growth) ** 3 * (1 + transition_growth) ** 4
+    # Terminal value — final_fcf continues from the last transition-year level
+    # (cumulative_fcf after year 7), then grows at terminal_growth.
+    final_fcf = cumulative_fcf
     if wacc <= terminal_growth:
         terminal_growth = wacc * 0.8  # Adjust if invalid
     terminal_value = (final_fcf * (1 + terminal_growth)) / (wacc - terminal_growth)
