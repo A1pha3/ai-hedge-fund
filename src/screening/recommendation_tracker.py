@@ -444,12 +444,27 @@ def update_tracking_history(
                     target = history_index.get(key)
                     if target is None:
                         continue
-                    target["next_day_return"] = returns.get("day_1")
-                    target["next_3day_return"] = returns.get("day_3")
-                    target["next_5day_return"] = returns.get("day_5")
-                    target["next_10day_return"] = returns.get("day_10")
-                    target["next_20day_return"] = returns.get("day_20")
-                    target["next_30day_return"] = returns.get("day_30")
+                    # BH-008: merge, not overwrite. A re-run whose fetcher returns a
+                    # shorter series (delisted/halted ticker, data-source hiccup)
+                    # would previously clobber an already-realized return with None,
+                    # demoting a mature record and corrupting the win-rate pool.
+                    # Only adopt a fetched value when it is present; keep the
+                    # existing realized value otherwise.
+                    changed = False
+                    for field_key, day_key in (
+                        ("next_day_return", "day_1"),
+                        ("next_3day_return", "day_3"),
+                        ("next_5day_return", "day_5"),
+                        ("next_10day_return", "day_10"),
+                        ("next_20day_return", "day_20"),
+                        ("next_30day_return", "day_30"),
+                    ):
+                        fetched = returns.get(day_key)
+                        if fetched is not None:
+                            if target.get(field_key) != fetched:
+                                target[field_key] = fetched
+                                changed = True
+                        # If fetched is None, keep the existing value (no clobber).
                     # 同步未来价字段 — 来自 fetcher 的隐含信息 (非 T+1)
                     # 保持 next_day_price 为 None (我们只关心收益率), 简化存储
                     has_t1 = target.get("next_day_return") is not None
@@ -460,7 +475,8 @@ def update_tracking_history(
                         target["tracking_status"] = "partial"
                     else:
                         target["tracking_status"] = "pending"
-                    updated_count += 1
+                    if changed:
+                        updated_count += 1
 
     # ----- Phase 3: 落盘 -----
     records = list(history_index.values())

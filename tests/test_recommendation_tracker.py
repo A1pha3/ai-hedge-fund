@@ -213,6 +213,60 @@ def test_update_tracking_history_idempotent(tmp_path: Path):
     assert tickers == {"000001", "000002"}
 
 
+def test_update_tracking_history_rerun_does_not_clobber_realized_return(tmp_path: Path):
+    """BH-008: a re-run whose fetcher returns a shorter series must not clobber
+    an already-realized return with None.
+
+    Before the fix, Phase 2 unconditionally overwrote next_day_return …
+    next_30day_return. If a later fetcher call returned fewer bars (delisted/
+    halted ticker, data-source hiccup), an existing realized value was
+    reverted to None, demoting a mature record and corrupting the win-rate
+    pool. The fix merges (adopt only non-None fetched values)."""
+
+    # Seed a recommendation old enough to clear the 6-day maturity gate.
+    _make_report(tmp_path, "20260520", [
+        {"ticker": "000001", "name": "A", "score_b": 0.5, "close": 10.0},
+    ])
+    # Phase 1 reads the trade_date report; an empty one triggers Phase 2 backfill
+    # of the 20260520 record already in history.
+    _make_report(tmp_path, "20260601", [])
+    # First, persist the 20260520 record into history.
+    update_tracking_history(tmp_path, "20260520")
+
+    # First backfill run: fetcher returns a full T+5 realization (base + 5 bars).
+    def full_fetcher(ticker, _frm, _to):
+        return [
+            {"time": "20260520", "close": 10.0},
+            {"time": "20260521", "close": 11.0},
+            {"time": "20260522", "close": 12.0},
+            {"time": "20260523", "close": 13.0},
+            {"time": "20260524", "close": 14.0},
+            {"time": "20260525", "close": 15.0},
+        ]
+
+    update_tracking_history(tmp_path, "20260601", use_data_fetcher=full_fetcher)
+    history = _load_history(tmp_path / HISTORY_FILENAME)
+    rec = next(r for r in history if r["ticker"] == "000001")
+    assert rec["next_day_return"] is not None
+    assert rec["next_5day_return"] is not None
+
+    # Second run: fetcher now returns a SHORTER series (simulating a halted
+    # ticker / data-source hiccup). Before BH-008 this would clobber
+    # next_5day_return → None.
+    def short_fetcher(ticker, _frm, _to):
+        return [
+            {"time": "20260520", "close": 10.0},
+            {"time": "20260521", "close": 11.0},
+        ]  # only T+1 available now
+
+    update_tracking_history(tmp_path, "20260601", use_data_fetcher=short_fetcher)
+    history = _load_history(tmp_path / HISTORY_FILENAME)
+    rec = next(r for r in history if r["ticker"] == "000001")
+    # The already-realized T+5 must survive the re-run (no clobber).
+    assert rec["next_5day_return"] is not None
+    assert rec["next_day_return"] is not None
+
+
 # ---------------------------------------------------------------------------
 # 8. 跨日推荐合并
 # ---------------------------------------------------------------------------
