@@ -113,7 +113,27 @@ def test_build_front_door_verdict_promotes_high_quality_pick_to_buy() -> None:
     )
 
     assert verdict["action"] == "BUY"
-    assert "edge" in verdict["invalidation_reason"]
+    # BH-010: a BUY pick (t30 edge +9.4%) must NOT carry the false "edge 转负"
+    # invalidation reason. The old code hardcoded it unconditionally.
+    assert "转负" not in verdict["invalidation_reason"]
+
+
+def test_build_front_door_verdict_lists_edge_turn_negative_only_when_negative() -> None:
+    """BH-010: "T+30 edge 转负" must only appear when t30 edge is actually < 0."""
+    # Positive edge → HOLD (composite 0.4) → no "转负" reason.
+    pos = build_front_door_verdict(
+        {"decision": "bullish", "composite_score": 0.4, "expected_returns": {"t30": 2.0},
+         "win_rates": {"t30": 0.52}, "bucket_sample_count": 48},
+        market_regime="trend",
+    )
+    assert "转负" not in pos["invalidation_reason"]
+    # Negative edge → AVOID → "转负" reason present.
+    neg = build_front_door_verdict(
+        {"decision": "bullish", "composite_score": 0.4, "expected_returns": {"t30": -1.5},
+         "win_rates": {"t30": 0.45}, "bucket_sample_count": 48},
+        market_regime="trend",
+    )
+    assert "转负" in neg["invalidation_reason"]
 
 
 def test_build_front_door_verdict_respects_risk_off_gate() -> None:

@@ -172,7 +172,12 @@ def build_front_door_verdict(
     else:
         action = "AVOID"
 
-    invalidation_reasons = ["T+30 edge 转负"]
+    # BH-010: "T+30 edge 转负" must only be listed when the edge is actually
+    # negative. Previously it was hardcoded unconditionally, so a BUY stock
+    # (edge>0) would still carry a false "edge 转负" invalidation reason.
+    invalidation_reasons: list[str] = []
+    if t30_edge is not None and t30_edge < 0:
+        invalidation_reasons.append("T+30 edge 转负")
     if "crisis" in regime_lower or "risk_off" in regime_lower:
         invalidation_reasons.append("市场门控维持 risk-off")
     else:

@@ -251,8 +251,10 @@ def compute_conviction_ranking(
     rows: list[ConvictionRow] = []
     for idx, rec in enumerate(recs, start=1):
         rows.append(compute_conviction_row(rec, original_rank=idx, calibration=calibration, weights=weights, threshold=threshold))
-    # 按 conviction 降序
-    rows.sort(key=lambda r: r.conviction_score, reverse=True)
+    # 按 conviction 降序。BH-011 drain: 确定性 tie-break (original_score 降序,
+    # ticker 升序)，避免相同 conviction 的 ticker 因 JSON dict 输入顺序
+    # 导致 Top-N 成员跨运行非确定翻转。
+    rows.sort(key=lambda r: (-r.conviction_score, -r.original_score, r.ticker))
     # 填充 conviction_rank 和 rank_delta
     for new_rank, row in enumerate(rows, start=1):
         row.conviction_rank = new_rank

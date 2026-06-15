@@ -253,8 +253,12 @@ def compute_composite_scores_for_recommendations(
             )
         )
 
-    # Sort by composite score descending
-    items.sort(key=lambda x: x.composite_score, reverse=True)
+    # Sort by composite score descending. BH-011: add deterministic
+    # secondary keys (base_score desc, then ticker asc) so equal-composite
+    # tickers have a stable order — otherwise Top-N membership flips
+    # nondeterministically across runs (Python stable sort preserves JSON-dict
+    # input order, which is not contractually sorted).
+    items.sort(key=lambda x: (-x.composite_score, -x.base_score, x.ticker))
 
     return CompositeReport(trade_date=trade_date, items=items)
 

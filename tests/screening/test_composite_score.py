@@ -196,6 +196,33 @@ class TestComputeCompositeScoresForRecommendations:
         )
         assert report.items[0].composite_score <= 1.0
 
+    def test_ties_broken_deterministically_by_base_score_then_ticker(self) -> None:
+        """BH-011: equal composite scores must break ties deterministically
+        (base_score desc, then ticker asc), not rely on JSON-dict input order.
+        Two runs with the SAME data but DIFFERENT input order must yield the
+        SAME ranking — otherwise Top-N membership flips nondeterministically.
+        """
+        # All three share the same score_b → same composite (no bonuses/penalties
+        # in this path), so the tie-break decides order. ticker asc is the weakest
+        # key: 000001 < 000002 < 000003.
+        base_recs = [
+            _make_rec(ticker="000002", score_b=0.5),
+            _make_rec(ticker="000001", score_b=0.5),
+            _make_rec(ticker="000003", score_b=0.5),
+        ]
+        report_a = compute_composite_scores_for_recommendations(
+            recommendations=list(base_recs), trade_date="2026-01-01",
+        )
+        # Reverse input order — result must be identical (deterministic).
+        report_b = compute_composite_scores_for_recommendations(
+            recommendations=list(reversed(base_recs)), trade_date="2026-01-01",
+        )
+        order_a = [it.ticker for it in report_a.items]
+        order_b = [it.ticker for it in report_b.items]
+        assert order_a == order_b, f"Nondeterministic tie-break: {order_a} vs {order_b}"
+        # ticker ascending within the tied group.
+        assert order_a == ["000001", "000002", "000003"]
+
     def test_composite_clamped_at_lower_bound(self) -> None:
         """composite_score is clamped to [-1.0, +1.0]."""
         report = compute_composite_scores_for_recommendations(
