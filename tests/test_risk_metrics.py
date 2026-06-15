@@ -432,3 +432,65 @@ def test_cvar_tail_excludes_var_boundary_observation() -> None:
 
     # CVaR must be >= VaR (tail risk is always at least as bad as VaR)
     assert cvar_95 >= var_95
+
+
+# ---------------------------------------------------------------------------
+# ALPHA regression: beta computed from aggregated portfolio returns, not per-ticker rows
+# ---------------------------------------------------------------------------
+
+
+def test_beta_uses_aggregated_portfolio_returns_not_per_ticker_rows() -> None:
+    """``beta_adjusted`` must regress the *value-weighted portfolio* daily-return
+    series against the benchmark — NOT the raw per-ticker ``return_pct`` rows.
+
+    Regression guard: ``compute_risk_snapshot`` previously passed the raw
+    ``lookback_returns`` (per-ticker rows ``{date, ticker, return_pct}``) to
+    ``_resolve_beta``, which read ``return_pct`` from every per-ticker row. That
+    conflates cross-sectional stock variation with the time-series portfolio
+    series: with N holdings × D days it builds an N·D-length series that is
+    neither date-aligned with the benchmark nor a portfolio return, so the
+    resulting beta is meaningless.
+
+    This test builds an equal-weighted two-ticker portfolio where ticker A
+    moves at 2.0× the benchmark and ticker B at 0.5×. The value-weighted
+    portfolio beta is therefore (2.0 + 0.5) / 2 = 1.25. The per-ticker-rows
+    regression instead regresses a shuffled bag of all 2.0× and 0.5× moves
+    against the benchmark, collapsing toward the unweighted average slope.
+    """
+    # 20 deterministic benchmark daily returns (decimal, e.g. 0.01 = +1%)
+    bench = [0.010 * (1 if i % 2 == 0 else -1) + 0.002 * (i - 10) / 10.0 for i in range(20)]
+    # Ticker A tracks 2.0x benchmark, B tracks 0.5x (no intercept, deterministic)
+    positions = [
+        {"ticker": "A", "market_value": 100_000.0, "industry_sw": "电子"},
+        {"ticker": "B", "market_value": 100_000.0, "industry_sw": "电子"},
+    ]
+    lookback = []
+    for i, b in enumerate(bench):
+        date = f"2026-06-{i + 1:02d}"
+        lookback.append({"date": date, "ticker": "A", "return_pct": 2.0 * b})
+        lookback.append({"date": date, "ticker": "B", "return_pct": 0.5 * b})
+
+    snapshot = compute_risk_snapshot(positions, lookback, benchmark_returns=bench)
+    # Expected value-weighted portfolio beta = (2.0 + 0.5) / 2 = 1.25
+    assert math.isclose(snapshot.beta_adjusted, 1.25, abs_tol=0.05), (
+        f"beta_adjusted={snapshot.beta_adjusted} should be ~1.25 (value-weighted avg of "
+        f"2.0 and 0.5), got a per-ticker-rows regression result instead"
+    )
+
+
+def test_beta_single_ticker_matches_its_own_slope() -> None:
+    """Sanity check: a single-ticker portfolio's beta must equal that ticker's
+    slope vs the benchmark (this held before the fix too, and must still hold)."""
+    bench = [0.010 * (1 if i % 2 == 0 else -1) for i in range(20)]
+    positions = [_position("A", 100_000.0)]
+    lookback = [_return(f"d{i}", "A", 1.5 * b) for i, b in enumerate(bench)]
+    snapshot = compute_risk_snapshot(positions, lookback, benchmark_returns=bench)
+    assert math.isclose(snapshot.beta_adjusted, 1.5, abs_tol=0.05)
+
+
+def test_beta_falls_back_to_market_neutral_without_benchmark() -> None:
+    """No benchmark series -> market-neutral fallback (1.0), unchanged by the fix."""
+    positions = [_position("A", 100_000.0)]
+    lookback = [_return(f"d{i}", "A", 0.01 * (1 if i % 2 == 0 else -1)) for i in range(20)]
+    snapshot = compute_risk_snapshot(positions, lookback, benchmark_returns=None)
+    assert snapshot.beta_adjusted == 1.0

@@ -253,18 +253,22 @@ def _portfolio_cvar_amount(
 
 
 def _resolve_beta(
-    lookback_returns: Iterable[Mapping[str, object]],
+    portfolio_returns: Iterable[float],
     benchmark_returns: Sequence[float] | None,
 ) -> float:
-    """Lightweight beta estimate against an optional benchmark series.
+    """Lightweight beta estimate of a portfolio return series against an
+    optional benchmark series.
 
-    Falls back to 1.0 (market-neutral proxy) when insufficient overlap; this
-    is acceptable for dashboard purposes and avoids producing misleading
-    near-zero betas from too-few observations (GAMMA-005 / ALPHA-007).
+    ``portfolio_returns`` is the value-weighted portfolio daily-return series
+    (decimal). Falls back to 1.0 (market-neutral proxy) when insufficient
+    overlap; this is acceptable for dashboard purposes and avoids producing
+    misleading near-zero betas from too-few observations (GAMMA-005 /
+    ALPHA-007). The caller must pass the *aggregated* portfolio series, not
+    raw per-ticker rows (ALPHA-008).
     """
     if not benchmark_returns or len(benchmark_returns) < 10:
         return 1.0
-    portfolio = [(_safe_float(r.get("portfolio_return", r.get("return_pct", 0.0)))) for r in lookback_returns]
+    portfolio = [_safe_float(r) for r in portfolio_returns]
     if len(portfolio) < 10:
         return 1.0
     n = min(len(portfolio), len(benchmark_returns))
@@ -347,7 +351,11 @@ def compute_risk_snapshot(
     drawdown_warning = current_dd >= drawdown_warning_threshold
 
     # ----- Beta -----
-    beta = _resolve_beta(lookback_returns, benchmark_returns)
+    # Regress the *value-weighted portfolio* daily-return series (not the raw
+    # per-ticker rows) against the benchmark. Passing ``lookback_returns``
+    # directly conflates cross-sectional stock variation with the time-series
+    # portfolio series and produces a meaningless beta (ALPHA-008).
+    beta = _resolve_beta(portfolio_daily_returns, benchmark_returns)
 
     return RiskSnapshot(
         timestamp=str(timestamp or ""),
