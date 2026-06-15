@@ -43,6 +43,12 @@ wheels/
 .installed.cfg
 *.egg
 
+# Test artifacts — pytest basetemp leaks to repo root when run from repo root
+# (pytest-of-<user>/) and some tests create uncleaned tmp* dirs. Ignore so they
+# never pollute `git status` or risk accidental commits.
+pytest-of-*/
+tmp*/
+
 # Ignore files
 logs/
 session.checkpoint.timings.jsonl

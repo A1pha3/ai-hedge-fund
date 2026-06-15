@@ -15,6 +15,7 @@ from src.screening.top_picks import (
     _apply_consecutive_bonus_and_resort,
     _build_signal_breakdown,
     _consecutive_bonus,
+    _extract_t30_metrics,
     _load_recommendation_context,
     _render_hit_rate_summary,
     _score_color,
@@ -161,6 +162,37 @@ class TestExtractedTopPicksHelpers:
         assert _score_color(0.6) == Fore.GREEN + Style.BRIGHT
         assert _score_color(0.4) == Fore.YELLOW
         assert _score_color(0.2) == Fore.RED
+
+    def test_extract_t30_metrics_returns_numeric_values(self) -> None:
+        """DRY helper extracts T+30 edge/winrate from a pick dict.
+
+        Used by both the per-pick table row and the R33 portfolio summary,
+        so the two rendering paths can never diverge on the extraction logic.
+        """
+        item = {
+            "expected_returns": {"t30": 3.5},
+            "win_rates": {"t30": 0.58},
+        }
+        edge, winrate = _extract_t30_metrics(item)
+        assert edge == 3.5
+        assert winrate == 0.58
+
+    def test_extract_t30_metrics_returns_none_when_missing(self) -> None:
+        item = {"expected_returns": {}, "win_rates": {}}
+        edge, winrate = _extract_t30_metrics(item)
+        assert edge is None
+        assert winrate is None
+
+    def test_extract_t30_metrics_returns_none_when_keys_absent(self) -> None:
+        edge, winrate = _extract_t30_metrics({})
+        assert edge is None
+        assert winrate is None
+
+    def test_extract_t30_metrics_ignores_non_numeric(self) -> None:
+        item = {"expected_returns": {"t30": "n/a"}, "win_rates": {"t30": None}}
+        edge, winrate = _extract_t30_metrics(item)
+        assert edge is None
+        assert winrate is None
 
     def test_load_recommendation_context_slices_to_count_times_three(self, tmp_path: Path) -> None:
         recs = [_make_rec(f"{index:06d}", f"Stock{index}", 0.5) for index in range(10)]

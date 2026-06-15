@@ -237,6 +237,23 @@ def _render_verdict_distribution(picks: list[dict], market_regime: str) -> str:
 _PORTFOLIO_SUMMARY_MIN_BUYS: int = 2
 
 
+def _extract_t30_metrics(item: dict) -> tuple[float | None, float | None]:
+    """Extract the T+30 expected-return edge and win-rate from a pick dict.
+
+    Shared by the per-pick table row (:func:`_build_top_table_row`) and the R33
+    portfolio summary (:func:`_render_portfolio_expected_return`) so the two
+    rendering paths never diverge on the defensive-extraction logic.
+
+    Returns ``(edge, winrate)`` where each value is the raw float when the
+    field is present and numeric, otherwise ``None``.
+    """
+    t30 = (item.get("expected_returns") or {}).get("t30")
+    t30_wr = (item.get("win_rates") or {}).get("t30")
+    edge = float(t30) if isinstance(t30, (int, float)) else None
+    winrate = float(t30_wr) if isinstance(t30_wr, (int, float)) else None
+    return edge, winrate
+
+
 def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> str:
     """R33: Render a one-line equal-weighted T+30 expected return for all BUY picks.
 
@@ -266,15 +283,14 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
     edges: list[float] = []
     winrates: list[float] = []
     for item in buy_picks:
-        t30 = (item.get("expected_returns") or {}).get("t30")
-        if isinstance(t30, (int, float)):
-            edges.append(float(t30))
+        edge, winrate = _extract_t30_metrics(item)
+        if edge is not None:
+            edges.append(edge)
         # Win-rate may be absent on some picks even when the T+30 edge is present
         # (different calibration fields).  Track its own denominator so the average
         # is not diluted by picks that have no win-rate data.
-        t30_wr = (item.get("win_rates") or {}).get("t30")
-        if isinstance(t30_wr, (int, float)):
-            winrates.append(float(t30_wr))
+        if winrate is not None:
+            winrates.append(winrate)
 
     if not edges:
         return ""
@@ -1008,12 +1024,11 @@ def _print_pick_entry(
     bullish, total = _compute_confluence(item)
     confluence_str = _render_confluence(bullish, total)
 
-    t30 = (item.get("expected_returns") or {}).get("t30")
-    t30_wr = (item.get("win_rates") or {}).get("t30")
+    t30, t30_wr = _extract_t30_metrics(item)
     sample_count = int(item.get("bucket_sample_count", 0) or 0)
 
-    t30_str = f"{t30:+.2f}%" if isinstance(t30, (int, float)) else "—"
-    t30_wr_str = f"{t30_wr:.0%}" if isinstance(t30_wr, (int, float)) else "—"
+    t30_str = f"{t30:+.2f}%" if t30 is not None else "—"
+    t30_wr_str = f"{t30_wr:.0%}" if t30_wr is not None else "—"
     base_score = float(item.get("base_score", item.get("score_b", 0.0)) or 0.0)
     score_color = _score_color(composite_score)
 
