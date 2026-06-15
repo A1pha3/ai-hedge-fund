@@ -933,7 +933,18 @@ class BacktestEngine:
         if last_processed_date is not None:
             dates = pd.DatetimeIndex([date for date in dates if date.strftime("%Y-%m-%d") > last_processed_date])
         elif len(dates) > 0:
-            self._portfolio_values = [{"Date": dates[0], "Portfolio Value": self._initial_capital}]
+            # Seed the initial-capital anchor at the calendar day BEFORE the
+            # first backtest bar. The run loop then appends a real post-trade
+            # point for every date in ``dates`` (including dates[0]); seeding
+            # at dates[0] itself produced a duplicate Date index whose phantom
+            # intra-day pct_change distorted per-bar return attribution and
+            # left max_drawdown_date / frontend rendering with a non-unique
+            # index. Anchoring one day earlier keeps iloc[0] == initial_capital
+            # (so total_return is unchanged) while yielding a unique Date index.
+            # See BH-001.
+            self._portfolio_values = [
+                {"Date": dates[0] - pd.Timedelta(days=1), "Portfolio Value": self._initial_capital}
+            ]
         else:
             self._portfolio_values = []
         return dates, pending_plan

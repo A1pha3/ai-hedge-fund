@@ -39,14 +39,16 @@
 
 ### 3. 已出现专门的“调试/修复脚本”散落在根目录
 
-包括：
+> 历史问题，已解决（根目录调试脚本已移除，相关规则沉淀进 `src/agents/prompt_rules.py`）。
 
-- `debug_agent_facts.py`
-- `debug_data_analysis.py`
-- `diagnose_akshare.py`
-- `fix_agent_prompts.py`
+历史曾包括（现已删除）：
 
-这说明项目已经积累了一批系统性问题，但处理方式仍偏人工排查，尚未沉淀为正式工程能力。
+- ~~`debug_agent_facts.py`~~ — 一次性 facts 结构检查脚本
+- ~~`debug_data_analysis.py`~~ — 一次性数据一致性排查脚本
+- ~~`diagnose_akshare.py`~~ — AKShare 连接诊断脚本（含硬编码本机路径）
+- ~~`fix_agent_prompts.py`~~ — 批量注入“不编造数据”规则的脚本（规则现已沉淀进各 agent prompt）
+
+这曾说明项目积累了一批系统性问题但处理方式偏人工排查；现在这些能力已沉淀为正式工程能力（prompt 规则统一在 `src/agents/prompt_rules.py` 维护）。
 
 ---
 

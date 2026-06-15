@@ -241,6 +241,43 @@ class TestComputeVerifyRecommendations:
         # (otherwise the test wouldn't catch the regression).
         assert abs(summary.avg_t1_return - summary.benchmark_avg_t1) > 0.4
 
+    def test_benchmark_restricted_to_report_basket_not_full_tracking(self, tmp_path: Path):
+        """BH-004: ``_compute_benchmark_returns`` must average only tickers in
+        the current report's basket, not every tracking entry for that date.
+
+        Before the fix, the benchmark iterated ALL tracking entries with
+        ``recommended_date == rec_date``. If the report's Top-N was trimmed
+        relative to the tracked universe (e.g. 5 picks shown but 10 tracked),
+        the "benchmark" and the per-day basket mean were computed over
+        different ticker sets on the same day, breaking the structural
+        identity ``excess_return ≡ 0`` for a reason unrelated to edge
+        (Top-N trimming noise, not alpha).
+
+        Fixture: Day A tracks 2 tickers (000001 +1.0%, 000002 +5.0%) but the
+        report only shows 000001.
+          - Buggy (all-tracking):  benchmark = mean(1.0, 5.0) = 3.0
+          - Fixed (basket-only):   benchmark = 1.0  (== basket mean)
+          - excess_return must be 0.0 (basket ≡ benchmark), not 1.0 - 3.0 = -2.0.
+        """
+        tracking = [
+            {"ticker": "000001", "recommended_date": "20260601", "next_day_return": 1.0, "tracking_status": "complete"},
+            {"ticker": "000002", "recommended_date": "20260601", "next_day_return": 5.0, "tracking_status": "complete"},
+        ]
+        (tmp_path / "tracking_history.json").write_text(json.dumps(tracking), encoding="utf-8")
+        # Report shows ONLY 000001 (Top-N trimmed 000002 out of the display).
+        report = {"trade_date": "20260601", "recommendations": [
+            {"ticker": "000001", "score_b": 0.8, "strategy_signals": {"trend": {"direction": 1, "confidence": 80}}},
+        ]}
+        (tmp_path / "auto_screening_20260601.json").write_text(json.dumps(report), encoding="utf-8")
+
+        summary = compute_verify_recommendations(reports_dir=tmp_path, lookback_days=30)
+        assert summary.benchmark_avg_t1 is not None
+        # Benchmark restricted to basket → 1.0, NOT mean(1.0, 5.0)=3.0.
+        assert abs(summary.benchmark_avg_t1 - 1.0) < 0.01
+        # excess_return structurally ≡ 0 (basket mean == benchmark).
+        assert summary.excess_return is not None
+        assert abs(summary.excess_return - 0.0) < 0.01
+
 
 class TestRenderVerifyRecommendations:
     def test_renders_basic(self, reports_dir: Path):

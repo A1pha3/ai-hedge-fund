@@ -67,6 +67,18 @@ class ScoreBucketStats:
     t10_avg_return: float | None = None
     t20_avg_return: float | None = None
     t30_avg_return: float | None = None
+    # Matured-sample counts per horizon (records that actually have a realized
+    # return at that horizon). ``sample_count`` counts every record in the
+    # bucket regardless of return maturity, so displaying it next to a
+    # realized-horizon stat (e.g. T+30 edge) misleads users into thinking the
+    # full bucket backs that number. These fields let renderers attribute each
+    # horizon's stat to its true (smaller, matured) denominator. See BH-002.
+    t1_sample_count: int = 0
+    t3_sample_count: int = 0
+    t5_sample_count: int = 0
+    t10_sample_count: int = 0
+    t20_sample_count: int = 0
+    t30_sample_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -85,6 +97,12 @@ class ScoreBucketStats:
             "t10_avg_return": self.t10_avg_return,
             "t20_avg_return": self.t20_avg_return,
             "t30_avg_return": self.t30_avg_return,
+            "t1_sample_count": self.t1_sample_count,
+            "t3_sample_count": self.t3_sample_count,
+            "t5_sample_count": self.t5_sample_count,
+            "t10_sample_count": self.t10_sample_count,
+            "t20_sample_count": self.t20_sample_count,
+            "t30_sample_count": self.t30_sample_count,
         }
 
 
@@ -104,6 +122,14 @@ class CalibrationSummary:
     overall_t10_avg_return: float | None = None
     overall_t20_avg_return: float | None = None
     overall_t30_avg_return: float | None = None
+    # Total records with a realized return at each horizon (sum of per-bucket
+    # matured counts). ``total_samples`` counts every record; these count only
+    # records old enough to have a realized N-day return, so a 30-day edge
+    # header can be attributed to its true denominator. See BH-002.
+    total_t5_samples: int = 0
+    total_t10_samples: int = 0
+    total_t20_samples: int = 0
+    total_t30_samples: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -119,6 +145,10 @@ class CalibrationSummary:
             "overall_t10_avg_return": self.overall_t10_avg_return,
             "overall_t20_avg_return": self.overall_t20_avg_return,
             "overall_t30_avg_return": self.overall_t30_avg_return,
+            "total_t5_samples": self.total_t5_samples,
+            "total_t10_samples": self.total_t10_samples,
+            "total_t20_samples": self.total_t20_samples,
+            "total_t30_samples": self.total_t30_samples,
         }
 
 
@@ -143,6 +173,21 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _win_rate_or_none(valid_returns: list[float]) -> float | None:
+    """Fraction of realized returns that are positive; None when empty.
+
+    Centralizes the per-horizon win-rate pattern so every horizon uses the
+    same denominator (matured returns only) and a future horizon addition
+    touches one helper instead of six near-identical expressions.
+    """
+    return (sum(1 for x in valid_returns if x > 0) / len(valid_returns)) if valid_returns else None
+
+
+def _mean_or_none(valid_returns: list[float]) -> float | None:
+    """Arithmetic mean of realized returns; None when empty."""
+    return (sum(valid_returns) / len(valid_returns)) if valid_returns else None
 
 
 # ---------------------------------------------------------------------------
@@ -234,17 +279,23 @@ def compute_calibration(
             score_low=low,
             score_high=high,
             sample_count=len(recs),
-            t1_win_rate=(sum(1 for x in t1_valid if x > 0) / len(t1_valid)) if t1_valid else None,
-            t3_win_rate=(sum(1 for x in t3_valid if x > 0) / len(t3_valid)) if t3_valid else None,
-            t5_win_rate=(sum(1 for x in t5_valid if x > 0) / len(t5_valid)) if t5_valid else None,
-            t10_win_rate=(sum(1 for x in t10_valid if x > 0) / len(t10_valid)) if t10_valid else None,
-            t20_win_rate=(sum(1 for x in t20_valid if x > 0) / len(t20_valid)) if t20_valid else None,
-            t30_win_rate=(sum(1 for x in t30_valid if x > 0) / len(t30_valid)) if t30_valid else None,
-            t1_avg_return=(sum(t1_valid) / len(t1_valid)) if t1_valid else None,
-            t5_avg_return=(sum(t5_valid) / len(t5_valid)) if t5_valid else None,
-            t10_avg_return=(sum(t10_valid) / len(t10_valid)) if t10_valid else None,
-            t20_avg_return=(sum(t20_valid) / len(t20_valid)) if t20_valid else None,
-            t30_avg_return=(sum(t30_valid) / len(t30_valid)) if t30_valid else None,
+            t1_win_rate=_win_rate_or_none(t1_valid),
+            t3_win_rate=_win_rate_or_none(t3_valid),
+            t5_win_rate=_win_rate_or_none(t5_valid),
+            t10_win_rate=_win_rate_or_none(t10_valid),
+            t20_win_rate=_win_rate_or_none(t20_valid),
+            t30_win_rate=_win_rate_or_none(t30_valid),
+            t1_avg_return=_mean_or_none(t1_valid),
+            t5_avg_return=_mean_or_none(t5_valid),
+            t10_avg_return=_mean_or_none(t10_valid),
+            t20_avg_return=_mean_or_none(t20_valid),
+            t30_avg_return=_mean_or_none(t30_valid),
+            t1_sample_count=len(t1_valid),
+            t3_sample_count=len(t3_valid),
+            t5_sample_count=len(t5_valid),
+            t10_sample_count=len(t10_valid),
+            t20_sample_count=len(t20_valid),
+            t30_sample_count=len(t30_valid),
         )
         bucket_stats.append(stats)
         all_t1.extend(t1_valid)
@@ -261,15 +312,19 @@ def compute_calibration(
         lookback_days=lookback_days,
         total_samples=sum(b.sample_count for b in bucket_stats),
         buckets=bucket_stats,
-        overall_t1_win_rate=(sum(1 for x in all_t1 if x > 0) / len(all_t1)) if all_t1 else None,
-        overall_t5_win_rate=(sum(1 for x in all_t5 if x > 0) / len(all_t5)) if all_t5 else None,
-        overall_t10_win_rate=(sum(1 for x in all_t10 if x > 0) / len(all_t10)) if all_t10 else None,
-        overall_t20_win_rate=(sum(1 for x in all_t20 if x > 0) / len(all_t20)) if all_t20 else None,
-        overall_t30_win_rate=(sum(1 for x in all_t30 if x > 0) / len(all_t30)) if all_t30 else None,
-        overall_t5_avg_return=(sum(all_t5_returns) / len(all_t5_returns)) if all_t5_returns else None,
-        overall_t10_avg_return=(sum(all_t10_returns) / len(all_t10_returns)) if all_t10_returns else None,
-        overall_t20_avg_return=(sum(all_t20_returns) / len(all_t20_returns)) if all_t20_returns else None,
-        overall_t30_avg_return=(sum(all_t30_returns) / len(all_t30_returns)) if all_t30_returns else None,
+        overall_t1_win_rate=_win_rate_or_none(all_t1),
+        overall_t5_win_rate=_win_rate_or_none(all_t5),
+        overall_t10_win_rate=_win_rate_or_none(all_t10),
+        overall_t20_win_rate=_win_rate_or_none(all_t20),
+        overall_t30_win_rate=_win_rate_or_none(all_t30),
+        overall_t5_avg_return=_mean_or_none(all_t5_returns),
+        overall_t10_avg_return=_mean_or_none(all_t10_returns),
+        overall_t20_avg_return=_mean_or_none(all_t20_returns),
+        overall_t30_avg_return=_mean_or_none(all_t30_returns),
+        total_t5_samples=len(all_t5),
+        total_t10_samples=len(all_t10),
+        total_t20_samples=len(all_t20),
+        total_t30_samples=len(all_t30),
     )
 
 
@@ -302,7 +357,7 @@ def render_calibration_table(summary: CalibrationSummary) -> str:
     lines: list[str] = []
     lines.append(
         f"\n{Fore.CYAN}{Style.BRIGHT}═══ 置信度校准 (lookback={summary.lookback_days}d, "
-        f"样本={summary.total_samples}) ═══{Style.RESET_ALL}"
+        f"样本={summary.total_samples}, 其中 T+30 成熟={summary.total_t30_samples}) ═══{Style.RESET_ALL}"
     )
 
     if summary.total_samples == 0:

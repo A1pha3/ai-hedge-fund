@@ -72,6 +72,44 @@ def test_run_backtest_async_builds_results(monkeypatch):
     assert any(update["type"] == "backtest_result" for update in updates)
 
 
+def test_run_backtest_async_seeds_anchor_before_first_bar_not_on_it(monkeypatch):
+    """BH-001 drain (backend): the initial-capital seed must NOT share its Date
+    with the first backtest bar. ``run_backtest_async`` appends a real post-trade
+    snapshot for every date (including the first); seeding at ``dates[0]``
+    produced a duplicate Date index whose phantom intra-day ``pct_change``
+    distorted per-bar return attribution. The fix anchors the seed one calendar
+    day earlier so the Date index stays unique while ``iloc[0] == initial_capital``.
+    """
+    service = _build_service()
+    monkeypatch.setattr(service, "prefetch_data", lambda: None)
+    monkeypatch.setattr(
+        "app.backend.services.backtest_service.get_price_data",
+        lambda *_args, **_kwargs: pd.DataFrame([{"close": 110.0}]),
+    )
+
+    async def fake_run_graph_async(**_kwargs):
+        return {
+            "messages": [SimpleNamespace(content="ignored")],
+            "data": {"analyst_signals": {"technical": {"AAPL": {"signal": "bullish"}}}},
+        }
+
+    monkeypatch.setattr("app.backend.services.backtest_service.run_graph_async", fake_run_graph_async)
+    monkeypatch.setattr(
+        "app.backend.services.backtest_service.parse_hedge_fund_response",
+        lambda _content: {"AAPL": {"action": "buy", "quantity": 5}},
+    )
+
+    asyncio.run(service.run_backtest_async(progress_callback=lambda _u: None))
+
+    dates = [pd.Timestamp(p["Date"]) for p in service.portfolio_values]
+    # No duplicate Date — the bug produced seed{dates[0]} + bar{dates[0]}.
+    assert len(dates) == len(set(dates)), f"Duplicate Date index: {dates}"
+    # Seed (iloc[0]) is the initial capital anchor, dated before the first bar.
+    assert service.portfolio_values[0]["Portfolio Value"] == 10_000.0
+    first_bar = pd.Timestamp("2026-01-05")
+    assert pd.Timestamp(service.portfolio_values[0]["Date"]) < first_bar
+
+
 # ---------------------------------------------------------------------------
 # BUG B fix: calculate_portfolio_value must include margin_used
 # ---------------------------------------------------------------------------

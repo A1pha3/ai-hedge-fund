@@ -172,6 +172,70 @@ def test_compute_calibration_overall_stats():
     assert summary.overall_t5_avg_return == pytest.approx(0.5, abs=1e-3)
 
 
+def _make_record_full(
+    ticker: str,
+    score: float,
+    t1: float | None = None,
+    t3: float | None = None,
+    t5: float | None = None,
+    t10: float | None = None,
+    t20: float | None = None,
+    t30: float | None = None,
+    date: str = "20260601",
+) -> dict:
+    """Record builder supporting all horizons (for BH-002 maturity tests)."""
+    rec = _make_record(ticker, score, t1=t1, t3=t3, t5=t5, date=date)
+    rec["next_10day_return"] = t10
+    rec["next_20day_return"] = t20
+    rec["next_30day_return"] = t30
+    return rec
+
+
+def test_compute_calibration_matured_sample_counts_track_per_horizon_realized():
+    """BH-002: per-horizon matured sample counts must equal the number of
+    records that actually have a realized return at that horizon, not the
+    all-records ``sample_count``.
+
+    A freshly-recommended pick has no T+30 return yet; it must NOT inflate the
+    T+30 backing-sample denominator displayed next to the 30-day edge.
+    """
+    records = [
+        # 3 picks in 中高 bucket; only 1 has matured to T+30.
+        _make_record_full("000001", 0.75, t1=1.0, t5=2.0, t10=3.0, t20=4.0, t30=5.0),
+        _make_record_full("000002", 0.72, t1=0.5, t5=1.5, t10=None, t20=None, t30=None),  # immature at T+10+
+        _make_record_full("000003", 0.78, t1=-0.5, t5=None, t10=None, t20=None, t30=None),  # immature at T+5+
+    ]
+    summary = compute_calibration(records)
+    bucket = next(b for b in summary.buckets if "中高" in b.label)
+
+    # sample_count counts every record (the denominator that previously
+    # mislabeled T+30 stats).
+    assert bucket.sample_count == 3
+    # Matured counts must reflect realized returns per horizon.
+    assert bucket.t1_sample_count == 3   # all 3 have T+1
+    assert bucket.t5_sample_count == 2   # 000001 + 000002
+    assert bucket.t10_sample_count == 1  # only 000001
+    assert bucket.t20_sample_count == 1  # only 000001
+    assert bucket.t30_sample_count == 1  # only 000001 — the crux of BH-002
+
+
+def test_compute_calibration_total_matured_samples_aggregate_across_buckets():
+    """BH-002: ``CalibrationSummary.total_t30_samples`` aggregates matured
+    T+30 counts across all buckets, so a 30-day-edge header can be attributed
+    to its true denominator instead of ``total_samples`` (all records)."""
+    records = [
+        _make_record_full("000001", 0.85, t30=5.0),   # 高 bucket, mature T+30
+        _make_record_full("000002", 0.82, t30=None),  # 高 bucket, immature
+        _make_record_full("000003", 0.45, t30=-2.0),  # 低 bucket, mature T+30
+        _make_record_full("000004", 0.42, t30=None),  # 低 bucket, immature
+    ]
+    summary = compute_calibration(records)
+    assert summary.total_samples == 4          # all records
+    assert summary.total_t30_samples == 2      # only 000001 + 000003 matured
+    assert summary.total_t20_samples == 0      # none have T+20
+    assert summary.total_t5_samples == 0       # none have T+5
+
+
 # ---------------------------------------------------------------------------
 # render_calibration_table
 # ---------------------------------------------------------------------------

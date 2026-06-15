@@ -14,7 +14,7 @@
 
 ### 1. LLM 数据可信度存在实证风险
 
-- **现象**：仓库根目录存在专门的排查脚本 `debug_data_analysis.py` 与修复脚本 `fix_agent_prompts.py`
+- **现象**：仓库根目录曾存在专门的排查脚本 `debug_data_analysis.py` 与修复脚本 `fix_agent_prompts.py`（两者均已移除；其沉淀的“不编造数据”规则现统一维护在 `src/agents/prompt_rules.py`）
 - **含义**：这不是推测，而是项目历史上已经出现过 agent 产出与真实数据不一致的问题
 - **风险**：
   - 生成虚假的财务指标、估值依据、交易理由

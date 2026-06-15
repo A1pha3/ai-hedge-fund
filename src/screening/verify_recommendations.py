@@ -207,7 +207,11 @@ def _extract_tracking_returns(tracking: list[dict[str, Any]], ticker: str, rec_d
     return None, None, None, None, None, None
 
 
-def _compute_benchmark_returns(tracking: list[dict[str, Any]], rec_date: str) -> float | None:
+def _compute_benchmark_returns(
+    tracking: list[dict[str, Any]],
+    rec_date: str,
+    basket_tickers: set[str] | None = None,
+) -> float | None:
     """Compute the *recommended-basket* average T+1 return on a date.
 
     NOTE (BETA-009): this is the picks' own cross-section mean, used as a
@@ -216,10 +220,21 @@ def _compute_benchmark_returns(tracking: list[dict[str, Any]], rec_date: str) ->
     not claim a market index. A true 沪深300 benchmark requires live index
     data which is out of scope for this offline-verify path; the label was
     previously misleading.
+
+    BH-004: when ``basket_tickers`` is provided, only tracking entries whose
+    ticker is in the current report's basket are averaged. Previously every
+    tracking entry with ``recommended_date == rec_date`` was averaged, so if
+    the report's Top-N was trimmed/re-ranked relative to the tracked universe,
+    the "benchmark" and the per-day basket mean were computed over different
+    ticker sets on the same day — breaking the structural identity
+    ``excess_return ≡ 0`` for a reason unrelated to edge (Top-N trimming noise,
+    not alpha). Restricting to the same basket restores the identity.
     """
     t1_returns: list[float] = []
     for entry in tracking:
         if str(entry.get("recommended_date", "")) != rec_date:
+            continue
+        if basket_tickers is not None and str(entry.get("ticker", "")) not in basket_tickers:
             continue
         t1 = _optional_float(entry.get("next_day_return"))
         if t1 is not None and -50.0 <= t1 <= 50.0:
@@ -388,7 +403,11 @@ def compute_verify_recommendations(
 
         # Recommended-basket average T+1 (reference point, NOT a market index —
         # see _compute_benchmark_returns docstring / BETA-009).
-        benchmark_t1 = _compute_benchmark_returns(tracking, rec_date)
+        # BH-004: restrict the benchmark to the same basket as the per-day mean
+        # so excess_return ≡ 0 holds structurally (no Top-N trimming noise).
+        benchmark_t1 = _compute_benchmark_returns(
+            tracking, rec_date, basket_tickers=set(day_tickers)
+        )
         avg_day_t1 = _mean_or_none(day_t1)
         if benchmark_t1 is not None:
             benchmark_t1_values.append(benchmark_t1)

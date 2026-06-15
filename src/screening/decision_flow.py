@@ -205,8 +205,15 @@ def run_decision_flow(
         t30_str = f"{float(t30):+.2f}%" if isinstance(t30, (int, float)) else "—"
         t30_wr = (best.get("win_rates") or {}).get("t30")
         t30_wr_str = f"{float(t30_wr):.0%}" if isinstance(t30_wr, (int, float)) else "—"
+        # BH-002 drain: attribute the T+30 stat to its matured-sample denominator,
+        # not the all-records ``bucket_sample_count``. A freshly-recommended
+        # batch inflates the all-records count without contributing to the T+30
+        # estimate, so the displayed backing sample was misleading.
+        sample_all = int(best.get("bucket_sample_count", 0) or 0)
+        sample_t30_mature = int(best.get("bucket_t30_mature_count", 0) or 0)
+        sample_str = f"样本={sample_all}(T30熟={sample_t30_mature})"
         print(
-            f"  Top investable: {best.get('ticker', '?')} (composite={float(best.get('composite_score', 0.0)):+.3f}, T+30={t30_str}, 胜率={t30_wr_str}, 样本={int(best.get('bucket_sample_count', 0) or 0)})"
+            f"  Top investable: {best.get('ticker', '?')} (composite={float(best.get('composite_score', 0.0)):+.3f}, T+30={t30_str}, 胜率={t30_wr_str}, {sample_str})"
         )
     print(f"  Completed in {elapsed:.1f}s")
 

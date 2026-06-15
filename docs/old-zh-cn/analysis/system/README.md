@@ -43,7 +43,7 @@
 
 ## 最高优先级修复清单（Top 10）
 
-1. 🔴 **LLM 数据伪造** — agents 产生虚假交易信号，见 `debug_data_analysis.py:82`
+1. 🔴 **LLM 数据伪造** — agents 产生虚假交易信号（历史排查脚本 `debug_data_analysis.py` 已移除，不编造规则现沉淀在 `src/agents/prompt_rules.py`）
 2. 🔴 **路径遍历漏洞** — `app/backend/routes/storage.py` 未验证文件名
 3. 🔴 **JWT 密钥不安全** — 未设置环境变量时使用硬编码默认密钥
 4. 🔴 **AUTH_DISABLED 绕过** — 环境变量可完全绕过认证

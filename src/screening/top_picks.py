@@ -306,7 +306,14 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
     avg_edge = sum(edges) / len(edges)
     avg_winrate = sum(winrates) / len(winrates) if winrates else 0.0
     edge_color = Fore.GREEN if avg_edge > 0 else Fore.RED if avg_edge < 0 else Fore.WHITE
-    wr_color = Fore.GREEN if avg_winrate >= 0.55 else Fore.YELLOW if avg_winrate >= 0.45 else Fore.RED
+    # Win-rate color thresholds must match the canonical thresholds used
+    # everywhere else in the front door (e.g. _render_hit_rate_summary line ~183
+    # and the BUY verdict gate which requires t30_win_rate >= 0.55). The
+    # previous 0.45 yellow band was an inconsistent outlier: a BUY portfolio
+    # (every pick >= 0.55) could never reach it, yet a future verdict-gate
+    # change would silently surface a "good enough" yellow on picks that fail
+    # the BUY bar elsewhere. Align to 0.50. See BH-003.
+    wr_color = Fore.GREEN if avg_winrate >= 0.55 else Fore.YELLOW if avg_winrate >= 0.50 else Fore.RED
 
     return (
         f"  {Fore.WHITE}组合 T+30 预期:{Style.RESET_ALL} "

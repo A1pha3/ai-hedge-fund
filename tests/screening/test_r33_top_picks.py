@@ -94,6 +94,22 @@ class TestRenderPortfolioExpectedReturn:
         assert result != ""
         assert Fore.RED in result
 
+    def test_winrate_below_half_uses_red_not_yellow(self, all_buy) -> None:
+        """BH-003: win rate in [0.45, 0.50) must be RED, not YELLOW.
+
+        The portfolio-summary win-rate color previously used a 0.45 yellow
+        threshold that was inconsistent with every other win-rate display in
+        the front door (the hit-rate panel at line ~183 and the BUY verdict
+        gate both use 0.50 for yellow / 0.55 for green). A 47% portfolio
+        win-rate would have rendered yellow here while failing the BUY bar
+        elsewhere. Aligned to 0.50 so the front door speaks with one voice.
+        """
+        picks = [_pick(ticker="000001", t30_wr=0.46), _pick(ticker="000002", t30_wr=0.48)]
+        result = _render_portfolio_expected_return(picks, "normal")
+        assert result != ""
+        assert Fore.RED in result
+        assert Fore.YELLOW not in result
+
     def test_buy_picks_are_equal_weighted(self, all_buy) -> None:
         """BUY picks are equal-weighted in the portfolio average.
 

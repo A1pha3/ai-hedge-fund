@@ -248,11 +248,13 @@ def rank_recommendations_by_investability(
         if expected is not None:
             merged["bucket_label"] = expected.bucket_label
             merged["bucket_sample_count"] = expected.bucket_sample_count
+            merged["bucket_t30_mature_count"] = expected.bucket_t30_mature_count
             merged["expected_returns"] = dict(expected.expected_returns)
             merged["win_rates"] = dict(expected.win_rates)
         else:
             merged["bucket_label"] = "未知"
             merged["bucket_sample_count"] = 0
+            merged["bucket_t30_mature_count"] = 0
             merged["expected_returns"] = {}
             merged["win_rates"] = {}
 

@@ -30,8 +30,9 @@ def _make_bucket(
     t10_wr: float | None = 0.58,
     t20_wr: float | None = 0.57,
     t30_wr: float | None = 0.56,
+    t30_mature: int | None = None,
 ) -> ScoreBucketStats:
-    return ScoreBucketStats(
+    bucket = ScoreBucketStats(
         label=label,
         score_low=low,
         score_high=high,
@@ -47,10 +48,14 @@ def _make_bucket(
         t20_avg_return=t20_ret,
         t30_avg_return=t30_ret,
     )
+    # BH-002: default matured T+30 count to the all-records count unless a
+    # smaller matured subset is explicitly requested (simulating immature picks).
+    bucket.t30_sample_count = n if t30_mature is None else t30_mature
+    return bucket
 
 
 def _make_calibration() -> CalibrationSummary:
-    return CalibrationSummary(
+    summary = CalibrationSummary(
         lookback_days=60,
         total_samples=200,
         buckets=[
@@ -61,6 +66,10 @@ def _make_calibration() -> CalibrationSummary:
             _make_bucket("低 (<0.5)", -1.01, 0.5, 30, t5_ret=-2.0, t10_ret=-3.5),
         ],
     )
+    # Default: all records matured (matches the all-records assumption the
+    # existing tests were written against before BH-002 surfaced maturity).
+    summary.total_t30_samples = sum(b.t30_sample_count for b in summary.buckets)
+    return summary
 
 
 def _make_rec(ticker: str, score_b: float) -> dict:
@@ -175,6 +184,64 @@ class TestComputeExpectedReturns:
         assert len(report.items) == 1
         assert report.items[0].bucket_label == "未知"
         assert report.items[0].bucket_sample_count == 0
+
+    @patch("src.screening.expected_return._load_tracking_records")
+    @patch("src.screening.expected_return.compute_calibration")
+    def test_mature_t30_samples_propagated_to_report(self, mock_calib: object, mock_records: object) -> None:
+        """BH-002: ``ExpectedReturnReport.mature_t30_samples`` must reflect the
+        calibration's matured-T+30 total, not the all-records ``total_samples``.
+
+        A freshly-recommended batch has no realized T+30 returns yet; it must
+        not inflate the 30-day-edge backing-sample count shown to users.
+        """
+        mock_records.return_value = [{"dummy": True}]
+        # 高 bucket: 40 records, but only 10 matured to T+30 (rest immature).
+        calib = CalibrationSummary(
+            lookback_days=60,
+            total_samples=120,
+            total_t30_samples=25,
+            buckets=[
+                _make_bucket("高 (>0.8)", 0.8, 1.01, 40, t30_mature=10),
+                _make_bucket("中高 (0.7-0.8)", 0.7, 0.8, 50, t30_mature=15),
+            ],
+        )
+        mock_calib.return_value = calib
+
+        recs = [_make_rec("000001", 0.85)]  # 高 bucket
+        report = compute_expected_returns(recommendations=recs, lookback_days=60)
+
+        # Report-level: matured T+30 denominator is 25, not 120.
+        assert report.total_samples == 120
+        assert report.mature_t30_samples == 25
+        # Item-level: 高 bucket's T+30 stat is backed by 10 matured, not 40.
+        high = report.items[0]
+        assert high.bucket_sample_count == 40
+        assert high.bucket_t30_mature_count == 10
+
+    @patch("src.screening.expected_return._load_tracking_records")
+    @patch("src.screening.expected_return.compute_calibration")
+    def test_compact_render_attributes_t30_to_matured_denominator(self, mock_calib: object, mock_records: object) -> None:
+        """BH-002: compact render must show the matured T+30 count next to the
+        30-day edge, so users see how much actually backs the number."""
+        mock_records.return_value = [{"dummy": True}]
+        calib = CalibrationSummary(
+            lookback_days=60,
+            total_samples=120,
+            total_t30_samples=25,
+            buckets=[_make_bucket("高 (>0.8)", 0.8, 1.01, 40, t30_mature=10)],
+        )
+        mock_calib.return_value = calib
+
+        recs = [_make_rec("000001", 0.85)]
+        report = compute_expected_returns(recommendations=recs, lookback_days=60)
+        text = render_expected_returns_compact(report)
+
+        # Header attributes the 30-day edge to BOTH counts.
+        assert "120 条历史" in text
+        assert "25 条已满 30 天" in text
+        # Row shows matured T+30 count (10), not the all-records count (40).
+        assert "T30熟=10" in text
+        assert "样本=40" in text
 
 
 class TestRenderExpectedReturns:

@@ -390,3 +390,81 @@ def test_update_daily_performance_metrics_updates_with_three_points(monkeypatch)
 
     assert len(compute_calls) == 1
     assert engine._performance_metrics["sharpe_ratio"] == 1.23
+
+
+def test_prepare_run_dates_seeds_anchor_before_first_bar_not_on_it(monkeypatch):
+    """BH-001: the initial-capital seed must NOT share its Date with the first
+    backtest bar. Previously the seed was labelled ``dates[0]`` and the run loop
+    also appended a real post-trade point for ``dates[0]``, producing a
+    duplicate Date index whose phantom intra-day ``pct_change`` distorted
+    per-bar return attribution and left ``max_drawdown_date`` / frontend
+    rendering with a non-unique index.
+
+    The fix anchors the seed at ``dates[0] - 1 calendar day``: ``iloc[0]``
+    stays ``initial_capital`` (total_return unchanged) while the Date index is
+    unique. This test pins that invariant so a regression is caught.
+    """
+    engine = BacktestEngine(
+        agent=dummy_agent,
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        model_name="m",
+        model_provider="p",
+        selected_analysts=["x"],
+        initial_margin_requirement=0.0,
+        backtest_mode="agent",
+    )
+    fixed_dates = pd.DatetimeIndex(
+        [pd.Timestamp("2024-03-04"), pd.Timestamp("2024-03-05")]
+    )
+    monkeypatch.setattr(engine, "_iter_backtest_dates", lambda: fixed_dates)
+    # Fresh run (no checkpoint) → seed path under test.
+    monkeypatch.setattr(engine, "_load_checkpoint", lambda: (None, None))
+
+    returned_dates, _ = engine._prepare_run_dates_and_plan()
+
+    assert len(engine._portfolio_values) == 1
+    seed = engine._portfolio_values[0]
+    seed_date = pd.Timestamp(seed["Date"])
+    first_bar_date = fixed_dates[0]
+
+    # Seed value is the initial capital (total_return anchor unchanged).
+    assert seed["Portfolio Value"] == 100000.0
+    # Seed Date is strictly BEFORE the first bar — never on it (the bug).
+    assert seed_date < first_bar_date
+    # Returned dates are unaffected (the loop still processes every bar).
+    assert list(returned_dates) == list(fixed_dates)
+
+
+def test_agent_mode_run_produces_unique_date_index(monkeypatch):
+    """BH-001 drain: a fresh agent-mode run must yield a portfolio_values series
+    with a unique Date index. Before the fix the seed shared ``dates[0]`` with
+    the first real bar, so the index had a duplicate."""
+    engine = BacktestEngine(
+        agent=dummy_agent,
+        tickers=["AAPL"],
+        start_date="2024-03-01",
+        end_date="2024-03-05",
+        initial_capital=100000.0,
+        model_name="m",
+        model_provider="p",
+        selected_analysts=["x"],
+        initial_margin_requirement=0.0,
+        backtest_mode="agent",
+    )
+    # Seed via the production path under test.
+    fixed_dates = pd.DatetimeIndex([pd.Timestamp("2024-03-04"), pd.Timestamp("2024-03-05")])
+    monkeypatch.setattr(engine, "_iter_backtest_dates", lambda: fixed_dates)
+    monkeypatch.setattr(engine, "_load_checkpoint", lambda: (None, None))
+    engine._prepare_run_dates_and_plan()
+
+    monkeypatch.setattr(engine, "_load_current_prices", lambda *a, **k: {"AAPL": 100.0})
+    # Let _append_daily_state run for real so real bars get appended.
+
+    engine._run_agent_mode(fixed_dates)
+
+    dates = [pd.Timestamp(p["Date"]) for p in engine._portfolio_values]
+    # Seed + one bar per processed date => no duplicate Date.
+    assert len(dates) == len(set(dates)), f"Duplicate Date index: {dates}"

@@ -255,7 +255,20 @@ class BacktestService:
 
         dates = pd.date_range(self.start_date, self.end_date, freq="B")
         performance_metrics = create_performance_metrics()
-        self.portfolio_values = [{"Date": dates[0], "Portfolio Value": self.initial_capital}] if len(dates) > 0 else []
+        # Seed the initial-capital anchor at the calendar day BEFORE the first
+        # backtest bar; the run loop appends a real post-trade snapshot for
+        # every date (including dates[0]). Seeding at dates[0] itself produced a
+        # duplicate Date index (phantom intra-day pct_change, non-unique index
+        # for max_drawdown_date / frontend rendering). Anchoring one day earlier
+        # keeps iloc[0] == initial_capital (total_return unchanged) with a unique
+        # Date index. Mirrors src/backtesting/engine.py _prepare_run_dates_and_plan
+        # (BH-001 drain).
+        if len(dates) > 0:
+            self.portfolio_values = [
+                {"Date": dates[0] - pd.Timedelta(days=1), "Portfolio Value": self.initial_capital}
+            ]
+        else:
+            self.portfolio_values = []
         backtest_results: list[dict[str, Any]] = []
 
         for current_step, current_date in enumerate(dates, start=1):

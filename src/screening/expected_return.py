@@ -56,6 +56,11 @@ class ExpectedReturn:
     bucket_sample_count: int
     expected_returns: dict[str, float | None]  # horizon → expected return pct
     win_rates: dict[str, float | None]  # horizon → win rate
+    # Records in this bucket old enough to have a realized 30-day return.
+    # ``bucket_sample_count`` counts every record; the T+30 edge/胜率 come from
+    # this smaller matured subset. Surfacing both lets users judge how much the
+    # 30-day stat actually backs. See BH-002.
+    bucket_t30_mature_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +68,7 @@ class ExpectedReturn:
             "score_b": round(self.score_b, 4),
             "bucket_label": self.bucket_label,
             "bucket_sample_count": self.bucket_sample_count,
+            "bucket_t30_mature_count": self.bucket_t30_mature_count,
             "expected_returns": {k: round(v, 4) if v is not None else None for k, v in self.expected_returns.items()},
             "win_rates": {k: round(v, 4) if v is not None else None for k, v in self.win_rates.items()},
         }
@@ -76,12 +82,20 @@ class ExpectedReturnReport:
     lookback_days: int
     total_samples: int
     items: list[ExpectedReturn] = field(default_factory=list)
+    # Records old enough to have a realized 30-day return. ``total_samples``
+    # counts every recommendation in the lookback window regardless of
+    # maturity, so the long-horizon (T+30) edge must be attributed to this
+    # smaller, matured denominator — otherwise a freshly-recommended batch
+    # inflates the displayed backing-sample count for a stat it cannot yet
+    # contribute to. See BH-002.
+    mature_t30_samples: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "trade_date": self.trade_date,
             "lookback_days": self.lookback_days,
             "total_samples": self.total_samples,
+            "mature_t30_samples": self.mature_t30_samples,
             "items": [item.to_dict() for item in self.items],
         }
 
@@ -128,6 +142,16 @@ def _build_bucket_sample_map(calibration: CalibrationSummary) -> dict[str, int]:
     return {bucket.label: bucket.sample_count for bucket in calibration.buckets}
 
 
+def _build_bucket_mature_t30_map(calibration: CalibrationSummary) -> dict[str, int]:
+    """Build a mapping from bucket label → matured T+30 sample count.
+
+    ``bucket.sample_count`` counts every record; this counts only records with
+    a realized 30-day return, so a per-row T+30 stat can be attributed to its
+    true denominator instead of the larger all-records count. See BH-002.
+    """
+    return {bucket.label: bucket.t30_sample_count for bucket in calibration.buckets}
+
+
 def compute_expected_returns(
     *,
     recommendations: list[dict[str, Any]],
@@ -150,6 +174,7 @@ def compute_expected_returns(
     return_map = _build_bucket_return_map(calibration)
     winrate_map = _build_bucket_winrate_map(calibration)
     sample_map = _build_bucket_sample_map(calibration)
+    mature_t30_map = _build_bucket_mature_t30_map(calibration)
 
     trade_date = ""
     items: list[ExpectedReturn] = []
@@ -182,6 +207,7 @@ def compute_expected_returns(
                 bucket_sample_count=sample_map.get(label, 0),
                 expected_returns=return_map.get(label, {h: None for h in HORIZONS}),
                 win_rates=winrate_map.get(label, {h: None for h in HORIZONS}),
+                bucket_t30_mature_count=mature_t30_map.get(label, 0),
             )
         )
 
@@ -189,6 +215,7 @@ def compute_expected_returns(
         trade_date=trade_date,
         lookback_days=lookback_days,
         total_samples=calibration.total_samples,
+        mature_t30_samples=calibration.total_t30_samples,
         items=items,
     )
 
@@ -236,16 +263,17 @@ def render_expected_returns(report: ExpectedReturnReport) -> str:
 
     lines = [
         f"\n{Fore.CYAN}📊 预期收益估算{Style.RESET_ALL}",
-        f"  基于最近 {report.lookback_days} 天 {report.total_samples} 条历史推荐",
+        f"  基于最近 {report.lookback_days} 天 {report.total_samples} 条历史推荐"
+        f" (其中 {report.mature_t30_samples} 条已有 T+30 实际收益)",
         "",
-        f"  {'标的':<8} {'Score':>6} {'分位':>10} {'样本':>4}  {'T+1':>8}  {'T+5':>8}  {'T+10':>8}  {'T+20':>9}  {'T+30':>9}",
-        f"  {'─' * 8} {'─' * 6} {'─' * 10} {'─' * 4}  {'─' * 8}  {'─' * 8}  {'─' * 8}  {'─' * 9}  {'─' * 9}",
+        f"  {'标的':<8} {'Score':>6} {'分位':>10} {'样本':>4} {'T30熟':>5}  {'T+1':>8}  {'T+5':>8}  {'T+10':>8}  {'T+20':>9}  {'T+30':>9}",
+        f"  {'─' * 8} {'─' * 6} {'─' * 10} {'─' * 4} {'─' * 5}  {'─' * 8}  {'─' * 8}  {'─' * 8}  {'─' * 9}  {'─' * 9}",
     ]
 
     for item in report.items:
         er = item.expected_returns
         row = (
-            f"  {item.ticker:<8} {item.score_b:>6.3f} {item.bucket_label:>10} {item.bucket_sample_count:>4}"
+            f"  {item.ticker:<8} {item.score_b:>6.3f} {item.bucket_label:>10} {item.bucket_sample_count:>4} {item.bucket_t30_mature_count:>5}"
             f"  {_fmt_return(er.get('t1')):>18}"
             f"  {_fmt_return(er.get('t5')):>18}"
             f"  {_fmt_return(er.get('t10')):>18}"
@@ -255,7 +283,11 @@ def render_expected_returns(report: ExpectedReturnReport) -> str:
         lines.append(row)
 
     lines.append("")
-    lines.append(f"  {Fore.WHITE}说明: 预期收益 = 历史同 score 分位的平均实际收益。仅供参考。{Style.RESET_ALL}")
+    lines.append(
+        f"  {Fore.WHITE}说明: 预期收益 = 历史同 score 分位的平均实际收益。"
+        f"「样本」为该分位全部历史推荐数;「T30熟」为其中已满 30 天、"
+        f"实际贡献 T+30 统计的成熟样本数。仅供参考。{Style.RESET_ALL}"
+    )
     return "\n".join(lines)
 
 
@@ -264,15 +296,17 @@ def render_expected_returns_compact(report: ExpectedReturnReport) -> str:
     if not report.items:
         return "无预期收益数据"
 
-    # Long-horizon emphasis for 30-day stock selection
-    lines = [f"  30天 edge (基于 {report.total_samples} 条历史):"]
+    # Long-horizon emphasis for 30-day stock selection. Attribute the T+30
+    # stat to its matured-sample denominator (BH-002), not the all-records
+    # ``bucket_sample_count``, so users see how much actually backs the number.
+    lines = [f"  30天 edge (基于 {report.total_samples} 条历史, 其中 {report.mature_t30_samples} 条已满 30 天):"]
     for item in report.items[:5]:
         er = item.expected_returns
         t20 = _fmt_return(er.get("t20"))
         t30 = _fmt_return(er.get("t30"))
         wr_str = _fmt_winrate(item.win_rates.get("t30"))
         lines.append(
-            f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}  T+20={t20}  T+30={t30}  T+30胜率={wr_str}"
+            f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}  T+30胜率={wr_str}"
         )
 
     return "\n".join(lines)

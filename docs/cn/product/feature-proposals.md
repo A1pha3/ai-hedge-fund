@@ -98,6 +98,7 @@
 | R32 | P1 | ✅ | **前门一句话理由 + 风险标签** | `--top-picks` 每只推荐追加一行：`理由: 动量+行业共振 | 风险: 中(ATR 4.2%)`。复用 R15 因子归因（Top-2 因子→中文标签）+ R8 ATR（→ 低/中/高风险等级，阈值 3%/5%）。重构 `_render_stop_loss_take_profit` 提取 `_compute_pick_risk_advice`（R8+R32 共享一次取数）。14 个回归测试。 |
 | R33 | P2 | ✅ | **前门组合预期收益汇总行** | `--top-picks` 底部追加一行：`组合 T+30 预期: +3.2% (加权) | 平均胜率: 58% | BUY 数: 4`。复用 `expected_return.py` 的 T+30 edge，对所有 BUY 等权平均（BUY 门控已要求 `bucket_sample_count >= 20`，低样本票不会进入 BUY 聚合，故无需额外降权），仅当 ≥2 只 BUY 时展示。回归测试含「低样本票永远不可能 BUY」守卫，防止未来 verdict 门控变更静默破坏等权假设。 |
 | R34 | P3 | ✅ | **前门 decision-flow 升级提示** | `--top-picks` 底部追加一行：`💡 深度分析（阈值/一致性/逐因子明细）请运行 --decision-flow`。落实 Round 6 调研发现 1（round6-product-analysis.md:15）：前门已覆盖新鲜度/verdict/T+30/因子归因/止损，power-user 的深度链路需显式指引而非让用户两个命令都跑。服务于「避免前门分裂」目标。 |
+| R35 | P1 | ✅ | **T+30 样本成熟度归因诚实化** | 前门/决策流/校准的 30 天 edge 旁的"样本"数此前用 `bucket_sample_count`（桶内全部历史推荐，含尚未满 30 天的未成熟记录），误导用户以为 T+30 数字由全量样本背书。新增 per-horizon 成熟样本计数字段（`tN_sample_count` / `total_t30_samples` / `bucket_t30_mature_count`），所有展示 T+30 edge/胜率 的位置（`--top-picks`、`--decision-flow`、`--expected-returns`、`--confidence-calibration`）改为同时显示"全部样本"与"T+30 成熟样本"，让用户判断 30 天统计的真实可信度。服务于"更高确信"目标。 |
 
 > 各已完成项的实现级设计细节（现状 / 方案 / 收益）已归档到 [`changelog/completed-roadmap-phases.md` §五](./changelog/completed-roadmap-phases.md#五r8-r33-前门信息密度设计细节归档)，主文档仅保留上表的一句话价值结论，避免历史实现细节淹没当前目标（见 §六维护规则 #2）。
 
