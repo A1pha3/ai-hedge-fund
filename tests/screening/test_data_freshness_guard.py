@@ -12,6 +12,7 @@ import pytest
 from src.screening.data_freshness_guard import (
     _days_between,
     _normalize_date,
+    _render_freshness_summary,
     apply_freshness_confidence_penalty,
     check_data_freshness,
 )
@@ -140,3 +141,26 @@ class TestApplyFreshnessConfidencePenalty:
         freshness = {"fresh": False, "warnings": [{"severity": "HIGH"}]}
         result = apply_freshness_confidence_penalty([], freshness)
         assert result == []
+
+
+class TestRenderFreshnessSummary:
+    def test_fresh_summary_text(self) -> None:
+        summary = _render_freshness_summary(True, [])
+        assert "通过" in summary
+
+    def test_stale_summary_shows_max_30_percent_penalty(self) -> None:
+        """Regression: the summary line must state the real max penalty (30%),
+        not the confused '70%' that (1.0-0.3)*100 produced.
+        HIGH severity → confidence × 0.7 → at most 30% loss."""
+        warnings = [
+            {
+                "severity": "HIGH",
+                "label": "行情数据",
+                "latest_date": "2026-06-10",
+                "stale_days": 3,
+                "max_stale_days": 1,
+            }
+        ]
+        summary = _render_freshness_summary(False, warnings)
+        assert "最高 30%" in summary
+        assert "70%" not in summary

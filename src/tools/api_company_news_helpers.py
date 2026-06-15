@@ -60,7 +60,10 @@ def fetch_remote_company_news(make_api_request, ticker: str, end_date: str, star
         if not start_date or len(company_news) < limit:
             break
 
-        current_end_date = min(news.date for news in company_news if news.date).split("T")[0]
+        dates = [news.date for news in company_news if news.date]
+        if not dates:
+            break
+        current_end_date = min(dates).split("T")[0]
         if current_end_date <= start_date:
             break
 

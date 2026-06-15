@@ -43,8 +43,9 @@ def news_date_in_range(pub_time: str, start_date: str | None, end_date: str | No
             return False
         if start_date and news_date < start_date:
             return False
-    except (ValueError, IndexError):
-        return True
+    except (TypeError, AttributeError):
+        # pub_time is None or not a string — exclude unparseable dates
+        return False
     return True
 
 
@@ -162,7 +163,7 @@ def is_news_relevant_to_stock(title: str, content: str, ticker: str, stock_name:
 
     if content:
         content_sample = content[:300]
-        digit_count = sum(1 for char in content_sample if char.isdigit() or char in ". -")
+        digit_count = sum(1 for char in content_sample if char.isdigit() or char in ".-")
         if len(content_sample) > 0 and digit_count / len(content_sample) > 0.5 and stock_name and stock_name not in content_sample[:100]:
             return False
 

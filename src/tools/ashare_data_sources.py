@@ -88,7 +88,7 @@ class TushareDataSource(BaseDataSource):
 
             df = _cached_tushare_dataframe_call(cls._pro, "daily", ts_code=ts_code, start_date=start_date_fmt, end_date=end_date_fmt)
 
-            if df.empty:
+            if df is None or df.empty:
                 raise DataSourceError(f"Tushare 返回空数据: {ticker}")
 
             prices = []

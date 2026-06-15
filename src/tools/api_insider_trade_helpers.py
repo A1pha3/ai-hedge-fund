@@ -53,7 +53,10 @@ def fetch_remote_insider_trades(make_api_request, ticker: str, end_date: str, st
         if not start_date or len(insider_trades) < limit:
             break
 
-        current_end_date = min(trade.filing_date for trade in insider_trades if trade.filing_date).split("T")[0]
+        dates = [trade.filing_date for trade in insider_trades if trade.filing_date]
+        if not dates:
+            break
+        current_end_date = min(dates).split("T")[0]
         if current_end_date <= start_date:
             break
 
