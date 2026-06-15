@@ -260,6 +260,10 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
     weighted_edge = 0.0
     weighted_winrate = 0.0
     total_weight = 0.0
+    # Win-rate may be absent on some picks even when the T+30 edge is present
+    # (different calibration fields).  Track its own denominator so the average
+    # is not diluted by picks that have no win-rate data.
+    total_winrate_weight = 0.0
     for item in buy_picks:
         t30 = (item.get("expected_returns") or {}).get("t30")
         t30_wr = (item.get("win_rates") or {}).get("t30")
@@ -268,15 +272,16 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
         sample_count = int(item.get("bucket_sample_count", 0) or 0)
         weight = 0.5 if sample_count < _LOW_SAMPLE_THRESHOLD else 1.0
         weighted_edge += float(t30) * weight
+        total_weight += weight
         if isinstance(t30_wr, (int, float)):
             weighted_winrate += float(t30_wr) * weight
-        total_weight += weight
+            total_winrate_weight += weight
 
     if total_weight <= 0:
         return ""
 
     avg_edge = weighted_edge / total_weight
-    avg_winrate = weighted_winrate / total_weight
+    avg_winrate = weighted_winrate / total_winrate_weight if total_winrate_weight > 0 else 0.0
     edge_color = Fore.GREEN if avg_edge > 0 else Fore.RED if avg_edge < 0 else Fore.WHITE
     wr_color = Fore.GREEN if avg_winrate >= 0.55 else Fore.YELLOW if avg_winrate >= 0.45 else Fore.RED
 
@@ -345,23 +350,6 @@ def _render_market_opportunity_index(
 # ---------------------------------------------------------------------------
 # R8: Stop-loss / take-profit from conditional order advisor
 # ---------------------------------------------------------------------------
-
-
-def _render_stop_loss_take_profit(
-    ticker: str,
-    name: str,
-    *,
-    trade_date: str,
-) -> str:
-    """R8: Compute and render ATR-based stop-loss/take-profit for a single ticker.
-
-    Fetches price history via tushare, computes ATR, and returns a compact
-    one-line summary.  Returns empty string on any failure (best-effort).
-    """
-    advice = _compute_pick_risk_advice(ticker, name, trade_date=trade_date)
-    if advice is None:
-        return ""
-    return _format_stop_loss_take_profit(advice)
 
 
 def _format_stop_loss_take_profit(advice) -> str:

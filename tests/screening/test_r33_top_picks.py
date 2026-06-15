@@ -112,6 +112,26 @@ class TestRenderPortfolioExpectedReturn:
         result = _render_portfolio_expected_return(picks, "normal")
         assert result == ""
 
+    def test_partial_winrate_not_diluted_by_missing(self, all_buy) -> None:
+        """Regression: a BUY with T+30 edge but no T+30 win-rate must not
+        inflate the win-rate denominator.
+
+        Before the fix, ``total_weight`` accumulated for every pick with a
+        valid ``t30`` edge, but ``weighted_winrate`` only accumulated for
+        picks that *also* had ``t30_wr``.  Dividing the partial sum by the
+        full weight showed a misleadingly low average win-rate (29% instead
+        of 58%), undermining the "更高确信" front-door goal.
+        """
+        picks = [
+            _pick(ticker="000001", t30=3.0, t30_wr=0.58, sample_count=30),
+            _pick(ticker="000002", t30=5.0, t30_wr=None, sample_count=30),
+        ]
+        result = _render_portfolio_expected_return(picks, "normal")
+        assert result != ""
+        # Correct: only pick 000001 has win-rate → average is 58%, not 29%.
+        assert "58%" in result
+        assert "29%" not in result
+
     def test_thresholds_are_sane(self) -> None:
         assert _PORTFOLIO_SUMMARY_MIN_BUYS >= 2
         assert _LOW_SAMPLE_THRESHOLD > 0

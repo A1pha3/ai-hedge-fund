@@ -837,18 +837,27 @@ class TestMarketOpportunityIndex:
 
 
 class TestStopLossTakeProfit:
-    """R8: _render_stop_loss_take_profit — best-effort ATR stop-loss/take-profit."""
+    """R8/R32: _compute_pick_risk_advice — best-effort ATR advice shared by
+    stop-loss rendering (R8) and reason+risk label (R32).
 
-    def test_no_prices_returns_empty(self) -> None:
-        from src.screening.top_picks import _render_stop_loss_take_profit
+    The dead ``_render_stop_loss_take_profit`` wrapper was removed after the
+    R32 refactor made ``_print_pick_entry_details`` call
+    ``_compute_pick_risk_advice`` + ``_format_stop_loss_take_profit`` directly;
+    these tests now exercise the real production function.
+    """
+
+    def test_no_prices_returns_none(self) -> None:
+        from src.screening.top_picks import _compute_pick_risk_advice
 
         with patch("src.tools.tushare_api.get_ashare_prices_with_tushare", return_value=[]):
-            result = _render_stop_loss_take_profit("300750", "宁德时代", trade_date="20260610")
-            assert result == ""
+            assert _compute_pick_risk_advice("300750", "宁德时代", trade_date="20260610") is None
 
-    def test_valid_prices_renders_output(self) -> None:
+    def test_valid_prices_returns_advice(self) -> None:
         from src.data.models import Price
-        from src.screening.top_picks import _render_stop_loss_take_profit
+        from src.screening.top_picks import (
+            _compute_pick_risk_advice,
+            _format_stop_loss_take_profit,
+        )
 
         # Create mock price data with enough history for ATR
         prices = [
@@ -856,18 +865,18 @@ class TestStopLossTakeProfit:
             for i in range(20)
         ]
         with patch("src.tools.tushare_api.get_ashare_prices_with_tushare", return_value=prices):
-            result = _render_stop_loss_take_profit("300750", "宁德时代", trade_date="20260610")
-            assert "止损止盈" in result
-            assert "止损=" in result
-            assert "止盈=" in result
-            assert "盈亏比=" in result
+            advice = _compute_pick_risk_advice("300750", "宁德时代", trade_date="20260610")
+        assert advice is not None
+        rendered = _format_stop_loss_take_profit(advice)
+        assert "止损=" in rendered
+        assert "止盈=" in rendered
+        assert "盈亏比=" in rendered
 
-    def test_exception_returns_empty(self) -> None:
-        from src.screening.top_picks import _render_stop_loss_take_profit
+    def test_exception_returns_none(self) -> None:
+        from src.screening.top_picks import _compute_pick_risk_advice
 
         with patch("src.tools.tushare_api.get_ashare_prices_with_tushare", side_effect=Exception("boom")):
-            result = _render_stop_loss_take_profit("300750", "宁德时代", trade_date="20260610")
-            assert result == ""
+            assert _compute_pick_risk_advice("300750", "宁德时代", trade_date="20260610") is None
 
 
 # ---------------------------------------------------------------------------
