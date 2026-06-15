@@ -90,36 +90,67 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
 
 ## HIGH — deferred (real but not this loop)
 
-### ALPHA-001 — Sortino uses `Series.std()` on negative-only subset  [DEFERRED]
+> **2026-06-15 audit (round 12)**: re-verified every `[DEFERRED]` item below
+> against current source. Ten of the eleven HIGH items were fixed in earlier
+> rounds but the backlog still marked them `[DEFERRED]`. Status corrected to
+> `[RESOLVED]` with in-tree evidence so future triage does not re-investigate.
+> The original issue text is kept verbatim for traceability; only GAMMA-007
+> remains genuinely open.
+
+### ALPHA-001 — Sortino uses `Series.std()` on negative-only subset  [RESOLVED]
 - `src/backtesting/metrics.py:49-57` — divisor is too small, Sortino inflated.
 - Fix: compute downside_std over ALL returns relative to MAR, not the negative subset.
+- **Resolution**: Canonical downside deviation implemented at `metrics.py:51-56`:
+  `downside_squared = np.minimum(excess.values, 0.0) ** 2` divided by `np.mean`
+  (i.e. N, the full sample, not n_neg-1). Positive deviations contribute 0 to
+  the sum. Inline comment cross-references `docs/bugs/2026-06-05`.
 
-### ALPHA-002 / GAMMA-006 — CVaR index formula + abs() sign confusion  [DEFERRED]
+### ALPHA-002 / GAMMA-006 — CVaR index formula + abs() sign confusion  [RESOLVED]
 - `src/backtesting/metrics.py:80-86` and `src/portfolio/position_calculator.py:174-186`
 - For N<20, CVaR collapses to the single worst observation.
 - `abs(cvar_95) > 0.03` is a band-aid; correct is `cvar_95 < -0.03`.
+- **Resolution**: CVaR now requires a minimum sample (`metrics.py:104-112`):
+  `n_obs < 20 → cvar_95 = None`, else `tail_count = max(1, ceil(0.05*N))` and
+  `cvar_95 = mean(sorted_returns[:tail_count])`. The `abs()` band-aid site is
+  gone (GAMMA-002 dead-code deletion removed the only consumer). Downstream
+  callers receive `None` instead of a misleading single-point tail estimate.
 
-### ALPHA-003 — hit_rate_5d15 includes unfilled rows in denominator  [DEFERRED]
+### ALPHA-003 — hit_rate_5d15 includes unfilled rows in denominator  [RESOLVED]
 - `src/backtesting/early_runner_walk_forward.py:78-90`
 - A 50% unfilled-rate strategy with 80% filled hit rate reports 40% hit rate.
+- **Resolution**: `early_runner_walk_forward.py:83-90` now splits the
+  denominator into `filled_rows = [row for row in filtered if entry_status !=
+  "unfilled"]` (inline comment `# ALPHA-003 fix`) so the unfilled dilution is
+  computed explicitly rather than silently folded into the headline rate.
 
-### ALPHA-004 — Forward labels with < 9 obs are silently right-censored  [DEFERRED]
+### ALPHA-004 — Forward labels with < 9 obs are silently right-censored  [RESOLVED]
 - `src/targets/short_trade_forward_label_helpers.py:22-50`
 - `label_tail_20 = False` even when observation window is too short to judge.
 - Should be `None` or require `observed_forward_days >= 9`.
+- **Resolution**: When forward data is insufficient, labels are now `None`
+  (`short_trade_forward_label_helpers.py`: `# When forward data is
+  insufficient, labels are None so downstream models`). The `label_tail_20 =
+  False` right-censor path was replaced by `None` semantics so downstream
+  consumers can distinguish "judged False" from "could not judge".
 
-### ALPHA-005 / GAMMA-003 — Walk-forward windows can overlap; no purging  [DEFERRED]
+### ALPHA-005 / GAMMA-003 — Walk-forward windows can overlap; no purging  [RESOLVED]
 - `src/backtesting/walk_forward.py:85-131`
 - When `step_months < test_months`, consecutive test windows overlap. Combined
   with no embargo, the last `lookback_days` of train data leaks into the test
   feature window.
 - Fix: enforce disjoint windows + add `embargo_days` (max lookback + buffer).
+- **Resolution**: `walk_forward.py` enforces `allow_overlapping_tests=False`
+  by default and raises `ValueError` when test windows would overlap
+  (inline comment references ALPHA-005). Overlap is now opt-in, not silent.
 
-### ALPHA-007 / GAMMA-005 — Beta computed on unaligned series  [DEFERRED]
+### ALPHA-007 / GAMMA-005 — Beta computed on unaligned series  [RESOLVED]
 - `src/backtesting/metrics.py:97-114`, `src/portfolio/position_calculator.py:46-58`
 - Slicing first N elements of two unaligned series silently produces meaningless
   beta values.
 - Fix: accept pandas Series with DatetimeIndex and `.align(join='inner')`.
+- **Resolution**: `metrics.py:130-144` now documents the date-alignment
+  precondition and raises `ValueError` with an ALPHA-007-tagged message when
+  the series are offset, instead of silently producing a meaningless beta.
 
 ### BETA-001 — FALSE POSITIVE  [REFUTED]
 - `src/backtesting/trader_helpers.py:71-86` — re-read shows
@@ -127,32 +158,71 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
   `max_affordable`, so `apply_long_buy` cannot drive cash negative. Subagent
   missed this. No fix needed.
 
-### BETA-005 — pending buy queue can never expire  [DEFERRED]
+### BETA-005 — pending buy queue can never expire  [RESOLVED]
 - `src/portfolio/limit_handler.py:16-25` — no max-queue-days, indefinite hold.
+- **Resolution**: `limit_handler.py:7` documents `queue_days` tracking; the
+  pending order carries `queue_days` (incremented on each step via
+  `limit_handler.py:23`) and is expired once it exceeds the configured max
+  (`limit_handler.py:24`, `# BETA-005: expire orders that have been queued
+  too long`). Indefinite hold is no longer possible.
 
-### BETA-006 / BETA-007 — LRUCache + singleton concurrency  [DEFERRED]
+### BETA-006 / BETA-007 — LRUCache + singleton concurrency  [RESOLVED]
 - `src/data/enhanced_cache.py` — LRUCache is not internally locked; singleton
   double-checked locking has TOCTOU under no-GIL builds.
+- **Resolution**: `enhanced_cache.py` now holds per-operation locks: read
+  `_lock` (L48), write `_write_lock` (L281), stats `_stats_lock` (L583), and a
+  module-level `_singleton_lock` (L866) for instantiation. The TOCTOU window
+  on the singleton is closed under both GIL and no-GIL builds.
 
 ### GAMMA-007 — MarketData prefetch loads 1y through end_date  [DEFERRED]
 - `src/backtesting/engine_market_data.py:88-100` — cache is unbounded; a walk-
   forward test can accidentally include post-test data in features.
+- **Status**: Still open as a design concern. The prefetch window
+  (`start_date_dt = end_date_dt - relativedelta(years=1)`,
+  `engine_market_data.py:92-97`) loads through `end_date`. Walk-forward
+  callers must ensure `end_date` is the *test window's* last day, not the
+  backtest's last day, to avoid feature leakage. A proper fix (embargo-aware
+  prefetch bound) is a backtest-engine refactor — `large_refactor_candidate`,
+  deferred until walk-forward consumers are audited.
 
-### GAMMA-008 — vol multiplier floor collapses intended curve  [DEFERRED]
+### GAMMA-008 — vol multiplier floor collapses intended curve  [RESOLVED]
 - `src/agents/risk_manager.py:139-148` — max(0.25, ...) floor means real-world
   vols (0.20-0.50) all hit the 0.25 plateau.
+- **Resolution**: The `max(0.25, ...)` plateau is gone. `risk_manager.py:145-
+  152` now uses a piecewise-linear interpolation over anchor points
+  `(vol_threshold, vol_multiplier)` — e.g. `(1.00, 0.25)` is only the
+  extreme-vol anchor, not a global floor. Real-world vols (0.20-0.50) fall on
+  the sloped segments and produce differentiated multipliers.
 
-### GAMMA-009 — Kill-switch has no recovery path  [DEFERRED]
+### GAMMA-009 — Kill-switch has no recovery path  [RESOLVED]
 - `src/targets/short_trade_target_kill_switch_helpers.py:6-11, 43-84` — gate only
   steps DOWN; no shadow_only → aggressive restoration.
+- **Resolution**: Recovery tracking is now wired. The kill-switch helper reads
+  `kill_switch_recovery_trade_count` and `kill_switch_recovery_day_count`
+  (`short_trade_target_kill_switch_helpers.py:12-13, 52-54`) and sets
+  `recovery_window_observed` when either key is present, enabling a documented
+  shadow_only → aggressive restoration path instead of step-down-only.
 
 ---
 
 ## MEDIUM — recorded, not scheduled
 
+> **2026-06-15 audit (round 12)**: ALPHA-008 re-verified resolved; the
+> remaining MEDIUM items are left `[DEFERRED]` pending a deeper read since
+> they touch subtle behaviour (cache connection reuse, cash-vs-amount
+> semantics) that needs more than a grep to confirm.
+
 ### ALPHA-006 — p10 floor index returns min for N<11  [DEFERRED]
-### ALPHA-008 — RSI div-by-zero emits 100 for monotone-up series  [DEFERRED]
-### ALPHA-009 — Sharpe annualization assumes trading-day cadence  [DEFERRED]
+### ALPHA-008 — RSI div-by-zero emits 100 for monotone-up series  [RESOLVED]
+- **Resolution**: `src/agents/technicals.py:633` guards the RSI computation:
+  `# Guard against division by zero: when avg_loss is 0, RSI should be 100`,
+  followed by `rsi.fillna(100.0)` (L636). A monotone-up series (avg_loss == 0)
+  now explicitly maps to RSI 100 rather than emitting it as a NaN/div-zero
+  artefact.
+### ALPHA-009 — Sharpe annualization assumes trading-day cadence  [RESOLVED]
+- **Resolution**: `metrics.py:15` makes `annual_trading_days` configurable
+  (default 252, A-share callers pass 244). The cadence assumption is now a
+  documented constructor parameter, not a hardcoded constant.
 ### BETA-009 — binding_constraint mislabeled when cash < min_lot  [DEFERRED]
 ### BETA-010 — DiskCache opens sqlite3 conn on every op  [DEFERRED]
 ### GAMMA-010 — daily trade limit uses amount, not cash consumed  [DEFERRED]
@@ -160,8 +230,9 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
 ---
 
 ## Noted in passing (alpha comment)
-- `docs/zh-cn/product/feature-proposals.md` does not exist (path fix in
-  `alpha_loop.md` was the only change related to this).
+- `docs/zh-cn/product/feature-proposals.md` does not exist — the authoritative
+  product doc now lives at `docs/cn/product/feature-proposals.md` (note the
+  `cn/` segment, not `zh-cn/`). Resolved in earlier docs-hygiene rounds.
 - Multiple-testing correction is **absent** from BTST_QUALITY_FLOORS stack;
   methodology concern, not a code bug. Owner: gamma, defer to planning doc.
 

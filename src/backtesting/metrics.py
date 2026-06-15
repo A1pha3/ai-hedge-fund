@@ -8,6 +8,16 @@ import pandas as pd
 
 from .types import PerformanceMetrics, PortfolioValuePoint
 
+#: Canonical empty-metrics sentinel returned by :meth:`compute_metrics` when the
+#: input is too short to compute any ratio. Centralised so the three early-exit
+#: paths (empty input, missing Portfolio Value column, < 2 returns) cannot drift
+#: apart in shape. A fresh copy is returned each time to avoid aliasing.
+_EMPTY_METRICS: PerformanceMetrics = {
+    "sharpe_ratio": None,
+    "sortino_ratio": None,
+    "max_drawdown": None,
+}
+
 
 class PerformanceMetricsCalculator:
     """Concrete metrics calculator like sharpe ratio, sortino ratio, max drawdown, etc."""
@@ -26,17 +36,17 @@ class PerformanceMetricsCalculator:
     def compute_metrics(self, values: Sequence[PortfolioValuePoint]) -> PerformanceMetrics:
 
         if not values:
-            return {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": None}
+            return dict(_EMPTY_METRICS)
 
         df = pd.DataFrame(values)
         if df.empty or "Portfolio Value" not in df:
-            return {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": None}
+            return dict(_EMPTY_METRICS)
 
         df = df.set_index("Date")
         df["Daily Return"] = df["Portfolio Value"].pct_change()
         clean_returns = df["Daily Return"].dropna()
         if len(clean_returns) < 2:
-            return {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": None}
+            return dict(_EMPTY_METRICS)
 
         daily_rf = self.annual_rf_rate / self.annual_trading_days
         excess = clean_returns - daily_rf

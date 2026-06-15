@@ -32,6 +32,29 @@ def test_metrics_insufficient_data_no_update():
     assert metrics["max_drawdown"] is None
 
 
+def test_compute_metrics_empty_sentinel_is_consistent_across_early_exits():
+    """All three early-exit paths must return the same canonical empty shape.
+
+    Guards against drift between the empty-input, missing-column, and
+    insufficient-returns branches in ``compute_metrics``.
+    """
+    calc = PerformanceMetricsCalculator()
+    expected = {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": None}
+
+    # Empty input.
+    assert calc.compute_metrics([]) == expected
+    # Missing Portfolio Value column.
+    assert calc.compute_metrics([{"Date": datetime(2024, 1, 1)}]) == expected  # type: ignore[list-item]
+    # Only one data point → < 2 returns after pct_change drops NaN.
+    assert calc.compute_metrics(_build_values([100_000.0])) == expected
+
+    # Each call returns an independent dict (no aliasing of the module sentinel).
+    first = calc.compute_metrics([])
+    second = calc.compute_metrics([])
+    first["sharpe_ratio"] = "mutated"
+    assert second["sharpe_ratio"] is None
+
+
 def test_metrics_basic_sharpe_sortino_and_drawdown():
     calc = PerformanceMetricsCalculator(annual_trading_days=2, annual_rf_rate=0.0)
     # Values: up then down → non-zero volatility; drawdown occurs on last day
