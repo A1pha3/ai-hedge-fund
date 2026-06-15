@@ -180,6 +180,9 @@ def test_run_walk_forward_mode_prints_rollout_and_promotion_summary(capsys):
     assert "Rollout Blockers: majority_non_positive_sharpe_windows" in captured.out
     assert "Promotion Ready: NO" in captured.out
     assert "Promotion Blockers: risk_budget_suppression_exceeded" in captured.out
+    # Finance-quant gamma lens: backtest performance output must carry an inline
+    # risk disclaimer so Sharpe/drawdown are not read as predictive guarantees.
+    assert "不代表未来" in captured.out
 
 
 # ---------------------------------------------------------------------------

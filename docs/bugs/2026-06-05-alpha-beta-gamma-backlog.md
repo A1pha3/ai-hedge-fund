@@ -8,12 +8,27 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
 - **[TRIAGED]** — independently verified, severity confirmed
 - **[DEFERRED]** — credible but needs deeper review; left for next loop
 - **[FALSE POSITIVE]** — subagent had partial context; refuted after re-read
+- **[RESOLVED]** — fixed/deleted with commit/test reference (added 2026-06-15 audit)
+
+> **2026-06-15 audit**: the four CRITICAL items below were all resolved in
+> earlier rounds but the backlog still presented them as open. Status corrected
+> to [RESOLVED] with evidence so future triage does not re-investigate. The
+> "should fix in this loop" framing was stale; no genuinely-open CRITICAL item
+> remains in this document.
 
 ---
 
 ## CRITICAL — should fix in this loop
 
-### BETA-004 / BETA-008 (linked)  [TRIAGED, HIGH→CRITICAL]
+### BETA-004 / BETA-008 (linked)  [RESOLVED]
+- **Where:** `src/backtesting/portfolio.py:234-281` (`apply_long_buy` / `apply_long_sell`)
+- **Resolution:** Fixed in commits `40432bff` (long side) + `38c14269` (short-side
+  mirror). `apply_long_buy` now capitalizes commission into cost basis via
+  `all_in_price = price * (1 + commission_rate)` (portfolio.py:260); the sell side
+  uses the mirrored net-price path. `adjust_cash` for fees is no longer called
+  post-hoc. Covered by 6 regression tests in `tests/backtesting/test_portfolio.py:148-293`
+  (cost-basis capitalization, realized-gain net proceeds, round-trip loss,
+  no-separate-adjust_cash for buy and sell).
 - **Where:** `src/backtesting/portfolio.py:234-281` (`apply_long_buy` / `apply_long_sell`)
 - **Issue:** Cost basis and realized gain are computed on **gross** price. Commission is
   debited from cash via `adjust_cash` AFTER the ledger mutates, so:
@@ -27,7 +42,7 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
 - **Test:** assert `cost_basis == price * (1 + commission_rate)` after a buy; assert
   `realized_gain == (net_sell_price - cost_basis) * qty` after a sell.
 
-### GAMMA-002 / BETA-003  [TRIAGED]
+### GAMMA-002 / BETA-003  [RESOLVED]
 - **Where:** `src/portfolio/position_calculator.py:166-200` (`evaluate_portfolio_risk_guardrails`)
 - **Issue:** Function defined but **zero call sites in production code** (only
   `tests/portfolio/test_phase3_extras.py` imports it). HHI, CVaR, beta block-buy
@@ -36,8 +51,13 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
   is honored. OR: delete the function and update the docs to remove the false claim.
 - **Test:** integration test feeding a watchlist with high-HHI / high-CVaR candidate
   and asserting no buy order is emitted.
+- **Resolution:** Deleted as dead code on 2026-06-08 (REF-001 note at
+  `position_calculator.py:175`). The function had zero production call sites and
+  the product doc does not advertise this specific function as enforced; if the
+  gating is later wired into the buy-order prep path it should be re-introduced at
+  that boundary.
 
-### GAMMA-001  [TRIAGED]
+### GAMMA-001  [RESOLVED]
 - **Where:** `src/agents/risk_manager.py:122-179` (`risk_management_agent`,
   `calculate_volatility_adjusted_limit`)
 - **Issue:** `risk_analysis[ticker].remaining_position_limit` is computed and shown
@@ -47,8 +67,12 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
   and truncates (or rejects) the order.
 - **Test:** assert that an order exceeding `remaining_position_limit` is clipped to
   the limit, with an explicit `risk_clipped` flag in the order metadata.
+- **Resolution:** Enforced via the `max_shares` path — `portfolio_manager.py:67`
+  reads `remaining_position_limit` and :72 caps `max_shares = limit // price`,
+  which is passed into `generate_trading_decision` (:94), so the portfolio manager
+  cannot order more shares than the limit allows.
 
-### GAMMA-004  [TRIAGED]
+### GAMMA-004  [RESOLVED]
 - **Where:** `src/backtesting/walk_forward.py:634-636` (`classify_runner_rollout_verdict`)
 - **Issue:** T+2 / T+3 regression guards short-circuit on `t2_win_rate > 0.0`,
   meaning a candidate with 0% T+2 win rate is auto-classified as "not risky" and
@@ -57,6 +81,10 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
   (e.g. `t2_win_rate < 0.4 → risky`).
 - **Test:** construct candidate with t2_win_rate=0.0 and assert verdict !=
   'promotable'.
+- **Resolution:** Absolute floor added — `RUNNER_T2_WIN_RATE_ABSOLUTE_MIN = 0.30`
+  (walk_forward.py:66); `t2_risky = t2_regression_risky or t2_win_rate < 0.30`
+  (:672). A 0% T+2 win-rate candidate is now classified risky via the absolute
+  floor regardless of the regression guard.
 
 ---
 

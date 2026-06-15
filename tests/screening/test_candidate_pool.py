@@ -2063,9 +2063,7 @@ class TestActiveCorridorPrimaryFocusLoader:
         """When the shadow pack has a ready primary, _shadow_focus_payload must include it
         under the 'layer_a_liquidity_corridor' key so the focus signature changes."""
         from src.screening.candidate_pool import (
-            _CORRIDOR_SHADOW_PACK_PATH,
             _shadow_focus_payload,
-            _UPSTREAM_REPEAT_SATURATION_BOARD_PATH,
         )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
@@ -2091,9 +2089,7 @@ class TestActiveCorridorPrimaryFocusLoader:
         """_resolve_shadow_focus_tickers for corridor lane must include the pack primary
         so that classify_overflow_candidate applies the focus-relaxed gate to 300683."""
         from src.screening.candidate_pool import (
-            _CORRIDOR_SHADOW_PACK_PATH,
             _resolve_shadow_focus_tickers,
-            _UPSTREAM_REPEAT_SATURATION_BOARD_PATH,
         )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
@@ -2113,9 +2109,7 @@ class TestActiveCorridorPrimaryFocusLoader:
     def test_resolve_shadow_focus_tickers_includes_diagnostic_pack_primary_for_corridor_lane(self, tmp_path):
         """Diagnostic-only primary replay must still activate the corridor lane focus-relaxed path."""
         from src.screening.candidate_pool import (
-            _CORRIDOR_SHADOW_PACK_PATH,
             _resolve_shadow_focus_tickers,
-            _UPSTREAM_REPEAT_SATURATION_BOARD_PATH,
         )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
@@ -2135,7 +2129,6 @@ class TestActiveCorridorPrimaryFocusLoader:
     def test_resolve_shadow_focus_tickers_does_not_include_pack_primary_for_rebucket_lane(self, tmp_path):
         """Pack primary focus must not bleed into the rebucket lane's focus set."""
         from src.screening.candidate_pool import (
-            _CORRIDOR_SHADOW_PACK_PATH,
             _resolve_shadow_focus_tickers,
         )
 
@@ -2154,9 +2147,7 @@ class TestActiveCorridorPrimaryFocusLoader:
         """Focus signature must differ when the corridor pack has a ready primary so the
         cache path is unique and 300683 gets a fresh shadow pool computation."""
         from src.screening.candidate_pool import (
-            _CORRIDOR_SHADOW_PACK_PATH,
             _shadow_focus_signature,
-            _UPSTREAM_REPEAT_SATURATION_BOARD_PATH,
         )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"
@@ -2193,9 +2184,7 @@ class TestActiveCorridorPrimaryFocusLoader:
     def test_shadow_focus_signature_changes_when_repeat_saturation_board_changes(self, tmp_path):
         """Changing repeat-saturation blocked tickers must change the focus signature so cached shadow snapshots are invalidated."""
         from src.screening.candidate_pool import (
-            _CORRIDOR_SHADOW_PACK_PATH,
             _shadow_focus_signature,
-            _UPSTREAM_REPEAT_SATURATION_BOARD_PATH,
         )
 
         pack_path = tmp_path / "btst_candidate_pool_corridor_shadow_pack_latest.json"

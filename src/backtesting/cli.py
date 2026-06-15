@@ -122,6 +122,10 @@ def _run_walk_forward_mode(args, build_engine) -> int:
     promotion_blockers = [str(item) for item in list(summary.get("promotion_blockers") or []) if str(item).strip()]
     if promotion_blockers:
         print(f"Promotion Blockers: {', '.join(promotion_blockers)}")
+    # Finance-quant risk disclosure (gamma lens): walk-forward Sharpe/drawdown are
+    # in-sample statistics over a finite window, not predictive guarantees. Echoing
+    # the project-level disclaimer inline keeps users from over-reading the numbers.
+    print("⚠ 回测/滚动验证为历史样本统计，不代表未来收益；实际交易还需计入滑点、流动性、政策与择时风险。")
     return 0
 
 
