@@ -1075,6 +1075,30 @@ class TestScoreTrend:
                 result = _render_score_trend("300750", report_dir=tmp_path)
                 assert result == ""
 
+    def test_zero_previous_score_returns_empty_not_flat_arrow(self, tmp_path: Path) -> None:
+        """BH-006: when previous_score == 0.0 (coerced from None/NaN by
+        ALPHA-002), ``change_pct`` is None (division by zero is undefined).
+        The old guard only checked ``previous_score is None``, so 0.0 slipped
+        through and rendered a flat "→" on a pick with no valid prior score.
+        The fix also suppresses the arrow when ``change_pct is None``."""
+        from src.screening.signal_decay_detector import DecayInfo, DecayLevel
+        from src.screening.top_picks import _render_score_trend
+
+        decay_info = DecayInfo(
+            ticker="300750",
+            level=DecayLevel.NONE,
+            current_score=0.6,
+            previous_score=0.0,  # NOT None — but change_pct is None (the trap)
+            change_pct=None,
+            days_since_peak=0,
+        )
+        with patch("src.screening.top_picks.detect_signal_decay", return_value={"300750": decay_info}):
+            with patch("src.screening.top_picks._find_latest_report", return_value=tmp_path / "fake.json"):
+                (tmp_path / "fake.json").write_text('{"recommendations":[]}', encoding="utf-8")
+                result = _render_score_trend("300750", report_dir=tmp_path)
+                assert result == ""
+                assert "→" not in result
+
 
 # ---------------------------------------------------------------------------
 # R10: Multi-strategy confluence

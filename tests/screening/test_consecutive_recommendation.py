@@ -220,6 +220,41 @@ class TestComputeConsecutiveRecommendations:
         assert result["000001"].consecutive_days == 1
         assert result["000001"].status == RecommendationStatus.BROKEN_STREAK
 
+    def test_streak_survives_weekend_gap(self, tmp_path) -> None:
+        """BH-005: a Fri→Mon consecutive recommendation must count as a streak.
+
+        Previously streak continuity stepped back one *calendar* day, so the
+        cursor landed on Saturday/Sunday and broke on every post-weekend
+        report — silently zeroing the R4 consecutive-recommendation bonus on
+        the most common (Mon/Tue) case. With trading-day stepping, Fri+Mon is
+        a 2-day streak.
+        """
+        # 20260102 = Friday, 20260105 = Monday (weekend in between).
+        for date_str in ["20260102", "20260105"]:
+            report = {"recommendations": [{"ticker": "000001", "score_b": 0.5}]}
+            (tmp_path / f"auto_screening_{date_str}.json").write_text(json.dumps(report), encoding="utf-8")
+        result = compute_consecutive_recommendations(
+            lookback_days=7,
+            report_dir=tmp_path,
+            end_date="20260105",
+        )
+        assert result["000001"].consecutive_days == 2
+        assert result["000001"].status == RecommendationStatus.CONSECUTIVE_2DAYS
+
+    def test_streak_survives_holiday_adjacent_weekend(self, tmp_path) -> None:
+        """BH-005 drain: Fri→(weekend)→Mon→Tue 3-day trading streak stays 3."""
+        # 20260102 Fri, 20260105 Mon, 20260106 Tue.
+        for date_str in ["20260102", "20260105", "20260106"]:
+            report = {"recommendations": [{"ticker": "000001", "score_b": 0.5}]}
+            (tmp_path / f"auto_screening_{date_str}.json").write_text(json.dumps(report), encoding="utf-8")
+        result = compute_consecutive_recommendations(
+            lookback_days=10,
+            report_dir=tmp_path,
+            end_date="20260106",
+        )
+        assert result["000001"].consecutive_days == 3
+        assert result["000001"].status == RecommendationStatus.CONSECUTIVE_3PLUS
+
     def test_reentry_signal(self, tmp_path) -> None:
         """Broken streak + previous high score → reentry signal."""
         for date_str, score in [("20260101", 0.4), ("20260102", None), ("20260103", 0.3)]:

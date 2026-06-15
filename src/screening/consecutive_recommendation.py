@@ -129,6 +129,24 @@ def _format_date(dt: datetime) -> str:
     return dt.strftime("%Y%m%d")
 
 
+def _prev_trading_day(dt: datetime) -> datetime:
+    """Step back one trading day (weekday approximation).
+
+    A-share markets close on Saturday/Sunday, so a streak recommended
+    Fri→Mon must count as consecutive. Stepping back a single calendar day
+    (``dt - timedelta(days=1)``) lands on Saturday/Sunday and breaks the
+    streak on every post-weekend report — silently zeroing the R4
+    consecutive-recommendation bonus on the most common case. Holidays are
+    unmodeled (same weekday approximation ``_check_report_freshness`` uses in
+    top_picks.py); a multi-day holiday gap still breaks the streak, which is
+    acceptable (no trading happened). See CAMPAIGN2-BH-5.
+    """
+    dt = dt - timedelta(days=1)
+    while dt.weekday() >= 5:  # 5=Sat, 6=Sun
+        dt -= timedelta(days=1)
+    return dt
+
+
 # ---------------------------------------------------------------------------
 # History loading
 # ---------------------------------------------------------------------------
@@ -294,11 +312,13 @@ def compute_consecutive_recommendations(
             status = RecommendationStatus.FIRST_APPEARANCE
             _ = gap_days  # silence unused warning
         else:
-            # 从 end_dt 向前追踪连续
+            # 从 end_dt 向前追踪连续。用交易日步进 (跳过周末)，否则
+            # 周五→周一的连续推荐会在每个周末断裂、把 R4 连续加权清零。
+            # 见 CAMPAIGN2-BH-5。
             streak = 1
             cursor = latest_date
             for entry in reversed(days[:-1]):
-                cursor = cursor - timedelta(days=1)
+                cursor = _prev_trading_day(cursor)
                 if _parse_date(entry["date"]) == cursor:
                     streak += 1
                 else:

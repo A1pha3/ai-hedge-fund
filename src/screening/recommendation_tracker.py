@@ -475,15 +475,38 @@ def update_tracking_history(
 # ---------------------------------------------------------------------------
 
 
+def _latest_recommended_date(history: list[dict[str, Any]]) -> datetime | None:
+    """Most recent ``recommended_date`` in ``history``; None if unparseable.
+
+    Used as a deterministic lookback anchor instead of ``datetime.now()`` so
+    the window is relative to the data's own time, not the machine clock.
+    See CAMPAIGN2-BH-7.
+    """
+    latest: datetime | None = None
+    for rec in history:
+        dt = _parse_date(str(rec.get("recommended_date", "") or ""))
+        if dt is not None and (latest is None or dt > latest):
+            latest = dt
+    return latest
+
+
 def _summarize_history(
     history: list[dict[str, Any]],
     lookback_days: int,
+    as_of: datetime | None = None,
 ) -> dict[str, Any]:
     """根据 history 列表计算汇总统计。
 
     Args:
         history: 全部记录列表
         lookback_days: 仅统计近 N 天 (含) 的推荐; <=0 表示全部
+        as_of: lookback 窗口的参考时刻。默认 ``datetime.now()``。
+
+            CAMPAIGN2-BH-7: lookback 此前锚定机器墙钟 ``datetime.now()``，
+            而模块其余部分是确定性的 (基于 ``trade_date``)。回填历史推荐时，
+            若墙钟已远晚于推荐日，回填记录会被静默丢出 lookback 窗口，
+            即使它已有成熟 T+30 收益。显式传 ``as_of`` (通常 = 报告 trade_date)
+            让统计可复现且不丢回填数据。
 
     Returns:
         ``{
@@ -501,7 +524,7 @@ def _summarize_history(
             "avg_return_day5": float | None,
         }``
     """
-    today = datetime.now()
+    today = as_of if as_of is not None else datetime.now()
     cutoff: datetime | None = None
     if lookback_days > 0:
         cutoff = today - timedelta(days=lookback_days)
@@ -565,12 +588,17 @@ def _summarize_history(
 def render_tracking_summary(
     history_path: Path,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+    as_of: datetime | None = None,
 ) -> str:
     """生成追踪总结: 近 N 天推荐胜率 + 平均 T+1/T+3/T+5 收益。
 
     Args:
         history_path: ``tracking_history.json`` 路径
         lookback_days: 回溯天数 (默认 30)
+        as_of: lookback 窗口参考时刻; 默认 ``datetime.now()`` (旧行为)。
+
+            CAMPAIGN2-BH-7: 回填历史推荐时显式传 ``as_of = 报告 trade_date``，
+            否则墙钟已远晚于推荐日会静默丢出窗口。
 
     Returns:
         多行字符串, 含胜率与平均收益; 无数据时返回提示行。
@@ -579,7 +607,7 @@ def render_tracking_summary(
     if not history:
         return f"暂无追踪历史 (请先运行 --auto 至少一次): {history_path}\n"
 
-    summary = _summarize_history(history, lookback_days=lookback_days)
+    summary = _summarize_history(history, lookback_days=lookback_days, as_of=as_of)
     total = summary["total_recommendations"]
 
     if total == 0:
@@ -617,15 +645,20 @@ def render_tracking_summary(
 def get_tracking_summary(
     history_path: Path,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+    as_of: datetime | None = None,
 ) -> dict[str, Any]:
     """以 dict 形式返回追踪汇总 — 便于 JSON payload 集成。
 
     Args:
         history_path: ``tracking_history.json`` 路径
         lookback_days: 回溯天数 (默认 30)
+        as_of: lookback 窗口参考时刻; 默认 ``datetime.now()`` (旧行为)。
+
+            CAMPAIGN2-BH-7: 回填时显式传 ``as_of = 报告 trade_date`` 让窗口
+            相对于数据时间而非墙钟，避免回填记录被静默丢出。
 
     Returns:
         详见 ``_summarize_history``。当历史为空时, ``total_recommendations=0``。
     """
     history = _load_history(history_path)
-    return _summarize_history(history, lookback_days=lookback_days)
+    return _summarize_history(history, lookback_days=lookback_days, as_of=as_of)

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -453,6 +454,29 @@ def test_render_tracking_summary_no_data_in_lookback(tmp_path: Path):
     _save_history(history_path, history)
     output = render_tracking_summary(history_path, lookback_days=30)
     assert "近 30 天内无推荐记录" in output
+
+
+def test_summarize_history_as_of_includes_backfilled_records_in_window():
+    """BH-007: ``_summarize_history(as_of=...)`` anchors the lookback window to
+    a caller-provided instant instead of the machine wall clock, so backfilled
+    recommendations (older than ``now`` but within N days of their own
+    ``as_of``) are not silently dropped from win-rate.
+
+    Default behavior (as_of=None → datetime.now()) still excludes old records
+    (see test_render_tracking_summary_no_data_in_lookback). This test pins the
+    new ``as_of`` capability that callers use during backfill.
+    """
+    history = [
+        {"ticker": "000001", "recommended_date": "20200101", "next_day_return": 5.0},
+        {"ticker": "000002", "recommended_date": "20200105", "next_day_return": -2.0},
+    ]
+    # Anchor to the data's own time: 20200105. Window = 30 days → both included.
+    as_of = datetime(2020, 1, 5)
+    summary = _summarize_history(history, lookback_days=30, as_of=as_of)
+    assert summary["total_recommendations"] == 2
+    # Wall-clock default would exclude BOTH (they're years before now()).
+    summary_now = _summarize_history(history, lookback_days=30)
+    assert summary_now["total_recommendations"] == 0
 
 
 # ---------------------------------------------------------------------------

@@ -516,6 +516,14 @@ def _render_score_trend(
         decay_info = decay_map.get(ticker)
         if decay_info is None or decay_info.previous_score is None:
             return ""
+        # change_pct is None when previous_score == 0.0 (a prior day's score
+        # coerced from None/NaN → 0.0 by ALPHA-002 makes the percentage
+        # undefined). The old guard above only checked ``previous_score is
+        # None``, so a 0.0 prior slipped through and rendered a flat "→"
+        # instead of being suppressed as "no valid prior". Suppress here too.
+        # See CAMPAIGN2-BH-6.
+        if decay_info.change_pct is None:
+            return ""
 
         change_pct = float(decay_info.change_pct or 0.0)
 
