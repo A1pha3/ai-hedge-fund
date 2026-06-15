@@ -10,7 +10,9 @@ from types import SimpleNamespace
 from src.screening.top_picks import (
     _RISK_HIGH_THRESHOLD,
     _RISK_LOW_THRESHOLD,
+    _compute_factor_reason,
     _format_stop_loss_take_profit,
+    _render_factor_attribution,
     _render_reason_and_risk,
     _risk_label_from_advice,
 )
@@ -150,3 +152,76 @@ class TestFormatStopLossTakeProfit:
         advice = _make_advice(atr=0.4, price=10.0, rr=1.0)
         result = _format_stop_loss_take_profit(advice)
         assert Fore.YELLOW in result  # rr < 1.5 → yellow
+
+
+class TestComputeFactorReason:
+    """R32 regression: _compute_factor_reason returns plain text (no color/prefix)."""
+
+    def test_returns_plain_text_without_prefix(self) -> None:
+        """Regression: _render_reason_and_risk previously stripped a colored
+        '主因:' prefix via fragile string-startswith, which never matched because
+        the prefix was wrapped in ANSI codes.  _compute_factor_reason now
+        returns plain text directly."""
+        item = {
+            "strategy_signals": {
+                "trend": {"direction": 1, "confidence": 80},
+                "fundamental": {"direction": 1, "confidence": 60},
+            }
+        }
+        reason = _compute_factor_reason(item)
+        assert reason == "趋势↑ + 基本面↑"
+        assert "主因" not in reason
+        assert Fore.WHITE not in reason  # no ANSI codes
+        assert Style.RESET_ALL not in reason
+
+    def test_empty_signals(self) -> None:
+        assert _compute_factor_reason({}) == ""
+        assert _compute_factor_reason({"strategy_signals": {}}) == ""
+
+    def test_only_neutral_directions(self) -> None:
+        """direction=0 contributes nothing."""
+        item = {"strategy_signals": {"trend": {"direction": 0, "confidence": 80}}}
+        assert _compute_factor_reason(item) == ""
+
+    def test_top_two_by_strength(self) -> None:
+        """Strongest two factors win, sorted descending."""
+        item = {
+            "strategy_signals": {
+                "trend": {"direction": 1, "confidence": 50},  # strength 50
+                "mean_reversion": {"direction": 1, "confidence": 90},  # strength 90
+                "fundamental": {"direction": 1, "confidence": 70},  # strength 70
+                "event_sentiment": {"direction": 1, "confidence": 30},  # strength 30
+            }
+        }
+        reason = _compute_factor_reason(item)
+        # Top 2 by strength: mean_reversion(90) + fundamental(70)
+        assert "反转↑" in reason
+        assert "基本面↑" in reason
+        assert "趋势↑" not in reason  # 3rd, excluded
+        assert "情绪↑" not in reason  # 4th, excluded
+
+    def test_render_factor_attribution_still_wraps_with_prefix(self) -> None:
+        """R15 wrapper still adds the '主因:' label + color."""
+        item = {"strategy_signals": {"trend": {"direction": 1, "confidence": 80}}}
+        result = _render_factor_attribution(item)
+        assert "主因" in result
+        assert Fore.WHITE in result
+        assert "趋势↑" in result
+
+
+class TestReasonAndRiskNoDoubleLabel:
+    """Regression: the R32 reason line must NOT contain a redundant '主因:' label."""
+
+    def test_no_double_label_with_reason_and_risk(self) -> None:
+        item = {
+            "strategy_signals": {
+                "trend": {"direction": 1, "confidence": 80},
+                "fundamental": {"direction": 1, "confidence": 60},
+            }
+        }
+        advice = _make_advice(atr=0.4, price=10.0)
+        result = _render_reason_and_risk(item, advice)
+        assert "主因" not in result  # no double label
+        assert "理由" in result
+        assert "趋势" in result
+        assert "风险" in result

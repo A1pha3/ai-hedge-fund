@@ -449,12 +449,7 @@ def _render_reason_and_risk(item: dict, advice) -> str:
     label, so the user sees "why buy" and "how risky" in a single glance.
     Returns empty string when neither reason nor risk is available.
     """
-    reason = _render_factor_attribution(item).strip()
-    # _render_factor_attribution returns "主因: X + Y" — strip the prefix for compactness
-    if reason.startswith("主因:"):
-        reason = reason[len("主因:"):].strip()
-    elif reason.startswith("主因："):
-        reason = reason[len("主因："):].strip()
+    reason = _compute_factor_reason(item)
 
     risk_label, risk_ratio = _risk_label_from_advice(advice)
     risk_color = Fore.GREEN if risk_label == "低" else Fore.YELLOW if risk_label == "中" else Fore.RED if risk_label == "高" else Fore.WHITE
@@ -654,25 +649,40 @@ def _render_factor_attribution(item: dict) -> str:
     Shows which factors contribute most to the score, making the
     recommendation explainable. Uses existing strategy_signals data.
     """
+    reason = _compute_factor_reason(item)
+    if not reason:
+        return ""
+    return f" {Fore.WHITE}主因:{Style.RESET_ALL} {reason}"
+
+
+#: Map strategy key → Chinese label (shared by R15 + R32)
+_FACTOR_LABEL_MAP: dict[str, str] = {
+    "trend": "趋势",
+    "mean_reversion": "反转",
+    "fundamental": "基本面",
+    "event_sentiment": "情绪",
+}
+
+
+def _compute_factor_reason(item: dict) -> str:
+    """Compute a plain-text top-2 factor reason string (no color/prefix).
+
+    Shared by R15 (:func:`_render_factor_attribution`) and R32
+    (:func:`_render_reason_and_risk`).  Returns ``""`` when no factors qualify.
+    """
     signals = item.get("strategy_signals") or {}
     if not signals:
         return ""
 
     # Collect (factor_name, direction * confidence) pairs
     contributions: list[tuple[str, float]] = []
-    label_map = {
-        "trend": "趋势",
-        "mean_reversion": "反转",
-        "fundamental": "基本面",
-        "event_sentiment": "情绪",
-    }
     for key, signal in signals.items():
         if not isinstance(signal, dict):
             continue
         direction = float(signal.get("direction", 0) or 0)
         confidence = float(signal.get("confidence", 0) or 0)
         strength = abs(direction * confidence)
-        label = label_map.get(key, key)
+        label = _FACTOR_LABEL_MAP.get(key, key)
         if direction > 0:
             contributions.append((f"{label}↑", strength))
         elif direction < 0:
@@ -684,7 +694,7 @@ def _render_factor_attribution(item: dict) -> str:
     # Sort by strength, take top 2
     contributions.sort(key=lambda x: x[1], reverse=True)
     top = [c[0] for c in contributions[:2]]
-    return f" {Fore.WHITE}主因:{Style.RESET_ALL} {' + '.join(top)}"
+    return " + ".join(top)
 
 
 # ---------------------------------------------------------------------------
