@@ -25,6 +25,10 @@ AUTO_EXPORT_PDF=true uv run python src/main.py --auto
 # 0 17 * * 1-5 cd /path/to/project && uv run python src/main.py --auto
 ```
 
+> 💡 **首次筛选完成后，日常请直接用 `--top-picks`**（见下方 §二）——它是默认前门，
+> 一行拿到代表票 + Buy/Hold/Avoid + T+30 证据。`--auto` 只需定时跑一次刷新底层数据，
+> 不必每次决策都重跑。
+
 ## 二、每日工作流 (推荐)
 
 ```bash

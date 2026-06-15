@@ -30,9 +30,6 @@ from scripts.optimize_profile import (
     _resolve_primary_surface,
     build_stage_grid,
     LIQUIDITY_LOW_REGIME_FLOOR,
-    LIQUIDITY_LOW_REGIME_WEIGHT_PENALTY,
-    LIQUIDITY_SOFT_REGIME_FLOOR,
-    LIQUIDITY_SOFT_REGIME_WEIGHT_PENALTY,
     RECENCY_DECAY_MIN_FACTOR,
     RECENCY_HALF_LIFE_CANDIDATES,
     RECENCY_HALF_LIFE_DAYS,
@@ -3975,7 +3972,6 @@ def test_apply_ic_feedback_increase_respects_max_upper_bound() -> None:
     from scripts.optimize_profile import (
         apply_ic_feedback_to_probe_grid,
         IC_WEIGHT_GRID_MAX_UPPER_BOUND,
-        IC_WEIGHT_GRID_STEP,
     )
 
     # Place the max exactly at the bound
@@ -5156,7 +5152,6 @@ def test_r24_verdict_calibration_score_capped_at_one() -> None:
 def test_r25_floor_suggestions_too_easy_when_floor_below_p25() -> None:
     """A current floor at or below 80% of P25 must produce action='too_easy'."""
     from scripts.optimize_profile import compute_auto_calibrated_floor_suggestions
-    from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
 
     # next_close_positive_rate has current floor 0.54.
     # Feed 8 windows all with value 0.80 → P25=0.80*0.25+… ≈ 0.80.
@@ -5187,7 +5182,6 @@ def test_r25_floor_suggestions_calibrated() -> None:
     """A floor that falls between P25*0.80 and P75*1.20 must produce action='calibrated'."""
     # next_close_positive_rate floor = 0.54.
     # Feed window values centered around 0.54 so the distribution brackets it nicely.
-    import statistics
 
     from scripts.optimize_profile import compute_auto_calibrated_floor_suggestions
     windows = [{"next_close_positive_rate": 0.48 + i * 0.02} for i in range(9)]  # 0.48…0.64
@@ -6367,7 +6361,6 @@ def test_r30_monthly_seasonal_effect_strong_flag() -> None:
 
 def test_r30_monthly_insufficient_samples_excluded() -> None:
     """Months with < 5 samples are excluded from spread/best/worst."""
-    import datetime
 
     from scripts.btst_analysis_utils import compute_monthly_performance_analysis
 
@@ -10791,7 +10784,6 @@ def test_r43_t3_label_registered() -> None:
 
 def _make_rs_rows(n: int, *, win_frac: float = 0.6, rs_spread: float = 1.0) -> list[dict]:
     """Helper: n rows with relative_strength_rank spread and deterministic win/loss."""
-    import math
     rows = []
     for i in range(n):
         rs = (i / max(n - 1, 1)) * rs_spread
@@ -13052,7 +13044,6 @@ def test_r51_win_loss_magnitude_all_losses_no_wins() -> None:
 
 def test_r51_win_loss_magnitude_mixed_normal_case() -> None:
     """Normal mixed returns → positive ratio, Kelly in [-1,1]."""
-    import pytest
 
     from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
     wins = [0.05, 0.04, 0.06, 0.07, 0.03]
@@ -13395,7 +13386,6 @@ def test_r52_score_concentration_fewer_than_6_rows() -> None:
 
 def test_r52_score_concentration_uniform_sci_near_zero() -> None:
     """Uniform score distribution → score_concentration_index ≈ 0 (three tiers ≈ equal)."""
-    import pytest
 
     from scripts.btst_analysis_utils import compute_score_concentration_analysis
     rows = [{"score": float(i)} for i in range(1, 10)]
@@ -14411,7 +14401,6 @@ def test_r55_factor_decay_missing_factor_none() -> None:
 
 def test_r55_factor_decay_mean_ic_signed() -> None:
     """mean_ic is signed average, not absolute."""
-    import pytest
 
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
     rows = [{"close_strength": float(i), "next_day_return": -float(i) * 0.01} for i in range(20)]
@@ -14435,7 +14424,6 @@ def test_r55_factor_decay_ic_spread_nonnegative() -> None:
 
 def test_r55_factor_decay_max_ic_factor() -> None:
     """max_ic_factor points to highest |IC| factor."""
-    import pytest
 
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i % 3), "next_day_return": float(i) * 0.01} for i in range(20)]
@@ -14556,7 +14544,6 @@ def test_r55_time_seg_best_session() -> None:
 
 def test_r55_time_seg_session_win_rate_spread() -> None:
     """session_win_rate_spread = max(wr) - min(wr)."""
-    import pytest
 
     from scripts.btst_analysis_utils import compute_intraday_time_segmentation
     rows = (
@@ -14905,7 +14892,6 @@ def test_r56_t2_score_field_fallback_to_score() -> None:
 def test_r56_t2_grade_b_threshold() -> None:
     """Grade B when rank_ic in [0.05, 0.10)."""
     # Construct slightly positive IC just above 0.05 but below 0.10
-    import math
 
     from scripts.btst_analysis_utils import compute_score_rank_stability
     n = 20
@@ -15158,7 +15144,6 @@ def test_r57_t1_invalid_empty() -> None:
 
 def test_r57_t1_bull_win_rate_correct() -> None:
     """bull_win_rate computed correctly as fraction of bull group with return > 0."""
-    import pytest
 
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
     rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
@@ -15171,7 +15156,6 @@ def test_r57_t1_bull_win_rate_correct() -> None:
 
 def test_r57_t1_bear_win_rate_correct() -> None:
     """bear_win_rate is fraction of bear group rows with return > 0."""
-    import pytest
 
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
     rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
@@ -15234,7 +15218,6 @@ def test_r57_t1_regime_adaptability_fallback_one_none() -> None:
 
 def test_r57_t1_mean_returns_correct() -> None:
     """bull_mean_return and bear_mean_return are correctly computed."""
-    import pytest
 
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
     rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
@@ -16004,7 +15987,6 @@ def test_r59_t1_invalid_no_next_day_return() -> None:
 
 def test_r59_t1_valid_basic() -> None:
     """Returns valid result with >=10 rows."""
-    import pytest
 
     from scripts.btst_analysis_utils import compute_return_dist_moments
     rows = [{"next_day_return": 0.01 * i} for i in range(12)]
@@ -16017,7 +15999,6 @@ def test_r59_t1_valid_basic() -> None:
 
 def test_r59_t1_symmetric_skewness_near_zero() -> None:
     """Symmetric distribution should have skewness near 0."""
-    import pytest
 
     from scripts.btst_analysis_utils import compute_return_dist_moments
     returns = [-0.05, -0.04, -0.03, -0.02, -0.01, 0.01, 0.02, 0.03, 0.04, 0.05]
@@ -16028,7 +16009,6 @@ def test_r59_t1_symmetric_skewness_near_zero() -> None:
 
 def test_r59_t1_positive_skewness() -> None:
     """Right-skewed distribution should have positive skewness."""
-    import pytest
 
     from scripts.btst_analysis_utils import compute_return_dist_moments
     returns = [0.01] * 8 + [0.10, 0.20]  # 10 items, two large positive outliers
@@ -16039,7 +16019,6 @@ def test_r59_t1_positive_skewness() -> None:
 
 def test_r59_t1_negative_skewness() -> None:
     """Left-skewed distribution should have negative skewness."""
-    import pytest
 
     from scripts.btst_analysis_utils import compute_return_dist_moments
     returns = [-0.20, -0.10] + [0.01] * 8
@@ -16340,7 +16319,6 @@ def test_r59_t3_invalid_no_key() -> None:
 
 def test_r59_t3_ols_slope_increasing() -> None:
     """OLS slope is positive for monotonically increasing win rates."""
-    import pytest
 
     from scripts.optimize_profile import compute_cross_window_threshold_trend
     summaries = [{"dyn_thresh_optimal_win_rate": 0.5 + 0.05 * i} for i in range(5)]
@@ -16996,7 +16974,6 @@ def test_r61_t3_invalid_too_few() -> None:
 
 def test_r61_t3_valid_keys() -> None:
     """Valid summaries produce all expected keys."""
-    import pytest
 
     from scripts.optimize_profile import compute_cross_window_consistency_trend
     summaries = [{"sig_consist_signal_consistency_lift": float(i) * 0.01} for i in range(5)]
@@ -19223,7 +19200,6 @@ def test_r67_t1_score_win_rate_spread_high_minus_low() -> None:
 
 def test_r67_t1_grade_a_high_cv_high_spread() -> None:
     """compute_score_dispersion_analysis: grade A when cv > 0.3 and spread > 0.1."""
-    import math
 
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
     rows = [{"score": float(i * 5), "next_day_return": 0.05 if i > 8 else -0.05} for i in range(1, 17)]
@@ -20871,7 +20847,6 @@ def test_r71_t1_grade_unknown_when_spread_none() -> None:
 
 def test_r71_t1_mean_return_spread_computed() -> None:
     """momentum_mean_return_spread = top group mean return - bot group mean return."""
-    import pytest
 
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
     rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.05 * (i - 6) / 12} for i in range(12)]
@@ -22531,7 +22506,6 @@ def test_r75_t1_return_mean_precision() -> None:
 
 def test_r75_t1_sharpe_ratio_formula() -> None:
     """sharpe_ratio = return_mean / return_std (both non-zero)."""
-    import math
 
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
     rets = [0.02, 0.01, -0.01, 0.03, 0.005, -0.005, 0.015, 0.025]

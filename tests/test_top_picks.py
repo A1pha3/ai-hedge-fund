@@ -12,6 +12,7 @@ import pytest
 from src.screening.composite_score import CompositeEntry, CompositeReport
 from src.screening.expected_return import ExpectedReturn, ExpectedReturnReport
 from src.screening.top_picks import (
+    _apply_consecutive_bonus_and_resort,
     _build_signal_breakdown,
     _consecutive_bonus,
     _load_recommendation_context,
@@ -424,6 +425,32 @@ class TestConsecutiveBonus:
 
     def test_status_icon_broken(self) -> None:
         assert _status_icon("broken_streak") == "⬇️"
+
+    def test_apply_consecutive_bonus_clips_to_unit_range(self) -> None:
+        """composite_score is documented as clamped to [-1.0, +1.0]
+        (composite_score.py:16, :233). The consecutive bonus is added *after*
+        that clamp in ``_apply_consecutive_bonus_and_resort``, so it must
+        re-clamp — otherwise a high-base pick (0.98) plus a 6+day bonus (0.08)
+        yields composite_score=1.06, an out-of-domain value that silently
+        breaks the [-1,1] invariant every downstream consumer assumes.
+        """
+        ranked = [
+            {"ticker": "A", "composite_score": 0.98, "consecutive_bonus": 0.08},
+        ]
+        out = _apply_consecutive_bonus_and_resort(ranked)
+        assert out[0]["composite_score"] <= 1.0, (
+            f"composite_score {out[0]['composite_score']} exceeds the documented [-1,1] domain"
+        )
+
+    def test_apply_consecutive_bonus_clips_negative_too(self) -> None:
+        """Symmetric: a low-base pick with a positive bonus must not dip
+        below -1.0 either. (Bonus is always >= 0 in practice, but the clamp
+        guard should hold for both bounds.)"""
+        ranked = [
+            {"ticker": "A", "composite_score": -0.98, "consecutive_bonus": 0.0},
+        ]
+        out = _apply_consecutive_bonus_and_resort(ranked)
+        assert out[0]["composite_score"] >= -1.0
 
     @patch(
         "src.screening.top_picks.compute_expected_returns",

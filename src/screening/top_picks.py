@@ -838,7 +838,10 @@ def _apply_consecutive_bonus_and_resort(ranked: list[dict]) -> list[dict]:
         if not bonus:
             continue
         original_score = float(recommendation.get("composite_score", 0.0) or 0.0)
-        recommendation["composite_score"] = round(original_score + bonus, 4)
+        # Re-clamp to the documented [-1.0, 1.0] domain (composite_score.py:16).
+        # compute_composite_scores already clamps, but the bonus is added after,
+        # so a high-base pick (0.98) + 6+day bonus (0.08) would otherwise reach 1.06.
+        recommendation["composite_score"] = round(max(-1.0, min(1.0, original_score + bonus)), 4)
     ranked.sort(
         key=lambda recommendation: float(recommendation.get("composite_score", 0.0) or 0.0),
         reverse=True,
