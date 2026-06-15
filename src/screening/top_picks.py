@@ -197,8 +197,15 @@ def _render_hit_rate_summary(verify_summary: object) -> str:
 
     # Excess return vs the picks' own recommended-basket average (a same-day
     # reference point, NOT a market index — see verify_recommendations BETA-009).
+    # H1 (Stage 3): the recommended-basket "benchmark" is computed from the SAME
+    # picks as the basket mean, so excess_return is structurally ≈ 0.0 (it is a
+    # mathematical identity: mean(picks) - mean(picks) = 0). Rendering a line that
+    # is always ~0.00% adds noise and erodes trust in the conviction panel.
+    # Suppress the line when the excess is within rounding of zero; a future real
+    # benchmark (e.g. CSI300 via get_index_daily) would naturally render here.
+    _EXCESS_RETURN_RENDER_EPSILON = 0.01
     excess = getattr(verify_summary, "excess_return", None)
-    if excess is not None:
+    if excess is not None and abs(excess) > _EXCESS_RETURN_RENDER_EPSILON:
         color = Fore.GREEN if excess > 0 else Fore.RED
         lines.append(f"  超额收益(vs 推荐均值): {color}{excess:+.2f}%{Style.RESET_ALL}")
 

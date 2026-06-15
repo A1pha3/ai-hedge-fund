@@ -179,15 +179,67 @@ class TestComputeVerifyRecommendations:
         Per-day cross-section-average "benchmark" (the picks' own mean):
           20260601: (2.0 + (-1.0)) / 2 = 0.5
           20260602: 1.5
-        => benchmark_avg_t1 = (0.5 + 1.5) / 2 = 1.0
-        avg_t1_return = (2.0 - 1.0 + 1.5) / 3 = 0.8333
-        => excess_return = 0.8333 - 1.0 = -0.1667
+        => benchmark_avg_t1 = (0.5 + 1.5) / 2 = 1.0 (day-weighted)
+        basket_avg_t1 (per-day pick-mean, same data) = (0.5 + 1.5) / 2 = 1.0
+        => excess_return = 1.0 - 1.0 = 0.0 (this fixture has benchmark ≡ basket mean).
+        The weighting-consistency invariant is pinned by
+        test_excess_return_uses_consistent_day_weighted_basis below with a
+        divergent fixture.
         """
         summary = compute_verify_recommendations(reports_dir=reports_dir, lookback_days=30)
         assert summary.benchmark_avg_t1 is not None
         assert abs(summary.benchmark_avg_t1 - 1.0) < 0.01
         assert summary.excess_return is not None
-        assert abs(summary.excess_return - ((2.0 - 1.0 + 1.5) / 3 - 1.0)) < 0.01
+        assert abs(summary.excess_return - 0.0) < 0.01
+
+    def test_excess_return_uses_consistent_day_weighted_basis(self, tmp_path: Path):
+        """Regression (BETA-009-drain): ``excess_return`` previously subtracted
+        ``summary.avg_t1_return`` (a pick-weighted mean — every pick pooled
+        across all days) from ``summary.benchmark_avg_t1`` (a day-weighted mean
+        — mean of per-day basket means). When pick counts vary per day the two
+        averages differ and the subtraction is meaningless.
+
+        Fixture engineered so benchmark ≠ basket mean on at least one day, and
+        daily pick counts differ, so the two weighting schemes diverge:
+
+          Day A (2 picks): basket mean = 0.5, benchmark = 0.5
+          Day B (1 pick):  basket mean = 3.0, benchmark = 3.0
+
+        Day-weighted basket mean = (0.5 + 3.0) / 2 = 1.75
+        Day-weighted benchmark    = (0.5 + 3.0) / 2 = 1.75
+        => correct excess_return = 0.0
+
+        Pick-weighted avg_t1_return = (2.0 + (-1.0) + 3.0) / 3 = 1.333
+        Old (buggy) excess_return  = 1.333 - 1.75 = -0.4167  ← meaningless mix
+        """
+        tracking = [
+            {"ticker": "000001", "recommended_date": "20260601", "next_day_return": 2.0, "tracking_status": "complete"},
+            {"ticker": "600519", "recommended_date": "20260601", "next_day_return": -1.0, "tracking_status": "complete"},
+            {"ticker": "300724", "recommended_date": "20260602", "next_day_return": 3.0, "tracking_status": "complete"},
+        ]
+        (tmp_path / "tracking_history.json").write_text(json.dumps(tracking), encoding="utf-8")
+        report1 = {"trade_date": "20260601", "recommendations": [
+            {"ticker": "000001", "score_b": 0.8, "strategy_signals": {"trend": {"direction": 1, "confidence": 80}}},
+            {"ticker": "600519", "score_b": 0.6, "strategy_signals": {"mean_reversion": {"direction": -1, "confidence": 70}}},
+        ]}
+        (tmp_path / "auto_screening_20260601.json").write_text(json.dumps(report1), encoding="utf-8")
+        report2 = {"trade_date": "20260602", "recommendations": [
+            {"ticker": "300724", "score_b": 0.7, "strategy_signals": {"trend": {"direction": 1, "confidence": 75}}},
+        ]}
+        (tmp_path / "auto_screening_20260602.json").write_text(json.dumps(report2), encoding="utf-8")
+
+        summary = compute_verify_recommendations(reports_dir=tmp_path, lookback_days=30)
+        # pick-weighted (would be the buggy basis)
+        assert abs(summary.avg_t1_return - (2.0 - 1.0 + 3.0) / 3) < 0.01
+        # day-weighted benchmark
+        assert summary.benchmark_avg_t1 is not None
+        assert abs(summary.benchmark_avg_t1 - 1.75) < 0.01
+        # excess_return must be 0.0 (consistent day-weighted basis), NOT -0.4167
+        assert summary.excess_return is not None
+        assert abs(summary.excess_return - 0.0) < 0.01
+        # Guard: the two weighting schemes genuinely diverge on this fixture
+        # (otherwise the test wouldn't catch the regression).
+        assert abs(summary.avg_t1_return - summary.benchmark_avg_t1) > 0.4
 
 
 class TestRenderVerifyRecommendations:

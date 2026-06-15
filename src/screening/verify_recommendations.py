@@ -1,7 +1,7 @@
 """P3-1: 推荐闭环验证 — 自动回测推荐实际收益。
 
 自动回放过去 N 天的每日推荐, 计算 T+1/T+3/T+5 实际收益,
-与基准 (沪深 300) 对比, 并归因到策略/因子层面。
+与"推荐组合自身均值"参考点对比 (非市场指数), 并归因到策略/因子层面。
 
 数据来源:
   - ``data/reports/auto_screening_*.json`` (每日推荐)
@@ -14,9 +14,14 @@ CLI::
 
 输出:
   - 总推荐次数 / 胜率 / 平均 T+1/T+3/T+5 收益
-  - 与沪深 300 同期对比
+  - 与推荐组合自身均值对比 (参考基准, 非沪深 300 等市场指数)
   - 策略归因: 哪个策略贡献正/负收益
   - 日度明细 (可选 ``--verify-detail``)
+
+NOTE (BETA-009): 本模块历史上宣称"与沪深 300 对比", 但代码从未拉取市场指数数据 —
+``_compute_benchmark_returns`` 计算的是当日推荐组合的横截面均值, 作为同日参考点。
+真正的沪深 300 基准需要实时指数数据, 超出本离线验证路径的范畴。所有面向用户的标签
+均已校正为"推荐均值"。
 """
 from __future__ import annotations
 
@@ -30,6 +35,18 @@ from typing import Any
 from src.utils.numeric import optional_float as _optional_float
 
 logger = logging.getLogger(__name__)
+
+
+def _mean_or_none(values: list[float]) -> float | None:
+    """Return the arithmetic mean of ``values``, or ``None`` when empty.
+
+    Centralises the ``sum(x) / len(x) if x else None`` idiom repeated across
+    the per-horizon / per-day / aggregate mean computations in this module so
+    the empty-list contract is identical everywhere (DRY).
+    """
+    if not values:
+        return None
+    return sum(values) / len(values)
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +287,15 @@ def compute_verify_recommendations(
 
     # Per-day recommended-basket average T+1 (reference, not a market benchmark)
     benchmark_t1_values: list[float] = []
+    # Per-day basket-mean T+1 (same weighting as benchmark_t1_values) so the
+    # aggregate excess_return uses a CONSISTENT basis with benchmark_avg_t1.
+    # NOTE (BETA-009-drain): the previous implementation subtracted summary.avg_t1_return
+    # (a pick-weighted mean — every pick across all days pooled equally) from
+    # summary.benchmark_avg_t1 (a day-weighted mean — mean of per-day basket means).
+    # When pick counts vary per day, the two averages drift and the subtraction is
+    # meaningless. We now accumulate the per-day basket mean in the same day-weighted
+    # space as the benchmark, then subtract within that space.
+    basket_avg_t1_values: list[float] = []
 
     for report in reports:
         rec_date = report.get("_report_date", "")
@@ -363,9 +389,14 @@ def compute_verify_recommendations(
         # Recommended-basket average T+1 (reference point, NOT a market index —
         # see _compute_benchmark_returns docstring / BETA-009).
         benchmark_t1 = _compute_benchmark_returns(tracking, rec_date)
-        avg_day_t1 = sum(day_t1) / len(day_t1) if day_t1 else None
+        avg_day_t1 = _mean_or_none(day_t1)
         if benchmark_t1 is not None:
             benchmark_t1_values.append(benchmark_t1)
+        # Accumulate the per-day basket mean in the same day-weighted space as
+        # benchmark_t1 so the aggregate excess_return is internally consistent
+        # (BETA-009-drain: previously mixed pick-weighted vs day-weighted means).
+        if avg_day_t1 is not None:
+            basket_avg_t1_values.append(avg_day_t1)
 
         if include_detail:
             day_detail = VerifyDay(
@@ -373,11 +404,11 @@ def compute_verify_recommendations(
                 tickers=day_tickers,
                 top_score=top_score,
                 avg_t1_return=avg_day_t1,
-                avg_t3_return=sum(day_t3) / len(day_t3) if day_t3 else None,
-                avg_t5_return=sum(day_t5) / len(day_t5) if day_t5 else None,
-                avg_t10_return=sum(day_t10) / len(day_t10) if day_t10 else None,
-                avg_t20_return=sum(day_t20) / len(day_t20) if day_t20 else None,
-                avg_t30_return=sum(day_t30) / len(day_t30) if day_t30 else None,
+                avg_t3_return=_mean_or_none(day_t3),
+                avg_t5_return=_mean_or_none(day_t5),
+                avg_t10_return=_mean_or_none(day_t10),
+                avg_t20_return=_mean_or_none(day_t20),
+                avg_t30_return=_mean_or_none(day_t30),
                 benchmark_return=benchmark_t1,
                 excess_return=(avg_day_t1 - benchmark_t1) if avg_day_t1 is not None and benchmark_t1 is not None else None,
             )
@@ -391,19 +422,27 @@ def compute_verify_recommendations(
     summary.overall_t10_win_rate = t10_wins / t10_total if t10_total > 0 else None
     summary.overall_t20_win_rate = t20_wins / t20_total if t20_total > 0 else None
     summary.overall_t30_win_rate = t30_wins / t30_total if t30_total > 0 else None
-    summary.avg_t1_return = sum(all_t1) / len(all_t1) if all_t1 else None
-    summary.avg_t3_return = sum(all_t3) / len(all_t3) if all_t3 else None
-    summary.avg_t5_return = sum(all_t5) / len(all_t5) if all_t5 else None
-    summary.avg_t10_return = sum(all_t10) / len(all_t10) if all_t10 else None
-    summary.avg_t20_return = sum(all_t20) / len(all_t20) if all_t20 else None
-    summary.avg_t30_return = sum(all_t30) / len(all_t30) if all_t30 else None
+    summary.avg_t1_return = _mean_or_none(all_t1)
+    summary.avg_t3_return = _mean_or_none(all_t3)
+    summary.avg_t5_return = _mean_or_none(all_t5)
+    summary.avg_t10_return = _mean_or_none(all_t10)
+    summary.avg_t20_return = _mean_or_none(all_t20)
+    summary.avg_t30_return = _mean_or_none(all_t30)
 
     # Recommended-basket reference (BETA-009): aggregate the per-day basket mean
     # and the excess of the picks' average over it, so the front-door
     # ``超额收益`` line renders real numbers instead of being dead code.
-    summary.benchmark_avg_t1 = sum(benchmark_t1_values) / len(benchmark_t1_values) if benchmark_t1_values else None
-    if summary.avg_t1_return is not None and summary.benchmark_avg_t1 is not None:
-        summary.excess_return = summary.avg_t1_return - summary.benchmark_avg_t1
+    summary.benchmark_avg_t1 = _mean_or_none(benchmark_t1_values)
+    # BETA-009-drain: excess_return must subtract within the SAME weighting space.
+    # Both basket_avg_t1_values and benchmark_t1_values are day-weighted (one entry
+    # per day with a valid basket), so their means are directly comparable.
+    # (Previously this used summary.avg_t1_return, a pick-weighted mean, which
+    # is incomparable with the day-weighted benchmark and produced a misleading
+    # excess_return whenever daily pick counts differed.)
+    basket_avg = _mean_or_none(basket_avg_t1_values)
+    benchmark_avg = summary.benchmark_avg_t1
+    if basket_avg is not None and benchmark_avg is not None:
+        summary.excess_return = basket_avg - benchmark_avg
     else:
         summary.excess_return = None
 

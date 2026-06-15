@@ -675,6 +675,42 @@ class TestHitRateSummary:
         assert "历史命中率速览" in result
         assert "超额收益" in result
 
+    def test_summary_suppresses_zero_information_excess_line(self) -> None:
+        """H1 (Stage 3 product-quality): the recommended-basket "benchmark" is
+        computed from the SAME picks as the basket mean, so ``excess_return`` is
+        structurally ≈ 0.0 (mean(picks) - mean(picks) = 0). Rendering a line that
+        is always ~0.00% adds noise and erodes trust. The line must be suppressed
+        when |excess| ≤ epsilon; a future real benchmark (CSI300) would render.
+
+        This pins the suppression invariant so the noisy dead line cannot return.
+        """
+        # |excess| within epsilon → suppressed
+        summary_zero = SimpleNamespace(
+            total_recommendations=100,
+            total_days=20,
+            unique_tickers=40,
+            lookback_days=30,
+            overall_t5_win_rate=0.55,
+            avg_t5_return=1.0,
+            excess_return=0.0,
+        )
+        result_zero = _render_hit_rate_summary(summary_zero)
+        assert "历史命中率速览" in result_zero
+        assert "超额收益" not in result_zero
+
+        # |excess| just above epsilon → rendered (future real-benchmark path)
+        summary_real = SimpleNamespace(
+            total_recommendations=100,
+            total_days=20,
+            unique_tickers=40,
+            lookback_days=30,
+            overall_t5_win_rate=0.55,
+            avg_t5_return=1.0,
+            excess_return=0.5,
+        )
+        result_real = _render_hit_rate_summary(summary_real)
+        assert "超额收益" in result_real
+
     def test_summary_without_optional_fields(self) -> None:
         summary = SimpleNamespace(
             total_recommendations=50,
