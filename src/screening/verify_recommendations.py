@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -167,18 +167,41 @@ def _load_tracking_history(reports_dir: Path) -> list[dict[str, Any]]:
 
 
 def _load_auto_screening_reports(reports_dir: Path, lookback_days: int) -> list[dict[str, Any]]:
-    """Load auto_screening_*.json reports within lookback window."""
+    """Load auto_screening_*.json reports within lookback window.
+
+    BH-018 / R36 same-class drain: the lookback cutoff is anchored to the
+    LATEST report date in the directory, not wall-clock ``datetime.now()``.
+    Anchoring to ``now()`` silently dropped any report older than
+    ``now() - (lookback+10)`` — breaking backfilled / historical analysis
+    (an all-old-data directory returned empty despite having in-window
+    reports relative to its own latest date). Anchoring to the latest report
+    date makes the window relative to the data, mirroring R36's ``as_of`` fix.
+    """
     reports: list[dict[str, Any]] = []
     if not reports_dir.exists():
         return reports
+    candidates: list[tuple[str, Path]] = []
     for path in sorted(reports_dir.glob("auto_screening_*.json"), reverse=True):
         date_str = path.stem.replace("auto_screening_", "")
         try:
-            cutoff = datetime.now() - __import__("datetime").timedelta(days=lookback_days + 10)
-            report_date = datetime.strptime(date_str, "%Y%m%d")
-            if report_date < cutoff:
-                continue
+            # Validate the date parses (skip malformed filenames) without
+            # anchoring to now() — the cutoff is derived below from the latest
+            # valid report date, R36-style.
+            datetime.strptime(date_str, "%Y%m%d")
         except ValueError:
+            continue
+        candidates.append((date_str, path))
+    if not candidates:
+        return reports
+    # Anchor the cutoff to the latest report date (newest, since sorted desc).
+    latest_dt = datetime.strptime(candidates[0][0], "%Y%m%d")
+    cutoff = latest_dt - timedelta(days=lookback_days + 10)
+    for date_str, path in candidates:
+        try:
+            report_date = datetime.strptime(date_str, "%Y%m%d")
+        except ValueError:
+            continue
+        if report_date < cutoff:
             continue
         try:
             with open(path, encoding="utf-8") as f:

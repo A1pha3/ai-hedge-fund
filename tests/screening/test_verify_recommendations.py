@@ -7,6 +7,7 @@ import pytest
 from src.screening.recommendation_tracker import _save_history
 from src.screening.verify_recommendations import (
     _extract_tracking_returns,
+    _load_auto_screening_reports,
     _load_tracking_history,
     compute_verify_recommendations,
     render_verify_recommendations,
@@ -104,6 +105,25 @@ class TestLoadTrackingHistory:
         (tmp_path / "tracking_history.json").write_text("not json{{{", encoding="utf-8")
         result = _load_tracking_history(tmp_path)
         assert result == []
+
+    def test_load_auto_screening_anchors_to_latest_report_not_now(self, tmp_path: Path) -> None:
+        """BH-018 / R36 same-class: the lookback cutoff must be anchored to the
+        LATEST report date in the directory, not wall-clock ``datetime.now()``.
+
+        Previously the cutoff used ``now() - (lookback+10)``, so any report
+        older than ~40 days from today was silently dropped — breaking
+        backfilled / historical analysis (all-old-data dirs returned empty
+        despite having in-window reports relative to their own latest date).
+        """
+        # Reports dated 2026-01-10..12 — all "old" relative to a June 2026
+        # wall-clock now, but consecutive relative to each other.
+        for date_str in ("20260110", "20260111", "20260112"):
+            (tmp_path / f"auto_screening_{date_str}.json").write_text(
+                json.dumps({"recommendations": []}), encoding="utf-8"
+            )
+        result = _load_auto_screening_reports(tmp_path, lookback_days=30)
+        # All three must be loaded (anchored to latest 20260112, not now()).
+        assert len(result) == 3, f"Expected 3 reports (anchored to latest), got {len(result)}"
 
     def test_loads_tracker_payload_shape(self, tmp_path: Path):
         history_path = tmp_path / "tracking_history.json"
