@@ -151,6 +151,69 @@ def test_build_front_door_verdict_respects_risk_off_gate() -> None:
     assert verdict["action"] == "HOLD"
 
 
+def test_build_front_door_verdict_buy_requires_mature_t30_sample() -> None:
+    """R35 consistency drain: the BUY gate must require enough *mature* T+30
+    samples, not just the raw all-records ``bucket_sample_count``.
+
+    A recommendation whose bucket has 40 raw records but only 5 matured T+30
+    records is backed by thin, mostly-unmatured evidence — the T+30 edge/win
+    rate are not yet statistically trustworthy. Promoting it to BUY would
+    violate the "higher conviction" goal and contradict R35's display honesty.
+    With ``bucket_t30_mature_count`` present and small, the verdict must NOT
+    be BUY even when every other signal looks strong."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t30": 9.4},
+            "win_rates": {"t30": 0.63},
+            "bucket_sample_count": 40,
+            # Only 5 of the 40 historical picks have matured past the 30-day
+            # horizon — the T+30 stats are dominated by unmatured records.
+            "bucket_t30_mature_count": 5,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] != "BUY", (
+        "BUY must require a meaningful mature T+30 sample, not just raw count"
+    )
+
+
+def test_build_front_door_verdict_buy_ok_when_mature_sample_sufficient() -> None:
+    """When the mature T+30 sample is sufficient, a strong pick still promotes
+    to BUY — the gate tightens but does not become unreachable."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t30": 9.4},
+            "win_rates": {"t30": 0.63},
+            "bucket_sample_count": 40,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] == "BUY"
+
+
+def test_build_front_door_verdict_falls_back_to_raw_count_when_mature_absent() -> None:
+    """Backward compatibility: legacy recommendations without
+    ``bucket_t30_mature_count`` must still gate on the raw
+    ``bucket_sample_count`` so existing pipelines are not silently broken."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t30": 9.4},
+            "win_rates": {"t30": 0.63},
+            "bucket_sample_count": 48,
+            # No bucket_t30_mature_count key at all (pre-R35 data / partial pipeline)
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] == "BUY"
+
+
 # ---------------------------------------------------------------------------
 # _grade_code / _safe_metric / _decorate_cluster_candidate
 # ---------------------------------------------------------------------------

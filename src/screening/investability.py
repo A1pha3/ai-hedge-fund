@@ -158,9 +158,22 @@ def build_front_door_verdict(
     t30_edge = _safe_metric(expected_returns.get("t30"), 0.0)
     t30_win_rate = _safe_metric(win_rates.get("t30"), 0.0)
     sample_count = int(_safe_metric(recommendation.get("bucket_sample_count"), 0.0))
+    # R35 consistency drain: the BUY gate must be backed by enough *mature*
+    # T+30 samples, not the all-records bucket_sample_count (which includes
+    # picks too recent to have a realized 30-day return). When the R35
+    # bucket_t30_mature_count field is present, require it to clear the same
+    # statistical-significance bar as the legacy raw count; otherwise fall
+    # back to the raw count so pre-R35 / partial pipelines keep working.
+    t30_mature_count_raw = recommendation.get("bucket_t30_mature_count")
+    has_mature_field = t30_mature_count_raw is not None
+    backing_sample = (
+        int(_safe_metric(t30_mature_count_raw, 0.0))
+        if has_mature_field
+        else sample_count
+    )
 
     supports_long = decision != "bearish"
-    is_high_quality = supports_long and composite_score >= 0.5 and t30_edge > 0 and t30_win_rate >= 0.55 and sample_count >= 20
+    is_high_quality = supports_long and composite_score >= 0.5 and t30_edge > 0 and t30_win_rate >= 0.55 and backing_sample >= 20
     is_watchable = supports_long and composite_score >= 0.25 and t30_edge >= 0 and t30_win_rate >= 0.5
 
     if "crisis" in regime_lower or "risk_off" in regime_lower:
