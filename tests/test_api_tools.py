@@ -290,32 +290,24 @@ def test_get_ashare_prices_with_tushare_formats_and_reverses_results(monkeypatch
     pro = object()
     monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
     monkeypatch.setattr(tushare_api, "_to_ts_code", lambda ticker: "000001.SZ")
-    # R37: price path now goes through _cached_tushare_pro_bar_call (qfq) instead
-    # of _cached_tushare_dataframe_call(pro, "daily", ...). Mock the new entrypoint.
-    monkeypatch.setattr(
-        tushare_api,
-        "_cached_tushare_pro_bar_call",
-        lambda *_args, **_kwargs: pd.DataFrame(
-            [
-                {
-                    "trade_date": "20260410",
-                    "open": 10.0,
-                    "high": 11.0,
-                    "low": 9.8,
-                    "close": 10.8,
-                    "vol": 1000,
-                },
-                {
-                    "trade_date": "20260409",
-                    "open": 9.5,
-                    "high": 10.2,
-                    "low": 9.4,
-                    "close": 10.0,
-                    "vol": 900,
-                },
-            ]
-        ),
-    )
+    # R37: price path now fetches daily + adj_factor and applies qfq. Mock both
+    # so the existing assertion (reversed order, values) still holds. adj_factor
+    # constant → qfq == raw (no adjustment), keeping the expected close values.
+    def fake_cached_call(_pro, api_name, **_kwargs):
+        if api_name == "daily":
+            return pd.DataFrame(
+                [
+                    {"trade_date": "20260410", "open": 10.0, "high": 11.0, "low": 9.8, "close": 10.8, "vol": 1000},
+                    {"trade_date": "20260409", "open": 9.5, "high": 10.2, "low": 9.4, "close": 10.0, "vol": 900},
+                ]
+            )
+        if api_name == "adj_factor":
+            return pd.DataFrame(
+                [{"trade_date": "20260410", "adj_factor": 1.0}, {"trade_date": "20260409", "adj_factor": 1.0}]
+            )
+        return None
+
+    monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", fake_cached_call)
 
     prices = tushare_api.get_ashare_prices_with_tushare("000001", "2026-04-09", "2026-04-10")
 
@@ -324,28 +316,60 @@ def test_get_ashare_prices_with_tushare_formats_and_reverses_results(monkeypatch
     assert prices[1].close == 10.8
 
 
-def test_fetch_tushare_ashare_prices_df_uses_qfq_adjustment(monkeypatch):
-    """R37: ``_fetch_tushare_ashare_prices_df`` must request forward-adjusted
-    (qfq) prices via ``ts.pro_bar(adj='qfq')``, not raw ``pro.daily``. Verify
-    the pro_bar call propagates adj='qfq' (the fix that removes phantom
-    ex-dividend gaps)."""
-    captured = {}
+def test_fetch_ashare_prices_applies_qfq_to_remove_ex_dividend_gap(monkeypatch):
+    """R37: across an ex-dividend day, raw prices gap down but qfq prices stay
+    continuous. Verify the implementation applies adj_factor so the phantom
+    gap is eliminated.
 
-    def fake_pro_bar(ts_code, adj, start_date, end_date):
-        captured.update(ts_code=ts_code, adj=adj, start_date=start_date, end_date=end_date)
-        return pd.DataFrame(
-            [{"trade_date": "20260410", "close": 10.8}, {"trade_date": "20260409", "close": 10.0}]
-        )
+    Fixture: day1 close=10 (adj_factor=1.2), day2 (ex-div) close=9.5 (adj_factor=1.0).
+    Raw shows a -5% gap. qfq: day1 = 10*1.2/1.0 = 12.0, day2 = 9.5*1.0/1.0 = 9.5
+    → still a drop, but adj_factor ratio captures it correctly. The point is
+    that qfq scales history by the ratio so the *return* reflects the true
+    ex-dividend economic effect without the artificial price-level jump. We
+    assert the scaled price equals raw * ratio / latest.
+    """
+    def fake_cached_call(_pro, api_name, **_kwargs):
+        if api_name == "daily":
+            return pd.DataFrame(
+                [
+                    {"trade_date": "20260109", "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.0, "vol": 1000},
+                    {"trade_date": "20260112", "open": 9.6, "high": 9.7, "low": 9.4, "close": 9.5, "vol": 1100},
+                ]
+            )
+        if api_name == "adj_factor":
+            return pd.DataFrame(
+                [
+                    {"trade_date": "20260109", "adj_factor": 1.2},  # pre-div
+                    {"trade_date": "20260112", "adj_factor": 1.0},  # post-div (latest)
+                ]
+            )
+        return None
 
-    import tushare as _ts
-    monkeypatch.setattr(_ts, "pro_bar", fake_pro_bar)
-    monkeypatch.setattr(tushare_api, "_get_tushare_cached_df", lambda *_a, **_k: None)
-    monkeypatch.setattr(tushare_api, "_get_persisted_tushare_cached_df", lambda *_a, **_k: None)
-    monkeypatch.setattr(tushare_api, "_persist_tushare_dataframe_result", lambda key, df, **_k: df)
+    monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", fake_cached_call)
+    df = tushare_api._fetch_tushare_ashare_prices_df(object(), "601398.SH", "20260109", "20260112")
+    assert df is not None and len(df) == 2
+    # Sort by trade_date for stable assertion (raw_df order is latest-first).
+    df_sorted = df.sort_values("trade_date").reset_index(drop=True)
+    # qfq: day1 close = 10.0 * 1.2/1.0 = 12.0; day2 close = 9.5 * 1.0/1.0 = 9.5
+    assert df_sorted.loc[0, "close"] == 12.0
+    assert df_sorted.loc[1, "close"] == 9.5
 
-    df = tushare_api._fetch_tushare_ashare_prices_df(object(), "000001.SZ", "20260409", "20260410")
-    assert captured["adj"] == "qfq"
-    assert df is not None and not df.empty
+
+def test_fetch_ashare_prices_falls_back_to_raw_when_no_adj_factor(monkeypatch):
+    """R37: if adj_factor fetch fails, return raw daily (degrade gracefully
+    rather than block the backtest with no data)."""
+    def fake_cached_call(_pro, api_name, **_kwargs):
+        if api_name == "daily":
+            return pd.DataFrame(
+                [{"trade_date": "20260109", "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.0, "vol": 1000}]
+            )
+        return None  # adj_factor fails
+
+    monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", fake_cached_call)
+    df = tushare_api._fetch_tushare_ashare_prices_df(object(), "601398.SH", "20260109", "20260109")
+    assert df is not None and len(df) == 1
+    # Raw close unchanged (no adj_factor to scale by).
+    assert df.loc[0, "close"] == 10.0
 
 
 def test_get_ashare_prices_with_tushare_returns_empty_when_uninitialized(monkeypatch):

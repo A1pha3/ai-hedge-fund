@@ -361,7 +361,7 @@ def get_ashare_prices_with_tushare(ticker: str, start_date: str, end_date: str) 
 
 
 def _fetch_tushare_ashare_prices_df(pro, ts_code: str, start_fmt: str, end_fmt: str) -> pd.DataFrame | None:
-    """Fetch A-share daily prices with forward-adjustment (前复权 qfq).
+    """Fetch A-share daily OHLCV with forward-adjustment (前复权 qfq).
 
     R37: previously used ``pro.daily`` which returns **unadjusted** (不复权)
     prices. Across any ex-dividend day (送股/分红/配股) the raw close gaps down,
@@ -371,102 +371,69 @@ def _fetch_tushare_ashare_prices_df(pro, ts_code: str, start_fmt: str, end_fmt: 
     adjustment is on price levels only and does not change return *structure*
     (stop-loss/ATR logic is unaffected).
 
-    ``ts.pro_bar`` is Tushare's adjustment-capable top-level helper (not a
-    ``pro`` method), so it cannot reuse ``_cached_tushare_dataframe_call``
-    (which does ``getattr(pro, api_name)``). We replicate the cache + retry
-    path via ``_call_tushare_pro_bar_api`` and reuse the cache-key/persist
-    helpers for consistency.
+    Implementation: ``ts.pro_bar(adj=...)`` is Tushare's adjustment helper but
+    it internally calls ``DataFrame.fillna(method=...)`` which is removed in
+    pandas 2.x/3.x (raises ``TypeError`` → ``OSError``), making it unusable in
+    this environment. Instead we fetch ``pro.daily`` + ``pro.adj_factor`` (both
+    standard ``pro`` methods, cached/retried via ``_cached_tushare_dataframe_call``)
+    and apply forward-adjustment manually:
+        price_qfq = price_raw * adj_factor / adj_factor_latest
+    This is exactly the qfq definition (anchor the latest price, scale history).
+    If ``adj_factor`` fetch fails, fall back to raw ``daily`` (degrade gracefully
+    rather than return no data — a backtest with unadjusted prices is still
+    runnable, just less accurate on ex-dividend days).
     """
-    return _cached_tushare_pro_bar_call(
+    raw_df = _cached_tushare_dataframe_call(
+        pro,
+        "daily",
         ts_code=ts_code,
         start_date=start_fmt,
         end_date=end_fmt,
-        adj="qfq",
     )
+    if raw_df is None or raw_df.empty:
+        return raw_df
+
+    adj_df = _cached_tushare_dataframe_call(
+        pro,
+        "adj_factor",
+        ts_code=ts_code,
+        start_date=start_fmt,
+        end_date=end_fmt,
+    )
+    if adj_df is None or adj_df.empty:
+        # adj_factor unavailable → return raw (degrade, don't block the backtest).
+        return raw_df
+
+    return _apply_qfq_adjustment(raw_df, adj_df)
 
 
-def _cached_tushare_pro_bar_call(ts_code: str, start_date: str, end_date: str, adj: str = "qfq") -> pd.DataFrame | None:
-    """Cached + retrying wrapper around ``ts.pro_bar`` for A-share qfq prices.
+def _apply_qfq_adjustment(raw_df: pd.DataFrame, adj_df: pd.DataFrame) -> pd.DataFrame:
+    """Apply forward-adjustment (前复权) to a raw daily frame using adj_factor.
 
-    Reuses ``_make_tushare_query_cache_key`` / ``_persist_tushare_dataframe_result``
-    so qfq frames share the same process + persisted cache lifecycle as the
-    other Tushare calls. See R37.
+    qfq anchors the LATEST price and scales history: price_qfq = price_raw *
+    adj_factor / adj_factor_latest. Only OHLC columns are scaled; volume is
+    left as-is (volume adjustment is a separate concern and the backtest does
+    not compute returns from volume). Rows are matched on trade_date.
+
+    Preserves the input ``raw_df`` row order (Tushare ``daily`` returns latest-
+    first; callers like ``get_ashare_prices_with_tushare`` reverse it). See R37.
     """
-    api_name = "pro_bar"
-    cache_key = _make_tushare_query_cache_key(
-        api_name, ts_code=ts_code, start_date=start_date, end_date=end_date, adj=adj,
-    )
-
-    cached_df = _get_tushare_cached_df(cache_key)
-    if cached_df is not None:
-        return cached_df
-
-    persisted_df = _get_persisted_tushare_cached_df(cache_key)
-    if persisted_df is not None:
-        return persisted_df
-
-    df = _call_tushare_pro_bar_api(ts_code=ts_code, start_date=start_date, end_date=end_date, adj=adj)
-
-    if df is not None:
-        return _persist_tushare_dataframe_result(
-            cache_key,
-            df,
-            api_name=api_name,
-            ts_code=ts_code,
-            start_date=start_date,
-            end_date=end_date,
-            adj=adj,
-        )
-    return None
-
-
-def _call_tushare_pro_bar_api(ts_code: str, start_date: str, end_date: str, adj: str = "qfq") -> pd.DataFrame | None:
-    """Call ``tushare.pro_bar`` with the same exponential-backoff retry policy
-    as ``_call_tushare_dataframe_api``. See R37."""
-    import tushare as _ts
-    import random
-
-    max_retries = int(os.environ.get("TUSHARE_MAX_RETRIES", "2"))
-    base_delay = float(os.environ.get("TUSHARE_RETRY_BASE_DELAY", "1.0"))
-    rate_limit_delay = float(os.environ.get("TUSHARE_RATE_LIMIT_DELAY", "30.0"))
-    rate_limit_max_retries = int(os.environ.get("TUSHARE_RATE_LIMIT_MAX_RETRIES", "2"))
-
-    transient_attempts = 0
-    rate_limit_attempts = 0
-    max_total = max_retries + rate_limit_max_retries + 1
-    for _ in range(max_total):
-        try:
-            df = _ts.pro_bar(ts_code=ts_code, adj=adj, start_date=start_date, end_date=end_date)
-            if df is None or df.empty:
-                return None
-            return df
-        except Exception as e:  # noqa: BLE001 — mirror _call_tushare_dataframe_api policy
-            msg = str(e)
-            non_retryable = any(k in msg for k in ("TypeError", "ValueError", "AttributeError", "KeyError"))
-            if non_retryable:
-                print(f"[Tushare] pro_bar 调用失败 (不可重试): {e}")
-                return None
-            is_rate_limit = any(
-                k in msg for k in ("429", "TooManyRequests", "每分钟", "限速", "rate limit", "freq")
-            )
-            if is_rate_limit:
-                if rate_limit_attempts >= rate_limit_max_retries:
-                    print(f"[Tushare] pro_bar 限速重试已用尽 ({rate_limit_max_retries} 次): {e}")
-                    return None
-                rate_limit_attempts += 1
-                jitter = random.uniform(0.7, 1.3)
-                delay = rate_limit_delay * jitter
-                print(f"[Tushare] pro_bar 触发限速 (尝试 {rate_limit_attempts}/{rate_limit_max_retries}): {e}，{delay:.1f}s 后重试...")
-                time.sleep(delay)
-                continue
-            if transient_attempts >= max_retries:
-                print(f"[Tushare] pro_bar({ts_code}) 调用失败 (已重试 {max_retries} 次): {e}")
-                return None
-            transient_attempts += 1
-            delay = base_delay * (2 ** (transient_attempts - 1))
-            print(f"[Tushare] pro_bar 调用失败 (尝试 {transient_attempts}/{max_retries + 1}): {e}，{delay:.1f}s 后重试...")
-            time.sleep(delay)
-    return None
+    adj = adj_df.sort_values("trade_date").reset_index(drop=True)
+    # adj_factor_latest = the factor on the chronologically latest trade date.
+    latest_adj = adj["adj_factor"].iloc[-1] if not adj.empty else None
+    if latest_adj is None or pd.isna(latest_adj) or float(latest_adj) == 0:
+        return raw_df
+    adj_map = dict(zip(adj["trade_date"].astype(str), adj["adj_factor"].astype(float)))
+    result = raw_df.copy()
+    ratios = []
+    for td in result["trade_date"].astype(str):
+        af = adj_map.get(td)
+        ratios.append((af / float(latest_adj)) if af is not None and af != 0 else 1.0)
+    ratio = pd.Series(ratios, index=result.index)
+    for col in ("open", "high", "low", "close"):
+        if col in result.columns:
+            result[col] = (result[col].astype(float) * ratio).round(2)
+    return result
 
 
 def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float = 3.0, include_name: bool = True) -> list[dict]:
