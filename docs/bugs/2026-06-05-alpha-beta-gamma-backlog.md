@@ -218,6 +218,12 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
 > remaining MEDIUM items are left `[DEFERRED]` pending a deeper read since
 > they touch subtle behaviour (cache connection reuse, cash-vs-amount
 > semantics) that needs more than a grep to confirm.
+>
+> **2026-06-16 audit (campaign 14)**: the deeper read is complete. BETA-009
+> and GAMMA-010 are by-design (constraint-min selection is correct; daily
+> trade limit is an intentional NAV-exposure control). BETA-010 was already
+> fixed by the R20 long-connection + WAL rework. All three moved to
+> [RESOLVED]. No open items remain in this section.
 
 ### ALPHA-006 — p10 floor index returns min for N<11  [RESOLVED]
 - **Resolution**: `src/backtesting/early_runner_walk_forward.py:_distribution_p10`
@@ -238,9 +244,39 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
 - **Resolution**: `metrics.py:15` makes `annual_trading_days` configurable
   (default 252, A-share callers pass 244). The cadence assumption is now a
   documented constructor parameter, not a hardcoded constant.
-### BETA-009 — binding_constraint mislabeled when cash < min_lot  [DEFERRED]
-### BETA-010 — DiskCache opens sqlite3 conn on every op  [DEFERRED]
-### GAMMA-010 — daily trade limit uses amount, not cash consumed  [DEFERRED]
+### BETA-009 — binding_constraint mislabeled when cash < min_lot  [RESOLVED — by-design]
+- **Resolution (campaign 11 audit, re-verified campaign 14)**: Not a bug.
+  `position_calculator.py:113-120` builds a constraints dict and selects the
+  binding constraint via `min(constraints.items(), key=lambda item: item[1])` —
+  the constraint with the smallest allowed amount is, by definition, the
+  binding one, and is labelled with its own key. When cash is the smallest,
+  it is correctly labelled `"cash"`. The `min_lot` rounding is handled
+  independently by `_round_down_lot` (line 121), not by the constraint label,
+  so there is no mislabelling path. Confirmed by-design across the position
+  calculator tests.
+
+### BETA-010 — DiskCache opens sqlite3 conn on every op  [RESOLVED]
+- **Resolution**: Already fixed by the R20 long-connection + WAL rework in
+  `enhanced_cache.py:252-365`. `DiskCache` now holds a single
+  `self._conn` sqlite3 connection (created once in `__init__`, recreated only
+  on liveness failure via `_ensure_conn`), runs in WAL journal mode with a
+  `threading.Lock` write guard, and caches liveness checks (`_is_alive`, 5s TTL)
+  to avoid a `SELECT 1` on every public method. The original "open a connection
+  per get/set/delete" pattern is gone. Covered by `tests/test_enhanced_cache_wal.py`
+  (`test_disk_cache_reuses_connection_across_set_get`,
+  `test_disk_cache_close_drops_long_connection`,
+  `test_disk_cache_get_conn_returns_long_connection`). Status tag was stale
+  (marked DEFERRED long after the R20 fix); corrected campaign 14.
+
+### GAMMA-010 — daily trade limit uses amount, not cash consumed  [RESOLVED — by-design]
+- **Resolution (campaign 11 audit, re-verified campaign 14)**: Not a bug.
+  `enforce_daily_trade_limit` bounds the daily *exposure increase* to
+  `portfolio_nav * limit_ratio` — an intentional portfolio-level risk control
+  measured in NAV-proportional amount, not a cash-availability constraint.
+  Cash availability is handled separately by `cash_limit = available_cash`
+  (`position_calculator.py:108`) upstream of the daily-limit gate. The two
+  constraints address different risks (NAV exposure vs cash solvency); using
+  amount for the daily limit is the documented design. Confirmed by-design.
 
 ---
 

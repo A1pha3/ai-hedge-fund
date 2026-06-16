@@ -282,25 +282,7 @@ class DiskCache:
         self._journal_mode: str | None = None
         try:
             os.makedirs(os.path.dirname(self._path), exist_ok=True)
-            self._conn = sqlite3.connect(
-                self._path,
-                check_same_thread=False,
-                timeout=30.0,
-                isolation_level=None,  # autocommit；显式控制事务
-            )
-            # WAL 模式：reader 与 writer 不互斥；首次设置后 SQLite 会持久化
-            # journal_mode，下次再开连接会保留 WAL 标记，但我们仍每次显式
-            # 确认一次以便测试断言。
-            try:
-                self._conn.execute("PRAGMA journal_mode=WAL")
-                self._conn.execute("PRAGMA synchronous=NORMAL")
-                self._conn.execute("PRAGMA temp_store=MEMORY")
-                cur = self._conn.execute("PRAGMA journal_mode")
-                row = cur.fetchone()
-                self._journal_mode = (row[0] if row else "").lower()
-            except Exception as pragma_err:
-                logger.debug(f"Disk cache PRAGMA setup error: {pragma_err}")
-            self._conn.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value BLOB, expires_at INTEGER)")
+            self._conn = self._open_connection()
         except Exception as e:
             logger.warning(f"Disk cache init error: {e}")
             self._available = False
@@ -311,6 +293,31 @@ class DiskCache:
             except Exception:
                 pass
             self._conn = None
+
+    def _open_connection(self) -> sqlite3.Connection:
+        """Open a fresh long-lived sqlite3 connection with WAL tuning and the
+        cache schema. Shared by ``__init__`` and ``_ensure_conn`` (reconnect)
+        so the two paths cannot drift. Raises on failure; callers handle."""
+        conn = sqlite3.connect(
+            self._path,
+            check_same_thread=False,
+            timeout=30.0,
+            isolation_level=None,  # autocommit；显式控制事务
+        )
+        # WAL 模式：reader 与 writer 不互斥；首次设置后 SQLite 会持久化
+        # journal_mode，下次再开连接会保留 WAL 标记，但我们仍每次显式
+        # 确认一次以便测试断言。
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA temp_store=MEMORY")
+            cur = conn.execute("PRAGMA journal_mode")
+            row = cur.fetchone()
+            self._journal_mode = (row[0] if row else "").lower()
+        except Exception as pragma_err:
+            logger.debug(f"Disk cache PRAGMA setup error: {pragma_err}")
+        conn.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value BLOB, expires_at INTEGER)")
+        return conn
 
     def _is_alive(self) -> bool:
         """检查长连接是否仍可用（未关闭且底层 fd 有效）。
@@ -346,21 +353,7 @@ class DiskCache:
                     self._conn.close()
             except Exception:
                 pass
-            self._conn = sqlite3.connect(
-                self._path,
-                check_same_thread=False,
-                timeout=30.0,
-                isolation_level=None,
-            )
-            try:
-                self._conn.execute("PRAGMA journal_mode=WAL")
-                self._conn.execute("PRAGMA synchronous=NORMAL")
-                cur = self._conn.execute("PRAGMA journal_mode")
-                row = cur.fetchone()
-                self._journal_mode = (row[0] if row else "").lower()
-            except Exception:
-                pass
-            self._conn.execute("CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, value BLOB, expires_at INTEGER)")
+            self._conn = self._open_connection()
             self._last_alive_check = time.monotonic()  # R20.10: 重建后立即标记存活
             return self._conn
         except Exception as e:
