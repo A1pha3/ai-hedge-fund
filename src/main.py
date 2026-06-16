@@ -517,7 +517,11 @@ def _rank_pool_by_investability(ranking_pool: list[dict], trade_date: str) -> li
             reports_dir=_resolve_consecutive_report_dir(),
         )
         return rank_recommendations_by_investability(ranking_pool, composite_report, expected_report)
-    except Exception:
+    except Exception as exc:
+        # BH-017: never crash auto-screening on ranking failure, but make the
+        # silent fallback observable — the user otherwise sees an unranked pool
+        # with no signal that investability ranking degraded.
+        logger.warning("[AutoScreening] investability ranking failed, returning unranked pool: %s", exc)
         return ranking_pool
 
 
@@ -736,8 +740,10 @@ def _rebuild_cli_objects(report_payload: dict):
         if decay_payload.get("level") and decay_payload.get("level") != "none":
             try:
                 decay_map[rec["ticker"]] = DecayInfo.from_dict(decay_payload)
-            except Exception:
-                pass
+            except Exception as exc:
+                # BH-017 drain: per-ticker decay enrichment is best-effort, but
+                # make the skip observable at debug level for diagnosis.
+                logger.debug("[AutoScreening] decay parse skipped for %s: %s", rec.get("ticker"), exc)
 
     return top_results, market_state, industry_signals, decay_map
 
@@ -1193,8 +1199,10 @@ def _print_top_score_enhancements(recs: list[dict], top_n: int, report_path) -> 
     for r in recs[:5]:
         try:
             top_results.append(FusedScore.model_validate(r))
-        except Exception:
-            # Older report format — skip decomposition rather than crash
+        except Exception as exc:
+            # Older report format — skip decomposition rather than crash.
+            # BH-017 drain: log at debug so format drift is diagnosable.
+            logger.debug("[AutoScreening] score decomposition skipped (old format?): %s", exc)
             continue
     if not top_results:
         return
@@ -1222,8 +1230,10 @@ def _print_top_score_enhancements(recs: list[dict], top_n: int, report_path) -> 
             if er_report.total_samples > 0:
                 print(f"\n{Fore.WHITE}{Style.BRIGHT}{'━' * 22} 预期收益 (P9-1) {'━' * 22}{Style.RESET_ALL}")
                 print(render_expected_returns_compact(er_report))
-    except Exception:
-        pass  # Non-critical enhancement — never crash auto output
+    except Exception as exc:
+        # Non-critical enhancement — never crash auto output. BH-017 drain:
+        # log at debug so display-enhancement failure is diagnosable.
+        logger.debug("[AutoScreening] expected-returns display skipped: %s", exc)
 
 
 def run_top(top_n: int = 10, filters: dict | None = None) -> int:
