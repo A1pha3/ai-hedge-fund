@@ -86,6 +86,35 @@ class TestCheckDataFreshness:
         result = check_data_freshness(trade_date="20260611")
         assert result["trade_date"] == "2026-06-11"
 
+    def test_cache_audit_failure_logs_warning(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+        """BH-017 drain: when the cache DB connection fails, the freshness
+        audit must (a) still return gracefully AND (b) emit a warning so the
+        silent false-"all fresh" risk is diagnosable."""
+        import logging
+        import sqlite3
+
+        from src.screening.data_freshness_guard import _check_cache_freshness
+
+        bad_cache = tmp_path / "cache.sqlite"
+        bad_cache.touch()
+
+        # Force sqlite3.connect to raise so the OUTER except (which warns)
+        # fires rather than the inner per-source handlers.
+        def boom(*_args, **_kwargs):
+            raise sqlite3.OperationalError("simulated locked DB")
+
+        monkeypatch.setattr(sqlite3, "connect", boom)
+
+        with caplog.at_level(logging.WARNING, logger="src.screening.data_freshness_guard"):
+            result = _check_cache_freshness("2026-06-11", bad_cache)
+
+        # Graceful: returns empty dict (no crash).
+        assert result == {}
+        # Observability: warns that the audit was unavailable.
+        assert any("cache freshness audit unavailable" in rec.message.lower() for rec in caplog.records), (
+            f"Expected cache-audit warning, got: {[rec.message for rec in caplog.records]}"
+        )
+
 
 class TestApplyFreshnessConfidencePenalty:
     def test_no_penalty_when_fresh(self) -> None:

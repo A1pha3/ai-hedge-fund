@@ -17,11 +17,14 @@ CLI:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from src.utils.display import Fore, Style
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -192,8 +195,11 @@ def _check_cache_freshness(
                     latest = str(row[0])[:10]
                     stale_days = _days_between(latest, trade_date)
                     result["daily_prices"] = {"latest_date": latest, "stale_days": stale_days}
-            except Exception:
-                pass
+            except Exception as exc:
+                # BH-017 drain: silent skip would hide a real freshness gap;
+                # log at debug so query failure (schema drift, locked DB) is
+                # diagnosable instead of producing a false "all fresh" signal.
+                logger.debug("[DataFreshness] daily_prices freshness query skipped: %s", exc)
 
             # Check financial metrics freshness
             try:
@@ -202,8 +208,8 @@ def _check_cache_freshness(
                     latest = str(row[0])[:10]
                     stale_days = _days_between(latest, trade_date)
                     result["financial_metrics"] = {"latest_date": latest, "stale_days": stale_days}
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("[DataFreshness] financial_metrics freshness query skipped: %s", exc)
 
             # Check industry classification freshness
             try:
@@ -212,12 +218,15 @@ def _check_cache_freshness(
                     latest = str(row[0])[:10]
                     stale_days = _days_between(latest, trade_date)
                     result["industry_classification"] = {"latest_date": latest, "stale_days": stale_days}
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("[DataFreshness] industry_classification freshness query skipped: %s", exc)
         finally:
             conn.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        # BH-017 drain: whole-DB failure (locked / corrupt / permission) makes
+        # the cache freshness audit silently return empty → false "all fresh".
+        # Warn so the operator can diagnose a cache that is actually stale.
+        logger.warning("[DataFreshness] cache freshness audit unavailable for %s: %s", cache_path, exc)
 
     return result
 
