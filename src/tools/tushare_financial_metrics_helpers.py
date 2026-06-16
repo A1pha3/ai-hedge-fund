@@ -178,7 +178,7 @@ def build_financial_metrics_from_frames(
     idx_out = 0
     for idx, (_, row) in enumerate(df_fin.iterrows()):
         end_date_str = str(row.get("end_date", ""))
-        if not _should_include_financial_period(end_date_str, period):
+        if not _should_include_financial_period(end_date_str, period, ann_date_str=str(row.get("ann_date", "")), as_of_date=end_date):
             continue
         metric = _build_single_financial_metric(
             ticker=ticker,
@@ -259,11 +259,28 @@ def _build_single_financial_metric(**kwargs) -> FinancialMetrics:
     )
 
 
-def _should_include_financial_period(end_date_str: str, period: str) -> bool:
+def _should_include_financial_period(end_date_str: str, period: str, ann_date_str: str | None = None, as_of_date: str | None = None) -> bool:
     if period == "annual":
-        return end_date_str.endswith("1231")
-    if period == "quarterly":
-        return not end_date_str.endswith("1231")
+        if not end_date_str.endswith("1231"):
+            return False
+    elif period == "quarterly":
+        if end_date_str.endswith("1231"):
+            return False
+    # R41: point-in-time look-ahead hardening. When an as_of trade date is
+    # supplied (backtest/replay), a financial report announced strictly after
+    # that date is look-ahead data and must be excluded — a 2 月 backtest must
+    # not read a 2023 annual report not *announced* until 4 月. R37-R40 hardened
+    # macro/prices/calendar; fundamental was the remaining sibling. ann_date is
+    # Tushare's 公告日 (filing/announcement date). Missing/malformed ann_date or
+    # as_of falls back to the historical behavior (live mode unchanged) rather
+    # than over-filtering and silently dropping legitimate metrics — mirrors the
+    # C2-BH2 robustness contract.
+    if ann_date_str and as_of_date:
+        ann_compact = str(ann_date_str).replace("-", "")
+        as_of_compact = str(as_of_date).replace("-", "")
+        if len(ann_compact) == 8 and len(as_of_compact) == 8 and ann_compact[:8].isdigit() and as_of_compact[:8].isdigit():
+            if ann_compact > as_of_compact:
+                return False
     return True
 
 
