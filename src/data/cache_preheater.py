@@ -206,8 +206,11 @@ def _fetch_financial_metrics(trade_date: str, force: bool) -> pd.DataFrame | Non
             metrics = get_ashare_financial_metrics_with_tushare(ts_code[:6], trade_date, limit=1)
             if metrics:
                 results.append({"ticker": ts_code, "count": len(metrics)})
-        except Exception:
-            pass
+        except Exception as exc:
+            # BH-017 drain: per-ticker preheat fetch is best-effort, but make
+            # the skip observable at debug so a systematic fetch failure is
+            # diagnosable instead of silently reducing preheat coverage.
+            logger.debug("[CachePreheat] financial metrics fetch skipped for %s: %s", ts_code, exc)
 
     if results:
         from src.data.enhanced_cache import get_enhanced_cache

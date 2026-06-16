@@ -284,8 +284,15 @@ class MarketDataLoader:
                     else:
                         hydrated_prices[ticker] = float(row["close"])
                         continue
-            except Exception:
-                pass
+            except Exception as exc:
+                # BH-017 drain: silent fallback to cost_basis on price-fetch
+                # failure could silently distort backtest NAV/drawdown. Log at
+                # debug so the degradation is diagnosable (mark-to-market fell
+                # back to cost basis for this held position).
+                logger.debug(
+                    "hydrate_position_prices: ticker=%s price fetch failed (%s), 回退 cost_basis",
+                    ticker, current_date_str, exc_info=exc,
+                )
             if fallback_price > 0:
                 hydrated_prices[ticker] = fallback_price
         return hydrated_prices
