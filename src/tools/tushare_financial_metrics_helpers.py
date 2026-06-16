@@ -733,8 +733,18 @@ def _index_rows_by_end_date(frame: pd.DataFrame | None) -> dict[str, pd.Series]:
 
 
 def _build_prior_period_keys(end_date_str: str) -> tuple[str, str]:
-    prior_year = str(int(end_date_str[:4]) - 1)
-    return f"{prior_year}1231", f"{prior_year}{end_date_str[4:]}"
+    # C2-BH2: Tushare fina_indicator may return a row with a null/missing/short
+    # end_date (newly-listed companies, partial-year restatements). Previously
+    # int(end_date_str[:4]) raised ValueError, which propagated through TTM
+    # synthesis and was swallowed by get_ashare_financial_metrics_with_tushare's
+    # outer except — silently dropping ALL financial metrics for the ticker.
+    # A malformed date now returns sentinel keys that downstream .get() misses,
+    # so one bad row cannot poison the whole batch.
+    raw = "" if end_date_str is None else str(end_date_str)
+    if len(raw) < 8 or not raw[:4].isdigit():
+        return ("__invalid_period__", "__invalid_period__")
+    prior_year = str(int(raw[:4]) - 1)
+    return f"{prior_year}1231", f"{prior_year}{raw[4:]}"
 
 
 def _sum_present_values(*values) -> float:

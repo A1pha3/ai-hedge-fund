@@ -329,6 +329,12 @@ class BacktestEngine:
             return None, None
 
         payload = read_checkpoint(self._checkpoint_path)
+        # C2-BH1: read_checkpoint quarantines a corrupt/truncated checkpoint and
+        # returns {} so the session is not wedged. An empty payload means there
+        # is no valid checkpoint to restore — start fresh rather than KeyError
+        # on payload["portfolio_snapshot"].
+        if not payload:
+            return None, None
         self._portfolio.load_snapshot(payload["portfolio_snapshot"])
         self._portfolio_values = deserialize_portfolio_values(payload.get("portfolio_values", []))
         self._performance_metrics.update(payload.get("performance_metrics", {}))
