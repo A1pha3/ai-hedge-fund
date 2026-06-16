@@ -270,11 +270,12 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
 
     The aggregate is equal-weighted. A previous per-pick ``sample_count < 20``
     halving scheme was removed because it was unreachable:
-    :func:`build_front_door_verdict` requires ``sample_count >= 20`` for any
-    BUY classification, so a low-sample pick can never enter this BUY-only
-    aggregate. Equal weighting matches the spec's documented alternative
-    ("等权或 composite_score 归一化"); see
-    ``test_low_sample_pick_can_never_be_buy`` for the guard that pins this.
+    :func:`build_front_door_verdict` requires a sufficient backing sample (raw
+    ``bucket_sample_count >= 20``, or — when the R35 field is present —
+    ``bucket_t30_mature_count >= 20``) for any BUY classification, so a
+    low-sample pick can never enter this BUY-only aggregate. Equal weighting
+    matches the spec's documented alternative ("等权或 composite_score 归一化");
+    see ``test_low_sample_pick_can_never_be_buy`` for the guard that pins this.
 
     Returns empty string when fewer than 2 BUY picks or no T+30 data.
     """
