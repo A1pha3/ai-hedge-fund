@@ -173,11 +173,21 @@ def build_front_door_verdict(
     )
 
     supports_long = decision != "bearish"
-    is_high_quality = supports_long and composite_score >= 0.5 and t30_edge > 0 and t30_win_rate >= 0.55 and backing_sample >= 20
+    # BUY requires strict *mature* T+30 evidence (R35). The risk_off HOLD
+    # decision, however, must reflect pick quality rather than tracking age: a
+    # freshly-active bucket with bucket_t30_mature_count == 0 (field present,
+    # no pick has yet crossed the 30-day horizon) should not be locked out of
+    # HOLD merely because none of its picks have matured. BH-013: use the raw
+    # bucket_sample_count as the risk_off HOLD backing sample so a populated
+    # young bucket can still surface a high-quality pick as HOLD instead of
+    # AVOID. BUY in normal regimes keeps the strict mature-count requirement.
+    _meets_quality_bar = supports_long and composite_score >= 0.5 and t30_edge > 0 and t30_win_rate >= 0.55
+    is_high_quality = _meets_quality_bar and backing_sample >= 20
+    is_high_quality_for_hold = _meets_quality_bar and sample_count >= 20
     is_watchable = supports_long and composite_score >= 0.25 and t30_edge >= 0 and t30_win_rate >= 0.5
 
     if "crisis" in regime_lower or "risk_off" in regime_lower:
-        action = "HOLD" if is_high_quality else "AVOID"
+        action = "HOLD" if is_high_quality_for_hold else "AVOID"
     elif is_high_quality:
         action = "BUY"
     elif is_watchable:

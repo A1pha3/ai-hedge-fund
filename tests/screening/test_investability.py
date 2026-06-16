@@ -214,6 +214,66 @@ def test_build_front_door_verdict_falls_back_to_raw_count_when_mature_absent() -
     assert verdict["action"] == "BUY"
 
 
+def test_build_front_door_verdict_risk_off_hold_not_blocked_by_zero_mature_count() -> None:
+    """BH-013: a high-quality pick under risk_off must HOLD (not AVOID) even when
+    ``bucket_t30_mature_count`` is present but zero.
+
+    Scenario: the bucket has 40 raw historical picks but none have yet matured
+    past the 30-day horizon (e.g. a freshly-active bucket, or a system within
+    its first 30 days of tracking). R35's BUY gate correctly refuses to BUY on
+    unmatured evidence, but the *risk_off HOLD* decision must not be blocked by
+    the same strict mature-count gate: HOLD only claims "quality looks good,
+    watch" — it does not rely on realized 30-day returns. Locking
+    ``backing_sample`` to 0 when the field exists-but-is-zero caused high-quality
+    picks (composite 0.72, edge +11.4%, winrate 66%, raw sample 40) to be
+    mis-classified as AVOID under risk_off, contradicting the "higher conviction"
+    goal (HOLD/AVOID distinction must reflect pick quality, not tracking age).
+
+    The fix: the BUY gate keeps the strict mature-count requirement, but the
+    risk_off HOLD path uses the raw ``bucket_sample_count`` as its backing
+    sample so a young-but-populated bucket can still surface quality picks as
+    HOLD rather than AVOID."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.72,
+            "expected_returns": {"t30": 11.4},
+            "win_rates": {"t30": 0.66},
+            "bucket_sample_count": 40,
+            # Field present but zero: bucket is tracked but no pick has matured
+            # past 30 days yet.
+            "bucket_t30_mature_count": 0,
+        },
+        market_regime="risk_off",
+    )
+    assert verdict["action"] == "HOLD", (
+        "risk_off HOLD must reflect pick quality, not tracking age; a populated "
+        "bucket with no matured samples should still HOLD a high-quality pick"
+    )
+
+
+def test_build_front_door_verdict_buy_still_requires_mature_sample_when_zero() -> None:
+    """BH-013 complement: even though risk_off HOLD now tolerates
+    ``bucket_t30_mature_count=0``, the BUY gate in a normal regime must STILL
+    refuse to BUY without mature evidence. The fix loosens the HOLD bar but
+    preserves R35's strict BUY requirement."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.72,
+            "expected_returns": {"t30": 11.4},
+            "win_rates": {"t30": 0.66},
+            "bucket_sample_count": 40,
+            "bucket_t30_mature_count": 0,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] != "BUY", (
+        "BUY must still require mature T+30 evidence; zero mature samples must "
+        "not promote to BUY even with a large raw sample count"
+    )
+
+
 # ---------------------------------------------------------------------------
 # _grade_code / _safe_metric / _decorate_cluster_candidate
 # ---------------------------------------------------------------------------

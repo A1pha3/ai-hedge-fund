@@ -877,6 +877,147 @@ def get_all_stock_basic() -> pd.DataFrame | None:
             return None
 
 
+def _normalize_compact_date(raw: object) -> str | None:
+    """Normalize a date-like cell to compact ``YYYYMMDD`` for integer comparison.
+
+    Accepts ``YYYY-MM-DD`` / ``YYYY/MM/DD`` / ``YYYYMMDD`` / ``datetime`` /
+    ``NaT``. Returns ``None`` when the value is empty, NaN, or unparseable —
+    callers treat ``None`` as "unknown" and decide conservatively per field
+    (list_date unknown → exclude; delist_date unknown → treat as not-yet-delisted).
+    Parity with R41 ``_normalize_compact_date`` in tushare_financial_metrics_helpers."""
+    if raw is None:
+        return None
+    if isinstance(raw, float) and pd.isna(raw):
+        return None
+    s = str(raw).strip()
+    if not s or s.lower() in {"nan", "nat", "none"}:
+        return None
+    # Accept YYYY-MM-DD / YYYY/MM-DD etc. — strip non-digits.
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if len(digits) != 8:
+        return None
+    return digits
+
+
+def filter_stock_basic_as_of(
+    stock_basic: pd.DataFrame,
+    *,
+    as_of: str | None,
+    return_audit: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, dict[str, int]]:
+    """R42 survivorship-bias fix: filter a stock_basic universe to the subset
+    that was actually listed and not-yet-delisted on ``as_of``.
+
+    The current ``_fetch_tushare_all_stock_basic`` requests ``list_status="L"``
+    (currently listed), which silently drops every stock that delisted before
+    *today*. A historical backtest for trade date T therefore cannot pick a
+    name that delisted after T but before today — even though that name was
+    alive and tradeable on T. That is survivorship bias: it beautifies backtest
+    returns because the eventual losers can never be selected.
+
+    This pure filter takes a stock_basic-shaped DataFrame (with ``list_date``
+    and, when available, ``delist_date``) plus an ``as_of`` trade date, and
+    returns the PIT-legitimate subset: listed on or before ``as_of`` AND (no
+    delist_date OR delist_date strictly after ``as_of``).
+
+    Args:
+        stock_basic: DataFrame with at least ``ts_code`` and ``list_date``;
+            ``delist_date`` is optional (current list_status="L" shape omits it).
+        as_of: compact or dashed trade date (YYYYMMDD / YYYY-MM-DD). When
+            ``None`` (live mode), returns the input unchanged — PIT filtering
+            is a backtest-only concern (parity with R40/R41 as_of=None).
+        return_audit: when True, also return a compact survivorship-bias audit
+            summary dict so a campaign can quantify the bias magnitude.
+
+    Returns:
+        Filtered DataFrame, or ``(filtered, audit_summary)`` when
+        ``return_audit=True``. The audit summary distinguishes
+        ``dropped_already_delisted`` (the survivorship-bias signal) from
+        ``dropped_not_yet_listed`` and ``dropped_unparseable``.
+    """
+    if as_of is None:
+        # Live mode: no PIT filtering. Return input unchanged.
+        if return_audit:
+            summary = {
+                "input_count": len(stock_basic),
+                "kept_count": len(stock_basic),
+                "dropped_already_delisted": 0,
+                "dropped_not_yet_listed": 0,
+                "dropped_unparseable": 0,
+            }
+            return stock_basic, summary
+        return stock_basic
+
+    as_of_compact = _normalize_compact_date(as_of)
+    # If as_of itself is unparseable, fail safe: do not filter (return input).
+    # This mirrors the R41 malformed-as_of fallback — never let a bad as_of
+    # silently over-filter the universe.
+    if as_of_compact is None:
+        if return_audit:
+            summary = {
+                "input_count": len(stock_basic),
+                "kept_count": len(stock_basic),
+                "dropped_already_delisted": 0,
+                "dropped_not_yet_listed": 0,
+                "dropped_unparseable": 0,
+            }
+            return stock_basic, summary
+        return stock_basic
+
+    input_count = len(stock_basic)
+    if input_count == 0:
+        if return_audit:
+            summary = {
+                "input_count": 0,
+                "kept_count": 0,
+                "dropped_already_delisted": 0,
+                "dropped_not_yet_listed": 0,
+                "dropped_unparseable": 0,
+            }
+            return stock_basic, summary
+
+    has_delist_col = "delist_date" in stock_basic.columns
+
+    kept_mask: list[bool] = []
+    dropped_already_delisted = 0
+    dropped_not_yet_listed = 0
+    dropped_unparseable = 0
+
+    for _, row in stock_basic.iterrows():
+        list_compact = _normalize_compact_date(row.get("list_date"))
+        if list_compact is None:
+            # Cannot establish PIT legality — conservative exclusion.
+            kept_mask.append(False)
+            dropped_unparseable += 1
+            continue
+        if list_compact > as_of_compact:
+            # IPO after as_of — did not exist yet.
+            kept_mask.append(False)
+            dropped_not_yet_listed += 1
+            continue
+        # list_date <= as_of: listed on or before as_of. Now check delist.
+        if has_delist_col:
+            delist_compact = _normalize_compact_date(row.get("delist_date"))
+            if delist_compact is not None and delist_compact <= as_of_compact:
+                # Delisted on or before as_of — no longer tradeable.
+                kept_mask.append(False)
+                dropped_already_delisted += 1
+                continue
+        kept_mask.append(True)
+
+    kept = stock_basic[pd.Series(kept_mask, index=stock_basic.index)].reset_index(drop=True)
+    if return_audit:
+        summary = {
+            "input_count": input_count,
+            "kept_count": len(kept),
+            "dropped_already_delisted": dropped_already_delisted,
+            "dropped_not_yet_listed": dropped_not_yet_listed,
+            "dropped_unparseable": dropped_unparseable,
+        }
+        return kept, summary
+    return kept
+
+
 def _fetch_tushare_daily_basic_batch(pro, trade_date: str) -> pd.DataFrame | None:
     return _cached_tushare_dataframe_call(
         pro,

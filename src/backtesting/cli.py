@@ -130,8 +130,11 @@ def _run_walk_forward_mode(args, build_engine) -> int:
     # surface that has been hardened (R37-R41) so users can calibrate how much to
     # trust the numbers, and name the known un-hardened surface (survivorship
     # bias, R42 pending) instead of implying the backtest is fully bias-free.
+    # C20 update: R42 audit primitive (filter_stock_basic_as_of) is delivered;
+    # backtest wiring is still pending, so the survivorship-bias surface remains
+    # partially open until the engine calls the PIT universe filter.
     print("ℹ 已加固的前瞻数据路径 (R37-R41): 价格前复权 / A股真实交易日历 / 宏观 as_of 过滤 / 财报 ann_date 过滤。"
-          "已知未覆盖面 (R42 待审): 选股池 survivorship bias。")
+          "已知未覆盖面 (R42 审计原语已交付，接线待定): 选股池 survivorship bias。")
     return 0
 
 
