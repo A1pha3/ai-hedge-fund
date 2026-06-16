@@ -28,6 +28,7 @@ from src.screening.consecutive_recommendation import (
     resolve_report_dir,
 )
 from src.utils.display import Fore, Style
+from src.utils.numeric import coerce_score_b
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -178,7 +179,10 @@ def compute_signal_momentum(
             ticker = str(rec.get("ticker", ""))
             if not ticker:
                 continue
-            score = float(rec.get("score_b", 0.0) or 0.0)
+            # BH-012-drain: coerce_score_b rejects NaN/Inf from persisted history
+            # so a corrupt score_b never poisons _simple_slope (which would
+            # propagate NaN into momentum_bonus and back into composite_score).
+            score = coerce_score_b(rec.get("score_b", 0.0))
             ticker_scores.setdefault(ticker, []).append(score)
             name = str(rec.get("name", "") or "")
             if name and ticker not in ticker_names:
@@ -189,7 +193,7 @@ def compute_signal_momentum(
     for rec in latest_recs:
         ticker = str(rec.get("ticker", ""))
         name = str(rec.get("name", "") or ticker_names.get(ticker, ""))
-        current_score = float(rec.get("score_b", 0.0) or 0.0)
+        current_score = coerce_score_b(rec.get("score_b", 0.0))
         scores = ticker_scores.get(ticker, [])
 
         if not scores:

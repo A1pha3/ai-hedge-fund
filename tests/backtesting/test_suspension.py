@@ -126,3 +126,52 @@ class TestSuspensionHandling:
         monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
         prices = loader.load_current_prices(["000001"], "2024-01-01", "2024-01-15")
         assert prices is None
+
+
+class TestHydrateSuspendedPosition:
+    """BETA-007-drain: hydrate_position_prices must NOT bypass the suspension guard.
+
+    ``load_current_prices`` skips tickers whose ``volume == 0`` (停牌) so the
+    backtest never trades at a phantom carry-forward price. But a HELD position
+    that suspends is absent from ``current_prices``, so the engine calls
+    ``hydrate_position_prices`` to mark it to market. Previously that method
+    re-fetched the SAME window and unconditionally took ``iloc[-1]['close']``
+    with NO volume check — fully bypassing BETA-007 and marking suspended
+    positions at the phantom suspended close.
+
+    A suspended held position must fall back to cost basis (or the most recent
+    ACTIVE close), never the suspended-day close.
+    """
+
+    def test_suspended_held_position_falls_back_to_cost_basis(self, monkeypatch) -> None:
+        """持仓标的当日停牌 → hydrate 应回退到 cost_basis, 不用停牌日 close。"""
+        loader = _make_loader(["000001"])
+        # 模拟已有持仓: 000001 以 cost_basis=10.0 买入
+        loader._portfolio.apply_long_buy("000001", price=10.0, quantity=100)
+
+        def fake_get_price_data(ticker, start, end, api_key=None):
+            # 停牌: volume=0, 但 close 仍是 carry-forward 价格 25.0
+            return _make_price_frame([
+                {"date": "2024-01-15", "close": 25.0, "volume": 0},
+            ])
+
+        monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
+        # current_prices 为空 (000001 已被 load_current_prices 因停牌排除)
+        hydrated = loader.hydrate_position_prices({}, "2024-01-01", "2024-01-15")
+        # 关键: 不能用停牌日 close=25.0, 应回退到 cost_basis=10.0
+        assert "000001" in hydrated
+        assert hydrated["000001"] == 10.0, f"停牌持仓不应以停牌价 mark-to-market, got {hydrated['000001']}"
+
+    def test_active_held_position_uses_latest_close(self, monkeypatch) -> None:
+        """持仓标的当日正常成交 → hydrate 用最新 close (正常路径不回归)。"""
+        loader = _make_loader(["000001"])
+        loader._portfolio.apply_long_buy("000001", price=10.0, quantity=100)
+
+        def fake_get_price_data(ticker, start, end, api_key=None):
+            return _make_price_frame([
+                {"date": "2024-01-15", "close": 12.0, "volume": 1_000_000},
+            ])
+
+        monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
+        hydrated = loader.hydrate_position_prices({}, "2024-01-01", "2024-01-15")
+        assert hydrated["000001"] == 12.0

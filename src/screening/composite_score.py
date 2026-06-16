@@ -36,6 +36,7 @@ from src.screening.signal_momentum import compute_signal_momentum
 from src.screening.trend_resonance import compute_trend_resonance
 from src.screening.volume_confirmation import compute_volume_confirmation
 from src.utils.display import Fore, Style
+from src.utils.numeric import coerce_score_b
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -222,7 +223,12 @@ def compute_composite_scores_for_recommendations(
     for rec in recs:
         ticker = str(rec.get("ticker", ""))
         name = str(rec.get("name", "") or "")
-        base_score = float(rec.get("score_b", 0.0) or 0.0)
+        # BH-012: ``float(nan or 0.0)`` stays NaN (NaN is truthy in Python),
+        # and ``max(-1.0, min(1.0, nan))`` returns 1.0 on CPython — so a corrupt
+        # score_b would silently get the HIGHEST composite and bubble to the top
+        # of the front-door recommendation list. coerce_score_b rejects NaN/Inf
+        # (and clamps non-finite to 0.0) so corrupt data never inflates ranking.
+        base_score = coerce_score_b(rec.get("score_b", 0.0))
 
         mom = momentum_map.get(ticker, 0.0)
         sec = sector_map.get(ticker, 0.0)

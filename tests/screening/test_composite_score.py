@@ -271,6 +271,45 @@ class TestComputeCompositeScoresForRecommendations:
         )
         assert report.items[0].name == ""
 
+    def test_nan_score_b_does_not_bubble_to_top(self) -> None:
+        """BH-012: score_b=NaN must NOT corrupt ranking.
+
+        ``float(nan or 0.0)`` stays NaN (NaN is truthy in Python), and
+        ``max(-1.0, min(1.0, nan))`` returns ``1.0`` on CPython — so a corrupt
+        ticker would silently get the HIGHEST composite and bubble to the top of
+        the front-door recommendation list, displacing legitimate picks.
+
+        A NaN/corrupt score must be coerced to 0.0 (treated as missing data),
+        never collapse to the max-composite of 1.0.
+        """
+        nan = float("nan")
+        report = compute_composite_scores_for_recommendations(
+            recommendations=[
+                _make_rec(ticker="GOOD", score_b=0.8),
+                {"ticker": "CORRUPT", "name": "坏数据", "score_b": nan},
+            ],
+            trade_date="2026-01-01",
+        )
+        # CORRUPT must NOT be ranked above GOOD — its NaN must become 0.0,
+        # yielding composite ≈ 0.0 + consistency_adj(-0.05), far below GOOD's 0.8.
+        assert report.items[0].ticker == "GOOD"
+        corrupt = next(it for it in report.items if it.ticker == "CORRUPT")
+        assert corrupt.composite_score < 0.5
+        assert corrupt.composite_score == pytest.approx(-0.05)
+
+    def test_inf_score_b_does_not_corrupt_ranking(self) -> None:
+        """BH-012: Inf must also be rejected (coerced to 0.0), not clamped."""
+        report = compute_composite_scores_for_recommendations(
+            recommendations=[
+                {"ticker": "CORRUPT", "name": "Inf", "score_b": float("inf")},
+                _make_rec(ticker="GOOD", score_b=0.7),
+            ],
+            trade_date="2026-01-01",
+        )
+        assert report.items[0].ticker == "GOOD"
+        corrupt = next(it for it in report.items if it.ticker == "CORRUPT")
+        assert corrupt.composite_score < 0.5
+
 
 # ---------------------------------------------------------------------------
 # render_composite_scores

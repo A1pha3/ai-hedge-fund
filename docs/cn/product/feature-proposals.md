@@ -1,8 +1,8 @@
-# 产品功能提案清单 (R20.41 活跃路线图版)
+# 产品功能提案清单 (R20.42 活跃路线图版)
 
 > **目标**：让用户用尽可能少的入口，稳定找到未来 30 天最有投资价值、最值得买入的 A 股标的。
 >
-> **本版调整**：Round 6 产品调研后新增 R32-R33 两项前门信息密度需求（一句话理由+风险标签、组合预期收益汇总）。
+> **本版调整**：Round 6 产品调研后新增 R32-R33 两项前门信息密度需求（一句话理由+风险标签、组合预期收益汇总）。Campaign 16 新增 R41（fundamental ann_date PIT 过滤，deferred backlog）。
 
 ---
 
@@ -104,6 +104,7 @@
 | R38 | P2 | ✅ | **回测交易日历用 A 股真实交易日（trade_cal）** | `iter_backtest_dates` 此前用 pandas `freq="B"`（周一-周五通用工作日），不排除中国节假日（春节/国庆等）。节假日时 `load_current_prices` 回退到前一个交易日收盘价，产生 phantom zero-return bar，轻微稀释 Sharpe/年化。改为优先用 `get_open_trade_dates`（trade_cal，返回 A 股真实开市日），空列表/异常时 fallback 到 `freq="B"`（保证无 token 或网络失败时 backtest 仍可运行）。授权来源：用户明确同意 R37/R38/R39 全部实施。 |
 | R39 | P1 | ✅ | **composite_score fallback domain mismatch — 保守 penalty 修正** | 当 ticker 不在 composite_report 中（composite 计算异常或超出 top_n），`rank_recommendations_by_investability` 的 fallback 此前把 `score_b`（域 [0,1]）直接赋给 `composite_score`（域 [-1,1]，含负 penalties），绕过 consistency/momentum/sector 负调整。改为对 fallback 应用 0.9 保守折扣（score_b=0.55 → 0.495 < BUY 0.5 门控）并标记 `composite_verified=False`，verified 路径标 `composite_verified=True`。验证结论：正常流程下 fallback 是 latent（composite 覆盖所有 ticker），仅在 composite 计算整体异常（main.py except 返回无 composite 的 ranking_pool）时触发，故采用保守折扣而非移除 fallback（避免把边界情况的好票打成 AVOID）。授权来源：用户明确同意 R37/R38/R39 全部实施。 |
 | R40 | P2 | ✅ | **macro_data look-ahead 修复（fetch_macro_snapshot 新增 as_of 点在时间过滤）** | `src/data/macro_data.py` 的 `fetch_macro_snapshot()` 此前拉取"最新"宏观数据发布，无 `as_of`/`trade_date` 过滤。回测/replay 场景下会读到模拟交易日之后发布的宏观数据（point-in-time look-ahead）。新增可选 `as_of` 参数（YYYY-MM-DD 或 YYYYMMDD），通过 `_filter_df_as_of` 按 `month <= as_of_month` 过滤所有指标，消除前瞻。为 None 时保持原"取最新"行为（live 模式不变）。当前仅作为 `state.macro_context` 的 informational label，未被 `_resolve_regime_gate` / `classify_btst_regime_gate` / 仓位缩放 / risk-off 决策消费，且 `build_market_state` 不在 backtest 引擎调用路径内，故此修复为 latent 风险的前瞻性消除（确保未来接入 backtest 时不会读到未来数据），服务于"更高确信"目标。 |
+| R41 | P1 | 🔄 | **fundamental 财报 ann_date point-in-time 过滤（R40 lookahead hardening 续集）** | Bug Hunt（campaign 16）发现 fundamental 数据路径无 `ann_date`（公告日）过滤——`_should_include_financial_period`（`tushare_financial_metrics_helpers.py:262`）只按 period 类型（annual/quarterly/ttm）过滤，不检查公告日是否 ≤ trade date。回测会用模拟交易日后才公告的财报（如 2 月回测读到 4 月才公告的 2023 年报），系统性虚高 fundamental agents（Warren Buffett / Michael Burry / Cathie Wood 等）回测收益。这是 R37-R40 lookahead hardening 的同类残留（已修 macro/prices/calendar，fundamental 漏修）。属大切片：触及 backtest lookahead 核心（beta veto 风险）、需 Tushare ann_date fixture 验证、会改变所有含 fundamental agent 的历史回测结果。next_smallest_slice: ① 加 fixture 测试锁定当前未过滤行为；② fetch/build 路径加 `ann_date <= trade_date_compact` 过滤；③ 在 backtest 输出 disclosure 该修复影响。deferred 至独立 campaign 实施。 |
 
 > 各已完成项的实现级设计细节（现状 / 方案 / 收益）已归档到 [`changelog/completed-roadmap-phases.md` §五](./changelog/completed-roadmap-phases.md#五r8-r33-前门信息密度设计细节归档)，主文档仅保留上表的一句话价值结论，避免历史实现细节淹没当前目标（见 §六维护规则 #2）。
 
@@ -147,4 +148,4 @@
 
 ---
 
-> **最后更新**：2026-06-15（Round 8：R8-R33 设计细节归档至 changelog，主文档 265→143 行（-46%）专注当前目标；R12 新鲜度从“自然日”升级为“交易日感知”）
+> **最后更新**：2026-06-16（Campaign 16：BH-012 NaN ranking corruption 修复链路 + persist fail-loud + R41 fundamental lookahead backlog refill）

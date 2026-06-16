@@ -1,5 +1,6 @@
 import argparse
 import json
+import math
 import os
 import sys
 from datetime import datetime
@@ -319,12 +320,35 @@ def run_daily_gainers_cli() -> int:
     return 0
 
 
+def _sanitize_nonfinite(value):
+    """BH-012: replace NaN/Inf floats with None so persisted JSON is valid.
+
+    ``json.dump`` defaults to ``allow_nan=True``, which writes the literal
+    ``NaN``/``Infinity`` tokens (non-standard JSON). Python ``json.loads``
+    accepts them on read-back, so a corrupt ``score_b`` silently survives a
+    round-trip and re-poisons ranking (see ``composite_score.py`` BH-012).
+    Recursively walking dicts/lists, this maps any non-finite float to ``None``
+    so the on-disk report is always strict JSON and downstream readers coerce
+    ``None`` to ``0.0`` via ``coerce_score_b``.
+    """
+    if isinstance(value, float):
+        return None if not math.isfinite(value) else value
+    if isinstance(value, dict):
+        return {key: _sanitize_nonfinite(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_nonfinite(item) for item in value]
+    return value
+
+
 def _save_json_report(filename: str, payload: dict) -> Path:
     report_dir = Path(__file__).resolve().parents[1] / "data" / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
     output_path = report_dir / filename
+    # BH-012: sanitize before write + allow_nan=False as a hard guard so a
+    # non-finite float can never be persisted as a literal NaN/Infinity token.
+    sanitized = _sanitize_nonfinite(payload)
     with open(output_path, "w", encoding="utf-8") as file:
-        json.dump(payload, file, ensure_ascii=False, indent=2, default=str)
+        json.dump(sanitized, file, ensure_ascii=False, indent=2, default=str, allow_nan=False)
     return output_path
 
 

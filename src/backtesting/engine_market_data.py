@@ -61,6 +61,20 @@ def resolve_benchmark_ticker(tickers: Sequence[str]) -> str:
     return DEFAULT_US_BENCHMARK_TICKER
 
 
+def _is_suspended_row(row) -> bool:
+    """BETA-007 shared suspension guard.
+
+    Returns True when *row* (a price-frame row) represents a suspended /
+    zero-volume trading day (``volume`` column present and ``<= 0``). Used by
+    both ``load_current_prices`` and ``hydrate_position_prices`` so the two
+    price-loading paths apply an identical "do not trade / mark at the phantom
+    carry-forward close" rule. A missing ``volume`` column is treated as
+    tradable (data-source compatibility).
+    """
+    volume = row.get("volume")
+    return volume is not None and float(volume) <= 0
+
+
 # ---------------------------------------------------------------------------
 # MarketDataLoader
 # ---------------------------------------------------------------------------
@@ -226,9 +240,7 @@ class MarketDataLoader:
                 row = price_data.iloc[-1]
                 # BETA-007: 停牌检测 — volume=0 表示当日未成交 (停牌), 不可交易。
                 # 若包含则回测会在停牌日按 carry-forward 价格"虚拟成交"导致结果失真。
-                # 仅当 active trade_date 有 volume 列且为 0 时跳过, 兼容数据源缺列场景。
-                volume = row.get("volume")
-                if volume is not None and float(volume) <= 0:
+                if _is_suspended_row(row):
                     logger.debug(
                         "load_current_prices: ticker=%s 停牌或零成交 (%s), 跳过",
                         ticker, current_date_str,
@@ -256,8 +268,22 @@ class MarketDataLoader:
             try:
                 price_data = get_price_data(ticker, previous_date_str, current_date_str)
                 if price_data is not None and not price_data.empty:
-                    hydrated_prices[ticker] = float(price_data.iloc[-1]["close"])
-                    continue
+                    row = price_data.iloc[-1]
+                    # BETA-007-drain: apply the SAME suspension guard as
+                    # load_current_prices. A held position that suspends
+                    # (volume=0) must NOT be marked-to-market at the phantom
+                    # carry-forward close — that silently inflates NAV/drawdown
+                    # and defeats the BETA-007 protection. Fall back to cost
+                    # basis (long) / cost basis (short) instead, matching the
+                    # pre-existing fallback below.
+                    if _is_suspended_row(row):
+                        logger.debug(
+                            "hydrate_position_prices: ticker=%s 停牌或零成交 (%s), 回退 cost_basis",
+                            ticker, current_date_str,
+                        )
+                    else:
+                        hydrated_prices[ticker] = float(row["close"])
+                        continue
             except Exception:
                 pass
             if fallback_price > 0:
