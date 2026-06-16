@@ -263,6 +263,26 @@ class TestRenderExpectedReturns:
         assert "000002" in text
         assert "预期收益估算" in text
 
+    @patch("src.screening.expected_return._load_tracking_records")
+    @patch("src.screening.expected_return.compute_calibration")
+    def test_render_shows_t30_winrate(self, mock_calib: object, mock_records: object) -> None:
+        """R52: full render must surface the T+30 win rate (decision horizon).
+
+        ``win_rates`` is computed for all horizons but the full
+        ``render_expected_returns`` previously showed only expected returns —
+        the T+30 win rate (the most decision-relevant stat, since T+30 edge
+        drives the BUY gate) was computed-but-hidden. The full table must now
+        include a T+30 win-rate column so the user can judge confidence.
+        """
+        mock_records.return_value = [{"dummy": True}]
+        mock_calib.return_value = _make_calibration()
+
+        recs = [_make_rec("000001", 0.85)]
+        report = compute_expected_returns(recommendations=recs)
+        text = render_expected_returns(report)
+        # T+30 win-rate header must appear.
+        assert "T+30胜率" in text or "T30胜率" in text
+
 
 class TestRenderCompact:
     def test_empty(self) -> None:

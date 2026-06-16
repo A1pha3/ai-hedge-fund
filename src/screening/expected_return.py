@@ -266,12 +266,18 @@ def render_expected_returns(report: ExpectedReturnReport) -> str:
         f"  基于最近 {report.lookback_days} 天 {report.total_samples} 条历史推荐"
         f" (其中 {report.mature_t30_samples} 条已有 T+30 实际收益)",
         "",
-        f"  {'标的':<8} {'Score':>6} {'分位':>10} {'样本':>4} {'T30熟':>5}  {'T+1':>8}  {'T+5':>8}  {'T+10':>8}  {'T+20':>9}  {'T+30':>9}",
-        f"  {'─' * 8} {'─' * 6} {'─' * 10} {'─' * 4} {'─' * 5}  {'─' * 8}  {'─' * 8}  {'─' * 8}  {'─' * 9}  {'─' * 9}",
+        # R52: add T+30 win-rate column. ``win_rates`` is computed for all
+        # horizons but the full render previously showed only expected returns
+        # — the T+30 win rate (which backs the BUY-gate edge) was
+        # computed-but-hidden. Surfacing it lets the user judge whether the
+        # T+30 edge is backed by a high or low hit rate.
+        f"  {'标的':<8} {'Score':>6} {'分位':>10} {'样本':>4} {'T30熟':>5}  {'T+1':>8}  {'T+5':>8}  {'T+10':>8}  {'T+20':>9}  {'T+30':>9}  {'T+30胜率':>8}",
+        f"  {'─' * 8} {'─' * 6} {'─' * 10} {'─' * 4} {'─' * 5}  {'─' * 8}  {'─' * 8}  {'─' * 8}  {'─' * 9}  {'─' * 9}  {'─' * 8}",
     ]
 
     for item in report.items:
         er = item.expected_returns
+        wr_t30 = _fmt_winrate(item.win_rates.get("t30"))
         row = (
             f"  {item.ticker:<8} {item.score_b:>6.3f} {item.bucket_label:>10} {item.bucket_sample_count:>4} {item.bucket_t30_mature_count:>5}"
             f"  {_fmt_return(er.get('t1')):>18}"
@@ -279,6 +285,7 @@ def render_expected_returns(report: ExpectedReturnReport) -> str:
             f"  {_fmt_return(er.get('t10')):>18}"
             f"  {_fmt_return(er.get('t20')):>19}"
             f"  {_fmt_return(er.get('t30')):>19}"
+            f"  {wr_t30:>8}"
         )
         lines.append(row)
 
