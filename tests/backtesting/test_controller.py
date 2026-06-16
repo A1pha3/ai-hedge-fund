@@ -270,6 +270,81 @@ def test_market_data_loader_prefetches_hs300_for_ashare_universe(monkeypatch):
     assert "SPY" not in fetched_price_tickers
 
 
+# ---------------------------------------------------------------------------
+# GAMMA-007 — embargo-bound prefetch (no look-ahead when data_through is set)
+# ---------------------------------------------------------------------------
+
+
+def test_prefetch_data_clamps_end_date_to_data_through(monkeypatch):
+    """GAMMA-007: when a caller declares ``data_through`` (the latest date whose
+    data may legitimately feed features — e.g. the last *trading* day of a
+    walk-forward test window), ``prefetch_data`` must fetch prices only up to
+    ``min(end_date, data_through)``. Without this clamp, a window whose
+    ``end_date`` is a calendar last-day past the final trading day would load a
+    few sessions of post-window price data into the feature cache (latent
+    look-ahead). The clamp makes the embargo contract self-enforcing instead of
+    trusting every caller to pass a correctly-truncated end_date."""
+    captured_price_windows: dict[str, tuple[str, str]] = {}
+
+    def fake_get_prices(ticker, start_date, end_date, *args, **kwargs):
+        captured_price_windows[ticker] = (start_date, end_date)
+        return []
+
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_prices", fake_get_prices)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_financial_metrics", lambda *a, **k: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_insider_trades", lambda *a, **k: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_company_news", lambda *a, **k: [])
+
+    loader = MarketDataLoader(
+        tickers=["001309"],
+        start_date="2026-04-07",
+        end_date="2026-04-13",
+        portfolio=Portfolio(tickers=["001309"], initial_cash=100000.0, margin_requirement=0.0),
+        exit_reentry_cooldowns={},
+        data_through="2026-04-10",  # embargo bound: never read past this date
+    )
+
+    loader.prefetch_data()
+
+    # Per-ticker price window must end at the data_through clamp, not end_date.
+    for ticker in ["001309", "000300.SH"]:
+        assert ticker in captured_price_windows, f"{ticker} not fetched"
+        _, end = captured_price_windows[ticker]
+        assert end == "2026-04-10", (
+            f"GAMMA-007 regression: {ticker} fetched through {end}, expected 2026-04-10 "
+            "(embargo bound must clamp the feature window)"
+        )
+
+
+def test_prefetch_data_default_uses_end_date_when_data_through_absent(monkeypatch):
+    """Backward compatibility: when ``data_through`` is not supplied, the prefetch
+    must keep its original behavior (fetch through ``end_date``) so existing
+    single-window backtests are unchanged."""
+    captured_price_windows: dict[str, tuple[str, str]] = {}
+
+    def fake_get_prices(ticker, start_date, end_date, *args, **kwargs):
+        captured_price_windows[ticker] = (start_date, end_date)
+        return []
+
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_prices", fake_get_prices)
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_financial_metrics", lambda *a, **k: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_insider_trades", lambda *a, **k: [])
+    monkeypatch.setattr("src.backtesting.engine_market_data.get_company_news", lambda *a, **k: [])
+
+    loader = MarketDataLoader(
+        tickers=["001309"],
+        start_date="2026-04-07",
+        end_date="2026-04-13",
+        portfolio=Portfolio(tickers=["001309"], initial_cash=100000.0, margin_requirement=0.0),
+        exit_reentry_cooldowns={},
+    )
+
+    loader.prefetch_data()
+
+    _, end = captured_price_windows["001309"]
+    assert end == "2026-04-13", f"default path must use end_date, got {end}"
+
+
 def test_append_daily_state_uses_hs300_benchmark_for_ashare_universe(monkeypatch):
     engine = BacktestEngine(
         agent=dummy_agent,

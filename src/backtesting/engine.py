@@ -122,6 +122,7 @@ class BacktestEngine:
         checkpoint_path: str | None = None,
         pipeline_event_recorder: Callable[[dict], None] | None = None,
         selection_artifact_writer: SelectionArtifactWriter | None = None,
+        data_through: str | None = None,
     ) -> None:
         self._initialize_engine_configuration(
             agent=agent,
@@ -137,6 +138,7 @@ class BacktestEngine:
             checkpoint_path=checkpoint_path,
             pipeline_event_recorder=pipeline_event_recorder,
             selection_artifact_writer=selection_artifact_writer,
+            data_through=data_through,
         )
         self._initialize_engine_components(
             tickers=tickers,
@@ -162,6 +164,7 @@ class BacktestEngine:
         checkpoint_path: str | None,
         pipeline_event_recorder: Callable[[dict], None] | None,
         selection_artifact_writer: SelectionArtifactWriter | None,
+        data_through: str | None,
     ) -> None:
         self._agent = agent
         self._tickers = tickers
@@ -177,6 +180,7 @@ class BacktestEngine:
         self._timing_log_path = self._resolve_timing_log_path()
         self._pipeline_event_recorder = pipeline_event_recorder
         self._selection_artifact_writer = selection_artifact_writer
+        self._data_through = data_through
 
     def _initialize_engine_components(
         self,
@@ -349,6 +353,7 @@ class BacktestEngine:
             end_date=self._end_date,
             portfolio=self._portfolio,
             exit_reentry_cooldowns=self._exit_reentry_cooldowns,
+            data_through=self._data_through,
         )
 
     def _prefetch_data(self) -> None:

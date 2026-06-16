@@ -174,16 +174,23 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
   module-level `_singleton_lock` (L866) for instantiation. The TOCTOU window
   on the singleton is closed under both GIL and no-GIL builds.
 
-### GAMMA-007 — MarketData prefetch loads 1y through end_date  [DEFERRED]
+### GAMMA-007 — MarketData prefetch loads 1y through end_date  [RESOLVED]
 - `src/backtesting/engine_market_data.py:88-100` — cache is unbounded; a walk-
   forward test can accidentally include post-test data in features.
-- **Status**: Still open as a design concern. The prefetch window
-  (`start_date_dt = end_date_dt - relativedelta(years=1)`,
-  `engine_market_data.py:92-97`) loads through `end_date`. Walk-forward
-  callers must ensure `end_date` is the *test window's* last day, not the
-  backtest's last day, to avoid feature leakage. A proper fix (embargo-aware
-  prefetch bound) is a backtest-engine refactor — `large_refactor_candidate`,
-  deferred until walk-forward consumers are audited.
+- **Resolution**: `MarketDataLoader` gained an optional `data_through` embargo
+  param; `prefetch_data` clamps the feature-warmup fetch horizon to
+  `min(end_date, data_through)` for both per-ticker prices/metrics/news *and*
+  the benchmark series, so a window whose `end_date` overshoots its last
+  legitimate trading day can never load post-window prices into the feature
+  cache. The param is wired through `BacktestEngine.__init__` so walk-forward
+  callers (e.g. `_build_engine` in `run_backtest_param_grid.py`) can pass
+  `data_through=test_end` to make the no-look-ahead contract self-enforcing
+  instead of trusting every caller to pass a correctly-truncated `end_date`.
+  `data_through=None` (default) preserves the original single-window behavior.
+  Audit confirmed the bug was *latent* in current callers (per-window
+  `end_date=test_end` already bounds iteration), so this is defensive
+  hardening that makes the latent risk impossible. Covered by 2 regression
+  tests (clamp-to-data_through + default-uses-end_date).
 
 ### GAMMA-008 — vol multiplier floor collapses intended curve  [RESOLVED]
 - `src/agents/risk_manager.py:139-148` — max(0.25, ...) floor means real-world

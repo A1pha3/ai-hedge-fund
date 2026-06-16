@@ -77,30 +77,46 @@ class MarketDataLoader:
         end_date: str,
         portfolio: Portfolio,
         exit_reentry_cooldowns: dict[str, dict],
+        data_through: str | None = None,
     ) -> None:
         self._tickers = tickers
         self._start_date = start_date
         self._end_date = end_date
         self._portfolio = portfolio
         self._exit_reentry_cooldowns = exit_reentry_cooldowns
+        # GAMMA-007: embargo bound. When set, prefetch clamps the feature-warmup
+        # window to ``min(end_date, data_through)`` so the loader never reads
+        # data published after the simulated trade horizon. Walk-forward callers
+        # pass ``data_through=test_end`` (or the last trading day of the window)
+        # to make the no-look-ahead contract self-enforcing instead of trusting
+        # each caller to pass a correctly-truncated ``end_date``. None keeps the
+        # original "fetch through end_date" behavior (single-window backtests).
+        self._data_through = data_through
 
     # ------------------------------------------------------------------
     # Data prefetch
     # ------------------------------------------------------------------
 
     def prefetch_data(self) -> None:
-        end_date_dt = datetime.strptime(self._end_date, "%Y-%m-%d")
+        # GAMMA-007: the feature-warmup fetch horizon. Clamp to data_through so a
+        # window whose end_date overshoots its last legitimate trading day never
+        # loads post-window prices into the feature cache.
+        fetch_end = self._end_date
+        if self._data_through is not None and self._data_through < self._end_date:
+            fetch_end = self._data_through
+
+        end_date_dt = datetime.strptime(fetch_end, "%Y-%m-%d")
         start_date_dt = end_date_dt - relativedelta(years=1)
         start_date_str = start_date_dt.strftime("%Y-%m-%d")
 
         for ticker in self._tickers:
-            get_prices(ticker, start_date_str, self._end_date)
-            get_financial_metrics(ticker, self._end_date, limit=10)
-            get_insider_trades(ticker, self._end_date, start_date=self._start_date, limit=1000)
-            get_company_news(ticker, self._end_date, start_date=self._start_date, limit=1000)
+            get_prices(ticker, start_date_str, fetch_end)
+            get_financial_metrics(ticker, fetch_end, limit=10)
+            get_insider_trades(ticker, fetch_end, start_date=self._start_date, limit=1000)
+            get_company_news(ticker, fetch_end, start_date=self._start_date, limit=1000)
 
         benchmark_ticker = resolve_benchmark_ticker(self._tickers)
-        get_prices(benchmark_ticker, self._start_date, self._end_date)
+        get_prices(benchmark_ticker, self._start_date, fetch_end)
 
     # ------------------------------------------------------------------
     # Date iteration
