@@ -263,3 +263,41 @@ class TestDecorateClusterCandidate:
         rec = {"ticker": "000001"}
         _decorate_cluster_candidate(rec, cluster_kind="industry", cluster_label="电子", cluster_members=[{"ticker": "000001"}])
         assert "cluster_kind" not in rec
+
+
+def test_missing_composite_fallback_applies_penalty_and_marks_unverified() -> None:
+    """R39: when a ticker is absent from the composite report, its fallback
+    ``composite_score`` must (a) be discounted so a missing-composite ticker
+    cannot easily cross the BUY 0.5 gate that a penalty-aware composite would
+    have demoted, and (b) be flagged ``composite_verified=False``.
+
+    Before the fix, ``score_b`` (domain [0,1], no penalties) was aliased
+    directly into ``composite_score`` (domain [-1,1], with negative
+    consistency/momentum/sector adjustments), so score_b=0.55 → composite 0.55
+    could spuriously reach BUY despite penalties that a real composite would
+    have applied.
+    """
+    # 000001 has a composite entry (verified); 000002 does NOT (fallback path).
+    recommendations = [
+        {"ticker": "000001", "name": "A", "score_b": 0.60},
+        {"ticker": "000002", "name": "B", "score_b": 0.55},
+    ]
+    composite = CompositeReport(
+        trade_date="20260612",
+        items=[CompositeEntry(ticker="000001", name="A", base_score=0.60, composite_score=0.55)],
+    )
+    expected = ExpectedReturnReport(trade_date="20260612", lookback_days=60, total_samples=10, items=[])
+
+    ranked = rank_recommendations_by_investability(recommendations, composite, expected)
+    by_ticker = {r["ticker"]: r for r in ranked}
+
+    # Verified ticker keeps the real composite score + verified flag.
+    assert by_ticker["000001"]["composite_score"] == 0.55
+    assert by_ticker["000001"]["composite_verified"] is True
+
+    # Missing-composite ticker: penalized (0.55 * 0.9 = 0.495) + unverified.
+    missing = by_ticker["000002"]
+    assert missing["composite_score"] == round(0.55 * 0.9, 4)
+    assert missing["composite_verified"] is False
+    # 0.495 < 0.5 → does not easily cross the BUY gate via the score_b shortcut.
+    assert missing["composite_score"] < 0.5

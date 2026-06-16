@@ -238,6 +238,7 @@ def rank_recommendations_by_investability(
             merged["trend_resonance_factor"] = composite.trend_resonance_factor
             merged["composite_score"] = round(composite.composite_score, 4)
             merged["composite_grade"] = _grade_code(composite.composite_score)
+            merged["composite_verified"] = True
         else:
             fallback_score = _safe_metric(rec.get("score_b", 0.0), 0.0)
             merged["base_score"] = fallback_score
@@ -246,8 +247,16 @@ def rank_recommendations_by_investability(
             merged["consistency_adj"] = 0.0
             merged["volume_factor"] = 0.0
             merged["trend_resonance_factor"] = 0.0
-            merged["composite_score"] = round(fallback_score, 4)
-            merged["composite_grade"] = _grade_code(fallback_score)
+            # R39: composite_score 域是 [-1,1]（含负 penalties: consistency/momentum/
+            # sector/volume 调整），但 score_b 域是 [0,1]（无 penalties）。直接把
+            # score_b 赋给 composite_score 让 missing-composite 标的绕过所有负调整，
+            # 可能把应降级为 HOLD 的标的（composite≈0.4）以 score_b=0.55 跨越 BUY 0.5
+            # 门控。应用 0.9 保守折扣并标记 composite_verified=False，使 missing-composite
+            # 标的不易轻易达到 BUY，同时保留它在排名里（不会被打成 AVOID）。
+            penalized = round(fallback_score * 0.9, 4)
+            merged["composite_score"] = penalized
+            merged["composite_grade"] = _grade_code(penalized)
+            merged["composite_verified"] = False
 
         expected = expected_map.get(ticker)
         if expected is not None:
