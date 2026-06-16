@@ -18,6 +18,7 @@ Design principle:
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -45,6 +46,8 @@ from src.screening.investability import (
 from src.screening.signal_decay_detector import detect_signal_decay
 from src.screening.verify_recommendations import compute_verify_recommendations
 from src.utils.display import Fore, Style
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # P16-1: Market gate warning
@@ -804,6 +807,13 @@ def _real_trading_days_between(start: datetime, end: datetime) -> int | None:
     except Exception:  # pragma: no cover — never block freshness on calendar fetch
         return None
     if not open_dates:
+        logger.debug(
+            "[TopPicks] get_open_trade_dates(%s, %s) returned empty — falling "
+            "back to weekday approximation (R36). Freshness guard accuracy "
+            "during long holidays (CNY/National Day) will be degraded.",
+            start_compact,
+            end_compact,
+        )
         return None
     # Strictly between: exclude both endpoints.
     return sum(1 for d in open_dates if start_compact < d < end_compact)

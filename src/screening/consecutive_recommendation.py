@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import bisect
 import json
 import logging
 import re
@@ -177,6 +178,13 @@ def _resolve_real_open_trade_dates(window_start_dt: datetime, end_dt: datetime) 
         logger.warning("[ConsecutiveRec] get_open_trade_dates(%s, %s) failed: %s", start_compact, end_compact, exc)
         return None
     if not open_dates:
+        logger.debug(
+            "[ConsecutiveRec] get_open_trade_dates(%s, %s) returned empty — "
+            "falling back to weekday approximation (R36). Streak accuracy "
+            "during long holidays (CNY/National Day) will be degraded.",
+            start_compact,
+            end_compact,
+        )
         return None
     return sorted(open_dates)
 
@@ -198,18 +206,15 @@ def _prev_real_trading_day(
     if not open_trade_dates:
         return _prev_trading_day(dt)
     target = _format_date(dt)
-    # Find rightmost date < target. open_trade_dates is sorted ascending.
-    prev: str | None = None
-    for cal_date in open_trade_dates:
-        if cal_date < target:
-            prev = cal_date
-        else:
-            break
-    if prev is None:
+    # Find rightmost date < target via bisect. open_trade_dates is sorted
+    # ascending; bisect_left(target) gives the index of the first entry >=
+    # target, so the predecessor (if any) is at idx - 1.
+    idx = bisect.bisect_left(open_trade_dates, target)
+    if idx == 0:
         # Window underflow — fall back to weekday approximation rather than
         # silently breaking the streak with no error signal.
         return _prev_trading_day(dt)
-    return _parse_date(prev)
+    return _parse_date(open_trade_dates[idx - 1])
 
 
 # ---------------------------------------------------------------------------

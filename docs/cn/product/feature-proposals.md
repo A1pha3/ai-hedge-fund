@@ -2,7 +2,7 @@
 
 > **目标**：让用户用尽可能少的入口，稳定找到未来 30 天最有投资价值、最值得买入的 A 股标的。
 >
-> **本版调整**：Round 6 产品调研后新增 R32-R33 两项前门信息密度需求（一句话理由+风险标签、组合预期收益汇总）。Campaign 16 新增 R41（fundamental ann_date PIT 过滤，deferred backlog）。Campaign 18 完成 R41（fundamental ann_date PIT 过滤落地）。Campaign 19 research refill 新增 R42-R44（回测可信度家族续集：survivorship-bias 审计 / PIT 不变式集成测试 / disclosure 标注 PIT 覆盖面）。Campaign 20 交付 R42 审计原语 `filter_stock_basic_as_of`（接线 deferred）+ 修复 BH-013（risk_off HOLD 被 mature_count=0 误判为 AVOID）。Campaign 21 完成 R43（PIT 不变式集成测试，5 原语横切回归守卫）+ research refill R45（连续推荐 streak 跨长假误算，R36 trade_cal 同族残留）。Campaign 22 完成 R45（trade_cal 真实日历替代 weekday 近似，2 个 TDD 守卫测试覆盖 CNY 跨假期 + trade_cal 不可用回退）。Campaign 23 完成 R46（同族 drain：top-picks 报告新鲜度告警跨长假误报修复，3 个 TDD 守卫）。
+> **本版调整**：Round 6 产品调研后新增 R32-R33 两项前门信息密度需求（一句话理由+风险标签、组合预期收益汇总）。Campaign 16 新增 R41（fundamental ann_date PIT 过滤，deferred backlog）。Campaign 18 完成 R41（fundamental ann_date PIT 过滤落地）。Campaign 19 research refill 新增 R42-R44（回测可信度家族续集：survivorship-bias 审计 / PIT 不变式集成测试 / disclosure 标注 PIT 覆盖面）。Campaign 20 交付 R42 审计原语 `filter_stock_basic_as_of`（接线 deferred）+ 修复 BH-013（risk_off HOLD 被 mature_count=0 误判为 AVOID）。Campaign 21 完成 R43（PIT 不变式集成测试，5 原语横切回归守卫）+ research refill R45（连续推荐 streak 跨长假误算，R36 trade_cal 同族残留）。Campaign 22 完成 R45（trade_cal 真实日历替代 weekday 近似，2 个 TDD 守卫测试覆盖 CNY 跨假期 + trade_cal 不可用回退）。Campaign 23 完成 R46（同族 drain：top-picks 报告新鲜度告警跨长假误报修复，3 个 TDD 守卫）。Campaign 24 完成 R47（trade_cal 降级可观测性：streak/freshness 回退时发 debug 日志）+ bisect 重构 `_prev_real_trading_day`。
 
 ---
 
@@ -110,6 +110,7 @@
 | R44 | P3 | ✅ | **回测 disclosure 标注 PIT 加固覆盖面（gamma 可信度校准）** | Campaign 19 产品研究发现：`cli.py:127` 的 gamma disclosure 警告"回测为历史样本统计"，但**未告知用户 look-ahead 表面现已加固（R37-R41）**，用户无法校准对回测数字的信任度。trust calibration 是"更高确信"目标的一部分。**Campaign 19 交付**：`cli.py` 回测输出在原有风险警告后追加一行，列出已 PIT 加固的数据路径（价格前复权/A股真实交易日历/宏观 as_of/财报 ann_date）与已知未覆盖面（R42 survivorship 待审），让用户据实校准信任度。doc/text-only，5 个 cli 回归测试通过。 |
 | R45 | P3 | ✅ | **连续推荐 streak 跨长假误算修复（R36 同族：交易日历近似残留）** | Campaign 21 research refill 发现：`_prev_trading_day`（`consecutive_recommendation.py:132`）用 weekday 近似（跳周六/周日）计算 streak 步进，与 R38 同族——R38 已修 backtest 日期迭代用真实 trade_cal，但 streak 计算仍用 weekday 近似。**影响**：春节/国庆等 7-9 天长假期间，weekday 近似会让节前最后交易日的报告误连接到节后首日的报告，phantom-连接虚增 streak 与 R4 加权。**Campaign 22 修复**：新增 `_resolve_real_open_trade_dates` (拉取 trade_cal 真实开市日，窗口前置 14 天预留长假闭市) + `_prev_real_trading_day` (基于 sorted open dates 二分查找前一交易日)，`compute_consecutive_recommendations` 改用真实日历步进；trade_cal 不可用时 fallback 到 `_prev_trading_day`（保持 R36 周末步进行为）。2 个 TDD 守卫测试：(a) CNY 跨假期 Wed+Thu+Mon+Tue 4-day 真实连续 streak；(b) trade_cal 空时回退到 weekday 近似。40/40 unit 测试全绿。服务于"更清晰决策"目标 (R36 同族缺口收口)。 |
 | R46 | P2 | ✅ | **--top-picks 报告新鲜度告警跨长假误报修复（R45 同族 drain）** | Campaign 22 Bug Hunt 发现 R45 同族同根因：`top_picks.py:_trading_days_between` 用 weekday 近似计算"已过期 N 个交易日"。**影响**：春节/国庆等长假期间，weekday 近似会把假期内的工作日误计入 elapsed trading days，让 `--top-picks` 顶部对节前报告显示"⚠ 非最新，请先运行 --auto 更新"——但市场闭市期间根本不会有新数据，告警误导用户在闭市期间反复跑 --auto。**Campaign 23 修复**：抽取 `_real_trading_days_between` (基于 trade_cal 计数严格区间内开市日) ，`_trading_days_between` 改为 trade_cal 优先 + weekday 回退；`_check_report_freshness` 通过现有 `_trading_days_elapsed` 自动获益。3 个 TDD 守卫测试：(a) CNY 闭市期内复查 pre-CNY 报告无误报；(b) post-CNY 真实经过 ≥2 交易日仍正确告警；(c) trade_cal 空时回退到 weekday（R36 行为保持）。8 → 11 freshness 测试全绿。服务于"更清晰决策"+ 用户对回测/选股结果的信任度。 |
+| R47 | P3 | ✅ | **trade_cal 降级可观测性（R45/R46 配套）** | Campaign 24 发现：R45/R46 让 streak 与 freshness 路径优先用真实 trade_cal、不可用时静默回退到 weekday 近似。但 trade_cal 返回空（无 TUSHARE_TOKEN / 网络失败）时此前**完全无日志**，运维与用户无法诊断"长假窗口的计算为何可能偏差"。**修复**：`_resolve_real_open_trade_dates`（streak 路径）与 `_real_trading_days_between`（freshness 路径）在 trade_cal 返回空时各发一条 `logger.debug` 降级提示，说明已回退到 weekday 近似且长假精度会降级；`top_picks.py` 新增 module-level logger（此前无 logging）。debug 级别避免噪音，运维调高级别即可诊断。服务于"更高确信"+ 可运维性，不改变任何行为。 |
 
 > 各已完成项的实现级设计细节（现状 / 方案 / 收益）已归档到 [`changelog/completed-roadmap-phases.md` §五](./changelog/completed-roadmap-phases.md#五r8-r33-前门信息密度设计细节归档)，主文档仅保留上表的一句话价值结论，避免历史实现细节淹没当前目标（见 §六维护规则 #2）。
 
@@ -153,4 +154,4 @@
 
 ---
 
-> **最后更新**：2026-06-17（Campaign 23：完成 R46 报告新鲜度告警跨长假误报修复，R45 同族 drain）
+> **最后更新**：2026-06-17（Campaign 24：完成 R47 trade_cal 降级可观测性 + bisect 重构）
