@@ -2,7 +2,7 @@
 
 > **目标**：让用户用尽可能少的入口，稳定找到未来 30 天最有投资价值、最值得买入的 A 股标的。
 >
-> **本版调整**：Round 6 产品调研后新增 R32-R33 两项前门信息密度需求（一句话理由+风险标签、组合预期收益汇总）。Campaign 16 新增 R41（fundamental ann_date PIT 过滤，deferred backlog）。Campaign 18 完成 R41（fundamental ann_date PIT 过滤落地）。
+> **本版调整**：Round 6 产品调研后新增 R32-R33 两项前门信息密度需求（一句话理由+风险标签、组合预期收益汇总）。Campaign 16 新增 R41（fundamental ann_date PIT 过滤，deferred backlog）。Campaign 18 完成 R41（fundamental ann_date PIT 过滤落地）。Campaign 19 research refill 新增 R42-R44（回测可信度家族续集：survivorship-bias 审计 / PIT 不变式集成测试 / disclosure 标注 PIT 覆盖面）。
 
 ---
 
@@ -105,6 +105,9 @@
 | R39 | P1 | ✅ | **composite_score fallback domain mismatch — 保守 penalty 修正** | 当 ticker 不在 composite_report 中（composite 计算异常或超出 top_n），`rank_recommendations_by_investability` 的 fallback 此前把 `score_b`（域 [0,1]）直接赋给 `composite_score`（域 [-1,1]，含负 penalties），绕过 consistency/momentum/sector 负调整。改为对 fallback 应用 0.9 保守折扣（score_b=0.55 → 0.495 < BUY 0.5 门控）并标记 `composite_verified=False`，verified 路径标 `composite_verified=True`。验证结论：正常流程下 fallback 是 latent（composite 覆盖所有 ticker），仅在 composite 计算整体异常（main.py except 返回无 composite 的 ranking_pool）时触发，故采用保守折扣而非移除 fallback（避免把边界情况的好票打成 AVOID）。授权来源：用户明确同意 R37/R38/R39 全部实施。 |
 | R40 | P2 | ✅ | **macro_data look-ahead 修复（fetch_macro_snapshot 新增 as_of 点在时间过滤）** | `src/data/macro_data.py` 的 `fetch_macro_snapshot()` 此前拉取"最新"宏观数据发布，无 `as_of`/`trade_date` 过滤。回测/replay 场景下会读到模拟交易日之后发布的宏观数据（point-in-time look-ahead）。新增可选 `as_of` 参数（YYYY-MM-DD 或 YYYYMMDD），通过 `_filter_df_as_of` 按 `month <= as_of_month` 过滤所有指标，消除前瞻。为 None 时保持原"取最新"行为（live 模式不变）。当前仅作为 `state.macro_context` 的 informational label，未被 `_resolve_regime_gate` / `classify_btst_regime_gate` / 仓位缩放 / risk-off 决策消费，且 `build_market_state` 不在 backtest 引擎调用路径内，故此修复为 latent 风险的前瞻性消除（确保未来接入 backtest 时不会读到未来数据），服务于"更高确信"目标。 |
 | R41 | P1 | ✅ | **fundamental 财报 ann_date point-in-time 过滤（R40 lookahead hardening 续集）** | Bug Hunt（campaign 16）发现 fundamental 数据路径无 `ann_date`（公告日）过滤——`_should_include_financial_period`（`tushare_financial_metrics_helpers.py:262`）只按 period 类型（annual/quarterly/ttm）过滤，不检查公告日是否 ≤ trade date。回测会用模拟交易日后才公告的财报（如 2 月回测读到 4 月才公告的 2023 年报），系统性虚高 fundamental agents（Warren Buffett / Michael Burry / Cathie Wood 等）回测收益。**Campaign 18 修复**：`_should_include_financial_period` 新增 `ann_date_str` + `as_of_date` 参数，当二者均存在且 `ann_date > as_of` 时排除该行；缺省/格式异常时回退到历史行为（live 模式不变，避免过度过滤误丢合法数据，对齐 C2-BH2 鲁棒性契约）。trade date 与 ann_date 均做 dashed→compact 归一化。TDD：8 个 fixture 测试覆盖 live-mode-unchanged / PIT-exclude / PIT-include / dashed-normalize / malformed-fallback / 集成回测路径。服务于"更高确信"目标。 |
+| R42 | P2 | ❌ | **回测选股池 survivorship-bias 审计（R37-R41 回测可信度家族续集）** | Campaign 19 产品研究（backlog 耗尽后的 research refill）发现：`_fetch_tushare_all_stock_basic`（`tushare_api.py:841`）用 `list_status="L"`（当前在市）构建股票池，历史回测的选股池因此**无法包含回测期间已退市的标的**，系统性美化结果（survivorship bias，beta veto 类，R37-R41 lookahead hardening 家族的同类残留——已修 prices/calendar/macro/fundamental，universe 构建漏审）。属研究/审计切片：本项先 trace 回测选股池是否真的用当前在市列表 vs PIT-as-of-trade-date 列表，量化潜在偏差面，再决定是否需要按 trade_date 重建历史在市池。next_smallest_slice: ① 写一段离线审计脚本/fixture，对比"当前在市池"与"按 list_date/delist_date 过滤的历史在市池"的差异规模；② 据差异规模决定 P 升级或 split。deferred 至独立 campaign。 |
+| R43 | P2 | ❌ | **回测 PIT 不变式集成测试（R37-R41 回归守卫）** | Campaign 19 产品研究发现：R37-R41 每项各有单元测试（prices qfq / trade_cal / macro as_of / fundamental ann_date），但**没有任何单一集成测试断言"一次回测运行不会读到任何晚于模拟交易日的数据"**横跨四条已加固路径。lookahead 家族用了 5 场 campaign 才补完，说明完整性脆弱、缺回归守卫——任一加固可能在未来被静默回退。next_smallest_slice: 加一个 backtest 级 PIT 不变式测试（fixture-based，无 live API），用已知 ann_date/list_date 的合成数据断言回测只消费 PIT 合法数据。test-only，不增产品臃肿。 |
+| R44 | P3 | ✅ | **回测 disclosure 标注 PIT 加固覆盖面（gamma 可信度校准）** | Campaign 19 产品研究发现：`cli.py:127` 的 gamma disclosure 警告"回测为历史样本统计"，但**未告知用户 look-ahead 表面现已加固（R37-R41）**，用户无法校准对回测数字的信任度。trust calibration 是"更高确信"目标的一部分。**Campaign 19 交付**：`cli.py` 回测输出在原有风险警告后追加一行，列出已 PIT 加固的数据路径（价格前复权/A股真实交易日历/宏观 as_of/财报 ann_date）与已知未覆盖面（R42 survivorship 待审），让用户据实校准信任度。doc/text-only，5 个 cli 回归测试通过。 |
 
 > 各已完成项的实现级设计细节（现状 / 方案 / 收益）已归档到 [`changelog/completed-roadmap-phases.md` §五](./changelog/completed-roadmap-phases.md#五r8-r33-前门信息密度设计细节归档)，主文档仅保留上表的一句话价值结论，避免历史实现细节淹没当前目标（见 §六维护规则 #2）。
 
@@ -148,4 +151,4 @@
 
 ---
 
-> **最后更新**：2026-06-16（Campaign 18：R41 fundamental ann_date point-in-time 过滤落地 — lookahead hardening 续集完结）
+> **最后更新**：2026-06-16（Campaign 19：backlog 耗尽 → research refill R42-R44 回测可信度家族续集；同场修复 flaky gamma 测试 + drain 2 sibling date-rot 测试）

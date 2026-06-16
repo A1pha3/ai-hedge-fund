@@ -3,12 +3,27 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.backend.routes.llm_metrics import (
     _estimate_cost_usd,
     _MODEL_COST_PER_1K_CHARS,
 )
+
+# Time-stable anchors for lookback-windowed tests. A hardcoded historical date
+# (e.g. 2026-06-01) rots out of the days=30 window as the calendar advances,
+# silently dropping entries and flipping assertions. Anchoring to "today - 5
+# days" keeps fixtures inside the window regardless of when tests run.
+_ANCHOR_DT = datetime.now(timezone.utc) - timedelta(days=5)
+RECENT_DATE = _ANCHOR_DT.strftime("%Y-%m-%d")
+RECENT_DATE_NEXT = (_ANCHOR_DT + timedelta(days=1)).strftime("%Y-%m-%d")
+RECENT_COMPACT = _ANCHOR_DT.strftime("%Y%m%d")
+RECENT_TS = f"{RECENT_DATE}T12:00:00"
+RECENT_TS_NEXT = f"{RECENT_DATE_NEXT}T12:00:00"
+RECENT_TS_MIN = f"{RECENT_DATE}T12:01:00"
+RECENT_TS_SEC = f"{RECENT_DATE}T12:02:00"
+RECENT_FILE = f"llm_metrics_{RECENT_COMPACT}_120000.jsonl"
 
 
 def test_estimate_cost_uses_matched_model_rates() -> None:
@@ -72,10 +87,10 @@ def test_summary_includes_provider_aggregation(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
     _write_jsonl(
-        tmp_path / "llm_metrics_20260601_120000.jsonl",
+        tmp_path / RECENT_FILE,
         [
             {
-                "timestamp": "2026-06-01T12:00:00",
+                "timestamp": RECENT_TS,
                 "agent_name": "warren_buffett",
                 "model_provider": "openai",
                 "model_name": "gpt-4o",
@@ -85,7 +100,7 @@ def test_summary_includes_provider_aggregation(tmp_path, monkeypatch) -> None:
                 "response_chars": 1500,
             },
             {
-                "timestamp": "2026-06-01T12:01:00",
+                "timestamp": RECENT_TS_MIN,
                 "agent_name": "warren_buffett",
                 "model_provider": "openai",
                 "model_name": "gpt-4o",
@@ -95,7 +110,7 @@ def test_summary_includes_provider_aggregation(tmp_path, monkeypatch) -> None:
                 "response_chars": 0,
             },
             {
-                "timestamp": "2026-06-01T12:02:00",
+                "timestamp": RECENT_TS_SEC,
                 "agent_name": "charlie_munger",
                 "model_provider": "anthropic",
                 "model_name": "claude-3-5-sonnet",
@@ -136,10 +151,10 @@ def test_summary_top_agents_by_cost_sorted_descending(tmp_path, monkeypatch) -> 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
     # warren_buffett uses gpt-4o (expensive), charlie_munger uses deepseek (cheap).
     _write_jsonl(
-        tmp_path / "llm_metrics_20260601_120000.jsonl",
+        tmp_path / RECENT_FILE,
         [
             {
-                "timestamp": "2026-06-01T12:00:00",
+                "timestamp": RECENT_TS,
                 "agent_name": "warren_buffett",
                 "model_provider": "openai",
                 "model_name": "gpt-4o",
@@ -149,7 +164,7 @@ def test_summary_top_agents_by_cost_sorted_descending(tmp_path, monkeypatch) -> 
                 "response_chars": 5000,
             },
             {
-                "timestamp": "2026-06-01T12:01:00",
+                "timestamp": RECENT_TS_MIN,
                 "agent_name": "charlie_munger",
                 "model_provider": "deepseek",
                 "model_name": "deepseek-chat",
@@ -183,10 +198,10 @@ def test_summary_top_providers_by_latency_sorted_descending(tmp_path, monkeypatc
 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
     _write_jsonl(
-        tmp_path / "llm_metrics_20260601_120000.jsonl",
+        tmp_path / RECENT_FILE,
         [
             {
-                "timestamp": "2026-06-01T12:00:00",
+                "timestamp": RECENT_TS,
                 "agent_name": "a1",
                 "model_provider": "slow_provider",
                 "model_name": "gpt-4o",
@@ -196,7 +211,7 @@ def test_summary_top_providers_by_latency_sorted_descending(tmp_path, monkeypatc
                 "response_chars": 100,
             },
             {
-                "timestamp": "2026-06-01T12:01:00",
+                "timestamp": RECENT_TS_MIN,
                 "agent_name": "a2",
                 "model_provider": "fast_provider",
                 "model_name": "deepseek-chat",
@@ -227,10 +242,10 @@ def test_summary_daily_provider_heatmap_populated(tmp_path, monkeypatch) -> None
 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
     _write_jsonl(
-        tmp_path / "llm_metrics_20260601_120000.jsonl",
+        tmp_path / RECENT_FILE,
         [
             {
-                "timestamp": "2026-06-01T12:00:00",
+                "timestamp": RECENT_TS,
                 "agent_name": "a1",
                 "model_provider": "openai",
                 "model_name": "gpt-4o",
@@ -240,7 +255,7 @@ def test_summary_daily_provider_heatmap_populated(tmp_path, monkeypatch) -> None
                 "response_chars": 100,
             },
             {
-                "timestamp": "2026-06-02T12:00:00",
+                "timestamp": RECENT_TS_NEXT,
                 "agent_name": "a2",
                 "model_provider": "openai",
                 "model_name": "gpt-4o",
@@ -257,7 +272,7 @@ def test_summary_daily_provider_heatmap_populated(tmp_path, monkeypatch) -> None
     payload = client.get("/llm-metrics/summary?days=30").json()
     heat = payload["daily_provider"]
     assert len(heat) == 2
-    assert heat[0]["date"] == "2026-06-01"
+    assert heat[0]["date"] == RECENT_DATE
     assert heat[0]["providers"][0]["provider"] == "openai"
     assert heat[0]["providers"][0]["calls"] == 1
     assert heat[1]["providers"][0]["errors"] == 1
@@ -272,11 +287,11 @@ def test_cost_savings_suggestion_flags_outlier_agents(tmp_path, monkeypatch) -> 
 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
     _write_jsonl(
-        tmp_path / "llm_metrics_20260601_120000.jsonl",
+        tmp_path / RECENT_FILE,
         [
             # Cheap: deepseek, 1000 in + 1000 out
             {
-                "timestamp": "2026-06-01T12:00:00",
+                "timestamp": RECENT_TS,
                 "agent_name": "cheap_a",
                 "model_provider": "deepseek",
                 "model_name": "deepseek-chat",
@@ -286,7 +301,7 @@ def test_cost_savings_suggestion_flags_outlier_agents(tmp_path, monkeypatch) -> 
                 "response_chars": 1000,
             },
             {
-                "timestamp": "2026-06-01T12:01:00",
+                "timestamp": RECENT_TS_MIN,
                 "agent_name": "cheap_b",
                 "model_provider": "deepseek",
                 "model_name": "deepseek-chat",
@@ -297,7 +312,7 @@ def test_cost_savings_suggestion_flags_outlier_agents(tmp_path, monkeypatch) -> 
             },
             # Expensive: opus, 10000 in + 10000 out
             {
-                "timestamp": "2026-06-01T12:02:00",
+                "timestamp": RECENT_TS_SEC,
                 "agent_name": "expensive_one",
                 "model_provider": "anthropic",
                 "model_name": "claude-3-opus",
@@ -326,10 +341,10 @@ def test_cost_savings_suggestion_empty_when_no_outliers(tmp_path, monkeypatch) -
 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
     _write_jsonl(
-        tmp_path / "llm_metrics_20260601_120000.jsonl",
+        tmp_path / RECENT_FILE,
         [
             {
-                "timestamp": "2026-06-01T12:00:00",
+                "timestamp": RECENT_TS,
                 "agent_name": "a1",
                 "model_provider": "openai",
                 "model_name": "gpt-4o",
@@ -339,7 +354,7 @@ def test_cost_savings_suggestion_empty_when_no_outliers(tmp_path, monkeypatch) -
                 "response_chars": 1000,
             },
             {
-                "timestamp": "2026-06-01T12:01:00",
+                "timestamp": RECENT_TS_MIN,
                 "agent_name": "a2",
                 "model_provider": "openai",
                 "model_name": "gpt-4o",

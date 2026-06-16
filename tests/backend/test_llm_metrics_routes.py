@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -105,13 +106,19 @@ def test_metrics_summary_respects_lookback_days(tmp_path, monkeypatch):
     """Only JSONL files within the lookback window are included."""
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
 
-    # Recent file
-    recent = tmp_path / "llm_metrics_20260613_000000.jsonl"
+    # Recent file — anchored to today so the test is time-stable. A hardcoded
+    # historical date rots out of the days=7 window as the calendar advances,
+    # silently flipping the "included" assertion. "Old" stays a far-past fixed
+    # date to guarantee it is always outside the window.
+    today = datetime.now(timezone.utc)
+    recent_name = f"llm_metrics_{today.strftime('%Y%m%d')}_000000.jsonl"
+    recent_ts = today.strftime("%Y-%m-%dT00:00:00")
+    recent = tmp_path / recent_name
     _write_jsonl(
         recent,
         [
             {
-                "timestamp": "2026-06-06T00:00:00",
+                "timestamp": recent_ts,
                 "agent_name": "agent_a",
                 "model_provider": "P",
                 "model_name": "M",

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import time as time_module
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -271,11 +272,20 @@ def test_collect_metrics_caches_result_within_ttl(tmp_path, monkeypatch):
 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
 
+    # Use a date relative to "now" so the test is time-stable: a hardcoded
+    # historical timestamp (e.g. 20260609) rots out of the lookback_days=7
+    # window as the calendar advances, making file_date < cutoff and silently
+    # dropping the entry (calls==0). Anchoring to today keeps it inside the
+    # window regardless of when the test runs.
+    now = datetime.now(timezone.utc)
+    file_name = f"llm_metrics_{now.strftime('%Y%m%d')}_000000.jsonl"
+    entry_ts = now.strftime("%Y-%m-%dT12:00:00")
+
     # Write one entry
-    jsonl = tmp_path / "llm_metrics_20260609_000000.jsonl"
+    jsonl = tmp_path / file_name
     jsonl.write_text(
         json.dumps({
-            "timestamp": "2026-06-09T12:00:00",
+            "timestamp": entry_ts,
             "agent_name": "test_agent",
             "model_provider": "Test",
             "model_name": "test-model",

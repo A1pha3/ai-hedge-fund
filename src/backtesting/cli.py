@@ -126,6 +126,12 @@ def _run_walk_forward_mode(args, build_engine) -> int:
     # in-sample statistics over a finite window, not predictive guarantees. Echoing
     # the project-level disclaimer inline keeps users from over-reading the numbers.
     print("⚠ 回测/滚动验证为历史样本统计，不代表未来收益；实际交易还需计入滑点、流动性、政策与择时风险。")
+    # R44 (gamma trust calibration): disclose the point-in-time (PIT) look-ahead
+    # surface that has been hardened (R37-R41) so users can calibrate how much to
+    # trust the numbers, and name the known un-hardened surface (survivorship
+    # bias, R42 pending) instead of implying the backtest is fully bias-free.
+    print("ℹ 已加固的前瞻数据路径 (R37-R41): 价格前复权 / A股真实交易日历 / 宏观 as_of 过滤 / 财报 ann_date 过滤。"
+          "已知未覆盖面 (R42 待审): 选股池 survivorship bias。")
     return 0
 
 
