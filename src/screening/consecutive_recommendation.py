@@ -137,14 +137,79 @@ def _prev_trading_day(dt: datetime) -> datetime:
     (``dt - timedelta(days=1)``) lands on Saturday/Sunday and breaks the
     streak on every post-weekend report — silently zeroing the R4
     consecutive-recommendation bonus on the most common case. Holidays are
-    unmodeled (same weekday approximation ``_check_report_freshness`` uses in
-    top_picks.py); a multi-day holiday gap still breaks the streak, which is
-    acceptable (no trading happened). See CAMPAIGN2-BH-5.
+    unmodeled here; the R45 path below uses real ``trade_cal`` open dates
+    when available and only falls back to this weekday helper when no
+    tushare token / network is reachable. See CAMPAIGN2-BH-5.
     """
     dt = dt - timedelta(days=1)
     while dt.weekday() >= 5:  # 5=Sat, 6=Sun
         dt -= timedelta(days=1)
     return dt
+
+
+def _resolve_real_open_trade_dates(window_start_dt: datetime, end_dt: datetime) -> list[str] | None:
+    """R45: Fetch real A-share open trade dates spanning ``[window_start, end]``.
+
+    Returns a YYYYMMDD-sorted list (ascending) of open trading days from
+    tushare ``trade_cal``, or ``None`` when no token / network failure /
+    empty result — the caller falls back to the weekday approximation
+    (``_prev_trading_day``) so streaks degrade gracefully without trade_cal
+    rather than zeroing R4 bonus altogether (R36 behavior preserved).
+
+    The window is widened to ``window_start_dt - 14 days`` to absorb the
+    longest plausible A-share holiday gap (Spring Festival, ~9 days) plus
+    extra slack before the lookback window's earliest report.
+    """
+    try:
+        from src.tools.tushare_api import get_open_trade_dates  # local import to keep module light
+    except Exception:  # pragma: no cover — defensive: should never raise on import
+        return None
+
+    # Widen back-window by 14 days to cover the longest plausible holiday
+    # closure (Spring Festival, ~9 days) so the cursor can always step
+    # across into the prior real trading day.
+    fetch_start = window_start_dt - timedelta(days=14)
+    start_compact = _format_date(fetch_start)
+    end_compact = _format_date(end_dt)
+    try:
+        open_dates = get_open_trade_dates(start_compact, end_compact)
+    except Exception as exc:  # pragma: no cover — never block streak on calendar fetch
+        logger.warning("[ConsecutiveRec] get_open_trade_dates(%s, %s) failed: %s", start_compact, end_compact, exc)
+        return None
+    if not open_dates:
+        return None
+    return sorted(open_dates)
+
+
+def _prev_real_trading_day(
+    dt: datetime,
+    *,
+    open_trade_dates: list[str] | None,
+) -> datetime:
+    """R45: Step back one A-share trading day, preferring ``open_trade_dates``.
+
+    When ``open_trade_dates`` is a non-empty sorted list (from trade_cal),
+    return the last entry strictly less than ``_format_date(dt)``. When
+    ``dt`` is earlier than the entire list (window underflow), fall back
+    to the weekday approximation. When ``open_trade_dates`` is ``None``
+    or empty, fall back to ``_prev_trading_day`` so that streak behavior
+    degrades to the R36 weekday approximation.
+    """
+    if not open_trade_dates:
+        return _prev_trading_day(dt)
+    target = _format_date(dt)
+    # Find rightmost date < target. open_trade_dates is sorted ascending.
+    prev: str | None = None
+    for cal_date in open_trade_dates:
+        if cal_date < target:
+            prev = cal_date
+        else:
+            break
+    if prev is None:
+        # Window underflow — fall back to weekday approximation rather than
+        # silently breaking the streak with no error signal.
+        return _prev_trading_day(dt)
+    return _parse_date(prev)
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +362,13 @@ def compute_consecutive_recommendations(
     if end_dt is None:
         return {}
 
+    # R45: prefer real A-share trade_cal so streak step skips holidays
+    # (CNY/National Day/etc.) and does not phantom-connect across them.
+    # Window starts at the earliest report date in scope; falls back to
+    # weekday approximation when no tushare token / network failure.
+    window_start_dt = end_dt - timedelta(days=lookback_days - 1)
+    open_trade_dates = _resolve_real_open_trade_dates(window_start_dt, end_dt)
+
     stats_map: dict[str, ConsecutiveStats] = {}
     for ticker in sorted(seen):
         days = appearances[ticker]
@@ -312,13 +384,13 @@ def compute_consecutive_recommendations(
             status = RecommendationStatus.FIRST_APPEARANCE
             _ = gap_days  # silence unused warning
         else:
-            # 从 end_dt 向前追踪连续。用交易日步进 (跳过周末)，否则
-            # 周五→周一的连续推荐会在每个周末断裂、把 R4 连续加权清零。
-            # 见 CAMPAIGN2-BH-5。
+            # R45: 用 trade_cal 步进 (跳过周末+长假闭市)，否则
+            # 周五→周一会在每个周末断裂 (R36)、且春节/国庆 phantom-连接
+            # (R45)。trade_cal 不可用时回退到 weekday 近似 (R36 行为)。
             streak = 1
             cursor = latest_date
             for entry in reversed(days[:-1]):
-                cursor = _prev_trading_day(cursor)
+                cursor = _prev_real_trading_day(cursor, open_trade_dates=open_trade_dates)
                 if _parse_date(entry["date"]) == cursor:
                     streak += 1
                 else:

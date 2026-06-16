@@ -241,6 +241,98 @@ class TestComputeConsecutiveRecommendations:
         assert result["000001"].consecutive_days == 2
         assert result["000001"].status == RecommendationStatus.CONSECUTIVE_2DAYS
 
+    def test_long_holiday_does_not_create_phantom_streak(self, tmp_path, monkeypatch) -> None:
+        """R45: Spring Festival gap must NOT inflate streak via weekday approximation.
+
+        2024-02-08 (Thu) was the last trading day before Spring Festival;
+        2024-02-19 (Mon) was the first trading day after the holiday — 7
+        trading days apart on the real calendar. The previous weekday
+        approximation walked back just one weekday from 2024-02-19 (→ Fri
+        2024-02-16, a holiday closure day), wrongly treating Thu+Mon as a
+        2-day consecutive streak and adding R4 stability bonus on every
+        post-CNY first-trading-day report. With trade_cal stepping the prior
+        trading day before 2024-02-19 is 2024-02-08, but the recommendation
+        on Mon and Thu are NOT adjacent (Thu→Mon is one trading-day step
+        across the holiday), so streak must equal 2 ONLY when consecutive
+        trading days are truly recommended. Here the test models an actual
+        holiday gap with no intervening trading days — streak = 2 is correct
+        (Thu+Mon are adjacent trading days on the real A-share calendar).
+        The phantom-streak failure mode is a different scenario (recommended
+        on Mon and prior Wed but NOT Thu): weekday approx counts Mon→Tue→Wed
+        backwards across only 2 weekdays, so it would step Mon→Fri→Thu and
+        find Wed three weekdays back as consecutive when in fact 1
+        intervening trading day (Thu) without recommendation breaks the
+        streak. Models that scenario:
+        Wed 2024-02-07 + Thu 2024-02-08 + skip CNY + Mon 2024-02-19 — Mon's
+        only consecutive predecessor is 2024-02-08 (Thu, real prev trading
+        day on A-share calendar). With weekday approx the cursor lands on
+        Fri 2024-02-16 (a holiday closure day), and since neither Wed nor
+        Thu reports match Fri, the bug actually breaks streak too early
+        without trade_cal — but Thu's report DOES match the real prev
+        trading day before Mon. So this test validates that the real
+        calendar correctly continues Thu→Mon=2 and Wed→Thu→Mon=3.
+        """
+        # Inject a mock trade_cal that returns the real A-share open dates
+        # spanning Spring Festival 2024 (Feb 8 Thu, Feb 19 Mon, Feb 20 Tue).
+        cny_open_dates = [
+            "20240207",  # Wed
+            "20240208",  # Thu (last day before CNY)
+            # 20240209-20240218 — Spring Festival closure
+            "20240219",  # Mon (first day after CNY)
+            "20240220",  # Tue
+            "20240221",  # Wed
+        ]
+
+        def mock_get_open(start: str, end: str) -> list[str]:
+            return [d for d in cny_open_dates if start <= d <= end]
+
+        monkeypatch.setattr(
+            "src.tools.tushare_api.get_open_trade_dates",
+            mock_get_open,
+        )
+        for date_str in ["20240207", "20240208", "20240219", "20240220"]:
+            report = {"recommendations": [{"ticker": "000001", "score_b": 0.5}]}
+            (tmp_path / f"auto_screening_{date_str}.json").write_text(json.dumps(report), encoding="utf-8")
+
+        result = compute_consecutive_recommendations(
+            lookback_days=15,
+            report_dir=tmp_path,
+            end_date="20240220",
+        )
+        # Tue 20240220 + Mon 20240219 + Thu 20240208 + Wed 20240207
+        # = 4 consecutive trading-day reports across the CNY gap.
+        # With weekday-only approx: from 20240220 step back lands on
+        # Fri 20240216 (holiday closure, no report) → streak breaks at 2.
+        # With real trade_cal step: 20240220→20240219→20240208→20240207
+        # → all reports present → streak = 4.
+        assert result["000001"].consecutive_days == 4
+
+    def test_streak_falls_back_to_weekday_when_trade_cal_unavailable(self, tmp_path, monkeypatch) -> None:
+        """R45 fallback: if get_open_trade_dates fails/empty, retain weekday approx.
+
+        Backward-compatible fallback: pre-R45 behavior must remain when no
+        token / network failure. Fri→Mon must still count as 2-day streak.
+        """
+
+        def mock_empty(start: str, end: str) -> list[str]:
+            return []  # simulates no token / API failure
+
+        monkeypatch.setattr(
+            "src.tools.tushare_api.get_open_trade_dates",
+            mock_empty,
+        )
+        # 20260102 = Friday, 20260105 = Monday (weekend in between).
+        for date_str in ["20260102", "20260105"]:
+            report = {"recommendations": [{"ticker": "000001", "score_b": 0.5}]}
+            (tmp_path / f"auto_screening_{date_str}.json").write_text(json.dumps(report), encoding="utf-8")
+        result = compute_consecutive_recommendations(
+            lookback_days=7,
+            report_dir=tmp_path,
+            end_date="20260105",
+        )
+        # Fallback to weekday: Fri+Mon = 2-day streak (R36 behavior preserved).
+        assert result["000001"].consecutive_days == 2
+
     def test_streak_survives_holiday_adjacent_weekend(self, tmp_path) -> None:
         """BH-005 drain: Fri→(weekend)→Mon→Tue 3-day trading streak stays 3."""
         # 20260102 Fri, 20260105 Mon, 20260106 Tue.
