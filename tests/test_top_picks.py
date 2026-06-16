@@ -1334,6 +1334,89 @@ class TestDataFreshness:
         result = _check_report_freshness("20260612", now=datetime(2026, 6, 17))
         assert "非最新" in result
 
+    def test_during_long_holiday_no_false_stale(self, monkeypatch) -> None:
+        """BH-015 / R45 same-class drain: a pre-CNY report read mid-holiday must
+        not show a false stale warning when trade_cal is available.
+
+        2024-02-08 (Thu) is the last trading day before Spring Festival;
+        2024-02-13 (Tue) is mid-holiday closure (markets shut Feb 9 - Feb 18).
+        The weekday-only approximation counts Fri 2/9 + Mon 2/12 + Tue 2/13's
+        prior-weekday-rolled "now" → 2+ elapsed business days → false stale.
+        With trade_cal, ZERO trading days have actually elapsed (no opens
+        between Feb 8 close and Feb 13), so warning must be suppressed.
+        """
+        from datetime import datetime
+
+        # Real A-share open dates spanning Spring Festival 2024.
+        cny_open_dates = [
+            "20240207",
+            "20240208",  # last day before CNY
+            # Feb 9 - Feb 18: Spring Festival closure (no opens)
+            "20240219",
+            "20240220",
+        ]
+
+        def mock_get_open(start: str, end: str) -> list[str]:
+            return [d for d in cny_open_dates if start <= d <= end]
+
+        monkeypatch.setattr(
+            "src.tools.tushare_api.get_open_trade_dates",
+            mock_get_open,
+        )
+        from src.screening.top_picks import _check_report_freshness
+
+        # Mid-holiday review of pre-CNY report.
+        result = _check_report_freshness("20240208", now=datetime(2024, 2, 13))
+        assert result == "", f"Expected no warning during CNY closure, got: {result!r}"
+
+    def test_post_long_holiday_warns_only_after_real_trading_days(self, monkeypatch) -> None:
+        """BH-015 / R45 same-class: post-CNY review still warns when real
+        elapsed trading days >= 2 (e.g. ran --auto Thu 2/8 pre-CNY but did
+        not re-run; reviewing Wed 2/21 = Mon 2/19 + Tue 2/20 = 2 real
+        trading days elapsed → stale).
+        """
+        from datetime import datetime
+
+        cny_open_dates = [
+            "20240207",
+            "20240208",
+            "20240219",
+            "20240220",
+            "20240221",
+        ]
+
+        def mock_get_open(start: str, end: str) -> list[str]:
+            return [d for d in cny_open_dates if start <= d <= end]
+
+        monkeypatch.setattr(
+            "src.tools.tushare_api.get_open_trade_dates",
+            mock_get_open,
+        )
+        from src.screening.top_picks import _check_report_freshness
+
+        # Pre-CNY report read Wed 2024-02-21 → 2 real trading days elapsed.
+        result = _check_report_freshness("20240208", now=datetime(2024, 2, 21))
+        assert "非最新" in result
+
+    def test_freshness_falls_back_to_weekday_when_trade_cal_unavailable(self, monkeypatch) -> None:
+        """BH-015 / R45 same-class: trade_cal failure must not break the
+        existing R12 weekday approximation behaviour. Fri+Mon read Wed = 2
+        trading days elapsed → still warns (R36 behaviour preserved).
+        """
+        from datetime import datetime
+
+        def mock_empty(start: str, end: str) -> list[str]:
+            return []
+
+        monkeypatch.setattr(
+            "src.tools.tushare_api.get_open_trade_dates",
+            mock_empty,
+        )
+        from src.screening.top_picks import _check_report_freshness
+
+        result = _check_report_freshness("20260612", now=datetime(2026, 6, 17))
+        assert "非最新" in result
+
 
 # ---------------------------------------------------------------------------
 # R13: New / dropped pick detection

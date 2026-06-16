@@ -359,6 +359,75 @@ class TestComputeConsecutiveRecommendations:
         )
         assert result["000001"].status == RecommendationStatus.REENTRY_SIGNAL
 
+    def test_broken_streak_low_historical_score_not_reentry(self, tmp_path) -> None:
+        """BH-016 ported: score_b<0.3 throughout → BROKEN_STREAK, not REENTRY.
+
+        20260101 (Thu) score=0.2, 20260102 (Fri) absent, 20260105 (Mon)
+        score=0.2 — too low to qualify for re-entry signal threshold.
+        """
+        (tmp_path / "auto_screening_20260101.json").write_text(
+            json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.2}]}), encoding="utf-8"
+        )
+        (tmp_path / "auto_screening_20260102.json").write_text(
+            json.dumps({"recommendations": [{"ticker": "000002", "score_b": 0.3}]}), encoding="utf-8"
+        )
+        (tmp_path / "auto_screening_20260105.json").write_text(
+            json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.2}]}), encoding="utf-8"
+        )
+        result = compute_consecutive_recommendations(
+            lookback_days=5,
+            report_dir=tmp_path,
+            end_date="20260105",
+        )
+        assert result["000001"].status == RecommendationStatus.BROKEN_STREAK
+        assert result["000001"].stability_bonus == 0.0
+
+    def test_consecutive_not_misclassified_as_reentry(self, tmp_path) -> None:
+        """BH-016 ported: continuous Thu-Fri-Mon stays CONSECUTIVE_3PLUS, not REENTRY."""
+        for date_str in ["20260101", "20260102", "20260105"]:
+            (tmp_path / f"auto_screening_{date_str}.json").write_text(
+                json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.5}]}), encoding="utf-8"
+            )
+        result = compute_consecutive_recommendations(
+            lookback_days=5,
+            report_dir=tmp_path,
+            end_date="20260105",
+        )
+        assert result["000001"].status == RecommendationStatus.CONSECUTIVE_3PLUS
+        assert result["000001"].stability_bonus == 10.0
+
+    def test_first_appearance_does_not_trigger_reentry(self, tmp_path) -> None:
+        """BH-016 ported: only 1 appearance in window → FIRST_APPEARANCE."""
+        (tmp_path / "auto_screening_20260105.json").write_text(
+            json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.5}]}), encoding="utf-8"
+        )
+        result = compute_consecutive_recommendations(
+            lookback_days=3,
+            report_dir=tmp_path,
+            end_date="20260105",
+        )
+        assert result["000001"].status == RecommendationStatus.FIRST_APPEARANCE
+
+    def test_reentry_bonus_strictly_between_first_and_consecutive(self, tmp_path) -> None:
+        """BH-016 ported: REENTRY bonus must be 0 < bonus < 10 (between
+        FIRST_APPEARANCE and CONSECUTIVE_3PLUS)."""
+        (tmp_path / "auto_screening_20260101.json").write_text(
+            json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.5}]}), encoding="utf-8"
+        )
+        (tmp_path / "auto_screening_20260102.json").write_text(
+            json.dumps({"recommendations": [{"ticker": "000002", "score_b": 0.3}]}), encoding="utf-8"
+        )
+        (tmp_path / "auto_screening_20260105.json").write_text(
+            json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.4}]}), encoding="utf-8"
+        )
+        result = compute_consecutive_recommendations(
+            lookback_days=5,
+            report_dir=tmp_path,
+            end_date="20260105",
+        )
+        bonus = result["000001"].stability_bonus
+        assert 0.0 < bonus < 10.0
+
     def test_stability_bonus_increases_with_streak(self, tmp_path) -> None:
         # 3 days
         for date_str in ["20260101", "20260102", "20260103"]:

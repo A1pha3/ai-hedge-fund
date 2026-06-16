@@ -730,11 +730,11 @@ def _compute_factor_reason(item: dict) -> str:
 def _check_report_freshness(report_date: str, now: datetime | None = None) -> str:
     """Return a warning string if the report is stale (>1 *trading* day old).
 
-    Uses business-day age rather than calendar-day age so that the normal
-    "Friday report read on Monday morning" workflow does not trigger a false
-    stale warning. Holidays (which would also be non-trading days) are not
-    modelled here; the weekend approximation covers the dominant false-positive
-    source and degrades gracefully toward the calendar heuristic on long breaks.
+    BH-015 / R45 same-class drain: prefers the real A-share ``trade_cal`` so
+    that a pre-CNY report read mid-holiday does not trigger a false stale
+    warning (no real trading days elapsed during closure). Falls back to the
+    weekday approximation when no tushare token / network failure (R36
+    behaviour preserved).
 
     A report is considered stale once >= 2 trading days have elapsed since its
     date — i.e. one full trading day has passed without a newer report, which
@@ -757,7 +757,12 @@ def _check_report_freshness(report_date: str, now: datetime | None = None) -> st
 
 
 def _trading_days_between(start: datetime, end: datetime) -> int:
-    """Count Mon-Fri trading days strictly between *start* and *end* (exclusive).
+    """Count A-share trading days strictly between *start* and *end* (exclusive).
+
+    Prefers the real ``trade_cal`` open dates (BH-015 / R45 same-class drain)
+    so that long holidays (Spring Festival, National Day) are correctly
+    recognised as zero-trading-day gaps. Falls back to the Mon-Fri weekday
+    approximation when ``trade_cal`` is unavailable (R36 behaviour preserved).
 
     ``start`` (the report's own trading day) and ``end`` (the review moment) are
     both excluded: the report's own day is already captured, and *end*'s trading
@@ -766,6 +771,10 @@ def _trading_days_between(start: datetime, end: datetime) -> int:
     """
     if end.date() <= start.date():
         return 0
+    real_count = _real_trading_days_between(start, end)
+    if real_count is not None:
+        return real_count
+    # Fallback: Mon-Fri weekday approximation.
     count = 0
     current = start.date() + timedelta(days=1)
     last = end.date() - timedelta(days=1)
@@ -774,6 +783,30 @@ def _trading_days_between(start: datetime, end: datetime) -> int:
             count += 1
         current += timedelta(days=1)
     return count
+
+
+def _real_trading_days_between(start: datetime, end: datetime) -> int | None:
+    """BH-015 / R45 same-class: count real A-share open trading days strictly
+    between ``start`` and ``end`` using ``trade_cal``.
+
+    Returns ``None`` (signaling fallback) when no tushare token / network
+    failure / empty result. Excludes both endpoints to match
+    ``_trading_days_between`` semantics.
+    """
+    try:
+        from src.tools.tushare_api import get_open_trade_dates  # local import: keep startup light
+    except Exception:  # pragma: no cover — defensive
+        return None
+    start_compact = start.strftime("%Y%m%d")
+    end_compact = end.strftime("%Y%m%d")
+    try:
+        open_dates = get_open_trade_dates(start_compact, end_compact)
+    except Exception:  # pragma: no cover — never block freshness on calendar fetch
+        return None
+    if not open_dates:
+        return None
+    # Strictly between: exclude both endpoints.
+    return sum(1 for d in open_dates if start_compact < d < end_compact)
 
 
 def _trading_days_elapsed(report_dt: datetime, now: datetime) -> int:
