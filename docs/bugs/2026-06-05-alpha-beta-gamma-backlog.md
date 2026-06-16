@@ -212,7 +212,15 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
 > they touch subtle behaviour (cache connection reuse, cash-vs-amount
 > semantics) that needs more than a grep to confirm.
 
-### ALPHA-006 — p10 floor index returns min for N<11  [DEFERRED]
+### ALPHA-006 — p10 floor index returns min for N<11  [RESOLVED]
+- **Resolution**: `src/backtesting/early_runner_walk_forward.py:_distribution_p10`
+  replaced the discrete index `max(0, floor((N-1)*0.10))` (always 0 for N<11 →
+  returned the min/worst drawdown) with `numpy.percentile(values, 10)` linear
+  interpolation. Small walk-forward windows now get a meaningful tail estimate
+  consistent with the rest of the analytics layer. The field is informational
+  only (not in `_ranking_key` or the best-param decision path). Covered by 2
+  regression tests (small-sample interpolation + large-sample tail guard).
+  Unused `from math import floor` import removed; `numpy` added.
 ### ALPHA-008 — RSI div-by-zero emits 100 for monotone-up series  [RESOLVED]
 - **Resolution**: `src/agents/technicals.py:633` guards the RSI computation:
   `# Guard against division by zero: when avg_loss is 0, RSI should be 100`,

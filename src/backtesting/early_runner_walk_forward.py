@@ -4,9 +4,10 @@ import json
 from collections import Counter, defaultdict
 from datetime import datetime
 from itertools import product
-from math import floor
 from statistics import mean
 from typing import Any
+
+import numpy as np
 
 from src.backtesting.walk_forward import (
     build_walk_forward_windows,
@@ -46,12 +47,18 @@ def _round_or_none(value: float | None) -> float | None:
 
 
 def _distribution_p10(values: list[float]) -> float | None:
-    """Return the existing discrete p10 calculation used by the legacy report."""
+    """Return the 10th percentile (p10) used by the legacy report.
+
+    ALPHA-006: the old ``index = max(0, floor((len(ordered) - 1) * 0.10))``
+    discrete index was always 0 for N<11, so p10 silently returned the
+    *minimum* (worst drawdown) instead of a real p10 — overstating tail risk
+    on every small walk-forward window. Switched to numpy's linear-interpolated
+    percentile, which matches the rest of the analytics layer and gives a
+    meaningful tail estimate even for small N.
+    """
     if not values:
         return None
-    ordered = sorted(float(value) for value in values)
-    index = max(0, floor((len(ordered) - 1) * 0.10))
-    return round(ordered[index], 4)
+    return round(float(np.percentile(np.asarray(values, dtype=float), 10)), 4)
 
 
 def _month_key(trade_date: str) -> str:

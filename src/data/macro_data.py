@@ -70,57 +70,17 @@ def _safe_float(value: Any, default: float | None = None) -> float | None:
     return fv
 
 
-def _fetch_macro_cpi(pro: Any) -> pd.DataFrame | None:
-    """获取 CPI 月度同比数据。"""
+def _fetch_macro_frame(pro: Any, api_name: str) -> pd.DataFrame | None:
+    """Fetch one macro indicator frame via the cached tushare call.
+
+    All six indicators (CPI/PPI/PMI/M2/社融/LPR) share the same shape: a single
+    ``_cached_tushare_dataframe_call`` with a 7-day ttl, returning ``None`` on any
+    failure so one broken endpoint never corrupts the rest of the snapshot.
+    """
     try:
-        return _cached_tushare_dataframe_call(pro, "cn_cpi", ttl=7 * 86400)
+        return _cached_tushare_dataframe_call(pro, api_name, ttl=7 * 86400)
     except Exception as exc:
-        logger.debug("macro_data: cn_cpi 获取失败: %s", exc)
-        return None
-
-
-def _fetch_macro_ppi(pro: Any) -> pd.DataFrame | None:
-    """获取 PPI 月度同比数据。"""
-    try:
-        return _cached_tushare_dataframe_call(pro, "cn_ppi", ttl=7 * 86400)
-    except Exception as exc:
-        logger.debug("macro_data: cn_ppi 获取失败: %s", exc)
-        return None
-
-
-def _fetch_macro_pmi(pro: Any) -> pd.DataFrame | None:
-    """获取 PMI 月度数据。"""
-    try:
-        return _cached_tushare_dataframe_call(pro, "cn_pmi", ttl=7 * 86400)
-    except Exception as exc:
-        logger.debug("macro_data: cn_pmi 获取失败: %s", exc)
-        return None
-
-
-def _fetch_macro_m2(pro: Any) -> pd.DataFrame | None:
-    """获取 M2 月度同比数据。"""
-    try:
-        return _cached_tushare_dataframe_call(pro, "cn_m2", ttl=7 * 86400)
-    except Exception as exc:
-        logger.debug("macro_data: cn_m2 获取失败: %s", exc)
-        return None
-
-
-def _fetch_macro_social_financing(pro: Any) -> pd.DataFrame | None:
-    """获取社融规模月度数据。"""
-    try:
-        return _cached_tushare_dataframe_call(pro, "cn_sf", ttl=7 * 86400)
-    except Exception as exc:
-        logger.debug("macro_data: cn_sf 获取失败: %s", exc)
-        return None
-
-
-def _fetch_lpr_rate(pro: Any) -> pd.DataFrame | None:
-    """获取 LPR 利率数据 (通过 shibor_quote 接口或直接利率接口)。"""
-    try:
-        return _cached_tushare_dataframe_call(pro, "shibor_quote", ttl=7 * 86400)
-    except Exception as exc:
-        logger.debug("macro_data: shibor_quote 获取失败: %s", exc)
+        logger.debug("macro_data: %s 获取失败: %s", api_name, exc)
         return None
 
 
@@ -232,7 +192,32 @@ def _extract_latest_social_financing(df: pd.DataFrame | None) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def fetch_macro_snapshot(*, use_cache: bool = True) -> MacroSnapshot:
+def _as_of_month(as_of: str | None) -> str | None:
+    """Normalize an as_of date (YYYY-MM-DD or YYYYMMDD) to a YYYYMM key for
+    comparing against the tushare ``month`` column. Returns None when as_of is
+    None (live/latest mode, no look-ahead filter)."""
+    if not as_of:
+        return None
+    digits = "".join(ch for ch in str(as_of) if ch.isdigit())
+    return digits[:6] if len(digits) >= 6 else None
+
+
+def _filter_df_as_of(df: pd.DataFrame | None, as_of_month: str | None) -> pd.DataFrame | None:
+    """Point-in-time filter: keep only rows whose ``month`` (YYYYMM) is <= the
+    as_of anchor. R40 — prevents backtest/replay from reading macro readings
+    published after the simulated trade date. No-op when as_of_month is None."""
+    if df is None or df.empty or as_of_month is None:
+        return df
+    month_col = "month" if "month" in df.columns else ("date" if "date" in df.columns else None)
+    if month_col is None:
+        return df
+    # Compare as strings: YYYYMM sorts chronologically for equal-length keys.
+    mask = df[month_col].astype(str) <= as_of_month
+    filtered = df[mask]
+    return filtered if not filtered.empty else None
+
+
+def fetch_macro_snapshot(*, use_cache: bool = True, as_of: str | None = None) -> MacroSnapshot:
     """从 tushare 获取最新宏观数据。
 
     逐一请求各指标; 任一接口失败不影响其他指标。
@@ -240,6 +225,10 @@ def fetch_macro_snapshot(*, use_cache: bool = True) -> MacroSnapshot:
 
     Args:
         use_cache: 是否使用 tushare 缓存 (默认 True)。
+        as_of: 可选的点在时间锚 (YYYY-MM-DD 或 YYYYMMDD)。设置后只返回
+            ``month <= as_of`` 的读数, 防止 backtest/replay 读到模拟交易日
+            之后才发布的宏观数据 (point-in-time look-ahead, R40)。为 None 时
+            保持原"取最新"行为 (live 模式)。
 
     Returns:
         MacroSnapshot 实例; 部分字段可能为 None。
@@ -249,11 +238,12 @@ def fetch_macro_snapshot(*, use_cache: bool = True) -> MacroSnapshot:
         logger.warning("macro_data: tushare pro 不可用, 返回空 MacroSnapshot")
         return MacroSnapshot()
 
+    as_of_m = _as_of_month(as_of)
     snapshot = MacroSnapshot()
 
     # 1. CPI
     try:
-        cpi_df = _fetch_macro_cpi(pro)
+        cpi_df = _filter_df_as_of(_fetch_macro_frame(pro, "cn_cpi"), as_of_m)
         cpi_val, cpi_date = _extract_latest_from_df(cpi_df, "nt_yoy")  # 全国同比
         if cpi_val is None:
             cpi_val, cpi_date = _extract_latest_from_df(cpi_df, "yoy")
@@ -264,7 +254,7 @@ def fetch_macro_snapshot(*, use_cache: bool = True) -> MacroSnapshot:
 
     # 2. PPI
     try:
-        ppi_df = _fetch_macro_ppi(pro)
+        ppi_df = _filter_df_as_of(_fetch_macro_frame(pro, "cn_ppi"), as_of_m)
         ppi_val, ppi_date = _extract_latest_from_df(ppi_df, "ppi_yoy") if ppi_df is not None else (None, "")
         if ppi_val is None:
             ppi_val, _ = _extract_latest_from_df(ppi_df, "yoy")
@@ -276,7 +266,7 @@ def fetch_macro_snapshot(*, use_cache: bool = True) -> MacroSnapshot:
 
     # 3. PMI (制造业 + 非制造业)
     try:
-        pmi_df = _fetch_macro_pmi(pro)
+        pmi_df = _filter_df_as_of(_fetch_macro_frame(pro, "cn_pmi"), as_of_m)
         mfg_pmi, non_mfg_pmi = _extract_latest_pmi(pmi_df)
         snapshot.pmi_manufacturing = mfg_pmi
         snapshot.pmi_non_manufacturing = non_mfg_pmi
@@ -287,7 +277,7 @@ def fetch_macro_snapshot(*, use_cache: bool = True) -> MacroSnapshot:
 
     # 4. M2
     try:
-        m2_df = _fetch_macro_m2(pro)
+        m2_df = _filter_df_as_of(_fetch_macro_frame(pro, "cn_m2"), as_of_m)
         m2_val, _ = _extract_latest_from_df(m2_df, "m2_yoy")
         if m2_val is None:
             m2_val, _ = _extract_latest_from_df(m2_df, "yoy")
@@ -297,14 +287,14 @@ def fetch_macro_snapshot(*, use_cache: bool = True) -> MacroSnapshot:
 
     # 5. 社融
     try:
-        sf_df = _fetch_macro_social_financing(pro)
+        sf_df = _filter_df_as_of(_fetch_macro_frame(pro, "cn_sf"), as_of_m)
         snapshot.social_financing = _extract_latest_social_financing(sf_df)
     except Exception as exc:
         logger.debug("macro_data: 社融提取异常: %s", exc)
 
     # 6. LPR 1Y
     try:
-        lpr_df = _fetch_lpr_rate(pro)
+        lpr_df = _filter_df_as_of(_fetch_macro_frame(pro, "shibor_quote"), as_of_m)
         snapshot.interest_rate_lpr_1y = _extract_latest_lpr(lpr_df)
     except Exception as exc:
         logger.debug("macro_data: LPR 提取异常: %s", exc)

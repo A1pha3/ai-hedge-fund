@@ -162,6 +162,41 @@ def test_hit_rate_on_fills_none_when_all_unfilled() -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# ALPHA-006: _distribution_p10 collapses to min for small N (no interpolation)
+# ---------------------------------------------------------------------------
+
+
+def test_distribution_p10_interpolates_for_small_samples() -> None:
+    """ALPHA-006: for N<11 the old ``floor((N-1)*0.10)`` index was always 0,
+    so p10 returned the *minimum* (worst drawdown) instead of a real p10.
+
+    With 5 drawdowns sorted ascending [-0.10, -0.08, -0.05, -0.03, -0.01],
+    the true p10 (linear-interpolation, numpy default 'linear') is about
+    -0.092, not -0.10. The legacy discrete index returned ordered[0] = -0.10,
+    overstating tail risk on every small walk-forward window."""
+    from src.backtesting.early_runner_walk_forward import _distribution_p10
+
+    values = [-0.01, -0.03, -0.05, -0.08, -0.10]
+    result = _distribution_p10(values)
+    # numpy.percentile 'linear' p10 of these 5 points = -0.092
+    assert result != -0.10, "ALPHA-006 regression: p10 still returns min for N<11"
+    assert round(result, 4) == -0.092, f"expected interpolated p10 -0.092, got {result}"
+
+
+def test_distribution_p10_exact_for_large_samples() -> None:
+    """For N>=11 the discrete index is >=1 and matches a real percentile
+    position; ensure the fix keeps the 10% tail behavior on a large sample
+    (regression guard against over-shooting to median or beyond)."""
+    from src.backtesting.early_runner_walk_forward import _distribution_p10
+
+    # 20 evenly spaced values 0..19; p10 should land near 1.9 (linear) — at
+    # or just below the 2nd-smallest, never at the median (9.5).
+    values = list(range(20))
+    result = _distribution_p10(values)
+    assert result < 5, f"p10 should stay in the tail (small), got {result}"
+
+
 def test_ranking_key_zero_expectancy_not_confused_with_missing() -> None:
     """GAMMA-R20.16: after_cost_expectancy=0.0 (break-even) must be ranked as 0.0,
     not as -999.0 (missing data sentinel).  The old `x or -999.0` pattern swallowed

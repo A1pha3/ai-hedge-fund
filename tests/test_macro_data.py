@@ -469,3 +469,75 @@ class TestExtractLatestPMIEdgeCases:
 
         assert snap.pmi_manufacturing == 50.8
         assert snap.pmi_non_manufacturing == 53.2
+
+
+# ---------------------------------------------------------------------------
+# 12. R40 — as_of point-in-time filter (no look-ahead in backtest/replay)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchMacroSnapshotAsOf:
+    """R40: ``fetch_macro_snapshot(as_of=...)`` must exclude macro readings whose
+    reporting period is later than the as_of anchor. Without this filter, a
+    backtest/replay reading the macro panel on e.g. 2026-03-01 would see the
+    April 2026 CPI (released mid-April), a point-in-time look-ahead.
+
+    Although the regime label is informational-only today (no decision consumes
+    it), the filter removes the latent look-ahead so the panel can never show
+    future data once a backtest consumer is wired in."""
+
+    @patch("src.data.macro_data._get_pro")
+    def test_as_of_excludes_future_months(self, mock_get_pro):
+        """CPI for months 202603/202604/202605 available; as_of=2026-04-15 must
+        return the 202604 reading (the latest month <= as_of), never 202605."""
+        import pandas as pd
+
+        mock_pro = MagicMock()
+        mock_get_pro.return_value = mock_pro
+
+        cpi_df = pd.DataFrame({
+            "month": ["202603", "202604", "202605"],
+            "nt_yoy": [1.5, 2.1, 3.0],
+        })
+
+        with patch("src.data.macro_data._cached_tushare_dataframe_call", side_effect=lambda pro, api_name, **kw: cpi_df if api_name == "cn_cpi" else None):
+            snap = fetch_macro_snapshot(as_of="2026-04-15")
+
+        # 202605 is future relative to 2026-04-15 → must be excluded
+        assert snap.cpi_yoy == 2.1, f"expected 2.1 (202604), got {snap.cpi_yoy}"
+        assert snap.date == "202604"
+
+    @patch("src.data.macro_data._get_pro")
+    def test_as_of_none_returns_latest_default_behavior(self, mock_get_pro):
+        """as_of=None (default) preserves the original 'latest' behavior so live
+        runs are unaffected — R40 must not change the default path."""
+        import pandas as pd
+
+        mock_pro = MagicMock()
+        mock_get_pro.return_value = mock_pro
+
+        cpi_df = pd.DataFrame({
+            "month": ["202603", "202604", "202605"],
+            "nt_yoy": [1.5, 2.1, 3.0],
+        })
+
+        with patch("src.data.macro_data._cached_tushare_dataframe_call", side_effect=lambda pro, api_name, **kw: cpi_df if api_name == "cn_cpi" else None):
+            snap = fetch_macro_snapshot()
+
+        assert snap.cpi_yoy == 3.0, f"default path must return latest (202605=3.0), got {snap.cpi_yoy}"
+
+    @patch("src.data.macro_data._get_pro")
+    def test_as_of_before_all_data_returns_none(self, mock_get_pro):
+        """If as_of predates all available months, no CPI is point-in-time
+        available → cpi_yoy must be None (not a future value)."""
+        import pandas as pd
+
+        mock_pro = MagicMock()
+        mock_get_pro.return_value = mock_pro
+
+        cpi_df = pd.DataFrame({"month": ["202603", "202604"], "nt_yoy": [1.5, 2.1]})
+
+        with patch("src.data.macro_data._cached_tushare_dataframe_call", side_effect=lambda pro, api_name, **kw: cpi_df if api_name == "cn_cpi" else None):
+            snap = fetch_macro_snapshot(as_of="2026-01-01")
+
+        assert snap.cpi_yoy is None
