@@ -468,3 +468,55 @@ def test_agent_mode_run_produces_unique_date_index(monkeypatch):
     dates = [pd.Timestamp(p["Date"]) for p in engine._portfolio_values]
     # Seed + one bar per processed date => no duplicate Date.
     assert len(dates) == len(set(dates)), f"Duplicate Date index: {dates}"
+
+
+def test_iter_backtest_dates_prefers_a_share_trading_calendar(monkeypatch):
+    """R38: iter_backtest_dates must use the real A-share trading calendar
+    (trade_cal) when available, so Chinese public holidays are excluded —
+    otherwise they produce phantom zero-return bars that dilute Sharpe."""
+    engine = BacktestEngine(
+        agent=dummy_agent,
+        tickers=["AAPL"],
+        start_date="2026-02-23",  # spans a weekday but Spring Festival holiday region
+        end_date="2026-02-27",
+        initial_capital=100000.0,
+        model_name="m",
+        model_provider="p",
+        selected_analysts=["x"],
+        initial_margin_requirement=0.0,
+        backtest_mode="agent",
+    )
+    # trade_cal returns only 2 trading days (simulate holiday exclusion).
+    monkeypatch.setattr(
+        "src.tools.tushare_api.get_open_trade_dates",
+        lambda start, end: ["20260225", "20260226"],
+    )
+    dates = engine._iter_backtest_dates()
+    assert list(dates) == [pd.Timestamp("20260225"), pd.Timestamp("20260226")]
+    # Holidays (Feb 23/24/27) excluded — no phantom zero-return bars.
+
+
+def test_iter_backtest_dates_falls_back_to_business_days_when_no_calendar(monkeypatch):
+    """R38: when trade_cal is unavailable (no token / API failure → empty
+    list), iter_backtest_dates must fall back to freq='B' so the backtest still
+    runs rather than failing."""
+    engine = BacktestEngine(
+        agent=dummy_agent,
+        tickers=["AAPL"],
+        start_date="2026-02-23",
+        end_date="2026-02-27",
+        initial_capital=100000.0,
+        model_name="m",
+        model_provider="p",
+        selected_analysts=["x"],
+        initial_margin_requirement=0.0,
+        backtest_mode="agent",
+    )
+    # No token / API failure → empty list → fallback to Mon–Fri business days.
+    monkeypatch.setattr(
+        "src.tools.tushare_api.get_open_trade_dates",
+        lambda start, end: [],
+    )
+    dates = engine._iter_backtest_dates()
+    # Mon 2026-02-23 through Fri 2026-02-27 = 5 business days (no holiday exclusion).
+    assert len(dates) == 5

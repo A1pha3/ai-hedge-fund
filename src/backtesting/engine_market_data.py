@@ -107,6 +107,28 @@ class MarketDataLoader:
     # ------------------------------------------------------------------
 
     def iter_backtest_dates(self) -> pd.DatetimeIndex:
+        """A-share trading days over the backtest window.
+
+        R38: previously used ``pd.date_range(freq="B")`` — the generic Mon–Fri
+        business calendar, which includes Chinese public holidays (Spring
+        Festival, National Day, etc.). On a holiday ``load_current_prices``
+        falls back to the prior session's close, producing phantom zero-return
+        bars that dilute Sharpe/annualization (extra zero-return days). Now
+        prefer the real A-share trading calendar via ``get_open_trade_dates``
+        (trade_cal); on any failure (no token, network, empty) fall back to
+        ``freq="B"`` so the backtest still runs.
+        """
+        try:
+            from src.tools.tushare_api import get_open_trade_dates
+
+            start_compact = self._start_date.replace("-", "")
+            end_compact = self._end_date.replace("-", "")
+            open_dates = get_open_trade_dates(start_compact, end_compact)
+            if open_dates:
+                return pd.DatetimeIndex([pd.Timestamp(d) for d in open_dates])
+            # Empty result (no token / API failure) → fall back to business-day cal.
+        except Exception as e:  # noqa: BLE001 — never block the backtest on calendar fetch
+            print(f"[Backtest] trade_cal 获取失败，回退到 freq=B 工作日历: {e}")
         return pd.date_range(self._start_date, self._end_date, freq="B")
 
     # ------------------------------------------------------------------
