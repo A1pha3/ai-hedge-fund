@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from types import SimpleNamespace
 
 from src.data.base_provider import DataResponse
@@ -80,7 +81,7 @@ def test_get_prices_falls_back_to_healthy_provider_and_caches_serialized_rows():
     )
     router.cache = _CacheStub()
     router._health_cache = {"bad": True, "good": True}
-    router._last_health_check = __import__("datetime").datetime.now()
+    router._last_health_check = datetime.now()
 
     result = asyncio.run(router.get_prices("AAPL", "2024-01-01", "2024-01-02"))
 
@@ -110,7 +111,7 @@ def test_get_financial_metrics_applies_limit_and_caches_trimmed_rows():
     )
     router.cache = _CacheStub()
     router._health_cache = {"bad": True, "good": True}
-    router._last_health_check = __import__("datetime").datetime.now()
+    router._last_health_check = datetime.now()
 
     result = asyncio.run(router.get_financial_metrics("AAPL", "2024-01-02", limit=1))
 
@@ -126,7 +127,7 @@ def test_get_financial_metrics_returns_router_error_when_all_providers_fail():
     router = DataRouter([_Provider("boom", metrics_response=Exception("kapow"))])
     router.cache = _CacheStub()
     router._health_cache = {"boom": True}
-    router._last_health_check = __import__("datetime").datetime.now()
+    router._last_health_check = datetime.now()
 
     result = asyncio.run(router.get_financial_metrics("AAPL", "2024-01-02", use_cache=False))
 
