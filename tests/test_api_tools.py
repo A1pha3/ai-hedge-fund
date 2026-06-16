@@ -290,9 +290,11 @@ def test_get_ashare_prices_with_tushare_formats_and_reverses_results(monkeypatch
     pro = object()
     monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
     monkeypatch.setattr(tushare_api, "_to_ts_code", lambda ticker: "000001.SZ")
+    # R37: price path now goes through _cached_tushare_pro_bar_call (qfq) instead
+    # of _cached_tushare_dataframe_call(pro, "daily", ...). Mock the new entrypoint.
     monkeypatch.setattr(
         tushare_api,
-        "_cached_tushare_dataframe_call",
+        "_cached_tushare_pro_bar_call",
         lambda *_args, **_kwargs: pd.DataFrame(
             [
                 {
@@ -320,6 +322,30 @@ def test_get_ashare_prices_with_tushare_formats_and_reverses_results(monkeypatch
     assert [price.time for price in prices] == ["2026-04-09", "2026-04-10"]
     assert prices[0].open == 9.5
     assert prices[1].close == 10.8
+
+
+def test_fetch_tushare_ashare_prices_df_uses_qfq_adjustment(monkeypatch):
+    """R37: ``_fetch_tushare_ashare_prices_df`` must request forward-adjusted
+    (qfq) prices via ``ts.pro_bar(adj='qfq')``, not raw ``pro.daily``. Verify
+    the pro_bar call propagates adj='qfq' (the fix that removes phantom
+    ex-dividend gaps)."""
+    captured = {}
+
+    def fake_pro_bar(ts_code, adj, start_date, end_date):
+        captured.update(ts_code=ts_code, adj=adj, start_date=start_date, end_date=end_date)
+        return pd.DataFrame(
+            [{"trade_date": "20260410", "close": 10.8}, {"trade_date": "20260409", "close": 10.0}]
+        )
+
+    import tushare as _ts
+    monkeypatch.setattr(_ts, "pro_bar", fake_pro_bar)
+    monkeypatch.setattr(tushare_api, "_get_tushare_cached_df", lambda *_a, **_k: None)
+    monkeypatch.setattr(tushare_api, "_get_persisted_tushare_cached_df", lambda *_a, **_k: None)
+    monkeypatch.setattr(tushare_api, "_persist_tushare_dataframe_result", lambda key, df, **_k: df)
+
+    df = tushare_api._fetch_tushare_ashare_prices_df(object(), "000001.SZ", "20260409", "20260410")
+    assert captured["adj"] == "qfq"
+    assert df is not None and not df.empty
 
 
 def test_get_ashare_prices_with_tushare_returns_empty_when_uninitialized(monkeypatch):
