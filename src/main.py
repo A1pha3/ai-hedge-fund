@@ -1179,7 +1179,12 @@ def _build_top_table_row(*, idx: int, rec: dict) -> list:
         decay_str = f"{Fore.WHITE}—{Style.RESET_ALL}"
     else:
         decay_pct = abs(float(decay.get("change_pct", 0) or 0))
-        decay_str = f"{Fore.YELLOW}↓{decay_pct:.0f}%{Style.RESET_ALL}"
+        # R53: surface days_since_peak (computed-but-hidden). Distinguishes early
+        # decay (↓20% at 1d) from late decay (↓20% at 5d) — a trajectory signal
+        # for the "is this BUY still valid?" decision. Omit when 0 (today=peak).
+        days_since_peak = int(decay.get("days_since_peak", 0) or 0)
+        days_tag = f"({days_since_peak}d)" if days_since_peak > 0 else ""
+        decay_str = f"{Fore.YELLOW}↓{decay_pct:.0f}%{days_tag}{Style.RESET_ALL}"
 
     return [idx, ticker_label, industry, score_colored, decision_colored, cons_str, decay_str]
 
@@ -1549,16 +1554,21 @@ def _build_auto_screening_table_row(
     if consecutive_days >= 3:
         ticker_label = f"{Fore.GREEN}{Style.BRIGHT}{ticker_label}{Style.RESET_ALL}"
 
-    # P0-3 信号衰减标记
+    # P0-3 信号衰减标记 + R53 days_since_peak surfacing
     decay_info = decay_map.get(item.ticker) if decay_map else None
     if decay_info is None or decay_info.level == DecayLevel.NONE:
         decay_str = f"{Fore.WHITE}—{Style.RESET_ALL}"
-    elif decay_info.level == DecayLevel.MILD:
-        decay_str = f"{Fore.YELLOW}↓{abs(decay_info.change_pct or 0):.0f}%{Style.RESET_ALL}"
-    elif decay_info.level == DecayLevel.MODERATE:
-        decay_str = f"{Fore.YELLOW}{Style.BRIGHT}↓{abs(decay_info.change_pct or 0):.0f}%{Style.RESET_ALL}"
-    else:  # SEVERE
-        decay_str = f"{Fore.RED}{Style.BRIGHT}↓{abs(decay_info.change_pct or 0):.0f}%{Style.RESET_ALL}"
+    else:
+        # R53: append days_since_peak tag (computed-but-hidden) so the user
+        # can distinguish early decay (↓20% 1d) from late decay (↓20% 5d).
+        _dsp = int(getattr(decay_info, "days_since_peak", 0) or 0)
+        _days_tag = f"({_dsp}d)" if _dsp > 0 else ""
+        if decay_info.level == DecayLevel.MILD:
+            decay_str = f"{Fore.YELLOW}↓{abs(decay_info.change_pct or 0):.0f}%{_days_tag}{Style.RESET_ALL}"
+        elif decay_info.level == DecayLevel.MODERATE:
+            decay_str = f"{Fore.YELLOW}{Style.BRIGHT}↓{abs(decay_info.change_pct or 0):.0f}%{_days_tag}{Style.RESET_ALL}"
+        else:  # SEVERE
+            decay_str = f"{Fore.RED}{Style.BRIGHT}↓{abs(decay_info.change_pct or 0):.0f}%{_days_tag}{Style.RESET_ALL}"
 
     return [
         f"{idx}",
