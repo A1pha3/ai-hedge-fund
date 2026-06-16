@@ -513,12 +513,16 @@ def render_verify_recommendations(summary: VerifySummary) -> str:
             return "—"
         return f"{v:+.2f}%"
 
-    lines.append("  ┌──────────┬──────────┬──────────┐")
-    lines.append("  │  指标     │  T+1     │  T+3     │")
-    lines.append("  ├──────────┼──────────┼──────────┤")
-    lines.append(f"  │  胜率     │ {_pct(summary.overall_t1_win_rate):>6}  │ {_pct(summary.overall_t3_win_rate):>6}  │")
-    lines.append(f"  │  平均收益 │ {_ret(summary.avg_t1_return):>7} │ {_ret(summary.avg_t3_return):>7} │")
-    lines.append("  └──────────┴──────────┴──────────┘")
+    # R51: T+5 was previously computed but never rendered (the module docstring
+    # promises T+1/T+3/T+5). Add the T+5 rung so the full horizon ladder
+    # (T+1/T+3/T+5 in the main table + T+10/T+20/T+30 in the extended table)
+    # is visible and the T+5 computation is not wasted.
+    lines.append("  ┌──────────┬──────────┬──────────┬──────────┐")
+    lines.append("  │  指标     │  T+1     │  T+3     │  T+5     │")
+    lines.append("  ├──────────┼──────────┼──────────┼──────────┤")
+    lines.append(f"  │  胜率     │ {_pct(summary.overall_t1_win_rate):>6}  │ {_pct(summary.overall_t3_win_rate):>6}  │ {_pct(summary.overall_t5_win_rate):>6}  │")
+    lines.append(f"  │  平均收益 │ {_ret(summary.avg_t1_return):>7} │ {_ret(summary.avg_t3_return):>7} │ {_ret(summary.avg_t5_return):>7} │")
+    lines.append("  └──────────┴──────────┴──────────┴──────────┘")
     lines.append("")
 
     # Strategy attribution

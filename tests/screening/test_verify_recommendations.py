@@ -394,6 +394,23 @@ class TestExtendedHorizonsVerifyRecommendations:
         """Rendered output should include T+10/T+20/T+30 columns."""
         summary = compute_verify_recommendations(reports_dir=extended_reports_dir, lookback_days=30)
         output = render_verify_recommendations(summary)
-        
+
         # Should display extended horizon stats
         assert "T+10" in output or "T+20" in output or "T+30" in output
+
+    def test_render_shows_t5_column(self, reports_dir: Path):
+        """R51: T+5 stats are computed but must also be rendered.
+
+        The module docstring promises T+1/T+3/T+5, and ``overall_t5_win_rate``
+        / ``avg_t5_return`` are populated by ``compute_verify_recommendations``,
+        but the render previously showed only T+1/T+3 in the main table —
+        leaving T+5 as wasted computation. The main table must now include a
+        T+5 column so the full horizon ladder (T+1/T+3/T+5 + T+10/T+20/T+30)
+        is visible to the user.
+        """
+        summary = compute_verify_recommendations(reports_dir=reports_dir, lookback_days=30)
+        # Sanity: T+5 is computed.
+        assert summary.avg_t5_return is not None or summary.overall_t5_win_rate is not None
+        output = render_verify_recommendations(summary)
+        # T+5 must appear in the rendered output.
+        assert "T+5" in output
