@@ -8,6 +8,7 @@ Handles:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from src.execution.daily_pipeline_candidate_helpers import rank_scored_entries
@@ -73,6 +74,9 @@ from src.execution.daily_pipeline_settings import (
 )
 from src.execution.models import LayerCResult
 from src.screening.models import StrategySignal
+
+# BH-033 (same-class drain): module logger for shadow-path validation-drop observability.
+logger = logging.getLogger(__name__)
 
 
 def _summarize_upstream_shadow_release_historical_support(historical_prior: dict[str, Any]) -> dict[str, Any]:
@@ -193,7 +197,13 @@ def _coerce_upstream_shadow_strategy_signal(payload: Any) -> StrategySignal | No
     if isinstance(payload, dict):
         try:
             return StrategySignal.model_validate(dict(payload))
-        except Exception:
+        except Exception as exc:
+            # BH-033 (same-class drain): malformed shadow strategy signal previously
+            # dropped silently. DEBUG diagnostic so ops can trace why a shadow
+            # promotion's strategy_signals shrank. Behavior preserved (None).
+            logger.debug(
+                "upstream shadow strategy signal malformed, dropping: error=%s", exc
+            )
             return None
     return None
 

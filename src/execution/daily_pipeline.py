@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -265,6 +266,12 @@ ExitChecker = Callable[..., list]
 _ORIGINAL_BUILD_CANDIDATE_POOL = build_candidate_pool
 _EARLY_RUNNER_RUNTIME_ARTIFACT = Path("data/reports/btst_early_runner_v1_latest.json")
 
+# BH-033: module logger for execution-pipeline data-loading degradation observability
+# (parity with BH-017 family: campaigns 25-30 added module loggers to screening/
+# backtesting modules that previously had none). DEBUG-level: graceful degradation
+# still returns [], but now leaves a traceable diagnostic for ops debugging.
+logger = logging.getLogger(__name__)
+
 
 def _load_early_runner_runtime_entries(trade_date: str) -> list[dict[str, Any]]:
     """Load confirmed early-runner entries and adapt them into runtime supplemental entries."""
@@ -273,7 +280,16 @@ def _load_early_runner_runtime_entries(trade_date: str) -> list[dict[str, Any]]:
         return []
     try:
         analysis = json.loads(artifact_path.read_text(encoding="utf-8"))
-    except Exception:
+    except Exception as exc:
+        # BH-033: corrupt/unreadable early-runner artifact previously degraded to []
+        # silently with no trace. Log at DEBUG so ops can diagnose why promoted
+        # entries disappeared from short-trade candidates. Behavior preserved ([]).
+        logger.debug(
+            "early-runner runtime artifact unreadable, degrading to empty entries: "
+            "path=%s error=%s",
+            artifact_path,
+            exc,
+        )
         return []
     return build_runtime_supplemental_entries(analysis, trade_date=trade_date, require_tradeable_gate=True)
 
