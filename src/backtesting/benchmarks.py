@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 
 from src.tools.api import get_price_data
+
+logger = logging.getLogger(__name__)
 
 
 class BenchmarkCalculator:
@@ -26,5 +30,17 @@ class BenchmarkCalculator:
                     return None
                 last_close = float(last_valid.iloc[-1])
             return (float(last_close) / float(first_close) - 1.0) * 100.0
-        except Exception:
+        except Exception as exc:
+            # BH-017 family (R50 same-family): benchmark failure degrades the
+            # backtest excess-return comparison to None silently. Emit a debug
+            # log so operators can diagnose why the benchmark column went missing
+            # instead of a silent empty column. Behavior unchanged (still None).
+            logger.debug(
+                "benchmark return calc failed for %s (%s -> %s): %s — "
+                "excess/benchmark columns will be unavailable",
+                ticker,
+                start_date,
+                end_date,
+                exc,
+            )
             return None

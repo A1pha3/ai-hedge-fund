@@ -221,7 +221,17 @@ class MarketDataLoader:
                     continue
                 row = price_data.iloc[-1]
                 turnovers[ticker] = float(row.get("close", 0.0)) * float(row.get("volume", 0.0))
-            except Exception:
+            except Exception as exc:
+                # BH-017 family (R50 same-family): per-ticker turnover fetch
+                # failure silently skips the ticker. Emit a debug log so a
+                # systematic upstream failure is diagnosable. Behavior unchanged.
+                logger.debug(
+                    "get_daily_turnovers: skip ticker=%s (%s ~ %s): %s",
+                    ticker,
+                    previous_date_str,
+                    current_date_str,
+                    exc,
+                )
                 continue
         return turnovers
 
