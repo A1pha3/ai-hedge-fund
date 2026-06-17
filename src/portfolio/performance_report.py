@@ -292,6 +292,22 @@ def _resolve_trade_pnl(trade: Mapping[str, Any]) -> float:
     return 0.0
 
 
+def _resolve_position_pnl(position: Mapping[str, Any]) -> float:
+    """Resolve a position's PnL value, preferring ``daily_pnl`` over ``return_pct``.
+
+    Same break-even correctness fix as ``_resolve_trade_pnl``: the legacy
+    ``pos.get("daily_pnl") or pos.get("return_pct")`` pattern silently
+    misclassified break-even positions (``daily_pnl == 0``) because ``or``
+    short-circuits on the falsy zero and wrongly pulled the secondary
+    ``return_pct`` field. Check presence explicitly instead.
+    """
+    if "daily_pnl" in position and position["daily_pnl"] is not None:
+        return _safe_float(position["daily_pnl"], 0.0)
+    if "return_pct" in position and position["return_pct"] is not None:
+        return _safe_float(position["return_pct"], 0.0)
+    return 0.0
+
+
 def _aggregate_trades(trades: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """聚合交易统计。"""
     if not trades:
@@ -359,7 +375,7 @@ def _aggregate_strategy_attribution(trades: Sequence[Mapping[str, Any]], positio
             strategy = str(pos.get("strategy", "") or "unknown").strip().lower()
             if not strategy or strategy == "unknown":
                 continue
-            pnl = _safe_float(pos.get("daily_pnl") or pos.get("return_pct"), 0.0)
+            pnl = _resolve_position_pnl(pos)
             strategy_pnl[strategy] = strategy_pnl.get(strategy, 0.0) + pnl
     return strategy_pnl
 

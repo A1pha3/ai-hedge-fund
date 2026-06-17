@@ -338,6 +338,40 @@ def test_strategy_attribution_from_positions():
     assert abs(attr["mean_reversion"] - (-0.01)) < 1e-6
 
 
+def test_strategy_attribution_from_positions_break_even_zero_pnl():
+    """BH-034 (BH-017 family / parity with _resolve_trade_pnl fix):
+
+    A break-even position (``daily_pnl == 0.0``) must NOT be silently
+    re-classified via the secondary ``return_pct`` field. The legacy
+    ``pos.get("daily_pnl") or pos.get("return_pct")`` pattern short-circuited
+    on the falsy zero and wrongly pulled ``return_pct`` — the same falsy-trap
+    that ``_resolve_trade_pnl`` already fixed for the trades path. The
+    positions-history fallback must apply the same explicit-presence fix.
+    """
+    from src.portfolio.performance_report import (
+        _aggregate_strategy_attribution,
+        _resolve_position_pnl,
+    )
+
+    # Break-even: daily_pnl=0.0 (truthful), return_pct=1.5 (stale/alt field)
+    positions_history = [
+        {
+            "date": "20260601",
+            "positions": [
+                {"strategy": "momentum", "daily_pnl": 0.0, "return_pct": 1.5},
+            ],
+        }
+    ]
+    # Direct primitive: must return 0.0, not 1.5
+    assert _resolve_position_pnl({"daily_pnl": 0.0, "return_pct": 1.5}) == 0.0
+    # Via strategy aggregation fallback
+    attr = _aggregate_strategy_attribution([], positions_history)
+    assert attr["momentum"] == 0.0, (
+        f"break-even daily_pnl=0 misclassified as {attr['momentum']} "
+        f"(or-short-circuit pulled return_pct) — same falsy-trap as _resolve_trade_pnl"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Test 8: Top winners / losers
 # ---------------------------------------------------------------------------
