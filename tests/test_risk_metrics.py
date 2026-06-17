@@ -494,3 +494,43 @@ def test_beta_falls_back_to_market_neutral_without_benchmark() -> None:
     lookback = [_return(f"d{i}", "A", 0.01 * (1 if i % 2 == 0 else -1)) for i in range(20)]
     snapshot = compute_risk_snapshot(positions, lookback, benchmark_returns=None)
     assert snapshot.beta_adjusted == 1.0
+
+
+def test_beta_length_mismatch_falls_back_to_market_neutral(caplog) -> None:
+    """BH-030: when ``portfolio`` daily returns and ``benchmark`` have different
+    lengths, ``_resolve_beta`` used to pair ``portfolio[:n]`` with
+    ``benchmark[:n]``, silently misaligning dates.
+
+    ``_weighted_portfolio_daily_returns`` legitimately drops days with no
+    observations (line 199-200), while the API-supplied ``benchmark_returns``
+    is a continuous trading-day series. A length mismatch therefore means the
+    two series are NOT date-aligned, and pairing by position produces a
+    meaningless (even wrong-sign) beta.
+
+    Regression guard: a perfect tracker (true beta = 1.0) with one dropped day
+    must NOT report a wrong-sign beta. It must fall back to the market-neutral
+    proxy (1.0) and emit a diagnosable warning so operators know beta degraded.
+    """
+    import logging
+
+    bench = [0.010 * (1 if i % 2 == 0 else -1) for i in range(20)]
+    # Single ticker perfectly tracking the benchmark (true beta = 1.0), but drop
+    # day index 5 to simulate a no-observation day being skipped.
+    lookback = [
+        _return(f"d{i}", "A", bench[i]) for i in range(20) if i != 5
+    ]  # 19 days vs 20-day benchmark -> length mismatch
+    positions = [_position("A", 100_000.0)]
+
+    with caplog.at_level(logging.WARNING, logger="src.portfolio.risk_metrics"):
+        snapshot = compute_risk_snapshot(positions, lookback, benchmark_returns=bench)
+
+    # A length-misaligned series must not yield a wrong-sign beta; fall back to
+    # the market-neutral proxy and warn so the degradation is observable.
+    assert snapshot.beta_adjusted == 1.0, (
+        f"length-mismatched portfolio/benchmark must fall back to market-neutral "
+        f"1.0, got {snapshot.beta_adjusted} (silent date misalignment)"
+    )
+    assert any(
+        "beta" in rec.message.lower() and ("mismatch" in rec.message.lower() or "align" in rec.message.lower())
+        for rec in caplog.records
+    ), "beta length-mismatch degradation must emit a diagnosable warning (BH-030)"

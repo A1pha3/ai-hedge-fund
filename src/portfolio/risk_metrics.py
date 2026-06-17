@@ -11,9 +11,12 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import asdict, dataclass, field
 from typing import Iterable, Mapping, Sequence
+
+logger = logging.getLogger(__name__)
 
 # 行业 / 单一标的 / 回撤预警阈值 (与产业文档保持一致)
 INDUSTRY_CONCENTRATION_WARNING_THRESHOLD = 0.25
@@ -272,13 +275,30 @@ def _resolve_beta(
     if len(portfolio) < 10:
         return 1.0
     n = min(len(portfolio), len(benchmark_returns))
+    # BH-030: ``_weighted_portfolio_daily_returns`` legitimately drops days with
+    # no observations, while the API-supplied ``benchmark_returns`` is a
+    # continuous trading-day series without dates. A length mismatch means the
+    # two series are NOT date-aligned; pairing ``portfolio[:n]`` with
+    # ``benchmark[:n]`` by position silently produces a wrong beta (a perfect
+    # tracker can report beta ≈ 0.58). When lengths differ, we cannot guarantee
+    # date alignment, so fall back to the market-neutral proxy (1.0) and warn.
+    if len(portfolio) != len(benchmark_returns):
+        logger.warning(
+            "beta: portfolio (%d) and benchmark (%d) return series differ in "
+            "length — likely misaligned dates (portfolio drops no-observation "
+            "days); falling back to market-neutral beta 1.0 to avoid a "
+            "meaningless regression",
+            len(portfolio),
+            len(benchmark_returns),
+        )
+        return 1.0
     port_arr = portfolio[:n]
     bench_arr = [(_safe_float(b)) for b in benchmark_returns[:n]]
-    bench_var = sum((b - (sum(bench_arr) / n)) ** 2 for b in bench_arr) / max(1, n - 1)
+    bench_mean = sum(bench_arr) / n
+    bench_var = sum((b - bench_mean) ** 2 for b in bench_arr) / max(1, n - 1)
     if bench_var < 1e-12:
         return 1.0
     port_mean = sum(port_arr) / n
-    bench_mean = sum(bench_arr) / n
     cov = sum((port_arr[i] - port_mean) * (bench_arr[i] - bench_mean) for i in range(n)) / max(1, n - 1)
     beta = cov / bench_var
     if not math.isfinite(beta):
