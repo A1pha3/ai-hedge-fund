@@ -122,6 +122,25 @@ class TestTopPicks:
         output = capsys.readouterr().out
         assert "--decision-flow" in output
 
+    def test_disclaimer_in_footer(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """C65 (BH-037 gamma trust calibration): --top-picks footer carries a
+        research-only disclaimer so users do not read BUY/HOLD/AVOID + stop-loss
+        levels as a guaranteed investment directive.
+
+        The default front door emits concrete verdicts and price levels but,
+        unlike the PDF exporter (pdf_exporter.py:344) and the backtest CLI
+        (backtesting/cli.py:128), it had no inline boundary disclosure. Adding
+        one serves the product goal "更高确信" (feature-proposals.md:29):
+        conviction includes honestly naming the limits of model output.
+        """
+        recs = [_make_rec("300750", "宁德时代", 0.6)]
+        _write_report(tmp_path, recs, date="20260613")
+        rc = run_top_picks(count=5, reports_dir=tmp_path)
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "不构成任何投资建议" in output
+        assert "研究" in output
+
 
 class TestExtractedTopPicksHelpers:
     def test_build_signal_breakdown_renders_positive_negative_and_consecutive(self) -> None:

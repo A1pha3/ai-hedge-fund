@@ -1195,6 +1195,25 @@ def _print_top_picks_footer(
     _print_high_confidence_summary(representative_picks)
     _print_hit_rate_block(report_dir)
     _print_decision_flow_hint()
+    _print_disclaimer()
+
+
+def _print_disclaimer() -> None:
+    """C65 (gamma trust calibration): research-only disclaimer on the default front door.
+
+    The front door emits concrete BUY/HOLD/AVOID verdicts, T+30 edges, and
+    stop-loss price levels. Without an inline boundary disclosure (which the
+    PDF exporter at pdf_exporter.py:344 and the backtest CLI at
+    backtesting/cli.py:128 already carry), a user can over-read the model
+    output as a guaranteed investment directive. Echoing the project-level
+    disclaimer serves the product goal "更高确信" (feature-proposals.md:29):
+    conviction includes honestly naming the limits of model output, not just
+    showing confident numbers.
+    """
+    print(
+        f"  {Fore.WHITE}⚠ 以上推荐由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。"
+        f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}"
+    )
 
 
 def _print_decision_flow_hint() -> None:

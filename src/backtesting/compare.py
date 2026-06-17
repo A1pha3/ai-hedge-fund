@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from math import erfc, sqrt
 from pathlib import Path
 from statistics import mean, stdev
 from time import perf_counter
+from typing import Any
 
 from src.execution.daily_pipeline import DailyPipeline
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
@@ -333,7 +334,7 @@ def run_ab_comparison_walk_forward(
 
     baseline_metrics = [item.baseline for item in results]
     mvp_metrics = [item.mvp for item in results]
-    sortino_deltas = [float(item.mvp.get("sortino_ratio", 0.0) or 0.0) - float(item.baseline.get("sortino_ratio", 0.0) or 0.0) for item in results]
+    sortino_deltas = [_metric(item.mvp, "sortino_ratio") - _metric(item.baseline, "sortino_ratio") for item in results]
     summary = {
         "window_count": len(results),
         "baseline_avg_sharpe": _average_metric(baseline_metrics, "sharpe_ratio"),
@@ -351,6 +352,16 @@ def run_ab_comparison_walk_forward(
     return results, summary
 
 
+def _metric(payload: Mapping[str, Any], key: str) -> float:
+    """Coerce a walk-forward metric dict value to a finite float, defaulting to 0.0.
+
+    ``payload.get(key, 0.0)`` alone returns ``None`` when the key exists with a
+    null value, so the ``or 0.0`` fallback still guards that case (preserving
+    the original behavior for missing/None/empty values).
+    """
+    return float(payload.get(key, 0.0) or 0.0)
+
+
 def format_ab_comparison_report(results: Sequence[ABWindowMetrics], summary: dict[str, float | int | None]) -> str:
     lines = [
         "# A/B Walk-Forward Comparison",
@@ -361,12 +372,12 @@ def format_ab_comparison_report(results: Sequence[ABWindowMetrics], summary: dic
     lines.extend(
         "| {window} | {b_sharpe:.2f} | {m_sharpe:.2f} | {b_sortino:.2f} | {m_sortino:.2f} | {b_mdd:.2f} | {m_mdd:.2f} |".format(
             window=f"{item.window.test_start}..{item.window.test_end}",
-            b_sharpe=float(item.baseline.get("sharpe_ratio", 0.0) or 0.0),
-            m_sharpe=float(item.mvp.get("sharpe_ratio", 0.0) or 0.0),
-            b_sortino=float(item.baseline.get("sortino_ratio", 0.0) or 0.0),
-            m_sortino=float(item.mvp.get("sortino_ratio", 0.0) or 0.0),
-            b_mdd=float(item.baseline.get("max_drawdown", 0.0) or 0.0),
-            m_mdd=float(item.mvp.get("max_drawdown", 0.0) or 0.0),
+            b_sharpe=_metric(item.baseline, "sharpe_ratio"),
+            m_sharpe=_metric(item.mvp, "sharpe_ratio"),
+            b_sortino=_metric(item.baseline, "sortino_ratio"),
+            m_sortino=_metric(item.mvp, "sortino_ratio"),
+            b_mdd=_metric(item.baseline, "max_drawdown"),
+            m_mdd=_metric(item.mvp, "max_drawdown"),
         )
         for item in results
     )
@@ -388,7 +399,7 @@ def format_ab_comparison_report(results: Sequence[ABWindowMetrics], summary: dic
         lines.append(f"- One-sided p-value estimate: {float(summary['sortino_p_value_estimate']):.4f}")
     if summary.get("avg_runner_tail_hit_delta") is not None:
         runner_delta = float(summary["avg_runner_tail_hit_delta"])
-        runner_median_delta = float(summary.get("avg_runner_tail_median_delta") or 0.0)
+        runner_median_delta = _metric(summary, "avg_runner_tail_median_delta")
         lines.extend([
             "",
             "## Runner Quality",
