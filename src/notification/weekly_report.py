@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -489,13 +490,13 @@ def _send_chunk(config: PushConfig, payload: PushPayload) -> PushResult:
         RETRY_BACKOFF_BASE,
     )
 
-    start_time = __import__("time").monotonic()
+    start_time = time.monotonic()
     last_error: str | None = None
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             _send_wecom(config, payload, _default_http_post)
-            duration_ms = (__import__("time").monotonic() - start_time) * 1000
+            duration_ms = (time.monotonic() - start_time) * 1000
             return PushResult(
                 channel=config.channel,
                 target=config.target,
@@ -506,9 +507,9 @@ def _send_chunk(config: PushConfig, payload: PushPayload) -> PushResult:
         except Exception as exc:
             last_error = f"{type(exc).__name__}: {exc}"
             if attempt < MAX_RETRIES:
-                __import__("time").sleep(RETRY_BACKOFF_BASE * (2 ** (attempt - 1)))
+                time.sleep(RETRY_BACKOFF_BASE * (2 ** (attempt - 1)))
 
-    duration_ms = (__import__("time").monotonic() - start_time) * 1000
+    duration_ms = (time.monotonic() - start_time) * 1000
     return PushResult(
         channel=config.channel,
         target=config.target,

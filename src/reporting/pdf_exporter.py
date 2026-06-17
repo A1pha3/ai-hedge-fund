@@ -455,6 +455,9 @@ def _render_recommendations(pdf: _ScreeningPDF, report_data: dict) -> None:
     pdf.ln(2)
 
 
+_TRACKING_HORIZONS: tuple[int, ...] = (1, 3, 5, 10, 20, 30)
+
+
 def _render_tracking_summary(pdf: _ScreeningPDF, report_data: dict) -> None:
     if not pdf.config.include_tracking_summary:
         return
@@ -463,15 +466,31 @@ def _render_tracking_summary(pdf: _ScreeningPDF, report_data: dict) -> None:
         return
     pdf._section("追踪总结 (近 30 天胜率)")
     pdf._kv_line("总推荐数", summary.get("total_recommendations", 0))
-    pdf._kv_line("总观察样本", summary.get("total_observations", 0))
-    t1 = summary.get("t1_win_rate")
-    t3 = summary.get("t3_win_rate")
-    t5 = summary.get("t5_win_rate")
-    pdf._kv_line("T+1 胜率", f"{t1:.2%}" if isinstance(t1, (int, float)) else "n/a")
-    pdf._kv_line("T+3 胜率", f"{t3:.2%}" if isinstance(t3, (int, float)) else "n/a")
-    pdf._kv_line("T+5 胜率", f"{t5:.2%}" if isinstance(t5, (int, float)) else "n/a")
-    pdf._kv_line("平均 T+1 收益", f"{summary.get('avg_t1_return', 0):+.2%}" if isinstance(summary.get("avg_t1_return"), (int, float)) else "n/a")
-    pdf._kv_line("平均 T+3 收益", f"{summary.get('avg_t3_return', 0):+.2%}" if isinstance(summary.get("avg_t3_return"), (int, float)) else "n/a")
+    # BH-019: tracking_summary producer (recommendation_tracker._summarize_history /
+    # get_tracking_summary) populates the full 6-horizon ladder under keys
+    # ``win_rate_day{N}`` / ``avg_return_day{N}`` / ``tracked_count_day{N}``
+    # (N in DEFAULT_HORIZONS = 1/3/5/10/20/30). The previous reader used the
+    # non-existent ``t1_win_rate`` / ``total_observations`` / ``avg_t1_return``
+    # keys, so every rate rendered as ``n/a`` on real payloads. Read the real
+    # schema keys and surface the complete horizon ladder (R51/R52 computed-but-
+    # hidden family: T+10/T+20/T+30 no longer dropped).
+    def _fmt_pct(value: Any) -> str:
+        if isinstance(value, (int, float)):
+            return f"{value:.2%}"
+        return "n/a"
+
+    def _fmt_ret(value: Any) -> str:
+        if isinstance(value, (int, float)):
+            return f"{value:+.2%}"
+        return "n/a"
+
+    for day in _TRACKING_HORIZONS:
+        win_rate = summary.get(f"win_rate_day{day}")
+        tracked = summary.get(f"tracked_count_day{day}")
+        avg_ret = summary.get(f"avg_return_day{day}")
+        tracked_tag = f" ({tracked} 样本)" if isinstance(tracked, int) and tracked > 0 else ""
+        pdf._kv_line(f"T+{day} 胜率{tracked_tag}", _fmt_pct(win_rate))
+        pdf._kv_line(f"T+{day} 平均收益", _fmt_ret(avg_ret))
 
 
 # ---------------------------------------------------------------------------

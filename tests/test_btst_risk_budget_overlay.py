@@ -17,6 +17,7 @@ from src.execution.daily_pipeline_buy_diagnostics_helpers import (
 )
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.portfolio.models import PositionPlan
+from src.portfolio.position_calculator import calculate_position
 from src.screening.models import CandidateStock
 from src.targets.models import DualTargetEvaluation, TargetEvaluationResult
 
@@ -224,7 +225,7 @@ def test_build_buy_orders_with_diagnostics_applies_p6_overlay_to_position_sizing
         build_filter_summary_fn=lambda entries: {"filtered_count": len(entries), "reason_counts": {}, "tickers": entries},
         build_reentry_filter_entry_fn=lambda *args, **kwargs: None,
         resolve_continuation_execution_overrides_fn=lambda **kwargs: {},
-        calculate_position_fn=__import__("src.portfolio.position_calculator", fromlist=["calculate_position"]).calculate_position,
+        calculate_position_fn=calculate_position,
         enforce_daily_trade_limit_fn=lambda plans, nav: plans,
     )
 
@@ -252,7 +253,7 @@ def test_btst_risk_budget_overlay_summary_emits_promotion_gate_inputs(monkeypatc
         build_filter_summary_fn=lambda entries: {"filtered_count": len(entries), "reason_counts": {}, "tickers": entries},
         build_reentry_filter_entry_fn=lambda *args, **kwargs: None,
         resolve_continuation_execution_overrides_fn=lambda **kwargs: {},
-        calculate_position_fn=__import__("src.portfolio.position_calculator", fromlist=["calculate_position"]).calculate_position,
+        calculate_position_fn=calculate_position,
         enforce_daily_trade_limit_fn=lambda plans, nav: plans,
     )
 
@@ -287,7 +288,7 @@ def test_btst_risk_budget_overlay_summary_emits_theme_exposure_maxima_for_promot
         build_filter_summary_fn=lambda entries: {"filtered_count": len(entries), "reason_counts": {}, "tickers": entries},
         build_reentry_filter_entry_fn=lambda *args, **kwargs: None,
         resolve_continuation_execution_overrides_fn=lambda **kwargs: {},
-        calculate_position_fn=__import__("src.portfolio.position_calculator", fromlist=["calculate_position"]).calculate_position,
+        calculate_position_fn=calculate_position,
         enforce_daily_trade_limit_fn=lambda plans, nav: plans,
     )
 
@@ -314,7 +315,7 @@ def test_build_buy_orders_with_diagnostics_zeroes_watch_only_formal_exposure(mon
         build_filter_summary_fn=lambda entries: {"filtered_count": len(entries), "reason_counts": {}, "tickers": entries},
         build_reentry_filter_entry_fn=lambda *args, **kwargs: None,
         resolve_continuation_execution_overrides_fn=lambda **kwargs: {},
-        calculate_position_fn=__import__("src.portfolio.position_calculator", fromlist=["calculate_position"]).calculate_position,
+        calculate_position_fn=calculate_position,
         enforce_daily_trade_limit_fn=lambda plans, nav: plans,
     )
 
@@ -574,7 +575,7 @@ def test_btst_daily_trade_limit_ranks_halt_relief_by_historical_prior_before_sco
         build_filter_summary_fn=lambda entries: {"filtered_count": len(entries), "reason_counts": {entry["reason"]: sum(1 for row in entries if row["reason"] == entry["reason"]) for entry in entries}, "tickers": entries},
         build_reentry_filter_entry_fn=lambda *args, **kwargs: None,
         resolve_continuation_execution_overrides_fn=lambda **kwargs: {},
-        calculate_position_fn=__import__("src.portfolio.position_calculator", fromlist=["calculate_position"]).calculate_position,
+        calculate_position_fn=calculate_position,
         enforce_daily_trade_limit_fn=_enforce_btst_daily_trade_limit,
     )
 
@@ -600,7 +601,7 @@ def test_p6_off_preserves_existing_position_sizing(monkeypatch):
         build_filter_summary_fn=lambda entries: {"filtered_count": len(entries), "reason_counts": {}, "tickers": entries},
         build_reentry_filter_entry_fn=lambda *args, **kwargs: None,
         resolve_continuation_execution_overrides_fn=lambda **kwargs: {},
-        calculate_position_fn=__import__("src.portfolio.position_calculator", fromlist=["calculate_position"]).calculate_position,
+        calculate_position_fn=calculate_position,
         enforce_daily_trade_limit_fn=lambda plans, nav: plans,
     )
 
@@ -636,7 +637,7 @@ def test_btst_daily_trade_limit_caps_normal_trade_to_two_positions(monkeypatch):
         build_filter_summary_fn=lambda entries: {"filtered_count": len(entries), "reason_counts": {entry["reason"]: sum(1 for row in entries if row["reason"] == entry["reason"]) for entry in entries}, "tickers": entries},
         build_reentry_filter_entry_fn=lambda *args, **kwargs: None,
         resolve_continuation_execution_overrides_fn=lambda **kwargs: {},
-        calculate_position_fn=__import__("src.portfolio.position_calculator", fromlist=["calculate_position"]).calculate_position,
+        calculate_position_fn=calculate_position,
         enforce_daily_trade_limit_fn=_enforce_btst_daily_trade_limit,
     )
 
@@ -667,7 +668,7 @@ def test_btst_daily_trade_limit_allows_three_aggressive_trade_positions(monkeypa
         build_filter_summary_fn=lambda entries: {"filtered_count": len(entries), "reason_counts": {entry["reason"]: sum(1 for row in entries if row["reason"] == entry["reason"]) for entry in entries}, "tickers": entries},
         build_reentry_filter_entry_fn=lambda *args, **kwargs: None,
         resolve_continuation_execution_overrides_fn=lambda **kwargs: {},
-        calculate_position_fn=__import__("src.portfolio.position_calculator", fromlist=["calculate_position"]).calculate_position,
+        calculate_position_fn=calculate_position,
         enforce_daily_trade_limit_fn=_enforce_btst_daily_trade_limit,
     )
 

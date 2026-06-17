@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -270,7 +271,7 @@ def test_cli_rebalance_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
             "--drift-threshold=0.05",
         ],
         cwd=str(repo_root),
-        env={**__import__("os").environ, "PYTHONPATH": str(repo_root)},
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
         capture_output=True,
         text=True,
         timeout=30,

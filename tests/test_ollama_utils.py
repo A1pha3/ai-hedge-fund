@@ -1,3 +1,4 @@
+import sys
 from types import SimpleNamespace
 
 from src.utils import ollama
@@ -42,7 +43,7 @@ def test_install_ollama_darwin_download_flow_succeeds(monkeypatch, capsys):
 
     monkeypatch.setattr(ollama.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(ollama.questionary, "confirm", _ConfirmStub([True, True]))
-    monkeypatch.setitem(__import__("sys").modules, "webbrowser", SimpleNamespace(open=lambda url: opened_urls.append(url)))
+    monkeypatch.setitem(sys.modules, "webbrowser", SimpleNamespace(open=lambda url: opened_urls.append(url)))
     monkeypatch.setattr(ollama, "is_ollama_installed", lambda: True)
     monkeypatch.setattr(ollama, "start_ollama_server", lambda: True)
 

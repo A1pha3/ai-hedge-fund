@@ -1,3 +1,4 @@
+import json
 import time
 
 from pydantic import BaseModel
@@ -390,7 +391,7 @@ def test_call_llm_records_structured_metrics(monkeypatch):
 
     assert result.signal == "ok"
     with open(summary_path, "r", encoding="utf-8") as handle:
-        summary = __import__("json").load(handle)
+        summary = json.load(handle)
     with open(jsonl_path, "r", encoding="utf-8") as handle:
         lines = [line for line in handle.readlines() if line.strip()]
 
@@ -407,7 +408,7 @@ def test_call_llm_records_structured_metrics(monkeypatch):
     assert summary["pipeline_stages"]["daily_pipeline_post_market"]["attempts"] == 1
     assert summary["model_tiers"]["fast"]["attempts"] == 1
 
-    entry = __import__("json").loads(lines[0])
+    entry = json.loads(lines[0])
     assert entry["trade_date"] == "20260320"
     assert entry["pipeline_stage"] == "daily_pipeline_post_market"
     assert entry["model_tier"] == "fast"
@@ -470,7 +471,7 @@ def test_call_llm_records_fallback_attempt_metrics(monkeypatch):
 
     paths = get_llm_metrics_paths()
     with open(paths["summary_path"], "r", encoding="utf-8") as handle:
-        summary = __import__("json").load(handle)
+        summary = json.load(handle)
 
     assert result.signal == "fallback-ok"
     assert summary["totals"]["attempts"] == 2
@@ -536,7 +537,7 @@ def test_call_llm_falls_back_on_transport_timeout(monkeypatch):
 
     paths = get_llm_metrics_paths()
     with open(paths["summary_path"], "r", encoding="utf-8") as handle:
-        summary = __import__("json").load(handle)
+        summary = json.load(handle)
 
     assert result.signal == "fallback-timeout-ok"
     assert summary["totals"]["attempts"] == 2
@@ -596,7 +597,7 @@ def test_call_llm_disables_provider_fallback_when_requested(monkeypatch):
 
     paths = get_llm_metrics_paths()
     with open(paths["summary_path"], "r", encoding="utf-8") as handle:
-        summary = __import__("json").load(handle)
+        summary = json.load(handle)
 
     assert result.signal == "Error in analysis, using default"
     assert summary["totals"]["attempts"] == 2

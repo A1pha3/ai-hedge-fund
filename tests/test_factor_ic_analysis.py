@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import tempfile
 from pathlib import Path
@@ -455,7 +456,7 @@ def _write_fake_report(
         "recommendations": recs,
     }
     path = reports_dir / f"auto_screening_{date_str}.json"
-    path.write_text(__import__("json").dumps(payload, ensure_ascii=False), encoding="utf-8")
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     return path
 
 
@@ -463,7 +464,7 @@ def _write_tracking_history(reports_dir: Path, records: list[dict]) -> None:
     """生成 tracking_history.json。"""
     path = reports_dir / "tracking_history.json"
     payload = {"records": records}
-    path.write_text(__import__("json").dumps(payload, ensure_ascii=False), encoding="utf-8")
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
 def test_extract_factor_panel_no_reports() -> None:

@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -327,7 +328,7 @@ class TestFetchFromProvidersHealthRecording:
             fetch_from_providers(
                 [p],
                 request_label="test",
-                logger=__import__("logging").getLogger("test"),
+                logger=logging.getLogger("test"),
                 fetcher=lambda provider: provider.get_prices("AAPL", "2024-01-01", "2024-01-02"),
             )
         )
@@ -348,7 +349,7 @@ class TestFetchFromProvidersHealthRecording:
             fetch_from_providers(
                 [p],
                 request_label="test",
-                logger=__import__("logging").getLogger("test"),
+                logger=logging.getLogger("test"),
                 fetcher=lambda provider: provider.get_prices("AAPL", "2024-01-01", "2024-01-02"),
             )
         )
@@ -371,7 +372,7 @@ class TestFetchFromProvidersHealthRecording:
             fetch_from_providers(
                 [p1, p2],
                 request_label="test",
-                logger=__import__("logging").getLogger("test"),
+                logger=logging.getLogger("test"),
                 fetcher=lambda provider: provider.get_prices("AAPL", "2024-01-01", "2024-01-02"),
             )
         )
@@ -397,7 +398,7 @@ class TestFetchFromProvidersHealthRecording:
             fetch_from_providers(
                 [p1, p2],
                 request_label="test",
-                logger=__import__("logging").getLogger("test"),
+                logger=logging.getLogger("test"),
                 fetcher=lambda provider: provider.get_prices("AAPL", "2024-01-01", "2024-01-02"),
             )
         )
@@ -416,7 +417,7 @@ class TestFetchFromProvidersHealthRecording:
             fetch_from_providers(
                 [p1, p2],
                 request_label="test",
-                logger=__import__("logging").getLogger("test"),
+                logger=logging.getLogger("test"),
                 fetcher=lambda provider: provider.get_prices("AAPL", "2024-01-01", "2024-01-02"),
             )
         )

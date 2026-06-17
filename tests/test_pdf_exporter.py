@@ -79,14 +79,30 @@ def _full_report() -> dict:
             {"industry_name": "银行", "momentum_score": -12.4, "avg_score_b": -0.18, "candidate_count": 8},
             {"industry_name": "房地产", "momentum_score": -8.1, "avg_score_b": -0.10, "candidate_count": 5},
         ],
+        # BH-019: tracking_summary producer (recommendation_tracker._summarize_history)
+        # uses ``win_rate_day{N}`` / ``avg_return_day{N}`` / ``tracked_count_day{N}``
+        # keys, NOT ``t1_win_rate`` / ``total_observations``. Keep the fixture aligned
+        # with the real producer schema so the renderer is tested against reality.
         "tracking_summary": {
             "total_recommendations": 287,
-            "total_observations": 412,
-            "t1_win_rate": 0.53,
-            "t3_win_rate": 0.51,
-            "t5_win_rate": 0.48,
-            "avg_t1_return": 0.0034,
-            "avg_t3_return": 0.0071,
+            "win_rate_day1": 0.53,
+            "win_rate_day3": 0.51,
+            "win_rate_day5": 0.48,
+            "win_rate_day10": 0.44,
+            "win_rate_day20": 0.41,
+            "win_rate_day30": 0.39,
+            "tracked_count_day1": 280,
+            "tracked_count_day3": 250,
+            "tracked_count_day5": 200,
+            "tracked_count_day10": 150,
+            "tracked_count_day20": 100,
+            "tracked_count_day30": 40,
+            "avg_return_day1": 0.0034,
+            "avg_return_day3": 0.0071,
+            "avg_return_day5": 0.0098,
+            "avg_return_day10": 0.0142,
+            "avg_return_day20": 0.0210,
+            "avg_return_day30": 0.0305,
         },
     }
 
@@ -229,6 +245,94 @@ def test_tracking_summary_skipped_when_empty(tmp_path: Path) -> None:
     out = tmp_path / "no_tracking.pdf"
     result = generate_screening_pdf(report, out)
     assert result.exists()
+
+
+def test_tracking_summary_renders_real_producer_schema(tmp_path: Path) -> None:
+    """BH-019: tracking_summary must render win rates from the real producer
+    schema (``win_rate_day{N}``), not the never-populated ``t1_win_rate`` keys.
+
+    Before the fix the renderer read ``t1_win_rate`` / ``total_observations`` /
+    ``avg_t1_return``, which ``get_tracking_summary`` never writes — every rate
+    rendered as ``n/a`` on real payloads. This regression captures emitted
+    (key, value) lines via a _kv_line spy so it does not depend on PDF text
+    extraction.
+    """
+    from src.reporting import pdf_exporter
+
+    emitted: list[tuple[str, str]] = []
+    report = _full_report()
+
+    # Spy on _kv_line by wrapping the module-level render function with a
+    # fake PDF whose _kv_line records every emitted (key, value) pair.
+    import types
+
+    class _SpyPDF:
+        def __init__(self) -> None:
+            self.config = pdf_exporter.PDFReportConfig(include_tracking_summary=True)
+            self.font_name = "Helvetica"
+
+        def _section(self, title: str) -> None:  # noqa: ARG002
+            pass
+
+        def _kv_line(self, key: str, value) -> None:  # noqa: ARG002
+            emitted.append((key, "" if value is None else str(value)))
+
+    spy = _SpyPDF()
+    # _ScreeningPDF methods referenced as bound methods; attach a real _kv_line
+    # by binding the spy's method via types.SimpleNamespace is insufficient
+    # because the renderer calls ``pdf._kv_line(...)`` — duck typing works.
+    pdf_exporter._render_tracking_summary(spy, report)  # type: ignore[arg-type]
+
+    emitted_dict = dict(emitted)
+    # Real producer keys must drive the output (not the old t1_win_rate path).
+    assert emitted_dict["总推荐数"] == "287"
+    assert emitted_dict["T+1 胜率 (280 样本)"] == "53.00%"
+    assert emitted_dict["T+3 胜率 (250 样本)"] == "51.00%"
+    assert emitted_dict["T+5 胜率 (200 样本)"] == "48.00%"
+    # R51/R52 computed-but-hidden family: longer horizons must be surfaced too.
+    assert emitted_dict["T+10 胜率 (150 样本)"] == "44.00%"
+    assert emitted_dict["T+30 胜率 (40 样本)"] == "39.00%"
+    assert emitted_dict["T+1 平均收益"] == "+0.34%"
+    assert emitted_dict["T+30 平均收益"] == "+3.05%"
+    # No line should fall back to n/a when the producer populated the value.
+    assert not any(v == "n/a" for k, v in emitted if k.startswith("T+"))
+
+
+def test_tracking_summary_handles_missing_horizon_gracefully(tmp_path: Path) -> None:
+    """BH-019 robustness: when a horizon's win rate is None (data not mature),
+    the renderer must show ``n/a`` instead of crashing on ``None:.2%``."""
+    from src.reporting import pdf_exporter
+
+    emitted: list[tuple[str, str]] = []
+    report = _full_report()
+    # Simulate long horizons not yet mature (None win_rate, None avg_return).
+    report["tracking_summary"] = {
+        "total_recommendations": 50,
+        "win_rate_day1": 0.6,
+        "tracked_count_day1": 45,
+        "avg_return_day1": 0.01,
+        "win_rate_day30": None,
+        "tracked_count_day30": 0,
+        "avg_return_day30": None,
+    }
+
+    class _SpyPDF:
+        def __init__(self) -> None:
+            self.config = pdf_exporter.PDFReportConfig(include_tracking_summary=True)
+            self.font_name = "Helvetica"
+
+        def _section(self, title: str) -> None:  # noqa: ARG002
+            pass
+
+        def _kv_line(self, key: str, value) -> None:  # noqa: ARG002
+            emitted.append((key, "" if value is None else str(value)))
+
+    pdf_exporter._render_tracking_summary(_SpyPDF(), report)  # type: ignore[arg-type]
+    emitted_dict = dict(emitted)
+    assert emitted_dict["T+1 胜率 (45 样本)"] == "60.00%"
+    # No tracked sample → no sample tag and n/a rate (not a crash).
+    assert emitted_dict["T+30 胜率"] == "n/a"
+    assert emitted_dict["T+30 平均收益"] == "n/a"
 
 
 # ---------------------------------------------------------------------------

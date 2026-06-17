@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -252,7 +253,7 @@ def test_cli_custom_weights_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
             "--top-n=5",
         ],
         cwd=str(repo_root),
-        env={**__import__("os").environ, "PYTHONPATH": str(repo_root)},
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
         capture_output=True,
         text=True,
         timeout=30,
@@ -281,7 +282,7 @@ def test_cli_custom_weights_invalid_weights_returns_error(tmp_path: Path, monkey
             "--event-sentiment=0.5",  # sum=2.0
         ],
         cwd=str(repo_root),
-        env={**__import__("os").environ, "PYTHONPATH": str(repo_root)},
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
         capture_output=True,
         text=True,
         timeout=30,

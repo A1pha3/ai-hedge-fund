@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -375,7 +376,7 @@ def test_cli_watchlist_list_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     result = subprocess.run(
         [sys.executable, "-m", "src.main", "--watchlist-list"],
         cwd=str(repo_root),
-        env={**__import__("os").environ, "PYTHONPATH": str(repo_root)},
+        env={**os.environ, "PYTHONPATH": str(repo_root)},
         capture_output=True,
         text=True,
         timeout=30,

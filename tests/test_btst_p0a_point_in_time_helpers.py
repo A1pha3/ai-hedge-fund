@@ -9,6 +9,7 @@ Covers:
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -230,7 +231,7 @@ class TestLoadEarlyRunnerContext:
             ],
         }
         (tmp_path / "btst_early_runner_v1_latest.json").write_text(
-            __import__("json").dumps(analysis, ensure_ascii=False),
+            json.dumps(analysis, ensure_ascii=False),
             encoding="utf-8",
         )
 
@@ -262,7 +263,7 @@ class TestLoadEarlyRunnerContext:
             ],
         }
         (tmp_path / "btst_early_runner_v1_latest.json").write_text(
-            __import__("json").dumps(analysis, ensure_ascii=False),
+            json.dumps(analysis, ensure_ascii=False),
             encoding="utf-8",
         )
 
@@ -295,7 +296,7 @@ class TestLoadEarlyRunnerContext:
             ],
         }
         (tmp_path / "btst_early_runner_v1_latest.json").write_text(
-            __import__("json").dumps(analysis, ensure_ascii=False),
+            json.dumps(analysis, ensure_ascii=False),
             encoding="utf-8",
         )
 
