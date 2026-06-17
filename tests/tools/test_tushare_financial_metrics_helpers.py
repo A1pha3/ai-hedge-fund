@@ -150,3 +150,63 @@ class TestR41AnnDatePointInTimeFilter:
         # 20240201 trade and must be gone; the 2022 report stays.
         assert "20231231" not in report_periods
         assert "20221231" in report_periods
+
+
+def test_safe_cached_statement_call_logs_degradation_on_silent_failure(caplog):
+    """BH-022 / R41 / BH-021 同族: fundamental 报表拉取失败时必须发可观测日志。
+
+    背景: ``_safe_cached_statement_call`` (cashflow/balancesheet/income) 此前
+    ``except Exception: return None`` 静默吞失败 → fundamental agents (Warren
+    Buffett / Munger / Graham 等) 拿到部分财报做分析，偏差且无信号。破坏
+    "更高确信"目标（fundamental agent 分析应基于完整可信数据）。修复: 行为
+    零变更（仍 return None），但发 logger.debug 降级诊断。
+    """
+    import logging
+
+    from src.tools.tushare_financial_metrics_helpers import _safe_cached_statement_call
+
+    def failing_cached_call(pro, api_name, ts_code, limit, dedupe=True):
+        raise RuntimeError("simulated tushare cashflow fetch failure")
+
+    mock_pro = object()
+    with caplog.at_level(logging.DEBUG, logger="src.tools.tushare_financial_metrics_helpers"):
+        result = _safe_cached_statement_call(
+            failing_cached_call, mock_pro, "cashflow", "000001.SZ", 8,
+        )
+
+    # 行为零变更: 仍返回 None (consumer 继续按缺报表处理)
+    assert result is None
+    # 可观测性: 必须有一条降级诊断日志
+    debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+    assert debug_records, "报表拉取静默失败时必须发 DEBUG 级降级诊断"
+    joined = "\n".join(r.getMessage() for r in debug_records)
+    assert "cashflow" in joined, "降级日志必须命名降级的报表类型"
+    assert "000001.SZ" in joined, "降级日志必须命名受影响的 ticker"
+
+
+def test_merge_financial_metric_extra_fields_logs_degradation_on_silent_failure(caplog):
+    """BH-022 同族: fina_indicator extra 指标拉取失败时必须发可观测日志。"""
+    import logging
+
+    from src.tools.tushare_financial_metrics_helpers import (
+        _merge_financial_metric_extra_fields,
+    )
+
+    def failing_cached_dataframe_call(pro, api_name, **kwargs):
+        raise RuntimeError("simulated fina_indicator fetch failure")
+
+    df_fin = pd.DataFrame({"ts_code": ["000001.SZ"], "end_date": ["20231231"]})
+    mock_pro = object()
+    with caplog.at_level(logging.DEBUG, logger="src.tools.tushare_financial_metrics_helpers"):
+        result = _merge_financial_metric_extra_fields(
+            failing_cached_dataframe_call, mock_pro, "000001.SZ", 8, df_fin,
+        )
+
+    # 行为零变更: 仍返回核心 df_fin (无 extra 指标)
+    pd.testing.assert_frame_equal(result, df_fin)
+    # 可观测性: 必须有一条降级诊断日志
+    debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+    assert debug_records, "extra 指标拉取静默失败时必须发 DEBUG 级降级诊断"
+    joined = "\n".join(r.getMessage() for r in debug_records)
+    assert "000001.SZ" in joined, "降级日志必须命名受影响的 ticker"
+

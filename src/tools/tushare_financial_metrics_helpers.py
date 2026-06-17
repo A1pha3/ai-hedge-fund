@@ -1,8 +1,16 @@
+import logging
 from collections.abc import Callable
 
 import pandas as pd
 
 from src.data.models import FinancialMetrics
+
+# BH-022 / R41 / BH-021 同族: fundamental 数据获取路径此前无 module logger。
+# cashflow/balancesheet/income 任一报表拉取失败时 _safe_cached_statement_call
+# 静默 return None → fundamental agents (Warren Buffett / Munger / Graham 等)
+# 拿到部分财报数据做分析，偏差且无信号。debug 级降级诊断让运维可定位哪个
+# 报表拉取降级，服务"更高确信"目标（fundamental agent 分析基于完整可信数据）。
+logger = logging.getLogger(__name__)
 
 _INCOME_TTM_FIELDS = ["operate_profit", "total_revenue", "fin_exp", "fin_exp_int_exp", "int_exp", "n_income_attr_p"]
 _CASH_TTM_FIELDS = ["depr_fa_coga_dpba"]
@@ -40,7 +48,12 @@ def _merge_financial_metric_extra_fields(cached_dataframe_call: Callable, pro, t
             fields="ts_code,end_date,inv_turn,dp_dt_ratio",
             dedupe=True,
         )
-    except Exception:
+    except Exception as exc:
+        # BH-022 / R41 同族: extra 指标 (inv_turn/dp_dt_ratio) 拉取失败时静默
+        # 返回核心 df_fin → fundamental agents 缺少这些装饰指标但无信号。发降级诊断。
+        logger.debug(
+            "fina_indicator extra fields degraded for %s: %s", ts_code, exc,
+        )
         return df_fin
     if df_extra is None or df_extra.empty:
         return df_fin
@@ -53,7 +66,14 @@ def _merge_financial_metric_extra_fields(cached_dataframe_call: Callable, pro, t
 def _safe_cached_statement_call(cached_call: Callable, pro, api_name: str, ts_code: str, limit: int) -> pd.DataFrame | None:
     try:
         return cached_call(pro, api_name, ts_code, limit, dedupe=True)
-    except Exception:
+    except Exception as exc:
+        # BH-022 / R41 同族: cashflow/balancesheet/income 任一报表拉取失败时
+        # 静默 return None → fundamental agents 拿到部分财报做分析，偏差且无信号。
+        # 发降级诊断让运维可定位哪个报表降级。
+        logger.debug(
+            "financial statement %s degraded to None for %s: %s",
+            api_name, ts_code, exc,
+        )
         return None
 
 

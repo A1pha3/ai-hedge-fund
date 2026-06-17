@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from src.screening.consecutive_recommendation import resolve_report_dir
 from src.screening.data_quality_audit import _find_latest_report
@@ -158,10 +158,42 @@ def compute_composite_scores(
     )
 
 
+def _compute_dimension_bonus_map(
+    dimension_name: str,
+    compute_fn: Callable[..., Any],
+    attr_name: str,
+    *,
+    top_n: int,
+    lookback_days: int,
+    search_dir: Path,
+) -> dict[str, float]:
+    """Compute a ``{ticker: bonus}`` map for one composite dimension.
+
+    Shared shape for momentum / sector / volume dimensions, which all take
+    ``(top_n, lookback_days, reports_dir)`` and expose a report with ``.items``
+    carrying a per-ticker bonus attribute. On any failure the dimension
+    degrades to an empty map (composite then scores that dimension as 0) and
+    emits a BH-021 debug log so the degradation is observable instead of silent.
+    """
+    try:
+        report = compute_fn(
+            top_n=top_n,
+            lookback_days=lookback_days,
+            reports_dir=search_dir,
+        )
+        return {item.ticker: getattr(item, attr_name) for item in report.items}
+    except Exception as exc:
+        # BH-021 / R48 BH-017 同族: 该维度降级 → bonus 全部 0，composite 偏差
+        # 直接影响 R10 共振与 BUY 门控。发降级诊断。
+        logger.debug("composite %s dimension degraded to {}: %s", dimension_name, exc)
+        return {}
+
+
 def compute_composite_scores_for_recommendations(
     *,
     recommendations: list[dict[str, Any]],
     trade_date: str = "",
+
     lookback_days: int = 5,
     reports_dir: Path | None = None,
 ) -> CompositeReport:
@@ -170,36 +202,23 @@ def compute_composite_scores_for_recommendations(
     if not recs:
         return CompositeReport(trade_date=trade_date)
 
-    # Compute momentum (P10-1)
+    # Compute momentum / sector / volume dimensions (shared P10-1/P10-2/P11-2 shape).
     top_n = len(recs)
     search_dir = reports_dir or resolve_report_dir()
-    try:
-        momentum_report = compute_signal_momentum(
-            top_n=top_n,
-            lookback_days=lookback_days,
-            reports_dir=search_dir,
-        )
-        momentum_map = {item.ticker: item.momentum_bonus for item in momentum_report.items}
-    except Exception as exc:
-        # BH-021 / R48 BH-017 同族: momentum 维度降级 → momentum_bonus 全部 0，
-        # composite 偏差直接影响 R10 共振与 BUY 门控。发降级诊断。
-        logger.debug("composite momentum dimension degraded to {}: %s", exc)
-        momentum_map = {}
+    momentum_map = _compute_dimension_bonus_map(
+        "momentum", compute_signal_momentum, "momentum_bonus",
+        top_n=top_n, lookback_days=lookback_days, search_dir=search_dir,
+    )
+    sector_map = _compute_dimension_bonus_map(
+        "sector", compute_sector_strength, "strength_bonus",
+        top_n=top_n, lookback_days=lookback_days, search_dir=search_dir,
+    )
+    volume_map = _compute_dimension_bonus_map(
+        "volume", compute_volume_confirmation, "volume_factor",
+        top_n=top_n, lookback_days=lookback_days, search_dir=search_dir,
+    )
 
-    # Compute sector strength (P10-2)
-    try:
-        sector_report = compute_sector_strength(
-            top_n=top_n,
-            lookback_days=lookback_days,
-            reports_dir=search_dir,
-        )
-        sector_map = {item.ticker: item.strength_bonus for item in sector_report.items}
-    except Exception as exc:
-        # BH-021 / R48 BH-017 同族: sector 维度降级 → sector_bonus 全部 0。
-        logger.debug("composite sector dimension degraded to {}: %s", exc)
-        sector_map = {}
-
-    # Compute signal consistency (P7-1)
+    # Compute signal consistency (P7-1) — distinct shape (dict comprehension), not shared.
     try:
         consistency_results = check_signal_consistency(recs)
         consistency_map = {
@@ -210,19 +229,6 @@ def compute_composite_scores_for_recommendations(
         # BH-021 / R48 BH-017 同族: consistency 维度降级 → consistency_adj 全部 0。
         logger.debug("composite consistency dimension degraded to {}: %s", exc)
         consistency_map = {}
-
-    # Compute volume confirmation (P11-2)
-    try:
-        volume_report = compute_volume_confirmation(
-            top_n=top_n,
-            lookback_days=lookback_days,
-            reports_dir=search_dir,
-        )
-        volume_map = {item.ticker: item.volume_factor for item in volume_report.items}
-    except Exception as exc:
-        # BH-021 / R48 BH-017 同族: volume 维度降级 → volume_factor 全部 0。
-        logger.debug("composite volume dimension degraded to {}: %s", exc)
-        volume_map = {}
 
     # Compute trend resonance (P14-1)
     try:
