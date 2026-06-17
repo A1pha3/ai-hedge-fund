@@ -67,6 +67,11 @@ class DigestResult:
     summary: dict[str, Any] = field(default_factory=dict)
     daily: list[DailyDigest] = field(default_factory=list)
     ticker_frequency: dict[str, int] = field(default_factory=dict)
+    # BH-028: trading-day (weekday) count and trading-day coverage. total_days
+    # counts calendar days incl. weekends, which misleads users about coverage
+    # (a Mon-Fri range with 5 snapshots showed "5/7 ≈ 71%" when it's 100%).
+    trading_days_in_range: int = 0
+    data_coverage_pct: float = 0.0
 
     # -- serialization helpers ------------------------------------------------
 
@@ -89,6 +94,34 @@ def _read_selection_snapshot(artifact_root: Path, trade_date: str) -> dict[str, 
     if not snapshot_path.exists():
         return None
     return json.loads(snapshot_path.read_text(encoding="utf-8"))
+
+
+def _count_weekdays(start_dt: datetime, end_dt: datetime) -> int:
+    """Count Mon-Fri days in [start_dt, end_dt] inclusive.
+
+    BH-028: total_days counts calendar days (incl. weekends). A-share markets
+    only trade on weekdays, so a Mon-Sun range with 5 snapshots reported
+    "5/7 ≈ 71% coverage" when real trading-day coverage was 100%. This helper
+    provides the weekday denominator for an honest coverage ratio. Note this
+    counts weekdays, not actual market holidays (which would need a trading
+    calendar) — it is a strict improvement over calendar days and the right
+    default for a tool that doesn't ship a holiday table.
+
+    Closed-form: each full 7-day week contributes 5 weekdays; the remaining
+    0-6 days are counted by checking each tail day's weekday. Equivalent to
+    the day-by-day loop but O(1) and obviously-correct by construction.
+    """
+    if start_dt > end_dt:
+        return 0
+    total = (end_dt - start_dt).days + 1
+    full_weeks, remainder = divmod(total, 7)
+    count = full_weeks * 5
+    # Walk only the (0-6) remainder days from start_dt to avoid iterating
+    # the whole range — keeps the count exact for partial weeks.
+    for offset in range(remainder):
+        if (start_dt + timedelta(days=offset)).weekday() < 5:
+            count += 1
+    return count
 
 
 def _extract_scores(entries: list[dict[str, Any]]) -> list[float]:
@@ -357,6 +390,17 @@ def run_digest(
     # Build summary
     total_days = (end_dt - start_dt).days + 1
     days_with_data = len(daily_digests)
+    # BH-028: weekday count gives an honest coverage denominator for A-share
+    # (weekends never have trading data, so dividing by calendar days
+    # systematically understates coverage).
+    trading_days_in_range = _count_weekdays(start_dt, end_dt)
+
+    if days_with_data == 0:
+        data_coverage_pct = 0.0
+    elif trading_days_in_range > 0:
+        data_coverage_pct = round(days_with_data / trading_days_in_range * 100, 2)
+    else:
+        data_coverage_pct = 100.0
 
     if days_with_data == 0:
         return DigestResult(
@@ -365,6 +409,8 @@ def run_digest(
             total_days=total_days,
             days_with_data=0,
             summary={"warning": "No selection artifacts found for the requested period"},
+            trading_days_in_range=trading_days_in_range,
+            data_coverage_pct=0.0,
         )
 
     candidate_counts = [d.candidates for d in daily_digests]
@@ -389,6 +435,8 @@ def run_digest(
     summary: dict[str, Any] = {
         "total_days": total_days,
         "days_with_data": days_with_data,
+        "trading_days_in_range": trading_days_in_range,
+        "data_coverage_pct": data_coverage_pct,
         "avg_candidates": avg_candidates,
         "avg_top_score": avg_top_score,
         "score_std": score_std,
@@ -408,6 +456,8 @@ def run_digest(
         summary=summary,
         daily=daily_digests,
         ticker_frequency=dict(ticker_counter.most_common()),
+        trading_days_in_range=trading_days_in_range,
+        data_coverage_pct=data_coverage_pct,
     )
 
 
@@ -436,6 +486,12 @@ def format_digest_markdown(result: DigestResult) -> str:
     lines.append("|--------|-------|")
     lines.append(f"| Days in range | {s.get('total_days', 'N/A')} |")
     lines.append(f"| Days with data | {s.get('days_with_data', 'N/A')} |")
+    # BH-028: trading-day coverage is the honest denominator — A-share
+    # weekends never have data, so calendar-day coverage understates reality.
+    trading_days = s.get("trading_days_in_range", "N/A")
+    coverage = s.get("data_coverage_pct", "N/A")
+    lines.append(f"| Trading days in range | {trading_days} |")
+    lines.append(f"| Trading-day coverage | {coverage}% |")
     lines.append(f"| Avg candidates/day | {s.get('avg_candidates', 'N/A')} |")
     lines.append(f"| Avg top score | {s.get('avg_top_score', 'N/A')} |")
     lines.append(f"| Score std | {s.get('score_std', 'N/A')} |")

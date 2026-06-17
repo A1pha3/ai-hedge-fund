@@ -254,6 +254,42 @@ class TestRunDigest:
         assert result.days_with_data == 2
         assert len(result.daily) == 2
 
+    def test_bh028_trading_days_and_coverage_exclude_weekends(self, tmp_path: Path) -> None:
+        """BH-028: total_days counts calendar days (incl. weekends), which
+        misleads users about data coverage — a 7-day range with 5 weekdays
+        and 5 snapshots looks like "5/7 = 71% coverage" when it's actually
+        100% trading-day coverage. The fix adds trading_days_in_range
+        (weekday count) and data_coverage_pct (days_with_data / trading_days)
+        so the user sees true coverage."""
+        # 2026-05-04 (Mon) .. 2026-05-10 (Sun) = 7 calendar days, 5 weekdays.
+        # Provide snapshots for all 5 weekdays → 100% trading-day coverage.
+        weekdays = ["2026-05-04", "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08"]
+        for d in weekdays:
+            _write_snapshot(tmp_path, d, _make_snapshot(d, selected=[_make_candidate("300724", 0.7)]))
+
+        result = run_digest(start_date="2026-05-04", end_date="2026-05-10", artifact_root=tmp_path)
+        # total_days stays calendar-based (backward compat).
+        assert result.total_days == 7
+        assert result.days_with_data == 5
+        # New fields: trading-day count excludes Sat/Sun.
+        assert result.trading_days_in_range == 5
+        # Coverage over trading days = 100%, not the misleading 5/7 ≈ 71%.
+        assert result.data_coverage_pct == 100.0
+        assert result.summary["trading_days_in_range"] == 5
+        assert result.summary["data_coverage_pct"] == 100.0
+
+    def test_bh028_coverage_partial_when_weekday_snapshot_missing(self, tmp_path: Path) -> None:
+        """BH-028: when a weekday snapshot is genuinely missing, coverage
+        must reflect the real gap (e.g. 4/5 weekdays = 80%)."""
+        # 2026-05-04..08 (Mon-Fri) = 5 weekdays; skip Wed (05-06).
+        for d in ["2026-05-04", "2026-05-05", "2026-05-07", "2026-05-08"]:
+            _write_snapshot(tmp_path, d, _make_snapshot(d, selected=[_make_candidate("300724", 0.7)]))
+
+        result = run_digest(start_date="2026-05-04", end_date="2026-05-08", artifact_root=tmp_path)
+        assert result.trading_days_in_range == 5
+        assert result.days_with_data == 4
+        assert result.data_coverage_pct == 80.0
+
     def test_no_data(self, tmp_path: Path) -> None:
         """No artifacts produces empty result with warning."""
         result = run_digest(start_date="2026-01-01", end_date="2026-01-05", artifact_root=tmp_path)

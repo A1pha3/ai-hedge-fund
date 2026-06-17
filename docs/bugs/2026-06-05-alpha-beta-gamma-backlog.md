@@ -326,3 +326,24 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
   `test_bh027_no_data_strategy_not_worse_than_zero_ir`); 17 weight_calibration
   tests pass. With IR=3.0 dominating, floored strategies now hold 0.05 (not
   0.0159) and trend holds 0.85 (still dominant, but conservatively bounded).
+
+### BH-028 — digest total_days counts calendar days, misleads coverage  [RESOLVED]
+- **Where:** `src/research/digest.py:run_digest` (line 358, `total_days = (end_dt - start_dt).days + 1`) surfaced via `format_digest_markdown` "Days in range" (line 481).
+- **Issue:** `total_days` counts calendar days including weekends, but A-share
+  markets only trade on weekdays. A Mon-Sun range with 5 complete snapshots
+  reported "Days with data: 5 / Days in range: 7" — a false ≈71% coverage
+  impression when real trading-day coverage was 100%. This undermines the
+  product's "可信度" (trust) goal: users could wrongly conclude data pipelines
+  are dropping 2 trading days when in fact coverage is complete.
+- **Product impact:** `run_digest` (and the daily-digest aggregation script)
+  feed the winrate/lookback dashboards. A misleading coverage denominator
+  erodes user trust in every downstream "is my data complete?" judgment.
+- **Resolution (Campaign 44):** Added `trading_days_in_range` (Mon-Fri count,
+  via closed-form O(1) `_count_weekdays`) and `data_coverage_pct`
+  (`days_with_data / trading_days * 100`) to `DigestResult`, the summary dict,
+  and the markdown table ("Trading days in range" / "Trading-day coverage").
+  `total_days` kept calendar-based for backward compatibility. Added 2 TDD
+  guards (`test_bh028_trading_days_and_coverage_exclude_weekends`,
+  `test_bh028_coverage_partial_when_weekday_snapshot_missing`); 51 digest
+  tests pass. Coverage is now honest: Mon-Fri with full data shows 100%, a
+  genuinely missing weekday shows e.g. 80%.
