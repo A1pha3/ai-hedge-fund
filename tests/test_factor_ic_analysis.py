@@ -13,10 +13,11 @@ from pathlib import Path
 import pytest
 
 from src.research.factor_ic_analysis import (
+    _is_finite,
     _pearson_correlation,
     _rank_average,
     _safe_stdev,
-    _spearman_correlation,
+    _to_finite,
     classify_significance,
     compute_factor_ic,
     extract_factor_panel_from_history,
@@ -24,8 +25,6 @@ from src.research.factor_ic_analysis import (
     IC_HIGH_THRESHOLD,
     IC_LOW_THRESHOLD,
     IC_MEDIUM_THRESHOLD,
-    MIN_FACTORS,
-    MIN_OBSERVATIONS,
     render_factor_ic_ranking,
 )
 
@@ -607,3 +606,59 @@ def test_strategy_unknown_for_unprefixed_factor() -> None:
     returns = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10]
     results = compute_factor_ic(factors, returns)
     assert all(r.strategy == "unknown" for r in results.values())
+
+
+# ---------------------------------------------------------------------------
+# Refactor characterization: _to_finite / _is_finite parity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value, expected_finite",
+    [
+        (1.5, True),
+        (0, True),
+        (-0.3, True),
+        ("2.5", True),          # numeric string coerces
+        ("abc", False),          # non-numeric string
+        (None, False),
+        (float("nan"), False),
+        (float("inf"), False),
+        (float("-inf"), False),
+        ([1.0], False),          # unhashable / non-numeric → TypeError
+    ],
+)
+def test_is_finite_parity(value, expected_finite) -> None:
+    """_is_finite must return True iff value is a finite real."""
+    assert _is_finite(value) is expected_finite
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (1.5, 1.5),
+        ("2.5", 2.5),
+        (0, 0.0),
+        (None, None),
+        (float("nan"), None),
+        ("abc", None),
+    ],
+)
+def test_to_finite_returns_finite_or_none(value, expected) -> None:
+    """_to_finite must coerce finite values and return None otherwise —
+    eliminating the redundant double-cast at every call site."""
+    result = _to_finite(value)
+    if expected is None:
+        assert result is None
+    else:
+        assert result == expected
+        assert math.isfinite(result)
+
+
+def test_to_finite_and_is_finite_are_consistent() -> None:
+    """For any value, _to_finite(v) is not None exactly when _is_finite(v)
+    is True (the refactor relies on this equivalence to drop the dead
+    ``try: float(v) except`` block that followed each ``_is_finite`` guard)."""
+    samples = [1.5, 0, -0.3, "2.5", "abc", None, float("nan"), float("inf"), [1.0]]
+    for v in samples:
+        assert (_to_finite(v) is not None) == _is_finite(v)

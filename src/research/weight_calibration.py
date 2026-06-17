@@ -135,27 +135,82 @@ def _calibrate_weights(
     summaries: list[StrategyICSummary],
     original_weights: dict[str, float],
 ) -> dict[str, float]:
-    """从策略 IR 推导校准后权重。
+    """从策略 IR 推导校准权重。
 
-    公式: weight_i = max(WEIGHT_FLOOR, max(0, IR_i)^alpha)
-    归一化: weight_i /= sum
+    公式: weight_i ∝ max(0, IR_i)^alpha, 归一化到 sum = 1.0, 再把
+    低于 WEIGHT_FLOOR 的策略提升到 floor 并按比例缩放其余策略。
+
+    BH-027: WEIGHT_FLOOR 此前在归一化**前**施加 (raw 阶段), 一个高 IR
+    策略会把 floored 策略归一化后压到远低于 floor (例: IR=3.0 让其它
+    策略落到 0.016 < 0.05), 违背模块"保守校准 / 避免某策略权重为 0
+    完全失效"契约。修复: 先归一化, 再投影到 [floor, 1.0] 下界, 然后
+    从仍有余量的策略里扣回被 floor 占用的预算, 保持 sum = 1.0。
     """
     raw: dict[str, float] = {}
-    for strat, default_w in original_weights.items():
-        # Find IR for this strategy
+    for strat in original_weights:
+        # Find IR for this strategy. No-data strategies are treated the
+        # same as zero-signal strategies (IR=0 → raw 0.0), so the
+        # post-normalization floor applies uniformly to both.
         match = next((s for s in summaries if s.strategy_name == strat), None)
-        if match is None:
-            # No IC data — use a neutral value (0.0 → floor)
-            raw[strat] = 0.0
-        else:
-            ir = match.avg_ir
-            raw[strat] = max(WEIGHT_FLOOR, max(0.0, ir) ** CALIBRATION_ALPHA)
+        ir = match.avg_ir if match is not None else 0.0
+        raw[strat] = max(0.0, ir) ** CALIBRATION_ALPHA
 
     total = sum(raw.values())
     if total <= 0:
-        return original_weights.copy()
+        # All strategies have no positive signal → equal weight.
+        equal = 1.0 / len(original_weights)
+        return {strat: equal for strat in original_weights}
 
-    return {k: v / total for k, v in raw.items()}
+    # First-pass normalization, then enforce WEIGHT_FLOOR as a true lower
+    # bound by projecting any sub-floor weight up to the floor and
+    # absorbing the deficit from the remaining (above-floor) strategies.
+    normalized = {strat: value / total for strat, value in raw.items()}
+    return _enforce_weight_floor(normalized, WEIGHT_FLOOR)
+
+
+def _enforce_weight_floor(
+    weights: dict[str, float],
+    floor: float,
+) -> dict[str, float]:
+    """Project ``weights`` onto the simplex where every entry is >= floor.
+
+    BH-027: makes WEIGHT_FLOOR a genuine post-normalization lower bound.
+    Iteratively lifts sub-floor weights to the floor and absorbs the
+    budget deficit from the strategies still above the floor, renormalizing
+    until the constraint is satisfied or no donor budget remains. When no
+    donor budget is available (every strategy would be floored), fall back
+    to uniform weights — the floor is a *minimum*, not a guarantee that
+    strong strategies can always retain their excess when too many
+    strategies demand the floor.
+    """
+    n = len(weights)
+    if n == 0:
+        return {}
+    # If even uniform weights violate the floor, the floor is infeasible
+    # for this many strategies; clamp the effective floor to uniform.
+    uniform = 1.0 / n
+    effective_floor = min(floor, uniform)
+    result = dict(weights)
+    for _ in range(n + 1):  # converges in at most n iterations
+        below = {k: v for k, v in result.items() if v < effective_floor - 1e-12}
+        if not below:
+            break
+        deficit = sum(effective_floor - v for v in below.values())
+        for k in below:
+            result[k] = effective_floor
+        donors = {k: v for k, v in result.items() if v > effective_floor + 1e-12}
+        donor_total = sum(donors.values())
+        if donor_total <= 0:
+            # No donor budget — uniform is the only feasible solution.
+            return {k: uniform for k in result}
+        # Absorb the deficit proportionally from donors.
+        for k, v in donors.items():
+            result[k] = v - deficit * (v / donor_total)
+    # Final renormalization guards against floating-point drift.
+    total = sum(result.values())
+    if total > 0:
+        result = {k: v / total for k, v in result.items()}
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +319,25 @@ def render_weight_calibration(result: WeightCalibrationResult) -> str:
         delta = cal - orig
         delta_str = f"{delta:+.3f}"
         lines.append(f"  {strat:<20} {orig:>8.3f} {cal:>8.3f} {delta_str:>8}")
+
+    # BH-027 follow-up: surface which strategies are held at WEIGHT_FLOOR by
+    # the post-normalization floor projection. A weight exactly at the floor
+    # is a *conservative floor*, not an IR-driven signal — without this note
+    # the user cannot tell "5% because IR≈0" from "5% because the floor held
+    # it there", which matters for trusting a dominating strategy's 85%.
+    if not result.calibration_skipped:
+        floored = sorted(
+            strat
+            for strat, w in result.calibrated_weights.items()
+            if abs(w - WEIGHT_FLOOR) < 1e-9
+        )
+        if floored:
+            names = "、".join(floored)
+            lines.append("")
+            lines.append(
+                f"  ⓘ 下限保护 ({WEIGHT_FLOOR:g})：{names} 命中保守下限，"
+                "非 IR 驱动；主导策略权重据此被压缩。"
+            )
 
     lines.append("━" * 70)
     return "\n".join(lines)

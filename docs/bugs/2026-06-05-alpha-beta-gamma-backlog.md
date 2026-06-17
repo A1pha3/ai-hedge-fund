@@ -298,3 +298,31 @@ Each finding cites file:line, code excerpt, root cause, and a fix direction.
   known backtest case and diff metrics before/after.
 - The risk-guardrail wiring (GAMMA-001/002) is a behavior change; needs an explicit
   product sign-off (or a shadow-mode rollout flag) before enforcement.
+
+---
+
+## Resolved after the 2026-06-15 audit (later campaigns)
+
+### BH-027 — weight_calibration WEIGHT_FLOOR violated after normalization  [RESOLVED]
+- **Where:** `src/research/weight_calibration.py:_calibrate_weights` (pre-fix lines 143-158)
+- **Issue:** `WEIGHT_FLOOR = 0.05` was applied to the **pre-normalization** raw
+  weight (`max(WEIGHT_FLOOR, max(0, IR)^alpha)`), but normalization then divided
+  by the sum. A dominating strategy (e.g. IR=3.0) squeezed the floored
+  strategies to ~0.0159 post-normalization — well below the stated 0.05 floor —
+  silently breaking the module's "保守校准 / 避免某个策略权重为 0 完全失效"
+  contract. Additionally the `match is None` (no IC data) branch set `raw = 0.0`
+  with **no floor**, so a no-data strategy was treated *worse* than a zero-IR
+  strategy (inconsistent). The existing test at `test_weight_calibration.py`
+  even pinned the buggy sub-floor outcome as "expected".
+- **Product impact:** `--calibrate-weights` (live CLI) emits "保守校准" weights
+  that could collapse three of four strategies to ~1.6% each while one reached
+  95% — the opposite of the conservative-floor promise, undermining "更高确信".
+- **Resolution (Campaign 43):** Rewrote `_calibrate_weights` to normalize first,
+  then project weights onto the simplex where every entry is `>= WEIGHT_FLOOR`
+  via the new `_enforce_weight_floor` helper (iterative floor-lift + donor
+  absorption, uniform fallback when the floor is infeasible for the strategy
+  count). No-data and zero-IR strategies now share the same path. Added 2 TDD
+  guards (`test_bh027_floor_honored_after_normalization`,
+  `test_bh027_no_data_strategy_not_worse_than_zero_ir`); 17 weight_calibration
+  tests pass. With IR=3.0 dominating, floored strategies now hold 0.05 (not
+  0.0159) and trend holds 0.85 (still dominant, but conservatively bounded).

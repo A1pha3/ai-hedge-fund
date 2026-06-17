@@ -176,13 +176,25 @@ def _safe_stdev(values: Sequence[float]) -> float:
 
 def _is_finite(value: Any) -> bool:
     """检查 value 是否为有限 float。None / NaN / Inf / 非数值 → False。"""
+    return _to_finite(value) is not None
+
+
+def _to_finite(value: Any) -> float | None:
+    """把 value 强转为有限 float；None / NaN / Inf / 非数值 → None。
+
+    合并了此前散落在三处调用点的 ``_is_finite(x)`` + 冗余
+    ``try: float(x) except (TypeError, ValueError)`` 双重强转 —— 既然
+    ``_is_finite`` 已经执行过一次 ``float()`` 并捕获同样的异常, 其后的
+    ``float(x)`` 在逻辑上不可能失败。本 helper 一次完成"判定 + 取值"，
+    消除重复转换与不可达的异常分支。
+    """
     if value is None:
-        return False
+        return None
     try:
         fv = float(value)
     except (TypeError, ValueError):
-        return False
-    return math.isfinite(fv)
+        return None
+    return fv if math.isfinite(fv) else None
 
 
 # ---------------------------------------------------------------------------
@@ -468,12 +480,9 @@ def _load_report_panel(
                     continue
                 if not isinstance(fpayload, dict):
                     continue
-                conf = fpayload.get("confidence")
-                if _is_finite(conf):
-                    try:
-                        rec_factors[str(fname)] = float(conf)
-                    except (TypeError, ValueError):
-                        continue
+                conf = _to_finite(fpayload.get("confidence"))
+                if conf is not None:
+                    rec_factors[str(fname)] = conf
         if rec_factors:
             factor_panel[ticker] = rec_factors
             factor_set.update(rec_factors.keys())
@@ -516,12 +525,9 @@ def _load_tracking_returns(
         if not ticker:
             continue
         # 优先 t+1, 缺失则退回 0
-        t1 = rec.get("t1_return")
-        if _is_finite(t1):
-            try:
-                returns_map[ticker] = float(t1)
-            except (TypeError, ValueError):
-                continue
+        t1 = _to_finite(rec.get("t1_return"))
+        if t1 is not None:
+            returns_map[ticker] = t1
     return returns_map
 
 
@@ -617,12 +623,9 @@ def extract_factor_panel_from_history(
                 for rec in recs:
                     if not isinstance(rec, dict):
                         continue
-                    sb = rec.get("score_b")
-                    if _is_finite(sb):
-                        try:
-                            score_b_values.append(float(sb))
-                        except (TypeError, ValueError):
-                            continue
+                    sb = _to_finite(rec.get("score_b"))
+                    if sb is not None:
+                        score_b_values.append(sb)
             except (OSError, json.JSONDecodeError):
                 pass
             if score_b_values:

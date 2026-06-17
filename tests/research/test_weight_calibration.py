@@ -1,9 +1,6 @@
 """Tests for P3-2: weight_calibration module."""
-import pytest
 
-from src.research.factor_ic_analysis import FactorICResult
 from src.research.weight_calibration import (
-    _aggregate_strategy_ic,
     _calibrate_weights,
     _infer_strategy,
     compute_weight_calibration,
@@ -79,6 +76,40 @@ class TestCalibrateWeights:
         # When all IR=0, only WEIGHT_FLOOR remains, then normalized
         # Floor = 0.05 for all → still 0.5/0.5 after normalization
         assert abs(sum(result.values()) - 1.0) < 0.001
+
+    def test_bh027_floor_honored_after_normalization(self):
+        """BH-027: WEIGHT_FLOOR must remain a real lower bound after
+        normalization. A dominating strategy (high IR) must not silently
+        squeeze floored strategies to a fraction of the stated floor —
+        that contradicts the module's "保守校准" + "避免某个策略权重为 0
+        完全失效" contract."""
+        summaries = [
+            StrategyICSummary(strategy_name="trend", avg_ir=3.0),          # strong
+            StrategyICSummary(strategy_name="mean_reversion", avg_ir=0.0),  # floored
+            StrategyICSummary(strategy_name="fundamental", avg_ir=0.0),     # floored
+            StrategyICSummary(strategy_name="event_sentiment", avg_ir=0.0), # floored
+        ]
+        result = _calibrate_weights(summaries, DEFAULT_EQUAL_WEIGHTS)
+        assert abs(sum(result.values()) - 1.0) < 0.001
+        # Every strategy must stay >= WEIGHT_FLOOR post-normalization.
+        for strat, w in result.items():
+            assert w >= WEIGHT_FLOOR - 1e-9, (
+                f"BH-027 regression: {strat}={w:.4f} < WEIGHT_FLOOR={WEIGHT_FLOOR}"
+            )
+
+    def test_bh027_no_data_strategy_not_worse_than_zero_ir(self):
+        """BH-027: a strategy with no IC data should not be treated worse
+        than a strategy with IR=0 (both are "no positive signal"). The
+        match-is-None branch must apply the same floor as the IR=0 branch."""
+        summaries = [
+            StrategyICSummary(strategy_name="trend", avg_ir=0.0),  # zero signal
+            # mean_reversion absent from summaries → no data
+        ]
+        original = {"trend": 0.5, "mean_reversion": 0.5}
+        result = _calibrate_weights(summaries, original)
+        # Both should land on the floor (equal), not trend=floor while
+        # mean_reversion is squeezed below it.
+        assert abs(result["trend"] - result["mean_reversion"]) < 1e-9
 
 
 class TestComputeWeightCalibration:
@@ -168,3 +199,55 @@ class TestRenderWeightCalibration:
         result = WeightCalibrationResult(calibration_skipped=True)
         output = render_weight_calibration(result)
         assert "校准跳过" in output
+
+    def test_renders_floor_enforcement_note_when_strategies_floored(self):
+        """BH-027 follow-up: when some strategies are held at WEIGHT_FLOOR by
+        the post-normalization floor projection (rather than reaching their
+        weight via IR), the render must surface this so the user can calibrate
+        trust in the result — a floored weight is a *conservative floor*, not
+        an IR-driven signal. Without this note the user cannot distinguish
+        "5% because IR≈0" from "5% because the floor held it there"."""
+        # Construct a result where two strategies sit exactly at the floor.
+        result = WeightCalibrationResult(
+            lookback_days=30,
+            original_weights=DEFAULT_EQUAL_WEIGHTS.copy(),
+            calibrated_weights={
+                "trend": 0.85,
+                "mean_reversion": WEIGHT_FLOOR,
+                "fundamental": WEIGHT_FLOOR,
+                "event_sentiment": WEIGHT_FLOOR,
+            },
+            strategy_summaries=[
+                StrategyICSummary(strategy_name="trend", avg_ir=3.0),
+                StrategyICSummary(strategy_name="mean_reversion", avg_ir=0.0),
+                StrategyICSummary(strategy_name="fundamental", avg_ir=0.0),
+                StrategyICSummary(strategy_name="event_sentiment", avg_ir=0.0),
+            ],
+            n_factors=4,
+            n_observations=20,
+            calibration_skipped=False,
+        )
+        output = render_weight_calibration(result)
+        # The note must (a) be present, (b) name which strategies are floored,
+        # (c) reference WEIGHT_FLOOR so the user understands the bound.
+        assert "下限保护" in output
+        assert "mean_reversion" in output
+        assert f"{WEIGHT_FLOOR:g}" in output
+
+    def test_renders_no_floor_note_when_nothing_floored(self):
+        """When no strategy is at the floor, the note must be absent to avoid
+        clutter — floor enforcement is only relevant when it actually bit."""
+        result = WeightCalibrationResult(
+            lookback_days=30,
+            original_weights=DEFAULT_EQUAL_WEIGHTS.copy(),
+            # Uniform 0.25 each — none at the 0.05 floor.
+            calibrated_weights=DEFAULT_EQUAL_WEIGHTS.copy(),
+            strategy_summaries=[
+                StrategyICSummary(strategy_name="trend", avg_ir=0.5),
+            ],
+            n_factors=4,
+            n_observations=20,
+            calibration_skipped=False,
+        )
+        output = render_weight_calibration(result)
+        assert "下限保护" not in output
