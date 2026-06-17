@@ -137,7 +137,7 @@ daily_basic_batch:{trade_date}
 
 ### 4.3 调用频率
 
-`validate_financial_metrics` 在 `validator.py:343` 和 `api_new.py:85` 中被调用，**未与 `BatchDataFetcher` 集成**——批量回填的 DataFrame **不经过 validator_v2**。如要在批量路径上加验证，需在 `_fetch_single_ticker_prices_sync` 或更上游手工接入。
+`validate_financial_metrics` 在 `validator.py:343` 中被调用，**未与 `BatchDataFetcher` 集成**——批量回填的 DataFrame **不经过 validator_v2**。如要在批量路径上加验证，需在 `_fetch_single_ticker_prices_sync` 或更上游手工接入。（注：原 `api_new.py:85` 的调用方已随 orphan 模块删除一并移除。）
 
 ## 5. 数据质量监控
 
@@ -211,6 +211,6 @@ CLI 入口 `python src/main.py --preheat --date 20260313`，并发=4。`force=Tr
 - 缓存层：`src/data/enhanced_cache.py`, `src/data/cache.py`
 - 路由：`src/data/router.py`, `src/data/router_helpers.py`, `src/data/base_provider.py`
 - 验证：`src/data/validator_v2.py`, `src/data/validator_v2_helpers.py`, `src/data/validation_rules.py`, `src/data/validator.py`
-- 健康：`src/data/health.py`, `src/data/health_checker.py`
+- 健康：`src/data/health.py`（当前活跃）；~~`src/data/health_checker.py`~~ 已删除（零调用方 orphan）；~~`src/data/api_new.py`~~ 已删除（零调用方 orphan，被 router 统一数据访问取代）
 - 批量：`src/screening/batch_data_fetcher.py`, `src/data/cache_preheater.py`
 - 预热入口：`src/main.py::run_preheat`（line 722）

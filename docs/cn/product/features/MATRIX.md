@@ -238,7 +238,7 @@
 | 1 | 数据验证器 (V2) | ✅ | `src/data/validator_v2.py` — 增强验证框架 |
 | 2 | 验证规则集 | ✅ | `src/data/validation_rules.py` |
 | 3 | 数据清洗 | ✅ | `src/data/cleaner.py` |
-| 4 | 健康检查 | ✅ | `src/data/health_checker.py` |
+| 4 | 健康检查 | ✅ | `src/data/health.py` — 当前活跃健康监控（DataSourceHealth / HealthMonitor，经 `__init__.py` 导出，被 router.py 消费）；~~`src/data/health_checker.py`~~ 已删除（零调用方，与 quality_monitor.py 同型，详见 [architecture/data-layer.md](../../architecture/data-layer.md)） |
 | 5 | 质量监控 | ⛔ 已移除 | ~~`src/data/quality_monitor.py`~~（R20 删除：零调用方，详见 [architecture/data-layer.md](../../architecture/data-layer.md)） |
 | 6 | 数据快照 | ✅ | `src/data/snapshot.py` — Markdown + JSON 双格式快照 |
 

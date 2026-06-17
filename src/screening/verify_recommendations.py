@@ -577,5 +577,24 @@ def render_verify_recommendations(summary: VerifySummary) -> str:
     if summary.total_days == 0:
         lines.append("  ⚠ 无推荐数据 — 请先运行 --auto 生成报告")
 
+    # BH-020: ``--verify-detail`` populates ``summary.daily_details`` (VerifyDay
+    # records), but this render function never surfaced them — the entire flag
+    # was a silent no-op at the presentation layer despite every VerifyDay
+    # field (date / tickers / avg_tN_return / benchmark_return / excess_return)
+    # being computed. Render a per-day detail table so the flag delivers on its
+    # promise. Skipped when daily_details is empty (default --verify without
+    # --verify-detail, or empty data) so no misleading empty section is shown.
+    if summary.daily_details:
+        lines.append("  日度明细 (--verify-detail):")
+        lines.append(f"  {'日期':<10} {'标的数':>5} {'T+1均收':>8} {'基准T+1':>8} {'超额':>7} {'最高分':>7}")
+        lines.append("  " + "-" * 52)
+        for d in summary.daily_details:
+            lines.append(
+                f"  {d.date:<10} {len(d.tickers):>5} "
+                f"{_ret(d.avg_t1_return):>8} {_ret(d.benchmark_return):>8} "
+                f"{_ret(d.excess_return):>7} {d.top_score:>7.2f}"
+            )
+        lines.append("")
+
     lines.append("━" * 60)
     return "\n".join(lines)

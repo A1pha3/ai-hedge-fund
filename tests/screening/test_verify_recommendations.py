@@ -317,6 +317,38 @@ class TestRenderVerifyRecommendations:
         output = render_verify_recommendations(summary)
         assert "推荐闭环验证" in output
 
+    def test_verify_detail_renders_daily_details_table(self, reports_dir: Path) -> None:
+        """BH-020: ``--verify-detail`` (include_detail=True) populates
+        ``summary.daily_details`` (VerifyDay records), but the render function
+        never rendered them — the entire ``--verify-detail`` flag was a silent
+        no-op at the presentation layer despite every VerifyDay field being
+        computed (date / tickers / avg_t1/t3/t5/t10/t20/t30_return /
+        benchmark_return / excess_return).
+
+        When daily_details is non-empty, the rendered output must surface them
+        (a per-day detail table or per-day rows), not silently drop them.
+        """
+        summary = compute_verify_recommendations(reports_dir=reports_dir, lookback_days=30, include_detail=True)
+        # Sanity: detail computation actually ran.
+        assert len(summary.daily_details) == 2
+        day_dates = {d.date for d in summary.daily_details}
+        assert day_dates == {"20260601", "20260602"}
+        output = render_verify_recommendations(summary)
+        # Each detail day's date must appear in the rendered output (the table
+        # would be useless if it dropped the date column).
+        assert "20260601" in output
+        assert "20260602" in output
+        # A detail-specific marker so users see the detail section rendered.
+        assert "日度明细" in output or "逐日" in output
+
+    def test_verify_detail_skipped_when_no_daily_details(self, reports_dir: Path) -> None:
+        """BH-020 robustness: without --verify-detail, daily_details is empty
+        and the renderer must not emit a (misleading) empty detail section."""
+        summary = compute_verify_recommendations(reports_dir=reports_dir, lookback_days=30, include_detail=False)
+        assert summary.daily_details == []
+        output = render_verify_recommendations(summary)
+        assert "日度明细" not in output
+
 
 # ---------------------------------------------------------------------------
 # Extended horizons (T+10/T+20/T+30) - P5-1
