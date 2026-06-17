@@ -150,13 +150,30 @@ def _apply_explicit_metric_overrides(
     if not explicit_metric_overrides:
         return scores
     overridden = dict(scores)
-    overridden["breakout_freshness"] = clamp_unit_interval_fn(float(explicit_metric_overrides.get("breakout_freshness", overridden["breakout_freshness"]) or overridden["breakout_freshness"]))
-    overridden["trend_acceleration"] = clamp_unit_interval_fn(float(explicit_metric_overrides.get("trend_acceleration", overridden["trend_acceleration"]) or overridden["trend_acceleration"]))
-    overridden["volume_expansion_quality"] = clamp_unit_interval_fn(float(explicit_metric_overrides.get("volume_expansion_quality", overridden["volume_expansion_quality"]) or overridden["volume_expansion_quality"]))
-    overridden["close_strength"] = clamp_unit_interval_fn(float(explicit_metric_overrides.get("close_strength", overridden["close_strength"]) or overridden["close_strength"]))
-    overridden["sector_resonance"] = clamp_unit_interval_fn(float(explicit_metric_overrides.get("sector_resonance", overridden["sector_resonance"]) or overridden["sector_resonance"]))
-    overridden["raw_catalyst_freshness"] = clamp_unit_interval_fn(float(explicit_metric_overrides.get("catalyst_freshness", overridden["raw_catalyst_freshness"]) or overridden["raw_catalyst_freshness"]))
+    # BH-035 (R68/BH-034 falsy-zero ``or`` family): use an explicit presence
+    # check instead of ``.get(key, default) or default``. These are unit-interval
+    # [0,1] scores where 0.0 is a legitimate value ("no breakout freshness",
+    # "stale catalyst"). The ``or`` short-circuit silently discarded a forced
+    # 0.0 override and replaced it with the computed default, inflating the
+    # candidate score. Mirrors ``_resolve_trade_pnl`` / ``_resolve_position_pnl``
+    # in performance_report. The ``catalyst_freshness`` override key maps to the
+    # ``raw_catalyst_freshness`` score key.
+    for override_key, score_key in _EXPLICIT_METRIC_OVERRIDE_FIELDS:
+        raw = explicit_metric_overrides.get(override_key)
+        if raw is not None:
+            overridden[score_key] = clamp_unit_interval_fn(float(raw))
     return overridden
+
+
+# (override-key, score-key) pairs for ``_apply_explicit_metric_overrides``.
+_EXPLICIT_METRIC_OVERRIDE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("breakout_freshness", "breakout_freshness"),
+    ("trend_acceleration", "trend_acceleration"),
+    ("volume_expansion_quality", "volume_expansion_quality"),
+    ("close_strength", "close_strength"),
+    ("sector_resonance", "sector_resonance"),
+    ("catalyst_freshness", "raw_catalyst_freshness"),
+)
 
 
 def build_short_trade_signal_snapshot(
