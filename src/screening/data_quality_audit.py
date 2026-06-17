@@ -18,6 +18,7 @@ CLI:
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -53,10 +54,30 @@ DEFAULT_WEIGHTS: dict[str, float] = {
 
 
 def _find_latest_report(report_dir: Path | None = None) -> Path | None:
-    """定位 ``report_dir`` 下最新的 ``auto_screening_YYYYMMDD.json``。"""
+    """定位 ``report_dir`` 下最新的 ``auto_screening_YYYYMMDD.json``。
+
+    文件名日期校验对齐 R54 的 ``_load_auto_screening_reports``：纯字母排序会把
+    非数字开头的 malformed 文件名（如 ``auto_screening_garbage.json``，字母在
+    ASCII 数字之后）排到合法日期之前，误选为"最新"。校验 stem 能解析为
+    ``%Y%m%d`` 后再排序，确保只从合法日期文件里选最新。
+    """
     search_dir = report_dir or resolve_report_dir()
-    candidates = sorted(search_dir.glob("auto_screening_*.json"), reverse=True)
+    candidates = [
+        path
+        for path in search_dir.glob("auto_screening_*.json")
+        if _parses_as_report_date(path.stem.replace("auto_screening_", ""))
+    ]
+    candidates.sort(reverse=True)
     return candidates[0] if candidates else None
+
+
+def _parses_as_report_date(date_str: str) -> bool:
+    """R54 同族：文件名 stem 必须能解析为 ``%Y%m%d`` 才算合法报告日期。"""
+    try:
+        datetime.strptime(date_str, "%Y%m%d")
+        return True
+    except ValueError:
+        return False
 
 
 def load_latest_recommendations(report_dir: Path | None = None) -> tuple[str, list[dict[str, Any]]]:

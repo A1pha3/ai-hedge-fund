@@ -183,6 +183,31 @@ def test_load_latest_recommendations_empty_dir(tmp_path: Path):
     assert recs == []
 
 
+def test_find_latest_report_skips_malformed_filename(tmp_path: Path):
+    """R54 同族: _find_latest_report 校验文件名日期，跳过 malformed 文件。
+
+    背景: 纯字母排序会把非数字开头的 malformed 文件名（如
+    ``auto_screening_garbage.json``，字母在 ASCII 数字之后）排到合法日期之前，
+    误选为"最新"。校验 stem 能解析为 ``%Y%m%d`` 后再排序，对齐 R54 的
+    ``_load_auto_screening_reports`` 文件名校验。
+    """
+    from src.screening.data_quality_audit import _find_latest_report
+
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    # 一个合法日期报告
+    (reports_dir / "auto_screening_20260609.json").write_text("{}", encoding="utf-8")
+    # 一个 malformed 文件名（字母开头会被排到数字之前）
+    (reports_dir / "auto_screening_garbage.json").write_text("{}", encoding="utf-8")
+
+    latest = _find_latest_report(report_dir=reports_dir)
+
+    # 必须选合法日期文件，而非 malformed（garbage 字母排序在数字之前）
+    assert latest is not None
+    assert latest.name == "auto_screening_20260609.json"
+
+
+
 def test_load_latest_recommendations_picks_most_recent(tmp_path: Path):
     """多个报告时应选最新 (按文件名倒序)。"""
     reports_dir = tmp_path / "data" / "reports"

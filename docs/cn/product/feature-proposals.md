@@ -166,4 +166,4 @@
 
 ---
 
-> **最后更新**：2026-06-17（Campaign 38：composite_score trend 维度并入 `_compute_dimension_bonus_map` helper，4/5 维度共享 helper — R58 重构续集）
+> **最后更新**：2026-06-17（Campaign 39：`_find_latest_report` 文件名日期校验加固，R54 同族一致性 — malformed 文件名不再误选为"最新"）
