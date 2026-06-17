@@ -1037,3 +1037,38 @@ def test_get_ashare_financial_metrics_with_tushare_annual_filters_to_1231(monkey
     assert len(metrics) == 1
     assert metrics[0].report_period == "20251231"
     assert metrics[0].period == "annual"
+
+
+def test_get_financial_metrics_logs_degradation_on_parse_failure(monkeypatch, caplog):
+    """BH-023 / BH-021 同族: get_financial_metrics 响应解析失败时必须发可观测日志。
+
+    背景: financial_datasets API 响应 Pydantic 解析失败时此前 ``except Exception:
+    return []`` 静默吞失败 → fundamental agents 拿到空指标做分析，偏差且无信号。
+    服务"更高确信"目标。修复: 行为零变更（仍 return []），但发 logger.debug
+    降级诊断。
+    """
+    import logging
+
+    # US-equity ticker → provider = financial_datasets (非 ashare)
+    monkeypatch.setattr(api, "is_ashare", lambda ticker: False)
+    # 缓存未命中
+    monkeypatch.setattr(api._cache, "get_financial_metrics", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(api, "_get_snapshot", lambda: SimpleNamespace(
+        export_financial_metrics=lambda *_args, **_kwargs: None,
+    ))
+    monkeypatch.setattr(api, "build_financial_datasets_headers", lambda api_key: {})
+    # 模拟 API 返回 200 但 body 是 Pydantic 无法解析的脏数据
+    bad_response = SimpleNamespace(status_code=200, json=lambda: {"not_a_valid_field": object()})
+    monkeypatch.setattr(api.requests, "get", lambda *_args, **_kwargs: bad_response)
+
+    with caplog.at_level(logging.DEBUG, logger="src.tools.api"):
+        result = api.get_financial_metrics("AAPL", "2026-04-10", api_key="fake_key")
+
+    # 行为零变更: 仍返回空列表 (consumer 继续按无指标处理)
+    assert result == []
+    # 可观测性: 必须有一条降级诊断日志
+    debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+    assert debug_records, "financial metrics 解析静默失败时必须发 DEBUG 级降级诊断"
+    joined = "\n".join(r.getMessage() for r in debug_records)
+    assert "get_financial_metrics" in joined, "降级日志必须命名降级的数据路径"
+

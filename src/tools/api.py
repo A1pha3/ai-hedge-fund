@@ -1,4 +1,5 @@
 import datetime
+import logging
 import os
 import time
 from datetime import timezone
@@ -46,6 +47,12 @@ from src.tools.tushare_api import (
 
 # Global cache instance
 _cache = get_cache()
+
+# BH-023 / BH-021 同族: api.py (US-equity financial_datasets 边界) 此前无 module
+# logger。get_prices / get_financial_metrics / search_line_items 在解析外部 API
+# 响应失败时静默 return [] → fundamental agents 拿到空数据做分析，偏差且无信号。
+# debug 级降级诊断让运维可定位哪个数据路径降级。
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Provider-aware cache key helper
@@ -191,7 +198,10 @@ def get_prices(ticker: str, start_date: str, end_date: str, api_key: str | None 
     try:
         price_response = PriceResponse(**response.json())
         prices = price_response.prices
-    except Exception:
+    except Exception as exc:
+        # BH-023 / BH-021 同族: 价格响应解析失败时静默 return [] → 下游拿到空
+        # 价格序列，回测/分析偏差且无信号。发降级诊断。
+        logger.debug("get_prices response parse degraded to [] for %s: %s", ticker, exc)
         return []
 
     if not prices:
@@ -254,7 +264,12 @@ def get_financial_metrics(
     try:
         metrics_response = FinancialMetricsResponse(**response.json())
         financial_metrics = _dedupe_by_report_period(metrics_response.financial_metrics)
-    except Exception:
+    except Exception as exc:
+        # BH-023 / BH-021 同族: 财务指标响应解析失败时静默 return [] →
+        # fundamental agents 拿到空指标做分析，偏差且无信号。发降级诊断。
+        logger.debug(
+            "get_financial_metrics response parse degraded to [] for %s: %s", ticker, exc,
+        )
         return []
 
     if not financial_metrics:
@@ -312,7 +327,12 @@ def search_line_items(
         data = response.json()
         response_model = LineItemResponse(**data)
         search_results = response_model.search_results
-    except Exception:
+    except Exception as exc:
+        # BH-023 / BH-021 同族: line items 响应解析失败时静默 return [] →
+        # fundamental agents 拿到空 line items 做分析，偏差且无信号。发降级诊断。
+        logger.debug(
+            "search_line_items response parse degraded to [] for %s: %s", ticker, exc,
+        )
         return []
     if not search_results:
         return []
