@@ -236,7 +236,7 @@ def analyze_valuation(financial_line_items: list, market_cap: float) -> dict:
     Ackman invests in companies trading at a discount to intrinsic value.
     Uses a simplified DCF with FCF as a proxy, plus margin of safety analysis.
     """
-    if not financial_line_items or market_cap is None:
+    if not financial_line_items or not market_cap:
         return {"score": 0, "details": "Insufficient data to perform valuation"}
 
     # Use normalized FCF (average of available periods) to account for cyclicality

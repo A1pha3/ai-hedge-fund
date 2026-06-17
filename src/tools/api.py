@@ -455,7 +455,15 @@ def get_market_cap(
 
         data = response.json()
         response_model = CompanyFactsResponse(**data)
-        return response_model.company_facts.market_cap
+        # BH-031: company-facts API may return market_cap=0 (Pydantic float
+        # field). A zero market_cap is semantically missing data, not a real
+        # value — return None so downstream agents treat it as unavailable
+        # instead of hitting ZeroDivisionError. Matches the fallback guard at
+        # line 466 (``if not market_cap: return None``).
+        market_cap = response_model.company_facts.market_cap
+        if not market_cap:
+            return None
+        return market_cap
 
     financial_metrics = get_financial_metrics(ticker, end_date, api_key=api_key)
     if not financial_metrics:

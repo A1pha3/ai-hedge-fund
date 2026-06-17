@@ -119,3 +119,31 @@ def test_analyze_innovation_growth_reports_missing_inputs_without_scoring():
     assert result["score"] == 0
     assert result["raw_score"] == 0
     assert result["details"] == "Insufficient R&D data for trend analysis; Insufficient FCF data for analysis; Insufficient operating margin data; Insufficient CAPEX data; Insufficient dividend data"
+
+
+def test_analyze_cathie_wood_valuation_does_not_crash_on_zero_market_cap():
+    """BH-031: ``analyze_cathie_wood_valuation`` guards with ``market_cap is
+    None`` (line 253), but ``get_market_cap`` can return ``0.0`` from the US
+    company-facts API path (``api.py:458`` has no ``if not market_cap`` guard,
+    unlike the fallback path at ``api.py:466``). A zero market_cap leaks past
+    the ``is None`` guard and hits ``margin_of_safety = (iv - mc) / mc`` →
+    ZeroDivisionError, crashing the entire Cathie Wood agent.
+
+    Regression guard: a zero market_cap must be treated as missing data and
+    return a safe neutral result, not crash.
+    """
+    financial_line_items = [
+        SimpleNamespace(
+            free_cash_flow=100.0,
+            revenue=1000.0,
+            operating_margin=0.2,
+            research_and_development=50.0,
+            capital_expenditure=20.0,
+        )
+    ]
+    # market_cap=0.0 simulates the company-facts API returning a zero field
+    result = cathie_wood.analyze_cathie_wood_valuation(financial_line_items, market_cap=0.0)
+    # Must not raise; must return a neutral/zero-score dict, not crash
+    assert isinstance(result, dict)
+    assert result.get("score") == 0
+    assert "market cap" in result.get("details", "").lower() or "insufficient" in result.get("details", "").lower()

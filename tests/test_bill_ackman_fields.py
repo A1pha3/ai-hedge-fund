@@ -66,3 +66,22 @@ def test_analyze_business_quality_reports_missing_inputs_without_scoring(monkeyp
     assert "No operating margin data across periods." in result["details"]
     assert "No free cash flow data across periods." in result["details"]
     assert "ROE data not available." in result["details"]
+
+
+def test_analyze_valuation_does_not_crash_on_zero_market_cap():
+    """BH-031 (same-class drain): ``analyze_valuation`` guards with
+    ``market_cap is None`` (line 239), but ``get_market_cap`` can return ``0.0``
+    from the company-facts API path. Zero leaks past ``is None`` and hits
+    ``margin_of_safety = (iv - mc) / mc`` → ZeroDivisionError. Must treat zero
+    as missing data.
+    """
+    financial_line_items = [
+        SimpleNamespace(
+            free_cash_flow=100.0,
+            revenue=1000.0,
+            operating_margin=0.2,
+        )
+    ]
+    result = bill_ackman.analyze_valuation(financial_line_items, market_cap=0.0)
+    assert isinstance(result, dict)
+    assert result.get("score") == 0
