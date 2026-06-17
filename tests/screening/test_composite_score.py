@@ -382,3 +382,41 @@ class TestComputeCompositeScores:
 
         report = compute_composite_scores(reports_dir=tmp_path)
         assert report.items == []
+
+
+def test_compute_composite_scores_for_recommendations_logs_dimension_degradation(
+    tmp_path, caplog,
+):
+    """BH-021 / R48 BH-017 同族: composite 5 维度任一瞬时失败必须发降级诊断。
+
+    背景: ``compute_composite_scores_for_recommendations`` 此前对 momentum/
+    sector/consistency/volume/trend 五个维度各用 ``except Exception: {} = {}``
+    静默吞掉失败 → 该维度贡献 0 → composite 偏差直接影响 R10 共振与 BUY 门控，
+    用户拿到错误的 Buy/Hold/Avoid 决策且无信号。破坏"更高确信"目标。修复:
+    行为零变更（仍回退空 map），但每个维度降级时发 logger.debug 诊断。
+    """
+    import logging
+    import unittest.mock as mock
+
+    from src.screening import composite_score
+    from src.screening.composite_score import compute_composite_scores_for_recommendations
+
+    rec = [{"ticker": "000001", "name": "测试", "score_b": 0.5}]
+    with mock.patch.object(
+        composite_score,
+        "compute_signal_momentum",
+        side_effect=RuntimeError("simulated momentum failure"),
+    ):
+        with caplog.at_level(logging.DEBUG, logger="src.screening.composite_score"):
+            report = compute_composite_scores_for_recommendations(
+                recommendations=rec, trade_date="20260304", reports_dir=tmp_path,
+            )
+
+    # 行为零变更: 仍正常返回 report (momentum 维度降级为空 map)
+    assert len(report.items) == 1
+    # 可观测性: momentum 维度降级必须发 DEBUG 日志
+    debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+    assert debug_records, "composite 维度降级时必须发 DEBUG 级诊断"
+    joined = "\n".join(r.getMessage() for r in debug_records)
+    assert "momentum" in joined, "降级日志必须命名降级的维度"
+

@@ -24,6 +24,7 @@ Integration:
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,12 @@ from src.screening.trend_resonance import compute_trend_resonance
 from src.screening.volume_confirmation import compute_volume_confirmation
 from src.utils.display import Fore, Style
 from src.utils.numeric import coerce_score_b
+
+# BH-021 / R48-R50 BH-017 同族: composite_score 此前无 module logger。composite score
+# 直接驱动前门 R10 多策略共振 + BUY 门控；5 个信号维度 (momentum/sector/consistency/
+# volume/trend) 任一瞬时失败时此前静默 → 该维度贡献 0 → composite 偏差 → 错误的
+# Buy/Hold/Avoid 决策且无信号。debug 级降级诊断让运维可定位哪个维度降级。
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -173,7 +180,10 @@ def compute_composite_scores_for_recommendations(
             reports_dir=search_dir,
         )
         momentum_map = {item.ticker: item.momentum_bonus for item in momentum_report.items}
-    except Exception:
+    except Exception as exc:
+        # BH-021 / R48 BH-017 同族: momentum 维度降级 → momentum_bonus 全部 0，
+        # composite 偏差直接影响 R10 共振与 BUY 门控。发降级诊断。
+        logger.debug("composite momentum dimension degraded to {}: %s", exc)
         momentum_map = {}
 
     # Compute sector strength (P10-2)
@@ -184,7 +194,9 @@ def compute_composite_scores_for_recommendations(
             reports_dir=search_dir,
         )
         sector_map = {item.ticker: item.strength_bonus for item in sector_report.items}
-    except Exception:
+    except Exception as exc:
+        # BH-021 / R48 BH-017 同族: sector 维度降级 → sector_bonus 全部 0。
+        logger.debug("composite sector dimension degraded to {}: %s", exc)
         sector_map = {}
 
     # Compute signal consistency (P7-1)
@@ -194,7 +206,9 @@ def compute_composite_scores_for_recommendations(
             item.get("ticker", ""): _CONSISTENCY_ADJ.get(item.get("consistency_level", "unknown"), 0.0)
             for item in consistency_results
         }
-    except Exception:
+    except Exception as exc:
+        # BH-021 / R48 BH-017 同族: consistency 维度降级 → consistency_adj 全部 0。
+        logger.debug("composite consistency dimension degraded to {}: %s", exc)
         consistency_map = {}
 
     # Compute volume confirmation (P11-2)
@@ -205,7 +219,9 @@ def compute_composite_scores_for_recommendations(
             reports_dir=search_dir,
         )
         volume_map = {item.ticker: item.volume_factor for item in volume_report.items}
-    except Exception:
+    except Exception as exc:
+        # BH-021 / R48 BH-017 同族: volume 维度降级 → volume_factor 全部 0。
+        logger.debug("composite volume dimension degraded to {}: %s", exc)
         volume_map = {}
 
     # Compute trend resonance (P14-1)
@@ -215,7 +231,9 @@ def compute_composite_scores_for_recommendations(
             reports_dir=search_dir,
         )
         trend_map = {item.ticker: item.resonance_factor for item in trend_report.items}
-    except Exception:
+    except Exception as exc:
+        # BH-021 / R48 BH-017 同族: trend 维度降级 → resonance_factor 全部 0。
+        logger.debug("composite trend dimension degraded to {}: %s", exc)
         trend_map = {}
 
     # Build composite entries

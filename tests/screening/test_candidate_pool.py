@@ -58,6 +58,37 @@ def _make_daily_basic_df(rows: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
+def test_get_avg_amount_20d_logs_degradation_on_silent_fallback(caplog):
+    """BH-021: _get_avg_amount_20d 静默回退 0.0 时必须发可观测日志。
+
+    背景: ``_get_avg_amount_20d`` 任何异常都 return 0.0，consumer 用
+    ``amount_map.get(ts_code, 0.0) < min_avg_amount_20d`` 判流动性 → 0.0
+    会让瞬时 API 失败的票被静默误判为低流动性而过滤掉，破坏"稳定保留最值得
+    买的代表票"目标。属 R48/R49/R50 BH-017 silent-except 同族（核心选股池
+    缩减路径）。修复: 静默回退时发 logger.debug 降级诊断（行为零变更）。
+    """
+    import logging
+
+    from src.screening.candidate_pool import _get_avg_amount_20d
+
+    mock_pro = MagicMock()
+    with patch(
+        "src.screening.candidate_pool._cached_tushare_dataframe_call",
+        side_effect=RuntimeError("simulated tushare transient failure"),
+    ):
+        with caplog.at_level(logging.DEBUG, logger="src.screening.candidate_pool"):
+            result = _get_avg_amount_20d(mock_pro, "000001.SZ", "20260304")
+
+    # 行为零变更: 仍返回 0.0 (consumer 继续按低流动性处理)
+    assert result == 0.0
+    # 可观测性: 必须有一条降级诊断日志
+    debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+    assert debug_records, "静默回退 0.0 时必须发 DEBUG 级降级诊断"
+    joined = "\n".join(r.getMessage() for r in debug_records)
+    assert "000001.SZ" in joined, "降级日志必须命名受影响的 ticker"
+
+
+
 # ============================================================================
 # 单元测试
 # ============================================================================

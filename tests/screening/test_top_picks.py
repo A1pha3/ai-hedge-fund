@@ -374,3 +374,32 @@ class TestEnrichWithConsecutiveBonus:
             result = top_picks._enrich_with_consecutive_bonus([], tmp_path)
 
         assert result[0]["consecutive_bonus"] == 0.0
+
+
+def test_print_hit_rate_block_logs_degradation_on_silent_failure(tmp_path, caplog):
+    """BH-021 / R48 BH-017 同族: 前门命中率摘要 (R5) 静默失败时必须发可观测日志。
+
+    背景: ``_print_hit_rate_block`` 此前 ``except Exception: pass`` 静默吞掉
+    ``compute_verify_recommendations`` 失败 → 用户看不到前门历史命中率摘要 (R5
+    能力)，且无任何信号表明 verify pipeline 降级。破坏"更高确信"目标。修复:
+    行为零变更 (仍 best-effort 跳过)，但发 logger.debug 降级诊断。
+    """
+    import logging
+    import unittest.mock as mock
+
+    from src.screening import top_picks
+
+    with mock.patch.object(
+        top_picks,
+        "compute_verify_recommendations",
+        side_effect=RuntimeError("simulated verify pipeline failure"),
+    ):
+        with caplog.at_level(logging.DEBUG, logger="src.screening.top_picks"):
+            # 必须不 raise (行为零变更)
+            top_picks._print_hit_rate_block(tmp_path)
+
+    debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+    assert debug_records, "verify pipeline 静默失败时必须发 DEBUG 级降级诊断"
+    joined = "\n".join(r.getMessage() for r in debug_records)
+    assert "hit-rate" in joined, "降级日志必须命名 hit-rate summary 降级"
+

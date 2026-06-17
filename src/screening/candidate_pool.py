@@ -15,6 +15,7 @@ Layer A 候选池构建器 — 全市场快筛
 
 import hashlib
 import json
+import logging
 import os
 import time
 from collections import defaultdict
@@ -103,6 +104,11 @@ _COOLDOWN_FILE = _SNAPSHOT_DIR / "cooldown_registry.json"
 _CORRIDOR_SHADOW_PACK_PATH = _PROJECT_ROOT / "data" / "reports" / "btst_candidate_pool_corridor_shadow_pack_latest.json"
 _UPSTREAM_HANDOFF_BOARD_PATH = _PROJECT_ROOT / "data" / "reports" / "btst_candidate_pool_upstream_handoff_board_latest.json"
 _UPSTREAM_REPEAT_SATURATION_BOARD_PATH = _PROJECT_ROOT / "data" / "reports" / "btst_upstream_shadow_repeat_saturation_board_latest.json"
+
+# BH-021 / R48-R50 BH-017 同族: candidate_pool 此前无 module logger。核心选股池
+# 缩减路径（流动性过滤）静默回退时需发降级诊断，便于运维排查瞬时 API 失败导致的
+# 候选池缩水。debug 级避免噪音，运维调高级别即可诊断。
+logger = logging.getLogger(__name__)
 
 # 常量
 MIN_LISTING_DAYS = 60
@@ -615,7 +621,13 @@ def _get_avg_amount_20d(pro, ts_code: str, trade_date: str) -> float:
         if df is None or df.empty:
             return 0.0
         return _resolve_avg_amount_20d_from_daily_df(df)
-    except Exception:
+    except Exception as exc:
+        # BH-021: 静默回退 0.0 会让此票被 consumer 误判为低流动性而过滤掉。
+        # 行为零变更（仍 return 0.0），但发降级诊断让瞬时 API 失败可观测。
+        logger.debug(
+            "avg_amount_20d degraded to 0.0 for %s @ %s: %s",
+            ts_code, trade_date, exc,
+        )
         return 0.0
 
 
@@ -653,7 +665,13 @@ def _get_recent_open_dates(pro, trade_date: str, lookback_sessions: int = 20) ->
         if df_cal is None or df_cal.empty:
             return []
         return _extract_recent_open_dates(df_cal, lookback_sessions)
-    except Exception:
+    except Exception as exc:
+        # BH-021 同族: trade_cal 拉取失败会让 _get_avg_amount_20d_map 拿不到开市日，
+        # 返回空 map → liquidity 过滤无法判流动性。发降级诊断便于排查。
+        logger.debug(
+            "recent_open_dates degraded to [] for %s (lookback=%s): %s",
+            trade_date, lookback_sessions, exc,
+        )
         return []
 
 
@@ -724,7 +742,11 @@ def _fetch_avg_amount_daily_frame(
     if batch_fetcher is not None:
         try:
             df = batch_fetcher.fetch_daily_prices_batch(trade_date)
-        except Exception:
+        except Exception as exc:
+            # BH-021 同族: batch 路径失败会回退到 tushare 长期缓存路径，发诊断。
+            logger.debug(
+                "avg_amount batch fetch degraded for %s: %s", trade_date, exc,
+            )
             df = None
         if df is not None and not df.empty:
             return df[["ts_code", "amount"]] if "amount" in df.columns else df
@@ -735,8 +757,12 @@ def _fetch_avg_amount_daily_frame(
             trade_date=trade_date,
             fields="ts_code,amount",
         )
-    except Exception:
+    except Exception as exc:
         # GAMMA-006: continue to next date instead of aborting entire batch
+        # BH-021 同族: 发降级诊断，让该 trade_date 静默跳过可观测。
+        logger.debug(
+            "avg_amount daily frame degraded to None for %s: %s", trade_date, exc,
+        )
         return None
 
 

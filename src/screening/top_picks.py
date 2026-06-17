@@ -1153,8 +1153,10 @@ def _print_hit_rate_block(report_dir: Path) -> None:
         summary = _render_hit_rate_summary(verify)
         if summary:
             print(summary)
-    except Exception:
-        pass  # Non-critical: hit-rate summary is best-effort
+    except Exception as exc:
+        # BH-021 / R48 BH-017 同族: 前门命中率摘要 (R5) 静默失败时用户看不到任何信号。
+        # 行为零变更 (仍 best-effort 跳过)，但发降级诊断让 verify pipeline 失败可观测。
+        logger.debug("hit-rate summary degraded to skip: %s", exc)
 
 
 def _print_top_picks_footer(
