@@ -78,12 +78,26 @@ def _safe_int(value: Any, default: int = 0) -> int:
     return int(fv)
 
 
-def _parse_date(date_str: str) -> datetime | None:
-    """YYYYMMDD / YYYY-MM-DD -> ``datetime``。"""
+def _normalize_compact_date(date_str: object) -> str | None:
+    """Normalize a date-like cell to compact ``YYYYMMDD`` digits.
+
+    Accepts ``YYYYMMDD`` / ``YYYY-MM-DD`` / empty. Returns ``None`` when the
+    value is empty or does not reduce to exactly 8 digits. Shared by
+    ``_parse_date`` and ``_format_date_display`` to avoid duplicated
+    dash-strip + length/isdigit validation.
+    """
     if not date_str:
         return None
     cleaned = str(date_str).replace("-", "").strip()
     if len(cleaned) != 8 or not cleaned.isdigit():
+        return None
+    return cleaned
+
+
+def _parse_date(date_str: str) -> datetime | None:
+    """YYYYMMDD / YYYY-MM-DD -> ``datetime``。"""
+    cleaned = _normalize_compact_date(date_str)
+    if cleaned is None:
         return None
     try:
         return datetime.strptime(cleaned, "%Y%m%d")
@@ -93,8 +107,8 @@ def _parse_date(date_str: str) -> datetime | None:
 
 def _format_date_display(date_str: str) -> str:
     """YYYYMMDD -> ``YYYY-MM-DD`` (显示用)。"""
-    cleaned = str(date_str).replace("-", "").strip()
-    if len(cleaned) == 8:
+    cleaned = _normalize_compact_date(date_str)
+    if cleaned is not None:
         return f"{cleaned[:4]}-{cleaned[4:6]}-{cleaned[6:]}"
     return date_str
 
@@ -390,10 +404,55 @@ def _compute_recommendation_hit_rate(recommendations: Sequence[Mapping[str, Any]
     return 0, 0.0, 0
 
 
-def _resolve_period_dates(period: str, end_date: str | None = None) -> tuple[str, str]:
-    """根据 period 和 end_date 解析出 (start_date, end_date) YYYYMMDD。"""
+def _latest_data_date(
+    positions_history: Sequence[Mapping[str, Any]],
+    trades: Sequence[Mapping[str, Any]],
+    tracking_history: Sequence[Mapping[str, Any]] | None = None,
+) -> str | None:
+    """BH-032 / R36-R62 同族: 从可用数据中找出最新可解析日期 (YYYYMMDD)。
+
+    扫描 positions_history 快照日期 + trades 日期 + tracking_history 推荐日期,
+    返回其中最新者。当所有数据日期均不可解析时返回 None —— caller 回退墙钟 now()
+    (live 兜底, 与 R36/R54/R61/R62 as_of=None live 模式一致)。
+
+    这是 data-anchored lookback 修复: 回填/历史分析时, 报告窗口应锚定到数据最新日期,
+    而非墙钟 now(), 否则报告标签显示当前日期而窗口与数据无关。
+    """
+    candidates: list[datetime] = []
+    for snap in positions_history or ():
+        dt = _parse_date(str(snap.get("date", "")))
+        if dt is not None:
+            candidates.append(dt)
+    for trade in trades or ():
+        dt = _parse_date(str(trade.get("date", "")))
+        if dt is not None:
+            candidates.append(dt)
+    for rec in tracking_history or ():
+        dt = _parse_date(str(rec.get("recommended_date", "")))
+        if dt is not None:
+            candidates.append(dt)
+    if not candidates:
+        return None
+    return max(candidates).strftime("%Y%m%d")
+
+
+def _resolve_period_dates(
+    period: str,
+    end_date: str | None = None,
+    *,
+    data_anchor: str | None = None,
+) -> tuple[str, str]:
+    """根据 period 和 end_date 解析出 (start_date, end_date) YYYYMMDD。
+
+    锚点优先级 (BH-032 / R36-R62 同族 data-anchored lookback):
+      1. 显式 ``end_date`` (live 显式指定 / 历史精确回测)
+      2. ``data_anchor`` (数据最新日期 — 回填/历史分析默认路径)
+      3. 墙钟 ``now()`` (live 兜底 — 无数据时报告今日空窗)
+    """
     if end_date:
         end_dt = _parse_date(end_date)
+    elif data_anchor:
+        end_dt = _parse_date(data_anchor)
     else:
         end_dt = datetime.now()
     if end_dt is None:
@@ -482,7 +541,11 @@ def generate_performance_report(
     Returns:
         PerformanceReport
     """
-    start_date, resolved_end = _resolve_period_dates(period, end_date)
+    start_date, resolved_end = _resolve_period_dates(
+        period,
+        end_date,
+        data_anchor=_latest_data_date(positions_history, trades, tracking_history),
+    )
 
     # 1. 收益
     total_return = _compute_total_return(positions_history, start_date, resolved_end)

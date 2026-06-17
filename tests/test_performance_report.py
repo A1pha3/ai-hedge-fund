@@ -556,6 +556,58 @@ def test_period_dates_monthly():
     assert start == "20260508"
 
 
+def test_period_dates_weekly_anchored_to_data_when_end_date_none():
+    """BH-032 / R36-R62 同族: end_date=None 时锚定数据最新日期, 而非墙钟 now()。
+
+    回填/历史分析场景: 2026-02 的 backfilled 数据在 2026-06 墙钟下生成周报时,
+    报告标签必须锚定到数据中最新日期 (2026-02-28), 而非墙钟 (2026-06-17)。
+    否则报告头显示当前日期, 误导用户校准绩效窗口。
+    与 R36/R54/R61/R62 data-anchored lookback 修复同型。
+    """
+    positions_history = [
+        {"date": "20260228", "portfolio_value": 100000.0, "positions": []},
+        {"date": "20260215", "portfolio_value": 95000.0, "positions": []},
+    ]
+    trades = [
+        {"date": "20260220", "ticker": "000001", "pnl": 120.0, "strategy": "value"},
+        {"date": "20260225", "ticker": "600000", "pnl": -80.0, "strategy": "growth"},
+    ]
+    report = generate_performance_report(
+        positions_history=positions_history,
+        trades=trades,
+        recommendations=[],
+        tracking_history=[],
+        period="weekly",
+        end_date=None,  # data-anchored: must resolve to latest snapshot/trade date
+    )
+    # end_date must be the latest available data date (2026-02-28), not today (2026-06-17).
+    assert report.end_date == "20260228", (
+        f"BH-032: end_date should anchor to latest data date (20260228), got {report.end_date}"
+    )
+    # start_date = end_date - 7 days (weekly).
+    assert report.start_date == "20260221", (
+        f"BH-032: start_date should be end_date - 7d (20260221), got {report.start_date}"
+    )
+
+
+def test_period_dates_explicit_end_date_still_wins():
+    """显式 end_date 仍优先于 data anchor (与 R36/R54 as_of 优先级一致)。"""
+    positions_history = [
+        {"date": "20260228", "portfolio_value": 100000.0, "positions": []},
+    ]
+    report = generate_performance_report(
+        positions_history=positions_history,
+        trades=[],
+        recommendations=[],
+        tracking_history=[],
+        period="weekly",
+        end_date="20260315",  # explicit, must win over data anchor
+    )
+    assert report.end_date == "20260315"
+    assert report.start_date == "20260308"
+
+
+
 def test_volatility():
     """波动率计算。"""
     returns = [0.01, -0.005, 0.02, -0.01, 0.015]
