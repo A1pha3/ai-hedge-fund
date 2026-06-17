@@ -164,23 +164,23 @@ def _compute_dimension_bonus_map(
     attr_name: str,
     *,
     top_n: int,
-    lookback_days: int,
     search_dir: Path,
+    lookback_days: int | None = None,
 ) -> dict[str, float]:
     """Compute a ``{ticker: bonus}`` map for one composite dimension.
 
-    Shared shape for momentum / sector / volume dimensions, which all take
-    ``(top_n, lookback_days, reports_dir)`` and expose a report with ``.items``
-    carrying a per-ticker bonus attribute. On any failure the dimension
-    degrades to an empty map (composite then scores that dimension as 0) and
-    emits a BH-021 debug log so the degradation is observable instead of silent.
+    Shared shape for momentum / sector / volume / trend dimensions, which all
+    expose a report with ``.items`` carrying a per-ticker bonus attribute.
+    ``lookback_days`` is forwarded only when provided (trend uses just
+    ``top_n`` + ``reports_dir``). On any failure the dimension degrades to an
+    empty map (composite then scores that dimension as 0) and emits a BH-021
+    debug log so the degradation is observable instead of silent.
     """
+    compute_kwargs: dict[str, Any] = {"top_n": top_n, "reports_dir": search_dir}
+    if lookback_days is not None:
+        compute_kwargs["lookback_days"] = lookback_days
     try:
-        report = compute_fn(
-            top_n=top_n,
-            lookback_days=lookback_days,
-            reports_dir=search_dir,
-        )
+        report = compute_fn(**compute_kwargs)
         return {item.ticker: getattr(item, attr_name) for item in report.items}
     except Exception as exc:
         # BH-021 / R48 BH-017 同族: 该维度降级 → bonus 全部 0，composite 偏差
@@ -230,17 +230,12 @@ def compute_composite_scores_for_recommendations(
         logger.debug("composite consistency dimension degraded to {}: %s", exc)
         consistency_map = {}
 
-    # Compute trend resonance (P14-1)
-    try:
-        trend_report = compute_trend_resonance(
-            top_n=top_n,
-            reports_dir=search_dir,
-        )
-        trend_map = {item.ticker: item.resonance_factor for item in trend_report.items}
-    except Exception as exc:
-        # BH-021 / R48 BH-017 同族: trend 维度降级 → resonance_factor 全部 0。
-        logger.debug("composite trend dimension degraded to {}: %s", exc)
-        trend_map = {}
+    # Compute trend resonance (P14-1) — uses _compute_dimension_bonus_map with
+    # lookback_days=None (trend only takes top_n + reports_dir).
+    trend_map = _compute_dimension_bonus_map(
+        "trend", compute_trend_resonance, "resonance_factor",
+        top_n=top_n, search_dir=search_dir,
+    )
 
     # Build composite entries
     items: list[CompositeEntry] = []

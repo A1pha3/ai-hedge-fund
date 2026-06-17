@@ -166,4 +166,4 @@
 
 ---
 
-> **最后更新**：2026-06-17（Campaign 37：完成 R59 US-equity 数据边界降级可观测性 BH-023 / BH-021 同族续集）
+> **最后更新**：2026-06-17（Campaign 38：composite_score trend 维度并入 `_compute_dimension_bonus_map` helper，4/5 维度共享 helper — R58 重构续集）
