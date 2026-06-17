@@ -516,13 +516,22 @@ def _summarize_history(
     Args:
         history: 全部记录列表
         lookback_days: 仅统计近 N 天 (含) 的推荐; <=0 表示全部
-        as_of: lookback 窗口的参考时刻。默认 ``datetime.now()``。
+        as_of: lookback 窗口的参考时刻。
 
             CAMPAIGN2-BH-7: lookback 此前锚定机器墙钟 ``datetime.now()``，
             而模块其余部分是确定性的 (基于 ``trade_date``)。回填历史推荐时，
             若墙钟已远晚于推荐日，回填记录会被静默丢出 lookback 窗口，
             即使它已有成熟 T+30 收益。显式传 ``as_of`` (通常 = 报告 trade_date)
             让统计可复现且不丢回填数据。
+
+            R62 / BH-026: 即便调用方不传 ``as_of``（默认 None），lookback
+            窗口也应锚定到历史记录的最新 ``recommended_date``（data-anchored），
+            而非墙钟 ``datetime.now()``。两个 live CLI 入口（``run_tracking_summary``
+            / ``--auto`` 的 ``get_tracking_summary``）此前从不传 ``as_of``，导致
+            回填/历史分析（如 2026-01 backfilled tracking_history.json 在 2026-06
+            墙钟下跑 ``--tracking-summary --lookback=30``）静默丢弃全部记录。
+            与 R36 / R54 / R61 wall-clock-anchored lookback 同族修复对称；仅当历史
+            记录无可解析日期时回退 ``datetime.now()``（live 兜底，保持旧行为）。
 
     Returns:
         ``{
@@ -540,7 +549,12 @@ def _summarize_history(
             "avg_return_day5": float | None,
         }``
     """
-    today = as_of if as_of is not None else datetime.now()
+    # R62 / BH-026: 默认锚点优先级 显式 as_of > 历史记录最新 recommended_date
+    # (data-anchored, 与 R36/R54/R61 同族一致) > 墙钟 now() (live 兜底)。
+    if as_of is not None:
+        today = as_of
+    else:
+        today = _latest_recommended_date(history) or datetime.now()
     cutoff: datetime | None = None
     if lookback_days > 0:
         cutoff = today - timedelta(days=lookback_days)
@@ -611,10 +625,14 @@ def render_tracking_summary(
     Args:
         history_path: ``tracking_history.json`` 路径
         lookback_days: 回溯天数 (默认 30)
-        as_of: lookback 窗口参考时刻; 默认 ``datetime.now()`` (旧行为)。
+        as_of: lookback 窗口参考时刻。
 
             CAMPAIGN2-BH-7: 回填历史推荐时显式传 ``as_of = 报告 trade_date``，
-            否则墙钟已远晚于推荐日会静默丢出窗口。
+            否则锚点回退到默认值。
+
+            R62 / BH-026: ``as_of=None`` 默认锚定到历史记录最新 ``recommended_date``
+            (data-anchored)，而非墙钟 ``datetime.now()`` —— 回填/历史分析不再静默
+            丢出窗口。详见 ``_summarize_history``。
 
     Returns:
         多行字符串, 含胜率与平均收益; 无数据时返回提示行。
@@ -668,10 +686,14 @@ def get_tracking_summary(
     Args:
         history_path: ``tracking_history.json`` 路径
         lookback_days: 回溯天数 (默认 30)
-        as_of: lookback 窗口参考时刻; 默认 ``datetime.now()`` (旧行为)。
+        as_of: lookback 窗口参考时刻。
 
             CAMPAIGN2-BH-7: 回填时显式传 ``as_of = 报告 trade_date`` 让窗口
             相对于数据时间而非墙钟，避免回填记录被静默丢出。
+
+            R62 / BH-026: ``as_of=None`` 默认锚定到历史记录最新 ``recommended_date``
+            (data-anchored)，而非墙钟 ``datetime.now()`` —— 回填/历史分析不再静默
+            丢出窗口。详见 ``_summarize_history``。
 
     Returns:
         详见 ``_summarize_history``。当历史为空时, ``total_recommendations=0``。

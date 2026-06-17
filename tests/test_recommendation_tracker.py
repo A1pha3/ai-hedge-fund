@@ -501,13 +501,37 @@ def test_get_tracking_summary_includes_extended_horizons(tmp_path: Path):
 
 
 def test_render_tracking_summary_no_data_in_lookback(tmp_path: Path):
+    """R62 后默认锚点是 data-anchored（最新 recommended_date），所以一条记录在
+    以它自身为锚的 lookback 窗口内**会被包含**。要真正触发"无数据"提示，需要让记录
+    落在 data-anchored 窗口之外：用两条日期相隔 >30 天的记录 + lookback=30，旧的那条
+    会被丢，新的仍在窗口 → 不触发"无推荐记录"。为真正测"无数据"路径，用显式 ``as_of``
+    锚定到记录**之后**足够远，让唯一记录落在窗口外。"""
     history = [
         {"ticker": "OLD", "recommended_date": "20200101", "next_day_return": 10.0, "next_3day_return": 20.0, "next_5day_return": 30.0},
     ]
     history_path = tmp_path / HISTORY_FILENAME
     _save_history(history_path, history)
+    # 显式锚定到记录之后 (20200201)，lookback=10 → cutoff=20200122，
+    # 唯一记录 20200101 < cutoff → 被丢 → "无推荐记录" 路径。
+    output = render_tracking_summary(history_path, lookback_days=10, as_of=datetime(2020, 2, 1))
+    assert "近 10 天内无推荐记录" in output
+
+
+def test_render_tracking_summary_data_anchored_includes_backfilled(tmp_path: Path):
+    """R62 / BH-026: 默认 ``as_of=None`` 锚定到最新 ``recommended_date``，
+    回填/历史分析不再被墙钟静默丢出窗口。一个 2026-01 backfilled tracking_history
+    在远晚墙钟（2026-06）下跑 ``--tracking-summary --lookback=30`` 应包含记录，
+    而非返回"无推荐记录"。"""
+    history = [
+        {"ticker": "000001", "recommended_date": "20260105", "next_day_return": 5.0},
+        {"ticker": "000002", "recommended_date": "20260115", "next_day_return": -2.0},
+    ]
+    history_path = tmp_path / HISTORY_FILENAME
+    _save_history(history_path, history)
+    # as_of=None → data-anchored 到 20260115，lookback=30 → 两条都在窗口内。
     output = render_tracking_summary(history_path, lookback_days=30)
-    assert "近 30 天内无推荐记录" in output
+    assert "跟踪总结" in output
+    assert "总推荐: 2 只" in output
 
 
 def test_summarize_history_as_of_includes_backfilled_records_in_window():
@@ -516,21 +540,63 @@ def test_summarize_history_as_of_includes_backfilled_records_in_window():
     recommendations (older than ``now`` but within N days of their own
     ``as_of``) are not silently dropped from win-rate.
 
-    Default behavior (as_of=None → datetime.now()) still excludes old records
-    (see test_render_tracking_summary_no_data_in_lookback). This test pins the
-    new ``as_of`` capability that callers use during backfill.
+    R62 / BH-026: 默认 ``as_of=None`` 现在也锚定到历史记录最新
+    ``recommended_date``（data-anchored），所以即便不传 ``as_of``，回填记录也
+    会被包含（见 test_summarize_history_default_anchor_is_data_anchored）。
+    本测试保留对显式 ``as_of`` 的覆盖，并验证它**能**把窗口收窄到排除较旧记录。
     """
     history = [
         {"ticker": "000001", "recommended_date": "20200101", "next_day_return": 5.0},
         {"ticker": "000002", "recommended_date": "20200105", "next_day_return": -2.0},
     ]
-    # Anchor to the data's own time: 20200105. Window = 30 days → both included.
+    # Anchor to 20200105 (最新记录日). Window = 30 天 → 两条都在窗口内。
     as_of = datetime(2020, 1, 5)
     summary = _summarize_history(history, lookback_days=30, as_of=as_of)
     assert summary["total_recommendations"] == 2
-    # Wall-clock default would exclude BOTH (they're years before now()).
-    summary_now = _summarize_history(history, lookback_days=30)
-    assert summary_now["total_recommendations"] == 0
+    # 显式 as_of 锚到 20200105 + lookback=2 → cutoff=20200103，
+    # 20200101 < cutoff → 被排除; 20200105 >= cutoff → 保留。
+    summary_narrow = _summarize_history(history, lookback_days=2, as_of=datetime(2020, 1, 5))
+    assert summary_narrow["total_recommendations"] == 1
+
+
+def test_summarize_history_default_anchor_is_data_anchored():
+    """R62 / BH-026: ``_summarize_history(as_of=None)`` 默认锚点应锚定到历史
+    记录的最新 ``recommended_date``（data-anchored），而非墙钟 ``datetime.now()``。
+
+    与 R36 / R54 / R61 同族修复对称：BH-007 虽已加 ``as_of`` 能力，但两个 live
+    CLI 入口（``run_tracking_summary`` / ``--auto`` 的 ``get_tracking_summary``）
+    从未传 ``as_of``，导致回填/历史分析（如 2026-01 backfilled tracking_history.json
+    在 2026-06 墙钟下跑 ``--tracking-summary --lookback=30``）静默丢弃全部记录
+    （``now() - 30d`` cutoff 远晚于 2026-01），返回"近 30 天内无推荐记录"。
+
+    data-anchored 默认让回填数据的统计相对于数据自身时间而非机器墙钟，与 R61
+    ``compute_winrate_dashboard`` 的 ``_latest_record_date(history) or datetime.now()``
+    完全同型。仅当历史记录无可解析日期时回退 ``datetime.now()``（live 兜底）。
+    """
+    history = [
+        {"ticker": "000001", "recommended_date": "20260105", "next_day_return": 5.0},
+        {"ticker": "000002", "recommended_date": "20260115", "next_day_return": -2.0},
+    ]
+    # 默认 as_of=None：应锚定到最新记录 20260115，lookback=30 → 两条都在窗口内。
+    # 旧墙钟默认会让 2026-01 记录全部被丢（now() 远晚于 2026-01）。
+    summary_default = _summarize_history(history, lookback_days=30)
+    assert summary_default["total_recommendations"] == 2
+
+
+def test_summarize_history_default_falls_back_to_wallclock_when_no_dates():
+    """R62 兜底：当历史记录的 ``recommended_date`` 全部不可解析时，
+    ``_latest_recommended_date`` 返回 None，默认锚点回退到墙钟 ``datetime.now()``
+    （保持 live 行为，不崩）。此时记录本身因 ``_parse_date`` 返回 None 而不入
+    ``scoped``（既有行为，不受 R62 影响）；本测试只断言回退路径不抛异常且返回
+    合法空摘要，而非墙钟误丢。"""
+    history = [
+        {"ticker": "BAD", "recommended_date": "", "next_day_return": 5.0},
+        {"ticker": "BAD2", "recommended_date": "not-a-date", "next_day_return": 1.0},
+    ]
+    # 无可解析日期 → 回退墙钟，函数不抛异常，返回合法空摘要。
+    summary = _summarize_history(history, lookback_days=30)
+    assert summary["total_recommendations"] == 0
+    assert "lookback_days" in summary
 
 
 # ---------------------------------------------------------------------------
