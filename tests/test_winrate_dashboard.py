@@ -492,3 +492,66 @@ class TestTrendWindowOverlap:
         path = _write_history(tmp_path, records)
         summary = compute_winrate_dashboard(path, lookback_days=30)
         assert summary.trend == "declining", f"Expected declining, got {summary.trend}"
+
+
+# ---------------------------------------------------------------------------
+# Test 14: R61 BUG — wall-clock anchored lookback drops backfilled history
+# ---------------------------------------------------------------------------
+
+
+class TestLookbackAnchoredToData:
+    """R36/R54 同族 bug: compute_winrate_dashboard anchored the lookback cutoff to
+    ``datetime.now()`` (wall-clock) instead of the latest record date in the file.
+
+    Impact: a tracking_history.json containing e.g. 2026-01 records, run in 2026-06
+    wall-clock with --lookback=30, silently returned an EMPTY dashboard even though
+    all records are mutually within the 30-day window. Identical silent-backfill-data-
+    loss defect as R54 (verify_recommendations) and R36 (consecutive streak lookback).
+    Fix mirrors R36/R54: anchor cutoff to the latest record date (data-anchored),
+    with an optional as_of override for testing/backfill.
+    """
+
+    def test_backfilled_history_not_silently_dropped(self, tmp_path: Path) -> None:
+        """2026-01 records run under 2026-06 wall-clock must NOT be silently dropped.
+
+        Records are mutually within 30d window (Jan 15-20). Without the fix the
+        now()-anchored cutoff (≈ late May) drops all of them → empty dashboard.
+        """
+        # Use absolute 2026-01 dates so the test is deterministic regardless of when
+        # pytest runs (NOT _days_ago).
+        records = [
+            _make_record("000001", "2026-01-15", next_day_return=2.0, next_3day_return=3.0, next_5day_return=1.0),
+            _make_record("000002", "2026-01-16", next_day_return=-1.0, next_3day_return=0.5, next_5day_return=2.0),
+            _make_record("000003", "2026-01-20", next_day_return=1.5, next_3day_return=-0.5, next_5day_return=0.0),
+        ]
+        path = _write_history(tmp_path, records)
+        summary = compute_winrate_dashboard(path, lookback_days=30)
+        # Data-anchored cutoff (latest=2026-01-20) → all three days within window.
+        assert summary.total_days == 3, (
+            f"BUG R61: backfilled 2026-01 history silently dropped under wall-clock "
+            f"lookback (got total_days={summary.total_days}, expected 3)"
+        )
+        assert summary.total_recommendations == 3
+
+    def test_as_of_override_anchors_cutoff_explicitly(self, tmp_path: Path) -> None:
+        """Explicit as_of must drive the cutoff regardless of wall-clock."""
+        records = [
+            _make_record("000001", "2026-01-10", next_day_return=1.0),
+            _make_record("000002", "2026-01-20", next_day_return=2.0),
+            # Outside a 30d window ending 2026-01-20:
+            _make_record("000003", "2025-12-05", next_day_return=3.0),
+        ]
+        path = _write_history(tmp_path, records)
+        # as_of=2026-01-20, lookback=30 → cutoff=2025-12-21 → drops 2025-12-05 only.
+        summary = compute_winrate_dashboard(path, lookback_days=30, as_of="2026-01-20")
+        assert summary.total_days == 2, f"Expected 2 days within as_of window, got {summary.total_days}"
+        dates = {d.date for d in summary.daily}
+        assert "20260110" in dates and "20260120" in dates
+        assert "20251205" not in dates
+
+    def test_empty_history_still_returns_empty(self, tmp_path: Path) -> None:
+        """as_of must not break the empty-history degenerate path."""
+        path = _write_history(tmp_path, [])
+        summary = compute_winrate_dashboard(path, lookback_days=30, as_of="2026-01-20")
+        assert summary.total_days == 0
+        assert summary.total_recommendations == 0

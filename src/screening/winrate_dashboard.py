@@ -140,6 +140,16 @@ def _format_date_short(date_str: str) -> str:
     return date_str
 
 
+def _latest_record_date(history: list[dict[str, Any]]) -> datetime | None:
+    """返回 ``history`` 中最新可解析的 ``recommended_date``; 无可解析日期返回 None。"""
+    latest: datetime | None = None
+    for rec in history:
+        dt = _parse_date(str(rec.get("recommended_date", "") or ""))
+        if dt is not None and (latest is None or dt > latest):
+            latest = dt
+    return latest
+
+
 def _load_tracking_history(path: Path) -> list[dict[str, Any]]:
     """读取 tracking_history.json; 缺失/损坏返回空列表。
 
@@ -223,12 +233,22 @@ def _determine_trend(daily_rates: list[DailyWinRate], window: int = 7) -> str:
 def compute_winrate_dashboard(
     tracking_history_path: Path,
     lookback_days: int = 30,
+    as_of: str | None = None,
 ) -> WinRateSummary:
     """从 P1-3 tracking_history.json 中读取历史推荐和实际收益, 按日聚合胜率和平均收益。
 
     Args:
         tracking_history_path: ``data/reports/tracking_history.json`` 路径
         lookback_days: 回溯天数 (默认 30)
+        as_of: 可选锚点日期 (YYYYMMDD 或 YYYY-MM-DD)。回溯窗口的右边界锚定到此日期,
+            而非墙钟 ``datetime.now()``。缺省时锚定到历史记录中的**最新推荐日期**
+            (data-anchored, 与 R36/R54 同族修复一致), 仅当历史记录无法解析出任何日期
+            时回退到 ``datetime.now()``。
+
+            为什么不锚定墙钟: 一个 2026-01 的 backfilled tracking_history.json 在
+            2026-06 墙钟下跑 ``--lookback=30`` 会因 ``now() - 30d`` cutoff 静默丢弃全部
+            记录 (尽管记录彼此都在 30 天窗口内), 返回空看板。这是 R36 / R54 同族的
+            wall-clock-anchored lookback 缺陷。
 
     Returns:
         :class:`WinRateSummary` 含汇总统计和日度趋势数据。
@@ -238,8 +258,15 @@ def compute_winrate_dashboard(
         return WinRateSummary(period_days=lookback_days)
 
     # 按日期切分
-    today = datetime.now()
-    cutoff = today - timedelta(days=lookback_days)
+    # 锚点优先级: 显式 as_of > 历史记录最新日期 > 墙钟 now() (live 兜底)。
+    # data-anchored 修复 R36/R54 同族 wall-clock lookback 缺陷。
+    anchor_dt = _parse_date(as_of) if as_of else None
+    if anchor_dt is None:
+        anchor_dt = _latest_record_date(history)
+    if anchor_dt is None:
+        # 历史记录无任何可解析日期 — 退化为墙钟 (保持 live 行为, 不丢已有数据)。
+        anchor_dt = datetime.now()
+    cutoff = anchor_dt - timedelta(days=lookback_days)
 
     by_date: dict[str, list[dict[str, Any]]] = {}
     for rec in history:

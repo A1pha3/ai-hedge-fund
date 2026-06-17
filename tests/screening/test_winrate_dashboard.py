@@ -239,13 +239,24 @@ class TestComputeWinrateDashboard:
         assert result.total_days >= 1
         assert result.total_recommendations == 2
 
-    def test_old_data_excluded(self, tmp_path) -> None:
+    def test_old_data_anchored_to_latest_not_wall_clock(self, tmp_path) -> None:
+        # R61 (BH-025, R36/R54 同族): lookback cutoff 锚定最新记录日期而非墙钟 now()。
+        # 一个孤立的 60 天前记录是历史中的"最新"数据 — data-anchored 下它在自身
+        # 窗口内, 应被展示而非静默丢弃 (与 R36/R54 同族修复一致)。
+        # 旧的 wall-clock 行为会返回 total_days==0 ("无数据"), 这是被 R61 修复的缺陷。
         path = tmp_path / "tracking_history.json"
         old_date = (datetime.now() - timedelta(days=60)).strftime("%Y%m%d")
         records = {"records": [{"recommended_date": old_date, "next_day_return": 1.0}]}
         path.write_text(json.dumps(records), encoding="utf-8")
         result = compute_winrate_dashboard(path, lookback_days=30)
-        assert result.total_days == 0
+        # data-anchored: 该记录是最新记录, 在自身 30d 窗口内 → 展示
+        assert result.total_days == 1
+        assert result.total_recommendations == 1
+        # 显式 as_of=now 钉死墙钟锚点 → 60 天前记录确实落在 30d 窗口外
+        result_strict = compute_winrate_dashboard(
+            path, lookback_days=30, as_of=datetime.now().strftime("%Y%m%d")
+        )
+        assert result_strict.total_days == 0
 
     def test_invalid_date_excluded(self, tmp_path) -> None:
         path = tmp_path / "tracking_history.json"
