@@ -1,6 +1,12 @@
+import logging
 from datetime import datetime
 
 from src.data.models import CompanyNews, CompanyNewsResponse
+
+# BH-024 / BH-023 同族: US-equity news 解析边界此前无 module logger。Pydantic
+# 解析失败时静默 break 分页 → news agents 拿到部分新闻做 sentiment 分析，
+# 偏差且无信号。debug 级降级诊断让运维可定位 news 拉取降级。
+logger = logging.getLogger(__name__)
 
 
 def build_company_news_cache_key(ticker: str, start_date: str | None, end_date: str, limit: int, *, ashare: bool = False) -> str:
@@ -50,7 +56,13 @@ def fetch_remote_company_news(make_api_request, ticker: str, end_date: str, star
 
         try:
             company_news = CompanyNewsResponse(**response.json()).news
-        except Exception:
+        except Exception as exc:
+            # BH-024 / BH-023 同族: news 响应解析失败时静默 break 分页 → news
+            # agents 拿到部分新闻做 sentiment 分析，偏差且无信号。发降级诊断。
+            logger.debug(
+                "company_news response parse degraded (break pagination) for %s: %s",
+                ticker, exc,
+            )
             break
 
         if not company_news:

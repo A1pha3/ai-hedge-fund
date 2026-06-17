@@ -1,6 +1,12 @@
+import logging
 import os
 
 from src.data.models import InsiderTrade, InsiderTradeResponse
+
+# BH-024 / BH-023 同族: US-equity insider trades 解析边界此前无 module logger。
+# Pydantic 解析失败时静默 break 分页 → 内部交易数据缺失且无信号。debug 级
+# 降级诊断让运维可定位 insider trades 拉取降级。
+logger = logging.getLogger(__name__)
 
 
 def build_insider_trade_cache_key(ticker: str, start_date: str | None, end_date: str, limit: int) -> str:
@@ -43,7 +49,13 @@ def fetch_remote_insider_trades(make_api_request, ticker: str, end_date: str, st
 
         try:
             insider_trades = InsiderTradeResponse(**response.json()).insider_trades
-        except Exception:
+        except Exception as exc:
+            # BH-024 / BH-023 同族: insider trades 响应解析失败时静默 break
+            # 分页 → 内部交易数据缺失且无信号。发降级诊断。
+            logger.debug(
+                "insider_trades response parse degraded (break pagination) for %s: %s",
+                ticker, exc,
+            )
             break
 
         if not insider_trades:
