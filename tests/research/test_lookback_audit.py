@@ -661,3 +661,29 @@ class TestNaNPriceGuards:
         assert tr.data_status == "no_forward_data"
         assert tr.return_pct is None
         assert result.audited_count == 0
+
+
+def test_r103_price_fetcher_silent_failure_emits_debug_diagnostic(caplog):
+    """R103 (BH-017/R48-R50/R57-R60/R63 family): ``PriceFetcher.fetch`` previously
+    had ``except Exception: return []`` with no logging — a forward-price fetch
+    failure (akshare API / network / rate limit) silently produced an empty
+    price series, making the lookback audit evaluate data-missing as a clean
+    "no anomaly". Behavior is still best-effort empty, but now emits a debug
+    diagnostic so operators can distinguish "no prices" vs "fetch broke"."""
+    fetcher = PriceFetcher(use_robust=False)
+
+    # Force the underlying get_prices import to raise on call.
+    import src.tools.akshare_api as akshare_api
+
+    orig = akshare_api.get_prices
+    akshare_api.get_prices = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("api down"))
+    try:
+        with caplog.at_level("DEBUG", logger="src.research.lookback_audit"):
+            out = fetcher.fetch("000001", "20260101", "20260110")
+    finally:
+        akshare_api.get_prices = orig
+
+    # Behavior preserved: empty list, no raise.
+    assert out == []
+    # Diagnostic emitted.
+    assert any("forward price fetch failed" in rec.message for rec in caplog.records)

@@ -187,7 +187,22 @@ class PriceFetcher:
             else:
                 from src.tools.akshare_api import get_prices
                 return get_prices(ticker, start_date, end_date)
-        except Exception:
+        except Exception as exc:
+            # R103 (BH-017/R48-R50/R57-R60/R63 family): a silent ``return []``
+            # made the forward-price fetch (akshare API failure / network / rate
+            # limit) invisible — the lookback audit then evaluates data-missing
+            # as if it were a clean "no anomaly", undermining the trust goal.
+            # Emit a debug diagnostic (behavior unchanged, still best-effort
+            # empty) so operators can distinguish "no forward prices for this
+            # ticker" vs "price fetch broke".
+            logger.debug(
+                "lookback_audit: forward price fetch failed for %s "
+                "(%s ~ %s): %s; 降级为空价格序列",
+                ticker,
+                start_date,
+                end_date,
+                exc,
+            )
             return []
 
 
