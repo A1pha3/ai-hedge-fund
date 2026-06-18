@@ -34,6 +34,7 @@ import pandas as pd
 from src.data.macro_data import _as_of_month, _filter_df_as_of
 from src.tools.tushare_api import _apply_qfq_adjustment, filter_stock_basic_as_of
 from src.tools.tushare_financial_metrics_helpers import _should_include_financial_period
+from src.tools.tushare_line_items_helpers import should_include_period as _line_items_should_include_period
 
 # Shared anchor: the simulated trade date. Every look-ahead datum in this
 # scenario is "known to us today" but was NOT knowable on AS_OF.
@@ -157,3 +158,28 @@ def test_r43_pit_invariant_all_primitives_agree_on_the_shared_as_of() -> None:
 
     # The shared AS_OF is consistently "inclusive on the boundary" across paths:
     # a record dated exactly AS_OF is legitimate (announced/listed/on-month).
+
+
+def test_r74_pit_invariant_line_items_ann_date_excludes_future_filings() -> None:
+    """R74 (R41 lookahead family on the line_items path): balancesheet /
+    cashflow / income / fina_indicator frames now filter by ``ann_date`` the
+    same way R41's metrics path does. A 2023 annual report announced 2024-04-30
+    must NOT be visible to a January (AS_OF=20240115) backtest that consumes
+    ``search_line_items`` → ``get_ashare_line_items_with_tushare``."""
+    # Legitimate: announced 2024-01-10, before AS_OF.
+    legit = _line_items_should_include_period(
+        "20231231", "annual", ann_date_str="20240110", as_of_date=AS_OF
+    )
+    assert legit is True, "line_items report announced before AS_OF is PIT-legitimate"
+
+    # Look-ahead: same 2023 annual report, but announced 2024-04-30 (after AS_OF).
+    lookahead = _line_items_should_include_period(
+        "20231231", "annual", ann_date_str="20240430", as_of_date=AS_OF
+    )
+    assert lookahead is False, (
+        "line_items report announced after AS_OF is look-ahead and must be excluded"
+    )
+
+    # Live-mode fallback: missing ann_date → no PIT filter (live path unchanged).
+    live = _line_items_should_include_period("20231231", "annual", ann_date_str=None, as_of_date=AS_OF)
+    assert live is True

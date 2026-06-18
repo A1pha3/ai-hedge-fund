@@ -127,11 +127,13 @@ def _run_walk_forward_mode(args, build_engine) -> int:
     # the project-level disclaimer inline keeps users from over-reading the numbers.
     print("⚠ 回测/滚动验证为历史样本统计，不代表未来收益；实际交易还需计入滑点、流动性、政策与择时风险。")
     # R44 (gamma trust calibration): disclose the point-in-time (PIT) look-ahead
-    # surface that has been hardened (R37-R41) so users can calibrate how much to
-    # trust the numbers. R42 is now closed by product decision: this product does
-    # not research delisted names, so historical backtests keep the current-listed
-    # A-share universe and disclose that sample boundary explicitly.
-    print("ℹ 已加固的前瞻数据路径 (R37-R41): 价格前复权 / A 股真实交易日历 / 宏观 as_of 过滤 / 财报 ann_date 过滤。"
+    # surface that has been hardened (R37-R41, R74) so users can calibrate how
+    # much to trust the numbers. R42 is now closed by product decision: this
+    # product does not research delisted names, so historical backtests keep the
+    # current-listed A-share universe and disclose that sample boundary
+    # explicitly. R74 extended ann_date PIT filtering from the fina_indicator
+    # metrics path (R41) to the balancesheet/cashflow/income line_items path.
+    print("ℹ 已加固的前瞻数据路径 (R37-R41, R74): 价格前复权 / A 股真实交易日历 / 宏观 as_of 过滤 / 财报 ann_date 过滤 (含三大报表 line_items)。"
           "当前股票池口径: 仅覆盖当前上市 A 股；退市标的不进入回测候选池。")
     return 0
 

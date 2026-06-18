@@ -650,6 +650,7 @@ def _build_tushare_line_items(
     df_bal: pd.DataFrame | None,
     df_cash: pd.DataFrame | None,
     df_income: pd.DataFrame | None,
+    as_of_date: str | None = None,
 ) -> list[LineItem]:
     return build_line_items_from_frames(
         ticker=ticker,
@@ -660,6 +661,7 @@ def _build_tushare_line_items(
         df_bal=df_bal,
         df_cash=df_cash,
         df_income=df_income,
+        as_of_date=as_of_date,
     )
 
 
@@ -670,6 +672,7 @@ def _resolve_tushare_line_items(
     line_items: list[str],
     period: str,
     limit: int,
+    as_of_date: str | None = None,
 ) -> list[LineItem]:
     ts_code = _to_ts_code(ticker)
     df_fin, df_bal, df_cash, df_income = _load_tushare_line_item_frames(
@@ -688,6 +691,7 @@ def _resolve_tushare_line_items(
         df_bal=df_bal,
         df_cash=df_cash,
         df_income=df_income,
+        as_of_date=as_of_date,
     )
 
 
@@ -701,7 +705,12 @@ def get_ashare_line_items_with_tushare(
     """
     使用 Tushare 获取 A 股财务项目数据
 
-    将 Tushare 的财务指标数据映射为 LineItem 格式
+    将 Tushare 的财务指标数据映射为 LineItem 格式。
+
+    ``end_date`` 作为 point-in-time ``as_of`` 锚点传到
+    ``build_line_items_from_frames``（R74）：一个 ann_date 严格晚于 ``end_date``
+    的报告被视为 look-ahead 并剔除（仅在 balancesheet/cashflow/income/
+    fina_indicator frames 含 ann_date 列时生效；缺失 ann_date 时保持 live 行为）。
     """
     pro = _get_pro()
     if not pro:
@@ -714,6 +723,7 @@ def get_ashare_line_items_with_tushare(
             line_items=line_items,
             period=period,
             limit=limit,
+            as_of_date=end_date,
         )
     except Exception as e:
         print(f"[Tushare] 获取财务项目失败: {e}")

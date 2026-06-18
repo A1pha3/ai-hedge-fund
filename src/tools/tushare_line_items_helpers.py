@@ -42,11 +42,52 @@ def _fetch_optional_frame(fetch_call, pro, api_name: str, ts_code: str, fetch_li
         return None
 
 
-def should_include_period(end_date_str: str, period: str) -> bool:
+def should_include_period(
+    end_date_str: str,
+    period: str,
+    ann_date_str: str | None = None,
+    as_of_date: str | None = None,
+) -> bool:
     if period == "annual":
-        return end_date_str.endswith("1231")
+        return _passes_period_and_pit(end_date_str, True, ann_date_str, as_of_date)
     if period == "quarterly":
-        return not end_date_str.endswith("1231")
+        return _passes_period_and_pit(end_date_str, False, ann_date_str, as_of_date)
+    return _passes_period_and_pit(end_date_str, None, ann_date_str, as_of_date)
+
+
+def _passes_period_and_pit(
+    end_date_str: str,
+    is_annual: bool | None,
+    ann_date_str: str | None,
+    as_of_date: str | None,
+) -> bool:
+    """Report-period gate + R74 point-in-time ``ann_date`` gate.
+
+    R41 hardened the sibling ``fina_indicator`` *metrics* path via
+    ``_should_include_financial_period``; the ``line_items`` path
+    (balancesheet / cashflow / income) only filtered by report-period
+    ``end_date``, so a backtest on a simulated trade date could read a report
+    *announced* after that date (look-ahead bias inflating fundamental-agent
+    backtest results). This mirrors R41: when ``ann_date`` and ``as_of`` are
+    both present and well-formed 8-digit dates, a report announced strictly
+    after ``as_of`` is excluded. Missing / malformed values fall back to the
+    historical behaviour (live mode unchanged) — C2-BH2 robustness contract.
+    """
+    if is_annual is True and not end_date_str.endswith("1231"):
+        return False
+    if is_annual is False and end_date_str.endswith("1231"):
+        return False
+    if ann_date_str and as_of_date:
+        ann_compact = str(ann_date_str).replace("-", "")
+        as_of_compact = str(as_of_date).replace("-", "")
+        if (
+            len(ann_compact) == 8
+            and len(as_of_compact) == 8
+            and ann_compact[:8].isdigit()
+            and as_of_compact[:8].isdigit()
+            and ann_compact > as_of_compact
+        ):
+            return False
     return True
 
 
@@ -254,12 +295,15 @@ def build_line_items_from_frames(
     df_bal: pd.DataFrame | None,
     df_cash: pd.DataFrame | None,
     df_income: pd.DataFrame | None,
+    as_of_date: str | None = None,
 ) -> list[LineItem]:
     results: list[LineItem] = []
     all_period_data: dict = {}
+    has_ann_date = "ann_date" in df_fin.columns
     for _, row in df_fin.iterrows():
         end_date_str = str(row.get("end_date", ""))
-        if not should_include_period(end_date_str, period):
+        ann_date_str = str(row.get("ann_date", "")) if has_ann_date else None
+        if not should_include_period(end_date_str, period, ann_date_str=ann_date_str or None, as_of_date=as_of_date):
             continue
         item_data, field_mapping = build_period_item_data(
             ticker=ticker,
