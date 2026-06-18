@@ -171,6 +171,49 @@ class TestApplyFreshnessConfidencePenalty:
         result = apply_freshness_confidence_penalty([], freshness)
         assert result == []
 
+    def test_confidence_zero_preserved_not_silently_overwritten_r96(self) -> None:
+        """R96 (Bug Hunt, R68/R69 falsy-zero 同族): confidence=0.0 是合法值
+        (agent error/fallback 明确输出 0.0 = "完全无信心", 见 ben_graham/bill_ackman/
+        cathie_wood/michael_burry/mohnish_pabrai/aswath_damodaran 的 confidence=0.0 fallback)。
+
+        此前 ``rec.get("confidence", 100) or 100`` 的 ``or`` 短路把 0.0 静默覆盖为 100
+        (满信心), 然后 ``100 * penalty`` 让一个"完全无信心"的 agent 输出变成"高信心推荐",
+        直接破坏"更高确信"目标。修复后 0.0 必须保留 (仅施加 penalty)。
+
+        与 R68 (_resolve_trade_pnl break-even PnL) / R69 (unit-interval metric overrides)
+        完全同型: falsy-zero 被 ``or`` 静默丢弃。
+        """
+        # confidence=0.0 (agent 明确说"完全无信心"), HIGH severity penalty (×0.7)
+        recs = [{"ticker": "000001", "confidence": 0.0}]
+        freshness = {
+            "fresh": False,
+            "warnings": [{"severity": "HIGH", "source": "daily_prices"}],
+        }
+        result = apply_freshness_confidence_penalty(recs, freshness)
+        # 0.0 必须保留 (0.0 * 0.7 = 0.0), 不得被 or 100 改成 70.0
+        assert result[0]["confidence"] == pytest.approx(0.0, abs=0.01), (
+            f"confidence=0.0 应保留为 0.0 (合法'完全无信心'), 不得被 falsy-zero `or 100` "
+            f"静默覆盖为满信心。实际: {result[0]['confidence']}"
+        )
+
+    def test_confidence_missing_defaults_to_100_r96(self) -> None:
+        """对照组: missing confidence 字段应走默认 100 (满信心, 与历史行为一致)。
+
+        修复必须区分"字段缺失"(→ 默认 100) vs "字段=0.0"(→ 保留 0.0)。
+        用显式 presence-check (``raw is not None``), 不用 ``or``。
+        用 stale freshness 进入 penalty 循环 (fresh 路径提前 return 不写字段)。
+        """
+        recs = [{"ticker": "000001"}]  # 无 confidence 字段
+        freshness = {
+            "fresh": False,
+            "warnings": [{"severity": "HIGH", "source": "daily_prices"}],
+        }
+        result = apply_freshness_confidence_penalty(recs, freshness)
+        # missing → 默认 100, HIGH penalty ×0.7 → 70.0
+        assert result[0]["confidence"] == pytest.approx(70.0, abs=0.1), (
+            "missing confidence 应默认 100, 然后 HIGH penalty ×0.7 = 70.0"
+        )
+
 
 class TestRenderFreshnessSummary:
     def test_fresh_summary_text(self) -> None:

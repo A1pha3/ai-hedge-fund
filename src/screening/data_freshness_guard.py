@@ -144,7 +144,13 @@ def apply_freshness_confidence_penalty(
             penalty = min(penalty, 0.95)
 
     for rec in recommendations:
-        current_confidence = float(rec.get("confidence", 100) or 100)
+        # R96 (R68/R69 falsy-zero 同族): 用显式 presence-check, 不用 ``or``。
+        # confidence=0.0 是合法值 (agent error/fallback 明确输出 0.0 = "完全无信心"),
+        # ``rec.get("confidence", 100) or 100`` 会把 0.0 静默覆盖为 100 (满信心),
+        # 让"完全无信心"的 agent 输出变成"高信心推荐", 破坏"更高确信"目标。
+        # 与 R68 (_resolve_trade_pnl) / R69 (_apply_explicit_metric_overrides) 同型。
+        raw_confidence = rec.get("confidence")
+        current_confidence = float(raw_confidence) if raw_confidence is not None else 100.0
         rec["confidence"] = round(current_confidence * penalty, 1)
         rec["confidence_penalty"] = round(1.0 - penalty, 2)
         rec["confidence_penalty_reason"] = "data_freshness_warning"
