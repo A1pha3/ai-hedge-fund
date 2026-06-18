@@ -131,6 +131,13 @@ class TushareProvider(BaseDataProvider):
                 date_str = str(row["trade_date"])
                 date_formatted = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
 
+                # R83 drain: 停牌/退市/部分数据源会在 OHLC/vol 单元产生 NaN/None。
+                # 之前裸 float()/int() 会抛 TypeError/ValueError, 被外层 except 吞掉,
+                # 让整个 ticker 的价格序列静默变 data=[] (BH-017 同族 silent data loss)。
+                # 与 sibling get_financial_metrics 的 pd.notna 守卫一致 (R20.11 BETA)。
+                ohlc = (row["open"], row["high"], row["low"], row["close"], row["vol"])
+                if any(not pd.notna(v) for v in ohlc):
+                    continue
                 price = Price(time=date_formatted, open=float(row["open"]), high=float(row["high"]), low=float(row["low"]), close=float(row["close"]), volume=int(row["vol"]))
                 prices.append(price)
 

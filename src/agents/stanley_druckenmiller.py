@@ -325,7 +325,7 @@ def analyze_druckenmiller_valuation(financial_line_items: list, market_cap: floa
       - EV/EBITDA
     Each can yield up to 2 points => max 8 raw points => scale to 0–10.
     """
-    if not financial_line_items or market_cap is None:
+    if not financial_line_items or not market_cap:
         return {"score": 0, "details": "Insufficient data to perform valuation"}
 
     details = []

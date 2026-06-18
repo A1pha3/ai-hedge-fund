@@ -131,6 +131,13 @@ class AKShareProvider(BaseDataProvider):
             # 转换为 Price 对象列表
             prices = []
             for _, row in df.iterrows():
+                # R83 drain: 停牌/退市/部分数据源会在 OHLC/成交量 单元产生 NaN/None。
+                # 之前裸 float()/int() 会抛 TypeError/ValueError, 被外层 except 吞掉,
+                # 让整个 ticker 的价格序列静默变 data=[] (BH-017 同族 silent data loss)。
+                # 与 sibling get_financial_metrics 的 pd.notna 守卫一致 (R20.11 BETA)。
+                ohlc = (row["开盘"], row["最高"], row["最低"], row["收盘"], row["成交量"])
+                if any(not pd.notna(v) for v in ohlc):
+                    continue
                 price = Price(time=str(row["日期"]), open=float(row["开盘"]), high=float(row["最高"]), low=float(row["最低"]), close=float(row["收盘"]), volume=int(row["成交量"]))
                 prices.append(price)
 

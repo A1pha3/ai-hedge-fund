@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -29,6 +30,10 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from src.utils.numeric import is_finite_number as _is_finite
 from src.utils.numeric import safe_float as _safe_float
+
+# BH-021 family: 降级路径此前无任何日志, 运维无法区分 "数据太少" vs
+# "价格 provider 返回 None/NaN 尾部 (停牌/退市/partial feed)"。debug 级别避免噪音。
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants & defaults
@@ -492,7 +497,19 @@ def attach_conditional_orders_to_payload(
         history_list = list(history) if history else []
         current_price = float(rec.get("current_price") or 0.0)
         if current_price <= 0.0 and history_list:
-            current_price = float(history_list[-1])
+            tail = history_list[-1]
+            # R83: 尾部可能是 None/NaN (停牌/退市/partial feed) -- 用 _safe_float
+            # 降级为 0.0 触发 degraded advice, 而非 TypeError 中断整个 web/CLI 入口。
+            current_price = _safe_float(tail, 0.0)
+            # BH-021 family: 若尾部本就无效 (非有限数), 降级是数据损坏信号而非良性 "无数据",
+            # 记录 debug 让运维可诊断 -- 与 R48-R50/R57-R60/R63 silent-degradation 家族一致。
+            if not _is_finite(tail):
+                logger.debug(
+                    "conditional_order_advisor: ticker=%s 价格历史尾部无效 (%r), "
+                    "已降级为 degraded advice (停牌/退市/partial feed?)",
+                    ticker,
+                    tail,
+                )
 
         advice = compute_conditional_advice(
             ticker=ticker,
@@ -576,7 +593,19 @@ def run_conditional_orders_cli(
         history_list = list(history) if history else []
         current_price = float(rec.get("current_price") or 0.0)
         if current_price <= 0.0 and history_list:
-            current_price = float(history_list[-1])
+            tail = history_list[-1]
+            # R83: 尾部可能是 None/NaN (停牌/退市/partial feed) -- 用 _safe_float
+            # 降级为 0.0 触发 degraded advice, 而非 TypeError 中断整个 web/CLI 入口。
+            current_price = _safe_float(tail, 0.0)
+            # BH-021 family: 若尾部本就无效 (非有限数), 降级是数据损坏信号而非良性 "无数据",
+            # 记录 debug 让运维可诊断 -- 与 R48-R50/R57-R60/R63 silent-degradation 家族一致。
+            if not _is_finite(tail):
+                logger.debug(
+                    "conditional_order_advisor (CLI): ticker=%s 价格历史尾部无效 (%r), "
+                    "已降级为 degraded advice (停牌/退市/partial feed?)",
+                    ticker,
+                    tail,
+                )
 
         advice = compute_conditional_advice(
             ticker=ticker,

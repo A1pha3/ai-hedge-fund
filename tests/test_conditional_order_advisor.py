@@ -447,6 +447,58 @@ def test_attach_to_payload_empty_recommendations() -> None:
     assert result == []
 
 
+def test_attach_to_payload_handles_none_tail_in_price_history() -> None:
+    """R83: price_provider 返回尾部为 None 的历史 (停牌/退市/partial feed)
+    不应崩溃 -- 应用 _safe_float 降级为 0.0 触发降级路径, 而非 TypeError 中断
+    整个 attach_conditional_orders_to_payload (web 端点 / CLI 共用入口)。
+    """
+    # 历史 [100.0, 101.0, None] -- 最后一天停牌/无数据
+    def _mock_price_provider(ticker: str, n: int) -> list[float]:
+        return [100.0, 101.0, None]  # type: ignore[list-item]
+
+    payload: dict[str, Any] = {
+        "recommendations": [
+            {"ticker": "000001", "name": "平安银行", "score_b": 0.5},
+        ]
+    }
+    # 不应抛 TypeError -- 应降级为 degraded advice
+    result = attach_conditional_orders_to_payload(
+        payload,
+        price_provider=_mock_price_provider,
+        top_n=10,
+    )
+    assert len(result) == 1
+    # 降级到 0.0 后 compute_conditional_advice 应产出 degraded advice
+    assert result[0]["degraded"] is True
+
+
+def test_attach_to_payload_logs_debug_when_price_tail_invalid(caplog) -> None:
+    """BH-021 family (R84): 价格尾部无效时的降级应发 debug 日志, 让运维可诊断
+    "停牌/退市/partial feed" vs 良性 "无历史数据"。与 R48-R50/R57-R60/R63 一致。
+    """
+    import logging as _logging
+
+    def _mock_price_provider(ticker: str, n: int) -> list[float]:
+        return [100.0, 101.0, float("nan")]  # type: ignore[list-item]
+
+    payload: dict[str, Any] = {
+        "recommendations": [
+            {"ticker": "000002", "name": "万科A", "score_b": 0.4},
+        ]
+    }
+    with caplog.at_level(_logging.DEBUG, logger="src.screening.conditional_order_advisor"):
+        attach_conditional_orders_to_payload(
+            payload,
+            price_provider=_mock_price_provider,
+            top_n=10,
+        )
+    # 应有一条 debug 提到尾部无效
+    debug_msgs = [r.message for r in caplog.records if r.levelno == _logging.DEBUG]
+    assert any("尾部无效" in m for m in debug_msgs), (
+        f"价格尾部 NaN 应触发 debug 降级诊断; got debug msgs={debug_msgs!r}"
+    )
+
+
 def test_attach_to_payload_with_recommendations() -> None:
     """正常 payload → 返回与推荐等长的条件单建议列表。"""
 

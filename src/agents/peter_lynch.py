@@ -245,7 +245,7 @@ def analyze_lynch_valuation(financial_line_items: list, market_cap: float | None
       - Also consider a basic P/E if PEG is unavailable
     A PEG < 1 is very attractive; 1-2 is fair; >2 is expensive.
     """
-    if not financial_line_items or market_cap is None:
+    if not financial_line_items or not market_cap:
         return {"score": 0, "details": "Insufficient data for valuation"}
 
     pe_ratio, eps_growth_rate, details = _describe_lynch_pe_and_growth(

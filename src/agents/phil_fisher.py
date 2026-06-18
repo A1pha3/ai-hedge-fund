@@ -293,7 +293,7 @@ def analyze_fisher_valuation(financial_line_items: list, market_cap: float | Non
       - (Optionally) Enterprise Value metrics, but simpler approach is typical
     We will grant up to 2 points for each of two metrics => max 4 raw => scale to 0–10.
     """
-    if not financial_line_items or market_cap is None:
+    if not financial_line_items or not market_cap:
         return {"score": 0, "details": "Insufficient data to perform valuation"}
 
     details = []
