@@ -79,9 +79,17 @@ def _load_tracking_history(report_dir: Path) -> list[dict[str, Any]]:
 def _compute_consecutive_days_from_history(records: list[dict[str, Any]]) -> dict[str, int]:
     """从 ``tracking_history.json`` 计算每只 ticker 的连续推荐天数。
 
-    连续推荐定义: ``recommended_date`` 排序去重, 从最新一天向前数连续日历日数。
-    用于 fallback (报告中无 ``consecutive_days`` 字段) 或双重校验。
+    连续推荐定义: ``recommended_date`` 排序去重, 从最新一天向前数连续
+    **交易日**数 (跳过周六/周日, 与 R36 主路径 ``consecutive_recommendation``
+    语义一致)。用于 fallback (报告中无 ``consecutive_days`` 字段) 或双重校验。
+
+    R36/R45 同族修复: 此前用自然日 ``timedelta(days=1)`` 步进, 导致周五→周一
+    (跨周末) 的连续推荐在 ``--daily-brief`` Top 3 排序键与「Top 3 必须含连续
+    推荐 ≥2 日」门控中被误清零。复用 ``consecutive_recommendation._prev_trading_day``
+    的交易日语义, 与主 streak 计算路径保持一致, 避免逻辑分裂。
     """
+    from src.screening.consecutive_recommendation import _prev_trading_day
+
     by_ticker: dict[str, set[str]] = {}
     for rec in records:
         ticker = str(rec.get("ticker", "") or "").strip()
@@ -109,7 +117,9 @@ def _compute_consecutive_days_from_history(records: list[dict[str, Any]]) -> dic
                 next_dt = datetime.strptime(d, "%Y%m%d")
             except ValueError:
                 continue
-            if (cursor - next_dt).days == 1:
+            # R36 交易日语义: cursor 的前一交易日 == next_dt 才算连续。
+            # _prev_trading_day 步进一天后跳过周六/周日, 故 Fri→Mon 计为连续。
+            if _prev_trading_day(cursor) == next_dt:
                 streak += 1
                 cursor = next_dt
             else:
@@ -162,6 +172,11 @@ def _extract_consecutive_days(rec: dict[str, Any], history_lookup: dict[str, int
     return history_lookup.get(ticker, 0)
 
 
+def _strategy_arrow(direction: int) -> str:
+    """Map a strategy direction to a directional arrow glyph."""
+    return "↑" if direction > 0 else "↓" if direction < 0 else "—"
+
+
 def _summarize_one_liner(rec: dict[str, Any], industry: str) -> str:
     """生成一句话原因: 取 strategy_signals 中 confidence 最高的 1-2 个方向相同的策略。
 
@@ -191,19 +206,16 @@ def _summarize_one_liner(rec: dict[str, Any], industry: str) -> str:
     if len(top) == 1:
         name, direction, conf = top[0]
         cn_label = _STRATEGY_LABELS_CN.get(name, name)
-        arrow = "↑" if direction > 0 else "↓" if direction < 0 else "—"
-        return f"{cn_label}{arrow} (conf {conf:.0f}) 主导, {industry}业 关注"
+        return f"{cn_label}{_strategy_arrow(direction)} (conf {conf:.0f}) 主导, {industry}业 关注"
 
     a_name, a_dir, _ = top[0]
     b_name, b_dir, _ = top[1]
     a_label = _STRATEGY_LABELS_CN.get(a_name, a_name)
     b_label = _STRATEGY_LABELS_CN.get(b_name, b_name)
-    a_arrow = "↑" if a_dir > 0 else "↓" if a_dir < 0 else "—"
-    b_arrow = "↑" if b_dir > 0 else "↓" if b_dir < 0 else "—"
 
     if (a_dir > 0 and b_dir > 0) or (a_dir < 0 and b_dir < 0):
-        return f"{a_label}{a_arrow} + {b_label}{b_arrow} 共振, {industry}业 momentum top"
-    return f"{a_label}{a_arrow} 但 {b_label}{b_arrow} 谨慎, {industry}业 待观察"
+        return f"{a_label}{_strategy_arrow(a_dir)} + {b_label}{_strategy_arrow(b_dir)} 共振, {industry}业 momentum top"
+    return f"{a_label}{_strategy_arrow(a_dir)} 但 {b_label}{_strategy_arrow(b_dir)} 谨慎, {industry}业 待观察"
 
 
 def _select_top3(recs: list[dict[str, Any]], history_lookup: dict[str, int]) -> list[dict[str, Any]]:
@@ -476,7 +488,27 @@ def run_daily_brief(report_dir: Path | None = None) -> int:
     # P16-2: Show watchlist health summary if available
     _print_watchlist_health(actual_dir, recs)
 
+    # R72 (R71 同族 gamma trust calibration): 盘前决策卡输出具体的 Top 3
+    # ticker + score_b + BUY/HOLD/AVOID 决策标签, 与 --top-picks (R71)、PDF
+    # exporter、backtest CLI 同属"可能被误读为投资指令的具体决策建议"。footer
+    # disclaimer 与其余三个前门入口语义一致, 服务于产品目标 "更高确信"
+    # (确信包含诚实的边界告知, 而非只展示确信的数字)。
+    _print_brief_disclaimer()
+
     return 0
+
+
+def _print_brief_disclaimer() -> None:
+    """R72: research-only disclaimer at the end of the pre-market decision card.
+
+    Mirrors the R71 ``--top-picks`` disclaimer (``top_picks._print_disclaimer``)
+    so all four user-facing decision surfaces (--top-picks / --daily-brief /
+    PDF export / backtest CLI) carry the same boundary disclosure.
+    """
+    print(
+        f"{Fore.WHITE}⚠ 以上盘前决策卡由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。"
+        f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}"
+    )
 
 
 __all__ = ["run_daily_brief"]

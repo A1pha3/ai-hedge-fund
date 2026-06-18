@@ -148,6 +148,33 @@ class TestDailyBriefBasic:
         assert "000001" in out
         assert "盘前决策卡" in out
 
+    def test_disclaimer_in_output(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """R72 (R71 同族 trust calibration): 盘前决策卡输出末尾含研究用途 disclaimer。
+
+        ``--daily-brief`` 是 §二 当前默认前门之一 (盘前补充摘要), 输出具体的
+        Top 3 ticker + score_b + BUY/HOLD/AVOID 决策标签, 与 ``--top-picks`` (R71)、
+        PDF exporter、backtest CLI 同属"可能被误读为投资指令的具体决策建议"。
+        但此前仅 ``--top-picks`` 有 footer disclaimer, ``--daily-brief`` 缺失,
+        与产品目标 "更高确信" (确信包含诚实的边界告知) 不一致。
+        """
+        recs = [
+            _make_recommendation("000001", "平安银行", "银行", score_b=0.62),
+            _make_recommendation("000002", "万科A", "地产", score_b=0.55),
+            _make_recommendation("000003", "国农科技", "电子", score_b=0.45),
+        ]
+        _write_report(tmp_path, _make_report(recs))
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        # 与 R71 / pdf_exporter / backtest cli 一致的边界告知关键词
+        assert "不构成" in out
+        assert "投资建议" in out
+        assert "研究" in out
+
 
 class TestDailyBriefSorting:
     def test_consecutive_recommendation_bonus(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -270,20 +297,42 @@ class TestDailyBriefHelpers:
     """单元测试 — 内部 helper 函数。"""
 
     def test_compute_consecutive_days_from_history(self) -> None:
-        """tracking_history 推算连续天数。"""
+        """tracking_history 推算连续天数 (交易日步进, 非自然日)。"""
         from src.cli.daily_brief import _compute_consecutive_days_from_history
 
+        # 真实交易日序列 (周一/二/三 连续) — tracking_history 只在交易日写推荐
         records = [
-            _make_history_record("000001", "20260607"),
-            _make_history_record("000001", "20260606"),
-            _make_history_record("000001", "20260605"),
-            _make_history_record("000002", "20260607"),
-            _make_history_record("000002", "20260605"),  # gap day → streak=1
+            _make_history_record("000001", "20260603"),  # Wed
+            _make_history_record("000001", "20260602"),  # Tue
+            _make_history_record("000001", "20260601"),  # Mon
+            _make_history_record("000002", "20260603"),  # Wed
+            _make_history_record("000002", "20260601"),  # Mon (skip Tue = gap → streak=1)
         ]
         result = _compute_consecutive_days_from_history(records)
 
         assert result["000001"] == 3
         assert result["000002"] == 1
+
+    def test_compute_consecutive_days_weekend_span_bridges_streak(self) -> None:
+        """R36/R45 同族: Fri→Mon 跨周末必须计为连续推荐 (交易日步进)。
+
+        bug 复现: 旧自然日逻辑 `(cursor - next_dt).days == 1` 对 Fri(20260605)
+        →Mon(20260608) 的 3 天间距会断裂 streak 为 1, 与 R36 修复的
+        ``consecutive_recommendation._prev_trading_day`` 主路径行为不一致。
+        该 fallback 路径驱动 ``--daily-brief`` Top 3 排序键 (score_b + 0.05*consec)
+        与「Top 3 必须含连续推荐 ≥2 日」门控, 周一报告的 streak 被误清零。
+        """
+        from src.cli.daily_brief import _compute_consecutive_days_from_history
+
+        # 真实场景: 周五推荐 + 周一推荐 (周六/周日闭市无推荐)
+        records = [
+            _make_history_record("000001", "20260608"),  # Mon
+            _make_history_record("000001", "20260605"),  # Fri (prev trading day)
+        ]
+        result = _compute_consecutive_days_from_history(records)
+
+        # R36 交易日语义: Fri→Mon 连续 = 2 (跨周末不断裂)
+        assert result["000001"] == 2
 
     def test_summarize_one_liner_bullish_convergence(self) -> None:
         """2 个策略都 bullish → 包含 "共振"。"""
