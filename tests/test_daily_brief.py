@@ -296,6 +296,68 @@ class TestDailyBriefErrors:
 class TestDailyBriefHelpers:
     """单元测试 — 内部 helper 函数。"""
 
+    def test_find_latest_report_skips_malformed_filename(self, tmp_path: Path) -> None:
+        """R86: ``_find_latest_report`` 必须跳过非日期 stem 的 malformed 文件名。
+
+        bug 复现: 旧实现 ``sorted(glob(...), reverse=True)[0]`` 是纯字母排序,
+        字母 (如 'g' in ``auto_screening_garbage.json``) 排在 ASCII 数字之后,
+        会把 malformed 文件误选为"最新"报告。sibling ``data_quality_audit.
+        _find_latest_report`` 已在 R54 加了日期 stem 校验, daily_brief 漏改。
+
+        影响: reports/ 里混入一个 stray ``auto_screening_garbage.json`` (手动测试
+        残留 / 部分写入) 时, ``--daily-brief`` 会选中它而非最新合法日期报告,
+        然后 ``_load_report`` 要么 JSONDecodeError 崩溃, 要么渲染错误日期的推荐。
+        """
+        from src.cli.daily_brief import _find_latest_report
+
+        # 一个合法日期报告 + 一个 malformed stem (字母开头排在数字之后)
+        good = tmp_path / "auto_screening_20260607.json"
+        good.write_text('{"date": "20260607", "recommendations": []}', encoding="utf-8")
+        junk = tmp_path / "auto_screening_garbage.json"
+        junk.write_text("{not valid json", encoding="utf-8")
+
+        latest = _find_latest_report(tmp_path)
+        # 必须选合法日期报告, 而非字母排序靠后的 garbage
+        assert latest == good, (
+            f"应选合法日期报告 {good.name}, 实际选了 {latest!r} (malformed 文件名未被日期校验过滤)"
+        )
+
+    def test_print_watchlist_health_logs_debug_on_load_failure(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """R86 drain (BH-021 family): watchlist 加载失败时应发 debug 日志, 让运维可诊断
+        "配置损坏 / import 失败" vs 良性 "用户没配 watchlist"。
+        """
+        import logging as _logging
+
+        from src.cli.daily_brief import _print_watchlist_health
+
+        # monkeypatch load_watchlist 让它抛异常 -- 通过 sys.modules 注入坏模块
+        import sys as _sys
+        from types import ModuleType
+
+        bad_mod = ModuleType("src.screening.watchlist")
+
+        def _bad_load_watchlist():
+            raise RuntimeError("watchlist.json 损坏")
+
+        bad_mod.load_watchlist = _bad_load_watchlist
+        original = _sys.modules.get("src.screening.watchlist")
+        _sys.modules["src.screening.watchlist"] = bad_mod
+        try:
+            with caplog.at_level(_logging.DEBUG, logger="src.cli.daily_brief"):
+                _print_watchlist_health(tmp_path, all_recs=[])
+        finally:
+            if original is not None:
+                _sys.modules["src.screening.watchlist"] = original
+            else:
+                _sys.modules.pop("src.screening.watchlist", None)
+
+        debug_msgs = [r.message for r in caplog.records if r.levelno == _logging.DEBUG]
+        assert any("watchlist" in m and "失败" in m for m in debug_msgs), (
+            f"watchlist 加载失败应触发 debug 诊断; got debug msgs={debug_msgs!r}"
+        )
+
     def test_compute_consecutive_days_from_history(self) -> None:
         """tracking_history 推算连续天数 (交易日步进, 非自然日)。"""
         from src.cli.daily_brief import _compute_consecutive_days_from_history

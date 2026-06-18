@@ -22,10 +22,15 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
+
+# BH-021 family: freshness 子命令此前吞掉所有 reports_dir 解析错误,
+# 运维无法区分 "默认 reports/" vs "resolve_report_dir 失败回退默认"。
+logger = logging.getLogger(__name__)
 
 # 这些是早期分发的所有命令。每个 flag 在 ``COMMAND_REGISTRY`` 中
 # 映射到一个 handler 函数。handler 签名: (argv: list[str]) -> int | None
@@ -662,8 +667,10 @@ def _resolve_check_freshness(argv: list[str]) -> int | None:
     try:
         from src.screening.consecutive_recommendation import resolve_report_dir
         reports_dir = resolve_report_dir()
-    except Exception:
-        pass
+    except Exception as exc:
+        # BH-021 family: reports_dir 解析失败时静默回退 None, 运维无法区分
+        # "用默认目录" vs "resolve_report_dir 抛异常"。
+        logger.debug("dispatcher: resolve_report_dir 失败, 回退默认 reports 目录: %s", exc)
     report = check_data_freshness(trade_date=trade_date, reports_dir=reports_dir)
     print(_render_freshness_summary(report["fresh"], report["warnings"]))
     return 0

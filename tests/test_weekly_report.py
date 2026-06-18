@@ -237,6 +237,21 @@ class TestDateDefaults:
         assert "2026-05-26" in report
         assert "2026-05-30" in report
 
+    def test_fmt_display_rejects_non_digit_compact_string(self) -> None:
+        """R87 (Refactor Batch, finding #4 漏检): ``_fmt_display`` 此前只检查
+        ``len==8`` 而漏掉 ``.isdigit()`` 守卫, 把 ``"abcdefgh"`` 误格式化成
+        ``"abcd-ef-gh"``。sibling ``date_utils.format_date`` 有 isdigit 守卫。
+        修复后应回退原串 (与 sibling 一致), 不产生垃圾日期串。
+        """
+        from src.notification.weekly_report import _fmt_display
+
+        # 合法 compact 日期正常格式化
+        assert _fmt_display("20260530") == "2026-05-30"
+        # 非数字 8 字符串不应被格式化 (此前 bug: 返回 "abcd-ef-gh")
+        assert _fmt_display("abcdefgh") == "abcdefgh"
+        # dashed 输入也应正确处理
+        assert _fmt_display("2026-05-30") == "2026-05-30"
+
 
 class TestCLIDispatcher:
     """CLI 分发器路由。"""

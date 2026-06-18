@@ -29,6 +29,7 @@ from src.notification.push import (
     PushResult,
     send_push,
 )
+from src.utils.date_utils import format_date
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +56,13 @@ def _this_monday_friday(ref_date: datetime | None = None) -> tuple[str, str]:
 
 
 def _fmt_display(date_str: str) -> str:
-    """YYYYMMDD → YYYY-MM-DD。"""
-    cleaned = date_str.replace("-", "").strip()
-    if len(cleaned) == 8:
-        return f"{cleaned[:4]}-{cleaned[4:6]}-{cleaned[6:]}"
-    return date_str
+    """YYYYMMDD → YYYY-MM-DD。
+
+    R87 (Refactor Batch): 委托 canonical ``date_utils.format_date``, 与 5 个 sibling
+    一致。此前漏 ``.isdigit()`` 守卫, 把 ``"abcdefgh"`` 误格式化成 ``"abcd-ef-gh"``
+    (silent miscompute, weekly report 邮件正文出现垃圾日期串)。
+    """
+    return format_date(date_str)
 
 
 # ---------------------------------------------------------------------------

@@ -12,11 +12,16 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from colorama import Fore, Style
+
+# BH-021 family: 降级路径此前无任何日志, 运维无法区分 "用户没配 watchlist" vs
+# "watchlist 配置损坏 / import 失败"。debug 级别避免噪音。
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -53,11 +58,32 @@ def _resolve_report_dir() -> Path:
 
 
 def _find_latest_report(report_dir: Path) -> Path | None:
-    """返回 ``report_dir`` 下最新的 ``auto_screening_*.json`` 路径。"""
+    """返回 ``report_dir`` 下最新的 ``auto_screening_YYYYMMDD.json`` 路径。
+
+    R86 (R54 同族): 文件名 stem 必须能解析为 ``%Y%m%d``。纯字母排序会把非数字
+    开头的 malformed 文件名 (如 ``auto_screening_garbage.json``, 字母在 ASCII
+    数字之后) 排到合法日期之前, 误选为"最新"导致 ``--daily-brief`` 渲染错误
+    报告或 JSONDecodeError 崩溃。校验日期后再排序, 与 sibling
+    ``data_quality_audit._find_latest_report`` (R54) 一致。
+    """
     if not report_dir.exists():
         return None
-    files = sorted(report_dir.glob("auto_screening_*.json"), reverse=True)
-    return files[0] if files else None
+    candidates = [
+        path
+        for path in report_dir.glob("auto_screening_*.json")
+        if _parses_as_report_date(path.stem.replace("auto_screening_", ""))
+    ]
+    candidates.sort(reverse=True)
+    return candidates[0] if candidates else None
+
+
+def _parses_as_report_date(date_str: str) -> bool:
+    """R54 同族: 文件名 stem 必须能解析为 ``%Y%m%d`` 才算合法报告日期。"""
+    try:
+        datetime.strptime(date_str, "%Y%m%d")
+        return True
+    except ValueError:
+        return False
 
 
 def _load_report(report_path: Path) -> dict[str, Any]:
@@ -397,7 +423,10 @@ def _print_watchlist_health(report_dir: Path, all_recs: list[dict[str, Any]]) ->
         from src.screening.watchlist import load_watchlist
 
         watchlist = load_watchlist()
-    except Exception:
+    except Exception as exc:
+        # BH-021 family: watchlist 健康块此前对任何错误 (配置损坏 / import 失败 /
+        # JSON 解析错误) 静默 return, 运维无法知道关注池健康速览为何消失。
+        logger.debug("daily_brief: watchlist 加载失败, 跳过关注池健康速览: %s", exc)
         return
 
     tickers = watchlist.get("tickers", [])
