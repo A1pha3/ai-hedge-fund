@@ -75,6 +75,23 @@ def test_apply_short_open_partial_when_insufficient_margin_cash() -> None:
     assert snap["cash"] == pytest.approx(400.0)
 
 
+def test_negative_margin_requirement_rejected() -> None:
+    """R82 (R81 同族 input-validation): ``--margin-requirement -0.5`` 让
+    ``margin_required = proceeds * -0.5`` 为负, ``apply_short_open`` 的
+    ``margin_required <= cash`` 判断恒为 True (负 <= 正), 完全绕过保证金风控 ——
+    用户能用 $10k cash short $10M notional (cash 暴涨到 $15M)。Portfolio 必须
+    在构造时拒绝负 margin_requirement。
+
+    margin_ratio > 1.0 语义合法 (over-collateralized), 所以 guard 是 ``>= 0``。
+    """
+    with pytest.raises(ValueError, match="margin_requirement"):
+        Portfolio(tickers=["AAPL"], initial_cash=10_000.0, margin_requirement=-0.5)
+    # 0 is valid (no margin required — upstream default)
+    Portfolio(tickers=["AAPL"], initial_cash=10_000.0, margin_requirement=0.0)
+    # > 1.0 is valid (over-collateralized)
+    Portfolio(tickers=["AAPL"], initial_cash=10_000.0, margin_requirement=1.5)
+
+
 def test_apply_short_cover_realized_gain_and_margin_release(portfolio: Portfolio) -> None:
     # Open short 100 @ 50, then cover 40 @ 40 → gain = (50-40)*40 = 400
     portfolio.apply_short_open("AAPL", 100, 50.0)

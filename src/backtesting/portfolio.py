@@ -59,6 +59,18 @@ class Portfolio:
         initial_cash: float,
         margin_requirement: float,
     ) -> None:
+        # R82 (R81 同族 input-validation): negative margin_requirement bypasses
+        # the short risk control — margin_required = proceeds * negative_ratio is
+        # negative, so `margin_required <= cash` is always True, letting the
+        # portfolio short unlimited notional with no margin posted (cash balloons).
+        # margin_ratio > 1.0 is semantically valid (over-collateralized), so the
+        # guard is >= 0.
+        if margin_requirement < 0:
+            raise ValueError(
+                f"margin_requirement 必须为非负数 (got {margin_requirement}); "
+                f"负值会让 apply_short_open 的 margin_required<=cash 判断恒为 True, "
+                f"完全绕过保证金风控"
+            )
         self._portfolio: PortfolioSnapshot = {
             "cash": float(initial_cash),
             "margin_used": 0.0,

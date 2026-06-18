@@ -31,6 +31,19 @@ def _positive_float(value: str) -> float:
     return parsed
 
 
+def _non_negative_float(value: str) -> float:
+    """R82: argparse type guard for --margin-requirement. Rejects negative values
+    that bypass the short risk control (margin_required<=cash always True when
+    margin_ratio < 0, letting portfolio short unlimited notional). 0 is valid
+    (no margin required — upstream default); > 1.0 is valid (over-collateralized)."""
+    parsed = float(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError(
+            f"必须为非负数 (got {parsed}); 负值会让保证金风控失效 (margin_required<=cash 恒为 True)"
+        )
+    return parsed
+
+
 def build_backtest_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run backtesting engine (modular)")
     parser.add_argument("--show-default-model", action="store_true", help="Print the currently resolved default model/provider from .env and exit")
@@ -43,7 +56,12 @@ def build_backtest_parser() -> argparse.ArgumentParser:
         default=100000,
         help="Initial capital (must be > 0; 0/negative triggers divide-by-zero in metrics)",
     )
-    parser.add_argument("--margin-requirement", type=float, default=0.0)
+    parser.add_argument(
+        "--margin-requirement",
+        type=_non_negative_float,
+        default=0.0,
+        help="Short margin requirement ratio (must be >= 0; negative bypasses risk control)",
+    )
     parser.add_argument("--mode", choices=["agent", "pipeline"], default="agent", help="Backtest execution mode")
     parser.add_argument("--walk-forward", action="store_true", help="Run walk-forward validation")
     parser.add_argument("--ab-compare", action="store_true", help="Run Group A vs Group B walk-forward comparison")

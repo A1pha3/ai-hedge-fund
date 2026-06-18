@@ -74,6 +74,27 @@ def test_positive_float_rejects_zero_and_negative():
             pass
 
 
+def test_non_negative_float_rejects_negative_margin():
+    """R82: --margin-requirement 必须为非负数, 负值会让保证金风控失效
+    (margin_required<=cash 恒为 True, portfolio short unlimited notional).
+    0 合法 (upstream default), > 1.0 合法 (over-collateralized)."""
+    import argparse
+
+    from src.backtesting.cli_helpers import _non_negative_float
+
+    # 0 and positive (incl > 1.0) pass through.
+    assert _non_negative_float("0") == 0.0
+    assert _non_negative_float("0.5") == 0.5
+    assert _non_negative_float("1.5") == 1.5
+    # Negative raises ArgumentTypeError.
+    for bad in ("-0.001", "-1", "-0.5"):
+        try:
+            _non_negative_float(bad)
+            assert False, f"expected ArgumentTypeError for {bad!r}"
+        except argparse.ArgumentTypeError:
+            pass
+
+
 def test_main_runs_engine_with_non_interactive_model_and_analysts(monkeypatch, capsys):
     args = SimpleNamespace(
         show_default_model=False,
