@@ -1,3 +1,6 @@
+from src.utils.numeric import safe_float
+
+
 def _resolve_portfolio_position(positions: dict, ticker: str) -> tuple[int, int]:
     position = positions.get(
         ticker,
@@ -66,7 +69,15 @@ def _accumulate_signal_weights(signals: dict) -> tuple[float, float, float, floa
 
     for payload in signals.values():
         signal = payload.get("sig", "").lower()
-        confidence = float(payload.get("conf", 0))
+        # R100 (R73/R76 bare-coercion 同族): ``.get("conf", 0)`` 默认值仅在 key
+        # 缺失时生效, key 存在且值为 JSON null 时返回 None, 裸 ``float(None)`` 抛
+        # TypeError 中断整个 generate_trading_decision 交易决策路径。当前两个
+        # caller (portfolio_manager.py:82 / :201) 都用 ``is not None`` 守卫, 故
+        # 现为 latent; 但本 helper 是 public decision-path 边界, 未来 caller
+        # (web/JSON snapshot / serialized state replay) 易传 null。改用 safe_float
+        # 与 R73 (--top score_b=null) / R76 (--why-not score_b=null) 一致, 在边界
+        # 处 fail-soft 而非崩整个决策。
+        confidence = safe_float(payload.get("conf"), 0.0)
         total_confidence += confidence
         if signal == "bullish":
             bullish_weight += confidence
@@ -122,7 +133,11 @@ def _collect_signal_counts(signals: dict) -> tuple[dict[str, int], dict[str, lis
 
     for agent, payload in signals.items():
         signal = _normalize_signal_label(payload.get("sig", "neutral"), counts)
-        confidence = float(payload.get("conf", 0) or 0)
+        # R100: 同上 — 改用 safe_float。原 ``or 0`` 虽然 null-safe, 但带 R68/R69/R96
+        # falsy-zero 潜在风险 (conf=0.0 真实"零信心"会被 ``0.0 or 0`` 短路保留为 0,
+        # 当前语义恰好一致故非 active bug, 但与 _accumulate_signal_weights 路径分裂)。
+        # 统一 safe_float 消除两条 decision-path confidence 解析的语义分裂。
+        confidence = safe_float(payload.get("conf"), 0.0)
         counts[signal] += 1
         top_by_signal[signal].append((agent, confidence))
 
