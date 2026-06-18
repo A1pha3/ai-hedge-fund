@@ -333,3 +333,161 @@ def test_weekly_report_default_position_scale_1_0_when_missing(tmp_path: Path) -
     )
 
     assert "仓位系数 100%" in report
+
+
+# ---------------------------------------------------------------------------
+# R94 (Campaign 81 Bug Hunt): weekly_report bare json.load 损坏文件崩溃 /
+# 静默降级无诊断 — R88 (bare json.load 全仓 drain) + BH-017 (silent except
+# degradation) 同族残留。positions.json / tracking_history.json / auto_screening
+# 任一损坏时:
+#   - _block_brinson_attribution 此前裸 json.load 无 guard → JSONDecodeError 崩溃整个 --weekly-report
+#   - _block_exit_rebalance_summary / _block_next_week_watch 外层宽 except 静默吞 → 降级无 logger 诊断
+# 修复后: 三处都应优雅降级为 "本周无 X 数据" 且发 logger.warning 诊断 (与 R88 digest/
+# lookback_audit/param_search/data_quality_audit 4 site 一致)。
+# ---------------------------------------------------------------------------
+
+
+class TestCorruptJsonGracefulR94:
+    """R94: weekly_report 三处 bare json.load 损坏文件必须优雅降级 + warning 诊断。"""
+
+    def test_corrupt_positions_json_does_not_crash_r94(self, tmp_path: Path, caplog: "pytest.LogCaptureFixture") -> None:
+        """_block_brinson_attribution: 损坏的 positions.json 不得崩溃整个周报。"""
+        from src.notification.weekly_report import generate_weekly_report
+
+        corrupt_positions = tmp_path / "positions.json"
+        corrupt_positions.write_text("{not valid json", encoding="utf-8")
+
+        # 必须不抛 JSONDecodeError, 优雅降级
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="src.notification.weekly_report"):
+            report = generate_weekly_report(
+                start_date="20260601",
+                end_date="20260606",
+                positions_path=corrupt_positions,
+                report_dir=tmp_path,
+            )
+
+        # 不崩溃, 输出本周归因降级提示
+        assert "本周无持仓数据" in report, (
+            f"损坏 positions.json 应降级为'本周无持仓数据', 实际报告: {report[:500]}"
+        )
+        # 其他区块仍正常 (不因一个坏文件中断整份周报)
+        assert "退出调仓" in report
+        # 降级必须有 warning 诊断, 且区分"文件损坏"(数据问题)而非笼统"归因异常"(代码 bug)
+        assert any(
+            "positions" in rec.message.lower() or "持仓" in rec.message or "损坏" in rec.message or "corrupt" in rec.message.lower()
+            for rec in caplog.records
+        ), (
+            f"损坏 positions.json 应发含文件名/损坏关键词的 warning 诊断 (区分数据损坏 vs 计算异常), "
+            f"caplog: {[r.message for r in caplog.records]}"
+        )
+
+    def test_corrupt_tracking_history_degrades_with_diagnostic_r94(
+        self, tmp_report_dir: Path, caplog: "pytest.LogCaptureFixture"
+    ) -> None:
+        """_block_exit_rebalance_summary: 损坏的 tracking_history.json 优雅降级 + warning。"""
+        from src.notification.weekly_report import generate_weekly_report
+        import logging
+
+        corrupt = tmp_report_dir / "tracking_history.json"
+        corrupt.write_text("}{corrupted", encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING, logger="src.notification.weekly_report"):
+            report = generate_weekly_report(
+                start_date="20260601",
+                end_date="20260606",
+                report_dir=tmp_report_dir,
+            )
+
+        assert "本周无交易记录" in report
+        assert any(
+            "tracking" in rec.message.lower() or "交易" in rec.message or "history" in rec.message.lower() or "损坏" in rec.message or "corrupt" in rec.message.lower()
+            for rec in caplog.records
+        ), (
+            f"损坏 tracking_history 应发含文件名/损坏关键词的 warning 诊断 (区分数据损坏 vs 计算异常), "
+            f"caplog: {[r.message for r in caplog.records]}"
+        )
+
+    def test_corrupt_auto_screening_degrades_with_diagnostic_r94(
+        self, tmp_report_dir: Path, caplog: "pytest.LogCaptureFixture"
+    ) -> None:
+        """_block_next_week_watch: 损坏的最新 auto_screening.json 优雅降级 + warning。"""
+        from src.notification.weekly_report import generate_weekly_report
+        import logging
+
+        corrupt = tmp_report_dir / "auto_screening_20260606.json"
+        corrupt.write_text("not json at all {{{", encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING, logger="src.notification.weekly_report"):
+            report = generate_weekly_report(
+                start_date="20260601",
+                end_date="20260606",
+                report_dir=tmp_report_dir,
+            )
+
+        assert "暂无最新选股报告" in report
+        assert any(
+            "auto_screening" in rec.message.lower() or "选股" in rec.message or "损坏" in rec.message or "corrupt" in rec.message.lower()
+            for rec in caplog.records
+        ), (
+            f"损坏 auto_screening 应发含文件名/损坏关键词的 warning 诊断 (区分数据损坏 vs 计算异常), "
+            f"caplog: {[r.message for r in caplog.records]}"
+        )
+
+
+def test_risk_metrics_block_reads_custom_report_dir_not_hardcoded_r94(tmp_path: Path) -> None:
+    """R94 (Bug Hunt, C4): ``_block_risk_metrics_delta`` 第三个参数此前命名为
+    ``positions_path`` 但函数体硬编码 ``_DEFAULT_REPORT_DIR`` 读 attribution_daily,
+    导致 ``generate_weekly_report(report_dir=...)`` 传入的自定义 report_dir 被忽略 —
+    用户换数据目录后"风险变化"区块永远从默认目录读 (静默读到空或读到错误数据)。
+
+    修复: 第三参数语义对齐为 ``report_dir``, 函数体读传入的 report_dir (回退默认)。
+    """
+    from src.notification.weekly_report import generate_weekly_report
+
+    # 在自定义 report_dir 放入足够 attribution_daily 数据 (>=2 天)
+    custom_dir = tmp_path / "custom_reports"
+    custom_dir.mkdir()
+    for i, date in enumerate(["20260601", "20260602", "20260603"]):
+        (custom_dir / f"attribution_daily_{date}.json").write_text(
+            json.dumps({"date": date, "portfolio_value_base": 100000.0 + i * 1000}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    report = generate_weekly_report(
+        start_date="20260601",
+        end_date="20260606",
+        report_dir=custom_dir,
+    )
+
+    # 必须从自定义 report_dir 读到 attribution 数据, 输出风险指标 (而非"无足够历史数据")
+    assert "Sharpe:" in report, (
+        f"自定义 report_dir 的 attribution_daily 应被读取并计算风险指标, "
+        f"实际报告风险区块: {[l for l in report.split(chr(10)) if '风险' in l or 'Sharpe' in l]}"
+    )
+
+
+def test_weekly_report_includes_disclaimer_r95(tmp_report_dir: Path) -> None:
+    """R95 (Product Quality, R71-R77 trust-calibration 同族第 8 个决策面):
+    ``--weekly-report`` 是推送场景 (企微/通知) 的组合体检周报, 输出持仓归因 +
+    风险指标 + 退出调仓 + 下周关注 Top 标的, 但 footer 缺少 disclaimer。
+    R71-R77 给前 7 个 CLI 决策面 + PDF + backtest 加了, 唯独 --weekly-report 漏了。
+
+    推送场景脱离 CLI "开发者工具" 上下文, 用户在企微里看到具体标的/收益/风险数字时
+    更容易把模型输出误读为投资指令。disclaimer 必须出现在周报 footer。
+    """
+    from src.notification.weekly_report import generate_weekly_report
+
+    report = generate_weekly_report(
+        start_date="20260601",
+        end_date="20260606",
+        report_dir=tmp_report_dir,
+    )
+
+    # footer 必须含研究用途 disclaimer (与 R71-R77 七个面 + PDF/backtest 一致)
+    assert "不构成" in report and ("投资建议" in report or "投资" in report), (
+        f"--weekly-report footer 必须含研究用途 disclaimer (R71-R77 同族第 8 个决策面), "
+        f"实际 footer: {[l for l in report.split(chr(10))[-6:]]}"
+    )
+    assert "研究" in report, "disclaimer 应含'研究'用途说明"

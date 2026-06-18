@@ -85,8 +85,15 @@ def _block_brinson_attribution(start: str, end: str, positions_path: Path | None
         if path is None or not path.exists():
             return "### 本周归因\n\n> 本周无持仓数据\n"
 
-        with open(path, encoding="utf-8") as f:
-            raw = json.load(f)
+        try:
+            with open(path, encoding="utf-8") as f:
+                raw = json.load(f)
+        except (json.JSONDecodeError, OSError) as exc:
+            # R94: 文件损坏 (R88/BH-017 同族) 单独诊断 — 区分"数据损坏"(用户可修)
+            # vs"Brinson 计算异常"(代码 bug)。此前宽 except 把 JSONDecodeError 笼统吞成
+            # "归因异常", 运维无法定位是数据问题还是代码问题。
+            logger.warning("[WeeklyReport] 持仓文件 %s 损坏或不可读 (%s); 降级为'本周无持仓数据'", path, exc)
+            return "### 本周归因\n\n> 本周无持仓数据\n"
 
         # 支持两种格式: 单个 dict 或 list
         if isinstance(raw, list):
@@ -160,8 +167,18 @@ def _block_exit_rebalance_summary(start: str, end: str, report_dir: Path | None 
         if not history_path.exists():
             return "### 退出调仓\n\n> 本周无交易记录\n"
 
-        with open(history_path, encoding="utf-8") as f:
-            payload = json.load(f)
+        try:
+            with open(history_path, encoding="utf-8") as f:
+                payload = json.load(f)
+        except (json.JSONDecodeError, OSError) as exc:
+            # R94: 文件损坏 (R88/BH-017 同族) 单独诊断 — 区分"数据损坏"(用户可修)
+            # vs"退出调仓计算异常"(代码 bug)。此前宽 except 笼统吞成"退出调仓异常"。
+            logger.warning(
+                "[WeeklyReport] 交易历史文件 %s 损坏或不可读 (%s); 降级为'本周无交易记录'",
+                history_path,
+                exc,
+            )
+            return "### 退出调仓\n\n> 本周无交易记录\n"
 
         records = payload.get("records", [])
         if not isinstance(records, list):
@@ -209,8 +226,13 @@ def _block_exit_rebalance_summary(start: str, end: str, report_dir: Path | None 
 # ---------------------------------------------------------------------------
 
 
-def _block_risk_metrics_delta(start: str, end: str, positions_path: Path | None = None) -> str:
-    """风险指标变化 (本周 vs 上周) — 复用 performance_report 的风险计算。"""
+def _block_risk_metrics_delta(start: str, end: str, report_dir: Path | None = None) -> str:
+    """风险指标变化 (本周 vs 上周) — 复用 performance_report 的风险计算。
+
+    R94 (Bug Hunt, C4): 第三个参数此前命名为 ``positions_path`` 但函数体硬编码
+    ``_DEFAULT_REPORT_DIR`` 读 attribution_daily, 导致 ``generate_weekly_report(report_dir=...)``
+    传入的自定义 report_dir 被忽略。签名语义对齐为 ``report_dir``, 与 caller 一致。
+    """
     try:
         from src.portfolio.performance_report import (
             _compute_daily_returns,
@@ -219,13 +241,13 @@ def _block_risk_metrics_delta(start: str, end: str, positions_path: Path | None 
             _compute_volatility,
         )
 
-        # 尝试从缓存/报告目录加载 positions_history
-        report_dir = _DEFAULT_REPORT_DIR
+        # R94: 读传入的 report_dir (回退默认), 不再硬编码
+        resolved_report_dir = report_dir or _DEFAULT_REPORT_DIR
         positions_history: list[dict[str, Any]] = []
 
         # 从 attribution_daily 报告中收集
-        if report_dir.exists():
-            for f in sorted(report_dir.glob("attribution_daily_*.json")):
+        if resolved_report_dir.exists():
+            for f in sorted(resolved_report_dir.glob("attribution_daily_*.json")):
                 try:
                     with open(f, encoding="utf-8") as fh:
                         data = json.load(fh)
@@ -286,8 +308,18 @@ def _block_next_week_watch(report_dir: Path | None = None) -> str:
         if not files:
             return "### 下周关注\n\n> 暂无最新选股报告\n"
 
-        with open(files[0], encoding="utf-8") as f:
-            payload = json.load(f)
+        try:
+            with open(files[0], encoding="utf-8") as f:
+                payload = json.load(f)
+        except (json.JSONDecodeError, OSError) as exc:
+            # R94: 文件损坏 (R88/BH-017 同族) 单独诊断 — 区分"数据损坏"(用户可修)
+            # vs"下周关注计算异常"(代码 bug)。此前宽 except 笼统吞成"下周关注异常"。
+            logger.warning(
+                "[WeeklyReport] 最新选股报告 %s 损坏或不可读 (%s); 降级为'暂无最新选股报告'",
+                files[0],
+                exc,
+            )
+            return "### 下周关注\n\n> 暂无最新选股报告\n"
 
         recs = payload.get("recommendations") or []
         market_state = payload.get("market_state") or {}
@@ -358,11 +390,16 @@ def generate_weekly_report(
     # 4 个区块
     lines.append(_block_brinson_attribution(s, e, positions_path))
     lines.append(_block_exit_rebalance_summary(s, e, report_dir))
-    lines.append(_block_risk_metrics_delta(s, e, positions_path))
+    lines.append(_block_risk_metrics_delta(s, e, report_dir))
     lines.append(_block_next_week_watch(report_dir))
 
     lines.append("---")
     lines.append("*AI Hedge Fund · 组合体检周报 (P2-10)*")
+    # R95: trust-calibration disclaimer (R71-R77 同族第 8 个用户决策面)。周报是推送
+    # 场景 (企微/通知), 脱离 CLI "开发者工具" 上下文, 用户更易把模型输出误读为投资
+    # 指令。纯 Markdown blockquote (推送渠道不支持 colorama), 与 R71-R77 七面语义一致。
+    lines.append("")
+    lines.append("> ⚠ 以上组合体检周报由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。")
 
     return "\n".join(lines)
 
