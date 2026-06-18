@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from statistics import mean
 from typing import Any
 
 from src.paper_trading import btst_trade_calendar
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Configuration constants (shared across BTST reporting modules)
@@ -72,8 +75,35 @@ def _source_lane_display(candidate_source: str | None) -> str:
 # I/O helpers
 # ---------------------------------------------------------------------------
 def _load_json(path: str | Path) -> dict[str, Any]:
+    """Best-effort JSON loader for BTST reporting sidecar artifacts.
+
+    R88/BH-017 family drain: sidecar JSON artifacts (replay input, brief, card,
+    rollout validation) may be corrupt due to run interruption / partial write /
+    disk error. A bare ``json.loads`` previously raised ``JSONDecodeError`` and
+    propagated up through callers like ``_load_selection_replay_input`` (which
+    only guards *missing* files via ``.exists()``), crashing the entire BTST
+    reporting path when ``reports/`` contained one corrupt sibling. This mirrors
+    the R88 digest/lookback_audit/param_search/data_quality_audit drain: corrupt
+    -> degrade to empty dict (consistent with the *missing*-file semantics all
+    four callers already tolerate via ``payload.get(...) or {}``) + warning
+    diagnostic so operators can distinguish "no artifact" vs "artifact corrupt".
+
+    Note: this is distinct from ``read_outcome_ledger`` (btst_outcome_ledger.py),
+    which is a deliberate explicit-validate contract that raises so upstream
+    knows the ledger is unusable. ``_load_json`` has no such contract — it is a
+    generic best-effort loader.
+    """
     resolved = Path(path).expanduser().resolve()
-    return json.loads(resolved.read_text(encoding="utf-8"))
+    try:
+        return json.loads(resolved.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "btst_reporting_utils: 损坏的 sidecar JSON %s "
+            "(运行中断/部分写入?): %s; 回退空 dict",
+            resolved,
+            exc,
+        )
+        return {}
 
 
 def _write_json(path: str | Path, payload: dict[str, Any]) -> None:

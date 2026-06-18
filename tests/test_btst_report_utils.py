@@ -10,7 +10,11 @@ from scripts.btst_report_utils import (
     normalize_trade_date,
     safe_load_json,
 )
-from src.paper_trading.btst_reporting_utils import _load_btst_rollout_validation_context
+from src.paper_trading.btst_reporting_utils import (
+    _load_btst_rollout_validation_context,
+    _load_json,
+    _load_selection_replay_input,
+)
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -90,3 +94,43 @@ def test_load_btst_rollout_validation_context_prefers_latest_report(tmp_path: Pa
     assert context["source_json_path"] == newer.resolve().as_posix()
     assert context["shadow_hit_rate_15pct"] == 0.3333
     assert context["execution_eligible_delta"] == -3
+
+
+def test_r101_load_json_corrupt_file_degrades_to_empty_dict(tmp_path: Path) -> None:
+    """R101 (R88/BH-017 family): ``_load_json`` previously used bare
+    ``json.loads`` and raised ``JSONDecodeError`` on a corrupt sidecar
+    (run interruption / partial write / disk error), propagating up through
+    callers like ``_load_selection_replay_input`` (which only guards *missing*
+    files via ``.exists()``) and crashing the entire BTST reporting path when
+    ``reports/`` contained one corrupt sibling. Corrupt -> degrade to empty
+    dict (consistent with the missing-file semantics all callers tolerate via
+    ``payload.get(...) or {}``) + warning diagnostic. Distinct from
+    ``read_outcome_ledger``'s deliberate explicit-validate-raise contract.
+    """
+    corrupt = tmp_path / "replay_input.json"
+    corrupt.write_text("{corrupt not json", encoding="utf-8")
+
+    # _load_json: corrupt -> empty dict, no raise.
+    assert _load_json(corrupt) == {}
+    # _load_json: valid -> parsed payload (no regression).
+    valid = tmp_path / "valid.json"
+    valid.write_text('{"k": 1}', encoding="utf-8")
+    assert _load_json(valid) == {"k": 1}
+
+
+def test_r101_load_selection_replay_input_corrupt_sibling_does_not_crash(
+    tmp_path: Path, caplog
+) -> None:
+    """R101 caller-path: corrupt ``selection_target_replay_input.json`` sibling
+    of a valid ``selection_snapshot.json`` must NOT crash
+    ``_load_selection_replay_input``; degrade to ``{}`` + warning (operator
+    can distinguish "no sibling" vs "sibling corrupt")."""
+    snap = tmp_path / "selection_snapshot.json"
+    snap.write_text("{}", encoding="utf-8")
+    replay = tmp_path / "selection_target_replay_input.json"
+    replay.write_text("{corrupt", encoding="utf-8")
+
+    with caplog.at_level("WARNING", logger="src.paper_trading.btst_reporting_utils"):
+        out = _load_selection_replay_input(snap)
+    assert out == {}
+    assert any("损坏" in rec.message for rec in caplog.records)
