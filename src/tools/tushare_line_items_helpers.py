@@ -1,7 +1,7 @@
-
 import pandas as pd
 
 from src.data.models import LineItem
+from src.utils.date_utils import is_announced_after_as_of
 
 TTM_FLOW_FIELDS = {
     "revenue",
@@ -77,18 +77,9 @@ def _passes_period_and_pit(
         return False
     if is_annual is False and end_date_str.endswith("1231"):
         return False
-    if ann_date_str and as_of_date:
-        ann_compact = str(ann_date_str).replace("-", "")
-        as_of_compact = str(as_of_date).replace("-", "")
-        if (
-            len(ann_compact) == 8
-            and len(as_of_compact) == 8
-            and ann_compact[:8].isdigit()
-            and as_of_compact[:8].isdigit()
-            and ann_compact > as_of_compact
-        ):
-            return False
-    return True
+    # R74 point-in-time ann_date gate (shared with R41 metrics path via
+    # ``is_announced_after_as_of``). Missing/malformed → False → live fallback.
+    return not is_announced_after_as_of(ann_date_str, as_of_date)
 
 
 def build_period_item_data(

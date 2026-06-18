@@ -2947,6 +2947,14 @@ def run_explain(ticker: str) -> int:
     else:
         print(f"\n{Fore.CYAN}仲裁规则:{Style.RESET_ALL} 无")
 
+    # R75 (R71/R72/R73 trust-calibration family): this surface emits a per-ticker
+    # decision label plus a full strategy/factor breakdown. Carry the same
+    # non-advice disclaimer as --top-picks / --daily-brief / --position-check /
+    # PDF / backtest so users do not read "决策: buy" as a deterministic
+    # instruction (serves product goal "更高确信" = confidence includes honest
+    # boundary disclosure).
+    print(f"\n  {Fore.WHITE}⚠ 以上解释由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。"
+          f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}")
     print()
     return 0
 

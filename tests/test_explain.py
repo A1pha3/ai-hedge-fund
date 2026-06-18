@@ -180,6 +180,37 @@ class TestExplainFactorDetail:
 
 
 # ---------------------------------------------------------------------------
+# Test: R75 trust-calibration disclaimer (R71/R72/R73 family)
+# ---------------------------------------------------------------------------
+
+class TestExplainDisclaimer:
+    def test_explain_carries_non_advice_disclaimer(self):
+        """R75 (R71/R72/R73 trust-calibration family): ``--explain`` emits a
+        per-ticker decision label (``决策: buy/hold/sell``) plus a full strategy
+        + factor breakdown for a specific stock, but the 5 sibling decision
+        surfaces (``--top-picks``, ``--daily-brief``, ``--position-check``, PDF
+        exporter, backtest CLI) all carry a non-advice disclaimer and
+        ``--explain`` did not. Users reading "决策: buy" with a detailed factor
+        rationale could treat it as a deterministic instruction. The footer must
+        carry the same boundary disclaimer so all 6 user-visible decision
+        surfaces are consistent."""
+        signals = {
+            "trend": _make_strategy_signal(1, 65.0, sub_factors={}),
+            "mean_reversion": _make_strategy_signal(0, 20.0, sub_factors={}),
+            "fundamental": _make_strategy_signal(1, 50.0, sub_factors={}),
+            "event_sentiment": _make_strategy_signal(1, 55.0, sub_factors={}),
+        }
+        rec = _make_recommendation(strategy_signals=signals, decision="buy")
+        report = _make_report(recommendations=[rec])
+
+        rc, output = _run_explain_capture(report)
+
+        assert rc == 0
+        assert "不构成任何投资建议" in output
+        assert "研究" in output
+
+
+# ---------------------------------------------------------------------------
 # Test 2: Industry ranking
 # ---------------------------------------------------------------------------
 

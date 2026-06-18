@@ -4,6 +4,7 @@ from collections.abc import Callable
 import pandas as pd
 
 from src.data.models import FinancialMetrics
+from src.utils.date_utils import is_announced_after_as_of
 
 # BH-022 / R41 / BH-021 同族: fundamental 数据获取路径此前无 module logger。
 # cashflow/balancesheet/income 任一报表拉取失败时 _safe_cached_statement_call
@@ -294,14 +295,9 @@ def _should_include_financial_period(end_date_str: str, period: str, ann_date_st
     # Tushare's 公告日 (filing/announcement date). Missing/malformed ann_date or
     # as_of falls back to the historical behavior (live mode unchanged) rather
     # than over-filtering and silently dropping legitimate metrics — mirrors the
-    # C2-BH2 robustness contract.
-    if ann_date_str and as_of_date:
-        ann_compact = str(ann_date_str).replace("-", "")
-        as_of_compact = str(as_of_date).replace("-", "")
-        if len(ann_compact) == 8 and len(as_of_compact) == 8 and ann_compact[:8].isdigit() and as_of_compact[:8].isdigit():
-            if ann_compact > as_of_compact:
-                return False
-    return True
+    # C2-BH2 robustness contract. R74 extracted the comparison into the shared
+    # ``is_announced_after_as_of`` helper (also used by the line_items path).
+    return not is_announced_after_as_of(ann_date_str, as_of_date)
 
 
 def _build_market_snapshot(row, daily_data: dict | None) -> dict[str, float | None]:
