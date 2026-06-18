@@ -339,6 +339,17 @@ def render_position_health(report: PositionHealthReport) -> str:
             f"  {Fore.RED}⚠ 建议立即关注: {', '.join(sell_tickers)}{Style.RESET_ALL}"
         )
 
+    # Trust-calibration disclaimer: this surface emits explicit SELL/WATCH/HOLD
+    # actions. Carry the same non-advice boundary as --top-picks / --daily-brief
+    # / PDF / backtest so users do not read model output as a deterministic
+    # instruction (serves product goal "更高确信" = confidence includes honest
+    # boundary disclosure).
+    lines.append("")
+    lines.append(
+        f"  {Fore.WHITE}⚠ 以上持仓健康检查由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。"
+        f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}"
+    )
+
     return "\n".join(lines)
 
 

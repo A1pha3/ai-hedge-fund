@@ -1138,7 +1138,7 @@ def _build_top_table_row(*, idx: int, rec: dict) -> list:
     """
     from colorama import Fore, Style
 
-    score_b = float(rec.get("score_b", 0.0))
+    score_b = _safe_float(rec.get("score_b"), 0.0)
     decision = rec.get("decision", "neutral")
 
     if score_b >= SCORE_B_GREEN_FLOOR:
@@ -2122,8 +2122,8 @@ def _print_custom_weights_results(top: list[dict], w: dict) -> bool:
     for idx, rec in enumerate(top, start=1):
         ticker = str(rec.get("ticker", ""))
         name = str(rec.get("name", "") or "")
-        score_b = float(rec.get("score_b", 0.0) or 0.0)
-        original = float(rec.get("original_score_b", 0.0) or 0.0)
+        score_b = _safe_float(rec.get("score_b"), 0.0)
+        original = _safe_float(rec.get("original_score_b"), 0.0)
         diff = score_b - original
         diff_str = f"{diff:+.3f}"
         label = f"{ticker} {name}".strip()

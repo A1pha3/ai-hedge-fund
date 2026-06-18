@@ -53,3 +53,27 @@ def test_decay_none_shows_dash() -> None:
     decay_cell = row[-1]
     assert "↓" not in decay_cell
     assert "—" in decay_cell
+
+
+def test_top_table_row_resilient_to_null_score_b() -> None:
+    """``score_b: null`` (JSON null) must not crash ``--top`` rendering.
+
+    ``_build_top_table_row`` used a bare ``float(rec.get("score_b", 0.0))`` which
+    raises ``TypeError`` when the key is present with value ``None`` (the default
+    arg only fires when the key is *absent*). Sibling renderers (``--top-picks``,
+    ``--daily-brief``) already use the shared ``safe_float`` helper; this brings
+    ``--top`` to the same resilience so one malformed recommendation does not
+    take down the whole table. Falls back to 0.0.
+    """
+    rec = _make_rec(score_b=None)
+    row = _build_top_table_row(idx=1, rec=rec)  # must not raise
+    # score column renders 0.0 (signed format +0.0000); stringify cells since
+    # idx column is an int (the row is a heterogeneous list).
+    assert any("0.0000" in str(cell) for cell in row)
+
+
+def test_top_table_row_resilient_to_non_numeric_score_b() -> None:
+    """A non-numeric ``score_b`` string must degrade to 0.0, not crash."""
+    rec = _make_rec(score_b="abc")
+    row = _build_top_table_row(idx=1, rec=rec)  # must not raise
+    assert any("0.0000" in str(cell) for cell in row)

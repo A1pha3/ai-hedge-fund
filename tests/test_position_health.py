@@ -210,6 +210,49 @@ class TestRenderPositionHealth:
         assert "HOLD" in output
         assert "SELL" in output
 
+    def test_disclaimer_in_footer(self) -> None:
+        """R73 (trust-calibration family of R71/R72): ``--position-check`` emits
+        explicit SELL/WATCH/HOLD actions and "⚠ 建议立即关注" lines but, unlike
+        the four sibling decision surfaces (``--top-picks``, ``--daily-brief``,
+        PDF exporter, backtest CLI), had no boundary disclaimer. Users could
+        read "✗ SELL" / "⚠ 建议立即关注: 000001" as a deterministic instruction.
+        The footer must carry the same non-advice disclaimer so all five
+        user-visible decision surfaces are consistent.
+        """
+        report = PositionHealthReport(
+            trade_date="20260610",
+            items=[
+                PositionHealth(
+                    ticker="000001",
+                    name="Test",
+                    composite_score=0.1,
+                    action="SELL",
+                    reason="composite=0.100 < sell_threshold=0.15",
+                ),
+            ],
+        )
+        output = render_position_health(report)
+        assert "不构成任何投资建议" in output
+        assert "研究" in output
+
+    def test_disclaimer_also_when_no_sell(self) -> None:
+        """Disclaimer must show even when there are no SELL recommendations
+        (the surface still emits HOLD/WATCH decisions)."""
+        report = PositionHealthReport(
+            trade_date="20260610",
+            items=[
+                PositionHealth(
+                    ticker="000001",
+                    name="Test",
+                    composite_score=0.6,
+                    action="HOLD",
+                    reason="综合信号健康",
+                ),
+            ],
+        )
+        output = render_position_health(report)
+        assert "不构成任何投资建议" in output
+
     def test_to_dict(self) -> None:
         report = PositionHealthReport(
             trade_date="20260610",
