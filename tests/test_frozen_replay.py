@@ -325,3 +325,180 @@ def test_build_recent_generated_buy_blocks_skips_malformed_dates() -> None:
     assert list(blocks.keys()) == ["300724"]
     assert blocks["300724"]["trigger_reason"] == "recent_formal_buy_cooldown"
     assert blocks["300724"]["exit_trade_date"] == "20260420"
+
+
+def _write_minimal_plan_line(path: Path, trade_date: str = "20260421") -> None:
+    """Helper: append one minimal valid plan record to daily_events.jsonl."""
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "event": "paper_trading_day",
+                    "trade_date": trade_date,
+                    "current_plan": {
+                        "date": trade_date,
+                        "market_state": {
+                            "breadth_ratio": 0.5,
+                            "daily_return": 0.0,
+                            "style_dispersion": 0.1,
+                            "regime_flip_risk": 0.05,
+                            "regime_gate_level": "normal",
+                        },
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+
+
+def test_load_frozen_post_market_plans_skips_corrupt_line(tmp_path, caplog) -> None:
+    """R88/BH-017 family drain: a single corrupt line in daily_events.jsonl
+    (partial write / interrupted process / disk error) must not crash the
+    entire frozen replay load. Well-formed lines around it must still load.
+
+    bug 复现: load_frozen_post_market_plans 用裸 json.loads(line) 解析每行;
+    任一行损坏 JSONDecodeError 中断整个 replay 加载 (paper_trading 主入口
+    runtime.py:359 调用), 用户回填多日 events 时一个坏行 poison 全部。
+    """
+    source_path = tmp_path / "daily_events.jsonl"
+    _write_minimal_plan_line(source_path, "20260420")
+    # corrupt line (interrupted write / disk error / hand edit)
+    with source_path.open("a", encoding="utf-8") as fh:
+        fh.write("{truncated:not valid json\n")
+    _write_minimal_plan_line(source_path, "20260421")
+
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="src.paper_trading.frozen_replay"):
+        plans = load_frozen_post_market_plans(source_path)
+
+    # Both well-formed lines loaded; corrupt line skipped, not crashed.
+    assert set(plans.keys()) == {"20260420", "20260421"}
+    # Diagnostic warning emitted so operators can distinguish "no record"
+    # from "corrupt record silently dropped".
+    assert any(
+        "corrupt" in rec.message.lower() or "损坏" in rec.message or "skip" in rec.message.lower()
+        for rec in caplog.records
+    ), [r.message for r in caplog.records]
+
+
+def test_load_sidecar_replay_input_payload_tolerates_corrupt_json(tmp_path, caplog) -> None:
+    """R88/BH-017 family drain: a corrupt selection_target_replay_input.json
+    sidecar must degrade to {} (no replay input) instead of crashing the
+    frozen replay plan loader. Paper trading writes these sidecars during
+    daily runs; a partial write mid-process must not poison the next replay.
+
+    bug 复现: _load_sidecar_replay_input_payload 用裸 json.loads(candidate_path
+    .read_text()) (line 130) + json.loads(selection_snapshot_path.read_text())
+    (line 133); 任一损坏 JSONDecodeError 由 caller load_frozen_post_market_plans
+    传播中断整个 frozen replay。
+    """
+    from src.paper_trading.frozen_replay import _load_sidecar_replay_input_payload
+
+    source_path = tmp_path / "daily_events.jsonl"
+    source_path.write_text("{}", encoding="utf-8")  # placeholder source
+
+    sel_root = tmp_path / "selection_artifacts" / "2026-04-21"
+    sel_root.mkdir(parents=True)
+    # corrupt replay input (partial write)
+    (sel_root / "selection_target_replay_input.json").write_text(
+        "{corrupt:not json", encoding="utf-8"
+    )
+
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="src.paper_trading.frozen_replay"):
+        result = _load_sidecar_replay_input_payload(source_path, "20260421")
+
+    # Degrade to empty dict, do not crash.
+    assert result == {}
+    assert any(
+        "corrupt" in rec.message.lower() or "损坏" in rec.message
+        for rec in caplog.records
+    ), [r.message for r in caplog.records]
+
+
+def test_load_sidecar_prior_by_ticker_tolerates_corrupt_json(tmp_path, caplog) -> None:
+    """R88/BH-017 family drain: a corrupt selection_snapshot.json sidecar
+    must degrade to {} (no prior) instead of crashing the replay loader.
+
+    bug 复现: _load_sidecar_prior_by_ticker 用裸 json.loads(candidate_path
+    .read_text()) (line 56); 损坏 JSONDecodeError 由 caller 传播中断整个 replay。
+    """
+    from src.paper_trading.frozen_replay import _load_sidecar_prior_by_ticker
+
+    source_path = tmp_path / "daily_events.jsonl"
+    source_path.write_text("{}", encoding="utf-8")
+
+    sel_root = tmp_path / "selection_artifacts" / "2026-04-21"
+    sel_root.mkdir(parents=True)
+    # corrupt snapshot (partial write)
+    (sel_root / "selection_snapshot.json").write_text(
+        "{corrupt:not json", encoding="utf-8"
+    )
+
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="src.paper_trading.frozen_replay"):
+        result = _load_sidecar_prior_by_ticker(source_path, "20260421")
+
+    assert result == {}
+    assert any(
+        "corrupt" in rec.message.lower() or "损坏" in rec.message
+        for rec in caplog.records
+    ), [r.message for r in caplog.records]
+
+
+def test_load_frozen_post_market_plans_partial_degradation_warns_with_counts(tmp_path, caplog) -> None:
+    """R92/R88 trust-calibration family: when SOME lines are corrupt but
+    valid plans still load, emit a warning naming both counts so the user
+    can calibrate trust on a partially-degraded replay (vs believing the
+    replay is complete). Mirrors R92 position_health degraded banner.
+    """
+    source_path = tmp_path / "daily_events.jsonl"
+    _write_minimal_plan_line(source_path, "20260420")
+    with source_path.open("a", encoding="utf-8") as fh:
+        fh.write("{corrupt1:not json\n")
+        fh.write("{corrupt2:not json\n")
+    _write_minimal_plan_line(source_path, "20260421")
+
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="src.paper_trading.frozen_replay"):
+        plans = load_frozen_post_market_plans(source_path)
+
+    assert set(plans.keys()) == {"20260420", "20260421"}
+    # Partial-degradation warning names both counts so user can calibrate.
+    degradation_msgs = [
+        r.message for r in caplog.records
+        if "完整性已降级" in r.message or "degraded" in r.message.lower()
+    ]
+    assert degradation_msgs, [r.message for r in caplog.records]
+    msg = degradation_msgs[0]
+    assert "2" in msg  # 2 corrupt lines skipped
+    assert "2" in msg  # 2 plans loaded
+
+
+def test_load_frozen_post_market_plans_all_corrupt_raises_distinguishing_error(tmp_path) -> None:
+    """R92/R88 trust-calibration family: when ALL lines are corrupt, the
+    ValueError must distinguish "all corrupt (data integrity signal)" from
+    "no current_plan records (file genuinely empty)" so the user knows to
+    repair the file rather than re-run with the same source.
+    """
+    import pytest
+
+    source_path = tmp_path / "daily_events.jsonl"
+    with source_path.open("w", encoding="utf-8") as fh:
+        fh.write("{corrupt1:not json\n")
+        fh.write("{corrupt2:not json\n")
+
+    with pytest.raises(ValueError) as exc_info:
+        load_frozen_post_market_plans(source_path)
+
+    msg = str(exc_info.value)
+    # Distinguishing signal: mentions corruption + count + repair hint,
+    # NOT the generic "No current_plan records" message.
+    assert "corrupt" in msg.lower() or "损坏" in msg
+    assert "2" in msg
+    assert "完整性" in msg or "integrity" in msg.lower() or "重新生成" in msg or "检查" in msg

@@ -8,6 +8,8 @@ from __future__ import annotations
 import itertools
 import json
 import logging
+import os
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -272,9 +274,44 @@ def _load_checkpoint(path: Path) -> dict[str, Any]:
 
 
 def _save_checkpoint(path: Path, data: dict[str, Any]) -> None:
+    """Atomically write *data* to *path*.
+
+    R93 family drain (write-side companion to R88 read-side fallback): the
+    previous plain ``open(path, "w") + json.dump`` could leave a truncated
+    checkpoint if the process was interrupted mid-write (SIGKILL / OOM /
+    disk-full / Ctrl-C during a long ``--param-search`` run). The next run
+    would then hit the R88 ``_load_checkpoint`` corrupt-fallback path and
+    silently lose all completed trials — even though the data was
+    successfully computed.
+
+    Atomic write via temp-file + ``os.replace`` (POSIX atomic on the same
+    mount point) guarantees the canonical path always holds either the
+    previous valid checkpoint or the complete new one — never a partial
+    write. Matches the established pattern in
+    ``backtesting/engine_checkpoint_helpers.write_checkpoint`` (C2-BH1) and
+    ``screening/candidate_pool_persistence_helpers._atomic_write_json`` (R93).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, default=str)
+    tmp_dir = str(path.parent)
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=tmp_dir, delete=False, suffix=".tmp"
+    ) as tmp:
+        json.dump(data, tmp, indent=2, default=str, ensure_ascii=False)
+        tmp.flush()
+        os.fsync(tmp.fileno())
+        tmp_path = tmp.name
+    try:
+        os.replace(tmp_path, path)
+    except OSError:
+        # If the atomic rename fails (extremely rare on same mount point),
+        # clean up the temp file so it cannot accumulate; re-raise so the
+        # caller knows the checkpoint was not persisted (and the canonical
+        # path still holds the prior valid state).
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def _trial_key(params: dict[str, Any]) -> str:

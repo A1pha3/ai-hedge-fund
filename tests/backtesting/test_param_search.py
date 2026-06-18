@@ -252,6 +252,71 @@ def test_load_checkpoint_corrupt_falls_back_to_empty(tmp_path, caplog):
     )
 
 
+def test_save_checkpoint_is_atomic_no_partial_file_on_crash(tmp_path, monkeypatch):
+    """R93 family drain (write-side): _save_checkpoint must use atomic write
+    (temp-file + os.replace) so a crash mid-write never leaves a truncated
+    checkpoint at the canonical path. A partial write would force the next
+    run into the R88 corrupt-fallback path, silently losing all completed
+    trials even though the data was successfully computed.
+
+    bug 复现: _save_checkpoint 用裸 open(path, "w") + json.dump; 进程在
+    json.dump 中途被 SIGKILL/OOM 留下截断文件, 下次启动 _load_checkpoint
+    触发 R88 fallback 回退空 checkpoint, 数小时已完成 trials 全部丢失。
+
+    verification strategy: monkeypatch os.replace to simulate a crash before
+    the atomic rename — the canonical path must remain in its prior valid
+    state (or absent if first write), never a partial file.
+    """
+    import os
+    import json
+
+    from src.backtesting.param_search import _save_checkpoint, _load_checkpoint
+
+    cp_path = tmp_path / "checkpoint.json"
+
+    # 1. Successful initial write establishes a valid baseline.
+    baseline_data = {"completed_trials": [{"params": {"a": 1}, "score": 0.5}]}
+    _save_checkpoint(cp_path, baseline_data)
+    assert cp_path.exists()
+    # Canonical path holds complete valid JSON, not a partial write.
+    assert _load_checkpoint(cp_path) == baseline_data
+
+    # 2. Simulate a crash during the SECOND write by breaking os.replace:
+    #    the temp file is written but never renamed onto the canonical path.
+    real_replace = os.replace
+    replace_calls: list = []
+
+    def _failing_replace(src, dst):
+        replace_calls.append((src, dst))
+        raise OSError("simulated crash before atomic rename")
+
+    monkeypatch.setattr("src.backtesting.param_search.os.replace", _failing_replace)
+
+    new_data = {"completed_trials": [{"params": {"a": 2}, "score": 0.9}]}
+    try:
+        _save_checkpoint(cp_path, new_data)
+    except OSError:
+        pass  # caller is informed the checkpoint was not persisted
+
+    # 3. Canonical path still holds the BASELINE (prior valid) data,
+    #    never a truncated/partial file. This is the atomic-write guarantee.
+    assert cp_path.exists(), "canonical checkpoint must remain after failed rename"
+    recovered = _load_checkpoint(cp_path)
+    assert recovered == baseline_data, (
+        f"atomic write must preserve prior valid checkpoint on crash; "
+        f"got {recovered!r}, expected baseline {baseline_data!r}"
+    )
+
+    # 4. No stray temp files left in the directory (cleanup-on-failure).
+    stray_tmps = [p for p in tmp_path.iterdir() if p.suffix == ".tmp"]
+    assert not stray_tmps, f"failed atomic write must clean up temp file; got {stray_tmps}"
+
+    # 5. Once os.replace works again, a fresh write succeeds normally.
+    monkeypatch.setattr("src.backtesting.param_search.os.replace", real_replace)
+    _save_checkpoint(cp_path, new_data)
+    assert _load_checkpoint(cp_path) == new_data
+
+
 def test_format_search_report():
     report = run_param_search(
         space=ParamSpace(grid={"a": [1, 2]}),
