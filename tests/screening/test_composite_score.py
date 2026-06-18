@@ -426,6 +426,23 @@ class TestComputeCompositeScores:
         report = compute_composite_scores(reports_dir=tmp_path)
         assert report.items == []
 
+    def test_r104_corrupt_report_degrades_to_empty(self, tmp_path, caplog) -> None:
+        """R104 (R88/BH-017 family): a corrupt/truncated latest report must not
+        crash the composite-scoring path that --auto depends on. Degrade to
+        empty CompositeReport (same semantics as missing file) + warning."""
+        import logging
+
+        from src.screening.composite_score import compute_composite_scores
+
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        (reports_dir / "auto_screening_20260611.json").write_text("{corrupt not json", encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING, logger="src.screening.composite_score"):
+            report = compute_composite_scores(reports_dir=reports_dir)
+        assert report.items == []
+        assert any("损坏" in rec.message for rec in caplog.records)
+
 
 def test_compute_composite_scores_for_recommendations_logs_dimension_degradation(
     tmp_path, caplog,

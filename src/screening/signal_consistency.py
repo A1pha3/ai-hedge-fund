@@ -223,7 +223,16 @@ def run_consistency_check(
         print(f"{Fore.YELLOW}⚠ No auto_screening report found{Style.RESET_ALL}")
         return 1
 
-    report = json.loads(report_path.read_text(encoding="utf-8"))
+    # R104 (R88/BH-017 family): corrupt/truncated report must not crash the
+    # --signal-consistency CLI; degrade to "no report" + user-visible warning.
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        print(
+            f"{Fore.YELLOW}⚠ 最新报告 {report_path.name} 损坏或不可读 ({exc}); "
+            f"请重新运行 --auto 生成.{Style.RESET_ALL}"
+        )
+        return 1
     recs = (report.get("recommendations") or [])[:top_n]
 
     results = check_signal_consistency(recs)

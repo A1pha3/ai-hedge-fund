@@ -147,7 +147,20 @@ def compute_composite_scores(
     if report_path is None:
         return CompositeReport()
 
-    report_data = json.loads(report_path.read_text(encoding="utf-8"))
+    # R104 (R88/BH-017 family): a corrupt/truncated report (partial write /
+    # interrupted run) must not crash the composite-scoring path that --auto
+    # depends on. Degrade to empty CompositeReport() (same semantics as the
+    # missing-file branch above) + warning diagnostic so the operator can
+    # distinguish "no report yet" vs "report corrupt".
+    try:
+        report_data = json.loads(report_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "[CompositeScore] 最新报告 %s 损坏或不可读 (%s); 降级为空 CompositeReport",
+            report_path,
+            exc,
+        )
+        return CompositeReport()
     recs = (report_data.get("recommendations") or [])[:top_n]
     trade_date = report_data.get("date", "")
 

@@ -109,3 +109,17 @@ class TestDecisionFlow:
         captured = capsys.readouterr()
         assert "不构成任何投资建议" in captured.out
         assert "研究" in captured.out
+
+    def test_r104_corrupt_report_degrades_gracefully(self, tmp_path: Path, capsys) -> None:
+        """R104 (R88/BH-017 family): a corrupt/truncated latest report (partial
+        write / interrupted run) must not crash --decision-flow with a raw
+        JSONDecodeError. Degrade to a user-visible error + "corrupt_report"
+        marker so the operator re-runs --auto."""
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        (reports_dir / "auto_screening_20260611.json").write_text("{corrupt not json", encoding="utf-8")
+
+        result = run_decision_flow(top_n=10, reports_dir=reports_dir)
+        captured = capsys.readouterr()
+        assert result.get("error") == "corrupt_report"
+        assert "损坏" in captured.out

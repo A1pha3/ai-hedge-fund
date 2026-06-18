@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from src.screening.signal_consistency import (
     check_signal_consistency,
     filter_by_consistency,
     render_consistency_report,
+    run_consistency_check,
 )
 
 
@@ -128,3 +131,17 @@ class TestRenderConsistencyReport:
         output = render_consistency_report(results)
         assert "Signal Consistency" in output
         assert "High: 1" in output
+
+
+def test_r104_corrupt_report_degrades_gracefully(tmp_path: Path, capsys) -> None:
+    """R104 (R88/BH-017 family): a corrupt/truncated latest report must not
+    crash --signal-consistency with a raw JSONDecodeError. Degrade to a
+    user-visible warning + nonzero exit so the operator re-runs --auto."""
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    (reports_dir / "auto_screening_20260611.json").write_text("{corrupt not json", encoding="utf-8")
+
+    rc = run_consistency_check(top_n=10, reports_dir=reports_dir)
+    captured = capsys.readouterr()
+    assert rc == 1
+    assert "损坏" in captured.out

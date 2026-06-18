@@ -73,7 +73,18 @@ def run_decision_flow(
         print(f"  {Fore.RED}✗ No auto_screening report found. Run --auto first.{Style.RESET_ALL}")
         return {**flow_result, "error": "no_report"}
 
-    report = json.loads(report_path.read_text(encoding="utf-8"))
+    # R104 (R88/BH-017 family): a corrupt/truncated report (partial write /
+    # interrupted run) must not crash the whole --decision-flow CLI. Degrade
+    # to "no report" + user-visible warning so the operator re-runs --auto
+    # rather than debugging a JSONDecodeError.
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        print(
+            f"  {Fore.RED}✗ 最新报告 {report_path.name} 损坏或不可读 ({exc}); "
+            f"请重新运行 --auto 生成.{Style.RESET_ALL}"
+        )
+        return {**flow_result, "error": "corrupt_report"}
     recs = (report.get("recommendations") or [])[:top_n]
     trade_date = report.get("date", date.today().strftime("%Y%m%d"))
     print(f"  {Fore.GREEN}✓{Style.RESET_ALL} Loaded {len(recs)} recommendations (date: {trade_date})")
