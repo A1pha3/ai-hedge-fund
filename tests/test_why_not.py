@@ -148,4 +148,107 @@ def test_top_n_cutoff_in_confidence_block(tmp_path: Path, capsys) -> None:
     assert "中位数:" in captured.out
     assert "末位:" in captured.out
     # 末位票 000001 应被列出
-    assert "000001" in captured.out
+
+
+def test_score_b_null_does_not_crash_confidence_block(tmp_path: Path, capsys) -> None:
+    """R76 (R73 同族): recommendation 中 score_b 为 JSON null 不得让 --why-not 崩溃。
+
+    ``score_b`` 在生产里通常是 float, 但部分推荐 (例如只进了 candidate_pool 但未完成
+    composite scoring 的标的) 在 JSON 里可能是 ``null``。 ``.get("score_b", 0.0)`` 默认值
+    只在 key 缺失时生效, key 存在且为 null 时返回 None, 裸 ``float(None)`` 抛 TypeError,
+    一条 malformed rec 让整个 ``--why-not`` 4-区块解释器崩溃。
+    """
+    reports_dir = tmp_path / "data" / "reports"
+    recs = [
+        _make_rec("300724", 0.80),
+        # 模拟一条 score_b=null 的残缺推荐 (例如 scoring 中途失败)
+        {"ticker": "600519", "name": "贵州茅台", "score_b": None, "decision": "neutral",
+         "strategy_signals": {}},
+    ]
+    _write_report(reports_dir, recommendations=recs)
+
+    rc = run_why_not("999999", reports_dir=reports_dir)
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    # null score_b 必须被当作 0.0 处理, 区块 2 仍正常渲染
+    assert "区块 2: confidence 不足" in captured.out
+    assert "末位:" in captured.out
+
+
+def test_score_b_null_in_already_recommended_does_not_crash(tmp_path: Path, capsys) -> None:
+    """R76 (R73 同族): State 1 命中 score_b=null 的 rec 不得在格式化 ``{score_b:+.4f}`` 时崩溃。
+
+    与 ``test_score_b_null_does_not_crash_confidence_block`` 同根因, 但触发点是
+    ``_print_already_recommended`` 的 f-string format — ``None:+.4f`` 抛 TypeError。
+    """
+    reports_dir = tmp_path / "data" / "reports"
+    recs = [
+        {"ticker": "000001", "name": "平安银行", "score_b": None, "decision": "neutral",
+         "strategy_signals": {}},
+    ]
+    _write_report(reports_dir, recommendations=recs)
+
+    rc = run_why_not("000001", reports_dir=reports_dir)
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "已被推荐" in captured.out
+    # null 必须降级为 0.0, 不得崩 format string
+    assert "Score B:" in captured.out
+
+
+def test_confidence_block_last_pick_matches_min_score(tmp_path: Path, capsys) -> None:
+    """R76: 区块 2 「末位票」标签必须指向 score_b 真正最低的那条 rec, 而非 recs[-1]。
+
+    recs 在 auto_screening_*.json 里的顺序由 ranking 逻辑决定, 不保证按 score_b 升序,
+    所以 ``recs[-1]`` 不一定是末位。原代码 ``末位票: recs[-1]`` 在 recs 未排序时会标
+    错标的, 与上面「末位: <min>  ← 门槛」自相矛盾, 误导 power-user 反事实判断。
+    """
+    reports_dir = tmp_path / "data" / "reports"
+    # 故意把最低分 000002 放在 recs 中间, 最高分 300724 放在末尾
+    recs = [
+        _make_rec("600519", 0.60, name="贵州茅台"),
+        _make_rec("000002", 0.10, name="万科A"),
+        _make_rec("300724", 0.80, name="捷佳伟创"),
+    ]
+    _write_report(reports_dir, recommendations=recs)
+
+    rc = run_why_not("999999", reports_dir=reports_dir)
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    # 末位票必须指向真正最低分的 000002 (万科A), 而非 recs[-1] 的 300724
+    assert "末位票: 000002" in captured.out
+    assert "万科A" in captured.out
+    # 不得把 recs[-1] (300724, 最高分) 标成末位票
+    assert "末位票: 300724" not in captured.out
+
+
+def test_main_path_has_disclaimer(tmp_path: Path, capsys) -> None:
+    """R76 (R71/R72/R73/R75 同族 trust calibration): --why-not 主路径 (State 2, 4 区块)
+    必须在 footer 追加「不构成投资建议」disclaimer, 与 --top-picks / --daily-brief /
+    --position-check / --explain / PDF / backtest 六个用户决策面语义一致。"""
+    reports_dir = tmp_path / "data" / "reports"
+    _write_report(reports_dir)
+
+    rc = run_why_not("600777", reports_dir=reports_dir)
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    # 必须出现 disclaimer 关键词 (与 R71-R75 一致的措辞)
+    assert "不构成任何投资建议" in captured.out
+    assert "研究" in captured.out
+
+
+def test_already_recommended_state_has_disclaimer(tmp_path: Path, capsys) -> None:
+    """R76 同族: State 1 (已在推荐中) 也输出 decision label, 必须同样补 disclaimer。"""
+    reports_dir = tmp_path / "data" / "reports"
+    _write_report(reports_dir)
+
+    rc = run_why_not("000001", reports_dir=reports_dir)
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "已被推荐" in captured.out
+    assert "不构成任何投资建议" in captured.out

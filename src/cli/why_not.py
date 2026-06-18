@@ -24,6 +24,7 @@ from typing import Any
 from colorama import Fore, Style
 
 from src.screening.custom_weights import STRATEGY_KEYS as _STRATEGY_ORDER
+from src.utils.numeric import safe_float
 
 DEFAULT_REPORT_DIR = Path("data/reports")
 
@@ -71,11 +72,21 @@ def _load_latest_report(reports_dir: Path) -> tuple[Path, dict[str, Any]] | None
 def _compute_top_score_stats(recs: list[dict[str, Any]]) -> dict[str, float]:
     """计算 Top N score_b 的统计指标。"""
     if not recs:
-        return {"min": 0.0, "median": 0.0, "max": 0.0}
-    scores = sorted((float(r.get("score_b", 0.0)) for r in recs), reverse=True)
+        return {"min": 0.0, "median": 0.0, "max": 0.0, "min_rec": None}
+    # R76 (R73 同族): score_b 在生产里通常是 float, 但部分推荐 (例如只进了
+    # candidate_pool 但未完成 composite scoring 的标的) 在 JSON 里可能是 null。
+    # 裸 float(r.get("score_b", 0.0)) 在 key 存在且为 null 时返回 None 抛 TypeError,
+    # 一条残缺 rec 让整个 --why-not 4-区块解释器崩溃。改用 safe_float 与 --top /
+    # --top-picks / --daily-brief 三条 sibling renderer 一致。
+    scored = [(safe_float(r.get("score_b")), r) for r in recs]
+    scored.sort(key=lambda pair: pair[0], reverse=True)
+    scores = [s for s, _ in scored]
     n = len(scores)
     median = scores[n // 2] if n % 2 == 1 else (scores[n // 2 - 1] + scores[n // 2]) / 2
-    return {"min": scores[-1], "median": median, "max": scores[0]}
+    # R76: 末位 rec 必须按 score_b 升序定位, 而非 recs[-1] —— auto_screening_*.json
+    # 里的 recs 顺序由 ranking 逻辑决定, 不保证按 score_b 升序, 直接取 recs[-1] 会
+    # 把非末位票标成「末位票」, 与上一行「末位: <min> 门槛」自相矛盾。
+    return {"min": scores[-1], "median": median, "max": scores[0], "min_rec": scored[-1][1]}
 
 
 def _aggregate_strategy_directions(recs: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
@@ -138,9 +149,11 @@ def _format_confidence_block(recs: list[dict[str, Any]], top_n: int) -> str:
     lines.append(f"    Top 1:  {stats['max']:+.4f}")
     lines.append(f"    中位数: {stats['median']:+.4f}")
     lines.append(f"    末位:  {stats['min']:+.4f}  ← 进 Top {top_n} 的最低门槛")
-    if recs:
-        last_name = recs[-1].get("name", recs[-1].get("ticker", "末位"))
-        last_ticker = recs[-1].get("ticker", "")
+    # R76: 末位票必须从 stats['min_rec'] 取 (按 score_b 升序定位), 而非 recs[-1]。
+    min_rec = stats.get("min_rec")
+    if min_rec:
+        last_name = min_rec.get("name", min_rec.get("ticker", "末位"))
+        last_ticker = min_rec.get("ticker", "")
         lines.append(f"    末位票: {last_ticker} {last_name}")
     lines.append("")
     lines.append(f"  要进入 Top {top_n}, 该票需 score_b ≥ {cutoff:+.4f}")
@@ -253,7 +266,9 @@ def _print_header(ticker: str, report_path: Path, top_n: int) -> None:
 
 def _print_already_recommended(ticker: str, match: dict[str, Any]) -> None:
     name = match.get("name", "")
-    score_b = match.get("score_b", 0.0)
+    # R76 (R73 同族): 见 _compute_top_score_stats 同款 null-score_b 守卫, 避免
+    # ``{score_b:+.4f}`` 在 None 上抛 TypeError。
+    score_b = safe_float(match.get("score_b"))
     decision = match.get("decision", "neutral")
     print(f"{Fore.GREEN}该票已被推荐, 请用 --explain {ticker} 查看推荐理由 (而非 --why-not){Style.RESET_ALL}")
     print(f"  当前状态: {decision}  |  Score B: {score_b:+.4f}  |  名称: {name}")
@@ -301,6 +316,8 @@ def run_why_not(
     if match is not None:
         _print_header(ticker, report_path, top_n)
         _print_already_recommended(ticker, match)
+        # R76: State 1 也带 decision label (当前状态: bullish/bearish), 同主路径补 disclaimer。
+        _print_why_not_disclaimer()
         print()
         return 0
 
@@ -360,4 +377,24 @@ def run_why_not(
     print(f"  2. 至少 1 个策略方向与 Top {top_n} 主流方向冲突")
     print("  3. 详细反事实: 对该票单独跑 score_batch (src/screening/strategy_scorer_*.py)")
     print()
+    # R76 (R71/R72/R73/R75 trust-calibration family): this surface emits a
+    # per-ticker decision direction (主流方向冲突 / confidence 阈值 / 反事实 ±score)
+    # plus the live "当前状态: bullish/bearish" label. Carry the same non-advice
+    # disclaimer as --top-picks / --daily-brief / --position-check / --explain /
+    # PDF / backtest so users do not read "末位门槛" / "反事实 +0.08" as a
+    # deterministic instruction (serves product goal "更高确信" = confidence
+    # includes honest boundary disclosure). 6th user-facing decision surface.
+    _print_why_not_disclaimer()
     return 0
+
+
+def _print_why_not_disclaimer() -> None:
+    """R76: research-only disclaimer at the end of the why-not explanation.
+
+    Mirrors the R71 ``--top-picks`` disclaimer (``top_picks._print_disclaimer``)
+    wording so all six user-facing decision surfaces stay consistent.
+    """
+    print(
+        f"  {Fore.WHITE}⚠ 以上反事实解释由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。"
+        f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}"
+    )

@@ -217,7 +217,29 @@ def run_decision_flow(
         )
     print(f"  Completed in {elapsed:.1f}s")
 
+    # R77 (R71/R72/R73/R75/R76 trust-calibration family): this surface emits a
+    # concrete Top-investable ticker with composite score, T+30 edge and win
+    # rate. Carry the same non-advice disclaimer as the other six user-facing
+    # decision surfaces (--top-picks / --daily-brief / --position-check /
+    # --explain / --why-not / PDF / backtest) so users do not read
+    # "Top investable: 000001 (T+30=+3.2%, 胜率=58%)" as a deterministic
+    # instruction (serves product goal "更高确信" = confidence includes honest
+    # boundary disclosure).
+    _print_decision_flow_disclaimer()
+
     return flow_result
+
+
+def _print_decision_flow_disclaimer() -> None:
+    """R77: research-only disclaimer at the end of the --decision-flow summary.
+
+    Mirrors the R71 ``--top-picks`` disclaimer wording so all user-facing
+    decision surfaces stay consistent.
+    """
+    print(
+        f"\n  {Fore.WHITE}⚠ 以上决策流摘要由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。"
+        f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}"
+    )
 
 
 def render_decision_flow_summary(flow: dict[str, Any]) -> str:

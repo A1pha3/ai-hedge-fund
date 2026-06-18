@@ -94,3 +94,18 @@ class TestDecisionFlow:
         output = render_decision_flow_summary(flow)
         assert "WARNING" in output
         assert "Outliers: 2" in output
+
+    def test_decision_flow_prints_disclaimer(self, tmp_path: Path, capsys) -> None:
+        """R77 (R71/R72/R73/R75/R76 trust-calibration family): --decision-flow
+        emits a concrete Top-investable ticker with composite score + T+30 edge +
+        win rate, so the footer must carry the same non-advice disclaimer as the
+        other six user-facing decision surfaces."""
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        today = _make_report("20260611", [_make_rec("000001", "A", 0.8)])
+        (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(today), encoding="utf-8")
+
+        run_decision_flow(top_n=10, reports_dir=reports_dir)
+        captured = capsys.readouterr()
+        assert "不构成任何投资建议" in captured.out
+        assert "研究" in captured.out
