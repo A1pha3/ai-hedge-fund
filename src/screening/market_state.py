@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+import logging
+
 import pandas as pd
 
 from src.screening.market_state_helpers import (
@@ -19,6 +21,8 @@ from src.tools.tushare_api import (
     get_limit_list,
     get_northbound_flow,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
@@ -94,7 +98,12 @@ def detect_market_state(trade_date: str) -> MarketState:
         # 仅当至少有一个非 unknown 标签时才附加
         if any(v != "unknown" for k, v in regime.items() if k != "summary"):
             state.macro_context = regime
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 — macro context is best-effort, never blocks market state
+        logger.warning(
+            "macro regime integration failed for trade_date=%s; "
+            "market state signal (GO/CAUTION/WAIT) will omit macro context",
+            trade_date,
+            exc_info=True,
+        )
 
     return state

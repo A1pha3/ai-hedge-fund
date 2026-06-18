@@ -140,6 +140,38 @@ class TestRenderPositionHealth:
         assert "SELL" in result
         assert "HOLD" in result
 
+    def test_signed_factor_coloring(self) -> None:
+        """Lock the +/-/0 coloring of momentum/trend/volume factors so the
+        _fmt closure can be safely hoisted out of the render loop (R91 refactor)."""
+        report = PositionHealthReport(
+            trade_date="2026-01-01",
+            items=[
+                PositionHealth(
+                    ticker="000001", name="A", composite_score=0.5,
+                    momentum_bonus=0.12, trend_resonance_factor=-0.08, volume_factor=0.0,
+                    action="HOLD", reason="ok",
+                ),
+            ],
+        )
+        result = render_position_health(report)
+        # positive → green "+", negative → red, zero → "0.00"
+        assert "+0.12" in result
+        assert "-0.08" in result
+        assert "0.00" in result
+
+    def test_degraded_report_shows_trust_banner(self) -> None:
+        """R92 product-quality: a degraded report must render a user-visible trust
+        banner so the user knows scores are unreliable (not a real 'all zero')."""
+        report = PositionHealthReport(
+            trade_date="2026-01-01",
+            degraded=True,
+            items=[
+                PositionHealth(ticker="000001", name="A", composite_score=0.0, action="HOLD"),
+            ],
+        )
+        result = render_position_health(report)
+        assert "降级" in result or "degraded" in result.lower() or "不可靠" in result or " unreliable" in result.lower()
+
 
 # ---------------------------------------------------------------------------
 # compute_position_health (end-to-end, no reports → empty)
@@ -152,6 +184,85 @@ class TestComputePositionHealth:
 
         report = compute_position_health(tickers=["000001"], reports_dir=tmp_path)
         assert report.items == []
+
+    def _seed_report(self, tmp_path) -> None:
+        """Seed one auto_screening report so held_recs is non-empty and the
+        composite/momentum/trend/volume compute branches are reached.
+        Filename must match ``auto_screening_YYYYMMDD.json`` (see
+        consecutive_recommendation._REPORT_FILENAME_PATTERN)."""
+        import json
+
+        report = {
+            "date": "20260102",
+            "recommendations": [
+                {"ticker": "000001", "name": "平安", "score_b": 0.5},
+            ],
+        }
+        (tmp_path / "auto_screening_20260102.json").write_text(
+            json.dumps(report), encoding="utf-8"
+        )
+
+    def test_silent_compute_failure_logs_warning(self, tmp_path, monkeypatch, caplog) -> None:
+        """R89 BH-017 silent-crash residue: if compute_composite_scores_for_recommendations
+        raises (provider/cache/numeric failure), position-check must NOT silently degrade to
+        score=0/HOLD — it must emit a warning so the user/operator can diagnose a broken
+        health check instead of trusting a false 'all healthy' result."""
+        import logging
+
+        from src.screening import position_health as ph_mod
+        from src.screening.position_health import compute_position_health
+
+        self._seed_report(tmp_path)
+
+        def _boom(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise RuntimeError("simulated provider/cache failure")
+
+        monkeypatch.setattr(ph_mod, "compute_composite_scores_for_recommendations", _boom)
+        monkeypatch.setattr(ph_mod, "compute_signal_momentum", _boom)
+        monkeypatch.setattr(ph_mod, "compute_trend_resonance", _boom)
+        monkeypatch.setattr(ph_mod, "compute_volume_confirmation", _boom)
+
+        with caplog.at_level(logging.WARNING, logger="src.screening.position_health"):
+            report = compute_position_health(tickers=["000001"], reports_dir=tmp_path)
+
+        # Behavior preserved: still returns a report with the held ticker
+        assert len(report.items) == 1
+        # Diagnostic: each silent fallback must now log a warning (the BH-017 fix)
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) >= 1, "compute failure must be logged, not silent"
+        assert any("000001" in r.getMessage() or "position" in r.getMessage().lower() or "health" in r.getMessage().lower() for r in warnings)
+
+    def test_compute_failure_marks_report_degraded(self, tmp_path, monkeypatch) -> None:
+        """R92 product-quality: when composite scoring degrades, the report must carry
+        a ``degraded`` flag so the user-visible render can disclose trust-calibration
+        (serves 'higher confidence' goal — distinguish real low score from silent failure)."""
+        from src.screening import position_health as ph_mod
+        from src.screening.position_health import compute_position_health
+
+        self._seed_report(tmp_path)
+
+        def _boom(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise RuntimeError("simulated provider failure")
+
+        monkeypatch.setattr(ph_mod, "compute_composite_scores_for_recommendations", _boom)
+
+        report = compute_position_health(tickers=["000001"], reports_dir=tmp_path)
+        assert report.degraded is True
+
+    def test_healthy_compute_not_degraded(self, tmp_path, monkeypatch) -> None:
+        """Baseline: when scoring succeeds, report.degraded is False (no false alarm)."""
+        from src.screening import position_health as ph_mod
+        from src.screening.position_health import compute_position_health
+
+        self._seed_report(tmp_path)
+        # All compute functions succeed (return empty reports — no exception)
+        monkeypatch.setattr(
+            ph_mod, "compute_composite_scores_for_recommendations",
+            lambda **k: type("R", (), {"items": []})(),
+        )
+
+        report = compute_position_health(tickers=["000001"], reports_dir=tmp_path)
+        assert report.degraded is False
 
 
 # ---------------------------------------------------------------------------

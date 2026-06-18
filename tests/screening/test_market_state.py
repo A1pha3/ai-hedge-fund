@@ -11,11 +11,62 @@ from src.screening.market_state import (
     _market_breadth_ratio,
     _normalize_weights,
     _northbound_streak,
+    detect_market_state,
 )
 
 # ---------------------------------------------------------------------------
-# _normalize_weights
+# detect_market_state — macro regime integration observability (R90 BH-017)
 # ---------------------------------------------------------------------------
+
+
+class TestDetectMarketStateMacro:
+    """R90 BH-017 silent-crash residue: the optional macro regime integration
+    in ``detect_market_state`` swallows all exceptions with a bare ``except: pass``.
+    When macro data fetch fails (no macro provider, network, parse error) the
+    GO/CAUTION/WAIT signal silently drops macro context with zero diagnostics.
+    The fix must emit a warning so operators can diagnose why macro context is
+    missing from the market state signal (R6 signal-light reliability)."""
+
+    def test_macro_failure_logs_warning(self, monkeypatch, caplog) -> None:
+        import logging
+
+        import pandas as pd
+
+        from src.screening import market_state as ms_mod
+
+        # Minimal non-empty index frame so detect_market_state does not early-return.
+        idx_df = pd.DataFrame(
+            {"open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0], "vol": [1.0]}
+        )
+        monkeypatch.setattr(ms_mod, "get_index_daily", lambda *a, **k: idx_df)
+        monkeypatch.setattr(ms_mod, "get_daily_price_batch", lambda *a, **k: None)
+        monkeypatch.setattr(ms_mod, "get_limit_list", lambda *a, **k: None)
+        monkeypatch.setattr(ms_mod, "get_daily_basic_batch", lambda *a, **k: None)
+        monkeypatch.setattr(ms_mod, "get_northbound_flow", lambda *a, **k: None)
+        # Short-circuit the metric builders so we reach the macro block.
+        monkeypatch.setattr(ms_mod, "calculate_market_state_metrics", lambda **k: None)
+        monkeypatch.setattr(ms_mod, "build_market_state_from_metrics", lambda **k: ms_mod.MarketState())
+
+        # Macro import path raises (simulating missing macro_data module / fetch failure).
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _import_macro(name, *args, **kwargs):
+            if name == "src.data.macro_data":
+                raise ImportError("simulated macro_data unavailability")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _import_macro)
+
+        with caplog.at_level(logging.WARNING, logger="src.screening.market_state"):
+            state = ms_mod.detect_market_state("20260102")
+
+        # Behavior preserved: returns a valid MarketState (macro is best-effort)
+        assert state is not None
+        # Diagnostic: macro failure must be logged, not silent
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) >= 1, "macro integration failure must be logged, not silent"
 
 
 class TestNormalizeWeights:
