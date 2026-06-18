@@ -88,6 +88,9 @@ cp .env.example .env
 ### 3.1 第一次运行(完整流程)
 
 ```bash
+# Step 0 (可选): 确认当前解析到的默认模型路由 (避免 silent model downgrade)
+uv run python src/main.py --show-default-model
+
 # Step 1: 预热缓存(减少 --auto 时的实时 API 请求)
 uv run python src/main.py --preheat
 
@@ -144,6 +147,31 @@ uv run python src/main.py --stock-detail 300750
 ```
 
 输出:估值 / 财务质量 / 技术面 / 资金流 / 近期事件 五板块综合卡片。
+
+### 3.4 盘前决策卡 `--daily-brief` (P0-7)
+
+```bash
+uv run python src/main.py --daily-brief
+```
+
+5 分钟盘前决策卡,整合 Top 3 一句话推荐 + 市场状态 + 行业轮动信号,适合盘前快速过一遍。
+- 输出**Top 3 ticker + score_b + BUY/HOLD/AVOID 决策标签** + 连续推荐天数 streak。
+- footer 附「不构成投资建议」disclaimer (R72, 与 `--top-picks`/`--position-check`/`--explain`/`--why-not`/`--decision-flow` 七前门一致)。
+
+### 3.5 反事实解释 `--why-not` (P0-8)
+
+```bash
+uv run python src/main.py --why-not 600519
+```
+
+解释**为什么某只票没被推荐**、需要变什么才能进 Top 推荐。输出 4 区块:
+- **区块 1 (已在推荐)**:若该票已在 Top,直接显示当前状态 + score_b。
+- **区块 2 (confidence 不足)**:Top 1/中位数/末位 score_b 门槛 + 该票当前 score_b 距末位门槛的 gap,标出真正末位票 (按 score_b 升序定位,非 recs[-1])。
+- **区块 3 (被候选池排除)**:该票是否被 ST/停牌/退市/流动性等候选池规则过滤。
+- **区块 4 (策略方向冲突)**:该票的策略方向与 Top N 主流方向的冲突详情。
+- 小结列出最可能原因 + footer 附「不构成投资建议」disclaimer (R76)。
+
+适合 power-user 反事实分析 (这票离进 Top 还差多少 score_b / 是哪个策略方向拖了后腿)。
 
 ---
 
