@@ -56,6 +56,24 @@ def test_main_prints_default_model_and_exits(monkeypatch, capsys):
     assert captured.out == "default_model_provider=openai\ndefault_model_name=gpt-default\n"
 
 
+def test_positive_float_rejects_zero_and_negative():
+    """R81: --initial-capital 必须为正数, 0/负数会触发 divide-by-zero in metrics."""
+    import argparse
+
+    from src.backtesting.cli_helpers import _positive_float
+
+    # Valid positive value passes through unchanged.
+    assert _positive_float("100000") == 100000.0
+    assert _positive_float("0.01") == 0.01
+    # Zero and negative raise ArgumentTypeError (argparse converts to exit + stderr).
+    for bad in ("0", "0.0", "-1", "-100000", "-0.5"):
+        try:
+            _positive_float(bad)
+            assert False, f"expected ArgumentTypeError for {bad!r}"
+        except argparse.ArgumentTypeError:
+            pass
+
+
 def test_main_runs_engine_with_non_interactive_model_and_analysts(monkeypatch, capsys):
     args = SimpleNamespace(
         show_default_model=False,

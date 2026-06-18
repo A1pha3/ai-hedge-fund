@@ -44,7 +44,12 @@ class PerformanceMetricsCalculator:
 
         df = df.set_index("Date")
         df["Daily Return"] = df["Portfolio Value"].pct_change()
-        clean_returns = df["Daily Return"].dropna()
+        # R81: portfolio 含 0 (用户传 --initial-capital 0 / 爆仓清零) 时, 0→value 的
+        # pct_change 为 inf, value→0 的 pct_change 为 -1.0; 0→0 为 NaN。inf 会毒化
+        # sharpe/sortino/std 计算 (产生 RuntimeWarning invalid value encountered in
+        # subtract, 并让 mean_excess/std_excess 变 inf/NaN)。drop inf 让这些不可信
+        # 收益不进入比率计算 (与 dropna 语义一致)。
+        clean_returns = df["Daily Return"].replace([np.inf, -np.inf], np.nan).dropna()
         if len(clean_returns) < 2:
             return dict(_EMPTY_METRICS)
 
@@ -72,7 +77,13 @@ class PerformanceMetricsCalculator:
             sortino = 0.0
 
         rolling_max = df["Portfolio Value"].cummax()
-        drawdown = (df["Portfolio Value"] - rolling_max) / rolling_max
+        # R81: 当 portfolio 序列含 0 (用户传 ``--initial-capital 0`` / 未初始化账户 /
+        # 爆仓清零后的第一行) 时, ``rolling_max`` 可能为 0, ``(value - 0) / 0`` 触发
+        # ``divide by zero`` RuntimeWarning 并产生 inf/NaN, 静默 corrupt max_drawdown。
+        # 把 rolling_max==0 的行 drawdown 置为 0 (无回撤, 因为 peak 本身是 0)。
+        safe_rolling_max = rolling_max.where(rolling_max != 0, np.nan)
+        drawdown = (df["Portfolio Value"] - rolling_max) / safe_rolling_max
+        drawdown = drawdown.fillna(0.0)
         if len(drawdown) > 0:
             min_dd = float(drawdown.min())
             max_drawdown = float(min_dd * 100.0)
@@ -86,26 +97,38 @@ class PerformanceMetricsCalculator:
 
         # --- Phase 0.3 新增指标 ---
         # Calmar Ratio = 年化收益 / |最大回撤|
-        total_return = (df["Portfolio Value"].iloc[-1] / df["Portfolio Value"].iloc[0]) - 1
+        # R81: iloc[0] == 0 (用户传 --initial-capital 0 / 未注资) 时 total_return
+        # 为 inf/NaN, 静默 corrupt annual_return / calmar。显式置 None 表示不可计算。
+        first_value = df["Portfolio Value"].iloc[0]
+        if first_value == 0:
+            total_return = None
+        else:
+            total_return = (df["Portfolio Value"].iloc[-1] / first_value) - 1
         # R4-GAMMA-002: pct_change drops the first row, so len(clean_returns) is
         # N-1 where N is the number of portfolio values. Using N-1 in the
         # denominator inflates annualization (e.g. 10-day backtest → 252/9 ≈ 28x).
         # Use max(N, 1) where N is the number of portfolio values.
         trading_days = max(len(clean_returns) + 1, 1)
         annualized_factor = self.annual_trading_days / max(trading_days, 1)
-        base = 1.0 + total_return
-        # GAMMA-007: negative base (total_return < -1.0) can occur when short
-        # positions cause portfolio value to go negative (extreme short squeeze).
-        # Raising a negative base to a non-integer power produces complex numbers
-        # and crashes. Clamp to -1.0 (total loss) in that pathological case.
-        if base < 0:
-            annual_return = -1.0
-        elif base > 0:
-            annual_return = base ** annualized_factor - 1.0
+        # R81: total_return 可能为 None (first_value == 0, 不可计算)。此时 annual_return
+        # / calmar 也不可计算, 置 None 而非喂 inf/NaN 进 base ** power。
+        if total_return is None:
+            annual_return = None
+            calmar = None
         else:
-            annual_return = -1.0
-        abs_mdd = abs(min_dd) if min_dd < 0 else 0
-        calmar = float(annual_return / abs_mdd) if abs_mdd > 1e-12 else (float("inf") if annual_return > 0 else 0.0)
+            base = 1.0 + total_return
+            # GAMMA-007: negative base (total_return < -1.0) can occur when short
+            # positions cause portfolio value to go negative (extreme short squeeze).
+            # Raising a negative base to a non-integer power produces complex numbers
+            # and crashes. Clamp to -1.0 (total loss) in that pathological case.
+            if base < 0:
+                annual_return = -1.0
+            elif base > 0:
+                annual_return = base ** annualized_factor - 1.0
+            else:
+                annual_return = -1.0
+            abs_mdd = abs(min_dd) if min_dd < 0 else 0
+            calmar = float(annual_return / abs_mdd) if abs_mdd > 1e-12 else (float("inf") if annual_return > 0 else 0.0)
 
         # CVaR(95%) = mean of the worst 5% of daily returns (historical
         # simulation). Tail count is ceil(0.05 * N), k >= 1. See

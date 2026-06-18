@@ -20,13 +20,29 @@ class ModelSelection:
     provider: str
 
 
+def _positive_float(value: str) -> float:
+    """R81: argparse type guard for --initial-capital. Rejects 0/negative values
+    that would trigger divide-by-zero in backtest metrics (drawdown / total_return)."""
+    parsed = float(value)
+    if not (parsed > 0):
+        raise argparse.ArgumentTypeError(
+            f"必须为正数 (got {parsed}); 0/负数会让 drawdown/total_return 触发 divide-by-zero"
+        )
+    return parsed
+
+
 def build_backtest_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run backtesting engine (modular)")
     parser.add_argument("--show-default-model", action="store_true", help="Print the currently resolved default model/provider from .env and exit")
     parser.add_argument("--tickers", type=str, required=False, help="Comma-separated tickers")
     parser.add_argument("--end-date", type=str, default=datetime.now().strftime("%Y-%m-%d"), help="End date YYYY-MM-DD")
     parser.add_argument("--start-date", type=str, default=(datetime.now() - relativedelta(months=1)).strftime("%Y-%m-%d"), help="Start date YYYY-MM-DD")
-    parser.add_argument("--initial-capital", type=float, default=100000)
+    parser.add_argument(
+        "--initial-capital",
+        type=_positive_float,
+        default=100000,
+        help="Initial capital (must be > 0; 0/negative triggers divide-by-zero in metrics)",
+    )
     parser.add_argument("--margin-requirement", type=float, default=0.0)
     parser.add_argument("--mode", choices=["agent", "pipeline"], default="agent", help="Backtest execution mode")
     parser.add_argument("--walk-forward", action="store_true", help="Run walk-forward validation")

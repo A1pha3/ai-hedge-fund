@@ -67,6 +67,32 @@ def test_metrics_basic_sharpe_sortino_and_drawdown():
     assert isinstance(metrics.get("max_drawdown_date"), str)
 
 
+def test_metrics_zero_portfolio_no_divide_by_zero_corruption():
+    """R81: 当 portfolio 序列含 0 (用户传 ``--initial-capital 0`` / 未初始化账户 /
+    账户被爆仓清零后第一行) 时, ``drawdown = (value - rolling_max) / rolling_max``
+    在 ``rolling_max == 0`` 行触发 ``divide by zero`` RuntimeWarning, 且
+    ``total_return = value.iloc[-1] / value.iloc[0] - 1`` 在 ``iloc[0] == 0`` 时为
+    inf/NaN, 静默 corrupt max_drawdown / total_return, 让回测结果不可信。
+
+    期望: 不得触发 divide-by-zero RuntimeWarning, total_return / max_drawdown 必须
+    是有限值或显式 None (而非被 RuntimeWarning 静默吞掉的 inf/NaN)。
+    """
+    import warnings
+
+    calc = PerformanceMetricsCalculator(annual_trading_days=2, annual_rf_rate=0.0)
+    # 第一行 portfolio=0 (用户传 --initial-capital 0), 之后才注资
+    vals = _build_values([0.0, 100_000.0, 90_000.0, 110_000.0])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        metrics = calc.compute_metrics(vals)
+    # total_return 不得是 inf/NaN 被静默吞掉; 必须是有限 float 或 None
+    tr = metrics.get("total_return")
+    assert tr is None or (isinstance(tr, (int, float)) and np.isfinite(tr))
+    # max_drawdown 不得是 -inf/NaN; 必须是有限 float 或 None
+    mdd = metrics.get("max_drawdown")
+    assert mdd is None or (isinstance(mdd, (int, float)) and np.isfinite(mdd))
+
+
 def test_metrics_zero_volatility_sharpe_zero():
     calc = PerformanceMetricsCalculator(annual_trading_days=252, annual_rf_rate=0.0)
     # Constant portfolio value → zero volatility → Sharpe 0
