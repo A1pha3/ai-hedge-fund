@@ -25,6 +25,7 @@ Integration:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -254,6 +255,18 @@ def compute_composite_scores_for_recommendations(
         con = consistency_map.get(ticker, 0.0)
         vol = volume_map.get(ticker, 0.0)
         trf = trend_map.get(ticker, 0.0)
+
+        # R78 (BH-012 同族): base_score 已通过 coerce_score_b 拒绝 NaN/Inf, 但
+        # 5 个 dimension bonus 来自各 dimension calculator, 任一返回 NaN/Inf (未来
+        # calculator 回归 / 缓存数据 corrupt) 都会让求和变为 NaN, 而
+        # ``max(-1.0, min(1.0, nan))`` 在 CPython 上返回 ``1.0`` —— corrupt 标的
+        # 会静默顶到前门推荐顶部 (BH-012 同型 silent-corruption)。对每个 dimension
+        # bonus 做 finite-guard (非有限值降级为 0.0), 与 base_score 的 coerce 一致。
+        mom = mom if math.isfinite(mom) else 0.0
+        sec = sec if math.isfinite(sec) else 0.0
+        con = con if math.isfinite(con) else 0.0
+        vol = vol if math.isfinite(vol) else 0.0
+        trf = trf if math.isfinite(trf) else 0.0
 
         composite = max(-1.0, min(1.0, base_score + mom + sec + con + vol + trf))
 

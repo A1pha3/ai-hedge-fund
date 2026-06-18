@@ -310,6 +310,49 @@ class TestComputeCompositeScoresForRecommendations:
         corrupt = next(it for it in report.items if it.ticker == "CORRUPT")
         assert corrupt.composite_score < 0.5
 
+    def test_nan_dimension_bonus_does_not_bubble_to_top(self, monkeypatch) -> None:
+        """R78 (BH-012 同族): NaN/Inf 从 dimension calculator 渗入 composite 求和时,
+        不得让 corrupt 标的静默拿到 HIGHEST composite (1.0) 并顶到前门推荐顶部。
+
+        BH-012 已为 ``base_score`` 修了 ``coerce_score_b`` (NaN→0.0), 但 composite
+        求和 ``base + mom + sec + con + vol + trf`` 没有最终 finite-guard:
+        ``max(-1.0, min(1.0, nan))`` 在 CPython 上返回 ``1.0`` —— 任一 dimension map
+        返回 NaN (未来 dimension calculator 回归 / 缓存数据 corrupt) 就会让该标的
+        静默顶到推荐顶部, 与 BH-012 同型的 silent-corruption 风险。本测试 monkeypatch
+        ``compute_signal_momentum`` 返回一个 NaN momentum_bonus, 验证 finite-guard
+        把 NaN 求和降级为有限值 (不得 == 1.0)。
+        """
+        from src.screening import composite_score as cs
+        from src.screening.signal_momentum import MomentumInfo
+
+        nan = float("nan")
+
+        def _momentum_returning_nan(**kwargs):
+            # 模拟未来 dimension calculator 回归产生 NaN bonus
+            ticker = "CORRUPT_DIM"
+            return type("FakeReport", (), {"items": [MomentumInfo(
+                ticker=ticker, name="坏维度", score_current=0.5,
+                score_history=[0.5], slope=nan, momentum_label="stable",
+                momentum_bonus=nan, days_observed=1,
+            )]})()
+
+        monkeypatch.setattr(cs, "compute_signal_momentum", _momentum_returning_nan)
+
+        report = compute_composite_scores_for_recommendations(
+            recommendations=[
+                _make_rec(ticker="GOOD", score_b=0.8),
+                _make_rec(ticker="CORRUPT_DIM", score_b=0.5),
+            ],
+            trade_date="2026-01-01",
+        )
+        # CORRUPT_DIM 的 NaN dimension 不得让它顶到 GOOD 之前
+        assert report.items[0].ticker == "GOOD"
+        corrupt = next(it for it in report.items if it.ticker == "CORRUPT_DIM")
+        # composite 不得 == 1.0 (BH-012 NaN-clamp 陷阱), 必须被降级为有限值
+        assert corrupt.composite_score != 1.0
+        # 降级后应低于 GOOD 的 composite
+        assert corrupt.composite_score < report.items[0].composite_score
+
 
 # ---------------------------------------------------------------------------
 # render_composite_scores
