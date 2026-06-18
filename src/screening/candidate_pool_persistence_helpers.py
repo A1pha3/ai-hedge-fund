@@ -1,15 +1,60 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import tempfile
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    """Write JSON atomically: serialize to a temp file in the same directory, then
+    ``os.replace`` onto the final path. A crash during serialization leaves the
+    previous file intact instead of a truncated/corrupt file (R93: prevents the
+    BH-017/R88 corrupted-state crash family on the candidate-pool front door)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Named temp file in the same dir so os.replace is atomic on the same filesystem.
+    fd, tmp_name = tempfile.mkstemp(prefix="." + path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_name, path)
+    except BaseException:
+        # Clean up the temp file on any failure; never leave a half-written tmp behind.
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
+def _safe_load_json(path: Path, *, fallback: Any, context: str) -> Any:
+    """Load JSON with corruption tolerance: a missing or truncated/corrupt file
+    (from a previously interrupted non-atomic write) returns ``fallback`` with a
+    warning instead of crashing the caller (R93 BH-017/R88 family)."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return fallback
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "candidate-pool state file %s is corrupt or unreadable (%s); "
+            "falling back to empty %s — a previous write may have been interrupted",
+            path,
+            exc,
+            context,
+        )
+        return fallback
+
 
 def load_candidate_pool_snapshot(snapshot_path: Path, *, candidate_stock_cls: type) -> list[Any]:
-    with open(snapshot_path, encoding="utf-8") as f:
-        data = json.load(f)
+    data = _safe_load_json(snapshot_path, fallback=[], context="candidate list")
     return [candidate_stock_cls(**item) for item in data]
 
 
@@ -30,9 +75,10 @@ def normalize_shadow_summary(shadow_summary: dict[str, Any], *, shadow_candidate
 
 
 def write_candidate_pool_snapshot(snapshot_path: Path, candidates: list[Any], *, snapshot_dir: Path) -> None:
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
-    with open(snapshot_path, "w", encoding="utf-8") as f:
-        json.dump([candidate.model_dump() for candidate in candidates], f, ensure_ascii=False, indent=2)
+    _atomic_write_json(
+        snapshot_path,
+        [candidate.model_dump() for candidate in candidates],
+    )
 
 
 def load_candidate_pool_shadow_snapshot(
@@ -41,8 +87,11 @@ def load_candidate_pool_shadow_snapshot(
     candidate_stock_cls: type,
     normalize_shadow_summary_fn: Callable[..., dict[str, Any]],
 ) -> dict[str, Any]:
-    with open(snapshot_path, encoding="utf-8") as f:
-        payload = json.load(f)
+    payload = _safe_load_json(
+        snapshot_path,
+        fallback={"selected_candidates": [], "shadow_candidates": [], "shadow_summary": {}},
+        context="shadow snapshot",
+    )
     shadow_summary_payload = dict(payload.get("shadow_summary") or {})
     shadow_summary_rows = {
         str(entry.get("ticker") or "").strip(): dict(entry)
@@ -95,34 +144,24 @@ def write_candidate_pool_shadow_snapshot(
     shadow_summary: dict[str, Any],
     snapshot_dir: Path,
 ) -> None:
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
-    with open(snapshot_path, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "selected_candidates": [candidate.model_dump() for candidate in selected_candidates],
-                "shadow_candidates": [candidate.model_dump() for candidate in shadow_candidates],
-                "shadow_summary": shadow_summary,
-            },
-            f,
-            ensure_ascii=False,
-            indent=2,
-        )
+    _atomic_write_json(
+        snapshot_path,
+        {
+            "selected_candidates": [candidate.model_dump() for candidate in selected_candidates],
+            "shadow_candidates": [candidate.model_dump() for candidate in shadow_candidates],
+            "shadow_summary": shadow_summary,
+        },
+    )
 
 
 def load_cooldown_registry(cooldown_file: Path) -> dict[str, str]:
-    if cooldown_file.exists():
-        try:
-            with open(cooldown_file, encoding="utf-8") as f:
-                return json.load(f)
-        except (OSError, json.JSONDecodeError):
-            return {}
-    return {}
+    # Delegate to the canonical corruption-tolerant loader so cooldown state and
+    # candidate-pool snapshots share one consistent read path (R93/R87 dedupe).
+    return _safe_load_json(cooldown_file, fallback={}, context="cooldown registry")
 
 
 def save_cooldown_registry(registry: dict[str, str], *, cooldown_file: Path, snapshot_dir: Path) -> None:
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
-    with open(cooldown_file, "w", encoding="utf-8") as f:
-        json.dump(registry, f, ensure_ascii=False, indent=2)
+    _atomic_write_json(cooldown_file, registry)
 
 
 def add_cooldown(

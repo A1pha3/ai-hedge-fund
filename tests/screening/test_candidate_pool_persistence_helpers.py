@@ -231,6 +231,56 @@ def test_load_shadow_snapshot_empty_summary_dedupes_rows() -> None:
         snapshot_path.unlink(missing_ok=True)
 
 
+def test_load_shadow_snapshot_corrupted_file_does_not_crash(tmp_path: Path) -> None:
+    """R93 BH-017/R88 family residue: a corrupted shadow snapshot (truncated write
+    from a previous interrupted run) must not crash the candidate-pool front door.
+    ``write_candidate_pool_shadow_snapshot`` writes non-atomically; if interrupted
+    mid-flush the next ``--auto`` load would raise JSONDecodeError. Load must
+    degrade gracefully (empty) like the cooldown loader does."""
+    snapshot_path = tmp_path / "shadow_corrupt.json"
+    # Truncated/partial JSON — exactly what a mid-write crash leaves behind.
+    snapshot_path.write_text('{"selected_candidates": [/* truncated', encoding="utf-8")
+
+    loaded = load_candidate_pool_shadow_snapshot(
+        snapshot_path,
+        candidate_stock_cls=CandidateStock,
+        normalize_shadow_summary_fn=normalize_shadow_summary,
+    )
+    assert loaded["selected_candidates"] == []
+    assert loaded["shadow_candidates"] == []
+
+
+def test_write_shadow_snapshot_is_atomic(tmp_path: Path) -> None:
+    """R93 write-side fix: writes must be atomic (temp file + os.replace) so an
+    interruption during write never corrupts an existing valid snapshot. Verify
+    by checking the file only appears at its final path with complete content."""
+    snapshot_path = tmp_path / "snapshots" / "shadow.json"
+    selected = [CandidateStock(ticker="000001", name="平安")]
+    shadow = [CandidateStock(ticker="000002", name="万科")]
+    summary = {"tickers": [{"ticker": "000002"}]}
+
+    write_candidate_pool_shadow_snapshot(
+        snapshot_path,
+        selected_candidates=selected,
+        shadow_candidates=shadow,
+        shadow_summary=summary,
+        snapshot_dir=tmp_path / "snapshots",
+    )
+
+    # Final file is complete and loadable (atomic write leaves no partial state).
+    assert snapshot_path.exists()
+    loaded = load_candidate_pool_shadow_snapshot(
+        snapshot_path,
+        candidate_stock_cls=CandidateStock,
+        normalize_shadow_summary_fn=normalize_shadow_summary,
+    )
+    assert len(loaded["selected_candidates"]) == 1
+    assert loaded["selected_candidates"][0].ticker == "000001"
+    # No leftover temp files in the snapshot dir.
+    leftover_tmps = [p for p in snapshot_path.parent.iterdir() if p.name.endswith(".tmp")]
+    assert leftover_tmps == []
+
+
 # ---------------------------------------------------------------------------
 # cooldown registry: load / save
 # ---------------------------------------------------------------------------
