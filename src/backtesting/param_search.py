@@ -259,8 +259,16 @@ def check_guardrails(
 def _load_checkpoint(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"completed_trials": []}
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        # R88 drain (BH-017 family): checkpoint 可能因运行中断 / 磁盘错误 / 部分写入而损坏
+        # (_save_checkpoint 非原子写)。此前裸 json.load 会让整个 --param-search
+        # JSONDecodeError 崩溃, 数小时已完成 trials 全部需要重跑。现在回退空 checkpoint
+        # 让搜索继续, 并发 warning 诊断让用户知情。
+        _logger.warning("param_search: 损坏的 checkpoint %s (运行中断/部分写入?): %s; 回退空 checkpoint", path, exc)
+        return {"completed_trials": []}
 
 
 def _save_checkpoint(path: Path, data: dict[str, Any]) -> None:

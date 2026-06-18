@@ -225,6 +225,33 @@ def test_run_param_search_checkpoint_resume(tmp_path):
     assert call_count == 2, "should not re-evaluate completed trials"
 
 
+def test_load_checkpoint_corrupt_falls_back_to_empty(tmp_path, caplog):
+    """R88 drain: 损坏的 checkpoint.json (运行中断 / 磁盘错误 / 部分写入) 不应让
+    整个 --param-search JSONDecodeError 崩溃丢失已完成 trials, 而应回退空 checkpoint
+    并发 warning 诊断 (用户可决定是否重新搜索)。
+
+    bug 复现: _load_checkpoint 裸 json.load(f), checkpoint 损坏时整个 param search
+    中断, 数小时已完成 trials 全部需要重跑。
+    """
+    import logging as _logging
+
+    from src.backtesting.param_search import _load_checkpoint
+
+    cp_path = tmp_path / "checkpoint.json"
+    cp_path.write_text("{partial write, not valid json", encoding="utf-8")
+
+    with caplog.at_level(_logging.WARNING, logger="src.backtesting.param_search"):
+        result = _load_checkpoint(cp_path)
+    # 应回退空 checkpoint (空 completed_trials), 而非抛 JSONDecodeError
+    assert result == {"completed_trials": []}, (
+        f"损坏 checkpoint 应回退空结构而非崩溃; got result={result!r}"
+    )
+    warn_msgs = [r.message for r in caplog.records if r.levelno >= _logging.WARNING]
+    assert any("checkpoint" in m.lower() or "损坏" in m for m in warn_msgs), (
+        f"损坏 checkpoint 应触发 warning 诊断; got warnings={warn_msgs!r}"
+    )
+
+
 def test_format_search_report():
     report = run_param_search(
         space=ParamSpace(grid={"a": [1, 2]}),

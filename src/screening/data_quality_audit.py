@@ -18,14 +18,17 @@ CLI:
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from src.screening.consecutive_recommendation import resolve_report_dir
-# Canonical 4-strategy key order — single source of truth (see custom_weights).
+
 from src.screening.custom_weights import STRATEGY_KEYS
 from src.utils.display import Fore, Style
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -83,13 +86,26 @@ def _parses_as_report_date(date_str: str) -> bool:
 def load_latest_recommendations(report_dir: Path | None = None) -> tuple[str, list[dict[str, Any]]]:
     """加载最新报告的日期 + recommendations 列表。
 
-    返回 ``(date_str, recs)``; 无报告时 ``(date_str, [])``。
+    返回 ``(date_str, recs)``; 无报告或报告损坏时 ``(date_str, [])``。
+
+    R88 drain (BH-017 family): 最新报告可能因部分写入 / 磁盘错误而损坏。此前裸
+    ``json.load`` 抛 JSONDecodeError 中断整个数据质量审计 CLI。现在 catch 解析错误,
+    发 warning 诊断, 返回空 recs 让审计继续 (与 sibling ``daily_brief._load_report``
+    的 graceful contract 一致)。
     """
     path = _find_latest_report(report_dir)
     if path is None:
         return ("", [])
-    with path.open(encoding="utf-8") as f:
-        payload = json.load(f)
+    try:
+        with path.open(encoding="utf-8") as f:
+            payload = json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "data_quality_audit: 最新报告 %s 损坏 (部分写入/磁盘错误?): %s; 返回空 recs",
+            path,
+            exc,
+        )
+        return ("", [])
     recs = list(payload.get("recommendations") or [])
     date_str = str(payload.get("date") or "")
     return (date_str, recs)

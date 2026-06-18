@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -26,6 +27,8 @@ from typing import Any
 from src.data.models import Price
 from src.utils.date_utils import format_date as _format_date
 from src.utils.date_utils import parse_date as _parse_date
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -72,12 +75,28 @@ def _read_selection_snapshot(artifact_root: Path, trade_date: str) -> dict[str, 
 
     artifact_root layout:
         <artifact_root>/<YYYY-MM-DD>/selection_snapshot.json
+
+    Raises FileNotFoundError if the snapshot does not exist or is corrupt.
+
+    R88 drain (BH-017 family): snapshot 可能因部分写入 / 磁盘错误 / 进程中断而损坏。
+    此前裸 ``json.loads`` 抛 JSONDecodeError 让整个 ``--lookback-audit`` CLI 崩溃
+    (caller :216 只 catch FileNotFoundError)。现在把解析错误也包装成 FileNotFoundError
+    语义的"数据不可用", 让 caller 走 graceful 分支 (返回错误结果而非崩溃),
+    并发 warning 诊断区分"文件不存在"vs"文件存在但损坏"。
     """
     formatted = _format_date(trade_date)
     snapshot_path = artifact_root / formatted / "selection_snapshot.json"
     if not snapshot_path.exists():
         raise FileNotFoundError(f"Selection snapshot not found: {snapshot_path}")
-    return json.loads(snapshot_path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "lookback_audit: 损坏的 selection_snapshot %s (部分写入/磁盘错误?): %s",
+            snapshot_path,
+            exc,
+        )
+        raise FileNotFoundError(f"Selection snapshot corrupt or unreadable: {snapshot_path}") from exc
 
 
 def _extract_top_tickers(snapshot: dict[str, Any], top_n: int = 10) -> list[dict[str, Any]]:

@@ -181,6 +181,27 @@ class TestSnapshotExtraction:
         result = _read_selection_snapshot(tmp_path, "20260505")
         assert result["trade_date"] == "2026-05-05"
 
+    def test_read_snapshot_corrupt_raises_file_not_found(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """R88 drain: 损坏的 snapshot (部分写入/磁盘错误) 应包装为 FileNotFoundError
+        让 caller 的 graceful 分支处理, 并发 warning 诊断 -- 而非裸 JSONDecodeError
+        崩溃整个 --lookback-audit CLI。
+        """
+        import logging as _logging
+
+        day_dir = tmp_path / "2026-05-05"
+        day_dir.mkdir()
+        (day_dir / "selection_snapshot.json").write_text("{not valid json", encoding="utf-8")
+
+        with caplog.at_level(_logging.WARNING, logger="src.research.lookback_audit"):
+            with pytest.raises(FileNotFoundError):
+                _read_selection_snapshot(tmp_path, "2026-05-05")
+        warn_msgs = [r.message for r in caplog.records if r.levelno >= _logging.WARNING]
+        assert any("损坏" in m for m in warn_msgs), (
+            f"损坏 snapshot 应触发 warning 诊断; got warnings={warn_msgs!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Tests: price calculations

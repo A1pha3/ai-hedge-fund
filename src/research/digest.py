@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 from collections import Counter
 from dataclasses import asdict, dataclass, field
@@ -35,6 +36,8 @@ from typing import Any
 
 from src.utils.date_utils import format_date as _format_date
 from src.utils.date_utils import parse_date as _parse_date
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Data models
@@ -88,12 +91,26 @@ class DigestResult:
 
 
 def _read_selection_snapshot(artifact_root: Path, trade_date: str) -> dict[str, Any] | None:
-    """Read a selection_snapshot.json. Returns None if not found."""
+    """Read a selection_snapshot.json. Returns None if not found or corrupt.
+
+    R88 (BH-017 family): snapshot 文件可能因部分写入 / 磁盘错误 / 进程中断而损坏。
+    此前裸 ``json.loads(read_text())`` 会抛 JSONDecodeError, run_digest 日期循环里
+    任一天损坏都中断整个聚合, 回测/审计期间写盘异常导致 lookback digest 全失败。
+    现在 catch 解析错误, 发 warning 诊断, 返回 None 让该天被跳过。
+    """
     formatted = _format_date(trade_date)
     snapshot_path = artifact_root / formatted / "selection_snapshot.json"
     if not snapshot_path.exists():
         return None
-    return json.loads(snapshot_path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "digest: 跳过损坏的 selection_snapshot %s (部分写入/磁盘错误?): %s",
+            snapshot_path,
+            exc,
+        )
+        return None
 
 
 def _count_weekdays(start_dt: datetime, end_dt: datetime) -> int:

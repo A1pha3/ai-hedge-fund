@@ -718,3 +718,43 @@ class TestEdgeCases:
         import math
         expected = math.sqrt(0.08 / 2)
         assert abs(result.summary["score_std"] - expected) < 0.001
+
+    def test_corrupt_snapshot_skipped_not_crash(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """R88 (BH-017 family): 损坏的 selection_snapshot.json (部分写入 / 磁盘错误)
+        不应让整个 run_digest JSONDecodeError 崩溃, 而应跳过该天并继续聚合其余日期。
+
+        bug 复现: ``_read_selection_snapshot`` 裸 ``json.loads(read_text())``,
+        snapshot 文件损坏时抛 JSONDecodeError, run_digest 的日期循环里任一天损坏
+        都中断整个聚合, 回测/审计期间写盘异常导致 lookback digest 全失败。
+        """
+        import logging as _logging
+
+        # Day 1: 合法 snapshot
+        _write_snapshot(
+            tmp_path, "2026-05-01",
+            _make_snapshot("2026-05-01", selected=[_make_candidate("300724", 0.8)]),
+        )
+        # Day 2: 损坏 JSON (部分写入 -- e.g. 进程被中断)
+        corrupt_dir = tmp_path / "2026-05-02"
+        corrupt_dir.mkdir(parents=True, exist_ok=True)
+        (corrupt_dir / "selection_snapshot.json").write_text("{not valid json", encoding="utf-8")
+        # Day 3: 合法 snapshot
+        _write_snapshot(
+            tmp_path, "2026-05-03",
+            _make_snapshot("2026-05-03", selected=[_make_candidate("000001", 0.9)]),
+        )
+
+        with caplog.at_level(_logging.WARNING, logger="src.research.digest"):
+            result = run_digest(
+                start_date="2026-05-01", end_date="2026-05-03", artifact_root=tmp_path
+            )
+        # 损坏天被跳过, 合法的两天仍聚合
+        assert result.days_with_data == 2, (
+            f"损坏 snapshot 应被跳过而非中断整个聚合; got days_with_data={result.days_with_data}"
+        )
+        assert {d.date for d in result.daily} == {"2026-05-01", "2026-05-03"}
+        # 应有 warning 提到损坏文件
+        warn_msgs = [r.message for r in caplog.records if r.levelno >= _logging.WARNING]
+        assert any("2026-05-02" in m or "snapshot" in m.lower() for m in warn_msgs), (
+            f"损坏 snapshot 应触发 warning 诊断; got warnings={warn_msgs!r}"
+        )
