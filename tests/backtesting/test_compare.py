@@ -1,6 +1,8 @@
 from src.backtesting.compare import (
     ABWindowMetrics,
     BaselineDailyGainersPipeline,
+    _load_compare_checkpoint,
+    _save_compare_checkpoint,
     build_ab_comparison_payload,
     format_ab_comparison_report,
     make_backtest_agent_runner,
@@ -431,3 +433,37 @@ def test_runner_delta_fields_return_none_when_baseline_absent(monkeypatch):
     # When baseline runner metrics are absent, delta should be None (cannot compute delta)
     assert summary["avg_runner_tail_hit_delta"] is None
     assert summary["avg_runner_tail_median_delta"] is None
+
+
+def test_r102_load_compare_checkpoint_corrupt_file_degrades_to_empty(tmp_path, caplog):
+    """R102 read-side (R88/BH-017 family): a corrupt/truncated checkpoint
+    (left behind by an interrupted non-atomic write) must not crash
+    ``run_ab_comparison``; degrade to empty windows + warning so the operator
+    can distinguish "no checkpoint" vs "checkpoint corrupt"."""
+    cp = tmp_path / "ab_compare.json"
+    cp.write_text("{corrupt not json", encoding="utf-8")
+
+    with caplog.at_level("WARNING", logger="src.backtesting.compare"):
+        out = _load_compare_checkpoint(cp)
+    assert out == {}
+    assert any("损坏" in rec.message for rec in caplog.records)
+
+    # Missing file -> empty dict, no warning (no regression).
+    assert _load_compare_checkpoint(tmp_path / "absent.json") == {}
+    assert _load_compare_checkpoint(None) == {}
+
+
+def test_r102_save_compare_checkpoint_atomic_no_tmp_residue(tmp_path):
+    """R102 write-side (R93 family): ``_save_compare_checkpoint`` must write
+    atomically (temp file + os.replace). After a successful write, no ``.tmp``
+    residue should remain in the directory and the file must be valid JSON
+    readable by ``_load_compare_checkpoint``."""
+    cp = tmp_path / "ab_compare.json"
+    windows = {"win1": {"baseline": {"sharpe": 1.2}, "mvp": {"sharpe": 1.5}}}
+    _save_compare_checkpoint(cp, windows)
+
+    # No tmp residue.
+    leftovers = [p.name for p in tmp_path.iterdir()]
+    assert leftovers == ["ab_compare.json"]
+    # Round-trips through the loader.
+    assert _load_compare_checkpoint(cp) == windows

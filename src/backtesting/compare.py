@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -26,6 +29,8 @@ from .walk_forward import (
     WalkForwardWindow,
     WindowMode,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _slice_agent_results(agent_results: dict[str, dict[str, dict]], tickers: list[str]) -> dict[str, dict[str, dict]]:
@@ -181,17 +186,57 @@ def _window_key(window: WalkForwardWindow) -> str:
 
 
 def _load_compare_checkpoint(path: Path | None) -> dict[str, dict]:
+    """Load A/B comparison checkpoint with corruption tolerance.
+
+    R102 (R88/BH-017 family read-side drain): a bare ``json.loads`` previously
+    raised ``JSONDecodeError`` on a corrupt/truncated checkpoint (left behind by
+    an interrupted non-atomic write — see ``_save_compare_checkpoint``), crashing
+    the entire ``run_ab_comparison`` and losing all already-completed window
+    progress. Degrade to empty windows (restart from scratch) + warning so an
+    operator can distinguish "no checkpoint" vs "checkpoint corrupt". Mirrors the
+    R88 param_search / R93 candidate-pool corruption-tolerant load contract.
+    """
     if path is None or not path.exists():
         return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning(
+            "[ABCompare] 检查点 %s 损坏或不可读 (%s); 丢弃已缓存窗口状态从头开始",
+            path,
+            exc,
+        )
+        return {}
     return payload.get("windows", {})
 
 
 def _save_compare_checkpoint(path: Path | None, windows_state: dict[str, dict]) -> None:
+    """Write A/B comparison checkpoint atomically.
+
+    R102 (R93 write-side family): a bare ``path.write_text`` left a
+    truncated/corrupt file if the process was interrupted mid-write (Ctrl-C /
+    OOM / power loss); the next run then crashed on load (read-side, above) or
+    loaded partial garbage. Serialize to a temp file in the same dir then
+    ``os.replace`` onto the final path — a crash during serialization leaves the
+    previous checkpoint intact. Mirrors the R93 candidate-pool
+    ``_atomic_write_json`` contract.
+    """
     if path is None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"windows": windows_state}, ensure_ascii=False, indent=2), encoding="utf-8")
+    fd, tmp_name = tempfile.mkstemp(
+        prefix="." + path.name + ".", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"windows": windows_state}, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def _remove_if_exists(path: Path | None) -> None:

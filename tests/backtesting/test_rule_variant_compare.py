@@ -87,3 +87,28 @@ def test_summarize_timing_log_aggregates_pipeline_day_events(tmp_path: Path):
     assert summary["nonzero_layer_b_days"] == 1
     assert summary["nonzero_buy_order_days"] == 1
     assert summary["executed_order_days"] == 1
+
+
+def test_r102_summarize_timing_log_skips_corrupt_lines(tmp_path: Path, caplog):
+    """R102 JSONL drain (R88/BH-017 family): a single corrupt/truncated line in
+    a JSONL timing log (left behind by a process interrupted mid-write of one
+    timing record) must not abort the whole rule-variant comparison. Skip the
+    corrupt line + warning; keep all valid lines."""
+    from src.backtesting.rule_variant_compare import summarize_timing_log
+
+    timing_log = tmp_path / "variant.timings.jsonl"
+    good = {"event": "pipeline_day_timing", "timing_seconds": {"total_day": 10.0}}
+    lines = [
+        json.dumps(good),
+        "{corrupt not json line",  # corrupt line in the middle
+        json.dumps(good),
+    ]
+    timing_log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    with caplog.at_level("WARNING", logger="src.backtesting.rule_variant_compare_helpers"):
+        summary = summarize_timing_log(timing_log)
+
+    # Both valid events were aggregated; the corrupt line was skipped, not crashed.
+    assert summary["pipeline_days"] == 2
+    assert summary["avg_total_day_seconds"] == 10.0
+    assert any("损坏" in rec.message for rec in caplog.records)
