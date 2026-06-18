@@ -16,6 +16,8 @@ from typing import Any
 
 from fpdf import FPDF
 
+from src.utils.numeric import safe_float
+
 # ---------------------------------------------------------------------------
 # 颜色 (RGB 0-255) — 使用低饱和度, 适合打印 + 屏幕
 # ---------------------------------------------------------------------------
@@ -376,13 +378,18 @@ def _render_industry_rotation(pdf: _ScreeningPDF, report_data: dict) -> None:
     rows: list[list[Any]] = []
     row_colors: list[list[tuple[int, int, int]]] = []
     for sig in rotation[:15]:
-        momentum = float(sig.get("momentum_score", 0))
+        # R76 same-class drain: momentum_score / avg_score_b 在 industry_rotation
+        # JSON 可能为 null (部分写入 / 手改 / 上游 compute 异常)。裸 float(.get(...))
+        # 在 null 上 TypeError 中断整个 PDF 行业轮动 section 渲染。改用 safe_float
+        # (与 --why-not / --top / --top-picks / --daily-brief sibling renderer 一致),
+        # null 降级 0.0 让 section 继续渲染。
+        momentum = safe_float(sig.get("momentum_score"))
         color = _COLOR_BUY if momentum > 5 else (_COLOR_AVOID if momentum < -5 else _COLOR_WATCH)
         rows.append([
             sig.get("industry_name", ""),
             f"{momentum:+.1f}",
-            f"{float(sig.get('avg_score_b', 0)):+.2f}",
-            int(sig.get("candidate_count", 0)),
+            f"{safe_float(sig.get('avg_score_b')):+.2f}",
+            int(sig.get("candidate_count", 0) or 0),
         ])
         row_colors.append([_COLOR_TEXT, color, _COLOR_TEXT, _COLOR_TEXT])
     pdf._table(headers, widths, rows, row_colors=row_colors)
@@ -394,7 +401,18 @@ def _render_recommendations(pdf: _ScreeningPDF, report_data: dict) -> None:
     recs = report_data.get("recommendations") or []
     if not recs:
         return
-    pdf._section(f"推荐标的 (Top {min(len(recs), pdf.config.max_recommendations)})")
+    # Feature: truncation disclosure. When recs count exceeds max_recommendations,
+    # the title shows 'Top {rendered} / 共 {total}' so the user sharing/archiving
+    # the PDF knows it is a truncated subset, not the full set. Ambiguous 'Top 30'
+    # could be misread as '30 total'. When not truncated, keep the clean title
+    # without a misleading '共' suffix.
+    total_recs = len(recs)
+    rendered = min(total_recs, pdf.config.max_recommendations)
+    if total_recs > pdf.config.max_recommendations:
+        title = f"推荐标的 (Top {rendered} / 共 {total_recs})"
+    else:
+        title = f"推荐标的 (Top {rendered})"
+    pdf._section(title)
     headers = ["代码", "名称", "行业", "score_b", "决策", "连续天数", "信号衰减"]
     widths = [22.0, 38.0, 28.0, 18.0, 22.0, 18.0, 24.0]
     rows: list[list[Any]] = []
@@ -411,22 +429,39 @@ def _render_recommendations(pdf: _ScreeningPDF, report_data: dict) -> None:
             "mild": "弱衰减",
             "none": "无",
         }.get(decay_level, decay_level)
+        # R76 same-class drain: score_b 在生产里通常是 float, 但部分推荐
+        # (例如只进了 candidate_pool 但未完成 composite scoring 的标的) 在
+        # JSON 里可能是 null。裸 float(rec.get('score_b', 0)) 在 key 存在且
+        # 为 null 时返回 None 抛 TypeError, 一条残缺 rec 中断整个 PDF 推荐
+        # section 渲染。改用 safe_float 与 --why-not / --top / --top-picks /
+        # --daily-brief 四条 sibling renderer 一致 (R76 canonical 模式)。
+        # 提取局部变量避免同一 rec 重复 safe_float 求值 (row value + row_color)。
+        raw_score_b = rec.get("score_b")
+        score_b_is_missing = raw_score_b is None
+        score_b = safe_float(raw_score_b)
+        consecutive_days = int(rec.get("consecutive_days", 0) or 0)
+        # Trust-calibration (R92 / Campaign 1 Stage 3 family): score_b=null 时
+        # PDF 单元格显示 "n/a" 而非 "+0.0000", 让用户一眼区分"真实 0 分"
+        # vs "数据残缺降级为 0", 不会把降级 0.0 误读为真实评分校准信任度。
+        score_b_display = "n/a" if score_b_is_missing else f"{score_b:+.4f}"
         rows.append([
             rec.get("ticker", ""),
             rec.get("name", "") or "-",
             rec.get("industry_sw", "") or "-",
-            f"{float(rec.get('score_b', 0)):+.4f}",
+            score_b_display,
             decision,
-            int(rec.get("consecutive_days", 0) or 0),
+            consecutive_days,
             decay_text,
         ])
         row_colors.append([
             _COLOR_TEXT,
             _COLOR_TEXT,
             _COLOR_MUTED,
-            _COLOR_BUY if float(rec.get("score_b", 0)) > 0 else _COLOR_AVOID,
+            # 残缺 score_b 用 _COLOR_MUTED (灰) 区分, 不触发 BUY/AVOID 着色
+            # (避免把降级 0.0 染成红色 AVOID 误导用户)。
+            _COLOR_MUTED if score_b_is_missing else (_COLOR_BUY if score_b > 0 else _COLOR_AVOID),
             decision_color,
-            _COLOR_BUY if int(rec.get("consecutive_days", 0) or 0) >= 3 else _COLOR_TEXT,
+            _COLOR_BUY if consecutive_days >= 3 else _COLOR_TEXT,
             decay_color,
         ])
     pdf._table(headers, widths, rows, row_colors=row_colors)

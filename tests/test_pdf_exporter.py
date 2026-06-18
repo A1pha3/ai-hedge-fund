@@ -478,3 +478,208 @@ def test_load_report_missing_file(tmp_path: Path) -> None:
     """load_report 在文件不存在时抛 ValueError。"""
     with pytest.raises(ValueError):
         load_report(tmp_path / "no_such.json")
+
+
+def test_render_recommendations_tolerates_null_score_b(tmp_path: Path) -> None:
+    """R76 same-class drain: recommendations JSON 里部分 rec 的 score_b 为 null
+    (candidate_pool 进了但未完成 composite scoring 的标的 / agent 输出 null /
+    部分写入) 时, --export-pdf 推荐 section 不应崩溃 (R76 已为 --why-not /
+    --top / --top-picks / --daily-brief 修了同型 bare-coercion crash, pdf 路径漏)。
+
+    bug 复现: pdf_exporter._render_recommendations 用裸 float(rec.get('score_b', 0)),
+    key 存在但 value=null 时 .get 返回 None, float(None) TypeError 中断整个 PDF
+    推荐 section 渲染 (line 418 + line 427 row_color 判断两处都会崩)。
+    """
+    report = {
+        "mode": "auto_screening",
+        "date": "20260607",
+        "recommendations": [
+            {
+                "ticker": "000001",
+                "name": "正常票",
+                "industry_sw": "银行",
+                "score_b": 0.72,
+                "decision": "buy",
+                "consecutive_days": 3,
+            },
+            {
+                "ticker": "000002",
+                "name": "残缺票",
+                "industry_sw": "电子",
+                "score_b": None,  # JSON null — R76 确认的 active reachable path
+                "decision": "neutral",
+                "consecutive_days": 0,
+            },
+        ],
+    }
+    out = tmp_path / "null_score_b.pdf"
+    config = PDFReportConfig(max_recommendations=10)
+    # Should NOT raise TypeError; null score_b degrades to 0.0.
+    result = generate_screening_pdf(report, out, config=config)
+    assert result.exists()
+    assert result.stat().st_size > 0
+
+
+def test_render_industry_rotation_tolerates_null_numeric_fields(tmp_path: Path) -> None:
+    """R76 same-class drain (industry_rotation path): momentum_score / avg_score_b
+    在 industry_rotation JSON 为 null (部分写入 / 手改 / 上游 compute 异常) 时,
+    --export-pdf 行业轮动 section 不应崩溃。同 _render_recommendations 的 score_b
+    同根因 (bare float(.get(...)) 在 null 上 TypeError)。
+    """
+    report = {
+        "mode": "auto_screening",
+        "date": "20260607",
+        "industry_rotation": [
+            {"industry_name": "正常行业", "momentum_score": 25.3, "avg_score_b": 0.42, "candidate_count": 12},
+            {"industry_name": "残缺行业", "momentum_score": None, "avg_score_b": None, "candidate_count": 5},
+        ],
+    }
+    out = tmp_path / "null_rotation.pdf"
+    config = PDFReportConfig(include_recommendations=False)
+    result = generate_screening_pdf(report, out, config=config)
+    assert result.exists()
+    assert result.stat().st_size > 0
+
+
+def test_render_recommendations_null_score_b_shows_na_not_zero(tmp_path: Path) -> None:
+    """R92 / Campaign 1 Stage 3 trust-calibration family: when score_b is null,
+    the PDF cell must show 'n/a' (not '+0.0000') so the user can distinguish
+    'genuinely zero score' from 'data-missing degraded to 0'. A degraded 0.0
+    formatted as a real score would silently mislead trust calibration.
+
+    verification: spy on _ScreeningPDF._table to capture the rows passed to
+    the recommendations table, then assert the null rec's score_b cell shows
+    'n/a' while the normal rec shows its formatted '+0.7200'.
+    """
+    from src.reporting.pdf_exporter import _ScreeningPDF
+
+    captured_tables: list = []
+
+    real_table = _ScreeningPDF._table
+
+    def _spy_table(self, headers, widths, rows, row_colors=None):
+        captured_tables.append({"headers": list(headers), "rows": [list(r) for r in rows]})
+        return real_table(self, headers, widths, rows, row_colors=row_colors)
+
+    report = {
+        "mode": "auto_screening",
+        "date": "20260607",
+        "recommendations": [
+            {
+                "ticker": "000001",
+                "name": "正常票",
+                "industry_sw": "银行",
+                "score_b": 0.72,
+                "decision": "buy",
+                "consecutive_days": 3,
+            },
+            {
+                "ticker": "000002",
+                "name": "残缺票",
+                "industry_sw": "电子",
+                "score_b": None,  # degraded — must show n/a, not +0.0000
+                "decision": "neutral",
+                "consecutive_days": 0,
+            },
+        ],
+    }
+    out = tmp_path / "na_score_b.pdf"
+    config = PDFReportConfig(max_recommendations=10)
+
+    import unittest.mock as _mock
+    with _mock.patch.object(_ScreeningPDF, "_table", _spy_table):
+        result = generate_screening_pdf(report, out, config=config)
+    assert result.exists()
+
+    # Find the recommendations table (has score_b header).
+    rec_table = next(
+        (t for t in captured_tables if "score_b" in t["headers"]),
+        None,
+    )
+    assert rec_table is not None, f"recommendations table not captured; got tables={[t['headers'] for t in captured_tables]}"
+    # 2 recs rendered.
+    assert len(rec_table["rows"]) == 2
+    # Find the row for the 残缺票 (null score_b).
+    null_row = next(r for r in rec_table["rows"] if "残缺" in str(r[1]))
+    normal_row = next(r for r in rec_table["rows"] if "正常" in str(r[1]))
+    # score_b is the 4th column (index 3) per headers: 代码/名称/行业/score_b/...
+    assert null_row[3] == "n/a", f"null score_b should display 'n/a'; got {null_row[3]!r}"
+    assert normal_row[3] == "+0.7200", f"normal score_b should format as +0.7200; got {normal_row[3]!r}"
+
+
+def test_render_recommendations_section_title_shows_total_when_truncated(tmp_path: Path) -> None:
+    """Feature: when recommendations count exceeds max_recommendations, the
+    PDF section title must disclose the total so the user sharing/archiving
+    the PDF knows it contains a truncated subset, not the full recommendation
+    set. Ambiguous 'Top 30' could be misread as '30 total'.
+
+    verification: spy on _ScreeningPDF._section to capture the title passed
+    when recs=50 and max_recommendations=30; assert title contains both
+    '30' (rendered) and '50' (total).
+    """
+    from src.reporting.pdf_exporter import _ScreeningPDF
+
+    captured_sections: list = []
+    real_section = _ScreeningPDF._section
+
+    def _spy_section(self, title, *args, **kwargs):
+        captured_sections.append(str(title))
+        return real_section(self, title, *args, **kwargs)
+
+    recs = _make_recs(50)
+    report = {
+        "mode": "auto_screening",
+        "date": "20260607",
+        "recommendations": recs,
+    }
+    out = tmp_path / "truncated.pdf"
+    config = PDFReportConfig(max_recommendations=30)
+
+    import unittest.mock as _mock
+    with _mock.patch.object(_ScreeningPDF, "_section", _spy_section):
+        result = generate_screening_pdf(report, out, config=config)
+    assert result.exists()
+
+    # Find the recommendations section title.
+    rec_titles = [t for t in captured_sections if "推荐" in t or "Top" in t]
+    assert rec_titles, f"recommendations section title not captured; got {captured_sections}"
+    title = rec_titles[0]
+    # When truncated (50 > 30), title must disclose both rendered and total.
+    assert "30" in title, f"title should show rendered count 30; got {title!r}"
+    assert "50" in title, f"title should show total count 50 (truncation disclosure); got {title!r}"
+
+
+def test_render_recommendations_section_title_no_total_when_not_truncated(tmp_path: Path) -> None:
+    """Feature companion: when recs count <= max_recommendations (no truncation),
+    the title should NOT add a misleading '/ 共 N' suffix (would imply truncation
+    that isn't happening). Keeps the title clean for the common case.
+    """
+    from src.reporting.pdf_exporter import _ScreeningPDF
+
+    captured_sections: list = []
+    real_section = _ScreeningPDF._section
+
+    def _spy_section(self, title, *args, **kwargs):
+        captured_sections.append(str(title))
+        return real_section(self, title, *args, **kwargs)
+
+    recs = _make_recs(10)
+    report = {
+        "mode": "auto_screening",
+        "date": "20260607",
+        "recommendations": recs,
+    }
+    out = tmp_path / "not_truncated.pdf"
+    config = PDFReportConfig(max_recommendations=30)
+
+    import unittest.mock as _mock
+    with _mock.patch.object(_ScreeningPDF, "_section", _spy_section):
+        result = generate_screening_pdf(report, out, config=config)
+    assert result.exists()
+
+    rec_titles = [t for t in captured_sections if "推荐" in t or "Top" in t]
+    assert rec_titles, f"recommendations section title not captured; got {captured_sections}"
+    title = rec_titles[0]
+    assert "10" in title, f"title should show count 10; got {title!r}"
+    # No truncation -> no '共' suffix that would imply truncation.
+    assert "共" not in title, f"non-truncated title should not imply truncation; got {title!r}"
