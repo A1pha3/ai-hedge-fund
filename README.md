@@ -1,4 +1,14 @@
-# AI Hedge Fund
+# AI Hedge Fund (A 股研究分叉 / A-share Research Fork)
+
+> ⚠️ **本仓库是 [virattt/ai-hedge-fund](https://github.com/virattt/ai-hedge-fund) 的 A 股研究分叉, 不是上游英文项目。**
+>
+> 本 README 下方保留上游英文说明以示出处与 credit, 但**本分叉的实际工作流、CLI 与数据源与上游不同**:
+> - **市场**: A 股 (沪深), 非美股; 主要工作流是 `--auto` 全市场筛选, 不是上游的 `--ticker AAPL,MSFT`。
+> - **安装**: 使用 `uv` (本仓库同时含 `uv.lock` 与上游遗留的 `poetry.lock`), 入口是 `uv run python src/main.py`, 不是 `poetry run`。
+> - **数据源**: Tushare / AkShare / Baostock (需 `TUSHARE_TOKEN`), 非上游的 `FINANCIAL_DATASETS_API_KEY`。
+> - **决策面**: 本分叉新增 `--auto` / `--explain` / `--why-not` / `--daily-brief` / `--decision-flow` / `--top-picks` / `--position-check` 等 A 股决策 CLI。
+>
+> **新用户请直接阅读 [docs/cn/user-manual.md](docs/cn/user-manual.md) (权威中文手册) 与 [docs/cn/product/feature-proposals.md](docs/cn/product/feature-proposals.md) (产品 backlog / R 系列变更记录), 不要照下方上游英文说明操作。**
 
 This is a proof of concept for an AI-powered hedge fund.  The goal of this project is to explore the use of AI to make trading decisions.  This project is for **educational** purposes only and is not intended for real trading or investment.
 
