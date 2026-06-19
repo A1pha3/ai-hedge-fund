@@ -78,7 +78,13 @@ class TestCheckDataFreshness:
         today_report = reports_dir / "auto_screening_20260611.json"
         today_report.write_text(json.dumps({"recommendations": []}), encoding="utf-8")
 
-        result = check_data_freshness(trade_date="20260611", reports_dir=reports_dir)
+        # R118: 显式 cache_path (不存在的路径) 避免依赖机器默认缓存状态 ——
+        # 否则本机若有 schema 不匹配的真实缓存会让测试结果非确定性。
+        result = check_data_freshness(
+            trade_date="20260611",
+            reports_dir=reports_dir,
+            cache_path=tmp_path / "nonexistent.sqlite",
+        )
         assert result["fresh"] is True
 
     def test_trade_date_normalized(self) -> None:
@@ -113,6 +119,65 @@ class TestCheckDataFreshness:
         # Observability: warns that the audit was unavailable.
         assert any("cache freshness audit unavailable" in rec.message.lower() for rec in caplog.records), (
             f"Expected cache-audit warning, got: {[rec.message for rec in caplog.records]}"
+        )
+
+    def test_per_source_query_failure_marks_freshness_unknown_not_fresh(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """R118 / 新鲜度门正确性: 单源新鲜度查询失败时, 该源应标记为"未知"
+        (不确定), 让 ``check_data_freshness`` 保守判 ``fresh=False``,
+        不能让查询失败被静默吞掉后误判 "all fresh"。
+
+        背景: ``_check_cache_freshness`` 每源 ``except Exception`` 只 ``logger.debug``
+        (BH-017 silent-swallow drain), 查询失败时该源 key 不进 ``result``。
+        ``check_data_freshness`` 只迭代 ``result`` 里 *存在的* 源, 缺失的源 →
+        无 stale 警告 → ``all_fresh`` 保持 True → 报告 ``fresh=True`` + 跳过
+        ``apply_freshness_confidence_penalty`` 的过期数据置信度惩罚。一个真正
+        stale 的 ``financial_metrics`` 缓存在 schema drift / locked DB 单源查询
+        失败时被报告为 fresh, 数据安全门被绕过。
+
+        设计: 真实可读 sqlite 缓存 (空表, 模拟查询本身可跑但 daily_prices 查询
+        因 schema drift 抛 OperationalError)。daily_prices 源查询失败 → 该源
+        标记 unknown → ``check_data_freshness`` 保守 ``fresh=False``。
+        """
+        import sqlite3
+
+        from src.screening import data_freshness_guard as dfg
+
+        cache = tmp_path / "cache.sqlite"
+        # 真实可打开的空 DB (让 outer sqlite3.connect 不抛, 进入 per-source 查询)
+        conn = sqlite3.connect(cache)
+        conn.execute("CREATE TABLE cache (key TEXT, date TEXT)")
+        conn.commit()
+        conn.close()
+
+        # 模拟单源查询失败: 包装 conn.execute, daily_prices 查询抛 OperationalError
+        orig_connect = sqlite3.connect
+        call_count = {"n": 0}
+
+        class _WrappedConn:
+            def __init__(self, real):
+                self._real = real
+
+            def execute(self, sql, *a, **kw):
+                if "daily_prices" in sql or "daily_%price" in sql:
+                    raise sqlite3.OperationalError("simulated schema drift: no such column")
+                return self._real.execute(sql, *a, **kw)
+
+            def close(self):
+                self._real.close()
+
+        def patched_connect(*args, **kwargs):
+            return _WrappedConn(orig_connect(*args, **kwargs))
+
+        monkeypatch.setattr(sqlite3, "connect", patched_connect)
+
+        result = dfg.check_data_freshness(trade_date="20260611", cache_path=cache)
+
+        # 保守安全默认: 单源查询失败 → fresh=False (不能误判 all fresh)
+        assert result["fresh"] is False, (
+            "新鲜度门正确性: daily_prices 查询失败时该源应标记未知, "
+            "check_data_freshness 应保守判 fresh=False, 不能误报 all-fresh 绕过数据安全门"
         )
 
 

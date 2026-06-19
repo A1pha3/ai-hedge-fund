@@ -79,6 +79,25 @@ def check_data_freshness(
     if cache_freshness:
         for source_name, details in cache_freshness.items():
             config = _FRESHNESS_CONFIG.get(source_name, {})
+            # R118 / 新鲜度门正确性: 单源查询失败 (schema drift / locked DB) 时
+            # _check_cache_freshness 标记 ``{"unknown": True}``。历史代码缺失源
+            # 不进 result → check_data_freshness 只迭代存在的源 → all_fresh 保持
+            # True → 误报 fresh=True 跳过 apply_freshness_confidence_penalty 的
+            # 过期数据置信度惩罚, 数据安全门被绕过。改为: unknown 源保守判 not-fresh。
+            if details.get("unknown"):
+                all_fresh = False
+                warnings.append(
+                    {
+                        "source": source_name,
+                        "label": config.get("label", source_name),
+                        "latest_date": "unknown",
+                        "stale_days": None,
+                        "max_stale_days": config.get("max_stale_days", 1),
+                        "severity": "UNKNOWN",
+                        "message": "freshness query failed (schema drift / locked DB); cannot verify freshness",
+                    }
+                )
+                continue
             max_stale = int(config.get("max_stale_days", 1))
             if details.get("stale_days", 0) > max_stale:
                 all_fresh = False
@@ -202,10 +221,11 @@ def _check_cache_freshness(
                     stale_days = _days_between(latest, trade_date)
                     result["daily_prices"] = {"latest_date": latest, "stale_days": stale_days}
             except Exception as exc:
-                # BH-017 drain: silent skip would hide a real freshness gap;
-                # log at debug so query failure (schema drift, locked DB) is
-                # diagnosable instead of producing a false "all fresh" signal.
-                logger.debug("[DataFreshness] daily_prices freshness query skipped: %s", exc)
+                # R118 / 新鲜度门正确性: 标记 unknown 而非静默跳过。历史 skip 让该源
+                # 缺失 → check_data_freshness 误报 all-fresh, 绕过数据安全门。
+                # BH-017 drain: 同时保留 debug 日志以便 schema drift / locked DB 可诊断。
+                logger.debug("[DataFreshness] daily_prices freshness query failed: %s", exc)
+                result["daily_prices"] = {"unknown": True}
 
             # Check financial metrics freshness
             try:
@@ -215,7 +235,8 @@ def _check_cache_freshness(
                     stale_days = _days_between(latest, trade_date)
                     result["financial_metrics"] = {"latest_date": latest, "stale_days": stale_days}
             except Exception as exc:
-                logger.debug("[DataFreshness] financial_metrics freshness query skipped: %s", exc)
+                logger.debug("[DataFreshness] financial_metrics freshness query failed: %s", exc)
+                result["financial_metrics"] = {"unknown": True}
 
             # Check industry classification freshness
             try:
@@ -225,7 +246,8 @@ def _check_cache_freshness(
                     stale_days = _days_between(latest, trade_date)
                     result["industry_classification"] = {"latest_date": latest, "stale_days": stale_days}
             except Exception as exc:
-                logger.debug("[DataFreshness] industry_classification freshness query skipped: %s", exc)
+                logger.debug("[DataFreshness] industry_classification freshness query failed: %s", exc)
+                result["industry_classification"] = {"unknown": True}
         finally:
             conn.close()
     except Exception as exc:
