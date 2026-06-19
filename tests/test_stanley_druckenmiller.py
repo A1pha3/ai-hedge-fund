@@ -15,9 +15,11 @@ def test_analyze_growth_and_momentum_preserves_price_only_bullish_path():
     ]
     prices = [SimpleNamespace(time=index, close=100 + index * 2) for index in range(40)]
 
+    # R116: momentum 现度量近 30 bar 区间 (close[-31]=118 → close[-1]=178 → +50.8%)
+    # 而非整段历史 (+78%)。仍落入 Very strong (>50%) 桶, 持续上涨路径保持。
     assert analyze_growth_and_momentum(financial_line_items, prices) == {
         "score": 3.333333333333333,
-        "details": "Insufficient revenue data for CAGR calculation.; Insufficient EPS data for CAGR calculation.; Very strong price momentum: 78.0%",
+        "details": "Insufficient revenue data for CAGR calculation.; Insufficient EPS data for CAGR calculation.; Very strong price momentum: 50.8%",
     }
 
 
@@ -72,3 +74,40 @@ def test_analyze_druckenmiller_valuation_preserves_zero_score_sparse_path():
         "score": 0.0,
         "details": "No positive net income for P/E calculation; No positive free cash flow for P/FCF calculation; No valid EV/EBIT because EV <= 0 or EBIT <= 0; No valid EV/EBITDA because EV <= 0 or EBITDA <= 0",
     }
+
+
+def test_druckenmiller_price_momentum_uses_30d_window_not_full_history():
+    """R116 / 窗口一致性: _score_druckenmiller_price_momentum 必须用近 30 个 bar 的
+    动量, 不能用整段历史。
+
+    背景: 函数 gate 是 ``len(prices) <= 30`` (要求 >30 bar), 强烈暗示 30 天动量窗口;
+    但历史上 ``pct_change`` 用 ``close_prices[0]`` 到 ``close_prices[-1]`` (整段历史)。
+    默认价格窗口 (resolve_dates default_months_back=3 ≈ 60-65 交易日) 下, prices 含
+    ~60 bar → momentum 实际度量的是 ~60 天动量, 与 gate 的 30 天语义不一致。
+
+    Druckenmiller 是宏观动量 agent (Stanley Druckenmiller 的核心风格 = 近期强势动量),
+    用整段历史把"前期大涨但近期走平/走弱"的票误判为强动量, 直接破坏 agent 的动量信号
+    可信度。sibling technicals agent 用明确的 momentum_1m/3m/6m 窗口, 本函数应对齐
+    1m 语义 (近 30 bar)。
+
+    设计: 42 个价格, 前 11 bar 从 100 涨到 150, 后 31 bar 全平在 150。
+    - bug (整段历史): close[0]=100 → close[-1]=150 → +50% → "Moderate" (>20%, 不 >50%)
+    - fix (30 bar 窗口): close[-31]=150 (idx 11) → close[-1]=150 → 0% → "Negative"
+    前 11 bar ramp 落在 30-bar 窗口 (idx 11-41) 之外, 保证窗口全平。
+    """
+    from src.agents.stanley_druckenmiller_helpers import _score_druckenmiller_price_momentum
+
+    # 前 11 bar: 100 → 150 (斜坡上涨, idx<11); 后 31 bar: 全部 150 (近期走平, idx>=11)
+    prices = [
+        SimpleNamespace(time=index, close=(100 + index * 5 if index < 11 else 150))
+        for index in range(42)
+    ]
+
+    points, details = _score_druckenmiller_price_momentum(prices)
+
+    # 30-bar 窗口 (近 30 bar 全在 150) → 0% 动量 → "Negative" (0 points)
+    # bug 代码会用整段历史 (+50% → "Moderate" 2 points)
+    assert points == 0, (
+        f"动量窗口不一致: 应度量近 30 bar 动量 (近期走平 → 0% → 0 points), "
+        f"但用了整段历史 (+50%) 误判为 Moderate, got points={points}, details={details!r}"
+    )

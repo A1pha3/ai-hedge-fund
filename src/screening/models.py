@@ -10,8 +10,13 @@ class CandidateStock(BaseModel):
     ticker: str
     name: str
     industry_sw: str = ""
-    market_cap: float = 0.0
-    avg_volume_20d: float = 0.0
+    # R117 / NaN 防御: ge=0 与 StrategySignal 一致, 让 Pydantic 在模型层拒绝 NaN/负值。
+    # build_candidate_stocks 用 mv_map.get(ts_code,0.0)/10000.0 与 amount_map.get(ts_code,0.0)
+    # 填充, .get 只挡 missing key, 不挡已有 key 的 NaN —— tushare/pandas 脏 NaN 会流入 model
+    # 再进 _candidate_liquidity_sort_key / _technical_stage_ranking_key 的 sort tuple, 让
+    # sorted() 比较非确定性, 候选池排序跨 run 不可复现。ge=0 把脏值挡在排序前。
+    market_cap: float = Field(0.0, ge=0)
+    avg_volume_20d: float = Field(0.0, ge=0)
     listing_date: str = ""
     disclosure_risk: bool = False
     candidate_pool_rank: int = 0

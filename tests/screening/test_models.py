@@ -221,6 +221,34 @@ class TestCandidateStock:
         assert c.industry_sw == "银行"
         assert c.disclosure_risk is True
 
+    def test_nan_market_cap_rejected(self) -> None:
+        """R117 / NaN 防御: market_cap 与 avg_volume_20d 必须拒绝 NaN。
+
+        背景: 两字段历史上是无约束 ``float = 0.0`` (unlike StrategySignal 的 ge/le)。
+        Pydantic v2 对无约束 float 接受 NaN (已验证)。build_candidate_stocks 用
+        ``mv_map.get(ts_code, 0.0) / 10000.0`` 与 ``amount_map.get(ts_code, 0.0)``
+        填充, .get 只挡 missing key, 不挡已有 key 的 NaN 值 —— tushare/pandas 数据含
+        NaN 时直接流入 model, 再进 _candidate_liquidity_sort_key /
+        _technical_stage_ranking_key 的 sort tuple, NaN 让 sorted() 比较非确定性,
+        候选池排序 (Layer A 入池 + scoring) 在受影响 cohort 上跨 run 不可复现。
+
+        加 ``ge=0`` 约束 (与 StrategySignal 一致) 让 Pydantic 在模型层拒绝 NaN/负值,
+        把数据脏值挡在排序前。服务"稳定找到" (候选池排序确定性 + 不被脏 NaN 值污染)。
+        """
+        import math
+
+        with pytest.raises(ValidationError):
+            CandidateStock(ticker="000001", name="平安", market_cap=float("nan"))
+        with pytest.raises(ValidationError):
+            CandidateStock(ticker="000001", name="平安", avg_volume_20d=float("nan"))
+
+    def test_negative_market_cap_rejected(self) -> None:
+        """R117: ge=0 同时拒绝负值 (market_cap/avg_volume_20d 物理上非负)。"""
+        with pytest.raises(ValidationError):
+            CandidateStock(ticker="000001", name="平安", market_cap=-1.0)
+        with pytest.raises(ValidationError):
+            CandidateStock(ticker="000001", name="平安", avg_volume_20d=-1.0)
+
 
 # ---------------------------------------------------------------------------
 # DEFAULT_STRATEGY_WEIGHTS

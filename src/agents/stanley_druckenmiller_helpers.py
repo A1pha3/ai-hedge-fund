@@ -24,7 +24,13 @@ def _score_druckenmiller_price_momentum(prices: list) -> tuple[int, str]:
     if len(close_prices) < 2:
         return 0, "Insufficient price data for momentum calculation."
 
-    start_price = close_prices[0]
+    # R116 / 窗口一致性: gate 要求 >30 bar, 强烈暗示 30 天动量窗口 (Druckenmiller 核心
+    # 风格 = 近期强势动量, 对齐 sibling technicals agent 的 momentum_1m 语义)。历史上用
+    # close_prices[0] (整段历史起点) 度量动量, 与 gate 的 30 天语义不一致 —— 默认价格窗口
+    # (resolve_dates default_months_back=3 ≈ 60-65 交易日) 下 momentum 实际度量 ~60 天动量,
+    # 把"前期大涨但近期走平/走弱"的票误判为强动量。改为取近 31 个 close bar 的窗口
+    # (start=close_prices[-31], end=close_prices[-1]) 度量近 30 个 bar 的区间动量。
+    start_price = close_prices[-31]
     end_price = close_prices[-1]
     if start_price <= 0:
         return 0, "Invalid start price (<= 0); can't compute momentum."
