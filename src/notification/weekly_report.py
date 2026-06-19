@@ -118,7 +118,14 @@ def _block_brinson_attribution(start: str, end: str, positions_path: Path | None
             if not ticker:
                 continue
             ret = float(pos.get("return_pct", 0.0) or 0.0)
-            mv = float(pos.get("market_value", 0.0) or pos.get("value", 0.0) or 0.0)
+            # R129 / falsy-zero family (R128 sibling): explicit None-check, not ``or``.
+            # market_value == 0 (a worthless position) is a legitimate value that
+            # ``or`` would skip, falling through to the legacy ``value`` field and
+            # inflating Brinson weights.
+            mv_raw = pos.get("market_value")
+            if mv_raw is None:
+                mv_raw = pos.get("value", 0.0)
+            mv = float(mv_raw)
             ticker_returns[ticker] = ret
             ticker_mvs[ticker] = mv
             total_mv += abs(mv)

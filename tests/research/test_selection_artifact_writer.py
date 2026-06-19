@@ -1509,3 +1509,27 @@ def test_file_selection_artifact_writer_surfaces_p2_execution_block_context(tmp_
     assert snapshot["reporting_target_summary"]["p2_execution_blocked_count"] == 1
     assert snapshot["short_trade_view"]["selected_symbols"] == []
     assert snapshot["short_trade_view"]["blocked_symbols"] == ["300724"]
+
+
+def test_portfolio_nav_keeps_zero_current_price_not_fallback_to_last_price():
+    """R129 / falsy-zero family (R128 sibling): current_price == 0 (a worthless /
+    delisted position) must value the position at 0, not fall through to
+    last_price or long_cost_basis. Previously
+    ``position.get("current_price") or position.get("last_price") or ...`` let 0.0
+    fall through to last_price=100 -> NAV inflated by shares*100. With an explicit
+    None-check, 0.0 is kept -> the worthless position contributes 0.
+    """
+    from src.research.artifacts import _portfolio_nav
+
+    portfolio_snapshot = {
+        "cash": 1000.0,
+        "positions": {
+            "000001": {"long": 10, "current_price": 0.0, "last_price": 100.0, "long_cost_basis": 50.0},
+        },
+    }
+
+    nav = _portfolio_nav(portfolio_snapshot)
+
+    # Worthless position (current_price=0) contributes 0 -> NAV == cash only,
+    # NOT cash + 10*100 = 2000 (the last_price fallback inflation).
+    assert nav == 1000.0

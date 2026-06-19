@@ -122,6 +122,33 @@ class TestGenerateWeeklyReport:
         assert "配置贡献" in report
         assert "选择贡献" in report
 
+    def test_brinson_block_zero_market_value_not_fallback_to_value(self, tmp_report_dir: Path, fake_auto_screening: Path, tmp_path: Path) -> None:
+        """R129 / falsy-zero family (R128 sibling): market_value == 0 (a worthless
+        position) must NOT fall through to the legacy ``value`` field. Previously
+        ``pos.get("market_value", 0.0) or pos.get("value", 0.0) or 0.0`` let 0.0
+        fall through to value=100 -> total_mv>0 -> Brinson computed on inflated
+        weights. With an explicit None-check, market_value=0 is kept -> total_mv=0
+        -> the block reads "本周无持仓数据" (all positions worthless).
+        """
+        from src.notification.weekly_report import generate_weekly_report
+
+        positions = [
+            # Worthless position (market_value=0) but legacy "value" field is nonzero
+            {"ticker": "000001", "return_pct": 0.03, "market_value": 0.0, "value": 100.0},
+        ]
+        p = tmp_path / "positions_zero_mv.json"
+        p.write_text(json.dumps({"positions": positions}, ensure_ascii=False), encoding="utf-8")
+
+        report = generate_weekly_report(
+            start_date="20260601",
+            end_date="20260606",
+            positions_path=p,
+            report_dir=tmp_report_dir,
+        )
+        # market_value=0 (worthless) kept -> total_mv=0 -> "无持仓数据",
+        # NOT a Brinson attribution computed on the inflated value=100 fallback.
+        assert "无持仓数据" in report
+
 
 class TestExitRebalance:
     """退出调仓区块。"""

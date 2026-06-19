@@ -104,8 +104,17 @@ def _portfolio_nav(portfolio_snapshot: dict[str, Any]) -> float:
         shares = float(position.get("long", 0) or 0)
         if shares <= 0:
             continue
-        # Use market price when available; fall back to cost basis
-        price = float(position.get("current_price") or position.get("last_price") or position.get("long_cost_basis", 0.0) or 0.0)
+        # Use market price when available; fall back to cost basis.
+        # R129 / falsy-zero family (R128 sibling): explicit None-check, not ``or``.
+        # current_price == 0 (a worthless / delisted position) is a legitimate value
+        # that ``or`` would skip, falling through to last_price / cost_basis and
+        # inflating NAV for a worthless position.
+        price_raw = position.get("current_price")
+        if price_raw is None:
+            price_raw = position.get("last_price")
+        if price_raw is None:
+            price_raw = position.get("long_cost_basis", 0.0)
+        price = float(price_raw)
         total += shares * price
     return total if total > 0 else cash
 
