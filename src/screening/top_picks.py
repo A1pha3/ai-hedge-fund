@@ -968,7 +968,22 @@ def _load_recommendation_context(
     if report_path is None:
         return None
 
-    report_data = json.loads(report_path.read_text(encoding="utf-8"))
+    try:
+        report_data = json.loads(report_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        # R106 (R88/BH-017 family): reports/ 目录混入 corrupt
+        # auto_screening_*.json (运行中断 / 部分写入 / 磁盘错误留下的半截文件)
+        # 时, 前门此前抛 raw JSONDecodeError traceback 中断整个默认前门。
+        # 与 missing-report 一致语义 (返回 None) + 用户可见 warning 提示
+        # "重新运行 --auto 生成", 让用户看到可操作提示而非 raw traceback。
+        print(
+            f"{Fore.RED}[TopPicks] 读取报告失败 ({report_path.name}, 可能是运行中断/"
+            f"部分写入留下的损坏文件): {exc}{Style.RESET_ALL}"
+        )
+        print(
+            f"{Fore.YELLOW}[TopPicks] 请重新运行 --auto 生成新的 auto_screening 报告。{Style.RESET_ALL}"
+        )
+        return None
     recommendations = (report_data.get("recommendations") or [])[:count * 3]
     trade_date = str(report_data.get("date", "") or "")
     return report_path, report_data, recommendations, trade_date

@@ -229,6 +229,22 @@ class TestExtractedTopPicksHelpers:
     def test_load_recommendation_context_returns_none_without_reports(self, tmp_path: Path) -> None:
         assert _load_recommendation_context(tmp_path, count=2) is None
 
+    def test_load_recommendation_context_corrupt_report_returns_none(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """R106 同族: reports/ 目录混入 corrupt auto_screening_*.json
+        (运行中断 / 部分写入 / 磁盘错误留下的半截文件) 时, 前门不再
+        抛 raw JSONDecodeError traceback, 而是 None + 用户可见 warning
+        (与 missing-report 一致语义, 让 run_top_picks 给出可操作提示)。
+        """
+        corrupt_path = tmp_path / "auto_screening_20260611.json"
+        corrupt_path.write_text("{ truncated partial write  <-", encoding="utf-8")
+
+        context = _load_recommendation_context(tmp_path, count=2)
+
+        assert context is None
+        assert "重新运行" in capsys.readouterr().out
+
     @patch(
         "src.screening.expected_return.compute_expected_returns",
         return_value=ExpectedReturnReport(

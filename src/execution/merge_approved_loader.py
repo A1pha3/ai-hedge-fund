@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -11,9 +12,28 @@ MERGE_REVIEW_READY = "merge_review_ready"
 LEGACY_DEFAULT_BTST_MERGE_REVIEW_PENDING = "default_btst_merge_review_pending"
 DEFAULT_BTST_MERGE_APPROVED_EXECUTION_ACTIVE = "default_btst_merge_approved_execution_active"
 
+_logger = logging.getLogger(__name__)
+
 
 def _load_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    """读取 BTST merge sidecar JSON, 损坏时回退空 dict + warning 诊断。
+
+    R106 (R88/BH-017 family): merge_review / merge_ranking sidecar 可能因
+    运行中断 / 部分写入 / 磁盘错误留下半截文件。此前裸 ``json.loads`` 会让
+    ``load_merge_approved_tickers`` 抛 raw ``JSONDecodeError`` 中断整个 daily
+    pipeline / BTST continuation 路径。回退空 dict (caller 用 ``.get(...) or {}``
+    容错) 让路径继续, 与 missing-file 语义一致。
+    """
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        _logger.warning(
+            "merge_approved_loader: 损坏的 sidecar JSON %s "
+            "(运行中断/部分写入?): %s; 回退空 dict 让路径继续",
+            path,
+            exc,
+        )
+        return {}
 
 
 def is_merge_approved_execution_blocker(value: str | None) -> bool:
