@@ -277,8 +277,11 @@ def analyze_margin_trends(metrics: list) -> dict:
 def analyze_insider_conviction(trades: list) -> dict:
     """Analyzes insider trading activity."""
 
-    buys = sum(t.transaction_value for t in trades if t.transaction_value and t.transaction_shares > 0)
-    sells = sum(abs(t.transaction_value) for t in trades if t.transaction_value and t.transaction_shares < 0)
+    # transaction_shares is ``float | None``; guard with ``or 0`` so a trade with
+    # a value but a missing share count is skipped instead of raising TypeError
+    # on the comparison. Mirrors michael_burry.py's insider-trade handling.
+    buys = sum(t.transaction_value for t in trades if t.transaction_value and (t.transaction_shares or 0) > 0)
+    sells = sum(abs(t.transaction_value) for t in trades if t.transaction_value and (t.transaction_shares or 0) < 0)
 
     net_flow_ratio = 0 if buys + sells == 0 else (buys - sells) / (buys + sells)
 
