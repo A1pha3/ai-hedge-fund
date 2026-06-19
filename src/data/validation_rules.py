@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from typing import Any
 
 
@@ -206,16 +206,21 @@ def _all_prices_positive(row: Any) -> bool:
 
 
 def _date_not_in_future(row: Any) -> bool:
-    """日期 <= 今天 (UTC date)。
+    """日期 <= 今天 (naive 本地 date)。
 
     row 必须有 `time` 字段 (Price 模型契约), 接受 ISO date / ISO datetime / date /
     datetime 几种形式。无法解析 → 默认通过 (schema 层会拒绝非法格式)。
+
+    R115: 历史上用 ``datetime.now(timezone.utc).date()`` 与 Price ``time`` 字段
+    (A 股 bar 是 naive 上海交易日, 无 tz) 比较 —— 东八区 00:00-08:00 UTC 时本地
+    已是今天、UTC 仍是昨天, 当天的 fresh bar 会被误判 > UTC-today → 误标"未来日期"
+    被丢弃。改为 naive 本地 ``datetime.now().date()`` 与 bar 日期口径一致。
     """
 
     t = _row_get(row, "time")
     if t is None:
         return True
-    today = datetime.now(timezone.utc).date()
+    today = datetime.now().date()
     if isinstance(t, datetime):
         return t.date() <= today
     if isinstance(t, date):

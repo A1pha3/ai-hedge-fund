@@ -674,6 +674,49 @@ class TestPriceValidatorRules:
         assert is_valid is False
         assert any(r.field == RULE_NO_FUTURE_DATE and not r.is_valid for r in results)
 
+    def test_today_ashare_bar_not_flagged_as_future(self, monkeypatch, price_validator):
+        """R115 / 时区一致性: 本地今天的 A 股 bar 不应被 RULE_NO_FUTURE_DATE 误判为未来。
+
+        背景: ``_date_not_in_future`` 历史上用 ``datetime.now(timezone.utc).date()``
+        与 Price ``time`` 字段 (A 股 bar 是 naive 上海交易日, 无 tz) 比较。东八区
+        00:00-08:00 UTC 时本地已是今天、UTC 仍是昨天, 当天的 fresh bar (time = 上海
+        今天) 会被误判 > UTC-today → 误标 "未来日期" → 数据被丢弃。修复: 用 naive
+        本地 ``datetime.now().date()`` 与 naive bar 日期口径一致。当前 v2 validator
+        未接入 live pipeline (latent), 但 R78/R85 precedent: latent 数据正确性守卫
+        值得收口, 避免未来 v2 接入时静默丢今天数据。
+        """
+        import datetime as _dtmod
+
+        from src.data import validation_rules as _vr
+
+        # 东八区 00:00-08:00 UTC: 本地今天 2026-06-19 03:00, UTC 昨天 2026-06-18 19:00
+        frozen_local = _dtmod.datetime(2026, 6, 19, 3, 0, 0)
+        frozen_utc = _dtmod.datetime(2026, 6, 18, 19, 0, 0)
+
+        class _FrozenDateTime(_dtmod.datetime):
+            """datetime 子类: now(tz) 返回冻结 UTC, now() 返回冻结本地; isinstance 仍可用。"""
+
+            @classmethod
+            def now(cls, tz=None):
+                return frozen_utc if tz is not None else frozen_local
+
+        # _vr.datetime 是 datetime 类 (from datetime import datetime); 替换模块级名
+        monkeypatch.setattr(_vr, "datetime", _FrozenDateTime)
+
+        # 本地今天的 A 股 bar (naive 上海交易日, 无 tz)
+        today_row = self._make_price(time="2026-06-19")
+        is_valid, results = price_validator.validate_metric(today_row)
+
+        # 行级规则仅在失败时记结果 (_evaluate_row_level_rule ok → 空)。本地今天
+        # 的 bar 不应触发未来日期规则 → RULE_NO_FUTURE_DATE 不在失败结果里,
+        # 整行 is_valid=True。bug 代码 (UTC 昨天) 会把今天 bar 误判为未来 →
+        # results 含 RULE_NO_FUTURE_DATE 失败 + is_valid=False。
+        future_violations = [r for r in results if r.field == RULE_NO_FUTURE_DATE]
+        assert not future_violations, (
+            "时区 bug: 本地今天的 A 股 bar 被误判为未来日期 (UTC 昨天导致) 而丢弃"
+        )
+        assert is_valid, "本地今天的 A 股 bar 应整体通过校验"
+
     def test_negative_volume_fails(self, price_validator):
         """负成交量 → 校验失败."""
         bad_row = self._make_price(volume=-100)

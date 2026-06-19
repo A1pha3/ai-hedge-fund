@@ -1072,3 +1072,71 @@ def test_get_financial_metrics_logs_degradation_on_parse_failure(monkeypatch, ca
     joined = "\n".join(r.getMessage() for r in debug_records)
     assert "get_financial_metrics" in joined, "降级日志必须命名降级的数据路径"
 
+
+def test_get_market_cap_uses_local_today_not_utc_for_company_facts_path(monkeypatch):
+    """R115 / 时区一致性: get_market_cap 判定 end_date == today 必须用与 end_date
+    生产端 (main.py 的 ``datetime.now().strftime("%Y-%m-%d")``) 一致的 naive 本地日期，
+    不能用 ``datetime.now(timezone.utc)``。
+
+    背景: 13 个 fundamental/valuation agent (aswath_damodaran / ben_graham /
+    bill_ackman / cathie_wood / charlie_munger / michael_burry / mohnish_pabrai /
+    peter_lynch / phil_fisher / rakesh_jhunjhunwala / stanley_druckenmiller /
+    valuation / warren_buffett) 经 get_market_cap 拿美股市值。end_date 全仓用
+    naive 本地日期 (main.py:293 default / main.py:2109 today_str)，但
+    api.py:442 历史上误用 ``datetime.now(timezone.utc)`` 比较 —— 本地已到今天、
+    UTC 仍是昨天时 (东八区 00:00-08:00 UTC)，今天最新 company/facts 路径被跳过，
+    静默退化到 stale TTM market_cap (get_financial_metrics 回退路径)。
+
+    修复: 用与 end_date 生产端一致的 ``datetime.now()`` (naive 本地)，让
+    "今天"判定与 end_date 生成口径一致。
+    """
+    import datetime as _dt
+
+    # US-equity ticker → 走 company/facts 路径 (非 ashare)
+    monkeypatch.setattr(api, "is_ashare", lambda ticker: False)
+
+    # 关键: 构造"本地已是今天、UTC 仍是昨天"的真实时区行为 (东八区 00:00-08:00 UTC)。
+    # frozen_local = 2026-06-19 03:00 本地 (今天) → 对应 UTC = 2026-06-18 19:00 (昨天)。
+    # now() 无参 → 返回本地冻结时刻 (今天 "2026-06-19", 与 main.py 生产端一致);
+    # now(timezone.utc) → 返回 UTC 冻结时刻 (昨天 "2026-06-18")。
+    # 这样 bug 代码 (用 now(timezone.utc)) 会把今天 end_date 误判为非今天 →
+    # 退化到 stale financial_metrics 回退路径 → 触发我们注入的 AssertionError。
+    frozen_local = _dt.datetime(2026, 6, 19, 3, 0, 0)
+    frozen_utc = _dt.datetime(2026, 6, 18, 19, 0, 0)
+
+    class _FrozenDateTime:
+        @staticmethod
+        def now(tz=None):
+            return frozen_utc if tz is not None else frozen_local
+
+    monkeypatch.setattr(api.datetime, "datetime", _FrozenDateTime)
+
+    # end_date = naive 本地今天 (与 main.py 生产端一致)
+    end_date = frozen_local.strftime("%Y-%m-%d")  # "2026-06-19"
+
+    # company/facts 路径: 模拟 200 + 合法 market_cap (CompanyFacts schema 要求 name)
+    facts_response = SimpleNamespace(
+        status_code=200,
+        json=lambda: {
+            "company_facts": {
+                "ticker": "AAPL",
+                "name": "Apple Inc.",
+                "market_cap": 3000000000000.0,
+            }
+        },
+    )
+    monkeypatch.setattr(api.requests, "get", lambda *_args, **_kwargs: facts_response)
+
+    # 不应该走 get_financial_metrics 回退 (那是 stale TTM 路径)
+    monkeypatch.setattr(api, "get_financial_metrics", lambda *_a, **_kw: (_ for _ in ()).throw(
+        AssertionError("时区 bug: 本地今天不应退化到 stale TTM financial_metrics 回退路径")
+    ))
+
+    result = api.get_market_cap("AAPL", end_date, api_key="fake_key")
+
+    # 命中 fresh company/facts 路径 → 返回最新市值
+    assert result == 3000000000000.0, (
+        f"时区不一致: 本地今天 end_date={end_date} 应命中 fresh company/facts 路径, "
+        f"但被 UTC 比较误判为非今天而退化到 stale financial_metrics, got result={result}"
+    )
+

@@ -2,7 +2,6 @@ import datetime
 import logging
 import os
 import time
-from datetime import timezone
 
 import pandas as pd
 import requests
@@ -438,8 +437,18 @@ def get_market_cap(
     if is_ashare(ticker):
         return get_ashare_market_cap_with_tushare(ticker, end_date)
 
-    # Check if end_date is today
-    if end_date == datetime.datetime.now(timezone.utc).strftime("%Y-%m-%d"):
+    # Check if end_date is today. R115: must use naive local now() to match the
+    # end_date production side (main.py uses ``datetime.now().strftime("%Y-%m-%d")``).
+    # The historical ``datetime.now(timezone.utc)`` made the "today" comparison
+    # tz-inconsistent: in CST (UTC+8) 00:00-08:00 UTC the local date is already
+    # today while UTC is still yesterday, so a genuinely-today end_date failed
+    # the == and silently fell back to the stale TTM get_financial_metrics path
+    # instead of the fresh company/facts API. 13 fundamental/valuation agents
+    # (aswath_damodaran / ben_graham / bill_ackman / cathie_wood / charlie_munger /
+    # michael_burry / mohnish_pabrai / peter_lynch / phil_fisher / rakesh_jhunjhunwala /
+    # stanley_druckenmiller / valuation / warren_buffett) read US market cap via
+    # this gate, so the silent stale-TTM fallback corrupted fundamental signals.
+    if end_date == datetime.datetime.now().strftime("%Y-%m-%d"):
         # Get the market cap from company facts API
         headers = {}
         financial_api_key = api_key or os.environ.get("FINANCIAL_DATASETS_API_KEY")
