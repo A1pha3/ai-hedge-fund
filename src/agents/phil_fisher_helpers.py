@@ -98,16 +98,19 @@ def _score_fisher_margin_volatility(op_margins: list[float]) -> tuple[int, str]:
     return 0, "Operating margin volatility is high"
 
 
-def _score_fisher_roe(ni_values: list, eq_values: list) -> tuple[int, str]:
-    if not (ni_values and eq_values and len(ni_values) == len(eq_values)):
+def _score_fisher_roe(ni_equity_pairs: list) -> tuple[int, str]:
+    # R127 / positional-mismatch family (R125/R126): receive SAME-PERIOD (ni, equity)
+    # pairs from the caller instead of two independently-filtered lists. The old
+    # len(ni)==len(eq) guard could not detect complementary-missing data (item0 had
+    # NI no equity, item1 had equity no NI -> equal-length lists, cross-period ROE).
+    if not ni_equity_pairs:
         return 0, "Insufficient data for ROE calculation"
 
-    recent_ni = ni_values[0]
+    recent_ni, recent_eq = ni_equity_pairs[0]
     # R124 / falsy-zero epsilon family: equity == 0 makes ROE undefined.
     # Previously ``eq_values[0] if eq_values[0] else 1e-9`` let a zero-equity
     # company (distressed) score ni/1e-9 ~ 1e10 -> "High ROE" (false positive).
     # Guard non-positive equity as undefined instead of an inflated ROE.
-    recent_eq = eq_values[0]
     if recent_eq <= 0:
         return 0, "ROE undefined (non-positive equity)"
     if recent_ni <= 0:
@@ -123,16 +126,20 @@ def _score_fisher_roe(ni_values: list, eq_values: list) -> tuple[int, str]:
     return 0, f"ROE is near zero or negative: {roe:.1%}"
 
 
-def _score_fisher_debt_to_equity(financial_line_items: list, eq_values: list) -> tuple[int, str]:
+def _score_fisher_debt_to_equity(financial_line_items: list, debt_equity_pairs: list) -> tuple[int, str]:
     dte = None
     dte_direct = getattr(financial_line_items[0], "debt_to_equity", None) if financial_line_items else None
     if dte_direct is not None:
         dte = dte_direct
-    else:
-        debt_values = [getattr(fi, "total_debt", None) for fi in financial_line_items if getattr(fi, "total_debt", None) is not None]
-        if debt_values and eq_values and len(debt_values) == len(eq_values):
-            recent_equity = eq_values[0] if eq_values[0] else 1e-9
-            dte = debt_values[0] / recent_equity
+    elif debt_equity_pairs:
+        # R127 / positional-mismatch family (R125/R126): use SAME-PERIOD (debt, equity)
+        # pairs from the caller. The old independent debt_values filter + len== guard
+        # vs caller-passed eq_values could not detect complementary-missing data.
+        recent_debt, recent_equity = debt_equity_pairs[0]
+        # equity == 0 -> infinite leverage -> huge D/E maps to "High debt-to-equity"
+        # low score (correct direction); epsilon guard preserves that semantics.
+        recent_equity = recent_equity if recent_equity else 1e-9
+        dte = recent_debt / recent_equity
 
     if dte is None:
         return 0, "No debt/equity data available"

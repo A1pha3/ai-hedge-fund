@@ -136,8 +136,8 @@ def test_roe_treats_zero_equity_as_undefined_not_huge_roe():
     """
     from src.agents.phil_fisher_helpers import _score_fisher_roe
 
-    # Equal-length lists (caller invariant); latest period has zero equity + positive NI
-    score, detail = _score_fisher_roe([30.0, 28.0], [0.0, 100.0])
+    # Paired (ni, equity) tuples (R127 caller contract); latest period has zero equity + positive NI
+    score, detail = _score_fisher_roe([(30.0, 0.0), (28.0, 100.0)])
 
     # Zero equity -> ROE undefined -> NOT "High ROE"
     assert score == 0
@@ -166,3 +166,45 @@ def test_rnd_intensity_pairs_rd_with_revenue_across_complementary_missing_period
     # No period has BOTH R&D and revenue -> Insufficient, not a mismatched 0.10 ratio
     assert score == 0
     assert "Insufficient" in detail
+
+
+def test_management_efficiency_roe_pairs_ni_with_equity_across_complementary_missing():
+    """ROE divides caller-filtered ni_values/eq_values; complementary-missing
+    (item0 has NI no equity, item1 has equity no NI) defeats the len== guard.
+    Previously ni_values[0] (=item0.NI=30) / eq_values[0] (=item1.equity=100)
+    -> 0.30 -> "High ROE" score 3, a cross-period false positive for a company
+    where no single period has both NI and equity. Same-period pairing yields
+    no NI+equity pair -> "Insufficient data for ROE calculation" score 0.
+    Positional-mismatch family (R125/R126), caller-side fix.
+    """
+    financial_line_items = [
+        SimpleNamespace(net_income=30.0, shareholders_equity=None, debt_to_equity=None, free_cash_flow=10.0),
+        SimpleNamespace(net_income=None, shareholders_equity=100.0, debt_to_equity=None, free_cash_flow=10.0),
+    ]
+
+    result = phil_fisher.analyze_management_efficiency_leverage(financial_line_items)
+
+    # No period has BOTH NI and equity -> ROE must read Insufficient, NOT "High ROE"
+    assert "High ROE" not in result["details"]
+    assert "Insufficient data for ROE" in result["details"]
+
+
+def test_management_efficiency_debt_to_equity_pairs_across_complementary_missing():
+    """_score_fisher_debt_to_equity fallback filters debt_values independently
+    and pairs with caller-passed eq_values via len==; complementary-missing
+    (item0 has debt no equity, item1 has equity no debt) defeats the guard.
+    Previously debt_values[0] (=item0.debt=80) / eq_values[0] (=item1.equity=50)
+    -> 1.60 -> "High debt-to-equity" score 0 (correct direction, fabricated
+    value). Same-period pairing yields no debt+equity pair -> "No debt/equity
+    data available" score 0. Positional-mismatch family (R125/R126).
+    """
+    financial_line_items = [
+        SimpleNamespace(total_debt=80.0, shareholders_equity=None, debt_to_equity=None, net_income=10.0, free_cash_flow=10.0),
+        SimpleNamespace(total_debt=None, shareholders_equity=50.0, debt_to_equity=None, net_income=10.0, free_cash_flow=10.0),
+    ]
+
+    result = phil_fisher.analyze_management_efficiency_leverage(financial_line_items)
+
+    # No period has BOTH debt and equity -> "No debt/equity data", NOT fabricated 1.60
+    assert "No debt/equity data" in result["details"]
+    assert "1.60" not in result["details"]

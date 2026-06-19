@@ -266,14 +266,28 @@ def analyze_management_efficiency_leverage(financial_line_items: list) -> dict:
     details = []
     raw_score = 0  # up to 6 => scale to 0–10
 
-    ni_values = [getattr(fi, "net_income", None) for fi in financial_line_items if getattr(fi, "net_income", None) is not None]
-    eq_values = [getattr(fi, "shareholders_equity", None) for fi in financial_line_items if getattr(fi, "shareholders_equity", None) is not None]
+    # R127 / positional-mismatch family: pair NI+equity and debt+equity from the
+    # SAME period. Previously two independent filters + len== guards could not
+    # detect complementary-missing data (item0 had NI no equity, item1 had equity
+    # no NI -> equal-length lists, cross-period ROE/D-E).
+    ni_equity_pairs = [
+        (fi.net_income, fi.shareholders_equity)
+        for fi in financial_line_items
+        if getattr(fi, "net_income", None) is not None
+        and getattr(fi, "shareholders_equity", None) is not None
+    ]
+    debt_equity_pairs = [
+        (fi.total_debt, fi.shareholders_equity)
+        for fi in financial_line_items
+        if getattr(fi, "total_debt", None) is not None
+        and getattr(fi, "shareholders_equity", None) is not None
+    ]
 
-    roe_score, roe_detail = _score_fisher_roe(ni_values, eq_values)
+    roe_score, roe_detail = _score_fisher_roe(ni_equity_pairs)
     raw_score += roe_score
     details.append(roe_detail)
 
-    leverage_score, leverage_detail = _score_fisher_debt_to_equity(financial_line_items, eq_values)
+    leverage_score, leverage_detail = _score_fisher_debt_to_equity(financial_line_items, debt_equity_pairs)
     raw_score += leverage_score
     details.append(leverage_detail)
 
