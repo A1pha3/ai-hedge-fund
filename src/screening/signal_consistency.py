@@ -110,8 +110,20 @@ def check_signal_consistency(
                 consistency_level = level
                 break
 
-        # Find conflicting strategies
-        dominant = "bullish" if bullish >= bearish else "bearish" if bearish > bullish else "neutral"
+        # Find conflicting strategies.
+        # R130: dominant is the plurality direction — neutral included. Previously
+        # ``"bullish" if bullish >= bearish else "bearish" if bearish > bullish
+        # else "neutral"`` had an UNREACHABLE neutral branch (bullish>=bearish
+        # False => bullish<bearish => bearish>bullish True), so dominant was always
+        # bullish/bearish even when neutral was the clear plurality — contradicting
+        # agreement_ratio which counts neutral as a direction. Pick neutral when it
+        # is >= both (plurality), else preserve the bullish-tie-break ordering.
+        if neutral >= bullish and neutral >= bearish:
+            dominant = "neutral"
+        elif bullish >= bearish:
+            dominant = "bullish"
+        else:
+            dominant = "bearish"
         conflicting = [s for s, d in direction_map.items() if d != dominant and d != "neutral"]
 
         results.append({

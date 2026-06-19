@@ -81,6 +81,46 @@ class TestCheckSignalConsistency:
         assert results[0]["neutral_count"] >= 2
         assert results[0]["agreement_ratio"] == 1.0
 
+    def test_neutral_plurality_dominant_is_neutral_not_bullish(self) -> None:
+        """R130: when neutral is the plurality, dominant_direction must be
+        "neutral", not "bullish".
+
+        Previously ``dominant = "bullish" if bullish >= bearish else "bearish"
+        if bearish > bullish else "neutral"`` — the "neutral" branch was
+        unreachable (``bullish >= bearish`` False implies ``bullish < bearish``
+        implies ``bearish > bullish`` True), so dominant was always bullish or
+        bearish even when neutral was the clear plurality. With 2 neutral +
+        1 bullish + 1 bearish, neutral(2) is the plurality yet dominant was
+        wrongly "bullish" (bullish>=bearish). This also skewed
+        conflicting_strategies (bearish flagged as conflicting against a
+        bullish "dominant" that doesn't reflect the neutral-majority reality).
+        """
+        recs = [_make_rec("000001", "Test", 0.4, {
+            "trend": {"signal": "neutral", "confidence": 50},
+            "mean_reversion": {"signal": "neutral", "confidence": 50},
+            "fundamental": {"signal": "bullish", "confidence": 80},
+            "event_sentiment": {"signal": "bearish", "confidence": 70},
+        })]
+        results = check_signal_consistency(recs)
+        # neutral(2) is the plurality -> dominant must be "neutral"
+        assert results[0]["dominant_direction"] == "neutral"
+        assert results[0]["neutral_count"] == 2
+
+    def test_all_neutral_dominant_is_neutral(self) -> None:
+        """R130: when every strategy is neutral, dominant must be "neutral".
+
+        Previously ``bullish(0) >= bearish(0)`` was True -> dominant="bullish",
+        misreporting an all-undecided stock as bullish-led.
+        """
+        recs = [_make_rec("000001", "Test", 0.3, {
+            "trend": {"signal": "neutral", "confidence": 50},
+            "mean_reversion": {"signal": "neutral", "confidence": 50},
+            "fundamental": {"signal": "neutral", "confidence": 50},
+            "event_sentiment": {"signal": "neutral", "confidence": 50},
+        })]
+        results = check_signal_consistency(recs)
+        assert results[0]["dominant_direction"] == "neutral"
+
     def test_multiple_recommendations(self) -> None:
         recs = [
             _make_rec("000001", "A", 0.9, {"trend": {"signal": "bullish"}, "fundamental": {"signal": "bullish"}}),
