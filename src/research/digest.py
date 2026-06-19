@@ -515,7 +515,12 @@ def format_digest_markdown(result: DigestResult) -> str:
     lines.append(f"| Unique tickers | {s.get('unique_tickers_total', 'N/A')} |")
     # ALPHA-R20.11: read min_recurrence from the summary dict (set by run_digest)
     # so non-default values (e.g. min_recurrence=10) are reflected in the header.
-    min_recurrence_for_header = int(s.get("min_recurrence", 5) or 5)
+    # NOTE (R108 / R107-R68-R69-R96 falsy-zero `or` family): 0 是合法 min_recurrence
+    # ("重复 >= 0 天 = 全部标的"), 不能用 `or 5` 静默覆盖回默认 5, 否则 header 标签
+    # ">= 5d" 与 recurring_tickers 实际 >= 0d 过滤口径不一致, 误导用户。
+    min_recurrence_for_header = int(
+        s["min_recurrence"] if s.get("min_recurrence") is not None else 5
+    )
     lines.append(f"| Recurring tickers (>= {min_recurrence_for_header}d) | {len(s.get('recurring_tickers', []))} |")
     lines.append("")
 
