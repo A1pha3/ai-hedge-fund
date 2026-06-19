@@ -90,7 +90,7 @@ def _score_cathie_gross_margin_profile(financial_line_items: list) -> tuple[int,
 
 def _score_cathie_operating_leverage(financial_line_items: list, calculate_cagr: Callable[..., float | None]) -> tuple[int, str | None]:
     revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
-    operating_expenses = [item.operating_expense for item in financial_line_items if hasattr(item, "operating_expense") and item.operating_expense]
+    operating_expenses = [item.operating_expense for item in financial_line_items if hasattr(item, "operating_expense") and item.operating_expense is not None]
 
     if len(revenues) >= 2 and len(operating_expenses) >= 2:
         rev_growth = calculate_cagr(financial_line_items, field="revenue")
@@ -118,7 +118,7 @@ def _score_cathie_rnd_intensity(financial_line_items: list) -> tuple[int, str | 
 
 
 def _score_cathie_rnd_trends(financial_line_items: list) -> tuple[int, list[str]]:
-    rd_expenses = [item.research_and_development for item in financial_line_items if hasattr(item, "research_and_development") and item.research_and_development]
+    rd_expenses = [item.research_and_development for item in financial_line_items if hasattr(item, "research_and_development") and item.research_and_development is not None]
     revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
 
     if not (rd_expenses and revenues and len(rd_expenses) >= 2):
@@ -176,7 +176,7 @@ def _score_cathie_operating_efficiency(financial_line_items: list) -> tuple[int,
 
 def _score_cathie_capex_commitment(financial_line_items: list) -> tuple[int, str]:
     revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
-    capex = [item.capital_expenditure for item in financial_line_items if hasattr(item, "capital_expenditure") and item.capital_expenditure]
+    capex = [item.capital_expenditure for item in financial_line_items if hasattr(item, "capital_expenditure") and item.capital_expenditure is not None]
     if not (capex and revenues and len(capex) >= 2):
         return 0, "Insufficient CAPEX data"
 
@@ -192,7 +192,10 @@ def _score_cathie_capex_commitment(financial_line_items: list) -> tuple[int, str
 
 def _score_cathie_reinvestment_focus(financial_line_items: list) -> tuple[int, str]:
     fcf_vals = [getattr(item, "free_cash_flow", None) for item in financial_line_items if getattr(item, "free_cash_flow", None) is not None]
-    dividends = [item.dividends_and_other_cash_distributions for item in financial_line_items if hasattr(item, "dividends_and_other_cash_distributions") and item.dividends_and_other_cash_distributions]
+    # R123 / falsy-zero family: dividends == 0 (paid nothing = pure reinvestment) is
+    # the signal this function seeks — use ``is not None`` so zero-dividend companies
+    # score as reinvestment-focused instead of falling through to "Insufficient data".
+    dividends = [item.dividends_and_other_cash_distributions for item in financial_line_items if hasattr(item, "dividends_and_other_cash_distributions") and item.dividends_and_other_cash_distributions is not None]
     if not (dividends and fcf_vals):
         return 0, "Insufficient dividend data"
 

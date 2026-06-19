@@ -147,3 +147,74 @@ def test_analyze_cathie_wood_valuation_does_not_crash_on_zero_market_cap():
     assert isinstance(result, dict)
     assert result.get("score") == 0
     assert "market cap" in result.get("details", "").lower() or "insufficient" in result.get("details", "").lower()
+
+
+def test_reinvestment_focus_treats_zero_dividends_as_strong_reinvestment():
+    """dividends_and_other_cash_distributions == 0 (company paid nothing) is the
+    textbook reinvestment-focused company Cathie Wood seeks — NOT missing data.
+
+    tushare ``c_pay_dist_dpcp_int_exp`` (分配股利利润偿付利息支付现金) is 0.0 when a
+    company distributes nothing in a period. ``_score_cathie_reinvestment_focus``
+    computes ``payout_ratio = dividends / fcf``; a zero-dividend company has
+    payout_ratio 0 (< 0.2 -> score 2 "Strong reinvestment"). Previously the
+    truthiness filter ``and item.dividends_and_other_cash_distributions`` dropped
+    every zero-dividend period, so an all-zero-dividend company fell through to
+    "Insufficient dividend data" (score 0) — the exact opposite of the intended
+    signal. Falsy-zero family (R105/R122), semantic inversion.
+    """
+    from src.agents.cathie_wood_helpers import _score_cathie_reinvestment_focus
+
+    financial_line_items = [
+        # Zero dividends (pure reinvestment) + positive FCF in every period
+        SimpleNamespace(free_cash_flow=100.0, dividends_and_other_cash_distributions=0.0),
+        SimpleNamespace(free_cash_flow=120.0, dividends_and_other_cash_distributions=0.0),
+    ]
+
+    score, detail = _score_cathie_reinvestment_focus(financial_line_items)
+
+    # Zero-dividend company must score as strong reinvestment, NOT "Insufficient"
+    assert score == 2
+    assert "Strong focus on reinvestment" in detail
+
+
+def test_rnd_trends_includes_zero_rd_aligning_with_rnd_intensity_sibling():
+    """research_and_development == 0 is legitimate (no innovation spend), not
+    missing. The within-file sibling ``_score_cathie_rnd_intensity`` already
+    filters R&D with ``is not None`` (line 106); ``_score_cathie_rnd_trends``
+    used truthiness (line 121) — a within-file semantic split. A company that
+    paused R&D (R&D=0 in the latest period) must still be evaluated rather than
+    silently dropping the period. Falsy-zero family (R105/R122).
+    """
+    from src.agents.cathie_wood_helpers import _score_cathie_rnd_trends
+
+    financial_line_items = [
+        # Latest period: R&D paused (legitimate 0); revenue present
+        SimpleNamespace(research_and_development=0.0, revenue=1000.0),
+        SimpleNamespace(research_and_development=100.0, revenue=800.0),
+    ]
+
+    score, details = _score_cathie_rnd_trends(financial_line_items)
+
+    # Must NOT report "Insufficient R&D data" — the 0-R&D period is present data
+    assert not any("Insufficient" in d for d in details)
+
+
+def test_capex_commitment_includes_zero_capex_period():
+    """capital_expenditure == 0 is legitimate (no infrastructure spend in a
+    period), not missing. Same falsy-zero pattern as R122 (buffett) /
+    _score_munger_capital_intensity sibling (both already use ``is not None``).
+    A zero-capex period must count toward the >= 2 data minimum rather than be
+    silently dropped. Falsy-zero family (R105/R122).
+    """
+    from src.agents.cathie_wood_helpers import _score_cathie_capex_commitment
+
+    financial_line_items = [
+        # Exactly 2 periods; one has legitimate zero capex
+        SimpleNamespace(capital_expenditure=0.0, revenue=1000.0),
+        SimpleNamespace(capital_expenditure=-50.0, revenue=1000.0),
+    ]
+
+    score, detail = _score_cathie_capex_commitment(financial_line_items)
+
+    # Zero-capex period is present -> not "Insufficient CAPEX data"
+    assert detail != "Insufficient CAPEX data"
