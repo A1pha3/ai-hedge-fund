@@ -338,10 +338,17 @@ def _resolve_nonzero_ratio(daily_data: dict, *field_names: str) -> float | None:
 def _build_peg_ratio(row, pe_ratio: float | None) -> float | None:
     if pe_ratio is None or pe_ratio <= 0:
         return None
-    earnings_growth = float(row.get("netprofit_yoy", 0)) / 100 if pd.notna(row.get("netprofit_yoy")) else None
-    if earnings_growth is None or earnings_growth <= 0:
+    # netprofit_yoy 是 tushare 百分数 (如 10.0 表示 10% 年增速). PEG = P/E / (growth%),
+    # 即 PE 除以 *百分数本身* (与 peter_lynch_helpers.py:99 的 PEG 公式语义一致)。
+    # 此前先 /100 转 fraction 再 *100 转回百分数是 no-op 冗余 (两者抵消), 已消除以
+    # 避免未来维护时误读为 fraction-domain 计算。行为保持: 8 个 characterization 测试守卫。
+    raw_growth_pct = row.get("netprofit_yoy")
+    if not pd.notna(raw_growth_pct) or raw_growth_pct is None:
         return None
-    return pe_ratio / (earnings_growth * 100)
+    growth_pct = float(raw_growth_pct)
+    if growth_pct <= 0:
+        return None
+    return pe_ratio / growth_pct
 
 
 def _build_enterprise_metrics(
