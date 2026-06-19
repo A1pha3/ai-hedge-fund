@@ -6,6 +6,7 @@ strong management, scalability, and reasonable valuations.
 """
 
 import json
+import logging
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
@@ -40,6 +41,8 @@ from src.utils.llm import call_llm
 from src.utils.numeric import is_finite_number
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_context
+
+logger = logging.getLogger(__name__)
 
 
 class RakeshJhunjhunwalaSignal(BaseModel):
@@ -323,6 +326,10 @@ def calculate_intrinsic_value(financial_line_items: list, market_cap: float) -> 
 
     except Exception:
         # Fallback to simple earnings multiple
+        # Traceability: a bug in the DCF path would otherwise be permanently masked
+        # by the *15 fallback and the agent would look healthy. Log so the fallback
+        # rate is observable in diagnostics.
+        logger.debug("rakesh dcf computation failed; using simple earnings-multiple fallback", exc_info=True)
         if getattr(latest, "net_income", None) and latest.net_income > 0:
             return latest.net_income * 15
         return None

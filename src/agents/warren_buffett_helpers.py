@@ -1,4 +1,8 @@
+import logging
+
 from src.utils.numeric import is_finite_number
+
+logger = logging.getLogger(__name__)
 
 
 def _score_buffett_fundamental_roe(latest_metrics) -> tuple[int, str]:
@@ -231,6 +235,10 @@ def _resolve_buffett_working_capital_change(financial_line_items: list, currency
             working_capital_change = wc_current - wc_previous
             return working_capital_change, f"Working capital change: {currency_symbol}{working_capital_change:,.0f}"
     except Exception:
+        # Traceability: returning 0 working-capital change silently inflates owner
+        # earnings and thus intrinsic value, which can flip SELL/HOLD to BUY. Log so
+        # a real balance-sheet parse failure is observable.
+        logger.debug("working capital change computation failed; returning 0 fallback", exc_info=True)
         return 0, None
 
     return 0, None

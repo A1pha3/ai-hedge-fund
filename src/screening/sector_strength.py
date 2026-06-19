@@ -19,6 +19,7 @@ Integration:
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,8 @@ from src.screening.industry_rotation import (
     top_strong_industries,
 )
 from src.utils.display import Fore, Style
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -167,6 +170,10 @@ def compute_sector_strength(
             reports_dir=str(search_dir),
         )
     except Exception:
+        # Traceability: empty industry_signals makes strong/weak sector sets empty,
+        # silently disabling sector filtering for the whole candidate pool. Log so a
+        # rotation-computation failure is observable rather than masked as neutral.
+        logger.debug("industry rotation computation failed; sector filtering disabled", exc_info=True)
         industry_signals = []
 
     sector_lookup = _build_sector_lookup(industry_signals)

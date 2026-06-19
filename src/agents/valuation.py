@@ -7,6 +7,7 @@ configurable weights.
 from __future__ import annotations
 
 import json
+import logging
 import statistics
 
 from langchain_core.messages import HumanMessage
@@ -37,6 +38,8 @@ from src.tools.api import (
 from src.utils.api_key import get_api_key_from_state
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_symbol
+
+logger = logging.getLogger(__name__)
 
 
 def valuation_analyst_agent(state: AgentState, agent_id: str = "valuation_analyst_agent"):
@@ -396,6 +399,11 @@ def calculate_fcf_volatility(fcf_history: list[float]) -> float:
         std_fcf = statistics.stdev(positive_fcf)
         return min(std_fcf / mean_fcf, 1.0) if mean_fcf > 0 else 0.8
     except Exception:
+        # Traceability: without this log the fallback 0.5 is indistinguishable
+        # from a genuine moderate-volatility signal that feeds valuation confidence
+        # and the discount logic. DEBUG keeps noise low while making the swallow
+        # observable in diagnostics.
+        logger.debug("fcf_volatility computation failed; returning moderate 0.5 fallback", exc_info=True)
         return 0.5
 
 

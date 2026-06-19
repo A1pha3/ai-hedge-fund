@@ -1,4 +1,8 @@
+import logging
+
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def _fallback_volatility_metrics(data_points: int = 0) -> dict[str, float | int]:
@@ -79,6 +83,10 @@ def _build_correlation_matrix(returns_by_ticker: dict[str, pd.Series]) -> pd.Dat
         if returns_df.shape[1] >= 2 and returns_df.shape[0] >= 5:
             return returns_df.corr()
     except Exception:
+        # Traceability: returning None makes the risk manager proceed without
+        # correlation/diversification checks, understating portfolio risk. Log so
+        # a real pandas/shape failure is observable rather than silent.
+        logger.debug("correlation matrix build failed; returning None fallback", exc_info=True)
         return None
     return None
 

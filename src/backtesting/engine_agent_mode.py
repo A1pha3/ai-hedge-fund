@@ -13,6 +13,7 @@ are therefore public standalone functions rather than class methods.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 
 import pandas as pd
@@ -26,6 +27,8 @@ from .portfolio import Portfolio
 from .trader import TradeExecutor
 from .trading_constraints import TradeExecutionInputs
 from .types import AgentOutput
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Shared helpers (used by both agent-mode and pipeline-mode)
@@ -64,12 +67,19 @@ def build_confirmation_inputs(
             try:
                 price_data = get_price_data(order.ticker, previous_date_str, current_date_str)
             except Exception:
+                # Traceability: price_data=None falls through to synthetic intraday
+                # fields, masking a data outage as a normal low-volume day. Log so a
+                # real fetch failure during backtest is observable.
+                logger.debug("agent-mode backtest price fetch failed for %s; using synthetic fallback", order.ticker, exc_info=True)
                 price_data = None
             if price_data is not None and len(price_data) < 2:
                 fallback_start = (pd.Timestamp(current_date_str) - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
                 try:
                     fallback_price_data = get_price_data(order.ticker, fallback_start, current_date_str)
                 except Exception:
+                    # Traceability: secondary 7-day window fetch failure; matches the
+                    # primary fetch swallow above so a provider outage is fully traceable.
+                    logger.debug("agent-mode backtest fallback price fetch failed for %s", order.ticker, exc_info=True)
                     fallback_price_data = None
                 if fallback_price_data is not None and not fallback_price_data.empty:
                     price_data = fallback_price_data
