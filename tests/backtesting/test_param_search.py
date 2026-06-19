@@ -795,6 +795,55 @@ def test_save_search_payload_includes_failed_guardrails(tmp_path):
     assert "next_close_positive_rate" in data["results"][0]["failed_guardrails"]
 
 
+def test_save_search_report_md_writes_utf8_non_ascii(tmp_path, monkeypatch):
+    """param_search markdown/json reports must write with explicit UTF-8 encoding.
+
+    write_text() without encoding= uses the locale default (cp1252/gbk on Windows),
+    which raises UnicodeEncodeError on Chinese A-share labels in param values.
+    This guards the fix by asserting encoding="utf-8" is passed to write_text and
+    that Chinese round-trips byte-for-byte.
+    """
+    report = run_param_search(
+        space=ParamSpace(grid={"策略": ["均值回归"]}),
+        objective=SearchObjective.SHARPE,
+        evaluator=lambda p: {"sharpe_ratio": 1.0, "sortino_ratio": 2.0, "max_drawdown": -0.5},
+    )
+
+    # Record every write_text call's kwargs so we can assert encoding is explicit.
+    from pathlib import Path
+
+    real_write_text = Path.write_text
+    recorded_encodings: list[object] = []
+
+    def recording_write_text(self, data, encoding=None, errors=None, newline=None):
+        recorded_encodings.append(encoding)
+        return real_write_text(self, data, encoding=encoding, errors=errors, newline=newline)
+
+    monkeypatch.setattr(Path, "write_text", recording_write_text)
+
+    save_search_report(report, tmp_path / "report.md")
+    save_search_payload(report, tmp_path / "report.json")
+
+    # Both write_text calls must pass an explicit UTF-8 encoding (not None = locale default).
+    assert recorded_encodings == ["utf-8", "utf-8"], (
+        f"expected explicit utf-8 encoding on both write_text calls, got {recorded_encodings}"
+    )
+
+    # Round-trip: Chinese A-share param labels survive as raw UTF-8 bytes in both files.
+    md_bytes = (tmp_path / "report.md").read_bytes()
+    json_bytes = (tmp_path / "report.json").read_bytes()
+    assert "策略".encode("utf-8") in md_bytes
+    assert "均值回归".encode("utf-8") in json_bytes
+
+    # Trust-calibration: both reports carry a generated_at timestamp so a reader
+    # reopening a saved report knows when the run completed.
+    assert b"Generated at:" in md_bytes
+    assert b"(UTC ISO-8601)" in md_bytes
+    json_data = json.loads(json_bytes.decode("utf-8"))
+    assert json_data["generated_at"] is not None
+    assert "T" in json_data["generated_at"]  # ISO-8601 marker
+
+
 # ---------------------------------------------------------------------------
 # Tests for BTST runner objective (Task 2)
 # ---------------------------------------------------------------------------

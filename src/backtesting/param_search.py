@@ -12,6 +12,7 @@ import os
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -70,6 +71,10 @@ class SearchReport:
     best_score: float | None = None
     total_trials: int = 0
     completed_trials: int = 0
+    # UTC ISO-8601 timestamp captured when the report is finalized (run_param_search
+    # return). Renders into the markdown/json header so a reader reopening a saved
+    # report knows when it was generated — trust-calibration for re-runnable tuning.
+    generated_at: str | None = None
 
 
 def compute_objective_score(
@@ -423,6 +428,9 @@ def run_param_search(
         report.best_params = top.params
         report.best_score = top.score
 
+    # Finalize the report: capture the generation timestamp once, at return, so a
+    # saved markdown/json report self-documents when the run completed.
+    report.generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     return report
 
 
@@ -435,6 +443,9 @@ def format_search_report(report: SearchReport) -> str:
     lines: list[str] = []
     lines.append("# Parameter Search Report")
     lines.append("")
+    if report.generated_at:
+        lines.append(f"Generated at: **{report.generated_at}** (UTC ISO-8601)")
+        lines.append("")
     lines.append(f"Objective: **{report.objective.value}**")
     lines.append(f"Trials completed: {report.completed_trials}/{report.total_trials}")
     if report.best_score is not None:
@@ -469,12 +480,21 @@ def format_search_report(report: SearchReport) -> str:
     return "\n".join(lines)
 
 
-def save_search_report(report: SearchReport, output_path: str | Path | None = None) -> Path:
-    md = format_search_report(report)
-    path = Path(output_path) if output_path else Path("data/reports/param_search_report.md")
+def _write_report_file(text: str, output_path: str | Path | None, default_name: str) -> Path:
+    """Write report text to disk with explicit UTF-8 encoding.
+
+    Shared by markdown and JSON report writers. Explicit encoding avoids the locale
+    default (cp1252/gbk on Windows) raising UnicodeEncodeError on Chinese A-share
+    labels in param values.
+    """
+    path = Path(output_path) if output_path else Path("data/reports") / default_name
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(md)
+    path.write_text(text, encoding="utf-8")
     return path
+
+
+def save_search_report(report: SearchReport, output_path: str | Path | None = None) -> Path:
+    return _write_report_file(format_search_report(report), output_path, "param_search_report.md")
 
 
 def save_search_payload(report: SearchReport, output_path: str | Path | None = None) -> Path:
@@ -482,6 +502,7 @@ def save_search_payload(report: SearchReport, output_path: str | Path | None = N
         "objective": report.objective.value,
         "total_trials": report.total_trials,
         "completed_trials": report.completed_trials,
+        "generated_at": report.generated_at,
         "best_score": report.best_score,
         "best_params": report.best_params,
         "results": [
@@ -496,7 +517,10 @@ def save_search_payload(report: SearchReport, output_path: str | Path | None = N
             for r in report.results
         ],
     }
-    path = Path(output_path) if output_path else Path("data/reports/param_search_report.json")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, default=str))
-    return path
+    # ensure_ascii=False writes Chinese A-share param labels as raw UTF-8 chars,
+    # not \uXXXX escapes, for human-readable reports.
+    return _write_report_file(
+        json.dumps(payload, ensure_ascii=False, indent=2, default=str),
+        output_path,
+        "param_search_report.json",
+    )
