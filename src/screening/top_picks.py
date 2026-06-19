@@ -1090,6 +1090,12 @@ def _print_pick_entry(
     """Render a single representative pick and its optional detail lines."""
     composite_score = float(item.get("composite_score", item.get("score_b", 0.0)) or 0.0)
     grade = _composite_grade(composite_score)
+    # R111 / R39-R44-R71-R77 trust-calibration family: 当 composite_score 来自 R39 fallback
+    # 路径（missing-composite, 0.9 折扣的 score_b, composite_verified=False）时, 在分数后
+    # 追加 (估) 标记, 让用户区分"完整维度调整的 composite"与"保守估计分数", 校准对推荐
+    # 的信任度。composite_verified 缺省（旧报告）按 verified 处理, 行为保持。
+    composite_verified = item.get("composite_verified")
+    estimate_marker = "" if composite_verified else ("估" if composite_verified is False else "")
     name = str(item.get("name", "") or item.get("ticker", ""))[:14]
     verdict = build_front_door_verdict(item, market_regime=context.market_regime)
 
@@ -1118,7 +1124,7 @@ def _print_pick_entry(
         f"  {Fore.WHITE}{idx}.{Style.RESET_ALL} "
         f"{Fore.CYAN}{str(item.get('ticker', '')):<8}{Style.RESET_ALL} "
         f"{name:<14}{new_badge} "
-        f"{score_color}{composite_score:>+.3f}{Style.RESET_ALL} "
+        f"{score_color}{composite_score:>+.3f}{Style.RESET_ALL}{estimate_marker} "
         f"{grade}{consec_str} {confluence_str}  "
         f"(base={base_score:.3f} {signal_str}{factor_attr})"
     )
