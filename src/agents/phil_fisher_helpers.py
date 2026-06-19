@@ -35,7 +35,13 @@ def _score_fisher_rnd_intensity(financial_line_items: list) -> tuple[int, str]:
         return 0, "Insufficient R&D data to evaluate"
 
     recent_rnd = rnd_values[0]
-    recent_rev = revenues[0] if revenues[0] else 1e-9
+    # R124 / falsy-zero epsilon family: revenue == 0 makes R&D/revenue undefined.
+    # Previously ``revenues[0] if revenues[0] else 1e-9`` let a pre-revenue company
+    # (revenue=0) score rnd/1e-9 ~ 1e10 -> "very high R&D ratio" (false positive).
+    # Guard non-positive revenue as undefined instead of an inflated ratio.
+    recent_rev = revenues[0]
+    if recent_rev <= 0:
+        return 0, "R&D ratio undefined (non-positive revenue)"
     rnd_ratio = recent_rnd / recent_rev
     if 0.03 <= rnd_ratio <= 0.15:
         return 3, f"R&D ratio {rnd_ratio:.1%} indicates significant investment in future growth"
@@ -89,7 +95,13 @@ def _score_fisher_roe(ni_values: list, eq_values: list) -> tuple[int, str]:
         return 0, "Insufficient data for ROE calculation"
 
     recent_ni = ni_values[0]
-    recent_eq = eq_values[0] if eq_values[0] else 1e-9
+    # R124 / falsy-zero epsilon family: equity == 0 makes ROE undefined.
+    # Previously ``eq_values[0] if eq_values[0] else 1e-9`` let a zero-equity
+    # company (distressed) score ni/1e-9 ~ 1e10 -> "High ROE" (false positive).
+    # Guard non-positive equity as undefined instead of an inflated ROE.
+    recent_eq = eq_values[0]
+    if recent_eq <= 0:
+        return 0, "ROE undefined (non-positive equity)"
     if recent_ni <= 0:
         return 0, "Recent net income is zero or negative, hurting ROE"
 

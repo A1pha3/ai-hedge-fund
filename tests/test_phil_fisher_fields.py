@@ -98,3 +98,47 @@ def test_analyze_management_efficiency_leverage_reports_negative_income_and_miss
     assert "Recent net income is zero or negative, hurting ROE" in result["details"]
     assert "High debt-to-equity: 1.60" in result["details"]
     assert "Insufficient or no FCF data to check consistency" in result["details"]
+
+
+def test_rnd_intensity_treats_zero_revenue_as_undefined_not_huge_ratio():
+    """revenue == 0 makes the R&D/revenue ratio undefined, not astronomically high.
+
+    A pre-revenue company (revenue=0, spending on R&D) previously hit the
+    ``revenues[0] if revenues[0] else 1e-9`` epsilon fallback: rnd/1e-9 exploded
+    to ~1e10, mapping to "R&D ratio ... is very high" (score 2) — a false
+    positive R&D-investment signal for a company with no revenue. The ratio is
+    mathematically undefined at zero revenue; it must read as undefined (neutral
+    score), not an inflated high score. Falsy-zero epsilon family (R122/R123).
+    """
+    from src.agents.phil_fisher_helpers import _score_fisher_rnd_intensity
+
+    financial_line_items = [
+        SimpleNamespace(revenue=0.0, research_and_development=10.0),
+        SimpleNamespace(revenue=0.0, research_and_development=8.0),
+    ]
+
+    score, detail = _score_fisher_rnd_intensity(financial_line_items)
+
+    # Zero revenue -> ratio undefined -> NOT a high-R&D-investment score
+    assert score == 0
+    assert "very high" not in detail.lower()
+
+
+def test_roe_treats_zero_equity_as_undefined_not_huge_roe():
+    """shareholders_equity == 0 makes ROE undefined, not astronomically high.
+
+    A zero-equity company (distressed: liabilities == assets) with positive net
+    income previously hit the ``eq_values[0] if eq_values[0] else 1e-9`` epsilon
+    fallback: ni/1e-9 exploded to ~1e10, mapping to "High ROE" (score 3) — a
+    false-positive quality signal for a balance sheet with no equity. ROE is
+    undefined at zero equity; it must read as undefined (neutral score), not an
+    inflated high score. Falsy-zero epsilon family (R122/R123).
+    """
+    from src.agents.phil_fisher_helpers import _score_fisher_roe
+
+    # Equal-length lists (caller invariant); latest period has zero equity + positive NI
+    score, detail = _score_fisher_roe([30.0, 28.0], [0.0, 100.0])
+
+    # Zero equity -> ROE undefined -> NOT "High ROE"
+    assert score == 0
+    assert "High ROE" not in detail
