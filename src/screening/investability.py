@@ -297,14 +297,23 @@ def rank_recommendations_by_investability(
 
         ranked.append(merged)
 
+    # BH-011 family (sibling: composite_score.py:312, top_picks._apply_consecutive_bonus_and_resort,
+    # portfolio/builder.compute_portfolio): the 5-level tuple above narrows ties heavily,
+    # but its final key is score_b — a colliding float (and score_b is itself an input to
+    # composite_score, so equal composite + equal calibration can imply equal score_b).
+    # Two fallback/missing-expected-return recs can fully collide across all five levels,
+    # leaving the order dependent on upstream dict/JSON iteration — non-deterministic across
+    # runs, breaking the "稳定找到" goal. Append ticker ascending as the deterministic
+    # final tie-break. reverse=True would also reverse the ticker key, so negate the
+    # numeric levels and sort ascending instead.
     ranked.sort(
         key=lambda rec: (
-            _safe_metric(rec.get("composite_score"), _safe_metric(rec.get("score_b", 0.0), 0.0)),
-            _safe_metric((rec.get("expected_returns") or {}).get("t30"), float("-inf")),
-            _safe_metric((rec.get("win_rates") or {}).get("t30"), float("-inf")),
-            _safe_metric(rec.get("bucket_sample_count"), 0.0),
-            _safe_metric(rec.get("score_b", 0.0), 0.0),
+            -_safe_metric(rec.get("composite_score"), _safe_metric(rec.get("score_b", 0.0), 0.0)),
+            -_safe_metric((rec.get("expected_returns") or {}).get("t30"), float("-inf")),
+            -_safe_metric((rec.get("win_rates") or {}).get("t30"), float("-inf")),
+            -_safe_metric(rec.get("bucket_sample_count"), 0.0),
+            -_safe_metric(rec.get("score_b", 0.0), 0.0),
+            str(rec.get("ticker") or ""),
         ),
-        reverse=True,
     )
     return ranked

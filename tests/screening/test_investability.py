@@ -67,6 +67,37 @@ def test_rank_recommendations_prefers_30d_edge_when_composite_ties() -> None:
     assert ranked[0]["composite_grade"] == "A"
 
 
+def test_rank_recommendations_full_tiebreaks_by_ticker_ascending_deterministic() -> None:
+    """R120/BH-011 family (investability sibling of top_picks + portfolio builder):
+    when the 5-level ranking tuple fully collides (identical composite_score, t30,
+    win_rate.t30, bucket_sample_count, AND score_b — realistic for fallback/missing-
+    expected-return recs, or two recs in the same score_b bucket with identical
+    calibration), the final tie-break must be deterministic by ticker ascending, not by
+    whatever upstream dict/JSON iteration order the ``ranked`` list arrived in. Before
+    the fix the tuple ended on score_b (a colliding float), so two identical runs over
+    the same data could reorder the front-door verdict assignment."""
+    base_recs = [
+        {"ticker": "600999", "name": "Zeta", "score_b": 0.50},
+        {"ticker": "000001", "name": "Alpha", "score_b": 0.50},
+    ]
+    composite = CompositeReport(
+        trade_date="20260612",
+        items=[
+            CompositeEntry(ticker="600999", name="Zeta", base_score=0.50, composite_score=0.50),
+            CompositeEntry(ticker="000001", name="Alpha", base_score=0.50, composite_score=0.50),
+        ],
+    )
+    # No expected-return report → both fall to t30=-inf, win_rate=-inf, sample=0:
+    # all five tuple components identical → deterministic tie-break required.
+    expected = ExpectedReturnReport(trade_date="20260612", lookback_days=60, total_samples=0, items=[])
+
+    ranked_forward = rank_recommendations_by_investability(list(base_recs), composite, expected)
+    ranked_reversed = rank_recommendations_by_investability(list(reversed(base_recs)), composite, expected)
+
+    assert [item["ticker"] for item in ranked_forward] == ["000001", "600999"]
+    assert [item["ticker"] for item in ranked_reversed] == ["000001", "600999"]
+
+
 def test_select_representative_candidates_prefers_unique_industry_clusters() -> None:
     ranked = [
         {"ticker": "000001", "industry_sw": "电子", "composite_score": 0.82},
