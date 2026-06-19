@@ -174,3 +174,50 @@ class TestBuildLineItemsFromFramesPIT:
         # Both remain because ann_date is unavailable → live fallback
         assert "20231231" in report_periods
         assert "20221231" in report_periods
+
+
+# ---------------------------------------------------------------------------
+# R128: falsy-zero field-fallback in tushare data layer
+# ---------------------------------------------------------------------------
+
+class TestFalsyZeroFieldFallback:
+    """R68/R69/R96/R107/R122-R124 falsy-zero family: ``get(A) or get(B)``
+    field-to-field fallback skips a legitimate ``0.0`` in field A and silently
+    uses field B. These helpers already use ``_is_present`` (which treats 0.0 as
+    present) elsewhere, so the ``or`` is an internal semantic split."""
+
+    def test_interest_expense_keeps_zero_fin_exp_int_exp(self) -> None:
+        """``fin_exp_int_exp == 0`` (debt-free company, no interest within
+        financial expense) must be kept as 0.0, not fall through to ``int_exp``.
+
+        Previously ``inc.get("fin_exp_int_exp") or inc.get("int_exp")`` let 0.0
+        fall through to int_exp=100 -> interest_expense=100 (wrong). With an
+        explicit None-check, 0.0 is present -> interest_expense=0.0.
+        """
+        from src.tools.tushare_line_items_helpers import _set_income_expense_fields
+
+        field_mapping: dict = {}
+        inc = {"fin_exp_int_exp": 0.0, "int_exp": 100.0}
+
+        _set_income_expense_fields(field_mapping, inc)
+
+        # 0.0 is a legitimate value -> must NOT fall through to int_exp=100
+        assert field_mapping.get("interest_expense") == 0.0
+
+    def test_eps_keeps_zero_eps(self) -> None:
+        """``eps == 0`` (broke-even period, zero earnings per share) must be kept
+        as 0.0, not fall through to ``basic_eps``.
+
+        Previously ``row.get("eps") or row.get("basic_eps")`` let 0.0 fall
+        through to basic_eps=5.0 -> earnings_per_share=5.0 (wrong). With an
+        explicit None-check, 0.0 is present -> earnings_per_share=0.0.
+        """
+        from src.tools.tushare_line_items_helpers import _backfill_per_share_defaults
+
+        field_mapping: dict = {"earnings_per_share": None}
+        row = {"eps": 0.0, "basic_eps": 5.0}
+
+        _backfill_per_share_defaults(field_mapping, row)
+
+        # 0.0 is a legitimate EPS -> must NOT fall through to basic_eps=5.0
+        assert field_mapping.get("earnings_per_share") == 0.0

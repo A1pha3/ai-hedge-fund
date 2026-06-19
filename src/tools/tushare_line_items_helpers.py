@@ -159,7 +159,13 @@ def _set_income_core_fields(field_mapping: dict, inc) -> None:
 
 
 def _set_income_expense_fields(field_mapping: dict, inc):
-    int_exp_val = inc.get("fin_exp_int_exp") or inc.get("int_exp")
+    # R128 / falsy-zero family: explicit None-check, not ``or``. ``fin_exp_int_exp
+    # == 0`` (debt-free company) is a legitimate value that ``or`` would skip,
+    # falling through to int_exp — inconsistent with the _is_present check below
+    # (which treats 0.0 as present).
+    int_exp_val = inc.get("fin_exp_int_exp")
+    if int_exp_val is None:
+        int_exp_val = inc.get("int_exp")
     if _is_present(int_exp_val):
         field_mapping["interest_expense"] = float(int_exp_val)
     rd_val = inc.get("rd_exp")
@@ -239,7 +245,12 @@ def _backfill_balance_defaults(field_mapping: dict, row) -> None:
 
 def _backfill_per_share_defaults(field_mapping: dict, row) -> None:
     if field_mapping.get("earnings_per_share") is None:
-        eps_val = row.get("eps") or row.get("basic_eps")
+        # R128 / falsy-zero family: explicit None-check, not ``or``. ``eps == 0``
+        # (broke-even period) is a legitimate value that ``or`` would skip, falling
+        # through to basic_eps — inconsistent with the _is_present check below.
+        eps_val = row.get("eps")
+        if eps_val is None:
+            eps_val = row.get("basic_eps")
         if _is_present(eps_val):
             field_mapping["earnings_per_share"] = eps_val
     if field_mapping.get("book_value_per_share") is None:

@@ -418,7 +418,13 @@ def _resolve_interest_expense(ttm_income_map: dict[tuple[str, str], float], end_
         int_exp_ttm = ttm_income_map.get((end_date_str, "int_exp"))
     if int_exp_ttm is not None:
         return int_exp_ttm
-    raw_interest = income_row.get("fin_exp_int_exp") or income_row.get("int_exp", 0) or 0
+    # R128 / falsy-zero family: explicit None-check, not ``or``. The TTM path
+    # above already uses ``is None`` (0.0 preserved); the raw fallback must agree
+    # so ``fin_exp_int_exp == 0`` (debt-free company) is kept as 0.0 instead of
+    # falling through to int_exp.
+    raw_interest = income_row.get("fin_exp_int_exp")
+    if raw_interest is None:
+        raw_interest = income_row.get("int_exp", 0)
     return _to_clean_float(raw_interest, default=0.0)
 
 

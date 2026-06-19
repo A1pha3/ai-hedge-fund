@@ -210,3 +210,30 @@ def test_merge_financial_metric_extra_fields_logs_degradation_on_silent_failure(
     joined = "\n".join(r.getMessage() for r in debug_records)
     assert "000001.SZ" in joined, "降级日志必须命名受影响的 ticker"
 
+
+
+# ---------------------------------------------------------------------------
+# R128: falsy-zero field-fallback in _resolve_interest_expense raw path
+# ---------------------------------------------------------------------------
+
+class TestResolveInterestExpenseFalsyZero:
+    """R68/R69 falsy-zero family: the TTM path (lines 416-420) already uses
+    ``is None`` correctly (0.0 preserved), but the raw fallback (line 421) used
+    ``or`` — an internal semantic split where 0.0 fell through to int_exp."""
+
+    def test_raw_path_keeps_zero_fin_exp_int_exp(self) -> None:
+        """When no TTM value exists, the raw fallback must keep
+        ``fin_exp_int_exp == 0`` (debt-free company) as 0.0, not fall through to
+        ``int_exp``.
+
+        Previously ``income_row.get("fin_exp_int_exp") or income_row.get("int_exp", 0) or 0``
+        let 0.0 fall through to int_exp=100. With an explicit None-check the
+        TTM path and raw path agree: 0.0 is a real value.
+        """
+        from src.tools.tushare_financial_metrics_helpers import _resolve_interest_expense
+
+        # Empty TTM map -> forces the raw fallback path
+        result = _resolve_interest_expense({}, "20240331", {"fin_exp_int_exp": 0.0, "int_exp": 100.0})
+
+        # 0.0 must NOT fall through to int_exp=100
+        assert result == 0.0
