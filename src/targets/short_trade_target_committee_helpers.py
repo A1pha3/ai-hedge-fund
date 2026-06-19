@@ -101,7 +101,14 @@ def _risk_score_100(value: float) -> float:
 def _shrink_support_score_for_evidence(base_support_score_100: float, evidence_weight: Any) -> float:
     reliability = clamp_unit_interval(float(evidence_weight or 0.0))
     multiplier = 0.70 + (0.30 * reliability)
-    return round(50.0 + ((float(base_support_score_100 or 50.0) - 50.0) * multiplier), 4)
+    # NOTE (R110 / R107-R68-R69-R96-R108 falsy-zero `or` family): 0.0 是合法
+    # base_support_score_100 ("最低支撑分"), 不能用 `or 50.0` 静默提升为中性 50 —— 否则
+    # `50 + (50-50)*mult == 50` 抹掉显式低分/看跌信号。改为与同模块 sibling 函数
+    # (_apply_prior_payoff_asymmetry_to_support_score line 110/161/172) 一致的 `or 0.0`
+    # (0 是支撑分的自然最小值)。当前 sole caller 传 _support_score_100 (floor 20), 故为
+    # latent 守卫加固 (R85/R78 precedent: latent data-correctness 守卫值得收口, 避免未来
+    # 新 caller 显式传 0 时静默篡改)。
+    return round(50.0 + ((float(base_support_score_100 or 0.0) - 50.0) * multiplier), 4)
 
 
 def _apply_prior_payoff_asymmetry_to_support_score(base_support_score_100: float, snapshot: dict[str, Any]) -> float:
