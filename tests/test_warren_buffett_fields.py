@@ -383,3 +383,43 @@ def test_analyze_book_value_growth_keeps_zero_shareholders_equity():
     # Period with shareholders_equity=0 must NOT cause "Insufficient data"
     assert "Insufficient" not in result["details"]
     assert result["score"] >= 0
+
+
+def test_collect_buffett_capex_ratio_inputs_includes_legitimate_zero_capex():
+    """capital_expenditure == 0 is a legitimate value, not missing data.
+
+    tushare ``c_pay_acq_const_fiolta`` (购建固定资产无形资产支付现金) can be 0.0
+    for a period where the company spent nothing on fixed/intangible assets
+    (service companies, holding companies between investment cycles). The
+    capex/revenue ratio filter must distinguish 0.0 from None — a zero-capex
+    period contributes ratio 0.0 (the most capital-light reading) and must
+    NOT be silently dropped.
+
+    Previously ``if ... and item.capital_expenditure and item.revenue`` used
+    truthiness, dropping zero-capex periods. With fewer ratios the avg capex
+    ratio is biased upward -> method_3 (avg_ratio * revenue) inflates the
+    maintenance capex estimate (or, if it drops below 3 ratios, method_3 is
+    skipped entirely) -> ``owner_earnings = net_income + depreciation -
+    maintenance_capex - working_capital_change`` is deflated. The
+    charlie_munger sibling (_score_munger_capital_intensity) already uses
+    ``is not None`` correctly; this aligns buffett with it.
+    Falsy-zero family residue (R107/R108/R110).
+    """
+    from src.agents.warren_buffett_helpers import _collect_buffett_capex_ratio_inputs
+
+    financial_line_items = [
+        SimpleNamespace(capital_expenditure=-10.0, revenue=100.0),
+        SimpleNamespace(capital_expenditure=-10.0, revenue=100.0),
+        # Legitimate zero-capex period (genuinely spent nothing this quarter)
+        SimpleNamespace(capital_expenditure=0.0, revenue=100.0),
+        SimpleNamespace(capital_expenditure=-8.0, revenue=100.0),
+        # Missing capex (None) -> still correctly excluded
+        SimpleNamespace(capital_expenditure=None, revenue=100.0),
+    ]
+
+    result = _collect_buffett_capex_ratio_inputs(financial_line_items)
+
+    # All 4 periods with a non-None capex must contribute (incl. the 0.0 one);
+    # only the None period is dropped.
+    assert len(result) == 4
+    assert 0.0 in result  # zero-capex period contributes ratio 0.0, not dropped

@@ -297,7 +297,13 @@ def _score_buffett_gross_margin_level(gross_margins: list[float]) -> tuple[int, 
 
 
 def _collect_buffett_capex_ratio_inputs(financial_line_items: list) -> list[float]:
-    return [abs(item.capital_expenditure) / item.revenue for item in financial_line_items[:5] if hasattr(item, "capital_expenditure") and hasattr(item, "revenue") and item.capital_expenditure and item.revenue and item.revenue > 0]
+    # R122 / falsy-zero family: filter with ``is not None`` (not truthiness) so a
+    # legitimate capital_expenditure == 0 (tushare c_pay_acq_const_fiolta can be 0.0
+    # for a period with no fixed-asset spend) contributes ratio 0.0 instead of being
+    # silently dropped. Truthiness biased avg capex ratio upward -> inflated
+    # maintenance_capex estimate -> deflated owner_earnings. Aligns with the
+    # charlie_munger sibling _score_munger_capital_intensity.
+    return [abs(item.capital_expenditure) / item.revenue for item in financial_line_items[:5] if hasattr(item, "capital_expenditure") and hasattr(item, "revenue") and item.capital_expenditure is not None and item.revenue is not None and item.revenue > 0]
 
 
 def _resolve_buffett_maintenance_capex_methods(financial_line_items: list) -> tuple[float, float, float]:
