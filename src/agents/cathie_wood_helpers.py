@@ -102,12 +102,22 @@ def _score_cathie_operating_leverage(financial_line_items: list, calculate_cagr:
 
 
 def _score_cathie_rnd_intensity(financial_line_items: list) -> tuple[int, str | None]:
-    revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
-    rd_expenses = [item.research_and_development for item in financial_line_items if hasattr(item, "research_and_development") and item.research_and_development is not None]
-    if not (rd_expenses and revenues):
+    # R125 / positional-mismatch family: pair R&D with revenue from the SAME period.
+    # Filtering each field independently then indexing [0] crossed periods when some
+    # items lacked one field (item0 had revenue but no R&D -> rd[0]=item1.R&D over
+    # rev[0]=item0.revenue). Pair in one comprehension, like the munger sibling.
+    paired = [
+        (item.research_and_development, item.revenue)
+        for item in financial_line_items
+        if hasattr(item, "research_and_development")
+        and item.research_and_development is not None
+        and getattr(item, "revenue", None) is not None
+    ]
+    if not paired:
         return 0, "No R&D data available"
 
-    rd_intensity = rd_expenses[0] / revenues[0] if revenues[0] != 0 else 0
+    recent_rnd, recent_rev = paired[0]
+    rd_intensity = recent_rnd / recent_rev if recent_rev != 0 else 0
     if rd_intensity > 0.15:
         return 3, f"High R&D investment: {(rd_intensity*100):.1f}% of revenue"
     if rd_intensity > 0.08:
@@ -118,11 +128,22 @@ def _score_cathie_rnd_intensity(financial_line_items: list) -> tuple[int, str | 
 
 
 def _score_cathie_rnd_trends(financial_line_items: list) -> tuple[int, list[str]]:
-    rd_expenses = [item.research_and_development for item in financial_line_items if hasattr(item, "research_and_development") and item.research_and_development is not None]
-    revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
+    # R125 / positional-mismatch family: pair R&D with revenue from the SAME period
+    # so [0]/[-1] indexing aligns periods (independent filters crossed periods when
+    # some items lacked one field, fabricating false "Increasing R&D intensity").
+    paired = [
+        (item.research_and_development, item.revenue)
+        for item in financial_line_items
+        if hasattr(item, "research_and_development")
+        and item.research_and_development is not None
+        and getattr(item, "revenue", None) is not None
+    ]
 
-    if not (rd_expenses and revenues and len(rd_expenses) >= 2):
+    if not (paired and len(paired) >= 2):
         return 0, ["Insufficient R&D data for trend analysis"]
+
+    rd_expenses = [p[0] for p in paired]
+    revenues = [p[1] for p in paired]
 
     score = 0
     details: list[str] = []
@@ -175,10 +196,21 @@ def _score_cathie_operating_efficiency(financial_line_items: list) -> tuple[int,
 
 
 def _score_cathie_capex_commitment(financial_line_items: list) -> tuple[int, str]:
-    revenues = [getattr(item, "revenue", None) for item in financial_line_items if getattr(item, "revenue", None) is not None]
-    capex = [item.capital_expenditure for item in financial_line_items if hasattr(item, "capital_expenditure") and item.capital_expenditure is not None]
-    if not (capex and revenues and len(capex) >= 2):
+    # R125 / positional-mismatch family: pair capex with revenue from the SAME period
+    # so abs(capex[0])/revenues[0] aligns periods (independent filters crossed periods
+    # when some items lacked one field, inflating capex_intensity and flipping scores).
+    paired = [
+        (item.capital_expenditure, item.revenue)
+        for item in financial_line_items
+        if hasattr(item, "capital_expenditure")
+        and item.capital_expenditure is not None
+        and getattr(item, "revenue", None) is not None
+    ]
+    if not (paired and len(paired) >= 2):
         return 0, "Insufficient CAPEX data"
+
+    capex = [p[0] for p in paired]
+    revenues = [p[1] for p in paired]
 
     capex_intensity = abs(capex[0]) / revenues[0] if revenues[0] != 0 else 0
     capex_growth = (abs(capex[0]) - abs(capex[-1])) / abs(capex[-1]) if capex[-1] != 0 else 0
@@ -191,15 +223,25 @@ def _score_cathie_capex_commitment(financial_line_items: list) -> tuple[int, str
 
 
 def _score_cathie_reinvestment_focus(financial_line_items: list) -> tuple[int, str]:
-    fcf_vals = [getattr(item, "free_cash_flow", None) for item in financial_line_items if getattr(item, "free_cash_flow", None) is not None]
+    # R125 / positional-mismatch family: pair dividends with FCF from the SAME period.
+    # Previously dividends[0]/fcf_vals[0] crossed periods when some items lacked one
+    # field (e.g. item0 had zero FCF but no dividends -> fcf[0]=0 triggered the
+    # ``else 1`` payout, masking item1's real low payout ratio).
+    paired = [
+        (item.dividends_and_other_cash_distributions, item.free_cash_flow)
+        for item in financial_line_items
+        if hasattr(item, "dividends_and_other_cash_distributions")
+        and item.dividends_and_other_cash_distributions is not None
+        and getattr(item, "free_cash_flow", None) is not None
+    ]
+    if not paired:
+        return 0, "Insufficient dividend data"
+
+    latest_dividends, latest_fcf = paired[0]
     # R123 / falsy-zero family: dividends == 0 (paid nothing = pure reinvestment) is
     # the signal this function seeks — use ``is not None`` so zero-dividend companies
     # score as reinvestment-focused instead of falling through to "Insufficient data".
-    dividends = [item.dividends_and_other_cash_distributions for item in financial_line_items if hasattr(item, "dividends_and_other_cash_distributions") and item.dividends_and_other_cash_distributions is not None]
-    if not (dividends and fcf_vals):
-        return 0, "Insufficient dividend data"
-
-    latest_payout_ratio = dividends[0] / fcf_vals[0] if fcf_vals[0] != 0 else 1
+    latest_payout_ratio = latest_dividends / latest_fcf if latest_fcf != 0 else 1
     if latest_payout_ratio < 0.2:
         return 2, "Strong focus on reinvestment over dividends"
     if latest_payout_ratio < 0.4:

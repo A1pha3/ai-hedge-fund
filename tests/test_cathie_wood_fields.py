@@ -218,3 +218,101 @@ def test_capex_commitment_includes_zero_capex_period():
 
     # Zero-capex period is present -> not "Insufficient CAPEX data"
     assert detail != "Insufficient CAPEX data"
+
+
+def test_rnd_intensity_pairs_rd_with_revenue_from_same_period():
+    """R&D and revenue are filtered independently then indexed [0]; when some
+    periods lack one field, [0] of each list points at different periods.
+
+    item0 has revenue but no R&D; item1 has both. Previously rd_expenses[0]
+    (=item1.R&D=20) was divided by revenues[0] (=item0.revenue=100) -> 0.20
+    -> "High R&D investment" score 3, a cross-period mismatch. The correct
+    ratio pairs R&D with revenue from the SAME period: 20/1000 = 0.02 -> score 0.
+    Positional-mismatch family (R125); the munger sibling pairs FCF/NI in a
+    single comprehension for exactly this reason.
+    """
+    from src.agents.cathie_wood_helpers import _score_cathie_rnd_intensity
+
+    financial_line_items = [
+        SimpleNamespace(revenue=100.0, research_and_development=None),  # no R&D
+        SimpleNamespace(revenue=1000.0, research_and_development=20.0),  # both
+    ]
+
+    score, detail = _score_cathie_rnd_intensity(financial_line_items)
+
+    # Same-period pairing: 20/1000 = 0.02 -> score 0, NOT mismatched 20/100 = 0.20 -> score 3
+    assert score == 0
+
+
+def test_rnd_trends_pairs_rd_intensity_with_revenue_from_same_period():
+    """rd_intensity_end/start divide independently-filtered R&D and revenue lists
+    at [0]/[-1]; sparse data (a period with revenue but no R&D) shifts the lists
+    out of alignment and fabricates an "Increasing R&D intensity" signal.
+
+    item0 has revenue only; item1/item2 have both. Previously rd_intensity_end
+    (=item1.R&D/item0.revenue = 10/100 = 0.10) > rd_intensity_start
+    (=item2.R&D/item2.revenue = 20/1000 = 0.02) -> false "Increasing" score 2.
+    Same-period pairing: end 10/1000 = 0.01, start 20/1000 = 0.02 -> intensity
+    actually DECREASED, no increasing signal. Positional-mismatch family (R125).
+    """
+    from src.agents.cathie_wood_helpers import _score_cathie_rnd_trends
+
+    financial_line_items = [
+        SimpleNamespace(revenue=100.0, research_and_development=None),  # no R&D
+        SimpleNamespace(revenue=1000.0, research_and_development=10.0),  # both
+        SimpleNamespace(revenue=1000.0, research_and_development=20.0),  # both
+    ]
+
+    score, details = _score_cathie_rnd_trends(financial_line_items)
+
+    # Same-period pairing shows intensity decreased, NOT the cross-period "Increasing"
+    assert not any("Increasing R&D intensity" in d for d in details)
+
+
+def test_capex_commitment_pairs_capex_with_revenue_from_same_period():
+    """capex_intensity = abs(capex[0]) / revenues[0] indexes two independently
+    filtered lists; a period with revenue but no capex misaligns them and
+    inflates intensity, flipping the score bucket.
+
+    item0 has revenue only; item1/item2 have both. Previously capex_intensity =
+    abs(item1.capex)/item0.revenue = 100/100 = 1.0 (> 0.10) AND capex_growth
+    > 0.2 -> "Strong investment" score 2. Same-period pairing: 100/1000 = 0.10
+    (not > 0.10) -> only "Moderate" score 1. Positional-mismatch family (R125).
+    """
+    from src.agents.cathie_wood_helpers import _score_cathie_capex_commitment
+
+    financial_line_items = [
+        SimpleNamespace(revenue=100.0, capital_expenditure=None),  # no capex
+        SimpleNamespace(revenue=1000.0, capital_expenditure=-100.0),  # both
+        SimpleNamespace(revenue=1000.0, capital_expenditure=-50.0),  # both
+    ]
+
+    score, detail = _score_cathie_capex_commitment(financial_line_items)
+
+    # Same-period pairing: 100/1000 = 0.10 -> "Moderate" score 1, NOT mismatched 100/100 = 1.0 -> score 2
+    assert score == 1
+    assert "Moderate" in detail
+
+
+def test_reinvestment_focus_pairs_dividends_with_fcf_from_same_period():
+    """latest_payout_ratio = dividends[0] / fcf_vals[0] indexes two independently
+    filtered lists; a period with zero FCF but no dividends misaligns them.
+
+    item0 has zero FCF but no dividends; item1 has both. Previously fcf_vals[0]
+    (=item0.fcf=0) triggered the ``else 1`` payout -> score 0, even though the
+    company (item1) paid -100 dividends on 1000 FCF (payout -0.1 -> strong
+    reinvestment score 2). Same-period pairing yields the correct score.
+    Positional-mismatch family (R125).
+    """
+    from src.agents.cathie_wood_helpers import _score_cathie_reinvestment_focus
+
+    financial_line_items = [
+        SimpleNamespace(free_cash_flow=0.0, dividends_and_other_cash_distributions=None),  # no dividends
+        SimpleNamespace(free_cash_flow=1000.0, dividends_and_other_cash_distributions=-100.0),  # both
+    ]
+
+    score, detail = _score_cathie_reinvestment_focus(financial_line_items)
+
+    # Same-period pairing: -100/1000 = -0.1 (< 0.2) -> strong reinvestment score 2
+    assert score == 2
+    assert "Strong focus on reinvestment" in detail
