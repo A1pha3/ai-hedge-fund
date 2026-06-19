@@ -288,11 +288,23 @@ def _parse_upstream_shadow_catalyst_relief_config(
 ) -> dict[str, Any]:
     return {
         "catalyst_freshness_floor": clamp_unit_interval(float(relief_config.get("catalyst_freshness_floor", 0.0) or 0.0)),
+        # NOTE (R107 / R68-R69-R96 falsy-zero `or` family): 0.0 是合法阈值覆盖
+        # ("无 near-miss 门槛 = 全部给予 relief"), 不能用 `or base` 静默覆盖为 base 阈值,
+        # 否则用户/影子策略显式放宽 relief 到 0 会被静默回退, 破坏 relief 决策。
+        # 与同函数下方 next_open_to_close_return_mean 的既有 NOTE 同型。
         "near_miss_threshold_override": clamp_unit_interval(
-            float(relief_config.get("near_miss_threshold", base_near_miss_threshold) or base_near_miss_threshold)
+            float(
+                relief_config["near_miss_threshold"]
+                if relief_config.get("near_miss_threshold") is not None
+                else base_near_miss_threshold
+            )
         ),
         "select_threshold_override": clamp_unit_interval(
-            float(relief_config.get("selected_threshold", base_select_threshold) or base_select_threshold)
+            float(
+                relief_config["selected_threshold"]
+                if relief_config.get("selected_threshold") is not None
+                else base_select_threshold
+            )
         ),
         "breakout_freshness_min": clamp_unit_interval(float(relief_config.get("breakout_freshness_min", 0.0) or 0.0)),
         "trend_acceleration_min": clamp_unit_interval(float(relief_config.get("trend_acceleration_min", 0.0) or 0.0)),
@@ -311,9 +323,12 @@ def _parse_upstream_shadow_catalyst_relief_config(
             if relief_config.get("min_historical_next_open_to_close_return_mean") is not None
             else -1.0
         ),
+        # NOTE (R107 同族): 0 是合法 carryover 最小评估数 ("无历史要求 = 给予 carryover relief"),
+        # 不能用 `or strong_carryover...` 静默覆盖为 carryover 默认值, 否则显式放宽到 0 被静默回退。
         "carryover_min_historical_evaluable_count": int(
-            relief_config.get("min_historical_evaluable_count", strong_carryover_history_min_evaluable_count)
-            or strong_carryover_history_min_evaluable_count
+            relief_config.get("min_historical_evaluable_count")
+            if relief_config.get("min_historical_evaluable_count") is not None
+            else strong_carryover_history_min_evaluable_count
         ),
     }
 
