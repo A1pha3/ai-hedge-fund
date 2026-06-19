@@ -63,6 +63,29 @@ class TestComputePortfolio:
         summary = compute_portfolio(SAMPLE_RECS, top_n=3)
         assert summary.n_positions == 3
 
+    def test_top_n_tiebreak_deterministic_across_input_order(self):
+        """R120/BH-011 family (sibling of top_picks._apply_consecutive_bonus_and_resort):
+        at the Top-N membership boundary, three recs tied on ``score_b`` with top_n=2
+        must drop/keep deterministically by ticker ascending — not by whatever order
+        the upstream auto_screening report array happened to arrive in. Before the fix,
+        ``filtered.sort(key=score_b)`` preserved input order on ties, so two identical
+        runs over the same data could allocate capital to different tickers, breaking
+        the "稳定找到" goal."""
+        tied_recs = [
+            {"ticker": "600999", "name": "B", "industry_sw": "综合", "score_b": 0.90},
+            {"ticker": "300118", "name": "C", "industry_sw": "电子", "score_b": 0.90},
+            {"ticker": "000001", "name": "A", "industry_sw": "银行", "score_b": 0.90},
+        ]
+        # top_n=2 with three tied-at-0.9: the boundary cut (keep 2, drop 1) must be
+        # deterministic. By ticker ascending the kept set is {000001, 300118} and the
+        # dropped is 600999, regardless of input order.
+        summary_forward = compute_portfolio(list(tied_recs), top_n=2, position_cap=0.9, industry_cap=0.9)
+        summary_reversed = compute_portfolio(list(reversed(tied_recs)), top_n=2, position_cap=0.9, industry_cap=0.9)
+
+        forward_tickers = {p.ticker for p in summary_forward.positions}
+        reversed_tickers = {p.ticker for p in summary_reversed.positions}
+        assert forward_tickers == reversed_tickers == {"000001", "300118"}
+
     def test_position_cap_respected(self):
         summary = compute_portfolio(SAMPLE_RECS, top_n=5, position_cap=0.30)
         for p in summary.positions:

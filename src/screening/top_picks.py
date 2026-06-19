@@ -925,9 +925,18 @@ def _apply_consecutive_bonus_and_resort(ranked: list[dict]) -> list[dict]:
         # compute_composite_scores already clamps, but the bonus is added after,
         # so a high-base pick (0.98) + 6+day bonus (0.08) would otherwise reach 1.06.
         recommendation["composite_score"] = round(max(-1.0, min(1.0, original_score + bonus)), 4)
+    # BH-011 family (sibling: composite_score.py:312): composite_score is rounded to
+    # 4 decimals above, so ties are common at the Top-N membership boundary. A
+    # single-key resort preserves whatever upstream (JSON-dict / fallback-merge) order
+    # ``ranked`` arrived in, which is not contractually sorted — two identical runs over
+    # the same data could flip which tied ticker reaches ``representative_picks[:N]``,
+    # breaking the "稳定找到" product goal. Add ticker ascending as the deterministic
+    # final key, mirroring the documented tie-break one layer up.
     ranked.sort(
-        key=lambda recommendation: float(recommendation.get("composite_score", 0.0) or 0.0),
-        reverse=True,
+        key=lambda recommendation: (
+            -float(recommendation.get("composite_score", 0.0) or 0.0),
+            str(recommendation.get("ticker") or ""),
+        ),
     )
     return ranked
 

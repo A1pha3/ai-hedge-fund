@@ -314,6 +314,52 @@ class TestApplyConsecutiveBonusAndResort:
         result = _apply_consecutive_bonus_and_resort(ranked)
         assert result is ranked
 
+    def test_tied_composite_score_tiebreaks_by_ticker_ascending(self) -> None:
+        """R120/BH-011 family: two picks sharing a (rounded) composite_score must not
+        depend on input list order. Before the fix the single-key resort preserved
+        whatever upstream (JSON-dict / fallback-merge) order ``ranked`` arrived in, so
+        two identical runs over the same data could flip which tied ticker reached
+        ``representative_picks[:N]`` — breaking the "稳定找到" product goal. The sibling
+        ``composite_score.py:312`` already documents ``(-composite_score, -base_score,
+        ticker)``; this downstream resort must mirror it (ticker ascending as the
+        deterministic final key)."""
+        from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+        # Two picks tie at composite_score=0.6000 after bonus folding (R4 rounds to 4dp).
+        # Input in descending ticker order to prove the output is NOT just input order.
+        ranked_desc = [
+            {"ticker": "600999", "composite_score": 0.6000, "consecutive_bonus": 0.0},
+            {"ticker": "000001", "composite_score": 0.6000, "consecutive_bonus": 0.0},
+        ]
+        ranked_asc = list(reversed(ranked_desc))
+
+        result_desc = _apply_consecutive_bonus_and_resort([dict(r) for r in ranked_desc])
+        result_asc = _apply_consecutive_bonus_and_resort([dict(r) for r in ranked_asc])
+
+        assert [r["ticker"] for r in result_desc] == ["000001", "600999"]
+        assert [r["ticker"] for r in result_asc] == ["000001", "600999"]
+
+    def test_tied_top_n_boundary_does_not_flip_membership(self) -> None:
+        """R120/BH-011 family: at the Top-N membership boundary, two tied picks must
+        drop/keep deterministically (ticker ascending), so the user sees the same
+        stock set every run regardless of upstream dict/JSON iteration order."""
+        from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+        base = [
+            {"ticker": "000001", "composite_score": 0.9000, "consecutive_bonus": 0.0},
+            {"ticker": "600999", "composite_score": 0.5000, "consecutive_bonus": 0.0},
+            {"ticker": "300118", "composite_score": 0.5000, "consecutive_bonus": 0.0},
+        ]
+        # Reverse input order; the two tied-at-0.5 tickers must always come out
+        # as 000001 > 300118 > 600999 (ticker ascending within the tie), so a
+        # subsequent [:2] cut keeps {000001, 300118} every time.
+        result_forward = _apply_consecutive_bonus_and_resort([dict(r) for r in base])
+        result_reversed = _apply_consecutive_bonus_and_resort([dict(r) for r in reversed(base)])
+
+        forward_top2 = {r["ticker"] for r in result_forward[:2]}
+        reversed_top2 = {r["ticker"] for r in result_reversed[:2]}
+        assert forward_top2 == reversed_top2 == {"000001", "300118"}
+
 
 # ---------------------------------------------------------------------------
 # _enrich_with_consecutive_bonus

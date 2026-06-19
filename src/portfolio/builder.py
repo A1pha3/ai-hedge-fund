@@ -169,8 +169,18 @@ def compute_portfolio(
     if not filtered:
         return summary
 
-    # Sort by score_b desc
-    filtered.sort(key=lambda r: _safe_float(r.get("score_b", 0.0), 0.0), reverse=True)
+    # Sort by score_b desc. BH-011 family (sibling: composite_score.py:312,
+    # top_picks._apply_consecutive_bonus_and_resort): score_b clusters in [0,1] so
+    # ties at the Top-N membership boundary are common. A single-key sort preserves
+    # upstream (auto_screening report array) order on ties, which is not contractually
+    # sorted — two identical runs could allocate capital to different tickers, breaking
+    # the "稳定找到" goal. Add ticker ascending as the deterministic final key.
+    filtered.sort(
+        key=lambda r: (
+            -_safe_float(r.get("score_b", 0.0), 0.0),
+            str(r.get("ticker") or ""),
+        ),
+    )
     selected = filtered[:top_n]
 
     if not selected:
