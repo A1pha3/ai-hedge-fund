@@ -40,6 +40,7 @@ from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_financial_metrics, get_market_cap, search_line_items
 from src.utils.api_key import get_api_key_from_state
 from src.utils.llm import call_llm
+from src.utils.numeric import is_finite_number
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_context, get_currency_symbol
 
@@ -397,7 +398,10 @@ def analyze_book_value_growth(financial_line_items: list) -> dict[str, Any]:
     for item in financial_line_items:
         shareholders_equity = getattr(item, "shareholders_equity", None)
         shares_outstanding = getattr(item, "outstanding_shares", None)
-        if shareholders_equity and shares_outstanding:
+        # Presence check (not truthiness): shareholders_equity == 0.0 is a real
+        # "zero net assets" value and must be kept. Div-by-zero guard belongs
+        # on shares_outstanding only. Falsy-zero family (R68/R69/R96/R100).
+        if is_finite_number(shareholders_equity) and is_finite_number(shares_outstanding) and shares_outstanding != 0:
             book_values.append(shareholders_equity / shares_outstanding)
 
     if len(book_values) < 3:

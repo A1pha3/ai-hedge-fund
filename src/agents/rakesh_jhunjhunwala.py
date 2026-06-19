@@ -37,6 +37,7 @@ from src.tools.api import get_financial_metrics, get_market_cap, search_line_ite
 from src.utils.api_key import get_api_key_from_state
 from src.utils.financial_calcs import calculate_cagr_from_line_items
 from src.utils.llm import call_llm
+from src.utils.numeric import is_finite_number
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_context
 
@@ -347,12 +348,19 @@ def analyze_rakesh_jhunjhunwala_style(
 
     details = f"Profitability: {profitability['details']}\n" f"Growth: {growth['details']}\n" f"Balance Sheet: {balance_sheet['details']}\n" f"Cash Flow: {cash_flow['details']}\n" f"Management Actions: {management['details']}"
 
-    # Use provided intrinsic value or calculate if not provided
-    if not intrinsic_value:
+    # Use provided intrinsic value or calculate if not provided.
+    # Presence check (not truthiness): an explicitly-provided intrinsic_value
+    # of 0.0 ("worthless company") must be honored, not silently overwritten.
+    # Falsy-zero family (R68/R69/R96/R100).
+    if not is_finite_number(intrinsic_value):
         intrinsic_value = calculate_intrinsic_value(financial_line_items, current_price)
 
     valuation_gap = None
-    if intrinsic_value and current_price:
+    # Presence check (not truthiness): intrinsic_value == 0.0 is a real
+    # computed "worthless company" value and must flow through. Pure
+    # subtraction, no division -> no div-guard justification. Falsy-zero
+    # family (R68/R69/R96/R100).
+    if is_finite_number(intrinsic_value) and is_finite_number(current_price):
         valuation_gap = intrinsic_value - current_price
 
     return {

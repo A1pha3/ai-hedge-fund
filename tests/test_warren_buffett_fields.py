@@ -10,6 +10,7 @@ from src.agents.warren_buffett import (
     calculate_owner_earnings,
     estimate_maintenance_capex,
 )
+from src.agents.warren_buffett_helpers import _resolve_buffett_working_capital_change
 
 
 def test_calculate_intrinsic_value_handles_missing_outstanding_shares_field():
@@ -325,3 +326,60 @@ def test_analyze_pricing_power_reports_declining_gross_margins_without_extra_cre
 
     assert result["score"] == 0
     assert result["details"] == "Declining gross margins may indicate pricing pressure"
+
+
+# ---------------------------------------------------------------------------
+# Falsy-zero residue guards (R68/R69/R96/R100 family on agents path)
+# A legitimate 0.0 balance-sheet value (zero current liabilities / zero net
+# assets) must NOT be silently skipped by a truthiness presence-check.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_buffett_working_capital_change_keeps_zero_current_liabilities():
+    """A period with current_liabilities=0.0 (debt-free shell) must be kept.
+
+    Previously `if all([current_assets, current_liabilities, ...])` skipped
+    any period whose current_liabilities legitimately equals 0.0, silently
+    dropping real working-capital data and returning 0 with no detail.
+    Falsy-zero family (R68/R69/R96/R100) residue on the agents path.
+    """
+    financial_line_items = [
+        # Latest period: zero current liabilities (real balance sheet value)
+        SimpleNamespace(current_assets=200.0, current_liabilities=0.0),
+        # Previous period: nonzero, so wc_change should be nonzero
+        SimpleNamespace(current_assets=150.0, current_liabilities=50.0),
+    ]
+
+    working_capital_change, detail = _resolve_buffett_working_capital_change(
+        financial_line_items, currency_symbol="$"
+    )
+
+    # wc_current = 200 - 0 = 200; wc_previous = 150 - 50 = 100; change = 100
+    assert working_capital_change == 100.0
+    # Detail string must be populated (not None) -> period was NOT skipped
+    assert detail is not None
+    assert "100" in detail
+
+
+def test_analyze_book_value_growth_keeps_zero_shareholders_equity():
+    """A period with shareholders_equity=0.0 (zero net assets) must be kept
+    when shares_outstanding is nonzero.
+
+    Previously `if shareholders_equity and shares_outstanding:` skipped any
+    period with shareholders_equity == 0, potentially dropping book_values
+    below the 3-period minimum -> "Insufficient book value data".
+    Falsy-zero family residue; the div-by-zero guard belongs on
+    shares_outstanding only, not shareholders_equity.
+    """
+    financial_line_items = [
+        SimpleNamespace(shareholders_equity=300.0, outstanding_shares=10.0),
+        SimpleNamespace(shareholders_equity=200.0, outstanding_shares=10.0),
+        # Latest period: zero net assets, but 10 shares -> book value 0.0 is real
+        SimpleNamespace(shareholders_equity=0.0, outstanding_shares=10.0),
+    ]
+
+    result = analyze_book_value_growth(financial_line_items)
+
+    # Period with shareholders_equity=0 must NOT cause "Insufficient data"
+    assert "Insufficient" not in result["details"]
+    assert result["score"] >= 0

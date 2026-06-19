@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from src.screening.consecutive_recommendation import resolve_report_dir
+from src.utils.date_utils import format_date
 from src.utils.display import Fore, Style
 
 # ---------------------------------------------------------------------------
@@ -181,7 +182,7 @@ def _load_sorted_reports(reports_dir: Path) -> list[dict[str, Any]]:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             date_str = path.stem.replace("auto_screening_", "")[:8]
-            reports.append({"date": _format_date(date_str), "path": str(path), "data": data})
+            reports.append({"date": format_date(date_str), "path": str(path), "data": data})
         except (json.JSONDecodeError, OSError):
             continue
     return reports
@@ -206,13 +207,6 @@ def _extract_top_n(report_data: dict[str, Any], top_n: int) -> list[dict[str, An
     """Extract Top N recommendations from a report."""
     recs = report_data.get("recommendations", []) or []
     return recs[:top_n]
-
-
-def _format_date(date_compact: str) -> str:
-    """Convert YYYYMMDD to YYYY-MM-DD."""
-    if len(date_compact) == 8 and date_compact.isdigit():
-        return f"{date_compact[:4]}-{date_compact[4:6]}-{date_compact[6:8]}"
-    return date_compact
 
 
 def _format_delta_entry(rec: dict[str, Any], *, rank: int = 0) -> dict[str, Any]:

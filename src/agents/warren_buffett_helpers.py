@@ -1,3 +1,6 @@
+from src.utils.numeric import is_finite_number
+
+
 def _score_buffett_fundamental_roe(latest_metrics) -> tuple[int, str]:
     if latest_metrics.return_on_equity and latest_metrics.return_on_equity > 0.15:
         return 2, f"Strong ROE of {latest_metrics.return_on_equity:.1%}"
@@ -222,7 +225,7 @@ def _resolve_buffett_working_capital_change(financial_line_items: list, currency
         current_assets_previous = getattr(previous, "current_assets", None)
         current_liab_previous = getattr(previous, "current_liabilities", None)
 
-        if all([current_assets_current, current_liab_current, current_assets_previous, current_liab_previous]):
+        if all(is_finite_number(v) for v in [current_assets_current, current_liab_current, current_assets_previous, current_liab_previous]):
             wc_current = current_assets_current - current_liab_current
             wc_previous = current_assets_previous - current_liab_previous
             working_capital_change = wc_current - wc_previous

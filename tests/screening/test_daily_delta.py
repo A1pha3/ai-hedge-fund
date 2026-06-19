@@ -11,12 +11,12 @@ from src.screening.daily_delta import (
     _empty_delta,
     _extract_top_n,
     _find_adjacent_reports,
-    _format_date,
     _format_delta_entry,
     _load_sorted_reports,
     compute_daily_delta,
     render_daily_delta,
 )
+from src.utils.date_utils import format_date
 
 
 def _make_report(date_str: str, recs: list[dict]) -> dict:
@@ -222,25 +222,29 @@ class TestEdgeCases:
 
 
 class TestFormatDate:
-    """Direct unit tests for _format_date (was 0 direct coverage)."""
+    """Regression guard for date formatting (now delegated to date_utils.format_date).
+
+    Kept here because daily_delta consumes this contract; the assertions lock
+    the YYYYMMDD -> YYYY-MM-DD behavior that callers depend on.
+    """
 
     def test_compact_8_digits_to_iso(self) -> None:
-        assert _format_date("20260610") == "2026-06-10"
+        assert format_date("20260610") == "2026-06-10"
 
     def test_leading_zeros_preserved(self) -> None:
-        assert _format_date("20260105") == "2026-01-05"
+        assert format_date("20260105") == "2026-01-05"
 
     def test_non_digit_8_chars_returned_unchanged(self) -> None:
-        assert _format_date("abcdefgh") == "abcdefgh"
+        assert format_date("abcdefgh") == "abcdefgh"
 
     def test_short_string_returned_unchanged(self) -> None:
-        assert _format_date("2026061") == "2026061"
+        assert format_date("2026061") == "2026061"
 
     def test_long_string_returned_unchanged(self) -> None:
-        assert _format_date("202606100") == "202606100"
+        assert format_date("202606100") == "202606100"
 
     def test_empty_string_returned_unchanged(self) -> None:
-        assert _format_date("") == ""
+        assert format_date("") == ""
 
 
 class TestFormatDeltaEntry:

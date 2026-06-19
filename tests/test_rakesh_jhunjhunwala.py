@@ -6,6 +6,7 @@ from src.agents.rakesh_jhunjhunwala import (
     analyze_growth,
     analyze_management_actions,
     analyze_profitability,
+    analyze_rakesh_jhunjhunwala_style,
     assess_quality_metrics,
     calculate_intrinsic_value,
 )
@@ -137,3 +138,36 @@ def test_calculate_intrinsic_value_preserves_growth_projection_path():
 def test_calculate_intrinsic_value_preserves_fallback_and_negative_earnings_paths():
     assert calculate_intrinsic_value([SimpleNamespace(net_income=50.0)], 1000.0) == 600.0
     assert calculate_intrinsic_value([SimpleNamespace(net_income=-5.0)], 1000.0) is None
+
+
+def test_analyze_rakesh_jhunjhunwala_style_keeps_zero_intrinsic_value_for_valuation_gap():
+    """A legitimately computed intrinsic_value of 0.0 (worthless company)
+    must flow through to valuation_gap, not be silently skipped.
+
+    Previously `if intrinsic_value and current_price:` skipped when
+    intrinsic_value == 0.0, leaving valuation_gap as None even though the
+    subtraction `0.0 - price` is well-defined. Falsy-zero family
+    (R68/R69/R96/R100) residue on the rakesh_jhunjhunwala path; pure
+    subtraction with no division, so no div-guard justification.
+    """
+    financial_line_items = [
+        SimpleNamespace(
+            net_income=10.0,
+            total_assets=100.0,
+            total_liabilities=20.0,
+            current_assets=50.0,
+            current_liabilities=10.0,
+            operating_income=15.0,
+            revenue=80.0,
+            earnings_per_share=1.0,
+        ),
+    ]
+
+    result = analyze_rakesh_jhunjhunwala_style(
+        financial_line_items,
+        intrinsic_value=0.0,
+        current_price=5.0,
+    )
+
+    # intrinsic_value=0.0 is a real computed value; valuation_gap = 0 - 5 = -5
+    assert result["valuation_gap"] == -5.0
