@@ -1135,6 +1135,69 @@ def test_score_news_article_downweights_stale_negative_article():
     assert metrics["effective_weight"] < metrics["decay"]
 
 
+def test_score_news_article_prior_day_morning_not_treated_as_today():
+    """R119 lookahead family: news published the prior morning (2026-03-04T08:00:00)
+    must NOT be scored as days_old==0 (today/freshest). trade_date midnight vs the
+    article's kept time-of-day made ``timedelta(0.67).days == 0``, inflating freshness
+    weight for a genuinely-prior-day article. Expected: prior day == 1 day old.
+    """
+    import src.screening.strategy_scorer_event_sentiment_helpers as _esh
+
+    metrics = _esh._score_news_article(
+        _news_item("profit growth beat", "2026-03-04T08:00:00", "record upgrade and contract"),
+        datetime(2026, 3, 5),
+    )
+
+    assert metrics["days_old"] == 1
+
+
+def test_score_news_article_same_day_after_decision_is_lookahead_not_freshest():
+    """R119 lookahead family: an article timestamped AFTER midnight on the trade day
+    (e.g. evening 2026-03-05T18:30:00) must not be privileged as fresher than a
+    genuine prior-day article. Before the fix ``timedelta(-0.77).days == -1`` →
+    ``max(-1,0)==0`` made the post-decision same-day article the freshest input.
+    After the .date()-only comparison it is days_old==0 (same calendar day), which is
+    acceptable because the per-source fetch already excludes articles strictly after
+    end_date; the key guard is that a prior-day article (days_old==1) is NOT tied with
+    it at 0, i.e. the lookahead floor no longer collapses prior-day to same-day.
+    """
+    import src.screening.strategy_scorer_event_sentiment_helpers as _esh
+
+    prior_day = _esh._score_news_article(
+        _news_item("profit growth beat", "2026-03-04T08:00:00", "record upgrade and contract"),
+        datetime(2026, 3, 5),
+    )
+    post_decision = _esh._score_news_article(
+        _news_item("profit growth beat", "2026-03-05T18:30:00", "record upgrade and contract"),
+        datetime(2026, 3, 5),
+    )
+
+    # Prior-day article is strictly older; no longer tied at 0 days due to the floor bug.
+    assert prior_day["days_old"] > post_decision["days_old"]
+
+
+def test_resolve_event_freshness_days_old_prior_day_morning_is_one_day():
+    """R119 lookahead family: _resolve_event_freshness_days_old shares the same
+    midnight-trade_dt vs kept-time-of-day news_date bug as _resolve_news_article_days_old.
+    Prior-day morning article must read as 1 day old, not 0.
+    """
+    import src.screening.strategy_scorer_event_sentiment_helpers as _esh
+
+    assert _esh._resolve_event_freshness_days_old("2026-03-04T08:00:00", "20260305") == 1
+
+
+def test_resolve_news_article_days_old_no_negative_timedelta_floor():
+    """R119 lookahead family: direct helper guard. A same-calendar-day article with a
+    late time-of-day (after the midnight trade_dt) must not floor to a negative delta
+    that ``max(.., 0)`` then masks as 0 while a prior-day article is also mis-floored
+    to 0. The same-day value is 0; the prior-day value is 1; they are now distinct.
+    """
+    import src.screening.strategy_scorer_event_sentiment_helpers as _esh
+
+    assert _esh._resolve_news_article_days_old("2026-03-05T18:30:00", datetime(2026, 3, 5)) == 0
+    assert _esh._resolve_news_article_days_old("2026-03-04T08:00:00", datetime(2026, 3, 5)) == 1
+
+
 def test_score_mean_reversion_strategy_marks_rsi_oversold_and_reversion_regime():
     prices_df = pd.DataFrame({"close": [100.0] * 100})
 

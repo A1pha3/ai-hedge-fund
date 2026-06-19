@@ -207,11 +207,25 @@ def _build_news_article_metrics(
     }
 
 
+def _days_old_between(trade_date_only, item_date_only) -> int:
+    """Calendar-day difference from a news item to the trade/decision date.
+
+    R119 (lookahead family): comparing a midnight trade_dt against a news timestamp
+    that keeps its time-of-day made ``timedelta(...).days`` floor a prior-day-morning
+    article to 0 days (inflating freshness) and a post-decision same-day article to
+    -1 → ``max(-1, 0) == 0`` (look-ahead: future info scored as freshest). Compare on
+    ``.date()`` only so the day boundary is unambiguous; the per-source news fetch
+    already filters articles whose calendar date is after ``end_date``.
+    """
+    delta = (trade_date_only - item_date_only).days
+    return delta if delta >= 0 else 0
+
+
 def _resolve_news_article_days_old(news_date: str, trade_dt: datetime) -> int:
     item_dt = _safe_date(news_date)
     # GAMMA-001: unparseable dates should be treated as very old (stale),
     # not as "today" (which would give maximum freshness weight).
-    return max((trade_dt - item_dt).days, 0) if item_dt else 9999
+    return _days_old_between(trade_dt.date(), item_dt.date()) if item_dt else 9999
 
 
 def _resolve_news_direction_and_strength(pos_hits: int, neg_hits: int) -> tuple[int, int]:
@@ -334,7 +348,9 @@ def _resolve_event_freshness_days_old(news_date: str, trade_date: str) -> int:
     latest_dt = _safe_date(news_date)
     # GAMMA-002: unparseable dates should be treated as very old (stale),
     # not as "today" (which would give maximum freshness weight).
-    return max((trade_dt - latest_dt).days, 0) if latest_dt else 9999
+    # R119 (lookahead family): compare on .date() to avoid the midnight-vs-time-of-day
+    # timedelta floor that mis-scored prior-day-morning articles as 0 days old.
+    return _days_old_between(trade_dt.date(), latest_dt.date()) if latest_dt else 9999
 
 
 def _count_event_keyword_hits(news_item: CompanyNews) -> tuple[int, int]:
