@@ -142,3 +142,27 @@ def test_roe_treats_zero_equity_as_undefined_not_huge_roe():
     # Zero equity -> ROE undefined -> NOT "High ROE"
     assert score == 0
     assert "High ROE" not in detail
+
+
+def test_rnd_intensity_pairs_rd_with_revenue_across_complementary_missing_periods():
+    """len(A)==len(B) guard cannot detect complementary-missing data.
+
+    item0 has revenue but no R&D; item1 has R&D but no revenue. Both filtered
+    lists end up length 1, so ``len(rnd_values) == len(revenues)`` passes — but
+    rnd_values[0] (=item1.R&D=10) pairs with revenues[0] (=item0.revenue=100),
+    a cross-period mismatch giving 0.10 -> score 1 ("somewhat low but positive").
+    Same-period pairing yields no period with BOTH fields -> "Insufficient".
+    Positional-mismatch family (R125), complementary-missing edge.
+    """
+    from src.agents.phil_fisher_helpers import _score_fisher_rnd_intensity
+
+    financial_line_items = [
+        SimpleNamespace(revenue=100.0, research_and_development=None),
+        SimpleNamespace(revenue=None, research_and_development=10.0),
+    ]
+
+    score, detail = _score_fisher_rnd_intensity(financial_line_items)
+
+    # No period has BOTH R&D and revenue -> Insufficient, not a mismatched 0.10 ratio
+    assert score == 0
+    assert "Insufficient" in detail

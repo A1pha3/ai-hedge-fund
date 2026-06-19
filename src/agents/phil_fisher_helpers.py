@@ -29,17 +29,25 @@ def _score_fisher_eps_growth(financial_line_items: list, calculate_cagr: Callabl
 
 
 def _score_fisher_rnd_intensity(financial_line_items: list) -> tuple[int, str]:
-    rnd_values = [getattr(fi, "research_and_development", None) for fi in financial_line_items if getattr(fi, "research_and_development", None) is not None]
-    revenues = [getattr(fi, "revenue", None) for fi in financial_line_items if getattr(fi, "revenue", None) is not None]
-    if not (rnd_values and revenues and len(rnd_values) == len(revenues)):
+    # R126 / positional-mismatch family (R125 cathie_wood sibling): pair R&D with
+    # revenue from the SAME period. Previously two independent filters + a
+    # len(rnd)==len(rev) guard could not detect complementary-missing data
+    # (item0 had revenue no R&D, item1 had R&D no revenue -> equal-length lists
+    # but rnd[0]=item1.R&D over rev[0]=item0.revenue, a cross-period mismatch).
+    paired = [
+        (fi.research_and_development, fi.revenue)
+        for fi in financial_line_items
+        if getattr(fi, "research_and_development", None) is not None
+        and getattr(fi, "revenue", None) is not None
+    ]
+    if not paired:
         return 0, "Insufficient R&D data to evaluate"
 
-    recent_rnd = rnd_values[0]
+    recent_rnd, recent_rev = paired[0]
     # R124 / falsy-zero epsilon family: revenue == 0 makes R&D/revenue undefined.
     # Previously ``revenues[0] if revenues[0] else 1e-9`` let a pre-revenue company
     # (revenue=0) score rnd/1e-9 ~ 1e10 -> "very high R&D ratio" (false positive).
     # Guard non-positive revenue as undefined instead of an inflated ratio.
-    recent_rev = revenues[0]
     if recent_rev <= 0:
         return 0, "R&D ratio undefined (non-positive revenue)"
     rnd_ratio = recent_rnd / recent_rev
