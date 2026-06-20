@@ -128,3 +128,35 @@ def test_daily_pipeline_price_lookup_routes_beijing_92_to_bj() -> None:
     from src.execution.daily_pipeline import _to_ts_code_for_price_lookup
 
     assert _to_ts_code_for_price_lookup("920001") == "920001.BJ"
+
+
+def test_tushare_data_source_skips_nan_volume_row(monkeypatch) -> None:
+    """R133 (R132/R83 same-class drain residue): TushareDataSource.get_prices is
+    a THIRD sibling df→Price converter (besides AKShareProvider R83 and
+    build_prices_from_dataframe R132) that lacks the pd.notna NaN-row skip guard.
+    ``int(row["vol"])`` on a NaN volume (halted/illiquid day in tushare daily)
+    raises ValueError, caught by the outer ``except Exception`` and re-raised as
+    DataSourceError — dropping the whole ticker's price series on one bad row.
+    A single NaN-volume row must be skipped, not fail the whole fetch.
+    """
+    monkeypatch.setattr(ashare_data_sources.TushareDataSource, "_init_tushare", classmethod(lambda cls: True))
+    monkeypatch.setattr(ashare_data_sources.TushareDataSource, "_pro", object())
+
+    def _fake_cached(_pro, _api_name, **kwargs):
+        return pd.DataFrame(
+            [
+                {"trade_date": "20260401", "open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2, "vol": 12345},
+                {"trade_date": "20260402", "open": 10.2, "high": 10.6, "low": 10.0, "close": 10.4, "vol": float("nan")},
+                {"trade_date": "20260403", "open": 10.4, "high": 10.8, "low": 10.3, "close": 10.7, "vol": 13000},
+            ]
+        )
+
+    monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", _fake_cached)
+
+    prices = ashare_data_sources.TushareDataSource.get_prices("920001", "2026-04-01", "2026-04-03")
+
+    # NaN-volume row skipped (not crash/fail); valid rows preserved (reversed to chronological)
+    times = [p.time for p in prices]
+    assert "2026-04-02" not in times
+    assert len(prices) == 2
+    assert prices[0].volume in (12345, 13000)

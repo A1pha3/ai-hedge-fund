@@ -5,6 +5,8 @@ A股多数据源模块
 
 import os
 
+import pandas as pd
+
 from src.data.models import FinancialMetrics, Price
 from src.tools.ashare_board_utils import to_baostock_code, to_tushare_code
 
@@ -93,6 +95,16 @@ class TushareDataSource(BaseDataSource):
 
             prices = []
             for _, row in df.iterrows():
+                # R133 (R83/R132 same-class drain): skip rows with NaN/None in any
+                # OHLC/vol cell. Tushare daily yields NaN vol on halted/illiquid
+                # days; bare ``int(row["vol"])`` raises ValueError, caught by the
+                # outer except and re-raised as DataSourceError — dropping the
+                # whole ticker's price series on one bad row. Aligns with the
+                # sibling AKShareProvider (R83) / build_prices_from_dataframe (R132)
+                # pd.notna skip guards.
+                ohlc = (row["open"], row["high"], row["low"], row["close"], row["vol"])
+                if any(not pd.notna(v) for v in ohlc):
+                    continue
                 date_str = row["trade_date"]
                 date_formatted = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
 
