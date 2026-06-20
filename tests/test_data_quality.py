@@ -265,6 +265,48 @@ class TestEnhancedDataValidator:
         nan_failures = [r for r in results if r.field == "return_on_equity" and not r.is_valid]
         assert len(nan_failures) > 0, "NaN must trigger a validation failure"
 
+    def test_string_numeric_value_does_not_crash_range_check(self, validator):
+        """R131: a legitimate string numeric value (e.g. ``"0.15"`` residue
+        from akshare/tushare scrape, not the string-NaN forms already rejected)
+        must not crash the min/max range check.
+
+        Previously ``_is_invalid_value`` only rejected string-NaN/Inf forms;
+        a string like ``"0.15"`` passed that check, then ``value < rule.min_value``
+        raised ``TypeError: '<' not supported between instances of 'str' and
+        'float'``, crashing the whole validation batch. The dict path
+        (``MetricRow = Union[FinancialMetrics, dict]``) does not auto-cast via
+        Pydantic, so upstream scrape residue reaches ``evaluate_metric_rule`` as
+        a raw string. The validator must coerce it for the comparison (a valid
+        numeric string is legitimate data, just un-cast) — never crash the caller.
+        """
+        metric = create_metric_dict(
+            return_on_equity="0.15",  # string residue from upstream scrape
+        )
+
+        # Must not raise TypeError; must return a (bool, list) verdict instead.
+        is_valid, results = validator.validate_metric(metric)
+
+        # "0.15" coerces to 0.15, within the return_on_equity range → the field
+        # must NOT be flagged (the value is valid once coerced). The key invariant:
+        # no crash, a clean (bool, list) verdict.
+        assert isinstance(is_valid, bool)
+        assert isinstance(results, list)
+        roe_failures = [r for r in results if r.field == "return_on_equity" and not r.is_valid]
+        assert roe_failures == [], "coerced 0.15 is in range, must not be flagged"
+
+    def test_non_numeric_string_value_is_rejected_not_crash(self, validator):
+        """R131: a non-numeric string (e.g. ``"N/A"``) that is not a string-NaN
+        form must be rejected as invalid, not crash the range check."""
+        metric = create_metric_dict(
+            return_on_equity="N/A",  # non-numeric, not a NaN/Inf keyword
+        )
+
+        is_valid, results = validator.validate_metric(metric)
+
+        assert isinstance(is_valid, bool)
+        roe_failures = [r for r in results if r.field == "return_on_equity" and not r.is_valid]
+        assert len(roe_failures) > 0, "non-numeric string must be flagged, not crash or pass"
+
     def test_inf_value_is_rejected_even_when_allow_null(self, validator):
         """Inf values must be rejected by validation, same rationale as NaN.
 

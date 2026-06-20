@@ -129,6 +129,28 @@ def evaluate_metric_rule(
         has_error = has_error or rule.severity == "error"
         return results, has_error
 
+    # R131: coerce string numerics for range comparison. The dict metric path
+    # (MetricRow = Union[FinancialMetrics, dict]) does not auto-cast via Pydantic,
+    # so upstream scrape residue (akshare/tushare returning "123.45") reaches here
+    # as a raw string. ``"123.45" < 100`` raises TypeError and crashes the whole
+    # validation batch. Try float() so the range check works; if it is not a
+    # parseable numeric string, reject as invalid (consistent with string-NaN).
+    if isinstance(value, str):
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            results.append(
+                result_factory(
+                    is_valid=False,
+                    field=field_name,
+                    value=value,
+                    rule=rule,
+                    message=f"{field_name}={value!r} 不是有效数值, 拒绝接受",
+                )
+            )
+            has_error = has_error or rule.severity == "error"
+            return results, has_error
+
     if rule.min_value is not None and value < rule.min_value:
         results.append(
             result_factory(
