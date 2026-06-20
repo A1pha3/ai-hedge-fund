@@ -260,6 +260,44 @@ class TestRenderMarketOpportunityIndex:
 
 
 # ---------------------------------------------------------------------------
+# _format_sample_count (O-2 / R35 mature-T+30 disclosure)
+# ---------------------------------------------------------------------------
+
+
+class TestFormatSampleCount:
+    """O-2: T+30 winrate confidence calibration. The winrate is computed over ALL
+    bucket records, but only *mature* ones (R35 ``bucket_t30_mature_count``) have
+    full 30-day outcomes — and the BUY gate requires mature >= 20. Showing
+    ``样本=N(熟M)`` when M < N lets the user see that a 62% winrate on 50 samples
+    of which only 20 are mature is weaker evidence than the bare "样本=50" implies."""
+
+    def test_mature_less_than_total_shows_suffix(self) -> None:
+        from src.screening.top_picks import _format_sample_count
+
+        assert _format_sample_count({"bucket_sample_count": 50, "bucket_t30_mature_count": 20}) == "50(熟20)"
+
+    def test_mature_equals_total_no_suffix(self) -> None:
+        from src.screening.top_picks import _format_sample_count
+
+        assert _format_sample_count({"bucket_sample_count": 30, "bucket_t30_mature_count": 30}) == "30"
+
+    def test_mature_exceeds_total_clamped_no_suffix(self) -> None:
+        from src.screening.top_picks import _format_sample_count
+
+        assert _format_sample_count({"bucket_sample_count": 10, "bucket_t30_mature_count": 15}) == "10"
+
+    def test_no_mature_field_just_total(self) -> None:
+        from src.screening.top_picks import _format_sample_count
+
+        assert _format_sample_count({"bucket_sample_count": 45}) == "45"
+
+    def test_missing_sample_count_zero(self) -> None:
+        from src.screening.top_picks import _format_sample_count
+
+        assert _format_sample_count({}) == "0"
+
+
+# ---------------------------------------------------------------------------
 # _apply_consecutive_bonus_and_resort
 # ---------------------------------------------------------------------------
 
@@ -313,6 +351,47 @@ class TestApplyConsecutiveBonusAndResort:
         ranked = [{"ticker": "a", "composite_score": 0.5, "consecutive_bonus": 0.04}]
         result = _apply_consecutive_bonus_and_resort(ranked)
         assert result is ranked
+
+    def test_tied_composite_tiebreaks_by_t30_edge_not_alphabetical(self) -> None:
+        """R143/O-1: when picks tie on composite_score (post-bonus), the tie-break
+        must be risk-aware — higher T+30 edge ranks first — restoring the
+        investability 6-tuple (rank_recommendations_by_investability:309) that the
+        bonus re-sort was discarding. Product goal "更高确信": the user must see the
+        stronger-evidence BUY first, not whichever ticker sorts alphabetically.
+
+        Before: two BUY picks with equal composite but different edge sorted
+        alphabetically (000001 < 600999), hiding the 12%-edge pick below the 8%-edge one."""
+        from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+        ranked = [
+            {"ticker": "000001", "composite_score": 0.50, "consecutive_bonus": 0.0,
+             "expected_returns": {"t30": 0.08}, "win_rates": {"t30": 0.62},
+             "bucket_sample_count": 45, "score_b": 0.50},
+            {"ticker": "600999", "composite_score": 0.50, "consecutive_bonus": 0.0,
+             "expected_returns": {"t30": 0.12}, "win_rates": {"t30": 0.58},
+             "bucket_sample_count": 120, "score_b": 0.50},
+        ]
+        result = _apply_consecutive_bonus_and_resort(ranked)
+        # 600999 has higher T+30 edge (12% > 8%) → ranks first despite 000001 < 600999
+        assert result[0]["ticker"] == "600999"
+        assert result[1]["ticker"] == "000001"
+
+    def test_tied_composite_and_edge_tiebreaks_by_winrate(self) -> None:
+        """R143/O-1: when composite AND t30_edge both tie, higher T+30 winrate ranks
+        first (the 6-tuple's 3rd level). Confirms the full risk-aware cascade."""
+        from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+        ranked = [
+            {"ticker": "000001", "composite_score": 0.50, "consecutive_bonus": 0.0,
+             "expected_returns": {"t30": 0.10}, "win_rates": {"t30": 0.62},
+             "bucket_sample_count": 45, "score_b": 0.50},
+            {"ticker": "600999", "composite_score": 0.50, "consecutive_bonus": 0.0,
+             "expected_returns": {"t30": 0.10}, "win_rates": {"t30": 0.58},
+             "bucket_sample_count": 120, "score_b": 0.50},
+        ]
+        result = _apply_consecutive_bonus_and_resort(ranked)
+        # 000001 has higher winrate (62% > 58%) → ranks first
+        assert result[0]["ticker"] == "000001"
 
     def test_tied_composite_score_tiebreaks_by_ticker_ascending(self) -> None:
         """R120/BH-011 family: two picks sharing a (rounded) composite_score must not

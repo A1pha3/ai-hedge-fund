@@ -39,6 +39,7 @@ from src.screening.consecutive_recommendation import (
 from src.screening.data_quality_audit import _find_latest_report
 from src.screening.expected_return import compute_expected_returns
 from src.screening.investability import (
+    _safe_metric,
     build_front_door_verdict,
     rank_recommendations_by_investability,
     select_representative_candidates,
@@ -263,6 +264,30 @@ def _extract_t30_metrics(item: dict) -> tuple[float | None, float | None]:
     edge = float(t30) if isinstance(t30, (int, float)) else None
     winrate = float(t30_wr) if isinstance(t30_wr, (int, float)) else None
     return edge, winrate
+
+
+def _format_sample_count(item: dict) -> str:
+    """O-2/R35: format the bucket sample count with a mature-T+30 suffix.
+
+    The displayed T+30 winrate is computed over ALL bucket records
+    (``bucket_sample_count``), but only *mature* records
+    (R35 ``bucket_t30_mature_count``) have full 30-day outcomes — and the BUY
+    gate requires mature >= 20. When fewer records are mature than the total,
+    show ``样本=N(熟M)`` so the user can calibrate confidence: a 62% winrate
+    on 50 samples of which only 20 are mature is weaker evidence than the bare
+    "样本=50" implies. Serves the "更高确信" goal via honest sample disclosure.
+    """
+    total = int(item.get("bucket_sample_count", 0) or 0)
+    mature_raw = item.get("bucket_t30_mature_count")
+    if mature_raw is None:
+        return f"{total}"
+    try:
+        mature = int(mature_raw)
+    except (TypeError, ValueError):
+        return f"{total}"
+    if 0 <= mature < total:
+        return f"{total}(熟{mature})"
+    return f"{total}"
 
 
 def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> str:
@@ -925,16 +950,22 @@ def _apply_consecutive_bonus_and_resort(ranked: list[dict]) -> list[dict]:
         # compute_composite_scores already clamps, but the bonus is added after,
         # so a high-base pick (0.98) + 6+day bonus (0.08) would otherwise reach 1.06.
         recommendation["composite_score"] = round(max(-1.0, min(1.0, original_score + bonus)), 4)
-    # BH-011 family (sibling: composite_score.py:312): composite_score is rounded to
-    # 4 decimals above, so ties are common at the Top-N membership boundary. A
-    # single-key resort preserves whatever upstream (JSON-dict / fallback-merge) order
-    # ``ranked`` arrived in, which is not contractually sorted — two identical runs over
-    # the same data could flip which tied ticker reaches ``representative_picks[:N]``,
-    # breaking the "稳定找到" product goal. Add ticker ascending as the deterministic
-    # final key, mirroring the documented tie-break one layer up.
+    # BH-011 family (sibling: composite_score.py:312, investability.py:309): composite_score
+    # is rounded to 4 decimals above, so ties are common at the Top-N membership boundary.
+    # R143/O-1: restore the risk-aware 6-tuple tie-break from rank_recommendations_by_investability
+    # (t30_edge → t30_winrate → bucket_sample_count → score_b) that this bonus re-sort was
+    # discarding — a pure 2-tuple (-composite, ticker) left two BUY picks with equal composite
+    # sorting alphabetically, hiding the stronger-evidence pick. composite_score (with bonus
+    # folded in) stays the primary key so R4 consecutive-boost still bubbles picks up; the
+    # risk-aware keys only break ties. Absent keys default equally so ticker remains the
+    # deterministic final fallback (preserves BH-011 determinism when risk keys are missing).
     ranked.sort(
         key=lambda recommendation: (
             -float(recommendation.get("composite_score", 0.0) or 0.0),
+            -_safe_metric((recommendation.get("expected_returns") or {}).get("t30"), float("-inf")),
+            -_safe_metric((recommendation.get("win_rates") or {}).get("t30"), float("-inf")),
+            -_safe_metric(recommendation.get("bucket_sample_count"), 0.0),
+            -float(recommendation.get("score_b", 0.0) or 0.0),
             str(recommendation.get("ticker") or ""),
         ),
     )
@@ -1122,7 +1153,6 @@ def _print_pick_entry(
     confluence_str = _render_confluence(bullish, total)
 
     t30, t30_wr = _extract_t30_metrics(item)
-    sample_count = int(item.get("bucket_sample_count", 0) or 0)
 
     t30_str = f"{t30:+.2f}%" if t30 is not None else "—"
     t30_wr_str = f"{t30_wr:.0%}" if t30_wr is not None else "—"
@@ -1137,7 +1167,7 @@ def _print_pick_entry(
         f"{grade}{consec_str} {confluence_str}  "
         f"(base={base_score:.3f} {signal_str}{factor_attr})"
     )
-    print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={sample_count}  市场门控={verdict['market_regime']}")
+    print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={_format_sample_count(item)}  市场门控={verdict['market_regime']}")
     print(f"     失效条件: {verdict['invalidation_reason']}")
 
     _print_pick_entry_details(
