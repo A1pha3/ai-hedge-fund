@@ -153,6 +153,52 @@ def test_nan_avg_volume_20d_does_not_bypass_liquidity_constraint():
     assert plan.constraint_binding == "liquidity"
 
 
+def test_nan_existing_position_ratio_blocks_not_crashes_pipeline():
+    """R146: a held ticker whose current_price is NaN (halted/suspended A-share)
+    yields NaN ``existing_position_ratio`` at the call site. NaN is truthy, so it
+    flowed into the constraints dict as the FIRST key ('single_name'); Python's
+    ``min()`` never displaces the first item when comparisons against NaN are all
+    False, so NaN won as the binding constraint → ``int(NaN // 100)`` → ValueError
+    crashing the WHOLE day's buy-order pipeline (not just the one ticker —
+    ``calculate_position`` raises and the caller doesn't isolate per-ticker).
+
+    NaN must sanitize to 'at cap' (1.0) so the single-name remaining-amount goes
+    to 0 (block adding) — conservative when the existing position can't be valued.
+    Same-class sibling of BETA-006 (avg_volume_20d) + score_final sanitize."""
+    plan = calculate_position(
+        ticker="000001",
+        current_price=20.0,
+        score_final=0.60,
+        portfolio_nav=100_000,
+        available_cash=50_000,
+        avg_volume_20d=5000.0,
+        industry_remaining_quota=25_000,
+        existing_position_ratio=float("nan"),  # halted-stock NaN price → NaN ratio
+    )
+    # Must NOT crash; conservative block (can't value existing → don't add)
+    assert plan.shares == 0
+    assert plan.amount == 0.0
+    assert plan.constraint_binding == "single_name"
+
+
+def test_nan_correlation_adjustment_treated_as_zero_not_bypassed():
+    """R146: NaN ``correlation_adjustment`` must be treated as 0.0 (conservative:
+    unknown correlation → minimal vol cap), NOT skipped. Previously NaN made
+    ``vol_limit = NaN``; as the 2nd key (after finite single_name) ``min()``
+    skipped it → vol cap silently bypassed → up to 2x over-allocation. The NaN
+    result must now equal the explicit-0 result (sanitize, not bypass)."""
+    kwargs = dict(
+        ticker="000001", current_price=20.0, score_final=0.60,
+        portfolio_nav=100_000, available_cash=50_000, avg_volume_20d=5000.0,
+        industry_remaining_quota=25_000,
+    )
+    plan_nan = calculate_position(correlation_adjustment=float("nan"), **kwargs)
+    plan_zero = calculate_position(correlation_adjustment=0.0, **kwargs)
+    # NaN must behave identically to explicit 0 (sanitized), not bypass vol
+    assert plan_nan.shares == plan_zero.shares
+    assert plan_nan.constraint_binding == plan_zero.constraint_binding
+
+
 def test_nan_score_final_returns_zero_position_plan():
     """BETA (R20.32) 回归测试: NaN score_final 必须被拒绝为 0 股 plan.
 

@@ -90,6 +90,22 @@ def calculate_position(
     if not math.isfinite(safe_avg_volume_20d):
         safe_avg_volume_20d = 0.0
 
+    # R146 (BETA-006 same-class drain): sanitize ``existing_position_ratio`` and
+    # ``correlation_adjustment``. A held ticker whose current_price is NaN
+    # (halted/suspended A-share) yields NaN existing_position_ratio at the call
+    # site; NaN is truthy and wins the constraints ``min()`` as the first key
+    # ('single_name') → ``int(NaN // 100)`` → ValueError crashing the WHOLE day's
+    # buy pipeline. NaN correlation_adjustment makes vol_limit=NaN; as the 2nd key
+    # it's skipped by min() (single_name finite), silently bypassing the vol cap
+    # → up to 2x over-allocation. Treat non-finite conservatively: existing → at
+    # cap (block adding when unvaluable); correlation → 0 (block when unknown).
+    existing_position_ratio = float(existing_position_ratio or 0.0)
+    if not math.isfinite(existing_position_ratio):
+        existing_position_ratio = 1.0
+    correlation_adjustment = float(correlation_adjustment or 0.0)
+    if not math.isfinite(correlation_adjustment):
+        correlation_adjustment = 0.0
+
     min_lot_amount = current_price * A_SHARE_MIN_LOT
     single_name_limit = _resolve_single_name_limit(
         allow_extended_limit=allow_extended_limit,
