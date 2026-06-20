@@ -185,7 +185,15 @@ def analyze_growth_and_reinvestment(metrics: list, line_items: list) -> dict[str
 
     # Revenue CAGR (oldest to latest)
     # TTM metrics are spaced ~3 months apart, so n TTM periods = (n-1)*0.25 years
-    revs = [m.revenue for m in reversed(metrics) if hasattr(m, "revenue") and m.revenue]
+    # R135 (R123 deferred falsy-zero residue): use ``is not None``, not truthiness.
+    # ``revenue == 0`` (pre-revenue startup / data-glitch zero base) is a legitimate
+    # value that truthiness dropped, shrinking ``n_periods`` and computing a
+    # misleadingly huge CAGR from the next period (false +2 high-growth score).
+    # CAGR from a zero base is undefined; keeping the 0 lets the ``revs[0] > 0``
+    # guard below correctly yield cagr=None ("Revenue data incomplete"). Aligns
+    # with the sibling DCF path (``calculate_intrinsic_value_dcf`` line 357/362
+    # ``is not None``) — closes the file-internal semantic split (R123 pattern).
+    revs = [m.revenue for m in reversed(metrics) if hasattr(m, "revenue") and m.revenue is not None]
     if len(revs) >= 2 and revs[0] > 0:
         n_periods = len(revs) - 1
         # Estimate years from TTM data: each consecutive TTM period is ~0.25 years apart.
@@ -448,6 +456,7 @@ def estimate_cost_of_equity(beta: float | None, ticker: str | None = None, debt_
     # Add country risk premium for A-share stocks
     if ticker:
         from src.tools.akshare_api import is_ashare
+
         if is_ashare(ticker):
             cost += 0.025  # China country risk premium ~2.5%
 
@@ -479,8 +488,7 @@ def generate_damodaran_output(
         [
             (
                 "system",
-                with_fact_grounding_rules(
-                    """You are Aswath Damodaran, Professor of Finance at NYU Stern.
+                with_fact_grounding_rules("""You are Aswath Damodaran, Professor of Finance at NYU Stern.
                 Use your valuation framework to issue trading signals on US equities.
 
                 Speak with your usual clear, data-driven tone:
@@ -488,8 +496,7 @@ def generate_damodaran_output(
                   ◦ Connect that story to key numerical drivers: revenue growth, margins, reinvestment, risk
                   ◦ Conclude with value: your FCFF DCF estimate, margin of safety, and relative valuation sanity checks
                   ◦ Highlight major uncertainties and how they affect value
-                Return ONLY the JSON specified below."""
-                ),
+                Return ONLY the JSON specified below."""),
             ),
             (
                 "human",
