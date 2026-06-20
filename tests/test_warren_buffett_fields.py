@@ -350,9 +350,7 @@ def test_resolve_buffett_working_capital_change_keeps_zero_current_liabilities()
         SimpleNamespace(current_assets=150.0, current_liabilities=50.0),
     ]
 
-    working_capital_change, detail = _resolve_buffett_working_capital_change(
-        financial_line_items, currency_symbol="$"
-    )
+    working_capital_change, detail = _resolve_buffett_working_capital_change(financial_line_items, currency_symbol="$")
 
     # wc_current = 200 - 0 = 200; wc_previous = 150 - 50 = 100; change = 100
     assert working_capital_change == 100.0
@@ -423,3 +421,35 @@ def test_collect_buffett_capex_ratio_inputs_includes_legitimate_zero_capex():
     # only the None period is dropped.
     assert len(result) == 4
     assert 0.0 in result  # zero-capex period contributes ratio 0.0, not dropped
+
+
+def test_resolve_buffett_conservative_growth_zero_base_not_dropped_into_inflated_cagr():
+    """R136 (R123 deferred falsy-zero residue): ``_resolve_buffett_conservative_growth``
+    filtered net_income with truthiness ``if hasattr(item, "net_income") and item.net_income``,
+    which drops a legitimate ``net_income == 0`` base period. Dropping the zero base
+    shrinks ``years`` and makes ``oldest_earnings`` the next (non-zero) period,
+    computing a misleadingly high historical CAGR (e.g. (100/40)^(1/3)-1 = 0.357 →
+    clamped 0.15 → ×0.7 = 0.105) that inflates the DCF growth assumption 3.5×
+    (0.03 → 0.105) and thus inflates intrinsic value. CAGR from a zero base is
+    undefined; a zero oldest_earnings must fall through to the default 0.03
+    (the ``oldest_earnings > 0`` guard), NOT an inflated growth. This is the
+    valuation-impacting sibling R123 deferred as Risk>2 — verified the fix is
+    behavior-preserving for every existing DCF exact-value test (none use a
+    zero-base net_income), so the existing DCF suite is the regression guard.
+    """
+    from src.agents.warren_buffett_helpers import _resolve_buffett_conservative_growth
+
+    # 5 periods net_income [100, 80, 60, 40, 0] — oldest (last) is 0 base
+    items = [
+        SimpleNamespace(net_income=100.0),
+        SimpleNamespace(net_income=80.0),
+        SimpleNamespace(net_income=60.0),
+        SimpleNamespace(net_income=40.0),
+        SimpleNamespace(net_income=0.0),
+    ]
+
+    growth = _resolve_buffett_conservative_growth(items)
+
+    # Zero base must NOT inflate the growth assumption: oldest_earnings=0 fails the
+    # ``oldest_earnings > 0`` guard → default 0.03, not the 0.105 truthiness produced.
+    assert growth == 0.03

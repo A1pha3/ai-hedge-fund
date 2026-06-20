@@ -105,7 +105,17 @@ def _score_buffett_performance_stability(historical_roes: list[float], historica
 
 
 def _resolve_buffett_conservative_growth(financial_line_items: list) -> float:
-    historical_earnings = [item.net_income for item in financial_line_items[:5] if hasattr(item, "net_income") and item.net_income]
+    # R136 (R123 deferred falsy-zero residue): use ``is not None``, not truthiness.
+    # ``net_income == 0`` (a lossless / data-glitch zero base period) is a legitimate
+    # value that truthiness dropped, shrinking ``years`` and making ``oldest_earnings``
+    # the next non-zero period — computing a misleadingly high CAGR (e.g.
+    # (100/40)^(1/3)-1 = 0.357 → clamped 0.15 → ×0.7 = 0.105) that inflates the DCF
+    # growth assumption 3.5× (0.03 → 0.105) and thus intrinsic value. CAGR from a
+    # zero base is undefined; keeping the 0 lets the ``oldest_earnings > 0`` guard
+    # below correctly fall through to the default 0.03. Behavior-preserving for all
+    # existing DCF exact-value tests (none use a zero-base net_income). Aligns with
+    # the sibling ``aswath_damodaran`` R135 / cathie_wood R123 ``is not None`` fix.
+    historical_earnings = [item.net_income for item in financial_line_items[:5] if hasattr(item, "net_income") and item.net_income is not None]
     if len(historical_earnings) < 3:
         return 0.03
 
