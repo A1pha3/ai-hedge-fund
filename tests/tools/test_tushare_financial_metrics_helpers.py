@@ -237,3 +237,48 @@ class TestResolveInterestExpenseFalsyZero:
 
         # 0.0 must NOT fall through to int_exp=100
         assert result == 0.0
+
+
+class TestRoaValidatorSelection:
+    """R142: ROA (return_on_assets) is a return-on-assets ratio with a real-
+    world max of ~30%. It must use the margin validator (±100%), not the ROE
+    validator (±200%) — consistent with gross/operating/net margin (all
+    return-class ratios). A corrupt ROA >100% must be nulled, not retained.
+    """
+
+    def test_corrupt_roa_over_100pct_is_nulled(self) -> None:
+        """roa=150.0 (150%, corrupt) → _resolve_margin_percentage → 1.5 →
+        validate_margin (±100%) → None. Previously validate_roe (±200%)
+        retained 1.5 as if it were a legitimate 150% return on assets."""
+        from src.tools.tushare_api import _validate_margin, _validate_roe
+        from src.tools.tushare_financial_metrics_helpers import _build_profitability_metrics
+
+        result = _build_profitability_metrics(
+            row={"roa": 150.0, "grossprofit_margin": 40.0},
+            end_date_str="20240331",
+            balance_row=None,
+            df_fin=pd.DataFrame(),
+            idx=0,
+            ttm_income_map={},
+            validate_margin=_validate_margin,
+            validate_roe=_validate_roe,
+        )
+        assert result["return_on_assets"] is None
+
+    def test_normal_roa_preserved(self) -> None:
+        """roa=8.0 (8%, normal) → 0.08 — within ±100%, preserved by both
+        validators. Guards against an over-broad fix that would null real ROA."""
+        from src.tools.tushare_api import _validate_margin, _validate_roe
+        from src.tools.tushare_financial_metrics_helpers import _build_profitability_metrics
+
+        result = _build_profitability_metrics(
+            row={"roa": 8.0},
+            end_date_str="20240331",
+            balance_row=None,
+            df_fin=pd.DataFrame(),
+            idx=0,
+            ttm_income_map={},
+            validate_margin=_validate_margin,
+            validate_roe=_validate_roe,
+        )
+        assert result["return_on_assets"] == pytest.approx(0.08)

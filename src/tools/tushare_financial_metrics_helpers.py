@@ -625,7 +625,10 @@ def _build_profitability_metrics(
         "operating_margin": validate_margin(ttm_operating_margin),
         "net_margin": validate_margin(ttm_net_margin),
         "return_on_equity": validate_roe(ttm_roe),
-        "return_on_assets": validate_roe(_resolve_margin_percentage(row.get("roa"))),
+        # R142: ROA is a return-on-assets ratio (real max ~30%), so it shares
+        # the margin validator (±100%) with gross/operating/net margin — NOT
+        # validate_roe (±200%), which would retain corrupt >100% ROA values.
+        "return_on_assets": validate_margin(_resolve_margin_percentage(row.get("roa"))),
         "revenue_growth": ttm_revenue_growth,
         "earnings_growth": ttm_earnings_growth,
         "book_value_growth": _build_book_value_growth(df_fin, idx, row),
