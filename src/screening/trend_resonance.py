@@ -28,6 +28,7 @@ from src.screening.consecutive_recommendation import (
     resolve_report_dir,
 )
 from src.utils.display import Fore, Style
+from src.utils.numeric import coerce_score_b
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -177,11 +178,12 @@ def _extract_score_history(
         recs = (report.get("payload", {}).get("recommendations")) or []
         for rec in recs:
             if str(rec.get("ticker", "")) == ticker:
-                try:
-                    score = float(rec.get("score_b", 0.0) or 0.0)
-                    scores.append(score)
-                except (TypeError, ValueError):
-                    scores.append(0.0)
+                # R141/BH-012-drain: ``float(nan or 0.0)`` → ``nan`` (NaN is
+                # truthy), which would poison _simple_slope into producing
+                # NaN slopes / a "flat" misclassification. coerce_score_b
+                # rejects NaN/Inf/None/non-numeric → 0.0. Mirrors the sibling
+                # signal_momentum._extract_score_history fix.
+                scores.append(coerce_score_b(rec.get("score_b", 0.0)))
                 break
     return scores[-max_days:] if len(scores) > max_days else scores
 

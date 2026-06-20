@@ -148,18 +148,17 @@ class TestExtractScoreHistory:
         assert _extract_score_history("000001", history) == []
 
     def test_max_days_truncation(self) -> None:
+        # score_b ∈ [-1.0, 1.0]; use i/10 so dummy values are in range
+        # (coerce_score_b clamps out-of-range, which would mask ordering).
         history = [
-            {"payload": {"recommendations": [{"ticker": "A", "score_b": float(i)}]}}
+            {"payload": {"recommendations": [{"ticker": "A", "score_b": float(i) / 10.0}]}}
             for i in range(10)
         ]
         scores = _extract_score_history("A", history, max_days=5)
         assert len(scores) == 5
-        # reversed: oldest first → scores are [9,8,7,...,0] reversed = [0,1,2,...,9]
-        # then truncated to last 5 → [5,6,7,8,9]
-        # Actually: reversed(history) iterates oldest first. history[0]=score_0 (newest)
-        # reversed → score_9, score_8, ..., score_0 → [9,8,7,6,5,4,3,2,1,0]
-        # then [-5:] → [4,3,2,1,0]
-        assert scores == [4.0, 3.0, 2.0, 1.0, 0.0]
+        # reversed(history) iterates oldest first. history[0]=0.0 (newest),
+        # history[9]=0.9 (oldest). reversed → [0.9,0.8,...,0.0]; [-5:] → newest 5.
+        assert scores == [0.4, 0.3, 0.2, 0.1, 0.0]
 
     def test_none_score_b_treated_as_zero(self) -> None:
         history = [
@@ -167,6 +166,23 @@ class TestExtractScoreHistory:
         ]
         scores = _extract_score_history("A", history)
         assert scores == [0.0]
+
+    def test_nan_score_b_coerced_not_poisoned(self) -> None:
+        """R141: a corrupt NaN score_b must not poison the slope series.
+
+        NaN is truthy, so ``float(nan or 0.0)`` evaluates to ``nan`` (not
+        0.0), silently corrupting _simple_slope into producing NaN slopes
+        and a "flat" direction misclassification. The sibling
+        signal_momentum._extract_score_history uses coerce_score_b for this
+        exact reason (BH-012-drain comment); trend_resonance missed it.
+        """
+        import math
+        history = [
+            {"payload": {"recommendations": [{"ticker": "A", "score_b": float("nan")}]}},
+        ]
+        scores = _extract_score_history("A", history)
+        assert scores == [0.0]
+        assert not any(math.isnan(s) for s in scores)
 
 
 # ---------------------------------------------------------------------------

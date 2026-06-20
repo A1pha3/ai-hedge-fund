@@ -121,6 +121,30 @@ class TestCheckSignalConsistency:
         results = check_signal_consistency(recs)
         assert results[0]["dominant_direction"] == "neutral"
 
+    def test_partial_strategies_not_diluted_by_phantom_neutral(self) -> None:
+        """R141: absent strategies must NOT count as neutral votes.
+
+        A stock with only 2 of 4 strategies present (both bullish) has TRUE
+        agreement 2/2 = 1.0 ("high"). Previously the loop iterated all 4
+        canonical STRATEGY_KEYS and treated the 2 missing as neutral,
+        computing 2 bullish + 2 phantom-neutral = 2/4 = 0.5 ("medium"),
+        silently demoting a genuinely high-consistency stock.
+        signal_fusion._normalize_active_weights drops completeness==0
+        strategies and artifacts._serialize_strategy_signals persists only
+        surviving keys, so <4-key strategy_signals is reachable in practice.
+        """
+        recs = [_make_rec("000001", "Test", 0.8, {
+            "trend": {"signal": "bullish", "confidence": 80},
+            "fundamental": {"signal": "bullish", "confidence": 90},
+            # mean_reversion + event_sentiment ABSENT (not neutral)
+        })]
+        results = check_signal_consistency(recs)
+        assert results[0]["bullish_count"] == 2
+        assert results[0]["neutral_count"] == 0  # absent ≠ neutral
+        assert results[0]["total_strategies"] == 2  # only present strategies counted
+        assert results[0]["agreement_ratio"] == 1.0  # 2/2, not 2/4
+        assert results[0]["consistency_level"] == "high"
+
     def test_multiple_recommendations(self) -> None:
         recs = [
             _make_rec("000001", "A", 0.9, {"trend": {"signal": "bullish"}, "fundamental": {"signal": "bullish"}}),

@@ -85,7 +85,15 @@ def check_signal_consistency(
         direction_map: dict[str, str] = {}
 
         for sname in strategy_names:
-            sig = strategy_signals.get(sname) or {}
+            sig = strategy_signals.get(sname)
+            if not sig:
+                # R141: an absent strategy is NOT a "neutral" vote — counting
+                # it would inflate ``total`` and dilute ``agreement_ratio``,
+                # demoting genuinely high-consistency stocks (e.g. 2 bullish +
+                # 2 missing → 0.5 "medium" instead of the true 2/2 = 1.0
+                # "high"). Only strategies that actually produced a signal
+                # count as votes; a present-but-neutral strategy still counts.
+                continue
             signal = str(sig.get("signal", "neutral")).lower()
             direction_map[sname] = signal
             if signal == "bullish":
