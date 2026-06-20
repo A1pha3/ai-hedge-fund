@@ -290,6 +290,7 @@ def test_get_ashare_prices_with_tushare_formats_and_reverses_results(monkeypatch
     pro = object()
     monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
     monkeypatch.setattr(tushare_api, "_to_ts_code", lambda ticker: "000001.SZ")
+
     # R37: price path now fetches daily + adj_factor and applies qfq. Mock both
     # so the existing assertion (reversed order, values) still holds. adj_factor
     # constant → qfq == raw (no adjustment), keeping the expected close values.
@@ -302,9 +303,7 @@ def test_get_ashare_prices_with_tushare_formats_and_reverses_results(monkeypatch
                 ]
             )
         if api_name == "adj_factor":
-            return pd.DataFrame(
-                [{"trade_date": "20260410", "adj_factor": 1.0}, {"trade_date": "20260409", "adj_factor": 1.0}]
-            )
+            return pd.DataFrame([{"trade_date": "20260410", "adj_factor": 1.0}, {"trade_date": "20260409", "adj_factor": 1.0}])
         return None
 
     monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", fake_cached_call)
@@ -328,6 +327,7 @@ def test_fetch_ashare_prices_applies_qfq_to_remove_ex_dividend_gap(monkeypatch):
     ex-dividend economic effect without the artificial price-level jump. We
     assert the scaled price equals raw * ratio / latest.
     """
+
     def fake_cached_call(_pro, api_name, **_kwargs):
         if api_name == "daily":
             return pd.DataFrame(
@@ -358,11 +358,10 @@ def test_fetch_ashare_prices_applies_qfq_to_remove_ex_dividend_gap(monkeypatch):
 def test_fetch_ashare_prices_falls_back_to_raw_when_no_adj_factor(monkeypatch):
     """R37: if adj_factor fetch fails, return raw daily (degrade gracefully
     rather than block the backtest with no data)."""
+
     def fake_cached_call(_pro, api_name, **_kwargs):
         if api_name == "daily":
-            return pd.DataFrame(
-                [{"trade_date": "20260109", "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.0, "vol": 1000}]
-            )
+            return pd.DataFrame([{"trade_date": "20260109", "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.0, "vol": 1000}])
         return None  # adj_factor fails
 
     monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", fake_cached_call)
@@ -1053,9 +1052,13 @@ def test_get_financial_metrics_logs_degradation_on_parse_failure(monkeypatch, ca
     monkeypatch.setattr(api, "is_ashare", lambda ticker: False)
     # 缓存未命中
     monkeypatch.setattr(api._cache, "get_financial_metrics", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(api, "_get_snapshot", lambda: SimpleNamespace(
-        export_financial_metrics=lambda *_args, **_kwargs: None,
-    ))
+    monkeypatch.setattr(
+        api,
+        "_get_snapshot",
+        lambda: SimpleNamespace(
+            export_financial_metrics=lambda *_args, **_kwargs: None,
+        ),
+    )
     monkeypatch.setattr(api, "build_financial_datasets_headers", lambda api_key: {})
     # 模拟 API 返回 200 但 body 是 Pydantic 无法解析的脏数据
     bad_response = SimpleNamespace(status_code=200, json=lambda: {"not_a_valid_field": object()})
@@ -1128,15 +1131,54 @@ def test_get_market_cap_uses_local_today_not_utc_for_company_facts_path(monkeypa
     monkeypatch.setattr(api.requests, "get", lambda *_args, **_kwargs: facts_response)
 
     # 不应该走 get_financial_metrics 回退 (那是 stale TTM 路径)
-    monkeypatch.setattr(api, "get_financial_metrics", lambda *_a, **_kw: (_ for _ in ()).throw(
-        AssertionError("时区 bug: 本地今天不应退化到 stale TTM financial_metrics 回退路径")
-    ))
+    monkeypatch.setattr(api, "get_financial_metrics", lambda *_a, **_kw: (_ for _ in ()).throw(AssertionError("时区 bug: 本地今天不应退化到 stale TTM financial_metrics 回退路径")))
 
     result = api.get_market_cap("AAPL", end_date, api_key="fake_key")
 
     # 命中 fresh company/facts 路径 → 返回最新市值
-    assert result == 3000000000000.0, (
-        f"时区不一致: 本地今天 end_date={end_date} 应命中 fresh company/facts 路径, "
-        f"但被 UTC 比较误判为非今天而退化到 stale financial_metrics, got result={result}"
-    )
+    assert result == 3000000000000.0, f"时区不一致: 本地今天 end_date={end_date} 应命中 fresh company/facts 路径, " f"但被 UTC 比较误判为非今天而退化到 stale financial_metrics, got result={result}"
 
+
+def test_get_ashare_daily_gainers_skips_nan_volume_row(monkeypatch):
+    """R137 (R83/R132/R133/R134 same-class drain residue): the daily-gainers
+    dict-output converter ``build_daily_gainer_item`` does ``int(row["vol"])``
+    on a tushare daily cell. R134's NaN-family scan only covered ``volume=int(``
+    Price-output converters, missing this dict-output sibling. A NaN-vol cell
+    (halted/illiquid day in tushare daily) raises ValueError inside the
+    gainers-build loop (no try/except), dropping the WHOLE daily-gainers list —
+    a production feature feeding the daily pipeline / hotspot detection. The
+    sibling fields ``pre_close``/``amount`` are already ``pd.notna``-guarded
+    inline (author knew about NaN, missed ``vol``). A NaN-vol row must be
+    skipped, not crash the whole gainers list.
+    """
+    pro = object()
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
+
+    def fake_cached_call(_pro, api_name, **kwargs):
+        if api_name == "daily":
+            return pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "trade_date": "20260410", "open": 10.0, "high": 11.0, "low": 9.8, "close": 10.8, "pre_close": 10.0, "vol": 1000, "amount": 2000, "pct_chg": 8.0},
+                    {"ts_code": "000002.SZ", "trade_date": "20260410", "open": 5.0, "high": 5.1, "low": 4.9, "close": 5.0, "pre_close": 5.0, "vol": float("nan"), "amount": 1200, "pct_chg": 6.0},
+                    {"ts_code": "000003.SZ", "trade_date": "20260410", "open": 3.0, "high": 3.5, "low": 2.9, "close": 3.3, "pre_close": 3.0, "vol": 500, "amount": 600, "pct_chg": 10.0},
+                ]
+            )
+        if api_name == "stock_basic":
+            return pd.DataFrame(
+                [
+                    {"ts_code": "000001.SZ", "name": "平安银行", "area": "深圳", "industry": "银行", "market": "主板", "list_date": "19910403"},
+                    {"ts_code": "000002.SZ", "name": "万科A", "area": "深圳", "industry": "地产", "market": "主板", "list_date": "19910129"},
+                    {"ts_code": "000003.SZ", "name": "测试股", "area": "深圳", "industry": "测试", "market": "主板", "list_date": "20000101"},
+                ]
+            )
+        raise AssertionError(api_name)
+
+    monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", fake_cached_call)
+
+    results = tushare_api.get_ashare_daily_gainers_with_tushare("2026-04-10", pct_threshold=3.0, include_name=True)
+
+    # NaN-vol row (000002) skipped, not crash; the two valid gainers preserved
+    codes = [r["ts_code"] for r in results]
+    assert "000002.SZ" not in codes
+    assert set(codes) == {"000001.SZ", "000003.SZ"}
+    assert all(r["vol"] != r["vol"] for r in results) is False  # no NaN vol leaked

@@ -108,6 +108,16 @@ def build_daily_gainers_with_tushare_data(
         ts_code = str(row["ts_code"])
         if ts_code in st_codes:
             continue
+        # R137 (R83/R132/R133/R134 same-class drain residue): skip halted/illiquid
+        # rows whose ``vol`` cell is NaN. ``build_daily_gainer_item`` does a bare
+        # ``int(row["vol"])`` (the sibling ``pre_close``/``amount`` fields are
+        # already pd.notna-guarded inline, but ``vol`` was missed); NaN vol raises
+        # ValueError and — with no try/except in this loop — drops the WHOLE
+        # daily-gainers list on one bad row. Halted days have no volume and are not
+        # meaningful gainers anyway. Aligns with the df→output converters' NaN-row
+        # skip guard (R83 family).
+        if not pd.notna(row.get("vol")):
+            continue
         results.append(
             build_daily_gainer_item_fn(
                 row,
