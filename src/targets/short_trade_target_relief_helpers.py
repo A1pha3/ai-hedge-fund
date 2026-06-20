@@ -495,7 +495,17 @@ def _parse_visibility_gap_continuation_relief_config(
         "trend_acceleration_min": clamp_unit_interval(float(profile.visibility_gap_continuation_trend_acceleration_min or 0.0)),
         "close_strength_min": clamp_unit_interval(float(profile.visibility_gap_continuation_close_strength_min or 0.0)),
         "catalyst_freshness_floor": clamp_unit_interval(float(profile.visibility_gap_continuation_catalyst_freshness_floor or 0.0)),
-        "near_miss_threshold_override": clamp_unit_interval(float(profile.visibility_gap_continuation_near_miss_threshold or base_near_miss_threshold)),
+        # NOTE (R107 同族, falsy-zero): 0.0 是合法的 visibility-gap near-miss 覆盖值
+        # ("接受全部 relief"), 不能用 `or base_near_miss_threshold` 静默回退, 否则显式
+        # 覆盖到 0.0 被静默替换为非零 base (如 0.46), 掩盖用户的放宽意图。参考
+        # _parse_upstream_shadow_catalyst_relief_config 同根因修复。
+        "near_miss_threshold_override": clamp_unit_interval(
+            float(
+                profile.visibility_gap_continuation_near_miss_threshold
+                if profile.visibility_gap_continuation_near_miss_threshold is not None
+                else base_near_miss_threshold
+            )
+        ),
     }
 
 
