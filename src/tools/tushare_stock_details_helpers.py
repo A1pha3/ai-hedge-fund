@@ -62,6 +62,17 @@ def build_prices_from_tushare_daily_df(df: pd.DataFrame | None) -> list[Price]:
 
     prices: list[Price] = []
     for _, row in df.iterrows():
+        # R134 (R83/R132/R133 same-class drain residue): skip rows with NaN/None
+        # in any OHLC/vol cell. Tushare daily yields NaN vol on halted/illiquid
+        # days; bare ``int(row["vol"])`` on NaN raises ValueError, which the
+        # production ``tushare_api.get_prices`` caller swallows into ``return []``
+        # — silently dropping the WHOLE ticker's price series on one bad row
+        # (BH-017 silent data loss). Aligns with sibling converters
+        # AKShareProvider (R83) / build_prices_from_dataframe (R132) /
+        # TushareDataSource (R133) pd.notna skip guards.
+        ohlc = (row["open"], row["high"], row["low"], row["close"], row["vol"])
+        if any(not pd.notna(v) for v in ohlc):
+            continue
         date_str = str(row["trade_date"])
         prices.append(
             Price(

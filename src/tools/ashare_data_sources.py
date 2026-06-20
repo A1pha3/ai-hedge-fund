@@ -172,7 +172,15 @@ class BaoStockDataSource(BaseDataSource):
                 prices = []
                 while (rs.error_code == "0") & rs.next():
                     row = rs.get_row_data()
-                    if row[1] == "":
+                    # R134 (R83/R132/R133 same-class drain residue): BaoStock
+                    # returns empty-string cells for missing OHLC/volume on
+                    # halted/illiquid days. The prior guard only checked the OPEN
+                    # cell (``row[1]``), so a row with a present open but an empty
+                    # volume/high/low/close crashed ``int(float(row[5]))`` /
+                    # ``float(row[N])`` with ValueError, dropping the whole ticker's
+                    # price series. Skip a row if ANY OHLC/volume cell is empty,
+                    # aligning with the sibling df→Price converters' guard.
+                    if any(cell == "" or cell is None for cell in row[1:6]):
                         continue
 
                     price = Price(time=row[0], open=float(row[1]), high=float(row[2]), low=float(row[3]), close=float(row[4]), volume=int(float(row[5])))

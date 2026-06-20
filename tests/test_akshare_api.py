@@ -166,9 +166,7 @@ def test_get_prices_uses_akshare_dataframe_and_caches(monkeypatch):
     monkeypatch.setattr(
         akshare_api,
         "_cached_akshare_dataframe_call",
-        lambda *args, **kwargs: pd.DataFrame(
-            [{"日期": "2026-04-01", "开盘": 10.0, "最高": 11.0, "最低": 9.5, "收盘": 10.8, "成交量": 12345}]
-        ),
+        lambda *args, **kwargs: pd.DataFrame([{"日期": "2026-04-01", "开盘": 10.0, "最高": 11.0, "最低": 9.5, "收盘": 10.8, "成交量": 12345}]),
     )
 
     prices = akshare_api.get_prices("000001", "2026-04-01", "2026-04-02")
@@ -188,9 +186,7 @@ def test_get_prices_normalizes_date_objects_from_akshare_dataframe(monkeypatch):
     monkeypatch.setattr(
         akshare_api,
         "_cached_akshare_dataframe_call",
-        lambda *args, **kwargs: pd.DataFrame(
-            [{"日期": date(2026, 4, 1), "开盘": 10.0, "最高": 11.0, "最低": 9.5, "收盘": 10.8, "成交量": 12345}]
-        ),
+        lambda *args, **kwargs: pd.DataFrame([{"日期": date(2026, 4, 1), "开盘": 10.0, "最高": 11.0, "最低": 9.5, "收盘": 10.8, "成交量": 12345}]),
     )
 
     prices = akshare_api.get_prices("000001", "2026-04-01", "2026-04-02")
@@ -235,11 +231,7 @@ def test_get_financial_metrics_uses_analysis_indicator_and_caches(monkeypatch):
     monkeypatch.setattr(
         akshare_api,
         "_cached_akshare_dataframe_call",
-        lambda api_name, *_args, **_kwargs: pd.DataFrame(
-            [{"报告期": "2026Q1", "市盈率": 15.2, "市净率": 2.3, "净资产收益率": 12.5, "资产负债率": 34.0}]
-        )
-        if api_name == "stock_financial_analysis_indicator"
-        else pytest.fail(f"unexpected api call: {api_name}"),
+        lambda api_name, *_args, **_kwargs: pd.DataFrame([{"报告期": "2026Q1", "市盈率": 15.2, "市净率": 2.3, "净资产收益率": 12.5, "资产负债率": 34.0}]) if api_name == "stock_financial_analysis_indicator" else pytest.fail(f"unexpected api call: {api_name}"),
     )
 
     metrics = akshare_api.get_financial_metrics("000001", "2026-04-02", limit=1)
@@ -731,6 +723,7 @@ def test_get_ashare_company_news_sorts_filters_and_deduplicates(monkeypatch, cap
     monkeypatch.setattr(akshare_api, "_deduplicate_news", lambda results: results[:1])
 
     import sys
+
     module = SimpleNamespace(get_stock_name=lambda ticker: "测试股")
     monkeypatch.setitem(sys.modules, "src.tools.tushare_api", module)
 
@@ -793,3 +786,39 @@ def test_build_prices_from_dataframe_skips_nan_ohlc_row():
     assert len(prices) == 1
     assert prices[0].time == "2024-01-01"
     assert prices[0].open == 10.0
+
+
+def test_build_prices_from_tencent_payload_skips_empty_volume_row():
+    """R134 (R83/R132/R133 same-class drain residue): ``build_prices_from_tencent_payload``
+    is a FIFTH sibling df→Price converter (Tencent kline fallback path used by
+    ``_get_prices_from_tencent`` when akshare fails). Tencent returns kline rows
+    as ``[date, open, close, high, low, volume]`` STRING lists; halted/illiquid
+    days yield empty-string cells. ``int(float(item[5]))`` on ``""`` raises
+    ValueError, crashing the whole ticker's price series on the fallback path.
+    Aligns with the sibling converters' NaN/empty-row skip guard.
+    """
+    from src.tools.akshare_price_helpers import build_prices_from_tencent_payload
+
+    class _Err(Exception):
+        pass
+
+    # Tencent kline item shape: [date, open, close, high, low, volume]
+    data = {
+        "code": 0,
+        "data": {
+            "sz000001": {
+                "qfqday": [
+                    ["2026-04-01", "10.0", "10.2", "10.5", "9.8", "1000"],
+                    ["2026-04-02", "10.2", "10.4", "10.6", "10.0", ""],  # halted day empty volume
+                    ["2026-04-03", "10.4", "10.7", "10.8", "10.3", "1200"],
+                ]
+            }
+        },
+    }
+
+    prices = build_prices_from_tencent_payload(data, "sz000001", _Err)
+
+    times = [p.time for p in prices]
+    assert "2026-04-02" not in times
+    assert len(prices) == 2
+    assert prices[0].time == "2026-04-01"

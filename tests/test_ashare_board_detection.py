@@ -72,11 +72,7 @@ def test_tushare_data_source_routes_beijing_92_to_bj(monkeypatch) -> None:
 
     def _fake_cached_tushare_dataframe_call(_pro, _api_name, **kwargs):
         captured.update(kwargs)
-        return pd.DataFrame(
-            [
-                {"trade_date": "20260401", "open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2, "vol": 12345}
-            ]
-        )
+        return pd.DataFrame([{"trade_date": "20260401", "open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2, "vol": 12345}])
 
     monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", _fake_cached_tushare_dataframe_call)
 
@@ -93,9 +89,11 @@ def test_baostock_data_source_routes_beijing_92_to_bj(monkeypatch) -> None:
         error_code = "0"
 
         def __init__(self) -> None:
-            self._rows = iter([
-                ["2026-04-01", "10.0", "10.5", "9.8", "10.2", "12345"],
-            ])
+            self._rows = iter(
+                [
+                    ["2026-04-01", "10.0", "10.5", "9.8", "10.2", "12345"],
+                ]
+            )
             self._current: list[str] | None = None
 
         def next(self) -> bool:
@@ -160,3 +158,45 @@ def test_tushare_data_source_skips_nan_volume_row(monkeypatch) -> None:
     assert "2026-04-02" not in times
     assert len(prices) == 2
     assert prices[0].volume in (12345, 13000)
+
+
+def test_baostock_data_source_skips_row_with_empty_volume(monkeypatch) -> None:
+    """R134 (R83/R132/R133 same-class drain residue): ``BaoStockDataSource.get_prices``
+    is a SIXTH sibling df→Price converter. Its existing guard only skips when the
+    OPEN cell is empty (``if row[1] == "": continue``), but BaoStock can return a
+    non-empty open with an empty volume/other cell on a halted day.
+    ``int(float(row[5]))`` on ``""`` raises ValueError, dropping the whole
+    ticker's price series. The guard must cover ALL OHLC/volume cells.
+    """
+    import baostock as bs
+
+    monkeypatch.setattr(ashare_data_sources.BaoStockDataSource, "_init_baostock", classmethod(lambda cls: True))
+
+    class _Rs:
+        error_code = "0"
+
+        def __init__(self):
+            self._rows = [
+                ["2026-04-01", "10.0", "10.5", "9.8", "10.2", "1000"],
+                ["2026-04-02", "10.2", "10.6", "10.0", "10.4", ""],  # halted day: open present, volume empty
+                ["2026-04-03", "10.4", "10.8", "10.3", "10.7", "1200"],
+            ]
+            self._i = -1
+
+        def next(self):
+            self._i += 1
+            return self._i < len(self._rows)
+
+        def get_row_data(self):
+            return self._rows[self._i]
+
+    monkeypatch.setattr(bs, "login", lambda: SimpleNamespace(error_code="0", error_msg=""))
+    monkeypatch.setattr(bs, "logout", lambda: None)
+    monkeypatch.setattr(bs, "query_history_k_data_plus", lambda *a, **k: _Rs())
+
+    prices = ashare_data_sources.BaoStockDataSource.get_prices("000001", "2026-04-01", "2026-04-03")
+
+    times = [p.time for p in prices]
+    assert "2026-04-02" not in times
+    assert len(prices) == 2
+    assert prices[0].time == "2026-04-01"

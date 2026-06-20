@@ -48,17 +48,28 @@ def build_prices_from_tencent_payload(data: dict, full_code: str, error_factory)
     if not kline_data:
         raise error_factory("腾讯接口返回空数据")
 
-    return [
-        Price(
-            time=item[0],
-            open=float(item[1]),
-            close=float(item[2]),
-            high=float(item[3]),
-            low=float(item[4]),
-            volume=int(float(item[5])),
+    prices: list[Price] = []
+    for item in kline_data:
+        # R134 (R83/R132/R133 same-class drain residue): Tencent kline rows are
+        # ``[date, open, close, high, low, volume]`` STRING lists; halted/illiquid
+        # days yield empty-string cells. Bare ``int(float(item[5]))`` on ``""``
+        # raises ValueError, crashing the WHOLE ticker's price series on the
+        # fallback path. Skip rows whose OHLC/volume cells are empty/missing,
+        # aligning with the sibling df→Price converters' NaN/empty-row skip guard.
+        ohlc = item[1:6]
+        if len(ohlc) < 5 or any(cell in ("", None) for cell in ohlc):
+            continue
+        prices.append(
+            Price(
+                time=item[0],
+                open=float(item[1]),
+                close=float(item[2]),
+                high=float(item[3]),
+                low=float(item[4]),
+                volume=int(float(item[5])),
+            )
         )
-        for item in kline_data
-    ]
+    return prices
 
 
 def execute_tencent_price_request(
@@ -188,11 +199,6 @@ def load_prices_with_fallback(
     # If both failed, report the actual errors from each source. Use a chained
     # exception (Tencent is the most-recent failure) so the traceback is preserved.
     if akshare_error is not None and tencent_error is not None:
-        raise error_factory(
-            f"无法获取股票 {ticker} 的历史数据（所有数据源都失败）。\n"
-            f"AKShare 错误: {akshare_error}\n"
-            f"腾讯接口错误: {tencent_error}\n"
-            "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
-        ) from tencent_error
+        raise error_factory(f"无法获取股票 {ticker} 的历史数据（所有数据源都失败）。\n" f"AKShare 错误: {akshare_error}\n" f"腾讯接口错误: {tencent_error}\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。") from tencent_error
 
     return []
