@@ -1,4 +1,6 @@
 from collections.abc import Callable
+from contextlib import contextmanager
+from contextvars import Context, ContextVar
 from datetime import datetime, UTC
 from threading import Lock
 
@@ -10,6 +12,43 @@ from rich.text import Text
 
 console = Console()
 
+# R140: run-id scope for the web SSE path. The progress singleton is process-global
+# and its handler fan-out historically delivered every run's events to every
+# concurrent run's SSE queue. Setting this ContextVar (via scoped_run_id in tests/CLI,
+# or attach_run_id + copy_context in run_graph_async for the executor-thread path)
+# tags each update with its originating run; register_handler(run_id=...) then
+# filters so a run-scoped handler only receives its own run's agent events (system
+# events with no run_id still broadcast to all handlers).
+_run_id_var: ContextVar[str | None] = ContextVar("progress_run_id", default=None)
+
+
+@contextmanager
+def scoped_run_id(run_id: str | None):
+    """Set the run-id ContextVar for the current context (tests / CLI).
+
+    The web execution path instead uses ``attach_run_id`` + ``copy_context().run``
+    so the var propagates through ``run_in_executor`` into the graph.invoke thread.
+    """
+    token = _run_id_var.set(run_id)
+    try:
+        yield
+    finally:
+        _run_id_var.reset(token)
+
+
+def attach_run_id(ctx: Context, run_id: str | None) -> Context:
+    """Bind ``run_id`` into a copied ``contextvars.Context`` for run_in_executor.
+
+    Used by ``run_graph_async``: ``ctx = attach_run_id(copy_context(), run_id)``
+    then ``loop.run_in_executor(None, lambda: ctx.run(run_graph, ...))``. The graph's
+    parallel analyst nodes inherit the context (verified: langgraph sync invoke
+    propagates the calling context to parallel branches), so each agent's
+    ``progress.update_status`` reads the correct run_id.
+    """
+    if run_id is not None:
+        ctx.run(_run_id_var.set, run_id)
+    return ctx
+
 
 class AgentProgress:
     """Manages progress tracking for multiple agents."""
@@ -20,19 +59,32 @@ class AgentProgress:
         self.live = Live(self.table, console=console, refresh_per_second=4)
         self.started = False
         self._handlers_lock = Lock()
+        # R140: handlers now carry an optional run_id. A handler with run_id=None is
+        # a broadcast handler (legacy/CLI) and receives every event. A handler with
+        # run_id=X receives only updates whose run_id is X (its own run's agent
+        # events) or None (system/broadcast events).
         self.update_handlers: list[Callable[..., None]] = []
 
-    def register_handler(self, handler: Callable[..., None]):
-        """Register a handler to be called when agent status updates."""
+    def register_handler(self, handler: Callable[..., None], run_id: str | None = None):
+        """Register a handler to be called when agent status updates.
+
+        If ``run_id`` is given the handler is run-scoped: it fires only for updates
+        originating from that run (matching run_id) plus system events (run_id None),
+        isolating concurrent runs. Without ``run_id`` the handler is broadcast (legacy).
+        """
         with self._handlers_lock:
-            self.update_handlers.append(handler)
+            self.update_handlers.append(handler)  # type: ignore[arg-type]
+            # Stash the run_id alongside the handler via a private attribute so the
+            # fan-out can read it without changing the handler-list shape that other
+            # code (e.g. unregister pop) relies on.
+            setattr(handler, "_progress_run_id", run_id)
         return handler  # Return handler to support use as decorator
 
     def unregister_handler(self, handler: Callable[..., None]):
         """Unregister a previously registered handler."""
         with self._handlers_lock:
             if handler in self.update_handlers:
-                self.update_handlers.remove(handler)
+                self.update_handlers.remove(handler)  # type: ignore[arg-type]
 
     def start(self):
         """Start the progress display."""
@@ -66,7 +118,20 @@ class AgentProgress:
         # unregister/append calls don't mutate it mid-iteration.
         with self._handlers_lock:
             handler_snapshot = list(self.update_handlers)
+
+        # R140: run-scoped fan-out. update_run_id is the originating run (set via the
+        # run-id ContextVar on the executing thread; None for system/CLI/legacy events).
+        update_run_id = _run_id_var.get()
         for handler in handler_snapshot:
+            handler_run_id = getattr(handler, "_progress_run_id", None)
+            # Skip only when BOTH are run-scoped AND differ. Broadcast handlers
+            # (handler_run_id None) and system events (update_run_id None) always fire.
+            if (
+                handler_run_id is not None
+                and update_run_id is not None
+                and handler_run_id != update_run_id
+            ):
+                continue
             handler(agent_name, ticker, status, analysis, timestamp)
 
         self._refresh_display()

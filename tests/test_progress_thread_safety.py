@@ -1,9 +1,6 @@
 from __future__ import annotations
 
 import threading
-import time
-
-import pytest
 
 from src.utils.progress import AgentProgress
 
@@ -88,53 +85,61 @@ def test_progress_update_status_continues_after_handler_raises() -> None:
     assert called == ["first", "second"]
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Known concurrency limitation: update_status fans out to ALL registered "
-        "handlers with no run/topic scoping. The web SSE path registers one handler "
-        "per run (create_progress_handler, bound to that run's asyncio.Queue), so two "
-        "concurrent hedge-fund runs receive EACH OTHER's progress events — cross-run "
-        "SSE contamination (Run B's stream renders Run A's analyst updates). Root cause: "
-        "progress is a process-global singleton; update_handlers is a global list; the "
-        "update event carries no run_id; create_flow_run has no active-run gate so "
-        "concurrent runs are reachable (multi-user / cross-flow / rerun-while-running). "
-        "Fix needs a run-scoped topic/contextvar on update_status + handler filtering "
-        "(change_risk>2, shared by CLI+web) — tracked as a blocked-on-design candidate. "
-        "Pinned xfail so the green baseline holds and a future run-scoped fix gets a "
-        "regression guard (xpass => fix landed, remove this marker)."
-    ),
-    strict=False,
-)
-def test_progress_handler_fanout_does_not_cross_contaminate_concurrent_runs() -> None:
-    """Two concurrent web runs must NOT receive each other's progress events.
+def test_progress_run_scoped_handlers_isolate_concurrent_runs() -> None:
+    """R140 fix: a handler registered with ``run_id`` receives only its own run's
+    agent events (plus system/broadcast events), NOT another run's agent events.
 
-    This currently FAILS (xfail): a single ``update_status`` call is delivered to
-    every registered handler because the fan-out has no run/topic scoping. With the
-    eventual run-scoped fix, only the updating run's handler should receive the event.
+    Previously the global handler fan-out delivered every run's analyst updates to
+    every concurrent run's SSE queue (cross-run contamination). The fix adds a
+    run-id ContextVar read by ``update_status`` and an optional ``run_id`` filter
+    on ``register_handler``; agent events (run_id set) route only to matching
+    handlers, while system events (run_id unset) still broadcast to all.
     """
+    from src.utils import progress as progress_mod
+
     progress = AgentProgress()
 
-    run_a_events: list[tuple] = []
-    run_b_events: list[tuple] = []
+    run_a_events: list[str] = []
+    run_b_events: list[str] = []
 
-    def handler_a(agent_name, ticker, status, _analysis, _timestamp) -> None:
-        run_a_events.append((agent_name, ticker, status))
+    def handler_a(agent_name, *_args, **_kwargs) -> None:
+        run_a_events.append(agent_name)
 
-    def handler_b(agent_name, ticker, status, _analysis, _timestamp) -> None:
-        run_b_events.append((agent_name, ticker, status))
+    def handler_b(agent_name, *_args, **_kwargs) -> None:
+        run_b_events.append(agent_name)
 
-    progress.register_handler(handler_a)
-    progress.register_handler(handler_b)
+    progress.register_handler(handler_a, run_id="A")
+    progress.register_handler(handler_b, run_id="B")
     try:
-        # Run A's analyst publishes its own progress.
-        progress.update_status("warren_buffett_agent", ticker="AAPL", status="Analyzing")
+        # Run A's analyst update, scoped to run A via the run-id ContextVar.
+        with progress_mod.scoped_run_id("A"):
+            progress.update_status("warren_buffett_agent", ticker="AAPL", status="Analyzing")
 
-        # Desired (run-scoped) behavior: only Run A's handler receives Run A's event.
-        assert run_a_events == [("warren_buffett_agent", "AAPL", "Analyzing")]
-        assert run_b_events == [], (
-            "Run B's handler was contaminated by Run A's progress event "
-            "(global fan-out, no run/topic scoping) — concurrent SSE runs cross-contaminate"
-        )
+        # Run A's handler received its own agent event; Run B's did NOT.
+        assert run_a_events == ["warren_buffett_agent"]
+        assert run_b_events == [], "Run B contaminated by Run A's run-scoped agent event"
+
+        # System event (no run_id set) still broadcasts to BOTH run-scoped handlers.
+        progress.update_status("system", status="Preparing hedge fund run")
+        assert run_a_events == ["warren_buffett_agent", "system"]
+        assert run_b_events == ["system"], "system events must still broadcast to all runs"
     finally:
         progress.unregister_handler(handler_a)
         progress.unregister_handler(handler_b)
+
+
+def test_progress_broadcast_handler_still_receives_all_events() -> None:
+    """R140 fix backward-compat: a handler registered WITHOUT run_id (legacy / CLI)
+    still receives every event (broadcast), unchanged from pre-fix behavior."""
+    from src.utils import progress as progress_mod
+
+    progress = AgentProgress()
+    broadcast_events: list[str] = []
+    progress.register_handler(lambda name, *_a, **_k: broadcast_events.append(name))
+    try:
+        with progress_mod.scoped_run_id("A"):
+            progress.update_status("warren_buffett_agent", ticker="AAPL", status="Analyzing")
+        progress.update_status("system", status="Preparing")
+        assert broadcast_events == ["warren_buffett_agent", "system"]
+    finally:
+        progress.update_handlers.clear()

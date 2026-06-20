@@ -17,7 +17,7 @@ class _DummyProgress:
     def __init__(self) -> None:
         self.handlers = []
 
-    def register_handler(self, handler) -> None:
+    def register_handler(self, handler, run_id: str | None = None) -> None:
         self.handlers.append(handler)
 
     def unregister_handler(self, handler) -> None:

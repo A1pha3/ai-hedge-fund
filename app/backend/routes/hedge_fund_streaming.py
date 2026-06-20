@@ -365,8 +365,12 @@ async def stream_hedge_fund_run(
     run_task: asyncio.Task[Any] | None = None
     disconnect_task: asyncio.Task[bool] | None = None
     progress_handler = create_progress_handler(progress_queue)
-
-    progress.register_handler(progress_handler)
+    # R140: scope this run's handler to a unique run_id so concurrent runs' progress
+    # events don't cross-contaminate each other's SSE queue. The same run_id is bound
+    # into run_graph_async's context so the agents' update_status calls match.
+    import uuid
+    run_id = uuid.uuid4().hex
+    progress.register_handler(progress_handler, run_id=run_id)
 
     try:
         run_task = asyncio.create_task(
@@ -379,6 +383,7 @@ async def stream_hedge_fund_run(
                 model_name=request_data.model_name,
                 model_provider=model_provider,
                 request=request_data,
+                run_id=run_id,
             )
         )
         disconnect_task = asyncio.create_task(wait_for_disconnect(request))

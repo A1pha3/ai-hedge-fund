@@ -147,12 +147,26 @@ def create_graph(graph_nodes: list, graph_edges: list) -> StateGraph:
     return graph
 
 
-async def run_graph_async(graph, portfolio, tickers, start_date, end_date, model_name, model_provider, request=None):
-    """Async wrapper for run_graph to work with asyncio."""
+async def run_graph_async(graph, portfolio, tickers, start_date, end_date, model_name, model_provider, request=None, run_id: str | None = None):
+    """Async wrapper for run_graph to work with asyncio.
+
+    ``run_id`` (R140) scopes the run's ``progress.update_status`` calls so concurrent
+    SSE runs don't cross-contaminate each other's progress events. It is bound into a
+    copied ``contextvars.Context`` that wraps ``run_graph``; the graph's parallel analyst
+    nodes inherit it (verified: langgraph sync invoke propagates the calling context to
+    parallel branches), and each agent's ``progress.update_status`` reads it.
+    """
     # Use run_in_executor to run the synchronous function in a separate thread
     # so it doesn't block the event loop
     loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, lambda: run_graph(graph, portfolio, tickers, start_date, end_date, model_name, model_provider, request))  # Use default executor
+    if run_id is not None:
+        import contextvars
+        from src.utils.progress import attach_run_id
+
+        ctx = attach_run_id(contextvars.copy_context(), run_id)
+        result = await loop.run_in_executor(None, lambda: ctx.run(run_graph, graph, portfolio, tickers, start_date, end_date, model_name, model_provider, request))
+    else:
+        result = await loop.run_in_executor(None, lambda: run_graph(graph, portfolio, tickers, start_date, end_date, model_name, model_provider, request))  # Use default executor
     return result
 
 
