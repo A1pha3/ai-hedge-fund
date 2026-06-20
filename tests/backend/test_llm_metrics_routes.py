@@ -43,9 +43,17 @@ def test_metrics_summary_aggregates_agents(tmp_path, monkeypatch):
     """GET /llm-metrics/summary correctly aggregates per-agent metrics."""
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))
 
+    # Anchor the fixture to today so the entries never age out of the
+    # default 7-day lookback window as the calendar advances. A hardcoded
+    # historical date silently flips these assertions once it crosses the
+    # cutoff (see the sibling test_metrics_summary_respects_lookback_days,
+    # whose comment documents the same rot risk).
+    today = datetime.now(timezone.utc)
+    day = today.strftime("%Y-%m-%d")
+
     entries = [
         {
-            "timestamp": "2026-06-13T12:00:00",
+            "timestamp": f"{day}T12:00:00",
             "agent_name": "warren_buffett_agent",
             "model_provider": "OpenAI",
             "model_name": "gpt-4o",
@@ -55,7 +63,7 @@ def test_metrics_summary_aggregates_agents(tmp_path, monkeypatch):
             "response_chars": 500,
         },
         {
-            "timestamp": "2026-06-13T12:01:00",
+            "timestamp": f"{day}T12:01:00",
             "agent_name": "warren_buffett_agent",
             "model_provider": "OpenAI",
             "model_name": "gpt-4o",
@@ -65,7 +73,7 @@ def test_metrics_summary_aggregates_agents(tmp_path, monkeypatch):
             "response_chars": 600,
         },
         {
-            "timestamp": "2026-06-13T12:02:00",
+            "timestamp": f"{day}T12:02:00",
             "agent_name": "cathie_wood_agent",
             "model_provider": "Anthropic",
             "model_name": "claude-sonnet",
@@ -76,8 +84,8 @@ def test_metrics_summary_aggregates_agents(tmp_path, monkeypatch):
         },
     ]
 
-    # Use a filename pattern that matches the recent date
-    jsonl = tmp_path / "llm_metrics_20260613_120000.jsonl"
+    # Use a filename pattern that matches today's date
+    jsonl = tmp_path / f"llm_metrics_{today.strftime('%Y%m%d')}_120000.jsonl"
     _write_jsonl(jsonl, entries)
 
     client = TestClient(_make_app())
