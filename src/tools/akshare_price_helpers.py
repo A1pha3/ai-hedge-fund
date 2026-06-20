@@ -12,6 +12,15 @@ def hydrate_cached_prices(cached_data: list[dict]) -> list[Price]:
 def build_prices_from_dataframe(df: pd.DataFrame) -> list[Price]:
     prices: list[Price] = []
     for _, row in df.iterrows():
+        # R132 (R83 same-class drain): skip rows with NaN/None in any OHLC/volume
+        # cell. Halted/illiquid/delisted days produce NaN cells (akshare
+        # stock_zh_a_hist); bare ``int(row["成交量"])`` on NaN raises ValueError
+        # and crashes the whole ticker's price series on the production
+        # ``akshare_api.get_prices`` path. Aligns with the sibling
+        # AKShareProvider.get_prices ``pd.notna`` guard (R83).
+        ohlc = (row["开盘"], row["最高"], row["最低"], row["收盘"], row["成交量"])
+        if any(not pd.notna(v) for v in ohlc):
+            continue
         prices.append(Price(time=row["日期"], open=float(row["开盘"]), high=float(row["最高"]), low=float(row["最低"]), close=float(row["收盘"]), volume=int(row["成交量"])))
     return prices
 

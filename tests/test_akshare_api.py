@@ -740,3 +740,56 @@ def test_get_ashare_company_news_sorts_filters_and_deduplicates(monkeypatch, cap
     assert news[0].title == "新新闻"
     assert news[0].sentiment == "正面"
     assert "[AKShare] 已过滤 1 篇与 300438(测试股) 无直接关联的通用市场文章" in capsys.readouterr().out
+
+
+def test_build_prices_from_dataframe_skips_nan_volume_row():
+    """R132 (R83 same-class drain residue): ``build_prices_from_dataframe`` is the
+    df→Price converter on the production ``akshare_api.get_prices`` path
+    (``_fetch_prices_from_akshare`` → ``build_prices_from_dataframe``), a SIBLING
+    of ``AKShareProvider.get_prices``. R83 added a ``pd.notna`` guard to the
+    provider path (skipping halted/illiquid rows with NaN OHLC/volume), but this
+    sibling was missed: ``int(row["成交量"])`` on a NaN volume raises
+    ``ValueError: cannot convert float NaN to integer``, crashing the whole
+    ticker's price series on the production path (lookback_audit / paper_trading /
+    api.py all use ``akshare_api.get_prices``, not the provider).
+
+    A single NaN-volume row (halted day) must be skipped, not crash the batch.
+    """
+    from src.tools.akshare_price_helpers import build_prices_from_dataframe
+
+    df = pd.DataFrame(
+        [
+            {"日期": "2024-01-01", "开盘": 10.0, "最高": 10.5, "最低": 9.8, "收盘": 10.2, "成交量": 1000},
+            {"日期": "2024-01-02", "开盘": 10.2, "最高": 10.6, "最低": 10.0, "收盘": 10.4, "成交量": float("nan")},
+            {"日期": "2024-01-03", "开盘": 10.4, "最高": 10.8, "最低": 10.3, "收盘": 10.7, "成交量": 1200},
+        ]
+    )
+
+    prices = build_prices_from_dataframe(df)
+
+    # NaN-volume row skipped, not crash; valid rows preserved
+    assert len(prices) == 2
+    assert [p.time for p in prices] == ["2024-01-01", "2024-01-03"]
+    assert prices[0].volume == 1000
+    assert prices[1].volume == 1200
+
+
+def test_build_prices_from_dataframe_skips_nan_ohlc_row():
+    """R132 (R83 same-class drain): NaN in any OHLC cell must also skip the row,
+    not propagate NaN into Price (downstream corrupts every price-based metric).
+    Aligns with the provider path's ``any(not pd.notna(v) for v in ohlc)`` guard.
+    """
+    from src.tools.akshare_price_helpers import build_prices_from_dataframe
+
+    df = pd.DataFrame(
+        [
+            {"日期": "2024-01-01", "开盘": 10.0, "最高": 10.5, "最低": 9.8, "收盘": 10.2, "成交量": 1000},
+            {"日期": "2024-01-02", "开盘": float("nan"), "最高": 10.6, "最低": 10.0, "收盘": 10.4, "成交量": 1100},
+        ]
+    )
+
+    prices = build_prices_from_dataframe(df)
+
+    assert len(prices) == 1
+    assert prices[0].time == "2024-01-01"
+    assert prices[0].open == 10.0
