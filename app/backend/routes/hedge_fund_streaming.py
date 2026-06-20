@@ -428,11 +428,15 @@ async def stream_backtest(
     disconnect_task: asyncio.Task[bool] | None = None
     progress_handler = create_progress_handler(progress_queue)
     progress_callback = create_backtest_progress_callback(progress_queue)
-
-    progress.register_handler(progress_handler)
+    # R140 backtest sibling: scope this run's handler + graph progress to a unique
+    # run_id so a concurrent hedge-fund run (or another backtest) doesn't cross-
+    # contaminate this stream's SSE progress via the global handler fan-out.
+    import uuid
+    run_id = uuid.uuid4().hex
+    progress.register_handler(progress_handler, run_id=run_id)
 
     try:
-        backtest_task = asyncio.create_task(backtest_service.run_backtest_async(progress_callback=progress_callback))
+        backtest_task = asyncio.create_task(backtest_service.run_backtest_async(progress_callback=progress_callback, run_id=run_id))
         disconnect_task = asyncio.create_task(wait_for_disconnect(request))
 
         yield StartEvent().to_sse()

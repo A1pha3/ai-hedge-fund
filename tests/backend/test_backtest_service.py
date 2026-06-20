@@ -72,6 +72,40 @@ def test_run_backtest_async_builds_results(monkeypatch):
     assert any(update["type"] == "backtest_result" for update in updates)
 
 
+def test_run_backtest_async_threads_run_id_to_graph_for_sse_isolation(monkeypatch):
+    """R140 backtest sibling (drain of the C130 hedge-fund fix): run_backtest_async must
+    thread ``run_id`` through to ``run_graph_async`` so a concurrent backtest and
+    hedge-fund run (or two backtests) don't cross-contaminate each other's SSE progress
+    via the global progress handler fan-out. Same run-id ContextVar mechanism as
+    stream_hedge_fund_run; the backtest runs the same agent graph per date.
+    """
+    service = _build_service()
+    monkeypatch.setattr(service, "prefetch_data", lambda: None)
+    monkeypatch.setattr(
+        "app.backend.services.backtest_service.get_price_data",
+        lambda *_args, **_kwargs: pd.DataFrame([{"close": 110.0}]),
+    )
+
+    captured: list[str | None] = []
+
+    async def fake_run_graph_async(**kwargs):
+        captured.append(kwargs.get("run_id"))
+        return {
+            "messages": [SimpleNamespace(content="ignored")],
+            "data": {"analyst_signals": {"technical": {"AAPL": {"signal": "bullish"}}}},
+        }
+
+    monkeypatch.setattr("app.backend.services.backtest_service.run_graph_async", fake_run_graph_async)
+    monkeypatch.setattr("app.backend.services.backtest_service.parse_hedge_fund_response", lambda _content: {"AAPL": {"action": "hold", "quantity": 0}})
+
+    asyncio.run(service.run_backtest_async(run_id="BT_RUN_1"))
+
+    assert captured, "run_graph_async was not invoked"
+    assert all(rid == "BT_RUN_1" for rid in captured), (
+        f"run_id not threaded to run_graph_async for backtest SSE isolation: {captured}"
+    )
+
+
 def test_run_backtest_async_seeds_anchor_before_first_bar_not_on_it(monkeypatch):
     """BH-001 drain (backend): the initial-capital seed must NOT share its Date
     with the first backtest bar. ``run_backtest_async`` appends a real post-trade

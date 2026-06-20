@@ -189,7 +189,7 @@ class BacktestService:
         portfolio_for_graph.update(self.portfolio)
         return portfolio_for_graph
 
-    async def _run_graph_for_date(self, lookback_start: str, current_date_str: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    async def _run_graph_for_date(self, lookback_start: str, current_date_str: str, run_id: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
         try:
             result = await run_graph_async(
                 graph=self.graph,
@@ -200,6 +200,7 @@ class BacktestService:
                 model_name=self.model_name,
                 model_provider=self.model_provider,
                 request=self.request,
+                run_id=run_id,
             )
         except Exception as error:
             print(f"Error running graph for {current_date_str}: {error}")
@@ -246,7 +247,7 @@ class BacktestService:
             "final_portfolio": self.portfolio,
         }
 
-    async def run_backtest_async(self, progress_callback: Callable[[dict[str, Any]], None] | None = None) -> dict[str, Any]:
+    async def run_backtest_async(self, progress_callback: Callable[[dict[str, Any]], None] | None = None, run_id: str | None = None) -> dict[str, Any]:
         """
         Run the backtest asynchronously with optional progress callbacks.
         Uses the pre-compiled graph for trading decisions.
@@ -286,7 +287,7 @@ class BacktestService:
             if current_prices is None:
                 continue
 
-            decisions, analyst_signals = await self._run_graph_for_date(lookback_start, current_date_str)
+            decisions, analyst_signals = await self._run_graph_for_date(lookback_start, current_date_str, run_id=run_id)
             executed_trades = self._execute_daily_decisions(decisions, current_prices)
             total_value = self.calculate_portfolio_value(current_prices)
             exposures = calculate_exposures(self.portfolio, self.tickers, current_prices)

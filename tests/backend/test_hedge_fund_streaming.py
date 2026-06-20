@@ -124,7 +124,7 @@ def test_stream_backtest_emits_progress_and_completion(monkeypatch):
     monkeypatch.setattr(hedge_fund_streaming, "progress", dummy_progress)
 
     class DummyBacktestService:
-        async def run_backtest_async(self, progress_callback):
+        async def run_backtest_async(self, progress_callback, run_id=None):
             for handler in list(dummy_progress.handlers):
                 handler("analyst", "AAPL", "screened", None, "2026-01-01T00:00:00Z")
             progress_callback(
