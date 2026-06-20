@@ -260,6 +260,55 @@ class TestRenderMarketOpportunityIndex:
 
 
 # ---------------------------------------------------------------------------
+# _classify_return_rhythm (O-3 / 收益节奏标签)
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyReturnRhythm:
+    """O-3: classify the T+30 gain pattern as 早/匀/晚 from the 5-horizon
+    cumulative return shape. Serves the product goal's explicit '持续时间综合最优'
+    dimension (line 31: 10天涨50% > 5天涨20% — the user must distinguish a
+    slow-grind holdable winner from a fast-mover that fades). Display-only, does
+    not enter ranking (avoids new sort-dimension bloat)."""
+
+    def test_early_most_gain_by_t5(self) -> None:
+        from src.screening.top_picks import _classify_return_rhythm
+
+        # t5=0.06, t30=0.08 → 75% of gain by T+5
+        assert _classify_return_rhythm({"t5": 0.06, "t20": 0.08, "t30": 0.08}) == "早"
+
+    def test_late_most_gain_after_t20(self) -> None:
+        from src.screening.top_picks import _classify_return_rhythm
+
+        # t20=0.03, t30=0.08 → 62.5% of gain after T+20
+        assert _classify_return_rhythm({"t5": 0.01, "t20": 0.03, "t30": 0.08}) == "晚"
+
+    def test_steady_linear_gain(self) -> None:
+        from src.screening.top_picks import _classify_return_rhythm
+
+        # roughly linear: t5=0.015, t20=0.05, t30=0.08
+        assert _classify_return_rhythm({"t5": 0.015, "t20": 0.05, "t30": 0.08}) == "匀"
+
+    def test_negative_or_zero_t30_returns_dash(self) -> None:
+        from src.screening.top_picks import _classify_return_rhythm
+
+        assert _classify_return_rhythm({"t5": 0.01, "t20": 0.02, "t30": 0.0}) == "—"
+        assert _classify_return_rhythm({"t5": 0.01, "t20": 0.02, "t30": -0.03}) == "—"
+
+    def test_missing_horizons_returns_dash(self) -> None:
+        from src.screening.top_picks import _classify_return_rhythm
+
+        assert _classify_return_rhythm({}) == "—"
+        assert _classify_return_rhythm({"t5": 0.05, "t30": 0.08}) == "—"  # no t20
+        assert _classify_return_rhythm(None) == "—"  # type: ignore[arg-type]
+
+    def test_non_numeric_returns_dash(self) -> None:
+        from src.screening.top_picks import _classify_return_rhythm
+
+        assert _classify_return_rhythm({"t5": "n/a", "t20": 0.05, "t30": 0.08}) == "—"
+
+
+# ---------------------------------------------------------------------------
 # _format_sample_count (O-2 / R35 mature-T+30 disclosure)
 # ---------------------------------------------------------------------------
 

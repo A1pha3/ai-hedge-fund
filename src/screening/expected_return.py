@@ -61,6 +61,10 @@ class ExpectedReturn:
     # this smaller matured subset. Surfacing both lets users judge how much the
     # 30-day stat actually backs. See BH-002.
     bucket_t30_mature_count: int = 0
+    # O-4: per-bucket mean of realized LOSING T+30 returns (typical downside /
+    # 赔率). Pairs with the T+30 win rate so users can size position by tail
+    # risk, not just win frequency. None when the bucket has no losing records.
+    bucket_t30_avg_negative_return: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -69,6 +73,11 @@ class ExpectedReturn:
             "bucket_label": self.bucket_label,
             "bucket_sample_count": self.bucket_sample_count,
             "bucket_t30_mature_count": self.bucket_t30_mature_count,
+            "bucket_t30_avg_negative_return": (
+                round(self.bucket_t30_avg_negative_return, 4)
+                if self.bucket_t30_avg_negative_return is not None
+                else None
+            ),
             "expected_returns": {k: round(v, 4) if v is not None else None for k, v in self.expected_returns.items()},
             "win_rates": {k: round(v, 4) if v is not None else None for k, v in self.win_rates.items()},
         }
@@ -152,6 +161,15 @@ def _build_bucket_mature_t30_map(calibration: CalibrationSummary) -> dict[str, i
     return {bucket.label: bucket.t30_sample_count for bucket in calibration.buckets}
 
 
+def _build_bucket_t30_downside_map(calibration: CalibrationSummary) -> dict[str, float | None]:
+    """Build a mapping from bucket label → mean realized LOSING T+30 return.
+
+    O-4: the typical downside (赔率) for the bucket — how much a losing pick
+    tends to cost. None when the bucket has no observed losers.
+    """
+    return {bucket.label: bucket.t30_avg_negative_return for bucket in calibration.buckets}
+
+
 def compute_expected_returns(
     *,
     recommendations: list[dict[str, Any]],
@@ -175,6 +193,7 @@ def compute_expected_returns(
     winrate_map = _build_bucket_winrate_map(calibration)
     sample_map = _build_bucket_sample_map(calibration)
     mature_t30_map = _build_bucket_mature_t30_map(calibration)
+    downside_t30_map = _build_bucket_t30_downside_map(calibration)
 
     trade_date = ""
     items: list[ExpectedReturn] = []
@@ -208,6 +227,7 @@ def compute_expected_returns(
                 expected_returns=return_map.get(label, {h: None for h in HORIZONS}),
                 win_rates=winrate_map.get(label, {h: None for h in HORIZONS}),
                 bucket_t30_mature_count=mature_t30_map.get(label, 0),
+                bucket_t30_avg_negative_return=downside_t30_map.get(label),
             )
         )
 

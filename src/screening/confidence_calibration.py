@@ -67,6 +67,8 @@ class ScoreBucketStats:
     t10_avg_return: float | None = None
     t20_avg_return: float | None = None
     t30_avg_return: float | None = None
+    # O-4: mean of realized LOSING T+30 returns (赔率 / typical-downside).
+    t30_avg_negative_return: float | None = None
     # Matured-sample counts per horizon (records that actually have a realized
     # return at that horizon). ``sample_count`` counts every record in the
     # bucket regardless of return maturity, so displaying it next to a
@@ -97,6 +99,7 @@ class ScoreBucketStats:
             "t10_avg_return": self.t10_avg_return,
             "t20_avg_return": self.t20_avg_return,
             "t30_avg_return": self.t30_avg_return,
+            "t30_avg_negative_return": self.t30_avg_negative_return,
             "t1_sample_count": self.t1_sample_count,
             "t3_sample_count": self.t3_sample_count,
             "t5_sample_count": self.t5_sample_count,
@@ -188,6 +191,17 @@ def _win_rate_or_none(valid_returns: list[float]) -> float | None:
 def _mean_or_none(valid_returns: list[float]) -> float | None:
     """Arithmetic mean of realized returns; None when empty."""
     return (sum(valid_returns) / len(valid_returns)) if valid_returns else None
+
+
+def _mean_negative_or_none(valid_returns: list[float]) -> float | None:
+    """Arithmetic mean of realized LOSING returns (< 0); None when no losers.
+
+    O-4: the per-bucket T+30 downside — how much a typical loss costs. Pairs
+    with ``t30_win_rate`` to surface 赔率 (a 60% win rate with a -4% typical
+    loss is a very different bet from 60% with -30%, but the bare win rate /
+    avg-return can't distinguish them)."""
+    losers = [x for x in valid_returns if x < 0]
+    return (sum(losers) / len(losers)) if losers else None
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +304,7 @@ def compute_calibration(
             t10_avg_return=_mean_or_none(t10_valid),
             t20_avg_return=_mean_or_none(t20_valid),
             t30_avg_return=_mean_or_none(t30_valid),
+            t30_avg_negative_return=_mean_negative_or_none(t30_valid),
             t1_sample_count=len(t1_valid),
             t3_sample_count=len(t3_valid),
             t5_sample_count=len(t5_valid),

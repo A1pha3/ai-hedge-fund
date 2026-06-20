@@ -151,6 +151,37 @@ def test_compute_calibration_none_returns_excluded():
     assert bucket.t5_win_rate == pytest.approx(0.5, abs=1e-3)  # 1/2 有 T+5 数据的中 1 个赢
 
 
+def test_compute_calibration_t30_avg_negative_return_only_losers():
+    """O-4: t30_avg_negative_return = mean of LOSING T+30 returns only (赔率 /
+    typical downside). Positive/zero returns excluded so the user sees how much a
+    typical loss costs, distinct from the overall avg_return (which winners pull
+    up). 60% win @ -4% typical loss ≠ 60% @ -30%."""
+    records = [
+        _make_record_full("000001", 0.75, t30=0.08),   # winner — excluded from downside
+        _make_record_full("000002", 0.75, t30=-0.04),  # loser
+        _make_record_full("000003", 0.75, t30=-0.12),  # loser
+    ]
+    summary = compute_calibration(records)
+    bucket = next(b for b in summary.buckets if "中高" in b.label)
+    # mean of losers only: (-0.04 + -0.12) / 2 = -0.08
+    assert bucket.t30_avg_negative_return == pytest.approx(-0.08)
+    # overall avg includes the winner: (0.08 - 0.04 - 0.12) / 3
+    assert bucket.t30_avg_return == pytest.approx((0.08 - 0.04 - 0.12) / 3)
+
+
+def test_compute_calibration_t30_avg_negative_return_none_when_no_losers():
+    """O-4: when every T+30 return is a winner, the bucket has no observed
+    downside → None (distinct from 0.0)."""
+    records = [
+        _make_record_full("000001", 0.75, t30=0.05),
+        _make_record_full("000002", 0.75, t30=0.08),
+    ]
+    summary = compute_calibration(records)
+    bucket = next(b for b in summary.buckets if "中高" in b.label)
+    assert bucket.t30_avg_negative_return is None
+    assert bucket.t30_avg_return == pytest.approx(0.065)
+
+
 def test_compute_calibration_score_missing_record_excluded():
     """缺 recommendation_score 的记录应被排除。"""
     records = [

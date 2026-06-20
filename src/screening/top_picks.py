@@ -290,6 +290,35 @@ def _format_sample_count(item: dict) -> str:
     return f"{total}"
 
 
+def _classify_return_rhythm(expected_returns: dict | None) -> str:
+    """O-3: classify the T+30 gain pattern as 早 / 匀 / 晚 from the 5-horizon
+    cumulative return shape. Serves the product goal's explicit "持续时间综合最优"
+    dimension (10天涨50% vs 5天涨20% are different winners — the user must
+    distinguish a fast-mover that fades from a slow-grind that holds).
+
+    Display-only: does NOT enter ranking (avoids a new sort-dimension bloat).
+    Thresholds (tunable): 早 = ≥60% of T+30 gain realized by T+5; 晚 = ≥40% of
+    T+30 gain realized after T+20; else 匀. Returns "—" when the edge is
+    non-positive or the anchor horizons (t5/t20/t30) are missing/non-numeric.
+    """
+    if not expected_returns:
+        return "—"
+    t5 = expected_returns.get("t5")
+    t20 = expected_returns.get("t20")
+    t30 = expected_returns.get("t30")
+    if not all(isinstance(x, (int, float)) for x in (t5, t20, t30)):
+        return "—"
+    if t30 <= 0:
+        return "—"
+    early_share = t5 / t30
+    late_share = (t30 - t20) / t30
+    if early_share >= 0.60:
+        return "早"
+    if late_share >= 0.40:
+        return "晚"
+    return "匀"
+
+
 def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> str:
     """R33: Render a one-line equal-weighted T+30 expected return for all BUY picks.
 
@@ -1156,6 +1185,11 @@ def _print_pick_entry(
 
     t30_str = f"{t30:+.2f}%" if t30 is not None else "—"
     t30_wr_str = f"{t30_wr:.0%}" if t30_wr is not None else "—"
+    rhythm = _classify_return_rhythm(item.get("expected_returns"))
+    # O-4: per-bucket T+30 typical downside (赔率). Pairs with win rate so the
+    # user can size by tail risk: 60% win @ -4% typical loss ≠ 60% @ -30%.
+    downside = item.get("bucket_t30_avg_negative_return")
+    downside_str = f"{downside:+.1f}%" if isinstance(downside, (int, float)) else "—"
     base_score = float(item.get("base_score", item.get("score_b", 0.0)) or 0.0)
     score_color = _score_color(composite_score)
 
@@ -1167,7 +1201,7 @@ def _print_pick_entry(
         f"{grade}{consec_str} {confluence_str}  "
         f"(base={base_score:.3f} {signal_str}{factor_attr})"
     )
-    print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={_format_sample_count(item)}  市场门控={verdict['market_regime']}")
+    print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={_format_sample_count(item)}  节奏={rhythm}  赔率(下行)={downside_str}  市场门控={verdict['market_regime']}")
     print(f"     失效条件: {verdict['invalidation_reason']}")
 
     _print_pick_entry_details(
