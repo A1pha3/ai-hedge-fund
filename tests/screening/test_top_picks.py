@@ -260,6 +260,68 @@ class TestRenderMarketOpportunityIndex:
 
 
 # ---------------------------------------------------------------------------
+# _suggest_position_pct (A-1 / per-pick position suggestion)
+# ---------------------------------------------------------------------------
+
+
+class TestSuggestPositionPct:
+    """A-1: transparent per-pick position suggestion for BUY picks. Simple
+    risk-budget — base scaled by confidence (winrate above coin-flip) and the
+    T+30 edge magnitude, regime-downgraded (crisis/risk_off → 0), capped at a
+    per-pick maximum for diversification. Educational decision-support only: NOT
+    portfolio optimization (no correlation/risk-parity), reuses the R71-R77
+    disclaimer. Serves the "买哪只 → 买多少" bridge for the product goal."""
+
+    def test_normal_regime_scales_with_edge_and_winrate(self) -> None:
+        from src.screening.top_picks import _suggest_position_pct
+
+        # edge=8%, winrate=62%, normal → confidence 0.6, base = 0.08*0.6*100 = 4.8
+        assert _suggest_position_pct(t30_edge=0.08, t30_winrate=0.62, market_regime="normal") == 4.8
+
+    def test_high_conviction_larger_size(self) -> None:
+        from src.screening.top_picks import _suggest_position_pct
+
+        # edge=12%, winrate=70% → confidence 1.0, base = 12.0
+        assert _suggest_position_pct(t30_edge=0.12, t30_winrate=0.70, market_regime="normal") == 12.0
+
+    def test_capped_at_max_per_pick(self) -> None:
+        from src.screening.top_picks import _suggest_position_pct
+
+        # edge=20%, winrate=80% → confidence 1.5, base = 30.0 → capped at 15.0
+        assert _suggest_position_pct(t30_edge=0.20, t30_winrate=0.80, market_regime="normal") == 15.0
+
+    def test_crisis_regime_returns_zero(self) -> None:
+        from src.screening.top_picks import _suggest_position_pct
+
+        assert _suggest_position_pct(t30_edge=0.10, t30_winrate=0.65, market_regime="crisis") == 0.0
+        assert _suggest_position_pct(t30_edge=0.10, t30_winrate=0.65, market_regime="risk_off") == 0.0
+
+    def test_caution_regime_halved(self) -> None:
+        from src.screening.top_picks import _suggest_position_pct
+
+        # edge=12%, winrate=70% → base 12.0; cautious → ×0.5 = 6.0
+        assert _suggest_position_pct(t30_edge=0.12, t30_winrate=0.70, market_regime="cautious") == 6.0
+
+    def test_non_positive_edge_returns_zero(self) -> None:
+        from src.screening.top_picks import _suggest_position_pct
+
+        assert _suggest_position_pct(t30_edge=-0.03, t30_winrate=0.60, market_regime="normal") == 0.0
+        assert _suggest_position_pct(t30_edge=0.0, t30_winrate=0.60, market_regime="normal") == 0.0
+
+    def test_none_inputs_return_zero(self) -> None:
+        from src.screening.top_picks import _suggest_position_pct
+
+        assert _suggest_position_pct(t30_edge=None, t30_winrate=0.60, market_regime="normal") == 0.0
+        assert _suggest_position_pct(t30_edge=0.08, t30_winrate=None, market_regime="normal") == 0.0
+
+    def test_low_winrate_below_coin_flip_shrinks(self) -> None:
+        from src.screening.top_picks import _suggest_position_pct
+
+        # winrate=0.52 (barely above coin-flip) → confidence 0.1, base = 0.08*0.1*100 = 0.8
+        assert _suggest_position_pct(t30_edge=0.08, t30_winrate=0.52, market_regime="normal") == 0.8
+
+
+# ---------------------------------------------------------------------------
 # _classify_return_rhythm (O-3 / 收益节奏标签)
 # ---------------------------------------------------------------------------
 

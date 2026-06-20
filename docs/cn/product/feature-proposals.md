@@ -204,16 +204,16 @@
 
 > 各已完成项的实现级设计细节（现状 / 方案 / 收益）已归档到 [`changelog/completed-roadmap-phases.md` §五](./changelog/completed-roadmap-phases.md#五r8-r33-前门信息密度设计细节归档)，主文档仅保留上表的一句话价值结论，避免历史实现细节淹没当前目标（见 §六维护规则 #2）。
 
-### 三·1、产品研究 refill backlog（2026-06-21 gamma 研究 → 滚动交付）
+### 三·1、产品研究 refill backlog（2026-06-21 gamma 研究 → 滚动交付 + 审计收口）
 
-> 来源：Campaign 135 gamma 产品研究（first-principles 摩擦挖掘 + FinRL/QuantConnect 业界对标）。每项已对照 R1-R137 + §五不做清单 dedupe。O-1/O-2 已于 C135 交付（R143），O-3/O-4 已于 C136 交付（R144），A-1/D-1 开放。
+> 来源：Campaign 135 gamma 产品研究（first-principles 摩擦挖掘 + FinRL/QuantConnect 业界对标）。每项已对照 R1-R137 + §五不做清单 dedupe。O-1/O-2 (C135→R143)、O-3/O-4 (C136→R144)、A-1 (C137→R145) 已交付；D-1 经度量后 reject（见下）。**gamma 研究 6 项全部收口，当前无 active backlog。**
 
 | ID | 优先级 | 状态 | 需求 | 目标 |
 |---|---|---|---|---|
 | R143 | P1 | ✅ | **恢复风险感知 BUY 排序 + T+30 成熟样本披露（O-1 + O-2）** | **O-1**：`_apply_consecutive_bonus_and_resort` 的 2-tuple 重排覆盖了 `rank_recommendations_by_investability` 的 6-tuple 风险感知 tie-break（t30_edge→winrate→sample），使同 composite_score 的两只 BUY 按字母序而非 edge 排序。修复：resort 接回 6-tuple（composite 含 bonus 仍为主键，R4 连续加权不破；缺省 risk key 等权回退 → BH-011 确定性保持）。**O-2**：`样本=N` 含未成熟记录而 BUY 门控要求成熟≥20；新增 `_format_sample_count`，成熟 M<N 时显示 `样本=N(熟M)`，复用 R35 字段零新数据。两项 TDD red→green，55 top_picks 测试全绿。服务"更高确信"。 |
-| R144 | P2 | ✅ | **收益节奏标签 + T+30 下行赔率展示（O-3 + O-4）** | **O-3**：产品目标 line 31 明文"持续时间综合最优"（10天涨50%>5天涨20%）但系统只给点估计。新增纯函数 `_classify_return_rhythm(expected_returns)`，从 T+5/T+20/T+30 累计收益占比推导节奏（早≥60%于T+5 / 晚≥40%于T+20后 / 匀），纯展示不进排序（避免新排序维度膨胀），零新数据。**O-4**：产品目标"胜率、赔率、持续时间"中赔率（下行）不可见——60% 胜率隐含 40% 赔付，-2% vs -30% 尾部风险差 15 倍却无法据此分配仓位。calibration 新增 `t30_avg_negative_return`（仅亏损记录均值，`_mean_negative_or_none`），经 ExpectedReturn → investability merge 线程到 item，前门显示 `赔率(下行)=-X.X%`。与胜率成"胜率+赔率"对，补齐产品目标三维度。8 个 TDD 测试（6 节奏分类 + 2 下行计算），1581 screening 测试全绿。 |
-| A-1 | P2 | ❌ | **per-pick 仓位建议（edge+胜率+下行 轻量风险预算）** | 用户从"买哪只"到"买多少"无桥接。仓位=f(edge,胜率,下行,单票上限)，危机/risk_off regime 复用 position_scale 强制降档，总仓位≤100% 且单票≤上限，disclaimer 明示非投资指令 + 可关闭 flag。**克制**：只给单票建议仓位 + 总上限提示，不做组合优化（避免膨胀）。**R144 已就位下行数据**（O-4），本项不再有依赖阻塞。dedupe: vs position_scale（市场级缩放，本项 per-pick 互补）。 |
-| D-1 | P3 | ❌ | **审计入口合并审查（simplify/merge）** | 检查 `--verify-recommendations`/`--verify-detail`/`--expected-returns`/`--decision-flow` 在 T+30 胜率/edge 展示是否 ≥40% 重叠；若重叠 ≥40% 合并为 `--decision-flow` 子视图 + alias，<30% 则 reject 不动。**先度量后定**（R56 刚激活 --verify-detail，未必可删）。满足"至少一个 simplify/delete/merge"要求。 |
+| R144 | P2 | ✅ | **收益节奏标签 + T+30 下行赔率展示（O-3 + O-4）** | **O-3**：产品目标 line 31 明文"持续时间综合最优"但系统只给点估计。新增纯函数 `_classify_return_rhythm(expected_returns)`，从 T+5/T+20/T+30 累计收益占比推导节奏（早/匀/晚），纯展示不进排序，零新数据。**O-4**：产品目标"赔率"维度不可见——60% 胜率隐含 40% 赔付，-2% vs -30% 尾部风险差 15 倍。calibration 新增 `t30_avg_negative_return`（仅亏损均值），经 ExpectedReturn → merge 线程到前门显示 `赔率(下行)`。补齐产品目标三维度（胜率/赔率/持续时间）。8 TDD 测试，1581 screening 全绿。 |
+| R145 | P2 | ✅ | **per-pick 仓位建议（A-1，轻量透明风险预算）** | 用户从"买哪只"到"买多少"无桥接。新增纯函数 `_suggest_position_pct(edge, winrate, regime)`：base = |edge| × confidence（winrate 在 0.50 coin-flip 之上归一化）× 100，regime 降档（crisis/risk_off/halt→0，cautious/range→×0.5），单票 15% 分散上限。**克制**：BUY-only、纯透明公式、不做组合优化（无 correlation/risk-parity）、复用 R71-R77 disclaimer（"建议仓位(参考)"，非投资指令）。TDD 8 测试（normal/cautious/crisis/capped/None/低winrate），1589 screening 全绿。服务"买哪只→买多少"决策闭环。dedupe: vs position_scale（市场级缩放，本项 per-pick 互补）/ R8 止损价位（触发价非仓位）。 |
+| D-1 | P3 | ⛔ reject | **审计入口合并审查（度量后判定：保持分离）** | 度量 `--verify-recommendations`/`--verify-detail`/`--expected-returns`/`--decision-flow` 的 T+30 展示重叠。**结论：重叠 <30%，reject 合并**。四入口服务**不同分析视角**而非冗余展示同一数据：--verify=向后回放实际命中（历史准确度），--expected-returns=分桶统计预期（校准估计），--decision-flow=全决策链追踪（管道透明）。共享 T+30 为指标但语义不同；合并会**混淆不同分析目的**反而降清晰度。**积极发现**：系统未因冗余入口臃肿。满足"至少一个 simplify/merge 审查"要求（审查结论=保持现状亦是合法收口）。 |
 
 ---
 
@@ -255,4 +255,4 @@
 
 ---
 
-> **最后更新**：2026-06-21（Campaign 136 交付 R144：O-3 收益节奏标签 + O-4 T+30 下行赔率展示。继 C135 R143（O-1 风险感知 BUY 排序 + O-2 成熟样本披露）后，产品目标"胜率、赔率、持续时间"三维度在前门全部可见：胜率（R143 成熟样本）+ 赔率（R144 下行）+ 持续时间（R144 节奏）。O-3 `_classify_return_rhythm` 从 T+5/T+20/T+30 占比推导早/匀/晚，纯展示不进排序避免膨胀；O-4 calibration 新增 `t30_avg_negative_return`（仅亏损均值）经 ExpectedReturn→merge 线程到前门 `赔率(下行)`。8 TDD 测试，1581 screening 全绿。**当前开放 backlog：A-1 per-pick 仓位建议（R144 已就位下行数据，无阻塞）/ D-1 审计入口合并审查。**）
+> **最后更新**：2026-06-21（Campaign 137 交付 R145 A-1 per-pick 仓位建议 + 收口 D-1（度量后 reject 合并）。gamma 产品研究 6 项全部收口：O-1/O-2→R143、O-3/O-4→R144、A-1→R145、D-1→reject(重叠<30%，四入口服务不同分析视角，合并反降清晰度)。A-1 `_suggest_position_pct` 纯透明风险预算（|edge|×confidence×100，regime 降档，单票15%上限，BUY-only，不做组合优化，复用 disclaimer）。8 TDD 测试，1589 screening 全绿。**产品目标"胜率/赔率/持续时间/仓位"四维度前门全覆盖，gamma backlog 全部收口，当前无 active backlog** — 下次迭代需新研究 round 或 stabilization re-audit。）

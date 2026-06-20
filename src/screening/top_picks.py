@@ -319,6 +319,40 @@ def _classify_return_rhythm(expected_returns: dict | None) -> str:
     return "匀"
 
 
+#: A-1 per-pick position diversification cap (single-name ceiling).
+_MAX_POSITION_PCT: float = 15.0
+
+
+def _suggest_position_pct(
+    *,
+    t30_edge: float | None,
+    t30_winrate: float | None,
+    market_regime: str,
+    max_per_pick: float = _MAX_POSITION_PCT,
+) -> float:
+    """A-1: transparent per-pick position suggestion for BUY picks (educational
+    decision-support). Simple risk-budget, NOT portfolio optimization (no
+    correlation / risk-parity / mean-variance) — reuses the R71-R77 disclaimer.
+
+    Formula (tunable): base = |edge| × confidence × 100, where confidence normalizes
+    winrate above the 0.50 coin-flip (0.50→0, 0.70→1.0, 1.0→2.5). Regime downgrade:
+    crisis/risk_off/halt → 0 (stand aside); cautious/range → ×0.5. Capped at
+    ``max_per_pick`` (15% single-name ceiling for diversification). Returns 0.0 for
+    non-positive edge, missing inputs, or risk-off regimes — bridging "买哪只 → 买多少"
+    without over-stepping into investment directive.
+    """
+    if t30_edge is None or t30_winrate is None or t30_edge <= 0:
+        return 0.0
+    regime_lower = str(market_regime).lower()
+    if "crisis" in regime_lower or "risk_off" in regime_lower or "halt" in regime_lower:
+        return 0.0
+    confidence = max(0.0, (t30_winrate - 0.50) / 0.20)
+    base = abs(t30_edge) * confidence * 100.0
+    if "cautious" in regime_lower or "range" in regime_lower:
+        base *= 0.5
+    return round(min(base, max_per_pick), 1)
+
+
 def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> str:
     """R33: Render a one-line equal-weighted T+30 expected return for all BUY picks.
 
@@ -1190,6 +1224,16 @@ def _print_pick_entry(
     # user can size by tail risk: 60% win @ -4% typical loss ≠ 60% @ -30%.
     downside = item.get("bucket_t30_avg_negative_return")
     downside_str = f"{downside:+.1f}%" if isinstance(downside, (int, float)) else "—"
+    # A-1: per-pick position suggestion (BUY only, regime-aware, capped). Bridges
+    # "买哪只 → 买多少" with a simple transparent risk-budget; covered by the R71
+    # disclaimer (not an investment directive).
+    pos_str = ""
+    if verdict["action"] == "BUY":
+        pos_pct = _suggest_position_pct(
+            t30_edge=t30, t30_winrate=t30_wr, market_regime=context.market_regime
+        )
+        if pos_pct > 0:
+            pos_str = f"  建议仓位(参考)={pos_pct:.1f}%"
     base_score = float(item.get("base_score", item.get("score_b", 0.0)) or 0.0)
     score_color = _score_color(composite_score)
 
@@ -1201,7 +1245,7 @@ def _print_pick_entry(
         f"{grade}{consec_str} {confluence_str}  "
         f"(base={base_score:.3f} {signal_str}{factor_attr})"
     )
-    print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={_format_sample_count(item)}  节奏={rhythm}  赔率(下行)={downside_str}  市场门控={verdict['market_regime']}")
+    print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={_format_sample_count(item)}  节奏={rhythm}  赔率(下行)={downside_str}{pos_str}  市场门控={verdict['market_regime']}")
     print(f"     失效条件: {verdict['invalidation_reason']}")
 
     _print_pick_entry_details(
