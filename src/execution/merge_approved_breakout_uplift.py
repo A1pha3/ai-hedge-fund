@@ -5,6 +5,7 @@ from typing import Any
 
 from src.screening.models import StrategySignal
 from src.utils.env_helpers import get_env_float
+from src.utils.numeric import clamp_confidence as _clamp_confidence
 
 MERGE_APPROVED_BREAKOUT_UPLIFT_SCORE_B_MIN = get_env_float("DAILY_PIPELINE_MERGE_APPROVED_BREAKOUT_UPLIFT_SCORE_B_MIN", -0.2)
 MERGE_APPROVED_BREAKOUT_UPLIFT_TREND_CONFIDENCE_MIN = get_env_float("DAILY_PIPELINE_MERGE_APPROVED_BREAKOUT_UPLIFT_TREND_CONFIDENCE_MIN", 25.0)
@@ -36,10 +37,6 @@ def _coerce_signal(payload: StrategySignal | Mapping[str, Any] | None) -> Strate
     if isinstance(payload, Mapping) and payload:
         return StrategySignal.model_validate(dict(payload))
     return None
-
-
-def _clamp_confidence(value: float) -> float:
-    return max(0.0, min(100.0, float(value or 0.0)))
 
 
 def _clone_snapshot(snapshot: Any) -> dict[str, Any]:

@@ -7,6 +7,7 @@ from collections import defaultdict
 from src.execution.models import LayerCResult
 from src.screening.models import FusedScore, StrategySignal
 from src.utils.env_helpers import get_env_float
+from src.utils.numeric import clamp_confidence
 
 INVESTOR_AGENT_IDS = [
     "aswath_damodaran_agent",
@@ -177,7 +178,7 @@ def _derive_quality_score(fused: FusedScore) -> float:
         direction = snapshot.get("direction")
         if direction not in {-1, 0, 1}:
             continue
-        confidence = max(0.0, min(100.0, float(snapshot.get("confidence", 0.0) or 0.0)))
+        confidence = clamp_confidence(snapshot.get("confidence", 0.0))
         completeness = max(0.0, min(1.0, float(snapshot.get("completeness", 1.0) if snapshot.get("completeness", 1.0) is not None else 1.0)))
         effective_weight = weight * completeness
         if effective_weight <= 0:

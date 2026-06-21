@@ -27,13 +27,14 @@ from src.execution.daily_pipeline_settings import (
 )
 from src.execution.layer_c_aggregator import _derive_quality_score
 from src.targets.short_trade_target import build_short_trade_target_snapshot_from_entry
+from src.utils.numeric import clamp_confidence
 
 
 def _signal_directional_strength(signal: Any) -> float:
     if signal is None:
         return 0.0
     direction = int(getattr(signal, "direction", 0) or 0)
-    confidence = max(0.0, min(100.0, float(getattr(signal, "confidence", 0.0) or 0.0)))
+    confidence = clamp_confidence(getattr(signal, "confidence", 0.0))
     completeness = max(0.0, min(1.0, float(getattr(signal, "completeness", 0.0) or 0.0)))
     return max(-1.0, min(1.0, direction * (confidence / 100.0) * completeness))
 

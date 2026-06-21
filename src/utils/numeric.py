@@ -120,3 +120,26 @@ def clamp_unit_interval(value: Any) -> float:
     if not math.isfinite(as_float):
         return 0.0
     return max(0.0, min(1.0, as_float))
+
+
+def clamp_confidence(value: Any) -> float:
+    """Clamp *value* to ``[0.0, 100.0]`` (confidence / 百分比 scale).
+
+    Handles ``None`` and non-finite floats (NaN, Inf) by returning ``0.0``.
+
+    R152: 防止 ``max(0.0, min(100.0, float(value or 0.0)))`` 把 NaN escalate 到
+    100.0 满分 — ``float(NaN or 0.0)`` = NaN (NaN 是 truthy, ``or`` 不兜底), 再
+    ``min(100.0, NaN)`` 在 CPython 返回 100.0, 最后 max→100.0。sub_factors 内层
+    dict / getattr 读取的 confidence 不经 Pydantic 校验, NaN 可达; escalate 后会让
+    垃圾置信度的 sub_factor 通过 gate (merge_approved_breakout_uplift / layer_c /
+    catalyst_diagnostics 同族)。invalid confidence = 无置信度 → 0.0 正确 fail gate。
+    """
+    if value is None:
+        return 0.0
+    try:
+        as_float = float(value)
+    except (ValueError, TypeError):
+        return 0.0
+    if not math.isfinite(as_float):
+        return 0.0
+    return max(0.0, min(100.0, as_float))

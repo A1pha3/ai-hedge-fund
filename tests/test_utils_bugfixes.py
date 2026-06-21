@@ -9,7 +9,7 @@ from src.utils.llm import (
     extract_json_from_response,
 )
 from src.utils.llm_json_helpers import extract_balanced_json_candidates
-from src.utils.numeric import clamp_unit_interval, clip
+from src.utils.numeric import clamp_confidence, clamp_unit_interval, clip
 from src.utils.progress import AgentProgress
 
 # ---------------------------------------------------------------------------
@@ -179,6 +179,30 @@ class TestNumericHelpers:
 
     def test_clamp_unit_nan(self):
         assert clamp_unit_interval(float("nan")) == 0.0
+
+    # R152: clamp_confidence 防止 NaN → 100.0 满分 escalation
+    def test_clamp_confidence_normal(self):
+        assert clamp_confidence(50.0) == 50.0
+
+    def test_clamp_confidence_above(self):
+        assert clamp_confidence(150.0) == 100.0
+
+    def test_clamp_confidence_negative(self):
+        assert clamp_confidence(-5.0) == 0.0
+
+    def test_clamp_confidence_none(self):
+        assert clamp_confidence(None) == 0.0
+
+    def test_clamp_confidence_nan(self):
+        # 修复前: max(0, min(100, float(NaN or 0))) → min(100, NaN)=100 → 100.0 (满分 escalation)
+        assert clamp_confidence(float("nan")) == 0.0
+
+    def test_clamp_confidence_inf(self):
+        assert clamp_confidence(float("inf")) == 0.0
+        assert clamp_confidence(float("-inf")) == 0.0
+
+    def test_clamp_confidence_non_numeric(self):
+        assert clamp_confidence("abc") == 0.0
 
 
 # ---------------------------------------------------------------------------
