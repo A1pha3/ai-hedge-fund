@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -95,6 +96,8 @@ from .valuation import (  # noqa: E402 — after BacktestConfig dataclass
     calculate_portfolio_value,
     compute_exposures,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class BacktestEngine:
@@ -300,6 +303,17 @@ class BacktestEngine:
             )
             plan.selection_artifacts = result.model_dump(mode="json", exclude_none=True)
         except Exception as error:
+            # BH-017 family (R113 sibling): the failure is recorded in the plan
+            # dict below, but operators monitoring logs during long backtests
+            # would otherwise miss that selection artifacts silently stopped
+            # being written. Emit a debug diagnostic so the degradation is
+            # observable without inspecting every plan.selection_artifacts.
+            logger.debug(
+                "selection artifact write failed for %s: %s",
+                trade_date_compact,
+                error,
+                exc_info=True,
+            )
             plan.selection_artifacts = {
                 "write_status": "failed",
                 "error_message": str(error),
