@@ -223,6 +223,17 @@ def compute_rebalance_actions(
                 )
             )
             handled_tickers.add(ticker)
+            # R147: decrement the sector aggregate by this single-name trim so a
+            # sibling in the same over-limit sector is trimmed by the RESIDUAL
+            # (post-trim) excess, not the stale pre-trim excess. Without this,
+            # A's 20%→15% trim leaves sector_weights at 30%, so sibling B gets
+            # trimmed by 5% it shouldn't — a needless ~50k liquidation. Re-check
+            # whether the sector is still over limit after the reduction.
+            trim_amount = cw - single_name_hard_limit
+            if sector in sector_weights:
+                sector_weights[sector] = max(0.0, sector_weights[sector] - trim_amount)
+                if sector_weights[sector] <= industry_hard_limit:
+                    sector_over_limit.pop(sector, None)
             continue
 
         # 行业超限 — 减仓本行业内最重的标的, 一次只动一只 (避免连锁清仓)

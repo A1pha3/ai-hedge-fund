@@ -159,6 +159,43 @@ def test_industry_over_hard_limit_triggers_forced_sell() -> None:
     assert forced[0].target_weight < forced[0].current_weight
 
 
+def test_single_name_trim_decrements_sector_no_sibling_overtrim() -> None:
+    """R147: priority-1 single-name trim must decrement the sector aggregate so a
+    sibling in the same over-limit sector isn't over-trimmed. Before the fix: A
+    (20%) was trimmed to 15% but ``sector_weights`` stayed at the pre-trim 30%, so
+    sibling B (10%) was trimmed by the STALE excess (30%-25%=5%) → needless ~50k
+    liquidation, even though A's 20%→15% trim had already brought the sector to
+    exactly the 25% industry limit (15%+10%). Real over-selling of shares."""
+    portfolio_value = 1_000_000.0
+    positions = [
+        _make_position("A", "A", "白酒", 200_000.0, 0.20),  # 20% > 15% single-name limit
+        _make_position("B", "B", "白酒", 100_000.0, 0.10),  # 10%; sector = 30% > 25%
+    ]
+    actions = compute_rebalance_actions(positions, portfolio_value)
+    sells = {a.ticker for a in actions if a.action == "sell"}
+    # A must be trimmed (single-name 20% > 15%)
+    assert "A" in sells
+    # B must NOT be trimmed — A's 20%→15% trim already brought sector to 15%+10%=25% (at limit)
+    assert "B" not in sells
+
+
+def test_single_name_trim_then_residual_sector_still_over_trims_sibling() -> None:
+    """R147 companion: when A's single-name trim does NOT fully clear the sector
+    over-limit, the sibling B must still be trimmed by the RESIDUAL (post-A-trim)
+    excess — not skipped, not over-trimmed. A=20%→15%, B=12%, sector 32%→27% after
+    A → residual 2% over 25% → B trimmed by 2% (to 10%)."""
+    portfolio_value = 1_000_000.0
+    positions = [
+        _make_position("A", "A", "白酒", 200_000.0, 0.20),  # 20% > 15% single-name
+        _make_position("B", "B", "白酒", 120_000.0, 0.12),  # 12%; sector = 32% > 25%
+    ]
+    actions = compute_rebalance_actions(positions, portfolio_value)
+    b_action = next((a for a in actions if a.ticker == "B" and a.action == "sell"), None)
+    # A's trim: 20%→15%, sector now 15%+12%=27%, residual over 25% = 2% → B 12%→10%
+    assert b_action is not None
+    assert b_action.target_weight == pytest.approx(0.10, abs=1e-6)
+
+
 # ===========================================================================
 # 6. drift_threshold 生效
 # ===========================================================================
