@@ -12,6 +12,13 @@ from src.portfolio.correlation_cluster_helpers import (
 
 
 def correlation_threshold_for_market(market_median_correlation: float) -> float:
+    # R150/gamma defending comment: the inversion is INTENTIONAL risk logic.
+    # High-correlation market (median > 0.6) → LOWER threshold (0.7) → MORE
+    # aggressive merging of co-movers, because when the whole market moves
+    # together, apparent diversification is illusory and positions should be
+    # treated as more correlated (less diversification credit). Low-correlation
+    # market → higher threshold (0.8): 0.8 co-movement is genuinely exceptional.
+    # Do NOT "fix" this to the intuitive direction — the asymmetry is correct.
     return 0.7 if market_median_correlation > 0.6 else 0.8
 
 
