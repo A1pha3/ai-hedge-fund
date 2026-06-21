@@ -27,3 +27,38 @@ def _isolate_trade_calendar(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(tushare_api, "get_open_trade_dates", lambda *_args, **_kwargs: [])
     yield
+
+
+@pytest.fixture(autouse=True)
+def _clean_tempfile_mkdtemp(monkeypatch: pytest.MonkeyPatch):
+    """Track and remove ``tempfile.mkdtemp()`` dirs so tests don't leak.
+
+    Several screening tests call ``tempfile.mkdtemp()`` (some via
+    ``from tempfile import mkdtemp``) without ever cleaning up, which has
+    leaked 17k+ dirs into the system temp dir over time. This wraps
+    ``mkdtemp`` to record created dirs and removes them after each test.
+    New tests should still prefer the pytest ``tmp_path`` fixture.
+    """
+    import shutil
+    import sys
+    import tempfile
+
+    created: list[str] = []
+    real_mkdtemp = tempfile.mkdtemp
+
+    def _tracked_mkdtemp(*args: object, **kwargs: object) -> str:
+        path = real_mkdtemp(*args, **kwargs)
+        created.append(path)
+        return path
+
+    # Patch the canonical ``tempfile.mkdtemp`` plus any module that bound it
+    # by name (``from tempfile import mkdtemp``), which a plain attribute
+    # patch on ``tempfile`` alone would otherwise miss.
+    for module in list(sys.modules.values()):
+        if module is not None and getattr(module, "mkdtemp", None) is real_mkdtemp:
+            monkeypatch.setattr(module, "mkdtemp", _tracked_mkdtemp, raising=False)
+
+    yield
+
+    for path in created:
+        shutil.rmtree(path, ignore_errors=True)
