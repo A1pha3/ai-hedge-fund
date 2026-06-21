@@ -223,8 +223,18 @@ def run_decision_flow(
         sample_all = int(best.get("bucket_sample_count", 0) or 0)
         sample_t30_mature = int(best.get("bucket_t30_mature_count", 0) or 0)
         sample_str = f"样本={sample_all}(T30熟={sample_t30_mature})"
+        # R111 cross-layer sibling (C143 learning item 4: a hardened computation
+        # layer's consumer can silently violate its contract): investability.py:282
+        # sets composite_verified=False on the R39 missing-composite fallback path
+        # (composite_score = 0.9-discounted score_b, a conservative estimate, not a
+        # fully dimension-adjusted composite). --top-picks (R111) already discloses
+        # this with an "估" marker; this power-user surface must do the same so the
+        # user can calibrate trust on the headline Top-investable score. Missing
+        # flag (old reports) is treated as verified (behavior preserved).
+        composite_verified = best.get("composite_verified")
+        estimate_marker = "估" if composite_verified is False else ""
         print(
-            f"  Top investable: {best.get('ticker', '?')} (composite={float(best.get('composite_score', 0.0)):+.3f}, T+30={t30_str}, 胜率={t30_wr_str}, {sample_str})"
+            f"  Top investable: {best.get('ticker', '?')} (composite={float(best.get('composite_score', 0.0)):+.3f}{estimate_marker}, T+30={t30_str}, 胜率={t30_wr_str}, {sample_str})"
         )
     print(f"  Completed in {elapsed:.1f}s")
 
