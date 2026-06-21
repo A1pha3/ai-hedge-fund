@@ -21,6 +21,7 @@ from src.agents.risk_manager_helpers import (
 from src.graph.state import AgentState, show_agent_reasoning
 from src.tools.api import get_prices, prices_to_df
 from src.utils.api_key import get_api_key_from_state
+from src.utils.numeric import is_finite_number
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_symbol
 
@@ -140,6 +141,17 @@ def calculate_volatility_adjusted_limit(annualized_volatility: float) -> float:
     - vol=0.50: 10% allocation (high-very high boundary)
     - vol>=1.0:  5% allocation (extreme volatility floor)
     """
+    # Guard against NaN (R78/R85/R117 latent-hardening precedent): a NaN
+    # annualized_volatility is neither <= the first anchor nor >= the last
+    # (both comparisons False), and ``vol_low <= NaN < vol_high`` is False for
+    # every anchor pair, so the interpolation loop would exit without assigning
+    # ``vol_multiplier`` → UnboundLocalError crash at the clamp below. Current
+    # callers guard NaN (calculate_volatility_metrics:126), but this is a PUBLIC
+    # function on the position-sizing path; a future caller passing NaN must
+    # degrade to the neutral baseline, not crash the risk pipeline.
+    if not is_finite_number(annualized_volatility):
+        return 0.20  # neutral baseline — neither max nor min allocation
+
     base_limit = 0.20  # 20% baseline
 
     # Anchor points: (vol_threshold, vol_multiplier)
@@ -182,6 +194,17 @@ def calculate_correlation_multiplier(avg_correlation: float) -> float:
     - Low correlation (0.2-0.4): slight increase (1.05x)
     - Very low correlation (< 0.2): increase (1.10x)
     """
+    # Guard against NaN/None (R78/R85/R117 latent-hardening precedent): NaN
+    # falls through every ``>=`` threshold (all False) and would return 1.10
+    # (the MOST PERMISSIVE multiplier — INCREASES the position limit). Unknown
+    # correlation is a risk signal — the safe default is conservative neutral
+    # (1.0), not permissive. None raises TypeError on ``>=``. Current callers
+    # guard NaN/None (_build_correlation_metrics:138-140 dropna + len check),
+    # but this is a PUBLIC function; a future caller passing NaN/None must get
+    # the risk-safe default, not a limit increase or crash.
+    if not is_finite_number(avg_correlation):
+        return 1.0  # conservative neutral — do not increase limit on unknown correlation
+
     if avg_correlation >= 0.80:
         return 0.70
     if avg_correlation >= 0.60:
