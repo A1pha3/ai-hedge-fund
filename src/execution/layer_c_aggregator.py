@@ -138,7 +138,14 @@ def convert_agent_signal_to_strategy_signal(agent_payload: dict) -> StrategySign
     if isinstance(reasoning, dict) and reasoning.get("error"):
         completeness = 0.0
     if confidence <= 0:
-        completeness = 0.0 if reasoning else min(completeness, 0.5)
+        # R149: a zero/negative-confidence signal carries no usable directional
+        # conviction — it contributes w·dir·(0/100)=0 regardless of reasoning.
+        # Excluding it from the normalization pool (completeness=0.0) prevents
+        # it from diluting live agents' normalized weights. Same-class as the
+        # C133 signal_consistency phantom-neutral fix (contributes-nothing but
+        # inflates denominator). Latent for the falsy-reasoning branch (real
+        # error-fallback agents emit conf=0 WITH truthy reasoning, already 0.0).
+        completeness = 0.0
 
     return StrategySignal(
         direction=direction,

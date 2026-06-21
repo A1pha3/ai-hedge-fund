@@ -139,6 +139,26 @@ def test_layer_c_agent_conversion():
     assert failed.completeness == 0.0
 
 
+def test_layer_c_zero_confidence_no_reasoning_excluded_from_normalization():
+    """R149: an agent with confidence=0 AND falsy reasoning carries no usable
+    directional conviction (it contributes w·dir·(0/100)=0). It must NOT stay in
+    the normalization pool (completeness>0) — keeping it dilutes live agents'
+    normalized weights. Same-class as the C133 signal_consistency phantom-neutral
+    fix (contributes-nothing but inflates denominator). Latent — no real agent
+    emits conf=0 + falsy reasoning (the 6 error-fallback agents emit conf=0 WITH
+    a truthy reasoning string → already completeness=0.0) — but the normalization
+    defect is real, so the guard is defensive-correct."""
+    # conf=0 + no reasoning key → must be completeness=0.0 (excluded)
+    sig = convert_agent_signal_to_strategy_signal({"signal": "bullish", "confidence": 0})
+    assert sig.completeness == 0.0
+    # conf=0 + empty-string reasoning → same (falsy reasoning)
+    sig_empty = convert_agent_signal_to_strategy_signal({"signal": "bullish", "confidence": 0, "reasoning": ""})
+    assert sig_empty.completeness == 0.0
+    # conf=0 + truthy error-reasoning → already 0.0 (unchanged by R149)
+    sig_err = convert_agent_signal_to_strategy_signal({"signal": "bullish", "confidence": 0, "reasoning": {"error": "fail"}})
+    assert sig_err.completeness == 0.0
+
+
 def test_layer_c_aggregation():
     fused = [_fused("000001", 0.60)]
     analyst_signals = {
