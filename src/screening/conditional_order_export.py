@@ -34,11 +34,19 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any, Sequence
 
 from src.screening.conditional_order_advisor import ConditionalOrderAdvice
+
+# R151: 降级 (数据不足) advice 被 advisor 自标为 "建议仅作参考, 请补充数据"
+# (confidence=0.0)。将降级 advice 作为真实券商条件单导出会与该标记矛盾, 且
+# 新上市 (<MIN_PRICE_SESSIONS 日) 标的用占位 ATR (current×0.005) 生成极紧止损
+# (≈1%), 正常波动下近必然触发; corrupted feed 则产生 0 价条件单。降级 advice
+# 仅在展示表 (带 "降级" 标签) 中可见, 不应进入券商导入。debug 级别避免噪音。
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -323,9 +331,20 @@ def export_conditional_orders(
             f"不支持的券商: {broker!r}, 支持: {', '.join(SUPPORTED_BROKERS)}"
         )
 
+    # R151: 过滤降级 (数据不足) advice — 不导出为真实券商条件单 (见模块 logger 注释)。
+    viable = [a for a in advices if not getattr(a, "degraded", False)]
+    skipped = len(advices) - len(viable)
+    if skipped > 0:
+        logger.warning(
+            "conditional_order_export: 跳过 %d 条降级 (数据不足) advice, "
+            "仅导出 %d 条有效条件单 (降级 advice 自标 '建议仅作参考', 不应进入券商导入)",
+            skipped,
+            len(viable),
+        )
+
     orders = [
         advice_to_broker_order(a, valid_days=valid_days, quantity=quantity, today=today)
-        for a in advices
+        for a in viable
     ]
 
     adapter = _ADAPTER_MAP[broker]
@@ -466,6 +485,8 @@ def run_export_conditional_orders_cli(
     today_str = date.today().strftime("%Y%m%d")
     output_path = f"{reports_dir}/conditional_orders_{broker}_{today_str}.{ext}"
 
+    # R151: 统计降级 advice 数 (export_from_dicts 内部会过滤); 让用户知晓跳过。
+    degraded_count = sum(1 for d in conditional_orders if isinstance(d, dict) and d.get("degraded"))
     content = export_from_dicts(conditional_orders, broker)
 
     # 5. 写入文件 (CSV 用 utf-8-sig 写入, JSON 用 utf-8)
@@ -474,10 +495,13 @@ def run_export_conditional_orders_cli(
         f.write(content)
 
     # 6. 输出预览
+    viable_count = len(conditional_orders) - degraded_count
     print(f"\n{Fore.CYAN}{Style.BRIGHT}{'=' * 60}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}{Style.BRIGHT}[P1-13] 条件单导出 · {broker.upper()}{Style.RESET_ALL}")
     print(f"  来源: {latest_file}")
-    print(f"  数量: {len(conditional_orders)} 条")
+    print(f"  数量: {viable_count} 条有效" + (
+        f" (跳过 {degraded_count} 条降级建议 — 数据不足, 不导出)" if degraded_count else ""
+    ))
     print(f"  输出: {output_path}")
     print(f"{Fore.CYAN}{Style.BRIGHT}{'=' * 60}{Style.RESET_ALL}\n")
 

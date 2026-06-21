@@ -385,3 +385,66 @@ def test_cli_smoke_invalid_broker() -> None:
     """CLI smoke: 无效 broker 不崩溃, 返回 2。"""
     rc = run_export_conditional_orders_cli(broker="invalid_broker")
     assert rc == 2
+
+
+# ===========================================================================
+# 12. R151 — 降级 (数据不足) advice 不导出为券商条件单
+# ===========================================================================
+
+
+def _make_degraded_advice(ticker: str = "300999", name: str = "新股") -> ConditionalOrderAdvice:
+    """构造一个降级 advice: 价格历史不足 MIN_PRICE_SESSIONS(5) → degraded=True。
+
+    current_price > 0, 但 ATR 用占位值 (current×0.005), 生成极紧的无意义止损。
+    """
+    advice = compute_conditional_advice(
+        ticker=ticker, name=name, current_price=50.0, price_history=[50.0, 49.5, 50.2],
+    )
+    assert advice.degraded is True  # n_sessions=3 < MIN_PRICE_SESSIONS=5
+    return advice
+
+
+def test_degraded_advice_excluded_from_export(fixed_today: date) -> None:
+    """R151: 降级 advice 不应进入券商导出 — advisor 自标 '建议仅作参考, 请补充数据'。
+
+    新上市 (<5 日) 标的降级 advice 用占位 ATR 生成 current×0.005×2 ≈ 1% 极紧止损,
+    正常波动下近必然触发; 将其作为真实券商条件单导出与 advisor 自身降级标记矛盾。
+    """
+    valid = _make_advice("000001", "平安银行", 100.0, 100.0)
+    degraded = _make_degraded_advice("300999", "新股")
+
+    csv_text = export_conditional_orders([valid, degraded], "huatai", today=fixed_today)
+
+    # 有效标的在, 降级标的被过滤
+    assert "000001" in csv_text
+    assert "300999" not in csv_text
+    reader = csv.reader(io.StringIO(csv_text.lstrip("﻿")))
+    rows = list(reader)
+    assert len(rows) == 2  # header + 1 valid data row
+
+
+def test_degraded_dict_excluded_from_export_from_dicts(fixed_today: date) -> None:
+    """R151: export_from_dicts (从报告读回的路径) 同样过滤降级 dict。"""
+    valid = _make_advice("000001", "平安银行", 100.0, 100.0)
+    degraded = _make_degraded_advice("300999", "新股")
+
+    dicts = [valid.to_dict(), degraded.to_dict()]
+    assert dicts[1]["degraded"] is True
+
+    csv_text = export_from_dicts(dicts, "huatai", today=fixed_today)
+
+    assert "000001" in csv_text
+    assert "300999" not in csv_text
+
+
+def test_all_degraded_exports_header_only(fixed_today: date) -> None:
+    """R151: 全部降级 → 仅 header (绝不导出垃圾/占位条件单), JSON → 空数组。"""
+    degraded = _make_degraded_advice("300999", "新股")
+
+    csv_text = export_conditional_orders([degraded], "huatai", today=fixed_today)
+    reader = csv.reader(io.StringIO(csv_text.lstrip("﻿")))
+    rows = list(reader)
+    assert len(rows) == 1  # header only
+
+    json_text = export_conditional_orders([degraded], "ths", today=fixed_today)
+    assert json.loads(json_text) == []
