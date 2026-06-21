@@ -158,10 +158,22 @@ def _build_runtime_confirmation_payload(
     first_window = intraday_bars.head(min(30, len(intraday_bars)))
     if first_window.empty:
         return None
-    open_price = float(first_window.iloc[0].get("open") or first_window.iloc[0].get("close") or 0.0)
+    # R156 same-class drain: ``float(x or y or 0.0)`` does NOT catch NaN — NaN
+    # is truthy and short-circuits the ``or`` chain, so a NaN open (valid close,
+    # passes _normalize's dropna(subset=['close'])) propagates to NaN open_price
+    # → NaN breakout_anchor / failed_breakout. Sibling vwap/amount lines already
+    # use fillna which catches NaN. Use a NaN-aware first-valid extraction.
+    _first_open = first_window.iloc[0].get("open")
+    _first_close = first_window.iloc[0].get("close")
+    open_price = (
+        float(_first_open) if pd.notna(_first_open) and _first_open
+        else float(_first_close) if pd.notna(_first_close) and _first_close
+        else 0.0
+    )
     next_open_return = _safe_float(row.get("next_open_return"))
     prev_close = open_price / (1.0 + next_open_return) if next_open_return is not None and open_price > 0.0 and abs(1.0 + next_open_return) > 1e-6 else 0.0
-    current_price = float(first_window.iloc[-1].get("close") or 0.0)
+    _last_close = first_window.iloc[-1].get("close")
+    current_price = float(_last_close) if pd.notna(_last_close) and _last_close else 0.0
     amount_sum = float(first_window["amount"].fillna(0.0).sum())
     estimated_amount_1d = _safe_float(row.get("estimated_amount_1d_wan_yuan"))
     avg_same_time_volume = max(amount_sum, 1.0)
