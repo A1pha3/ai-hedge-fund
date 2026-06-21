@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from src.utils.numeric import is_finite_number
+
 from .portfolio import Portfolio
 
 
@@ -16,7 +18,14 @@ def calculate_portfolio_value(portfolio: Portfolio, current_prices: Mapping[str,
     total_value += float(snapshot.get("margin_used", 0.0))
     positions = portfolio.get_positions()
     for ticker, pos in positions.items():
-        price = float(current_prices.get(ticker, 0.0))
+        # R154 family defense-in-depth (R78 precedent): NaN price must not
+        # propagate — a single NaN makes pos["long"]*NaN = NaN → total_value NaN
+        # → entire backtest NAV NaN (sharpe/sortino/drawdown all garbage). R156
+        # guards upstream load_current_prices, but this PUBLIC NAV-core is the
+        # last line of defense. Treat NaN/None/non-finite price as 0.0
+        # (position unvalued — conservative, cannot mark it).
+        raw_price = current_prices.get(ticker, 0.0)
+        price = float(raw_price) if is_finite_number(raw_price) else 0.0
         long_value = pos["long"] * price
         total_value += long_value
         if pos["short"] > 0:
@@ -33,7 +42,10 @@ def compute_exposures(portfolio: Portfolio, current_prices: Mapping[str, float])
     long_exposure = 0.0
     short_exposure = 0.0
     for ticker, pos in positions.items():
-        price = float(current_prices.get(ticker, 0.0))
+        # R154 family defense-in-depth (sibling of calculate_portfolio_value):
+        # NaN price must not propagate to exposures. Treat NaN/None as 0.0.
+        raw_price = current_prices.get(ticker, 0.0)
+        price = float(raw_price) if is_finite_number(raw_price) else 0.0
         long_exposure += pos["long"] * price
         short_exposure += pos["short"] * price
 
