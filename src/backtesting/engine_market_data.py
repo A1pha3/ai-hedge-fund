@@ -220,7 +220,20 @@ class MarketDataLoader:
                 if price_data.empty:
                     continue
                 row = price_data.iloc[-1]
-                turnovers[ticker] = float(row.get("close", 0.0)) * float(row.get("volume", 0.0))
+                # R83 same-class drain: guard NaN close/volume (partial feed /
+                # corrupt cache with volume>0 but NaN close) — NaN would make
+                # turnover NaN, poisoning the market-size classification in
+                # walk_forward. Preserve the historical missing-key → 0.0
+                # turnover semantics (only skip when the key is PRESENT but NaN).
+                close_v = row.get("close", 0.0)
+                vol_v = row.get("volume", 0.0)
+                if pd.notna(close_v) and pd.notna(vol_v):
+                    turnovers[ticker] = float(close_v) * float(vol_v)
+                else:
+                    logger.debug(
+                        "get_daily_turnovers: skip ticker=%s NaN close/volume (%s)",
+                        ticker, current_date_str,
+                    )
             except Exception as exc:
                 # BH-017 family (R50 same-family): per-ticker turnover fetch
                 # failure silently skips the ticker. Emit a debug log so a
@@ -256,7 +269,24 @@ class MarketDataLoader:
                         ticker, current_date_str,
                     )
                     continue
-                current_prices[ticker] = float(row["close"])
+                # R83 same-class drain: NaN close on the last row (partial /
+                # incomplete live feed where the most recent bar is not yet
+                # filled, or a corrupt cache row with volume>0 but close=NaN
+                # that passes the volume-only _is_suspended_row guard) must be
+                # skipped — NOT stored as NaN. float(nan) in current_prices
+                # propagates into calculate_portfolio_value, silently corrupting
+                # the entire backtest NAV (sharpe/sortino/drawdown all NaN). The
+                # df→Price converters (R83/R132-R137) already skip NaN rows, but
+                # this path reads the DataFrame via iloc[-1] directly, bypassing
+                # those guards — so the NaN-skip must be applied here too.
+                close_val = row["close"]
+                if not pd.notna(close_val):
+                    logger.debug(
+                        "load_current_prices: ticker=%s NaN close (%s), 跳过",
+                        ticker, current_date_str,
+                    )
+                    continue
+                current_prices[ticker] = float(close_val)
             except Exception:
                 logger.warning("load_current_prices: exception loading price for ticker=%s (%s ~ %s)", ticker, previous_date_str, current_date_str, exc_info=True)
                 continue
@@ -289,6 +319,17 @@ class MarketDataLoader:
                     if _is_suspended_row(row):
                         logger.debug(
                             "hydrate_position_prices: ticker=%s 停牌或零成交 (%s), 回退 cost_basis",
+                            ticker, current_date_str,
+                        )
+                    elif not pd.notna(row["close"]):
+                        # R83 same-class drain (sibling of load_current_prices):
+                        # NaN close on the last row (partial feed / corrupt cache
+                        # with volume>0) must NOT be stored — float(nan) in
+                        # hydrated_prices propagates into calculate_portfolio_value
+                        # and silently corrupts the entire backtest NAV. Fall back
+                        # to cost basis (same as suspended rows).
+                        logger.debug(
+                            "hydrate_position_prices: ticker=%s NaN close (%s), 回退 cost_basis",
                             ticker, current_date_str,
                         )
                     else:
