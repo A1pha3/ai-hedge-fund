@@ -30,7 +30,7 @@ from src.execution.merge_approved_breakout_uplift import (
 )
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.execution.signal_decay import apply_signal_decay
-from src.execution.t1_confirmation import confirm_buy_signal
+from src.execution.buy_signal_confirmation import confirm_buy_signal
 from src.portfolio.models import PositionPlan
 from src.screening.models import (
     CandidateStock,

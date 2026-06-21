@@ -4,7 +4,7 @@ from typing import Any
 
 import pandas as pd
 
-from src.execution.t1_confirmation import confirm_buy_signal
+from src.execution.buy_signal_confirmation import confirm_buy_signal
 from src.screening.strategy_scorer import build_intraday_short_trade_metrics
 from src.tools.akshare_api import get_intraday_bars
 

@@ -8,7 +8,7 @@ from src.execution.layer_c_aggregator import (
 )
 from src.execution.plan_generator import generate_execution_plan
 from src.execution.signal_decay import apply_signal_decay
-from src.execution.t1_confirmation import confirm_buy_signal
+from src.execution.buy_signal_confirmation import confirm_buy_signal
 
 __all__ = [
     "DailyPipeline",

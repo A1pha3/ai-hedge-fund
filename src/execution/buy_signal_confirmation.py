@@ -1,4 +1,11 @@
-"""T+1 确认执行器。
+"""买入信号盘中确认器 (buy-signal intraday confirmation)。
+
+R148: 此模块原名 ``t1_confirmation``，但其唯一函数 :func:`confirm_buy_signal`
+做的是**买入信号的盘中软/硬检查**（价格支撑 / 量能 / 行业强度 / 开盘缺口 / 突破），
+与 A 股 T+1 结算无关。真正的 T+1 卖出门控在
+``src/backtesting/trader_helpers.py:execute_sell_trade``（entry_date==trade_date
++ long>0 → block）+ ``src/backtesting/portfolio.py`` 的 holding-days 账本。
+旧名是维护陷阱（grep "t1" 会落到错文件、漏掉真正的 T+1 闸门），故改名。
 
 .. note::
     ``day_low`` 是收盘后才能确定的指标。在回测场景下这没有问题，但如果用于

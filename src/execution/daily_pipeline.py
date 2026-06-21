@@ -227,7 +227,7 @@ from src.execution.merge_approved_loader import load_merge_approved_tickers
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.execution.plan_generator import generate_execution_plan
 from src.execution.signal_decay import apply_signal_decay
-from src.execution.t1_confirmation import confirm_buy_signal
+from src.execution.buy_signal_confirmation import confirm_buy_signal
 from src.llm.defaults import get_default_model_config
 from src.portfolio.exit_manager import check_exit_signal
 from src.portfolio.models import HoldingState
