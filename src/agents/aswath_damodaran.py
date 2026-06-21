@@ -23,6 +23,7 @@ from src.tools.api import (
 )
 from src.utils.api_key import get_api_key_from_state
 from src.utils.llm import call_llm
+from src.utils.numeric import is_finite_number
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_context
 
@@ -438,7 +439,11 @@ def estimate_cost_of_equity(beta: float | None, ticker: str | None = None, debt_
     For A-share stocks, adds China country risk premium."""
     risk_free = 0.04  # 10-yr US Treasury proxy
     erp = 0.05  # long-run US equity risk premium
-    beta_u = beta if beta is not None else 1.0  # unlevered beta
+    # R154 same-class: guard NaN beta (regression-computed beta can be NaN on
+    # insufficient data / zero variance). ``min(cost, 0.30)`` at the return
+    # does NOT clamp NaN (Python min/max pass NaN through), silently violating
+    # the documented 30% cap. Default NaN/None beta → 1.0 (market beta).
+    beta_u = beta if is_finite_number(beta) else 1.0  # unlevered beta
 
     # Hamada equation: lever up beta with D/E
     # Negative D/E (negative shareholders' equity, common in distressed names) is

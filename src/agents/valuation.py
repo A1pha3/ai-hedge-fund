@@ -36,6 +36,7 @@ from src.tools.api import (
     search_line_items,
 )
 from src.utils.api_key import get_api_key_from_state
+from src.utils.numeric import is_finite_number
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_symbol
 
@@ -357,6 +358,12 @@ def calculate_residual_income_value(
 
 def calculate_wacc(market_cap: float, total_debt: float | None, cash: float | None, interest_coverage: float | None, debt_to_equity: float | None, beta_proxy: float = 1.0, risk_free_rate: float = 0.045, market_risk_premium: float = 0.06) -> float:
     """Calculate WACC using available financial data."""
+    # R154 same-class: guard NaN beta_proxy (regression beta can be NaN on
+    # insufficient data). ``min(max(wacc, 0.06), 0.20)`` at the return does NOT
+    # clamp NaN (Python min/max pass NaN through), silently violating the
+    # documented [6%, 20%] floor/cap. Default NaN beta_proxy → 1.0.
+    if not is_finite_number(beta_proxy):
+        beta_proxy = 1.0
 
     # Cost of Equity (CAPM)
     cost_of_equity = risk_free_rate + beta_proxy * market_risk_premium
