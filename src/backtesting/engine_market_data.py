@@ -253,6 +253,8 @@ class MarketDataLoader:
     # ------------------------------------------------------------------
 
     def load_current_prices(self, tickers: Sequence[str], previous_date_str: str, current_date_str: str) -> dict[str, float] | None:
+        if not tickers:
+            return {}
         current_prices: dict[str, float] = {}
         for ticker in tickers:
             try:

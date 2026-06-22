@@ -16,11 +16,12 @@ If a same-day decision card exists, the final reply must start with this exact o
 
 - Reuse the same conclusion already written in `BTST-YYYYMMDD.md` and `BTST-LLM-YYYYMMDD.md`.
 - Do not invent a new conservative/aggressive judgment in the final reply.
-- Keep the top summary compact. It should fit in 4-6 short bullets.
-- The `核心理由` section should name only the 1-2 strongest factors from:
-  - intersection advantage
-  - only early-runner pressure
-  - second-entry interference
+- Keep the non-file-location summary compact. Excluding `文件位置`, aim for roughly 4-6 short bullets total; `文件位置` may use its own short list.
+- The `核心理由` section should keep only the 1-2 strongest factors, but when a decision card exists it must include:
+  - 1 条 **统计质量理由**（样本 / 区间谨慎 / 胜率赔率质量 / 是否分化）
+  - 1 条 **市场或 gate 理由**（大盘 / 板块 / 赚钱效应 / market gate）
+- `intersection advantage` / `only early-runner pressure` / `second-entry interference` can be cited only when they are one of the strongest supported factors, not as automatic filler.
+- If one dimension lacks artifact support, say `artifacts not available` rather than inventing commentary.
 - The `文件位置` section should list the most useful outputs first:
   - decision card
   - BTST-YYYYMMDD.md
@@ -34,7 +35,8 @@ If a same-day decision card exists, the final reply must start with this exact o
 - 今天更偏 `conservative|aggressive`
 
 **核心理由**
-- 交集票 / only early-runner / second-entry 中最关键的 1-2 条
+- 统计质量：样本 / 区间谨慎 / 胜率赔率质量中的最关键 1 条
+- 市场 / 板块 / gate：最关键 1 条
 
 **文件位置**
 - 决策卡：...
@@ -45,6 +47,7 @@ If a same-day decision card exists, the final reply must start with this exact o
 **主线摘要**
 - 规则版主线一句话
 - 多智能体主线一句话
+- 若存在决策卡，这两句不得与顶部执行倾向冲突
 
 **方案 A 状态**
 - 当前是 `exact|stale_fallback|unavailable`
@@ -60,7 +63,8 @@ If there is no decision card, skip `今日执行倾向` and `核心理由`, then
 ### operator_summary.json awareness
 
 If `operator_summary.json` exists:
-- Check `summary_status` first. If `degraded` or `failed`, explain the reason before any trading advice.
+- Check `summary_status` first. If `degraded`, explain the reason before any trading advice.
+- If `failed`, stop normal deliverables and surface the blocker instead of continuing into trading advice.
 - Reference the `decision_id` for traceability.
 - Do NOT let the summary override canonical execution contracts or session_summary provenance.
 
@@ -74,6 +78,7 @@ If `operator_summary.json` exists:
 - Always state that profile comparison scope is `doc_bundle_rendering` and `effective_decision_diff` is `False`.
 - Do NOT claim any profile has been verified as strategically superior.
 - When writing `今日执行倾向`, if `dominant_reason_type=no_effective_profile_diff`, state that the choice defaults to conservative as risk baseline — not because it has been proven better.
+- `今日执行倾向` 一旦存在，最终回复必须与决策卡、规则版文档、多智能体文档保持同一句结论；不能在回复里换成另一套保守/激进判断。
 
 ### Incremental evidence
 

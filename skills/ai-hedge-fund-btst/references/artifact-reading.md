@@ -26,6 +26,32 @@ Load this file before drafting any BTST output.
 - If btst_full_report.py returns target day N/A on the newest usable date, recompute or verify the real next trading day before writing final documents.
 - If session_summary and a downstream artifact disagree, trust the downstream BTST artifact for candidate semantics and trust session_summary for file locations.
 
+## Alpha 统计提取
+
+必须从当前 run artifacts 提取或明确缺失：
+
+- `sample_size`：样本笔数 / 票数 / 事件数；没有就写 `artifacts not available`。
+- `interval_or_shrinkage_caution`：
+  - 优先读取 Wilson interval、置信区间或 artifacts 已给出的统计区间。
+  - 若无显式区间但有样本量与胜率，只能给“样本偏小，需收缩看待点估计”这类谨慎语。
+  - 若连样本量都拿不到，直接写 `统计区间 artifacts not available`。
+- `payoff_quality`：盈亏比、平均赚亏结构、期望值、回撤/尾部代价等现成字段。
+- `win_rate_vs_payoff_divergence`：明确判断“高胜率但赔率弱 / 胜率一般但赔率更厚 / 两者一致 / 无法判断”。
+
+禁止把单一胜率数字直接写成稳定 edge；必须同时交代样本与赔率质量。
+
+## Beta 执行提取
+
+从 `btst_premarket_execution_card_latest.json`、`btst_opening_watch_card_latest.json` 和同层 execution artifacts 中抽取：
+
+- `entry_trigger`：什么确认后才能执行。
+- `cancel_trigger`：什么情况下直接不做。
+- `downgrade_or_upgrade_rule`：何时从正式执行层降为观察，或从优先复审回到仅观察。
+- `time_window`：如 09:20-09:25 / 09:25-09:35 / 09:35-10:00 / 10:00 onward。
+- `cost_constraints`：追价、滑点、仓位、槽位、成交成本上限等 artifacts 已支持的约束。
+
+若某项 execution 语义拿不到，不要用泛化交易常识补位；直接写 `相关 execution artifacts not available`。
+
 ## Lane discipline
 
 Keep these layers separate unless the artifacts explicitly merge them:
@@ -39,14 +65,22 @@ Keep these layers separate unless the artifacts explicitly merge them:
 
 Do not flatten these layers into one trade list.
 
-## Market-context extraction
+## Gamma 环境提取
 
 Use current-run evidence only:
 
+- market gate / gate enforcement / report_mode
 - audit summary, selected count, rejected count, opportunity pool count
 - regime notes, breadth, position scale, or similar risk framing if present
-- catalyst or theme frontier when it directly explains sector concentration
-- whether the result is narrow, divergent, concentrated, or weak relative to the artifact set in front of you
+- sector / theme frontier, concentration, leader-follower structure
+- 赚钱效应、情绪、承接、强弱切换等 artifacts 已给出的语义
+- whether the result is narrow, divergent, concentrated, weak, or sentiment-supported relative to the artifact set in front of you
+
+If the current run cannot support market / sector / 赚钱效应 commentary, say one of:
+
+- `大盘环境 artifacts not available`
+- `板块 / 题材 context weak`
+- `赚钱效应 / 情绪 artifacts not available`
 
 Do not add generic market commentary that is not supported by the run artifacts.
 

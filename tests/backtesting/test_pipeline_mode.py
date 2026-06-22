@@ -936,6 +936,61 @@ def test_pipeline_mode_records_selection_artifacts_in_event_and_timing_logs(tmp_
     assert pipeline.post_market_calls[0][2] == {}
 
 
+def test_pipeline_mode_bootstraps_post_market_plan_when_active_tickers_start_empty(tmp_path, monkeypatch):
+    _patch_market_data(
+        monkeypatch,
+        {
+            "SPY": {
+                "2024-03-01": 100.0,
+                "2024-03-04": 101.0,
+            },
+        },
+    )
+    plan = ExecutionPlan(
+        date="20240301",
+        portfolio_snapshot={"cash": 100000.0, "positions": {}},
+        risk_metrics={"counts": {"watchlist_count": 1}},
+        watchlist=[
+            LayerCResult(
+                ticker="300750",
+                score_b=0.61,
+                score_c=0.44,
+                score_final=0.53,
+                quality_score=0.62,
+                decision="watch",
+            )
+        ],
+    )
+    pipeline = StubPipeline(post_market_plans=[plan], intraday_responses=[])
+    event_payloads: list[dict] = []
+
+    engine = BacktestEngine(
+        agent=lambda **kwargs: {"decisions": {}, "analyst_signals": {}},
+        tickers=[],
+        start_date="2024-03-01",
+        end_date="2024-03-01",
+        initial_capital=100000.0,
+        model_name="test-model",
+        model_provider="test-provider",
+        selected_analysts=None,
+        initial_margin_requirement=0.0,
+        backtest_mode="pipeline",
+        pipeline=pipeline,
+        checkpoint_path=str(tmp_path / "checkpoint.json"),
+        pipeline_event_recorder=event_payloads.append,
+        selection_artifact_writer=FileSelectionArtifactWriter(artifact_root=tmp_path / "selection_artifacts", run_id="bootstrap_test"),
+    )
+
+    engine.run_backtest()
+
+    assert len(pipeline.post_market_calls) == 1
+    assert pipeline.post_market_calls[0][0] == "20240301"
+    assert event_payloads
+    assert event_payloads[0]["trade_date"] == "20240301"
+    assert event_payloads[0]["active_tickers"] == []
+    assert (tmp_path / "selection_artifacts" / "2024-03-01" / "selection_snapshot.json").exists()
+
+
 def test_pipeline_checkpoint_persists_exit_reentry_cooldowns(tmp_path, monkeypatch):
     _patch_market_data(
         monkeypatch,
