@@ -1909,10 +1909,8 @@ def test_generate_btst_doc_bundle_renders_institutional_control_sections(tmp_pat
     assert quality_summary["required_sections_missing"] == []
     assert quality_summary["quality_warnings"] == ["market_gate_downgraded_raw_trade_allowed"]
     assert "## Alpha 样本稳健性与标签拆解" in llm_doc
-    assert "样本 `15`（正 `12` / 负 `3`）" in llm_doc
-    assert "Wilson 区间" in llm_doc
-    assert "收缩胜率" in llm_doc
-    assert "开盘均值 `2.04%`" in llm_doc
+    assert "| 股票 | 样本量 | 收缩胜率 | 盈亏比 | 分化标签 | 当前层级 |" in llm_doc
+    assert "| 300408 三环集团 | 15 | 76.47% | 3.79 | 一致偏强 | 正式执行层 |" in llm_doc
     assert "## Alpha 因子证据卡" in llm_doc
     assert "正向证据：`trend_acceleration_confirmed`" in llm_doc
     assert "## Gamma 市场门控与风险预算" in llm_doc
