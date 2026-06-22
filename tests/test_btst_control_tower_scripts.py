@@ -246,6 +246,8 @@ def test_build_btst_nightly_control_tower_payload_surfaces_default_merge_review(
                 "watchlist_tickers": ["300505", "300720"],
                 "priority_tickers": ["300505"],
                 "second_entry_tickers": ["300720"],
+                "theme_radar_top": ["AI Agent", "Chiplet"],
+                "industry_radar_top": ["Electronics", "Computer"],
             },
         },
         "default_merge_historical_counterfactual_summary": {
@@ -381,6 +383,12 @@ def test_build_btst_nightly_control_tower_payload_surfaces_default_merge_review(
     assert payload["candidate_pool_corridor_persistence_dossier_summary"]["verdict"] == "await_second_independent_selected_window"
     assert payload["candidate_pool_corridor_window_command_board_summary"]["verdict"] == "collect_one_more_selected_window"
     assert payload["candidate_pool_corridor_window_diagnostics_summary"]["visibility_gap_window"]["verdict"] == "recoverable_current_plan_visibility_gap"
+    assert payload["gamma_market_context"] == {
+        "market_gate": "normal_trade",
+        "gate_action": "tradable",
+        "primary_themes": ["AI Agent", "Chiplet"],
+        "primary_industries": ["Electronics", "Computer"],
+    }
 
 
 def test_build_btst_open_ready_delta_payload_surfaces_carryover_promotion_gate_changes(tmp_path: Path) -> None:

@@ -161,12 +161,14 @@ def build_nightly_control_tower_analysis(
     timestamp_factory: TimestampFactory,
 ) -> dict[str, Any]:
     priority_board = dict(latest_btst_snapshot.get("priority_board") or {})
+    gamma_market_context = _build_gamma_market_context(control_tower_snapshot, latest_btst_snapshot)
     return {
         "generated_at": timestamp_factory(),
         "reports_root": manifest.get("reports_root"),
         "latest_btst_run": manifest.get("latest_btst_run"),
         "refresh_status": build_nightly_refresh_status(manifest),
         "control_tower_snapshot": control_tower_snapshot,
+        "gamma_market_context": gamma_market_context,
         "early_runner_summary": dict(control_tower_snapshot.get("early_runner_summary") or {}),
         "merge_replay_validation_summary": dict(control_tower_snapshot.get("merge_replay_validation_summary") or {}),
         "prepared_breakout_relief_validation_summary": dict(control_tower_snapshot.get("prepared_breakout_relief_validation_summary") or {}),
@@ -194,3 +196,23 @@ def build_nightly_control_tower_analysis(
         "recommended_reading_order": recommended_reading_order,
         "source_paths": source_paths,
     }
+
+
+def _build_gamma_market_context(control_tower_snapshot: dict[str, Any], latest_btst_snapshot: dict[str, Any]) -> dict[str, Any]:
+    latest_daily_board = dict(dict(control_tower_snapshot.get("early_runner_summary") or {}).get("latest_daily_board") or {})
+    catalyst_theme_frontier_summary = dict(latest_btst_snapshot.get("catalyst_theme_frontier_summary") or {})
+    primary_themes = [str(value) for value in list(latest_daily_board.get("theme_radar_top") or []) if str(value).strip()]
+    primary_industries = [str(value) for value in list(latest_daily_board.get("industry_radar_top") or []) if str(value).strip()]
+    gamma_market_context = {
+        "market_gate": latest_daily_board.get("btst_regime_gate"),
+        "gate_action": latest_daily_board.get("gate_action"),
+        "primary_themes": primary_themes,
+        "primary_industries": primary_industries,
+    }
+    frontier_status = catalyst_theme_frontier_summary.get("status")
+    promoted_shadow_count = catalyst_theme_frontier_summary.get("recommended_promoted_shadow_count")
+    if frontier_status is not None:
+        gamma_market_context["frontier_status"] = frontier_status
+    if promoted_shadow_count is not None:
+        gamma_market_context["promoted_shadow_count"] = promoted_shadow_count
+    return gamma_market_context
