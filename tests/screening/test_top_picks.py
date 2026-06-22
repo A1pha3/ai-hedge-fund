@@ -675,3 +675,26 @@ def test_print_stability_block_renders_when_reports_exist(tmp_path, capsys):
     top_picks._print_stability_block(empty_dir)
     extra = capsys.readouterr().out
     assert extra == "", "不足 2 份报告时不得渲染稳定性行"
+
+
+def test_print_concentration_block_warns_when_concentrated(capsys):
+    """P-4: --top-picks footer shows ⚠ concentration warning when one industry dominates."""
+    from src.screening import top_picks
+
+    picks = [
+        {"ticker": "000001", "industry_sw": "电子"},
+        {"ticker": "000002", "industry_sw": "电子"},
+        {"ticker": "000003", "industry_sw": "电子"},
+        {"ticker": "000004", "industry_sw": "电子"},
+        {"ticker": "000005", "industry_sw": "银行"},
+    ]
+    top_picks._print_concentration_block(picks)
+    out = capsys.readouterr().out
+    assert "电子" in out
+    assert "⚠" in out
+
+    # diversified → no warning
+    diverse = [{"ticker": f"{i:06d}", "industry_sw": f"行业{i}"} for i in range(5)]
+    top_picks._print_concentration_block(diverse)
+    out2 = capsys.readouterr().out
+    assert "⚠" not in out2

@@ -1333,8 +1333,30 @@ def _print_top_picks_footer(
     _print_high_confidence_summary(representative_picks)
     _print_hit_rate_block(report_dir)
     _print_stability_block(report_dir)
+    _print_concentration_block(representative_picks)
     _print_decision_flow_hint()
     _print_disclaimer()
+
+
+def _print_concentration_block(picks: list[dict]) -> None:
+    """P-4: 组合级行业集中度 — Top 行业占比 + 超阈值 ⚠ 风险提示。
+
+    R145 给 per-pick 仓位, 但组合层级"你 40% 在科技"集中度视角此前缺失。
+    count-based (每只推荐 = 1 单位), 过滤未知行业, 纯展示不改门控。数据不足
+    (无合法 industry_sw) 时静默不渲染。
+    """
+    try:
+        from src.screening.portfolio_concentration import (
+            compute_industry_concentration,
+            render_concentration_line,
+        )
+
+        report = compute_industry_concentration(picks, threshold=0.3)
+    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+        return
+    line = render_concentration_line(report)
+    if line:
+        print(line)
 
 
 def _print_stability_block(report_dir: Path) -> None:
