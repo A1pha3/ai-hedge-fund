@@ -65,6 +65,10 @@ class ExpectedReturn:
     # 赔率). Pairs with the T+30 win rate so users can size position by tail
     # risk, not just win frequency. None when the bucket has no losing records.
     bucket_t30_avg_negative_return: float | None = None
+    # P-2: per-bucket sample std of realized T+30 returns (outcome dispersion /
+    # 离散度). Pairs with the T+30 mean edge so users can judge confidence in
+    # the point estimate. None when the bucket has < 2 matured T+30 records.
+    bucket_t30_std_return: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +80,11 @@ class ExpectedReturn:
             "bucket_t30_avg_negative_return": (
                 round(self.bucket_t30_avg_negative_return, 4)
                 if self.bucket_t30_avg_negative_return is not None
+                else None
+            ),
+            "bucket_t30_std_return": (
+                round(self.bucket_t30_std_return, 4)
+                if self.bucket_t30_std_return is not None
                 else None
             ),
             "expected_returns": {k: round(v, 4) if v is not None else None for k, v in self.expected_returns.items()},
@@ -170,6 +179,15 @@ def _build_bucket_t30_downside_map(calibration: CalibrationSummary) -> dict[str,
     return {bucket.label: bucket.t30_avg_negative_return for bucket in calibration.buckets}
 
 
+def _build_bucket_t30_std_map(calibration: CalibrationSummary) -> dict[str, float | None]:
+    """Build a mapping from bucket label → sample std of realized T+30 returns.
+
+    P-2: outcome dispersion (离散度) for the bucket — how widely individual T+30
+    outcomes vary around the mean. None when the bucket has < 2 matured T+30.
+    """
+    return {bucket.label: bucket.t30_std_return for bucket in calibration.buckets}
+
+
 def compute_expected_returns(
     *,
     recommendations: list[dict[str, Any]],
@@ -194,6 +212,7 @@ def compute_expected_returns(
     sample_map = _build_bucket_sample_map(calibration)
     mature_t30_map = _build_bucket_mature_t30_map(calibration)
     downside_t30_map = _build_bucket_t30_downside_map(calibration)
+    std_t30_map = _build_bucket_t30_std_map(calibration)
 
     trade_date = ""
     items: list[ExpectedReturn] = []
@@ -228,6 +247,7 @@ def compute_expected_returns(
                 win_rates=winrate_map.get(label, {h: None for h in HORIZONS}),
                 bucket_t30_mature_count=mature_t30_map.get(label, 0),
                 bucket_t30_avg_negative_return=downside_t30_map.get(label),
+                bucket_t30_std_return=std_t30_map.get(label),
             )
         )
 
@@ -332,8 +352,12 @@ def render_expected_returns_compact(report: ExpectedReturnReport) -> str:
         t20 = _fmt_return(er.get("t20"))
         t30 = _fmt_return(er.get("t30"))
         wr_str = _fmt_winrate(item.win_rates.get("t30"))
+        # P-2: show outcome dispersion (±std) next to T+30 edge so the user can
+        # calibrate confidence in the point estimate. +3.2%(±1.5%) vs +3.2%(±8%)
+        # are very different bets even with identical mean.
+        std_str = f" (±{item.bucket_t30_std_return:.1f}% 离散)" if item.bucket_t30_std_return is not None else ""
         lines.append(
-            f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}  T+30胜率={wr_str}"
+            f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}{std_str}  T+30胜率={wr_str}"
         )
 
     return "\n".join(lines)

@@ -414,3 +414,65 @@ def test_calibration_summary_has_extended_overall_stats():
     assert summary.overall_t10_win_rate == pytest.approx(0.5, abs=1e-3)
     assert summary.overall_t20_win_rate == pytest.approx(0.5, abs=1e-3)
     assert summary.overall_t30_win_rate == pytest.approx(0.5, abs=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# P-2: T+30 standard deviation (outcome dispersion → 预测置信区间)
+# ---------------------------------------------------------------------------
+
+
+class TestStdAndT30StdReturn:
+    """P-2: calibration must expose T+30 return standard deviation so the front
+    door can show outcome dispersion (±std), not just the point-estimate mean.
+
+    产品目标 "更高确信" 此前只给点估计 "+3.2%" — 用户无法判断该估计的离散度。
+    +3.2% (±1.5%, n=45) vs +3.2% (±8%, n=45) 是完全不同的置信度。"""
+
+    def test_std_or_none_sample_std(self) -> None:
+        from src.screening.confidence_calibration import _std_or_none
+        # sample std of [1,2,3,4,5] = sqrt(10/4) = sqrt(2.5) ≈ 1.5811
+        assert _std_or_none([1.0, 2.0, 3.0, 4.0, 5.0]) == pytest.approx(1.5811, abs=1e-3)
+
+    def test_std_or_none_empty(self) -> None:
+        from src.screening.confidence_calibration import _std_or_none
+        assert _std_or_none([]) is None
+
+    def test_std_or_none_single_is_none(self) -> None:
+        """sample std of 1 element is undefined (n-1=0 division) → None."""
+        from src.screening.confidence_calibration import _std_or_none
+        assert _std_or_none([5.0]) is None
+
+    def test_std_or_none_identical_is_zero(self) -> None:
+        from src.screening.confidence_calibration import _std_or_none
+        assert _std_or_none([3.0, 3.0, 3.0]) == 0.0
+
+    def test_bucket_has_t30_std_return(self) -> None:
+        """P-2: ScoreBucketStats must carry t30_std_return for the front door."""
+        records = [
+            _make_extended_record("000001", 0.85, t30=10.0),
+            _make_extended_record("000002", 0.82, t30=6.0),
+            _make_extended_record("000003", 0.81, t30=2.0),
+        ]
+        summary = compute_calibration(records)
+        high_bucket = next(b for b in summary.buckets if b.label == "高 (>0.8)")
+        assert high_bucket.t30_std_return is not None
+        # sample std of [10,6,2]: mean=6, var=((16+0+16)/2)=16, std=4.0
+        assert high_bucket.t30_std_return == pytest.approx(4.0, abs=1e-2)
+
+    def test_bucket_t30_std_none_when_no_t30_data(self) -> None:
+        from src.screening.confidence_calibration import compute_calibration
+        # records with no t30 return
+        records = [{"ticker": "000001", "score_b": 0.85, "recommended_date": "20260101"}]
+        summary = compute_calibration(records)
+        high_bucket = next(b for b in summary.buckets if b.label == "高 (>0.8)")
+        assert high_bucket.t30_std_return is None
+
+    def test_std_return_in_to_dict(self) -> None:
+        """t30_std_return must serialize for web/API consumers."""
+        records = [
+            _make_extended_record("000001", 0.85, t30=5.0),
+            _make_extended_record("000002", 0.82, t30=3.0),
+        ]
+        summary = compute_calibration(records)
+        d = summary.buckets[0].to_dict()
+        assert "t30_std_return" in d

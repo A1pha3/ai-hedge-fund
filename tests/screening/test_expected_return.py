@@ -421,3 +421,61 @@ class TestFmtWinrate:
 
         out = _fmt_winrate(0.30)
         assert "30%" in out
+
+
+# ---------------------------------------------------------------------------
+# P-2: T+30 std (outcome dispersion) propagation + render
+# ---------------------------------------------------------------------------
+
+
+class TestBucketT30StdPropagation:
+    """P-2: bucket_t30_std_return must propagate from calibration → ExpectedReturn."""
+
+    def test_expected_return_carries_t30_std(self, tmp_path):
+        """ExpectedReturn must expose bucket_t30_std_return from calibration."""
+        import json
+        from src.screening.expected_return import compute_expected_returns
+
+        # 3 records in "高 (>0.8)" with distinct T+30 returns → std is computable
+        records = [
+            {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.85, "next_30day_return": 10.0},
+            {"ticker": "000002", "recommended_date": "20260101", "recommendation_score": 0.82, "next_30day_return": 6.0},
+            {"ticker": "000003", "recommended_date": "20260101", "recommendation_score": 0.81, "next_30day_return": 2.0},
+        ]
+        (tmp_path / "tracking_history.json").write_text(json.dumps(records), encoding="utf-8")
+        recs = [{"ticker": "000001", "score_b": 0.85}]
+        report = compute_expected_returns(recommendations=recs, reports_dir=tmp_path)
+        item = report.items[0]
+        assert item.bucket_t30_std_return is not None
+        # sample std of [10,6,2] = 4.0
+        assert abs(item.bucket_t30_std_return - 4.0) < 0.01
+
+    def test_expected_return_std_none_when_insufficient(self, tmp_path):
+        """<2 matured T+30 records → std None (honest, not a fake 0)."""
+        import json
+        from src.screening.expected_return import compute_expected_returns
+
+        records = [
+            {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.85, "next_30day_return": 5.0},
+        ]
+        (tmp_path / "tracking_history.json").write_text(json.dumps(records), encoding="utf-8")
+        recs = [{"ticker": "000001", "score_b": 0.85}]
+        report = compute_expected_returns(recommendations=recs, reports_dir=tmp_path)
+        assert report.items[0].bucket_t30_std_return is None
+
+    def test_compact_render_shows_dispersion(self, tmp_path):
+        """P-2: compact render must show ±std 离散 next to T+30 edge."""
+        import json
+        from src.screening.expected_return import compute_expected_returns, render_expected_returns_compact
+
+        records = [
+            {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.85, "next_30day_return": 10.0},
+            {"ticker": "000002", "recommended_date": "20260101", "recommendation_score": 0.82, "next_30day_return": 6.0},
+            {"ticker": "000003", "recommended_date": "20260101", "recommendation_score": 0.81, "next_30day_return": 2.0},
+        ]
+        (tmp_path / "tracking_history.json").write_text(json.dumps(records), encoding="utf-8")
+        recs = [{"ticker": "000001", "score_b": 0.85}]
+        report = compute_expected_returns(recommendations=recs, reports_dir=tmp_path)
+        out = render_expected_returns_compact(report)
+        assert "离散" in out
+        assert "±" in out

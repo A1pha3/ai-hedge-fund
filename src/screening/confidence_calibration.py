@@ -69,6 +69,10 @@ class ScoreBucketStats:
     t30_avg_return: float | None = None
     # O-4: mean of realized LOSING T+30 returns (赔率 / typical-downside).
     t30_avg_negative_return: float | None = None
+    # P-2: sample standard deviation of realized T+30 returns (outcome dispersion).
+    # 服务产品目标 "更高确信": 点估计 "+3.2%" 此前无离散度; ±std 让用户校准对点估计的
+    # 信任 (±1.5% vs ±8% 是完全不同的置信度, 即使 mean 相同)。None when <2 matured T+30。
+    t30_std_return: float | None = None
     # Matured-sample counts per horizon (records that actually have a realized
     # return at that horizon). ``sample_count`` counts every record in the
     # bucket regardless of return maturity, so displaying it next to a
@@ -100,6 +104,7 @@ class ScoreBucketStats:
             "t20_avg_return": self.t20_avg_return,
             "t30_avg_return": self.t30_avg_return,
             "t30_avg_negative_return": self.t30_avg_negative_return,
+            "t30_std_return": self.t30_std_return,
             "t1_sample_count": self.t1_sample_count,
             "t3_sample_count": self.t3_sample_count,
             "t5_sample_count": self.t5_sample_count,
@@ -204,6 +209,21 @@ def _mean_negative_or_none(valid_returns: list[float]) -> float | None:
     return (sum(losers) / len(losers)) if losers else None
 
 
+def _std_or_none(valid_returns: list[float]) -> float | None:
+    """Sample standard deviation of realized returns; None when < 2 samples.
+
+    P-2: outcome dispersion for the front-door confidence display. 服务产品目标
+    "更高确信" — a point-estimate mean (+3.2%) is meaningless without dispersion;
+    +3.2% (±1.5%) vs +3.2% (±8%) imply very different confidence in the estimate.
+    Uses sample std (n-1 denominator) so small buckets stay conservative."""
+    n = len(valid_returns)
+    if n < 2:
+        return None
+    mean = sum(valid_returns) / n
+    variance = sum((x - mean) ** 2 for x in valid_returns) / (n - 1)
+    return variance ** 0.5
+
+
 # ---------------------------------------------------------------------------
 # Calibration logic
 # ---------------------------------------------------------------------------
@@ -305,6 +325,7 @@ def compute_calibration(
             t20_avg_return=_mean_or_none(t20_valid),
             t30_avg_return=_mean_or_none(t30_valid),
             t30_avg_negative_return=_mean_negative_or_none(t30_valid),
+            t30_std_return=_std_or_none(t30_valid),
             t1_sample_count=len(t1_valid),
             t3_sample_count=len(t3_valid),
             t5_sample_count=len(t5_valid),
