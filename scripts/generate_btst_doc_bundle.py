@@ -874,20 +874,19 @@ def _render_action_matrix_sections(
     if not rows:
         lines.append(f"- 当前没有{action_item_label}票。")
         return lines
+    lines.extend(
+        [
+            "| 股票 | 场景 | 动作 |",
+            "| --- | --- | --- |",
+        ]
+    )
     for row in rows[:limit]:
-        lines.extend(
-            [
-                f"### {_enriched_stock_label(row)}",
-                "",
-                "| 场景 | 动作 |",
-                "| --- | --- |",
-            ]
-        )
+        stock_label = _markdown_table_cell(_enriched_stock_label(row))
         for item in list(row.get("action_matrix") or []):
             scenario = _markdown_table_cell(item.get("scenario"))
             action = _markdown_table_cell(item.get("action"))
-            lines.append(f"| {scenario} | {action} |")
-        lines.append("")
+            lines.append(f"| {stock_label} | {scenario} | {action} |")
+    lines.append("")
     return lines
 
 
