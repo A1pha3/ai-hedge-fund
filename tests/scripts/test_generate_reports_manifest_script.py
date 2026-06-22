@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import scripts.generate_reports_manifest as manifest_script
@@ -24,7 +25,7 @@ from scripts.generate_reports_manifest_candidate_entry_shadow_helpers import (
     build_candidate_entry_shadow_paths,
     refresh_candidate_entry_shadow_prerequisites,
 )
-from src.screening.models import StrategySignal
+from src.screening.models import MarketState, StrategySignal
 from src.targets.router import build_selection_targets
 
 
@@ -43,9 +44,20 @@ def _make_signal(direction: int, confidence: float, completeness: float = 1.0, s
 
 
 def _build_entry(ticker: str, *, weak_structure: bool) -> dict:
+    market_state = MarketState(
+        breadth_ratio=0.39,
+        daily_return=0.002,
+        position_scale=0.62,
+        adjusted_weights={"trend": 0.28, "mean_reversion": 0.22, "fundamental": 0.30, "event_sentiment": 0.20},
+    ).model_dump(mode="json")
+    ts_code = f"{ticker}.SH" if ticker.startswith(("600", "601", "603", "688")) else f"{ticker}.SZ"
     if weak_structure:
         return {
             "ticker": ticker,
+            "ts_code": ts_code,
+            "name": f"测试{ticker}",
+            "list_date": "20200101",
+            "market": "SZ",
             "score_b": 0.3829,
             "score_c": -0.1194,
             "score_final": 0.1568,
@@ -78,9 +90,14 @@ def _build_entry(ticker: str, *, weak_structure: bool) -> dict:
                 "mean_reversion": _make_signal(0, 0.0),
             },
             "agent_contribution_summary": {"cohort_contributions": {"analyst": -0.0646, "investor": -0.0548}},
+            "market_state": market_state,
         }
     return {
         "ticker": ticker,
+        "ts_code": ts_code,
+        "name": f"测试{ticker}",
+        "list_date": "20200101",
+        "market": "SZ",
         "score_b": 0.4199,
         "score_c": -0.0961,
         "score_final": 0.1877,
@@ -113,10 +130,17 @@ def _build_entry(ticker: str, *, weak_structure: bool) -> dict:
             "mean_reversion": _make_signal(0, 0.0),
         },
         "agent_contribution_summary": {"cohort_contributions": {"analyst": -0.0305, "investor": -0.0656}},
+        "market_state": market_state,
     }
 
 
 def _write_replay_input(report_dir: Path, *, trade_date: str, entries: list[dict]) -> None:
+    market_state_payload = {
+        "breadth_ratio": 0.39,
+        "daily_return": 0.002,
+        "position_scale": 0.62,
+        "adjusted_weights": {"trend": 0.28, "mean_reversion": 0.22, "fundamental": 0.30, "event_sentiment": 0.20},
+    }
     selection_targets, summary = build_selection_targets(
         trade_date=trade_date.replace("-", ""),
         watchlist=[],
@@ -132,6 +156,7 @@ def _write_replay_input(report_dir: Path, *, trade_date: str, entries: list[dict
         "market": "CN",
         "target_mode": "dual_target",
         "pipeline_config_snapshot": {},
+        "market_state": market_state_payload,
         "source_summary": {
             "watchlist_count": 0,
             "rejected_entry_count": len(entries),
@@ -155,6 +180,28 @@ def _write_replay_input(report_dir: Path, *, trade_date: str, entries: list[dict
     target_dir.mkdir(parents=True, exist_ok=True)
     (target_dir / "selection_target_replay_input.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     _write_json(report_dir / "session_summary.json", {"plan_generation": {"selection_target": "dual_target"}})
+    snapshots_root = report_dir.parent.parent / "snapshots"
+    compact_trade_date = trade_date.replace("-", "")
+    previous_trade_date = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    two_days_back_trade_date = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
+    for entry in entries:
+        ticker = str(entry.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        prices_path = snapshots_root / ticker / compact_trade_date / "prices.json"
+        prices_path.parent.mkdir(parents=True, exist_ok=True)
+        prices_path.write_text(
+            json.dumps(
+                [
+                    {"time": trade_date, "close": 10.0, "volume": 100000.0},
+                    {"time": previous_trade_date, "close": 9.9, "volume": 98000.0},
+                    {"time": two_days_back_trade_date, "close": 9.8, "volume": 95000.0},
+                ],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
 
 def test_generate_reports_manifest_includes_default_merge_review_summary(tmp_path: Path) -> None:
@@ -1207,6 +1254,10 @@ def _write_tradeable_opportunity_artifacts(reports_root: Path) -> None:
             {
                 "trade_date": "2026-03-25",
                 "ticker": "300502",
+                "ts_code": "300502.SZ",
+                "name": "测试300502",
+                "market": "SZ",
+                "list_date": "20200101",
                 "industry": "Chip",
                 "first_kill_switch": "no_candidate_entry",
                 "strict_btst_goal_case": False,
@@ -1249,6 +1300,34 @@ def _write_tradeable_opportunity_artifacts(reports_root: Path) -> None:
     snapshots_root = reports_root.parent / "snapshots"
     snapshots_root.mkdir(parents=True, exist_ok=True)
     _write_json(snapshots_root / "candidate_pool_20260325_top300.json", [{"ticker": "300394"}])
+    prices_root = snapshots_root / "300502" / "20260326"
+    prices_root.mkdir(parents=True, exist_ok=True)
+    (prices_root / "prices.json").write_text(
+        json.dumps(
+            [
+                {"time": "2026-03-25", "close": 10.0, "volume": 100000.0},
+                {"time": "2026-03-24", "close": 9.9, "volume": 98000.0},
+                {"time": "2026-03-23", "close": 9.8, "volume": 95000.0},
+            ],
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    cutoff_prices_root = snapshots_root / "300394" / "20260326"
+    cutoff_prices_root.mkdir(parents=True, exist_ok=True)
+    (cutoff_prices_root / "prices.json").write_text(
+        json.dumps(
+            [
+                {"time": "2026-03-25", "close": 10.1, "volume": 100000.0},
+                {"time": "2026-03-24", "close": 10.0, "volume": 98000.0},
+                {"time": "2026-03-23", "close": 9.9, "volume": 95000.0},
+            ],
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_generate_reports_manifest_picks_latest_btst_followup_and_curated_entries(tmp_path: Path) -> None:

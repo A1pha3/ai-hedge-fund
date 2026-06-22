@@ -560,6 +560,88 @@ def _build_tradeable_pool_stock_basic_fallback(rows: list[dict[str, Any]]) -> tu
     return pd.DataFrame(fallback_rows), fallback_by_symbol
 
 
+def _build_replay_input_selection_artifact_path(reports_root: Path, *, report_dir_name: str, trade_date: str) -> Path:
+    compact_trade_date = _compact_trade_date(trade_date)
+    if len(compact_trade_date) != 8:
+        return Path()
+    formatted_trade_date = f"{compact_trade_date[:4]}-{compact_trade_date[4:6]}-{compact_trade_date[6:8]}"
+    return (reports_root / report_dir_name / "selection_artifacts" / formatted_trade_date / "selection_target_replay_input.json").expanduser().resolve()
+
+
+def _iter_replay_input_selection_artifact_paths(reports_root: Path, *, report_dir_name: str, trade_date: str) -> list[Path]:
+    exact_path = _build_replay_input_selection_artifact_path(
+        reports_root,
+        report_dir_name=report_dir_name,
+        trade_date=trade_date,
+    )
+    report_dir = (reports_root / report_dir_name).expanduser().resolve()
+    selection_root = report_dir / "selection_artifacts"
+    candidate_paths: list[Path] = []
+    if exact_path.exists():
+        candidate_paths.append(exact_path)
+    if selection_root.exists():
+        fallback_paths = sorted(selection_root.glob("*/selection_target_replay_input.json"), reverse=True)
+        for path in fallback_paths:
+            resolved = path.expanduser().resolve()
+            if resolved not in candidate_paths:
+                candidate_paths.append(resolved)
+    return candidate_paths
+
+
+def _backfill_tradeable_pool_rows_from_replay_inputs(rows: list[dict[str, Any]], *, reports_root: Path) -> list[dict[str, Any]]:
+    replay_cache: dict[Path, dict[str, Any]] = {}
+    enriched_rows: list[dict[str, Any]] = []
+    candidate_sections = (
+        "rejected_entries",
+        "watchlist",
+        "supplemental_short_trade_entries",
+        "upstream_shadow_observation_entries",
+    )
+
+    for raw_row in rows:
+        row = dict(raw_row)
+        if str(row.get("ts_code") or "").strip():
+            enriched_rows.append(row)
+            continue
+
+        report_dir_name = str(row.get("report_dir") or "").strip()
+        trade_date = str(row.get("trade_date") or "").strip()
+        ticker = str(row.get("ticker") or "").strip()
+        if not report_dir_name or not trade_date or not ticker:
+            enriched_rows.append(row)
+            continue
+
+        matched_entry: dict[str, Any] | None = None
+        for replay_path in _iter_replay_input_selection_artifact_paths(
+            reports_root,
+            report_dir_name=report_dir_name,
+            trade_date=trade_date,
+        ):
+            replay_payload = replay_cache.get(replay_path)
+            if replay_payload is None:
+                replay_payload = _safe_load_json(replay_path)
+                replay_cache[replay_path] = replay_payload
+            for section in candidate_sections:
+                for entry in list(replay_payload.get(section) or []):
+                    if str(entry.get("ticker") or "").strip() == ticker:
+                        matched_entry = dict(entry)
+                        break
+                if matched_entry is not None:
+                    break
+            if matched_entry is not None:
+                break
+
+        if matched_entry is not None:
+            for key in ("ts_code", "name", "market", "list_date", "market_state"):
+                if row.get(key) in (None, "", {}, []):
+                    value = matched_entry.get(key)
+                    if value not in (None, "", {}, []):
+                        row[key] = value
+        enriched_rows.append(row)
+
+    return enriched_rows
+
+
 def _build_frontier_window(rows: list[dict[str, Any]], *, center_rank: int | None, neighbor_count: int = DEFAULT_FRONTIER_NEIGHBOR_COUNT) -> list[dict[str, Any]]:
     if not rows or center_rank is None:
         return []
@@ -2071,6 +2153,17 @@ def _evaluate_ticker_stage(
     local_prices_snapshot_path = stage_resolution["local_prices_snapshot_path"]
     failed_filters = list(stage_resolution["failed_filters"])
 
+    if cutoff_avg_amount_20d is None and snapshot_cutoff_ticker:
+        cutoff_local_avg_amount_20d, _ = _estimate_avg_amount_20d_from_local_prices(
+            snapshots_root,
+            str(snapshot_cutoff_ticker),
+            compact_trade_date,
+        )
+        if cutoff_local_avg_amount_20d is not None:
+            cutoff_avg_amount_20d = cutoff_local_avg_amount_20d
+    if pre_truncation_cutoff_avg_amount_share_of_min_gate is None:
+        pre_truncation_cutoff_avg_amount_share_of_min_gate = _avg_amount_share_of_min_gate(cutoff_avg_amount_20d)
+
     if avg_amount_share_of_min_gate is None:
         avg_amount_share_of_min_gate = _avg_amount_share_of_min_gate(avg_amount_20d)
     if pre_truncation_avg_amount_gap_to_cutoff is None and cutoff_avg_amount_20d is not None and avg_amount_20d is not None:
@@ -2717,6 +2810,10 @@ def _build_priority_ticker_dossiers(
         for row in list(tradeable_pool.get("rows") or [])
         if str(row.get("first_kill_switch") or "") == "no_candidate_entry"
     ]
+    no_candidate_rows = _backfill_tradeable_pool_rows_from_replay_inputs(
+        no_candidate_rows,
+        reports_root=report_manifest_path.parent,
+    )
     no_candidate_rows.extend(
         _build_latest_shadow_visible_rows(
             focus_tickers,

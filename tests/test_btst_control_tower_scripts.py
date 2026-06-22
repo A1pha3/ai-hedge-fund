@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from datetime import datetime, timedelta
 
 from scripts.analyze_btst_governance_synthesis import analyze_btst_governance_synthesis
 from scripts.analyze_btst_replay_cohort import analyze_btst_replay_cohort
@@ -20,7 +21,7 @@ from scripts.run_btst_nightly_control_tower import (
 from scripts.validate_btst_governance_consistency import (
     validate_btst_governance_consistency,
 )
-from src.screening.models import StrategySignal
+from src.screening.models import MarketState, StrategySignal
 from src.targets.router import build_selection_targets
 
 
@@ -39,9 +40,20 @@ def _make_signal(direction: int, confidence: float, completeness: float = 1.0, s
 
 
 def _build_entry(ticker: str, *, weak_structure: bool) -> dict:
+    market_state = MarketState(
+        breadth_ratio=0.39,
+        daily_return=0.002,
+        position_scale=0.62,
+        adjusted_weights={"trend": 0.28, "mean_reversion": 0.22, "fundamental": 0.30, "event_sentiment": 0.20},
+    ).model_dump(mode="json")
+    ts_code = f"{ticker}.SH" if ticker.startswith(("600", "601", "603", "688")) else f"{ticker}.SZ"
     if weak_structure:
         return {
             "ticker": ticker,
+            "ts_code": ts_code,
+            "name": f"测试{ticker}",
+            "list_date": "20200101",
+            "market": "SZ",
             "score_b": 0.3829,
             "score_c": -0.1194,
             "score_final": 0.1568,
@@ -74,9 +86,14 @@ def _build_entry(ticker: str, *, weak_structure: bool) -> dict:
                 "mean_reversion": _make_signal(0, 0.0),
             },
             "agent_contribution_summary": {"cohort_contributions": {"analyst": -0.0646, "investor": -0.0548}},
+            "market_state": market_state,
         }
     return {
         "ticker": ticker,
+        "ts_code": ts_code,
+        "name": f"测试{ticker}",
+        "list_date": "20200101",
+        "market": "SZ",
         "score_b": 0.4199,
         "score_c": -0.0961,
         "score_final": 0.1877,
@@ -109,10 +126,17 @@ def _build_entry(ticker: str, *, weak_structure: bool) -> dict:
             "mean_reversion": _make_signal(0, 0.0),
         },
         "agent_contribution_summary": {"cohort_contributions": {"analyst": -0.0305, "investor": -0.0656}},
+        "market_state": market_state,
     }
 
 
 def _write_replay_input(report_dir: Path, *, trade_date: str, entries: list[dict]) -> None:
+    market_state_payload = {
+        "breadth_ratio": 0.39,
+        "daily_return": 0.002,
+        "position_scale": 0.62,
+        "adjusted_weights": {"trend": 0.28, "mean_reversion": 0.22, "fundamental": 0.30, "event_sentiment": 0.20},
+    }
     selection_targets, summary = build_selection_targets(
         trade_date=trade_date.replace("-", ""),
         watchlist=[],
@@ -128,6 +152,7 @@ def _write_replay_input(report_dir: Path, *, trade_date: str, entries: list[dict
         "market": "CN",
         "target_mode": "dual_target",
         "pipeline_config_snapshot": {},
+        "market_state": market_state_payload,
         "source_summary": {
             "watchlist_count": 0,
             "rejected_entry_count": len(entries),
@@ -151,6 +176,28 @@ def _write_replay_input(report_dir: Path, *, trade_date: str, entries: list[dict
     target_dir.mkdir(parents=True, exist_ok=True)
     (target_dir / "selection_target_replay_input.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     _write_json(report_dir / "session_summary.json", {"plan_generation": {"selection_target": "dual_target"}})
+    snapshots_root = report_dir.parent.parent / "snapshots"
+    compact_trade_date = trade_date.replace("-", "")
+    previous_trade_date = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    two_days_back_trade_date = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
+    for entry in entries:
+        ticker = str(entry.get("ticker") or "").strip()
+        if not ticker:
+            continue
+        prices_path = snapshots_root / ticker / compact_trade_date / "prices.json"
+        prices_path.parent.mkdir(parents=True, exist_ok=True)
+        prices_path.write_text(
+            json.dumps(
+                [
+                    {"time": trade_date, "close": 10.0, "volume": 100000.0},
+                    {"time": previous_trade_date, "close": 9.9, "volume": 98000.0},
+                    {"time": two_days_back_trade_date, "close": 9.8, "volume": 95000.0},
+                ],
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
 
 def test_build_btst_nightly_control_tower_payload_surfaces_default_merge_review() -> None:
