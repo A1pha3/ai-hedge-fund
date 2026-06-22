@@ -39,6 +39,8 @@ def test_render_action_matrix_sections_escapes_markdown_table_cells() -> None:
 
     rendered = "\n".join(lines)
 
+    assert "| 股票 | 场景 | 动作 |" in rendered
+    assert "| 300054 鼎龙股份 | 强势\\|确认 | 先等确认<br>再执行 |" in rendered
     assert "强势\\|确认" in rendered
     assert "先等确认<br>再执行" in rendered
 
@@ -60,6 +62,7 @@ def test_render_action_matrix_sections_confirmation_review_only_uses_confirmatio
 
     assert "## 确认复核动作矩阵" in rendered
     assert "## 正式执行动作矩阵" not in rendered
+    assert "| 股票 | 场景 | 动作 |" in rendered
 
 
 def test_build_semantic_conflicts_checks_allowed_sections_in_confirmation_review_mode() -> None:
@@ -385,9 +388,10 @@ def test_generate_btst_doc_bundle_writes_early_runner_sections(tmp_path: Path) -
     assert "09:20-09:25" in checklist_doc
     assert "## 当前策略阈值基线" in checklist_doc
     assert "## 确认复核动作矩阵" in checklist_doc
-    assert "### 300054 鼎龙股份" in checklist_doc
-    assert "| 开盘强且延续确认 | 等待盘中延续确认后再执行，不做开盘无确认追价。 |" in checklist_doc
-    assert "| 触发失效条件 | 若开盘后无法形成延续确认，或快速冲高回落，则取消正式执行。 |" in checklist_doc
+    assert "### 300054 鼎龙股份" not in checklist_doc
+    assert "| 股票 | 场景 | 动作 |" in checklist_doc
+    assert "| 300054 鼎龙股份 | 开盘强且延续确认 | 等待盘中延续确认后再执行，不做开盘无确认追价。 |" in checklist_doc
+    assert "| 300054 鼎龙股份 | 触发失效条件 | 若开盘后无法形成延续确认，或快速冲高回落，则取消正式执行。 |" in checklist_doc
     assert "## Governed Rollout 观察" in checklist_doc
     assert "execution_eligible_delta" in checklist_doc
     assert "## 交集优先复审" in checklist_doc
@@ -1909,10 +1913,8 @@ def test_generate_btst_doc_bundle_renders_institutional_control_sections(tmp_pat
     assert quality_summary["required_sections_missing"] == []
     assert quality_summary["quality_warnings"] == ["market_gate_downgraded_raw_trade_allowed"]
     assert "## Alpha 样本稳健性与标签拆解" in llm_doc
-    assert "样本 `15`（正 `12` / 负 `3`）" in llm_doc
-    assert "Wilson 区间" in llm_doc
-    assert "收缩胜率" in llm_doc
-    assert "开盘均值 `2.04%`" in llm_doc
+    assert "| 股票 | 样本量 | 收缩胜率 | 盈亏比 | 分化标签 | 当前层级 |" in llm_doc
+    assert "| 300408 三环集团 | 15 | 76.47% | 3.79 | 一致偏强 | 正式执行层 |" in llm_doc
     assert "## Alpha 因子证据卡" in llm_doc
     assert "正向证据：`trend_acceleration_confirmed`" in llm_doc
     assert "## Gamma 市场门控与风险预算" in llm_doc

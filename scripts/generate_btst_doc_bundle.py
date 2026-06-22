@@ -619,23 +619,40 @@ def _render_alpha_reliability_lines(rows: list[dict[str, Any]]) -> list[str]:
     if not rows:
         lines.append("- 当前没有正式执行票，无法形成样本稳健性卡片。")
         return lines
+    lines.extend(
+        [
+            "| 股票 | 样本量 | 收缩胜率 | 盈亏比 | 分化标签 | 当前层级 |",
+            "| --- | ---: | ---: | ---: | --- | --- |",
+        ]
+    )
     for row in rows[:5]:
         reliability = build_historical_reliability_metrics(row)
-        positive_count = reliability.get("positive_count")
-        negative_count = reliability.get("negative_count")
         evaluable_count = reliability.get("evaluable_count") or reliability.get("sample_count")
-        count_text = f"样本 `{evaluable_count}`（正 `{positive_count}` / 负 `{negative_count}`）" if evaluable_count is not None else "样本 `n/a`"
-        wilson_low = reliability.get("win_rate_wilson_low")
-        wilson_high = reliability.get("win_rate_wilson_high")
-        wilson_text = f"{_fmt_pct(wilson_low)}~{_fmt_pct(wilson_high)}" if wilson_low is not None and wilson_high is not None else "n/a"
+        payoff_ratio = _row_historical_metric(row, "next_close_payoff_ratio")
+        raw_win_rate = reliability.get("raw_win_rate")
+        payoff_value = None
+        win_rate_value = None
+        try:
+            payoff_value = None if payoff_ratio in (None, "") else float(payoff_ratio)
+        except (TypeError, ValueError):
+            payoff_value = None
+        try:
+            win_rate_value = None if raw_win_rate in (None, "") else float(raw_win_rate)
+        except (TypeError, ValueError):
+            win_rate_value = None
+        if payoff_value is not None and win_rate_value is not None and payoff_value >= 1.0 and win_rate_value >= 0.6:
+            divergence_label = "一致偏强"
+        elif payoff_value is not None and payoff_value < 1.0 and win_rate_value is not None and win_rate_value >= 0.6:
+            divergence_label = "胜率强但赔率弱"
+        elif payoff_value is not None and payoff_value >= 1.5 and win_rate_value is not None and win_rate_value < 0.5:
+            divergence_label = "赔率强但胜率弱"
+        else:
+            divergence_label = "中性待确认"
+        lane_label = "正式执行层" if str(row.get("role") or "") == "formal_selected" else "正式观察层"
+        sample_text = "n/a" if evaluable_count is None else str(int(evaluable_count))
         lines.append(
-            f"- `{_stock_label(row)}`：{count_text}，原始胜率 `{_fmt_pct(reliability.get('raw_win_rate'))}`，"
-            f"Wilson 区间 `{wilson_text}`，收缩胜率 `{_fmt_pct(reliability.get('shrunk_win_rate'))}`，"
-            f"可靠性 `{reliability.get('reliability_label')}`；标签拆解："
-            f"开盘均值 `{_fmt_pct(_row_historical_metric(row, 'next_open_return_mean'))}`，"
-            f"最高命中 `{_fmt_pct(_row_historical_metric(row, 'next_high_hit_rate_at_threshold'))}`，"
-            f"收盘均值 `{_fmt_pct(_row_historical_metric(row, 'next_close_return_mean'))}`，"
-            f"开盘到收盘 `{_fmt_pct(_row_historical_metric(row, 'next_open_to_close_return_mean'))}`。"
+            f"| {_stock_label(row)} | {sample_text} | {_fmt_pct(reliability.get('shrunk_win_rate'))} | "
+            f"{_fmt_num(payoff_ratio, 2)} | {divergence_label} | {lane_label} |"
         )
     return lines
 
@@ -857,20 +874,19 @@ def _render_action_matrix_sections(
     if not rows:
         lines.append(f"- 当前没有{action_item_label}票。")
         return lines
+    lines.extend(
+        [
+            "| 股票 | 场景 | 动作 |",
+            "| --- | --- | --- |",
+        ]
+    )
     for row in rows[:limit]:
-        lines.extend(
-            [
-                f"### {_enriched_stock_label(row)}",
-                "",
-                "| 场景 | 动作 |",
-                "| --- | --- |",
-            ]
-        )
+        stock_label = _markdown_table_cell(_enriched_stock_label(row))
         for item in list(row.get("action_matrix") or []):
             scenario = _markdown_table_cell(item.get("scenario"))
             action = _markdown_table_cell(item.get("action"))
-            lines.append(f"| {scenario} | {action} |")
-        lines.append("")
+            lines.append(f"| {stock_label} | {scenario} | {action} |")
+    lines.append("")
     return lines
 
 
