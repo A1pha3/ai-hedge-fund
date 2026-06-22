@@ -206,7 +206,7 @@
 
 ### 三·1、产品研究 refill backlog（2026-06-21 gamma 研究 → 滚动交付 + 审计收口）
 
-> 来源：Campaign 135 gamma 产品研究（first-principles 摩擦挖掘 + FinRL/QuantConnect 业界对标）。每项已对照 R1-R137 + §五不做清单 dedupe。O-1/O-2 (C135→R143)、O-3/O-4 (C136→R144)、A-1 (C137→R145) 已交付；D-1 经度量后 reject（见下）。**gamma 研究 6 项全部收口，当前无 active backlog。**
+> 来源：Campaign 135 gamma 产品研究（first-principles 摩擦挖掘 + FinRL/QuantConnect 业界对标）。每项已对照 R1-R137 + §五不做清单 dedupe。O-1/O-2 (C135→R143)、O-3/O-4 (C136→R144)、A-1 (C137→R145) 已交付；D-1 经度量后 reject（见下）。**gamma 研究 6 项全部收口。**
 
 | ID | 优先级 | 状态 | 需求 | 目标 |
 |---|---|---|---|---|
@@ -214,6 +214,18 @@
 | R144 | P2 | ✅ | **收益节奏标签 + T+30 下行赔率展示（O-3 + O-4）** | **O-3**：产品目标 line 31 明文"持续时间综合最优"但系统只给点估计。新增纯函数 `_classify_return_rhythm(expected_returns)`，从 T+5/T+20/T+30 累计收益占比推导节奏（早/匀/晚），纯展示不进排序，零新数据。**O-4**：产品目标"赔率"维度不可见——60% 胜率隐含 40% 赔付，-2% vs -30% 尾部风险差 15 倍。calibration 新增 `t30_avg_negative_return`（仅亏损均值），经 ExpectedReturn → merge 线程到前门显示 `赔率(下行)`。补齐产品目标三维度（胜率/赔率/持续时间）。8 TDD 测试，1581 screening 全绿。 |
 | R145 | P2 | ✅ | **per-pick 仓位建议（A-1，轻量透明风险预算）** | 用户从"买哪只"到"买多少"无桥接。新增纯函数 `_suggest_position_pct(edge, winrate, regime)`：base = |edge| × confidence（winrate 在 0.50 coin-flip 之上归一化）× 100，regime 降档（crisis/risk_off/halt→0，cautious/range→×0.5），单票 15% 分散上限。**克制**：BUY-only、纯透明公式、不做组合优化（无 correlation/risk-parity）、复用 R71-R77 disclaimer（"建议仓位(参考)"，非投资指令）。TDD 8 测试（normal/cautious/crisis/capped/None/低winrate），1589 screening 全绿。服务"买哪只→买多少"决策闭环。dedupe: vs position_scale（市场级缩放，本项 per-pick 互补）/ R8 止损价位（触发价非仓位）。 |
 | D-1 | P3 | ⛔ reject | **审计入口合并审查（度量后判定：保持分离）** | 度量 `--verify-recommendations`/`--verify-detail`/`--expected-returns`/`--decision-flow` 的 T+30 展示重叠。**结论：重叠 <30%，reject 合并**。四入口服务**不同分析视角**而非冗余展示同一数据：--verify=向后回放实际命中（历史准确度），--expected-returns=分桶统计预期（校准估计），--decision-flow=全决策链追踪（管道透明）。共享 T+30 为指标但语义不同；合并会**混淆不同分析目的**反而降清晰度。**积极发现**：系统未因冗余入口臃肿。满足"至少一个 simplify/merge 审查"要求（审查结论=保持现状亦是合法收口）。 |
+
+### 三·2、产品方向 refill backlog（2026-06-22 first-principles 缺口挖掘 → 滚动交付）
+
+> 来源：Campaign 158 startup（backlog empty 后 authoritative refill）。first-principles 挖掘基于产品目标"**稳定**找到未来 30 天最有投资价值"四维度（胜率/赔率/持续时间/仓位）覆盖审计 + "不做清单"dedupe。P-1~P-5 均为 **delivery**（非 self-gen），交付即重置 self-gen streak。每项优先复用既有数据（auto_screening 历史 / calibration / tracking_history），避免前门分裂。
+
+| ID | 优先级 | 状态 | 需求 | 目标 |
+|---|---|---|---|---|
+| P-1 | P1 | 🔄 | **推荐稳定性度量 — Top-N 日间重叠率** | 产品目标核心形容词"**稳定**找到"当前无任何度量。一只昨 BUY 今 AVOID 明又 BUY 的票完全合法却违背"稳定"。新增纯函数 `compute_recommendation_stability(reports_dir, lookback_days=5, top_n=3)`：读最近 N 份 auto_screening 报告，提取每日 Top-N ticker 集，计算相邻日重叠率均值（Jaccard 或 |∩|/|∪|），`--top-picks` footer 展示「近 5 日 Top 3 重叠率: 67% (稳定/波动/剧烈轮换)」。复用 consecutive_recommendation 历史加载，零新数据源。服务 trust/calibration 元维度（系统级自信）。 |
+| P-2 | P1 | ❌ | **T+30 预测置信区间（点估计→区间估计）** | T+30 edge 是裸点估计 "+3.2%"，但 calibration 有 per-bucket 全量收益分布 → 可算离散度。新增 `_compute_bucket_return_std` 从 calibration 桶内收益算标准差，`--top-picks`/`--expected-returns` 展示 "+3.2% (±1.5%, n=45)"；样本少时区间宽，诚实披露预测不确定性。复用 R35/R144 calibration 字段。服务"更高确信"（预测本身的可信度）。 |
+| P-3 | P2 | ❌ | **实盘对账 / 预测 vs 实际闭环** | 系统产出 delivery_value 预测但无闭环验证。新增 `--reconcile` 读用户交易日志（CSV/JSON），对比"预测 T+30 +3% vs 实际 +10%"，输出准确度报告。服务全部 4 维度（realized outcome）。**关键价值**：产出 realized evidence——唯一能合法重置 self-gen streak 的路径（外部真实结果）。需用户定义交易日志格式。 |
+| P-4 | P2 | ❌ | **组合级行业集中度 / 风险预算** | R145 给 per-pick 仓位，但无组合层级"你 40% 在科技，集中度超限"视角。新增 `compute_portfolio_concentration(holdings_or_picks)` 从 industry_sw 聚合，`--top-picks`/`--position-check` footer 展示「组合行业集中度: 科技 40% ⚠ > 30%」。服务"仓位"维度（组合层级）。复用 industry_rotation 数据。 |
+| P-5 | P3 | ❌ | **市场状态条件下胜率（research）** | 研究问题：`market_state=cautious` 时 T+30 胜率是否系统性更低？用户该不该在 cautious 时降仓位？产出条件 calibration 表（per regime × per bucket）。需 market_state 历史 + calibration join。服务"胜率"维度（条件化）。类型：research → 可能导出 feature。 |
 
 ---
 

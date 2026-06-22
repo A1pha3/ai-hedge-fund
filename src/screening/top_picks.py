@@ -1332,8 +1332,32 @@ def _print_top_picks_footer(
 
     _print_high_confidence_summary(representative_picks)
     _print_hit_rate_block(report_dir)
+    _print_stability_block(report_dir)
     _print_decision_flow_hint()
     _print_disclaimer()
+
+
+def _print_stability_block(report_dir: Path) -> None:
+    """P-1: 推荐稳定性度量 — 近 N 日 Top-3 相邻日 Jaccard 重叠率。
+
+    产品目标核心形容词"稳定"此前无任何度量。一只昨 BUY 今 AVOID 明又 BUY 的票
+    完全合法却违背"稳定"。复用 auto_screening 历史，零新数据源，纯展示不进排序。
+    数据不足（<2 份报告）时静默不渲染（不污染首次运行的前门）。
+    """
+    try:
+        from src.screening.recommendation_stability import (
+            compute_recommendation_stability,
+            render_stability_line,
+        )
+
+        report = compute_recommendation_stability(
+            reports_dir=report_dir, lookback_days=5, top_n=3
+        )
+    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+        return
+    line = render_stability_line(report)
+    if line:
+        print(line)
 
 
 def _print_disclaimer() -> None:

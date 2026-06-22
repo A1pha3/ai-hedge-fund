@@ -639,3 +639,39 @@ def test_print_hit_rate_block_logs_degradation_on_silent_failure(tmp_path, caplo
     joined = "\n".join(r.getMessage() for r in debug_records)
     assert "hit-rate" in joined, "降级日志必须命名 hit-rate summary 降级"
 
+
+def test_print_stability_block_renders_when_reports_exist(tmp_path, capsys):
+    """P-1: --top-picks footer 必须展示推荐稳定性行（近 N 日 Top-3 Jaccard）。
+
+    产品目标核心形容词"稳定"此前无度量。有 ≥2 份历史报告时，footer 必须渲染
+    稳定性摘要行；不足 2 份（首次运行）时静默不渲染，不污染前门。
+    """
+    import json
+
+    from src.screening import top_picks
+
+    # 3 份相同 Top-3 的报告 → stability 1.0 稳定
+    for d in ["20260101", "20260102", "20260103"]:
+        payload = {
+            "date": d,
+            "recommendations": [
+                {"ticker": "000001", "name": "平安", "score_b": 0.9},
+                {"ticker": "000002", "name": "万科", "score_b": 0.8},
+                {"ticker": "000003", "name": "招行", "score_b": 0.7},
+            ],
+        }
+        (tmp_path / f"auto_screening_{d}.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+    top_picks._print_stability_block(tmp_path)
+    out = capsys.readouterr().out
+    assert "推荐稳定性" in out
+    assert "稳定" in out
+
+    # 空目录 → 静默不渲染
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    top_picks._print_stability_block(empty_dir)
+    extra = capsys.readouterr().out
+    assert extra == "", "不足 2 份报告时不得渲染稳定性行"
