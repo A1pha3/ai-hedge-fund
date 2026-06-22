@@ -264,6 +264,54 @@ class TestComputePositionHealth:
         report = compute_position_health(tickers=["000001"], reports_dir=tmp_path)
         assert report.degraded is False
 
+    def test_degraded_composite_does_not_emit_false_sell(self, tmp_path, monkeypatch) -> None:
+        """R161: when composite scoring is unavailable for a held ticker, the
+        fallback composite_score=0.0 MUST NOT trigger a SELL action. A failed
+        score is not evidence the position deteriorated — issuing SELL on a
+        real-money surface (--position-check tells users to sell actual holdings)
+        would panic-sell a healthy position. The degraded banner mitigates at
+        report level, but the per-item action must also be safe (HOLD with a
+        data-unavailable reason, not SELL)."""
+        from src.screening import position_health as ph_mod
+        from src.screening.position_health import compute_position_health
+
+        self._seed_report(tmp_path)  # healthy ticker 000001, score_b=0.5
+
+        def _boom(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise RuntimeError("simulated provider failure")
+
+        monkeypatch.setattr(ph_mod, "compute_composite_scores_for_recommendations", _boom)
+
+        report = compute_position_health(tickers=["000001"], reports_dir=tmp_path)
+        assert len(report.items) == 1
+        item = report.items[0]
+        assert item.action != "SELL", (
+            f"composite-unavailable must not emit SELL (got {item.action!r} from "
+            f"fallback composite_score={item.composite_score}); a failed score is "
+            f"not a sell signal on a real-money surface"
+        )
+        assert item.action == "HOLD"
+
+    def test_partial_composite_miss_does_not_emit_false_sell(self, tmp_path, monkeypatch) -> None:
+        """R161 sibling: even without a full compute failure (degraded stays
+        False), a held ticker absent from the composite report (comp=None) would
+        fall back to composite_score=0.0 → false SELL. The guard must fire
+        per-item, not only on the whole-report degraded flag."""
+        from src.screening import position_health as ph_mod
+        from src.screening.position_health import compute_position_health
+
+        self._seed_report(tmp_path)  # ticker 000001 in history
+
+        # Composite scorer succeeds but returns NO items → 000001 is comp=None
+        monkeypatch.setattr(
+            ph_mod, "compute_composite_scores_for_recommendations",
+            lambda **k: type("R", (), {"items": []})(),
+        )
+
+        report = compute_position_health(tickers=["000001"], reports_dir=tmp_path)
+        assert len(report.items) == 1
+        assert report.items[0].action != "SELL"
+
 
 # ---------------------------------------------------------------------------
 # _action_colored (was 0 direct coverage)

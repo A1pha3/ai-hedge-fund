@@ -270,10 +270,22 @@ def compute_position_health(
         trend_label = trend.resonance_label if trend else "unknown"
         vol_label = vol.confirmation if vol else "unknown"
 
-        action, reason = _determine_action(
-            composite_score, mom_bonus, trf,
-            sell_threshold, watch_threshold,
-        )
+        # R161: when composite is unavailable for this ticker (compute failure or
+        # the ticker was absent from the composite report), composite_score falls
+        # back to 0.0 — which is below sell_threshold and would emit a FALSE SELL.
+        # A failed score is not evidence the position deteriorated. On a
+        # real-money surface (--position-check directs sells of actual holdings)
+        # the safe default is HOLD with a data-unavailable reason; the report-level
+        # degraded banner further disclosed trust-calibration. Do NOT pass the
+        # fallback 0.0 to _determine_action.
+        if comp is not None:
+            action, reason = _determine_action(
+                composite_score, mom_bonus, trf,
+                sell_threshold, watch_threshold,
+            )
+        else:
+            action = "HOLD"
+            reason = "综合分数据不足, 跳过阈值判断 — 请勿仅凭此结果操作"
 
         items.append(
             PositionHealth(
