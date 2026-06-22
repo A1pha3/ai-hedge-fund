@@ -11,6 +11,7 @@ from typing import Any
 
 from src.screening.composite_score import CompositeReport
 from src.screening.expected_return import ExpectedReturnReport
+from src.utils.numeric import is_finite_number
 
 
 def _grade_code(score: float) -> str:
@@ -215,7 +216,15 @@ def build_front_door_verdict(
         invalidation_reasons.append("量价背离")
     if _safe_metric(recommendation.get("trend_resonance_factor"), 0.0) < 0:
         invalidation_reasons.append("趋势共振失效")
-    if t30_win_rate and t30_win_rate < 0.5:
+    # R68/R96 falsy-zero family drain: ``t30_win_rate`` is
+    # ``_safe_metric(win_rates.get("t30"), 0.0)`` which returns 0.0 for BOTH
+    # missing data (key absent/None) AND an actual 0.0 (0%) win rate. The
+    # previous ``if t30_win_rate and t30_win_rate < 0.5`` guard short-circuited
+    # on falsy 0.0, so the worst-possible real win rate (0%) did NOT trigger
+    # the flag. Check the RAW value with is_finite_number so actual 0.0 flags
+    # (0 < 0.5) while missing/NaN data does not.
+    _raw_t30_wr = win_rates.get("t30")
+    if is_finite_number(_raw_t30_wr) and float(_raw_t30_wr) < 0.5:
         invalidation_reasons.append("同分组胜率跌破 50%")
     if 0 < sample_count < 20:
         invalidation_reasons.append("样本量不足 20")
