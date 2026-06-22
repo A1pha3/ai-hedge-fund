@@ -20,10 +20,15 @@ Integration:
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from src.screening.consecutive_recommendation import resolve_report_dir
+from src.screening.recommendation_tracker import (
+    _latest_recommended_date,
+    _parse_date,
+)
 from src.utils.display import Fore, Style
 
 # ---------------------------------------------------------------------------
@@ -162,6 +167,21 @@ def _load_recent_hit_rate(
     records = history.get("records") if history.get("records") else (history if isinstance(history, list) else [])
     if not records:
         return None, 0
+
+    # R160: actually apply lookback_days — filter records to those whose
+    # ``recommended_date`` falls within [anchor - lookback_days, anchor], where
+    # the anchor is the latest parseable ``recommended_date`` (data-anchored,
+    # per R62/BH-026). Before this fix ``lookback_days`` was accepted but never
+    # used, so "recent hit rate" was silently the *all-time* hit rate — the
+    # self-correcting threshold (docstring: "Load recent tracking history (last
+    # N days)") could not tighten after a recent losing streak. When no records
+    # carry a parseable date, fall back to including all (backward compat for
+    # legacy / dateless tracking history that cannot be positioned in time).
+    if lookback_days > 0:
+        anchor = _latest_recommended_date(records)
+        if anchor is not None:
+            cutoff = anchor - timedelta(days=lookback_days)
+            records = [rec for rec in records if _parse_date(str(rec.get("recommended_date", "") or "")) is not None and _parse_date(str(rec.get("recommended_date", "") or "")) >= cutoff]
 
     # Filter to recent records with known outcomes
     recent_with_outcome = 0
