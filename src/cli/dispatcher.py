@@ -828,6 +828,42 @@ def _resolve_top_picks(argv: list[str]) -> int | None:
     return run_top_picks(count=count, lookback_days=lookback)
 
 
+def _resolve_reconcile(argv: list[str]) -> int | None:
+    """P-3 实盘对账 — trade log vs 模型预测 (realized-evidence path).
+
+    Usage: ``--reconcile trade_log.csv``
+    Trade-log v1 format (CSV): ticker,buy_date,buy_price,sell_date,sell_price
+    """
+    if "--reconcile" not in argv:
+        return None
+    from pathlib import Path
+
+    from src.utils.display import Fore, Style
+
+    trade_path_raw = _get_kv(argv, "--reconcile")
+    if not trade_path_raw:
+        try:
+            idx = argv.index("--reconcile")
+            trade_path_raw = argv[idx + 1] if idx + 1 < len(argv) else ""
+        except (ValueError, IndexError):
+            trade_path_raw = ""
+    if not trade_path_raw:
+        print(
+            f"{Fore.RED}Usage: --reconcile <trade_log.csv>{Style.RESET_ALL}\n"
+            f"  v1 format: ticker,buy_date,buy_price,sell_date,sell_price"
+        )
+        return 1
+    trade_path = Path(trade_path_raw).expanduser()
+    if not trade_path.exists():
+        print(f"{Fore.RED}交易日志不存在: {trade_path}{Style.RESET_ALL}")
+        return 1
+    from src.screening.reconciliation import compute_reconciliation, render_reconciliation
+
+    report = compute_reconciliation(trade_log_path=trade_path)
+    print(render_reconciliation(report))
+    return 0
+
+
 COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--preheat", _resolve_preheat),
     ("--daily-gainers", _resolve_daily_gainers),
@@ -880,6 +916,7 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--position-check", _resolve_position_check),
     ("--strategy-report", _resolve_strategy_report),
     ("--top-picks", _resolve_top_picks),
+    ("--reconcile", _resolve_reconcile),
 ]
 
 
