@@ -29,6 +29,7 @@ from src.screening.confidence_calibration import (
     compute_calibration,
 )
 from src.screening.consecutive_recommendation import resolve_report_dir
+from src.screening.drawdown_estimate import compute_drawdown_estimate
 from src.utils.display import Fore, Style
 
 # ---------------------------------------------------------------------------
@@ -356,8 +357,12 @@ def render_expected_returns_compact(report: ExpectedReturnReport) -> str:
         # calibrate confidence in the point estimate. +3.2%(±1.5%) vs +3.2%(±8%)
         # are very different bets even with identical mean.
         std_str = f" (±{item.bucket_t30_std_return:.1f}% 离散)" if item.bucket_t30_std_return is not None else ""
+        # Q-2: average-path max drawdown from per-horizon cumulative returns.
+        # +3.2% T+30 with −15% mid-hold drawdown ≠ +3.2% with −2%; the path matters.
+        dd_est = compute_drawdown_estimate(er)
+        dd_str = f"  回撤={dd_est.max_drawdown:.1f}%" if dd_est.available and dd_est.max_drawdown is not None else ""
         lines.append(
-            f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}{std_str}  T+30胜率={wr_str}"
+            f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}{std_str}  T+30胜率={wr_str}{dd_str}"
         )
 
     return "\n".join(lines)
