@@ -237,7 +237,7 @@
 | Q-2 | P2 | ✅ | **回撤预期 / mid-hold drawdown** | T+30 edge 是端点 (+3.2%)，但路径重要——+3.2% 配 −15% mid-hold 回撤 ≠ +3.2% 配 −2%。从 calibration per-horizon (T+5/T+10/T+20/T+30) 收益估同分位典型最大回撤。展示「T+30 +3.2%, 历史同分位平均最大回撤 −8%」。服务"赔率"路径维度。。**C164 交付** commit be4ab0cf；TDD 16；FULL 9769 passed 495s。 |
 | Q-3 | P2 | ✅ | **推荐质量趋势 / rolling win-rate trend** | P-1 量"推荐"稳定性，无"表现"稳定性。模型在变好还是变坏？滚动窗口 T+30 胜率趋势：近 4 周 52%→58%→61%→65% (↑) 或下滑。服务"稳定"模型层 (系统级自信)。复用 calibration。。**C165 交付** commit 244f0c8d；TDD 8；FULL 9777 passed 505s。 |
 | Q-4 | P2 | ❌ | **相关性仓位折减 / correlation-aware discount** | R145 per-pick 独立仓位，P-4 集中度计数，但两 BUY 同行业 0.9 相关 ≠ 两个独立 bet。行业 + score 邻近作相关代理，折减重叠仓位。服务"仓位"组合层 (P-4 计数的补充)。effort 3 / risk 2。 |
-| Q-5 | P2 | ❌ | **尾部风险 / 5th-percentile CVaR** | R144 赔率(下行) 给亏损均值，不给最坏情形。−5% 均值配 −30% 尾 ≠ −5% 配 −8% 尾。从 calibration 桶收益算 5/10 分位。展示「T+30 +3.2%, 5% 分位 −18% (尾部)」。服务"赔率"深尾。 |
+| Q-5 | P2 | ✅ | **尾部风险 / 5th-percentile CVaR** | R144 赔率(下行) 给亏损均值，不给最坏情形。−5% 均值配 −30% 尾 ≠ −5% 配 −8% 尾。从 calibration 桶收益算 5/10 分位。展示「T+30 +3.2%, 5% 分位 −18% (尾部)」。服务"赔率"深尾。。**C166 交付** commit f77a00cc；TDD 14；FULL 9791 passed 488s。 |
 
 ---
 
