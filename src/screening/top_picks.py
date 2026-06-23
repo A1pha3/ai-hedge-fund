@@ -629,6 +629,32 @@ def _render_score_trend(
         return ""
 
 
+def _render_exit_timing_line(
+    ticker: str, rhythm: str, current_score_b: float, report_dir: Path
+) -> str:
+    """Q-1: per-pick 卖时机建议 (综合 R144 节奏 + R9 衰减).
+
+    服务"持续时间"可行动化 — 系统说 BUY 但不说何时 SELL。节奏=早→止盈窗口,
+    匀→持有到期, 晚→耐心; 叠加信号衰减→提前关注。无节奏/无前值 → 空串不渲染。
+    ``current_score_b`` 必须是真实当日分 (传 0.0 会让 change_pct 全为 -100%)。
+    """
+    from src.screening.exit_timing import compute_exit_timing, render_exit_timing
+    from src.screening.signal_decay_detector import detect_signal_decay
+
+    decay_map = detect_signal_decay(
+        current_recommendations=[{"ticker": ticker, "score_b": current_score_b}],
+        report_dir=report_dir,
+    )
+    decay_info = decay_map.get(ticker)
+    change_pct = float(decay_info.change_pct) if decay_info and decay_info.change_pct is not None else None
+    days_peak = int(decay_info.days_since_peak) if decay_info else 0
+
+    advice = compute_exit_timing(
+        rhythm=rhythm, decay_change_pct=change_pct, days_since_peak=days_peak
+    )
+    return render_exit_timing(advice)
+
+
 # ---------------------------------------------------------------------------
 # R10: Multi-strategy confluence indicator
 # ---------------------------------------------------------------------------
@@ -1247,6 +1273,17 @@ def _print_pick_entry(
     )
     print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={_format_sample_count(item)}  节奏={rhythm}  赔率(下行)={downside_str}{pos_str}  市场门控={verdict['market_regime']}")
     print(f"     失效条件: {verdict['invalidation_reason']}")
+
+    # Q-1: per-pick 卖时机建议 (BUY 才显示 — HOLD/AVOID 无卖出问题)
+    if verdict["action"] == "BUY":
+        exit_line = _render_exit_timing_line(
+            ticker=str(item.get("ticker", "")),
+            rhythm=rhythm,
+            current_score_b=base_score,
+            report_dir=context.report_dir,
+        )
+        if exit_line:
+            print(f"     {exit_line}")
 
     _print_pick_entry_details(
         item=item,
