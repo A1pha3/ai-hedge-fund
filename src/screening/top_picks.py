@@ -1285,6 +1285,14 @@ def _print_pick_entry(
         if exit_line:
             print(f"     {exit_line}")
 
+    # R-1: 多周期冲突 (short vs long horizon sign disagreement) — any pick
+    from src.screening.horizon_conflict import detect_horizon_conflict, render_horizon_conflict as _render_hc
+
+    hc = detect_horizon_conflict(item.get("expected_returns"))
+    hc_line = _render_hc(hc)
+    if hc_line:
+        print(f"     {hc_line}")
+
     _print_pick_entry_details(
         item=item,
         verdict=verdict,

@@ -239,6 +239,17 @@
 | Q-4 | P2 | ✅ | **相关性仓位折减 / correlation-aware discount** | R145 per-pick 独立仓位，P-4 集中度计数，但两 BUY 同行业 0.9 相关 ≠ 两个独立 bet。行业 + score 邻近作相关代理，折减重叠仓位。服务"仓位"组合层 (P-4 计数的补充)。effort 3 / risk 2。。**C167 交付** commit 8dc16867；TDD 15+1；FULL 9807 passed 530s。 |
 | Q-5 | P2 | ✅ | **尾部风险 / 5th-percentile CVaR** | R144 赔率(下行) 给亏损均值，不给最坏情形。−5% 均值配 −30% 尾 ≠ −5% 配 −8% 尾。从 calibration 桶收益算 5/10 分位。展示「T+30 +3.2%, 5% 分位 −18% (尾部)」。服务"赔率"深尾。。**C166 交付** commit f77a00cc；TDD 14；FULL 9791 passed 488s。 |
 
+### 三·4、产品方向 refill backlog（2026-06-23 §三·3 收口后 first-principles 残余缺口）
+
+> 来源：§三·2 + §三·3 全部交付 (P-1~P-5 + Q-1~Q-5) 后 first-principles 残余缺口挖掘。**诚实标注**: 4 维度 + 赔率/仓位双三联体 + 稳定 + realized-evidence 已覆盖, 本轮比 §三·2/§三·3 更增量 (refinement, 非 decision-hole 关闭)。最高价值仍是 owner 跑 --reconcile 产出 realized evidence, 非更多展示 feature。
+
+| ID | 优先级 | 状态 | 需求 | 目标 |
+|---|---|---|---|---|
+| R-1 | P1 | 🔄 | **多周期冲突 / horizon-conflict flag** | 一只票可 T+1 看多但 T+30 看空 (短线 pop + 长线 fade), 用户看到两个数字却无冲突标记。新增纯函数 `detect_horizon_conflict(expected_returns)`: 短期 (T+1/T+5) 与长期 (T+20/T+30) sign 不一致 → ⚠ 「多周期冲突: T+1 +2% 但 T+30 -1%」。复用 expected_returns, 零新数据。**唯一新决策信号** (其余 R-2~R-4 是聚合/展示既有)。 |
+| R-2 | P2 | ❌ | **数据完整度门控 / run-level data-quality on front door** | `data_quality_audit` 存在但未在 `--top-picks` 暴露。用户无法一眼判断今日推荐基于完整还是部分数据。新增 front-door 「📊 数据完整度: 85% (3/4 数据源就绪)」。复用 data_quality_audit。 |
+| R-3 | P2 | ❌ | **组合风险预算总览 / portfolio risk-budget synthesis** | P-4 (集中度) + Q-4 (相关) + R145 (仓位) 各自独立, 无单一"总组合风险 vs 预算"数。新增 read-only 「🎯 组合风险: 72%/100% 预算」。effort 3 / risk 2 (合成既有, borderline 组合优化但 read-only 可辩护)。 |
+| R-4 | P3 | ❌ | **止损触发复盘 / ATR stop trigger replay** | R8 设 ATR 止损位, 但止损本身未回测 (历史触发率多少?)。需历史价格。effort 3 / risk 2。 |
+
 ---
 
 ## 四、已完成能力（主文档只保留结论）
