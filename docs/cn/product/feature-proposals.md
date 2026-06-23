@@ -233,7 +233,7 @@
 
 | ID | 优先级 | 状态 | 需求 | 目标 |
 |---|---|---|---|---|
-| Q-1 | P1 | 🔄 | **卖时机信号 / exit-timing** | 系统说 BUY 但不说何时 SELL——"持续时间"维度有买入无卖出。R144 把节奏分早/匀/晚但仅展示，未驱动卖出建议。新增纯函数 `compute_exit_timing(rhythm, decay_change_pct, days_since_peak)`：节奏=早→建议 T+5–T+10 关注止盈；匀→T+20–T+30 持有；晚→T+30+ 耐心持有；叠加 R9 信号衰减 (change_pct<0) → ⚠ 提前关注。`--top-picks` per-pick 一行卖出建议。复用 R144 + R9，零新数据。服务"持续时间"可行动化。 |
+| Q-1 | P1 | ✅ | **卖时机信号 / exit-timing** | 系统说 BUY 但不说何时 SELL——"持续时间"维度有买入无卖出。R144 把节奏分早/匀/晚但仅展示，未驱动卖出建议。新增纯函数 `compute_exit_timing(rhythm, decay_change_pct, days_since_peak)`：节奏=早→建议 T+5–T+10 关注止盈；匀→T+20–T+30 持有；晚→T+30+ 耐心持有；叠加 R9 信号衰减 (change_pct<0) → ⚠ 提前关注。`--top-picks` per-pick 一行卖出建议。复用 R144 + R9，零新数据。服务"持续时间"可行动化。。**C163 交付** commit ea29ea00；TDD 11；FULL 9753 passed 509s。 |
 | Q-2 | P2 | ❌ | **回撤预期 / mid-hold drawdown** | T+30 edge 是端点 (+3.2%)，但路径重要——+3.2% 配 −15% mid-hold 回撤 ≠ +3.2% 配 −2%。从 calibration per-horizon (T+5/T+10/T+20/T+30) 收益估同分位典型最大回撤。展示「T+30 +3.2%, 历史同分位平均最大回撤 −8%」。服务"赔率"路径维度。 |
 | Q-3 | P2 | ❌ | **推荐质量趋势 / rolling win-rate trend** | P-1 量"推荐"稳定性，无"表现"稳定性。模型在变好还是变坏？滚动窗口 T+30 胜率趋势：近 4 周 52%→58%→61%→65% (↑) 或下滑。服务"稳定"模型层 (系统级自信)。复用 calibration。 |
 | Q-4 | P2 | ❌ | **相关性仓位折减 / correlation-aware discount** | R145 per-pick 独立仓位，P-4 集中度计数，但两 BUY 同行业 0.9 相关 ≠ 两个独立 bet。行业 + score 邻近作相关代理，折减重叠仓位。服务"仓位"组合层 (P-4 计数的补充)。effort 3 / risk 2。 |
