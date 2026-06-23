@@ -70,6 +70,10 @@ class ExpectedReturn:
     # 离散度). Pairs with the T+30 mean edge so users can judge confidence in
     # the point estimate. None when the bucket has < 2 matured T+30 records.
     bucket_t30_std_return: float | None = None
+    # Q-5: per-bucket 5th percentile of realized T+30 returns (tail risk /
+    # worst plausible). Completes the risk triplet (R144 mean-of-losers + P-2 std
+    # + this tail). None when < 2 matured T+30.
+    bucket_t30_p5_return: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +90,11 @@ class ExpectedReturn:
             "bucket_t30_std_return": (
                 round(self.bucket_t30_std_return, 4)
                 if self.bucket_t30_std_return is not None
+                else None
+            ),
+            "bucket_t30_p5_return": (
+                round(self.bucket_t30_p5_return, 4)
+                if self.bucket_t30_p5_return is not None
                 else None
             ),
             "expected_returns": {k: round(v, 4) if v is not None else None for k, v in self.expected_returns.items()},
@@ -189,6 +198,14 @@ def _build_bucket_t30_std_map(calibration: CalibrationSummary) -> dict[str, floa
     return {bucket.label: bucket.t30_std_return for bucket in calibration.buckets}
 
 
+def _build_bucket_t30_p5_map(calibration: CalibrationSummary) -> dict[str, float | None]:
+    """Build a mapping from bucket label → 5th percentile of realized T+30 returns.
+
+    Q-5: tail risk (worst plausible) for the bucket. None when < 2 matured T+30.
+    """
+    return {bucket.label: bucket.t30_p5_return for bucket in calibration.buckets}
+
+
 def compute_expected_returns(
     *,
     recommendations: list[dict[str, Any]],
@@ -214,6 +231,7 @@ def compute_expected_returns(
     mature_t30_map = _build_bucket_mature_t30_map(calibration)
     downside_t30_map = _build_bucket_t30_downside_map(calibration)
     std_t30_map = _build_bucket_t30_std_map(calibration)
+    p5_t30_map = _build_bucket_t30_p5_map(calibration)
 
     trade_date = ""
     items: list[ExpectedReturn] = []
@@ -249,6 +267,7 @@ def compute_expected_returns(
                 bucket_t30_mature_count=mature_t30_map.get(label, 0),
                 bucket_t30_avg_negative_return=downside_t30_map.get(label),
                 bucket_t30_std_return=std_t30_map.get(label),
+                bucket_t30_p5_return=p5_t30_map.get(label),
             )
         )
 
@@ -357,12 +376,14 @@ def render_expected_returns_compact(report: ExpectedReturnReport) -> str:
         # calibrate confidence in the point estimate. +3.2%(±1.5%) vs +3.2%(±8%)
         # are very different bets even with identical mean.
         std_str = f" (±{item.bucket_t30_std_return:.1f}% 离散)" if item.bucket_t30_std_return is not None else ""
+        # Q-5: tail risk (5th percentile) — worst plausible outcome.
+        p5_str = f"  尾={item.bucket_t30_p5_return:.1f}%" if item.bucket_t30_p5_return is not None else ""
         # Q-2: average-path max drawdown from per-horizon cumulative returns.
         # +3.2% T+30 with −15% mid-hold drawdown ≠ +3.2% with −2%; the path matters.
         dd_est = compute_drawdown_estimate(er)
         dd_str = f"  回撤={dd_est.max_drawdown:.1f}%" if dd_est.available and dd_est.max_drawdown is not None else ""
         lines.append(
-            f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}{std_str}  T+30胜率={wr_str}{dd_str}"
+            f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}{std_str}  T+30胜率={wr_str}{dd_str}{p5_str}"
         )
 
     return "\n".join(lines)

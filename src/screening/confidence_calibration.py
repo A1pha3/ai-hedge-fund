@@ -73,6 +73,10 @@ class ScoreBucketStats:
     # 服务产品目标 "更高确信": 点估计 "+3.2%" 此前无离散度; ±std 让用户校准对点估计的
     # 信任 (±1.5% vs ±8% 是完全不同的置信度, 即使 mean 相同)。None when <2 matured T+30。
     t30_std_return: float | None = None
+    # Q-5: 5th percentile of realized T+30 returns (tail risk / CVaR proxy).
+    # 服务"赔率"深尾: R144 给亏损均值, P-2 给离散度, 此项给最坏 plausible 情形
+    # (-5% 均值配 -30% 尾 ≠ -5% 配 -8% 尾, 即使 std 相同)。None when <2 matured T+30。
+    t30_p5_return: float | None = None
     # Matured-sample counts per horizon (records that actually have a realized
     # return at that horizon). ``sample_count`` counts every record in the
     # bucket regardless of return maturity, so displaying it next to a
@@ -105,6 +109,7 @@ class ScoreBucketStats:
             "t30_avg_return": self.t30_avg_return,
             "t30_avg_negative_return": self.t30_avg_negative_return,
             "t30_std_return": self.t30_std_return,
+            "t30_p5_return": self.t30_p5_return,
             "t1_sample_count": self.t1_sample_count,
             "t3_sample_count": self.t3_sample_count,
             "t5_sample_count": self.t5_sample_count,
@@ -224,6 +229,20 @@ def _std_or_none(valid_returns: list[float]) -> float | None:
     return variance ** 0.5
 
 
+def _p5_or_none(valid_returns: list[float]) -> float | None:
+    """5th percentile of realized returns (tail risk); None when < 2 samples.
+
+    Q-5: the worst plausible outcome (CVaR proxy). Delegates to
+    ``tail_risk._percentile_or_none`` (linear-interpolation percentile).
+    Pairs with R144 mean-of-losers + P-2 std to complete the risk triplet
+    (mean + dispersion + tail)."""
+    if len(valid_returns) < 2:
+        return None
+    from src.screening.tail_risk import _percentile_or_none
+
+    return _percentile_or_none(valid_returns, 5)
+
+
 # ---------------------------------------------------------------------------
 # Calibration logic
 # ---------------------------------------------------------------------------
@@ -326,6 +345,7 @@ def compute_calibration(
             t30_avg_return=_mean_or_none(t30_valid),
             t30_avg_negative_return=_mean_negative_or_none(t30_valid),
             t30_std_return=_std_or_none(t30_valid),
+            t30_p5_return=_p5_or_none(t30_valid),
             t1_sample_count=len(t1_valid),
             t3_sample_count=len(t3_valid),
             t5_sample_count=len(t5_valid),
