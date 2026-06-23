@@ -200,3 +200,46 @@ def test_baostock_data_source_skips_row_with_empty_volume(monkeypatch) -> None:
     assert "2026-04-02" not in times
     assert len(prices) == 2
     assert prices[0].time == "2026-04-01"
+
+
+# ---------------------------------------------------------------------------
+# R163: to_tushare_code / split_ashare_exchange_prefix must handle .SH/.SZ/.BJ
+# SUFFIX format (tushare standard ts_code) — not just bare codes + sh/sz prefix.
+# Before fix: to_tushare_code("600000.SH") → "600000.sh.SH" (double-suffix).
+# ---------------------------------------------------------------------------
+
+
+def test_to_tushare_code_suffix_format_idempotent() -> None:
+    """R163: .SH/.SZ/.BJ suffix input must round-trip, not double-suffix."""
+    from src.tools.ashare_board_utils import to_tushare_code
+
+    assert to_tushare_code("600000.SH") == "600000.SH"
+    assert to_tushare_code("000001.SZ") == "000001.SZ"
+    assert to_tushare_code("920001.BJ") == "920001.BJ"
+    assert to_tushare_code("688766.SH") == "688766.SH"
+
+
+def test_split_ashare_exchange_prefix_suffix_format() -> None:
+    """R163: split must recognize .SH/.SZ/.BJ suffix and extract clean symbol."""
+    from src.tools.ashare_board_utils import split_ashare_exchange_prefix
+
+    assert split_ashare_exchange_prefix("600000.SH") == ("sh", "600000")
+    assert split_ashare_exchange_prefix("000001.SZ") == ("sz", "000001")
+    assert split_ashare_exchange_prefix("920001.BJ") == ("bj", "920001")
+    # lowercase suffix too
+    assert split_ashare_exchange_prefix("688766.sh") == ("sh", "688766")
+
+
+def test_split_ashare_exchange_prefix_prefix_format_unchanged() -> None:
+    """R163 regression: sh/sz PREFIX format still works."""
+    from src.tools.ashare_board_utils import split_ashare_exchange_prefix
+
+    assert split_ashare_exchange_prefix("sh600000") == ("sh", "600000")
+    assert split_ashare_exchange_prefix("sz000001") == ("sz", "000001")
+
+
+def test_split_ashare_exchange_prefix_bare_unchanged() -> None:
+    """R163 regression: bare code still returns (None, code)."""
+    from src.tools.ashare_board_utils import split_ashare_exchange_prefix
+
+    assert split_ashare_exchange_prefix("600000") == (None, "600000")

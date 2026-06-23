@@ -16,6 +16,14 @@ def _normalize_ticker_text(ticker: Any) -> str:
 
 def split_ashare_exchange_prefix(ticker: Any) -> tuple[str | None, str]:
     normalized = _normalize_ticker_text(ticker).lower()
+    # R163: .SH/.SZ/.BJ SUFFIX format (tushare ts_code standard, e.g. "600000.SH")
+    # must be split — before fix the suffix stayed attached to the symbol and
+    # to_tushare_code re-appended it → "600000.sh.SH" (double-suffix → empty fetch).
+    if "." in normalized:
+        base, _, suffix = normalized.rpartition(".")
+        if suffix in ("sh", "sz", "bj") and base:
+            return suffix, base
+    # sh/sz/bj PREFIX format (e.g. "sh600000")
     if normalized.startswith(("sh", "sz", "bj")):
         return normalized[:2], normalized[2:]
     return None, normalized
