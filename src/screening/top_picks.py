@@ -1371,8 +1371,28 @@ def _print_top_picks_footer(
     _print_hit_rate_block(report_dir)
     _print_stability_block(report_dir)
     _print_concentration_block(representative_picks)
+    _print_correlation_block(representative_picks)
     _print_decision_flow_hint()
     _print_disclaimer()
+
+
+def _print_correlation_block(picks: list[dict]) -> None:
+    """Q-4: 相关性仓位折减 — when BUY picks overlap (same industry + close score),
+    their combined position over-concentrates risk. Surface ⚠ + per-pick discount
+    factor so R145 position suggestions can be scaled. Independent picks → silent.
+    """
+    try:
+        from src.screening.correlation_discount import (
+            compute_correlation_discount,
+            render_correlation_note,
+        )
+
+        report = compute_correlation_discount(picks)
+    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+        return
+    line = render_correlation_note(report)
+    if line:
+        print(line)
 
 
 def _print_concentration_block(picks: list[dict]) -> None:

@@ -698,3 +698,26 @@ def test_print_concentration_block_warns_when_concentrated(capsys):
     top_picks._print_concentration_block(diverse)
     out2 = capsys.readouterr().out
     assert "⚠" not in out2
+
+
+def test_print_correlation_block_warns_on_overlap(capsys):
+    """Q-4: --top-picks footer shows ⚠ correlation warning when BUY picks overlap."""
+    from src.screening import top_picks
+
+    picks = [
+        {"ticker": "000001", "industry_sw": "电子", "score_b": 0.75},
+        {"ticker": "000002", "industry_sw": "电子", "score_b": 0.74},
+    ]
+    top_picks._print_correlation_block(picks)
+    out = capsys.readouterr().out
+    assert "相关" in out
+    assert "⚠" in out
+
+    # independent picks → silent
+    indep = [
+        {"ticker": "000001", "industry_sw": "电子", "score_b": 0.85},
+        {"ticker": "000002", "industry_sw": "银行", "score_b": 0.50},
+    ]
+    top_picks._print_correlation_block(indep)
+    out2 = capsys.readouterr().out
+    assert out2 == ""
