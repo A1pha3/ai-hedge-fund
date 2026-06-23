@@ -641,19 +641,19 @@
       "false_negative_count": 10,
       "tradeable_surface": {
         "closed_cycle_count": 377,
-        "positive_rate": 0.5756,
-        "return_hit_rate": 0.2971,
-        "mean_t_plus_2_return": 0.017,
+        "positive_rate": 0.5809,
+        "return_hit_rate": 0.3024,
+        "mean_t_plus_2_return": 0.0204,
         "verdict": "below_strict_btst_objective",
-        "objective_fit_score": 0.4869
+        "objective_fit_score": 0.5058
       },
       "rejected_surface": {
         "closed_cycle_count": 167,
-        "positive_rate": 0.5689,
-        "return_hit_rate": 0.2335,
-        "mean_t_plus_2_return": 0.0113,
+        "positive_rate": 0.5749,
+        "return_hit_rate": 0.2395,
+        "mean_t_plus_2_return": 0.0151,
         "verdict": "below_strict_btst_objective",
-        "objective_fit_score": 0.4254
+        "objective_fit_score": 0.4466
       },
       "structural_guardrail": null,
       "execution_eligible_evidence": null
