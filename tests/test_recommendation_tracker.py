@@ -725,3 +725,63 @@ def test_uses_injected_fetcher_for_actual_returns(tmp_path: Path):
     # 窗口扩展从 +10 天改为 +45 天 (为 T+30 容错)
     assert call_log == [("000010", "20260607", "20260728")]
     assert result["000010"]["day_1"] == pytest.approx(10.0, rel=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# R164: _default_price_fetcher must fall back to TushareDataSource when akshare
+# returns empty (proxy/network). Before fix: backfill data path was akshare-only
+# → proxy-blocked → realized returns never backfilled → calibration starved.
+# ---------------------------------------------------------------------------
+
+
+def test_default_price_fetcher_tushare_fallback_when_akshare_empty(monkeypatch) -> None:
+    """R164: akshare empty → fall back to TushareDataSource; backfill unblocked."""
+    from src.screening import recommendation_tracker as rt
+
+    # akshare returns empty (simulating the proxy block seen in production)
+    monkeypatch.setattr("src.tools.akshare_api.get_prices", lambda *a, **k: [])
+
+    # capture + stub the tushare source
+    called: list[str] = []
+
+    class _FakePrice:
+        def __init__(self, t: str, c: float) -> None:
+            self.time = t
+            self.close = c
+
+    def _fake_tushare(ticker: str, start_date: str, end_date: str, period: str = "daily"):
+        called.append(ticker)
+        return [_FakePrice("2026-06-22", 100.0), _FakePrice("2026-06-23", 105.0)]
+
+    monkeypatch.setattr(
+        "src.tools.ashare_data_sources.TushareDataSource.get_prices",
+        classmethod(lambda cls, *a, **k: _fake_tushare(*a, **k)),
+    )
+
+    result = rt._default_price_fetcher("002222", "20260622", "20260623")
+
+    assert called == ["002222"], "tushare must be called as fallback when akshare empty"
+    assert len(result) == 2
+    assert result[0]["close"] == 100.0
+    assert result[1]["close"] == 105.0
+
+
+def test_default_price_fetcher_prefers_akshare_when_available(monkeypatch) -> None:
+    """R164 regression: when akshare returns data, tushare is NOT called."""
+    from src.screening import recommendation_tracker as rt
+
+    class _P:
+        def __init__(self, t, c): self.time = t; self.close = c
+
+    monkeypatch.setattr(
+        "src.tools.akshare_api.get_prices",
+        lambda *a, **k: [_P("2026-06-22", 100.0)],
+    )
+    tushare_called: list[str] = []
+    monkeypatch.setattr(
+        "src.tools.ashare_data_sources.TushareDataSource.get_prices",
+        classmethod(lambda cls, *a, **k: tushare_called.append("tushare") or []),
+    )
+
+    rt._default_price_fetcher("002222", "20260622", "20260623")
+    assert tushare_called == [], "tushare must NOT be called when akshare has data"

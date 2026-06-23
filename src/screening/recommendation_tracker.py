@@ -211,7 +211,19 @@ def _default_price_fetcher(ticker: str, start_date: str, end_date: str) -> list[
         prices = get_prices(ticker, start_date, end_date, period="daily")
     except Exception as exc:  # pragma: no cover - 网络路径
         logger.debug("[Tracking] 默认 fetcher 拉取 %s 失败: %s", ticker, exc)
-        return []
+        prices = []
+
+    # R164: akshare 返回空 (代理/网络失败 — 生产环境 eastmoney 代理墙) 时回退到
+    # TushareDataSource (已修复 R162 kwargs + R163 ticker-parse, live 路径可用)。
+    # 否则 realized-returns backfill 永远拿不到数据 → calibration/reconcile 饿死。
+    if not prices:
+        try:
+            from src.tools.ashare_data_sources import TushareDataSource
+
+            prices = TushareDataSource.get_prices(ticker, start_date, end_date)
+        except Exception as exc:  # pragma: no cover - 网络路径
+            logger.debug("[Tracking] tushare 回退拉取 %s 失败: %s", ticker, exc)
+            prices = []
 
     result: list[dict[str, Any]] = []
     for p in prices:
