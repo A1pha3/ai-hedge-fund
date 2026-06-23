@@ -99,7 +99,7 @@ class AKShareProvider(BaseDataProvider):
         Returns:
             函数执行结果
         """
-        return await asyncio.get_running_loop().run_in_executor(None, func, *args, **kwargs)
+        return await asyncio.to_thread(func, *args, **kwargs)
 
     async def get_prices(self, ticker: str, start_date: str, end_date: str) -> DataResponse:
         """
