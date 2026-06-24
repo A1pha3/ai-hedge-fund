@@ -182,7 +182,13 @@ def compute_sector_strength(
     strong = [s.industry_name for s in top_strong_industries(industry_signals, _STRONG_COUNT)]
     weak = [s.industry_name for s in bottom_weak_industries(industry_signals, _WEAK_COUNT)]
     strong_set = set(strong)
-    weak_set = set(weak)
+    # Deduplicate: a sector cannot be both strong and weak in the same report.
+    # With fewer than _STRONG_COUNT+_WEAK_COUNT total industries, the bottom-N
+    # list may include sectors already classified as strong (they appear in both
+    # rank<=N and rank>total-N when total < 2*N). Strong takes priority in the
+    # if-elif scoring chain (line~199) — apply the same priority to the display
+    # sets so the user never sees "强势: 电子" and "弱势: 电子" simultaneously.
+    weak_set = {w for w in weak if w not in strong_set}
 
     items: list[SectorStrengthInfo] = []
     for rec in latest_recs:
@@ -226,7 +232,7 @@ def compute_sector_strength(
         trade_date=trade_date,
         lookback_days=lookback_days,
         strong_sectors=strong,
-        weak_sectors=weak,
+        weak_sectors=sorted(weak_set),
         items=items,
     )
 
