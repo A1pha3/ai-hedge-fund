@@ -67,6 +67,11 @@ class ScoreBucketStats:
     t10_avg_return: float | None = None
     t20_avg_return: float | None = None
     t30_avg_return: float | None = None
+    # R-6: median of realized T+30 returns — outlier-robust center vs t30_avg_return.
+    # realized evidence 20260624 showed arithmetic mean is distorted by a single
+    # extreme winner; median reflects the typical pick. mean ≫ median ⇒ outlier
+    # pollution. None when no matured T+30.
+    t30_median_return: float | None = None
     # O-4: mean of realized LOSING T+30 returns (赔率 / typical-downside).
     t30_avg_negative_return: float | None = None
     # P-2: sample standard deviation of realized T+30 returns (outcome dispersion).
@@ -107,6 +112,7 @@ class ScoreBucketStats:
             "t10_avg_return": self.t10_avg_return,
             "t20_avg_return": self.t20_avg_return,
             "t30_avg_return": self.t30_avg_return,
+            "t30_median_return": self.t30_median_return,
             "t30_avg_negative_return": self.t30_avg_negative_return,
             "t30_std_return": self.t30_std_return,
             "t30_p5_return": self.t30_p5_return,
@@ -201,6 +207,27 @@ def _win_rate_or_none(valid_returns: list[float]) -> float | None:
 def _mean_or_none(valid_returns: list[float]) -> float | None:
     """Arithmetic mean of realized returns; None when empty."""
     return (sum(valid_returns) / len(valid_returns)) if valid_returns else None
+
+
+def _median_or_none(valid_returns: list[float]) -> float | None:
+    """Median of realized returns; None when empty.
+
+    R-6 (realized evidence 20260624): ``t30_avg_return`` (arithmetic mean) is
+    outlier-fragile — a single extreme winner (688008 +112% across 4 batches)
+    pulled a bucket's mean to +17% while the typical pick was flat. The median
+    is immune to that single-pick distortion, so it reflects the *typical*
+    realized T+30 for a score bucket. Pair with ``t30_avg_return`` so consumers
+    (``--reconcile`` predicted edge, display) can detect outlier pollution
+    (mean ≫ median ⇒ a few picks dominate).
+    """
+    if not valid_returns:
+        return None
+    ordered = sorted(valid_returns)
+    n = len(ordered)
+    mid = n // 2
+    if n % 2 == 1:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) / 2.0
 
 
 def _mean_negative_or_none(valid_returns: list[float]) -> float | None:
@@ -343,6 +370,7 @@ def compute_calibration(
             t10_avg_return=_mean_or_none(t10_valid),
             t20_avg_return=_mean_or_none(t20_valid),
             t30_avg_return=_mean_or_none(t30_valid),
+            t30_median_return=_median_or_none(t30_valid),
             t30_avg_negative_return=_mean_negative_or_none(t30_valid),
             t30_std_return=_std_or_none(t30_valid),
             t30_p5_return=_p5_or_none(t30_valid),

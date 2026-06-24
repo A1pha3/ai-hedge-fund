@@ -476,3 +476,63 @@ class TestStdAndT30StdReturn:
         summary = compute_calibration(records)
         d = summary.buckets[0].to_dict()
         assert "t30_std_return" in d
+
+
+# ---------------------------------------------------------------------------
+# R-6 t30_median_return — robust center vs outlier-polluted mean
+# (realized evidence 20260624: 688008 +112% singlehandedly pulled a bucket's
+#  arithmetic mean to +17% while the typical pick was flat. Median is immune.)
+# ---------------------------------------------------------------------------
+
+
+class TestT30MedianReturn:
+    """R-6: t30_median_return as an outlier-robust companion to t30_avg_return."""
+
+    def test_median_none_when_no_t30(self) -> None:
+        """无成熟 T+30 → median None (同 avg)。"""
+        records = [_make_extended_record("000001", 0.85)]  # no t30
+        summary = compute_calibration(records)
+        high = next(b for b in summary.buckets if b.label == "高 (>0.8)")
+        assert high.t30_median_return is None
+
+    def test_median_equals_avg_when_symmetric(self) -> None:
+        """对称分布 → median ≈ avg。"""
+        records = [
+            _make_extended_record("000001", 0.85, t30=2.0),
+            _make_extended_record("000002", 0.82, t30=4.0),
+            _make_extended_record("000003", 0.81, t30=6.0),
+        ]
+        summary = compute_calibration(records)
+        high = next(b for b in summary.buckets if b.label == "高 (>0.8)")
+        assert high.t30_median_return == pytest.approx(4.0)
+        assert high.t30_avg_return == pytest.approx(4.0)
+
+    def test_median_robust_to_outlier(self) -> None:
+        """单个极端赢家 (688008 场景: +112%) 污染 mean 但不污染 median。
+
+        realized evidence 20260624: 中高 bucket mean +17% (被 +112% 拉高),
+        但典型 pick 其实是 flat/negative。median 揭示真实典型值。
+        """
+        records = [
+            _make_extended_record("000001", 0.72, t30=-3.0),
+            _make_extended_record("000002", 0.71, t30=-1.0),
+            _make_extended_record("000003", 0.75, t30=2.0),
+            _make_extended_record("000004", 0.78, t30=112.0),  # 极端赢家
+        ]
+        summary = compute_calibration(records)
+        bucket = next(b for b in summary.buckets if b.label == "中高 (0.7-0.8)")
+        # mean 被严重拉高
+        assert bucket.t30_avg_return > 20.0
+        # median 保持在中位 (~0.5), 反映典型 pick
+        assert bucket.t30_median_return is not None
+        assert abs(bucket.t30_median_return) < 5.0  # 接近 0, 不是 +27
+
+    def test_median_serializes(self) -> None:
+        """t30_median_return 必须序列化 (web/API 消费)。"""
+        records = [
+            _make_extended_record("000001", 0.85, t30=5.0),
+            _make_extended_record("000002", 0.82, t30=3.0),
+        ]
+        summary = compute_calibration(records)
+        d = summary.buckets[0].to_dict()
+        assert "t30_median_return" in d
