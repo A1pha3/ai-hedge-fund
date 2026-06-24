@@ -246,8 +246,8 @@
 | ID | 优先级 | 状态 | 需求 | 目标 |
 |---|---|---|---|---|
 | R-1 | P1 | ✅ | **多周期冲突 / horizon-conflict flag** | 一只票可 T+1 看多但 T+30 看空 (短线 pop + 长线 fade), 用户看到两个数字却无冲突标记。新增纯函数 `detect_horizon_conflict(expected_returns)`: 短期 (T+1/T+5) 与长期 (T+20/T+30) sign 不一致 → ⚠ 「多周期冲突: T+1 +2% 但 T+30 -1%」。复用 expected_returns, 零新数据。**唯一新决策信号** (其余 R-2~R-4 是聚合/展示既有)。。**C168 交付** commit 6925e35a；TDD 10；FULL 9817 passed 503s。 |
-| R-2 | P2 | ❌ | **数据完整度门控 / run-level data-quality on front door** | `data_quality_audit` 存在但未在 `--top-picks` 暴露。用户无法一眼判断今日推荐基于完整还是部分数据。新增 front-door 「📊 数据完整度: 85% (3/4 数据源就绪)」。复用 data_quality_audit。 |
-| R-3 | P2 | ❌ | **组合风险预算总览 / portfolio risk-budget synthesis** | P-4 (集中度) + Q-4 (相关) + R145 (仓位) 各自独立, 无单一"总组合风险 vs 预算"数。新增 read-only 「🎯 组合风险: 72%/100% 预算」。effort 3 / risk 2 (合成既有, borderline 组合优化但 read-only 可辩护)。 |
+| R-2 | P2 | ✅ | **数据完整度门控 / run-level data-quality on front door** | `data_quality_audit` 存在但未在 `--top-picks` 暴露。用户无法一眼判断今日推荐基于完整还是部分数据。新增 front-door 「📊 数据完整度: 85% (3/4 数据源就绪)」。复用 data_quality_audit。**C169 交付** commit 032ed1cc；TDD 3；FULL 9842 passed 498s。 |
+| R-3 | P2 | ✅ | **组合风险预算总览 / portfolio risk-budget synthesis** | P-4 (集中度) + Q-4 (相关) + R145 (仓位) 各自独立, 无单一"总组合风险 vs 预算"数。新增 read-only 「🎯 组合风险: 72%/100% 预算」。**C171 交付** commit 95cd6ec9；TDD 10；FULL 9854 passed 520s。 |
 | R-4 | P3 | ❌ | **止损触发复盘 / ATR stop trigger replay** | R8 设 ATR 止损位, 但止损本身未回测 (历史触发率多少?)。需历史价格。effort 3 / risk 2。 |
 
 ### 三·5、产品方向 refill backlog（2026-06-24 **真实回测证据**驱动 → 揭示核心问题）

@@ -1,23 +1,17 @@
 """R-5.A 按 regime 展示真实历史胜率 / regime-aware win-rate disclosure.
 
-真实回测 (2026-06-24, 14 日期 91 只真实推荐) 揭示一个反直觉但关键的事实:
-系统 ``regime_gate_level`` 的标签语义是为**风控**设计的, 但对**选股赚钱**而言
-方向相反——
+v2 扩样本回测 (2026-06-24, 32 日期 ~189 只真实推荐, tushare 真实 T+30) 结论:
+三 regime 胜率接近 (crisis 47% / normal 43% / risk_off 30%), 典型票 (median) 都微亏
+到平 — **没有哪个 regime 明显赚钱** (推翻了早期小样本 "crisis 73% 赚钱" 的偏差结论)。
+regime 差异主要体现在 risk_off 略差 (30% vs 43-47%)。
 
-  crisis regime (广度极弱, 结构性行情): 真实 T+30 胜率 73%, median +8.24%
-      → 模型选股能发挥 (挑出少数大涨的票) → **赚钱**
-  normal regime (广度强, 普涨普跌震荡): 真实 T+30 胜率 24%, median -8.74%
-      → 选股无 alpha (买什么都差不多且震荡易亏) → **亏钱**
+R-5.A 是**零行为改变**的诚实披露: 不碰 gate / 不碰仓位, 只在 --top-picks footer
+按当前 regime 展示真实历史胜率, 让用户看到当前期望自己决定。这是赚钱工具的
+诚实基础, 也是持续累积真实数据验证假设的基础设施。
 
-这不是 regime gate 的 bug (广度弱=结构脆弱是标准风控语义), 而是它与"赚钱工具"
-目标的**错配**: gate 在结构性行情 (选股最强场景) 降仓, 在震荡市 (选股无效) 满仓。
-
-R-5.A 是**零行为改变**的第一步: 不碰 gate / 不碰仓位, 只在 --top-picks footer
-按 current regime 展示真实历史胜率, 让用户看到当前期望自己决定。这是赚钱工具的
-诚实基础, 也是验证"结构性行情赚钱"假设是否持续的第一步。
-
-数据源: ``REGIME_HISTORICAL_WINRATES`` 内嵌真实回测结果 (随 daily scheduling
-累积应定期重算; 硬编码是 v1, 后续可改为从 tracking_history 动态算)。
+数据源: ``REGIME_HISTORICAL_WINRATES`` 内嵌真实回测结果 (v2 扩充版, 32 日期 ~189 只;
+随 daily scheduling 累积应定期重算; 后续可从 tracking_history 动态算, 当前硬编码
+避免每跑一次就拉 tushare 或依赖本地 tracking_history 存在)。
 """
 
 from __future__ import annotations
