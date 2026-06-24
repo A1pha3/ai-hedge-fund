@@ -1381,6 +1381,7 @@ def _print_top_picks_footer(
     _print_data_quality_block(report_dir)
     _print_concentration_block(representative_picks)
     _print_correlation_block(representative_picks)
+    _print_portfolio_risk_block(representative_picks)
     _print_decision_flow_hint()
     _print_disclaimer()
 
@@ -1400,6 +1401,28 @@ def _print_correlation_block(picks: list[dict]) -> None:
     except Exception:  # noqa: BLE001 — best-effort display; never break the front door
         return
     line = render_correlation_note(report)
+    if line:
+        print(line)
+
+
+def _print_portfolio_risk_block(picks: list[dict]) -> None:
+    """R-3: 组合风险预算总览 — synthesize P-4 concentration + Q-4 correlation into a
+    single read-only ``🎯 组合风险: X%/100% 预算`` line.
+
+    P-4 (集中度) / Q-4 (相关性) / R145 (仓位) 各自独立, 此前无组合层"总风险 vs
+    预算"数。R-3 复用既有 compute_industry_concentration + compute_correlation_discount
+    合成 0-100% 预算占用。纯展示不进排序, 数据不足/<2 picks 静默 (同 R-1/R-2/R-5).
+    """
+    try:
+        from src.screening.portfolio_risk_budget import (
+            render_portfolio_risk_line,
+            summarize_portfolio_risk,
+        )
+
+        summary = summarize_portfolio_risk(picks)
+    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+        return
+    line = render_portfolio_risk_line(summary)
     if line:
         print(line)
 
