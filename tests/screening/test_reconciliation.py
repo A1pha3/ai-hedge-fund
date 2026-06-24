@@ -178,3 +178,70 @@ class TestRenderReconciliation:
         report = ReconciliationReport()
         result = render_reconciliation(report)
         assert "无" in result or "无交易" in result or "empty" in result.lower() or result == ""
+
+
+# ---------------------------------------------------------------------------
+# R-7: median predicted side — wire t30_median_return into reconcile
+# (R-6 added the robust center; R-7 makes reconcile USE it so users see both
+#  mean-based and median-based predictions + which center is more accurate)
+# ---------------------------------------------------------------------------
+
+
+class TestReconcileMedianPrediction:
+    """R-7: reconcile surfaces median prediction alongside mean."""
+
+    def test_predicted_return_median_populated(self, tmp_path: Path) -> None:
+        """Each matched row carries both predicted_return (mean) and predicted_return_median."""
+        _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}])
+        # bucket 中高: give it T+30 returns so mean != median (outlier scenario)
+        _seed_tracking(tmp_path, [
+            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": -1.0},
+            {"ticker": "000098", "recommended_date": "20251202", "recommendation_score": 0.71, "next_30day_return": 3.0},
+            {"ticker": "000097", "recommended_date": "20251203", "recommendation_score": 0.78, "next_30day_return": 112.0},  # outlier
+        ])
+        trade_path = _write_trade_log(tmp_path, [
+            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.5},
+        ])
+        report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+        row = report.rows[0]
+        # mean = (-1+3+112)/3 ≈ 38; median = 3.0 → both populated, differ
+        assert row.predicted_return is not None
+        assert row.predicted_return_median is not None
+        assert row.predicted_return > row.predicted_return_median  # mean inflated by outlier
+
+    def test_predicted_median_none_when_bucket_has_no_t30(self, tmp_path: Path) -> None:
+        """Bucket with no matured T+30 → median None (same as mean)."""
+        _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}])
+        _seed_tracking(tmp_path, [])  # empty → bucket t30 all None
+        trade_path = _write_trade_log(tmp_path, [
+            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.5},
+        ])
+        report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+        row = report.rows[0]
+        assert row.predicted_return is None
+        assert row.predicted_return_median is None
+
+    def test_report_has_mae_median(self, tmp_path: Path) -> None:
+        """ReconciliationReport carries mae_median (median-based MAE) alongside mae."""
+        _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}])
+        _seed_tracking(tmp_path, [
+            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
+        ])
+        trade_path = _write_trade_log(tmp_path, [
+            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.67},
+        ])
+        report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+        assert report.mae is not None
+        assert report.mae_median is not None
+
+    def test_render_shows_both_centers(self, tmp_path: Path) -> None:
+        """render_reconciliation output mentions both mean and median predictions."""
+        report = ReconciliationReport(
+            rows=[ReconciliationRow(ticker="000001", buy_date="20260101",
+                                    predicted_return=38.0, predicted_return_median=3.0,
+                                    actual_return=5.0, error=-33.0, directional_match=True)],
+            matched_count=1, mae=33.0, mae_median=2.0,
+        )
+        out = render_reconciliation(report)
+        # both MAE stats surfaced
+        assert "MAE" in out

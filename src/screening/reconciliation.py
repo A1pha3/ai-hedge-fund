@@ -45,6 +45,8 @@ class ReconciliationRow:
     buy_date: str
     #: 模型预测的 T+30 收益 (买入日 score_b 分桶的 T+30 均收); None = 买入日报告无该 ticker
     predicted_return: float | None = None
+    #: R-7: 同分桶的 T+30 中位数预测 (稳健中心, 免异常值); None = 无成熟 T+30
+    predicted_return_median: float | None = None
     actual_return: float = 0.0  # sell_price/buy_price - 1
     error: float | None = None  # actual - predicted; None when predicted is None
     directional_match: bool | None = None  # sign(predicted) == sign(actual); None when predicted None
@@ -57,7 +59,9 @@ class ReconciliationReport:
     rows: list[ReconciliationRow] = field(default_factory=list)
     matched_count: int = 0  # 有预测 + 有实际的 trade 数
     unmatched_count: int = 0  # 买入日报告无该 ticker (predicted=None)
-    mae: float | None = None  # 平均绝对误差 (仅 matched)
+    mae: float | None = None  # 平均绝对误差 (仅 matched, mean-based)
+    #: R-7: median-based MAE (用 predicted_return_median). 低于 mae → 中位数是更好的预测中心
+    mae_median: float | None = None
     directional_accuracy: float | None = None  # 方向准确率 (仅 matched)
 
 
@@ -144,6 +148,27 @@ def _predicted_t30(score_b: float, calibration) -> float | None:  # calibration:
     return None
 
 
+def _predicted_t30_median(score_b: float, calibration) -> float | None:  # calibration: CalibrationSummary
+    """Look up the model's predicted T+30 return for a score_b via bucket MEDIAN.
+
+    R-7: companion to :func:`_predicted_t30` (which uses the outlier-fragile
+    arithmetic mean). Uses the bucket's ``t30_median_return`` (R-6) so a single
+    extreme winner (e.g. 688008 +112%) doesn't inflate the predicted edge.
+    Reconcile surfaces both centers; if median-MAE < mean-MAE, the robust center
+    is the better predictor.
+    """
+    from src.screening.confidence_calibration import _find_bucket
+
+    bucket_info = _find_bucket(score_b)
+    if bucket_info is None:
+        return None
+    label = bucket_info[0]
+    for b in calibration.buckets:
+        if b.label == label:
+            return b.t30_median_return
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Core reconciliation
 # ---------------------------------------------------------------------------
@@ -185,6 +210,7 @@ def compute_reconciliation(
     matched = 0
     unmatched = 0
     abs_errors: list[float] = []
+    abs_errors_median: list[float] = []
     directional_hits = 0
 
     for trade in trades:
@@ -197,18 +223,27 @@ def compute_reconciliation(
 
         score_b = _score_b_on_date(history, ticker, buy_date)
         predicted = _predicted_t30(score_b, calibration) if score_b is not None else None
+        # R-7: median-based prediction (robust center). Computed even when mean is
+        # available, so both centers surface per row; matched/MAE keyed on mean
+        # (preserves existing contract — median is a parallel diagnostic).
+        predicted_median = (
+            _predicted_t30_median(score_b, calibration) if score_b is not None else None
+        )
 
         if predicted is not None:
             matched += 1
             error = actual - predicted
             abs_errors.append(abs(error))
+            if predicted_median is not None:
+                abs_errors_median.append(abs(actual - predicted_median))
             dmatch = (predicted > 0) == (actual > 0)
             if dmatch:
                 directional_hits += 1
             rows.append(
                 ReconciliationRow(
                     ticker=ticker, buy_date=buy_date,
-                    predicted_return=predicted, actual_return=actual,
+                    predicted_return=predicted, predicted_return_median=predicted_median,
+                    actual_return=actual,
                     error=error, directional_match=dmatch,
                 )
             )
@@ -217,12 +252,14 @@ def compute_reconciliation(
             rows.append(
                 ReconciliationRow(
                     ticker=ticker, buy_date=buy_date,
-                    predicted_return=None, actual_return=actual,
+                    predicted_return=None, predicted_return_median=predicted_median,
+                    actual_return=actual,
                     error=None, directional_match=None,
                 )
             )
 
     mae = (sum(abs_errors) / len(abs_errors)) if abs_errors else None
+    mae_median = (sum(abs_errors_median) / len(abs_errors_median)) if abs_errors_median else None
     directional_accuracy = (directional_hits / matched) if matched else None
 
     return ReconciliationReport(
@@ -230,6 +267,7 @@ def compute_reconciliation(
         matched_count=matched,
         unmatched_count=unmatched,
         mae=mae,
+        mae_median=mae_median,
         directional_accuracy=directional_accuracy,
     )
 
@@ -271,10 +309,14 @@ def render_reconciliation(report: ReconciliationReport) -> str:
     lines.append("")
     if report.matched_count:
         mae_str = f"{report.mae:.1f}%" if report.mae is not None else "—"
+        mae_median_str = f"{report.mae_median:.1f}%" if report.mae_median is not None else "—"
         da_str = f"{report.directional_accuracy * 100:.0f}%" if report.directional_accuracy is not None else "—"
+        # R-7: median-MAE 并列 mean-MAE — 若 median-MAE < mean-MAE, 中位数是更好的预测中心
+        # (mean 被 outlier 污染时 median 更准). 不带判断的并列展示, 让用户自己比对.
         lines.append(
             f"  {Fore.CYAN}聚合:{Style.RESET_ALL} 对账 {report.matched_count} 笔"
-            f" (未匹配 {report.unmatched_count})  |  MAE={mae_str}  |  方向准确率={da_str}"
+            f" (未匹配 {report.unmatched_count})  |  MAE={mae_str}  |  MAE(中位)={mae_median_str}"
+            f"  |  方向准确率={da_str}"
         )
     else:
         lines.append(
