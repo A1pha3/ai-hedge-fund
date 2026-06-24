@@ -39,20 +39,23 @@ class RegimeWinrateSummary:
     sample_count: int = 0
 
 
-# 真实回测结果 (2026-06-24, 91 只真实推荐, tushare 真实 T+30)。
-# crisis = 广度极弱结构性行情 (模型选股强); normal = 广度强震荡市 (选股无 alpha)。
-# risk_off 无足够样本。随 daily scheduling 累积应定期重算 (v1 硬编码)。
+# 真实回测结果 (2026-06-24, 扩充至 32 日期 ~189 只真实推荐, tushare 真实 T+30)。
+# 扩样本后结论: 三 regime 胜率接近 (normal 43% / crisis 47% / risk_off 30%),
+# 典型票 (median) 都微亏到平 — 没有哪个 regime 明显赚钱 (推翻了早期小样本
+# "crisis 73% 赚钱" 的偏差结论)。regime 差异主要体现在 risk_off 略差。
+# 随 daily scheduling 累积应定期重算 (v2 扩充版, 替代 v1 91 只小样本)。
 REGIME_HISTORICAL_WINRATES: dict[str, dict] = {
-    "crisis": {"winrate": 0.727, "avg_return": 10.04, "median_return": 8.24, "sample_count": 22},
-    "normal": {"winrate": 0.237, "avg_return": -4.91, "median_return": -8.74, "sample_count": 59},
-    # risk_off: 暂无足够真实样本 (91 只中 0 条落到 risk_off regime)
+    "crisis": {"winrate": 0.468, "avg_return": 0.58, "median_return": -0.93, "sample_count": 119},
+    "normal": {"winrate": 0.434, "avg_return": 1.31, "median_return": -4.37, "sample_count": 60},
+    "risk_off": {"winrate": 0.30, "avg_return": -1.89, "median_return": -5.12, "sample_count": 10},
 }
 
 
-# regime 的产品语义提示 (基于真实回测的赚钱判断, 非风控语义)
+# regime 的产品语义提示 (基于扩充后真实回测: 三 regime 胜率都 30-47%, 典型票微亏)
 _REGIME_ADVICE: dict[str, str] = {
-    "crisis": "结构性行情 (广度弱), 模型选股可能发挥",
-    "normal": "广度强震荡市, 选股 alpha 弱, 建议谨慎/轻仓",
+    "crisis": "广度弱结构性行情, 历史胜率 ~47%, 典型票微亏 (扩样本后无显著 alpha)",
+    "normal": "广度强常态市, 历史胜率 ~43%, 典型票微亏, 建议谨慎",
+    "risk_off": "避险/弱势市, 历史胜率仅 ~30%, 典型票 -5%, 建议空仓/轻仓",
 }
 
 
