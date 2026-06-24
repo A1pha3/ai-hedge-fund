@@ -14,6 +14,8 @@ from src.screening.data_quality_audit import (
     DEFAULT_QUALITY_THRESHOLD,
     load_latest_recommendations,
     render_audit_report,
+    render_data_quality_summary,
+    summarize_data_quality,
     STRATEGY_ORDER,
 )
 
@@ -341,3 +343,85 @@ class TestCompletenessBar:
 
         out = _completeness_bar(-0.5)
         assert out.count("░") == 10
+
+
+# ---------------------------------------------------------------------------
+# R-2 数据完整度门控 — summarize_data_quality / render_data_quality_summary
+# ---------------------------------------------------------------------------
+
+
+class TestSummarizeDataQuality:
+    """R-2: 从 audit_recommendations 产出聚合数据完整度摘要。"""
+
+    def test_empty_recommendations_returns_no_data(self) -> None:
+        """空推荐列表 → 没有可摘要的数据。"""
+        s = summarize_data_quality([])
+        assert s.has_data is False
+
+    def test_single_full_completeness(self) -> None:
+        """单只票全部策略完整 → avg 完整度 = 那只票的 composite。"""
+        rec = _make_rec("000001", {s: 1.0 for s in STRATEGY_ORDER})
+        audits = audit_recommendations([rec])
+        s = summarize_data_quality(audits)
+        assert s.has_data is True
+        assert s.pick_count == 1
+        assert s.avg_completeness == pytest.approx(1.0)
+        assert s.low_quality_count == 0
+        # all 4 strategies ready → ready count == len(STRATEGY_ORDER)
+        assert s.strategy_ready_count == len(STRATEGY_ORDER)
+
+    def test_mixed_completeness_avg_and_low_count(self) -> None:
+        """多只票: avg 取平均, low_quality_count 计 composite < threshold。"""
+        full = _make_rec("000001", {s: 1.0 for s in STRATEGY_ORDER})
+        half = _make_rec("000002", {s: 0.5 for s in STRATEGY_ORDER})  # 0.5 < 0.6 → low
+        audits = audit_recommendations([full, half])
+        s = summarize_data_quality(audits)
+        assert s.pick_count == 2
+        assert s.avg_completeness == pytest.approx(0.75)
+        assert s.low_quality_count == 1
+
+    def test_strategy_ready_counts_above_threshold(self) -> None:
+        """一个策略在所有 picks 都完整 → 计入 ready; 一个都不完整 → 不计入。"""
+        # trend=1.0 everywhere, fundamental=0.0 everywhere
+        comps = {s: 0.0 for s in STRATEGY_ORDER}
+        comps["trend"] = 1.0
+        rec = _make_rec("000001", comps)
+        audits = audit_recommendations([rec])
+        s = summarize_data_quality(audits)
+        # trend ready, the rest not
+        assert s.strategy_ready_count == 1
+
+
+class TestRenderDataQualitySummary:
+    """R-2: 渲染单行数据完整度摘要 (空数据 → 空串)。"""
+
+    def test_no_data_returns_empty_string(self) -> None:
+        """无可摘要数据 → 空串 (前门不展示, 诚实)。"""
+        s = summarize_data_quality([])
+        assert render_data_quality_summary(s) == ""
+
+    def test_full_completeness_renders_green(self) -> None:
+        """全部完整 → 单行含百分比 + 就绪数 + 绿色。"""
+        rec = _make_rec("000001", {s: 1.0 for s in STRATEGY_ORDER})
+        audits = audit_recommendations([rec])
+        line = render_data_quality_summary(summarize_data_quality(audits))
+        assert line != ""
+        assert "数据完整度" in line
+        assert "100%" in line
+        assert "4/4" in line or f"{len(STRATEGY_ORDER)}/{len(STRATEGY_ORDER)}" in line
+        from src.utils.display import Fore
+
+        assert Fore.GREEN in line
+
+    def test_partial_completeness_renders_warning_and_low_count(self) -> None:
+        """有低质量 pick → 含 ⚠ + 低质量计数。"""
+        full = _make_rec("000001", {s: 1.0 for s in STRATEGY_ORDER})
+        low = _make_rec("000002", {s: 0.3 for s in STRATEGY_ORDER})
+        audits = audit_recommendations([full, low])
+        line = render_data_quality_summary(summarize_data_quality(audits))
+        assert "数据完整度" in line
+        # one low-quality pick surfaced
+        assert "1" in line  # low_quality_count == 1
+        from src.utils.display import Fore
+
+        assert Fore.YELLOW in line or Fore.RED in line

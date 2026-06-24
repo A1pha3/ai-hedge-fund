@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -259,6 +260,92 @@ def render_audit_report(
 
 
 # ---------------------------------------------------------------------------
+# R-2 数据完整度门控 — run-level data-quality summary on the front door
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DataQualitySummary:
+    """聚合数据完整度摘要 (供前门单行展示)。
+
+    基于 :func:`audit_recommendations` 的逐 pick 审计结果聚合:
+    平均综合完整度、低质量 pick 数、各策略平均是否就绪。
+    """
+
+    has_data: bool = False
+    pick_count: int = 0
+    avg_completeness: float = 0.0
+    low_quality_count: int = 0
+    strategy_ready_count: int = 0
+    #: 各策略平均完整度 ≥ 阈值即视为该策略「就绪」, 对应前门 "N/M 策略就绪"
+    strategy_total: int = field(default_factory=lambda: len(STRATEGY_ORDER))
+
+
+def summarize_data_quality(
+    audits: list[dict[str, Any]], threshold: float = DEFAULT_QUALITY_THRESHOLD
+) -> DataQualitySummary:
+    """聚合逐 pick 审计结果为 run-level 数据完整度摘要。
+
+    Args:
+        audits: :func:`audit_recommendations` 返回的逐 pick 审计列表
+        threshold: composite completeness 低于此值计为低质量; 同阈值用于策略就绪判定
+
+    Returns:
+        :class:`DataQualitySummary` (空 audits → ``has_data=False``)
+    """
+    if not audits:
+        return DataQualitySummary()
+
+    pick_count = len(audits)
+    avg_completeness = sum(a["composite_completeness"] for a in audits) / pick_count
+    low_quality_count = sum(1 for a in audits if a["is_low_quality"])
+
+    # Per-strategy readiness: a strategy is "ready" when its average completeness
+    # across picks is at least the threshold (uses the same line as the audit).
+    strategy_ready_count = 0
+    for s in STRATEGY_ORDER:
+        per_values = [a["per_strategy_completeness"].get(s, 0.0) for a in audits]
+        if per_values and (sum(per_values) / len(per_values)) >= threshold:
+            strategy_ready_count += 1
+
+    return DataQualitySummary(
+        has_data=True,
+        pick_count=pick_count,
+        avg_completeness=avg_completeness,
+        low_quality_count=low_quality_count,
+        strategy_ready_count=strategy_ready_count,
+    )
+
+
+def render_data_quality_summary(summary: DataQualitySummary) -> str:
+    """渲染单行数据完整度摘要 (无数据 → 空串)。
+
+    展示形如: ``  📊 数据完整度: 75%  (3/4 策略就绪)  ⚠ 1 只推荐基于部分数据``
+    """
+    if not summary.has_data:
+        return ""
+
+    total = summary.strategy_total
+    ready = summary.strategy_ready_count
+    avg = summary.avg_completeness
+
+    # 颜色随平均完整度: ≥0.8 绿 / ≥0.6 黄 / 其余红 (与 _completeness_bar 一致)
+    if avg >= 0.8:
+        color = Fore.GREEN
+    elif avg >= 0.6:
+        color = Fore.YELLOW
+    else:
+        color = Fore.RED
+
+    parts = [f"  📊 数据完整度: {color}{avg:.0%}{Style.RESET_ALL}  ({ready}/{total} 策略就绪)"]
+    if summary.low_quality_count > 0:
+        parts.append(
+            f"  {Fore.YELLOW}⚠ {summary.low_quality_count} 只推荐基于部分数据{Style.RESET_ALL}"
+        )
+    return " ".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # CLI entry
 # ---------------------------------------------------------------------------
 
@@ -282,4 +369,7 @@ __all__ = [
     "audit_recommendations",
     "render_audit_report",
     "run_data_quality_audit",
+    "DataQualitySummary",
+    "summarize_data_quality",
+    "render_data_quality_summary",
 ]

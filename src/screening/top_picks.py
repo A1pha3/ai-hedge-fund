@@ -1378,6 +1378,7 @@ def _print_top_picks_footer(
     _print_high_confidence_summary(representative_picks)
     _print_hit_rate_block(report_dir)
     _print_stability_block(report_dir)
+    _print_data_quality_block(report_dir)
     _print_concentration_block(representative_picks)
     _print_correlation_block(representative_picks)
     _print_decision_flow_hint()
@@ -1443,6 +1444,33 @@ def _print_stability_block(report_dir: Path) -> None:
     except Exception:  # noqa: BLE001 — best-effort display; never break the front door
         return
     line = render_stability_line(report)
+    if line:
+        print(line)
+
+
+def _print_data_quality_block(report_dir: Path) -> None:
+    """R-2: 数据完整度门控 — run-level 数据完整度单行摘要。
+
+    用户无法一眼判断今日推荐基于完整还是部分数据 (某策略源缺失会让对应 signal
+    静默为中性, composite 仍照常排序)。复用 ``data_quality_audit`` 既有审计:
+    读最新 auto_screening 报告 → 审计 Top N → 聚合为单行「📊 数据完整度: N%
+    (M/4 策略就绪) ⚠ K 只基于部分数据」。纯展示不进排序, 数据不足/缺报告时静默
+    不渲染 (与 P-1/P-4/Q-4 同 best-effort 模式, 永不中断前门)。
+    """
+    try:
+        from src.screening.data_quality_audit import (
+            audit_recommendations,
+            load_latest_recommendations,
+            render_data_quality_summary,
+            summarize_data_quality,
+        )
+
+        _date_str, recs = load_latest_recommendations(report_dir=report_dir)
+        audits = audit_recommendations(recs)
+        summary = summarize_data_quality(audits)
+    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+        return
+    line = render_data_quality_summary(summary)
     if line:
         print(line)
 
