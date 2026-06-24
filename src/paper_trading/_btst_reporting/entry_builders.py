@@ -54,14 +54,22 @@ FORMAL_EXECUTION_BLOCK_FLAGS = (
 def _resolve_selected_execution_quality_thresholds() -> dict[str, Any]:
     """Load selected-entry demotion thresholds from the shared BTST strategy config."""
     thresholds = resolve_strategy_thresholds()
+    # R-5 (falsy-zero, R107 family): explicit 0 is a legitimate config for the
+    # ``min_evaluable_count`` fields ("no minimum — apply demotion regardless of
+    # sample size"). A truthiness ``or`` would silently override 0 back to the
+    # WEAK_NEAR_MISS default, contradicting the operator's explicit config (the
+    # config loader itself respects 0 via ``is not None``). Use the same
+    # presence-check as the sibling ``max_next_close_positive_rate`` field below.
     return {
         "selected_zero_follow_through_min_evaluable_count": int(
             thresholds.get("selected_zero_follow_through_min_evaluable_count")
-            or WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT
+            if thresholds.get("selected_zero_follow_through_min_evaluable_count") is not None
+            else WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT
         ),
         "selected_intraday_only_min_evaluable_count": int(
             thresholds.get("selected_intraday_only_min_evaluable_count")
-            or WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT
+            if thresholds.get("selected_intraday_only_min_evaluable_count") is not None
+            else WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT
         ),
         "selected_intraday_only_max_next_close_positive_rate": float(
             thresholds.get("selected_intraday_only_max_next_close_positive_rate")
