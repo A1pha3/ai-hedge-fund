@@ -58,9 +58,19 @@ echo "[$(date -Iseconds)] [daily_auto] start (top_n=$TOP_N trade_date=${TRADE_DA
 
 # Step 1: --auto (generates report + appends tracking_history for the date).
 #   Also triggers Phase 2 backfill for any records now ≥6 days old.
+#   NOTE: --auto 内部从 inputs.end_date 解析交易日期 (src/main.py:2989
+#   `trade_date = inputs.end_date.replace("-","")`), CLI 层暴露的是 --end-date
+#   (格式 YYYY-MM-DD), 不是 --trade-date. 早期版本误用 --trade-date=YYYYMMDD
+#   会被 argparse 拒绝 (rc=2) → --auto 静默不跑. 这里把 --trade-date YYYYMMDD
+#   转成 --end-date YYYY-MM-DD.
 DATE_ARG=""
 if [[ -n "$TRADE_DATE" ]]; then
-  DATE_ARG="--trade-date=$TRADE_DATE"
+  if [[ ! "$TRADE_DATE" =~ ^[0-9]{8}$ ]]; then
+    echo "[daily_auto] FATAL: --trade-date must be YYYYMMDD, got '$TRADE_DATE'" >&2
+    exit 5
+  fi
+  END_DATE="${TRADE_DATE:0:4}-${TRADE_DATE:4:2}-${TRADE_DATE:6:2}"
+  DATE_ARG="--end-date=$END_DATE"
 fi
 
 if ! "$PYTHON" src/main.py --auto --top-n="$TOP_N" $DATE_ARG >>"$LOG_FILE" 2>&1; then
