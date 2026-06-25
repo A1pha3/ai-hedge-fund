@@ -50,9 +50,13 @@ MOM_WINDOW_6M = 126
 MOM_WEIGHT_1M = 0.4
 MOM_WEIGHT_3M = 0.3
 MOM_WEIGHT_6M = 0.3
-MOM_THRESHOLD = 0.05
+# ALPHA-MOM.1: 阈值松绑 (2026-06-25 诊断驱动)
+# 60日全universe回测显示 momentum dir=0 占比 53.7%, 但 +1 vs -1 T+1 差 +0.812% (因子有效)
+# 主要压制因素: 量能确认 (1.0 太严, A股大量票日常量能<MA21) + 动量阈值 (5% 被加权稀释)
+# 调整: 阈值 0.05→0.03, 量能确认 1.0→0.8 (保留语义但放宽)
+MOM_THRESHOLD = 0.03
 MOM_CONFIDENCE_SCALE = 5  # multiplier mapping momentum score to confidence
-MOM_VOLUME_CONFIRM_RATIO = 1.0
+MOM_VOLUME_CONFIRM_RATIO = 0.8
 
 # Volatility strategy
 VOL_WINDOW = 21
