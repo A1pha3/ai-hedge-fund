@@ -665,14 +665,31 @@ def test_get_sina_historical_data_wraps_errors(monkeypatch):
         akshare_api.get_sina_historical_data("000001", "2026-04-03", "2026-04-06")
 
 
-def test_get_prices_robust_falls_back_to_mock_when_all_sources_fail(monkeypatch):
+def test_get_prices_robust_raises_by_default_when_all_sources_fail(monkeypatch):
+    """NS-10: silent mock injection must NOT be the default on real-money/paper-trading paths.
+
+    get_prices_robust feeds lookback_audit + btst extractors/entry_builders (real-money
+    surfaces). Defaulting use_mock_on_fail=True silently substituted random prices when all
+    sources failed — bypassing every NaN guard, flowing into scoring/backtest/trading.
+    Default must now raise (honest failure); mock is opt-in only.
+    """
+    monkeypatch.setattr(akshare_api, "get_prices", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("akshare fail")))
+    monkeypatch.setattr(akshare_api, "get_sina_historical_data", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("sina fail")))
+    monkeypatch.setattr("src.tools.ashare_data_sources.get_prices_multi_source", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("multi fail")))
+
+    with pytest.raises(akshare_api.AShareDataError, match="所有数据源都失败"):
+        akshare_api.get_prices_robust("000001", "2026-04-03", "2026-04-06")  # default
+
+
+def test_get_prices_robust_opt_in_mock_still_available(monkeypatch):
+    """NS-10: mock remains reachable via explicit use_mock_on_fail=True (testing opt-in)."""
     monkeypatch.setattr(akshare_api, "get_prices", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("akshare fail")))
     monkeypatch.setattr(akshare_api, "get_sina_historical_data", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("sina fail")))
     monkeypatch.setattr("src.tools.ashare_data_sources.get_prices_multi_source", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("multi fail")))
     sentinel = [akshare_api.Price(time="2026-04-03", open=1, high=1, low=1, close=1, volume=1)]
     monkeypatch.setattr(akshare_api, "get_mock_prices", lambda *args, **kwargs: sentinel)
 
-    result = akshare_api.get_prices_robust("000001", "2026-04-03", "2026-04-06")
+    result = akshare_api.get_prices_robust("000001", "2026-04-03", "2026-04-06", use_mock_on_fail=True)
 
     assert result is sentinel
 

@@ -511,16 +511,21 @@ def get_sina_historical_data(ticker: str, start_date: str, end_date: str, period
     )
 
 
-def get_prices_robust(ticker: str, start_date: str, end_date: str, period: str = "daily", use_mock_on_fail: bool = True) -> list[Price]:
+def get_prices_robust(ticker: str, start_date: str, end_date: str, period: str = "daily", use_mock_on_fail: bool = False) -> list[Price]:
     """
     稳健的价格数据获取（自动尝试多种数据源）
+
+    NS-10: ``use_mock_on_fail`` 默认改为 ``False`` — 静默 mock 注入曾是默认行为,
+    在真实资金/纸面交易路径 (lookback_audit / btst extractors / entry_builders) 上
+    所有数据源失败时悄悄返回随机价, 绕过所有 NaN guard 流入打分/回测/交易。默认现在
+    raise (诚实失败); mock 仅通过显式 ``use_mock_on_fail=True`` opt-in (测试用)。
 
     Args:
         ticker: 股票代码
         start_date: 开始日期 (YYYY-MM-DD)
         end_date: 结束日期 (YYYY-MM-DD)
         period: 周期
-        use_mock_on_fail: 失败时是否使用模拟数据
+        use_mock_on_fail: 失败时是否使用模拟数据 (默认 False; 显式 True 才注入 mock)
 
     Returns:
         List[Price]: 价格数据列表
