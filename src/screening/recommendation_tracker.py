@@ -50,8 +50,8 @@ REPORT_PATTERN = re.compile(r"^auto_screening_(\d{8})\.json$")
 #: 默认回溯天数
 DEFAULT_LOOKBACK_DAYS: int = 30
 
-#: T+N 默认阈值 (单位: 交易日数) — P5-1: 扩展到 30 天
-DEFAULT_HORIZONS: tuple[int, ...] = (1, 3, 5, 10, 20, 30)
+#: T+N 默认阈值 (单位: 交易日数) — P5-1: 扩展到 30 天; Phase 1: 加 T+15/T+25
+DEFAULT_HORIZONS: tuple[int, ...] = (1, 3, 5, 10, 15, 20, 25, 30)
 
 #: 当日报告 Top N 推荐提取数量
 DEFAULT_TOP_N: int = 10
@@ -77,7 +77,9 @@ class TrackingRecord:
         next_3day_return: T+3 收益率 (%, 可正可负); 缺失时为 ``None``
         next_5day_return: T+5 收益率 (%, 可正可负); 缺失时为 ``None``
         next_10day_return: T+10 收益率 (%, 可正可负); 缺失时为 ``None``
+        next_15day_return: T+15 收益率 (%, 可正可负); 缺失时为 ``None``
         next_20day_return: T+20 收益率 (%, 可正可负); 缺失时为 ``None``
+        next_25day_return: T+25 收益率 (%, 可正可负); 缺失时为 ``None``
         next_30day_return: T+30 收益率 (%, 可正可负); 缺失时为 ``None``
         tracking_status: 状态: ``"pending"`` / ``"partial"`` / ``"complete"``
     """
@@ -92,7 +94,9 @@ class TrackingRecord:
     next_3day_return: float | None = None
     next_5day_return: float | None = None
     next_10day_return: float | None = None
+    next_15day_return: float | None = None
     next_20day_return: float | None = None
+    next_25day_return: float | None = None
     next_30day_return: float | None = None
     tracking_status: str = "pending"
 
@@ -113,7 +117,9 @@ class TrackingRecord:
             next_3day_return=_optional_float(payload.get("next_3day_return")),
             next_5day_return=_optional_float(payload.get("next_5day_return")),
             next_10day_return=_optional_float(payload.get("next_10day_return")),
+            next_15day_return=_optional_float(payload.get("next_15day_return")),
             next_20day_return=_optional_float(payload.get("next_20day_return")),
+            next_25day_return=_optional_float(payload.get("next_25day_return")),
             next_30day_return=_optional_float(payload.get("next_30day_return")),
             tracking_status=str(payload.get("tracking_status", "pending") or "pending"),
         )
@@ -468,7 +474,9 @@ def update_tracking_history(
                         ("next_3day_return", "day_3"),
                         ("next_5day_return", "day_5"),
                         ("next_10day_return", "day_10"),
+                        ("next_15day_return", "day_15"),
                         ("next_20day_return", "day_20"),
+                        ("next_25day_return", "day_25"),
                         ("next_30day_return", "day_30"),
                     ):
                         fetched = returns.get(day_key)
@@ -609,7 +617,9 @@ def _summarize_history(
         3: "next_3day_return",
         5: "next_5day_return",
         10: "next_10day_return",
+        15: "next_15day_return",
         20: "next_20day_return",
+        25: "next_25day_return",
         30: "next_30day_return",
     }
     bucket_stats = {day: _bucket(field) for day, field in bucket_fields.items()}

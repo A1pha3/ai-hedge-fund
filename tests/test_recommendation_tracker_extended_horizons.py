@@ -57,8 +57,8 @@ def _mock_fetcher_map(mapping: dict[str, list[tuple[str, float]]]):
 
 
 def test_default_horizons_includes_extended():
-    """DEFAULT_HORIZONS 必须包含 T+10, T+20, T+30。"""
-    assert DEFAULT_HORIZONS == (1, 3, 5, 10, 20, 30)
+    """DEFAULT_HORIZONS 必须包含 T+10, T+20, T+30 (P5-1) + T+15, T+25 (Phase 1)."""
+    assert DEFAULT_HORIZONS == (1, 3, 5, 10, 15, 20, 25, 30)
 
 
 # ---------------------------------------------------------------------------
@@ -249,3 +249,120 @@ def test_tracking_status_not_complete_until_t30(tmp_path: Path):
     rec = history[0]
     assert rec["tracking_status"] == "complete"
     assert rec["next_30day_return"] == pytest.approx(30.0, rel=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 multi-horizon extension (T+15, T+25)
+# ---------------------------------------------------------------------------
+
+
+def test_default_horizons_includes_t15_t25():
+    """DEFAULT_HORIZONS 必须包含 T+15, T+25 (Phase 1 多周期扩展)."""
+    from src.screening.recommendation_tracker import DEFAULT_HORIZONS
+
+    assert 15 in DEFAULT_HORIZONS, "T+15 missing from DEFAULT_HORIZONS"
+    assert 25 in DEFAULT_HORIZONS, "T+25 missing from DEFAULT_HORIZONS"
+
+
+def test_tracking_record_has_t15_t25_fields():
+    """TrackingRecord 必须含 next_15day_return / next_25day_return 字段."""
+    from src.screening.recommendation_tracker import TrackingRecord
+
+    rec = TrackingRecord(
+        ticker="000001",
+        name="平安",
+        recommended_date="20260101",
+        recommended_price=10.0,
+        recommendation_score=0.4,
+        next_15day_return=3.5,
+        next_25day_return=-1.2,
+    )
+    assert rec.next_15day_return == 3.5
+    assert rec.next_25day_return == -1.2
+
+
+def test_tracking_record_from_dict_reads_t15_t25():
+    """from_dict 必须读 next_15day_return / next_25day_return."""
+    from src.screening.recommendation_tracker import TrackingRecord
+
+    payload = {
+        "ticker": "000001",
+        "name": "平安",
+        "recommended_date": "20260101",
+        "recommended_price": 10.0,
+        "recommendation_score": 0.4,
+        "next_15day_return": 2.1,
+        "next_25day_return": None,
+    }
+    rec = TrackingRecord.from_dict(payload)
+    assert rec.next_15day_return == 2.1
+    assert rec.next_25day_return is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 Task 2: fetch_actual_returns 算 day_15/day_25
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_actual_returns_computes_day15():
+    """fetch_actual_returns 必须计算 T+15 收益."""
+    from src.screening.recommendation_tracker import fetch_actual_returns
+
+    # 16 个交易日的价格序列 (基准 100, T+15 涨到 115 → +15%)
+    prices = [(f"2026-01-{d:02d}", 100.0) for d in range(1, 17)]
+    prices[15] = ("2026-01-16", 115.0)  # T+15 = +15%
+    fetcher = _mock_fetcher_map({"000001": prices})
+    result = fetch_actual_returns(["000001"], "20260101", "20260120", use_data_fetcher=fetcher)
+    assert "000001" in result
+    assert abs(result["000001"]["day_15"] - 15.0) < 0.01
+
+
+def test_fetch_actual_returns_computes_day25():
+    """fetch_actual_returns 必须计算 T+25 收益."""
+    from src.screening.recommendation_tracker import fetch_actual_returns
+
+    # 26 个交易日的价格序列 (基准 100, T+25 涨到 125 → +25%)
+    prices = [(f"2026-01-{d:02d}", 100.0) for d in range(1, 27)]
+    prices[25] = ("2026-01-26", 125.0)  # T+25 = +25%
+    fetcher = _mock_fetcher_map({"000001": prices})
+    result = fetch_actual_returns(["000001"], "20260101", "20260130", use_data_fetcher=fetcher)
+    assert "000001" in result
+    assert abs(result["000001"]["day_25"] - 25.0) < 0.01
+
+
+def test_update_tracking_history_populates_day15_day25(tmp_path: Path):
+    """update_tracking_history 必须填充 next_15day_return / next_25day_return."""
+    from src.screening.recommendation_tracker import (
+        update_tracking_history,
+        _load_history,
+    )
+
+    # Phase 1: 注册 20260201 当日推荐
+    _make_report(
+        tmp_path,
+        "20260201",
+        [
+            {"ticker": "000001", "name": "平安", "score_b": 0.4},
+        ],
+    )
+    update_tracking_history(reports_dir=tmp_path, trade_date="20260201")
+
+    # Phase 2: 构造 T+0 到 T+30 价格 (31 个交易日, T+15=115, T+25=125)
+    prices = [(f"2026-02-{d:02d}", 100.0) for d in range(1, 29)]
+    prices += [(f"2026-03-{d:02d}", 100.0) for d in range(1, 5)]
+    prices[15] = ("2026-02-16", 115.0)  # T+15 = +15%
+    prices[25] = ("2026-02-26", 125.0)  # T+25 = +25%
+    fetcher = _mock_fetcher_map({"000001": prices})
+
+    # Phase 3: 在 T+35 触发收益拉取
+    update_tracking_history(
+        reports_dir=tmp_path,
+        trade_date="20260308",
+        use_data_fetcher=fetcher,
+    )
+    records = _load_history(tmp_path / "tracking_history.json")
+    assert len(records) == 1
+    rec = records[0]
+    assert rec.get("next_15day_return") is not None
+    assert rec.get("next_25day_return") is not None
+

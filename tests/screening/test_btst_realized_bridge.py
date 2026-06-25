@@ -130,3 +130,71 @@ class TestBackfillBtstRealized:
             use_data_fetcher=lambda *a, **k: [],
         )
         assert n == 0
+
+
+# ---------------------------------------------------------------------------
+# Task 4: T+15 / T+25 horizon support (multi-horizon diagnosis plan)
+# ---------------------------------------------------------------------------
+
+
+class TestTask4T15T25Horizons:
+    """Task 4: seed dict and horizon mapping must include T+15 / T+25."""
+
+    def test_seed_dict_includes_t15_t25_keys(self, tmp_path: Path) -> None:
+        """Newly seeded records must carry next_15day_return / next_25day_return keys."""
+        outputs_dir = tmp_path / "outputs"
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        _seed_btst_report(outputs_dir, "20260618_scheme_a", "20260618", ["300395 蓝色光标"])
+
+        def fake_fetcher(ticker, start, end):
+            return [{"time": "2026-06-18", "close": 10.0}, {"time": "2026-06-19", "close": 11.0}]
+
+        backfill_btst_realized(
+            outputs_dir=outputs_dir,
+            reports_dir=reports_dir,
+            as_of_date="20260623",
+            use_data_fetcher=fake_fetcher,
+        )
+        hist_path = reports_dir / "tracking_history.json"
+        data = json.load(open(hist_path))
+        recs = data.get("records", data) if isinstance(data, dict) else data
+        rec = next(r for r in recs if r["ticker"] == "300395")
+        # Seed dict must include the new horizon keys (None until backfilled)
+        assert "next_15day_return" in rec
+        assert "next_25day_return" in rec
+
+    def test_horizon_mapping_backfills_t15_t25(self, tmp_path: Path) -> None:
+        """When fetcher returns enough data, day_15/day_25 land in the right fields."""
+        outputs_dir = tmp_path / "outputs"
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        _seed_btst_report(outputs_dir, "20260618_scheme_a", "20260618", ["300395 蓝色光标"])
+
+        # Fetcher that returns 31 daily bars so fetch_actual_returns produces day_15/day_25.
+        # Use real calendar dates — date parsing rejects invalid month/day combos silently.
+        import datetime as _dt
+
+        def fake_fetcher(ticker, start, end):
+            base = 10.0
+            start_dt = _dt.date(2026, 6, 18)
+            return [
+                {"time": (start_dt + _dt.timedelta(days=i)).isoformat(), "close": base + i * 0.1}
+                for i in range(31)
+            ]
+
+        backfill_btst_realized(
+            outputs_dir=outputs_dir,
+            reports_dir=reports_dir,
+            as_of_date="20260720",
+            use_data_fetcher=fake_fetcher,
+        )
+        hist_path = reports_dir / "tracking_history.json"
+        data = json.load(open(hist_path))
+        recs = data.get("records", data) if isinstance(data, dict) else data
+        rec = next(r for r in recs if r["ticker"] == "300395")
+        # Mapping must route day_15 → next_15day_return (positive since prices rise)
+        assert rec.get("next_15day_return") is not None
+        assert rec.get("next_15day_return") > 0
+        assert rec.get("next_25day_return") is not None
+        assert rec.get("next_25day_return") > 0

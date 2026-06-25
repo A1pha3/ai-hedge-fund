@@ -536,3 +536,69 @@ class TestT30MedianReturn:
         summary = compute_calibration(records)
         d = summary.buckets[0].to_dict()
         assert "t30_median_return" in d
+
+
+# ---------------------------------------------------------------------------
+# Task 4: T+15 / T+25 horizon support (multi-horizon diagnosis plan)
+# ---------------------------------------------------------------------------
+
+
+def test_score_bucket_stats_has_t15_t25_fields():
+    """Task 4: ScoreBucketStats must accept t15/t25 win_rate + avg_return kwargs."""
+    from src.screening.confidence_calibration import ScoreBucketStats
+
+    stats = ScoreBucketStats(
+        label="low", score_low=0.0, score_high=0.4, sample_count=10,
+        t15_win_rate=0.5, t25_win_rate=0.6,
+        t15_avg_return=1.5, t25_avg_return=2.5,
+    )
+    assert stats.t15_win_rate == 0.5
+    assert stats.t25_win_rate == 0.6
+    assert stats.t15_avg_return == 1.5
+    assert stats.t25_avg_return == 2.5
+
+
+def test_compute_calibration_t15_t25_from_records():
+    """Task 4: compute_calibration must read next_15day_return / next_25day_return."""
+    records = [
+        {
+            "ticker": "000001", "recommended_date": "20260601",
+            "recommendation_score": 0.75,
+            "next_15day_return": 2.0, "next_25day_return": 3.0,
+        },
+        {
+            "ticker": "000002", "recommended_date": "20260601",
+            "recommendation_score": 0.72,
+            "next_15day_return": -1.0, "next_25day_return": 0.5,
+        },
+        {
+            "ticker": "000003", "recommended_date": "20260601",
+            "recommendation_score": 0.78,
+            "next_15day_return": 0.5, "next_25day_return": -2.0,
+        },
+    ]
+    summary = compute_calibration(records)
+    bucket = next(b for b in summary.buckets if "中高" in b.label)
+    # T+15: 2/3 positive (2.0, 0.5 win; -1.0 loss)
+    assert bucket.t15_win_rate == pytest.approx(2 / 3, abs=1e-3)
+    # T+25: 2/3 positive (3.0, 0.5 win; -2.0 loss)
+    assert bucket.t25_win_rate == pytest.approx(2 / 3, abs=1e-3)
+    # avg returns
+    assert bucket.t15_avg_return == pytest.approx((2.0 + -1.0 + 0.5) / 3, abs=1e-3)
+    assert bucket.t25_avg_return == pytest.approx((3.0 + 0.5 + -2.0) / 3, abs=1e-3)
+
+
+def test_t15_t25_fields_serialize_in_to_dict():
+    """Task 4: t15/t25 fields must appear in to_dict() for downstream consumers."""
+    from src.screening.confidence_calibration import ScoreBucketStats
+
+    stats = ScoreBucketStats(
+        label="low", score_low=0.0, score_high=0.4,
+        t15_win_rate=0.5, t25_win_rate=0.6,
+        t15_avg_return=1.0, t25_avg_return=2.0,
+    )
+    d = stats.to_dict()
+    assert "t15_win_rate" in d
+    assert "t25_win_rate" in d
+    assert "t15_avg_return" in d
+    assert "t25_avg_return" in d

@@ -60,12 +60,22 @@ class ScoreBucketStats:
     t3_win_rate: float | None = None
     t5_win_rate: float | None = None
     t10_win_rate: float | None = None
+    # Task 4 (multi-horizon diagnosis): T+15 horizon stat. Same semantics as
+    # t10_win_rate — fraction of matured T+15 returns that are positive. None
+    # when no record in the bucket has a realized 15-day return.
+    t15_win_rate: float | None = None
     t20_win_rate: float | None = None
+    # Task 4: T+25 horizon stat (midpoint between T+20 / T+30).
+    t25_win_rate: float | None = None
     t30_win_rate: float | None = None
     t1_avg_return: float | None = None
     t5_avg_return: float | None = None
     t10_avg_return: float | None = None
+    # Task 4: mean realized T+15 return; None when no matured T+15 record.
+    t15_avg_return: float | None = None
     t20_avg_return: float | None = None
+    # Task 4: mean realized T+25 return.
+    t25_avg_return: float | None = None
     t30_avg_return: float | None = None
     # R-6: median of realized T+30 returns — outlier-robust center vs t30_avg_return.
     # realized evidence 20260624 showed arithmetic mean is distorted by a single
@@ -92,7 +102,10 @@ class ScoreBucketStats:
     t3_sample_count: int = 0
     t5_sample_count: int = 0
     t10_sample_count: int = 0
+    # Task 4: matured-sample counts for the new T+15 / T+25 horizons.
+    t15_sample_count: int = 0
     t20_sample_count: int = 0
+    t25_sample_count: int = 0
     t30_sample_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -105,12 +118,16 @@ class ScoreBucketStats:
             "t3_win_rate": self.t3_win_rate,
             "t5_win_rate": self.t5_win_rate,
             "t10_win_rate": self.t10_win_rate,
+            "t15_win_rate": self.t15_win_rate,
             "t20_win_rate": self.t20_win_rate,
+            "t25_win_rate": self.t25_win_rate,
             "t30_win_rate": self.t30_win_rate,
             "t1_avg_return": self.t1_avg_return,
             "t5_avg_return": self.t5_avg_return,
             "t10_avg_return": self.t10_avg_return,
+            "t15_avg_return": self.t15_avg_return,
             "t20_avg_return": self.t20_avg_return,
+            "t25_avg_return": self.t25_avg_return,
             "t30_avg_return": self.t30_avg_return,
             "t30_median_return": self.t30_median_return,
             "t30_avg_negative_return": self.t30_avg_negative_return,
@@ -120,7 +137,9 @@ class ScoreBucketStats:
             "t3_sample_count": self.t3_sample_count,
             "t5_sample_count": self.t5_sample_count,
             "t10_sample_count": self.t10_sample_count,
+            "t15_sample_count": self.t15_sample_count,
             "t20_sample_count": self.t20_sample_count,
+            "t25_sample_count": self.t25_sample_count,
             "t30_sample_count": self.t30_sample_count,
         }
 
@@ -135,11 +154,17 @@ class CalibrationSummary:
     overall_t1_win_rate: float | None = None
     overall_t5_win_rate: float | None = None
     overall_t10_win_rate: float | None = None
+    # Task 4: overall T+15 / T+25 aggregates across all buckets.
+    overall_t15_win_rate: float | None = None
     overall_t20_win_rate: float | None = None
+    overall_t25_win_rate: float | None = None
     overall_t30_win_rate: float | None = None
     overall_t5_avg_return: float | None = None
     overall_t10_avg_return: float | None = None
+    # Task 4: overall mean realized T+15 / T+25 return across all buckets.
+    overall_t15_avg_return: float | None = None
     overall_t20_avg_return: float | None = None
+    overall_t25_avg_return: float | None = None
     overall_t30_avg_return: float | None = None
     # Total records with a realized return at each horizon (sum of per-bucket
     # matured counts). ``total_samples`` counts every record; these count only
@@ -147,7 +172,10 @@ class CalibrationSummary:
     # header can be attributed to its true denominator. See BH-002.
     total_t5_samples: int = 0
     total_t10_samples: int = 0
+    # Task 4: total matured records at T+15 / T+25 (sum of per-bucket matured counts).
+    total_t15_samples: int = 0
     total_t20_samples: int = 0
+    total_t25_samples: int = 0
     total_t30_samples: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -158,15 +186,21 @@ class CalibrationSummary:
             "overall_t1_win_rate": self.overall_t1_win_rate,
             "overall_t5_win_rate": self.overall_t5_win_rate,
             "overall_t10_win_rate": self.overall_t10_win_rate,
+            "overall_t15_win_rate": self.overall_t15_win_rate,
             "overall_t20_win_rate": self.overall_t20_win_rate,
+            "overall_t25_win_rate": self.overall_t25_win_rate,
             "overall_t30_win_rate": self.overall_t30_win_rate,
             "overall_t5_avg_return": self.overall_t5_avg_return,
             "overall_t10_avg_return": self.overall_t10_avg_return,
+            "overall_t15_avg_return": self.overall_t15_avg_return,
             "overall_t20_avg_return": self.overall_t20_avg_return,
+            "overall_t25_avg_return": self.overall_t25_avg_return,
             "overall_t30_avg_return": self.overall_t30_avg_return,
             "total_t5_samples": self.total_t5_samples,
             "total_t10_samples": self.total_t10_samples,
+            "total_t15_samples": self.total_t15_samples,
             "total_t20_samples": self.total_t20_samples,
+            "total_t25_samples": self.total_t25_samples,
             "total_t30_samples": self.total_t30_samples,
         }
 
@@ -334,11 +368,17 @@ def compute_calibration(
     all_t1: list[float] = []
     all_t5: list[float] = []
     all_t10: list[float] = []
+    # Task 4: aggregate T+15 / T+25 valid returns across buckets.
+    all_t15: list[float] = []
     all_t20: list[float] = []
+    all_t25: list[float] = []
     all_t30: list[float] = []
     all_t5_returns: list[float] = []
     all_t10_returns: list[float] = []
+    # Task 4: aggregate T+15 / T+25 returns for overall avg_return.
+    all_t15_returns: list[float] = []
     all_t20_returns: list[float] = []
+    all_t25_returns: list[float] = []
     all_t30_returns: list[float] = []
     for label, low, high in SCORE_BUCKETS:
         recs = bucket_records[label]
@@ -346,13 +386,19 @@ def compute_calibration(
         t3_returns = [_optional_float(r.get("next_3day_return")) for r in recs]
         t5_returns = [_optional_float(r.get("next_5day_return")) for r in recs]
         t10_returns = [_optional_float(r.get("next_10day_return")) for r in recs]
+        # Task 4: T+15 / T+25 returns extraction.
+        t15_returns = [_optional_float(r.get("next_15day_return")) for r in recs]
         t20_returns = [_optional_float(r.get("next_20day_return")) for r in recs]
+        t25_returns = [_optional_float(r.get("next_25day_return")) for r in recs]
         t30_returns = [_optional_float(r.get("next_30day_return")) for r in recs]
         t1_valid = [x for x in t1_returns if x is not None]
         t3_valid = [x for x in t3_returns if x is not None]
         t5_valid = [x for x in t5_returns if x is not None]
         t10_valid = [x for x in t10_returns if x is not None]
+        # Task 4: T+15 / T+25 valid filters.
+        t15_valid = [x for x in t15_returns if x is not None]
         t20_valid = [x for x in t20_returns if x is not None]
+        t25_valid = [x for x in t25_returns if x is not None]
         t30_valid = [x for x in t30_returns if x is not None]
         stats = ScoreBucketStats(
             label=label,
@@ -363,12 +409,17 @@ def compute_calibration(
             t3_win_rate=_win_rate_or_none(t3_valid),
             t5_win_rate=_win_rate_or_none(t5_valid),
             t10_win_rate=_win_rate_or_none(t10_valid),
+            # Task 4: T+15 / T+25 per-bucket stats.
+            t15_win_rate=_win_rate_or_none(t15_valid),
             t20_win_rate=_win_rate_or_none(t20_valid),
+            t25_win_rate=_win_rate_or_none(t25_valid),
             t30_win_rate=_win_rate_or_none(t30_valid),
             t1_avg_return=_mean_or_none(t1_valid),
             t5_avg_return=_mean_or_none(t5_valid),
             t10_avg_return=_mean_or_none(t10_valid),
+            t15_avg_return=_mean_or_none(t15_valid),
             t20_avg_return=_mean_or_none(t20_valid),
+            t25_avg_return=_mean_or_none(t25_valid),
             t30_avg_return=_mean_or_none(t30_valid),
             t30_median_return=_median_or_none(t30_valid),
             t30_avg_negative_return=_mean_negative_or_none(t30_valid),
@@ -378,18 +429,25 @@ def compute_calibration(
             t3_sample_count=len(t3_valid),
             t5_sample_count=len(t5_valid),
             t10_sample_count=len(t10_valid),
+            t15_sample_count=len(t15_valid),
             t20_sample_count=len(t20_valid),
+            t25_sample_count=len(t25_valid),
             t30_sample_count=len(t30_valid),
         )
         bucket_stats.append(stats)
         all_t1.extend(t1_valid)
         all_t5.extend(t5_valid)
         all_t10.extend(t10_valid)
+        # Task 4: extend T+15 / T+25 aggregates.
+        all_t15.extend(t15_valid)
         all_t20.extend(t20_valid)
+        all_t25.extend(t25_valid)
         all_t30.extend(t30_valid)
         all_t5_returns.extend(t5_valid)
         all_t10_returns.extend(t10_valid)
+        all_t15_returns.extend(t15_valid)
         all_t20_returns.extend(t20_valid)
+        all_t25_returns.extend(t25_valid)
         all_t30_returns.extend(t30_valid)
 
     return CalibrationSummary(
@@ -399,15 +457,22 @@ def compute_calibration(
         overall_t1_win_rate=_win_rate_or_none(all_t1),
         overall_t5_win_rate=_win_rate_or_none(all_t5),
         overall_t10_win_rate=_win_rate_or_none(all_t10),
+        # Task 4: overall T+15 / T+25 aggregates.
+        overall_t15_win_rate=_win_rate_or_none(all_t15),
         overall_t20_win_rate=_win_rate_or_none(all_t20),
+        overall_t25_win_rate=_win_rate_or_none(all_t25),
         overall_t30_win_rate=_win_rate_or_none(all_t30),
         overall_t5_avg_return=_mean_or_none(all_t5_returns),
         overall_t10_avg_return=_mean_or_none(all_t10_returns),
+        overall_t15_avg_return=_mean_or_none(all_t15_returns),
         overall_t20_avg_return=_mean_or_none(all_t20_returns),
+        overall_t25_avg_return=_mean_or_none(all_t25_returns),
         overall_t30_avg_return=_mean_or_none(all_t30_returns),
         total_t5_samples=len(all_t5),
         total_t10_samples=len(all_t10),
+        total_t15_samples=len(all_t15),
         total_t20_samples=len(all_t20),
+        total_t25_samples=len(all_t25),
         total_t30_samples=len(all_t30),
     )
 

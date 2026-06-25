@@ -115,13 +115,17 @@ class VerifySummary:
         overall_t3_win_rate: 整体 T+3 胜率
         overall_t5_win_rate: 整体 T+5 胜率
         overall_t10_win_rate: 整体 T+10 胜率
+        overall_t15_win_rate: 整体 T+15 胜率 (multi-horizon diagnosis Task 3)
         overall_t20_win_rate: 整体 T+20 胜率
+        overall_t25_win_rate: 整体 T+25 胜率 (multi-horizon diagnosis Task 3)
         overall_t30_win_rate: 整体 T+30 胜率
         avg_t1_return: 平均 T+1 收益率
         avg_t3_return: 平均 T+3 收益率
         avg_t5_return: 平均 T+5 收益率
         avg_t10_return: 平均 T+10 收益率
+        avg_t15_return: 平均 T+15 收益率 (multi-horizon diagnosis Task 3)
         avg_t20_return: 平均 T+20 收益率
+        avg_t25_return: 平均 T+25 收益率 (multi-horizon diagnosis Task 3)
         avg_t30_return: 平均 T+30 收益率
         benchmark_avg_t1: 推荐组合平均 T+1 收益 (参考基准, 非市场指数)
         excess_return: 超额收益 (avg_t1 - benchmark)
@@ -137,13 +141,17 @@ class VerifySummary:
     overall_t3_win_rate: float | None = None
     overall_t5_win_rate: float | None = None
     overall_t10_win_rate: float | None = None
+    overall_t15_win_rate: float | None = None
     overall_t20_win_rate: float | None = None
+    overall_t25_win_rate: float | None = None
     overall_t30_win_rate: float | None = None
     avg_t1_return: float | None = None
     avg_t3_return: float | None = None
     avg_t5_return: float | None = None
     avg_t10_return: float | None = None
+    avg_t15_return: float | None = None
     avg_t20_return: float | None = None
+    avg_t25_return: float | None = None
     avg_t30_return: float | None = None
     benchmark_avg_t1: float | None = None
     excess_return: float | None = None
@@ -213,8 +221,13 @@ def _load_auto_screening_reports(reports_dir: Path, lookback_days: int) -> list[
     return reports[:lookback_days]
 
 
-def _extract_tracking_returns(tracking: list[dict[str, Any]], ticker: str, rec_date: str) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None]:
-    """Extract T+1/T+3/T+5/T+10/T+20/T+30 returns for a ticker from tracking history."""
+def _extract_tracking_returns(tracking: list[dict[str, Any]], ticker: str, rec_date: str) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None, float | None, float | None]:
+    """Extract T+1/T+3/T+5/T+10/T+15/T+20/T+25/T+30 returns for a ticker from tracking history.
+
+    Returns an 8-tuple in chronological horizon order. Horizons absent from a
+    given tracking entry degrade to ``None`` (the caller filters ``None`` and
+    out-of-range values before accumulating).
+    """
     for entry in tracking:
         if str(entry.get("ticker", "")) != ticker:
             continue
@@ -224,10 +237,12 @@ def _extract_tracking_returns(tracking: list[dict[str, Any]], ticker: str, rec_d
         t3 = _optional_float(entry.get("next_3day_return"))
         t5 = _optional_float(entry.get("next_5day_return"))
         t10 = _optional_float(entry.get("next_10day_return"))
+        t15 = _optional_float(entry.get("next_15day_return"))
         t20 = _optional_float(entry.get("next_20day_return"))
+        t25 = _optional_float(entry.get("next_25day_return"))
         t30 = _optional_float(entry.get("next_30day_return"))
-        return t1, t3, t5, t10, t20, t30
-    return None, None, None, None, None, None
+        return t1, t3, t5, t10, t15, t20, t25, t30
+    return None, None, None, None, None, None, None, None
 
 
 def _compute_benchmark_returns(
@@ -304,20 +319,26 @@ def compute_verify_recommendations(
     all_t3: list[float] = []
     all_t5: list[float] = []
     all_t10: list[float] = []
+    all_t15: list[float] = []
     all_t20: list[float] = []
+    all_t25: list[float] = []
     all_t30: list[float] = []
     all_tickers: set[str] = set()
     t1_wins = 0
     t3_wins = 0
     t5_wins = 0
     t10_wins = 0
+    t15_wins = 0
     t20_wins = 0
+    t25_wins = 0
     t30_wins = 0
     t1_total = 0
     t3_total = 0
     t5_total = 0
     t10_total = 0
+    t15_total = 0
     t20_total = 0
+    t25_total = 0
     t30_total = 0
 
     # Strategy attribution accumulators
@@ -346,7 +367,9 @@ def compute_verify_recommendations(
         day_t3: list[float] = []
         day_t5: list[float] = []
         day_t10: list[float] = []
+        day_t15: list[float] = []
         day_t20: list[float] = []
+        day_t25: list[float] = []
         day_t30: list[float] = []
         top_score = 0.0
 
@@ -364,7 +387,7 @@ def compute_verify_recommendations(
                 top_score = score
 
             # Get actual returns from tracking
-            t1, t3, t5, t10, t20, t30 = _extract_tracking_returns(tracking, ticker, rec_date)
+            t1, t3, t5, t10, t15, t20, t25, t30 = _extract_tracking_returns(tracking, ticker, rec_date)
 
             if t1 is not None and -50.0 <= t1 <= 50.0:
                 day_t1.append(t1)
@@ -394,12 +417,26 @@ def compute_verify_recommendations(
                 if t10 > 0:
                     t10_wins += 1
 
+            if t15 is not None and -50.0 <= t15 <= 50.0:
+                day_t15.append(t15)
+                all_t15.append(t15)
+                t15_total += 1
+                if t15 > 0:
+                    t15_wins += 1
+
             if t20 is not None and -50.0 <= t20 <= 50.0:
                 day_t20.append(t20)
                 all_t20.append(t20)
                 t20_total += 1
                 if t20 > 0:
                     t20_wins += 1
+
+            if t25 is not None and -50.0 <= t25 <= 50.0:
+                day_t25.append(t25)
+                all_t25.append(t25)
+                t25_total += 1
+                if t25 > 0:
+                    t25_wins += 1
 
             if t30 is not None and -50.0 <= t30 <= 50.0:
                 day_t30.append(t30)
@@ -462,13 +499,17 @@ def compute_verify_recommendations(
     summary.overall_t3_win_rate = t3_wins / t3_total if t3_total > 0 else None
     summary.overall_t5_win_rate = t5_wins / t5_total if t5_total > 0 else None
     summary.overall_t10_win_rate = t10_wins / t10_total if t10_total > 0 else None
+    summary.overall_t15_win_rate = t15_wins / t15_total if t15_total > 0 else None
     summary.overall_t20_win_rate = t20_wins / t20_total if t20_total > 0 else None
+    summary.overall_t25_win_rate = t25_wins / t25_total if t25_total > 0 else None
     summary.overall_t30_win_rate = t30_wins / t30_total if t30_total > 0 else None
     summary.avg_t1_return = _mean_or_none(all_t1)
     summary.avg_t3_return = _mean_or_none(all_t3)
     summary.avg_t5_return = _mean_or_none(all_t5)
     summary.avg_t10_return = _mean_or_none(all_t10)
+    summary.avg_t15_return = _mean_or_none(all_t15)
     summary.avg_t20_return = _mean_or_none(all_t20)
+    summary.avg_t25_return = _mean_or_none(all_t25)
     summary.avg_t30_return = _mean_or_none(all_t30)
 
     # Recommended-basket reference (BETA-009): aggregate the per-day basket mean

@@ -118,7 +118,10 @@ def backfill_btst_realized(
             "next_3day_return": None,
             "next_5day_return": None,
             "next_10day_return": None,
+            # Task 4: T+15 / T+25 horizons (multi-horizon diagnosis plan).
+            "next_15day_return": None,
             "next_20day_return": None,
+            "next_25day_return": None,
             "next_30day_return": None,
             "tracking_status": "pending",
             "source": "btst",
@@ -156,7 +159,10 @@ def backfill_btst_realized(
                 ("next_3day_return", "day_3"),
                 ("next_5day_return", "day_5"),
                 ("next_10day_return", "day_10"),
+                # Task 4: T+15 / T+25 horizon mapping.
+                ("next_15day_return", "day_15"),
                 ("next_20day_return", "day_20"),
+                ("next_25day_return", "day_25"),
                 ("next_30day_return", "day_30"),
             ):
                 fetched = returns.get(day_key)

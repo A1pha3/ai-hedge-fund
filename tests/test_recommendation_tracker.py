@@ -702,8 +702,8 @@ def test_update_tracking_history_empty_recommendations(tmp_path: Path):
 
 
 def test_default_horizons_constant():
-    """DEFAULT_HORIZONS 必须包含扩展周期 (1, 3, 5, 10, 20, 30)。"""
-    assert DEFAULT_HORIZONS == (1, 3, 5, 10, 20, 30)
+    """DEFAULT_HORIZONS 必须包含扩展周期 (1, 3, 5, 10, 15, 20, 25, 30)。"""
+    assert DEFAULT_HORIZONS == (1, 3, 5, 10, 15, 20, 25, 30)
 
 
 def test_uses_injected_fetcher_for_actual_returns(tmp_path: Path):

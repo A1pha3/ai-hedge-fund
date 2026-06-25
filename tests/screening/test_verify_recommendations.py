@@ -65,29 +65,33 @@ class TestExtractTrackingReturns:
         tracking = [
             {"ticker": "000001", "recommended_date": "20260601", "next_day_return": 2.0, "next_3day_return": 3.5, "next_5day_return": 5.0},
         ]
-        t1, t3, t5, t10, t20, t30 = _extract_tracking_returns(tracking, "000001", "20260601")
+        t1, t3, t5, t10, t15, t20, t25, t30 = _extract_tracking_returns(tracking, "000001", "20260601")
         assert t1 == 2.0
         assert t3 == 3.5
         assert t5 == 5.0
         assert t10 is None
+        assert t15 is None
         assert t20 is None
+        assert t25 is None
         assert t30 is None
 
     def test_not_found(self):
         tracking = [{"ticker": "000001", "recommended_date": "20260601"}]
-        t1, t3, t5, t10, t20, t30 = _extract_tracking_returns(tracking, "999999", "20260601")
+        t1, t3, t5, t10, t15, t20, t25, t30 = _extract_tracking_returns(tracking, "999999", "20260601")
         assert t1 is None
         assert t3 is None
         assert t5 is None
         assert t10 is None
+        assert t15 is None
         assert t20 is None
+        assert t25 is None
         assert t30 is None
 
     def test_none_values(self):
         tracking = [
             {"ticker": "000001", "recommended_date": "20260601", "next_day_return": None, "next_3day_return": None},
         ]
-        t1, t3, t5, t10, t20, t30 = _extract_tracking_returns(tracking, "000001", "20260601")
+        t1, t3, t5, t10, t15, t20, t25, t30 = _extract_tracking_returns(tracking, "000001", "20260601")
         assert t1 is None
         assert t3 is None
 
@@ -466,3 +470,122 @@ class TestExtendedHorizonsVerifyRecommendations:
         output = render_verify_recommendations(summary)
         # T+5 must appear in the rendered output.
         assert "T+5" in output
+
+
+# ---------------------------------------------------------------------------
+# Intermediate horizons (T+15/T+25) — multi-horizon diagnosis Task 3
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def intermediate_reports_dir(tmp_path: Path) -> Path:
+    """Temp reports dir with T+15/T+25 horizon data populated.
+
+    Mirrors the ``extended_reports_dir`` fixture but adds the two intermediate
+    horizons introduced by Tasks 1-2 (``next_15day_return`` /
+    ``next_25day_return`` on TrackingRecord). Engineered so that 000001 wins
+    on both horizons and 600519 loses on both, giving a 50% win rate with
+    auditable averages.
+    """
+    tracking = [
+        {
+            "ticker": "000001", "name": "平安银行", "recommended_date": "20260601",
+            "recommended_price": 12.0,
+            "next_day_return": 2.0, "next_3day_return": 3.5, "next_5day_return": 5.0,
+            "next_10day_return": 7.0, "next_15day_return": 9.0,
+            "next_20day_return": 10.0, "next_25day_return": 11.0,
+            "next_30day_return": 12.0,
+            "tracking_status": "complete",
+        },
+        {
+            "ticker": "600519", "name": "贵州茅台", "recommended_date": "20260601",
+            "recommended_price": 1500.0,
+            "next_day_return": -1.0, "next_3day_return": 2.0, "next_5day_return": -0.5,
+            "next_10day_return": -2.0, "next_15day_return": -2.5,
+            "next_20day_return": -3.0, "next_25day_return": -4.0,
+            "next_30day_return": -1.0,
+            "tracking_status": "complete",
+        },
+    ]
+    (tmp_path / "tracking_history.json").write_text(json.dumps(tracking), encoding="utf-8")
+
+    report = {
+        "trade_date": "20260601",
+        "recommendations": [
+            {"ticker": "000001", "name": "平安银行", "score_b": 0.8, "decision": "bullish",
+             "strategy_signals": {"trend": {"direction": 1, "confidence": 80}}},
+            {"ticker": "600519", "name": "贵州茅台", "score_b": 0.6, "decision": "bullish",
+             "strategy_signals": {"fundamental": {"direction": 1, "confidence": 70}}},
+        ],
+    }
+    (tmp_path / "auto_screening_20260601.json").write_text(json.dumps(report), encoding="utf-8")
+    return tmp_path
+
+
+class TestIntermediateHorizonsVerifyRecommendations:
+    """T+15/T+25 win rate + avg return surfaced via VerifySummary."""
+
+    def test_summary_attributes_exist(self, intermediate_reports_dir: Path):
+        """VerifySummary must expose overall_t15/t25_win_rate + avg_t15/t25_return.
+
+        RED phase: these attributes do not exist yet on VerifySummary.
+        """
+        summary = compute_verify_recommendations(reports_dir=intermediate_reports_dir, lookback_days=30)
+        assert hasattr(summary, "overall_t15_win_rate"), "VerifySummary missing overall_t15_win_rate"
+        assert hasattr(summary, "overall_t25_win_rate"), "VerifySummary missing overall_t25_win_rate"
+        assert hasattr(summary, "avg_t15_return"), "VerifySummary missing avg_t15_return"
+        assert hasattr(summary, "avg_t25_return"), "VerifySummary missing avg_t25_return"
+
+    def test_intermediate_horizon_computation(self, intermediate_reports_dir: Path):
+        """T+15/T+27 win rate and avg return must be computed correctly.
+
+        Fixture:
+          000001: T+15 +9.0 (win), T+25 +11.0 (win)
+          600519: T+15 -2.5 (loss), T+25 -4.0 (loss)
+        Expected:
+          overall_t15_win_rate = 1/2 = 0.5
+          avg_t15_return       = (9.0 + (-2.5)) / 2 = 3.25
+          overall_t25_win_rate = 1/2 = 0.5
+          avg_t25_return       = (11.0 + (-4.0)) / 2 = 3.5
+        """
+        summary = compute_verify_recommendations(reports_dir=intermediate_reports_dir, lookback_days=30)
+        assert summary.overall_t15_win_rate == pytest.approx(0.5, abs=1e-3)
+        assert summary.avg_t15_return == pytest.approx(3.25, abs=1e-3)
+        assert summary.overall_t25_win_rate == pytest.approx(0.5, abs=1e-3)
+        assert summary.avg_t25_return == pytest.approx(3.5, abs=1e-3)
+
+    def test_intermediate_horizons_none_when_missing(self, extended_reports_dir: Path):
+        """When tracking has no T+15/T+25 fields, the new attributes must be
+        ``None`` rather than raising (graceful absence, matching the t10/t20
+        contract on the pre-Task-3 extended_reports_dir fixture)."""
+        summary = compute_verify_recommendations(reports_dir=extended_reports_dir, lookback_days=30)
+        # extended_reports_dir fixture does NOT populate next_15day/25day_return,
+        # so the new horizons must degrade to None (not 0.0, not raise).
+        assert summary.overall_t15_win_rate is None
+        assert summary.overall_t25_win_rate is None
+        assert summary.avg_t15_return is None
+        assert summary.avg_t25_return is None
+
+    def test_extract_tracking_returns_8_tuple(self):
+        """``_extract_tracking_returns`` must return an 8-tuple in chronological
+        order t1, t3, t5, t10, t15, t20, t25, t30."""
+        tracking = [
+            {
+                "ticker": "000001", "recommended_date": "20260601",
+                "next_day_return": 1.0, "next_3day_return": 2.0, "next_5day_return": 3.0,
+                "next_10day_return": 4.0, "next_15day_return": 5.0,
+                "next_20day_return": 6.0, "next_25day_return": 7.0,
+                "next_30day_return": 8.0,
+            },
+        ]
+        result = _extract_tracking_returns(tracking, "000001", "20260601")
+        assert len(result) == 8, f"Expected 8-tuple, got {len(result)}-tuple"
+        t1, t3, t5, t10, t15, t20, t25, t30 = result
+        assert t1 == 1.0
+        assert t3 == 2.0
+        assert t5 == 3.0
+        assert t10 == 4.0
+        assert t15 == 5.0
+        assert t20 == 6.0
+        assert t25 == 7.0
+        assert t30 == 8.0
