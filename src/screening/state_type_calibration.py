@@ -80,6 +80,15 @@ def _optional_float(value: Any) -> float | None:
     return result
 
 
+def _record_score(rec: dict[str, Any]) -> Any:
+    """读 tracking_history 记录的推荐分. 真实字段是 recommendation_score
+    (consecutive_recommendation.load_tracking_history), 保留 score_b 兜底."""
+    score = rec.get("recommendation_score")
+    if score is None:
+        score = rec.get("score_b")
+    return score
+
+
 def _win_rate_or_none(returns: list[float]) -> float | None:
     return (sum(1 for x in returns if x > 0) / len(returns)) if returns else None
 
@@ -205,7 +214,7 @@ def compute_state_type_bucket_subdivision(
         st = date_st.get(date_raw)
         if st is None or st not in target:
             continue
-        bucket = _score_bucket(rec.get("score_b"))
+        bucket = _score_bucket(_record_score(rec))
         key = (st, bucket)
         by_cell_count[key] = by_cell_count.get(key, 0) + 1
         t30 = _optional_float(rec.get("next_30day_return"))
@@ -264,7 +273,7 @@ def _bucket_returns_by_date(
         st = date_st.get(date_raw)
         if st is None or st not in target:
             continue
-        bucket = _score_bucket(rec.get("score_b"))
+        bucket = _score_bucket(_record_score(rec))
         t30 = _optional_float(rec.get("next_30day_return"))
         if t30 is None:
             continue

@@ -167,3 +167,26 @@ def test_verdict_1b_when_q1_yes_but_no_robust_subset():
     q3 = LopoReport(target_state_types=("RANGE",), robust=False)
     verdict = aggregate_verdict(q1=q1, q2_best_bucket_winrate=0.40, q3=q3)
     assert verdict.phase1_branch == "1B"
+
+
+# ---------------------------------------------------------------------------
+# Task 5 fix: tracking_history 真实字段是 recommendation_score (非 score_b)
+# ---------------------------------------------------------------------------
+
+
+def test_q2_uses_recommendation_score_field_not_score_b():
+    """tracking_history 记录用 recommendation_score; 须能正确分桶 (回归守卫)."""
+    history = [
+        {"date": "20250601", "payload": {"market_state": {"state_type": "RANGE"}}},
+    ]
+    records = [
+        # recommendation_score=0.55 → high bucket 涨; 0.10 → low bucket 跌
+        {"recommended_date": "20250601", "recommendation_score": 0.55, "next_30day_return": 6.0},
+        {"recommended_date": "20250601", "recommendation_score": 0.10, "next_30day_return": -5.0},
+    ]
+    rows = compute_state_type_bucket_subdivision(history, records, target_state_types=("RANGE",))
+    by_bucket = {(r.state_type, r.bucket): r for r in rows}
+    assert ("RANGE", "high") in by_bucket  # 0.55 → high
+    assert ("RANGE", "low") in by_bucket  # 0.10 → low
+    assert by_bucket[("RANGE", "high")].t30_win_rate == 1.0
+    assert by_bucket[("RANGE", "low")].t30_win_rate == 0.0
