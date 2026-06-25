@@ -95,19 +95,19 @@ DEFAULT_STRATEGY_WEIGHTS: dict[str, float] = {
 }
 
 
-#: 策略方向乘数 — A 股市场特性修正 (诊断 2026-06-25, n=472 真实回测).
+#: 策略方向乘数 — 默认全部正向 (1.0).
 #:
-#: ``mean_reversion`` 在 A 股是**反向指标**: 因子诊断 (493 条 tracking_history ×
-#: 32 auto_screening 报告) 证明 MR bullish (超跌) 的票 mean -3.52%, MR bearish
-#: (超涨) 的票 mean +5.10%, bull-bear 差 -8.62% (2025+2026 两时段稳定).
-#: 原因: A 股是动量市场, 超跌的票往往有基本面问题继续跌, 超涨的票有资金推动
-#: 继续涨. MR 因子的均值回归假设在 A 股不成立.
+#: 历史: 2026-06-25 曾基于推荐池 (n=472) 诊断将 mean_reversion 设为 -1.0 (反向),
+#: 但随后全 universe 回测 (n=8136, 470 票 × 20 日期, 零 LLM 纯技术指标) 推翻了
+#: 该结论: 在全市场下 MR 是**正向有效因子** (IC=+0.040, p=0.0003, bullish mean
+#: +6.86% vs bearish +3.32%, bull-bear 差 +3.54%). 推荐池的反向现象是**选择偏差**
+#: (池子预筛选强势股, 把能反弹的超跌票过滤掉了), 不是 MR 因子本身的问题.
 #:
-#: 反转后 (multiplier=-1): MR bullish 拉低 score, MR bearish 拉高 score —
-#: 让 score 从反向 (IC=-0.124) 变成弱正向 (IC=+0.033), crisis regime 下 IC=+0.056.
+#: 教训: 因子诊断必须用全 universe (无选择偏差), 不能只看推荐池. 参见
+#: mean-reversion-reversed-20260625 memory 的修正记录.
 STRATEGY_DIRECTION_MULTIPLIER: dict[str, float] = {
     "trend": 1.0,
-    "mean_reversion": -1.0,  # A 股动量市场: MR 信号反向贡献
+    "mean_reversion": 1.0,  # 全 universe 验证: MR 正向有效 (IC=+0.040)
     "fundamental": 1.0,
     "event_sentiment": 1.0,
 }
