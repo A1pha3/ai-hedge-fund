@@ -151,3 +151,78 @@ def compute_state_type_calibration(
     history = load_auto_screening_history(lookback_days=lookback_days, report_dir=search_dir)
     records = load_tracking_history(search_dir)
     return compute_state_type_calibration_from_loaded(history, records)
+
+
+# ---------------------------------------------------------------------------
+# Q2: 震荡市内 score-bucket 细分 (找结构性赢面子集)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class StateTypeBucketWinRate:
+    """state_type × score-bucket 单元的 T+30 胜率。"""
+
+    state_type: str
+    bucket: str
+    t30_win_rate: float | None = None
+    t30_avg_return: float | None = None
+    t30_median_return: float | None = None
+    sample_count: int = 0
+    mature_t30_count: int = 0
+
+
+def _score_bucket(score_b: Any) -> str:
+    """score_b → bucket 标签. 边界对齐 dynamic_threshold 与 BUY 门控 (composite>=0.5)."""
+    s = _optional_float(score_b)
+    if s is None:
+        return "unknown"
+    if s < 0.30:
+        return "low"
+    if s < 0.40:
+        return "mid_low"
+    if s < 0.50:
+        return "mid_high"
+    return "high"
+
+
+def compute_state_type_bucket_subdivision(
+    history: list[dict[str, Any]],
+    records: list[dict[str, Any]],
+    *,
+    target_state_types: tuple[str, ...] = ("RANGE", "MIXED"),
+) -> list[StateTypeBucketWinRate]:
+    """问2: 在 target_state_types 子集内按 score bucket 细分算 T+30 胜率.
+
+    找'震荡市里仍有高胜率'的 bucket (结构性机会). 调用方按 mature_t30_count<20
+    判定证据不足 (诚实, 不在此硬编码以免掩盖样本量).
+    """
+    date_st = _build_date_state_type_map(history)
+    target = {s.upper() for s in target_state_types}
+    by_cell_returns: dict[tuple[str, str], list[float]] = {}
+    by_cell_count: dict[tuple[str, str], int] = {}
+    for rec in records:
+        date_raw = str(rec.get("recommended_date", "") or "").replace("-", "")
+        st = date_st.get(date_raw)
+        if st is None or st not in target:
+            continue
+        bucket = _score_bucket(rec.get("score_b"))
+        key = (st, bucket)
+        by_cell_count[key] = by_cell_count.get(key, 0) + 1
+        t30 = _optional_float(rec.get("next_30day_return"))
+        if t30 is not None:
+            by_cell_returns.setdefault(key, []).append(t30)
+    rows: list[StateTypeBucketWinRate] = []
+    for (st, bucket), count in sorted(by_cell_count.items()):
+        rets = by_cell_returns.get((st, bucket), [])
+        rows.append(
+            StateTypeBucketWinRate(
+                state_type=st,
+                bucket=bucket,
+                t30_win_rate=_win_rate_or_none(rets),
+                t30_avg_return=_mean_or_none(rets),
+                t30_median_return=_median_or_none(rets),
+                sample_count=count,
+                mature_t30_count=len(rets),
+            )
+        )
+    return rows
