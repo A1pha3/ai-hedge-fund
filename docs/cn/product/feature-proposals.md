@@ -320,7 +320,7 @@ risk_off    (避险/弱势市):  n=10,  winrate=30%,  median=-5.12%   (2 日期)
 
 | ID | 优先级 | 状态 | 需求 | 目标 / autodev 边界 |
 |---|---|---|---|---|
-| **NS-1** | **P0** | ❌ | **数据质量: recommended_price=0 调查与修复** | Phase 0 诊断发现真实记录 recommended_price=0.0 (如兴业银锡 000426), 污染下游所有价格/收益/止损/ATR 计算。调查根因 (provider gap/拆股/停牌/除权未复权), 修复加载逻辑或标记+剔除脏记录。**autodev 可自主** (数据路径 bug, TDD + 真实数据验证)。**先于一切** — 脏数据污染所有诊断结论。 |
+| **NS-1** | **P0** | ❌ | **数据质量: recommended_price=0 修复 (根因已定位)** | Phase 0 诊断发现真实记录 recommended_price=0.0。**根因 (2026-06-25 深审定位)**: `_build_auto_screening_payload` (main.py:443) 写的 auto_screening 报告 payload **不含任何价格字段**; `recommendation_tracker._coerce_recommended_price` (tracker.py:151-164) 按序找 recommended_price/entry_price/close 全部缺失 → 落到 `return 0.0`, 污染每条 tracking_history 记录。btst_realized_bridge.py:114 也硬编码 0.0。Fix: 在 `_build_auto_screening_payload` 注入当日 close (compute_auto_screening_results 已有该数据), 让 _coerce_recommended_price 能读到。**autodev 可自主** (TDD + 真实数据验证)。**先于一切** — 脏数据污染所有诊断/校准/归因。 |
 | **NS-2** | **P1** | ❌ | **模型版本标记 + 诊断分版本** | owner 改了因子但历史推荐没标模型版本 → 诊断无法区分老/新模型效果 (Phase 0 结论基于老模型, 新模型待验)。给报告/推荐加 `model_version` 字段 (factor 配置 hash 或 git sha), 诊断按 version 分组。**autodev 可自主**。是 owner 因子验证闭环的前提基础设施。 |
 | **NS-3** | **P1** | ❌ | **北极星 P&L 趋势仪表** | 北极星 (用户按推荐操作 30 天真实 P&L>0) 当前无直接度量。加"按推荐日等权累积真实 T+30 P&L 趋势"展示 (`--top-picks` footer 或 `--decision-flow`), 让 owner/用户看到是否向 >0 收敛。复用 tracking_history + reconcile。**autodev 可自主**。 |
 | **NS-4** | **P1** | ❌ | **rank 单调性健康度 (per state_type)** | Phase 0 发现 MIXED 市场 ranking 倒挂 (high score 42% 反而最差, low 52% 最好)。加"score rank → T+30 胜率单调性"健康信号 (overall + per state_type), 倒挂时 ⚠ 提示。直接量化模型质量, 服务 owner 调优反馈。复用 `state_type_calibration` 模块 (R-5.F Phase 0 已建)。**autodev 可自主**。 |
@@ -328,18 +328,42 @@ risk_off    (避险/弱势市):  n=10,  winrate=30%,  median=-5.12%   (2 日期)
 | **NS-6** | **P2** | ❌ | **因子归因 × state_type 条件诊断** | Phase 0 只到 score bucket × state_type。扩展到因子层 (momentum/sector/MR/consistency): 各因子正/负贡献 × state_type 的 T+30 胜率, 告诉 owner 哪个因子在哪个市场帮倒忙。镜像 `state_type_calibration` 结构 + 留一时段验证。**autodev 可自主** (诊断模块, 只读, **不改因子** — 越界即过拟合)。 |
 | **NS-7** | **P2** | ❌→依赖 | **新模型效果监测框架** | owner 新因子推荐累积满 T+30 后, 自动比较新旧模型 (NS-2 version 分组) 的 rank 单调性 + 胜率 + P&L。依赖 NS-2 + 新数据成熟 (≥30 天)。**autodev 可搭框架**, 完整运行需等数据。 |
 | **NS-8** | **P2** | ❌ | **全 universe 回测产品化** | owner 的 `scripts/_backtest_light_stage_universe.py` 是临时脚本。固化成可重复 CLI (参数化日期范围/universe/模型版本), 输出标准化报告, 供持续验证。**autodev 可自主**。 |
+| **NS-9** | **P0** | ❌ | **qfq 价格复权 drain (R37 family × 3)** | R37 修了 `_fetch_tushare_ashare_prices_df` 用 qfq, 但 **3 个 sibling 仍用不复权 raw price**: `TushareProvider.get_prices` (providers/tushare_provider.py:123 用 pro.daily 无 adj_factor)、`TushareDataSource.get_prices` (ashare_data_sources.py:91 fallback)、`BaoStockDataSource` (ashare_data_sources.py:167 `adjustflag="3"` 应为 `"2"`)。跨除权除息日产生假跳空, 污染收益/ATR/止损/回撤。**autodev 可自主** (镜像 R37 + 改 adjustflag, TDD)。 |
+| **NS-10** | **P0** | ❌ | **移除 mock 数据注入真实回退链 (静默伪造)** | `get_sina_historical_data` (akshare_api.py:492-511) 返回 **MOCK 随机价**, 却作为 "robust" 回退链第二环 (akshare_price_helpers.py:149) + `SinaDataSource` (ashare_data_sources.py:221); `load_prices_with_fallback` 也 `use_mock_on_fail=True`。akshare 失败时 caller 收到形态合理的**随机价**, 绕过所有 NaN guard, 流入打分/回测/交易。**静默数据伪造, 最危险类**。Fix: 移出回退链 or 硬 opt-in (`allow_mock=True`)。**autodev 可自主**。 |
+| **NS-11** | **P0** | ❌ | **连续 bonus 不应喂 BUY 门控 (ranking-only)** | `top_picks.py:1044` `_apply_consecutive_bonus_and_resort` 把 consecutive bonus (最高 +0.08) 加进 composite_score, 而 `build_front_door_verdict` 用这个 boosted score 判 BUY 门控 (>=0.5)。bonus 本意是**排序** tie-break, 不是放水 gate。0.47 真分 + 0.05 bonus = 0.52 越过 BUY → stale 挑选反而更容易 BUY。Fix: 存 pre-bonus `composite_score_gated` 喂 gate, bonus 仅用于排序。**建议 owner 确认 semantics**。autodev 可自主实现 (TDD)。 |
+| **NS-12** | **P0** | ❌ | **volume_factor 死信号修复** | `volume_confirmation._extract_volume_from_rec` (96-120) 找 volume/vol/turnover 键, 但真实 `FusedScore.metrics` 只有 attack_slope_258/turnover_ratio_20/amount_ratio_5 等, 无匹配 → **每只票 volume_factor=0.0**。composite_score 六维信号有一维静默失效, 用户永远看到"量价:中性"。测试只过是因为注入假 volume 字段。Fix: 映射到真实 metrics 键 or 从 price 源读。**autodev 可自主** (TDD + 真实数据)。 |
+| **NS-13** | **P1** | ❌ | **NaN/finite-guard drain (排序+calibration+仓位)** | 多处不拒 NaN/Inf: `investability._safe_metric` (29-35) 让 NaN 进排序键 → 非确定 ranking (同数据不同 run 不同 top picks); `confidence_calibration._optional_float` (222-228) 接受 "NaN" 字符串污染全 bucket; `expected_return.py:240` + `conviction_ranking.py:179` `float(... or 0.0)` 不过 NaN (NaN truthy); `calculate_position` 缺 `isfinite(current_price)` (现靠 NaN 传播意外归零, 脆弱)。Fix: 统一用 `src/utils/numeric.safe_float`/`coerce_score_b` + isfinite guard。**autodev 可自主** (family drain, TDD)。 |
+| **NS-14** | **P0** | ❌ | **web 认证 + 安全三连** | (1) `screening` 路由 (routes/__init__.py:48) 注册为 public, 6/7 端点含 `POST /auto` (返回真实推荐+score)、`GET conditional-orders` (券商条件单) **无 JWT**; (2) `auth/__init__.py:89` 默认 admin 密码 `Hedge@2026!` 硬编码进 git; (3) 6/7 screening 端点缺 `@safe_route`, `str(exc)` 泄露给匿名 caller。**真实资金推荐+条件单对匿名暴露**。Fix: 加 `_auth` + 移除默认密码 (fail-fast 如 AUTH_SECRET_KEY) + `@safe_route` + auth 测试。**autodev 可自主**。 |
+| **NS-15** | **P0** | ❌ | **broker 条件单导出真实性** | (1) `conditional_order_export.py:69` `_next_business_day` 实为 `start+timedelta(days=n)` 纯自然日, 周五+3=周日, broker 收到**周末到期**单被拒/静默失效; (2) `DEFAULT_QUANTITY=100` 硬编码所有票, 与仓位/NAV 无关; (3) degraded advice 仍渲染真实看价 (conditional_order_advisor.py:250-266, R151 只挡 export 不挡渲染) → 用户手动输入触发 ~1% 极紧止损。Fix: 用 `get_open_trade_dates` 算交易日 + `--nav` CLI 算手数 + degraded 时价字段清零显"—"。**autodev 可自主** (前两项), 数量公式建议 owner 定。 |
+| **NS-16** | **P1** | ❌→owner | **危机机制在回测 dead (owner 决策)** | `engine_pending_plan_runner.py:263` `crisis_inputs={"drawdown_pct":0.0}` 硬编码, `crisis_handler` 的 -10%/-15% 强制减仓**永不触发**, 回测风险画像失真 (C-3 已知 blocked-on-design)。paper trading 同引擎。**owner 决策**: 接线真实 drawdown (从 equity curve) 让回测反映危机, or 显式 env flag 禁用并文档。autodev **待 owner 方向**。 |
+| **NS-17** | **P1** | ❌ | **打分可观测性 (must-win 诊断黑盒)** | `signal_fusion.py` (641L 打分核心) **零 logger** — 无法回答"为什么 X 得 0.32"。SSE cancel + LLM JSON-parse 失败用 `print()` 不入 logs (hedge_fund_streaming.py:395 等, graph.py:234 → `parse_hedge_fund_response` 返 None → 无面包屑)。price 回退链 print + 静默 mock (NS-10)。Fix: signal_fusion 每个仲裁分支加 `logger.info` (trade_date+ticker → rule → score_b); `print`→`logger` 带 run_id。**直接服务"为什么这票这个分"可诊断性**。**autodev 可自主**。 |
+| **NS-18** | **P1** | ❌ | **模型输入准确性三连** | (1) `tushare_provider.get_financial_metrics` (175-234) 把单 trade_date 的 PE/PB 套到全部 10 个报告期 → 趋势变平线; (2) 两 provider 都 `debt_to_equity=None` (akshare_provider:199/tushare_provider:211) 但 router 不走 adapter → **所有 agent 杠杆检查静默跳过** (bill_ackman/phil_fisher/valuation); (3) `dynamic_threshold._load_recent_hit_rate` (196-205) 混用 T+1/T+3/T+5 horizon 抬高 hit rate → 门槛过低。Fix: per-end_date 取 PE; provider 内联 derive debt_to_equity; 单一 horizon (T+5)。**autodev 可自主**。 |
+| **NS-19** | **P1** | ❌ | **回测 NAV 准确性** | (1) `engine_market_data.hydrate_position_prices` (300-351) 停牌价缺失时落回 `long_cost_basis`, 全停牌期 NAV 按买入价计 → 虚增/虚减 + profit_take 误触发; (2) `trader_helpers` `execute_short_trade`/`execute_cover_trade` (154-183) 不 apply 5 元佣金底 → 小额做空成本被低估。Fix: 停牌用 last_known_market_price or 标"未估值"剔出 NAV; short/cover 对称加 `_apply_commission_floor`。**autodev 可自主**。 |
+| **NS-20** | **P1** | ❌ | **前端 loadFlow/useNodeState 防回归测试缺失** | CLAUDE.md 反模式"加载 flow 不清 config state", 但 `flow-context.test.tsx` 只测 `createNewFlow`, **`loadFlow` 零测试**; `use-node-state.ts` (293L 隔离原语) **无测试文件**。一次回归 (重新引入 clearAllNodeStates) 会静默清掉所有 flow runtime state。`use-node-state.ts:282-290` init effect dep 含 `value` 有 render-loop 风险。Fix: 加 loadFlow 保留 outputNodeData 测试 + `use-node-state.test.ts` + 从 init effect dep 移除 value。**autodev 可自主**。 |
+| **NS-21** | **P1** | ❌ | **provider 空数据 fallback (R164 router sibling)** | `DataRouter.get_prices` (router.py:246) 健康 provider 返回 `data=[]` 时直接返回, **不回退下一个 provider** (tushare 空不给 akshare)。R164 修了 `_default_price_fetcher` sibling, router 层未修。Fix: `fetch_from_providers` 把 `data=[]` 当失败继续下一个。**autodev 可自主**。 |
+| **NS-22** | **P1** | ❌ | **reconciliation CSV 校验 (realized-evidence 完整性)** | `reconciliation._load_trade_log` (73-108) **无 header 检测**, 列数<5 静默跳; broker 导出多余前置列会让列对齐**静默错位** → 垃圾 MAE/方向准确率 (calibration 依赖它)。错误日期静默 unmatched 无诊断。Fix: header 检测 + 列数严格校验 + unmatched>50% 警告。**autodev 可自主**。 |
 
 **R-5.C** (§三·5) = 当前下次交付目标, 不在此重复。
 **R-5.B** (门槛) = **deferred** — 老模型 MIXED 反预测下调高门槛会更糟, 等 NS-4/NS-7 证明 ranking 翻正后再议。
 
-**建议执行顺序（autodev 每 campaign 选最高优先级可执行项）**：
-1. **NS-1 先** (P0 数据质量, 污染一切, 必须最先修)
-2. **NS-2** (版本基础设施, 后续诊断依赖)
-3. **R-5.C** (§三·5, 已选定, 纯展示层可并行)
-4. **NS-3 + NS-4** (北极星度量 + 模型健康度, 一起做, 给 owner 调优反馈闭环)
-5. **NS-5** (数据时效)
-6. **NS-6** (因子诊断, 服务 owner 深度调优)
-7. **NS-8 → NS-7** (回测产品化 → 新模型监测, 依赖数据成熟)
+**建议执行顺序（autodev 每 campaign 选最高优先级可执行项；P0 数据/安全先于一切）**：
+1. **NS-1** (P0 数据质量根因已定位, 污染一切, 最先修)
+2. **NS-10** (P0 mock 数据伪造 — 假价流入打分, 最危险)
+3. **NS-9** (P0 qfq drain × 3 — 不复权价污染收益/止损)
+4. **NS-14** (P0 认证/安全 — 真实推荐+条件单匿名暴露)
+5. **NS-11 + NS-12** (P0 BUY 门控完整性 — bonus 放水 + volume 死信号)
+6. **NS-15** (P0 broker 导出真实性 — 周末到期/数量/降级渲染)
+7. **NS-13** (P1 NaN guard drain — 排序确定性, 同数据同结果)
+8. **NS-22** (P1 reconcile 校验 — realized-evidence 完整性)
+9. **NS-2** (版本基础设施, 后续诊断依赖)
+10. **NS-17** (可观测性 — 让后续问题可诊断, 早做回报高)
+11. **R-5.C** (§三·5, 纯展示层可并行)
+12. **NS-3 + NS-4** (北极星 P&L + rank 健康度, 给 owner 调优反馈闭环)
+13. **NS-5 / NS-18 / NS-19 / NS-21** (数据准确性/时效 siblings)
+14. **NS-6** (因子诊断, 服务 owner 深度调优)
+15. **NS-20** (前端防回归测试)
+16. **NS-8 → NS-7** (回测产品化 → 新模型监测, 依赖数据成熟)
+17. **NS-16** (危机机制, awaiting owner 决策)
 
 **autodev 迭代边界（诚实）**：
 - autodev **不能**把系统跑到"最优"——模型打分质量(最大杠杆)在 owner 领域, autodev 只能提供度量/诊断/验证闭环让 owner 的调优更有效。
