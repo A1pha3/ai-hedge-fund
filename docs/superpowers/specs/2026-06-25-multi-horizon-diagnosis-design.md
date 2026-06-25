@@ -221,12 +221,14 @@ T+30  | <0.4     | 85  | 43%  | -4.4%   | +1.3%   | +5.8%   | -8.2%   | 0.71  | 
 
 - **Phase 1 必要**：FULL 回归绿，tracking_history 293 条记录有 T+15/T+25 实测值，向后兼容
 - **Phase 2 必要**：54 格全部展示（无隐藏），结论基于数据回答 Q1/Q2/Q3/Q4
+- **Phase 2 数据完整性（sanity check）**：Phase 2 的 T+30 × 聚合全 score 桶，胜率应**约等于** R-5.A 的 `REGIME_HISTORICAL_WINRATES`（normal 43% / crisis 47% / risk_off 30%）。若偏离 > 5pp，说明数据集差异（293 条 vs R-5.D 用的 189 只）或 regime 关联逻辑有误，需先排查再下结论
 - **充分**：结论足以让用户做出"做 A/B/C/D 中的哪些"的决策，或明确放弃
 
 ## 九、风险与已知局限
 
 - **样本小**：293 条记录跨 30 日期，某些分桶（如 0.5+ × risk_off）必然 n < 10
 - **regime 关联**：依赖 auto_screening 报告存在且含 market_state；若某日期报告缺失，归 unknown
+- **score 时点不一致**（设计简化，必须明确）：验证用 tracking_history 的 `recommendation_score`（= **score_b**，原始分），但当前前门 BUY/HOLD/AVOID 决策用 `composite_score`（= score_b + 动量/行业/一致性/量价/趋势 bonus）。一只票可能 `score_b=0.40` 但 `composite=0.55`。**验证结论回答的是 score_b 的预测力**；若后续 B（选股筛选）用 composite 门槛，需二次验证 composite 的预测力（R-5.D 已用 score_b 保持一致，本验证沿用）
 - **score 来源**：tracking_history 的 `recommendation_score` 是当时的 score_b（非 composite），与当前前门 composite_score 略有差异——R-5.D 已用此字段得出结论，保持一致
 - **T+15/T+25 回填依赖 tushare 配额**：若配额耗尽，可能需要分批；R-5.E 已成功回填 32 日期，配额应该够
 - **向后兼容风险**：扩 `DEFAULT_HORIZONS` 可能影响未知消费者——Phase 1 实现时必须 grep 全仓确认所有 `DEFAULT_HORIZONS` / `next_Xday_return` 消费者
