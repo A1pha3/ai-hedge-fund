@@ -74,6 +74,54 @@ class TestLoadTradeLog:
         trades = _load_trade_log(tmp_path / "nonexistent.csv")
         assert trades == []
 
+    def test_header_maps_columns_with_extra_leading_columns(self, tmp_path: Path) -> None:
+        """NS-22: broker export with extra leading column must map by header name, not position.
+
+        Before fix: _load_trade_log was purely positional (row[0..4]), so a broker export
+        with a leading 账户/序号 column silently misaligned → wrong ticker/date/price →
+        garbage MAE. Header-based column mapping handles it.
+        """
+        path = tmp_path / "broker_export.csv"
+        # Extra leading "账户" column; columns in different order than positional default
+        path.write_text(
+            "账户,代码,买入日期,买入价,卖出日期,卖出价\n"
+            "ACC1,000001,2026-01-01,10.5,2026-01-31,11.2\n",
+            encoding="utf-8",
+        )
+        trades = _load_trade_log(path)
+        assert len(trades) == 1
+        t = trades[0]
+        assert t["ticker"] == "000001"
+        assert t["buy_date"] == "20260101"
+        assert t["buy_price"] == pytest.approx(10.5)
+        assert t["sell_price"] == pytest.approx(11.2)
+
+    def test_english_header_maps_columns(self, tmp_path: Path) -> None:
+        """NS-22: English header keywords also trigger column mapping."""
+        path = tmp_path / "trade_log.csv"
+        path.write_text(
+            "id,ticker,buy_date,buy_price,sell_date,sell_price,note\n"
+            "1,000002,2026-02-01,20,2026-02-28,22,extra\n",
+            encoding="utf-8",
+        )
+        trades = _load_trade_log(path)
+        assert len(trades) == 1
+        assert trades[0]["ticker"] == "000002"
+        assert trades[0]["buy_price"] == pytest.approx(20.0)
+
+    def test_positional_fallback_when_no_header_keywords(self, tmp_path: Path) -> None:
+        """NS-22: CSV with no recognizable header → positional [0..4] (backward compat)."""
+        path = tmp_path / "trade_log.csv"
+        path.write_text(
+            "000001,20260101,10.5,20260131,11.2\n"
+            "000002,20260101,20,20260131,22\n",
+            encoding="utf-8",
+        )
+        trades = _load_trade_log(path)
+        assert len(trades) == 2
+        assert trades[0]["ticker"] == "000001"
+        assert trades[1]["ticker"] == "000002"
+
 
 # ---------------------------------------------------------------------------
 # compute_reconciliation
@@ -81,6 +129,40 @@ class TestLoadTradeLog:
 
 
 class TestComputeReconciliation:
+    def test_warns_when_mostly_unmatched(self, tmp_path: Path) -> None:
+        """NS-22: unmatched >50% → warning in report (likely column misalignment / date / dir issue)."""
+        # No reports seeded → every trade is unmatched (no score_b on buy_date)
+        trade_path = _write_trade_log(tmp_path, [
+            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
+            {"ticker": "000002", "buy_date": "20260101", "buy_price": 20.0, "sell_date": "20260131", "sell_price": 21.0},
+            {"ticker": "000003", "buy_date": "20260101", "buy_price": 30.0, "sell_date": "20260131", "sell_price": 31.0},
+            {"ticker": "000004", "buy_date": "20260101", "buy_price": 40.0, "sell_date": "20260131", "sell_price": 41.0},
+        ])
+        report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+        assert report.unmatched_count == 4
+        assert report.matched_count == 0
+        assert len(report.warnings) == 1
+        assert "未匹配率 4/4" in report.warnings[0]
+
+    def test_no_warning_when_mostly_matched(self, tmp_path: Path) -> None:
+        """NS-22: matched majority → no spurious warning."""
+        _seed_report(tmp_path, "20260101", [
+            {"ticker": "000001", "score_b": 0.75},
+            {"ticker": "000002", "score_b": 0.75},
+            {"ticker": "000003", "score_b": 0.75},
+        ])
+        _seed_tracking(tmp_path, [
+            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
+        ])
+        trade_path = _write_trade_log(tmp_path, [
+            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
+            {"ticker": "000002", "buy_date": "20260101", "buy_price": 20.0, "sell_date": "20260131", "sell_price": 21.0},
+            {"ticker": "000003", "buy_date": "20260101", "buy_price": 30.0, "sell_date": "20260131", "sell_price": 31.0},
+            {"ticker": "999999", "buy_date": "20260101", "buy_price": 40.0, "sell_date": "20260131", "sell_price": 41.0},
+        ])
+        report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+        assert report.warnings == []
+
     def test_predicted_vs_actual(self, tmp_path: Path) -> None:
         """Ticker bought on 20260101; model predicted (bucket avg) +5%, actual +6.7%."""
         # report on buy_date has the ticker with score_b → bucket "中高 (0.7-0.8)"

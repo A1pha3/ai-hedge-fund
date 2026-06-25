@@ -63,6 +63,8 @@ class ReconciliationReport:
     #: R-7: median-based MAE (用 predicted_return_median). 低于 mae → 中位数是更好的预测中心
     mae_median: float | None = None
     directional_accuracy: float | None = None  # 方向准确率 (仅 matched)
+    #: NS-22: 完整性警告 (如 unmatched>50% 提示 trade_log 列错位 / 日期未对齐 / 错报告目录)
+    warnings: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -73,39 +75,82 @@ class ReconciliationReport:
 def _load_trade_log(path: Path) -> list[dict[str, Any]]:
     """读取交易日志 CSV (v1: ticker,buy_date,buy_price,sell_date,sell_price)。
 
+    NS-22: 支持 header-based 列映射 (broker 导出常带额外前导列如 账户/序号,
+    纯 positional 解析会静默错位 → 垃圾 MAE)。若首行含可识别 header 关键词
+    (中英文), 按表头名映射列索引; 否则回退 positional [0..4] (向后兼容)。
+
     缺失文件 → 空列表 (优雅降级)。跳过表头与空行。
     """
     if not path.exists():
         return []
-    trades: list[dict[str, Any]] = []
     with path.open(encoding="utf-8") as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if len(row) < 5:
-                continue
-            # skip header (non-numeric buy_price) and blank rows
-            ticker = row[0].strip()
-            buy_date = row[1].strip()
-            buy_price_raw = row[2].strip()
-            sell_date = row[3].strip()
-            sell_price_raw = row[4].strip()
-            if not ticker or not buy_date:
-                continue
-            try:
-                buy_price = float(buy_price_raw)
-                sell_price = float(sell_price_raw)
-            except ValueError:
-                continue  # header row or malformed
-            trades.append(
-                {
-                    "ticker": str(ticker),
-                    "buy_date": str(buy_date).replace("-", ""),
-                    "buy_price": buy_price,
-                    "sell_date": str(sell_date).replace("-", ""),
-                    "sell_price": sell_price,
-                }
-            )
+        rows = list(csv.reader(f))
+    if not rows:
+        return []
+
+    # NS-22: header 检测 — 首行含可识别字段名则按表头映射列, 容忍额外前导列
+    header_colmap = _resolve_trade_log_columns(rows[0])
+    data_start = 1 if header_colmap is not None else 0
+    colmap = header_colmap or {"ticker": 0, "buy_date": 1, "buy_price": 2, "sell_date": 3, "sell_price": 4}
+    max_idx = max(colmap.values())
+
+    trades: list[dict[str, Any]] = []
+    for row in rows[data_start:]:
+        if len(row) <= max_idx:
+            continue  # 列数不足, 跳过 (不静默错位)
+        ticker = row[colmap["ticker"]].strip()
+        buy_date = row[colmap["buy_date"]].strip()
+        buy_price_raw = row[colmap["buy_price"]].strip()
+        sell_date = row[colmap["sell_date"]].strip()
+        sell_price_raw = row[colmap["sell_price"]].strip()
+        if not ticker or not buy_date:
+            continue
+        try:
+            buy_price = float(buy_price_raw)
+            sell_price = float(sell_price_raw)
+        except ValueError:
+            continue  # 表头残行或格式错
+        trades.append(
+            {
+                "ticker": str(ticker),
+                "buy_date": str(buy_date).replace("-", ""),
+                "buy_price": buy_price,
+                "sell_date": str(sell_date).replace("-", ""),
+                "sell_price": sell_price,
+            }
+        )
     return trades
+
+
+#: NS-22: 各字段的可识别 header 关键词 (中英文, case-insensitive, substring match)
+_HEADER_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "ticker": ("ticker", "symbol", "代码", "股票代码", "股票"),
+    "buy_date": ("buy_date", "buy date", "买入日期", "买入日"),
+    "buy_price": ("buy_price", "buy price", "买入价", "买入价格"),
+    "sell_date": ("sell_date", "sell date", "卖出日期", "卖出日"),
+    "sell_price": ("sell_price", "sell price", "卖出价", "卖出价格"),
+}
+
+
+def _resolve_trade_log_columns(header_row: list[str]) -> dict[str, int] | None:
+    """NS-22: 若首行含足量可识别 header 关键词, 返回 字段→列索引 映射; 否则 None。
+
+    要求至少识别出 ticker + buy_price (核心字段), 避免把偶然命中的数据行误判为 header。
+    """
+    normalized = [str(c).strip().lower() for c in header_row]
+    found: dict[str, int] = {}
+    for field_name, keywords in _HEADER_KEYWORDS.items():
+        for idx, cell in enumerate(normalized):
+            if any(kw in cell for kw in keywords):
+                found[field_name] = idx
+                break
+    # 核心字段必须命中才视为 header (sell_date/sell_price 未命中时用 positional 默认)
+    if "ticker" in found and "buy_price" in found:
+        found.setdefault("buy_date", 1)
+        found.setdefault("sell_date", 3)
+        found.setdefault("sell_price", 4)
+        return found
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +307,15 @@ def compute_reconciliation(
     mae_median = (sum(abs_errors_median) / len(abs_errors_median)) if abs_errors_median else None
     directional_accuracy = (directional_hits / matched) if matched else None
 
+    # NS-22: 完整性警告 — 未匹配 >50% 提示 trade_log 可能列错位/日期未对齐/错报告目录
+    warnings: list[str] = []
+    total = matched + unmatched
+    if total >= 4 and unmatched / total > 0.5:
+        warnings.append(
+            f"未匹配率 {unmatched}/{total} > 50% — 检查 trade_log 列对齐 (broker 导出前导列)、"
+            "buy_date 与报告日期对齐、reports_dir 是否正确; 高未匹配率下的 MAE/方向准确率不可信"
+        )
+
     return ReconciliationReport(
         rows=rows,
         matched_count=matched,
@@ -269,6 +323,7 @@ def compute_reconciliation(
         mae=mae,
         mae_median=mae_median,
         directional_accuracy=directional_accuracy,
+        warnings=warnings,
     )
 
 
