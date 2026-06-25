@@ -226,3 +226,107 @@ def compute_state_type_bucket_subdivision(
             )
         )
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Q3: 留一时段样本外验证 (防 in-sample 过拟合核心)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class LopoHeldoutResult:
+    """单次留出日的验证结果。"""
+
+    heldout_date: str
+    rediscovered_winner_bucket: str | None  # 用非留出日数据发现的赢家 bucket
+    heldout_winner_winrate: float | None  # 该赢家 bucket 在留出日的胜率
+    heldout_n: int
+
+
+@dataclass
+class LopoReport:
+    """留一时段验证汇总。"""
+
+    target_state_types: tuple[str, ...]
+    heldout_periods: int = 0
+    rediscovered_winner_rate: float = 0.0  # 留出日赢家仍维持高胜率(>=floor)的比例
+    robust: bool = False
+    heldout_results: list[LopoHeldoutResult] = field(default_factory=list)
+
+
+def _bucket_returns_by_date(
+    records: list[dict[str, Any]], date_st: dict[str, str], target: set[str]
+) -> dict[str, dict[str, list[float]]]:
+    """→ {date: {bucket: [returns]}} 仅 target state_type, 仅成熟 T+30 记录."""
+    out: dict[str, dict[str, list[float]]] = {}
+    for rec in records:
+        date_raw = str(rec.get("recommended_date", "") or "").replace("-", "")
+        st = date_st.get(date_raw)
+        if st is None or st not in target:
+            continue
+        bucket = _score_bucket(rec.get("score_b"))
+        t30 = _optional_float(rec.get("next_30day_return"))
+        if t30 is None:
+            continue
+        out.setdefault(date_raw, {}).setdefault(bucket, []).append(t30)
+    return out
+
+
+def leave_one_period_out_validation(
+    history: list[dict[str, Any]],
+    records: list[dict[str, Any]],
+    *,
+    target_state_types: tuple[str, ...] = ("RANGE", "MIXED"),
+    min_n: int = 20,
+    winner_winrate_floor: float = 0.5,
+) -> LopoReport:
+    """问3: 留一时段样本外验证问2发现的赢家 bucket 是否稳健.
+
+    每次留出一个日期 d: 用其余日期数据找 (胜率最高 且 n>=min_n 的 bucket) 作'赢家',
+    再在留出日 d 上测该赢家 bucket 胜率. 若留出日胜率 >= winner_winrate_floor 计'维持'.
+    robust = 维持率 >= 0.6 (多数留出日仍维持才算样本外稳健, 非 in-sample 假象).
+    """
+    date_st = _build_date_state_type_map(history)
+    target = {s.upper() for s in target_state_types}
+    by_date = _bucket_returns_by_date(records, date_st, target)
+    dates = sorted(by_date.keys())
+    heldout: list[LopoHeldoutResult] = []
+    maintained = 0
+    for d in dates:
+        # 训练 = 所有非 d 日期的 bucket 汇总
+        train: dict[str, list[float]] = {}
+        for other, buckets in by_date.items():
+            if other == d:
+                continue
+            for bucket, rets in buckets.items():
+                train.setdefault(bucket, []).extend(rets)
+        # 发现赢家: 胜率最高 且 样本 >= min_n
+        winner: str | None = None
+        winner_wr: float | None = None
+        for bucket, rets in train.items():
+            if len(rets) < min_n:
+                continue
+            wr = _win_rate_or_none(rets)
+            if wr is not None and (winner_wr is None or wr > winner_wr):
+                winner, winner_wr = bucket, wr
+        # 在留出日测赢家
+        heldout_rets = by_date[d].get(winner, []) if winner else []
+        held_wr = _win_rate_or_none(heldout_rets)
+        heldout.append(
+            LopoHeldoutResult(
+                heldout_date=d,
+                rediscovered_winner_bucket=winner,
+                heldout_winner_winrate=held_wr,
+                heldout_n=len(heldout_rets),
+            )
+        )
+        if held_wr is not None and held_wr >= winner_winrate_floor:
+            maintained += 1
+    rate = (maintained / len(dates)) if dates else 0.0
+    return LopoReport(
+        target_state_types=target_state_types,
+        heldout_periods=len(dates),
+        rediscovered_winner_rate=rate,
+        robust=bool(dates) and rate >= 0.6,
+        heldout_results=heldout,
+    )

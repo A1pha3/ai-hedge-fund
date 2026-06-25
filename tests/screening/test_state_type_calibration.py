@@ -79,3 +79,47 @@ def test_q2_subdivides_target_state_types_by_score_bucket():
     assert by_bucket[("RANGE", "high")].sample_count == 2
     # TREND 日的记录不应出现 (非 target)
     assert all(r.state_type == "RANGE" for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# Task 3: 问3 留一时段样本外验证 (防 in-sample 过拟合核心)
+# ---------------------------------------------------------------------------
+
+from src.screening.state_type_calibration import leave_one_period_out_validation  # noqa: E402
+
+
+def test_q3_lopo_rediscovers_real_signal_out_of_sample():
+    # 3 个 RANGE 日期; 每个日期内 high bucket 涨、low bucket 跌 (跨所有日期一致)
+    history = [
+        {"date": f"2025060{d}", "payload": {"market_state": {"state_type": "RANGE"}}}
+        for d in (1, 2, 3)
+    ]
+    records = []
+    for d in (1, 2, 3):
+        records += [
+            {"recommended_date": f"2025060{d}", "score_b": 0.55, "next_30day_return": 6.0},
+            {"recommended_date": f"2025060{d}", "score_b": 0.10, "next_30day_return": -5.0},
+        ]
+    report = leave_one_period_out_validation(history, records, target_state_types=("RANGE",), min_n=1)
+    # 每次留出一个日期, 用其余两日发现 high 是赢家 → high 在留出日也应高胜率
+    assert report.heldout_periods == 3
+    assert report.rediscovered_winner_rate == 1.0  # 3/3 留出日 high 都维持高胜率
+    assert report.robust is True
+
+
+def test_q3_lopo_rejects_in_sample_artifact():
+    # high bucket 只在 day1 大涨, day2/day3 都跌 → 留出 day2/day3 时 high 不再维持
+    # (整体均值可能被 day1 拉高, 但逐留出日不稳定 = in-sample 假象)
+    history = [
+        {"date": f"2025060{d}", "payload": {"market_state": {"state_type": "RANGE"}}}
+        for d in (1, 2, 3)
+    ]
+    rets_by_day = {"1": 10.0, "2": -8.0, "3": -8.0}
+    records = []
+    for d, ret in rets_by_day.items():
+        records.append({"recommended_date": f"2025060{d}", "score_b": 0.55, "next_30day_return": ret})
+        records.append({"recommended_date": f"2025060{d}", "score_b": 0.10, "next_30day_return": -1.0})
+    report = leave_one_period_out_validation(history, records, target_state_types=("RANGE",), min_n=1)
+    # 留出 day2/day3 时 high 在留出日胜率为 0 → 维持率 1/3 < 60% → 不稳健
+    assert report.robust is False
+    assert report.rediscovered_winner_rate < 0.6
