@@ -310,6 +310,43 @@ risk_off    (避险/弱势市):  n=10,  winrate=30%,  median=-5.12%   (2 日期)
 
 **为什么 regime-gating 前提被推翻但仍然是个有价值的教训**：v1 小样本 (91 只) 曾暗示"crisis 73% 赚钱" → v2 扩样本 (32 日期 ~189 只) 修正为 47%。**这是 R-5.D/E 的方法论价值**——诊断先于优化, 扩样本先于修代码, 用数据纠正假设。如果没有 R-5.E 的扩样本, R-5.F 会基于小样本错误前提去做 regime-gating 方向修正 → 白费功夫甚至让产品更差。**"先诚实理解真相, 再用真相决定方向"比"看到迹象就动手"高效得多**。
 
+### 三·6、赚钱工具优化 backlog（2026-06-25 R-5.F STOP 后 · 北极星 P&L>0 驱动）
+
+> 来源：R-5.F Phase 0 诊断 STOP 后的路径重定。**真杠杆 = 模型打分质量(owner 领域) + 持续真实数据 + 产品诚实披露 + 度量闭环(autodev 领域)**。regime-gating 已被 v2 + Phase 0 两轮否决, 本节不再列入。每项标 autodev 可自主 vs 需 owner/数据。
+
+**owner vs autodev 切分（重要）**：
+- **owner 领域（autodev 不自主改）**：因子权重/阈值/打分模型本身 — 过拟合风险（R-5.D 否决），owner 正在手动调（commits ab96aae0..e5406887）
+- **autodev 领域**：数据质量修复 / 诊断工具 / 展示诚实化 / 度量闭环 / 验证框架 / 版本基础设施
+
+| ID | 优先级 | 状态 | 需求 | 目标 / autodev 边界 |
+|---|---|---|---|---|
+| **NS-1** | **P0** | ❌ | **数据质量: recommended_price=0 调查与修复** | Phase 0 诊断发现真实记录 recommended_price=0.0 (如兴业银锡 000426), 污染下游所有价格/收益/止损/ATR 计算。调查根因 (provider gap/拆股/停牌/除权未复权), 修复加载逻辑或标记+剔除脏记录。**autodev 可自主** (数据路径 bug, TDD + 真实数据验证)。**先于一切** — 脏数据污染所有诊断结论。 |
+| **NS-2** | **P1** | ❌ | **模型版本标记 + 诊断分版本** | owner 改了因子但历史推荐没标模型版本 → 诊断无法区分老/新模型效果 (Phase 0 结论基于老模型, 新模型待验)。给报告/推荐加 `model_version` 字段 (factor 配置 hash 或 git sha), 诊断按 version 分组。**autodev 可自主**。是 owner 因子验证闭环的前提基础设施。 |
+| **NS-3** | **P1** | ❌ | **北极星 P&L 趋势仪表** | 北极星 (用户按推荐操作 30 天真实 P&L>0) 当前无直接度量。加"按推荐日等权累积真实 T+30 P&L 趋势"展示 (`--top-picks` footer 或 `--decision-flow`), 让 owner/用户看到是否向 >0 收敛。复用 tracking_history + reconcile。**autodev 可自主**。 |
+| **NS-4** | **P1** | ❌ | **rank 单调性健康度 (per state_type)** | Phase 0 发现 MIXED 市场 ranking 倒挂 (high score 42% 反而最差, low 52% 最好)。加"score rank → T+30 胜率单调性"健康信号 (overall + per state_type), 倒挂时 ⚠ 提示。直接量化模型质量, 服务 owner 调优反馈。复用 `state_type_calibration` 模块 (R-5.F Phase 0 已建)。**autodev 可自主**。 |
+| **NS-5** | **P1** | ❌ | **REGIME_HISTORICAL_WINRATES 自动刷新** | R-5.A 的 regime 胜率数据因 owner 改因子而过时 (见 autodev re-audit staleness flag)。加 daily scheduling 触发的自动重算 + 报告内嵌"数据时点"标注。**autodev 可自主**。 |
+| **NS-6** | **P2** | ❌ | **因子归因 × state_type 条件诊断** | Phase 0 只到 score bucket × state_type。扩展到因子层 (momentum/sector/MR/consistency): 各因子正/负贡献 × state_type 的 T+30 胜率, 告诉 owner 哪个因子在哪个市场帮倒忙。镜像 `state_type_calibration` 结构 + 留一时段验证。**autodev 可自主** (诊断模块, 只读, **不改因子** — 越界即过拟合)。 |
+| **NS-7** | **P2** | ❌→依赖 | **新模型效果监测框架** | owner 新因子推荐累积满 T+30 后, 自动比较新旧模型 (NS-2 version 分组) 的 rank 单调性 + 胜率 + P&L。依赖 NS-2 + 新数据成熟 (≥30 天)。**autodev 可搭框架**, 完整运行需等数据。 |
+| **NS-8** | **P2** | ❌ | **全 universe 回测产品化** | owner 的 `scripts/_backtest_light_stage_universe.py` 是临时脚本。固化成可重复 CLI (参数化日期范围/universe/模型版本), 输出标准化报告, 供持续验证。**autodev 可自主**。 |
+
+**R-5.C** (§三·5) = 当前下次交付目标, 不在此重复。
+**R-5.B** (门槛) = **deferred** — 老模型 MIXED 反预测下调高门槛会更糟, 等 NS-4/NS-7 证明 ranking 翻正后再议。
+
+**建议执行顺序（autodev 每 campaign 选最高优先级可执行项）**：
+1. **NS-1 先** (P0 数据质量, 污染一切, 必须最先修)
+2. **NS-2** (版本基础设施, 后续诊断依赖)
+3. **R-5.C** (§三·5, 已选定, 纯展示层可并行)
+4. **NS-3 + NS-4** (北极星度量 + 模型健康度, 一起做, 给 owner 调优反馈闭环)
+5. **NS-5** (数据时效)
+6. **NS-6** (因子诊断, 服务 owner 深度调优)
+7. **NS-8 → NS-7** (回测产品化 → 新模型监测, 依赖数据成熟)
+
+**autodev 迭代边界（诚实）**：
+- autodev **不能**把系统跑到"最优"——模型打分质量(最大杠杆)在 owner 领域, autodev 只能提供度量/诊断/验证闭环让 owner 的调优更有效。
+- autodev 有 self-gen stop gate (2/2) + marginal-value exhaustion, 到顶时会诚实停下, 不制造价值。
+- 部分 NS 项依赖 owner 决策或新数据成熟, autodev 遇到会 `awaiting_release`/`wait`, 不硬闯。
+- **北极星 P&L>0 的达成**最终取决于 owner 因子调优 + 数据累积, autodev 的角色是**让这条路可度量、可验证、不盲目**。
+
 ---
 
 ## 四、已完成能力（主文档只保留结论）
