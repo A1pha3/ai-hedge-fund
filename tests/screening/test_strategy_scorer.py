@@ -1425,3 +1425,24 @@ def test_parallel_handles_individual_candidate_failure_gracefully():
     # Healthy candidate still scored correctly
     assert results["000002"]["trend"].direction == 1
     assert results["000002"]["trend"].confidence == 70.0
+
+
+def test_light_weights_mr_higher_than_trend() -> None:
+    """全 universe 因子回测 (n=8136, IC=+0.040 p=0.0003) 证明 MR 是正向有效因子,
+    trend 在全市场下接近常量 (8136/8136 direction=0, completeness=0).
+    Light stage 权重应让 MR 主导, 使超跌反弹潜力票进入候选池.
+    """
+    from src.screening.strategy_scorer import LIGHT_STRATEGY_WEIGHTS
+
+    mr_w = LIGHT_STRATEGY_WEIGHTS.get("mean_reversion", 0.0)
+    trend_w = LIGHT_STRATEGY_WEIGHTS.get("trend", 0.0)
+    assert mr_w >= 0.55, (
+        f"MR weight={mr_w} 应 >= 0.55 (IC +0.040, 全 universe 正信号). "
+        f"当前 trend={trend_w}, MR={mr_w}"
+    )
+    assert mr_w > trend_w, (
+        f"MR weight={mr_w} 必须 > trend={trend_w}. "
+        f"trend 因子接近常量 (全 universe 8136 条 direction=0), 不应主导 light score."
+    )
+    # 权重之和必须为 1.0 (light stage 只有这两个策略)
+    assert mr_w + trend_w == 1.0, f"权重和必须为 1.0, got {mr_w + trend_w}"

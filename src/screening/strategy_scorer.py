@@ -52,9 +52,12 @@ __all__ = [
     "score_fundamental_strategy",
 ]
 
+# Light stage weights: 全 universe 因子回测 (2026-06-25, n=8136) 证明 MR 是正向有效因子
+# (IC=+0.040, p=0.0003, bull +6.86% > bear +3.32%), trend 因子接近常量 (对全市场 direction=0,
+# completeness=0, 无区分度). MR 应主导 light stage 筛选, 让超跌反弹潜力票进入候选池.
 LIGHT_STRATEGY_WEIGHTS = {
-    "trend": 0.65,
-    "mean_reversion": 0.35,
+    "trend": 0.35,
+    "mean_reversion": 0.65,
 }
 _DEFAULT_CANDIDATE_POOL_SIZE = int(os.getenv("MAX_CANDIDATE_POOL_SIZE", "300"))
 TECHNICAL_SCORE_MAX_CANDIDATES = int(
