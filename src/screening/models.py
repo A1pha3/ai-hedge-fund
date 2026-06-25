@@ -95,6 +95,24 @@ DEFAULT_STRATEGY_WEIGHTS: dict[str, float] = {
 }
 
 
+#: 策略方向乘数 — A 股市场特性修正 (诊断 2026-06-25, n=472 真实回测).
+#:
+#: ``mean_reversion`` 在 A 股是**反向指标**: 因子诊断 (493 条 tracking_history ×
+#: 32 auto_screening 报告) 证明 MR bullish (超跌) 的票 mean -3.52%, MR bearish
+#: (超涨) 的票 mean +5.10%, bull-bear 差 -8.62% (2025+2026 两时段稳定).
+#: 原因: A 股是动量市场, 超跌的票往往有基本面问题继续跌, 超涨的票有资金推动
+#: 继续涨. MR 因子的均值回归假设在 A 股不成立.
+#:
+#: 反转后 (multiplier=-1): MR bullish 拉低 score, MR bearish 拉高 score —
+#: 让 score 从反向 (IC=-0.124) 变成弱正向 (IC=+0.033), crisis regime 下 IC=+0.056.
+STRATEGY_DIRECTION_MULTIPLIER: dict[str, float] = {
+    "trend": 1.0,
+    "mean_reversion": -1.0,  # A 股动量市场: MR 信号反向贡献
+    "fundamental": 1.0,
+    "event_sentiment": 1.0,
+}
+
+
 class FusedScore(BaseModel):
     """单标的 Layer B 融合得分（§3.1 融合公式 + §3.4 决策阈值）"""
     ticker: str

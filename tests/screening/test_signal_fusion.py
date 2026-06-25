@@ -441,12 +441,17 @@ def test_compute_score_b_all_bearish() -> None:
 
 
 def test_compute_score_b_mixed_signals() -> None:
-    """Mixed signals (some bullish, some bearish) → score near zero."""
+    """Trend bullish + MR same-direction → nonzero score.
+
+    Note: MR is reversed for A-share (STRATEGY_DIRECTION_MULTIPLIER=-1).
+    So trend bullish (dir=1) + MR bullish (dir=1, reversed→-1) cancel out.
+    Here trend bullish + MR bullish → near zero.
+    """
     from src.screening.signal_fusion import compute_score_b
 
     signals = {
         "trend": StrategySignal(direction=1, confidence=60.0, completeness=1.0),
-        "mean_reversion": StrategySignal(direction=-1, confidence=60.0, completeness=1.0),
+        "mean_reversion": StrategySignal(direction=1, confidence=60.0, completeness=1.0),
     }
     weights = {"trend": 0.50, "mean_reversion": 0.50}
     score = compute_score_b(signals, weights, [])
@@ -475,6 +480,39 @@ def test_compute_score_b_clamps_to_negative_one() -> None:
     weights = {"trend": 1.0}
     score = compute_score_b(signals, weights, [])
     assert score == -1.0
+
+
+def test_mean_reversion_direction_reversed_in_score() -> None:
+    """A股动量市场: mean_reversion 信号方向反转 (诊断 2026-06-25).
+
+    MR bullish (超跌, 预期反弹) → A 股超跌继续跌 → 应拉低 score.
+    MR bearish (超涨, 预期回调) → A 股超涨继续涨 → 应拉高 score.
+    """
+    from src.screening.signal_fusion import compute_score_b
+    from src.screening.models import STRATEGY_DIRECTION_MULTIPLIER
+
+    # 配置检查
+    assert STRATEGY_DIRECTION_MULTIPLIER.get("mean_reversion") == -1.0, (
+        "mean_reversion must be reversed for A-share momentum market"
+    )
+
+    # MR bullish (方向=1) × 反转(-1) → score 应为负
+    signals_bull = {
+        "mean_reversion": StrategySignal(direction=1, confidence=80.0, completeness=1.0),
+    }
+    score_bull = compute_score_b(signals_bull, {"mean_reversion": 1.0}, [])
+    assert score_bull == pytest.approx(-0.80), (
+        f"MR bullish 应拉低 score (反转后), got {score_bull}"
+    )
+
+    # MR bearish (方向=-1) × 反转(-1) → score 应为正
+    signals_bear = {
+        "mean_reversion": StrategySignal(direction=-1, confidence=80.0, completeness=1.0),
+    }
+    score_bear = compute_score_b(signals_bear, {"mean_reversion": 1.0}, [])
+    assert score_bear == pytest.approx(+0.80), (
+        f"MR bearish 应拉高 score (反转后), got {score_bear}"
+    )
 
 
 def test_compute_score_b_consensus_bonus_bullish() -> None:
@@ -513,10 +551,10 @@ def test_compute_score_b_consensus_bonus_zero_score_is_noop() -> None:
     from src.screening.models import ArbitrationAction
     from src.screening.signal_fusion import compute_score_b
 
-    # Equal bullish and bearish signals → score ≈ 0
+    # Trend bullish + MR bullish (MR reversed → negative) cancel out → score ≈ 0
     signals = {
         "trend": StrategySignal(direction=1, confidence=60.0, completeness=1.0),
-        "mean_reversion": StrategySignal(direction=-1, confidence=60.0, completeness=1.0),
+        "mean_reversion": StrategySignal(direction=1, confidence=60.0, completeness=1.0),
     }
     weights = {"trend": 0.50, "mean_reversion": 0.50}
     without_bonus = compute_score_b(signals, weights, [])

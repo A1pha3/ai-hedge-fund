@@ -377,10 +377,15 @@ def apply_arbitration_rules(
 
 def compute_score_b(signals: dict[str, StrategySignal], weights: dict[str, float], arbitration_applied: list[str]) -> float:
     normalized_weights = _normalize_for_available_signals(weights, signals)
+    # A 股动量市场: mean_reversion 信号方向反转 (STRATEGY_DIRECTION_MULTIPLIER).
+    # 见 models.py:STRATEGY_DIRECTION_MULTIPLIER docstring (诊断 2026-06-25).
+    from src.screening.models import STRATEGY_DIRECTION_MULTIPLIER
+
     score = 0.0
     for name, signal in signals.items():
         weight = normalized_weights.get(name, 0.0)
-        score += weight * signal.direction * (signal.confidence / 100.0) * signal.completeness
+        multiplier = STRATEGY_DIRECTION_MULTIPLIER.get(name, 1.0)
+        score += weight * signal.direction * multiplier * (signal.confidence / 100.0) * signal.completeness
 
     if ArbitrationAction.CONSENSUS_BONUS.value in arbitration_applied:
         # GAMMA-016: apply bonus in the direction of the consensus, not
