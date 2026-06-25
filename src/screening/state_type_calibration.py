@@ -330,3 +330,145 @@ def leave_one_period_out_validation(
         robust=bool(dates) and rate >= 0.6,
         heldout_results=heldout,
     )
+
+
+# ---------------------------------------------------------------------------
+# Q4: verdict 聚合 (spec §九 映射表 → 1A / 1B / STOP)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DiagnosisVerdict:
+    """Phase 0 诊断裁决: 决定 Phase 1 走哪条路。"""
+
+    phase1_branch: str  # "1A" | "1B" | "STOP"
+    reason: str
+    q1_trend_winrate: float | None = None
+    q1_choppy_winrate: float | None = None
+    q1_discriminative: bool = False
+    q2_best_bucket: str | None = None
+    q2_best_bucket_winrate: float | None = None
+    q3_robust: bool = False
+
+
+_Q1_MIN_GAP = 0.10  # TREND vs RANGE/MIXED 胜率差 >= 10pp 才算 discriminative
+_Q1_MIN_N = 20
+_Q2_WINNER_FLOOR = 0.50  # 震荡市赢家 bucket 胜率门槛
+
+
+def _q1_is_discriminative(
+    q1: StateTypeCalibrationReport,
+) -> tuple[bool, float | None, float | None]:
+    """判定问1: TREND 胜率 vs 震荡(RANGE/MIXED)最低胜率, 差 >= 10pp 且样本足."""
+    by_st = {r.state_type: r for r in q1.rows}
+    trend = by_st.get("TREND")
+    choppy_rows = [
+        r
+        for r in q1.rows
+        if r.state_type in ("RANGE", "MIXED") and r.mature_t30_count >= _Q1_MIN_N
+    ]
+    if not trend or trend.mature_t30_count < _Q1_MIN_N or not choppy_rows:
+        return False, (trend.t30_win_rate if trend else None), None
+    choppy_wr = min(r.t30_win_rate or 0.0 for r in choppy_rows)
+    discriminative = (trend.t30_win_rate or 0.0) - choppy_wr >= _Q1_MIN_GAP
+    return discriminative, trend.t30_win_rate, choppy_wr
+
+
+def aggregate_verdict(
+    *,
+    q1: StateTypeCalibrationReport,
+    q2_best_bucket_winrate: float | None,
+    q3: LopoReport,
+) -> DiagnosisVerdict:
+    """按 spec §九 映射表聚合三问结论 → 1A / 1B / STOP."""
+    discriminative, trend_wr, choppy_wr = _q1_is_discriminative(q1)
+    if not discriminative:
+        return DiagnosisVerdict(
+            phase1_branch="STOP",
+            reason="state_type not discriminative (TREND vs RANGE/MIXED 胜率差 < 10pp 或样本不足)",
+            q1_trend_winrate=trend_wr,
+            q1_choppy_winrate=choppy_wr,
+            q1_discriminative=False,
+        )
+    q2_yes = q2_best_bucket_winrate is not None and q2_best_bucket_winrate >= _Q2_WINNER_FLOOR
+    if q2_yes and q3.robust:
+        return DiagnosisVerdict(
+            phase1_branch="1A",
+            reason="震荡市存在样本外稳健的赢面 bucket → regime-conditional 精选",
+            q1_trend_winrate=trend_wr,
+            q1_choppy_winrate=choppy_wr,
+            q1_discriminative=True,
+            q2_best_bucket_winrate=q2_best_bucket_winrate,
+            q3_robust=True,
+        )
+    return DiagnosisVerdict(
+        phase1_branch="1B",
+        reason="震荡市无样本外稳健赢面子集 → 保守版 (禁 BUY + 砍 top-3)",
+        q1_trend_winrate=trend_wr,
+        q1_choppy_winrate=choppy_wr,
+        q1_discriminative=True,
+        q2_best_bucket_winrate=q2_best_bucket_winrate,
+        q3_robust=q3.robust,
+    )
+
+
+def run_state_type_diagnosis(
+    *,
+    reports_dir: Path | None = None,
+    lookback_days: int = 30,
+    target_state_types: tuple[str, ...] = ("RANGE", "MIXED"),
+) -> tuple[
+    StateTypeCalibrationReport,
+    list[StateTypeBucketWinRate],
+    LopoReport,
+    DiagnosisVerdict,
+]:
+    """跑完三问 + 聚合 verdict. 返回 (q1, q2_rows, q3, verdict)."""
+    from src.screening.consecutive_recommendation import (
+        load_auto_screening_history,
+        load_tracking_history,
+        resolve_report_dir,
+    )
+
+    search_dir = reports_dir or resolve_report_dir()
+    history = load_auto_screening_history(lookback_days=lookback_days, report_dir=search_dir)
+    records = load_tracking_history(search_dir)
+    q1 = compute_state_type_calibration_from_loaded(history, records)
+    q2_rows = compute_state_type_bucket_subdivision(
+        history, records, target_state_types=target_state_types
+    )
+    # 问2赢家: target 内胜率最高 且 mature n>=20 的 bucket
+    qualified = [
+        r for r in q2_rows if r.mature_t30_count >= _Q1_MIN_N and r.t30_win_rate is not None
+    ]
+    q2_best = max(qualified, key=lambda r: r.t30_win_rate) if qualified else None
+    # 留一时段 min_n: 真实每个日期的成熟样本可能很少, 用 2 (至少 2 只才算该日有信号)
+    q3 = leave_one_period_out_validation(
+        history, records, target_state_types=target_state_types, min_n=2
+    )
+    verdict = aggregate_verdict(
+        q1=q1,
+        q2_best_bucket_winrate=(q2_best.t30_win_rate if q2_best else None),
+        q3=q3,
+    )
+    if q2_best is not None:
+        verdict.q2_best_bucket = q2_best.bucket
+    return q1, q2_rows, q3, verdict
+
+
+__all__ = [
+    "StateTypeWinRate",
+    "StateTypeCalibrationReport",
+    "StateTypeBucketWinRate",
+    "LopoHeldoutResult",
+    "LopoReport",
+    "DiagnosisVerdict",
+    "_build_date_state_type_map",
+    "_score_bucket",
+    "compute_state_type_calibration",
+    "compute_state_type_calibration_from_loaded",
+    "compute_state_type_bucket_subdivision",
+    "leave_one_period_out_validation",
+    "aggregate_verdict",
+    "run_state_type_diagnosis",
+]

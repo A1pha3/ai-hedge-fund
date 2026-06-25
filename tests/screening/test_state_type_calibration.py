@@ -123,3 +123,47 @@ def test_q3_lopo_rejects_in_sample_artifact():
     # 留出 day2/day3 时 high 在留出日胜率为 0 → 维持率 1/3 < 60% → 不稳健
     assert report.robust is False
     assert report.rediscovered_winner_rate < 0.6
+
+
+# ---------------------------------------------------------------------------
+# Task 4: verdict 聚合 (1A/1B/STOP) — spec §九 映射表
+# ---------------------------------------------------------------------------
+
+from src.screening.state_type_calibration import (  # noqa: E402
+    StateTypeCalibrationReport,
+    StateTypeWinRate,
+    LopoReport,
+    DiagnosisVerdict,
+    aggregate_verdict,
+)
+
+
+def test_verdict_stop_when_state_type_not_discriminative():
+    # 问1 no: TREND 与 RANGE 胜率接近 (< 10pp 差)
+    q1 = StateTypeCalibrationReport(rows=[
+        StateTypeWinRate("TREND", t30_win_rate=0.45, mature_t30_count=60),
+        StateTypeWinRate("RANGE", t30_win_rate=0.43, mature_t30_count=80),
+    ])
+    verdict = aggregate_verdict(q1=q1, q2_best_bucket_winrate=None, q3=LopoReport(target_state_types=("RANGE",), robust=False))
+    assert verdict.phase1_branch == "STOP"
+    assert "not discriminative" in verdict.reason.lower()
+
+
+def test_verdict_1a_when_all_three_yes():
+    q1 = StateTypeCalibrationReport(rows=[
+        StateTypeWinRate("TREND", t30_win_rate=0.80, mature_t30_count=60),
+        StateTypeWinRate("RANGE", t30_win_rate=0.25, mature_t30_count=80),
+    ])
+    q3 = LopoReport(target_state_types=("RANGE",), robust=True, rediscovered_winner_rate=0.8, heldout_periods=10)
+    verdict = aggregate_verdict(q1=q1, q2_best_bucket_winrate=0.62, q3=q3)
+    assert verdict.phase1_branch == "1A"
+
+
+def test_verdict_1b_when_q1_yes_but_no_robust_subset():
+    q1 = StateTypeCalibrationReport(rows=[
+        StateTypeWinRate("TREND", t30_win_rate=0.80, mature_t30_count=60),
+        StateTypeWinRate("RANGE", t30_win_rate=0.25, mature_t30_count=80),
+    ])
+    q3 = LopoReport(target_state_types=("RANGE",), robust=False)
+    verdict = aggregate_verdict(q1=q1, q2_best_bucket_winrate=0.40, q3=q3)
+    assert verdict.phase1_branch == "1B"
