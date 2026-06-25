@@ -45,6 +45,42 @@ REGIME_HISTORICAL_WINRATES: dict[str, dict] = {
 }
 
 
+# R-5.A 多周期扩展 (2026-06-25): per-regime × per-horizon (T+5/10/15/20/25/30) 真实 median return.
+# 数据源: Phase 1 commit f7965bd2 扩展 DEFAULT_HORIZONS 到 8 周期后, 从 293 条 tracking_history
+# 记录 × 32 个 auto_screening 报告 (regime_gate_level) 聚合. 全 score 桶合并.
+# 关键发现 (来自一次性 54 格诊断):
+#   - crisis T+20/T+25 median 转正 (+0.8%/+1.5%, n>120) — 唯一跨样本稳定的正信号
+#   - normal 所有 horizon median < 0 — 难以赚钱
+#   - risk_off 样本小 (n=20) + T+15-T+30 显著负 — 应空仓/轻仓
+# 诚实约束: 单次回测样本, 未来 daily scheduling 累积应重算; 当前硬编码避免每次拉 tushare.
+REGIME_MULTIHORIZON_MEDIANS: dict[str, dict[str, dict]] = {
+    "crisis": {
+        "t5":  {"median": -0.3, "winrate": 0.457, "n": 173},
+        "t10": {"median": -0.7, "winrate": 0.494, "n": 168},
+        "t15": {"median": -0.0, "winrate": 0.500, "n": 178},
+        "t20": {"median": +0.8, "winrate": 0.536, "n": 166},
+        "t25": {"median": +1.5, "winrate": 0.531, "n": 177},
+        "t30": {"median": -1.6, "winrate": 0.466, "n": 163},
+    },
+    "normal": {
+        "t5":  {"median": -1.7, "winrate": 0.378, "n": 90},
+        "t10": {"median": -2.6, "winrate": 0.371, "n": 89},
+        "t15": {"median": -5.7, "winrate": 0.303, "n": 89},
+        "t20": {"median": -5.5, "winrate": 0.382, "n": 89},
+        "t25": {"median": -6.8, "winrate": 0.330, "n": 88},
+        "t30": {"median": -6.0, "winrate": 0.391, "n": 87},
+    },
+    "risk_off": {
+        "t5":  {"median": +1.6, "winrate": 0.55, "n": 20},
+        "t10": {"median": -3.1, "winrate": 0.35, "n": 20},
+        "t15": {"median": -8.2, "winrate": 0.20, "n": 20},
+        "t20": {"median": -6.5, "winrate": 0.15, "n": 20},
+        "t25": {"median": -4.9, "winrate": 0.25, "n": 20},
+        "t30": {"median": -9.7, "winrate": 0.15, "n": 20},
+    },
+}
+
+
 # regime 的产品语义提示 (基于扩充后真实回测: 三 regime 胜率都 30-47%, 典型票微亏)
 _REGIME_ADVICE: dict[str, str] = {
     "crisis": "广度弱结构性行情, 历史胜率 ~47%, 典型票微亏 (扩样本后无显著 alpha)",
@@ -105,9 +141,69 @@ def render_regime_winrate_line(regime: str) -> str:
     return " ".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# R-5.A 多周期扩展: 按 regime 展示各 horizon 真实 median
+# ---------------------------------------------------------------------------
+
+
+def render_regime_multihorizon_line(regime: str) -> str:
+    """渲染一行当前 regime 的多周期 median 速览 (无数据 → 空串)。
+
+    展示形如:
+      ``  📊 多周期期望 (crisis): T+15 0.0% | T+20 +0.8% | T+25 +1.5% | T+30 -1.6% (n=163+)``
+
+    颜色逻辑:
+      - 有 horizon median > 0 → 绿色 (展示甜区)
+      - 所有 median < 0 → 黄色 (谨慎, 所有周期都亏)
+      - 未知 / 无数据 → 空串
+
+    仅展示 T+15/T+20/T+25/T+30 (中长周期), T+5/T+10 噪声大略过.
+    """
+    key = (regime or "").strip().lower()
+    data = REGIME_MULTIHORIZON_MEDIANS.get(key)
+    if not data:
+        return ""
+
+    # 仅展示 T+15-T+30 (中长周期), T+5/T+10 短期噪声大
+    display_horizons = [
+        ("t15", "T+15"), ("t20", "T+20"), ("t25", "T+25"), ("t30", "T+30"),
+    ]
+
+    parts: list[str] = []
+    has_positive = False
+    max_n = 0
+    for h, label in display_horizons:
+        h_data = data.get(h)
+        if h_data is None:
+            continue
+        med = h_data["median"]
+        n = h_data["n"]
+        if n > max_n:
+            max_n = n
+        sign = "+" if med >= 0 else ""
+        parts.append(f"{label} {sign}{med:.1f}%")
+        if med > 0:
+            has_positive = True
+
+    if not parts:
+        return ""
+
+    if has_positive:
+        color = Fore.GREEN
+    else:
+        color = Fore.YELLOW
+
+    # 用最小 n (T+30) 作为样本提示，诚实披露
+    min_n = min(data[h]["n"] for h, _ in display_horizons if h in data)
+    horizon_parts = " | ".join(parts)
+    return f"  📊 多周期期望 ({key}): {color}{horizon_parts}{Style.RESET_ALL} (n={min_n}+)"
+
+
 __all__ = [
     "RegimeWinrateSummary",
     "REGIME_HISTORICAL_WINRATES",
+    "REGIME_MULTIHORIZON_MEDIANS",
     "compute_regime_winrate_summary",
     "render_regime_winrate_line",
+    "render_regime_multihorizon_line",
 ]

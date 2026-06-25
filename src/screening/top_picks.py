@@ -1432,20 +1432,26 @@ def _print_portfolio_risk_block(picks: list[dict]) -> None:
 
 
 def _print_regime_winrate_block(market_regime: str) -> None:
-    """R-5.A: 按 current regime 展示真实历史 T+30 胜率 (零行为改变, 只展示)。
+    """R-5.A: 按 current regime 展示真实历史 T+30 胜率 + 多周期 median 速览。
 
     真实回测 (2026-06-24, 91 只) 揭示: crisis regime (结构性行情) 真实胜率 73%
     +8%, normal regime (震荡市) 24% -9%。这让用户看到当前 regime 的真实期望,
     自己决定是否信任推荐。是赚钱工具的诚实基础 (不碰 gate/仓位)。
+
+    2026-06-25 多周期扩展: 加一行各 horizon (T+15/T+20/T+25/T+30) median,
+    让用户看到中长周期是否比 T+30 更优 (如 crisis T+20/T+25 正 median).
     """
     try:
-        from src.screening.regime_winrate import render_regime_winrate_line
+        from src.screening.regime_winrate import render_regime_winrate_line, render_regime_multihorizon_line
 
         line = render_regime_winrate_line(market_regime)
+        if line:
+            print(line)
+        mh_line = render_regime_multihorizon_line(market_regime)
+        if mh_line:
+            print(mh_line)
     except Exception:  # noqa: BLE001 — best-effort display; never break the front door
         return
-    if line:
-        print(line)
 
 
 def _print_concentration_block(picks: list[dict]) -> None:
