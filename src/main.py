@@ -461,6 +461,66 @@ def _build_auto_screening_payload(
     }
 
 
+def _inject_recommended_prices(
+    recommendations: list[dict],
+    trade_date: str,
+    *,
+    price_frame_fetcher=None,
+) -> list[dict]:
+    """NS-1: 注入推荐日收盘价作为 ``recommended_price``。
+
+    ``_build_auto_screening_payload`` 产出的 recommendations 不含任何价格字段,
+    ``recommendation_tracker._coerce_recommended_price`` 按序找
+    ``recommended_price`` / ``entry_price`` / ``close`` 全部缺失 → 落到
+    ``return 0.0``, 污染每条 tracking_history 记录的 recommended_price,
+    进而污染下游诊断 / 校准 / 归因。
+
+    Fix: 从全市场当日 daily 行情 (batch fetcher, 与评分共用同一缓存) 取 close,
+    按 ts_code → 6 位代码映射后注入每条缺少价格的 rec。
+
+    - ``price_frame_fetcher``: 可注入 ``(trade_date) -> pd.DataFrame | None``
+      (测试用); 默认走 ``BatchDataFetcher.fetch_daily_prices_batch``。
+    - 数据不可用 (None / 空 / 缺列) 时不注入, 绝不伪造价格。
+    - 已有非零 ``recommended_price`` 的 rec 不覆盖。
+    """
+    if price_frame_fetcher is not None:
+        df = price_frame_fetcher(trade_date)
+    else:
+        from src.screening.batch_data_fetcher import get_global_batch_data_fetcher
+
+        df = get_global_batch_data_fetcher().fetch_daily_prices_batch(trade_date)
+
+    # 数据不可用 → 保持 recs 原样 (不注入假价)。没有价格数据时
+    # recommended_price 仍会落到 0.0, 但本函数绝不伪造。
+    if df is None or not hasattr(df, "columns") or df.empty:
+        return recommendations
+    if "ts_code" not in df.columns or "close" not in df.columns:
+        return recommendations
+
+    close_by_ticker: dict[str, float] = {}
+    for ts_code, close in zip(df["ts_code"].tolist(), df["close"].tolist()):
+        code6 = str(ts_code).split(".")[0]  # "000001.SZ" → "000001"
+        try:
+            close_val = float(close)
+        except (TypeError, ValueError):
+            continue
+        if code6 and close_val > 0 and code6 not in close_by_ticker:
+            close_by_ticker[code6] = close_val
+
+    for rec in recommendations:
+        existing = rec.get("recommended_price")
+        try:
+            if existing is not None and float(existing) > 0:
+                continue  # 真实价格优先, 不覆盖
+        except (TypeError, ValueError):
+            pass
+        ticker = str(rec.get("ticker", "")).split(".")[0]
+        close_val = close_by_ticker.get(ticker)
+        if close_val and close_val > 0:
+            rec["recommended_price"] = round(close_val, 4)
+    return recommendations
+
+
 def _attach_signal_decay(
     top_results_serializable: list[dict],
     consecutive_report_dir: Path | None,
@@ -613,6 +673,8 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
         report_dir=consecutive_report_dir,
         end_date=trade_date,
     )
+    # NS-1: 注入推荐日收盘价 → tracking_history recommended_price 不再落到 0.0。
+    top_results_serializable = _inject_recommended_prices(top_results_serializable, trade_date)
     consecutive_highlight = sum(1 for rec in top_results_serializable if rec.get("consecutive_days", 0) >= 3)
 
     # P0-3 信号衰减检测 — 对比当前与历史 score_b
