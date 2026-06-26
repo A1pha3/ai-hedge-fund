@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 import re
 
@@ -13,6 +14,11 @@ from src.graph.state import AgentState
 from src.main import start
 from src.utils.analysts import ANALYST_CONFIG
 from src.utils.llm import build_parallel_provider_execution_plan
+
+#: NS-17: parse_hedge_fund_response 之前用 print() 吞 LLM JSON-parse 失败 —
+#: 无面包屑入 logs, 运维无法定位"为何某 ticker 缺 strategy signal"。module logger
+#: 让 JSONDecodeError / TypeError / 意外异常都进入结构化日志 (warning 级别)。
+logger = logging.getLogger(__name__)
 
 
 def extract_base_agent_key(unique_id: str) -> str:
@@ -231,11 +237,24 @@ def parse_hedge_fund_response(response):
     try:
         return json.loads(response)
     except json.JSONDecodeError as e:
-        print(f"JSON decoding error: {e}\nResponse: {repr(response)}")
+        logger.warning(
+            "parse_hedge_fund_response JSONDecodeError: %s | response=%r",
+            e,
+            response,
+        )
         return None
     except TypeError as e:
-        print(f"Invalid response type (expected string, got {type(response).__name__}): {e}")
+        logger.warning(
+            "parse_hedge_fund_response TypeError (expected string, got %s): %s | response=%r",
+            type(response).__name__,
+            e,
+            response,
+        )
         return None
     except Exception as e:
-        print(f"Unexpected error while parsing response: {e}\nResponse: {repr(response)}")
+        logger.warning(
+            "parse_hedge_fund_response unexpected error: %s | response=%r",
+            e,
+            response,
+        )
         return None

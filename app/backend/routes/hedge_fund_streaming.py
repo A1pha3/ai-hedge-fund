@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -22,6 +23,11 @@ from app.backend.services.api_key_service import ApiKeyService
 from app.backend.services.backtest_service import BacktestService
 from app.backend.services.graph import parse_hedge_fund_response, run_graph_async
 from src.utils.progress import progress
+
+#: NS-17: SSE cancel / task cancel 之前用 print() 不入 logs — 运维无法从
+#: 结构化日志定位"为何某次 hedge fund run / backtest 中途断流"。module logger 让
+#: disconnect / cancel / generator-cancel 都进入 logs (info 级别, 正常运行事件)。
+logger = logging.getLogger(__name__)
 
 
 def hydrate_api_keys(request_data: HedgeFundRequest | BacktestRequest, db: Session) -> None:
@@ -392,7 +398,7 @@ async def stream_hedge_fund_run(
 
         while not run_task.done():
             if disconnect_task.done():
-                print("Client disconnected, cancelling hedge fund execution")
+                logger.info("Client disconnected, cancelling hedge fund execution")
                 await cancel_task(run_task)
                 return
 
@@ -405,13 +411,13 @@ async def stream_hedge_fund_run(
         try:
             result = await run_task
         except asyncio.CancelledError:
-            print("Task was cancelled")
+            logger.info("Hedge fund task was cancelled")
             return
 
         yield create_run_completion_event(result).to_sse()
 
     except asyncio.CancelledError:
-        print("Event generator cancelled")
+        logger.info("Hedge fund event generator cancelled")
         return
     finally:
         progress.unregister_handler(progress_handler)
@@ -443,7 +449,7 @@ async def stream_backtest(
 
         while not backtest_task.done():
             if disconnect_task.done():
-                print("Client disconnected, cancelling backtest execution")
+                logger.info("Client disconnected, cancelling backtest execution")
                 await cancel_task(backtest_task)
                 return
 
@@ -456,13 +462,13 @@ async def stream_backtest(
         try:
             result = await backtest_task
         except asyncio.CancelledError:
-            print("Backtest task was cancelled")
+            logger.info("Backtest task was cancelled")
             return
 
         yield create_backtest_completion_event(result).to_sse()
 
     except asyncio.CancelledError:
-        print("Backtest event generator cancelled")
+        logger.info("Backtest event generator cancelled")
         return
     finally:
         progress.unregister_handler(progress_handler)
