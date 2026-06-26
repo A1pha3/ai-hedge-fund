@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 from datetime import datetime, timedelta
@@ -30,6 +31,10 @@ from src.screening.signal_fusion_arbitration_helpers import (
     initialize_arbitration_state,
     maybe_apply_forced_avoid,
 )
+
+#: NS-17: signal_fusion (打分核心) 之前零 logger — 无法回答 "为什么 X 得 0.32"。
+#: 模块 logger 供 per-ticker score breakdown (DEBUG, opt-in via LOG_LEVEL=DEBUG)。
+logger = logging.getLogger(__name__)
 
 
 def _analysis_excludes_neutral_mean_reversion() -> bool:
@@ -494,6 +499,23 @@ def fuse_signals_for_ticker(
     else:
         score_b = compute_score_b(adjusted_signals, weights_used, arbitration_applied)
         decision = FusedScore.classify_decision(score_b)
+
+    # NS-17: per-ticker DEBUG score breakdown — answers "why did X get score_b Y".
+    # Opt-in via LOG_LEVEL=DEBUG (avoids noise on full-universe runs). Surfaces the
+    # arbitration rules applied + per-strategy direction/confidence + final score_b.
+    if logger.isEnabledFor(logging.DEBUG):
+        strat_summary = " ".join(
+            f"{name}(d={sig.direction},c={sig.confidence:.0f})"
+            for name, sig in adjusted_signals.items()
+        )
+        logger.debug(
+            "score_b breakdown ticker=%s trade_date=%s decision=%s score_b=%.4f "
+            "forced_avoid=%s arbitration=[%s] weights=%s signals=[%s]",
+            ticker, trade_date, decision, score_b, forced_avoid,
+            ", ".join(arbitration_applied) or "none",
+            {k: round(float(v), 3) for k, v in weights_used.items()},
+            strat_summary,
+        )
 
     return FusedScore(
         ticker=ticker,

@@ -1426,3 +1426,41 @@ class TestHasQualityFirstRedFlag:
             growth={"direction": 0, "confidence": 30},
         )}
         assert _has_quality_first_red_flag(signals) is False
+
+
+# ---------------------------------------------------------------------------
+# NS-17: signal_fusion observability (per-ticker score breakdown logger)
+# ---------------------------------------------------------------------------
+
+
+def test_signal_fusion_module_has_logger():
+    """NS-17: signal_fusion (641L scoring core) must have a module logger for diagnosability."""
+    from src.screening import signal_fusion
+
+    assert hasattr(signal_fusion, "logger"), "signal_fusion module must expose a `logger`"
+    import logging
+
+    assert isinstance(signal_fusion.logger, logging.Logger)
+
+
+def test_fuse_emits_per_ticker_debug_breakdown(caplog):
+    """NS-17: fusing a ticker at DEBUG emits a 'why did X get score Y' breakdown.
+
+    Before NS-17, signal_fusion had ZERO loggers — impossible to answer
+    'why did 300999 get score_b 0.32'. The DEBUG line surfaces ticker +
+    arbitration + score_b for opt-in diagnosis (LOG_LEVEL=DEBUG).
+    """
+    import logging
+    from src.screening.signal_fusion import fuse_signals_for_ticker
+
+    with caplog.at_level(logging.DEBUG, logger="src.screening.signal_fusion"):
+        fuse_signals_for_ticker(
+            "300999",
+            signals={
+                "trend": StrategySignal(direction=1, confidence=75.0, completeness=1.0),
+            },
+            market_state=MarketState(),
+        )
+    # at least one record must mention the ticker + score_b (the breakdown line)
+    breakdown_records = [r for r in caplog.records if "300999" in r.getMessage() and "score_b" in r.getMessage()]
+    assert breakdown_records, "expected a per-ticker DEBUG breakdown mentioning ticker + score_b"
