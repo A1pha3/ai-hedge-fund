@@ -28,6 +28,7 @@ from src.screening.confidence_calibration import (
     CalibrationSummary,
     compute_calibration,
 )
+from src.utils.numeric import safe_float  # NS-13: NaN-rejecting coercion
 from src.screening.consecutive_recommendation import resolve_report_dir
 from src.screening.drawdown_estimate import compute_drawdown_estimate
 from src.utils.display import Fore, Style
@@ -237,7 +238,7 @@ def compute_expected_returns(
     items: list[ExpectedReturn] = []
     for rec in recommendations:
         ticker = str(rec.get("ticker", ""))
-        score_b = float(rec.get("score_b", 0.0) or 0.0)
+        score_b = safe_float(rec.get("score_b", 0.0))  # NS-13: NaN is truthy, `float(x or 0.0)` passed NaN through → NaN bucket lookup
         if not trade_date:
             trade_date = str(rec.get("trade_date", ""))
 

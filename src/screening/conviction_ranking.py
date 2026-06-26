@@ -38,6 +38,7 @@ from src.screening.data_quality_audit import (
     load_latest_recommendations,
 )
 from src.utils.display import Fore, Style
+from src.utils.numeric import safe_float  # NS-13: NaN-rejecting coercion
 
 # ---------------------------------------------------------------------------
 # Weights — 透明可调
@@ -176,7 +177,7 @@ def compute_conviction_row(
     """
     weights = weights or DEFAULT_WEIGHTS
     audit = audit_recommendation(rec, threshold=threshold)
-    score = float(rec.get("score_b") or 0.0)
+    score = safe_float(rec.get("score_b"), 0.0)  # NS-13: `float(x or 0.0)` passed NaN through (NaN truthy) → NaN bucket lookup
     # NOTE: consecutive_days=0 是合法值 (首次推荐/非连续, 来自 consecutive_recommendation.py:338),
     # 不能用 `or 1` 静默覆盖为 1 — 会污染 row.consecutive_days 元数据 (R20.26-A)。
     raw_consecutive = rec.get("consecutive_days")

@@ -223,9 +223,16 @@ def _optional_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
     try:
-        return float(value)
+        out = float(value)
     except (TypeError, ValueError):
         return None
+    # NS-13: reject NaN/Inf — previously returned NaN on the success path, which
+    # poisoned bucket averages (t30_avg_return etc.) used by calibration / R-5.C
+    # prediction. NaN in a bucket mean is silently corrupting.
+    import math
+    if not math.isfinite(out):
+        return None
+    return out
 
 
 def _win_rate_or_none(valid_returns: list[float]) -> float | None:

@@ -453,3 +453,20 @@ class TestRankDeltaStr:
         assert _rank_delta_str(-1).endswith(Style.RESET_ALL)
         assert _rank_delta_str(1).endswith(Style.RESET_ALL)
         assert _rank_delta_str(0).endswith(Style.RESET_ALL)
+
+
+# ---------------------------------------------------------------------------
+# NS-13 sibling: conviction_ranking NaN score_b guard
+# ---------------------------------------------------------------------------
+
+
+def test_conviction_score_nan_score_b_returns_finite():
+    """NS-13: NaN score_b must coerce to 0.0 (was: float('nan' or 0.0) = nan — NaN is truthy)."""
+    import math
+    from src.screening.confidence_calibration import CalibrationSummary
+    from src.screening.conviction_ranking import compute_conviction_row
+
+    cal = CalibrationSummary(lookback_days=60)
+    rec = {"ticker": "000001", "name": "X", "score_b": float("nan")}
+    row = compute_conviction_row(rec, original_rank=1, calibration=cal)
+    assert math.isfinite(row.original_score) and math.isfinite(row.conviction_score), f"NaN score_b leaked through conviction_ranking: orig={row.original_score} conv={row.conviction_score}"

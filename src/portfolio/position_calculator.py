@@ -81,6 +81,13 @@ def calculate_position(
     if current_price <= 0 or portfolio_nav <= 0 or score_final < watchlist_min_score:
         return PositionPlan(ticker=ticker, shares=0, amount=0.0, constraint_binding="score", score_final=score_final, execution_ratio=0.0, quality_score=quality_score)
 
+    # NS-13 sibling: reject NaN/Inf current_price. ``current_price <= 0`` is False
+    # for NaN (NaN comparisons are False), so a halted/suspended A-share with NaN
+    # price passed the guard and poisoned base_shares/amount math. portfolio_nav
+    # is already covered by ``<= 0`` only if finite; guard both explicitly.
+    if not math.isfinite(float(current_price)) or not math.isfinite(float(portfolio_nav)):
+        return PositionPlan(ticker=ticker, shares=0, amount=0.0, constraint_binding="price", score_final=score_final, execution_ratio=0.0, quality_score=quality_score)
+
     # GAMMA-009 / R20.26-B BETA-006: sanitize ``avg_volume_20d`` ONCE at the
     # top. ``float(NaN or 0.0)`` yields NaN (NaN is truthy in Python), so the
     # previous code passed NaN to ``_resolve_single_name_limit`` and again to

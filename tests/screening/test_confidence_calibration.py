@@ -602,3 +602,25 @@ def test_t15_t25_fields_serialize_in_to_dict():
     assert "t25_win_rate" in d
     assert "t15_avg_return" in d
     assert "t25_avg_return" in d
+
+
+# ---------------------------------------------------------------------------
+# NS-13 sibling: _optional_float NaN/Inf guard (calibration bucket integrity)
+# ---------------------------------------------------------------------------
+
+
+def test_optional_float_rejects_nan_inf():
+    """NS-13: _optional_float must return None for NaN/Inf (else bucket averages poisoned)."""
+    import math
+    from src.screening.confidence_calibration import _optional_float
+
+    assert _optional_float(float("nan")) is None
+    assert _optional_float(float("inf")) is None
+    assert _optional_float(float("-inf")) is None
+    assert _optional_float("NaN") is None  # string from LLM/JSON
+    assert _optional_float("inf") is None
+    # legitimate values pass through
+    assert _optional_float(0.72) == 0.72
+    assert _optional_float(0) == 0.0
+    assert _optional_float(None) is None
+    assert _optional_float("") is None

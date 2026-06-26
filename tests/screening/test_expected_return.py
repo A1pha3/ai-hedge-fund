@@ -479,3 +479,21 @@ class TestBucketT30StdPropagation:
         out = render_expected_returns_compact(report)
         assert "离散" in out
         assert "±" in out
+
+
+# ---------------------------------------------------------------------------
+# NS-13 sibling: expected_return NaN score_b guard
+# ---------------------------------------------------------------------------
+
+
+def test_expected_return_nan_score_b_does_not_corrupt_bucket():
+    """NS-13: a NaN score_b must fall to 0.0 (was: float('nan' or 0.0) = nan, NaN is truthy)."""
+    import math
+    from src.screening.expected_return import compute_expected_returns
+
+    recs = [{"ticker": "000001", "name": "X", "score_b": float("nan")}]
+    report = compute_expected_returns(recommendations=recs)
+    # NaN score_b must NOT produce a NaN bucket label / NaN-finding logic;
+    # it should be coerced to 0.0 and binned into the lowest bucket.
+    for item in report.items:
+        assert math.isfinite(item.score_b if hasattr(item, "score_b") else 0.0), "NaN score_b leaked into expected_return"
