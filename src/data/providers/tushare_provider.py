@@ -125,6 +125,29 @@ class TushareProvider(BaseDataProvider):
             if df is None or df.empty:
                 return DataResponse(data=[], source=self.name, error="返回空数据")
 
+            # NS-9: apply forward-adjustment (前复权 qfq) to remove ex-dividend
+            # gaps. Mirrors R37 _fetch_tushare_ashare_prices_df in
+            # src/tools/tushare_api.py. Without qfq, raw close gaps down across
+            # any ex-dividend day (送股/分红/配股), fabricating phantom losses
+            # that corrupt return/ATR/stop-loss/drawdown downstream. If
+            # adj_factor fetch fails, fall back to raw daily (degrade, don't
+            # block — a backtest with unadjusted prices is still runnable,
+            # just less accurate on ex-div days).
+            try:
+                adj_df = await self._run_sync(
+                    self._pro.adj_factor,
+                    ts_code=ts_code,
+                    start_date=start_fmt,
+                    end_date=end_fmt,
+                )
+            except Exception:
+                adj_df = None
+
+            if adj_df is not None and not adj_df.empty:
+                from src.tools.tushare_api import _apply_qfq_adjustment
+
+                df = _apply_qfq_adjustment(df, adj_df)
+
             # 转换为 Price 对象列表
             prices = []
             for _, row in df.iterrows():

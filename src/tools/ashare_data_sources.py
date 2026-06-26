@@ -82,7 +82,10 @@ class TushareDataSource(BaseDataSource):
             raise DataSourceError("Tushare 不可用，请设置 TUSHARE_TOKEN 环境变量")
 
         try:
-            from src.tools.tushare_api import _cached_tushare_dataframe_call
+            from src.tools.tushare_api import (
+                _apply_qfq_adjustment,
+                _cached_tushare_dataframe_call,
+            )
 
             ts_code = to_tushare_code(ticker)
             start_date_fmt = start_date.replace("-", "")
@@ -92,6 +95,28 @@ class TushareDataSource(BaseDataSource):
 
             if df is None or df.empty:
                 raise DataSourceError(f"Tushare 返回空数据: {ticker}")
+
+            # NS-9: apply forward-adjustment (前复权 qfq) to remove ex-dividend
+            # gaps. Mirrors R37 _fetch_tushare_ashare_prices_df in
+            # src/tools/tushare_api.py. Without qfq, raw close gaps down across
+            # any ex-dividend day (送股/分红/配股), fabricating phantom losses
+            # that corrupt return/ATR/stop-loss/drawdown downstream. If
+            # adj_factor fetch fails, fall back to raw daily (degrade, don't
+            # block — a backtest with unadjusted prices is still runnable,
+            # just less accurate on ex-div days).
+            try:
+                adj_df = _cached_tushare_dataframe_call(
+                    cls._pro,
+                    "adj_factor",
+                    ts_code=ts_code,
+                    start_date=start_date_fmt,
+                    end_date=end_date_fmt,
+                )
+            except Exception:
+                adj_df = None
+
+            if adj_df is not None and not adj_df.empty:
+                df = _apply_qfq_adjustment(df, adj_df)
 
             prices = []
             for _, row in df.iterrows():
@@ -114,6 +139,8 @@ class TushareDataSource(BaseDataSource):
             prices.reverse()
             return prices
 
+        except DataSourceError:
+            raise
         except Exception as e:
             raise DataSourceError(f"Tushare 获取数据失败: {e}") from e
 

@@ -72,6 +72,11 @@ def test_tushare_data_source_routes_beijing_92_to_bj(monkeypatch) -> None:
 
     def _fake_cached_tushare_dataframe_call(_pro, _api_name, **kwargs):
         captured.update(kwargs)
+        # NS-9: get_prices now also fetches adj_factor for qfq adjustment.
+        # Return None for adj_factor to exercise the degrade-to-raw fallback
+        # (this test is about board routing, not qfq).
+        if _api_name == "adj_factor":
+            return None
         return pd.DataFrame([{"trade_date": "20260401", "open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2, "vol": 12345}])
 
     monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", _fake_cached_tushare_dataframe_call)
@@ -182,6 +187,11 @@ def test_tushare_data_source_skips_nan_volume_row(monkeypatch) -> None:
     monkeypatch.setattr(ashare_data_sources.TushareDataSource, "_pro", object())
 
     def _fake_cached(_pro, _api_name, **kwargs):
+        # NS-9: get_prices now also fetches adj_factor for qfq adjustment.
+        # Return None for adj_factor to exercise the degrade-to-raw fallback
+        # (this test is about NaN-row skip, not qfq).
+        if _api_name == "adj_factor":
+            return None
         return pd.DataFrame(
             [
                 {"trade_date": "20260401", "open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2, "vol": 12345},
