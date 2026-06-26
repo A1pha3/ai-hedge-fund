@@ -2,13 +2,69 @@
 
 from __future__ import annotations
 
+import math
+
 from src.screening.composite_score import CompositeEntry, CompositeReport
 from src.screening.expected_return import ExpectedReturn, ExpectedReturnReport
 from src.screening.investability import (
+    _safe_metric,
     build_front_door_verdict,
     rank_recommendations_by_investability,
     select_representative_candidates,
 )
+
+
+# ---------------------------------------------------------------------------
+# NS-13: _safe_metric NaN/Inf guard (ranking determinism)
+# ---------------------------------------------------------------------------
+
+
+class TestSafeMetricNanGuard:
+    def test_nan_returns_default_not_propagates(self) -> None:
+        """NS-13: NaN must not propagate into sort keys (else same data -> different top picks across runs)."""
+        assert _safe_metric(float("nan"), 0.0) == 0.0
+        assert _safe_metric(float("nan"), -1.0) == -1.0
+
+    def test_inf_returns_default(self) -> None:
+        """NS-13: Inf also poisons sort comparisons; must fall to default."""
+        assert _safe_metric(float("inf"), 0.0) == 0.0
+        assert _safe_metric(float("-inf"), 0.0) == 0.0
+
+    def test_nan_string_returns_default(self) -> None:
+        """NS-13: 'NaN' string (from LLM/JSON) must not leak through as NaN float."""
+        assert _safe_metric("NaN", 0.0) == 0.0
+        assert _safe_metric("inf", 0.0) == 0.0
+
+    def test_finite_value_passes_through(self) -> None:
+        """NS-13: legitimate finite values are unchanged (no over-rejection)."""
+        assert _safe_metric(0.72, 0.0) == 0.72
+        assert _safe_metric(0, 0.5) == 0.0
+        assert _safe_metric(None, 0.5) == 0.5
+
+    def test_nan_does_not_corrupt_sort_key(self) -> None:
+        """NS-13 regression: a NaN composite_score must yield deterministic ranking.
+
+        Before fix, _safe_metric(float('nan')) returned nan, which as a sort key
+        made sorted() produce non-deterministic ordering across runs (nan comparison
+        is unstable). Two NaN-bearing recs must now tie-break deterministically.
+        """
+        import random
+        recs = [
+            {"ticker": "AAA", "name": "A", "score_b": float("nan"), "composite_score": float("nan")},
+            {"ticker": "BBB", "name": "B", "score_b": float("nan"), "composite_score": float("nan")},
+            {"ticker": "CCC", "name": "C", "score_b": 0.5, "composite_score": 0.5},
+        ]
+        cr = CompositeReport(trade_date="20260101", items=[])
+        er = ExpectedReturnReport(trade_date="20260101", items=[], lookback_days=60, total_samples=0)
+        # Run ranking twice with shuffled input order; output tickers must be identical
+        order_a = rank_recommendations_by_investability(list(recs), cr, er)
+        shuffled = list(reversed(recs))
+        order_b = rank_recommendations_by_investability(shuffled, cr, er)
+        assert [r["ticker"] for r in order_a] == [r["ticker"] for r in order_b], (
+            "NaN in sort key produced non-deterministic ranking"
+        )
+        # sane ordering: CCC (finite 0.5) should rank ahead of the two NaN-defaulted recs
+        assert order_a[0]["ticker"] == "CCC"
 
 
 def test_rank_recommendations_prefers_30d_edge_when_composite_ties() -> None:

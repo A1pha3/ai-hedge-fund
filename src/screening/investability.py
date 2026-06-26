@@ -27,12 +27,17 @@ def _grade_code(score: float) -> str:
 
 
 def _safe_metric(value: Any, default: float) -> float:
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+    """Coerce to finite float, else default.
+
+    NS-13: previously only guarded None/TypeError/ValueError, so ``float('nan')``
+    returned NaN on the success path → NaN leaked into sort keys (composite_score,
+    score_b) → ``sorted()`` ordering became non-deterministic (NaN comparisons are
+    unstable) → same data produced different top picks across runs. Delegates to
+    ``utils.numeric.safe_float`` which also rejects NaN/Inf/bool.
+    """
+    from src.utils.numeric import safe_float
+
+    return safe_float(value, default)
 
 
 def _safe_text(value: Any) -> str:
