@@ -82,6 +82,8 @@ class TrackingRecord:
         next_25day_return: T+25 收益率 (%, 可正可负); 缺失时为 ``None``
         next_30day_return: T+30 收益率 (%, 可正可负); 缺失时为 ``None``
         tracking_status: 状态: ``"pending"`` / ``"partial"`` / ``"complete"``
+        model_version: NS-2 模型版本标识 (git short sha, 来自 auto_screening
+            payload 顶层); 旧记录无此字段默认 ``""``
     """
 
     ticker: str
@@ -99,6 +101,9 @@ class TrackingRecord:
     next_25day_return: float | None = None
     next_30day_return: float | None = None
     tracking_status: str = "pending"
+    # NS-2: 模型版本标识 (来自 auto_screening payload 顶层), 让诊断模块按版本
+    # 分组区分老/新模型效果。旧 tracking_history 记录无此字段 → 默认 ""。
+    model_version: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -122,6 +127,7 @@ class TrackingRecord:
             next_25day_return=_optional_float(payload.get("next_25day_return")),
             next_30day_return=_optional_float(payload.get("next_30day_return")),
             tracking_status=str(payload.get("tracking_status", "pending") or "pending"),
+            model_version=str(payload.get("model_version", "") or ""),
         )
 
 
@@ -169,6 +175,50 @@ def _coerce_recommended_price(rec: dict[str, Any]) -> float:
 # ---------------------------------------------------------------------------
 
 
+def _load_auto_screening_payload(
+    reports_dir: Path,
+    as_of_date: str,
+) -> dict[str, Any] | None:
+    """读取 ``auto_screening_{as_of_date}.json`` 并返回顶层 payload dict。
+
+    报告缺失 / 损坏 / 日期无效时返回 ``None`` (不抛异常)。
+    被 :func:`load_pending_recommendations` 与
+    :func:`load_pending_recommendations_with_version` 共享。
+    """
+    cleaned_date = str(as_of_date).replace("-", "").strip()
+    if len(cleaned_date) != 8 or not cleaned_date.isdigit():
+        logger.warning("[Tracking] 无效的 as_of_date: %s", as_of_date)
+        return None
+
+    report_path = reports_dir / f"auto_screening_{cleaned_date}.json"
+    if not report_path.exists():
+        logger.info("[Tracking] 报告不存在: %s", report_path)
+        return None
+
+    try:
+        with open(report_path, encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("[Tracking] 报告解析失败 %s: %s", report_path, exc)
+        return None
+
+    if not isinstance(payload, dict):
+        logger.warning("[Tracking] 报告 %s 顶层不是 dict", report_path)
+        return None
+    return payload
+
+
+def _extract_recommendations(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """从 payload 抽取 recommendations list; 非法时返回 ``[]``。"""
+    if payload is None:
+        return []
+    recs = payload.get("recommendations") or []
+    if not isinstance(recs, list):
+        logger.warning("[Tracking] recommendations 不是 list")
+        return []
+    return recs
+
+
 def load_pending_recommendations(
     reports_dir: Path,
     as_of_date: str,
@@ -182,28 +232,32 @@ def load_pending_recommendations(
     Returns:
         ``recommendations`` 字段列表 (可能为空 — 当报告缺失或损坏时)
     """
-    cleaned_date = str(as_of_date).replace("-", "").strip()
-    if len(cleaned_date) != 8 or not cleaned_date.isdigit():
-        logger.warning("[Tracking] 无效的 as_of_date: %s", as_of_date)
-        return []
+    return _extract_recommendations(_load_auto_screening_payload(reports_dir, as_of_date))
 
-    report_path = reports_dir / f"auto_screening_{cleaned_date}.json"
-    if not report_path.exists():
-        logger.info("[Tracking] 报告不存在: %s", report_path)
-        return []
 
-    try:
-        with open(report_path, encoding="utf-8") as f:
-            payload = json.load(f)
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("[Tracking] 报告解析失败 %s: %s", report_path, exc)
-        return []
+def load_pending_recommendations_with_version(
+    reports_dir: Path,
+    as_of_date: str,
+) -> tuple[list[dict[str, Any]], str]:
+    """NS-2: 读取 Top N 推荐 + payload 顶层的 ``model_version``。
 
-    recs = payload.get("recommendations") or []
-    if not isinstance(recs, list):
-        logger.warning("[Tracking] 报告 %s 的 recommendations 不是 list", report_path)
-        return []
-    return recs
+    与 :func:`load_pending_recommendations` 同源, 额外返回 payload 顶层的
+    ``model_version`` (旧报告无此字段 → ``""``), 让
+    :func:`update_tracking_history` 把版本写入每条 :class:`TrackingRecord`。
+
+    Args:
+        reports_dir: ``data/reports`` 目录
+        as_of_date: 推荐日期 (YYYYMMDD)
+
+    Returns:
+        ``(recommendations, model_version)`` — 报告缺失/损坏时 ``([], "")``
+    """
+    payload = _load_auto_screening_payload(reports_dir, as_of_date)
+    recs = _extract_recommendations(payload)
+    version = ""
+    if payload is not None:
+        version = str(payload.get("model_version", "") or "")
+    return recs, version
 
 
 def _default_price_fetcher(ticker: str, start_date: str, end_date: str) -> list[dict[str, Any]]:
@@ -401,7 +455,8 @@ def update_tracking_history(
     updated_count = 0
 
     # ----- Phase 1: 处理 trade_date 当日报告, 加入新推荐 -----
-    pending = load_pending_recommendations(reports_dir, trade_date)
+    # NS-2: 同时读 payload 顶层的 model_version, 注入每条 TrackingRecord
+    pending, model_version = load_pending_recommendations_with_version(reports_dir, trade_date)
     for rec in pending:
         ticker = str(rec.get("ticker", "") or "").strip()
         if not ticker:
@@ -419,6 +474,7 @@ def update_tracking_history(
             recommended_price=price,
             recommendation_score=score_b,
             tracking_status="pending",
+            model_version=model_version,
         )
         history_index[key] = record.to_dict()
         updated_count += 1

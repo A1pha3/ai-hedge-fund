@@ -87,6 +87,38 @@ SCORE_B_GREEN_FLOOR = 0.35   # >= 此值 → 绿色 (看多) / high_pool 候选
 SCORE_B_YELLOW_FLOOR = 0.0   # >= 此值 (但 < 绿色) → 黄色 (中性); 低于此值 → 红色 (看空)
 
 
+def _compute_model_version() -> str:
+    """NS-2: 返回当前打分模型的版本标识 (git short sha)。
+
+    ``model_version`` 让后续诊断模块 (state_type_calibration /
+    regime_calibration / expected_return / conviction_ranking) 能按版本分组
+    区分 owner 因子调优前后的老/新模型效果 — owner 改因子 = 改代码 = commit
+    = git sha 变, 因此 git short sha 精确反映打分逻辑状态。
+
+    Returns:
+        7 位小写 hex (git short sha); git 不可用时回退 ``"unknown"``。
+        绝不抛异常阻断主流程 (打分/落盘优先于版本标记)。
+    """
+    import re
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+        sha = result.stdout.strip()
+        # git short sha 默认 7 位; 验证是 hex 防止异常输出污染
+        if sha and re.fullmatch(r"[0-9a-f]{7,40}", sha):
+            return sha
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
+    return "unknown"
+
+
 def parse_hedge_fund_response(response):
     """Parses a JSON string and returns a dictionary."""
     try:
@@ -435,6 +467,8 @@ def _build_auto_screening_payload(
     return {
         "mode": "auto_screening",
         "date": trade_date,
+        # NS-2: 模型版本标识 (git short sha), 让诊断模块按版本区分老/新模型效果。
+        "model_version": _compute_model_version(),
         "market_state": market_state.model_dump(),
         "layer_a_count": len(candidates),
         "total_scored": len(fused),
