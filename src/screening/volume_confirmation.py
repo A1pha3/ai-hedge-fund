@@ -94,10 +94,19 @@ class VolumeReport:
 
 
 def _extract_volume_from_rec(rec: dict[str, Any]) -> float:
-    """Extract volume from a recommendation record.
+    """Extract volume (or volume-ratio proxy) from a recommendation record.
 
-    Looks for 'volume' field in the metrics or strategy_signals.
-    Falls back to 0.0 if not found.
+    Priority:
+        1. Direct 'volume' field on rec (legacy synthetic fixtures).
+        2. metrics['volume'/'vol'/'turnover'] (legacy synthetic fixtures).
+        3. metrics['amount_ratio_5'] — NS-12 fix: real FusedScore.metrics key
+           (5-day amount ratio; closest to single-day volume-ratio semantics).
+        4. metrics['turnover_ratio_20'] — NS-12 fix fallback (20-day turnover ratio).
+
+    Returns 0.0 if no usable value is found. The historical ratio logic in
+    ``compute_volume_confirmation`` is scale-invariant (latest/avg), so feeding
+    ratio proxies still yields a meaningful "increasing vs decreasing" signal
+    even though the absolute scale differs from raw volume.
     """
     # Try direct volume field
     vol = rec.get("volume")
@@ -110,6 +119,15 @@ def _extract_volume_from_rec(rec: dict[str, Any]) -> float:
     # Try metrics
     metrics = rec.get("metrics") or {}
     for key in ("volume", "vol", "turnover"):
+        val = metrics.get(key)
+        if val is not None:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                pass
+
+    # NS-12: real FusedScore.metrics keys — 修复死信号 (原本永远返回 0.0)
+    for key in ("amount_ratio_5", "turnover_ratio_20"):
         val = metrics.get(key)
         if val is not None:
             try:

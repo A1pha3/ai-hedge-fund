@@ -40,6 +40,37 @@ def _make_vol_rec(
     }
 
 
+def _make_real_metrics_rec(
+    ticker: str,
+    name: str,
+    score_b: float,
+    amount_ratio_5: float,
+) -> dict[str, Any]:
+    """模拟真实 FusedScore.metrics 结构 (无 volume/vol/turnover 键).
+
+    NS-12: 真实 rec 只带 amount_ratio_5/turnover_ratio_20 等 ratio 指标,
+    不带原始 volume 字段 — 这是死信号的根因。
+    """
+    return {
+        "ticker": ticker,
+        "name": name,
+        "score_b": score_b,
+        "metrics": {
+            "attack_slope_258": 0.45,
+            "breakout_quality_20_atr": 1.2,
+            "close_structure": 0.65,
+            "retention_proxy": 0.72,
+            "supply_pressure_60": -0.15,
+            "amount_ratio_5": amount_ratio_5,
+            "turnover_ratio_20": amount_ratio_5 * 0.9,
+            "limit_up_memory_259": 0.0,
+            "ret_2d": 0.03,
+            "ret_5d": 0.05,
+            "failed_breakout_10": 0.0,
+        },
+    }
+
+
 class TestExtractVolume:
     def test_direct_volume(self) -> None:
         assert _extract_volume_from_rec({"volume": 500}) == 500.0
@@ -55,6 +86,57 @@ class TestExtractVolume:
 
     def test_none_volume(self) -> None:
         assert _extract_volume_from_rec({"volume": None}) == 0.0
+
+    # NS-12: 真实 FusedScore.metrics 键识别 (RED — 当前实现返回 0.0)
+    def test_ns12_amount_ratio_5(self) -> None:
+        """真实 FusedScore.metrics 含 amount_ratio_5 (5日量比), 应被识别."""
+        rec = {"ticker": "000001", "metrics": {"amount_ratio_5": 1.5}}
+        assert _extract_volume_from_rec(rec) == 1.5
+
+    def test_ns12_turnover_ratio_20_fallback(self) -> None:
+        """无 amount_ratio_5 时, turnover_ratio_20 (20日换手率比) 应作 fallback."""
+        rec = {"ticker": "000001", "metrics": {"turnover_ratio_20": 2.0}}
+        assert _extract_volume_from_rec(rec) == 2.0
+
+    def test_ns12_amount_ratio_5_priority_over_turnover(self) -> None:
+        """两者都存在时, amount_ratio_5 优先 (更接近单日量比语义)."""
+        rec = {
+            "ticker": "000001",
+            "metrics": {"amount_ratio_5": 1.5, "turnover_ratio_20": 2.5},
+        }
+        assert _extract_volume_from_rec(rec) == 1.5
+
+    def test_ns12_invalid_amount_ratio_5_falls_to_turnover(self) -> None:
+        """amount_ratio_5 无效时, 应尝试 turnover_ratio_20."""
+        rec = {
+            "ticker": "000001",
+            "metrics": {"amount_ratio_5": "abc", "turnover_ratio_20": 1.8},
+        }
+        assert _extract_volume_from_rec(rec) == 1.8
+
+    def test_ns12_real_fused_score_metrics(self) -> None:
+        """真实 FusedScore.metrics (无 volume/vol/turnover 键) 应能读到非零值."""
+        rec = {
+            "ticker": "000001",
+            "name": "平安银行",
+            "score_b": 0.62,
+            "metrics": {
+                "attack_slope_258": 0.45,
+                "breakout_quality_20_atr": 1.2,
+                "close_structure": 0.65,
+                "retention_proxy": 0.72,
+                "supply_pressure_60": -0.15,
+                "amount_ratio_5": 1.45,
+                "turnover_ratio_20": 1.30,
+                "limit_up_memory_259": 0.0,
+                "ret_2d": 0.03,
+                "ret_5d": 0.05,
+                "failed_breakout_10": 0.0,
+            },
+        }
+        # 当前 RED: 返回 0.0 (无 volume/vol/turnover 键)
+        # 期望 GREEN: 返回 1.45 (amount_ratio_5)
+        assert _extract_volume_from_rec(rec) == 1.45
 
 
 class TestComputeVolumeConfirmation:
@@ -159,6 +241,42 @@ class TestComputeVolumeConfirmation:
         items = {i.ticker: i for i in report.items}
         assert items["000001"].confirmation == "confirmed"
         assert items["000002"].confirmation == "divergence"
+
+    # NS-12: 真实 FusedScore.metrics 集成测试 (RED — 当前 volume_factor 永远 0.0)
+    def test_ns12_real_metrics_confirmed(self, tmp_path: Path) -> None:
+        """真实 FusedScore.metrics (amount_ratio_5) 增加 → confirmed."""
+        _write_reports(
+            tmp_path,
+            {
+                "20260608": [_make_real_metrics_rec("000001", "Test", 0.3, 0.8)],
+                "20260609": [_make_real_metrics_rec("000001", "Test", 0.4, 0.9)],
+                "20260610": [_make_real_metrics_rec("000001", "Test", 0.5, 1.8)],  # 1.8/0.85 ≈ 2.1x
+            },
+        )
+        report = compute_volume_confirmation(reports_dir=tmp_path, lookback_days=5)
+        item = report.items[0]
+        # 当前 RED: confirmation="neutral" factor=0.0 (因 _extract_volume_from_rec 返回 0.0)
+        # 期望 GREEN: confirmation="confirmed" factor>0
+        assert item.confirmation == "confirmed"
+        assert item.volume_factor > 0
+        assert item.volume_ratio > 1.2
+
+    def test_ns12_real_metrics_divergence(self, tmp_path: Path) -> None:
+        """真实 FusedScore.metrics (amount_ratio_5) 减少 → divergence."""
+        _write_reports(
+            tmp_path,
+            {
+                "20260608": [_make_real_metrics_rec("000001", "Test", 0.3, 1.8)],
+                "20260609": [_make_real_metrics_rec("000001", "Test", 0.4, 1.6)],
+                "20260610": [_make_real_metrics_rec("000001", "Test", 0.5, 0.4)],  # 0.4/1.7 ≈ 0.24x
+            },
+        )
+        report = compute_volume_confirmation(reports_dir=tmp_path, lookback_days=5)
+        item = report.items[0]
+        # 当前 RED: confirmation="neutral" (无数据)
+        # 期望 GREEN: confirmation="divergence" factor<0
+        assert item.confirmation == "divergence"
+        assert item.volume_factor < 0
 
 
 class TestRenderVolumeConfirmation:
