@@ -242,35 +242,37 @@ def compute_conditional_advice(
     #   - 清洗后无任何数据
     degraded = (n_sessions < MIN_PRICE_SESSIONS) or (current <= 0.0) or (n_sessions == 0)
 
-    if not degraded:
-        atr = compute_atr(cleaned, period=atr_period)
-    else:
+    # NS-15(3): 降级时所有建议价位 + ATR 清零, 不输出基于占位 ATR 的假价格.
+    # 旧实现: degraded 但 current>0 时仍用 current*0.005 占位 ATR 算出
+    # buy_zone/stop_loss/take_profit, 看起来像真建议, 用户手动输入触发 ~1% 极紧止损.
+    # 新实现: degraded=True → 所有建议字段 0.0; 渲染层显示 "—" 明示不可用.
+    if degraded:
         atr = 0.0
-
-    # 即使 ATR=0 也不直接降级, 而是给一个固定 0.5% 的占位 ATR (用 current_price × 0.005)
-    # 以保证 output 不会因 ATR=0 出现 [x, x] 的退化区间
-    if atr <= 0.0 and not degraded:
-        atr = current * 0.005
-    elif atr <= 0.0 and degraded:
-        atr = max(current * 0.005, 0.01) if current > 0.0 else 0.01
-
-    # 计算建议价位
-    buy_low = current - zone_width_atr * atr
-    buy_high = current + zone_width_atr * atr
-    stop_loss = current - stop_loss_atr * atr
-    take_profit = current + take_profit_atr * atr
-
-    # 价格 <= 0 的极端降级: 把建议价位固定为 current=0
-    if current <= 0.0:
-        buy_low = buy_high = stop_loss = take_profit = 0.0
-        atr = 0.0
-
-    # 历史命中率
-    if not degraded and n_sessions > 0:
-        hits = sum(1 for p in cleaned if buy_low <= p <= buy_high)
-        hit_rate = hits / n_sessions
-    else:
+        buy_low = 0.0
+        buy_high = 0.0
+        stop_loss = 0.0
+        take_profit = 0.0
         hit_rate = 0.0
+    else:
+        atr = compute_atr(cleaned, period=atr_period)
+
+        # 即使 ATR=0 也不直接降级, 而是给一个固定 0.5% 的占位 ATR (用 current_price × 0.005)
+        # 以保证 output 不会因 ATR=0 出现 [x, x] 的退化区间
+        if atr <= 0.0:
+            atr = current * 0.005
+
+        # 计算建议价位
+        buy_low = current - zone_width_atr * atr
+        buy_high = current + zone_width_atr * atr
+        stop_loss = current - stop_loss_atr * atr
+        take_profit = current + take_profit_atr * atr
+
+        # 历史命中率
+        if n_sessions > 0:
+            hits = sum(1 for p in cleaned if buy_low <= p <= buy_high)
+            hit_rate = hits / n_sessions
+        else:
+            hit_rate = 0.0
 
     # 盈亏比
     risk = current - stop_loss
@@ -423,15 +425,25 @@ def format_conditional_advice_table(
 
     for adv in advices:
         low, high = adv.suggested_buy_zone
-        zone_text = f"[{low:.2f}, {high:.2f}]"
-        rr_text = f"{adv.risk_reward_ratio:.1f}" if adv.risk_reward_ratio > 0 else "—"
-        conf_text = f"{adv.confidence * 100:.0f}%"
+        # NS-15(3): 降级项价格字段显示 "—" 明示不可用, 避免用户误输入假价格.
+        if adv.degraded:
+            zone_text = "—"
+            stop_text = "—"
+            profit_text = "—"
+            rr_text = "—"
+            conf_text = "—"
+        else:
+            zone_text = f"[{low:.2f}, {high:.2f}]"
+            stop_text = f"{adv.suggested_stop_loss:.2f}"
+            profit_text = f"{adv.suggested_take_profit:.2f}"
+            rr_text = f"{adv.risk_reward_ratio:.1f}" if adv.risk_reward_ratio > 0 else "—"
+            conf_text = f"{adv.confidence * 100:.0f}%"
         status = "降级" if adv.degraded else "OK"
         name_disp = adv.name[:8] if adv.name else "—"
         lines.append(
             f"{adv.ticker:<8} | {name_disp:<10} | {adv.current_price:>9.2f} | "
-            f"{zone_text:<20} | {adv.suggested_stop_loss:>9.2f} | "
-            f"{adv.suggested_take_profit:>9.2f} | {rr_text:>6} | {conf_text:>6} | {status:<4}"
+            f"{zone_text:<20} | {stop_text:>9} | "
+            f"{profit_text:>9} | {rr_text:>6} | {conf_text:>6} | {status:<4}"
         )
 
     lines.append("")

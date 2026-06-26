@@ -331,6 +331,96 @@ def test_degrades_when_history_empty() -> None:
 
 
 # ===========================================================================
+# 7b. NS-15(3): 降级时不输出真实看价 (display honesty)
+# ===========================================================================
+
+
+def test_ns15_3_degraded_zeros_price_fields_when_current_positive() -> None:
+    """NS-15(3): 降级 + current>0 → 价格字段全部清零 (避免 ~1% 极紧止损误导).
+
+    旧实现: degraded=True 但 current=100 时, 用占位 ATR=current*0.005=0.5 算出
+    buy_zone=[99.25, 100.75], stop_loss=99.0, take_profit=101.5, 看起来像真建议,
+    用户手动输入触发 ~1% 极紧止损. 新实现: degraded 时这些字段全部 0.0.
+    """
+    advice = compute_conditional_advice(
+        ticker="000001",
+        current_price=100.0,
+        price_history=[100.0, 101.0],  # 2 个 < MIN_PRICE_SESSIONS=5 → 降级
+    )
+    assert advice.degraded is True
+    # 核心修复: 降级时所有建议价位必须为 0.0 (不显示假价格)
+    assert advice.suggested_buy_zone == (0.0, 0.0)
+    assert advice.suggested_stop_loss == 0.0
+    assert advice.suggested_take_profit == 0.0
+    assert advice.atr == 0.0
+
+
+def test_ns15_3_degraded_zeros_price_fields_when_history_empty() -> None:
+    """NS-15(3): 空历史 + current>0 → 价格字段全部清零 (与 current<=0 路径对称)."""
+    advice = compute_conditional_advice(
+        ticker="000002",
+        current_price=50.0,
+        price_history=[],
+    )
+    assert advice.degraded is True
+    assert advice.suggested_buy_zone == (0.0, 0.0)
+    assert advice.suggested_stop_loss == 0.0
+    assert advice.suggested_take_profit == 0.0
+    assert advice.atr == 0.0
+
+
+def test_ns15_3_degraded_zeros_price_fields_when_current_zero() -> None:
+    """NS-15(3): current=0 + 充足历史 → 价格字段全部清零 (回归覆盖, 旧实现已正确)."""
+    advice = compute_conditional_advice(
+        ticker="000003",
+        current_price=0.0,
+        price_history=_oscillating_prices(n=30),
+    )
+    assert advice.degraded is True
+    assert advice.suggested_buy_zone == (0.0, 0.0)
+    assert advice.suggested_stop_loss == 0.0
+    assert advice.suggested_take_profit == 0.0
+    assert advice.atr == 0.0
+
+
+def test_ns15_3_non_degraded_keeps_real_prices() -> None:
+    """NS-15(3) 回归保护: 非降级路径必须保留真实 ATR-based 价格 (不能误伤)."""
+    advice = compute_conditional_advice(
+        ticker="000004",
+        current_price=100.0,
+        price_history=_oscillating_prices(n=30),  # 30 个 > MIN_PRICE_SESSIONS=5
+    )
+    assert advice.degraded is False
+    # 非降级: 价格字段应基于 ATR 计算, 不为 0
+    assert advice.atr > 0.0
+    low, high = advice.suggested_buy_zone
+    assert low < 100.0 < high
+    assert advice.suggested_stop_loss < 100.0
+    assert advice.suggested_take_profit > 100.0
+
+
+def test_ns15_3_format_table_shows_dash_for_degraded_prices() -> None:
+    """NS-15(3): 降级项在表格中价格字段显示 "—" 而非 "0.00".
+
+    用户看到 "—" 知道该建议不可用, 不会手动输入 0.00 触发 broker 拒单或市价单.
+    """
+    degraded_advice = compute_conditional_advice(
+        ticker="000005",
+        current_price=100.0,
+        price_history=[100.0, 101.0],  # 2 个 < MIN → 降级
+    )
+    assert degraded_advice.degraded is True
+    text = format_conditional_advice_table([degraded_advice])
+    # 降级标记必须存在
+    assert "降级" in text
+    # 价格字段应显示 "—" 而非 "0.00" (clear signal of unavailable advice)
+    assert "—" in text
+    # 不应出现 "0.00" 作为建议价位 (会误导用户)
+    # (current_price 列可能显示 100.00, 但 buy_zone/stop_loss/take_profit 不应为 0.00)
+    assert "[0.00, 0.00]" not in text
+
+
+# ===========================================================================
 # 8. 全相同时不崩
 # ===========================================================================
 
