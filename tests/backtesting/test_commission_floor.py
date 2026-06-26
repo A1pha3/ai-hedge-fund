@@ -5,17 +5,19 @@
 - 大额交易不触发 (effective_rate = raw rate)
 - 买入侧 (apply_long_buy via execute_buy_trade)
 - 卖出侧 (apply_long_sell via execute_sell_trade)
+- 做空侧 (apply_short_open via execute_short_trade)  — NS-19(2) 对称性
+- 平仓侧 (apply_short_cover via execute_cover_trade)  — NS-19(2) 对称性
 - 零名义金额 → 边界 (不崩)
 """
 from __future__ import annotations
-
-import pytest
 
 from src.backtesting.portfolio import Portfolio
 from src.backtesting.trader_helpers import (
     _apply_commission_floor,
     execute_buy_trade,
+    execute_cover_trade,
     execute_sell_trade,
+    execute_short_trade,
 )
 
 
@@ -159,3 +161,169 @@ class TestExecuteSellWithFloor:
         actual_proceeds = cash_after - cash_before
         expected_proceeds = 1000 * 100 * (1 - 0.00025 - 0.0005)
         assert abs(actual_proceeds - expected_proceeds) < 1e-6
+
+
+class TestExecuteShortWithFloor:
+    """NS-19(2): 做空侧执行 — 小额交易触发佣金下限。
+
+    BETA-006 给买入/卖出侧加了 5 元佣金下限, 但 ``execute_short_trade``
+    (apply_short_open) 与 ``execute_cover_trade`` (apply_short_cover) 漏改,
+    导致做空/平仓的小额交易少收佣金 (raw rate * notional < 5 元时)，
+    低估做空真实成本。这与 finance-quant beta veto "missing transaction
+    costs" 直接相关 — 必须与 long 侧对称。
+    """
+
+    def test_small_short_charges_floor(self) -> None:
+        """做空 100 股 @ ¥10 (¥1000 名义) — commission 上调至 5 元 (0.5%)。
+
+        apply_short_open: net_proceeds_price = price * (1 - commission_rate)。
+        floor rate = 5 / 1000 = 0.005 > raw 0.00025 → effective = 0.005。
+        net_proceeds_price = 10 * (1 - 0.005) = 9.95。
+        margin_requirement=1.0 → margin = 9.95 * 100 * 1.0 = 995。
+        cash delta = +995 (proceeds) - 995 (margin) = 0。
+        若不应用 floor: net_proceeds_price = 10 * (1 - 0.00025) = 9.9975,
+        cash delta = +999.75 - 999.75 = 0 (看似相同), 但 short_cost_basis
+        与 margin 记录偏低 — 通过 margin/short_cost_basis 间接断言更稳。
+        这里用 margin_used 直接断言 floor 已生效。
+        """
+        portfolio = Portfolio(tickers=["000001"], initial_cash=10_000.0, margin_requirement=1.0)
+        executed = execute_short_trade(
+            ticker="000001",
+            quantity=100,
+            current_price=10.0,
+            portfolio=portfolio,
+            slippage_rate=0.0,
+            commission_rate=0.00025,
+        )
+        assert executed == 100
+        # margin_used = net_proceeds_price * qty * margin_ratio
+        # floor: 9.95 * 100 * 1.0 = 995.0
+        # no-floor (buggy): 9.9975 * 100 * 1.0 = 999.75
+        margin_used = portfolio._portfolio["margin_used"]  # noqa: SLF001
+        assert abs(margin_used - 995.0) < 1e-6, (
+            f"Expected margin_used 995.0 (floor applied), got {margin_used}"
+        )
+
+    def test_large_short_uses_raw_rate(self) -> None:
+        """做空 1000 股 @ ¥100 (¥100000) — raw rate 适用 (不触发下限)。"""
+        portfolio = Portfolio(tickers=["000001"], initial_cash=200_000.0, margin_requirement=1.0)
+        executed = execute_short_trade(
+            ticker="000001",
+            quantity=1000,
+            current_price=100.0,
+            portfolio=portfolio,
+            slippage_rate=0.0,
+            commission_rate=0.00025,
+        )
+        assert executed == 1000
+        # floor rate = 5 / 100000 = 0.00005 < raw 0.00025 → effective = 0.00025
+        # margin_used = 100 * (1 - 0.00025) * 1000 * 1.0 = 99.975 * 1000 = 99975.0
+        margin_used = portfolio._portfolio["margin_used"]  # noqa: SLF001
+        assert abs(margin_used - 99_975.0) < 1e-6
+
+
+class TestExecuteCoverWithFloor:
+    """NS-19(2): 平仓侧执行 — 小额交易触发佣金下限。
+
+    apply_short_cover: all_in_price = price * (1 + commission_rate)。
+    floor 生效时 all_in_price 上升 → cover_cost 上升 → cash 多扣。
+    """
+
+    def test_small_cover_charges_floor(self) -> None:
+        """平仓 100 股 @ ¥10 (¥1000 名义) — commission 上调至 5 元 (0.5%)。
+
+        先做空建仓, 再平仓。floor rate = 5 / 1000 = 0.005。
+        all_in_price = 10 * (1 + 0.005) = 10.05。
+        cover_cost = 10.05 * 100 = 1005。
+        """
+        portfolio = Portfolio(tickers=["000001"], initial_cash=10_000.0, margin_requirement=1.0)
+        # 建空仓 (用足够大的 commission_rate 避免 floor 干扰建仓数学)
+        portfolio.apply_short_open("000001", 100, 10.0, commission_rate=0.0)
+        cash_before = portfolio.get_cash()
+
+        executed = execute_cover_trade(
+            ticker="000001",
+            quantity=100,
+            current_price=10.0,
+            portfolio=portfolio,
+            slippage_rate=0.0,
+            commission_rate=0.00025,
+        )
+        assert executed == 100
+        # all_in_price with floor = 10.05, cover_cost = 1005
+        # margin_release = 100% of short_margin_used (建仓时 margin=1000)
+        # cash delta = +1000 (margin release) - 1005 (cover cost) = -5
+        # no-floor (buggy): all_in_price = 10 * 1.00025 = 10.0025, cover_cost=1000.25
+        #   cash delta = +1000 - 1000.25 = -0.25
+        cash_after = portfolio.get_cash()
+        actual_cover_cost = cash_before - cash_after  # net cash decrease
+        # floor: margin_release(1000) - cover_cost(1005) = -5 net decrease
+        assert abs(actual_cover_cost - 5.0) < 1e-6, (
+            f"Expected net cash decrease 5.0 (floor applied), got {actual_cover_cost}"
+        )
+
+    def test_large_cover_uses_raw_rate(self) -> None:
+        """平仓 1000 股 @ ¥100 (¥100000) — raw rate 适用。"""
+        portfolio = Portfolio(tickers=["000001"], initial_cash=200_000.0, margin_requirement=1.0)
+        portfolio.apply_short_open("000001", 1000, 100.0, commission_rate=0.0)
+        cash_before = portfolio.get_cash()
+
+        executed = execute_cover_trade(
+            ticker="000001",
+            quantity=1000,
+            current_price=100.0,
+            portfolio=portfolio,
+            slippage_rate=0.0,
+            commission_rate=0.00025,
+        )
+        assert executed == 1000
+        # floor rate = 5 / 100000 = 0.00005 < raw 0.00025 → effective = raw
+        # all_in_price = 100 * 1.00025 = 100.025, cover_cost = 100025
+        # margin_release = 100000 (建仓 margin), cash delta = +100000 - 100025 = -25
+        cash_after = portfolio.get_cash()
+        actual_cover_cost = cash_before - cash_after
+        assert abs(actual_cover_cost - 25.0) < 1e-6
+
+
+class TestShortCoverFloorParameter:
+    """NS-19(2): commission_floor_yuan 参数对称性。"""
+
+    def test_short_accepts_custom_floor(self) -> None:
+        """execute_short_trade 接受 commission_floor_yuan 参数 (与 buy/sell 对称)。"""
+        portfolio = Portfolio(tickers=["000001"], initial_cash=10_000.0, margin_requirement=1.0)
+        # 100 * 10 = 1000, floor 10 → floor_rate = 10/1000 = 0.01
+        executed = execute_short_trade(
+            ticker="000001",
+            quantity=100,
+            current_price=10.0,
+            portfolio=portfolio,
+            slippage_rate=0.0,
+            commission_rate=0.00025,
+            commission_floor_yuan=10.0,
+        )
+        assert executed == 100
+        # effective rate 0.01, net_proceeds_price = 10 * 0.99 = 9.9
+        # margin_used = 9.9 * 100 = 990.0
+        margin_used = portfolio._portfolio["margin_used"]  # noqa: SLF001
+        assert abs(margin_used - 990.0) < 1e-6
+
+    def test_cover_accepts_custom_floor(self) -> None:
+        """execute_cover_trade 接受 commission_floor_yuan 参数 (与 buy/sell 对称)。"""
+        portfolio = Portfolio(tickers=["000001"], initial_cash=10_000.0, margin_requirement=1.0)
+        portfolio.apply_short_open("000001", 100, 10.0, commission_rate=0.0)
+        cash_before = portfolio.get_cash()
+        # 100 * 10 = 1000, floor 10 → floor_rate = 0.01
+        # all_in_price = 10 * 1.01 = 10.1, cover_cost = 1010
+        # cash delta = +1000 (margin) - 1010 = -10
+        executed = execute_cover_trade(
+            ticker="000001",
+            quantity=100,
+            current_price=10.0,
+            portfolio=portfolio,
+            slippage_rate=0.0,
+            commission_rate=0.00025,
+            commission_floor_yuan=10.0,
+        )
+        assert executed == 100
+        cash_after = portfolio.get_cash()
+        assert abs((cash_before - cash_after) - 10.0) < 1e-6

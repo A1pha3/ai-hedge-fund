@@ -159,11 +159,17 @@ def execute_short_trade(
     slippage_rate: float,
     commission_rate: float,
     daily_turnover: float | None = None,
+    commission_floor_yuan: float = 5.0,
 ) -> int:
     requested_quantity, executed_price = _resolve_short_open_execution(quantity, current_price, portfolio, slippage_rate, daily_turnover)
     # BETA-004 mirror: commission is internalized in apply_short_open
     # (net proceeds credited to cash). No post-hoc adjust_cash for fees.
-    return portfolio.apply_short_open(ticker, requested_quantity, executed_price, commission_rate=commission_rate)
+    # NS-19(2): Apply 5 yuan commission floor — symmetric with execute_buy_trade /
+    # execute_sell_trade (BETA-006). A small short (notional * rate < 5 yuan) would
+    # otherwise undercharge commission, underestimating real shorting cost and
+    # violating the finance-quant beta "missing transaction costs" gate.
+    effective_rate = _apply_commission_floor(commission_rate, requested_quantity, executed_price, commission_floor_yuan)
+    return portfolio.apply_short_open(ticker, requested_quantity, executed_price, commission_rate=effective_rate)
 
 
 def execute_cover_trade(
@@ -174,10 +180,15 @@ def execute_cover_trade(
     slippage_rate: float,
     commission_rate: float,
     daily_turnover: float | None = None,
+    commission_floor_yuan: float = 5.0,
 ) -> int:
     positions = portfolio.get_positions()
     executable_quantity = min(int(quantity), int(positions.get(ticker, {}).get("short", 0))) if quantity > 0 else 0
     executed_price = float(current_price) * (1 + _resolve_execution_slippage_rate(slippage_rate, executable_quantity, current_price, daily_turnover))
     # BETA-004 mirror: commission is internalized in apply_short_cover
     # (all-in cover cost debited from cash). No post-hoc adjust_cash.
-    return portfolio.apply_short_cover(ticker, executable_quantity, executed_price, commission_rate=commission_rate)
+    # NS-19(2): Apply 5 yuan commission floor — symmetric with execute_buy_trade /
+    # execute_sell_trade (BETA-006) and with execute_short_trade above. A small cover
+    # would otherwise undercharge commission, underestimating real cover cost.
+    effective_rate = _apply_commission_floor(commission_rate, executable_quantity, executed_price, commission_floor_yuan)
+    return portfolio.apply_short_cover(ticker, executable_quantity, executed_price, commission_rate=effective_rate)
