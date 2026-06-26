@@ -1,0 +1,203 @@
+"""NS-4 排序单调性健康度模块的合成数据测试.
+
+不依赖真实报告文件 —— 全部用内联合成 history + tracking records. 验证:
+  - 高分票胜率反而更低 → inverted (⚠ 倒挂)
+  - 低分→高分胜率递增 → monotonic (✓)
+  - 任一 bucket 样本不足 → insufficient (静默)
+  - per-state_type 细分裁决
+  - render 行为 (⚠/✓/空串)
+"""
+from __future__ import annotations
+
+from src.screening.rank_monotonicity import (
+    compute_rank_monotonicity_from_loaded,
+    render_monotonicity_line,
+)
+
+
+def _by_bucket(report, bucket):
+    for row in report.overall_buckets:
+        if row.bucket == bucket:
+            return row
+    return None
+
+
+def _records(buckets):
+    """合成 records: {bucket: [t30 returns]} → flat record list (score→bucket)."""
+    score_for = {"low": 0.10, "mid_low": 0.35, "mid_high": 0.45, "high": 0.60}
+    out = []
+    for bucket, rets in buckets.items():
+        for r in rets:
+            out.append(
+                {
+                    "recommended_date": "20250601",
+                    "recommendation_score": score_for[bucket],
+                    "next_30day_return": r,
+                }
+            )
+    return out
+
+
+def test_inverted_when_high_score_winrate_lower_than_low():
+    """高分票全跌, 低分票全涨 → 倒挂 (模型把输家排前面)."""
+    history = [{"date": "20250601", "payload": {"market_state": {"state_type": "MIXED"}}}]
+    records = _records(
+        {
+            "low": [5.0, 5.0, 5.0, 5.0],  # 全涨 100%
+            "mid_low": [3.0, 3.0, -1.0, -1.0],  # 50%
+            "mid_high": [-2.0, -2.0, 1.0, 1.0],  # 50%
+            "high": [-4.0, -4.0, -4.0, -4.0],  # 全跌 0%
+        }
+    )
+    report = compute_rank_monotonicity_from_loaded(history, records, min_n=2)
+    assert report.overall_verdict == "inverted"
+    assert report.overall_inverted is True
+    assert _by_bucket(report, "low").t30_win_rate == 1.0
+    assert _by_bucket(report, "high").t30_win_rate == 0.0
+
+
+def test_monotonic_when_winrate_increases_with_score():
+    """低分→高分胜率递增 → monotonic (理想: 高分=高胜率)."""
+    history = [{"date": "20250601", "payload": {"market_state": {"state_type": "TREND"}}}]
+    records = _records(
+        {
+            "low": [-5.0, -5.0, 1.0, 1.0],  # 50%
+            "mid_low": [1.0, 1.0, 1.0, -1.0],  # 75%
+            "mid_high": [2.0, 2.0, 2.0, 2.0],  # 100%
+            "high": [3.0, 3.0, 3.0, 3.0],  # 100%
+        }
+    )
+    report = compute_rank_monotonicity_from_loaded(history, records, min_n=2)
+    assert report.overall_verdict == "monotonic"
+    assert report.overall_inverted is False
+
+
+def test_non_monotonic_when_shape_is_mixed():
+    """非单调也非严格倒挂 (中间凸起) → non_monotonic."""
+    history = [{"date": "20250601", "payload": {"market_state": {"state_type": "RANGE"}}}]
+    records = _records(
+        {
+            "low": [5.0, 5.0, 5.0, 5.0],  # 100%
+            "mid_low": [-1.0, -1.0, -1.0, -1.0],  # 0%
+            "mid_high": [2.0, 2.0, 2.0, 2.0],  # 100%
+            "high": [1.0, 1.0, -1.0, -1.0],  # 50%
+        }
+    )
+    report = compute_rank_monotonicity_from_loaded(history, records, min_n=2)
+    assert report.overall_verdict == "non_monotonic"
+    assert report.overall_inverted is False
+
+
+def test_insufficient_when_any_bucket_below_min_n():
+    """任一 bucket 样本 < min_n → insufficient (诚实, 不下倒挂结论)."""
+    history = [{"date": "20250601", "payload": {"market_state": {"state_type": "MIXED"}}}]
+    records = _records(
+        {
+            "low": [5.0] * 5,
+            "mid_low": [3.0] * 5,
+            "mid_high": [1.0] * 5,
+            "high": [-4.0],  # 仅 1 只 < min_n=2
+        }
+    )
+    report = compute_rank_monotonicity_from_loaded(history, records, min_n=2)
+    assert report.overall_verdict == "insufficient"
+    assert report.overall_inverted is False
+
+
+def test_per_state_type_subdivision():
+    """overall 倒挂但某 state_type 单调 → per_state_type 各自裁决."""
+    history = [
+        {"date": "20250601", "payload": {"market_state": {"state_type": "MIXED"}}},
+        {"date": "20250602", "payload": {"market_state": {"state_type": "TREND"}}},
+    ]
+    score_for = {"low": 0.10, "mid_low": 0.35, "mid_high": 0.45, "high": 0.60}
+    records = []
+    # MIXED 日: 倒挂 (低涨高跌)
+    for b, r in [("low", 5.0), ("mid_low", 3.0), ("mid_high", -1.0), ("high", -4.0)]:
+        for _ in range(3):
+            records.append(
+                {
+                    "recommended_date": "20250601",
+                    "recommendation_score": score_for[b],
+                    "next_30day_return": r,
+                }
+            )
+    # TREND 日: 单调 (低跌高涨)
+    for b, r in [("low", -5.0), ("mid_low", -1.0), ("mid_high", 2.0), ("high", 4.0)]:
+        for _ in range(3):
+            records.append(
+                {
+                    "recommended_date": "20250602",
+                    "recommendation_score": score_for[b],
+                    "next_30day_return": r,
+                }
+            )
+    report = compute_rank_monotonicity_from_loaded(history, records, min_n=2)
+    assert report.per_state_type_verdict.get("MIXED") == "inverted"
+    assert report.per_state_type_verdict.get("TREND") == "monotonic"
+
+
+def test_render_inverted_line_has_warning():
+    history = [{"date": "20250601", "payload": {"market_state": {"state_type": "MIXED"}}}]
+    report = compute_rank_monotonicity_from_loaded(
+        history,
+        _records(
+            {
+                "low": [5.0, 5.0, 5.0, 5.0],
+                "mid_low": [3.0, 3.0, -1.0, -1.0],
+                "mid_high": [-2.0, -2.0, 1.0, 1.0],
+                "high": [-4.0, -4.0, -4.0, -4.0],
+            }
+        ),
+        min_n=2,
+    )
+    line = render_monotonicity_line(report)
+    assert line  # 非空
+    assert "倒挂" in line or "inverted" in line.lower()
+    assert "100%" in line  # 低 bucket 胜率
+    assert "0%" in line  # 高 bucket 胜率
+
+
+def test_render_silent_when_insufficient():
+    history = [{"date": "20250601", "payload": {"market_state": {"state_type": "MIXED"}}}]
+    report = compute_rank_monotonicity_from_loaded(
+        history,
+        _records(
+            {
+                "low": [5.0] * 5,
+                "mid_low": [3.0] * 5,
+                "mid_high": [1.0] * 5,
+                "high": [-4.0],  # 样本不足
+            }
+        ),
+        min_n=2,
+    )
+    assert render_monotonicity_line(report) == ""
+
+
+def test_render_monotonic_line():
+    history = [{"date": "20250601", "payload": {"market_state": {"state_type": "TREND"}}}]
+    report = compute_rank_monotonicity_from_loaded(
+        history,
+        _records(
+            {
+                "low": [-5.0, -5.0, 1.0, 1.0],
+                "mid_low": [1.0, 1.0, 1.0, -1.0],
+                "mid_high": [2.0, 2.0, 2.0, 2.0],
+                "high": [3.0, 3.0, 3.0, 3.0],
+            }
+        ),
+        min_n=2,
+    )
+    line = render_monotonicity_line(report)
+    assert line
+    assert "单调" in line or "monotonic" in line.lower()
+
+
+def test_finite_float_rejects_nan_and_garbage():
+    from src.screening.rank_monotonicity import _finite_float
+
+    assert _finite_float(None) is None
+    assert _finite_float("abc") is None
+    assert _finite_float(float("nan")) is None
+    assert _finite_float("1.5") == 1.5

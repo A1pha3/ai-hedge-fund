@@ -1386,6 +1386,7 @@ def _print_top_picks_footer(
     _print_correlation_block(representative_picks)
     _print_portfolio_risk_block(representative_picks)
     _print_regime_winrate_block(market_regime)
+    _print_monotonicity_block(report_dir)
     _print_decision_flow_hint()
     _print_disclaimer()
 
@@ -1452,6 +1453,31 @@ def _print_regime_winrate_block(market_regime: str) -> None:
             print(mh_line)
     except Exception:  # noqa: BLE001 — best-effort display; never break the front door
         return
+
+
+def _print_monotonicity_block(report_dir: Path) -> None:
+    """NS-4: 排序单调性健康度 — score rank → T+30 胜率是否单调.
+
+    真实数据 (493 条 tracking_history) 揭示模型整体排序倒挂: low-score 胜率
+    50.5% → high-score 39.5% (高分票胜率反而最低). 本块在 ``--top-picks`` footer
+    把"高分是否 → 高胜率"量化展示: 倒挂时 ⚠ 红字提示 (模型把输家排前面),
+    单调时 ✓ 绿字, 非单调时 ⚠ 黄字, 样本不足静默.
+
+    纯诊断不改 gate/factor/仓位 (越界 = 过拟合, Phase 0 STOP 裁决). 镜像
+    regime_winrate / portfolio_concentration 的 best-effort footer-block 模式.
+    """
+    try:
+        from src.screening.rank_monotonicity import (
+            compute_rank_monotonicity,
+            render_monotonicity_line,
+        )
+
+        report = compute_rank_monotonicity(reports_dir=report_dir)
+    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+        return
+    line = render_monotonicity_line(report)
+    if line:
+        print(line)
 
 
 def _print_concentration_block(picks: list[dict]) -> None:
