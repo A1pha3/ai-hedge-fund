@@ -30,6 +30,7 @@ from src.screening.conditional_order_advisor import (
     ConditionalOrderAdvice,
 )
 from src.screening.conditional_order_export import (
+    _next_business_day,
     advice_to_broker_order,
     BrokerConditionalOrder,
     DEFAULT_QUANTITY,
@@ -448,3 +449,140 @@ def test_all_degraded_exports_header_only(fixed_today: date) -> None:
 
     json_text = export_conditional_orders([degraded], "ths", today=fixed_today)
     assert json.loads(json_text) == []
+
+
+# ===========================================================================
+# 13. NS-15(1) — _next_business_day 必须用 trade_cal, 不能用纯自然日
+# ===========================================================================
+#
+# 缺陷 (feature-proposals.md §三·6 NS-15):
+#   旧实现 `_next_business_day(start, n)` = `start + timedelta(days=n)`, 纯自然日。
+#   周四 2026-06-11 + 3 = 周日 2026-06-14 (周末, broker 收到周末到期单被拒/静默失效)。
+#
+# 修复:
+#   用 get_open_trade_dates 算真实 A 股交易日 (排除周末 + 节假日);
+#   无 token / 网络失败 / 空结果时 fallback 到 weekday 近似 (跳过周六周日)。
+# ===========================================================================
+
+
+def test_next_business_day_uses_trade_cal_not_calendar_days(monkeypatch) -> None:
+    """NS-15(1): trade_cal 可用时, _next_business_day 返回第 n 个交易日 (非自然日)。
+
+    周四 2026-06-11 + 3 自然日 = 周日 2026-06-14 (周末, broker 拒单)。
+    周四 2026-06-11 + 3 交易日 = 周二 2026-06-16 (Fri/Mon/Tue, 跳过周末)。
+    """
+    # 模拟 trade_cal 返回 2026-06-11 ~ 2026-06-17 的真实 A 股交易日
+    # (跳过周六 06-13、周日 06-14; 该区间无节假日)
+    real_open_dates = [
+        "20260611",  # Thu
+        "20260612",  # Fri
+        "20260615",  # Mon
+        "20260616",  # Tue
+        "20260617",  # Wed
+    ]
+
+    def mock_get_open(start: str, end: str) -> list[str]:
+        return [d for d in real_open_dates if start <= d <= end]
+
+    monkeypatch.setattr(
+        "src.tools.tushare_api.get_open_trade_dates",
+        mock_get_open,
+    )
+
+    # 周四 + 3 交易日 = 周二 (不是周日!)
+    result = _next_business_day(date(2026, 6, 11), n_days=3)
+    assert result == "20260616", (
+        f"Expected 20260616 (Tue, 3rd trading day after Thu), got {result}"
+    )
+    # 关键断言: 绝不能返回周末日期
+    assert result != "20260614", (
+        "Must not return Sunday — broker rejects weekend-expiring orders"
+    )
+    assert result != "20260613", (
+        "Must not return Saturday — broker rejects weekend-expiring orders"
+    )
+
+
+def test_next_business_day_falls_back_to_weekday_when_no_trade_cal(monkeypatch) -> None:
+    """NS-15(1) fallback: trade_cal 不可用时, 用 weekday 近似 (跳过周六周日)。
+
+    无 token / 网络失败时 get_open_trade_dates 返回空列表, 此时 fallback
+    到 weekday-only 近似: 周四+3 weekdays = 周二 (跳过 Sat/Sun)。
+    旧实现错误地用纯自然日, 返回周日。
+    """
+    # 模拟 trade_cal 不可用 (无 token / 网络失败)
+    monkeypatch.setattr(
+        "src.tools.tushare_api.get_open_trade_dates",
+        lambda start, end: [],
+    )
+
+    # 周四 + 3 weekdays = 周二 (Fri=1, Mon=2, Tue=3)
+    result = _next_business_day(date(2026, 6, 11), n_days=3)
+    assert result == "20260616", (
+        f"Weekday fallback: Expected 20260616 (Tue), got {result}"
+    )
+    # 绝不能是周日
+    assert result != "20260614", (
+        "Weekday fallback must skip weekend — got Sunday (broker rejects)"
+    )
+
+
+def test_next_business_day_friday_plus_one_not_saturday(monkeypatch) -> None:
+    """NS-15(1) 边界: 周五 + 1 交易日 = 周一 (不是周六)。
+
+    覆盖 n_days=1 的边界: 旧实现周五+1=周六 (周末), 修复后应为周一。
+    """
+    monkeypatch.setattr(
+        "src.tools.tushare_api.get_open_trade_dates",
+        lambda start, end: [],
+    )
+
+    # 周五 2026-06-12 + 1 weekday = 周一 2026-06-15
+    result = _next_business_day(date(2026, 6, 12), n_days=1)
+    assert result == "20260615", (
+        f"Fri+1 weekday = Mon; got {result}"
+    )
+
+
+def test_next_business_day_preserves_weekday_only_behavior_when_no_weekend(monkeypatch) -> None:
+    """NS-15(1) 回归: 起点为周二, +3 交易日 = 周五 (无周末跨越, 行为不变)。
+
+    确保修复不破坏既有的 weekday-only 路径 (现有测试 test_advice_to_broker_order_mapping
+    依赖 Tuesday+3=Friday)。
+    """
+    monkeypatch.setattr(
+        "src.tools.tushare_api.get_open_trade_dates",
+        lambda start, end: [],
+    )
+
+    # 周二 2026-06-09 + 3 weekdays = 周五 2026-06-12 (Tue→Wed→Thu→Fri)
+    result = _next_business_day(date(2026, 6, 9), n_days=3)
+    assert result == "20260612", (
+        f"Tue+3 weekdays = Fri (no weekend cross); got {result}"
+    )
+
+
+def test_advice_to_broker_order_valid_until_uses_trade_cal(monkeypatch, fixed_today: date) -> None:
+    """NS-15(1) 集成: advice_to_broker_order 的 valid_until 字段用 trade_cal。
+
+    用 fixed_today=2026-06-09 (Tuesday) + 3 交易日 = 2026-06-12 (Friday)。
+    既验证 trade_cal 路径集成, 又确保与现有 test_advice_to_broker_order_mapping
+    的断言 `valid_until == "20260612"` 一致 (不破坏既有契约)。
+    """
+    real_open_dates = [
+        "20260609", "20260610", "20260611", "20260612",  # Tue-Fri
+        "20260615", "20260616",  # Mon-Tue next week
+    ]
+
+    def mock_get_open(start: str, end: str) -> list[str]:
+        return [d for d in real_open_dates if start <= d <= end]
+
+    monkeypatch.setattr(
+        "src.tools.tushare_api.get_open_trade_dates",
+        mock_get_open,
+    )
+
+    advice = _make_advice("000001", "平安银行", 100.0, 100.0)
+    order = advice_to_broker_order(advice, today=fixed_today, valid_days=3)
+    # Tuesday + 3 trading days = Friday (Wed/Thu/Fri)
+    assert order.valid_until == "20260612"

@@ -62,20 +62,53 @@ DEFAULT_QUANTITY = 100
 
 
 # ---------------------------------------------------------------------------
-# Helper: 营业日计算 (简化版, 不查日历)
+# Helper: 营业日计算 (trade_cal 优先, weekday fallback)
 # ---------------------------------------------------------------------------
 
 
 def _next_business_day(start: date, n_days: int = DEFAULT_VALID_DAYS) -> str:
-    """计算从 start 起第 n_days 个自然日后的日期 (简化版, 不排除周末/节假日)。
+    """计算从 start 起第 n_days 个交易日后的日期。
 
-    生产环境应使用 ``exchange_calendar`` 或 akshare 交易日历。
-    这里用自然日 + n_days 作为合理默认值。
+    优先使用 tushare ``trade_cal`` (``get_open_trade_dates``) 获取真实 A 股
+    交易日, 排除周末和节假日 (春节/国庆等)。无 token / 网络失败 / 空结果时
+    fallback 到 weekday-only 近似 (跳过周六周日, 不排除节假日)。
+
+    NS-15(1) 修复: 旧实现用 ``start + timedelta(days=n_days)`` 纯自然日,
+    周四+3=周日, broker 收到周末到期单被拒/静默失效。
+
+    Args:
+        start: 基准日期 (不含在 n_days 内, 即返回 start 之后第 n_days 个交易日)
+        n_days: 交易日天数 (默认 3)
 
     Returns:
         ``YYYYMMDD`` 格式字符串
     """
-    target = start + timedelta(days=n_days)
+    start_str = start.strftime("%Y%m%d")
+
+    # 1. 优先用 trade_cal (拉取足够窗口: n_days 个交易日 + 21 天节假日缓冲)
+    try:
+        from src.tools.tushare_api import get_open_trade_dates  # local import: keep startup light
+
+        fetch_end = start + timedelta(days=n_days + 21)
+        open_dates = get_open_trade_dates(start_str, fetch_end.strftime("%Y%m%d"))
+    except Exception as exc:  # pragma: no cover — defensive: never block export on calendar fetch
+        logger.debug("_next_business_day: trade_cal fetch failed: %s", exc)
+        open_dates = []
+
+    if open_dates:
+        # 过滤掉 start 及之前的日期, 取第 n_days 个交易日 (1-indexed)
+        future_dates = [d for d in sorted(open_dates) if d > start_str]
+        if len(future_dates) >= n_days:
+            return future_dates[n_days - 1]
+        # 不足 n_days (理论上不会发生, 因窗口有 21 天缓冲), 保守 fallback
+
+    # 2. Fallback: weekday-only 近似 (Mon-Fri, 不排除节假日)
+    target = start
+    count = 0
+    while count < n_days:
+        target = target + timedelta(days=1)
+        if target.weekday() < 5:  # Mon=0..Fri=4, Sat=5, Sun=6
+            count += 1
     return target.strftime("%Y%m%d")
 
 
