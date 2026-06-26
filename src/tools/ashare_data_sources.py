@@ -164,7 +164,7 @@ class BaoStockDataSource(BaseDataSource):
                 raise DataSourceError(f"BaoStock 登录失败: {lg.error_msg}")
 
             try:
-                rs = bs.query_history_k_data_plus(bs_code, "date,open,high,low,close,volume", start_date=start_date, end_date=end_date, frequency="d", adjustflag="3")
+                rs = bs.query_history_k_data_plus(bs_code, "date,open,high,low,close,volume", start_date=start_date, end_date=end_date, frequency="d", adjustflag="2")  # NS-9: 前复权 qfq (was "3" 不复权 → 除权除息日假跳空污染收益/ATR/止损/回撤)
 
                 if rs.error_code != "0":
                     raise DataSourceError(f"BaoStock 查询失败: {rs.error_msg}")

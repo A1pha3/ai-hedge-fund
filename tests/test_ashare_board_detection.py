@@ -122,6 +122,47 @@ def test_baostock_data_source_routes_beijing_92_to_bj(monkeypatch) -> None:
     assert prices[0].close == 10.2
 
 
+def test_baostock_data_source_uses_qfq_adjustflag(monkeypatch) -> None:
+    """NS-9 BaoStock slice: adjustflag must be '2' (前复权 qfq), not '3' (不复权 raw).
+
+    R37 fixed the dominant tushare path to qfq; BaoStockDataSource was the sibling
+    still using adjustflag='3' (raw) → phantom losses across ex-dividend days.
+    BaoStock's query_history_k_data_plus handles qfq natively via adjustflag.
+    """
+    captured: dict[str, object] = {}
+
+    class _FakeResult:
+        error_code = "0"
+
+        def __init__(self) -> None:
+            self._rows = iter([["2026-04-01", "10.0", "10.5", "9.8", "10.2", "12345"]])
+            self._current: list[str] | None = None
+
+        def next(self) -> bool:
+            self._current = next(self._rows, None)
+            return self._current is not None
+
+        def get_row_data(self) -> list[str]:
+            return self._current or []
+
+    def _fake_query(code, *_args, **kwargs):
+        captured["adjustflag"] = kwargs.get("adjustflag")
+        return _FakeResult()
+
+    fake_bs = SimpleNamespace(
+        login=lambda: SimpleNamespace(error_code="0", error_msg=""),
+        logout=lambda: None,
+        query_history_k_data_plus=_fake_query,
+    )
+    monkeypatch.setattr(ashare_data_sources.BaoStockDataSource, "_init_baostock", classmethod(lambda cls: True))
+    monkeypatch.setitem(sys.modules, "baostock", fake_bs)
+
+    ashare_data_sources.BaoStockDataSource.get_prices("000001", "2026-04-01", "2026-04-02")
+    assert captured.get("adjustflag") == "2", (
+        f"NS-9: BaoStock adjustflag must be '2' (qfq), got {captured.get('adjustflag')!r}"
+    )
+
+
 def test_daily_pipeline_price_lookup_routes_beijing_92_to_bj() -> None:
     from src.execution.daily_pipeline import _to_ts_code_for_price_lookup
 
