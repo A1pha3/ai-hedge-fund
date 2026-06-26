@@ -1387,6 +1387,7 @@ def _print_top_picks_footer(
     _print_portfolio_risk_block(representative_picks)
     _print_regime_winrate_block(market_regime)
     _print_monotonicity_block(report_dir)
+    _print_north_star_block(report_dir)
     _print_decision_flow_hint()
     _print_disclaimer()
 
@@ -1476,6 +1477,31 @@ def _print_monotonicity_block(report_dir: Path) -> None:
     except Exception:  # noqa: BLE001 — best-effort display; never break the front door
         return
     line = render_monotonicity_line(report)
+    if line:
+        print(line)
+
+
+def _print_north_star_block(report_dir: Path) -> None:
+    """NS-3: 北极星 P&L 趋势仪表 — 按推荐日等权累积真实 T+30 P&L.
+
+    北极星目标: 用户按推荐操作 30 天真实 P&L>0. 本块在 ``--top-picks`` footer
+    量化该目标当前状态 (累积等权 mean + 整体 winrate + median 三维度). 真实数据
+    (493 条) 显示 divergent: 累积 mean +190% 但 winrate 46% + median -2%
+    (少数大赢家拉高 mean, 典型票微亏). 三维度避免 R-6/R-7 mean 异常值污染误导.
+
+    verdict: divergent⚠ (mean 正但典型票不赚) / positive✓ (全正趋近 >0) /
+    negative⚠ (亏) / insufficient 静默. 纯诊断不改 gate/factor/仓位.
+    """
+    try:
+        from src.screening.north_star_pnl import (
+            compute_north_star_pnl,
+            render_north_star_line,
+        )
+
+        report = compute_north_star_pnl(reports_dir=report_dir)
+    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+        return
+    line = render_north_star_line(report)
     if line:
         print(line)
 
