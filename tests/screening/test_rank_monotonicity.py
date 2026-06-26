@@ -7,6 +7,7 @@
   - per-state_type 细分裁决
   - render 行为 (⚠/✓/空串)
 """
+
 from __future__ import annotations
 
 from src.screening.rank_monotonicity import (
@@ -201,3 +202,80 @@ def test_finite_float_rejects_nan_and_garbage():
     assert _finite_float("abc") is None
     assert _finite_float(float("nan")) is None
     assert _finite_float("1.5") == 1.5
+
+
+# ---------------------------------------------------------------------------
+# M5: 时段分段单调性 (period breakdown) — 区分 H1 因子 bug (全期倒挂) vs H2 regime (分化)
+# ---------------------------------------------------------------------------
+
+from src.screening.rank_monotonicity import (  # noqa: E402
+    compute_period_breakdown_from_loaded,
+    render_period_breakdown_line,
+)
+
+
+def _period_records(first_half: dict, second_half: dict) -> list:
+    """{bucket: [returns]} × 2 halves → records with recommended_date."""
+    score_for = {"low": 0.10, "mid_low": 0.35, "mid_high": 0.45, "high": 0.60}
+    out = []
+    for bucket, rets in first_half.items():
+        for r in rets:
+            out.append({"recommended_date": "20250101", "recommendation_score": score_for[bucket], "next_30day_return": r})
+    for bucket, rets in second_half.items():
+        for r in rets:
+            out.append({"recommended_date": "20250601", "recommendation_score": score_for[bucket], "next_30day_return": r})
+    return out
+
+
+def test_period_breakdown_two_halves_inverted_first_monotonic_second():
+    """前半倒挂 (高分全跌), 后半单调 (低跌高涨) → 各段 verdict 不同 → regime 分化 (H2 信号)."""
+    # 前半: 倒挂 (low 涨 high 跌)
+    first = {"low": [5] * 4, "mid_low": [3, -1, 3, -1], "mid_high": [-2, 2, -2, 2], "high": [-4] * 4}
+    # 后半: 单调 (low 跌 high 涨)
+    second = {"low": [-5] * 4, "mid_low": [-1, 1, -1, 1], "mid_high": [2] * 4, "high": [4] * 4}
+    recs = _period_records(first, second)
+    periods = compute_period_breakdown_from_loaded(recs, n_periods=2, min_n=2)
+    assert len(periods) == 2
+    verdicts = {p.label: p.verdict for p in periods}
+    assert verdicts["前半"] == "inverted"
+    assert verdicts["后半"] == "monotonic"
+
+
+def test_period_breakdown_both_inverted_signals_h1():
+    """两段都倒挂 → 全期因子方向问题 (H1 信号, 非 regime)."""
+    first = {"low": [5] * 4, "mid_low": [3, -1, 3, -1], "mid_high": [-2, 2, -2, 2], "high": [-4] * 4}
+    second = {"low": [6] * 4, "mid_low": [2, -2, 2, -2], "mid_high": [-1, 1, -1, 1], "high": [-5] * 4}
+    recs = _period_records(first, second)
+    periods = compute_period_breakdown_from_loaded(recs, n_periods=2, min_n=2)
+    verdicts = {p.label: p.verdict for p in periods}
+    assert verdicts["前半"] == "inverted"
+    assert verdicts["后半"] == "inverted"
+
+
+def test_period_breakdown_insufficient_segment():
+    """一段样本不足 → 该段 insufficient (诚实)."""
+    first = {"low": [5] * 4, "mid_low": [3, -1, 3, -1], "mid_high": [-2, 2, -2, 2], "high": [-4] * 4}
+    second = {"low": [5], "mid_low": [3], "mid_high": [-2], "high": [-4]}  # 各 1 < min_n=2
+    recs = _period_records(first, second)
+    periods = compute_period_breakdown_from_loaded(recs, n_periods=2, min_n=2)
+    verdicts = {p.label: p.verdict for p in periods}
+    assert verdicts["后半"] == "insufficient"
+
+
+def test_render_period_breakdown_line_has_both_periods():
+    first = {"low": [5] * 4, "mid_low": [3, -1, 3, -1], "mid_high": [-2, 2, -2, 2], "high": [-4] * 4}
+    second = {"low": [6] * 4, "mid_low": [2, -2, 2, -2], "mid_high": [-1, 1, -1, 1], "high": [-5] * 4}
+    recs = _period_records(first, second)
+    periods = compute_period_breakdown_from_loaded(recs, n_periods=2, min_n=2)
+    line = render_period_breakdown_line(periods)
+    assert line
+    assert "前半" in line
+    assert "后半" in line
+
+
+def test_render_period_breakdown_silent_when_all_insufficient():
+    first = {"low": [5], "mid_low": [3], "mid_high": [-2], "high": [-4]}
+    second = {"low": [5], "mid_low": [3], "mid_high": [-2], "high": [-4]}
+    recs = _period_records(first, second)
+    periods = compute_period_breakdown_from_loaded(recs, n_periods=2, min_n=2)
+    assert render_period_breakdown_line(periods) == ""

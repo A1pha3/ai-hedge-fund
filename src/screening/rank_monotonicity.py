@@ -244,10 +244,120 @@ def render_monotonicity_line(report: RankMonotonicityReport) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# M5: 时段分段单调性 (period breakdown)
+# 区分 H1 因子方向 bug (全期倒挂) vs H2 regime 分化 (前/后半 verdict 不同).
+# design packet (docs/cn/product/research/model-scoring-investigation-packet.md)
+# 推荐的最快证伪路径, 复用现有总分数据, 无需 payload 扩展.
+# ---------------------------------------------------------------------------
+
+_PERIOD_LABELS_2 = ("前半", "后半")
+
+
+@dataclass
+class PeriodBreakdown:
+    """单个时段的单调性分解."""
+
+    label: str
+    verdict: str  # monotonic | inverted | non_monotonic | insufficient
+    winrates: list[float]  # ordered low→high (空若 insufficient)
+    sample_count: int
+
+
+def _period_label(index: int, n_periods: int) -> str:
+    if n_periods == 2:
+        return _PERIOD_LABELS_2[index]
+    return f"段{index + 1}"
+
+
+def compute_period_breakdown_from_loaded(
+    records: list[dict[str, Any]],
+    *,
+    n_periods: int = 2,
+    min_n: int = 15,
+) -> list[PeriodBreakdown]:
+    """按 recommended_date 排序分 n_periods 段, 每段算 score→T+30 winrate 单调性.
+
+    回答 design packet H1 vs H2: 两段都倒挂 → H1 因子方向 bug; verdict 分化 → H2 regime.
+    分段后样本变薄, min_n 默认 15 (比 overall 的 20 宽松, 诚实标注可靠性).
+    """
+    # 按 recommended_date 分组, 仅成熟 T+30
+    by_date: dict[str, list[dict[str, Any]]] = {}
+    for rec in records:
+        t30 = _finite_float(rec.get("next_30day_return"))
+        if t30 is None:
+            continue
+        date_raw = str(rec.get("recommended_date", "") or "").replace("-", "")
+        if not date_raw:
+            continue
+        by_date.setdefault(date_raw, []).append(rec)
+
+    dates = sorted(by_date)
+    if not dates or n_periods < 1:
+        return []
+
+    # 日期均分 n_periods 段
+    n = len(dates)
+    out: list[PeriodBreakdown] = []
+    for i in range(n_periods):
+        start = i * n // n_periods
+        end = (i + 1) * n // n_periods
+        seg_dates = set(dates[start:end])
+        seg_records = [r for d in seg_dates for r in by_date[d]]
+        returns_by_bucket = _bucket_returns_by_state(seg_records)
+        verdict, wrs = _verdict(returns_by_bucket, min_n)
+        sample = sum(len(v) for v in returns_by_bucket.values())
+        out.append(
+            PeriodBreakdown(
+                label=_period_label(i, n_periods),
+                verdict=verdict,
+                winrates=[w for w in wrs if w is not None],
+                sample_count=sample,
+            )
+        )
+    return out
+
+
+def render_period_breakdown_line(periods: list[PeriodBreakdown]) -> str:
+    """渲染时段分段单调性对比 (全 insufficient → 空串).
+
+    展示形如:
+      ``  📊 时段单调性: 前半 倒挂⚠ (46→38) | 后半 倒挂⚠ (59→41) — 两段均倒挂, 倾向因子方向 (H1)``
+    """
+    if not periods or all(p.verdict == "insufficient" for p in periods):
+        return ""
+
+    def _seg(p: PeriodBreakdown) -> str:
+        if p.verdict == "insufficient" or len(p.winrates) < 2:
+            return f"{p.label} 样本不足"
+        shape = "→".join(f"{w:.0%}" for w in p.winrates)
+        tag = {"inverted": "倒挂⚠", "monotonic": "单调✓", "non_monotonic": "非单调⚠"}.get(
+            p.verdict, p.verdict
+        )
+        return f"{p.label} {tag} ({shape})"
+
+    parts = [_seg(p) for p in periods]
+    # 裁决: 多段都倒挂 → H1 因子方向; 分化 → H2 regime
+    non_insufficient = [p for p in periods if p.verdict != "insufficient"]
+    all_inverted = bool(non_insufficient) and all(p.verdict == "inverted" for p in non_insufficient)
+    verdicts_diverge = len({p.verdict for p in non_insufficient}) > 1
+    if all_inverted:
+        suffix = f"{Fore.RED}— 多段均倒挂, 倾向因子方向问题 (H1, 跨 regime){Style.RESET_ALL}"
+    elif verdicts_diverge:
+        suffix = f"{Fore.YELLOW}— verdict 分化, 倾向 regime 驱动 (H2){Style.RESET_ALL}"
+    else:
+        suffix = ""
+    body = " | ".join(parts)
+    return f"  📊 时段单调性: {body} {suffix}".rstrip()
+
+
 __all__ = [
     "BucketWinRate",
     "RankMonotonicityReport",
+    "PeriodBreakdown",
     "compute_rank_monotonicity",
     "compute_rank_monotonicity_from_loaded",
+    "compute_period_breakdown_from_loaded",
     "render_monotonicity_line",
+    "render_period_breakdown_line",
 ]

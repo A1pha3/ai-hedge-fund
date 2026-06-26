@@ -1469,8 +1469,13 @@ def _print_monotonicity_block(report_dir: Path) -> None:
     """
     try:
         from src.screening.rank_monotonicity import (
+            compute_period_breakdown_from_loaded,
             compute_rank_monotonicity,
             render_monotonicity_line,
+            render_period_breakdown_line,
+        )
+        from src.screening.consecutive_recommendation import (
+            load_tracking_history,
         )
 
         report = compute_rank_monotonicity(reports_dir=report_dir)
@@ -1479,6 +1484,15 @@ def _print_monotonicity_block(report_dir: Path) -> None:
     line = render_monotonicity_line(report)
     if line:
         print(line)
+    # M5: 时段分段单调性 (design packet 推荐区分 H1 因子 bug vs H2 regime)
+    try:
+        records = load_tracking_history(report_dir)
+        periods = compute_period_breakdown_from_loaded(records, n_periods=2, min_n=15)
+        period_line = render_period_breakdown_line(periods)
+        if period_line:
+            print(period_line)
+    except Exception:  # noqa: BLE001 — best-effort; period breakdown 永不破坏前门
+        return
 
 
 def _print_north_star_block(report_dir: Path) -> None:
