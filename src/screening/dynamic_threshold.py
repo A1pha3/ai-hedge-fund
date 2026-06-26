@@ -192,17 +192,23 @@ def _load_recent_hit_rate(
         if tracking_status != "complete":
             continue
 
-        # Check T+5 return (or any positive return)
-        for horizon in ("t_plus_5_return", "t_plus_3_return", "t_plus_1_return"):
-            ret = rec.get(horizon)
-            if ret is not None:
-                try:
-                    if float(ret) > 0:
-                        hits += 1
-                    recent_with_outcome += 1
-                except (ValueError, TypeError):
-                    pass
-                break
+        # NS-18(3): Read the real tracking_history schema field
+        # ``next_5day_return`` (written by ``recommendation_tracker``) rather
+        # than the stale ``t_plus_5_return`` field name that never exists in
+        # production data. Single T+5 horizon — no T+3/T+1 fallback, which
+        # would inflate hit_rate with shorter-horizon noise (T+1/T+3 are
+        # noisier and more likely positive by chance), lowering the bar for
+        # ``--decision-flow`` BUY gate. Before this fix the feature was
+        # silently dead: hit_rate was always None (field name mismatch) so
+        # dynamic_threshold always returned base_threshold.
+        ret = rec.get("next_5day_return")
+        if ret is not None:
+            try:
+                if float(ret) > 0:
+                    hits += 1
+                recent_with_outcome += 1
+            except (ValueError, TypeError):
+                pass
 
     if recent_with_outcome < 5:
         return None, recent_with_outcome
