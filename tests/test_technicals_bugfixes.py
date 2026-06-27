@@ -231,6 +231,55 @@ class TestVolatilitySignalNaNHandling:
             assert math.isfinite(safe_float(val)), f"{key} is not finite: {val}"
 
 
+class TestVolatilityLabelDirection:
+    """Volatility factor direction labels (autodev C224 / iv057).
+
+    Counterfactual evidence (autodev C222 n=1587 + C223 n=8922, commits b135243f +
+    _diag_trend_subfactor_direction): the original bullish/bearish labels were REVERSED
+    vs T+1 — sep = T+1(bullish) - T+1(bearish) was -0.34~-0.94 (bullish 票实际 T+1 更低).
+    Root cause: low-vol-regime 'bullish' was a mean-reversion bet (低 vol → expansion),
+    but short-term momentum dominates T+1 (high-vol = recent winners → continue up /
+    decline less). Fix: flip labels so high-vol regime → bullish, low-vol → bearish.
+    """
+
+    @staticmethod
+    def _make_regime_df(calm_then_spike: bool, seed: int = 42) -> pd.DataFrame:
+        """Series ending in a clear high-vol or low-vol regime at the last bar.
+
+        calm_then_spike=True  → regime>1.2, z>+1 (high-vol regime).
+        calm_then_spike=False → regime<0.8, z<-1 (low-vol regime).
+        """
+        rng = np.random.default_rng(seed)
+        if calm_then_spike:
+            calm = 100.0 + rng.normal(0, 0.2, 80)
+            spike = 100.0 + rng.normal(0, 3.0, 40)
+        else:
+            turb = 100.0 + rng.normal(0, 3.0, 80)
+            calm = 100.0 + rng.normal(0, 0.2, 40)
+        close = np.concatenate([calm, spike]) if calm_then_spike else np.concatenate([turb, calm])
+        n = len(close)
+        return pd.DataFrame(
+            {"open": close, "high": close, "low": close, "close": close, "volume": np.full(n, 1000.0)},
+            index=pd.date_range("2025-01-01", periods=n),
+        )
+
+    def test_high_vol_regime_is_bullish(self):
+        """High-vol regime (regime>1.2, z>+1) → bullish (C224 flip: momentum continuation)."""
+        df = self._make_regime_df(calm_then_spike=True)
+        result = calculate_volatility_signals(df)
+        m = result["metrics"]
+        assert m["volatility_regime"] > 1.2 and m["volatility_z_score"] > 1.0, "fixture must trigger high-vol regime"
+        assert result["signal"] == "bullish", "high-vol regime → bullish (C224; was 'bearish' pre-flip)"
+
+    def test_low_vol_regime_is_bearish(self):
+        """Low-vol regime (regime<0.8, z<-1) → bearish (C224 flip: stagnation)."""
+        df = self._make_regime_df(calm_then_spike=False)
+        result = calculate_volatility_signals(df)
+        m = result["metrics"]
+        assert m["volatility_regime"] < 0.8 and m["volatility_z_score"] < -1.0, "fixture must trigger low-vol regime"
+        assert result["signal"] == "bearish", "low-vol regime → bearish (C224; was 'bullish' pre-flip)"
+
+
 # ---------------------------------------------------------------------------
 # Momentum volume division-by-zero
 # ---------------------------------------------------------------------------

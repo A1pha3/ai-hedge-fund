@@ -500,10 +500,10 @@ def calculate_volatility_signals(prices_df):
     vol_z = safe_float(vol_z_score.iloc[-1], default=0.0)
 
     if current_vol_regime < VOL_LOW_THRESHOLD and vol_z < -VOL_Z_THRESHOLD:
-        signal = "bullish"  # Low vol regime, potential for expansion
+        signal = "bearish"  # Low vol regime → stagnation (C224: labels were reversed vs T+1)
         confidence = min(abs(vol_z) / VOL_CONFIDENCE_SCALE, 1.0)
     elif current_vol_regime > VOL_HIGH_THRESHOLD and vol_z > VOL_Z_THRESHOLD:
-        signal = "bearish"  # High vol regime, potential for contraction
+        signal = "bullish"  # High vol regime → momentum continuation (C224 flip)
         confidence = min(abs(vol_z) / VOL_CONFIDENCE_SCALE, 1.0)
     else:
         signal = "neutral"
