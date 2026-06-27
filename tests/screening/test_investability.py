@@ -187,8 +187,9 @@ def test_build_front_door_verdict_promotes_high_quality_pick_to_buy() -> None:
         {
             "decision": "bullish",
             "composite_score": 0.68,
-            "expected_returns": {"t30": 9.4},
-            "win_rates": {"t30": 0.63},
+            # C219: BUY gate 用 T+5 OR T+10 OR 逻辑; t5/t10 提供, t30 保留作 invalidation
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 9.4},
+            "win_rates": {"t5": 0.61, "t10": 0.62, "t30": 0.63},
             "bucket_sample_count": 48,
             "momentum_bonus": 0.05,
             "sector_bonus": 0.03,
@@ -208,16 +209,18 @@ def test_build_front_door_verdict_promotes_high_quality_pick_to_buy() -> None:
 def test_build_front_door_verdict_lists_edge_turn_negative_only_when_negative() -> None:
     """BH-010: "T+30 edge 转负" must only appear when t30 edge is actually < 0."""
     # Positive edge → HOLD (composite 0.4) → no "转负" reason.
+    # C219: t5/t10 正值让 is_watchable 通过 → HOLD
     pos = build_front_door_verdict(
-        {"decision": "bullish", "composite_score": 0.4, "expected_returns": {"t30": 2.0},
-         "win_rates": {"t30": 0.52}, "bucket_sample_count": 48},
+        {"decision": "bullish", "composite_score": 0.4, "expected_returns": {"t5": 1.8, "t10": 2.0, "t30": 2.0},
+         "win_rates": {"t5": 0.51, "t10": 0.52, "t30": 0.52}, "bucket_sample_count": 48},
         market_regime="trend",
     )
     assert "转负" not in pos["invalidation_reason"]
     # Negative edge → AVOID → "转负" reason present.
+    # C219: t5/t10 负值让 is_watchable 不通过 → AVOID
     neg = build_front_door_verdict(
-        {"decision": "bullish", "composite_score": 0.4, "expected_returns": {"t30": -1.5},
-         "win_rates": {"t30": 0.45}, "bucket_sample_count": 48},
+        {"decision": "bullish", "composite_score": 0.4, "expected_returns": {"t5": -1.2, "t10": -1.5, "t30": -1.5},
+         "win_rates": {"t5": 0.45, "t10": 0.45, "t30": 0.45}, "bucket_sample_count": 48},
         market_regime="trend",
     )
     assert "转负" in neg["invalidation_reason"]
@@ -228,8 +231,9 @@ def test_build_front_door_verdict_respects_risk_off_gate() -> None:
         {
             "decision": "bullish",
             "composite_score": 0.71,
-            "expected_returns": {"t30": 11.2},
-            "win_rates": {"t30": 0.66},
+            # C219: t5/t10 让 _meets_quality_bar 通过, risk_off → HOLD
+            "expected_returns": {"t5": 10.0, "t10": 10.5, "t30": 11.2},
+            "win_rates": {"t5": 0.64, "t10": 0.65, "t30": 0.66},
             "bucket_sample_count": 52,
         },
         market_regime="risk_off",
@@ -252,8 +256,9 @@ def test_build_front_door_verdict_buy_requires_mature_t30_sample() -> None:
         {
             "decision": "bullish",
             "composite_score": 0.68,
-            "expected_returns": {"t30": 9.4},
-            "win_rates": {"t30": 0.63},
+            # C219: t5/t10 让 _short_term_passes 通过, 但 mature_count=5 < 20 → 不 BUY
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 9.4},
+            "win_rates": {"t5": 0.61, "t10": 0.62, "t30": 0.63},
             "bucket_sample_count": 40,
             # Only 5 of the 40 historical picks have matured past the 30-day
             # horizon — the T+30 stats are dominated by unmatured records.
@@ -273,8 +278,9 @@ def test_build_front_door_verdict_buy_ok_when_mature_sample_sufficient() -> None
         {
             "decision": "bullish",
             "composite_score": 0.68,
-            "expected_returns": {"t30": 9.4},
-            "win_rates": {"t30": 0.63},
+            # C219: t5/t10 让 _short_term_passes 通过, mature_count=25 >= 20 → BUY
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 9.4},
+            "win_rates": {"t5": 0.61, "t10": 0.62, "t30": 0.63},
             "bucket_sample_count": 40,
             "bucket_t30_mature_count": 25,
         },
@@ -291,8 +297,9 @@ def test_build_front_door_verdict_falls_back_to_raw_count_when_mature_absent() -
         {
             "decision": "bullish",
             "composite_score": 0.68,
-            "expected_returns": {"t30": 9.4},
-            "win_rates": {"t30": 0.63},
+            # C219: t5/t10 让 _short_term_passes 通过, 无 mature_count → fallback raw count
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 9.4},
+            "win_rates": {"t5": 0.61, "t10": 0.62, "t30": 0.63},
             "bucket_sample_count": 48,
             # No bucket_t30_mature_count key at all (pre-R35 data / partial pipeline)
         },
@@ -324,8 +331,9 @@ def test_build_front_door_verdict_risk_off_hold_not_blocked_by_zero_mature_count
         {
             "decision": "bullish",
             "composite_score": 0.72,
-            "expected_returns": {"t30": 11.4},
-            "win_rates": {"t30": 0.66},
+            # C219: t5/t10 让 _meets_quality_bar 通过, risk_off + mature=0 → HOLD (用 raw count)
+            "expected_returns": {"t5": 10.0, "t10": 10.5, "t30": 11.4},
+            "win_rates": {"t5": 0.64, "t10": 0.65, "t30": 0.66},
             "bucket_sample_count": 40,
             # Field present but zero: bucket is tracked but no pick has matured
             # past 30 days yet.
@@ -348,8 +356,9 @@ def test_build_front_door_verdict_buy_still_requires_mature_sample_when_zero() -
         {
             "decision": "bullish",
             "composite_score": 0.72,
-            "expected_returns": {"t30": 11.4},
-            "win_rates": {"t30": 0.66},
+            # C219: t5/t10 让 _short_term_passes 通过, 但 mature=0 < 20 → 不 BUY
+            "expected_returns": {"t5": 10.0, "t10": 10.5, "t30": 11.4},
+            "win_rates": {"t5": 0.64, "t10": 0.65, "t30": 0.66},
             "bucket_sample_count": 40,
             "bucket_t30_mature_count": 0,
         },
@@ -359,6 +368,117 @@ def test_build_front_door_verdict_buy_still_requires_mature_sample_when_zero() -
         "BUY must still require mature T+30 evidence; zero mature samples must "
         "not promote to BUY even with a large raw sample count"
     )
+
+
+# ---------------------------------------------------------------------------
+# C219: BUY gate T+5 OR T+10 OR 逻辑 (短期反弹信号)
+# per-horizon bootstrap CI (n=7203, 95%): T+5 60.2% [59.0%, 61.3%],
+# T+10 60.5% [59.4%, 61.6%], T+30 45.4% [44.2%, 46.5%] << 50%
+# ---------------------------------------------------------------------------
+
+
+def test_c219_buy_passes_when_t5_only_passes() -> None:
+    """C219: T+5 通过 (winrate>=0.55 AND edge>0), T+10 不通过 → 仍 BUY."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            # T+5 强 (winrate 0.62, edge 8.5), T+10 弱 (winrate 0.50, edge 0.5)
+            "expected_returns": {"t5": 8.5, "t10": 0.5, "t30": -1.0},
+            "win_rates": {"t5": 0.62, "t10": 0.50, "t30": 0.40},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] == "BUY", "T+5 单独通过应 BUY (OR 逻辑)"
+
+
+def test_c219_buy_passes_when_t10_only_passes() -> None:
+    """C219: T+10 通过, T+5 不通过 → 仍 BUY."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            # T+5 弱 (winrate 0.50, edge 0.5), T+10 强 (winrate 0.62, edge 9.0)
+            "expected_returns": {"t5": 0.5, "t10": 9.0, "t30": -1.0},
+            "win_rates": {"t5": 0.50, "t10": 0.62, "t30": 0.40},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] == "BUY", "T+10 单独通过应 BUY (OR 逻辑)"
+
+
+def test_c219_buy_blocked_when_both_t5_t10_fail() -> None:
+    """C219: T+5 和 T+10 都不通过 → 不 BUY, 即使 T+30 强."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            # T+5/T+10 都弱, T+30 强 — 旧代码会 BUY, 新代码不应 BUY
+            "expected_returns": {"t5": -0.5, "t10": -0.5, "t30": 9.4},
+            "win_rates": {"t5": 0.45, "t10": 0.45, "t30": 0.63},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] != "BUY", "T+5/T+10 都不通过时即使 T+30 强也不应 BUY"
+
+
+def test_c219_buy_passes_when_both_t5_t10_pass() -> None:
+    """C219: T+5 和 T+10 都通过 → BUY (OR 逻辑的退化情况)."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 9.4},
+            "win_rates": {"t5": 0.62, "t10": 0.63, "t30": 0.63},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] == "BUY"
+
+
+def test_c219_watchable_uses_or_logic() -> None:
+    """C219: is_watchable 也用 T+5 OR T+10 (winrate>=0.5, edge>=0).
+    composite 0.4 (不够 BUY), T+5 弱但 T+10 watchable → HOLD."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.40,  # 不够 BUY (需要 >=0.5)
+            # T+5 不 watchable (edge<0), T+10 watchable (winrate 0.52, edge 2.0)
+            "expected_returns": {"t5": -0.5, "t10": 2.0, "t30": 2.0},
+            "win_rates": {"t5": 0.48, "t10": 0.52, "t30": 0.52},
+            "bucket_sample_count": 48,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] == "HOLD", "T+10 watchable 但 T+5 不 watchable → HOLD (OR)"
+
+
+def test_c219_invalidation_t30_negative_still_flagged() -> None:
+    """C219: 即使 BUY 通过 (T+5/T+10 强), T+30 edge 转负仍作为长期衰退信号."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            # T+5/T+10 强 (BUY), T+30 edge 转负 (长期衰退)
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": -2.0},
+            "win_rates": {"t5": 0.62, "t10": 0.63, "t30": 0.40},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    # BUY gate 通过 (T+5/T+10 OR)
+    assert verdict["action"] == "BUY"
+    # 但 T+30 edge 转负仍被标记 (长期衰退信号)
+    assert "转负" in verdict["invalidation_reason"]
 
 
 # ---------------------------------------------------------------------------

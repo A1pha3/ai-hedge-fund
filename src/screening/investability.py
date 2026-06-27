@@ -161,6 +161,17 @@ def build_front_door_verdict(
     composite_score = _safe_metric(recommendation.get("composite_score"), _safe_metric(recommendation.get("score_b", 0.0), 0.0))
     expected_returns = recommendation.get("expected_returns") or {}
     win_rates = recommendation.get("win_rates") or {}
+    # C219 (autodev): per-horizon bootstrap CI (n=7203, 95%) 证明 low bucket
+    # 是短期反弹票 — T+5 winrate=60.2% [59.0%, 61.3%], T+10 winrate=60.5%
+    # [59.4%, 61.6%], 但 T+30 winrate=45.4% [44.2%, 46.5%] << 50%. 原 BUY gate
+    # 用 T+30 horizon 导致 low bucket 票被门控翻转拒绝. 改为 T+5 OR T+10 OR
+    # 逻辑: 任一短期 horizon 满足 (edge>0 AND winrate>=0.55) 即可 BUY, 让短期
+    # 反弹票通过门控.
+    t5_edge = _safe_metric(expected_returns.get("t5"), 0.0)
+    t5_win_rate = _safe_metric(win_rates.get("t5"), 0.0)
+    t10_edge = _safe_metric(expected_returns.get("t10"), 0.0)
+    t10_win_rate = _safe_metric(win_rates.get("t10"), 0.0)
+    # 保留 t30 用于长期衰退信号 (invalidation_reasons)
     t30_edge = _safe_metric(expected_returns.get("t30"), 0.0)
     t30_win_rate = _safe_metric(win_rates.get("t30"), 0.0)
     sample_count = int(_safe_metric(recommendation.get("bucket_sample_count"), 0.0))
@@ -170,6 +181,8 @@ def build_front_door_verdict(
     # bucket_t30_mature_count field is present, require it to clear the same
     # statistical-significance bar as the legacy raw count; otherwise fall
     # back to the raw count so pre-R35 / partial pipelines keep working.
+    # C219: T+30 mature_count 蕴含 T+5/T+10 mature (T+30 比 T+5/T+10 更严格),
+    # 作为短期 horizon 的保守成熟度代理.
     t30_mature_count_raw = recommendation.get("bucket_t30_mature_count")
     has_mature_field = t30_mature_count_raw is not None
     backing_sample = (
@@ -179,18 +192,19 @@ def build_front_door_verdict(
     )
 
     supports_long = decision != "bearish"
-    # BUY requires strict *mature* T+30 evidence (R35). The risk_off HOLD
-    # decision, however, must reflect pick quality rather than tracking age: a
-    # freshly-active bucket with bucket_t30_mature_count == 0 (field present,
-    # no pick has yet crossed the 30-day horizon) should not be locked out of
-    # HOLD merely because none of its picks have matured. BH-013: use the raw
-    # bucket_sample_count as the risk_off HOLD backing sample so a populated
-    # young bucket can still surface a high-quality pick as HOLD instead of
-    # AVOID. BUY in normal regimes keeps the strict mature-count requirement.
-    _meets_quality_bar = supports_long and composite_score >= 0.5 and t30_edge > 0 and t30_win_rate >= 0.55
+    # C219: BUY gate 改为 T+5 OR T+10 OR 逻辑 (短期反弹信号). 任一 horizon
+    # 满足 edge>0 AND winrate>=0.55 即可通过. T+30 mature_count 仍作为成熟度
+    # 代理 (T+30 mature 蕴含 T+5/T+10 mature, 更严格).
+    _t5_passes = t5_edge > 0 and t5_win_rate >= 0.55
+    _t10_passes = t10_edge > 0 and t10_win_rate >= 0.55
+    _short_term_passes = _t5_passes or _t10_passes
+    _meets_quality_bar = supports_long and composite_score >= 0.5 and _short_term_passes
     is_high_quality = _meets_quality_bar and backing_sample >= 20
     is_high_quality_for_hold = _meets_quality_bar and sample_count >= 20
-    is_watchable = supports_long and composite_score >= 0.25 and t30_edge >= 0 and t30_win_rate >= 0.5
+    # is_watchable: 宽松版 (winrate>=0.5, edge>=0), 同样用 T+5 OR T+10
+    _t5_watchable = t5_edge >= 0 and t5_win_rate >= 0.5
+    _t10_watchable = t10_edge >= 0 and t10_win_rate >= 0.5
+    is_watchable = supports_long and composite_score >= 0.25 and (_t5_watchable or _t10_watchable)
 
     if "crisis" in regime_lower or "risk_off" in regime_lower:
         action = "HOLD" if is_high_quality_for_hold else "AVOID"
