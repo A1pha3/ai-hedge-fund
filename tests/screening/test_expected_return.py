@@ -497,3 +497,133 @@ def test_expected_return_nan_score_b_does_not_corrupt_bucket():
     # it should be coerced to 0.0 and binned into the lowest bucket.
     for item in report.items:
         assert math.isfinite(item.score_b if hasattr(item, "score_b") else 0.0), "NaN score_b leaked into expected_return"
+
+
+# ---------------------------------------------------------------------------
+# R-5.C: T+30 median (诚实窄预测) propagation + render
+# ---------------------------------------------------------------------------
+
+
+class TestBucketT30MedianPropagation:
+    """R-5.C: bucket_t30_median_return must propagate from calibration → ExpectedReturn.
+
+    Mean 被 outlier 污染 (688008 +112% 案例); median 是更稳健的"典型票"信号.
+    复用 confidence_calibration.R-6 的 t30_median_return, 不重新计算.
+    """
+
+    def test_expected_return_carries_t30_median(self, tmp_path):
+        """ExpectedReturn must expose bucket_t30_median_return from calibration."""
+        import json
+        from src.screening.expected_return import compute_expected_returns
+
+        # 5 records in "高 (>0.8)" with skewed T+30 returns → median ≠ mean
+        # mean = (1+2+3+4+100)/5 = 22.0 (polluted by +100% outlier)
+        # median = 3.0 (honest typical-pick view)
+        records = [
+            {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.85, "next_30day_return": 1.0},
+            {"ticker": "000002", "recommended_date": "20260101", "recommendation_score": 0.82, "next_30day_return": 2.0},
+            {"ticker": "000003", "recommended_date": "20260101", "recommendation_score": 0.81, "next_30day_return": 3.0},
+            {"ticker": "000004", "recommended_date": "20260101", "recommendation_score": 0.83, "next_30day_return": 4.0},
+            {"ticker": "000005", "recommended_date": "20260101", "recommendation_score": 0.84, "next_30day_return": 100.0},
+        ]
+        (tmp_path / "tracking_history.json").write_text(json.dumps(records), encoding="utf-8")
+        recs = [{"ticker": "000001", "score_b": 0.85}]
+        report = compute_expected_returns(recommendations=recs, reports_dir=tmp_path)
+        item = report.items[0]
+        assert item.bucket_t30_median_return is not None
+        # median of [1,2,3,4,100] = 3.0
+        assert abs(item.bucket_t30_median_return - 3.0) < 0.01
+        # sanity: mean should be 22.0 (polluted) — proving median is more honest
+        assert item.expected_returns["t30"] is not None
+        assert abs(item.expected_returns["t30"] - 22.0) < 0.01
+
+    def test_expected_return_median_none_when_no_matured(self, tmp_path):
+        """No matured T+30 records → median None (honest, not a fake 0)."""
+        import json
+        from src.screening.expected_return import compute_expected_returns
+
+        # Records without next_30day_return → no matured T+30 → median None
+        records = [
+            {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.85},
+        ]
+        (tmp_path / "tracking_history.json").write_text(json.dumps(records), encoding="utf-8")
+        recs = [{"ticker": "000001", "score_b": 0.85}]
+        report = compute_expected_returns(recommendations=recs, reports_dir=tmp_path)
+        assert report.items[0].bucket_t30_median_return is None
+
+    def test_to_dict_serializes_median(self, tmp_path):
+        """R-5.C: to_dict must serialize bucket_t30_median_return (None and value)."""
+        import json
+        from src.screening.expected_return import ExpectedReturn, HORIZONS
+
+        # Case 1: median value → rounded to 4 decimals
+        item = ExpectedReturn(
+            ticker="000001",
+            score_b=0.85,
+            bucket_label="高 (>0.8)",
+            bucket_sample_count=5,
+            expected_returns={h: None for h in HORIZONS},
+            win_rates={h: None for h in HORIZONS},
+            bucket_t30_median_return=3.12345,
+        )
+        d = item.to_dict()
+        assert d["bucket_t30_median_return"] == 3.1235
+
+        # Case 2: None → None (no fake 0)
+        item_none = ExpectedReturn(
+            ticker="000002",
+            score_b=0.5,
+            bucket_label="中 (0.4-0.6)",
+            bucket_sample_count=0,
+            expected_returns={h: None for h in HORIZONS},
+            win_rates={h: None for h in HORIZONS},
+            bucket_t30_median_return=None,
+        )
+        assert item_none.to_dict()["bucket_t30_median_return"] is None
+
+    def test_full_render_shows_median_column(self, tmp_path):
+        """R-5.C: render_expected_returns must show T+30中位 column header and value."""
+        import json
+        from src.screening.expected_return import compute_expected_returns, render_expected_returns
+
+        records = [
+            {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.85, "next_30day_return": 3.0},
+            {"ticker": "000002", "recommended_date": "20260101", "recommendation_score": 0.82, "next_30day_return": 5.0},
+        ]
+        (tmp_path / "tracking_history.json").write_text(json.dumps(records), encoding="utf-8")
+        recs = [{"ticker": "000001", "score_b": 0.85}]
+        report = compute_expected_returns(recommendations=recs, reports_dir=tmp_path)
+        out = render_expected_returns(report)
+        assert "T+30中位" in out
+        # median of [3.0, 5.0] = 4.0 → rendered as +4.00%
+        assert "+4.00%" in out
+
+    def test_compact_render_shows_median(self, tmp_path):
+        """R-5.C: compact render must show T+30中位= next to T+30 mean."""
+        import json
+        from src.screening.expected_return import compute_expected_returns, render_expected_returns_compact
+
+        records = [
+            {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.85, "next_30day_return": 3.0},
+            {"ticker": "000002", "recommended_date": "20260101", "recommendation_score": 0.82, "next_30day_return": 5.0},
+        ]
+        (tmp_path / "tracking_history.json").write_text(json.dumps(records), encoding="utf-8")
+        recs = [{"ticker": "000001", "score_b": 0.85}]
+        report = compute_expected_returns(recommendations=recs, reports_dir=tmp_path)
+        out = render_expected_returns_compact(report)
+        assert "T+30中位" in out
+
+    def test_compact_render_omits_median_when_none(self, tmp_path):
+        """R-5.C: when median is None, compact render must omit T+30中位 (no fake 0)."""
+        import json
+        from src.screening.expected_return import compute_expected_returns, render_expected_returns_compact
+
+        # Records without next_30day_return → median None
+        records = [
+            {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.85},
+        ]
+        (tmp_path / "tracking_history.json").write_text(json.dumps(records), encoding="utf-8")
+        recs = [{"ticker": "000001", "score_b": 0.85}]
+        report = compute_expected_returns(recommendations=recs, reports_dir=tmp_path)
+        out = render_expected_returns_compact(report)
+        assert "T+30中位" not in out

@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from src.screening.isotonic_calibration import MIN_BUCKET_SAMPLES
 from src.utils.display import Fore, Style
 
 
@@ -47,6 +48,9 @@ class ReconciliationRow:
     predicted_return: float | None = None
     #: R-7: 同分桶的 T+30 中位数预测 (稳健中心, 免异常值); None = 无成熟 T+30
     predicted_return_median: float | None = None
+    #: R-5.C: isotonic-calibrated prediction. None when matched trades < 20
+    # (insufficient evidence) or when the underlying bucket has no T+30 mean.
+    predicted_return_isotonic: float | None = None
     actual_return: float = 0.0  # sell_price/buy_price - 1
     error: float | None = None  # actual - predicted; None when predicted is None
     directional_match: bool | None = None  # sign(predicted) == sign(actual); None when predicted None
@@ -62,6 +66,12 @@ class ReconciliationReport:
     mae: float | None = None  # 平均绝对误差 (仅 matched, mean-based)
     #: R-7: median-based MAE (用 predicted_return_median). 低于 mae → 中位数是更好的预测中心
     mae_median: float | None = None
+    #: R-5.C: isotonic-calibrated MAE (用 predicted_return_isotonic).
+    #: None when matched_count < 20 (证据不足, 不强行校准) or no valid pairs.
+    mae_isotonic: float | None = None
+    #: R-5.C: 是否有足够样本做 isotonic 校准 (matched >= MIN_BUCKET_SAMPLES).
+    #: False 时 mae_isotonic 保持 None, 渲染输出"证据不足"诚实标注.
+    calibration_sufficient: bool = True
     directional_accuracy: float | None = None  # 方向准确率 (仅 matched)
     #: NS-22: 完整性警告 (如 unmatched>50% 提示 trade_log 列错位 / 日期未对齐 / 错报告目录)
     warnings: list[str] = field(default_factory=list)
@@ -239,6 +249,11 @@ def compute_reconciliation(
         load_tracking_history,
         resolve_report_dir,
     )
+    from src.screening.isotonic_calibration import (
+        fit_isotonic,
+        apply_isotonic,
+        is_bucket_insufficient,
+    )
 
     search_dir = reports_dir or resolve_report_dir()
     trades = _load_trade_log(trade_log_path)
@@ -257,6 +272,9 @@ def compute_reconciliation(
     abs_errors: list[float] = []
     abs_errors_median: list[float] = []
     directional_hits = 0
+    # R-5.C: collect (predicted, actual) pairs for isotonic fit.
+    # Delayed until after the loop so we can decide sufficiency once.
+    iso_pairs: list[tuple[float, float]] = []
 
     for trade in trades:
         ticker = trade["ticker"]
@@ -292,6 +310,8 @@ def compute_reconciliation(
                     error=error, directional_match=dmatch,
                 )
             )
+            # collect pair for isotonic fit (predicted → actual)
+            iso_pairs.append((predicted, actual))
         else:
             unmatched += 1
             rows.append(
@@ -307,6 +327,30 @@ def compute_reconciliation(
     mae_median = (sum(abs_errors_median) / len(abs_errors_median)) if abs_errors_median else None
     directional_accuracy = (directional_hits / matched) if matched else None
 
+    # R-5.C #3 + #4: isotonic calibration with n<20 honest "证据不足" gate.
+    # 只有 matched >= MIN_BUCKET_SAMPLES 才拟合保序回归; 否则保持 mae_isotonic=None,
+    # 在渲染输出"证据不足"标注, 不假装校准有效.
+    mae_isotonic: float | None = None
+    calibration_sufficient = not is_bucket_insufficient(matched, MIN_BUCKET_SAMPLES)
+    if calibration_sufficient and iso_pairs:
+        # fit on (predicted, actual) — xs are predicted returns, ys are actuals.
+        # PAV finds the monotone mapping that best explains actuals given predicts;
+        # a calibrated prediction at the low end should not exceed one at the high end.
+        xs = [p[0] for p in iso_pairs]
+        ys = [p[1] for p in iso_pairs]
+        iso_model = fit_isotonic(xs, ys, min_samples=MIN_BUCKET_SAMPLES)
+        if not iso_model.insufficient:
+            calibrated = apply_isotonic(iso_model, xs)
+            abs_errors_isotonic = [abs(a - c) if c is not None else 0.0 for a, c in zip(ys, calibrated)]
+            # only count rows where calibration produced a value
+            valid = [c is not None for c in calibrated]
+            if any(valid):
+                mae_isotonic = sum(abs_errors_isotonic[i] for i, v in enumerate(valid) if v) / sum(valid)
+            # backfill per-row calibrated predictions for transparency
+            for row, cal in zip(rows, calibrated):
+                if row.predicted_return is not None and cal is not None:
+                    row.predicted_return_isotonic = cal
+
     # NS-22: 完整性警告 — 未匹配 >50% 提示 trade_log 可能列错位/日期未对齐/错报告目录
     warnings: list[str] = []
     total = matched + unmatched
@@ -315,6 +359,12 @@ def compute_reconciliation(
             f"未匹配率 {unmatched}/{total} > 50% — 检查 trade_log 列对齐 (broker 导出前导列)、"
             "buy_date 与报告日期对齐、reports_dir 是否正确; 高未匹配率下的 MAE/方向准确率不可信"
         )
+    # R-5.C #4: 诚实标注 — matched < 20 → isotonic 不可信, 明确告知用户
+    if not calibration_sufficient:
+        warnings.append(
+            f"匹配交易 {matched} < {MIN_BUCKET_SAMPLES} — 证据不足, isotonic 校准未执行; "
+            f"收集更多交易后再比较 MAE(保序). 当前 MAE/MAE(中位) 仅供参考, 样本量小不可定论"
+        )
 
     return ReconciliationReport(
         rows=rows,
@@ -322,6 +372,8 @@ def compute_reconciliation(
         unmatched_count=unmatched,
         mae=mae,
         mae_median=mae_median,
+        mae_isotonic=mae_isotonic,
+        calibration_sufficient=calibration_sufficient,
         directional_accuracy=directional_accuracy,
         warnings=warnings,
     )
@@ -365,17 +417,31 @@ def render_reconciliation(report: ReconciliationReport) -> str:
     if report.matched_count:
         mae_str = f"{report.mae:.1f}%" if report.mae is not None else "—"
         mae_median_str = f"{report.mae_median:.1f}%" if report.mae_median is not None else "—"
+        # R-5.C #4: 诚实标注 — matched < 20 时 MAE(保序) 显示"证据不足"而非 0 或 —
+        # 明确告知用户当前样本量不够, 不要把保序校准的缺失误读为"无改善".
+        if report.calibration_sufficient:
+            mae_iso_str = f"{report.mae_isotonic:.1f}%" if report.mae_isotonic is not None else "—"
+        else:
+            mae_iso_str = f"{Fore.YELLOW}证据不足 (<{MIN_BUCKET_SAMPLES}笔){Style.RESET_ALL}"
         da_str = f"{report.directional_accuracy * 100:.0f}%" if report.directional_accuracy is not None else "—"
-        # R-7: median-MAE 并列 mean-MAE — 若 median-MAE < mean-MAE, 中位数是更好的预测中心
-        # (mean 被 outlier 污染时 median 更准). 不带判断的并列展示, 让用户自己比对.
+        # R-7 + R-5.C: 三中心 MAE 并列 — mean / median / isotonic.
+        # mean: 现有 baseline; median: 抗 outlier; isotonic: 单调校准后.
+        # 用户可自行比较哪个 MAE 最低, 即为该数据集上最佳预测中心.
         lines.append(
             f"  {Fore.CYAN}聚合:{Style.RESET_ALL} 对账 {report.matched_count} 笔"
             f" (未匹配 {report.unmatched_count})  |  MAE={mae_str}  |  MAE(中位)={mae_median_str}"
-            f"  |  方向准确率={da_str}"
+            f"  |  MAE(保序)={mae_iso_str}  |  方向准确率={da_str}"
         )
     else:
         lines.append(
             f"  {Fore.YELLOW}无匹配交易 (买入日报告未含日志中的标的){Style.RESET_ALL}"
+        )
+
+    # R-5.C #4: 把"证据不足"警告以显著方式再次展示 (除了 warnings 列表, 聚合行也提示)
+    if not report.calibration_sufficient and report.matched_count > 0:
+        lines.append(
+            f"  {Fore.YELLOW}⚠ isotonic 校准未执行: 匹配交易 {report.matched_count} < "
+            f"{MIN_BUCKET_SAMPLES} 笔, 证据不足. 收集更多交易后再比较 MAE(保序).{Style.RESET_ALL}"
         )
 
     lines.append(

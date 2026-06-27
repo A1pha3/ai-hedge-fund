@@ -141,11 +141,18 @@ class TestComputeReconciliation:
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
         assert report.unmatched_count == 4
         assert report.matched_count == 0
-        assert len(report.warnings) == 1
-        assert "未匹配率 4/4" in report.warnings[0]
+        # NS-22 unmatched warning must be present
+        assert any("未匹配率 4/4" in w for w in report.warnings)
+        # R-5.C: matched=0 < 20 also adds 证据不足 warning (honest, expected)
+        assert any("证据不足" in w for w in report.warnings)
 
     def test_no_warning_when_mostly_matched(self, tmp_path: Path) -> None:
-        """NS-22: matched majority → no spurious warning."""
+        """NS-22: matched majority → no spurious NS-22 warning.
+
+        Note: R-5.C may still add a 证据不足 warning when matched < 20; that is
+        intentional honest labeling, not a spurious NS-22 warning. This test
+        only asserts the NS-22 unmatched warning is absent.
+        """
         _seed_report(tmp_path, "20260101", [
             {"ticker": "000001", "score_b": 0.75},
             {"ticker": "000002", "score_b": 0.75},
@@ -161,7 +168,8 @@ class TestComputeReconciliation:
             {"ticker": "999999", "buy_date": "20260101", "buy_price": 40.0, "sell_date": "20260131", "sell_price": 41.0},
         ])
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
-        assert report.warnings == []
+        # NS-22 unmatched warning must NOT be present (majority matched)
+        assert not any("未匹配率" in w for w in report.warnings)
 
     def test_predicted_vs_actual(self, tmp_path: Path) -> None:
         """Ticker bought on 20260101; model predicted (bucket avg) +5%, actual +6.7%."""
@@ -327,3 +335,104 @@ class TestReconcileMedianPrediction:
         out = render_reconciliation(report)
         # both MAE stats surfaced
         assert "MAE" in out
+
+
+# ---------------------------------------------------------------------------
+# R-5.C: isotonic MAE comparison + n<20 honest "证据不足" labeling
+# (owner-chosen honest-narrow-prediction direction: median + isotonic + MAE
+#  comparison + n<20 honest flag)
+# ---------------------------------------------------------------------------
+
+
+class TestReconcileIsotonicCalibration:
+    """R-5.C #3: isotonic MAE alongside mean/median MAE for tri-center comparison."""
+
+    def _seed_and_reconcile(self, tmp_path: Path, n_trades: int) -> ReconciliationReport:
+        """Helper: seed n trades with monotonically increasing predicted→actual.
+
+        predicted is bucket T+30 mean; we seed tracking so the bucket has known
+        T+30 returns, then write n trade rows each matching a distinct buy_date.
+        """
+        # Seed tracking: bucket 中高 (0.6-0.8) with T+30 returns around +5%
+        # (so predicted_return ≈ 5.0 for all rows in this bucket).
+        tracking_recs = [
+            {"ticker": f"00009{i}", "recommended_date": f"202511{i+1:02d}",
+             "recommendation_score": 0.70 + i * 0.01,
+             "next_30day_return": 5.0 + i * 0.1}
+            for i in range(min(n_trades + 2, 30))  # extra matured for bucket stability
+        ]
+        _seed_tracking(tmp_path, tracking_recs)
+
+        # Seed n_trades daily reports, each containing one ticker at score_b=0.75
+        # (so all rows land in bucket 中高 with predicted ≈ 5.1).
+        # Date format: YYYYMMDD (8 digits). Day = i+1 (01..31).
+        for i in range(n_trades):
+            day = f"202601{i+1:02d}"
+            _seed_report(tmp_path, day, [{"ticker": f"60000{i}", "score_b": 0.75}])
+
+        # Trade log: n_trades rows, each buy on its own day, sell 30 days later.
+        # All actual returns ≈ 5% (buy 10, sell 10.5) — predicted ≈ 5.5 → small error.
+        # Isotonic fit on near-constant xs will just average the ys.
+        trade_rows = []
+        for i in range(n_trades):
+            day = f"202601{i+1:02d}"
+            sell_day = f"202602{i+1:02d}"  # next month, same day (≥30 days later)
+            trade_rows.append({
+                "ticker": f"60000{i}", "buy_date": day,
+                "buy_price": 10.0, "sell_date": sell_day, "sell_price": 10.5,
+            })
+        trade_path = _write_trade_log(tmp_path, trade_rows)
+        return compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+
+    def test_mae_isotonic_populated_when_sufficient(self, tmp_path: Path) -> None:
+        """matched >= 20 → mae_isotonic must be populated (not None)."""
+        report = self._seed_and_reconcile(tmp_path, n_trades=22)
+        assert report.matched_count >= 20
+        assert report.calibration_sufficient is True
+        assert report.mae_isotonic is not None
+        # isotonic on near-constant predicted → calibrated ≈ mean of actuals,
+        # so MAE(保序) should be small (all actuals ≈ 5%).
+        assert report.mae_isotonic >= 0.0
+
+    def test_mae_isotonic_none_when_insufficient(self, tmp_path: Path) -> None:
+        """matched < 20 → mae_isotonic None (证据不足, not a fake 0)."""
+        report = self._seed_and_reconcile(tmp_path, n_trades=5)
+        assert report.matched_count == 5
+        assert report.calibration_sufficient is False
+        assert report.mae_isotonic is None
+        # warning surfaces the honest "证据不足" message
+        assert any("证据不足" in w for w in report.warnings)
+
+    def test_render_shows_isotonic_mae_when_sufficient(self, tmp_path: Path) -> None:
+        """render shows MAE(保序) column when matched >= 20."""
+        report = self._seed_and_reconcile(tmp_path, n_trades=22)
+        out = render_reconciliation(report)
+        assert "MAE(保序)" in out
+
+    def test_render_shows_证据不足_when_insufficient(self, tmp_path: Path) -> None:
+        """render shows 证据不足 in MAE(保序) slot when matched < 20."""
+        report = self._seed_and_reconcile(tmp_path, n_trades=5)
+        out = render_reconciliation(report)
+        assert "MAE(保序)" in out
+        assert "证据不足" in out
+        # the standalone warning line also fires
+        assert "isotonic 校准未执行" in out
+
+    def test_calibration_sufficient_flag_threshold(self, tmp_path: Path) -> None:
+        """calibration_sufficient is True at >= 20, False below 20."""
+        # exactly 20 → sufficient
+        r20 = self._seed_and_reconcile(tmp_path, n_trades=20)
+        assert r20.calibration_sufficient is True
+        # 19 → insufficient (need a fresh tmp_path)
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            r19 = self._seed_and_reconcile(Path(td), n_trades=19)
+            assert r19.calibration_sufficient is False
+
+    def test_predicted_return_isotonic_backfilled_per_row(self, tmp_path: Path) -> None:
+        """Each matched row carries predicted_return_isotonic when sufficient."""
+        report = self._seed_and_reconcile(tmp_path, n_trades=22)
+        matched_rows = [r for r in report.rows if r.predicted_return is not None]
+        assert len(matched_rows) >= 20
+        for row in matched_rows:
+            assert row.predicted_return_isotonic is not None

@@ -75,6 +75,10 @@ class ExpectedReturn:
     # worst plausible). Completes the risk triplet (R144 mean-of-losers + P-2 std
     # + this tail). None when < 2 matured T+30.
     bucket_t30_p5_return: float | None = None
+    # R-5.C: per-bucket median of realized T+30 returns (诚实窄预测).
+    # Mean 被 outlier 污染 (688008 +112% 案例); median 更稳健反映典型票.
+    # None when bucket has no matured T+30 records.
+    bucket_t30_median_return: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -96,6 +100,11 @@ class ExpectedReturn:
             "bucket_t30_p5_return": (
                 round(self.bucket_t30_p5_return, 4)
                 if self.bucket_t30_p5_return is not None
+                else None
+            ),
+            "bucket_t30_median_return": (
+                round(self.bucket_t30_median_return, 4)
+                if self.bucket_t30_median_return is not None
                 else None
             ),
             "expected_returns": {k: round(v, 4) if v is not None else None for k, v in self.expected_returns.items()},
@@ -207,6 +216,16 @@ def _build_bucket_t30_p5_map(calibration: CalibrationSummary) -> dict[str, float
     return {bucket.label: bucket.t30_p5_return for bucket in calibration.buckets}
 
 
+def _build_bucket_t30_median_map(calibration: CalibrationSummary) -> dict[str, float | None]:
+    """Build a mapping from bucket label → median of realized T+30 returns.
+
+    R-5.C: 诚实窄预测. Mean 被 outlier 污染 (例如 688008 +112% 案例); median
+    更稳健地反映"典型票"在该分位的实际 T+30 表现. None when the bucket has no
+    matured T+30 records (复用 confidence_calibration.R-6 的 t30_median_return).
+    """
+    return {bucket.label: bucket.t30_median_return for bucket in calibration.buckets}
+
+
 def compute_expected_returns(
     *,
     recommendations: list[dict[str, Any]],
@@ -233,6 +252,7 @@ def compute_expected_returns(
     downside_t30_map = _build_bucket_t30_downside_map(calibration)
     std_t30_map = _build_bucket_t30_std_map(calibration)
     p5_t30_map = _build_bucket_t30_p5_map(calibration)
+    median_t30_map = _build_bucket_t30_median_map(calibration)
 
     trade_date = ""
     items: list[ExpectedReturn] = []
@@ -269,6 +289,7 @@ def compute_expected_returns(
                 bucket_t30_avg_negative_return=downside_t30_map.get(label),
                 bucket_t30_std_return=std_t30_map.get(label),
                 bucket_t30_p5_return=p5_t30_map.get(label),
+                bucket_t30_median_return=median_t30_map.get(label),
             )
         )
 
@@ -332,8 +353,11 @@ def render_expected_returns(report: ExpectedReturnReport) -> str:
         # — the T+30 win rate (which backs the BUY-gate edge) was
         # computed-but-hidden. Surfacing it lets the user judge whether the
         # T+30 edge is backed by a high or low hit rate.
-        f"  {'标的':<8} {'Score':>6} {'分位':>10} {'样本':>4} {'T30熟':>5}  {'T+1':>8}  {'T+5':>8}  {'T+10':>8}  {'T+20':>9}  {'T+30':>9}  {'T+30胜率':>8}",
-        f"  {'─' * 8} {'─' * 6} {'─' * 10} {'─' * 4} {'─' * 5}  {'─' * 8}  {'─' * 8}  {'─' * 8}  {'─' * 9}  {'─' * 9}  {'─' * 8}",
+        # R-5.C: add T+30中位 column. T+30 mean is polluted by outliers
+        # (e.g. 688008 +112%); median is a more honest "typical pick" view.
+        # 用户看到 T+30 与 T+30中位 差距大时, 即可判断本桶被尾部极端值拉高.
+        f"  {'标的':<8} {'Score':>6} {'分位':>10} {'样本':>4} {'T30熟':>5}  {'T+1':>8}  {'T+5':>8}  {'T+10':>8}  {'T+20':>9}  {'T+30':>9}  {'T+30中位':>9}  {'T+30胜率':>8}",
+        f"  {'─' * 8} {'─' * 6} {'─' * 10} {'─' * 4} {'─' * 5}  {'─' * 8}  {'─' * 8}  {'─' * 8}  {'─' * 9}  {'─' * 9}  {'─' * 9}  {'─' * 8}",
     ]
 
     for item in report.items:
@@ -346,13 +370,15 @@ def render_expected_returns(report: ExpectedReturnReport) -> str:
             f"  {_fmt_return(er.get('t10')):>18}"
             f"  {_fmt_return(er.get('t20')):>19}"
             f"  {_fmt_return(er.get('t30')):>19}"
+            f"  {_fmt_return(item.bucket_t30_median_return):>19}"
             f"  {wr_t30:>8}"
         )
         lines.append(row)
 
     lines.append("")
     lines.append(
-        f"  {Fore.WHITE}说明: 预期收益 = 历史同 score 分位的平均实际收益。"
+        f"  {Fore.WHITE}说明: 预期收益 = 历史同 score 分位的平均实际收益;"
+        f"T+30中位 = 同分位 T+30 收益中位数 (R-5.C 诚实窄预测, 抗 outlier)."
         f"「样本」为该分位全部历史推荐数;「T30熟」为其中已满 30 天、"
         f"实际贡献 T+30 统计的成熟样本数。仅供参考。{Style.RESET_ALL}"
     )
@@ -383,8 +409,11 @@ def render_expected_returns_compact(report: ExpectedReturnReport) -> str:
         # +3.2% T+30 with −15% mid-hold drawdown ≠ +3.2% with −2%; the path matters.
         dd_est = compute_drawdown_estimate(er)
         dd_str = f"  回撤={dd_est.max_drawdown:.1f}%" if dd_est.available and dd_est.max_drawdown is not None else ""
+        # R-5.C: T+30 中位数 (诚实窄预测). 与 mean 并列展示 — 差距大说明本桶被
+        # outlier 拉高/拉低, 用户应更信任 median 作为典型票的代表.
+        med_str = f"  T+30中位={_fmt_return(item.bucket_t30_median_return)}" if item.bucket_t30_median_return is not None else ""
         lines.append(
-            f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}{std_str}  T+30胜率={wr_str}{dd_str}{p5_str}"
+            f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}{med_str}{std_str}  T+30胜率={wr_str}{dd_str}{p5_str}"
         )
 
     return "\n".join(lines)
