@@ -196,3 +196,68 @@ def test_finite_float_skips_nan_in_curve():
     p5 = curve[0]
     assert p5.sample_count == 2  # 只 5.0 + 3.0 有效
     assert p5.avg_return == 4.0
+
+
+# ---------------------------------------------------------------------------
+# M10: 盈亏比 + 输家画像 — 服务 winrate>50% + 高盈亏比目标
+# payoff ratio, avg_winner, avg_loser, profit factor, per-bucket 输家池
+# ---------------------------------------------------------------------------
+
+from src.screening.north_star_pnl import (  # noqa: E402
+    PayoffAnalysisResult,
+    compute_payoff_analysis_from_loaded,
+    render_payoff_line,
+)
+
+def _p_recs(returns: list) -> list:
+    return [{"recommended_date": "20250101", "recommendation_score": 0.35, "next_30day_return": r} for r in returns]
+
+def test_payoff_computes_ratio_from_wins_and_losses():
+    recs = _p_recs([10.0, -5.0, 20.0, -10.0])  # 2 wins (10,20) 2 losses (-5,-10)
+    res = compute_payoff_analysis_from_loaded(recs, min_n=2)
+    assert res.verdict == "ok"
+    assert res.winrate == 0.5
+    assert res.avg_winner == 15.0  # (10+20)/2
+    assert res.avg_loser == -7.5  # (-5+-10)/2
+    assert res.payoff_ratio == 2.0  # 15/7.5
+    assert abs(res.expectancy - 3.75) < 0.1  # (10-5+20-10)/4
+
+
+def test_payoff_no_losses_none_ratio():
+    recs = _p_recs([10.0, 20.0, 5.0])
+    res = compute_payoff_analysis_from_loaded(recs, min_n=2)
+    assert res.avg_loser is None
+    assert res.payoff_ratio is None  # 无输家
+
+
+def test_payoff_insufficient_below_min_n():
+    recs = _p_recs([10.0, -5.0])  # n=2 < min_n=5
+    res = compute_payoff_analysis_from_loaded(recs, min_n=5)
+    assert res.verdict == "insufficient"
+
+
+def test_payoff_per_bucket_breakdown():
+    """per-bucket winrate + expectancy (定位输家池)."""
+    low = [{"recommended_date": "20250101", "recommendation_score": 0.10, "next_30day_return": 5.0} for _ in range(30)]
+    mid_high = [{"recommended_date": "20250101", "recommendation_score": 0.45, "next_30day_return": -5.0} for _ in range(30)]
+    recs = low + mid_high
+    res = compute_payoff_analysis_from_loaded(recs, min_n=20)
+    low_row = [b for b in res.per_bucket if b["bucket"] == "low"][0]
+    assert low_row["winrate"] == 1.0
+    mh_row = [b for b in res.per_bucket if b["bucket"] == "mid_high"][0]
+    assert mh_row["winrate"] == 0.0
+
+
+def test_render_payoff_line_shows_ratio():
+    recs = _p_recs([10.0, -5.0, 20.0, -10.0, 5.0, -3.0])
+    res = compute_payoff_analysis_from_loaded(recs, min_n=2)
+    line = render_payoff_line(res)
+    assert line
+    assert "payoff" in line.lower() or "盈亏" in line
+    assert "payoff" in line
+
+
+def test_render_payoff_silent_when_insufficient():
+    recs = _p_recs([10.0, -5.0])
+    res = compute_payoff_analysis_from_loaded(recs, min_n=5)
+    assert render_payoff_line(res) == ""

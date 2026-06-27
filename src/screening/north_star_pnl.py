@@ -270,12 +270,142 @@ def render_holding_period_line(curve: list[HoldingPeriodPoint]) -> str:
     return f"  📊 持有期: {body}{Fore.YELLOW}{suffix}{Style.RESET_ALL}"
 
 
+# ---------------------------------------------------------------------------
+# M10: 盈亏比 + 输家画像 — 服务 winrate>50% + 高盈亏比目标
+# payoff ratio, avg_winner, avg_loser, profit factor, per-bucket 输家池.
+# 真实 493: payoff=1.86, mid_high bucket winrate 43% (最大输家池, 砍此提 winrate).
+# ---------------------------------------------------------------------------
+
+_BUCKET_ORDER_PAYOFF = ("low", "mid_low", "mid_high", "high")
+
+
+def _score_bucket_local(score_b: Any) -> str:
+    s = _finite_float(score_b)
+    if s is None:
+        return "unknown"
+    if s < 0.30:
+        return "low"
+    if s < 0.40:
+        return "mid_low"
+    if s < 0.50:
+        return "mid_high"
+    return "high"
+
+
+@dataclass
+class PayoffAnalysisResult:
+    """全样本盈亏比 + 输家画像."""
+
+    winrate: float | None = None
+    avg_winner: float | None = None
+    avg_loser: float | None = None
+    payoff_ratio: float | None = None  # avg_winner / |avg_loser|
+    profit_factor: float | None = None  # sum_wins / |sum_losses|
+    expectancy: float | None = None
+    sample_count: int = 0
+    per_bucket: list[dict[str, Any]] = field(default_factory=list)
+    verdict: str = "insufficient"  # ok | insufficient
+
+
+def compute_payoff_analysis_from_loaded(
+    records: list[dict[str, Any]],
+    *,
+    min_n: int = 20,
+) -> PayoffAnalysisResult:
+    """全样本盈亏比 + per-bucket 输家画像 (哪个 bucket 拖累 winrate 最严重).
+
+    服务目标: winrate>50% + 高盈亏比. per-bucket 定位输家池 → 砍/下调.
+    """
+    all_returns: list[float] = []
+    bucket_returns: dict[str, list[float]] = {}
+    for rec in records:
+        val = _finite_float(rec.get("next_30day_return"))
+        if val is None:
+            continue
+        all_returns.append(val)
+        b = _score_bucket_local(rec.get("recommendation_score", rec.get("score_b")))
+        bucket_returns.setdefault(b, []).append(val)
+
+    n = len(all_returns)
+    if n < min_n:
+        return PayoffAnalysisResult(sample_count=n, verdict="insufficient")
+
+    wins = [x for x in all_returns if x > 0]
+    losses = [x for x in all_returns if x <= 0]
+    avg_win = (sum(wins) / len(wins)) if wins else None
+    avg_loss = (sum(losses) / len(losses)) if losses else None
+    payoff = (avg_win / abs(avg_loss)) if (avg_win is not None and avg_loss is not None and avg_loss != 0) else None
+    p_factor = (sum(wins) / abs(sum(losses))) if (losses and sum(losses) != 0) else None
+    expectancy = sum(all_returns) / n
+
+    per_bucket: list[dict[str, Any]] = []
+    for b in _BUCKET_ORDER_PAYOFF:
+        bv = bucket_returns.get(b, [])
+        if not bv:
+            continue
+        bw = [x for x in bv if x > 0]
+        bl = [x for x in bv if x <= 0]
+        per_bucket.append({
+            "bucket": b,
+            "winrate": len(bw) / len(bv),
+            "avg_winner": (sum(bw) / len(bw)) if bw else None,
+            "avg_loser": (sum(bl) / len(bl)) if bl else None,
+            "expectancy": sum(bv) / len(bv),
+            "n": len(bv),
+            "verdict": "ok" if len(bv) >= min_n else "insufficient",
+        })
+
+    return PayoffAnalysisResult(
+        winrate=len(wins) / n,
+        avg_winner=avg_win,
+        avg_loser=avg_loss,
+        payoff_ratio=payoff,
+        profit_factor=p_factor,
+        expectancy=expectancy,
+        sample_count=n,
+        per_bucket=per_bucket,
+        verdict="ok",
+    )
+
+
+def render_payoff_line(result: PayoffAnalysisResult) -> str:
+    """渲染盈亏比 + 输家池提示 (insufficient → 空串).
+
+    展示形如:
+      ``  📊 盈亏比: payoff=1.86 avg_winner=+21% avg_loser=-11% | 输家池: mid_high winrate=43% (n=125) — 砍此 bucket 提整体 winrate``
+    """
+    if result.verdict == "insufficient":
+        return ""
+    payoff_str = f"{result.payoff_ratio:.2f}" if result.payoff_ratio is not None else "?"
+    aw_str = f"{result.avg_winner:+.0f}%" if result.avg_winner is not None else "?"
+    al_str = f"{result.avg_loser:+.0f}%" if result.avg_loser is not None else "?"
+    base = f"  📊 盈亏比: payoff={payoff_str} avg_winner={aw_str} avg_loser={al_str}"
+    # 找最大输家池 (最低 winrate bucket)
+    ok_buckets = [b for b in result.per_bucket if b["verdict"] == "ok"]
+    if ok_buckets:
+        worst = min(ok_buckets, key=lambda b: b["winrate"])
+        ww = worst["winrate"]
+        wn = worst["n"]
+        wb = worst["bucket"]
+        label = {"low": "低", "mid_low": "中低", "mid_high": "中高", "high": "高"}.get(wb, wb)
+        if ww < 0.5:
+            cutoff = f" | 输家池: {label} winrate={ww:.0%} (n={wn}) — {Fore.RED}砍/下调此 bucket 提整体 winrate{Style.RESET_ALL}"
+        else:
+            cutoff = f" | 最差 bucket: {label} winrate={ww:.0%} (n={wn})"
+    else:
+        cutoff = ""
+    return base + cutoff
+
+
 __all__ = [
     "NorthStarPnlReport",
     "HoldingPeriodPoint",
+    "PayoffAnalysisResult",
     "compute_north_star_pnl",
     "compute_north_star_pnl_from_loaded",
     "compute_holding_period_curve_from_loaded",
+    "compute_payoff_analysis_from_loaded",
     "render_north_star_line",
     "render_holding_period_line",
+    "render_payoff_line",
 ]

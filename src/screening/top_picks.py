@@ -1550,8 +1550,10 @@ def _print_north_star_block(report_dir: Path) -> None:
         from src.screening.north_star_pnl import (
             compute_holding_period_curve_from_loaded,
             compute_north_star_pnl,
+            compute_payoff_analysis_from_loaded,
             render_holding_period_line,
             render_north_star_line,
+            render_payoff_line,
         )
         from src.screening.consecutive_recommendation import load_tracking_history
 
@@ -1574,6 +1576,15 @@ def _print_north_star_block(report_dir: Path) -> None:
             print(hp_line)
     except Exception:  # noqa: BLE001 — best-effort; holding period 永不破坏前门
         pass
+    # M10: 盈亏比 + 输家画像 (全样本, 服务 winrate>50%+高盈亏比; 哪 bucket 拖累 winrate?)
+    if records:
+        try:
+            payoff = compute_payoff_analysis_from_loaded(records, min_n=20)
+            payoff_line = render_payoff_line(payoff)
+            if payoff_line:
+                print(payoff_line)
+        except Exception:  # noqa: BLE001 — best-effort; payoff 永不破坏前门
+            pass
 
 
 def _print_concentration_block(picks: list[dict]) -> None:
