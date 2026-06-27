@@ -507,7 +507,10 @@ def attach_conditional_orders_to_payload(
             history = _fallback_price_provider(ticker, lookback_sessions)
 
         history_list = list(history) if history else []
-        current_price = float(rec.get("current_price") or 0.0)
+        # NS-13 family drain: NaN current_price 经 `float(x or 0.0)` 仍 truthy 不兜底,
+        # 绕过 `<= 0.0` 降级条件直达 compute_conditional_advice (虽内层 _safe_float 兜底,
+        # 但源头未 guard 是 fragile design). 用 _safe_float 源头拒绝 NaN.
+        current_price = _safe_float(rec.get("current_price"), 0.0)
         if current_price <= 0.0 and history_list:
             tail = history_list[-1]
             # R83: 尾部可能是 None/NaN (停牌/退市/partial feed) -- 用 _safe_float
@@ -603,7 +606,9 @@ def run_conditional_orders_cli(
         else:
             history = _fallback_price_provider(ticker, lookback_sessions)
         history_list = list(history) if history else []
-        current_price = float(rec.get("current_price") or 0.0)
+        # NS-13 family drain (CLI path, 同 line 510 API path 同型 bug):
+        # NaN current_price 经 `float(x or 0.0)` 仍 truthy 不兜底, 用 _safe_float 源头拒绝.
+        current_price = _safe_float(rec.get("current_price"), 0.0)
         if current_price <= 0.0 and history_list:
             tail = history_list[-1]
             # R83: 尾部可能是 None/NaN (停牌/退市/partial feed) -- 用 _safe_float

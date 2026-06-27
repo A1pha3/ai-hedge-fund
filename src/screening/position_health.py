@@ -31,6 +31,7 @@ from src.screening.signal_momentum import compute_signal_momentum
 from src.screening.trend_resonance import compute_trend_resonance
 from src.screening.volume_confirmation import compute_volume_confirmation
 from src.utils.display import Fore, Style
+from src.utils.numeric import safe_float as _safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +260,9 @@ def compute_position_health(
         vol = volume_map.get(ticker)
 
         composite_score = comp.composite_score if comp else 0.0
-        score_b = comp.base_score if comp else float(rec.get("score_b", 0.0) or 0.0)
+        # NS-13 family drain: comp 为 None 时回退路径 `float(x or 0.0)` 不兜底 NaN,
+        # 用 safe_float 源头拒绝 NaN score_b.
+        score_b = comp.base_score if comp else _safe_float(rec.get("score_b", 0.0), 0.0)
         mom_bonus = comp.momentum_bonus if comp else 0.0
         sec_bonus = comp.sector_bonus if comp else 0.0
         con_adj = comp.consistency_adj if comp else 0.0

@@ -17,6 +17,8 @@ from scripts.btst_latest_followup_utils import (
     load_recent_btst_buy_order_cooldowns,
 )
 from src.execution.crisis_handler import evaluate_crisis_response
+from src.utils.numeric import is_finite_number as _is_finite_number
+from src.utils.numeric import safe_float as _safe_float
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
     _apply_btst_risk_budget_overlay_to_plan,
     _enforce_btst_daily_trade_limit,
@@ -401,7 +403,10 @@ def _attach_btst_runtime_exit_metrics_to_portfolio_snapshot(portfolio_snapshot: 
         return portfolio_snapshot
 
     for ticker, position in positions.items():
-        if float(position.get("long", 0.0) or 0.0) <= 0:
+        # NS-13 family drain: NaN long 经 `float(x or 0.0)` 仍 truthy 不兜底,
+        # `NaN <= 0` 返回 False 绕过 continue guard, 无效持仓被附加 btst_runtime_metrics.
+        # 用 safe_float 源头拒绝 NaN, NaN → 0.0 → <= 0 → continue.
+        if _safe_float(position.get("long", 0.0), 0.0) <= 0:
             continue
         runtime_metrics = runtime_metrics_by_ticker.get(str(ticker))
         if runtime_metrics:
@@ -1166,8 +1171,15 @@ class DailyPipeline:
         plan = plan.model_copy(deep=True)
         selection_targets = dict(plan.selection_targets or {})
         watchlist_by_ticker = {item.ticker: item for item in plan.watchlist}
-        nav = float((plan.portfolio_snapshot or {}).get("cash", 0.0) or 0.0)
-        nav += sum(float(position.get("long", 0) or 0) * float(position.get("long_cost_basis", 0.0) or 0.0) for position in dict((plan.portfolio_snapshot or {}).get("positions", {}) or {}).values())
+        # NS-13 family drain: NaN cash/long/long_cost_basis 经 `float(x or 0.0)` 仍 truthy
+        # 不兜底, NAV 变 NaN, `nav > 0` 对 NaN 返回 False 触发兜底 nav=1.0 (错误值, 非真实 NAV).
+        # 用 safe_float 源头拒绝 NaN, NAV 兜底只在真实 <=0 时触发.
+        nav = _safe_float((plan.portfolio_snapshot or {}).get("cash", 0.0), 0.0)
+        nav += sum(
+            _safe_float(position.get("long", 0), 0.0)
+            * _safe_float(position.get("long_cost_basis", 0.0), 0.0)
+            for position in dict((plan.portfolio_snapshot or {}).get("positions", {}) or {}).values()
+        )
         nav = nav if nav > 0 else 1.0
 
         filtered_entries: list[dict[str, Any]] = []

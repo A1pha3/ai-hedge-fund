@@ -28,6 +28,7 @@ from src.screening.consecutive_recommendation import resolve_report_dir
 
 from src.screening.custom_weights import STRATEGY_KEYS
 from src.utils.display import Fore, Style
+from src.utils.numeric import safe_float as _safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +163,10 @@ def audit_recommendation(rec: dict[str, Any], threshold: float = DEFAULT_QUALITY
         "ticker": str(rec.get("ticker") or ""),
         "name": str(rec.get("name") or ""),
         "industry_sw": str(rec.get("industry_sw") or ""),
-        "score_b": float(rec.get("score_b") or 0.0),
+        # NS-13 family drain: NaN score_b 经 `float(x or 0.0)` 仍 truthy 不兜底,
+        # 写入 audit 记录为 NaN, 污染下游消费 (conviction_ranking 等虽已 guard,
+        # 但 audit 记录本身应不含 NaN). 用 safe_float 源头拒绝.
+        "score_b": _safe_float(rec.get("score_b"), 0.0),
         "per_strategy_completeness": per_strategy,
         "composite_completeness": composite,
         "weak_strategies": weak,

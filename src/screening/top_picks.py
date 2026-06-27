@@ -46,6 +46,7 @@ from src.screening.investability import (
 )
 from src.screening.signal_decay_detector import detect_signal_decay
 from src.screening.verify_recommendations import compute_verify_recommendations
+from src.utils.numeric import safe_float as _safe_float_value
 from src.utils.display import Fore, Style
 
 logger = logging.getLogger(__name__)
@@ -599,7 +600,9 @@ def _render_score_trend(
         current_score = 0.0
         for rec in current_recs:
             if str(rec.get("ticker", "")) == ticker:
-                current_score = float(rec.get("score_b", 0.0) or 0.0)
+                # NS-13 family drain: NaN score_b 经 `float(x or 0.0)` 仍 truthy 不兜底,
+                # 进入 detect_signal_decay 污染 change_pct 计算. 用 safe_float 源头拒绝.
+                current_score = _safe_float_value(rec.get("score_b", 0.0), 0.0)
                 break
 
         # Load previous reports to find historical score
@@ -1034,10 +1037,13 @@ def _apply_consecutive_bonus_and_resort(ranked: list[dict]) -> list[dict]:
     picks bubble up. Mutates ``ranked`` in place and returns it.
     """
     for recommendation in ranked:
-        bonus = float(recommendation.get("consecutive_bonus", 0.0) or 0.0)
+        # NS-13 family drain: NaN bonus/score 经 `float(x or 0.0)` 仍 truthy 不兜底,
+        # 导致 `max(-1.0, min(1.0, NaN+bonus))` 在 CPython 返回 1.0, corrupt 标的静默
+        # 顶到推荐列表顶部 (BH-012 escalate-to-top 同型). 用 safe_float 源头拒绝 NaN.
+        bonus = _safe_float_value(recommendation.get("consecutive_bonus", 0.0), 0.0)
         if not bonus:
             continue
-        original_score = float(recommendation.get("composite_score", 0.0) or 0.0)
+        original_score = _safe_float_value(recommendation.get("composite_score", 0.0), 0.0)
         # Re-clamp to the documented [-1.0, 1.0] domain (composite_score.py:16).
         # compute_composite_scores already clamps, but the bonus is added after,
         # so a high-base pick (0.98) + 6+day bonus (0.08) would otherwise reach 1.06.
@@ -1051,13 +1057,15 @@ def _apply_consecutive_bonus_and_resort(ranked: list[dict]) -> list[dict]:
     # folded in) stays the primary key so R4 consecutive-boost still bubbles picks up; the
     # risk-aware keys only break ties. Absent keys default equally so ticker remains the
     # deterministic final fallback (preserves BH-011 determinism when risk keys are missing).
+    # NS-13: sort key 的 composite_score / score_b 也用 safe_float 防止 NaN 进 sort key
+    # 导致同 score 的标的间排序不确定 (NaN 比较均 False, 破坏 Timsort 稳定性).
     ranked.sort(
         key=lambda recommendation: (
-            -float(recommendation.get("composite_score", 0.0) or 0.0),
+            -_safe_float_value(recommendation.get("composite_score", 0.0), 0.0),
             -_safe_metric((recommendation.get("expected_returns") or {}).get("t30"), float("-inf")),
             -_safe_metric((recommendation.get("win_rates") or {}).get("t30"), float("-inf")),
             -_safe_metric(recommendation.get("bucket_sample_count"), 0.0),
-            -float(recommendation.get("score_b", 0.0) or 0.0),
+            -_safe_float_value(recommendation.get("score_b", 0.0), 0.0),
             str(recommendation.get("ticker") or ""),
         ),
     )
