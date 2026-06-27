@@ -284,8 +284,9 @@ class TestExtractedTopPicksHelpers:
                     score_b=0.8,
                     bucket_label="高 (>0.8)",
                     bucket_sample_count=40,
-                    expected_returns={"t30": 11.4},
-                    win_rates={"t30": 0.66},
+                    # C219: BUY gate 用 T+5 OR T+10, 加 t5/t10 让 BUY/HOLD 通过
+                    expected_returns={"t5": 11.4, "t10": 11.4, "t30": 11.4},
+                    win_rates={"t5": 0.66, "t10": 0.66, "t30": 0.66},
                 ),
             ],
         ),
@@ -416,8 +417,9 @@ class TestExtractedTopPicksHelpers:
                     score_b=0.8,
                     bucket_label="高 (>0.8)",
                     bucket_sample_count=40,
-                    expected_returns={"t30": 11.4},
-                    win_rates={"t30": 0.66},
+                    # C219: BUY gate 用 T+5 OR T+10, 加 t5/t10 让 BUY/HOLD 通过
+                    expected_returns={"t5": 11.4, "t10": 11.4, "t30": 11.4},
+                    win_rates={"t5": 0.66, "t10": 0.66, "t30": 0.66},
                 ),
             ],
         ),
@@ -531,8 +533,9 @@ class TestConsecutiveBonus:
                     score_b=0.8,
                     bucket_label="高",
                     bucket_sample_count=40,
-                    expected_returns={"t30": 11.4},
-                    win_rates={"t30": 0.66},
+                    # C219: BUY gate 用 T+5 OR T+10, 加 t5/t10 让 BUY/HOLD 通过
+                    expected_returns={"t5": 11.4, "t10": 11.4, "t30": 11.4},
+                    win_rates={"t5": 0.66, "t10": 0.66, "t30": 0.66},
                 ),
                 ExpectedReturn(
                     ticker="000001",
@@ -616,8 +619,9 @@ class TestConsecutiveBonus:
                     score_b=0.8,
                     bucket_label="高",
                     bucket_sample_count=40,
-                    expected_returns={"t30": 11.4},
-                    win_rates={"t30": 0.66},
+                    # C219: BUY gate 用 T+5 OR T+10, 加 t5/t10 让 BUY/HOLD 通过
+                    expected_returns={"t5": 11.4, "t10": 11.4, "t30": 11.4},
+                    win_rates={"t5": 0.66, "t10": 0.66, "t30": 0.66},
                 ),
             ],
         ),
@@ -769,8 +773,9 @@ class TestHitRateSummary:
                     score_b=0.8,
                     bucket_label="高",
                     bucket_sample_count=40,
-                    expected_returns={"t30": 11.4},
-                    win_rates={"t30": 0.66},
+                    # C219: BUY gate 用 T+5 OR T+10, 加 t5/t10 让 BUY/HOLD 通过
+                    expected_returns={"t5": 11.4, "t10": 11.4, "t30": 11.4},
+                    win_rates={"t5": 0.66, "t10": 0.66, "t30": 0.66},
                 ),
             ],
         ),
@@ -834,8 +839,9 @@ class TestHitRateSummary:
                     score_b=0.8,
                     bucket_label="高",
                     bucket_sample_count=40,
-                    expected_returns={"t30": 11.4},
-                    win_rates={"t30": 0.66},
+                    # C219: BUY gate 用 T+5 OR T+10, 加 t5/t10 让 BUY/HOLD 通过
+                    expected_returns={"t5": 11.4, "t10": 11.4, "t30": 11.4},
+                    win_rates={"t5": 0.66, "t10": 0.66, "t30": 0.66},
                 ),
             ],
         ),
@@ -888,8 +894,9 @@ class TestVerdictDistribution:
             "composite_score": score,
             "score_b": score,
             "decision": decision,
-            "expected_returns": {"t30": t30},
-            "win_rates": {"t30": t30_wr},
+            # C219: BUY gate 用 T+5 OR T+10, 让 t5/t10 跟随 t30 保持测试意图
+            "expected_returns": {"t5": t30, "t10": t30, "t30": t30},
+            "win_rates": {"t5": t30_wr, "t10": t30_wr, "t30": t30_wr},
             "bucket_sample_count": sample,
         }
 
@@ -943,8 +950,9 @@ class TestMarketOpportunityIndex:
             "composite_score": score,
             "score_b": score,
             "decision": decision,
-            "expected_returns": {"t30": t30},
-            "win_rates": {"t30": t30_wr},
+            # C219: BUY gate 用 T+5 OR T+10, 让 t5/t10 跟随 t30 保持测试意图
+            "expected_returns": {"t5": t30, "t10": t30, "t30": t30},
+            "win_rates": {"t5": t30_wr, "t10": t30_wr, "t30": t30_wr},
             "bucket_sample_count": sample,
         }
 

@@ -482,6 +482,120 @@ def test_c219_invalidation_t30_negative_still_flagged() -> None:
 
 
 # ---------------------------------------------------------------------------
+# C221: signal_horizon 字段 — 呈现层区分 T+5 / T+10 / T+5+T+10 反弹信号
+# C219 改 BUY gate 为 T+5 OR T+10 OR, 但呈现只显示 action=BUY, 用户无法区分
+# 是 T+5 还是 T+10 反弹, 容易把 T+5 票当 T+10 持有增加风险. signal_horizon 字段
+# 让用户灵活组合资金: T+5 票快进快出, T+10 票持有更久, T+5+T+10 票更强可加仓.
+# ---------------------------------------------------------------------------
+
+
+def test_c221_signal_horizon_t5_only() -> None:
+    """C221: T+5 通过 (edge>0 AND winrate>=0.55), T+10 不通过 → signal_horizon="T+5"."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            # T+5 强 (winrate 0.62, edge 8.5), T+10 弱 (winrate 0.50, edge 0.5)
+            "expected_returns": {"t5": 8.5, "t10": 0.5, "t30": -1.0},
+            "win_rates": {"t5": 0.62, "t10": 0.50, "t30": 0.40},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] == "BUY"
+    assert verdict["signal_horizon"] == "T+5", (
+        "T+5 单独通过时 signal_horizon 必须为 'T+5', 让用户知道这是 T+5 反弹票"
+    )
+
+
+def test_c221_signal_horizon_t10_only() -> None:
+    """C221: T+10 通过, T+5 不通过 → signal_horizon="T+10"."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            # T+5 弱 (winrate 0.50, edge 0.5), T+10 强 (winrate 0.62, edge 9.0)
+            "expected_returns": {"t5": 0.5, "t10": 9.0, "t30": -1.0},
+            "win_rates": {"t5": 0.50, "t10": 0.62, "t30": 0.40},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] == "BUY"
+    assert verdict["signal_horizon"] == "T+10", (
+        "T+10 单独通过时 signal_horizon 必须为 'T+10', 让用户知道这是 T+10 反弹票"
+    )
+
+
+def test_c221_signal_horizon_both() -> None:
+    """C221: T+5 和 T+10 都通过 → signal_horizon="T+5+T+10" (双信号更强)."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 9.4},
+            "win_rates": {"t5": 0.62, "t10": 0.63, "t30": 0.63},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] == "BUY"
+    assert verdict["signal_horizon"] == "T+5+T+10", (
+        "T+5 和 T+10 都通过时 signal_horizon 必须为 'T+5+T+10', 标识双信号更强的反弹票"
+    )
+
+
+def test_c221_signal_horizon_empty_when_neither_passes() -> None:
+    """C221: T+5/T+10 都不通过 (HOLD/AVOID) → signal_horizon="" (不展示)."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.40,  # 不够 BUY
+            # T+5/T+10 都弱 (winrate 0.48, edge 负)
+            "expected_returns": {"t5": -0.5, "t10": -0.8, "t30": -1.0},
+            "win_rates": {"t5": 0.48, "t10": 0.48, "t30": 0.40},
+            "bucket_sample_count": 48,
+        },
+        market_regime="trend",
+    )
+    # 不是 BUY (composite 0.4 < 0.5)
+    assert verdict["action"] != "BUY"
+    # signal_horizon 为空, 呈现层不展示 (避免误导用户)
+    assert verdict["signal_horizon"] == "", (
+        "T+5/T+10 都不通过时 signal_horizon 必须为空, 不展示短期反弹信号"
+    )
+
+
+def test_c221_signal_horizon_preserved_under_risk_off_downgrade() -> None:
+    """C221: risk_off 降级 BUY→HOLD, 但 signal_horizon 仍标注.
+
+    让用户知道"本可 BUY 但被市场门控降级为 HOLD"的短期反弹信号,
+    可以在市场门控解除后重新关注这些票.
+    """
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.72,
+            # T+5/T+10 强 (本可 BUY)
+            "expected_returns": {"t5": 10.0, "t10": 10.5, "t30": 11.4},
+            "win_rates": {"t5": 0.64, "t10": 0.65, "t30": 0.66},
+            "bucket_sample_count": 40,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="risk_off",  # 降级 BUY→HOLD
+    )
+    # risk_off 降级为 HOLD
+    assert verdict["action"] == "HOLD"
+    # 但 signal_horizon 仍标注 (让用户知道本可 BUY)
+    assert verdict["signal_horizon"] == "T+5+T+10", (
+        "risk_off 降级不应丢失 signal_horizon — 用户需知道本可 BUY 的短期反弹信号"
+    )
+
+
+# ---------------------------------------------------------------------------
 # _grade_code / _safe_metric / _decorate_cluster_candidate
 # ---------------------------------------------------------------------------
 

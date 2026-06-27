@@ -171,8 +171,9 @@ class TestBuildFrontDoorVerdict:
             "decision": "bullish",
             "composite_score": 0.6,
             "score_b": 0.5,
-            "expected_returns": {"t30": 0.05},
-            "win_rates": {"t30": 0.6},
+            # C219: BUY gate 用 T+5 OR T+10, 需提供 t5/t10 强信号让 BUY 通过
+            "expected_returns": {"t5": 0.05, "t10": 0.05, "t30": 0.05},
+            "win_rates": {"t5": 0.6, "t10": 0.6, "t30": 0.6},
             "bucket_sample_count": 50,
         }
 
@@ -181,8 +182,10 @@ class TestBuildFrontDoorVerdict:
             "decision": "bullish",
             "composite_score": 0.3,
             "score_b": 0.25,
-            "expected_returns": {"t30": 0.01},
-            "win_rates": {"t30": 0.52},
+            # C219: is_watchable 用 T+5 OR T+10 (winrate>=0.5, edge>=0),
+            # 需提供 t5/t10 watchable 信号让 HOLD 通过 (winrate 0.52 >= 0.5)
+            "expected_returns": {"t5": 0.01, "t10": 0.01, "t30": 0.01},
+            "win_rates": {"t5": 0.52, "t10": 0.52, "t30": 0.52},
             "bucket_sample_count": 30,
         }
 

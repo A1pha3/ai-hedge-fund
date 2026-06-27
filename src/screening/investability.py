@@ -215,6 +215,21 @@ def build_front_door_verdict(
     else:
         action = "AVOID"
 
+    # C221: signal_horizon — 让用户区分 BUY 信号来源 (T+5 / T+10 / T+5+T+10).
+    # C219 改 BUY gate 为 T+5 OR T+10 OR 逻辑, 但呈现层只显示 action=BUY,
+    # 用户无法区分是 T+5 反弹还是 T+10 反弹, 容易把 T+5 票当 T+10 持有增加风险.
+    # 基于 _short_term_passes 的两个 sub-signal 标注具体 horizon, 让用户灵活组合资金.
+    # 注意: 即使 risk_off 降级为 HOLD, 只要 _short_term_passes 通过仍标注 horizon,
+    # 让用户知道"本可 BUY 但被市场门控降级"的短期反弹信号.
+    if _t5_passes and _t10_passes:
+        signal_horizon = "T+5+T+10"
+    elif _t5_passes:
+        signal_horizon = "T+5"
+    elif _t10_passes:
+        signal_horizon = "T+10"
+    else:
+        signal_horizon = ""
+
     # BH-010: "T+30 edge 转负" must only be listed when the edge is actually
     # negative. Previously it was hardcoded unconditionally, so a BUY stock
     # (edge>0) would still carry a false "edge 转负" invalidation reason.
@@ -253,6 +268,8 @@ def build_front_door_verdict(
         "action": action,
         "market_regime": regime_lower or "unknown",
         "invalidation_reason": " / ".join(deduped_reasons[:4]),
+        # C221: 短期反弹信号来源 horizon, 用于呈现层区分 T+5/T+10 反弹票
+        "signal_horizon": signal_horizon,
     }
 
 

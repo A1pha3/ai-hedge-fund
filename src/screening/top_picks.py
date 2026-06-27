@@ -1282,7 +1282,13 @@ def _print_pick_entry(
         f"{grade}{consec_str} {confluence_str}  "
         f"(base={base_score:.3f} {signal_str}{factor_attr})"
     )
-    print(f"     操作={verdict['action']}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={_format_sample_count(item)}  节奏={rhythm}  赔率(下行)={downside_str}{pos_str}  市场门控={verdict['market_regime']}")
+    # C221: 展示短期反弹信号来源 horizon (T+5 / T+10 / T+5+T+10),
+    # 让用户区分 BUY 信号是 T+5 反弹还是 T+10 反弹, 避免把 T+5 票当 T+10 持有.
+    # signal_horizon 为空 (HOLD/AVOID 无短期信号) 时不展示, 保持输出简洁.
+    signal_horizon_str = ""
+    if verdict.get("signal_horizon"):
+        signal_horizon_str = f"  信号={verdict['signal_horizon']}"
+    print(f"     操作={verdict['action']}{signal_horizon_str}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={_format_sample_count(item)}  节奏={rhythm}  赔率(下行)={downside_str}{pos_str}  市场门控={verdict['market_regime']}")
     print(f"     失效条件: {verdict['invalidation_reason']}")
 
     # Q-1: per-pick 卖时机建议 (BUY 才显示 — HOLD/AVOID 无卖出问题)
