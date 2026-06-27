@@ -205,7 +205,12 @@ def spearman_ic(x: np.ndarray, y: np.ndarray) -> float:
 # 4. 主流程
 # ---------------------------------------------------------------------------
 
-def run_backtest(n_days: int = 60, end_date: str | None = None, top_n: int = 50) -> None:
+def run_backtest(
+    n_days: int = 60,
+    end_date: str | None = None,
+    top_n: int = 50,
+    output_path: str | None = None,
+) -> None:
     pro = _get_pro()
     stock_basic = pro.stock_basic(exchange="", list_status="L", fields="ts_code,name")
     trade_dates = get_trading_dates(pro, n_days + 1, end_date=end_date)  # 多取 1 天用于 T+1 收益
@@ -329,6 +334,35 @@ def run_backtest(n_days: int = 60, end_date: str | None = None, top_n: int = 50)
 
     summary_df = pd.DataFrame(daily_records)
     _print_summary(summary_df, top_n=top_n)
+    saved = _save_report(summary_df, output_path)
+    if saved:
+        print(f"\n报告已保存: {saved}")
+
+
+def _save_report(summary_df: pd.DataFrame, output_path: str | None) -> str | None:
+    """NS-8: 持久化回测汇总报告 (CSV/JSON), 供持续验证 + 版本对比.
+
+    design packet evidence gap: owner 应重跑全 universe 回测刷新 regime 胜率.
+    本函数把 summary_df (每日 MR/trend IC + Top-N 收益/胜率/AVOID 比例) 持久化,
+    让 owner 能保存回测结果供版本对比. ``output_path`` 为 None/空 → 不写 (向后兼容).
+
+    Args:
+        summary_df: 每日回测汇总 DataFrame (trade_date/mr_ic/trend_ic/top_*/overlap/avoid_*).
+        output_path: 输出路径; ``.json`` 后缀写 JSON (records orient), 其余写 CSV.
+
+    Returns:
+        实际写入路径 (str), 或 None (未写).
+    """
+    if not output_path:
+        return None
+    path = Path(output_path)
+    if path.parent and not path.parent.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix == ".json":
+        summary_df.to_json(path, orient="records", force_ascii=False, indent=2)
+    else:
+        summary_df.to_csv(path, index=False)
+    return str(path)
 
 
 def _print_summary(df: pd.DataFrame, *, top_n: int) -> None:
@@ -437,9 +471,15 @@ if __name__ == "__main__":
     parser.add_argument("--n-days", type=int, default=60, help="回测交易日数 (默认 60, 可设 90)")
     parser.add_argument("--end-date", default="", help="结束日期 YYYYMMDD (默认今天)")
     parser.add_argument("--top-n", type=int, default=50, help="Top-N 候选池规模 (默认 50)")
+    parser.add_argument(
+        "--output",
+        default="",
+        help="NS-8: 持久化汇总报告路径 (.csv 或 .json); 留空只 print stdout (向后兼容)",
+    )
     args = parser.parse_args()
     run_backtest(
         n_days=args.n_days,
         end_date=args.end_date or None,
         top_n=args.top_n,
+        output_path=args.output or None,
     )
