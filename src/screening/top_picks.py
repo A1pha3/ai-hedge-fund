@@ -1396,6 +1396,7 @@ def _print_top_picks_footer(
     _print_regime_winrate_block(market_regime)
     _print_monotonicity_block(report_dir)
     _print_north_star_block(report_dir)
+    _print_factor_attribution_block(report_dir)
     _print_decision_flow_hint()
     _print_disclaimer()
 
@@ -1541,6 +1542,29 @@ def _print_monotonicity_block(report_dir: Path) -> None:
                 print(horizon_line)
         except Exception:  # noqa: BLE001 — best-effort; horizon breakdown 永不破坏前门
             pass
+
+
+def _print_factor_attribution_block(report_dir: Path) -> None:
+    """M1: 因子层归因 — per-strategy T/MR/F/E 贡献 × T+30 胜率.
+
+    owner 授权 C (decomposition). 定位**哪个因子**让高分票输 (倒挂根因).
+    当前旧 records 无 score_decomposition → insufficient 静默.
+    owner 跑 --auto (新代码注入 decomposition) 累积新 records 后激活.
+    """
+    try:
+        from src.screening.factor_attribution import (
+            compute_factor_attribution_from_loaded,
+            render_factor_attribution_line,
+        )
+        from src.screening.consecutive_recommendation import load_tracking_history
+
+        records = load_tracking_history(report_dir)
+        report = compute_factor_attribution_from_loaded(records, min_n=15)
+    except Exception:  # noqa: BLE001 — best-effort; never break the front door
+        return
+    line = render_factor_attribution_line(report)
+    if line:
+        print(line)
 
 
 def _print_north_star_block(report_dir: Path) -> None:

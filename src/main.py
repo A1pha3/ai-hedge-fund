@@ -688,7 +688,17 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
         ranking_pool = reweighted_results[:ranking_pool_size]
     else:
         sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
-        ranking_pool = [item.model_dump(mode="json") for item in sorted_results[:ranking_pool_size]]
+        ranking_pool = []
+        for item in sorted_results[:ranking_pool_size]:
+            d = item.model_dump(mode="json")
+            # M1: 注入 score_decomposition (per-strategy T/MR/F/E 贡献) 到 recommendation dict,
+            # 向后兼容 (旧 records 无此字段 → factor_attribution 模块 insufficient 静默).
+            try:
+                from src.screening.signal_fusion import compute_score_decomposition as _decompose
+                d["score_decomposition"] = _decompose(item)
+            except Exception:
+                pass  # best-effort, never block on decomposition
+            ranking_pool.append(d)
 
     ranked_pool = _rank_pool_by_investability(ranking_pool, trade_date)
 
