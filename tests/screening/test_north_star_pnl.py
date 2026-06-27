@@ -209,8 +209,10 @@ from src.screening.north_star_pnl import (  # noqa: E402
     render_payoff_line,
 )
 
+
 def _p_recs(returns: list) -> list:
     return [{"recommended_date": "20250101", "recommendation_score": 0.35, "next_30day_return": r} for r in returns]
+
 
 def test_payoff_computes_ratio_from_wins_and_losses():
     recs = _p_recs([10.0, -5.0, 20.0, -10.0])  # 2 wins (10,20) 2 losses (-5,-10)
