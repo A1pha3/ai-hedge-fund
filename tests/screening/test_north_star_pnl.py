@@ -322,3 +322,107 @@ def test_render_pruning_silent_when_insufficient():
     recs = _pruning_recs([5.0], [-3.0])
     result = compute_pruning_strategy_from_loaded(recs, min_n=5)
     assert render_pruning_line(result) == ""
+
+
+# ---------------------------------------------------------------------------
+# M12: winrate bootstrap CI (percentile method) — 给 owner 门控决策提供稳健
+# 不确定性估计. 服务 winrate>50% 路径: low bucket 50% (n=105) 的 95% CI 是
+# [42%, 58%] (正态近似 ±9.6% 太宽). bootstrap percentile 免正态假设, 更稳健.
+# 纯诊断, 不改 gate/factor; 幂等 (固定 seed); 单调 (lower <= upper).
+# ---------------------------------------------------------------------------
+
+from src.screening.north_star_pnl import (  # noqa: E402
+    compute_bootstrap_ci_from_loaded,
+    render_bootstrap_ci_line,
+)
+
+
+def _ci_recs(low_rets: list, high_rets: list) -> list:
+    """{score: low|high} → tracking records (镜像 _pruning_recs)."""
+    out = [{"recommended_date": "20250101", "recommendation_score": 0.10, "next_30day_return": r} for r in low_rets]
+    out += [{"recommended_date": "20250101", "recommendation_score": 0.60, "next_30day_return": r} for r in high_rets]
+    return out
+
+
+def test_bootstrap_ci_computes_percentile_bounds():
+    """给定 30 条 low records (winrate ~50%), bootstrap 应返回非 None 的 lower/upper."""
+    recs = _ci_recs([5.0] * 15 + [-3.0] * 15, [])  # low only, winrate=50%, n=30
+    result = compute_bootstrap_ci_from_loaded(recs, buckets=["low"], min_n=20, n_bootstrap=500, seed=42)
+    assert len(result) == 1
+    ci = result[0]
+    assert ci.bucket == "low"
+    assert ci.verdict == "ok"
+    assert ci.point_estimate == 0.5  # 15/30
+    assert ci.ci_lower is not None
+    assert ci.ci_upper is not None
+
+
+def test_bootstrap_ci_monotonic_lower_le_upper():
+    """CI 边界单调: lower <= point_estimate <= upper (percentile method 保证)."""
+    recs = _ci_recs([5.0] * 20 + [-3.0] * 10, [])  # winrate ~67%
+    result = compute_bootstrap_ci_from_loaded(recs, buckets=["low"], min_n=20, n_bootstrap=500, seed=42)
+    ci = result[0]
+    assert ci.ci_lower <= ci.point_estimate <= ci.ci_upper
+
+
+def test_bootstrap_ci_idempotent_same_seed():
+    """同 seed + 同 input → 完全相同的 CI 输出 (幂等, 可复现)."""
+    recs = _ci_recs([5.0] * 15 + [-3.0] * 15, [])
+    r1 = compute_bootstrap_ci_from_loaded(recs, buckets=["low"], min_n=20, n_bootstrap=500, seed=42)
+    r2 = compute_bootstrap_ci_from_loaded(recs, buckets=["low"], min_n=20, n_bootstrap=500, seed=42)
+    assert r1[0].ci_lower == r2[0].ci_lower
+    assert r1[0].ci_upper == r2[0].ci_upper
+
+
+def test_bootstrap_ci_insufficient_below_min_n():
+    """n < min_n → verdict='insufficient', ci_lower/ci_upper=None (诚实, 静默)."""
+    recs = _ci_recs([5.0, -3.0], [])  # n=2 < min_n=20
+    result = compute_bootstrap_ci_from_loaded(recs, buckets=["low"], min_n=20, n_bootstrap=500, seed=42)
+    ci = result[0]
+    assert ci.verdict == "insufficient"
+    assert ci.ci_lower is None
+    assert ci.ci_upper is None
+
+
+def test_bootstrap_ci_per_bucket():
+    """给定 low + high records, 默认返回所有非空 bucket 的 CI."""
+    low = [5.0] * 15 + [-3.0] * 15  # n=30
+    high = [5.0] * 10 + [-3.0] * 20  # n=30, winrate=33%
+    recs = _ci_recs(low, high)
+    result = compute_bootstrap_ci_from_loaded(recs, min_n=20, n_bootstrap=500, seed=42)
+    buckets = {ci.bucket for ci in result}
+    assert "low" in buckets
+    assert "high" in buckets
+    low_ci = next(ci for ci in result if ci.bucket == "low")
+    high_ci = next(ci for ci in result if ci.bucket == "high")
+    assert low_ci.point_estimate == 0.5  # 15/30
+    assert high_ci.point_estimate == 0.3333333333333333  # 10/30
+
+
+def test_bootstrap_ci_extreme_winrate_capped_at_1():
+    """winrate=100% (全涨) → CI upper <= 1.0 (不超 100%, 逻辑边界)."""
+    recs = _ci_recs([5.0] * 30, [])  # winrate=100%
+    result = compute_bootstrap_ci_from_loaded(recs, buckets=["low"], min_n=20, n_bootstrap=500, seed=42)
+    ci = result[0]
+    assert ci.point_estimate == 1.0
+    assert ci.ci_lower <= 1.0
+    assert ci.ci_upper <= 1.0
+
+
+def test_render_bootstrap_ci_line_shows_bounds():
+    """渲染含 lower/upper + bucket label (服务 owner 决策可读性)."""
+    recs = _ci_recs([5.0] * 15 + [-3.0] * 15, [])  # n=30, winrate=50%
+    result = compute_bootstrap_ci_from_loaded(recs, buckets=["low"], min_n=20, n_bootstrap=500, seed=42)
+    line = render_bootstrap_ci_line(result)
+    assert line
+    assert "low" in line.lower() or "低" in line
+    assert "50" in line  # point estimate 50%
+    assert "bootstrap" in line.lower()
+    assert "95" in line  # ci_level=0.95
+
+
+def test_render_bootstrap_ci_silent_when_insufficient():
+    """全 bucket insufficient → 空串 (永不破坏前门, 同 M9/M10/M11 模式)."""
+    recs = _ci_recs([5.0], [-3.0])  # n=2 < min_n=20
+    result = compute_bootstrap_ci_from_loaded(recs, min_n=20, n_bootstrap=500, seed=42)
+    assert render_bootstrap_ci_line(result) == ""

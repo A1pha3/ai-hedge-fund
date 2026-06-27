@@ -21,6 +21,7 @@ verdict:
 """
 from __future__ import annotations
 
+import random as _random
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -499,17 +500,154 @@ def render_pruning_line(strategies: dict[str, dict[str, Any]]) -> str:
     return f"  📊 砍输家池: {' → '.join(parts)}{suffix}"
 
 
+# ---------------------------------------------------------------------------
+# M12: winrate bootstrap CI (percentile method) — 给 owner 门控决策提供稳健
+# 不确定性估计. 服务 winrate>50% 路径: low bucket 50% (n=105) 的正态近似 95% CI
+# 是 [40%, 60%] (±9.6% 太宽, 无法支撑门控翻转决策). bootstrap percentile 免正态
+# 假设, 更稳健. 纯诊断, 不改 gate/factor; 幂等 (固定 seed); 单调 (lower<=upper).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class BootstrapCIResult:
+    """单个 bucket 的 winrate bootstrap CI (percentile method)."""
+
+    bucket: str  # "low" | "mid_low" | "mid_high" | "high"
+    point_estimate: float = 0.0  # 原始 winrate (wins/n)
+    ci_lower: float | None = None  # bootstrap percentile 下界
+    ci_upper: float | None = None  # bootstrap percentile 上界
+    sample_count: int = 0
+    n_bootstrap: int = 10000
+    ci_level: float = 0.95
+    verdict: str = "insufficient"  # ok | insufficient
+
+
+def _bootstrap_winrate_ci(
+    returns: list[float],
+    *,
+    n_bootstrap: int,
+    ci_level: float,
+    seed: int,
+) -> tuple[float | None, float | None]:
+    """纯函数: bootstrap percentile winrate CI.
+
+    返回 (ci_lower, ci_upper); 两者均为 [0, 1] 或 None (n=0).
+    幂等: 同 seed + 同 input → 同 output (用独立 Random 实例, 不污染全局).
+    """
+    n = len(returns)
+    if n == 0:
+        return None, None
+    wins_flags = [1 if r > 0 else 0 for r in returns]  # 预计算 win flag
+    rng = _random.Random(seed)  # 独立 PRNG, 不污染全局 random 状态
+    boot_winrates: list[float] = []
+    for _ in range(n_bootstrap):
+        # 重采样 n 次 (有放回), 算 winrate
+        wins = sum(wins_flags[rng.randrange(n)] for _ in range(n))
+        boot_winrates.append(wins / n)
+    boot_winrates.sort()
+    alpha = 1.0 - ci_level
+    lower_idx = max(0, int(alpha / 2 * n_bootstrap))
+    upper_idx = min(n_bootstrap - 1, int((1 - alpha / 2) * n_bootstrap))
+    # clamp to [0, 1] (逻辑边界, winrate 不超 100%)
+    lower = min(1.0, max(0.0, boot_winrates[lower_idx]))
+    upper = min(1.0, max(0.0, boot_winrates[upper_idx]))
+    return lower, upper
+
+
+def compute_bootstrap_ci_from_loaded(
+    records: list[dict[str, Any]],
+    *,
+    buckets: list[str] | None = None,
+    n_bootstrap: int = 10000,
+    ci_level: float = 0.95,
+    seed: int = 42,
+    min_n: int = 20,
+) -> list[BootstrapCIResult]:
+    """per-bucket winrate bootstrap CI (percentile method, owner 门控决策依据).
+
+    给定 tracking records, 按 score 分桶, 每桶用 bootstrap 重采样算 winrate CI.
+    服务目标: 给 owner 门控决策提供稳健的不确定性估计 (vs 正态近似 ±9.6%).
+
+    Args:
+        records: tracking_history records (含 recommendation_score + next_30day_return)
+        buckets: None=所有非空 bucket; 指定 list 则只算这些 bucket
+        n_bootstrap: bootstrap 重采样次数 (默认 10000, 稳健默认)
+        ci_level: CI 置信水平 (默认 0.95)
+        seed: 随机种子 (固定 → 幂等可复现)
+        min_n: 每 bucket 最少样本数 (n<min_n → insufficient, 静默)
+
+    Returns:
+        list[BootstrapCIResult], 按 _BUCKET_ORDER_PAYOFF 顺序.
+    """
+    target_buckets = buckets if buckets is not None else list(_BUCKET_ORDER_PAYOFF)
+    bucket_returns: dict[str, list[float]] = {}
+    for rec in records:
+        val = _finite_float(rec.get("next_30day_return"))
+        if val is None:
+            continue
+        b = _score_bucket_local(rec.get("recommendation_score", rec.get("score_b")))
+        if b not in target_buckets:
+            continue
+        bucket_returns.setdefault(b, []).append(val)
+
+    results: list[BootstrapCIResult] = []
+    for b in _BUCKET_ORDER_PAYOFF:
+        if b not in target_buckets:
+            continue
+        rets = bucket_returns.get(b, [])
+        n = len(rets)
+        if n < min_n:
+            results.append(BootstrapCIResult(
+                bucket=b, point_estimate=(sum(1 for r in rets if r > 0) / n if n else 0.0),
+                sample_count=n, n_bootstrap=n_bootstrap, ci_level=ci_level, verdict="insufficient",
+            ))
+            continue
+        wins = sum(1 for r in rets if r > 0)
+        point = wins / n
+        lower, upper = _bootstrap_winrate_ci(rets, n_bootstrap=n_bootstrap, ci_level=ci_level, seed=seed)
+        results.append(BootstrapCIResult(
+            bucket=b, point_estimate=point, ci_lower=lower, ci_upper=upper,
+            sample_count=n, n_bootstrap=n_bootstrap, ci_level=ci_level, verdict="ok",
+        ))
+    return results
+
+
+def render_bootstrap_ci_line(results: list[BootstrapCIResult]) -> str:
+    """渲染 per-bucket winrate bootstrap CI (全 insufficient → 空串).
+
+    展示形如:
+      ``  📊 winrate CI (bootstrap 95%, n_boot=10000): 低 50% [42%, 58%] (n=105) | 中高 43% [34%, 52%] (n=125)``
+    """
+    ok = [ci for ci in results if ci.verdict == "ok"]
+    if not ok:
+        return ""
+    labels = {"low": "低", "mid_low": "中低", "mid_high": "中高", "high": "高"}
+    parts: list[str] = []
+    for ci in ok:
+        label = labels.get(ci.bucket, ci.bucket)
+        lo = f"{ci.ci_lower:.0%}" if ci.ci_lower is not None else "?"
+        up = f"{ci.ci_upper:.0%}" if ci.ci_upper is not None else "?"
+        parts.append(f"{label} {ci.point_estimate:.0%} [{lo}, {up}] (n={ci.sample_count})")
+    return (
+        f"  📊 winrate CI (bootstrap {ci.ci_level:.0%}, n_boot={ci.n_bootstrap}): "
+        + " | ".join(parts)
+    )
+
+
 __all__ = [
     "NorthStarPnlReport",
     "HoldingPeriodPoint",
     "PayoffAnalysisResult",
+    "BootstrapCIResult",
     "compute_north_star_pnl",
     "compute_north_star_pnl_from_loaded",
     "compute_holding_period_curve_from_loaded",
     "compute_payoff_analysis_from_loaded",
     "compute_pruning_strategy_from_loaded",
+    "compute_bootstrap_ci_from_loaded",
     "render_north_star_line",
     "render_holding_period_line",
     "render_payoff_line",
     "render_pruning_line",
+    "render_bootstrap_ci_line",
 ]

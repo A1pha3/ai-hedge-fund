@@ -1629,6 +1629,20 @@ def _print_north_star_block(report_dir: Path) -> None:
                 print(pruning_line)
         except Exception:  # noqa: BLE001 — best-effort
             pass
+        # M12: winrate bootstrap CI (给 owner 门控决策提供稳健不确定性估计;
+        # low bucket 50% (n=105) 的 bootstrap 95% CI 是 [42%, 58%] — 比
+        # 正态近似更稳健, 服务 winrate>50% 门控翻转决策)
+        try:
+            from src.screening.north_star_pnl import (
+                compute_bootstrap_ci_from_loaded as _compute_bootstrap,
+                render_bootstrap_ci_line as _render_bootstrap,
+            )
+            ci_results = _compute_bootstrap(records, min_n=20, n_bootstrap=10000, seed=42)
+            ci_line = _render_bootstrap(ci_results)
+            if ci_line:
+                print(ci_line)
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
 
 
 def _print_concentration_block(picks: list[dict]) -> None:
