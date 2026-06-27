@@ -1498,6 +1498,19 @@ def _print_monotonicity_block(report_dir: Path) -> None:
             print(sig_line)
     except Exception:  # noqa: BLE001 — best-effort; significance 永不破坏前门
         pass
+    # M8: 样本充足性 — 不显著是因为样本太小吗? (需累积多少才能下结论)
+    if records:
+        try:
+            from src.screening.rank_monotonicity import (
+                compute_power_analysis_from_loaded as _compute_power,
+                render_power_line as _render_power,
+            )
+            power = _compute_power(records, min_n=20)
+            power_line = _render_power(power)
+            if power_line:
+                print(power_line)
+        except Exception:  # noqa: BLE001 — best-effort; power 永不破坏前门
+            pass
     # M5: 时段分段单调性 (design packet 推荐区分 H1 因子 bug vs H2 regime)
     try:
         records = load_tracking_history(report_dir)

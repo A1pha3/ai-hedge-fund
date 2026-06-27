@@ -562,19 +562,125 @@ def render_significance_line(result: SignificanceResult) -> str:
     return f"{base} {Fore.YELLOW}不显著 (差异可能噪声, 勿 over-react){Style.RESET_ALL}"
 
 
+# ---------------------------------------------------------------------------
+# M8: 样本量充足性 (power analysis)
+# M7 T+30 不显著因 high n=38 太小. 告诉 owner 需累积多少样本才能可靠检测倒挂.
+# 防 owner 据 38 样本噪声下结论改模型. two-proportion sample size (pooled).
+# ---------------------------------------------------------------------------
+
+
+def _required_sample_size(
+    p1: float, p2: float, *, z_alpha: float = 1.96, z_power: float = 0.84
+) -> int | None:
+    """检测 p1 vs p2 差异 (two-proportion, 80% power, alpha=0.05) 每组需 n.
+
+    z_alpha=1.96 (two-tailed 0.05), z_power=0.84 (80% power) 默认.
+    返回 None 当 p1==p2 (零差异, 无需检测).
+    """
+    gap = p1 - p2
+    if abs(gap) < 1e-9:
+        return None
+    variance_sum = p1 * (1 - p1) + p2 * (1 - p2)
+    n = (z_alpha + z_power) ** 2 * variance_sum / (gap * gap)
+    return math.ceil(n)
+
+
+@dataclass
+class PowerAnalysisResult:
+    """high-vs-low 倒挂检测的样本量充足性."""
+
+    low_p: float | None = None
+    high_p: float | None = None
+    gap_pp: float | None = None  # 百分点
+    required_n_per_group: int | None = None
+    current_high_n: int = 0
+    sufficiency_pct: float | None = None  # current_high_n / required * 100
+    verdict: str = "no_data"  # no_data | insufficient_samples | sufficient
+
+
+def compute_power_analysis_from_loaded(
+    records: list[dict[str, Any]],
+    *,
+    horizon_field: str = "next_30day_return",
+    min_n: int = 20,
+) -> PowerAnalysisResult:
+    """算当前 high-vs-low 倒挂检测的样本充足性.
+
+    verdict:
+      - no_data: low/high bucket 缺
+      - insufficient_samples: current_high_n < required (NS-4 T+30 属此, n=38 << 317)
+      - sufficient: current_high_n >= required
+    """
+    low_returns: list[float] = []
+    high_returns: list[float] = []
+    for rec in records:
+        bucket = _score_bucket(_record_score(rec))
+        val = _finite_float(rec.get(horizon_field))
+        if val is None:
+            continue
+        if bucket == "low":
+            low_returns.append(val)
+        elif bucket == "high":
+            high_returns.append(val)
+
+    nl, nh = len(low_returns), len(high_returns)
+    if nl == 0 or nh == 0:
+        return PowerAnalysisResult(current_high_n=nh, verdict="no_data")
+
+    low_p = sum(1 for x in low_returns if x > 0) / nl
+    high_p = sum(1 for x in high_returns if x > 0) / nh
+    required = _required_sample_size(low_p, high_p)
+    if required is None:
+        return PowerAnalysisResult(
+            low_p=low_p, high_p=high_p, gap_pp=0.0, current_high_n=nh, verdict="no_data"
+        )
+    sufficiency = nh / required * 100.0
+    verdict = "sufficient" if nh >= required else "insufficient_samples"
+    return PowerAnalysisResult(
+        low_p=low_p,
+        high_p=high_p,
+        gap_pp=round((low_p - high_p) * 100, 1),
+        required_n_per_group=required,
+        current_high_n=nh,
+        sufficiency_pct=round(sufficiency, 1),
+        verdict=verdict,
+    )
+
+
+def render_power_line(result: PowerAnalysisResult) -> str:
+    """渲染样本充足性提示 (no_data → 空串).
+
+    展示形如:
+      ``  📊 样本充足性: 检测当前 11pp 差异需 ~317/组 (80% power, p<.05), 当前 high n=38 (12%, ⚠ 严重不足, 勿据噪声下结论)``
+    """
+    if result.verdict == "no_data" or result.required_n_per_group is None:
+        return ""
+    req = result.required_n_per_group
+    cur = result.current_high_n
+    pct = f"{result.sufficiency_pct:.0f}%" if result.sufficiency_pct is not None else "?"
+    gap = f"{result.gap_pp:.0f}pp" if result.gap_pp is not None else "?"
+    base = f"  📊 样本充足性: 检测当前 {gap} 差异需 ~{req}/组 (80% power, p<.05), 当前 high n={cur} ({pct})"
+    if result.verdict == "sufficient":
+        return f"{base} {Fore.GREEN}✓ 足够下结论{Style.RESET_ALL}"
+    return f"{base} {Fore.RED}⚠ 不足, 勿据噪声下结论 (累积 high bucket){Style.RESET_ALL}"
+
+
 __all__ = [
     "BucketWinRate",
     "RankMonotonicityReport",
     "PeriodBreakdown",
     "HorizonMonotonicity",
     "SignificanceResult",
+    "PowerAnalysisResult",
     "compute_rank_monotonicity",
     "compute_rank_monotonicity_from_loaded",
     "compute_period_breakdown_from_loaded",
     "compute_horizon_monotonicity_from_loaded",
     "compute_high_vs_low_significance_from_loaded",
+    "compute_power_analysis_from_loaded",
     "render_monotonicity_line",
     "render_period_breakdown_line",
     "render_horizon_breakdown_line",
     "render_significance_line",
+    "render_power_line",
 ]

@@ -428,3 +428,71 @@ def test_render_significance_silent_when_insufficient():
     recs = _sig_records([5.0] * 5, [-5.0] * 5)
     res = compute_high_vs_low_significance_from_loaded(recs, min_n=20)
     assert render_significance_line(res) == ""
+
+
+# ---------------------------------------------------------------------------
+# M8: 样本量充足性 (power analysis) — 当前数据够不够下结论?
+# M7 T+30 不显著因 high n=38 太小. 告诉 owner 需累积多少样本.
+# ---------------------------------------------------------------------------
+
+from src.screening.rank_monotonicity import (  # noqa: E402
+    _required_sample_size,
+    compute_power_analysis_from_loaded,
+    render_power_line,
+)
+
+
+def test_required_sample_size_formula():
+    """11pp (50% vs 39%) 80% power alpha=0.05 → ~317/组."""
+    n = _required_sample_size(0.50, 0.39)
+    assert n is not None
+    assert 310 <= n <= 325  # ~317 容差
+
+
+def test_required_sample_size_smaller_gap_needs_more():
+    """小 gap → 大 n (5pp > 15pp)."""
+    n_small_gap = _required_sample_size(0.50, 0.45)  # 5pp
+    n_large_gap = _required_sample_size(0.50, 0.35)  # 15pp
+    assert n_small_gap > n_large_gap
+
+
+def test_required_sample_size_zero_gap_none():
+    assert _required_sample_size(0.50, 0.50) is None
+
+
+def test_power_analysis_from_loaded_current_vs_required():
+    """合成 records: high n=38, low 50% high 39% → required ~317, sufficiency 12%."""
+    # low: 105 records, 53 win (50%); high: 38 records, 15 win (39%)
+    low = [1.0] * 53 + [-1.0] * 52  # 53/105 = 50%
+    high = [1.0] * 15 + [-1.0] * 23  # 15/38 = 39%
+    recs = [{"recommended_date": "20250101", "recommendation_score": 0.10, "next_30day_return": r} for r in low] + \
+           [{"recommended_date": "20250101", "recommendation_score": 0.60, "next_30day_return": r} for r in high]
+    res = compute_power_analysis_from_loaded(recs, min_n=20)
+    assert res.current_high_n == 38
+    assert res.required_n_per_group is not None
+    assert 310 <= res.required_n_per_group <= 325
+    assert res.verdict == "insufficient_samples"  # 38 << 317
+
+
+def test_power_analysis_no_high_bucket():
+    recs = [{"recommended_date": "20250101", "recommendation_score": 0.10, "next_30day_return": 5.0}]
+    res = compute_power_analysis_from_loaded(recs, min_n=20)
+    assert res.verdict == "no_data"
+
+
+def test_render_power_line_shows_required_and_current():
+    low = [1.0] * 53 + [-1.0] * 52
+    high = [1.0] * 15 + [-1.0] * 23
+    recs = [{"recommended_date": "20250101", "recommendation_score": 0.10, "next_30day_return": r} for r in low] + \
+           [{"recommended_date": "20250101", "recommendation_score": 0.60, "next_30day_return": r} for r in high]
+    res = compute_power_analysis_from_loaded(recs, min_n=20)
+    line = render_power_line(res)
+    assert line
+    assert "需" in line or "样本" in line
+    assert "317" in line or "31" in line  # required ~317
+
+
+def test_render_power_silent_when_no_data():
+    recs = [{"recommended_date": "20250101", "recommendation_score": 0.10, "next_30day_return": 5.0}]
+    res = compute_power_analysis_from_loaded(recs, min_n=20)
+    assert render_power_line(res) == ""
