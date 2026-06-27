@@ -279,3 +279,72 @@ def test_render_period_breakdown_silent_when_all_insufficient():
     recs = _period_records(first, second)
     periods = compute_period_breakdown_from_loaded(recs, n_periods=2, min_n=2)
     assert render_period_breakdown_line(periods) == ""
+
+
+# ---------------------------------------------------------------------------
+# M6: 多 horizon 单调性 (horizon breakdown) — 回答 design packet H5/D1
+# 倒挂是 T+30 特定还是全 horizon? (排除 MR 短期反转假说)
+# ---------------------------------------------------------------------------
+
+from src.screening.rank_monotonicity import (  # noqa: E402
+    compute_horizon_monotonicity_from_loaded,
+    render_horizon_breakdown_line,
+)
+
+
+def _horizon_records(horizon_returns: dict) -> list:
+    """{horizon_field: {bucket: [returns]}} → records (每 horizon 独立 set)."""
+    score_for = {"low": 0.10, "mid_low": 0.35, "mid_high": 0.45, "high": 0.60}
+    out = []
+    for horizon, buckets in horizon_returns.items():
+        for bucket, rets in buckets.items():
+            for r in rets:
+                out.append({"recommended_date": "20250101", "recommendation_score": score_for[bucket], horizon: r})
+    return out
+
+
+def test_horizon_breakdown_each_horizon_independent_verdict():
+    """T+5 倒挂, T+30 单调 → 各 horizon 独立裁决 (排除 MR 短期反转 = 全 horizon 倒挂才是 H5)."""
+    recs = _horizon_records(
+        {
+            "next_5day_return": {"low": [5] * 4, "mid_low": [3, -1, 3, -1], "mid_high": [-2, 2, -2, 2], "high": [-4] * 4},
+            "next_30day_return": {"low": [-5] * 4, "mid_low": [-1, 1, -1, 1], "mid_high": [2] * 4, "high": [4] * 4},
+        }
+    )
+    horizons = compute_horizon_monotonicity_from_loaded(recs, ["next_5day_return", "next_30day_return"], min_n=2)
+    v = {h.horizon: h.verdict for h in horizons}
+    assert v["next_5day_return"] == "inverted"
+    assert v["next_30day_return"] == "monotonic"
+
+
+def test_horizon_breakdown_insufficient_horizon():
+    recs = _horizon_records({"next_5day_return": {"low": [5], "mid_low": [3], "mid_high": [-2], "high": [-4]}})
+    horizons = compute_horizon_monotonicity_from_loaded(recs, ["next_5day_return"], min_n=2)
+    assert horizons[0].verdict == "insufficient"
+
+
+def test_horizon_breakdown_missing_horizon_field():
+    """record 缺该 horizon 字段 → insufficient (诚实, 不下结论)."""
+    recs = [{"recommended_date": "20250101", "recommendation_score": 0.5, "next_5day_return": 5.0}]
+    horizons = compute_horizon_monotonicity_from_loaded(recs, ["next_99day_return"], min_n=2)  # 不存在字段
+    assert horizons[0].verdict == "insufficient"
+
+
+def test_render_horizon_breakdown_line_shows_horizons():
+    recs = _horizon_records(
+        {
+            "next_5day_return": {"low": [5] * 4, "mid_low": [3, -1, 3, -1], "mid_high": [-2, 2, -2, 2], "high": [-4] * 4},
+            "next_30day_return": {"low": [-5] * 4, "mid_low": [-1, 1, -1, 1], "mid_high": [2] * 4, "high": [4] * 4},
+        }
+    )
+    horizons = compute_horizon_monotonicity_from_loaded(recs, ["next_5day_return", "next_30day_return"], min_n=2)
+    line = render_horizon_breakdown_line(horizons)
+    assert line
+    assert "T+5" in line or "next_5day" in line
+    assert "T+30" in line or "next_30day" in line
+
+
+def test_render_horizon_breakdown_silent_when_all_insufficient():
+    recs = _horizon_records({"next_5day_return": {"low": [5], "mid_low": [3], "mid_high": [-2], "high": [-4]}})
+    horizons = compute_horizon_monotonicity_from_loaded(recs, ["next_5day_return"], min_n=2)
+    assert render_horizon_breakdown_line(horizons) == ""

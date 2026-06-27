@@ -22,6 +22,7 @@ load_auto_screening_history → {date → state_type} (per-state_type 细分).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -351,13 +352,107 @@ def render_period_breakdown_line(periods: list[PeriodBreakdown]) -> str:
     return f"  📊 时段单调性: {body} {suffix}".rstrip()
 
 
+# ---------------------------------------------------------------------------
+# M6: 多 horizon 单调性 (horizon breakdown)
+# 回答 design packet H5/D1: 倒挂是 T+30 特定还是全 horizon?
+# 排除 MR 短期反转假说 (H5) — 若短 horizon 就倒挂则非"短期反转长期才对".
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HorizonMonotonicity:
+    """单个 horizon 的 score→winrate 单调性."""
+
+    horizon: str  # 字段名 e.g. next_5day_return
+    verdict: str  # monotonic | inverted | non_monotonic | insufficient
+    winrates: list[float]  # ordered low→high (空若 insufficient)
+    sample_count: int
+
+
+def _horizon_label(horizon_field: str) -> str:
+    """next_5day_return → T+5; next_day_return → T+1."""
+    m = re.search(r"(\d+)", horizon_field)
+    return f"T+{m.group(1)}" if m else horizon_field
+
+
+def _bucket_returns_for_field(records: list[dict[str, Any]], field: str) -> dict[str, list[float]]:
+    """{bucket: [returns]} for a given return field (复用 _score_bucket)."""
+    out: dict[str, list[float]] = {}
+    for rec in records:
+        bucket = _score_bucket(_record_score(rec))
+        val = _finite_float(rec.get(field))
+        if val is None:
+            continue
+        out.setdefault(bucket, []).append(val)
+    return out
+
+
+def compute_horizon_monotonicity_from_loaded(
+    records: list[dict[str, Any]],
+    horizons: list[str],
+    *,
+    min_n: int = 15,
+) -> list[HorizonMonotonicity]:
+    """对每个 horizon 字段算 score→winrate 单调性.
+
+    回答 design packet H5/D1: 若全 horizon 倒挂 → 非短期反转 (排除 H5 MR 假说).
+    record 缺该 horizon 字段 → insufficient (诚实).
+    """
+    out: list[HorizonMonotonicity] = []
+    for horizon in horizons:
+        returns_by_bucket = _bucket_returns_for_field(records, horizon)
+        verdict, wrs = _verdict(returns_by_bucket, min_n)
+        sample = sum(len(v) for v in returns_by_bucket.values())
+        out.append(
+            HorizonMonotonicity(
+                horizon=horizon,
+                verdict=verdict,
+                winrates=[w for w in wrs if w is not None],
+                sample_count=sample,
+            )
+        )
+    return out
+
+
+def render_horizon_breakdown_line(horizons: list[HorizonMonotonicity]) -> str:
+    """渲染多 horizon 单调性对比 (全 insufficient → 空串).
+
+    展示形如:
+      ``  📊 多周期单调性: T+5 倒挂⚠ (57→39) | T+10 非单调⚠ | T+30 倒挂⚠ (50→39) — 全 horizon 倒挂, 非短期反转``
+    """
+    if not horizons or all(h.verdict == "insufficient" for h in horizons):
+        return ""
+
+    def _seg(h: HorizonMonotonicity) -> str:
+        label = _horizon_label(h.horizon)
+        if h.verdict == "insufficient" or len(h.winrates) < 2:
+            return f"{label} 样本不足"
+        shape = "→".join(f"{w:.0%}" for w in h.winrates)
+        tag = {"inverted": "倒挂⚠", "monotonic": "单调✓", "non_monotonic": "非单调⚠"}.get(h.verdict, h.verdict)
+        return f"{label} {tag} ({shape})"
+
+    parts = [_seg(h) for h in horizons]
+    non_insufficient = [h for h in horizons if h.verdict != "insufficient"]
+    all_inverted = bool(non_insufficient) and all(h.verdict == "inverted" for h in non_insufficient)
+    # H5 判定: 全 horizon 倒挂 → 非短期反转 (排除 MR 短期反转假说)
+    if all_inverted and len(non_insufficient) >= 2:
+        suffix = f"{Fore.RED}— 多 horizon 均倒挂, 排除短期反转假说 (非 H5 MR){Style.RESET_ALL}"
+    else:
+        suffix = ""
+    body = " | ".join(parts)
+    return f"  📊 多周期单调性: {body} {suffix}".rstrip()
+
+
 __all__ = [
     "BucketWinRate",
     "RankMonotonicityReport",
     "PeriodBreakdown",
+    "HorizonMonotonicity",
     "compute_rank_monotonicity",
     "compute_rank_monotonicity_from_loaded",
     "compute_period_breakdown_from_loaded",
+    "compute_horizon_monotonicity_from_loaded",
     "render_monotonicity_line",
     "render_period_breakdown_line",
+    "render_horizon_breakdown_line",
 ]

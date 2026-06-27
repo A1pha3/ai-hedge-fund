@@ -1469,8 +1469,10 @@ def _print_monotonicity_block(report_dir: Path) -> None:
     """
     try:
         from src.screening.rank_monotonicity import (
+            compute_horizon_monotonicity_from_loaded,
             compute_period_breakdown_from_loaded,
             compute_rank_monotonicity,
+            render_horizon_breakdown_line,
             render_monotonicity_line,
             render_period_breakdown_line,
         )
@@ -1484,6 +1486,7 @@ def _print_monotonicity_block(report_dir: Path) -> None:
     line = render_monotonicity_line(report)
     if line:
         print(line)
+    records = None
     # M5: 时段分段单调性 (design packet 推荐区分 H1 因子 bug vs H2 regime)
     try:
         records = load_tracking_history(report_dir)
@@ -1492,7 +1495,20 @@ def _print_monotonicity_block(report_dir: Path) -> None:
         if period_line:
             print(period_line)
     except Exception:  # noqa: BLE001 — best-effort; period breakdown 永不破坏前门
-        return
+        pass
+    # M6: 多 horizon 单调性 (回答 design packet H5: 倒挂是 T+30 特定还是全 horizon? 排除 MR 短期反转)
+    if records:
+        try:
+            horizons = compute_horizon_monotonicity_from_loaded(
+                records,
+                ["next_5day_return", "next_10day_return", "next_20day_return", "next_30day_return"],
+                min_n=15,
+            )
+            horizon_line = render_horizon_breakdown_line(horizons)
+            if horizon_line:
+                print(horizon_line)
+        except Exception:  # noqa: BLE001 — best-effort; horizon breakdown 永不破坏前门
+            pass
 
 
 def _print_north_star_block(report_dir: Path) -> None:
