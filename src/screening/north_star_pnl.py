@@ -21,6 +21,7 @@ verdict:
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -182,9 +183,99 @@ def render_north_star_line(report: NorthStarPnlReport) -> str:
     return f"{base} {Fore.RED}⚠ 亏 — 远未达北极星{Style.RESET_ALL}"
 
 
+# ---------------------------------------------------------------------------
+# M9: 持有期收益曲线 (holding period) — 全样本, 不受 high bucket n=38 限制
+# 各 horizon avg/winrate/median → 最优卖出点 + 推荐票稳健画像.
+# 真实 493: winrate 始终 ~46% (持有期无关), avg 随持有期增 (大赢家), median 全负 (典型亏).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HoldingPeriodPoint:
+    """单个 horizon 的全样本平均收益/胜率/median."""
+
+    horizon: str  # 字段名 e.g. next_5day_return
+    avg_return: float | None = None
+    winrate: float | None = None
+    median_return: float | None = None
+    sample_count: int = 0
+    verdict: str = "insufficient"  # insufficient | ok
+
+
+def _horizon_short_label(horizon_field: str) -> str:
+    m = re.search(r"(\d+)", horizon_field)
+    return f"T+{m.group(1)}" if m else horizon_field
+
+
+def compute_holding_period_curve_from_loaded(
+    records: list[dict[str, Any]],
+    horizons: list[str],
+    *,
+    min_n: int = 20,
+) -> list[HoldingPeriodPoint]:
+    """全样本各 horizon 的 avg/winrate/median (不受 score bucket n=38 限制)."""
+    out: list[HoldingPeriodPoint] = []
+    for horizon in horizons:
+        returns = [_finite_float(rec.get(horizon)) for rec in records]
+        returns = [r for r in returns if r is not None]
+        if len(returns) < min_n:
+            out.append(HoldingPeriodPoint(horizon=horizon, sample_count=len(returns), verdict="insufficient"))
+            continue
+        n = len(returns)
+        avg = sum(returns) / n
+        winrate = sum(1 for x in returns if x > 0) / n
+        median = _median(returns)
+        out.append(
+            HoldingPeriodPoint(
+                horizon=horizon, avg_return=avg, winrate=winrate, median_return=median, sample_count=n, verdict="ok"
+            )
+        )
+    return out
+
+
+def render_holding_period_line(curve: list[HoldingPeriodPoint]) -> str:
+    """渲染持有期收益曲线 (全 insufficient → 空串).
+
+    展示形如:
+      ``  📊 持有期: T+5 +0.5%/46% | T+30 +3.6%/46% | winrate 稳46% (持有期无关) + median 全负 (典型亏, 靠大赢家)``
+    """
+    if not curve or all(p.verdict == "insufficient" for p in curve):
+        return ""
+    ok = [p for p in curve if p.verdict == "ok"]
+    if not ok:
+        return ""
+
+    def _seg(p: HoldingPeriodPoint) -> str:
+        label = _horizon_short_label(p.horizon)
+        if p.avg_return is None or p.winrate is None:
+            return f"{label} 样本不足"
+        return f"{label} {p.avg_return:+.1f}%/{p.winrate:.0%}"
+
+    parts = [_seg(p) for p in curve if p.verdict == "ok"]
+    body = " | ".join(parts)
+
+    # 洞察: winrate 稳定? median 全负? avg 随 horizon 增?
+    insights: list[str] = []
+    winrates = [p.winrate for p in ok if p.winrate is not None]
+    if len(winrates) >= 2 and (max(winrates) - min(winrates)) < 0.05:
+        insights.append(f"winrate 稳~{sum(winrates) / len(winrates):.0%} (持有期无关)")
+    medians = [p.median_return for p in ok if p.median_return is not None]
+    if medians and all(m < 0 for m in medians):
+        insights.append("median 全负 (典型票亏, 靠少数大赢家拉高 avg)")
+    avgs = [p.avg_return for p in ok if p.avg_return is not None]
+    if len(avgs) >= 2 and avgs[-1] > avgs[0]:
+        insights.append(f"avg 随持有期增 ({avgs[0]:+.1f}%→{avgs[-1]:+.1f}%, 长持暴露大赢家)")
+
+    suffix = f" — {'; '.join(insights)}" if insights else ""
+    return f"  📊 持有期: {body}{Fore.YELLOW}{suffix}{Style.RESET_ALL}"
+
+
 __all__ = [
     "NorthStarPnlReport",
+    "HoldingPeriodPoint",
     "compute_north_star_pnl",
     "compute_north_star_pnl_from_loaded",
+    "compute_holding_period_curve_from_loaded",
     "render_north_star_line",
+    "render_holding_period_line",
 ]

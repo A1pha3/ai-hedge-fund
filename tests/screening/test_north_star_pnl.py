@@ -125,3 +125,74 @@ def test_handles_missing_and_garbage_returns():
     rep = compute_north_star_pnl_from_loaded(recs, min_n=2)
     # 只 2 条有效 (5.0, -2.0) → n=2
     assert rep.sample_count == 2
+
+
+# ---------------------------------------------------------------------------
+# M9: 持有期收益曲线 (holding period) — 全样本, 不受 high bucket n=38 限制
+# 各 horizon avg/winrate/median → 最优卖出点 + 推荐票稳健画像
+# ---------------------------------------------------------------------------
+
+from src.screening.north_star_pnl import (  # noqa: E402
+    HoldingPeriodPoint,
+    compute_holding_period_curve_from_loaded,
+    render_holding_period_line,
+)
+
+
+def test_holding_period_curve_per_horizon():
+    recs = [
+        {"next_5day_return": 5.0, "next_30day_return": 10.0},
+        {"next_5day_return": -3.0, "next_30day_return": -5.0},
+    ]
+    curve = compute_holding_period_curve_from_loaded(recs, ["next_5day_return", "next_30day_return"], min_n=2)
+    p5 = [p for p in curve if p.horizon == "next_5day_return"][0]
+    assert p5.avg_return == 1.0  # (5 + -3)/2
+    assert p5.winrate == 0.5
+    assert p5.median_return == 1.0
+    assert p5.sample_count == 2
+    p30 = [p for p in curve if p.horizon == "next_30day_return"][0]
+    assert p30.avg_return == 2.5  # (10 + -5)/2
+
+
+def test_holding_period_curve_insufficient_below_min_n():
+    recs = [{"next_5day_return": 5.0}]
+    curve = compute_holding_period_curve_from_loaded(recs, ["next_5day_return"], min_n=2)
+    assert curve[0].verdict == "insufficient"
+
+
+def test_holding_period_curve_handles_missing_horizon():
+    recs = [{"next_5day_return": 5.0}, {"next_5day_return": 3.0}]  # 无 next_30day
+    curve = compute_holding_period_curve_from_loaded(recs, ["next_5day_return", "next_30day_return"], min_n=2)
+    p30 = [p for p in curve if p.horizon == "next_30day_return"][0]
+    assert p30.verdict == "insufficient"  # 缺字段
+    p5 = [p for p in curve if p.horizon == "next_5day_return"][0]
+    assert p5.verdict != "insufficient"
+
+
+def test_render_holding_period_line_shows_horizons():
+    recs = [{"next_5day_return": 5.0, "next_30day_return": 10.0}, {"next_5day_return": -3.0, "next_30day_return": -5.0}]
+    curve = compute_holding_period_curve_from_loaded(recs, ["next_5day_return", "next_30day_return"], min_n=2)
+    line = render_holding_period_line(curve)
+    assert line
+    assert "T+5" in line or "next_5day" in line
+    assert "T+30" in line or "next_30day" in line
+
+
+def test_render_holding_period_silent_when_all_insufficient():
+    recs = [{"next_5day_return": 5.0}]
+    curve = compute_holding_period_curve_from_loaded(recs, ["next_5day_return"], min_n=2)
+    assert render_holding_period_line(curve) == ""
+
+
+def test_finite_float_skips_nan_in_curve():
+    recs = [
+        {"next_5day_return": 5.0},
+        {"next_5day_return": float("nan")},
+        {"next_5day_return": "abc"},
+        {"next_5day_return": None},
+        {"next_5day_return": 3.0},
+    ]
+    curve = compute_holding_period_curve_from_loaded(recs, ["next_5day_return"], min_n=2)
+    p5 = curve[0]
+    assert p5.sample_count == 2  # 只 5.0 + 3.0 有效
+    assert p5.avg_return == 4.0

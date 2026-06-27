@@ -1548,9 +1548,12 @@ def _print_north_star_block(report_dir: Path) -> None:
     """
     try:
         from src.screening.north_star_pnl import (
+            compute_holding_period_curve_from_loaded,
             compute_north_star_pnl,
+            render_holding_period_line,
             render_north_star_line,
         )
+        from src.screening.consecutive_recommendation import load_tracking_history
 
         report = compute_north_star_pnl(reports_dir=report_dir)
     except Exception:  # noqa: BLE001 — best-effort display; never break the front door
@@ -1558,6 +1561,19 @@ def _print_north_star_block(report_dir: Path) -> None:
     line = render_north_star_line(report)
     if line:
         print(line)
+    # M9: 持有期收益曲线 (全样本, 不受 high bucket n=38 限制; 最优卖出点 + 稳健画像)
+    try:
+        records = load_tracking_history(report_dir)
+        curve = compute_holding_period_curve_from_loaded(
+            records,
+            ["next_5day_return", "next_10day_return", "next_20day_return", "next_30day_return"],
+            min_n=20,
+        )
+        hp_line = render_holding_period_line(curve)
+        if hp_line:
+            print(hp_line)
+    except Exception:  # noqa: BLE001 — best-effort; holding period 永不破坏前门
+        pass
 
 
 def _print_concentration_block(picks: list[dict]) -> None:
