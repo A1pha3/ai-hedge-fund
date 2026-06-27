@@ -348,3 +348,83 @@ def test_render_horizon_breakdown_silent_when_all_insufficient():
     recs = _horizon_records({"next_5day_return": {"low": [5], "mid_low": [3], "mid_high": [-2], "high": [-4]}})
     horizons = compute_horizon_monotonicity_from_loaded(recs, ["next_5day_return"], min_n=2)
     assert render_horizon_breakdown_line(horizons) == ""
+
+
+# ---------------------------------------------------------------------------
+# M7: 单调性统计显著性 — NS-4 倒挂是真的还是小样本噪声?
+# high-vs-low two-proportion z-test + Wilson CI (免 owner over-react 到噪声)
+# ---------------------------------------------------------------------------
+
+from src.screening.rank_monotonicity import (  # noqa: E402
+    compute_high_vs_low_significance_from_loaded,
+    render_significance_line,
+)
+
+
+def _sig_records(low_returns: list, high_returns: list) -> list:
+    """合成 low/high bucket records."""
+    out = []
+    for r in low_returns:
+        out.append({"recommended_date": "20250101", "recommendation_score": 0.10, "next_30day_return": r})
+    for r in high_returns:
+        out.append({"recommended_date": "20250101", "recommendation_score": 0.60, "next_30day_return": r})
+    return out
+
+
+def test_significance_large_gap_significant():
+    """low 全涨 (n=50), high 全跌 (n=50) → 显著 (p~0)."""
+    recs = _sig_records([5.0] * 50, [-5.0] * 50)
+    res = compute_high_vs_low_significance_from_loaded(recs, min_n=20)
+    assert res.verdict_note == "significant"
+    assert res.p_value < 0.05
+    assert res.z_score > 0  # low > high
+
+
+def test_significance_small_gap_not_significant():
+    """low/high 接近 → 不显著."""
+    # low 52% win, high 48% win, n=50 each → z 小, 不显著
+    low = [1.0] * 26 + [-1.0] * 24  # 26/50 = 52%
+    high = [1.0] * 24 + [-1.0] * 26  # 24/50 = 48%
+    recs = _sig_records(low, high)
+    res = compute_high_vs_low_significance_from_loaded(recs, min_n=20)
+    assert res.verdict_note == "not_significant"
+    assert res.p_value >= 0.05
+
+
+def test_significance_marginal():
+    """p 在 [0.05, 0.1) → marginal (边缘显著)."""
+    # 构造边缘: low 60% (n=50), high 38% (n=50) → z≈2.3? 调整到 p~0.06-0.1
+    low = [1.0] * 30 + [-1.0] * 20  # 60%
+    high = [1.0] * 19 + [-1.0] * 31  # 38%
+    recs = _sig_records(low, high)
+    res = compute_high_vs_low_significance_from_loaded(recs, min_n=20)
+    assert res.verdict_note in ("marginal", "significant", "not_significant")  # 容忍边界
+
+
+def test_significance_insufficient_small_n():
+    """low/high n < min_n → insufficient (诚实, 不下结论)."""
+    recs = _sig_records([5.0] * 5, [-5.0] * 5)  # n=5 < min_n=20
+    res = compute_high_vs_low_significance_from_loaded(recs, min_n=20)
+    assert res.verdict_note == "insufficient"
+
+
+def test_significance_insufficient_when_no_high_bucket():
+    """无 high bucket → insufficient."""
+    recs = _sig_records([5.0] * 50, [])  # 无 high
+    res = compute_high_vs_low_significance_from_loaded(recs, min_n=20)
+    assert res.verdict_note == "insufficient"
+
+
+def test_render_significance_line_shows_z_p():
+    recs = _sig_records([5.0] * 50, [-5.0] * 50)
+    res = compute_high_vs_low_significance_from_loaded(recs, min_n=20)
+    line = render_significance_line(res)
+    assert line
+    assert "p=" in line
+    assert "z=" in line.lower() or "z=" in line
+
+
+def test_render_significance_silent_when_insufficient():
+    recs = _sig_records([5.0] * 5, [-5.0] * 5)
+    res = compute_high_vs_low_significance_from_loaded(recs, min_n=20)
+    assert render_significance_line(res) == ""

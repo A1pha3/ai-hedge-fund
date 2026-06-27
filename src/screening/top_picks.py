@@ -1469,12 +1469,14 @@ def _print_monotonicity_block(report_dir: Path) -> None:
     """
     try:
         from src.screening.rank_monotonicity import (
+            compute_high_vs_low_significance_from_loaded,
             compute_horizon_monotonicity_from_loaded,
             compute_period_breakdown_from_loaded,
             compute_rank_monotonicity,
             render_horizon_breakdown_line,
             render_monotonicity_line,
             render_period_breakdown_line,
+            render_significance_line,
         )
         from src.screening.consecutive_recommendation import (
             load_tracking_history,
@@ -1487,6 +1489,15 @@ def _print_monotonicity_block(report_dir: Path) -> None:
     if line:
         print(line)
     records = None
+    # M7: 显著性 — 倒挂是真的还是小样本噪声? (防 owner over-react; 紧接 overall 解释)
+    try:
+        records = load_tracking_history(report_dir)
+        sig = compute_high_vs_low_significance_from_loaded(records, min_n=20)
+        sig_line = render_significance_line(sig)
+        if sig_line:
+            print(sig_line)
+    except Exception:  # noqa: BLE001 — best-effort; significance 永不破坏前门
+        pass
     # M5: 时段分段单调性 (design packet 推荐区分 H1 因子 bug vs H2 regime)
     try:
         records = load_tracking_history(report_dir)

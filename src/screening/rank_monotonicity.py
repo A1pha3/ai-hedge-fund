@@ -22,6 +22,7 @@ load_auto_screening_history → {date → state_type} (per-state_type 细分).
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -443,16 +444,137 @@ def render_horizon_breakdown_line(horizons: list[HorizonMonotonicity]) -> str:
     return f"  📊 多周期单调性: {body} {suffix}".rstrip()
 
 
+# ---------------------------------------------------------------------------
+# M7: 单调性统计显著性 — NS-4 倒挂是真的还是小样本噪声?
+# high-vs-low two-proportion z-test (pooled) + p-value.
+# 真实数据: T+30 倒挂 11pp 但 high n=38 → p=0.245 不显著 (可能噪声).
+# 防 owner 据 NS-4 "倒挂" over-react 到噪声改模型.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SignificanceResult:
+    """high-vs-low 胜率差异的统计显著性."""
+
+    low_winrate: float | None = None
+    low_n: int = 0
+    high_winrate: float | None = None
+    high_n: int = 0
+    z_score: float | None = None
+    p_value: float | None = None
+    verdict_note: str = "insufficient"  # significant | marginal | not_significant | insufficient
+
+
+def _normal_cdf(z: float) -> float:
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
+def _two_proportion_z(k1: int, n1: int, k2: int, n2: int) -> tuple[float, float] | None:
+    """two-proportion pooled z-test (low vs high). Returns (z, two-tailed p) or None."""
+    if n1 == 0 or n2 == 0:
+        return None
+    p1, p2 = k1 / n1, k2 / n2
+    pooled = (k1 + k2) / (n1 + n2)
+    variance = pooled * (1 - pooled) * (1 / n1 + 1 / n2)
+    if variance <= 0:
+        return None
+    se = math.sqrt(variance)
+    z = (p1 - p2) / se
+    p = 2 * (1 - _normal_cdf(abs(z)))
+    return z, p
+
+
+def compute_high_vs_low_significance_from_loaded(
+    records: list[dict[str, Any]],
+    *,
+    horizon_field: str = "next_30day_return",
+    min_n: int = 20,
+) -> SignificanceResult:
+    """high-vs-low T+horizon 胜率差异的统计显著性 (z-test).
+
+    verdict_note:
+      - insufficient: low/high n < min_n (诚实, 不下结论)
+      - significant: p < 0.05
+      - marginal: 0.05 ≤ p < 0.10
+      - not_significant: p ≥ 0.10 (NS-4 倒挂可能属此, 高分桶小样本噪声)
+    """
+    low_returns: list[float] = []
+    high_returns: list[float] = []
+    for rec in records:
+        bucket = _score_bucket(_record_score(rec))
+        val = _finite_float(rec.get(horizon_field))
+        if val is None:
+            continue
+        if bucket == "low":
+            low_returns.append(val)
+        elif bucket == "high":
+            high_returns.append(val)
+
+    nl, nh = len(low_returns), len(high_returns)
+    if nl < min_n or nh < min_n:
+        return SignificanceResult(low_n=nl, high_n=nh, verdict_note="insufficient")
+
+    kl = sum(1 for x in low_returns if x > 0)
+    kh = sum(1 for x in high_returns if x > 0)
+    result = _two_proportion_z(kl, nl, kh, nh)
+    if result is None:
+        return SignificanceResult(
+            low_winrate=kl / nl, low_n=nl, high_winrate=kh / nh, high_n=nh, verdict_note="insufficient"
+        )
+    z, p = result
+    if p < 0.05:
+        note = "significant"
+    elif p < 0.10:
+        note = "marginal"
+    else:
+        note = "not_significant"
+    return SignificanceResult(
+        low_winrate=kl / nl,
+        low_n=nl,
+        high_winrate=kh / nh,
+        high_n=nh,
+        z_score=z,
+        p_value=p,
+        verdict_note=note,
+    )
+
+
+def render_significance_line(result: SignificanceResult) -> str:
+    """渲染 high-vs-low 显著性提示 (insufficient → 空串).
+
+    展示形如:
+      ``  📊 high vs low 显著性: z=+1.16 p=0.245 不显著 (倒挂可能噪声, 勿 over-react)``
+      ``  📊 high vs low 显著性: z=+3.2 p=0.001 显著 (倒挂真实)``
+    """
+    if result.verdict_note == "insufficient":
+        return ""
+    if result.z_score is None or result.p_value is None:
+        return ""
+    z = result.z_score
+    p = result.p_value
+    wr_low = f"{result.low_winrate:.0%}" if result.low_winrate is not None else "?"
+    wr_high = f"{result.high_winrate:.0%}" if result.high_winrate is not None else "?"
+    base = f"  📊 high vs low 显著性: low {wr_low} (n={result.low_n}) vs high {wr_high} (n={result.high_n}) | z={z:+.2f} p={p:.3f}"
+    if result.verdict_note == "significant":
+        return f"{base} {Fore.RED}显著 (差异真实){Style.RESET_ALL}"
+    if result.verdict_note == "marginal":
+        return f"{base} {Fore.YELLOW}边缘显著 (需更多样本确认){Style.RESET_ALL}"
+    return f"{base} {Fore.YELLOW}不显著 (差异可能噪声, 勿 over-react){Style.RESET_ALL}"
+
+
 __all__ = [
     "BucketWinRate",
     "RankMonotonicityReport",
     "PeriodBreakdown",
     "HorizonMonotonicity",
+    "SignificanceResult",
     "compute_rank_monotonicity",
     "compute_rank_monotonicity_from_loaded",
     "compute_period_breakdown_from_loaded",
     "compute_horizon_monotonicity_from_loaded",
+    "compute_high_vs_low_significance_from_loaded",
     "render_monotonicity_line",
     "render_period_breakdown_line",
     "render_horizon_breakdown_line",
+    "render_significance_line",
 ]
