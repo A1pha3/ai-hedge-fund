@@ -1593,6 +1593,18 @@ def _print_north_star_block(report_dir: Path) -> None:
                 print(payoff_line)
         except Exception:  # noqa: BLE001 — best-effort; payoff 永不破坏前门
             pass
+        # M11: 砍输家池策略模拟 (量化"砍哪个 bucket"提 winrate 的效果; owner 门控决策依据)
+        try:
+            from src.screening.north_star_pnl import (
+                compute_pruning_strategy_from_loaded as _compute_pruning,
+                render_pruning_line as _render_pruning,
+            )
+            pruning = _compute_pruning(records, min_n=20)
+            pruning_line = _render_pruning(pruning)
+            if pruning_line:
+                print(pruning_line)
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
 
 
 def _print_concentration_block(picks: list[dict]) -> None:

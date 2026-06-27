@@ -263,3 +263,62 @@ def test_render_payoff_silent_when_insufficient():
     recs = _p_recs([10.0, -5.0])
     res = compute_payoff_analysis_from_loaded(recs, min_n=5)
     assert render_payoff_line(res) == ""
+
+
+# ---------------------------------------------------------------------------
+# M11: 砍输家池策略模拟 — 各 score 子集的 winrate/payoff/expectancy
+# 服务 winrate>50%+高盈亏比: 量化"砍哪个 bucket"的效果 (owner 门控决策依据)
+# ---------------------------------------------------------------------------
+
+from src.screening.north_star_pnl import (  # noqa: E402
+    compute_pruning_strategy_from_loaded,
+    render_pruning_line,
+)
+
+
+def _pruning_recs(low_rets: list, high_rets: list) -> list:
+    out = [{"recommended_date": "20250101", "recommendation_score": 0.10, "next_30day_return": r} for r in low_rets]
+    out += [{"recommended_date": "20250101", "recommendation_score": 0.60, "next_30day_return": r} for r in high_rets]
+    return out
+
+
+def test_pruning_strategy_all_vs_subset():
+    """low 全涨, high 全跌 → 砍 high 后 winrate 从 50% → 100%."""
+    low = [5.0] * 10 + [-3.0] * 10  # winrate 50%
+    high = [-4.0] * 20  # winrate 0%
+    recs = _pruning_recs(low, high)
+    result = compute_pruning_strategy_from_loaded(recs, min_n=5)
+    assert "all" in result
+    assert "drop_high" in result
+    assert result["all"]["winrate"] == 0.25  # 10 win / 40 total
+    assert result["drop_high"]["winrate"] == 0.5  # 10 win / 20 total (low only)
+
+
+def test_pruning_strategy_expectancy_improves_when_dropping_losers():
+    low = [10.0] * 8 + [-2.0] * 2  # exp high
+    high = [-5.0] * 10  # exp negative
+    recs = _pruning_recs(low, high)
+    result = compute_pruning_strategy_from_loaded(recs, min_n=5)
+    assert result["drop_high"]["expectancy"] > result["all"]["expectancy"]
+
+
+def test_pruning_strategy_insufficient_sample():
+    recs = _pruning_recs([5.0], [-3.0])  # n=2 < min_n=5
+    result = compute_pruning_strategy_from_loaded(recs, min_n=5)
+    assert result.get("all", {}).get("verdict") == "insufficient"
+
+
+def test_render_pruning_line_shows_strategies():
+    low = [10.0] * 8 + [-2.0] * 2
+    high = [-5.0] * 10
+    recs = _pruning_recs(low, high)
+    result = compute_pruning_strategy_from_loaded(recs, min_n=5)
+    line = render_pruning_line(result)
+    assert line
+    assert "winrate" in line.lower() or "胜率" in line
+
+
+def test_render_pruning_silent_when_insufficient():
+    recs = _pruning_recs([5.0], [-3.0])
+    result = compute_pruning_strategy_from_loaded(recs, min_n=5)
+    assert render_pruning_line(result) == ""

@@ -397,6 +397,108 @@ def render_payoff_line(result: PayoffAnalysisResult) -> str:
     return base + cutoff
 
 
+# ---------------------------------------------------------------------------
+# M11: 砍输家池策略模拟 — 各 score 子集 winrate/payoff/expectancy
+# 服务 winrate>50%+高盈亏比: 量化"砍哪个 bucket"的效果 (owner 门控决策依据)
+# 真实 493: 砍 mid_high+high → winrate 46%→48%, payoff 1.86→1.96, exp +3.6%→+4.7%
+#           只 low → winrate 50%, payoff 2.05, exp +5.8% (n=105)
+# ---------------------------------------------------------------------------
+
+_PRUNING_STRATEGIES = {
+    "all": ("low", "mid_low", "mid_high", "high"),
+    "drop_mid_high": ("low", "mid_low", "high"),
+    "drop_high": ("low", "mid_low", "mid_high"),
+    "drop_mid_high_high": ("low", "mid_low"),
+    "keep_low": ("low",),
+    "keep_mid_low": ("mid_low",),
+}
+_PRUNING_LABELS = {
+    "all": "全部",
+    "drop_mid_high": "砍中高",
+    "drop_high": "砍高",
+    "drop_mid_high_high": "砍中高+高",
+    "keep_low": "只低分",
+    "keep_mid_low": "只中低",
+}
+
+
+def compute_pruning_strategy_from_loaded(
+    records: list[dict[str, Any]],
+    *,
+    min_n: int = 20,
+) -> dict[str, dict[str, Any]]:
+    """各砍 bucket 策略的 winrate/payoff/expectancy (owner 门控决策依据).
+
+    返回 {strategy_name: {winrate, payoff, expectancy, n, verdict}}.
+    verdict=insufficient 当 n < min_n.
+    """
+    bucket_returns: dict[str, list[float]] = {}
+    for rec in records:
+        val = _finite_float(rec.get("next_30day_return"))
+        if val is None:
+            continue
+        b = _score_bucket_local(rec.get("recommendation_score", rec.get("score_b")))
+        bucket_returns.setdefault(b, []).append(val)
+
+    result: dict[str, dict[str, Any]] = {}
+    for strategy, buckets in _PRUNING_STRATEGIES.items():
+        rets = [r for b in buckets for r in bucket_returns.get(b, [])]
+        n = len(rets)
+        if n < min_n:
+            result[strategy] = {"n": n, "verdict": "insufficient", "label": _PRUNING_LABELS[strategy]}
+            continue
+        wins = [x for x in rets if x > 0]
+        losses = [x for x in rets if x <= 0]
+        wr = len(wins) / n
+        avg_w = (sum(wins) / len(wins)) if wins else 0
+        avg_l = (sum(losses) / len(losses)) if losses else 0
+        payoff = (avg_w / abs(avg_l)) if avg_l != 0 else 0
+        exp = sum(rets) / n
+        result[strategy] = {
+            "winrate": wr,
+            "payoff": payoff,
+            "expectancy": exp,
+            "n": n,
+            "verdict": "ok",
+            "label": _PRUNING_LABELS[strategy],
+        }
+    return result
+
+
+def render_pruning_line(strategies: dict[str, dict[str, Any]]) -> str:
+    """渲染砍输家池策略对比 (全 insufficient → 空串).
+
+    展示形如:
+      ``  📊 砍输家池: 全部46%/1.86 → 砍中高+高48%/1.96 → 只低分50%/2.05 (winrate>50%! exp+5.8%)``
+    """
+    ok = {k: v for k, v in strategies.items() if v.get("verdict") == "ok"}
+    if not ok:
+        return ""
+
+    parts: list[str] = []
+    best_wr = 0.0
+    best_key = None
+    for key in ("all", "drop_mid_high_high", "keep_low"):
+        v = ok.get(key)
+        if v is None:
+            continue
+        wr = v["winrate"]
+        if wr > best_wr:
+            best_wr = wr
+            best_key = key
+        parts.append(f"{v['label']}{wr:.0%}/{v['payoff']:.1f}")
+
+    suffix = ""
+    if best_key and best_wr >= 0.50:
+        bv = ok[best_key]
+        suffix = f" {Fore.GREEN}→ {bv['label']} winrate>50%! exp={bv['expectancy']:+.1f}%{Style.RESET_ALL}"
+    elif best_key:
+        bv = ok[best_key]
+        suffix = f" {Fore.YELLOW}→ 最佳: {bv['label']} winrate={bv['winrate']:.0%} exp={bv['expectancy']:+.1f}%{Style.RESET_ALL}"
+
+    return f"  📊 砍输家池: {' → '.join(parts)}{suffix}"
+
+
 __all__ = [
     "NorthStarPnlReport",
     "HoldingPeriodPoint",
@@ -405,7 +507,9 @@ __all__ = [
     "compute_north_star_pnl_from_loaded",
     "compute_holding_period_curve_from_loaded",
     "compute_payoff_analysis_from_loaded",
+    "compute_pruning_strategy_from_loaded",
     "render_north_star_line",
     "render_holding_period_line",
     "render_payoff_line",
+    "render_pruning_line",
 ]
