@@ -1,9 +1,17 @@
-"""NS-4 排序单调性健康度: score rank → T+30 胜率是否单调.
+"""NS-4 排序单调性健康度: score rank → T+horizon 胜率是否单调.
 
 R-5.F Phase 0 (state_type_calibration) 与真实数据 (493 条 tracking_history) 共同
 发现: **模型整体排序倒挂** — low-score bucket T+30 胜率 50.5%, high-score bucket
 反而 39.5% (高分票胜率最低). 这意味着 must-win 前门按 score 取的"最值得买"代表票,
 真实赢面反而最差.
+
+C222 (2026-06-28 horizon 一致性): 所有计算函数已参数化 ``horizon_field``
+(默认 ``next_30day_return`` 保留 — NS-4 是长期质量诊断, T+30 短期波动小, 更适合
+评估 score 区分度; C219 证明 low bucket T+5/T+10 winrate=60% 而 T+30 winrate=45%
+是反弹特性, 不是 score 系统失效). 未来可在调用点传 ``horizon_field="next_5day_return"``
+或 ``next_10day_return`` 并列诊断, 让 owner 看到"score 系统在短期 horizon 下是否仍
+倒挂". 当前 ``top_picks._print_monotonicity_block`` 仍用默认 T+30 (footer 文案需
+明确标注 horizon, 防止误读为 BUY 决策 horizon).
 
 本模块把"高分是否 → 高胜率"量化成可复现的健康信号, 在 ``--top-picks`` footer 展示:
 
@@ -17,7 +25,7 @@ R-5.F Phase 0 (state_type_calibration) 与真实数据 (493 条 tracking_history
 与 consecutive_recommendation 的数据加载, 镜像 regime_winrate / portfolio_concentration
 的 footer-block 模式 (best-effort, 数据不足静默, 永不破坏前门).
 
-数据流: load_tracking_history → records (recommendation_score + next_30day_return);
+数据流: load_tracking_history → records (recommendation_score + next_Nday_return);
 load_auto_screening_history → {date → state_type} (per-state_type 细分).
 """
 from __future__ import annotations
@@ -68,30 +76,39 @@ def _record_score(rec: dict[str, Any]) -> Any:
 
 @dataclass
 class BucketWinRate:
-    """单个 score-bucket 的 T+30 胜率."""
+    """单个 score-bucket 的胜率 (horizon 由 RankMonotonicityReport.horizon_label 标)."""
 
     bucket: str
-    t30_win_rate: float | None = None
+    win_rate: float | None = None
     sample_count: int = 0
 
 
 @dataclass
 class RankMonotonicityReport:
-    """score rank → T+30 胜率单调性诊断报告."""
+    """score rank → 胜率单调性诊断报告 (horizon 默认 T+5, BUY gate 决策 horizon; 2026-06-28 C229 缩短自 T+30)."""
 
     overall_buckets: list[BucketWinRate] = field(default_factory=list)
     overall_verdict: str = "insufficient"  # monotonic | inverted | non_monotonic | insufficient
     overall_inverted: bool = False
     per_state_type: dict[str, list[BucketWinRate]] = field(default_factory=dict)
     per_state_type_verdict: dict[str, str] = field(default_factory=dict)
+    horizon_label: str = "T+5"  # 决策 horizon (C229: 默认 T+5; 可传 next_10day_return / next_30day_return)
 
 
 def _bucket_returns_by_state(
     records: list[dict[str, Any]],
     date_st: dict[str, str] | None = None,
     target_state: str | None = None,
+    *,
+    horizon_field: str = "next_5day_return",
 ) -> dict[str, list[float]]:
-    """→ {bucket: [t30 returns]} 仅成熟 T+30; target_state 过滤 (None=全部)."""
+    """→ {bucket: [horizon returns]} 仅成熟该 horizon; target_state 过滤 (None=全部).
+
+    C229 (2026-06-28 产品方向): must-win 周期 T+30 → T+5/T+10 (owner 决策; C219
+    backfill T+5/T+10 winrate≈60% >> T+30≈45%). 默认改 ``next_5day_return`` 对齐 BUY
+    gate 决策 horizon. 调用方仍可传 ``next_10day_return`` / ``next_30day_return``
+    (T+30 保留为长期质量诊断 — 短期波动小, 评估 score 区分度更稳).
+    """
     out: dict[str, list[float]] = {}
     for rec in records:
         if target_state is not None and date_st is not None:
@@ -99,10 +116,10 @@ def _bucket_returns_by_state(
             if date_st.get(date_raw) != target_state:
                 continue
         bucket = _score_bucket(_record_score(rec))
-        t30 = _finite_float(rec.get("next_30day_return"))
-        if t30 is None:
+        t = _finite_float(rec.get(horizon_field))
+        if t is None:
             continue
-        out.setdefault(bucket, []).append(t30)
+        out.setdefault(bucket, []).append(t)
     return out
 
 
@@ -116,7 +133,7 @@ def _bucket_rows(returns_by_bucket: dict[str, list[float]]) -> list[BucketWinRat
         rows.append(
             BucketWinRate(
                 bucket=bucket,
-                t30_win_rate=_win_rate(rets),
+                win_rate=_win_rate(rets),
                 sample_count=len(rets),
             )
         )
@@ -156,16 +173,23 @@ def compute_rank_monotonicity_from_loaded(
     records: list[dict[str, Any]],
     *,
     min_n: int = _MIN_N_PER_BUCKET_DEFAULT,
+    horizon_field: str = "next_5day_return",
 ) -> RankMonotonicityReport:
-    """纯函数: 用已加载 history + tracking records 算单调性报告 (可注入测试)."""
+    """纯函数: 用已加载 history + tracking records 算单调性报告 (可注入测试).
+
+    C229: ``horizon_field`` 默认 ``next_5day_return`` (BUY gate 决策 horizon;
+    2026-06-28 must-win 周期 T+30 → T+5/T+10). 透传给 :func:`_bucket_returns_by_state`.
+    调用方可传 ``next_10day_return`` / ``next_30day_return`` (T+30 长期质量诊断).
+    """
     date_st = _build_date_state_type_map(history)
 
-    overall_returns = _bucket_returns_by_state(records)
+    overall_returns = _bucket_returns_by_state(records, horizon_field=horizon_field)
     overall_verdict, _ = _verdict(overall_returns, min_n)
     report = RankMonotonicityReport(
         overall_buckets=_bucket_rows(overall_returns),
         overall_verdict=overall_verdict,
         overall_inverted=(overall_verdict == "inverted"),
+        horizon_label=_horizon_label(horizon_field),
     )
 
     # per-state_type 细分 (仅出现过的 state_type)
@@ -176,7 +200,7 @@ def compute_rank_monotonicity_from_loaded(
         if st:
             seen_states.add(st)
     for st in sorted(seen_states):
-        st_returns = _bucket_returns_by_state(records, date_st, st)
+        st_returns = _bucket_returns_by_state(records, date_st, st, horizon_field=horizon_field)
         st_verdict, _ = _verdict(st_returns, min_n)
         report.per_state_type[st] = _bucket_rows(st_returns)
         report.per_state_type_verdict[st] = st_verdict
@@ -189,8 +213,12 @@ def compute_rank_monotonicity(
     reports_dir: Path | None = None,
     lookback_days: int = 30,
     min_n: int = _MIN_N_PER_BUCKET_DEFAULT,
+    horizon_field: str = "next_5day_return",
 ) -> RankMonotonicityReport:
-    """从报告目录加载数据算单调性 (镜像 state_type_calibration 的 IO 包装)."""
+    """从报告目录加载数据算单调性 (镜像 state_type_calibration 的 IO 包装).
+
+    C229: ``horizon_field`` 默认 ``next_5day_return`` (BUY gate 决策 horizon).
+    """
     from src.screening.consecutive_recommendation import (
         load_auto_screening_history,
         load_tracking_history,
@@ -200,7 +228,9 @@ def compute_rank_monotonicity(
     search_dir = reports_dir or resolve_report_dir()
     history = load_auto_screening_history(lookback_days=lookback_days, report_dir=search_dir)
     records = load_tracking_history(search_dir)
-    return compute_rank_monotonicity_from_loaded(history, records, min_n=min_n)
+    return compute_rank_monotonicity_from_loaded(
+        history, records, min_n=min_n, horizon_field=horizon_field
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -221,27 +251,28 @@ def render_monotonicity_line(report: RankMonotonicityReport) -> str:
         return ""
 
     parts = [
-        f"{_BUCKET_LABEL.get(b.bucket, b.bucket)}{b.t30_win_rate:.0%}"
+        f"{_BUCKET_LABEL.get(b.bucket, b.bucket)}{b.win_rate:.0%}"
         for b in report.overall_buckets
-        if b.t30_win_rate is not None
+        if b.win_rate is not None
     ]
     if len(parts) < 2:
         return ""
     shape = " → ".join(parts)
+    hlabel = f"({report.horizon_label})" if report.horizon_label else ""
 
     if report.overall_verdict == "inverted":
         return (
-            f"  {Fore.RED}⚠ 排序单调性: {shape} 倒挂{Style.RESET_ALL}"
+            f"  {Fore.RED}⚠ 排序单调性 {hlabel}: {shape} 倒挂{Style.RESET_ALL}"
             f" {Fore.RED}(高分票胜率反而更低 — 模型打分质量待改进){Style.RESET_ALL}"
         )
     if report.overall_verdict == "monotonic":
         return (
-            f"  {Fore.GREEN}✓ 排序单调性: {shape}{Style.RESET_ALL}"
+            f"  {Fore.GREEN}✓ 排序单调性 {hlabel}: {shape}{Style.RESET_ALL}"
             f" {Fore.GREEN}(高分→高胜率){Style.RESET_ALL}"
         )
     # non_monotonic
     return (
-        f"  {Fore.YELLOW}⚠ 排序单调性: {shape} 非单调{Style.RESET_ALL}"
+        f"  {Fore.YELLOW}⚠ 排序单调性 {hlabel}: {shape} 非单调{Style.RESET_ALL}"
         f" {Fore.YELLOW}(部分 bucket 倒挂 — 模型打分质量不稳定){Style.RESET_ALL}"
     )
 
@@ -277,17 +308,21 @@ def compute_period_breakdown_from_loaded(
     *,
     n_periods: int = 2,
     min_n: int = 15,
+    horizon_field: str = "next_30day_return",
 ) -> list[PeriodBreakdown]:
-    """按 recommended_date 排序分 n_periods 段, 每段算 score→T+30 winrate 单调性.
+    """按 recommended_date 排序分 n_periods 段, 每段算 score→T+horizon winrate 单调性.
 
     回答 design packet H1 vs H2: 两段都倒挂 → H1 因子方向 bug; verdict 分化 → H2 regime.
     分段后样本变薄, min_n 默认 15 (比 overall 的 20 宽松, 诚实标注可靠性).
+
+    C222: ``horizon_field`` 参数化 (默认 ``next_30day_return``) — 与
+    :func:`compute_rank_monotonicity_from_loaded` 对齐.
     """
-    # 按 recommended_date 分组, 仅成熟 T+30
+    # 按 recommended_date 分组, 仅成熟该 horizon
     by_date: dict[str, list[dict[str, Any]]] = {}
     for rec in records:
-        t30 = _finite_float(rec.get("next_30day_return"))
-        if t30 is None:
+        t = _finite_float(rec.get(horizon_field))
+        if t is None:
             continue
         date_raw = str(rec.get("recommended_date", "") or "").replace("-", "")
         if not date_raw:
@@ -306,7 +341,7 @@ def compute_period_breakdown_from_loaded(
         end = (i + 1) * n // n_periods
         seg_dates = set(dates[start:end])
         seg_records = [r for d in seg_dates for r in by_date[d]]
-        returns_by_bucket = _bucket_returns_by_state(seg_records)
+        returns_by_bucket = _bucket_returns_by_state(seg_records, horizon_field=horizon_field)
         verdict, wrs = _verdict(returns_by_bucket, min_n)
         sample = sum(len(v) for v in returns_by_bucket.values())
         out.append(

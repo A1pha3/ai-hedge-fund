@@ -33,7 +33,7 @@ def _records(buckets):
                 {
                     "recommended_date": "20250601",
                     "recommendation_score": score_for[bucket],
-                    "next_30day_return": r,
+                    "next_5day_return": r,
                 }
             )
     return out
@@ -53,8 +53,8 @@ def test_inverted_when_high_score_winrate_lower_than_low():
     report = compute_rank_monotonicity_from_loaded(history, records, min_n=2)
     assert report.overall_verdict == "inverted"
     assert report.overall_inverted is True
-    assert _by_bucket(report, "low").t30_win_rate == 1.0
-    assert _by_bucket(report, "high").t30_win_rate == 0.0
+    assert _by_bucket(report, "low").win_rate == 1.0
+    assert _by_bucket(report, "high").win_rate == 0.0
 
 
 def test_monotonic_when_winrate_increases_with_score():
@@ -120,7 +120,7 @@ def test_per_state_type_subdivision():
                 {
                     "recommended_date": "20250601",
                     "recommendation_score": score_for[b],
-                    "next_30day_return": r,
+                    "next_5day_return": r,
                 }
             )
     # TREND 日: 单调 (低跌高涨)
@@ -130,7 +130,7 @@ def test_per_state_type_subdivision():
                 {
                     "recommended_date": "20250602",
                     "recommendation_score": score_for[b],
-                    "next_30day_return": r,
+                    "next_5day_return": r,
                 }
             )
     report = compute_rank_monotonicity_from_loaded(history, records, min_n=2)
