@@ -1,8 +1,12 @@
-"""M1: 因子层归因 (factor contribution × T+30 winrate) — decomposition 解锁.
+"""M1: 因子层归因 (factor contribution × 胜率) — decomposition 解锁.
 
 owner 授权 C (decomposition 因子层归因). 本模块读 tracking_history record 的
 ``score_decomposition.base_contributions`` (per-strategy T/MR/F/E 贡献),
-按各策略贡献分位分组算 T+30 胜率 → 定位**哪个因子**让高分票输.
+按各策略贡献分位分组算胜率 → 定位**哪个因子**让高分票输.
+
+**horizon** (C229, 2026-06-28): 默认 ``next_5day_return`` (BUY gate 决策 horizon;
+must-win 周期 T+30 → T+5/T+10). 可传 ``next_10day_return`` / ``next_30day_return``
+(T+30 保留为长期 invalidation 诊断).
 
 **前置**: main.py _build_auto_screening_payload 需注入 ``score_decomposition``
 到 recommendation dict (向后兼容, 旧 records 无 → insufficient 静默).
@@ -12,6 +16,7 @@ owner 授权 C (decomposition 因子层归因). 本模块读 tracking_history re
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,13 +33,19 @@ def _finite_float(value: Any) -> float | None:
     return result
 
 
+def _horizon_short_label(horizon_field: str) -> str:
+    """next_5day_return → 'T+5'."""
+    m = re.search(r"(\d+)", horizon_field)
+    return f"T+{m.group(1)}" if m else horizon_field
+
+
 @dataclass
 class FactorContributionWinrate:
-    """单个策略因子的贡献分位 × T+30 胜率."""
+    """单个策略因子的贡献分位 × 胜率 (horizon 由报告 horizon_label 标)."""
 
     strategy: str  # T | MR | F | E | attention | stability | consensus
-    high_contrib_winrate: float | None = None  # 贡献高 1/3 的 T+30 胜率
-    low_contrib_winrate: float | None = None  # 贡献低 1/3 的 T+30 胜率
+    high_contrib_winrate: float | None = None  # 贡献高 1/3 的胜率
+    low_contrib_winrate: float | None = None  # 贡献低 1/3 的胜率
     high_n: int = 0
     low_n: int = 0
     verdict: str = "insufficient"  # inverted | positive | insufficient
@@ -42,33 +53,37 @@ class FactorContributionWinrate:
 
 @dataclass
 class FactorAttributionReport:
-    """per-factor 贡献 × T+30 胜率归因报告."""
+    """per-factor 贡献 × 胜率归因报告 (horizon 默认 T+5, BUY gate 决策 horizon)."""
 
     factors: list[FactorContributionWinrate] = field(default_factory=list)
     sample_count: int = 0
     verdict: str = "insufficient"  # ok | insufficient
     worst_factor: str | None = None  # 倒挂最严重的因子
     worst_factor_inversion: float | None = None  # low - high (正=倒挂)
+    horizon_label: str = "T+5"  # 决策 horizon (C229: 默认 T+5; 可传 next_10day_return / next_30day_return)
 
 
 def compute_factor_attribution_from_loaded(
     records: list[dict[str, Any]],
     *,
     min_n: int = 15,
+    horizon_field: str = "next_5day_return",
 ) -> FactorAttributionReport:
-    """读 score_decomposition.base_contributions, 按 per-factor 贡献分位算 T+30 胜率.
+    """读 score_decomposition.base_contributions, 按 per-factor 贡献分位算胜率.
+
+    horizon_field 默认 ``next_5day_return`` (BUY gate 决策 horizon; 2026-06-28 缩短自 T+30)。
 
     对每个策略 (T/MR/F/E/attention/stability/consensus):
       - 按该策略贡献排序, 取高 1/3 vs 低 1/3
-      - 算两组 T+30 胜率
+      - 算两组胜率
       - 如果"贡献高 → 胜率低"(inverted), 该因子可能是倒挂根因
     """
-    # 收集有 decomposition + t30 的 records
+    # 收集有 decomposition + 该 horizon return 的 records
     valid: list[dict[str, Any]] = []
     for rec in records:
         decomp = rec.get("score_decomposition")
-        t30 = _finite_float(rec.get("next_30day_return"))
-        if decomp is None or t30 is None:
+        ret = _finite_float(rec.get(horizon_field))
+        if decomp is None or ret is None:
             continue
         if not isinstance(decomp, dict):
             continue
@@ -111,8 +126,8 @@ def compute_factor_attribution_from_loaded(
         low_recs = sorted_recs[:third]
         high_recs = sorted_recs[-third:]
 
-        low_returns = [_finite_float(r.get("next_30day_return")) for r in low_recs]
-        high_returns = [_finite_float(r.get("next_30day_return")) for r in high_recs]
+        low_returns = [_finite_float(r.get(horizon_field)) for r in low_recs]
+        high_returns = [_finite_float(r.get(horizon_field)) for r in high_recs]
         low_returns = [r for r in low_returns if r is not None]
         high_returns = [r for r in high_returns if r is not None]
 
@@ -150,6 +165,7 @@ def compute_factor_attribution_from_loaded(
         verdict="ok",
         worst_factor=worst_factor if worst_inversion > 0.05 else None,
         worst_factor_inversion=worst_inversion if worst_inversion > 0.05 else None,
+        horizon_label=_horizon_short_label(horizon_field),
     )
 
 
@@ -166,12 +182,13 @@ def render_factor_attribution_line(report: FactorAttributionReport) -> str:
         return ""
 
     inverted = [f for f in report.factors if f.verdict == "inverted"]
+    hlabel = f"({report.horizon_label})" if report.horizon_label else ""
     if not inverted:
         # 无倒挂因子 (好信号) 或全 insufficient
         ok_factors = [f for f in report.factors if f.verdict != "insufficient"]
         if not ok_factors:
             return ""
-        return f"  🔍 因子归因: 无倒挂因子 ({len(report.factors)} 因子检测, n={report.sample_count}) {__import__('src.utils.display', fromlist=['Fore']).Fore.GREEN}✓{Style.RESET_ALL}"
+        return f"  🔍 因子归因 {hlabel}: 无倒挂因子 ({len(report.factors)} 因子检测, n={report.sample_count}) {__import__('src.utils.display', fromlist=['Fore']).Fore.GREEN}✓{Style.RESET_ALL}"
 
     parts = []
     for f in inverted:
@@ -185,7 +202,7 @@ def render_factor_attribution_line(report: FactorAttributionReport) -> str:
     if report.worst_factor:
         suffix = f" {Fore.RED}— {report.worst_factor} 因子可能是倒挂根因{Style.RESET_ALL}"
 
-    return f"  🔍 因子归因: {'; '.join(parts)}{suffix}"
+    return f"  🔍 因子归因 {hlabel}: {'; '.join(parts)}{suffix}"
 
 
 __all__ = [

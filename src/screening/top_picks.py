@@ -1637,9 +1637,11 @@ def _print_monotonicity_block(report_dir: Path) -> None:
 
 
 def _print_factor_attribution_block(report_dir: Path) -> None:
-    """M1: 因子层归因 — per-strategy T/MR/F/E 贡献 × T+30 胜率.
+    """M1: 因子层归因 — per-strategy T/MR/F/E 贡献 × T+5 胜率 (BUY gate 决策 horizon).
 
     owner 授权 C (decomposition). 定位**哪个因子**让高分票输 (倒挂根因).
+    horizon 对齐 C229/C230 (2026-06-28): 默认 ``next_5day_return``;
+    T+30 保留为长期 invalidation 诊断 (可显式传 ``horizon_field``).
     当前旧 records 无 score_decomposition → insufficient 静默.
     owner 跑 --auto (新代码注入 decomposition) 累积新 records 后激活.
     """

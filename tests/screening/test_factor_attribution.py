@@ -16,14 +16,14 @@ def _decomp_rec(t30: float, contributions: dict[str, float]) -> dict:
     """合成含 score_decomposition 的 record."""
     return {
         "recommended_date": "20250101",
-        "next_30day_return": t30,
+        "next_5day_return": t30,
         "score_decomposition": {"base_contributions": contributions},
     }
 
 
 def test_insufficient_when_no_decomposition():
     """旧 records 无 score_decomposition → insufficient."""
-    recs = [{"recommended_date": "20250101", "next_30day_return": 5.0}] * 100
+    recs = [{"recommended_date": "20250101", "next_5day_return": 5.0}] * 100
     rep = compute_factor_attribution_from_loaded(recs, min_n=10)
     assert rep.verdict == "insufficient"
 
@@ -87,6 +87,6 @@ def test_render_inverted_factor():
 
 
 def test_render_silent_when_insufficient():
-    recs = [{"recommended_date": "20250101", "next_30day_return": 5.0}] * 100
+    recs = [{"recommended_date": "20250101", "next_5day_return": 5.0}] * 100
     rep = compute_factor_attribution_from_loaded(recs, min_n=10)
     assert render_factor_attribution_line(rep) == ""
