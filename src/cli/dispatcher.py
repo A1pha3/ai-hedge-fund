@@ -864,6 +864,26 @@ def _resolve_reconcile(argv: list[str]) -> int | None:
     return 0
 
 
+def _resolve_refresh_regime_winrates(argv: list[str]) -> int | None:
+    """NS-5 (C237): ``--refresh-regime-winrates`` — daily scheduling 重算 regime 历史胜率.
+
+    Usage:
+        --refresh-regime-winrates                  # 输出 JSON 到 stdout
+        --refresh-regime-winrates --output=path    # 写入文件
+        --refresh-regime-winrates --min-samples=10 # 覆盖默认阈值
+    """
+    if "--refresh-regime-winrates" not in argv:
+        return None
+    from pathlib import Path
+
+    from src.screening.regime_winrate_recompute import run_refresh_cli
+
+    output_raw = _get_kv(argv, "--output")
+    output_path = Path(output_raw).expanduser() if output_raw else None
+    min_samples = _parse_int(_get_kv(argv, "--min-samples"), 10)
+    return run_refresh_cli(output_path=output_path, min_samples=min_samples)
+
+
 COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--preheat", _resolve_preheat),
     ("--daily-gainers", _resolve_daily_gainers),
@@ -917,6 +937,7 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--strategy-report", _resolve_strategy_report),
     ("--top-picks", _resolve_top_picks),
     ("--reconcile", _resolve_reconcile),
+    ("--refresh-regime-winrates", _resolve_refresh_regime_winrates),
 ]
 
 
