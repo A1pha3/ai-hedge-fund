@@ -17,13 +17,9 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
-
-import pandas as pd
-import pytest
 
 from src.screening.market_state import MarketState
 from src.screening.models import (
@@ -526,3 +522,71 @@ def test_e2e_top_n_truncation_and_sort(tmp_path, monkeypatch) -> None:
     assert len(payload["recommendations"]) == 3
     scores = [r.get("score_b", 0.0) for r in payload["recommendations"]]
     assert scores == sorted(scores, reverse=True), f"未按 score_b 降序: {scores}"
+
+
+# ---------------------------------------------------------------------------
+# 8. NS-6: selected_strategies 分支也注入 score_decomposition
+# ---------------------------------------------------------------------------
+
+
+def test_e2e_selected_strategies_branch_injects_score_decomposition(tmp_path, monkeypatch) -> None:
+    """NS-6: selected_strategies 分支生成的 recommendations 也应有 score_decomposition.
+
+    背景 (autodev C236 friction mining):
+    - main.py:680-688 ``if selected_strategies:`` 分支调用 reweight_recommendations
+      但未注入 score_decomposition (仅 else 分支注入)
+    - 后果: 用户用 --strategies fundamental 等自定义权重时, tracking_history 落盘的
+      rec 无 score_decomposition → factor_attribution 永远 insufficient
+    - 修复: 把注入逻辑提取到 if/else 之后, 对 ranking_pool 统一注入
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("USE_BATCH_FETCHER", "true")
+    monkeypatch.setenv("TUSHARE_TOKEN", "test_token")
+    report_dir = tmp_path / "data" / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("src.main._save_json_report", lambda *_a, **_kw: report_dir / "stub.json")
+
+    candidates = _make_candidates(3)
+    market_state = _make_market_state()
+    fused = _make_fused(candidates, market_state)
+    patches = _patch_pipeline_layers(candidates, fused=fused)
+
+    from src.main import compute_auto_screening_results
+
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+        payload = compute_auto_screening_results("20260607", top_n=3, selected_strategies=["fundamental"])
+
+    assert len(payload["recommendations"]) == 3
+    for rec in payload["recommendations"]:
+        assert "score_decomposition" in rec, (
+            f"selected_strategies 分支未注入 score_decomposition: {rec.get('ticker')}"
+        )
+        decomp = rec["score_decomposition"]
+        assert isinstance(decomp, dict), f"score_decomposition 非 dict: {decomp}"
+        assert "base_contributions" in decomp
+        assert "total" in decomp
+
+
+def test_e2e_default_branch_still_injects_score_decomposition(tmp_path, monkeypatch) -> None:
+    """NS-6 回归: 默认分支 (无 selected_strategies) 仍正确注入 score_decomposition."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("USE_BATCH_FETCHER", "true")
+    monkeypatch.setenv("TUSHARE_TOKEN", "test_token")
+    report_dir = tmp_path / "data" / "reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr("src.main._save_json_report", lambda *_a, **_kw: report_dir / "stub.json")
+
+    candidates = _make_candidates(3)
+    patches = _patch_pipeline_layers(candidates)
+
+    from src.main import compute_auto_screening_results
+
+    with patches["build_candidate_pool"], patches["score_batch"], patches["fuse_batch"], patches["detect_market_state"]:
+        payload = compute_auto_screening_results("20260607", top_n=3)
+
+    assert len(payload["recommendations"]) == 3
+    for rec in payload["recommendations"]:
+        assert "score_decomposition" in rec
+        decomp = rec["score_decomposition"]
+        assert isinstance(decomp, dict)
+        assert "base_contributions" in decomp

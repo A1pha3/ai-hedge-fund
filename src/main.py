@@ -677,6 +677,10 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     # Step 4: 排序输出 Top N
     progress.update_status("auto_screening", None, f"Step 4/4: 输出 Top {top_n} 推荐")
     ranking_pool_size = max(top_n * 3, top_n)
+    # NS-6: fused_by_ticker 提前构建, 供 selected_strategies / default 两分支统一注入
+    # score_decomposition (因子瀑布) — 避免 selected_strategies 分支漏注入导致
+    # tracking_history 落盘的 rec 无 decomposition → factor_attribution insufficient.
+    fused_by_ticker = {str(item.ticker): item for item in fused}
     if selected_strategies:
         from src.screening.custom_weights import reweight_recommendations
 
@@ -688,22 +692,26 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
         ranking_pool = reweighted_results[:ranking_pool_size]
     else:
         sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
-        ranking_pool = []
-        for item in sorted_results[:ranking_pool_size]:
-            d = item.model_dump(mode="json")
-            # M1: 注入 score_decomposition (per-strategy T/MR/F/E 贡献) 到 recommendation dict,
-            # 向后兼容 (旧 records 无此字段 → factor_attribution 模块 insufficient 静默).
-            try:
-                from src.screening.signal_fusion import compute_score_decomposition as _decompose
-                d["score_decomposition"] = _decompose(item)
-            except Exception:
-                pass  # best-effort, never block on decomposition
-            ranking_pool.append(d)
+        ranking_pool = [item.model_dump(mode="json") for item in sorted_results[:ranking_pool_size]]
+
+    # NS-6: 统一注入 score_decomposition (per-strategy T/MR/F/E 贡献 + attention +
+    # stability + consensus + other + total) 到 ranking_pool 每条 rec, 让
+    # update_tracking_history 落盘后 factor_attribution 模块可按贡献分位检测
+    # 高低 winrate 倒挂。best-effort: 异常时不阻塞主流程 (rec 无 decomposition →
+    # factor_attribution 消费侧 isinstance 校验后返回 insufficient).
+    try:
+        from src.screening.signal_fusion import compute_score_decomposition as _decompose
+        for rec in ranking_pool:
+            fused_item = fused_by_ticker.get(str(rec.get("ticker", "")))
+            if fused_item is None:
+                continue
+            rec["score_decomposition"] = _decompose(fused_item)
+    except Exception:
+        pass  # best-effort, never block on decomposition
 
     ranked_pool = _rank_pool_by_investability(ranking_pool, trade_date)
 
     top_results_serializable = ranked_pool[:top_n]
-    fused_by_ticker = {str(item.ticker): item for item in fused}
     top_results_for_sector = [fused_by_ticker.get(str(rec.get("ticker", "")), rec) for rec in top_results_serializable]
 
     # Sector concentration guard

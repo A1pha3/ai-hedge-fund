@@ -84,6 +84,11 @@ class TrackingRecord:
         tracking_status: 状态: ``"pending"`` / ``"partial"`` / ``"complete"``
         model_version: NS-2 模型版本标识 (git short sha, 来自 auto_screening
             payload 顶层); 旧记录无此字段默认 ``""``
+        score_decomposition: NS-6 因子瀑布 (per-strategy T/MR/F/E 贡献 + attention
+            + stability + consensus + other + total), 来自 main.py 注入的
+            ``signal_fusion.compute_score_decomposition`` 输出; 旧记录/未注入时
+            ``None``, 让 ``factor_attribution`` 模块在消费侧 isinstance 校验后
+            返回 insufficient (向后兼容)
     """
 
     ticker: str
@@ -104,6 +109,12 @@ class TrackingRecord:
     # NS-2: 模型版本标识 (来自 auto_screening payload 顶层), 让诊断模块按版本
     # 分组区分老/新模型效果。旧 tracking_history 记录无此字段 → 默认 ""。
     model_version: str = ""
+    # NS-6: 因子瀑布 (per-strategy T/MR/F/E 贡献 + attention/stability/consensus/
+    # other/total), 来自 signal_fusion.compute_score_decomposition。让 factor_
+    # attribution 模块按贡献分位检测高低 winrate 倒挂。旧 tracking_history 记录
+    # 无此字段 → 默认 None (而非 {}), 让消费侧 isinstance(decomp, dict) 校验失败
+    # 时返回 insufficient, 保持持久化层与计算层解耦。
+    score_decomposition: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -128,6 +139,7 @@ class TrackingRecord:
             next_30day_return=_optional_float(payload.get("next_30day_return")),
             tracking_status=str(payload.get("tracking_status", "pending") or "pending"),
             model_version=str(payload.get("model_version", "") or ""),
+            score_decomposition=payload.get("score_decomposition"),
         )
 
 
@@ -467,6 +479,12 @@ def update_tracking_history(
             continue
         price = _coerce_recommended_price(rec)
         score_b = _safe_float(rec.get("score_b"), default=0.0)
+        # NS-6: 落盘 main.py 注入的 score_decomposition (因子瀑布), 让
+        # factor_attribution 模块按贡献分位检测高低 winrate 倒挂。rec 无此字段
+        # 时 None (向后兼容旧 rec / selected_strategies 分支未注入路径).
+        decomp = rec.get("score_decomposition")
+        if not isinstance(decomp, dict):
+            decomp = None
         record = TrackingRecord(
             ticker=ticker,
             name=str(rec.get("name", "") or ""),
@@ -475,6 +493,7 @@ def update_tracking_history(
             recommendation_score=score_b,
             tracking_status="pending",
             model_version=model_version,
+            score_decomposition=decomp,
         )
         history_index[key] = record.to_dict()
         updated_count += 1
