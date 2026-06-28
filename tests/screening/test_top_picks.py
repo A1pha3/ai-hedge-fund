@@ -563,6 +563,55 @@ class TestApplyConsecutiveBonusAndResort:
         reversed_top2 = {r["ticker"] for r in result_reversed[:2]}
         assert forward_top2 == reversed_top2 == {"000001", "300118"}
 
+    # ------------------------------------------------------------------
+    # NS-11 (autodev c232): consecutive bonus 不应喂 BUY 门控 — bonus 本意
+    # 是排序 tie-break, 不是放水 gate. _apply_consecutive_bonus_and_resort
+    # 必须在加 bonus 前存 pre-bonus `composite_score_gated`, 让下游
+    # build_front_door_verdict 用 pre-bonus score 判 BUY gate (>=0.5), 用
+    # post-bonus composite_score 排序. C220 horizon 对齐后, bonus 污染 gate
+    # 会让 0.47 真分 + 0.05 bonus = 0.52 越过 BUY → stale 挑选反而更容易 BUY.
+    # ------------------------------------------------------------------
+
+    def test_ns11_preserves_pre_bonus_score_as_composite_score_gated(self) -> None:
+        """NS-11: pre-bonus composite_score 必须存入 `composite_score_gated`
+        字段, 让 BUY gate 用 pre-bonus score 判定, bonus 仅用于排序."""
+        from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+        ranked = [
+            {"ticker": "a", "composite_score": 0.47, "consecutive_bonus": 0.05},
+        ]
+        result = _apply_consecutive_bonus_and_resort(ranked)
+        # post-bonus composite_score (用于排序)
+        assert result[0]["composite_score"] == pytest.approx(0.52)
+        # pre-bonus composite_score_gated (用于 BUY gate, NS-11 新增)
+        assert result[0]["composite_score_gated"] == pytest.approx(0.47)
+
+    def test_ns11_zero_bonus_composite_score_gated_equals_composite_score(self) -> None:
+        """NS-11: bonus=0 时 composite_score_gated 与 composite_score 相同."""
+        from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+        ranked = [
+            {"ticker": "a", "composite_score": 0.50, "consecutive_bonus": 0.0},
+        ]
+        result = _apply_consecutive_bonus_and_resort(ranked)
+        assert result[0]["composite_score_gated"] == pytest.approx(0.50)
+        assert result[0]["composite_score"] == pytest.approx(0.50)
+
+    def test_ns11_composite_score_gated_clamped_to_domain(self) -> None:
+        """NS-11: composite_score_gated 也必须 clamp 到 [-1.0, 1.0] 域,
+        与 composite_score 一致 (composite_score.py:16 文档化域)."""
+        from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+        # bonus>0 让 composite_score 也被 clamp (bonus=0 时 composite_score 不修改)
+        ranked = [
+            {"ticker": "a", "composite_score": 1.5, "consecutive_bonus": 0.05},
+        ]
+        result = _apply_consecutive_bonus_and_resort(ranked)
+        # pre-bonus 1.5 clamped to 1.0
+        assert result[0]["composite_score_gated"] == 1.0
+        # post-bonus 1.5+0.05=1.55 clamped to 1.0
+        assert result[0]["composite_score"] == 1.0
+
 
 # ---------------------------------------------------------------------------
 # _enrich_with_consecutive_bonus

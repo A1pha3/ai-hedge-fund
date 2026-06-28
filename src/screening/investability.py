@@ -194,7 +194,16 @@ def build_front_door_verdict(
 
     regime_lower = _safe_text(market_regime).lower()
     decision = _safe_text(recommendation.get("decision")).lower()
-    composite_score = _safe_metric(recommendation.get("composite_score"), _safe_metric(recommendation.get("score_b", 0.0), 0.0))
+    # NS-11 (autodev c232): 优先读 pre-bonus `composite_score_gated` 判 BUY gate,
+    # 不被 consecutive bonus 放水. bonus 本意是排序 tie-break (R4), 不是放水
+    # gate — 0.47 真分 + 0.05 bonus = 0.52 不应越过 BUY gate (>=0.5). C220
+    # horizon 对齐后, bonus 污染 gate 会让 stale 挑选反而更容易 BUY, 与"稳定
+    # 找到"产品目标相违. 缺省 composite_score_gated (旧报告/无 bonus 路径)
+    # 回退 composite_score 保持向后兼容.
+    _composite_score_raw = recommendation.get("composite_score_gated")
+    if _composite_score_raw is None:
+        _composite_score_raw = recommendation.get("composite_score")
+    composite_score = _safe_metric(_composite_score_raw, _safe_metric(recommendation.get("score_b", 0.0), 0.0))
     expected_returns = recommendation.get("expected_returns") or {}
     win_rates = recommendation.get("win_rates") or {}
     # C219 (autodev): per-horizon bootstrap CI (n=7203, 95%) 证明 low bucket

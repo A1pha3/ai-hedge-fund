@@ -609,6 +609,110 @@ def test_c221_signal_horizon_preserved_under_risk_off_downgrade() -> None:
 
 
 # ---------------------------------------------------------------------------
+# NS-11 (autodev c232): consecutive bonus 不应喂 BUY 门控 — bonus 本意是
+# 排序 tie-break, 不是放水 gate. _apply_consecutive_bonus_and_resort (top_picks.py)
+# 在加 bonus 前存 pre-bonus `composite_score_gated`, build_front_door_verdict
+# 优先读 composite_score_gated 判 BUY gate (>=0.5), 缺省回退 composite_score
+# (向后兼容旧报告). C220 horizon 对齐后, bonus 污染 gate 会让 0.47 真分 + 0.05
+# bonus = 0.52 越过 BUY → stale 挑选反而更容易 BUY, 与"稳定找到"产品目标相违.
+# ---------------------------------------------------------------------------
+
+
+def test_ns11_buy_gate_uses_pre_bonus_composite_score_gated() -> None:
+    """NS-11: BUY gate 必须用 pre-bonus composite_score_gated 判定, 不被
+    consecutive bonus 放水. 模拟 0.47 真分 + 0.05 bonus = 0.52 场景:
+    composite_score_gated=0.47 < 0.5 → 不 BUY, 即使 composite_score=0.52."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            # post-bonus composite_score (boosted, 用于排序)
+            "composite_score": 0.52,
+            # pre-bonus composite_score_gated (NS-11 新增, 用于 BUY gate)
+            "composite_score_gated": 0.47,
+            # T+5/T+10 强 (本可 BUY 若 score 够)
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 9.4},
+            "win_rates": {"t5": 0.62, "t10": 0.63, "t30": 0.63},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    # composite_score_gated=0.47 < 0.5 → 不 BUY, 降级 HOLD (is_watchable: 0.47>=0.25)
+    assert verdict["action"] != "BUY", (
+        "NS-11: BUY gate 必须用 pre-bonus composite_score_gated; 0.47 真分 + "
+        "0.05 bonus = 0.52 不应越过 BUY gate (>=0.5) — bonus 是排序 tie-break, "
+        "不是放水 gate"
+    )
+    # is_watchable 用 pre-bonus score: 0.47 >= 0.25 → HOLD (非 AVOID)
+    assert verdict["action"] == "HOLD", (
+        "NS-11: composite_score_gated=0.47 >= 0.25 (is_watchable 阈值) → HOLD, 非 AVOID"
+    )
+
+
+def test_ns11_buy_passes_when_composite_score_gated_above_threshold() -> None:
+    """NS-11: composite_score_gated >= 0.5 (真分够 BUY) → BUY, bonus 仅影响排序."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.55,  # post-bonus (0.50 + 0.05)
+            "composite_score_gated": 0.50,  # pre-bonus (真分够 BUY)
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 9.4},
+            "win_rates": {"t5": 0.62, "t10": 0.63, "t30": 0.63},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] == "BUY", (
+        "NS-11: composite_score_gated=0.50 >= 0.5 → BUY (bonus 仅排序, 不影响 gate)"
+    )
+
+
+def test_ns11_falls_back_to_composite_score_when_gated_absent() -> None:
+    """NS-11: 缺省 composite_score_gated (旧报告/无 bonus 路径) 回退 composite_score.
+
+    向后兼容: 旧报告无 composite_score_gated 字段, build_front_door_verdict
+    回退到 composite_score 判 BUY gate, 保持旧行为."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,  # 无 composite_score_gated → 回退
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 9.4},
+            "win_rates": {"t5": 0.62, "t10": 0.63, "t30": 0.63},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] == "BUY", (
+        "NS-11: 缺省 composite_score_gated 时回退 composite_score 判 BUY gate (向后兼容)"
+    )
+
+
+def test_ns11_watchable_uses_pre_bonus_composite_score_gated() -> None:
+    """NS-11: is_watchable (HOLD/AVOID 分界) 也用 composite_score_gated.
+
+    模拟 0.22 真分 + 0.05 bonus = 0.27 场景: composite_score_gated=0.22 < 0.25
+    → 不 watchable → AVOID, 即使 composite_score=0.27 >= 0.25."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.27,  # post-bonus (0.22 + 0.05)
+            "composite_score_gated": 0.22,  # pre-bonus (不够 watchable)
+            "expected_returns": {"t5": 2.0, "t10": 2.5, "t30": 3.0},
+            "win_rates": {"t5": 0.52, "t10": 0.52, "t30": 0.52},
+            "bucket_sample_count": 48,
+        },
+        market_regime="trend",
+    )
+    # composite_score_gated=0.22 < 0.25 → 不 watchable → AVOID
+    assert verdict["action"] == "AVOID", (
+        "NS-11: is_watchable 用 composite_score_gated; 0.22 真分 + 0.05 bonus "
+        "= 0.27 不应越过 watchable 阈值 (>=0.25) → AVOID"
+    )
+
+
+# ---------------------------------------------------------------------------
 # _grade_code / _safe_metric / _decorate_cluster_candidate
 # ---------------------------------------------------------------------------
 

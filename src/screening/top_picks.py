@@ -1094,9 +1094,15 @@ def _apply_consecutive_bonus_and_resort(ranked: list[dict]) -> list[dict]:
         # 导致 `max(-1.0, min(1.0, NaN+bonus))` 在 CPython 返回 1.0, corrupt 标的静默
         # 顶到推荐列表顶部 (BH-012 escalate-to-top 同型). 用 safe_float 源头拒绝 NaN.
         bonus = _safe_float_value(recommendation.get("consecutive_bonus", 0.0), 0.0)
+        original_score = _safe_float_value(recommendation.get("composite_score", 0.0), 0.0)
+        # NS-11 (autodev c232): 存 pre-bonus `composite_score_gated` 让下游
+        # build_front_door_verdict 用 pre-bonus score 判 BUY gate (>=0.5), bonus
+        # 仅用于排序. 总是存 (即使 bonus=0) 让下游总能读到 pre-bonus score,
+        # 行为一致. 缺省时 build_front_door_verdict 回退 composite_score (向后兼容).
+        # Re-clamp to the documented [-1.0, 1.0] domain (composite_score.py:16).
+        recommendation["composite_score_gated"] = round(max(-1.0, min(1.0, original_score)), 4)
         if not bonus:
             continue
-        original_score = _safe_float_value(recommendation.get("composite_score", 0.0), 0.0)
         # Re-clamp to the documented [-1.0, 1.0] domain (composite_score.py:16).
         # compute_composite_scores already clamps, but the bonus is added after,
         # so a high-base pick (0.98) + 6+day bonus (0.08) would otherwise reach 1.06.
