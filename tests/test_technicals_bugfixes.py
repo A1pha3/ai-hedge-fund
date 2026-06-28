@@ -22,6 +22,7 @@ from src.agents.technicals import (
     safe_float,
     weighted_signal_combination,
 )
+from src.agents.technicals import VOL_HIGH_THRESHOLD, VOL_LOW_THRESHOLD
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -278,6 +279,120 @@ class TestVolatilityLabelDirection:
         m = result["metrics"]
         assert m["volatility_regime"] < 0.8 and m["volatility_z_score"] < -1.0, "fixture must trigger low-vol regime"
         assert result["signal"] == "bearish", "low-vol regime → bearish (C224; was 'bullish' pre-flip)"
+
+
+class TestVolatilityBNarrowThreshold:
+    """Volatility factor B_narrow threshold tightening (autodev C236 / iv069).
+
+    Counterfactual evidence (autodev C222/C224 n=1977, 20 日期 sample=100):
+    current_AND (0.8/1.2) has %neutral=53.0% (中性带太宽) + sep=-0.028 (反向, pre-C224).
+    C224 翻转方向后, B_narrow (0.9/1.1) 进一步: %neutral=46.4%, sep=+0.031 (方向正, 最佳).
+    Fix: VOL_LOW_THRESHOLD 0.8→0.9, VOL_HIGH_THRESHOLD 1.2→1.1 — 缩窄中性带, 让更多
+    mild-vol 票进入 bullish/bearish 可操作区间. T+5/T+10 horizon 验证留 post-push observation.
+    """
+
+    def test_vol_low_threshold_narrowed_to_0_9(self):
+        """B_narrow: VOL_LOW_THRESHOLD 0.8 → 0.9 (收缩中性带上界)."""
+        assert VOL_LOW_THRESHOLD == 0.9, (
+            "B_narrow: VOL_LOW_THRESHOLD should be 0.9 (was 0.8); "
+            "shrinks neutral band to reduce 53% dir=0 rate"
+        )
+
+    def test_vol_high_threshold_narrowed_to_1_1(self):
+        """B_narrow: VOL_HIGH_THRESHOLD 1.2 → 1.1 (收缩中性带下界)."""
+        assert VOL_HIGH_THRESHOLD == 1.1, (
+            "B_narrow: VOL_HIGH_THRESHOLD should be 1.1 (was 1.2); "
+            "shrinks neutral band to reduce 53% dir=0 rate"
+        )
+
+    @staticmethod
+    def _make_mild_regime_df(mild_spike: bool) -> pd.DataFrame:
+        """Deterministic series ending in a MILD vol regime (regime in [1.1, 1.2] or [0.8, 0.9]).
+
+        Uses alternating returns for deterministic vol control (no random seed dependence).
+        mild_spike=True  → regime ≈ 1.135, z ≈ +1.16 (mild high-vol, neutral with old 1.2).
+        mild_spike=False → regime ≈ 0.863, z ≈ -1.20 (mild low-vol, neutral with old 0.8).
+        """
+        calm_80 = np.array([0.01, -0.01] * 40)  # 80 bars, std ≈ 0.01
+        calm_40 = np.array([0.01, -0.01] * 20)  # 40 bars, std ≈ 0.01
+        spike_80 = np.array([0.013, -0.013] * 40)  # 80 bars, std ≈ 0.013
+        spike_40 = np.array([0.013, -0.013] * 20)  # 40 bars, std ≈ 0.013
+        if mild_spike:
+            all_returns = np.concatenate([calm_80, spike_40])  # 80 calm + 40 spike
+        else:
+            all_returns = np.concatenate([spike_80, calm_40])  # 80 turb + 40 calm
+        close = 100.0 * np.cumprod(1 + all_returns)
+        n = len(close)
+        return pd.DataFrame(
+            {"open": close, "high": close, "low": close, "close": close, "volume": np.full(n, 1000.0)},
+            index=pd.date_range("2025-01-01", periods=n),
+        )
+
+    def test_mild_high_vol_regime_now_bullish(self):
+        """Mild high-vol (regime in [1.1, 1.2], z > 1) → bullish (B_narrow; was neutral with old 1.2)."""
+        df = self._make_mild_regime_df(mild_spike=True)
+        result = calculate_volatility_signals(df)
+        m = result["metrics"]
+        assert 1.1 < m["volatility_regime"] < 1.2, (
+            f"fixture must produce regime in [1.1, 1.2] for mild-high-vol test, "
+            f"got regime={m['volatility_regime']:.4f}"
+        )
+        assert m["volatility_z_score"] > 1.0, (
+            f"fixture must produce z > 1 for mild-high-vol test, got z={m['volatility_z_score']:.4f}"
+        )
+        assert result["signal"] == "bullish", (
+            "B_narrow: mild high-vol regime (1.1<regime<1.2, z>1) → bullish; "
+            "was 'neutral' with old VOL_HIGH_THRESHOLD=1.2"
+        )
+
+    def test_mild_low_vol_regime_now_bearish(self):
+        """Mild low-vol (regime in [0.8, 0.9], z < -1) → bearish (B_narrow; was neutral with old 0.8)."""
+        df = self._make_mild_regime_df(mild_spike=False)
+        result = calculate_volatility_signals(df)
+        m = result["metrics"]
+        assert 0.8 < m["volatility_regime"] < 0.9, (
+            f"fixture must produce regime in [0.8, 0.9] for mild-low-vol test, "
+            f"got regime={m['volatility_regime']:.4f}"
+        )
+        assert m["volatility_z_score"] < -1.0, (
+            f"fixture must produce z < -1 for mild-low-vol test, got z={m['volatility_z_score']:.4f}"
+        )
+        assert result["signal"] == "bearish", (
+            "B_narrow: mild low-vol regime (0.8<regime<0.9, z<-1) → bearish; "
+            "was 'neutral' with old VOL_LOW_THRESHOLD=0.8"
+        )
+
+    def test_strict_high_vol_regime_still_bullish(self):
+        """Strict high-vol (regime > 1.2, z > 1) → bullish (no regression from C224)."""
+        rng = np.random.default_rng(99)
+        calm = 100.0 + rng.normal(0, 0.2, 80)
+        spike = 100.0 + rng.normal(0, 3.0, 40)
+        close = np.concatenate([calm, spike])
+        n = len(close)
+        df = pd.DataFrame(
+            {"open": close, "high": close, "low": close, "close": close, "volume": np.full(n, 1000.0)},
+            index=pd.date_range("2025-01-01", periods=n),
+        )
+        result = calculate_volatility_signals(df)
+        m = result["metrics"]
+        assert m["volatility_regime"] > 1.2, "fixture must trigger strict high-vol regime"
+        assert result["signal"] == "bullish", "strict high-vol → bullish (C224 no regression)"
+
+    def test_strict_low_vol_regime_still_bearish(self):
+        """Strict low-vol (regime < 0.8, z < -1) → bearish (no regression from C224)."""
+        rng = np.random.default_rng(99)
+        turb = 100.0 + rng.normal(0, 3.0, 80)
+        calm = 100.0 + rng.normal(0, 0.2, 40)
+        close = np.concatenate([turb, calm])
+        n = len(close)
+        df = pd.DataFrame(
+            {"open": close, "high": close, "low": close, "close": close, "volume": np.full(n, 1000.0)},
+            index=pd.date_range("2025-01-01", periods=n),
+        )
+        result = calculate_volatility_signals(df)
+        m = result["metrics"]
+        assert m["volatility_regime"] < 0.8, "fixture must trigger strict low-vol regime"
+        assert result["signal"] == "bearish", "strict low-vol → bearish (C224 no regression)"
 
 
 # ---------------------------------------------------------------------------
