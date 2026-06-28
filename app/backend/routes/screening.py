@@ -290,6 +290,7 @@ def _build_screening_response(
         500: {"description": "其他内部错误"},
     },
 )
+@safe_route
 async def run_auto_screening(req: ScreeningRequest) -> ScreeningResponse:
     """Web 端一键运行全市场自动筛选。
 
@@ -331,9 +332,8 @@ async def run_auto_screening(req: ScreeningRequest) -> ScreeningResponse:
     except ValueError as exc:
         # 候选池为空 — 503 而非 500 (上游数据问题)
         raise HTTPException(status_code=503, detail=str(exc))
-    except Exception as exc:
-        # 其他内部错误
-        raise HTTPException(status_code=500, detail=f"一键选股失败: {exc}")
+        # 其他非预期异常不在此拼接 str(exc) — 交由 @safe_route 记日志 +
+        # 返回脱敏 "Internal server error" (NS-14: 匿名 caller 信息泄露).
 
     return _build_screening_response(
         payload,
@@ -400,6 +400,7 @@ class CompareResponse(BaseModel):
         404: {"description": "未找到有效的 auto_screening 报告"},
     },
 )
+@safe_route
 async def compare_endpoint(
     tickers: str = Query(..., description="逗号分隔的 ticker, 2-5 只 (e.g. '300750,600519,000001')"),
     metrics: str | None = Query(None, description="逗号分隔的指标, 缺省全部 (e.g. 'trend_score,score_b')"),
@@ -561,6 +562,7 @@ class ConditionalOrdersResponse(BaseModel):
         422: {"description": "参数校验失败 (top_n 越界)"},
     },
 )
+@safe_route
 async def conditional_orders_endpoint(
     top_n: int = Query(20, ge=1, le=50, description="Top N 推荐 (1-50)"),
     atr_period: int = Query(14, ge=2, le=60, description="ATR 周期 (2-60)"),
@@ -676,6 +678,7 @@ class CustomWeightsRequest(BaseModel):
         404: {"description": "未找到有效 auto_screening 报告"},
     },
 )
+@safe_route
 async def apply_custom_weights(req: CustomWeightsRequest) -> ScreeningResponse:
     """P2-5 应用自定义策略权重, 重新计算 score_b 并返回 Top N 推荐。
 
@@ -774,6 +777,7 @@ class WinRateDashboardResponse(BaseModel):
         200: {"description": "成功 — 返回近 N 天推荐胜率趋势 + 平均收益率曲线"},
     },
 )
+@safe_route
 async def get_winrate_dashboard(
     lookback_days: int = Query(30, ge=1, le=365, description="回溯天数 (默认 30)"),
 ) -> WinRateDashboardResponse:
@@ -856,6 +860,7 @@ class StockDetailResponse(BaseModel):
         404: {"description": "未找到有效的 auto_screening 报告"},
     },
 )
+@safe_route
 async def get_stock_detail(
     ticker: str,
     trade_date: str | None = Query(None, description="报告日期 YYYYMMDD, 缺省取最新"),
