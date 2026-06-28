@@ -1495,6 +1495,7 @@ def _print_top_picks_footer(
     _print_monotonicity_block(report_dir)
     _print_north_star_block(report_dir)
     _print_factor_attribution_block(report_dir)
+    _print_factor_attribution_by_state_block(report_dir)  # NS-6: 因子 × state_type 倒挂
     _print_decision_flow_hint()
     _print_disclaimer()
 
@@ -1663,6 +1664,31 @@ def _print_factor_attribution_block(report_dir: Path) -> None:
     except Exception:  # noqa: BLE001 — best-effort; never break the front door
         return
     line = render_factor_attribution_line(report)
+    if line:
+        print(line)
+
+
+def _print_factor_attribution_by_state_block(report_dir: Path) -> None:
+    """NS-6: 因子归因 × state_type — 哪个因子在哪个市场帮倒忙 (历史回测).
+
+    用户方法论 (2026-06-29): 历史回测先行 — 不等 score_decomposition 持久化成熟.
+    JOIN tracking_history (realized T+5/T+10 return) + 历史报告 recommendations
+    (score_decomposition + market_state.state_type) on (ticker, date) → ~7500 条.
+    对每 state_type × 每 factor 算贡献高/低组胜率倒挂.
+
+    历史 n=7500 诊断 (2024-03~2026-05): event_sentiment 系统性倒挂 (trend T+5
+    高贡献胜率 27% vs 低 69%, +42% inversion), fundamental/mean_reversion 在
+    trend 倒挂. 供 owner 因子调优 (最大 P&L 杠杆). 纯诊断不改因子/gate/仓位.
+    """
+    try:
+        from src.screening.factor_attribution_by_state import (
+            compute_factor_attribution_by_state,
+            render_factor_attribution_by_state_line,
+        )
+        report = compute_factor_attribution_by_state(reports_dir=report_dir, min_n=15)
+    except Exception:  # noqa: BLE001 — best-effort; never break the front door
+        return
+    line = render_factor_attribution_by_state_line(report)
     if line:
         print(line)
 
