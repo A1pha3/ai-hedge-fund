@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from src.screening.state_type_calibration import _score_bucket
 from src.utils.display import Fore, Style
 
 #: state_type 内每因子高/低组最低样本数 (镜像 rank_monotonicity _MIN_N)
@@ -244,6 +245,17 @@ def compute_factor_attribution_by_state(
     return compute_factor_attribution_by_state_from_loaded(records, min_n=min_n, horizon_field=horizon_field)
 
 
+def compute_factor_attribution_score_controlled(
+    *, reports_dir: Path | None = None, min_n: int = _MIN_N_DEFAULT,
+    horizon_field: str = "next_5day_return",
+) -> ScoreControlledFactorReport:
+    """IO 包装: load + compute score-controlled (镜像 compute_factor_attribution_by_state)."""
+    from src.screening.consecutive_recommendation import resolve_report_dir
+    search_dir = reports_dir or resolve_report_dir()
+    records = load_factor_attribution_by_state_records(search_dir)
+    return compute_factor_attribution_score_controlled_from_loaded(records, min_n=min_n, horizon_field=horizon_field)
+
+
 def render_factor_attribution_by_state_line(report: FactorAttributionByStateReport) -> str:
     """渲染因子 × state_type 倒挂 (insufficient/无倒挂 → 空串).
 
@@ -266,6 +278,150 @@ def render_factor_attribution_by_state_line(report: FactorAttributionByStateRepo
     )
 
 
+# ---------------------------------------------------------------------------
+# NS-6 score-controlled: 隔离因子真实效应 (排除 score-level confound)
+# c239 uncontrolled NS-6 把 fundamental 标为倒挂 (+9%), 但 score-controlled 后
+# 只剩 +5% (borderline) — 多数是 NS-4 score-level inversion 的 confound.
+# event_sentiment 经 control 仍 +15% (真实倒挂). owner 据 score-controlled 决策.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ScoreControlledFactorInversion:
+    """单因子经 score 控制后的真实倒挂 (stratified within score bucket)."""
+
+    factor: str
+    stratified_inversion: float  # size-weighted avg of within-bucket inversions
+    high_winrate: float
+    low_winrate: float
+    n: int
+    survives: bool  # stratified_inversion > threshold (真实倒挂, 非 score confound)
+
+
+@dataclass
+class ScoreControlledFactorReport:
+    """score-controlled 因子倒挂诊断报告 (confound-free)."""
+
+    inversions: list[ScoreControlledFactorInversion] = field(default_factory=list)
+    sample_count: int = 0
+    horizon_label: str = "T+5"
+    verdict: str = "insufficient"  # ok | insufficient
+
+
+def compute_factor_attribution_score_controlled_from_loaded(
+    records: list[dict[str, Any]],
+    *,
+    min_n: int = _MIN_N_DEFAULT,
+    horizon_field: str = "next_5day_return",
+) -> ScoreControlledFactorReport:
+    """纯函数: score-controlled 因子倒挂 (stratified within score bucket).
+
+    隔离因子真实效应, 排除 score-level inversion (NS-4) 的 confound:
+      - 按 score bucket 分组 (low/mid_low/mid_high/high)
+      - 每 bucket 内按 factor 贡献高/低 1/3 算胜率倒挂 (within-bucket, 已控制 score)
+      - stratified_inversion = 各 bucket 倒挂的 size-weighted 平均
+      - > threshold = 真实倒挂 (survives score control); 否则是 score confound
+
+    Args:
+        records: 每条含 score_decomposition.base_contributions + .total + horizon return.
+        min_n: 每 score bucket 内 factor 高/低组最低样本数.
+
+    Returns:
+        :class:`ScoreControlledFactorReport` — survives=True 的因子是真实倒挂.
+    """
+    # 收集有效 records (base_contributions + total score + horizon return)
+    valid: list[tuple[str, dict[str, float], float]] = []
+    for rec in records:
+        decomp = rec.get("score_decomposition")
+        if not isinstance(decomp, dict):
+            continue
+        bc = decomp.get("base_contributions")
+        if not isinstance(bc, dict) or not bc:
+            continue
+        score = _finite_float(decomp.get("total"))
+        if score is None:
+            continue
+        ret = _finite_float(rec.get(horizon_field))
+        if ret is None:
+            continue
+        contribs = {k: (_finite_float(v) or 0.0) for k, v in bc.items()}
+        valid.append((_score_bucket(score), contribs, ret))
+
+    if not valid:
+        return ScoreControlledFactorReport(verdict="insufficient", horizon_label=_horizon_label(horizon_field))
+
+    all_factors: set[str] = set()
+    for _, contribs, _ in valid:
+        all_factors.update(contribs.keys())
+
+    # 按 score bucket 分组
+    by_bucket: dict[str, list[tuple[dict[str, float], float]]] = {}
+    for bucket, contribs, ret in valid:
+        by_bucket.setdefault(bucket, []).append((contribs, ret))
+
+    inversions: list[ScoreControlledFactorInversion] = []
+    for factor in sorted(all_factors):
+        # 每 bucket 内 within-bucket 倒挂 (已控制 score)
+        total_weight = 0
+        weighted_inversion = 0.0
+        pooled_high_returns: list[float] = []
+        pooled_low_returns: list[float] = []
+        for bucket, bucket_recs in by_bucket.items():
+            sorted_recs = sorted(bucket_recs, key=lambda cr: cr[0].get(factor, 0.0))
+            third = len(sorted_recs) // 3
+            if third < min_n:
+                continue
+            low_recs = sorted_recs[:third]
+            high_recs = sorted_recs[-third:]
+            low_returns = [r for _, r in low_recs]
+            high_returns = [r for _, r in high_recs]
+            if len(low_returns) < min_n or len(high_returns) < min_n:
+                continue
+            low_wr = sum(1 for x in low_returns if x > 0) / len(low_returns)
+            high_wr = sum(1 for x in high_returns if x > 0) / len(high_returns)
+            w = len(low_returns) + len(high_returns)
+            weighted_inversion += (low_wr - high_wr) * w
+            total_weight += w
+            pooled_high_returns.extend(high_returns)
+            pooled_low_returns.extend(low_returns)
+        if total_weight == 0:
+            continue
+        stratified = weighted_inversion / total_weight
+        if stratified > _INVERSION_THRESHOLD:
+            inversions.append(ScoreControlledFactorInversion(
+                factor=factor, stratified_inversion=stratified,
+                high_winrate=sum(1 for x in pooled_high_returns if x > 0) / len(pooled_high_returns) if pooled_high_returns else 0.0,
+                low_winrate=sum(1 for x in pooled_low_returns if x > 0) / len(pooled_low_returns) if pooled_low_returns else 0.0,
+                n=len(pooled_high_returns) + len(pooled_low_returns),
+                survives=True,
+            ))
+
+    return ScoreControlledFactorReport(
+        inversions=inversions, sample_count=len(valid),
+        horizon_label=_horizon_label(horizon_field),
+        verdict="ok" if inversions else "insufficient",
+    )
+
+
+def render_score_controlled_factor_line(report: ScoreControlledFactorReport) -> str:
+    """渲染 score-controlled 因子倒挂 (insufficient → 空串).
+
+    展示形如:
+      ``  ⚠ 因子真实倒挂(T+5, score-controlled): event_sentiment +15% (survives control) | fundamental borderline (filtered)``
+    """
+    if report.verdict != "ok" or not report.inversions:
+        return ""
+    parts = [
+        f"{inv.factor} 倒挂 +{inv.stratified_inversion:.0%} (高{inv.high_winrate:.0%} 低{inv.low_winrate:.0%}, n={inv.n}, 经 score 控制仍真实)"
+        for inv in report.inversions
+    ]
+    body = " | ".join(parts)
+    return (
+        f"  {Fore.RED}⚠ 因子真实倒挂({report.horizon_label}, score-controlled): {body}{Style.RESET_ALL}"
+        f" {Fore.RED}(排除 score-level confound 后的真实因子效应, 供 owner 调优){Style.RESET_ALL}"
+    )
+
+
 __all__ = [
     "FactorStateInversion",
     "FactorAttributionByStateReport",
@@ -273,4 +429,8 @@ __all__ = [
     "compute_factor_attribution_by_state",
     "load_factor_attribution_by_state_records",
     "render_factor_attribution_by_state_line",
+    "ScoreControlledFactorInversion",
+    "ScoreControlledFactorReport",
+    "compute_factor_attribution_score_controlled_from_loaded",
+    "render_score_controlled_factor_line",
 ]

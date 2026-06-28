@@ -1683,14 +1683,20 @@ def _print_factor_attribution_by_state_block(report_dir: Path) -> None:
     try:
         from src.screening.factor_attribution_by_state import (
             compute_factor_attribution_by_state,
+            compute_factor_attribution_score_controlled,
             render_factor_attribution_by_state_line,
+            render_score_controlled_factor_line,
         )
         report = compute_factor_attribution_by_state(reports_dir=report_dir, min_n=15)
+        sc_report = compute_factor_attribution_score_controlled(reports_dir=report_dir, min_n=15)
     except Exception:  # noqa: BLE001 — best-effort; never break the front door
         return
     line = render_factor_attribution_by_state_line(report)
     if line:
         print(line)
+    sc_line = render_score_controlled_factor_line(sc_report)
+    if sc_line:
+        print(sc_line)
 
 
 def _print_north_star_block(report_dir: Path) -> None:

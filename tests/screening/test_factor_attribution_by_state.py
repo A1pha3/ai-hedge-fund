@@ -70,3 +70,44 @@ class TestComputeFactorAttributionByState:
         ]
         report = compute_factor_attribution_by_state_from_loaded(recs, min_n=1)
         assert report.sample_count == 1  # 只 Y 有效
+
+
+class TestScoreControlledFactorAttribution:
+    """NS-6 score-controlled: 隔离因子真实效应 (排除 score-level confound).
+
+    c239 uncontrolled NS-6 把 fundamental 标为倒挂 (+9%), 但 score-controlled 后
+    只剩 +5% (borderline) — 多数是 score-level inversion (NS-4) 的 confound.
+    event_sentiment 经 control 仍 +15% (真实倒挂). owner 据 score-controlled 视图决策.
+    """
+
+    def test_real_factor_inversion_survives_score_control(self) -> None:
+        """真实因子效应: 同 score bucket 内, 高贡献→低胜率 (经 control 仍倒挂)."""
+        from src.screening.factor_attribution_by_state import compute_factor_attribution_score_controlled_from_loaded
+        recs = []
+        # 全在 low bucket (score~0.2), 排除 score confound; event_sentiment 高→负return
+        for i in range(60):
+            recs.append({"score_decomposition": {"base_contributions": {"event_sentiment": 0.02}, "total": 0.2}, "next_5day_return": -2.0})
+        for i in range(60):
+            recs.append({"score_decomposition": {"base_contributions": {"event_sentiment": -0.05}, "total": 0.2}, "next_5day_return": +3.0})
+        report = compute_factor_attribution_score_controlled_from_loaded(recs, min_n=15)
+        inv = next((x for x in report.inversions if x.factor == "event_sentiment"), None)
+        assert inv is not None, "event_sentiment 真实倒挂应被检测 (经 score control)"
+        assert inv.stratified_inversion > 0.05
+
+    def test_score_confound_filtered_out(self) -> None:
+        """纯 score confound (无真实因子效应): score-controlled 后不报倒挂."""
+        from src.screening.factor_attribution_by_state import compute_factor_attribution_score_controlled_from_loaded
+        recs = []
+        # factor 贡献完全跟随 score (无独立效应); winrate 由 score 决定非 factor
+        # low bucket: factor 低 + 高 winrate; high bucket: factor 高 + 低 winrate
+        # uncontrolled 会显示倒挂, 但 within-bucket factor 无效应 → score-controlled 无倒挂
+        for i in range(60):  # low bucket, factor 低
+            recs.append({"score_decomposition": {"base_contributions": {"trend": 0.01}, "total": 0.2}, "next_5day_return": +2.0})
+        for i in range(60):  # low bucket, factor 高 (within low, factor 高也高 winrate — 无倒挂)
+            recs.append({"score_decomposition": {"base_contributions": {"trend": 0.05}, "total": 0.2}, "next_5day_return": +2.0})
+        for i in range(60):  # high bucket
+            recs.append({"score_decomposition": {"base_contributions": {"trend": 0.20}, "total": 0.6}, "next_5day_return": -2.0})
+        report = compute_factor_attribution_score_controlled_from_loaded(recs, min_n=15)
+        # within low bucket, trend 高/低 都是 +2.0 (50/50) → 无 within-bucket 倒挂
+        inv = next((x for x in report.inversions if x.factor == "trend"), None)
+        assert inv is None, "纯 score confound (within-bucket 无效应) 不应报倒挂"
