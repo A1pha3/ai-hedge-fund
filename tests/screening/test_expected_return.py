@@ -31,6 +31,7 @@ def _make_bucket(
     t20_wr: float | None = 0.57,
     t30_wr: float | None = 0.56,
     t30_mature: int | None = None,
+    t30_median: float | None = None,
 ) -> ScoreBucketStats:
     bucket = ScoreBucketStats(
         label=label,
@@ -51,6 +52,9 @@ def _make_bucket(
     # BH-002: default matured T+30 count to the all-records count unless a
     # smaller matured subset is explicitly requested (simulating immature picks).
     bucket.t30_sample_count = n if t30_mature is None else t30_mature
+    # R-5.C: t30_median_return defaults to t30_ret (== avg) for backward-compat;
+    # tests that distinguish median from mean pass t30_median explicitly.
+    bucket.t30_median_return = t30_ret if t30_median is None else t30_median
     return bucket
 
 
@@ -533,9 +537,11 @@ class TestBucketT30MedianPropagation:
         assert item.bucket_t30_median_return is not None
         # median of [1,2,3,4,100] = 3.0
         assert abs(item.bucket_t30_median_return - 3.0) < 0.01
-        # sanity: mean should be 22.0 (polluted) — proving median is more honest
+        # R-5.C (autodev): expected_returns["t30"] now uses MEDIAN (3.0), not the
+        # outlier-polluted mean (22.0). Mean 22.0 is dragged up by the +100%
+        # outlier; median 3.0 is the honest "typical pick" T+30 prediction.
         assert item.expected_returns["t30"] is not None
-        assert abs(item.expected_returns["t30"] - 22.0) < 0.01
+        assert abs(item.expected_returns["t30"] - 3.0) < 0.01
 
     def test_expected_return_median_none_when_no_matured(self, tmp_path):
         """No matured T+30 records → median None (honest, not a fake 0)."""
@@ -627,3 +633,57 @@ class TestBucketT30MedianPropagation:
         report = compute_expected_returns(recommendations=recs, reports_dir=tmp_path)
         out = render_expected_returns_compact(report)
         assert "T+30中位" not in out
+
+
+class TestR5CMedianBaseline:
+    """R-5.C (autodev): T+30 predicted return uses bucket MEDIAN not MEAN.
+
+    R-6/R-7 realized evidence: median MAE 8.7% < mean MAE 10.7% (outlier-robust).
+    Isotonic calibration (isotonic_calibration.py) DEFERRED — NS-4 (C192) shows
+    T+30 score ranking is inverted; PAV isotonic would mask the inversion
+    (dishonest while rank_monotonicity footer discloses 倒挂). Revisit after
+    owner fixes inversion. BUY gate uses t5/t10 (C222), so t30 change is
+    orthogonal to BUY decisions / iv069 observation.
+    """
+
+    @patch("src.screening.expected_return._load_tracking_records")
+    @patch("src.screening.expected_return.compute_calibration")
+    def test_t30_uses_median_not_mean(self, mock_calib: object, mock_records: object) -> None:
+        """expected_returns['t30'] must equal bucket median, not mean (R-5.C)."""
+        mock_records.return_value = [{"dummy": True}]
+        # bucket with DISTINCT mean (8.0) vs median (5.0)
+        mock_calib.return_value = CalibrationSummary(
+            lookback_days=60,
+            total_samples=40,
+            buckets=[_make_bucket("高 (>0.8)", 0.8, 1.01, 40, t30_ret=8.0, t30_median=5.0)],
+        )
+        report = compute_expected_returns(recommendations=[_make_rec("000001", 0.85)])
+        assert report.items[0].expected_returns["t30"] == 5.0  # median, not 8.0 mean
+
+    @patch("src.screening.expected_return._load_tracking_records")
+    @patch("src.screening.expected_return.compute_calibration")
+    def test_t5_t10_unchanged_by_median_switch(self, mock_calib: object, mock_records: object) -> None:
+        """BUY-gate inputs t5/t10 must stay mean-based (orthogonality to iv069)."""
+        mock_records.return_value = [{"dummy": True}]
+        mock_calib.return_value = CalibrationSummary(
+            lookback_days=60,
+            total_samples=40,
+            buckets=[_make_bucket("高 (>0.8)", 0.8, 1.01, 40, t5_ret=3.5, t10_ret=5.2, t30_ret=8.0, t30_median=5.0)],
+        )
+        report = compute_expected_returns(recommendations=[_make_rec("000001", 0.85)])
+        er = report.items[0].expected_returns
+        assert er["t5"] == 3.5  # mean, unchanged
+        assert er["t10"] == 5.2  # mean, unchanged
+        assert er["t30"] == 5.0  # median (R-5.C)
+
+    @patch("src.screening.expected_return._load_tracking_records")
+    @patch("src.screening.expected_return.compute_calibration")
+    def test_t30_falls_back_when_median_none(self, mock_calib: object, mock_records: object) -> None:
+        """When median unavailable (no mature T+30), t30 should be None (same as mean's None semantics)."""
+        mock_records.return_value = [{"dummy": True}]
+        b = _make_bucket("高 (>0.8)", 0.8, 1.01, 40, t30_ret=8.0, t30_median=None)
+        # force median None explicitly
+        b.t30_median_return = None
+        mock_calib.return_value = CalibrationSummary(lookback_days=60, total_samples=40, buckets=[b])
+        report = compute_expected_returns(recommendations=[_make_rec("000001", 0.85)])
+        assert report.items[0].expected_returns["t30"] is None

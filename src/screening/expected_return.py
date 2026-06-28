@@ -144,10 +144,32 @@ class ExpectedReturnReport:
 
 
 def _build_bucket_return_map(calibration: CalibrationSummary) -> dict[str, dict[str, float | None]]:
-    """Build a mapping from bucket label → {horizon: avg_return}.
+    """Build a mapping from bucket label → {horizon: return}.
+
+    R-5.C (autodev): T+30 (``t30``) uses bucket **median** (``t30_median_return``)
+    instead of mean (``t30_avg_return``). Realized evidence R-6/R-7: median MAE
+    8.7% < mean MAE 10.7% — mean is outlier-polluted (e.g. 688008 +112% case
+    dragged a bucket mean positive while the typical stock was negative).
+    Median is the honest "typical stock" T+30 prediction.
+
+    Isotonic calibration (``src/screening/isotonic_calibration.py``) is DEFERRED:
+    NS-4 (C192) found the T+30 score→winrate ranking is **inverted** (low-score
+    50.5% → high-score 39.5%). PAV isotonic enforces monotonicity and would
+    **mask** that inversion in the displayed T+30 prediction — dishonest while
+    ``rank_monotonicity`` footer separately discloses 倒挂. Revisit isotonic
+    wiring after the owner fixes the inversion.
+
+    BUY-gate orthogonality: the BUY gate (``investability.build_front_door_verdict``)
+    and ranking tie-breakers (C222) consume only ``t5``/``t10`` (T+5/T+10),
+    NOT ``t30``. T+30 is retained solely as a long-term invalidation /
+    display signal (``invalidation_reasons`` "T+30 edge 转负" is advisory).
+    So this t30 mean→median switch does not change any BUY verdict or ranking
+    order — orthogonal to iv069 (vol-threshold) post-push observation.
+
+    t1/t5/t10/t20 remain mean-based (``tN_avg_return``).
 
     Returns:
-        ``{"高 (>0.8)": {"t1": 1.5, "t5": 3.2, ...}, ...}``
+        ``{"高 (>0.8)": {"t1": 1.5, "t5": 3.2, ..., "t30": <median>}, ...}``
     """
     result: dict[str, dict[str, float | None]] = {}
     for bucket in calibration.buckets:
@@ -156,7 +178,7 @@ def _build_bucket_return_map(calibration: CalibrationSummary) -> dict[str, dict[
             "t5": bucket.t5_avg_return,
             "t10": bucket.t10_avg_return,
             "t20": bucket.t20_avg_return,
-            "t30": bucket.t30_avg_return,
+            "t30": bucket.t30_median_return,  # R-5.C: median (outlier-robust); was t30_avg_return
         }
     return result
 
