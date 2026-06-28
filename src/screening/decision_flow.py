@@ -212,6 +212,24 @@ def run_decision_flow(
     print(f"  Momentum: {Fore.GREEN}{improving_count} improving{Style.RESET_ALL} / {Fore.RED}{declining_count} declining{Style.RESET_ALL}")
     if investability:
         best = investability[0]
+        # C222 (2026-06-28 horizon 一致性): BUY gate decision horizon is T+5 OR
+        # T+10 (see ``_meets_quality_bar`` C220 commit 4184dd7e). The Top-investable
+        # headline must show the decision-horizon edge/winrate that actually drove
+        # the BUY verdict (max of t5/t10), not T+30 which is the long-term
+        # invalidation horizon. T+30 retained as a secondary display so the user
+        # can see the long-term view alongside the short-term decision basis.
+        decision_edge_raw = None
+        decision_winrate_raw = None
+        for _hk in ("t10", "t5"):  # max(t5, t10) by reading larger horizon first
+            _e = (best.get("expected_returns") or {}).get(_hk)
+            if isinstance(_e, (int, float)) and (decision_edge_raw is None or _e > decision_edge_raw):
+                decision_edge_raw = float(_e)
+            _w = (best.get("win_rates") or {}).get(_hk)
+            if isinstance(_w, (int, float)) and (decision_winrate_raw is None or _w > decision_winrate_raw):
+                decision_winrate_raw = float(_w)
+        decision_str = f"{decision_edge_raw:+.2f}%" if decision_edge_raw is not None else "—"
+        decision_wr_str = f"{decision_winrate_raw:.0%}" if decision_winrate_raw is not None else "—"
+        # T+30 retained as long-term invalidation view (per C222 dual-horizon rule).
         t30 = (best.get("expected_returns") or {}).get("t30")
         t30_str = f"{float(t30):+.2f}%" if isinstance(t30, (int, float)) else "—"
         t30_wr = (best.get("win_rates") or {}).get("t30")
@@ -234,7 +252,8 @@ def run_decision_flow(
         composite_verified = best.get("composite_verified")
         estimate_marker = "估" if composite_verified is False else ""
         print(
-            f"  Top investable: {best.get('ticker', '?')} (composite={float(best.get('composite_score', 0.0)):+.3f}{estimate_marker}, T+30={t30_str}, 胜率={t30_wr_str}, {sample_str})"
+            f"  Top investable: {best.get('ticker', '?')} (composite={float(best.get('composite_score', 0.0)):+.3f}{estimate_marker}, "
+            f"决策={decision_str} 胜率={decision_wr_str}, T+30={t30_str} T+30胜率={t30_wr_str}, {sample_str})"
         )
     print(f"  Completed in {elapsed:.1f}s")
 

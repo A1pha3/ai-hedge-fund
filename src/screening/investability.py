@@ -1,8 +1,10 @@
 """Shared investability ranking helpers.
 
-Blend composite confidence with long-horizon posterior evidence so the default
-entry points can prioritize stocks that are both high-quality signals and
-historically attractive over the next 30 trading days.
+Blend composite confidence with short-horizon T+5/T+10 posterior evidence (BUY
+gate decision horizon, see C220 commit 4184dd7e) so the default entry points
+can prioritize stocks that are both high-quality signals and historically
+attractive over the next T+5 or T+10 trading days. T+30 retained only as
+long-term invalidation signal (not a BUY-decision horizon).
 """
 
 from __future__ import annotations
@@ -12,6 +14,40 @@ from typing import Any
 from src.screening.composite_score import CompositeReport
 from src.screening.expected_return import ExpectedReturnReport
 from src.utils.numeric import is_finite_number
+
+
+#: C222 (2026-06-28 horizon 一致性): BUY gate 主决策 horizon 是 T+5 OR T+10
+#: (见 ``_meets_quality_bar`` line 198-207). 排序键 tie-breaker 必须与 BUY gate
+#: horizon 一致 — 用 max(t5, t10) 取短期 horizon 最优 metric. T+30 metric 排除出
+#: 排序键 (保留为 long-term invalidation 信号, 见 ``invalidation_reasons`` 字段),
+#: 与产品目标"未来 T+5 或 T+10 天"对齐.
+_SHORT_HORIZON_KEYS: tuple[str, ...] = ("t5", "t10")
+
+
+def _max_short_horizon_metric(metrics: dict[str, Any] | None) -> float | None:
+    """Return max of short-horizon (T+5/T+10) metrics; ``None`` if all missing.
+
+    Used as ranking tie-breaker after ``composite_score``, aligned with BUY gate
+    horizon (T+5 OR T+10 pass, see C220). Returns the larger of the two horizons
+    so a pick strong on *either* T+5 or T+10 ranks higher than one weak on both.
+    Returns ``None`` when the metrics dict is missing or no T+5/T+10 entry is
+    numeric — the caller's ``_safe_metric`` default (``-inf``) then pushes such
+    picks below any pick with short-horizon data.
+
+    Note: this is intentionally horizon-restricted (not max over all horizons)
+    because the BUY gate decision is horizon-restricted (T+5 OR T+10, not T+30).
+    Including T+30 in the sort key would re-introduce the horizon mismatch fixed
+    by C222 (T+30-strong picks ranking above T+5/T+10-strong picks, even though
+    BUY verdict is driven by T+5/T+10).
+    """
+    if not metrics:
+        return None
+    nums: list[float] = []
+    for key in _SHORT_HORIZON_KEYS:
+        raw = metrics.get(key)
+        if isinstance(raw, (int, float)):
+            nums.append(float(raw))
+    return max(nums) if nums else None
 
 
 def _grade_code(score: float) -> str:
@@ -353,11 +389,22 @@ def rank_recommendations_by_investability(
     # runs, breaking the "稳定找到" goal. Append ticker ascending as the deterministic
     # final tie-break. reverse=True would also reverse the ticker key, so negate the
     # numeric levels and sort ascending instead.
+    #
+    # C222 (2026-06-28 horizon 一致性): tie-breakers 2/3 previously used t30_edge /
+    # t30_winrate, but BUY gate decision horizon is T+5 OR T+10 (see
+    # ``_meets_quality_bar`` line 198-207, C220 commit 4184dd7e). Two picks with equal
+    # composite_score could be ordered by T+30 strength even though BUY verdict is
+    # driven by T+5/T+10 — letting a T+30-strong-but-T+5/T+10-weak pick rank above a
+    # T+5/T+10-strong pick. Tie-breakers 2/3 now use ``_max_short_horizon_metric``
+    # (max of t5/t10), aligned with BUY gate horizon. T+30 metrics retained only as
+    # long-term invalidation signal (``invalidation_reasons``), not as ranking
+    # tie-breaker. Behavior change: picks whose T+30 was their only strength drop
+    # below picks strong on T+5/T+10 — which is the intended BUY-gate alignment.
     ranked.sort(
         key=lambda rec: (
             -_safe_metric(rec.get("composite_score"), _safe_metric(rec.get("score_b", 0.0), 0.0)),
-            -_safe_metric((rec.get("expected_returns") or {}).get("t30"), float("-inf")),
-            -_safe_metric((rec.get("win_rates") or {}).get("t30"), float("-inf")),
+            -_safe_metric(_max_short_horizon_metric(rec.get("expected_returns")), float("-inf")),
+            -_safe_metric(_max_short_horizon_metric(rec.get("win_rates")), float("-inf")),
             -_safe_metric(rec.get("bucket_sample_count"), 0.0),
             -_safe_metric(rec.get("score_b", 0.0), 0.0),
             str(rec.get("ticker") or ""),

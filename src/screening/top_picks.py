@@ -39,6 +39,7 @@ from src.screening.consecutive_recommendation import (
 from src.screening.data_quality_audit import _find_latest_report
 from src.screening.expected_return import compute_expected_returns
 from src.screening.investability import (
+    _max_short_horizon_metric,
     _safe_metric,
     build_front_door_verdict,
     rank_recommendations_by_investability,
@@ -256,9 +257,14 @@ _PORTFOLIO_SUMMARY_MIN_BUYS: int = 2
 def _extract_t30_metrics(item: dict) -> tuple[float | None, float | None]:
     """Extract the T+30 expected-return edge and win-rate from a pick dict.
 
-    Shared by the per-pick table row (:func:`_build_top_table_row`) and the R33
-    portfolio summary (:func:`_render_portfolio_expected_return`) so the two
-    rendering paths never diverge on the defensive-extraction logic.
+    Used by the per-pick table row (:func:`_build_top_table_row`) to render the
+    long-horizon *invalidation* view (T+30 edge<0 → "T+30 edge 转负" reason in
+    ``build_front_door_verdict``). T+30 is intentionally NOT the BUY-gate
+    decision horizon (see C220 commit 4184dd7e + C222 horizon 一致性) — it is
+    the long-term衰退 signal retained alongside the short-horizon decision.
+
+    For BUY-gate decision-horizon (T+5/T+10) extraction use
+    :func:`_extract_decision_horizon_metrics` instead.
 
     Returns ``(edge, winrate)`` where each value is the raw float when the
     field is present and numeric, otherwise ``None``.
@@ -267,6 +273,30 @@ def _extract_t30_metrics(item: dict) -> tuple[float | None, float | None]:
     t30_wr = (item.get("win_rates") or {}).get("t30")
     edge = float(t30) if isinstance(t30, (int, float)) else None
     winrate = float(t30_wr) if isinstance(t30_wr, (int, float)) else None
+    return edge, winrate
+
+
+def _extract_decision_horizon_metrics(item: dict) -> tuple[float | None, float | None]:
+    """Extract the BUY-gate decision-horizon (max of T+5/T+10) edge and win-rate.
+
+    C222 (2026-06-28 horizon 一致性): BUY gate decision horizon is T+5 OR T+10
+    (see ``_meets_quality_bar`` C220 commit 4184dd7e, per-horizon bootstrap CI
+    in C219: T+5 winrate=60.2% [59.0%, 61.3%], T+10 winrate=60.5% [59.4%, 61.6%],
+    but T+30 winrate=45.4% [44.2%, 46.5%] << 50%). Position sizing
+    (:func:`_suggest_position_pct`) and portfolio P&L aggregation
+    (:func:`_render_portfolio_expected_return`) must use the SAME horizon as
+    the BUY verdict — using T+30 here would mis-state the expected return of
+    a BUY portfolio (a BUY stock was admitted on T+5/T+10 strength, so its
+    expected return should be quoted on T+5/T+10, not on T+30 where the
+    same population has <50% winrate).
+
+    Returns ``(edge, winrate)`` where each is ``max(t5, t10)`` when at least
+    one short-horizon entry is numeric; ``None`` when no short-horizon data
+    is present. Uses :func:`investability._max_short_horizon_metric` to stay
+    in sync with the ranking sort key tie-breaker.
+    """
+    edge = _max_short_horizon_metric(item.get("expected_returns"))
+    winrate = _max_short_horizon_metric(item.get("win_rates"))
     return edge, winrate
 
 
@@ -329,14 +359,23 @@ _MAX_POSITION_PCT: float = 15.0
 
 def _suggest_position_pct(
     *,
-    t30_edge: float | None,
-    t30_winrate: float | None,
+    decision_edge: float | None,
+    decision_winrate: float | None,
     market_regime: str,
     max_per_pick: float = _MAX_POSITION_PCT,
 ) -> float:
     """A-1: transparent per-pick position suggestion for BUY picks (educational
     decision-support). Simple risk-budget, NOT portfolio optimization (no
     correlation / risk-parity / mean-variance) — reuses the R71-R77 disclaimer.
+
+    C222 (2026-06-28 horizon 一致性): ``decision_edge`` / ``decision_winrate``
+    are the BUY-gate decision-horizon metrics (max of T+5/T+10), NOT T+30.
+    Previously named ``t30_edge`` / ``t30_winrate`` which misrepresented the
+    computation: a BUY pick is admitted on T+5/T+10 strength (see
+    ``_meets_quality_bar`` C220 commit 4184dd7e), so sizing it by T+30 edge
+    would under-allocate when T+5/T+10 edge > T+30 edge (the typical case
+    for low-bucket short-term rebound tickets per C219). Callers should
+    source these via :func:`_extract_decision_horizon_metrics`.
 
     Formula (tunable): base = |edge| × confidence × 100, where confidence normalizes
     winrate above the 0.50 coin-flip (0.50→0, 0.70→1.0, 1.0→2.5). Regime downgrade:
@@ -345,23 +384,34 @@ def _suggest_position_pct(
     non-positive edge, missing inputs, or risk-off regimes — bridging "买哪只 → 买多少"
     without over-stepping into investment directive.
     """
-    if t30_edge is None or t30_winrate is None or t30_edge <= 0:
+    if decision_edge is None or decision_winrate is None or decision_edge <= 0:
         return 0.0
     regime_lower = str(market_regime).lower()
     if "crisis" in regime_lower or "risk_off" in regime_lower or "halt" in regime_lower:
         return 0.0
-    confidence = max(0.0, (t30_winrate - 0.50) / 0.20)
-    base = abs(t30_edge) * confidence * 100.0
+    confidence = max(0.0, (decision_winrate - 0.50) / 0.20)
+    base = abs(decision_edge) * confidence * 100.0
     if "cautious" in regime_lower or "range" in regime_lower:
         base *= 0.5
     return round(min(base, max_per_pick), 1)
 
 
 def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> str:
-    """R33: Render a one-line equal-weighted T+30 expected return for all BUY picks.
+    """R33: Render a one-line equal-weighted decision-horizon (T+5/T+10) expected
+    return for all BUY picks.
 
-    Reuses the per-pick ``expected_returns.t30`` and ``win_rates.t30`` already
-    attached by :func:`rank_recommendations_by_investability`.
+    C222 (2026-06-28 horizon 一致性): previously aggregated T+30 edge/winrate,
+    but BUY gate decision horizon is T+5 OR T+10 (see ``_meets_quality_bar``
+    C220 commit 4184dd7e). Quoting a BUY portfolio's expected return on T+30
+    mis-states the population's actual edge — the same picks have T+30 winrate
+    ~45% (per C219 bootstrap CI n=7201), so an "T+30 avg edge=+0.5%" header
+    on a BUY portfolio would falsely imply 30-day hold alpha when the alpha is
+    actually a 5-10 day rebound. Now uses ``_extract_decision_horizon_metrics``
+    (max of T+5/T+10) so the quoted edge/winrate matches the horizon on which
+    the BUY verdict was issued.
+
+    Reuses the per-pick ``expected_returns.t5`` / ``t10`` and ``win_rates.t5`` /
+    ``t10`` already attached by :func:`rank_recommendations_by_investability`.
 
     The aggregate is equal-weighted. A previous per-pick ``sample_count < 20``
     halving scheme was removed because it was unreachable:
@@ -372,7 +422,8 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
     matches the spec's documented alternative ("等权或 composite_score 归一化");
     see ``test_low_sample_pick_can_never_be_buy`` for the guard that pins this.
 
-    Returns empty string when fewer than 2 BUY picks or no T+30 data.
+    Returns empty string when fewer than 2 BUY picks or no decision-horizon
+    (T+5/T+10) data.
     """
     buy_picks: list[dict] = []
     for item in picks:
@@ -383,14 +434,16 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
     if len(buy_picks) < _PORTFOLIO_SUMMARY_MIN_BUYS:
         return ""
 
-    # Equal weighting across BUY picks that carry a T+30 edge.
+    # Equal weighting across BUY picks that carry a decision-horizon edge.
+    # Uses max(t5, t10) per pick (the same horizon that justified its BUY
+    # verdict), NOT t30 — see C222 horizon 一致性 comment above.
     edges: list[float] = []
     winrates: list[float] = []
     for item in buy_picks:
-        edge, winrate = _extract_t30_metrics(item)
+        edge, winrate = _extract_decision_horizon_metrics(item)
         if edge is not None:
             edges.append(edge)
-        # Win-rate may be absent on some picks even when the T+30 edge is present
+        # Win-rate may be absent on some picks even when the edge is present
         # (different calibration fields).  Track its own denominator so the average
         # is not diluted by picks that have no win-rate data.
         if winrate is not None:
@@ -404,7 +457,7 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
     edge_color = Fore.GREEN if avg_edge > 0 else Fore.RED if avg_edge < 0 else Fore.WHITE
     # Win-rate color thresholds must match the canonical thresholds used
     # everywhere else in the front door (e.g. _render_hit_rate_summary line ~183
-    # and the BUY verdict gate which requires t30_win_rate >= 0.55). The
+    # and the BUY verdict gate which requires t5/t10 win_rate >= 0.55). The
     # previous 0.45 yellow band was an inconsistent outlier: a BUY portfolio
     # (every pick >= 0.55) could never reach it, yet a future verdict-gate
     # change would silently surface a "good enough" yellow on picks that fail
@@ -412,8 +465,8 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
     wr_color = Fore.GREEN if avg_winrate >= 0.55 else Fore.YELLOW if avg_winrate >= 0.50 else Fore.RED
 
     return (
-        f"  {Fore.WHITE}组合 T+30 预期:{Style.RESET_ALL} "
-        f"{edge_color}{avg_edge:+.2f}% (加权){Style.RESET_ALL} | "
+        f"  {Fore.WHITE}组合 T+5/T+10 决策预期:{Style.RESET_ALL} "
+        f"{edge_color}{avg_edge:+.2f}% (等权){Style.RESET_ALL} | "
         f"{Fore.WHITE}平均胜率:{Style.RESET_ALL} {wr_color}{avg_winrate:.0%}{Style.RESET_ALL} | "
         f"{Fore.WHITE}BUY 数:{Style.RESET_ALL} {len(buy_picks)}"
     )
@@ -1051,19 +1104,27 @@ def _apply_consecutive_bonus_and_resort(ranked: list[dict]) -> list[dict]:
     # BH-011 family (sibling: composite_score.py:312, investability.py:309): composite_score
     # is rounded to 4 decimals above, so ties are common at the Top-N membership boundary.
     # R143/O-1: restore the risk-aware 6-tuple tie-break from rank_recommendations_by_investability
-    # (t30_edge → t30_winrate → bucket_sample_count → score_b) that this bonus re-sort was
-    # discarding — a pure 2-tuple (-composite, ticker) left two BUY picks with equal composite
-    # sorting alphabetically, hiding the stronger-evidence pick. composite_score (with bonus
-    # folded in) stays the primary key so R4 consecutive-boost still bubbles picks up; the
-    # risk-aware keys only break ties. Absent keys default equally so ticker remains the
-    # deterministic final fallback (preserves BH-011 determinism when risk keys are missing).
+    # that this bonus re-sort was discarding — a pure 2-tuple (-composite, ticker) left two
+    # BUY picks with equal composite sorting alphabetically, hiding the stronger-evidence
+    # pick. composite_score (with bonus folded in) stays the primary key so R4
+    # consecutive-boost still bubbles picks up; the risk-aware keys only break ties.
+    # Absent keys default equally so ticker remains the deterministic final fallback
+    # (preserves BH-011 determinism when risk keys are missing).
     # NS-13: sort key 的 composite_score / score_b 也用 safe_float 防止 NaN 进 sort key
     # 导致同 score 的标的间排序不确定 (NaN 比较均 False, 破坏 Timsort 稳定性).
+    # C222 (2026-06-28 horizon 一致性): mirror of investability.rank_recommendations_by_investability
+    # — tie-breakers 2/3 changed from t30_edge/t30_winrate to
+    # ``_max_short_horizon_metric`` (max of t5/t10) to align with BUY gate horizon
+    # (T+5 OR T+10 pass, see ``_meets_quality_bar`` C220 commit 4184dd7e). The two
+    # sort sites must stay in sync: rank_recommendations_by_investability produces
+    # the initial ranking, this function re-sorts after applying consecutive_bonus;
+    # diverging tie-breakers would invert the order of bonus-equal picks. T+30
+    # retained only as long-term invalidation signal (not a ranking tie-breaker).
     ranked.sort(
         key=lambda recommendation: (
             -_safe_float_value(recommendation.get("composite_score", 0.0), 0.0),
-            -_safe_metric((recommendation.get("expected_returns") or {}).get("t30"), float("-inf")),
-            -_safe_metric((recommendation.get("win_rates") or {}).get("t30"), float("-inf")),
+            -_safe_metric(_max_short_horizon_metric(recommendation.get("expected_returns")), float("-inf")),
+            -_safe_metric(_max_short_horizon_metric(recommendation.get("win_rates")), float("-inf")),
             -_safe_metric(recommendation.get("bucket_sample_count"), 0.0),
             -_safe_float_value(recommendation.get("score_b", 0.0), 0.0),
             str(recommendation.get("ticker") or ""),
@@ -1253,9 +1314,20 @@ def _print_pick_entry(
     confluence_str = _render_confluence(bullish, total)
 
     t30, t30_wr = _extract_t30_metrics(item)
+    # C222: BUY gate decision-horizon metrics (max of T+5/T+10). Used for
+    # position sizing and the decision-horizon display row. T+30 above is
+    # retained only as the long-term invalidation view.
+    decision_edge, decision_winrate = _extract_decision_horizon_metrics(item)
 
     t30_str = f"{t30:+.2f}%" if t30 is not None else "—"
     t30_wr_str = f"{t30_wr:.0%}" if t30_wr is not None else "—"
+    # C222: render decision-horizon edge/winrate so the user can see the
+    # BUY verdict's actual basis (max of T+5/T+10). When signal_horizon is
+    # set (BUY/HOLD-with-short-signal), this row disambiguates "T+30=+0.3%"
+    # (weak long-term) from "决策=+1.2% 胜率=62%" (the short-term rebound
+    # that actually drove the BUY).
+    decision_edge_str = f"{decision_edge:+.2f}%" if decision_edge is not None else "—"
+    decision_wr_str = f"{decision_winrate:.0%}" if decision_winrate is not None else "—"
     rhythm = _classify_return_rhythm(item.get("expected_returns"))
     # O-4: per-bucket T+30 typical downside (赔率). Pairs with win rate so the
     # user can size by tail risk: 60% win @ -4% typical loss ≠ 60% @ -30%.
@@ -1263,11 +1335,14 @@ def _print_pick_entry(
     downside_str = f"{downside:+.1f}%" if isinstance(downside, (int, float)) else "—"
     # A-1: per-pick position suggestion (BUY only, regime-aware, capped). Bridges
     # "买哪只 → 买多少" with a simple transparent risk-budget; covered by the R71
-    # disclaimer (not an investment directive).
+    # disclaimer (not an investment directive). C222: sized by decision-horizon
+    # (T+5/T+10) edge/winrate, NOT T+30 — matches BUY verdict horizon.
     pos_str = ""
     if verdict["action"] == "BUY":
         pos_pct = _suggest_position_pct(
-            t30_edge=t30, t30_winrate=t30_wr, market_regime=context.market_regime
+            decision_edge=decision_edge,
+            decision_winrate=decision_winrate,
+            market_regime=context.market_regime,
         )
         if pos_pct > 0:
             pos_str = f"  建议仓位(参考)={pos_pct:.1f}%"
@@ -1288,7 +1363,18 @@ def _print_pick_entry(
     signal_horizon_str = ""
     if verdict.get("signal_horizon"):
         signal_horizon_str = f"  信号={verdict['signal_horizon']}"
-    print(f"     操作={verdict['action']}{signal_horizon_str}  T+30={t30_str}  T+30胜率={t30_wr_str}  样本={_format_sample_count(item)}  节奏={rhythm}  赔率(下行)={downside_str}{pos_str}  市场门控={verdict['market_regime']}")
+    # C222: per-pick 行展示分两层 — 决策 horizon (max T+5/T+10, BUY verdict 依据)
+    # + 长期 horizon (T+30, invalidation 维度). 让用户看到 BUY 票的短期反弹强度
+    # (决策=+1.2% 胜率=62%) 与长期走势 (T+30=+0.3% 胜率=48%) 的差异, 避免把
+    # T+5/T+10 反弹票当 30 天持有 (C219 n=7201 证明 low bucket T+30 winrate=45%).
+    print(
+        f"     操作={verdict['action']}{signal_horizon_str}  "
+        f"决策={decision_edge_str} 胜率={decision_wr_str}  "
+        f"T+30={t30_str} T+30胜率={t30_wr_str}  "
+        f"样本={_format_sample_count(item)}  节奏={rhythm}  "
+        f"赔率(下行)={downside_str}{pos_str}  "
+        f"市场门控={verdict['market_regime']}"
+    )
     print(f"     失效条件: {verdict['invalidation_reason']}")
 
     # Q-1: per-pick 卖时机建议 (BUY 才显示 — HOLD/AVOID 无卖出问题)
@@ -1326,7 +1412,7 @@ def _print_top_picks_header(
 ) -> None:
     """Render the static header block above the representative picks."""
     print(f"\n{Fore.CYAN}{Style.BRIGHT}🎯 Today's Top Picks{Style.RESET_ALL}")
-    print(f"  Date: {trade_date}  |  默认前门: composite confidence + T+30 posterior edge + 代表票去重 + 连续推荐加权")
+    print(f"  Date: {trade_date}  |  默认前门: composite confidence + T+5/T+10 决策 horizon posterior edge + 代表票去重 + 连续推荐加权")
     if freshness_warning:
         print(freshness_warning)
     print(_render_market_opportunity_index(representative_picks, market_regime))

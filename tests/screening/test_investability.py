@@ -67,7 +67,18 @@ class TestSafeMetricNanGuard:
         assert order_a[0]["ticker"] == "CCC"
 
 
-def test_rank_recommendations_prefers_30d_edge_when_composite_ties() -> None:
+def test_rank_recommendations_prefers_decision_horizon_edge_when_composite_ties() -> None:
+    """R143/O-1 + C222: when composite_score ties, ranking falls back to the
+    BUY-gate decision-horizon tie-breakers (max of T+5/T+10 edge, then max
+    of T+5/T+10 winrate, then bucket_sample_count, then score_b, then ticker).
+
+    C222 (2026-06-28 horizon 一致性): previously asserted on T+30 edge as the
+    2nd tie-breaker; tie-breakers 2/3 now use ``_max_short_horizon_metric``
+    (max of t5/t10) to align with BUY gate horizon (T+5 OR T+10 pass, see
+    C220 commit 4184dd7e). Test data: 000001 and 000002 share composite=0.85
+    AND max(t5,t10)=3.0 AND max(t5,t10) winrate=0.57, so the tie cascades to
+    bucket_sample_count (000002: 45 > 000001: 40) → 000002 ranks first.
+    """
     recommendations = [
         {"ticker": "000001", "name": "Alpha", "score_b": 0.70},
         {"ticker": "000002", "name": "Beta", "score_b": 0.71},
@@ -117,6 +128,8 @@ def test_rank_recommendations_prefers_30d_edge_when_composite_ties() -> None:
 
     assert [item["ticker"] for item in ranked] == ["000002", "000001", "000003"]
     assert ranked[0]["composite_score"] == 0.85
+    # C222: T+30 fields are still attached (invalidation horizon); the BUY
+    # decision used max(t5, t10) but T+30 is retained for downstream display.
     assert ranked[0]["expected_returns"]["t30"] == 9.0
     assert ranked[0]["win_rates"]["t30"] == 0.62
     assert ranked[0]["bucket_sample_count"] == 45

@@ -276,49 +276,50 @@ class TestSuggestPositionPct:
         from src.screening.top_picks import _suggest_position_pct
 
         # edge=8%, winrate=62%, normal → confidence 0.6, base = 0.08*0.6*100 = 4.8
-        assert _suggest_position_pct(t30_edge=0.08, t30_winrate=0.62, market_regime="normal") == 4.8
+        # C222: parameters renamed decision_edge/decision_winrate (BUY gate horizon).
+        assert _suggest_position_pct(decision_edge=0.08, decision_winrate=0.62, market_regime="normal") == 4.8
 
     def test_high_conviction_larger_size(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
         # edge=12%, winrate=70% → confidence 1.0, base = 12.0
-        assert _suggest_position_pct(t30_edge=0.12, t30_winrate=0.70, market_regime="normal") == 12.0
+        assert _suggest_position_pct(decision_edge=0.12, decision_winrate=0.70, market_regime="normal") == 12.0
 
     def test_capped_at_max_per_pick(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
         # edge=20%, winrate=80% → confidence 1.5, base = 30.0 → capped at 15.0
-        assert _suggest_position_pct(t30_edge=0.20, t30_winrate=0.80, market_regime="normal") == 15.0
+        assert _suggest_position_pct(decision_edge=0.20, decision_winrate=0.80, market_regime="normal") == 15.0
 
     def test_crisis_regime_returns_zero(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        assert _suggest_position_pct(t30_edge=0.10, t30_winrate=0.65, market_regime="crisis") == 0.0
-        assert _suggest_position_pct(t30_edge=0.10, t30_winrate=0.65, market_regime="risk_off") == 0.0
+        assert _suggest_position_pct(decision_edge=0.10, decision_winrate=0.65, market_regime="crisis") == 0.0
+        assert _suggest_position_pct(decision_edge=0.10, decision_winrate=0.65, market_regime="risk_off") == 0.0
 
     def test_caution_regime_halved(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
         # edge=12%, winrate=70% → base 12.0; cautious → ×0.5 = 6.0
-        assert _suggest_position_pct(t30_edge=0.12, t30_winrate=0.70, market_regime="cautious") == 6.0
+        assert _suggest_position_pct(decision_edge=0.12, decision_winrate=0.70, market_regime="cautious") == 6.0
 
     def test_non_positive_edge_returns_zero(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        assert _suggest_position_pct(t30_edge=-0.03, t30_winrate=0.60, market_regime="normal") == 0.0
-        assert _suggest_position_pct(t30_edge=0.0, t30_winrate=0.60, market_regime="normal") == 0.0
+        assert _suggest_position_pct(decision_edge=-0.03, decision_winrate=0.60, market_regime="normal") == 0.0
+        assert _suggest_position_pct(decision_edge=0.0, decision_winrate=0.60, market_regime="normal") == 0.0
 
     def test_none_inputs_return_zero(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        assert _suggest_position_pct(t30_edge=None, t30_winrate=0.60, market_regime="normal") == 0.0
-        assert _suggest_position_pct(t30_edge=0.08, t30_winrate=None, market_regime="normal") == 0.0
+        assert _suggest_position_pct(decision_edge=None, decision_winrate=0.60, market_regime="normal") == 0.0
+        assert _suggest_position_pct(decision_edge=0.08, decision_winrate=None, market_regime="normal") == 0.0
 
     def test_low_winrate_below_coin_flip_shrinks(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
         # winrate=0.52 (barely above coin-flip) → confidence 0.1, base = 0.08*0.1*100 = 0.8
-        assert _suggest_position_pct(t30_edge=0.08, t30_winrate=0.52, market_regime="normal") == 0.8
+        assert _suggest_position_pct(decision_edge=0.08, decision_winrate=0.52, market_regime="normal") == 0.8
 
 
 # ---------------------------------------------------------------------------
@@ -463,12 +464,19 @@ class TestApplyConsecutiveBonusAndResort:
         result = _apply_consecutive_bonus_and_resort(ranked)
         assert result is ranked
 
-    def test_tied_composite_tiebreaks_by_t30_edge_not_alphabetical(self) -> None:
+    def test_tied_composite_tiebreaks_by_decision_horizon_edge_not_alphabetical(self) -> None:
         """R143/O-1: when picks tie on composite_score (post-bonus), the tie-break
-        must be risk-aware — higher T+30 edge ranks first — restoring the
-        investability 6-tuple (rank_recommendations_by_investability:309) that the
-        bonus re-sort was discarding. Product goal "更高确信": the user must see the
-        stronger-evidence BUY first, not whichever ticker sorts alphabetically.
+        must be risk-aware — higher BUY-gate decision-horizon edge (max t5/t10)
+        ranks first — restoring the investability 6-tuple
+        (rank_recommendations_by_investability:309) that the bonus re-sort was
+        discarding. Product goal "更高确信": the user must see the stronger-evidence
+        BUY first, not whichever ticker sorts alphabetically.
+
+        C222 (2026-06-28 horizon 一致性): tie-breakers 2/3 changed from t30_edge /
+        t30_winrate to ``_max_short_horizon_metric`` (max of t5/t10) to align with
+        BUY gate horizon (T+5 OR T+10 pass, see C220 commit 4184dd7e). Test data
+        now uses t5 as the decision-horizon carrier (max(t5, t10) == t5 when t10
+        absent).
 
         Before: two BUY picks with equal composite but different edge sorted
         alphabetically (000001 < 600999), hiding the 12%-edge pick below the 8%-edge one."""
@@ -476,32 +484,37 @@ class TestApplyConsecutiveBonusAndResort:
 
         ranked = [
             {"ticker": "000001", "composite_score": 0.50, "consecutive_bonus": 0.0,
-             "expected_returns": {"t30": 0.08}, "win_rates": {"t30": 0.62},
+             "expected_returns": {"t5": 0.08, "t30": 0.08}, "win_rates": {"t5": 0.62, "t30": 0.62},
              "bucket_sample_count": 45, "score_b": 0.50},
             {"ticker": "600999", "composite_score": 0.50, "consecutive_bonus": 0.0,
-             "expected_returns": {"t30": 0.12}, "win_rates": {"t30": 0.58},
+             "expected_returns": {"t5": 0.12, "t30": 0.12}, "win_rates": {"t5": 0.58, "t30": 0.58},
              "bucket_sample_count": 120, "score_b": 0.50},
         ]
         result = _apply_consecutive_bonus_and_resort(ranked)
-        # 600999 has higher T+30 edge (12% > 8%) → ranks first despite 000001 < 600999
+        # 600999 has higher decision-horizon edge (max t5/t10 = 12% > 8%) → ranks
+        # first despite 000001 < 600999.
         assert result[0]["ticker"] == "600999"
         assert result[1]["ticker"] == "000001"
 
-    def test_tied_composite_and_edge_tiebreaks_by_winrate(self) -> None:
-        """R143/O-1: when composite AND t30_edge both tie, higher T+30 winrate ranks
-        first (the 6-tuple's 3rd level). Confirms the full risk-aware cascade."""
+    def test_tied_composite_and_edge_tiebreaks_by_decision_horizon_winrate(self) -> None:
+        """R143/O-1: when composite AND decision-horizon edge both tie, higher
+        decision-horizon winrate ranks first (the 6-tuple's 3rd level). Confirms
+        the full risk-aware cascade.
+
+        C222: tie-breaker 3 changed from t30_winrate to max(t5, t10) winrate.
+        """
         from src.screening.top_picks import _apply_consecutive_bonus_and_resort
 
         ranked = [
             {"ticker": "000001", "composite_score": 0.50, "consecutive_bonus": 0.0,
-             "expected_returns": {"t30": 0.10}, "win_rates": {"t30": 0.62},
+             "expected_returns": {"t5": 0.10, "t30": 0.10}, "win_rates": {"t5": 0.62, "t30": 0.62},
              "bucket_sample_count": 45, "score_b": 0.50},
             {"ticker": "600999", "composite_score": 0.50, "consecutive_bonus": 0.0,
-             "expected_returns": {"t30": 0.10}, "win_rates": {"t30": 0.58},
+             "expected_returns": {"t5": 0.10, "t30": 0.10}, "win_rates": {"t5": 0.58, "t30": 0.58},
              "bucket_sample_count": 120, "score_b": 0.50},
         ]
         result = _apply_consecutive_bonus_and_resort(ranked)
-        # 000001 has higher winrate (62% > 58%) → ranks first
+        # 000001 has higher decision-horizon winrate (62% > 58%) → ranks first
         assert result[0]["ticker"] == "000001"
 
     def test_tied_composite_score_tiebreaks_by_ticker_ascending(self) -> None:

@@ -386,14 +386,23 @@ def render_expected_returns(report: ExpectedReturnReport) -> str:
 
 
 def render_expected_returns_compact(report: ExpectedReturnReport) -> str:
-    """Render a compact summary for integration into decision flow."""
+    """Render a compact summary for integration into decision flow.
+
+    C222 (2026-06-28 horizon 一致性): this is the *long-horizon invalidation*
+    view (T+20/T+30) — historical回测 distribution, tail risk, max drawdown.
+    The BUY-gate decision horizon is T+5 OR T+10 (see ``_meets_quality_bar``
+    C220 commit 4184dd7e); T+30 here is the long-term衰退 signal retained
+    alongside the short-horizon decision (see ``invalidation_reasons`` in
+    ``build_front_door_verdict``). Header labels the view as "长期 invalidation
+    horizon" so power-users do not mistake T+30 stats for the BUY decision basis.
+    """
     if not report.items:
         return "无预期收益数据"
 
-    # Long-horizon emphasis for 30-day stock selection. Attribute the T+30
-    # stat to its matured-sample denominator (BH-002), not the all-records
+    # Long-horizon invalidation view (T+20/T+30). Attribute the T+30 stat to
+    # its matured-sample denominator (BH-002), not the all-records
     # ``bucket_sample_count``, so users see how much actually backs the number.
-    lines = [f"  30天 edge (基于 {report.total_samples} 条历史, 其中 {report.mature_t30_samples} 条已满 30 天):"]
+    lines = [f"  长期 invalidation horizon T+20/T+30 edge (基于 {report.total_samples} 条历史, 其中 {report.mature_t30_samples} 条已满 30 天; BUY 决策 horizon 为 T+5/T+10):"]
     for item in report.items[:5]:
         er = item.expected_returns
         t20 = _fmt_return(er.get("t20"))

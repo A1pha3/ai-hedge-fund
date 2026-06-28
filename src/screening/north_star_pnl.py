@@ -1,12 +1,22 @@
-"""NS-3 北极星 P&L 趋势仪表: 按推荐日等权累积真实 T+30 P&L.
+"""NS-3 北极星 P&L 趋势仪表: 按推荐日等权累积真实 T+5 P&L (代码默认 horizon).
 
-北极星目标: 用户按推荐操作 30 天真实 P&L>0. 本模块量化该目标的当前状态,
+北极星目标: 用户按推荐操作 5 天真实 P&L>0. 本模块量化该目标的当前状态,
 在 ``--top-picks`` footer 展示, 让 owner/用户看到是否向 >0 收敛.
 
+C222 (2026-06-28 horizon 一致性): BUY gate 主决策 horizon 已在 C220 (commit
+4184dd7e) 改为 T+5 OR T+10. 本模块代码默认读 ``next_5day_return`` (见下方
+``compute_north_star_pnl_from_loaded`` 默认 horizon_field) — 与 BUY gate 主决策
+horizon 对齐. T+30 在历史 owner 决策上下文中曾用作门控评估 horizon (C218/C219
+bootstrap CI), 但 C219 n=7201 证明 low bucket T+30 winrate=45% << T+5/T+10
+winrate=60% (low bucket 是短期反弹票, 不是 30 天持有票), 故 NS-3 默认 horizon
+切到 T+5 与 BUY 决策对齐. 模块内 payoff/pruning/bootstrap CI 仍可显式传
+``horizon_field="next_30day_return"`` 复用历史 T+30 评估口径 (与 NS-4 同: T+30
+保留为长期 invalidation / 长期质量诊断维度).
+
 **三维度诚实度量** (吸取 R-6/R-7 mean 被异常值污染教训):
-  - 累积等权 mean T+30 P&L (趋势, 但可能被少数大赢家拉高)
+  - 累积等权 mean T+horizon P&L (趋势, 但可能被少数大赢家拉高)
   - 整体 winrate (典型票能否赚钱, count-based 免异常值污染)
-  - overall median (典型票真实 T+30, 免异常值污染)
+  - overall median (典型票真实 T+horizon, 免异常值污染)
 
 verdict:
   - **divergent** (⚠): mean 正但 winrate<50% 或 median<0 — 表面达标但典型票微亏
