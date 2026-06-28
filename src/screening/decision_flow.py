@@ -95,12 +95,23 @@ def run_decision_flow(
     print(f"\n{Fore.WHITE}Step 2/{total_steps}: Checking data freshness...{Style.RESET_ALL}")
     from src.screening.data_freshness_guard import (
         _render_freshness_summary,
+        apply_freshness_confidence_penalty,
         check_data_freshness,
     )
 
     freshness = check_data_freshness(trade_date=trade_date, reports_dir=search_dir)
     print(f"  {_render_freshness_summary(freshness['fresh'], freshness['warnings'])}")
     flow_result["freshness"] = freshness
+
+    # C241 (R96/R118 family drain): apply_freshness_confidence_penalty was
+    # defined in data_freshness_guard.py and tested in test_data_freshness_guard.py
+    # but never wired into production. check_data_freshness was display-only,
+    # so stale data never actually reduced recommendation confidence -- breaking
+    # the R96/R118 design intent. Wire the penalty here so stale-data recs get
+    # confidence *= {0.7 HIGH | 0.85 MEDIUM | 0.95 LOW} before they flow into
+    # signal_consistency / expected_returns / investability downstream.
+    if not freshness.get("fresh", True):
+        recs = apply_freshness_confidence_penalty(recs, freshness)
 
     # Step 3: Signal consistency
     print(f"\n{Fore.WHITE}Step 3/{total_steps}: Cross-checking signal consistency...{Style.RESET_ALL}")
