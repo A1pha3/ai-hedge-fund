@@ -53,11 +53,13 @@ __all__ = [
 ]
 
 # Light stage weights: 全 universe 因子回测 (2026-06-25, n=8136) 证明 MR 是正向有效因子
-# (IC=+0.040, p=0.0003, bull +6.86% > bear +3.32%), trend 因子接近常量 (对全市场 direction=0,
-# completeness=0, 无区分度). MR 应主导 light stage 筛选, 让超跌反弹潜力票进入候选池.
+# C226 revert: 全 universe 诊断 (C225 n=8901) 证实 MR 全 4 sub-factor 与 T+1 反向
+# (sep<0, IC=-0.128); MR-heavy (0.65) 在更长样本下跑输 trend-heavy (daily excess -0.28%).
+# mean-reversion bet 在 T+1 horizon 失败 (短期 momentum 主导). 回滚到 trend:0.65/MR:0.35
+# (validated by _backtest_light_stage_universe: OLD Top-50 T+1 跑赢 NEW 67% 天).
 LIGHT_STRATEGY_WEIGHTS = {
-    "trend": 0.35,
-    "mean_reversion": 0.65,
+    "trend": 0.65,
+    "mean_reversion": 0.35,
 }
 _DEFAULT_CANDIDATE_POOL_SIZE = int(os.getenv("MAX_CANDIDATE_POOL_SIZE", "300"))
 TECHNICAL_SCORE_MAX_CANDIDATES = int(
