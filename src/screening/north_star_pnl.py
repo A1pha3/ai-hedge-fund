@@ -59,15 +59,16 @@ def _median(values: list[float]) -> float | None:
 class NorthStarPnlReport:
     """北极星 P&L 趋势报告 (三维度)."""
 
-    cumulative_mean_pnl: float = 0.0  # 累积等权 mean T+30 (%)
-    overall_winrate: float | None = None  # 0-1, T+30 正收益比例
-    overall_median: float | None = None  # %, 典型票 T+30 (免异常值)
+    cumulative_mean_pnl: float = 0.0  # 累积等权 mean (%), horizon 由 horizon_label 标
+    overall_winrate: float | None = None  # 0-1, 正收益比例 (决策 horizon)
+    overall_median: float | None = None  # %, 典型票 (免异常值)
     sample_dates: int = 0
     sample_count: int = 0
     recent_daily_avg: float | None = None  # 最近 N 日等权 avg (%)
     mean_median_divergence: bool = False  # mean 正但 winrate<50% 或 median<0
     verdict: str = "insufficient"  # insufficient | divergent | positive | negative
     daily_series: list[tuple[str, float]] = field(default_factory=list)  # (date, daily_mean)
+    horizon_label: str = "T+5"  # 决策 horizon (2026-06-28 周期缩短自 T+30 → 默认 T+5; BUY gate = T+5 OR T+10)
 
 
 def compute_north_star_pnl_from_loaded(
@@ -75,21 +76,28 @@ def compute_north_star_pnl_from_loaded(
     *,
     min_n: int = _MIN_N_DEFAULT,
     recent_days: int = _RECENT_DAYS,
+    horizon_field: str = "next_5day_return",
 ) -> NorthStarPnlReport:
-    """纯函数: 用已加载的 tracking records 算北极星 P&L 报告 (可注入测试)."""
+    """纯函数: 用已加载的 tracking records 算北极星 P&L 报告 (可注入测试).
+
+    horizon_field 默认 ``next_5day_return`` (BUY gate 决策 horizon = T+5 OR T+10;
+    2026-06-28 周期缩短自 T+30). 可传 ``next_10day_return`` / ``next_30day_return``
+    (T+30 保留为长期衰退 invalidation 子度量).
+    """
     from collections import defaultdict
 
+    horizon_label = _horizon_short_label(horizon_field)
     by_date: dict[str, list[float]] = defaultdict(list)
     all_returns: list[float] = []
     for rec in records:
-        t30 = _finite_float(rec.get("next_30day_return"))
-        if t30 is None:
+        ret = _finite_float(rec.get(horizon_field))
+        if ret is None:
             continue
         date_raw = str(rec.get("recommended_date", "") or "").replace("-", "")
         if not date_raw:
             date_raw = "unknown"
-        by_date[date_raw].append(t30)
-        all_returns.append(t30)
+        by_date[date_raw].append(ret)
+        all_returns.append(ret)
 
     n = len(all_returns)
     if n < min_n:
@@ -134,13 +142,18 @@ def compute_north_star_pnl_from_loaded(
         mean_median_divergence=divergence,
         verdict=verdict,
         daily_series=daily_series,
+        horizon_label=horizon_label,
     )
 
 
 def compute_north_star_pnl(
-    *, reports_dir: Path | None = None, min_n: int = _MIN_N_DEFAULT
+    *, reports_dir: Path | None = None, min_n: int = _MIN_N_DEFAULT,
+    horizon_field: str = "next_5day_return",
 ) -> NorthStarPnlReport:
-    """从报告目录加载 tracking_history 算北极星 (镜像 rank_monotonicity IO 包装)."""
+    """从报告目录加载 tracking_history 算北极星 (镜像 rank_monotonicity IO 包装).
+
+    horizon_field 默认 T+5 (BUY gate 决策 horizon); 可传 next_10day_return / next_30day_return。
+    """
     from src.screening.consecutive_recommendation import (
         load_tracking_history,
         resolve_report_dir,
@@ -148,7 +161,7 @@ def compute_north_star_pnl(
 
     search_dir = reports_dir or resolve_report_dir()
     records = load_tracking_history(search_dir)
-    return compute_north_star_pnl_from_loaded(records, min_n=min_n)
+    return compute_north_star_pnl_from_loaded(records, min_n=min_n, horizon_field=horizon_field)
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +183,7 @@ def render_north_star_line(report: NorthStarPnlReport) -> str:
     med = f"{report.overall_median:+.0f}%" if report.overall_median is not None else "—"
     cum = f"{report.cumulative_mean_pnl:+.0f}%"
     base = (
-        f"  🎯 北极星 P&L: 累积 {cum} (mean) | 胜率 {wr} | 典型 {med}"
+        f"  🎯 北极星 P&L ({report.horizon_label}): 累积 {cum} (mean) | 胜率 {wr} | 典型 {med}"
         f" | n={report.sample_count}, {report.sample_dates}日"
     )
 

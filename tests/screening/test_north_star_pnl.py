@@ -1,10 +1,11 @@
 """NS-3 北极星 P&L 趋势仪表模块的合成数据测试.
 
 不依赖真实报告文件 —— 全部用内联合成 tracking records. 验证:
-  - 累积等权 mean T+30 P&L 计算
+  - 累积等权 mean P&L 计算 (默认 horizon = T+5, BUY gate 决策 horizon; 2026-06-28 缩短自 T+30)
   - 整体 winrate + median (典型票, 免异常值污染)
   - mean/median 背离检测 (R-6/R-7: mean 被少数大赢家拉高但典型票微亏)
   - render 3 色态 (divergent⚠ / positive✓ / negative⚠) + insufficient 静默
+  - horizon 可配置 (T+5 默认 / T+10 / T+30 长期 invalidation)
 """
 from __future__ import annotations
 
@@ -15,11 +16,11 @@ from src.screening.north_star_pnl import (
 
 
 def _records(date_returns: dict[str, list[float]]) -> list[dict]:
-    """{date: [t30 returns]} → flat tracking record list."""
+    """{date: [returns]} → flat tracking record list (默认 horizon field = next_5day_return)."""
     out = []
     for dt, rets in date_returns.items():
         for r in rets:
-            out.append({"recommended_date": dt, "next_30day_return": r})
+            out.append({"recommended_date": dt, "next_5day_return": r})
     return out
 
 
@@ -113,18 +114,43 @@ def test_finite_float_rejects_nan_garbage():
 
 
 def test_handles_missing_and_garbage_returns():
-    """缺 next_30day_return / NaN / 字符串 → 跳过, 不崩."""
+    """缺 next_5day_return / NaN / 字符串 → 跳过, 不崩."""
     recs = [
-        {"recommended_date": "20250101", "next_30day_return": 5.0},
+        {"recommended_date": "20250101", "next_5day_return": 5.0},
         {"recommended_date": "20250101"},  # 缺
-        {"recommended_date": "20250101", "next_30day_return": None},
-        {"recommended_date": "20250101", "next_30day_return": float("nan")},
-        {"recommended_date": "20250101", "next_30day_return": "abc"},
-        {"recommended_date": "20250101", "next_30day_return": -2.0},
+        {"recommended_date": "20250101", "next_5day_return": None},
+        {"recommended_date": "20250101", "next_5day_return": float("nan")},
+        {"recommended_date": "20250101", "next_5day_return": "abc"},
+        {"recommended_date": "20250101", "next_5day_return": -2.0},
     ]
     rep = compute_north_star_pnl_from_loaded(recs, min_n=2)
     # 只 2 条有效 (5.0, -2.0) → n=2
     assert rep.sample_count == 2
+
+
+def test_horizon_configurable_default_t5_label_and_t30_explicit():
+    """horizon_field 可配置: 默认 T+5 (label), 显式传 next_30day_return 走 T+30."""
+    recs = [
+        {"recommended_date": "20250101", "next_5day_return": 3.0, "next_30day_return": 9.0},
+        {"recommended_date": "20250101", "next_5day_return": -1.0, "next_30day_return": -5.0},
+    ]
+    # 默认 T+5
+    rep_t5 = compute_north_star_pnl_from_loaded(recs, min_n=2)
+    assert rep_t5.horizon_label == "T+5"
+    assert abs(rep_t5.cumulative_mean_pnl - 1.0) < 0.01  # (3 + -1)/2 = 1.0 per day
+    # 显式 T+30 (长期 invalidation 子度量)
+    rep_t30 = compute_north_star_pnl_from_loaded(recs, min_n=2, horizon_field="next_30day_return")
+    assert rep_t30.horizon_label == "T+30"
+    assert abs(rep_t30.cumulative_mean_pnl - 2.0) < 0.01  # (9 + -5)/2 = 2.0
+
+
+def test_render_shows_horizon_label():
+    """render 输出含 horizon_label (T+5 默认), 让用户知道度量的是哪个周期."""
+    rep = compute_north_star_pnl_from_loaded(
+        _records({"20250101": [5.0, 3.0, 8.0, 2.0, 6.0]}), min_n=2
+    )
+    line = render_north_star_line(rep)
+    assert "(T+5)" in line
 
 
 # ---------------------------------------------------------------------------

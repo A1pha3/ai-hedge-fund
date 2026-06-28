@@ -1,8 +1,10 @@
 # 产品功能提案清单 (R20.42 活跃路线图版)
 
-> **目标**：让用户用尽可能少的入口，稳定找到未来 30 天最有投资价值、最值得买入的 A 股标的。
+> **目标**：让用户用尽可能少的入口，稳定找到未来 T+5 或 T+10 天最有投资价值、最值得买入的 A 股标的。
 >
 > **本版调整**：2026-06-18 根据用户产品决策关闭 R42：不接退市股历史池，回测继续采用当前上市 A 股 universe；退市 / 非当前上市标的从候选池剔除，并作为样本边界披露。历史 R42 审计原语 `filter_stock_basic_as_of` 保留为研究证据，不再触发 active backlog。
+>
+> **本版调整**：2026-06-28 根据用户产品决策缩短 must-win 周期：**T+30 → T+5 或 T+10**（C219 历史 backfill 实测：low bucket T+5/T+10 winrate≈60% [59%, 61%]，T+30≈45%；BUY gate 已在 C220 改为 T+5 OR T+10 通过）。系统目标改为"选 5 天或 10 天内大概率赚更多钱的票"。**T+30 保留为长期衰退 / invalidation 信号**（不作为 BUY 主决策 horizon）。所有前门 / 校准 / 成功 metric 以 T+5/T+10 为准。
 >
 
 ---
@@ -26,14 +28,14 @@
 
 ### 核心目标
 
-1. 默认前门必须围绕 **未来 30 天的可投资性**，而不是让用户手动拼接多个短周期信号。
+1. 默认前门必须围绕 **未来 T+5 或 T+10 天的可投资性**，而不是让用户手动拼接多个短周期信号。
 2. 用户最终需要的不是"更多指标"，而是 **更少候选、更高确信、更清晰的 Buy / Hold / Avoid 决策**。
 3. 更值得买的目标：胜率、赔率、持续时间，综合最优的候选，而不是单指标最优，比如（能连续5天涨停的，肯定要比能连续3天涨停的更值得买，10天能涨50%的，肯定要比5天涨20%的好）。
 3. 所有新增功能都要服务于这条主线：**更快筛掉低质量候选，更稳保留最值得买的代表票**。
 
 ### 约束
 
-- **优先复用既有能力**：20-agent、composite score、T+30 posterior edge、market gate、position check、risk snapshot、verify pipeline 都已具备，不再平行造新入口。
+- **优先复用既有能力**：20-agent、composite score、T+5/T+10 posterior edge、market gate、position check、risk snapshot、verify pipeline 都已具备，不再平行造新入口。
 - **避免前门分裂**：power-user 命令可以保留，但不应成为默认工作流。
 - **避免冗余候选**：同主题、同行业、强相关标的不应在前门里成批挤占用户注意力。
 - **避免产品臃肿**：不为"看起来先进"而新增重型功能。
@@ -45,7 +47,7 @@
 系统已经具备完整能力。自 R20.40 起，默认前门收敛为：
 
 ```text
---top-picks                 默认前门（代表票 + Buy/Hold/Avoid + T+30 证据）
+--top-picks                 默认前门（代表票 + Buy/Hold/Avoid + T+5 或 T+10 证据）
 --daily-brief               盘前补充摘要
 --position-check            持仓监控
 --decision-flow             power-user 深度链路
@@ -65,7 +67,7 @@
 
 | ID | 优先级 | 状态 | 需求 | 目标 |
 |---|---|---|---|---|
-| R1 | P0 | ✅ | **单一 30 天决策前门** | `--top-picks` 已成为默认前门。 |
+| R1 | P0 | ✅ | **单一 5天 或 10天 决策前门** | `--top-picks` 已成为默认前门。 |
 | R2 | P0 | ✅ | **候选去重 + 代表票机制** | `--top-picks` 已按行业 / 主题簇优先保留代表票。 |
 | R3 | P1 | ✅ | **前门文档收敛** | 主路线图、快速开始、完整 CLI 参考已完成分工。 |
 | R4 | P0 | ✅ | **连续推荐加权集成到前门** | `--top-picks` 整合连续推荐天数到排序和展示。 |
@@ -306,7 +308,7 @@ risk_off    (避险/弱势市):  n=10,  winrate=30%,  median=-5.12%   (2 日期)
 3. **核心矛盾**：产品目标"每天都能选出最能赚钱的股票" vs 真相"震荡市没有能赚钱的票"。**解决方式 = regime-gated**：震荡市产品应说"今天没有值得买的票"（空仓也是赚钱的一部分——不亏就是赚），而非强行推 10 只
 4. **"优化策略提高胜率"诊断否决仍然成立**——但否决的是"调打分模型"（过拟合），**不是否决"改产品行为"**。R-5.F 重新定义为 regime-gated，这才是赚钱工具的正解
 
-**赚钱工具的北极星指标**（用于衡量所有后续工作）：**用户按产品推荐操作 30 天后的真实 P&L > 0**。v2 扩样本确认: 三 regime 典型票都微亏到平 (best case crisis -0.9% median, worst risk_off -5.1%) → **当前模型在任何 regime 下都没达到赚钱目标**。真实证据指向的不是"改 regime gate"或"改模型打分", 而是**持续累积证据, 诚实展示, 承认当前 top-n 推荐在 30 天尺度上整体平胸/微亏, 让用户基于真实期望决策**。
+**赚钱工具的北极星指标**（用于衡量所有后续工作）：**用户按产品推荐操作 T+5 或 T+10 后的真实 P&L > 0（winrate > 50%）**。[2026-06-28 周期缩短] 原 T+30 北极星实测整体平胸/微亏（v2 扩样本：三 regime 典型票 −0.9%~−5.1% median，winrate≈46%）；C219 历史 backfill（n=7201）发现 **T+5/T+10 winrate≈60% [59%, 61%] >> T+30≈45%**，故 must-win 周期缩短到 T+5/T+10，BUY gate 已在 C220 改为 T+5 OR T+10 通过。**T+30 保留为长期衰退 / invalidation 信号**（不作为 BUY 主决策 horizon）。当前 T+5/T+10 北极星更可能达标，但仍需 post-push 真实观察确认。真实证据指向：**持续累积证据、诚实展示、让用户基于真实期望决策**（regime-gating 已被 v2 + Phase 0 两轮否决）。
 
 **为什么 regime-gating 前提被推翻但仍然是个有价值的教训**：v1 小样本 (91 只) 曾暗示"crisis 73% 赚钱" → v2 扩样本 (32 日期 ~189 只) 修正为 47%。**这是 R-5.D/E 的方法论价值**——诊断先于优化, 扩样本先于修代码, 用数据纠正假设。如果没有 R-5.E 的扩样本, R-5.F 会基于小样本错误前提去做 regime-gating 方向修正 → 白费功夫甚至让产品更差。**"先诚实理解真相, 再用真相决定方向"比"看到迹象就动手"高效得多**。
 
@@ -324,7 +326,7 @@ risk_off    (避险/弱势市):  n=10,  winrate=30%,  median=-5.12%   (2 日期)
 | **NS-2** | **P1** | ❌ | **模型版本标记 + 诊断分版本** | owner 改了因子但历史推荐没标模型版本 → 诊断无法区分老/新模型效果 (Phase 0 结论基于老模型, 新模型待验)。给报告/推荐加 `model_version` 字段 (factor 配置 hash 或 git sha), 诊断按 version 分组。**autodev 可自主**。是 owner 因子验证闭环的前提基础设施。 |
 **已交付 (autodev C195, 2026-06-27, commit 待提交)**: 新增 `src/screening/north_star_pnl.py` 按推荐日等权累积真实 T+30 P&L, 在 `--top-picks` footer 展示 **三维度** (累积 mean + 整体 winrate + median, 吸取 R-6/R-7 mean 异常值污染教训). 真实 493 条/50 日验证: verdict=**divergent** — 累积 mean +190% 但 winrate 46% + median -2% (少数大赢家拉高 mean, 典型票微亏, 北极星未真达标). divergent⚠/positive✓/negative⚠/insufficient 静默. 纯诊断不改 gate/factor/仓位. 镜像 rank_monotonicity/regime_winrate 的 footer-block 模式. TDD 10 red→green + flake8 clean. 原缺口: 北极星 (用户按推荐操作30天P&L>0) 此前无直接度量.
 
-| **NS-3** | **P1** | ✅ | **北极星 P&L 趋势仪表 (已交付)** | 北极星 (用户按推荐操作 30 天真实 P&L>0) 当前无直接度量。加"按推荐日等权累积真实 T+30 P&L 趋势"展示 (`--top-picks` footer 或 `--decision-flow`), 让 owner/用户看到是否向 >0 收敛。复用 tracking_history + reconcile。**autodev 可自主**。 |
+| **NS-3** | **P1** | ✅→**T+5/T+10 对齐中** | **北极星 P&L 趋势仪表 (已交付 T+30, 需对齐 T+5/T+10)** | 北极星 (用户按推荐操作 **T+5/T+10** 真实 P&L>0, 2026-06-28 周期缩短自 T+30) 度量。已交付 T+30 版本 (`north_star_pnl.py`, C195)。**对齐工作**: 把累积 P&L/winrate/median 从 T+30 改为 T+5/T+10 (BUY gate 决策 horizon), 让北极星度量与决策 horizon 一致。复用 tracking_history 的 `next_5day_return`/`next_10day_return`。T+30 保留为长期衰退 invalidation 子度量。**autodev 可自主**（纯展示层，不改 gate/factor）。 |
 **已交付 (autodev C192, 2026-06-27, commit 2b69ad36)**: 新增 `src/screening/rank_monotonicity.py` 把 'score rank → T+30 胜率是否单调' 量化成健康信号, 在 `--top-picks` footer 展示 (倒挂⚠红/单调✓绿/非单调⚠黄/样本不足静默). 真实 493 条 tracking_history 验证: **模型整体排序倒挂** — low-score T+30 胜率 50.5% → high-score 39.5% (高分票胜率反而最低, 11pp 单调递减). overall + per-state_type 细分. 纯诊断不改 gate/factor/仓位 (Phase 0 STOP: 越界=过拟合). 镜像 regime_winrate/portfolio_concentration 的 best-effort footer-block 模式. TDD 9 red→green + FULL 9990 passed + flake8 clean. 原根因: 打分质量诊断此前埋在 Phase 0 一次性研究输出, 前门用户/owner 每天看不到模型把输家排前面.
 
 | **NS-4** | **P1** | ✅ | **rank 单调性健康度 (per state_type) (已交付)** | Phase 0 发现 MIXED 市场 ranking 倒挂 (high score 42% 反而最差, low 52% 最好)。加"score rank → T+30 胜率单调性"健康信号 (overall + per state_type), 倒挂时 ⚠ 提示。直接量化模型质量, 服务 owner 调优反馈。复用 `state_type_calibration` 模块 (R-5.F Phase 0 已建)。**autodev 可自主**。 |
