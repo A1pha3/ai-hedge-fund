@@ -58,11 +58,18 @@ def _analyze_fundamentals_health(metrics) -> tuple[str, dict]:
     earnings_per_share = metrics.earnings_per_share
 
     health_score = 0
-    if current_ratio and current_ratio > 1.5:
+    # R68/R96 falsy-zero family (part 3): use `is not None` guard, not truthiness.
+    # 0.0 是 computed value (零负债 / breakeven FCF), None 是 missing; truthiness
+    # `if 0.0:` 短路会把最优资产负债表误判为数据不足 (C250, sibling of C246/C247).
+    if current_ratio is not None and current_ratio > 1.5:
         health_score += 1
-    if debt_to_equity and debt_to_equity < 0.5:
+    if debt_to_equity is not None and debt_to_equity < 0.5:
         health_score += 1
-    if free_cash_flow_per_share and earnings_per_share and free_cash_flow_per_share > earnings_per_share * 0.8:
+    if (
+        free_cash_flow_per_share is not None
+        and earnings_per_share is not None
+        and free_cash_flow_per_share > earnings_per_share * 0.8
+    ):
         health_score += 1
 
     signal = "bullish" if health_score >= 2 else "bearish" if health_score == 0 else "neutral"
