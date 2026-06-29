@@ -10,6 +10,10 @@ from src.agents.rakesh_jhunjhunwala import (
     assess_quality_metrics,
     calculate_intrinsic_value,
 )
+from src.agents.rakesh_jhunjhunwala_helpers import (
+    _score_rakesh_debt_ratio,
+    _score_rakesh_quality_debt_factor,
+)
 
 
 def test_analyze_profitability_preserves_high_score_path():
@@ -171,3 +175,47 @@ def test_analyze_rakesh_jhunjhunwala_style_keeps_zero_intrinsic_value_for_valuat
 
     # intrinsic_value=0.0 is a real computed value; valuation_gap = 0 - 5 = -5
     assert result["valuation_gap"] == -5.0
+
+
+# ---------------------------------------------------------------------------
+# Falsy-zero on liabilities numerator (R68/R96 family, part 2)
+# A legitimate total_liabilities == 0.0 (ZERO-LIABILITY company — the cleanest
+# possible balance sheet) was dropped by truthiness `and latest.total_liabilities`,
+# mislabeling it "Insufficient data" / neutral 0.5 instead of the best debt score.
+# Sibling of the warren_buffett _score_buffett_debt_to_equity fix (C246).
+# ---------------------------------------------------------------------------
+
+
+def test_score_rakesh_debt_ratio_zero_liabilities_is_low_debt_not_missing():
+    """total_liabilities == 0.0 (zero-liability company) → debt_ratio 0.0 < 0.5
+    → must score 2 ('Low debt ratio: 0.00'). Truthiness dropped 0.0 → 'Insufficient
+    data' score 0, under-scoring an excellent balance sheet."""
+    score, reason = _score_rakesh_debt_ratio(SimpleNamespace(total_assets=1000.0, total_liabilities=0.0))
+    assert score == 2
+    assert reason == "Low debt ratio: 0.00"
+
+
+def test_score_rakesh_debt_ratio_none_liabilities_still_reports_insufficient():
+    """Regression guard: None must STILL read 'Insufficient data'."""
+    score, reason = _score_rakesh_debt_ratio(SimpleNamespace(total_assets=1000.0, total_liabilities=None))
+    assert score == 0
+    assert reason == "Insufficient data to calculate debt ratio"
+
+
+def test_score_rakesh_quality_debt_factor_zero_liabilities_is_best_not_neutral():
+    """total_liabilities == 0.0 → debt_ratio 0.0 < 0.3 → factor 1.0 (best).
+    Truthiness returned 0.5 (neutral) → feeds a worse discount_rate → lower
+    intrinsic value for a zero-liability company."""
+    factor = _score_rakesh_quality_debt_factor(SimpleNamespace(total_assets=1000.0, total_liabilities=0.0))
+    assert factor == 1.0
+
+
+def test_analyze_balance_sheet_zero_liability_company_earns_low_debt_credit():
+    """End-to-end through analyze_balance_sheet: a zero-liability company must
+    earn the low-debt credit (score 2 from debt ratio), not 'Insufficient data'."""
+    financial_line_items = [
+        SimpleNamespace(total_assets=1000.0, total_liabilities=0.0, current_assets=420.0, current_liabilities=180.0)
+    ]
+    result = analyze_balance_sheet(financial_line_items)
+    assert "Low debt ratio: 0.00" in result["details"]
+    assert "Insufficient data to calculate debt ratio" not in result["details"]

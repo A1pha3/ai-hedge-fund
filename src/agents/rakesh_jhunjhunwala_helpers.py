@@ -121,8 +121,15 @@ def _score_rakesh_quality_roe_factor(latest) -> float:
 
 
 def _score_rakesh_quality_debt_factor(latest) -> float:
-    if getattr(latest, "total_assets", None) and getattr(latest, "total_liabilities", None) and latest.total_assets and latest.total_liabilities:
-        debt_ratio = latest.total_liabilities / latest.total_assets
+    # R68/R96 falsy-zero family (part 2): is not None, not truthiness.
+    # total_liabilities == 0.0 (zero-liability company → debt_ratio 0.0 < 0.3,
+    # best factor 1.0) was dropped by truthiness into the 0.5 neutral default,
+    # feeding a worse discount_rate → lower intrinsic value. Only the divisor
+    # total_assets needs the > 0 guard. Sibling of C246 buffett D/E fix.
+    total_assets = getattr(latest, "total_assets", None)
+    total_liabilities = getattr(latest, "total_liabilities", None)
+    if total_assets is not None and total_liabilities is not None and total_assets > 0:
+        debt_ratio = total_liabilities / total_assets
         if debt_ratio < 0.3:
             return 1.0
         if debt_ratio < 0.5:
@@ -147,8 +154,14 @@ def _score_rakesh_quality_growth_consistency(financial_line_items: list) -> floa
 
 
 def _score_rakesh_debt_ratio(latest) -> tuple[int, str]:
-    if getattr(latest, "total_assets", None) and getattr(latest, "total_liabilities", None) and latest.total_assets and latest.total_liabilities and latest.total_assets > 0:
-        debt_ratio = latest.total_liabilities / latest.total_assets
+    # R68/R96 falsy-zero family (part 2): is not None, not truthiness.
+    # total_liabilities == 0.0 (zero-liability company → debt_ratio 0.0 < 0.5,
+    # best score 2) was dropped by truthiness into "Insufficient data" score 0.
+    # Only the divisor total_assets needs the > 0 guard. Sibling of C246 buffett D/E.
+    total_assets = getattr(latest, "total_assets", None)
+    total_liabilities = getattr(latest, "total_liabilities", None)
+    if total_assets is not None and total_liabilities is not None and total_assets > 0:
+        debt_ratio = total_liabilities / total_assets
         if debt_ratio < 0.5:
             return 2, f"Low debt ratio: {debt_ratio:.2f}"
         if debt_ratio < 0.7:

@@ -125,3 +125,43 @@ def test_analyze_business_quality_reports_breakeven_roe_not_missing(monkeypatch)
 
     assert "ROE of 0.0% is moderate." in result["details"]
     assert "ROE data not available." not in result["details"]
+
+
+# ---------------------------------------------------------------------------
+# Falsy-zero on liabilities numerator (R68/R96 family, part 2)
+# In _score_ackman_leverage's liab_to_assets fallback, truthiness
+# `if total_liabilities and total_assets and total_assets > 0:` dropped any period
+# whose total_liabilities legitimately equals 0.0 (zero-liability period → ratio
+# 0.0 < 0.5 → should count toward 'Liabilities-to-assets < 50%'). Dropping
+# zero-liability periods can flip the majority count and under-score a clean
+# balance sheet. Sibling missed by C246 (same file, _score_ackman_roe only).
+# ---------------------------------------------------------------------------
+
+
+def test_score_ackman_leverage_zero_liability_periods_count_as_below_50pct():
+    """Majority zero-liability periods (ratio 0.0 < 0.5) must score 2, not be
+    dropped into 'No consistent leverage ratio data'."""
+    from src.agents.bill_ackman_helpers import _score_ackman_leverage
+
+    # debt_to_equity absent → falls to liab_to_assets fallback.
+    # 2 periods zero-liability (ratio 0.0) + 1 high (ratio 0.6): majority < 50%.
+    financial_line_items = [
+        SimpleNamespace(debt_to_equity=None, total_liabilities=0.0, total_assets=1000.0),
+        SimpleNamespace(debt_to_equity=None, total_liabilities=0.0, total_assets=1000.0),
+        SimpleNamespace(debt_to_equity=None, total_liabilities=600.0, total_assets=1000.0),
+    ]
+    score, detail = _score_ackman_leverage(financial_line_items)
+    assert score == 2
+    assert "Liabilities-to-assets < 50% for majority of periods." in detail
+
+
+def test_analyze_financial_discipline_zero_liability_company_earns_leverage_credit():
+    """End-to-end: a fully zero-liability company must earn the leverage credit,
+    not report 'No consistent leverage ratio data available.'"""
+    financial_line_items = [
+        SimpleNamespace(debt_to_equity=None, total_liabilities=0.0, total_assets=1000.0, outstanding_shares=100.0),
+        SimpleNamespace(debt_to_equity=None, total_liabilities=0.0, total_assets=1000.0),
+    ]
+    result = analyze_financial_discipline(metrics=[SimpleNamespace()], financial_line_items=financial_line_items)
+    assert "Liabilities-to-assets < 50% for majority of periods." in result["details"]
+    assert "No consistent leverage ratio data available." not in result["details"]

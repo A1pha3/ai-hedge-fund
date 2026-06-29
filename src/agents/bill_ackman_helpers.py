@@ -68,7 +68,11 @@ def _score_ackman_leverage(financial_line_items: list) -> tuple[int, str]:
     for item in financial_line_items:
         total_liabilities = getattr(item, "total_liabilities", None)
         total_assets = getattr(item, "total_assets", None)
-        if total_liabilities and total_assets and total_assets > 0:
+        # R68/R96 falsy-zero family (part 2): is not None, not truthiness.
+        # total_liabilities == 0.0 (zero-liability period → ratio 0.0 < 0.5,
+        # counts toward 'Liabilities-to-assets < 50%') was dropped by truthiness,
+        # which can flip the majority count. Only the divisor needs > 0.
+        if total_liabilities is not None and total_assets is not None and total_assets > 0:
             liab_to_assets.append(total_liabilities / total_assets)
 
     if not liab_to_assets:
