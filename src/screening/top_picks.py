@@ -1496,6 +1496,7 @@ def _print_top_picks_footer(
     _print_north_star_block(report_dir)
     _print_factor_attribution_block(report_dir)
     _print_factor_attribution_by_state_block(report_dir)  # NS-6: 因子 × state_type 倒挂
+    _print_model_version_comparison_block(report_dir)  # NS-7: 新旧 model_version 效果对比
     _print_decision_flow_hint()
     _print_disclaimer()
 
@@ -1697,6 +1698,34 @@ def _print_factor_attribution_by_state_block(report_dir: Path) -> None:
     sc_line = render_score_controlled_factor_line(sc_report)
     if sc_line:
         print(sc_line)
+
+
+def _print_model_version_comparison_block(report_dir: Path) -> None:
+    """NS-7: 新旧 model_version 效果对比 — owner 每次调参是否改善实现胜率/收益.
+
+    按 NS-2 ``model_version`` (git short sha) 分组 tracking_history, 取两个最近活跃
+    版本做 candidate-vs-baseline 对比 (winrate + median return delta). 服务 owner
+    因子调优反馈闭环 (P&L 最大杠杆): 让 owner 看到 commits ab96aae0..e5406887 每次
+    调参后实现 winrate 是升是降, 而非只在全量聚合上盲调.
+
+    纯诊断, 不改 gate/factor/仓位/score (越界=过拟合). best-effort: 数据不足
+    (新版本 < min_samples mature 记录) 诚实标 insufficient, 不强行下结论; 任何
+    异常静默 return, 永不破坏前门.
+    """
+    try:
+        from src.screening.consecutive_recommendation import load_tracking_history
+        from src.screening.model_version_comparison import (
+            compare_model_versions,
+            render_model_version_comparison_line,
+        )
+
+        records = load_tracking_history(report_dir)
+        comparison = compare_model_versions(records)
+    except Exception:  # noqa: BLE001 — best-effort; never break the front door
+        return
+    line = render_model_version_comparison_line(comparison)
+    if line:
+        print(line)
 
 
 def _print_north_star_block(report_dir: Path) -> None:
