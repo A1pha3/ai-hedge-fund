@@ -268,7 +268,7 @@ class PendingPlanRunner:
             logger.warning(
                 "NS-16: backtest crisis handler DISABLED (drawdown_pct hardcoded to 0.0 in "
                 "PendingPlanRunner._run_pending_intraday_pipeline). Crisis scenarios "
-                "(-10%% drawdown_warning / -15%% drawdown_forced_reduce) are NOT simulated; "
+                "(-10% drawdown_warning / -15% drawdown_forced_reduce) are NOT simulated; "
                 "backtest drawdown/risk profile does not reflect crisis circuit-breaker behavior. "
                 "Owner decision pending (wire real drawdown from equity curve OR env-flag disable). "
                 "See docs NS-16 + tests/backtesting/test_ns16_crisis_characterization.py."
