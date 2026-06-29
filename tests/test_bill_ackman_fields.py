@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import src.agents.bill_ackman as bill_ackman
 from src.agents.bill_ackman import analyze_financial_discipline
+from src.agents.bill_ackman_helpers import _score_ackman_roe
 
 
 def test_analyze_financial_discipline_scores_reasonable_leverage_dividends_and_buybacks():
@@ -85,3 +86,42 @@ def test_analyze_valuation_does_not_crash_on_zero_market_cap():
     result = bill_ackman.analyze_valuation(financial_line_items, market_cap=0.0)
     assert isinstance(result, dict)
     assert result.get("score") == 0
+
+
+# ---------------------------------------------------------------------------
+# Falsy-zero on ROE (R68/R96 family residue) — sibling of warren_buffett
+# ``_score_buffett_fundamental_roe``. The data provider emits ``None`` for a
+# *missing* ROE and 0.0 for a *computed* breakeven ROE (net_income == 0).
+# Truthiness ``if latest_metrics.return_on_equity:`` collapsed 0.0 into the
+# 'ROE data not available.' fallthrough, mislabeling a real breakeven ROE.
+# ---------------------------------------------------------------------------
+
+
+def test_score_ackman_roe_zero_is_moderate_not_missing():
+    """ROE == 0.0 (breakeven year) must read 'ROE of 0.0% is moderate.', not 'data not available.'"""
+    score, reason = _score_ackman_roe([SimpleNamespace(return_on_equity=0.0)])
+    assert score == 0
+    assert reason == "ROE of 0.0% is moderate."
+
+
+def test_score_ackman_roe_none_still_reports_unavailable():
+    """Regression guard: None must STILL read 'ROE data not available.'."""
+    score, reason = _score_ackman_roe([SimpleNamespace(return_on_equity=None)])
+    assert score == 0
+    assert reason == "ROE data not available."
+
+
+def test_analyze_business_quality_reports_breakeven_roe_not_missing(monkeypatch):
+    """End-to-end: a breakeven-ROE company must report 'ROE of 0.0% is moderate.',
+    not 'ROE data not available.' (the existing None-path test stays green)."""
+    monkeypatch.setattr(bill_ackman, "calculate_cagr_from_line_items", lambda financial_line_items, field: None)
+    financial_line_items = [
+        SimpleNamespace(revenue=100.0, operating_margin=None, free_cash_flow=None),
+        SimpleNamespace(revenue=95.0, operating_margin=None, free_cash_flow=None),
+    ]
+    metrics = [SimpleNamespace(return_on_equity=0.0)]
+
+    result = bill_ackman.analyze_business_quality(metrics=metrics, financial_line_items=financial_line_items)
+
+    assert "ROE of 0.0% is moderate." in result["details"]
+    assert "ROE data not available." not in result["details"]

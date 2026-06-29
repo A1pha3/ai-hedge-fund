@@ -43,10 +43,16 @@ def _score_ackman_profitability_and_cash_flow(financial_line_items: list) -> tup
 
 def _score_ackman_roe(metrics: list) -> tuple[int, str]:
     latest_metrics = metrics[0]
-    if latest_metrics.return_on_equity and latest_metrics.return_on_equity > 0.15:
-        return 2, f"High ROE of {latest_metrics.return_on_equity:.1%}, indicating a competitive advantage."
-    if latest_metrics.return_on_equity:
-        return 0, f"ROE of {latest_metrics.return_on_equity:.1%} is moderate."
+    # R68/R96 falsy-zero family residue (sibling of warren_buffett
+    # ``_score_buffett_fundamental_roe``): use ``is not None``, not truthiness.
+    # The data provider emits ``None`` for a *missing* ROE and 0.0 for a *computed*
+    # breakeven ROE (net_income == 0). Truthiness ``if roe:`` collapsed 0.0 into
+    # the "data not available" fallthrough, mislabeling a real breakeven ROE.
+    roe = latest_metrics.return_on_equity
+    if roe is not None and roe > 0.15:
+        return 2, f"High ROE of {roe:.1%}, indicating a competitive advantage."
+    if roe is not None:
+        return 0, f"ROE of {roe:.1%} is moderate."
     return 0, "ROE data not available."
 
 

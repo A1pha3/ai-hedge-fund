@@ -10,7 +10,13 @@ from src.agents.warren_buffett import (
     calculate_owner_earnings,
     estimate_maintenance_capex,
 )
-from src.agents.warren_buffett_helpers import _resolve_buffett_working_capital_change
+from src.agents.warren_buffett_helpers import (
+    _resolve_buffett_working_capital_change,
+    _score_buffett_current_ratio,
+    _score_buffett_debt_to_equity,
+    _score_buffett_fundamental_roe,
+    _score_buffett_operating_margin,
+)
 
 
 def test_calculate_intrinsic_value_handles_missing_outstanding_shares_field():
@@ -453,3 +459,92 @@ def test_resolve_buffett_conservative_growth_zero_base_not_dropped_into_inflated
     # Zero base must NOT inflate the growth assumption: oldest_earnings=0 fails the
     # ``oldest_earnings > 0`` guard → default 0.03, not the 0.105 truthiness produced.
     assert growth == 0.03
+
+
+# ---------------------------------------------------------------------------
+# Falsy-zero on ratio-attribute score functions (R68/R96 family residue)
+# A legitimate 0.0 ratio (breakeven ROE / zero-debt / breakeven margin /
+# zero current assets) is a real computed value — the data provider emits
+# ``None`` for *missing* metrics and 0.0 for a *computed* zero (see
+# akshare_financial_metrics_helpers: ``... else None``). Truthiness
+# ``if attr:`` collapsed 0.0 into the "data not available" fallthrough,
+# mislabeling real values AND — for debt_to_equity — under-scoring a
+# zero-debt (most conservative) company as 0 instead of 2.
+# ---------------------------------------------------------------------------
+
+
+def _metric(**overrides):
+    """Build a SimpleNamespace metric with all four ratio fields defaulting to None."""
+    base = {"return_on_equity": None, "debt_to_equity": None, "operating_margin": None, "current_ratio": None}
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_score_buffett_fundamental_roe_zero_is_weak_not_missing():
+    """ROE == 0.0 (breakeven year) must read 'Weak ROE of 0.0%', not 'data not available'."""
+    score, reason = _score_buffett_fundamental_roe(_metric(return_on_equity=0.0))
+    assert score == 0
+    assert "not available" not in reason
+    assert "Weak ROE of 0.0%" == reason
+
+
+def test_score_buffett_debt_to_equity_zero_is_conservative_not_missing():
+    """debt_to_equity == 0.0 (zero-debt company) is the MOST conservative reading.
+
+    0.0 < 0.5 is True, so it must score 2 ('Conservative debt levels'). Truthiness
+    ``if attr and attr < 0.5`` skipped 0.0 (falsy) and fell through to
+    'Debt to equity data not available', under-scoring an excellent balance sheet.
+    """
+    score, reason = _score_buffett_debt_to_equity(_metric(debt_to_equity=0.0))
+    assert score == 2
+    assert reason == "Conservative debt levels"
+
+
+def test_score_buffett_operating_margin_zero_is_weak_not_missing():
+    """Operating margin == 0.0 (breakeven) must read 'Weak operating margin of 0.0%'."""
+    score, reason = _score_buffett_operating_margin(_metric(operating_margin=0.0))
+    assert score == 0
+    assert "not available" not in reason
+    assert "Weak operating margin of 0.0%" == reason
+
+
+def test_score_buffett_current_ratio_zero_is_weak_not_missing():
+    """Current ratio == 0.0 (zero current assets) must read 'Weak liquidity ... 0.0'."""
+    score, reason = _score_buffett_current_ratio(_metric(current_ratio=0.0))
+    assert score == 0
+    assert "not available" not in reason
+    assert "Weak liquidity with current ratio of 0.0" == reason
+
+
+def test_score_buffett_fundamental_roe_none_still_reports_unavailable():
+    """Regression guard: None must STILL read 'data not available' (fix must not
+    flip the genuinely-missing case into a value-bearing message)."""
+    score, reason = _score_buffett_fundamental_roe(_metric(return_on_equity=None))
+    assert score == 0
+    assert reason == "ROE data not available"
+
+
+def test_score_buffett_debt_to_equity_none_still_reports_unavailable():
+    score, reason = _score_buffett_debt_to_equity(_metric(debt_to_equity=None))
+    assert score == 0
+    assert reason == "Debt to equity data not available"
+
+
+def test_analyze_fundamentals_zero_debt_company_scores_conservative_credit():
+    """End-to-end guard through the public ``analyze_fundamentals`` entry:
+    a zero-debt, breakeven-ROE company must earn the conservative-D/E credit
+    (score 2 from D/E) and report real values — not 'all data not available'."""
+    metrics = [
+        _metric(
+            return_on_equity=0.0,
+            debt_to_equity=0.0,
+            operating_margin=0.0,
+            current_ratio=0.0,
+            model_dump=lambda: {"return_on_equity": 0.0, "debt_to_equity": 0.0, "operating_margin": 0.0, "current_ratio": 0.0},
+        )
+    ]
+    result = analyze_fundamentals(metrics)
+    # D/E == 0.0 contributes 2; the other three contribute 0 each → total 2.
+    assert result["score"] == 2
+    assert "Conservative debt levels" in result["details"]
+    assert "not available" not in result["details"]

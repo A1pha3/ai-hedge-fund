@@ -6,34 +6,52 @@ logger = logging.getLogger(__name__)
 
 
 def _score_buffett_fundamental_roe(latest_metrics) -> tuple[int, str]:
-    if latest_metrics.return_on_equity and latest_metrics.return_on_equity > 0.15:
-        return 2, f"Strong ROE of {latest_metrics.return_on_equity:.1%}"
-    if latest_metrics.return_on_equity:
-        return 0, f"Weak ROE of {latest_metrics.return_on_equity:.1%}"
+    # R68/R96 falsy-zero family residue: use ``is not None``, not truthiness.
+    # The data provider emits ``None`` for a *missing* ROE and 0.0 for a
+    # *computed* breakeven ROE (net_income == 0). Truthiness ``if roe:``
+    # collapsed 0.0 into the "not available" fallthrough, mislabeling a real
+    # breakeven ROE as missing data. Aligns with R122/R136 siblings below.
+    roe = latest_metrics.return_on_equity
+    if roe is not None and roe > 0.15:
+        return 2, f"Strong ROE of {roe:.1%}"
+    if roe is not None:
+        return 0, f"Weak ROE of {roe:.1%}"
     return 0, "ROE data not available"
 
 
 def _score_buffett_debt_to_equity(latest_metrics) -> tuple[int, str]:
-    if latest_metrics.debt_to_equity and latest_metrics.debt_to_equity < 0.5:
+    # R68/R96 falsy-zero family residue (same as ROE above): ``debt_to_equity == 0.0``
+    # means a ZERO-DEBT company — the most conservative reading, which must score 2
+    # (0.0 < 0.5). Truthiness ``if dte and dte < 0.5`` skipped 0.0 (falsy) and fell
+    # through to "data not available", under-scoring an excellent balance sheet.
+    dte = latest_metrics.debt_to_equity
+    if dte is not None and dte < 0.5:
         return 2, "Conservative debt levels"
-    if latest_metrics.debt_to_equity:
-        return 0, f"High debt to equity ratio of {latest_metrics.debt_to_equity:.1f}"
+    if dte is not None:
+        return 0, f"High debt to equity ratio of {dte:.1f}"
     return 0, "Debt to equity data not available"
 
 
 def _score_buffett_operating_margin(latest_metrics) -> tuple[int, str]:
-    if latest_metrics.operating_margin and latest_metrics.operating_margin > 0.15:
+    # R68/R96 falsy-zero family residue: ``operating_margin == 0.0`` (breakeven) is a
+    # real value, not missing data. Truthiness collapsed it into "not available".
+    margin = latest_metrics.operating_margin
+    if margin is not None and margin > 0.15:
         return 2, "Strong operating margins"
-    if latest_metrics.operating_margin:
-        return 0, f"Weak operating margin of {latest_metrics.operating_margin:.1%}"
+    if margin is not None:
+        return 0, f"Weak operating margin of {margin:.1%}"
     return 0, "Operating margin data not available"
 
 
 def _score_buffett_current_ratio(latest_metrics) -> tuple[int, str]:
-    if latest_metrics.current_ratio and latest_metrics.current_ratio > 1.5:
+    # R68/R96 falsy-zero family residue: ``current_ratio == 0.0`` (zero current
+    # assets) is a real value, not missing data. Truthiness collapsed it into
+    # "not available".
+    current_ratio = latest_metrics.current_ratio
+    if current_ratio is not None and current_ratio > 1.5:
         return 1, "Good liquidity position"
-    if latest_metrics.current_ratio:
-        return 0, f"Weak liquidity with current ratio of {latest_metrics.current_ratio:.1f}"
+    if current_ratio is not None:
+        return 0, f"Weak liquidity with current ratio of {current_ratio:.1f}"
     return 0, "Current ratio data not available"
 
 
