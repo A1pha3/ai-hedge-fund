@@ -185,3 +185,77 @@ class TestNS16PureFunctionDrawdownZeroCharacterization:
         assert "drawdown_warning" not in result["alerts"]
         assert "drawdown_forced_reduce" not in result["alerts"]
         assert result["forced_reduce_ratio"] == 0.0
+
+
+def _build_and_run_runner_once() -> _CrisisInputsCapturingPipeline:
+    """Build a PendingPlanRunner with a capturing pipeline + run one plan (shared fixture)."""
+    pipeline = _CrisisInputsCapturingPipeline()
+    portfolio = Portfolio(tickers=["000001"], initial_cash=100_000.0, margin_requirement=0.0)
+    runner = PendingPlanRunner(pipeline=pipeline, decision_executor=_NoopDecisionExecutor(), portfolio=portfolio)
+    pending_plan = ExecutionPlan(
+        date="20240301",
+        buy_orders=[PositionPlan(ticker="000001", shares=100, amount=10_000.0)],
+    )
+    day_context = build_pipeline_day_context(
+        current_date=pd.Timestamp("2024-03-04"),
+        active_tickers=["000001"],
+        current_prices={"000001": 10.0},
+        daily_turnovers={},
+        limit_up=set(),
+        limit_down=set(),
+        load_market_data_seconds=0.0,
+    )
+    runner.run_pending_pipeline_plan(
+        pending_plan=pending_plan,
+        day_context=day_context,
+        decisions={},
+        executed_trades={},
+        pending_buy_queue=[],
+        pending_sell_queue=[],
+        build_confirmation_inputs_fn=lambda plan, prices, prev, cur: {"000001": {"open_gap_pct": 0.0}},
+        process_pending_queues_fn=lambda **kw: ([], [], []),
+    )
+    return pipeline
+
+
+class TestNS16CrisisDisabledObservability:
+    """NS-16 observability (C253, 2026-06-30): the silently-dead crisis handler must be OBSERVABLE.
+
+    The characterization tests above lock the latent defect (drawdown hardcoded 0.0).
+    This class locks the observability sibling (BH-017 family drain): PendingPlanRunner
+    emits a once-per-instance WARNING disclosing that crisis scenarios are NOT simulated
+    in backtest. Behavior is unchanged (crisis_inputs stays {"drawdown_pct": 0.0}); only
+    a log emission is added, so the latent-defect characterization above still holds.
+    """
+
+    def test_crisis_disabled_warning_emitted_on_run(self, caplog) -> None:
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="src.backtesting.engine_pending_plan_runner"):
+            _build_and_run_runner_once()
+        warnings = [r for r in caplog.records if "crisis" in r.message.lower() and "disable" in r.message.lower()]
+        assert len(warnings) >= 1, "NS-16 observability: backtest must warn that crisis handler is disabled"
+
+    def test_warning_emitted_at_most_once_per_runner(self, caplog) -> None:
+        """Once-per-instance: two runs of the same runner emit the warning only once."""
+        import logging
+
+        pipeline = _CrisisInputsCapturingPipeline()
+        portfolio = Portfolio(tickers=["000001"], initial_cash=100_000.0, margin_requirement=0.0)
+        runner = PendingPlanRunner(pipeline=pipeline, decision_executor=_NoopDecisionExecutor(), portfolio=portfolio)
+        pending_plan = ExecutionPlan(date="20240301", buy_orders=[PositionPlan(ticker="000001", shares=100, amount=10_000.0)])
+        day_context = build_pipeline_day_context(
+            current_date=pd.Timestamp("2024-03-04"), active_tickers=["000001"],
+            current_prices={"000001": 10.0}, daily_turnovers={}, limit_up=set(), limit_down=set(),
+            load_market_data_seconds=0.0,
+        )
+        with caplog.at_level(logging.WARNING, logger="src.backtesting.engine_pending_plan_runner"):
+            for _ in range(3):
+                runner.run_pending_pipeline_plan(
+                    pending_plan=pending_plan, day_context=day_context, decisions={}, executed_trades={},
+                    pending_buy_queue=[], pending_sell_queue=[],
+                    build_confirmation_inputs_fn=lambda plan, prices, prev, cur: {"000001": {"open_gap_pct": 0.0}},
+                    process_pending_queues_fn=lambda **kw: ([], [], []),
+                )
+        warnings = [r for r in caplog.records if "crisis" in r.message.lower() and "disable" in r.message.lower()]
+        assert len(warnings) == 1, f"NS-16: warning must be once-per-instance, got {len(warnings)}"

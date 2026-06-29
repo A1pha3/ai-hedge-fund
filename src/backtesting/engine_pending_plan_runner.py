@@ -8,6 +8,7 @@ portfolio via PipelineDecisionExecutor.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from time import perf_counter
@@ -19,6 +20,8 @@ from src.execution.models import ExecutionPlan, PendingOrder
 from .engine_pipeline_decisions import PipelineDecisionExecutor
 from .engine_pipeline_helpers import extract_plan_risk_metrics, PipelineDayContext
 from .portfolio import Portfolio
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,10 @@ class PendingPlanRunner:
         self._pipeline = pipeline
         self._decision_executor = decision_executor
         self._portfolio = portfolio
+        # NS-16 observability (BH-017 sibling): once-per-instance disclosure that the
+        # crisis handler is disabled in backtest (drawdown hardcoded 0.0). See
+        # test_ns16_crisis_characterization.py for the latent-defect characterization.
+        self._crisis_disabled_warned = False
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -93,11 +100,7 @@ class PendingPlanRunner:
             day_context.previous_date_str,
             day_context.current_date_str,
         )
-        open_gap_pct = {
-            ticker: float(payload["open_gap_pct"])
-            for ticker, payload in dict(confirmation_inputs or {}).items()
-            if isinstance(payload, dict) and payload.get("open_gap_pct") is not None
-        }
+        open_gap_pct = {ticker: float(payload["open_gap_pct"]) for ticker, payload in dict(confirmation_inputs or {}).items() if isinstance(payload, dict) and payload.get("open_gap_pct") is not None}
 
         preparation = self._build_pending_pipeline_preparation_state(
             pending_plan=pending_plan,
@@ -106,9 +109,7 @@ class PendingPlanRunner:
         )
 
         prepared_buy_tickers = {order.ticker for order in list(preparation.prepared_plan.buy_orders or [])}
-        prepared_confirmation_inputs = {
-            ticker: payload for ticker, payload in dict(confirmation_inputs or {}).items() if ticker in prepared_buy_tickers
-        }
+        prepared_confirmation_inputs = {ticker: payload for ticker, payload in dict(confirmation_inputs or {}).items() if ticker in prepared_buy_tickers}
 
         intraday_state, updated_buy_queue, updated_sell_queue = self._build_pending_pipeline_intraday_state(
             prepared_plan=preparation.prepared_plan,
@@ -256,6 +257,22 @@ class PendingPlanRunner:
         trade_date_compact: str,
         confirmation_inputs: dict[str, dict],
     ) -> tuple[list, list, dict]:
+        # NS-16 observability (BH-017 silent-degradation sibling, C253 2026-06-30): the
+        # crisis handler is disabled in backtest (drawdown_pct hardcoded 0.0 below), so the
+        # -10%/-15% crisis branches (crisis_handler.py:52-62) are dead and the backtest risk
+        # profile does NOT reflect crisis circuit-breaker behavior. Disclose once per instance
+        # so owners evaluating factor tuning against backtests know the equity curve is NOT
+        # risk-sanitized for crises. Behavior unchanged (still passes drawdown_pct=0.0).
+        if not self._crisis_disabled_warned:
+            self._crisis_disabled_warned = True
+            logger.warning(
+                "NS-16: backtest crisis handler DISABLED (drawdown_pct hardcoded to 0.0 in "
+                "PendingPlanRunner._run_pending_intraday_pipeline). Crisis scenarios "
+                "(-10%% drawdown_warning / -15%% drawdown_forced_reduce) are NOT simulated; "
+                "backtest drawdown/risk profile does not reflect crisis circuit-breaker behavior. "
+                "Owner decision pending (wire real drawdown from equity curve OR env-flag disable). "
+                "See docs NS-16 + tests/backtesting/test_ns16_crisis_characterization.py."
+            )
         return self._pipeline.run_intraday(
             prepared_plan,
             trade_date_compact,
