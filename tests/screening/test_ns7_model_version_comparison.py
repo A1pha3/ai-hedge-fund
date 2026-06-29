@@ -167,3 +167,53 @@ class TestRenderLine:
         cmp = compare_model_versions(records, min_samples=5)
         line = render_model_version_comparison_line(cmp)
         assert "insufficient" in line.lower() or "不足" in line or "样本" in line
+
+
+def _rec_s(version: str, score: float, ret5: float, date: str) -> dict:
+    """Tracking record WITH recommendation_score (for rank_monotonicity tests)."""
+    return {"model_version": version, "recommendation_score": score, "next_5day_return": ret5, "recommended_date": date}
+
+
+class TestRankMonotonicityPerVersion:
+    """NS-7 extension: per-version rank monotonicity — does higher score → higher winrate WITHIN each model_version?
+
+    Directly measures whether the owner's factor tuning (NS-4 score→winrate inversion)
+    is improving, per version. Verdict: monotonic (high-score wins more) / inverted
+    (high-score wins less — the NS-4 defect) / flat / insufficient.
+    """
+
+    def test_inverted_when_high_score_loses_more(self) -> None:
+        # low-score (0.3) all win; high-score (0.7) all lose → INVERTED (the NS-4 signal)
+        records = [_rec_s("v1", 0.3, 5.0, "2026010%d" % d) for d in range(1, 4)] + [_rec_s("v1", 0.7, -5.0, "2026010%d" % d) for d in range(4, 7)]
+        metrics = compute_model_version_metrics(records, min_samples=2, rank_min_per_half=2)
+        m = next(x for x in metrics if x.model_version == "v1")
+        assert m.rank_monotonicity_verdict == "inverted"
+        assert m.low_score_winrate == 1.0
+        assert m.high_score_winrate == 0.0
+
+    def test_monotonic_when_high_score_wins_more(self) -> None:
+        # high-score wins, low-score loses → MONOTONIC (good model)
+        records = [_rec_s("v1", 0.3, -5.0, "2026010%d" % d) for d in range(1, 4)] + [_rec_s("v1", 0.7, 5.0, "2026010%d" % d) for d in range(4, 7)]
+        metrics = compute_model_version_metrics(records, min_samples=2, rank_min_per_half=2)
+        m = next(x for x in metrics if x.model_version == "v1")
+        assert m.rank_monotonicity_verdict == "monotonic"
+        assert m.high_score_winrate > m.low_score_winrate
+
+    def test_insufficient_when_too_few_records(self) -> None:
+        # only 2 records (< 2*rank_min_per_half=6) → insufficient
+        records = [_rec_s("v1", 0.3, 5.0, "20260101"), _rec_s("v1", 0.7, -5.0, "20260102")]
+        metrics = compute_model_version_metrics(records, min_samples=1, rank_min_per_half=3)
+        assert metrics[0].rank_monotonicity_verdict == "insufficient"
+
+    def test_records_without_score_treated_insufficient(self) -> None:
+        # records missing recommendation_score → can't bucket → insufficient
+        records = [_rec("v1", 5.0, "2026010%d" % d) for d in range(1, 8)]  # _rec has no score
+        metrics = compute_model_version_metrics(records, min_samples=2, rank_min_per_half=2)
+        assert metrics[0].rank_monotonicity_verdict == "insufficient"
+
+    def test_rank_mono_rendered_in_comparison_line(self) -> None:
+        records = [_rec_s("aaa1111aaaa", 0.3, 5.0, "2026010%d" % d) for d in range(1, 4)] + [_rec_s("aaa1111aaaa", 0.7, -5.0, "2026010%d" % d) for d in range(4, 7)] + [_rec_s("bbb2222bbbb", 0.3, -5.0, "2026020%d" % d) for d in range(1, 4)] + [_rec_s("bbb2222bbbb", 0.7, 5.0, "2026020%d" % d) for d in range(4, 7)]
+        cmp = compare_model_versions(records, min_samples=2, rank_min_per_half=2)
+        line = render_model_version_comparison_line(cmp)
+        # rank_mono verdict markers should appear (倒挂 for inverted baseline, 单调 for monotonic candidate)
+        assert "倒挂" in line or "单调" in line or "rank" in line.lower()

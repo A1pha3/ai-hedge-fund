@@ -53,6 +53,12 @@ class ModelVersionMetrics:
     median_return: float | None  # median realized horizon return; None if no samples
     latest_date: str  # most recent recommended_date for this version (activity ordering)
     sufficient: bool  # n_samples >= min_samples
+    # NS-7 extension: per-version rank monotonicity (does higher score → higher winrate WITHIN
+    # this version? directly measures whether owner factor tuning reduces the NS-4 score→winrate
+    # inversion). verdict: monotonic|inverted|flat|insufficient.
+    rank_monotonicity_verdict: str = "insufficient"
+    low_score_winrate: float | None = None  # winrate of the low-score half (0..1)
+    high_score_winrate: float | None = None  # winrate of the high-score half (0..1)
 
 
 @dataclass
@@ -84,16 +90,54 @@ def _date_key(rec: dict[str, Any]) -> str:
     return ""
 
 
+def _score_rank_monotonicity(recs: list[dict[str, Any]], horizon_field: str, rank_min_per_half: int) -> tuple[str, float | None, float | None]:
+    """Per-version rank monotonicity: split records by score median into low/high halves,
+    compute winrate of each. verdict: monotonic (high ≥ low) / inverted (high < low, the NS-4
+    signal) / flat / insufficient (too few records or no scores).
+
+    Returns ``(verdict, low_score_winrate, high_score_winrate)``. Self-contained (no external
+    history map); quick per-version signal — owner can cross-reference the full NS-4
+    rank_monotonicity footer for the 3-bucket + per-state-type breakdown.
+    """
+    scored = []
+    for rec in recs:
+        s = _finite_float(rec.get("recommendation_score"))
+        if s is None:
+            s = _finite_float(rec.get("score_b"))  # fallback (mirror north_star_pnl)
+        r = _horizon_return(rec, horizon_field)
+        if s is not None and r is not None:
+            scored.append((s, r))
+    if len(scored) < rank_min_per_half * 2:
+        return ("insufficient", None, None)
+    scored.sort(key=lambda x: x[0])  # ascending by score
+    mid = len(scored) // 2
+    low = scored[:mid]
+    high = scored[mid:]
+    low_wr = sum(1 for _, r in low if r > 0) / len(low)
+    high_wr = sum(1 for _, r in high if r > 0) / len(high)
+    if high_wr > low_wr:
+        verdict = "monotonic"
+    elif high_wr < low_wr:
+        verdict = "inverted"
+    else:
+        verdict = "flat"
+    return (verdict, low_wr, high_wr)
+
+
 def compute_model_version_metrics(
     records: list[dict[str, Any]],
     *,
     horizon_field: str = "next_5day_return",
     min_samples: int = _MIN_SAMPLES_DEFAULT,
+    rank_min_per_half: int = 5,
 ) -> list[ModelVersionMetrics]:
-    """按 model_version 分组, 算每组的 n_samples / winrate / median_return.
+    """按 model_version 分组, 算每组的 n_samples / winrate / median_return / rank_monotonicity.
 
     跳过无 model_version 标注 (pre-NS-2 旧报告) 或 horizon return 非有限值的记录.
     返回按 ``latest_date`` 降序排列 (最近活跃在前), 供 caller 取 candidate/baseline.
+
+    ``rank_min_per_half``: per-version rank monotonicity 需每半 (low/high score) 至少
+    这么多记录 (default 5 → 版本需 ≥10 有分记录). 不足 → verdict=insufficient.
 
     纯函数 (无 I/O), 可用合成 records 注入测试.
     """
@@ -112,6 +156,7 @@ def compute_model_version_metrics(
         winrate = (sum(1 for r in returns if r > 0) / n) if n else None
         median_return = statistics.median(returns) if returns else None
         latest_date = max((d for d in dates if d), default="")
+        rm_verdict, low_wr, high_wr = _score_rank_monotonicity(recs, horizon_field, rank_min_per_half)
         result.append(
             ModelVersionMetrics(
                 model_version=version,
@@ -120,6 +165,9 @@ def compute_model_version_metrics(
                 median_return=median_return,
                 latest_date=latest_date,
                 sufficient=(n >= min_samples),
+                rank_monotonicity_verdict=rm_verdict,
+                low_score_winrate=low_wr,
+                high_score_winrate=high_wr,
             )
         )
 
@@ -132,6 +180,7 @@ def compare_model_versions(
     *,
     horizon_field: str = "next_5day_return",
     min_samples: int = _MIN_SAMPLES_DEFAULT,
+    rank_min_per_half: int = 5,
 ) -> ModelVersionComparison:
     """对比两个最近活跃 model_version, 给出 verdict + delta.
 
@@ -144,7 +193,7 @@ def compare_model_versions(
       - ``single_version``: 仅一个版本 (待累积第二个版本)
       - ``no_data``: 无有效记录
     """
-    versions = compute_model_version_metrics(records, horizon_field=horizon_field, min_samples=min_samples)
+    versions = compute_model_version_metrics(records, horizon_field=horizon_field, min_samples=min_samples, rank_min_per_half=rank_min_per_half)
     if not versions:
         return ModelVersionComparison(
             baseline=None,
@@ -223,6 +272,22 @@ def _short(version: str) -> str:
     return version[:7]
 
 
+def _rank_mono_tag(m: ModelVersionMetrics) -> str:
+    """Per-version rank-monotonicity short tag for the footer line.
+
+    Shows whether higher score → higher winrate WITHIN this version (monotonic✓) or the
+    inverse (倒挂⚠ = the NS-4 score→winrate inversion, the owner's tuning target).
+    """
+    v = m.rank_monotonicity_verdict
+    if v == "monotonic":
+        return "单调✓"
+    if v == "inverted":
+        return "倒挂⚠"
+    if v == "flat":
+        return "持平"
+    return "rank不足"
+
+
 _VERDICT_MARKER = {
     "improved": ("✓", Fore.GREEN),
     "degraded": ("⚠", Fore.RED),
@@ -255,14 +320,14 @@ def render_model_version_comparison_line(comparison: ModelVersionComparison) -> 
     if comparison.verdict == "single_version" or comparison.baseline is None:
         c = comparison.candidate
         assert c is not None
-        line = f"模型版本监测{marker}: 仅 {_short(c.model_version)} " f"(n={c.n_samples}, 胜率{_pct(c.winrate)}, 中位{_ret(c.median_return)}) " f"[{verdict_label}, 待累积第二版本对比]"
+        line = f"模型版本监测{marker}: 仅 {_short(c.model_version)} " f"(n={c.n_samples}, 胜率{_pct(c.winrate)}, 中位{_ret(c.median_return)}, {_rank_mono_tag(c)}) " f"[{verdict_label}, 待累积第二版本对比]"
         return f"{color}{line}{Style.RESET_ALL}"
 
     b = comparison.baseline
     cand = comparison.candidate
     assert b is not None and cand is not None
-    base_str = f"{_short(b.model_version)}(n={b.n_samples},胜率{_pct(b.winrate)})"
-    cand_str = f"{_short(cand.model_version)}(n={cand.n_samples},胜率{_pct(cand.winrate)})"
+    base_str = f"{_short(b.model_version)}(n={b.n_samples},胜率{_pct(b.winrate)},{_rank_mono_tag(b)})"
+    cand_str = f"{_short(cand.model_version)}(n={cand.n_samples},胜率{_pct(cand.winrate)},{_rank_mono_tag(cand)})"
 
     if comparison.verdict in ("insufficient", "inconclusive"):
         line = f"模型版本监测{marker}: {base_str} → {cand_str} " f"[{verdict_label}, n_new={cand.n_samples}]"
