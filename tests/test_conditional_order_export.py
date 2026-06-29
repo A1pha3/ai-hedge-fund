@@ -586,3 +586,164 @@ def test_advice_to_broker_order_valid_until_uses_trade_cal(monkeypatch, fixed_to
     order = advice_to_broker_order(advice, today=fixed_today, valid_days=3)
     # Tuesday + 3 trading days = Friday (Wed/Thu/Fri)
     assert order.valid_until == "20260612"
+
+
+
+# ===========================================================================
+# NS-15(2): --nav CLI 算手数 (NAV-based equal-weight position sizing)
+# ===========================================================================
+
+
+def _make_explicit_advice(
+    ticker: str,
+    name: str,
+    current_price: float,
+    buy_zone: tuple[float, float],
+    *,
+    degraded: bool = False,
+) -> ConditionalOrderAdvice:
+    """直接构造 ConditionalOrderAdvice (绕过 compute_conditional_advice)。
+
+    用于 NS-15(2) 测试: 需要精确控制 buy_zone / current_price / degraded,
+    计算 equal-weight quantity 时入口价 = buy_zone 中点。
+    """
+    return ConditionalOrderAdvice(
+        ticker=ticker,
+        name=name,
+        current_price=current_price,
+        atr=2.0,
+        suggested_buy_zone=buy_zone,
+        suggested_stop_loss=current_price * 0.95,
+        suggested_take_profit=current_price * 1.10,
+        confidence=0.7,
+        reasoning="test",
+        historical_hit_rate=0.5,
+        risk_reward_ratio=2.0,
+        n_sessions=30,
+        degraded=degraded,
+        atr_period=14,
+        params={},
+    )
+
+
+def test_compute_equal_weight_quantities_basic() -> None:
+    """NS-15(2): 3 票 NAV=120000 等权 -> 每票 allocation=40000。
+
+    入口价 = buy_zone 中点:
+      - 000001 @ 100.0 -> 40000/100 = 400 shares = 4 lots
+      - 600519 @ 1800.0 -> 40000/1800 = 22.2 shares -> 0 lots -> 0
+      - 300750 @ 250.0 -> 40000/250 = 160 shares = 1 lot (floor 1.6->1)
+    """
+    from src.screening.conditional_order_export import compute_equal_weight_quantities
+
+    advices = [
+        _make_explicit_advice("000001", "平安银行", 100.0, (98.0, 102.0)),
+        _make_explicit_advice("600519", "贵州茅台", 1800.0, (1790.0, 1810.0)),
+        _make_explicit_advice("300750", "宁德时代", 250.0, (245.0, 255.0)),
+    ]
+    result = compute_equal_weight_quantities(advices, nav=120000.0)
+    assert result == {"000001": 400, "600519": 0, "300750": 100}, (
+        f"expected 400/0/100, got {result}"
+    )
+
+
+def test_compute_equal_weight_quantities_rounds_down_to_lot() -> None:
+    """NS-15(2): 向下取整到 1 手 (100 股), 不四舍五入。"""
+    from src.screening.conditional_order_export import compute_equal_weight_quantities
+
+    advices = [_make_explicit_advice("000001", "平安银行", 100.0, (99.0, 101.0))]
+    result = compute_equal_weight_quantities(advices, nav=100000.0)
+    assert result == {"000001": 1000}, f"expected 1000 (10 lots), got {result}"
+
+
+def test_compute_equal_weight_quantities_zero_when_cannot_afford() -> None:
+    """NS-15(2): 茅台 @ 1800, NAV=1000, 1 票 -> 0 (买不起 1 手)。"""
+    from src.screening.conditional_order_export import compute_equal_weight_quantities
+
+    advices = [_make_explicit_advice("600519", "贵州茅台", 1800.0, (1790.0, 1810.0))]
+    result = compute_equal_weight_quantities(advices, nav=1000.0)
+    assert result == {"600519": 0}, f"expected 0 (cannot afford 1 lot), got {result}"
+
+
+def test_compute_equal_weight_quantities_filters_degraded() -> None:
+    """NS-15(2): degraded advice 不参与等权分配。"""
+    from src.screening.conditional_order_export import compute_equal_weight_quantities
+
+    advices = [
+        _make_explicit_advice("000001", "平安银行", 100.0, (98.0, 102.0)),
+        _make_explicit_advice("600519", "贵州茅台", 1800.0, (1790.0, 1810.0), degraded=True),
+    ]
+    result = compute_equal_weight_quantities(advices, nav=100000.0)
+    assert result == {"000001": 1000}, (
+        f"degraded should be excluded; expected only 000001=1000, got {result}"
+    )
+
+
+def test_compute_equal_weight_quantities_empty_or_zero_nav() -> None:
+    """NS-15(2): 空 advices 或 nav<=0 -> 空 dict。"""
+    from src.screening.conditional_order_export import compute_equal_weight_quantities
+
+    assert compute_equal_weight_quantities([], nav=100000.0) == {}
+    advices = [_make_explicit_advice("000001", "平安银行", 100.0, (98.0, 102.0))]
+    assert compute_equal_weight_quantities(advices, nav=0.0) == {}
+    assert compute_equal_weight_quantities(advices, nav=-1000.0) == {}
+
+
+def test_export_with_quantity_map_uses_per_ticker(fixed_today: date) -> None:
+    """NS-15(2): export_conditional_orders 接受 quantity_map, 按 ticker 用不同数量。"""
+    advices = [
+        _make_explicit_advice("000001", "平安银行", 100.0, (98.0, 102.0)),
+        _make_explicit_advice("300750", "宁德时代", 250.0, (245.0, 255.0)),
+    ]
+    quantity_map = {"000001": 500, "300750": 200}
+    content = export_conditional_orders(
+        advices, "huatai", quantity_map=quantity_map, today=fixed_today
+    )
+    assert "500" in content, f"000001 quantity=500 not in output:\n{content}"
+    assert "200" in content, f"300750 quantity=200 not in output:\n{content}"
+
+
+def test_export_with_quantity_map_skips_zero(fixed_today: date) -> None:
+    """NS-15(2): quantity_map 中 0 数量的票被跳过 (不导出无效条件单)。"""
+    advices = [
+        _make_explicit_advice("000001", "平安银行", 100.0, (98.0, 102.0)),
+        _make_explicit_advice("600519", "贵州茅台", 1800.0, (1790.0, 1810.0)),
+    ]
+    quantity_map = {"000001": 300, "600519": 0}
+    content = export_conditional_orders(
+        advices, "huatai", quantity_map=quantity_map, today=fixed_today
+    )
+    assert "000001" in content, "000001 should be exported"
+    assert "600519" not in content, "600519 (quantity=0) should be skipped"
+
+
+def test_export_quantity_map_none_backward_compat(fixed_today: date) -> None:
+    """NS-15(2): quantity_map=None (缺省) 用 quantity 参数, 向后兼容。"""
+    advices = [
+        _make_explicit_advice("000001", "平安银行", 100.0, (98.0, 102.0)),
+    ]
+    content_default = export_conditional_orders(advices, "huatai", today=fixed_today)
+    content_explicit = export_conditional_orders(
+        advices, "huatai", quantity=DEFAULT_QUANTITY, today=fixed_today
+    )
+    content_none_map = export_conditional_orders(
+        advices, "huatai", quantity_map=None, today=fixed_today
+    )
+    assert content_default == content_explicit == content_none_map, (
+        "quantity_map=None should be backward compatible with quantity param"
+    )
+
+
+def test_export_from_dicts_with_quantity_map(fixed_today: date) -> None:
+    """NS-15(2): export_from_dicts 也接受 quantity_map。"""
+    advices = [
+        _make_explicit_advice("000001", "平安银行", 100.0, (98.0, 102.0)),
+        _make_explicit_advice("300750", "宁德时代", 250.0, (245.0, 255.0)),
+    ]
+    dicts = [a.to_dict() for a in advices]
+    quantity_map = {"000001": 400, "300750": 100}
+    content = export_from_dicts(
+        dicts, "huatai", quantity_map=quantity_map, today=fixed_today
+    )
+    assert "400" in content, f"000001 quantity=400 not in output:\n{content}"
+    assert "100" in content, f"300750 quantity=100 not in output:\n{content}"

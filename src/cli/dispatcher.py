@@ -478,14 +478,25 @@ def _resolve_explain(argv: list[str]) -> int | None:
 
 
 def _resolve_export_conditional_orders(argv: list[str]) -> int | None:
-    """``--export-conditional-orders [--broker=huatai|gtja|ths]`` — 导出券商条件单格式 (P1-13)。"""
+    """``--export-conditional-orders [--broker=huatai|gtja|ths] [--nav=N]`` — 导出券商条件单格式 (P1-13)。
+
+    NS-15(2): ``--nav=N`` 提供总资产 (元) 时, 按等权公式 ``compute_equal_weight_quantities``
+    计算每票委托手数 (向下取整到 1 手 = 100 股); 缺省所有票用 ``DEFAULT_QUANTITY=100``。
+    """
     if "--export-conditional-orders" not in argv:
         return None
     broker_raw = _get_kv(argv, "--broker")
     broker = broker_raw.strip().lower() if broker_raw else "huatai"
+    nav_raw = _get_kv(argv, "--nav")
+    nav: float | None = None
+    if nav_raw:
+        try:
+            nav = float(nav_raw)
+        except ValueError:
+            nav = None
     from src.screening.conditional_order_export import run_export_conditional_orders_cli
 
-    return run_export_conditional_orders_cli(broker=broker)
+    return run_export_conditional_orders_cli(broker=broker, nav=nav)
 
 
 def _resolve_weekly_report(argv: list[str]) -> int | None:
