@@ -862,3 +862,163 @@ def test_missing_composite_fallback_applies_penalty_and_marks_unverified() -> No
     assert missing["composite_verified"] is False
     # 0.495 < 0.5 → does not easily cross the BUY gate via the score_b shortcut.
     assert missing["composite_score"] < 0.5
+
+
+# ---------------------------------------------------------------------------
+# NS-23 (autodev c245): crisis regime T+5 BUY gate 不可靠修复.
+#
+# 根因 (用户 2026-06-29 直接复现证据): C220 BUY gate 用全期 per-bucket T+5
+# winrate (~60%) 判门控 (`_short_term_passes = _t5_passes or _t10_passes`),
+# 但本月 crisis regime 实际 T+5 winrate=43.59% < 50%. per-ticker 全期历史
+# stats 不能盲目外推到 regime-specific — crisis 下 T+5 alone 不应放行.
+# T+10 相对靠谱但仍需验证 (仅 2 信号日 mature, 等 7 月初更多数据).
+#
+# Fix: crisis/risk_off regime 下 `_short_term_passes = _t10_passes` (只 T+10
+# 可放行); 非 crisis 保持 C220 OR 逻辑.
+# ---------------------------------------------------------------------------
+
+
+def test_ns23_crisis_t5_only_does_not_pass_gate() -> None:
+    """NS-23: crisis regime 下 T+5 alone 不应放行 BUY gate.
+
+    场景: composite 0.68 (够 BUY), T+5 强 (winrate 0.61, edge 8.5), T+10 弱
+    (winrate 0.45, edge -1.0). 全期 T+5 winrate 0.61 >= 0.55 让 _t5_passes=True,
+    但 crisis regime 实际 T+5 winrate=43.59% < 50% → T+5 信号不可靠, 不应放行.
+    期望: action=AVOID (非 HOLD), 因为 _short_term_passes 在 crisis 下只看 T+10.
+    """
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            # T+5 强 (全期历史 stats, crisis 下实际不可靠)
+            "expected_returns": {"t5": 8.5, "t10": -1.0, "t30": -2.0},
+            "win_rates": {"t5": 0.61, "t10": 0.45, "t30": 0.42},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="crisis",
+    )
+    assert verdict["action"] == "AVOID", (
+        "NS-23: crisis regime 下 T+5 alone 不应放行 — 全期 T+5 winrate 0.61 让 "
+        "_t5_passes=True, 但 crisis 实际 T+5 winrate=43.59% < 50% 不可靠. "
+        "T+10 弱 (winrate 0.45) → _short_term_passes 应为 False → AVOID (非 HOLD)"
+    )
+
+
+def test_ns23_crisis_t10_passes_still_hold() -> None:
+    """NS-23: crisis regime 下 T+10 通过仍可 HOLD (T+10 相对靠谱).
+
+    场景: T+5 弱, T+10 强 (winrate 0.62, edge 9.0). crisis 下只看 T+10,
+    T+10 通过 → _short_term_passes=True → is_high_quality_for_hold=True → HOLD.
+    """
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            # T+5 弱, T+10 强 (crisis 下 T+10 相对靠谱)
+            "expected_returns": {"t5": -0.5, "t10": 9.0, "t30": -1.0},
+            "win_rates": {"t5": 0.45, "t10": 0.62, "t30": 0.42},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="crisis",
+    )
+    assert verdict["action"] == "HOLD", (
+        "NS-23: crisis regime 下 T+10 通过仍可 HOLD — T+10 相对靠谱 (用户 evidence), "
+        "crisis 下 _short_term_passes=_t10_passes=True → is_high_quality_for_hold=True → HOLD"
+    )
+
+
+def test_ns23_crisis_both_pass_still_hold() -> None:
+    """NS-23: crisis regime 下 T+5+T+10 都通过 → HOLD (T+10 通过即放行).
+
+    场景: T+5/T+10 都强. crisis 下 _short_term_passes=_t10_passes=True → HOLD.
+    signal_horizon 仍标注 'T+5+T+10' (raw 信号展示, 不受 regime 调整影响).
+    """
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.72,
+            "expected_returns": {"t5": 10.0, "t10": 10.5, "t30": 11.4},
+            "win_rates": {"t5": 0.64, "t10": 0.65, "t30": 0.66},
+            "bucket_sample_count": 40,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="crisis",
+    )
+    assert verdict["action"] == "HOLD"
+    # signal_horizon 仍标注 raw 信号 (T+5+T+10 都通过), 不受 regime 调整影响
+    assert verdict["signal_horizon"] == "T+5+T+10"
+
+
+def test_ns23_risk_off_t5_only_does_not_pass_gate() -> None:
+    """NS-23: risk_off regime 同 crisis — T+5 alone 不应放行.
+
+    risk_off 与 crisis 共享同一 market_gate 分支 (line 254), T+5 不可靠
+    同样适用. T+5 强但 T+10 弱 → AVOID (非 HOLD).
+    """
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t5": 8.5, "t10": -1.0, "t30": -2.0},
+            "win_rates": {"t5": 0.61, "t10": 0.45, "t30": 0.42},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="risk_off",
+    )
+    assert verdict["action"] == "AVOID", (
+        "NS-23: risk_off 同 crisis — T+5 alone 不应放行 (T+10 弱 → AVOID 非 HOLD)"
+    )
+
+
+def test_ns23_non_crisis_keeps_or_logic() -> None:
+    """NS-23: 非 crisis regime 保持 C220 OR 逻辑 (回归保护).
+
+    场景: trend regime, T+5 强 T+10 弱. C220 OR 逻辑下 _t5_passes=True
+    → _short_term_passes=True → BUY. crisis 调整不应影响非 crisis regime.
+    """
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            # T+5 强, T+10 弱 — 非 crisis 下 OR 逻辑让 T+5 放行
+            "expected_returns": {"t5": 8.5, "t10": -1.0, "t30": 9.4},
+            "win_rates": {"t5": 0.61, "t10": 0.45, "t30": 0.63},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    assert verdict["action"] == "BUY", (
+        "NS-23: 非 crisis regime 保持 C220 OR 逻辑 — T+5 强 → _t5_passes=True "
+        "→ _short_term_passes=True → BUY (crisis 调整不影响非 crisis)"
+    )
+
+
+def test_ns23_crisis_t5_only_signal_horizon_preserved() -> None:
+    """NS-23: crisis 下 T+5-only 被 AVOID, 但 signal_horizon 仍标注 'T+5'.
+
+    signal_horizon 展示 raw 信号 (T+5 通过), action 展示 regime 调整后判决
+    (AVOID). 让用户知道"有 T+5 信号但 crisis 下不可靠 → AVOID", 与 C221
+    'risk_off 降级 HOLD 仍标注 horizon' 同理.
+    """
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t5": 8.5, "t10": -1.0, "t30": -2.0},
+            "win_rates": {"t5": 0.61, "t10": 0.45, "t30": 0.42},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="crisis",
+    )
+    # action=AVOID (T+5 alone crisis 下不放行)
+    assert verdict["action"] == "AVOID"
+    # signal_horizon 仍标注 'T+5' (raw 信号, 让用户知道有 T+5 信号但被 crisis 门控)
+    assert verdict["signal_horizon"] == "T+5", (
+        "NS-23: crisis 下 T+5-only 被 AVOID 但 signal_horizon 仍标注 'T+5' — "
+        "raw 信号展示, 让用户知道有 T+5 信号但 crisis 下不可靠"
+    )

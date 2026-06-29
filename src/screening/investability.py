@@ -242,7 +242,18 @@ def build_front_door_verdict(
     # 代理 (T+30 mature 蕴含 T+5/T+10 mature, 更严格).
     _t5_passes = t5_edge > 0 and t5_win_rate >= 0.55
     _t10_passes = t10_edge > 0 and t10_win_rate >= 0.55
-    _short_term_passes = _t5_passes or _t10_passes
+    # NS-23 (autodev c245): crisis/risk_off regime 下 T+5 不可靠 — BUY gate
+    # 用全期 per-bucket T+5 winrate (~60%) 判门控, 但 crisis regime 实际 T+5
+    # winrate=43.59% < 50% (用户 2026-06-29 直接复现证据, 8 只候选票本月 crisis
+    # 回测). per-ticker 全期历史 stats 不能盲目外推到 regime-specific — T+5 alone
+    # 不应放行 (用户原话 "T+5 winrate < 50% 时不应放行"). crisis 下只 T+10 可放行
+    # (T+10 相对靠谱但仍需验证, 仅 2 信号日 mature, 等 7 月初更多数据). 非 crisis
+    # 保持 C220 OR 逻辑 (短期反弹票在非 crisis 下 T+5 信号有效).
+    _is_market_gate_active = "crisis" in regime_lower or "risk_off" in regime_lower
+    if _is_market_gate_active:
+        _short_term_passes = _t10_passes
+    else:
+        _short_term_passes = _t5_passes or _t10_passes
     _meets_quality_bar = supports_long and composite_score >= 0.5 and _short_term_passes
     is_high_quality = _meets_quality_bar and backing_sample >= 20
     is_high_quality_for_hold = _meets_quality_bar and sample_count >= 20
@@ -251,7 +262,7 @@ def build_front_door_verdict(
     _t10_watchable = t10_edge >= 0 and t10_win_rate >= 0.5
     is_watchable = supports_long and composite_score >= 0.25 and (_t5_watchable or _t10_watchable)
 
-    if "crisis" in regime_lower or "risk_off" in regime_lower:
+    if _is_market_gate_active:
         action = "HOLD" if is_high_quality_for_hold else "AVOID"
     elif is_high_quality:
         action = "BUY"
