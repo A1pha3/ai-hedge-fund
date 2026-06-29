@@ -6,9 +6,11 @@ from pathlib import Path
 from scripts.generate_btst_doc_bundle import (
     _build_forbidden_semantics_hits,
     _build_semantic_conflicts,
+    _fmt_pct_point,
     _group_rows_by_allowed_sections,
     _render_action_matrix_sections,
     _render_llm_doc,
+    _render_multihorizon_winrate_section,
     compare_btst_doc_bundle_profiles,
     generate_btst_doc_bundle,
 )

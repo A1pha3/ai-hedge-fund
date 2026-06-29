@@ -30,6 +30,11 @@ from src.paper_trading.btst_decision_enrichment import (
     estimate_execution_cost_cap,
 )
 from src.paper_trading.btst_reporting_utils import _format_rollout_value
+from src.screening.ticker_horizon_stats import (
+    TickerHorizonStats,
+    compute_ticker_horizon_stats,
+    load_tracking_records,
+)
 
 REPORTS_DIR = Path("data/reports")
 OUTPUTS_DIR = Path("outputs")
@@ -247,6 +252,22 @@ def _fmt_num(value: Any, digits: int = 4) -> str:
         if value is None or value == "":
             return "n/a"
         return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _fmt_pct_point(value: Any, digits: int = 2) -> str:
+    """Render percentage-point values (e.g. 5.80 → '+5.80%', -1.2 → '-1.20%').
+
+    与 ``_fmt_pct`` 区别: ``_fmt_pct`` 接收 0-1 小数比例 (0.7241 → 72.41%),
+    ``_fmt_pct_point`` 接收已是百分点的值 (5.80 → '+5.80%'). expectancy /
+    avg_return 等 tracking_history 字段已是百分点 (next_5day_return=1.5 表示
+    +1.5%), 用 ``_fmt_pct_point`` 而非 ``_fmt_pct``.
+    """
+    try:
+        if value is None or value == "":
+            return "n/a"
+        return f"{float(value):+.{digits}f}%"
     except (TypeError, ValueError):
         return "n/a"
 
@@ -611,6 +632,73 @@ def _render_win_rate_payoff_gate(rows: list[dict[str, Any]]) -> list[str]:
         if line.startswith("- "):
             lines.append("- [ ] " + line[2:])
     return lines or ["## 胜率/赔率闸门", "", "- [ ] 当前没有正式执行票。"]
+
+
+def _render_multihorizon_winrate_section(
+    rows: list[dict[str, Any]],
+    tracking_records: list[dict[str, Any]],
+) -> list[str]:
+    """Render T+5/T+10 per-ticker winrate/payoff/expectancy section.
+
+    Per-ticker × per-horizon stats from tracking_history records. 与
+    ``next_close_*`` (T+1) 同口径 (same-ticker historical), 不是 per-bucket
+    (C220 ``win_rates.t5`` 是 per-bucket). 数据源: tracking_history.json
+    (C219 回填 7993 records + 7201 mature).
+
+    Args:
+        rows: selected_actions / watch_actions rows (含 ticker 字段).
+        tracking_records: tracking_history records list (loader 已加载).
+
+    Returns:
+        Markdown lines for "## T+5/T+10 horizon 胜率" section.
+        无数据时返回空 section 提示.
+    """
+    lines = ["## T+5/T+10 horizon 胜率", ""]
+    if not rows:
+        lines.append("- 当前没有候选票，无法计算 T+5/T+10 horizon 胜率。")
+        return lines
+
+    # 扩展候选: selected + watch + opportunity 都纳入 (与 priority_board 同范围)
+    tickers = [_extract_ticker(row) for row in rows]
+    tickers = [t for t in tickers if t]
+    if not tickers:
+        lines.append("- 候选票无 ticker 字段，无法计算 T+5/T+10 horizon 胜率。")
+        return lines
+
+    lines.extend([
+        "| 股票 | T+5 胜率 | T+5 盈亏比 | T+5 期望 | n | T+10 胜率 | T+10 盈亏比 | T+10 期望 | n |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ])
+    has_data = False
+    for row in rows[:8]:
+        ticker = _extract_ticker(row)
+        if not ticker:
+            continue
+        stats = compute_ticker_horizon_stats(tracking_records, ticker)
+        t5 = stats["t5"]
+        t10 = stats["t10"]
+        if t5.sample_count > 0 or t10.sample_count > 0:
+            has_data = True
+        lines.append(
+            f"| {_stock_label(row)} "
+            f"| {_fmt_pct(t5.winrate)} | {_fmt_num(t5.payoff_ratio, 2)} | {_fmt_pct_point(t5.expectancy)} | {t5.sample_count} "
+            f"| {_fmt_pct(t10.winrate)} | {_fmt_num(t10.payoff_ratio, 2)} | {_fmt_pct_point(t10.expectancy)} | {t10.sample_count} |"
+        )
+    if not has_data:
+        lines = ["## T+5/T+10 horizon 胜率", "", "- tracking_history 无候选票历史数据 (T+5/T+10 未 mature 或 ticker 无匹配)。"]
+    lines.extend([
+        "",
+        f"- 数据源：tracking_history.json ({len(tracking_records)} records, C219 回填)。",
+        "- 口径：per-ticker same-ticker historical (与 next_close_* 同源), 非 per-bucket。",
+        "- horizon 选择：T+5/T+10 是 BUY gate 决策 horizon (C220), T+30 winrate ~45% 不适合短期反弹票评估 (C219)。",
+    ])
+    return lines
+
+
+def _extract_ticker(row: dict[str, Any]) -> str:
+    """Extract ticker string from a row (handle missing ticker gracefully)."""
+    value = row.get("ticker")
+    return str(value) if value else ""
 
 
 def _render_alpha_reliability_lines(rows: list[dict[str, Any]]) -> list[str]:
@@ -1773,6 +1861,10 @@ def _render_llm_doc(
     lines.extend(_render_premarket_control_tower(control_tower))
     lines.extend([""])
     lines.extend(_render_win_rate_payoff_decision(selected_actions))
+    lines.extend([""])
+    # T+5/T+10 per-ticker horizon 胜率 (C219/C220 后补的 horizon 数据, 与 next_close_* 同口径)
+    tracking_records = load_tracking_records(report_dir.parent)
+    lines.extend(_render_multihorizon_winrate_section(selected_actions, tracking_records))
     lines.extend([""])
     lines.extend(_render_alpha_reliability_lines(selected_actions))
     lines.extend([""])
