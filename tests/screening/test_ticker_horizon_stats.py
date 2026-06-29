@@ -158,6 +158,105 @@ class TestComputeTickerHorizonStats:
 
 
 # ---------------------------------------------------------------------------
+# C251 — NaN/Inf guard (sibling alignment with regime_winrate_recompute._optional_float)
+# ---------------------------------------------------------------------------
+
+
+class TestNanInfGuard:
+    """NaN/Inf 在 returns 中应被过滤, 不污染 winrate/expectancy.
+
+    Background (C251, d3ad07ac 引入的 fresh code latent defect):
+      `_collect_ticker_horizon_returns` 用 `float(value)` + `(TypeError,
+      ValueError)` guard, 但 `float(NaN)` 不抛异常 → NaN 进 returns →
+      `_summarize_returns` 的 `statistics.mean(returns)` 传播 NaN →
+      expectancy=NaN, winrate 分母被稀释. 与 sibling
+      `regime_winrate_recompute._optional_float` 的 NaN/Inf guard 不一致.
+    """
+
+    def test_nan_return_skipped_does_not_pollute_expectancy(self) -> None:
+        """NaN 在 returns 中应被过滤; 不应传播到 expectancy."""
+        import math
+
+        records = [
+            {"ticker": "002463", "next_5day_return": 1.5},
+            {"ticker": "002463", "next_5day_return": float("nan")},
+            {"ticker": "002463", "next_5day_return": 2.5},
+        ]
+        stats = compute_ticker_horizon_stats(records, "002463")
+        # NaN 应被过滤 → sample_count=2, expectancy=(1.5+2.5)/2=2.0
+        assert stats["t5"].sample_count == 2, (
+            f"NaN 应被过滤, sample_count=2; got {stats['t5'].sample_count}"
+        )
+        assert stats["t5"].expectancy == pytest.approx(2.0, abs=0.01), (
+            f"NaN 过滤后 expectancy=2.0; got {stats['t5'].expectancy}"
+        )
+        assert not math.isnan(stats["t5"].expectancy), "expectancy 不应是 NaN"
+
+    def test_nan_return_skipped_does_not_dilute_winrate(self) -> None:
+        """NaN 不应进入分母稀释 winrate."""
+        records = [
+            {"ticker": "002463", "next_5day_return": 1.5},  # win
+            {"ticker": "002463", "next_5day_return": float("nan")},  # 应过滤
+            {"ticker": "002463", "next_5day_return": -0.5},  # loss
+        ]
+        stats = compute_ticker_horizon_stats(records, "002463")
+        # NaN 过滤后: 1 win / 2 total = 0.5; BUG: NaN 不过滤 → 1/3 = 0.333
+        assert stats["t5"].winrate == pytest.approx(0.5, abs=0.01), (
+            f"NaN 过滤后 winrate=0.5; got {stats['t5'].winrate} (NaN 稀释分母 bug)"
+        )
+
+    def test_inf_return_skipped_does_not_pollute_stats(self) -> None:
+        """Inf 在 returns 中应被过滤."""
+        records = [
+            {"ticker": "002463", "next_5day_return": 1.5},
+            {"ticker": "002463", "next_5day_return": float("inf")},
+            {"ticker": "002463", "next_5day_return": float("-inf")},
+            {"ticker": "002463", "next_5day_return": 2.5},
+        ]
+        stats = compute_ticker_horizon_stats(records, "002463")
+        # Inf 应被过滤 → sample_count=2
+        assert stats["t5"].sample_count == 2, (
+            f"Inf 应被过滤, sample_count=2; got {stats['t5'].sample_count}"
+        )
+        assert stats["t5"].expectancy == pytest.approx(2.0, abs=0.01)
+
+    def test_all_nan_returns_yields_empty_stats(self) -> None:
+        """全部 NaN → sample_count=0 (regression guard)."""
+        records = [
+            {"ticker": "002463", "next_5day_return": float("nan")},
+            {"ticker": "002463", "next_5day_return": float("nan")},
+        ]
+        stats = compute_ticker_horizon_stats(records, "002463")
+        assert stats["t5"].sample_count == 0
+        assert stats["t5"].winrate is None
+        assert stats["t5"].expectancy is None
+
+    def test_string_nan_skipped_silently(self) -> None:
+        """字符串 'nan' 转 float 后也应被过滤 (regression guard for float('nan'))."""
+        records = [
+            {"ticker": "002463", "next_5day_return": "nan"},  # float("nan")=NaN
+            {"ticker": "002463", "next_5day_return": 1.5},
+        ]
+        stats = compute_ticker_horizon_stats(records, "002463")
+        assert stats["t5"].sample_count == 1, (
+            f"'nan' 转 float 后应被过滤, sample_count=1; got {stats['t5'].sample_count}"
+        )
+        assert stats["t5"].winrate == 1.0
+
+    def test_valid_floats_pass_through_unchanged(self) -> None:
+        """合法 float (含 0.0, 负数) 不受影响 (regression guard)."""
+        records = [
+            {"ticker": "002463", "next_5day_return": 0.0},  # 0.0 合法, 不是 NaN
+            {"ticker": "002463", "next_5day_return": -1.5},
+            {"ticker": "002463", "next_5day_return": 2.5},
+        ]
+        stats = compute_ticker_horizon_stats(records, "002463")
+        assert stats["t5"].sample_count == 3  # 0.0 不被过滤
+        assert stats["t5"].winrate == pytest.approx(1 / 3, abs=0.01)  # 只有 2.5 是 win
+        assert stats["t5"].expectancy == pytest.approx((0.0 + -1.5 + 2.5) / 3, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
 # Loader 测试 — load_tracking_records
 # ---------------------------------------------------------------------------
 

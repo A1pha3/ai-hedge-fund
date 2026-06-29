@@ -20,6 +20,7 @@ C220 (BUY gate horizon T+5/T+10 OR), C221 (signal_horizon 呈现层).
 """
 from __future__ import annotations
 
+import math
 import statistics
 from dataclasses import dataclass
 from typing import Any
@@ -116,7 +117,12 @@ def _collect_ticker_horizon_returns(
     ticker: str,
     field: str,
 ) -> list[float]:
-    """从 records 过滤指定 ticker 的指定 horizon return (跳过 None)."""
+    """从 records 过滤指定 ticker 的指定 horizon return (跳过 None/NaN/Inf).
+
+    C251: 加 NaN/Inf guard (与 sibling ``regime_winrate_recompute._optional_float``
+    对齐). ``float(NaN)`` 不抛异常 → NaN 进 returns → ``statistics.mean`` 传播 NaN
+    → expectancy=NaN, winrate 分母被稀释. 用 ``math.isfinite`` 过滤 NaN/Inf.
+    """
     returns: list[float] = []
     for rec in records:
         if str(rec.get("ticker") or "") != ticker:
@@ -125,9 +131,12 @@ def _collect_ticker_horizon_returns(
         if value is None:
             continue
         try:
-            returns.append(float(value))
+            f = float(value)
         except (TypeError, ValueError):
             continue  # 非数字 return 跳过, 不污染 stats
+        if not math.isfinite(f):  # NaN / Inf 跳过 (C251)
+            continue
+        returns.append(f)
     return returns
 
 
