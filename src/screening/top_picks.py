@@ -1613,8 +1613,8 @@ def _print_monotonicity_block(report_dir: Path) -> None:
         sig_line = render_significance_line(sig)
         if sig_line:
             print(sig_line)
-    except Exception:  # noqa: BLE001 — best-effort; significance 永不破坏前门
-        pass
+    except Exception as exc:  # noqa: BLE001 — best-effort; significance 永不破坏前门  (c267: was silent pass → observable)
+        logger.warning("[top_picks] significance footer block failed (best-effort, skipped): %s", exc)
     # M8: 样本充足性 — 不显著是因为样本太小吗? (需累积多少才能下结论)
     if records:
         try:
@@ -1626,8 +1626,8 @@ def _print_monotonicity_block(report_dir: Path) -> None:
             power_line = _render_power(power)
             if power_line:
                 print(power_line)
-        except Exception:  # noqa: BLE001 — best-effort; power 永不破坏前门
-            pass
+        except Exception as exc:  # noqa: BLE001 — best-effort; power 永不破坏前门  (c267: was silent pass → observable)
+            logger.warning("[top_picks] power footer block failed (best-effort, skipped): %s", exc)
     # M5: 时段分段单调性 (design packet 推荐区分 H1 因子 bug vs H2 regime)
     try:
         records = load_tracking_history(report_dir)
@@ -1635,8 +1635,8 @@ def _print_monotonicity_block(report_dir: Path) -> None:
         period_line = render_period_breakdown_line(periods)
         if period_line:
             print(period_line)
-    except Exception:  # noqa: BLE001 — best-effort; period breakdown 永不破坏前门
-        pass
+    except Exception as exc:  # noqa: BLE001 — best-effort; period breakdown 永不破坏前门  (c267: was silent pass → observable)
+        logger.warning("[top_picks] period_breakdown footer block failed (best-effort, skipped): %s", exc)
     # M6: 多 horizon 单调性 (回答 design packet H5: 倒挂是 T+30 特定还是全 horizon? 排除 MR 短期反转)
     if records:
         try:
@@ -1648,8 +1648,8 @@ def _print_monotonicity_block(report_dir: Path) -> None:
             horizon_line = render_horizon_breakdown_line(horizons)
             if horizon_line:
                 print(horizon_line)
-        except Exception:  # noqa: BLE001 — best-effort; horizon breakdown 永不破坏前门
-            pass
+        except Exception as exc:  # noqa: BLE001 — best-effort; horizon breakdown 永不破坏前门  (c267: was silent pass → observable)
+            logger.warning("[top_picks] horizon_breakdown footer block failed (best-effort, skipped): %s", exc)
 
 
 def _print_factor_attribution_block(report_dir: Path) -> None:
@@ -1775,8 +1775,8 @@ def _print_north_star_block(report_dir: Path) -> None:
         hp_line = render_holding_period_line(curve)
         if hp_line:
             print(hp_line)
-    except Exception:  # noqa: BLE001 — best-effort; holding period 永不破坏前门
-        pass
+    except Exception as exc:  # noqa: BLE001 — best-effort; holding period 永不破坏前门  (c267: was silent pass → observable)
+        logger.warning("[top_picks] holding_period footer block failed (best-effort, skipped): %s", exc)
     # M10: 盈亏比 + 输家画像 (全样本, 服务 winrate>50%+高盈亏比; 哪 bucket 拖累 winrate?)
     if records:
         try:
@@ -1784,8 +1784,8 @@ def _print_north_star_block(report_dir: Path) -> None:
             payoff_line = render_payoff_line(payoff)
             if payoff_line:
                 print(payoff_line)
-        except Exception:  # noqa: BLE001 — best-effort; payoff 永不破坏前门
-            pass
+        except Exception as exc:  # noqa: BLE001 — best-effort; payoff 永不破坏前门  (c267: was silent pass → observable)
+            logger.warning("[top_picks] payoff footer block failed (best-effort, skipped): %s", exc)
         # M11: 砍输家池策略模拟 (量化"砍哪个 bucket"提 winrate 的效果; owner 门控决策依据)
         try:
             from src.screening.north_star_pnl import (
@@ -1796,8 +1796,8 @@ def _print_north_star_block(report_dir: Path) -> None:
             pruning_line = _render_pruning(pruning)
             if pruning_line:
                 print(pruning_line)
-        except Exception:  # noqa: BLE001 — best-effort
-            pass
+        except Exception as exc:  # noqa: BLE001 — best-effort  (c267: was silent pass → observable)
+            logger.warning("[top_picks] pruning footer block failed (best-effort, skipped): %s", exc)
         # M12: winrate bootstrap CI (给 owner 门控决策提供稳健不确定性估计;
         # low bucket 50% (n=105) 的 bootstrap 95% CI 是 [42%, 58%] — 比
         # 正态近似更稳健, 服务 winrate>50% 门控翻转决策)
@@ -1810,8 +1810,8 @@ def _print_north_star_block(report_dir: Path) -> None:
             ci_line = _render_bootstrap(ci_results)
             if ci_line:
                 print(ci_line)
-        except Exception:  # noqa: BLE001 — best-effort
-            pass
+        except Exception as exc:  # noqa: BLE001 — best-effort  (c267: was silent pass → observable)
+            logger.warning("[top_picks] bootstrap_ci footer block failed (best-effort, skipped): %s", exc)
 
 
 def _print_concentration_block(picks: list[dict]) -> None:
