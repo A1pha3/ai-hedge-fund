@@ -267,59 +267,88 @@ class TestRenderMarketOpportunityIndex:
 class TestSuggestPositionPct:
     """A-1: transparent per-pick position suggestion for BUY picks. Simple
     risk-budget — base scaled by confidence (winrate above coin-flip) and the
-    T+30 edge magnitude, regime-downgraded (crisis/risk_off → 0), capped at a
-    per-pick maximum for diversification. Educational decision-support only: NOT
-    portfolio optimization (no correlation/risk-parity), reuses the R71-R77
-    disclaimer. Serves the "买哪只 → 买多少" bridge for the product goal."""
+    decision-horizon edge magnitude, regime-downgraded (crisis/risk_off → 0),
+    capped at a per-pick maximum for diversification. Educational decision-support
+    only: NOT portfolio optimization (no correlation/risk-parity), reuses the
+    R71-R77 disclaimer. Serves the "买哪只 → 买多少" bridge for the product goal.
+
+    C260 (2026-06-30): ``decision_edge`` is in PERCENT (e.g. 8.0 = 8%), matching
+    the sole caller ``_extract_decision_horizon_metrics`` (max of T+5/T+10
+    expected_returns, rendered as ``f"{decision_edge:+.2f}%"``). The prior tests
+    passed FRACTION inputs (0.08) that never occur in production, masking a 100×
+    unit bug (the ``×100`` multiplier saturated the 15% cap for ~all BUY picks,
+    making the feature non-informative). Tests now use realistic percent inputs.
+    """
 
     def test_normal_regime_scales_with_edge_and_winrate(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        # edge=8%, winrate=62%, normal → confidence 0.6, base = 0.08*0.6*100 = 4.8
-        # C222: parameters renamed decision_edge/decision_winrate (BUY gate horizon).
-        assert _suggest_position_pct(decision_edge=0.08, decision_winrate=0.62, market_regime="normal") == 4.8
+        # edge=8% (percent), winrate=0.62, normal → confidence 0.6, base = 8.0*0.6 = 4.8
+        assert _suggest_position_pct(decision_edge=8.0, decision_winrate=0.62, market_regime="normal") == 4.8
 
     def test_high_conviction_larger_size(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        # edge=12%, winrate=70% → confidence 1.0, base = 12.0
-        assert _suggest_position_pct(decision_edge=0.12, decision_winrate=0.70, market_regime="normal") == 12.0
+        # edge=12%, winrate=0.70 → confidence 1.0, base = 12.0
+        assert _suggest_position_pct(decision_edge=12.0, decision_winrate=0.70, market_regime="normal") == 12.0
 
     def test_capped_at_max_per_pick(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        # edge=20%, winrate=80% → confidence 1.5, base = 30.0 → capped at 15.0
-        assert _suggest_position_pct(decision_edge=0.20, decision_winrate=0.80, market_regime="normal") == 15.0
+        # edge=20%, winrate=0.80 → confidence 1.5, base = 30.0 → capped at 15.0
+        assert _suggest_position_pct(decision_edge=20.0, decision_winrate=0.80, market_regime="normal") == 15.0
 
     def test_crisis_regime_returns_zero(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        assert _suggest_position_pct(decision_edge=0.10, decision_winrate=0.65, market_regime="crisis") == 0.0
-        assert _suggest_position_pct(decision_edge=0.10, decision_winrate=0.65, market_regime="risk_off") == 0.0
+        assert _suggest_position_pct(decision_edge=10.0, decision_winrate=0.65, market_regime="crisis") == 0.0
+        assert _suggest_position_pct(decision_edge=10.0, decision_winrate=0.65, market_regime="risk_off") == 0.0
 
     def test_caution_regime_halved(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        # edge=12%, winrate=70% → base 12.0; cautious → ×0.5 = 6.0
-        assert _suggest_position_pct(decision_edge=0.12, decision_winrate=0.70, market_regime="cautious") == 6.0
+        # edge=12%, winrate=0.70 → base 12.0; cautious → ×0.5 = 6.0
+        assert _suggest_position_pct(decision_edge=12.0, decision_winrate=0.70, market_regime="cautious") == 6.0
 
     def test_non_positive_edge_returns_zero(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        assert _suggest_position_pct(decision_edge=-0.03, decision_winrate=0.60, market_regime="normal") == 0.0
+        assert _suggest_position_pct(decision_edge=-3.0, decision_winrate=0.60, market_regime="normal") == 0.0
         assert _suggest_position_pct(decision_edge=0.0, decision_winrate=0.60, market_regime="normal") == 0.0
 
     def test_none_inputs_return_zero(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
         assert _suggest_position_pct(decision_edge=None, decision_winrate=0.60, market_regime="normal") == 0.0
-        assert _suggest_position_pct(decision_edge=0.08, decision_winrate=None, market_regime="normal") == 0.0
+        assert _suggest_position_pct(decision_edge=8.0, decision_winrate=None, market_regime="normal") == 0.0
 
     def test_low_winrate_below_coin_flip_shrinks(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        # winrate=0.52 (barely above coin-flip) → confidence 0.1, base = 0.08*0.1*100 = 0.8
-        assert _suggest_position_pct(decision_edge=0.08, decision_winrate=0.52, market_regime="normal") == 0.8
+        # winrate=0.52 (barely above coin-flip) → confidence 0.1, base = 8.0*0.1 = 0.8
+        assert _suggest_position_pct(decision_edge=8.0, decision_winrate=0.52, market_regime="normal") == 0.8
+
+    def test_realistic_pick_does_not_saturate_cap(self) -> None:
+        """C260 regression: the bug's signature was that realistic BUY picks
+        (edge~4-5%, winrate~0.60) hit the 15% cap. With the unit fix, a typical
+        pick must size WELL BELOW the cap (realistic input from 2026-06-30 data:
+        edge=4.66%, winrate=0.597 → 4.66*0.485 = 2.26 → 2.3%)."""
+        from src.screening.top_picks import _suggest_position_pct
+
+        pos = _suggest_position_pct(decision_edge=4.66, decision_winrate=0.597, market_regime="normal")
+        assert pos < 15.0  # MUST NOT saturate the cap
+        assert 1.5 < pos < 3.5  # sane ~2.3% for a typical pick
+
+    def test_differentiates_by_conviction(self) -> None:
+        """C260: the feature must actually differentiate — strong pick > typical
+        > marginal (the bug made all three return 15%)."""
+        from src.screening.top_picks import _suggest_position_pct
+
+        strong = _suggest_position_pct(decision_edge=8.0, decision_winrate=0.70, market_regime="normal")
+        typical = _suggest_position_pct(decision_edge=4.0, decision_winrate=0.58, market_regime="normal")
+        marginal = _suggest_position_pct(decision_edge=1.5, decision_winrate=0.52, market_regime="normal")
+        assert strong > typical > marginal
+        assert marginal < 5.0  # marginal pick gets a small size, not the cap
 
 
 # ---------------------------------------------------------------------------

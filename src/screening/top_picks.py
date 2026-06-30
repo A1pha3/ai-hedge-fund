@@ -390,7 +390,15 @@ def _suggest_position_pct(
     if "crisis" in regime_lower or "risk_off" in regime_lower or "halt" in regime_lower:
         return 0.0
     confidence = max(0.0, (decision_winrate - 0.50) / 0.20)
-    base = abs(decision_edge) * confidence * 100.0
+    # C260 (2026-06-30): decision_edge is in PERCENT (the BUY-gate decision-horizon
+    # expected return, max of T+5/T+10; see _extract_decision_horizon_metrics which
+    # reads expected_returns percent values rendered as f"{decision_edge:+.2f}%").
+    # The prior `* 100.0` was a unit-conversion leftover from when edge was a fraction
+    # (0.08) — it saturated max_per_pick for ~all BUY picks (edge 4.66 * conf 0.485
+    # * 100 = 225 -> capped 15), making the per-pick suggestion a constant 15% and
+    # destroying the conviction-based differentiation the feature exists to provide.
+    # With percent input, base = edge% * confidence is already in percent.
+    base = abs(decision_edge) * confidence
     if "cautious" in regime_lower or "range" in regime_lower:
         base *= 0.5
     return round(min(base, max_per_pick), 1)
