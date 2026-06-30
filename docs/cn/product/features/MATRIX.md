@@ -32,7 +32,7 @@
 | # | 功能 | 状态 | 说明 |
 |---|------|------|------|
 | 1 | 趋势策略评分 | ✅ | `src/screening/strategy_scorer_trend.py` — 趋势跟踪+动量因子 |
-| 2 | 均值回归策略评分 | ✅ | `src/screening/strategy_scorer_mean_reversion.py` — 超跌反弹+反转因子 |
+| 2 | 均值回归策略评分 | ✅ | `src/screening/strategy_scorer_mean_reversion.py` — 动量延续+反转因子 (NS-4 commit 023acd74 翻转: 短期 momentum 主导) |
 | 3 | 基本面策略评分 | ✅ | `src/screening/strategy_scorer_fundamental.py` — 估值+财务质量因子 |
 | 4 | 事件情绪策略评分 | ✅ | `src/screening/strategy_scorer.py` — 新闻情绪+龙虎榜+资金流 |
 | 5 | 子因子聚合框架 | ✅ | SubFactor 标准三元组 (direction, confidence, completeness) |
