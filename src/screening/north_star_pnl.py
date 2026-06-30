@@ -202,6 +202,21 @@ def render_north_star_line(report: NorthStarPnlReport) -> str:
             f"{base} {Fore.RED}⚠ mean 被少数赢家拉高, 典型票微亏 — 北极星未真达标{Style.RESET_ALL}"
         )
     if report.verdict == "positive":
+        # C270 (2026-07-01, empirical dogfood on 2026-06-30 report): the existing
+        # `divergent` verdict only flags median<0/winrate<0.5. When mean and median
+        # are BOTH positive but mean is wildly inflated by a few outliers (the
+        # 2026-06-30 case: +102% mean / +2% median → 100pp gap), the bare green ✓
+        # overstated the typical user's outcome by ~50× for a 赚钱工具. R-6/R-7
+        # established median honesty; this render-level warning extends it to the
+        # positive verdict without adding a new verdict enum (threshold = 10pp
+        # absolute gap, engineering-owned heuristic tuning).
+        if (
+            report.overall_median is not None
+            and report.cumulative_mean_pnl - report.overall_median > 10
+        ):
+            return (
+                f"{base} {Fore.YELLOW}✓ 趋近 >0 但 mean 被少数赢家拉高 (典型 {med} 远低于 mean){Style.RESET_ALL}"
+            )
         return f"{base} {Fore.GREEN}✓ 趋近 >0{Style.RESET_ALL}"
     # negative
     return f"{base} {Fore.RED}⚠ 亏 — 远未达北极星{Style.RESET_ALL}"

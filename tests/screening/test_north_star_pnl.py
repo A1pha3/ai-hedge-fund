@@ -104,6 +104,41 @@ def test_render_positive_green():
     assert "趋近" in line or "✓" in line
 
 
+def test_render_positive_warns_when_mean_inflated_by_outliers():
+    """C270 (2026-07-01, empirical dogfood on 2026-06-30 report): when the
+    cumulative mean is positive but wildly inflated by a few outliers
+    (mean >> median, both positive), the `positive` verdict must warn — not a
+    bare ✓. The 2026-06-30 north star headlined ``+102% (mean) ✓ 趋近 >0`` while
+    the typical (median) pick made only +2%; for a 赚钱工具 this overstates the
+    typical user's outcome by ~50×. R-6/R-7 established median honesty; the
+    existing ``divergent`` verdict only catches ``median < 0``. This test pins
+    the extension: mean >> median (both positive) shows ✓ PLUS a warning."""
+    rep = compute_north_star_pnl_from_loaded(
+        _records({"20250101": [200.0, 2.0, 1.0, 3.0, 1.0]}), min_n=2
+    )
+    # both mean and median positive → positive verdict (not divergent)
+    assert rep.verdict == "positive"
+    assert rep.cumulative_mean_pnl - rep.overall_median > 10  # mean inflated by outlier
+    line = render_north_star_line(rep)
+    assert line
+    # still positive (both metrics positive) — keeps the ✓/趋近 signal...
+    assert "趋近" in line or "✓" in line
+    # ...but warns the mean is inflated (not a bare green ✓)
+    assert "拉高" in line
+
+
+def test_render_positive_no_warning_when_mean_close_to_median():
+    """C270 negative guard: when mean ≈ median (no outlier inflation), the
+    positive verdict shows a bare ✓ with no inflation warning."""
+    rep = compute_north_star_pnl_from_loaded(
+        _records({"20250101": [5.0, 3.0, 8.0, 2.0, 6.0]}), min_n=2
+    )
+    assert rep.verdict == "positive"
+    assert (rep.cumulative_mean_pnl - rep.overall_median) <= 10
+    line = render_north_star_line(rep)
+    assert "拉高" not in line
+
+
 def test_finite_float_rejects_nan_garbage():
     from src.screening.north_star_pnl import _finite_float
 
