@@ -73,10 +73,12 @@ def _build_rsi_extreme_snapshot(prices_df: pd.DataFrame) -> tuple[float, float]:
 
 
 def _resolve_rsi_extreme_signal(last_rsi_14: float, last_rsi_28: float) -> tuple[int, float]:
+    # NS-4 flip (autodev C225 sep=-2.15%): RSI mean-reversion bet was reversed vs T+1
+    # (momentum dominates — oversold keeps falling). Flip direction.
     if last_rsi_14 < 30 and last_rsi_28 < 40:
-        return 1, min(100.0, (40.0 - last_rsi_14) * 3)
+        return -1, min(100.0, (40.0 - last_rsi_14) * 3)  # NS-4: oversold→bearish (was +1)
     if last_rsi_14 > 70 and last_rsi_28 > 60:
-        return -1, min(100.0, (last_rsi_14 - 60.0) * 3)
+        return 1, min(100.0, (last_rsi_14 - 60.0) * 3)  # NS-4: overbought→bullish (was -1)
     return 0, 50.0
 
 
@@ -124,7 +126,11 @@ def _build_hurst_regime_snapshot(prices_df: pd.DataFrame) -> HurstRegimeSnapshot
 
 def _resolve_hurst_regime_signal(snapshot: HurstRegimeSnapshot) -> tuple[int, float]:
     if snapshot.hurst < 0.45 and snapshot.z_score is not None:
-        return (1 if snapshot.z_score < -1.0 else -1 if snapshot.z_score > 1.0 else 0), min(100.0, (0.55 - snapshot.hurst) * 180)
+        # NS-4 flip (autodev C225 sep=-2.50%): mean-reverting-regime branch bet on
+        # reversion (oversold z<-1 → +1), but momentum dominates T+1 even here. Flip:
+        # oversold → bearish, overbought → bullish. (Trending branch below UNCHANGED —
+        # it was already momentum-following / correct per C225.)
+        return (-1 if snapshot.z_score < -1.0 else 1 if snapshot.z_score > 1.0 else 0), min(100.0, (0.55 - snapshot.hurst) * 180)
     if snapshot.hurst > 0.55:
         return (-1 if snapshot.z_score is not None and snapshot.z_score < 0 else 1 if snapshot.z_score is not None and snapshot.z_score > 0 else 0), min(100.0, (snapshot.hurst - 0.45) * 120)
     return 0, 45.0

@@ -1198,7 +1198,7 @@ def test_resolve_news_article_days_old_no_negative_timedelta_floor():
     assert _esh._resolve_news_article_days_old("2026-03-04T08:00:00", datetime(2026, 3, 5)) == 1
 
 
-def test_score_mean_reversion_strategy_marks_rsi_oversold_and_reversion_regime():
+def test_score_mean_reversion_strategy_marks_rsi_oversold_bearish_post_ns4_flip():
     prices_df = pd.DataFrame({"close": [100.0] * 100})
 
     with (
@@ -1215,7 +1215,9 @@ def test_score_mean_reversion_strategy_marks_rsi_oversold_and_reversion_regime()
     ):
         signal = score_mean_reversion_strategy(prices_df)
 
-    assert signal.sub_factors["rsi_extreme"]["direction"] == 1
+    # NS-4 flip (autodev C225 sep=-2.15%): oversold RSI<30 → bearish (direction -1; was
+    # +1 pre-flip when MR bet on mean reversion). Momentum dominates T+1 → oversold keeps falling.
+    assert signal.sub_factors["rsi_extreme"]["direction"] == -1
     assert signal.sub_factors["rsi_extreme"]["metrics"] == {"rsi_14": 25.0, "rsi_28": 35.0}
     assert signal.sub_factors["hurst_regime"]["direction"] == 0
     assert signal.sub_factors["hurst_regime"]["metrics"]["hurst_exponent"] == 0.4

@@ -403,11 +403,15 @@ def calculate_mean_reversion_signals(prices_df):
         price_vs_bb = 0.5  # No band width, default to middle
 
     # Combine signals
+    # NS-4 flip (autodev C225 n=1193/factor, sep=-2.58%; mirrors volatility flip C224
+    # commit 9059a4cf): mean-reversion logic was systematically REVERSED vs T+1 —
+    # short-term momentum dominates, so oversold 票 keep falling. Swap labels:
+    # oversold → bearish (momentum), overbought → bullish (momentum continuation).
     if z_score.iloc[-1] < MR_ZSCORE_BULL and price_vs_bb < MR_PRICE_VS_BB_BULL:
-        signal = "bullish"
+        signal = "bearish"  # NS-4: was "bullish" (mean-reversion bet; reversed vs T+1)
         confidence = min(abs(z_score.iloc[-1]) / MR_ZSCORE_MAX, 1.0)
     elif z_score.iloc[-1] > MR_ZSCORE_BEAR and price_vs_bb > MR_PRICE_VS_BB_BEAR:
-        signal = "bearish"
+        signal = "bullish"  # NS-4: was "bearish"
         confidence = min(abs(z_score.iloc[-1]) / MR_ZSCORE_MAX, 1.0)
     else:
         signal = "neutral"
@@ -539,11 +543,13 @@ def calculate_stat_arb_signals(prices_df):
     # (would include correlation with related securities in real implementation)
 
     # Generate signal based on statistical properties
+    # NS-4 flip (autodev C225 sep=-1.04%; same root cause as zscore_bbands flip above):
+    # mean-reversion bet was reversed vs T+1. Swap labels.
     if hurst < STAT_ARB_HURST_BULL and skew.iloc[-1] > STAT_ARB_SKEW_THRESHOLD:
-        signal = "bullish"
+        signal = "bearish"  # NS-4: was "bullish"
         confidence = (0.5 - hurst) * STAT_ARB_HURST_SCALE
     elif hurst < STAT_ARB_HURST_BULL and skew.iloc[-1] < -STAT_ARB_SKEW_THRESHOLD:
-        signal = "bearish"
+        signal = "bullish"  # NS-4: was "bearish"
         confidence = (0.5 - hurst) * STAT_ARB_HURST_SCALE
     else:
         signal = "neutral"
