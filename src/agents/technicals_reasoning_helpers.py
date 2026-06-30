@@ -69,13 +69,16 @@ def _build_volatility_lines(metrics: dict, signal: str) -> list[str]:
     atr_ratio = metrics.get("atr_ratio", 0) * 100
     lines = [
         f"  • 历史波动率: {hist_vol:.2f}%",
-        f"  • 波动率区间: {vol_regime:.2f} (1=正常, <0.8=低波动, >1.2=高波动)",
+        f"  • 波动率区间: {vol_regime:.2f} (1=正常, <0.9=低波动, >1.1=高波动)",
         f"  • ATR比率: {atr_ratio:.2f}%",
     ]
+    # C224 (commit 9059a4cf): signal labels flipped — bullish now means
+    # HIGH-VOL regime (momentum continuation); bearish means LOW-VOL regime (stagnation).
+    # C236 (commit 2af98d88): thresholds narrowed 0.8/1.2 → 0.9/1.1 (B_narrow).
     if signal == "bullish":
-        lines.append("  • 解读: 处于低波动区间，波动率有望扩张，可能伴随价格上涨")
+        lines.append("  • 解读: 处于高波动区间，动量延续看涨 (C224: 高波动=近期强势股延续)")
     elif signal == "bearish":
-        lines.append("  • 解读: 处于高波动区间，波动率有望收缩，可能伴随价格调整")
+        lines.append("  • 解读: 处于低波动区间，动量停滞看跌 (C224: 低波动=停滞盘整)")
     else:
         lines.append("  • 解读: 波动率处于正常水平")
     return lines

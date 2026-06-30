@@ -94,7 +94,7 @@ def test_generate_chinese_reasoning_preserves_bearish_branch_explanations():
             "trend": {"signal": "bearish", "confidence": 0.72, "metrics": {"adx": 28.0, "trend_strength": -0.64}},
             "mean_reversion": {"signal": "bearish", "confidence": 0.81, "metrics": {"z_score": -2.4, "price_vs_bb": 0.08, "rsi_14": 25.0, "rsi_28": 35.0}},
             "momentum": {"signal": "neutral", "confidence": 0.48, "metrics": {"momentum_1m": -0.01, "momentum_3m": 0.02, "momentum_6m": 0.03, "volume_momentum": 0.94}},
-            "volatility": {"signal": "bearish", "confidence": 0.74, "metrics": {"historical_volatility": 0.31, "volatility_regime": 1.35, "volatility_z_score": 1.7, "atr_ratio": 0.063}},
+            "volatility": {"signal": "bearish", "confidence": 0.74, "metrics": {"historical_volatility": 0.08, "volatility_regime": 0.75, "volatility_z_score": -1.7, "atr_ratio": 0.010}},
             "stat_arb": {"signal": "neutral", "confidence": 0.58, "metrics": {"hurst_exponent": 0.53, "skewness": 0.12, "kurtosis": 1.1}},
         },
         weights={
@@ -109,6 +109,6 @@ def test_generate_chinese_reasoning_preserves_bearish_branch_explanations():
     assert "【综合信号】看跌 (置信度: 67.0%)" in reasoning
     assert "  • 解读: EMA8<EMA21且EMA21<EMA55，短期和中期趋势均为下降" in reasoning
     assert "  • 解读: 价格显著低于均值(Z<-2)且接近布林带下轨，动量延续看跌" in reasoning
-    assert "  • 解读: 处于高波动区间，波动率有望收缩，可能伴随价格调整" in reasoning
+    assert "  • 解读: 处于低波动区间，动量停滞看跌 (C224: 低波动=停滞盘整)" in reasoning
     assert "  • 看涨策略: 0/5, 看跌策略: 3/5, 中性策略: 2/5" in reasoning
     assert "  • 多数策略指向看跌，建议关注卖出或规避风险" in reasoning

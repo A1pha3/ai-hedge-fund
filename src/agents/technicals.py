@@ -146,9 +146,9 @@ def generate_chinese_reasoning(ticker: str, combined_signal: dict, strategy_sign
     4. 波动率策略 (Volatility) - 权重15%
        - 历史波动率 = 日收益率标准差 × √252
        - 波动率区间 = 当前波动率 / 63日平均波动率
-       - 信号规则：
-         *  bullish: 波动率区间 < 0.8 且 Z-Score < -1（低波动，可能扩张）
-         *  bearish: 波动率区间 > 1.2 且 Z-Score > 1（高波动，可能收缩）
+       - 信号规则 (C224 commit 9059a4cf 翻转: 高波动=近期强势股延续, 低波动=停滞; C236 commit 2af98d88 B_narrow 阈值 0.8/1.2→0.9/1.1):
+         *  bullish: 波动率区间 > 1.1 且 Z-Score > 1（高波动, 动量延续看涨）
+         *  bearish: 波动率区间 < 0.9 且 Z-Score < -1（低波动, 动量停滞看跌）
          *  neutral: 其他情况
 
     5. 统计套利策略 (Statistical Arbitrage) - 权重15%
@@ -477,7 +477,19 @@ def calculate_momentum_signals(prices_df):
 
 def calculate_volatility_signals(prices_df):
     """
-    Volatility-based trading strategy
+    Volatility-based trading strategy.
+
+    C224 (commit 9059a4cf): signal labels flipped — bullish now means HIGH-VOL
+    regime (regime>VOL_HIGH_THRESHOLD, vol_z>+1 → momentum continuation:
+    recent winners keep going up); bearish means LOW-VOL regime (stagnation:
+    low volatility = no recent momentum). Pre-C224 the labels were reversed
+    (low-vol → bullish on a mean-reversion bet), but C222/C223 counterfactual
+    (n=8922) showed sep = T+1(bullish) - T+1(bearish) was -0.94 (bullish 票
+    实际 T+1 更低), so short-term momentum dominates T+1, not mean reversion.
+
+    C236 (commit 2af98d88): B_narrow thresholds — VOL_LOW_THRESHOLD 0.8→0.9,
+    VOL_HIGH_THRESHOLD 1.2→1.1, shrinking the neutral band (53%→46% dir=0)
+    so more mild-vol 票 enter the actionable bullish/bearish zones.
     """
     # Calculate various volatility metrics
     returns = prices_df["close"].pct_change()
