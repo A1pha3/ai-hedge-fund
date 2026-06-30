@@ -1533,6 +1533,7 @@ def _print_top_picks_footer(
     _print_regime_winrate_block(market_regime)
     _print_monotonicity_block(report_dir)
     _print_north_star_block(report_dir)
+    _print_selection_profitability_block(report_dir)
     _print_factor_attribution_block(report_dir)
     _print_factor_attribution_by_state_block(report_dir)  # NS-6: 因子 × state_type 倒挂
     _print_model_version_comparison_block(report_dir)  # NS-7: 新旧 model_version 效果对比
@@ -1843,6 +1844,33 @@ def _print_north_star_block(report_dir: Path) -> None:
                 print(ci_line)
         except Exception as exc:  # noqa: BLE001 — best-effort  (c267: was silent pass → observable)
             logger.warning("[top_picks] bootstrap_ci footer block failed (best-effort, skipped): %s", exc)
+
+
+def _print_selection_profitability_block(report_dir: Path) -> None:
+    """C272 (2026-07-01): 选取盈利性诊断 — backtest 模型 top-N-by-score 选取 vs 替代策略.
+
+    第一性原理: 北极星度量是"用户跟随模型 top-N 是否赚钱"。rank_monotonicity
+    展示 bucket 层倒挂 (low60%→high45%); 本块展示 **portfolio 层** — 模型实际
+    top-N 选取的真实胜率 vs 等权/随机/反向。真实 74 日 backtest (2026-06-30):
+    score_desc 胜率 47.3% (中位 -0.45%) vs 等权 59.5% — 模型分有 **负预测力**。
+
+    纯诊断, 不改 ranking/gate/factor。让 owner 看到 MR flip 是否修好选取层
+    (post-flip 数据 ~7/8 成熟后此处自动反映)。best-effort, 数据不足静默。
+    """
+    try:
+        from src.screening.consecutive_recommendation import load_tracking_history
+        from src.screening.north_star_pnl import (
+            compute_selection_profitability_from_loaded,
+            render_selection_profitability_line,
+        )
+
+        records = load_tracking_history(report_dir)
+        report = compute_selection_profitability_from_loaded(records, top_n=3, min_days=10)
+        line = render_selection_profitability_line(report)
+        if line:
+            print(line)
+    except Exception as exc:  # noqa: BLE001 — best-effort; selection-profitability 永不破坏前门
+        logger.warning("[top_picks] selection_profitability footer block failed (best-effort, skipped): %s", exc)
 
 
 def _print_concentration_block(picks: list[dict]) -> None:

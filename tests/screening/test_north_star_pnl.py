@@ -487,3 +487,77 @@ def test_render_bootstrap_ci_silent_when_insufficient():
     recs = _ci_recs([5.0], [-3.0])  # n=2 < min_n=20
     result = compute_bootstrap_ci_from_loaded(recs, min_n=20, n_bootstrap=500, seed=42)
     assert render_bootstrap_ci_line(result) == ""
+
+
+# ---------------------------------------------------------------------------
+# C272 (2026-07-01): selection-profitability diagnostic.
+# Backtest the MODEL's top-N-by-score selection vs alternatives (score_asc,
+# equal_weight, random). First-principles: the 2026-06-30 empirical backtest
+# (74 days, n=7993) showed score_desc portfolio T+5 winrate=47.3% (median
+# -0.45%) vs random 58.1% / equal_weight 59.5% — the model's score has
+# NEGATIVE predictive value for the front-door top-N selection. This makes
+# the inversion measurable at the portfolio level (rank_monotonicity shows
+# bucket-level; this shows selection-level) and tracks whether owner factor
+# changes (MR flip) fix it.
+# ---------------------------------------------------------------------------
+
+from src.screening.north_star_pnl import (  # noqa: E402
+    compute_selection_profitability_from_loaded,
+    render_selection_profitability_line,
+)
+
+
+def _selection_recs(date_returns: dict[str, list[tuple[float, float]]]) -> list[dict]:
+    """{date: [(score, t5_return), ...]} → flat record list."""
+    out = []
+    for dt, pairs in date_returns.items():
+        for i, (score, ret) in enumerate(pairs):
+            out.append({"recommended_date": dt, "recommendation_score": score, "next_5day_return": ret, "ticker": f"t{i}_{dt}"})
+    return out
+
+
+def test_selection_profitability_detects_model_underperforms():
+    """C272: when the model's top-N-by-score loses vs random/equal-weight, the
+    verdict must be ``model_underperforms``. Synthetic inversion: each day's
+    high-score picks return -5%, low-score picks return +5%."""
+    # 3 days × 6 picks. score_desc picks the 3 high-score (-5%) losers.
+    pairs = [(0.80, -5.0), (0.70, -5.0), (0.60, -5.0), (0.20, 8.0), (0.15, 8.0), (0.10, 8.0)]
+    recs = _selection_recs({f"2026010{d}": pairs for d in range(3)})
+    report = compute_selection_profitability_from_loaded(recs, top_n=3, min_days=2)
+    assert report.has_data
+    assert report.verdict == "model_underperforms"
+    sd = next(s for s in report.strategies if s.strategy == "score_desc")
+    ew = next(s for s in report.strategies if s.strategy == "equal_weight_all")
+    assert sd.median_return is not None and sd.median_return < 0  # top-3-by-score loses
+    assert ew.median_return is not None and ew.median_return > 0  # equal-weight profits
+
+
+def test_selection_profitability_detects_model_outperforms():
+    """C272 positive guard: when high-score picks actually win more, verdict is
+    ``model_outperforms`` (not a hardcoded 'always inverted' label)."""
+    # high-score = +5%, low-score = -5% (model is correct)
+    pairs = [(0.80, 5.0), (0.70, 5.0), (0.60, 5.0), (0.20, -5.0), (0.15, -5.0), (0.10, -5.0)]
+    recs = _selection_recs({f"2026010{d}": pairs for d in range(3)})
+    report = compute_selection_profitability_from_loaded(recs, top_n=3, min_days=2)
+    assert report.verdict == "model_outperforms"
+
+
+def test_selection_profitability_silent_when_insufficient():
+    """Few days (< min_days) → has_data=False, render returns empty (never breaks front door)."""
+    recs = _selection_recs({"20260101": [(0.8, 5.0), (0.2, -5.0)]})  # 1 day < min_days
+    report = compute_selection_profitability_from_loaded(recs, top_n=3, min_days=2)
+    assert not report.has_data
+    assert render_selection_profitability_line(report) == ""
+
+
+def test_render_selection_profitability_line_shows_inversion():
+    """Render names the verdict + the model's portfolio winrate so the owner
+    sees the selection-level profitability directly."""
+    pairs = [(0.80, -5.0), (0.70, -5.0), (0.60, -5.0), (0.20, 8.0), (0.15, 8.0), (0.10, 8.0)]
+    recs = _selection_recs({f"2026010{d}": pairs for d in range(4)})
+    report = compute_selection_profitability_from_loaded(recs, top_n=3, min_days=2)
+    line = render_selection_profitability_line(report)
+    assert line
+    assert "选取" in line or "selection" in line.lower()
+    # must surface the model's portfolio winrate (the problematic number)
+    assert "倒挂" in line or "跑输" in line or "负预测" in line

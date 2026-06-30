@@ -689,3 +689,167 @@ __all__ = [
     "render_pruning_line",
     "render_bootstrap_ci_line",
 ]
+
+
+# ---------------------------------------------------------------------------
+# C272 (2026-07-01): selection-profitability diagnostic.
+# First-principles: backtest the MODEL's top-N-by-score selection vs alternatives
+# (score_asc, equal_weight, random). The 2026-06-30 empirical backtest (74 days,
+# n=7993) showed score_desc portfolio T+5 winrate=47.3% (median -0.45%) vs random
+# 58.1% / equal_weight 59.5% — the model's composite_score has NEGATIVE predictive
+# value for the front-door top-N selection. rank_monotonicity shows the inversion
+# at the BUCKET level (low60%→high45%); this shows it at the PORTFOLIO level
+# (does following the model's actual top picks profit?). Tracks whether owner
+# factor changes (MR flip) fix the selection. Pure diagnostic — does not change
+# the ranking or the BUY gate.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SelectionStrategyResult:
+    """One strategy's portfolio backtest result."""
+
+    strategy: str  # score_desc | score_asc | equal_weight_all | random_n
+    portfolio_winrate: float | None
+    mean_return: float | None
+    median_return: float | None
+    sample_days: int
+
+
+@dataclass(frozen=True)
+class SelectionProfitabilityReport:
+    has_data: bool
+    horizon_field: str
+    top_n: int
+    strategies: tuple[SelectionStrategyResult, ...]
+    verdict: str  # insufficient | model_underperforms | model_outperforms | neutral
+
+
+_SELECTION_HORIZON_LABEL = {"next_5day_return": "T+5", "next_10day_return": "T+10", "next_30day_return": "T+30"}
+
+
+def compute_selection_profitability_from_loaded(
+    records: list[dict[str, Any]],
+    *,
+    top_n: int = 3,
+    horizon_field: str = "next_5day_return",
+    min_days: int = 10,
+    verdict_threshold: float = 0.05,
+) -> SelectionProfitabilityReport:
+    """Backtest the model's top-N-by-score selection vs alternatives.
+
+    For each date with >= top_n picks, simulate 4 selection strategies and
+    record the equal-weighted portfolio return at ``horizon_field``:
+
+    * ``score_desc``   — current front-door (top-N by model score)
+    * ``score_asc``    — bet against the model (lowest-N)
+    * ``equal_weight_all`` — ignore the score, hold every pick that day
+    * ``random_n``     — random-N baseline (seeded, reproducible)
+
+    Verdict compares ``score_desc`` vs ``equal_weight_all`` portfolio winrate:
+    the model "underperforms" when its top-N selection loses by >=
+    ``verdict_threshold`` (default 5pp) to simply ignoring the score.
+    """
+    by_date: dict[str, list[dict[str, float]]] = {}
+    for rec in records:
+        d = rec.get("recommended_date")
+        raw_s = rec.get("recommendation_score")
+        if raw_s is None:
+            raw_s = rec.get("score_b")
+        if raw_s is None:
+            raw_s = rec.get("composite_score")
+        try:
+            score = float(raw_s)
+            ret = float(rec.get(horizon_field))
+        except (TypeError, ValueError):
+            continue
+        if d is None or d == "":
+            continue
+        by_date.setdefault(str(d), []).append({"score": score, "ret": ret})
+
+    # only dates with enough picks for a meaningful top-N
+    days = [picks for picks in by_date.values() if len(picks) >= top_n]
+    if len(days) < min_days:
+        return SelectionProfitabilityReport(
+            has_data=False, horizon_field=horizon_field, top_n=top_n,
+            strategies=(), verdict="insufficient",
+        )
+
+    def _portfolio_returns(strategy: str) -> list[float]:
+        out: list[float] = []
+        rnd = _random.Random(42)
+        for picks in sorted(days, key=lambda p: id(p)):  # stable-ish order
+            # determinism across runs: sort each day by (score desc, ticker-ish)
+            # but picks have no ticker here; use score then original order via index
+            indexed = list(enumerate(picks))
+            if strategy == "score_desc":
+                sel = [x for _, x in sorted(indexed, key=lambda kv: (-kv[1]["score"], kv[0]))[:top_n]]
+            elif strategy == "score_asc":
+                sel = [x for _, x in sorted(indexed, key=lambda kv: (kv[1]["score"], kv[0]))[:top_n]]
+            elif strategy == "equal_weight_all":
+                sel = list(picks)
+            elif strategy == "random_n":
+                idx = rnd.sample(range(len(picks)), min(top_n, len(picks)))
+                sel = [picks[i] for i in idx]
+            else:
+                continue
+            if sel:
+                out.append(sum(x["ret"] for x in sel) / len(sel))
+        return out
+
+    results: list[SelectionStrategyResult] = []
+    for strat in ("score_desc", "score_asc", "equal_weight_all", "random_n"):
+        pr = _portfolio_returns(strat)
+        if not pr:
+            continue
+        wins = sum(1 for x in pr if x > 0)
+        results.append(SelectionStrategyResult(
+            strategy=strat,
+            portfolio_winrate=wins / len(pr),
+            mean_return=sum(pr) / len(pr),
+            median_return=_median(pr),
+            sample_days=len(pr),
+        ))
+
+    sd = next((s for s in results if s.strategy == "score_desc"), None)
+    ew = next((s for s in results if s.strategy == "equal_weight_all"), None)
+    if not sd or not ew or sd.portfolio_winrate is None or ew.portfolio_winrate is None:
+        verdict = "neutral"
+    else:
+        diff = sd.portfolio_winrate - ew.portfolio_winrate
+        if diff <= -verdict_threshold:
+            verdict = "model_underperforms"
+        elif diff >= verdict_threshold:
+            verdict = "model_outperforms"
+        else:
+            verdict = "neutral"
+
+    return SelectionProfitabilityReport(
+        has_data=True, horizon_field=horizon_field, top_n=top_n,
+        strategies=tuple(results), verdict=verdict,
+    )
+
+
+def render_selection_profitability_line(report: SelectionProfitabilityReport) -> str:
+    """Render one line: does following the model's top-N profit vs ignoring the score?
+
+    Silent (empty string) when insufficient — never breaks the front door.
+    """
+    if not report.has_data:
+        return ""
+    sd = next((s for s in report.strategies if s.strategy == "score_desc"), None)
+    ew = next((s for s in report.strategies if s.strategy == "equal_weight_all"), None)
+    if not sd or not ew or sd.portfolio_winrate is None or ew.portfolio_winrate is None:
+        return ""
+    label = _SELECTION_HORIZON_LABEL.get(report.horizon_field, report.horizon_field)
+    if report.verdict == "model_underperforms":
+        marker = f"{Fore.RED}⚠ 选取倒挂: 模型 top-N 跑输等权 (负预测力){Style.RESET_ALL}"
+    elif report.verdict == "model_outperforms":
+        marker = f"{Fore.GREEN}✓ 选取正向: 模型 top-N 跑赢等权{Style.RESET_ALL}"
+    else:
+        marker = f"{Fore.YELLOW}≈ 选取中性: 模型 top-N 与等权相当{Style.RESET_ALL}"
+    return (
+        f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): "
+        f"模型分 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%} (中位 {sd.median_return:+.2f}%) "
+        f"vs 等权 {ew.portfolio_winrate:.0%} (中位 {ew.median_return:+.2f}%) | {marker}"
+    )
