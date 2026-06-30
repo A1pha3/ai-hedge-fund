@@ -195,3 +195,45 @@ class TestRunDailyRegimeRefresh:
             return (kw["output_path"], 0)
         run_daily_regime_refresh(reports_dir=tmp_path, output_dir=tmp_path, _runner=fake_runner)
         assert captured["min_samples"] == 10
+
+
+# ---- NS-5 part 3: expose flywheel health via CLI (c258) ----
+class TestFlywheelHealthCli:
+    """The silent-stall antidote (assess_tracking_history) must be CHECKABLE on
+    demand via a CLI, not buried in the daily launcher log. Otherwise the owner
+    can only learn the flywheel stalled by reading a boot-volume log file."""
+
+    def test_resolver_returns_none_when_flag_absent(self):
+        from src.cli.dispatcher import _resolve_flywheel_health
+        assert _resolve_flywheel_health([]) is None
+        assert _resolve_flywheel_health(["--top-n", "5"]) is None
+
+    def test_resolver_returns_zero_and_prints_health_when_flag_present(self, capsys, tmp_path, monkeypatch):
+        from src.cli import dispatcher
+        # point assess_tracking_history at a controlled report_dir with a fresh file
+        import os, time
+        th = tmp_path / "tracking_history.json"
+        th.write_text("[]")
+        os.utime(th, (time.time(), time.time()))  # fresh mtime
+        monkeypatch.setattr(
+            "src.screening.consecutive_recommendation.resolve_report_dir",
+            lambda: tmp_path,
+        )
+        rc = dispatcher._resolve_flywheel_health(["--flywheel-health"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "flywheel" in out.lower() or "飞轮" in out
+        # must surface the status verdict + days-since-write (the whole point)
+        assert "healthy" in out.lower() or "stale" in out.lower() or "critical" in out.lower()
+
+    def test_resolver_handles_missing_history_gracefully(self, capsys, tmp_path, monkeypatch):
+        from src.cli import dispatcher
+        monkeypatch.setattr(
+            "src.screening.consecutive_recommendation.resolve_report_dir",
+            lambda: tmp_path,
+        )
+        # no tracking_history.json present
+        rc = dispatcher._resolve_flywheel_health(["--flywheel-health"])
+        assert rc == 0  # graceful, not a crash
+        out = capsys.readouterr().out
+        assert "critical" in out.lower()  # missing = critical (observable)

@@ -895,6 +895,24 @@ def _resolve_refresh_regime_winrates(argv: list[str]) -> int | None:
     return run_refresh_cli(output_path=output_path, min_samples=min_samples)
 
 
+
+def _resolve_flywheel_health(argv: list[str]) -> int | None:
+    """NS-5: on-demand data-flywheel health check.
+
+    Surfaces the silent-stall antidote (:func:`assess_tracking_history`) to the
+    CLI so the owner can check whether the daily auto_screening job is actually
+    accumulating tracking_history — without reading the boot-volume launchd log.
+    The whole point of c256: silent 6-day stalls must become OBSERVABLE.
+    """
+    if "--flywheel-health" not in argv:
+        return None
+    import json as _json
+    from src.screening.flywheel_health import assess_tracking_history
+    result = assess_tracking_history()
+    # human-readable + machine-parseable (JSON) so scripts/cron can grep it
+    print(_json.dumps(result, ensure_ascii=False))
+    return 0
+
 COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--preheat", _resolve_preheat),
     ("--daily-gainers", _resolve_daily_gainers),
@@ -933,6 +951,7 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--conviction-ranking", _resolve_conviction_ranking),
     ("--top", _resolve_top),
     ("--check-freshness", _resolve_check_freshness),
+    ("--flywheel-health", _resolve_flywheel_health),
     ("--daily-delta", _resolve_daily_delta),
     ("--signal-consistency", _resolve_signal_consistency),
     ("--dynamic-threshold", _resolve_dynamic_threshold),
