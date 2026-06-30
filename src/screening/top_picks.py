@@ -508,8 +508,17 @@ def _render_market_opportunity_index(
     buy_count = sum(1 for v in verdicts if v.get("action") == "BUY")
     total = len(picks)
 
-    # High-quality: composite >= 0.5
-    high_quality = sum(1 for p in picks if float(p.get("composite_score", 0.0) or 0.0) >= 0.5)
+    # High-quality: passes the BUY verdict (composite>=0.5 AND T+5/T+10 calibration
+    # winrate>=0.55 AND mature sample>=20), NOT raw composite_score. C269 (c268 sibling,
+    # found via empirical dogfood on the 2026-06-30 report): under NS-4 rank inversion
+    # the high-score bucket carries the LOWEST winrate (39% vs low-bucket 60%), so a
+    # composite-only "high_quality" count labels AVOID picks as high-quality and inflates
+    # the opportunity index via the +0.3 bonus — an all-AVOID day rendered as CAUTION
+    # instead of WAIT. Aligning on the BUY verdict makes the bonus reflect genuine
+    # actionable quality. (In normal regime BUY == is_high_quality; in crisis the +0.3
+    # bonus never overcomes the -0.5 crisis penalty anyway, so no meaningful behavior
+    # is lost there.)
+    high_quality = buy_count
 
     # Scoring
     score = 0.0

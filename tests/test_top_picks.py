@@ -1071,6 +1071,38 @@ class TestMarketOpportunityIndex:
         result = _render_market_opportunity_index([], market_regime="trend")
         assert "无候选" in result or "CAUTION" in result
 
+    def test_high_score_avoid_picks_not_counted_as_high_quality(self) -> None:
+        """C269 (2026-07-01, c268 sibling — empirical dogfood on 2026-06-30 report):
+        the 'HQ' count and its +0.3 opportunity-index bonus must reflect the BUY
+        verdict, not raw composite_score. Under NS-4 rank inversion (high-score
+        bucket = LOWEST winrate), 5 high-composite picks that are all AVOID must
+        NOT receive the high-quality bonus — otherwise the all-AVOID day is
+        mislabeled CAUTION instead of WAIT."""
+        from src.screening.top_picks import _render_market_opportunity_index
+        # 5 picks: high composite (>= 0.5) but AVOID verdict (winrate 0.47 < 0.55)
+        picks = [
+            self._make_pick(score, t30=1.15, t30_wr=0.47, sample=41)
+            for score in [0.80, 0.72, 0.67, 0.63, 0.55]
+        ]
+        result = _render_market_opportunity_index(picks, market_regime="normal")
+        assert "HQ 0" in result, (
+            "AVOID-verdict picks must not count as high-quality even with high "
+            "composite_score — under NS-4 inversion high-score = low winrate."
+        )
+        assert "WAIT" in result, (
+            "5 all-AVOID picks (the NS-4 inversion reality) must produce WAIT, "
+            "not CAUTION — the +0.3 high_quality bonus must not apply when no "
+            "picks pass the BUY bar."
+        )
+
+    def test_buy_picks_counted_as_high_quality(self) -> None:
+        """C269 positive path: BUY-verdict picks (composite>=0.5 AND T+5/T+10
+        winrate>=0.55 AND mature sample) ARE counted as high-quality."""
+        from src.screening.top_picks import _render_market_opportunity_index
+        picks = [self._make_pick(0.7, t30=6.0, t30_wr=0.60, sample=30)]
+        result = _render_market_opportunity_index(picks, market_regime="normal")
+        assert "HQ 1" in result
+
 
 # ---------------------------------------------------------------------------
 # R8: Stop-loss / take-profit

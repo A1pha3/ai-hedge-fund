@@ -247,11 +247,14 @@ class TestRenderMarketOpportunityIndex:
         assert "CAUTION" in result
 
     def test_normal_regime(self) -> None:
-        """Without strategy_signals the verdict defaults to AVOID, so buy_count=0 → CAUTION."""
+        """C269 (2026-07-01): without strategy_signals/calibration the verdict
+        defaults to AVOID, so buy_count=0 AND high_quality=0 → score=0 → WAIT.
+        Previously the composite-only high_quality filter (composite>=0.5) gave
+        AVOID picks the +0.3 bonus, mislabeling all-AVOID days as CAUTION."""
         picks = [{"composite_score": 0.6}]
         result = _render_market_opportunity_index(picks, "normal")
-        # buy_count=0, high_quality=1 → score = 0 + 0.3 = 0.3 → CAUTION
-        assert "CAUTION" in result
+        assert "WAIT" in result
+        assert "HQ 0" in result
 
     def test_crisis_regime(self) -> None:
         picks = [{"composite_score": 0.6}]
