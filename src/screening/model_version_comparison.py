@@ -71,6 +71,11 @@ class ModelVersionComparison:
     delta_median_return: float | None  # candidate - baseline
     verdict: str  # improved|degraded|unchanged|insufficient|inconclusive|single_version|no_data
     all_versions: list[ModelVersionMetrics] = field(default_factory=list)
+    # NS-7 disclosure: pre-NS-2 (commit d61f5dba 2026-06-26 之前) tracking_history 记录
+    # 无 model_version 字段, 无法分配到任何 version bucket, 不参与 per-version
+    # rank_monotonicity 验证. 这里统计被排除数, 供 render 显式披露 (避免 owner 误以为
+    # 数据缺失或传播 bug). no_data 时仍可通过此字段程序化访问, 但 render 保持静默.
+    excluded_pre_versioning_count: int = 0
 
 
 def _horizon_return(rec: dict[str, Any], horizon_field: str) -> float | None:
@@ -192,7 +197,14 @@ def compare_model_versions(
       - ``inconclusive``: candidate 足够但 baseline 不足 (无可靠基线)
       - ``single_version``: 仅一个版本 (待累积第二个版本)
       - ``no_data``: 无有效记录
+
+    NS-7 disclosure: 统计 pre-NS-2 (commit d61f5dba 之前) 无 model_version 的记录数,
+    填入 ``excluded_pre_versioning_count`` 供 render 显式披露. 这些记录无法分配到任何
+    version bucket, 不参与 per-version rank_monotonicity 验证 (NS-4 per-version 验证).
     """
+    # NS-7 disclosure: 统计 pre-versioning 记录 (空 / None model_version)
+    excluded_count = sum(1 for rec in records if not _version_key(rec))
+
     versions = compute_model_version_metrics(records, horizon_field=horizon_field, min_samples=min_samples, rank_min_per_half=rank_min_per_half)
     if not versions:
         return ModelVersionComparison(
@@ -202,6 +214,7 @@ def compare_model_versions(
             delta_median_return=None,
             verdict="no_data",
             all_versions=[],
+            excluded_pre_versioning_count=excluded_count,
         )
     if len(versions) == 1:
         return ModelVersionComparison(
@@ -211,6 +224,7 @@ def compare_model_versions(
             delta_median_return=None,
             verdict="single_version",
             all_versions=versions,
+            excluded_pre_versioning_count=excluded_count,
         )
 
     candidate = versions[0]  # 最近活跃 = 最新调参
@@ -245,6 +259,7 @@ def compare_model_versions(
         delta_median_return=delta_median,
         verdict=verdict,
         all_versions=versions,
+        excluded_pre_versioning_count=excluded_count,
     )
 
 
@@ -299,10 +314,23 @@ _VERDICT_MARKER = {
 }
 
 
+def _excluded_suffix(comparison: ModelVersionComparison) -> str:
+    """NS-7 disclosure: 构造 pre-NS-2 未版本化记录排除标注 (空串若无不渲染).
+
+    展示形如: `` (排除 N 条 pre-NS-2 未版本化记录)``. owner 可据此判断为何部分
+    tracking_history 记录未进入 per-version bucket (pre-versioning 历史数据, 非传播 bug).
+    """
+    n = comparison.excluded_pre_versioning_count
+    if n <= 0:
+        return ""
+    return f" (排除{n}条 pre-NS-2 未版本化记录)"
+
+
 def render_model_version_comparison_line(comparison: ModelVersionComparison) -> str:
     """渲染单行 footer (镜像 north_star_pnl/regime_winrate footer-block 风格).
 
     ``no_data`` → 空串 (静默, 不污染前门). 其余 → "模型版本监测: ..." 单行.
+    NS-7 disclosure: 非 no_data 且存在 pre-NS-2 未版本化记录时, 末尾追加排除标注.
     """
     if comparison.verdict == "no_data":
         return ""
@@ -317,10 +345,12 @@ def render_model_version_comparison_line(comparison: ModelVersionComparison) -> 
         "single_version": "仅单版本",
     }.get(comparison.verdict, comparison.verdict)
 
+    excluded_suffix = _excluded_suffix(comparison)
+
     if comparison.verdict == "single_version" or comparison.baseline is None:
         c = comparison.candidate
         assert c is not None
-        line = f"模型版本监测{marker}: 仅 {_short(c.model_version)} " f"(n={c.n_samples}, 胜率{_pct(c.winrate)}, 中位{_ret(c.median_return)}, {_rank_mono_tag(c)}) " f"[{verdict_label}, 待累积第二版本对比]"
+        line = f"模型版本监测{marker}: 仅 {_short(c.model_version)} " f"(n={c.n_samples}, 胜率{_pct(c.winrate)}, 中位{_ret(c.median_return)}, {_rank_mono_tag(c)}) " f"[{verdict_label}, 待累积第二版本对比]{excluded_suffix}"
         return f"{color}{line}{Style.RESET_ALL}"
 
     b = comparison.baseline
@@ -330,10 +360,10 @@ def render_model_version_comparison_line(comparison: ModelVersionComparison) -> 
     cand_str = f"{_short(cand.model_version)}(n={cand.n_samples},胜率{_pct(cand.winrate)},{_rank_mono_tag(cand)})"
 
     if comparison.verdict in ("insufficient", "inconclusive"):
-        line = f"模型版本监测{marker}: {base_str} → {cand_str} " f"[{verdict_label}, n_new={cand.n_samples}]"
+        line = f"模型版本监测{marker}: {base_str} → {cand_str} " f"[{verdict_label}, n_new={cand.n_samples}]{excluded_suffix}"
         return f"{color}{line}{Style.RESET_ALL}"
 
     dw = comparison.delta_winrate
     dw_str = f", 胜率Δ{dw * 100:+.0f}pp" if dw is not None else ""
-    line = f"模型版本监测{marker}: {base_str} → {cand_str}{dw_str} [{verdict_label}]"
+    line = f"模型版本监测{marker}: {base_str} → {cand_str}{dw_str} [{verdict_label}]{excluded_suffix}"
     return f"{color}{line}{Style.RESET_ALL}"

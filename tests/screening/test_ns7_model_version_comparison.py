@@ -16,7 +16,6 @@ verdict=insufficient (诚实, 不强行下结论).
 from __future__ import annotations
 
 from src.screening.model_version_comparison import (
-    ModelVersionComparison,
     compute_model_version_metrics,
     compare_model_versions,
     render_model_version_comparison_line,
@@ -217,3 +216,85 @@ class TestRankMonotonicityPerVersion:
         line = render_model_version_comparison_line(cmp)
         # rank_mono verdict markers should appear (倒挂 for inverted baseline, 单调 for monotonic candidate)
         assert "倒挂" in line or "单调" in line or "rank" in line.lower()
+
+
+class TestPreVersioningExclusionDisclosure:
+    """NS-7 extension: 显式披露被排除的 pre-NS-2 未版本化记录 (model_version='' / None / '?').
+
+    背景: tracking_history 含 493 条 pre-NS-2 (2026-06-26 d61f5dba 之前) 的月度快照
+    记录, 无 model_version 字段. 这些记录无法分配到任何 version bucket, 不参与
+    per-version rank_monotonicity 验证 (NS-4 per-version 验证). 为避免 owner 误以为
+    数据缺失或传播 bug, 在 comparison 中显式统计被排除数, 并在渲染时标注.
+
+    纯诊断披露, 不改变过滤逻辑 (pre-versioning 仍跳过), 不破坏前门 (no_data 仍静默).
+    """
+
+    def test_pre_versioning_records_counted_in_comparison(self) -> None:
+        """records 含 pre-versioning → comparison.excluded_pre_versioning_count == N."""
+        records = [
+            _rec("aaa1111aaaa", 0.03, "20260101"),
+            _rec("aaa1111aaaa", 0.03, "20260102"),
+            _rec("aaa1111aaaa", 0.03, "20260103"),
+            {"next_5day_return": 0.05, "recommended_date": "20240101"},  # no model_version
+            {"model_version": "", "next_5day_return": 0.05, "recommended_date": "20240102"},  # empty
+            {"model_version": None, "next_5day_return": 0.05, "recommended_date": "20240103"},  # None
+        ]
+        cmp = compare_model_versions(records, min_samples=2)
+        assert cmp.excluded_pre_versioning_count == 3
+        # 仅 1 个真实 version bucket (aaa1111aaaa)
+        assert len(cmp.all_versions) == 1
+
+    def test_pre_versioning_records_excluded_from_version_buckets(self) -> None:
+        """pre-versioning 记录不进入任何 version bucket (过滤逻辑保持)."""
+        records = [
+            _rec("aaa1111aaaa", 0.03, "20260101"),
+            {"next_5day_return": 0.05, "recommended_date": "20240101"},  # pre-versioning
+        ]
+        metrics = compute_model_version_metrics(records, min_samples=1)
+        assert len(metrics) == 1
+        assert metrics[0].model_version == "aaa1111aaaa"
+        assert metrics[0].n_samples == 1  # pre-versioning 不计入
+
+    def test_render_includes_excluded_count_when_present(self) -> None:
+        """非 no_data 时, render 追加 '(排除 N 条 pre-NS-2 未版本化记录)' 标注."""
+        records = [
+            _rec("aaa1111aaaa", 0.03, "2026010%d" % d) for d in range(1, 5)
+        ] + [
+            _rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 5)
+        ] + [
+            {"next_5day_return": 0.05, "recommended_date": "20240101"},  # pre-versioning
+            {"model_version": "", "next_5day_return": 0.05, "recommended_date": "20240102"},
+        ]
+        cmp = compare_model_versions(records, min_samples=3)
+        assert cmp.excluded_pre_versioning_count == 2
+        line = render_model_version_comparison_line(cmp)
+        assert "排除" in line
+        assert "2" in line
+        assert "pre-NS-2" in line or "未版本化" in line
+
+    def test_render_no_data_still_silent_even_with_excluded(self) -> None:
+        """no_data (无任何 versioned record) + 有 excluded → 仍空串 (前门静默原则).
+
+        owner 真正关心的是 per-version 对比; 无 versioned record 时即使有 pre-versioning
+        被排除也不输出 (避免污染前门). excluded count 仍可通过 comparison 对象程序化访问.
+        """
+        records = [
+            {"next_5day_return": 0.05, "recommended_date": "20240101"},  # pre-versioning
+            {"model_version": "", "next_5day_return": 0.05, "recommended_date": "20240102"},
+        ]
+        cmp = compare_model_versions(records, min_samples=3)
+        assert cmp.verdict == "no_data"
+        assert cmp.excluded_pre_versioning_count == 2  # 程序化访问仍可得
+        assert render_model_version_comparison_line(cmp) == ""  # 渲染仍静默
+
+    def test_zero_excluded_not_rendered(self) -> None:
+        """无 pre-versioning 记录时, render 不追加排除标注 (避免噪声)."""
+        records = [
+            _rec("aaa1111aaaa", 0.03, "2026010%d" % d) for d in range(1, 5)
+        ] + [
+            _rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 5)
+        ]
+        cmp = compare_model_versions(records, min_samples=3)
+        assert cmp.excluded_pre_versioning_count == 0
+        line = render_model_version_comparison_line(cmp)
+        assert "排除" not in line
