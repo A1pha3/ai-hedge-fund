@@ -55,10 +55,19 @@ def compute_exit_timing(
     Returns:
         :class:`ExitTimingAdvice` (节奏="—" → suggested_window 空)
     """
+    # C259 (2026-06-30): exit windows REALIGNED to the empirically-established
+    # optimal exit. C219 backfill (n=7993 tracking_history records) measured
+    # winrate declining monotonically: T+5=59.1%, T+10=59.2%, T+15=55.4%,
+    # T+20=51.4%, T+25=48.9%, T+30=45.5%. The prior map (C163, pre-C219) told
+    # 匀/晚-rhythm users to hold to T+20–T+30 / T+30+ — the LOSS zone (winrate
+    # <52%). Owner decision (must-win 周期 T+30 → T+5/T+10; "T+5/T+10 是最佳卖出
+    # 点, T+30 是长期衰退信号"): all exit advice now stays WITHIN the T+5–T+10
+    # optimal window (59% winrate zone), preserving rhythm nuance as early-vs-late
+    # WITHIN that window. Decay (R9) still urges earlier exit.
     window_map = {
-        "早": "T+5–T+10 关注止盈 (快涨型, 高点靠前)",
-        "匀": "T+20–T+30 持有 (匀速型, 等到期限)",
-        "晚": "T+30+ 耐心持有 (晚熟型, 勿过早离场)",
+        "早": "T+5 关注止盈 (快涨型, 高点靠前, 窗口前半)",
+        "匀": "T+5–T+10 关注止盈 (匀速型, 窗口后半)",
+        "晚": "T+10 关注止盈 (晚熟型, 窗口末端)",
     }
     window = window_map.get(rhythm, "")
     decaying = decay_change_pct is not None and decay_change_pct < 0
