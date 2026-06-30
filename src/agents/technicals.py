@@ -130,9 +130,9 @@ def generate_chinese_reasoning(ticker: str, combined_signal: dict, strategy_sign
        - 使用Z-Score判断价格偏离程度（Z-Score = (价格-50日均值)/50日标准差）
        - 结合布林带位置判断超买超卖
        - RSI(14/28)判断动量是否过度延伸
-       - 信号规则：
-         *  bullish: Z-Score < -2 且 价格处于布林带下轨20%以内（超卖）
-         *  bearish: Z-Score > 2 且 价格处于布林带上轨80%以上（超买）
+       - 信号规则 (NS-4 commit 023acd74 翻转: 短期 momentum 主导, 超卖票继续跌):
+         *  bullish: Z-Score > +2 且 价格处于布林带上轨80%以上（超买, 动量延续看涨）
+         *  bearish: Z-Score < -2 且 价格处于布林带下轨20%以内（超卖, 动量延续看跌）
          *  neutral: 其他情况
 
     3. 动量策略 (Momentum) - 权重25%
@@ -154,9 +154,9 @@ def generate_chinese_reasoning(ticker: str, combined_signal: dict, strategy_sign
     5. 统计套利策略 (Statistical Arbitrage) - 权重15%
        - Hurst指数判断时间序列特性（H < 0.5均值回归，H > 0.5趋势性）
        - 收益率分布偏度判断极端行情概率
-       - 信号规则：
-         *  bullish: Hurst < 0.4 且 偏度 > 1（均值回归+右偏）
-         *  bearish: Hurst < 0.4 且 偏度 < -1（均值回归+左偏）
+       - 信号规则 (NS-4 commit 023acd74 翻转: 信号方向对齐 T+1):
+         *  bullish: Hurst < 0.4 且 偏度 < -1（均值回归+左偏, 动量延续看涨）
+         *  bearish: Hurst < 0.4 且 偏度 > 1（均值回归+右偏, 动量延续看跌）
          *  neutral: 其他情况
 
     综合信号计算：

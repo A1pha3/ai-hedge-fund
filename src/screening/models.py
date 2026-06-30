@@ -103,11 +103,18 @@ DEFAULT_STRATEGY_WEIGHTS: dict[str, float] = {
 #: +6.86% vs bearish +3.32%, bull-bear 差 +3.54%). 推荐池的反向现象是**选择偏差**
 #: (池子预筛选强势股, 把能反弹的超跌票过滤掉了), 不是 MR 因子本身的问题.
 #:
-#: 教训: 因子诊断必须用全 universe (无选择偏差), 不能只看推荐池. 参见
-#: mean-reversion-reversed-20260625 memory 的修正记录.
+#: NS-4 (commit 023acd74, autodev C225 n=1193/sub-factor, sep=-2.58%, IC=-0.128)
+#: 进一步发现 4 个 MR sub-factor 信号相对 T+1 系统性反向 — 短期 momentum 主导,
+#: 超卖票继续跌. NS-4 在 signal generators (technicals.py +
+#: strategy_scorer_mean_reversion.py) 内翻转 bullish/bearish 标签使信号方向
+#: 对齐 T+1; multiplier 保持 1.0 (信号已对齐, 无需再反转).
+#:
+#: 教训: 因子诊断必须用全 universe (无选择偏差), 不能只看推荐池; 信号方向修复
+#: 应在 generator 层 (语义对齐) 而非 multiplier 层 (盲反转). 参见 NS-4 keystone
+#: (commit 023acd74) 与 mean-reversion-reversed-20260625 memory 修正记录.
 STRATEGY_DIRECTION_MULTIPLIER: dict[str, float] = {
     "trend": 1.0,
-    "mean_reversion": 1.0,  # 全 universe 验证: MR 正向有效 (IC=+0.040)
+    "mean_reversion": 1.0,  # NS-4 generator 层已对齐 T+1, multiplier 保持 1.0
     "fundamental": 1.0,
     "event_sentiment": 1.0,
 }

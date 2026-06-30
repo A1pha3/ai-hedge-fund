@@ -382,8 +382,8 @@ def apply_arbitration_rules(
 
 def compute_score_b(signals: dict[str, StrategySignal], weights: dict[str, float], arbitration_applied: list[str]) -> float:
     normalized_weights = _normalize_for_available_signals(weights, signals)
-    # A 股动量市场: mean_reversion 信号方向反转 (STRATEGY_DIRECTION_MULTIPLIER).
-    # 见 models.py:STRATEGY_DIRECTION_MULTIPLIER docstring (诊断 2026-06-25).
+    # A 股动量市场: mean_reversion 信号方向由 NS-4 (commit 023acd74) 在 generator
+    # 层翻转对齐 T+1, multiplier=1.0 不再反转. 见 models.py:STRATEGY_DIRECTION_MULTIPLIER.
     from src.screening.models import STRATEGY_DIRECTION_MULTIPLIER
 
     score = 0.0

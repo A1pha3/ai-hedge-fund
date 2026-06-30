@@ -33,10 +33,13 @@ def _build_mean_reversion_lines(metrics: dict, signal: str) -> list[str]:
         f"  • 布林带位置: {price_vs_bb:.2f} (0=下轨, 1=上轨)",
         f"  • RSI(14): {rsi_14:.2f}, RSI(28): {rsi_28:.2f}",
     ]
+    # NS-4 (commit 023acd74): signal generators flipped — short-term momentum
+    # dominates T+1, so oversold 票 keep falling. bullish now means OVERBOUGHT
+    # (z>+2, near upper band); bearish now means OVERSOLD (z<-2, near lower band).
     if signal == "bullish":
-        lines.append("  • 解读: 价格显著低于均值(Z<-2)且接近布林带下轨，存在反弹机会")
+        lines.append("  • 解读: 价格显著高于均值(Z>+2)且接近布林带上轨，动量延续看涨")
     elif signal == "bearish":
-        lines.append("  • 解读: 价格显著高于均值(Z>2)且接近布林带上轨，存在回调风险")
+        lines.append("  • 解读: 价格显著低于均值(Z<-2)且接近布林带下轨，动量延续看跌")
     else:
         lines.append("  • 解读: 价格处于正常波动区间，无明显超买超卖")
     return lines
@@ -87,10 +90,12 @@ def _build_stat_arb_lines(metrics: dict, signal: str) -> list[str]:
         f"  • 偏度: {skew:.2f} (>0右偏, <0左偏)",
         f"  • 峰度: {kurt:.2f}",
     ]
+    # NS-4 (commit 023acd74): signal generators flipped — bullish now means
+    # NEGATIVE skew (左偏); bearish now means POSITIVE skew (右偏).
     if signal == "bullish":
-        lines.append("  • 解读: 价格呈现均值回归特性且分布右偏，反弹概率较高")
+        lines.append("  • 解读: 价格呈现均值回归特性且分布左偏，动量延续看涨")
     elif signal == "bearish":
-        lines.append("  • 解读: 价格呈现均值回归特性且分布左偏，回调概率较高")
+        lines.append("  • 解读: 价格呈现均值回归特性且分布右偏，动量延续看跌")
     else:
         lines.append("  • 解读: 价格行为接近随机游走，统计特征不明显")
     return lines
