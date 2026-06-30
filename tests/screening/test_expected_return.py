@@ -308,6 +308,52 @@ class TestRenderCompact:
         assert "T+30" in text
         assert "样本" in text
 
+    @patch("src.screening.expected_return._load_tracking_records")
+    @patch("src.screening.expected_return.compute_calibration")
+    def test_compact_flags_t30_winrate_on_tiny_mature_sample(self, mock_calib: object, mock_records: object) -> None:
+        """C271 (2026-07-01, empirical dogfood via --decision-flow on 2026-06-30):
+        T+30 winrate based on <5 mature samples must be flagged low-confidence.
+        ``_fmt_winrate`` colors 100% green regardless of n; a per-bucket n=1
+        ``100% winrate`` is statistically meaningless yet rendered as a confident
+        green — for a 赚钱工具 this invites over-reaction to noise. The codebase
+        already requires ``backing_sample >= 20`` for the BUY gate; this extends
+        the honesty to the display."""
+        mock_records.return_value = [{"dummy": True}]
+        calib = CalibrationSummary(
+            lookback_days=60,
+            total_samples=4,
+            total_t30_samples=1,
+            buckets=[_make_bucket("高 (>0.8)", 0.8, 1.01, n=4, t30_mature=1, t30_wr=1.0)],
+        )
+        mock_calib.return_value = calib
+        recs = [_make_rec("000001", 0.85)]
+        report = compute_expected_returns(recommendations=recs, lookback_days=60)
+        text = render_expected_returns_compact(report)
+        # winrate is present (100% on n=1) but flagged low-confidence
+        assert "T30熟=1" in text or "T30熟= 1" in text
+        assert "少" in text or "⚠" in text or "不足" in text, (
+            "T+30 winrate based on <5 mature samples must carry a low-confidence marker "
+            "— a green 100% on n=1 misleads users of a 赚钱工具."
+        )
+
+    @patch("src.screening.expected_return._load_tracking_records")
+    @patch("src.screening.expected_return.compute_calibration")
+    def test_compact_no_flag_when_mature_sample_sufficient(self, mock_calib: object, mock_records: object) -> None:
+        """C271 negative guard: mature sample >= 5 → no low-confidence marker."""
+        mock_records.return_value = [{"dummy": True}]
+        calib = CalibrationSummary(
+            lookback_days=60,
+            total_samples=50,
+            total_t30_samples=10,
+            buckets=[_make_bucket("高 (>0.8)", 0.8, 1.01, n=50, t30_mature=10, t30_wr=0.60)],
+        )
+        mock_calib.return_value = calib
+        recs = [_make_rec("000001", 0.85)]
+        report = compute_expected_returns(recommendations=recs, lookback_days=60)
+        text = render_expected_returns_compact(report)
+        # winrate shown without the tiny-sample marker
+        assert "少样本" not in text
+
 
 # ---------------------------------------------------------------------------
 # _build_bucket_return_map / _build_bucket_winrate_map / _build_bucket_sample_map

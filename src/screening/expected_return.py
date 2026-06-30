@@ -430,6 +430,16 @@ def render_expected_returns_compact(report: ExpectedReturnReport) -> str:
         t20 = _fmt_return(er.get("t20"))
         t30 = _fmt_return(er.get("t30"))
         wr_str = _fmt_winrate(item.win_rates.get("t30"))
+        # C271 (2026-07-01, empirical dogfood via --decision-flow on 2026-06-30):
+        # flag the T+30 winrate low-confidence when the mature sample is tiny
+        # (< 5). _fmt_winrate colors 100% green regardless of n; a per-bucket n=1
+        # "100% winrate" is statistically meaningless yet rendered confident-green
+        # — for a 赚钱工具 this invites over-reaction to noise. The codebase
+        # already requires backing_sample >= 20 for the BUY gate; this extends
+        # that honesty to the display without hiding the number.
+        _t30_mature = item.bucket_t30_mature_count
+        if 0 < _t30_mature < 5:
+            wr_str = f"{wr_str} {Fore.YELLOW}⚠少样本{Style.RESET_ALL}"
         # P-2: show outcome dispersion (±std) next to T+30 edge so the user can
         # calibrate confidence in the point estimate. +3.2%(±1.5%) vs +3.2%(±8%)
         # are very different bets even with identical mean.
