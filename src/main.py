@@ -619,6 +619,45 @@ def _rank_pool_by_investability(ranking_pool: list[dict], trade_date: str) -> li
         return ranking_pool
 
 
+def _inject_score_decomposition(
+    ranking_pool: list[dict],
+    fused_by_ticker: dict[str, object],
+) -> int:
+    """NS-6 (c266 observable): inject ``score_decomposition`` into each ranking_pool rec.
+
+    Best-effort: a failure for one rec logs a WARNING and continues (was a silent
+    ``except Exception: pass`` before c266 — BH-017 silent-degradation family).
+    Without this observability, a future ``signal_fusion`` refactor that breaks
+    ``compute_score_decomposition`` would silently drop decomposition for every rec
+    → ``factor_attribution`` returns "insufficient" with no log, and the owner
+    cannot diagnose why the factor-feedback loop (which factor is inverted) broke
+    mid-tuning-iteration. Only 12/8005 tracking_history records currently carry
+    decomposition (feature is new); masking a regression here directly blocks the
+    NS-4-flip evaluation the owner is waiting on.
+
+    Returns:
+        count of recs successfully injected (for an info-level coverage log).
+    """
+    from src.screening.signal_fusion import compute_score_decomposition
+
+    injected = 0
+    for rec in ranking_pool:
+        fused_item = fused_by_ticker.get(str(rec.get("ticker", "")))
+        if fused_item is None:
+            continue
+        try:
+            rec["score_decomposition"] = compute_score_decomposition(fused_item)
+            injected += 1
+        except Exception as exc:  # best-effort: never block the pipeline, but DO log
+            logger.warning(
+                "[Auto] score_decomposition injection failed for ticker=%s: %s "
+                "(factor_attribution will be insufficient for this rec)",
+                rec.get("ticker", "?"),
+                exc,
+            )
+    return injected
+
+
 def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_strategies: list[str] | None = None) -> dict:
     """Run the full --auto pipeline and return a JSON-serializable payload (no IO side effects).
 
@@ -699,15 +738,10 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     # update_tracking_history 落盘后 factor_attribution 模块可按贡献分位检测
     # 高低 winrate 倒挂。best-effort: 异常时不阻塞主流程 (rec 无 decomposition →
     # factor_attribution 消费侧 isinstance 校验后返回 insufficient).
-    try:
-        from src.screening.signal_fusion import compute_score_decomposition as _decompose
-        for rec in ranking_pool:
-            fused_item = fused_by_ticker.get(str(rec.get("ticker", "")))
-            if fused_item is None:
-                continue
-            rec["score_decomposition"] = _decompose(fused_item)
-    except Exception:
-        pass  # best-effort, never block on decomposition
+    # c266: 抽成 _inject_score_decomposition helper — 失败时 logger.warning (was
+    # silent except:pass), 让 factor_attribution insufficient 可诊断 (BH-017 drain).
+    _injected = _inject_score_decomposition(ranking_pool, fused_by_ticker)
+    logger.info("[Auto] score_decomposition injected for %d/%d ranking_pool recs", _injected, len(ranking_pool))
 
     ranked_pool = _rank_pool_by_investability(ranking_pool, trade_date)
 
