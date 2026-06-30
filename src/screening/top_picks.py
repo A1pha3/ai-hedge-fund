@@ -1433,11 +1433,33 @@ def _print_top_picks_header(
     print(f"{Fore.WHITE}{'─' * 72}{Style.RESET_ALL}")
 
 
-def _print_high_confidence_summary(representative_picks: list[dict]) -> None:
-    """Render the quick high-confidence summary line."""
-    strong_picks = [item for item in representative_picks if float(item.get("composite_score", 0.0) or 0.0) >= 0.5]
-    if strong_picks:
-        tickers = ", ".join(f"{Fore.CYAN}{str(pick.get('ticker', ''))}{Style.RESET_ALL}" for pick in strong_picks[:3])
+def _print_high_confidence_summary(representative_picks: list[dict], *, market_regime: str) -> None:
+    """Render the quick high-confidence summary line.
+
+    A "high-confidence" pick is one the front door actually recommends BUYing —
+    cleared by :func:`build_front_door_verdict` (composite_score >= 0.5 AND
+    T+5/T+10 calibration winrate >= 0.55 AND edge > 0 AND mature sample >= 20),
+    not merely a high raw ``composite_score``.
+
+    C268 (2026-07-01, found via empirical dogfood on the 2026-06-30 report): the
+    prior ``composite_score >= 0.5`` filter labeled AVOID picks as "High
+    confidence". Under NS-4 rank inversion (the high-score bucket carries the
+    LOWEST historical winrate — 39% vs the low-bucket 60%), this is the OPPOSITE
+    of actionable confidence: the 2026-06-30 front door rendered
+    ``💡 High confidence picks: 688019, 688630, 300308`` while every one was
+    ``操作=AVOID`` (winrate 37-47%, T+30 -7.94%). Filtering on the BUY verdict
+    aligns the label with the picks the tool is confident enough to recommend
+    buying; when the model's top picks all fail the BUY bar, the user honestly
+    sees "No high-confidence picks today" instead of being steered to AVOID
+    picks.
+    """
+    buy_picks = [
+        item
+        for item in representative_picks
+        if build_front_door_verdict(item, market_regime=market_regime).get("action") == "BUY"
+    ]
+    if buy_picks:
+        tickers = ", ".join(f"{Fore.CYAN}{str(pick.get('ticker', ''))}{Style.RESET_ALL}" for pick in buy_picks[:3])
         print(f"  💡 High confidence picks: {tickers}")
         return
     print("  ⚠ No high-confidence picks today. Consider waiting for better signals.")
@@ -1492,7 +1514,7 @@ def _print_top_picks_footer(
         if changes:
             print(changes)
 
-    _print_high_confidence_summary(representative_picks)
+    _print_high_confidence_summary(representative_picks, market_regime=market_regime)
     _print_hit_rate_block(report_dir)
     _print_stability_block(report_dir)
     _print_data_quality_block(report_dir)

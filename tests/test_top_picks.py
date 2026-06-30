@@ -17,6 +17,7 @@ from src.screening.top_picks import (
     _consecutive_bonus,
     _extract_t30_metrics,
     _load_recommendation_context,
+    _print_high_confidence_summary,
     _render_hit_rate_summary,
     _score_color,
     _status_icon,
@@ -83,12 +84,16 @@ class TestTopPicks:
         assert "3." in output
 
     def test_high_confidence_message(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        # C268 (2026-07-01): "High confidence" now requires a BUY verdict (backed by
+        # T+5/T+10 calibration), not just composite_score >= 0.5. A bare _make_rec
+        # has no calibration → AVOID → "No high-confidence" (the honest message).
+        # The BUY-verdict positive path is covered by TestHighConfidenceVerdictAlignment.
         recs = [_make_rec("300750", "宁德时代", 0.8)]
         _write_report(tmp_path, recs)
         rc = run_top_picks(count=5, reports_dir=tmp_path)
         assert rc == 0
         output = capsys.readouterr().out
-        assert "High confidence" in output
+        assert "No high-confidence" in output or "waiting" in output
 
     def test_no_confidence_message(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         recs = [_make_rec("000001", "平安银行", 0.05)]
@@ -140,6 +145,89 @@ class TestTopPicks:
         output = capsys.readouterr().out
         assert "不构成任何投资建议" in output
         assert "研究" in output
+
+
+def _buy_grade_rec(ticker: str = "TESTBUY", score: float = 0.70) -> dict[str, Any]:
+    """A record that clears the BUY gate: composite >= 0.5, T+5/T+10 winrate >=
+    0.55, edge > 0, mature sample >= 20, non-bearish decision."""
+    return {
+        "ticker": ticker,
+        "name": f"Test {ticker}",
+        "composite_score": score,
+        "expected_returns": {"t5": 2.0, "t10": 3.0, "t30": 5.0},
+        "win_rates": {"t5": 0.60, "t10": 0.58, "t30": 0.46},
+        "decision": "strong_buy",
+        "bucket_sample_count": 40,
+        "bucket_t30_mature_count": 38,
+    }
+
+
+def _avoid_grade_rec(ticker: str = "688630", score: float = 0.663) -> dict[str, Any]:
+    """A high-score record that FAILS the BUY gate (T+5/T+10 winrate 47% < 0.55
+    → AVOID). Models the NS-4 rank-inversion reality: high composite_score but
+    the bucket's historical short-horizon winrate is below the BUY bar, so the
+    honest verdict is AVOID. Previously mislabeled 'High confidence' because the
+    filter was composite-only."""
+    return {
+        "ticker": ticker,
+        "name": f"Test {ticker}",
+        "composite_score": score,
+        "expected_returns": {"t5": 1.15, "t10": 1.15, "t30": -7.94},
+        "win_rates": {"t5": 0.4737, "t10": 0.4473, "t30": 0.3684},
+        "decision": "strong_buy",
+        "bucket_sample_count": 41,
+        "bucket_t30_mature_count": 38,
+    }
+
+
+class TestHighConfidenceVerdictAlignment:
+    """C268 (2026-07-01, found via empirical dogfood on the 2026-06-30 report):
+    'High confidence picks' must align with the BUY verdict, not raw
+    ``composite_score``. Under NS-4 rank inversion (high-score bucket has the
+    LOWEST historical winrate — 39% vs low-bucket 60%), a composite-only filter
+    labels AVOID picks as 'High confidence', steering users toward the picks
+    most likely to lose money. The 2026-06-30 front door rendered
+    ``💡 High confidence picks: 688019, 688630, 300308`` while every one was
+    ``操作=AVOID`` (winrate 37-47%, T+30 -7.94%). Fix: filter by
+    ``build_front_door_verdict(...).action == "BUY"``."""
+
+    def test_avoid_pick_not_labeled_high_confidence(self, capsys: pytest.CaptureFixture[str]) -> None:
+        _print_high_confidence_summary([_avoid_grade_rec()], market_regime="normal")
+        out = capsys.readouterr().out
+        assert "High confidence picks" not in out, (
+            "AVOID-verdict picks must not be labeled 'High confidence': under NS-4 "
+            "rank inversion the high-score bucket has the LOWEST winrate, so this "
+            "label would steer users to the worst picks."
+        )
+        assert "No high-confidence" in out or "waiting" in out
+
+    def test_buy_pick_labeled_high_confidence(self, capsys: pytest.CaptureFixture[str]) -> None:
+        _print_high_confidence_summary([_buy_grade_rec()], market_regime="normal")
+        out = capsys.readouterr().out
+        assert "High confidence picks" in out
+        assert "TESTBUY" in out
+
+    def test_mixed_picks_only_buy_shown_even_if_avoid_scores_higher(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # AVOID pick has the higher composite_score (0.80) — must still be excluded.
+        _print_high_confidence_summary(
+            [_avoid_grade_rec("688630", 0.80), _buy_grade_rec("TESTBUY", 0.55)],
+            market_regime="normal",
+        )
+        out = capsys.readouterr().out
+        assert "TESTBUY" in out
+        assert "688630" not in out, (
+            "AVOID pick must be excluded from 'High confidence' even when its "
+            "composite_score is higher than the BUY pick's."
+        )
+
+    def test_all_avoid_shows_waiting_message(self, capsys: pytest.CaptureFixture[str]) -> None:
+        _print_high_confidence_summary(
+            [_avoid_grade_rec("AAA", 0.80), _avoid_grade_rec("BBB", 0.70)],
+            market_regime="normal",
+        )
+        out = capsys.readouterr().out
+        assert "No high-confidence" in out or "waiting" in out
+        assert "High confidence picks" not in out
 
 
 class TestExtractedTopPicksHelpers:
