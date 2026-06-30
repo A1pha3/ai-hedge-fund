@@ -160,3 +160,86 @@ def assess_tracking_history(report_dir: Optional[Path] = None) -> dict:
     except Exception:
         pass
     return check_flywheel_health(mtime, latest_date)
+
+
+def run_daily_regime_refresh(
+    reports_dir: Optional[Path] = None,
+    output_dir: Optional[Path] = None,
+    *,
+    min_samples: int = 10,
+    _runner=None,
+) -> dict:
+    """NS-5 part 2: auto-recompute regime winrates inside the daily job.
+
+    The daily flywheel (unblocked in c256) accumulates ``tracking_history``, but
+    the hardcoded ``REGIME_HISTORICAL_WINRATES`` (stale after owner factor
+    changes) only refreshes if the recompute actually runs. This wires
+    :func:`regime_winrate_recompute.run_refresh_cli` into the daily path and
+    writes a dated, owner-auditable artifact so the stale constants can be
+    replaced with fresh values as data accrues.
+
+    Parameters
+    ----------
+    reports_dir:
+        Directory holding ``tracking_history.json`` + ``auto_screening_*.json``.
+        ``None`` → resolved via ``resolve_report_dir``.
+    output_dir:
+        Where to write the dated recomputed artifact. ``None`` → ``reports_dir``.
+    min_samples:
+        Minimum records per regime (default 10 = production threshold).
+    _runner:
+        Test seam: a callable receiving ``reports_dir``, ``output_path``,
+        ``min_samples`` and returning ``(written_path | None, rc)``. Defaults to
+        the real :func:`run_refresh_cli` (which writes the file itself and rc).
+
+    Returns
+    -------
+    dict with ``status`` (ok|skipped|failed), ``rc``, ``output_path``, ``message``.
+    rc != 0 is non-fatal (the daily job's value is the --auto + backfill; this is
+    a best-effort refresh) so callers log and continue.
+    """
+    from datetime import datetime
+
+    from src.screening.consecutive_recommendation import resolve_report_dir
+
+    rd = Path(reports_dir) if reports_dir else resolve_report_dir()
+    out_dir = Path(output_dir) if output_dir else rd
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d")
+    out_path = out_dir / f"regime_winrates_recomputed_{stamp}.json"
+
+    if _runner is None:
+        from src.screening.regime_winrate_recompute import run_refresh_cli
+
+        def _runner(**kw):  # type: ignore[misc]
+            rc = run_refresh_cli(
+                reports_dir=kw["reports_dir"],
+                output_path=kw["output_path"],
+                min_samples=kw["min_samples"],
+            )
+            written = kw["output_path"] if rc == 0 and kw["output_path"].exists() else None
+            return (written, rc)
+
+    try:
+        written, rc = _runner(reports_dir=rd, output_path=out_path, min_samples=min_samples)
+    except Exception as exc:  # defensive: daily job must not die on refresh failure
+        return {
+            "status": "failed",
+            "rc": None,
+            "output_path": str(out_path),
+            "message": f"regime refresh 异常 (non-fatal): {exc}",
+        }
+
+    if rc == 0 and written is not None:
+        return {
+            "status": "ok",
+            "rc": 0,
+            "output_path": str(written),
+            "message": f"regime winrates refreshed → {written}",
+        }
+    return {
+        "status": "skipped",
+        "rc": rc,
+        "output_path": str(out_path),
+        "message": f"regime refresh skipped (rc={rc}, non-fatal — insufficient data or no date→regime map yet)",
+    }

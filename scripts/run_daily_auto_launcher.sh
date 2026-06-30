@@ -93,4 +93,15 @@ from src.screening.flywheel_health import assess_tracking_history
 print('[daily_auto] flywheel:', json.dumps(assess_tracking_history(), ensure_ascii=False))
 PYEOF
 
+# Step 4: NS-5 part 2 — auto-recompute regime winrates so the stale hardcoded
+# REGIME_HISTORICAL_WINRATES refreshes as tracking_history accrues (owner-auditable
+# artifact: data/reports/regime_winrates_recomputed_<date>.json). Non-fatal.
+"$PYTHON" - <<PYEOF || true
+from dotenv import dotenv_values; import os, json
+for k,v in dotenv_values('$REPO/.env').items():
+    v is not None and os.environ.setdefault(k,v)
+from src.screening.flywheel_health import run_daily_regime_refresh
+print('[daily_auto] regime_refresh:', json.dumps(run_daily_regime_refresh(), ensure_ascii=False))
+PYEOF
+
 echo "[$(date -Iseconds)] [daily_auto] done"

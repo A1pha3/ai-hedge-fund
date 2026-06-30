@@ -133,3 +133,65 @@ class TestLauncherScriptExists:
         # launcher inlines the pipeline (no /Volumes file open); run_daily_auto.sh stays for ad-hoc shell use
         assert "src/main.py" in text, "launcher must call src/main.py --auto inline"
         assert "run_daily_auto.sh" in text  # still referenced in comments/doc for ad-hoc runs
+
+
+# ---- NS-5 part 2: daily regime-winrate auto-recompute wiring (c257) ----
+
+
+class TestRunDailyRegimeRefresh:
+    """The daily job must auto-recompute regime winrates so the hardcoded
+    REGIME_HISTORICAL_WINRATES (stale after owner factor changes) refreshes
+    automatically as tracking_history accumulates. NS-5 backlog row explicitly
+    requires 'daily scheduling 触发的自动重算'."""
+
+    def test_returns_success_when_recompute_succeeds(self, tmp_path):
+        from src.screening.flywheel_health import run_daily_regime_refresh
+        # Simulate run_refresh_cli writing a payload to an output path.
+        def _succ(**kw):
+            kw["output_path"].write_text(
+                '{"regime_winrates": {"normal": {"winrate": 0.55, "n": 60}}, '
+                '"as_of": "2026-06-30", "matched_records": 60}', encoding="utf-8")
+            return (kw["output_path"], 0)
+        result = run_daily_regime_refresh(
+            reports_dir=tmp_path, output_dir=tmp_path, _runner=_succ,
+        )
+        assert result["status"] == "ok"
+        assert result["rc"] == 0
+        assert result["output_path"].startswith(str(tmp_path))
+        assert result["output_path"].endswith(".json")
+
+    def test_returns_skipped_when_recompute_returns_nonzero(self, tmp_path):
+        from src.screening.flywheel_health import run_daily_regime_refresh
+        result = run_daily_regime_refresh(
+            reports_dir=tmp_path,
+            output_dir=tmp_path,
+            _runner=lambda **kw: (None, 1),  # run_refresh_cli returns 1 on empty input
+        )
+        assert result["status"] == "skipped"
+        assert result["rc"] == 1
+        assert "non-fatal" in result["message"].lower() or "skip" in result["message"].lower()
+
+    def test_output_path_is_dated_and_in_output_dir(self, tmp_path):
+        from src.screening.flywheel_health import run_daily_regime_refresh
+        captured = {}
+        def fake_runner(**kw):
+            captured["path"] = kw["output_path"]
+            kw["output_path"].write_text("{}", encoding="utf-8")
+            return (kw["output_path"], 0)
+        run_daily_regime_refresh(reports_dir=tmp_path, output_dir=tmp_path, _runner=fake_runner)
+        name = captured["path"].name
+        assert name.startswith("regime_winrates_recomputed_")
+        assert name.endswith(".json")
+        # contains a YYYYMMDD date stamp
+        import re
+        assert re.search(r"\d{8}", name), f"date stamp missing in {name}"
+
+    def test_default_min_samples_is_10(self, tmp_path):
+        from src.screening.flywheel_health import run_daily_regime_refresh
+        captured = {}
+        def fake_runner(**kw):
+            captured["min_samples"] = kw.get("min_samples")
+            kw["output_path"].write_text("{}", encoding="utf-8")
+            return (kw["output_path"], 0)
+        run_daily_regime_refresh(reports_dir=tmp_path, output_dir=tmp_path, _runner=fake_runner)
+        assert captured["min_samples"] == 10
