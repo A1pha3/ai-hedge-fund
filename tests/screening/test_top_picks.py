@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 
 from src.screening.top_picks import (
     _check_report_freshness,
     _compute_confluence,
     _consecutive_bonus,
+    _print_pick_entry,
     _render_confluence,
     _render_factor_attribution,
     _render_market_opportunity_index,
@@ -15,6 +19,7 @@ from src.screening.top_picks import (
     _render_sector_focus,
     _render_sector_rotation,
     _status_icon,
+    TopPicksRenderContext,
 )
 
 # ---------------------------------------------------------------------------
@@ -439,6 +444,86 @@ class TestFormatSampleCount:
         from src.screening.top_picks import _format_sample_count
 
         assert _format_sample_count({}) == "0"
+
+
+# ---------------------------------------------------------------------------
+# _print_pick_entry — T+30 winrate low-confidence flag (R51/R52 family)
+# ---------------------------------------------------------------------------
+
+
+class TestPrintPickEntryT30LowConfidence:
+    """R141 Bug Hunt (R51/R52 family — coverage gap drain): c271 added the
+    ``⚠少样本`` low-confidence marker to ``render_expected_returns_compact``
+    (--decision-flow view), c277 to ``render_expected_returns`` (full
+    --expected-returns table), but ``_print_pick_entry`` (the DEFAULT front door
+    ``--top-picks`` per-pick row) was missed — it renders ``T+30胜率`` without
+    the flag even when ``bucket_t30_mature_count < 5``, same R51/R52 family
+    coverage gap. A per-bucket n=1 "100% winrate" renders confident-green in
+    the default front door while the sibling expected-returns table flags it
+    yellow — inconsistent honesty across surfaces in the same command.
+    """
+
+    @patch("src.screening.top_picks.build_front_door_verdict")
+    def test_t30_winrate_flags_low_confidence_when_mature_tiny(self, mock_verdict, capsys) -> None:
+        """Tiny mature sample (n=1, 100% winrate) must flag ⚠少样本."""
+        mock_verdict.return_value = {
+            "action": "HOLD",
+            "market_regime": "NORMAL",
+            "signal_horizon": "",
+            "invalidation_reason": "",
+        }
+        item = {
+            "ticker": "000001",
+            "name": "TestStock",
+            "score_b": 0.85,
+            "composite_score": 0.8,
+            "win_rates": {"t30": 1.0, "t5": 0.6, "t10": 0.6},
+            "expected_returns": {"t30": 0.03, "t5": 0.01, "t10": 0.012},
+            "bucket_sample_count": 4,
+            "bucket_t30_mature_count": 1,
+        }
+        ctx = TopPicksRenderContext(
+            market_regime="NORMAL",
+            new_tickers=set(),
+            report_dir=Path("."),
+            trade_date="20260701",
+        )
+        _print_pick_entry(1, item, ctx)
+        out = capsys.readouterr().out
+        assert "少样本" in out or "⚠" in out, (
+            "_print_pick_entry (--top-picks per-pick row) must flag T+30 winrate "
+            "low-confidence when mature sample < 5 — c271/c277 fixed the expected_return "
+            "renderers but missed the default front door's per-pick row."
+        )
+
+    @patch("src.screening.top_picks.build_front_door_verdict")
+    def test_t30_winrate_no_flag_when_mature_sufficient(self, mock_verdict, capsys) -> None:
+        """Sufficient mature sample (n=20) must NOT emit the low-confidence marker."""
+        mock_verdict.return_value = {
+            "action": "HOLD",
+            "market_regime": "NORMAL",
+            "signal_horizon": "",
+            "invalidation_reason": "",
+        }
+        item = {
+            "ticker": "000001",
+            "name": "TestStock",
+            "score_b": 0.85,
+            "composite_score": 0.8,
+            "win_rates": {"t30": 0.6, "t5": 0.6, "t10": 0.6},
+            "expected_returns": {"t30": 0.03, "t5": 0.01, "t10": 0.012},
+            "bucket_sample_count": 50,
+            "bucket_t30_mature_count": 20,
+        }
+        ctx = TopPicksRenderContext(
+            market_regime="NORMAL",
+            new_tickers=set(),
+            report_dir=Path("."),
+            trade_date="20260701",
+        )
+        _print_pick_entry(1, item, ctx)
+        out = capsys.readouterr().out
+        assert "少样本" not in out
 
 
 # ---------------------------------------------------------------------------

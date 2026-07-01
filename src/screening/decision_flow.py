@@ -252,6 +252,16 @@ def run_decision_flow(
         sample_all = int(best.get("bucket_sample_count", 0) or 0)
         sample_t30_mature = int(best.get("bucket_t30_mature_count", 0) or 0)
         sample_str = f"样本={sample_all}(T30熟={sample_t30_mature})"
+        # R141 Bug Hunt (R51/R52 family — coverage gap drain): c271 added the
+        # ``⚠少样本`` low-confidence marker to ``render_expected_returns_compact``
+        # in this SAME ``--decision-flow`` output, but this Top investable
+        # headline line (which reads the SAME ``win_rates.t30`` +
+        # ``bucket_t30_mature_count`` fields) was missed. A per-bucket n=1
+        # "100% winrate" renders confident-green in the headline while the
+        # expected-returns section below flags the same ticker yellow.
+        # Mirror the c271 guard: flag when 0 < mature < 5.
+        if 0 < sample_t30_mature < 5 and isinstance(t30_wr, (int, float)):
+            t30_wr_str = f"{t30_wr_str} {Fore.YELLOW}⚠少样本{Style.RESET_ALL}"
         # R111 cross-layer sibling (C143 learning item 4: a hardened computation
         # layer's consumer can silently violate its contract): investability.py:282
         # sets composite_verified=False on the R39 missing-composite fallback path

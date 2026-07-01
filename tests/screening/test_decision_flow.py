@@ -123,3 +123,80 @@ class TestDecisionFlow:
         captured = capsys.readouterr()
         assert result.get("error") == "corrupt_report"
         assert "损坏" in captured.out
+
+    @patch("src.screening.investability.rank_recommendations_by_investability")
+    def test_top_investable_flags_t30_low_confidence_when_mature_tiny(
+        self, mock_rank, tmp_path: Path, capsys
+    ) -> None:
+        """R141 Bug Hunt (R51/R52 family — coverage gap drain): c271 added the
+        ``⚠少样本`` low-confidence marker to ``render_expected_returns_compact``
+        in this SAME ``--decision-flow`` output, but the Top investable headline
+        line (which reads the SAME ``win_rates.t30`` + ``bucket_t30_mature_count``
+        fields) was missed. A per-bucket n=1 "100% winrate" renders
+        confident-green in the Top investable line while the expected-returns
+        section below it flags the same ticker yellow — inconsistent honesty
+        within a single command output.
+        """
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        today = _make_report("20260611", [_make_rec("000001", "A", 0.8)])
+        (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(today), encoding="utf-8")
+
+        mock_rank.return_value = [
+            {
+                "ticker": "000001",
+                "name": "A",
+                "score_b": 0.8,
+                "composite_score": 0.8,
+                "win_rates": {"t30": 1.0, "t5": 0.6, "t10": 0.6},
+                "expected_returns": {"t30": 0.03, "t5": 0.01, "t10": 0.012},
+                "bucket_sample_count": 4,
+                "bucket_t30_mature_count": 1,
+            }
+        ]
+
+        run_decision_flow(top_n=10, reports_dir=reports_dir)
+        captured = capsys.readouterr()
+        # Isolate the Top investable line (not the entire output which may
+        # contain ⚠少样本 from the c271-fixed compact expected-returns section).
+        top_investable_lines = [
+            line for line in captured.out.splitlines() if "Top investable" in line
+        ]
+        assert top_investable_lines, "Top investable line must be present"
+        assert "少样本" in top_investable_lines[0] or "⚠" in top_investable_lines[0], (
+            "--decision-flow Top investable line must flag T+30 winrate "
+            "low-confidence when mature sample < 5 — c271 fixed the compact "
+            "expected-returns renderer in the same output but missed the headline."
+        )
+
+    @patch("src.screening.investability.rank_recommendations_by_investability")
+    def test_top_investable_no_flag_when_mature_sufficient(
+        self, mock_rank, tmp_path: Path, capsys
+    ) -> None:
+        """R141 negative guard: sufficient mature sample → no low-confidence marker."""
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        today = _make_report("20260611", [_make_rec("000001", "A", 0.8)])
+        (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(today), encoding="utf-8")
+
+        mock_rank.return_value = [
+            {
+                "ticker": "000001",
+                "name": "A",
+                "score_b": 0.8,
+                "composite_score": 0.8,
+                "win_rates": {"t30": 0.6, "t5": 0.6, "t10": 0.6},
+                "expected_returns": {"t30": 0.03, "t5": 0.01, "t10": 0.012},
+                "bucket_sample_count": 50,
+                "bucket_t30_mature_count": 20,
+            }
+        ]
+
+        run_decision_flow(top_n=10, reports_dir=reports_dir)
+        captured = capsys.readouterr()
+        # Top investable line should be present but without the low-confidence marker.
+        top_investable_lines = [
+            line for line in captured.out.splitlines() if "Top investable" in line
+        ]
+        assert top_investable_lines, "Top investable line must be present"
+        assert "少样本" not in top_investable_lines[0]

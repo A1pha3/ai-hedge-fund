@@ -1373,6 +1373,19 @@ def _print_pick_entry(
 
     t30_str = f"{t30:+.2f}%" if t30 is not None else "—"
     t30_wr_str = f"{t30_wr:.0%}" if t30_wr is not None else "—"
+    # R141 Bug Hunt (R51/R52 family — coverage gap drain): c271 added the
+    # ``⚠少样本`` low-confidence marker to ``render_expected_returns_compact``
+    # and c277 to ``render_expected_returns`` (full table), but this per-pick
+    # row in the DEFAULT front door ``--top-picks`` was missed — it renders the
+    # SAME ``T+30胜率`` from the SAME ``win_rates.t30`` with the SAME
+    # ``bucket_t30_mature_count`` available (via ``_format_sample_count``), yet
+    # omits the flag. A per-bucket n=1 "100% winrate" renders confident-green
+    # here while the sibling expected-returns table flags it yellow. Mirror the
+    # c271/c277 guard: flag when 0 < mature < 5 so a green 100% on n=1 does not
+    # mislead users of a 赚钱工具.
+    _t30_mature_pick = int(item.get("bucket_t30_mature_count", 0) or 0)
+    if 0 < _t30_mature_pick < 5 and t30_wr is not None:
+        t30_wr_str = f"{t30_wr_str} {Fore.YELLOW}⚠少样本{Style.RESET_ALL}"
     # C222: render decision-horizon edge/winrate so the user can see the
     # BUY verdict's actual basis (max of T+5/T+10). When signal_horizon is
     # set (BUY/HOLD-with-short-signal), this row disambiguates "T+30=+0.3%"
