@@ -446,6 +446,25 @@ class TestHurstExponent:
         result = calculate_hurst_exponent(series)
         assert 0.0 <= result <= 1.0
 
+    def test_polyfit_linalg_error_returns_half(self, monkeypatch):
+        """LinAlgError IS a ValueError subclass — verify it's caught by the
+        existing except (ValueError, RuntimeWarning) and returns 0.5 fallback.
+
+        This test documents/locks the actual behavior: np.linalg.LinAlgError
+        inherits from ValueError, so the existing except clause DOES catch it.
+        The real dead-branch issue is RuntimeWarning (a Warning, not Exception)
+        which can never be caught — but that's a separate, lower-impact concern
+        since polyfit only *issues* warnings, never *raises* them.
+        """
+        series = pd.Series([float(i) for i in range(50)])
+
+        def _fake_polyfit(*args, **kwargs):
+            raise np.linalg.LinAlgError("SVD did not converge")
+
+        monkeypatch.setattr(np, "polyfit", _fake_polyfit)
+        result = calculate_hurst_exponent(series)
+        assert result == 0.5  # must return random-walk fallback, not crash
+
 
 # ---------------------------------------------------------------------------
 # weighted_signal_combination bounds

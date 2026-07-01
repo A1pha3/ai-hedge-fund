@@ -158,7 +158,7 @@ class MarketDataLoader:
                 return pd.DatetimeIndex([pd.Timestamp(d) for d in open_dates])
             # Empty result (no token / API failure) → fall back to business-day cal.
         except Exception as e:  # noqa: BLE001 — never block the backtest on calendar fetch
-            print(f"[Backtest] trade_cal 获取失败，回退到 freq=B 工作日历: {e}")
+            logger.warning("trade_cal 获取失败，回退到 freq=B 工作日历: %s", e)
         return pd.date_range(self._start_date, self._end_date, freq="B")
 
     # ------------------------------------------------------------------
