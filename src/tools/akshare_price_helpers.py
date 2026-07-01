@@ -1,8 +1,17 @@
 from collections.abc import Callable
+import logging
 
 import pandas as pd
 
 from src.data.models import Price
+
+# NS-17 / BH-017 family sibling drain: 本模块持有 A 股多级价格回退链
+# (execute_robust_price_request: AKShare→新浪→Tushare/BaoStock→mock;
+# load_prices_with_fallback: AKShare→Tencent), 是 get_prices_robust /
+# akshare_api.get_prices 的核心价格获取路径。此前无 logger, 8 处 print() 在
+# cron/launchd 上下文里不入结构化日志: 某级 tier 静默失败时运维无法定位"为何
+# 最终拿到 mock/空数据"。
+logger = logging.getLogger(__name__)
 
 
 def hydrate_cached_prices(cached_data: list[dict]) -> list[Price]:
@@ -139,28 +148,28 @@ def execute_robust_price_request(
     errors: list[str] = []
 
     try:
-        print("[1/4] 尝试 AKShare...")
+        logger.debug("[1/4] 尝试 AKShare...")
         return get_prices_fn(ticker, start_date, end_date, period, False)
     except Exception as error:
         errors.append(f"AKShare: {error}")
-        print(f"  ✗ 失败: {error}")
+        logger.warning("  ✗ AKShare 失败: %s", error)
 
     try:
-        print("[2/4] 尝试新浪财经历史数据...")
+        logger.debug("[2/4] 尝试新浪财经历史数据...")
         return get_sina_historical_data_fn(ticker, start_date, end_date, period)
     except Exception as error:
         errors.append(f"新浪财经: {error}")
-        print(f"  ✗ 失败: {error}")
+        logger.warning("  ✗ 新浪财经失败: %s", error)
 
     try:
-        print("[3/4] 尝试 Tushare/BaoStock...")
+        logger.debug("[3/4] 尝试 Tushare/BaoStock...")
         return get_prices_multi_source_fn(ticker, start_date, end_date, period)
     except Exception as error:
         errors.append(f"多数据源: {error}")
-        print(f"  ✗ 失败: {error}")
+        logger.warning("  ✗ 多数据源失败: %s", error)
 
     if use_mock_on_fail:
-        print("[4/4] 使用模拟数据...")
+        logger.warning("[4/4] 所有真实数据源失败, 回退模拟数据")
         return get_mock_prices_fn(ticker, start_date, end_date)
 
     raise error_factory(f"所有数据源都失败: {'; '.join(errors)}")
@@ -187,7 +196,7 @@ def load_prices_with_fallback(
             return cache_prices_fn(cache_key, akshare_prices)
     except Exception as error:
         akshare_error = error
-        print(f"AKShare 获取数据失败，尝试腾讯接口: {error}")
+        logger.warning("AKShare 获取数据失败，尝试腾讯接口: %s", error)
 
     try:
         prices = fetch_prices_from_tencent_fn(ticker, start_date, end_date)
