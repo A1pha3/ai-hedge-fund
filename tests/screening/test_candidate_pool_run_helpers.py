@@ -6,6 +6,7 @@ finalization path. All collaborators are injected, so tests use plain stubs.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -86,7 +87,7 @@ def test_try_load_both_snapshots_exist_returns_shadow_payload(tmp_path: Path, ca
     assert capfd.readouterr().out.count("从缓存加载") == 1
 
 
-def test_try_load_both_snapshots_load_raises_returns_none(tmp_path: Path, capfd: pytest.CaptureFixture) -> None:
+def test_try_load_both_snapshots_load_raises_returns_none(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     shadow_path = tmp_path / "shadow.json"
     shadow_path.write_text("{}")
     main_path = tmp_path / "main.json"
@@ -95,16 +96,22 @@ def test_try_load_both_snapshots_load_raises_returns_none(tmp_path: Path, capfd:
     def _load_shadow(path):
         raise RuntimeError("boom")
 
-    result = _try_load_cached_candidate_pool_with_shadow(
-        **_cache_load_kwargs(snapshot_path=main_path, shadow_snapshot_path=shadow_path),
-        load_candidate_pool_shadow_snapshot_fn=_load_shadow,
-        write_candidate_pool_snapshot_fn=lambda *a, **k: None,
-        load_candidate_pool_snapshot_fn=lambda path: [],
-        build_shadow_summary_from_selected_candidates_fn=lambda *a, **k: {},
-        write_candidate_pool_shadow_snapshot_fn=lambda *a, **k: None,
-    )
+    with caplog.at_level(logging.WARNING, logger="src.screening.candidate_pool_run_helpers"):
+        result = _try_load_cached_candidate_pool_with_shadow(
+            **_cache_load_kwargs(snapshot_path=main_path, shadow_snapshot_path=shadow_path),
+            load_candidate_pool_shadow_snapshot_fn=_load_shadow,
+            write_candidate_pool_snapshot_fn=lambda *a, **k: None,
+            load_candidate_pool_snapshot_fn=lambda path: [],
+            build_shadow_summary_from_selected_candidates_fn=lambda *a, **k: {},
+            write_candidate_pool_shadow_snapshot_fn=lambda *a, **k: None,
+        )
     assert result is None
-    assert "缓存读取失败" in capfd.readouterr().out
+    # NS-17 / BH-017 family: silent fallback must emit via structured logging,
+    # not print(), so cron/launchd operators can diagnose cache corruption.
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, f"expected 1 WARNING, got {len(warnings)}"
+    assert "shadow" in warnings[0].message
+    assert "缓存读取失败" in warnings[0].message
 
 
 def test_try_load_main_only_no_focus_backfills_empty_shadow(tmp_path: Path, capfd: pytest.CaptureFixture) -> None:
@@ -190,23 +197,27 @@ def test_try_load_use_cache_false_returns_none(tmp_path: Path) -> None:
     assert result is None
 
 
-def test_try_load_main_only_read_raises_no_crash(tmp_path: Path, capfd: pytest.CaptureFixture) -> None:
+def test_try_load_main_only_read_raises_no_crash(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     main_path = tmp_path / "main.json"
     main_path.write_text("{}")
 
     def _load_main(path):
         raise RuntimeError("corrupt")
 
-    result = _try_load_cached_candidate_pool_with_shadow(
-        **_cache_load_kwargs(snapshot_path=main_path, shadow_snapshot_path=tmp_path / "nope.json", focus_signature=""),
-        load_candidate_pool_shadow_snapshot_fn=lambda path: {},
-        write_candidate_pool_snapshot_fn=lambda *a, **k: None,
-        load_candidate_pool_snapshot_fn=_load_main,
-        build_shadow_summary_from_selected_candidates_fn=lambda *a, **k: {},
-        write_candidate_pool_shadow_snapshot_fn=lambda *a, **k: None,
-    )
+    with caplog.at_level(logging.WARNING, logger="src.screening.candidate_pool_run_helpers"):
+        result = _try_load_cached_candidate_pool_with_shadow(
+            **_cache_load_kwargs(snapshot_path=main_path, shadow_snapshot_path=tmp_path / "nope.json", focus_signature=""),
+            load_candidate_pool_shadow_snapshot_fn=lambda path: {},
+            write_candidate_pool_snapshot_fn=lambda *a, **k: None,
+            load_candidate_pool_snapshot_fn=_load_main,
+            build_shadow_summary_from_selected_candidates_fn=lambda *a, **k: {},
+            write_candidate_pool_shadow_snapshot_fn=lambda *a, **k: None,
+        )
     assert result is None
-    assert "主池缓存读取失败" in capfd.readouterr().out
+    # NS-17 / BH-017 family: main-pool cache read failure must reach logs.
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, f"expected 1 WARNING, got {len(warnings)}"
+    assert "主池缓存读取失败" in warnings[0].message
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +356,7 @@ def test_build_recomputes_when_no_cache(tmp_path: Path) -> None:
     assert result == (selected, shadow, {"shadow_recall_complete": True, "computed": True, "focus_filter_diagnostics": []})
 
 
-def test_build_recompute_failure_falls_back_to_cached_main(tmp_path: Path, capfd: pytest.CaptureFixture) -> None:
+def test_build_recompute_failure_falls_back_to_cached_main(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """When recompute returns empty candidates but a cached main exists, keep the cache.
 
     Requires a non-empty focus_signature so _try_load skips the main-cache
@@ -359,26 +370,30 @@ def test_build_recompute_failure_falls_back_to_cached_main(tmp_path: Path, capfd
     def _compute(trade_date, *, cooldown_tickers):
         return [], [], []  # recompute failure
 
-    result = build_candidate_pool_with_shadow(
-        trade_date="20260613",
-        use_cache=True,
-        cooldown_tickers=None,
-        snapshot_path=main_path,
-        legacy_snapshot_path=tmp_path / "legacy.json",
-        shadow_snapshot_path=tmp_path / "shadow.json",  # does NOT exist
-        max_candidate_pool_size=10,
-        shadow_focus_signature_fn=lambda: "focus_sig",  # non-empty → skip backfill
-        load_candidate_pool_shadow_snapshot_fn=lambda path: {},
-        write_candidate_pool_snapshot_fn=lambda *a, **k: None,
-        load_candidate_pool_snapshot_fn=lambda path: cached_cands,
-        build_shadow_summary_from_selected_candidates_fn=lambda cands, *, pool_size: {"computed": True},
-        write_candidate_pool_shadow_snapshot_fn=lambda *a, **k: None,
-        compute_candidate_pool_candidates_fn=_compute,
-        build_shadow_candidate_pool_payload_fn=lambda *a, **k: ([], [], {}),
-        finalize_focus_filter_diagnostics_fn=lambda *a, **k: [],
-    )
+    with caplog.at_level(logging.WARNING, logger="src.screening.candidate_pool_run_helpers"):
+        result = build_candidate_pool_with_shadow(
+            trade_date="20260613",
+            use_cache=True,
+            cooldown_tickers=None,
+            snapshot_path=main_path,
+            legacy_snapshot_path=tmp_path / "legacy.json",
+            shadow_snapshot_path=tmp_path / "shadow.json",  # does NOT exist
+            max_candidate_pool_size=10,
+            shadow_focus_signature_fn=lambda: "focus_sig",  # non-empty → skip backfill
+            load_candidate_pool_shadow_snapshot_fn=lambda path: {},
+            write_candidate_pool_snapshot_fn=lambda *a, **k: None,
+            load_candidate_pool_snapshot_fn=lambda path: cached_cands,
+            build_shadow_summary_from_selected_candidates_fn=lambda cands, *, pool_size: {"computed": True},
+            write_candidate_pool_shadow_snapshot_fn=lambda *a, **k: None,
+            compute_candidate_pool_candidates_fn=_compute,
+            build_shadow_candidate_pool_payload_fn=lambda *a, **k: ([], [], {}),
+            finalize_focus_filter_diagnostics_fn=lambda *a, **k: [],
+        )
     selected, shadow, summary = result
     assert selected == cached_cands
     assert shadow == []
     assert summary["shadow_recall_status"] == "selected_cache_fallback_after_recompute_failure"
-    assert "候选池重算失败" in capfd.readouterr().out
+    # NS-17 / BH-017 family: recompute-failure fallback must reach logs.
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, f"expected 1 WARNING, got {len(warnings)}"
+    assert "候选池重算失败" in warnings[0].message

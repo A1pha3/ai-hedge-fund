@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.screening.models import CandidateStock
+
+logger = logging.getLogger(__name__)
 
 
 def _try_load_cached_candidate_pool_with_shadow(
@@ -35,7 +38,7 @@ def _try_load_cached_candidate_pool_with_shadow(
             )
             return shadow_payload["selected_candidates"], shadow_payload["shadow_candidates"], shadow_payload["shadow_summary"], cached_selected_candidates
         except Exception as e:
-            print(f"[CandidatePool] shadow 缓存读取失败，重新计算: {e}")
+            logger.warning("[CandidatePool] shadow 缓存读取失败，重新计算: %s", e, exc_info=True)
             return None
 
     if use_cache and snapshot_path.exists():
@@ -59,7 +62,7 @@ def _try_load_cached_candidate_pool_with_shadow(
                 )
                 return cached_selected_candidates, [], shadow_summary, cached_selected_candidates
         except Exception as e:
-            print(f"[CandidatePool] 主池缓存读取失败，无法作为 shadow 补算回退: {e}")
+            logger.warning("[CandidatePool] 主池缓存读取失败，无法作为 shadow 补算回退: %s", e, exc_info=True)
 
     return None if not cached_selected_candidates else ([], [], {}, cached_selected_candidates)
 
@@ -164,8 +167,10 @@ def build_candidate_pool_with_shadow(
             shadow_summary=shadow_summary,
         )
         write_candidate_pool_snapshot_fn(legacy_snapshot_path, cached_selected_candidates)
-        print(
-            f"[CandidatePool] 候选池重算失败，保留已有主池缓存并回填空 shadow 快照 ({trade_date}, top{max_candidate_pool_size})"
+        logger.warning(
+            "[CandidatePool] 候选池重算失败，保留已有主池缓存并回填空 shadow 快照 (%s, top%s)",
+            trade_date,
+            max_candidate_pool_size,
         )
         return cached_selected_candidates, [], shadow_summary
 
