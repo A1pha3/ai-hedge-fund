@@ -132,3 +132,50 @@ def _make_repo_root_path_shim(tmp_path: Path):
             return _Parents()
 
     return _ShimmedPath
+
+
+class TestSaveJsonReportAtomicity:
+    """R93 same-family drain (R88 corrupt-report CRASH vector): ``_save_json_report``
+    must write atomically so a crash mid-serialization leaves the previous file intact.
+
+    c292 (flock) prevents CONCURRENT-write corruption of ``auto_screening_{date}.json``;
+    atomic write prevents CRASH-mid-write corruption (Ctrl-C / OOM / ``kill`` during
+    ``json.dump``). Together they fully guard the R88 corrupt-report root cause from
+    both vectors. The auto_screening report is the must-win daily output consumed by
+    ``--top-picks`` / ``--decision-flow`` / ``--signal-consistency`` / composite scoring.
+    """
+
+    def test_crash_mid_write_preserves_prior_report(self, tmp_path: Path, monkeypatch) -> None:
+        """A crash during json.dump must leave the existing report intact, not truncated."""
+        monkeypatch.setattr("src.main.Path", _make_repo_root_path_shim(tmp_path))
+        prior = {"ticker": "PRIOR", "score_b": 0.9, "version": "v1"}
+        _save_json_report("atomic_test.json", prior)
+
+        # Simulate a crash mid-serialization (Ctrl-C / OOM after the write started).
+        from unittest.mock import patch
+
+        with patch("src.main.json.dump", side_effect=RuntimeError("simulated crash mid-write")):
+            with pytest.raises(RuntimeError, match="simulated crash"):
+                _save_json_report("atomic_test.json", {"ticker": "NEW", "score_b": 0.5})
+
+        report_dir = tmp_path / "data" / "reports"
+        raw = (report_dir / "atomic_test.json").read_text(encoding="utf-8")
+        parsed = json.loads(raw)  # must parse cleanly (no half-written truncated file)
+        assert parsed == prior, (
+            "prior report must survive a crashed write — non-atomic open('w') truncates "
+            "immediately, so a crash mid-dump leaves the must-win report corrupt (R88 root cause)"
+        )
+
+    def test_crashed_write_leaves_no_temp_residue(self, tmp_path: Path, monkeypatch) -> None:
+        """A crashed atomic write must clean up its temp file (no .tmp leaked to reports/)."""
+        monkeypatch.setattr("src.main.Path", _make_repo_root_path_shim(tmp_path))
+        from unittest.mock import patch
+
+        _save_json_report("cleanup_test.json", {"v": 1})
+        with patch("src.main.json.dump", side_effect=RuntimeError("boom")):
+            with pytest.raises(RuntimeError):
+                _save_json_report("cleanup_test.json", {"v": 2})
+
+        report_dir = tmp_path / "data" / "reports"
+        leftover = list(report_dir.glob(".*.tmp")) + list(report_dir.glob("*.tmp"))
+        assert leftover == [], f"temp file leaked after crashed write: {[str(p) for p in leftover]}"

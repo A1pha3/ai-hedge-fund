@@ -4,6 +4,7 @@ import json
 import math
 import os
 import sys
+import tempfile
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -380,8 +381,23 @@ def _save_json_report(filename: str, payload: dict) -> Path:
     # BH-012: sanitize before write + allow_nan=False as a hard guard so a
     # non-finite float can never be persisted as a literal NaN/Infinity token.
     sanitized = _sanitize_nonfinite(payload)
-    with open(output_path, "w", encoding="utf-8") as file:
-        json.dump(sanitized, file, ensure_ascii=False, indent=2, default=str, allow_nan=False)
+    # R93-style atomic write: serialize to a same-dir temp file then os.replace
+    # onto the final path. A crash (Ctrl-C / OOM / kill) during json.dump leaves
+    # the previous report intact instead of a truncated/corrupt half-file — the
+    # R88 corrupt-report CRASH vector. Complements c292 (flock) which guards the
+    # CONCURRENT-write vector. Together: full proactive guard for the R88 family.
+    fd, tmp_name = tempfile.mkstemp(prefix="." + filename + ".", suffix=".tmp", dir=str(report_dir))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            json.dump(sanitized, file, ensure_ascii=False, indent=2, default=str, allow_nan=False)
+        os.replace(tmp_name, output_path)
+    except BaseException:
+        # Never leave a half-written temp behind; the prior report stays intact.
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
     return output_path
 
 
