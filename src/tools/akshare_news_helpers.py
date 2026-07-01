@@ -1,8 +1,12 @@
+import logging
 import re
 
 import pandas as pd
 
 from src.data.models import CompanyNews
+
+# NS-17 / BH-017 family sibling drain: 新闻去重计数此前用 print, 在 cron 上下文不可见。
+logger = logging.getLogger(__name__)
 
 
 def normalize_news_symbol(ticker: str) -> str:
@@ -140,7 +144,7 @@ def deduplicate_news(articles: list, similarity_threshold: float = 0.5) -> list:
 
     dedup_count = len(articles) - len(unique_articles)
     if dedup_count > 0:
-        print(f"[AKShare] 新闻去重：移除 {dedup_count} 篇重复报道（同一事件不同来源），保留 {len(unique_articles)} 篇")
+        logger.info("[AKShare] 新闻去重：移除 %d 篇重复报道（同一事件不同来源），保留 %d 篇", dedup_count, len(unique_articles))
 
     return unique_articles
 

@@ -1,6 +1,11 @@
+import logging
 import time
 
 import pandas as pd
+
+# NS-17 / BH-017 family sibling drain: 申万行业成分映射用于 candidate-pool 行业聚类;
+# 此前无 logger, 行业成分拉取失败静默跳过 → 映射残缺, 运维无面包屑。
+logger = logging.getLogger(__name__)
 
 
 def extract_open_trade_dates(df: pd.DataFrame | None) -> list[str]:
@@ -51,6 +56,6 @@ def build_sw_industry_mapping(fetch_dataframe, pro, index_df: pd.DataFrame) -> d
                 if pd.isna(member_row.get("out_date")):
                     result[str(member_row["con_code"])] = industry_name
         except Exception as e:
-            print(f"[Tushare] 获取行业 {industry_name}({index_code}) 成分失败: {e}")
+            logger.warning("[Tushare] 获取行业 %s(%s) 成分失败: %s", industry_name, index_code, e, exc_info=True)
             continue
     return result

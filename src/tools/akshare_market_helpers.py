@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 import pandas as pd
+
+# NS-17 / BH-017 family sibling drain: 可选市场帧 (index/northbound) 拉取失败此前用
+# print, 在 cron 上下文不可见, 运维无法定位"为何市场数据缺失"。
+logger = logging.getLogger(__name__)
 
 
 def load_optional_market_dataframe(
@@ -14,7 +19,7 @@ def load_optional_market_dataframe(
     transform_fn: Callable[[pd.DataFrame], pd.DataFrame] | None = None,
 ) -> pd.DataFrame | None:
     if not is_available:
-        print(unavailable_message)
+        logger.warning("%s", unavailable_message)
         return None
 
     try:
@@ -27,5 +32,5 @@ def load_optional_market_dataframe(
                 return None
         return df
     except Exception as error:
-        print(f"{error_message}: {error}")
+        logger.warning("%s: %s", error_message, error, exc_info=True)
         return None
