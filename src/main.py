@@ -1,4 +1,5 @@
 import argparse
+import fcntl
 import json
 import math
 import os
@@ -896,6 +897,39 @@ def _rebuild_cli_objects(report_payload: dict):
     return top_results, market_state, industry_signals, decay_map
 
 
+_AUTO_PIPELINE_LOCK_PATH = Path(__file__).resolve().parents[1] / "logs" / ".auto_pipeline.lock"
+
+
+def _try_acquire_pipeline_lock(lock_path: Path) -> int | None:
+    """Try to acquire an exclusive advisory lock on ``lock_path`` (non-blocking).
+
+    Concurrency guard for the ``--auto`` pipeline. Overlapping invocations
+    (cron launchd + manual + ``daily_accumulate`` subprocess + direct call)
+    write the same ``auto_screening_{trade_date}.json`` (fixed-path → partial
+    write / last-writer-wins — the R88/R104 corrupt-report root cause) and race
+    on ``tracking_history.json`` read-modify-write. The codebase has reactive
+    corrupt-report armor (R88 drain across composite_score /
+    data_quality_audit / candidate_pool_persistence_helpers / signal_consistency)
+    but this is the first PROACTIVE mutual exclusion — it treats the root cause,
+    the reactive guards treat the symptom.
+
+    ``fcntl.flock`` is advisory and auto-releases when the holding process exits
+    (even on crash / ``kill -9``), so there is no stale-lock cleanup.
+
+    Returns the lock fd on success (caller keeps it open for the critical
+    section; released at fd close / process exit), or ``None`` if another
+    ``--auto`` run currently holds the lock.
+    """
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (BlockingIOError, OSError):
+        os.close(fd)
+        return None
+    return fd
+
+
 def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
     """一键跑全流程：全市场筛选 -> 因子评分 -> 信号融合 -> Top N 推荐。
 
@@ -913,6 +947,23 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         退出码（0 = 成功）
     """
     from colorama import Fore, Style
+
+    # Concurrency guard (R88/R104 corrupt-report root cause): serialize overlapping
+    # --auto invocations (cron launchd + manual + daily_accumulate subprocess + direct
+    # call) so they cannot corrupt auto_screening_{trade_date}.json or race on
+    # tracking_history.json. flock auto-releases at process exit (crash-safe).
+    _auto_lock_fd = _try_acquire_pipeline_lock(_AUTO_PIPELINE_LOCK_PATH)
+    if _auto_lock_fd is None:
+        print(
+            f"\n{Fore.YELLOW}[Auto] 另一个 --auto 实例正在运行 (lock {_AUTO_PIPELINE_LOCK_PATH} 已占用)；"
+            f"跳过本次以避免 auto_screening 报告 / tracking_history 并发写入损坏。{Style.RESET_ALL}\n"
+        )
+        logger.warning(
+            "--auto skipped: another instance holds the pipeline lock (%s) — "
+            "concurrent run would corrupt auto_screening report / tracking_history",
+            _AUTO_PIPELINE_LOCK_PATH,
+        )
+        return 0
 
     progress.start()
     try:
