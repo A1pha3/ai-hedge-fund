@@ -287,6 +287,59 @@ class TestRenderExpectedReturns:
         # T+30 win-rate header must appear.
         assert "T+30胜率" in text or "T30胜率" in text
 
+    @patch("src.screening.expected_return._load_tracking_records")
+    @patch("src.screening.expected_return.compute_calibration")
+    def test_render_full_flags_t30_winrate_on_tiny_mature_sample(self, mock_calib: object, mock_records: object) -> None:
+        """R140 Bug Hunt (R51/R52 family — same-function coverage gap): c271 added the
+        ``⚠少样本`` low-confidence marker to ``render_expected_returns_compact`` (the
+        --decision-flow view) but NOT to ``render_expected_returns`` (the full
+        --expected-returns table) — even though both render the SAME ``T+30胜率`` via
+        the SAME ``_fmt_winrate(item.win_rates.get("t30"))`` and both have
+        ``bucket_t30_mature_count`` available (the full table even DISPLAYS it as
+        ``T30熟``). So a per-bucket n=1 "100% winrate" renders confident-green in
+        ``--expected-returns`` but flagged-yellow in ``--decision-flow`` — c271's
+        honesty fix is inconsistent across the two surfaces.
+
+        This guard asserts the full renderer also flags tiny-mature-sample T+30
+        winrates, matching the compact renderer's c271 behavior.
+        """
+        mock_records.return_value = [{"dummy": True}]
+        calib = CalibrationSummary(
+            lookback_days=60,
+            total_samples=4,
+            total_t30_samples=1,
+            buckets=[_make_bucket("高 (>0.8)", 0.8, 1.01, n=4, t30_mature=1, t30_wr=1.0)],
+        )
+        mock_calib.return_value = calib
+        recs = [_make_rec("000001", 0.85)]
+        report = compute_expected_returns(recommendations=recs, lookback_days=60)
+        text = render_expected_returns(report)
+        assert "T+30胜率" in text or "T30胜率" in text
+        assert "少" in text or "⚠" in text or "不足" in text, (
+            "render_expected_returns (full --expected-returns table) must flag T+30 winrate "
+            "low-confidence when mature sample < 5 — c271 added this to the compact renderer "
+            "but missed the full renderer (same _fmt_winrate, same bucket_t30_mature_count). "
+            "A green 100% on n=1 misleads users of a 赚钱工具."
+        )
+
+    @patch("src.screening.expected_return._load_tracking_records")
+    @patch("src.screening.expected_return.compute_calibration")
+    def test_render_full_no_flag_when_mature_sample_sufficient(self, mock_calib: object, mock_records: object) -> None:
+        """R140 negative guard (mirror of c271's compact guard): mature sample >= 5 →
+        the full renderer must NOT emit the low-confidence marker."""
+        mock_records.return_value = [{"dummy": True}]
+        calib = CalibrationSummary(
+            lookback_days=60,
+            total_samples=50,
+            total_t30_samples=10,
+            buckets=[_make_bucket("高 (>0.8)", 0.8, 1.01, n=50, t30_mature=10, t30_wr=0.60)],
+        )
+        mock_calib.return_value = calib
+        recs = [_make_rec("000001", 0.85)]
+        report = compute_expected_returns(recommendations=recs, lookback_days=60)
+        text = render_expected_returns(report)
+        assert "少样本" not in text
+
 
 class TestRenderCompact:
     def test_empty(self) -> None:

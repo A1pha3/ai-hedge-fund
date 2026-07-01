@@ -385,6 +385,17 @@ def render_expected_returns(report: ExpectedReturnReport) -> str:
     for item in report.items:
         er = item.expected_returns
         wr_t30 = _fmt_winrate(item.win_rates.get("t30"))
+        # R140 Bug Hunt (R51/R52 family — same-function coverage gap): c271 added the
+        # ``⚠少样本`` low-confidence marker to ``render_expected_returns_compact`` (the
+        # --decision-flow view) but missed this full --expected-returns table, even
+        # though both render the SAME T+30 winrate via the SAME ``_fmt_winrate`` and
+        # both have ``bucket_t30_mature_count`` available (the full table even displays
+        # it as ``T30熟``). A per-bucket n=1 "100% winrate" rendered confident-green
+        # here but flagged-yellow in --decision-flow — c271's honesty fix was
+        # inconsistent across the two surfaces. Mirror the compact renderer's c271
+        # guard: flag when 0 < mature < 5 so a green 100% on n=1 does not mislead.
+        if 0 < item.bucket_t30_mature_count < 5:
+            wr_t30 = f"{wr_t30} {Fore.YELLOW}⚠少样本{Style.RESET_ALL}"
         row = (
             f"  {item.ticker:<8} {item.score_b:>6.3f} {item.bucket_label:>10} {item.bucket_sample_count:>4} {item.bucket_t30_mature_count:>5}"
             f"  {_fmt_return(er.get('t1')):>18}"
