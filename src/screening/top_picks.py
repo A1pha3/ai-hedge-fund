@@ -1098,13 +1098,21 @@ def _enrich_with_consecutive_bonus(recommendations: list[dict], report_dir: Path
     return enriched
 
 
-def _apply_consecutive_bonus_and_resort(ranked: list[dict]) -> list[dict]:
+def _apply_consecutive_bonus_and_resort(ranked: list[dict], *, profit_aware: bool = False) -> list[dict]:
     """Fold the consecutive-recommendation bonus into composite_score and re-sort.
 
     Extracted from :func:`_build_ranked_candidates`. The ranker produces an
     initial ordering; consecutive-day bonus (R4) is then added on top of each
     item's composite_score and the list re-sorted descending so bonus-boosted
     picks bubble up. Mutates ``ranked`` in place and returns it.
+
+    R139 Bug Hunt: ``profit_aware`` (C273) must thread through here — the prior
+    impl always re-sorted on ``composite_score`` primary, silently reverting the
+    ranker's winrate re-keying and making ``--profit-aware`` a no-op in the wired
+    ``run_top_picks`` path. When ``profit_aware=True``, the re-sort keys on the
+    empirical bucket winrate (max T+5/T+10, BUY-gate-aligned) primary, matching
+    ``rank_recommendations_by_investability``'s profit-aware key so the ordering
+    survives the bonus fold-in. Default ``profit_aware=False`` is unchanged.
     """
     for recommendation in ranked:
         # NS-13 family drain: NaN bonus/score 经 `float(x or 0.0)` 仍 truthy 不兜底,
@@ -1143,6 +1151,24 @@ def _apply_consecutive_bonus_and_resort(ranked: list[dict]) -> list[dict]:
     # the initial ranking, this function re-sorts after applying consecutive_bonus;
     # diverging tie-breakers would invert the order of bonus-equal picks. T+30
     # retained only as long-term invalidation signal (not a ranking tie-breaker).
+    #
+    # R139 Bug Hunt: when ``profit_aware=True`` (C273), key on empirical bucket
+    # winrate primary — matching ``rank_recommendations_by_investability``'s
+    # profit-aware key — so the winrate re-keying survives this bonus re-sort.
+    # The prior impl always used composite_score primary here, silently reverting
+    # the ranker's profit-aware ordering and making ``--profit-aware`` a no-op.
+    if profit_aware:
+        ranked.sort(
+            key=lambda recommendation: (
+                -_safe_metric(_max_short_horizon_metric(recommendation.get("win_rates")), float("-inf")),
+                -_safe_metric(_max_short_horizon_metric(recommendation.get("expected_returns")), float("-inf")),
+                -_safe_metric(recommendation.get("bucket_sample_count"), 0.0),
+                -_safe_float_value(recommendation.get("composite_score", 0.0), 0.0),
+                -_safe_float_value(recommendation.get("score_b", 0.0), 0.0),
+                str(recommendation.get("ticker") or ""),
+            ),
+        )
+        return ranked
     ranked.sort(
         key=lambda recommendation: (
             -_safe_float_value(recommendation.get("composite_score", 0.0), 0.0),
@@ -1183,7 +1209,7 @@ def _build_ranked_candidates(
         expected,
         profit_aware=profit_aware,
     )
-    return _apply_consecutive_bonus_and_resort(ranked)
+    return _apply_consecutive_bonus_and_resort(ranked, profit_aware=profit_aware)
 
 
 def _load_recommendation_context(

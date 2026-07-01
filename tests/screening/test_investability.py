@@ -1081,3 +1081,62 @@ def test_profit_aware_default_is_off() -> None:
     sig = inspect.signature(rank_recommendations_by_investability)
     assert "profit_aware" in sig.parameters
     assert sig.parameters["profit_aware"].default is False
+
+
+def test_profit_aware_survives_consecutive_bonus_resort() -> None:
+    """R139 Bug Hunt: the profit-aware winrate ordering must survive the
+    ``_apply_consecutive_bonus_and_resort`` step that ``_build_ranked_candidates``
+    runs AFTER the ranker. c273's unit test (test_profit_aware_ranks_by_empirical_
+    winrate_not_composite) proves the RANKER re-keys on winrate, but the WIRED
+    path (``run_top_picks`` → ``_build_ranked_candidates`` → ranker →
+    ``_apply_consecutive_bonus_and_resort``) always calls the resort, which
+    re-sorts on ``composite_score`` primary — silently reverting the profit-aware
+    ordering. The ``--profit-aware`` flag was a no-op in the integrated path
+    despite the commit claiming "backtested 47%→62%".
+
+    This guard runs the actual wired sequence (ranker THEN resort) and asserts
+    the profit-aware winrate ordering is preserved end-to-end. Without passing
+    ``profit_aware`` through to the resort (or skipping the composite re-sort in
+    profit-aware mode), the low-composite/high-winrate pick (BBB) must STILL rank
+    above the high-composite/low-winrate pick (AAA) after the resort.
+    """
+    from src.screening.top_picks import _apply_consecutive_bonus_and_resort
+
+    recommendations = [
+        {"ticker": "AAA", "name": "high-score low-winrate", "score_b": 0.80},
+        {"ticker": "BBB", "name": "low-score high-winrate", "score_b": 0.30},
+    ]
+    composite = CompositeReport(
+        trade_date="20260612",
+        items=[
+            CompositeEntry(ticker="AAA", name="high-score low-winrate", base_score=0.80, composite_score=0.85),
+            CompositeEntry(ticker="BBB", name="low-score high-winrate", base_score=0.30, composite_score=0.25),
+        ],
+    )
+    expected = ExpectedReturnReport(
+        trade_date="20260612", lookback_days=60, total_samples=100,
+        items=[
+            ExpectedReturn(
+                ticker="AAA", score_b=0.80, bucket_label="高 (>0.8)", bucket_sample_count=40,
+                expected_returns={"t5": 1.0, "t10": 1.0}, win_rates={"t5": 0.42, "t10": 0.42},
+            ),
+            ExpectedReturn(
+                ticker="BBB", score_b=0.30, bucket_label="低 (<0.3)", bucket_sample_count=50,
+                expected_returns={"t5": 3.0, "t10": 3.0}, win_rates={"t5": 0.62, "t10": 0.62},
+            ),
+        ],
+    )
+    # Step 1: ranker alone (what c273's unit test checks) — profit-aware works here
+    ranked_pa = rank_recommendations_by_investability(recommendations, composite, expected, profit_aware=True)
+    assert [r["ticker"] for r in ranked_pa] == ["BBB", "AAA"], "ranker profit-aware ordering (c273 unit test)"
+
+    # Step 2: the wired path applies _apply_consecutive_bonus_and_resort AFTER the ranker.
+    # This must NOT revert the profit-aware winrate ordering back to composite-score order.
+    # (profit_aware threads through _build_ranked_candidates → resort, mirroring the wired path.)
+    ranked_after_resort = _apply_consecutive_bonus_and_resort([dict(r) for r in ranked_pa], profit_aware=True)
+    assert [r["ticker"] for r in ranked_after_resort] == ["BBB", "AAA"], (
+        "profit-aware ordering was reverted by _apply_consecutive_bonus_and_resort — the "
+        "--profit-aware flag is a no-op in the wired run_top_picks path (the resort re-sorts "
+        "on composite_score primary, undoing the ranker's winrate re-keying). c273's claimed "
+        "47%→62% improvement is not delivered."
+    )
