@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -108,7 +110,24 @@ def _load_json(path: str | Path) -> dict[str, Any]:
 
 def _write_json(path: str | Path, payload: dict[str, Any]) -> None:
     resolved = Path(path).expanduser().resolve()
-    resolved.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    # R101 read-side sibling (R88 corrupt-sidecar CRASH vector): atomic write so a
+    # crash (run interruption / OOM / kill) during serialization cannot leave a
+    # truncated sidecar that the R101 _load_json guard would have to degrade.
+    # Same tempfile + os.replace pattern as R93 / c293. Prior artifact stays intact
+    # until the full new payload is committed via the atomic rename.
+    fd, tmp_name = tempfile.mkstemp(prefix="." + resolved.name + ".", suffix=".tmp", dir=str(resolved.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+        os.replace(tmp_name, resolved)
+    except BaseException:
+        # Never leave a half-written temp behind; the prior sidecar stays intact.
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def _sync_text_artifact_alias(source_path: str | Path, alias_path: str | Path) -> str:

@@ -134,3 +134,67 @@ def test_r101_load_selection_replay_input_corrupt_sibling_does_not_crash(
         out = _load_selection_replay_input(snap)
     assert out == {}
     assert any("损坏" in rec.message for rec in caplog.records)
+
+
+class TestWriteJsonAtomicity:
+    """R101 read-side sibling (R88 corrupt-sidecar CRASH vector): production
+    ``_write_json`` must write atomically so a crash mid-write leaves the prior
+    sidecar intact.
+
+    R101 made ``_load_json`` tolerate corrupt sidecar JSON ("run interruption /
+    partial write"); atomic write prevents ``_write_json`` from creating them in
+    the first place — same read/write completion pattern as c293 (R93 pair).
+    """
+
+    def test_crash_during_write_never_leaves_final_path_truncated(self, tmp_path: Path, monkeypatch) -> None:
+        """A crashed write must never leave the final sidecar path truncated/corrupt.
+
+        Non-atomic ``write_text`` truncates on ``open(mode='w')`` then writes; a crash
+        during the write (OOM / disk-full / kill) leaves an empty or half-written file.
+        Atomic write (tempfile + ``os.replace``) never truncates the final path until
+        the full payload is committed, so the worst case is the prior content — never a
+        corrupt half-file (R101 / R88 corrupt-sidecar root cause from the CRASH vector).
+        """
+        from src.paper_trading.btst_reporting_utils import _write_json as _write_json_prod
+
+        target = tmp_path / "sidecar.json"
+        _write_json_prod(target, {"artifact": "PRIOR", "v": 1})
+
+        # Faithfully simulate Path.write_text's truncate-on-open + mid-write failure.
+        def crashing_write_text(self, data, *args, **kwargs):  # noqa: ANN001
+            open(self, "w").close()  # write_text opens mode='w' → truncates
+            raise OSError("simulated mid-write crash")
+
+        monkeypatch.setattr(Path, "write_text", crashing_write_text)
+        try:
+            _write_json_prod(target, {"artifact": "NEW", "v": 2})
+        except OSError:
+            pass  # acceptable: the write reported failure; the guard is about file state
+
+        raw = target.read_text(encoding="utf-8")
+        assert raw.strip(), "final path must not be truncated-empty after a crashed write attempt"
+        parsed = json.loads(raw)  # must parse cleanly — no half-written corrupt file
+        assert parsed in ({"artifact": "PRIOR", "v": 1}, {"artifact": "NEW", "v": 2}), (
+            "final path must hold either the prior or the new complete payload — never a corrupt half-write"
+        )
+
+    def test_serialization_crash_preserves_prior_and_cleans_temp(self, tmp_path: Path) -> None:
+        """When serialization itself fails, the prior sidecar is intact and no temp leaks.
+
+        Guards the atomic implementation's ``except BaseException`` cleanup: a failed
+        serialization must unlink the temp file and leave the prior final-path artifact intact.
+        """
+        import pytest
+        from unittest.mock import patch
+        from src.paper_trading.btst_reporting_utils import _write_json as _write_json_prod
+
+        target = tmp_path / "sidecar.json"
+        _write_json_prod(target, {"artifact": "PRIOR", "v": 1})
+
+        with patch("src.paper_trading.btst_reporting_utils.json.dumps", side_effect=ValueError("bad payload")):
+            with pytest.raises(ValueError):
+                _write_json_prod(target, {"artifact": "NEW", "v": 2})
+
+        assert json.loads(target.read_text(encoding="utf-8")) == {"artifact": "PRIOR", "v": 1}
+        leftover = list(tmp_path.glob(".*.tmp")) + list(tmp_path.glob("*.tmp"))
+        assert leftover == [], f"temp file leaked after crashed serialization: {[str(p) for p in leftover]}"
