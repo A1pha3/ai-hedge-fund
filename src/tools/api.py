@@ -134,7 +134,7 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
             else:
                 response = requests.get(url, headers=headers, timeout=timeout)
         except requests.RequestException as e:
-            print(f"Request error for {url}: {e}")
+            logger.warning("Request error for %s: %s", url, e, exc_info=True)
             if attempt < max_retries:
                 time.sleep(2 ** attempt)
                 continue
@@ -143,7 +143,7 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
         if response.status_code == 429 and attempt < max_retries:
             # Linear backoff: 60s, 90s, 120s, 150s...
             delay = 60 + (30 * attempt)
-            print(f"Rate limited (429). Attempt {attempt + 1}/{max_retries + 1}. Waiting {delay}s before retrying...")
+            logger.warning("Rate limited (429). Attempt %d/%d. Waiting %ds before retrying...", attempt + 1, max_retries + 1, delay)
             time.sleep(delay)
             continue
 
@@ -459,7 +459,7 @@ def get_market_cap(
         response = _make_api_request(url, headers)
         if response is None or response.status_code != 200:
             if response is not None:
-                print(f"Error fetching company facts: {ticker} - {response.status_code}")
+                logger.warning("Error fetching company facts: %s - %s", ticker, response.status_code)
             return None
 
         data = response.json()
