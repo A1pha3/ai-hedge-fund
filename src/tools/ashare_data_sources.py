@@ -3,12 +3,20 @@ A股多数据源模块
 支持多种数据源：Tushare、BaoStock、新浪财经、AKShare、模拟数据
 """
 
+import logging
 import os
 
 import pandas as pd
 
 from src.data.models import FinancialMetrics, Price
 from src.tools.ashare_board_utils import to_baostock_code, to_tushare_code
+
+# NS-17 / BH-017 family sibling drain: 本模块此前无 logger, 7 处 print() 在 cron /
+# 长跑 pipeline 上下文里不入结构化日志, Tushare/BaoStock 初始化静默失败或多源回退
+# 链退化时, 运维失去根因定位能力。本模块是 north-star P&L backfill
+# (recommendation_tracker._default_price_fetcher R164 fallback) + 多源价格路径
+# (akshare_api.get_prices → get_prices_multi_source) 的生产基础设施。
+logger = logging.getLogger(__name__)
 
 
 class DataSourceError(Exception):
@@ -55,13 +63,13 @@ class TushareDataSource(BaseDataSource):
                 cls._pro = ts.pro_api(timeout=_ts_timeout)
                 cls.available = True
                 return True
-            print("Warning: TUSHARE_TOKEN 环境变量未设置，Tushare 不可用")
+            logger.warning("Tushare 不可用: TUSHARE_TOKEN 环境变量未设置")
             return False
         except ImportError:
-            print("Warning: tushare 模块未安装")
+            logger.warning("Tushare 不可用: tushare 模块未安装")
             return False
         except Exception as e:
-            print(f"Warning: Tushare 初始化失败: {e}")
+            logger.warning("Tushare 初始化失败: %s", e, exc_info=True)
             return False
 
     @classmethod
@@ -159,9 +167,14 @@ class BaoStockDataSource(BaseDataSource):
 
             if importlib.util.find_spec("baostock") is not None:
                 cls.available = True
+            else:
+                # baostock 未安装: 此前完全静默 (available 默默保持 False, 无任何面包屑),
+                # 与 BH-017 silent-degradation 家族同型。发 warning 让运维可定位回退链为何
+                # 跳过 BaoStock。
+                logger.warning("BaoStock 不可用: baostock 模块未安装")
             return True
         except ImportError:
-            print("Warning: baostock 模块未安装")
+            logger.warning("BaoStock 不可用: baostock 模块未安装")
             return False
 
     @classmethod
@@ -310,13 +323,13 @@ def get_prices_multi_source(ticker: str, start_date: str, end_date: str, period:
 
     for source in sources:
         try:
-            print(f"尝试使用数据源: {source.name}")
+            logger.debug("尝试使用数据源: %s", source.name)
             prices = source.get_prices(ticker, start_date, end_date, period)
-            print(f"✓ 数据源 {source.name} 获取成功，共 {len(prices)} 条数据")
+            logger.debug("✓ 数据源 %s 获取成功，共 %d 条数据", source.name, len(prices))
             return prices
         except Exception as e:
             last_error = e
-            print(f"✗ 数据源 {source.name} 获取失败: {e}")
+            logger.warning("✗ 数据源 %s 获取失败: %s", source.name, e, exc_info=True)
             continue
 
     raise DataSourceError(f"所有数据源都失败，最后错误: {last_error}")
