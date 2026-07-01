@@ -5,6 +5,7 @@ AKShare 数据提供商
 """
 
 import asyncio
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -17,6 +18,8 @@ from src.data.base_provider import (
 )
 from src.data.models import CompanyNews, FinancialMetrics, Price
 from src.tools.ashare_board_utils import detect_ashare_exchange, get_ashare_symbol
+
+logger = logging.getLogger(__name__)
 
 
 class AKShareProvider(BaseDataProvider):
@@ -289,7 +292,11 @@ class AKShareProvider(BaseDataProvider):
             self.health_status = "healthy"
             return True
 
-        except Exception:
+        except Exception as e:
+            # NS-17 / BH-017 family sibling: surface the underlying failure so
+            # operators can diagnose provider outages (token/API/network) from
+            # structured logs instead of seeing only a generic "unhealthy".
+            logger.warning("AKShare health_check 失败: %s", e, exc_info=True)
             self.health_status = "unhealthy"
             return False
 
