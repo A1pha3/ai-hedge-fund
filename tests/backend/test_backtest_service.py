@@ -314,3 +314,38 @@ def test_execute_daily_decisions_skips_tickers_with_missing_prices():
     executed = service._execute_daily_decisions(decisions, current_prices)
     assert executed["AAPL"] == 0  # skipped, no trade
     assert executed["MSFT"] == 5  # executed normally
+
+
+def test_run_graph_for_date_exception_emits_logger_warning_not_print(monkeypatch, caplog):
+    """NS-17 / BH-017 sibling: per-date graph failure must emit logger.warning, not print().
+
+    When ``run_graph_async`` raises during a backtest, the service degrades to
+    empty dicts for that date. The error breadcrumb must reach structured logging
+    (operators route/aggregate uvicorn logs), not ``print()`` to stdout — which
+    uvicorn does not reliably capture. Sibling of the NS-17 drain that fixed
+    ``hedge_fund_streaming.py`` SSE cancel + ``graph.py`` JSON-parse.
+    """
+    import logging
+
+    service = _build_service()
+
+    async def _raising_graph(**_kwargs):
+        raise RuntimeError("graph boom")
+
+    monkeypatch.setattr(
+        "app.backend.services.backtest_service.run_graph_async",
+        _raising_graph,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.backend.services.backtest_service"):
+        result = asyncio.run(
+            service._run_graph_for_date("2026-01-01", "2026-01-05", run_id="r1")
+        )
+
+    # Behavior unchanged: empty dicts on failure.
+    assert result == ({}, {})
+    # NS-17 / BH-017: breadcrumb must reach logs, not stdout.
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, f"expected 1 WARNING, got {len(warnings)}"
+    assert "Error running graph" in warnings[0].message
+    assert "2026-01-05" in warnings[0].message

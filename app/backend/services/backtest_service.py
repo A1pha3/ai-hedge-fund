@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
@@ -29,6 +30,8 @@ from src.tools.api import (
     get_price_data,
     get_prices,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class BacktestService:
@@ -203,7 +206,7 @@ class BacktestService:
                 run_id=run_id,
             )
         except Exception as error:
-            print(f"Error running graph for {current_date_str}: {error}")
+            logger.warning("Error running graph for %s: %s", current_date_str, error, exc_info=True)
             return {}, {}
 
         if not result or not result.get("messages"):
