@@ -775,10 +775,21 @@ def compute_selection_profitability_from_loaded(
             strategies=(), verdict="insufficient",
         )
 
+    # C274 Bug Hunt: iterate days in a DETERMINISTIC order. The prior code used
+    # ``sorted(days, key=lambda p: id(p))`` — ``id(picks)`` is the list's memory
+    # address, which is process-ASLR-dependent and unstable. Because the seeded
+    # ``_random.Random(42)`` consumes state per day, a different iteration order
+    # produces a different ``random_n`` sample → a different baseline winrate,
+    # breaking the "seeded, reproducible" contract the docstring promises and
+    # making the selection-profitability diagnostic (the owner's pool-widening
+    # A/B/C/D evidence) unreliable across runs. Sort by the date key instead —
+    # dates are stable identifiers independent of dict insertion order.
+    sorted_days = [by_date[d] for d in sorted(by_date) if len(by_date[d]) >= top_n]
+
     def _portfolio_returns(strategy: str) -> list[float]:
         out: list[float] = []
         rnd = _random.Random(42)
-        for picks in sorted(days, key=lambda p: id(p)):  # stable-ish order
+        for picks in sorted_days:
             # determinism across runs: sort each day by (score desc, ticker-ish)
             # but picks have no ticker here; use score then original order via index
             indexed = list(enumerate(picks))

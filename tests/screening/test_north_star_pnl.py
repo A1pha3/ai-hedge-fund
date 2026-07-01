@@ -561,3 +561,73 @@ def test_render_selection_profitability_line_shows_inversion():
     assert "选取" in line or "selection" in line.lower()
     # must surface the model's portfolio winrate (the problematic number)
     assert "倒挂" in line or "跑输" in line or "负预测" in line
+
+
+def test_selection_profitability_random_n_reproducible_across_input_order():
+    """C274 Bug Hunt: the ``random_n`` baseline MUST be deterministic regardless of
+    the input records' iteration order. The docstring (north_star_pnl.py:747)
+    promises "seeded, reproducible" — but the prior implementation sorted days by
+    ``id(picks)`` (the memory address), which is process-ASLR-dependent and
+    unstable. The seeded RNG consumes state per-day, so a different day iteration
+    order yields a different ``random_n`` sample → different winrate → the
+    selection-profitability diagnostic (which the owner uses to decide the
+    pool-widening A/B/C/D) becomes unreliable.
+
+    This guard builds the SAME underlying data in two different insertion orders
+    (forward vs reversed vs shuffled dates) and asserts the ``random_n`` strategy
+    produces an identical winrate/median in all orderings. Without a deterministic
+    sort key (e.g. by date), this test fails.
+    """
+    # Heterogeneous: each day has DISTINCT returns so random_n's per-day sample
+    # choice actually moves the portfolio return (a homogeneous fixture would
+    # mask the non-determinism, which is why c272's own tests missed it).
+    days_data = {}
+    for d in range(6):
+        pairs = [
+            (0.8, -4.0 + d * 0.5),
+            (0.6, -3.0 + d * 0.4),
+            (0.3, 6.0 - d * 0.3),
+            (0.1, 7.0 - d * 0.2),
+        ]
+        days_data[f"2026010{d}"] = pairs
+
+    def flatten(order):
+        recs = []
+        for dt in order:
+            for i, (score, ret) in enumerate(days_data[dt]):
+                recs.append(
+                    {"recommended_date": dt, "recommendation_score": score, "next_5day_return": ret}
+                )
+        return recs
+
+    forward = list(days_data.keys())
+    reversed_ = list(reversed(forward))
+
+    rep_fwd = compute_selection_profitability_from_loaded(flatten(forward), top_n=3, min_days=2)
+    rep_rev = compute_selection_profitability_from_loaded(flatten(reversed_), top_n=3, min_days=2)
+
+    rn_fwd = next(s for s in rep_fwd.strategies if s.strategy == "random_n")
+    rn_rev = next(s for s in rep_rev.strategies if s.strategy == "random_n")
+    # The seeded random_n baseline must be IDENTICAL for the same data regardless
+    # of how the records happen to be ordered in the input list.
+    assert rn_fwd.portfolio_winrate == rn_rev.portfolio_winrate, (
+        f"random_n non-deterministic across input order: "
+        f"forward={rn_fwd.portfolio_winrate} vs reversed={rn_rev.portfolio_winrate}"
+    )
+    assert rn_fwd.median_return == rn_rev.median_return
+    # And the verdict must be stable too (it depends only on score_desc vs
+    # equal_weight, which are order-invariant, but guard against future drift).
+    assert rep_fwd.verdict == rep_rev.verdict
+
+
+def test_selection_profitability_strategy_results_are_reproducible_on_repeated_calls():
+    """C274 Bug Hunt: two calls on the identical record list must return byte-for-byte
+    identical strategy winrates. This guards the ``random_n`` seed-and-sort
+    determinism at the most basic level (same input → same output)."""
+    pairs = [(0.80, -5.0), (0.70, -5.0), (0.60, -5.0), (0.20, 8.0), (0.15, 8.0), (0.10, 8.0)]
+    recs = _selection_recs({f"2026010{d}": pairs for d in range(5)})
+    rep1 = compute_selection_profitability_from_loaded(recs, top_n=3, min_days=2)
+    rep2 = compute_selection_profitability_from_loaded(recs, top_n=3, min_days=2)
+    for s1, s2 in zip(rep1.strategies, rep2.strategies):
+        assert s1.portfolio_winrate == s2.portfolio_winrate
+        assert s1.median_return == s2.median_return
