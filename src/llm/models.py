@@ -1,3 +1,4 @@
+import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -37,6 +38,11 @@ from src.llm.zhipu_model_helpers import (
     resolve_zhipu_route_inputs,
     should_route_zhipu_to_coding_plan,
 )
+
+# NS-17 / BH-017 family sibling drain: API key 缺失是 LLM 初始化 #1 失败模式 (整个系统
+# 停摆)。此前 7 处 print() 紧跟 raise (冗余双输出), 且 print 在 cron/launchd 上下文
+# 不入结构化日志, 运维无法从 logs 定位"为何 LLM 初始化失败"。
+logger = logging.getLogger(__name__)
 
 
 class ModelProvider(StrEnum):
@@ -356,7 +362,7 @@ def build_openai_compatible_model(model_name: str, config: OpenAICompatibleTrans
     """Builds a ChatOpenAI-compatible client from transport config."""
     api_key = (api_keys or {}).get(config.api_key_name) or os.getenv(config.api_key_name)
     if not api_key:
-        print(f"API Key Error: Please make sure {config.api_key_name} is set in your .env file or provided via API keys.")
+        logger.error("API Key Error: Please make sure %s is set in your .env file or provided via API keys.", config.api_key_name)
         raise ValueError(f"{config.api_key_name} not found. Please make sure it is set in your .env file or provided via API keys.")
 
     normalized_model_name = config.model_name_transform(model_name) if config.model_name_transform else model_name
@@ -402,7 +408,7 @@ def get_zhipu_model(model_name: str, api_keys: dict | None = None) -> ChatOpenAI
         return get_zhipu_coding_plan_model(model_name, api_keys)
 
     if not standard_api_key:
-        print("API Key Error: Please make sure ZHIPU_API_KEY is set in your .env file or provided via API keys.")
+        logger.error("API Key Error: Please make sure ZHIPU_API_KEY is set in your .env file or provided via API keys.")
         raise ValueError("Zhipu API key not found. Please make sure ZHIPU_API_KEY is set in your .env file or provided via API keys.")
 
     return build_openai_compatible_model(
@@ -435,7 +441,7 @@ def get_models_list():
 def _get_required_api_key(api_keys: dict | None, key_name: str, provider_label: str) -> str:
     api_key = (api_keys or {}).get(key_name) or os.getenv(key_name)
     if not api_key:
-        print(f"API Key Error: Please make sure {key_name} is set in your .env file or provided via API keys.")
+        logger.error("API Key Error: Please make sure %s is set in your .env file or provided via API keys.", key_name)
         raise ValueError(f"{provider_label} API key not found. Please make sure {key_name} is set in your .env file or provided via API keys.")
     return api_key
 
@@ -486,7 +492,7 @@ def _build_ollama_or_gigachat_model(model_name: str, model_provider: ModelProvid
             return GigaChat(model=model_name)
         api_key = (api_keys or {}).get("GIGACHAT_API_KEY") or os.getenv("GIGACHAT_API_KEY") or os.getenv("GIGACHAT_CREDENTIALS")
         if not api_key:
-            print("API Key Error: Please make sure api_keys is set in your .env file or provided via API keys.")
+            logger.error("API Key Error: Please make sure GIGACHAT_API_KEY is set in your .env file or provided via API keys.")
             raise ValueError("GigaChat API key not found. Please make sure GIGACHAT_API_KEY is set in your .env file or provided via API keys.")
         return GigaChat(credentials=api_key, model=model_name)
     return None

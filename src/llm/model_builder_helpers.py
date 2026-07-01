@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Callable
 from typing import Any
+
+# NS-17 / BH-017 family sibling drain: Azure OpenAI 配置缺失 (key/endpoint/deployment)
+# 的诊断 print 紧跟 raise (冗余双输出), 且 print 在 cron/launchd 上下文不入结构化日志。
+logger = logging.getLogger(__name__)
 
 
 def build_openai_family_model_impl(
@@ -27,17 +32,17 @@ def build_openai_family_model_impl(
 
     api_key = os.getenv("AZURE_OPENAI_API_KEY")
     if not api_key:
-        print("API Key Error: Please make sure AZURE_OPENAI_API_KEY is set in your .env file.")
+        logger.error("API Key Error: Please make sure AZURE_OPENAI_API_KEY is set in your .env file.")
         raise ValueError("Azure OpenAI API key not found.  Please make sure AZURE_OPENAI_API_KEY is set in your .env file.")
 
     azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     if not azure_endpoint:
-        print("Azure Endpoint Error: Please make sure AZURE_OPENAI_ENDPOINT is set in your .env file.")
+        logger.error("Azure Endpoint Error: Please make sure AZURE_OPENAI_ENDPOINT is set in your .env file.")
         raise ValueError("Azure OpenAI endpoint not found.  Please make sure AZURE_OPENAI_ENDPOINT is set in your .env file.")
 
     azure_deployment_name = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
     if not azure_deployment_name:
-        print("Azure Deployment Name Error: Please make sure AZURE_OPENAI_DEPLOYMENT_NAME is set in your .env file.")
+        logger.error("Azure Deployment Name Error: Please make sure AZURE_OPENAI_DEPLOYMENT_NAME is set in your .env file.")
         raise ValueError("Azure OpenAI deployment name not found.  Please make sure AZURE_OPENAI_DEPLOYMENT_NAME is set in your .env file.")
 
     return azure_chat_openai_cls(
