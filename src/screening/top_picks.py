@@ -1160,6 +1160,8 @@ def _build_ranked_candidates(
     recommendations: list[dict],
     report_dir: Path,
     lookback_days: int,
+    *,
+    profit_aware: bool = False,
 ) -> list[dict]:
     """Compute ranked candidates with expected returns and consecutive bonus."""
     composite = compute_composite_scores(
@@ -1179,6 +1181,7 @@ def _build_ranked_candidates(
         _enrich_with_consecutive_bonus(recommendations, report_dir),
         composite,
         expected,
+        profit_aware=profit_aware,
     )
     return _apply_consecutive_bonus_and_resort(ranked)
 
@@ -1988,6 +1991,7 @@ def run_top_picks(
     count: int = 5,
     lookback_days: int = 5,
     reports_dir: Path | None = None,
+    profit_aware: bool = False,
 ) -> int:
     """Run full decision pipeline and output top picks.
 
@@ -2020,6 +2024,7 @@ def run_top_picks(
         recs,
         search_dir,
         lookback_days,
+        profit_aware=profit_aware,
     )
     if not ranked:
         print(f"{Fore.YELLOW}Unable to compute composite scores.{Style.RESET_ALL}")

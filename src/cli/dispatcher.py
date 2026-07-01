@@ -834,9 +834,10 @@ def _resolve_top_picks(argv: list[str]) -> int | None:
         return None
     count = _parse_int(_get_kv(argv, "--count"), 5)
     lookback = _parse_int(_get_kv(argv, "--lookback"), 5)
+    profit_aware = "--profit-aware" in argv  # C273: opt-in empirical-winrate ranking (backtested 47%→62%)
     from src.screening.top_picks import run_top_picks
 
-    return run_top_picks(count=count, lookback_days=lookback)
+    return run_top_picks(count=count, lookback_days=lookback, profit_aware=profit_aware)
 
 
 def _resolve_reconcile(argv: list[str]) -> int | None:

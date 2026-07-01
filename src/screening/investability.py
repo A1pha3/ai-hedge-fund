@@ -333,15 +333,27 @@ def rank_recommendations_by_investability(
     recommendations: list[dict[str, Any]],
     composite_report: CompositeReport,
     expected_report: ExpectedReturnReport,
+    *,
+    profit_aware: bool = False,
 ) -> list[dict[str, Any]]:
     """Merge composite and long-horizon evidence, then sort by investability.
 
-    Ranking priority:
+    Ranking priority (default, ``profit_aware=False``):
     1. composite confidence score
     2. T+30 expected return
     3. T+30 win rate
     4. bucket sample count
     5. raw score_b
+
+    C273 (2026-07-01) ``profit_aware=True``: re-key the ranking on the
+    EMPIRICAL bucket winrate instead of composite_score. Grounded in the c272
+    selection-profitability backtest (74 days, n=7993): the model's
+    ``composite_score`` has NEGATIVE predictive value for top-N selection
+    (``score_desc`` portfolio T+5 winrate 47.3% vs ``equal_weight`` 59.5% —
+    following the model's top picks loses money). Profit-aware mode keys on
+    the BUY-gate-aligned short-horizon bucket winrate (the backtested profit
+    signal), demoting ``composite_score`` to a tie-break. Opt-in only —
+    default behavior is unchanged.
     """
 
     composite_map = {item.ticker: item for item in composite_report.items}
@@ -430,4 +442,23 @@ def rank_recommendations_by_investability(
             str(rec.get("ticker") or ""),
         ),
     )
+    if profit_aware:
+        # C273 (2026-07-01): re-key on empirical bucket winrate — the backtested
+        # profit signal. c272 proved composite_score has NEGATIVE predictive value
+        # for top-N selection (47% score_desc vs 60% equal_weight). Primary =
+        # max(T+5/T+10) bucket winrate (BUY-gate-aligned); expected_return as
+        # secondary (magnitude); bucket_sample_count rewards mature buckets;
+        # composite_score demoted to tie-break (keeps the model's residual signal
+        # as the last resort, so profit-aware mode never throws the model away
+        # entirely — it just stops trusting it as the PRIMARY key).
+        ranked.sort(
+            key=lambda rec: (
+                -_safe_metric(_max_short_horizon_metric(rec.get("win_rates")), float("-inf")),
+                -_safe_metric(_max_short_horizon_metric(rec.get("expected_returns")), float("-inf")),
+                -_safe_metric(rec.get("bucket_sample_count"), 0.0),
+                -_safe_metric(rec.get("composite_score"), _safe_metric(rec.get("score_b", 0.0), 0.0)),
+                -_safe_metric(rec.get("score_b", 0.0), 0.0),
+                str(rec.get("ticker") or ""),
+            ),
+        )
     return ranked

@@ -1022,3 +1022,62 @@ def test_ns23_crisis_t5_only_signal_horizon_preserved() -> None:
         "NS-23: crisis 下 T+5-only 被 AVOID 但 signal_horizon 仍标注 'T+5' — "
         "raw 信号展示, 让用户知道有 T+5 信号但 crisis 下不可靠"
     )
+
+
+# ---------------------------------------------------------------------------
+# C273 (2026-07-01): profit-aware ranking mode.
+# c272 selection-profitability backtest (74 days, n=7993) proved the model's
+# composite_score has NEGATIVE predictive value for top-N selection (score_desc
+# portfolio T+5 winrate 47.3% vs equal_weight 59.5%). This adds an opt-in
+# ``profit_aware`` ranking that keys on empirical bucket winrate instead.
+# Opt-in only — default behavior unchanged (no change to existing users).
+# ---------------------------------------------------------------------------
+
+
+def test_profit_aware_ranks_by_empirical_winrate_not_composite() -> None:
+    """C273: in profit-aware mode, rank by empirical bucket winrate (the
+    backtested profit signal), not composite_score (negative predictive value).
+    A low-composite / high-winrate pick must rank ABOVE high-composite / low-winrate.
+    Default mode (profit_aware=False) keeps composite-first ordering."""
+    recommendations = [
+        {"ticker": "AAA", "name": "high-score low-winrate", "score_b": 0.80},
+        {"ticker": "BBB", "name": "low-score high-winrate", "score_b": 0.30},
+    ]
+    composite = CompositeReport(
+        trade_date="20260612",
+        items=[
+            CompositeEntry(ticker="AAA", name="high-score low-winrate", base_score=0.80, composite_score=0.85),
+            CompositeEntry(ticker="BBB", name="low-score high-winrate", base_score=0.30, composite_score=0.25),
+        ],
+    )
+    expected = ExpectedReturnReport(
+        trade_date="20260612", lookback_days=60, total_samples=100,
+        items=[
+            ExpectedReturn(
+                ticker="AAA", score_b=0.80, bucket_label="高 (>0.8)", bucket_sample_count=40,
+                expected_returns={"t5": 1.0, "t10": 1.0}, win_rates={"t5": 0.42, "t10": 0.42},
+            ),
+            ExpectedReturn(
+                ticker="BBB", score_b=0.30, bucket_label="低 (<0.3)", bucket_sample_count=50,
+                expected_returns={"t5": 3.0, "t10": 3.0}, win_rates={"t5": 0.62, "t10": 0.62},
+            ),
+        ],
+    )
+    # default mode: composite first → AAA (0.85) > BBB (0.25)
+    ranked_default = rank_recommendations_by_investability(recommendations, composite, expected)
+    assert [r["ticker"] for r in ranked_default] == ["AAA", "BBB"], "default mode unchanged (composite-first)"
+    # profit-aware mode: empirical winrate first → BBB (0.62) > AAA (0.42)
+    ranked_pa = rank_recommendations_by_investability(recommendations, composite, expected, profit_aware=True)
+    assert [r["ticker"] for r in ranked_pa] == ["BBB", "AAA"], (
+        "profit-aware mode must rank by empirical bucket winrate, not composite_score "
+        "— c272 backtest proved composite has negative predictive value (47% vs 60%)"
+    )
+
+
+def test_profit_aware_default_is_off() -> None:
+    """C273 safety: profit_aware defaults to False (opt-in). Verifies the
+    parameter exists and defaults off — existing callers see no behavior change."""
+    import inspect
+    sig = inspect.signature(rank_recommendations_by_investability)
+    assert "profit_aware" in sig.parameters
+    assert sig.parameters["profit_aware"].default is False
