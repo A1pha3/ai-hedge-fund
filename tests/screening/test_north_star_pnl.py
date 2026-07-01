@@ -631,3 +631,45 @@ def test_selection_profitability_strategy_results_are_reproducible_on_repeated_c
     for s1, s2 in zip(rep1.strategies, rep2.strategies):
         assert s1.portfolio_winrate == s2.portfolio_winrate
         assert s1.median_return == s2.median_return
+
+
+def test_selection_profitability_skips_nan_score_and_return():
+    """R138 Bug Hunt: NaN in score OR horizon return must be SKIPPED, not propagated.
+
+    ``compute_selection_profitability_from_loaded`` (c272) used bare ``float()`` —
+    but ``float('nan')`` does NOT raise, so a NaN return passes through and corrupts
+    the entire strategy's mean/median via ``sum()`` (NaN propagates), and a NaN score
+    makes the within-day ``score_desc``/``score_asc`` sort non-deterministic (NaN
+    comparisons are unstable, R117/BH-011 family). This is the diagnostic the owner
+    uses for the pool-widening A/B/C/D decision — a single corrupt record must not
+    poison the whole strategy's stats.
+
+    Same-file semantic split (R128/R135 family): the module's ``_finite_float``
+    helper (line 46) rejects NaN/garbage → None, and SIX sibling call sites in this
+    file (lines 103/258/322/361/476/623) already use it — only the c272 block
+    (lines 762-763) used bare ``float()``.
+    """
+    import math
+
+    # 4 days × 4 valid picks each (enough to meet min_days after dropping corrupt).
+    days = {f"2026010{d}": [(0.8, 3.0), (0.6, 2.0), (0.4, -1.0), (0.2, -2.0)] for d in range(4)}
+    recs = _selection_recs(days)
+    # Inject a NaN-return record (5th pick on day 2) — e.g. an unmatured/price-gap
+    # record whose next_5day_return parsed as NaN from a JSON ``NaN`` token.
+    recs.append({"recommended_date": "20260102", "recommendation_score": 0.5, "next_5day_return": float("nan")})
+    # Inject a NaN-score record (5th pick on day 3).
+    recs.append({"recommended_date": "20260103", "recommendation_score": float("nan"), "next_5day_return": 4.0})
+
+    report = compute_selection_profitability_from_loaded(recs, top_n=3, min_days=2)
+    assert report.has_data
+    # NaN must NOT propagate into any strategy's mean/median — with bare float(),
+    # equal_weight_all for day 2 would be (3+2-1-2+NaN)/5 = NaN → mean_return NaN.
+    for s in report.strategies:
+        assert s.mean_return is not None, f"{s.strategy}: mean_return is None"
+        assert math.isfinite(s.mean_return), (
+            f"{s.strategy}: mean_return={s.mean_return} — bare float() let NaN through"
+        )
+        assert s.median_return is not None, f"{s.strategy}: median_return is None"
+        assert math.isfinite(s.median_return), (
+            f"{s.strategy}: median_return={s.median_return} — NaN propagated into median"
+        )

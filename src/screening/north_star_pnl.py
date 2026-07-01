@@ -758,12 +758,13 @@ def compute_selection_profitability_from_loaded(
             raw_s = rec.get("score_b")
         if raw_s is None:
             raw_s = rec.get("composite_score")
-        try:
-            score = float(raw_s)
-            ret = float(rec.get(horizon_field))
-        except (TypeError, ValueError):
-            continue
-        if d is None or d == "":
+        # R138 Bug Hunt: use the module's ``_finite_float`` helper (line 46) — same as
+        # six sibling call sites in this file (103/258/322/361/476/623). Bare ``float()``
+        # lets NaN through (``float('nan')`` doesn't raise), corrupting the strategy
+        # mean/median via ``sum()`` and making within-day sort non-deterministic.
+        score = _finite_float(raw_s)
+        ret = _finite_float(rec.get(horizon_field))
+        if score is None or ret is None or d is None or d == "":
             continue
         by_date.setdefault(str(d), []).append({"score": score, "ret": ret})
 
