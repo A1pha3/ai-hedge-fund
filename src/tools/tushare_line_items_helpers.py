@@ -1,7 +1,15 @@
+import logging
+
 import pandas as pd
 
 from src.data.models import LineItem
 from src.utils.date_utils import is_announced_after_as_of
+
+# NS-17 / BH-017 family sibling drain: 本模块在 fundamental 数据路径上
+# (fina_indicator/balancesheet/cashflow/income), fundamental agents 读 line items;
+# 此前无 logger, 2 处 print() 在拉取失败时静默回退 None → agent 在缺失财报上打分,
+# 运维无法定位"为何基本面信号缺失"。
+logger = logging.getLogger(__name__)
 
 TTM_FLOW_FIELDS = {
     "revenue",
@@ -25,7 +33,7 @@ def fetch_line_item_statement_frames(fetch_call, pro, ts_code: str, fetch_limit:
     try:
         df_fin = fetch_call(pro, "fina_indicator", ts_code, fetch_limit, dedupe=True)
     except Exception as e:
-        print(f"[Tushare] 获取财务指标失败: {e}")
+        logger.warning("[Tushare] 获取财务指标失败: %s", e, exc_info=True)
         df_fin = None
 
     df_bal = _fetch_optional_frame(fetch_call, pro, "balancesheet", ts_code, fetch_limit, "资产负债表")
@@ -38,7 +46,7 @@ def _fetch_optional_frame(fetch_call, pro, api_name: str, ts_code: str, fetch_li
     try:
         return fetch_call(pro, api_name, ts_code, fetch_limit, dedupe=True)
     except Exception as e:
-        print(f"[Tushare] 获取{label}失败(非致命): {e}")
+        logger.warning("[Tushare] 获取%s失败(非致命): %s", label, e, exc_info=True)
         return None
 
 

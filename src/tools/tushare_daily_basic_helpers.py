@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 
 import pandas as pd
+
+# NS-17 / BH-017 family sibling drain: 本模块在 daily_basic (PE/PB/PS) 路径上,
+# PE/PB 喂给 valuation + composite_score; 此前无 logger, 1 处 print() 在批量拉取
+# 失败时静默回退空 df → 所有 PE/PB 查询 miss → valuation 退化, 运维无面包屑。
+logger = logging.getLogger(__name__)
 
 
 def load_daily_basic_batch(
@@ -37,7 +43,7 @@ def load_daily_basic_batch(
         if df_batch is not None and not df_batch.empty and "trade_date" in df_batch.columns:
             df_batch = df_batch.sort_values("trade_date", ascending=False).reset_index(drop=True)
     except Exception as exc:
-        print(f"[Tushare] daily_basic 批量获取({ts_code}, {start_fmt}~{actual_end}) 失败: {exc}")
+        logger.warning("[Tushare] daily_basic 批量获取(%s, %s~%s) 失败: %s", ts_code, start_fmt, actual_end, exc, exc_info=True)
         df_batch = pd.DataFrame()
 
     store_cached_df(cache_key, df_batch)
