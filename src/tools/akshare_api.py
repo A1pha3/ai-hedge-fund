@@ -27,6 +27,7 @@ Tushare 限速配额 (见 tushare_api.py):
   超限会触发 TUSHARE_RATE_LIMIT_MAX_RETRIES (默认 2) 次 30s 退避重试。
 """
 
+import logging
 import os
 from datetime import datetime
 from typing import Any
@@ -111,6 +112,11 @@ _persistent_cache = get_enhanced_cache()
 AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS = float(os.getenv("AKSHARE_STOCK_NEWS_TIMEOUT_SECONDS", "8"))
 AKSHARE_INTRADAY_TIMEOUT_SECONDS = float(os.getenv("AKSHARE_INTRADAY_TIMEOUT_SECONDS", "2.5"))
 
+# NS-17 / BH-017 family sibling drain: 本模块是 AKShare 数据接口 (价格/财报/新闻),
+# 是 A 股主数据路径。此前无 logger, 3 处 print() 在 cron/launchd 上下文里不入结构化
+# 日志: akshare 未安装或新闻拉取失败静默退化, 运维无法定位"为何情绪信号/价格缺失"。
+logger = logging.getLogger(__name__)
+
 # AKShare 是否可用标志
 _akshare_available = False
 
@@ -119,7 +125,7 @@ try:
 
     _akshare_available = True
 except ImportError:
-    print("Warning: akshare not installed. A-share data will not be available.")
+    logger.warning("AKShare 未安装, A 股数据将不可用")
     ak = None
 
 
@@ -610,11 +616,11 @@ def get_ashare_company_news(ticker: str, end_date: str, start_date: str | None =
         )
 
         if filtered_count > 0:
-            print(f"[AKShare] 已过滤 {filtered_count} 篇与 {ticker}({stock_name}) 无直接关联的通用市场文章")
+            logger.info("[AKShare] 已过滤 %d 篇与 %s(%s) 无直接关联的通用市场文章", filtered_count, ticker, stock_name)
 
         return results
     except Exception as e:
-        print(f"[AKShare] 获取 A 股新闻失败 ({ticker}): {e}")
+        logger.warning("[AKShare] 获取 A 股新闻失败 (%s): %s", ticker, e, exc_info=True)
         return []
 
 

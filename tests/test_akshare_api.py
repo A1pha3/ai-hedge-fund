@@ -703,7 +703,7 @@ def test_get_prices_robust_raises_when_all_sources_fail_and_mock_disabled(monkey
         akshare_api.get_prices_robust("000001", "2026-04-03", "2026-04-06", use_mock_on_fail=False)
 
 
-def test_get_ashare_company_news_sorts_filters_and_deduplicates(monkeypatch, capsys):
+def test_get_ashare_company_news_sorts_filters_and_deduplicates(monkeypatch, caplog):
     monkeypatch.setattr(akshare_api, "_akshare_available", True)
     monkeypatch.setattr(
         akshare_api,
@@ -749,7 +749,15 @@ def test_get_ashare_company_news_sorts_filters_and_deduplicates(monkeypatch, cap
     assert len(news) == 1
     assert news[0].title == "新新闻"
     assert news[0].sentiment == "正面"
-    assert "[AKShare] 已过滤 1 篇与 300438(测试股) 无直接关联的通用市场文章" in capsys.readouterr().out
+    # NS-17 / BH-017 family drain: 过滤计数现经 logger.info (结构化日志), 不再 print
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="src.tools.akshare_api"):
+        news = akshare_api.get_ashare_company_news("300438", "2026-03-30", start_date="2026-03-30", limit=5)
+    assert any(
+        "已过滤 1 篇" in r.getMessage() and "300438" in r.getMessage()
+        for r in caplog.records
+    ), "过滤计数必须经 logger.info 可观测"
 
 
 def test_build_prices_from_dataframe_skips_nan_volume_row():
