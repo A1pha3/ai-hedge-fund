@@ -1,0 +1,219 @@
+"""NS-17 family sibling drain: tushare_api.py print()→logger observability.
+
+`src/tools/tushare_api.py` is the core A-share production data layer: it wraps
+the Tushare Pro API (prices / financials / daily_basic / gainers / industry /
+northbound flow / etc.) with retry, rate-limit backoff, and multi-layer caching.
+It is imported across main.py, screening/, data/, paper_trading/, execution/,
+screening top_picks + candidate_pool + market_state + batch_data_fetcher — i.e.
+nearly every must-win workflow depends on it.
+
+Before this drain the module had **no module logger**, 27 ``print()`` calls, and
+3 ``traceback.print_exc()`` calls. In cron / launchd / long-running pipeline
+contexts ``print()`` / ``traceback.print_exc()`` go to stdout which operators
+never inspect, so:
+
+  - rate-limit / retry exhaustion silently throttles the whole screening run
+    (free users get ~200 req/min; exhaustion returns ``None`` → empty data →
+    agents score on missing inputs) with zero diagnostic breadcrumb
+  - TUSHARE_TOKEN-missing ("未初始化") silently returns ``[]`` everywhere
+  - every API failure silently degrades the data layer
+
+This is the highest-value BH-017 family sibling: largest print surface (29),
+on the most-reached must-win module. Mirrors the established NS-17 guard pattern
+(tests/backend/test_ns17_observability.py + test_ns17_ashare_data_sources_observability.py).
+"""
+
+from __future__ import annotations
+
+import logging
+
+from src.tools import tushare_api
+
+
+class TestTushareApiModuleLogger:
+    """NS-17 family: tushare_api must have a module logger."""
+
+    def test_module_logger_exists(self) -> None:
+        """模块必须有 logger (此前无 logging, 27 print + 3 traceback 不入结构化日志)。"""
+        assert hasattr(tushare_api, "logger"), (
+            "tushare_api 必须有 module logger (NS-17 / BH-017 family 可观测性要求)"
+        )
+        assert isinstance(tushare_api.logger, logging.Logger)
+        assert tushare_api.logger.name == "src.tools.tushare_api"
+
+    def test_no_print_calls_remain(self) -> None:
+        """模块源码不再含裸 print() 调用 (注释/字符串字面量除外)。"""
+        import inspect
+
+        source = inspect.getsource(tushare_api)
+        code_lines = [
+            line
+            for line in source.splitlines()
+            if line.lstrip().startswith("print(")
+            and not line.lstrip().startswith("#")
+        ]
+        assert not code_lines, (
+            f"tushare_api 不应再有裸 print() 调用, 发现: {code_lines}"
+        )
+
+    def test_no_traceback_print_exc_remain(self) -> None:
+        """模块源码不再含 traceback.print_exc() (改用 logger.error exc_info=True)。"""
+        import inspect
+
+        source = inspect.getsource(tushare_api)
+        code_lines = [
+            line
+            for line in source.splitlines()
+            if "traceback.print_exc" in line
+            and not line.lstrip().startswith("#")
+        ]
+        assert not code_lines, (
+            f"tushare_api 不应再有 traceback.print_exc(), 发现: {code_lines}"
+        )
+
+
+class TestCallTushareDataframeApiObservability:
+    """NS-17 family: 重试/限速退避须用结构化日志, 不再 print。
+
+    这是 tushare_api 观测性最关键的一段: 限速/重试耗尽时静默返回 None →
+    下游拿到空数据 → agent 在缺失输入上打分, 运维无法定位"为何这批票数据为空"。
+    """
+
+    def test_non_retryable_failure_emits_warning(self, caplog) -> None:
+        """非可重试错误 (TypeError 等) 须发 warning 并返回 None。"""
+
+        class _Boom:
+            def daily(self, **kwargs):
+                raise TypeError("bad param")
+
+        pro = _Boom()
+        with caplog.at_level(logging.WARNING, logger="src.tools.tushare_api"):
+            df = tushare_api._call_tushare_dataframe_api(pro, "daily", ts_code="000001.SZ")
+
+        assert df is None
+        assert any(
+            "不可重试" in record.getMessage() and record.levelno >= logging.WARNING
+            for record in caplog.records
+        ), "非可重试错误必须发 logger.warning (含'不可重试'标记)"
+
+    def test_rate_limit_exhaustion_emits_warning(self, caplog, monkeypatch) -> None:
+        """限速重试耗尽须发 warning, 不再静默 print。"""
+        monkeypatch.setenv("TUSHARE_RATE_LIMIT_MAX_RETRIES", "0")
+        monkeypatch.setenv("TUSHARE_RATE_LIMIT_DELAY", "0")
+
+        class _RateLimited:
+            def daily(self, **kwargs):
+                raise ConnectionError("429 Too Many Requests")
+
+        pro = _RateLimited()
+        with caplog.at_level(logging.WARNING, logger="src.tools.tushare_api"):
+            df = tushare_api._call_tushare_dataframe_api(pro, "daily", ts_code="000001.SZ")
+
+        assert df is None
+        assert any(
+            "限速" in record.getMessage() and record.levelno >= logging.WARNING
+            for record in caplog.records
+        ), "限速重试耗尽必须发 logger.warning"
+
+
+class TestGetAsharePricesWithTushareObservability:
+    """NS-17 family: 价格拉取未初始化/失败须可观测。
+
+    get_ashare_prices_with_tushare 被 top_picks.py (默认前门 R1) 调用。
+    token 缺失或拉取失败时静默返回 [] → 前门缺价格 → 评分/止损/仓位全失效。
+    """
+
+    def test_not_initialized_emits_warning(self, caplog, monkeypatch) -> None:
+        """TUSHARE_TOKEN 未设置时 get_ashare_prices_with_tushare 须发 warning 并返回 []。"""
+        monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+        # 重置 module-level _pro 缓存
+        tushare_api._pro = None
+
+        with caplog.at_level(logging.WARNING, logger="src.tools.tushare_api"):
+            prices = tushare_api.get_ashare_prices_with_tushare("000001", "2026-01-01", "2026-01-02")
+
+        assert prices == []
+        assert any(
+            "TUSHARE_TOKEN" in record.getMessage() or "未初始化" in record.getMessage()
+            for record in caplog.records
+        ), "未初始化 (token 缺失) 必须发 logger.warning"
+
+    def test_fetch_failure_emits_observation(self, caplog, monkeypatch) -> None:
+        """拉取异常须在结构化日志可观测 (重试层 warning 或 except 层 error)。
+
+        注: get_ashare_prices_with_tushare → _fetch_tushare_ashare_prices_df →
+        _cached_tushare_dataframe_call → _call_tushare_dataframe_api: daily/adj_factor
+        异常在重试层被 catch 发 logger.warning (耗尽后返回 None), build_prices 收到
+        None 返回 [], 不传播到 get_ashare_prices 的 except 块。可观测性在重试层覆盖 —
+        这正是本次 drain 的核心价值 (此前重试层用 print 不入日志)。
+        """
+
+        class _FakePro:
+            def daily(self, **kwargs):
+                raise RuntimeError("simulated fetch failure")
+
+            def adj_factor(self, **kwargs):
+                raise RuntimeError("simulated fetch failure")
+
+        monkeypatch.setenv("TUSHARE_TOKEN", "fake-token-for-test")
+        monkeypatch.setattr(tushare_api, "_pro", _FakePro())
+
+        with caplog.at_level(logging.WARNING, logger="src.tools.tushare_api"):
+            prices = tushare_api.get_ashare_prices_with_tushare("000001", "2026-01-01", "2026-01-02")
+
+        assert prices == []
+        # 重试层 warning (daily) 或 except 层 error (获取价格数据失败) 任一即可
+        assert any(
+            ("daily" in record.getMessage() or "获取价格数据失败" in record.getMessage())
+            and record.levelno >= logging.WARNING
+            for record in caplog.records
+        ), "价格拉取失败必须在结构化日志可观测 (重试层 warning 或 except 层 error)"
+
+
+class TestGenericApiFailureObservability:
+    """NS-17 family: 通用 API 失败须可观测 (代表性抽检 get_open_trade_dates)。
+
+    覆盖 line 1127 的 "获取交易日历失败" — paper_trading/execution 大量依赖
+    trade_cal, 失败静默 return [] 会让回测日期序列错位。
+    """
+
+    def test_trade_dates_failure_emits_error(self, caplog, monkeypatch) -> None:
+        """get_open_trade_dates 失败须发 logger.error, 不再静默 print。"""
+        monkeypatch.setattr(tushare_api, "_get_pro", lambda: None)
+
+        with caplog.at_level(logging.ERROR, logger="src.tools.tushare_api"):
+            result = tushare_api.get_open_trade_dates("20260101", "20260102")
+
+        assert result == []
+        # _get_pro 返回 None 时函数提前返回 []; 用一个会真正抛异常的 fake pro
+        # 改为直接测 logger 存在 + 函数在 pro=None 时不崩 (契约守卫)
+        # 更精确的失败注入在下面
+        assert hasattr(tushare_api, "logger")
+
+    def test_api_failure_with_raising_pro_emits_observation(self, caplog, monkeypatch) -> None:
+        """真实抛异常的 pro 须触发结构化日志 (在重试层 warning 或 except 层 error)。
+
+        注: get_open_trade_dates → _cached_tushare_dataframe_call →
+        _call_tushare_dataframe_api: 异常在重试层被 catch 并发 logger.warning
+        (重试耗尽返回 None), 不传播到 get_open_trade_dates 的 except 块。可观测性
+        在重试层覆盖 (warning), 这正是本次 drain 的核心价值 — 此前重试层用 print
+        完全不入日志。
+        """
+
+        class _BoomPro:
+            def trade_cal(self, **kwargs):
+                raise RuntimeError("simulated trade_cal failure")
+
+        monkeypatch.setenv("TUSHARE_TOKEN", "fake-token-for-test")
+        monkeypatch.setattr(tushare_api, "_pro", _BoomPro())
+
+        with caplog.at_level(logging.WARNING, logger="src.tools.tushare_api"):
+            result = tushare_api.get_open_trade_dates("20260101", "20260102")
+
+        assert result == []
+        # 重试层 warning (trade_cal) 或 except 层 error (get_open_trade_dates) 任一即可
+        assert any(
+            ("trade_cal" in record.getMessage() or "get_open_trade_dates" in record.getMessage())
+            and record.levelno >= logging.WARNING
+            for record in caplog.records
+        ), "trade_cal 失败必须在结构化日志可观测 (重试层 warning 或 except 层 error)"

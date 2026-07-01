@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 import os
 import threading
 import time
@@ -54,6 +55,14 @@ from src.tools.tushare_sw_industry_helpers import (
     load_sw_index_classification,
     resolve_cached_sw_industry_mapping,
 )
+
+# NS-17 / BH-017 family sibling drain: 本模块是 A 股核心生产数据层
+# (价格/财报/daily_basic/涨幅榜/行业/北向资金), 被 main.py / screening / data /
+# paper_trading / execution 几乎所有 must-win workflow 调用。此前无 logger,
+# 27 处 print() + 3 处 traceback.print_exc() 在 cron/launchd 上下文里不入结构化
+# 日志: 限速/重试耗尽静默返回 None → 下游在空数据上打分, TUSHARE_TOKEN 缺失静默
+# 返回 [], 运维无法定位"为何这批票数据为空"。
+logger = logging.getLogger(__name__)
 
 _pro = None
 _pro_lock = threading.Lock()
@@ -189,7 +198,7 @@ def _call_tushare_dataframe_api(pro, api_name: str, **kwargs) -> pd.DataFrame | 
             # 非瞬时错误不重试（参数错误、数据不存在等）
             non_retryable = ("TypeError", "ValueError", "AttributeError", "KeyError")
             if exc_name in non_retryable:
-                print(f"[Tushare] API {api_name} 调用失败 (不可重试): {e}")
+                logger.warning("[Tushare] API %s 调用失败 (不可重试): %s", api_name, e)
                 return None
 
             is_rate_limit = _is_tushare_rate_limit_error(e)
@@ -197,21 +206,33 @@ def _call_tushare_dataframe_api(pro, api_name: str, **kwargs) -> pd.DataFrame | 
             if is_rate_limit:
                 rate_limit_attempts += 1
                 if rate_limit_attempts > rate_limit_max_retries:
-                    print(f"[Tushare] API {api_name} 限速重试已用尽 ({rate_limit_max_retries} 次): {e}")
+                    logger.warning(
+                        "[Tushare] API %s 限速重试已用尽 (%d 次): %s",
+                        api_name, rate_limit_max_retries, e,
+                    )
                     return None
                 # 限速退避：默认 30s + ±30% jitter
                 delay = rate_limit_delay * (1 + random.random() * 0.3)
-                print(f"[Tushare] API {api_name} 触发限速 (尝试 {rate_limit_attempts}/{rate_limit_max_retries}): {e}，{delay:.1f}s 后重试...")
+                logger.info(
+                    "[Tushare] API %s 触发限速 (尝试 %d/%d): %s，%.1fs 后重试...",
+                    api_name, rate_limit_attempts, rate_limit_max_retries, e, delay,
+                )
                 time.sleep(delay)
                 continue
 
             transient_attempts += 1
             if transient_attempts > max_retries:
-                print(f"[Tushare] API {api_name}({kwargs}) 调用失败 (已重试 {max_retries} 次): {e}")
+                logger.warning(
+                    "[Tushare] API %s(%s) 调用失败 (已重试 %d 次): %s",
+                    api_name, kwargs, max_retries, e,
+                )
                 return None
             # 常规指数退避 (base_delay * 2^(attempt-1)) + ±30% jitter
             delay = base_delay * (2 ** (transient_attempts - 1)) * (1 + random.random() * 0.3)
-            print(f"[Tushare] API {api_name} 调用失败 (尝试 {transient_attempts}/{max_retries + 1}): {e}，{delay:.1f}s 后重试...")
+            logger.info(
+                "[Tushare] API %s 调用失败 (尝试 %d/%d): %s，%.1fs 后重试...",
+                api_name, transient_attempts, max_retries + 1, e, delay,
+            )
             time.sleep(delay)
 
     return None
@@ -340,23 +361,20 @@ def get_ashare_prices_with_tushare(ticker: str, start_date: str, end_date: str) 
     """
     pro = _get_pro()
     if not pro:
-        print("[Tushare] 未初始化，检查 TUSHARE_TOKEN")
+        logger.warning("[Tushare] 未初始化，检查 TUSHARE_TOKEN")
         return []
     try:
         ts_code = _to_ts_code(ticker)
         start_fmt = start_date.replace("-", "")
         end_fmt = end_date.replace("-", "")
-        print(f"[Tushare] 调用 daily API: ts_code={ts_code}, start_date={start_fmt}, end_date={end_fmt}")
+        logger.debug("[Tushare] 调用 daily API: ts_code=%s, start_date=%s, end_date=%s", ts_code, start_fmt, end_fmt)
         df = _fetch_tushare_ashare_prices_df(pro, ts_code, start_fmt, end_fmt)
-        print(f"[Tushare] 返回数据: {df.shape if df is not None else 'None'}")
+        logger.debug("[Tushare] 返回数据: %s", df.shape if df is not None else "None")
         prices = build_prices_from_tushare_daily_df(df)
-        print(f"[Tushare] 成功获取 {len(prices)} 条数据")
+        logger.debug("[Tushare] 成功获取 %d 条数据", len(prices))
         return prices
     except Exception as e:
-        print(f"[Tushare] 获取价格数据失败: {e}")
-        import traceback
-
-        traceback.print_exc()
+        logger.error("[Tushare] 获取价格数据失败: %s", e, exc_info=True)
         return []
 
 
@@ -442,7 +460,7 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
     """
     pro = _get_pro()
     if not pro:
-        print("[Tushare] 未初始化，检查 TUSHARE_TOKEN")
+        logger.warning("[Tushare] 未初始化，检查 TUSHARE_TOKEN")
         return []
     try:
         trade_fmt = _normalize_tushare_trade_date(trade_date)
@@ -458,10 +476,7 @@ def get_ashare_daily_gainers_with_tushare(trade_date: str, pct_threshold: float 
             build_daily_gainer_item_fn=build_daily_gainer_item,
         )
     except Exception as e:
-        print(f"[Tushare] 获取涨幅榜失败: {e}")
-        import traceback
-
-        traceback.print_exc()
+        logger.error("[Tushare] 获取涨幅榜失败: %s", e, exc_info=True)
         return []
 
 
@@ -605,7 +620,7 @@ def get_ashare_financial_metrics_with_tushare(ticker: str, end_date: str, limit:
             df_income=df_income,
         )
     except Exception as e:
-        print(f"[Tushare] 获取财务指标失败: {e}")
+        logger.error("[Tushare] 获取财务指标失败: %s", e, exc_info=True)
         return []
 
 
@@ -627,7 +642,7 @@ def get_ashare_market_cap_with_tushare(ticker: str, end_date: str) -> float | No
                 return float(mv) * 10000
         return None
     except Exception as e:
-        print(f"[Tushare] 获取市值失败({ticker}): {e}")
+        logger.error("[Tushare] 获取市值失败(%s): %s", ticker, e, exc_info=True)
         return None
 
 
@@ -726,10 +741,7 @@ def get_ashare_line_items_with_tushare(
             as_of_date=end_date,
         )
     except Exception as e:
-        print(f"[Tushare] 获取财务项目失败: {e}")
-        import traceback
-
-        traceback.print_exc()
+        logger.error("[Tushare] 获取财务项目失败: %s", e, exc_info=True)
         return []
 
 
@@ -770,7 +782,7 @@ def get_ashare_insider_trades_with_tushare(ticker: str, end_date: str, start_dat
             return []
         return _build_tushare_insider_trades(ticker, df, limit=limit)
     except Exception as e:
-        print(f"[Tushare] 获取股东增减持数据失败: {e}")
+        logger.error("[Tushare] 获取股东增减持数据失败: %s", e, exc_info=True)
         return []
 
 
@@ -829,7 +841,7 @@ def get_stock_details(ticker: str, trade_date: str | None = None) -> dict:
             **build_stock_price_details(df_daily),
         }
     except Exception as e:
-        print(f"[Tushare] 获取股票详细信息失败 ({ticker}): {e}")
+        logger.error("[Tushare] 获取股票详细信息失败 (%s): %s", ticker, e, exc_info=True)
         return build_default_stock_details(ticker)
 
 
@@ -883,7 +895,7 @@ def get_all_stock_basic() -> pd.DataFrame | None:
             _stock_basic_cache = df
             return df.copy()
         except Exception as e:
-            print(f"[Tushare] get_all_stock_basic 失败: {e}")
+            logger.error("[Tushare] get_all_stock_basic 失败: %s", e, exc_info=True)
             return None
 
 
@@ -1065,7 +1077,7 @@ def get_daily_basic_batch(trade_date: str) -> pd.DataFrame | None:
             fetch_frame=lambda: _fetch_tushare_daily_basic_batch(pro, trade_date),
         )
     except Exception as e:
-        print(f"[Tushare] get_daily_basic_batch({trade_date}) 失败: {e}")
+        logger.error("[Tushare] get_daily_basic_batch(%s) 失败: %s", trade_date, e, exc_info=True)
         return None
 
 
@@ -1104,7 +1116,7 @@ def get_daily_price_batch(trade_date: str) -> pd.DataFrame | None:
             fetch_frame=lambda: _fetch_tushare_daily_price_batch(pro, trade_date),
         )
     except Exception as e:
-        print(f"[Tushare] get_daily_price_batch({trade_date}) 失败: {e}")
+        logger.error("[Tushare] get_daily_price_batch(%s) 失败: %s", trade_date, e, exc_info=True)
         return None
 
 
@@ -1124,7 +1136,7 @@ def get_open_trade_dates(start_date: str, end_date: str) -> list[str]:
         df = _fetch_tushare_open_trade_dates(pro, start_date, end_date)
         return extract_open_trade_dates(df)
     except Exception as e:
-        print(f"[Tushare] get_open_trade_dates({start_date}, {end_date}) 失败: {e}")
+        logger.error("[Tushare] get_open_trade_dates(%s, %s) 失败: %s", start_date, end_date, e, exc_info=True)
         return []
 
 
@@ -1175,10 +1187,10 @@ def get_sw_industry_classification() -> dict[str, str] | None:
     try:
         result = _resolve_tushare_sw_industry_mapping(pro, None)
         if result is None:
-            print("[Tushare] 无法获取申万行业分类")
+            logger.warning("[Tushare] 无法获取申万行业分类")
         return result
     except Exception as e:
-        print(f"[Tushare] get_sw_industry_classification 失败: {e}")
+        logger.error("[Tushare] get_sw_industry_classification 失败: %s", e, exc_info=True)
         return None
 
 
@@ -1218,7 +1230,7 @@ def get_limit_list(trade_date: str) -> pd.DataFrame | None:
             fetch_frame=lambda: _fetch_tushare_limit_list(pro, trade_date),
         )
     except Exception as e:
-        print(f"[Tushare] get_limit_list({trade_date}) 失败: {e}")
+        logger.error("[Tushare] get_limit_list(%s) 失败: %s", trade_date, e, exc_info=True)
         return None
 
 
@@ -1245,7 +1257,7 @@ def get_suspend_list(trade_date: str) -> pd.DataFrame | None:
             fetch_frame=lambda: _fetch_tushare_suspend_list(pro, trade_date),
         )
     except Exception as e:
-        print(f"[Tushare] get_suspend_list({trade_date}) 失败: {e}")
+        logger.error("[Tushare] get_suspend_list(%s) 失败: %s", trade_date, e, exc_info=True)
         return None
 
 
@@ -1284,7 +1296,7 @@ def get_index_daily(index_code: str, start_date: str = "", end_date: str = "", l
             fetch_frame=lambda: _fetch_tushare_index_daily(pro, kwargs),
         )
     except Exception as e:
-        print(f"[Tushare] get_index_daily({index_code}) 失败: {e}")
+        logger.error("[Tushare] get_index_daily(%s) 失败: %s", index_code, e, exc_info=True)
         return None
 
 
@@ -1318,5 +1330,5 @@ def get_northbound_flow(trade_date: str = "", start_date: str = "", end_date: st
             fetch_frame=lambda: _fetch_tushare_northbound_flow(pro, kwargs),
         )
     except Exception as e:
-        print(f"[Tushare] get_northbound_flow 失败: {e}")
+        logger.error("[Tushare] get_northbound_flow 失败: %s", e, exc_info=True)
         return None
