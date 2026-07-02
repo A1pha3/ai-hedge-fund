@@ -316,3 +316,85 @@ class TestGetProInitFailureObservability:
         assert warning_records == [], (
             f"ImportError 是预期状态不应发 warning, got {warning_records}"
         )
+
+
+class TestGetStockNameObservability:
+    """NS-17 family sibling (c274): ``get_stock_name`` stock_basic 失败须可观测.
+
+    生产路径: 多个展示/报告路径 (top_picks / pdf_exporter / etc.) 调用
+    ``get_stock_name(ticker)`` 把 ticker 解析成中文名。c306 drain 漏网了这一处
+    — stock_basic 查询失败静默 ``pass`` 会让运维无法区分 "ticker 无对应
+    stock_basic 记录" (合法) 与 "tushare API 抖动 / token 失效" (需运维介入)。
+
+    Best-effort 契约保留 (返回 ticker), 但 failure path 必须发 debug (展示用途,
+    非决策链; 有 _stock_name_cache 减少 hot path 噪声)。
+    """
+
+    def test_stock_basic_failure_emits_debug(self, caplog, monkeypatch) -> None:
+        """stock_basic 查询抛异常必须发 debug + 返回 ticker (best-effort)."""
+        # 确保 cache miss, 强制走 stock_basic 路径
+        monkeypatch.setattr(tushare_api, "_stock_name_cache", {})
+
+        # 注入一个 _get_pro 返回假 pro, _cached_tushare_dataframe_call 抛异常
+        class _FakePro:
+            pass
+
+        monkeypatch.setattr(tushare_api, "_get_pro", lambda: _FakePro())
+
+        def _boom_cached_call(*_args, **_kwargs):
+            raise RuntimeError("simulated stock_basic API failure")
+
+        monkeypatch.setattr(
+            tushare_api, "_cached_tushare_dataframe_call", _boom_cached_call
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="src.tools.tushare_api"):
+            name = tushare_api.get_stock_name("000001.SZ")
+
+        # best-effort: 返回 ticker
+        assert name == "000001.SZ"
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(debug_records) == 1, (
+            f"expected 1 DEBUG record, got {debug_records}"
+        )
+        msg = debug_records[0].getMessage()
+        assert "get_stock_name stock_basic query failed" in msg
+        assert "000001.SZ" in msg
+        assert "simulated stock_basic API failure" in msg
+
+    def test_stock_basic_success_no_debug(self, caplog, monkeypatch) -> None:
+        """合法 stock_basic 查询不应发 debug (避免日志噪声)."""
+        import pandas as pd
+
+        monkeypatch.setattr(tushare_api, "_stock_name_cache", {})
+
+        class _FakePro:
+            pass
+
+        monkeypatch.setattr(tushare_api, "_get_pro", lambda: _FakePro())
+
+        def _ok_cached_call(*_args, **_kwargs):
+            return pd.DataFrame({"ts_code": ["000001.SZ"], "name": ["平安银行"]})
+
+        monkeypatch.setattr(
+            tushare_api, "_cached_tushare_dataframe_call", _ok_cached_call
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="src.tools.tushare_api"):
+            name = tushare_api.get_stock_name("000001.SZ")
+
+        assert name == "平安银行"
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(debug_records) == 0
+
+    def test_no_pro_returns_ticker_silently(self, caplog, monkeypatch) -> None:
+        """``_get_pro`` 返回 None (TUSHARE_TOKEN 未配置) 是预期 dev 状态, 不发 debug."""
+        monkeypatch.setattr(tushare_api, "_stock_name_cache", {})
+        monkeypatch.setattr(tushare_api, "_get_pro", lambda: None)
+
+        with caplog.at_level(logging.DEBUG, logger="src.tools.tushare_api"):
+            name = tushare_api.get_stock_name("000001.SZ")
+
+        assert name == "000001.SZ"
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(debug_records) == 0

@@ -720,11 +720,28 @@ def _resolve_batch_fetcher_for_avg_amount() -> "BatchDataFetcher | None":
     """获取 (lazy) 全局 BatchDataFetcher 单例；导入失败/未安装时返回 None。"""
     try:
         from src.screening.batch_data_fetcher import get_global_batch_data_fetcher
-    except Exception:
+    except Exception as exc:
+        # NS-17/BH-017 同族 (c274): ImportError 静默返回 None 会掩盖
+        # batch_data_fetcher 模块的语法错误/循环依赖/缺失依赖 — avg_amount
+        # 用于候选池流动性筛选 (决策链数据源), fallback 走 _cached_tushare_dataframe_call
+        # 仍可工作但效率降低, 运维需要知道 batch fetcher 不可用。
+        logger.warning(
+            "batch_data_fetcher import failed (fallback to _cached_tushare_dataframe_call): %s",
+            exc,
+            exc_info=True,
+        )
         return None
     try:
         return get_global_batch_data_fetcher()
-    except Exception:
+    except Exception as exc:
+        # NS-17/BH-017 同族 (c274): 单例初始化失败 (如 DB 连接/配置错误) 静默
+        # 返回 None 会掩盖 batch_data_fetcher 内部 bug — avg_amount 决策链数据源,
+        # fallback 仍可工作但运维需要知道单例初始化失败。
+        logger.warning(
+            "get_global_batch_data_fetcher() init failed (fallback to _cached_tushare_dataframe_call): %s",
+            exc,
+            exc_info=True,
+        )
         return None
 
 

@@ -410,8 +410,16 @@ def get_stock_name(ticker: str) -> str:
             name = str(df.iloc[0]["name"])
             _stock_name_cache[ticker] = name
             return name
-    except Exception:
-        pass
+    except Exception as exc:
+        # NS-17/BH-017 同族 (c274): c306 drain 漏网 — stock_basic 查询失败静默
+        # pass 会让运维无法区分 "ticker 无对应 stock_basic 记录" (合法) 与
+        # "tushare API 抖动 / token 失效" (需运维介入)。debug 级别 (展示用途,
+        # 非决策链, 有 _stock_name_cache 减少 hot path 噪声)。
+        logger.debug(
+            "get_stock_name stock_basic query failed (ticker=%s, fallback to ticker): %s",
+            ticker,
+            exc,
+        )
 
     return ticker
 
