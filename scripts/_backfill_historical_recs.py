@@ -63,21 +63,57 @@ def backfill_one_date(trade_date: str, top_n: int = 300) -> dict:
     Returns:
         dict with date, n_recs, n_low, elapsed, success
     """
-    from src.main import compute_auto_screening_results
+    from src.main import (
+        _AUTO_PIPELINE_LOCK_PATH,
+        _save_json_report,
+        _try_acquire_pipeline_lock,
+        compute_auto_screening_results,
+    )
     from src.screening.consecutive_recommendation import resolve_report_dir
     from src.screening.recommendation_tracker import update_tracking_history
 
     report_dir = resolve_report_dir()
     t0 = time.time()
 
+    # c292 pipeline 锁复用: 防与 --auto / 其他 backfill 并发写报告 + tracking_history。
+    # backfill 写 auto_screening 报告 + 两阶段 update_tracking_history, 与 --auto 共享
+    # 同一套文件; 不持锁则并发 lost-update / 报告互相覆盖 (c292 守 --auto 流程, 本锁
+    # 让 backfill 也进同一临界区)。flock 进程退出自动释放 (crash-safe)。
+    _lock_fd = _try_acquire_pipeline_lock(_AUTO_PIPELINE_LOCK_PATH)
+    if _lock_fd is None:
+        logging.warning("backfill %s 跳过: 另一个 --auto/backfill 实例持锁", trade_date)
+        return {"date": trade_date, "n_recs": 0, "n_low": 0, "seeded": 0, "updated": 0,
+                "elapsed_s": 0.0, "success": False, "skipped": "pipeline_lock_held"}
+    try:
+        return _backfill_one_date_locked(
+            trade_date=trade_date, top_n=top_n, report_dir=report_dir,
+            compute_fn=compute_auto_screening_results,
+            save_report_fn=_save_json_report,
+            update_history_fn=update_tracking_history,
+            t0=t0,
+        )
+    finally:
+        try:
+            import os as _os
+            _os.close(_lock_fd)
+        except OSError:
+            pass
+
+
+def _backfill_one_date_locked(
+    *, trade_date: str, top_n: int, report_dir: Path,
+    compute_fn, save_report_fn, update_history_fn, t0: float,
+) -> dict:
+    """backfill_one_date 临界区主体 (调用方已持 c292 pipeline 锁)。"""
     # Step 1: 跑历史日期 --auto (纯函数, 不写文件)
-    payload = compute_auto_screening_results(trade_date, top_n=top_n)
+    payload = compute_fn(trade_date, top_n=top_n)
     recs = payload.get("recommendations", [])
     n_recs = len(recs)
 
-    # Step 2: 写报告文件 (update_tracking_history Phase 1 从这里读 recommendations)
-    report_path = report_dir / f"auto_screening_{trade_date}.json"
-    report_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Step 2: 写报告文件 (原子写, 复用 c293 _save_json_report — 此前 backfill 绕过它
+    # 直接 write_text, 是 c293 同族不同路径残留; crash mid-write 留半截历史报告污染
+    # reconcile/digest)。_save_json_report 内部 tempfile + os.replace + BH-012 sanitize。
+    save_report_fn(f"auto_screening_{trade_date}.json", payload)
 
     # Step 3: 统计 low bucket 数量 (score<0.30)
     scores = [r.get("score_b", r.get("recommendation_score", 0)) for r in recs]
@@ -85,12 +121,12 @@ def backfill_one_date(trade_date: str, top_n: int = 300) -> dict:
 
     # Step 4: Phase 1 seed — update_tracking_history(trade_date) seed recommendations
     # (Phase 2 用 trade_date 作为 "today", 历史 date 当天 rec_dt==today_dt, 0 < 6 跳过回填)
-    seeded = update_tracking_history(reports_dir=report_dir, trade_date=trade_date)
+    seeded = update_history_fn(reports_dir=report_dir, trade_date=trade_date)
 
     # Step 5: Phase 2 backfill — 用真实今天日期触发 T+30 回填
     # (Phase 2 会遍历所有 pending records, (today_dt - rec_dt).days > 6 的会回填)
     today_str = datetime.now().strftime("%Y%m%d")
-    updated = update_tracking_history(reports_dir=report_dir, trade_date=today_str)
+    updated = update_history_fn(reports_dir=report_dir, trade_date=today_str)
 
     elapsed = time.time() - t0
     return {
