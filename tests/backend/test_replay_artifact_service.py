@@ -2623,3 +2623,69 @@ class TestLedgerIoWriteAtomicity:
         assert parsed.get("session_id") == "keep-alive", (
             "prior summary fields must survive a crashed write attempt (prior or new-complete, never corrupt)"
         )
+
+
+class TestSelectionFeedbackSummaryAtomicity:
+    """c296 helper reuse (R88 corrupt-sidecar CRASH vector, replay subsystem):
+    ``_finalize_selection_artifact_feedback_append`` must write
+    ``research_feedback_summary.json`` atomically so a crash mid-write leaves any
+    prior summary intact, not truncated. Sibling of the c296 ledger_io write fix.
+    """
+
+    def test_crash_during_summary_write_never_leaves_truncated_file(self, tmp_path: Path, monkeypatch) -> None:
+        report_dir = tmp_path / "demo_report"
+        artifact_root = report_dir / "selection_artifacts"
+        day_dir = artifact_root / "2026-03-11"
+
+        _write_json(
+            report_dir / "session_summary.json",
+            {"artifacts": {"selection_artifact_root": str(artifact_root)}},
+        )
+        _write_json(
+            day_dir / "selection_snapshot.json",
+            {"artifact_version": "v1", "run_id": "r1", "trade_date": "2026-03-11",
+             "selected": [{"symbol": "300724"}], "rejected": []},
+        )
+        (day_dir / "selection_review.md").write_text("review", encoding="utf-8")
+        (day_dir / "research_feedback.jsonl").write_text("", encoding="utf-8")
+
+        # Prior summary that must survive a crashed write attempt.
+        summary_path = artifact_root / "research_feedback_summary.json"
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+        summary_path.write_text(json.dumps({"prior": True, "keep": "alive"}), encoding="utf-8")
+
+        # Crash ONLY the research_feedback_summary.json write (scoped by filename);
+        # other writes (session_summary atomic via c296, feedback jsonl) proceed.
+        _original_write_text = Path.write_text
+
+        def crashing_write_text(self, data, *args, **kwargs):  # noqa: ANN001
+            if self.name == "research_feedback_summary.json":
+                open(self, "w").close()  # write_text opens mode='w' → truncates
+                raise OSError("simulated mid-write crash on summary")
+            return _original_write_text(self, data, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", crashing_write_text)
+
+        service = _build_service_with_db(tmp_path)
+        try:
+            service.append_selection_artifact_feedback(
+                report_name="demo_report",
+                trade_date="2026-03-11",
+                reviewer="researcher_a",
+                symbol="300724",
+                primary_tag="high_quality_selection",
+                research_verdict="selected_for_good_reason",
+                tags=["thesis_clear"],
+                review_status="final",
+                confidence=0.82,
+                notes="quality",
+            )
+        except OSError:
+            pass  # acceptable: the write reported failure; the guard is about file state
+
+        raw = summary_path.read_text(encoding="utf-8")
+        assert raw.strip(), (
+            "prior research_feedback_summary must not be truncated-empty after a crashed write — "
+            "non-atomic write_text truncates on open (R88 corrupt-sidecar CRASH vector root cause)"
+        )
+        json.loads(raw)  # must parse cleanly — no half-written corrupt file

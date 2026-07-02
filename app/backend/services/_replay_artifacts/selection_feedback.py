@@ -17,6 +17,9 @@ from src.research.models import (
     ResearchFeedbackRecord,
 )
 
+# c296 reusable atomic-write helper (same _replay_artifacts subsystem).
+from app.backend.services._replay_artifacts.ledger_io import _atomic_write_json
+
 if TYPE_CHECKING:
     from app.backend.services.replay_artifact_service import ReplayArtifactService
 
@@ -272,7 +275,7 @@ class ReplaySelectionFeedbackHelper:
         service = self._service
         directory_summary = summarize_research_feedback_directory(artifact_root=artifact_root, skip_invalid=False)
         summary_path = artifact_root / "research_feedback_summary.json"
-        summary_path.write_text(json.dumps(directory_summary.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+        _atomic_write_json(summary_path, directory_summary.model_dump(mode="json"))
         service._sync_session_feedback_summary(report_dir=report_dir, directory_summary=directory_summary, summary_path=summary_path)
 
         day_records = read_research_feedback(file_path=feedback_path, skip_invalid=False)
