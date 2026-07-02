@@ -2334,6 +2334,11 @@ def _print_custom_weights_results(top: list[dict], w: dict) -> bool:
         return False
 
     print(f"Top {len(top)}:")
+    # c284 observability: reweight 越过桶边界的 pick 其 bucket 校准已被 reset
+    # (见 reweight_recommendations 的 bucket_recalibration_needed 标记). CLI 必须
+    # 让操作者看到 reset 发生 (否则只在 JSON 里, 人读不到) — 行内标记 + 末尾汇总,
+    # 指引去 --top-picks 复核 (那里会重算校准).
+    recalibration_needed_count = 0
     for idx, rec in enumerate(top, start=1):
         ticker = str(rec.get("ticker", ""))
         name = str(rec.get("name", "") or "")
@@ -2342,7 +2347,16 @@ def _print_custom_weights_results(top: list[dict], w: dict) -> bool:
         diff = score_b - original
         diff_str = f"{diff:+.3f}"
         label = f"{ticker} {name}".strip()
-        print(f"  {idx:>2}. {label:<22}  score_b {score_b:+.3f}  (原 {original:+.3f}  Δ {diff_str})")
+        recalib_marker = ""
+        if rec.get("bucket_recalibration_needed"):
+            recalibration_needed_count += 1
+            recalib_marker = f"  {Fore.YELLOW}⚠重权越界(校准已重置){Style.RESET_ALL}"
+        print(f"  {idx:>2}. {label:<22}  score_b {score_b:+.3f}  (原 {original:+.3f}  Δ {diff_str}){recalib_marker}")
+    if recalibration_needed_count > 0:
+        print(
+            f"{Fore.YELLOW}⚠ {recalibration_needed_count} 只标的因重权越过桶边界, "
+            f"bucket 校准已重置为未知 — 请 --top-picks 复核有效校准.{Style.RESET_ALL}"
+        )
     return True
 
 

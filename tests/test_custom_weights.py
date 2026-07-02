@@ -281,6 +281,48 @@ def test_reweight_preserves_composite_score_when_crossing() -> None:
     assert r["composite_verified"] is True
 
 
+def test_print_custom_weights_warns_on_recalibration_needed(capsys: pytest.CaptureFixture) -> None:
+    """c284 observability: CLI 显示必须告知哪些 pick 因重权越过桶边界被 reset.
+
+    c284 的 bucket reset 写入 JSON (bucket_recalibration_needed=True), 但若 CLI
+    显示 (_print_custom_weights_results) 只打 score_b, 操作者看不到 reset 发生.
+    必须在越界 pick 行加标记 + 末尾汇总, 让操作者知道去 --top-picks 复核.
+    """
+    from src.main import _print_custom_weights_results
+
+    top = [
+        {
+            "ticker": "X",
+            "name": "测试_X",
+            "score_b": 0.80,
+            "original_score_b": 0.55,
+            "bucket_recalibration_needed": True,
+        },
+        {
+            "ticker": "Y",
+            "name": "测试_Y",
+            "score_b": 0.58,
+            "original_score_b": 0.55,  # 未越界, 无 marker
+        },
+    ]
+    w = StrategyWeights().to_dict()
+    assert _print_custom_weights_results(top, w) is True
+    out = capsys.readouterr().out
+    # 末尾汇总: 提及越界 + 复核指引
+    assert "越过桶边界" in out or "越界" in out, (
+        f"CLI must summarize recalibration-needed picks; got stdout={out!r}"
+    )
+    assert "--top-picks" in out, (
+        f"CLI must point operator to --top-picks for re-validation; got stdout={out!r}"
+    )
+    # 越界 pick (X) 行应带可视标记区分 (Y 不带)
+    x_line = [ln for ln in out.splitlines() if "X" in ln and "测试_X" in ln]
+    assert x_line, f"X pick line missing; stdout={out!r}"
+    assert "重权" in x_line[0] or "越界" in x_line[0] or "⚠" in x_line[0], (
+        f"crossed pick X must carry a visible marker; got {x_line[0]!r}"
+    )
+
+
 # ===========================================================================
 # 8. 排序变化
 # ===========================================================================
