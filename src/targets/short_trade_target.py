@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from src.execution.models import LayerCResult
@@ -89,6 +90,8 @@ from src.targets.short_trade_target_watchlist_helpers import (
     resolve_watchlist_zero_catalyst_penalty_impl,
 )
 
+logger = logging.getLogger(__name__)
+
 STRONG_CARRYOVER_SELECTED_SCORE_TOLERANCE = 0.001
 STRONG_CARRYOVER_HISTORY_MIN_EVALUABLE_COUNT = 3
 STRONG_CARRYOVER_SELECTED_TOLERANCE_MIN_EVALUABLE_COUNT = STRONG_CARRYOVER_HISTORY_MIN_EVALUABLE_COUNT
@@ -114,7 +117,20 @@ def _load_signal(payload: Any) -> StrategySignal | None:
     if isinstance(payload, dict) and payload:
         try:
             return StrategySignal.model_validate(payload)
-        except Exception:
+        except Exception as exc:
+            # NS-17/BH-017: 静默 drop 畸形 payload 会让该 strategy signal 整条消失
+            # (_signal_signed_strength(signal=None) == 0.0 → score 衰减), 上游
+            # schema drift / type bug 无任何信号可观测。surface 到 logger.warning
+            # 让 operators 能关联 "score 异常衰减" 与 "payload 畸形"。
+            try:
+                payload_keys = list(payload.keys())[:5]
+            except Exception:
+                payload_keys = None
+            logger.warning(
+                "_load_signal StrategySignal.model_validate failed (keys=%s): %s",
+                payload_keys,
+                exc,
+            )
             return None
     return None
 

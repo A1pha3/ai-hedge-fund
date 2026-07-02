@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import os
 import sys
 from functools import lru_cache
@@ -12,6 +13,8 @@ from src.screening.market_state_helpers import (
 from src.targets.explainability import clamp_unit_interval
 from src.targets.short_trade_target_kill_switch_helpers import resolve_btst_kill_switch
 from src.targets.short_trade_target_rank_helpers import compute_runner_composite_score
+
+logger = logging.getLogger(__name__)
 
 SHADOW_ONLY_GATES = frozenset({"shadow_only", "halt"})
 COMMITTEE_PROFILE_BY_GATE = {
@@ -52,7 +55,16 @@ def _as_float(payload: dict[str, Any], key: str, default: float = 0.0) -> float:
         # NOTE: 不能用 `payload.get(key, default) or default` — 0.0 是合法值, 会被静默覆盖。
         _raw = payload.get(key, default)
         return float(_raw) if _raw is not None else default
-    except Exception:
+    except Exception as exc:
+        # NS-17/BH-017 同族: 静默回退 default 会让该 metric 字段被 consumer 误判为
+        # "显式 0.0" 或 "缺失", 影响 committee scoring。发 debug 诊断 (热路径,
+        # warning 太噪) 让数据畸形可观测。
+        logger.debug(
+            "_as_float coercion failed (key=%s, default=%r): %s",
+            key,
+            default,
+            exc,
+        )
         return default
 
 
@@ -70,20 +82,42 @@ def _attr_float(profile: Any, key: str, default: float) -> float:
 def _optional_float(payload: dict[str, Any], key: str) -> float | None:
     try:
         value = payload.get(key)
-    except Exception:
+    except Exception as exc:
+        # NS-17/BH-017 同族: payload.get 异常 (e.g. payload 非 dict) 静默回退 None
+        # 会让 historical_prior metric 整条丢失。发 debug 让数据畸形可观测。
+        logger.debug(
+            "_optional_float payload.get failed (key=%s): %s",
+            key,
+            exc,
+        )
         return None
     if value is None or value == "":
         return None
     try:
         return float(value)
-    except Exception:
+    except Exception as exc:
+        # NS-17/BH-017 同族: float(value) 异常 (e.g. value="abc") 静默回退 None
+        # 会让该 metric 整条丢失, 影响下游 historical_prior 计算。
+        logger.debug(
+            "_optional_float float coercion failed (key=%s, value=%r): %s",
+            key,
+            value,
+            exc,
+        )
         return None
 
 
 def _normalized_ratio(value: Any) -> float:
     try:
         numeric = float(value or 0.0)
-    except Exception:
+    except Exception as exc:
+        # NS-17/BH-017 同族: 静默回退 0.0 会让该 ratio metric 被下游 committee
+        # scoring 误判为 "显式 0" (最低分)。发 debug 让数据畸形可观测。
+        logger.debug(
+            "_normalized_ratio coercion failed (value=%r): %s",
+            value,
+            exc,
+        )
         return 0.0
     if numeric > 1.0 and numeric <= 100.0:
         numeric = numeric / 100.0

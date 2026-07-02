@@ -1771,3 +1771,162 @@ def test_runner_escape_pool_quality_min_defaults_to_zero() -> None:
     profile = build_short_trade_target_profile("default")
     assert hasattr(profile, "runner_escape_pool_quality_min")
     assert profile.runner_escape_pool_quality_min == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# NS-17/BH-017 c270: silent-degradation drain in trade-target decision chain
+# ---------------------------------------------------------------------------
+
+
+def test_load_signal_validation_failure_emits_warning(caplog) -> None:
+    """_load_signal StrategySignal.model_validate 失败时必须发 warning (c270).
+
+    之前完全静默返回 None — 上游 schema drift / type bug 会让该 strategy signal
+    整条消失且无任何信号可观测, 直接影响 committee scoring。
+    """
+    import logging
+
+    from src.targets.short_trade_target import _load_signal
+
+    # direction 是 int 必填字段; 传 "not_an_int" 触发 ValidationError
+    bad_payload = {"direction": "not_an_int", "confidence": 80.0, "completeness": 1.0}
+
+    with caplog.at_level(logging.WARNING, logger="src.targets.short_trade_target"):
+        result = _load_signal(bad_payload)
+
+    # best-effort 契约保留: 返回 None
+    assert result is None
+    # 静默降级 surface 到 warning
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning_records) == 1
+    msg = warning_records[0].getMessage()
+    assert "_load_signal" in msg
+    assert "StrategySignal.model_validate failed" in msg
+    # payload keys 应该被记录用于排查
+    assert "direction" in msg
+
+
+def test_load_signal_valid_payload_no_warning(caplog) -> None:
+    """合法 payload 不应发 warning (避免日志噪声)."""
+    import logging
+
+    from src.targets.short_trade_target import _load_signal
+
+    valid_payload = {"direction": 1, "confidence": 80.0, "completeness": 1.0}
+
+    with caplog.at_level(logging.WARNING, logger="src.targets.short_trade_target"):
+        result = _load_signal(valid_payload)
+
+    assert result is not None
+    assert result.direction == 1
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning_records) == 0
+
+
+def test_as_float_coercion_failure_emits_debug(caplog) -> None:
+    """_as_float float() 失败时必须发 debug (c270)."""
+    import logging
+
+    from src.targets.short_trade_target_committee_helpers import _as_float
+
+    payload = {"bad_metric": "not_a_number"}
+
+    with caplog.at_level(logging.DEBUG, logger="src.targets.short_trade_target_committee_helpers"):
+        result = _as_float(payload, "bad_metric", 0.0)
+
+    # best-effort: 返回 default
+    assert result == 0.0
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert len(debug_records) == 1
+    msg = debug_records[0].getMessage()
+    assert "_as_float" in msg
+    assert "bad_metric" in msg
+
+
+def test_optional_float_coercion_failure_emits_debug(caplog) -> None:
+    """_optional_float float(value) 失败时必须发 debug (c270)."""
+    import logging
+
+    from src.targets.short_trade_target_committee_helpers import _optional_float
+
+    payload = {"bad_metric": "abc"}
+
+    with caplog.at_level(logging.DEBUG, logger="src.targets.short_trade_target_committee_helpers"):
+        result = _optional_float(payload, "bad_metric")
+
+    assert result is None
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert len(debug_records) == 1
+    msg = debug_records[0].getMessage()
+    assert "_optional_float" in msg
+    assert "bad_metric" in msg
+
+
+def test_optional_float_payload_get_failure_emits_debug(caplog) -> None:
+    """_optional_float payload.get 异常 (非 dict) 必须发 debug (c270)."""
+    import logging
+
+    from src.targets.short_trade_target_committee_helpers import _optional_float
+
+    # payload 不是 dict — payload.get 会抛 AttributeError
+    bad_payload = ["not", "a", "dict"]  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.DEBUG, logger="src.targets.short_trade_target_committee_helpers"):
+        result = _optional_float(bad_payload, "any_key")  # type: ignore[arg-type]
+
+    assert result is None
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert len(debug_records) == 1
+    msg = debug_records[0].getMessage()
+    assert "_optional_float" in msg
+    assert "any_key" in msg
+
+
+def test_normalized_ratio_coercion_failure_emits_debug(caplog) -> None:
+    """_normalized_ratio float(value) 失败时必须发 debug (c270)."""
+    import logging
+
+    from src.targets.short_trade_target_committee_helpers import _normalized_ratio
+
+    # float() 在某些类型上会抛 TypeError/ValueError
+    bad_value = ["not", "a", "number"]
+
+    with caplog.at_level(logging.DEBUG, logger="src.targets.short_trade_target_committee_helpers"):
+        result = _normalized_ratio(bad_value)
+
+    assert result == 0.0
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert len(debug_records) == 1
+    msg = debug_records[0].getMessage()
+    assert "_normalized_ratio" in msg
+
+
+def test_as_float_valid_value_no_debug(caplog) -> None:
+    """合法数值不应发 debug (避免日志噪声)."""
+    import logging
+
+    from src.targets.short_trade_target_committee_helpers import _as_float
+
+    payload = {"good_metric": 0.42}
+
+    with caplog.at_level(logging.DEBUG, logger="src.targets.short_trade_target_committee_helpers"):
+        result = _as_float(payload, "good_metric", 0.0)
+
+    assert result == pytest.approx(0.42)
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert len(debug_records) == 0
+
+
+def test_optional_float_none_value_no_debug(caplog) -> None:
+    """None 或空字符串是合法 'no value' 信号, 不应发 debug (避免日志噪声)."""
+    import logging
+
+    from src.targets.short_trade_target_committee_helpers import _optional_float
+
+    with caplog.at_level(logging.DEBUG, logger="src.targets.short_trade_target_committee_helpers"):
+        assert _optional_float({"k": None}, "k") is None
+        assert _optional_float({"k": ""}, "k") is None
+        assert _optional_float({"k_missing": 1.0}, "k_absent") is None
+
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert len(debug_records) == 0
