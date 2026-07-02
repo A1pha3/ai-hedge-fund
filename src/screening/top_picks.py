@@ -15,6 +15,7 @@ Design principle:
     One command → one answer. No analysis paralysis.
     The user sees: ticker, name, composite score, grade, and why.
 """
+
 from __future__ import annotations
 
 import json
@@ -67,9 +68,7 @@ def _print_market_gate_regime_advice(regime: str) -> None:
     """
     regime_lower = regime.lower()
     if "crisis" in regime_lower or "risk_off" in regime_lower:
-        print(
-            f"\n{Fore.RED}{Style.BRIGHT}⚠ MARKET GATE: {regime}{Style.RESET_ALL}"
-        )
+        print(f"\n{Fore.RED}{Style.BRIGHT}⚠ MARKET GATE: {regime}{Style.RESET_ALL}")
         print(
             f"  {Fore.RED}当前市场处于高风险状态, 默认前门只给 HOLD / AVOID 级别建议。{Style.RESET_ALL}"
         )
@@ -77,16 +76,12 @@ def _print_market_gate_regime_advice(regime: str) -> None:
             f"  {Fore.YELLOW}建议: 降低仓位或等待市场企稳后再操作。{Style.RESET_ALL}\n"
         )
     elif "cautious" in regime_lower or "range" in regime_lower:
-        print(
-            f"\n{Fore.YELLOW}⚡ MARKET GATE: {regime}{Style.RESET_ALL}"
-        )
+        print(f"\n{Fore.YELLOW}⚡ MARKET GATE: {regime}{Style.RESET_ALL}")
         print(
             f"  {Fore.YELLOW}市场处于震荡/谨慎状态, 建议轻仓参与, 严格止损。{Style.RESET_ALL}\n"
         )
     else:
-        print(
-            f"\n{Fore.GREEN}✓ MARKET GATE: {regime or 'normal'}{Style.RESET_ALL}"
-        )
+        print(f"\n{Fore.GREEN}✓ MARKET GATE: {regime or 'normal'}{Style.RESET_ALL}")
         print(
             f"  {Fore.GREEN}市场门控允许正常筛选, 重点关注 BUY / HOLD 级别代表票。{Style.RESET_ALL}\n"
         )
@@ -103,9 +98,7 @@ def _render_market_gate(trade_date: str) -> str:
     try:
         state = detect_market_state(trade_date)
     except Exception as exc:
-        print(
-            f"\n{Fore.YELLOW}⚠ MARKET GATE unavailable: {exc}{Style.RESET_ALL}"
-        )
+        print(f"\n{Fore.YELLOW}⚠ MARKET GATE unavailable: {exc}{Style.RESET_ALL}")
         print(
             f"  {Fore.YELLOW}已跳过市场门控增强，继续输出默认前门结果。{Style.RESET_ALL}\n"
         )
@@ -180,8 +173,7 @@ def _render_hit_rate_summary(verify_summary: object) -> str:
     unique = getattr(verify_summary, "unique_tickers", 0)
     lookback = getattr(verify_summary, "lookback_days", 30)
     lines.append(
-        f"  近 {lookback} 天: {days} 个交易日, "
-        f"{total} 次推荐 ({unique} 只不重复标的)"
+        f"  近 {lookback} 天: {days} 个交易日, {total} 次推荐 ({unique} 只不重复标的)"
     )
 
     # Win rates
@@ -189,7 +181,9 @@ def _render_hit_rate_summary(verify_summary: object) -> str:
     for horizon, label in [("t5", "T+5"), ("t10", "T+10"), ("t30", "T+30")]:
         wr = getattr(verify_summary, f"overall_{horizon}_win_rate", None)
         if wr is not None:
-            color = Fore.GREEN if wr >= 0.55 else Fore.YELLOW if wr >= 0.50 else Fore.RED
+            color = (
+                Fore.GREEN if wr >= 0.55 else Fore.YELLOW if wr >= 0.50 else Fore.RED
+            )
             wr_parts.append(f"{label} 胜率={color}{wr:.0%}{Style.RESET_ALL}")
     if wr_parts:
         lines.append("  " + " | ".join(wr_parts))
@@ -462,7 +456,9 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
 
     avg_edge = sum(edges) / len(edges)
     avg_winrate = sum(winrates) / len(winrates) if winrates else 0.0
-    edge_color = Fore.GREEN if avg_edge > 0 else Fore.RED if avg_edge < 0 else Fore.WHITE
+    edge_color = (
+        Fore.GREEN if avg_edge > 0 else Fore.RED if avg_edge < 0 else Fore.WHITE
+    )
     # Win-rate color thresholds must match the canonical thresholds used
     # everywhere else in the front door (e.g. _render_hit_rate_summary line ~183
     # and the BUY verdict gate which requires t5/t10 win_rate >= 0.55). The
@@ -470,7 +466,13 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
     # (every pick >= 0.55) could never reach it, yet a future verdict-gate
     # change would silently surface a "good enough" yellow on picks that fail
     # the BUY bar elsewhere. Align to 0.50. See BH-003.
-    wr_color = Fore.GREEN if avg_winrate >= 0.55 else Fore.YELLOW if avg_winrate >= 0.50 else Fore.RED
+    wr_color = (
+        Fore.GREEN
+        if avg_winrate >= 0.55
+        else Fore.YELLOW
+        if avg_winrate >= 0.50
+        else Fore.RED
+    )
 
     return (
         f"  {Fore.WHITE}组合 T+5/T+10 决策预期:{Style.RESET_ALL} "
@@ -543,6 +545,7 @@ def _render_market_opportunity_index(
 
     return f"  机会指数: {label}  BUY {buy_count}/{total}  HQ {high_quality}  | {hint}"
 
+
 # ---------------------------------------------------------------------------
 # R8: Stop-loss / take-profit from conditional order advisor
 # ---------------------------------------------------------------------------
@@ -550,8 +553,12 @@ def _render_market_opportunity_index(
 
 def _format_stop_loss_take_profit(advice) -> str:
     """R8: Format a :class:`ConditionalOrderAdvice` as a stop-loss/take-profit line."""
-    sl_pct = ((advice.suggested_stop_loss - advice.current_price) / advice.current_price) * 100
-    tp_pct = ((advice.suggested_take_profit - advice.current_price) / advice.current_price) * 100
+    sl_pct = (
+        (advice.suggested_stop_loss - advice.current_price) / advice.current_price
+    ) * 100
+    tp_pct = (
+        (advice.suggested_take_profit - advice.current_price) / advice.current_price
+    ) * 100
     sl_color = Fore.RED
     tp_color = Fore.GREEN
     rr_color = Fore.YELLOW if advice.risk_reward_ratio < 1.5 else Fore.GREEN
@@ -579,7 +586,11 @@ def _compute_pick_risk_advice(
     try:
         from src.tools.tushare_api import get_ashare_prices_with_tushare
 
-        end_dt = datetime.strptime(trade_date, "%Y%m%d") if len(trade_date) == 8 else datetime.now()
+        end_dt = (
+            datetime.strptime(trade_date, "%Y%m%d")
+            if len(trade_date) == 8
+            else datetime.now()
+        )
         start_dt = (end_dt - timedelta(days=90)).strftime("%Y%m%d")
         end_str = end_dt.strftime("%Y%m%d")
 
@@ -634,12 +645,24 @@ def _render_reason_and_risk(item: dict, advice) -> str:
     reason = _compute_factor_reason(item)
 
     risk_label, risk_ratio = _risk_label_from_advice(advice)
-    risk_color = Fore.GREEN if risk_label == "低" else Fore.YELLOW if risk_label == "中" else Fore.RED if risk_label == "高" else Fore.WHITE
+    risk_color = (
+        Fore.GREEN
+        if risk_label == "低"
+        else Fore.YELLOW
+        if risk_label == "中"
+        else Fore.RED
+        if risk_label == "高"
+        else Fore.WHITE
+    )
 
     if not reason and risk_label == "—":
         return ""
     reason_part = f"理由: {reason}" if reason else "理由: 数据不足"
-    risk_part = f"风险: {risk_color}{risk_label}({risk_ratio:.1%}){Style.RESET_ALL}" if risk_label != "—" else "风险: 数据不足"
+    risk_part = (
+        f"风险: {risk_color}{risk_label}({risk_ratio:.1%}){Style.RESET_ALL}"
+        if risk_label != "—"
+        else "风险: 数据不足"
+    )
     return f"     {Fore.WHITE}{reason_part} | {risk_part}{Style.RESET_ALL}"
 
 
@@ -722,7 +745,11 @@ def _render_exit_timing_line(
         report_dir=report_dir,
     )
     decay_info = decay_map.get(ticker)
-    change_pct = float(decay_info.change_pct) if decay_info and decay_info.change_pct is not None else None
+    change_pct = (
+        float(decay_info.change_pct)
+        if decay_info and decay_info.change_pct is not None
+        else None
+    )
     days_peak = int(decay_info.days_since_peak) if decay_info else 0
 
     advice = compute_exit_timing(
@@ -744,7 +771,9 @@ def _compute_confluence(item: dict) -> tuple[int, int]:
     signals = item.get("strategy_signals") or {}
     if not signals:
         return 0, 0
-    bullish = sum(1 for s in signals.values() if isinstance(s, dict) and s.get("direction") == 1)
+    bullish = sum(
+        1 for s in signals.values() if isinstance(s, dict) and s.get("direction") == 1
+    )
     return bullish, len(signals)
 
 
@@ -837,7 +866,9 @@ def _render_sector_rotation(report_data: dict, picks: list[dict]) -> str:
     Shows direction arrows for each industry in the current picks,
     using momentum_score from the report's industry_rotation payload.
     """
-    momentum_map = _build_industry_momentum_map(report_data.get("industry_rotation") or [])
+    momentum_map = _build_industry_momentum_map(
+        report_data.get("industry_rotation") or []
+    )
     if not momentum_map:
         return ""
 
@@ -943,9 +974,7 @@ def _check_report_freshness(report_date: str, now: datetime | None = None) -> st
     elapsed_trading_days = _trading_days_elapsed(report_dt, today)
     if elapsed_trading_days >= 2:
         formatted = report_dt.strftime("%Y-%m-%d")
-        return (
-            f"  {Fore.YELLOW}{Style.BRIGHT}⚠ 报告日期: {formatted}（非最新，请先运行 --auto 更新）{Style.RESET_ALL}"
-        )
+        return f"  {Fore.YELLOW}{Style.BRIGHT}⚠ 报告日期: {formatted}（非最新，请先运行 --auto 更新）{Style.RESET_ALL}"
     return ""
 
 
@@ -987,7 +1016,9 @@ def _real_trading_days_between(start: datetime, end: datetime) -> int | None:
     ``_trading_days_between`` semantics.
     """
     try:
-        from src.tools.tushare_api import get_open_trade_dates  # local import: keep startup light
+        from src.tools.tushare_api import (
+            get_open_trade_dates,
+        )  # local import: keep startup light
     except Exception:  # pragma: no cover — defensive
         return None
     start_compact = start.strftime("%Y%m%d")
@@ -1057,23 +1088,35 @@ def _compute_pick_changes(
     except (OSError, json.JSONDecodeError):
         return set(), set()
     prev_recs = prev_data.get("recommendations") or []
-    prev_tickers = {str(r.get("ticker", "")) for r in prev_recs if str(r.get("ticker", ""))}
+    prev_tickers = {
+        str(r.get("ticker", "")) for r in prev_recs if str(r.get("ticker", ""))
+    }
     new = current_tickers - prev_tickers
     dropped = prev_tickers - current_tickers
     return new, dropped
 
 
-def _render_pick_changes(new: set[str], dropped: set[str], current_items: list[dict]) -> str:
+def _render_pick_changes(
+    new: set[str], dropped: set[str], current_items: list[dict]
+) -> str:
     """Render a one-line summary of new/dropped picks."""
     parts = []
     if new:
         # Get names for new tickers
-        name_map = {str(it.get("ticker", "")): str(it.get("name", "") or it.get("ticker", "")) for it in current_items}
-        new_labels = [f"{Fore.GREEN}🆕 {name_map.get(t, t)}{Style.RESET_ALL}" for t in sorted(new)[:3]]
+        name_map = {
+            str(it.get("ticker", "")): str(it.get("name", "") or it.get("ticker", ""))
+            for it in current_items
+        }
+        new_labels = [
+            f"{Fore.GREEN}🆕 {name_map.get(t, t)}{Style.RESET_ALL}"
+            for t in sorted(new)[:3]
+        ]
         extra = f" +{len(new) - 3}个" if len(new) > 3 else ""
         parts.append("新入选: " + ", ".join(new_labels) + extra)
     if dropped:
-        drop_labels = [f"{Fore.RED}❌ {t}{Style.RESET_ALL}" for t in sorted(dropped)[:3]]
+        drop_labels = [
+            f"{Fore.RED}❌ {t}{Style.RESET_ALL}" for t in sorted(dropped)[:3]
+        ]
         extra = f" +{len(dropped) - 3}个" if len(dropped) > 3 else ""
         parts.append("退出: " + ", ".join(drop_labels) + extra)
     if not parts:
@@ -1081,7 +1124,9 @@ def _render_pick_changes(new: set[str], dropped: set[str], current_items: list[d
     return "  📊 " + " | ".join(parts)
 
 
-def _enrich_with_consecutive_bonus(recommendations: list[dict], report_dir: Path) -> list[dict]:
+def _enrich_with_consecutive_bonus(
+    recommendations: list[dict], report_dir: Path
+) -> list[dict]:
     """Best-effort enrichment for consecutive recommendation metadata."""
     try:
         enriched = enrich_recommendations_with_history(
@@ -1089,7 +1134,17 @@ def _enrich_with_consecutive_bonus(recommendations: list[dict], report_dir: Path
             lookback_days=10,
             report_dir=report_dir,
         )
-    except Exception:
+    except Exception as e:
+        # NS-17 / BH-017 family sibling: enrich 失败时返回原 list (best-effort) 是
+        # 有意为之, 但之前完全静默 — consecutive_bonus 字段缺失会让下游 ranking
+        # 退化到无 bonus tie-breaker (C232 已隔离 BUY gate 不喂 bonus, 但 ranking
+        # 仍依赖 bonus 做 tie-breaking)。surface 到 logger.warning 让 operators
+        # 能感知 ranking 退化触发, 与下游 rank order 异常关联定位。
+        logger.warning(
+            "enrich_recommendations_with_history 失败, 跳过 consecutive_bonus 加成 (ranking 退化到无 bonus tie-breaker): %s",
+            e,
+            exc_info=True,
+        )
         return recommendations
 
     for recommendation in enriched:
@@ -1098,7 +1153,9 @@ def _enrich_with_consecutive_bonus(recommendations: list[dict], report_dir: Path
     return enriched
 
 
-def _apply_consecutive_bonus_and_resort(ranked: list[dict], *, profit_aware: bool = False) -> list[dict]:
+def _apply_consecutive_bonus_and_resort(
+    ranked: list[dict], *, profit_aware: bool = False
+) -> list[dict]:
     """Fold the consecutive-recommendation bonus into composite_score and re-sort.
 
     Extracted from :func:`_build_ranked_candidates`. The ranker produces an
@@ -1119,19 +1176,25 @@ def _apply_consecutive_bonus_and_resort(ranked: list[dict], *, profit_aware: boo
         # 导致 `max(-1.0, min(1.0, NaN+bonus))` 在 CPython 返回 1.0, corrupt 标的静默
         # 顶到推荐列表顶部 (BH-012 escalate-to-top 同型). 用 safe_float 源头拒绝 NaN.
         bonus = _safe_float_value(recommendation.get("consecutive_bonus", 0.0), 0.0)
-        original_score = _safe_float_value(recommendation.get("composite_score", 0.0), 0.0)
+        original_score = _safe_float_value(
+            recommendation.get("composite_score", 0.0), 0.0
+        )
         # NS-11 (autodev c232): 存 pre-bonus `composite_score_gated` 让下游
         # build_front_door_verdict 用 pre-bonus score 判 BUY gate (>=0.5), bonus
         # 仅用于排序. 总是存 (即使 bonus=0) 让下游总能读到 pre-bonus score,
         # 行为一致. 缺省时 build_front_door_verdict 回退 composite_score (向后兼容).
         # Re-clamp to the documented [-1.0, 1.0] domain (composite_score.py:16).
-        recommendation["composite_score_gated"] = round(max(-1.0, min(1.0, original_score)), 4)
+        recommendation["composite_score_gated"] = round(
+            max(-1.0, min(1.0, original_score)), 4
+        )
         if not bonus:
             continue
         # Re-clamp to the documented [-1.0, 1.0] domain (composite_score.py:16).
         # compute_composite_scores already clamps, but the bonus is added after,
         # so a high-base pick (0.98) + 6+day bonus (0.08) would otherwise reach 1.06.
-        recommendation["composite_score"] = round(max(-1.0, min(1.0, original_score + bonus)), 4)
+        recommendation["composite_score"] = round(
+            max(-1.0, min(1.0, original_score + bonus)), 4
+        )
     # BH-011 family (sibling: composite_score.py:312, investability.py:309): composite_score
     # is rounded to 4 decimals above, so ties are common at the Top-N membership boundary.
     # R143/O-1: restore the risk-aware 6-tuple tie-break from rank_recommendations_by_investability
@@ -1160,8 +1223,14 @@ def _apply_consecutive_bonus_and_resort(ranked: list[dict], *, profit_aware: boo
     if profit_aware:
         ranked.sort(
             key=lambda recommendation: (
-                -_safe_metric(_max_short_horizon_metric(recommendation.get("win_rates")), float("-inf")),
-                -_safe_metric(_max_short_horizon_metric(recommendation.get("expected_returns")), float("-inf")),
+                -_safe_metric(
+                    _max_short_horizon_metric(recommendation.get("win_rates")),
+                    float("-inf"),
+                ),
+                -_safe_metric(
+                    _max_short_horizon_metric(recommendation.get("expected_returns")),
+                    float("-inf"),
+                ),
                 -_safe_metric(recommendation.get("bucket_sample_count"), 0.0),
                 -_safe_float_value(recommendation.get("composite_score", 0.0), 0.0),
                 -_safe_float_value(recommendation.get("score_b", 0.0), 0.0),
@@ -1172,8 +1241,14 @@ def _apply_consecutive_bonus_and_resort(ranked: list[dict], *, profit_aware: boo
     ranked.sort(
         key=lambda recommendation: (
             -_safe_float_value(recommendation.get("composite_score", 0.0), 0.0),
-            -_safe_metric(_max_short_horizon_metric(recommendation.get("expected_returns")), float("-inf")),
-            -_safe_metric(_max_short_horizon_metric(recommendation.get("win_rates")), float("-inf")),
+            -_safe_metric(
+                _max_short_horizon_metric(recommendation.get("expected_returns")),
+                float("-inf"),
+            ),
+            -_safe_metric(
+                _max_short_horizon_metric(recommendation.get("win_rates")),
+                float("-inf"),
+            ),
             -_safe_metric(recommendation.get("bucket_sample_count"), 0.0),
             -_safe_float_value(recommendation.get("score_b", 0.0), 0.0),
             str(recommendation.get("ticker") or ""),
@@ -1237,14 +1312,18 @@ def _load_recommendation_context(
             f"{Fore.YELLOW}[TopPicks] 请重新运行 --auto 生成新的 auto_screening 报告。{Style.RESET_ALL}"
         )
         return None
-    recommendations = (report_data.get("recommendations") or [])[:count * 3]
+    recommendations = (report_data.get("recommendations") or [])[: count * 3]
     trade_date = str(report_data.get("date", "") or "")
     return report_path, report_data, recommendations, trade_date
 
 
-def _detect_pick_changes(report_path: Path, ranked: list[dict]) -> tuple[set[str], set[str]]:
+def _detect_pick_changes(
+    report_path: Path, ranked: list[dict]
+) -> tuple[set[str], set[str]]:
     """Compare the current ranked candidates against the previous report."""
-    all_current_tickers = {str(item.get("ticker", "")) for item in ranked if str(item.get("ticker", ""))}
+    all_current_tickers = {
+        str(item.get("ticker", "")) for item in ranked if str(item.get("ticker", ""))
+    }
     prev_report = _find_previous_report(report_path)
     if prev_report is None:
         return set(), set()
@@ -1254,11 +1333,36 @@ def _detect_pick_changes(report_path: Path, ranked: list[dict]) -> tuple[set[str
 def _build_signal_breakdown(item: dict) -> str:
     """Render the compact signal breakdown shown next to the base score."""
     signal_specs = (
-        ("momentum_bonus", f"{Fore.GREEN}动量↑{Style.RESET_ALL}", f"{Fore.RED}动量↓{Style.RESET_ALL}", 0.0),
-        ("sector_bonus", f"{Fore.GREEN}行业强{Style.RESET_ALL}", f"{Fore.RED}行业弱{Style.RESET_ALL}", 0.0),
-        ("consistency_adj", f"{Fore.GREEN}一致{Style.RESET_ALL}", f"{Fore.RED}分歧{Style.RESET_ALL}", 0.0),
-        ("volume_factor", f"{Fore.GREEN}放量{Style.RESET_ALL}", f"{Fore.RED}缩量{Style.RESET_ALL}", 0.0),
-        ("trend_resonance_factor", f"{Fore.GREEN}共振↑{Style.RESET_ALL}", f"{Fore.RED}冲突{Style.RESET_ALL}", 0.02),
+        (
+            "momentum_bonus",
+            f"{Fore.GREEN}动量↑{Style.RESET_ALL}",
+            f"{Fore.RED}动量↓{Style.RESET_ALL}",
+            0.0,
+        ),
+        (
+            "sector_bonus",
+            f"{Fore.GREEN}行业强{Style.RESET_ALL}",
+            f"{Fore.RED}行业弱{Style.RESET_ALL}",
+            0.0,
+        ),
+        (
+            "consistency_adj",
+            f"{Fore.GREEN}一致{Style.RESET_ALL}",
+            f"{Fore.RED}分歧{Style.RESET_ALL}",
+            0.0,
+        ),
+        (
+            "volume_factor",
+            f"{Fore.GREEN}放量{Style.RESET_ALL}",
+            f"{Fore.RED}缩量{Style.RESET_ALL}",
+            0.0,
+        ),
+        (
+            "trend_resonance_factor",
+            f"{Fore.GREEN}共振↑{Style.RESET_ALL}",
+            f"{Fore.RED}冲突{Style.RESET_ALL}",
+            0.02,
+        ),
     )
     parts: list[str] = []
     for key, positive_label, negative_label, threshold in signal_specs:
@@ -1329,8 +1433,16 @@ def _print_pick_entry_details(
             print(f"     趋势:{trend}")
 
     cluster_size = int(item.get("cluster_size", 1) or 1)
-    alternatives = [str(ticker_alt) for ticker_alt in (item.get("cluster_alternatives") or []) if str(ticker_alt)]
-    if cluster_size > 1 and alternatives and bool(item.get("is_cluster_representative")):
+    alternatives = [
+        str(ticker_alt)
+        for ticker_alt in (item.get("cluster_alternatives") or [])
+        if str(ticker_alt)
+    ]
+    if (
+        cluster_size > 1
+        and alternatives
+        and bool(item.get("is_cluster_representative"))
+    ):
         cluster_label = str(item.get("cluster_label", "") or "")
         print(f"     {cluster_label} 代表票， 同簇备选: {', '.join(alternatives[:2])}")
 
@@ -1341,14 +1453,18 @@ def _print_pick_entry(
     context: TopPicksRenderContext,
 ) -> None:
     """Render a single representative pick and its optional detail lines."""
-    composite_score = float(item.get("composite_score", item.get("score_b", 0.0)) or 0.0)
+    composite_score = float(
+        item.get("composite_score", item.get("score_b", 0.0)) or 0.0
+    )
     grade = _composite_grade(composite_score)
     # R111 / R39-R44-R71-R77 trust-calibration family: 当 composite_score 来自 R39 fallback
     # 路径（missing-composite, 0.9 折扣的 score_b, composite_verified=False）时, 在分数后
     # 追加 (估) 标记, 让用户区分"完整维度调整的 composite"与"保守估计分数", 校准对推荐
     # 的信任度。composite_verified 缺省（旧报告）按 verified 处理, 行为保持。
     composite_verified = item.get("composite_verified")
-    estimate_marker = "" if composite_verified else ("估" if composite_verified is False else "")
+    estimate_marker = (
+        "" if composite_verified else ("估" if composite_verified is False else "")
+    )
     name = str(item.get("name", "") or item.get("ticker", ""))[:14]
     verdict = build_front_door_verdict(item, market_regime=context.market_regime)
 
@@ -1454,7 +1570,10 @@ def _print_pick_entry(
             print(f"     {exit_line}")
 
     # R-1: 多周期冲突 (short vs long horizon sign disagreement) — any pick
-    from src.screening.horizon_conflict import detect_horizon_conflict, render_horizon_conflict as _render_hc
+    from src.screening.horizon_conflict import (
+        detect_horizon_conflict,
+        render_horizon_conflict as _render_hc,
+    )
 
     hc = detect_horizon_conflict(item.get("expected_returns"))
     hc_line = _render_hc(hc)
@@ -1477,14 +1596,18 @@ def _print_top_picks_header(
 ) -> None:
     """Render the static header block above the representative picks."""
     print(f"\n{Fore.CYAN}{Style.BRIGHT}🎯 Today's Top Picks{Style.RESET_ALL}")
-    print(f"  Date: {trade_date}  |  默认前门: composite confidence + T+5/T+10 决策 horizon posterior edge + 代表票去重 + 连续推荐加权")
+    print(
+        f"  Date: {trade_date}  |  默认前门: composite confidence + T+5/T+10 决策 horizon posterior edge + 代表票去重 + 连续推荐加权"
+    )
     if freshness_warning:
         print(freshness_warning)
     print(_render_market_opportunity_index(representative_picks, market_regime))
     print(f"{Fore.WHITE}{'─' * 72}{Style.RESET_ALL}")
 
 
-def _print_high_confidence_summary(representative_picks: list[dict], *, market_regime: str) -> None:
+def _print_high_confidence_summary(
+    representative_picks: list[dict], *, market_regime: str
+) -> None:
     """Render the quick high-confidence summary line.
 
     A "high-confidence" pick is one the front door actually recommends BUYing —
@@ -1507,10 +1630,14 @@ def _print_high_confidence_summary(representative_picks: list[dict], *, market_r
     buy_picks = [
         item
         for item in representative_picks
-        if build_front_door_verdict(item, market_regime=market_regime).get("action") == "BUY"
+        if build_front_door_verdict(item, market_regime=market_regime).get("action")
+        == "BUY"
     ]
     if buy_picks:
-        tickers = ", ".join(f"{Fore.CYAN}{str(pick.get('ticker', ''))}{Style.RESET_ALL}" for pick in buy_picks[:3])
+        tickers = ", ".join(
+            f"{Fore.CYAN}{str(pick.get('ticker', ''))}{Style.RESET_ALL}"
+            for pick in buy_picks[:3]
+        )
         print(f"  💡 High confidence picks: {tickers}")
         return
     print("  ⚠ No high-confidence picks today. Consider waiting for better signals.")
@@ -1548,7 +1675,9 @@ def _print_top_picks_footer(
     if dist:
         print(dist)
 
-    portfolio_edge = _render_portfolio_expected_return(representative_picks, market_regime)
+    portfolio_edge = _render_portfolio_expected_return(
+        representative_picks, market_regime
+    )
     if portfolio_edge:
         print(portfolio_edge)
 
@@ -1578,7 +1707,9 @@ def _print_top_picks_footer(
     _print_selection_profitability_block(report_dir)
     _print_factor_attribution_block(report_dir)
     _print_factor_attribution_by_state_block(report_dir)  # NS-6: 因子 × state_type 倒挂
-    _print_model_version_comparison_block(report_dir)  # NS-7: 新旧 model_version 效果对比
+    _print_model_version_comparison_block(
+        report_dir
+    )  # NS-7: 新旧 model_version 效果对比
     _print_decision_flow_hint()
     _print_disclaimer()
 
@@ -1635,7 +1766,10 @@ def _print_regime_winrate_block(market_regime: str) -> None:
     让用户看到中长周期是否比 T+30 更优 (如 crisis T+20/T+25 正 median).
     """
     try:
-        from src.screening.regime_winrate import render_regime_winrate_line, render_regime_multihorizon_line
+        from src.screening.regime_winrate import (
+            render_regime_winrate_line,
+            render_regime_multihorizon_line,
+        )
 
         line = render_regime_winrate_line(market_regime)
         if line:
@@ -1688,7 +1822,10 @@ def _print_monotonicity_block(report_dir: Path) -> None:
         if sig_line:
             print(sig_line)
     except Exception as exc:  # noqa: BLE001 — best-effort; significance 永不破坏前门  (c267: was silent pass → observable)
-        logger.warning("[top_picks] significance footer block failed (best-effort, skipped): %s", exc)
+        logger.warning(
+            "[top_picks] significance footer block failed (best-effort, skipped): %s",
+            exc,
+        )
     # M8: 样本充足性 — 不显著是因为样本太小吗? (需累积多少才能下结论)
     if records:
         try:
@@ -1696,12 +1833,15 @@ def _print_monotonicity_block(report_dir: Path) -> None:
                 compute_power_analysis_from_loaded as _compute_power,
                 render_power_line as _render_power,
             )
+
             power = _compute_power(records, min_n=20)
             power_line = _render_power(power)
             if power_line:
                 print(power_line)
         except Exception as exc:  # noqa: BLE001 — best-effort; power 永不破坏前门  (c267: was silent pass → observable)
-            logger.warning("[top_picks] power footer block failed (best-effort, skipped): %s", exc)
+            logger.warning(
+                "[top_picks] power footer block failed (best-effort, skipped): %s", exc
+            )
     # M5: 时段分段单调性 (design packet 推荐区分 H1 因子 bug vs H2 regime)
     try:
         records = load_tracking_history(report_dir)
@@ -1710,20 +1850,31 @@ def _print_monotonicity_block(report_dir: Path) -> None:
         if period_line:
             print(period_line)
     except Exception as exc:  # noqa: BLE001 — best-effort; period breakdown 永不破坏前门  (c267: was silent pass → observable)
-        logger.warning("[top_picks] period_breakdown footer block failed (best-effort, skipped): %s", exc)
+        logger.warning(
+            "[top_picks] period_breakdown footer block failed (best-effort, skipped): %s",
+            exc,
+        )
     # M6: 多 horizon 单调性 (回答 design packet H5: 倒挂是 T+30 特定还是全 horizon? 排除 MR 短期反转)
     if records:
         try:
             horizons = compute_horizon_monotonicity_from_loaded(
                 records,
-                ["next_5day_return", "next_10day_return", "next_20day_return", "next_30day_return"],
+                [
+                    "next_5day_return",
+                    "next_10day_return",
+                    "next_20day_return",
+                    "next_30day_return",
+                ],
                 min_n=15,
             )
             horizon_line = render_horizon_breakdown_line(horizons)
             if horizon_line:
                 print(horizon_line)
         except Exception as exc:  # noqa: BLE001 — best-effort; horizon breakdown 永不破坏前门  (c267: was silent pass → observable)
-            logger.warning("[top_picks] horizon_breakdown footer block failed (best-effort, skipped): %s", exc)
+            logger.warning(
+                "[top_picks] horizon_breakdown footer block failed (best-effort, skipped): %s",
+                exc,
+            )
 
 
 def _print_factor_attribution_block(report_dir: Path) -> None:
@@ -1770,8 +1921,11 @@ def _print_factor_attribution_by_state_block(report_dir: Path) -> None:
             render_factor_attribution_by_state_line,
             render_score_controlled_factor_line,
         )
+
         report = compute_factor_attribution_by_state(reports_dir=report_dir, min_n=15)
-        sc_report = compute_factor_attribution_score_controlled(reports_dir=report_dir, min_n=15)
+        sc_report = compute_factor_attribution_score_controlled(
+            reports_dir=report_dir, min_n=15
+        )
     except Exception:  # noqa: BLE001 — best-effort; never break the front door
         return
     line = render_factor_attribution_by_state_line(report)
@@ -1843,14 +1997,22 @@ def _print_north_star_block(report_dir: Path) -> None:
         records = load_tracking_history(report_dir)
         curve = compute_holding_period_curve_from_loaded(
             records,
-            ["next_5day_return", "next_10day_return", "next_20day_return", "next_30day_return"],
+            [
+                "next_5day_return",
+                "next_10day_return",
+                "next_20day_return",
+                "next_30day_return",
+            ],
             min_n=20,
         )
         hp_line = render_holding_period_line(curve)
         if hp_line:
             print(hp_line)
     except Exception as exc:  # noqa: BLE001 — best-effort; holding period 永不破坏前门  (c267: was silent pass → observable)
-        logger.warning("[top_picks] holding_period footer block failed (best-effort, skipped): %s", exc)
+        logger.warning(
+            "[top_picks] holding_period footer block failed (best-effort, skipped): %s",
+            exc,
+        )
     # M10: 盈亏比 + 输家画像 (全样本, 服务 winrate>50%+高盈亏比; 哪 bucket 拖累 winrate?)
     if records:
         try:
@@ -1859,19 +2021,25 @@ def _print_north_star_block(report_dir: Path) -> None:
             if payoff_line:
                 print(payoff_line)
         except Exception as exc:  # noqa: BLE001 — best-effort; payoff 永不破坏前门  (c267: was silent pass → observable)
-            logger.warning("[top_picks] payoff footer block failed (best-effort, skipped): %s", exc)
+            logger.warning(
+                "[top_picks] payoff footer block failed (best-effort, skipped): %s", exc
+            )
         # M11: 砍输家池策略模拟 (量化"砍哪个 bucket"提 winrate 的效果; owner 门控决策依据)
         try:
             from src.screening.north_star_pnl import (
                 compute_pruning_strategy_from_loaded as _compute_pruning,
                 render_pruning_line as _render_pruning,
             )
+
             pruning = _compute_pruning(records, min_n=20)
             pruning_line = _render_pruning(pruning)
             if pruning_line:
                 print(pruning_line)
         except Exception as exc:  # noqa: BLE001 — best-effort  (c267: was silent pass → observable)
-            logger.warning("[top_picks] pruning footer block failed (best-effort, skipped): %s", exc)
+            logger.warning(
+                "[top_picks] pruning footer block failed (best-effort, skipped): %s",
+                exc,
+            )
         # M12: winrate bootstrap CI (给 owner 门控决策提供稳健不确定性估计;
         # low bucket 50% (n=105) 的 bootstrap 95% CI 是 [42%, 58%] — 比
         # 正态近似更稳健, 服务 winrate>50% 门控翻转决策)
@@ -1880,12 +2048,18 @@ def _print_north_star_block(report_dir: Path) -> None:
                 compute_bootstrap_ci_from_loaded as _compute_bootstrap,
                 render_bootstrap_ci_line as _render_bootstrap,
             )
-            ci_results = _compute_bootstrap(records, min_n=20, n_bootstrap=10000, seed=42)
+
+            ci_results = _compute_bootstrap(
+                records, min_n=20, n_bootstrap=10000, seed=42
+            )
             ci_line = _render_bootstrap(ci_results)
             if ci_line:
                 print(ci_line)
         except Exception as exc:  # noqa: BLE001 — best-effort  (c267: was silent pass → observable)
-            logger.warning("[top_picks] bootstrap_ci footer block failed (best-effort, skipped): %s", exc)
+            logger.warning(
+                "[top_picks] bootstrap_ci footer block failed (best-effort, skipped): %s",
+                exc,
+            )
 
 
 def _print_selection_profitability_block(report_dir: Path) -> None:
@@ -1907,12 +2081,17 @@ def _print_selection_profitability_block(report_dir: Path) -> None:
         )
 
         records = load_tracking_history(report_dir)
-        report = compute_selection_profitability_from_loaded(records, top_n=3, min_days=10)
+        report = compute_selection_profitability_from_loaded(
+            records, top_n=3, min_days=10
+        )
         line = render_selection_profitability_line(report)
         if line:
             print(line)
     except Exception as exc:  # noqa: BLE001 — best-effort; selection-profitability 永不破坏前门
-        logger.warning("[top_picks] selection_profitability footer block failed (best-effort, skipped): %s", exc)
+        logger.warning(
+            "[top_picks] selection_profitability footer block failed (best-effort, skipped): %s",
+            exc,
+        )
 
 
 def _print_concentration_block(picks: list[dict]) -> None:
@@ -2046,7 +2225,9 @@ def run_top_picks(
 
     context = _load_recommendation_context(search_dir, count)
     if context is None:
-        print(f"{Fore.RED}No auto_screening report found. Run --auto first.{Style.RESET_ALL}")
+        print(
+            f"{Fore.RED}No auto_screening report found. Run --auto first.{Style.RESET_ALL}"
+        )
         return 1
 
     report_path, report_data, recs, trade_date = context

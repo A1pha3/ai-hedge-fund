@@ -76,21 +76,25 @@ class TestStatusIcon:
 
 class TestComputeConfluence:
     def test_all_bullish(self) -> None:
-        item = {"strategy_signals": {
-            "trend": {"direction": 1, "confidence": 80},
-            "mean_reversion": {"direction": 1, "confidence": 70},
-            "fundamental": {"direction": 1, "confidence": 90},
-            "event_sentiment": {"direction": 1, "confidence": 85},
-        }}
+        item = {
+            "strategy_signals": {
+                "trend": {"direction": 1, "confidence": 80},
+                "mean_reversion": {"direction": 1, "confidence": 70},
+                "fundamental": {"direction": 1, "confidence": 90},
+                "event_sentiment": {"direction": 1, "confidence": 85},
+            }
+        }
         bullish, total = _compute_confluence(item)
         assert bullish == 4
         assert total == 4
 
     def test_mixed(self) -> None:
-        item = {"strategy_signals": {
-            "trend": {"direction": 1, "confidence": 80},
-            "fundamental": {"direction": -1, "confidence": 90},
-        }}
+        item = {
+            "strategy_signals": {
+                "trend": {"direction": 1, "confidence": 80},
+                "fundamental": {"direction": -1, "confidence": 90},
+            }
+        }
         bullish, total = _compute_confluence(item)
         assert bullish == 1
         assert total == 2
@@ -130,19 +134,23 @@ class TestRenderFactorAttribution:
         assert _render_factor_attribution({}) == ""
 
     def test_with_signals(self) -> None:
-        item = {"strategy_signals": {
-            "trend": {"direction": 1, "confidence": 80},
-            "fundamental": {"direction": -1, "confidence": 60},
-        }}
+        item = {
+            "strategy_signals": {
+                "trend": {"direction": 1, "confidence": 80},
+                "fundamental": {"direction": -1, "confidence": 60},
+            }
+        }
         result = _render_factor_attribution(item)
         assert "主因:" in result
         assert "趋势↑" in result
         assert "基本面↓" in result
 
     def test_all_neutral(self) -> None:
-        item = {"strategy_signals": {
-            "trend": {"direction": 0, "confidence": 50},
-        }}
+        item = {
+            "strategy_signals": {
+                "trend": {"direction": 0, "confidence": 50},
+            }
+        }
         assert _render_factor_attribution(item) == ""
 
 
@@ -160,16 +168,19 @@ class TestCheckReportFreshness:
 
     def test_today_is_fresh(self) -> None:
         from datetime import datetime
+
         today = datetime.now().strftime("%Y%m%d")
         assert _check_report_freshness(today) == ""
 
     def test_yesterday_is_fresh(self) -> None:
         from datetime import datetime, timedelta
+
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
         assert _check_report_freshness(yesterday) == ""
 
     def test_old_report_warns(self) -> None:
         from datetime import datetime
+
         # Deterministic: Fri report (2026-06-12) read Wed (2026-06-17) = 2
         # elapsed trading days (Mon, Tue) → stale. The old `now - 3 days` form
         # was weekend-flaky (e.g. on Sunday it collapses to a same-week report).
@@ -231,10 +242,12 @@ class TestRenderSectorRotation:
         assert _render_sector_rotation({}, []) == ""
 
     def test_with_rotation(self) -> None:
-        report = {"industry_rotation": [
-            {"industry_name": "电子", "momentum_score": 50.0},
-            {"industry_name": "银行", "momentum_score": -30.0},
-        ]}
+        report = {
+            "industry_rotation": [
+                {"industry_name": "电子", "momentum_score": 50.0},
+                {"industry_name": "银行", "momentum_score": -30.0},
+            ]
+        }
         picks = [{"industry_sw": "电子"}, {"industry_sw": "银行"}]
         result = _render_sector_rotation(report, picks)
         assert "行业轮动" in result
@@ -292,49 +305,104 @@ class TestSuggestPositionPct:
         from src.screening.top_picks import _suggest_position_pct
 
         # edge=8% (percent), winrate=0.62, normal → confidence 0.6, base = 8.0*0.6 = 4.8
-        assert _suggest_position_pct(decision_edge=8.0, decision_winrate=0.62, market_regime="normal") == 4.8
+        assert (
+            _suggest_position_pct(
+                decision_edge=8.0, decision_winrate=0.62, market_regime="normal"
+            )
+            == 4.8
+        )
 
     def test_high_conviction_larger_size(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
         # edge=12%, winrate=0.70 → confidence 1.0, base = 12.0
-        assert _suggest_position_pct(decision_edge=12.0, decision_winrate=0.70, market_regime="normal") == 12.0
+        assert (
+            _suggest_position_pct(
+                decision_edge=12.0, decision_winrate=0.70, market_regime="normal"
+            )
+            == 12.0
+        )
 
     def test_capped_at_max_per_pick(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
         # edge=20%, winrate=0.80 → confidence 1.5, base = 30.0 → capped at 15.0
-        assert _suggest_position_pct(decision_edge=20.0, decision_winrate=0.80, market_regime="normal") == 15.0
+        assert (
+            _suggest_position_pct(
+                decision_edge=20.0, decision_winrate=0.80, market_regime="normal"
+            )
+            == 15.0
+        )
 
     def test_crisis_regime_returns_zero(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        assert _suggest_position_pct(decision_edge=10.0, decision_winrate=0.65, market_regime="crisis") == 0.0
-        assert _suggest_position_pct(decision_edge=10.0, decision_winrate=0.65, market_regime="risk_off") == 0.0
+        assert (
+            _suggest_position_pct(
+                decision_edge=10.0, decision_winrate=0.65, market_regime="crisis"
+            )
+            == 0.0
+        )
+        assert (
+            _suggest_position_pct(
+                decision_edge=10.0, decision_winrate=0.65, market_regime="risk_off"
+            )
+            == 0.0
+        )
 
     def test_caution_regime_halved(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
         # edge=12%, winrate=0.70 → base 12.0; cautious → ×0.5 = 6.0
-        assert _suggest_position_pct(decision_edge=12.0, decision_winrate=0.70, market_regime="cautious") == 6.0
+        assert (
+            _suggest_position_pct(
+                decision_edge=12.0, decision_winrate=0.70, market_regime="cautious"
+            )
+            == 6.0
+        )
 
     def test_non_positive_edge_returns_zero(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        assert _suggest_position_pct(decision_edge=-3.0, decision_winrate=0.60, market_regime="normal") == 0.0
-        assert _suggest_position_pct(decision_edge=0.0, decision_winrate=0.60, market_regime="normal") == 0.0
+        assert (
+            _suggest_position_pct(
+                decision_edge=-3.0, decision_winrate=0.60, market_regime="normal"
+            )
+            == 0.0
+        )
+        assert (
+            _suggest_position_pct(
+                decision_edge=0.0, decision_winrate=0.60, market_regime="normal"
+            )
+            == 0.0
+        )
 
     def test_none_inputs_return_zero(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        assert _suggest_position_pct(decision_edge=None, decision_winrate=0.60, market_regime="normal") == 0.0
-        assert _suggest_position_pct(decision_edge=8.0, decision_winrate=None, market_regime="normal") == 0.0
+        assert (
+            _suggest_position_pct(
+                decision_edge=None, decision_winrate=0.60, market_regime="normal"
+            )
+            == 0.0
+        )
+        assert (
+            _suggest_position_pct(
+                decision_edge=8.0, decision_winrate=None, market_regime="normal"
+            )
+            == 0.0
+        )
 
     def test_low_winrate_below_coin_flip_shrinks(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
         # winrate=0.52 (barely above coin-flip) → confidence 0.1, base = 8.0*0.1 = 0.8
-        assert _suggest_position_pct(decision_edge=8.0, decision_winrate=0.52, market_regime="normal") == 0.8
+        assert (
+            _suggest_position_pct(
+                decision_edge=8.0, decision_winrate=0.52, market_regime="normal"
+            )
+            == 0.8
+        )
 
     def test_realistic_pick_does_not_saturate_cap(self) -> None:
         """C260 regression: the bug's signature was that realistic BUY picks
@@ -343,7 +411,9 @@ class TestSuggestPositionPct:
         edge=4.66%, winrate=0.597 → 4.66*0.485 = 2.26 → 2.3%)."""
         from src.screening.top_picks import _suggest_position_pct
 
-        pos = _suggest_position_pct(decision_edge=4.66, decision_winrate=0.597, market_regime="normal")
+        pos = _suggest_position_pct(
+            decision_edge=4.66, decision_winrate=0.597, market_regime="normal"
+        )
         assert pos < 15.0  # MUST NOT saturate the cap
         assert 1.5 < pos < 3.5  # sane ~2.3% for a typical pick
 
@@ -352,9 +422,15 @@ class TestSuggestPositionPct:
         > marginal (the bug made all three return 15%)."""
         from src.screening.top_picks import _suggest_position_pct
 
-        strong = _suggest_position_pct(decision_edge=8.0, decision_winrate=0.70, market_regime="normal")
-        typical = _suggest_position_pct(decision_edge=4.0, decision_winrate=0.58, market_regime="normal")
-        marginal = _suggest_position_pct(decision_edge=1.5, decision_winrate=0.52, market_regime="normal")
+        strong = _suggest_position_pct(
+            decision_edge=8.0, decision_winrate=0.70, market_regime="normal"
+        )
+        typical = _suggest_position_pct(
+            decision_edge=4.0, decision_winrate=0.58, market_regime="normal"
+        )
+        marginal = _suggest_position_pct(
+            decision_edge=1.5, decision_winrate=0.52, market_regime="normal"
+        )
         assert strong > typical > marginal
         assert marginal < 5.0  # marginal pick gets a small size, not the cap
 
@@ -423,17 +499,32 @@ class TestFormatSampleCount:
     def test_mature_less_than_total_shows_suffix(self) -> None:
         from src.screening.top_picks import _format_sample_count
 
-        assert _format_sample_count({"bucket_sample_count": 50, "bucket_t30_mature_count": 20}) == "50(熟20)"
+        assert (
+            _format_sample_count(
+                {"bucket_sample_count": 50, "bucket_t30_mature_count": 20}
+            )
+            == "50(熟20)"
+        )
 
     def test_mature_equals_total_no_suffix(self) -> None:
         from src.screening.top_picks import _format_sample_count
 
-        assert _format_sample_count({"bucket_sample_count": 30, "bucket_t30_mature_count": 30}) == "30"
+        assert (
+            _format_sample_count(
+                {"bucket_sample_count": 30, "bucket_t30_mature_count": 30}
+            )
+            == "30"
+        )
 
     def test_mature_exceeds_total_clamped_no_suffix(self) -> None:
         from src.screening.top_picks import _format_sample_count
 
-        assert _format_sample_count({"bucket_sample_count": 10, "bucket_t30_mature_count": 15}) == "10"
+        assert (
+            _format_sample_count(
+                {"bucket_sample_count": 10, "bucket_t30_mature_count": 15}
+            )
+            == "10"
+        )
 
     def test_no_mature_field_just_total(self) -> None:
         from src.screening.top_picks import _format_sample_count
@@ -464,7 +555,9 @@ class TestPrintPickEntryT30LowConfidence:
     """
 
     @patch("src.screening.top_picks.build_front_door_verdict")
-    def test_t30_winrate_flags_low_confidence_when_mature_tiny(self, mock_verdict, capsys) -> None:
+    def test_t30_winrate_flags_low_confidence_when_mature_tiny(
+        self, mock_verdict, capsys
+    ) -> None:
         """Tiny mature sample (n=1, 100% winrate) must flag ⚠少样本."""
         mock_verdict.return_value = {
             "action": "HOLD",
@@ -497,7 +590,9 @@ class TestPrintPickEntryT30LowConfidence:
         )
 
     @patch("src.screening.top_picks.build_front_door_verdict")
-    def test_t30_winrate_no_flag_when_mature_sufficient(self, mock_verdict, capsys) -> None:
+    def test_t30_winrate_no_flag_when_mature_sufficient(
+        self, mock_verdict, capsys
+    ) -> None:
         """Sufficient mature sample (n=20) must NOT emit the low-confidence marker."""
         mock_verdict.return_value = {
             "action": "HOLD",
@@ -563,7 +658,9 @@ class TestApplyConsecutiveBonusAndResort:
     def test_score_rounded_to_four_decimals(self) -> None:
         from src.screening.top_picks import _apply_consecutive_bonus_and_resort
 
-        ranked = [{"ticker": "a", "composite_score": 0.123456, "consecutive_bonus": 0.03}]
+        ranked = [
+            {"ticker": "a", "composite_score": 0.123456, "consecutive_bonus": 0.03}
+        ]
         result = _apply_consecutive_bonus_and_resort(ranked)
         assert result[0]["composite_score"] == round(0.123456 + 0.03, 4)
 
@@ -581,7 +678,9 @@ class TestApplyConsecutiveBonusAndResort:
         result = _apply_consecutive_bonus_and_resort(ranked)
         assert result is ranked
 
-    def test_tied_composite_tiebreaks_by_decision_horizon_edge_not_alphabetical(self) -> None:
+    def test_tied_composite_tiebreaks_by_decision_horizon_edge_not_alphabetical(
+        self,
+    ) -> None:
         """R143/O-1: when picks tie on composite_score (post-bonus), the tie-break
         must be risk-aware — higher BUY-gate decision-horizon edge (max t5/t10)
         ranks first — restoring the investability 6-tuple
@@ -600,12 +699,24 @@ class TestApplyConsecutiveBonusAndResort:
         from src.screening.top_picks import _apply_consecutive_bonus_and_resort
 
         ranked = [
-            {"ticker": "000001", "composite_score": 0.50, "consecutive_bonus": 0.0,
-             "expected_returns": {"t5": 0.08, "t30": 0.08}, "win_rates": {"t5": 0.62, "t30": 0.62},
-             "bucket_sample_count": 45, "score_b": 0.50},
-            {"ticker": "600999", "composite_score": 0.50, "consecutive_bonus": 0.0,
-             "expected_returns": {"t5": 0.12, "t30": 0.12}, "win_rates": {"t5": 0.58, "t30": 0.58},
-             "bucket_sample_count": 120, "score_b": 0.50},
+            {
+                "ticker": "000001",
+                "composite_score": 0.50,
+                "consecutive_bonus": 0.0,
+                "expected_returns": {"t5": 0.08, "t30": 0.08},
+                "win_rates": {"t5": 0.62, "t30": 0.62},
+                "bucket_sample_count": 45,
+                "score_b": 0.50,
+            },
+            {
+                "ticker": "600999",
+                "composite_score": 0.50,
+                "consecutive_bonus": 0.0,
+                "expected_returns": {"t5": 0.12, "t30": 0.12},
+                "win_rates": {"t5": 0.58, "t30": 0.58},
+                "bucket_sample_count": 120,
+                "score_b": 0.50,
+            },
         ]
         result = _apply_consecutive_bonus_and_resort(ranked)
         # 600999 has higher decision-horizon edge (max t5/t10 = 12% > 8%) → ranks
@@ -613,7 +724,9 @@ class TestApplyConsecutiveBonusAndResort:
         assert result[0]["ticker"] == "600999"
         assert result[1]["ticker"] == "000001"
 
-    def test_tied_composite_and_edge_tiebreaks_by_decision_horizon_winrate(self) -> None:
+    def test_tied_composite_and_edge_tiebreaks_by_decision_horizon_winrate(
+        self,
+    ) -> None:
         """R143/O-1: when composite AND decision-horizon edge both tie, higher
         decision-horizon winrate ranks first (the 6-tuple's 3rd level). Confirms
         the full risk-aware cascade.
@@ -623,12 +736,24 @@ class TestApplyConsecutiveBonusAndResort:
         from src.screening.top_picks import _apply_consecutive_bonus_and_resort
 
         ranked = [
-            {"ticker": "000001", "composite_score": 0.50, "consecutive_bonus": 0.0,
-             "expected_returns": {"t5": 0.10, "t30": 0.10}, "win_rates": {"t5": 0.62, "t30": 0.62},
-             "bucket_sample_count": 45, "score_b": 0.50},
-            {"ticker": "600999", "composite_score": 0.50, "consecutive_bonus": 0.0,
-             "expected_returns": {"t5": 0.10, "t30": 0.10}, "win_rates": {"t5": 0.58, "t30": 0.58},
-             "bucket_sample_count": 120, "score_b": 0.50},
+            {
+                "ticker": "000001",
+                "composite_score": 0.50,
+                "consecutive_bonus": 0.0,
+                "expected_returns": {"t5": 0.10, "t30": 0.10},
+                "win_rates": {"t5": 0.62, "t30": 0.62},
+                "bucket_sample_count": 45,
+                "score_b": 0.50,
+            },
+            {
+                "ticker": "600999",
+                "composite_score": 0.50,
+                "consecutive_bonus": 0.0,
+                "expected_returns": {"t5": 0.10, "t30": 0.10},
+                "win_rates": {"t5": 0.58, "t30": 0.58},
+                "bucket_sample_count": 120,
+                "score_b": 0.50,
+            },
         ]
         result = _apply_consecutive_bonus_and_resort(ranked)
         # 000001 has higher decision-horizon winrate (62% > 58%) → ranks first
@@ -653,7 +778,9 @@ class TestApplyConsecutiveBonusAndResort:
         ]
         ranked_asc = list(reversed(ranked_desc))
 
-        result_desc = _apply_consecutive_bonus_and_resort([dict(r) for r in ranked_desc])
+        result_desc = _apply_consecutive_bonus_and_resort(
+            [dict(r) for r in ranked_desc]
+        )
         result_asc = _apply_consecutive_bonus_and_resort([dict(r) for r in ranked_asc])
 
         assert [r["ticker"] for r in result_desc] == ["000001", "600999"]
@@ -674,7 +801,9 @@ class TestApplyConsecutiveBonusAndResort:
         # as 000001 > 300118 > 600999 (ticker ascending within the tie), so a
         # subsequent [:2] cut keeps {000001, 300118} every time.
         result_forward = _apply_consecutive_bonus_and_resort([dict(r) for r in base])
-        result_reversed = _apply_consecutive_bonus_and_resort([dict(r) for r in reversed(base)])
+        result_reversed = _apply_consecutive_bonus_and_resort(
+            [dict(r) for r in reversed(base)]
+        )
 
         forward_top2 = {r["ticker"] for r in result_forward[:2]}
         reversed_top2 = {r["ticker"] for r in result_reversed[:2]}
@@ -749,10 +878,52 @@ class TestEnrichWithConsecutiveBonus:
 
         import unittest.mock as mock
 
-        with mock.patch.object(top_picks, "enrich_recommendations_with_history", side_effect=boom):
+        with mock.patch.object(
+            top_picks, "enrich_recommendations_with_history", side_effect=boom
+        ):
             result = top_picks._enrich_with_consecutive_bonus(recs, tmp_path)
 
         assert result is recs or result == original_recs
+
+    def test_exception_emits_warning_for_ranking_degradation(
+        self, tmp_path, caplog
+    ) -> None:
+        """NS-17 / BH-017 family sibling: enrich 失败时必须发 warning, 不再静默。
+
+        背景: 失败时返回原 list 是有意为之 (best-effort), 但之前完全静默 —
+        consecutive_bonus 字段缺失会让下游 ranking 退化到无 bonus tie-breaker
+        (C232 已隔离 BUY gate 不喂 bonus, 但 ranking 仍依赖 bonus 做 tie-breaking)。
+        修复后必须发 logger.warning 让 operators 能感知 ranking 退化触发。
+        """
+        import logging
+        import unittest.mock as mock
+
+        from src.screening import top_picks
+
+        recs = [{"ticker": "a", "composite_score": 0.5}]
+        original_recs = list(recs)
+
+        def boom(**kwargs):
+            raise RuntimeError("simulated enrich failure")
+
+        with mock.patch.object(
+            top_picks, "enrich_recommendations_with_history", side_effect=boom
+        ):
+            with caplog.at_level(logging.WARNING, logger="src.screening.top_picks"):
+                result = top_picks._enrich_with_consecutive_bonus(recs, tmp_path)
+
+        # Best-effort contract preserved: original list returned.
+        assert result is recs or result == original_recs
+
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warning_records) >= 1, (
+            f"expected >=1 WARNING record from enrich failure, got {caplog.records}"
+        )
+        msg = warning_records[0].getMessage()
+        assert (
+            "enrich_recommendations_with_history" in msg or "consecutive_bonus" in msg
+        )
+        assert "simulated enrich failure" in msg
 
     def test_assigns_bonus_from_consecutive_days(self, tmp_path) -> None:
         from src.screening import top_picks
@@ -767,7 +938,9 @@ class TestEnrichWithConsecutiveBonus:
 
         import unittest.mock as mock
 
-        with mock.patch.object(top_picks, "enrich_recommendations_with_history", side_effect=fake_enrich):
+        with mock.patch.object(
+            top_picks, "enrich_recommendations_with_history", side_effect=fake_enrich
+        ):
             result = top_picks._enrich_with_consecutive_bonus([], tmp_path)
 
         assert result[0]["consecutive_bonus"] == _consecutive_bonus(5)
@@ -785,7 +958,9 @@ class TestEnrichWithConsecutiveBonus:
 
         import unittest.mock as mock
 
-        with mock.patch.object(top_picks, "enrich_recommendations_with_history", side_effect=fake_enrich):
+        with mock.patch.object(
+            top_picks, "enrich_recommendations_with_history", side_effect=fake_enrich
+        ):
             result = top_picks._enrich_with_consecutive_bonus([], tmp_path)
 
         assert result[0]["consecutive_bonus"] == 0.0
