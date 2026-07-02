@@ -124,3 +124,26 @@ def test_render_selection_profitability_line_shows_profit_aware_ab() -> None:
         f"render must include default (score_desc) winrate {sd.portfolio_winrate:.0%}; got: {line!r}"
     )
 
+
+def test_strategy_results_carry_bootstrap_ci() -> None:
+    """每策略的 SelectionStrategyResult 必须带 bootstrap CI (winrate 不确定性).
+
+    R6 owner 决策需要知道 +9pp lift 是否显著 (CI 是否含 0/是否重叠). n=75 日
+    winrate 的正态近似 SE≈5.8%, 12pp 差距约 2σ — 点估计不够, 必须 CI. 复用
+    模块现有 _bootstrap_winrate_ci (M12 percentile method).
+    """
+    report = compute_selection_profitability_from_loaded(
+        _inversion_records(n_days=6), top_n=1, min_days=2
+    )
+    for s in report.strategies:
+        assert s.ci_lower is not None, f"{s.strategy}: ci_lower must be populated"
+        assert s.ci_upper is not None, f"{s.strategy}: ci_upper must be populated"
+        # monotonic + in [0,1] + brackets the point estimate
+        assert 0.0 <= s.ci_lower <= s.ci_upper <= 1.0, (
+            f"{s.strategy}: CI must be monotonic in [0,1]; got [{s.ci_lower}, {s.ci_upper}]"
+        )
+        assert s.ci_lower <= s.portfolio_winrate <= s.ci_upper, (
+            f"{s.strategy}: point {s.portfolio_winrate} must lie in CI [{s.ci_lower}, {s.ci_upper}]"
+        )
+
+

@@ -709,11 +709,16 @@ __all__ = [
 class SelectionStrategyResult:
     """One strategy's portfolio backtest result."""
 
-    strategy: str  # score_desc | score_asc | equal_weight_all | random_n
+    strategy: str  # score_desc | score_asc | equal_weight_all | random_n | profit_aware
     portfolio_winrate: float | None
     mean_return: float | None
     median_return: float | None
     sample_days: int
+    # NS-30/R6 (loop 30): bootstrap percentile CI on portfolio winrate (复用 M12
+    # _bootstrap_winrate_ci). 让 owner 判断策略间 winrate 差是否显著 (CI 重叠
+    # → 不显著). n_bootstrap=2000 (诊断级, 平衡精度/速度).
+    ci_lower: float | None = None
+    ci_upper: float | None = None
 
 
 @dataclass(frozen=True)
@@ -854,12 +859,20 @@ def compute_selection_profitability_from_loaded(
         if not pr:
             continue
         wins = sum(1 for x in pr if x > 0)
+        # NS-30/R6 (loop 30): bootstrap CI on winrate — owner 决策需要知道策略间
+        # 差距是否显著 (n=75 日点估计不够). 复用 M12 _bootstrap_winrate_ci, seed=42
+        # 幂等. 独立 seed 偏移避免策略间相关 (每策略自己的重采样序列).
+        ci_lower, ci_upper = _bootstrap_winrate_ci(
+            pr, n_bootstrap=2000, ci_level=0.95, seed=42 + hash(strat) % 1000
+        )
         results.append(SelectionStrategyResult(
             strategy=strat,
             portfolio_winrate=wins / len(pr),
             mean_return=sum(pr) / len(pr),
             median_return=_median(pr),
             sample_days=len(pr),
+            ci_lower=ci_lower,
+            ci_upper=ci_upper,
         ))
 
     sd = next((s for s in results if s.strategy == "score_desc"), None)
@@ -879,6 +892,13 @@ def compute_selection_profitability_from_loaded(
         has_data=True, horizon_field=horizon_field, top_n=top_n,
         strategies=tuple(results), verdict=verdict,
     )
+
+
+def _ci_bracket(result: SelectionStrategyResult) -> str:
+    """Compact bootstrap CI bracket for inline render, e.g. ' [44-52%]'. Empty if missing."""
+    if result.ci_lower is None or result.ci_upper is None:
+        return ""
+    return f" [{result.ci_lower:.0%}-{result.ci_upper:.0%}]"
 
 
 def render_selection_profitability_line(report: SelectionProfitabilityReport) -> str:
@@ -914,10 +934,12 @@ def render_selection_profitability_line(report: SelectionProfitabilityReport) ->
         elif lift_pp <= -5.0:
             pa_marker = f"  {Fore.YELLOW}profit-aware 重排 {lift_pp:+.0f}pp (无收益){Style.RESET_ALL}"
     if pa is not None and pa.portfolio_winrate is not None:
+        sd_ci = _ci_bracket(sd)
+        pa_ci = _ci_bracket(pa)
         return (
             f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): "
-            f"默认 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%} (中位 {sd.median_return:+.2f}%) "
-            f"vs profit-aware {pa.portfolio_winrate:.0%} (中位 {pa.median_return:+.2f}%) "
+            f"默认 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%}{sd_ci} (中位 {sd.median_return:+.2f}%) "
+            f"vs profit-aware {pa.portfolio_winrate:.0%}{pa_ci} (中位 {pa.median_return:+.2f}%) "
             f"vs 等权 {ew.portfolio_winrate:.0%} | {marker}{pa_marker}"
         )
     return (
