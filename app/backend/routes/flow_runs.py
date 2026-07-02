@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -284,6 +285,14 @@ async def rerun_flow_run(
     Returns a JSON payload with the *new* run metadata **and** a SSE stream
     body, so the frontend can both track the new run ID and stream progress
     events in a single response.
+
+    c294: discloses source-run age via ``X-Rerun-Source-Run-Created-At`` /
+    ``X-Rerun-Source-Run-Age-Days`` response headers. Rerun re-executes a
+    historical run's ``request_data`` against CURRENT market data — tickers
+    may be delisted, positions stale. The operator must be able to tell
+    "fresh params" from "stale params re-run on today's data". This is the
+    NS-5 staleness disease class on a money-acting SSE surface. Fix is
+    ADDITIVE: new headers, no existing behavior changes.
     """
     # --- Validate parent flow ---
     flow_repo = FlowRepository(db)
@@ -333,6 +342,22 @@ async def rerun_flow_run(
     progress.update_status("system", None, "Preparing rerun")
     model_provider = resolve_model_provider(rerun_request.model_provider)
 
+    # --- c294: disclose source-run age on the response ---
+    # ``created_at`` may be naive (SQLite default) or tz-aware; normalize to
+    # UTC before computing the delta to avoid TypeError on subtraction.
+    source_created = source_run.created_at
+    if source_created is not None:
+        source_created_iso = source_created.isoformat()
+        source_created_aware = (
+            source_created
+            if source_created.tzinfo is not None
+            else source_created.replace(tzinfo=timezone.utc)
+        )
+        age_days = (datetime.now(timezone.utc) - source_created_aware).days
+    else:
+        source_created_iso = ""
+        age_days = 0
+
     # Return SSE stream (same as normal /hedge-fund/run)
     return StreamingResponse(
         stream_hedge_fund_run(request, rerun_request, compiled_graph, portfolio, model_provider),
@@ -340,5 +365,7 @@ async def rerun_flow_run(
         headers={
             "X-Rerun-Run-Id": str(new_run.id),
             "X-Rerun-Run-Number": str(new_run.run_number),
+            "X-Rerun-Source-Run-Created-At": source_created_iso,
+            "X-Rerun-Source-Run-Age-Days": str(age_days),
         },
     )

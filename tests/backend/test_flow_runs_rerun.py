@@ -41,7 +41,7 @@ def _create_test_client():
     return client, test_session, engine
 
 
-def _seed_flow_and_run(db, flow_id=1, run_id=1, request_data=None, status="COMPLETE"):
+def _seed_flow_and_run(db, flow_id=1, run_id=1, request_data=None, status="COMPLETE", created_at=None):
     """Insert a flow and a completed run into the test database."""
     flow = HedgeFundFlow(
         id=flow_id,
@@ -53,13 +53,16 @@ def _seed_flow_and_run(db, flow_id=1, run_id=1, request_data=None, status="COMPL
     db.add(flow)
     db.flush()
 
-    run = HedgeFundFlowRun(
+    run_kwargs = dict(
         id=run_id,
         flow_id=flow_id,
         status=status,
         run_number=1,
         request_data=request_data,
     )
+    if created_at is not None:
+        run_kwargs["created_at"] = created_at
+    run = HedgeFundFlowRun(**run_kwargs)
     db.add(run)
     db.commit()
 
@@ -150,6 +153,79 @@ def test_rerun_returns_404_for_missing_run():
         response = client.post("/flows/1/runs/999/rerun")
 
         assert response.status_code == 404
+
+    finally:
+        Base.metadata.drop_all(bind=engine)
+        engine.dispose()
+
+
+def test_rerun_discloses_source_run_age():
+    """c294: rerun must disclose source-run age so the operator can tell stale params on current data.
+
+    The rerun endpoint re-executes a historical run's ``request_data`` against
+    CURRENT market data. The source run could be weeks/months old — tickers
+    may be delisted, portfolio positions may no longer reflect reality. The
+    operator cannot distinguish "fresh parameters" from "stale parameters
+    re-run on today's data" without an age disclosure. This is the NS-5
+    staleness disease class on a money-acting SSE surface.
+
+    Fix is ADDITIVE: two new response headers ``X-Rerun-Source-Run-Created-At``
+    (ISO ts) and ``X-Rerun-Source-Run-Age-Days`` (integer days). No existing
+    behavior changes.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    client, test_session, engine = _create_test_client()
+    try:
+        db = test_session()
+        stored_request = {
+            "tickers": ["AAPL"],
+            "graph_nodes": [],
+            "graph_edges": [],
+            "initial_cash": 100000.0,
+            "start_date": "2026-01-01",
+            "end_date": "2026-03-01",
+        }
+        # Seed the source run with an OLD created_at (30 days ago) so the
+        # age is measurably non-zero. A run created "now" would yield age 0
+        # and the assertion would be ambiguous (could pass by accident).
+        old_created = datetime.now(timezone.utc) - timedelta(days=30)
+        _seed_flow_and_run(db, request_data=stored_request, created_at=old_created)
+        db.close()
+
+        with (
+            patch("app.backend.routes.flow_runs.create_graph") as mock_create_graph,
+            patch("app.backend.routes.flow_runs.create_portfolio", return_value={}),
+            patch("app.backend.routes.flow_runs.hydrate_api_keys"),
+            patch("app.backend.routes.flow_runs.resolve_model_provider", return_value="OpenAI"),
+            patch("app.backend.routes.flow_runs.progress"),
+            patch("app.backend.routes.flow_runs.stream_hedge_fund_run") as mock_stream,
+        ):
+            mock_graph = MagicMock()
+            mock_create_graph.return_value = mock_graph
+
+            async def _fake_stream(*args, **kwargs):
+                yield 'event: complete\ndata: {"data": {"decisions": {}}}\n\n'
+
+            mock_stream.return_value = _fake_stream()
+
+            response = client.post("/flows/1/runs/1/rerun")
+
+        assert response.status_code == 200
+        # The source-run created_at must be disclosed so the operator can see
+        # WHEN the re-run parameters were originally captured.
+        assert "X-Rerun-Source-Run-Created-At" in response.headers, (
+            "rerun must disclose X-Rerun-Source-Run-Created-At — re-executing a "
+            "historical run's params on current market data without an age label "
+            "is the NS-5 staleness disease class on a money-acting surface (c294)"
+        )
+        # The age in days must be disclosed and reflect the 30-day-old source.
+        assert "X-Rerun-Source-Run-Age-Days" in response.headers
+        age_days = int(response.headers["X-Rerun-Source-Run-Age-Days"])
+        assert age_days >= 29, (
+            f"X-Rerun-Source-Run-Age-Days should be ~30 for a 30-day-old source "
+            f"run, got {age_days}"
+        )
 
     finally:
         Base.metadata.drop_all(bind=engine)
