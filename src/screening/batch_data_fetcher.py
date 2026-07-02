@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import threading
 import time
@@ -40,6 +41,12 @@ from src.tools.tushare_api import (
 )
 
 T = TypeVar("T")
+
+# NS-17/BH-017 同族 (c281): 此前文件无 logger, batch 失败 / per-ticker 失败
+# 均静默吞异常, 运维只能通过 stats() 计数器间接感知, 无法定位根因.
+# batch 失败 → WARNING (罕见且关键, 触发数千次 fallback);
+# per-ticker 失败 → DEBUG (热路径避免刷屏, 排查时打开).
+logger = logging.getLogger(__name__)
 
 # 默认缓存 TTL (秒)
 DEFAULT_CACHE_TTL_SECONDS = 60
@@ -149,6 +156,11 @@ class BatchDataFetcher:
         self._single_ticker_calls = 0
         self._single_ticker_cache_hits = 0
         self._single_ticker_cache_misses = 0
+        # c281: 单 ticker fetch 异常计数 (与 cache miss 严格区分 —
+        # cache miss 是确定性无数据, fetch error 是网络/限频/鉴权异常).
+        # 此前 except Exception 错误累加到 _single_ticker_cache_misses,
+        # 让 stats() 报告失真, 误导运维把 fetch error 当 cache miss 处理.
+        self._single_ticker_fetch_errors = 0
         self._cache_hits = 0
         # R20.10 BETA: 防缓存击穿 — 同一 cache_key 的并发调用只触发一次实际 fetch。
         # 后续调用等待第一个调用完成后直接读缓存。
@@ -231,7 +243,18 @@ class BatchDataFetcher:
         self._batch_calls += 1
         try:
             df = fetch()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 — best-effort batch, fallback to single-ticker  (c281: was silent → observable)
+            # NS-17/BH-017 同族 (c281): 静默 return None 会让批量失败不可观测 —
+            # 调用方回退到数千次单 ticker 并发 API 调用, 运维只看到 stats().batch_failures
+            # 计数器增加, 无法定位根因 (网络/限频/鉴权/接口字段变更).
+            # warning 级别 (罕见且关键 — 每批次每 trade_date 最多一次, 但触发 fallback 风暴).
+            logger.warning(
+                "batch_data_fetcher: batch fetch failed (cache_key=%s, "
+                "falling back to single-ticker path): %s",
+                cache_key,
+                exc,
+                exc_info=True,
+            )
             self._batch_failures += 1
             return None
         finally:
@@ -305,8 +328,24 @@ class BatchDataFetcher:
                 end_date=end_date,
                 fields="ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg",
             )
-        except Exception:
-            self._single_ticker_cache_misses += 1
+        except Exception as exc:  # noqa: BLE001 — best-effort per-ticker, return []  (c281: was silent → observable)
+            # NS-17/BH-017 同族 (c281): 静默 return [] 会让 tushare API 异常 (网络/限频/
+            # 鉴权) 与 "停牌/退市/合法无数据" 在下游完全无法区分 — 下游 Layer B 评分会把
+            # "拉数失败" 误判为 "无数据 ticker" 静默剔除, 直接污染选股结果.
+            # debug 级别 (热路径 — 批量失败时可能并发触发数千 ticker, WARNING 会刷屏;
+            # 排查时通过 logger level=DEBUG 打开).
+            # c281 同时修复计数 bug: 此前 _single_ticker_cache_misses += 1 把 fetch error
+            # 误标为 cache miss (语义错误 — cache miss 是确定性无数据, fetch error 是异常),
+            # 让 stats() 报告失真. 新增 _single_ticker_fetch_errors 计数器严格区分.
+            logger.debug(
+                "batch_data_fetcher: single-ticker fetch failed (ticker=%s, "
+                "start=%s, end=%s, returning []): %s",
+                ticker,
+                start_date,
+                end_date,
+                exc,
+            )
+            self._single_ticker_fetch_errors += 1
             return []
         if df is None or df.empty:
             self._single_ticker_cache_misses += 1
@@ -353,6 +392,7 @@ class BatchDataFetcher:
         self._single_ticker_calls = 0
         self._single_ticker_cache_hits = 0
         self._single_ticker_cache_misses = 0
+        self._single_ticker_fetch_errors = 0
         self._cache_hits = 0
         self._cache.clear()
 
@@ -364,6 +404,7 @@ class BatchDataFetcher:
             "single_ticker_calls": self._single_ticker_calls,
             "single_ticker_cache_hits": self._single_ticker_cache_hits,
             "single_ticker_cache_misses": self._single_ticker_cache_misses,
+            "single_ticker_fetch_errors": self._single_ticker_fetch_errors,
             "cache_hits": self._cache_hits,
             "cache_hits_internal": cache_stats["hits"],
             "cache_misses_internal": cache_stats["misses"],

@@ -450,8 +450,13 @@ class TestSingleTickerBatchCacheSharing:
         stats = fetcher.stats()
         assert stats["single_ticker_cache_misses"] == 0
 
-    def test_single_ticker_tushare_exception_records_miss(self):
-        """tushare 异常时, 记 cache_miss。"""
+    def test_single_ticker_tushare_exception_records_fetch_error(self):
+        """c281: tushare 异常时, 记 fetch_errors (NOT cache_misses).
+
+        旧 bug: except Exception: self._single_ticker_cache_misses += 1
+        (语义错误 — cache miss 是确定性无数据, fetch error 是异常)
+        新行为: except Exception: self._single_ticker_fetch_errors += 1
+        """
         fetcher = BatchDataFetcher(use_batch=True, max_concurrency=2)
         import src.tools.tushare_api as tushare_api_module
 
@@ -461,7 +466,9 @@ class TestSingleTickerBatchCacheSharing:
 
         assert result == []
         stats = fetcher.stats()
-        assert stats["single_ticker_cache_misses"] >= 1
+        # c281: fetch error 应记 fetch_errors (NOT cache_misses)
+        assert stats["single_ticker_fetch_errors"] >= 1
+        assert stats["single_ticker_cache_misses"] == 0
 
     def test_single_ticker_tushare_empty_records_miss(self):
         """tushare 返回空 DataFrame 时, 记 cache_miss。"""
