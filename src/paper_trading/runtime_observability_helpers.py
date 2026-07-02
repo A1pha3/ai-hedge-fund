@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -10,6 +11,8 @@ from src.targets.router_build_helpers import build_reporting_target_summary
 
 if TYPE_CHECKING:
     from src.execution.daily_pipeline import DailyPipeline
+
+logger = logging.getLogger(__name__)
 
 
 def build_llm_route_provenance(*, get_llm_metrics_paths_fn: Callable[[], dict[str, str]]) -> tuple[dict, dict]:
@@ -103,8 +106,13 @@ def build_dual_target_session_summary(daily_events_path: Path) -> dict:
         summary["read_error"] = read_error
         return summary
 
-    for payload in _iter_paper_trading_day_payloads(lines):
+    # NS-17/c289: use the counting iterator so corrupt-skipped rows surface
+    # in the summary (operator can distinguish corrupt-skipped from fewer-days).
+    payloads, corrupt_count = _iter_paper_trading_day_payloads_with_corrupt_count(lines)
+    for payload in payloads:
         _accumulate_dual_target_day(summary, payload)
+    if corrupt_count:
+        summary["corrupt_rows"] = corrupt_count
     return summary
 
 
@@ -118,8 +126,12 @@ def build_reporting_target_session_summary(daily_events_path: Path) -> dict:
         summary["read_error"] = read_error
         return summary
 
-    for payload in _iter_paper_trading_day_payloads(lines):
+    # NS-17/c289: same counting iterator as dual_target — surface corrupt rows.
+    payloads, corrupt_count = _iter_paper_trading_day_payloads_with_corrupt_count(lines)
+    for payload in payloads:
         _accumulate_reporting_target_day(summary, payload)
+    if corrupt_count:
+        summary["corrupt_rows"] = corrupt_count
     return summary
 
 
@@ -383,11 +395,48 @@ def _iter_paper_trading_day_payloads(lines: list[str]) -> Iterator[dict]:
     for line in lines:
         try:
             payload = json.loads(line)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            # NS-17/c289: 与 frozen_replay:217 一致 — 损坏的 daily_events 行
+            # 必须发 warning, 不能静默 continue. 否则 operator 调试 degraded
+            # session summary 时无法区分 "corrupt rows 静默丢失" vs "本就少几天".
+            # 此前同一文件 frozen_replay 会 log, 本解析器静默 — 不一致.
+            logger.warning(
+                "runtime_observability: 损坏的 daily_events 行 (运行中断/部分写入?): "
+                "%s; 跳过该行",
+                exc,
+            )
             continue
         if payload.get("event") != "paper_trading_day":
             continue
         yield payload
+
+
+def _iter_paper_trading_day_payloads_with_corrupt_count(
+    lines: list[str],
+) -> tuple[list[dict], int]:
+    """Iterate payloads AND count corrupt-skipped rows (NS-17/c289).
+
+    Returns (payloads, corrupt_count) so session-summary builders can surface
+    the corrupt-row count to the operator (distinguishing corrupt-skipped from
+    genuinely-fewer-days).
+    """
+    payloads: list[dict] = []
+    corrupt = 0
+    for line in lines:
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError as exc:
+            corrupt += 1
+            logger.warning(
+                "runtime_observability: 损坏的 daily_events 行 (运行中断/部分写入?): "
+                "%s; 跳过该行",
+                exc,
+            )
+            continue
+        if payload.get("event") != "paper_trading_day":
+            continue
+        payloads.append(payload)
+    return payloads, corrupt
 
 
 def _accumulate_dual_target_day(summary: dict, payload: dict) -> None:
