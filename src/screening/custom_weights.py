@@ -228,6 +228,10 @@ def reweight_recommendations(
     """
     if not isinstance(recommendations, Sequence):
         return []
+    # Lazy import: confidence_calibration → data_quality_audit → custom_weights
+    # 形成 indirect cycle, 必须延迟到函数内 import (见下方 bucket-stale reset).
+    from src.screening.confidence_calibration import _find_bucket as _find_score_bucket
+
     weights_dict = weights.to_dict()
     enriched: list[dict[str, Any]] = []
     for rec in recommendations:
@@ -239,6 +243,35 @@ def reweight_recommendations(
         rec_copy["original_score_b"] = original
         rec_copy["score_b"] = new_score_b
         rec_copy["custom_weights"] = dict(weights_dict)
+        # NS-19/c284: bucket-stale reset on score_b boundary cross.
+        # auto_screening 报告里的 bucket 校准 (bucket_label / expected_returns /
+        # win_rates / bucket_sample_count / bucket_t30_mature_count / downside)
+        # 是为 ORIGINAL score_b 所属桶计算的. reweight 改了 score_b, 一旦越过桶
+        # 边界 (dogfood 20260702 实测 5 只 top 中 3 只越界: 688019 中→中低,
+        # 002463/300308 中低→低), 这些字段就 STALE — 反映的是旧桶的历史胜率/edge,
+        # 对新 score_b 不成立. 下游 (CLI JSON / web slider / build_front_door_verdict)
+        # 读到的是新 score_b 配旧桶校准, 误导决策.
+        #
+        # reweight 是纯函数, 无 tracking-record 访问, 无法重算校准. 正确做法是
+        # 检测越界并 reset 为未知, 让调用方 (run_custom_weights 可调
+        # compute_expected_returns 重算; web slider 可提示用户) 自行重算或当缺失处理.
+        # composite_score 独立于 score_b (从 agent 信号 + bonuses 算, dogfood 实测
+        # reweight 前后不变), 不在 reset 范围.
+        _orig_bucket = _find_score_bucket(original) if math.isfinite(original) else None
+        _new_bucket = _find_score_bucket(new_score_b) if math.isfinite(new_score_b) else None
+        if (
+            _orig_bucket is not None
+            and _new_bucket is not None
+            and _orig_bucket[0] != _new_bucket[0]
+            and rec.get("bucket_label") is not None
+        ):
+            rec_copy["bucket_label"] = "未知"
+            rec_copy["bucket_sample_count"] = 0
+            rec_copy["bucket_t30_mature_count"] = 0
+            rec_copy["bucket_t30_avg_negative_return"] = None
+            rec_copy["expected_returns"] = {}
+            rec_copy["win_rates"] = {}
+            rec_copy["bucket_recalibration_needed"] = True
         enriched.append(rec_copy)
 
     if sort and enriched:

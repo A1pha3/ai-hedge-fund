@@ -189,6 +189,99 @@ def test_reweight_with_balanced_weights_matches_average() -> None:
 
 
 # ===========================================================================
+# 7b. reweight bucket-stale reset (NS-19/c284)
+# ===========================================================================
+
+
+def _make_rec_with_calibration(
+    ticker: str,
+    *,
+    score_b: float,
+    new_score_b: float,
+    composite_score: float = 0.64,
+) -> tuple[dict, float]:
+    """构造一条带 bucket 校准数据 (模拟 auto_screening 报告 rec) + 能重权到 new_score_b 的信号.
+
+    返回 (rec, expected_new_score_b). 用 trend=1.0 权重把 trend 信号直接映射成 score_b.
+    """
+    # trend signal: direction=+1, confidence=new_score_b*100 → reweight(trend=1.0) = new_score_b
+    # 用 trend 信号承载目标 new_score_b; 其余策略 0.
+    rec = _make_rec(
+        ticker,
+        trend=1 if new_score_b >= 0 else -1,
+        trend_conf=abs(new_score_b) * 100.0,
+        score_b=score_b,
+    )
+    rec["composite_score"] = composite_score
+    rec["composite_verified"] = True
+    rec["bucket_label"] = "中低 (0.5-0.6)"  # 假设 orig score_b 落中低桶
+    rec["bucket_sample_count"] = 41
+    rec["bucket_t30_mature_count"] = 38
+    rec["bucket_t30_avg_negative_return"] = -7.94
+    rec["expected_returns"] = {"t5": 0.293, "t10": 1.146, "t30": -7.94}
+    rec["win_rates"] = {"t5": 0.474, "t10": 0.447, "t30": 0.368}
+    return rec, new_score_b
+
+
+def test_reweight_clears_stale_bucket_when_crossing_boundary() -> None:
+    """NS-19/c284: reweight 改 score_b; 若越过桶边界, 原 bucket 校准 (为旧 score_b 计算) 失效.
+
+    rec 原 score_b=0.55 (中低 0.5-0.6), 带 中低桶 校准数据.
+    trend=1.0 重权 → score_b=0.80 (高 0.7-1.0), 越过边界.
+    原 bucket_label/expected_returns/win_rates/sample_count 是 中低桶 的, 对 0.80 的新 score_b STALE.
+    reweight 是纯函数无法重算校准 → 必须 reset 为未知, 不能 ship 过期数据误导下游.
+    """
+    rec, expected_new = _make_rec_with_calibration("X", score_b=0.55, new_score_b=0.80)
+    w = StrategyWeights(trend=1.0, mean_reversion=0.0, fundamental=0.0, event_sentiment=0.0)
+    out = reweight_recommendations([rec], w)
+    r = out[0]
+    assert abs(r["score_b"] - expected_new) < 1e-9, f"new score_b should be {expected_new}"
+    # 越过桶边界 → 校准数据 reset 为未知
+    assert r["bucket_label"] == "未知", (
+        f"crossed bucket boundary → bucket_label must reset to '未知'; got {r['bucket_label']!r}"
+    )
+    assert r["bucket_sample_count"] == 0
+    assert r["bucket_t30_mature_count"] == 0
+    assert r["expected_returns"] == {}
+    assert r["win_rates"] == {}
+    assert r.get("bucket_recalibration_needed") is True
+
+
+def test_reweight_preserves_bucket_when_not_crossing() -> None:
+    """NS-19/c284: reweight 后仍在同一桶 → 校准数据保留 (仍有效)."""
+    # orig 0.55 → new 0.58, 都在 中低 (0.5-0.6)
+    rec, _ = _make_rec_with_calibration("X", score_b=0.55, new_score_b=0.58)
+    w = StrategyWeights(trend=1.0, mean_reversion=0.0, fundamental=0.0, event_sentiment=0.0)
+    out = reweight_recommendations([rec], w)
+    r = out[0]
+    assert r["bucket_label"] == "中低 (0.5-0.6)", "same bucket → preserve calibration"
+    assert r["bucket_sample_count"] == 41
+    assert r["expected_returns"] == {"t5": 0.293, "t10": 1.146, "t30": -7.94}
+    assert r["win_rates"] == {"t5": 0.474, "t10": 0.447, "t30": 0.368}
+    assert "bucket_recalibration_needed" not in r
+
+
+def test_reweight_preserves_composite_score_when_crossing() -> None:
+    """NS-19/c284: composite_score 独立于 score_b (从 agent 信号算), 越界时不 reset.
+
+    dogfood 证实 (auto_screening vs custom_weights 同 ticker composite_score 完全一致),
+    reweight 只改 score_b 不改 composite_score. 越界 reset 只清 bucket 校准, 不动 composite.
+    """
+    rec, _ = _make_rec_with_calibration(
+        "X", score_b=0.55, new_score_b=0.80, composite_score=0.72
+    )
+    w = StrategyWeights(trend=1.0, mean_reversion=0.0, fundamental=0.0, event_sentiment=0.0)
+    out = reweight_recommendations([rec], w)
+    r = out[0]
+    # bucket 越界 reset, 但 composite_score 保留
+    assert r["bucket_label"] == "未知"
+    assert r["composite_score"] == 0.72, (
+        "composite_score is score_b-independent; must survive bucket reset"
+    )
+    assert r["composite_verified"] is True
+
+
+# ===========================================================================
 # 8. 排序变化
 # ===========================================================================
 
