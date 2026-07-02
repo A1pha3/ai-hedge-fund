@@ -5,6 +5,13 @@
 > **证据**: c297 profit_aware 策略 + c298 bootstrap CI（`compute_selection_profitability_from_loaded`），n=75 mature 日 / 7993 records。
 > **关联**: 本决策的工程基础设施已全部交付（C272 诊断 + C192 NS-4 footer + C273/C276 `--profit-aware` opt-in + c296 route-A 持久化 + c297 A/B 策略 + c298 CI）。
 
+> **⚠️ 关键警告（c301, loop 34 新增）— 选择偏差风险，可能推翻整个诊断**:
+> 本决策包的所有证据（c297/c298 A/B+CI）都跑在 `tracking_history`，即**推荐池**里的记录，**不是全 universe**。
+> 历史 precedes: MR 因子诊断（C225, n=8901 推荐池）显示"全 4 MR 因子系统性反向 sep<0"，但 `aff989be`（2026-06-25, FULL 9896 passed）的全 universe 回测（n=8136）**推翻**了它 —— MR 在 A 股实际是**正向统计显著因子**（IC=+0.040, p=0.0003），推荐池里的"反向"是**选择偏差**（池预筛 trend-bullish 强势股，把能反弹的"超跌"票过滤掉了）。
+> **R6 的"负预测力"可能是同一选择偏差伪象**: 若 composite_score 在池内的排序区分度被选择偏差污染（像 MR 那样），则翻转/重设权重会重蹈 `aff989be` 回滚的 MR-flip 覆辙。
+> **教训**（`aff989be` 原文）: "因子诊断必须用全 universe（无选择偏差），不能只看推荐池。选择偏差是真实风险。"
+> **对本决策包的影响**: 下面"推荐 D（推迟）"的信心应**更强** —— 不仅 CI 太宽，连点估计的"负预测力"本身都可能被选择偏差推翻。**owner 在做任何 flip/reweight 决策前，应先确认全 universe 诊断是否复现负预测力**（这是 c301+ 的 open 工作）。
+
 ---
 
 ## 1. 当前问题与证据
