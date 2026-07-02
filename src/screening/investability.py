@@ -217,6 +217,18 @@ def build_front_door_verdict(
         composite_score = round(_score_b_fallback * 0.9, 4)
     else:
         composite_score = _safe_metric(_composite_score_raw, 0.0)
+    # NS-18 trust calibration (c283): ranker-path disclosure 一致性 —
+    # c282 让 DISCOUNT 在两条路径一致, 但 DISCLOSURE ("composite 缺失(已折扣)"
+    # invalidation_reason) 仍只在 direct path (_composite_score_raw is None) 触发.
+    # ranker 处理过的 missing-composite 标的到达 verdict 时 composite_score 已是
+    # 0.9*score_b (float 非 None), _is_missing_composite 读不出 missing 状态 →
+    # 默认前门 (ranker→verdict) 路径漏标. ranker 对 missing-composite 显式置
+    # composite_verified=False (L450), verdict 读此标记补齐 disclosure, 与
+    # top_picks.py:1506 / decision_flow.py:274 的渲染层 strict ``is False`` 检查
+    # 对齐. discount 不受影响 (ranker-path 已折扣, 不重复 — 见 _is_missing_composite
+    # 仅 _composite_score_raw is None 时 True).
+    _composite_verified = recommendation.get("composite_verified")
+    _disclose_missing_composite = _is_missing_composite or _composite_verified is False
     expected_returns = recommendation.get("expected_returns") or {}
     win_rates = recommendation.get("win_rates") or {}
     # C219 (autodev): per-horizon bootstrap CI (n=7203, 95%) 证明 low bucket
@@ -330,10 +342,14 @@ def build_front_door_verdict(
         invalidation_reasons.append("量价背离")
     if _safe_metric(recommendation.get("trend_resonance_factor"), 0.0) < 0:
         invalidation_reasons.append("趋势共振失效")
-    # NS-18 trust calibration (c282): missing-composite 标注 — 让用户知晓
+    # NS-18 trust calibration (c282/c283): missing-composite 标注 — 让用户知晓
     # composite_score 已应用 0.9 折扣 (源自 score_b fallback, 非 composite 真分).
     # 与 L408 ranker 的 composite_verified=False 标记一致, 让呈现层能加视觉标记.
-    if _is_missing_composite:
+    # c283: disclosure 条件扩展为 _disclose_missing_composite (direct path
+    # _is_missing_composite OR ranker-path composite_verified is False), 让
+    # ranker→verdict 默认前门路径的结构化 invalidation_reason 也披露, 与
+    # direct call 路径一致.
+    if _disclose_missing_composite:
         invalidation_reasons.append("composite 缺失(已折扣)")
     # R68/R96 falsy-zero family drain: ``t30_win_rate`` is
     # ``_safe_metric(win_rates.get("t30"), 0.0)`` which returns 0.0 for BOTH

@@ -293,6 +293,120 @@ class TestMissingCompositeDiscount:
 
 
 # ---------------------------------------------------------------------------
+# Gap 3 continuation: ranker-path missing-composite disclosure consistency
+# ---------------------------------------------------------------------------
+# c282 把 0.9 折扣从 ranker 下沉到 verdict 让两条路径的 DISCOUNT 一致, 但
+# DISCLOSURE ("composite 缺失(已折扣)" invalidation_reason) 仍只在 direct call
+# 路径 (_composite_score_raw is None) 触发. ranker 处理过的 missing-composite
+# 标的到达 verdict 时 composite_score 已是 0.9*score_b (float 非 None), verdict
+# 读不出"这是 missing-composite"→ 默认前门 (ranker→verdict) 路径的 invalidation_reason
+# 漏标. 渲染层 (top_picks "估" marker / decision_flow "估" marker) 读 composite_verified
+# 兜底了显示层, 但 verdict 的结构化 invalidation_reason 字段 (API/logs/替代渲染器
+# 消费的 canonical disclosure) 不一致. 修复: 把 disclosure 条件从"_score_raw is None"
+# 扩展为"_score_raw is None OR composite_verified is False" (与 top_picks.py:1506
+# 和 decision_flow.py:274 的 strict False 检查对齐), discount 保持 direct-path-only
+# (ranker 已折扣, 不重复).
+
+
+class TestMissingCompositeDisclosureRankerPath:
+    """NS-18 trust calibration (c283): ranker-path missing-composite disclosure.
+
+    ranker 对 missing-composite 标的设置 ``composite_verified=False`` 并把
+    ``composite_score=round(score_b*0.9, 4)`` 写入 rec. 默认前门路径 (ranker →
+    verdict) 上, verdict 读到的 composite_score 是 float (非 None), 原
+    ``_is_missing_composite = _composite_score_raw is None`` 检测为 False →
+    "composite 缺失(已折扣)" invalidation_reason 不触发. 与 direct call 路径
+    披露不一致 (c282 消除的"必须先经 ranker"隐式依赖在 DISCLOSURE 侧复发).
+    """
+
+    @staticmethod
+    def _ranker_missing_composite_rec(*, score_b: float = 0.55) -> dict[str, Any]:
+        """构造 rank_recommendations_by_investability 对 missing-composite 标的的输出.
+
+        模拟 investability.py L433-450 的 else 分支:
+        - composite_score_gated: 不设置 (ranker 从不设置此字段)
+        - composite_score: round(score_b * 0.9, 4) (R39 0.9 折扣, float 非 None)
+        - composite_verified: False (ranker 显式标记)
+        - base_score = score_b; momentum/sector/consistency/volume/trend bonus = 0
+        """
+        return {
+            "ticker": "RANKER001",
+            "decision": "bullish",
+            "score_b": score_b,
+            "base_score": score_b,
+            "momentum_bonus": 0.0,
+            "sector_bonus": 0.0,
+            "consistency_adj": 0.0,
+            "volume_factor": 0.0,
+            "trend_resonance_factor": 0.0,
+            "composite_score": round(score_b * 0.9, 4),
+            "composite_grade": "C",
+            "composite_verified": False,
+            "bucket_sample_count": 100,
+            "bucket_label": "mid",
+            "bucket_t30_mature_count": 80,
+            "expected_returns": {"t5": 0.02, "t10": 0.025, "t30": 0.03},
+            "win_rates": {"t5": 0.60, "t10": 0.62, "t30": 0.55},
+        }
+
+    def test_ranker_path_missing_composite_labels_discounted(self) -> None:
+        """ranker 处理过的 missing-composite 标的 → verdict 必须标 'composite 缺失(已折扣)'.
+
+        这是默认前门路径 (ranker → verdict). composite_score=0.495 (0.55*0.9) 非 None,
+        但 composite_verified=False 是 ranker 留下的 missing-composite 信号. verdict 的
+        结构化 invalidation_reason 必须披露, 与 direct call 路径一致.
+        """
+        rec = self._ranker_missing_composite_rec(score_b=0.55)
+        verdict = build_front_door_verdict(rec, market_regime="normal")
+        reasons = verdict["invalidation_reason"]
+        assert "composite 缺失(已折扣)" in reasons, (
+            f"ranker-path missing-composite (composite_verified=False) must label "
+            f"'composite 缺失(已折扣)' in verdict invalidation_reason; got reasons={reasons}"
+        )
+
+    def test_ranker_path_missing_composite_no_double_discount(self) -> None:
+        """ranker-path discount 不重复: composite_score 已是 0.9*score_b, verdict 不再打 0.9.
+
+        score_b=0.60 → ranker 写 composite_score=0.54 (0.60*0.9). verdict 读 0.54,
+        若误对 ranker 路径再打 0.9 折扣 → 0.486 < 0.5 → action 从 BUY 翻成 HOLD/AVOID.
+        本测试守住"discount direct-path-only"边界: ranker-path 用 ranker 已折扣的值原样.
+        """
+        rec = self._ranker_missing_composite_rec(score_b=0.60)
+        # composite_score = round(0.60 * 0.9, 4) = 0.54 >= 0.5 → 应 BUY
+        verdict = build_front_door_verdict(rec, market_regime="normal")
+        assert verdict["action"] == "BUY", (
+            f"ranker-path: score_b=0.60 → composite_score=0.54 (ranker 已折扣) >= 0.5 → BUY; "
+            f"double-discount would push to <0.5 → non-BUY. got action={verdict['action']}"
+        )
+
+    def test_ranker_path_verified_composite_no_missing_label(self) -> None:
+        """composite_verified=True (真实 composite) → 不标 'composite 缺失(已折扣)'."""
+        rec = self._ranker_missing_composite_rec(score_b=0.60)
+        rec["composite_verified"] = True  # 真实 composite
+        rec["composite_score"] = 0.60  # 真实分, 非 0.9 折扣值
+        verdict = build_front_door_verdict(rec, market_regime="normal")
+        reasons = verdict["invalidation_reason"]
+        assert "composite 缺失(已折扣)" not in reasons, (
+            f"composite_verified=True must NOT label 'composite 缺失(已折扣)'; got reasons={reasons}"
+        )
+
+    def test_composite_verified_none_legacy_no_missing_label(self) -> None:
+        """composite_verified 缺失 (None, 旧报告/未走 ranker) → 不标, 向后兼容.
+
+        与 top_picks.py:1506 和 decision_flow.py:274 一致: strict ``is False`` 检查,
+        None / 缺省按 verified 处理, 避免误报.
+        """
+        rec = self._ranker_missing_composite_rec(score_b=0.60)
+        rec.pop("composite_verified")  # 模拟旧报告无此字段
+        rec["composite_score"] = 0.60  # 真实分
+        verdict = build_front_door_verdict(rec, market_regime="normal")
+        reasons = verdict["invalidation_reason"]
+        assert "composite 缺失(已折扣)" not in reasons, (
+            f"composite_verified missing (None/legacy) must NOT label; got reasons={reasons}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Regression: existing behavior preserved
 # ---------------------------------------------------------------------------
 
