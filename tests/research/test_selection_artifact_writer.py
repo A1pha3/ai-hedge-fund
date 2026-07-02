@@ -1052,12 +1052,18 @@ def test_file_selection_artifact_writer_returns_partial_success_when_snapshot_wr
 
     original_write_text = Path.write_text
 
-    def _patched_write_text(self, data, *args, **kwargs):
-        if self.name == "selection_snapshot.json":
-            raise OSError("snapshot write failed")
-        return original_write_text(self, data, *args, **kwargs)
+    # c303: snapshot 写改走 _atomic_write_json (tempfile + os.replace), 不再经
+    # Path.write_text, 故 mock 点从 write_text 移到 _atomic_write_json。意图不变
+    # (snapshot 写失败 → partial_success, review/feedback/replay_input 已先成功)。
+    from src.research import artifacts as _artifacts_mod
+    _original_atomic = _artifacts_mod._atomic_write_json
 
-    monkeypatch.setattr(Path, "write_text", _patched_write_text)
+    def _patched_atomic(path, payload):  # noqa: ANN001
+        if path.name == "selection_snapshot.json":
+            raise OSError("snapshot write failed")
+        return _original_atomic(path, payload)
+
+    monkeypatch.setattr(_artifacts_mod, "_atomic_write_json", _patched_atomic)
 
     result = writer.write_for_plan(plan=plan, trade_date="20260322", pipeline=None, selected_analysts=None)
 

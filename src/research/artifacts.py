@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Protocol, TYPE_CHECKING
 
@@ -38,6 +39,27 @@ if TYPE_CHECKING:
     from src.execution.daily_pipeline import DailyPipeline
     from src.execution.models import ExecutionPlan, LayerCResult
     from src.portfolio.models import PositionPlan
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    """R88 corrupt-snapshot CRASH vector guard: 原子写 (tempfile + os.replace)。
+
+    selection_snapshot.json / selection_target_replay_input.json 被 BTST/replay/回测链
+    消费 — R101 (btst_reporting_utils._load_json) 守了读端容错, 本 helper 守写端不产
+    损坏文件 (read/write 闭环)。crash 落在序列化中途保留 prior, 不 truncate 最终路径。
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix="." + path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False, indent=2))
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 class SelectionArtifactWriter(Protocol):
@@ -913,7 +935,7 @@ class FileSelectionArtifactWriter:
             day_dir.mkdir(parents=True, exist_ok=True)
             review_path.write_text(render_selection_review(snapshot), encoding="utf-8")
             feedback_path.touch(exist_ok=True)
-            replay_input_path.write_text(json.dumps(replay_input.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+            _atomic_write_json(replay_input_path, replay_input.model_dump(mode="json"))
             finalized_snapshot = snapshot.model_copy(
                 update={
                     "artifact_status": {
@@ -923,7 +945,7 @@ class FileSelectionArtifactWriter:
                     }
                 }
             )
-            snapshot_path.write_text(json.dumps(finalized_snapshot.model_dump(mode="json"), ensure_ascii=False, indent=2), encoding="utf-8")
+            _atomic_write_json(snapshot_path, finalized_snapshot.model_dump(mode="json"))
             return SelectionArtifactWriteResult(
                 artifact_version=self._artifact_version,
                 snapshot_path=str(snapshot_path),
