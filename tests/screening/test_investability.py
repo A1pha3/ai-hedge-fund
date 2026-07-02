@@ -1140,3 +1140,123 @@ def test_profit_aware_survives_consecutive_bonus_resort() -> None:
         "on composite_score primary, undoing the ranker's winrate re-keying). c273's claimed "
         "47%→62% improvement is not delivered."
     )
+
+
+# ---------------------------------------------------------------------------
+# NS-18 (autodev c275): invalidation_reasons 诚实化 — 数据缺失 / mature 不足
+# 原先只检查 ``0 < sample_count < 20``, 漏掉 sample_count==0 (数据缺失) 与
+# backing_sample<20 (mature 不足但 raw 充足) 两个场景. gate 行为正确但呈现层
+# 不诚实, 用户无法 self-audit 非 BUY 决策的原因.
+# ---------------------------------------------------------------------------
+
+
+def test_invalidation_reasons_marks_zero_sample_as_data_missing() -> None:
+    """NS-18 c275: sample_count==0 (完全无数据) 必须标 '数据缺失'.
+
+    原先 ``0 < 0 < 20`` = False, 不标任何原因 → 用户看到 AVOID 但不知是
+    '数据完全缺失' 还是 '质量差'. 修复后必须标 '数据缺失'.
+    """
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t5": 0.0, "t10": 0.0, "t30": 0.0},
+            "win_rates": {"t5": 0.0, "t10": 0.0, "t30": 0.0},
+            "bucket_sample_count": 0,
+            "bucket_t30_mature_count": 0,
+        },
+        market_regime="trend",
+    )
+    assert "数据缺失" in verdict["invalidation_reason"], (
+        f"sample_count==0 必须标 '数据缺失', got: {verdict['invalidation_reason']}"
+    )
+
+
+def test_invalidation_reasons_marks_insufficient_mature_sample() -> None:
+    """NS-18 c275: backing_sample<20 (mature 不足) 必须标 '成熟样本不足 20'.
+
+    场景: bucket_sample_count=40 (raw 充足) 但 bucket_t30_mature_count=5 (mature 不足).
+    BUY gate 正确降级 (line 258 backing_sample >= 20 拒绝 BUY), 但呈现层必须
+    标注原因让用户 self-audit.
+    """
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 9.4},
+            "win_rates": {"t5": 0.61, "t10": 0.62, "t30": 0.63},
+            "bucket_sample_count": 40,
+            "bucket_t30_mature_count": 5,
+        },
+        market_regime="trend",
+    )
+    assert "成熟样本不足 20" in verdict["invalidation_reason"], (
+        f"backing_sample<20 必须标 '成熟样本不足 20', got: {verdict['invalidation_reason']}"
+    )
+    # 不应同时标 '样本量不足 20' (raw count=40 充足)
+    assert "样本量不足 20" not in verdict["invalidation_reason"], (
+        f"raw count=40 充足时不应标 '样本量不足 20', got: {verdict['invalidation_reason']}"
+    )
+
+
+def test_invalidation_reasons_legacy_path_marks_insufficient_raw_sample() -> None:
+    """NS-18 c275: 旧路径 (无 mature_count 字段) 保留 '样本量不足 20' 标注.
+
+    向后兼容: pre-R35 / partial pipeline 的 recommendation 没有
+    bucket_t30_mature_count 字段, fallback 到 raw count, 保留原标注.
+    """
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 9.4},
+            "win_rates": {"t5": 0.61, "t10": 0.62, "t30": 0.63},
+            "bucket_sample_count": 10,
+            # 无 bucket_t30_mature_count 字段
+        },
+        market_regime="trend",
+    )
+    assert "样本量不足 20" in verdict["invalidation_reason"], (
+        f"旧路径 raw count<20 必须标 '样本量不足 20', got: {verdict['invalidation_reason']}"
+    )
+    # 不应标 '成熟样本不足 20' (无 mature 字段)
+    assert "成熟样本不足 20" not in verdict["invalidation_reason"]
+
+
+def test_invalidation_reasons_sufficient_samples_no_sample_warning() -> None:
+    """NS-18 c275: 样本充足时不应标任何样本相关警告."""
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 9.4},
+            "win_rates": {"t5": 0.61, "t10": 0.62, "t30": 0.63},
+            "bucket_sample_count": 40,
+            "bucket_t30_mature_count": 25,
+        },
+        market_regime="trend",
+    )
+    assert "数据缺失" not in verdict["invalidation_reason"]
+    assert "成熟样本不足 20" not in verdict["invalidation_reason"]
+    assert "样本量不足 20" not in verdict["invalidation_reason"]
+
+
+def test_invalidation_reasons_zero_sample_with_mature_field_marks_both() -> None:
+    """NS-18 c275: sample_count==0 且 has_mature_field 时同时标 '数据缺失' + '成熟样本不足 20'.
+
+    边界场景: bucket_sample_count=0 + bucket_t30_mature_count=0 (字段存在但为零).
+    两个原因都成立 — '数据缺失' (raw=0) + '成熟样本不足 20' (mature=0<20).
+    """
+    verdict = build_front_door_verdict(
+        {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t5": 0.0, "t10": 0.0, "t30": 0.0},
+            "win_rates": {"t5": 0.0, "t10": 0.0, "t30": 0.0},
+            "bucket_sample_count": 0,
+            "bucket_t30_mature_count": 0,
+        },
+        market_regime="trend",
+    )
+    assert "数据缺失" in verdict["invalidation_reason"]
+    assert "成熟样本不足 20" in verdict["invalidation_reason"]

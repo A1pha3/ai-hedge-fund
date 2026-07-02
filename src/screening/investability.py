@@ -316,7 +316,23 @@ def build_front_door_verdict(
     _raw_t30_wr = win_rates.get("t30")
     if is_finite_number(_raw_t30_wr) and float(_raw_t30_wr) < 0.5:
         invalidation_reasons.append("同分组胜率跌破 50%")
-    if 0 < sample_count < 20:
+    # NS-18 (autodev c275): invalidation_reasons 诚实化 — 原先只检查
+    # ``0 < sample_count < 20``, 漏掉两个关键场景:
+    #   1. ``sample_count == 0`` (完全无数据): ``0 < 0 < 20`` = False, 不标任何
+    #      原因 → 用户看到 AVOID 但不知是 "数据完全缺失" 还是 "质量差".
+    #   2. ``has_mature_field and backing_sample < 20`` (mature 不足但 raw 充足):
+    #      BUY gate 正确降级 (line 258 ``backing_sample >= 20`` 拒绝 BUY), 但
+    #      invalidation_reasons 不标原因 → 用户看到非 BUY 但不知是 "mature 不足"
+    #      还是 "其他原因". 这是 trust calibration gap: gate 行为正确但呈现层
+    #      不诚实, 用户无法 self-audit 决策.
+    # 修复: 分三档标注, 让用户能区分 "数据缺失" / "mature 不足" / "raw 不足".
+    if sample_count == 0:
+        invalidation_reasons.append("数据缺失")
+    if has_mature_field and backing_sample < 20:
+        invalidation_reasons.append("成熟样本不足 20")
+    elif not has_mature_field and 0 < sample_count < 20:
+        # 旧路径 (pre-R35 / partial pipeline): 无 mature_count 字段时 fallback
+        # 到 raw count, 保留原 "样本量不足 20" 标注.
         invalidation_reasons.append("样本量不足 20")
 
     deduped_reasons = list(dict.fromkeys(invalidation_reasons))
