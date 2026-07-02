@@ -237,3 +237,67 @@ class TestFlywheelHealthCli:
         assert rc == 0  # graceful, not a crash
         out = capsys.readouterr().out
         assert "critical" in out.lower()  # missing = critical (observable)
+
+
+# ---------------------------------------------------------------------------
+# NS-17/BH-017 c271: silent-degradation drain in flywheel_health
+# ---------------------------------------------------------------------------
+
+
+def test_assess_tracking_history_load_failure_emits_warning(tmp_path, caplog, monkeypatch) -> None:
+    """assess_tracking_history load_tracking_history 失败时必须发 warning (c271).
+
+    之前完全静默 pass — operators 无法区分 "无记录" 与 "tracking_history.json 损坏
+    / load_tracking_history bug", flywheel 健康降级不可观测。
+    """
+    import logging
+
+    from src.screening import flywheel_health
+
+    # 创建 tracking_history.json 让 th.exists() 返回 True (mtime 非 None),
+    # 但 load_tracking_history 抛异常模拟损坏 JSON。
+    th_file = tmp_path / "tracking_history.json"
+    th_file.write_text("NOT_VALID_JSON")
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("simulated corrupt JSON load failure")
+
+    monkeypatch.setattr(
+        "src.screening.consecutive_recommendation.load_tracking_history",
+        _raise,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="src.screening.flywheel_health"):
+        result = flywheel_health.assess_tracking_history(report_dir=tmp_path)
+
+    # best-effort 契约保留: 仍返回 dict (不崩溃)
+    assert isinstance(result, dict)
+    # 静默降级 surface 到 warning
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning_records) == 1
+    msg = warning_records[0].getMessage()
+    assert "assess_tracking_history load failed" in msg
+    assert str(tmp_path) in msg
+    assert "simulated corrupt JSON load failure" in msg
+
+
+def test_assess_tracking_history_valid_no_warning(tmp_path, caplog, monkeypatch) -> None:
+    """合法 tracking_history 不应发 warning (避免日志噪声)."""
+    import logging
+
+    from src.screening import flywheel_health
+
+    th_file = tmp_path / "tracking_history.json"
+    th_file.write_text("[]")  # 空列表是合法 "无记录" 信号
+
+    monkeypatch.setattr(
+        "src.screening.consecutive_recommendation.load_tracking_history",
+        lambda rd: [],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="src.screening.flywheel_health"):
+        result = flywheel_health.assess_tracking_history(report_dir=tmp_path)
+
+    assert isinstance(result, dict)
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning_records) == 0

@@ -6,6 +6,7 @@ brilliance.
 """
 
 import json
+import logging
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage
@@ -45,6 +46,8 @@ from src.utils.financial_calcs import calculate_cagr_from_line_items
 from src.utils.llm import call_llm
 from src.utils.progress import progress
 from src.utils.ticker_utils import get_currency_context
+
+logger = logging.getLogger(__name__)
 
 
 class CharlieMungerSignal(BaseModel):
@@ -373,7 +376,17 @@ def analyze_news_sentiment(news_items: list) -> str:
 def _r(x, n=3):
     try:
         return round(float(x), n)
-    except Exception:
+    except Exception as exc:
+        # NS-17/BH-017 同族: 静默返回 None 会让 make_munger_facts_bundle 中
+        # `_r(...) or 0` 回退到 0, 上游 LLM 输出畸形 (None/"abc"/dict) 时
+        # facts bundle 静默显示 0, 操作员无法定位是 LLM 输出问题还是数据缺失。
+        # debug 级别 (热路径, 每个 metric 调用一次, warning 太噪)。
+        logger.debug(
+            "_r round(float) failed (x=%r, n=%s): %s",
+            x,
+            n,
+            exc,
+        )
         return None
 
 

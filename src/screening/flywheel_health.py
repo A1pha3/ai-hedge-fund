@@ -20,10 +20,13 @@ Two pure, testable helpers prevent recurrence:
 """
 from __future__ import annotations
 
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # Thresholds (days). Tuned to the realized-evidence pipeline: records become
 # eligible for T+1 backfill at ~6 days, so a 3-day gap already starves
@@ -157,8 +160,16 @@ def assess_tracking_history(report_dir: Optional[Path] = None) -> dict:
         recs = load_tracking_history(rd)
         dates = sorted(r.get("recommended_date", "") for r in recs if r.get("recommended_date"))
         latest_date = dates[-1] if dates else None
-    except Exception:
-        pass
+    except Exception as exc:
+        # NS-17/BH-017 同族: 静默 pass 会让 latest_date 保持 None, check_flywheel_health
+        # 仍按 mtime 判级, 但 operators 无法区分 "无记录" 与 "tracking_history.json 损坏
+        # / load_tracking_history bug"。surface 到 logger.warning 让 flywheel 健康降级
+        # 可观测 (NS-5 flywheel 健康是前门信任校准的核心信号)。
+        logger.warning(
+            "assess_tracking_history load failed (rd=%s): %s",
+            rd,
+            exc,
+        )
     return check_flywheel_health(mtime, latest_date)
 
 

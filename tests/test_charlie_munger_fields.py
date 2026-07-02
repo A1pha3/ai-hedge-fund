@@ -230,3 +230,64 @@ def test_calculate_munger_valuation_reports_expensive_declining_fcf_case():
     assert result["fcf_yield"] == 0.02
     assert result["normalized_fcf"] == 20.0
     assert result["margin_of_safety_vs_fair_value"] == -0.7
+
+
+# ---------------------------------------------------------------------------
+# NS-17/BH-017 c271: silent-degradation drain in charlie_munger._r
+# ---------------------------------------------------------------------------
+
+
+def test_charlie_munger_r_coercion_failure_emits_debug(caplog) -> None:
+    """_r round(float(x), n) 失败时必须发 debug (c271)."""
+    import logging
+
+    from src.agents.charlie_munger import _r
+
+    # float(["not", "a", "number"]) 抛 TypeError
+    bad_value = ["not", "a", "number"]
+
+    with caplog.at_level(logging.DEBUG, logger="src.agents.charlie_munger"):
+        result = _r(bad_value, n=2)
+
+    # best-effort: 返回 None
+    assert result is None
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert len(debug_records) == 1
+    msg = debug_records[0].getMessage()
+    assert "_r round(float) failed" in msg
+
+
+def test_charlie_munger_r_valid_value_no_debug(caplog) -> None:
+    """合法数值不应发 debug (避免日志噪声)."""
+    import logging
+
+    from src.agents.charlie_munger import _r
+
+    with caplog.at_level(logging.DEBUG, logger="src.agents.charlie_munger"):
+        result = _r(3.14159, n=2)
+
+    assert result == 3.14
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert len(debug_records) == 0
+
+
+def test_charlie_munger_r_none_emits_debug(caplog) -> None:
+    """None 走 coercion failure 路径, 必须发 debug (c271).
+
+    float(None) 抛 TypeError — None 不是合法数值, 是上游 LLM "missing field" 的常见
+    信号。发 debug 让 facts bundle 中的 `_r(None) or 0` 回退路径可观测, 帮助定位是
+    LLM 输出 missing field 还是数据 corruption。
+    """
+    import logging
+
+    from src.agents.charlie_munger import _r
+
+    with caplog.at_level(logging.DEBUG, logger="src.agents.charlie_munger"):
+        result = _r(None)
+
+    assert result is None
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert len(debug_records) == 1
+    msg = debug_records[0].getMessage()
+    assert "_r round(float) failed" in msg
+    assert "None" in msg
