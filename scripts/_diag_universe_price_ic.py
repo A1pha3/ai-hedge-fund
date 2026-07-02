@@ -13,21 +13,57 @@ lean 设计: 只需 universe + 当日 close + 次日 pct_chg, 不算因子 → �
 复用 _backtest_light_stage_universe 的 _get_pro/get_trading_dates/get_universe_for_date。
 """
 from __future__ import annotations
-import logging, os, sys, time
+
+import logging
+import os
+import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-import numpy as np, pandas as pd
+
+import numpy as np
+import pandas as pd
 from dotenv import load_dotenv
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 from scripts._backtest_light_stage_universe import (  # noqa: E402
-    get_trading_dates, get_universe_for_date, _get_pro,
+    get_trading_dates,
+    get_universe_for_date,
+    _get_pro,
 )
-from scipy.stats import spearmanr
+from scipy.stats import spearmanr  # noqa: E402
 
 BUCKETS = [(0, 10), (10, 20), (20, 40), (40, 80), (80, 200), (200, 1e9)]
+
+
+def classify_price_effect(universe_ic: float, pool_ic: float | None = None) -> str:
+    """Classify whether a within-pool price-IC reflects a real universe-level price
+    effect or selection-bias amplification (pure). Returns 'bias_amplified' |
+    'real_factor' | 'mixed'. c308 (loop 42): extracted from run() for testability —
+    the c307 conclusion (pool price-IC +0.176 is bias-amplified, universe +0.049)
+    rests on this classification.
+
+    - universe_ic < 0.05: weak universe effect → pool's strong IC is bias-amplified
+      (the 3rd selection-bias instance after score/MR; not an actionable ranking signal).
+    - universe_ic > 0.10: real universe-level price factor (high price = quality proxy).
+    - else: mixed (partially real, partially amplified).
+    """
+    if universe_ic < 0.05:
+        return "bias_amplified"
+    if universe_ic > 0.10:
+        return "real_factor"
+    return "mixed"
+
+
+def amplification_ratio(universe_ic: float, pool_ic: float) -> float | None:
+    """How many times stronger the pool IC is vs the universe IC (pure). None if
+    universe_ic is 0 (avoid divide-by-zero). c307 real-data: pool +0.176 / universe
+    +0.049 = 3.6× amplification."""
+    if universe_ic == 0:
+        return None
+    return pool_ic / universe_ic
 
 
 def run(n_days: int = 20, end_date: str | None = None) -> None:
@@ -63,7 +99,8 @@ def run(n_days: int = 20, end_date: str | None = None) -> None:
             print(f"  [{di+1}/{len(test_dates)}] {test_date}: n={len(df)} day-price-IC={rho:+.4f}")
 
     if not all_rows:
-        print("无数据"); return
+        print("无数据")
+        return
     df = pd.DataFrame(all_rows)
     overall_rho, p = spearmanr(df["price"].values, df["next_ret"].values)
     print(f"\n{'=' * 90}")
@@ -78,11 +115,12 @@ def run(n_days: int = 20, end_date: str | None = None) -> None:
             wr = (b["next_ret"] > 0).mean()
             print(f"  ¥{lo:<6}-{hi:<8} {len(b):>7} {wr:>8.1%} {b['next_ret'].mean():>+8.2f}%")
     print(f"\n{'=' * 90}")
+    verdict = classify_price_effect(overall_rho)
     print("判读 (池内 price-IC +0.176 是否是选择偏差伪象):")
-    if overall_rho < 0.05:
+    if verdict == "bias_amplified":
         print(f"  ✅ 全 universe price-IC ≈ {overall_rho:+.3f} (~0 或负, 小盘溢价) 但池内 +0.176 → **选择偏差伪象**")
         print(f"     池反转了 price 效应 (像 score 那样); price 不是真实可用的排序 signal。")
-    elif overall_rho > 0.10:
+    elif verdict == "real_factor":
         print(f"  ⚠️ 全 universe price-IC ≈ {overall_rho:+.3f} (正, 与池内同向) → price 是真实 factor (高价=质量代理)。")
         print(f"     可考虑作为池内排序辅助 signal (但需 T+5/T+10 + 全模型确认)。")
     else:
