@@ -615,8 +615,22 @@ def _compute_pick_risk_advice(
         if advice.degraded or advice.current_price <= 0:
             return None
         return advice
-    except Exception:
-        return None  # Best-effort: failure is non-critical
+    except Exception as e:
+        # NS-17 / BH-017 family sibling (c268): advice=None 会让该 BUY pick 在前门
+        # 渲染时缺止损/止盈/盈亏比标签 (操作员拿到无风险约束的 BUY 信号)。返回 None
+        # 是 best-effort 有意为之 (前门永不崩溃), 但不再静默 — surface 到
+        # logger.warning 让 operators 能关联"BUY pick 缺风险标签"与"tushare 接口
+        # 抖动 / 价格序列异常"。exc_info=True 便于在 DEBUG 级日志中追溯堆栈。
+        logger.warning(
+            "_compute_pick_risk_advice 失败, 跳过该 pick 止损/止盈/盈亏比渲染 "
+            "(ticker=%s, name=%s, trade_date=%s): %s",
+            ticker,
+            name,
+            trade_date,
+            e,
+            exc_info=True,
+        )
+        return None
 
 
 def _risk_label_from_advice(advice) -> tuple[str, float]:

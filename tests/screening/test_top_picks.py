@@ -1075,3 +1075,80 @@ def test_print_correlation_block_warns_on_overlap(capsys):
     top_picks._print_correlation_block(indep)
     out2 = capsys.readouterr().out
     assert out2 == ""
+
+
+# ---------------------------------------------------------------------------
+# _compute_pick_risk_advice — NS-17 / BH-017 family sibling (c268)
+# ---------------------------------------------------------------------------
+
+
+class TestComputePickRiskAdviceSilentFailure:
+    """R32 risk-advice fetcher: best-effort return-None preserved, but failure
+    must be observable so operators can correlate missing stop-loss/take-profit
+    labels on BUY picks with upstream data-fetch degradation."""
+
+    def test_exception_returns_none_and_emits_warning(self, caplog) -> None:
+        """NS-17 / BH-017 family: tushare price fetch raising must NOT be silent.
+
+        背景: ``_compute_pick_risk_advice`` 在 ``get_ashare_prices_with_tushare``
+        抛异常时返回 None 是 best-effort 有意为之 (前门永不崩溃), 但之前完全静默 —
+        advice=None 会让该 BUY pick 在前门渲染时缺止损/止盈/盈亏比标签 (操作员拿
+        到无风险约束的 BUY 信号)。修复后必须发 logger.warning 让 operators 能关
+        联"BUY pick 缺风险标签"与"tushare 接口抖动"。
+        """
+        import logging
+        import unittest.mock as mock
+
+        from src.screening import top_picks
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("simulated tushare price fetch failure")
+
+        with mock.patch(
+            "src.tools.tushare_api.get_ashare_prices_with_tushare", side_effect=boom
+        ):
+            with caplog.at_level(logging.WARNING, logger="src.screening.top_picks"):
+                result = top_picks._compute_pick_risk_advice(
+                    "000001", "平安", trade_date="20260101"
+                )
+
+        # Best-effort contract preserved: None returned, no crash.
+        assert result is None
+
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warning_records, (
+            f"expected >=1 WARNING record from risk-advice fetch failure, "
+            f"got {caplog.records}"
+        )
+        msg = warning_records[0].getMessage()
+        # Must name the function / feature so operators can grep it.
+        assert (
+            "_compute_pick_risk_advice" in msg or "risk_advice" in msg.lower()
+        ), f"warning must name the degraded feature, got: {msg!r}"
+        # Must include the ticker so the operator knows WHICH pick lost its label.
+        assert "000001" in msg, f"warning must include ticker, got: {msg!r}"
+        # Must include the underlying exception message for triage.
+        assert "simulated tushare price fetch failure" in msg
+
+    def test_empty_prices_returns_none_silently(self, caplog) -> None:
+        """Empty price series is a legitimate no-data condition, NOT an exception
+        — must return None without emitting a warning (avoid log noise when a
+        ticker simply has no recent trades)."""
+        import logging
+        import unittest.mock as mock
+
+        from src.screening import top_picks
+
+        with mock.patch(
+            "src.tools.tushare_api.get_ashare_prices_with_tushare", return_value=[]
+        ):
+            with caplog.at_level(logging.WARNING, logger="src.screening.top_picks"):
+                result = top_picks._compute_pick_risk_advice(
+                    "000001", "平安", trade_date="20260101"
+                )
+
+        assert result is None
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert not warning_records, (
+            f"empty-price path must be silent, got {warning_records}"
+        )
