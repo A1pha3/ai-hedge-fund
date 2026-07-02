@@ -40,13 +40,27 @@ def aggregate_outcomes_by_profile(
         {
             "conservative": {"sample_count": ..., "win_rate": ..., ...},
             "aggressive": {"sample_count": ..., "win_rate": ..., ...},
+            "_skipped_ledgers": [{"path": ..., "error": ...}, ...],  # NS-17/c288
         }
+
+    NS-17/c288: previously ``except Exception: continue`` silently dropped
+    corrupt/unreadable ledgers — operator got a report on the surviving
+    subset with NO indication data was lost (dogfood: 1 valid + 2 corrupt
+    → "1 sample, 100% win rate" with no warning). Now skipped ledgers are
+    recorded under the ``_skipped_ledgers`` key (a non-profile bucket) so
+    the render can surface a warning. The caller can also inspect it.
     """
     groups: dict[str, dict[str, Any]] = {}
+    skipped: list[dict[str, str]] = []
     for path in ledger_paths:
         try:
             header, outcomes = read_outcome_ledger(path)
-        except Exception:
+        except Exception as exc:
+            # NS-17/c288: record the skip instead of silently continuing.
+            # name the file + error so the operator can fix the root cause
+            # (corrupt write, partial file, schema drift) rather than trust
+            # a report built on a silently-truncated sample.
+            skipped.append({"path": str(path), "error": f"{type(exc).__name__}: {exc}"})
             continue
         for outcome in outcomes:
             profile = str(outcome.profile or "unknown")
@@ -106,6 +120,11 @@ def aggregate_outcomes_by_profile(
             "regimes_covered": sorted(bucket["regimes_covered"]),
             "decision_count": len(bucket["decision_ids"]),
         }
+    # NS-17/c288: surface skipped-ledger diagnostics so the render can warn.
+    # Stored under a non-profile key (profiles are lowercase like "conservative"
+    # / "aggressive" / "unknown"; "_skipped_ledgers" cannot collide).
+    if skipped:
+        normalized["_skipped_ledgers"] = skipped
     return normalized
 
 
@@ -155,6 +174,17 @@ def render_profile_experiment_report(
         lines.append("")
 
     lines.extend(["## Outcome Aggregation", ""])
+    # NS-17/c288: surface skipped-ledger warning BEFORE the table so the operator
+    # sees data loss before reading stats built on a silently-truncated subset.
+    skipped = aggregated.get("_skipped_ledgers") if isinstance(aggregated, dict) else None
+    if skipped:
+        lines.append(
+            f"- **⚠ 跳过 {len(skipped)} 个无法读取的 outcome ledger** — 聚合基于剩余可读 ledger, "
+            f"统计可能不代表完整样本. 请检查下列文件 (损坏写入 / schema 漂移 / 部分文件):"
+        )
+        for s in skipped:
+            lines.append(f"  - `{s['path']}`: {s['error']}")
+        lines.append("")
     if not aggregated:
         lines.append("- **证据不足**：尚未收集到闭合的 outcome 样本。")
         lines.append("")

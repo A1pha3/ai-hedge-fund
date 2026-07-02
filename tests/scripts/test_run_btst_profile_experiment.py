@@ -108,6 +108,56 @@ class TestAggregation:
         assert result["conservative"]["profit_count"] == 1
         assert result["aggressive"]["loss_count"] == 1
 
+    def test_aggregation_warns_when_ledgers_silently_skipped(self, tmp_path: Path) -> None:
+        """NS-17/c288: corrupt/unreadable ledgers must NOT be silently skipped.
+
+        Dogfood (run_btst_profile_experiment on 1 valid + 2 corrupt ledgers)
+        found that ``except Exception: continue`` silently drops corrupt
+        ledgers and produces a report on the surviving subset with NO warning.
+        Operator sees "1 sample, 100% win rate" and may decide on it, not
+        knowing 2 of 3 ledgers were skipped (data loss invisible). Same
+        silent-skip family as NS-17/BH-017. Fix: aggregate_outcomes_by_profile
+        must surface skipped-ledger warnings (returned to caller + visible in
+        the rendered report).
+        """
+        valid_path = tmp_path / "valid.json"
+        _make_outcome_ledger(
+            decision_id="cons-1",
+            signal_date="20260601",
+            profile="conservative",
+            outcomes_data=[("300001", "profit", "normal")],
+            path=valid_path,
+        )
+        corrupt_path = tmp_path / "corrupt.json"
+        corrupt_path.write_text("{not valid json", encoding="utf-8")
+        missing_keys_path = tmp_path / "missing_keys.json"
+        missing_keys_path.write_text('{"outcomes": []}', encoding="utf-8")
+
+        # aggregate_outcomes_by_profile must return skipped-ledger info so the
+        # render can warn. The return contract carries skips under a non-profile
+        # "_skipped_ledgers" key (profiles are lowercase, no collision).
+        from scripts.run_btst_profile_experiment import aggregate_outcomes_by_profile, render_profile_experiment_report
+
+        result = aggregate_outcomes_by_profile([valid_path, corrupt_path, missing_keys_path])
+        # The aggregation result must carry skipped-ledger diagnostics.
+        assert isinstance(result, dict), "aggregate must return a dict"
+        skipped = result.get("_skipped_ledgers")
+        assert skipped is not None and len(skipped) == 2, (
+            f"2 corrupt ledgers must be recorded under _skipped_ledgers; got result keys={list(result.keys())}"
+        )
+        skipped_paths = {s["path"] for s in skipped}
+        assert str(corrupt_path) in skipped_paths and str(missing_keys_path) in skipped_paths, (
+            f"skipped ledgers must name both corrupt files; got {skipped_paths}"
+        )
+        # the rendered report must surface the warning (operator-visible)
+        md = render_profile_experiment_report(aggregated=result)
+        assert "跳过" in md or "skipped" in md.lower(), (
+            f"rendered report must warn about skipped ledgers; got:\n{md}"
+        )
+        assert str(corrupt_path.name) in md, (
+            f"rendered report must name the skipped corrupt ledger file; got:\n{md}"
+        )
+
     def test_ci_95_computed_when_decided_gt_0(self, tmp_path: Path) -> None:
         ledger_path = tmp_path / "ledger.json"
         outcomes_data = [("300001", "profit", "normal")] * 10 + [("300002", "loss", "normal")] * 5
