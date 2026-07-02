@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from app.backend.routes._common import safe_route
 from src.main import compute_auto_screening_results
+from src.screening.investability import build_front_door_verdict
 
 router = APIRouter(prefix="/api/screening", tags=["screening"])
 
@@ -250,6 +251,30 @@ def _build_screening_response(
     raw_recs = payload.get("recommendations", []) or []
     recs = _apply_score_threshold(raw_recs, score_threshold)
     recs = _attach_explain(recs, use_explain)
+    # c290: CLI↔web front-door parity — attach the BUY/HOLD/AVOID verdict +
+    # invalidation_reason + signal_horizon + market_regime to each rec, exactly
+    # as the CLI `--top-picks` does at top_picks.py:228. The web front door is a
+    # pre-production auth-gated surface where users act on real picks; it must
+    # not silently omit the trust-calibration disclosure (c282/c283, NS-18) the
+    # CLI has. Reads market_regime from payload market_state regime_gate_level
+    # (same field CLI's _render_market_gate reads); missing market_state →
+    # 'unknown' (build_front_door_verdict handles it honestly per c282 gap 1).
+    market_state = payload.get("market_state") or {}
+    _regime_raw = market_state.get("regime_gate_level") if isinstance(market_state, dict) else None
+    market_regime = str(_regime_raw).lower() if _regime_raw else "unknown"
+    for rec in recs:
+        try:
+            rec["verdict"] = build_front_door_verdict(rec, market_regime=market_regime)
+        except Exception:
+            # Defensive: verdict must never crash the web response. A pick
+            # without verdict is strictly worse than one with, but a 500 on
+            # the whole screening endpoint is worse still. Log via meta below.
+            rec["verdict"] = {
+                "action": "AVOID",
+                "market_regime": market_regime,
+                "invalidation_reason": "verdict 计算失败 (请复核)",
+                "signal_horizon": "",
+            }
     return ScreeningResponse(
         trade_date=trade_date,
         recommendations=_sanitize_nan(recs),
