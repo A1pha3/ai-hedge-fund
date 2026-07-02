@@ -501,7 +501,18 @@ def attach_conditional_orders_to_payload(
         if price_provider is not None:
             try:
                 history = price_provider(ticker, lookback_sessions)
-            except Exception:  # noqa: BLE001 — 价格 provider 容错
+            except Exception as exc:  # noqa: BLE001 — 价格 provider 容错  (c280: was silent → observable)
+                # NS-17/BH-017 同族 (c280): 静默 history = [] 会让止损/止盈建议基于
+                # 空价格历史 (ATR 无法计算), 下游 compute_conditional_advice 降级为
+                # degraded advice 但 operator 不知是数据缺失还是 provider 异常.
+                # warning 级别 (决策链, 止损/止盈建议, 触及风控数据质量).
+                logger.warning(
+                    "conditional_order_advisor: price_provider failed (ticker=%s, "
+                    "lookback=%d, falling back to empty history): %s",
+                    ticker,
+                    lookback_sessions,
+                    exc,
+                )
                 history = []
         else:
             history = _fallback_price_provider(ticker, lookback_sessions)
@@ -601,7 +612,17 @@ def run_conditional_orders_cli(
         if price_provider is not None:
             try:
                 history = price_provider(ticker, lookback_sessions)
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001  (c280: was silent → observable)
+                # NS-17/BH-017 同族 (c280, CLI path): 同 API path (line 504), 价格
+                # provider 失败静默 history = [] 让止损/止盈建议基于空历史.
+                # warning 级别 (决策链, 止损/止盈建议, 触及风控数据质量).
+                logger.warning(
+                    "conditional_order_advisor (CLI): price_provider failed (ticker=%s, "
+                    "lookback=%d, falling back to empty history): %s",
+                    ticker,
+                    lookback_sessions,
+                    exc,
+                )
                 history = []
         else:
             history = _fallback_price_provider(ticker, lookback_sessions)
