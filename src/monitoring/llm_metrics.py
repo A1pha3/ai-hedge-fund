@@ -1,5 +1,6 @@
 import json
 import os
+import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -91,8 +92,20 @@ def _write_summary() -> None:
     totals = _SUMMARY["totals"]
     if totals["attempts"]:
         totals["avg_duration_ms"] = round(totals["total_duration_ms"] / totals["attempts"], 3)
-    with _SUMMARY_PATH.open("w", encoding="utf-8") as handle:
-        json.dump(_SUMMARY, handle, ensure_ascii=False, indent=2)
+    # R88 corrupt-summary CRASH vector guard: 原子写 (tempfile + os.replace)。
+    # 此前 open('w') 立即 truncate, crash 落在 json.dump 中途留下空/半截汇总。
+    _SUMMARY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".llm_metrics_summary.", suffix=".tmp", dir=str(_SUMMARY_PATH.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(_SUMMARY, handle, ensure_ascii=False, indent=2)
+        os.replace(tmp_name, _SUMMARY_PATH)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def get_llm_metrics_paths() -> dict[str, str]:
