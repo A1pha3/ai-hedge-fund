@@ -904,10 +904,14 @@ def _ci_bracket(result: SelectionStrategyResult) -> str:
 def render_selection_profitability_line(report: SelectionProfitabilityReport) -> str:
     """Render one line: does following the model's top-N profit vs ignoring the score?
 
-    Includes the R6 A/B signal (loop 30): 默认 (score_desc) vs profit-aware (按经验
-    bucket winrate walk-forward 重排) vs 等权. profit-aware 跑赢默认时附 💡 lift 标注
-    (owner 据此决定是否 flip 默认到 --profit-aware). 当 profit_aware 策略不存在或数据
-    不足时回退到原三段式渲染 (向后兼容).
+    **c303/c304/c305 (loop 36-37) — SUPERSEDED interpretation**: this is a WITHIN-POOL
+    A/B (runs on tracking_history = the model's own high-score picks). c303 full-universe
+    diagnostic confirmed composite_score has POSITIVE predictive power at universe level
+    (Top-3 beats equal-weight-all, +0.44%); the within-pool 'negative predictive power'
+    / profit-aware lift are SELECTION-BIAS ARTIFACTS (score-self-selection; within-pool
+    IC = -0.027). The line is KEPT for continuity/diagnostics but now carries an explicit
+    池内/选择偏差 caveat so the operator does NOT misread it as a model defect or a flip
+    recommendation. See docs/cn/product/research/composite-score-reweighting-decision-pack.md.
 
     Silent (empty string) when insufficient — never breaks the front door.
     """
@@ -919,20 +923,21 @@ def render_selection_profitability_line(report: SelectionProfitabilityReport) ->
         return ""
     pa = next((s for s in report.strategies if s.strategy == "profit_aware"), None)
     label = _SELECTION_HORIZON_LABEL.get(report.horizon_field, report.horizon_field)
+    # c305: 池内 A/B caveat — 所有 verdict/marker 都附加"池内/选择偏差"标注, 防止 operator
+    # 误读为全局 model defect 或 flip 建议 (c303 证实全 universe 有正预测力, 池内现象是伪象).
+    pool_caveat = f"{Fore.YELLOW}〔池内 A/B, c303 证为选择偏差伪象 — 非 model defect, 不建议 flip〕{Style.RESET_ALL}"
     if report.verdict == "model_underperforms":
-        marker = f"{Fore.RED}⚠ 选取倒挂: 模型 top-N 跑输等权 (负预测力){Style.RESET_ALL}"
+        marker = f"{Fore.RED}⚠ 池内选取倒挂 (负预测力){Style.RESET_ALL}  {pool_caveat}"
     elif report.verdict == "model_outperforms":
-        marker = f"{Fore.GREEN}✓ 选取正向: 模型 top-N 跑赢等权{Style.RESET_ALL}"
+        marker = f"{Fore.GREEN}✓ 池内选取正向{Style.RESET_ALL}  {pool_caveat}"
     else:
-        marker = f"{Fore.YELLOW}≈ 选取中性: 模型 top-N 与等权相当{Style.RESET_ALL}"
-    # R6 A/B lift marker: profit-aware vs default. 仅当 pa 存在且有 winrate 时附注.
+        marker = f"{Fore.YELLOW}≈ 池内选取中性{Style.RESET_ALL}  {pool_caveat}"
+    # c305: profit-aware marker 改为中性披露 (不再推荐 flip — c303 证明 flip 是错的).
     pa_marker = ""
     if pa is not None and pa.portfolio_winrate is not None:
         lift_pp = (pa.portfolio_winrate - sd.portfolio_winrate) * 100.0
-        if lift_pp >= 5.0:
-            pa_marker = f"  {Fore.CYAN}💡 profit-aware 重排 +{lift_pp:.0f}pp (--profit-aware opt-in, C273){Style.RESET_ALL}"
-        elif lift_pp <= -5.0:
-            pa_marker = f"  {Fore.YELLOW}profit-aware 重排 {lift_pp:+.0f}pp (无收益){Style.RESET_ALL}"
+        if abs(lift_pp) >= 5.0:
+            pa_marker = f"  {Fore.YELLOW}profit-aware 池内 {lift_pp:+.0f}pp (选择偏差伪象, c303 不建议 flip){Style.RESET_ALL}"
     if pa is not None and pa.portfolio_winrate is not None:
         sd_ci = _ci_bracket(sd)
         pa_ci = _ci_bracket(pa)
