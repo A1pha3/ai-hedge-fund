@@ -22,9 +22,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import math
+import os
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
@@ -461,6 +463,31 @@ def update_tracking_history(
         本次实际写入 / 更新的记录数 (新增 + 更新 T+1/T+3/T+5 收益的合计)
     """
     history_path = reports_dir / history_filename
+    # c292 精确化 (文件级 flock 纵深): 守 read-modify-write 临界区, 防止锁外 caller
+    # (backfill 脚本 / launcher Step 2) 并发导致 lost-update (后写覆盖先写, 丢 Phase 2
+    # 回填的 T+30 returns)。c292 flock 守 --auto 流程内; 本锁守 tracking_history 文件
+    # 本身, 不依赖 caller 协调。flock 进程退出自动释放 (crash-safe, kill -9 无 stale-lock)。
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    _lock_fd = os.open(history_path.with_suffix(".json.lock"), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX)  # 阻塞直到拿到排他锁
+        return _update_tracking_history_locked(history_path, trade_date, history_filename, use_data_fetcher)
+    finally:
+        # finally 释放: 正常返回 / 异常 / Ctrl-C 都释放 fd (flock 随 fd close 自动释放)
+        try:
+            os.close(_lock_fd)
+        except OSError:
+            pass
+
+
+def _update_tracking_history_locked(
+    history_path: Path,
+    trade_date: str,
+    history_filename: str,
+    use_data_fetcher: Callable[[str, str, str], list[dict[str, Any]]] | None,
+) -> int:
+    """update_tracking_history 的临界区主体 (调用方已持 flock)。"""
+    reports_dir = history_path.parent
     history = _load_history(history_path)
     history_index: dict[tuple[str, str], dict[str, Any]] = {_record_key(r): r for r in history}
 

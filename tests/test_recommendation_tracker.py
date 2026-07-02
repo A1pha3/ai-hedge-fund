@@ -785,3 +785,89 @@ def test_default_price_fetcher_prefers_akshare_when_available(monkeypatch) -> No
 
     rt._default_price_fetcher("002222", "20260622", "20260623")
     assert tushare_called == [], "tushare must NOT be called when akshare has data"
+
+
+class TestUpdateTrackingHistoryFileLock:
+    """c292 精确化: update_tracking_history 在 read-modify-write 期间必须持文件锁,
+    防止锁外 caller (backfill 脚本 / launcher Step 2) 并发导致 lost-update
+    (后写覆盖先写, 丢 Phase 2 回填的 T+30 returns)。c292 flock 守 --auto 流程;
+    本锁守 tracking_history 文件本身 (文件级纵深, 不依赖 caller 协调)。
+    """
+
+    def test_update_tracking_history_holds_exclusive_lock_during_write(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """在 _save_history 执行瞬间, 另一个对同锁文件的 LOCK_EX|LOCK_NB 获取必须失败
+        (证明 update_tracking_history 持有排他锁)。"""
+        import fcntl as _fcntl
+        from src.screening import recommendation_tracker as rt
+        from src.screening.recommendation_tracker import update_tracking_history
+
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        # 准备一份当日报告让 Phase 1 能读到 recommendations
+        (reports_dir / "auto_screening_20260702.json").write_text(
+            json.dumps({"date": "2026-07-02", "recommendations": [
+                {"ticker": "000001", "score_b": 0.5, "recommended_price": 10.0}
+            ]}),
+            encoding="utf-8",
+        )
+
+        # 在 _save_history 调用瞬间, 探测锁是否被持有
+        lock_probe_results: list[bool] = []
+        real_save = rt._save_history
+
+        def _spy_save(history_path, records):
+            # 探测: 同进程新 fd 尝试 LOCK_EX|LOCK_NB on the lock file
+            lock_path = history_path.with_suffix(".json.lock")
+            if lock_path.exists():
+                fd = os.open(lock_path, os.O_RDWR)
+                try:
+                    _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+                    lock_probe_results.append(True)   # 获取成功 = 锁没被持有
+                except (BlockingIOError, OSError):
+                    lock_probe_results.append(False)  # 获取失败 = 锁被持有 (期望)
+                finally:
+                    os.close(fd)
+            return real_save(history_path, records)
+
+        monkeypatch.setattr(rt, "_save_history", _spy_save)
+        monkeypatch.setattr(rt, "fetch_actual_returns", lambda **kw: {})
+
+        update_tracking_history(reports_dir=reports_dir, trade_date="20260702")
+
+        assert lock_probe_results == [False], (
+            "update_tracking_history 必须在 _save_history 期间持有 tracking_history 排他锁 "
+            "(防止并发 lost-update); probe 应被拒绝"
+        )
+
+    def test_update_tracking_history_releases_lock_after_write(self, tmp_path: Path) -> None:
+        """update_tracking_history 返回后锁必须释放 (后续 caller 能获取)。"""
+        import fcntl as _fcntl
+        from src.screening import recommendation_tracker as rt
+        from src.screening.recommendation_tracker import update_tracking_history
+
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        (reports_dir / "auto_screening_20260702.json").write_text(
+            json.dumps({"date": "2026-07-02", "recommendations": [
+                {"ticker": "000001", "score_b": 0.5, "recommended_price": 10.0}
+            ]}),
+            encoding="utf-8",
+        )
+        monkeypatch_setattr = None
+        from unittest.mock import patch as _patch
+        with _patch.object(rt, "fetch_actual_returns", return_value={}):
+            update_tracking_history(reports_dir=reports_dir, trade_date="20260702")
+
+        history_path = reports_dir / HISTORY_FILENAME
+        lock_path = history_path.with_suffix(".json.lock")
+        # 锁文件应存在; 且现在能获取 (已释放)
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)  # 应成功
+        finally:
+            os.close(fd)
+
+
+import os  # 供上面的测试 helper 用
