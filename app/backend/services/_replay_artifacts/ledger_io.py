@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -15,6 +17,29 @@ from src.research.feedback import read_research_feedback
 from src.research.models import ResearchFeedbackRecord
 
 logger = logging.getLogger(__name__)
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    """Write JSON atomically (R93/c293/c294 canonical pattern).
+
+    Serialize to a same-dir temp file then ``os.replace`` onto the final path. A crash
+    during serialization leaves the previous file intact instead of a truncated/corrupt
+    half-file (R88 corrupt-sidecar CRASH vector). Complements the c295 read-side
+    corrupt-tolerance for the replay-artifact session_summary.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix="." + path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
 
 if TYPE_CHECKING:
     from app.backend.services.replay_artifact_service import ReplayArtifactService
@@ -253,10 +278,7 @@ class ReplayLedgerIoHelper:
         artifacts = session_summary.setdefault("artifacts", {})
         artifacts["research_feedback_summary"] = str(summary_path)
         session_summary["research_feedback_summary"] = directory_summary.model_dump(mode="json")
-        session_summary_path.write_text(
-            json.dumps(session_summary, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        _atomic_write_json(session_summary_path, session_summary)
 
     def _read_jsonl(self, path: Path) -> list[dict[str, Any]]:
         if not path.exists():

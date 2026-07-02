@@ -2577,3 +2577,49 @@ class TestLedgerIoReadCorruptTolerance:
 
         assert rows == [{"ok": 1}, {"ok": 2}], "valid rows must survive a corrupt sibling line"
         assert len(caplog.records) >= 1, "skipped corrupt line must emit a warning"
+
+
+class TestLedgerIoWriteAtomicity:
+    """c295 read-side pair (R88 corrupt-sidecar CRASH vector, write side):
+    ``_sync_session_feedback_summary`` must write session_summary.json atomically so a
+    crash mid-write leaves the prior summary intact, not truncated. Same read/write
+    completion pattern as c293 (R93 pair) and c294 (R101 pair).
+    """
+
+    def test_crash_during_summary_write_never_leaves_truncated_file(self, tmp_path: Path, monkeypatch) -> None:
+        from app.backend.services._replay_artifacts.ledger_io import ReplayLedgerIoHelper
+
+        service = _build_service_with_db(tmp_path)
+        helper = ReplayLedgerIoHelper(service)
+        session_summary = tmp_path / "session_summary.json"
+        prior = {"artifacts": {}, "version": "v1", "session_id": "keep-alive"}
+        session_summary.write_text(json.dumps(prior, ensure_ascii=False), encoding="utf-8")
+
+        class _StubSummary:
+            def model_dump(self, mode):  # noqa: ARG002
+                return {"reviewed": 3}
+
+        # Faithfully simulate Path.write_text's truncate-on-open + mid-write failure.
+        def crashing_write_text(self, data, *args, **kwargs):  # noqa: ANN001
+            open(self, "w").close()  # write_text opens mode='w' → truncates
+            raise OSError("simulated mid-write crash")
+
+        monkeypatch.setattr(Path, "write_text", crashing_write_text)
+        try:
+            helper._sync_session_feedback_summary(
+                report_dir=tmp_path,
+                directory_summary=_StubSummary(),
+                summary_path=tmp_path / "research_feedback_summary.json",
+            )
+        except OSError:
+            pass  # acceptable: the write reported failure; the guard is about file state
+
+        raw = session_summary.read_text(encoding="utf-8")
+        assert raw.strip(), (
+            "prior session_summary must not be truncated-empty after a crashed write — "
+            "non-atomic write_text truncates on open (R88 corrupt-sidecar CRASH vector root cause)"
+        )
+        parsed = json.loads(raw)  # must parse cleanly — no half-written corrupt file
+        assert parsed.get("session_id") == "keep-alive", (
+            "prior summary fields must survive a crashed write attempt (prior or new-complete, never corrupt)"
+        )
