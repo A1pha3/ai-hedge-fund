@@ -1289,9 +1289,9 @@ def _write_analysis_artifacts(
 ) -> dict[str, Any]:
     output_json = resolved_output_dir / f"{stem}.json"
     output_md = resolved_output_dir / f"{stem}.md"
-    output_json.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    # R88 corrupt-report CRASH vector: atomic .json write (reuse c294 _write_json, already
+    # imported from btst_reporting_utils) so a crash mid-write leaves prior artifact intact.
+    _write_json(output_json, payload)
     output_md.write_text(render_markdown(payload), encoding="utf-8")
     return {
         "analysis": payload,
