@@ -21,6 +21,11 @@
 > **证据文件**: `data/reports/r6_full_universe_diag_20d_20260703.log`; 脚本 `scripts/_diag_r6_full_universe.py` (c303)。
 > **剩余 caveat**: light-stage (0 LLM) + T+1 + n=19。若 owner 想更强证据, 跑全模型 (with LLM) / T+5,T+10 / 更长 N (c302 §7 重型路线)。但当前证据已足够支撑"不 flip"决策。
 
+> **选择偏差机制 (quantified, loop 37/c305)**: 不是显式 trend-bullish 过滤 (`candidate_pool` 过滤的是流动性/cooldown/focus), 而是**分数自选择** — `tracking_history` 本就是模型的高分 picks, 在已高分池内分数的区分度坍缩:
+> - **Within-UNIVERSE** (c303, n=19d): composite_score 正区分 — Top-3 跑赢等权全 universe (+0.44%, 58% vs 42%)。
+> - **Within-POOL** (tracking_history, n=7993): Spearman IC(score, T+5 return) = **−0.0268** (p=0.016, 方向微负); high-score-half winrate 58.4% ≈ low-score-half 59.7%; 池内 score 带极窄 (mean 0.070, stdev 0.185)。
+> - **含义**: composite_score 擅长**选池** (universe 级), 但弱于**池内排序** (top-picks 级, 这正是 owner `--top-picks` 前门做的)。c297/c298 的"负预测力"是池内弱区分, 不是全局缺陷。修复池内排序是一个独立的、更难的问题 (小分数差内的噪声); **不等于**全局 flip/reweight。
+
 ---
 
 ## 1. 当前问题与证据
