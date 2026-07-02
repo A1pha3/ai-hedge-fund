@@ -30,12 +30,16 @@ class BaseDataSource:
     available: bool = False
 
     @classmethod
-    def get_prices(cls, ticker: str, start_date: str, end_date: str, period: str = "daily") -> list[Price]:
+    def get_prices(
+        cls, ticker: str, start_date: str, end_date: str, period: str = "daily"
+    ) -> list[Price]:
         """获取价格数据"""
         raise NotImplementedError
 
     @classmethod
-    def get_financial_metrics(cls, ticker: str, end_date: str, limit: int = 10) -> list[FinancialMetrics]:
+    def get_financial_metrics(
+        cls, ticker: str, end_date: str, limit: int = 10
+    ) -> list[FinancialMetrics]:
         """获取财务指标"""
         raise NotImplementedError
 
@@ -73,7 +77,9 @@ class TushareDataSource(BaseDataSource):
             return False
 
     @classmethod
-    def get_prices(cls, ticker: str, start_date: str, end_date: str, period: str = "daily") -> list[Price]:
+    def get_prices(
+        cls, ticker: str, start_date: str, end_date: str, period: str = "daily"
+    ) -> list[Price]:
         """
         通过 Tushare 获取价格数据
 
@@ -99,7 +105,13 @@ class TushareDataSource(BaseDataSource):
             start_date_fmt = start_date.replace("-", "")
             end_date_fmt = end_date.replace("-", "")
 
-            df = _cached_tushare_dataframe_call(cls._pro, "daily", ts_code=ts_code, start_date=start_date_fmt, end_date=end_date_fmt)
+            df = _cached_tushare_dataframe_call(
+                cls._pro,
+                "daily",
+                ts_code=ts_code,
+                start_date=start_date_fmt,
+                end_date=end_date_fmt,
+            )
 
             if df is None or df.empty:
                 raise DataSourceError(f"Tushare 返回空数据: {ticker}")
@@ -120,7 +132,19 @@ class TushareDataSource(BaseDataSource):
                     start_date=start_date_fmt,
                     end_date=end_date_fmt,
                 )
-            except Exception:
+            except Exception as e:
+                # NS-17 / BH-017 family sibling: 与 src/data/providers/tushare_provider.py
+                # get_prices adj_factor 路径同族残留 (NS-9/R37 复权 drain)。adj_factor
+                # 抓取失败时降级到未复权价格是有意为之 (backtest 仍可跑, 仅在 ex-div
+                # 日有 phantom loss), 但之前完全静默 — 运维无法感知 backtest 结果被
+                # 未复权价格污染。surface 到 logger.warning 让 operators 能检测到此
+                # 降级触发, 并与下游 return/ATR/stop-loss/drawdown 异常关联定位。
+                logger.warning(
+                    "adj_factor 抓取失败 ts_code=%s, 降级到未复权价格 (ex-div 日将产生 phantom loss): %s",
+                    ts_code,
+                    e,
+                    exc_info=True,
+                )
                 adj_df = None
 
             if adj_df is not None and not adj_df.empty:
@@ -141,7 +165,14 @@ class TushareDataSource(BaseDataSource):
                 date_str = row["trade_date"]
                 date_formatted = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
 
-                price = Price(time=date_formatted, open=float(row["open"]), high=float(row["high"]), low=float(row["low"]), close=float(row["close"]), volume=int(row["vol"]))
+                price = Price(
+                    time=date_formatted,
+                    open=float(row["open"]),
+                    high=float(row["high"]),
+                    low=float(row["low"]),
+                    close=float(row["close"]),
+                    volume=int(row["vol"]),
+                )
                 prices.append(price)
 
             prices.reverse()
@@ -178,7 +209,9 @@ class BaoStockDataSource(BaseDataSource):
             return False
 
     @classmethod
-    def get_prices(cls, ticker: str, start_date: str, end_date: str, period: str = "daily") -> list[Price]:
+    def get_prices(
+        cls, ticker: str, start_date: str, end_date: str, period: str = "daily"
+    ) -> list[Price]:
         """
         通过 BaoStock 获取价格数据
 
@@ -204,7 +237,14 @@ class BaoStockDataSource(BaseDataSource):
                 raise DataSourceError(f"BaoStock 登录失败: {lg.error_msg}")
 
             try:
-                rs = bs.query_history_k_data_plus(bs_code, "date,open,high,low,close,volume", start_date=start_date, end_date=end_date, frequency="d", adjustflag="2")  # NS-9: 前复权 qfq (was "3" 不复权 → 除权除息日假跳空污染收益/ATR/止损/回撤)
+                rs = bs.query_history_k_data_plus(
+                    bs_code,
+                    "date,open,high,low,close,volume",
+                    start_date=start_date,
+                    end_date=end_date,
+                    frequency="d",
+                    adjustflag="2",
+                )  # NS-9: 前复权 qfq (was "3" 不复权 → 除权除息日假跳空污染收益/ATR/止损/回撤)
 
                 if rs.error_code != "0":
                     raise DataSourceError(f"BaoStock 查询失败: {rs.error_msg}")
@@ -223,7 +263,14 @@ class BaoStockDataSource(BaseDataSource):
                     if any(cell == "" or cell is None for cell in row[1:6]):
                         continue
 
-                    price = Price(time=row[0], open=float(row[1]), high=float(row[2]), low=float(row[3]), close=float(row[4]), volume=int(float(row[5])))
+                    price = Price(
+                        time=row[0],
+                        open=float(row[1]),
+                        high=float(row[2]),
+                        low=float(row[3]),
+                        close=float(row[4]),
+                        volume=int(float(row[5])),
+                    )
                     prices.append(price)
 
                 return prices
@@ -244,7 +291,9 @@ class SinaDataSource(BaseDataSource):
     available: bool = True
 
     @classmethod
-    def get_prices(cls, ticker: str, start_date: str, end_date: str, period: str = "daily") -> list[Price]:
+    def get_prices(
+        cls, ticker: str, start_date: str, end_date: str, period: str = "daily"
+    ) -> list[Price]:
         """
         通过新浪财经获取历史数据（使用模拟数据，因为真实接口暂时不可用）
 
@@ -272,7 +321,9 @@ class MockDataSource(BaseDataSource):
     available: bool = True
 
     @classmethod
-    def get_prices(cls, ticker: str, start_date: str, end_date: str, period: str = "daily") -> list[Price]:
+    def get_prices(
+        cls, ticker: str, start_date: str, end_date: str, period: str = "daily"
+    ) -> list[Price]:
         """
         获取模拟价格数据
 
@@ -299,7 +350,13 @@ DATA_SOURCES = [
 ]
 
 
-def get_prices_multi_source(ticker: str, start_date: str, end_date: str, period: str = "daily", source_preference: list[str] | None = None) -> list[Price]:
+def get_prices_multi_source(
+    ticker: str,
+    start_date: str,
+    end_date: str,
+    period: str = "daily",
+    source_preference: list[str] | None = None,
+) -> list[Price]:
     """
     多数据源获取价格数据（自动容错）
 

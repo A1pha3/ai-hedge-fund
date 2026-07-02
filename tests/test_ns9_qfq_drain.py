@@ -12,6 +12,7 @@ a phantom loss that corrupts return/ATR/stop-loss/drawdown computations
 downstream. This test suite verifies both siblings now apply qfq adjustment
 mirroring R37.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -37,8 +38,22 @@ from src.tools.ashare_data_sources import TushareDataSource
 #: is the oldest day after reverse.
 _RAW_DAILY_DF = pd.DataFrame(
     [
-        {"trade_date": "20260112", "open": 9.6, "high": 9.7, "low": 9.4, "close": 9.5, "vol": 1100},
-        {"trade_date": "20260109", "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.0, "vol": 1000},
+        {
+            "trade_date": "20260112",
+            "open": 9.6,
+            "high": 9.7,
+            "low": 9.4,
+            "close": 9.5,
+            "vol": 1100,
+        },
+        {
+            "trade_date": "20260109",
+            "open": 10.0,
+            "high": 10.2,
+            "low": 9.9,
+            "close": 10.0,
+            "vol": 1000,
+        },
     ]
 )
 
@@ -115,7 +130,9 @@ def test_ns9_tushare_provider_applies_qfq_adjustment() -> None:
         return await provider.get_prices("600519", "2026-01-09", "2026-01-12")
 
     response = asyncio.run(_run())
-    assert response.error is None or response.error == "", f"unexpected error: {response.error}"
+    assert response.error is None or response.error == "", (
+        f"unexpected error: {response.error}"
+    )
     assert len(response.data) == 2, f"expected 2 prices, got {len(response.data)}"
 
     # qfq day1 close = raw * adj_factor / latest_adj = 10 * 1.2 / 1.0 = 12.0
@@ -165,7 +182,10 @@ def _patch_tushare_datasource_cached_call(
     patch it on its home module (``tushare_api``) — every fresh ``from`` import
     re-binds the (now patched) attribute, which is exactly the behaviour we need.
     """
-    def fake_cached_call(_pro: Any, api_name: str, **_kwargs: Any) -> pd.DataFrame | None:
+
+    def fake_cached_call(
+        _pro: Any, api_name: str, **_kwargs: Any
+    ) -> pd.DataFrame | None:
         if api_name == "daily":
             return raw_df
         if api_name == "adj_factor":
@@ -178,7 +198,9 @@ def _patch_tushare_datasource_cached_call(
     )
 
 
-def test_ns9_tushare_datasource_applies_qfq_adjustment(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ns9_tushare_datasource_applies_qfq_adjustment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """TushareDataSource.get_prices must apply qfq adjustment (NS-9 drain).
 
     RED: current implementation calls only ``_cached_tushare_dataframe_call(pro, "daily", ...)``
@@ -187,7 +209,9 @@ def test_ns9_tushare_datasource_applies_qfq_adjustment(monkeypatch: pytest.Monke
     """
     _patch_tushare_datasource_cached_call(monkeypatch)
     # Bypass _init_tushare (TUSHARE_TOKEN not set in test env)
-    monkeypatch.setattr(TushareDataSource, "_init_tushare", classmethod(lambda cls: True))
+    monkeypatch.setattr(
+        TushareDataSource, "_init_tushare", classmethod(lambda cls: True)
+    )
     monkeypatch.setattr(TushareDataSource, "_pro", object(), raising=False)
 
     prices = TushareDataSource.get_prices("600519", "2026-01-09", "2026-01-12")
@@ -210,7 +234,9 @@ def test_ns9_tushare_datasource_falls_back_to_raw_when_no_adj_factor(
 ) -> None:
     """TushareDataSource.get_prices must degrade gracefully if adj_factor fetch fails."""
     _patch_tushare_datasource_cached_call(monkeypatch, adj_df=None)
-    monkeypatch.setattr(TushareDataSource, "_init_tushare", classmethod(lambda cls: True))
+    monkeypatch.setattr(
+        TushareDataSource, "_init_tushare", classmethod(lambda cls: True)
+    )
     monkeypatch.setattr(TushareDataSource, "_pro", object(), raising=False)
 
     prices = TushareDataSource.get_prices("600519", "2026-01-09", "2026-01-12")
@@ -218,3 +244,71 @@ def test_ns9_tushare_datasource_falls_back_to_raw_when_no_adj_factor(
     # Raw close unchanged (no adj_factor to scale by)
     day1 = prices[0]
     assert day1.close == pytest.approx(10.0, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# NS-17 / BH-017 family sibling: adj_factor fetch *raises* must be observable
+# (extends NS-9 qfq drain with observability contract — same degrade behaviour,
+# different trigger. Previously the raising path was silent, masking the fact
+# that a backtest's results were contaminated by unadjusted ex-div prices.)
+# ---------------------------------------------------------------------------
+
+
+def _patch_tushare_datasource_cached_call_raising_on_adj(
+    monkeypatch: pytest.MonkeyPatch,
+    raw_df: pd.DataFrame | None = _RAW_DAILY_DF,
+    adj_exc: Exception | None = RuntimeError("simulated adj_factor outage"),
+) -> None:
+    """Like ``_patch_tushare_datasource_cached_call`` but makes adj_factor RAISE
+    instead of returning None — exercises the new logger.warning drain path
+    (silent swallow → observable degrade)."""
+
+    def fake_cached_call(
+        _pro: Any, api_name: str, **_kwargs: Any
+    ) -> pd.DataFrame | None:
+        if api_name == "daily":
+            return raw_df
+        if api_name == "adj_factor":
+            if adj_exc is not None:
+                raise adj_exc
+            return None
+        return None
+
+    monkeypatch.setattr(
+        "src.tools.tushare_api._cached_tushare_dataframe_call",
+        fake_cached_call,
+    )
+
+
+def test_ns9_tushare_datasource_adj_factor_exception_logs_and_degrades(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog,
+) -> None:
+    """When ``adj_factor`` fetch RAISES, TushareDataSource.get_prices must
+    (1) emit a WARNING carrying ts_code + failure so operators can correlate
+    downstream return/ATR anomalies, and (2) still return raw daily prices
+    (degrade, don't block — backtest remains runnable)."""
+    import logging
+
+    _patch_tushare_datasource_cached_call_raising_on_adj(monkeypatch)
+    monkeypatch.setattr(
+        TushareDataSource, "_init_tushare", classmethod(lambda cls: True)
+    )
+    monkeypatch.setattr(TushareDataSource, "_pro", object(), raising=False)
+
+    with caplog.at_level(logging.WARNING, logger="src.tools.ashare_data_sources"):
+        prices = TushareDataSource.get_prices("600519", "2026-01-09", "2026-01-12")
+
+    # Degrade-but-don't-block contract preserved: prices still returned.
+    assert len(prices) == 2
+    day1 = prices[0]
+    assert day1.close == pytest.approx(10.0, abs=0.01)
+
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warning_records) >= 1, (
+        f"expected >=1 WARNING record from adj_factor fetch exception, got {caplog.records}"
+    )
+    msg = warning_records[0].getMessage()
+    assert "adj_factor" in msg
+    assert "600519" in msg or "600519.SH" in msg
+    assert "simulated adj_factor outage" in msg
