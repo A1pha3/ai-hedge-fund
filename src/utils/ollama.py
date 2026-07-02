@@ -47,13 +47,27 @@ def is_ollama_installed() -> bool:
         try:
             result = subprocess.run(["which", "ollama"], capture_output=True, text=True)
             return result.returncode == 0
-        except Exception:
+        except Exception as exc:
+            # NS-17/BH-017 同族 (c278): 静默 return False 会让 "未安装" 与
+            # "which 命令本身异常" 不可区分. debug 级别 (冷路径启动检查, 非决策链).
+            logger.debug(
+                "is_ollama_installed: 'which ollama' failed (system=%s): %s",
+                system,
+                exc,
+            )
             return False
     elif system == "windows":  # Windows
         try:
             result = subprocess.run(["where", "ollama"], capture_output=True, text=True, shell=True)
             return result.returncode == 0
-        except Exception:
+        except Exception as exc:
+            # NS-17/BH-017 同族 (c278): 同 darwin/linux 分支, Windows 'where' 异常
+            # 静默 return False 不可观测. debug 级别 (冷路径, 非决策链).
+            logger.debug(
+                "is_ollama_installed: 'where ollama' failed (system=%s): %s",
+                system,
+                exc,
+            )
             return False
     else:
         return False  # Unsupported OS

@@ -21,7 +21,16 @@ def sort_news_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         sorted_df = df.copy()
         sorted_df["_pub_dt"] = pd.to_datetime(sorted_df["发布时间"], errors="coerce")
         return sorted_df.sort_values("_pub_dt", ascending=False).reset_index(drop=True)
-    except Exception:
+    except Exception as exc:
+        # NS-17/BH-017 同族 (c278): 静默 return df 会让新闻时序错乱不可观测 —
+        # 下游 event_sentiment agent 处理旧新闻先 / 新新闻后会误导情绪时序.
+        # warning 级别 (温路径 per-ticker, 触及数据质量, 非纯展示).
+        logger.warning(
+            "sort_news_dataframe failed (rows=%d, returning unsorted): %s",
+            len(df) if df is not None else 0,
+            exc,
+            exc_info=True,
+        )
         return df
 
 
@@ -57,7 +66,14 @@ def resolve_stock_name(get_stock_name, ticker: str) -> str:
     try:
         stock_name = get_stock_name(ticker)
         return "" if stock_name == ticker else stock_name
-    except Exception:
+    except Exception as exc:
+        # NS-17/BH-017 同族 (c278): 静默 return "" 会让股票名解析失败不可观测.
+        # debug 级别 (温路径 per-ticker, 纯展示用途, 非决策链).
+        logger.debug(
+            "resolve_stock_name failed (ticker=%s, fallback to empty): %s",
+            ticker,
+            exc,
+        )
         return ""
 
 

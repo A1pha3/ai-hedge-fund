@@ -290,8 +290,14 @@ class DiskCache:
             try:
                 if self._conn is not None:
                     self._conn.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                # NS-17/BH-017 同族 (c278): 静默 pass 会让连接关闭失败不可观测.
+                # 主错误已在第 287 行 logger.warning 记录, 此处仅 debug 记录
+                # 清理副作用. debug 级别 (冷路径启动 1 次, 缓存层非决策链).
+                logger.debug(
+                    "DiskCache init: failed connection cleanup close error: %s",
+                    exc,
+                )
             self._conn = None
 
     def _open_connection(self) -> sqlite3.Connection:
@@ -351,8 +357,14 @@ class DiskCache:
             try:
                 if self._conn is not None:
                     self._conn.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                # NS-17/BH-017 同族 (c278): 静默 pass 会让死连接关闭失败不可观测.
+                # 主错误 (reconnect 失败) 已在下方 logger.warning 记录, 此处仅
+                # debug 记录旧连接清理副作用. debug 级别 (温路径重连, 缓存层非决策链).
+                logger.debug(
+                    "DiskCache _ensure_conn: dead connection close error: %s",
+                    exc,
+                )
             self._conn = self._open_connection()
             self._last_alive_check = time.monotonic()  # R20.10: 重建后立即标记存活
             return self._conn
