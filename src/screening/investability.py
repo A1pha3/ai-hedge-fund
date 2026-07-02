@@ -203,7 +203,20 @@ def build_front_door_verdict(
     _composite_score_raw = recommendation.get("composite_score_gated")
     if _composite_score_raw is None:
         _composite_score_raw = recommendation.get("composite_score")
-    composite_score = _safe_metric(_composite_score_raw, _safe_metric(recommendation.get("score_b", 0.0), 0.0))
+    # NS-18 trust calibration (c282): missing-composite 0.9 折扣下沉 —
+    # rank_recommendations_by_investability L408 对 missing-composite 显式应用
+    # 0.9 折扣 (R39 defensive), 但 build_front_door_verdict 直接读 score_b fallback
+    # 无折扣. 生产主路径 picks 已先经 ranker (折扣已应用), 但 direct call 路径
+    # (测试 / skill / ad-hoc 脚本) 会绕过 ranker 让 missing-composite 标的以
+    # score_b 跨越 BUY 0.5 门控 (R39 注释: "应降级为 HOLD 的标的以 score_b=0.55
+    # 跨越 BUY"). 把 0.9 折扣逻辑从 ranker 下沉到 verdict 函数, 让两条调用路径
+    # 行为一致, 消除 "必须先经 ranker 才有折扣" 的隐式依赖.
+    _is_missing_composite = _composite_score_raw is None
+    if _is_missing_composite:
+        _score_b_fallback = _safe_metric(recommendation.get("score_b", 0.0), 0.0)
+        composite_score = round(_score_b_fallback * 0.9, 4)
+    else:
+        composite_score = _safe_metric(_composite_score_raw, 0.0)
     expected_returns = recommendation.get("expected_returns") or {}
     win_rates = recommendation.get("win_rates") or {}
     # C219 (autodev): per-horizon bootstrap CI (n=7203, 95%) 证明 low bucket
@@ -218,7 +231,8 @@ def build_front_door_verdict(
     t10_win_rate = _safe_metric(win_rates.get("t10"), 0.0)
     # 保留 t30 用于长期衰退信号 (invalidation_reasons)
     t30_edge = _safe_metric(expected_returns.get("t30"), 0.0)
-    t30_win_rate = _safe_metric(win_rates.get("t30"), 0.0)
+    # t30_win_rate 不再使用 — R68/R96 修复改用 _raw_t30_wr + is_finite_number
+    # 检查 raw value (避免 falsy 0.0 短路), 此变量被遗弃.
     sample_count = int(_safe_metric(recommendation.get("bucket_sample_count"), 0.0))
     # R35 consistency drain: the BUY gate must be backed by enough *mature*
     # T+30 samples, not the all-records bucket_sample_count (which includes
@@ -292,10 +306,20 @@ def build_front_door_verdict(
     invalidation_reasons: list[str] = []
     if t30_edge is not None and t30_edge < 0:
         invalidation_reasons.append("T+30 edge 转负")
+    # NS-18 trust calibration (c282): market_regime 三档判定 — 原先二分支
+    # (crisis/risk_off → "risk-off", else → "转弱") 把 unknown / 空 / 拼写错误
+    # 全部标 "转弱" 误导用户. 改为白名单三档:
+    #   1. crisis/risk_off → "市场门控维持 risk-off"
+    #   2. 已知非 risk-off (cautious/range/normal) → "市场门控转弱"
+    #   3. unknown / 空 / 未识别 → "regime 未识别" (诚实标注, 不假装检测到转弱)
+    _KNOWN_REGIMES_NON_RISK_OFF = {"cautious", "range", "normal"}
     if "crisis" in regime_lower or "risk_off" in regime_lower:
         invalidation_reasons.append("市场门控维持 risk-off")
-    else:
+    elif regime_lower in _KNOWN_REGIMES_NON_RISK_OFF:
         invalidation_reasons.append("市场门控转弱")
+    else:
+        # unknown / 空 / 未识别 regime — 不假装检测到"转弱", 诚实标注未识别
+        invalidation_reasons.append("regime 未识别")
     if _safe_metric(recommendation.get("momentum_bonus"), 0.0) < 0:
         invalidation_reasons.append("动量转负")
     if _safe_metric(recommendation.get("sector_bonus"), 0.0) < 0:
@@ -306,6 +330,11 @@ def build_front_door_verdict(
         invalidation_reasons.append("量价背离")
     if _safe_metric(recommendation.get("trend_resonance_factor"), 0.0) < 0:
         invalidation_reasons.append("趋势共振失效")
+    # NS-18 trust calibration (c282): missing-composite 标注 — 让用户知晓
+    # composite_score 已应用 0.9 折扣 (源自 score_b fallback, 非 composite 真分).
+    # 与 L408 ranker 的 composite_verified=False 标记一致, 让呈现层能加视觉标记.
+    if _is_missing_composite:
+        invalidation_reasons.append("composite 缺失(已折扣)")
     # R68/R96 falsy-zero family drain: ``t30_win_rate`` is
     # ``_safe_metric(win_rates.get("t30"), 0.0)`` which returns 0.0 for BOTH
     # missing data (key absent/None) AND an actual 0.0 (0%) win rate. The
@@ -328,6 +357,16 @@ def build_front_door_verdict(
     # 修复: 分三档标注, 让用户能区分 "数据缺失" / "mature 不足" / "raw 不足".
     if sample_count == 0:
         invalidation_reasons.append("数据缺失")
+    # NS-18 trust calibration (c282): horizon 数据完整性检查 — 当
+    # ``expected_returns`` / ``win_rates`` 缺失或为空 dict 但 ``sample_count > 0``
+    # 时, L207-208 的 ``or {}`` 保护把缺失静默兜底为空 dict, L215-221 的
+    # ``_safe_metric(..., 0.0)`` 把缺失的 t5/t10/t30 全部变成 0.0, 触发 AVOID
+    # (gate 行为正确) 但 ``invalidation_reason`` 只标 "regime 未识别" 或 "转弱",
+    # 用户不知真实原因是 horizon 数据缺失. 与 R68/R96 falsy-zero 同源未闭环.
+    # 修复: 显式检查 horizon dict 完整性, 让用户能区分 "bucket 有样本但 horizon
+    # 计算缺失" 与 "完全无数据".
+    if sample_count > 0 and (not expected_returns or not win_rates):
+        invalidation_reasons.append("horizon 数据缺失")
     if has_mature_field and backing_sample < 20:
         invalidation_reasons.append("成熟样本不足 20")
     elif not has_mature_field and 0 < sample_count < 20:
