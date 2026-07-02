@@ -6,6 +6,8 @@
 >
 > **本版调整**：2026-06-28 根据用户产品决策缩短 must-win 周期：**T+30 → T+5 或 T+10**（C219 历史 backfill 实测：low bucket T+5/T+10 winrate≈60% [59%, 61%]，T+30≈45%；BUY gate 已在 C220 改为 T+5 OR T+10 通过）。系统目标改为"选 5 天或 10 天内大概率赚更多钱的票"。**T+30 保留为长期衰退 / invalidation 信号**（不作为 BUY 主决策 horizon）。所有前门 / 校准 / 成功 metric 以 T+5/T+10 为准。
 >
+> **AutoDev 执行契约**：AutoDev 每轮选题前，先读取 [`autodev-contract.md`](./autodev-contract.md) 作为本项目的目标函数、授权边界和 owner-blocker 处理规则。
+>
 
 ---
 
@@ -13,6 +15,7 @@
 
 | 内容 | 路径 | 说明 |
 |---|---|---|
+| AutoDev 项目契约 | [autodev-contract.md](./autodev-contract.md) | AutoDev 的项目级北极星、授权边界、owner-blocker 协议。 |
 | 已实现功能矩阵 | [features/MATRIX.md](./features/MATRIX.md) | 当前全量能力总览 |
 | 已完成路线图归档 | [changelog/completed-roadmap-phases.md](./changelog/completed-roadmap-phases.md) | Phase 5-19 完成态与收口说明 |
 | 审查历史 | [changelog/r20-audit-history.md](./changelog/r20-audit-history.md) | alpha / beta / gamma 历次审查 |
