@@ -29,6 +29,15 @@ export interface CustomWeightsRequest {
 /** 单条推荐 (镜像后端 recommendations[].dict; 后端为 list[dict], 此处给出常用字段 + 索引签名)。 */
 export interface ScreeningRecommendation {
   ticker: string;
+  /** c290: per-pick BUY/HOLD/AVOID verdict (build_front_door_verdict output).
+   * Attached by backend _build_screening_response; may be absent on legacy
+   * payloads. Carries action / invalidation_reason / signal_horizon / market_regime. */
+  verdict?: {
+    action: 'BUY' | 'HOLD' | 'AVOID';
+    market_regime: string;
+    invalidation_reason: string;
+    signal_horizon: string;
+  };
   [key: string]: unknown;
 }
 

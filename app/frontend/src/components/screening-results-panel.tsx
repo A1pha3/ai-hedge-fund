@@ -36,6 +36,35 @@ function _str(rec: ScreeningRecommendation, key: string): string {
   return typeof v === 'string' ? v : '';
 }
 
+/** c290: read verdict fields defensively from the (loosely-typed) rec.
+ * Mirrors backend build_front_door_verdict output: action / invalidation_reason
+ * / signal_horizon / market_regime. Missing verdict (legacy payload) → nulls,
+ * verdict UI simply absent. */
+function _verdict(rec: ScreeningRecommendation): {
+  action: string;
+  invalidation: string;
+  horizon: string;
+} | null {
+  const v = rec.verdict;
+  if (!v || typeof v !== 'object') return null;
+  const obj = v as Record<string, unknown>;
+  const action = typeof obj.action === 'string' ? obj.action : '';
+  if (!action) return null;
+  return {
+    action,
+    invalidation: typeof obj.invalidation_reason === 'string' ? obj.invalidation_reason : '',
+    horizon: typeof obj.signal_horizon === 'string' ? obj.signal_horizon : '',
+  };
+}
+
+/** c290: verdict action → badge variant (BUY=success, AVOID=destructive, HOLD/other=secondary). */
+function _verdictVariant(action: string): 'success' | 'destructive' | 'secondary' {
+  const a = (action || '').toUpperCase();
+  if (a === 'BUY') return 'success';
+  if (a === 'AVOID') return 'destructive';
+  return 'secondary';
+}
+
 function _decisionVariant(decision: string): 'success' | 'destructive' | 'secondary' {
   const d = (decision || '').toLowerCase();
   if (d.includes('bull') || d.includes('buy') || d.includes('多')) return 'success';
@@ -77,6 +106,11 @@ export function ScreeningResultsPanel({
               const name = _str(rec, 'name');
               const score = _num(rec, 'score_b');
               const decision = _str(rec, 'decision');
+              // c290: CLI↔web parity — surface the BUY/AVOID verdict + the
+              // invalidation_reason disclosure + signal_horizon the backend now
+              // attaches (build_front_door_verdict). Without rendering here, the
+              // backend verdict is invisible to web users.
+              const verdict = _verdict(rec);
               const isSelected = ticker === selectedTicker;
               return (
                 <div
@@ -92,6 +126,11 @@ export function ScreeningResultsPanel({
                     <span className="w-5 text-right font-mono text-muted-foreground">{idx + 1}</span>
                     <span className="font-mono font-medium">{ticker}</span>
                     {name && <span className="text-muted-foreground">{name}</span>}
+                    {verdict && verdict.horizon && (
+                      <span className="font-mono text-[10px] text-muted-foreground" data-testid={`verdict-horizon-${ticker}`}>
+                        {verdict.horizon}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     {score !== null && (
@@ -100,7 +139,21 @@ export function ScreeningResultsPanel({
                       </span>
                     )}
                     {decision && <Badge variant={_decisionVariant(decision)}>{decision}</Badge>}
+                    {verdict && (
+                      <Badge
+                        variant={_verdictVariant(verdict.action)}
+                        data-testid={`verdict-action-${ticker}`}
+                        title={verdict.invalidation || undefined}
+                      >
+                        {verdict.action}
+                      </Badge>
+                    )}
                   </div>
+                  {verdict && verdict.invalidation && (
+                    <span className="sr-only" data-testid={`verdict-invalidation-${ticker}`}>
+                      {verdict.invalidation}
+                    </span>
+                  )}
                 </div>
               );
             })}
