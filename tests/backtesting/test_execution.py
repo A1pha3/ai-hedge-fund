@@ -288,3 +288,106 @@ def test_trade_executor_t_plus_1_no_trade_date_param_allows_sell(portfolio):
     # Sell without trade_date parameter should succeed (backward compatibility)
     sell_qty = ex.execute_trade("AAPL", "sell", 10, 100.0, portfolio)
     assert sell_qty == 10, "Sell should succeed when trade_date param not provided"
+
+
+# ---------------------------------------------------------------------------
+# coerce_trade_action — NS-17 / BH-017 family sibling (c269)
+# ---------------------------------------------------------------------------
+
+
+class TestCoerceTradeActionSilentFailure:
+    """Backtest signal → Action coercion: HOLD fallback preserved, but the
+    fallback must be observable so backtest operators can detect biased results
+    caused by upstream agents emitting case-mismatched / whitespace-laden /
+    unknown signal strings that get silently downgraded to HOLD."""
+
+    def test_valid_lowercase_string_no_warning(self, caplog) -> None:
+        import logging
+
+        from src.backtesting.trader_helpers import coerce_trade_action
+        from src.backtesting.types import Action
+
+        with caplog.at_level(logging.WARNING, logger="src.backtesting.trader_helpers"):
+            assert coerce_trade_action("buy") is Action.BUY
+            assert coerce_trade_action("sell") is Action.SELL
+            assert coerce_trade_action("hold") is Action.HOLD
+
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert not warning_records, (
+            f"valid signal strings must NOT emit warning, got {warning_records}"
+        )
+
+    def test_action_enum_passthrough_no_warning(self, caplog) -> None:
+        import logging
+
+        from src.backtesting.trader_helpers import coerce_trade_action
+        from src.backtesting.types import Action
+
+        with caplog.at_level(logging.WARNING, logger="src.backtesting.trader_helpers"):
+            assert coerce_trade_action(Action.BUY) is Action.BUY
+
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert not warning_records
+
+    def test_unknown_string_returns_hold_and_emits_warning(self, caplog) -> None:
+        """NS-17 / BH-017 family: unknown signal string must NOT be silent.
+
+        背景: ``coerce_trade_action`` 在 ``Action(action)`` 抛 ValueError 时返回
+        HOLD 是 best-effort 有意为之 (回测不崩溃), 但之前完全静默 — 上游 agent
+        若发出 "unknown" / 大小写不匹配 / 带空白 的信号, 该笔 BUY/SELL 被悄悄降级
+        为 HOLD (不交易), 回测表现失真且无任何信号。修复后必须发 logger.warning
+        让回测 operators 能感知"信号被吞"并定位上游 agent 输出格式漂移。
+        """
+        import logging
+
+        from src.backtesting.trader_helpers import coerce_trade_action
+        from src.backtesting.types import Action
+
+        with caplog.at_level(logging.WARNING, logger="src.backtesting.trader_helpers"):
+            result = coerce_trade_action("unknown")
+
+        assert result is Action.HOLD  # best-effort contract preserved
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warning_records, (
+            f"expected >=1 WARNING record for unknown signal, got {caplog.records}"
+        )
+        msg = warning_records[0].getMessage()
+        # Must name the function / feature so operators can grep it.
+        assert "coerce_trade_action" in msg, (
+            f"warning must name the degraded function, got: {msg!r}"
+        )
+        # Must include the offending value so operators can trace the upstream agent.
+        assert "unknown" in msg, f"warning must include the bad value, got: {msg!r}"
+
+    def test_case_mismatch_returns_hold_and_emits_warning(self, caplog) -> None:
+        """Uppercase 'BUY' is NOT a valid StrEnum value (only 'buy' is). This is
+        the most likely real-world drift (an agent formatting signals as uppercase
+        after a refactor). Must warn so the backtest bias is detectable."""
+        import logging
+
+        from src.backtesting.trader_helpers import coerce_trade_action
+        from src.backtesting.types import Action
+
+        with caplog.at_level(logging.WARNING, logger="src.backtesting.trader_helpers"):
+            result = coerce_trade_action("BUY")
+
+        assert result is Action.HOLD
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warning_records, "uppercase 'BUY' must emit warning (case drift)"
+        msg = warning_records[0].getMessage()
+        assert "BUY" in msg
+
+    def test_whitespace_laden_returns_hold_and_emits_warning(self, caplog) -> None:
+        """Trailing whitespace 'buy ' is NOT a valid StrEnum value. Another
+        common real-world drift (string concatenation / JSON formatting)."""
+        import logging
+
+        from src.backtesting.trader_helpers import coerce_trade_action
+        from src.backtesting.types import Action
+
+        with caplog.at_level(logging.WARNING, logger="src.backtesting.trader_helpers"):
+            result = coerce_trade_action("buy ")
+
+        assert result is Action.HOLD
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert warning_records, "whitespace-laden 'buy ' must emit warning"

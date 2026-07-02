@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import re
 
 from src.backtesting.portfolio import Portfolio
 
 from .types import Action
+
+logger = logging.getLogger(__name__)
 
 
 def _compact_date(date_str: str) -> str:
@@ -15,7 +18,19 @@ def _compact_date(date_str: str) -> str:
 def coerce_trade_action(action) -> Action:
     try:
         return Action(action) if not isinstance(action, Action) else action
-    except Exception:
+    except Exception as e:
+        # NS-17 / BH-017 family sibling (c269): 返回 HOLD 是 best-effort 有意为之
+        # (回测不崩溃), 但之前完全静默 — 上游 agent 若发出 "unknown" / 大小写不
+        # 匹配 ("BUY") / 带空白 ("buy ") 的信号, 该笔 BUY/SELL 被悄悄降级为 HOLD
+        # (不交易), 回测表现失真且无任何信号。surface 到 logger.warning 让回测
+        # operators 能感知"信号被吞"并定位上游 agent 输出格式漂移。repr() 避免
+        # 空白/不可见字符在日志中消失。
+        logger.warning(
+            "coerce_trade_action 无法识别信号, 降级为 HOLD (回测该笔不交易, "
+            "可能掩盖上游 agent 输出格式漂移): action=%r, error=%s",
+            action,
+            e,
+        )
         return Action.HOLD
 
 
