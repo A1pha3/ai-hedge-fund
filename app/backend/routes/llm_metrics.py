@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -12,6 +13,8 @@ from typing import Any
 from fastapi import APIRouter
 
 router = APIRouter(prefix="/llm-metrics")
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_LOOKBACK_DAYS = 7
 
@@ -101,19 +104,33 @@ _METRICS_CACHE_TTL: float = 60.0  # seconds
 
 
 def _collect_metrics(logs_dir: Path, lookback_days: int) -> dict[str, Any]:
-    """Parse recent JSONL files and return aggregated metrics."""
+    """Parse recent JSONL files and return aggregated metrics.
+
+    c293: a 60s-TTL in-memory cache fronts the JSONL parse. The cached
+    response now discloses ``served_from_cache`` / ``cache_age_seconds`` /
+    ``as_of`` so the operator can tell a stale dashboard from a fresh one
+    (NS-5 staleness disease class). Previously the cache was invisible —
+    the caller could not tell 0s-old data from 59s-old data.
+    """
     import time as _time
 
-    # Return cached result if still fresh
     cache_key = f"{logs_dir}:{lookback_days}"
     now_ts = _time.time()
     global _metrics_cache, _metrics_cache_ts
     if _metrics_cache.get("_key") == cache_key and (now_ts - _metrics_cache_ts) < _METRICS_CACHE_TTL:
-        return _metrics_cache
+        # Cache hit: serve the cached payload but disclose staleness. Return
+        # a shallow copy (minus the internal ``_key``) so the cached object
+        # is not mutated by per-serve field overrides.
+        served = {k: v for k, v in _metrics_cache.items() if k != "_key"}
+        served["served_from_cache"] = True
+        served["cache_age_seconds"] = round(now_ts - _metrics_cache_ts, 3)
+        return served
 
     result = _collect_metrics_uncached(logs_dir, lookback_days)
+    result["served_from_cache"] = False
+    result["cache_age_seconds"] = 0.0
 
-    # Update cache
+    # Update cache (``_key`` is internal and stripped on serve).
     _metrics_cache = {**result, "_key": cache_key}
     _metrics_cache_ts = now_ts
     return result
@@ -122,7 +139,20 @@ def _collect_metrics(logs_dir: Path, lookback_days: int) -> dict[str, Any]:
 def _collect_metrics_uncached(logs_dir: Path, lookback_days: int) -> dict[str, Any]:
     """Parse recent JSONL files and return aggregated metrics (no caching)."""
     now = datetime.now(timezone.utc)
+    as_of_iso = now.isoformat()
     cutoff = now - timedelta(days=lookback_days)
+
+    # c293: data-quality counters. Previously the parse silently skipped
+    # files that raised OSError, lines with malformed JSON, files with
+    # unparseable date names, and entries with unparseable timestamps —
+    # the dashboard showed polished aggregates with no hint of data loss
+    # (NS-17 silent-skip disease class). These counters are surfaced in
+    # the response ``data_quality`` dict so the operator can see how much
+    # data was dropped.
+    files_skipped_oserror = 0
+    lines_skipped_json = 0
+    files_skipped_bad_date = 0
+    entries_unknown_date = 0
 
     # Per-agent aggregation
     agent_data: dict[str, dict[str, Any]] = defaultdict(
@@ -188,7 +218,10 @@ def _collect_metrics_uncached(logs_dir: Path, lookback_days: int) -> dict[str, A
     jsonl_files = sorted(logs_dir.glob("llm_metrics_*.jsonl"))
     for jsonl_path in jsonl_files:
         file_date = _parse_date_from_filename(jsonl_path.name)
-        if file_date is None or file_date < cutoff:
+        if file_date is None:
+            files_skipped_bad_date += 1
+            continue
+        if file_date < cutoff:
             continue
 
         sessions_scanned += 1
@@ -201,6 +234,7 @@ def _collect_metrics_uncached(logs_dir: Path, lookback_days: int) -> dict[str, A
                     try:
                         entry = json.loads(line)
                     except json.JSONDecodeError:
+                        lines_skipped_json += 1
                         continue
 
                     success = entry.get("success", False)
@@ -218,6 +252,7 @@ def _collect_metrics_uncached(logs_dir: Path, lookback_days: int) -> dict[str, A
                         entry_date = datetime.fromisoformat(ts_str).strftime("%Y-%m-%d")
                     except (ValueError, TypeError):
                         entry_date = "unknown"
+                        entries_unknown_date += 1
 
                     # Agent aggregation
                     ad = agent_data[agent]
@@ -261,7 +296,18 @@ def _collect_metrics_uncached(logs_dir: Path, lookback_days: int) -> dict[str, A
                     totals["prompt_chars"] += prompt_chars
                     totals["response_chars"] += response_chars
                     totals["estimated_cost_usd"] += estimated_cost
-        except OSError:
+        except OSError as exc:
+            # c293: a whole session's data disappearing is the most damaging
+            # silent-skip — log + count so the operator can diagnose
+            # permissions / IO errors instead of seeing a polished dashboard
+            # with no hint of data loss (NS-17 silent-skip disease class).
+            files_skipped_oserror += 1
+            logger.warning(
+                "llm_metrics: skipping unreadable JSONL file %s: %s: %s",
+                jsonl_path,
+                type(exc).__name__,
+                exc,
+            )
             continue
 
     totals["sessions_scanned"] = sessions_scanned
@@ -398,6 +444,19 @@ def _collect_metrics_uncached(logs_dir: Path, lookback_days: int) -> dict[str, A
         "top_providers_by_latency": top_providers_by_latency,
         "cost_savings_suggestions": cost_savings_suggestions,
         "lookback_days": lookback_days,
+        # c293: data-quality + staleness honesty disclosure (NS-17 silent-skip
+        # + NS-5 staleness disease classes). ``as_of`` is pinned here to the
+        # compute time; the cache wrapper in _collect_metrics overrides
+        # ``served_from_cache`` / ``cache_age_seconds`` on cache hits.
+        "as_of": as_of_iso,
+        "data_quality": {
+            "logs_dir": str(logs_dir),
+            "logs_dir_exists": logs_dir.exists(),
+            "files_skipped_oserror": files_skipped_oserror,
+            "lines_skipped_json": lines_skipped_json,
+            "files_skipped_bad_date": files_skipped_bad_date,
+            "entries_unknown_date": entries_unknown_date,
+        },
     }
 
 
