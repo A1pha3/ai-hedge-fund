@@ -766,7 +766,7 @@ def compute_selection_profitability_from_loaded(
         ret = _finite_float(rec.get(horizon_field))
         if score is None or ret is None or d is None or d == "":
             continue
-        by_date.setdefault(str(d), []).append({"score": score, "ret": ret})
+        by_date.setdefault(str(d), []).append({"score": score, "ret": ret, "bucket": _score_bucket_local(score)})
 
     # only dates with enough picks for a meaningful top-N
     days = [picks for picks in by_date.values() if len(picks) >= top_n]
@@ -785,12 +785,38 @@ def compute_selection_profitability_from_loaded(
     # making the selection-profitability diagnostic (the owner's pool-widening
     # A/B/C/D evidence) unreliable across runs. Sort by the date key instead —
     # dates are stable identifiers independent of dict insertion order.
-    sorted_days = [by_date[d] for d in sorted(by_date) if len(by_date[d]) >= top_n]
+    # qualifying_dates: qualifying date keys in DETERMINISTIC sorted order. Used by
+    # _portfolio_returns (needs the date key for profit_aware's per-date walk-forward
+    # lookup). Same sorted-by-date determinism as the prior C274 fix (date keys are
+    # stable across runs; id(picks) was ASLR-dependent and broke random_n seeding).
+    qualifying_dates = [d for d in sorted(by_date) if len(by_date[d]) >= top_n]
+
+    # R6 route-B-lite (loop 30, profit-aware A/B): walk-forward per-bucket winrate.
+    # For each date D (sorted), snapshot T+5 winrate per score-bucket from records
+    # with recommended_date STRICTLY BEFORE D. profit_aware strategy ranks day-D
+    # picks by their bucket's prior winrate DESC (empirical-winrate rekey =
+    # --profit-aware semantics). Honest: no look-ahead (only data available before
+    # D). Caveat: overall bucket winrate, ignores regime dimension (approximation
+    # of the live profit-aware key which is bucket×regime); decision-grade evidence
+    # still needs route-A data (c296) to mature. Uses ALL mature records for winrate
+    # estimation (incl. days with < top_n picks — they still inform bucket prior).
+    _prior_bucket_returns: dict[str, list[float]] = {b: [] for b in ("low", "mid_low", "mid_high", "high")}
+    _bucket_winrate_by_date: dict[str, dict[str, float | None]] = {}
+    for _d in sorted(by_date):
+        _bucket_winrate_by_date[_d] = {
+            b: (sum(1 for r in rets if r > 0) / len(rets)) if rets else None
+            for b, rets in _prior_bucket_returns.items()
+        }
+        for _pick in by_date[_d]:
+            _b = _pick["bucket"]
+            if _b in _prior_bucket_returns:
+                _prior_bucket_returns[_b].append(_pick["ret"])
 
     def _portfolio_returns(strategy: str) -> list[float]:
         out: list[float] = []
         rnd = _random.Random(42)
-        for picks in sorted_days:
+        for d in qualifying_dates:
+            picks = by_date[d]
             # determinism across runs: sort each day by (score desc, ticker-ish)
             # but picks have no ticker here; use score then original order via index
             indexed = list(enumerate(picks))
@@ -803,6 +829,19 @@ def compute_selection_profitability_from_loaded(
             elif strategy == "random_n":
                 idx = rnd.sample(range(len(picks)), min(top_n, len(picks)))
                 sel = [picks[i] for i in idx]
+            elif strategy == "profit_aware":
+                # rank by walk-forward bucket winrate DESC; bucket 无先验 → 中性 0.5
+                # (退化到 score tiebreaker, 当日无 edge — 守住 no-lookahead). score 作
+                # tiebreaker 镜像 live profit-aware 键的低优先级 tiebreaker (-composite, -score_b).
+                wr_map = _bucket_winrate_by_date.get(d, {})
+
+                def _pa_key(kv: tuple[int, dict]) -> tuple:
+                    pick = kv[1]
+                    bwr = wr_map.get(pick["bucket"])
+                    winrate = bwr if bwr is not None else 0.5
+                    return (-winrate, -pick["score"], kv[0])
+
+                sel = [x for _, x in sorted(indexed, key=_pa_key)[:top_n]]
             else:
                 continue
             if sel:
@@ -810,7 +849,7 @@ def compute_selection_profitability_from_loaded(
         return out
 
     results: list[SelectionStrategyResult] = []
-    for strat in ("score_desc", "score_asc", "equal_weight_all", "random_n"):
+    for strat in ("score_desc", "score_asc", "equal_weight_all", "random_n", "profit_aware"):
         pr = _portfolio_returns(strat)
         if not pr:
             continue
@@ -845,6 +884,11 @@ def compute_selection_profitability_from_loaded(
 def render_selection_profitability_line(report: SelectionProfitabilityReport) -> str:
     """Render one line: does following the model's top-N profit vs ignoring the score?
 
+    Includes the R6 A/B signal (loop 30): 默认 (score_desc) vs profit-aware (按经验
+    bucket winrate walk-forward 重排) vs 等权. profit-aware 跑赢默认时附 💡 lift 标注
+    (owner 据此决定是否 flip 默认到 --profit-aware). 当 profit_aware 策略不存在或数据
+    不足时回退到原三段式渲染 (向后兼容).
+
     Silent (empty string) when insufficient — never breaks the front door.
     """
     if not report.has_data:
@@ -853,6 +897,7 @@ def render_selection_profitability_line(report: SelectionProfitabilityReport) ->
     ew = next((s for s in report.strategies if s.strategy == "equal_weight_all"), None)
     if not sd or not ew or sd.portfolio_winrate is None or ew.portfolio_winrate is None:
         return ""
+    pa = next((s for s in report.strategies if s.strategy == "profit_aware"), None)
     label = _SELECTION_HORIZON_LABEL.get(report.horizon_field, report.horizon_field)
     if report.verdict == "model_underperforms":
         marker = f"{Fore.RED}⚠ 选取倒挂: 模型 top-N 跑输等权 (负预测力){Style.RESET_ALL}"
@@ -860,6 +905,21 @@ def render_selection_profitability_line(report: SelectionProfitabilityReport) ->
         marker = f"{Fore.GREEN}✓ 选取正向: 模型 top-N 跑赢等权{Style.RESET_ALL}"
     else:
         marker = f"{Fore.YELLOW}≈ 选取中性: 模型 top-N 与等权相当{Style.RESET_ALL}"
+    # R6 A/B lift marker: profit-aware vs default. 仅当 pa 存在且有 winrate 时附注.
+    pa_marker = ""
+    if pa is not None and pa.portfolio_winrate is not None:
+        lift_pp = (pa.portfolio_winrate - sd.portfolio_winrate) * 100.0
+        if lift_pp >= 5.0:
+            pa_marker = f"  {Fore.CYAN}💡 profit-aware 重排 +{lift_pp:.0f}pp (--profit-aware opt-in, C273){Style.RESET_ALL}"
+        elif lift_pp <= -5.0:
+            pa_marker = f"  {Fore.YELLOW}profit-aware 重排 {lift_pp:+.0f}pp (无收益){Style.RESET_ALL}"
+    if pa is not None and pa.portfolio_winrate is not None:
+        return (
+            f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): "
+            f"默认 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%} (中位 {sd.median_return:+.2f}%) "
+            f"vs profit-aware {pa.portfolio_winrate:.0%} (中位 {pa.median_return:+.2f}%) "
+            f"vs 等权 {ew.portfolio_winrate:.0%} | {marker}{pa_marker}"
+        )
     return (
         f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): "
         f"模型分 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%} (中位 {sd.median_return:+.2f}%) "
