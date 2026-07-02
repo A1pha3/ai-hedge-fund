@@ -101,3 +101,28 @@ class TestDailyBasicBatchFailureObservability:
         assert df.empty
         assert any("daily_basic" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), \
             "daily_basic 批量拉取失败必须发 logger.warning"
+
+    def test_date_parse_failure_emits_warning(self, caplog) -> None:
+        """anchor_date 格式异常导致日期解析失败必须发 logger.warning (NS-17 c273).
+
+        原先 line 32 的 ``except Exception: return None`` 静默吞掉 ValueError,
+        运维无法区分 "ts_code 无 daily_basic 数据" 与 "上游传入畸形 anchor_date"。
+        此测试覆盖 best-effort 契约 (返回 None) + 可观测性 (warning 发出)。
+        """
+        with caplog.at_level(logging.WARNING, logger="src.tools.tushare_daily_basic_helpers"):
+            df = tushare_daily_basic_helpers.load_daily_basic_batch(
+                pro=None,  # 不会到达 pro.query 调用
+                ts_code="000001.SZ",
+                anchor_date="not-a-date",  # strptime 会抛 ValueError
+                cache_key="test-cache-key",
+                get_cached_df=lambda key: None,
+                store_cached_df=lambda key, df: None,
+            )
+
+        assert df is None
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, "date parse 失败必须发 1 条 warning"
+        msg = warnings[0].getMessage()
+        assert "date parse failed" in msg
+        assert "000001.SZ" in msg
+        assert "not-a-date" in msg

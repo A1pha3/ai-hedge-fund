@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta
+import logging
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def fallback_trade_date_dataframe(fetch_dataframe, pro, trade_fmt: str, fields: str):
@@ -11,7 +14,15 @@ def fallback_trade_date_dataframe(fetch_dataframe, pro, trade_fmt: str, fields: 
         if df_cal is not None and not df_cal.empty:
             last_open = str(df_cal.iloc[-1]["cal_date"])
             return fetch_dataframe(pro, "daily", trade_date=last_open, fields=fields)
-    except Exception:
+    except Exception as exc:
+        # NS-17/BH-017 同族: 静默返回 None 会让 daily gainers pipeline 在 trade_cal
+        # 拉取失败时无任何信号 — operators 无法区分 "无交易日" 与 "tushare API 抖动"。
+        # surface 到 logger.warning (rare, data source failure 影响 daily gainers pipeline)。
+        logger.warning(
+            "fallback_trade_date_dataframe failed (trade_fmt=%s): %s",
+            trade_fmt,
+            exc,
+        )
         return None
     return None
 

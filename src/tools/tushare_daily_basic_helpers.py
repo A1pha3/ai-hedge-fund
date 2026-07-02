@@ -29,7 +29,16 @@ def load_daily_basic_batch(
     try:
         actual_end = max(date_fmt, today_fmt)
         date_obj = datetime.strptime(actual_end, "%Y%m%d")
-    except Exception:
+    except Exception as exc:
+        # NS-17/BH-017 同族: 静默返回 None 会让 daily_basic (PE/PB/PS) 在 anchor_date
+        # 格式异常时无任何信号 — valuation 与 composite_score 全部退化, 运维无面包屑。
+        # surface 到 logger.warning (rare, 上游格式 bug, 决策关键)。
+        logger.warning(
+            "load_daily_basic_batch date parse failed (ts_code=%s, anchor_date=%s): %s",
+            ts_code,
+            anchor_date,
+            exc,
+        )
         return None
 
     # 2-year lookback window is intentional: daily_basic fields (PE, PB, PS, etc.)
