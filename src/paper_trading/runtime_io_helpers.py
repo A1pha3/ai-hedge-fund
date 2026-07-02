@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -54,13 +56,30 @@ def write_research_feedback_summary(
     feedback_summary_path = selection_artifact_root / "research_feedback_summary.json"
     summary = summarize_research_feedback_directory_fn(artifact_root=selection_artifact_root)
     payload = summary.model_dump(mode="json")
-    feedback_summary_path.parent.mkdir(parents=True, exist_ok=True)
-    feedback_summary_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write_json(feedback_summary_path, payload)
     return payload, feedback_summary_path
 
 
 def write_runtime_summary(summary_path: Path, summary: dict) -> None:
-    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write_json(summary_path, summary)
+
+
+def _atomic_write_json(path: Path, payload: Any) -> None:
+    """R88 corrupt-sidecar CRASH vector guard: tempfile + os.replace 原子写。
+    paper_trading runtime summary 的输出格式 (ensure_ascii=False, indent=2, 无尾换行)
+    与 c294 btst_reporting_utils._write_json (带 \\n) 不同, 故就地实现而非复用。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix="." + path.name + ".", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False, indent=2))
+        os.replace(tmp_name, path)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def promote_runtime_timing_log(context: SessionRuntimeContext) -> None:

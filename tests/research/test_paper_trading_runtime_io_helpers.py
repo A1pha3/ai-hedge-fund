@@ -75,3 +75,67 @@ def test_reset_output_artifacts_skips_cleanup_when_checkpoint_exists(tmp_path: P
     assert selection_artifact_root.exists(), "partial selection artifacts must survive for resume"
     assert session_summary_path.exists(), "prior session_summary must survive for resume"
     assert btst_brief_path.exists(), "prior trade brief must survive for resume"
+
+
+def test_write_research_feedback_summary_atomic_crash_preserves_prior(tmp_path: Path, monkeypatch) -> None:
+    """R88 corrupt-sidecar CRASH vector: write_research_feedback_summary must write
+    atomically — a crash mid-write leaves any prior summary intact, not truncated."""
+    import json as _json
+    from src.paper_trading.runtime_io_helpers import write_research_feedback_summary
+
+    artifact_root = tmp_path / "selection_artifacts"
+    summary_path = artifact_root / "research_feedback_summary.json"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(_json.dumps({"prior": True, "keep": "alive"}), encoding="utf-8")
+
+    class _Stub:
+        def model_dump(self, mode):  # noqa: ARG002
+            return {"new": 1}
+
+    _orig = Path.write_text
+
+    def crashing_write_text(self, data, *a, **kw):  # noqa: ANN001
+        if self == summary_path:
+            open(self, "w").close()
+            raise OSError("simulated mid-write crash on summary")
+        return _orig(self, data, *a, **kw)
+
+    monkeypatch.setattr(Path, "write_text", crashing_write_text)
+    try:
+        write_research_feedback_summary(
+            artifact_root,
+            summarize_research_feedback_directory_fn=lambda **kw: _Stub(),
+        )
+    except OSError:
+        pass
+
+    raw = summary_path.read_text(encoding="utf-8")
+    assert raw.strip(), "prior summary must not be truncated-empty after a crashed write"
+    _json.loads(raw)
+
+
+def test_write_runtime_summary_atomic_crash_preserves_prior(tmp_path: Path, monkeypatch) -> None:
+    """R88 corrupt-sidecar CRASH vector: write_runtime_summary must write atomically."""
+    import json as _json
+    from src.paper_trading.runtime_io_helpers import write_runtime_summary
+
+    summary_path = tmp_path / "runtime_summary.json"
+    summary_path.write_text(_json.dumps({"prior": True, "keep": "alive"}), encoding="utf-8")
+
+    _orig = Path.write_text
+
+    def crashing_write_text(self, data, *a, **kw):  # noqa: ANN001
+        if self == summary_path:
+            open(self, "w").close()
+            raise OSError("simulated mid-write crash on runtime summary")
+        return _orig(self, data, *a, **kw)
+
+    monkeypatch.setattr(Path, "write_text", crashing_write_text)
+    try:
+        write_runtime_summary(summary_path, {"new": 1})
+    except OSError:
+        pass
+
+    raw = summary_path.read_text(encoding="utf-8")
+    assert raw.strip(), "prior runtime summary must not be truncated-empty after a crashed write"
+    _json.loads(raw)
