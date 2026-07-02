@@ -38,7 +38,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import tushare as ts
 
-TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "ab9ec94882de89ccf50a06744281e9f6bdeef378b509b30f8eaef7aa")
+TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "")
+if not TUSHARE_TOKEN:
+    raise RuntimeError(
+        "TUSHARE_TOKEN 环境变量未设置。请从 https://tushare.pro/ 获取 token 并设置 TUSHARE_TOKEN 环境变量。"
+        " (c272: 修复硬编码 token 安全漏洞 — 历史 token 已泄露于 git history, owner 需旋转)"
+    )
 ts.set_token(TUSHARE_TOKEN)
 pro = ts.pro_api()
 
