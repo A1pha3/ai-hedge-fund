@@ -1,16 +1,25 @@
 # 决策包：composite_score 排序修复（R6 — 负预测力）
 
-> **状态**: 证据已就绪 (c297+c298), 等 owner 决策。**当前不建议翻转默认** — CI 太宽。
-> **决策范围**: owner-only（默认前门行为切换 / 排序语义）。
-> **证据**: c297 profit_aware 策略 + c298 bootstrap CI（`compute_selection_profitability_from_loaded`），n=75 mature 日 / 7993 records。
-> **关联**: 本决策的工程基础设施已全部交付（C272 诊断 + C192 NS-4 footer + C273/C276 `--profit-aware` opt-in + c296 route-A 持久化 + c297 A/B 策略 + c298 CI）。
+> **状态**: ⚠️ **选择偏差伪象已确认 (c303, loop 36)** — R6"负预测力"是推荐池选择偏差伪象, **NOT a model defect; owner 不应 flip/reweight.** 全 universe 诊断 (20 日, light-stage T+1) 证实 composite_score 全 universe 有**正预测力** (Top-3 跑赢等权 +0.44%, 58% vs 42% winrate, 63% 日). 与 MR/aff989be precede 完全同型. 原 c297/c298 pool-based A/B 框架被推翻.
+> **决策范围**: owner-only（默认前门行为切换 / 排序语义）— 但决策结论现已明确: **保持现状 (A), 不 flip/reweight**.
+> **证据**: c297 profit_aware 策略 + c298 bootstrap CI（pool, n=75 日）+ **c303 全 universe 诊断 (n=19 日, light-stage T+1) — 见 §⚠️ 与 §7**.
+> **关联**: 工程基础设施（C272 诊断 + C192 NS-4 footer + C273/C276 `--profit-aware` opt-in + c296 route-A 持久化 + c297 A/B 策略 + c298 CI + c303 全 universe 诊断）.
 
-> **⚠️ 关键警告（c301, loop 34 新增）— 选择偏差风险，可能推翻整个诊断**:
-> 本决策包的所有证据（c297/c298 A/B+CI）都跑在 `tracking_history`，即**推荐池**里的记录，**不是全 universe**。
-> 历史 precedes: MR 因子诊断（C225, n=8901 推荐池）显示"全 4 MR 因子系统性反向 sep<0"，但 `aff989be`（2026-06-25, FULL 9896 passed）的全 universe 回测（n=8136）**推翻**了它 —— MR 在 A 股实际是**正向统计显著因子**（IC=+0.040, p=0.0003），推荐池里的"反向"是**选择偏差**（池预筛 trend-bullish 强势股，把能反弹的"超跌"票过滤掉了）。
-> **R6 的"负预测力"可能是同一选择偏差伪象**: 若 composite_score 在池内的排序区分度被选择偏差污染（像 MR 那样），则翻转/重设权重会重蹈 `aff989be` 回滚的 MR-flip 覆辙。
-> **教训**（`aff989be` 原文）: "因子诊断必须用全 universe（无选择偏差），不能只看推荐池。选择偏差是真实风险。"
-> **对本决策包的影响**: 下面"推荐 D（推迟）"的信心应**更强** —— 不仅 CI 太宽，连点估计的"负预测力"本身都可能被选择偏差推翻。**owner 在做任何 flip/reweight 决策前，应先确认全 universe 诊断是否复现负预测力**（这是 c301+ 的 open 工作）。
+> **⚠️ 选择偏差伪象 — 已由 c303 全 universe 诊断确认 (loop 34 caveat → loop 36 confirmed)**:
+> 原 c297/c298 A/B+CI 跑在 `tracking_history` = **推荐池**, 显示"负预测力"(48% vs 等权 60%)。
+> **c303 全 universe 诊断 (20260703, n=19 日, light-stage 纯技术 T+1, ~2800 票/日)**:
+
+> | 全 universe 策略 | mean | winrate | 跑赢等权日数 |
+> |---|---|---|---|
+> | 等权全 universe | **−0.063%** | 42.1% | — |
+> | **Top-3 by score** | **+0.381%** | **57.9%** | **63.2%** ✅ |
+> | Top-50 by score | +0.054% | 52.6% | 52.6% |
+
+> **Top-3 by score 在全 universe 跑赢等权 (+0.44% delta, 58% vs 42% winrate, 63% 日)** → composite_score 全 universe 有**正预测力**; 推荐池里的"负预测力"是**选择偏差伪象** (池预筛 trend-bullish, 像 MR C225 那样)。
+> **与 aff989be MR precede 完全同型**: MR 曾在池内诊断"系统性反向"(C225) 并 flip, 后被全 universe 回测推翻 (MR IC=+0.040 正向), flip 被 revert。R6 是同一现象的第二次实例。
+> **owner 决策**: **不应 flip/reweight** (会重蹈 MR-flip-revert 覆辙, 破坏一个实际在全 universe 工作的模型)。原 B/C/profit-aware 方案均基于池伪象, 应放弃。
+> **证据文件**: `data/reports/r6_full_universe_diag_20d_20260703.log`; 脚本 `scripts/_diag_r6_full_universe.py` (c303)。
+> **剩余 caveat**: light-stage (0 LLM) + T+1 + n=19。若 owner 想更强证据, 跑全模型 (with LLM) / T+5,T+10 / 更长 N (c302 §7 重型路线)。但当前证据已足够支撑"不 flip"决策。
 
 ---
 
@@ -68,11 +77,15 @@
 
 ## 3. 推荐方案
 
-**D（推迟 + 加速证据）**，理由：
-1. 现有证据**不支持翻转**（所有 CI 重叠）—— 在噪声上翻转默认是负 EV。
-2. route-A 真实键数据正在累积（c296）—— 决策级证据会自然到来，无需赌。
-3. 根因（哪个维度驱动倒挂）未定位 —— 整体翻转（B/C）是症状治疗；维度重设（D 的并行工作）是根治。
-4. 北极星（用户跟操作 30 天真实 P&L > 0）在默认 48% winrate 下**未达成** —— 但翻转的 B/C 也未必达成（profit-aware 57% / score_asc 63% 都未显著且仍可能亏损 median）。
+**A（保持默认 — 不 flip/reweight）— c303 选择偏差伪象确认后升级**，理由：
+1. **c303 全 universe 诊断证实 composite_score 有正预测力**（Top-3 跑赢等权 +0.44%, 58% vs 42% winrate, 63% 日）。"负预测力"是推荐池选择偏差伪象, 不是 model defect。
+2. **flip/reweight 会破坏一个实际在全 universe 工作的模型** — 重蹈 aff989be MR-flip-revert 覆辙（MR 也曾被池诊断"反向"而 flip, 后被全 universe 推翻并 revert）。
+3. 原 c297/c298 pool-based A/B（包括 profit-aware +9pp、score_asc +15pp）均建立在**偏差样本**上, 其点估计不能指导全 universe 行为决策。
+4. 北极星（用户跟操作 30 天真实 P&L > 0）: 全 universe 模型有正预测力, 但**推荐池**层面的 pool-level 现象仍可能让用户的实际 top-picks 体验不佳 — 这是**池筛选机制**问题 (trend 几乎全 bullish 无区分度, 见 aff989be), 不是排序权重问题。根治路径是改进池筛选 / 因子区分度, 而非 flip 排序。
+
+**原 D（推迟）方案被 c303 结果取代**: 不再需要等 CI 收窄来决定 flip — flip 本身被证伪。
+
+> **owner 问题更新（c303 后）**: 不再问"flip 还是 推迟"。问: **(a) 接受"模型在全 universe 工作, 池内表现是筛选机制问题"的结论, 把 R6 关掉吗?** (b) 是否要跑 c302 §7 重型全模型 (with LLM) / T+5,T+10 / 更长 N 来进一步确认? (c) 是否转向**池筛选机制**改进 (trend 区分度, aff989be 指出的根本问题) 作为新的北极星路径?
 
 ---
 
