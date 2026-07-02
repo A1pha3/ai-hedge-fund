@@ -13,6 +13,7 @@
 import json
 import logging
 import os
+import tempfile
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -197,8 +198,24 @@ class DataSnapshotExporter:
 
     @staticmethod
     def _write_json(path: Path, data: Any) -> None:
-        """写入 JSON 文件（UTF-8）"""
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        """写入 JSON 文件（UTF-8），原子写：tempfile + os.replace（R88 corrupt-snapshot
+        CRASH vector guard）。default=str 保留以序列化 datetime 等非 JSON 原生类型。
+
+        此前用 write_text (非原子): open(mode='w') 立即 truncate, crash 落在 truncate
+        之后留下空/半截快照。与 c294 的 btst_reporting_utils._write_json 同名但此前不同义
+        (c294 原子、本 helper 此前非原子), 现对齐为原子写。"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_name = tempfile.mkstemp(prefix="." + path.name + ".", suffix=".tmp", dir=str(path.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+            os.replace(tmp_name, path)
+        except BaseException:
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
 
     @staticmethod
     def _read_json(path: Path, default: Any = None) -> Any:
