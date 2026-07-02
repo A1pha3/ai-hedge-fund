@@ -1222,6 +1222,7 @@ def test_run_paper_trading_session_writes_artifacts(tmp_path, monkeypatch):
     assert summary["llm_observability_summary"] == {
         "jsonl_available": False,
         "entry_count": 0,
+        "corrupt_entries": 0,
         "by_trade_date": {},
         "by_model_tier": {},
         "by_provider": {},

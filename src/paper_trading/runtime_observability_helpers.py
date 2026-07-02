@@ -48,11 +48,30 @@ def build_llm_observability_summary(jsonl_path: Path) -> dict:
     summary["entry_count"] = len(lines)
     context_buckets: dict[tuple[str, str, str, str], dict] = {}
 
+    # NS-17/c295 (loop 26 dogfood): mirror c289 daily_events hardening — count +
+    # warn corrupt jsonl rows instead of silently dropping them. Previously
+    # ``_parse_observability_entry`` returned None on JSONDecodeError and the
+    # loop ``continue``-d, so a partially-written / corrupt llm_metrics.jsonl
+    # (interrupted run, disk hiccup) produced a summary indistinguishable from
+    # a clean file with fewer entries — while ``entry_count`` still counted the
+    # corrupt lines, hiding the gap between line count and aggregated totals.
+    # Same drain-scope-bounded c289 bug: the sibling daily_events path was
+    # hardened but this llm_observability path was missed. Inline json.loads so
+    # the warning can carry the JSONDecodeError detail (matches c289 / frozen_replay:217).
+    corrupt_entries = 0
     for line in lines:
-        entry = _parse_observability_entry(line)
-        if entry is None:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError as exc:
+            corrupt_entries += 1
+            logger.warning(
+                "runtime_observability: 损坏的 llm_metrics 行 (运行中断/部分写入?): %s; 跳过该行",
+                exc,
+            )
             continue
         _accumulate_observability_entry(summary, context_buckets, entry)
+    if corrupt_entries:
+        summary["corrupt_entries"] = corrupt_entries
 
     summary["context_breakdown"] = _build_sorted_context_breakdown(context_buckets)
     return summary
@@ -195,6 +214,7 @@ def _empty_llm_observability_summary() -> dict:
     return {
         "jsonl_available": False,
         "entry_count": 0,
+        "corrupt_entries": 0,
         "by_trade_date": {},
         "by_model_tier": {},
         "by_provider": {},
@@ -314,13 +334,6 @@ def _resolve_llm_error_digest_status(
 
 def _read_non_empty_jsonl_lines(jsonl_path: Path) -> list[str]:
     return [line for line in jsonl_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-
-
-def _parse_observability_entry(line: str) -> dict | None:
-    try:
-        return json.loads(line)
-    except json.JSONDecodeError:
-        return None
 
 
 def _accumulate_observability_entry(summary: dict, context_buckets: dict[tuple[str, str, str, str], dict], entry: dict) -> None:

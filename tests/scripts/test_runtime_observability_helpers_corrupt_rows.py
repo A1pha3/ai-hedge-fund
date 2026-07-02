@@ -22,6 +22,7 @@ import pytest
 
 from src.paper_trading.runtime_observability_helpers import (
     build_dual_target_session_summary,
+    build_llm_observability_summary,
     _iter_paper_trading_day_payloads,
 )
 
@@ -76,3 +77,65 @@ def test_dual_target_session_summary_surfaces_corrupt_row_count(tmp_path: Path) 
     assert corrupt_count is not None and corrupt_count >= 1, (
         f"session summary must report corrupt-skipped row count; got keys={list(summary.keys())}"
     )
+
+
+def _write_llm_metrics(path: Path, lines: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_build_llm_observability_summary_surfaces_corrupt_entries(tmp_path: Path) -> None:
+    """NS-17/c295 (loop 26 dogfood): llm_observability summary must report
+    corrupt-skipped jsonl entries so the operator can distinguish 'corrupt
+    entries dropped' from 'genuinely fewer LLM calls'.
+
+    The sibling daily_events path was hardened in c289 (corrupt_rows counter +
+    warning). The llm_observability path — parsed by ``_parse_observability_entry``
+    returning None on JSONDecodeError, then ``continue``-d in
+    ``build_llm_observability_summary`` — was NOT: it silently dropped corrupt
+    rows while ``entry_count = len(lines)`` still counted them, so a degraded
+    summary (corrupt rows from an interrupted run's partial write) was
+    indistinguishable from a clean summary with fewer entries.
+
+    A summary built from [good, corrupt, good] must (a) carry a corrupt-entry
+    count, (b) keep entry_count == total lines so the operator can compute the
+    aggregated subset, and (c) aggregate only the parsed entries.
+    """
+    good = json.dumps({"trade_date": "20260629", "pipeline_stage": "daily_pipeline_post_market", "model_tier": "fast", "model_provider": "MiniMax", "success": True, "duration_ms": 1000.0})
+    bad = "{not valid json"
+    p = tmp_path / "llm_metrics.jsonl"
+    _write_llm_metrics(p, [good, bad, good])
+
+    summary = build_llm_observability_summary(p)
+
+    # (a) corrupt-entry count must be surfaced (implementation-flexible key)
+    corrupt = summary.get("corrupt_entries") or summary.get("corrupt_rows") or summary.get("skipped_corrupt_entries")
+    assert corrupt is not None and corrupt >= 1, (
+        f"llm_observability summary must report corrupt-skipped entry count; got keys={list(summary.keys())}"
+    )
+    # (b) entry_count keeps total-lines semantics so operator sees the gap
+    assert summary["entry_count"] == 3, (
+        f"entry_count must remain total non-empty lines (3); got {summary['entry_count']} — if this counts only parsed entries the operator loses the corrupt signal"
+    )
+    # (c) only the 2 good entries aggregated
+    assert summary["by_trade_date"]["20260629"]["attempts"] == 2
+
+
+def test_build_llm_observability_summary_warns_on_corrupt_entries(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """NS-17/c295 mirror of c289: a corrupt llm_metrics row must emit a warning,
+    not silently skip — so the observability path is consistent with the
+    daily_events path (c289) and with frozen_replay (line 217)."""
+    good = json.dumps({"trade_date": "20260629", "model_provider": "MiniMax", "success": True})
+    bad = "{not valid json"
+    p = tmp_path / "llm_metrics.jsonl"
+    _write_llm_metrics(p, [good, bad])
+
+    with caplog.at_level("WARNING"):
+        build_llm_observability_summary(p)
+
+    assert any(
+        "损坏" in r.message or "corrupt" in r.message.lower() or "JSONDecodeError" in r.message
+        for r in caplog.records
+    ), f"corrupt llm_metrics row must emit a warning; got records={[r.message for r in caplog.records]}"
