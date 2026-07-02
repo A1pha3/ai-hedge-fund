@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import bcrypt
 from jose import jwt, JWTError
+from jose.exceptions import ExpiredSignatureError
 
 logger = logging.getLogger(__name__)
 _PRODUCTION_ENV_VALUES = {"prod", "production"}
@@ -134,11 +135,26 @@ def create_reset_token(username: str, token_version: int | None = None) -> str:
 
 
 def decode_token(token: str) -> dict | None:
-    """Decode and validate a JWT token. Returns payload or None on failure."""
+    """Decode and validate a JWT token. Returns payload or None on failure.
+
+    c299/F5: rejected tokens are now LOGGED for security observability —
+    ``ExpiredSignatureError`` at INFO (benign, user needs re-login), other
+    ``JWTError`` at WARNING (invalid signature / malformed / bad claims = potential
+    forgery probe). Previously the ``except JWTError`` silently returned None with
+    no audit trail, so the operator could not detect a token-forgery storm or tell
+    benign-expired from attack-probe. No decision change — still returns None →
+    caller (_require_payload) raises 401 (fail-closed, verified). Consistent with
+    existing auth-event logging (routes/auth.py reset-token generation). No PII
+    leaked: at decode failure there is no valid username, only the error reason.
+    """
     try:
         payload = jwt.decode(token, get_secret_key(), algorithms=[ALGORITHM])
         return payload
-    except JWTError:
+    except ExpiredSignatureError:
+        logger.info("JWT token decode failed: signature expired")
+        return None
+    except JWTError as exc:
+        logger.warning("JWT token decode failed (rejecting): %s", exc)
         return None
 
 

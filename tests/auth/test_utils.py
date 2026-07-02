@@ -110,6 +110,57 @@ class TestJWTTokens:
         tampered = parts[0] + "." + parts[1] + "X." + parts[2]
         assert decode_token(tampered) is None
 
+    def test_decode_token_warns_on_tampered_signature(self, caplog):
+        """c299/F5: bad-signature token must be REJECTED (None) AND logged at WARNING.
+
+        The auth path is fail-closed but ``decode_token`` silently swallowed
+        JWTError — no audit trail distinguishing benign-expired from attack-probe
+        (invalid signature). On a money-acting app's auth surface, the operator
+        needs the invalid-signature storm visible in logs (forgery detection).
+        Consistent with existing auth-event logging (routes/auth.py:176 logs
+        reset-token generation). No decision change (still None → 401).
+        """
+        import logging
+
+        token = create_access_token({"sub": "user1"})
+        parts = token.split(".")
+        tampered = parts[0] + "." + parts[1] + "X." + parts[2]
+        with caplog.at_level(logging.WARNING):
+            result = decode_token(tampered)
+        assert result is None  # fail-closed (unchanged)
+        assert any(
+            r.levelno == logging.WARNING and "decode failed" in r.message.lower()
+            for r in caplog.records
+        ), (
+            f"tampered-signature token must log WARNING for attack detection; "
+            f"got {[r.message for r in caplog.records]}"
+        )
+
+    def test_decode_token_logs_info_not_warning_on_expired(self, caplog):
+        """An expired token is BENIGN (user re-login) — must NOT warn (cry wolf).
+
+        Differential: expired=INFO, invalid-sig=WARNING. Still rejected (None).
+        Uses ExpiredSignatureError (subclass of JWTError) caught first.
+        """
+        import logging
+
+        expired = create_access_token({"sub": "user1"}, expires_delta=timedelta(seconds=-10))
+        with caplog.at_level(logging.INFO):
+            result = decode_token(expired)
+        assert result is None
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert not any("decode failed" in r.message.lower() for r in warnings), (
+            f"expired token is benign — must NOT warn; got warnings={[r.message for r in warnings]}"
+        )
+        # must emit an INFO (benign) — not silent, not WARNING
+        assert any(
+            r.levelno == logging.INFO and "expired" in r.message.lower() for r in caplog.records
+        ), (
+            f"expired token must log an INFO message (benign, not silent); "
+            f"got {[r.message for r in caplog.records]}"
+        )
+
+
     def test_create_reset_token(self):
         token = create_reset_token("testuser")
         payload = decode_token(token)
