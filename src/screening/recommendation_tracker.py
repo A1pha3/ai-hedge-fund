@@ -117,6 +117,19 @@ class TrackingRecord:
     # 无此字段 → 默认 None (而非 {}), 让消费侧 isinstance(decomp, dict) 校验失败
     # 时返回 insufficient, 保持持久化层与计算层解耦。
     score_decomposition: dict[str, Any] | None = None
+    # NS-30/R6-route-A (loop 29): profit-aware 排序键字段, frozen at scoring time.
+    # 让未来成熟日期的 A/B 在 compute_selection_profitability_from_loaded 里重建
+    # ``--profit-aware`` 排序 (按经验 winrate 重排) on honest PIT data (评分时刻
+    # winrate frozen = 正确 point-in-time, 避免 look-ahead bias). 旧记录 → None.
+    # composite_score 与 recommendation_score(=score_b) 并存: profit-aware 键的
+    # tiebreaker 顺序是 (-winrate, -expected_return, -bucket_sample_count,
+    # -composite_score, -score_b, ticker) — 见 top_picks._apply_consecutive_bonus_and_resort.
+    # 不验证 dict 内部 schema (win_rates 的 t5/t10 键等); 消费侧 (未来 A/B 策略)
+    # isinstance/键存在性校验, 保持持久化层与计算层解耦 (镜像 NS-6 模式).
+    composite_score: float | None = None
+    win_rates: dict[str, Any] | None = None
+    expected_returns: dict[str, Any] | None = None
+    bucket_sample_count: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -142,6 +155,10 @@ class TrackingRecord:
             tracking_status=str(payload.get("tracking_status", "pending") or "pending"),
             model_version=str(payload.get("model_version", "") or ""),
             score_decomposition=payload.get("score_decomposition"),
+            composite_score=_optional_float(payload.get("composite_score")),
+            win_rates=payload.get("win_rates"),
+            expected_returns=payload.get("expected_returns"),
+            bucket_sample_count=payload.get("bucket_sample_count"),
         )
 
 
@@ -512,6 +529,14 @@ def _update_tracking_history_locked(
         decomp = rec.get("score_decomposition")
         if not isinstance(decomp, dict):
             decomp = None
+        # NS-30/R6-route-A (loop 29): persist profit-aware 排序键 (win_rates /
+        # expected_returns / bucket_sample_count / composite_score) frozen at scoring
+        # time, 让未来成熟日期 A/B 重建 --profit-aware 排序. rec 无字段时 None
+        # (旧 auto_screening / 未注入路径 向后兼容). dict 字段非 dict → None 防
+        # schema 污染; bucket_sample_count 仅接受数值 (排除 bool).
+        _wr = rec.get("win_rates")
+        _er = rec.get("expected_returns")
+        _bsc = rec.get("bucket_sample_count")
         record = TrackingRecord(
             ticker=ticker,
             name=str(rec.get("name", "") or ""),
@@ -521,6 +546,12 @@ def _update_tracking_history_locked(
             tracking_status="pending",
             model_version=model_version,
             score_decomposition=decomp,
+            composite_score=_optional_float(rec.get("composite_score")),
+            win_rates=_wr if isinstance(_wr, dict) else None,
+            expected_returns=_er if isinstance(_er, dict) else None,
+            bucket_sample_count=int(_bsc)
+            if isinstance(_bsc, (int, float)) and not isinstance(_bsc, bool)
+            else None,
         )
         history_index[key] = record.to_dict()
         updated_count += 1
