@@ -794,7 +794,11 @@ def _compute_confluence(item: dict) -> tuple[int, int]:
 def _render_confluence(bullish: int, total: int) -> str:
     """Render a compact confluence badge like '共振 4/4'."""
     if total == 0:
-        return ""
+        # NS-18 c276 (honesty disclosure): 原先返回空串让用户无法区分
+        # "4 策略都缺失" (数据缺失) 与 "策略存在但都是 direction=0" (中性).
+        # 标注 ⚠无信号 让数据缺失在呈现层可观测 — 用户看到 ⚠ 知道是信号缺失
+        # 而非渲染 bug. 不改变决策链 (confluence_str 仅用于展示).
+        return f"{Fore.YELLOW}⚠无信号{Style.RESET_ALL}"
     ratio = bullish / total
     if ratio >= 1.0:
         color = Fore.GREEN + Style.BRIGHT
@@ -942,8 +946,23 @@ def _compute_factor_reason(item: dict) -> str:
     for key, signal in signals.items():
         if not isinstance(signal, dict):
             continue
-        direction = float(signal.get("direction", 0) or 0)
-        confidence = float(signal.get("confidence", 0) or 0)
+        # NS-18 c276 (honesty disclosure): 检测 LLM 输出 missing field.
+        # ``signal.get("direction", 0) or 0`` 模式会让 None 静默退化为 0,
+        # 与真正的 direction=0 (中性) 不可区分. 当 LLM 输出 None 时发 debug
+        # log 让运维知道 LLM agent 输出了 missing field (而非真的中性信号).
+        # 不改变呈现层行为 (仍走 "数据不足" fallback), 只让 missing field 可观测.
+        raw_direction = signal.get("direction")
+        raw_confidence = signal.get("confidence")
+        if raw_direction is None or raw_confidence is None:
+            logger.debug(
+                "_compute_factor_reason: strategy_signals[%s] has missing field "
+                "(direction=%r, confidence=%r) — LLM agent output incomplete",
+                key,
+                raw_direction,
+                raw_confidence,
+            )
+        direction = float(raw_direction or 0)
+        confidence = float(raw_confidence or 0)
         strength = abs(direction * confidence)
         label = _FACTOR_LABEL_MAP.get(key, key)
         if direction > 0:

@@ -1321,7 +1321,9 @@ class TestConfluence:
         from src.screening.top_picks import _render_confluence
 
         result = _render_confluence(0, 0)
-        assert result == ""
+        # NS-18 c276: total==0 必须标 ⚠无信号 (数据缺失可观测), 不再返回空串
+        assert "⚠无信号" in result
+        assert result != ""
 
     def test_confluence_appears_in_output(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         recs = [_make_rec("300750", "宁德时代", 0.6)]

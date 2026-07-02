@@ -10,6 +10,7 @@ import pytest
 from src.screening.top_picks import (
     _check_report_freshness,
     _compute_confluence,
+    _compute_factor_reason,
     _consecutive_bonus,
     _print_pick_entry,
     _render_confluence,
@@ -112,8 +113,17 @@ class TestComputeConfluence:
 
 
 class TestRenderConfluence:
-    def test_zero_total(self) -> None:
-        assert _render_confluence(0, 0) == ""
+    def test_zero_total_emits_warning_marker(self) -> None:
+        """NS-18 c276: total==0 (数据缺失) 必须标 ⚠无信号 而非空串.
+
+        原先返回空串让用户无法区分 "4 策略都缺失" 与 "策略存在但都是 direction=0".
+        修复后返回 ⚠无信号 让数据缺失在呈现层可观测.
+        """
+        result = _render_confluence(0, 0)
+        assert "⚠无信号" in result
+        assert result != "", (
+            "total==0 必须返回 ⚠无信号 标注, 不再返回空串 (NS-18 c276)"
+        )
 
     def test_full_confluence(self) -> None:
         result = _render_confluence(4, 4)
@@ -122,6 +132,98 @@ class TestRenderConfluence:
     def test_partial(self) -> None:
         result = _render_confluence(2, 4)
         assert "2/4" in result
+
+
+# ---------------------------------------------------------------------------
+# NS-18 c276: _compute_factor_reason missing field observability
+# ---------------------------------------------------------------------------
+
+
+class TestComputeFactorReasonMissingField:
+    """NS-18 c276: LLM agent 输出 missing field (direction/confidence=None) 必须
+    发 debug log 让运维知道, 不再静默退化为 0."""
+
+    def test_missing_direction_emits_debug(self, caplog) -> None:
+        """direction=None 必须发 debug log (LLM agent 输出 incomplete)."""
+        import logging
+
+        item = {
+            "strategy_signals": {
+                "trend": {"direction": None, "confidence": 0.8},
+            }
+        }
+        with caplog.at_level(logging.DEBUG, logger="src.screening.top_picks"):
+            result = _compute_factor_reason(item)
+
+        # 呈现层行为不变: direction=None 退化为 0 → 无 contributions → 返回 ""
+        assert result == ""
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(debug_records) == 1, (
+            f"expected 1 DEBUG for missing direction, got {debug_records}"
+        )
+        msg = debug_records[0].getMessage()
+        assert "missing field" in msg
+        assert "trend" in msg
+        assert "direction=None" in msg
+
+    def test_missing_confidence_emits_debug(self, caplog) -> None:
+        """confidence=None 必须发 debug log (LLM agent 输出 incomplete)."""
+        import logging
+
+        item = {
+            "strategy_signals": {
+                "mean_reversion": {"direction": 1, "confidence": None},
+            }
+        }
+        with caplog.at_level(logging.DEBUG, logger="src.screening.top_picks"):
+            result = _compute_factor_reason(item)
+
+        # direction=1 但 confidence=None → strength=0 → 不进 contributions (因 >0 判断)
+        # 实际: direction=1>0 → 进 contributions, 但 strength=0
+        # 呈现层行为: 返回 "反转↑"
+        assert "反转" in result
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(debug_records) == 1
+        msg = debug_records[0].getMessage()
+        assert "missing field" in msg
+        assert "mean_reversion" in msg
+        assert "confidence=None" in msg
+
+    def test_valid_fields_no_debug(self, caplog) -> None:
+        """合法 direction/confidence 不应发 debug (避免日志噪声)."""
+        import logging
+
+        item = {
+            "strategy_signals": {
+                "trend": {"direction": 1, "confidence": 0.8},
+                "mean_reversion": {"direction": -1, "confidence": 0.6},
+            }
+        }
+        with caplog.at_level(logging.DEBUG, logger="src.screening.top_picks"):
+            result = _compute_factor_reason(item)
+
+        assert result != ""
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(debug_records) == 0
+
+    def test_zero_direction_no_debug(self, caplog) -> None:
+        """direction=0 (真正的中性信号, 非 None) 不应发 debug."""
+        import logging
+
+        item = {
+            "strategy_signals": {
+                "trend": {"direction": 0, "confidence": 0.5},
+            }
+        }
+        with caplog.at_level(logging.DEBUG, logger="src.screening.top_picks"):
+            result = _compute_factor_reason(item)
+
+        # direction=0 不 >0 也不 <0 → 无 contributions → 返回 ""
+        assert result == ""
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(debug_records) == 0, (
+            "direction=0 (真中性) 不应发 debug, 只有 None 才发"
+        )
 
 
 # ---------------------------------------------------------------------------
