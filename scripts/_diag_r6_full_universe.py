@@ -54,6 +54,49 @@ from scripts._backtest_light_stage_universe import (  # noqa: E402
 logger = logging.getLogger("r6_full_universe_diag")
 
 
+def summarize_r6_diagnostic(daily_records: list[dict[str, Any]], top_n_list: tuple[int, ...]) -> dict[str, Any]:
+    """Aggregate per-day R6 diagnostic records into a summary (pure, no I/O).
+
+    c308 (loop 41): extracted from run_r6_diagnostic for testability — the R6
+    selection-bias conclusion (biggest finding of the multi-session arc) rests on
+    this aggregation, so it must be unit-tested, not buried inline.
+
+    Input: list of per-day dicts each with 'eq_all_ret' and f'top{tn}_ret' /
+    f'top{tn}_beats_eq' for each tn. Output:
+      {'n_days', 'eq_all': {'mean','winrate'}, 'top_n': {tn: {'mean','winrate','beats_eq','delta'}}}
+    Empty input → {'n_days': 0, 'eq_all': None, 'top_n': {}}.
+    """
+    if not daily_records:
+        return {"n_days": 0, "eq_all": None, "top_n": {}}
+    n = len(daily_records)
+    eq_rets = [r["eq_all_ret"] for r in daily_records]
+    eq_mean = sum(eq_rets) / n
+    eq_win = sum(1 for r in eq_rets if r > 0) / n
+    out: dict[str, Any] = {"n_days": n, "eq_all": {"mean": eq_mean, "winrate": eq_win}, "top_n": {}}
+    for tn in top_n_list:
+        tn_rets = [r[f"top{tn}_ret"] for r in daily_records]
+        tn_mean = sum(tn_rets) / n
+        tn_win = sum(1 for r in tn_rets if r > 0) / n
+        tn_beats = sum(1 for r in daily_records if r[f"top{tn}_beats_eq"]) / n
+        out["top_n"][tn] = {"mean": tn_mean, "winrate": tn_win, "beats_eq": tn_beats, "delta": tn_mean - eq_mean}
+    return out
+
+
+def r6_selection_bias_verdict(top3_delta: float, top3_beats: float) -> str:
+    """Classify the R6 selection-bias test result (pure). Returns positive|negative|ambiguous.
+
+    positive: Top-3 BEATS equal-weight on full universe (delta>0 AND beats>0.5) →
+      selection-bias artifact confirmed (pool 'negative predictive power' is spurious).
+    negative: Top-3 LOSES (delta<0 AND beats<0.5) → genuine model defect.
+    ambiguous: mixed signal → needs more N or full-model.
+    """
+    if top3_delta > 0 and top3_beats > 0.5:
+        return "positive"
+    if top3_delta < 0 and top3_beats < 0.5:
+        return "negative"
+    return "ambiguous"
+
+
 def run_r6_diagnostic(n_days: int = 60, end_date: str | None = None, top_n_list: tuple[int, ...] = (3, 50)) -> None:
     pro = _get_pro()
     stock_basic = pro.stock_basic(exchange="", list_status="L", fields="ts_code,name")
@@ -120,27 +163,29 @@ def run_r6_diagnostic(n_days: int = 60, end_date: str | None = None, top_n_list:
     if not daily:
         print("\n无有效数据")
         return
-    df = pd.DataFrame(daily)
+    summary = summarize_r6_diagnostic(daily, top_n_list)
+    df = pd.DataFrame(daily)  # kept for the per-day mean/winrate display formatting
     print(f"\n{'=' * 100}")
-    print(f"聚合 (n={len(df)} 日, 全 universe, light-stage 纯技术 0 LLM, T+1):")
-    print(f"  等权全 universe:        mean={df['eq_all_ret'].mean():+.3f}%  winrate={ (df['eq_all_ret']>0).mean():.1%}")
+    print(f"聚合 (n={summary['n_days']} 日, 全 universe, light-stage 纯技术 0 LLM, T+1):")
+    eq = summary["eq_all"]
+    print(f"  等权全 universe:        mean={eq['mean']:+.3f}%  winrate={eq['winrate']:.1%}")
     for tn in top_n_list:
-        beats = df[f"top{tn}_beats_eq"].mean()
-        print(f"  Top-{tn} by score:        mean={df[f'top{tn}_ret'].mean():+.3f}%  winrate={ (df[f'top{tn}_ret']>0).mean():.1%}  | 跑赢等权的日数比={beats:.1%}  | delta vs 等权={df[f'top{tn}_ret'].mean()-df['eq_all_ret'].mean():+.3f}%")
+        s = summary["top_n"][tn]
+        print(f"  Top-{tn} by score:        mean={s['mean']:+.3f}%  winrate={s['winrate']:.1%}  | 跑赢等权的日数比={s['beats_eq']:.1%}  | delta vs 等权={s['delta']:+.3f}%")
     print(f"{'=' * 100}")
-    # 判读
-    top3_delta = df["top3_ret"].mean() - df["eq_all_ret"].mean()
-    top3_beats = df["top3_beats_eq"].mean()
+    # 判读 (c308: pure verdict function)
+    top3 = summary["top_n"][3]
+    verdict = r6_selection_bias_verdict(top3["delta"], top3["beats_eq"])
     print("\n判读 (R6 选择偏差检验, 对照 aff989be MR precede):")
-    if top3_delta > 0 and top3_beats > 0.5:
-        print(f"  ✅ Top-3 by score 在全 universe **跑赢** 等权 (delta={top3_delta:+.3f}%, {top3_beats:.1%} 日).")
+    if verdict == "positive":
+        print(f"  ✅ Top-3 by score 在全 universe **跑赢** 等权 (delta={top3['delta']:+.3f}%, {top3['beats_eq']:.1%} 日).")
         print(f"     → composite_score 全 universe 有**正预测力**; 推荐池的'负预测力'(c297/c298) 是**选择偏差伪象**.")
         print(f"     → owner **不应** flip/reweight; R6 pool-based A/B 框架被推翻 (像 MR C225 那样).")
-    elif top3_delta < 0 and top3_beats < 0.5:
-        print(f"  ⚠️ Top-3 by score 在全 universe 也**跑输** 等权 (delta={top3_delta:+.3f}%, {top3_beats:.1%} 日).")
+    elif verdict == "negative":
+        print(f"  ⚠️ Top-3 by score 在全 universe 也**跑输** 等权 (delta={top3['delta']:+.3f}%, {top3['beats_eq']:.1%} 日).")
         print(f"     → 负预测力在全 universe 也成立 → 真实 model defect, flip/reweight 有据 (但仍需 T+5/T+10 + 全模型 LLM 确认).")
     else:
-        print(f"  ≈ Top-3 vs 等权 在全 universe 上分歧 (delta={top3_delta:+.3f}%, {top3_beats:.1%} 日) — 不显著, 需更大 N 或全模型.")
+        print(f"  ≈ Top-3 vs 等权 在全 universe 上分歧 (delta={top3['delta']:+.3f}%, {top3['beats_eq']:.1%} 日) — 不显著, 需更大 N 或全模型.")
     print(f"\n注意: light-stage (纯技术 0 LLM) — 不含 LLM 因子. 全模型 (with LLM) 是 c302 §7 重型路线, 未跑.")
 
 
