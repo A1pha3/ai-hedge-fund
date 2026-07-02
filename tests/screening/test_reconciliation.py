@@ -293,6 +293,63 @@ class TestComputeReconciliation:
             f"render must surface bucket-empty reason for 000001; got:\n{out}"
         )
 
+    def test_render_shows_per_row_median_prediction(self, tmp_path: Path) -> None:
+        """c287: render must surface per-row median prediction, not just mean.
+
+        Dogfood (--reconcile real trade log 20260702) found the 低 bucket has
+        mean T+30 = +5.8% but median T+30 = -2.35% (R-6 outlier-inflation:
+        most low-bucket picks lose money, a few big winners pull the mean up).
+        reconcile computes predicted_return_median per row (R-7) but the render
+        only shows the mean in 预测T+30 — operator sees +5.8% and misses that
+        the median is -2.35%. The median is the honesty disclosure that the
+        mean is outlier-driven; must be visible per row (not just aggregate MAE).
+
+        Fixture engineered so median value is distinct from BOTH mean and actual,
+        so the only way it appears in the data row is a genuine median render.
+        """
+        from src.screening.reconciliation import render_reconciliation
+
+        # score_b=0.45 → 低 (<0.5) bucket
+        _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.45}])
+        # tracking returns [3.0, 3.0, -30.0] → mean=-8.0, median=3.0 (median != mean)
+        _seed_tracking(tmp_path, [
+            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.40, "next_30day_return": 3.0},
+            {"ticker": "000098", "recommended_date": "20251201", "recommendation_score": 0.40, "next_30day_return": 3.0},
+            {"ticker": "000097", "recommended_date": "20251201", "recommendation_score": 0.40, "next_30day_return": -30.0},
+        ])
+        # actual = 10.40/10.0 - 1 = +4.0% (distinct from median 3.0% and mean -8.0%)
+        trade_path = _write_trade_log(tmp_path, [
+            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.40},
+        ])
+        report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+        row = report.rows[0]
+        # both centers computed and distinct
+        assert row.predicted_return is not None  # mean = -8.0
+        assert row.predicted_return_median is not None  # median = 3.0
+        assert row.predicted_return != row.predicted_return_median, (
+            "fixture must produce mean != median so the render distinction is meaningful"
+        )
+        assert abs(row.actual_return - row.predicted_return_median) > 0.5, (
+            "actual must differ from median so median-in-data-row can't be confused with actual"
+        )
+        out = render_reconciliation(report)
+        import re
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", out)
+        data_rows = [
+            ln for ln in clean.splitlines()
+            if ln.strip().startswith("000001") and "聚合" not in ln and "MAE" not in ln
+        ]
+        assert data_rows, f"000001 data row missing; got:\n{clean}"
+        data_row = data_rows[0]
+        # median=3.0% — distinct from mean(-8.0%) and actual(+4.0%). Only present
+        # in the data row if reconcile genuinely renders the median per row.
+        median_val_str = f"{row.predicted_return_median:+.1f}%"
+        assert median_val_str in data_row, (
+            f"per-row median {median_val_str} (distinct from mean {row.predicted_return:+.1f}% "
+            f"and actual {row.actual_return:+.1f}%) must render in the data row; "
+            f"data row={data_row!r}"
+        )
+
     def test_aggregate_stats(self, tmp_path: Path) -> None:
         """2 matched trades → aggregate MAE + directional accuracy computed."""
         _seed_report(tmp_path, "20260101", [

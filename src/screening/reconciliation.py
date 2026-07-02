@@ -411,13 +411,18 @@ def render_reconciliation(report: ReconciliationReport) -> str:
 
     lines = [f"\n{Fore.CYAN}🧾 实盘对账 (预测 vs 实际){Style.RESET_ALL}", ""]
     lines.append(
-        f"  {'标的':<8} {'买入日':<10} {'预测T+30':>9} {'实际':>9} {'误差':>9}  {'方向':>5}"
+        f"  {'标的':<8} {'买入日':<10} {'预测T+30':>9} {'中位T+30':>9} {'实际':>9} {'误差':>9}  {'方向':>5}"
     )
-    lines.append(f"  {'─' * 8} {'─' * 10} {'─' * 9} {'─' * 9} {'─' * 9}  {'─' * 5}")
+    lines.append(f"  {'─' * 8} {'─' * 10} {'─' * 9} {'─' * 9} {'─' * 9} {'─' * 9}  {'─' * 5}")
 
     for row in report.rows:
         # values stored in PERCENT (match calibration t30_avg_return convention)
         pred = f"{row.predicted_return:+.1f}%" if row.predicted_return is not None else "—"
+        # c287: per-row median prediction (R-7 robust center). 低 bucket dogfood
+        # 实测 mean +5.8% vs median -2.35% — mean 被 outlier 拉高, 大多数低分票实际
+        # 亏钱. 之前 median 只在 aggregate MAE(中位) 出现, 数据行只显示 mean, 操作者
+        # 误读"低分桶预测 +5.8%". 现 per-row 列出中位让操作者看到 outlier 影响.
+        pred_med = f"{row.predicted_return_median:+.1f}%" if row.predicted_return_median is not None else "—"
         act = f"{row.actual_return:+.1f}%"
         if row.error is not None:
             err = f"{row.error:+.1f}%"
@@ -435,7 +440,7 @@ def render_reconciliation(report: ReconciliationReport) -> str:
         if row.predicted_return is None and row.unmatched_reason:
             reason_str = f"  {Fore.YELLOW}({row.unmatched_reason}){Style.RESET_ALL}"
         lines.append(
-            f"  {row.ticker:<8} {row.buy_date:<10} {pred:>9} {act:>9} {err:>9}  {dstr:>5}{reason_str}"
+            f"  {row.ticker:<8} {row.buy_date:<10} {pred:>9} {pred_med:>9} {act:>9} {err:>9}  {dstr:>5}{reason_str}"
         )
 
     lines.append("")
