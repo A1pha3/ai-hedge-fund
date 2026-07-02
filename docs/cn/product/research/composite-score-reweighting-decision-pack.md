@@ -101,3 +101,21 @@
 - CI 半宽收窄到 < 7pp → 能区分 48% vs 57%。
 - factor_attribution 定位到驱动倒挂的具体维度 → 触发"维度重设"新决策包（根治路径）。
 - 任意 horizon（T+5/T+10）的 A/B 在收窄 CI 后显著 → 触发对应翻转评估。
+- **全 universe 诊断复现/推翻负预测力（§7 prerequisite，c301+）**。
+
+---
+
+## 7. 全 universe 诊断 prerequisite（c301, loop 34-35）— owner 在 flip/reweight 前必须先做
+
+**为什么**: §⚠️ 已述 — 推荐池诊断可能被选择偏差污染（aff989be MR precedes）。owner 必须先确认负预测力在全 universe 仍成立，才能合理考虑 B/C flip/reweight。
+
+**两条路线（owner 选）**:
+
+| 路线 | 方法 | 能回答什么 | 代价 |
+|---|---|---|---|
+| **全模型（with LLM）** | 在历史 N 日对全 universe 跑完整 composite_score（含 fundamental/event_sentiment LLM agents），rank top-3 vs equal-weight | 完全复现 owner `--top-picks` 行为；最权威 | 大 compute（数百票 × N 日 × LLM 调用）；可能需数小时 + LLM 费用 |
+| **轻量（纯技术 0 LLM）** | 复用 `scripts/_backtest_light_stage_universe.py`（aff989be/C226 infra），只用 trend/MR 技术因子算 provisional score，rank top-N vs equal-weight | 部分回答（不含 LLM 因子）；快速 | 小 compute（分钟级）；但若 LLM 因子才是负预测力来源，此路线看不到 |
+
+**推荐顺序**: 先跑**轻量**路线（快，看技术 composite 是否已有负预测力）。若轻量显示全 universe 上技术 composite **无**负预测力 → 强化选择偏差假设（像 MR），owner 应停止 flip 考虑。若轻量显示**有**负预测力 → 再跑全模型确认。
+
+**Autodev 状态**: 这是 c301+ open 工作（candidate C-R6-FULL-UNIVERSE-DIAGNOSTIC）。owner 可指示 autodev 执行轻量路线（autonomous-able，复用现有 script infra），或 owner 自行决定路线。
