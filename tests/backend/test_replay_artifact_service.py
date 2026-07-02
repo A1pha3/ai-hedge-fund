@@ -2525,3 +2525,55 @@ def test_get_selection_artifact_day_syncs_existing_feedback_to_database(tmp_path
     assert activity["review_status_counts"] == {"final": 1, "draft": 1}
     assert activity["tag_counts"]["high_quality_selection"] == 1
     assert activity["tag_counts"]["thesis_clear"] == 1
+
+
+class TestLedgerIoReadCorruptTolerance:
+    """R88 family (app/backend extension): ledger_io read helpers must tolerate
+    corrupt replay artifacts (partial write during session recording / disk error)
+    instead of crashing the feedback-sync path. Same pattern as R101 ``_load_json``.
+    """
+
+    def test_read_json_degrades_to_empty_on_corrupt(self, tmp_path: Path, caplog) -> None:
+        """Corrupt session_summary.json → degrade to {} + warning, not JSONDecodeError crash."""
+        import logging as _logging
+        from app.backend.services._replay_artifacts.ledger_io import ReplayLedgerIoHelper
+
+        service = _build_service_with_db(tmp_path)
+        helper = ReplayLedgerIoHelper(service)
+        corrupt = tmp_path / "session_summary.json"
+        corrupt.write_text("{corrupt not valid json", encoding="utf-8")
+
+        with caplog.at_level(_logging.WARNING, logger="app.backend.services._replay_artifacts.ledger_io"):
+            result = helper._read_json(corrupt)
+
+        assert result == {}, "corrupt JSON must degrade to empty dict, not crash"
+        assert any("损坏" in r.message or "corrupt" in r.message.lower() or "json" in r.message.lower() for r in caplog.records), (
+            "corrupt-JSON degradation must emit a warning breadcrumb (R101 pattern)"
+        )
+
+    def test_read_json_still_raises_for_missing_file(self, tmp_path: Path) -> None:
+        """The missing-file contract (raise FileNotFoundError) must be preserved — callers depend on it."""
+        from app.backend.services._replay_artifacts.ledger_io import ReplayLedgerIoHelper
+
+        service = _build_service_with_db(tmp_path)
+        helper = ReplayLedgerIoHelper(service)
+        import pytest
+        with pytest.raises(FileNotFoundError):
+            helper._read_json(tmp_path / "does_not_exist.json")
+
+    def test_read_jsonl_skips_corrupt_line_keeps_valid_rows(self, tmp_path: Path, caplog) -> None:
+        """R60/R102 JSONL pattern: a single corrupt line in a feedback JSONL ledger
+        is skipped (with warning), valid rows preserved — not a whole-read crash."""
+        import logging as _logging
+        from app.backend.services._replay_artifacts.ledger_io import ReplayLedgerIoHelper
+
+        service = _build_service_with_db(tmp_path)
+        helper = ReplayLedgerIoHelper(service)
+        jsonl = tmp_path / "feedback.jsonl"
+        jsonl.write_text('{"ok": 1}\n{corrupt line}\n{"ok": 2}\n', encoding="utf-8")
+
+        with caplog.at_level(_logging.WARNING, logger="app.backend.services._replay_artifacts.ledger_io"):
+            rows = helper._read_jsonl(jsonl)
+
+        assert rows == [{"ok": 1}, {"ok": 2}], "valid rows must survive a corrupt sibling line"
+        assert len(caplog.records) >= 1, "skipped corrupt line must emit a warning"

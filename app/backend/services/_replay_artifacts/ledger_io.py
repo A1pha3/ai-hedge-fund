@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,8 @@ from app.backend.database.connection import Base
 from app.backend.database.models import ReplayResearchFeedbackLedger
 from src.research.feedback import read_research_feedback
 from src.research.models import ResearchFeedbackRecord
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from app.backend.services.replay_artifact_service import ReplayArtifactService
@@ -196,7 +199,18 @@ class ReplayLedgerIoHelper:
     def _read_json(self, path: Path) -> dict[str, Any]:
         if not path.exists():
             raise FileNotFoundError(path)
-        return json.loads(path.read_text(encoding="utf-8"))
+        # R88 family (app/backend extension): a corrupt session_summary.json (partial
+        # write during replay recording / disk error) degrades to {} + warning instead
+        # of crashing the feedback-sync path. Same pattern as R101 _load_json.
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning(
+                "ledger_io: 损坏的 JSON %s (运行中断/部分写入?): %s; 回退空 dict",
+                path,
+                exc,
+            )
+            return {}
 
     def _read_text(self, path: Path) -> str:
         if not path.exists():
@@ -250,5 +264,14 @@ class ReplayLedgerIoHelper:
         rows: list[dict[str, Any]] = []
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
-                rows.append(json.loads(line))
+                # R60/R102 JSONL pattern: skip a single corrupt line (partial write of
+                # one feedback record) instead of crashing the whole ledger read.
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError as exc:
+                    logger.warning(
+                        "ledger_io: 跳过 %s 中的损坏 JSONL 行: %s",
+                        path,
+                        exc,
+                    )
         return rows
