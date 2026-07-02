@@ -738,7 +738,14 @@ def _render_score_trend(
             return f" {Fore.WHITE}→{Style.RESET_ALL}"
         else:
             return f" {Fore.RED}↓↓{Style.RESET_ALL}"
-    except Exception:
+    except Exception as exc:
+        # NS-17/BH-017 同族 (c279): 静默 return "" 会让趋势箭头渲染失败不可观测.
+        # debug 级别 (热路径 per-pick, 纯展示层非决策链, 失败仅退化为无箭头).
+        logger.debug(
+            "[top_picks] _render_score_trend failed (ticker=%s, returning empty): %s",
+            ticker,
+            exc,
+        )
         return ""
 
 
@@ -1759,7 +1766,10 @@ def _print_correlation_block(picks: list[dict]) -> None:
         )
 
         report = compute_correlation_discount(picks)
-    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+    except Exception as exc:  # noqa: BLE001 — best-effort display; never break the front door  (c279: was silent return → observable)
+        logger.warning(
+            "[top_picks] correlation footer block failed (best-effort, skipped): %s", exc
+        )
         return
     line = render_correlation_note(report)
     if line:
@@ -1781,7 +1791,10 @@ def _print_portfolio_risk_block(picks: list[dict]) -> None:
         )
 
         summary = summarize_portfolio_risk(picks)
-    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+    except Exception as exc:  # noqa: BLE001 — best-effort display; never break the front door  (c279: was silent return → observable)
+        logger.warning(
+            "[top_picks] portfolio_risk footer block failed (best-effort, skipped): %s", exc
+        )
         return
     line = render_portfolio_risk_line(summary)
     if line:
@@ -1810,7 +1823,10 @@ def _print_regime_winrate_block(market_regime: str) -> None:
         mh_line = render_regime_multihorizon_line(market_regime)
         if mh_line:
             print(mh_line)
-    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+    except Exception as exc:  # noqa: BLE001 — best-effort display; never break the front door  (c279: was silent return → observable)
+        logger.warning(
+            "[top_picks] regime_winrate footer block failed (best-effort, skipped): %s", exc
+        )
         return
 
 
@@ -1841,7 +1857,10 @@ def _print_monotonicity_block(report_dir: Path) -> None:
         )
 
         report = compute_rank_monotonicity(reports_dir=report_dir)
-    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+    except Exception as exc:  # noqa: BLE001 — best-effort display; never break the front door  (c279: was silent return → observable)
+        logger.warning(
+            "[top_picks] monotonicity footer block failed (best-effort, skipped): %s", exc
+        )
         return
     line = render_monotonicity_line(report)
     if line:
@@ -1928,7 +1947,10 @@ def _print_factor_attribution_block(report_dir: Path) -> None:
 
         records = load_tracking_history(report_dir)
         report = compute_factor_attribution_from_loaded(records, min_n=15)
-    except Exception:  # noqa: BLE001 — best-effort; never break the front door
+    except Exception as exc:  # noqa: BLE001 — best-effort; never break the front door  (c279: was silent return → observable)
+        logger.warning(
+            "[top_picks] factor_attribution footer block failed (best-effort, skipped): %s", exc
+        )
         return
     line = render_factor_attribution_line(report)
     if line:
@@ -1959,7 +1981,10 @@ def _print_factor_attribution_by_state_block(report_dir: Path) -> None:
         sc_report = compute_factor_attribution_score_controlled(
             reports_dir=report_dir, min_n=15
         )
-    except Exception:  # noqa: BLE001 — best-effort; never break the front door
+    except Exception as exc:  # noqa: BLE001 — best-effort; never break the front door  (c279: was silent return → observable)
+        logger.warning(
+            "[top_picks] factor_attribution_by_state footer block failed (best-effort, skipped): %s", exc
+        )
         return
     line = render_factor_attribution_by_state_line(report)
     if line:
@@ -1990,7 +2015,10 @@ def _print_model_version_comparison_block(report_dir: Path) -> None:
 
         records = load_tracking_history(report_dir)
         comparison = compare_model_versions(records)
-    except Exception:  # noqa: BLE001 — best-effort; never break the front door
+    except Exception as exc:  # noqa: BLE001 — best-effort; never break the front door  (c279: was silent return → observable)
+        logger.warning(
+            "[top_picks] model_version_comparison footer block failed (best-effort, skipped): %s", exc
+        )
         return
     line = render_model_version_comparison_line(comparison)
     if line:
@@ -2020,7 +2048,10 @@ def _print_north_star_block(report_dir: Path) -> None:
         from src.screening.consecutive_recommendation import load_tracking_history
 
         report = compute_north_star_pnl(reports_dir=report_dir)
-    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+    except Exception as exc:  # noqa: BLE001 — best-effort display; never break the front door  (c279: was silent return → observable)
+        logger.warning(
+            "[top_picks] north_star footer block failed (best-effort, skipped): %s", exc
+        )
         return
     line = render_north_star_line(report)
     if line:
@@ -2141,7 +2172,10 @@ def _print_concentration_block(picks: list[dict]) -> None:
         )
 
         report = compute_industry_concentration(picks, threshold=0.3)
-    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+    except Exception as exc:  # noqa: BLE001 — best-effort display; never break the front door  (c279: was silent return → observable)
+        logger.warning(
+            "[top_picks] concentration footer block failed (best-effort, skipped): %s", exc
+        )
         return
     line = render_concentration_line(report)
     if line:
@@ -2164,7 +2198,10 @@ def _print_stability_block(report_dir: Path) -> None:
         report = compute_recommendation_stability(
             reports_dir=report_dir, lookback_days=5, top_n=3
         )
-    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+    except Exception as exc:  # noqa: BLE001 — best-effort display; never break the front door  (c279: was silent return → observable)
+        logger.warning(
+            "[top_picks] stability footer block failed (best-effort, skipped): %s", exc
+        )
         return
     line = render_stability_line(report)
     if line:
@@ -2191,7 +2228,10 @@ def _print_data_quality_block(report_dir: Path) -> None:
         _date_str, recs = load_latest_recommendations(report_dir=report_dir)
         audits = audit_recommendations(recs)
         summary = summarize_data_quality(audits)
-    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+    except Exception as exc:  # noqa: BLE001 — best-effort display; never break the front door  (c279: was silent return → observable)
+        logger.warning(
+            "[top_picks] data_quality footer block failed (best-effort, skipped): %s", exc
+        )
         return
     line = render_data_quality_summary(summary)
     if line:
