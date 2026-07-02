@@ -220,6 +220,79 @@ class TestComputeReconciliation:
         assert report.rows[0].predicted_return is None
         assert report.unmatched_count == 1
 
+    def test_unmatched_reason_ticker_absent_vs_bucket_empty(self, tmp_path: Path) -> None:
+        """NS-18/c286: reconcile must distinguish two unmatched causes.
+
+        Dogfood (20260702, real trade log logs/reconcile_trade_log_20260607.csv)
+        found both causes rendered as a bare '—' with no reason — operator can't
+        self-audit why a trade wasn't matched:
+          (a) ticker genuinely absent from buy_date report (300395)
+          (b) ticker present but its score_b bucket has 0 calibration samples
+              (600000 score_b=0.7 → 中高 bucket, 0 tracking records there)
+
+        Both are unmatched (predicted=None) but the cause differs. Fix: add
+        unmatched_reason to ReconciliationRow distinguishing the two.
+        """
+        # (a) ticker 999999 absent from report
+        # (b) ticker 000001 present with score_b=0.75 (中高 bucket), but the only
+        #     tracking record scores 0.55 (中低 bucket) → 中高 has 0 samples
+        _seed_report(tmp_path, "20260101", [
+            {"ticker": "000001", "score_b": 0.75},  # 中高 bucket
+        ])
+        _seed_tracking(tmp_path, [
+            # tracking record in 中低 (0.5-0.6), NOT 中高 → 中高 bucket empty
+            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.55, "next_30day_return": 5.0},
+        ])
+        trade_path = _write_trade_log(tmp_path, [
+            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},  # (b)
+            {"ticker": "999999", "buy_date": "20260101", "buy_price": 20.0, "sell_date": "20260131", "sell_price": 21.0},  # (a)
+        ])
+        report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+        assert report.unmatched_count == 2
+        by_ticker = {r.ticker: r for r in report.rows}
+        # (a) absent: 999999 not in report
+        absent_row = by_ticker["999999"]
+        assert absent_row.predicted_return is None
+        reason_a = getattr(absent_row, "unmatched_reason", None)
+        assert reason_a is not None and "报告无该标的" in reason_a, (
+            f"ticker-absent row must carry unmatched_reason mentioning 报告无该标的; got {reason_a!r}"
+        )
+        # (b) bucket-empty: 000001 found but 中高 bucket has 0 calibration samples
+        bucket_row = by_ticker["000001"]
+        assert bucket_row.predicted_return is None
+        reason_b = getattr(bucket_row, "unmatched_reason", None)
+        assert reason_b is not None and ("分桶无样本" in reason_b or "校准无样本" in reason_b), (
+            f"bucket-empty row must carry unmatched_reason mentioning 分桶无样本/校准无样本; got {reason_b!r}"
+        )
+        # the two reasons must differ (the whole point — distinguish causes)
+        assert reason_a != reason_b, (
+            f"the two unmatched causes must produce DIFFERENT reasons; both={reason_a!r}"
+        )
+
+    def test_render_shows_unmatched_reason(self, tmp_path: Path) -> None:
+        """NS-18/c286: render must surface the unmatched reason, not a bare '—'.
+
+        The bare '—' in the 预测T+30 column is unchanged (honest no-prediction),
+        but the row must carry the reason so the operator can self-audit. Verified
+        via render_reconciliation output containing the reason text.
+        """
+        from src.screening.reconciliation import render_reconciliation
+
+        _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}])
+        _seed_tracking(tmp_path, [
+            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.55, "next_30day_return": 5.0},
+        ])
+        trade_path = _write_trade_log(tmp_path, [
+            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
+        ])
+        report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+        out = render_reconciliation(report)
+        # 000001 row: ticker found but 中高 bucket empty → reason must appear
+        assert "000001" in out
+        assert ("分桶无样本" in out or "校准无样本" in out), (
+            f"render must surface bucket-empty reason for 000001; got:\n{out}"
+        )
+
     def test_aggregate_stats(self, tmp_path: Path) -> None:
         """2 matched trades → aggregate MAE + directional accuracy computed."""
         _seed_report(tmp_path, "20260101", [

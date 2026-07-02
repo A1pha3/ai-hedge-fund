@@ -54,6 +54,11 @@ class ReconciliationRow:
     actual_return: float = 0.0  # sell_price/buy_price - 1
     error: float | None = None  # actual - predicted; None when predicted is None
     directional_match: bool | None = None  # sign(predicted) == sign(actual); None when predicted None
+    #: NS-18/c286: 为什么本笔 unmatched (predicted=None). 区分两种原因让操作者能 self-audit:
+    #:   "报告无该标的"      — buy_date 报告里找不到该 ticker (score_b lookup 返回 None)
+    #:   "分桶无样本 (X桶)"  — ticker 找到但其 score_b 分桶在 calibration 里 0 mature 样本
+    #: None = matched (有预测). 之前两种 unmatched 都显示成裸 "—", 操作者无法区分.
+    unmatched_reason: str | None = None
 
 
 @dataclass
@@ -292,6 +297,20 @@ def compute_reconciliation(
         predicted_median = (
             _predicted_t30_median(score_b, calibration) if score_b is not None else None
         )
+        # NS-18/c286: 确定 unmatched 原因 (predicted is None 的两种情况).
+        # score_b is None → buy_date 报告无该标的; score_b 有但 predicted None →
+        # 该 score_b 分桶在 calibration 里 0 mature 样本 (dogfood 20260702: 600000
+        # score_b=0.7 落 中高 桶, 该桶 0 样本). 区分让操作者能 self-audit 裸 "—".
+        from src.screening.confidence_calibration import _find_bucket as _find_cal_bucket
+
+        if score_b is None:
+            _unmatched_reason: str | None = "报告无该标的"
+        elif predicted is None:
+            _bucket_info = _find_cal_bucket(score_b)
+            _bucket_label = _bucket_info[0] if _bucket_info is not None else "未知"
+            _unmatched_reason = f"分桶无样本 ({_bucket_label})"
+        else:
+            _unmatched_reason = None
 
         if predicted is not None:
             matched += 1
@@ -320,6 +339,7 @@ def compute_reconciliation(
                     predicted_return=None, predicted_return_median=predicted_median,
                     actual_return=actual,
                     error=None, directional_match=None,
+                    unmatched_reason=_unmatched_reason,
                 )
             )
 
@@ -409,8 +429,13 @@ def render_reconciliation(report: ReconciliationReport) -> str:
             dstr = f"{Fore.GREEN}✓{Style.RESET_ALL}"
         else:
             dstr = f"{Fore.RED}✗{Style.RESET_ALL}"
+        # NS-18/c286: unmatched 行附原因 (区分 报告无该标的 / 分桶无样本), 让操作者
+        # 能 self-audit 裸 "—". matched 行不附 (保持紧凑).
+        reason_str = ""
+        if row.predicted_return is None and row.unmatched_reason:
+            reason_str = f"  {Fore.YELLOW}({row.unmatched_reason}){Style.RESET_ALL}"
         lines.append(
-            f"  {row.ticker:<8} {row.buy_date:<10} {pred:>9} {act:>9} {err:>9}  {dstr:>5}"
+            f"  {row.ticker:<8} {row.buy_date:<10} {pred:>9} {act:>9} {err:>9}  {dstr:>5}{reason_str}"
         )
 
     lines.append("")
