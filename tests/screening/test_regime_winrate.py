@@ -212,6 +212,147 @@ class TestRegimeAdviceNotStale:
 
 
 # ---------------------------------------------------------------------------
+# loop 57 (empirical dogfood): horizon-labeling + BUY-horizon winrate surfacing
+# ---------------------------------------------------------------------------
+
+
+class TestRegimeWinrateHorizonDisclosure:
+    """loop 57 (empirical dogfood on regime-winrate CI thread, loops 52-56):
+
+    Two disease symptoms found by running render_regime_winrate_line on real
+    JSON (8000+ records) and eyeballing against the contract:
+
+    1. **Unlabelled horizon (misleading-display class):** the headline
+       "历史真实胜率 53% (95% CI 51%-55%)" shown next to BUY/HOLD/AVOID
+       verdicts is the **T+30** winrate, but the BUY decision horizon is
+       T+5/T+10 (contract §北极星). A reasonable operator reading "53%"
+       next to a BUY would mistake it for the BUY-horizon winrate. The
+       actual T+5/T+10 winrates (69% / 65% on real data) are HIGHER.
+
+    2. **Computed-but-never-rendered (loop-53 disease class, 'written but
+       never read'):** ``_compute_multihorizon_stats`` writes per-horizon
+       winrate + winrate_ci_low/winrate_ci_high for T+5/T+10 into the JSON
+       artifact, but no render path reads the BUY-horizon winrate. The owner's
+       T+5/T+10 winrate > 50% north-star (F2) was invisible.
+
+    Fix (engineering-owned disclosure, no behavior change): label the headline
+    horizon explicitly, and surface T+5/T+10 winrate + CI in the multihorizon
+    render so the BUY-horizon numbers are visible.
+    """
+
+    @staticmethod
+    def _restore_real_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+        import src.screening.regime_winrate as rw
+
+        real = getattr(rw, "_real_load_latest_regime_recompute", None)
+        if real is None:
+            real = rw.__dict__.get("load_latest_regime_recompute")
+        if real is not None:
+            monkeypatch.setattr(rw, "load_latest_regime_recompute", real)
+
+    def test_headline_line_labels_horizon_as_t30(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The headline winrate must label its horizon so the operator can't
+        mistake T+30 (long-horizon decay) for the T+5/T+10 BUY-horizon winrate.
+
+        Contract §北极星: BUY decision horizon = T+5/T+10; T+30 is for
+        long-horizon decay / invalidation only. Headline winrate is T+30
+        (``_compute_stats`` on next_30day_return) — it must say so.
+        """
+        self._restore_real_loader(monkeypatch)
+        json_dir = tmp_path / "reports"
+        json_dir.mkdir()
+        payload = {
+            "regime_winrates": {
+                "crisis": {
+                    "winrate": 0.53,
+                    "avg_return": 10.1,
+                    "median_return": 1.7,
+                    "sample_count": 1763,
+                    "winrate_ci_low": 0.507,
+                    "winrate_ci_high": 0.554,
+                    "ci_level": 0.95,
+                }
+            },
+            "regime_multihorizon_medians": {},
+            "as_of": "2026-07-03",
+            "total_records": 8000,
+            "matched_records": 8000,
+        }
+        import json
+
+        (json_dir / "regime_winrates_recomputed_20260703.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+        line = render_regime_winrate_line("crisis", today=date(2026, 7, 4), reports_dir=json_dir)
+        assert line != ""
+        # Headline winrate (53%) is T+30; must label the horizon explicitly.
+        assert "T+30" in line, (
+            f"headline winrate is T+30 口径 but render doesn't label it — "
+            f"operator next to a BUY (T+5/T+10) can mistake it for the "
+            f"BUY-horizon winrate. line={line!r}"
+        )
+
+    def test_multihorizon_line_surfaces_buy_horizon_winrate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The BUY-horizon (T+5/T+10) winrate must be surfaced somewhere in the
+        footer, because it is the contract north-star and is currently computed
+        in the JSON but never rendered (loop-53 'written but never read').
+
+        ``_compute_multihorizon_stats`` already writes per-horizon winrate +
+        CI for T+5/T+10; the render should read it.
+        """
+        self._restore_real_loader(monkeypatch)
+        json_dir = tmp_path / "reports"
+        json_dir.mkdir()
+        payload = {
+            "regime_winrates": {
+                "crisis": {
+                    "winrate": 0.53,
+                    "avg_return": 10.1,
+                    "median_return": 1.7,
+                    "sample_count": 1763,
+                }
+            },
+            "regime_multihorizon_medians": {
+                "crisis": {
+                    "t5": {"median": 3.98, "winrate": 0.689, "n": 1763,
+                           "winrate_ci_low": 0.665, "winrate_ci_high": 0.709, "ci_level": 0.95},
+                    "t10": {"median": 4.66, "winrate": 0.646, "n": 1763,
+                            "winrate_ci_low": 0.624, "winrate_ci_high": 0.668, "ci_level": 0.95},
+                    "t15": {"median": 3.67, "winrate": 0.607, "n": 1763},
+                    "t20": {"median": 4.19, "winrate": 0.587, "n": 1763},
+                    "t25": {"median": 5.47, "winrate": 0.607, "n": 1763},
+                    "t30": {"median": 1.72, "winrate": 0.530, "n": 1763},
+                }
+            },
+            "as_of": "2026-07-03",
+            "total_records": 8000,
+            "matched_records": 8000,
+        }
+        import json
+
+        (json_dir / "regime_winrates_recomputed_20260703.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+        line = render_regime_multihorizon_line("crisis", today=date(2026, 7, 4), reports_dir=json_dir)
+        assert line != ""
+        # T+5 winrate (69%) must be visible — it's the BUY-horizon north-star.
+        assert "69%" in line, (
+            f"T+5 BUY-horizon winrate (69%) is in the JSON but not rendered — "
+            f"the contract north-star winrate is invisible to the operator. line={line!r}"
+        )
+        # T+10 winrate (65%) likewise.
+        assert "65%" in line, (
+            f"T+10 BUY-horizon winrate (65%) is in the JSON but not rendered. line={line!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # 纯函数测试 — compute_regime_winrate_summary
 # ---------------------------------------------------------------------------
 

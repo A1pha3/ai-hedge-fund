@@ -304,8 +304,14 @@ def render_regime_winrate_line(
     NS-5 (C234): 末尾追加 ``| 数据时点 YYYY-MM-DD`` + (若 stale) ``| ⚠ ...`` 提示.
 
     展示形如 (具体胜率/median 随数据变, 此处仅示意格式):
-      ``  📊 当前市场 (crisis): 历史真实胜率 53% (95% CI 51%-55%) | 典型 +1.7% | 样本 n=1763 | 数据时点 2026-07-02 | 广度弱结构性行情...``
+      ``  📊 当前市场 (crisis): 历史真实胜率 T+30: 53% (95% CI 51%-55%) | 典型 +1.7% | 样本 n=1763 | 数据时点 2026-07-02 | 广度弱结构性行情...``
     颜色随胜率: ≥50% 绿 / 30-50% 黄 / <30% 红.
+
+    loop 57 (empirical dogfood): headline winrate 显式标注 ``T+30`` horizon.
+    BUY 决策 horizon 是 T+5/T+10 (contract §北极星), headline 是 T+30 口径
+    (``_compute_stats`` on next_30day_return); 不标注会让 operator 把 T+30
+    胜率误读成 BUY-horizon 胜率。BUY-horizon (T+5/T+10) 胜率在
+    :func:`render_regime_multihorizon_line` 单独披露。
 
     Args:
         regime: ``regime_gate_level`` 值.
@@ -325,7 +331,7 @@ def render_regime_winrate_line(
     advice = _REGIME_ADVICE.get(s.regime, "")
     ci_label = _format_ci_label(s.winrate_ci_low, s.winrate_ci_high)
     parts = [
-        f"  📊 当前市场 ({s.regime}): {color}历史真实胜率 {s.winrate:.0%}{ci_label}{Style.RESET_ALL}",
+        f"  📊 当前市场 ({s.regime}): {color}历史真实胜率 T+30: {s.winrate:.0%}{ci_label}{Style.RESET_ALL}",
         f"| 典型 {s.median_return:+.1f}%",
         f"| 样本 n={s.sample_count}",
     ]
@@ -434,6 +440,28 @@ def render_regime_multihorizon_line(
     min_n = min(data[h]["n"] for h, _ in display_horizons if h in data)
     horizon_parts = " | ".join(parts)
     out = f"  📊 多周期期望 ({key}): {color}{horizon_parts}{Style.RESET_ALL} (n={min_n}+)"
+
+    # loop 57 (empirical dogfood): 披露 BUY-horizon (T+5/T+10) 胜率 + CI.
+    # 这些字段由 ``_compute_multihorizon_stats`` 写入 JSON, 但此前 render 不读
+    # (loop-53 'written but never read' disease). contract §北极星 BUY 决策
+    # horizon = T+5/T+10, 但 headline 胜率是 T+30 口径 — 必须单独让 BUY-horizon
+    # 胜率可见, 否则 owner 的 F2 north-star (T+5/T+10 winrate > 50%) 是盲的.
+    buy_horizons = [("t5", "T+5"), ("t10", "T+10")]
+    buy_parts: list[str] = []
+    for h, label in buy_horizons:
+        h_data = data.get(h)
+        if not isinstance(h_data, dict):
+            continue
+        wr = _optional_float(h_data.get("winrate"))
+        if wr is None:
+            continue
+        ci_lo = _optional_float(h_data.get("winrate_ci_low"))
+        ci_hi = _optional_float(h_data.get("winrate_ci_high"))
+        # _format_ci_label 返回 " (95% CI ..-..)"; 无 CI → "" (不留空格)
+        ci = _format_ci_label(ci_lo, ci_hi)
+        buy_parts.append(f"{label} 胜率 {wr:.0%}{ci}")
+    if buy_parts:
+        out += f" | BUY 周期胜率: {color}{' / '.join(buy_parts)}{Style.RESET_ALL}"
 
     # NS-5: 数据时点 + staleness 警告
     out += f" | 数据时点 {as_of.isoformat()}"
