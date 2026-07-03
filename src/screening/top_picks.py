@@ -207,9 +207,11 @@ def _render_hit_rate_summary(verify_summary: object) -> str:
     if wr_parts:
         lines.append("  " + " | ".join(wr_parts))
 
-    # Average returns
+    # Average returns — T+5, T+10, T+30 available from verify_summary.
+    # Include T+10 (BUY-gate decision horizon alongside T+5) to match the
+    # win-rate section above; T+30 retained as long-term invalidation view.
     ret_parts: list[str] = []
-    for horizon, label in [("t5", "T+5"), ("t30", "T+30")]:
+    for horizon, label in [("t5", "T+5"), ("t10", "T+10"), ("t30", "T+30")]:
         ret = getattr(verify_summary, f"avg_{horizon}_return", None)
         if ret is not None:
             color = Fore.GREEN if ret > 0 else Fore.RED
