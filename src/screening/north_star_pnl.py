@@ -728,6 +728,8 @@ class SelectionProfitabilityReport:
     top_n: int
     strategies: tuple[SelectionStrategyResult, ...]
     verdict: str  # insufficient | model_underperforms | model_outperforms | neutral
+    # c327/autodev-36: 数据时点 — 最大 recommended_date
+    as_of: str | None = None
 
 
 _SELECTION_HORIZON_LABEL = {"next_5day_return": "T+5", "next_10day_return": "T+10", "next_30day_return": "T+30"}
@@ -891,6 +893,7 @@ def compute_selection_profitability_from_loaded(
     return SelectionProfitabilityReport(
         has_data=True, horizon_field=horizon_field, top_n=top_n,
         strategies=tuple(results), verdict=verdict,
+        as_of=max(by_date.keys()) if by_date else None,
     )
 
 
@@ -943,16 +946,18 @@ def render_selection_profitability_line(report: SelectionProfitabilityReport) ->
     # 会误读 "模型 48% [36-60%] vs 等权 60%" 为模型显著输, 实际 CI 重叠 (n=75).
     sd_ci = _ci_bracket(sd)
     ew_ci = _ci_bracket(ew)
+    # c327/autodev-36: 数据时点披露
+    as_of_suffix = f" | 数据时点 {report.as_of}" if report.as_of else ""
     if pa is not None and pa.portfolio_winrate is not None:
         pa_ci = _ci_bracket(pa)
         return (
             f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): "
             f"默认 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%}{sd_ci} (中位 {sd.median_return:+.2f}%) "
             f"vs profit-aware {pa.portfolio_winrate:.0%}{pa_ci} (中位 {pa.median_return:+.2f}%) "
-            f"vs 等权 {ew.portfolio_winrate:.0%}{ew_ci} | {marker}{pa_marker}"
+            f"vs 等权 {ew.portfolio_winrate:.0%}{ew_ci} | {marker}{pa_marker}{as_of_suffix}"
         )
     return (
         f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): "
         f"模型分 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%}{sd_ci} (中位 {sd.median_return:+.2f}%) "
-        f"vs 等权 {ew.portfolio_winrate:.0%}{ew_ci} (中位 {ew.median_return:+.2f}%) | {marker}"
+        f"vs 等权 {ew.portfolio_winrate:.0%}{ew_ci} (中位 {ew.median_return:+.2f}%) | {marker}{as_of_suffix}"
     )

@@ -563,6 +563,24 @@ def test_render_selection_profitability_line_shows_inversion():
     assert "倒挂" in line or "跑输" in line or "负预测" in line
 
 
+def test_selection_profitability_as_of_uses_max_date():
+    """c327/autodev-36: as_of 取最大 recommended_date."""
+    pairs = [(0.80, -5.0), (0.70, -5.0), (0.60, -5.0), (0.20, 8.0), (0.15, 8.0), (0.10, 8.0)]
+    recs = _selection_recs({f"2026010{d}": pairs for d in range(4)})
+    report = compute_selection_profitability_from_loaded(recs, top_n=3, min_days=2)
+    assert report.as_of == "20260103"
+
+
+def test_selection_profitability_render_shows_as_of():
+    """render 展示 | 数据时点."""
+    pairs = [(0.80, -5.0), (0.70, -5.0), (0.60, -5.0), (0.20, 8.0), (0.15, 8.0), (0.10, 8.0)]
+    recs = _selection_recs({f"2026010{d}": pairs for d in range(4)})
+    report = compute_selection_profitability_from_loaded(recs, top_n=3, min_days=2)
+    line = render_selection_profitability_line(report)
+    assert "数据时点" in line
+    assert "20260103" in line
+
+
 def test_selection_profitability_random_n_reproducible_across_input_order():
     """C274 Bug Hunt: the ``random_n`` baseline MUST be deterministic regardless of
     the input records' iteration order. The docstring (north_star_pnl.py:747)
