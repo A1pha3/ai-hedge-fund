@@ -410,7 +410,7 @@ class TestExtractedTopPicksHelpers:
 
         def fake_detect_market_state(trade_date: str) -> SimpleNamespace:
             assert trade_date == "20260610"
-            return SimpleNamespace(regime="risk_off")
+            return SimpleNamespace(regime_gate_level="risk_off")
 
         with patch("src.screening.market_state.detect_market_state", side_effect=fake_detect_market_state):
             rc = run_top_picks(count=3, reports_dir=tmp_path)
@@ -423,7 +423,7 @@ class TestExtractedTopPicksHelpers:
 
     @patch(
         "src.screening.market_state.detect_market_state",
-        return_value=SimpleNamespace(regime="trend"),
+        return_value=SimpleNamespace(regime_gate_level="trend"),
     )
     @patch(
         "src.screening.top_picks.compute_expected_returns",
@@ -685,7 +685,7 @@ class TestConsecutiveBonus:
 
         mock_enrich.side_effect = enrich_side_effect
 
-        with patch("src.screening.market_state.detect_market_state", return_value=SimpleNamespace(regime="trend")):
+        with patch("src.screening.market_state.detect_market_state", return_value=SimpleNamespace(regime_gate_level="trend")):
             rc = run_top_picks(count=5, reports_dir=tmp_path)
 
         assert rc == 0
@@ -739,7 +739,7 @@ class TestConsecutiveBonus:
             side_effect=RuntimeError("no history"),
         ), patch(
             "src.screening.market_state.detect_market_state",
-            return_value=SimpleNamespace(regime="trend"),
+            return_value=SimpleNamespace(regime_gate_level="trend"),
         ):
             rc = run_top_picks(count=5, reports_dir=tmp_path)
 
@@ -906,7 +906,7 @@ class TestHitRateSummary:
 
         with patch(
             "src.screening.market_state.detect_market_state",
-            return_value=SimpleNamespace(regime="trend"),
+            return_value=SimpleNamespace(regime_gate_level="trend"),
         ):
             rc = run_top_picks(count=5, reports_dir=tmp_path)
 
@@ -959,7 +959,7 @@ class TestHitRateSummary:
             side_effect=RuntimeError("no data"),
         ), patch(
             "src.screening.market_state.detect_market_state",
-            return_value=SimpleNamespace(regime="trend"),
+            return_value=SimpleNamespace(regime_gate_level="trend"),
         ):
             rc = run_top_picks(count=5, reports_dir=tmp_path)
 
