@@ -296,8 +296,9 @@ def _extract_decision_horizon_metrics(item: dict) -> tuple[float | None, float |
 
     C222 (2026-06-28 horizon 一致性): BUY gate decision horizon is T+5 OR T+10
     (see ``_meets_quality_bar`` C220 commit 4184dd7e, per-horizon bootstrap CI
-    in C219: T+5 winrate=60.2% [59.0%, 61.3%], T+10 winrate=60.5% [59.4%, 61.6%],
-    but T+30 winrate=45.4% [44.2%, 46.5%] << 50%). Position sizing
+    in C219, snapshot may drift with new data: T+5 winrate≈60%, T+10 winrate≈60%,
+    but T+30 winrate≈45% (CI excluded from docstring — check `--recompute` for
+    current values). Position sizing
     (:func:`_suggest_position_pct`) and portfolio P&L aggregation
     (:func:`_render_portfolio_expected_return`) must use the SAME horizon as
     the BUY verdict — using T+30 here would mis-state the expected return of
@@ -389,7 +390,8 @@ def _suggest_position_pct(
     computation: a BUY pick is admitted on T+5/T+10 strength (see
     ``_meets_quality_bar`` C220 commit 4184dd7e), so sizing it by T+30 edge
     would under-allocate when T+5/T+10 edge > T+30 edge (the typical case
-    for low-bucket short-term rebound tickets per C219). Callers should
+    for low-bucket short-term rebound tickets — snapshot from C219, current
+    values in `--recompute` output). Callers should
     source these via :func:`_extract_decision_horizon_metrics`.
 
     Formula (tunable): base = |edge| × confidence × 100, where confidence normalizes
@@ -431,7 +433,7 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
     but BUY gate decision horizon is T+5 OR T+10 (see ``_meets_quality_bar``
     C220 commit 4184dd7e). Quoting a BUY portfolio's expected return on T+30
     mis-states the population's actual edge — the same picks have T+30 winrate
-    ~45% (per C219 bootstrap CI n=7201), so an "T+30 avg edge=+0.5%" header
+    ~45% (C219 bootstrap CI snapshot — current in ``--recompute``), so an "T+30 avg edge=+0.5%" header
     on a BUY portfolio would falsely imply 30-day hold alpha when the alpha is
     actually a 5-10 day rebound. Now uses ``_extract_decision_horizon_metrics``
     (max of T+5/T+10) so the quoted edge/winrate matches the horizon on which
@@ -1603,7 +1605,7 @@ def _print_pick_entry(
     # C222: per-pick 行展示分两层 — 决策 horizon (max T+5/T+10, BUY verdict 依据)
     # + 长期 horizon (T+30, invalidation 维度). 让用户看到 BUY 票的短期反弹强度
     # (决策=+1.2% 胜率=62%) 与长期走势 (T+30=+0.3% 胜率=48%) 的差异, 避免把
-    # T+5/T+10 反弹票当 30 天持有 (C219 n=7201 证明 low bucket T+30 winrate=45%).
+    # T+5/T+10 反弹票当 30 天持有 (C219 snapshot proves low bucket T+30 winrate≈45%;
     print(
         f"     操作={verdict['action']}{signal_horizon_str}  "
         f"决策={decision_edge_str} 胜率={decision_wr_str}  "
