@@ -349,6 +349,7 @@ def render_regime_winrate_line(
     parts = [
         f"  📊 当前市场 ({s.regime}): {color}历史真实胜率 T+30: {s.winrate:.0%}{ci_label}{Style.RESET_ALL}",
         f"| 典型 {s.median_return:+.1f}%",
+        f"| 平均 {s.avg_return:+.1f}%",
         f"| 样本 n={s.sample_count}",
     ]
     # NS-5: 数据时点标注
