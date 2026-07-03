@@ -592,6 +592,15 @@ def test_selection_profitability_render_shows_as_of():
     assert "20260103" in line
 
 
+def test_selection_profitability_render_shows_mean_return():
+    """c331/autodev-36: mean_return 之前 computed-but-unrendered."""
+    pairs = [(0.80, -5.0), (0.70, -5.0), (0.60, -5.0), (0.20, 8.0), (0.15, 8.0), (0.10, 8.0)]
+    recs = _selection_recs({f"2026010{d}": pairs for d in range(4)})
+    report = compute_selection_profitability_from_loaded(recs, top_n=3, min_days=2)
+    line = render_selection_profitability_line(report)
+    assert "均值" in line  # mean_return now rendered alongside median
+
+
 def test_selection_profitability_random_n_reproducible_across_input_order():
     """C274 Bug Hunt: the ``random_n`` baseline MUST be deterministic regardless of
     the input records' iteration order. The docstring (north_star_pnl.py:747)

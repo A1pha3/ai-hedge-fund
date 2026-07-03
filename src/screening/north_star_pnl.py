@@ -920,6 +920,11 @@ def _ci_bracket(result: SelectionStrategyResult) -> str:
     return f" [{result.ci_lower:.0%}-{result.ci_upper:.0%}]"
 
 
+def _mean_strat(s: SelectionStrategyResult) -> str:
+    """c331/autodev-36: mean_return 之前 computed-but-unrendered; pair with median."""
+    return f" 均值 {s.mean_return:+.2f}%" if s.mean_return is not None else ""
+
+
 def render_selection_profitability_line(report: SelectionProfitabilityReport) -> str:
     """Render one line: does following the model's top-N profit vs ignoring the score?
 
@@ -964,16 +969,17 @@ def render_selection_profitability_line(report: SelectionProfitabilityReport) ->
     ew_ci = _ci_bracket(ew)
     # c327/autodev-36: 数据时点披露
     as_of_suffix = f" | 数据时点 {report.as_of}" if report.as_of else ""
+
     if pa is not None and pa.portfolio_winrate is not None:
         pa_ci = _ci_bracket(pa)
         return (
             f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): "
-            f"默认 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%}{sd_ci} (中位 {sd.median_return:+.2f}%) "
-            f"vs profit-aware {pa.portfolio_winrate:.0%}{pa_ci} (中位 {pa.median_return:+.2f}%) "
+            f"默认 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%}{sd_ci} (中位 {sd.median_return:+.2f}%{_mean_strat(sd)}) "
+            f"vs profit-aware {pa.portfolio_winrate:.0%}{pa_ci} (中位 {pa.median_return:+.2f}%{_mean_strat(pa)}) "
             f"vs 等权 {ew.portfolio_winrate:.0%}{ew_ci} | {marker}{pa_marker}{as_of_suffix}"
         )
     return (
         f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): "
-        f"模型分 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%}{sd_ci} (中位 {sd.median_return:+.2f}%) "
-        f"vs 等权 {ew.portfolio_winrate:.0%}{ew_ci} (中位 {ew.median_return:+.2f}%) | {marker}{as_of_suffix}"
+        f"模型分 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%}{sd_ci} (中位 {sd.median_return:+.2f}%{_mean_strat(sd)}) "
+        f"vs 等权 {ew.portfolio_winrate:.0%}{ew_ci} (中位 {ew.median_return:+.2f}%{_mean_strat(ew)}) | {marker}{as_of_suffix}"
     )
