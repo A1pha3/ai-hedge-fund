@@ -286,8 +286,11 @@ def render_factor_attribution_line(report: FactorAttributionReport) -> str:
         ci_str = ""
         if f.inversion_ci_low is not None and f.inversion_ci_high is not None:
             ci_str = f", CI[{f.inversion_ci_low:+.0%}, {f.inversion_ci_high:+.0%}]"
+        # c333/autodev-36: n 之前 computed-but-unrendered; 镜像 factor_attribution_by_state c332
+        total_n = f.high_n + f.low_n
+        n_str = f", n={total_n}" if total_n > 0 else ""
         parts.append(
-            f"{f.strategy} {label} low {(f.low_contrib_winrate or 0):.0%} vs high {(f.high_contrib_winrate or 0):.0%} (Δ{delta:.0%}{ci_str})"
+            f"{f.strategy} {label} low {(f.low_contrib_winrate or 0):.0%} vs high {(f.high_contrib_winrate or 0):.0%} (Δ{delta:.0%}{ci_str}{n_str})"
         )
 
     suffix = ""

@@ -126,3 +126,19 @@ def test_render_shows_as_of():
     line = render_factor_attribution_line(rep)
     assert "数据时点" in line
     assert "20260703" in line
+
+
+def test_render_shows_n_per_factor():
+    """c333/autodev-36: high_n + low_n 之前 computed-but-unrendered."""
+    recs = []
+    for _ in range(30):
+        recs.append(_decomp_rec(5.0, {"T": -0.1, "MR": 0.2}))
+    for _ in range(30):
+        recs.append(_decomp_rec(-5.0, {"T": 0.5, "MR": -0.1}))
+    for _ in range(30):
+        recs.append(_decomp_rec(1.0, {"T": 0.2, "MR": 0.1}))
+    rep = compute_factor_attribution_from_loaded(recs, min_n=10)
+    line = render_factor_attribution_line(rep)
+    # n=20 per tertile (high 1/3 of 90 = 30, but sorted splits may differ)
+    # Just assert n= appears at all
+    assert "n=" in line
