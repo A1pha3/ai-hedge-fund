@@ -344,8 +344,10 @@ def _format_one_factor_state(inv: FactorStateInversion) -> str:
 
     CI available: show CI bracket. CI unavailable (edge case): bare estimate.
     Uses the same CI text format as _format_one_score_controlled.
+    c332/autodev-36: n now shown (mirrors _format_one_score_controlled).
     """
-    base = f"{inv.state_type} {inv.factor} 倒挂 (高{inv.high_contrib_winrate:.0%} 低{inv.low_contrib_winrate:.0%}"
+    total_n = inv.high_n + inv.low_n
+    base = f"{inv.state_type} {inv.factor} 倒挂 (高{inv.high_contrib_winrate:.0%} 低{inv.low_contrib_winrate:.0%}, n={total_n}"
     if inv.inversion_ci_low is not None and inv.inversion_ci_high is not None:
         ci_str = f", CI[{inv.inversion_ci_low:+.0%}, {inv.inversion_ci_high:+.0%}]"
     else:

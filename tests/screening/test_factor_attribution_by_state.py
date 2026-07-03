@@ -243,6 +243,21 @@ class TestScoreControlledFactorAttribution:
         assert "CI[" not in line
         assert "帮倒忙" in line
 
+    def test_factor_state_render_shows_n(self) -> None:
+        """c332/autodev-36: n 现在展示 (镜像 _format_one_score_controlled)."""
+        inv = FactorStateInversion(
+            state_type="MIXED", factor="MR",
+            high_contrib_winrate=0.30, low_contrib_winrate=0.55,
+            inversion=0.25, high_n=40, low_n=60,
+            inversion_ci_low=0.10, inversion_ci_high=0.40,
+        )
+        report = FactorAttributionByStateReport(
+            inversions=[inv], sample_count=100,
+            state_types=["MIXED"], horizon_label="T+5", verdict="ok",
+        )
+        line = render_factor_attribution_by_state_line(report)
+        assert "n=100" in line  # total_n = high_n + low_n = 40 + 60
+
 
 class TestAsOf:
     """c325/autodev-36: 数据时点披露."""
