@@ -1260,3 +1260,83 @@ def test_invalidation_reasons_zero_sample_with_mature_field_marks_both() -> None
     )
     assert "数据缺失" in verdict["invalidation_reason"]
     assert "成熟样本不足 20" in verdict["invalidation_reason"]
+
+
+# ---------------------------------------------------------------------------
+# loop 62 (autodev): supports_long gate — decision="bearish" must force AVOID
+# ---------------------------------------------------------------------------
+
+
+class TestBearishDecisionForcesAvoid:
+    """loop 62: ``supports_long = decision != "bearish"`` (investability.py:265) is
+    a hard gate on BOTH BUY (line 283) and HOLD (line 289). Audit (loop 61) found
+    **100% of verdict tests use ``decision="bullish"``** — the bearish gate input
+    was entirely untested. This is a money-safety concern: a bearish pick must
+    NEVER reach BUY/HOLD on the strength of T+5/T+10 edge+winrate alone, because
+    the long-thesis is inverted.
+
+    These tests pin the gate so a future refactor that drops/inverts ``supports_long``
+    cannot silently let bearish picks through. They mirror the proven BUY fixtures
+    (test_c219_*, lines 393-424) with identical otherwise-perfect metrics — only
+    ``decision`` flips to ``"bearish"``, and the verdict must downgrade.
+    """
+
+    @staticmethod
+    def _strong_metrics() -> dict:
+        """Otherwise-perfect BUY metrics (the test_c219 fixtures' values).
+
+        decision is set per-test; everything else would BUY under bullish.
+        """
+        return {
+            "composite_score": 0.68,
+            # T+5 AND T+10 both strong — passes under either OR-logic branch.
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 2.0},
+            "win_rates": {"t5": 0.62, "t10": 0.62, "t30": 0.60},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        }
+
+    def test_bearish_forces_avoid_in_normal_regime(self) -> None:
+        """Bearish pick with otherwise-perfect BUY metrics → AVOID (not BUY).
+
+        Normal regime: bullish twin (test_c219_buy_passes_when_t5_only_passes)
+        returns BUY on these exact metrics. Bearish must downgrade past HOLD to
+        AVOID, because supports_long=False kills both is_high_quality AND
+        is_watchable.
+        """
+        rec = self._strong_metrics()
+        rec["decision"] = "bearish"
+        verdict = build_front_door_verdict(rec, market_regime="trend")
+        assert verdict["action"] != "BUY", (
+            "bearish decision must never BUY — supports_long gate failed "
+            "(money-safety: a bearish pick is an inverted long thesis)"
+        )
+        assert verdict["action"] == "AVOID", (
+            f"bearish with strong metrics must AVOID (not HOLD) — supports_long "
+            f"also gates is_watchable. got {verdict['action']!r}"
+        )
+
+    def test_bearish_forces_avoid_not_buy_even_in_crisis(self) -> None:
+        """Crisis regime never returns BUY anyway, but bearish must not even HOLD
+        on strong metrics — supports_long gates is_high_quality_for_hold too."""
+        rec = self._strong_metrics()
+        rec["decision"] = "bearish"
+        verdict = build_front_door_verdict(rec, market_regime="crisis")
+        assert verdict["action"] == "AVOID", (
+            f"bearish in crisis must AVOID (supports_long gates HOLD path too). "
+            f"got {verdict['action']!r}"
+        )
+
+    def test_bearish_gate_is_decision_value_not_score(self) -> None:
+        """The gate keys on the ``decision`` field, not composite_score. A bearish
+        pick with composite_score=0.95 (top of range) must still AVOID — the gate
+        is thesis-direction, not conviction-strength."""
+        rec = self._strong_metrics()
+        rec["decision"] = "bearish"
+        rec["composite_score"] = 0.95  # near-max conviction
+        verdict = build_front_door_verdict(rec, market_regime="trend")
+        assert verdict["action"] == "AVOID", (
+            "supports_long must gate on decision='bearish' regardless of "
+            "composite_score magnitude — high conviction on an inverted thesis "
+            "is still not a long. got {verdict['action']!r}".format(verdict=verdict)
+        )
