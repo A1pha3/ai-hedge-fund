@@ -1,17 +1,18 @@
 """NS-5 daily scheduling 重算 — regime 历史胜率从 tracking_history 重算.
 
-C234 (2026-06-28) 加了 as_of + staleness 诚实披露, 但 "重算" 半环缺失 —
-硬编码 ``REGIME_HISTORICAL_WINRATES`` / ``REGIME_MULTIHORIZON_MEDIANS`` 仍
-是 2026-06-25 v2 扩样本回测值, owner 因子改动 (C220-C236) 后已 stale.
+C234 (2026-06-28) 加了 as_of + staleness 诚实披露. 本模块自 C237 (2026-06-29)
+起补 "重算" 半环, 至 C256 (2026-06-30 C253 housekeeping) 完成 flywheel 集成:
+daily scheduling 重算 + JSON artifact 写入, owner NS-5 前门每日自动刷新.
+硬编码 ``REGIME_HISTORICAL_WINRATES`` / ``REGIME_MULTIHORIZON_MEDIANS``
+仅作为 fallback (JSON 缺失/损坏时使用, 已标注 source=hardcoded_fallback).
 
-本模块补 "重算" 半环:
+本模块实现:
 - :func:`compute_regime_historical_winrates_from_records` — 纯函数, 从
   tracking_history records + date→regime map 重算 per-regime × per-horizon
   winrate/avg/median, 输出结构匹配 ``REGIME_HISTORICAL_WINRATES`` /
-  ``REGIME_MULTIHORIZON_MEDIANS`` (让 owner 可直接替换硬编码值).
+  ``REGIME_MULTIHORIZON_MEDIANS`` (用作 JSON artifact 写入源).
 - :func:`build_date_to_regime_map` — 从 ``data/reports/auto_screening_*.json``
-  报告构建 date→regime 映射 (each report has ``date`` +
-  ``market_state.regime_gate_level``).
+  报告构建 date→regime 映射.
 
 设计原则:
 - **纯函数 + loader 分离**: 重算逻辑无 I/O 副作用, loader 单独处理 JSON 读取.
