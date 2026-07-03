@@ -298,3 +298,55 @@ class TestPreVersioningExclusionDisclosure:
         assert cmp.excluded_pre_versioning_count == 0
         line = render_model_version_comparison_line(cmp)
         assert "排除" not in line
+
+
+class TestBootstrapCI:
+    """c323/autodev-36: bootstrap CI on delta_winrate."""
+
+    def test_delta_winrate_carries_ci(self) -> None:
+        """improved/degraded verdict 中 delta_winrate 携带 CI."""
+        records = [_rec("aaa1111aaaa", -0.10, "2026010%d" % d) for d in range(1, 8)] + \
+                  [_rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 8)]
+        cmp = compare_model_versions(records, min_samples=3)
+        assert cmp.verdict in ("improved", "degraded")
+        assert cmp.delta_winrate_ci_low is not None
+        assert cmp.delta_winrate_ci_high is not None
+        assert cmp.delta_winrate_ci_high >= cmp.delta_winrate_ci_low
+
+    def test_insufficient_verdict_no_ci(self) -> None:
+        """insufficient 时 CI 为 None (仍诚实)."""
+        records = [_rec("aaa1111aaaa", 0.03, "2026010%d" % d) for d in range(1, 6)] + \
+                  [_rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 3)]
+        cmp = compare_model_versions(records, min_samples=5)
+        assert cmp.verdict == "insufficient"
+        assert cmp.delta_winrate_ci_low is None
+
+    def test_single_version_no_ci(self) -> None:
+        """single_version 时 CI 为 None."""
+        records = [_rec("only_ver00001", 0.03, "2026010%d" % d) for d in range(1, 6)]
+        cmp = compare_model_versions(records, min_samples=3)
+        assert cmp.verdict == "single_version"
+        assert cmp.delta_winrate_ci_low is None
+
+    def test_render_shows_ci_bracket(self) -> None:
+        """render 展示 CI 括号."""
+        records = [_rec("aaa1111aaaa", -0.10, "2026010%d" % d) for d in range(1, 8)] + \
+                  [_rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 8)]
+        cmp = compare_model_versions(records, min_samples=3)
+        line = render_model_version_comparison_line(cmp)
+        assert "CI[" in line or "improved" in line or "退化" in line or "改善" in line
+
+    def test_delta_ci_deterministic(self) -> None:
+        """同 seed → 同 CI (幂等)."""
+        from src.screening.model_version_comparison import _bootstrap_delta_winrate_ci
+        cand = [0.03, -0.01, 0.05, -0.02, 0.01] * 4
+        base = [-0.05, -0.03, -0.01, 0.02, -0.04] * 4
+        lo1, hi1 = _bootstrap_delta_winrate_ci(cand, base, n_bootstrap=500, seed=42)
+        lo2, hi2 = _bootstrap_delta_winrate_ci(cand, base, n_bootstrap=500, seed=42)
+        assert lo1 == lo2 and hi1 == hi2
+
+    def test_delta_ci_none_for_empty(self) -> None:
+        """空输入 → None, None."""
+        from src.screening.model_version_comparison import _bootstrap_delta_winrate_ci
+        lo, hi = _bootstrap_delta_winrate_ci([], [1.0, 2.0])
+        assert lo is None and hi is None
