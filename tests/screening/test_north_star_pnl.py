@@ -691,3 +691,19 @@ def test_selection_profitability_skips_nan_score_and_return():
         assert math.isfinite(s.median_return), (
             f"{s.strategy}: median_return={s.median_return} — NaN propagated into median"
         )
+
+
+def test_north_star_pnl_as_of_uses_max_date():
+    """c328/autodev-36: as_of 取 daily_series 最大日期."""
+    recs = _records({"20260101": [1.0, 2.0], "20260102": [3.0, -1.0], "20260103": [2.0]})
+    rep = compute_north_star_pnl_from_loaded(recs, min_n=2)
+    assert rep.as_of == "20260103"
+
+
+def test_north_star_pnl_render_shows_as_of():
+    """render 展示 | 数据时点."""
+    recs = _records({"20260101": [1.0, 2.0], "20260102": [3.0, -1.0]})
+    rep = compute_north_star_pnl_from_loaded(recs, min_n=2)
+    line = render_north_star_line(rep)
+    assert "数据时点" in line
+    assert "20260102" in line

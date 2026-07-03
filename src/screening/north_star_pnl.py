@@ -79,6 +79,8 @@ class NorthStarPnlReport:
     verdict: str = "insufficient"  # insufficient | divergent | positive | negative
     daily_series: list[tuple[str, float]] = field(default_factory=list)  # (date, daily_mean)
     horizon_label: str = "T+5"  # 决策 horizon (2026-06-28 周期缩短自 T+30 → 默认 T+5; BUY gate = T+5 OR T+10)
+    # c328/autodev-36: 数据时点 — daily_series 最大日期
+    as_of: str | None = None
 
 
 def compute_north_star_pnl_from_loaded(
@@ -153,6 +155,7 @@ def compute_north_star_pnl_from_loaded(
         verdict=verdict,
         daily_series=daily_series,
         horizon_label=horizon_label,
+        as_of=daily_series[-1][0] if daily_series else None,
     )
 
 
@@ -192,9 +195,11 @@ def render_north_star_line(report: NorthStarPnlReport) -> str:
     wr = f"{report.overall_winrate:.0%}" if report.overall_winrate is not None else "—"
     med = f"{report.overall_median:+.0f}%" if report.overall_median is not None else "—"
     cum = f"{report.cumulative_mean_pnl:+.0f}%"
+    # c328/autodev-36: 数据时点披露
+    as_of_suffix = f" | 数据时点 {report.as_of}" if report.as_of else ""
     base = (
         f"  🎯 北极星 P&L ({report.horizon_label}): 累积 {cum} (mean) | 胜率 {wr} | 典型 {med}"
-        f" | n={report.sample_count}, {report.sample_dates}日"
+        f" | n={report.sample_count}, {report.sample_dates}日{as_of_suffix}"
     )
 
     if report.verdict == "divergent":
