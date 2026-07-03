@@ -21,6 +21,16 @@ _DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # who batch more can raise it via HEDGE_FUND_MAX_TICKERS.
 _DEFAULT_MAX_TICKERS = 25
 
+# Default cap on graph_nodes (the second request multiplier — total agent
+# executions per run ≈ len(tickers) × len(graph_nodes)). Each graph node becomes
+# one agent registered in the StateGraph and runs once per ticker
+# (services/graph.py:create_graph). Bounding tickers but not graph_nodes leaves the
+# cost-DoS vector open via the unbounded multiplier. 50 is 2.5x the 20 canonical
+# agents (18 in ANALYST_CONFIG + risk_manager + portfolio_manager) — headroom for
+# legitimate duplicates / utility / notes / group nodes; owners who need more can
+# raise it via HEDGE_FUND_MAX_GRAPH_NODES. Same CLI/cron-bypass scope as tickers.
+_DEFAULT_MAX_GRAPH_NODES = 50
+
 
 def _max_tickers() -> int:
     """Resolve the ticker cap at validation time (not import time) so an env change
@@ -34,6 +44,20 @@ def _max_tickers() -> int:
     except (TypeError, ValueError):
         return _DEFAULT_MAX_TICKERS
     return n if n > 0 else _DEFAULT_MAX_TICKERS
+
+
+def _max_graph_nodes() -> int:
+    """Resolve the graph_nodes cap at validation time (same rationale as
+    _max_tickers: env change takes effect on the next request without a restart;
+    non-positive/unparseable falls back to default)."""
+    raw = os.environ.get("HEDGE_FUND_MAX_GRAPH_NODES")
+    if not raw:
+        return _DEFAULT_MAX_GRAPH_NODES
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_GRAPH_NODES
+    return n if n > 0 else _DEFAULT_MAX_GRAPH_NODES
 
 
 class FlowRunStatus(str, Enum):
@@ -105,6 +129,17 @@ class BaseHedgeFundRequest(BaseModel):
         limit = _max_tickers()
         if len(v) > limit:
             raise ValueError(f"Too many tickers: {len(v)} (limit {limit}). " f"Raise HEDGE_FUND_MAX_TICKERS to allow more.")
+        return v
+
+    @field_validator("graph_nodes")
+    @classmethod
+    def bound_graph_node_count(cls, v: List[GraphNode]) -> List[GraphNode]:
+        limit = _max_graph_nodes()
+        if len(v) > limit:
+            raise ValueError(
+                f"Too many graph_nodes: {len(v)} (limit {limit}). "
+                f"Raise HEDGE_FUND_MAX_GRAPH_NODES to allow more."
+            )
         return v
 
     def get_agent_ids(self) -> List[str]:
