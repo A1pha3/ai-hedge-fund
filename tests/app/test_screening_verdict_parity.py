@@ -134,3 +134,49 @@ def test_verdict_absent_when_market_state_missing_does_not_crash() -> None:
     assert "regime 未识别" in v["invalidation_reason"], (
         f"unknown regime must disclose 'regime 未识别' (c282); got {v['invalidation_reason']!r}"
     )
+
+
+def test_verdict_compute_exception_is_logged_not_swallowed(monkeypatch, caplog) -> None:
+    """c314 (loop 46): if build_front_door_verdict raises, the defensive AVOID
+    fallback must LOG the exception — not swallow it silently. This is the NS-17
+    silent-except disease class: c290 added the try/except to make the verdict
+    never crash the web response (correct), but the except block had NO logger
+    call, so a verdict-computation failure produced an AVOID with no operator-
+    visible trace of why. The comment said 'Log via meta below' but no log
+    existed. An operator seeing a sudden cluster of AVOID 'verdict 计算失败'
+    picks could not diagnose the root cause from logs.
+
+    Same disease class F5 retired across the decision chain (c267-c281) and the
+    web storage route (c292). The verdict path is money-acting (operator acts
+    on BUY/AVOID), so a silent failure there is exactly the high-cost case.
+    """
+    import logging
+
+    import app.backend.routes.screening as screening_mod
+
+    def _boom(rec, market_regime=None):  # noqa: ARG001
+        raise RuntimeError("simulated verdict compute failure")
+
+    monkeypatch.setattr(screening_mod, "build_front_door_verdict", _boom)
+    payload = _make_payload(regime="normal", n_recs=2)
+
+    with caplog.at_level(logging.WARNING, logger="app.backend.routes.screening"):
+        resp = _build_screening_response(
+            payload, trade_date="20260607", score_threshold=0.0,
+            use_explain=False, strategies=None, execution_time_seconds=1.0,
+        )
+
+    # defensive AVOID still attaches (response must not crash)
+    for rec in resp.recommendations:
+        assert rec["verdict"]["action"] == "AVOID"
+        assert "verdict 计算失败" in rec["verdict"]["invalidation_reason"]
+    # AND the failure is logged (not swallowed) — the NS-17 fix
+    joined = " ".join(r.getMessage() for r in caplog.records)
+    assert "verdict" in joined.lower(), (
+        f"verdict-compute exception must be logged for operator diagnosis; "
+        f"got records: {caplog.records!r}"
+    )
+    # the exception detail itself should reach the log (exc_info or message)
+    assert any("simulated verdict compute failure" in (r.getMessage() + str(getattr(r, "exc_text", "") or "")) for r in caplog.records), (
+        "the underlying exception message must reach the log so the operator can diagnose"
+    )

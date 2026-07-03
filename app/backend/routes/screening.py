@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import os
 import re
@@ -28,6 +29,8 @@ from pydantic import BaseModel, Field
 from app.backend.routes._common import safe_route
 from src.main import compute_auto_screening_results
 from src.screening.investability import build_front_door_verdict
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/screening", tags=["screening"])
 
@@ -268,7 +271,15 @@ def _build_screening_response(
         except Exception:
             # Defensive: verdict must never crash the web response. A pick
             # without verdict is strictly worse than one with, but a 500 on
-            # the whole screening endpoint is worse still. Log via meta below.
+            # the whole screening endpoint is worse still. c314: LOG the
+            # failure (exc_info) so an operator seeing a cluster of AVOID
+            # 'verdict 计算失败' picks can diagnose the root cause — this is
+            # the NS-17 silent-except disease class (the prior 'Log via meta
+            # below' comment described a log that did not exist).
+            logger.warning(
+                "verdict compute failed for %s (regime=%s) — falling back to AVOID",
+                rec.get("ticker"), market_regime, exc_info=True,
+            )
             rec["verdict"] = {
                 "action": "AVOID",
                 "market_regime": market_regime,
