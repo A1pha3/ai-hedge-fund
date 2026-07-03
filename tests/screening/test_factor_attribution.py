@@ -90,3 +90,39 @@ def test_render_silent_when_insufficient():
     recs = [{"recommended_date": "20250101", "next_5day_return": 5.0}] * 100
     rep = compute_factor_attribution_from_loaded(recs, min_n=10)
     assert render_factor_attribution_line(rep) == ""
+
+
+def test_report_as_of_uses_max_recommended_date():
+    """c326/autodev-36: as_of 取有效 records 的最大 recommended_date."""
+    recs = []
+    for i in range(30):
+        recs.append({"recommended_date": "20260701", "next_5day_return": 5.0, "score_decomposition": {"base_contributions": {"T": -0.1}}})
+    for i in range(30):
+        recs.append({"recommended_date": "20260702", "next_5day_return": -5.0, "score_decomposition": {"base_contributions": {"T": 0.5}}})
+    for i in range(30):
+        recs.append({"recommended_date": "20260703", "next_5day_return": 1.0, "score_decomposition": {"base_contributions": {"T": 0.2}}})
+    rep = compute_factor_attribution_from_loaded(recs, min_n=10)
+    assert rep.as_of == "20260703"
+
+
+def test_report_as_of_none_when_insufficient():
+    """insufficient 时 as_of 为 None."""
+    recs = [{"recommended_date": "20250101", "next_5day_return": 5.0}] * 100
+    rep = compute_factor_attribution_from_loaded(recs, min_n=10)
+    assert rep.verdict == "insufficient"
+    assert rep.as_of is None
+
+
+def test_render_shows_as_of():
+    """render 展示 | 数据时点."""
+    recs = []
+    for i in range(30):
+        recs.append({"recommended_date": "20260701", "next_5day_return": 5.0, "score_decomposition": {"base_contributions": {"T": -0.1}}})
+    for i in range(30):
+        recs.append({"recommended_date": "20260702", "next_5day_return": -5.0, "score_decomposition": {"base_contributions": {"T": 0.5}}})
+    for i in range(30):
+        recs.append({"recommended_date": "20260703", "next_5day_return": 1.0, "score_decomposition": {"base_contributions": {"T": 0.2}}})
+    rep = compute_factor_attribution_from_loaded(recs, min_n=10)
+    line = render_factor_attribution_line(rep)
+    assert "数据时点" in line
+    assert "20260703" in line

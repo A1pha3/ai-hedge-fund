@@ -104,6 +104,8 @@ class FactorAttributionReport:
     worst_factor: str | None = None  # 倒挂最严重的因子
     worst_factor_inversion: float | None = None  # low - high (正=倒挂)
     horizon_label: str = "T+5"  # 决策 horizon (C229: 默认 T+5; 可传 next_10day_return / next_30day_return)
+    # c326/autodev-36: 数据时点 — 镜像 factor_attribution_by_state c325 模式
+    as_of: str | None = None
 
 
 def compute_factor_attribution_from_loaded(
@@ -131,6 +133,7 @@ def compute_factor_attribution_from_loaded(
     """
     # 收集有 decomposition + 该 horizon return 的 records
     valid: list[dict[str, Any]] = []
+    max_date = ""
     for rec in records:
         decomp = rec.get("score_decomposition")
         ret = _finite_float(rec.get(horizon_field))
@@ -139,6 +142,9 @@ def compute_factor_attribution_from_loaded(
         if not isinstance(decomp, dict):
             continue
         valid.append(rec)
+        d = str(rec.get("recommended_date", "") or "").strip()
+        if d > max_date:
+            max_date = d
 
     if len(valid) < min_n * 3:  # 需 3 组 (高/中/低 各 min_n)
         return FactorAttributionReport(sample_count=len(valid), verdict="insufficient")
@@ -242,6 +248,7 @@ def compute_factor_attribution_from_loaded(
         worst_factor=worst_factor if worst_inversion > 0.05 else None,
         worst_factor_inversion=worst_inversion if worst_inversion > 0.05 else None,
         horizon_label=_horizon_short_label(horizon_field),
+        as_of=max_date or None,
     )
 
 
@@ -287,7 +294,10 @@ def render_factor_attribution_line(report: FactorAttributionReport) -> str:
     if report.worst_factor:
         suffix = f" {Fore.RED}— {report.worst_factor} 因子可能是倒挂根因{Style.RESET_ALL}"
 
-    return f"  🔍 因子归因 {hlabel}: {'; '.join(parts)}{suffix}"
+    # c326/autodev-36: 数据时点披露
+    as_of_suffix = f" | 数据时点 {report.as_of}" if report.as_of else ""
+
+    return f"  🔍 因子归因 {hlabel}: {'; '.join(parts)}{suffix}{as_of_suffix}"
 
 
 __all__ = [
