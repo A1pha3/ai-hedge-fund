@@ -1340,3 +1340,105 @@ class TestBearishDecisionForcesAvoid:
             "composite_score magnitude — high conviction on an inverted thesis "
             "is still not a long. got {verdict['action']!r}".format(verdict=verdict)
         )
+
+
+# ---------------------------------------------------------------------------
+# loop 64 (autodev): BUY-gate boundary values (off-by-one operator pinning)
+# ---------------------------------------------------------------------------
+
+
+class TestBuyGateBoundaryValues:
+    """loop 64: pin the exact comparison operators on the BUY gate. The gate is
+
+        _t5_passes  = t5_edge > 0       and t5_win_rate >= 0.55   # strict >, >=
+        _meets_quality_bar = ... and composite_score >= 0.5       # >=
+
+    Audit (loop 61): existing tests use values comfortably above/below the
+    thresholds (winrate 0.62, edge 8.5, composite 0.68) — they prove the gate
+    works in the interior but NOT at the boundary. An off-by-one operator flip
+    (``>=`` → ``>`` on winrate, or ``>`` → ``>=`` on edge) would change the
+    verdict at the boundary with NO test catching it.
+
+    Two boundaries are money-safety-critical:
+      - winrate==0.55 MUST pass (the >= direction: a 55% win rate is the BUY bar)
+      - edge==0   MUST NOT pass (the strict > direction: missing-horizon-data
+        defaults to edge=0.0, so >= 0 would let missing data silently BUY)
+
+    Mutation-verified (see commit): flipping each operator makes the relevant
+    test FAIL.
+    """
+
+    @staticmethod
+    def _buy_eligible(extra: dict | None = None) -> dict:
+        """Baseline rec that BUYs under bullish in normal regime (mature sample)."""
+        rec = {
+            "decision": "bullish",
+            "composite_score": 0.55,
+            "expected_returns": {"t5": 5.0, "t10": 5.0, "t30": 3.0},
+            "win_rates": {"t5": 0.60, "t10": 0.60, "t30": 0.58},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        }
+        if extra:
+            rec.update(extra)
+        return rec
+
+    def test_winrate_exactly_0_55_passes_buy(self) -> None:
+        """winrate == 0.55 must PASS the BUY gate (operator is ``>=``).
+
+        If a refactor changed ``>= 0.55`` to ``> 0.55``, a 55%-winrate pick
+        would wrongly downgrade. This pins the inclusive direction.
+        """
+        rec = self._buy_eligible({
+            "win_rates": {"t5": 0.55, "t10": 0.55, "t30": 0.55},  # exactly at bar
+            "expected_returns": {"t5": 5.0, "t10": 5.0, "t30": 3.0},
+        })
+        verdict = build_front_door_verdict(rec, market_regime="trend")
+        assert verdict["action"] == "BUY", (
+            "winrate==0.55 must BUY (gate is >=); got "
+            f"{verdict['action']!r} — operator may have flipped to strict >"
+        )
+
+    def test_edge_exactly_0_does_not_buy(self) -> None:
+        """edge == 0 must NOT pass the BUY gate (operator is strict ``>``).
+
+        This is the money-safety direction: missing-horizon-data defaults to
+        edge=0.0 (investability.py:240-243), so ``>= 0`` would let missing data
+        silently BUY. The strict ``>`` is the guard. If a refactor changed
+        ``> 0`` to ``>= 0``, a pick with NO horizon edge data would pass.
+        """
+        rec = self._buy_eligible({
+            "win_rates": {"t5": 0.60, "t10": 0.60, "t30": 0.58},
+            "expected_returns": {"t5": 0.0, "t10": 0.0, "t30": 0.0},  # edge exactly 0
+        })
+        verdict = build_front_door_verdict(rec, market_regime="trend")
+        assert verdict["action"] != "BUY", (
+            "edge==0 must NOT BUY (gate is strict >) — flipping to >= would let "
+            "missing-horizon-data (default 0.0) silently BUY. got "
+            f"{verdict['action']!r}"
+        )
+
+    def test_composite_exactly_0_5_buys(self) -> None:
+        """composite_score == 0.5 must BUY (operator is ``>= 0.5``).
+
+        Pins the inclusive boundary on the conviction gate. A 0.49→0.50 pick
+        crosses into BUY; 0.4999 does not.
+        """
+        rec = self._buy_eligible({"composite_score": 0.5})  # exactly at BUY bar
+        verdict = build_front_door_verdict(rec, market_regime="trend")
+        assert verdict["action"] == "BUY", (
+            "composite_score==0.5 must BUY (gate is >= 0.5); got "
+            f"{verdict['action']!r}"
+        )
+
+    def test_composite_just_below_0_5_does_not_buy(self) -> None:
+        """composite_score = 0.4999 must NOT BUY (the other side of the boundary).
+
+        Pins that 0.5 is the true threshold, not 0.49 or 0.4999.
+        """
+        rec = self._buy_eligible({"composite_score": 0.4999})
+        verdict = build_front_door_verdict(rec, market_regime="trend")
+        assert verdict["action"] != "BUY", (
+            "composite_score=0.4999 must NOT BUY (< 0.5 bar); got "
+            f"{verdict['action']!r}"
+        )
