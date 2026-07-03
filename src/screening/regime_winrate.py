@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -73,6 +74,9 @@ class RegimeWinrateSummary:
     regime: str
     has_data: bool = False
     winrate: float = 0.0  # 0-1, T+30 正收益比例
+    winrate_ci_low: float | None = None  # bootstrap CI 下限 (loop 52)
+    winrate_ci_high: float | None = None  # bootstrap CI 上限
+    ci_level: float = 0.95  # bootstrap 置信水平
     avg_return: float = 0.0  # 百分点
     median_return: float = 0.0  # 百分点 (典型票, 免异常值)
     sample_count: int = 0
@@ -177,6 +181,9 @@ def compute_regime_winrate_summary(
                     regime=key,
                     has_data=True,
                     winrate=float(stats.get("winrate", 0.0)),
+                    winrate_ci_low=_optional_float(stats.get("winrate_ci_low")),
+                    winrate_ci_high=_optional_float(stats.get("winrate_ci_high")),
+                    ci_level=float(stats.get("ci_level", 0.95)),
                     avg_return=float(stats.get("avg_return", 0.0)),
                     median_return=float(stats.get("median_return", 0.0)),
                     sample_count=int(stats.get("sample_count", 0)),
@@ -257,7 +264,35 @@ def _format_staleness_warning(
     return f"⚠ 数据可能过时 (距今 {days_old} 天, 阈值 {REGIME_STALENESS_THRESHOLD_DAYS} 天)"
 
 
-def render_regime_winrate_line(regime: str, *, today: date | None = None) -> str:
+def _optional_float(value: Any) -> float | None:
+    """安全转 float; None/NaN/Inf → None."""
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(result) or math.isinf(result):
+        return None
+    return result
+
+
+def _format_ci_label(ci_low: float | None, ci_high: float | None, /) -> str:
+    """Format bootstrap CI as human label, e.g. '(95% CI 38-56%)'.
+
+    Returns empty string when CI is unavailable.
+    """
+    if ci_low is None or ci_high is None:
+        return ""
+    return f" (95% CI {ci_low:.0%}-{ci_high:.0%})"
+
+
+def render_regime_winrate_line(
+    regime: str,
+    *,
+    today: date | None = None,
+    reports_dir: Path | None = None,
+) -> str:
     """渲染单行 regime 真实胜率提示 (无数据 → 空串).
 
     NS-5 (C234): 末尾追加 ``| 数据时点 YYYY-MM-DD`` + (若 stale) ``| ⚠ ...`` 提示.
@@ -270,7 +305,7 @@ def render_regime_winrate_line(regime: str, *, today: date | None = None) -> str
         regime: ``regime_gate_level`` 值.
         today: NS-5 测试注入用. ``None`` → ``date.today()`` (生产路径).
     """
-    s = compute_regime_winrate_summary(regime)
+    s = compute_regime_winrate_summary(regime, reports_dir=reports_dir)
     if not s.has_data:
         return ""
 
@@ -282,8 +317,9 @@ def render_regime_winrate_line(regime: str, *, today: date | None = None) -> str
         color = Fore.RED
 
     advice = _REGIME_ADVICE.get(s.regime, "")
+    ci_label = _format_ci_label(s.winrate_ci_low, s.winrate_ci_high)
     parts = [
-        f"  📊 当前市场 ({s.regime}): {color}历史真实胜率 {s.winrate:.0%}{Style.RESET_ALL}",
+        f"  📊 当前市场 ({s.regime}): {color}历史真实胜率 {s.winrate:.0%}{ci_label}{Style.RESET_ALL}",
         f"| 典型 {s.median_return:+.1f}%",
         f"| 样本 n={s.sample_count}",
     ]

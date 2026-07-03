@@ -16,15 +16,153 @@ NS-5 (C234, 2026-06-28): 加 as_of 字段 (数据时点标注) + staleness 检�
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import pytest
 
 from src.screening.regime_winrate import (
+    _format_ci_label,
+    _optional_float,
     compute_regime_winrate_summary,
+    load_latest_regime_recompute,
     render_regime_winrate_line,
     render_regime_multihorizon_line,
     REGIME_MULTIHORIZON_MEDIANS,
 )
+
+
+# ---------------------------------------------------------------------------
+# 辅助函数测试 — _optional_float / _format_ci_label
+# ---------------------------------------------------------------------------
+
+
+class TestOptionalFloat:
+    def test_none_returns_none(self) -> None:
+        assert _optional_float(None) is None
+
+    def test_float_passthrough(self) -> None:
+        assert _optional_float(0.5) == pytest.approx(0.5)
+
+    def test_nan_returns_none(self) -> None:
+        assert _optional_float(float("nan")) is None
+
+    def test_inf_returns_none(self) -> None:
+        assert _optional_float(float("inf")) is None
+
+
+class TestFormatCiLabel:
+    def test_none_ci_returns_empty(self) -> None:
+        assert _format_ci_label(None, None) == ""
+        assert _format_ci_label(0.3, None) == ""
+
+    def test_valid_ci_formatted_correctly(self) -> None:
+        label = _format_ci_label(0.3, 0.6)
+        assert "30%" in label
+        assert "60%" in label
+        assert "CI" in label
+
+
+# ---------------------------------------------------------------------------
+# bootstrap CI wiring from recomputed JSON — render_regime_winrate_line
+# ---------------------------------------------------------------------------
+
+
+class TestRegimeWinrateLineWithBootstrapCi:
+    """loop 52: bootstrap CI fields written by regime_winrate_recompute should
+    be read by compute_regime_winrate_summary and displayed by render_regime_winrate_line."""
+
+    @staticmethod
+    def _restore_real_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+        """撤销 conftest autouse fixture 对 load_latest_regime_recompute 的 patch."""
+        import src.screening.regime_winrate as rw
+
+        real = getattr(rw, "_real_load_latest_regime_recompute", None)
+        if real is None:
+            real = rw.__dict__.get("load_latest_regime_recompute")
+        if real is not None:
+            monkeypatch.setattr(rw, "load_latest_regime_recompute", real)
+
+    def test_json_with_ci_appears_in_rendered_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """合成 JSON artifact (含 winrate_ci_low/winrate_ci_high) → rendered line 含 CI 标记."""
+        self._restore_real_loader(monkeypatch)
+
+        json_dir = tmp_path / "reports"
+        json_dir.mkdir()
+
+        payload = {
+            "regime_winrates": {
+                "crisis": {
+                    "winrate": 0.468,
+                    "avg_return": 0.58,
+                    "median_return": -0.93,
+                    "sample_count": 119,
+                    "winrate_ci_low": 0.37,
+                    "winrate_ci_high": 0.56,
+                    "ci_level": 0.95,
+                }
+            },
+            "regime_multihorizon_medians": {},
+            "as_of": "2026-07-04",
+            "total_records": 200,
+            "matched_records": 195,
+        }
+        import json
+        (json_dir / "regime_winrates_recomputed_20260704.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+        # Verify compute_regime_winrate_summary reads CI fields from JSON
+        s = compute_regime_winrate_summary("crisis", reports_dir=json_dir)
+        assert s.source == "recomputed_json", f"source={s.source}"
+        assert s.winrate_ci_low == pytest.approx(0.37, abs=0.01)
+        assert s.winrate_ci_high == pytest.approx(0.56, abs=0.01)
+
+        # Verify the rendered line includes CI label
+        line = render_regime_winrate_line("crisis", today=date(2026, 7, 4), reports_dir=json_dir)
+        assert line != ""
+        assert "47%" in line
+        assert "CI" in line, f"line={line}"
+        assert "37%" in line, f"line={line}"
+
+    def test_json_without_ci_still_renders(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """JSON artifact 无 CI 字段 → 降级展示 (无 CI label, 不崩溃)."""
+        self._restore_real_loader(monkeypatch)
+
+        json_dir = tmp_path / "reports"
+        json_dir.mkdir()
+        payload = {
+            "regime_winrates": {
+                "crisis": {
+                    "winrate": 0.468,
+                    "avg_return": 0.58,
+                    "median_return": -0.93,
+                    "sample_count": 119,
+                }
+            },
+            "regime_multihorizon_medians": {},
+            "as_of": "2026-07-04",
+            "total_records": 200,
+            "matched_records": 195,
+        }
+        import json
+        (json_dir / "regime_winrates_recomputed_20260704.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+        line = render_regime_winrate_line("crisis", today=date(2026, 7, 4), reports_dir=json_dir)
+        assert line != ""
+        assert "47%" in line
+        # 无 CI 字段 → 不渲染 CI label (不含 "CI")
+        assert "CI" not in line
+
+
+# ---------------------------------------------------------------------------
+# 纯函数测试 — compute_regime_winrate_summary
+# ---------------------------------------------------------------------------
 
 
 class TestComputeRegimeWinrateSummary:
