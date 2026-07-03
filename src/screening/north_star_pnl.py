@@ -195,16 +195,16 @@ def render_north_star_line(report: NorthStarPnlReport) -> str:
     wr = f"{report.overall_winrate:.0%}" if report.overall_winrate is not None else "—"
     med = f"{report.overall_median:+.0f}%" if report.overall_median is not None else "—"
     cum = f"{report.cumulative_mean_pnl:+.0f}%"
-    # c328/autodev-36: 数据时点披露
+    # c328/autodev-36: 数据时点披露 (移出 color span)
     as_of_suffix = f" | 数据时点 {report.as_of}" if report.as_of else ""
     base = (
         f"  🎯 北极星 P&L ({report.horizon_label}): 累积 {cum} (mean) | 胜率 {wr} | 典型 {med}"
-        f" | n={report.sample_count}, {report.sample_dates}日{as_of_suffix}"
+        f" | n={report.sample_count}, {report.sample_dates}日"
     )
 
     if report.verdict == "divergent":
         return (
-            f"{base} {Fore.RED}⚠ mean 被少数赢家拉高, 典型票微亏 — 北极星未真达标{Style.RESET_ALL}"
+            f"{base} {Fore.RED}⚠ mean 被少数赢家拉高, 典型票微亏 — 北极星未真达标{Style.RESET_ALL}{as_of_suffix}"
         )
     if report.verdict == "positive":
         # C270 (2026-07-01, empirical dogfood on 2026-06-30 report): the existing
@@ -220,11 +220,11 @@ def render_north_star_line(report: NorthStarPnlReport) -> str:
             and report.cumulative_mean_pnl - report.overall_median > 10
         ):
             return (
-                f"{base} {Fore.YELLOW}✓ 趋近 >0 但 mean 被少数赢家拉高 (典型 {med} 远低于 mean){Style.RESET_ALL}"
+                f"{base} {Fore.YELLOW}✓ 趋近 >0 但 mean 被少数赢家拉高 (典型 {med} 远低于 mean){Style.RESET_ALL}{as_of_suffix}"
             )
-        return f"{base} {Fore.GREEN}✓ 趋近 >0{Style.RESET_ALL}"
+        return f"{base} {Fore.GREEN}✓ 趋近 >0{Style.RESET_ALL}{as_of_suffix}"
     # negative
-    return f"{base} {Fore.RED}⚠ 亏 — 远未达北极星{Style.RESET_ALL}"
+    return f"{base} {Fore.RED}⚠ 亏 — 远未达北极星{Style.RESET_ALL}{as_of_suffix}"
 
 
 # ---------------------------------------------------------------------------
