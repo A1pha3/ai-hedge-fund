@@ -18,7 +18,7 @@ AutoDev 评估候选工作时，优先级按下面顺序收敛：
 
 1. 提升 T+5 / T+10 realized P&L。
 2. 提升 T+5 / T+10 winrate，并优先要求 winrate > 50%。
-3. 提升 T+5 / T+10 median return，并优先要求 median return > 0。
+3. 提升 T+5 / T+10 return (BUY gate 实际使用 mean, 见 investability.py:241); median 用于 T+30 invalidation 和 --reconcile 诊断显示。contract 说 median 是历史产物 — 若 owner 确认应以 mean 为准, 可更新此处。
 4. 减少低质量候选，保留更少、更高确信、更可解释的代表票。
 5. 提高数据真实性、point-in-time 正确性、可回放性、可观测性和前门信任校准。
 
