@@ -77,6 +77,23 @@ def test_load_state_corrupt_file_returns_empty_not_raise(tmp_path):
     assert s["rows"] == []
 
 
+def test_load_state_valid_json_non_dict_returns_empty_not_raise(tmp_path):
+    """c317c (loop 51): valid JSON that is NOT a dict (e.g. ``42``, ``null``,
+    ``[]``, ``"hello"`` — plausible outcomes of a truncated/garbled write or a
+    hand-edit) must NOT crash the resume. The docstring promises '不 crash 不
+    加载垃圾' but pre-fix load_state called raw.get() at L76 before any
+    isinstance check, so a non-dict JSON raised AttributeError — directly
+    contradicting the documented guard. JSONDecodeError + wrong-shape-dict
+    were handled; valid-non-dict-JSON was the hole.
+    """
+    for bad_content in ("42", "null", "[]", "\"hello\"", "true"):
+        p = tmp_path / f"nondict_{bad_content[:4]}.json"
+        p.write_text(bad_content)
+        s = load_state(p)  # must NOT raise AttributeError
+        assert s["days_done"] == [], f"content={bad_content!r} should give empty state"
+        assert s["rows"] == []
+
+
 # ---------------------------------------------------------------------------
 # merge_day_rows — the decision-critical dedup. Double-counting a day fakes N.
 # ---------------------------------------------------------------------------

@@ -73,6 +73,14 @@ def load_state(path: Path) -> dict[str, Any]:
         # NS-17 / 数据真实性: 损坏 → 安全降级 (重新积累), 不 crash 不加载垃圾.
         print(f"[warn] 状态文件 {path} 损坏 ({e}); 重新积累.", file=sys.stderr)
         return {"days_done": [], "rows": []}
+    # c317c (loop 51): valid JSON that is NOT a dict (e.g. 42 / null / [] / "x" —
+    # plausible outcomes of a truncated/garbled write or hand-edit) must also
+    # safe-degrade. Pre-fix raw.get() here raised AttributeError, contradicting
+    # the '不 crash' docstring guard (JSONDecodeError + wrong-shape-dict were
+    # handled; valid-non-dict-JSON was the hole).
+    if not isinstance(raw, dict):
+        print(f"[warn] 状态文件 {path} 非 dict ({type(raw).__name__}); 重新积累.", file=sys.stderr)
+        return {"days_done": [], "rows": []}
     days_done = raw.get("days_done") or []
     rows = raw.get("rows") or []
     if not isinstance(days_done, list) or not isinstance(rows, list):
@@ -158,7 +166,18 @@ def _collect_one_date(
                     dict(zip(dfn["ts_code"].tolist(), dfn["pct_chg"].astype(float).tolist()))
                     if dfn is not None and not dfn.empty else {}
                 )
-            except Exception:
+            except Exception as exc:
+                # c317c (loop 51): NS-17 drain. This script is the direct instrument
+                # for the R6 direction-sign verdict; its own docstring warns silent
+                # data gaps could fake N and flip the delta. A bare except here would
+                # make a transient API failure (rate-limit/network/auth) indistinguishable
+                # from a genuine empty trading day — silently reducing per-horizon
+                # maturity. Log so the operator can tell 'API hiccup' from 'no data'.
+                logger.warning(
+                    "forward-window fetch failed for %s: %s: %s (recording as empty; "
+                    "maturity for this date will be reduced)",
+                    trade_dates[fi], type(exc).__name__, exc,
+                )
                 fwd_cache[trade_dates[fi]] = {}
 
     mature = mature_horizons(di, len(trade_dates), horizons)
