@@ -111,3 +111,80 @@ class TestScoreControlledFactorAttribution:
         # within low bucket, trend 高/低 都是 +2.0 (50/50) → 无 within-bucket 倒挂
         inv = next((x for x in report.inversions if x.factor == "trend"), None)
         assert inv is None, "纯 score confound (within-bucket 无效应) 不应报倒挂"
+
+    def test_score_controlled_inversion_carries_bootstrap_ci(self) -> None:
+        """c321/autodev-36: score-controlled 因子倒挂携带 bootstrap CI (镜像 c317)."""
+        from src.screening.factor_attribution_by_state import compute_factor_attribution_score_controlled_from_loaded
+        recs = []
+        # 全 low bucket, event_sentiment 高→负 (强倒挂, ~720 条)
+        for i in range(120):
+            recs.append({"score_decomposition": {"base_contributions": {"event_sentiment": 0.03}, "total": 0.2}, "next_5day_return": -3.0})
+        for i in range(120):
+            recs.append({"score_decomposition": {"base_contributions": {"event_sentiment": -0.04}, "total": 0.2}, "next_5day_return": +3.0})
+        report = compute_factor_attribution_score_controlled_from_loaded(recs, min_n=15)
+        inv = next((x for x in report.inversions if x.factor == "event_sentiment"), None)
+        assert inv is not None
+        # Bootstrap CI 应存在且上界 > 下界
+        assert inv.inversion_ci_low is not None
+        assert inv.inversion_ci_high is not None
+        assert inv.inversion_ci_high >= inv.inversion_ci_low
+        # 强倒挂 CI 应 > 0 (不跨零)
+        assert inv.inversion_ci_low > 0, f"强倒挂 CI 下界应 > 0, got {inv.inversion_ci_low:.4f}"
+        assert inv.inversion_ci_high > 0
+
+    def test_score_controlled_render_shows_ci_bracket(self) -> None:
+        """c321: render_score_controlled_factor_line 展示 CI 括号."""
+        from src.screening.factor_attribution_by_state import (
+            ScoreControlledFactorInversion, ScoreControlledFactorReport,
+            render_score_controlled_factor_line,
+        )
+        inv = ScoreControlledFactorInversion(
+            factor="event_sentiment", stratified_inversion=0.15,
+            high_winrate=0.40, low_winrate=0.55, n=200, survives=True,
+            inversion_ci_low=0.05, inversion_ci_high=0.25,
+        )
+        report = ScoreControlledFactorReport(
+            inversions=[inv], sample_count=500,
+            horizon_label="T+5", verdict="ok",
+        )
+        line = render_score_controlled_factor_line(report)
+        assert "CI[" in line
+        assert "+5%" in line or "+5.0%" in line or "5%" in line
+        assert "15%" in line or "15.0%" in line or "+15%" in line
+        assert "经 score 控制仍真实" in line
+
+    def test_score_controlled_render_silent_when_insufficient(self) -> None:
+        """insufficient 时 render 返回空串."""
+        from src.screening.factor_attribution_by_state import (
+            ScoreControlledFactorReport, render_score_controlled_factor_line,
+        )
+        report = ScoreControlledFactorReport(verdict="insufficient")
+        assert render_score_controlled_factor_line(report) == ""
+
+    def test_bootstrap_inversion_ci_upper_ge_lower(self) -> None:
+        """_bootstrap_inversion_ci 单调性: upper >= lower (幂等 seed 相同)."""
+        from src.screening.factor_attribution_by_state import _bootstrap_inversion_ci
+        high_ret = [-2.0, -1.0, -3.0, -5.0, -1.5, -0.5, -4.0, -2.0, -3.5, -1.0]
+        low_ret = [3.0, 5.0, 2.0, 1.0, 4.0, 3.5, 2.5, 1.5, 4.5, 3.0]
+        lo, hi = _bootstrap_inversion_ci(high_ret, low_ret, n_bootstrap=500, seed=42)
+        assert lo is not None and hi is not None
+        assert hi >= lo
+        # 强效应: CI 应 > 0
+        assert lo > 0, f"强 inversion CI 下界应 > 0, got {lo:.4f}"
+
+    def test_bootstrap_inversion_ci_deterministic(self) -> None:
+        """同 seed → 同 CI (幂等)."""
+        from src.screening.factor_attribution_by_state import _bootstrap_inversion_ci
+        high_ret = [-2.0, -1.0, -3.0, -5.0] * 5
+        low_ret = [3.0, 5.0, 2.0, 1.0] * 5
+        lo1, hi1 = _bootstrap_inversion_ci(high_ret, low_ret, n_bootstrap=500, seed=42)
+        lo2, hi2 = _bootstrap_inversion_ci(high_ret, low_ret, n_bootstrap=500, seed=42)
+        assert lo1 == lo2 and hi1 == hi2
+
+    def test_bootstrap_inversion_ci_returns_none_for_empty(self) -> None:
+        """空输入 → None, None."""
+        from src.screening.factor_attribution_by_state import _bootstrap_inversion_ci
+        lo, hi = _bootstrap_inversion_ci([], [1.0, 2.0])
+        assert lo is None and hi is None
+        lo, hi = _bootstrap_inversion_ci([1.0, 2.0], [])
+        assert lo is None and hi is None

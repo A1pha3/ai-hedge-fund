@@ -13,6 +13,7 @@ rank_monotonicity (footer-block) 结构. **纯诊断, 不改因子/gate/仓位**
 """
 from __future__ import annotations
 
+import random as _random
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +27,43 @@ _MIN_N_DEFAULT = 15
 
 #: 倒挂阈值 (low_winrate - high_winrate > 此值 = 倒挂, 镜像 factor_attribution 0.05)
 _INVERSION_THRESHOLD = 0.05
+
+# Bootstrap CI defaults (mirror factor_attribution.py c317)
+_N_BOOTSTRAP = 2000
+_BOOTSTRAP_SEED = 42
+
+
+def _bootstrap_inversion_ci(
+    high_returns: list[float],
+    low_returns: list[float],
+    *,
+    n_bootstrap: int = _N_BOOTSTRAP,
+    ci_level: float = 0.95,
+    seed: int = _BOOTSTRAP_SEED,
+) -> tuple[float | None, float | None]:
+    """Bootstrap percentile CI on (low_winrate - high_winrate).
+
+    对 high/low returns 分别重采样 (有放回), 每轮算 inversion = low_wr - high_wr,
+    返回 [(ci_lower, ci_upper)] percentile CI of the inversion distribution.
+    幂等: 同 seed + 同 input → 同 output (独立 PRNG). None 当输入不足.
+    """
+    n_high = len(high_returns)
+    n_low = len(low_returns)
+    if n_high == 0 or n_low == 0:
+        return None, None
+    high_flags = [1 if r > 0 else 0 for r in high_returns]
+    low_flags = [1 if r > 0 else 0 for r in low_returns]
+    rng = _random.Random(seed)
+    inversions: list[float] = []
+    for _ in range(n_bootstrap):
+        hw = sum(high_flags[rng.randrange(n_high)] for _ in range(n_high)) / n_high
+        lw = sum(low_flags[rng.randrange(n_low)] for _ in range(n_low)) / n_low
+        inversions.append(lw - hw)
+    inversions.sort()
+    alpha = 1.0 - ci_level
+    lo = max(0, int(alpha / 2 * n_bootstrap))
+    hi = min(n_bootstrap - 1, int((1 - alpha / 2) * n_bootstrap))
+    return inversions[lo], inversions[hi]
 
 
 @dataclass
@@ -296,6 +334,10 @@ class ScoreControlledFactorInversion:
     low_winrate: float
     n: int
     survives: bool  # stratified_inversion > threshold (真实倒挂, 非 score confound)
+    # c321/autodev-36: bootstrap CI on stratified_inversion — same disease class as
+    # c317 factor_attribution CI. 让 owner 看见 uncertainty 再决定是否重平衡.
+    inversion_ci_low: float | None = None
+    inversion_ci_high: float | None = None
 
 
 @dataclass
@@ -388,12 +430,19 @@ def compute_factor_attribution_score_controlled_from_loaded(
             continue
         stratified = weighted_inversion / total_weight
         if stratified > _INVERSION_THRESHOLD:
+            # Bootstrap CI on the inversion (same disease class as c317 factor_attribution CI)
+            ci_lo, ci_hi = _bootstrap_inversion_ci(
+                pooled_high_returns, pooled_low_returns,
+                n_bootstrap=_N_BOOTSTRAP, seed=_BOOTSTRAP_SEED + hash(factor) % 1000,
+            )
             inversions.append(ScoreControlledFactorInversion(
                 factor=factor, stratified_inversion=stratified,
                 high_winrate=sum(1 for x in pooled_high_returns if x > 0) / len(pooled_high_returns) if pooled_high_returns else 0.0,
                 low_winrate=sum(1 for x in pooled_low_returns if x > 0) / len(pooled_low_returns) if pooled_low_returns else 0.0,
                 n=len(pooled_high_returns) + len(pooled_low_returns),
                 survives=True,
+                inversion_ci_low=ci_lo,
+                inversion_ci_high=ci_hi,
             ))
 
     return ScoreControlledFactorReport(
@@ -407,12 +456,12 @@ def render_score_controlled_factor_line(report: ScoreControlledFactorReport) -> 
     """渲染 score-controlled 因子倒挂 (insufficient → 空串).
 
     展示形如:
-      ``  ⚠ 因子真实倒挂(T+5, score-controlled): event_sentiment +15% (survives control) | fundamental borderline (filtered)``
+      ``  ⚠ 因子真实倒挂(T+5, score-controlled): event_sentiment +16% (CI[+6%, +26%], survives control)``
     """
     if report.verdict != "ok" or not report.inversions:
         return ""
     parts = [
-        f"{inv.factor} 倒挂 +{inv.stratified_inversion:.0%} (高{inv.high_winrate:.0%} 低{inv.low_winrate:.0%}, n={inv.n}, 经 score 控制仍真实)"
+        _format_one_score_controlled(inv)
         for inv in report.inversions
     ]
     body = " | ".join(parts)
@@ -420,6 +469,20 @@ def render_score_controlled_factor_line(report: ScoreControlledFactorReport) -> 
         f"  {Fore.RED}⚠ 因子真实倒挂({report.horizon_label}, score-controlled): {body}{Style.RESET_ALL}"
         f" {Fore.RED}(排除 score-level confound 后的真实因子效应, 供 owner 调优){Style.RESET_ALL}"
     )
+
+
+def _format_one_score_controlled(inv: ScoreControlledFactorInversion) -> str:
+    """Format one score-controlled inversion line with CI bracket.
+
+    CI available and non-trivial (range > 0): show CI bracket.
+    CI unavailable (edge case, e.g. bootstrap degeneracy): show bare estimate.
+    """
+    base = f"{inv.factor} 倒挂 +{inv.stratified_inversion:.0%} (高{inv.high_winrate:.0%} 低{inv.low_winrate:.0%}, n={inv.n}"
+    if inv.inversion_ci_low is not None and inv.inversion_ci_high is not None:
+        ci_str = f", CI[{inv.inversion_ci_low:+.0%}, {inv.inversion_ci_high:+.0%}]"
+    else:
+        ci_str = ""
+    return f"{base}{ci_str}, 经 score 控制仍真实)"
 
 
 __all__ = [
