@@ -8,6 +8,10 @@
 
 当前 BUY 主决策 horizon 是 T+5 或 T+10。T+30 只作为长期衰退、持有风险和 invalidation 信号，不作为默认 BUY 主决策依据。
 
+注: crisis/risk_off regime 下 T+5 被 BUY gate 排除 (NS-23, autodev c245)。
+    仅 T+10 可放行 — 全期 per-bucket T+5 winrate 不能盲目外推到 regime-specific
+    (用户 2026-06-29 直接复现证据: crisis 实际 T+5 winrate=43.59% < 50%)。
+
 ## Fitness 优先级
 
 AutoDev 评估候选工作时，优先级按下面顺序收敛：
