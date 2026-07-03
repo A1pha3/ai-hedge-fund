@@ -110,7 +110,7 @@ class TestRenderPortfolioExpectedReturn:
         assert Fore.GREEN in result
 
     def test_low_winrate_uses_red(self, all_buy) -> None:
-        """Win rate < 45% → red."""
+        """Win rate < 50% → red (threshold aligned with _winrate_color >=0.55)."""
         picks = [_pick(ticker="000001", t30_wr=0.40), _pick(ticker="000002", t30_wr=0.42)]
         result = _render_portfolio_expected_return(picks, "normal")
         assert result != ""
