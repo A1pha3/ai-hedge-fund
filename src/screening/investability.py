@@ -9,6 +9,7 @@ long-term invalidation signal (not a BUY-decision horizon).
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from src.screening.composite_score import CompositeReport
@@ -45,7 +46,7 @@ def _max_short_horizon_metric(metrics: dict[str, Any] | None) -> float | None:
     nums: list[float] = []
     for key in _SHORT_HORIZON_KEYS:
         raw = metrics.get(key)
-        if isinstance(raw, (int, float)):
+        if isinstance(raw, (int, float)) and math.isfinite(raw):
             nums.append(float(raw))
     return max(nums) if nums else None
 

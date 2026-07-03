@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -334,7 +335,7 @@ def _classify_return_rhythm(expected_returns: dict | None) -> str:
     t5 = expected_returns.get("t5")
     t20 = expected_returns.get("t20")
     t30 = expected_returns.get("t30")
-    if not all(isinstance(x, (int, float)) for x in (t5, t20, t30)):
+    if not all(isinstance(x, (int, float)) and math.isfinite(x) for x in (t5, t20, t30)):
         return "—"
     if t30 <= 0:
         return "—"
@@ -379,6 +380,10 @@ def _suggest_position_pct(
     without over-stepping into investment directive.
     """
     if decision_edge is None or decision_winrate is None or decision_edge <= 0:
+        return 0.0
+    # NaN guard: upstream _extract_decision_horizon_metrics now uses isfinite
+    # but any call-site passing NaN directly must not crash or produce nan%.
+    if not math.isfinite(decision_edge) or not math.isfinite(decision_winrate):
         return 0.0
     regime_lower = str(market_regime).lower()
     if "crisis" in regime_lower or "risk_off" in regime_lower or "halt" in regime_lower:

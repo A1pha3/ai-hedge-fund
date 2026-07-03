@@ -585,6 +585,105 @@ class TestClassifyReturnRhythm:
 
         assert _classify_return_rhythm({"t5": "n/a", "t20": 0.05, "t30": 0.08}) == "—"
 
+    def test_nan_anchor_horizon_returns_dash(self) -> None:
+        """NaN in any anchor horizon → '—' (not silent '匀' misclassification).
+
+        NaN t5 passes isinstance(t5, (int, float)) at line 337, t30<=0 is
+        False (NaN compared), so the function falls through all branches into
+        the '匀' default — a silent misclassification. The fix adds math.isfinite
+        or safe_float guards so the function returns '—' for corrupt data.
+        """
+        import math
+        from src.screening.top_picks import _classify_return_rhythm
+
+        nan = math.nan
+        assert _classify_return_rhythm({"t5": nan, "t20": 0.05, "t30": 0.08}) == "—", (
+            "NaN t5 → '—', not fall-through to 匀"
+        )
+        assert _classify_return_rhythm({"t5": 0.06, "t20": nan, "t30": 0.08}) == "—", (
+            "NaN t20 → '—'"
+        )
+        assert _classify_return_rhythm({"t5": 0.06, "t20": 0.05, "t30": nan}) == "—", (
+            "NaN t30 → '—', not fall-through (NaN t30 <= 0 is False)"
+        )
+        assert _classify_return_rhythm({"t5": nan, "t20": nan, "t30": nan}) == "—"
+
+
+# ---------------------------------------------------------------------------
+# Loops 63-64 (autodev): NaN display-layer guard — position sizing / portfolio
+# ---------------------------------------------------------------------------
+
+
+class TestDecisionHorizonMetricsWithNan:
+    """loop 64: _extract_decision_horizon_metrics — NaN in horizon dicts must
+    not propagate to position-sizing / portfolio aggregation as nan%.
+
+    _extract_decision_horizon_metrics calls _max_short_horizon_metric which
+    filters with isinstance(raw, (int, float)) — NaN passes through. The
+    caller _suggest_position_pct checks 'decision_edge <= 0' which returns
+    False for NaN, letting NaN into the position-size computation and
+    ultimately rendering as '建议仓位=nan%'.
+
+    These tests pin the NaN-aware behavior.
+    """
+
+    def test_extract_nan_horizon_returns_none(self) -> None:
+        import math
+        from src.screening.top_picks import _extract_decision_horizon_metrics
+
+        edge, winrate = _extract_decision_horizon_metrics({
+            "expected_returns": {"t5": math.nan, "t10": math.nan},
+            "win_rates": {"t5": math.nan, "t10": math.nan},
+        })
+        assert edge is None, f"expected None for NaN edge, got {edge!r}"
+        assert winrate is None, f"expected None for NaN winrate, got {winrate!r}"
+
+    def test_extract_mixed_nan_horizon_returns_clean(self) -> None:
+        import math
+        from src.screening.top_picks import _extract_decision_horizon_metrics
+
+        edge, winrate = _extract_decision_horizon_metrics({
+            "expected_returns": {"t5": math.nan, "t10": 9.0},
+            "win_rates": {"t5": math.nan, "t10": 0.62},
+        })
+        assert edge == 9.0, f"expected 9.0 for mixed NaN/clean edge, got {edge!r}"
+        assert winrate == 0.62, f"expected 0.62 for mixed NaN/clean winrate, got {winrate!r}"
+
+
+class TestNanDoesNotRenderNanInPositionSizing:
+    """loop 63: _suggest_position_pct must not render nan% when NaN flows
+    through from horizon dicts.
+
+    The bug chain: all-NaN expected_returns → _extract_decision_horizon_metrics
+    → None (after fix) → _suggest_position_pct → 0.0 (not NaN+confidence→nan%).
+    """
+
+    def test_nan_expected_returns_gives_zero_position(self) -> None:
+        import math
+        from src.screening.top_picks import _suggest_position_pct
+
+        pos = _suggest_position_pct(
+            decision_edge=math.nan,
+            decision_winrate=math.nan,
+            market_regime="trend",
+        )
+        assert pos == 0.0, (
+            f"NaN decision_edge → position should be 0.0, got {pos!r}"
+        )
+
+    def test_nan_winrate_with_finite_edge_gives_position(self) -> None:
+        import math
+        from src.screening.top_picks import _suggest_position_pct
+
+        # NaN winrate should not crash — confidence should be treated safely
+        pos = _suggest_position_pct(
+            decision_edge=5.0,
+            decision_winrate=math.nan,
+            market_regime="trend",
+        )
+        assert isinstance(pos, (int, float)), "position must be a number"
+        assert pos >= 0.0, "position must be non-negative"
+
 
 # ---------------------------------------------------------------------------
 # _format_sample_count (O-2 / R35 mature-T+30 disclosure)
