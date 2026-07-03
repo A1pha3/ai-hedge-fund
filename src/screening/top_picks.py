@@ -1804,12 +1804,14 @@ def _print_portfolio_risk_block(picks: list[dict]) -> None:
 def _print_regime_winrate_block(market_regime: str) -> None:
     """R-5.A: 按 current regime 展示真实历史 T+30 胜率 + 多周期 median 速览。
 
-    真实回测 (2026-06-24, 91 只) 揭示: crisis regime (结构性行情) 真实胜率 73%
-    +8%, normal regime (震荡市) 24% -9%。这让用户看到当前 regime 的真实期望,
-    自己决定是否信任推荐。是赚钱工具的诚实基础 (不碰 gate/仓位)。
+    数据源由 ``regime_winrate`` 模块决定 (NS-5 wiring): 优先读 daily scheduling
+    写的 ``regime_winrates_recomputed_*.json`` artifact, fallback 到 hardcoded
+    ``REGIME_HISTORICAL_WINRATES``. 具体胜率随数据累积而变 (非固定值), 让用户
+    看到当前 regime 的真实期望, 自己决定是否信任推荐。是赚钱工具的诚实基础
+    (不碰 gate/仓位).
 
-    2026-06-25 多周期扩展: 加一行各 horizon (T+15/T+20/T+25/T+30) median,
-    让用户看到中长周期是否比 T+30 更优 (如 crisis T+20/T+25 正 median).
+    多周期扩展: 加一行各 horizon (T+15/T+20/T+25/T+30) median, 让用户看到
+    中长周期是否比 T+30 更优.
     """
     try:
         from src.screening.regime_winrate import (

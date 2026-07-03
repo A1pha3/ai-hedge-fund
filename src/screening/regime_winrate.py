@@ -1,17 +1,20 @@
 """R-5.A 按 regime 展示真实历史胜率 / regime-aware win-rate disclosure.
 
-v2 扩样本回测 (2026-06-24, 32 日期 ~189 只真实推荐, tushare 真实 T+30) 结论:
-三 regime 胜率接近 (crisis 47% / normal 43% / risk_off 30%), 典型票 (median) 都微亏
-到平 — **没有哪个 regime 明显赚钱** (推翻了早期小样本 "crisis 73% 赚钱" 的偏差结论)。
-regime 差异主要体现在 risk_off 略差 (30% vs 43-47%)。
+胜率随数据累积而变 (非固定值). 数据源由 NS-5 wiring 决定: 优先读 daily
+scheduling 写的 ``regime_winrates_recomputed_*.json`` artifact (从
+tracking_history 重算), fallback 到 hardcoded ``REGIME_HISTORICAL_WINRATES``.
+早期 v1 (91 只) 误判 "crisis 73% 赚钱", v2 扩样本 (189 只) 修正为 "三 regime
+都 30-47%"; 随 daily scheduling 累积至 8000+ records (2026-07), crisis 已回到
+53% — **结论会随数据变, 勿在此 docstring 写死具体胜率** (loop 55 教训:
+_REGIME_ADVICE 写死 ~47% 与 headline 53% 矛盾). 当前实际值见 JSON artifact
+或 ``compute_regime_winrate_summary()`` 返回.
 
 R-5.A 是**零行为改变**的诚实披露: 不碰 gate / 不碰仓位, 只在 --top-picks footer
 按当前 regime 展示真实历史胜率, 让用户看到当前期望自己决定。这是赚钱工具的
 诚实基础, 也是持续累积真实数据验证假设的基础设施。
 
-数据源: ``REGIME_HISTORICAL_WINRATES`` 内嵌真实回测结果 (v2 扩充版, 32 日期 ~189 只;
-随 daily scheduling 累积应定期重算; 后续可从 tracking_history 动态算, 当前硬编码
-避免每跑一次就拉 tushare 或依赖本地 tracking_history 存在)。
+loop 52-53: winrate 点估计附 bootstrap 95% CI (recompute 写, render 读+展示),
+让 owner 区分 "53% ± 2pp" vs "34% ± 4pp" 的不确定性差异.
 
 NS-5 (C234, 2026-06-28): 加 ``as_of`` 数据时点标注 + staleness 检测.
 C220 BUY gate horizon T+30→T+5/T+10 后, 当前 T+30 硬编码数据已 stale (距 owner
@@ -84,11 +87,11 @@ class RegimeWinrateSummary:
     source: str = "hardcoded_fallback"  # NS-5 wiring: recomputed_json | hardcoded_fallback
 
 
-# 真实回测结果 (2026-06-24, 扩充至 32 日期 ~189 只真实推荐, tushare 真实 T+30)。
-# 扩样本后结论: 三 regime 胜率接近 (normal 43% / crisis 47% / risk_off 30%),
-# 典型票 (median) 都微亏到平 — 没有哪个 regime 明显赚钱 (推翻了早期小样本
-# "crisis 73% 赚钱" 的偏差结论)。regime 差异主要体现在 risk_off 略差。
-# 随 daily scheduling 累积应定期重算 (v2 扩充版, 替代 v1 91 只小样本)。
+# FALLBACK 常量 — 仅当 daily scheduling JSON artifact 缺失/损坏时使用 (NS-5 wiring).
+# 数据来自 2026-06-24 v2 扩样本回测 (32 日期 ~189 只). 注: 此为 fallback 快照,
+# 非当前真实值 — daily scheduling 重算后 crisis 已升至 53% (8000+ records, 2026-07).
+# 见 ``compute_regime_winrate_summary()`` source 字段区分 recomputed_json vs fallback.
+# 勿据这些 fallback 数字下结论 (loop 55 教训: _REGIME_ADVICE 写死 ~47% 与实际矛盾).
 REGIME_HISTORICAL_WINRATES: dict[str, dict] = {
     "crisis": {"winrate": 0.468, "avg_return": 0.58, "median_return": -0.93, "sample_count": 119},
     "normal": {"winrate": 0.434, "avg_return": 1.31, "median_return": -4.37, "sample_count": 60},
@@ -300,8 +303,8 @@ def render_regime_winrate_line(
 
     NS-5 (C234): 末尾追加 ``| 数据时点 YYYY-MM-DD`` + (若 stale) ``| ⚠ ...`` 提示.
 
-    展示形如:
-      ``  📊 当前市场 (crisis): 历史真实胜率 47% | 典型 -0.9% | 样本 n=119 | 数据时点 2026-06-25 | ⚠ 数据可能过时 (距今 21 天, 阈值 14 天)``
+    展示形如 (具体胜率/median 随数据变, 此处仅示意格式):
+      ``  📊 当前市场 (crisis): 历史真实胜率 53% (95% CI 51%-55%) | 典型 +1.7% | 样本 n=1763 | 数据时点 2026-07-02 | 广度弱结构性行情...``
     颜色随胜率: ≥50% 绿 / 30-50% 黄 / <30% 红.
 
     Args:
