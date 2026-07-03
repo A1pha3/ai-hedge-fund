@@ -320,6 +320,17 @@ def test_render_payoff_line_shows_ratio():
     assert "payoff" in line
 
 
+def test_render_payoff_line_shows_profit_factor_and_expectancy():
+    """c330/autodev-36: profit_factor + expectancy 之前 computed-but-unrendered."""
+    recs = _p_recs([10.0, -5.0, 20.0, -10.0, 5.0, -3.0])
+    res = compute_payoff_analysis_from_loaded(recs, min_n=2)
+    assert res.profit_factor is not None
+    assert res.expectancy is not None
+    line = render_payoff_line(res)
+    assert "profit_factor" in line
+    assert "expectancy" in line
+
+
 def test_render_payoff_silent_when_insufficient():
     recs = _p_recs([10.0, -5.0])
     res = compute_payoff_analysis_from_loaded(recs, min_n=5)

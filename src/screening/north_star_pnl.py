@@ -416,7 +416,12 @@ def render_payoff_line(result: PayoffAnalysisResult) -> str:
     """渲染盈亏比 + 输家池提示 (insufficient → 空串).
 
     展示形如:
-      ``  📊 盈亏比: payoff=1.86 avg_winner=+21% avg_loser=-11% | 输家池: mid_high winrate=43% (n=125) — 砍此 bucket 提整体 winrate``
+      ``  📊 盈亏比: payoff=1.86 avg_winner=+21% avg_loser=-11% profit_factor=2.3 expectancy=+0.5% | 输家池: mid_high winrate=43% (n=125) — 砍此 bucket 提整体 winrate``
+
+    c330/autodev-36: profit_factor + expectancy 之前被 compute_payoff_analysis_from_loaded
+    计算但从未渲染 (computed-but-unrendered, loop-57 disease class). profit_factor
+    捕获 winrate × payoff 的交互 (sum_wins/|sum_losses|), 与 payoff_ratio (per-trade
+    avg) 互补; expectancy 是 per-trade 期望值. 让 owner 看见完整画像.
     """
     if result.verdict == "insufficient":
         return ""
@@ -424,6 +429,12 @@ def render_payoff_line(result: PayoffAnalysisResult) -> str:
     aw_str = f"{result.avg_winner:+.0f}%" if result.avg_winner is not None else "?"
     al_str = f"{result.avg_loser:+.0f}%" if result.avg_loser is not None else "?"
     base = f"  📊 盈亏比: payoff={payoff_str} avg_winner={aw_str} avg_loser={al_str}"
+    # c330: profit_factor (sum_wins / |sum_losses|) — 之前 computed-but-unrendered
+    if result.profit_factor is not None:
+        base += f" profit_factor={result.profit_factor:.2f}"
+    # c330: expectancy (per-trade expected return) — 之前 computed-but-unrendered
+    if result.expectancy is not None:
+        base += f" expectancy={result.expectancy:+.1f}%"
     # 找最大输家池 (最低 winrate bucket)
     ok_buckets = [b for b in result.per_bucket if b["verdict"] == "ok"]
     if ok_buckets:
