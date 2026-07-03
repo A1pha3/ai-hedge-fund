@@ -352,6 +352,32 @@ class TestBootstrapCI:
         assert lo is None and hi is None
 
 
+class TestDeterministicStrHash:
+    """c337/autodev-36 regression: _deterministic_str_hash must be stable
+    across process restarts (Python's built-in hash() is salted per-process
+    via PYTHONHASHSEED, breaking bootstrap CI determinism contract).
+    """
+
+    def test_known_values(self) -> None:
+        """Lock the Java String.hashCode() algorithm to known outputs."""
+        from src.screening.model_version_comparison import _deterministic_str_hash
+        # Empty string → 0
+        assert _deterministic_str_hash("") == 0
+        # Single char
+        assert _deterministic_str_hash("a") == 97
+        # "ab" = 31*97 + 98 = 3105
+        assert _deterministic_str_hash("ab") == 3105
+        # All implementations should be ≥ 0 (32-bit mask)
+        assert _deterministic_str_hash("event_sentiment") >= 0
+
+    def test_different_strings_different_hashes(self) -> None:
+        from src.screening.model_version_comparison import _deterministic_str_hash
+        factors = ["event_sentiment", "trend", "fundamental", "mean_reversion"]
+        hashes = [_deterministic_str_hash(f) for f in factors]
+        # All distinct
+        assert len(set(hashes)) == len(factors)
+
+
 class TestAsOf:
     """c329/autodev-36: 数据时点披露."""
 

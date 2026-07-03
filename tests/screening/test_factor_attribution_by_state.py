@@ -312,3 +312,22 @@ class TestAsOf:
         )
         line = render_factor_attribution_by_state_line(report)
         assert "数据时点" not in line
+
+
+class TestDeterministicStrHash:
+    """c337/autodev-36 regression: stable across process restarts."""
+
+    def test_known_values(self) -> None:
+        """Lock the Java String.hashCode() algorithm to known outputs."""
+        from src.screening.factor_attribution_by_state import _deterministic_str_hash
+        assert _deterministic_str_hash("") == 0
+        assert _deterministic_str_hash("a") == 97
+        assert _deterministic_str_hash("ab") == 3105  # 31*97 + 98
+
+    def test_consistent_with_sibling_modules(self) -> None:
+        """All 3 implementations must produce identical hashes."""
+        from src.screening.factor_attribution_by_state import _deterministic_str_hash as h1
+        from src.screening.north_star_pnl import _deterministic_str_hash as h2
+        from src.screening.model_version_comparison import _deterministic_str_hash as h3
+        for s in ["event_sentiment", "trend", "score_desc"]:
+            assert h1(s) == h2(s) == h3(s)
