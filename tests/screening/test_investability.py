@@ -1442,3 +1442,195 @@ class TestBuyGateBoundaryValues:
             "composite_score=0.4999 must NOT BUY (< 0.5 bar); got "
             f"{verdict['action']!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# loop 65 (autodev): NaN-through-verdict end-to-end (money-safety invariant)
+# ---------------------------------------------------------------------------
+
+
+class TestNaNInputsNeverCauseBuy:
+    """loop 65: pin the load-bearing money-safety invariant of the whole verdict
+    system — **NaN in any gate input must never CAUSE a BUY that wouldn't happen
+    if the NaN were treated as missing/0**.
+
+    Audit (loop 61 survey, loop 65 ranking): ``_safe_metric``/``safe_float`` are
+    tested in isolation (reject NaN → 0.0), but there was NO end-to-end test that
+    a rec carrying NaN in ``expected_returns``/``win_rates``/``composite_score``
+    flows through ``build_front_door_verdict`` safely. The safe behavior today
+    (NaN never produces a BUY it shouldn't) holds *by accident* — NaN comparisons
+    return False, and ``safe_float(NaN)`` returns 0.0 which fails the strict
+    ``edge > 0`` guard. A refactor touching either layer (the gate operators
+    pinned in c321, or the safe_float default) could flip NaN semantics with no
+    test catching it. The contract explicitly worries about NaN corrupting the
+    gate (wrong BUY signal loses real money).
+
+    Probed actual behavior (loop 65):
+      - NaN composite_score             → AVOID (safe_float→0.0 < 0.5)        ✓
+      - NaN in BOTH horizon win_rates   → AVOID (0.0 < 0.55)                  ✓
+      - NaN in ONE horizon, other clean → BUY on the clean horizon (OR-logic) ✓
+        (correct: one clean signal suffices; NaN horizon = "no signal", edge→0)
+    """
+
+    @staticmethod
+    def _buy_eligible() -> dict:
+        return {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t5": 8.5, "t10": 9.0, "t30": 2.0},
+            "win_rates": {"t5": 0.62, "t10": 0.62, "t30": 0.60},
+            "bucket_sample_count": 48,
+            "bucket_t30_mature_count": 25,
+        }
+
+    def test_nan_composite_score_does_not_buy(self) -> None:
+        """NaN composite_score must NOT BUY.
+
+        safe_float(NaN) → 0.0, which is < the 0.5 BUY bar. This is the safe
+        direction: a pick with corrupt/missing conviction data cannot enter the
+        portfolio. (NS-18 trust discount handles the *missing* case explicitly;
+        NaN is the corrupt-data case.)
+        """
+        nan = float("nan")
+        rec = self._buy_eligible()
+        rec["composite_score"] = nan
+        rec["composite_score_gated"] = nan
+        verdict = build_front_door_verdict(rec, market_regime="trend")
+        assert verdict["action"] != "BUY", (
+            "NaN composite_score must NOT BUY — safe_float→0.0 < 0.5 bar; "
+            f"got {verdict['action']!r}"
+        )
+
+    def test_nan_in_all_horizon_winrates_does_not_buy(self) -> None:
+        """NaN in BOTH T+5 and T+10 win_rates must NOT BUY.
+
+        Both horizons' winrate become 0.0 (< 0.55), so neither passes. This is
+        the case where ALL gate signals are corrupt — must default to non-BUY.
+        """
+        nan = float("nan")
+        rec = self._buy_eligible()
+        rec["win_rates"] = {"t5": nan, "t10": nan, "t30": 0.60}
+        verdict = build_front_door_verdict(rec, market_regime="trend")
+        assert verdict["action"] != "BUY", (
+            "NaN in both horizon win_rates must NOT BUY (both →0.0 < 0.55); "
+            f"got {verdict['action']!r}"
+        )
+
+    def test_nan_in_all_horizon_edges_does_not_buy(self) -> None:
+        """NaN in BOTH T+5 and T+10 expected_returns (edges) must NOT BUY.
+
+        safe_float(NaN) → 0.0, fails the strict ``edge > 0`` guard on both
+        horizons. This pins the strict-``>`` direction (already pinned on finite
+        values by c321 test_edge_exactly_0_does_not_buy) for the NaN case.
+        """
+        nan = float("nan")
+        rec = self._buy_eligible()
+        rec["expected_returns"] = {"t5": nan, "t10": nan, "t30": 2.0}
+        verdict = build_front_door_verdict(rec, market_regime="trend")
+        assert verdict["action"] != "BUY", (
+            "NaN in both horizon edges must NOT BUY (both →0.0, fail strict >); "
+            f"got {verdict['action']!r}"
+        )
+
+    def test_nan_in_one_horizon_other_clean_still_buys_with_honest_horizon(self) -> None:
+        """NaN in ONE horizon (the other clean-passing) → BUY on the clean horizon.
+
+        This pins the OR-logic + honest signal_horizon: a corrupt T+5 does not
+        block a clean T+10 signal (OR-logic), AND the verdict attributes the BUY
+        to T+10 (not T+5) so the operator knows which horizon drove it.
+
+        Money-safety angle: the NaN horizon is treated as "no signal" (edge→0,
+        fails the guard), NOT as a false-positive. The BUY rests entirely on the
+        clean horizon's genuine metrics.
+        """
+        nan = float("nan")
+        rec = self._buy_eligible()
+        rec["expected_returns"] = {"t5": nan, "t10": 9.0, "t30": 2.0}
+        rec["win_rates"] = {"t5": nan, "t10": 0.62, "t30": 0.60}
+        verdict = build_front_door_verdict(rec, market_regime="trend")
+        assert verdict["action"] == "BUY", (
+            "NaN in T+5 with clean T+10 should still BUY (OR-logic, clean "
+            f"horizon suffices); got {verdict['action']!r}"
+        )
+        assert verdict["signal_horizon"] == "T+10", (
+            "BUY must be attributed to the CLEAN horizon (T+10), not the NaN "
+            f"one — operator must know which horizon drove the signal. got "
+            f"{verdict.get('signal_horizon')!r}"
+        )
+
+    def test_nan_inputs_never_crash_verdict(self) -> None:
+        """NaN in every gate input must not raise — the verdict must always
+        return a dict (the web layer's AVOID fallback depends on this contract:
+        a crash here would force the bare-except AVOID, masking the root cause).
+        """
+        nan = float("nan")
+        rec = {
+            "decision": "bullish",
+            "composite_score": nan,
+            "composite_score_gated": nan,
+            "expected_returns": {"t5": nan, "t10": nan, "t30": nan},
+            "win_rates": {"t5": nan, "t10": nan, "t30": nan},
+            "bucket_sample_count": nan,
+            "bucket_t30_mature_count": nan,
+        }
+        # Must not raise
+        verdict = build_front_door_verdict(rec, market_regime="trend")
+        assert isinstance(verdict, dict), "verdict must always return a dict"
+        assert verdict["action"] in {"BUY", "HOLD", "AVOID"}
+        assert verdict["action"] != "BUY", (
+            "all-NaN inputs must never BUY; got "
+            f"{verdict['action']!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# loop 66 (autodev): ranker NaN-in-nested-dicts (pin masked coercion)
+# ---------------------------------------------------------------------------
+
+
+class TestRankerNanInNestedHorizonDicts:
+    """loop 66: extend test_nan_does_not_corrupt_sort_key (line 44) to NaN *inside*
+    ``expected_returns``/``win_rates`` dicts, not just top-level composite_score.
+
+    Audit (loop 61 survey, area #2): ``_max_short_horizon_metric`` (investability.py:46-50)
+    builds ``nums`` via ``isinstance(raw, (int, float))`` — this does NOT filter
+    NaN. A NaN float passes the isinstance check, gets appended, and ``max(nums)``
+    returns NaN. The bug is currently MASKED by defense-in-depth: the caller
+    wraps the result in ``_safe_metric(..., float("-inf"))`` (lines 509-510),
+    which converts the NaN to ``-inf``. So ranking is correct today, but only
+    because of two layers — if either is silently refactored, NaN could corrupt
+    the sort key and produce non-deterministic ranking (the exact NS-13 bug).
+
+    These tests pin the end-to-end behavior (deterministic ranking with NaN in
+    nested horizon dicts) so the masked coercion can't silently regress.
+    """
+
+    def test_nan_in_nested_horizon_dicts_does_not_corrupt_ranking(self) -> None:
+        """Two recs with NaN in expected_returns/win_rates (nested) must rank
+        deterministically — same ticker order regardless of input shuffle.
+
+        This is the nested-dict analog of test_nan_does_not_corrupt_sort_key
+        (line 44), which only covers top-level composite_score NaN.
+        """
+        nan = float("nan")
+        recs = [
+            {
+                "ticker": "AAA", "name": "A", "score_b": 0.5, "composite_score": 0.5,
+                # NaN inside the nested horizon dicts (the masked-coercion path)
+                "expected_returns": {"t5": nan, "t10": nan, "t30": nan},
+                "win_rates": {"t5": nan, "t10": nan, "t30": nan},
+            },
+            {
+                "ticker": "BBB", "name": "B", "score_b": 0.5, "composite_score": 0.5,
+                "expected_returns": {"t5": nan, "t10": nan, "t30": nan},
+                "win_rates": {"t5": nan, "t10": nan, "t30": nan},
+            },
+        ]
+        cr = CompositeReport(trade_date="20260101", items=[])
+        er = ExpectedReturnReport(trade_date="20260101", items=[], lookback_days=60, total_samples=0)
+        order_a = rank_recommendations_by_investability(list(recs), cr, er)
+        order_b = rank_recommendations_by_investability(list(reversed(recs)), cr, er)
+        assert [r["ticker"] for r in order_a] == [r["ticker"] for r in order_b], (
+            "NaN in nested horizon dicts produced non-deterministic ranking "
+            "(masked coercion at investability.py:46-50 may have regressed)"
+        )
