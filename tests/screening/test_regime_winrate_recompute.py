@@ -104,6 +104,42 @@ class TestWinrateBootstrapCi:
         # 全局 random 状态不变 (我们用独立 Random 实例, 非默认 seed)
         # 因无种子, 两次 random.random() 一般不同, 但不会因为 bootstrap CI 调用而改变 pattern
 
+    def test_ci_brackets_point_estimate(self) -> None:
+        """CI 必须包含点估计 (winrate). 统计基本性质."""
+        # 70% winrate
+        returns = [1.0] * 14 + [-1.0] * 6
+        ci_low, ci_high = _winrate_bootstrap_ci(returns, n_bootstrap=1000, seed=42)
+        point = 14 / 20
+        assert ci_low <= point <= ci_high
+
+    def test_ci_known_answer_matches_wald(self) -> None:
+        """n=100, 50% wins → bootstrap 95% CI ≈ Wald [40%, 60%].
+
+        loop 53 method lesson: "green tests + clean commit ≠ correctness".
+        This test proves the CI numbers are statistically trustworthy, not
+        just present — owner decisions depend on CI being right.
+        """
+        returns = [1.0] * 50 + [-1.0] * 50
+        ci_low, ci_high = _winrate_bootstrap_ci(returns, n_bootstrap=5000, seed=42)
+        # Wald 95% CI for 50/100: 0.5 ± 1.96*sqrt(0.25/100) = 0.5 ± 0.098
+        # Bootstrap percentile should be close (within ~3pp)
+        assert 0.37 <= ci_low <= 0.43, f"ci_low={ci_low} (Wald ~0.40)"
+        assert 0.57 <= ci_high <= 0.63, f"ci_high={ci_high} (Wald ~0.60)"
+
+    def test_larger_n_narrower_ci(self) -> None:
+        """更大样本 → CI 更窄 (统计基本性质: 样本量↑ → 不确定性↓)."""
+        # 50% winrate, n=10 vs n=200
+        small = [1.0] * 5 + [-1.0] * 5
+        large = [1.0] * 100 + [-1.0] * 100
+        _, small_high = _winrate_bootstrap_ci(small, n_bootstrap=1000, seed=42)
+        _, large_high = _winrate_bootstrap_ci(large, n_bootstrap=1000, seed=42)
+        small_width = small_high - 0.5
+        large_width = large_high - 0.5
+        assert small_width > large_width, (
+            f"n=10 upper-half {small_width} should be wider than "
+            f"n=200 {large_width}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # 纯函数测试 — compute_regime_historical_winrates_from_records
@@ -593,3 +629,78 @@ class TestRunRefreshCli:
         assert "crisis" not in parsed["regime_winrates"]
         assert parsed["matched_records"] == 12  # records 仍 matched, 只是 regime 被过滤
         assert parsed["total_records"] == 12
+
+
+# ---------------------------------------------------------------------------
+# 端到端集成测试 — recompute → JSON artifact → load → render (loop 53)
+# ---------------------------------------------------------------------------
+
+
+class TestRecomputeToRenderIntegration:
+    """loop 53: 锁定 recompute 写 CI → JSON artifact → load_latest_regime_recompute
+    读 CI → render_regime_winrate_line 显示 CI 的完整链路.
+
+    这条链路跨两个模块 (regime_winrate_recompute + regime_winrate), 两个 commit
+    (d613a048 + b95fc16c). 没有集成测试的话, 任一端改名/改字段都会静默断裂
+    (recompute 写 winrate_ci_low, render 读不到 → 不显示, 不报错).
+    """
+
+    def test_full_pipeline_ci_flows_through(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """recompute 写 CI → JSON → load → render 显示 CI 标记."""
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+
+        # 写 auto_screening report (crisis regime)
+        _write_auto_screening_report(reports_dir, "20260601", "crisis")
+        # 写 tracking_history: 30 records, 20 win / 10 loss → winrate ~67%
+        # 用不同 return 值避免全一致 (CI 退化为 [1,1])
+        records = []
+        for i in range(20):
+            records.append(_rec(date_str="20260601", t30=float(1 + i * 0.1)))
+        for i in range(10):
+            records.append(_rec(date_str="20260601", t30=float(-(1 + i * 0.1))))
+        _write_tracking_history(reports_dir, records)
+
+        # Step 1: run_refresh_cli 写 JSON artifact (含 bootstrap CI)
+        output_path = reports_dir / "regime_winrates_recomputed_20260601.json"
+        rc = run_refresh_cli(
+            reports_dir=reports_dir, output_path=output_path, min_samples=10
+        )
+        assert rc == 0
+        assert output_path.exists()
+
+        # Step 2: JSON artifact 含 CI 字段
+        payload = json.loads(output_path.read_text(encoding="utf-8"))
+        crisis = payload["regime_winrates"]["crisis"]
+        assert "winrate_ci_low" in crisis
+        assert "winrate_ci_high" in crisis
+        assert crisis["winrate_ci_low"] is not None
+        assert crisis["winrate_ci_high"] is not None
+
+        # Step 3: regime_winrate.load_latest_regime_recompute 读到 CI
+        from src.screening.regime_winrate import (
+            compute_regime_winrate_summary,
+            render_regime_winrate_line,
+        )
+
+        # 撤销 conftest autouse fixture 的 patch
+        import src.screening.regime_winrate as rw
+
+        real = getattr(rw, "_real_load_latest_regime_recompute", None)
+        if real is not None:
+            monkeypatch.setattr(rw, "load_latest_regime_recompute", real)
+
+        summary = compute_regime_winrate_summary("crisis", reports_dir=reports_dir)
+        assert summary.source == "recomputed_json"
+        assert summary.winrate_ci_low is not None
+        assert summary.winrate_ci_high is not None
+
+        # Step 4: render 输出含 CI 标记
+        line = render_regime_winrate_line(
+            "crisis", today=date(2026, 6, 1), reports_dir=reports_dir
+        )
+        assert "CI" in line, f"line={line}"
+        # winrate ~67% → "67%" 出现
+        assert "67%" in line
