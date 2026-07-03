@@ -1,12 +1,24 @@
-"""c310 (loop 43): production-readiness — bound tickers on HedgeFundRequest.
+"""c310+c311 (loops 43-44): production-readiness — bound the two web request
+multipliers that determine total hedge-fund-run work.
 
 The web money-acting endpoints (hedge-fund run, backtest, rerun) accepted
-unbounded tickers → N tickers × 20 agents + per-ticker data fetches = resource
-exhaustion / cost-DoS / timeout for a pre-production web app. No client-side
-bound either. CLI/cron don't use HedgeFundRequest (they build the graph
-directly), so bounding the web model is safe. Default 25 (interactive use is
-typically 2-5 tickers per CLAUDE.md examples); env-configurable for owners who
-batch more.
+unbounded ``tickers`` AND unbounded ``graph_nodes``. Total agent executions per
+request is approximately ``len(tickers) x len(graph_nodes)`` (each graph node
+becomes one agent registered in the StateGraph, and each agent runs once per
+ticker — see ``app/backend/services/graph.py`` ``create_graph``). Either field
+unbounded => resource exhaustion / cost-DoS / timeout on the pre-production web
+app. CLI/cron don't use HedgeFundRequest (they build the graph directly), so
+bounding the web model is safe.
+
+- c310: tickers default 25 (interactive use is 2-5 per CLAUDE.md), env
+  ``HEDGE_FUND_MAX_TICKERS``.
+- c311: graph_nodes default 50 (system has 20 canonical agents — 18 in
+  ANALYST_CONFIG + risk_manager + portfolio_manager; 2.5x headroom for
+  duplicates / utility / notes / group nodes), env
+  ``HEDGE_FUND_MAX_GRAPH_NODES``.
+
+Bounding one multiplier but not the other leaves the DoS vector open via the
+unbounded one, so both are guarded.
 """
 
 from __future__ import annotations
@@ -24,6 +36,10 @@ from app.backend.models.schemas import (
 
 def _hf(tickers: list[str]) -> HedgeFundRequest:
     return HedgeFundRequest(tickers=tickers, graph_nodes=[], graph_edges=[])
+
+
+def _nodes(n: int) -> list[GraphNode]:
+    return [GraphNode(id=f"agent_{i}") for i in range(n)]
 
 
 def test_tickers_within_default_bound_ok():
