@@ -1341,6 +1341,21 @@ class TestBearishDecisionForcesAvoid:
             "is still not a long. got {verdict['action']!r}".format(verdict=verdict)
         )
 
+    def test_bearish_forces_avoid_in_risk_off_regime(self) -> None:
+        """Risk_off regime + bearish → AVOID (crisis branch + supports_long).
+
+        risk_off shares the crisis NS-23 branch (_short_term_passes=_t10_passes).
+        Bearish kills supports_long, which gates both is_high_quality and
+        is_watchable. Even with T+10 passing, the pick must AVOID.
+        """
+        rec = self._strong_metrics()
+        rec["decision"] = "bearish"
+        verdict = build_front_door_verdict(rec, market_regime="risk_off")
+        assert verdict["action"] == "AVOID", (
+            f"bearish in risk_off must AVOID (supports_long gates both quality "
+            f"and watchable paths). got {verdict['action']!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # loop 64 (autodev): BUY-gate boundary values (off-by-one operator pinning)
