@@ -299,6 +299,7 @@ def render_per_state_type_monotonicity_line(report: RankMonotonicityReport) -> s
     if not parts:
         return ""
     body = " | ".join(parts)
+    hlabel = f"({report.horizon_label})" if report.horizon_label else ""
     # 裁决: 全倒挂 → model defect; 分化 → regime-specific
     non_insufficient = [v for v in report.per_state_type_verdict.values() if v != "insufficient"]
     all_inverted = bool(non_insufficient) and all(v == "inverted" for v in non_insufficient)
@@ -309,7 +310,7 @@ def render_per_state_type_monotonicity_line(report: RankMonotonicityReport) -> s
         suffix = f" {Fore.YELLOW}— verdict 分化, regime-specific{Style.RESET_ALL}"
     else:
         suffix = ""
-    return f"  📊 单调性 per state_type: {body}{suffix}"
+    return f"  📊 排序单调性 {hlabel} per state_type: {body}{suffix}"
 
 
 # ---------------------------------------------------------------------------

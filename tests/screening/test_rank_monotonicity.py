@@ -549,3 +549,19 @@ class TestRenderPerStateTypeMonotonicityLine:
     def test_empty_when_no_per_state_type(self) -> None:
         report = compute_rank_monotonicity_from_loaded([], [], min_n=2)
         assert render_per_state_type_monotonicity_line(report) == ""
+
+    def test_shows_horizon_label(self) -> None:
+        """c335/autodev-36: render 包含 horizon_label."""
+        history = [
+            {"date": "20250601", "payload": {"market_state": {"state_type": "MIXED"}}},
+            {"date": "20250602", "payload": {"market_state": {"state_type": "TREND"}}},
+        ]
+        score_for = {"low": 0.10, "mid_low": 0.35, "mid_high": 0.45, "high": 0.60}
+        records = []
+        for date, st in [("20250601", "MIXED"), ("20250602", "TREND")]:
+            for b, r in [("low", 5.0), ("mid_low", 3.0), ("mid_high", -1.0), ("high", -4.0)]:
+                for _ in range(3):
+                    records.append({"recommended_date": date, "recommendation_score": score_for[b], "next_5day_return": r})
+        report = compute_rank_monotonicity_from_loaded(history, records, min_n=2)
+        line = render_per_state_type_monotonicity_line(report)
+        assert "(T+5)" in line
