@@ -125,6 +125,65 @@ def test_render_selection_profitability_line_shows_profit_aware_ab() -> None:
     )
 
 
+def test_render_shows_equal_weight_benchmark_ci() -> None:
+    """loop 60 (empirical dogfood on c306 footer): the equal_weight benchmark CI
+    must be rendered alongside its point estimate.
+
+    Bug found 2026-07-04 by running render_selection_profitability_line on real
+    data (75 days): the line showed "默认 top-3 胜率=48% [36%-60%] ... vs 等权 60%"
+    — the model strategy carried a bootstrap CI but the **benchmark it is compared
+    against showed a bare point estimate**. This creates a false-precision
+    asymmetry: the model looks uncertain (±12pp) while the benchmark looks exact,
+    exaggerating the apparent underperformance. On real data score_desc CI
+    [37%, 60%] **overlaps** the equal_weight point estimate 60%, so the
+    "model_underperforms" verdict is not statistically clean at n=75.
+
+    This is the loop-57 disease class (computed-but-unrendered) recurring on the
+    c306 surface: ``test_strategy_results_carry_bootstrap_ci`` proves equal_weight
+    CI IS computed, but the render dropped it.
+
+    Fixture: constructed directly with a WIDE non-degenerate equal_weight CI
+    [48%, 71%] mirroring real data (n=75), so the bare "60%" cannot trivially
+    satisfy a "[X%-Y%]" substring check.
+    """
+    from src.screening.north_star_pnl import (
+        SelectionProfitabilityReport,
+        SelectionStrategyResult,
+        render_selection_profitability_line,
+    )
+
+    def _strat(name: str, wr: float, lo: float, hi: float, median: float = 0.0) -> SelectionStrategyResult:
+        return SelectionStrategyResult(
+            strategy=name, portfolio_winrate=wr, mean_return=0.0,
+            median_return=median, sample_days=75,
+            ci_lower=lo, ci_upper=hi,
+        )
+
+    # Mirror real data (2026-07-04 dogfood): score_desc 48% [37%-60%],
+    # equal_weight 60% [48%-71%] (CI overlaps the model's), profit_aware 57% [45%-68%].
+    report = SelectionProfitabilityReport(
+        has_data=True, horizon_field="next_5day_return", top_n=3,
+        verdict="model_underperforms",
+        strategies=(
+            _strat("score_desc", 0.48, 0.373, 0.60, median=-0.33),
+            _strat("score_asc", 0.63, 0.52, 0.73),
+            _strat("equal_weight_all", 0.60, 0.48, 0.71),  # <-- wide CI, non-degenerate
+            _strat("random_n", 0.60, 0.48, 0.71),
+            _strat("profit_aware", 0.573, 0.453, 0.68, median=0.81),
+        ),
+    )
+    ew = next(s for s in report.strategies if s.strategy == "equal_weight_all")
+    line = render_selection_profitability_line(report)
+    assert line, "render must produce a line"
+    # The benchmark CI must appear — same _ci_bracket format as the model strategies.
+    ew_ci_expected = f"[{ew.ci_lower:.0%}-{ew.ci_upper:.0%}]"
+    assert ew_ci_expected in line, (
+        f"equal_weight benchmark CI {ew_ci_expected} is computed but not rendered — "
+        f"the benchmark the verdict is measured against looks falsely exact next to "
+        f"the model's bracketed CI (false-precision asymmetry). line={line!r}"
+    )
+
+
 def test_strategy_results_carry_bootstrap_ci() -> None:
     """每策略的 SelectionStrategyResult 必须带 bootstrap CI (winrate 不确定性).
 
@@ -145,5 +204,3 @@ def test_strategy_results_carry_bootstrap_ci() -> None:
         assert s.ci_lower <= s.portfolio_winrate <= s.ci_upper, (
             f"{s.strategy}: point {s.portfolio_winrate} must lie in CI [{s.ci_lower}, {s.ci_upper}]"
         )
-
-

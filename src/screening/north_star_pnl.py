@@ -938,17 +938,21 @@ def render_selection_profitability_line(report: SelectionProfitabilityReport) ->
         lift_pp = (pa.portfolio_winrate - sd.portfolio_winrate) * 100.0
         if abs(lift_pp) >= 5.0:
             pa_marker = f"  {Fore.YELLOW}profit-aware 池内 {lift_pp:+.0f}pp (选择偏差伪象, c303 不建议 flip){Style.RESET_ALL}"
+    # loop 60 (empirical dogfood on c306): 所有策略 CI 必须一致展示, 否则
+    # benchmark (等权) 裸点估计 vs 模型带 CI 形成 false-precision 不对称 — operator
+    # 会误读 "模型 48% [36-60%] vs 等权 60%" 为模型显著输, 实际 CI 重叠 (n=75).
+    sd_ci = _ci_bracket(sd)
+    ew_ci = _ci_bracket(ew)
     if pa is not None and pa.portfolio_winrate is not None:
-        sd_ci = _ci_bracket(sd)
         pa_ci = _ci_bracket(pa)
         return (
             f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): "
             f"默认 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%}{sd_ci} (中位 {sd.median_return:+.2f}%) "
             f"vs profit-aware {pa.portfolio_winrate:.0%}{pa_ci} (中位 {pa.median_return:+.2f}%) "
-            f"vs 等权 {ew.portfolio_winrate:.0%} | {marker}{pa_marker}"
+            f"vs 等权 {ew.portfolio_winrate:.0%}{ew_ci} | {marker}{pa_marker}"
         )
     return (
         f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): "
-        f"模型分 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%} (中位 {sd.median_return:+.2f}%) "
-        f"vs 等权 {ew.portfolio_winrate:.0%} (中位 {ew.median_return:+.2f}%) | {marker}"
+        f"模型分 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%}{sd_ci} (中位 {sd.median_return:+.2f}%) "
+        f"vs 等权 {ew.portfolio_winrate:.0%}{ew_ci} (中位 {ew.median_return:+.2f}%) | {marker}"
     )
