@@ -277,6 +277,41 @@ def render_monotonicity_line(report: RankMonotonicityReport) -> str:
     )
 
 
+def render_per_state_type_monotonicity_line(report: RankMonotonicityReport) -> str:
+    """渲染 per-state_type 单调性细分 (无数据/无 state_type → 空串).
+
+    c334/autodev-36: per_state_type 之前 computed-but-unrendered. 回答关键问题:
+    倒挂是全 regime 一致 (model defect) 还是 regime-specific (expected)?
+    展示形如:
+      ``  📊 单调性 per state_type: crisis 倒挂⚠ (低50%→高40%) | normal 倒挂⚠ (低55%→高42%) — 全 regime 倒挂, 倾向 model defect``
+    """
+    if not report.per_state_type_verdict:
+        return ""
+    parts = []
+    for st, verdict in sorted(report.per_state_type_verdict.items()):
+        buckets = report.per_state_type.get(st, [])
+        wrs = [b.win_rate for b in buckets if b.win_rate is not None]
+        if len(wrs) < 2:
+            continue
+        shape = "→".join(f"{w:.0%}" for w in wrs)
+        tag = {"inverted": "倒挂⚠", "monotonic": "单调✓", "non_monotonic": "非单调⚠"}.get(verdict, verdict)
+        parts.append(f"{st} {tag} ({shape})")
+    if not parts:
+        return ""
+    body = " | ".join(parts)
+    # 裁决: 全倒挂 → model defect; 分化 → regime-specific
+    non_insufficient = [v for v in report.per_state_type_verdict.values() if v != "insufficient"]
+    all_inverted = bool(non_insufficient) and all(v == "inverted" for v in non_insufficient)
+    verdicts_diverge = len(set(non_insufficient)) > 1
+    if all_inverted and len(non_insufficient) >= 2:
+        suffix = f" {Fore.RED}— 全 regime 倒挂, 倾向 model defect{Style.RESET_ALL}"
+    elif verdicts_diverge:
+        suffix = f" {Fore.YELLOW}— verdict 分化, regime-specific{Style.RESET_ALL}"
+    else:
+        suffix = ""
+    return f"  📊 单调性 per state_type: {body}{suffix}"
+
+
 # ---------------------------------------------------------------------------
 # M5: 时段分段单调性 (period breakdown)
 # 区分 H1 因子方向 bug (全期倒挂) vs H2 regime 分化 (前/后半 verdict 不同).
@@ -714,6 +749,7 @@ __all__ = [
     "compute_high_vs_low_significance_from_loaded",
     "compute_power_analysis_from_loaded",
     "render_monotonicity_line",
+    "render_per_state_type_monotonicity_line",
     "render_period_breakdown_line",
     "render_horizon_breakdown_line",
     "render_significance_line",

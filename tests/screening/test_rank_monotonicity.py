@@ -13,6 +13,7 @@ from __future__ import annotations
 from src.screening.rank_monotonicity import (
     compute_rank_monotonicity_from_loaded,
     render_monotonicity_line,
+    render_per_state_type_monotonicity_line,
 )
 
 
@@ -496,3 +497,55 @@ def test_render_power_silent_when_no_data():
     recs = [{"recommended_date": "20250101", "recommendation_score": 0.10, "next_30day_return": 5.0}]
     res = compute_power_analysis_from_loaded(recs, min_n=20)
     assert render_power_line(res) == ""
+
+
+class TestRenderPerStateTypeMonotonicityLine:
+    """c334/autodev-36: per-state_type 单调性渲染 (computed-but-unrendered 修复)."""
+
+    def test_all_inverted_shows_universal_warning(self) -> None:
+        """全 regime 倒挂 → model defect 标注."""
+        history = [
+            {"date": "20250601", "payload": {"market_state": {"state_type": "MIXED"}}},
+            {"date": "20250602", "payload": {"market_state": {"state_type": "TREND"}}},
+        ]
+        score_for = {"low": 0.10, "mid_low": 0.35, "mid_high": 0.45, "high": 0.60}
+        records = []
+        # 两个 state 都倒挂: 高分跌, 低分涨
+        for date, st in [("20250601", "MIXED"), ("20250602", "TREND")]:
+            for b, r in [("low", 5.0), ("mid_low", 3.0), ("mid_high", -1.0), ("high", -4.0)]:
+                for _ in range(3):
+                    records.append({"recommended_date": date, "recommendation_score": score_for[b], "next_5day_return": r})
+        report = compute_rank_monotonicity_from_loaded(history, records, min_n=2)
+        line = render_per_state_type_monotonicity_line(report)
+        assert line
+        assert "倒挂" in line
+        assert "model defect" in line
+        report = compute_rank_monotonicity_from_loaded(history, records, min_n=2)
+        line = render_per_state_type_monotonicity_line(report)
+        assert line
+        assert "倒挂" in line
+        assert "model defect" in line
+
+    def test_divergent_shows_regime_specific(self) -> None:
+        """verdict 分化 → regime-specific 标注."""
+        history = [
+            {"date": "20250601", "payload": {"market_state": {"state_type": "MIXED"}}},
+            {"date": "20250602", "payload": {"market_state": {"state_type": "TREND"}}},
+        ]
+        score_for = {"low": 0.10, "mid_low": 0.35, "mid_high": 0.45, "high": 0.60}
+        records = []
+        # MIXED: inverted; TREND: monotonic
+        for b, r in [("low", 5.0), ("mid_low", 3.0), ("mid_high", -1.0), ("high", -4.0)]:
+            for _ in range(5):
+                records.append({"recommended_date": "20250601", "recommendation_score": score_for[b], "next_5day_return": r})
+        for b, r in [("low", -5.0), ("mid_low", -1.0), ("mid_high", 2.0), ("high", 4.0)]:
+            for _ in range(5):
+                records.append({"recommended_date": "20250602", "recommendation_score": score_for[b], "next_5day_return": r})
+        report = compute_rank_monotonicity_from_loaded(history, records, min_n=2)
+        line = render_per_state_type_monotonicity_line(report)
+        assert line
+        assert "regime-specific" in line or "分化" in line
+
+    def test_empty_when_no_per_state_type(self) -> None:
+        report = compute_rank_monotonicity_from_loaded([], [], min_n=2)
+        assert render_per_state_type_monotonicity_line(report) == ""

@@ -1869,6 +1869,7 @@ def _print_monotonicity_block(report_dir: Path) -> None:
             compute_rank_monotonicity,
             render_horizon_breakdown_line,
             render_monotonicity_line,
+            render_per_state_type_monotonicity_line,
             render_period_breakdown_line,
             render_significance_line,
         )
@@ -1885,6 +1886,10 @@ def _print_monotonicity_block(report_dir: Path) -> None:
     line = render_monotonicity_line(report)
     if line:
         print(line)
+    # c334/autodev-36: per-state_type 单调性细分 (computed-but-unrendered 修复)
+    st_line = render_per_state_type_monotonicity_line(report)
+    if st_line:
+        print(st_line)
     records = None
     # M7: 显著性 — 倒挂是真的还是小样本噪声? (防 owner over-react; 紧接 overall 解释)
     try:
