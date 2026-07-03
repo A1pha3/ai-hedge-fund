@@ -132,11 +132,14 @@ REGIME_MULTIHORIZON_MEDIANS: dict[str, dict[str, dict]] = {
 }
 
 
-# regime 的产品语义提示 (基于扩充后真实回测: 三 regime 胜率都 30-47%, 典型票微亏)
+# regime 的产品语义提示 (loop 55: 纯定性市场特征 + 操作姿态, 不硬编码胜率/alpha 判断 —
+# headline 已展示实际 winrate + CI + median, advice 里重复具体数字会随 daily
+# scheduling 重算变 stale, 与 headline 矛盾. 仅保留 regime 的市场性格定性 + 操作倾向,
+# 这些不随数据重算变 stale: risk_off 本质就是防御, normal 常态市本就需精选.)
 _REGIME_ADVICE: dict[str, str] = {
-    "crisis": "广度弱结构性行情, 历史胜率 ~47%, 典型票微亏 (扩样本后无显著 alpha)",
-    "normal": "广度强常态市, 历史胜率 ~43%, 典型票微亏, 建议谨慎",
-    "risk_off": "避险/弱势市, 历史胜率仅 ~30%, 典型票 -5%, 建议空仓/轻仓",
+    "crisis": "广度弱结构性行情, 少数权重股拉动指数, 选股难度高",
+    "normal": "广度强常态市, 个股分化明显, 建议谨慎精选",
+    "risk_off": "避险/弱势市, 系统性压力大, 建议空仓/轻仓",
 }
 
 

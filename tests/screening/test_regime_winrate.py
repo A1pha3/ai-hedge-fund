@@ -160,6 +160,57 @@ class TestRegimeWinrateLineWithBootstrapCi:
         assert "CI" not in line
 
 
+class TestRegimeAdviceNotStale:
+    """loop 55 (empirical dogfood): _REGIME_ADVICE must not hardcode stale winrate
+    numbers that contradict the recomputed JSON data.
+
+    Bug found 2026-07-03: crisis recomputed winrate=53% but advice said "~47%"
+    (stale v2-扩样本 value). Owner saw contradictory numbers in the same line.
+    Also "无显著 alpha" was stale — 53% CI[50.7%,55.4%] IS significant alpha.
+    """
+
+    @staticmethod
+    def _restore_real_loader(monkeypatch: pytest.MonkeyPatch) -> None:
+        import src.screening.regime_winrate as rw
+
+        real = getattr(rw, "_real_load_latest_regime_recompute", None)
+        if real is None:
+            real = rw.__dict__.get("load_latest_regime_recompute")
+        if real is not None:
+            monkeypatch.setattr(rw, "load_latest_regcompute", real)
+
+    def test_advice_does_not_hardcode_stale_winrate_numbers(self) -> None:
+        """_REGIME_ADVICE must not contain hardcoded winrate percentages.
+
+        The headline already shows the actual winrate. Hardcoding a different
+        number in advice (~47%/~43%/~30%) creates a contradiction when the
+        recomputed JSON shows different values (53%/44%/34%).
+        """
+        from src.screening.regime_winrate import _REGIME_ADVICE
+
+        for regime, advice in _REGIME_ADVICE.items():
+            # advice 不应含硬编码胜率百分比 (headline 已展示实际值)
+            assert "~" not in advice or "%" not in advice, (
+                f"{regime} advice hardcodes a stale winrate: {advice!r} — "
+                f"this contradicts the headline winrate when data changes"
+            )
+
+    def test_advice_does_not_make_data_dependent_alpha_claims(self) -> None:
+        """advice 不应做依赖当前数据的 alpha 判断 (如 '无显著 alpha').
+
+        crisis winrate 53% CI[50.7%,55.4%] 实际 HAS significant alpha —
+        '无显著 alpha' 是 v2 扩样本 (47%) 时的 stale claim.
+        """
+        from src.screening.regime_winrate import _REGIME_ADVICE
+
+        for regime, advice in _REGIME_ADVICE.items():
+            # 不应含数据依赖的 alpha 判断 (随数据变化会 stale)
+            assert "无显著 alpha" not in advice, (
+                f"{regime} advice claims '无显著 alpha' — this is data-dependent "
+                f"and goes stale when winrate CI moves above 50%"
+            )
+
+
 # ---------------------------------------------------------------------------
 # 纯函数测试 — compute_regime_winrate_summary
 # ---------------------------------------------------------------------------
