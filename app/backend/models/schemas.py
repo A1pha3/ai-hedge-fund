@@ -1,3 +1,4 @@
+import os
 import re
 from datetime import datetime, timedelta
 from enum import Enum
@@ -10,6 +11,29 @@ from src.llm.defaults import get_default_model_config
 from src.llm.models import ModelProvider
 
 _DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# Default cap on tickers per web money-acting request (hedge-fund run / backtest /
+# rerun). Prevents resource exhaustion and cost-DoS on the pre-production web app:
+# N tickers × 20 agents + per-ticker data fetches can saturate the provider lanes
+# and run up LLM cost for a single request. CLI/cron bypass HedgeFundRequest (they
+# build the graph directly), so this only guards the web front door. 25 is well
+# above the 2-5 tickers typical of interactive use (see CLAUDE.md examples); owners
+# who batch more can raise it via HEDGE_FUND_MAX_TICKERS.
+_DEFAULT_MAX_TICKERS = 25
+
+
+def _max_tickers() -> int:
+    """Resolve the ticker cap at validation time (not import time) so an env change
+    takes effect on the next request without restarting the server. Non-positive or
+    unparseable values fall back to the default rather than rejecting everything."""
+    raw = os.environ.get("HEDGE_FUND_MAX_TICKERS")
+    if not raw:
+        return _DEFAULT_MAX_TICKERS
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_TICKERS
+    return n if n > 0 else _DEFAULT_MAX_TICKERS
 
 
 class FlowRunStatus(str, Enum):
@@ -30,11 +54,11 @@ class PortfolioPosition(BaseModel):
     quantity: float
     trade_price: float
 
-    @field_validator('trade_price')
+    @field_validator("trade_price")
     @classmethod
     def price_must_be_positive(cls, v: float) -> float:
         if v <= 0:
-            raise ValueError('Trade price must be positive!')
+            raise ValueError("Trade price must be positive!")
         return v
 
 
@@ -75,6 +99,14 @@ class BaseHedgeFundRequest(BaseModel):
     portfolio_positions: Optional[List[PortfolioPosition]] = None
     api_keys: Optional[Dict[str, str]] = None
 
+    @field_validator("tickers")
+    @classmethod
+    def bound_ticker_count(cls, v: List[str]) -> List[str]:
+        limit = _max_tickers()
+        if len(v) > limit:
+            raise ValueError(f"Too many tickers: {len(v)} (limit {limit}). " f"Raise HEDGE_FUND_MAX_TICKERS to allow more.")
+        return v
+
     def get_agent_ids(self) -> List[str]:
         """Extract agent IDs from graph structure"""
         return [node.id for node in self.graph_nodes]
@@ -84,15 +116,12 @@ class BaseHedgeFundRequest(BaseModel):
         if self.agent_models:
             # Extract base agent key from unique node ID for matching
             base_agent_key = extract_base_agent_key(agent_id)
-            
+
             for config in self.agent_models:
                 # Check both unique node ID and base agent key for matches
                 config_base_key = extract_base_agent_key(config.agent_id)
                 if config.agent_id == agent_id or config_base_key == base_agent_key:
-                    return (
-                        config.model_name or self.model_name,
-                        config.model_provider or self.model_provider
-                    )
+                    return (config.model_name or self.model_name, config.model_provider or self.model_provider)
         # Fallback to global model settings
         return self.model_name, self.model_provider
 
@@ -209,6 +238,7 @@ class FlowResponse(BaseModel):
 
 class FlowSummaryResponse(BaseModel):
     """Lightweight flow response without nodes/edges for listing"""
+
     id: int
     name: str
     description: Optional[str]
@@ -222,11 +252,13 @@ class FlowSummaryResponse(BaseModel):
 
 class FlowRunCreateRequest(BaseModel):
     """Request to create a new flow run"""
+
     request_data: Optional[Dict[str, Any]] = None
 
 
 class FlowRunUpdateRequest(BaseModel):
     """Request to update an existing flow run"""
+
     status: Optional[FlowRunStatus] = None
     results: Optional[Dict[str, Any]] = None
     error_message: Optional[str] = None
@@ -234,6 +266,7 @@ class FlowRunUpdateRequest(BaseModel):
 
 class FlowRunResponse(BaseModel):
     """Complete flow run response"""
+
     id: int
     flow_id: int
     status: FlowRunStatus
@@ -251,6 +284,7 @@ class FlowRunResponse(BaseModel):
 
 class FlowRunSummaryResponse(BaseModel):
     """Lightweight flow run response for listing"""
+
     id: int
     flow_id: int
     status: FlowRunStatus
@@ -266,6 +300,7 @@ class FlowRunSummaryResponse(BaseModel):
 # API Key schemas
 class ApiKeyCreateRequest(BaseModel):
     """Request to create or update an API key"""
+
     provider: str = Field(..., min_length=1, max_length=100)
     key_value: str = Field(..., min_length=1)
     description: Optional[str] = None
@@ -274,6 +309,7 @@ class ApiKeyCreateRequest(BaseModel):
 
 class ApiKeyUpdateRequest(BaseModel):
     """Request to update an existing API key"""
+
     key_value: Optional[str] = Field(None, min_length=1)
     description: Optional[str] = None
     is_active: Optional[bool] = None
@@ -281,6 +317,7 @@ class ApiKeyUpdateRequest(BaseModel):
 
 class ApiKeyResponse(BaseModel):
     """Complete API key response"""
+
     id: int
     provider: str
     masked_key_value: Optional[str] = None
@@ -296,6 +333,7 @@ class ApiKeyResponse(BaseModel):
 
 class ApiKeySummaryResponse(BaseModel):
     """API key response without the actual key value"""
+
     id: int
     provider: str
     is_active: bool
@@ -311,4 +349,5 @@ class ApiKeySummaryResponse(BaseModel):
 
 class ApiKeyBulkUpdateRequest(BaseModel):
     """Request to update multiple API keys at once"""
+
     api_keys: List[ApiKeyCreateRequest]
