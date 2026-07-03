@@ -350,3 +350,29 @@ class TestBootstrapCI:
         from src.screening.model_version_comparison import _bootstrap_delta_winrate_ci
         lo, hi = _bootstrap_delta_winrate_ci([], [1.0, 2.0])
         assert lo is None and hi is None
+
+
+class TestAsOf:
+    """c329/autodev-36: 数据时点披露."""
+
+    def test_as_of_uses_candidate_latest_date(self) -> None:
+        """candidate (最近活跃) 的 latest_date 作为 as_of."""
+        records = [_rec("aaa0000aaaa", 0.03, "20260101"), _rec("aaa0000aaaa", 0.03, "20260102")] + [_rec("bbb1111bbbb", 0.03, "20260201"), _rec("bbb1111bbbb", 0.03, "20260202")]
+        cmp = compare_model_versions(records, min_samples=2)
+        assert cmp.candidate is not None
+        assert cmp.as_of == cmp.candidate.latest_date
+        assert cmp.as_of == "20260202"
+
+    def test_render_shows_as_of(self) -> None:
+        """render 展示 | 数据时点."""
+        records = [_rec("aaa0000aaaa", 0.03, "20260101"), _rec("aaa0000aaaa", 0.03, "20260102")] + [_rec("bbb1111bbbb", 0.03, "20260201"), _rec("bbb1111bbbb", 0.03, "20260202")]
+        cmp = compare_model_versions(records, min_samples=2)
+        line = render_model_version_comparison_line(cmp)
+        assert "数据时点" in line
+        assert "20260202" in line
+
+    def test_no_data_as_of_empty(self) -> None:
+        """no_data 时 as_of 为空."""
+        cmp = compare_model_versions([], min_samples=3)
+        assert cmp.verdict == "no_data"
+        assert cmp.as_of == ""

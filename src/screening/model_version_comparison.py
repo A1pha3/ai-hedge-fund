@@ -112,6 +112,8 @@ class ModelVersionComparison:
     # c323/autodev-36: bootstrap CI on delta_winrate — 让 owner 看见 delta 的不确定性
     delta_winrate_ci_low: float | None = None
     delta_winrate_ci_high: float | None = None
+    # c329/autodev-36: 数据时点 — candidate.latest_date (最近活跃版本)
+    as_of: str = ""
     # NS-7 disclosure: pre-NS-2 (commit d61f5dba 2026-06-26 之前) tracking_history 记录
     # 无 model_version 字段, 无法分配到任何 version bucket, 不参与 per-version
     # rank_monotonicity 验证. 这里统计被排除数, 供 render 显式披露 (避免 owner 误以为
@@ -266,6 +268,7 @@ def compare_model_versions(
             verdict="single_version",
             all_versions=versions,
             excluded_pre_versioning_count=excluded_count,
+            as_of=versions[0].latest_date,
         )
 
     candidate = versions[0]  # 最近活跃 = 最新调参
@@ -317,6 +320,7 @@ def compare_model_versions(
         excluded_pre_versioning_count=excluded_count,
         delta_winrate_ci_low=delta_ci_low,
         delta_winrate_ci_high=delta_ci_high,
+        as_of=candidate.latest_date,
     )
 
 
@@ -403,11 +407,13 @@ def render_model_version_comparison_line(comparison: ModelVersionComparison) -> 
     }.get(comparison.verdict, comparison.verdict)
 
     excluded_suffix = _excluded_suffix(comparison)
+    # c329/autodev-36: 数据时点披露
+    as_of_suffix = f" | 数据时点 {comparison.as_of}" if comparison.as_of else ""
 
     if comparison.verdict == "single_version" or comparison.baseline is None:
         c = comparison.candidate
         assert c is not None
-        line = f"模型版本监测{marker}: 仅 {_short(c.model_version)} " f"(n={c.n_samples}, 胜率{_pct(c.winrate)}, 中位{_ret(c.median_return)}, {_rank_mono_tag(c)}) " f"[{verdict_label}, 待累积第二版本对比]{excluded_suffix}"
+        line = f"模型版本监测{marker}: 仅 {_short(c.model_version)} " f"(n={c.n_samples}, 胜率{_pct(c.winrate)}, 中位{_ret(c.median_return)}, {_rank_mono_tag(c)}) " f"[{verdict_label}, 待累积第二版本对比]{excluded_suffix}{as_of_suffix}"
         return f"{color}{line}{Style.RESET_ALL}"
 
     b = comparison.baseline
@@ -417,7 +423,7 @@ def render_model_version_comparison_line(comparison: ModelVersionComparison) -> 
     cand_str = f"{_short(cand.model_version)}(n={cand.n_samples},胜率{_pct(cand.winrate)},{_rank_mono_tag(cand)})"
 
     if comparison.verdict in ("insufficient", "inconclusive"):
-        line = f"模型版本监测{marker}: {base_str} → {cand_str} " f"[{verdict_label}, n_new={cand.n_samples}]{excluded_suffix}"
+        line = f"模型版本监测{marker}: {base_str} → {cand_str} " f"[{verdict_label}, n_new={cand.n_samples}]{excluded_suffix}{as_of_suffix}"
         return f"{color}{line}{Style.RESET_ALL}"
 
     dw = comparison.delta_winrate
@@ -426,5 +432,5 @@ def render_model_version_comparison_line(comparison: ModelVersionComparison) -> 
     ci_str = ""
     if dw is not None and comparison.delta_winrate_ci_low is not None and comparison.delta_winrate_ci_high is not None:
         ci_str = f" CI[{comparison.delta_winrate_ci_low:+.0%}, {comparison.delta_winrate_ci_high:+.0%}]"
-    line = f"模型版本监测{marker}: {base_str} → {cand_str}{dw_str}{ci_str} [{verdict_label}]{excluded_suffix}"
+    line = f"模型版本监测{marker}: {base_str} → {cand_str}{dw_str}{ci_str} [{verdict_label}]{excluded_suffix}{as_of_suffix}"
     return f"{color}{line}{Style.RESET_ALL}"
