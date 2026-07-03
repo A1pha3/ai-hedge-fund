@@ -751,6 +751,18 @@ class SelectionProfitabilityReport:
 _SELECTION_HORIZON_LABEL = {"next_5day_return": "T+5", "next_10day_return": "T+10", "next_30day_return": "T+30"}
 
 
+def _deterministic_str_hash(s: str) -> int:
+    """Stable string-to-int hash (Python hash() is salted per-process).
+
+    Uses Java String.hashCode() algorithm: h = 31*h + char.
+    Deterministic across process restarts.
+    """
+    h = 0
+    for c in s:
+        h = (31 * h + ord(c)) & 0xFFFFFFFF
+    return h
+
+
 def compute_selection_profitability_from_loaded(
     records: list[dict[str, Any]],
     *,
@@ -881,7 +893,7 @@ def compute_selection_profitability_from_loaded(
         # 差距是否显著 (n=75 日点估计不够). 复用 M12 _bootstrap_winrate_ci, seed=42
         # 幂等. 独立 seed 偏移避免策略间相关 (每策略自己的重采样序列).
         ci_lower, ci_upper = _bootstrap_winrate_ci(
-            pr, n_bootstrap=2000, ci_level=0.95, seed=42 + hash(strat) % 1000
+            pr, n_bootstrap=2000, ci_level=0.95, seed=42 + _deterministic_str_hash(strat) % 1000
         )
         results.append(SelectionStrategyResult(
             strategy=strat,

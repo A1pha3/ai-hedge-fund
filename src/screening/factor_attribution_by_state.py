@@ -33,6 +33,18 @@ _N_BOOTSTRAP = 2000
 _BOOTSTRAP_SEED = 42
 
 
+def _deterministic_str_hash(s: str) -> int:
+    """Stable string-to-int hash (Python hash() is salted per-process).
+
+    Uses Java String.hashCode() algorithm: h = 31*h + char.
+    Deterministic across process restarts.
+    """
+    h = 0
+    for c in s:
+        h = (31 * h + ord(c)) & 0xFFFFFFFF
+    return h
+
+
 def _bootstrap_inversion_ci(
     high_returns: list[float],
     low_returns: list[float],
@@ -191,7 +203,7 @@ def compute_factor_attribution_by_state_from_loaded(
                 # 让 owner 在调整因子权重时看见 uncertainty.
                 ci_lo, ci_hi = _bootstrap_inversion_ci(
                     high_returns, low_returns,
-                    n_bootstrap=_N_BOOTSTRAP, seed=_BOOTSTRAP_SEED + hash(factor) % 1000,
+                    n_bootstrap=_N_BOOTSTRAP, seed=_BOOTSTRAP_SEED + _deterministic_str_hash(factor) % 1000,
                 )
                 inversions.append(FactorStateInversion(
                     state_type=state, factor=factor,
@@ -479,7 +491,7 @@ def compute_factor_attribution_score_controlled_from_loaded(
             # Bootstrap CI on the inversion (same disease class as c317 factor_attribution CI)
             ci_lo, ci_hi = _bootstrap_inversion_ci(
                 pooled_high_returns, pooled_low_returns,
-                n_bootstrap=_N_BOOTSTRAP, seed=_BOOTSTRAP_SEED + hash(factor) % 1000,
+                n_bootstrap=_N_BOOTSTRAP, seed=_BOOTSTRAP_SEED + _deterministic_str_hash(factor) % 1000,
             )
             inversions.append(ScoreControlledFactorInversion(
                 factor=factor, stratified_inversion=stratified,

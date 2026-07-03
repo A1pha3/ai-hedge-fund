@@ -37,6 +37,14 @@ _N_BOOTSTRAP = 2000
 _BOOTSTRAP_SEED = 42
 
 
+def _deterministic_str_hash(s: str) -> int:
+    """Stable string-to-int hash (Python hash() is salted per-process)."""
+    h = 0
+    for c in s:
+        h = (31 * h + ord(c)) & 0xFFFFFFFF
+    return h
+
+
 def _bootstrap_delta_winrate_ci(
     candidate_returns: list[float],
     baseline_returns: list[float],
@@ -302,7 +310,7 @@ def compare_model_versions(
         base_rets = [r for r in (_horizon_return(rec, horizon_field) for rec in records if _version_key(rec) == baseline.model_version) if r is not None]
         ci_lo, ci_hi = _bootstrap_delta_winrate_ci(
             cand_rets, base_rets,
-            n_bootstrap=_N_BOOTSTRAP, seed=_BOOTSTRAP_SEED + hash(candidate.model_version) % 1000,
+            n_bootstrap=_N_BOOTSTRAP, seed=_BOOTSTRAP_SEED + _deterministic_str_hash(candidate.model_version) % 1000,
         )
         delta_ci_low = ci_lo
         delta_ci_high = ci_hi
