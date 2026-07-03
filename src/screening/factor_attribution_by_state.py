@@ -334,8 +334,9 @@ def render_factor_attribution_by_state_line(report: FactorAttributionByStateRepo
     as_of_suffix = f" | 数据时点 {report.as_of}" if report.as_of else ""
 
     return (
-        f"  {Fore.RED}⚠ 因子归因({report.horizon_label}): {body}{as_of_suffix}{Style.RESET_ALL}"
+        f"  {Fore.RED}⚠ 因子归因({report.horizon_label}): {body}{Style.RESET_ALL}"
         f" {Fore.RED}(某因子高贡献反而低胜率 = 该市场帮倒忙, 供 owner 调优){Style.RESET_ALL}"
+        f"{as_of_suffix}"
     )
 
 
@@ -516,8 +517,9 @@ def render_score_controlled_factor_line(report: ScoreControlledFactorReport) -> 
     as_of_suffix = f" | 数据时点 {report.as_of}" if report.as_of else ""
 
     return (
-        f"  {Fore.RED}⚠ 因子真实倒挂({report.horizon_label}, score-controlled): {body}{as_of_suffix}{Style.RESET_ALL}"
+        f"  {Fore.RED}⚠ 因子真实倒挂({report.horizon_label}, score-controlled): {body}{Style.RESET_ALL}"
         f" {Fore.RED}(排除 score-level confound 后的真实因子效应, 供 owner 调优){Style.RESET_ALL}"
+        f"{as_of_suffix}"
     )
 
 
