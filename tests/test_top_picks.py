@@ -776,7 +776,7 @@ class TestHitRateSummary:
             overall_t30_win_rate=0.52,
             avg_t5_return=2.1,
             avg_t30_return=5.4,
-            excess_return=1.2,
+            excess_return=0.02,  # structurally ≈0.0; > epsilon (0.01) to exercise render
         )
         result = _render_hit_rate_summary(summary)
         assert "历史命中率速览" in result
@@ -796,7 +796,7 @@ class TestHitRateSummary:
             overall_t30_win_rate=0.42,
             avg_t5_return=-0.5,
             avg_t30_return=-2.1,
-            excess_return=-1.5,
+            excess_return=0.02,  # structurally ≈0.0; > epsilon to exercise render
         )
         result = _render_hit_rate_summary(summary)
         assert "历史命中率速览" in result
@@ -901,7 +901,7 @@ class TestHitRateSummary:
             overall_t30_win_rate=0.55,
             avg_t5_return=1.8,
             avg_t30_return=4.5,
-            excess_return=2.0,
+            excess_return=0.01,  # structurally ≈0.0; non-zero to exercise render
         )
 
         with patch(
