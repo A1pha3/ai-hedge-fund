@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from src.screening.factor_attribution_by_state import (
     FactorAttributionByStateReport,
+    FactorStateInversion,
     compute_factor_attribution_by_state_from_loaded,
+    render_factor_attribution_by_state_line,
 )
 
 
@@ -41,6 +43,11 @@ class TestComputeFactorAttributionByState:
         inv = next((x for x in report.inversions if x.state_type == "MIXED" and x.factor == "MR"), None)
         assert inv is not None, "MIXED 市场 MR 倒挂应被检测"
         assert inv.inversion > 0.05  # low_winrate - high_winrate > 0 (倒挂)
+        # c322/autodev-36: 倒挂因子携带 bootstrap CI
+        assert inv.inversion_ci_low is not None, "FactorStateInversion 应携带 CI"
+        assert inv.inversion_ci_high is not None
+        assert inv.inversion_ci_high >= inv.inversion_ci_low
+        assert inv.inversion_ci_low > 0, "强倒挂 CI 下界 > 0"
         # TREND 市场 MR 不应倒挂
         inv_trend = next((x for x in report.inversions if x.state_type == "TREND"), None)
         assert inv_trend is None
@@ -188,3 +195,50 @@ class TestScoreControlledFactorAttribution:
         assert lo is None and hi is None
         lo, hi = _bootstrap_inversion_ci([1.0, 2.0], [])
         assert lo is None and hi is None
+
+    def test_factor_state_inversion_carries_bootstrap_ci(self) -> None:
+        """c322/autodev-36: FactorStateInversion (uncontrolled) 也携带 bootstrap CI."""
+        recs = []
+        for i in range(30):
+            recs.append(_rec(f"H{i}", "MIXED", {"MR": 0.08}, t5=-2.0))
+        for i in range(30):
+            recs.append(_rec(f"L{i}", "MIXED", {"MR": -0.08}, t5=+3.0))
+        report = compute_factor_attribution_by_state_from_loaded(recs, min_n=15, horizon_field="next_5day_return")
+        inv = next((x for x in report.inversions if x.state_type == "MIXED" and x.factor == "MR"), None)
+        assert inv is not None
+        assert inv.inversion_ci_low is not None
+        assert inv.inversion_ci_high is not None
+        assert inv.inversion_ci_high >= inv.inversion_ci_low
+
+    def test_factor_state_render_shows_ci_bracket(self) -> None:
+        """render_factor_attribution_by_state_line 展示 CI 括号."""
+        inv = FactorStateInversion(
+            state_type="MIXED", factor="MR",
+            high_contrib_winrate=0.22, low_contrib_winrate=0.50,
+            inversion=0.28, high_n=30, low_n=30,
+            inversion_ci_low=0.10, inversion_ci_high=0.42,
+        )
+        report = FactorAttributionByStateReport(
+            inversions=[inv], sample_count=100,
+            state_types=["MIXED"], horizon_label="T+5", verdict="ok",
+        )
+        line = render_factor_attribution_by_state_line(report)
+        assert "CI[" in line
+        assert "+10%" in line or "+10.0%" in line or "10%" in line
+        assert "帮倒忙" in line
+
+    def test_factor_state_render_no_ci_fallback(self) -> None:
+        """CI unavailable 时 fallback 到 bare estimate (无 CI)."""
+        inv = FactorStateInversion(
+            state_type="MIXED", factor="ES",
+            high_contrib_winrate=0.30, low_contrib_winrate=0.55,
+            inversion=0.25, high_n=30, low_n=30,
+            inversion_ci_low=None, inversion_ci_high=None,
+        )
+        report = FactorAttributionByStateReport(
+            inversions=[inv], sample_count=60,
+            state_types=["MIXED"], horizon_label="T+5", verdict="ok",
+        )
+        line = render_factor_attribution_by_state_line(report)
+        assert "CI[" not in line
+        assert "帮倒忙" in line

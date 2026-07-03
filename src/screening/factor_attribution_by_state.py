@@ -77,6 +77,10 @@ class FactorStateInversion:
     inversion: float  # low - high (正 = 倒挂: 贡献高反而胜率低)
     high_n: int
     low_n: int
+    # c322/autodev-36: bootstrap CI on inversion — same disease class as c317 + c321.
+    # 让 owner 看见 uncertainty 再决定因子调优.
+    inversion_ci_low: float | None = None
+    inversion_ci_high: float | None = None
 
 
 @dataclass
@@ -176,10 +180,17 @@ def compute_factor_attribution_by_state_from_loaded(
             high_wr = sum(1 for x in high_returns if x > 0) / len(high_returns)
             inversion = low_wr - high_wr  # 正 = 倒挂
             if inversion > _INVERSION_THRESHOLD:
+                # c322/autodev-36: bootstrap CI on inversion (same disease class as c317 + c321).
+                # 让 owner 在调整因子权重时看见 uncertainty.
+                ci_lo, ci_hi = _bootstrap_inversion_ci(
+                    high_returns, low_returns,
+                    n_bootstrap=_N_BOOTSTRAP, seed=_BOOTSTRAP_SEED + hash(factor) % 1000,
+                )
                 inversions.append(FactorStateInversion(
                     state_type=state, factor=factor,
                     high_contrib_winrate=high_wr, low_contrib_winrate=low_wr,
                     inversion=inversion, high_n=len(high_returns), low_n=len(low_returns),
+                    inversion_ci_low=ci_lo, inversion_ci_high=ci_hi,
                 ))
 
     return FactorAttributionByStateReport(
@@ -303,7 +314,7 @@ def render_factor_attribution_by_state_line(report: FactorAttributionByStateRepo
     if report.verdict != "ok" or not report.inversions:
         return ""
     parts = [
-        f"{inv.state_type} {inv.factor} 倒挂 (高{inv.high_contrib_winrate:.0%} 低{inv.low_contrib_winrate:.0%}, 帮倒忙)"
+        _format_one_factor_state(inv)
         for inv in report.inversions[:4]  # 最多展示 4 个倒挂
     ]
     no_inversion_states = [st for st in report.state_types if st not in {inv.state_type for inv in report.inversions}]
@@ -314,6 +325,20 @@ def render_factor_attribution_by_state_line(report: FactorAttributionByStateRepo
         f"  {Fore.RED}⚠ 因子归因({report.horizon_label}): {body}{Style.RESET_ALL}"
         f" {Fore.RED}(某因子高贡献反而低胜率 = 该市场帮倒忙, 供 owner 调优){Style.RESET_ALL}"
     )
+
+
+def _format_one_factor_state(inv: FactorStateInversion) -> str:
+    """Format one factor×state inversion with CI bracket.
+
+    CI available: show CI bracket. CI unavailable (edge case): bare estimate.
+    Uses the same CI text format as _format_one_score_controlled.
+    """
+    base = f"{inv.state_type} {inv.factor} 倒挂 (高{inv.high_contrib_winrate:.0%} 低{inv.low_contrib_winrate:.0%}"
+    if inv.inversion_ci_low is not None and inv.inversion_ci_high is not None:
+        ci_str = f", CI[{inv.inversion_ci_low:+.0%}, {inv.inversion_ci_high:+.0%}]"
+    else:
+        ci_str = ""
+    return f"{base}{ci_str}, 帮倒忙)"
 
 
 # ---------------------------------------------------------------------------
