@@ -61,6 +61,24 @@ class TestFormatCiLabel:
         assert "60%" in label
         assert "CI" in label
 
+    def test_default_ci_level_is_95(self) -> None:
+        """Default ci_level=0.95 → '(95% CI ...)'. """
+        label = _format_ci_label(0.3, 0.6)
+        assert "95%" in label, f"default ci_level=0.95 should produce '95% CI', got {label!r}"
+
+    def test_custom_ci_level_reflected_in_label(self) -> None:
+        """Non‑default ci_level (e.g. 0.90) → label says '(90% CI ...)'. """
+        label = _format_ci_label(0.3, 0.6, ci_level=0.90)
+        assert "90%" in label, f"ci_level=0.90 should produce '90% CI', got {label!r}"
+        assert "95%" not in label, "ci_level=0.90 must NOT say 95%"
+
+    def test_ci_level_integer_percent_no_fraction(self) -> None:
+        """ci_level=0.995 → label says '99.5% CI' (preserve fractional). """
+        label = _format_ci_label(0.3, 0.6, ci_level=0.995)
+        assert "99.5%" in label, (
+            f"ci_level=0.995 should produce '99.5% CI', got {label!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # bootstrap CI wiring from recomputed JSON — render_regime_winrate_line

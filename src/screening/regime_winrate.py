@@ -283,14 +283,30 @@ def _optional_float(value: Any) -> float | None:
     return result
 
 
-def _format_ci_label(ci_low: float | None, ci_high: float | None, /) -> str:
-    """Format bootstrap CI as human label, e.g. '(95% CI 38-56%)'.
+def _format_ci_label(
+    ci_low: float | None,
+    ci_high: float | None,
+    /,
+    ci_level: float = 0.95,
+) -> str:
+    """Format bootstrap CI as human label, e.g. '(95% CI 38‑56%)'.
 
     Returns empty string when CI is unavailable.
+    The *ci_level* param (default 0.95) is rendered as its integer‑percent
+    form (e.g. 0.90 → '90%', 0.995 → '99.5%'). Using the exact level
+    avoids the "written‑but‑never‑read" disease where a build‑time
+    constant is hard‑coded in a render helper and silently diverges.
     """
     if ci_low is None or ci_high is None:
         return ""
-    return f" (95% CI {ci_low:.0%}-{ci_high:.0%})"
+    pct = ci_level * 100.0
+    # Strip trailing ".0" so 0.95 → "95%", not "95.0%"
+    if pct == int(pct):
+        level_str = str(int(pct))
+    else:
+        # Preserve fractional part (e.g. 99.5 → "99.5")
+        level_str = f"{pct:.1f}".rstrip("0").rstrip(".")
+    return f" ({level_str}% CI {ci_low:.0%}-{ci_high:.0%})"
 
 
 def render_regime_winrate_line(
@@ -329,7 +345,7 @@ def render_regime_winrate_line(
         color = Fore.RED
 
     advice = _REGIME_ADVICE.get(s.regime, "")
-    ci_label = _format_ci_label(s.winrate_ci_low, s.winrate_ci_high)
+    ci_label = _format_ci_label(s.winrate_ci_low, s.winrate_ci_high, ci_level=s.ci_level)
     parts = [
         f"  📊 当前市场 ({s.regime}): {color}历史真实胜率 T+30: {s.winrate:.0%}{ci_label}{Style.RESET_ALL}",
         f"| 典型 {s.median_return:+.1f}%",
@@ -457,8 +473,8 @@ def render_regime_multihorizon_line(
             continue
         ci_lo = _optional_float(h_data.get("winrate_ci_low"))
         ci_hi = _optional_float(h_data.get("winrate_ci_high"))
-        # _format_ci_label 返回 " (95% CI ..-..)"; 无 CI → "" (不留空格)
-        ci = _format_ci_label(ci_lo, ci_hi)
+        h_ci_level = _optional_float(h_data.get("ci_level")) or 0.95
+        ci = _format_ci_label(ci_lo, ci_hi, ci_level=h_ci_level)
         buy_parts.append(f"{label} 胜率 {wr:.0%}{ci}")
     if buy_parts:
         out += f" | BUY 周期胜率: {color}{' / '.join(buy_parts)}{Style.RESET_ALL}"
