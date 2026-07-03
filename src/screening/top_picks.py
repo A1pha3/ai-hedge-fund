@@ -158,6 +158,26 @@ def _status_icon(status: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# 共享: 胜率颜色阈值 (0.55 绿 / 0.50 黄 / <0.50 红).
+# BUY verdict gate 要求 t5/t10 win_rate >= 0.55 (investability.py _meets_quality_bar);
+# 展示端颜色必须与此保持一致, 否则一个 BUY 个票在门控是绿但在展示是黄,
+# 造成 operator 认知冲突. BH-003 证明了 0.45 边界是静默异常.
+# 定义成函数而不是常量 (字符串格式化需要动态颜色), 任何展示端调用此函数.
+# ---------------------------------------------------------------------------
+
+
+def _winrate_color(winrate: float) -> str:
+    """胜率颜色: >=0.55 绿, >=0.50 黄, 否则红."""
+    return (
+        Fore.GREEN
+        if winrate >= 0.55
+        else Fore.YELLOW
+        if winrate >= 0.50
+        else Fore.RED
+    )
+
+
+# ---------------------------------------------------------------------------
 # R5: Historical hit-rate summary
 # ---------------------------------------------------------------------------
 
@@ -182,9 +202,7 @@ def _render_hit_rate_summary(verify_summary: object) -> str:
     for horizon, label in [("t5", "T+5"), ("t10", "T+10"), ("t30", "T+30")]:
         wr = getattr(verify_summary, f"overall_{horizon}_win_rate", None)
         if wr is not None:
-            color = (
-                Fore.GREEN if wr >= 0.55 else Fore.YELLOW if wr >= 0.50 else Fore.RED
-            )
+            color = _winrate_color(wr)
             wr_parts.append(f"{label} 胜率={color}{wr:.0%}{Style.RESET_ALL}")
     if wr_parts:
         lines.append("  " + " | ".join(wr_parts))
@@ -464,20 +482,11 @@ def _render_portfolio_expected_return(picks: list[dict], market_regime: str) -> 
     edge_color = (
         Fore.GREEN if avg_edge > 0 else Fore.RED if avg_edge < 0 else Fore.WHITE
     )
-    # Win-rate color thresholds must match the canonical thresholds used
-    # everywhere else in the front door (e.g. _render_hit_rate_summary line ~183
-    # and the BUY verdict gate which requires t5/t10 win_rate >= 0.55). The
-    # previous 0.45 yellow band was an inconsistent outlier: a BUY portfolio
-    # (every pick >= 0.55) could never reach it, yet a future verdict-gate
-    # change would silently surface a "good enough" yellow on picks that fail
-    # the BUY bar elsewhere. Align to 0.50. See BH-003.
-    wr_color = (
-        Fore.GREEN
-        if avg_winrate >= 0.55
-        else Fore.YELLOW
-        if avg_winrate >= 0.50
-        else Fore.RED
-    )
+    # Win-rate color thresholds: use the shared _winrate_color so the display
+    # always stays consistent with _render_hit_rate_summary and the BUY-gate
+    # threshold (which requires t5/t10 win_rate >= 0.55). The 0.45 outlier
+    # (BH-003) is eliminated by calling the canonical helper.
+    wr_color = _winrate_color(avg_winrate)
 
     return (
         f"  {Fore.WHITE}组合 T+5/T+10 决策预期:{Style.RESET_ALL} "
