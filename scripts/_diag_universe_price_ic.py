@@ -37,6 +37,8 @@ from scipy.stats import spearmanr  # noqa: E402
 
 BUCKETS = [(0, 10), (10, 20), (20, 40), (40, 80), (80, 200), (200, 1e9)]
 
+logger = logging.getLogger("universe_price_ic")
+
 
 def classify_price_effect(universe_ic: float, pool_ic: float | None = None) -> str:
     """Classify whether a within-pool price-IC reflects a real universe-level price
@@ -66,6 +68,48 @@ def amplification_ratio(universe_ic: float, pool_ic: float) -> float | None:
     return pool_ic / universe_ic
 
 
+def render_price_verdict(
+    universe_ic: float,
+    pool_ic: float,
+    *,
+    n_records: int,
+    n_days: int,
+) -> list[str]:
+    """Render the bias-amplification verdict as a list of print lines (pure).
+
+    c317b (loop 50): extracted from run() so the verdict block is testable AND
+    so ``amplification_ratio`` is actually surfaced (it was orphaned — defined +
+    unit-tested but never called in run(); the c307 commit message's '3.59×
+    amplification' headline was computed only by the helper test, never shown
+    to the operator reading the diagnostic). Also discloses sample size so the
+    owner can gauge verdict reliability.
+    """
+    verdict = classify_price_effect(universe_ic)
+    amp = amplification_ratio(universe_ic, pool_ic)
+    amp_str = f"{amp:.1f}×" if amp is not None else "N/A (universe IC=0)"
+    lines = [
+        "=" * 90,
+        f"判读 (池内 price-IC {pool_ic:+.3f} 是否是选择偏差伪象; n={n_records}, {n_days} 日):",
+        f"  amplification: {amp_str} (pool / universe)",
+    ]
+    if verdict == "bias_amplified":
+        lines.append(
+            f"  ✅ 全 universe price-IC ≈ {universe_ic:+.3f} (~0 或负, 小盘溢价) 但池内 {pool_ic:+.3f} "
+            f"→ **选择偏差伪象** ({amp_str} 放大)"
+        )
+        lines.append("     池反转了 price 效应 (像 score 那样); price 不是真实可用的排序 signal。")
+    elif verdict == "real_factor":
+        lines.append(
+            f"  ⚠️ 全 universe price-IC ≈ {universe_ic:+.3f} (正, 与池内同向) → price 是真实 factor (高价=质量代理)。"
+        )
+        lines.append("     可考虑作为池内排序辅助 signal (但需 T+5/T+10 + 全模型确认)。")
+    else:  # mixed
+        lines.append(
+            f"  ≈ 全 universe price-IC ≈ {universe_ic:+.3f} (弱) — 池内 {pool_ic:+.3f} 部分是真实, 部分是偏差放大 ({amp_str})。"
+        )
+    return lines
+
+
 def run(n_days: int = 20, end_date: str | None = None) -> None:
     pro = _get_pro()
     stock_basic = pro.stock_basic(exchange="", list_status="L", fields="ts_code,name")
@@ -77,16 +121,22 @@ def run(n_days: int = 20, end_date: str | None = None) -> None:
 
     all_rows: list[dict[str, float]] = []
     per_day_ics: list[float] = []
+    fetch_failures: list[str] = []  # c317b: NS-17 drain — track silently-dropped days
     for di, test_date in enumerate(test_dates):
         next_date = trade_dates[di + 1]
         universe = get_universe_for_date(pro, test_date, stock_basic)
         if universe.empty:
+            fetch_failures.append(f"{test_date}: empty universe")
             continue
         try:
             # 当日 close (price anchor) + 次日 pct_chg (T+1 return)
             d0 = pro.daily(trade_date=test_date)[["ts_code", "close"]].rename(columns={"close": "price"})
             d1 = pro.daily(trade_date=next_date)[["ts_code", "pct_chg"]].rename(columns={"pct_chg": "next_ret"})
-        except Exception:
+        except Exception as exc:
+            # c317b: NS-17 silent-except drain — surface the dropped day + cause
+            # so the operator can tell 'API rate-limited' from 'genuinely no data'.
+            fetch_failures.append(f"{test_date}: {type(exc).__name__}: {exc}")
+            logger.warning("universe price-IC: dropped day %s (data fetch failed: %s)", test_date, exc)
             continue
         df = universe.merge(d0, on="ts_code", how="inner").merge(d1, on="ts_code", how="inner")
         if len(df) < 100:
@@ -114,17 +164,20 @@ def run(n_days: int = 20, end_date: str | None = None) -> None:
         if len(b):
             wr = (b["next_ret"] > 0).mean()
             print(f"  ¥{lo:<6}-{hi:<8} {len(b):>7} {wr:>8.1%} {b['next_ret'].mean():>+8.2f}%")
-    print(f"\n{'=' * 90}")
-    verdict = classify_price_effect(overall_rho)
-    print("判读 (池内 price-IC +0.176 是否是选择偏差伪象):")
-    if verdict == "bias_amplified":
-        print(f"  ✅ 全 universe price-IC ≈ {overall_rho:+.3f} (~0 或负, 小盘溢价) 但池内 +0.176 → **选择偏差伪象**")
-        print(f"     池反转了 price 效应 (像 score 那样); price 不是真实可用的排序 signal。")
-    elif verdict == "real_factor":
-        print(f"  ⚠️ 全 universe price-IC ≈ {overall_rho:+.3f} (正, 与池内同向) → price 是真实 factor (高价=质量代理)。")
-        print(f"     可考虑作为池内排序辅助 signal (但需 T+5/T+10 + 全模型确认)。")
-    else:
-        print(f"  ≈ 全 universe price-IC ≈ {overall_rho:+.3f} (弱) — 池内 +0.176 部分是真实, 部分是偏差放大。")
+    # c317b: dropped-days disclosure (NS-17 drain) — operator can tell how many
+    # of the requested n_days actually contributed, and why the rest were dropped.
+    if fetch_failures:
+        print(f"\n  ⚠ 丢弃 {len(fetch_failures)}/{len(test_dates)} 天 (前几条):")
+        for f in fetch_failures[:5]:
+            print(f"    - {f}")
+    # c317b: verdict via pure helper (de-orphans amplification_ratio; pins text)
+    for line in render_price_verdict(
+        universe_ic=overall_rho,
+        pool_ic=0.176,  # loop-39 within-pool benchmark
+        n_records=len(df),
+        n_days=len(per_day_ics),
+    ):
+        print(line)
 
 
 def main() -> None:
