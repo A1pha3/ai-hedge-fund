@@ -143,6 +143,10 @@ class TestRegimeWinrateLineWithBootstrapCi:
         assert "47%" in line
         assert "CI" in line, f"line={line}"
         assert "37%" in line, f"line={line}"
+        # avg_return (new in c332) must appear in rendered line
+        assert "平均 +0.6" in line or "平均 0.6%" in line, (
+            f"avg_return 0.58 should appear as '平均 +0.6%' in rendered line:\n{line}"
+        )
 
     def test_json_without_ci_still_renders(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
