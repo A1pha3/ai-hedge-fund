@@ -242,3 +242,58 @@ class TestScoreControlledFactorAttribution:
         line = render_factor_attribution_by_state_line(report)
         assert "CI[" not in line
         assert "帮倒忙" in line
+
+
+class TestAsOf:
+    """c325/autodev-36: 数据时点披露."""
+
+    def test_factor_state_report_has_as_of_when_data_available(self) -> None:
+        """有 recommended_date 时, as_of 取最大值."""
+        recs = [
+            _rec("A", "MIXED", {"MR": 0.08}, t5=-2.0),
+            _rec("B", "MIXED", {"MR": -0.08}, t5=+3.0),
+        ]
+        recs[0]["recommended_date"] = "20260702"
+        recs[1]["recommended_date"] = "20260703"
+        report = compute_factor_attribution_by_state_from_loaded(recs, min_n=1)
+        assert report.as_of == "20260703"
+
+    def test_score_controlled_report_has_as_of(self) -> None:
+        from src.screening.factor_attribution_by_state import compute_factor_attribution_score_controlled_from_loaded
+        recs = [
+            {"score_decomposition": {"base_contributions": {"ES": 0.02}, "total": 0.3}, "next_5day_return": -2.0, "recommended_date": "20260701"},
+            {"score_decomposition": {"base_contributions": {"ES": -0.05}, "total": 0.3}, "next_5day_return": +3.0, "recommended_date": "20260702"},
+        ]
+        report = compute_factor_attribution_score_controlled_from_loaded(recs, min_n=1)
+        assert report.as_of == "20260702"
+
+    def test_render_shows_as_of(self) -> None:
+        """render 展示 | 数据时点."""
+        inv = FactorStateInversion(
+            state_type="MIXED", factor="MR",
+            high_contrib_winrate=0.30, low_contrib_winrate=0.55,
+            inversion=0.25, high_n=20, low_n=20,
+            inversion_ci_low=0.10, inversion_ci_high=0.40,
+        )
+        report = FactorAttributionByStateReport(
+            inversions=[inv], sample_count=40,
+            state_types=["MIXED"], horizon_label="T+5", verdict="ok",
+            as_of="20260703",
+        )
+        line = render_factor_attribution_by_state_line(report)
+        assert "数据时点" in line
+        assert "20260703" in line
+
+    def test_render_no_as_of_when_none(self) -> None:
+        """as_of=None 时不显示数据时点."""
+        inv = FactorStateInversion(
+            state_type="MIXED", factor="ES",
+            high_contrib_winrate=0.30, low_contrib_winrate=0.55,
+            inversion=0.25, high_n=20, low_n=20,
+        )
+        report = FactorAttributionByStateReport(
+            inversions=[inv], sample_count=40,
+            state_types=["MIXED"], horizon_label="T+5", verdict="ok",
+        )
+        line = render_factor_attribution_by_state_line(report)
+        assert "数据时点" not in line

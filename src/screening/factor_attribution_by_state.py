@@ -92,6 +92,8 @@ class FactorAttributionByStateReport:
     state_types: list[str] = field(default_factory=list)
     horizon_label: str = "T+5"
     verdict: str = "insufficient"  # ok | insufficient
+    # c325/autodev-36: 数据时点
+    as_of: str | None = None
 
 
 def _finite_float(value: Any) -> float | None:
@@ -131,6 +133,7 @@ def compute_factor_attribution_by_state_from_loaded(
     """
     # 收集有效 records (有 base_contributions + state_type + horizon return)
     valid: list[tuple[str, dict[str, float], float]] = []
+    max_date = ""
     for rec in records:
         decomp = rec.get("score_decomposition")
         if not isinstance(decomp, dict):
@@ -147,6 +150,10 @@ def compute_factor_attribution_by_state_from_loaded(
         # 规范化贡献为 float
         contribs = {k: (_finite_float(v) or 0.0) for k, v in bc.items()}
         valid.append((state, contribs, ret))
+        # Track latest date for as_of
+        d = str(rec.get("recommended_date", "") or "").strip()
+        if d > max_date:
+            max_date = d
 
     if not valid:
         return FactorAttributionByStateReport(verdict="insufficient", horizon_label=_horizon_label(horizon_field))
@@ -199,6 +206,7 @@ def compute_factor_attribution_by_state_from_loaded(
         state_types=sorted(by_state.keys()),
         horizon_label=_horizon_label(horizon_field),
         verdict="ok" if inversions else "insufficient",
+        as_of=max_date or None,
     )
 
 
@@ -321,8 +329,12 @@ def render_factor_attribution_by_state_line(report: FactorAttributionByStateRepo
     if no_inversion_states:
         parts.append(f"{'/'.join(no_inversion_states[:2])} 无倒挂")
     body = " | ".join(parts)
+
+    # c325/autodev-36: 数据时点披露 (镜像 regime_winrate 模式)
+    as_of_suffix = f" | 数据时点 {report.as_of}" if report.as_of else ""
+
     return (
-        f"  {Fore.RED}⚠ 因子归因({report.horizon_label}): {body}{Style.RESET_ALL}"
+        f"  {Fore.RED}⚠ 因子归因({report.horizon_label}): {body}{as_of_suffix}{Style.RESET_ALL}"
         f" {Fore.RED}(某因子高贡献反而低胜率 = 该市场帮倒忙, 供 owner 调优){Style.RESET_ALL}"
     )
 
@@ -373,6 +385,8 @@ class ScoreControlledFactorReport:
     sample_count: int = 0
     horizon_label: str = "T+5"
     verdict: str = "insufficient"  # ok | insufficient
+    # c325/autodev-36: 数据时点 (None=样本不足或不适用)
+    as_of: str | None = None
 
 
 def compute_factor_attribution_score_controlled_from_loaded(
@@ -398,6 +412,7 @@ def compute_factor_attribution_score_controlled_from_loaded(
     """
     # 收集有效 records (base_contributions + total score + horizon return)
     valid: list[tuple[str, dict[str, float], float]] = []
+    max_date = ""
     for rec in records:
         decomp = rec.get("score_decomposition")
         if not isinstance(decomp, dict):
@@ -413,6 +428,9 @@ def compute_factor_attribution_score_controlled_from_loaded(
             continue
         contribs = {k: (_finite_float(v) or 0.0) for k, v in bc.items()}
         valid.append((_score_bucket(score), contribs, ret))
+        d = str(rec.get("recommended_date", "") or "").strip()
+        if d > max_date:
+            max_date = d
 
     if not valid:
         return ScoreControlledFactorReport(verdict="insufficient", horizon_label=_horizon_label(horizon_field))
@@ -474,6 +492,7 @@ def compute_factor_attribution_score_controlled_from_loaded(
         inversions=inversions, sample_count=len(valid),
         horizon_label=_horizon_label(horizon_field),
         verdict="ok" if inversions else "insufficient",
+        as_of=max_date or None,
     )
 
 
@@ -490,8 +509,12 @@ def render_score_controlled_factor_line(report: ScoreControlledFactorReport) -> 
         for inv in report.inversions
     ]
     body = " | ".join(parts)
+
+    # c325/autodev-36: 数据时点披露 (镜像 regime_winrate 模式)
+    as_of_suffix = f" | 数据时点 {report.as_of}" if report.as_of else ""
+
     return (
-        f"  {Fore.RED}⚠ 因子真实倒挂({report.horizon_label}, score-controlled): {body}{Style.RESET_ALL}"
+        f"  {Fore.RED}⚠ 因子真实倒挂({report.horizon_label}, score-controlled): {body}{as_of_suffix}{Style.RESET_ALL}"
         f" {Fore.RED}(排除 score-level confound 后的真实因子效应, 供 owner 调优){Style.RESET_ALL}"
     )
 
