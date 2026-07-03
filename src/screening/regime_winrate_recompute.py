@@ -163,20 +163,15 @@ def _compute_stats(
     seed: int = _DEFAULT_BOOTSTRAP_SEED,
 ) -> dict[str, Any]:
     """算 winrate/avg/median + bootstrap CI (returns 非空, 已过滤 None)."""
-    n = len(returns)
-    wins = sum(1 for r in returns if r > 0)
-    ci_low, ci_high = _winrate_bootstrap_ci(
-        returns, n_bootstrap=n_bootstrap, ci_level=ci_level, seed=seed
+    return _compute_common_stats(
+        returns,
+        n_bootstrap=n_bootstrap,
+        ci_level=ci_level,
+        seed=seed,
+        key_median="median_return",
+        key_sample="sample_count",
+        extra={"avg_return": sum(returns) / len(returns) if returns else 0.0},
     )
-    return {
-        "winrate": wins / n if n > 0 else 0.0,
-        "avg_return": sum(returns) / n if n > 0 else 0.0,
-        "median_return": statistics.median(returns) if n > 0 else 0.0,
-        "sample_count": n,
-        "winrate_ci_low": ci_low,
-        "winrate_ci_high": ci_high,
-        "ci_level": ci_level,
-    }
 
 
 def _compute_multihorizon_stats(
@@ -187,19 +182,54 @@ def _compute_multihorizon_stats(
     seed: int = _DEFAULT_BOOTSTRAP_SEED,
 ) -> dict[str, Any]:
     """算 per-horizon median/winrate/n + bootstrap CI (returns 非空, 已过滤 None)."""
+    return _compute_common_stats(
+        returns,
+        n_bootstrap=n_bootstrap,
+        ci_level=ci_level,
+        seed=seed,
+        key_median="median",
+        key_sample="n",
+    )
+
+
+def _compute_common_stats(
+    returns: list[float],
+    *,
+    n_bootstrap: int,
+    ci_level: float,
+    seed: int,
+    key_median: str,
+    key_sample: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """算 winrate/median/bootstrap CI (returns 非空, 已过滤 None).
+
+    共享基函数 — _compute_stats 和 _compute_multihorizon_stats 仅 key 命名和
+    额外字段 (avg_return) 不同. 多个 callers 重复 13 行相同 bootstrap 代码
+    是维护拖累: 任一函数的 bootstrap 参数/logic 改动需手动复制到另一个.
+
+    Args:
+        returns: 过滤后的非 None finite float 列表 (长度 > 0).
+        key_median: 结果 dict 中 median 的 key ("median_return" 或 "median").
+        key_sample: 结果 dict 中 n 的 key ("sample_count" 或 "n").
+        extra: 额外字段写入结果 (e.g. {"avg_return": ...}).
+    """
     n = len(returns)
     wins = sum(1 for r in returns if r > 0)
     ci_low, ci_high = _winrate_bootstrap_ci(
         returns, n_bootstrap=n_bootstrap, ci_level=ci_level, seed=seed
     )
-    return {
-        "median": statistics.median(returns) if n > 0 else 0.0,
+    result: dict[str, Any] = {
         "winrate": wins / n if n > 0 else 0.0,
-        "n": n,
+        key_median: statistics.median(returns) if n > 0 else 0.0,
+        key_sample: n,
         "winrate_ci_low": ci_low,
         "winrate_ci_high": ci_high,
         "ci_level": ci_level,
     }
+    if extra:
+        result.update(extra)
+    return result
 
 
 def compute_regime_historical_winrates_from_records(
