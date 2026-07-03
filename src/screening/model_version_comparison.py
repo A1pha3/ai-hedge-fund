@@ -425,8 +425,8 @@ def render_model_version_comparison_line(comparison: ModelVersionComparison) -> 
     if comparison.verdict == "single_version" or comparison.baseline is None:
         c = comparison.candidate
         assert c is not None
-        line = f"模型版本监测{marker}: 仅 {_short(c.model_version)} " f"(n={c.n_samples}, 胜率{_pct(c.winrate)}, 中位{_ret(c.median_return)}, {_rank_mono_tag(c)}) " f"[{verdict_label}, 待累积第二版本对比]{excluded_suffix}{as_of_suffix}"
-        return f"{color}{line}{Style.RESET_ALL}"
+        line = f"模型版本监测{marker}: 仅 {_short(c.model_version)} " f"(n={c.n_samples}, 胜率{_pct(c.winrate)}, 中位{_ret(c.median_return)}, {_rank_mono_tag(c)}) " f"[{verdict_label}, 待累积第二版本对比]{excluded_suffix}"
+        return f"{color}{line}{Style.RESET_ALL}{as_of_suffix}"
 
     b = comparison.baseline
     cand = comparison.candidate
@@ -435,8 +435,8 @@ def render_model_version_comparison_line(comparison: ModelVersionComparison) -> 
     cand_str = f"{_short(cand.model_version)}(n={cand.n_samples},胜率{_pct(cand.winrate)},{_rank_mono_tag(cand)})"
 
     if comparison.verdict in ("insufficient", "inconclusive"):
-        line = f"模型版本监测{marker}: {base_str} → {cand_str} " f"[{verdict_label}, n_new={cand.n_samples}]{excluded_suffix}{as_of_suffix}"
-        return f"{color}{line}{Style.RESET_ALL}"
+        line = f"模型版本监测{marker}: {base_str} → {cand_str} " f"[{verdict_label}, n_new={cand.n_samples}]{excluded_suffix}"
+        return f"{color}{line}{Style.RESET_ALL}{as_of_suffix}"
 
     dw = comparison.delta_winrate
     dw_str = f", 胜率Δ{dw * 100:+.0f}pp" if dw is not None else ""
@@ -444,5 +444,5 @@ def render_model_version_comparison_line(comparison: ModelVersionComparison) -> 
     ci_str = ""
     if dw is not None and comparison.delta_winrate_ci_low is not None and comparison.delta_winrate_ci_high is not None:
         ci_str = f" CI[{comparison.delta_winrate_ci_low:+.0%}, {comparison.delta_winrate_ci_high:+.0%}]"
-    line = f"模型版本监测{marker}: {base_str} → {cand_str}{dw_str}{ci_str} [{verdict_label}]{excluded_suffix}{as_of_suffix}"
-    return f"{color}{line}{Style.RESET_ALL}"
+    line = f"模型版本监测{marker}: {base_str} → {cand_str}{dw_str}{ci_str} [{verdict_label}]{excluded_suffix}"
+    return f"{color}{line}{Style.RESET_ALL}{as_of_suffix}"
