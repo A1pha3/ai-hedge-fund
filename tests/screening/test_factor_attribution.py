@@ -142,3 +142,19 @@ def test_render_shows_n_per_factor():
     # n=20 per tertile (high 1/3 of 90 = 30, but sorted splits may differ)
     # Just assert n= appears at all
     assert "n=" in line
+
+
+def test_render_no_inversion_shows_as_of():
+    """c338/autodev-36: 无倒挂因子路径也显示数据时点."""
+    # All positive: T contributes high -> high winrate -> no inversion
+    recs = []
+    for _ in range(30):
+        recs.append(_decomp_rec(-5.0, {"T": -0.1}))
+    for _ in range(30):
+        recs.append(_decomp_rec(5.0, {"T": 0.5}))
+    for _ in range(30):
+        recs.append(_decomp_rec(1.0, {"T": 0.2}))
+    rep = compute_factor_attribution_from_loaded(recs, min_n=10)
+    line = render_factor_attribution_line(rep)
+    assert "无倒挂因子" in line
+    assert "数据时点" in line

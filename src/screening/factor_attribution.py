@@ -277,7 +277,8 @@ def render_factor_attribution_line(report: FactorAttributionReport) -> str:
         ok_factors = [f for f in report.factors if f.verdict != "insufficient"]
         if not ok_factors:
             return ""
-        return f"  🔍 因子归因 {hlabel}: 无倒挂因子 ({len(report.factors)} 因子检测, n={report.sample_count}) {Fore.GREEN}✓{Style.RESET_ALL}"
+        as_of_suffix_clean = f" | 数据时点 {report.as_of}" if report.as_of else ""
+        return f"  🔍 因子归因 {hlabel}: 无倒挂因子 ({len(report.factors)} 因子检测, n={report.sample_count}){as_of_suffix_clean} {Fore.GREEN}✓{Style.RESET_ALL}"
 
     parts = []
     for f in flagged:

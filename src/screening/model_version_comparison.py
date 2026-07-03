@@ -38,7 +38,11 @@ _BOOTSTRAP_SEED = 42
 
 
 def _deterministic_str_hash(s: str) -> int:
-    """Stable string-to-int hash (Python hash() is salted per-process)."""
+    """Stable string-to-int hash (Python hash() is salted per-process).
+
+    Uses Java String.hashCode() algorithm: h = 31*h + char.
+    Deterministic across process restarts.
+    """
     h = 0
     for c in s:
         h = (31 * h + ord(c)) & 0xFFFFFFFF
