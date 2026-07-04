@@ -662,3 +662,62 @@ class TestSerialization:
         # 确保 JSON 可序列化
         json_str = json.dumps(d, ensure_ascii=False)
         assert "300750" in json_str
+
+
+# ============================================================================
+# NS-17 honesty: silent-except on consecutive_recommendations / signal_decay
+# compute paths must surface to operator (c324, loop 75). Without a logger
+# call the failure collapses into the same value as a genuine "no streak",
+# indistinguishable to the operator deep-diving a ticker.
+# ============================================================================
+
+
+class TestSilentExceptDisclosure:
+    """compute_consecutive_recommendations / detect_signal_decay 失败时必须
+    surface 到 logger — 不能与"真实无连续推荐/无衰减"信号不可区分 (NS-17)。
+    """
+
+    def test_consecutive_compute_failure_logs_warning(
+        self, full_recommendations: list[dict], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """compute_consecutive_recommendations 抛异常时必须 logger.warning。"""
+        with patch(
+            "src.screening.stock_detail.compute_consecutive_recommendations",
+            side_effect=RuntimeError("tracking_history corrupt"),
+        ):
+            with caplog.at_level("WARNING", logger="src.screening.stock_detail"):
+                detail = compute_stock_detail(
+                    ticker="300750",
+                    recommendations=full_recommendations,
+                    tracking_history=[],
+                )
+        # 仍 fallback 到 0 (best-effort, 不阻塞渲染)
+        assert detail.consecutive_days == 0
+        # 但必须 surface 到 operator — 不能静默
+        assert any(
+            "compute_consecutive_recommendations" in r.message
+            and r.levelname == "WARNING"
+            for r in caplog.records
+        ), f"expected WARNING mentioning compute_consecutive_recommendations, got: {[r.message for r in caplog.records]}"
+
+    def test_signal_decay_compute_failure_logs_warning(
+        self, full_recommendations: list[dict], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """detect_signal_decay 抛异常时必须 logger.warning。"""
+        with patch(
+            "src.screening.stock_detail.detect_signal_decay",
+            side_effect=RuntimeError("report schema drift"),
+        ):
+            with caplog.at_level("WARNING", logger="src.screening.stock_detail"):
+                detail = compute_stock_detail(
+                    ticker="300750",
+                    recommendations=full_recommendations,
+                    tracking_history=[],
+                )
+        # 仍 fallback 到 none (best-effort, 不阻塞渲染)
+        assert detail.decay_level == "none"
+        # 但必须 surface 到 operator — 不能静默
+        assert any(
+            "detect_signal_decay" in r.message and r.levelname == "WARNING"
+            for r in caplog.records
+        ), f"expected WARNING mentioning detect_signal_decay, got: {[r.message for r in caplog.records]}"
