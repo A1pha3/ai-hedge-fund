@@ -58,9 +58,11 @@ def _bootstrap_inversion_ci(
     low_wins = [1 if r > 0 else 0 for r in low_returns]
     rng = _random.Random(seed)  # 独立 PRNG, 不污染全局 random 状态
     boot_inversions: list[float] = []
+    # c343/autodev-36: rng.choices (C-level batch) is 5x faster than randrange loop.
+    # (c342 missed this file — family-tree audit lesson from c321 re-applied.)
     for _ in range(n_bootstrap):
-        h_wr = sum(high_wins[rng.randrange(n_high)] for _ in range(n_high)) / n_high
-        l_wr = sum(low_wins[rng.randrange(n_low)] for _ in range(n_low)) / n_low
+        h_wr = sum(rng.choices(high_wins, k=n_high)) / n_high
+        l_wr = sum(rng.choices(low_wins, k=n_low)) / n_low
         boot_inversions.append(l_wr - h_wr)  # 正=倒挂
     boot_inversions.sort()
     alpha = 1.0 - ci_level
