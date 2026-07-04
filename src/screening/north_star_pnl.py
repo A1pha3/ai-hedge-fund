@@ -251,8 +251,8 @@ def compute_holding_period_curve_from_loaded(
     """全样本各 horizon 的 avg/winrate/median (不受 score bucket n=38 限制)."""
     out: list[HoldingPeriodPoint] = []
     for horizon in horizons:
-        returns = [_finite_float(rec.get(horizon)) for rec in records]
-        returns = [r for r in returns if r is not None]
+        raw_returns = [_finite_float(rec.get(horizon)) for rec in records]
+        returns: list[float] = [r for r in raw_returns if r is not None]
         if len(returns) < min_n:
             out.append(HoldingPeriodPoint(horizon=horizon, sample_count=len(returns), verdict="insufficient"))
             continue
@@ -786,7 +786,7 @@ def compute_selection_profitability_from_loaded(
     the model "underperforms" when its top-N selection loses by >=
     ``verdict_threshold`` (default 5pp) to simply ignoring the score.
     """
-    by_date: dict[str, list[dict[str, float]]] = {}
+    by_date: dict[str, list[dict[str, Any]]] = {}
     for rec in records:
         d = rec.get("recommended_date")
         raw_s = rec.get("recommendation_score")

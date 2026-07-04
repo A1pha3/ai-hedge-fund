@@ -144,7 +144,7 @@ def _bucket_rows(returns_by_bucket: dict[str, list[float]]) -> list[BucketWinRat
 def _verdict(
     returns_by_bucket: dict[str, list[float]],
     min_n: int,
-) -> tuple[str, list[float | None]]:
+) -> tuple[str, list[float]]:
     """从 {bucket: returns} 算 verdict + per-bucket winrates (ordered).
 
     insufficient: 任一 bucket 缺失或 n < min_n (诚实, 不下结论).
@@ -156,17 +156,19 @@ def _verdict(
     for bucket in _BUCKET_ORDER:
         rets = returns_by_bucket.get(bucket, [])
         if len(rets) < min_n:
-            return "insufficient", [None] * len(_BUCKET_ORDER)
+            return "insufficient", []
         wrs.append(_win_rate(rets))
+    # Filter out None after the loop — the function now returns a clean float list.
     if any(w is None for w in wrs):
-        return "insufficient", wrs
-    non_decreasing = all(wrs[i] <= wrs[i + 1] + 1e-9 for i in range(len(wrs) - 1))
-    non_increasing = all(wrs[i] >= wrs[i + 1] - 1e-9 for i in range(len(wrs) - 1))
+        return "insufficient", [w for w in wrs if w is not None]
+    wrs_safe: list[float] = [w for w in wrs if w is not None]
+    non_decreasing = all(wrs_safe[i] <= wrs_safe[i + 1] + 1e-9 for i in range(len(wrs_safe) - 1))
+    non_increasing = all(wrs_safe[i] >= wrs_safe[i + 1] - 1e-9 for i in range(len(wrs_safe) - 1))
     if non_decreasing:
-        return "monotonic", wrs
-    if non_increasing and wrs[0] > wrs[-1]:
-        return "inverted", wrs
-    return "non_monotonic", wrs
+        return "monotonic", wrs_safe
+    if non_increasing and wrs_safe[0] > wrs_safe[-1]:
+        return "inverted", wrs_safe
+    return "non_monotonic", wrs_safe
 
 
 def compute_rank_monotonicity_from_loaded(

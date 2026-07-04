@@ -198,21 +198,21 @@ def compute_factor_attribution_from_loaded(
 
         low_returns = [_finite_float(r.get(horizon_field)) for r in low_recs]
         high_returns = [_finite_float(r.get(horizon_field)) for r in high_recs]
-        low_returns = [r for r in low_returns if r is not None]
-        high_returns = [r for r in high_returns if r is not None]
+        low_returns_clean: list[float] = [r for r in low_returns if r is not None]
+        high_returns_clean: list[float] = [r for r in high_returns if r is not None]
 
-        if len(low_returns) < min_n or len(high_returns) < min_n:
+        if len(low_returns_clean) < min_n or len(high_returns_clean) < min_n:
             factors.append(FactorContributionWinrate(strategy=key, verdict="insufficient"))
             continue
 
-        low_wr = sum(1 for x in low_returns if x > 0) / len(low_returns)
-        high_wr = sum(1 for x in high_returns if x > 0) / len(high_returns)
+        low_wr = sum(1 for x in low_returns_clean if x > 0) / len(low_returns_clean)
+        high_wr = sum(1 for x in high_returns_clean if x > 0) / len(high_returns_clean)
 
         inversion = low_wr - high_wr  # 正=倒挂 (贡献高反而胜率低)
         # c317: bootstrap CI on the inversion (决定倒挂是否可信)
         ci_low, ci_high = _bootstrap_inversion_ci(
-            high_returns,
-            low_returns,
+            high_returns_clean,
+            low_returns_clean,
             n_bootstrap=n_bootstrap,
             ci_level=ci_level,
             seed=seed,
