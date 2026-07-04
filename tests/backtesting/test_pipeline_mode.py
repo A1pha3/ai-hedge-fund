@@ -44,11 +44,7 @@ def _patch_market_data(monkeypatch, closes_by_ticker: dict[str, dict[str, float]
 
     def fake_get_price_data(ticker: str, start_date: str, end_date: str, api_key=None):
         closes = closes_by_ticker[ticker]
-        rows = [
-            {"date": date_str, "close": close, "open": close, "high": close, "low": close, "volume": 1_000_000}
-            for date_str, close in closes.items()
-            if start_date <= date_str <= end_date
-        ]
+        rows = [{"date": date_str, "close": close, "open": close, "high": close, "low": close, "volume": 1_000_000} for date_str, close in closes.items() if start_date <= date_str <= end_date]
         frame = pd.DataFrame(rows)
         if frame.empty:
             return frame
@@ -140,11 +136,7 @@ def test_pipeline_mode_confirmation_inputs_include_open_gap_confirmation_fields(
                 {"date": "2024-03-04", "open": 100.5, "close": 100.8, "high": 101.0, "low": 100.4, "volume": 5_200_000},
             ],
         }
-        rows = [
-            row
-            for row in rows_by_ticker[ticker]
-            if start_date <= row["date"] <= end_date
-        ]
+        rows = [row for row in rows_by_ticker[ticker] if start_date <= row["date"] <= end_date]
         frame = pd.DataFrame(rows)
         if frame.empty:
             return frame
@@ -495,10 +487,7 @@ def test_apply_pipeline_decisions_builds_lookup_maps_and_dedupes_queues(monkeypa
         captured["apply_kwargs"] = kwargs
 
     monkeypatch.setattr(engine._decision_executor, "_apply_single", fake_apply_single)
-    monkeypatch.setattr(engine._decision_executor, "_dedupe_queues", lambda buy_q, sell_q: (
-        buy_q.append(PendingOrder(ticker="DONE", order_type="buy", shares=1)) or
-        sell_q.append(PendingOrder(ticker="DONE", order_type="sell", shares=1))
-    ))
+    monkeypatch.setattr(engine._decision_executor, "_dedupe_queues", lambda buy_q, sell_q: (buy_q.append(PendingOrder(ticker="DONE", order_type="buy", shares=1)) or sell_q.append(PendingOrder(ticker="DONE", order_type="sell", shares=1))))
 
     engine._pending_plan_runner._apply_pipeline_decisions(
         prepared_plan=prepared_plan,
@@ -657,6 +646,7 @@ def test_run_pending_pipeline_plan_merges_applies_and_carries_queue_alerts(monke
         from src.backtesting.engine_pending_plan_runner import (
             PendingPipelineIntradayState,
         )
+
         return (
             PendingPipelineIntradayState(
                 confirmed_orders=confirmed_orders,
@@ -1021,9 +1011,7 @@ def test_pipeline_checkpoint_persists_exit_reentry_cooldowns(tmp_path, monkeypat
         pipeline=StubPipeline(post_market_plans=[], intraday_responses=[]),
         checkpoint_path=str(checkpoint_path),
     )
-    engine._exit_reentry_cooldowns = {
-        "AAPL": {"trigger_reason": "hard_stop_loss", "exit_trade_date": "20240304", "blocked_until": "20240311", "reentry_review_until": "20240318"}
-    }
+    engine._exit_reentry_cooldowns = {"AAPL": {"trigger_reason": "hard_stop_loss", "exit_trade_date": "20240304", "blocked_until": "20240311", "reentry_review_until": "20240318"}}
 
     engine._save_checkpoint("2024-03-04")
 
@@ -1157,6 +1145,7 @@ def test_pipeline_mode_timing_log_includes_funnel_diagnostics(monkeypatch):
 # Gap 3: Pipeline mode integration tests for P2 regime gate enforcement
 # ---------------------------------------------------------------------------
 
+
 def test_pipeline_mode_p2_enforce_clears_buy_orders_on_halt_day(monkeypatch):
     """Plans returned by a pipeline with halt gate + P2 enforce must carry enforcement payload in timing logs.
 
@@ -1174,6 +1163,7 @@ def test_pipeline_mode_p2_enforce_clears_buy_orders_on_halt_day(monkeypatch):
     )
     from src.execution.daily_pipeline import _enforce_btst_regime_gate_p2
     from src.screening.models import MarketState
+
     raw_plan = ExecutionPlan(
         date="20240301",
         portfolio_snapshot={"cash": 100000.0, "positions": {}},
@@ -1223,11 +1213,11 @@ def test_pipeline_mode_p2_enforce_records_p2_flag_in_config_snapshot(monkeypatch
     monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
     from src.execution.models import ExecutionPlan
     from src.research.artifacts import _build_pipeline_config_snapshot
+
     plan = ExecutionPlan(date="20240301", portfolio_snapshot={"cash": 100000.0, "positions": {}})
     snapshot = _build_pipeline_config_snapshot(plan, None, None)
     flags = snapshot.get("btst_0422_flags", {})
-    assert flags.get("p2_regime_gate_mode") == "enforce", \
-        "pipeline_config_snapshot must record p2_regime_gate_mode=enforce when flag is set"
+    assert flags.get("p2_regime_gate_mode") == "enforce", "pipeline_config_snapshot must record p2_regime_gate_mode=enforce when flag is set"
 
 
 def test_pipeline_mode_p6_enforce_records_p6_flag_in_config_snapshot(monkeypatch):
@@ -1252,6 +1242,7 @@ def test_pipeline_mode_p2_off_preserves_buy_orders_on_halt_day(monkeypatch):
         },
     )
     from src.screening.models import MarketState
+
     halt_plan = ExecutionPlan(
         date="20240301",
         portfolio_snapshot={"cash": 100000.0, "positions": {}},
@@ -1295,19 +1286,19 @@ def test_t_plus_1_enforcement_in_pipeline_context(monkeypatch):
     # when called from pipeline-mode-like context with trade_date parameter
     from src.backtesting.portfolio import Portfolio
     from src.backtesting.trader import TradeExecutor
-    
+
     portfolio = Portfolio(tickers=["AAPL"], initial_cash=100000.0, margin_requirement=0.0)
     executor = TradeExecutor()
-    
+
     # Simulate day 1: buy and record entry
     buy_qty = executor.execute_trade("AAPL", "buy", 100, 10.0, portfolio, trade_date="20240301")
     assert buy_qty == 100
     portfolio.record_long_entry("AAPL", "20240301", reset=True)
-    
+
     # Same day sell should be blocked
     sell_qty_same_day = executor.execute_trade("AAPL", "sell", 100, 11.0, portfolio, trade_date="20240301")
     assert sell_qty_same_day == 0, "T+1: same-day sell blocked"
-    
+
     # Next day sell should succeed
     sell_qty_next_day = executor.execute_trade("AAPL", "sell", 100, 11.0, portfolio, trade_date="20240304")
     assert sell_qty_next_day == 100, "T+1: next-day sell allowed"

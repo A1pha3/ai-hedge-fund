@@ -165,6 +165,7 @@ def test_zero_or_negative_quantity_is_noop(portfolio: Portfolio, action: str) ->
 # BETA-004: fee-aware cost basis / realized gain (commission + stamp duty)
 # ---------------------------------------------------------------------------
 
+
 def test_apply_long_buy_capitalizes_commission_into_cost_basis(portfolio: Portfolio) -> None:
     """BETA-004 fix: when a buy is filled with commission_rate > 0, the
     per-share cost basis must be all-in (price + commission), not just
@@ -262,9 +263,11 @@ def test_execute_buy_trade_no_longer_debits_cash_separately(monkeypatch) -> None
     # Spy on adjust_cash
     cash_history: list[float] = []
     orig_adjust = p.adjust_cash
+
     def spy_adjust(delta):
         cash_history.append(delta)
         orig_adjust(delta)
+
     monkeypatch.setattr(p, "adjust_cash", spy_adjust)
 
     # BETA-006: use commission_floor_yuan=0 to isolate BETA-004 scenario
@@ -278,11 +281,7 @@ def test_execute_buy_trade_no_longer_debits_cash_separately(monkeypatch) -> None
         commission_floor_yuan=0.0,
     )
     # in execute_buy_trade — the all-in cost was debited inside apply_long_buy.
-    assert cash_history == [], (
-        f"execute_buy_trade made {len(cash_history)} adjust_cash call(s) "
-        f"({cash_history}); the commission must be baked into apply_long_buy, "
-        f"not debited separately (BETA-004)."
-    )
+    assert cash_history == [], f"execute_buy_trade made {len(cash_history)} adjust_cash call(s) " f"({cash_history}); the commission must be baked into apply_long_buy, " f"not debited separately (BETA-004)."
     snap = p.get_snapshot()
     # All-in cash debit: 100 * 10 * 1.0025 = 1002.5 (BETA-006 floor disabled)
     assert snap["cash"] == pytest.approx(100_000.0 - 1002.5)
@@ -302,9 +301,11 @@ def test_execute_sell_trade_no_longer_debits_cash_separately(monkeypatch) -> Non
 
     cash_history: list[float] = []
     orig_adjust = p.adjust_cash
+
     def spy_adjust(delta):
         cash_history.append(delta)
         orig_adjust(delta)
+
     monkeypatch.setattr(p, "adjust_cash", spy_adjust)
 
     # BETA-006: use commission_floor_yuan=0 to isolate BETA-004 scenario
@@ -320,10 +321,7 @@ def test_execute_sell_trade_no_longer_debits_cash_separately(monkeypatch) -> Non
         commission_floor_yuan=0.0,
     )
     # No post-hoc adjust_cash for fees
-    assert cash_history == [], (
-        f"execute_sell_trade made {len(cash_history)} post-fill adjust_cash "
-        f"calls ({cash_history}); fees must be in apply_long_sell (BETA-004)."
-    )
+    assert cash_history == [], f"execute_sell_trade made {len(cash_history)} post-fill adjust_cash " f"calls ({cash_history}); fees must be in apply_long_sell (BETA-004)."
     snap = p.get_snapshot()
     # Net cash credit: 100 * 11 * (1 - 0.0025 - 0.001) = 100 * 11 * 0.9965 = 1096.15
     expected_cash = starting_cash + 100 * 11.0 * 0.9965
@@ -333,6 +331,7 @@ def test_execute_sell_trade_no_longer_debits_cash_separately(monkeypatch) -> Non
 # ---------------------------------------------------------------------------
 # REF-006: _EMPTY_POSITION stays in sync with PositionState type
 # ---------------------------------------------------------------------------
+
 
 def test_empty_position_keys_match_position_state_type():
     """REF-006: any new field added to PositionState must also be added

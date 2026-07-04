@@ -65,14 +65,16 @@ def test_main_writes_outputs(tmp_path, monkeypatch):
     md_out = tmp_path / "out.md"
 
     # call main with our paths
-    rc = main([
-        "--session-summary-json",
-        str(input_file),
-        "--output-json",
-        str(json_out),
-        "--output-md",
-        str(md_out),
-    ])
+    rc = main(
+        [
+            "--session-summary-json",
+            str(input_file),
+            "--output-json",
+            str(json_out),
+            "--output-md",
+            str(md_out),
+        ]
+    )
     assert rc == 0
 
     assert json_out.exists()

@@ -9,6 +9,7 @@ diagnostic quantifies it. The verdict rests on three pure helpers in
 Extracted from inline (untestable); this test pins their math + thresholds so a
 future bug can't silently flip the verdict.
 """
+
 from __future__ import annotations
 
 import math
@@ -23,7 +24,6 @@ from scripts._diag_trend_pool_filter_discrimination import (  # noqa: E402
     trend_direction_distribution,
     trend_directional_edge,
 )
-
 
 # ---------------------------------------------------------------------------
 # trend_direction_distribution — aff989be "~100% bullish" claim
@@ -177,7 +177,6 @@ from scripts._diag_trend_pool_filter_discrimination import (  # noqa: E402
     per_horizon_summary,
 )
 
-
 # --- cumulative_horizon_return: pct_chg series → N-day cumulative return ---
 
 
@@ -200,12 +199,14 @@ def test_cumulative_return_handles_negative_pct():
 
 def test_cumulative_return_insufficient_history_is_nan():
     import math
+
     r = cumulative_horizon_return([1.0, 2.0], horizon=5)
     assert math.isnan(r)
 
 
 def test_cumulative_return_empty_is_nan():
     import math
+
     assert math.isnan(cumulative_horizon_return([], horizon=1))
 
 

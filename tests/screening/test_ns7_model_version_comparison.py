@@ -257,14 +257,14 @@ class TestPreVersioningExclusionDisclosure:
 
     def test_render_includes_excluded_count_when_present(self) -> None:
         """非 no_data 时, render 追加 '(排除 N 条 pre-NS-2 未版本化记录)' 标注."""
-        records = [
-            _rec("aaa1111aaaa", 0.03, "2026010%d" % d) for d in range(1, 5)
-        ] + [
-            _rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 5)
-        ] + [
-            {"next_5day_return": 0.05, "recommended_date": "20240101"},  # pre-versioning
-            {"model_version": "", "next_5day_return": 0.05, "recommended_date": "20240102"},
-        ]
+        records = (
+            [_rec("aaa1111aaaa", 0.03, "2026010%d" % d) for d in range(1, 5)]
+            + [_rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 5)]
+            + [
+                {"next_5day_return": 0.05, "recommended_date": "20240101"},  # pre-versioning
+                {"model_version": "", "next_5day_return": 0.05, "recommended_date": "20240102"},
+            ]
+        )
         cmp = compare_model_versions(records, min_samples=3)
         assert cmp.excluded_pre_versioning_count == 2
         line = render_model_version_comparison_line(cmp)
@@ -289,11 +289,7 @@ class TestPreVersioningExclusionDisclosure:
 
     def test_zero_excluded_not_rendered(self) -> None:
         """无 pre-versioning 记录时, render 不追加排除标注 (避免噪声)."""
-        records = [
-            _rec("aaa1111aaaa", 0.03, "2026010%d" % d) for d in range(1, 5)
-        ] + [
-            _rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 5)
-        ]
+        records = [_rec("aaa1111aaaa", 0.03, "2026010%d" % d) for d in range(1, 5)] + [_rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 5)]
         cmp = compare_model_versions(records, min_samples=3)
         assert cmp.excluded_pre_versioning_count == 0
         line = render_model_version_comparison_line(cmp)
@@ -305,8 +301,7 @@ class TestBootstrapCI:
 
     def test_delta_winrate_carries_ci(self) -> None:
         """improved/degraded verdict 中 delta_winrate 携带 CI."""
-        records = [_rec("aaa1111aaaa", -0.10, "2026010%d" % d) for d in range(1, 8)] + \
-                  [_rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 8)]
+        records = [_rec("aaa1111aaaa", -0.10, "2026010%d" % d) for d in range(1, 8)] + [_rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 8)]
         cmp = compare_model_versions(records, min_samples=3)
         assert cmp.verdict in ("improved", "degraded")
         assert cmp.delta_winrate_ci_low is not None
@@ -315,8 +310,7 @@ class TestBootstrapCI:
 
     def test_insufficient_verdict_no_ci(self) -> None:
         """insufficient 时 CI 为 None (仍诚实)."""
-        records = [_rec("aaa1111aaaa", 0.03, "2026010%d" % d) for d in range(1, 6)] + \
-                  [_rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 3)]
+        records = [_rec("aaa1111aaaa", 0.03, "2026010%d" % d) for d in range(1, 6)] + [_rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 3)]
         cmp = compare_model_versions(records, min_samples=5)
         assert cmp.verdict == "insufficient"
         assert cmp.delta_winrate_ci_low is None
@@ -330,8 +324,7 @@ class TestBootstrapCI:
 
     def test_render_shows_ci_bracket(self) -> None:
         """render 展示 CI 括号."""
-        records = [_rec("aaa1111aaaa", -0.10, "2026010%d" % d) for d in range(1, 8)] + \
-                  [_rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 8)]
+        records = [_rec("aaa1111aaaa", -0.10, "2026010%d" % d) for d in range(1, 8)] + [_rec("bbb2222bbbb", 0.03, "2026020%d" % d) for d in range(1, 8)]
         cmp = compare_model_versions(records, min_samples=3)
         line = render_model_version_comparison_line(cmp)
         assert "CI[" in line or "improved" in line or "退化" in line or "改善" in line
@@ -339,6 +332,7 @@ class TestBootstrapCI:
     def test_delta_ci_deterministic(self) -> None:
         """同 seed → 同 CI (幂等)."""
         from src.screening.model_version_comparison import _bootstrap_delta_winrate_ci
+
         cand = [0.03, -0.01, 0.05, -0.02, 0.01] * 4
         base = [-0.05, -0.03, -0.01, 0.02, -0.04] * 4
         lo1, hi1 = _bootstrap_delta_winrate_ci(cand, base, n_bootstrap=500, seed=42)
@@ -348,12 +342,14 @@ class TestBootstrapCI:
     def test_delta_ci_none_for_empty(self) -> None:
         """空输入 → None, None."""
         from src.screening.model_version_comparison import _bootstrap_delta_winrate_ci
+
         lo, hi = _bootstrap_delta_winrate_ci([], [1.0, 2.0])
         assert lo is None and hi is None
 
     def test_delta_ci_contains_point_estimate(self) -> None:
         """c346/autodev-36: 统计学基本性质 — CI 必须包含点估计."""
         from src.screening.model_version_comparison import _bootstrap_delta_winrate_ci
+
         # candidate 70% winrate, baseline 40% winrate → delta point estimate = 0.30
         cand = [1.0] * 70 + [-1.0] * 30
         base = [1.0] * 40 + [-1.0] * 60
@@ -372,6 +368,7 @@ class TestDeterministicStrHash:
     def test_known_values(self) -> None:
         """Lock the Java String.hashCode() algorithm to known outputs."""
         from src.screening.model_version_comparison import _deterministic_str_hash
+
         # Empty string → 0
         assert _deterministic_str_hash("") == 0
         # Single char
@@ -383,6 +380,7 @@ class TestDeterministicStrHash:
 
     def test_different_strings_different_hashes(self) -> None:
         from src.screening.model_version_comparison import _deterministic_str_hash
+
         factors = ["event_sentiment", "trend", "fundamental", "mean_reversion"]
         hashes = [_deterministic_str_hash(f) for f in factors]
         # All distinct

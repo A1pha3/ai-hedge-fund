@@ -1356,12 +1356,14 @@ def test_runner_composite_score_direct_computation() -> None:
     # raw = 0.40*0.80 + 0.30*0.70 + 0.20*0.60 + 0.10*0.50 + 0.10*0.0 = 0.70
     # total_weight = 0.40+0.30+0.20+0.10+0.10 = 1.10
     # normalized = 0.70 / 1.10 ≈ 0.6364
-    score = compute_runner_composite_score({
-        "breakout_freshness": 0.80,
-        "trend_acceleration": 0.70,
-        "volume_expansion_quality": 0.60,
-        "catalyst_freshness": 0.50,
-    })
+    score = compute_runner_composite_score(
+        {
+            "breakout_freshness": 0.80,
+            "trend_acceleration": 0.70,
+            "volume_expansion_quality": 0.60,
+            "catalyst_freshness": 0.50,
+        }
+    )
     expected = round(0.70 / 1.10, 4)
     assert abs(score - expected) < 0.001
 
@@ -1459,6 +1461,7 @@ def test_sector_resonance_phase_score_neutral_when_zero() -> None:
     from src.targets.short_trade_target_rank_helpers import (
         compute_sector_resonance_phase_score,
     )
+
     score = compute_sector_resonance_phase_score(0.0)
     assert score == pytest.approx(0.0)  # phase fn returns 0 for 0 input (neutral handled by caller)
 
@@ -1468,6 +1471,7 @@ def test_sector_resonance_phase_score_strong_alignment_exceeds_linear() -> None:
     from src.targets.short_trade_target_rank_helpers import (
         compute_sector_resonance_phase_score,
     )
+
     raw = 0.80
     linear_score = raw  # what the old code would return
     phase_score = compute_sector_resonance_phase_score(raw)
@@ -1480,6 +1484,7 @@ def test_sector_resonance_phase_score_weak_alignment_below_linear() -> None:
     from src.targets.short_trade_target_rank_helpers import (
         compute_sector_resonance_phase_score,
     )
+
     raw = 0.20
     linear_score = raw
     phase_score = compute_sector_resonance_phase_score(raw)
@@ -1492,6 +1497,7 @@ def test_sector_resonance_phase_score_mid_range_unchanged() -> None:
     from src.targets.short_trade_target_rank_helpers import (
         compute_sector_resonance_phase_score,
     )
+
     for raw in (0.40, 0.50, 0.60):
         assert compute_sector_resonance_phase_score(raw) == pytest.approx(raw, abs=1e-4), f"Mid-range raw={raw} should be linear"
 
@@ -1501,6 +1507,7 @@ def test_sector_resonance_phase_score_clamped_to_unit_interval() -> None:
     from src.targets.short_trade_target_rank_helpers import (
         compute_sector_resonance_phase_score,
     )
+
     for raw in (-0.5, 0.0, 0.5, 1.0, 1.5):
         score = compute_sector_resonance_phase_score(raw)
         assert 0.0 <= score <= 1.0, f"Score {score} out of range for raw={raw}"
@@ -1544,6 +1551,7 @@ def test_quiet_breakout_score_disabled_by_default() -> None:
     snapshot = {"breakout_freshness": 0.80, "trend_acceleration": 0.65, "volume_expansion_quality": 0.60, "volatility_regime": 0.9, "atr_ratio": 0.04}
     # No profile → default weights used (quiet_breakout_weight defaults to 0.0).
     score_no_profile = compute_runner_composite_score(snapshot)
+
     # Explicit profile with zero quiet_breakout weight.
     class ZeroQbProfile:
         runner_composite_score_breakout_weight = 0.40
@@ -1624,14 +1632,13 @@ def test_quiet_breakout_score_absent_volatility_defaults_to_breakout() -> None:
 
     score_a = compute_runner_composite_score(snapshot, profile=ProfileABreakoutHeavy())
     score_b = compute_runner_composite_score(snapshot, profile=ProfileBBreakoutSplit())
-    assert score_a == pytest.approx(score_b, abs=1e-4), (
-        f"With no vol data quiet_breakout_score must equal breakout_freshness: {score_a=} vs {score_b=}"
-    )
+    assert score_a == pytest.approx(score_b, abs=1e-4), f"With no vol data quiet_breakout_score must equal breakout_freshness: {score_a=} vs {score_b=}"
 
 
 def test_quiet_breakout_profile_field_wired_to_profile() -> None:
     """runner_composite_score_quiet_breakout_weight must be a proper field on ShortTradeTargetProfile with default 0.0."""
     from src.targets.profiles import build_short_trade_target_profile
+
     profile = build_short_trade_target_profile("default")
     assert hasattr(profile, "runner_composite_score_quiet_breakout_weight")
     assert profile.runner_composite_score_quiet_breakout_weight == 0.0
@@ -1768,6 +1775,7 @@ def test_resolve_runner_escape_zero_gap_risk_does_not_block() -> None:
 def test_runner_escape_pool_quality_min_defaults_to_zero() -> None:
     """runner_escape_pool_quality_min must default to 0.0 on ShortTradeTargetProfile (gate disabled by default)."""
     from src.targets.profiles import build_short_trade_target_profile
+
     profile = build_short_trade_target_profile("default")
     assert hasattr(profile, "runner_escape_pool_quality_min")
     assert profile.runner_escape_pool_quality_min == pytest.approx(0.0)

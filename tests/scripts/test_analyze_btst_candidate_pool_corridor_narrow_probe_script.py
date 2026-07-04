@@ -117,15 +117,11 @@ def test_analyze_btst_candidate_pool_corridor_narrow_probe_surfaces_threshold_ov
     )
     _write_json(
         visibility_gap_dir / "selection_artifacts" / "2026-03-27" / "selection_target_replay_input.json",
-        {
-            "selection_targets": {"300720": {"short_trade": {"decision": "near_miss"}}}
-        },
+        {"selection_targets": {"300720": {"short_trade": {"decision": "near_miss"}}}},
     )
     _write_json(
         visibility_gap_dir / "selection_artifacts" / "2026-03-27" / "selection_snapshot.json",
-        {
-            "near_miss_entries": [{"ticker": "300720"}]
-        },
+        {"near_miss_entries": [{"ticker": "300720"}]},
     )
 
     analysis = analyze_btst_candidate_pool_corridor_narrow_probe(

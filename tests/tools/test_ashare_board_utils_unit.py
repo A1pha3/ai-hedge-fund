@@ -5,6 +5,7 @@ edge case end-to-end, but split_ashare_exchange_prefix, get_ashare_symbol, and
 to_prefixed_ashare_code had zero direct unit coverage. These tests lock down
 their per-exchange behavior.
 """
+
 from __future__ import annotations
 
 import pytest

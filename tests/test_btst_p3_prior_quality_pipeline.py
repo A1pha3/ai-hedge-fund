@@ -8,6 +8,7 @@ Covers:
   5. Buy-order filtering: P3-blocked tickers removed from plan.buy_orders in enforce mode.
   6. Summary refresh: plan.dual_target_summary reflects P3 counts after enforcement.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -99,6 +100,7 @@ class TestP3PipelineEnforcementExists:
             BTST_0422_P3_PRIOR_QUALITY_MODE_ENV,
             BTST_0422_P3_PRIOR_QUALITY_MODES,
         )
+
         assert BTST_0422_P3_PRIOR_QUALITY_MODE_ENV == "BTST_0422_P3_PRIOR_QUALITY_MODE"
         assert "off" in BTST_0422_P3_PRIOR_QUALITY_MODES
         assert "enforce" in BTST_0422_P3_PRIOR_QUALITY_MODES
@@ -180,11 +182,13 @@ class TestP3PipelineEnforceModeBlocks:
         monkeypatch.setenv("BTST_0422_P3_PRIOR_QUALITY_MODE", "enforce")
         ev = _make_selected_evaluation("000003")
         plan = _make_plan_with_selection_targets({"000003": ev})
-        prior_by_ticker = {"000003": {
-            "evaluable_count": 10,
-            "next_high_hit_rate_at_threshold": 0.0,
-            "next_close_positive_rate": 0.70,
-        }}
+        prior_by_ticker = {
+            "000003": {
+                "evaluable_count": 10,
+                "next_high_hit_rate_at_threshold": 0.0,
+                "next_close_positive_rate": 0.70,
+            }
+        }
 
         result = _enforce_btst_prior_quality_p3(plan, prior_by_ticker=prior_by_ticker)
         assert result.selection_targets["000003"].p3_execution_blocked is True
@@ -265,15 +269,18 @@ class TestDualTargetSummaryP3Fields:
 
     def test_p3_prior_quality_distribution_populated(self):
         e1 = DualTargetEvaluation(
-            ticker="000001", trade_date="20260422",
+            ticker="000001",
+            trade_date="20260422",
             p3_prior_quality_label="watch_only",
         )
         e2 = DualTargetEvaluation(
-            ticker="000002", trade_date="20260422",
+            ticker="000002",
+            trade_date="20260422",
             p3_prior_quality_label="execution_ready",
         )
         e3 = DualTargetEvaluation(
-            ticker="000003", trade_date="20260422",
+            ticker="000003",
+            trade_date="20260422",
             p3_prior_quality_label="watch_only",
         )
         targets = {"000001": e1, "000002": e2, "000003": e3}
@@ -493,9 +500,7 @@ class TestP3EnforceBuyOrderFiltering:
         result = _enforce_btst_prior_quality_p3(plan, prior_by_ticker=prior_by_ticker)
 
         payload = (result.risk_metrics or {}).get("btst_prior_quality_p3_enforcement", {})
-        assert payload.get("buy_orders_removed") == 1, (
-            "enforcement payload must record how many buy orders were removed"
-        )
+        assert payload.get("buy_orders_removed") == 1, "enforcement payload must record how many buy orders were removed"
 
     def test_no_prior_ticker_with_buy_order_is_preserved(self, monkeypatch):
         """A ticker with no prior data must not have its buy order removed."""
@@ -531,9 +536,7 @@ class TestP3EnforceSummaryRefresh:
 
         result = _enforce_btst_prior_quality_p3(plan, prior_by_ticker={"000001": _bad_prior("000001")})
 
-        assert result.dual_target_summary.p3_execution_blocked_count == 1, (
-            "plan.dual_target_summary must be refreshed to reflect P3 enforcement"
-        )
+        assert result.dual_target_summary.p3_execution_blocked_count == 1, "plan.dual_target_summary must be refreshed to reflect P3 enforcement"
 
     def test_dual_target_summary_distribution_reflects_enforcement(self, monkeypatch):
         """plan.dual_target_summary.p3_prior_quality_distribution populated after enforcement."""
@@ -548,9 +551,7 @@ class TestP3EnforceSummaryRefresh:
 
         dist = result.dual_target_summary.p3_prior_quality_distribution
         assert dist, "distribution must be non-empty after enforcement"
-        assert "watch_only" in dist or "reject" in dist, (
-            "distribution must include the applied label"
-        )
+        assert "watch_only" in dist or "reject" in dist, "distribution must include the applied label"
 
     def test_dual_target_summary_zero_when_no_enforcement_needed(self, monkeypatch):
         """When all priors pass, blocked_count stays 0 and distribution has only good labels."""
@@ -630,7 +631,7 @@ class TestP3BuyOrderCountSynchronized:
         plan.risk_metrics["counts"]["buy_order_count"] = 2
 
         prior_by_ticker = {
-            "000001": _bad_prior("000001"),   # will be blocked and removed
+            "000001": _bad_prior("000001"),  # will be blocked and removed
             "000002": _good_prior("000002"),  # passes, kept
         }
 
@@ -639,10 +640,7 @@ class TestP3BuyOrderCountSynchronized:
         remaining_count = len(result.buy_orders)
         recorded_count = (result.risk_metrics or {}).get("counts", {}).get("buy_order_count")
         assert remaining_count == 1, "one buy order must remain after P3 removes the blocked ticker"
-        assert recorded_count == 1, (
-            f"risk_metrics['counts']['buy_order_count'] must equal actual remaining buy orders "
-            f"(got {recorded_count}, expected 1)"
-        )
+        assert recorded_count == 1, f"risk_metrics['counts']['buy_order_count'] must equal actual remaining buy orders " f"(got {recorded_count}, expected 1)"
 
     def test_buy_order_count_unchanged_when_no_orders_removed(self, monkeypatch):
         """buy_order_count must not change when all tickers pass P3."""

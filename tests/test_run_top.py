@@ -18,7 +18,8 @@ def _write_report(tmp_path: Path, date: str = "20260608", recs: list[dict] | Non
         "date": date,
         "market_state": {"state_type": "mixed"},
         "layer_a_count": 100,
-        "recommendations": recs or [
+        "recommendations": recs
+        or [
             {"ticker": "300750", "name": "宁德时代", "industry_sw": "电气设备", "score_b": 0.55, "decision": "watch", "consecutive_days": 3, "decay": {"level": "none"}},
             {"ticker": "000001", "name": "平安银行", "industry_sw": "银行", "score_b": 0.35, "decision": "watch", "consecutive_days": 1, "decay": {"level": "mild", "change_pct": -5}},
         ],
@@ -69,10 +70,7 @@ class TestRunTop:
 
     def test_top_n_limits_output(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
         """--top 1 只显示 1 条推荐。"""
-        recs = [
-            {"ticker": f"00000{i}", "name": f"Stock{i}", "industry_sw": "行业", "score_b": 0.5 - i * 0.1, "decision": "watch", "consecutive_days": 0, "decay": {"level": "none"}}
-            for i in range(5)
-        ]
+        recs = [{"ticker": f"00000{i}", "name": f"Stock{i}", "industry_sw": "行业", "score_b": 0.5 - i * 0.1, "decision": "watch", "consecutive_days": 0, "decay": {"level": "none"}} for i in range(5)]
         report_path = _write_report(tmp_path, recs=recs)
         with patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=report_path.parent):
             with patch("src.reporting.pdf_exporter.find_latest_report", return_value=report_path):

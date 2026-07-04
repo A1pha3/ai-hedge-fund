@@ -167,22 +167,17 @@ def test_cagr_floor_is_quarter_not_year():
     # The fix is in two locations: aswath_damodaran.py line ~186 and ~354.
     # We test the formula directly to avoid constructing full pydantic models.
     for n_periods, expected_with_fix, expected_with_bug in [
-        (1, 0.25, 1.0),    # 1 quarter
-        (2, 0.5, 1.0),     # 2 quarters
-        (3, 0.75, 1.0),    # 3 quarters
-        (5, 1.25, 1.25),   # 5 quarters — both formulas agree
+        (1, 0.25, 1.0),  # 1 quarter
+        (2, 0.5, 1.0),  # 2 quarters
+        (3, 0.75, 1.0),  # 3 quarters
+        (5, 1.25, 1.25),  # 5 quarters — both formulas agree
     ]:
         n_years_fixed = max(n_periods * 0.25, 0.25)
         n_years_buggy = max(n_periods * 0.25, 1.0)
-        assert n_years_fixed == pytest.approx(expected_with_fix), (
-            f"n_periods={n_periods}: fix expected {expected_with_fix}, got {n_years_fixed}"
-        )
+        assert n_years_fixed == pytest.approx(expected_with_fix), f"n_periods={n_periods}: fix expected {expected_with_fix}, got {n_years_fixed}"
         # Verify the bug-formula differs from the fix for small n_periods
         if n_periods < 4:
-            assert n_years_fixed != n_years_buggy, (
-                f"n_periods={n_periods}: fix {n_years_fixed} and bug {n_years_buggy} "
-                f"should differ (small-input discontinuity)"
-            )
+            assert n_years_fixed != n_years_buggy, f"n_periods={n_periods}: fix {n_years_fixed} and bug {n_years_buggy} " f"should differ (small-input discontinuity)"
 
 
 # ============================================================
@@ -204,10 +199,7 @@ def test_hamada_negative_equity_treated_as_all_equity():
     cost_negative_de = estimate_cost_of_equity(beta=1.0, ticker="000001", debt_to_equity=-0.5)
     # With the fix, negative D/E behaves like 0 D/E → same cost as no leverage
     cost_no_de = estimate_cost_of_equity(beta=1.0, ticker="000001", debt_to_equity=None)
-    assert cost_negative_de == pytest.approx(cost_no_de, rel=1e-3), (
-        f"negative D/E should be clamped to 0; cost {cost_negative_de} should equal "
-        f"no-D/E cost {cost_no_de}"
-    )
+    assert cost_negative_de == pytest.approx(cost_no_de, rel=1e-3), f"negative D/E should be clamped to 0; cost {cost_negative_de} should equal " f"no-D/E cost {cost_no_de}"
     # And it should be LOWER than positive D/E (since 0.5 is real leverage)
     assert cost_negative_de < cost_positive_de
 
@@ -226,13 +218,17 @@ def test_akshare_helpers_debt_to_equity_derived_from_debt_to_assets():
         build_metrics_from_analysis_indicator_df,
     )
 
-    df = pd.DataFrame([{
-        "报告期": "2024-09-30",
-        "市盈率": 15.0,
-        "市净率": 1.5,
-        "净资产收益率": 12.0,
-        "资产负债率": 45.0,  # AKShare returns as percent (45%)
-    }])
+    df = pd.DataFrame(
+        [
+            {
+                "报告期": "2024-09-30",
+                "市盈率": 15.0,
+                "市净率": 1.5,
+                "净资产收益率": 12.0,
+                "资产负债率": 45.0,  # AKShare returns as percent (45%)
+            }
+        ]
+    )
     metrics = build_metrics_from_analysis_indicator_df(
         ticker="000001",
         df=df,
@@ -254,13 +250,17 @@ def test_akshare_helpers_negative_equity_returns_none_for_d_e():
         build_metrics_from_analysis_indicator_df,
     )
 
-    df = pd.DataFrame([{
-        "报告期": "2024-09-30",
-        "市盈率": 0.0,
-        "市净率": 0.0,
-        "净资产收益率": -50.0,
-        "资产负债率": 110.0,  # D/A > 100% → negative equity
-    }])
+    df = pd.DataFrame(
+        [
+            {
+                "报告期": "2024-09-30",
+                "市盈率": 0.0,
+                "市净率": 0.0,
+                "净资产收益率": -50.0,
+                "资产负债率": 110.0,  # D/A > 100% → negative equity
+            }
+        ]
+    )
     metrics = build_metrics_from_analysis_indicator_df(ticker="000001", df=df, limit=1)
     m = metrics[0]
     # D/A clamped to 1.0; D/E is None
@@ -381,6 +381,7 @@ def test_maybe_release_cooldown_early_handles_garbage_registry():
         # Use monkey-patched path? Just verify _parse_cooldown_date is robust
         # and the function doesn't raise
         from datetime import datetime
+
         assert _parse_cooldown_date("garbage") is None
         assert _parse_cooldown_date("2024-01-01") is None  # wrong format
         assert _parse_cooldown_date("20240101") is not None

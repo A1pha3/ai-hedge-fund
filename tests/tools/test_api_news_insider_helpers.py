@@ -24,7 +24,12 @@ def test_fetch_remote_company_news_logs_degradation_on_parse_failure(caplog):
 
     with caplog.at_level(logging.DEBUG, logger="src.tools.api_company_news_helpers"):
         result = fetch_remote_company_news(
-            make_api_request, "AAPL", "2026-04-10", None, 100, {},
+            make_api_request,
+            "AAPL",
+            "2026-04-10",
+            None,
+            100,
+            {},
         )
 
     # 行为零变更: 仍返回空列表 (解析失败 break)
@@ -48,7 +53,12 @@ def test_fetch_remote_insider_trades_logs_degradation_on_parse_failure(caplog):
 
     with caplog.at_level(logging.DEBUG, logger="src.tools.api_insider_trade_helpers"):
         result = fetch_remote_insider_trades(
-            make_api_request, "AAPL", "2026-04-10", None, 100, {},
+            make_api_request,
+            "AAPL",
+            "2026-04-10",
+            None,
+            100,
+            {},
         )
 
     # 行为零变更: 仍返回空列表 (解析失败 break)

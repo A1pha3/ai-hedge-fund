@@ -7,6 +7,7 @@ the *plumbing* — argument parsing, output paths, evaluator wiring — not
 the inner backtest semantics (those are covered by
 ``tests/backtesting/test_param_grid.py``).
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -65,13 +66,20 @@ def _stub_engine_factory():
 
 def _base_argv(tmp_path: Path) -> list[str]:
     return [
-        "--tickers", "AAPL,MSFT",
-        "--start-date", "2026-01-01",
-        "--end-date", "2026-04-30",
-        "--model-name", "gpt-test",
-        "--model-provider", "openai",
-        "--param-grid", "initial_capital=100000,200000",
-        "--output", str(tmp_path / "out"),
+        "--tickers",
+        "AAPL,MSFT",
+        "--start-date",
+        "2026-01-01",
+        "--end-date",
+        "2026-04-30",
+        "--model-name",
+        "gpt-test",
+        "--model-provider",
+        "openai",
+        "--param-grid",
+        "initial_capital=100000,200000",
+        "--output",
+        str(tmp_path / "out"),
         "--quiet",
     ]
 

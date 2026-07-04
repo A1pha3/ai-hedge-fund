@@ -106,6 +106,7 @@ def test_metrics_zero_volatility_sharpe_zero():
 # ALPHA-002 / GAMMA-006: CVaR(95%) historical-simulation formula
 # ---------------------------------------------------------------------------
 
+
 def test_cvar_95_uses_ceil_alpha_n_for_tail_mean():
     """For N=20 at alpha=0.05, the formula must take the mean of the worst
     ceil(0.05 * 20) = 1 observation, NOT floor(...)=0 which collapses to
@@ -148,9 +149,7 @@ def test_cvar_95_large_sample_matches_analytical_normal_tail():
     expected = 0.001 - 2.063 * 0.02  # ≈ -0.0403
     # Empirical estimate has SE ≈ σ/sqrt(0.05*n) ≈ 0.02/15.8 ≈ 0.00127
     # Use 5 SE tolerance for robustness
-    assert abs(cvar_95 - expected) < 5 * 0.00127, (
-        f"Expected CVaR ≈ {expected:.4f} (±{5*0.00127:.4f}), got {cvar_95:.4f}"
-    )
+    assert abs(cvar_95 - expected) < 5 * 0.00127, f"Expected CVaR ≈ {expected:.4f} (±{5*0.00127:.4f}), got {cvar_95:.4f}"
 
 
 def test_cvar_95_is_negative_for_lossy_returns():
@@ -181,9 +180,7 @@ def test_cvar_95_small_sample_returns_none():
     metrics = {"sharpe_ratio": None, "sortino_ratio": None, "max_drawdown": None}
     calc.update_metrics(metrics, _build_values(values))
     cvar_95 = metrics["cvar_95"]
-    assert cvar_95 is None, (
-        f"CVaR should be None for N<20 observations, got {cvar_95}"
-    )
+    assert cvar_95 is None, f"CVaR should be None for N<20 observations, got {cvar_95}"
 
 
 def test_cvar_95_uses_ceil_not_floor_for_tail_count():
@@ -208,10 +205,7 @@ def test_cvar_95_uses_ceil_not_floor_for_tail_count():
     calc.update_metrics(metrics, _build_values(values))
     cvar_95 = metrics["cvar_95"]
     # Should be ≈ -0.075 (the mean of the 2 worst)
-    assert -0.080 <= cvar_95 <= -0.070, (
-        f"Expected CVaR ≈ -0.075 (mean of 2 worst), got {cvar_95}. "
-        f"This indicates floor() was used instead of ceil() — ALPHA-002."
-    )
+    assert -0.080 <= cvar_95 <= -0.070, f"Expected CVaR ≈ -0.075 (mean of 2 worst), got {cvar_95}. " f"This indicates floor() was used instead of ceil() — ALPHA-002."
 
 
 def test_cvar_95_medium_sample_n_60_uses_correct_tail_count():
@@ -234,14 +228,13 @@ def test_cvar_95_medium_sample_n_60_uses_correct_tail_count():
     cvar_95 = metrics["cvar_95"]
     # For N=60 the formula gives ceil(0.05*60)=3 → mean of 3 worst
     # With 3 planted losses averaging (-0.08-0.06-0.05)/3 = -0.0633
-    assert -0.075 < cvar_95 < -0.055, (
-        f"Expected CVaR ≈ -0.063 (mean of 3 worst), got {cvar_95}"
-    )
+    assert -0.075 < cvar_95 < -0.055, f"Expected CVaR ≈ -0.063 (mean of 3 worst), got {cvar_95}"
 
 
 # ---------------------------------------------------------------------------
 # ALPHA-001: Sortino ratio uses canonical downside deviation
 # ---------------------------------------------------------------------------
+
 
 def test_sortino_uses_canonical_downside_deviation():
     """ALPHA-001: Sortino ratio must use the canonical downside deviation
@@ -287,10 +280,7 @@ def test_sortino_uses_canonical_downside_deviation():
     # start from 100.0 and add 5 changes). mean_excess = 0.024.
     # Canonical σ_d = sqrt(mean([0.0001, 0.0004, 0, 0, 0])) = 0.01
     # Sortino = sqrt(252) * 0.024 / 0.01 ≈ 38.10
-    assert 37.0 < sortino < 40.0, (
-        f"Sortino = {sortino:.2f} — expected ≈ 38.1 with canonical downside deviation. "
-        f"If Sortino ≈ 54, the old Series.std() on negative subset is still in use (ALPHA-001)."
-    )
+    assert 37.0 < sortino < 40.0, f"Sortino = {sortino:.2f} — expected ≈ 38.1 with canonical downside deviation. " f"If Sortino ≈ 54, the old Series.std() on negative subset is still in use (ALPHA-001)."
 
 
 def test_sortino_all_positive_returns_is_inf():
@@ -324,15 +314,13 @@ def test_sortino_large_sample_matches_analytical():
     calc.update_metrics(metrics, _build_values(values))
     sortino = metrics["sortino_ratio"]
     # Analytical Sortino ≈ 1.15; allow ±20% for finite-sample noise
-    assert 0.8 < sortino < 1.6, (
-        f"Sortino = {sortino:.3f} — expected ≈ 1.15 for N(0.001, 0.02) sample. "
-        f"If much higher, negative-subset std is in use (ALPHA-001)."
-    )
+    assert 0.8 < sortino < 1.6, f"Sortino = {sortino:.3f} — expected ≈ 1.15 for N(0.001, 0.02) sample. " f"If much higher, negative-subset std is in use (ALPHA-001)."
 
 
 # ---------------------------------------------------------------------------
 # ALPHA-007 / GAMMA-005: compute_beta warns on length mismatch
 # ---------------------------------------------------------------------------
+
 
 def test_compute_beta_warns_on_length_mismatch():
     """ALPHA-007: when portfolio and benchmark series have different lengths,
@@ -341,8 +329,7 @@ def test_compute_beta_warns_on_length_mismatch():
     import warnings
 
     calc = PerformanceMetricsCalculator(annual_trading_days=252, annual_rf_rate=0.0)
-    portfolio = [0.01, 0.02, -0.01, 0.03, 0.01, -0.02, 0.04, 0.01, -0.01, 0.02,
-                 0.03, -0.01, 0.02, 0.01, -0.03]
+    portfolio = [0.01, 0.02, -0.01, 0.03, 0.01, -0.02, 0.04, 0.01, -0.01, 0.02, 0.03, -0.01, 0.02, 0.01, -0.03]
     benchmark = [0.005, 0.01, -0.005, 0.015, 0.005, -0.01, 0.02, 0.005, -0.005, 0.01]
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")

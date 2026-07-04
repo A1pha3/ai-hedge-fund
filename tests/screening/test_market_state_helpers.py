@@ -63,55 +63,109 @@ def _metrics(
 
 class TestRecommendShortTradeProfile:
     def test_bounce_regime_returns_v2(self) -> None:
-        assert recommend_short_trade_profile(
-            breadth_ratio=0.50, daily_return=-0.02, limit_ratio=5.0, adx=25.0,
-        ) == "btst_precision_v2"
+        assert (
+            recommend_short_trade_profile(
+                breadth_ratio=0.50,
+                daily_return=-0.02,
+                limit_ratio=5.0,
+                adx=25.0,
+            )
+            == "btst_precision_v2"
+        )
 
     def test_slight_drop_returns_v2(self) -> None:
-        assert recommend_short_trade_profile(
-            breadth_ratio=0.50, daily_return=-0.005, limit_ratio=3.0, adx=25.0,
-        ) == "btst_precision_v2"
+        assert (
+            recommend_short_trade_profile(
+                breadth_ratio=0.50,
+                daily_return=-0.005,
+                limit_ratio=3.0,
+                adx=25.0,
+            )
+            == "btst_precision_v2"
+        )
 
     def test_euphoria_returns_conservative(self) -> None:
-        assert recommend_short_trade_profile(
-            breadth_ratio=0.50, daily_return=0.02, limit_ratio=3.0, adx=25.0,
-        ) == "conservative"
+        assert (
+            recommend_short_trade_profile(
+                breadth_ratio=0.50,
+                daily_return=0.02,
+                limit_ratio=3.0,
+                adx=25.0,
+            )
+            == "conservative"
+        )
 
     def test_neutral_returns_v2(self) -> None:
-        assert recommend_short_trade_profile(
-            breadth_ratio=0.50, daily_return=0.005, limit_ratio=3.0, adx=25.0,
-        ) == "btst_precision_v2"
+        assert (
+            recommend_short_trade_profile(
+                breadth_ratio=0.50,
+                daily_return=0.005,
+                limit_ratio=3.0,
+                adx=25.0,
+            )
+            == "btst_precision_v2"
+        )
 
     def test_regime_gate_crisis_overrides(self) -> None:
         """Even with bounce signal, crisis gate forces conservative."""
-        assert recommend_short_trade_profile(
-            breadth_ratio=0.50, daily_return=-0.02, limit_ratio=5.0, adx=25.0,
-            regime_gate_level="crisis",
-        ) == "conservative"
+        assert (
+            recommend_short_trade_profile(
+                breadth_ratio=0.50,
+                daily_return=-0.02,
+                limit_ratio=5.0,
+                adx=25.0,
+                regime_gate_level="crisis",
+            )
+            == "conservative"
+        )
 
     def test_regime_gate_risk_off_overrides(self) -> None:
-        assert recommend_short_trade_profile(
-            breadth_ratio=0.50, daily_return=-0.02, limit_ratio=5.0, adx=25.0,
-            regime_gate_level="risk_off",
-        ) == "conservative"
+        assert (
+            recommend_short_trade_profile(
+                breadth_ratio=0.50,
+                daily_return=-0.02,
+                limit_ratio=5.0,
+                adx=25.0,
+                regime_gate_level="risk_off",
+            )
+            == "conservative"
+        )
 
     def test_high_regime_flip_risk_returns_conservative(self) -> None:
-        assert recommend_short_trade_profile(
-            breadth_ratio=0.50, daily_return=0.0, limit_ratio=3.0, adx=25.0,
-            regime_flip_risk=0.60,
-        ) == "conservative"
+        assert (
+            recommend_short_trade_profile(
+                breadth_ratio=0.50,
+                daily_return=0.0,
+                limit_ratio=3.0,
+                adx=25.0,
+                regime_flip_risk=0.60,
+            )
+            == "conservative"
+        )
 
     def test_high_style_dispersion_returns_conservative(self) -> None:
-        assert recommend_short_trade_profile(
-            breadth_ratio=0.50, daily_return=0.0, limit_ratio=3.0, adx=25.0,
-            style_dispersion=0.60,
-        ) == "conservative"
+        assert (
+            recommend_short_trade_profile(
+                breadth_ratio=0.50,
+                daily_return=0.0,
+                limit_ratio=3.0,
+                adx=25.0,
+                style_dispersion=0.60,
+            )
+            == "conservative"
+        )
 
     def test_weak_breadth_returns_conservative(self) -> None:
         """Breadth ≤ 0.35 forces conservative even in neutral regime."""
-        assert recommend_short_trade_profile(
-            breadth_ratio=0.30, daily_return=0.0, limit_ratio=3.0, adx=25.0,
-        ) == "conservative"
+        assert (
+            recommend_short_trade_profile(
+                breadth_ratio=0.30,
+                daily_return=0.0,
+                limit_ratio=3.0,
+                adx=25.0,
+            )
+            == "conservative"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -161,8 +215,10 @@ class TestResolveRegimeGate:
 class TestClassifyBtstRegimeGate:
     def test_halt_on_crisis_gate(self) -> None:
         result = classify_btst_regime_gate(
-            breadth_ratio=0.30, daily_return=-0.03,
-            style_dispersion=0.60, regime_flip_risk=0.80,
+            breadth_ratio=0.30,
+            daily_return=-0.03,
+            style_dispersion=0.60,
+            regime_flip_risk=0.80,
             regime_gate_level="crisis",
         )
         assert result["gate"] == "halt"
@@ -170,31 +226,39 @@ class TestClassifyBtstRegimeGate:
 
     def test_shadow_only_on_conservative_profile(self) -> None:
         result = classify_btst_regime_gate(
-            breadth_ratio=0.50, daily_return=0.02,
-            style_dispersion=0.20, regime_flip_risk=0.30,
+            breadth_ratio=0.50,
+            daily_return=0.02,
+            style_dispersion=0.20,
+            regime_flip_risk=0.30,
         )
         assert result["gate"] == "shadow_only"
         assert result["profile_hint"] == "conservative"
 
     def test_aggressive_trade_on_ideal_conditions(self) -> None:
         result = classify_btst_regime_gate(
-            breadth_ratio=0.65, daily_return=-0.005,
-            style_dispersion=0.15, regime_flip_risk=0.10,
+            breadth_ratio=0.65,
+            daily_return=-0.005,
+            style_dispersion=0.15,
+            regime_flip_risk=0.10,
         )
         assert result["gate"] == "aggressive_trade"
         assert result["profile_hint"] == "btst_precision_v2"
 
     def test_normal_trade_typical(self) -> None:
         result = classify_btst_regime_gate(
-            breadth_ratio=0.50, daily_return=-0.002,
-            style_dispersion=0.25, regime_flip_risk=0.25,
+            breadth_ratio=0.50,
+            daily_return=-0.002,
+            style_dispersion=0.25,
+            regime_flip_risk=0.25,
         )
         assert result["gate"] == "normal_trade"
 
     def test_result_has_metrics(self) -> None:
         result = classify_btst_regime_gate(
-            breadth_ratio=0.50, daily_return=0.0,
-            style_dispersion=0.20, regime_flip_risk=0.30,
+            breadth_ratio=0.50,
+            daily_return=0.0,
+            style_dispersion=0.20,
+            regime_flip_risk=0.30,
         )
         assert "metrics" in result
         assert "breadth_ratio" in result["metrics"]
@@ -244,27 +308,35 @@ class TestComputeStyleDispersion:
 class TestComputeRegimeFlipRisk:
     def test_stable_market_low_risk(self) -> None:
         risk = _compute_regime_flip_risk(
-            breadth_ratio=0.60, daily_return=0.001,
-            northbound_flow_days=3, style_dispersion=0.15,
+            breadth_ratio=0.60,
+            daily_return=0.001,
+            northbound_flow_days=3,
+            style_dispersion=0.15,
         )
         assert 0.0 <= risk <= 1.0
         assert risk < 0.5
 
     def test_negative_northbound_flow_increases_risk(self) -> None:
         risk_good = _compute_regime_flip_risk(
-            breadth_ratio=0.50, daily_return=0.0,
-            northbound_flow_days=3, style_dispersion=0.20,
+            breadth_ratio=0.50,
+            daily_return=0.0,
+            northbound_flow_days=3,
+            style_dispersion=0.20,
         )
         risk_bad = _compute_regime_flip_risk(
-            breadth_ratio=0.50, daily_return=0.0,
-            northbound_flow_days=-5, style_dispersion=0.20,
+            breadth_ratio=0.50,
+            daily_return=0.0,
+            northbound_flow_days=-5,
+            style_dispersion=0.20,
         )
         assert risk_bad > risk_good
 
     def test_extreme_severe_northbound_flow(self) -> None:
         risk = _compute_regime_flip_risk(
-            breadth_ratio=0.40, daily_return=-0.01,
-            northbound_flow_days=-5, style_dispersion=0.50,
+            breadth_ratio=0.40,
+            daily_return=-0.01,
+            northbound_flow_days=-5,
+            style_dispersion=0.50,
         )
         assert risk > 0.3  # Extreme conditions should elevate risk
 
@@ -280,14 +352,18 @@ class TestComputeTotalVolume:
 
     def test_empty_df_returns_zero(self) -> None:
         import pandas as pd
+
         assert _compute_total_volume(pd.DataFrame()) == 0.0
 
     def test_valid_df_returns_volume(self) -> None:
         import pandas as pd
-        df = pd.DataFrame({
-            "circ_mv": [100000.0, 200000.0],
-            "turnover_rate": [5.0, 3.0],
-        })
+
+        df = pd.DataFrame(
+            {
+                "circ_mv": [100000.0, 200000.0],
+                "turnover_rate": [5.0, 3.0],
+            }
+        )
         vol = _compute_total_volume(df)
         assert vol > 0
 

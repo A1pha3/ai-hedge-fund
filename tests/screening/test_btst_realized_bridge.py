@@ -178,10 +178,7 @@ class TestTask4T15T25Horizons:
         def fake_fetcher(ticker, start, end):
             base = 10.0
             start_dt = _dt.date(2026, 6, 18)
-            return [
-                {"time": (start_dt + _dt.timedelta(days=i)).isoformat(), "close": base + i * 0.1}
-                for i in range(31)
-            ]
+            return [{"time": (start_dt + _dt.timedelta(days=i)).isoformat(), "close": base + i * 0.1} for i in range(31)]
 
         backfill_btst_realized(
             outputs_dir=outputs_dir,

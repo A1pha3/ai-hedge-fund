@@ -138,9 +138,7 @@ def test_analyze_btst_tplus2_near_cluster_dossier_supports_observation_queue(mon
     assert analysis["promotion_readiness_verdict"] == "validation_queue_ready"
 
 
-def test_analyze_btst_tplus2_near_cluster_dossier_counts_recent_tier_trade_dates_within_same_report(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_analyze_btst_tplus2_near_cluster_dossier_counts_recent_tier_trade_dates_within_same_report(monkeypatch, tmp_path: Path) -> None:
     reports_root = tmp_path / "reports"
     reports_root.mkdir()
 
@@ -177,7 +175,7 @@ def test_analyze_btst_tplus2_near_cluster_dossier_counts_recent_tier_trade_dates
                     "catalyst_freshness": 0.02,
                     "layer_c_alignment": 0.5,
                     "sector_resonance": 0.14,
-                        "close_strength": 0.88,
+                    "close_strength": 0.88,
                 },
                 "next_high_return": 0.09,
                 "next_close_return": 0.03,
@@ -194,7 +192,7 @@ def test_analyze_btst_tplus2_near_cluster_dossier_counts_recent_tier_trade_dates
                     "catalyst_freshness": 0.02,
                     "layer_c_alignment": 0.5,
                     "sector_resonance": 0.14,
-                        "close_strength": 0.88,
+                    "close_strength": 0.88,
                 },
                 "next_high_return": 0.08,
                 "next_close_return": 0.02,
@@ -211,9 +209,7 @@ def test_analyze_btst_tplus2_near_cluster_dossier_counts_recent_tier_trade_dates
     assert analysis["recent_tier_verdict"] == "recent_tier_confirmed"
 
 
-def test_analyze_btst_tplus2_near_cluster_dossier_keeps_strong_positive_t_plus_2_window_in_recent_tier(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_analyze_btst_tplus2_near_cluster_dossier_keeps_strong_positive_t_plus_2_window_in_recent_tier(monkeypatch, tmp_path: Path) -> None:
     reports_root = tmp_path / "reports"
     reports_root.mkdir()
 

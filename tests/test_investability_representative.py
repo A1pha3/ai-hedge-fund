@@ -1,4 +1,5 @@
 """Tests for new investability.py functions — R20.40 representative candidates + front-door verdict."""
+
 from __future__ import annotations
 
 import pytest
@@ -122,10 +123,7 @@ class TestSelectRepresentativeCandidates:
         assert len(result) == 3
 
     def test_count_limit(self) -> None:
-        recs = [
-            {"ticker": f"T{i}", "industry_sw": f"行业{i}"}
-            for i in range(10)
-        ]
+        recs = [{"ticker": f"T{i}", "industry_sw": f"行业{i}"} for i in range(10)]
         result = select_representative_candidates(recs, count=3)
         assert len(result) == 3
 

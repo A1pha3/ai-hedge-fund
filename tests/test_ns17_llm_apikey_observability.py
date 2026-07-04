@@ -61,10 +61,7 @@ class TestZhipuApiKeyMissingObservability:
             with pytest.raises(ValueError):
                 models.get_zhipu_model("glm-4")
 
-        assert any(
-            "ZHIPU_API_KEY" in r.getMessage() and r.levelno >= logging.ERROR
-            for r in caplog.records
-        ), "Zhipu API key 缺失必须发 logger.error"
+        assert any("ZHIPU_API_KEY" in r.getMessage() and r.levelno >= logging.ERROR for r in caplog.records), "Zhipu API key 缺失必须发 logger.error"
 
 
 class TestRequiredApiKeyHelperObservability:
@@ -77,10 +74,7 @@ class TestRequiredApiKeyHelperObservability:
             with pytest.raises(ValueError):
                 models._get_required_api_key(None, "SOME_TEST_KEY", "TestProvider")
 
-        assert any(
-            "SOME_TEST_KEY" in r.getMessage() and r.levelno >= logging.ERROR
-            for r in caplog.records
-        ), "_get_required_api_key 缺失必须发 logger.error"
+        assert any("SOME_TEST_KEY" in r.getMessage() and r.levelno >= logging.ERROR for r in caplog.records), "_get_required_api_key 缺失必须发 logger.error"
 
 
 class TestAzureConfigMissingObservability:
@@ -101,7 +95,4 @@ class TestAzureConfigMissingObservability:
                     azure_chat_openai_cls=None,
                 )
 
-        assert any(
-            "AZURE_OPENAI_API_KEY" in r.getMessage() and r.levelno >= logging.ERROR
-            for r in caplog.records
-        ), "Azure API key 缺失必须发 logger.error"
+        assert any("AZURE_OPENAI_API_KEY" in r.getMessage() and r.levelno >= logging.ERROR for r in caplog.records), "Azure API key 缺失必须发 logger.error"

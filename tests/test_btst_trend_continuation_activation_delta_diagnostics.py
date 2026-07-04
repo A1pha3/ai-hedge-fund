@@ -79,9 +79,12 @@ def test_cli_main_creates_expected_outputs(tmp_path: Path) -> None:
 
     result = main(
         [
-            "--input-json", str(input_path),
-            "--output-json", str(json_out),
-            "--output-md", str(md_out),
+            "--input-json",
+            str(input_path),
+            "--output-json",
+            str(json_out),
+            "--output-md",
+            str(md_out),
         ]
     )
 
@@ -94,6 +97,7 @@ def test_cli_main_creates_expected_outputs(tmp_path: Path) -> None:
     markdown = md_out.read_text(encoding="utf-8")
     assert "# Trend Continuation Activation Delta Diagnostics" in markdown
     assert "profile_variant_without_runtime_activation_delta: 1" in markdown
+
 
 def test_build_activation_delta_diagnostics_flags_execution_eligible_surface_when_present() -> None:
     payload = build_trend_continuation_activation_delta_diagnostics(

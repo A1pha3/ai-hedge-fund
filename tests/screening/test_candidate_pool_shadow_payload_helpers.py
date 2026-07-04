@@ -219,9 +219,7 @@ def test_classify_overflow_routes_to_corridor() -> None:
             return "layer_a_liquidity_corridor", (k["min_gate_share"], k["rank"], k["candidate"], False, False)
         return None
 
-    overflow, cutoff_avg, corridor, rebucket = _classify_shadow_overflow_candidates(
-        **_classify_kwargs(ranked, pool_size=2, classify_fn=_classify)
-    )
+    overflow, cutoff_avg, corridor, rebucket = _classify_shadow_overflow_candidates(**_classify_kwargs(ranked, pool_size=2, classify_fn=_classify))
     # overflow = ranked[2:] = [000003]
     assert [c.ticker for c in overflow] == ["000003"]
     assert len(corridor) == 1
@@ -237,9 +235,7 @@ def test_classify_overflow_routes_to_rebucket() -> None:
             return "post_gate_liquidity_competition", (k["cutoff_share"], k["rank"], k["candidate"], False, False)
         return None
 
-    _, _, corridor, rebucket = _classify_shadow_overflow_candidates(
-        **_classify_kwargs(ranked, pool_size=2, classify_fn=_classify)
-    )
+    _, _, corridor, rebucket = _classify_shadow_overflow_candidates(**_classify_kwargs(ranked, pool_size=2, classify_fn=_classify))
     assert len(corridor) == 0
     assert len(rebucket) == 1
 
@@ -250,9 +246,7 @@ def test_classify_overflow_drops_unclassified() -> None:
     def _classify(**k):
         return None  # nothing classifies
 
-    _, _, corridor, rebucket = _classify_shadow_overflow_candidates(
-        **_classify_kwargs(ranked, pool_size=2, classify_fn=_classify)
-    )
+    _, _, corridor, rebucket = _classify_shadow_overflow_candidates(**_classify_kwargs(ranked, pool_size=2, classify_fn=_classify))
     assert corridor == []
     assert rebucket == []
 
@@ -263,9 +257,7 @@ def test_classify_overflow_cutoff_avg_floored_at_1() -> None:
     def _classify(**k):
         return None
 
-    _, cutoff_avg, _, _ = _classify_shadow_overflow_candidates(
-        **_classify_kwargs(ranked, pool_size=2, classify_fn=_classify)
-    )
+    _, cutoff_avg, _, _ = _classify_shadow_overflow_candidates(**_classify_kwargs(ranked, pool_size=2, classify_fn=_classify))
     assert cutoff_avg == 1.0  # max(0.0, 1.0)
 
 
@@ -424,9 +416,7 @@ def test_impl_no_overflow_when_candidates_le_pool_size() -> None:
 
 
 def test_impl_with_overflow_extends_shadow() -> None:
-    candidates = [
-        _cand(f"{i:06d}", avg_volume=float(1000 - i * 100)) for i in range(1, 6)  # 5 candidates
-    ]
+    candidates = [_cand(f"{i:06d}", avg_volume=float(1000 - i * 100)) for i in range(1, 6)]  # 5 candidates
 
     def _classify(**k):
         # classify all overflow as corridor

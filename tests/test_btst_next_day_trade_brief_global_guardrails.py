@@ -4,9 +4,7 @@ from src.paper_trading._btst_reporting import brief_builder, brief_rendering
 
 
 def test_btst_brief_builder_regime_guardrail_risk_off() -> None:
-    guardrail = brief_builder._btst_regime_gate_guardrail(
-        {"market_state": {"regime_gate_level": "risk_off"}}
-    )
+    guardrail = brief_builder._btst_regime_gate_guardrail({"market_state": {"regime_gate_level": "risk_off"}})
     assert guardrail is not None
     assert "risk_off" in guardrail
 
@@ -39,9 +37,7 @@ def test_btst_next_day_trade_brief_markdown_renders_global_guardrails() -> None:
             "excluded_research_count": 0,
         },
         "recommendation": "空仓观察",
-        "global_guardrails": [
-            "Regime gate (risk_off): 默认不做正式买入，只允许观察/确认性复审；若无明确修复信号则空仓。"
-        ],
+        "global_guardrails": ["Regime gate (risk_off): 默认不做正式买入，只允许观察/确认性复审；若无明确修复信号则空仓。"],
         "selected_entries": [],
         "near_miss_entries": [],
         "opportunity_pool_entries": [],

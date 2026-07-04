@@ -40,17 +40,13 @@ def test_compute_shadow_share_metrics_negative_volume() -> None:
 
 
 def test_compute_shadow_share_metrics_normal() -> None:
-    cutoff_share, min_gate_share = compute_shadow_share_metrics(
-        avg_volume_20d=500.0, cutoff_reference=1000.0, min_avg_amount_20d=200.0
-    )
+    cutoff_share, min_gate_share = compute_shadow_share_metrics(avg_volume_20d=500.0, cutoff_reference=1000.0, min_avg_amount_20d=200.0)
     assert cutoff_share == 0.5
     assert min_gate_share == 2.5
 
 
 def test_compute_shadow_share_metrics_rounds_to_4() -> None:
-    cutoff_share, min_gate_share = compute_shadow_share_metrics(
-        avg_volume_20d=333.0, cutoff_reference=1000.0, min_avg_amount_20d=7.0
-    )
+    cutoff_share, min_gate_share = compute_shadow_share_metrics(avg_volume_20d=333.0, cutoff_reference=1000.0, min_avg_amount_20d=7.0)
     assert cutoff_share == round(0.333, 4)
     assert min_gate_share == round(47.5714, 4)
 
@@ -186,20 +182,16 @@ def _liquidity_key(c: CandidateStock) -> tuple[int, float, float, str]:
 def test_select_shadow_rows_visibility_gap_first() -> None:
     rows: list[ShadowRankRow] = [
         (10.0, 1, _cand("000001"), False, False),  # neither
-        (5.0, 2, _cand("000002"), False, True),    # visibility gap
+        (5.0, 2, _cand("000002"), False, True),  # visibility gap
     ]
-    selected = select_shadow_rows(
-        rows=rows, max_tickers=2, focus_tickers=set(), visibility_gap_tickers={"000002"}, liquidity_sort_key=_liquidity_key
-    )
+    selected = select_shadow_rows(rows=rows, max_tickers=2, focus_tickers=set(), visibility_gap_tickers={"000002"}, liquidity_sort_key=_liquidity_key)
     tickers = [row[2].ticker for row in selected]
     assert tickers[0] == "000002"  # visibility gap prioritized
 
 
 def test_select_shadow_rows_caps_at_max() -> None:
     rows = [(float(i), i, _cand(f"{i:06d}"), False, False) for i in range(1, 6)]
-    selected = select_shadow_rows(
-        rows=rows, max_tickers=3, focus_tickers=set(), visibility_gap_tickers=set(), liquidity_sort_key=_liquidity_key
-    )
+    selected = select_shadow_rows(rows=rows, max_tickers=3, focus_tickers=set(), visibility_gap_tickers=set(), liquidity_sort_key=_liquidity_key)
     assert len(selected) == 3
 
 
@@ -208,9 +200,7 @@ def test_select_shadow_rows_focus_before_all() -> None:
         (10.0, 1, _cand("000001"), False, False),
         (8.0, 2, _cand("000002"), True, False),  # focus
     ]
-    selected = select_shadow_rows(
-        rows=rows, max_tickers=2, focus_tickers={"000002"}, visibility_gap_tickers=set(), liquidity_sort_key=_liquidity_key
-    )
+    selected = select_shadow_rows(rows=rows, max_tickers=2, focus_tickers={"000002"}, visibility_gap_tickers=set(), liquidity_sort_key=_liquidity_key)
     tickers = [row[2].ticker for row in selected]
     assert tickers[0] == "000002"  # focus before plain
 
@@ -220,16 +210,12 @@ def test_select_shadow_rows_dedupes_ticker() -> None:
         (10.0, 1, _cand("000001"), False, True),
         (5.0, 2, _cand("000001"), True, False),  # same ticker, duplicate
     ]
-    selected = select_shadow_rows(
-        rows=rows, max_tickers=5, focus_tickers={"000001"}, visibility_gap_tickers={"000001"}, liquidity_sort_key=_liquidity_key
-    )
+    selected = select_shadow_rows(rows=rows, max_tickers=5, focus_tickers={"000001"}, visibility_gap_tickers={"000001"}, liquidity_sort_key=_liquidity_key)
     assert len(selected) == 1  # deduped
 
 
 def test_select_shadow_rows_empty_rows() -> None:
-    selected = select_shadow_rows(
-        rows=[], max_tickers=5, focus_tickers=set(), visibility_gap_tickers=set(), liquidity_sort_key=_liquidity_key
-    )
+    selected = select_shadow_rows(rows=[], max_tickers=5, focus_tickers=set(), visibility_gap_tickers=set(), liquidity_sort_key=_liquidity_key)
     assert selected == []
 
 
@@ -373,7 +359,7 @@ def test_classify_overflow_corridor_basic() -> None:
     lane, row = result
     assert lane == "layer_a_liquidity_corridor"
     assert row[0] == 1.5  # score = min_gate_share
-    assert row[1] == 5    # rank
+    assert row[1] == 5  # rank
 
 
 def test_classify_overflow_corridor_visibility_gap() -> None:
@@ -454,7 +440,7 @@ def test_classify_overflow_returns_none_when_no_match() -> None:
     result = classify_overflow_candidate(
         **_classify_kwargs(
             min_gate_share=0.1,  # too low for any gate
-            cutoff_share=0.9,    # too high for corridor
+            cutoff_share=0.9,  # too high for corridor
             corridor_max_cutoff_share=0.5,
             corridor_min_gate_share=1.0,
             rebucket_min_gate_share=0.8,

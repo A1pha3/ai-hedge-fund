@@ -121,9 +121,7 @@ class TestRenderConfluence:
         """
         result = _render_confluence(0, 0)
         assert "⚠无信号" in result
-        assert result != "", (
-            "total==0 必须返回 ⚠无信号 标注, 不再返回空串 (NS-18 c276)"
-        )
+        assert result != "", "total==0 必须返回 ⚠无信号 标注, 不再返回空串 (NS-18 c276)"
 
     def test_full_confluence(self) -> None:
         result = _render_confluence(4, 4)
@@ -158,9 +156,7 @@ class TestComputeFactorReasonMissingField:
         # 呈现层行为不变: direction=None 退化为 0 → 无 contributions → 返回 ""
         assert result == ""
         debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
-        assert len(debug_records) == 1, (
-            f"expected 1 DEBUG for missing direction, got {debug_records}"
-        )
+        assert len(debug_records) == 1, f"expected 1 DEBUG for missing direction, got {debug_records}"
         msg = debug_records[0].getMessage()
         assert "missing field" in msg
         assert "trend" in msg
@@ -221,9 +217,7 @@ class TestComputeFactorReasonMissingField:
         # direction=0 不 >0 也不 <0 → 无 contributions → 返回 ""
         assert result == ""
         debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
-        assert len(debug_records) == 0, (
-            "direction=0 (真中性) 不应发 debug, 只有 None 才发"
-        )
+        assert len(debug_records) == 0, "direction=0 (真中性) 不应发 debug, 只有 None 才发"
 
 
 # ---------------------------------------------------------------------------
@@ -407,104 +401,49 @@ class TestSuggestPositionPct:
         from src.screening.top_picks import _suggest_position_pct
 
         # edge=8% (percent), winrate=0.62, normal → confidence 0.6, base = 8.0*0.6 = 4.8
-        assert (
-            _suggest_position_pct(
-                decision_edge=8.0, decision_winrate=0.62, market_regime="normal"
-            )
-            == 4.8
-        )
+        assert _suggest_position_pct(decision_edge=8.0, decision_winrate=0.62, market_regime="normal") == 4.8
 
     def test_high_conviction_larger_size(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
         # edge=12%, winrate=0.70 → confidence 1.0, base = 12.0
-        assert (
-            _suggest_position_pct(
-                decision_edge=12.0, decision_winrate=0.70, market_regime="normal"
-            )
-            == 12.0
-        )
+        assert _suggest_position_pct(decision_edge=12.0, decision_winrate=0.70, market_regime="normal") == 12.0
 
     def test_capped_at_max_per_pick(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
         # edge=20%, winrate=0.80 → confidence 1.5, base = 30.0 → capped at 15.0
-        assert (
-            _suggest_position_pct(
-                decision_edge=20.0, decision_winrate=0.80, market_regime="normal"
-            )
-            == 15.0
-        )
+        assert _suggest_position_pct(decision_edge=20.0, decision_winrate=0.80, market_regime="normal") == 15.0
 
     def test_crisis_regime_returns_zero(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        assert (
-            _suggest_position_pct(
-                decision_edge=10.0, decision_winrate=0.65, market_regime="crisis"
-            )
-            == 0.0
-        )
-        assert (
-            _suggest_position_pct(
-                decision_edge=10.0, decision_winrate=0.65, market_regime="risk_off"
-            )
-            == 0.0
-        )
+        assert _suggest_position_pct(decision_edge=10.0, decision_winrate=0.65, market_regime="crisis") == 0.0
+        assert _suggest_position_pct(decision_edge=10.0, decision_winrate=0.65, market_regime="risk_off") == 0.0
 
     def test_caution_regime_halved(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
         # edge=12%, winrate=0.70 → base 12.0; cautious → ×0.5 = 6.0
-        assert (
-            _suggest_position_pct(
-                decision_edge=12.0, decision_winrate=0.70, market_regime="cautious"
-            )
-            == 6.0
-        )
+        assert _suggest_position_pct(decision_edge=12.0, decision_winrate=0.70, market_regime="cautious") == 6.0
 
     def test_non_positive_edge_returns_zero(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        assert (
-            _suggest_position_pct(
-                decision_edge=-3.0, decision_winrate=0.60, market_regime="normal"
-            )
-            == 0.0
-        )
-        assert (
-            _suggest_position_pct(
-                decision_edge=0.0, decision_winrate=0.60, market_regime="normal"
-            )
-            == 0.0
-        )
+        assert _suggest_position_pct(decision_edge=-3.0, decision_winrate=0.60, market_regime="normal") == 0.0
+        assert _suggest_position_pct(decision_edge=0.0, decision_winrate=0.60, market_regime="normal") == 0.0
 
     def test_none_inputs_return_zero(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
-        assert (
-            _suggest_position_pct(
-                decision_edge=None, decision_winrate=0.60, market_regime="normal"
-            )
-            == 0.0
-        )
-        assert (
-            _suggest_position_pct(
-                decision_edge=8.0, decision_winrate=None, market_regime="normal"
-            )
-            == 0.0
-        )
+        assert _suggest_position_pct(decision_edge=None, decision_winrate=0.60, market_regime="normal") == 0.0
+        assert _suggest_position_pct(decision_edge=8.0, decision_winrate=None, market_regime="normal") == 0.0
 
     def test_low_winrate_below_coin_flip_shrinks(self) -> None:
         from src.screening.top_picks import _suggest_position_pct
 
         # winrate=0.52 (barely above coin-flip) → confidence 0.1, base = 8.0*0.1 = 0.8
-        assert (
-            _suggest_position_pct(
-                decision_edge=8.0, decision_winrate=0.52, market_regime="normal"
-            )
-            == 0.8
-        )
+        assert _suggest_position_pct(decision_edge=8.0, decision_winrate=0.52, market_regime="normal") == 0.8
 
     def test_realistic_pick_does_not_saturate_cap(self) -> None:
         """C260 regression: the bug's signature was that realistic BUY picks
@@ -513,9 +452,7 @@ class TestSuggestPositionPct:
         edge=4.66%, winrate=0.597 → 4.66*0.485 = 2.26 → 2.3%)."""
         from src.screening.top_picks import _suggest_position_pct
 
-        pos = _suggest_position_pct(
-            decision_edge=4.66, decision_winrate=0.597, market_regime="normal"
-        )
+        pos = _suggest_position_pct(decision_edge=4.66, decision_winrate=0.597, market_regime="normal")
         assert pos < 15.0  # MUST NOT saturate the cap
         assert 1.5 < pos < 3.5  # sane ~2.3% for a typical pick
 
@@ -524,15 +461,9 @@ class TestSuggestPositionPct:
         > marginal (the bug made all three return 15%)."""
         from src.screening.top_picks import _suggest_position_pct
 
-        strong = _suggest_position_pct(
-            decision_edge=8.0, decision_winrate=0.70, market_regime="normal"
-        )
-        typical = _suggest_position_pct(
-            decision_edge=4.0, decision_winrate=0.58, market_regime="normal"
-        )
-        marginal = _suggest_position_pct(
-            decision_edge=1.5, decision_winrate=0.52, market_regime="normal"
-        )
+        strong = _suggest_position_pct(decision_edge=8.0, decision_winrate=0.70, market_regime="normal")
+        typical = _suggest_position_pct(decision_edge=4.0, decision_winrate=0.58, market_regime="normal")
+        marginal = _suggest_position_pct(decision_edge=1.5, decision_winrate=0.52, market_regime="normal")
         assert strong > typical > marginal
         assert marginal < 5.0  # marginal pick gets a small size, not the cap
 
@@ -597,15 +528,9 @@ class TestClassifyReturnRhythm:
         from src.screening.top_picks import _classify_return_rhythm
 
         nan = math.nan
-        assert _classify_return_rhythm({"t5": nan, "t20": 0.05, "t30": 0.08}) == "—", (
-            "NaN t5 → '—', not fall-through to 匀"
-        )
-        assert _classify_return_rhythm({"t5": 0.06, "t20": nan, "t30": 0.08}) == "—", (
-            "NaN t20 → '—'"
-        )
-        assert _classify_return_rhythm({"t5": 0.06, "t20": 0.05, "t30": nan}) == "—", (
-            "NaN t30 → '—', not fall-through (NaN t30 <= 0 is False)"
-        )
+        assert _classify_return_rhythm({"t5": nan, "t20": 0.05, "t30": 0.08}) == "—", "NaN t5 → '—', not fall-through to 匀"
+        assert _classify_return_rhythm({"t5": 0.06, "t20": nan, "t30": 0.08}) == "—", "NaN t20 → '—'"
+        assert _classify_return_rhythm({"t5": 0.06, "t20": 0.05, "t30": nan}) == "—", "NaN t30 → '—', not fall-through (NaN t30 <= 0 is False)"
         assert _classify_return_rhythm({"t5": nan, "t20": nan, "t30": nan}) == "—"
 
 
@@ -631,10 +556,12 @@ class TestDecisionHorizonMetricsWithNan:
         import math
         from src.screening.top_picks import _extract_decision_horizon_metrics
 
-        edge, winrate = _extract_decision_horizon_metrics({
-            "expected_returns": {"t5": math.nan, "t10": math.nan},
-            "win_rates": {"t5": math.nan, "t10": math.nan},
-        })
+        edge, winrate = _extract_decision_horizon_metrics(
+            {
+                "expected_returns": {"t5": math.nan, "t10": math.nan},
+                "win_rates": {"t5": math.nan, "t10": math.nan},
+            }
+        )
         assert edge is None, f"expected None for NaN edge, got {edge!r}"
         assert winrate is None, f"expected None for NaN winrate, got {winrate!r}"
 
@@ -642,10 +569,12 @@ class TestDecisionHorizonMetricsWithNan:
         import math
         from src.screening.top_picks import _extract_decision_horizon_metrics
 
-        edge, winrate = _extract_decision_horizon_metrics({
-            "expected_returns": {"t5": math.nan, "t10": 9.0},
-            "win_rates": {"t5": math.nan, "t10": 0.62},
-        })
+        edge, winrate = _extract_decision_horizon_metrics(
+            {
+                "expected_returns": {"t5": math.nan, "t10": 9.0},
+                "win_rates": {"t5": math.nan, "t10": 0.62},
+            }
+        )
         assert edge == 9.0, f"expected 9.0 for mixed NaN/clean edge, got {edge!r}"
         assert winrate == 0.62, f"expected 0.62 for mixed NaN/clean winrate, got {winrate!r}"
 
@@ -667,9 +596,7 @@ class TestNanDoesNotRenderNanInPositionSizing:
             decision_winrate=math.nan,
             market_regime="trend",
         )
-        assert pos == 0.0, (
-            f"NaN decision_edge → position should be 0.0, got {pos!r}"
-        )
+        assert pos == 0.0, f"NaN decision_edge → position should be 0.0, got {pos!r}"
 
     def test_nan_winrate_with_finite_edge_gives_position(self) -> None:
         import math
@@ -700,32 +627,17 @@ class TestFormatSampleCount:
     def test_mature_less_than_total_shows_suffix(self) -> None:
         from src.screening.top_picks import _format_sample_count
 
-        assert (
-            _format_sample_count(
-                {"bucket_sample_count": 50, "bucket_t30_mature_count": 20}
-            )
-            == "50(熟20)"
-        )
+        assert _format_sample_count({"bucket_sample_count": 50, "bucket_t30_mature_count": 20}) == "50(熟20)"
 
     def test_mature_equals_total_no_suffix(self) -> None:
         from src.screening.top_picks import _format_sample_count
 
-        assert (
-            _format_sample_count(
-                {"bucket_sample_count": 30, "bucket_t30_mature_count": 30}
-            )
-            == "30"
-        )
+        assert _format_sample_count({"bucket_sample_count": 30, "bucket_t30_mature_count": 30}) == "30"
 
     def test_mature_exceeds_total_clamped_no_suffix(self) -> None:
         from src.screening.top_picks import _format_sample_count
 
-        assert (
-            _format_sample_count(
-                {"bucket_sample_count": 10, "bucket_t30_mature_count": 15}
-            )
-            == "10"
-        )
+        assert _format_sample_count({"bucket_sample_count": 10, "bucket_t30_mature_count": 15}) == "10"
 
     def test_no_mature_field_just_total(self) -> None:
         from src.screening.top_picks import _format_sample_count
@@ -756,9 +668,7 @@ class TestPrintPickEntryT30LowConfidence:
     """
 
     @patch("src.screening.top_picks.build_front_door_verdict")
-    def test_t30_winrate_flags_low_confidence_when_mature_tiny(
-        self, mock_verdict, capsys
-    ) -> None:
+    def test_t30_winrate_flags_low_confidence_when_mature_tiny(self, mock_verdict, capsys) -> None:
         """Tiny mature sample (n=1, 100% winrate) must flag ⚠少样本."""
         mock_verdict.return_value = {
             "action": "HOLD",
@@ -784,16 +694,10 @@ class TestPrintPickEntryT30LowConfidence:
         )
         _print_pick_entry(1, item, ctx)
         out = capsys.readouterr().out
-        assert "少样本" in out or "⚠" in out, (
-            "_print_pick_entry (--top-picks per-pick row) must flag T+30 winrate "
-            "low-confidence when mature sample < 5 — c271/c277 fixed the expected_return "
-            "renderers but missed the default front door's per-pick row."
-        )
+        assert "少样本" in out or "⚠" in out, "_print_pick_entry (--top-picks per-pick row) must flag T+30 winrate " "low-confidence when mature sample < 5 — c271/c277 fixed the expected_return " "renderers but missed the default front door's per-pick row."
 
     @patch("src.screening.top_picks.build_front_door_verdict")
-    def test_t30_winrate_no_flag_when_mature_sufficient(
-        self, mock_verdict, capsys
-    ) -> None:
+    def test_t30_winrate_no_flag_when_mature_sufficient(self, mock_verdict, capsys) -> None:
         """Sufficient mature sample (n=20) must NOT emit the low-confidence marker."""
         mock_verdict.return_value = {
             "action": "HOLD",
@@ -859,9 +763,7 @@ class TestApplyConsecutiveBonusAndResort:
     def test_score_rounded_to_four_decimals(self) -> None:
         from src.screening.top_picks import _apply_consecutive_bonus_and_resort
 
-        ranked = [
-            {"ticker": "a", "composite_score": 0.123456, "consecutive_bonus": 0.03}
-        ]
+        ranked = [{"ticker": "a", "composite_score": 0.123456, "consecutive_bonus": 0.03}]
         result = _apply_consecutive_bonus_and_resort(ranked)
         assert result[0]["composite_score"] == round(0.123456 + 0.03, 4)
 
@@ -979,9 +881,7 @@ class TestApplyConsecutiveBonusAndResort:
         ]
         ranked_asc = list(reversed(ranked_desc))
 
-        result_desc = _apply_consecutive_bonus_and_resort(
-            [dict(r) for r in ranked_desc]
-        )
+        result_desc = _apply_consecutive_bonus_and_resort([dict(r) for r in ranked_desc])
         result_asc = _apply_consecutive_bonus_and_resort([dict(r) for r in ranked_asc])
 
         assert [r["ticker"] for r in result_desc] == ["000001", "600999"]
@@ -1002,9 +902,7 @@ class TestApplyConsecutiveBonusAndResort:
         # as 000001 > 300118 > 600999 (ticker ascending within the tie), so a
         # subsequent [:2] cut keeps {000001, 300118} every time.
         result_forward = _apply_consecutive_bonus_and_resort([dict(r) for r in base])
-        result_reversed = _apply_consecutive_bonus_and_resort(
-            [dict(r) for r in reversed(base)]
-        )
+        result_reversed = _apply_consecutive_bonus_and_resort([dict(r) for r in reversed(base)])
 
         forward_top2 = {r["ticker"] for r in result_forward[:2]}
         reversed_top2 = {r["ticker"] for r in result_reversed[:2]}
@@ -1079,16 +977,12 @@ class TestEnrichWithConsecutiveBonus:
 
         import unittest.mock as mock
 
-        with mock.patch.object(
-            top_picks, "enrich_recommendations_with_history", side_effect=boom
-        ):
+        with mock.patch.object(top_picks, "enrich_recommendations_with_history", side_effect=boom):
             result = top_picks._enrich_with_consecutive_bonus(recs, tmp_path)
 
         assert result is recs or result == original_recs
 
-    def test_exception_emits_warning_for_ranking_degradation(
-        self, tmp_path, caplog
-    ) -> None:
+    def test_exception_emits_warning_for_ranking_degradation(self, tmp_path, caplog) -> None:
         """NS-17 / BH-017 family sibling: enrich 失败时必须发 warning, 不再静默。
 
         背景: 失败时返回原 list 是有意为之 (best-effort), 但之前完全静默 —
@@ -1107,9 +1001,7 @@ class TestEnrichWithConsecutiveBonus:
         def boom(**kwargs):
             raise RuntimeError("simulated enrich failure")
 
-        with mock.patch.object(
-            top_picks, "enrich_recommendations_with_history", side_effect=boom
-        ):
+        with mock.patch.object(top_picks, "enrich_recommendations_with_history", side_effect=boom):
             with caplog.at_level(logging.WARNING, logger="src.screening.top_picks"):
                 result = top_picks._enrich_with_consecutive_bonus(recs, tmp_path)
 
@@ -1117,13 +1009,9 @@ class TestEnrichWithConsecutiveBonus:
         assert result is recs or result == original_recs
 
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warning_records) >= 1, (
-            f"expected >=1 WARNING record from enrich failure, got {caplog.records}"
-        )
+        assert len(warning_records) >= 1, f"expected >=1 WARNING record from enrich failure, got {caplog.records}"
         msg = warning_records[0].getMessage()
-        assert (
-            "enrich_recommendations_with_history" in msg or "consecutive_bonus" in msg
-        )
+        assert "enrich_recommendations_with_history" in msg or "consecutive_bonus" in msg
         assert "simulated enrich failure" in msg
 
     def test_assigns_bonus_from_consecutive_days(self, tmp_path) -> None:
@@ -1139,9 +1027,7 @@ class TestEnrichWithConsecutiveBonus:
 
         import unittest.mock as mock
 
-        with mock.patch.object(
-            top_picks, "enrich_recommendations_with_history", side_effect=fake_enrich
-        ):
+        with mock.patch.object(top_picks, "enrich_recommendations_with_history", side_effect=fake_enrich):
             result = top_picks._enrich_with_consecutive_bonus([], tmp_path)
 
         assert result[0]["consecutive_bonus"] == _consecutive_bonus(5)
@@ -1159,9 +1045,7 @@ class TestEnrichWithConsecutiveBonus:
 
         import unittest.mock as mock
 
-        with mock.patch.object(
-            top_picks, "enrich_recommendations_with_history", side_effect=fake_enrich
-        ):
+        with mock.patch.object(top_picks, "enrich_recommendations_with_history", side_effect=fake_enrich):
             result = top_picks._enrich_with_consecutive_bonus([], tmp_path)
 
         assert result[0]["consecutive_bonus"] == 0.0
@@ -1215,9 +1099,7 @@ def test_print_stability_block_renders_when_reports_exist(tmp_path, capsys):
                 {"ticker": "000003", "name": "招行", "score_b": 0.7},
             ],
         }
-        (tmp_path / f"auto_screening_{d}.json").write_text(
-            json.dumps(payload), encoding="utf-8"
-        )
+        (tmp_path / f"auto_screening_{d}.json").write_text(json.dumps(payload), encoding="utf-8")
 
     top_picks._print_stability_block(tmp_path)
     out = capsys.readouterr().out
@@ -1305,27 +1187,18 @@ class TestComputePickRiskAdviceSilentFailure:
         def boom(*args, **kwargs):
             raise RuntimeError("simulated tushare price fetch failure")
 
-        with mock.patch(
-            "src.tools.tushare_api.get_ashare_prices_with_tushare", side_effect=boom
-        ):
+        with mock.patch("src.tools.tushare_api.get_ashare_prices_with_tushare", side_effect=boom):
             with caplog.at_level(logging.WARNING, logger="src.screening.top_picks"):
-                result = top_picks._compute_pick_risk_advice(
-                    "000001", "平安", trade_date="20260101"
-                )
+                result = top_picks._compute_pick_risk_advice("000001", "平安", trade_date="20260101")
 
         # Best-effort contract preserved: None returned, no crash.
         assert result is None
 
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert warning_records, (
-            f"expected >=1 WARNING record from risk-advice fetch failure, "
-            f"got {caplog.records}"
-        )
+        assert warning_records, f"expected >=1 WARNING record from risk-advice fetch failure, " f"got {caplog.records}"
         msg = warning_records[0].getMessage()
         # Must name the function / feature so operators can grep it.
-        assert (
-            "_compute_pick_risk_advice" in msg or "risk_advice" in msg.lower()
-        ), f"warning must name the degraded feature, got: {msg!r}"
+        assert "_compute_pick_risk_advice" in msg or "risk_advice" in msg.lower(), f"warning must name the degraded feature, got: {msg!r}"
         # Must include the ticker so the operator knows WHICH pick lost its label.
         assert "000001" in msg, f"warning must include ticker, got: {msg!r}"
         # Must include the underlying exception message for triage.
@@ -1340,16 +1213,10 @@ class TestComputePickRiskAdviceSilentFailure:
 
         from src.screening import top_picks
 
-        with mock.patch(
-            "src.tools.tushare_api.get_ashare_prices_with_tushare", return_value=[]
-        ):
+        with mock.patch("src.tools.tushare_api.get_ashare_prices_with_tushare", return_value=[]):
             with caplog.at_level(logging.WARNING, logger="src.screening.top_picks"):
-                result = top_picks._compute_pick_risk_advice(
-                    "000001", "平安", trade_date="20260101"
-                )
+                result = top_picks._compute_pick_risk_advice("000001", "平安", trade_date="20260101")
 
         assert result is None
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert not warning_records, (
-            f"empty-price path must be silent, got {warning_records}"
-        )
+        assert not warning_records, f"empty-price path must be silent, got {warning_records}"

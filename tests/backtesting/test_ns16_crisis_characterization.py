@@ -97,9 +97,7 @@ class TestNS16PipelineCrisisInputsHardcoded:
             load_market_data_seconds=0.0,
         )
 
-        def build_confirmation_inputs_fn(
-            plan: ExecutionPlan, current_prices: dict[str, float], previous_date_str: str, current_date_str: str
-        ) -> dict[str, dict]:
+        def build_confirmation_inputs_fn(plan: ExecutionPlan, current_prices: dict[str, float], previous_date_str: str, current_date_str: str) -> dict[str, dict]:
             return {"000001": {"open_gap_pct": 0.0}}
 
         def process_pending_queues_fn(**kwargs):
@@ -117,13 +115,7 @@ class TestNS16PipelineCrisisInputsHardcoded:
         )
 
         # NS-16 latent defect: drawdown_pct hardcoded to 0.0, never reflects portfolio state.
-        assert pipeline.last_crisis_inputs == {"drawdown_pct": 0.0}, (
-            "NS-16 characterization broken: crisis_inputs no longer hardcodes drawdown_pct=0.0. "
-            "If this is an intentional owner decision (wire real drawdown or env-flag disable), "
-            "update docs/cn/product/feature-proposals.md NS-16 row and this test together. "
-            "See crisis_handler.py:52-62 for the -10%/-15% branches that were previously dead "
-            "in backtest."
-        )
+        assert pipeline.last_crisis_inputs == {"drawdown_pct": 0.0}, "NS-16 characterization broken: crisis_inputs no longer hardcodes drawdown_pct=0.0. " "If this is an intentional owner decision (wire real drawdown or env-flag disable), " "update docs/cn/product/feature-proposals.md NS-16 row and this test together. " "See crisis_handler.py:52-62 for the -10%/-15% branches that were previously dead " "in backtest."
 
 
 class TestNS16PureFunctionDrawdownZeroCharacterization:
@@ -152,16 +144,8 @@ class TestNS16PureFunctionDrawdownZeroCharacterization:
             drawdown_pct=0.0,  # backtest hardcoded value (NS-16)
         )
 
-        assert "drawdown_warning" not in result["alerts"], (
-            "NS-16 characterization: drawdown_pct=0.0 must not trigger drawdown_warning. "
-            "If this breaks, crisis_handler threshold logic changed — verify backtest "
-            "still passes drawdown_pct=0.0 (engine_pending_plan_runner.py:263)."
-        )
-        assert "drawdown_forced_reduce" not in result["alerts"], (
-            "NS-16 characterization: drawdown_pct=0.0 must not trigger drawdown_forced_reduce. "
-            "If this breaks, crisis_handler threshold logic changed — verify backtest "
-            "still passes drawdown_pct=0.0 (engine_pending_plan_runner.py:263)."
-        )
+        assert "drawdown_warning" not in result["alerts"], "NS-16 characterization: drawdown_pct=0.0 must not trigger drawdown_warning. " "If this breaks, crisis_handler threshold logic changed — verify backtest " "still passes drawdown_pct=0.0 (engine_pending_plan_runner.py:263)."
+        assert "drawdown_forced_reduce" not in result["alerts"], "NS-16 characterization: drawdown_pct=0.0 must not trigger drawdown_forced_reduce. " "If this breaks, crisis_handler threshold logic changed — verify backtest " "still passes drawdown_pct=0.0 (engine_pending_plan_runner.py:263)."
         assert result["forced_reduce_ratio"] == 0.0
         assert result["recovery_cooldown_days"] == 0
 
@@ -245,15 +229,23 @@ class TestNS16CrisisDisabledObservability:
         runner = PendingPlanRunner(pipeline=pipeline, decision_executor=_NoopDecisionExecutor(), portfolio=portfolio)
         pending_plan = ExecutionPlan(date="20240301", buy_orders=[PositionPlan(ticker="000001", shares=100, amount=10_000.0)])
         day_context = build_pipeline_day_context(
-            current_date=pd.Timestamp("2024-03-04"), active_tickers=["000001"],
-            current_prices={"000001": 10.0}, daily_turnovers={}, limit_up=set(), limit_down=set(),
+            current_date=pd.Timestamp("2024-03-04"),
+            active_tickers=["000001"],
+            current_prices={"000001": 10.0},
+            daily_turnovers={},
+            limit_up=set(),
+            limit_down=set(),
             load_market_data_seconds=0.0,
         )
         with caplog.at_level(logging.WARNING, logger="src.backtesting.engine_pending_plan_runner"):
             for _ in range(3):
                 runner.run_pending_pipeline_plan(
-                    pending_plan=pending_plan, day_context=day_context, decisions={}, executed_trades={},
-                    pending_buy_queue=[], pending_sell_queue=[],
+                    pending_plan=pending_plan,
+                    day_context=day_context,
+                    decisions={},
+                    executed_trades={},
+                    pending_buy_queue=[],
+                    pending_sell_queue=[],
                     build_confirmation_inputs_fn=lambda plan, prices, prev, cur: {"000001": {"open_gap_pct": 0.0}},
                     process_pending_queues_fn=lambda **kw: ([], [], []),
                 )

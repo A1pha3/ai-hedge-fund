@@ -8,7 +8,6 @@ from src.screening.portfolio_concentration import (
     render_concentration_line,
 )
 
-
 # ---------------------------------------------------------------------------
 # compute_industry_concentration
 # ---------------------------------------------------------------------------
@@ -102,18 +101,14 @@ class TestComputeConcentration:
 
 class TestRenderConcentrationLine:
     def test_over_threshold_shows_warning(self) -> None:
-        report = IndustryConcentrationReport(
-            top_industry="电子", top_share=0.45, pick_count=5, over_threshold=True, threshold=0.3
-        )
+        report = IndustryConcentrationReport(top_industry="电子", top_share=0.45, pick_count=5, over_threshold=True, threshold=0.3)
         result = render_concentration_line(report)
         assert "电子" in result
         assert "45%" in result
         assert "⚠" in result  # warning marker
 
     def test_under_threshold_shows_ok(self) -> None:
-        report = IndustryConcentrationReport(
-            top_industry="电子", top_share=0.2, pick_count=5, over_threshold=False, threshold=0.3
-        )
+        report = IndustryConcentrationReport(top_industry="电子", top_share=0.2, pick_count=5, over_threshold=False, threshold=0.3)
         result = render_concentration_line(report)
         assert "20%" in result
         assert "⚠" not in result

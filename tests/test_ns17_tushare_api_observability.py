@@ -35,9 +35,7 @@ class TestTushareApiModuleLogger:
 
     def test_module_logger_exists(self) -> None:
         """模块必须有 logger (此前无 logging, 27 print + 3 traceback 不入结构化日志)。"""
-        assert hasattr(tushare_api, "logger"), (
-            "tushare_api 必须有 module logger (NS-17 / BH-017 family 可观测性要求)"
-        )
+        assert hasattr(tushare_api, "logger"), "tushare_api 必须有 module logger (NS-17 / BH-017 family 可观测性要求)"
         assert isinstance(tushare_api.logger, logging.Logger)
         assert tushare_api.logger.name == "src.tools.tushare_api"
 
@@ -46,28 +44,16 @@ class TestTushareApiModuleLogger:
         import inspect
 
         source = inspect.getsource(tushare_api)
-        code_lines = [
-            line
-            for line in source.splitlines()
-            if line.lstrip().startswith("print(") and not line.lstrip().startswith("#")
-        ]
-        assert not code_lines, (
-            f"tushare_api 不应再有裸 print() 调用, 发现: {code_lines}"
-        )
+        code_lines = [line for line in source.splitlines() if line.lstrip().startswith("print(") and not line.lstrip().startswith("#")]
+        assert not code_lines, f"tushare_api 不应再有裸 print() 调用, 发现: {code_lines}"
 
     def test_no_traceback_print_exc_remain(self) -> None:
         """模块源码不再含 traceback.print_exc() (改用 logger.error exc_info=True)。"""
         import inspect
 
         source = inspect.getsource(tushare_api)
-        code_lines = [
-            line
-            for line in source.splitlines()
-            if "traceback.print_exc" in line and not line.lstrip().startswith("#")
-        ]
-        assert not code_lines, (
-            f"tushare_api 不应再有 traceback.print_exc(), 发现: {code_lines}"
-        )
+        code_lines = [line for line in source.splitlines() if "traceback.print_exc" in line and not line.lstrip().startswith("#")]
+        assert not code_lines, f"tushare_api 不应再有 traceback.print_exc(), 发现: {code_lines}"
 
 
 class TestCallTushareDataframeApiObservability:
@@ -86,15 +72,10 @@ class TestCallTushareDataframeApiObservability:
 
         pro = _Boom()
         with caplog.at_level(logging.WARNING, logger="src.tools.tushare_api"):
-            df = tushare_api._call_tushare_dataframe_api(
-                pro, "daily", ts_code="000001.SZ"
-            )
+            df = tushare_api._call_tushare_dataframe_api(pro, "daily", ts_code="000001.SZ")
 
         assert df is None
-        assert any(
-            "不可重试" in record.getMessage() and record.levelno >= logging.WARNING
-            for record in caplog.records
-        ), "非可重试错误必须发 logger.warning (含'不可重试'标记)"
+        assert any("不可重试" in record.getMessage() and record.levelno >= logging.WARNING for record in caplog.records), "非可重试错误必须发 logger.warning (含'不可重试'标记)"
 
     def test_rate_limit_exhaustion_emits_warning(self, caplog, monkeypatch) -> None:
         """限速重试耗尽须发 warning, 不再静默 print。"""
@@ -107,15 +88,10 @@ class TestCallTushareDataframeApiObservability:
 
         pro = _RateLimited()
         with caplog.at_level(logging.WARNING, logger="src.tools.tushare_api"):
-            df = tushare_api._call_tushare_dataframe_api(
-                pro, "daily", ts_code="000001.SZ"
-            )
+            df = tushare_api._call_tushare_dataframe_api(pro, "daily", ts_code="000001.SZ")
 
         assert df is None
-        assert any(
-            "限速" in record.getMessage() and record.levelno >= logging.WARNING
-            for record in caplog.records
-        ), "限速重试耗尽必须发 logger.warning"
+        assert any("限速" in record.getMessage() and record.levelno >= logging.WARNING for record in caplog.records), "限速重试耗尽必须发 logger.warning"
 
 
 class TestGetAsharePricesWithTushareObservability:
@@ -132,15 +108,10 @@ class TestGetAsharePricesWithTushareObservability:
         tushare_api._pro = None
 
         with caplog.at_level(logging.WARNING, logger="src.tools.tushare_api"):
-            prices = tushare_api.get_ashare_prices_with_tushare(
-                "000001", "2026-01-01", "2026-01-02"
-            )
+            prices = tushare_api.get_ashare_prices_with_tushare("000001", "2026-01-01", "2026-01-02")
 
         assert prices == []
-        assert any(
-            "TUSHARE_TOKEN" in record.getMessage() or "未初始化" in record.getMessage()
-            for record in caplog.records
-        ), "未初始化 (token 缺失) 必须发 logger.warning"
+        assert any("TUSHARE_TOKEN" in record.getMessage() or "未初始化" in record.getMessage() for record in caplog.records), "未初始化 (token 缺失) 必须发 logger.warning"
 
     def test_fetch_failure_emits_observation(self, caplog, monkeypatch) -> None:
         """拉取异常须在结构化日志可观测 (重试层 warning 或 except 层 error)。
@@ -163,20 +134,11 @@ class TestGetAsharePricesWithTushareObservability:
         monkeypatch.setattr(tushare_api, "_pro", _FakePro())
 
         with caplog.at_level(logging.WARNING, logger="src.tools.tushare_api"):
-            prices = tushare_api.get_ashare_prices_with_tushare(
-                "000001", "2026-01-01", "2026-01-02"
-            )
+            prices = tushare_api.get_ashare_prices_with_tushare("000001", "2026-01-01", "2026-01-02")
 
         assert prices == []
         # 重试层 warning (daily) 或 except 层 error (获取价格数据失败) 任一即可
-        assert any(
-            (
-                "daily" in record.getMessage()
-                or "获取价格数据失败" in record.getMessage()
-            )
-            and record.levelno >= logging.WARNING
-            for record in caplog.records
-        ), "价格拉取失败必须在结构化日志可观测 (重试层 warning 或 except 层 error)"
+        assert any(("daily" in record.getMessage() or "获取价格数据失败" in record.getMessage()) and record.levelno >= logging.WARNING for record in caplog.records), "价格拉取失败必须在结构化日志可观测 (重试层 warning 或 except 层 error)"
 
 
 class TestGenericApiFailureObservability:
@@ -199,9 +161,7 @@ class TestGenericApiFailureObservability:
         # 更精确的失败注入在下面
         assert hasattr(tushare_api, "logger")
 
-    def test_api_failure_with_raising_pro_emits_observation(
-        self, caplog, monkeypatch
-    ) -> None:
+    def test_api_failure_with_raising_pro_emits_observation(self, caplog, monkeypatch) -> None:
         """真实抛异常的 pro 须触发结构化日志 (在重试层 warning 或 except 层 error)。
 
         注: get_open_trade_dates → _cached_tushare_dataframe_call →
@@ -223,14 +183,7 @@ class TestGenericApiFailureObservability:
 
         assert result == []
         # 重试层 warning (trade_cal) 或 except 层 error (get_open_trade_dates) 任一即可
-        assert any(
-            (
-                "trade_cal" in record.getMessage()
-                or "get_open_trade_dates" in record.getMessage()
-            )
-            and record.levelno >= logging.WARNING
-            for record in caplog.records
-        ), "trade_cal 失败必须在结构化日志可观测 (重试层 warning 或 except 层 error)"
+        assert any(("trade_cal" in record.getMessage() or "get_open_trade_dates" in record.getMessage()) and record.levelno >= logging.WARNING for record in caplog.records), "trade_cal 失败必须在结构化日志可观测 (重试层 warning 或 except 层 error)"
 
 
 class TestGetProInitFailureObservability:
@@ -245,9 +198,7 @@ class TestGetProInitFailureObservability:
     但失效" — 与 c305 ``health_check`` swallow 同族残留。
     """
 
-    def test_get_pro_non_import_failure_emits_warning(
-        self, caplog, monkeypatch
-    ) -> None:
+    def test_get_pro_non_import_failure_emits_warning(self, caplog, monkeypatch) -> None:
         """非 ImportError 失败 (token rejected at first API call, runtime
         schema change, 网络错误) 必须发 warning, 不再静默吞成 return None。"""
         import sys
@@ -273,15 +224,9 @@ class TestGetProInitFailureObservability:
         assert pro is None
 
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warning_records) >= 1, (
-            f"expected >=1 WARNING record from _get_pro non-ImportError init failure, got {caplog.records}"
-        )
+        assert len(warning_records) >= 1, f"expected >=1 WARNING record from _get_pro non-ImportError init failure, got {caplog.records}"
         msg = warning_records[0].getMessage()
-        assert (
-            "tushare" in msg.lower()
-            or "_get_pro" in msg.lower()
-            or "pro_api" in msg.lower()
-        )
+        assert "tushare" in msg.lower() or "_get_pro" in msg.lower() or "pro_api" in msg.lower()
         assert "simulated tushare init runtime error" in msg
 
     def test_get_pro_import_error_stays_silent(self, caplog, monkeypatch) -> None:
@@ -293,11 +238,7 @@ class TestGetProInitFailureObservability:
         monkeypatch.setattr(tushare_api, "_pro", None)
 
         # 让 import tushare 抛 ImportError
-        real_import = (
-            __builtins__["__import__"]
-            if isinstance(__builtins__, dict)
-            else __builtins__.__import__
-        )
+        real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
 
         def _import_side_effect(name, *args, **kwargs):
             if name == "tushare":
@@ -313,9 +254,7 @@ class TestGetProInitFailureObservability:
 
         assert pro is None
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert warning_records == [], (
-            f"ImportError 是预期状态不应发 warning, got {warning_records}"
-        )
+        assert warning_records == [], f"ImportError 是预期状态不应发 warning, got {warning_records}"
 
 
 class TestGetStockNameObservability:
@@ -344,9 +283,7 @@ class TestGetStockNameObservability:
         def _boom_cached_call(*_args, **_kwargs):
             raise RuntimeError("simulated stock_basic API failure")
 
-        monkeypatch.setattr(
-            tushare_api, "_cached_tushare_dataframe_call", _boom_cached_call
-        )
+        monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", _boom_cached_call)
 
         with caplog.at_level(logging.DEBUG, logger="src.tools.tushare_api"):
             name = tushare_api.get_stock_name("000001.SZ")
@@ -354,9 +291,7 @@ class TestGetStockNameObservability:
         # best-effort: 返回 ticker
         assert name == "000001.SZ"
         debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
-        assert len(debug_records) == 1, (
-            f"expected 1 DEBUG record, got {debug_records}"
-        )
+        assert len(debug_records) == 1, f"expected 1 DEBUG record, got {debug_records}"
         msg = debug_records[0].getMessage()
         assert "get_stock_name stock_basic query failed" in msg
         assert "000001.SZ" in msg
@@ -376,9 +311,7 @@ class TestGetStockNameObservability:
         def _ok_cached_call(*_args, **_kwargs):
             return pd.DataFrame({"ts_code": ["000001.SZ"], "name": ["平安银行"]})
 
-        monkeypatch.setattr(
-            tushare_api, "_cached_tushare_dataframe_call", _ok_cached_call
-        )
+        monkeypatch.setattr(tushare_api, "_cached_tushare_dataframe_call", _ok_cached_call)
 
         with caplog.at_level(logging.DEBUG, logger="src.tools.tushare_api"):
             name = tushare_api.get_stock_name("000001.SZ")

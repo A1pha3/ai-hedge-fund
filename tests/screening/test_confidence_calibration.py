@@ -157,7 +157,7 @@ def test_compute_calibration_t30_avg_negative_return_only_losers():
     typical loss costs, distinct from the overall avg_return (which winners pull
     up). 60% win @ -4% typical loss ≠ 60% @ -30%."""
     records = [
-        _make_record_full("000001", 0.75, t30=0.08),   # winner — excluded from downside
+        _make_record_full("000001", 0.75, t30=0.08),  # winner — excluded from downside
         _make_record_full("000002", 0.75, t30=-0.04),  # loser
         _make_record_full("000003", 0.75, t30=-0.12),  # loser
     ]
@@ -243,8 +243,8 @@ def test_compute_calibration_matured_sample_counts_track_per_horizon_realized():
     # mislabeled T+30 stats).
     assert bucket.sample_count == 3
     # Matured counts must reflect realized returns per horizon.
-    assert bucket.t1_sample_count == 3   # all 3 have T+1
-    assert bucket.t5_sample_count == 2   # 000001 + 000002
+    assert bucket.t1_sample_count == 3  # all 3 have T+1
+    assert bucket.t5_sample_count == 2  # 000001 + 000002
     assert bucket.t10_sample_count == 1  # only 000001
     assert bucket.t20_sample_count == 1  # only 000001
     assert bucket.t30_sample_count == 1  # only 000001 — the crux of BH-002
@@ -255,16 +255,16 @@ def test_compute_calibration_total_matured_samples_aggregate_across_buckets():
     T+30 counts across all buckets, so a 30-day-edge header can be attributed
     to its true denominator instead of ``total_samples`` (all records)."""
     records = [
-        _make_record_full("000001", 0.85, t30=5.0),   # 高 bucket, mature T+30
+        _make_record_full("000001", 0.85, t30=5.0),  # 高 bucket, mature T+30
         _make_record_full("000002", 0.82, t30=None),  # 高 bucket, immature
         _make_record_full("000003", 0.45, t30=-2.0),  # 低 bucket, mature T+30
         _make_record_full("000004", 0.42, t30=None),  # 低 bucket, immature
     ]
     summary = compute_calibration(records)
-    assert summary.total_samples == 4          # all records
-    assert summary.total_t30_samples == 2      # only 000001 + 000003 matured
-    assert summary.total_t20_samples == 0      # none have T+20
-    assert summary.total_t5_samples == 0       # none have T+5
+    assert summary.total_samples == 4  # all records
+    assert summary.total_t30_samples == 2  # only 000001 + 000003 matured
+    assert summary.total_t20_samples == 0  # none have T+20
+    assert summary.total_t5_samples == 0  # none have T+5
 
 
 # ---------------------------------------------------------------------------
@@ -336,9 +336,7 @@ def test_render_top_n_calibration_no_sample_bucket():
 def test_render_top_n_calibration_respects_top_n_limit():
     records = [_make_record("000099", 0.85, t5=2.0)]
     summary = compute_calibration(records)
-    top_recs = [
-        {"ticker": f"{i:06d}", "name": f"票{i}", "score_b": 0.85} for i in range(5)
-    ]
+    top_recs = [{"ticker": f"{i:06d}", "name": f"票{i}", "score_b": 0.85} for i in range(5)]
     out = render_top_n_calibration(top_recs, summary, top_n=2)
     assert "Top 2 推荐校准" in out
 
@@ -348,12 +346,7 @@ def test_render_top_n_calibration_respects_top_n_limit():
 # ---------------------------------------------------------------------------
 
 
-def _make_extended_record(
-    ticker: str, score: float, 
-    t1: float | None = None, t3: float | None = None, t5: float | None = None,
-    t10: float | None = None, t20: float | None = None, t30: float | None = None,
-    date: str = "20260601"
-) -> dict:
+def _make_extended_record(ticker: str, score: float, t1: float | None = None, t3: float | None = None, t5: float | None = None, t10: float | None = None, t20: float | None = None, t30: float | None = None, date: str = "20260601") -> dict:
     """Create tracking record with extended horizons."""
     return {
         "ticker": ticker,
@@ -377,22 +370,22 @@ def test_compute_calibration_with_extended_horizons():
     ]
     summary = compute_calibration(records)
     bucket = next(b for b in summary.buckets if "中高" in b.label)
-    
+
     # Should have extended horizon stats
     assert bucket.sample_count == 3
-    assert hasattr(bucket, 't10_win_rate')
-    assert hasattr(bucket, 't20_win_rate')
-    assert hasattr(bucket, 't30_win_rate')
-    assert hasattr(bucket, 't10_avg_return')
-    assert hasattr(bucket, 't20_avg_return')
-    assert hasattr(bucket, 't30_avg_return')
-    
+    assert hasattr(bucket, "t10_win_rate")
+    assert hasattr(bucket, "t20_win_rate")
+    assert hasattr(bucket, "t30_win_rate")
+    assert hasattr(bucket, "t10_avg_return")
+    assert hasattr(bucket, "t20_avg_return")
+    assert hasattr(bucket, "t30_avg_return")
+
     # T+10: 2/3 positive
-    assert bucket.t10_win_rate == pytest.approx(2/3, abs=1e-3)
+    assert bucket.t10_win_rate == pytest.approx(2 / 3, abs=1e-3)
     # T+20: 2/3 positive
-    assert bucket.t20_win_rate == pytest.approx(2/3, abs=1e-3)
+    assert bucket.t20_win_rate == pytest.approx(2 / 3, abs=1e-3)
     # T+30: 2/3 positive
-    assert bucket.t30_win_rate == pytest.approx(2/3, abs=1e-3)
+    assert bucket.t30_win_rate == pytest.approx(2 / 3, abs=1e-3)
 
 
 def test_calibration_summary_has_extended_overall_stats():
@@ -402,14 +395,14 @@ def test_calibration_summary_has_extended_overall_stats():
         _make_extended_record("000002", 0.45, t10=-2.0, t20=-3.0, t30=-1.0),
     ]
     summary = compute_calibration(records)
-    
-    assert hasattr(summary, 'overall_t10_win_rate')
-    assert hasattr(summary, 'overall_t20_win_rate')
-    assert hasattr(summary, 'overall_t30_win_rate')
-    assert hasattr(summary, 'overall_t10_avg_return')
-    assert hasattr(summary, 'overall_t20_avg_return')
-    assert hasattr(summary, 'overall_t30_avg_return')
-    
+
+    assert hasattr(summary, "overall_t10_win_rate")
+    assert hasattr(summary, "overall_t20_win_rate")
+    assert hasattr(summary, "overall_t30_win_rate")
+    assert hasattr(summary, "overall_t10_avg_return")
+    assert hasattr(summary, "overall_t20_avg_return")
+    assert hasattr(summary, "overall_t30_avg_return")
+
     # 1 win / 1 loss = 50%
     assert summary.overall_t10_win_rate == pytest.approx(0.5, abs=1e-3)
     assert summary.overall_t20_win_rate == pytest.approx(0.5, abs=1e-3)
@@ -430,20 +423,24 @@ class TestStdAndT30StdReturn:
 
     def test_std_or_none_sample_std(self) -> None:
         from src.screening.confidence_calibration import _std_or_none
+
         # sample std of [1,2,3,4,5] = sqrt(10/4) = sqrt(2.5) ≈ 1.5811
         assert _std_or_none([1.0, 2.0, 3.0, 4.0, 5.0]) == pytest.approx(1.5811, abs=1e-3)
 
     def test_std_or_none_empty(self) -> None:
         from src.screening.confidence_calibration import _std_or_none
+
         assert _std_or_none([]) is None
 
     def test_std_or_none_single_is_none(self) -> None:
         """sample std of 1 element is undefined (n-1=0 division) → None."""
         from src.screening.confidence_calibration import _std_or_none
+
         assert _std_or_none([5.0]) is None
 
     def test_std_or_none_identical_is_zero(self) -> None:
         from src.screening.confidence_calibration import _std_or_none
+
         assert _std_or_none([3.0, 3.0, 3.0]) == 0.0
 
     def test_bucket_has_t30_std_return(self) -> None:
@@ -461,6 +458,7 @@ class TestStdAndT30StdReturn:
 
     def test_bucket_t30_std_none_when_no_t30_data(self) -> None:
         from src.screening.confidence_calibration import compute_calibration
+
         # records with no t30 return
         records = [{"ticker": "000001", "score_b": 0.85, "recommended_date": "20260101"}]
         summary = compute_calibration(records)
@@ -546,9 +544,14 @@ class TestT30MedianReturn:
 def test_score_bucket_stats_has_t15_t25_fields():
     """Task 4: ScoreBucketStats must accept t15/t25 win_rate + avg_return kwargs."""
     stats = ScoreBucketStats(
-        label="low", score_low=0.0, score_high=0.4, sample_count=10,
-        t15_win_rate=0.5, t25_win_rate=0.6,
-        t15_avg_return=1.5, t25_avg_return=2.5,
+        label="low",
+        score_low=0.0,
+        score_high=0.4,
+        sample_count=10,
+        t15_win_rate=0.5,
+        t25_win_rate=0.6,
+        t15_avg_return=1.5,
+        t25_avg_return=2.5,
     )
     assert stats.t15_win_rate == 0.5
     assert stats.t25_win_rate == 0.6
@@ -560,19 +563,25 @@ def test_compute_calibration_t15_t25_from_records():
     """Task 4: compute_calibration must read next_15day_return / next_25day_return."""
     records = [
         {
-            "ticker": "000001", "recommended_date": "20260601",
+            "ticker": "000001",
+            "recommended_date": "20260601",
             "recommendation_score": 0.75,
-            "next_15day_return": 2.0, "next_25day_return": 3.0,
+            "next_15day_return": 2.0,
+            "next_25day_return": 3.0,
         },
         {
-            "ticker": "000002", "recommended_date": "20260601",
+            "ticker": "000002",
+            "recommended_date": "20260601",
             "recommendation_score": 0.72,
-            "next_15day_return": -1.0, "next_25day_return": 0.5,
+            "next_15day_return": -1.0,
+            "next_25day_return": 0.5,
         },
         {
-            "ticker": "000003", "recommended_date": "20260601",
+            "ticker": "000003",
+            "recommended_date": "20260601",
             "recommendation_score": 0.78,
-            "next_15day_return": 0.5, "next_25day_return": -2.0,
+            "next_15day_return": 0.5,
+            "next_25day_return": -2.0,
         },
     ]
     summary = compute_calibration(records)
@@ -589,9 +598,13 @@ def test_compute_calibration_t15_t25_from_records():
 def test_t15_t25_fields_serialize_in_to_dict():
     """Task 4: t15/t25 fields must appear in to_dict() for downstream consumers."""
     stats = ScoreBucketStats(
-        label="low", score_low=0.0, score_high=0.4,
-        t15_win_rate=0.5, t25_win_rate=0.6,
-        t15_avg_return=1.0, t25_avg_return=2.0,
+        label="low",
+        score_low=0.0,
+        score_high=0.4,
+        t15_win_rate=0.5,
+        t25_win_rate=0.6,
+        t15_avg_return=1.0,
+        t25_avg_return=2.0,
     )
     d = stats.to_dict()
     assert "t15_win_rate" in d

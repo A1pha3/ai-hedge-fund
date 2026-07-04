@@ -39,9 +39,7 @@ def test_build_early_runner_walk_forward_summary_uses_shared_windows_and_counts_
     monkeypatch.setattr(
         walk_forward_module,
         "build_walk_forward_windows",
-        lambda *args, **kwargs: [
-            SimpleNamespace(train_start="2026-03-01", train_end="2026-03-15", test_start="2026-03-16", test_end="2026-03-20")
-        ],
+        lambda *args, **kwargs: [SimpleNamespace(train_start="2026-03-01", train_end="2026-03-15", test_start="2026-03-16", test_end="2026-03-20")],
     )
     rows = [
         {
@@ -113,6 +111,7 @@ def test_build_early_runner_walk_forward_summary_uses_shared_windows_and_counts_
 # ALPHA-003: hit_rate_5d15_on_fills uses filled-only denominator
 # ---------------------------------------------------------------------------
 
+
 def test_hit_rate_5d15_on_fills_uses_filled_only_denominator() -> None:
     """ALPHA-003: hit_rate_5d15_on_fills must exclude unfilled rows from the
     denominator. If 5 of 10 filtered rows are unfilled (hit=False) and 4 of
@@ -122,6 +121,7 @@ def test_hit_rate_5d15_on_fills_uses_filled_only_denominator() -> None:
     Without the fix, there was no way to distinguish a 40% hit rate from
     bad signals vs a 40% hit rate caused by 50% unfilled rate."""
     from src.backtesting.early_runner_walk_forward import _summarize_param_set
+
     rows = [
         # 5 filled rows: 4 hit, 1 miss
         {"entry_status": "filled", "future_high_hit_15pct_2_5d": True, "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8, "next_close_return_after_cost": 0.03, "next_low_return": -0.02},
@@ -148,6 +148,7 @@ def test_hit_rate_on_fills_none_when_all_unfilled() -> None:
     """When all filtered rows are unfilled, hit_rate_on_fills should be None
     (no filled population to measure)."""
     from src.backtesting.early_runner_walk_forward import _summarize_param_set
+
     rows = [
         {"entry_status": "unfilled", "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8},
         {"entry_status": "unfilled", "ret_5d": 0.01, "ret_10d": 0.02, "next_open_return": 0.01, "close_strength": 0.5, "volume_expansion_quality": 0.5, "confirm_score": 0.8},

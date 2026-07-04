@@ -1,4 +1,5 @@
 """Tests for top_picks.py — P12-2 + R4/R5."""
+
 from __future__ import annotations
 
 import json
@@ -194,11 +195,7 @@ class TestHighConfidenceVerdictAlignment:
     def test_avoid_pick_not_labeled_high_confidence(self, capsys: pytest.CaptureFixture[str]) -> None:
         _print_high_confidence_summary([_avoid_grade_rec()], market_regime="normal")
         out = capsys.readouterr().out
-        assert "High confidence picks" not in out, (
-            "AVOID-verdict picks must not be labeled 'High confidence': under NS-4 "
-            "rank inversion the high-score bucket has the LOWEST winrate, so this "
-            "label would steer users to the worst picks."
-        )
+        assert "High confidence picks" not in out, "AVOID-verdict picks must not be labeled 'High confidence': under NS-4 " "rank inversion the high-score bucket has the LOWEST winrate, so this " "label would steer users to the worst picks."
         assert "No high-confidence" in out or "waiting" in out
 
     def test_buy_pick_labeled_high_confidence(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -215,10 +212,7 @@ class TestHighConfidenceVerdictAlignment:
         )
         out = capsys.readouterr().out
         assert "TESTBUY" in out
-        assert "688630" not in out, (
-            "AVOID pick must be excluded from 'High confidence' even when its "
-            "composite_score is higher than the BUY pick's."
-        )
+        assert "688630" not in out, "AVOID pick must be excluded from 'High confidence' even when its " "composite_score is higher than the BUY pick's."
 
     def test_all_avoid_shows_waiting_message(self, capsys: pytest.CaptureFixture[str]) -> None:
         _print_high_confidence_summary(
@@ -317,9 +311,7 @@ class TestExtractedTopPicksHelpers:
     def test_load_recommendation_context_returns_none_without_reports(self, tmp_path: Path) -> None:
         assert _load_recommendation_context(tmp_path, count=2) is None
 
-    def test_load_recommendation_context_corrupt_report_returns_none(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_load_recommendation_context_corrupt_report_returns_none(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """R106 同族: reports/ 目录混入 corrupt auto_screening_*.json
         (运行中断 / 部分写入 / 磁盘错误留下的半截文件) 时, 前门不再
         抛 raw JSONDecodeError traceback, 而是 None + 用户可见 warning
@@ -595,9 +587,7 @@ class TestConsecutiveBonus:
             {"ticker": "A", "composite_score": 0.98, "consecutive_bonus": 0.08},
         ]
         out = _apply_consecutive_bonus_and_resort(ranked)
-        assert out[0]["composite_score"] <= 1.0, (
-            f"composite_score {out[0]['composite_score']} exceeds the documented [-1,1] domain"
-        )
+        assert out[0]["composite_score"] <= 1.0, f"composite_score {out[0]['composite_score']} exceeds the documented [-1,1] domain"
 
     def test_apply_consecutive_bonus_clips_negative_too(self) -> None:
         """Symmetric: a low-base pick with a positive bonus must not dip
@@ -734,12 +724,15 @@ class TestConsecutiveBonus:
         recs = [_make_rec("300750", "宁德时代", 0.8)]
         _write_report(tmp_path, recs)
 
-        with patch(
-            "src.screening.top_picks.enrich_recommendations_with_history",
-            side_effect=RuntimeError("no history"),
-        ), patch(
-            "src.screening.market_state.detect_market_state",
-            return_value=SimpleNamespace(regime_gate_level="trend"),
+        with (
+            patch(
+                "src.screening.top_picks.enrich_recommendations_with_history",
+                side_effect=RuntimeError("no history"),
+            ),
+            patch(
+                "src.screening.market_state.detect_market_state",
+                return_value=SimpleNamespace(regime_gate_level="trend"),
+            ),
         ):
             rc = run_top_picks(count=5, reports_dir=tmp_path)
 
@@ -954,12 +947,15 @@ class TestHitRateSummary:
         recs = [_make_rec("300750", "宁德时代", 0.8)]
         _write_report(tmp_path, recs)
 
-        with patch(
-            "src.screening.top_picks.compute_verify_recommendations",
-            side_effect=RuntimeError("no data"),
-        ), patch(
-            "src.screening.market_state.detect_market_state",
-            return_value=SimpleNamespace(regime_gate_level="trend"),
+        with (
+            patch(
+                "src.screening.top_picks.compute_verify_recommendations",
+                side_effect=RuntimeError("no data"),
+            ),
+            patch(
+                "src.screening.market_state.detect_market_state",
+                return_value=SimpleNamespace(regime_gate_level="trend"),
+            ),
         ):
             rc = run_top_picks(count=5, reports_dir=tmp_path)
 
@@ -990,6 +986,7 @@ class TestVerdictDistribution:
 
     def test_all_buy(self) -> None:
         from src.screening.top_picks import _render_verdict_distribution
+
         picks = [
             self._make_pick(0.8, t30=10.0, t30_wr=0.66, sample=40),
             self._make_pick(0.6, t30=5.0, t30_wr=0.60, sample=30),
@@ -1000,10 +997,11 @@ class TestVerdictDistribution:
 
     def test_mixed_verdicts(self) -> None:
         from src.screening.top_picks import _render_verdict_distribution
+
         picks = [
-            self._make_pick(0.7, t30=8.0, t30_wr=0.62, sample=25),   # BUY
+            self._make_pick(0.7, t30=8.0, t30_wr=0.62, sample=25),  # BUY
             self._make_pick(0.35, t30=1.0, t30_wr=0.52, sample=15),  # HOLD
-            self._make_pick(0.1, t30=-2.0, t30_wr=0.40, sample=10),   # AVOID
+            self._make_pick(0.1, t30=-2.0, t30_wr=0.40, sample=10),  # AVOID
         ]
         result = _render_verdict_distribution(picks, market_regime="trend")
         assert "BUY=1" in result
@@ -1012,11 +1010,13 @@ class TestVerdictDistribution:
 
     def test_empty_picks(self) -> None:
         from src.screening.top_picks import _render_verdict_distribution
+
         result = _render_verdict_distribution([], market_regime="trend")
         assert result == ""
 
     def test_crisis_mode_downgrades(self) -> None:
         from src.screening.top_picks import _render_verdict_distribution
+
         picks = [
             self._make_pick(0.8, t30=10.0, t30_wr=0.66, sample=40),
         ]
@@ -1046,6 +1046,7 @@ class TestMarketOpportunityIndex:
 
     def test_go_signal_with_high_quality_buys(self) -> None:
         from src.screening.top_picks import _render_market_opportunity_index
+
         picks = [
             self._make_pick(0.7, t30=8.0, t30_wr=0.62, sample=25),
             self._make_pick(0.6, t30=6.0, t30_wr=0.58, sample=30),
@@ -1056,18 +1057,21 @@ class TestMarketOpportunityIndex:
 
     def test_wait_signal_in_crisis(self) -> None:
         from src.screening.top_picks import _render_market_opportunity_index
+
         picks = [self._make_pick(0.3)]
         result = _render_market_opportunity_index(picks, market_regime="crisis")
         assert "WAIT" in result
 
     def test_caution_signal_with_no_buys(self) -> None:
         from src.screening.top_picks import _render_market_opportunity_index
+
         picks = [self._make_pick(0.2, t30=-1.0, t30_wr=0.40, sample=5)]
         result = _render_market_opportunity_index(picks, market_regime="range_bound")
         assert "WAIT" in result or "CAUTION" in result
 
     def test_empty_picks(self) -> None:
         from src.screening.top_picks import _render_market_opportunity_index
+
         result = _render_market_opportunity_index([], market_regime="trend")
         assert "无候选" in result or "CAUTION" in result
 
@@ -1079,26 +1083,18 @@ class TestMarketOpportunityIndex:
         NOT receive the high-quality bonus — otherwise the all-AVOID day is
         mislabeled CAUTION instead of WAIT."""
         from src.screening.top_picks import _render_market_opportunity_index
+
         # 5 picks: high composite (>= 0.5) but AVOID verdict (winrate 0.47 < 0.55)
-        picks = [
-            self._make_pick(score, t30=1.15, t30_wr=0.47, sample=41)
-            for score in [0.80, 0.72, 0.67, 0.63, 0.55]
-        ]
+        picks = [self._make_pick(score, t30=1.15, t30_wr=0.47, sample=41) for score in [0.80, 0.72, 0.67, 0.63, 0.55]]
         result = _render_market_opportunity_index(picks, market_regime="normal")
-        assert "HQ 0" in result, (
-            "AVOID-verdict picks must not count as high-quality even with high "
-            "composite_score — under NS-4 inversion high-score = low winrate."
-        )
-        assert "WAIT" in result, (
-            "5 all-AVOID picks (the NS-4 inversion reality) must produce WAIT, "
-            "not CAUTION — the +0.3 high_quality bonus must not apply when no "
-            "picks pass the BUY bar."
-        )
+        assert "HQ 0" in result, "AVOID-verdict picks must not count as high-quality even with high " "composite_score — under NS-4 inversion high-score = low winrate."
+        assert "WAIT" in result, "5 all-AVOID picks (the NS-4 inversion reality) must produce WAIT, " "not CAUTION — the +0.3 high_quality bonus must not apply when no " "picks pass the BUY bar."
 
     def test_buy_picks_counted_as_high_quality(self) -> None:
         """C269 positive path: BUY-verdict picks (composite>=0.5 AND T+5/T+10
         winrate>=0.55 AND mature sample) ARE counted as high-quality."""
         from src.screening.top_picks import _render_market_opportunity_index
+
         picks = [self._make_pick(0.7, t30=6.0, t30_wr=0.60, sample=30)]
         result = _render_market_opportunity_index(picks, market_regime="normal")
         assert "HQ 1" in result
@@ -1133,10 +1129,7 @@ class TestStopLossTakeProfit:
         )
 
         # Create mock price data with enough history for ATR
-        prices = [
-            Price(open=100.0 + i * 0.5, close=100.0 + i * 0.5, high=101.0 + i * 0.5, low=99.0 + i * 0.5, volume=1000, time=f"2026-05-{i+1:02d}")
-            for i in range(20)
-        ]
+        prices = [Price(open=100.0 + i * 0.5, close=100.0 + i * 0.5, high=101.0 + i * 0.5, low=99.0 + i * 0.5, volume=1000, time=f"2026-05-{i+1:02d}") for i in range(20)]
         with patch("src.tools.tushare_api.get_ashare_prices_with_tushare", return_value=prices):
             advice = _compute_pick_risk_advice("300750", "宁德时代", trade_date="20260610")
         assert advice is not None

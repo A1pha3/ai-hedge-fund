@@ -15,6 +15,7 @@ hurst_regime flip is surgical: only the mean-reverting-regime branch (hurst<0.45
 the trending-regime branch (hurst>0.55) was already momentum-following (correct) and is
 left unchanged.
 """
+
 from __future__ import annotations
 
 from unittest.mock import patch

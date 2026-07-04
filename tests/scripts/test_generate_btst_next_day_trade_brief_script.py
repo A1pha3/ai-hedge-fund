@@ -469,12 +469,10 @@ def test_selected_execution_reclassification_respects_strategy_thresholds(monkey
             "selected_intraday_only_max_next_close_positive_rate": 0.0,
         },
     )
-    retained_selected, near_miss_entries, opportunity_pool_entries = (
-        entry_builders._reclassify_selected_execution_quality_entries(
-            selected_entries,
-            [],
-            [],
-        )
+    retained_selected, near_miss_entries, opportunity_pool_entries = entry_builders._reclassify_selected_execution_quality_entries(
+        selected_entries,
+        [],
+        [],
     )
 
     assert retained_selected == selected_entries
@@ -490,12 +488,10 @@ def test_selected_execution_reclassification_respects_strategy_thresholds(monkey
             "selected_intraday_only_max_next_close_positive_rate": 0.05,
         },
     )
-    retained_selected, near_miss_entries, opportunity_pool_entries = (
-        entry_builders._reclassify_selected_execution_quality_entries(
-            selected_entries,
-            [],
-            [],
-        )
+    retained_selected, near_miss_entries, opportunity_pool_entries = entry_builders._reclassify_selected_execution_quality_entries(
+        selected_entries,
+        [],
+        [],
     )
 
     assert retained_selected == []
@@ -572,10 +568,7 @@ def test_enrich_upstream_shadow_entries_with_history_threads_helpers(monkeypatch
     monkeypatch.setattr(
         historical_prior_brief_enrichment,
         "_apply_historical_prior_to_entries",
-        lambda entries, historical_rows, price_cache, family: [
-            {**entry, "family": family, "hist_rows": len(historical_rows)}
-            for entry in entries
-        ],
+        lambda entries, historical_rows, price_cache, family: [{**entry, "family": family, "hist_rows": len(historical_rows)} for entry in entries],
     )
 
     result = historical_prior._enrich_upstream_shadow_entries_with_history(
@@ -1273,17 +1266,10 @@ def test_generate_btst_next_day_trade_brief_separates_short_trade_from_research(
                             "top_reasons": ["catalyst_freshness=0.83"],
                             "rejection_reasons": ["score_short_below_threshold"],
                             "gate_status": {"data": "pass", "structural": "pass", "score": "fail"},
-                            "metrics_payload": {
-                                "breakout_freshness": 0.411,
-                                "trend_acceleration": 0.392,
-                                "volume_expansion_quality": 0.301,
-                                "close_strength": 0.465,
-                                "catalyst_freshness": 0.834,
-                                "thresholds": {"near_miss_threshold": 0.52}
-                            },
+                            "metrics_payload": {"breakout_freshness": 0.411, "trend_acceleration": 0.392, "volume_expansion_quality": 0.301, "close_strength": 0.465, "catalyst_freshness": 0.834, "thresholds": {"near_miss_threshold": 0.52}},
                             "explainability_payload": {"candidate_source": "short_trade_boundary"},
                         },
-                    }
+                    },
                 },
                 "catalyst_theme_candidates": [
                     {
@@ -1697,9 +1683,7 @@ def test_generate_btst_next_day_trade_brief_surfaces_payoff_first_runner_recall_
         encoding="utf-8",
     )
 
-    analysis = analyze_btst_next_day_trade_brief(
-        report_dir, trade_date="2026-05-22", next_trade_date="2026-05-23"
-    )
+    analysis = analyze_btst_next_day_trade_brief(report_dir, trade_date="2026-05-22", next_trade_date="2026-05-23")
     markdown = render_btst_next_day_trade_brief_markdown(analysis)
 
     assert [entry["ticker"] for entry in analysis["runner_recall_review_entries"]] == ["688183"]
@@ -1739,10 +1723,7 @@ def test_generate_btst_next_day_trade_brief_prefers_payoff_first_runner_recall_c
             target_mode="short_trade_only",
         )
 
-    runtime_reason_codes = {
-        ticker: list(evaluation.candidate_reason_codes)
-        for ticker, evaluation in runtime_selection_targets.items()
-    }
+    runtime_reason_codes = {ticker: list(evaluation.candidate_reason_codes) for ticker, evaluation in runtime_selection_targets.items()}
     assert runtime_reason_codes["300757"] == ["watchlist_filter_diagnostics"]
     # After R6 fix (trend_continuation added to positive_score_weights), score_target
     # is higher and the runner_payoff_realign_shadow profile's payoff_first_runner_recall_score_target_max
@@ -1831,9 +1812,7 @@ def test_generate_btst_next_day_trade_brief_prefers_payoff_first_runner_recall_c
         encoding="utf-8",
     )
 
-    analysis = analyze_btst_next_day_trade_brief(
-        report_dir, trade_date="2026-05-22", next_trade_date="2026-05-23"
-    )
+    analysis = analyze_btst_next_day_trade_brief(report_dir, trade_date="2026-05-22", next_trade_date="2026-05-23")
 
     assert [entry["ticker"] for entry in analysis["runner_recall_review_entries"]] == ["688183", "300757"]
     # After R6 fix, runner_recall_review_entries[0] candidate_reason_codes may or may not
@@ -1891,9 +1870,7 @@ def test_generate_btst_next_day_trade_brief_surfaces_rollout_validation(tmp_path
         encoding="utf-8",
     )
 
-    analysis = analyze_btst_next_day_trade_brief(
-        report_dir, trade_date="2026-03-27", next_trade_date="2026-03-30"
-    )
+    analysis = analyze_btst_next_day_trade_brief(report_dir, trade_date="2026-03-27", next_trade_date="2026-03-30")
     markdown = render_btst_next_day_trade_brief_markdown(analysis)
 
     assert analysis["rollout_validation"]["status"] == "governed_shadow_ready"

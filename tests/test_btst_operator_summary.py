@@ -7,6 +7,7 @@ Key invariants from the plan:
   4. Same inputs produce identical output (idempotent).
   5. Outcome fields must be rejected by the schema validator.
 """
+
 from __future__ import annotations
 
 import json

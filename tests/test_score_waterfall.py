@@ -83,12 +83,7 @@ class TestComputeScoreDecomposition:
         # Construct a fused where the math will produce a residual
         fused = _make_fused(score_b=0.9, attention=0.1)  # components sum to ~0.6, residual ~0.3
         decomp = compute_score_decomposition(fused)
-        components_sum = (
-            sum(decomp["base_contributions"].values())
-            + decomp["attention_contribution"]
-            + decomp["stability_bonus"]
-            + decomp["consensus_bonus"]
-        )
+        components_sum = sum(decomp["base_contributions"].values()) + decomp["attention_contribution"] + decomp["stability_bonus"] + decomp["consensus_bonus"]
         assert decomp["other_adjustments"] == pytest.approx(fused.score_b - components_sum, rel=1e-6)
 
     def test_total_equals_score_b(self):
@@ -99,8 +94,12 @@ class TestComputeScoreDecomposition:
     def test_empty_signals(self):
         """If no signals present, base contributions are 0."""
         fused = FusedScore(
-            ticker="X", name="", score_b=0.0,
-            weights_used={}, strategy_signals={}, metrics={},
+            ticker="X",
+            name="",
+            score_b=0.0,
+            weights_used={},
+            strategy_signals={},
+            metrics={},
         )
         decomp = compute_score_decomposition(fused)
         assert all(v == 0.0 for v in decomp["base_contributions"].values())
@@ -119,8 +118,10 @@ class TestComputeScoreDecomposition:
     def test_zero_confidence_handled(self):
         """A signal with confidence=0 should produce 0 contribution."""
         from src.screening.models import StrategySignal
+
         fused = FusedScore(
-            ticker="X", score_b=0.0,
+            ticker="X",
+            score_b=0.0,
             weights_used={"trend": 1.0},
             strategy_signals={
                 "trend": StrategySignal(direction=1.0, confidence=0.0, completeness=1.0),
@@ -143,6 +144,7 @@ class TestWaterfallPrint:
 
     def test_waterfall_with_empty_input(self, capsys):
         from src.main import _print_score_waterfall
+
         _print_score_waterfall([], {})
         captured = capsys.readouterr()
         # Should produce no output for empty input
@@ -150,6 +152,7 @@ class TestWaterfallPrint:
 
     def test_waterfall_renders_for_one_ticker(self, capsys):
         from src.main import _print_score_waterfall
+
         fused = _make_fused(ticker="000001", score_b=0.5)
         _print_score_waterfall([fused], {"000001": {"consecutive_days": 2, "stability_bonus": 3.0}})
         out = capsys.readouterr().out

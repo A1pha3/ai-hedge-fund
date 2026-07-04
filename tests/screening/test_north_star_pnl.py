@@ -7,6 +7,7 @@
   - render 3 色态 (divergent⚠ / positive✓ / negative⚠) + insufficient 静默
   - horizon 可配置 (T+5 默认 / T+10 / T+30 长期 invalidation)
 """
+
 from __future__ import annotations
 
 from src.screening.north_star_pnl import (
@@ -26,9 +27,7 @@ def _records(date_returns: dict[str, list[float]]) -> list[dict]:
 
 def test_cumulative_mean_and_winrate_median():
     """2 日期: 各 3 只, 等权 mean 累积 + winrate/median 整体."""
-    recs = _records(
-        {"20250101": [10.0, -5.0, 8.0], "20250102": [6.0, -2.0, 4.0]}
-    )
+    recs = _records({"20250101": [10.0, -5.0, 8.0], "20250102": [6.0, -2.0, 4.0]})
     rep = compute_north_star_pnl_from_loaded(recs, min_n=2)
     # 每日等权 avg: day1=13/3=4.33, day2=8/3=2.67; 累积=7.0
     assert abs(rep.cumulative_mean_pnl - 7.0) < 0.01
@@ -78,9 +77,7 @@ def test_insufficient_when_below_min_n():
 
 
 def test_render_divergent_has_warning():
-    rep = compute_north_star_pnl_from_loaded(
-        _records({"20250101": [200.0, -3.0, -2.0, -4.0, -1.0]}), min_n=2
-    )
+    rep = compute_north_star_pnl_from_loaded(_records({"20250101": [200.0, -3.0, -2.0, -4.0, -1.0]}), min_n=2)
     line = render_north_star_line(rep)
     assert line
     assert "北极星" in line
@@ -89,16 +86,12 @@ def test_render_divergent_has_warning():
 
 
 def test_render_silent_when_insufficient():
-    rep = compute_north_star_pnl_from_loaded(
-        _records({"20250101": [5.0, 3.0]}), min_n=5
-    )
+    rep = compute_north_star_pnl_from_loaded(_records({"20250101": [5.0, 3.0]}), min_n=5)
     assert render_north_star_line(rep) == ""
 
 
 def test_render_positive_green():
-    rep = compute_north_star_pnl_from_loaded(
-        _records({"20250101": [5.0, 3.0, 8.0, 2.0, 6.0]}), min_n=2
-    )
+    rep = compute_north_star_pnl_from_loaded(_records({"20250101": [5.0, 3.0, 8.0, 2.0, 6.0]}), min_n=2)
     line = render_north_star_line(rep)
     assert line
     assert "趋近" in line or "✓" in line
@@ -113,9 +106,7 @@ def test_render_positive_warns_when_mean_inflated_by_outliers():
     typical user's outcome by ~50×. R-6/R-7 established median honesty; the
     existing ``divergent`` verdict only catches ``median < 0``. This test pins
     the extension: mean >> median (both positive) shows ✓ PLUS a warning."""
-    rep = compute_north_star_pnl_from_loaded(
-        _records({"20250101": [200.0, 2.0, 1.0, 3.0, 1.0]}), min_n=2
-    )
+    rep = compute_north_star_pnl_from_loaded(_records({"20250101": [200.0, 2.0, 1.0, 3.0, 1.0]}), min_n=2)
     # both mean and median positive → positive verdict (not divergent)
     assert rep.verdict == "positive"
     assert rep.cumulative_mean_pnl - rep.overall_median > 10  # mean inflated by outlier
@@ -130,9 +121,7 @@ def test_render_positive_warns_when_mean_inflated_by_outliers():
 def test_render_positive_no_warning_when_mean_close_to_median():
     """C270 negative guard: when mean ≈ median (no outlier inflation), the
     positive verdict shows a bare ✓ with no inflation warning."""
-    rep = compute_north_star_pnl_from_loaded(
-        _records({"20250101": [5.0, 3.0, 8.0, 2.0, 6.0]}), min_n=2
-    )
+    rep = compute_north_star_pnl_from_loaded(_records({"20250101": [5.0, 3.0, 8.0, 2.0, 6.0]}), min_n=2)
     assert rep.verdict == "positive"
     assert (rep.cumulative_mean_pnl - rep.overall_median) <= 10
     line = render_north_star_line(rep)
@@ -181,9 +170,7 @@ def test_horizon_configurable_default_t5_label_and_t30_explicit():
 
 def test_render_shows_horizon_label():
     """render 输出含 horizon_label (T+5 默认), 让用户知道度量的是哪个周期."""
-    rep = compute_north_star_pnl_from_loaded(
-        _records({"20250101": [5.0, 3.0, 8.0, 2.0, 6.0]}), min_n=2
-    )
+    rep = compute_north_star_pnl_from_loaded(_records({"20250101": [5.0, 3.0, 8.0, 2.0, 6.0]}), min_n=2)
     line = render_north_star_line(rep)
     assert "(T+5)" in line
 
@@ -633,9 +620,7 @@ def test_selection_profitability_random_n_reproducible_across_input_order():
         recs = []
         for dt in order:
             for i, (score, ret) in enumerate(days_data[dt]):
-                recs.append(
-                    {"recommended_date": dt, "recommendation_score": score, "next_5day_return": ret}
-                )
+                recs.append({"recommended_date": dt, "recommendation_score": score, "next_5day_return": ret})
         return recs
 
     forward = list(days_data.keys())
@@ -648,10 +633,7 @@ def test_selection_profitability_random_n_reproducible_across_input_order():
     rn_rev = next(s for s in rep_rev.strategies if s.strategy == "random_n")
     # The seeded random_n baseline must be IDENTICAL for the same data regardless
     # of how the records happen to be ordered in the input list.
-    assert rn_fwd.portfolio_winrate == rn_rev.portfolio_winrate, (
-        f"random_n non-deterministic across input order: "
-        f"forward={rn_fwd.portfolio_winrate} vs reversed={rn_rev.portfolio_winrate}"
-    )
+    assert rn_fwd.portfolio_winrate == rn_rev.portfolio_winrate, f"random_n non-deterministic across input order: " f"forward={rn_fwd.portfolio_winrate} vs reversed={rn_rev.portfolio_winrate}"
     assert rn_fwd.median_return == rn_rev.median_return
     # And the verdict must be stable too (it depends only on score_desc vs
     # equal_weight, which are order-invariant, but guard against future drift).
@@ -704,13 +686,9 @@ def test_selection_profitability_skips_nan_score_and_return():
     # equal_weight_all for day 2 would be (3+2-1-2+NaN)/5 = NaN → mean_return NaN.
     for s in report.strategies:
         assert s.mean_return is not None, f"{s.strategy}: mean_return is None"
-        assert math.isfinite(s.mean_return), (
-            f"{s.strategy}: mean_return={s.mean_return} — bare float() let NaN through"
-        )
+        assert math.isfinite(s.mean_return), f"{s.strategy}: mean_return={s.mean_return} — bare float() let NaN through"
         assert s.median_return is not None, f"{s.strategy}: median_return is None"
-        assert math.isfinite(s.median_return), (
-            f"{s.strategy}: median_return={s.median_return} — NaN propagated into median"
-        )
+        assert math.isfinite(s.median_return), f"{s.strategy}: median_return={s.median_return} — NaN propagated into median"
 
 
 def test_north_star_pnl_as_of_uses_max_date():

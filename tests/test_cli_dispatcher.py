@@ -214,9 +214,7 @@ class TestDispatchBehavior(unittest.TestCase):
 
     def test_dispatch_watchlist_subcommands_share_handler(self) -> None:
         # 4 个 watchlist 子命令共享 ``_resolve_watchlist``
-        watchlist_handlers = {
-            h for flag, h in COMMAND_REGISTRY if flag.startswith("--watchlist-")
-        }
+        watchlist_handlers = {h for flag, h in COMMAND_REGISTRY if flag.startswith("--watchlist-")}
         self.assertEqual(len(watchlist_handlers), 1)
 
 

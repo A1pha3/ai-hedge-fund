@@ -164,12 +164,8 @@ def test_analyze_btst_watchlist_recall_dossier_recognizes_shadow_focus_snapshot_
     )
 
     dossiers_by_ticker = {row["ticker"]: row for row in analysis["priority_ticker_dossiers"]}
-    assert dossiers_by_ticker["300683"]["dominant_recall_stage"] != "absent_from_candidate_pool", (
-        "300683 is present in the shadow focus snapshot; dominant_recall_stage should not be absent_from_candidate_pool"
-    )
-    assert dossiers_by_ticker["300683"]["dominant_recall_stage"] == "candidate_pool_visible_but_missing_layer_b", (
-        "300683 is shadow-visible in candidate_pool; expected candidate_pool_visible_but_missing_layer_b"
-    )
+    assert dossiers_by_ticker["300683"]["dominant_recall_stage"] != "absent_from_candidate_pool", "300683 is present in the shadow focus snapshot; dominant_recall_stage should not be absent_from_candidate_pool"
+    assert dossiers_by_ticker["300683"]["dominant_recall_stage"] == "candidate_pool_visible_but_missing_layer_b", "300683 is shadow-visible in candidate_pool; expected candidate_pool_visible_but_missing_layer_b"
     assert dossiers_by_ticker["300683"]["candidate_pool_visible_count"] == 1
 
 
@@ -196,9 +192,7 @@ def test_analyze_btst_watchlist_recall_dossier_shadow_only_snapshot_counts_as_vi
                     "t_plus_2_close_return": 0.11,
                 },
             ],
-            "no_candidate_entry_summary": {
-                "top_ticker_rows": [{"ticker": "300888"}]
-            },
+            "no_candidate_entry_summary": {"top_ticker_rows": [{"ticker": "300888"}]},
         },
     )
     _write_json(
@@ -228,12 +222,8 @@ def test_analyze_btst_watchlist_recall_dossier_shadow_only_snapshot_counts_as_vi
     )
 
     dossiers_by_ticker = {row["ticker"]: row for row in analysis["priority_ticker_dossiers"]}
-    assert dossiers_by_ticker["300888"]["dominant_recall_stage"] != "missing_candidate_pool_snapshot", (
-        "300888 is present in the shadow-only snapshot; should not be classified as missing_candidate_pool_snapshot"
-    )
-    assert dossiers_by_ticker["300888"]["dominant_recall_stage"] == "candidate_pool_visible_but_missing_layer_b", (
-        "300888 is shadow-visible with no layer-b info; expected candidate_pool_visible_but_missing_layer_b"
-    )
+    assert dossiers_by_ticker["300888"]["dominant_recall_stage"] != "missing_candidate_pool_snapshot", "300888 is present in the shadow-only snapshot; should not be classified as missing_candidate_pool_snapshot"
+    assert dossiers_by_ticker["300888"]["dominant_recall_stage"] == "candidate_pool_visible_but_missing_layer_b", "300888 is shadow-visible with no layer-b info; expected candidate_pool_visible_but_missing_layer_b"
     assert dossiers_by_ticker["300888"]["candidate_pool_visible_count"] == 1
 
 
@@ -264,9 +254,7 @@ def test_analyze_btst_watchlist_recall_dossier_shadow_only_absent_ticker_stays_m
                     "t_plus_2_close_return": 0.11,
                 },
             ],
-            "no_candidate_entry_summary": {
-                "top_ticker_rows": [{"ticker": "300999"}]
-            },
+            "no_candidate_entry_summary": {"top_ticker_rows": [{"ticker": "300999"}]},
         },
     )
     _write_json(
@@ -296,13 +284,8 @@ def test_analyze_btst_watchlist_recall_dossier_shadow_only_absent_ticker_stays_m
     )
 
     dossiers_by_ticker = {row["ticker"]: row for row in analysis["priority_ticker_dossiers"]}
-    assert dossiers_by_ticker["300999"]["dominant_recall_stage"] != "absent_from_candidate_pool", (
-        "300999 is absent from a shadow-only snapshot; shadow is partial evidence only — "
-        "should not be classified as absent_from_candidate_pool"
-    )
-    assert dossiers_by_ticker["300999"]["dominant_recall_stage"] == "missing_candidate_pool_snapshot", (
-        "No main snapshot and ticker not in shadow; expected missing_candidate_pool_snapshot"
-    )
+    assert dossiers_by_ticker["300999"]["dominant_recall_stage"] != "absent_from_candidate_pool", "300999 is absent from a shadow-only snapshot; shadow is partial evidence only — " "should not be classified as absent_from_candidate_pool"
+    assert dossiers_by_ticker["300999"]["dominant_recall_stage"] == "missing_candidate_pool_snapshot", "No main snapshot and ticker not in shadow; expected missing_candidate_pool_snapshot"
 
 
 def test_render_btst_watchlist_recall_dossier_markdown_renders_sections() -> None:

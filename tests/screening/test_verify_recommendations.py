@@ -1,4 +1,5 @@
 """Tests for P3-1: verify_recommendations module."""
+
 import json
 from pathlib import Path
 
@@ -34,10 +35,8 @@ def reports_dir(tmp_path: Path) -> Path:
     report1 = {
         "trade_date": "20260601",
         "recommendations": [
-            {"ticker": "000001", "name": "平安银行", "score_b": 0.8, "decision": "bullish",
-             "strategy_signals": {"trend": {"direction": 1, "confidence": 80}, "fundamental": {"direction": 1, "confidence": 60}}},
-            {"ticker": "600519", "name": "贵州茅台", "score_b": 0.6, "decision": "bullish",
-             "strategy_signals": {"mean_reversion": {"direction": -1, "confidence": 70}}},
+            {"ticker": "000001", "name": "平安银行", "score_b": 0.8, "decision": "bullish", "strategy_signals": {"trend": {"direction": 1, "confidence": 80}, "fundamental": {"direction": 1, "confidence": 60}}},
+            {"ticker": "600519", "name": "贵州茅台", "score_b": 0.6, "decision": "bullish", "strategy_signals": {"mean_reversion": {"direction": -1, "confidence": 70}}},
         ],
     }
     (tmp_path / "auto_screening_20260601.json").write_text(json.dumps(report1), encoding="utf-8")
@@ -46,8 +45,7 @@ def reports_dir(tmp_path: Path) -> Path:
     report2 = {
         "trade_date": "20260602",
         "recommendations": [
-            {"ticker": "300724", "name": "捷佳伟创", "score_b": 0.7, "decision": "bullish",
-             "strategy_signals": {"trend": {"direction": 1, "confidence": 75}}},
+            {"ticker": "300724", "name": "捷佳伟创", "score_b": 0.7, "decision": "bullish", "strategy_signals": {"trend": {"direction": 1, "confidence": 75}}},
         ],
     }
     (tmp_path / "auto_screening_20260602.json").write_text(json.dumps(report2), encoding="utf-8")
@@ -122,9 +120,7 @@ class TestLoadTrackingHistory:
         # Reports dated 2026-01-10..12 — all "old" relative to a June 2026
         # wall-clock now, but consecutive relative to each other.
         for date_str in ("20260110", "20260111", "20260112"):
-            (tmp_path / f"auto_screening_{date_str}.json").write_text(
-                json.dumps({"recommendations": []}), encoding="utf-8"
-            )
+            (tmp_path / f"auto_screening_{date_str}.json").write_text(json.dumps({"recommendations": []}), encoding="utf-8")
         result = _load_auto_screening_reports(tmp_path, lookback_days=30)
         # All three must be loaded (anchored to latest 20260112, not now()).
         assert len(result) == 3, f"Expected 3 reports (anchored to latest), got {len(result)}"
@@ -242,14 +238,20 @@ class TestComputeVerifyRecommendations:
             {"ticker": "300724", "recommended_date": "20260602", "next_day_return": 3.0, "tracking_status": "complete"},
         ]
         (tmp_path / "tracking_history.json").write_text(json.dumps(tracking), encoding="utf-8")
-        report1 = {"trade_date": "20260601", "recommendations": [
-            {"ticker": "000001", "score_b": 0.8, "strategy_signals": {"trend": {"direction": 1, "confidence": 80}}},
-            {"ticker": "600519", "score_b": 0.6, "strategy_signals": {"mean_reversion": {"direction": -1, "confidence": 70}}},
-        ]}
+        report1 = {
+            "trade_date": "20260601",
+            "recommendations": [
+                {"ticker": "000001", "score_b": 0.8, "strategy_signals": {"trend": {"direction": 1, "confidence": 80}}},
+                {"ticker": "600519", "score_b": 0.6, "strategy_signals": {"mean_reversion": {"direction": -1, "confidence": 70}}},
+            ],
+        }
         (tmp_path / "auto_screening_20260601.json").write_text(json.dumps(report1), encoding="utf-8")
-        report2 = {"trade_date": "20260602", "recommendations": [
-            {"ticker": "300724", "score_b": 0.7, "strategy_signals": {"trend": {"direction": 1, "confidence": 75}}},
-        ]}
+        report2 = {
+            "trade_date": "20260602",
+            "recommendations": [
+                {"ticker": "300724", "score_b": 0.7, "strategy_signals": {"trend": {"direction": 1, "confidence": 75}}},
+            ],
+        }
         (tmp_path / "auto_screening_20260602.json").write_text(json.dumps(report2), encoding="utf-8")
 
         summary = compute_verify_recommendations(reports_dir=tmp_path, lookback_days=30)
@@ -289,9 +291,12 @@ class TestComputeVerifyRecommendations:
         ]
         (tmp_path / "tracking_history.json").write_text(json.dumps(tracking), encoding="utf-8")
         # Report shows ONLY 000001 (Top-N trimmed 000002 out of the display).
-        report = {"trade_date": "20260601", "recommendations": [
-            {"ticker": "000001", "score_b": 0.8, "strategy_signals": {"trend": {"direction": 1, "confidence": 80}}},
-        ]}
+        report = {
+            "trade_date": "20260601",
+            "recommendations": [
+                {"ticker": "000001", "score_b": 0.8, "strategy_signals": {"trend": {"direction": 1, "confidence": 80}}},
+            ],
+        }
         (tmp_path / "auto_screening_20260601.json").write_text(json.dumps(report), encoding="utf-8")
 
         summary = compute_verify_recommendations(reports_dir=tmp_path, lookback_days=30)
@@ -365,20 +370,8 @@ def extended_reports_dir(tmp_path: Path) -> Path:
     # Use a recent date that won't be filtered out by lookback
     # tracking_history.json with T+10/T+20/T+30
     tracking = [
-        {
-            "ticker": "000001", "name": "平安银行", "recommended_date": "20260601",
-            "recommended_price": 12.0,
-            "next_day_return": 2.0, "next_3day_return": 3.5, "next_5day_return": 5.0,
-            "next_10day_return": 7.0, "next_20day_return": 10.0, "next_30day_return": 12.0,
-            "tracking_status": "complete"
-        },
-        {
-            "ticker": "600519", "name": "贵州茅台", "recommended_date": "20260601",
-            "recommended_price": 1500.0,
-            "next_day_return": -1.0, "next_3day_return": 2.0, "next_5day_return": -0.5,
-            "next_10day_return": -2.0, "next_20day_return": -3.0, "next_30day_return": -1.0,
-            "tracking_status": "complete"
-        },
+        {"ticker": "000001", "name": "平安银行", "recommended_date": "20260601", "recommended_price": 12.0, "next_day_return": 2.0, "next_3day_return": 3.5, "next_5day_return": 5.0, "next_10day_return": 7.0, "next_20day_return": 10.0, "next_30day_return": 12.0, "tracking_status": "complete"},
+        {"ticker": "600519", "name": "贵州茅台", "recommended_date": "20260601", "recommended_price": 1500.0, "next_day_return": -1.0, "next_3day_return": 2.0, "next_5day_return": -0.5, "next_10day_return": -2.0, "next_20day_return": -3.0, "next_30day_return": -1.0, "tracking_status": "complete"},
     ]
     (tmp_path / "tracking_history.json").write_text(json.dumps(tracking), encoding="utf-8")
 
@@ -386,10 +379,8 @@ def extended_reports_dir(tmp_path: Path) -> Path:
     report = {
         "trade_date": "20260601",
         "recommendations": [
-            {"ticker": "000001", "name": "平安银行", "score_b": 0.8, "decision": "bullish",
-             "strategy_signals": {"trend": {"direction": 1, "confidence": 80}}},
-            {"ticker": "600519", "name": "贵州茅台", "score_b": 0.6, "decision": "bullish",
-             "strategy_signals": {"fundamental": {"direction": 1, "confidence": 70}}},
+            {"ticker": "000001", "name": "平安银行", "score_b": 0.8, "decision": "bullish", "strategy_signals": {"trend": {"direction": 1, "confidence": 80}}},
+            {"ticker": "600519", "name": "贵州茅台", "score_b": 0.6, "decision": "bullish", "strategy_signals": {"fundamental": {"direction": 1, "confidence": 70}}},
         ],
     }
     (tmp_path / "auto_screening_20260601.json").write_text(json.dumps(report), encoding="utf-8")
@@ -400,52 +391,48 @@ class TestExtendedHorizonsVerifyRecommendations:
     def test_extended_horizon_attributes_exist(self, extended_reports_dir: Path):
         """VerifySummary and VerifyDay should have T+10/T+20/T+30 attributes."""
         summary = compute_verify_recommendations(reports_dir=extended_reports_dir, lookback_days=30)
-        
+
         # VerifySummary should have extended stats
-        assert hasattr(summary, 'overall_t10_win_rate')
-        assert hasattr(summary, 'overall_t20_win_rate')
-        assert hasattr(summary, 'overall_t30_win_rate')
-        assert hasattr(summary, 'avg_t10_return')
-        assert hasattr(summary, 'avg_t20_return')
-        assert hasattr(summary, 'avg_t30_return')
-    
+        assert hasattr(summary, "overall_t10_win_rate")
+        assert hasattr(summary, "overall_t20_win_rate")
+        assert hasattr(summary, "overall_t30_win_rate")
+        assert hasattr(summary, "avg_t10_return")
+        assert hasattr(summary, "avg_t20_return")
+        assert hasattr(summary, "avg_t30_return")
+
     def test_extended_horizon_computation(self, extended_reports_dir: Path):
         """Extended horizons should be computed correctly."""
         summary = compute_verify_recommendations(reports_dir=extended_reports_dir, lookback_days=30)
-        
+
         # T+10: 000001 (+7.0) win, 600519 (-2.0) loss → 50% win rate
         assert summary.overall_t10_win_rate == pytest.approx(0.5, abs=1e-3)
         # Average: (7.0 + (-2.0)) / 2 = 2.5
         assert summary.avg_t10_return == pytest.approx(2.5, abs=1e-3)
-        
+
         # T+20: 000001 (+10.0) win, 600519 (-3.0) loss → 50% win rate
         assert summary.overall_t20_win_rate == pytest.approx(0.5, abs=1e-3)
         assert summary.avg_t20_return == pytest.approx(3.5, abs=1e-3)
-        
+
         # T+30: 000001 (+12.0) win, 600519 (-1.0) loss → 50% win rate
         assert summary.overall_t30_win_rate == pytest.approx(0.5, abs=1e-3)
         assert summary.avg_t30_return == pytest.approx(5.5, abs=1e-3)
-    
+
     def test_extended_horizon_day_details(self, extended_reports_dir: Path):
         """VerifyDay should track T+10/T+20/T+30 per-day averages."""
-        summary = compute_verify_recommendations(
-            reports_dir=extended_reports_dir, 
-            lookback_days=30, 
-            include_detail=True
-        )
-        
+        summary = compute_verify_recommendations(reports_dir=extended_reports_dir, lookback_days=30, include_detail=True)
+
         assert len(summary.daily_details) == 1
         day = summary.daily_details[0]
-        
-        assert hasattr(day, 'avg_t10_return')
-        assert hasattr(day, 'avg_t20_return')
-        assert hasattr(day, 'avg_t30_return')
-        
+
+        assert hasattr(day, "avg_t10_return")
+        assert hasattr(day, "avg_t20_return")
+        assert hasattr(day, "avg_t30_return")
+
         # Average of 000001 and 600519
         assert day.avg_t10_return == pytest.approx(2.5, abs=1e-3)
         assert day.avg_t20_return == pytest.approx(3.5, abs=1e-3)
         assert day.avg_t30_return == pytest.approx(5.5, abs=1e-3)
-    
+
     def test_render_shows_extended_columns(self, extended_reports_dir: Path):
         """Rendered output should include T+10/T+20/T+30 columns."""
         summary = compute_verify_recommendations(reports_dir=extended_reports_dir, lookback_days=30)
@@ -489,20 +476,32 @@ def intermediate_reports_dir(tmp_path: Path) -> Path:
     """
     tracking = [
         {
-            "ticker": "000001", "name": "平安银行", "recommended_date": "20260601",
+            "ticker": "000001",
+            "name": "平安银行",
+            "recommended_date": "20260601",
             "recommended_price": 12.0,
-            "next_day_return": 2.0, "next_3day_return": 3.5, "next_5day_return": 5.0,
-            "next_10day_return": 7.0, "next_15day_return": 9.0,
-            "next_20day_return": 10.0, "next_25day_return": 11.0,
+            "next_day_return": 2.0,
+            "next_3day_return": 3.5,
+            "next_5day_return": 5.0,
+            "next_10day_return": 7.0,
+            "next_15day_return": 9.0,
+            "next_20day_return": 10.0,
+            "next_25day_return": 11.0,
             "next_30day_return": 12.0,
             "tracking_status": "complete",
         },
         {
-            "ticker": "600519", "name": "贵州茅台", "recommended_date": "20260601",
+            "ticker": "600519",
+            "name": "贵州茅台",
+            "recommended_date": "20260601",
             "recommended_price": 1500.0,
-            "next_day_return": -1.0, "next_3day_return": 2.0, "next_5day_return": -0.5,
-            "next_10day_return": -2.0, "next_15day_return": -2.5,
-            "next_20day_return": -3.0, "next_25day_return": -4.0,
+            "next_day_return": -1.0,
+            "next_3day_return": 2.0,
+            "next_5day_return": -0.5,
+            "next_10day_return": -2.0,
+            "next_15day_return": -2.5,
+            "next_20day_return": -3.0,
+            "next_25day_return": -4.0,
             "next_30day_return": -1.0,
             "tracking_status": "complete",
         },
@@ -512,10 +511,8 @@ def intermediate_reports_dir(tmp_path: Path) -> Path:
     report = {
         "trade_date": "20260601",
         "recommendations": [
-            {"ticker": "000001", "name": "平安银行", "score_b": 0.8, "decision": "bullish",
-             "strategy_signals": {"trend": {"direction": 1, "confidence": 80}}},
-            {"ticker": "600519", "name": "贵州茅台", "score_b": 0.6, "decision": "bullish",
-             "strategy_signals": {"fundamental": {"direction": 1, "confidence": 70}}},
+            {"ticker": "000001", "name": "平安银行", "score_b": 0.8, "decision": "bullish", "strategy_signals": {"trend": {"direction": 1, "confidence": 80}}},
+            {"ticker": "600519", "name": "贵州茅台", "score_b": 0.6, "decision": "bullish", "strategy_signals": {"fundamental": {"direction": 1, "confidence": 70}}},
         ],
     }
     (tmp_path / "auto_screening_20260601.json").write_text(json.dumps(report), encoding="utf-8")
@@ -571,10 +568,15 @@ class TestIntermediateHorizonsVerifyRecommendations:
         order t1, t3, t5, t10, t15, t20, t25, t30."""
         tracking = [
             {
-                "ticker": "000001", "recommended_date": "20260601",
-                "next_day_return": 1.0, "next_3day_return": 2.0, "next_5day_return": 3.0,
-                "next_10day_return": 4.0, "next_15day_return": 5.0,
-                "next_20day_return": 6.0, "next_25day_return": 7.0,
+                "ticker": "000001",
+                "recommended_date": "20260601",
+                "next_day_return": 1.0,
+                "next_3day_return": 2.0,
+                "next_5day_return": 3.0,
+                "next_10day_return": 4.0,
+                "next_15day_return": 5.0,
+                "next_20day_return": 6.0,
+                "next_25day_return": 7.0,
                 "next_30day_return": 8.0,
             },
         ]

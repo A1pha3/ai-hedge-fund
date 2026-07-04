@@ -80,11 +80,13 @@ def client(test_app):
 
 def _make_token(user: User) -> str:
     """Create a JWT token for the given user."""
-    return create_access_token({
-        "sub": user.username,
-        "role": user.role,
-        "tv": user.token_version or 0,
-    })
+    return create_access_token(
+        {
+            "sub": user.username,
+            "role": user.role,
+            "tv": user.token_version or 0,
+        }
+    )
 
 
 def auth_header(token: str) -> dict:
@@ -144,6 +146,7 @@ def viewer_token(seed_users):
 # 1. POST /invites — Generate invite code
 # ============================================================
 
+
 class TestCreateInvite:
     """Admin generates invitation codes with role assignment."""
 
@@ -158,32 +161,48 @@ class TestCreateInvite:
         assert data["expires_at"] is not None
 
     def test_create_invite_with_viewer_role(self, client, admin_token):
-        resp = client.post("/invites/", json={
-            "role_to_assign": "viewer",
-            "expires_days": 30,
-        }, headers=auth_header(admin_token))
+        resp = client.post(
+            "/invites/",
+            json={
+                "role_to_assign": "viewer",
+                "expires_days": 30,
+            },
+            headers=auth_header(admin_token),
+        )
         assert resp.status_code == 201
         assert resp.json()["role_to_assign"] == "viewer"
 
     def test_create_invite_no_expiry(self, client, admin_token):
-        resp = client.post("/invites/", json={
-            "role_to_assign": "member",
-            "expires_days": None,
-        }, headers=auth_header(admin_token))
+        resp = client.post(
+            "/invites/",
+            json={
+                "role_to_assign": "member",
+                "expires_days": None,
+            },
+            headers=auth_header(admin_token),
+        )
         assert resp.status_code == 201
         assert resp.json()["expires_at"] is None
 
     def test_create_invite_blocks_admin_role(self, client, admin_token):
-        resp = client.post("/invites/", json={
-            "role_to_assign": "admin",
-        }, headers=auth_header(admin_token))
+        resp = client.post(
+            "/invites/",
+            json={
+                "role_to_assign": "admin",
+            },
+            headers=auth_header(admin_token),
+        )
         assert resp.status_code == 400
         assert "管理员" in resp.json()["detail"]
 
     def test_create_invite_invalid_role(self, client, admin_token):
-        resp = client.post("/invites/", json={
-            "role_to_assign": "superuser",
-        }, headers=auth_header(admin_token))
+        resp = client.post(
+            "/invites/",
+            json={
+                "role_to_assign": "superuser",
+            },
+            headers=auth_header(admin_token),
+        )
         assert resp.status_code == 400
 
     def test_create_invite_member_forbidden(self, client, member_token):
@@ -205,6 +224,7 @@ class TestCreateInvite:
 # ============================================================
 # 2. GET /invites — List invites
 # ============================================================
+
 
 class TestListInvites:
     """Admin lists all invitation codes."""
@@ -249,6 +269,7 @@ class TestListInvites:
 # 3. DELETE /invites/{code} — Revoke invite
 # ============================================================
 
+
 class TestRevokeInvite:
     """Admin revokes unused invitation codes."""
 
@@ -289,34 +310,49 @@ class TestRevokeInvite:
 # 4. POST /invites/{code}/redeem — Public redeem
 # ============================================================
 
+
 class TestRedeemInvite:
     """Public endpoint: redeem invitation code to create user."""
 
     def test_redeem_success(self, client, admin_token):
-        create_resp = client.post("/invites/", json={
-            "role_to_assign": "member",
-        }, headers=auth_header(admin_token))
+        create_resp = client.post(
+            "/invites/",
+            json={
+                "role_to_assign": "member",
+            },
+            headers=auth_header(admin_token),
+        )
         code = create_resp.json()["code"]
 
-        resp = client.post(f"/invites/{code}/redeem", json={
-            "username": "newmember",
-            "password": "NewMember1",
-        })
+        resp = client.post(
+            f"/invites/{code}/redeem",
+            json={
+                "username": "newmember",
+                "password": "NewMember1",
+            },
+        )
         assert resp.status_code == 201
         data = resp.json()
         assert data["username"] == "newmember"
         assert data["role"] == "member"
 
     def test_redeem_viewer_role(self, client, admin_token):
-        create_resp = client.post("/invites/", json={
-            "role_to_assign": "viewer",
-        }, headers=auth_header(admin_token))
+        create_resp = client.post(
+            "/invites/",
+            json={
+                "role_to_assign": "viewer",
+            },
+            headers=auth_header(admin_token),
+        )
         code = create_resp.json()["code"]
 
-        resp = client.post(f"/invites/{code}/redeem", json={
-            "username": "newviewer",
-            "password": "NewViewer1",
-        })
+        resp = client.post(
+            f"/invites/{code}/redeem",
+            json={
+                "username": "newviewer",
+                "password": "NewViewer1",
+            },
+        )
         assert resp.status_code == 201
         assert resp.json()["role"] == "viewer"
 
@@ -325,18 +361,24 @@ class TestRedeemInvite:
         code = create_resp.json()["code"]
         client.delete(f"/invites/{code}", headers=auth_header(admin_token))
 
-        resp = client.post(f"/invites/{code}/redeem", json={
-            "username": "blockeduser",
-            "password": "BlockedPass1",
-        })
+        resp = client.post(
+            f"/invites/{code}/redeem",
+            json={
+                "username": "blockeduser",
+                "password": "BlockedPass1",
+            },
+        )
         assert resp.status_code == 400
         assert "撤销" in resp.json()["detail"]
 
     def test_redeem_nonexistent_code(self, client):
-        resp = client.post("/invites/INV-NONEXISTENT/redeem", json={
-            "username": "someone",
-            "password": "SomePass123",
-        })
+        resp = client.post(
+            "/invites/INV-NONEXISTENT/redeem",
+            json={
+                "username": "someone",
+                "password": "SomePass123",
+            },
+        )
         assert resp.status_code == 400
         assert "不存在" in resp.json()["detail"]
 
@@ -345,17 +387,23 @@ class TestRedeemInvite:
         code = create_resp.json()["code"]
 
         # First redeem succeeds
-        resp1 = client.post(f"/invites/{code}/redeem", json={
-            "username": "firstuser",
-            "password": "FirstPass1",
-        })
+        resp1 = client.post(
+            f"/invites/{code}/redeem",
+            json={
+                "username": "firstuser",
+                "password": "FirstPass1",
+            },
+        )
         assert resp1.status_code == 201
 
         # Second redeem fails (code already used)
-        resp2 = client.post(f"/invites/{code}/redeem", json={
-            "username": "seconduser",
-            "password": "SecondPass1",
-        })
+        resp2 = client.post(
+            f"/invites/{code}/redeem",
+            json={
+                "username": "seconduser",
+                "password": "SecondPass1",
+            },
+        )
         assert resp2.status_code == 400
         assert "使用" in resp2.json()["detail"]
 
@@ -363,10 +411,13 @@ class TestRedeemInvite:
         create_resp = client.post("/invites/", json={}, headers=auth_header(admin_token))
         code = create_resp.json()["code"]
 
-        resp = client.post(f"/invites/{code}/redeem", json={
-            "username": "weakpassuser",
-            "password": "weak",
-        })
+        resp = client.post(
+            f"/invites/{code}/redeem",
+            json={
+                "username": "weakpassuser",
+                "password": "weak",
+            },
+        )
         # Pydantic min_length=8 catches it as 422 before reaching service logic
         assert resp.status_code == 422
 
@@ -374,6 +425,7 @@ class TestRedeemInvite:
 # ============================================================
 # 5. POST /invites/users/{id}/revoke-session — Force logout
 # ============================================================
+
 
 class TestRevokeSession:
     """Admin force-logs out a user by invalidating their token version."""
@@ -421,45 +473,66 @@ class TestRevokeSession:
 # 6. PUT /invites/users/{id}/role — Update user role
 # ============================================================
 
+
 class TestUpdateUserRole:
     """Admin changes a user's role."""
 
     def test_update_role_member_to_viewer(self, client, admin_token, seed_users):
         member = seed_users["member"]
-        resp = client.put(f"/invites/users/{member.id}/role", json={
-            "role": "viewer",
-        }, headers=auth_header(admin_token))
+        resp = client.put(
+            f"/invites/users/{member.id}/role",
+            json={
+                "role": "viewer",
+            },
+            headers=auth_header(admin_token),
+        )
         assert resp.status_code == 200
         assert resp.json()["role"] == "viewer"
 
     def test_update_role_viewer_to_member(self, client, admin_token, seed_users):
         viewer = seed_users["viewer"]
-        resp = client.put(f"/invites/users/{viewer.id}/role", json={
-            "role": "member",
-        }, headers=auth_header(admin_token))
+        resp = client.put(
+            f"/invites/users/{viewer.id}/role",
+            json={
+                "role": "member",
+            },
+            headers=auth_header(admin_token),
+        )
         assert resp.status_code == 200
         assert resp.json()["role"] == "member"
 
     def test_update_role_cannot_modify_self(self, client, admin_token, seed_users):
         admin = seed_users["admin"]
-        resp = client.put(f"/invites/users/{admin.id}/role", json={
-            "role": "member",
-        }, headers=auth_header(admin_token))
+        resp = client.put(
+            f"/invites/users/{admin.id}/role",
+            json={
+                "role": "member",
+            },
+            headers=auth_header(admin_token),
+        )
         assert resp.status_code == 400
         assert "自己" in resp.json()["detail"]
 
     def test_update_role_cannot_downgrade_admin(self, client, admin_token, seed_users):
         admin = seed_users["admin"]
-        resp = client.put(f"/invites/users/{admin.id}/role", json={
-            "role": "member",
-        }, headers=auth_header(admin_token))
+        resp = client.put(
+            f"/invites/users/{admin.id}/role",
+            json={
+                "role": "member",
+            },
+            headers=auth_header(admin_token),
+        )
         assert resp.status_code == 400
 
     def test_update_role_invalid_role(self, client, admin_token, seed_users):
         member = seed_users["member"]
-        resp = client.put(f"/invites/users/{member.id}/role", json={
-            "role": "superadmin",
-        }, headers=auth_header(admin_token))
+        resp = client.put(
+            f"/invites/users/{member.id}/role",
+            json={
+                "role": "superadmin",
+            },
+            headers=auth_header(admin_token),
+        )
         assert resp.status_code == 400
 
     def test_update_role_forces_relogin(self, client, admin_token, seed_users, test_session):
@@ -467,24 +540,33 @@ class TestUpdateUserRole:
         member = seed_users["member"]
         old_tv = member.token_version
 
-        client.put(f"/invites/users/{member.id}/role", json={
-            "role": "viewer",
-        }, headers=auth_header(admin_token))
+        client.put(
+            f"/invites/users/{member.id}/role",
+            json={
+                "role": "viewer",
+            },
+            headers=auth_header(admin_token),
+        )
 
         test_session.refresh(member)
         assert member.token_version > old_tv
 
     def test_update_role_member_forbidden(self, client, member_token, seed_users):
         viewer = seed_users["viewer"]
-        resp = client.put(f"/invites/users/{viewer.id}/role", json={
-            "role": "member",
-        }, headers=auth_header(member_token))
+        resp = client.put(
+            f"/invites/users/{viewer.id}/role",
+            json={
+                "role": "member",
+            },
+            headers=auth_header(member_token),
+        )
         assert resp.status_code == 403
 
 
 # ============================================================
 # 7. GET /invites/users — List users
 # ============================================================
+
 
 class TestListUsers:
     """Admin lists all users."""
@@ -508,15 +590,20 @@ class TestListUsers:
 # 8. Full lifecycle test — end-to-end
 # ============================================================
 
+
 class TestInviteLifecycle:
     """End-to-end: create -> list -> redeem -> verify role -> revoke session."""
 
     def test_full_lifecycle(self, client, admin_token, seed_users, test_session):
         # Step 1: Admin creates a viewer invite
-        create_resp = client.post("/invites/", json={
-            "role_to_assign": "viewer",
-            "expires_days": 7,
-        }, headers=auth_header(admin_token))
+        create_resp = client.post(
+            "/invites/",
+            json={
+                "role_to_assign": "viewer",
+                "expires_days": 7,
+            },
+            headers=auth_header(admin_token),
+        )
         assert create_resp.status_code == 201
         code = create_resp.json()["code"]
         assert create_resp.json()["role_to_assign"] == "viewer"
@@ -529,10 +616,13 @@ class TestInviteLifecycle:
         assert code in codes_in_list
 
         # Step 3: Public user redeems the code
-        redeem_resp = client.post(f"/invites/{code}/redeem", json={
-            "username": "lifecycle_user",
-            "password": "Lifecycle1",
-        })
+        redeem_resp = client.post(
+            f"/invites/{code}/redeem",
+            json={
+                "username": "lifecycle_user",
+                "password": "Lifecycle1",
+            },
+        )
         assert redeem_resp.status_code == 201
         new_user_data = redeem_resp.json()
         assert new_user_data["role"] == "viewer"
@@ -540,9 +630,13 @@ class TestInviteLifecycle:
 
         # Step 4: Admin upgrades the user to member
         user_id = new_user_data["id"]
-        role_resp = client.put(f"/invites/users/{user_id}/role", json={
-            "role": "member",
-        }, headers=auth_header(admin_token))
+        role_resp = client.put(
+            f"/invites/users/{user_id}/role",
+            json={
+                "role": "member",
+            },
+            headers=auth_header(admin_token),
+        )
         assert role_resp.status_code == 200
         assert role_resp.json()["role"] == "member"
 
@@ -567,9 +661,12 @@ class TestInviteLifecycle:
         assert revoke_resp.json()["is_revoked"] is True
 
         # Attempt redeem should fail
-        redeem_resp = client.post(f"/invites/{code}/redeem", json={
-            "username": "shouldnotwork",
-            "password": "ShouldNot1",
-        })
+        redeem_resp = client.post(
+            f"/invites/{code}/redeem",
+            json={
+                "username": "shouldnotwork",
+                "password": "ShouldNot1",
+            },
+        )
         assert redeem_resp.status_code == 400
         assert "撤销" in redeem_resp.json()["detail"]

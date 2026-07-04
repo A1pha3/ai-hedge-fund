@@ -10,6 +10,7 @@ told 匀/晚-rhythm users to "持有至 T+20–T+30" / "T+30+ 耐心持有" — 
 within the T+5–T+10 window (the 59% winrate zone), preserving rhythm nuance as
 early-vs-late WITHIN that window.
 """
+
 from __future__ import annotations
 
 from src.screening.exit_timing import (
@@ -17,7 +18,6 @@ from src.screening.exit_timing import (
     compute_exit_timing,
     render_exit_timing,
 )
-
 
 # ---------------------------------------------------------------------------
 # compute_exit_timing — C219-aligned exit windows
@@ -63,9 +63,7 @@ class TestComputeExitTiming:
         for rhythm in ("早", "匀", "晚"):
             advice = compute_exit_timing(rhythm=rhythm, decay_change_pct=0.0, days_since_peak=0)
             for loss_horizon in ("T+20", "T+25", "T+30"):
-                assert loss_horizon not in advice.suggested_window, (
-                    f"rhythm={rhythm!r} suggests loss-zone {loss_horizon}: {advice.suggested_window!r}"
-                )
+                assert loss_horizon not in advice.suggested_window, f"rhythm={rhythm!r} suggests loss-zone {loss_horizon}: {advice.suggested_window!r}"
 
     def test_unknown_rhythm_no_advice(self) -> None:
         """节奏=— (无数据) → no window, honest not-a-fake-signal."""

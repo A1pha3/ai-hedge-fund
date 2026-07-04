@@ -23,7 +23,6 @@ from src.screening.conditional_order_advisor import attach_conditional_orders_to
 from src.screening.data_quality_audit import audit_recommendation
 from src.utils.numeric import safe_float
 
-
 # ---------------------------------------------------------------------------
 # Position #1 (CRITICAL): top_picks._apply_consecutive_bonus_and_resort
 # NaN bonus / original_score → max(-1.0, min(1.0, NaN+bonus)) 在 CPython
@@ -72,15 +71,11 @@ def test_consecutive_bonus_nan_not_escalate_to_top() -> None:
     result = _apply_consecutive_bonus_and_resort(ranked)
     # 修复后: GOOD001 应该在第一位 (composite_score 0.85 > 其他)
     # 修复前: CORRUPT_NAN_* 会因 NaN escalate 到 1.0 顶到第一位
-    assert result[0]["ticker"] == "GOOD001", (
-        f"NaN corrupt 标的不应顶到顶部; 实际 ranked[0]={result[0]['ticker']}"
-    )
+    assert result[0]["ticker"] == "GOOD001", f"NaN corrupt 标的不应顶到顶部; 实际 ranked[0]={result[0]['ticker']}"
     # corrupt 标的的 composite_score 不应该是 1.0 (escalate 漏洞标志)
     for rec in result:
         if "CORRUPT" in rec["ticker"]:
-            assert rec["composite_score"] != 1.0, (
-                f"{rec['ticker']} composite_score escalate 到 1.0 (NaN→1.0 漏洞)"
-            )
+            assert rec["composite_score"] != 1.0, f"{rec['ticker']} composite_score escalate 到 1.0 (NaN→1.0 漏洞)"
 
 
 def test_consecutive_bonus_nan_score_finite() -> None:
@@ -130,9 +125,7 @@ def test_sort_key_no_nan_in_composite_or_score_b() -> None:
     ]
     # 修复后: NaN score_b → 0.0, BBB (score_b=0.4) 应排前
     result = _apply_consecutive_bonus_and_resort(ranked)
-    assert result[0]["ticker"] == "BBB", (
-        f"NaN score_b 应降级为 0.0, BBB (score_b=0.4) 应排前; 实际 result[0]={result[0]['ticker']}"
-    )
+    assert result[0]["ticker"] == "BBB", f"NaN score_b 应降级为 0.0, BBB (score_b=0.4) 应排前; 实际 result[0]={result[0]['ticker']}"
 
 
 # ---------------------------------------------------------------------------
@@ -164,16 +157,10 @@ def test_conditional_advisor_api_nan_current_price_triggers_degraded() -> None:
     advice = results[0]
     # 修复后: NaN current_price 应该被 safe_float 替换为 0.0, 触发 degraded
     # degraded advice: atr/buy_zone/stop_loss/take_profit 应该清零 (R151)
-    assert advice["degraded"] is True, (
-        f"NaN current_price 应触发 degraded=True; 实际 degraded={advice['degraded']}"
-    )
-    assert advice["atr"] == 0.0 or advice["atr"] is None, (
-        f"degraded advice 的 atr 应清零; 实际 atr={advice['atr']}"
-    )
+    assert advice["degraded"] is True, f"NaN current_price 应触发 degraded=True; 实际 degraded={advice['degraded']}"
+    assert advice["atr"] == 0.0 or advice["atr"] is None, f"degraded advice 的 atr 应清零; 实际 atr={advice['atr']}"
     # 修复后: current_price 字段应该是 finite (0.0), 不应是 NaN
-    assert math.isfinite(safe_float(advice["current_price"], 0.0)), (
-        f"advice.current_price 应是 finite; 实际 {advice['current_price']}"
-    )
+    assert math.isfinite(safe_float(advice["current_price"], 0.0)), f"advice.current_price 应是 finite; 实际 {advice['current_price']}"
 
 
 # ---------------------------------------------------------------------------
@@ -203,9 +190,7 @@ def test_conditional_advisor_cli_path_nan_current_price_not_propagated() -> None
     )
     assert len(results) == 1
     advice = results[0]
-    assert advice["degraded"] is True, (
-        f"NaN current_price 应触发 degraded; 实际 {advice['degraded']}"
-    )
+    assert advice["degraded"] is True, f"NaN current_price 应触发 degraded; 实际 {advice['degraded']}"
     # current_price 不应是 NaN (修复后源头用 safe_float)
     cp = advice["current_price"]
     if cp is not None:
@@ -277,9 +262,7 @@ def test_audit_recommendation_nan_score_b_zero() -> None:
     }
     result = audit_recommendation(rec, threshold=0.5)
     assert isinstance(result["score_b"], float), "score_b 应该是 float"
-    assert math.isfinite(result["score_b"]), (
-        f"score_b 应该是 finite, 实际 {result['score_b']}"
-    )
+    assert math.isfinite(result["score_b"]), f"score_b 应该是 finite, 实际 {result['score_b']}"
     assert result["score_b"] == 0.0, f"NaN score_b 应降级为 0.0, 实际 {result['score_b']}"
 
 
@@ -328,4 +311,5 @@ def test_family_drain_no_nan_leak_summary() -> None:
     assert safe_float(nan, -1.0) == -1.0
     # coerce_score_b: NaN → 0.0 (clamped)
     from src.utils.numeric import coerce_score_b
+
     assert coerce_score_b(nan) == 0.0

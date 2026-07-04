@@ -1,4 +1,5 @@
 """Daily accumulate progress tracking 测试."""
+
 from __future__ import annotations
 
 from unittest.mock import patch

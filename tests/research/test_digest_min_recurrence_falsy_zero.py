@@ -11,6 +11,7 @@ the underlying recurring_tickers list was actually filtered at >= 0d — the hea
 label contradicts the data shown to the user. A display-path data/label mismatch
 that corrupts the digest's "higher-confidence" value.
 """
+
 from __future__ import annotations
 
 from src.research.digest import DigestResult, format_digest_markdown
@@ -42,10 +43,7 @@ def _result(**summary_overrides) -> DigestResult:
 def test_explicit_zero_min_recurrence_is_reflected_in_header_not_overridden() -> None:
     """Explicit min_recurrence=0 must render '>= 0d' header, not silently fall back to 5."""
     rendered = format_digest_markdown(_result(min_recurrence=0))
-    assert ">= 0d" in rendered, (
-        "explicit min_recurrence=0 must render '>= 0d' header; "
-        "falsy-zero `or 5` silently overrode to 5 (display/label mismatch with data)"
-    )
+    assert ">= 0d" in rendered, "explicit min_recurrence=0 must render '>= 0d' header; " "falsy-zero `or 5` silently overrode to 5 (display/label mismatch with data)"
 
 
 def test_default_min_recurrence_still_shows_5() -> None:

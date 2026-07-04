@@ -350,9 +350,7 @@ class TestP4DecisionPath:
 
         assert result.decision == "selected"
         assert result.explainability_payload["historical_prior"]["effective_prior_rate_source"] == "calibrated"
-        assert result.metrics_payload["historical_continuation_prior_score"]["next_close_positive_rate"] == pytest.approx(
-            result.explainability_payload["historical_prior"]["calibrated_next_close_positive_rate"]
-        )
+        assert result.metrics_payload["historical_continuation_prior_score"]["next_close_positive_rate"] == pytest.approx(result.explainability_payload["historical_prior"]["calibrated_next_close_positive_rate"])
 
     def test_p3_hard_reject_still_wins_when_p4_is_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(BTST_0422_P4_PRIOR_SHRINKAGE_MODE_ENV, "enforce")

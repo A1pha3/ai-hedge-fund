@@ -2565,12 +2565,12 @@ def test_build_continuation_promotion_ready_summary_dossier_same_day_variants_do
                 "current_plan_visibility_gap_trade_date_count": 1,
             },
             "recent_window_summaries": [
-                    {"report_label": "20260331", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/a"},
-                    {"report_label": "20260331", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/b"},
-                    {"report_label": "20260331", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/c"},
-                    {"report_label": "20260331", "supporting_window": False, "report_dir": "/tmp/reports/d"},
-                ],
-            },
+                {"report_label": "20260331", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/a"},
+                {"report_label": "20260331", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/b"},
+                {"report_label": "20260331", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/c"},
+                {"report_label": "20260331", "supporting_window": False, "report_dir": "/tmp/reports/d"},
+            ],
+        },
     )
     _write_json(
         reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json",
@@ -2634,11 +2634,11 @@ def test_build_continuation_promotion_ready_summary_dossier_second_trade_date_ad
             "recent_validation_verdict": "governance_followup_payoff_confirmed",
             "recent_tier_verdict": "governance_followup_payoff_confirmed",
             "recent_window_summaries": [
-                    {"report_label": "20260331", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/a"},
-                    {"report_label": "20260401", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/b"},
-                ],
-            },
-        )
+                {"report_label": "20260331", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/a"},
+                {"report_label": "20260401", "supporting_window": True, "decision": "selected", "report_dir": "/tmp/reports/b"},
+            ],
+        },
+    )
     _write_json(
         reports_root / "btst_tplus1_tplus2_objective_monitor_latest.json",
         {
@@ -2780,9 +2780,7 @@ def test_generate_reports_manifest_corridor_entry_questions_use_corridor_focus_t
             "next_confirmation_requirement": "300683 still needs 1 independent selected sample.",
         },
     )
-    (reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.md").write_text(
-        "# corridor persistence dossier\n", encoding="utf-8"
-    )
+    (reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.md").write_text("# corridor persistence dossier\n", encoding="utf-8")
 
     # Write corridor window command board with 300683 as focus
     _write_json(
@@ -2793,9 +2791,7 @@ def test_generate_reports_manifest_corridor_entry_questions_use_corridor_focus_t
             "next_target_trade_dates": ["2026-04-15"],
         },
     )
-    (reports_root / "btst_candidate_pool_corridor_window_command_board_latest.md").write_text(
-        "# corridor window command board\n", encoding="utf-8"
-    )
+    (reports_root / "btst_candidate_pool_corridor_window_command_board_latest.md").write_text("# corridor window command board\n", encoding="utf-8")
 
     # Write corridor window diagnostics with 300683 as focus
     _write_json(
@@ -2810,9 +2806,7 @@ def test_generate_reports_manifest_corridor_entry_questions_use_corridor_focus_t
             "recommendation": "Prioritize visibility gap window for 300683.",
         },
     )
-    (reports_root / "btst_candidate_pool_corridor_window_diagnostics_latest.md").write_text(
-        "# corridor window diagnostics\n", encoding="utf-8"
-    )
+    (reports_root / "btst_candidate_pool_corridor_window_diagnostics_latest.md").write_text("# corridor window diagnostics\n", encoding="utf-8")
 
     # Write corridor narrow probe with 300683 as focus
     _write_json(
@@ -2823,9 +2817,7 @@ def test_generate_reports_manifest_corridor_entry_questions_use_corridor_focus_t
             "threshold_override_gap_vs_anchor": 0.10,
         },
     )
-    (reports_root / "btst_candidate_pool_corridor_narrow_probe_latest.md").write_text(
-        "# corridor narrow probe\n", encoding="utf-8"
-    )
+    (reports_root / "btst_candidate_pool_corridor_narrow_probe_latest.md").write_text("# corridor narrow probe\n", encoding="utf-8")
 
     manifest = generate_reports_manifest(reports_root=reports_root)
     entries_by_id = {entry["id"]: entry for entry in manifest["entries"]}
@@ -2833,36 +2825,20 @@ def test_generate_reports_manifest_corridor_entry_questions_use_corridor_focus_t
     # Each corridor-specific entry question must reference the current focus ticker 300683
     # and must NOT still reference the stale 300720
     persistence_entry = entries_by_id["btst_candidate_pool_corridor_persistence_dossier_latest"]
-    assert "300683" in persistence_entry["question"], (
-        f"Corridor persistence entry question should contain '300683' but got: {persistence_entry['question']!r}"
-    )
-    assert "300720" not in persistence_entry["question"], (
-        f"Corridor persistence entry question still has stale '300720': {persistence_entry['question']!r}"
-    )
+    assert "300683" in persistence_entry["question"], f"Corridor persistence entry question should contain '300683' but got: {persistence_entry['question']!r}"
+    assert "300720" not in persistence_entry["question"], f"Corridor persistence entry question still has stale '300720': {persistence_entry['question']!r}"
 
     window_cmd_entry = entries_by_id["btst_candidate_pool_corridor_window_command_board_latest"]
-    assert "300683" in window_cmd_entry["question"], (
-        f"Corridor window command board entry question should contain '300683' but got: {window_cmd_entry['question']!r}"
-    )
-    assert "300720" not in window_cmd_entry["question"], (
-        f"Corridor window command board entry question still has stale '300720': {window_cmd_entry['question']!r}"
-    )
+    assert "300683" in window_cmd_entry["question"], f"Corridor window command board entry question should contain '300683' but got: {window_cmd_entry['question']!r}"
+    assert "300720" not in window_cmd_entry["question"], f"Corridor window command board entry question still has stale '300720': {window_cmd_entry['question']!r}"
 
     window_diag_entry = entries_by_id["btst_candidate_pool_corridor_window_diagnostics_latest"]
-    assert "300683" in window_diag_entry["question"], (
-        f"Corridor window diagnostics entry question should contain '300683' but got: {window_diag_entry['question']!r}"
-    )
-    assert "300720" not in window_diag_entry["question"], (
-        f"Corridor window diagnostics entry question still has stale '300720': {window_diag_entry['question']!r}"
-    )
+    assert "300683" in window_diag_entry["question"], f"Corridor window diagnostics entry question should contain '300683' but got: {window_diag_entry['question']!r}"
+    assert "300720" not in window_diag_entry["question"], f"Corridor window diagnostics entry question still has stale '300720': {window_diag_entry['question']!r}"
 
     narrow_probe_entry = entries_by_id["btst_candidate_pool_corridor_narrow_probe_latest"]
-    assert "300683" in narrow_probe_entry["question"], (
-        f"Corridor narrow probe entry question should contain '300683' but got: {narrow_probe_entry['question']!r}"
-    )
-    assert "300720" not in narrow_probe_entry["question"], (
-        f"Corridor narrow probe entry question still has stale '300720': {narrow_probe_entry['question']!r}"
-    )
+    assert "300683" in narrow_probe_entry["question"], f"Corridor narrow probe entry question should contain '300683' but got: {narrow_probe_entry['question']!r}"
+    assert "300720" not in narrow_probe_entry["question"], f"Corridor narrow probe entry question still has stale '300720': {narrow_probe_entry['question']!r}"
 
     # Summaries must reflect 300683 (read from JSON)
     assert manifest["candidate_pool_corridor_persistence_dossier_summary"]["focus_ticker"] == "300683"
@@ -2876,12 +2852,8 @@ def test_generate_reports_manifest_corridor_entry_questions_keep_300720_when_dos
     reports_root = tmp_path / "data" / "reports"
     # Do NOT write the corridor persistence dossier - simulate missing artifact
     # Write only the MD so the entry appears but the JSON is absent
-    (reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.md").parent.mkdir(
-        parents=True, exist_ok=True
-    )
-    (reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.md").write_text(
-        "# corridor persistence dossier\n", encoding="utf-8"
-    )
+    (reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.md").parent.mkdir(parents=True, exist_ok=True)
+    (reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.md").write_text("# corridor persistence dossier\n", encoding="utf-8")
 
     manifest = generate_reports_manifest(reports_root=reports_root)
     entries_by_id = {entry["id"]: entry for entry in manifest["entries"]}
@@ -2912,9 +2884,7 @@ def test_generate_reports_manifest_corridor_entry_questions_keep_300720_when_dos
             "next_confirmation_requirement": "300683 still needs 1 independent selected sample.",
         },
     )
-    (reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.md").write_text(
-        "# corridor persistence dossier\n", encoding="utf-8"
-    )
+    (reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.md").write_text("# corridor persistence dossier\n", encoding="utf-8")
     # Intentionally omit: window command board, window diagnostics, narrow probe JSONs
 
     manifest = generate_reports_manifest(reports_root=reports_root)
@@ -2923,14 +2893,8 @@ def test_generate_reports_manifest_corridor_entry_questions_keep_300720_when_dos
     # Without corroborating artifact support, questions must retain 300720 (the safe default)
     persistence_entry = entries_by_id.get("btst_candidate_pool_corridor_persistence_dossier_latest")
     if persistence_entry is not None:
-        assert "300720" in persistence_entry["question"], (
-            f"Corridor persistence entry question should retain '300720' when no corroborating artifacts exist, "
-            f"but got: {persistence_entry['question']!r}"
-        )
-        assert "300683" not in persistence_entry["question"], (
-            f"Corridor persistence entry question must not reference unsupported focus_ticker '300683' "
-            f"when no corroborating artifacts confirm it. Got: {persistence_entry['question']!r}"
-        )
+        assert "300720" in persistence_entry["question"], f"Corridor persistence entry question should retain '300720' when no corroborating artifacts exist, " f"but got: {persistence_entry['question']!r}"
+        assert "300683" not in persistence_entry["question"], f"Corridor persistence entry question must not reference unsupported focus_ticker '300683' " f"when no corroborating artifacts confirm it. Got: {persistence_entry['question']!r}"
 
 
 def test_refresh_prerequisites_passes_persistence_dossier_path_to_corridor_shadow_pack(tmp_path: Path) -> None:
@@ -3005,9 +2969,7 @@ def test_refresh_prerequisites_passes_persistence_dossier_path_to_corridor_shado
         analyze_btst_candidate_pool_corridor_shadow_pack=fake_shadow_pack,
         run_btst_candidate_pool_rebucket_shadow_pack=MagicMock(return_value={"shadow_status": "skipped_no_rebucket_candidate", "experiment": {}}),
         analyze_btst_candidate_pool_rebucket_objective_validation=MagicMock(return_value={"validation_status": "skipped_no_rebucket_candidate"}),
-        analyze_btst_candidate_pool_rebucket_comparison_bundle=MagicMock(
-            return_value={"bundle_status": "skipped_no_rebucket_lane", "rebucket_objective_row": {}, "priority_alignment_status": ""}
-        ),
+        analyze_btst_candidate_pool_rebucket_comparison_bundle=MagicMock(return_value={"bundle_status": "skipped_no_rebucket_lane", "rebucket_objective_row": {}, "priority_alignment_status": ""}),
         analyze_btst_candidate_pool_upstream_handoff_board=MagicMock(return_value={"board_status": "skipped_no_focus_tickers", "historical_shadow_probe_tickers": []}),
         analyze_btst_candidate_pool_lane_pair_board=MagicMock(
             return_value={
@@ -3021,9 +2983,7 @@ def test_refresh_prerequisites_passes_persistence_dossier_path_to_corridor_shado
                 "parallel_watch_same_source_sample_count": 0,
             }
         ),
-        analyze_btst_candidate_pool_corridor_uplift_runbook=MagicMock(
-            return_value={"runbook_status": "skipped_no_corridor_probe", "corridor_validation_pack_status": "", "promotion_readiness_status": "", "prototype_type": ""}
-        ),
+        analyze_btst_candidate_pool_corridor_uplift_runbook=MagicMock(return_value={"runbook_status": "skipped_no_corridor_probe", "corridor_validation_pack_status": "", "promotion_readiness_status": "", "prototype_type": ""}),
         _write_analysis_artifact=MagicMock(return_value=None),
     ):
         paths = build_candidate_entry_shadow_paths(reports_root, dict(CANDIDATE_ENTRY_SHADOW_ARTIFACT_FILENAMES))
@@ -3031,11 +2991,7 @@ def test_refresh_prerequisites_passes_persistence_dossier_path_to_corridor_shado
         refresh_candidate_entry_shadow_prerequisites(paths=paths, reports_root=reports_root, preserve_tickers=[], state=state)
 
     assert len(captured) == 1, "analyze_btst_candidate_pool_corridor_shadow_pack should have been called exactly once"
-    assert "persistence_dossier_path" in captured[0]["kwargs"], (
-        "analyze_btst_candidate_pool_corridor_shadow_pack must be called with persistence_dossier_path "
-        "so the persistence gate is honoured during manifest refresh; "
-        f"got kwargs: {captured[0]['kwargs']}"
-    )
+    assert "persistence_dossier_path" in captured[0]["kwargs"], "analyze_btst_candidate_pool_corridor_shadow_pack must be called with persistence_dossier_path " "so the persistence gate is honoured during manifest refresh; " f"got kwargs: {captured[0]['kwargs']}"
     expected = reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
     assert Path(captured[0]["kwargs"]["persistence_dossier_path"]) == expected
 
@@ -3123,14 +3079,10 @@ def test_refresh_prerequisites_passes_persistence_dossier_path_to_lane_pair_boar
         ),
         run_btst_candidate_pool_rebucket_shadow_pack=MagicMock(return_value={"shadow_status": "skipped_no_rebucket_candidate", "experiment": {}}),
         analyze_btst_candidate_pool_rebucket_objective_validation=MagicMock(return_value={"validation_status": "skipped_no_rebucket_candidate"}),
-        analyze_btst_candidate_pool_rebucket_comparison_bundle=MagicMock(
-            return_value={"bundle_status": "skipped_no_rebucket_lane", "rebucket_objective_row": {}, "priority_alignment_status": ""}
-        ),
+        analyze_btst_candidate_pool_rebucket_comparison_bundle=MagicMock(return_value={"bundle_status": "skipped_no_rebucket_lane", "rebucket_objective_row": {}, "priority_alignment_status": ""}),
         analyze_btst_candidate_pool_upstream_handoff_board=MagicMock(return_value={"board_status": "skipped_no_focus_tickers", "historical_shadow_probe_tickers": []}),
         analyze_btst_candidate_pool_lane_pair_board=fake_lane_pair_board,
-        analyze_btst_candidate_pool_corridor_uplift_runbook=MagicMock(
-            return_value={"runbook_status": "skipped_no_corridor_probe", "corridor_validation_pack_status": "", "promotion_readiness_status": "", "prototype_type": ""}
-        ),
+        analyze_btst_candidate_pool_corridor_uplift_runbook=MagicMock(return_value={"runbook_status": "skipped_no_corridor_probe", "corridor_validation_pack_status": "", "promotion_readiness_status": "", "prototype_type": ""}),
         _write_analysis_artifact=MagicMock(return_value=None),
     ):
         paths = build_candidate_entry_shadow_paths(reports_root, dict(CANDIDATE_ENTRY_SHADOW_ARTIFACT_FILENAMES))
@@ -3138,10 +3090,6 @@ def test_refresh_prerequisites_passes_persistence_dossier_path_to_lane_pair_boar
         refresh_candidate_entry_shadow_prerequisites(paths=paths, reports_root=reports_root, preserve_tickers=[], state=state)
 
     assert len(captured) == 1, "analyze_btst_candidate_pool_lane_pair_board should have been called exactly once"
-    assert "persistence_dossier_path" in captured[0]["kwargs"], (
-        "analyze_btst_candidate_pool_lane_pair_board must be called with persistence_dossier_path "
-        "so the persistence gate is honoured during the helper -> lane_pair_board hop; "
-        f"got kwargs: {captured[0]['kwargs']}"
-    )
+    assert "persistence_dossier_path" in captured[0]["kwargs"], "analyze_btst_candidate_pool_lane_pair_board must be called with persistence_dossier_path " "so the persistence gate is honoured during the helper -> lane_pair_board hop; " f"got kwargs: {captured[0]['kwargs']}"
     expected = reports_root / "btst_candidate_pool_corridor_persistence_dossier_latest.json"
     assert Path(captured[0]["kwargs"]["persistence_dossier_path"]) == expected

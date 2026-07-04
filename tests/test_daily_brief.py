@@ -7,6 +7,7 @@
   4. ``test_industry_rotation_top1`` — 多票行业计数, Top 1 行业正确
   5. ``test_missing_auto_screening_returns_1`` — 没有任何报告时函数返回 1
 """
+
 from __future__ import annotations
 
 import json
@@ -45,7 +46,8 @@ def _make_recommendation(
         "decision": decision,
         "consecutive_days": consecutive_days,
         "recommendation_history": [],
-        "strategy_signals": strategy_signals or {
+        "strategy_signals": strategy_signals
+        or {
             "trend": _make_strategy_signal(1, 70.0),
             "mean_reversion": _make_strategy_signal(1, 60.0),
             "fundamental": _make_strategy_signal(1, 50.0),
@@ -318,13 +320,9 @@ class TestDailyBriefHelpers:
 
         latest = _find_latest_report(tmp_path)
         # 必须选合法日期报告, 而非字母排序靠后的 garbage
-        assert latest == good, (
-            f"应选合法日期报告 {good.name}, 实际选了 {latest!r} (malformed 文件名未被日期校验过滤)"
-        )
+        assert latest == good, f"应选合法日期报告 {good.name}, 实际选了 {latest!r} (malformed 文件名未被日期校验过滤)"
 
-    def test_print_watchlist_health_logs_debug_on_load_failure(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_print_watchlist_health_logs_debug_on_load_failure(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """R86 drain (BH-021 family): watchlist 加载失败时应发 debug 日志, 让运维可诊断
         "配置损坏 / import 失败" vs 良性 "用户没配 watchlist"。
         """
@@ -354,9 +352,7 @@ class TestDailyBriefHelpers:
                 _sys.modules.pop("src.screening.watchlist", None)
 
         debug_msgs = [r.message for r in caplog.records if r.levelno == _logging.DEBUG]
-        assert any("watchlist" in m and "失败" in m for m in debug_msgs), (
-            f"watchlist 加载失败应触发 debug 诊断; got debug msgs={debug_msgs!r}"
-        )
+        assert any("watchlist" in m and "失败" in m for m in debug_msgs), f"watchlist 加载失败应触发 debug 诊断; got debug msgs={debug_msgs!r}"
 
     def test_compute_consecutive_days_from_history(self) -> None:
         """tracking_history 推算连续天数 (交易日步进, 非自然日)。"""

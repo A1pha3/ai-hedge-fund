@@ -64,6 +64,7 @@ def user_with_email(db_session):
 
 # ---- Token Version ----
 
+
 class TestTokenVersion:
     """Test token version invalidation mechanism."""
 
@@ -95,6 +96,7 @@ class TestTokenVersion:
 
 
 # ---- Reset Token Security ----
+
 
 class TestResetTokenSecurity:
     """Tests for reset token edge cases."""
@@ -137,6 +139,7 @@ class TestResetTokenSecurity:
 
 # ---- Password Edge Cases ----
 
+
 class TestPasswordEdgeCases:
     """Edge cases for password handling."""
 
@@ -170,6 +173,7 @@ class TestPasswordEdgeCases:
 
 # ---- Brute Force Edge Cases ----
 
+
 class TestBruteForceEdgeCases:
     """Edge cases for brute-force protection."""
 
@@ -194,6 +198,7 @@ class TestBruteForceEdgeCases:
 
 
 # ---- Invitation Code Edge Cases ----
+
 
 class TestInvitationCodeEdgeCases:
     """Edge cases for invitation code handling."""
@@ -221,6 +226,7 @@ class TestInvitationCodeEdgeCases:
 
 
 # ---- User Model Edge Cases ----
+
 
 class TestUserModelEdgeCases:
     """Edge cases for User model defaults."""
@@ -258,6 +264,7 @@ class TestUserModelEdgeCases:
 
 
 # ---- DateTime Consistency ----
+
 
 class TestDateTimeConsistency:
     """Verify naive UTC datetime handling."""

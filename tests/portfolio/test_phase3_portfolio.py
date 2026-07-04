@@ -188,8 +188,12 @@ def test_nan_correlation_adjustment_treated_as_zero_not_bypassed():
     skipped it → vol cap silently bypassed → up to 2x over-allocation. The NaN
     result must now equal the explicit-0 result (sanitize, not bypass)."""
     kwargs = dict(
-        ticker="000001", current_price=20.0, score_final=0.60,
-        portfolio_nav=100_000, available_cash=50_000, avg_volume_20d=5000.0,
+        ticker="000001",
+        current_price=20.0,
+        score_final=0.60,
+        portfolio_nav=100_000,
+        available_cash=50_000,
+        avg_volume_20d=5000.0,
         industry_remaining_quota=25_000,
     )
     plan_nan = calculate_position(correlation_adjustment=float("nan"), **kwargs)

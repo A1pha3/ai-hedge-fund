@@ -122,7 +122,7 @@ def test_mixed_portfolio_generates_multiple_actions() -> None:
     portfolio_value = 1_000_000.0
     positions = [
         _make_position("600519", "贵州茅台", "白酒", 250_000.0, 0.10),  # 超配 15% → trim 强烈
-        _make_position("000001", "平安银行", "银行", 30_000.0, 0.10),   # 低配 7% → add 弱
+        _make_position("000001", "平安银行", "银行", 30_000.0, 0.10),  # 低配 7% → add 弱
         _make_position("300750", "宁德时代", "新能源", 100_000.0, 0.10),  # 对齐
     ]
     actions = compute_rebalance_actions(positions, portfolio_value)
@@ -144,8 +144,8 @@ def test_industry_over_hard_limit_triggers_forced_sell() -> None:
     portfolio_value = 1_000_000.0
     positions = [
         _make_position("600519", "贵州茅台", "白酒", 130_000.0, 0.10),  # 13% — 未超单标的硬限
-        _make_position("000858", "五粮液", "白酒", 100_000.0, 0.08),    # 10%
-        _make_position("600809", "山西汾酒", "白酒", 70_000.0, 0.07),   # 7%
+        _make_position("000858", "五粮液", "白酒", 100_000.0, 0.08),  # 10%
+        _make_position("600809", "山西汾酒", "白酒", 70_000.0, 0.07),  # 7%
         # 累计白酒 = 30%, 超 25%
     ]
     actions = compute_rebalance_actions(positions, portfolio_value)
@@ -435,7 +435,7 @@ def test_industry_hard_limit_only_trims_heaviest() -> None:
     positions = [
         _make_position("A1", "x", "白酒", 150_000.0, 0.10),  # 15%, 最重
         _make_position("A2", "y", "白酒", 120_000.0, 0.10),  # 12%
-        _make_position("A3", "z", "白酒", 80_000.0, 0.10),   # 8%
+        _make_position("A3", "z", "白酒", 80_000.0, 0.10),  # 8%
         # 累计 35%
     ]
     actions = compute_rebalance_actions(positions, portfolio_value)

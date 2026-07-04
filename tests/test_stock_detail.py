@@ -328,9 +328,7 @@ class TestIndustryRank:
         assert detail.industry_total == 2
 
     def test_no_industry(self) -> None:
-        recs = [
-            {"ticker": "300750", "name": "test", "industry_sw": "", "score_b": 0.5, "decision": "watch", "strategy_signals": {}, "metrics": {}}
-        ]
+        recs = [{"ticker": "300750", "name": "test", "industry_sw": "", "score_b": 0.5, "decision": "watch", "strategy_signals": {}, "metrics": {}}]
         detail = compute_stock_detail(
             ticker="300750",
             recommendations=recs,
@@ -427,15 +425,11 @@ class TestMACDSignal:
     """测试 MACD 信号判定逻辑。"""
 
     def test_bullish_via_sub_factor(self) -> None:
-        strategy_signals = {
-            "trend": {"direction": 1, "confidence": 80.0, "sub_factors": {"macd": {"name": "macd", "direction": 1, "confidence": 75.0}}}
-        }
+        strategy_signals = {"trend": {"direction": 1, "confidence": 80.0, "sub_factors": {"macd": {"name": "macd", "direction": 1, "confidence": 75.0}}}}
         assert _determine_macd_signal(strategy_signals) == "bullish"
 
     def test_bearish_via_sub_factor(self) -> None:
-        strategy_signals = {
-            "trend": {"direction": -1, "confidence": 80.0, "sub_factors": {"macd": {"name": "macd", "direction": -1, "confidence": 75.0}}}
-        }
+        strategy_signals = {"trend": {"direction": -1, "confidence": 80.0, "sub_factors": {"macd": {"name": "macd", "direction": -1, "confidence": 75.0}}}}
         assert _determine_macd_signal(strategy_signals) == "bearish"
 
     def test_neutral_no_trend(self) -> None:
@@ -513,9 +507,9 @@ class TestRenderOutput:
     def test_render_contains_metrics(self) -> None:
         detail = self._make_full_detail()
         output = render_stock_detail(detail)
-        assert "35.2" in output   # PE
+        assert "35.2" in output  # PE
         assert "245.30" in output  # price
-        assert "62.3" in output    # RSI
+        assert "62.3" in output  # RSI
         assert "bullish" in output
         assert "+2.1%" in output
 

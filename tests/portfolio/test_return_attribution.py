@@ -202,11 +202,7 @@ class TestBrinsonAttribution:
             ticker_market_values={"AAPL": 50_000.0, "MSFT": 30_000.0, "NVDA": 20_000.0},
             total_portfolio_value=100_000.0,
         )
-        total = (
-            result.total_allocation_contribution
-            + result.total_selection_contribution
-            + result.total_residual
-        )
+        total = result.total_allocation_contribution + result.total_selection_contribution + result.total_residual
         _assert_close(total, result.total_portfolio_return)
 
     def test_attribution_identity_with_external_benchmark(self) -> None:
@@ -220,11 +216,7 @@ class TestBrinsonAttribution:
             benchmark_weights={"AAPL": 0.5, "MSFT": 0.5},
             benchmark_returns={"AAPL": 0.10, "MSFT": 0.06},
         )
-        total = (
-            result.total_allocation_contribution
-            + result.total_selection_contribution
-            + result.total_residual
-        )
+        total = result.total_allocation_contribution + result.total_selection_contribution + result.total_residual
         _assert_close(total, result.total_portfolio_return)
 
     def test_short_position_attribution(self) -> None:

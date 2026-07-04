@@ -1,4 +1,5 @@
 """Test for Task 1: win-rate-first precision tightening."""
+
 from __future__ import annotations
 
 import pytest
@@ -50,10 +51,10 @@ def test_win_rate_first_precision_mode_downgrades_watch_only_selected(monkeypatc
     """Win-rate-first precision mode: downgrade watch_only from selected to near_miss."""
     monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
     monkeypatch.setenv("BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE", "true")
-    
+
     plan = _build_test_plan(prior_quality_label="watch_only", gate="normal_trade")
     result = _enforce_btst_execution_contract_p5(plan)
-    
+
     evaluation = result.selection_targets["300724"]
     assert evaluation.short_trade is not None
     assert evaluation.short_trade.decision == "near_miss", "watch_only should be downgraded in precision mode"
@@ -67,10 +68,10 @@ def test_win_rate_first_precision_mode_downgrades_none_prior_quality_selected(mo
     """Win-rate-first precision mode: downgrade None/missing prior quality from selected to near_miss."""
     monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
     monkeypatch.setenv("BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE", "true")
-    
+
     plan = _build_test_plan(prior_quality_label=None, gate="normal_trade")
     result = _enforce_btst_execution_contract_p5(plan)
-    
+
     evaluation = result.selection_targets["300724"]
     assert evaluation.short_trade is not None
     assert evaluation.short_trade.decision == "near_miss", "None prior quality should be downgraded in precision mode"
@@ -83,10 +84,10 @@ def test_win_rate_first_precision_mode_allows_execution_ready_through(monkeypatc
     """Win-rate-first precision mode: execution_ready candidates pass through."""
     monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
     monkeypatch.setenv("BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE", "true")
-    
+
     plan = _build_test_plan(prior_quality_label="execution_ready", gate="normal_trade")
     result = _enforce_btst_execution_contract_p5(plan)
-    
+
     evaluation = result.selection_targets["300724"]
     assert evaluation.short_trade is not None
     assert evaluation.short_trade.decision == "selected", "execution_ready should pass through in precision mode"
@@ -99,11 +100,11 @@ def test_win_rate_first_precision_mode_off_preserves_baseline_behavior(monkeypat
     """Win-rate-first precision mode OFF: baseline P5 behavior preserved."""
     monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
     monkeypatch.setenv("BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE", "false")
-    
+
     # None prior quality should pass through when precision mode is OFF
     plan = _build_test_plan(prior_quality_label=None, gate="normal_trade")
     result = _enforce_btst_execution_contract_p5(plan)
-    
+
     evaluation = result.selection_targets["300724"]
     assert evaluation.short_trade is not None
     assert evaluation.short_trade.decision == "selected", "None prior should pass through when precision mode OFF"
@@ -115,14 +116,14 @@ def test_win_rate_first_precision_mode_does_not_touch_near_miss(monkeypatch):
     """Win-rate-first precision mode: does not change near_miss candidates."""
     monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
     monkeypatch.setenv("BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE", "true")
-    
+
     plan = _build_test_plan(decision="near_miss", prior_quality_label="watch_only", gate="normal_trade")
     plan.buy_orders = []  # near_miss has no buy orders
     plan.dual_target_summary.short_trade_selected_count = 0
     plan.dual_target_summary.short_trade_near_miss_count = 1
-    
+
     result = _enforce_btst_execution_contract_p5(plan)
-    
+
     evaluation = result.selection_targets["300724"]
     assert evaluation.short_trade is not None
     assert evaluation.short_trade.decision == "near_miss", "near_miss should remain near_miss"
@@ -133,11 +134,11 @@ def test_win_rate_first_precision_mode_combined_with_existing_downgrades(monkeyp
     """Win-rate-first precision mode: combines with existing P5 downgrade reasons."""
     monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
     monkeypatch.setenv("BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE", "true")
-    
+
     # Bad gate + watch_only = both downgrade reasons should be present
     plan = _build_test_plan(prior_quality_label="watch_only", gate="shadow_only")
     result = _enforce_btst_execution_contract_p5(plan)
-    
+
     evaluation = result.selection_targets["300724"]
     assert evaluation.short_trade is not None
     assert evaluation.short_trade.decision == "near_miss"
@@ -148,15 +149,15 @@ def test_win_rate_first_precision_mode_combined_with_existing_downgrades(monkeyp
 
 def test_win_rate_first_precision_mode_preserves_formal_blocked_selected_provenance(monkeypatch):
     """CRITICAL: Win-rate-first precision mode must NOT downgrade already formal-blocked selected names.
-    
+
     Formal-blocked names (p2_execution_blocked, p3_execution_blocked, etc.) that have raw decision="selected"
     must preserve that raw decision for correct reporting (blocked-selected provenance).
-    
+
     The win-rate-first downgrade should ONLY apply to non-blocked selected names with bad prior quality.
     """
     monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
     monkeypatch.setenv("BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE", "true")
-    
+
     # Build a name that is raw selected + p2_execution_blocked + watch_only prior
     evaluation = DualTargetEvaluation(
         ticker="300724",
@@ -184,9 +185,9 @@ def test_win_rate_first_precision_mode_preserves_formal_blocked_selected_provena
         target_mode="short_trade_only",
         dual_target_summary=DualTargetSummary(target_mode="short_trade_only", selection_target_count=1, short_trade_selected_count=1),
     )
-    
+
     result = _enforce_btst_execution_contract_p5(plan)
-    
+
     evaluation = result.selection_targets["300724"]
     assert evaluation.short_trade is not None
     # CRITICAL: raw decision must remain "selected" to preserve formal-blocked-selected provenance
@@ -201,10 +202,10 @@ def test_win_rate_first_precision_mode_preserves_formal_blocked_selected_provena
 
 def test_formally_blocked_selected_no_new_p5_downgrade_reasons(monkeypatch):
     """CRITICAL: Formally-blocked raw-selected names must NOT receive new P5 downgrade reasons.
-    
+
     Spec gap: btst_regime_gate_not_tradeable was appended BEFORE the formal-block guard,
     causing formally-blocked names to accumulate new P5 reasons and pollute metrics/explainability.
-    
+
     Once a name is formally blocked (p2/p3/p5/p6_execution_blocked), P5 should:
     1. Preserve raw selected decision
     2. Keep execution_eligible=False
@@ -215,7 +216,7 @@ def test_formally_blocked_selected_no_new_p5_downgrade_reasons(monkeypatch):
     """
     monkeypatch.setenv("BTST_0422_P5_EXECUTION_CONTRACT_MODE", "enforce")
     monkeypatch.setenv("BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE", "true")
-    
+
     # Build a formally-blocked (p3) raw-selected name with BOTH bad gate AND bad prior
     # This exercises the worst case: both gate downgrade (line 665-666) and win-rate downgrade (line 671-673)
     evaluation = DualTargetEvaluation(
@@ -248,31 +249,31 @@ def test_formally_blocked_selected_no_new_p5_downgrade_reasons(monkeypatch):
             short_trade_selected_count=1,
         ),
     )
-    
+
     result = _enforce_btst_execution_contract_p5(plan)
-    
+
     evaluation = result.selection_targets["300724"]
     str_result = evaluation.short_trade
     assert str_result is not None
-    
+
     # 1. Preserve raw selected decision
     assert str_result.decision == "selected", "Formal-blocked selected must preserve raw 'selected' decision"
-    
+
     # 2. Keep execution_eligible=False
     assert evaluation.execution_eligible is False, "Formal-blocked names are never execution-eligible"
     assert str_result.execution_eligible is False
-    
+
     # 3. Clear buy orders via existing filtering
     assert result.buy_orders == [], "Formal-blocked names must have no buy orders"
-    
+
     # 4. BUT NOT append ANY new P5 downgrade reasons
     assert evaluation.downgrade_reasons == [], f"Formal-blocked names must have ZERO P5 downgrade reasons, got: {evaluation.downgrade_reasons}"
     assert str_result.downgrade_reasons == []
-    
+
     # 5. NOT persist new P5 downgrade reasons to metrics/explainability
     assert str_result.metrics_payload.get("downgrade_reasons", []) == []
     assert str_result.explainability_payload.get("downgrade_reasons", []) == []
-    
+
     # 6. Specifically: gate downgrade must NOT be added (the bug we're fixing)
     assert "btst_regime_gate_not_tradeable" not in evaluation.downgrade_reasons
     assert "win_rate_first_precision_prior_not_execution_ready" not in evaluation.downgrade_reasons

@@ -31,9 +31,7 @@ def test_progress_handler_register_is_thread_safe() -> None:
 
     register_thread = threading.Thread(target=hammer_register)
     unregister_thread = threading.Thread(target=hammer_unregister)
-    updater_thread = threading.Thread(
-        target=lambda: [progress.update_status("agent_a", ticker="X", status="running") for _ in range(500)]
-    )
+    updater_thread = threading.Thread(target=lambda: [progress.update_status("agent_a", ticker="X", status="running") for _ in range(500)])
 
     try:
         progress.start()

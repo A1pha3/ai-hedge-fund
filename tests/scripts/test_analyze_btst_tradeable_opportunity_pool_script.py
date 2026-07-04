@@ -385,9 +385,7 @@ def test_analyze_btst_tradeable_opportunity_pool_handles_missing_report_context(
     reports_root = tmp_path / "data" / "reports"
     reports_root.mkdir(parents=True, exist_ok=True)
 
-    stock_basic = pd.DataFrame(
-        [{"ts_code": "000001.SZ", "symbol": "000001", "name": "Alpha", "industry": "AI", "market": "SZ", "list_date": "20200101"}]
-    )
+    stock_basic = pd.DataFrame([{"ts_code": "000001.SZ", "symbol": "000001", "name": "Alpha", "industry": "AI", "market": "SZ", "list_date": "20200101"}])
     daily_basic = pd.DataFrame([{"ts_code": "000001.SZ", "turnover_rate": 5.0, "circ_mv": 100000.0}])
 
     monkeypatch.setattr(tradeable_pool, "get_all_stock_basic", lambda: stock_basic.copy())
@@ -542,7 +540,7 @@ def test_board_aware_extreme_open_gap_detection_main_board() -> None:
     }
     symbol = "000001"
     market = "SZ"
-    
+
     notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
     assert "t_plus_1_extreme_open_gap" in notes
 
@@ -560,7 +558,7 @@ def test_board_aware_extreme_open_gap_detection_chinext_not_triggered() -> None:
     }
     symbol = "300724"
     market = "创业板"
-    
+
     notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
     assert "t_plus_1_extreme_open_gap" not in notes
 
@@ -578,7 +576,7 @@ def test_board_aware_extreme_open_gap_detection_chinext_triggered() -> None:
     }
     symbol = "300724"
     market = "创业板"
-    
+
     notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
     assert "t_plus_1_extreme_open_gap" in notes
 
@@ -596,7 +594,7 @@ def test_board_aware_extreme_open_gap_detection_star_triggered() -> None:
     }
     symbol = "688001"
     market = "科创板"
-    
+
     notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
     assert "t_plus_1_extreme_open_gap" in notes
 
@@ -614,7 +612,7 @@ def test_board_aware_one_word_board_detection_main_board() -> None:
     }
     symbol = "000001"
     market = "SZ"
-    
+
     notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
     assert "t_plus_1_one_word_board" in notes
 
@@ -632,7 +630,7 @@ def test_board_aware_one_word_board_detection_chinext_not_triggered() -> None:
     }
     symbol = "300724"
     market = "创业板"
-    
+
     notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
     assert "t_plus_1_one_word_board" not in notes
 
@@ -650,7 +648,7 @@ def test_board_aware_one_word_board_detection_chinext_triggered() -> None:
     }
     symbol = "300724"
     market = "创业板"
-    
+
     notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
     assert "t_plus_1_one_word_board" in notes
 
@@ -668,7 +666,7 @@ def test_board_aware_one_word_board_detection_star_triggered() -> None:
     }
     symbol = "688001"
     market = "科创板"
-    
+
     notes = tradeable_pool._detect_tradeability_notes(price_outcome, symbol=symbol, market=market)
     assert "t_plus_1_one_word_board" in notes
 
@@ -717,11 +715,11 @@ def test_board_aware_tradeability_integration_with_chinext_stock(tmp_path: Path,
     )
 
     rows_by_ticker = {row["ticker"]: row for row in analysis["rows"]}
-    
+
     # ChiNext stock should be tradeable (no tradeability notes at 9.6%)
     assert rows_by_ticker["300724"]["pool_b_tradeable"] is True
     assert rows_by_ticker["300724"]["tradeability_notes"] == []
-    
+
     # Main board stock should have tradeability note (one-word-board at 9.6%)
     assert rows_by_ticker["000001"]["pool_b_tradeable"] is False
     assert "t_plus_1_one_word_board" in rows_by_ticker["000001"]["tradeability_notes"]
@@ -742,7 +740,7 @@ def test_execution_cost_summary_exists_in_analysis(tmp_path: Path, monkeypatch) 
     daily_basic = pd.DataFrame(
         [
             {"ts_code": "000001.SZ", "turnover_rate": 10.0, "circ_mv": 100000.0},  # 10000 万元 - base liquidity
-            {"ts_code": "000011.SZ", "turnover_rate": 2.0, "circ_mv": 100000.0},   # 2000 万元 - low liquidity but >= MIN threshold
+            {"ts_code": "000011.SZ", "turnover_rate": 2.0, "circ_mv": 100000.0},  # 2000 万元 - low liquidity but >= MIN threshold
         ]
     )
     price_outcomes = {
@@ -772,7 +770,7 @@ def test_execution_cost_summary_exists_in_analysis(tmp_path: Path, monkeypatch) 
     # Check that execution_cost_summary exists
     assert "execution_cost_summary" in analysis
     cost_summary = analysis["execution_cost_summary"]
-    
+
     # Check expected fields
     assert "tradeable_row_count" in cost_summary
     assert "base_liquidity_count" in cost_summary
@@ -783,15 +781,11 @@ def test_execution_cost_summary_exists_in_analysis(tmp_path: Path, monkeypatch) 
     assert "positive_gross_next_high_flipped_count" in cost_summary
     assert "positive_gross_next_close_flipped_count" in cost_summary
     assert "positive_gross_t_plus_2_close_flipped_count" in cost_summary
-    
+
     # Should have at least 1 tradeable row
     assert cost_summary["tradeable_row_count"] >= 1
     # Should have cost regime counts that sum to tradeable_row_count
-    total_regimes = (
-        cost_summary["base_liquidity_count"] 
-        + cost_summary["low_liquidity_count"] 
-        + cost_summary["unknown_liquidity_count"]
-    )
+    total_regimes = cost_summary["base_liquidity_count"] + cost_summary["low_liquidity_count"] + cost_summary["unknown_liquidity_count"]
     assert total_regimes == cost_summary["tradeable_row_count"]
 
 
@@ -811,8 +805,8 @@ def test_cost_regime_classification_aligns_with_backtesting_threshold(tmp_path: 
     daily_basic = pd.DataFrame(
         [
             {"ts_code": "000001.SZ", "turnover_rate": 10.0, "circ_mv": 100000.0},  # 10000 万元 > 5000 - base
-            {"ts_code": "000002.SZ", "turnover_rate": 1.0, "circ_mv": 100000.0},   # 1000 万元 < 5000 - low
-            {"ts_code": "000003.SZ", "turnover_rate": 5.0, "circ_mv": 100000.0},   # 5000 万元 = 5000 - edge case (should be base)
+            {"ts_code": "000002.SZ", "turnover_rate": 1.0, "circ_mv": 100000.0},  # 1000 万元 < 5000 - low
+            {"ts_code": "000003.SZ", "turnover_rate": 5.0, "circ_mv": 100000.0},  # 5000 万元 = 5000 - edge case (should be base)
         ]
     )
     price_outcomes = {
@@ -841,7 +835,7 @@ def test_cost_regime_classification_aligns_with_backtesting_threshold(tmp_path: 
     )
 
     rows_by_ticker = {row["ticker"]: row for row in analysis["rows"]}
-    
+
     # Check cost regime classification
     assert rows_by_ticker["000001"]["cost_regime"] == "base_liquidity"
     assert rows_by_ticker["000002"]["cost_regime"] == "low_liquidity"
@@ -884,12 +878,12 @@ def test_row_level_cost_fields_populated_correctly(tmp_path: Path, monkeypatch) 
     )
 
     row = analysis["rows"][0]
-    
+
     # Check cost fields
     assert row["cost_regime"] == "base_liquidity"
     assert row["estimated_slippage_rate"] == 0.0015
     assert row["round_trip_cost_rate"] == 0.004
-    
+
     # Check net return fields
     assert row["next_high_return"] == 0.10
     assert row["next_high_return_after_cost"] == round(0.10 - 0.004, 4)
@@ -960,7 +954,7 @@ def test_execution_cost_markdown_section_exists(tmp_path: Path, monkeypatch) -> 
     )
 
     markdown = tradeable_pool.render_btst_tradeable_opportunity_pool_markdown(analysis)
-    
+
     # Check that markdown includes execution cost section
     assert "## Execution Cost Impact" in markdown or "## 执行成本影响" in markdown
     # Check cost summary fields appear in markdown

@@ -87,13 +87,15 @@ def test_score_batch_delays_heavy_signals_to_ranked_subset():
         event_calls.append(ticker)
         return _signal(1, 65)
 
-    with patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}), \
-         patch("src.screening.strategy_scorer._compute_light_signals", side_effect=fake_light), \
-         patch("src.screening.strategy_scorer.score_fundamental_strategy", side_effect=fake_fundamental), \
-         patch("src.screening.strategy_scorer.score_event_sentiment_strategy", side_effect=fake_event), \
-         patch("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 2), \
-         patch("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 1), \
-         patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.05):
+    with (
+        patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}),
+        patch("src.screening.strategy_scorer._compute_light_signals", side_effect=fake_light),
+        patch("src.screening.strategy_scorer.score_fundamental_strategy", side_effect=fake_fundamental),
+        patch("src.screening.strategy_scorer.score_event_sentiment_strategy", side_effect=fake_event),
+        patch("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 2),
+        patch("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 1),
+        patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.05),
+    ):
         results = score_batch(candidates, "20260305")
 
     assert fundamental_calls == ["000001", "000002"]
@@ -171,15 +173,18 @@ def test_score_batch_enriches_intraday_short_trade_metrics_for_heavy_candidates(
 
     with (
         patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}),
-        patch("src.screening.strategy_scorer._compute_light_signals", return_value=(
-            {
-                "trend": trend_signal,
-                "mean_reversion": _signal(0, 0, completeness=0.0),
-                "fundamental": _signal(0, 0, completeness=0.0),
-                "event_sentiment": _signal(0, 0, completeness=0.0),
-            },
-            None,
-        )),
+        patch(
+            "src.screening.strategy_scorer._compute_light_signals",
+            return_value=(
+                {
+                    "trend": trend_signal,
+                    "mean_reversion": _signal(0, 0, completeness=0.0),
+                    "fundamental": _signal(0, 0, completeness=0.0),
+                    "event_sentiment": _signal(0, 0, completeness=0.0),
+                },
+                None,
+            ),
+        ),
         patch("src.screening.strategy_scorer.score_fundamental_strategy", return_value=_signal(1, 65)),
         patch("src.screening.strategy_scorer.score_event_sentiment_strategy", return_value=_signal(1, 60)),
         patch("src.screening.strategy_scorer.get_intraday_bars", return_value=intraday_bars),
@@ -1014,8 +1019,7 @@ def _news_item(title: str, date: str, content: str = "") -> CompanyNews:
 def test_event_sentiment_ignores_stale_weak_single_keyword_news():
     news = [_news_item("Company growth", "2026-02-26", "")]
 
-    with patch("src.screening.strategy_scorer_event_sentiment_helpers.get_company_news", return_value=news), \
-         patch("src.screening.strategy_scorer_event_sentiment_helpers.get_insider_trades", return_value=[]):
+    with patch("src.screening.strategy_scorer_event_sentiment_helpers.get_company_news", return_value=news), patch("src.screening.strategy_scorer_event_sentiment_helpers.get_insider_trades", return_value=[]):
         signal = score_event_sentiment_strategy("000001", "20260305")
 
     assert signal.direction == 0
@@ -1026,8 +1030,7 @@ def test_event_sentiment_ignores_stale_weak_single_keyword_news():
 def test_event_sentiment_keeps_fresh_multi_keyword_news_actionable():
     news = [_news_item("profit growth beat upgrade", "2026-03-05", "record order growth and profit beat")]
 
-    with patch("src.screening.strategy_scorer_event_sentiment_helpers.get_company_news", return_value=news), \
-         patch("src.screening.strategy_scorer_event_sentiment_helpers.get_insider_trades", return_value=[]):
+    with patch("src.screening.strategy_scorer_event_sentiment_helpers.get_company_news", return_value=news), patch("src.screening.strategy_scorer_event_sentiment_helpers.get_insider_trades", return_value=[]):
         signal = score_event_sentiment_strategy("000001", "20260305")
 
     assert signal.direction == 1
@@ -1065,6 +1068,7 @@ def test_score_event_sentiment_strategy_builds_sub_factors_from_loaded_data(monk
         return trades
 
     import src.screening.strategy_scorer_event_sentiment_helpers as _esh
+
     monkeypatch.setattr(_esh, "get_company_news", fake_news_loader)
     monkeypatch.setattr(_esh, "get_insider_trades", fake_trades_loader)
     monkeypatch.setattr(_esh, "_score_news_sentiment", lambda items, trade_date: SubFactor(name="news_sentiment", direction=1, confidence=80.0, weight=0.55, metrics={"news_count": len(items), "trade_date": trade_date}))
@@ -1112,6 +1116,7 @@ def test_score_news_sentiment_returns_incomplete_when_no_news():
 
 def test_score_news_article_builds_positive_fresh_article_metrics():
     import src.screening.strategy_scorer_event_sentiment_helpers as _esh
+
     metrics = _esh._score_news_article(
         _news_item("profit growth beat", "2026-03-05", "record upgrade and contract"),
         datetime(2026, 3, 5),
@@ -1125,6 +1130,7 @@ def test_score_news_article_builds_positive_fresh_article_metrics():
 
 def test_score_news_article_downweights_stale_negative_article():
     import src.screening.strategy_scorer_event_sentiment_helpers as _esh
+
     metrics = _esh._score_news_article(
         _news_item("downgrade warning", "2026-03-01", "fraud risk and weak demand"),
         datetime(2026, 3, 5),
@@ -1439,13 +1445,7 @@ def test_light_weights_trend_dominates_reversed_mr() -> None:
 
     mr_w = LIGHT_STRATEGY_WEIGHTS.get("mean_reversion", 0.0)
     trend_w = LIGHT_STRATEGY_WEIGHTS.get("trend", 0.0)
-    assert trend_w >= 0.55, (
-        f"trend weight={trend_w} 应 >= 0.55 (C225: MR reversed IC=-0.128; trend 正向有效). "
-        f"当前 trend={trend_w}, MR={mr_w}"
-    )
-    assert trend_w > mr_w, (
-        f"trend weight={trend_w} 必须 > MR={mr_w}. "
-        f"MR 全 4 sub-factor 与 T+1 反向 (C225 IC=-0.128), 不应主导 light score."
-    )
+    assert trend_w >= 0.55, f"trend weight={trend_w} 应 >= 0.55 (C225: MR reversed IC=-0.128; trend 正向有效). " f"当前 trend={trend_w}, MR={mr_w}"
+    assert trend_w > mr_w, f"trend weight={trend_w} 必须 > MR={mr_w}. " f"MR 全 4 sub-factor 与 T+1 反向 (C225 IC=-0.128), 不应主导 light score."
     # 权重之和必须为 1.0 (light stage 只有这两个策略)
     assert mr_w + trend_w == 1.0, f"权重和必须为 1.0, got {mr_w + trend_w}"

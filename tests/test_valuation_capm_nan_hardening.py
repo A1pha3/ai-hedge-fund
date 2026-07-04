@@ -24,6 +24,7 @@ signals. Fix: guard beta with ``is_finite_number`` → default 1.0 (same as
 None/missing), so the rate caps work correctly. Behavior-preserving for valid
 inputs.
 """
+
 from __future__ import annotations
 
 import math
@@ -41,10 +42,7 @@ class TestEstimateCostOfEquityNaNHardening:
         Guard beta → default 1.0 (same as None)."""
         result = estimate_cost_of_equity(float("nan"), ticker="000001")
         assert isinstance(result, float)
-        assert math.isfinite(result), (
-            "NaN beta must not propagate to NaN cost_of_equity; the 30% cap "
-            "is silently violated because min(NaN, 0.30) returns NaN"
-        )
+        assert math.isfinite(result), "NaN beta must not propagate to NaN cost_of_equity; the 30% cap " "is silently violated because min(NaN, 0.30) returns NaN"
         # Should match the None-beta path (default beta 1.0)
         expected = estimate_cost_of_equity(None, ticker="000001")
         assert result == pytest.approx(expected)
@@ -69,10 +67,7 @@ class TestCalculateWaccNaNHardening:
             beta_proxy=float("nan"),
         )
         assert isinstance(result, float)
-        assert math.isfinite(result), (
-            "NaN beta_proxy must not propagate to NaN WACC; the [6%, 20%] "
-            "floor/cap is silently violated because min/max do not clamp NaN"
-        )
+        assert math.isfinite(result), "NaN beta_proxy must not propagate to NaN WACC; the [6%, 20%] " "floor/cap is silently violated because min/max do not clamp NaN"
         # Should be within documented [0.06, 0.20] range
         assert 0.06 <= result <= 0.20
 

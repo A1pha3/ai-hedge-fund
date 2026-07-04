@@ -50,61 +50,45 @@ def test_execution_quality_delta_unknown_label_zero() -> None:
 
 def test_apply_rate_support_low_evaluable_skipped() -> None:
     """evaluable_count < 3 → no adjustment."""
-    score = _apply_historical_rate_support(
-        support_score=0.0, evaluable_count=2, next_close_positive_rate=0.7, next_high_hit_rate=0.7
-    )
+    score = _apply_historical_rate_support(support_score=0.0, evaluable_count=2, next_close_positive_rate=0.7, next_high_hit_rate=0.7)
     assert score == 0.0
 
 
 def test_apply_rate_support_high_close_positive_boosts() -> None:
-    score = _apply_historical_rate_support(
-        support_score=0.0, evaluable_count=3, next_close_positive_rate=0.6, next_high_hit_rate=None
-    )
+    score = _apply_historical_rate_support(support_score=0.0, evaluable_count=3, next_close_positive_rate=0.6, next_high_hit_rate=None)
     assert score == pytest.approx(0.04)
 
 
 def test_apply_rate_support_low_close_positive_dampens() -> None:
-    score = _apply_historical_rate_support(
-        support_score=0.0, evaluable_count=3, next_close_positive_rate=0.0, next_high_hit_rate=None
-    )
+    score = _apply_historical_rate_support(support_score=0.0, evaluable_count=3, next_close_positive_rate=0.0, next_high_hit_rate=None)
     assert score == pytest.approx(-0.04)
 
 
 def test_apply_rate_support_close_neutral_no_change() -> None:
     """0.0 < next_close < 0.5 (e.g. 0.3) → no change."""
-    score = _apply_historical_rate_support(
-        support_score=0.0, evaluable_count=3, next_close_positive_rate=0.3, next_high_hit_rate=None
-    )
+    score = _apply_historical_rate_support(support_score=0.0, evaluable_count=3, next_close_positive_rate=0.3, next_high_hit_rate=None)
     assert score == 0.0
 
 
 def test_apply_rate_support_high_hit_boosts() -> None:
-    score = _apply_historical_rate_support(
-        support_score=0.0, evaluable_count=3, next_close_positive_rate=None, next_high_hit_rate=0.6
-    )
+    score = _apply_historical_rate_support(support_score=0.0, evaluable_count=3, next_close_positive_rate=None, next_high_hit_rate=0.6)
     assert score == pytest.approx(0.04)
 
 
 def test_apply_rate_support_low_hit_dampens() -> None:
     """next_high_hit_rate < 0.25 → -0.02."""
-    score = _apply_historical_rate_support(
-        support_score=0.0, evaluable_count=3, next_close_positive_rate=None, next_high_hit_rate=0.1
-    )
+    score = _apply_historical_rate_support(support_score=0.0, evaluable_count=3, next_close_positive_rate=None, next_high_hit_rate=0.1)
     assert score == pytest.approx(-0.02)
 
 
 def test_apply_rate_support_hit_neutral_no_change() -> None:
     """0.25 <= next_high_hit_rate < 0.5 (e.g. 0.3) → no change."""
-    score = _apply_historical_rate_support(
-        support_score=0.0, evaluable_count=3, next_close_positive_rate=None, next_high_hit_rate=0.3
-    )
+    score = _apply_historical_rate_support(support_score=0.0, evaluable_count=3, next_close_positive_rate=None, next_high_hit_rate=0.3)
     assert score == 0.0
 
 
 def test_apply_rate_support_combined_close_and_hit() -> None:
-    score = _apply_historical_rate_support(
-        support_score=0.0, evaluable_count=3, next_close_positive_rate=0.6, next_high_hit_rate=0.6
-    )
+    score = _apply_historical_rate_support(support_score=0.0, evaluable_count=3, next_close_positive_rate=0.6, next_high_hit_rate=0.6)
     assert score == pytest.approx(0.08)
 
 
@@ -114,49 +98,31 @@ def test_apply_rate_support_combined_close_and_hit() -> None:
 
 
 def test_sparse_weak_history_true() -> None:
-    assert (
-        _is_sparse_weak_history(evaluable_count=2, next_close_positive_rate=0.0, next_high_hit_rate=0.0)
-        is True
-    )
+    assert _is_sparse_weak_history(evaluable_count=2, next_close_positive_rate=0.0, next_high_hit_rate=0.0) is True
 
 
 def test_sparse_weak_history_false_evaluable_zero() -> None:
     """evaluable_count=0 → fails `0 < evaluable_count` check → False."""
-    assert (
-        _is_sparse_weak_history(evaluable_count=0, next_close_positive_rate=0.0, next_high_hit_rate=0.0)
-        is False
-    )
+    assert _is_sparse_weak_history(evaluable_count=0, next_close_positive_rate=0.0, next_high_hit_rate=0.0) is False
 
 
 def test_sparse_weak_history_false_evaluable_three() -> None:
     """evaluable_count >= 3 → not sparse."""
-    assert (
-        _is_sparse_weak_history(evaluable_count=3, next_close_positive_rate=0.0, next_high_hit_rate=0.0)
-        is False
-    )
+    assert _is_sparse_weak_history(evaluable_count=3, next_close_positive_rate=0.0, next_high_hit_rate=0.0) is False
 
 
 def test_sparse_weak_history_false_positive_close() -> None:
     """next_close > 0 → not weak."""
-    assert (
-        _is_sparse_weak_history(evaluable_count=2, next_close_positive_rate=0.1, next_high_hit_rate=0.0)
-        is False
-    )
+    assert _is_sparse_weak_history(evaluable_count=2, next_close_positive_rate=0.1, next_high_hit_rate=0.0) is False
 
 
 def test_sparse_weak_history_false_positive_hit() -> None:
     """next_high > 0 → not weak."""
-    assert (
-        _is_sparse_weak_history(evaluable_count=2, next_close_positive_rate=0.0, next_high_hit_rate=0.1)
-        is False
-    )
+    assert _is_sparse_weak_history(evaluable_count=2, next_close_positive_rate=0.0, next_high_hit_rate=0.1) is False
 
 
 def test_sparse_weak_history_false_missing_rates() -> None:
-    assert (
-        _is_sparse_weak_history(evaluable_count=2, next_close_positive_rate=None, next_high_hit_rate=None)
-        is False
-    )
+    assert _is_sparse_weak_history(evaluable_count=2, next_close_positive_rate=None, next_high_hit_rate=None) is False
 
 
 # ---------------------------------------------------------------------------
@@ -389,19 +355,20 @@ def test_relief_thresholds_non_post_gate_returns_base() -> None:
 
 
 def test_relief_thresholds_post_gate_no_history_returns_base() -> None:
-    result = resolve_catalyst_relief_thresholds(
-        **_relief_kwargs(candidate_pool_lane="post_gate_liquidity_competition", historical_next_close_positive_rate=None)
-    )
+    result = resolve_catalyst_relief_thresholds(**_relief_kwargs(candidate_pool_lane="post_gate_liquidity_competition", historical_next_close_positive_rate=None))
     assert result["candidate_score_min"] == 0.5
 
 
 def test_relief_thresholds_post_gate_history_below_min_returns_none() -> None:
-    assert resolve_catalyst_relief_thresholds(
-        **_relief_kwargs(
-            candidate_pool_lane="post_gate_liquidity_competition",
-            historical_next_close_positive_rate=0.3,
+    assert (
+        resolve_catalyst_relief_thresholds(
+            **_relief_kwargs(
+                candidate_pool_lane="post_gate_liquidity_competition",
+                historical_next_close_positive_rate=0.3,
+            )
         )
-    ) is None
+        is None
+    )
 
 
 def test_relief_thresholds_post_gate_hard_cliff_relaxes_thresholds() -> None:
@@ -421,13 +388,16 @@ def test_relief_thresholds_post_gate_hard_cliff_relaxes_thresholds() -> None:
 
 def test_relief_thresholds_post_gate_hard_cliff_history_below_min_returns_none() -> None:
     """hard_cliff + history below min → None."""
-    assert resolve_catalyst_relief_thresholds(
-        **_relief_kwargs(
-            candidate_pool_lane="post_gate_liquidity_competition",
-            profitability_hard_cliff=True,
-            historical_next_close_positive_rate=0.3,  # < 0.5
+    assert (
+        resolve_catalyst_relief_thresholds(
+            **_relief_kwargs(
+                candidate_pool_lane="post_gate_liquidity_competition",
+                profitability_hard_cliff=True,
+                historical_next_close_positive_rate=0.3,  # < 0.5
+            )
         )
-    ) is None
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------

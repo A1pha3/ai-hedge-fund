@@ -130,16 +130,8 @@ def test_fuse_batch_propagates_name_and_industry_from_candidates() -> None:
     ]
     fused_scores = fuse_batch(
         {
-            "000001": {
-                "trend": StrategySignal(
-                    direction=1, confidence=70.0, completeness=1.0, sub_factors={}
-                )
-            },
-            "000002": {
-                "trend": StrategySignal(
-                    direction=1, confidence=70.0, completeness=1.0, sub_factors={}
-                )
-            },
+            "000001": {"trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={})},
+            "000002": {"trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={})},
         },
         market_state=MarketState(),
         candidates=candidates,
@@ -155,13 +147,7 @@ def test_fuse_batch_propagates_name_and_industry_from_candidates() -> None:
 def test_fuse_batch_without_candidates_leaves_name_industry_empty() -> None:
     """fuse_batch without candidates parameter should still work (backward compat)."""
     fused_scores = fuse_batch(
-        {
-            "000001": {
-                "trend": StrategySignal(
-                    direction=1, confidence=70.0, completeness=1.0, sub_factors={}
-                )
-            }
-        },
+        {"000001": {"trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={})}},
         market_state=MarketState(),
     )
     assert fused_scores[0].name == ""
@@ -177,13 +163,7 @@ def test_fuse_batch_ignores_candidates_not_in_signals() -> None:
         CandidateStock(ticker="000999", name="未评分", industry_sw="—"),
     ]
     fused_scores = fuse_batch(
-        {
-            "000001": {
-                "trend": StrategySignal(
-                    direction=1, confidence=70.0, completeness=1.0, sub_factors={}
-                )
-            }
-        },
+        {"000001": {"trend": StrategySignal(direction=1, confidence=70.0, completeness=1.0, sub_factors={})}},
         market_state=MarketState(),
         candidates=candidates,
     )
@@ -279,12 +259,8 @@ def test_attention_composite_ignores_nan_metric_values() -> None:
     # 000001 should get percentile 0.5 (lowest rank) and 000003 should get 1.0.
     assert composite_001 is not None and math.isfinite(composite_001)
     assert composite_003 is not None and math.isfinite(composite_003)
-    assert composite_001 == pytest.approx(0.5, abs=1e-4), (
-        f"With NaN filtered, 000001 must be rank 1/2 (percentile 0.5); got {composite_001}"
-    )
-    assert composite_003 == pytest.approx(1.0, abs=1e-4), (
-        f"With NaN filtered, 000003 must be rank 2/2 (percentile 1.0); got {composite_003}"
-    )
+    assert composite_001 == pytest.approx(0.5, abs=1e-4), f"With NaN filtered, 000001 must be rank 1/2 (percentile 0.5); got {composite_001}"
+    assert composite_003 == pytest.approx(1.0, abs=1e-4), f"With NaN filtered, 000003 must be rank 2/2 (percentile 1.0); got {composite_003}"
     # 000002 either has no composite, or it's not in (0.0, 1.0]
     if composite_002 is not None:
         assert math.isfinite(composite_002)
@@ -493,9 +469,7 @@ def test_mean_reversion_not_reversed_by_default() -> None:
     from src.screening.signal_fusion import compute_score_b
     from src.screening.models import STRATEGY_DIRECTION_MULTIPLIER
 
-    assert STRATEGY_DIRECTION_MULTIPLIER.get("mean_reversion") == 1.0, (
-        "NS-4 已在 generator 层对齐 T+1 方向, multiplier 保持 1.0"
-    )
+    assert STRATEGY_DIRECTION_MULTIPLIER.get("mean_reversion") == 1.0, "NS-4 已在 generator 层对齐 T+1 方向, multiplier 保持 1.0"
 
     # MR bullish (post-NS-4: overbought, 动量延续看涨) → score 为正
     sig = {"mean_reversion": StrategySignal(direction=1, confidence=80.0, completeness=1.0)}
@@ -597,7 +571,9 @@ def test_risk_off_demotion_applies_when_low_breadth() -> None:
     arbitration: list[str] = []
 
     _apply_risk_off_short_term_demotion(
-        signals, MarketState(breadth_ratio=0.30, position_scale=0.80), arbitration,
+        signals,
+        MarketState(breadth_ratio=0.30, position_scale=0.80),
+        arbitration,
     )
 
     assert trend.confidence == pytest.approx(64.0)  # 80 * 0.80
@@ -614,7 +590,9 @@ def test_risk_off_demotion_skips_when_good_breadth() -> None:
     arbitration: list[str] = []
 
     _apply_risk_off_short_term_demotion(
-        signals, MarketState(breadth_ratio=0.50, position_scale=0.90), arbitration,
+        signals,
+        MarketState(breadth_ratio=0.50, position_scale=0.90),
+        arbitration,
     )
 
     assert trend.confidence == 80.0  # unchanged
@@ -630,7 +608,9 @@ def test_risk_off_demotion_skips_when_no_bullish_signals() -> None:
     arbitration: list[str] = []
 
     _apply_risk_off_short_term_demotion(
-        signals, MarketState(breadth_ratio=0.30, position_scale=0.50), arbitration,
+        signals,
+        MarketState(breadth_ratio=0.30, position_scale=0.50),
+        arbitration,
     )
 
     assert trend.confidence == 80.0  # unchanged
@@ -647,7 +627,9 @@ def test_risk_off_demotion_skips_with_strong_fundamental() -> None:
     arbitration: list[str] = []
 
     _apply_risk_off_short_term_demotion(
-        signals, MarketState(breadth_ratio=0.30, position_scale=0.50), arbitration,
+        signals,
+        MarketState(breadth_ratio=0.30, position_scale=0.50),
+        arbitration,
     )
 
     assert trend.confidence == 80.0  # unchanged — fundamental protects
@@ -1203,7 +1185,9 @@ class TestGetSubFactorSnapshot:
 
     def test_returns_sub_factor_when_present(self) -> None:
         signal = StrategySignal(
-            direction=1, confidence=70.0, completeness=1.0,
+            direction=1,
+            confidence=70.0,
+            completeness=1.0,
             sub_factors={"growth": {"direction": 1, "confidence": 80.0}},
         )
         result = _get_sub_factor_snapshot(signal, "growth")
@@ -1215,14 +1199,18 @@ class TestGetSubFactorSnapshot:
 
     def test_returns_empty_when_not_a_dict(self) -> None:
         signal = StrategySignal(
-            direction=1, confidence=70.0, completeness=1.0,
+            direction=1,
+            confidence=70.0,
+            completeness=1.0,
             sub_factors={"growth": "not a dict"},
         )
         assert _get_sub_factor_snapshot(signal, "growth") == {}
 
     def test_returns_empty_when_none(self) -> None:
         signal = StrategySignal(
-            direction=1, confidence=70.0, completeness=1.0,
+            direction=1,
+            confidence=70.0,
+            completeness=1.0,
             sub_factors={"growth": None},
         )
         assert _get_sub_factor_snapshot(signal, "growth") == {}
@@ -1358,10 +1346,12 @@ class TestHasQualityFirstRedFlag:
 
     def test_guard_disabled_returns_false(self, monkeypatch) -> None:
         monkeypatch.setenv(_QUALITY_GUARD_ENV, "0")
-        signals = {"fundamental": _fundamental_signal_with_subs(
-            profitability={"direction": -1, "confidence": 80},
-            financial_health={"direction": -1, "confidence": 80},
-        )}
+        signals = {
+            "fundamental": _fundamental_signal_with_subs(
+                profitability={"direction": -1, "confidence": 80},
+                financial_health={"direction": -1, "confidence": 80},
+            )
+        }
         assert _has_quality_first_red_flag(signals) is False
 
     def test_no_fundamental_signal_returns_false(self, monkeypatch) -> None:
@@ -1370,67 +1360,81 @@ class TestHasQualityFirstRedFlag:
 
     def test_zero_completeness_returns_false(self, monkeypatch) -> None:
         monkeypatch.setenv(_QUALITY_GUARD_ENV, "1")
-        signals = {"fundamental": _fundamental_signal_with_subs(
-            completeness=0.0,
-            profitability={"direction": -1, "confidence": 80},
-            financial_health={"direction": -1, "confidence": 80},
-        )}
+        signals = {
+            "fundamental": _fundamental_signal_with_subs(
+                completeness=0.0,
+                profitability={"direction": -1, "confidence": 80},
+                financial_health={"direction": -1, "confidence": 80},
+            )
+        }
         assert _has_quality_first_red_flag(signals) is False
 
     def test_paired_quality_breakdown_high_confidence_returns_true(self, monkeypatch) -> None:
         monkeypatch.setenv(_QUALITY_GUARD_ENV, "1")
-        signals = {"fundamental": _fundamental_signal_with_subs(
-            profitability={"direction": -1, "confidence": 70},
-            financial_health={"direction": -1, "confidence": 70},
-            growth={"direction": 1, "confidence": 50},  # growth positive, but paired pair triggers
-        )}
+        signals = {
+            "fundamental": _fundamental_signal_with_subs(
+                profitability={"direction": -1, "confidence": 70},
+                financial_health={"direction": -1, "confidence": 70},
+                growth={"direction": 1, "confidence": 50},  # growth positive, but paired pair triggers
+            )
+        }
         assert _has_quality_first_red_flag(signals) is True
 
     def test_paired_breakdown_below_confidence_threshold_returns_false(self, monkeypatch) -> None:
         monkeypatch.setenv(_QUALITY_GUARD_ENV, "1")
         # Both directions -1 but confidences below 55
-        signals = {"fundamental": _fundamental_signal_with_subs(
-            profitability={"direction": -1, "confidence": 50},
-            financial_health={"direction": -1, "confidence": 50},
-        )}
+        signals = {
+            "fundamental": _fundamental_signal_with_subs(
+                profitability={"direction": -1, "confidence": 50},
+                financial_health={"direction": -1, "confidence": 50},
+            )
+        }
         assert _has_quality_first_red_flag(signals) is False
 
     def test_only_one_negative_direction_returns_false(self, monkeypatch) -> None:
         monkeypatch.setenv(_QUALITY_GUARD_ENV, "1")
-        signals = {"fundamental": _fundamental_signal_with_subs(
-            profitability={"direction": -1, "confidence": 80},
-            financial_health={"direction": 0, "confidence": 80},  # not negative
-            growth={"direction": 1, "confidence": 50},  # offset, no hard-cliff
-        )}
+        signals = {
+            "fundamental": _fundamental_signal_with_subs(
+                profitability={"direction": -1, "confidence": 80},
+                financial_health={"direction": 0, "confidence": 80},  # not negative
+                growth={"direction": 1, "confidence": 50},  # offset, no hard-cliff
+            )
+        }
         assert _has_quality_first_red_flag(signals) is False
 
     def test_hard_cliff_with_no_offset_returns_true(self, monkeypatch) -> None:
         monkeypatch.setenv(_QUALITY_GUARD_ENV, "1")
         # Hard cliff: profitability direction=-1, positive_count=0
         # financial_health direction in {-1, 0}, growth direction in {-1, 0, None}
-        signals = {"fundamental": _fundamental_signal_with_subs(
-            profitability={"direction": -1, "confidence": 30, "metrics": {"positive_count": 0}},
-            financial_health={"direction": 0, "confidence": 40},
-            growth={"direction": 0, "confidence": 30},
-        )}
+        signals = {
+            "fundamental": _fundamental_signal_with_subs(
+                profitability={"direction": -1, "confidence": 30, "metrics": {"positive_count": 0}},
+                financial_health={"direction": 0, "confidence": 40},
+                growth={"direction": 0, "confidence": 30},
+            )
+        }
         assert _has_quality_first_red_flag(signals) is True
 
     def test_hard_cliff_offset_by_positive_growth_returns_false(self, monkeypatch) -> None:
         monkeypatch.setenv(_QUALITY_GUARD_ENV, "1")
-        signals = {"fundamental": _fundamental_signal_with_subs(
-            profitability={"direction": -1, "confidence": 30, "metrics": {"positive_count": 0}},
-            financial_health={"direction": 0, "confidence": 40},
-            growth={"direction": 1, "confidence": 60},  # positive growth offsets
-        )}
+        signals = {
+            "fundamental": _fundamental_signal_with_subs(
+                profitability={"direction": -1, "confidence": 30, "metrics": {"positive_count": 0}},
+                financial_health={"direction": 0, "confidence": 40},
+                growth={"direction": 1, "confidence": 60},  # positive growth offsets
+            )
+        }
         assert _has_quality_first_red_flag(signals) is False
 
     def test_hard_cliff_offset_by_positive_financial_health_returns_false(self, monkeypatch) -> None:
         monkeypatch.setenv(_QUALITY_GUARD_ENV, "1")
-        signals = {"fundamental": _fundamental_signal_with_subs(
-            profitability={"direction": -1, "confidence": 30, "metrics": {"positive_count": 0}},
-            financial_health={"direction": 1, "confidence": 70},  # positive offsets
-            growth={"direction": 0, "confidence": 30},
-        )}
+        signals = {
+            "fundamental": _fundamental_signal_with_subs(
+                profitability={"direction": -1, "confidence": 30, "metrics": {"positive_count": 0}},
+                financial_health={"direction": 1, "confidence": 70},  # positive offsets
+                growth={"direction": 0, "confidence": 30},
+            )
+        }
         assert _has_quality_first_red_flag(signals) is False
 
 

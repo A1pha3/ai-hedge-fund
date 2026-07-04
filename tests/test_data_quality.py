@@ -754,9 +754,7 @@ class TestPriceValidatorRules:
         # 整行 is_valid=True。bug 代码 (UTC 昨天) 会把今天 bar 误判为未来 →
         # results 含 RULE_NO_FUTURE_DATE 失败 + is_valid=False。
         future_violations = [r for r in results if r.field == RULE_NO_FUTURE_DATE]
-        assert not future_violations, (
-            "时区 bug: 本地今天的 A 股 bar 被误判为未来日期 (UTC 昨天导致) 而丢弃"
-        )
+        assert not future_violations, "时区 bug: 本地今天的 A 股 bar 被误判为未来日期 (UTC 昨天导致) 而丢弃"
         assert is_valid, "本地今天的 A 股 bar 应整体通过校验"
 
     def test_negative_volume_fails(self, price_validator):

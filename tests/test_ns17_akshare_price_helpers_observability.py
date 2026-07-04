@@ -26,9 +26,7 @@ class TestAksharePriceHelpersModuleLogger:
 
     def test_module_logger_exists(self) -> None:
         """模块必须有 logger (此前无 logging, 8 处 print 不入结构化日志)。"""
-        assert hasattr(akshare_price_helpers, "logger"), (
-            "akshare_price_helpers 必须有 module logger (NS-17 / BH-017 family 可观测性要求)"
-        )
+        assert hasattr(akshare_price_helpers, "logger"), "akshare_price_helpers 必须有 module logger (NS-17 / BH-017 family 可观测性要求)"
         assert isinstance(akshare_price_helpers.logger, logging.Logger)
         assert akshare_price_helpers.logger.name == "src.tools.akshare_price_helpers"
 
@@ -37,15 +35,8 @@ class TestAksharePriceHelpersModuleLogger:
         import inspect
 
         source = inspect.getsource(akshare_price_helpers)
-        code_lines = [
-            line
-            for line in source.splitlines()
-            if line.lstrip().startswith("print(")
-            and not line.lstrip().startswith("#")
-        ]
-        assert not code_lines, (
-            f"akshare_price_helpers 不应再有裸 print() 调用, 发现: {code_lines}"
-        )
+        code_lines = [line for line in source.splitlines() if line.lstrip().startswith("print(") and not line.lstrip().startswith("#")]
+        assert not code_lines, f"akshare_price_helpers 不应再有裸 print() 调用, 发现: {code_lines}"
 
 
 class TestExecuteRobustPriceRequestObservability:
@@ -81,9 +72,7 @@ class TestExecuteRobustPriceRequestObservability:
 
         # 三级失败 (AKShare/新浪/多源) 至少各发一条 warning
         failure_msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
-        assert len(failure_msgs) >= 3, (
-            f"三级 tier 失败至少须发 3 条 warning, 实际 {len(failure_msgs)}: {failure_msgs}"
-        )
+        assert len(failure_msgs) >= 3, f"三级 tier 失败至少须发 3 条 warning, 实际 {len(failure_msgs)}: {failure_msgs}"
 
     def test_first_tier_success_no_warning(self, monkeypatch, caplog) -> None:
         """第一 tier 成功时不应发 warning。"""
@@ -108,9 +97,7 @@ class TestExecuteRobustPriceRequestObservability:
             )
 
         assert len(prices) == 1
-        assert not any(r.levelno >= logging.WARNING for r in caplog.records), (
-            "第一 tier 成功时不应发 warning"
-        )
+        assert not any(r.levelno >= logging.WARNING for r in caplog.records), "第一 tier 成功时不应发 warning"
 
 
 class TestLoadPricesWithFallbackObservability:
@@ -142,7 +129,4 @@ class TestLoadPricesWithFallbackObservability:
             )
 
         assert len(prices) == 1  # Tencent 回退成功
-        assert any(
-            "AKShare" in r.getMessage() and r.levelno >= logging.WARNING
-            for r in caplog.records
-        ), "AKShare 失败回退 Tencent 必须发 logger.warning"
+        assert any("AKShare" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), "AKShare 失败回退 Tencent 必须发 logger.warning"

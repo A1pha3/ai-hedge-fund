@@ -2,6 +2,7 @@
 
 不依赖真实报告文件 —— 全部用内联合成 history + tracking records.
 """
+
 from __future__ import annotations
 
 from src.screening.state_type_calibration import (
@@ -90,10 +91,7 @@ from src.screening.state_type_calibration import leave_one_period_out_validation
 
 def test_q3_lopo_rediscovers_real_signal_out_of_sample():
     # 3 个 RANGE 日期; 每个日期内 high bucket 涨、low bucket 跌 (跨所有日期一致)
-    history = [
-        {"date": f"2025060{d}", "payload": {"market_state": {"state_type": "RANGE"}}}
-        for d in (1, 2, 3)
-    ]
+    history = [{"date": f"2025060{d}", "payload": {"market_state": {"state_type": "RANGE"}}} for d in (1, 2, 3)]
     records = []
     for d in (1, 2, 3):
         records += [
@@ -110,10 +108,7 @@ def test_q3_lopo_rediscovers_real_signal_out_of_sample():
 def test_q3_lopo_rejects_in_sample_artifact():
     # high bucket 只在 day1 大涨, day2/day3 都跌 → 留出 day2/day3 时 high 不再维持
     # (整体均值可能被 day1 拉高, 但逐留出日不稳定 = in-sample 假象)
-    history = [
-        {"date": f"2025060{d}", "payload": {"market_state": {"state_type": "RANGE"}}}
-        for d in (1, 2, 3)
-    ]
+    history = [{"date": f"2025060{d}", "payload": {"market_state": {"state_type": "RANGE"}}} for d in (1, 2, 3)]
     rets_by_day = {"1": 10.0, "2": -8.0, "3": -8.0}
     records = []
     for d, ret in rets_by_day.items():
@@ -140,30 +135,36 @@ from src.screening.state_type_calibration import (  # noqa: E402
 
 def test_verdict_stop_when_state_type_not_discriminative():
     # 问1 no: TREND 与 RANGE 胜率接近 (< 10pp 差)
-    q1 = StateTypeCalibrationReport(rows=[
-        StateTypeWinRate("TREND", t30_win_rate=0.45, mature_t30_count=60),
-        StateTypeWinRate("RANGE", t30_win_rate=0.43, mature_t30_count=80),
-    ])
+    q1 = StateTypeCalibrationReport(
+        rows=[
+            StateTypeWinRate("TREND", t30_win_rate=0.45, mature_t30_count=60),
+            StateTypeWinRate("RANGE", t30_win_rate=0.43, mature_t30_count=80),
+        ]
+    )
     verdict = aggregate_verdict(q1=q1, q2_best_bucket_winrate=None, q3=LopoReport(target_state_types=("RANGE",), robust=False))
     assert verdict.phase1_branch == "STOP"
     assert "not discriminative" in verdict.reason.lower()
 
 
 def test_verdict_1a_when_all_three_yes():
-    q1 = StateTypeCalibrationReport(rows=[
-        StateTypeWinRate("TREND", t30_win_rate=0.80, mature_t30_count=60),
-        StateTypeWinRate("RANGE", t30_win_rate=0.25, mature_t30_count=80),
-    ])
+    q1 = StateTypeCalibrationReport(
+        rows=[
+            StateTypeWinRate("TREND", t30_win_rate=0.80, mature_t30_count=60),
+            StateTypeWinRate("RANGE", t30_win_rate=0.25, mature_t30_count=80),
+        ]
+    )
     q3 = LopoReport(target_state_types=("RANGE",), robust=True, rediscovered_winner_rate=0.8, heldout_periods=10)
     verdict = aggregate_verdict(q1=q1, q2_best_bucket_winrate=0.62, q3=q3)
     assert verdict.phase1_branch == "1A"
 
 
 def test_verdict_1b_when_q1_yes_but_no_robust_subset():
-    q1 = StateTypeCalibrationReport(rows=[
-        StateTypeWinRate("TREND", t30_win_rate=0.80, mature_t30_count=60),
-        StateTypeWinRate("RANGE", t30_win_rate=0.25, mature_t30_count=80),
-    ])
+    q1 = StateTypeCalibrationReport(
+        rows=[
+            StateTypeWinRate("TREND", t30_win_rate=0.80, mature_t30_count=60),
+            StateTypeWinRate("RANGE", t30_win_rate=0.25, mature_t30_count=80),
+        ]
+    )
     q3 = LopoReport(target_state_types=("RANGE",), robust=False)
     verdict = aggregate_verdict(q1=q1, q2_best_bucket_winrate=0.40, q3=q3)
     assert verdict.phase1_branch == "1B"

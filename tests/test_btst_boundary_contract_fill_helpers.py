@@ -53,13 +53,16 @@ def test_recommend_boundary_repair_action_only_allows_fully_repaired_rows_back()
     assert classify_boundary_repair_status(["trend_acceleration"], 6) == "partially_repaired_boundary_contract"
     # also ensure multiple missing keys but non-zero recovery is still partial
     assert classify_boundary_repair_status(["trend_acceleration", "volume_expansion_quality"], 5) == "partially_repaired_boundary_contract"
-    assert recommend_boundary_repair_action(
-        {
-            "fully_repaired_row_count": 1,
-            "partially_repaired_row_count": 2,
-            "irrecoverable_row_count": 3,
-        }
-    ) == "quarantine_boundary_surface"
+    assert (
+        recommend_boundary_repair_action(
+            {
+                "fully_repaired_row_count": 1,
+                "partially_repaired_row_count": 2,
+                "irrecoverable_row_count": 3,
+            }
+        )
+        == "quarantine_boundary_surface"
+    )
 
 
 def test_repair_boundary_contract_row_with_no_boundary_context_is_irrecoverable() -> None:

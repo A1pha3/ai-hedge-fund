@@ -47,14 +47,20 @@ class TestComputeDailyDelta:
     def test_two_reports_shows_added_and_removed(self, tmp_path: Path) -> None:
         reports_dir = tmp_path / "reports"
         reports_dir.mkdir()
-        yesterday = _make_report("20260610", [
-            _make_rec("000001", "StockA", 0.7),
-            _make_rec("000002", "StockB", 0.5),
-        ])
-        today = _make_report("20260611", [
-            _make_rec("000001", "StockA", 0.75),
-            _make_rec("000003", "StockC", 0.8),
-        ])
+        yesterday = _make_report(
+            "20260610",
+            [
+                _make_rec("000001", "StockA", 0.7),
+                _make_rec("000002", "StockB", 0.5),
+            ],
+        )
+        today = _make_report(
+            "20260611",
+            [
+                _make_rec("000001", "StockA", 0.75),
+                _make_rec("000003", "StockC", 0.8),
+            ],
+        )
         (reports_dir / "auto_screening_20260610.json").write_text(json.dumps(yesterday), encoding="utf-8")
         (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(today), encoding="utf-8")
 
@@ -111,16 +117,22 @@ class TestComputeDailyDelta:
     def test_rank_change_tracked(self, tmp_path: Path) -> None:
         reports_dir = tmp_path / "reports"
         reports_dir.mkdir()
-        yesterday = _make_report("20260610", [
-            _make_rec("000001", "A", 0.9),
-            _make_rec("000002", "B", 0.8),
-            _make_rec("000003", "C", 0.7),
-        ])
-        today = _make_report("20260611", [
-            _make_rec("000003", "C", 0.95),
-            _make_rec("000001", "A", 0.85),
-            _make_rec("000002", "B", 0.75),
-        ])
+        yesterday = _make_report(
+            "20260610",
+            [
+                _make_rec("000001", "A", 0.9),
+                _make_rec("000002", "B", 0.8),
+                _make_rec("000003", "C", 0.7),
+            ],
+        )
+        today = _make_report(
+            "20260611",
+            [
+                _make_rec("000003", "C", 0.95),
+                _make_rec("000001", "A", 0.85),
+                _make_rec("000002", "B", 0.75),
+            ],
+        )
         (reports_dir / "auto_screening_20260610.json").write_text(json.dumps(yesterday), encoding="utf-8")
         (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(today), encoding="utf-8")
 
@@ -205,6 +217,7 @@ class TestEdgeCases:
     def test_none_score_b_no_delta(self) -> None:
         """When yesterday's score_b is None, no delta should be computed."""
         from src.screening.daily_delta import _compute_field_deltas
+
         result = _compute_field_deltas(
             {"ticker": "000001", "name": "A", "score_b": 0.5},
             {"ticker": "000001", "name": "A", "score_b": None},
@@ -214,6 +227,7 @@ class TestEdgeCases:
     def test_both_none_score_b_no_delta(self) -> None:
         """When both score_b are None, no delta should be computed."""
         from src.screening.daily_delta import _compute_field_deltas
+
         result = _compute_field_deltas(
             {"ticker": "000001", "name": "A", "score_b": None},
             {"ticker": "000001", "name": "A", "score_b": None},

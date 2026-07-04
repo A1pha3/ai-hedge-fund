@@ -30,10 +30,7 @@ def _write_replay_input(report_dir: Path, *, trade_date: str, rejected_tickers: 
             for ticker in rejected_tickers
         ],
         "supplemental_short_trade_entries": [],
-        "selection_targets": {
-            ticker: {"short_trade": {"decision": "rejected"}}
-            for ticker in rejected_tickers
-        },
+        "selection_targets": {ticker: {"short_trade": {"decision": "rejected"}} for ticker in rejected_tickers},
         "buy_order_tickers": [],
     }
     selection_dir = report_dir / "selection_artifacts" / trade_date

@@ -5,6 +5,7 @@ Blocks tested:
   B — 近 5 日关键事件
   C — 同行业排名百分位
 """
+
 from __future__ import annotations
 
 import json
@@ -108,6 +109,7 @@ class _MockReadFile:
 
     def __enter__(self):
         from io import StringIO
+
         return StringIO(self._content)
 
     def __exit__(self, *args):
@@ -116,14 +118,17 @@ class _MockReadFile:
 
 def _mock_open_read(content: str):
     """Return a mock for builtins.open that returns content for any file path."""
+
     def _open(path, *args, **kwargs):
         return _MockReadFile(content)
+
     return _open
 
 
 # ---------------------------------------------------------------------------
 # Test 1: Factor detail shows top 3 factors per strategy
 # ---------------------------------------------------------------------------
+
 
 class TestExplainFactorDetail:
 
@@ -183,6 +188,7 @@ class TestExplainFactorDetail:
 # Test: R75 trust-calibration disclaimer (R71/R72/R73 family)
 # ---------------------------------------------------------------------------
 
+
 class TestExplainDisclaimer:
     def test_explain_carries_non_advice_disclaimer(self):
         """R75 (R71/R72/R73 trust-calibration family): ``--explain`` emits a
@@ -213,6 +219,7 @@ class TestExplainDisclaimer:
 # ---------------------------------------------------------------------------
 # Test 2: Industry ranking
 # ---------------------------------------------------------------------------
+
 
 class TestExplainIndustryRanking:
 
@@ -280,6 +287,7 @@ class TestExplainIndustryRanking:
 # Test 3: Recent events
 # ---------------------------------------------------------------------------
 
+
 class TestExplainRecentEvents:
 
     def test_explain_handles_no_events(self):
@@ -315,7 +323,9 @@ class TestExplainRecentEvents:
         ]
         sub_factors_event = {
             "news_sentiment": _make_sub_factor(
-                "news_sentiment", 1, 60.0,
+                "news_sentiment",
+                1,
+                60.0,
                 metrics={"articles": articles},
             ),
         }
@@ -339,7 +349,9 @@ class TestExplainRecentEvents:
         ]
         sub_factors_event = {
             "news_sentiment": _make_sub_factor(
-                "news_sentiment", 1, 60.0,
+                "news_sentiment",
+                1,
+                60.0,
                 metrics={"articles": articles},
             ),
         }
@@ -358,6 +370,7 @@ class TestExplainRecentEvents:
 # ---------------------------------------------------------------------------
 # Test 4: Ticker not found (existing logic)
 # ---------------------------------------------------------------------------
+
 
 class TestExplainTickerNotFound:
 
@@ -380,27 +393,33 @@ class TestExplainTickerNotFound:
 # Test 5: Unit tests for helper functions
 # ---------------------------------------------------------------------------
 
+
 class TestHelperFunctions:
 
     def test_build_factor_bar_full(self):
         from src.cli.explain_helpers import _build_factor_bar
+
         assert _build_factor_bar(100.0) == "██████████"
 
     def test_build_factor_bar_zero(self):
         from src.cli.explain_helpers import _build_factor_bar
+
         assert _build_factor_bar(0.0) == "░░░░░░░░░░"
 
     def test_build_factor_bar_mid(self):
         from src.cli.explain_helpers import _build_factor_bar
+
         assert _build_factor_bar(50.0) == "█████░░░░░"
 
     def test_build_factor_bar_clamps(self):
         from src.cli.explain_helpers import _build_factor_bar
+
         assert _build_factor_bar(150.0) == "██████████"
         assert _build_factor_bar(-10.0) == "░░░░░░░░░░"
 
     def test_extract_articles_empty(self):
         from src.cli.explain_helpers import _extract_articles_from_event_subfactors
+
         assert _extract_articles_from_event_subfactors({}) == []
         assert _extract_articles_from_event_subfactors({"news_sentiment": "bad"}) == []
         assert _extract_articles_from_event_subfactors({"news_sentiment": {"metrics": "bad"}}) == []
@@ -408,6 +427,7 @@ class TestHelperFunctions:
 
     def test_extract_articles_valid(self):
         from src.cli.explain_helpers import _extract_articles_from_event_subfactors
+
         arts = [{"title": "a"}, {"title": "b"}]
         result = _extract_articles_from_event_subfactors({"news_sentiment": {"metrics": {"articles": arts}}})
         assert len(result) == 2
@@ -417,6 +437,7 @@ class TestHelperFunctions:
         import math
 
         from src.cli.explain_helpers import _build_factor_bar
+
         result = _build_factor_bar(float("nan"))
         assert result == "░░░░░░░░░░"
 
@@ -425,6 +446,7 @@ class TestHelperFunctions:
     def test_print_strategy_breakdown_all_directions(self, capsys):
         """Bullish/bearish/neutral directions render correct arrows + confidence."""
         from src.cli.explain_helpers import _print_strategy_breakdown
+
         signals = {
             "trend": {"direction": 1, "confidence": 72.5},
             "mean_reversion": {"direction": -1, "confidence": 45.0},
@@ -443,6 +465,7 @@ class TestHelperFunctions:
     def test_print_strategy_breakdown_missing_strategy(self, capsys):
         """Missing strategy shows 数据缺失 fallback."""
         from src.cli.explain_helpers import _print_strategy_breakdown
+
         signals = {"trend": {"direction": 1, "confidence": 65.0}}
         _print_strategy_breakdown(signals)
         output = capsys.readouterr().out
@@ -452,6 +475,7 @@ class TestHelperFunctions:
     def test_print_strategy_breakdown_empty_signals(self, capsys):
         """Empty signals dict → all 4 strategies show 数据缺失."""
         from src.cli.explain_helpers import _print_strategy_breakdown
+
         _print_strategy_breakdown({})
         output = capsys.readouterr().out
         assert output.count("数据缺失") == 4
@@ -461,6 +485,7 @@ class TestHelperFunctions:
     def test_print_factor_detail_block_top3_sorted(self, capsys):
         """Top 3 factors shown per strategy, sorted by |confidence| descending."""
         from src.cli.explain_helpers import _print_factor_detail_block
+
         signals = {
             "trend": {
                 "sub_factors": {
@@ -485,6 +510,7 @@ class TestHelperFunctions:
     def test_print_factor_detail_block_empty_shows_fallback(self, capsys):
         """Empty signals → 暂无因子明细数据 fallback."""
         from src.cli.explain_helpers import _print_factor_detail_block
+
         _print_factor_detail_block({})
         output = capsys.readouterr().out
         assert "暂无因子明细数据" in output
@@ -492,6 +518,7 @@ class TestHelperFunctions:
     def test_print_factor_detail_block_no_subfactors_shows_fallback(self, capsys):
         """Strategy without sub_factors → skipped; fallback shown if none have factors."""
         from src.cli.explain_helpers import _print_factor_detail_block
+
         signals = {"trend": {"direction": 1, "confidence": 65.0}}  # no sub_factors key
         _print_factor_detail_block(signals)
         output = capsys.readouterr().out
@@ -502,6 +529,7 @@ class TestHelperFunctions:
     def test_print_recent_events_from_report_dicts(self, capsys):
         """Priority 1: report-level recent_events list of dicts → date + description."""
         from src.cli.explain_helpers import _print_recent_events_block
+
         report = {"recent_events": [{"date": "20260610", "description": "财报超预期"}]}
         _print_recent_events_block(report, {})
         output = capsys.readouterr().out
@@ -511,6 +539,7 @@ class TestHelperFunctions:
     def test_print_recent_events_from_report_strings(self, capsys):
         """Priority 1: recent_events list of plain strings → printed as-is."""
         from src.cli.explain_helpers import _print_recent_events_block
+
         report = {"recent_events": ["限售解禁", "大宗交易"]}
         _print_recent_events_block(report, {})
         output = capsys.readouterr().out
@@ -520,20 +549,9 @@ class TestHelperFunctions:
     def test_print_recent_events_from_subfactors(self, capsys):
         """Priority 2: no report events, extract from event_sentiment sub_factors."""
         from src.cli.explain_helpers import _print_recent_events_block
+
         report = {}
-        match = {
-            "strategy_signals": {
-                "event_sentiment": {
-                    "sub_factors": {
-                        "news_sentiment": {
-                            "metrics": {
-                                "articles": [{"days_old": "3", "title": "利好消息"}]
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        match = {"strategy_signals": {"event_sentiment": {"sub_factors": {"news_sentiment": {"metrics": {"articles": [{"days_old": "3", "title": "利好消息"}]}}}}}}
         _print_recent_events_block(report, match)
         output = capsys.readouterr().out
         assert "3天前" in output
@@ -542,6 +560,7 @@ class TestHelperFunctions:
     def test_print_recent_events_no_data_fallback(self, capsys):
         """No report events and no articles → fallback message."""
         from src.cli.explain_helpers import _print_recent_events_block
+
         _print_recent_events_block({}, {})
         output = capsys.readouterr().out
         assert "暂无近期事件数据" in output
@@ -551,6 +570,7 @@ class TestHelperFunctions:
     def test_print_industry_ranking_no_industry(self, capsys):
         """Match has no industry_sw → shows 无行业信息."""
         from src.cli.explain_helpers import _print_industry_ranking_block
+
         _print_industry_ranking_block([], {"ticker": "000001"})
         output = capsys.readouterr().out
         assert "无行业信息" in output
@@ -558,6 +578,7 @@ class TestHelperFunctions:
     def test_print_industry_ranking_no_peers(self, capsys):
         """Industry present but no same-industry recs → 无同行业数据."""
         from src.cli.explain_helpers import _print_industry_ranking_block
+
         recs = [{"ticker": "000002", "industry_sw": "银行", "score_b": 0.5}]
         _print_industry_ranking_block(recs, {"ticker": "000001", "industry_sw": "电子"})
         output = capsys.readouterr().out
@@ -566,6 +587,7 @@ class TestHelperFunctions:
     def test_print_industry_ranking_normal(self, capsys):
         """Same-industry recs → prints rank/total/percentile."""
         from src.cli.explain_helpers import _print_industry_ranking_block
+
         recs = [
             {"ticker": "000001", "industry_sw": "电子", "score_b": 0.8},
             {"ticker": "000002", "industry_sw": "电子", "score_b": 0.5},
@@ -578,6 +600,7 @@ class TestHelperFunctions:
     def test_print_industry_ranking_none_score_b_coerced(self, capsys):
         """GAMMA-008: None score_b coerced to 0.0 without crash."""
         from src.cli.explain_helpers import _print_industry_ranking_block
+
         recs = [
             {"ticker": "000001", "industry_sw": "电子", "score_b": None},
             {"ticker": "000002", "industry_sw": "电子", "score_b": 0.5},

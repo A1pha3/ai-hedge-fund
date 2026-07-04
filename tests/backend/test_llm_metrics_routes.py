@@ -245,17 +245,10 @@ def test_collect_metrics_discloses_oserror_file_skip(tmp_path, monkeypatch, capl
         data = mod._collect_metrics(tmp_path, lookback_days=7)
 
     dq = data["data_quality"]
-    assert dq["files_skipped_oserror"] == 1, (
-        "a JSONL file that raised OSError on open must be counted in "
-        "data_quality.files_skipped_oserror — silently dropping a whole "
-        "session's data is the NS-17 silent-skip disease class (c293)"
-    )
+    assert dq["files_skipped_oserror"] == 1, "a JSONL file that raised OSError on open must be counted in " "data_quality.files_skipped_oserror — silently dropping a whole " "session's data is the NS-17 silent-skip disease class (c293)"
     # The skip must also be logged so the operator can diagnose (matches the
     # c289 corrupt-row logging pattern).
-    assert "skip" in caplog.text.lower() or "oserror" in caplog.text.lower(), (
-        "OSError file-skip must be logged (logger.warning) so the operator can "
-        "diagnose permissions / IO errors, not just silently counted"
-    )
+    assert "skip" in caplog.text.lower() or "oserror" in caplog.text.lower(), "OSError file-skip must be logged (logger.warning) so the operator can " "diagnose permissions / IO errors, not just silently counted"
 
 
 def test_collect_metrics_discloses_json_line_skip_and_bad_date(tmp_path, monkeypatch):
@@ -292,13 +285,8 @@ def test_collect_metrics_discloses_json_line_skip_and_bad_date(tmp_path, monkeyp
     data = _collect_metrics(tmp_path, lookback_days=7)
 
     dq = data["data_quality"]
-    assert dq["lines_skipped_json"] == 1, (
-        "the malformed JSON line must be counted in data_quality.lines_skipped_json"
-    )
-    assert dq["files_skipped_bad_date"] == 1, (
-        "the file with an unparseable date in its name must be counted in "
-        "data_quality.files_skipped_bad_date"
-    )
+    assert dq["lines_skipped_json"] == 1, "the malformed JSON line must be counted in data_quality.lines_skipped_json"
+    assert dq["files_skipped_bad_date"] == 1, "the file with an unparseable date in its name must be counted in " "data_quality.files_skipped_bad_date"
 
 
 def test_collect_metrics_discloses_cache_staleness(tmp_path, monkeypatch):
@@ -319,10 +307,7 @@ def test_collect_metrics_discloses_cache_staleness(tmp_path, monkeypatch):
 
     # Second call within TTL — served from cache.
     second = _collect_metrics(tmp_path, lookback_days=7)
-    assert second["served_from_cache"] is True, (
-        "second call within 60s TTL must disclose served_from_cache=True so the "
-        "operator can tell the dashboard is stale (NS-5 staleness disease class, c293)"
-    )
+    assert second["served_from_cache"] is True, "second call within 60s TTL must disclose served_from_cache=True so the " "operator can tell the dashboard is stale (NS-5 staleness disease class, c293)"
     assert second["cache_age_seconds"] >= 0.0
     # as_of stays pinned to when the data was actually computed (the cache
     # population time), NOT the serve time — so the operator sees the true

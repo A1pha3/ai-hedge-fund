@@ -205,9 +205,7 @@ def test_build_summary_records_profile_and_resolved_config_path() -> None:
     )
 
     assert summary["strategy_thresholds_profile"] == "aggressive"
-    assert summary["strategy_thresholds_config_path"].endswith(
-        "config/btst_strategy_thresholds_aggressive.json"
-    )
+    assert summary["strategy_thresholds_config_path"].endswith("config/btst_strategy_thresholds_aggressive.json")
 
 
 def test_build_profile_comparison_prefers_stronger_intersection_profile() -> None:
@@ -404,7 +402,7 @@ def test_validate_btst_early_runner_history_writes_upgraded_outputs(tmp_path: Pa
     monkeypatch.setattr(
         history_script,
         "_build_row",
-            lambda reports_root, signal_date, bundle_root, **kwargs: {
+        lambda reports_root, signal_date, bundle_root, **kwargs: {
             "signal_date": signal_date,
             "next_trade_date": "2026-05-03",
             "report_dir": f"report-{signal_date}",
@@ -418,7 +416,19 @@ def test_validate_btst_early_runner_history_writes_upgraded_outputs(tmp_path: Pa
             "second_entry_count": 1,
             "second_entry_tickers": ["300003"],
             "outcome_attribution": {
-                "intersection": {"candidate_count": 1 if signal_date == "20260502" else 0, "next_close_available_count": 1 if signal_date == "20260502" else 0, "next_close_positive_count": 1 if signal_date == "20260502" else 0, "next_close_mean_return": 0.04 if signal_date == "20260502" else None, "t_plus_2_available_count": 0, "t_plus_2_positive_count": 0, "t_plus_2_mean_return": None, "next_close_expectation_count": 1 if signal_date == "20260502" else 0, "next_close_matched_count": 1 if signal_date == "20260502" else 0, "next_close_violated_count": 0, "next_close_observed_without_positive_expectation_count": 0},
+                "intersection": {
+                    "candidate_count": 1 if signal_date == "20260502" else 0,
+                    "next_close_available_count": 1 if signal_date == "20260502" else 0,
+                    "next_close_positive_count": 1 if signal_date == "20260502" else 0,
+                    "next_close_mean_return": 0.04 if signal_date == "20260502" else None,
+                    "t_plus_2_available_count": 0,
+                    "t_plus_2_positive_count": 0,
+                    "t_plus_2_mean_return": None,
+                    "next_close_expectation_count": 1 if signal_date == "20260502" else 0,
+                    "next_close_matched_count": 1 if signal_date == "20260502" else 0,
+                    "next_close_violated_count": 0,
+                    "next_close_observed_without_positive_expectation_count": 0,
+                },
                 "only_early_runner": {"candidate_count": 1, "next_close_available_count": 1, "next_close_positive_count": 0, "next_close_mean_return": -0.01, "t_plus_2_available_count": 0, "t_plus_2_positive_count": 0, "t_plus_2_mean_return": None, "next_close_expectation_count": 1, "next_close_matched_count": 0, "next_close_violated_count": 1, "next_close_observed_without_positive_expectation_count": 0},
                 "second_entry": {"candidate_count": 1, "next_close_available_count": 1, "next_close_positive_count": 1, "next_close_mean_return": 0.02, "t_plus_2_available_count": 0, "t_plus_2_positive_count": 0, "t_plus_2_mean_return": None, "next_close_expectation_count": 1, "next_close_matched_count": 1, "next_close_violated_count": 0, "next_close_observed_without_positive_expectation_count": 0},
             },

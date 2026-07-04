@@ -24,9 +24,7 @@ class TestDetectOutliers:
     def test_single_report(self, tmp_path: Path) -> None:
         reports_dir = tmp_path / "reports"
         reports_dir.mkdir()
-        (reports_dir / "auto_screening_20260611.json").write_text(
-            json.dumps(_make_report("20260611", [])), encoding="utf-8"
-        )
+        (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(_make_report("20260611", [])), encoding="utf-8")
         result = detect_outliers(reports_dir=reports_dir)
         assert result.get("error") is not None
 
@@ -45,14 +43,20 @@ class TestDetectOutliers:
     def test_detects_surge(self, tmp_path: Path) -> None:
         reports_dir = tmp_path / "reports"
         reports_dir.mkdir()
-        yesterday = _make_report("20260610", [
-            _make_rec("000001", "A", 0.20),
-            _make_rec("000002", "B", 0.50),
-        ])
-        today = _make_report("20260611", [
-            _make_rec("000001", "A", 0.60),  # +0.40 surge
-            _make_rec("000002", "B", 0.55),  # +0.05 normal
-        ])
+        yesterday = _make_report(
+            "20260610",
+            [
+                _make_rec("000001", "A", 0.20),
+                _make_rec("000002", "B", 0.50),
+            ],
+        )
+        today = _make_report(
+            "20260611",
+            [
+                _make_rec("000001", "A", 0.60),  # +0.40 surge
+                _make_rec("000002", "B", 0.55),  # +0.05 normal
+            ],
+        )
         (reports_dir / "auto_screening_20260610.json").write_text(json.dumps(yesterday), encoding="utf-8")
         (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(today), encoding="utf-8")
 
@@ -89,14 +93,20 @@ class TestDetectOutliers:
     def test_sorted_by_abs_delta(self, tmp_path: Path) -> None:
         reports_dir = tmp_path / "reports"
         reports_dir.mkdir()
-        yesterday = _make_report("20260610", [
-            _make_rec("000001", "A", 0.20),
-            _make_rec("000002", "B", 0.80),
-        ])
-        today = _make_report("20260611", [
-            _make_rec("000001", "A", 0.60),  # +0.40
-            _make_rec("000002", "B", 0.20),  # -0.60
-        ])
+        yesterday = _make_report(
+            "20260610",
+            [
+                _make_rec("000001", "A", 0.20),
+                _make_rec("000002", "B", 0.80),
+            ],
+        )
+        today = _make_report(
+            "20260611",
+            [
+                _make_rec("000001", "A", 0.60),  # +0.40
+                _make_rec("000002", "B", 0.20),  # -0.60
+            ],
+        )
         (reports_dir / "auto_screening_20260610.json").write_text(json.dumps(yesterday), encoding="utf-8")
         (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(today), encoding="utf-8")
 
@@ -128,18 +138,18 @@ class TestRenderOutliers:
         assert "Need at least 2" in output
 
     def test_no_outliers_renders(self) -> None:
-        result = {"outliers": [], "total_compared": 5, "threshold": 0.3,
-                  "today_date": "2026-06-11", "yesterday_date": "2026-06-10"}
+        result = {"outliers": [], "total_compared": 5, "threshold": 0.3, "today_date": "2026-06-11", "yesterday_date": "2026-06-10"}
         output = render_outliers(result)
         assert "No significant outliers" in output
 
     def test_outliers_renders(self) -> None:
         result = {
-            "outliers": [{"ticker": "000001", "name": "Test", "today_score": 0.8,
-                          "yesterday_score": 0.4, "delta": 0.4, "abs_delta": 0.4,
-                          "direction": "surge", "today_rank": 1}],
-            "outlier_count": 1, "total_compared": 5, "threshold": 0.3,
-            "today_date": "2026-06-11", "yesterday_date": "2026-06-10",
+            "outliers": [{"ticker": "000001", "name": "Test", "today_score": 0.8, "yesterday_score": 0.4, "delta": 0.4, "abs_delta": 0.4, "direction": "surge", "today_rank": 1}],
+            "outlier_count": 1,
+            "total_compared": 5,
+            "threshold": 0.3,
+            "today_date": "2026-06-11",
+            "yesterday_date": "2026-06-10",
         }
         output = render_outliers(result)
         assert "1 outlier" in output

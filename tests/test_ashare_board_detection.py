@@ -163,9 +163,7 @@ def test_baostock_data_source_uses_qfq_adjustflag(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, "baostock", fake_bs)
 
     ashare_data_sources.BaoStockDataSource.get_prices("000001", "2026-04-01", "2026-04-02")
-    assert captured.get("adjustflag") == "2", (
-        f"NS-9: BaoStock adjustflag must be '2' (qfq), got {captured.get('adjustflag')!r}"
-    )
+    assert captured.get("adjustflag") == "2", f"NS-9: BaoStock adjustflag must be '2' (qfq), got {captured.get('adjustflag')!r}"
 
 
 def test_daily_pipeline_price_lookup_routes_beijing_92_to_bj() -> None:

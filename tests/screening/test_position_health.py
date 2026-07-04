@@ -147,9 +147,14 @@ class TestRenderPositionHealth:
             trade_date="2026-01-01",
             items=[
                 PositionHealth(
-                    ticker="000001", name="A", composite_score=0.5,
-                    momentum_bonus=0.12, trend_resonance_factor=-0.08, volume_factor=0.0,
-                    action="HOLD", reason="ok",
+                    ticker="000001",
+                    name="A",
+                    composite_score=0.5,
+                    momentum_bonus=0.12,
+                    trend_resonance_factor=-0.08,
+                    volume_factor=0.0,
+                    action="HOLD",
+                    reason="ok",
                 ),
             ],
         )
@@ -198,9 +203,7 @@ class TestComputePositionHealth:
                 {"ticker": "000001", "name": "平安", "score_b": 0.5},
             ],
         }
-        (tmp_path / "auto_screening_20260102.json").write_text(
-            json.dumps(report), encoding="utf-8"
-        )
+        (tmp_path / "auto_screening_20260102.json").write_text(json.dumps(report), encoding="utf-8")
 
     def test_silent_compute_failure_logs_warning(self, tmp_path, monkeypatch, caplog) -> None:
         """R89 BH-017 silent-crash residue: if compute_composite_scores_for_recommendations
@@ -257,7 +260,8 @@ class TestComputePositionHealth:
         self._seed_report(tmp_path)
         # All compute functions succeed (return empty reports — no exception)
         monkeypatch.setattr(
-            ph_mod, "compute_composite_scores_for_recommendations",
+            ph_mod,
+            "compute_composite_scores_for_recommendations",
             lambda **k: type("R", (), {"items": []})(),
         )
 
@@ -285,11 +289,7 @@ class TestComputePositionHealth:
         report = compute_position_health(tickers=["000001"], reports_dir=tmp_path)
         assert len(report.items) == 1
         item = report.items[0]
-        assert item.action != "SELL", (
-            f"composite-unavailable must not emit SELL (got {item.action!r} from "
-            f"fallback composite_score={item.composite_score}); a failed score is "
-            f"not a sell signal on a real-money surface"
-        )
+        assert item.action != "SELL", f"composite-unavailable must not emit SELL (got {item.action!r} from " f"fallback composite_score={item.composite_score}); a failed score is " f"not a sell signal on a real-money surface"
         assert item.action == "HOLD"
 
     def test_partial_composite_miss_does_not_emit_false_sell(self, tmp_path, monkeypatch) -> None:
@@ -304,7 +304,8 @@ class TestComputePositionHealth:
 
         # Composite scorer succeeds but returns NO items → 000001 is comp=None
         monkeypatch.setattr(
-            ph_mod, "compute_composite_scores_for_recommendations",
+            ph_mod,
+            "compute_composite_scores_for_recommendations",
             lambda **k: type("R", (), {"items": []})(),
         )
 

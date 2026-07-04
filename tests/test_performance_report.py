@@ -290,7 +290,7 @@ def test_trade_aggregation_break_even_pnl_does_not_fall_back_to_return_pct():
     """
     trades = [
         {"pnl": 0.05, "return_pct": 999.0},  # win (return_pct ignored)
-        {"pnl": 0.0, "return_pct": -0.99},   # break-even, NOT a loss
+        {"pnl": 0.0, "return_pct": -0.99},  # break-even, NOT a loss
     ]
     stats = _aggregate_trades(trades)
     assert stats["win_count"] == 1
@@ -366,10 +366,7 @@ def test_strategy_attribution_from_positions_break_even_zero_pnl():
     assert _resolve_position_pnl({"daily_pnl": 0.0, "return_pct": 1.5}) == 0.0
     # Via strategy aggregation fallback
     attr = _aggregate_strategy_attribution([], positions_history)
-    assert attr["momentum"] == 0.0, (
-        f"break-even daily_pnl=0 misclassified as {attr['momentum']} "
-        f"(or-short-circuit pulled return_pct) — same falsy-trap as _resolve_trade_pnl"
-    )
+    assert attr["momentum"] == 0.0, f"break-even daily_pnl=0 misclassified as {attr['momentum']} " f"(or-short-circuit pulled return_pct) — same falsy-trap as _resolve_trade_pnl"
 
 
 # ---------------------------------------------------------------------------
@@ -615,13 +612,9 @@ def test_period_dates_weekly_anchored_to_data_when_end_date_none():
         end_date=None,  # data-anchored: must resolve to latest snapshot/trade date
     )
     # end_date must be the latest available data date (2026-02-28), not today (2026-06-17).
-    assert report.end_date == "20260228", (
-        f"BH-032: end_date should anchor to latest data date (20260228), got {report.end_date}"
-    )
+    assert report.end_date == "20260228", f"BH-032: end_date should anchor to latest data date (20260228), got {report.end_date}"
     # start_date = end_date - 7 days (weekly).
-    assert report.start_date == "20260221", (
-        f"BH-032: start_date should be end_date - 7d (20260221), got {report.start_date}"
-    )
+    assert report.start_date == "20260221", f"BH-032: start_date should be end_date - 7d (20260221), got {report.start_date}"
 
 
 def test_period_dates_explicit_end_date_still_wins():
@@ -639,7 +632,6 @@ def test_period_dates_explicit_end_date_still_wins():
     )
     assert report.end_date == "20260315"
     assert report.start_date == "20260308"
-
 
 
 def test_volatility():

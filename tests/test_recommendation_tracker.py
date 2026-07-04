@@ -68,8 +68,10 @@ def _mock_fetcher_map(
     mapping: dict[str, list[tuple[str, float]]],
 ):
     """根据 mapping 构造 fetcher 函数。"""
+
     def fetcher(ticker: str, start_date: str, end_date: str):
         return _make_price_series(ticker, mapping.get(ticker, []))
+
     return fetcher
 
 
@@ -224,9 +226,13 @@ def test_update_tracking_history_rerun_does_not_clobber_realized_return(tmp_path
     pool. The fix merges (adopt only non-None fetched values)."""
 
     # Seed a recommendation old enough to clear the 6-day maturity gate.
-    _make_report(tmp_path, "20260520", [
-        {"ticker": "000001", "name": "A", "score_b": 0.5, "close": 10.0},
-    ])
+    _make_report(
+        tmp_path,
+        "20260520",
+        [
+            {"ticker": "000001", "name": "A", "score_b": 0.5, "close": 10.0},
+        ],
+    )
     # Phase 1 reads the trade_date report; an empty one triggers Phase 2 backfill
     # of the 20260520 record already in history.
     _make_report(tmp_path, "20260601", [])
@@ -274,15 +280,27 @@ def test_update_tracking_history_rerun_does_not_clobber_realized_return(tmp_path
 
 def test_update_tracking_history_merges_multi_day_recommendations(tmp_path: Path):
     """多日报告推荐同一 ticker, 历史应保留两条 (不同 recommended_date)。"""
-    _make_report(tmp_path, "20260605", [
-        {"ticker": "000001", "name": "A", "score_b": 0.5, "close": 10.0},
-    ])
-    _make_report(tmp_path, "20260606", [
-        {"ticker": "000001", "name": "A", "score_b": 0.6, "close": 11.0},
-    ])
-    _make_report(tmp_path, "20260607", [
-        {"ticker": "000002", "name": "B", "score_b": 0.4, "close": 20.0},
-    ])
+    _make_report(
+        tmp_path,
+        "20260605",
+        [
+            {"ticker": "000001", "name": "A", "score_b": 0.5, "close": 10.0},
+        ],
+    )
+    _make_report(
+        tmp_path,
+        "20260606",
+        [
+            {"ticker": "000001", "name": "A", "score_b": 0.6, "close": 11.0},
+        ],
+    )
+    _make_report(
+        tmp_path,
+        "20260607",
+        [
+            {"ticker": "000002", "name": "B", "score_b": 0.4, "close": 20.0},
+        ],
+    )
 
     update_tracking_history(tmp_path, "20260605")
     update_tracking_history(tmp_path, "20260606")
@@ -298,9 +316,13 @@ def test_update_tracking_history_merges_multi_day_recommendations(tmp_path: Path
 
 def test_update_tracking_history_fills_pending_returns(tmp_path: Path):
     """当历史中存在 < 6 天的 pending 记录, 不会尝试拉取收益。"""
-    _make_report(tmp_path, "20260607", [
-        {"ticker": "000001", "name": "A", "score_b": 0.5, "close": 10.0},
-    ])
+    _make_report(
+        tmp_path,
+        "20260607",
+        [
+            {"ticker": "000001", "name": "A", "score_b": 0.5, "close": 10.0},
+        ],
+    )
     update_tracking_history(tmp_path, "20260607")
     history = _load_history(tmp_path / HISTORY_FILENAME)
     assert history[0]["tracking_status"] == "pending"
@@ -310,9 +332,13 @@ def test_update_tracking_history_fills_pending_returns(tmp_path: Path):
 def test_update_tracking_history_queries_returns_when_due(tmp_path: Path):
     """6+ 天前的 pending 记录会被查询, 有 T+5 后标记 partial (非 complete)。"""
     # Phase 1: 注册 6+ 天前的推荐
-    _make_report(tmp_path, "20260601", [
-        {"ticker": "000001", "name": "A", "score_b": 0.5, "close": 10.0},
-    ])
+    _make_report(
+        tmp_path,
+        "20260601",
+        [
+            {"ticker": "000001", "name": "A", "score_b": 0.5, "close": 10.0},
+        ],
+    )
     update_tracking_history(tmp_path, "20260601")
     # Phase 2: 当下日期 6+ 天后, 触发收益拉取
     mapping = {
@@ -408,9 +434,13 @@ def test_update_tracking_history_handles_corrupted_history(tmp_path: Path):
     """历史文件损坏时, update 仍能正常处理当日新推荐。"""
     history_path = tmp_path / HISTORY_FILENAME
     history_path.write_text("CORRUPTED", encoding="utf-8")
-    _make_report(tmp_path, "20260607", [
-        {"ticker": "000001", "name": "A", "score_b": 0.5, "close": 10.0},
-    ])
+    _make_report(
+        tmp_path,
+        "20260607",
+        [
+            {"ticker": "000001", "name": "A", "score_b": 0.5, "close": 10.0},
+        ],
+    )
     n = update_tracking_history(tmp_path, "20260607")
     assert n == 1
     history = _load_history(history_path)
@@ -667,9 +697,9 @@ def test_extract_sorted_closes_filters_and_sorts():
         {"time": "2026-06-09", "close": 11.0},  # later
         {"time": "2026-06-07", "close": 10.0},  # base
         {"time": "2026-06-08", "close": 10.5},
-        {"time": "invalid", "close": 99.0},     # invalid
-        {"time": "2026-06-08", "close": 0.0},   # zero close — filtered
-        {"time": "2026-06-06", "close": 9.0},   # before base — filtered
+        {"time": "invalid", "close": 99.0},  # invalid
+        {"time": "2026-06-08", "close": 0.0},  # zero close — filtered
+        {"time": "2026-06-06", "close": 9.0},  # before base — filtered
     ]
     closes = _extract_sorted_closes(raw, base_date="20260607")
     assert [c[0] for c in closes] == ["20260607", "20260608", "20260609"]
@@ -709,6 +739,7 @@ def test_default_horizons_constant():
 def test_uses_injected_fetcher_for_actual_returns(tmp_path: Path):
     """验证 use_data_fetcher 被实际调用, 默认 fetcher 不被触发。"""
     call_log: list[tuple[str, str, str]] = []
+
     def fake_fetcher(ticker, start, end):
         call_log.append((ticker, start, end))
         if ticker == "000010":
@@ -717,6 +748,7 @@ def test_uses_injected_fetcher_for_actual_returns(tmp_path: Path):
                 {"time": "2026-06-08", "close": 5.5},
             ]
         return []
+
     with patch(
         "src.screening.recommendation_tracker._default_price_fetcher",
         side_effect=AssertionError("默认 fetcher 不应被调用"),
@@ -771,7 +803,9 @@ def test_default_price_fetcher_prefers_akshare_when_available(monkeypatch) -> No
     from src.screening import recommendation_tracker as rt
 
     class _P:
-        def __init__(self, t, c): self.time = t; self.close = c
+        def __init__(self, t, c):
+            self.time = t
+            self.close = c
 
     monkeypatch.setattr(
         "src.tools.akshare_api.get_prices",
@@ -794,9 +828,7 @@ class TestUpdateTrackingHistoryFileLock:
     本锁守 tracking_history 文件本身 (文件级纵深, 不依赖 caller 协调)。
     """
 
-    def test_update_tracking_history_holds_exclusive_lock_during_write(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    def test_update_tracking_history_holds_exclusive_lock_during_write(self, tmp_path: Path, monkeypatch) -> None:
         """在 _save_history 执行瞬间, 另一个对同锁文件的 LOCK_EX|LOCK_NB 获取必须失败
         (证明 update_tracking_history 持有排他锁)。"""
         import fcntl as _fcntl
@@ -807,9 +839,7 @@ class TestUpdateTrackingHistoryFileLock:
         reports_dir.mkdir()
         # 准备一份当日报告让 Phase 1 能读到 recommendations
         (reports_dir / "auto_screening_20260702.json").write_text(
-            json.dumps({"date": "2026-07-02", "recommendations": [
-                {"ticker": "000001", "score_b": 0.5, "recommended_price": 10.0}
-            ]}),
+            json.dumps({"date": "2026-07-02", "recommendations": [{"ticker": "000001", "score_b": 0.5, "recommended_price": 10.0}]}),
             encoding="utf-8",
         )
 
@@ -824,7 +854,7 @@ class TestUpdateTrackingHistoryFileLock:
                 fd = os.open(lock_path, os.O_RDWR)
                 try:
                     _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
-                    lock_probe_results.append(True)   # 获取成功 = 锁没被持有
+                    lock_probe_results.append(True)  # 获取成功 = 锁没被持有
                 except (BlockingIOError, OSError):
                     lock_probe_results.append(False)  # 获取失败 = 锁被持有 (期望)
                 finally:
@@ -836,10 +866,7 @@ class TestUpdateTrackingHistoryFileLock:
 
         update_tracking_history(reports_dir=reports_dir, trade_date="20260702")
 
-        assert lock_probe_results == [False], (
-            "update_tracking_history 必须在 _save_history 期间持有 tracking_history 排他锁 "
-            "(防止并发 lost-update); probe 应被拒绝"
-        )
+        assert lock_probe_results == [False], "update_tracking_history 必须在 _save_history 期间持有 tracking_history 排他锁 " "(防止并发 lost-update); probe 应被拒绝"
 
     def test_update_tracking_history_releases_lock_after_write(self, tmp_path: Path) -> None:
         """update_tracking_history 返回后锁必须释放 (后续 caller 能获取)。"""
@@ -850,13 +877,12 @@ class TestUpdateTrackingHistoryFileLock:
         reports_dir = tmp_path / "reports"
         reports_dir.mkdir()
         (reports_dir / "auto_screening_20260702.json").write_text(
-            json.dumps({"date": "2026-07-02", "recommendations": [
-                {"ticker": "000001", "score_b": 0.5, "recommended_price": 10.0}
-            ]}),
+            json.dumps({"date": "2026-07-02", "recommendations": [{"ticker": "000001", "score_b": 0.5, "recommended_price": 10.0}]}),
             encoding="utf-8",
         )
         monkeypatch_setattr = None
         from unittest.mock import patch as _patch
+
         with _patch.object(rt, "fetch_actual_returns", return_value={}):
             update_tracking_history(reports_dir=reports_dir, trade_date="20260702")
 

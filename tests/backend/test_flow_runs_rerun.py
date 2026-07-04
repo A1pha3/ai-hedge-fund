@@ -5,6 +5,7 @@ Three test cases:
 2. Rerun of a flow run with no request_data returns 400.
 3. Rerun of a non-existent run returns 404.
 """
+
 from unittest.mock import MagicMock, patch
 
 from fastapi import FastAPI
@@ -214,18 +215,11 @@ def test_rerun_discloses_source_run_age():
         assert response.status_code == 200
         # The source-run created_at must be disclosed so the operator can see
         # WHEN the re-run parameters were originally captured.
-        assert "X-Rerun-Source-Run-Created-At" in response.headers, (
-            "rerun must disclose X-Rerun-Source-Run-Created-At — re-executing a "
-            "historical run's params on current market data without an age label "
-            "is the NS-5 staleness disease class on a money-acting surface (c294)"
-        )
+        assert "X-Rerun-Source-Run-Created-At" in response.headers, "rerun must disclose X-Rerun-Source-Run-Created-At — re-executing a " "historical run's params on current market data without an age label " "is the NS-5 staleness disease class on a money-acting surface (c294)"
         # The age in days must be disclosed and reflect the 30-day-old source.
         assert "X-Rerun-Source-Run-Age-Days" in response.headers
         age_days = int(response.headers["X-Rerun-Source-Run-Age-Days"])
-        assert age_days >= 29, (
-            f"X-Rerun-Source-Run-Age-Days should be ~30 for a 30-day-old source "
-            f"run, got {age_days}"
-        )
+        assert age_days >= 29, f"X-Rerun-Source-Run-Age-Days should be ~30 for a 30-day-old source " f"run, got {age_days}"
 
     finally:
         Base.metadata.drop_all(bind=engine)

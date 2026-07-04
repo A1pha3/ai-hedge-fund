@@ -40,9 +40,7 @@ class TestAshareDataSourcesModuleLogger:
 
     def test_module_logger_exists(self) -> None:
         """模块必须有 logger (此前无 logging, 7 处 print 不入结构化日志)。"""
-        assert hasattr(ashare_data_sources, "logger"), (
-            "ashare_data_sources 必须有 module logger (NS-17 / BH-017 family 可观测性要求)"
-        )
+        assert hasattr(ashare_data_sources, "logger"), "ashare_data_sources 必须有 module logger (NS-17 / BH-017 family 可观测性要求)"
         assert isinstance(ashare_data_sources.logger, logging.Logger)
         assert ashare_data_sources.logger.name == "src.tools.ashare_data_sources"
 
@@ -51,15 +49,8 @@ class TestAshareDataSourcesModuleLogger:
         import inspect
 
         source = inspect.getsource(ashare_data_sources)
-        code_lines = [
-            line
-            for line in source.splitlines()
-            if line.lstrip().startswith("print(")
-            and not line.lstrip().startswith("#")
-        ]
-        assert not code_lines, (
-            f"ashare_data_sources 不应再有裸 print() 调用, 发现: {code_lines}"
-        )
+        code_lines = [line for line in source.splitlines() if line.lstrip().startswith("print(") and not line.lstrip().startswith("#")]
+        assert not code_lines, f"ashare_data_sources 不应再有裸 print() 调用, 发现: {code_lines}"
 
 
 class TestTushareInitFailureObservability:
@@ -82,9 +73,7 @@ class TestTushareInitFailureObservability:
             result = ashare_data_sources.TushareDataSource._init_tushare()
 
         assert result is False
-        assert any(
-            "TUSHARE_TOKEN" in record.getMessage() for record in caplog.records
-        ), "TUSHARE_TOKEN 缺失必须发 logger.warning"
+        assert any("TUSHARE_TOKEN" in record.getMessage() for record in caplog.records), "TUSHARE_TOKEN 缺失必须发 logger.warning"
 
     def test_tushare_init_exception_emits_warning(self, caplog, monkeypatch) -> None:
         """tushare.set_token / pro_api 抛异常时必须发 warning (含异常信息)。"""
@@ -109,10 +98,7 @@ class TestTushareInitFailureObservability:
             result = ashare_data_sources.TushareDataSource._init_tushare()
 
         assert result is False
-        assert any(
-            "Tushare" in record.getMessage() and record.levelno == logging.WARNING
-            for record in caplog.records
-        ), "Tushare 初始化异常必须发 logger.warning"
+        assert any("Tushare" in record.getMessage() and record.levelno == logging.WARNING for record in caplog.records), "Tushare 初始化异常必须发 logger.warning"
 
 
 class TestBaostockInitObservability:
@@ -143,10 +129,7 @@ class TestBaostockInitObservability:
 
         assert result is True  # 契约: 始终返回 True, caller 看 available
         assert ashare_data_sources.BaoStockDataSource.available is False
-        assert any(
-            "baostock" in record.getMessage() and record.levelno == logging.WARNING
-            for record in caplog.records
-        ), "baostock 模块缺失必须发 logger.warning (此前完全静默)"
+        assert any("baostock" in record.getMessage() and record.levelno == logging.WARNING for record in caplog.records), "baostock 模块缺失必须发 logger.warning (此前完全静默)"
 
 
 class TestMultiSourceFallbackObservability:
@@ -183,10 +166,7 @@ class TestMultiSourceFallbackObservability:
 
         # 回退到第二个 source 成功
         assert len(prices) == 1
-        assert any(
-            "boom-test" in record.getMessage() and record.levelno == logging.WARNING
-            for record in caplog.records
-        ), "失败 source 必须发 logger.warning 含 source 名"
+        assert any("boom-test" in record.getMessage() and record.levelno == logging.WARNING for record in caplog.records), "失败 source 必须发 logger.warning 含 source 名"
 
     def test_source_attempt_emits_debug(self, caplog, monkeypatch) -> None:
         """每个 source 的尝试 (debug) 与成功 (info) 用结构化日志, 不再 print。"""
@@ -208,6 +188,4 @@ class TestMultiSourceFallbackObservability:
         assert len(prices) == 1
         # 至少有一条 debug (尝试) 或 info (成功) 记录, 证明不再静默
         messages = [record.getMessage() for record in caplog.records]
-        assert any("ok-debug-test" in m for m in messages), (
-            "source 尝试/成功必须发结构化日志 (debug/info), 不再 print"
-        )
+        assert any("ok-debug-test" in m for m in messages), "source 尝试/成功必须发结构化日志 (debug/info), 不再 print"

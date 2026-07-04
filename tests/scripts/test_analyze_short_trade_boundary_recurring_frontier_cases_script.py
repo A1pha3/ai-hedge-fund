@@ -114,7 +114,7 @@ def test_analyze_short_trade_boundary_recurring_frontier_cases_groups_repeated_t
                         },
                     },
                 },
-            }
+            },
         },
     }
     (day1 / "selection_snapshot.json").write_text(json.dumps(snapshot_day1, ensure_ascii=False) + "\n", encoding="utf-8")

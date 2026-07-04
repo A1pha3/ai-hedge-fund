@@ -28,11 +28,7 @@ class TestParseHedgeFundResponseObservability:
             result = graph.parse_hedge_fund_response("{not valid json")
 
         assert result is None
-        assert any(
-            "JSONDecodeError" in record.getMessage()
-            and "parse_hedge_fund_response" in record.getMessage()
-            for record in caplog.records
-        ), "JSONDecodeError 必须发 logger.warning 含 parse_hedge_fund_response 标记"
+        assert any("JSONDecodeError" in record.getMessage() and "parse_hedge_fund_response" in record.getMessage() for record in caplog.records), "JSONDecodeError 必须发 logger.warning 含 parse_hedge_fund_response 标记"
 
     def test_type_error_logs_warning_and_returns_none(self, caplog) -> None:
         """非字符串输入 (如 int) 必须发 warning + 返回 None。"""
@@ -40,11 +36,7 @@ class TestParseHedgeFundResponseObservability:
             result = graph.parse_hedge_fund_response(42)
 
         assert result is None
-        assert any(
-            "TypeError" in record.getMessage()
-            and "parse_hedge_fund_response" in record.getMessage()
-            for record in caplog.records
-        ), "TypeError 必须发 logger.warning 含 parse_hedge_fund_response 标记"
+        assert any("TypeError" in record.getMessage() and "parse_hedge_fund_response" in record.getMessage() for record in caplog.records), "TypeError 必须发 logger.warning 含 parse_hedge_fund_response 标记"
 
     def test_valid_json_returns_dict_without_warning(self, caplog) -> None:
         """合法 JSON 正常解析, 不发 warning。"""
@@ -52,10 +44,7 @@ class TestParseHedgeFundResponseObservability:
             result = graph.parse_hedge_fund_response('{"action": "buy", "score": 0.85}')
 
         assert result == {"action": "buy", "score": 0.85}
-        assert not any(
-            "parse_hedge_fund_response" in record.getMessage()
-            for record in caplog.records
-        ), "合法 JSON 不应发 warning"
+        assert not any("parse_hedge_fund_response" in record.getMessage() for record in caplog.records), "合法 JSON 不应发 warning"
 
 
 class TestHedgeFundStreamingModuleLogger:
@@ -63,9 +52,7 @@ class TestHedgeFundStreamingModuleLogger:
 
     def test_module_logger_exists(self) -> None:
         """模块必须有 logger (此前无 logging, SSE cancel 用 print 不入 logs)。"""
-        assert hasattr(hedge_fund_streaming, "logger"), (
-            "hedge_fund_streaming 必须有 module logger (NS-17 可观测性要求)"
-        )
+        assert hasattr(hedge_fund_streaming, "logger"), "hedge_fund_streaming 必须有 module logger (NS-17 可观测性要求)"
         assert isinstance(hedge_fund_streaming.logger, logging.Logger)
         assert hedge_fund_streaming.logger.name == "app.backend.routes.hedge_fund_streaming"
 
@@ -75,15 +62,8 @@ class TestHedgeFundStreamingModuleLogger:
 
         source = inspect.getsource(hedge_fund_streaming)
         # 统计非注释行的 print( 调用
-        code_lines = [
-            line
-            for line in source.splitlines()
-            if line.lstrip().startswith(("print(", "                print(", "            print("))
-            and not line.lstrip().startswith("#")
-        ]
-        assert not code_lines, (
-            f"hedge_fund_streaming 不应再有裸 print() 调用, 发现: {code_lines}"
-        )
+        code_lines = [line for line in source.splitlines() if line.lstrip().startswith(("print(", "                print(", "            print(")) and not line.lstrip().startswith("#")]
+        assert not code_lines, f"hedge_fund_streaming 不应再有裸 print() 调用, 发现: {code_lines}"
 
 
 class TestGraphModuleLogger:
@@ -91,9 +71,7 @@ class TestGraphModuleLogger:
 
     def test_module_logger_exists(self) -> None:
         """模块必须有 logger (此前无 logging, parse 失败用 print 不入 logs)。"""
-        assert hasattr(graph, "logger"), (
-            "graph 必须有 module logger (NS-17 可观测性要求)"
-        )
+        assert hasattr(graph, "logger"), "graph 必须有 module logger (NS-17 可观测性要求)"
         assert isinstance(graph.logger, logging.Logger)
         assert graph.logger.name == "app.backend.services.graph"
 
@@ -102,12 +80,5 @@ class TestGraphModuleLogger:
         import inspect
 
         source = inspect.getsource(graph)
-        code_lines = [
-            line
-            for line in source.splitlines()
-            if line.lstrip().startswith("print(")
-            and not line.lstrip().startswith("#")
-        ]
-        assert not code_lines, (
-            f"graph 不应再有裸 print() 调用, 发现: {code_lines}"
-        )
+        code_lines = [line for line in source.splitlines() if line.lstrip().startswith("print(") and not line.lstrip().startswith("#")]
+        assert not code_lines, f"graph 不应再有裸 print() 调用, 发现: {code_lines}"

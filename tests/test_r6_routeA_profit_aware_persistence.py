@@ -28,6 +28,7 @@
 - 不改默认前门行为 (纯诊断字段持久化). 不做 A/B 本身 (那是 route A 数据成熟后的
   下一切片).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -36,7 +37,6 @@ from src.screening.recommendation_tracker import (
     TrackingRecord,
     update_tracking_history,
 )
-
 
 # ---------------------------------------------------------------------------
 # 1. TrackingRecord — profit-aware 字段默认 None (向后兼容)

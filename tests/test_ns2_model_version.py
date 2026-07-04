@@ -27,7 +27,6 @@ from src.screening.recommendation_tracker import (
     update_tracking_history,
 )
 
-
 # ---------------------------------------------------------------------------
 # 1. _compute_model_version — git short sha 或 "unknown" 回退
 # ---------------------------------------------------------------------------
@@ -44,13 +43,12 @@ def test_compute_model_version_is_short_sha_or_unknown():
     """成功时返回 7 位 hex; 失败时返回 'unknown'。绝不抛异常。"""
     version = _compute_model_version()
     # git short sha = 7 位小写 hex; 回退 = "unknown"
-    assert version == "unknown" or re.fullmatch(r"[0-9a-f]{7,40}", version), (
-        f"model_version 必须是 git short sha (hex) 或 'unknown', 实际: {version!r}"
-    )
+    assert version == "unknown" or re.fullmatch(r"[0-9a-f]{7,40}", version), f"model_version 必须是 git short sha (hex) 或 'unknown', 实际: {version!r}"
 
 
 def test_compute_model_version_never_raises(monkeypatch):
     """git subprocess 失败时绝不抛异常阻断主流程。"""
+
     def _raise(*args, **kwargs):
         raise OSError("git not available")
 
@@ -247,9 +245,7 @@ def test_update_tracking_history_persists_model_version(tmp_path: Path):
         history = json.load(f)
 
     for record in history["records"]:
-        assert record["model_version"] == "cafef00", (
-            f"TrackingRecord 缺少或 model_version 不匹配: {record}"
-        )
+        assert record["model_version"] == "cafef00", f"TrackingRecord 缺少或 model_version 不匹配: {record}"
 
 
 def test_update_tracking_history_missing_model_version_defaults_empty(tmp_path: Path):

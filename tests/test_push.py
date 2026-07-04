@@ -275,9 +275,7 @@ def test_send_email_with_pdf_attachment(sample_report: dict[str, Any], email_con
     assert len(msg.get_payload()) >= 2
 
 
-def test_send_email_missing_pdf_attachment_silently_continues(
-    sample_report: dict[str, Any], email_config: PushConfig, tmp_path: Path
-) -> None:
+def test_send_email_missing_pdf_attachment_silently_continues(sample_report: dict[str, Any], email_config: PushConfig, tmp_path: Path) -> None:
     """include_pdf=True 但 PDF 不存在 → 继续发送纯文本 (warn 一次)。"""
     email_config.include_pdf = True
     non_existent = tmp_path / "missing.pdf"
@@ -354,9 +352,7 @@ def test_send_generic_webhook(sample_report: dict[str, Any], webhook_config: Pus
 # ---------------------------------------------------------------------------
 
 
-def test_send_push_retries_3_times_on_failure(
-    sample_report: dict[str, Any], wecom_config: PushConfig
-) -> None:
+def test_send_push_retries_3_times_on_failure(sample_report: dict[str, Any], wecom_config: PushConfig) -> None:
     """HTTP 持续失败 → 重试 3 次后放弃, 不抛异常, 返回 success=False。"""
     call_count = {"n": 0}
 
@@ -376,9 +372,7 @@ def test_send_push_retries_3_times_on_failure(
     assert mock_sleep.call_count == 2  # 重试 3 次, 中间 sleep 2 次
 
 
-def test_send_push_eventually_succeeds_after_retry(
-    sample_report: dict[str, Any], wecom_config: PushConfig
-) -> None:
+def test_send_push_eventually_succeeds_after_retry(sample_report: dict[str, Any], wecom_config: PushConfig) -> None:
     """前 2 次失败, 第 3 次成功 → 返回 success=True, attempts=3。"""
     call_count = {"n": 0}
 
@@ -396,9 +390,7 @@ def test_send_push_eventually_succeeds_after_retry(
     assert call_count["n"] == 3
 
 
-def test_send_push_disabled_config_returns_success_immediately(
-    sample_report: dict[str, Any], wecom_config: PushConfig
-) -> None:
+def test_send_push_disabled_config_returns_success_immediately(sample_report: dict[str, Any], wecom_config: PushConfig) -> None:
     """enabled=False → 视为"未启用", 立即返回 success=True, 不调用 HTTP。"""
     wecom_config.enabled = False
 
@@ -440,9 +432,7 @@ def test_load_push_config_channels_must_be_list(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_send_email_calls_smtp_with_real_attachment(
-    sample_report: dict[str, Any], email_config: PushConfig, tmp_path: Path
-) -> None:
+def test_send_email_calls_smtp_with_real_attachment(sample_report: dict[str, Any], email_config: PushConfig, tmp_path: Path) -> None:
     """SMTP 注入函数接收到包含附件的 MIMEMultipart。"""
     email_config.include_pdf = True
     pdf_path = tmp_path / "report.pdf"

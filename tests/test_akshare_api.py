@@ -754,10 +754,7 @@ def test_get_ashare_company_news_sorts_filters_and_deduplicates(monkeypatch, cap
 
     with caplog.at_level(logging.INFO, logger="src.tools.akshare_api"):
         news = akshare_api.get_ashare_company_news("300438", "2026-03-30", start_date="2026-03-30", limit=5)
-    assert any(
-        "已过滤 1 篇" in r.getMessage() and "300438" in r.getMessage()
-        for r in caplog.records
-    ), "过滤计数必须经 logger.info 可观测"
+    assert any("已过滤 1 篇" in r.getMessage() and "300438" in r.getMessage() for r in caplog.records), "过滤计数必须经 logger.info 可观测"
 
 
 def test_build_prices_from_dataframe_skips_nan_volume_row():

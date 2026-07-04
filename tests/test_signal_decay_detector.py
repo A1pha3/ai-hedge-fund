@@ -33,10 +33,7 @@ def _write_auto_report(
     """写入一个最小可用的 auto_screening_{date}.json 文件。"""
     report_dir.mkdir(parents=True, exist_ok=True)
     if recommendations is None:
-        recommendations = [
-            {"ticker": t, "score_b": score_b, "decision": "watch"}
-            for t in (tickers or [])
-        ]
+        recommendations = [{"ticker": t, "score_b": score_b, "decision": "watch"} for t in (tickers or [])]
     payload = {
         "mode": "auto_screening",
         "date": date_str,
@@ -327,9 +324,9 @@ def test_multiple_tickers_mixed_levels(tmp_path: Path) -> None:
     _write_auto_report(tmp_path, "20260607", recommendations=[{"ticker": "DUMMY", "score_b": 0.5}])
 
     current = [
-        {"ticker": "000001", "score_b": 0.85},   # -15% -> MILD
-        {"ticker": "000002", "score_b": 0.56},   # -30% -> MODERATE
-        {"ticker": "000003", "score_b": 0.20},   # -60% -> SEVERE
+        {"ticker": "000001", "score_b": 0.85},  # -15% -> MILD
+        {"ticker": "000002", "score_b": 0.56},  # -30% -> MODERATE
+        {"ticker": "000003", "score_b": 0.20},  # -60% -> SEVERE
         {"ticker": "NEW_TICKER", "score_b": 0.7},  # first appearance -> NONE
     ]
     result = detect_signal_decay(current, tmp_path, lookback_days=3, end_date="20260607")
@@ -397,19 +394,23 @@ def test_coerce_score_b_variants() -> None:
 
 def test_build_decay_summary_counts(tmp_path: Path) -> None:
     """build_decay_summary 应正确统计各等级数量。"""
-    _write_auto_report(tmp_path, "20260606", recommendations=[
-        {"ticker": "A", "score_b": 1.0},
-        {"ticker": "B", "score_b": 1.0},
-        {"ticker": "C", "score_b": 1.0},
-        {"ticker": "D", "score_b": 1.0},
-    ])
+    _write_auto_report(
+        tmp_path,
+        "20260606",
+        recommendations=[
+            {"ticker": "A", "score_b": 1.0},
+            {"ticker": "B", "score_b": 1.0},
+            {"ticker": "C", "score_b": 1.0},
+            {"ticker": "D", "score_b": 1.0},
+        ],
+    )
     _write_auto_report(tmp_path, "20260607", recommendations=[{"ticker": "DUMMY", "score_b": 0.5}])
 
     current = [
-        {"ticker": "A", "score_b": 0.85},   # -15% -> MILD
-        {"ticker": "B", "score_b": 0.7},    # -30% -> MODERATE
-        {"ticker": "C", "score_b": 0.4},    # -60% -> SEVERE
-        {"ticker": "D", "score_b": 1.1},    # +10% -> NONE
+        {"ticker": "A", "score_b": 0.85},  # -15% -> MILD
+        {"ticker": "B", "score_b": 0.7},  # -30% -> MODERATE
+        {"ticker": "C", "score_b": 0.4},  # -60% -> SEVERE
+        {"ticker": "D", "score_b": 1.1},  # +10% -> NONE
     ]
     decay_map = detect_signal_decay(current, tmp_path, lookback_days=3, end_date="20260607")
     summary = build_decay_summary(decay_map)
@@ -422,10 +423,12 @@ def test_build_decay_summary_counts(tmp_path: Path) -> None:
 
 def test_build_decay_summary_all_none() -> None:
     """全部 NONE 的汇总。"""
-    summary = build_decay_summary({
-        "A": DecayInfo("A", DecayLevel.NONE, 0.5, None, None, 0),
-        "B": DecayInfo("B", DecayLevel.NONE, 0.3, None, None, 0),
-    })
+    summary = build_decay_summary(
+        {
+            "A": DecayInfo("A", DecayLevel.NONE, 0.5, None, None, 0),
+            "B": DecayInfo("B", DecayLevel.NONE, 0.3, None, None, 0),
+        }
+    )
     assert summary == {"none": 2, "mild": 0, "moderate": 0, "severe": 0}
 
 

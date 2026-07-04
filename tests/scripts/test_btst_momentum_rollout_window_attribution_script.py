@@ -310,9 +310,7 @@ def test_main_fails_closed_on_malformed_dossier_blocker_list() -> None:
         ({"blockers": None}, "blockers"),
     ],
 )
-def test_main_fails_closed_when_dossier_family_omits_blockers(
-    family_payload: dict[str, object], expected_message: str
-) -> None:
+def test_main_fails_closed_when_dossier_family_omits_blockers(family_payload: dict[str, object], expected_message: str) -> None:
     scratch_dir = _make_scratch_dir("main_fails_closed_when_dossier_family_omits_blockers")
     try:
         rollout_json = scratch_dir / "rollout.json"

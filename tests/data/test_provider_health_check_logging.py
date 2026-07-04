@@ -26,7 +26,6 @@ from unittest.mock import MagicMock, patch
 from src.data.providers.akshare_provider import AKShareProvider
 from src.data.providers.tushare_provider import TushareProvider
 
-
 # ---------------------------------------------------------------------------
 # AKShare provider
 # ---------------------------------------------------------------------------
@@ -52,9 +51,7 @@ def test_akshare_health_check_failure_logs_warning(caplog) -> None:
         "_run_sync",
         side_effect=RuntimeError("simulated akshare outage"),
     ):
-        with caplog.at_level(
-            logging.WARNING, logger="src.data.providers.akshare_provider"
-        ):
+        with caplog.at_level(logging.WARNING, logger="src.data.providers.akshare_provider"):
             import asyncio
 
             ok = asyncio.run(prov.health_check())
@@ -65,9 +62,7 @@ def test_akshare_health_check_failure_logs_warning(caplog) -> None:
 
     # Failure must be logged at WARNING level (not silent)
     warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warning_records) >= 1, (
-        f"expected >=1 WARNING record from akshare health_check failure, got {caplog.records}"
-    )
+    assert len(warning_records) >= 1, f"expected >=1 WARNING record from akshare health_check failure, got {caplog.records}"
     msg = warning_records[0].message
     assert "akshare" in msg.lower() or "health" in msg.lower()
     assert "simulated akshare outage" in msg
@@ -82,9 +77,7 @@ def test_akshare_health_check_no_exc_info_is_fine(caplog) -> None:
         return True
 
     with patch.object(prov, "_run_sync", side_effect=_fake):
-        with caplog.at_level(
-            logging.WARNING, logger="src.data.providers.akshare_provider"
-        ):
+        with caplog.at_level(logging.WARNING, logger="src.data.providers.akshare_provider"):
             import asyncio
 
             ok = asyncio.run(prov.health_check())
@@ -120,9 +113,7 @@ def test_tushare_health_check_failure_logs_warning(caplog) -> None:
         "_run_sync",
         side_effect=RuntimeError("simulated tushare token revoked"),
     ):
-        with caplog.at_level(
-            logging.WARNING, logger="src.data.providers.tushare_provider"
-        ):
+        with caplog.at_level(logging.WARNING, logger="src.data.providers.tushare_provider"):
             import asyncio
 
             ok = asyncio.run(prov.health_check())
@@ -131,9 +122,7 @@ def test_tushare_health_check_failure_logs_warning(caplog) -> None:
     assert prov.health_status == "unhealthy"
 
     warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warning_records) >= 1, (
-        f"expected >=1 WARNING record from tushare health_check failure, got {caplog.records}"
-    )
+    assert len(warning_records) >= 1, f"expected >=1 WARNING record from tushare health_check failure, got {caplog.records}"
     msg = warning_records[0].message
     assert "tushare" in msg.lower() or "health" in msg.lower()
     assert "simulated tushare token revoked" in msg
@@ -190,18 +179,14 @@ def test_tushare_init_non_import_failure_logs_warning(caplog) -> None:
     not installed" (ImportError, silent) from "configured but broken"
     (runtime error, logged)."""
     with patch("builtins.__import__", side_effect=_import_tushare_raising_runtime()):
-        with caplog.at_level(
-            logging.WARNING, logger="src.data.providers.tushare_provider"
-        ):
+        with caplog.at_level(logging.WARNING, logger="src.data.providers.tushare_provider"):
             prov = TushareProvider(token="fake-token")
 
     assert prov.health_status == "unhealthy"
     assert prov._pro is None
 
     warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warning_records) >= 1, (
-        f"expected >=1 WARNING record from tushare init runtime failure, got {caplog.records}"
-    )
+    assert len(warning_records) >= 1, f"expected >=1 WARNING record from tushare init runtime failure, got {caplog.records}"
     msg = warning_records[0].message
     assert "tushare" in msg.lower() or "pro_api" in msg.lower()
     assert "simulated tushare init runtime error" in msg
@@ -210,12 +195,8 @@ def test_tushare_init_non_import_failure_logs_warning(caplog) -> None:
 def test_tushare_init_import_error_stays_silent(caplog) -> None:
     """ImportError (tushare not installed) is an expected dev-box state and
     must NOT emit a WARNING — only runtime/init failures are surfaced."""
-    with patch(
-        "builtins.__import__", side_effect=_import_tushare_raising_import_error()
-    ):
-        with caplog.at_level(
-            logging.WARNING, logger="src.data.providers.tushare_provider"
-        ):
+    with patch("builtins.__import__", side_effect=_import_tushare_raising_import_error()):
+        with caplog.at_level(logging.WARNING, logger="src.data.providers.tushare_provider"):
             prov = TushareProvider(token="fake-token")
 
     assert prov.health_status == "unhealthy"
@@ -313,9 +294,7 @@ def test_tushare_get_prices_adj_factor_failure_logs_warning_and_degrades(
         raise RuntimeError("simulated adj_factor outage")
 
     with patch.object(prov, "_run_sync", side_effect=_fake_run_sync):
-        with caplog.at_level(
-            logging.WARNING, logger="src.data.providers.tushare_provider"
-        ):
+        with caplog.at_level(logging.WARNING, logger="src.data.providers.tushare_provider"):
             resp = asyncio.run(prov.get_prices("600519", "2024-01-01", "2024-01-03"))
 
     # Degrade-but-don't-block contract preserved: prices still returned.
@@ -324,9 +303,7 @@ def test_tushare_get_prices_adj_factor_failure_logs_warning_and_degrades(
     assert resp.error is None
 
     warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warning_records) >= 1, (
-        f"expected >=1 WARNING record from adj_factor fetch failure, got {caplog.records}"
-    )
+    assert len(warning_records) >= 1, f"expected >=1 WARNING record from adj_factor fetch failure, got {caplog.records}"
     msg = warning_records[0].message
     assert "adj_factor" in msg
     assert "600519.SH" in msg or "600519" in msg

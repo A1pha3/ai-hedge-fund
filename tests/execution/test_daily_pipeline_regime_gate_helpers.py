@@ -154,9 +154,7 @@ def test_build_downstream_payload_includes_gate_in_shadow_mode(
     monkeypatch.setenv(BTST_0422_P1_REGIME_GATE_MODE_ENV, "shadow")
     import src.screening.market_state_helpers as msh
 
-    monkeypatch.setattr(
-        msh, "classify_btst_regime_gate_from_market_state", lambda ms: {"gate": "halt"}
-    )
+    monkeypatch.setattr(msh, "classify_btst_regime_gate_from_market_state", lambda ms: {"gate": "halt"})
     payload = build_downstream_target_market_state_payload(_market_state())
     assert payload["btst_regime_gate"]["gate"] == "halt"
 
@@ -316,9 +314,7 @@ def test_enforce_p2_blocked_gate_preserves_shadow_promoted_orders(
     def _promo(*, evaluation, short_trade_result=None, gate=None):
         return {"eligible": evaluation.ticker == "000001"}
 
-    monkeypatch.setattr(
-        "src.execution.daily_pipeline_regime_gate_helpers.resolve_btst_shadow_promotion_payload", _promo
-    )
+    monkeypatch.setattr("src.execution.daily_pipeline_regime_gate_helpers.resolve_btst_shadow_promotion_payload", _promo)
     from src.portfolio.models import PositionPlan
     from src.targets.models import DualTargetEvaluation
 

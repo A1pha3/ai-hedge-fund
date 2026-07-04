@@ -125,6 +125,7 @@ def test_attribution_get_returns_400_on_non_numeric_benchmark_returns():
 # Fix 2: replay_artifacts.py unprotected endpoints -> try/except + 500
 # ===========================================================================
 
+
 def test_list_replay_artifacts_returns_500_on_service_failure(monkeypatch):
     """GET /replay-artifacts/ returns 500 when service.list_replays() raises."""
     from app.backend.routes.replay_artifacts import router
@@ -186,6 +187,7 @@ def test_get_replay_workflow_queue_returns_500_on_service_failure(monkeypatch):
 # Fix 3: language_models.py ollama isolation -> cloud models still return
 # ===========================================================================
 
+
 def test_language_models_returns_cloud_models_when_ollama_fails(monkeypatch):
     """GET /language-models/ returns cloud models even if ollama fails."""
     from app.backend.routes import language_models as lm_module
@@ -223,6 +225,7 @@ def test_language_models_returns_cloud_models_when_ollama_fails(monkeypatch):
 # ===========================================================================
 # Fix 4: api.py _make_api_request timeout=30
 # ===========================================================================
+
 
 def test_make_api_request_passes_timeout(monkeypatch):
     """_make_api_request passes timeout to requests.get."""
@@ -262,11 +265,13 @@ def test_make_api_request_default_timeout_is_30(monkeypatch):
 # Fix 5: llm_metrics.py _collect_metrics TTL cache
 # ===========================================================================
 
+
 def test_collect_metrics_caches_result_within_ttl(tmp_path, monkeypatch):
     """_collect_metrics returns cached result within TTL without re-reading files."""
     # Reset module-level cache state
     import app.backend.routes.llm_metrics as lm_mod
     from app.backend.routes.llm_metrics import _collect_metrics, _METRICS_CACHE_TTL
+
     lm_mod._metrics_cache = {}
     lm_mod._metrics_cache_ts = 0.0
 
@@ -284,16 +289,18 @@ def test_collect_metrics_caches_result_within_ttl(tmp_path, monkeypatch):
     # Write one entry
     jsonl = tmp_path / file_name
     jsonl.write_text(
-        json.dumps({
-            "timestamp": entry_ts,
-            "agent_name": "test_agent",
-            "model_provider": "Test",
-            "model_name": "test-model",
-            "success": True,
-            "duration_ms": 100.0,
-            "prompt_chars": 50,
-            "response_chars": 10,
-        })
+        json.dumps(
+            {
+                "timestamp": entry_ts,
+                "agent_name": "test_agent",
+                "model_provider": "Test",
+                "model_name": "test-model",
+                "success": True,
+                "duration_ms": 100.0,
+                "prompt_chars": 50,
+                "response_chars": 10,
+            }
+        )
         + "\n",
         encoding="utf-8",
     )
@@ -315,6 +322,7 @@ def test_collect_metrics_caches_result_within_ttl(tmp_path, monkeypatch):
 # ===========================================================================
 # Fix 6: graph/state.py show_agent_reasoning TypeError catch
 # ===========================================================================
+
 
 def test_show_agent_reasoning_handles_none_output(capsys):
     """show_agent_reasoning does not crash when output=None."""
@@ -352,6 +360,7 @@ def test_show_agent_reasoning_handles_non_json_string(capsys):
 # New finding A: data_sources.py had no error handling
 # ===========================================================================
 
+
 def test_data_sources_health_returns_500_on_monitor_failure(monkeypatch):
     """GET /data-sources/health returns 500 when get_health_monitor() fails."""
     import app.backend.routes.data_sources as ds_module
@@ -374,6 +383,7 @@ def test_data_sources_health_returns_500_on_monitor_failure(monkeypatch):
 # ===========================================================================
 # New finding B: cache.py had no error handling
 # ===========================================================================
+
 
 def test_cache_stats_returns_500_on_cache_failure(monkeypatch):
     """GET /cache/stats returns 500 when get_cache_runtime_info() fails."""

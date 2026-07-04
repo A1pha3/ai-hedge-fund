@@ -453,11 +453,13 @@ class TestExtractLatestPMIEdgeCases:
         mock_pro = MagicMock()
         mock_get_pro.return_value = mock_pro
 
-        pmi_df = pd.DataFrame({
-            "month": ["202605", "202604"],
-            "pmi_make": [50.8, 49.5],
-            "pmi_service": [53.2, 52.1],
-        })
+        pmi_df = pd.DataFrame(
+            {
+                "month": ["202605", "202604"],
+                "pmi_make": [50.8, 49.5],
+                "pmi_service": [53.2, 52.1],
+            }
+        )
 
         def mock_cached_call(pro, api_name, **kwargs):
             if api_name == "cn_pmi":
@@ -495,10 +497,12 @@ class TestFetchMacroSnapshotAsOf:
         mock_pro = MagicMock()
         mock_get_pro.return_value = mock_pro
 
-        cpi_df = pd.DataFrame({
-            "month": ["202603", "202604", "202605"],
-            "nt_yoy": [1.5, 2.1, 3.0],
-        })
+        cpi_df = pd.DataFrame(
+            {
+                "month": ["202603", "202604", "202605"],
+                "nt_yoy": [1.5, 2.1, 3.0],
+            }
+        )
 
         with patch("src.data.macro_data._cached_tushare_dataframe_call", side_effect=lambda pro, api_name, **kw: cpi_df if api_name == "cn_cpi" else None):
             snap = fetch_macro_snapshot(as_of="2026-04-15")
@@ -516,10 +520,12 @@ class TestFetchMacroSnapshotAsOf:
         mock_pro = MagicMock()
         mock_get_pro.return_value = mock_pro
 
-        cpi_df = pd.DataFrame({
-            "month": ["202603", "202604", "202605"],
-            "nt_yoy": [1.5, 2.1, 3.0],
-        })
+        cpi_df = pd.DataFrame(
+            {
+                "month": ["202603", "202604", "202605"],
+                "nt_yoy": [1.5, 2.1, 3.0],
+            }
+        )
 
         with patch("src.data.macro_data._cached_tushare_dataframe_call", side_effect=lambda pro, api_name, **kw: cpi_df if api_name == "cn_cpi" else None):
             snap = fetch_macro_snapshot()

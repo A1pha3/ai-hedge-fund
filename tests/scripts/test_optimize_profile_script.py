@@ -1265,9 +1265,7 @@ def test_staged_ignition_evaluator_injects_required_fields(monkeypatch: pytest.M
     assert "source_coverage_pass_ratio" in metrics
 
 
-def test_staged_ignition_evaluator_guardrail_passes_when_candidate_beats_baselines(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_staged_ignition_evaluator_guardrail_passes_when_candidate_beats_baselines(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     fake_module = _make_fake_replay_module_for_staged(
         ignition_win_rate=0.60,
         ignition_expectancy=0.010,
@@ -1286,9 +1284,7 @@ def test_staged_ignition_evaluator_guardrail_passes_when_candidate_beats_baselin
     assert metrics["baseline_next_close_positive_rate_delta"] is not None
 
 
-def test_staged_ignition_evaluator_guardrail_fails_when_candidate_below_baselines(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_staged_ignition_evaluator_guardrail_fails_when_candidate_below_baselines(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # Candidate win_rate (0.45) is clearly below both ignition (0.68) and default (0.65) baselines
     fake_module = _make_fake_replay_module_for_staged(
         ignition_win_rate=0.68,
@@ -1311,9 +1307,7 @@ def test_staged_ignition_evaluator_guardrail_fails_when_candidate_below_baseline
     assert float(metrics["baseline_next_close_positive_rate_delta"]) < -0.1
 
 
-def test_staged_ignition_evaluator_guardrail_fails_when_source_coverage_too_low(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_staged_ignition_evaluator_guardrail_fails_when_source_coverage_too_low(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # Candidate metrics are fine on win_rate/expectancy but source coverage is all proxy (no exact_tick)
     low_coverage = {
         "flow_60_source_counts": {"bar_proxy": 6, "daily_flow_proxy": 4},
@@ -1342,9 +1336,7 @@ def test_staged_ignition_evaluator_guardrail_fails_when_source_coverage_too_low(
     assert metrics["promotion_guardrail_pass"] is False
 
 
-def test_staged_ignition_evaluator_source_coverage_ratio_from_replay(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_staged_ignition_evaluator_source_coverage_ratio_from_replay(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     fake_module = _make_fake_replay_module_for_staged()
     monkeypatch.setitem(sys.modules, "scripts.btst_profile_replay_utils", fake_module)
 
@@ -1360,9 +1352,7 @@ def test_staged_ignition_evaluator_source_coverage_ratio_from_replay(
     assert metrics["source_coverage_pass_ratio"] == pytest.approx(7.0 / 8.0)
 
 
-def test_staged_ignition_evaluator_guardrail_passes_at_exact_baseline(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_staged_ignition_evaluator_guardrail_passes_at_exact_baseline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Candidate exactly equal to all baselines must pass (no tolerance: >= is strictly non-degrading)."""
     fake_module = _make_fake_replay_module_for_staged(
         ignition_win_rate=0.60,
@@ -1382,9 +1372,7 @@ def test_staged_ignition_evaluator_guardrail_passes_at_exact_baseline(
     assert metrics["promotion_guardrail_pass"] is True
 
 
-def test_staged_ignition_evaluator_guardrail_fails_at_one_tick_below_baseline(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_staged_ignition_evaluator_guardrail_fails_at_one_tick_below_baseline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Candidate fractionally below ignition baseline must fail — no tolerance is allowed."""
     fake_module = _make_fake_replay_module_for_staged(
         ignition_win_rate=0.60,
@@ -1404,9 +1392,7 @@ def test_staged_ignition_evaluator_guardrail_fails_at_one_tick_below_baseline(
     assert metrics["promotion_guardrail_pass"] is False
 
 
-def test_staged_ignition_evaluator_guardrail_fails_when_below_default_only(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_staged_ignition_evaluator_guardrail_fails_when_below_default_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Candidate beats ignition but falls below default win rate — must fail."""
     fake_module = _make_fake_replay_module_for_staged(
         ignition_win_rate=0.55,
@@ -1426,9 +1412,7 @@ def test_staged_ignition_evaluator_guardrail_fails_when_below_default_only(
     assert metrics["promotion_guardrail_pass"] is False
 
 
-def test_staged_ignition_evaluator_raises_when_ignition_baseline_missing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_staged_ignition_evaluator_raises_when_ignition_baseline_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Missing ignition_breakout baseline metrics must raise RuntimeError (fail closed, not pass)."""
     import types as _types
 
@@ -1462,9 +1446,7 @@ def test_staged_ignition_evaluator_raises_when_ignition_baseline_missing(
         _build_staged_ignition_evaluator([input_path], base_profile="ignition_breakout")
 
 
-def test_staged_ignition_evaluator_raises_when_default_baseline_missing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_staged_ignition_evaluator_raises_when_default_baseline_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Missing default profile baseline metrics must raise RuntimeError (fail closed, not pass)."""
     import types as _types
 
@@ -1725,9 +1707,7 @@ def test_format_staged_ignition_summary_overall_verdict_uses_full_results_not_sh
     )
     output = _format_staged_ignition_summary(report)
     # The displayed shortlist (top 5 by score) excludes rank-6; overall verdict must still detect it
-    assert "PROMOTION AVAILABLE" in output, (
-        "Overall verdict must scan full report.results, not only the displayed top-5 shortlist"
-    )
+    assert "PROMOTION AVAILABLE" in output, "Overall verdict must scan full report.results, not only the displayed top-5 shortlist"
 
 
 def test_format_staged_ignition_summary_includes_score_and_delta_context() -> None:
@@ -2537,6 +2517,7 @@ def test_main_writes_rollout_recommendation_to_output_files(monkeypatch: pytest.
         "run_param_search",
         lambda **kwargs: SimpleNamespace(best_params={"select_threshold": 0.50}, best_score=0.42, objective=kwargs["objective"], results=[], completed_trials=1, total_trials=1),
     )
+
     def fake_save_search_report(report: object, output_path: str | None = None) -> Path:
         path = Path(output_path or output_md)
         path.write_text("# Parameter Search Report\n", encoding="utf-8")
@@ -3577,9 +3558,7 @@ def test_low_liquidity_window_reduces_sample_weight(monkeypatch: pytest.MonkeyPa
 
     assert metrics_low["sample_weight"] is not None
     assert metrics_high["sample_weight"] is not None
-    assert metrics_low["sample_weight"] < metrics_high["sample_weight"], (
-        f"Low-liq sample_weight={metrics_low['sample_weight']} should be < high-liq={metrics_high['sample_weight']}"
-    )
+    assert metrics_low["sample_weight"] < metrics_high["sample_weight"], f"Low-liq sample_weight={metrics_low['sample_weight']} should be < high-liq={metrics_high['sample_weight']}"
 
 
 # ---------------------------------------------------------------------------
@@ -3614,9 +3593,7 @@ def test_build_recency_decay_map_respects_half_life_param() -> None:
     dm_short = _build_recency_decay_map(paths, half_life_days=60)
     dm_long = _build_recency_decay_map(paths, half_life_days=180)
     # The oldest window must decay more steeply with the shorter half-life.
-    assert dm_short[old_path_key] < dm_long[old_path_key], (
-        f"short half-life={dm_short[old_path_key]} should be < long half-life={dm_long[old_path_key]}"
-    )
+    assert dm_short[old_path_key] < dm_long[old_path_key], f"short half-life={dm_short[old_path_key]} should be < long half-life={dm_long[old_path_key]}"
     # The newest window always has factor 1.0 regardless of half-life.
     assert dm_short[str(paths[1])] == pytest.approx(1.0)
     assert dm_long[str(paths[1])] == pytest.approx(1.0)
@@ -3663,9 +3640,7 @@ def test_evaluator_uses_recency_half_life_days_param(monkeypatch: pytest.MonkeyP
     assert metrics_short["sample_weight"] is not None
     assert metrics_long["sample_weight"] is not None
     # With two windows (one old, one new), longer half-life must yield equal or higher weight.
-    assert metrics_short["sample_weight"] <= metrics_long["sample_weight"], (
-        f"short={metrics_short['sample_weight']} should be ≤ long={metrics_long['sample_weight']}"
-    )
+    assert metrics_short["sample_weight"] <= metrics_long["sample_weight"], f"short={metrics_short['sample_weight']} should be ≤ long={metrics_long['sample_weight']}"
 
 
 # ---------------------------------------------------------------------------
@@ -3743,13 +3718,13 @@ def test_replay_evaluator_ic_fraction_partial_factors_above_threshold(monkeypatc
     surface = _base_replay_surface()
     # 4 out of 7 factors above threshold
     surface["factor_ic_next_close"] = {
-        "breakout_freshness": 0.05,   # above
-        "trend_acceleration": 0.03,   # above
+        "breakout_freshness": 0.05,  # above
+        "trend_acceleration": 0.03,  # above
         "volume_expansion_quality": -0.01,  # below
-        "catalyst_freshness": 0.04,   # above
-        "close_strength": 0.01,       # below (< 0.02)
-        "volatility_regime": -0.03,   # below
-        "sector_resonance": 0.06,     # above
+        "catalyst_freshness": 0.04,  # above
+        "close_strength": 0.01,  # below (< 0.02)
+        "volatility_regime": -0.03,  # below
+        "sector_resonance": 0.06,  # above
     }
     _make_fake_module_with_surface(surface, monkeypatch)
 
@@ -3891,9 +3866,7 @@ def test_apply_ic_feedback_reduce_drops_top_candidate() -> None:
     original = sorted(float(v) for v in BTST_RUNNER_PROBE_GRID["runner_composite_score_breakout_weight"])
     modified = sorted(float(v) for v in result["runner_composite_score_breakout_weight"])
 
-    assert max(modified) < max(original), (
-        f"'reduce' should drop the top candidate: original={original}, modified={modified}"
-    )
+    assert max(modified) < max(original), f"'reduce' should drop the top candidate: original={original}, modified={modified}"
     assert len(modified) == len(original) - 1
 
 
@@ -3915,9 +3888,7 @@ def test_apply_ic_feedback_increase_adds_one_step_above_max() -> None:
     modified = sorted(float(v) for v in result["runner_composite_score_trend_weight"])
 
     if expected_new_max <= IC_WEIGHT_GRID_MAX_UPPER_BOUND:
-        assert max(modified) == pytest.approx(expected_new_max, abs=1e-6), (
-            f"'increase' should add {expected_new_max} but got max={max(modified)}"
-        )
+        assert max(modified) == pytest.approx(expected_new_max, abs=1e-6), f"'increase' should add {expected_new_max} but got max={max(modified)}"
         assert len(modified) == len(BTST_RUNNER_PROBE_GRID["runner_composite_score_trend_weight"]) + 1
 
 
@@ -3934,9 +3905,7 @@ def test_apply_ic_feedback_maintain_leaves_candidates_unchanged() -> None:
     original = sorted(float(v) for v in BTST_RUNNER_PROBE_GRID["runner_composite_score_volume_weight"])
     modified = sorted(float(v) for v in result["runner_composite_score_volume_weight"])
 
-    assert original == pytest.approx(modified, abs=1e-6), (
-        f"'maintain' should not change candidates: original={original}, modified={modified}"
-    )
+    assert original == pytest.approx(modified, abs=1e-6), f"'maintain' should not change candidates: original={original}, modified={modified}"
 
 
 def test_apply_ic_feedback_unknown_factor_is_ignored() -> None:
@@ -3981,9 +3950,7 @@ def test_apply_ic_feedback_increase_respects_max_upper_bound() -> None:
     result = apply_ic_feedback_to_probe_grid(suggestions, at_ceiling_grid)
 
     modified = sorted(float(v) for v in result["runner_composite_score_breakout_weight"])
-    assert max(modified) <= IC_WEIGHT_GRID_MAX_UPPER_BOUND, (
-        f"'increase' exceeded IC_WEIGHT_GRID_MAX_UPPER_BOUND {IC_WEIGHT_GRID_MAX_UPPER_BOUND}: max={max(modified)}"
-    )
+    assert max(modified) <= IC_WEIGHT_GRID_MAX_UPPER_BOUND, f"'increase' exceeded IC_WEIGHT_GRID_MAX_UPPER_BOUND {IC_WEIGHT_GRID_MAX_UPPER_BOUND}: max={max(modified)}"
 
 
 def test_apply_ic_feedback_does_not_mutate_base_grid() -> None:
@@ -3999,9 +3966,7 @@ def test_apply_ic_feedback_does_not_mutate_base_grid() -> None:
     _ = apply_ic_feedback_to_probe_grid(suggestions, BTST_RUNNER_PROBE_GRID)
 
     # Original grid must be unchanged
-    assert list(BTST_RUNNER_PROBE_GRID["runner_composite_score_breakout_weight"]) == original_breakout, (
-        "apply_ic_feedback_to_probe_grid must not mutate the input grid"
-    )
+    assert list(BTST_RUNNER_PROBE_GRID["runner_composite_score_breakout_weight"]) == original_breakout, "apply_ic_feedback_to_probe_grid must not mutate the input grid"
 
 
 def test_resolve_grid_params_btst_runner_probe_applies_ic_feedback() -> None:
@@ -4021,9 +3986,7 @@ def test_resolve_grid_params_btst_runner_probe_applies_ic_feedback() -> None:
     original_breakout = sorted(float(v) for v in BTST_RUNNER_PROBE_GRID["runner_composite_score_breakout_weight"])
     result_breakout = sorted(float(v) for v in grid["runner_composite_score_breakout_weight"])
 
-    assert max(result_breakout) < max(original_breakout), (
-        f"IC feedback 'reduce' should drop top breakout weight: original={original_breakout}, result={result_breakout}"
-    )
+    assert max(result_breakout) < max(original_breakout), f"IC feedback 'reduce' should drop top breakout weight: original={original_breakout}, result={result_breakout}"
 
 
 def test_resolve_grid_params_btst_runner_probe_no_ic_feedback_unchanged() -> None:
@@ -4037,12 +4000,8 @@ def test_resolve_grid_params_btst_runner_probe_no_ic_feedback_unchanged() -> Non
         ic_weight_suggestions=None,
     )
 
-    assert sorted(grid["runner_composite_score_breakout_weight"]) == sorted(
-        BTST_RUNNER_PROBE_GRID["runner_composite_score_breakout_weight"]
-    ), "Without IC feedback, breakout weight candidates must match the base grid"
-    assert sorted(grid["runner_composite_score_trend_weight"]) == sorted(
-        BTST_RUNNER_PROBE_GRID["runner_composite_score_trend_weight"]
-    ), "Without IC feedback, trend weight candidates must match the base grid"
+    assert sorted(grid["runner_composite_score_breakout_weight"]) == sorted(BTST_RUNNER_PROBE_GRID["runner_composite_score_breakout_weight"]), "Without IC feedback, breakout weight candidates must match the base grid"
+    assert sorted(grid["runner_composite_score_trend_weight"]) == sorted(BTST_RUNNER_PROBE_GRID["runner_composite_score_trend_weight"]), "Without IC feedback, trend weight candidates must match the base grid"
 
 
 def test_resolve_grid_params_non_btst_runner_probe_ignores_ic_feedback() -> None:
@@ -4063,9 +4022,7 @@ def test_resolve_grid_params_non_btst_runner_probe_ignores_ic_feedback() -> None
         ic_weight_suggestions=None,
     )
 
-    assert grid_with == grid_without, (
-        "IC suggestions should have no effect on non-btst_runner_probe profiles"
-    )
+    assert grid_with == grid_without, "IC suggestions should have no effect on non-btst_runner_probe profiles"
 
 
 # ---------------------------------------------------------------------------
@@ -4163,33 +4120,39 @@ def test_r15_all_comparison_metrics_have_labels() -> None:
 # Task 1 (Round 20, Beta): realized_payoff_ratio in COMPARISON_METRICS
 # ---------------------------------------------------------------------------
 
+
 def test_r20_realized_payoff_ratio_in_comparison_metrics() -> None:
     """realized_payoff_ratio must be in COMPARISON_METRICS (Task 1, Round 20)."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "realized_payoff_ratio" in COMPARISON_METRICS
 
 
 def test_r20_realized_payoff_ratio_has_label() -> None:
     """realized_payoff_ratio must have a human-readable label (Task 1, Round 20)."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "realized_payoff_ratio" in COMPARISON_METRIC_LABELS
 
 
 def test_r20_realized_payoff_ratio_is_optional() -> None:
     """realized_payoff_ratio must be optional (pre-Round-20 surfaces lack it) (Task 1, Round 20)."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "realized_payoff_ratio" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r20_realized_payoff_ratio_has_epsilon() -> None:
     """realized_payoff_ratio must have an epsilon in COMPARISON_METRIC_EPSILON (Task 1, Round 20)."""
     from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
+
     assert "realized_payoff_ratio" in COMPARISON_METRIC_EPSILON
 
 
 def test_r20_realized_payoff_ratio_floor_in_btst_quality_floors() -> None:
     """realized_payoff_ratio must have a floor of 1.0 in BTST_QUALITY_FLOORS (Task 1, Round 20)."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "realized_payoff_ratio" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["realized_payoff_ratio"] == pytest.approx(1.0)
 
@@ -4197,7 +4160,23 @@ def test_r20_realized_payoff_ratio_floor_in_btst_quality_floors() -> None:
 def test_r20_realized_payoff_ratio_floor_triggers_blocker() -> None:
     """Floor breach on realized_payoff_ratio must trigger a blocker label (Task 1, Round 20)."""
     from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
-    metrics = {"realized_payoff_ratio": 0.8, "next_close_positive_rate": 0.60, "next_high_hit_rate": 0.62, "t_plus_2_close_positive_rate": 0.55, "t_plus_2_close_payoff_ratio": 1.1, "t_plus_3_close_positive_rate": 0.52, "t_plus_3_close_expectancy": 0.01, "t_plus_3_close_payoff_ratio": 1.05, "downside_p10": -0.04, "sample_weight": 0.80, "window_coverage": 0.80, "avg_composite_score_escaped": 0.50, "t_plus_1_intraday_drawdown_p10": -0.05, "avg_escape_gap_cost": -0.01}
+
+    metrics = {
+        "realized_payoff_ratio": 0.8,
+        "next_close_positive_rate": 0.60,
+        "next_high_hit_rate": 0.62,
+        "t_plus_2_close_positive_rate": 0.55,
+        "t_plus_2_close_payoff_ratio": 1.1,
+        "t_plus_3_close_positive_rate": 0.52,
+        "t_plus_3_close_expectancy": 0.01,
+        "t_plus_3_close_payoff_ratio": 1.05,
+        "downside_p10": -0.04,
+        "sample_weight": 0.80,
+        "window_coverage": 0.80,
+        "avg_composite_score_escaped": 0.50,
+        "t_plus_1_intraday_drawdown_p10": -0.05,
+        "avg_escape_gap_cost": -0.01,
+    }
     blockers = build_btst_quality_floor_blockers(metrics)
     assert any("realized_payoff_ratio" in b for b in blockers), f"Expected realized_payoff_ratio blocker, got: {blockers}"
 
@@ -4205,7 +4184,23 @@ def test_r20_realized_payoff_ratio_floor_triggers_blocker() -> None:
 def test_r20_realized_payoff_ratio_no_blocker_when_above_floor() -> None:
     """No blocker for realized_payoff_ratio when it meets the floor (Task 1, Round 20)."""
     from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
-    metrics = {"realized_payoff_ratio": 1.5, "next_close_positive_rate": 0.60, "next_high_hit_rate": 0.62, "t_plus_2_close_positive_rate": 0.55, "t_plus_2_close_payoff_ratio": 1.1, "t_plus_3_close_positive_rate": 0.52, "t_plus_3_close_expectancy": 0.01, "t_plus_3_close_payoff_ratio": 1.05, "downside_p10": -0.04, "sample_weight": 0.80, "window_coverage": 0.80, "avg_composite_score_escaped": 0.50, "t_plus_1_intraday_drawdown_p10": -0.05, "avg_escape_gap_cost": -0.01}
+
+    metrics = {
+        "realized_payoff_ratio": 1.5,
+        "next_close_positive_rate": 0.60,
+        "next_high_hit_rate": 0.62,
+        "t_plus_2_close_positive_rate": 0.55,
+        "t_plus_2_close_payoff_ratio": 1.1,
+        "t_plus_3_close_positive_rate": 0.52,
+        "t_plus_3_close_expectancy": 0.01,
+        "t_plus_3_close_payoff_ratio": 1.05,
+        "downside_p10": -0.04,
+        "sample_weight": 0.80,
+        "window_coverage": 0.80,
+        "avg_composite_score_escaped": 0.50,
+        "t_plus_1_intraday_drawdown_p10": -0.05,
+        "avg_escape_gap_cost": -0.01,
+    }
     blockers = build_btst_quality_floor_blockers(metrics)
     assert not any("realized_payoff_ratio" in b for b in blockers), f"Unexpected realized_payoff_ratio blocker: {blockers}"
 
@@ -4214,9 +4209,11 @@ def test_r20_realized_payoff_ratio_no_blocker_when_above_floor() -> None:
 # Task 2 (Round 20, Alpha): score-conditioned metrics in COMPARISON_METRICS
 # ---------------------------------------------------------------------------
 
+
 def test_r20_score_conditioned_metrics_in_comparison_metrics() -> None:
     """All Task 2 Round 20 score-conditioned metrics must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     for key in ("high_confidence_selection_rate", "score_weighted_win_rate", "score_win_rate_lift", "high_confidence_win_rate"):
         assert key in COMPARISON_METRICS, f"{key} missing from COMPARISON_METRICS"
 
@@ -4224,6 +4221,7 @@ def test_r20_score_conditioned_metrics_in_comparison_metrics() -> None:
 def test_r20_score_conditioned_metrics_have_labels() -> None:
     """All Task 2 Round 20 score-conditioned metrics must have labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     for key in ("high_confidence_selection_rate", "score_weighted_win_rate", "score_win_rate_lift", "high_confidence_win_rate"):
         assert key in COMPARISON_METRIC_LABELS, f"{key} missing from COMPARISON_METRIC_LABELS"
 
@@ -4231,6 +4229,7 @@ def test_r20_score_conditioned_metrics_have_labels() -> None:
 def test_r20_score_conditioned_metrics_are_optional() -> None:
     """All Task 2 Round 20 score-conditioned metrics must be optional."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for key in ("high_confidence_selection_rate", "score_weighted_win_rate", "score_win_rate_lift", "high_confidence_win_rate"):
         assert key in OPTIONAL_COMPARISON_METRICS, f"{key} missing from OPTIONAL_COMPARISON_METRICS"
 
@@ -4238,6 +4237,7 @@ def test_r20_score_conditioned_metrics_are_optional() -> None:
 def test_r20_score_conditioned_metrics_have_epsilon() -> None:
     """All Task 2 Round 20 score-conditioned metrics must have epsilon values."""
     from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
+
     for key in ("high_confidence_selection_rate", "score_weighted_win_rate", "score_win_rate_lift", "high_confidence_win_rate"):
         assert key in COMPARISON_METRIC_EPSILON, f"{key} missing from COMPARISON_METRIC_EPSILON"
 
@@ -4246,9 +4246,11 @@ def test_r20_score_conditioned_metrics_have_epsilon() -> None:
 # Task 3 (Round 20, Gamma): limit-up risk metrics in COMPARISON_METRICS
 # ---------------------------------------------------------------------------
 
+
 def test_r20_limit_up_metrics_in_comparison_metrics() -> None:
     """All Task 3 Round 20 limit-up metrics must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     for key in ("consecutive_limit_up_rate", "limit_up_win_rate", "non_limit_up_win_rate"):
         assert key in COMPARISON_METRICS, f"{key} missing from COMPARISON_METRICS"
 
@@ -4256,6 +4258,7 @@ def test_r20_limit_up_metrics_in_comparison_metrics() -> None:
 def test_r20_limit_up_metrics_have_labels() -> None:
     """All Task 3 Round 20 limit-up metrics must have labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     for key in ("consecutive_limit_up_rate", "limit_up_win_rate", "non_limit_up_win_rate"):
         assert key in COMPARISON_METRIC_LABELS, f"{key} missing from COMPARISON_METRIC_LABELS"
 
@@ -4263,6 +4266,7 @@ def test_r20_limit_up_metrics_have_labels() -> None:
 def test_r20_limit_up_metrics_are_optional() -> None:
     """All Task 3 Round 20 limit-up metrics must be optional."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for key in ("consecutive_limit_up_rate", "limit_up_win_rate", "non_limit_up_win_rate"):
         assert key in OPTIONAL_COMPARISON_METRICS, f"{key} missing from OPTIONAL_COMPARISON_METRICS"
 
@@ -4270,12 +4274,14 @@ def test_r20_limit_up_metrics_are_optional() -> None:
 def test_r20_consecutive_limit_up_rate_is_lower_is_better() -> None:
     """consecutive_limit_up_rate must be in LOWER_IS_BETTER_COMPARISON_METRICS (Task 3, Round 20)."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "consecutive_limit_up_rate" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r20_all_new_metrics_have_labels() -> None:
     """All Round 20 new metrics in COMPARISON_METRICS must have labels (invariant check)."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS, COMPARISON_METRICS
+
     r20_metrics = ("realized_payoff_ratio", "high_confidence_selection_rate", "score_weighted_win_rate", "score_win_rate_lift", "high_confidence_win_rate", "consecutive_limit_up_rate", "limit_up_win_rate", "non_limit_up_win_rate")
     for metric in r20_metrics:
         assert metric in COMPARISON_METRICS, f"{metric} must be in COMPARISON_METRICS"
@@ -4286,9 +4292,11 @@ def test_r20_all_new_metrics_have_labels() -> None:
 # Round 21 — Task 1 (Gamma): compute_surface_metric_correlations
 # =============================================================================
 
+
 def test_r21_compute_surface_metric_correlations_returns_empty_below_5_windows() -> None:
     """compute_surface_metric_correlations returns {} when fewer than 5 summaries provided."""
     from scripts.btst_analysis_utils import compute_surface_metric_correlations
+
     assert compute_surface_metric_correlations([]) == {}
     four_summaries = [{"next_close_positive_rate": 0.5, "some_metric": float(i)} for i in range(4)]
     assert compute_surface_metric_correlations(four_summaries) == {}
@@ -4297,6 +4305,7 @@ def test_r21_compute_surface_metric_correlations_returns_empty_below_5_windows()
 def test_r21_compute_surface_metric_correlations_positive_correlation() -> None:
     """Metrics that increase monotonically with win rate should have high positive Spearman corr."""
     from scripts.btst_analysis_utils import compute_surface_metric_correlations
+
     summaries = [{"next_close_positive_rate": float(i) / 9.0, "good_metric": float(i)} for i in range(10)]
     result = compute_surface_metric_correlations(summaries)
     assert "good_metric" in result, "good_metric should be in correlations"
@@ -4306,6 +4315,7 @@ def test_r21_compute_surface_metric_correlations_positive_correlation() -> None:
 def test_r21_compute_surface_metric_correlations_negative_correlation() -> None:
     """Metrics that decrease as win rate increases should have negative Spearman corr."""
     from scripts.btst_analysis_utils import compute_surface_metric_correlations
+
     summaries = [{"next_close_positive_rate": float(i) / 9.0, "bad_metric": float(9 - i)} for i in range(10)]
     result = compute_surface_metric_correlations(summaries)
     assert "bad_metric" in result
@@ -4317,6 +4327,7 @@ def test_r21_compute_surface_metric_correlations_result_in_range() -> None:
     import random
 
     from scripts.btst_analysis_utils import compute_surface_metric_correlations
+
     random.seed(42)
     summaries = [{"next_close_positive_rate": random.random(), "m1": random.random(), "m2": random.random()} for _ in range(8)]
     result = compute_surface_metric_correlations(summaries)
@@ -4328,6 +4339,7 @@ def test_r21_compute_surface_metric_correlations_result_in_range() -> None:
 def test_r21_compute_surface_metric_correlations_top_bottom_5() -> None:
     """top_5_correlated_metrics and bottom_5_correlated_metrics must be present and be lists."""
     from scripts.btst_analysis_utils import compute_surface_metric_correlations
+
     summaries = [{"next_close_positive_rate": float(i) / 9.0, "m1": float(i), "m2": float(9 - i), "m3": float(i) * 0.5} for i in range(10)]
     result = compute_surface_metric_correlations(summaries)
     assert "top_5_correlated_metrics" in result
@@ -4339,6 +4351,7 @@ def test_r21_compute_surface_metric_correlations_top_bottom_5() -> None:
 def test_r21_compute_surface_metric_correlations_nan_in_summaries() -> None:
     """Summaries with None metric values are gracefully skipped; result still computed from valid pairs."""
     from scripts.btst_analysis_utils import compute_surface_metric_correlations
+
     summaries = [{"next_close_positive_rate": float(i) / 9.0, "partial": float(i) if i < 7 else None} for i in range(10)]
     result = compute_surface_metric_correlations(summaries)
     # partial has 7 valid pairs (i=0..6) — >= 5, so it should appear
@@ -4350,9 +4363,11 @@ def test_r21_compute_surface_metric_correlations_nan_in_summaries() -> None:
 # Round 21 — Task 2 (Alpha): compute_factor_ic_stability
 # =============================================================================
 
+
 def test_r21_compute_factor_ic_stability_empty_input_returns_empty() -> None:
     """compute_factor_ic_stability returns {} when given empty list."""
     from scripts.btst_analysis_utils import compute_factor_ic_stability
+
     assert compute_factor_ic_stability([]) == {}
 
 
@@ -4362,6 +4377,7 @@ def test_r21_compute_factor_ic_stability_single_window_no_std() -> None:
         BTST_FACTOR_NAMES,
         compute_factor_ic_stability,
     )
+
     factor = BTST_FACTOR_NAMES[0]
     summaries = [{"factor_ic_next_close": {factor: 0.05}}]
     result = compute_factor_ic_stability(summaries)
@@ -4377,11 +4393,13 @@ def test_r21_compute_factor_ic_stability_ir_computation() -> None:
         BTST_FACTOR_NAMES,
         compute_factor_ic_stability,
     )
+
     factor = BTST_FACTOR_NAMES[0]
     ic_vals = [0.04, 0.06, 0.05, 0.07, 0.03]
     summaries = [{"factor_ic_next_close": {factor: v}} for v in ic_vals]
     result = compute_factor_ic_stability(summaries)
     import math
+
     mean_ic = sum(ic_vals) / len(ic_vals)
     std_ic = math.sqrt(sum((v - mean_ic) ** 2 for v in ic_vals) / (len(ic_vals) - 1))
     expected_ir = mean_ic / std_ic
@@ -4394,6 +4412,7 @@ def test_r21_compute_factor_ic_stability_most_least_stable() -> None:
         BTST_FACTOR_NAMES,
         compute_factor_ic_stability,
     )
+
     f1, f2 = BTST_FACTOR_NAMES[0], BTST_FACTOR_NAMES[1]
     # f1: constant IC 0.05 → std≈0 → IR = mean = 0.05
     # f2: highly volatile IC → low IR
@@ -4409,6 +4428,7 @@ def test_r21_compute_factor_ic_stability_positive_fraction() -> None:
         BTST_FACTOR_NAMES,
         compute_factor_ic_stability,
     )
+
     factor = BTST_FACTOR_NAMES[0]
     ic_vals = [0.05, -0.02, 0.03, -0.01, 0.04]  # 3 positive out of 5
     summaries = [{"factor_ic_next_close": {factor: v}} for v in ic_vals]
@@ -4419,6 +4439,7 @@ def test_r21_compute_factor_ic_stability_positive_fraction() -> None:
 # =============================================================================
 # Round 21 — Task 3 (Beta): compute_optimal_entry_signal
 # =============================================================================
+
 
 def _make_timing_rows(early_n: int, late_n: int, mid_n: int, t0_tail: float) -> list[dict]:
     """Helper: build synthetic rows with desired early/late/mid high-timing and t0_tail_strength."""
@@ -4438,6 +4459,7 @@ def _make_timing_rows(early_n: int, late_n: int, mid_n: int, t0_tail: float) -> 
 def test_r21_compute_optimal_entry_signal_empty_rows_returns_uncertain() -> None:
     """Empty row list should return recommended_execution='uncertain' and None numeric fields."""
     from scripts.btst_analysis_utils import compute_optimal_entry_signal
+
     result = compute_optimal_entry_signal([])
     assert result["recommended_execution"] == "uncertain"
     assert result["open_entry_signal_strength"] is None
@@ -4448,6 +4470,7 @@ def test_r21_compute_optimal_entry_signal_empty_rows_returns_uncertain() -> None
 def test_r21_compute_optimal_entry_signal_early_dominated_recommends_immediate() -> None:
     """When most T+1 highs are early AND t0_tail_strength is high, recommend 'immediate'."""
     from scripts.btst_analysis_utils import compute_optimal_entry_signal
+
     rows = _make_timing_rows(early_n=8, late_n=1, mid_n=1, t0_tail=0.95)
     result = compute_optimal_entry_signal(rows)
     assert result["recommended_execution"] == "immediate", f"expected immediate, got {result['recommended_execution']}"
@@ -4458,6 +4481,7 @@ def test_r21_compute_optimal_entry_signal_early_dominated_recommends_immediate()
 def test_r21_compute_optimal_entry_signal_late_dominated_recommends_wait() -> None:
     """When most T+1 highs are late AND t0_tail_strength is low, recommend 'wait'."""
     from scripts.btst_analysis_utils import compute_optimal_entry_signal
+
     rows = _make_timing_rows(early_n=1, late_n=8, mid_n=1, t0_tail=0.30)
     result = compute_optimal_entry_signal(rows)
     assert result["recommended_execution"] == "wait", f"expected wait, got {result['recommended_execution']}"
@@ -4467,6 +4491,7 @@ def test_r21_compute_optimal_entry_signal_late_dominated_recommends_wait() -> No
 def test_r21_compute_optimal_entry_signal_balanced_returns_uncertain() -> None:
     """Equal early/late split with median t0_tail=0.5 should yield 'uncertain'."""
     from scripts.btst_analysis_utils import compute_optimal_entry_signal
+
     rows = _make_timing_rows(early_n=5, late_n=5, mid_n=0, t0_tail=0.5)
     result = compute_optimal_entry_signal(rows)
     assert result["recommended_execution"] == "uncertain"
@@ -4475,6 +4500,7 @@ def test_r21_compute_optimal_entry_signal_balanced_returns_uncertain() -> None:
 def test_r21_compute_optimal_entry_signal_signal_values_in_range() -> None:
     """All numeric output values must be in sensible ranges."""
     from scripts.btst_analysis_utils import compute_optimal_entry_signal
+
     rows = _make_timing_rows(early_n=6, late_n=2, mid_n=2, t0_tail=0.70)
     result = compute_optimal_entry_signal(rows)
     assert 0.0 <= result["open_entry_signal_strength"] <= 1.0
@@ -4485,6 +4511,7 @@ def test_r21_compute_optimal_entry_signal_signal_values_in_range() -> None:
 def test_r21_compute_optimal_entry_signal_missing_t0_tail_returns_uncertain() -> None:
     """Rows without t0_tail_strength should fall back to 'uncertain'."""
     from scripts.btst_analysis_utils import compute_optimal_entry_signal
+
     rows = [{"next_open": 100.0, "next_high": 100.0, "next_close": 95.0} for _ in range(5)]
     result = compute_optimal_entry_signal(rows)
     assert result["recommended_execution"] == "uncertain"
@@ -4495,9 +4522,11 @@ def test_r21_compute_optimal_entry_signal_missing_t0_tail_returns_uncertain() ->
 # Round 21 — COMPARISON_METRICS / optimizer registry checks
 # =============================================================================
 
+
 def test_r21_entry_signal_metrics_in_comparison_metrics() -> None:
     """open_entry_signal_strength and execution_timing_confidence must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "open_entry_signal_strength" in COMPARISON_METRICS
     assert "execution_timing_confidence" in COMPARISON_METRICS
 
@@ -4505,6 +4534,7 @@ def test_r21_entry_signal_metrics_in_comparison_metrics() -> None:
 def test_r21_entry_signal_metrics_have_labels() -> None:
     """R21 execution timing metrics must have labels in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "open_entry_signal_strength" in COMPARISON_METRIC_LABELS
     assert "execution_timing_confidence" in COMPARISON_METRIC_LABELS
 
@@ -4512,6 +4542,7 @@ def test_r21_entry_signal_metrics_have_labels() -> None:
 def test_r21_entry_signal_metrics_are_optional() -> None:
     """R21 execution timing metrics must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "open_entry_signal_strength" in OPTIONAL_COMPARISON_METRICS
     assert "execution_timing_confidence" in OPTIONAL_COMPARISON_METRICS
 
@@ -4519,6 +4550,7 @@ def test_r21_entry_signal_metrics_are_optional() -> None:
 def test_r21_entry_signal_metrics_have_epsilon() -> None:
     """R21 execution timing metrics must have epsilon entries."""
     from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
+
     assert "open_entry_signal_strength" in COMPARISON_METRIC_EPSILON
     assert "execution_timing_confidence" in COMPARISON_METRIC_EPSILON
 
@@ -4526,6 +4558,7 @@ def test_r21_entry_signal_metrics_have_epsilon() -> None:
 def test_r21_all_new_metrics_have_labels() -> None:
     """All Round 21 new metrics must be in both COMPARISON_METRICS and COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS, COMPARISON_METRICS
+
     r21_metrics = ("open_entry_signal_strength", "execution_timing_confidence")
     for metric in r21_metrics:
         assert metric in COMPARISON_METRICS, f"{metric} must be in COMPARISON_METRICS"
@@ -4536,9 +4569,11 @@ def test_r21_all_new_metrics_have_labels() -> None:
 # Round 22 — Task 1 (Gamma): compute_low_impact_probe_axes
 # =============================================================================
 
+
 def test_r22_compute_low_impact_probe_axes_empty_inputs_returns_empty_lists() -> None:
     """Empty surface_metric_correlations and ic_stability → all lists empty."""
     from scripts.optimize_profile import compute_low_impact_probe_axes
+
     result = compute_low_impact_probe_axes({}, {})
     assert result["low_impact_axes"] == []
     assert result["low_ir_factors"] == []
@@ -4552,6 +4587,7 @@ def test_r22_compute_low_impact_probe_axes_low_corr_threshold() -> None:
         BTST_FACTOR_TO_PROBE_WEIGHT_KEY,
         compute_low_impact_probe_axes,
     )
+
     factor = next(iter(BTST_FACTOR_TO_PROBE_WEIGHT_KEY))
     probe_key = BTST_FACTOR_TO_PROBE_WEIGHT_KEY[factor]
     result = compute_low_impact_probe_axes({factor: 0.01}, {}, ic_corr_threshold=0.05)
@@ -4565,6 +4601,7 @@ def test_r22_compute_low_impact_probe_axes_low_ir_threshold() -> None:
         BTST_FACTOR_TO_PROBE_WEIGHT_KEY,
         compute_low_impact_probe_axes,
     )
+
     factor = next(iter(BTST_FACTOR_TO_PROBE_WEIGHT_KEY))
     result = compute_low_impact_probe_axes({}, {f"{factor}_ic_ir": 0.10}, ir_threshold=0.20)
     assert factor in result["low_ir_factors"]
@@ -4577,6 +4614,7 @@ def test_r22_compute_low_impact_probe_axes_pruning_candidate_requires_both() -> 
         BTST_FACTOR_TO_PROBE_WEIGHT_KEY,
         compute_low_impact_probe_axes,
     )
+
     factor = next(iter(BTST_FACTOR_TO_PROBE_WEIGHT_KEY))
     probe_key = BTST_FACTOR_TO_PROBE_WEIGHT_KEY[factor]
     result = compute_low_impact_probe_axes(
@@ -4595,6 +4633,7 @@ def test_r22_compute_low_impact_probe_axes_high_corr_not_flagged() -> None:
         BTST_FACTOR_TO_PROBE_WEIGHT_KEY,
         compute_low_impact_probe_axes,
     )
+
     factor = next(iter(BTST_FACTOR_TO_PROBE_WEIGHT_KEY))
     probe_key = BTST_FACTOR_TO_PROBE_WEIGHT_KEY[factor]
     result = compute_low_impact_probe_axes({factor: 0.30}, {}, ic_corr_threshold=0.05)
@@ -4604,6 +4643,7 @@ def test_r22_compute_low_impact_probe_axes_high_corr_not_flagged() -> None:
 # =============================================================================
 # Round 22 — Task 2 (Alpha): compute_optimal_hold_period
 # =============================================================================
+
 
 def _make_hold_rows(t1: list[float], t2: list[float], t3: list[float]) -> list[dict]:
     """Build synthetic rows with T+1/T+2/T+3 returns."""
@@ -4624,7 +4664,8 @@ def _make_hold_rows(t1: list[float], t2: list[float], t3: list[float]) -> list[d
 def test_r22_compute_optimal_hold_period_t1_optimal() -> None:
     """When T+1 has clearly higher Sharpe, optimal_hold_days should be 1."""
     from scripts.btst_analysis_utils import compute_optimal_hold_period
-    t1 = [0.05, 0.06, 0.04, 0.07, 0.05, 0.06]    # high mean, low std → high Sharpe
+
+    t1 = [0.05, 0.06, 0.04, 0.07, 0.05, 0.06]  # high mean, low std → high Sharpe
     t2 = [0.01, -0.05, 0.03, -0.04, 0.02, -0.03]  # lower Sharpe
     t3 = [-0.02, -0.03, 0.01, -0.04, -0.01, -0.02]  # worst
     rows = _make_hold_rows(t1, t2, t3)
@@ -4636,8 +4677,9 @@ def test_r22_compute_optimal_hold_period_t1_optimal() -> None:
 def test_r22_compute_optimal_hold_period_t2_optimal() -> None:
     """When T+2 has clearly higher Sharpe, optimal_hold_days should be 2."""
     from scripts.btst_analysis_utils import compute_optimal_hold_period
+
     t1 = [0.01, -0.01, 0.02, -0.02, 0.01, -0.01]  # near zero Sharpe
-    t2 = [0.06, 0.07, 0.05, 0.08, 0.06, 0.07]     # high Sharpe
+    t2 = [0.06, 0.07, 0.05, 0.08, 0.06, 0.07]  # high Sharpe
     t3 = [-0.01, 0.00, -0.02, 0.01, -0.01, 0.00]
     rows = _make_hold_rows(t1, t2, t3)
     result = compute_optimal_hold_period(rows)
@@ -4663,6 +4705,7 @@ def test_r22_compute_optimal_hold_period_insufficient_data_returns_none_sharpe()
 def test_r22_compute_optimal_hold_period_all_missing_returns_none() -> None:
     """All periods < 5 rows → optimal_hold_days is None."""
     from scripts.btst_analysis_utils import compute_optimal_hold_period
+
     rows = [{"next_close_return": 0.01}, {"next_close_return": 0.02}]
     result = compute_optimal_hold_period(rows)
     assert result["optimal_hold_days"] is None
@@ -4672,6 +4715,7 @@ def test_r22_compute_optimal_hold_period_all_missing_returns_none() -> None:
 def test_r22_compute_optimal_hold_period_sharpe_diff_fields_present() -> None:
     """t1_vs_t2_sharpe_diff and t1_vs_t3_sharpe_diff are computed when both periods valid."""
     from scripts.btst_analysis_utils import compute_optimal_hold_period
+
     returns = [0.02, 0.03, 0.01, 0.04, 0.02, 0.03]
     rows = _make_hold_rows(returns, returns, returns)
     result = compute_optimal_hold_period(rows)
@@ -4684,6 +4728,7 @@ def test_r22_compute_optimal_hold_period_sharpe_diff_fields_present() -> None:
 # =============================================================================
 # Round 22 — Task 3 (Beta): compute_score_position_tiers
 # =============================================================================
+
 
 def _make_tier_rows(score_return_pairs: list[tuple[float, float]]) -> list[dict]:
     """Build rows with runner_composite_score and next_close_return."""
@@ -4704,6 +4749,7 @@ def test_r22_compute_score_position_tiers_monotone_when_high_scores_win_more() -
 def test_r22_compute_score_position_tiers_spread_is_positive_when_high_wins_more() -> None:
     """tier_win_rate_spread > 0 when high tier wins more than low tier."""
     from scripts.btst_analysis_utils import compute_score_position_tiers
+
     pairs = [(0.9, 0.04)] * 10 + [(0.5, 0.01)] * 10 + [(0.1, -0.02)] * 10
     rows = _make_tier_rows(pairs)
     result = compute_score_position_tiers(rows)
@@ -4726,6 +4772,7 @@ def test_r22_compute_score_position_tiers_too_few_rows_returns_none_tiers() -> N
 def test_r22_compute_score_position_tiers_empty_rows_returns_none() -> None:
     """Empty input returns all None metrics and tier_monotone_win_rate=False."""
     from scripts.btst_analysis_utils import compute_score_position_tiers
+
     result = compute_score_position_tiers([])
     assert result["score_p33"] is None
     assert result["score_p67"] is None
@@ -4736,6 +4783,7 @@ def test_r22_compute_score_position_tiers_empty_rows_returns_none() -> None:
 def test_r22_compute_score_position_tiers_percentile_ordering() -> None:
     """score_p33 < score_p67 for a non-trivial distribution."""
     from scripts.btst_analysis_utils import compute_score_position_tiers
+
     pairs = [(float(i) / 20.0, 0.01 if i > 10 else -0.01) for i in range(20)]
     rows = _make_tier_rows(pairs)
     result = compute_score_position_tiers(rows)
@@ -4748,9 +4796,11 @@ def test_r22_compute_score_position_tiers_percentile_ordering() -> None:
 # Round 22 — COMPARISON_METRICS / optimizer registry checks
 # =============================================================================
 
+
 def test_r22_new_metrics_in_comparison_metrics() -> None:
     """Round 22 new metrics must all be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     for m in ("t1_vs_t2_sharpe_diff", "hold_period_confidence", "tier_win_rate_spread", "tier_monotone_win_rate"):
         assert m in COMPARISON_METRICS, f"{m} missing from COMPARISON_METRICS"
 
@@ -4758,6 +4808,7 @@ def test_r22_new_metrics_in_comparison_metrics() -> None:
 def test_r22_new_metrics_have_labels() -> None:
     """Round 22 new metrics must have labels in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     for m in ("t1_vs_t2_sharpe_diff", "hold_period_confidence", "tier_win_rate_spread", "tier_monotone_win_rate"):
         assert m in COMPARISON_METRIC_LABELS, f"{m} missing from COMPARISON_METRIC_LABELS"
 
@@ -4765,6 +4816,7 @@ def test_r22_new_metrics_have_labels() -> None:
 def test_r22_new_metrics_are_optional() -> None:
     """Round 22 new metrics must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for m in ("t1_vs_t2_sharpe_diff", "hold_period_confidence", "tier_win_rate_spread", "tier_monotone_win_rate"):
         assert m in OPTIONAL_COMPARISON_METRICS, f"{m} missing from OPTIONAL_COMPARISON_METRICS"
 
@@ -4772,6 +4824,7 @@ def test_r22_new_metrics_are_optional() -> None:
 def test_r22_new_metrics_have_epsilon() -> None:
     """Round 22 new metrics must have epsilon entries in COMPARISON_METRIC_EPSILON."""
     from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
+
     for m in ("t1_vs_t2_sharpe_diff", "hold_period_confidence", "tier_win_rate_spread", "tier_monotone_win_rate"):
         assert m in COMPARISON_METRIC_EPSILON, f"{m} missing from COMPARISON_METRIC_EPSILON"
 
@@ -4787,6 +4840,7 @@ def test_r23_lean_grid_is_subset_of_full_grid() -> None:
         BTST_RUNNER_LEAN_PROBE_GRID,
         BTST_RUNNER_PROBE_GRID,
     )
+
     for key in BTST_RUNNER_LEAN_PROBE_GRID:
         assert key in BTST_RUNNER_PROBE_GRID, f"lean grid axis '{key}' is absent from full BTST_RUNNER_PROBE_GRID"
 
@@ -4797,12 +4851,14 @@ def test_r23_lean_grid_axis_count_constant() -> None:
         BTST_RUNNER_LEAN_PROBE_GRID,
         LEAN_GRID_AXIS_COUNT,
     )
+
     assert LEAN_GRID_AXIS_COUNT == len(BTST_RUNNER_LEAN_PROBE_GRID)
 
 
 def test_r23_full_grid_axis_count_constant() -> None:
     """FULL_GRID_AXIS_COUNT must equal len(BTST_RUNNER_PROBE_GRID)."""
     from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID, FULL_GRID_AXIS_COUNT
+
     assert FULL_GRID_AXIS_COUNT == len(BTST_RUNNER_PROBE_GRID)
 
 
@@ -4813,6 +4869,7 @@ def test_r23_lean_mode_true_uses_lean_grid() -> None:
         BTST_RUNNER_PROBE_GRID,
         resolve_grid_params,
     )
+
     lean_result = resolve_grid_params(grid_params=[], preset_grid=True, profile_name="btst_runner_probe", lean_mode=True)
     # All lean axes must be present.
     for key in BTST_RUNNER_LEAN_PROBE_GRID:
@@ -4827,6 +4884,7 @@ def test_r23_lean_mode_true_uses_lean_grid() -> None:
 def test_r23_lean_mode_false_uses_full_grid() -> None:
     """resolve_grid_params with lean_mode=False must include all full-grid axes."""
     from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID, resolve_grid_params
+
     full_result = resolve_grid_params(grid_params=[], preset_grid=True, profile_name="btst_runner_probe", lean_mode=False)
     for key in BTST_RUNNER_PROBE_GRID:
         assert key in full_result, f"full grid axis '{key}' missing from lean_mode=False result"
@@ -4835,6 +4893,7 @@ def test_r23_lean_mode_false_uses_full_grid() -> None:
 def test_r23_lean_mode_default_is_false() -> None:
     """resolve_grid_params must default to lean_mode=False (full grid)."""
     from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID, resolve_grid_params
+
     default_result = resolve_grid_params(grid_params=[], preset_grid=True, profile_name="btst_runner_probe")
     for key in BTST_RUNNER_PROBE_GRID:
         assert key in default_result, f"full grid axis '{key}' missing when lean_mode not specified"
@@ -4843,12 +4902,14 @@ def test_r23_lean_mode_default_is_false() -> None:
 def test_r23_lean_grid_size_smaller_than_full() -> None:
     """LEAN_GRID_AXIS_COUNT must be strictly smaller than FULL_GRID_AXIS_COUNT."""
     from scripts.optimize_profile import FULL_GRID_AXIS_COUNT, LEAN_GRID_AXIS_COUNT
+
     assert LEAN_GRID_AXIS_COUNT < FULL_GRID_AXIS_COUNT, f"lean grid ({LEAN_GRID_AXIS_COUNT}) is not smaller than full grid ({FULL_GRID_AXIS_COUNT})"
 
 
 def test_r23_new_metrics_in_comparison_metrics() -> None:
     """Round 23 new metrics must all be present in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     for m in ("kelly_fraction_half", "kelly_positive", "regime_consistency_score", "regime_robustness_flag"):
         assert m in COMPARISON_METRICS, f"{m} missing from COMPARISON_METRICS"
 
@@ -4856,6 +4917,7 @@ def test_r23_new_metrics_in_comparison_metrics() -> None:
 def test_r23_new_metrics_have_labels() -> None:
     """Round 23 new metrics must have entries in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     for m in ("kelly_fraction_half", "kelly_positive", "regime_consistency_score", "regime_robustness_flag"):
         assert m in COMPARISON_METRIC_LABELS, f"{m} missing from COMPARISON_METRIC_LABELS"
 
@@ -4863,6 +4925,7 @@ def test_r23_new_metrics_have_labels() -> None:
 def test_r23_new_metrics_are_optional() -> None:
     """Round 23 new metrics must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for m in ("kelly_fraction_half", "kelly_positive", "regime_consistency_score", "regime_robustness_flag"):
         assert m in OPTIONAL_COMPARISON_METRICS, f"{m} missing from OPTIONAL_COMPARISON_METRICS"
 
@@ -4870,6 +4933,7 @@ def test_r23_new_metrics_are_optional() -> None:
 def test_r23_new_metrics_have_epsilon() -> None:
     """Round 23 new metrics must have epsilon entries in COMPARISON_METRIC_EPSILON."""
     from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
+
     for m in ("kelly_fraction_half", "kelly_positive", "regime_consistency_score", "regime_robustness_flag"):
         assert m in COMPARISON_METRIC_EPSILON, f"{m} missing from COMPARISON_METRIC_EPSILON"
 
@@ -4882,6 +4946,7 @@ def test_r23_new_metrics_have_epsilon() -> None:
 def test_r24_new_metrics_in_comparison_metrics() -> None:
     """Round 24 new metrics must all be present in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     for m in ("decaying_factor_count", "kelly_fraction_drawdown_adjusted", "drawdown_adjustment_factor", "verdict_calibration_score", "verdict_monotone"):
         assert m in COMPARISON_METRICS, f"{m} missing from COMPARISON_METRICS"
 
@@ -4889,6 +4954,7 @@ def test_r24_new_metrics_in_comparison_metrics() -> None:
 def test_r24_new_metrics_have_labels() -> None:
     """Round 24 new metrics must have entries in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     for m in ("decaying_factor_count", "kelly_fraction_drawdown_adjusted", "drawdown_adjustment_factor", "verdict_calibration_score", "verdict_monotone"):
         assert m in COMPARISON_METRIC_LABELS, f"{m} missing from COMPARISON_METRIC_LABELS"
 
@@ -4896,6 +4962,7 @@ def test_r24_new_metrics_have_labels() -> None:
 def test_r24_new_metrics_are_optional() -> None:
     """Round 24 new metrics must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for m in ("decaying_factor_count", "kelly_fraction_drawdown_adjusted", "drawdown_adjustment_factor", "verdict_calibration_score", "verdict_monotone"):
         assert m in OPTIONAL_COMPARISON_METRICS, f"{m} missing from OPTIONAL_COMPARISON_METRICS"
 
@@ -4903,6 +4970,7 @@ def test_r24_new_metrics_are_optional() -> None:
 def test_r24_new_metrics_have_epsilon() -> None:
     """Round 24 new metrics must have epsilon entries in COMPARISON_METRIC_EPSILON."""
     from scripts.optimize_profile import COMPARISON_METRIC_EPSILON
+
     for m in ("decaying_factor_count", "kelly_fraction_drawdown_adjusted", "drawdown_adjustment_factor", "verdict_calibration_score", "verdict_monotone"):
         assert m in COMPARISON_METRIC_EPSILON, f"{m} missing from COMPARISON_METRIC_EPSILON"
 
@@ -4910,12 +4978,14 @@ def test_r24_new_metrics_have_epsilon() -> None:
 def test_r24_decaying_factor_count_is_lower_is_better() -> None:
     """decaying_factor_count must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "decaying_factor_count" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r24_quality_floor_for_drawdown_adjusted_kelly() -> None:
     """BTST_QUALITY_FLOORS must contain kelly_fraction_drawdown_adjusted with value 0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "kelly_fraction_drawdown_adjusted" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["kelly_fraction_drawdown_adjusted"] == 0.01
 
@@ -4928,6 +4998,7 @@ def test_r24_quality_floor_for_drawdown_adjusted_kelly() -> None:
 def test_r24_drawdown_adjusted_kelly_null_when_kelly_missing() -> None:
     """Returns all None when kelly_fraction_half is absent."""
     from scripts.btst_analysis_utils import compute_drawdown_adjusted_kelly
+
     result = compute_drawdown_adjusted_kelly([], {"t_plus_1_intraday_drawdown_p10": -0.04})
     assert result["kelly_fraction_drawdown_adjusted"] is None
     assert result["drawdown_adjustment_factor"] is None
@@ -4936,6 +5007,7 @@ def test_r24_drawdown_adjusted_kelly_null_when_kelly_missing() -> None:
 def test_r24_drawdown_adjusted_kelly_null_when_p10_missing() -> None:
     """Returns all None when t_plus_1_intraday_drawdown_p10 is absent."""
     from scripts.btst_analysis_utils import compute_drawdown_adjusted_kelly
+
     result = compute_drawdown_adjusted_kelly([], {"kelly_fraction_half": 0.10})
     assert result["kelly_fraction_drawdown_adjusted"] is None
 
@@ -4943,6 +5015,7 @@ def test_r24_drawdown_adjusted_kelly_null_when_p10_missing() -> None:
 def test_r24_drawdown_adjusted_kelly_low_risk_no_reduction() -> None:
     """p10 > -0.02 (low risk) → risk_level='low'; adjustment_factor = 1/(1+severity) with severity=max(0,-p10/0.05)."""
     from scripts.btst_analysis_utils import compute_drawdown_adjusted_kelly
+
     result = compute_drawdown_adjusted_kelly([], {"kelly_fraction_half": 0.10, "t_plus_1_intraday_drawdown_p10": -0.01})
     assert result["drawdown_risk_level"] == "low"
     # severity = max(0, 0.01/0.05) = 0.2 → adj_factor = 1/1.2 ≈ 0.8333
@@ -4955,6 +5028,7 @@ def test_r24_drawdown_adjusted_kelly_low_risk_no_reduction() -> None:
 def test_r24_drawdown_adjusted_kelly_severe_risk_large_reduction() -> None:
     """p10 = -0.10 (severe) → severity=2.0 → adj_factor=1/3 ≈ 0.333."""
     from scripts.btst_analysis_utils import compute_drawdown_adjusted_kelly
+
     result = compute_drawdown_adjusted_kelly([], {"kelly_fraction_half": 0.12, "t_plus_1_intraday_drawdown_p10": -0.10})
     assert result["drawdown_risk_level"] == "severe"
     assert result["drawdown_adjustment_factor"] is not None
@@ -4966,6 +5040,7 @@ def test_r24_drawdown_adjusted_kelly_severe_risk_large_reduction() -> None:
 def test_r24_drawdown_adjusted_kelly_moderate_risk_partial_reduction() -> None:
     """p10 = -0.03 (moderate) → severity=0.6 → adj_factor=1/1.6=0.625."""
     from scripts.btst_analysis_utils import compute_drawdown_adjusted_kelly
+
     result = compute_drawdown_adjusted_kelly([], {"kelly_fraction_half": 0.10, "t_plus_1_intraday_drawdown_p10": -0.03})
     assert result["drawdown_risk_level"] == "moderate"
     expected_adj_factor = 1.0 / (1.0 + 0.6)
@@ -4976,6 +5051,7 @@ def test_r24_drawdown_adjusted_kelly_moderate_risk_partial_reduction() -> None:
 def test_r24_drawdown_adjusted_kelly_capped_at_half() -> None:
     """Output is clipped to [0, 0.50]; a very large kelly_half stays within bounds."""
     from scripts.btst_analysis_utils import compute_drawdown_adjusted_kelly
+
     result = compute_drawdown_adjusted_kelly([], {"kelly_fraction_half": 0.60, "t_plus_1_intraday_drawdown_p10": -0.01})
     assert result["kelly_fraction_drawdown_adjusted"] <= 0.50
 
@@ -4988,6 +5064,7 @@ def test_r24_drawdown_adjusted_kelly_capped_at_half() -> None:
 def test_r24_ic_temporal_trend_empty_returns_defaults() -> None:
     """Empty input returns decaying_factor_count=0 and None summary fields."""
     from scripts.btst_analysis_utils import compute_factor_ic_temporal_trend
+
     result = compute_factor_ic_temporal_trend([])
     assert result["decaying_factor_count"] == 0
     assert result["decaying_factors"] == []
@@ -5001,6 +5078,7 @@ def test_r24_ic_temporal_trend_single_window_returns_defaults() -> None:
         BTST_FACTOR_NAMES,
         compute_factor_ic_temporal_trend,
     )
+
     result = compute_factor_ic_temporal_trend([{"factor_ic_next_close": {BTST_FACTOR_NAMES[0]: 0.05}}])
     assert result["decaying_factor_count"] == 0
 
@@ -5011,6 +5089,7 @@ def test_r24_ic_temporal_trend_detects_decay() -> None:
         BTST_FACTOR_NAMES,
         compute_factor_ic_temporal_trend,
     )
+
     factor = BTST_FACTOR_NAMES[0]
     # 8 windows: first 4 (early) have IC=0.10, last 4 (late) have IC=0.02
     summaries = [{"factor_ic_next_close": {factor: 0.10}} for _ in range(4)] + [{"factor_ic_next_close": {factor: 0.02}} for _ in range(4)]
@@ -5027,6 +5106,7 @@ def test_r24_ic_temporal_trend_no_decay_when_stable() -> None:
         BTST_FACTOR_NAMES,
         compute_factor_ic_temporal_trend,
     )
+
     factor = BTST_FACTOR_NAMES[0]
     summaries = [{"factor_ic_next_close": {factor: 0.05}} for _ in range(8)]
     result = compute_factor_ic_temporal_trend(summaries)
@@ -5040,13 +5120,11 @@ def test_r24_ic_temporal_trend_most_decaying_most_improving() -> None:
         BTST_FACTOR_NAMES,
         compute_factor_ic_temporal_trend,
     )
+
     f1, f2 = BTST_FACTOR_NAMES[0], BTST_FACTOR_NAMES[1]
     # f1: strong decay (0.15 → 0.01), f2: improving (0.01 → 0.12)
     # Need ≥3 windows per half — use 6 total (split=3 early, 3 late)
-    summaries = (
-        [{"factor_ic_next_close": {f1: 0.15, f2: 0.01}} for _ in range(3)] +
-        [{"factor_ic_next_close": {f1: 0.01, f2: 0.12}} for _ in range(3)]
-    )
+    summaries = [{"factor_ic_next_close": {f1: 0.15, f2: 0.01}} for _ in range(3)] + [{"factor_ic_next_close": {f1: 0.01, f2: 0.12}} for _ in range(3)]
     result = compute_factor_ic_temporal_trend(summaries)
     assert result["most_decaying_factor"] == f1
     assert result["most_improving_factor"] == f2
@@ -5058,6 +5136,7 @@ def test_r24_ic_temporal_trend_skip_factors_with_insufficient_data() -> None:
         BTST_FACTOR_NAMES,
         compute_factor_ic_temporal_trend,
     )
+
     factor = BTST_FACTOR_NAMES[0]
     # 4 windows total: split=2 early, 2 late → each half has only 2 valid ICs for this factor → skip
     summaries = [{"factor_ic_next_close": {factor: 0.10}} for _ in range(4)]
@@ -5074,6 +5153,7 @@ def test_r24_ic_temporal_trend_skip_factors_with_insufficient_data() -> None:
 def test_r24_verdict_calibration_empty_returns_none() -> None:
     """Empty input returns None calibration score and empty maps."""
     from scripts.btst_analysis_utils import compute_verdict_calibration
+
     result = compute_verdict_calibration([])
     assert result["verdict_calibration_score"] is None
     assert result["verdict_monotone"] is None
@@ -5083,6 +5163,7 @@ def test_r24_verdict_calibration_empty_returns_none() -> None:
 def test_r24_verdict_calibration_uses_real_verdicts_when_present() -> None:
     """When verdict field is present, uses real categories (not quartile proxy)."""
     from scripts.btst_analysis_utils import compute_verdict_calibration
+
     summaries = [
         {"verdict": "promotable", "next_close_positive_rate": 0.70},
         {"verdict": "promotable", "next_close_positive_rate": 0.68},
@@ -5099,6 +5180,7 @@ def test_r24_verdict_calibration_uses_real_verdicts_when_present() -> None:
 def test_r24_verdict_calibration_monotone_true_when_ordered() -> None:
     """When promotable_wr > watch_wr > probation_wr, verdict_monotone must be True."""
     from scripts.btst_analysis_utils import compute_verdict_calibration
+
     summaries = [
         {"verdict": "promotable", "next_close_positive_rate": 0.70},
         {"verdict": "watch", "next_close_positive_rate": 0.58},
@@ -5111,6 +5193,7 @@ def test_r24_verdict_calibration_monotone_true_when_ordered() -> None:
 def test_r24_verdict_calibration_monotone_false_when_inverted() -> None:
     """When probation_wr > promotable_wr, verdict_monotone must be False."""
     from scripts.btst_analysis_utils import compute_verdict_calibration
+
     summaries = [
         {"verdict": "promotable", "next_close_positive_rate": 0.45},
         {"verdict": "probation", "next_close_positive_rate": 0.70},
@@ -5135,6 +5218,7 @@ def test_r24_verdict_calibration_proxy_splits_by_quartile() -> None:
 def test_r24_verdict_calibration_score_capped_at_one() -> None:
     """calibration_score must not exceed 1.0 even when spread > 0.20."""
     from scripts.btst_analysis_utils import compute_verdict_calibration
+
     summaries = [
         {"verdict": "promotable", "next_close_positive_rate": 0.90},
         {"verdict": "probation", "next_close_positive_rate": 0.40},
@@ -5148,6 +5232,7 @@ def test_r24_verdict_calibration_score_capped_at_one() -> None:
 # ---------------------------------------------------------------------------
 # Round 25 — T3 (Alpha): compute_auto_calibrated_floor_suggestions
 # ---------------------------------------------------------------------------
+
 
 def test_r25_floor_suggestions_too_easy_when_floor_below_p25() -> None:
     """A current floor at or below 80% of P25 must produce action='too_easy'."""
@@ -5184,6 +5269,7 @@ def test_r25_floor_suggestions_calibrated() -> None:
     # Feed window values centered around 0.54 so the distribution brackets it nicely.
 
     from scripts.optimize_profile import compute_auto_calibrated_floor_suggestions
+
     windows = [{"next_close_positive_rate": 0.48 + i * 0.02} for i in range(9)]  # 0.48…0.64
     result = compute_auto_calibrated_floor_suggestions(windows)
     suggestion = result["floor_suggestions"].get("next_close_positive_rate")
@@ -5196,6 +5282,7 @@ def test_r25_floor_suggestions_calibrated() -> None:
 def test_r25_floor_suggestions_empty_input() -> None:
     """Empty window list must return empty suggestions and empty category lists."""
     from scripts.optimize_profile import compute_auto_calibrated_floor_suggestions
+
     result = compute_auto_calibrated_floor_suggestions([])
     assert result["floor_suggestions"] == {}
     assert result["overly_easy_floors"] == []
@@ -5223,9 +5310,11 @@ def test_r25_floor_suggestions_missing_metric_graceful() -> None:
 # Task 1 (Round 27, Alpha): compute_return_distribution_shape
 # ---------------------------------------------------------------------------
 
+
 def test_r27_return_distribution_symmetric_skewness_near_zero() -> None:
     """Symmetric distribution should have skewness close to 0."""
     from scripts.btst_analysis_utils import compute_return_distribution_shape
+
     rows = [{"next_close_return": v} for v in [-0.03, -0.01, 0.0, 0.01, 0.03]]
     result = compute_return_distribution_shape(rows)
     assert result["next_close_return_skewness"] is not None
@@ -5270,6 +5359,7 @@ def test_r27_return_distribution_heavy_left_tail_flag() -> None:
 def test_r27_return_distribution_insufficient_data() -> None:
     """Fewer than 5 rows should return all None values."""
     from scripts.btst_analysis_utils import compute_return_distribution_shape
+
     rows = [{"next_close_return": 0.01}, {"next_close_return": 0.02}, {"next_close_return": -0.01}]
     result = compute_return_distribution_shape(rows)
     assert result["next_close_return_skewness"] is None
@@ -5281,9 +5371,11 @@ def test_r27_return_distribution_insufficient_data() -> None:
 # Task 2 (Round 27, Gamma): compute_score_discrimination_power
 # ---------------------------------------------------------------------------
 
+
 def test_r27_score_discrimination_high_spread() -> None:
     """Wide score distribution should yield large spread and no low_discrimination_flag."""
     from scripts.btst_analysis_utils import compute_score_discrimination_power
+
     scores = [0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90]
     rows = [{"runner_composite_score": s, "next_close_return": (s - 0.5) * 0.1} for s in scores]
     result = compute_score_discrimination_power(rows)
@@ -5295,6 +5387,7 @@ def test_r27_score_discrimination_high_spread() -> None:
 def test_r27_score_discrimination_low_spread_flag() -> None:
     """Scores clustered around 0.5 trigger low_discrimination_flag."""
     from scripts.btst_analysis_utils import compute_score_discrimination_power
+
     scores = [0.48, 0.49, 0.50, 0.51, 0.52, 0.49, 0.50, 0.51]
     rows = [{"runner_composite_score": s, "next_close_return": 0.01} for s in scores]
     result = compute_score_discrimination_power(rows)
@@ -5306,6 +5399,7 @@ def test_r27_score_discrimination_low_spread_flag() -> None:
 def test_r27_score_discrimination_spearman_positive_correlation() -> None:
     """Perfect rank correlation between score and return should give spearman ≈ 1.0."""
     from scripts.btst_analysis_utils import compute_score_discrimination_power
+
     pairs = [(0.2, -0.04), (0.4, -0.02), (0.5, 0.0), (0.6, 0.02), (0.8, 0.04), (0.9, 0.06)]
     rows = [{"runner_composite_score": s, "next_close_return": r} for s, r in pairs]
     result = compute_score_discrimination_power(rows)
@@ -5317,6 +5411,7 @@ def test_r27_score_discrimination_spearman_positive_correlation() -> None:
 def test_r27_score_discrimination_index_equals_spread_times_abs_spearman() -> None:
     """discrimination_index should equal spread_p95_p5 × |spearman|."""
     from scripts.btst_analysis_utils import compute_score_discrimination_power
+
     scores = [0.2, 0.4, 0.5, 0.6, 0.8, 0.9]
     returns = [-0.04, -0.02, 0.0, 0.02, 0.04, 0.06]
     rows = [{"runner_composite_score": s, "next_close_return": r} for s, r in zip(scores, returns)]
@@ -5328,6 +5423,7 @@ def test_r27_score_discrimination_index_equals_spread_times_abs_spearman() -> No
 def test_r27_score_discrimination_missing_field_returns_null() -> None:
     """Rows without runner_composite_score should return all-None result."""
     from scripts.btst_analysis_utils import compute_score_discrimination_power
+
     rows = [{"next_close_return": 0.01} for _ in range(6)]
     result = compute_score_discrimination_power(rows)
     assert result["score_spread_p95_p5"] is None
@@ -5338,9 +5434,11 @@ def test_r27_score_discrimination_missing_field_returns_null() -> None:
 # Task 3 (Round 27, Beta): compute_liquidity_position_guidance
 # ---------------------------------------------------------------------------
 
+
 def test_r27_liquidity_large_pool_low_risk() -> None:
     """Pool > 100 should give max positions = 10 and concentration_risk_level = 'low'."""
     from scripts.btst_analysis_utils import compute_liquidity_position_guidance
+
     result = compute_liquidity_position_guidance({"avg_candidate_pool_size": 120.0, "scarce_market_window_count": 0, "market_size_classification": "abundant_dominated"})
     assert result["recommended_max_positions"] == 10
     assert result["concentration_risk_level"] == "low"
@@ -5350,6 +5448,7 @@ def test_r27_liquidity_large_pool_low_risk() -> None:
 def test_r27_liquidity_small_pool_extreme_risk() -> None:
     """Pool < 10 should give max positions = 1 and concentration_risk_level = 'extreme'."""
     from scripts.btst_analysis_utils import compute_liquidity_position_guidance
+
     result = compute_liquidity_position_guidance({"avg_candidate_pool_size": 8.0, "scarce_market_window_count": 3, "market_size_classification": "scarce_dominated"})
     assert result["recommended_max_positions"] == 1
     assert result["concentration_risk_level"] == "extreme"
@@ -5359,6 +5458,7 @@ def test_r27_liquidity_small_pool_extreme_risk() -> None:
 def test_r27_liquidity_pool_stability_classification() -> None:
     """market_size_classification drives pool_size_stability correctly."""
     from scripts.btst_analysis_utils import compute_liquidity_position_guidance
+
     assert compute_liquidity_position_guidance({"avg_candidate_pool_size": 50.0, "scarce_market_window_count": 0, "market_size_classification": "abundant_dominated"})["pool_size_stability"] == "stable"
     assert compute_liquidity_position_guidance({"avg_candidate_pool_size": 50.0, "scarce_market_window_count": 2, "market_size_classification": "mixed"})["pool_size_stability"] == "variable"
     assert compute_liquidity_position_guidance({"avg_candidate_pool_size": 15.0, "scarce_market_window_count": 5, "market_size_classification": "scarce_dominated"})["pool_size_stability"] == "scarce"
@@ -5367,6 +5467,7 @@ def test_r27_liquidity_pool_stability_classification() -> None:
 def test_r27_liquidity_missing_pool_size_uses_default() -> None:
     """Missing avg_candidate_pool_size should fall back to 50 (medium pool)."""
     from scripts.btst_analysis_utils import compute_liquidity_position_guidance
+
     result = compute_liquidity_position_guidance({})
     # Default pool=50 → floor(50/10)=5 positions → medium risk
     assert result["recommended_max_positions"] == 5
@@ -5376,6 +5477,7 @@ def test_r27_liquidity_missing_pool_size_uses_default() -> None:
 def test_r27_liquidity_position_size_pct_capped_at_20pct() -> None:
     """Minimum 1 position → max position size = 1.0 (100% but capped at 20%)."""
     from scripts.btst_analysis_utils import compute_liquidity_position_guidance
+
     result = compute_liquidity_position_guidance({"avg_candidate_pool_size": 5.0})
     # 1 position → min(0.20, 1.0/1) = 0.20
     assert result["recommended_position_size_pct"] == 0.20
@@ -5385,9 +5487,11 @@ def test_r27_liquidity_position_size_pct_capped_at_20pct() -> None:
 # Task 1/2/3 (Round 27): registry checks — new metrics in comparison/quality dicts
 # ---------------------------------------------------------------------------
 
+
 def test_r27_new_metrics_in_comparison_metrics() -> None:
     """All four R27 COMPARISON_METRICS entries must be present."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "next_close_return_skewness" in COMPARISON_METRICS
     assert "win_loss_std_ratio" in COMPARISON_METRICS
     assert "score_discrimination_index" in COMPARISON_METRICS
@@ -5397,6 +5501,7 @@ def test_r27_new_metrics_in_comparison_metrics() -> None:
 def test_r27_new_metrics_in_optional_comparison_metrics() -> None:
     """All four R27 metrics must be optional (pre-R27 surfaces omit them)."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "next_close_return_skewness" in OPTIONAL_COMPARISON_METRICS
     assert "win_loss_std_ratio" in OPTIONAL_COMPARISON_METRICS
     assert "score_discrimination_index" in OPTIONAL_COMPARISON_METRICS
@@ -5406,6 +5511,7 @@ def test_r27_new_metrics_in_optional_comparison_metrics() -> None:
 def test_r27_new_metrics_have_labels() -> None:
     """All R27 metrics must have human-readable labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "next_close_return_skewness" in COMPARISON_METRIC_LABELS
     assert "win_loss_std_ratio" in COMPARISON_METRIC_LABELS
     assert "score_discrimination_index" in COMPARISON_METRIC_LABELS
@@ -5415,6 +5521,7 @@ def test_r27_new_metrics_have_labels() -> None:
 def test_r27_skewness_cap_in_btst_quality_caps() -> None:
     """next_close_return_skewness floor must be registered at -2.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "next_close_return_skewness" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["next_close_return_skewness"] == -2.0
 
@@ -5422,6 +5529,7 @@ def test_r27_skewness_cap_in_btst_quality_caps() -> None:
 def test_r27_score_spread_floor_in_btst_quality_floors() -> None:
     """score_spread_p95_p5 floor must be registered at 0.10."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "score_spread_p95_p5" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["score_spread_p95_p5"] == 0.10
 
@@ -5429,7 +5537,29 @@ def test_r27_score_spread_floor_in_btst_quality_floors() -> None:
 def test_r27_skewness_cap_blocker_fires_when_too_negative() -> None:
     """build_btst_quality_floor_blockers must fire when skewness < -2.0."""
     from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
-    metrics = {"next_close_return_skewness": -3.5, "score_spread_p95_p5": 0.50, "next_close_positive_rate": 0.60, "kelly_fraction_half": 0.05, "realized_payoff_ratio": 1.2, "alpha_avg_return": 0.001, "regime_consistency_score": 0.80, "kelly_fraction_drawdown_adjusted": 0.02, "downside_p10": -0.04, "sample_weight": 0.80, "window_coverage": 0.70, "avg_composite_score_escaped": 0.50, "t_plus_1_intraday_drawdown_p10": -0.04, "avg_escape_gap_cost": -0.01, "t_plus_2_close_payoff_ratio": 1.1, "t_plus_3_close_payoff_ratio": 1.05, "t_plus_3_close_expectancy": 0.001, "t_plus_3_close_positive_rate": 0.51, "t_plus_2_close_positive_rate": 0.53, "next_high_hit_rate": 0.57}
+
+    metrics = {
+        "next_close_return_skewness": -3.5,
+        "score_spread_p95_p5": 0.50,
+        "next_close_positive_rate": 0.60,
+        "kelly_fraction_half": 0.05,
+        "realized_payoff_ratio": 1.2,
+        "alpha_avg_return": 0.001,
+        "regime_consistency_score": 0.80,
+        "kelly_fraction_drawdown_adjusted": 0.02,
+        "downside_p10": -0.04,
+        "sample_weight": 0.80,
+        "window_coverage": 0.70,
+        "avg_composite_score_escaped": 0.50,
+        "t_plus_1_intraday_drawdown_p10": -0.04,
+        "avg_escape_gap_cost": -0.01,
+        "t_plus_2_close_payoff_ratio": 1.1,
+        "t_plus_3_close_payoff_ratio": 1.05,
+        "t_plus_3_close_expectancy": 0.001,
+        "t_plus_3_close_positive_rate": 0.51,
+        "t_plus_2_close_positive_rate": 0.53,
+        "next_high_hit_rate": 0.57,
+    }
     blockers = build_btst_quality_floor_blockers(metrics)
     assert any("next_close_return_skewness" in b for b in blockers)
 
@@ -5437,7 +5567,29 @@ def test_r27_skewness_cap_blocker_fires_when_too_negative() -> None:
 def test_r27_skewness_cap_blocker_silent_when_acceptable() -> None:
     """No blocker when skewness >= -2.0."""
     from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
-    metrics = {"next_close_return_skewness": -1.5, "score_spread_p95_p5": 0.50, "next_close_positive_rate": 0.60, "kelly_fraction_half": 0.05, "realized_payoff_ratio": 1.2, "alpha_avg_return": 0.001, "regime_consistency_score": 0.80, "kelly_fraction_drawdown_adjusted": 0.02, "downside_p10": -0.04, "sample_weight": 0.80, "window_coverage": 0.70, "avg_composite_score_escaped": 0.50, "t_plus_1_intraday_drawdown_p10": -0.04, "avg_escape_gap_cost": -0.01, "t_plus_2_close_payoff_ratio": 1.1, "t_plus_3_close_payoff_ratio": 1.05, "t_plus_3_close_expectancy": 0.001, "t_plus_3_close_positive_rate": 0.51, "t_plus_2_close_positive_rate": 0.53, "next_high_hit_rate": 0.57}
+
+    metrics = {
+        "next_close_return_skewness": -1.5,
+        "score_spread_p95_p5": 0.50,
+        "next_close_positive_rate": 0.60,
+        "kelly_fraction_half": 0.05,
+        "realized_payoff_ratio": 1.2,
+        "alpha_avg_return": 0.001,
+        "regime_consistency_score": 0.80,
+        "kelly_fraction_drawdown_adjusted": 0.02,
+        "downside_p10": -0.04,
+        "sample_weight": 0.80,
+        "window_coverage": 0.70,
+        "avg_composite_score_escaped": 0.50,
+        "t_plus_1_intraday_drawdown_p10": -0.04,
+        "avg_escape_gap_cost": -0.01,
+        "t_plus_2_close_payoff_ratio": 1.1,
+        "t_plus_3_close_payoff_ratio": 1.05,
+        "t_plus_3_close_expectancy": 0.001,
+        "t_plus_3_close_positive_rate": 0.51,
+        "t_plus_2_close_positive_rate": 0.53,
+        "next_high_hit_rate": 0.57,
+    }
     blockers = build_btst_quality_floor_blockers(metrics)
     assert not any("next_close_return_skewness" in b for b in blockers)
 
@@ -5445,7 +5597,28 @@ def test_r27_skewness_cap_blocker_silent_when_acceptable() -> None:
 def test_r27_score_spread_floor_blocker_fires_when_too_narrow() -> None:
     """build_btst_quality_floor_blockers must fire when score_spread_p95_p5 < 0.10."""
     from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
-    metrics = {"score_spread_p95_p5": 0.05, "next_close_positive_rate": 0.60, "kelly_fraction_half": 0.05, "realized_payoff_ratio": 1.2, "alpha_avg_return": 0.001, "regime_consistency_score": 0.80, "kelly_fraction_drawdown_adjusted": 0.02, "downside_p10": -0.04, "sample_weight": 0.80, "window_coverage": 0.70, "avg_composite_score_escaped": 0.50, "t_plus_1_intraday_drawdown_p10": -0.04, "avg_escape_gap_cost": -0.01, "t_plus_2_close_payoff_ratio": 1.1, "t_plus_3_close_payoff_ratio": 1.05, "t_plus_3_close_expectancy": 0.001, "t_plus_3_close_positive_rate": 0.51, "t_plus_2_close_positive_rate": 0.53, "next_high_hit_rate": 0.57}
+
+    metrics = {
+        "score_spread_p95_p5": 0.05,
+        "next_close_positive_rate": 0.60,
+        "kelly_fraction_half": 0.05,
+        "realized_payoff_ratio": 1.2,
+        "alpha_avg_return": 0.001,
+        "regime_consistency_score": 0.80,
+        "kelly_fraction_drawdown_adjusted": 0.02,
+        "downside_p10": -0.04,
+        "sample_weight": 0.80,
+        "window_coverage": 0.70,
+        "avg_composite_score_escaped": 0.50,
+        "t_plus_1_intraday_drawdown_p10": -0.04,
+        "avg_escape_gap_cost": -0.01,
+        "t_plus_2_close_payoff_ratio": 1.1,
+        "t_plus_3_close_payoff_ratio": 1.05,
+        "t_plus_3_close_expectancy": 0.001,
+        "t_plus_3_close_positive_rate": 0.51,
+        "t_plus_2_close_positive_rate": 0.53,
+        "next_high_hit_rate": 0.57,
+    }
     blockers = build_btst_quality_floor_blockers(metrics)
     assert any("score_spread_p95_p5" in b for b in blockers)
 
@@ -5458,6 +5631,7 @@ def test_r27_score_spread_floor_blocker_fires_when_too_narrow() -> None:
 def test_r28_factor_cross_corr_perfectly_positively_correlated() -> None:
     """Two factors with identical values should yield Spearman corr = 1.0."""
     from scripts.btst_analysis_utils import compute_factor_cross_correlation
+
     rows = [{"breakout_freshness": float(i) / 9, "close_strength": float(i) / 9} for i in range(10)]
     result = compute_factor_cross_correlation(rows)
     assert result["factor_max_correlation"] is not None
@@ -5468,6 +5642,7 @@ def test_r28_factor_cross_corr_perfectly_positively_correlated() -> None:
 def test_r28_factor_cross_corr_perfectly_negatively_correlated() -> None:
     """Monotone-inverse factor pair should yield Spearman corr = -1.0."""
     from scripts.btst_analysis_utils import compute_factor_cross_correlation
+
     rows = [{"breakout_freshness": float(i) / 9, "trend_acceleration": 1.0 - float(i) / 9} for i in range(10)]
     result = compute_factor_cross_correlation(rows)
     assert result["factor_max_correlation"] is not None
@@ -5479,6 +5654,7 @@ def test_r28_factor_cross_corr_orthogonal_pair_near_zero() -> None:
     import math
 
     from scripts.btst_analysis_utils import compute_factor_cross_correlation
+
     rows = [{"breakout_freshness": float(i), "close_strength": math.sin(i * math.pi)} for i in range(10)]
     result = compute_factor_cross_correlation(rows)
     assert result["factor_min_correlation"] is not None
@@ -5538,6 +5714,7 @@ def test_r28_factor_cross_corr_absent_factor_gracefully_skipped() -> None:
 def test_r28_factor_cross_corr_empty_rows_returns_nulls() -> None:
     """Empty rows should return all-null result without raising."""
     from scripts.btst_analysis_utils import compute_factor_cross_correlation
+
     result = compute_factor_cross_correlation([])
     assert result["factor_max_correlation"] is None
     assert result["avg_pairwise_correlation"] is None
@@ -5554,11 +5731,7 @@ def test_r28_regime_alpha_all_positive() -> None:
     from scripts.btst_analysis_utils import compute_regime_alpha_consistency
 
     # bull days (hs300 > 0.003), bear days (hs300 < -0.003), sideways
-    rows = (
-        [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)]
-        + [{"hs300_daily_return": -0.01, "next_close_return": 0.0} for _ in range(6)]
-        + [{"hs300_daily_return": 0.001, "next_close_return": 0.005} for _ in range(6)]
-    )
+    rows = [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)] + [{"hs300_daily_return": -0.01, "next_close_return": 0.0} for _ in range(6)] + [{"hs300_daily_return": 0.001, "next_close_return": 0.005} for _ in range(6)]
     result = compute_regime_alpha_consistency(rows)
     assert result["all_regimes_positive_alpha"] is True
     assert result["bull_alpha_avg"] is not None and result["bull_alpha_avg"] > 0
@@ -5569,11 +5742,8 @@ def test_r28_regime_alpha_all_positive() -> None:
 def test_r28_regime_alpha_bear_negative() -> None:
     """When bear alpha < 0, all_regimes_positive_alpha must be False."""
     from scripts.btst_analysis_utils import compute_regime_alpha_consistency
-    rows = (
-        [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)]
-        + [{"hs300_daily_return": -0.01, "next_close_return": -0.02} for _ in range(6)]
-        + [{"hs300_daily_return": 0.001, "next_close_return": 0.005} for _ in range(6)]
-    )
+
+    rows = [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)] + [{"hs300_daily_return": -0.01, "next_close_return": -0.02} for _ in range(6)] + [{"hs300_daily_return": 0.001, "next_close_return": 0.005} for _ in range(6)]
     result = compute_regime_alpha_consistency(rows)
     assert result["all_regimes_positive_alpha"] is False
     assert result["bear_alpha_avg"] is not None and result["bear_alpha_avg"] < 0
@@ -5585,11 +5755,7 @@ def test_r28_regime_alpha_consistency_score_correct() -> None:
     from scripts.btst_analysis_utils import compute_regime_alpha_consistency
 
     # bull alpha = 0.01, bear alpha = 0.005, sideways alpha = 0.008  → min=0.005, max_abs=0.01
-    rows = (
-        [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)]   # alpha 0.01
-        + [{"hs300_daily_return": -0.01, "next_close_return": -0.005} for _ in range(6)]  # alpha 0.005
-        + [{"hs300_daily_return": 0.001, "next_close_return": 0.009} for _ in range(6)]  # alpha 0.008
-    )
+    rows = [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)] + [{"hs300_daily_return": -0.01, "next_close_return": -0.005} for _ in range(6)] + [{"hs300_daily_return": 0.001, "next_close_return": 0.009} for _ in range(6)]  # alpha 0.01  # alpha 0.005  # alpha 0.008
     result = compute_regime_alpha_consistency(rows)
     score = result["alpha_consistency_score"]
     assert score is not None
@@ -5600,6 +5766,7 @@ def test_r28_regime_alpha_consistency_score_correct() -> None:
 def test_r28_regime_alpha_missing_hs300_returns_all_none() -> None:
     """When hs300_daily_return is absent, all fields should degrade to None."""
     from scripts.btst_analysis_utils import compute_regime_alpha_consistency
+
     rows = [{"next_close_return": 0.01} for _ in range(10)]
     result = compute_regime_alpha_consistency(rows)
     assert result["bull_alpha_avg"] is None
@@ -5612,11 +5779,7 @@ def test_r28_regime_alpha_insufficient_domain_samples() -> None:
     from scripts.btst_analysis_utils import compute_regime_alpha_consistency
 
     # Only 3 bear days — bear_alpha_avg should be None
-    rows = (
-        [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)]
-        + [{"hs300_daily_return": -0.01, "next_close_return": -0.005} for _ in range(3)]
-        + [{"hs300_daily_return": 0.001, "next_close_return": 0.009} for _ in range(6)]
-    )
+    rows = [{"hs300_daily_return": 0.01, "next_close_return": 0.02} for _ in range(6)] + [{"hs300_daily_return": -0.01, "next_close_return": -0.005} for _ in range(3)] + [{"hs300_daily_return": 0.001, "next_close_return": 0.009} for _ in range(6)]
     result = compute_regime_alpha_consistency(rows)
     assert result["bear_alpha_avg"] is None
 
@@ -5624,11 +5787,8 @@ def test_r28_regime_alpha_insufficient_domain_samples() -> None:
 def test_r28_regime_alpha_spread_calculation() -> None:
     """alpha_regime_spread should equal max_alpha - min_alpha across valid domains."""
     from scripts.btst_analysis_utils import compute_regime_alpha_consistency
-    rows = (
-        [{"hs300_daily_return": 0.01, "next_close_return": 0.03} for _ in range(6)]   # alpha 0.02
-        + [{"hs300_daily_return": -0.01, "next_close_return": -0.008} for _ in range(6)]  # alpha 0.002
-        + [{"hs300_daily_return": 0.001, "next_close_return": 0.006} for _ in range(6)]  # alpha 0.005
-    )
+
+    rows = [{"hs300_daily_return": 0.01, "next_close_return": 0.03} for _ in range(6)] + [{"hs300_daily_return": -0.01, "next_close_return": -0.008} for _ in range(6)] + [{"hs300_daily_return": 0.001, "next_close_return": 0.006} for _ in range(6)]  # alpha 0.02  # alpha 0.002  # alpha 0.005
     result = compute_regime_alpha_consistency(rows)
     spread = result["alpha_regime_spread"]
     assert spread is not None
@@ -5646,11 +5806,7 @@ def test_r28_post_loss_mean_reversion_signal() -> None:
     from scripts.btst_analysis_utils import compute_post_loss_recovery_analysis
 
     # 7 out of 8 loss rows have T+2 > 0 → positive rate = 0.875
-    rows = (
-        [{"next_close_return": -0.02, "t_plus_2_close_return": 0.01} for _ in range(7)]
-        + [{"next_close_return": -0.02, "t_plus_2_close_return": -0.01}]
-        + [{"next_close_return": 0.01}]  # win row — excluded
-    )
+    rows = [{"next_close_return": -0.02, "t_plus_2_close_return": 0.01} for _ in range(7)] + [{"next_close_return": -0.02, "t_plus_2_close_return": -0.01}] + [{"next_close_return": 0.01}]  # win row — excluded
     result = compute_post_loss_recovery_analysis(rows)
     assert result["mean_reversion_signal"] is True
     assert result["momentum_continuation_signal"] is False
@@ -5660,11 +5816,8 @@ def test_r28_post_loss_mean_reversion_signal() -> None:
 def test_r28_post_loss_momentum_continuation_signal() -> None:
     """T+2 positive rate < 0.45 triggers momentum_continuation_signal."""
     from scripts.btst_analysis_utils import compute_post_loss_recovery_analysis
-    rows = (
-        [{"next_close_return": -0.02, "t_plus_2_close_return": -0.01} for _ in range(7)]
-        + [{"next_close_return": -0.02, "t_plus_2_close_return": 0.01}]
-        + [{"next_close_return": 0.01}]
-    )
+
+    rows = [{"next_close_return": -0.02, "t_plus_2_close_return": -0.01} for _ in range(7)] + [{"next_close_return": -0.02, "t_plus_2_close_return": 0.01}] + [{"next_close_return": 0.01}]
     result = compute_post_loss_recovery_analysis(rows)
     assert result["momentum_continuation_signal"] is True
     assert result["mean_reversion_signal"] is False
@@ -5693,6 +5846,7 @@ def test_r28_post_loss_hold_through_loss_beneficial_false() -> None:
 def test_r28_post_loss_insufficient_samples_degradation() -> None:
     """Fewer than 5 loss rows should degrade most fields to None."""
     from scripts.btst_analysis_utils import compute_post_loss_recovery_analysis
+
     rows = [{"next_close_return": -0.02, "t_plus_2_close_return": 0.01} for _ in range(3)]
     result = compute_post_loss_recovery_analysis(rows)
     assert result["loss_sample_count"] == 3
@@ -5720,6 +5874,7 @@ def test_r28_post_loss_recovery_expected_value() -> None:
 def test_r28_new_metrics_in_comparison_metrics() -> None:
     """All R28 COMPARISON_METRICS entries must be present."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "high_correlation_pair_count" in COMPARISON_METRICS
     assert "alpha_consistency_score" in COMPARISON_METRICS
     assert "all_regimes_positive_alpha" in COMPARISON_METRICS
@@ -5729,6 +5884,7 @@ def test_r28_new_metrics_in_comparison_metrics() -> None:
 def test_r28_new_metrics_in_optional_comparison_metrics() -> None:
     """All R28 metrics must be optional (pre-R28 surfaces omit them)."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "high_correlation_pair_count" in OPTIONAL_COMPARISON_METRICS
     assert "alpha_consistency_score" in OPTIONAL_COMPARISON_METRICS
     assert "all_regimes_positive_alpha" in OPTIONAL_COMPARISON_METRICS
@@ -5738,6 +5894,7 @@ def test_r28_new_metrics_in_optional_comparison_metrics() -> None:
 def test_r28_new_metrics_have_labels() -> None:
     """All R28 metrics must have human-readable labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "high_correlation_pair_count" in COMPARISON_METRIC_LABELS
     assert "alpha_consistency_score" in COMPARISON_METRIC_LABELS
     assert "all_regimes_positive_alpha" in COMPARISON_METRIC_LABELS
@@ -5747,12 +5904,14 @@ def test_r28_new_metrics_have_labels() -> None:
 def test_r28_high_correlation_pair_count_lower_is_better() -> None:
     """high_correlation_pair_count must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "high_correlation_pair_count" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r28_bear_alpha_floor_in_btst_quality_floors() -> None:
     """bear_alpha_avg floor must be registered at -0.005."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "bear_alpha_avg" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["bear_alpha_avg"] == -0.005
 
@@ -6136,6 +6295,7 @@ def test_r29_weekday_win_rates_keys_are_ints() -> None:
 def test_r29_effective_factor_rank_floor_registered() -> None:
     """effective_factor_rank floor must be registered at 3."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "effective_factor_rank" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["effective_factor_rank"] == 3
 
@@ -6143,6 +6303,7 @@ def test_r29_effective_factor_rank_floor_registered() -> None:
 def test_r29_overfit_score_cap_registered() -> None:
     """overfit_score cap must be registered at 0.30."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "overfit_score" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["overfit_score"] == 0.30
 
@@ -6150,6 +6311,7 @@ def test_r29_overfit_score_cap_registered() -> None:
 def test_r29_new_metrics_in_optional_comparison_metrics() -> None:
     """All R29 metrics must appear in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "pca_diversity_score" in OPTIONAL_COMPARISON_METRICS
     assert "overfit_score" in OPTIONAL_COMPARISON_METRICS
     assert "weekday_win_rate_spread" in OPTIONAL_COMPARISON_METRICS
@@ -6158,12 +6320,14 @@ def test_r29_new_metrics_in_optional_comparison_metrics() -> None:
 def test_r29_overfit_score_in_lower_is_better_metrics() -> None:
     """overfit_score must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "overfit_score" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r29_new_metrics_have_labels() -> None:
     """All R29 metrics must have human-readable labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "pca_diversity_score" in COMPARISON_METRIC_LABELS
     assert "overfit_score" in COMPARISON_METRIC_LABELS
     assert "weekday_win_rate_spread" in COMPARISON_METRIC_LABELS
@@ -6181,11 +6345,7 @@ def test_r30_param_stability_stable_parameters() -> None:
     """Very stable metrics across windows → low param_drift_score, grade A or B."""
     from scripts.btst_analysis_utils import compute_parameter_stability_metrics
 
-    windows = [
-        {"next_close_positive_rate": 0.60 + i * 0.001, "next_close_expectancy": 0.02 + i * 0.0001,
-         "candidate_pool_avg_composite_score": 0.70, "realized_payoff_ratio": 1.5, "regime_consistency_score": 0.80}
-        for i in range(6)
-    ]
+    windows = [{"next_close_positive_rate": 0.60 + i * 0.001, "next_close_expectancy": 0.02 + i * 0.0001, "candidate_pool_avg_composite_score": 0.70, "realized_payoff_ratio": 1.5, "regime_consistency_score": 0.80} for i in range(6)]
     result = compute_parameter_stability_metrics(windows)
     assert result["param_drift_score"] is not None
     assert result["param_drift_score"] < 0.30
@@ -6196,11 +6356,7 @@ def test_r30_param_stability_unstable_parameters() -> None:
     """Wildly fluctuating metrics → high param_drift_score."""
     from scripts.btst_analysis_utils import compute_parameter_stability_metrics
 
-    windows = [
-        {"next_close_positive_rate": v, "next_close_expectancy": v * 0.1,
-         "candidate_pool_avg_composite_score": v, "realized_payoff_ratio": v * 2.0, "regime_consistency_score": v}
-        for v in [0.20, 0.90, 0.15, 0.85, 0.10, 0.95]
-    ]
+    windows = [{"next_close_positive_rate": v, "next_close_expectancy": v * 0.1, "candidate_pool_avg_composite_score": v, "realized_payoff_ratio": v * 2.0, "regime_consistency_score": v} for v in [0.20, 0.90, 0.15, 0.85, 0.10, 0.95]]
     result = compute_parameter_stability_metrics(windows)
     assert result["param_drift_score"] is not None
     assert result["param_drift_score"] > 0.30
@@ -6224,11 +6380,7 @@ def test_r30_param_stability_unstable_count() -> None:
     from scripts.btst_analysis_utils import compute_parameter_stability_metrics
 
     # Build windows where all 5 keys fluctuate wildly
-    windows = [
-        {"next_close_positive_rate": v, "next_close_expectancy": v * 0.05,
-         "candidate_pool_avg_composite_score": v + 0.1, "realized_payoff_ratio": v * 3.0, "regime_consistency_score": 1.0 - v}
-        for v in [0.10, 0.90, 0.10, 0.90, 0.10]
-    ]
+    windows = [{"next_close_positive_rate": v, "next_close_expectancy": v * 0.05, "candidate_pool_avg_composite_score": v + 0.1, "realized_payoff_ratio": v * 3.0, "regime_consistency_score": 1.0 - v} for v in [0.10, 0.90, 0.10, 0.90, 0.10]]
     result = compute_parameter_stability_metrics(windows)
     assert result["unstable_param_count"] >= 1
 
@@ -6238,11 +6390,7 @@ def test_r30_param_stability_grade_assignment() -> None:
     from scripts.btst_analysis_utils import compute_parameter_stability_metrics
 
     # Constant values → drift ≈ 0 → grade A
-    windows_const = [
-        {"next_close_positive_rate": 0.60, "next_close_expectancy": 0.02,
-         "candidate_pool_avg_composite_score": 0.70, "realized_payoff_ratio": 1.5, "regime_consistency_score": 0.80}
-        for _ in range(5)
-    ]
+    windows_const = [{"next_close_positive_rate": 0.60, "next_close_expectancy": 0.02, "candidate_pool_avg_composite_score": 0.70, "realized_payoff_ratio": 1.5, "regime_consistency_score": 0.80} for _ in range(5)]
     r = compute_parameter_stability_metrics(windows_const)
     assert r["parameter_stability_grade"] == "A"
 
@@ -6251,11 +6399,7 @@ def test_r30_param_drift_score_is_median() -> None:
     """param_drift_score must equal the median of per-key drift scores."""
     from scripts.btst_analysis_utils import compute_parameter_stability_metrics
 
-    windows = [
-        {"next_close_positive_rate": v, "realized_payoff_ratio": 1.5,
-         "next_close_expectancy": 0.02, "candidate_pool_avg_composite_score": 0.7, "regime_consistency_score": 0.8}
-        for v in [0.50, 0.60, 0.70, 0.80, 0.90]
-    ]
+    windows = [{"next_close_positive_rate": v, "realized_payoff_ratio": 1.5, "next_close_expectancy": 0.02, "candidate_pool_avg_composite_score": 0.7, "regime_consistency_score": 0.8} for v in [0.50, 0.60, 0.70, 0.80, 0.90]]
     result = compute_parameter_stability_metrics(windows)
     assert result["param_drift_score"] is not None
     drifts = list(result["param_drift_by_key"].values())
@@ -6268,6 +6412,7 @@ def test_r30_param_drift_score_is_median() -> None:
 def test_r30_param_drift_cap_registered() -> None:
     """param_drift_score cap must be registered at 0.50 in BTST_QUALITY_CAPS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "param_drift_score" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["param_drift_score"] == 0.50
 
@@ -6280,6 +6425,7 @@ def test_r30_param_drift_cap_registered() -> None:
 def _make_monthly_rows(month_returns: dict[int, list[float]]) -> list[dict]:
     """Build rows with dates targeting specific months."""
     import datetime
+
     rows = []
     base_year = 2022
     for month, rets in month_returns.items():
@@ -6349,7 +6495,7 @@ def test_r30_monthly_seasonal_effect_strong_flag() -> None:
     from scripts.btst_analysis_utils import compute_monthly_performance_analysis
 
     month_rets: dict[int, list[float]] = {
-        1: [0.05] * 8,   # wr=1.0
+        1: [0.05] * 8,  # wr=1.0
         2: [-0.05] * 8,  # wr=0.0
         3: [0.02 if j % 2 == 0 else -0.02 for j in range(8)],
         4: [0.02 if j % 2 == 0 else -0.02 for j in range(8)],
@@ -6366,8 +6512,7 @@ def test_r30_monthly_insufficient_samples_excluded() -> None:
 
     # Month 1 has only 3 rows (excluded); month 2 has 8 rows
     rows = [{"date": f"2022-01-0{i + 1}", "next_close_return": 0.03} for i in range(3)]
-    rows += [{"date": f"2022-0{m}-0{i + 1}", "next_close_return": 0.02 if i % 2 == 0 else -0.02}
-             for m in range(2, 5) for i in range(8)]
+    rows += [{"date": f"2022-0{m}-0{i + 1}", "next_close_return": 0.02 if i % 2 == 0 else -0.02} for m in range(2, 5) for i in range(8)]
     result = compute_monthly_performance_analysis(rows)
     # Month 1 should not appear in monthly_win_rates
     assert 1 not in result["monthly_win_rates"]
@@ -6378,7 +6523,7 @@ def test_r30_monthly_best_worst_month_identified() -> None:
     from scripts.btst_analysis_utils import compute_monthly_performance_analysis
 
     month_rets: dict[int, list[float]] = {
-        3: [0.05] * 8,   # wr=1.0 → best
+        3: [0.05] * 8,  # wr=1.0 → best
         6: [-0.05] * 8,  # wr=0.0 → worst
         9: [0.02 if j % 2 == 0 else -0.02 for j in range(8)],  # wr≈0.5
     }
@@ -6408,11 +6553,7 @@ def test_r30_nonlinear_u_shaped_factor_detected() -> None:
     factor = BTST_FACTOR_NAMES[0]
     # Low: returns +5%, Mid: returns -5%, High: returns +5% → U-shape
     n_each = 10
-    rows = (
-        [{"next_close_return": 0.05, factor: 0.1 + i * 0.005} for i in range(n_each)]  # low
-        + [{"next_close_return": -0.05, factor: 0.4 + i * 0.005} for i in range(n_each)]  # mid
-        + [{"next_close_return": 0.05, factor: 0.7 + i * 0.005} for i in range(n_each)]  # high
-    )
+    rows = [{"next_close_return": 0.05, factor: 0.1 + i * 0.005} for i in range(n_each)] + [{"next_close_return": -0.05, factor: 0.4 + i * 0.005} for i in range(n_each)] + [{"next_close_return": 0.05, factor: 0.7 + i * 0.005} for i in range(n_each)]  # low  # mid  # high
     result = compute_factor_nonlinearity(rows)
     assert factor in result["nonlinear_factor_names"]
     assert result["nonlinear_factor_count"] >= 1
@@ -6428,11 +6569,7 @@ def test_r30_nonlinear_monotone_linear_factor_not_flagged() -> None:
     factor = BTST_FACTOR_NAMES[0]
     # Linear: low=-0.05, mid=0.0, high=+0.05 → mid is exactly at linear expectation
     n_each = 10
-    rows = (
-        [{"next_close_return": -0.05, factor: 0.1 + i * 0.005} for i in range(n_each)]
-        + [{"next_close_return": 0.00, factor: 0.4 + i * 0.005} for i in range(n_each)]
-        + [{"next_close_return": 0.05, factor: 0.7 + i * 0.005} for i in range(n_each)]
-    )
+    rows = [{"next_close_return": -0.05, factor: 0.1 + i * 0.005} for i in range(n_each)] + [{"next_close_return": 0.00, factor: 0.4 + i * 0.005} for i in range(n_each)] + [{"next_close_return": 0.05, factor: 0.7 + i * 0.005} for i in range(n_each)]
     result = compute_factor_nonlinearity(rows)
     assert factor not in result["nonlinear_factor_names"]
 
@@ -6447,11 +6584,7 @@ def test_r30_nonlinearity_ratio_calculation() -> None:
     factor = BTST_FACTOR_NAMES[0]
     # Inverted-U: low=0.0, mid=+0.10, high=0.0 → linear_score≈0.0, nonlin large
     n_each = 10
-    rows = (
-        [{"next_close_return": 0.00, factor: 0.1 + i * 0.005} for i in range(n_each)]
-        + [{"next_close_return": 0.10, factor: 0.4 + i * 0.005} for i in range(n_each)]
-        + [{"next_close_return": 0.00, factor: 0.7 + i * 0.005} for i in range(n_each)]
-    )
+    rows = [{"next_close_return": 0.00, factor: 0.1 + i * 0.005} for i in range(n_each)] + [{"next_close_return": 0.10, factor: 0.4 + i * 0.005} for i in range(n_each)] + [{"next_close_return": 0.00, factor: 0.7 + i * 0.005} for i in range(n_each)]
     result = compute_factor_nonlinearity(rows)
     # nonlinear_deviation = |0.10 - 0.0| = 0.10, linear_score = |0.0 - 0.0| = 0.0 → ratio = 100
     assert result["nonlinear_factor_count"] >= 1 or result["avg_nonlinearity_ratio"] is not None
@@ -6467,11 +6600,7 @@ def test_r30_nonlinearity_threshold_0_30() -> None:
     factor = BTST_FACTOR_NAMES[0]
     # Weak nonlinearity: mid deviates only 1% from linear expectation
     n_each = 10
-    rows = (
-        [{"next_close_return": 0.00, factor: 0.1 + i * 0.005} for i in range(n_each)]
-        + [{"next_close_return": 0.051, factor: 0.4 + i * 0.005} for i in range(n_each)]  # expected mid = 0.05
-        + [{"next_close_return": 0.10, factor: 0.7 + i * 0.005} for i in range(n_each)]
-    )
+    rows = [{"next_close_return": 0.00, factor: 0.1 + i * 0.005} for i in range(n_each)] + [{"next_close_return": 0.051, factor: 0.4 + i * 0.005} for i in range(n_each)] + [{"next_close_return": 0.10, factor: 0.7 + i * 0.005} for i in range(n_each)]  # expected mid = 0.05
     result = compute_factor_nonlinearity(rows)
     # linear_score=0.10, nonlinear_deviation=|0.051-0.05|=0.001 → ratio=0.01 → not flagged
     assert factor not in result["nonlinear_factor_names"]
@@ -6505,11 +6634,7 @@ def test_r30_nonlinearity_most_nonlinear_factor() -> None:
 
     n_each = 10
     # f0: strong U-shape (high nonlinearity)
-    rows_f0 = (
-        [{"next_close_return": 0.10, f0: 0.1 + i * 0.005, f1: 0.5} for i in range(n_each)]
-        + [{"next_close_return": -0.10, f0: 0.4 + i * 0.005, f1: 0.5} for i in range(n_each)]
-        + [{"next_close_return": 0.10, f0: 0.7 + i * 0.005, f1: 0.5} for i in range(n_each)]
-    )
+    rows_f0 = [{"next_close_return": 0.10, f0: 0.1 + i * 0.005, f1: 0.5} for i in range(n_each)] + [{"next_close_return": -0.10, f0: 0.4 + i * 0.005, f1: 0.5} for i in range(n_each)] + [{"next_close_return": 0.10, f0: 0.7 + i * 0.005, f1: 0.5} for i in range(n_each)]
     result = compute_factor_nonlinearity(rows_f0)
     assert result["most_nonlinear_factor"] == f0
 
@@ -6523,11 +6648,7 @@ def test_r30_nonlinearity_count_and_avg_correct() -> None:
 
     factor = BTST_FACTOR_NAMES[0]
     n_each = 10
-    rows = (
-        [{"next_close_return": 0.10, factor: 0.1 + i * 0.005} for i in range(n_each)]
-        + [{"next_close_return": -0.10, factor: 0.4 + i * 0.005} for i in range(n_each)]
-        + [{"next_close_return": 0.10, factor: 0.7 + i * 0.005} for i in range(n_each)]
-    )
+    rows = [{"next_close_return": 0.10, factor: 0.1 + i * 0.005} for i in range(n_each)] + [{"next_close_return": -0.10, factor: 0.4 + i * 0.005} for i in range(n_each)] + [{"next_close_return": 0.10, factor: 0.7 + i * 0.005} for i in range(n_each)]
     result = compute_factor_nonlinearity(rows)
     assert isinstance(result["nonlinear_factor_count"], int)
     if result["avg_nonlinearity_ratio"] is not None:
@@ -6542,6 +6663,7 @@ def test_r30_nonlinearity_count_and_avg_correct() -> None:
 def test_r30_new_metrics_in_comparison_metrics() -> None:
     """All R30 metrics must appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "param_drift_score" in COMPARISON_METRICS
     assert "monthly_win_rate_spread" in COMPARISON_METRICS
     assert "nonlinear_factor_count" in COMPARISON_METRICS
@@ -6550,6 +6672,7 @@ def test_r30_new_metrics_in_comparison_metrics() -> None:
 def test_r30_new_metrics_in_optional_comparison_metrics() -> None:
     """All R30 metrics must appear in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "param_drift_score" in OPTIONAL_COMPARISON_METRICS
     assert "monthly_win_rate_spread" in OPTIONAL_COMPARISON_METRICS
     assert "nonlinear_factor_count" in OPTIONAL_COMPARISON_METRICS
@@ -6558,6 +6681,7 @@ def test_r30_new_metrics_in_optional_comparison_metrics() -> None:
 def test_r30_lower_is_better_metrics_registered() -> None:
     """param_drift_score and nonlinear_factor_count must be in LOWER_IS_BETTER."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "param_drift_score" in LOWER_IS_BETTER_COMPARISON_METRICS
     assert "nonlinear_factor_count" in LOWER_IS_BETTER_COMPARISON_METRICS
 
@@ -6565,6 +6689,7 @@ def test_r30_lower_is_better_metrics_registered() -> None:
 def test_r30_new_metrics_have_labels() -> None:
     """All R30 metrics must have human-readable labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "param_drift_score" in COMPARISON_METRIC_LABELS
     assert "monthly_win_rate_spread" in COMPARISON_METRIC_LABELS
     assert "nonlinear_factor_count" in COMPARISON_METRIC_LABELS
@@ -6735,6 +6860,7 @@ def test_r31_score_stability_win_rate_corr_positive() -> None:
 def test_r31_score_cv_cap_registered() -> None:
     """score_cv_across_windows cap must be 0.30 in BTST_QUALITY_CAPS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "score_cv_across_windows" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["score_cv_across_windows"] == 0.30
 
@@ -6747,12 +6873,14 @@ def test_r31_score_cv_cap_registered() -> None:
 def test_r31_f13_in_btst_factor_names() -> None:
     """BTST_FACTOR_NAMES must contain 'rs_sector_rank'."""
     from scripts.btst_analysis_utils import BTST_FACTOR_NAMES
+
     assert "rs_sector_rank" in BTST_FACTOR_NAMES
 
 
 def test_r31_f13_profile_has_weight_field() -> None:
     """ShortTradeTargetProfile must have runner_composite_score_rs_sector_rank_weight defaulting to 0.0."""
     from src.targets.profiles import ShortTradeTargetProfile
+
     profile = ShortTradeTargetProfile(name="test_r31")
     assert hasattr(profile, "runner_composite_score_rs_sector_rank_weight")
     assert profile.runner_composite_score_rs_sector_rank_weight == 0.0
@@ -6761,6 +6889,7 @@ def test_r31_f13_profile_has_weight_field() -> None:
 def test_r31_f13_probe_grid_has_rs_sector_rank_axis() -> None:
     """BTST_RUNNER_PROBE_GRID must include runner_composite_score_rs_sector_rank_weight axis."""
     from scripts.optimize_profile import BTST_RUNNER_PROBE_GRID
+
     assert "runner_composite_score_rs_sector_rank_weight" in BTST_RUNNER_PROBE_GRID
     assert 0.0 in BTST_RUNNER_PROBE_GRID["runner_composite_score_rs_sector_rank_weight"]
 
@@ -6768,12 +6897,14 @@ def test_r31_f13_probe_grid_has_rs_sector_rank_axis() -> None:
 def test_r31_f13_full_grid_axis_count_24() -> None:
     """FULL_GRID_AXIS_COUNT must equal 24 after adding F13 axis."""
     from scripts.optimize_profile import FULL_GRID_AXIS_COUNT
+
     assert FULL_GRID_AXIS_COUNT == 24
 
 
 def test_r31_f13_factor_to_probe_weight_key_mapping() -> None:
     """BTST_FACTOR_TO_PROBE_WEIGHT_KEY must map rs_sector_rank to the correct grid key."""
     from scripts.optimize_profile import BTST_FACTOR_TO_PROBE_WEIGHT_KEY
+
     assert "rs_sector_rank" in BTST_FACTOR_TO_PROBE_WEIGHT_KEY
     assert BTST_FACTOR_TO_PROBE_WEIGHT_KEY["rs_sector_rank"] == "runner_composite_score_rs_sector_rank_weight"
 
@@ -6901,8 +7032,7 @@ def test_r32_t1_score_field_fallback() -> None:
     """composite_score → runner_composite_score fallback works correctly."""
     from scripts.btst_analysis_utils import compute_conditional_tail_risk
 
-    rows = [{"composite_score": 0.9, "next_close_return": 0.02}] * 20 + \
-           [{"composite_score": 0.1, "next_close_return": -0.04}] * 20
+    rows = [{"composite_score": 0.9, "next_close_return": 0.02}] * 20 + [{"composite_score": 0.1, "next_close_return": -0.04}] * 20
     result = compute_conditional_tail_risk(rows)
     assert result["score_field_used"] == "composite_score"
     assert result["score_tail_separation"] is not None
@@ -6913,8 +7043,7 @@ def test_r32_t1_insufficient_high_score_rows() -> None:
     from scripts.btst_analysis_utils import compute_conditional_tail_risk
 
     # Only 3 rows with score > P75 threshold
-    rows = [{"runner_composite_score": 0.99, "next_close_return": 0.01}] * 3 + \
-           [{"runner_composite_score": 0.01, "next_close_return": -0.05}] * 3
+    rows = [{"runner_composite_score": 0.99, "next_close_return": 0.01}] * 3 + [{"runner_composite_score": 0.01, "next_close_return": -0.05}] * 3
     result = compute_conditional_tail_risk(rows)
     # total rows = 6 < 10 → falls to global path or None group stats
     # No assertion on exact values; just must not raise
@@ -6941,11 +7070,13 @@ def _make_vam_rows_monotone(n: int = 30) -> list[dict]:
         veq = i / (n - 1)
         enir = veq  # aligned
         ret = 0.03 if veq > 0.5 else -0.02
-        rows.append({
-            "volume_expansion_quality": round(veq, 3),
-            "t0_estimated_net_inflow_ratio": round(enir, 3),
-            "next_close_return": round(ret, 4),
-        })
+        rows.append(
+            {
+                "volume_expansion_quality": round(veq, 3),
+                "t0_estimated_net_inflow_ratio": round(enir, 3),
+                "next_close_return": round(ret, 4),
+            }
+        )
     return rows
 
 
@@ -7045,10 +7176,10 @@ def _make_best_surface() -> dict:
     return {
         "next_close_positive_rate": 0.60,  # above 0.55 ceiling
         "regime_consistency_score": 0.90,  # above 0.80 ceiling
-        "profile_health_score": 90.0,       # above 80 ceiling
-        "realized_payoff_ratio": 2.0,       # above 1.5 ceiling
-        "overfit_score": 0.0,               # at 0.0 ceiling (lower is better)
-        "kelly_fraction_half": 0.10,        # above 0.05 ceiling
+        "profile_health_score": 90.0,  # above 80 ceiling
+        "realized_payoff_ratio": 2.0,  # above 1.5 ceiling
+        "overfit_score": 0.0,  # at 0.0 ceiling (lower is better)
+        "kelly_fraction_half": 0.10,  # above 0.05 ceiling
     }
 
 
@@ -7057,10 +7188,10 @@ def _make_worst_surface() -> dict:
     return {
         "next_close_positive_rate": 0.40,  # below 0.45 floor
         "regime_consistency_score": 0.50,  # below 0.60 floor
-        "profile_health_score": 30.0,       # below 50 floor
-        "realized_payoff_ratio": 0.50,      # below 1.0 floor
-        "overfit_score": 0.30,              # above 0.20 floor (inverted)
-        "kelly_fraction_half": 0.01,        # below 0.02 floor
+        "profile_health_score": 30.0,  # below 50 floor
+        "realized_payoff_ratio": 0.50,  # below 1.0 floor
+        "overfit_score": 0.30,  # above 0.20 floor (inverted)
+        "kelly_fraction_half": 0.01,  # below 0.02 floor
     }
 
 
@@ -7153,6 +7284,7 @@ def test_r32_t3_score_in_range() -> None:
     import random
 
     from scripts.btst_analysis_utils import compute_composite_gate_score
+
     rng = random.Random(42)
     for _ in range(50):
         surface = {
@@ -7531,13 +7663,14 @@ def test_r33_t3_factor_ic_mean_key_supported() -> None:
 # Helpers for Round 34
 # ---------------------------------------------------------------------------
 
+
 def _make_cross_factor_rows(n: int, *, win_frac: float = 0.6, high_frac: float = 0.5) -> list[dict]:
     """Generate rows with 7 cross-factors and next_close_return."""
     import random
+
     random.seed(42)
     rows = []
-    factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank",
-               "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
     for i in range(n):
         ret = 0.02 if i < int(n * win_frac) else -0.01
         row: dict = {"next_close_return": ret}
@@ -7561,6 +7694,7 @@ def _make_churn_windows(n: int, *, stable: bool = True) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Round 34, T1 — compute_cross_factor_conditional
 # ---------------------------------------------------------------------------
+
 
 def test_r34_t1_basic_returns_expected_keys() -> None:
     """compute_cross_factor_conditional returns all required keys."""
@@ -7594,8 +7728,7 @@ def test_r34_t1_none_returns_filtered() -> None:
     """Rows with next_close_return=None are excluded from analysis."""
     from scripts.btst_analysis_utils import compute_cross_factor_conditional
 
-    factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank",
-               "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
     rows = [{"next_close_return": None, **{f: 0.5 for f in factors}}] * 25
     result = compute_cross_factor_conditional(rows)
     assert result["multi_factor_lift"] is None
@@ -7616,8 +7749,7 @@ def test_r34_t1_synergy_true_when_lift_positive() -> None:
     from scripts.btst_analysis_utils import compute_cross_factor_conditional
 
     # Force: rows with ALL factors high → all win; rows with none high → all lose.
-    factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank",
-               "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
+    factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
     high_rows = [{"next_close_return": 0.03, **{f: 0.95 for f in factors}} for _ in range(20)]
     low_rows = [{"next_close_return": -0.02, **{f: 0.05 for f in factors}} for _ in range(20)]
     result = compute_cross_factor_conditional(high_rows + low_rows)
@@ -7660,6 +7792,7 @@ def test_r34_t1_label_registered() -> None:
 # ---------------------------------------------------------------------------
 # Round 34, T2 — compute_adaptive_sizing_score
 # ---------------------------------------------------------------------------
+
 
 def test_r34_t2_basic_returns_required_keys() -> None:
     """compute_adaptive_sizing_score returns all required keys."""
@@ -7755,6 +7888,7 @@ def test_r34_t2_label_registered() -> None:
 # ---------------------------------------------------------------------------
 # Round 34, T3 — compute_signal_churn_metrics
 # ---------------------------------------------------------------------------
+
 
 def test_r34_t3_basic_returns_required_keys() -> None:
     """compute_signal_churn_metrics returns required keys."""
@@ -7868,6 +8002,7 @@ def test_r34_t3_signal_churn_label_registered() -> None:
 # Round 35, T1 — compute_sharpe_sortino_analysis
 # ---------------------------------------------------------------------------
 
+
 def _make_rows_with_returns(returns: list[float]) -> list[dict]:
     """Helper: build row dicts with next_close_return."""
     return [{"next_close_return": r} for r in returns]
@@ -7965,6 +8100,7 @@ def test_r35_t1_label_registered() -> None:
 # Round 35, T2 — compute_quality_trend_analysis
 # ---------------------------------------------------------------------------
 
+
 def test_r35_t2_basic_returns_required_keys() -> None:
     """compute_quality_trend_analysis returns required keys."""
     from scripts.optimize_profile import compute_quality_trend_analysis
@@ -7996,10 +8132,7 @@ def test_r35_t2_all_improving_score_one() -> None:
     """All metrics monotonically increasing → quality_trend_score = 1.0, grade A."""
     from scripts.optimize_profile import compute_quality_trend_analysis
 
-    summaries = [
-        {"win_rate": 0.50 + i * 0.02, "expected_value_per_trade": 0.001 * (i + 1), "composite_gate_score": 60 + i * 2, "sortino_ratio": 0.1 * (i + 1)}
-        for i in range(5)
-    ]
+    summaries = [{"win_rate": 0.50 + i * 0.02, "expected_value_per_trade": 0.001 * (i + 1), "composite_gate_score": 60 + i * 2, "sortino_ratio": 0.1 * (i + 1)} for i in range(5)]
     result = compute_quality_trend_analysis(summaries)
     assert result["quality_trend_score"] == 1.0
     assert result["quality_trend_improving"] is True
@@ -8010,10 +8143,7 @@ def test_r35_t2_all_declining_score_zero() -> None:
     """All metrics declining → quality_trend_score = 0.0, grade D."""
     from scripts.optimize_profile import compute_quality_trend_analysis
 
-    summaries = [
-        {"win_rate": 0.70 - i * 0.02, "expected_value_per_trade": 0.01 - i * 0.002, "composite_gate_score": 80 - i * 3, "sortino_ratio": 1.0 - i * 0.2}
-        for i in range(5)
-    ]
+    summaries = [{"win_rate": 0.70 - i * 0.02, "expected_value_per_trade": 0.01 - i * 0.002, "composite_gate_score": 80 - i * 3, "sortino_ratio": 1.0 - i * 0.2} for i in range(5)]
     result = compute_quality_trend_analysis(summaries)
     assert result["quality_trend_score"] == 0.0
     assert result["quality_trend_improving"] is False
@@ -8047,6 +8177,7 @@ def test_r35_t2_label_registered() -> None:
 # ---------------------------------------------------------------------------
 # Round 35, T3 — compute_candidate_diversity_score
 # ---------------------------------------------------------------------------
+
 
 def _make_rows_with_sectors(sectors: list[str | None]) -> list[dict]:
     """Helper: build row dicts with sector field."""
@@ -8152,6 +8283,7 @@ def test_r35_t3_label_registered() -> None:
 # T1 — compute_return_percentile_breakdown
 # ---------------------------------------------------------------------------
 
+
 def test_r36_t1_basic_returns_required_keys() -> None:
     """compute_return_percentile_breakdown returns all required keys for >=10 rows."""
     from scripts.btst_analysis_utils import compute_return_percentile_breakdown
@@ -8246,6 +8378,7 @@ def test_r36_t1_label_registered() -> None:
 # T2 — compute_composite_score_ic
 # ---------------------------------------------------------------------------
 
+
 def test_r36_t2_basic_returns_required_keys() -> None:
     """compute_composite_score_ic returns all required keys for >=10 paired rows."""
     from scripts.btst_analysis_utils import compute_composite_score_ic
@@ -8339,6 +8472,7 @@ def test_r36_t2_label_registered() -> None:
 # ---------------------------------------------------------------------------
 # T3 — compute_win_rate_confidence_interval
 # ---------------------------------------------------------------------------
+
 
 def test_r36_t3_basic_returns_required_keys() -> None:
     """compute_win_rate_confidence_interval returns all required keys for >=10 rows."""
@@ -8446,15 +8580,14 @@ def test_r36_t3_label_registered() -> None:
 # T1 — compute_holding_period_analysis
 # ---------------------------------------------------------------------------
 
+
 def test_r37_t1_basic_returns_required_keys() -> None:
     """compute_holding_period_analysis returns all required keys for valid input."""
     from scripts.btst_analysis_utils import compute_holding_period_analysis
 
     rows = [{"next_close_return": 0.03, "t2_return": 0.02, "t3_return": 0.01} for _ in range(10)]
     result = compute_holding_period_analysis(rows)
-    for key in ("optimal_holding_days", "holding_analysis_valid", "avg_return_t1", "avg_return_t2",
-                "avg_return_t3", "ev_t1", "ev_t2", "ev_t3", "holding_period_monotone",
-                "t1_vs_t2_advantage", "multi_day_cumulative_return"):
+    for key in ("optimal_holding_days", "holding_analysis_valid", "avg_return_t1", "avg_return_t2", "avg_return_t3", "ev_t1", "ev_t2", "ev_t3", "holding_period_monotone", "t1_vs_t2_advantage", "multi_day_cumulative_return"):
         assert key in result, f"Missing key: {key}"
 
 
@@ -8550,21 +8683,14 @@ def test_r37_t1_label_registered() -> None:
 # T2 — compute_loss_trade_signature
 # ---------------------------------------------------------------------------
 
+
 def test_r37_t2_basic_returns_required_keys() -> None:
     """compute_loss_trade_signature returns all required keys for valid input."""
     from scripts.btst_analysis_utils import compute_loss_trade_signature
 
-    rows = [
-        {"next_close_return": 0.03 if i % 2 == 0 else -0.02,
-         "close_strength": 0.6, "volume_expansion_quality": 0.5,
-         "sector_resonance": 0.4, "rs_sector_rank": 0.7,
-         "t0_estimated_net_inflow_ratio": 0.3, "breakout_quality_score": 0.8,
-         "momentum_slope_20d": 0.2}
-        for i in range(20)
-    ]
+    rows = [{"next_close_return": 0.03 if i % 2 == 0 else -0.02, "close_strength": 0.6, "volume_expansion_quality": 0.5, "sector_resonance": 0.4, "rs_sector_rank": 0.7, "t0_estimated_net_inflow_ratio": 0.3, "breakout_quality_score": 0.8, "momentum_slope_20d": 0.2} for i in range(20)]
     result = compute_loss_trade_signature(rows)
-    for key in ("loss_warning_factors", "loss_warning_factor_count", "loss_signature_strength",
-                "loss_avoidable", "factor_divergence"):
+    for key in ("loss_warning_factors", "loss_warning_factor_count", "loss_signature_strength", "loss_avoidable", "factor_divergence"):
         assert key in result, f"Missing key: {key}"
 
 
@@ -8590,14 +8716,7 @@ def test_r37_t2_none_return_filtered() -> None:
     """compute_loss_trade_signature filters rows with None next_close_return."""
     from scripts.btst_analysis_utils import compute_loss_trade_signature
 
-    rows = [{"next_close_return": None, "close_strength": 0.5}] * 5 + [
-        {"next_close_return": 0.03 if i % 2 == 0 else -0.02,
-         "close_strength": 0.6, "volume_expansion_quality": 0.5,
-         "sector_resonance": 0.4, "rs_sector_rank": 0.7,
-         "t0_estimated_net_inflow_ratio": 0.3, "breakout_quality_score": 0.8,
-         "momentum_slope_20d": 0.2}
-        for i in range(20)
-    ]
+    rows = [{"next_close_return": None, "close_strength": 0.5}] * 5 + [{"next_close_return": 0.03 if i % 2 == 0 else -0.02, "close_strength": 0.6, "volume_expansion_quality": 0.5, "sector_resonance": 0.4, "rs_sector_rank": 0.7, "t0_estimated_net_inflow_ratio": 0.3, "breakout_quality_score": 0.8, "momentum_slope_20d": 0.2} for i in range(20)]
     result = compute_loss_trade_signature(rows)
     assert result["loss_signature_strength"] is not None
 
@@ -8608,21 +8727,31 @@ def test_r37_t2_divergence_direction() -> None:
 
     rows = []
     for i in range(15):
-        rows.append({
-            "next_close_return": 0.05,
-            "close_strength": 0.9, "volume_expansion_quality": 0.8,
-            "sector_resonance": 0.7, "rs_sector_rank": 0.8,
-            "t0_estimated_net_inflow_ratio": 0.6, "breakout_quality_score": 0.9,
-            "momentum_slope_20d": 0.5,
-        })
+        rows.append(
+            {
+                "next_close_return": 0.05,
+                "close_strength": 0.9,
+                "volume_expansion_quality": 0.8,
+                "sector_resonance": 0.7,
+                "rs_sector_rank": 0.8,
+                "t0_estimated_net_inflow_ratio": 0.6,
+                "breakout_quality_score": 0.9,
+                "momentum_slope_20d": 0.5,
+            }
+        )
     for i in range(15):
-        rows.append({
-            "next_close_return": -0.03,
-            "close_strength": 0.2, "volume_expansion_quality": 0.1,
-            "sector_resonance": 0.2, "rs_sector_rank": 0.1,
-            "t0_estimated_net_inflow_ratio": 0.1, "breakout_quality_score": 0.2,
-            "momentum_slope_20d": 0.1,
-        })
+        rows.append(
+            {
+                "next_close_return": -0.03,
+                "close_strength": 0.2,
+                "volume_expansion_quality": 0.1,
+                "sector_resonance": 0.2,
+                "rs_sector_rank": 0.1,
+                "t0_estimated_net_inflow_ratio": 0.1,
+                "breakout_quality_score": 0.2,
+                "momentum_slope_20d": 0.1,
+            }
+        )
     result = compute_loss_trade_signature(rows)
     assert result["loss_avoidable"] is True
     for f, div in result["factor_divergence"].items():
@@ -8656,14 +8785,14 @@ def test_r37_t2_label_registered() -> None:
 # T3 — compute_score_gini_coefficient
 # ---------------------------------------------------------------------------
 
+
 def test_r37_t3_basic_returns_required_keys() -> None:
     """compute_score_gini_coefficient returns all required keys for valid input."""
     from scripts.btst_analysis_utils import compute_score_gini_coefficient
 
     rows = [{"runner_composite_score": float(i) / 10} for i in range(1, 11)]
     result = compute_score_gini_coefficient(rows)
-    for key in ("score_gini", "top20_share", "elite_candidate_rate",
-                "score_distribution_quality", "score_well_differentiated"):
+    for key in ("score_gini", "top20_share", "elite_candidate_rate", "score_distribution_quality", "score_well_differentiated"):
         assert key in result, f"Missing key: {key}"
         assert result[key] is not None
 
@@ -8710,6 +8839,7 @@ def test_r37_t3_gini_in_unit_interval() -> None:
     import random
 
     from scripts.btst_analysis_utils import compute_score_gini_coefficient
+
     rng = random.Random(7)
     rows = [{"runner_composite_score": rng.uniform(0.1, 1.0)} for _ in range(30)]
     result = compute_score_gini_coefficient(rows)
@@ -8762,14 +8892,9 @@ def test_r38_t1_basic_returns_required_keys() -> None:
     """compute_market_environment_sensitivity returns all required keys for valid input."""
     from scripts.btst_analysis_utils import compute_market_environment_sensitivity
 
-    rows = [
-        {"next_close_return": 0.03 if i % 2 == 0 else -0.01, "sector_resonance": float(i) / 20}
-        for i in range(20)
-    ]
+    rows = [{"next_close_return": 0.03 if i % 2 == 0 else -0.01, "sector_resonance": float(i) / 20} for i in range(20)]
     result = compute_market_environment_sensitivity(rows)
-    for key in ("bull_env_win_rate", "bear_env_win_rate", "bull_env_avg_return",
-                "bear_env_avg_return", "market_sensitivity_ratio", "env_win_rate_gap",
-                "environment_adaptive", "market_neutral"):
+    for key in ("bull_env_win_rate", "bear_env_win_rate", "bull_env_avg_return", "bear_env_avg_return", "market_sensitivity_ratio", "env_win_rate_gap", "environment_adaptive", "market_neutral"):
         assert key in result, f"Missing key: {key}"
 
 
@@ -8796,10 +8921,7 @@ def test_r38_t1_none_fields_filtered() -> None:
     """Rows with None next_close_return or sector_resonance are excluded."""
     from scripts.btst_analysis_utils import compute_market_environment_sensitivity
 
-    rows = [{"next_close_return": None, "sector_resonance": 0.5}] * 5 + [
-        {"next_close_return": 0.03 if i % 2 == 0 else -0.01, "sector_resonance": float(i) / 20}
-        for i in range(20)
-    ]
+    rows = [{"next_close_return": None, "sector_resonance": 0.5}] * 5 + [{"next_close_return": 0.03 if i % 2 == 0 else -0.01, "sector_resonance": float(i) / 20} for i in range(20)]
     result = compute_market_environment_sensitivity(rows)
     assert result["env_win_rate_gap"] is not None
 
@@ -8877,15 +8999,9 @@ def test_r38_t2_basic_returns_required_keys() -> None:
     """compute_factor_importance_ranking returns all required keys for valid input."""
     from scripts.btst_analysis_utils import compute_factor_importance_ranking
 
-    rows = [
-        {"next_close_return": 0.03 if i % 2 == 0 else -0.01,
-         "close_strength": float(i) / 20, "sector_resonance": float(i) / 20,
-         "rs_sector_rank": float(i) / 20}
-        for i in range(20)
-    ]
+    rows = [{"next_close_return": 0.03 if i % 2 == 0 else -0.01, "close_strength": float(i) / 20, "sector_resonance": float(i) / 20, "rs_sector_rank": float(i) / 20} for i in range(20)]
     result = compute_factor_importance_ranking(rows)
-    for key in ("factor_ic_ranking", "top_factor", "bottom_factor",
-                "positive_ic_factor_count", "top3_avg_ic", "factor_ic_spread"):
+    for key in ("factor_ic_ranking", "top_factor", "bottom_factor", "positive_ic_factor_count", "top3_avg_ic", "factor_ic_spread"):
         assert key in result, f"Missing key: {key}"
 
 
@@ -8911,10 +9027,7 @@ def test_r38_t2_none_returns_filtered() -> None:
     """Rows with None next_close_return are excluded."""
     from scripts.btst_analysis_utils import compute_factor_importance_ranking
 
-    rows = [{"next_close_return": None, "close_strength": 0.5}] * 5 + [
-        {"next_close_return": float(i) / 20 - 0.05, "close_strength": float(i) / 20}
-        for i in range(20)
-    ]
+    rows = [{"next_close_return": None, "close_strength": 0.5}] * 5 + [{"next_close_return": float(i) / 20 - 0.05, "close_strength": float(i) / 20} for i in range(20)]
     result = compute_factor_importance_ranking(rows)
     assert result["positive_ic_factor_count"] is not None
 
@@ -8923,13 +9036,7 @@ def test_r38_t2_ranking_sorted_descending() -> None:
     """factor_ic_ranking is sorted from highest IC to lowest."""
     from scripts.btst_analysis_utils import compute_factor_importance_ranking
 
-    rows = [
-        {"next_close_return": float(i) / 20 - 0.25,
-         "close_strength": float(i) / 20,
-         "sector_resonance": 1.0 - float(i) / 20,
-         "rs_sector_rank": float(i) / 20}
-        for i in range(20)
-    ]
+    rows = [{"next_close_return": float(i) / 20 - 0.25, "close_strength": float(i) / 20, "sector_resonance": 1.0 - float(i) / 20, "rs_sector_rank": float(i) / 20} for i in range(20)]
     result = compute_factor_importance_ranking(rows)
     ranking = result["factor_ic_ranking"]
     if len(ranking) >= 2:
@@ -8941,10 +9048,7 @@ def test_r38_t2_positive_ic_count_non_negative() -> None:
     """positive_ic_factor_count is a non-negative integer when data is available."""
     from scripts.btst_analysis_utils import compute_factor_importance_ranking
 
-    rows = [
-        {"next_close_return": float(i) / 20 - 0.25, "close_strength": float(i) / 20}
-        for i in range(20)
-    ]
+    rows = [{"next_close_return": float(i) / 20 - 0.25, "close_strength": float(i) / 20} for i in range(20)]
     result = compute_factor_importance_ranking(rows)
     if result["positive_ic_factor_count"] is not None:
         assert isinstance(result["positive_ic_factor_count"], int)
@@ -8982,15 +9086,9 @@ def test_r38_t3_basic_returns_required_keys() -> None:
     """compute_score_bucket_win_rates returns all required keys for valid input."""
     from scripts.btst_analysis_utils import compute_score_bucket_win_rates
 
-    rows = [
-        {"next_close_return": 0.03 if i % 2 == 0 else -0.01,
-         "runner_composite_score": float(i) / 30}
-        for i in range(30)
-    ]
+    rows = [{"next_close_return": 0.03 if i % 2 == 0 else -0.01, "runner_composite_score": float(i) / 30} for i in range(30)]
     result = compute_score_bucket_win_rates(rows)
-    for key in ("win_rate_q1", "win_rate_q2", "win_rate_q3", "win_rate_q4", "win_rate_q5",
-                "score_monotone", "score_near_monotone", "top_quintile_premium",
-                "score_rank_ic", "score_discriminates_well"):
+    for key in ("win_rate_q1", "win_rate_q2", "win_rate_q3", "win_rate_q4", "win_rate_q5", "score_monotone", "score_near_monotone", "top_quintile_premium", "score_rank_ic", "score_discriminates_well"):
         assert key in result, f"Missing key: {key}"
 
 
@@ -9016,11 +9114,7 @@ def test_r38_t3_none_fields_filtered() -> None:
     """Rows with None return or score are excluded from computation."""
     from scripts.btst_analysis_utils import compute_score_bucket_win_rates
 
-    rows = [{"next_close_return": None, "runner_composite_score": 0.5}] * 5 + [
-        {"next_close_return": 0.03 if i % 2 == 0 else -0.01,
-         "runner_composite_score": float(i) / 30}
-        for i in range(30)
-    ]
+    rows = [{"next_close_return": None, "runner_composite_score": 0.5}] * 5 + [{"next_close_return": 0.03 if i % 2 == 0 else -0.01, "runner_composite_score": float(i) / 30} for i in range(30)]
     result = compute_score_bucket_win_rates(rows)
     assert result["top_quintile_premium"] is not None
 
@@ -9029,11 +9123,7 @@ def test_r38_t3_composite_score_fallback() -> None:
     """compute_score_bucket_win_rates falls back to composite_score when runner_composite_score absent."""
     from scripts.btst_analysis_utils import compute_score_bucket_win_rates
 
-    rows = [
-        {"next_close_return": 0.03 if i % 2 == 0 else -0.01,
-         "composite_score": float(i) / 30}
-        for i in range(30)
-    ]
+    rows = [{"next_close_return": 0.03 if i % 2 == 0 else -0.01, "composite_score": float(i) / 30} for i in range(30)]
     result = compute_score_bucket_win_rates(rows)
     assert result["top_quintile_premium"] is not None
 
@@ -9047,10 +9137,10 @@ def test_r38_t3_monotone_score_produces_valid_flags() -> None:
         win_prob = 0.3 + bucket * 0.15
         for _ in range(8):
             import random
+
             rng = random.Random(bucket * 100 + _)
             ret = 0.04 if rng.random() < win_prob else -0.02
-            rows.append({"next_close_return": ret,
-                         "runner_composite_score": float(bucket) + rng.uniform(0, 0.9)})
+            rows.append({"next_close_return": ret, "runner_composite_score": float(bucket) + rng.uniform(0, 0.9)})
     result = compute_score_bucket_win_rates(rows)
     assert result["score_monotone"] in (True, False, None)
     assert result["score_near_monotone"] in (True, False, None)
@@ -9185,11 +9275,7 @@ def test_r39_t2_basic_returns_result() -> None:
     """compute_optimal_score_threshold returns a valid result with enough rows."""
     from scripts.btst_analysis_utils import compute_optimal_score_threshold
 
-    rows = [
-        {"next_close_return": 0.04 if i % 2 == 0 else -0.01,
-         "runner_composite_score": float(i) / 25}
-        for i in range(25)
-    ]
+    rows = [{"next_close_return": 0.04 if i % 2 == 0 else -0.01, "runner_composite_score": float(i) / 25} for i in range(25)]
     result = compute_optimal_score_threshold(rows)
     assert result["optimal_threshold_pct"] is not None
     assert result["optimal_threshold_lift"] is not None
@@ -9216,11 +9302,7 @@ def test_r39_t2_none_fields_filtered() -> None:
     """Rows with None return or score are excluded from threshold analysis."""
     from scripts.btst_analysis_utils import compute_optimal_score_threshold
 
-    rows = [{"next_close_return": None, "runner_composite_score": 0.5}] * 5 + [
-        {"next_close_return": 0.03 if i % 2 == 0 else -0.01,
-         "runner_composite_score": float(i) / 25}
-        for i in range(25)
-    ]
+    rows = [{"next_close_return": None, "runner_composite_score": 0.5}] * 5 + [{"next_close_return": 0.03 if i % 2 == 0 else -0.01, "runner_composite_score": float(i) / 25} for i in range(25)]
     result = compute_optimal_score_threshold(rows)
     assert result["optimal_threshold_lift"] is not None
 
@@ -9229,11 +9311,7 @@ def test_r39_t2_score_field_fallback() -> None:
     """compute_optimal_score_threshold falls back to composite_score when runner_composite_score absent."""
     from scripts.btst_analysis_utils import compute_optimal_score_threshold
 
-    rows = [
-        {"next_close_return": 0.03 if i % 2 == 0 else -0.01,
-         "composite_score": float(i) / 25}
-        for i in range(25)
-    ]
+    rows = [{"next_close_return": 0.03 if i % 2 == 0 else -0.01, "composite_score": float(i) / 25} for i in range(25)]
     result = compute_optimal_score_threshold(rows)
     assert result["optimal_threshold_pct"] is not None
 
@@ -9242,11 +9320,7 @@ def test_r39_t2_coverage_in_range() -> None:
     """threshold_coverage is in [0, 1]."""
     from scripts.btst_analysis_utils import compute_optimal_score_threshold
 
-    rows = [
-        {"next_close_return": 0.04 if i % 2 == 0 else -0.01,
-         "runner_composite_score": float(i) / 30}
-        for i in range(30)
-    ]
+    rows = [{"next_close_return": 0.04 if i % 2 == 0 else -0.01, "runner_composite_score": float(i) / 30} for i in range(30)]
     result = compute_optimal_score_threshold(rows)
     if result["threshold_coverage"] is not None:
         assert 0.0 <= result["threshold_coverage"] <= 1.0
@@ -9379,14 +9453,20 @@ def test_r39_t3_label_registered() -> None:
 # T1: compute_factor_synergy_matrix
 # ---------------------------------------------------------------------------
 
+
 def _make_synergy_rows(n: int = 40, seed: int = 0) -> list[dict]:
     """Return n synthetic rows with core factor fields and next_close_return."""
     import random
+
     rng = random.Random(seed)
     factors = [
-        "close_strength", "volume_expansion_quality", "sector_resonance",
-        "rs_sector_rank", "t0_estimated_net_inflow_ratio",
-        "breakout_quality_score", "momentum_slope_20d",
+        "close_strength",
+        "volume_expansion_quality",
+        "sector_resonance",
+        "rs_sector_rank",
+        "t0_estimated_net_inflow_ratio",
+        "breakout_quality_score",
+        "momentum_slope_20d",
     ]
     rows = []
     for i in range(n):
@@ -9492,9 +9572,11 @@ def test_r40_t1_label_registered() -> None:
 # T2: compute_float_turnover_analysis
 # ---------------------------------------------------------------------------
 
+
 def _make_turnover_rows(n: int = 40, seed: int = 0, include_turnover: bool = True) -> list[dict]:
     """Return n synthetic rows with float_turnover_rate and next_close_return."""
     import random
+
     rng = random.Random(seed)
     rows = []
     for _ in range(n):
@@ -9588,18 +9670,22 @@ def test_r40_t2_label_registered() -> None:
 # T3: compute_cross_window_factor_exposure
 # ---------------------------------------------------------------------------
 
+
 def _make_window_summaries(n: int = 5, seed: int = 0) -> list[dict]:
     """Return n synthetic window summary dicts with core metric fields."""
     import random
+
     rng = random.Random(seed)
     summaries = []
     for _ in range(n):
-        summaries.append({
-            "win_rate": rng.uniform(0.45, 0.70),
-            "composite_gate_score": rng.uniform(40.0, 80.0),
-            "sortino_ratio": rng.uniform(-0.5, 3.0),
-            "expected_value_per_trade": rng.uniform(-0.01, 0.03),
-        })
+        summaries.append(
+            {
+                "win_rate": rng.uniform(0.45, 0.70),
+                "composite_gate_score": rng.uniform(40.0, 80.0),
+                "sortino_ratio": rng.uniform(-0.5, 3.0),
+                "expected_value_per_trade": rng.uniform(-0.01, 0.03),
+            }
+        )
     return summaries
 
 
@@ -9691,13 +9777,13 @@ def test_r40_t3_label_registered() -> None:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_r41_windows(n: int = 5, seed: int = 0, include_ranking: bool = True) -> list[dict]:
     """Return n synthetic window summary dicts with factor_ic_ranking."""
     import random
+
     rng = random.Random(seed)
-    factors = ["momentum_score", "volume_expansion_quality", "price_strength_score",
-               "t0_estimated_net_inflow_ratio", "t0_tail_strength", "gap_body_ratio",
-               "float_turnover_rate"]
+    factors = ["momentum_score", "volume_expansion_quality", "price_strength_score", "t0_estimated_net_inflow_ratio", "t0_tail_strength", "gap_body_ratio", "float_turnover_rate"]
     summaries = []
     for _ in range(n):
         if include_ranking:
@@ -9714,6 +9800,7 @@ def _make_r41_windows(n: int = 5, seed: int = 0, include_ranking: bool = True) -
 def _make_r41_vpa_rows(n: int = 40, seed: int = 0, include_veq: bool = True, include_enir: bool = True) -> list[dict]:
     """Return n rows with next_close_return, volume_expansion_quality, t0_estimated_net_inflow_ratio."""
     import random
+
     rng = random.Random(seed)
     rows = []
     for _ in range(n):
@@ -9729,6 +9816,7 @@ def _make_r41_vpa_rows(n: int = 40, seed: int = 0, include_veq: bool = True, inc
 def _make_r41_stat_rows(n: int = 50, seed: int = 0, positive_bias: float = 0.02) -> list[dict]:
     """Return n rows with next_close_return having a slight positive bias."""
     import random
+
     rng = random.Random(seed)
     rows = []
     for _ in range(n):
@@ -9739,6 +9827,7 @@ def _make_r41_stat_rows(n: int = 50, seed: int = 0, positive_bias: float = 0.02)
 # ---------------------------------------------------------------------------
 # T1: compute_factor_rank_consistency
 # ---------------------------------------------------------------------------
+
 
 def test_r41_t1_basic_returns_result() -> None:
     """compute_factor_rank_consistency returns a dict with expected keys for sufficient windows."""
@@ -9841,6 +9930,7 @@ def test_r41_t1_label_registered() -> None:
 # T2: compute_volume_price_alignment
 # ---------------------------------------------------------------------------
 
+
 def test_r41_t2_basic_returns_result() -> None:
     """compute_volume_price_alignment returns valid dict for sufficient data."""
     from scripts.btst_analysis_utils import compute_volume_price_alignment
@@ -9906,13 +9996,7 @@ def test_r41_t2_enir_only_scenario() -> None:
     """When only ENIR is provided (no VEQ), scenario 2 still runs."""
     from scripts.btst_analysis_utils import compute_volume_price_alignment
 
-    rows = [
-        {"next_close_return": 0.02, "t0_estimated_net_inflow_ratio": 0.5}
-        for _ in range(25)
-    ] + [
-        {"next_close_return": -0.01, "t0_estimated_net_inflow_ratio": -0.3}
-        for _ in range(15)
-    ]
+    rows = [{"next_close_return": 0.02, "t0_estimated_net_inflow_ratio": 0.5} for _ in range(25)] + [{"next_close_return": -0.01, "t0_estimated_net_inflow_ratio": -0.3} for _ in range(15)]
     result = compute_volume_price_alignment(rows)
     assert result["vol_price_signal_valid"] is True
     # VEQ not provided so alignment_rate may be None; but ENIR rates may be set
@@ -9945,6 +10029,7 @@ def test_r41_t2_label_registered() -> None:
 # ---------------------------------------------------------------------------
 # T3: compute_statistical_significance_tests
 # ---------------------------------------------------------------------------
+
 
 def test_r41_t3_basic_returns_result() -> None:
     """compute_statistical_significance_tests returns dict with expected keys."""
@@ -10102,12 +10187,14 @@ def _make_r42_consensus_windows(n: int = 5, seed: int = 0, pct_passing: float = 
     windows = []
     for i in range(n):
         passing = rng.random() < pct_passing
-        windows.append({
-            "next_close_positive_rate": 0.60 if passing else 0.48,
-            "composite_gate_score": 65.0 if passing else 40.0,
-            "expected_value_per_trade": 0.008 if passing else 0.001,
-            "combined_significance_score": 0.50 if passing else 0.10,
-        })
+        windows.append(
+            {
+                "next_close_positive_rate": 0.60 if passing else 0.48,
+                "composite_gate_score": 65.0 if passing else 40.0,
+                "expected_value_per_trade": 0.008 if passing else 0.001,
+                "combined_significance_score": 0.50 if passing else 0.10,
+            }
+        )
     return windows
 
 
@@ -10156,6 +10243,7 @@ def test_r42_t1_score_priority_runner_composite() -> None:
     import random as _r
 
     from scripts.btst_analysis_utils import compute_score_calibration_curve
+
     rng = _r.Random(42)
     rows = [{"runner_composite_score": rng.uniform(0, 1), "composite_score": None, "next_close_return": rng.uniform(-0.03, 0.03)} for _ in range(20)]
     result = compute_score_calibration_curve(rows)
@@ -10168,6 +10256,7 @@ def test_r42_t1_fallback_to_composite_score() -> None:
     import random as _r
 
     from scripts.btst_analysis_utils import compute_score_calibration_curve
+
     rng = _r.Random(5)
     rows = [{"composite_score": rng.uniform(0, 1), "next_close_return": rng.uniform(-0.03, 0.03)} for _ in range(20)]
     result = compute_score_calibration_curve(rows)
@@ -10418,8 +10507,10 @@ def test_r42_t3_label_registered() -> None:
 # Round 43 — T1 (Alpha): Profit Factor Analysis helpers
 # ===========================================================================
 
+
 def _make_r43_pf_rows(n: int, *, seed: int = 0, win_rate: float = 0.6, avg_win: float = 0.03, avg_loss: float = -0.02) -> list[dict]:
     import random as _r
+
     rng = _r.Random(seed)
     rows = []
     for _ in range(n):
@@ -10434,8 +10525,10 @@ def _make_r43_pf_rows(n: int, *, seed: int = 0, win_rate: float = 0.6, avg_win: 
 # Round 43 — T2 (Beta): News Sentiment Stratification helpers
 # ===========================================================================
 
+
 def _make_r43_sentiment_rows(n: int, *, seed: int = 0, sentiment_lift: float = 0.10) -> list[dict]:
     import random as _r
+
     rng = _r.Random(seed)
     rows = []
     for i in range(n):
@@ -10450,8 +10543,10 @@ def _make_r43_sentiment_rows(n: int, *, seed: int = 0, sentiment_lift: float = 0
 # Round 43 — T3 (Gamma): Score Momentum Trend helpers
 # ===========================================================================
 
+
 def _make_r43_trend_windows(n: int, *, seed: int = 0, slope: float = 0.01) -> list[dict]:
     import random as _r
+
     rng = _r.Random(seed)
     base = 0.55
     return [{"candidate_pool_avg_composite_score": base + slope * i + rng.uniform(-0.005, 0.005)} for i in range(n)]
@@ -10460,6 +10555,7 @@ def _make_r43_trend_windows(n: int, *, seed: int = 0, slope: float = 0.01) -> li
 # ---------------------------------------------------------------------------
 # T1 tests
 # ---------------------------------------------------------------------------
+
 
 def test_r43_t1_basic_returns_result() -> None:
     """compute_profit_factor_analysis returns dict with expected keys."""
@@ -10572,6 +10668,7 @@ def test_r43_t1_label_registered() -> None:
 # T2 tests
 # ---------------------------------------------------------------------------
 
+
 def test_r43_t2_basic_returns_result() -> None:
     """compute_news_sentiment_stratification returns dict with expected keys."""
     from scripts.btst_analysis_utils import compute_news_sentiment_stratification
@@ -10671,6 +10768,7 @@ def test_r43_t2_label_registered() -> None:
 # ---------------------------------------------------------------------------
 # T3 tests
 # ---------------------------------------------------------------------------
+
 
 def test_r43_t3_basic_returns_result() -> None:
     """compute_score_momentum_trend returns dict with expected keys."""
@@ -11396,11 +11494,13 @@ def test_r45_top_candidate_consistency_optional_registered() -> None:
 # T1 — compute_volume_price_divergence_stratification
 # ---------------------------------------------------------------------------
 
+
 def test_r46_vpd_strat_empty_input() -> None:
     """Empty rows -> graceful degradation with vpd_stratification_valid=False."""
     from scripts.btst_analysis_utils import (
         compute_volume_price_divergence_stratification,
     )
+
     result = compute_volume_price_divergence_stratification([])
     assert result["vpd_stratification_valid"] is False
     assert result["vpd_low_win_rate"] is None
@@ -11414,6 +11514,7 @@ def test_r46_vpd_strat_missing_field() -> None:
     from scripts.btst_analysis_utils import (
         compute_volume_price_divergence_stratification,
     )
+
     rows = [{"next_day_return": 0.01} for _ in range(20)]
     result = compute_volume_price_divergence_stratification(rows)
     assert result["vpd_stratification_valid"] is False
@@ -11425,6 +11526,7 @@ def test_r46_vpd_strat_normal_three_tiers() -> None:
     from scripts.btst_analysis_utils import (
         compute_volume_price_divergence_stratification,
     )
+
     rows = []
     # low vpd rows: 9 rows returning positive (high win rate in low tier)
     for _ in range(9):
@@ -11449,6 +11551,7 @@ def test_r46_vpd_strat_anti_monotone_logic() -> None:
     from scripts.btst_analysis_utils import (
         compute_volume_price_divergence_stratification,
     )
+
     rows = []
     # low tier: 8/10 win
     for _ in range(8):
@@ -11511,6 +11614,7 @@ def test_r46_vpd_strat_effective_threshold() -> None:
 def test_r46_vpd_strat_floor_registered() -> None:
     """vpd_low_vs_high_lift: 0.0 must be in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "vpd_low_vs_high_lift" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["vpd_low_vs_high_lift"] == 0.0
 
@@ -11518,6 +11622,7 @@ def test_r46_vpd_strat_floor_registered() -> None:
 def test_r46_vpd_strat_label_registered() -> None:
     """vpd_low_vs_high_lift must have a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "vpd_low_vs_high_lift" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["vpd_low_vs_high_lift"] == "量价低背离胜率溢价"
 
@@ -11525,6 +11630,7 @@ def test_r46_vpd_strat_label_registered() -> None:
 def test_r46_vpd_strat_optional_registered() -> None:
     """vpd_low_vs_high_lift must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "vpd_low_vs_high_lift" in OPTIONAL_COMPARISON_METRICS
 
 
@@ -11532,9 +11638,11 @@ def test_r46_vpd_strat_optional_registered() -> None:
 # T2 — compute_score_distribution_moments
 # ---------------------------------------------------------------------------
 
+
 def test_r46_score_moments_empty_input() -> None:
     """Empty rows -> graceful degradation (all None)."""
     from scripts.btst_analysis_utils import compute_score_distribution_moments
+
     result = compute_score_distribution_moments([])
     assert result["score_mean"] is None
     assert result["score_skewness"] is None
@@ -11544,6 +11652,7 @@ def test_r46_score_moments_empty_input() -> None:
 def test_r46_score_moments_too_few_rows() -> None:
     """Fewer than 5 rows -> graceful degradation."""
     from scripts.btst_analysis_utils import compute_score_distribution_moments
+
     rows = [{"score": float(i)} for i in range(4)]
     result = compute_score_distribution_moments(rows)
     assert result["score_mean"] is None
@@ -11575,6 +11684,7 @@ def test_r46_score_moments_right_skewed() -> None:
 def test_r46_score_moments_all_positive_pct() -> None:
     """All scores > 0 -> score_positive_pct == 1.0."""
     from scripts.btst_analysis_utils import compute_score_distribution_moments
+
     rows = [{"score": float(i + 1)} for i in range(10)]
     result = compute_score_distribution_moments(rows)
     assert result["score_positive_pct"] == 1.0
@@ -11583,6 +11693,7 @@ def test_r46_score_moments_all_positive_pct() -> None:
 def test_r46_score_moments_floor_skewness_registered() -> None:
     """score_skewness: 0.0 must be in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "score_skewness" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["score_skewness"] == 0.0
 
@@ -11590,6 +11701,7 @@ def test_r46_score_moments_floor_skewness_registered() -> None:
 def test_r46_score_moments_floor_positive_pct_registered() -> None:
     """score_positive_pct: 0.50 must be in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "score_positive_pct" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["score_positive_pct"] == 0.50
 
@@ -11597,6 +11709,7 @@ def test_r46_score_moments_floor_positive_pct_registered() -> None:
 def test_r46_score_moments_label_skewness_registered() -> None:
     """score_skewness must have a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "score_skewness" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["score_skewness"] == "评分分布偏度"
 
@@ -11604,6 +11717,7 @@ def test_r46_score_moments_label_skewness_registered() -> None:
 def test_r46_score_moments_label_positive_pct_registered() -> None:
     """score_positive_pct must have a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "score_positive_pct" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["score_positive_pct"] == "评分正值占比"
 
@@ -11611,12 +11725,14 @@ def test_r46_score_moments_label_positive_pct_registered() -> None:
 def test_r46_score_moments_optional_skewness_registered() -> None:
     """score_skewness must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "score_skewness" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r46_score_moments_optional_positive_pct_registered() -> None:
     """score_positive_pct must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "score_positive_pct" in OPTIONAL_COMPARISON_METRICS
 
 
@@ -11624,9 +11740,11 @@ def test_r46_score_moments_optional_positive_pct_registered() -> None:
 # T3 — compute_cross_window_gate_consistency
 # ---------------------------------------------------------------------------
 
+
 def test_r46_gate_consistency_empty_list() -> None:
     """Empty list -> graceful degradation (all None)."""
     from scripts.optimize_profile import compute_cross_window_gate_consistency
+
     result = compute_cross_window_gate_consistency([])
     assert result["gate_above_threshold_mean"] is None
     assert result["gate_above_threshold_cv"] is None
@@ -11636,6 +11754,7 @@ def test_r46_gate_consistency_empty_list() -> None:
 def test_r46_gate_consistency_too_few_windows() -> None:
     """Fewer than 3 valid windows -> graceful degradation."""
     from scripts.optimize_profile import compute_cross_window_gate_consistency
+
     summaries = [{"gate_high_pct": 0.5}, {"gate_high_pct": 0.4}]
     result = compute_cross_window_gate_consistency(summaries)
     assert result["gate_above_threshold_cv"] is None
@@ -11645,6 +11764,7 @@ def test_r46_gate_consistency_too_few_windows() -> None:
 def test_r46_gate_consistency_perfectly_stable() -> None:
     """All windows with same gate fraction -> cv == 0.0, grade A."""
     from scripts.optimize_profile import compute_cross_window_gate_consistency
+
     summaries = [{"gate_high_pct": 0.6}] * 5
     result = compute_cross_window_gate_consistency(summaries)
     assert result["gate_above_threshold_cv"] == 0.0
@@ -11654,6 +11774,7 @@ def test_r46_gate_consistency_perfectly_stable() -> None:
 def test_r46_gate_consistency_high_variation_grade_d() -> None:
     """High variation -> cv >= 0.25, grade D."""
     from scripts.optimize_profile import compute_cross_window_gate_consistency
+
     summaries = [
         {"gate_high_pct": 0.1},
         {"gate_high_pct": 0.9},
@@ -11683,6 +11804,7 @@ def test_r46_gate_consistency_grade_b_boundary() -> None:
 def test_r46_gate_consistency_cap_registered() -> None:
     """gate_above_threshold_cv: 0.25 must be in BTST_QUALITY_CAPS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "gate_above_threshold_cv" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["gate_above_threshold_cv"] == 0.25
 
@@ -11690,12 +11812,14 @@ def test_r46_gate_consistency_cap_registered() -> None:
 def test_r46_gate_consistency_lower_is_better_registered() -> None:
     """gate_above_threshold_cv must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "gate_above_threshold_cv" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r46_gate_consistency_optional_registered() -> None:
     """gate_above_threshold_cv must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "gate_above_threshold_cv" in OPTIONAL_COMPARISON_METRICS
 
 
@@ -12058,7 +12182,7 @@ def test_r47_factor_ic_consistency_best_worst_factor() -> None:
     windows = []
     for _ in range(4):
         ic_dict = {f: 0.10 for f in _R47_FACTOR_NAMES}
-        ic_dict["close_strength"] = 0.50   # always best
+        ic_dict["close_strength"] = 0.50  # always best
         ic_dict["float_turnover_rate"] = -0.50  # always worst
         windows.append({"factor_ic_values": ic_dict})
     result = compute_factor_ic_consistency(windows)
@@ -12102,9 +12226,11 @@ def test_r47_factor_ic_consistency_in_comparison_metrics() -> None:
 
 # ---- T1: VEQ Stratification ----
 
+
 def test_r48_veq_strat_empty_input() -> None:
     """Empty rows → veq_stratification_valid=False."""
     from scripts.btst_analysis_utils import compute_veq_stratification
+
     result = compute_veq_stratification([])
     assert result["veq_stratification_valid"] is False
     assert result["veq_high_vs_low_lift"] is None
@@ -12113,6 +12239,7 @@ def test_r48_veq_strat_empty_input() -> None:
 def test_r48_veq_strat_missing_field() -> None:
     """Rows without volume_expansion_quality → graceful degradation."""
     from scripts.btst_analysis_utils import compute_veq_stratification
+
     rows = [{"next_day_return": 0.01} for _ in range(20)]
     result = compute_veq_stratification(rows)
     assert result["veq_stratification_valid"] is False
@@ -12122,6 +12249,7 @@ def test_r48_veq_strat_missing_field() -> None:
 def test_r48_veq_strat_normal_three_tiers() -> None:
     """Normal data with three tiers: lift is a float, valid=True."""
     from scripts.btst_analysis_utils import compute_veq_stratification
+
     rows = []
     for i in range(30):
         rows.append({"volume_expansion_quality": float(i), "next_day_return": 0.01 if i >= 20 else -0.01})
@@ -12133,6 +12261,7 @@ def test_r48_veq_strat_normal_three_tiers() -> None:
 def test_r48_veq_strat_lift_direction() -> None:
     """High VEQ group should win more → positive lift."""
     from scripts.btst_analysis_utils import compute_veq_stratification
+
     rows = []
     for i in range(30):
         win = 1 if i >= 20 else 0
@@ -12161,6 +12290,7 @@ def test_r48_veq_strat_monotone_logic() -> None:
 def test_r48_veq_strat_effective_threshold() -> None:
     """veq_effective=True when lift > 0.05."""
     from scripts.btst_analysis_utils import compute_veq_stratification
+
     rows = []
     for i in range(30):
         win = i >= 20
@@ -12175,6 +12305,7 @@ def test_r48_veq_strat_effective_threshold() -> None:
 def test_r48_veq_strat_floor_registered() -> None:
     """veq_high_vs_low_lift: 0.0 must be in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "veq_high_vs_low_lift" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["veq_high_vs_low_lift"] == 0.0
 
@@ -12182,6 +12313,7 @@ def test_r48_veq_strat_floor_registered() -> None:
 def test_r48_veq_strat_label_registered() -> None:
     """veq_high_vs_low_lift must have a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "veq_high_vs_low_lift" in COMPARISON_METRIC_LABELS
     assert "成交量质量" in COMPARISON_METRIC_LABELS["veq_high_vs_low_lift"]
 
@@ -12189,20 +12321,24 @@ def test_r48_veq_strat_label_registered() -> None:
 def test_r48_veq_strat_optional_registered() -> None:
     """veq_high_vs_low_lift must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "veq_high_vs_low_lift" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r48_veq_strat_in_comparison_metrics() -> None:
     """veq_high_vs_low_lift must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "veq_high_vs_low_lift" in COMPARISON_METRICS
 
 
 # ---- T2: Sector Resonance Stratification ----
 
+
 def test_r48_sr_strat_empty_input() -> None:
     """Empty rows → sr_stratification_valid=False."""
     from scripts.btst_analysis_utils import compute_sector_resonance_stratification
+
     result = compute_sector_resonance_stratification([])
     assert result["sr_stratification_valid"] is False
     assert result["sr_high_vs_low_lift"] is None
@@ -12211,6 +12347,7 @@ def test_r48_sr_strat_empty_input() -> None:
 def test_r48_sr_strat_missing_field() -> None:
     """Rows without sector_resonance → graceful degradation."""
     from scripts.btst_analysis_utils import compute_sector_resonance_stratification
+
     rows = [{"next_day_return": 0.01} for _ in range(20)]
     result = compute_sector_resonance_stratification(rows)
     assert result["sr_stratification_valid"] is False
@@ -12219,6 +12356,7 @@ def test_r48_sr_strat_missing_field() -> None:
 def test_r48_sr_strat_normal_three_tiers() -> None:
     """Normal data: sr_high_vs_low_lift is a float, valid=True."""
     from scripts.btst_analysis_utils import compute_sector_resonance_stratification
+
     rows = []
     for i in range(30):
         rows.append({"sector_resonance": float(i), "next_day_return": 0.01 if i >= 20 else -0.01})
@@ -12246,6 +12384,7 @@ def test_r48_sr_strat_monotone_logic() -> None:
 def test_r48_sr_strat_effective_threshold() -> None:
     """sr_effective=True when lift > 0.05."""
     from scripts.btst_analysis_utils import compute_sector_resonance_stratification
+
     rows = []
     for i in range(30):
         win = i >= 20
@@ -12258,6 +12397,7 @@ def test_r48_sr_strat_effective_threshold() -> None:
 def test_r48_sr_strat_floor_registered() -> None:
     """sr_high_vs_low_lift: 0.0 must be in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "sr_high_vs_low_lift" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["sr_high_vs_low_lift"] == 0.0
 
@@ -12265,6 +12405,7 @@ def test_r48_sr_strat_floor_registered() -> None:
 def test_r48_sr_strat_label_registered() -> None:
     """sr_high_vs_low_lift must have a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "sr_high_vs_low_lift" in COMPARISON_METRIC_LABELS
     assert "板块共振" in COMPARISON_METRIC_LABELS["sr_high_vs_low_lift"]
 
@@ -12272,14 +12413,17 @@ def test_r48_sr_strat_label_registered() -> None:
 def test_r48_sr_strat_optional_registered() -> None:
     """sr_high_vs_low_lift must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "sr_high_vs_low_lift" in OPTIONAL_COMPARISON_METRICS
 
 
 # ---- T3: Cross-window EV Trend ----
 
+
 def test_r48_ev_trend_empty_list() -> None:
     """Empty list → ev_trend_slope=None."""
     from scripts.optimize_profile import compute_cross_window_ev_trend
+
     result = compute_cross_window_ev_trend([])
     assert result["ev_trend_slope"] is None
 
@@ -12287,6 +12431,7 @@ def test_r48_ev_trend_empty_list() -> None:
 def test_r48_ev_trend_too_few_valid_windows() -> None:
     """Fewer than 3 windows with ev values → degraded."""
     from scripts.optimize_profile import compute_cross_window_ev_trend
+
     summaries = [
         {"expected_value_per_trade": 0.1},
         {"other_key": 999},
@@ -12298,6 +12443,7 @@ def test_r48_ev_trend_too_few_valid_windows() -> None:
 def test_r48_ev_trend_rising_trend() -> None:
     """Ascending EV series → positive slope, grade A or B."""
     from scripts.optimize_profile import compute_cross_window_ev_trend
+
     summaries = [{"expected_value_per_trade": v} for v in [0.1, 0.2, 0.3]]
     result = compute_cross_window_ev_trend(summaries)
     assert result["ev_trend_slope"] is not None
@@ -12308,6 +12454,7 @@ def test_r48_ev_trend_rising_trend() -> None:
 def test_r48_ev_trend_falling_trend() -> None:
     """Descending EV series → negative slope."""
     from scripts.optimize_profile import compute_cross_window_ev_trend
+
     summaries = [{"expected_value_per_trade": v} for v in [0.3, 0.2, 0.1]]
     result = compute_cross_window_ev_trend(summaries)
     assert result["ev_trend_slope"] is not None
@@ -12317,6 +12464,7 @@ def test_r48_ev_trend_falling_trend() -> None:
 def test_r48_ev_trend_severe_decline_grade_d() -> None:
     """Slope < -0.05 → grade D."""
     from scripts.optimize_profile import compute_cross_window_ev_trend
+
     summaries = [{"expected_value_per_trade": v} for v in [0.5, 0.3, 0.1, -0.1, -0.3]]
     result = compute_cross_window_ev_trend(summaries)
     assert result["ev_trend_slope"] is not None
@@ -12327,6 +12475,7 @@ def test_r48_ev_trend_severe_decline_grade_d() -> None:
 def test_r48_ev_trend_floor_registered() -> None:
     """ev_trend_slope: -0.05 must be in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "ev_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["ev_trend_slope"] == -0.05
 
@@ -12334,6 +12483,7 @@ def test_r48_ev_trend_floor_registered() -> None:
 def test_r48_ev_trend_label_registered() -> None:
     """ev_trend_slope must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "ev_trend_slope" in COMPARISON_METRIC_LABELS
     assert "期望收益" in COMPARISON_METRIC_LABELS["ev_trend_slope"]
 
@@ -12341,12 +12491,14 @@ def test_r48_ev_trend_label_registered() -> None:
 def test_r48_ev_trend_optional_registered() -> None:
     """ev_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "ev_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r48_ev_trend_in_comparison_metrics() -> None:
     """ev_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "ev_trend_slope" in COMPARISON_METRICS
 
 
@@ -12354,15 +12506,21 @@ def test_r48_ev_trend_in_comparison_metrics() -> None:
 # Round 49, Task 1 (Alpha): compute_factor_consensus_analysis tests
 # ===========================================================================
 
+
 def _make_consensus_rows(n: int, high_factor_rows: int = 0) -> list[dict]:
     """Build synthetic rows for consensus tests."""
     import random
+
     random.seed(42)
     rows = []
     core_factors = [
-        "close_strength", "volume_expansion_quality", "sector_resonance",
-        "rs_sector_rank", "t0_estimated_net_inflow_ratio",
-        "breakout_quality_score", "momentum_slope_20d",
+        "close_strength",
+        "volume_expansion_quality",
+        "sector_resonance",
+        "rs_sector_rank",
+        "t0_estimated_net_inflow_ratio",
+        "breakout_quality_score",
+        "momentum_slope_20d",
     ]
     for i in range(n):
         row: dict = {"next_day_return": 0.02 if i % 2 == 0 else -0.01}
@@ -12380,6 +12538,7 @@ def _make_consensus_rows(n: int, high_factor_rows: int = 0) -> list[dict]:
 def test_r49_consensus_empty_input() -> None:
     """Empty input → graceful degradation."""
     from scripts.btst_analysis_utils import compute_factor_consensus_analysis
+
     result = compute_factor_consensus_analysis([])
     assert result["consensus_valid"] is False
     assert result["consensus_lift"] is None
@@ -12388,6 +12547,7 @@ def test_r49_consensus_empty_input() -> None:
 def test_r49_consensus_fewer_than_6_rows() -> None:
     """< 6 rows → degradation (consensus_valid=False)."""
     from scripts.btst_analysis_utils import compute_factor_consensus_analysis
+
     rows = _make_consensus_rows(5)
     result = compute_factor_consensus_analysis(rows)
     assert result["consensus_valid"] is False
@@ -12397,6 +12557,7 @@ def test_r49_consensus_fewer_than_6_rows() -> None:
 def test_r49_consensus_all_factors_missing() -> None:
     """All factor fields absent → graceful degradation with consensus_count=0."""
     from scripts.btst_analysis_utils import compute_factor_consensus_analysis
+
     rows = [{"next_day_return": 0.01} for _ in range(10)]
     result = compute_factor_consensus_analysis(rows)
     # Should not raise; mean_count should be 0.0
@@ -12411,18 +12572,26 @@ def test_r49_consensus_normal_with_high_group() -> None:
     # 10 high-consensus rows (all 7 factors high, win) + 10 low rows
     high_rows = [
         {
-            "close_strength": 1.0, "volume_expansion_quality": 1.0, "sector_resonance": 1.0,
-            "rs_sector_rank": 1.0, "t0_estimated_net_inflow_ratio": 1.0,
-            "breakout_quality_score": 1.0, "momentum_slope_20d": 1.0,
+            "close_strength": 1.0,
+            "volume_expansion_quality": 1.0,
+            "sector_resonance": 1.0,
+            "rs_sector_rank": 1.0,
+            "t0_estimated_net_inflow_ratio": 1.0,
+            "breakout_quality_score": 1.0,
+            "momentum_slope_20d": 1.0,
             "next_day_return": 0.05,
         }
         for _ in range(10)
     ]
     low_rows = [
         {
-            "close_strength": 0.0, "volume_expansion_quality": 0.0, "sector_resonance": 0.0,
-            "rs_sector_rank": 0.0, "t0_estimated_net_inflow_ratio": 0.0,
-            "breakout_quality_score": 0.0, "momentum_slope_20d": 0.0,
+            "close_strength": 0.0,
+            "volume_expansion_quality": 0.0,
+            "sector_resonance": 0.0,
+            "rs_sector_rank": 0.0,
+            "t0_estimated_net_inflow_ratio": 0.0,
+            "breakout_quality_score": 0.0,
+            "momentum_slope_20d": 0.0,
             "next_day_return": -0.02,
         }
         for _ in range(10)
@@ -12437,6 +12606,7 @@ def test_r49_consensus_normal_with_high_group() -> None:
 def test_r49_consensus_mean_count_in_range() -> None:
     """consensus_mean_count must be in [0, 7]."""
     from scripts.btst_analysis_utils import compute_factor_consensus_analysis
+
     rows = _make_consensus_rows(20, high_factor_rows=5)
     result = compute_factor_consensus_analysis(rows)
     if result["consensus_mean_count"] is not None:
@@ -12446,6 +12616,7 @@ def test_r49_consensus_mean_count_in_range() -> None:
 def test_r49_consensus_high_pct_in_range() -> None:
     """consensus_high_pct must be in [0, 1]."""
     from scripts.btst_analysis_utils import compute_factor_consensus_analysis
+
     rows = _make_consensus_rows(30, high_factor_rows=10)
     result = compute_factor_consensus_analysis(rows)
     if result["consensus_high_pct"] is not None:
@@ -12455,6 +12626,7 @@ def test_r49_consensus_high_pct_in_range() -> None:
 def test_r49_consensus_floor_registered() -> None:
     """consensus_lift: 0.0 must be in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "consensus_lift" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["consensus_lift"] == 0.0
 
@@ -12462,6 +12634,7 @@ def test_r49_consensus_floor_registered() -> None:
 def test_r49_consensus_label_registered() -> None:
     """consensus_lift must have a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "consensus_lift" in COMPARISON_METRIC_LABELS
     assert "共识" in COMPARISON_METRIC_LABELS["consensus_lift"]
 
@@ -12469,18 +12642,21 @@ def test_r49_consensus_label_registered() -> None:
 def test_r49_consensus_optional_registered() -> None:
     """consensus_lift must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "consensus_lift" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r49_consensus_in_comparison_metrics() -> None:
     """consensus_lift must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "consensus_lift" in COMPARISON_METRICS
 
 
 # ===========================================================================
 # Round 49, Task 2 (Beta): compute_score_decile_analysis tests
 # ===========================================================================
+
 
 def _make_decile_rows(n: int, monotone: bool = False) -> list[dict]:
     """Build synthetic rows for decile tests."""
@@ -12499,6 +12675,7 @@ def _make_decile_rows(n: int, monotone: bool = False) -> list[dict]:
 def test_r49_decile_empty_input() -> None:
     """Empty input → degradation."""
     from scripts.btst_analysis_utils import compute_score_decile_analysis
+
     result = compute_score_decile_analysis([])
     assert result["decile_valid"] is False
     assert result["top_decile_premium"] is None
@@ -12507,6 +12684,7 @@ def test_r49_decile_empty_input() -> None:
 def test_r49_decile_fewer_than_20_rows() -> None:
     """< 20 rows → degradation."""
     from scripts.btst_analysis_utils import compute_score_decile_analysis
+
     rows = _make_decile_rows(15)
     result = compute_score_decile_analysis(rows)
     assert result["decile_valid"] is False
@@ -12516,6 +12694,7 @@ def test_r49_decile_fewer_than_20_rows() -> None:
 def test_r49_decile_normal_has_all_fields() -> None:
     """≥ 20 rows → d1..d10 win rates and top_decile_premium present."""
     from scripts.btst_analysis_utils import compute_score_decile_analysis
+
     rows = _make_decile_rows(100)
     result = compute_score_decile_analysis(rows)
     assert result["decile_valid"] is True
@@ -12527,6 +12706,7 @@ def test_r49_decile_normal_has_all_fields() -> None:
 def test_r49_decile_monotone_count_in_range() -> None:
     """decile_monotone_count must be in [0, 9]."""
     from scripts.btst_analysis_utils import compute_score_decile_analysis
+
     rows = _make_decile_rows(100)
     result = compute_score_decile_analysis(rows)
     assert result["decile_valid"] is True
@@ -12536,6 +12716,7 @@ def test_r49_decile_monotone_count_in_range() -> None:
 def test_r49_decile_top_half_lift_computed() -> None:
     """top_half_vs_bottom_half_lift should be numeric with monotone data."""
     from scripts.btst_analysis_utils import compute_score_decile_analysis
+
     rows = _make_decile_rows(100, monotone=True)
     result = compute_score_decile_analysis(rows)
     assert result["decile_valid"] is True
@@ -12547,14 +12728,17 @@ def test_r49_decile_top_half_lift_computed() -> None:
 def test_r49_decile_score_priority() -> None:
     """runner_composite_score takes priority over composite_score and score."""
     from scripts.btst_analysis_utils import compute_score_decile_analysis
+
     rows = []
     for i in range(30):
-        rows.append({
-            "runner_composite_score": i / 30,
-            "composite_score": 0.5,  # same for all — should be ignored
-            "score": 0.9,            # same for all — should be ignored
-            "next_day_return": 0.02 if i > 15 else -0.01,
-        })
+        rows.append(
+            {
+                "runner_composite_score": i / 30,
+                "composite_score": 0.5,  # same for all — should be ignored
+                "score": 0.9,  # same for all — should be ignored
+                "next_day_return": 0.02 if i > 15 else -0.01,
+            }
+        )
     result = compute_score_decile_analysis(rows)
     assert result["decile_valid"] is True
 
@@ -12562,6 +12746,7 @@ def test_r49_decile_score_priority() -> None:
 def test_r49_decile_floor_registered() -> None:
     """top_decile_premium: 0.0 must be in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "top_decile_premium" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["top_decile_premium"] == 0.0
 
@@ -12569,6 +12754,7 @@ def test_r49_decile_floor_registered() -> None:
 def test_r49_decile_label_registered() -> None:
     """top_decile_premium must have a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "top_decile_premium" in COMPARISON_METRIC_LABELS
     assert "十分位" in COMPARISON_METRIC_LABELS["top_decile_premium"]
 
@@ -12576,12 +12762,14 @@ def test_r49_decile_label_registered() -> None:
 def test_r49_decile_optional_registered() -> None:
     """top_decile_premium must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "top_decile_premium" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r49_decile_in_comparison_metrics() -> None:
     """top_decile_premium must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "top_decile_premium" in COMPARISON_METRICS
 
 
@@ -12589,9 +12777,11 @@ def test_r49_decile_in_comparison_metrics() -> None:
 # Round 49, Task 3 (Gamma): compute_cross_window_sortino_trend tests
 # ===========================================================================
 
+
 def test_r49_sortino_trend_empty_list() -> None:
     """Empty list → degradation."""
     from scripts.optimize_profile import compute_cross_window_sortino_trend
+
     result = compute_cross_window_sortino_trend([])
     assert result["sortino_trend_valid"] is False
     assert result["sortino_trend_slope"] is None
@@ -12600,6 +12790,7 @@ def test_r49_sortino_trend_empty_list() -> None:
 def test_r49_sortino_trend_fewer_than_3_windows() -> None:
     """< 3 valid windows → degradation."""
     from scripts.optimize_profile import compute_cross_window_sortino_trend
+
     summaries = [{"sortino_ratio": 1.0}, {"other_key": 0.5}]
     result = compute_cross_window_sortino_trend(summaries)
     assert result["sortino_trend_valid"] is False
@@ -12609,6 +12800,7 @@ def test_r49_sortino_trend_fewer_than_3_windows() -> None:
 def test_r49_sortino_trend_rising_slope_positive() -> None:
     """Rising Sortino series → slope > 0."""
     from scripts.optimize_profile import compute_cross_window_sortino_trend
+
     summaries = [{"sortino_ratio": float(i)} for i in range(5)]
     result = compute_cross_window_sortino_trend(summaries)
     assert result["sortino_trend_valid"] is True
@@ -12619,6 +12811,7 @@ def test_r49_sortino_trend_rising_slope_positive() -> None:
 def test_r49_sortino_trend_grade_a_or_b_for_rising() -> None:
     """Strongly rising series → grade A or B."""
     from scripts.optimize_profile import compute_cross_window_sortino_trend
+
     summaries = [{"sortino_ratio": float(i) * 0.5} for i in range(10)]
     result = compute_cross_window_sortino_trend(summaries)
     assert result["sortino_trend_grade"] in ("A", "B")
@@ -12627,6 +12820,7 @@ def test_r49_sortino_trend_grade_a_or_b_for_rising() -> None:
 def test_r49_sortino_trend_falling_slope_negative() -> None:
     """Declining Sortino series → slope < 0."""
     from scripts.optimize_profile import compute_cross_window_sortino_trend
+
     summaries = [{"sortino_ratio": float(5 - i)} for i in range(5)]
     result = compute_cross_window_sortino_trend(summaries)
     assert result["sortino_trend_valid"] is True
@@ -12648,6 +12842,7 @@ def test_r49_sortino_trend_grade_d_for_steep_decline() -> None:
 def test_r49_sortino_positive_windows_pct_all_positive() -> None:
     """All positive sortino values → sortino_positive_windows_pct == 1.0."""
     from scripts.optimize_profile import compute_cross_window_sortino_trend
+
     summaries = [{"sortino_ratio": 1.0 + i * 0.1} for i in range(5)]
     result = compute_cross_window_sortino_trend(summaries)
     assert result["sortino_positive_windows_pct"] == 1.0
@@ -12656,6 +12851,7 @@ def test_r49_sortino_positive_windows_pct_all_positive() -> None:
 def test_r49_sortino_positive_windows_pct_all_negative() -> None:
     """All negative sortino values → sortino_positive_windows_pct == 0.0."""
     from scripts.optimize_profile import compute_cross_window_sortino_trend
+
     summaries = [{"sortino_ratio": -1.0 - i * 0.1} for i in range(5)]
     result = compute_cross_window_sortino_trend(summaries)
     assert result["sortino_positive_windows_pct"] == 0.0
@@ -12664,6 +12860,7 @@ def test_r49_sortino_positive_windows_pct_all_negative() -> None:
 def test_r49_sortino_trend_floor_registered() -> None:
     """sortino_trend_slope: -0.10 must be in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "sortino_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["sortino_trend_slope"] == -0.10
 
@@ -12671,6 +12868,7 @@ def test_r49_sortino_trend_floor_registered() -> None:
 def test_r49_sortino_trend_label_registered() -> None:
     """sortino_trend_slope must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "sortino_trend_slope" in COMPARISON_METRIC_LABELS
     assert "Sortino" in COMPARISON_METRIC_LABELS["sortino_trend_slope"]
 
@@ -12678,12 +12876,14 @@ def test_r49_sortino_trend_label_registered() -> None:
 def test_r49_sortino_trend_optional_registered() -> None:
     """sortino_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "sortino_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r49_sortino_trend_in_comparison_metrics() -> None:
     """sortino_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "sortino_trend_slope" in COMPARISON_METRICS
 
 
@@ -12695,9 +12895,11 @@ def test_r49_sortino_trend_in_comparison_metrics() -> None:
 # T1: compute_factor_redundancy_analysis
 # ---------------------------------------------------------------------------
 
+
 def test_r50_factor_redundancy_empty_input() -> None:
     """Empty input → redundancy_valid False, all None."""
     from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+
     result = compute_factor_redundancy_analysis([])
     assert result["redundancy_valid"] is False
     assert result["avg_inter_factor_correlation"] is None
@@ -12708,6 +12910,7 @@ def test_r50_factor_redundancy_empty_input() -> None:
 def test_r50_factor_redundancy_fewer_than_6_rows() -> None:
     """< 6 rows → graceful degradation."""
     from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+
     rows = [{"close_strength": i * 0.1, "volume_expansion_quality": i * 0.2} for i in range(5)]
     result = compute_factor_redundancy_analysis(rows)
     assert result["redundancy_valid"] is False
@@ -12716,6 +12919,7 @@ def test_r50_factor_redundancy_fewer_than_6_rows() -> None:
 def test_r50_factor_redundancy_all_factors_missing() -> None:
     """All factor fields absent → fewer than 3 present factors → degradation."""
     from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+
     rows = [{"unrelated_field": i} for i in range(10)]
     result = compute_factor_redundancy_analysis(rows)
     assert result["redundancy_valid"] is False
@@ -12726,10 +12930,7 @@ def test_r50_factor_redundancy_identical_factors_r_is_one() -> None:
     from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
 
     # Need at least 3 factors present — add a third orthogonal factor
-    rows = [
-        {"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i * 2 + 1)}
-        for i in range(10)
-    ]
+    rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i * 2 + 1)} for i in range(10)]
     result = compute_factor_redundancy_analysis(rows)
     assert result["redundancy_valid"] is True
     corrs = result["factor_pair_correlations"]
@@ -12759,6 +12960,7 @@ def test_r50_factor_redundancy_independent_factors_r_near_zero() -> None:
 def test_r50_factor_redundancy_cap_registered() -> None:
     """avg_inter_factor_correlation: 0.50 must be in BTST_QUALITY_CAPS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "avg_inter_factor_correlation" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["avg_inter_factor_correlation"] == pytest.approx(0.50)
 
@@ -12766,24 +12968,28 @@ def test_r50_factor_redundancy_cap_registered() -> None:
 def test_r50_factor_redundancy_lower_is_better_registered() -> None:
     """avg_inter_factor_correlation must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "avg_inter_factor_correlation" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r50_factor_redundancy_optional_registered() -> None:
     """avg_inter_factor_correlation must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "avg_inter_factor_correlation" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r50_factor_redundancy_in_comparison_metrics() -> None:
     """avg_inter_factor_correlation must appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "avg_inter_factor_correlation" in COMPARISON_METRICS
 
 
 def test_r50_factor_redundancy_label_registered() -> None:
     """avg_inter_factor_correlation must have a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "avg_inter_factor_correlation" in COMPARISON_METRIC_LABELS
     assert "冗余" in COMPARISON_METRIC_LABELS["avg_inter_factor_correlation"]
 
@@ -12795,11 +13001,13 @@ def test_r50_factor_redundancy_grade_a_for_low_correlation() -> None:
     # Build rows where close_strength is identity and other factors are fixed → many pairs will have ~0 corr
     rows = []
     for i in range(12):
-        rows.append({
-            "close_strength": float(i),
-            "volume_expansion_quality": float((i * 7) % 13),
-            "sector_resonance": float((i * 3 + 5) % 11),
-        })
+        rows.append(
+            {
+                "close_strength": float(i),
+                "volume_expansion_quality": float((i * 7) % 13),
+                "sector_resonance": float((i * 3 + 5) % 11),
+            }
+        )
     result = compute_factor_redundancy_analysis(rows)
     if result["redundancy_valid"] and result["avg_inter_factor_correlation"] is not None:
         assert result["avg_inter_factor_correlation"] < 0.50  # at most C grade
@@ -12808,6 +13016,7 @@ def test_r50_factor_redundancy_grade_a_for_low_correlation() -> None:
 def test_r50_factor_redundancy_high_correlation_pairs_count() -> None:
     """Two identical factors → high_correlation_pairs >= 1."""
     from scripts.btst_analysis_utils import compute_factor_redundancy_analysis
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i * 2)} for i in range(10)]
     result = compute_factor_redundancy_analysis(rows)
     assert result["redundancy_valid"] is True
@@ -12818,9 +13027,11 @@ def test_r50_factor_redundancy_high_correlation_pairs_count() -> None:
 # T2: compute_extended_holding_period
 # ---------------------------------------------------------------------------
 
+
 def test_r50_extended_holding_empty_input() -> None:
     """Empty input → extended_holding_valid False."""
     from scripts.btst_analysis_utils import compute_extended_holding_period
+
     result = compute_extended_holding_period([])
     assert result["extended_holding_valid"] is False
     assert result["t1_win_rate"] is None
@@ -12830,6 +13041,7 @@ def test_r50_extended_holding_empty_input() -> None:
 def test_r50_extended_holding_fewer_than_5_t1_rows() -> None:
     """< 5 next_day_return rows → degradation."""
     from scripts.btst_analysis_utils import compute_extended_holding_period
+
     rows = [{"next_day_return": 0.01 * i} for i in range(4)]
     result = compute_extended_holding_period(rows)
     assert result["extended_holding_valid"] is False
@@ -12838,6 +13050,7 @@ def test_r50_extended_holding_fewer_than_5_t1_rows() -> None:
 def test_r50_extended_holding_t1_only_data() -> None:
     """Only T+1 data available → t1_win_rate set, t2_vs_t1_premium None, holding_data_available False."""
     from scripts.btst_analysis_utils import compute_extended_holding_period
+
     rows = [{"next_day_return": 0.01 * (i - 2)} for i in range(8)]
     result = compute_extended_holding_period(rows)
     assert result["extended_holding_valid"] is True
@@ -12849,6 +13062,7 @@ def test_r50_extended_holding_t1_only_data() -> None:
 def test_r50_extended_holding_t2_data_available() -> None:
     """With T+2 data (≥3 rows) → t2_win_rate not None, t2_vs_t1_premium computed."""
     from scripts.btst_analysis_utils import compute_extended_holding_period
+
     rows = [{"next_day_return": 0.02, "t2_return": 0.01} for _ in range(6)]
     result = compute_extended_holding_period(rows)
     assert result["extended_holding_valid"] is True
@@ -12872,6 +13086,7 @@ def test_r50_extended_holding_premium_computation() -> None:
 def test_r50_extended_holding_label_registered() -> None:
     """t2_vs_t1_premium must have a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "t2_vs_t1_premium" in COMPARISON_METRIC_LABELS
     assert "T+2" in COMPARISON_METRIC_LABELS["t2_vs_t1_premium"]
 
@@ -12879,24 +13094,28 @@ def test_r50_extended_holding_label_registered() -> None:
 def test_r50_extended_holding_optional_registered() -> None:
     """t2_vs_t1_premium must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "t2_vs_t1_premium" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r50_extended_holding_no_floor() -> None:
     """t2_vs_t1_premium must NOT be in BTST_QUALITY_FLOORS (diagnostic only)."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "t2_vs_t1_premium" not in BTST_QUALITY_FLOORS
 
 
 def test_r50_extended_holding_in_comparison_metrics() -> None:
     """t2_vs_t1_premium must appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "t2_vs_t1_premium" in COMPARISON_METRICS
 
 
 def test_r50_extended_holding_multi_day_consistency() -> None:
     """Both T+2 and T+3 ≥ 0.5 win rate → multi_day_consistency True."""
     from scripts.btst_analysis_utils import compute_extended_holding_period
+
     rows = [{"next_day_return": 0.01, "t2_return": 0.02, "t3_return": 0.015} for _ in range(6)]
     result = compute_extended_holding_period(rows)
     assert result["multi_day_consistency"] is True
@@ -12906,9 +13125,11 @@ def test_r50_extended_holding_multi_day_consistency() -> None:
 # T3: compute_cross_window_sharpe_trend
 # ---------------------------------------------------------------------------
 
+
 def test_r50_sharpe_trend_empty_list() -> None:
     """Empty list → sharpe_trend_valid False."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     result = compute_cross_window_sharpe_trend([])
     assert result["sharpe_trend_valid"] is False
     assert result["sharpe_trend_slope"] is None
@@ -12917,6 +13138,7 @@ def test_r50_sharpe_trend_empty_list() -> None:
 def test_r50_sharpe_trend_fewer_than_3_windows() -> None:
     """< 3 valid sharpe_ratio values → degradation."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_ratio": 1.0}, {"sharpe_ratio": 1.5}]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_valid"] is False
@@ -12925,6 +13147,7 @@ def test_r50_sharpe_trend_fewer_than_3_windows() -> None:
 def test_r50_sharpe_trend_rising_slope_positive() -> None:
     """Strictly rising sharpe series → slope > 0."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_ratio": 0.5 + i * 0.3} for i in range(5)]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_valid"] is True
@@ -12934,6 +13157,7 @@ def test_r50_sharpe_trend_rising_slope_positive() -> None:
 def test_r50_sharpe_trend_grade_a_or_b_for_rising() -> None:
     """Rising series → grade A or B."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_ratio": 0.5 + i * 0.3} for i in range(5)]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_grade"] in ("A", "B")
@@ -12942,6 +13166,7 @@ def test_r50_sharpe_trend_grade_a_or_b_for_rising() -> None:
 def test_r50_sharpe_trend_falling_slope_negative() -> None:
     """Strictly declining series → slope < 0."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_ratio": 2.0 - i * 0.2} for i in range(5)]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_slope"] < 0
@@ -12950,6 +13175,7 @@ def test_r50_sharpe_trend_falling_slope_negative() -> None:
 def test_r50_sharpe_trend_grade_d_for_steep_decline() -> None:
     """Slope ≤ -0.10 → grade D."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_ratio": 2.0 - i * 0.5} for i in range(6)]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_valid"] is True
@@ -12960,6 +13186,7 @@ def test_r50_sharpe_trend_grade_d_for_steep_decline() -> None:
 def test_r50_sharpe_trend_positive_windows_pct_all_positive() -> None:
     """All positive sharpe values → sharpe_positive_windows_pct == 1.0."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_ratio": 1.0 + i * 0.1} for i in range(5)]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_positive_windows_pct"] == pytest.approx(1.0)
@@ -12968,6 +13195,7 @@ def test_r50_sharpe_trend_positive_windows_pct_all_positive() -> None:
 def test_r50_sharpe_trend_floor_registered() -> None:
     """sharpe_trend_slope: -0.02 must be in BTST_QUALITY_FLOORS (tightened in Round 76)."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "sharpe_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["sharpe_trend_slope"] == pytest.approx(-0.02)
 
@@ -12975,6 +13203,7 @@ def test_r50_sharpe_trend_floor_registered() -> None:
 def test_r50_sharpe_trend_label_registered() -> None:
     """sharpe_trend_slope must have a label containing 'Sharpe'."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "sharpe_trend_slope" in COMPARISON_METRIC_LABELS
     assert "Sharpe" in COMPARISON_METRIC_LABELS["sharpe_trend_slope"]
 
@@ -12982,18 +13211,21 @@ def test_r50_sharpe_trend_label_registered() -> None:
 def test_r50_sharpe_trend_optional_registered() -> None:
     """sharpe_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "sharpe_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r50_sharpe_trend_in_comparison_metrics() -> None:
     """sharpe_trend_slope must appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "sharpe_trend_slope" in COMPARISON_METRICS
 
 
 def test_r50_sharpe_trend_skips_missing_sharpe_ratio() -> None:
     """Windows without sharpe_ratio are skipped; valid windows still compute."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_ratio": 1.0}, {"other_key": 0.5}, {"sharpe_ratio": 1.5}, {"sharpe_ratio": 2.0}]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_valid"] is True
@@ -13008,6 +13240,7 @@ def test_r50_sharpe_trend_skips_missing_sharpe_ratio() -> None:
 def test_r51_win_loss_magnitude_empty_input() -> None:
     """Empty input → graceful degradation with all-None result."""
     from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
+
     result = compute_win_loss_magnitude_analysis([])
     assert result["win_loss_magnitude_ratio"] is None
     assert result["kelly_fraction"] is None
@@ -13017,6 +13250,7 @@ def test_r51_win_loss_magnitude_empty_input() -> None:
 def test_r51_win_loss_magnitude_fewer_than_5_rows() -> None:
     """Fewer than 5 valid rows → graceful degradation."""
     from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
+
     rows = [{"next_day_return": 0.05}] * 4
     result = compute_win_loss_magnitude_analysis(rows)
     assert result["win_loss_magnitude_ratio"] is None
@@ -13026,6 +13260,7 @@ def test_r51_win_loss_magnitude_fewer_than_5_rows() -> None:
 def test_r51_win_loss_magnitude_all_wins_no_losses() -> None:
     """All rows profitable → avg_loss_return=None, ratio=None, kelly=None."""
     from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
+
     rows = [{"next_day_return": 0.02 + i * 0.001} for i in range(10)]
     result = compute_win_loss_magnitude_analysis(rows)
     assert result["avg_loss_return"] is None
@@ -13036,6 +13271,7 @@ def test_r51_win_loss_magnitude_all_wins_no_losses() -> None:
 def test_r51_win_loss_magnitude_all_losses_no_wins() -> None:
     """All rows losing → avg_win_return=None, ratio=None."""
     from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
+
     rows = [{"next_day_return": -0.02 - i * 0.001} for i in range(10)]
     result = compute_win_loss_magnitude_analysis(rows)
     assert result["avg_win_return"] is None
@@ -13046,6 +13282,7 @@ def test_r51_win_loss_magnitude_mixed_normal_case() -> None:
     """Normal mixed returns → positive ratio, Kelly in [-1,1]."""
 
     from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
+
     wins = [0.05, 0.04, 0.06, 0.07, 0.03]
     losses = [-0.02, -0.01, -0.03, -0.02, -0.015]
     rows = [{"next_day_return": r} for r in wins + losses]
@@ -13059,6 +13296,7 @@ def test_r51_win_loss_magnitude_mixed_normal_case() -> None:
 def test_r51_win_loss_magnitude_profit_factor_v2_nonneg() -> None:
     """profit_factor_v2 must always be >= 0."""
     from scripts.btst_analysis_utils import compute_win_loss_magnitude_analysis
+
     wins = [0.03, 0.02, 0.04, 0.05, 0.01]
     losses = [-0.05, -0.04, -0.06, -0.07, -0.08]
     rows = [{"next_day_return": r} for r in wins + losses]
@@ -13072,6 +13310,7 @@ def test_r51_win_loss_magnitude_floor_registered() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "win_loss_magnitude_ratio" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["win_loss_magnitude_ratio"] == pytest.approx(1.0)
     assert "kelly_fraction" in BTST_QUALITY_FLOORS
@@ -13081,6 +13320,7 @@ def test_r51_win_loss_magnitude_floor_registered() -> None:
 def test_r51_win_loss_magnitude_optional_registered() -> None:
     """win_loss_magnitude_ratio and kelly_fraction must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "win_loss_magnitude_ratio" in OPTIONAL_COMPARISON_METRICS
     assert "kelly_fraction" in OPTIONAL_COMPARISON_METRICS
 
@@ -13088,6 +13328,7 @@ def test_r51_win_loss_magnitude_optional_registered() -> None:
 def test_r51_win_loss_magnitude_in_comparison_metrics() -> None:
     """win_loss_magnitude_ratio and kelly_fraction must appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "win_loss_magnitude_ratio" in COMPARISON_METRICS
     assert "kelly_fraction" in COMPARISON_METRICS
 
@@ -13095,6 +13336,7 @@ def test_r51_win_loss_magnitude_in_comparison_metrics() -> None:
 def test_r51_win_loss_magnitude_label_registered() -> None:
     """win_loss_magnitude_ratio and kelly_fraction must have labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "win_loss_magnitude_ratio" in COMPARISON_METRIC_LABELS
     assert "kelly_fraction" in COMPARISON_METRIC_LABELS
 
@@ -13107,6 +13349,7 @@ def test_r51_win_loss_magnitude_label_registered() -> None:
 def test_r51_outlier_robustness_empty_input() -> None:
     """Empty input → graceful degradation."""
     from scripts.btst_analysis_utils import compute_outlier_robustness_check
+
     result = compute_outlier_robustness_check([])
     assert result["outlier_dependency_ratio"] is None
     assert result["robustness_grade"] is None
@@ -13115,6 +13358,7 @@ def test_r51_outlier_robustness_empty_input() -> None:
 def test_r51_outlier_robustness_fewer_than_10_rows() -> None:
     """Fewer than 10 valid rows → graceful degradation."""
     from scripts.btst_analysis_utils import compute_outlier_robustness_check
+
     rows = [{"next_day_return": 0.01 * i} for i in range(9)]
     result = compute_outlier_robustness_check(rows)
     assert result["outlier_dependency_ratio"] is None
@@ -13124,6 +13368,7 @@ def test_r51_outlier_robustness_fewer_than_10_rows() -> None:
 def test_r51_outlier_robustness_uniform_distribution_near_zero() -> None:
     """Uniformly spaced returns → outlier dependency ratio near 0 (grade A)."""
     from scripts.btst_analysis_utils import compute_outlier_robustness_check
+
     rows = [{"next_day_return": 0.01 * i} for i in range(1, 21)]
     result = compute_outlier_robustness_check(rows)
     assert result["outlier_dependency_ratio"] is not None
@@ -13134,6 +13379,7 @@ def test_r51_outlier_robustness_uniform_distribution_near_zero() -> None:
 def test_r51_outlier_robustness_high_dependency_one_big_winner() -> None:
     """Most rows near zero with one large outlier → positive dependency ratio."""
     from scripts.btst_analysis_utils import compute_outlier_robustness_check
+
     rows = [{"next_day_return": -0.01}] * 15 + [{"next_day_return": 0.50}]
     result = compute_outlier_robustness_check(rows)
     assert result["outlier_dependency_ratio"] is not None
@@ -13143,6 +13389,7 @@ def test_r51_outlier_robustness_high_dependency_one_big_winner() -> None:
 def test_r51_outlier_robustness_grade_valid_values() -> None:
     """robustness_grade must be one of A/B/C/D when data is sufficient."""
     from scripts.btst_analysis_utils import compute_outlier_robustness_check
+
     rows = [{"next_day_return": (i - 10) * 0.01} for i in range(20)]
     result = compute_outlier_robustness_check(rows)
     if result["robustness_grade"] is not None:
@@ -13154,6 +13401,7 @@ def test_r51_outlier_robustness_cap_registered() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "outlier_dependency_ratio" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["outlier_dependency_ratio"] == pytest.approx(0.30)
 
@@ -13161,18 +13409,21 @@ def test_r51_outlier_robustness_cap_registered() -> None:
 def test_r51_outlier_robustness_lower_is_better_registered() -> None:
     """outlier_dependency_ratio must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "outlier_dependency_ratio" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r51_outlier_robustness_optional_registered() -> None:
     """outlier_dependency_ratio must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "outlier_dependency_ratio" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r51_outlier_robustness_label_registered() -> None:
     """outlier_dependency_ratio must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "outlier_dependency_ratio" in COMPARISON_METRIC_LABELS
 
 
@@ -13184,6 +13435,7 @@ def test_r51_outlier_robustness_label_registered() -> None:
 def test_r51_pf_trend_empty_list() -> None:
     """Empty list → graceful degradation."""
     from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+
     result = compute_cross_window_profit_factor_trend([])
     assert result["pf_trend_slope"] is None
     assert result["pf_trend_valid"] is False
@@ -13192,6 +13444,7 @@ def test_r51_pf_trend_empty_list() -> None:
 def test_r51_pf_trend_fewer_than_3_windows() -> None:
     """Fewer than 3 valid profit_factor values → graceful degradation."""
     from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+
     summaries = [{"profit_factor": 1.2}, {"profit_factor": 1.5}]
     result = compute_cross_window_profit_factor_trend(summaries)
     assert result["pf_trend_slope"] is None
@@ -13201,6 +13454,7 @@ def test_r51_pf_trend_fewer_than_3_windows() -> None:
 def test_r51_pf_trend_rising_trend_positive_slope() -> None:
     """Increasing profit factors → slope > 0 and grade A or B."""
     from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+
     summaries = [{"profit_factor": 1.0 + i * 0.3} for i in range(6)]
     result = compute_cross_window_profit_factor_trend(summaries)
     assert result["pf_trend_valid"] is True
@@ -13212,6 +13466,7 @@ def test_r51_pf_trend_rising_trend_positive_slope() -> None:
 def test_r51_pf_trend_falling_trend_negative_slope() -> None:
     """Decreasing profit factors → slope < 0."""
     from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+
     summaries = [{"profit_factor": 2.0 - i * 0.2} for i in range(6)]
     result = compute_cross_window_profit_factor_trend(summaries)
     assert result["pf_trend_valid"] is True
@@ -13222,6 +13477,7 @@ def test_r51_pf_trend_falling_trend_negative_slope() -> None:
 def test_r51_pf_trend_steep_decline_grade_d() -> None:
     """slope <= -0.10 → grade D."""
     from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+
     summaries = [{"profit_factor": 3.0 - i * 0.5} for i in range(6)]
     result = compute_cross_window_profit_factor_trend(summaries)
     assert result["pf_trend_valid"] is True
@@ -13234,6 +13490,7 @@ def test_r51_pf_trend_above_one_pct_all_above() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+
     summaries = [{"profit_factor": 1.5 + i * 0.1} for i in range(5)]
     result = compute_cross_window_profit_factor_trend(summaries)
     assert result["pf_above_one_pct"] == pytest.approx(1.0)
@@ -13244,6 +13501,7 @@ def test_r51_pf_trend_floor_registered() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "pf_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["pf_trend_slope"] == pytest.approx(-0.10)
 
@@ -13251,24 +13509,28 @@ def test_r51_pf_trend_floor_registered() -> None:
 def test_r51_pf_trend_label_registered() -> None:
     """pf_trend_slope must have a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "pf_trend_slope" in COMPARISON_METRIC_LABELS
 
 
 def test_r51_pf_trend_optional_registered() -> None:
     """pf_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "pf_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r51_pf_trend_in_comparison_metrics() -> None:
     """pf_trend_slope must appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "pf_trend_slope" in COMPARISON_METRICS
 
 
 def test_r51_pf_trend_skips_missing_profit_factor() -> None:
     """Windows without profit_factor are skipped; valid windows still compute."""
     from scripts.optimize_profile import compute_cross_window_profit_factor_trend
+
     summaries = [{"profit_factor": 1.2}, {"other_key": 0.5}, {"profit_factor": 1.5}, {"profit_factor": 1.8}]
     result = compute_cross_window_profit_factor_trend(summaries)
     assert result["pf_trend_valid"] is True
@@ -13283,6 +13545,7 @@ def test_r51_pf_trend_skips_missing_profit_factor() -> None:
 def test_r52_information_ratio_empty_input() -> None:
     """Empty input → graceful degradation (IR=None)."""
     from scripts.btst_analysis_utils import compute_information_ratio_analysis
+
     result = compute_information_ratio_analysis([])
     assert result["information_ratio"] is None
     assert result["ir_grade"] is None
@@ -13291,6 +13554,7 @@ def test_r52_information_ratio_empty_input() -> None:
 def test_r52_information_ratio_fewer_than_5_rows() -> None:
     """Fewer than 5 rows → graceful degradation."""
     from scripts.btst_analysis_utils import compute_information_ratio_analysis
+
     rows = [{"next_day_return": 0.01 * i} for i in range(4)]
     result = compute_information_ratio_analysis(rows)
     assert result["information_ratio"] is None
@@ -13300,6 +13564,7 @@ def test_r52_information_ratio_fewer_than_5_rows() -> None:
 def test_r52_information_ratio_all_positive_returns() -> None:
     """All positive returns → IR > 0, grade A or B, downside_capture_ratio=0.0."""
     from scripts.btst_analysis_utils import compute_information_ratio_analysis
+
     rows = [{"next_day_return": 0.02 + 0.001 * i} for i in range(10)]
     result = compute_information_ratio_analysis(rows)
     assert result["information_ratio"] is not None
@@ -13311,6 +13576,7 @@ def test_r52_information_ratio_all_positive_returns() -> None:
 def test_r52_information_ratio_all_negative_returns() -> None:
     """All negative returns → IR < 0, grade D."""
     from scripts.btst_analysis_utils import compute_information_ratio_analysis
+
     rows = [{"next_day_return": -0.02 - 0.001 * i} for i in range(10)]
     result = compute_information_ratio_analysis(rows)
     assert result["information_ratio"] is not None
@@ -13321,6 +13587,7 @@ def test_r52_information_ratio_all_negative_returns() -> None:
 def test_r52_information_ratio_mixed_clamped_range() -> None:
     """Mixed returns → IR clamped to [-10, 10]."""
     from scripts.btst_analysis_utils import compute_information_ratio_analysis
+
     rows = [{"next_day_return": 0.01 * (i % 3 - 1)} for i in range(15)]
     result = compute_information_ratio_analysis(rows)
     if result["information_ratio"] is not None:
@@ -13330,6 +13597,7 @@ def test_r52_information_ratio_mixed_clamped_range() -> None:
 def test_r52_information_ratio_upside_capture_nonneg() -> None:
     """upside_capture_ratio is non-negative when positive returns exist."""
     from scripts.btst_analysis_utils import compute_information_ratio_analysis
+
     rows = [{"next_day_return": 0.01 * i - 0.03} for i in range(10)]
     result = compute_information_ratio_analysis(rows)
     if result["upside_capture_ratio"] is not None:
@@ -13341,6 +13609,7 @@ def test_r52_information_ratio_floor_registered() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "information_ratio" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["information_ratio"] == pytest.approx(0.0)
 
@@ -13348,18 +13617,21 @@ def test_r52_information_ratio_floor_registered() -> None:
 def test_r52_information_ratio_optional_registered() -> None:
     """information_ratio must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "information_ratio" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r52_information_ratio_in_comparison_metrics() -> None:
     """information_ratio must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "information_ratio" in COMPARISON_METRICS
 
 
 def test_r52_information_ratio_label_registered() -> None:
     """information_ratio must have label '年化信息比率'."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("information_ratio") == "年化信息比率"
 
 
@@ -13371,6 +13643,7 @@ def test_r52_information_ratio_label_registered() -> None:
 def test_r52_score_concentration_empty_input() -> None:
     """Empty input → graceful degradation."""
     from scripts.btst_analysis_utils import compute_score_concentration_analysis
+
     result = compute_score_concentration_analysis([])
     assert result["score_concentration_index"] is None
     assert result["dominant_tier"] is None
@@ -13379,6 +13652,7 @@ def test_r52_score_concentration_empty_input() -> None:
 def test_r52_score_concentration_fewer_than_6_rows() -> None:
     """Fewer than 6 rows → graceful degradation."""
     from scripts.btst_analysis_utils import compute_score_concentration_analysis
+
     rows = [{"score": 0.5 * i} for i in range(5)]
     result = compute_score_concentration_analysis(rows)
     assert result["score_concentration_index"] is None
@@ -13388,6 +13662,7 @@ def test_r52_score_concentration_uniform_sci_near_zero() -> None:
     """Uniform score distribution → score_concentration_index ≈ 0 (three tiers ≈ equal)."""
 
     from scripts.btst_analysis_utils import compute_score_concentration_analysis
+
     rows = [{"score": float(i)} for i in range(1, 10)]
     result = compute_score_concentration_analysis(rows)
     assert result["score_concentration_index"] is not None
@@ -13399,6 +13674,7 @@ def test_r52_score_concentration_all_same_high_score_pct() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_score_concentration_analysis
+
     rows = [{"runner_composite_score": 0.9} for _ in range(9)]
     result = compute_score_concentration_analysis(rows)
     assert result["high_score_pct"] is not None
@@ -13408,6 +13684,7 @@ def test_r52_score_concentration_all_same_high_score_pct() -> None:
 def test_r52_score_concentration_mostly_high_sci_approx_0_67() -> None:
     """5 high + 1 low out of 6 → score_concentration_index ≈ 0.67."""
     from scripts.btst_analysis_utils import compute_score_concentration_analysis
+
     rows = [{"score": 0.1}] + [{"score": 0.9} for _ in range(5)]
     result = compute_score_concentration_analysis(rows)
     assert result["score_concentration_index"] is not None
@@ -13417,6 +13694,7 @@ def test_r52_score_concentration_mostly_high_sci_approx_0_67() -> None:
 def test_r52_score_concentration_dominant_tier_correct() -> None:
     """dominant_tier matches the tier with the largest fraction."""
     from scripts.btst_analysis_utils import compute_score_concentration_analysis
+
     rows = [{"score": float(i)} for i in range(12)]
     result = compute_score_concentration_analysis(rows)
     assert result["dominant_tier"] in ("high", "mid", "low")
@@ -13433,6 +13711,7 @@ def test_r52_score_concentration_floor_registered() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "score_concentration_index" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["score_concentration_index"] == pytest.approx(0.0)
 
@@ -13440,12 +13719,14 @@ def test_r52_score_concentration_floor_registered() -> None:
 def test_r52_score_concentration_label_registered() -> None:
     """score_concentration_index must have label '高分候选集中度'."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("score_concentration_index") == "高分候选集中度"
 
 
 def test_r52_score_concentration_optional_registered() -> None:
     """score_concentration_index must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "score_concentration_index" in OPTIONAL_COMPARISON_METRICS
 
 
@@ -13457,6 +13738,7 @@ def test_r52_score_concentration_optional_registered() -> None:
 def test_r52_kelly_trend_empty_list() -> None:
     """Empty list → graceful degradation."""
     from scripts.optimize_profile import compute_cross_window_kelly_trend
+
     result = compute_cross_window_kelly_trend([])
     assert result["kelly_trend_slope"] is None
     assert result["kelly_trend_valid"] is False
@@ -13465,6 +13747,7 @@ def test_r52_kelly_trend_empty_list() -> None:
 def test_r52_kelly_trend_fewer_than_3_windows() -> None:
     """Fewer than 3 valid kelly_fraction values → graceful degradation."""
     from scripts.optimize_profile import compute_cross_window_kelly_trend
+
     summaries = [{"kelly_fraction": 0.1}, {"kelly_fraction": 0.2}]
     result = compute_cross_window_kelly_trend(summaries)
     assert result["kelly_trend_slope"] is None
@@ -13474,6 +13757,7 @@ def test_r52_kelly_trend_fewer_than_3_windows() -> None:
 def test_r52_kelly_trend_rising_trend_positive_slope() -> None:
     """Increasing Kelly fractions → slope > 0, grade A or B."""
     from scripts.optimize_profile import compute_cross_window_kelly_trend
+
     summaries = [{"kelly_fraction": 0.1 + 0.1 * i} for i in range(5)]
     result = compute_cross_window_kelly_trend(summaries)
     assert result["kelly_trend_valid"] is True
@@ -13485,6 +13769,7 @@ def test_r52_kelly_trend_rising_trend_positive_slope() -> None:
 def test_r52_kelly_trend_falling_trend_negative_slope() -> None:
     """Decreasing Kelly fractions → slope < 0."""
     from scripts.optimize_profile import compute_cross_window_kelly_trend
+
     summaries = [{"kelly_fraction": 0.5 - 0.1 * i} for i in range(5)]
     result = compute_cross_window_kelly_trend(summaries)
     assert result["kelly_trend_valid"] is True
@@ -13495,6 +13780,7 @@ def test_r52_kelly_trend_falling_trend_negative_slope() -> None:
 def test_r52_kelly_trend_steep_decline_grade_d() -> None:
     """slope <= -0.05 → grade D."""
     from scripts.optimize_profile import compute_cross_window_kelly_trend
+
     summaries = [{"kelly_fraction": 0.5 - 0.15 * i} for i in range(5)]
     result = compute_cross_window_kelly_trend(summaries)
     assert result["kelly_trend_valid"] is True
@@ -13507,6 +13793,7 @@ def test_r52_kelly_trend_positive_windows_pct_correct() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_kelly_trend
+
     summaries = [{"kelly_fraction": 0.1}, {"kelly_fraction": -0.1}, {"kelly_fraction": 0.2}]
     result = compute_cross_window_kelly_trend(summaries)
     assert result["kelly_trend_valid"] is True
@@ -13518,6 +13805,7 @@ def test_r52_kelly_trend_floor_registered() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "kelly_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["kelly_trend_slope"] == pytest.approx(-0.05)
 
@@ -13525,24 +13813,28 @@ def test_r52_kelly_trend_floor_registered() -> None:
 def test_r52_kelly_trend_label_registered() -> None:
     """kelly_trend_slope must have label 'Kelly分数跨窗趋势'."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("kelly_trend_slope") == "Kelly分数跨窗趋势"
 
 
 def test_r52_kelly_trend_optional_registered() -> None:
     """kelly_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "kelly_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r52_kelly_trend_in_comparison_metrics() -> None:
     """kelly_trend_slope must appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "kelly_trend_slope" in COMPARISON_METRICS
 
 
 def test_r52_kelly_trend_skips_missing_kelly_fraction() -> None:
     """Windows without kelly_fraction are skipped; valid windows still compute."""
     from scripts.optimize_profile import compute_cross_window_kelly_trend
+
     summaries = [{"kelly_fraction": 0.1}, {"other_key": 0.5}, {"kelly_fraction": 0.2}, {"kelly_fraction": 0.3}]
     result = compute_cross_window_kelly_trend(summaries)
     assert result["kelly_trend_valid"] is True
@@ -13557,6 +13849,7 @@ def test_r52_kelly_trend_skips_missing_kelly_fraction() -> None:
 def test_r53_conditional_factor_invalid_too_few_rows() -> None:
     """Fewer than 10 rows → valid=False, all metrics None."""
     from scripts.btst_analysis_utils import compute_conditional_factor_performance
+
     rows = [{"close_strength": 0.8, "next_day_return": 0.02} for _ in range(9)]
     result = compute_conditional_factor_performance(rows)
     assert result["conditional_factor_valid"] is False
@@ -13569,6 +13862,7 @@ def test_r53_conditional_factor_invalid_too_few_rows() -> None:
 def test_r53_conditional_factor_empty_rows() -> None:
     """Empty list → valid=False."""
     from scripts.btst_analysis_utils import compute_conditional_factor_performance
+
     result = compute_conditional_factor_performance([])
     assert result["conditional_factor_valid"] is False
 
@@ -13576,6 +13870,7 @@ def test_r53_conditional_factor_empty_rows() -> None:
 def test_r53_conditional_factor_valid_basic() -> None:
     """10 rows with valid factor data → valid=True, metrics are numeric."""
     from scripts.btst_analysis_utils import compute_conditional_factor_performance
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": 0.01 if i >= 5 else -0.01} for i in range(10)]
     result = compute_conditional_factor_performance(rows)
     assert result["conditional_factor_valid"] is True
@@ -13587,6 +13882,7 @@ def test_r53_conditional_factor_lift_is_high_minus_low() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_conditional_factor_performance
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": 0.03 if i >= 5 else -0.03} for i in range(10)]
     result = compute_conditional_factor_performance(rows)
     assert result["conditional_factor_valid"] is True
@@ -13597,6 +13893,7 @@ def test_r53_conditional_factor_lift_is_high_minus_low() -> None:
 def test_r53_conditional_factor_win_rate_between_0_and_1() -> None:
     """Win rates are fractions in [0, 1]."""
     from scripts.btst_analysis_utils import compute_conditional_factor_performance
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "momentum_slope_20d": float(i), "next_day_return": 0.02 if i % 2 == 0 else -0.02} for i in range(14)]
     result = compute_conditional_factor_performance(rows)
     assert result["conditional_factor_valid"] is True
@@ -13609,6 +13906,7 @@ def test_r53_conditional_factor_win_rate_between_0_and_1() -> None:
 def test_r53_conditional_factor_all_high_returns_high_win_rate() -> None:
     """Rows with all-high-factor scores and positive returns → high_signal_win_rate=1.0."""
     from scripts.btst_analysis_utils import compute_conditional_factor_performance
+
     rows = []
     for i in range(10):
         score = 1.0 if i < 6 else 0.0
@@ -13622,6 +13920,7 @@ def test_r53_conditional_factor_all_high_returns_high_win_rate() -> None:
 def test_r53_conditional_factor_no_factor_fields_returns_null() -> None:
     """Rows without any recognised factor fields → valid=False (no factor medians)."""
     from scripts.btst_analysis_utils import compute_conditional_factor_performance
+
     rows = [{"next_day_return": 0.01} for _ in range(10)]
     result = compute_conditional_factor_performance(rows)
     assert result["conditional_factor_valid"] is False
@@ -13632,6 +13931,7 @@ def test_r53_conditional_factor_floor_registered() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "conditional_lift" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["conditional_lift"] == pytest.approx(0.0)
 
@@ -13639,24 +13939,28 @@ def test_r53_conditional_factor_floor_registered() -> None:
 def test_r53_conditional_factor_label_registered() -> None:
     """conditional_lift must have label '条件因子高信号胜率提升' in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("conditional_lift") == "条件因子高信号胜率提升"
 
 
 def test_r53_conditional_factor_optional_registered() -> None:
     """conditional_lift must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "conditional_lift" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r53_conditional_factor_in_comparison_metrics() -> None:
     """conditional_lift must appear in COMPARISON_METRICS tuple."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "conditional_lift" in COMPARISON_METRICS
 
 
 def test_r53_conditional_factor_in_guardrail_keys() -> None:
     """conditional_lift must be in _GUARDRAIL_KEYS so it acts as a rollout guardrail."""
     import importlib
+
     eb = importlib.import_module("src.backtesting.evaluation_bundle")
     guardrail_keys = getattr(eb, "_GUARDRAIL_KEYS", ())
     assert "conditional_lift" in guardrail_keys
@@ -13670,6 +13974,7 @@ def test_r53_conditional_factor_in_guardrail_keys() -> None:
 def test_r53_autocorr_invalid_too_few_rows() -> None:
     """Fewer than 8 rows → valid=False, all metrics None."""
     from scripts.btst_analysis_utils import compute_return_autocorrelation
+
     rows = [{"next_day_return": 0.01 * i} for i in range(7)]
     result = compute_return_autocorrelation(rows)
     assert result["return_autocorrelation_valid"] is False
@@ -13682,6 +13987,7 @@ def test_r53_autocorr_invalid_too_few_rows() -> None:
 def test_r53_autocorr_empty_rows() -> None:
     """Empty list → valid=False."""
     from scripts.btst_analysis_utils import compute_return_autocorrelation
+
     result = compute_return_autocorrelation([])
     assert result["return_autocorrelation_valid"] is False
 
@@ -13689,6 +13995,7 @@ def test_r53_autocorr_empty_rows() -> None:
 def test_r53_autocorr_valid_with_8_rows() -> None:
     """Exactly 8 valid rows → valid=True."""
     from scripts.btst_analysis_utils import compute_return_autocorrelation
+
     rows = [{"next_day_return": 0.01 * i} for i in range(8)]
     result = compute_return_autocorrelation(rows)
     assert result["return_autocorrelation_valid"] is True
@@ -13701,6 +14008,7 @@ def test_r53_autocorr_lag1_perfect_momentum() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_return_autocorrelation
+
     rows = [{"next_day_return": float(i)} for i in range(1, 12)]
     result = compute_return_autocorrelation(rows)
     assert result["return_autocorrelation_valid"] is True
@@ -13711,6 +14019,7 @@ def test_r53_autocorr_lag1_perfect_momentum() -> None:
 def test_r53_autocorr_lag1_mean_reversion() -> None:
     """Alternating +/- series → lag1 should be close to -1.0 (mean_reversion)."""
     from scripts.btst_analysis_utils import compute_return_autocorrelation
+
     rows = [{"next_day_return": 0.1 if i % 2 == 0 else -0.1} for i in range(10)]
     result = compute_return_autocorrelation(rows)
     assert result["return_autocorrelation_valid"] is True
@@ -13722,6 +14031,7 @@ def test_r53_autocorr_lag1_mean_reversion() -> None:
 def test_r53_autocorr_lag2_requires_10_rows() -> None:
     """lag2 is None when fewer than 10 valid rows are present."""
     from scripts.btst_analysis_utils import compute_return_autocorrelation
+
     rows = [{"next_day_return": 0.01 * i} for i in range(9)]
     result = compute_return_autocorrelation(rows)
     assert result["return_autocorrelation_valid"] is True
@@ -13731,6 +14041,7 @@ def test_r53_autocorr_lag2_requires_10_rows() -> None:
 def test_r53_autocorr_lag2_present_with_10_rows() -> None:
     """lag2 is numeric when ≥ 10 valid rows are present."""
     from scripts.btst_analysis_utils import compute_return_autocorrelation
+
     rows = [{"next_day_return": float(i)} for i in range(10)]
     result = compute_return_autocorrelation(rows)
     assert result["return_autocorrelation_valid"] is True
@@ -13742,6 +14053,7 @@ def test_r53_autocorr_interpretation_random_walk() -> None:
     import math
 
     from scripts.btst_analysis_utils import compute_return_autocorrelation
+
     rows = [{"next_day_return": math.cos(i * 1.2)} for i in range(12)]
     result = compute_return_autocorrelation(rows)
     assert result["return_autocorrelation_valid"] is True
@@ -13754,6 +14066,7 @@ def test_r53_autocorr_persistence_is_abs_lag1_when_no_lag2() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_return_autocorrelation
+
     rows = [{"next_day_return": float(i)} for i in range(9)]
     result = compute_return_autocorrelation(rows)
     assert result["return_autocorrelation_valid"] is True
@@ -13767,6 +14080,7 @@ def test_r53_autocorr_persistence_avg_abs_when_lag2_present() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_return_autocorrelation
+
     rows = [{"next_day_return": float(i)} for i in range(12)]
     result = compute_return_autocorrelation(rows)
     assert result["return_autocorrelation_valid"] is True
@@ -13778,6 +14092,7 @@ def test_r53_autocorr_persistence_avg_abs_when_lag2_present() -> None:
 def test_r53_autocorr_lag1_clamped_to_minus1_plus1() -> None:
     """lag1 must be within [-1, 1] regardless of input."""
     from scripts.btst_analysis_utils import compute_return_autocorrelation
+
     rows = [{"next_day_return": 1000.0 if i % 2 == 0 else -1000.0} for i in range(10)]
     result = compute_return_autocorrelation(rows)
     if result["autocorr_lag1"] is not None:
@@ -13787,18 +14102,21 @@ def test_r53_autocorr_lag1_clamped_to_minus1_plus1() -> None:
 def test_r53_autocorr_optional_registered() -> None:
     """autocorr_lag1 must be in OPTIONAL_COMPARISON_METRICS (set by Round 31, reused in Round 53)."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "autocorr_lag1" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r53_autocorr_in_comparison_metrics() -> None:
     """autocorr_lag1 must appear in COMPARISON_METRICS tuple."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "autocorr_lag1" in COMPARISON_METRICS
 
 
 def test_r53_autocorr_label_registered() -> None:
     """autocorr_lag1 must have Chinese label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "autocorr_lag1" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["autocorr_lag1"] == "收益序列Lag1自相关"
 
@@ -13811,6 +14129,7 @@ def test_r53_autocorr_label_registered() -> None:
 def test_r53_ir_trend_empty_list() -> None:
     """Empty list → valid=False, all metrics None."""
     from scripts.optimize_profile import compute_cross_window_ir_trend
+
     result = compute_cross_window_ir_trend([])
     assert result["ir_trend_valid"] is False
     assert result["ir_trend_slope"] is None
@@ -13820,6 +14139,7 @@ def test_r53_ir_trend_empty_list() -> None:
 def test_r53_ir_trend_fewer_than_3_windows() -> None:
     """Fewer than 3 valid information_ratio values → valid=False."""
     from scripts.optimize_profile import compute_cross_window_ir_trend
+
     summaries = [{"information_ratio": 0.5}, {"information_ratio": 0.6}]
     result = compute_cross_window_ir_trend(summaries)
     assert result["ir_trend_valid"] is False
@@ -13829,6 +14149,7 @@ def test_r53_ir_trend_fewer_than_3_windows() -> None:
 def test_r53_ir_trend_rising_positive_slope() -> None:
     """Increasing IR values → slope > 0, valid=True."""
     from scripts.optimize_profile import compute_cross_window_ir_trend
+
     summaries = [{"information_ratio": 0.1 * i} for i in range(1, 6)]
     result = compute_cross_window_ir_trend(summaries)
     assert result["ir_trend_valid"] is True
@@ -13839,6 +14160,7 @@ def test_r53_ir_trend_rising_positive_slope() -> None:
 def test_r53_ir_trend_falling_negative_slope() -> None:
     """Decreasing IR values → slope < 0."""
     from scripts.optimize_profile import compute_cross_window_ir_trend
+
     summaries = [{"information_ratio": 0.5 - 0.1 * i} for i in range(5)]
     result = compute_cross_window_ir_trend(summaries)
     assert result["ir_trend_valid"] is True
@@ -13849,6 +14171,7 @@ def test_r53_ir_trend_falling_negative_slope() -> None:
 def test_r53_ir_trend_grade_a_steep_rise() -> None:
     """slope > 0.01 → grade A."""
     from scripts.optimize_profile import compute_cross_window_ir_trend
+
     summaries = [{"information_ratio": 0.05 * i} for i in range(5)]
     result = compute_cross_window_ir_trend(summaries)
     assert result["ir_trend_valid"] is True
@@ -13859,6 +14182,7 @@ def test_r53_ir_trend_grade_a_steep_rise() -> None:
 def test_r53_ir_trend_grade_d_steep_decline() -> None:
     """slope <= -0.05 → grade D."""
     from scripts.optimize_profile import compute_cross_window_ir_trend
+
     summaries = [{"information_ratio": 0.5 - 0.2 * i} for i in range(5)]
     result = compute_cross_window_ir_trend(summaries)
     assert result["ir_trend_valid"] is True
@@ -13871,6 +14195,7 @@ def test_r53_ir_trend_positive_windows_pct_correct() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_ir_trend
+
     summaries = [{"information_ratio": 0.3}, {"information_ratio": -0.1}, {"information_ratio": 0.5}, {"information_ratio": -0.2}, {"information_ratio": 0.1}]
     result = compute_cross_window_ir_trend(summaries)
     assert result["ir_trend_valid"] is True
@@ -13882,6 +14207,7 @@ def test_r53_ir_trend_mean_correct() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_ir_trend
+
     vals = [0.2, 0.4, 0.6, 0.8, 1.0]
     summaries = [{"information_ratio": v} for v in vals]
     result = compute_cross_window_ir_trend(summaries)
@@ -13892,6 +14218,7 @@ def test_r53_ir_trend_mean_correct() -> None:
 def test_r53_ir_trend_skips_missing_information_ratio() -> None:
     """Windows without information_ratio are skipped gracefully."""
     from scripts.optimize_profile import compute_cross_window_ir_trend
+
     summaries = [{"information_ratio": 0.3}, {"other_key": 99}, {"information_ratio": 0.5}, {"information_ratio": 0.1}]
     result = compute_cross_window_ir_trend(summaries)
     assert result["ir_trend_valid"] is True
@@ -13903,6 +14230,7 @@ def test_r53_ir_trend_floor_registered() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "ir_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["ir_trend_slope"] == pytest.approx(-0.05)
 
@@ -13910,24 +14238,28 @@ def test_r53_ir_trend_floor_registered() -> None:
 def test_r53_ir_trend_label_registered() -> None:
     """ir_trend_slope must have label 'IR信号跨窗趋势斜率'."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("ir_trend_slope") == "IR信号跨窗趋势斜率"
 
 
 def test_r53_ir_trend_optional_registered() -> None:
     """ir_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "ir_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r53_ir_trend_in_comparison_metrics() -> None:
     """ir_trend_slope must appear in COMPARISON_METRICS tuple."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "ir_trend_slope" in COMPARISON_METRICS
 
 
 def test_r53_ir_trend_grade_b_small_positive_slope() -> None:
     """0 < slope <= 0.01 → grade B."""
     from scripts.optimize_profile import compute_cross_window_ir_trend
+
     summaries = [{"information_ratio": 0.1 + 0.002 * i} for i in range(5)]
     result = compute_cross_window_ir_trend(summaries)
     assert result["ir_trend_valid"] is True
@@ -13938,6 +14270,7 @@ def test_r53_ir_trend_grade_b_small_positive_slope() -> None:
 def test_r53_ir_trend_grade_c_mild_decline() -> None:
     """-0.05 < slope <= 0 → grade C."""
     from scripts.optimize_profile import compute_cross_window_ir_trend
+
     summaries = [{"information_ratio": 0.5 - 0.005 * i} for i in range(5)]
     result = compute_cross_window_ir_trend(summaries)
     assert result["ir_trend_valid"] is True
@@ -13950,6 +14283,7 @@ def test_r53_ir_trend_min_max_correct() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_ir_trend
+
     vals = [0.2, -0.1, 0.8, 0.4, 0.6]
     summaries = [{"information_ratio": v} for v in vals]
     result = compute_cross_window_ir_trend(summaries)
@@ -13962,6 +14296,7 @@ def test_r53_ir_trend_min_max_correct() -> None:
 # Round 54 tests
 # ---------------------------------------------------------------------------
 
+
 def _make_rows(returns: list[float]) -> list[dict]:
     return [{"next_day_return": r} for r in returns]
 
@@ -13972,6 +14307,7 @@ def _make_rows(returns: list[float]) -> list[dict]:
 def test_r54_tail_risk_invalid_too_few_rows() -> None:
     """Fewer than 10 rows → valid=False, all metrics None."""
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
+
     result = compute_tail_risk_analysis(_make_rows([0.01] * 9))
     assert result["tail_risk_valid"] is False
     assert result["var_5pct"] is None
@@ -13981,6 +14317,7 @@ def test_r54_tail_risk_invalid_too_few_rows() -> None:
 def test_r54_tail_risk_invalid_empty() -> None:
     """Empty list → valid=False."""
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
+
     result = compute_tail_risk_analysis([])
     assert result["tail_risk_valid"] is False
 
@@ -13988,6 +14325,7 @@ def test_r54_tail_risk_invalid_empty() -> None:
 def test_r54_tail_risk_valid_basic() -> None:
     """10+ rows → valid=True and required keys present."""
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
+
     result = compute_tail_risk_analysis(_make_rows([i * 0.01 - 0.05 for i in range(20)]))
     assert result["tail_risk_valid"] is True
     for key in ("var_5pct", "cvar_5pct", "right_tail_95", "tail_asymmetry", "left_tail_pct", "right_tail_pct", "tail_ratio", "tail_risk_grade"):
@@ -13999,6 +14337,7 @@ def test_r54_var_5pct_matches_5th_percentile() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
+
     rets = [i * 0.01 for i in range(20)]
     result = compute_tail_risk_analysis(_make_rows(rets))
     expected = sorted(rets)[int(0.05 * 19)]
@@ -14010,6 +14349,7 @@ def test_r54_right_tail_95_matches_95th_percentile() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
+
     rets = [i * 0.01 for i in range(20)]
     result = compute_tail_risk_analysis(_make_rows(rets))
     expected = sorted(rets)[int(0.95 * 19)]
@@ -14021,6 +14361,7 @@ def test_r54_cvar_5pct_is_mean_of_left_rows() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
+
     rets = [-0.10, -0.08, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10]
     result = compute_tail_risk_analysis(_make_rows(rets))
     assert result["tail_risk_valid"] is True
@@ -14036,6 +14377,7 @@ def test_r54_tail_asymmetry_formula() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
+
     rets = [-0.10, -0.08, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10]
     result = compute_tail_risk_analysis(_make_rows(rets))
     if result["tail_risk_valid"]:
@@ -14046,6 +14388,7 @@ def test_r54_tail_asymmetry_formula() -> None:
 def test_r54_tail_ratio_no_left_tail_clamp() -> None:
     """tail_ratio clamped to 5.0 when left_tail_pct==0."""
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
+
     rets = [0.05] * 15
     result = compute_tail_risk_analysis(_make_rows(rets))
     assert result["tail_risk_valid"] is True
@@ -14057,6 +14400,7 @@ def test_r54_tail_ratio_formula() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
+
     rets = [-0.05] * 5 + [0.05] * 15
     result = compute_tail_risk_analysis(_make_rows(rets))
     assert result["tail_risk_valid"] is True
@@ -14069,6 +14413,7 @@ def test_r54_tail_ratio_formula() -> None:
 def test_r54_tail_risk_grade_a() -> None:
     """tail_ratio > 2.0 → grade A."""
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
+
     rets = [-0.04] * 2 + [0.05] * 18
     result = compute_tail_risk_analysis(_make_rows(rets))
     if result["tail_risk_valid"] and result["tail_ratio"] is not None and result["tail_ratio"] > 2.0:
@@ -14078,6 +14423,7 @@ def test_r54_tail_risk_grade_a() -> None:
 def test_r54_tail_risk_grade_d() -> None:
     """tail_ratio <= 0.5 → grade D."""
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
+
     rets = [-0.05] * 14 + [0.04] * 6
     result = compute_tail_risk_analysis(_make_rows(rets))
     if result["tail_risk_valid"] and result["tail_ratio"] is not None and result["tail_ratio"] <= 0.5:
@@ -14087,6 +14433,7 @@ def test_r54_tail_risk_grade_d() -> None:
 def test_r54_tail_asymmetry_guardrail_registered() -> None:
     """tail_asymmetry must be in _GUARDRAIL_KEYS."""
     from src.backtesting import evaluation_bundle
+
     assert "tail_asymmetry" in evaluation_bundle._GUARDRAIL_KEYS
 
 
@@ -14095,6 +14442,7 @@ def test_r54_tail_asymmetry_floor_registered() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "tail_asymmetry" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["tail_asymmetry"] == pytest.approx(0.0)
 
@@ -14102,18 +14450,21 @@ def test_r54_tail_asymmetry_floor_registered() -> None:
 def test_r54_tail_asymmetry_in_comparison_metrics() -> None:
     """tail_asymmetry must appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "tail_asymmetry" in COMPARISON_METRICS
 
 
 def test_r54_tail_asymmetry_optional() -> None:
     """tail_asymmetry must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "tail_asymmetry" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r54_tail_asymmetry_label() -> None:
     """tail_asymmetry label must be '尾部收益不对称度'."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("tail_asymmetry") == "尾部收益不对称度"
 
 
@@ -14123,6 +14474,7 @@ def test_r54_tail_asymmetry_label() -> None:
 def test_r54_max_drawdown_invalid_too_few() -> None:
     """Fewer than 8 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+
     result = compute_max_drawdown_analysis(_make_rows([0.01] * 7))
     assert result["max_drawdown_valid"] is False
     assert result["max_drawdown"] is None
@@ -14131,6 +14483,7 @@ def test_r54_max_drawdown_invalid_too_few() -> None:
 def test_r54_max_drawdown_invalid_empty() -> None:
     """Empty list → valid=False."""
     from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+
     result = compute_max_drawdown_analysis([])
     assert result["max_drawdown_valid"] is False
 
@@ -14138,6 +14491,7 @@ def test_r54_max_drawdown_invalid_empty() -> None:
 def test_r54_max_drawdown_valid_basic() -> None:
     """8+ rows → valid=True and required keys present."""
     from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+
     result = compute_max_drawdown_analysis(_make_rows([0.01, -0.02, 0.03, -0.01, 0.02, 0.01, -0.03, 0.04]))
     assert result["max_drawdown_valid"] is True
     for key in ("max_drawdown", "max_drawdown_duration", "recovery_ratio", "calmar_ratio"):
@@ -14149,6 +14503,7 @@ def test_r54_max_drawdown_flat_series_zero() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+
     result = compute_max_drawdown_analysis(_make_rows([0.0] * 10))
     assert result["max_drawdown_valid"] is True
     assert result["max_drawdown"] == pytest.approx(0.0, abs=1e-8)
@@ -14157,6 +14512,7 @@ def test_r54_max_drawdown_flat_series_zero() -> None:
 def test_r54_max_drawdown_positive_value() -> None:
     """max_drawdown is expressed as a positive value (fraction)."""
     from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+
     rets = [0.05, 0.05, -0.10, -0.10, 0.02, 0.02, 0.02, 0.02]
     result = compute_max_drawdown_analysis(_make_rows(rets))
     assert result["max_drawdown_valid"] is True
@@ -14166,6 +14522,7 @@ def test_r54_max_drawdown_positive_value() -> None:
 def test_r54_calmar_ratio_clamp_when_zero_drawdown() -> None:
     """calmar_ratio clamped to 10.0 when max_drawdown == 0."""
     from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+
     result = compute_max_drawdown_analysis(_make_rows([0.01] * 10))
     assert result["max_drawdown_valid"] is True
     assert result["calmar_ratio"] == 10.0
@@ -14174,6 +14531,7 @@ def test_r54_calmar_ratio_clamp_when_zero_drawdown() -> None:
 def test_r54_recovery_ratio_positive() -> None:
     """recovery_ratio > 0 for any series."""
     from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+
     rets = [0.05, -0.15, 0.10, 0.05, 0.05, -0.05, 0.05, 0.05]
     result = compute_max_drawdown_analysis(_make_rows(rets))
     assert result["max_drawdown_valid"] is True
@@ -14184,24 +14542,28 @@ def test_r54_recovery_ratio_positive() -> None:
 def test_r54_max_drawdown_in_comparison_metrics() -> None:
     """drawdown_max_drawdown must appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "drawdown_max_drawdown" in COMPARISON_METRICS
 
 
 def test_r54_max_drawdown_lower_is_better() -> None:
     """drawdown_max_drawdown must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "drawdown_max_drawdown" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r54_max_drawdown_optional() -> None:
     """drawdown_max_drawdown must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "drawdown_max_drawdown" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r54_max_drawdown_label() -> None:
     """drawdown_max_drawdown label must be '最大回撤率'."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("drawdown_max_drawdown") == "最大回撤率"
 
 
@@ -14211,6 +14573,7 @@ def test_r54_max_drawdown_label() -> None:
 def test_r54_conditional_trend_invalid_empty() -> None:
     """Empty list → valid=False."""
     from scripts.optimize_profile import compute_cross_window_conditional_trend
+
     result = compute_cross_window_conditional_trend([])
     assert result["conditional_lift_trend_valid"] is False
 
@@ -14218,6 +14581,7 @@ def test_r54_conditional_trend_invalid_empty() -> None:
 def test_r54_conditional_trend_invalid_too_few() -> None:
     """Fewer than 3 valid values → valid=False."""
     from scripts.optimize_profile import compute_cross_window_conditional_trend
+
     result = compute_cross_window_conditional_trend([{"conditional_conditional_lift": 0.1}, {"conditional_conditional_lift": 0.2}])
     assert result["conditional_lift_trend_valid"] is False
 
@@ -14225,6 +14589,7 @@ def test_r54_conditional_trend_invalid_too_few() -> None:
 def test_r54_conditional_trend_valid_basic() -> None:
     """3+ valid values → valid=True."""
     from scripts.optimize_profile import compute_cross_window_conditional_trend
+
     summaries = [{"conditional_conditional_lift": 0.1 + 0.01 * i} for i in range(5)]
     result = compute_cross_window_conditional_trend(summaries)
     assert result["conditional_lift_trend_valid"] is True
@@ -14234,6 +14599,7 @@ def test_r54_conditional_trend_valid_basic() -> None:
 def test_r54_conditional_trend_ols_slope_positive() -> None:
     """Strictly increasing series → positive slope."""
     from scripts.optimize_profile import compute_cross_window_conditional_trend
+
     summaries = [{"conditional_conditional_lift": float(i) * 0.01} for i in range(5)]
     result = compute_cross_window_conditional_trend(summaries)
     assert result["conditional_lift_trend_valid"] is True
@@ -14243,6 +14609,7 @@ def test_r54_conditional_trend_ols_slope_positive() -> None:
 def test_r54_conditional_trend_ols_slope_negative() -> None:
     """Strictly decreasing series → negative slope."""
     from scripts.optimize_profile import compute_cross_window_conditional_trend
+
     summaries = [{"conditional_conditional_lift": 0.1 - float(i) * 0.02} for i in range(5)]
     result = compute_cross_window_conditional_trend(summaries)
     assert result["conditional_lift_trend_valid"] is True
@@ -14252,6 +14619,7 @@ def test_r54_conditional_trend_ols_slope_negative() -> None:
 def test_r54_conditional_trend_grade_a() -> None:
     """slope > 0.005 → grade A."""
     from scripts.optimize_profile import compute_cross_window_conditional_trend
+
     summaries = [{"conditional_conditional_lift": float(i) * 0.05} for i in range(5)]
     result = compute_cross_window_conditional_trend(summaries)
     if result["conditional_lift_trend_valid"] and result["conditional_lift_trend_slope"] is not None and result["conditional_lift_trend_slope"] > 0.005:
@@ -14261,6 +14629,7 @@ def test_r54_conditional_trend_grade_a() -> None:
 def test_r54_conditional_trend_grade_d() -> None:
     """slope <= -0.01 → grade D."""
     from scripts.optimize_profile import compute_cross_window_conditional_trend
+
     summaries = [{"conditional_conditional_lift": -float(i) * 0.05} for i in range(5)]
     result = compute_cross_window_conditional_trend(summaries)
     if result["conditional_lift_trend_valid"] and result["conditional_lift_trend_slope"] is not None and result["conditional_lift_trend_slope"] <= -0.01:
@@ -14272,6 +14641,7 @@ def test_r54_conditional_positive_windows_pct() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_conditional_trend
+
     summaries = [{"conditional_conditional_lift": v} for v in [0.1, -0.1, 0.2, -0.2, 0.3]]
     result = compute_cross_window_conditional_trend(summaries)
     assert result["conditional_lift_trend_valid"] is True
@@ -14283,6 +14653,7 @@ def test_r54_conditional_trend_min_max() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_conditional_trend
+
     vals = [0.05, -0.03, 0.12, 0.07, -0.01]
     summaries = [{"conditional_conditional_lift": v} for v in vals]
     result = compute_cross_window_conditional_trend(summaries)
@@ -14294,12 +14665,14 @@ def test_r54_conditional_trend_min_max() -> None:
 def test_r54_conditional_trend_in_comparison_metrics() -> None:
     """conditional_lift_trend_slope must appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "conditional_lift_trend_slope" in COMPARISON_METRICS
 
 
 def test_r54_conditional_trend_optional() -> None:
     """conditional_lift_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "conditional_lift_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
@@ -14308,6 +14681,7 @@ def test_r54_conditional_trend_floor_registered() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "conditional_lift_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["conditional_lift_trend_slope"] == pytest.approx(-0.01)
 
@@ -14315,12 +14689,14 @@ def test_r54_conditional_trend_floor_registered() -> None:
 def test_r54_conditional_trend_label() -> None:
     """conditional_lift_trend_slope label must be '条件因子协同跨窗趋势'."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("conditional_lift_trend_slope") == "条件因子协同跨窗趋势"
 
 
 def test_r54_conditional_trend_skips_none_values() -> None:
     """None values in conditional_conditional_lift are skipped."""
     from scripts.optimize_profile import compute_cross_window_conditional_trend
+
     summaries = [{"conditional_conditional_lift": None}, {"conditional_conditional_lift": 0.1}, {"conditional_conditional_lift": 0.2}, {"conditional_conditional_lift": 0.3}]
     result = compute_cross_window_conditional_trend(summaries)
     assert result["conditional_lift_trend_valid"] is True
@@ -14329,6 +14705,7 @@ def test_r54_conditional_trend_skips_none_values() -> None:
 def test_r54_tail_risk_missing_next_day_return_skipped() -> None:
     """Rows missing next_day_return are skipped."""
     from scripts.btst_analysis_utils import compute_tail_risk_analysis
+
     rows = [{"next_day_return": 0.01 * i} for i in range(15)] + [{"other": 1}] * 5
     result = compute_tail_risk_analysis(rows)
     assert result["tail_risk_valid"] is True
@@ -14337,6 +14714,7 @@ def test_r54_tail_risk_missing_next_day_return_skipped() -> None:
 def test_r54_max_drawdown_missing_next_day_return_skipped() -> None:
     """Rows missing next_day_return are skipped."""
     from scripts.btst_analysis_utils import compute_max_drawdown_analysis
+
     rows = [{"next_day_return": 0.01 * i} for i in range(10)] + [{"other": 1}] * 5
     result = compute_max_drawdown_analysis(rows)
     assert result["max_drawdown_valid"] is True
@@ -14355,6 +14733,7 @@ def test_r54_max_drawdown_missing_next_day_return_skipped() -> None:
 def test_r55_factor_decay_invalid_too_few_rows() -> None:
     """Fewer than 12 rows → factor_decay_valid=False."""
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
+
     rows = [{"close_strength": 0.5, "next_day_return": 0.01} for _ in range(11)]
     result = compute_factor_decay_analysis(rows)
     assert result["factor_decay_valid"] is False
@@ -14364,6 +14743,7 @@ def test_r55_factor_decay_invalid_too_few_rows() -> None:
 def test_r55_factor_decay_valid_flag() -> None:
     """12+ rows → factor_decay_valid=True."""
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
+
     rows = [{"close_strength": float(i) * 0.1, "next_day_return": float(i) * 0.01} for i in range(15)]
     result = compute_factor_decay_analysis(rows)
     assert result["factor_decay_valid"] is True
@@ -14374,6 +14754,7 @@ def test_r55_factor_decay_spearman_positive_corr() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
+
     rows = [{"close_strength": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
     result = compute_factor_decay_analysis(rows)
     assert result["factor_decay_valid"] is True
@@ -14385,6 +14766,7 @@ def test_r55_factor_decay_spearman_negative_corr() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
+
     rows = [{"close_strength": float(i), "next_day_return": -float(i) * 0.01} for i in range(20)]
     result = compute_factor_decay_analysis(rows)
     assert result["factor_ic_scores"]["close_strength"] == pytest.approx(-1.0, abs=1e-5)
@@ -14393,6 +14775,7 @@ def test_r55_factor_decay_spearman_negative_corr() -> None:
 def test_r55_factor_decay_missing_factor_none() -> None:
     """Factor with < 5 valid pairs returns None IC."""
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
+
     rows = [{"close_strength": None, "next_day_return": float(i) * 0.01} for i in range(20)]
     result = compute_factor_decay_analysis(rows)
     assert result["factor_decay_valid"] is True
@@ -14403,6 +14786,7 @@ def test_r55_factor_decay_mean_ic_signed() -> None:
     """mean_ic is signed average, not absolute."""
 
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
+
     rows = [{"close_strength": float(i), "next_day_return": -float(i) * 0.01} for i in range(20)]
     result = compute_factor_decay_analysis(rows)
     assert result["mean_ic"] is not None
@@ -14414,6 +14798,7 @@ def test_r55_factor_decay_ic_spread_nonnegative() -> None:
     import random
 
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
+
     random.seed(42)
     rows = [{"close_strength": random.random(), "volume_expansion_quality": random.random(), "next_day_return": random.gauss(0, 0.01)} for _ in range(20)]
     result = compute_factor_decay_analysis(rows)
@@ -14426,6 +14811,7 @@ def test_r55_factor_decay_max_ic_factor() -> None:
     """max_ic_factor points to highest |IC| factor."""
 
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i % 3), "next_day_return": float(i) * 0.01} for i in range(20)]
     result = compute_factor_decay_analysis(rows)
     assert result["max_ic_factor"] is not None
@@ -14438,6 +14824,7 @@ def test_r55_factor_decay_max_ic_factor() -> None:
 def test_r55_factor_decay_min_ic_factor() -> None:
     """min_ic_factor points to lowest |IC| factor."""
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i % 3), "next_day_return": float(i) * 0.01} for i in range(20)]
     result = compute_factor_decay_analysis(rows)
     assert result["min_ic_factor"] is not None
@@ -14450,6 +14837,7 @@ def test_r55_factor_decay_min_ic_factor() -> None:
 def test_r55_factor_decay_positive_ic_count() -> None:
     """positive_ic_count counts factors with IC > 0."""
     from scripts.btst_analysis_utils import compute_factor_decay_analysis
+
     rows = [{"close_strength": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
     result = compute_factor_decay_analysis(rows)
     ics = result["factor_ic_scores"]
@@ -14460,12 +14848,14 @@ def test_r55_factor_decay_positive_ic_count() -> None:
 def test_r55_factor_decay_in_comparison_metrics() -> None:
     """decay_mean_ic must appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "decay_mean_ic" in COMPARISON_METRICS
 
 
 def test_r55_factor_decay_in_optional_metrics() -> None:
     """decay_mean_ic must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "decay_mean_ic" in OPTIONAL_COMPARISON_METRICS
 
 
@@ -14474,6 +14864,7 @@ def test_r55_factor_decay_floor_registered() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "mean_ic" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["mean_ic"] == pytest.approx(0.0)
 
@@ -14481,12 +14872,14 @@ def test_r55_factor_decay_floor_registered() -> None:
 def test_r55_factor_decay_label() -> None:
     """decay_mean_ic label must be '多因子平均IC'."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("decay_mean_ic") == "多因子平均IC"
 
 
 def test_r55_factor_decay_guardrail_key() -> None:
     """mean_ic must be in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "mean_ic" in _GUARDRAIL_KEYS
 
 
@@ -14498,6 +14891,7 @@ def test_r55_factor_decay_guardrail_key() -> None:
 def test_r55_time_seg_invalid_too_few_rows() -> None:
     """Fewer than 9 rows → intraday_time_valid=False."""
     from scripts.btst_analysis_utils import compute_intraday_time_segmentation
+
     rows = [{"next_day_return": 0.01} for _ in range(8)]
     result = compute_intraday_time_segmentation(rows)
     assert result["intraday_time_valid"] is False
@@ -14507,6 +14901,7 @@ def test_r55_time_seg_invalid_too_few_rows() -> None:
 def test_r55_time_seg_valid_no_time_field() -> None:
     """9+ rows without time field → intraday_time_valid=True (row-index split)."""
     from scripts.btst_analysis_utils import compute_intraday_time_segmentation
+
     rows = [{"next_day_return": 0.01 * i} for i in range(12)]
     result = compute_intraday_time_segmentation(rows)
     assert result["intraday_time_valid"] is True
@@ -14515,11 +14910,8 @@ def test_r55_time_seg_valid_no_time_field() -> None:
 def test_r55_time_seg_valid_with_trade_time() -> None:
     """Rows with trade_time → session split by hour."""
     from scripts.btst_analysis_utils import compute_intraday_time_segmentation
-    rows = (
-        [{"trade_time": "09:30", "next_day_return": 0.02}] * 5
-        + [{"trade_time": "11:30", "next_day_return": -0.01}] * 5
-        + [{"trade_time": "14:00", "next_day_return": 0.01}] * 5
-    )
+
+    rows = [{"trade_time": "09:30", "next_day_return": 0.02}] * 5 + [{"trade_time": "11:30", "next_day_return": -0.01}] * 5 + [{"trade_time": "14:00", "next_day_return": 0.01}] * 5
     result = compute_intraday_time_segmentation(rows)
     assert result["intraday_time_valid"] is True
 
@@ -14529,6 +14921,7 @@ def test_r55_time_seg_early_win_rate_correct() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_intraday_time_segmentation
+
     rows = [{"trade_time": "09:30", "next_day_return": 0.02}] * 10 + [{"trade_time": "11:30", "next_day_return": -0.01}] * 5 + [{"trade_time": "14:00", "next_day_return": 0.01}] * 5
     result = compute_intraday_time_segmentation(rows)
     assert result["early_session_win_rate"] == pytest.approx(1.0)
@@ -14537,6 +14930,7 @@ def test_r55_time_seg_early_win_rate_correct() -> None:
 def test_r55_time_seg_best_session() -> None:
     """best_session points to session with highest win_rate."""
     from scripts.btst_analysis_utils import compute_intraday_time_segmentation
+
     rows = [{"trade_time": "09:30", "next_day_return": 0.02}] * 10 + [{"trade_time": "11:30", "next_day_return": -0.01}] * 5 + [{"trade_time": "14:00", "next_day_return": 0.01}] * 5
     result = compute_intraday_time_segmentation(rows)
     assert result["best_session"] == "early"
@@ -14546,11 +14940,8 @@ def test_r55_time_seg_session_win_rate_spread() -> None:
     """session_win_rate_spread = max(wr) - min(wr)."""
 
     from scripts.btst_analysis_utils import compute_intraday_time_segmentation
-    rows = (
-        [{"trade_time": "09:30", "next_day_return": 0.02}] * 10
-        + [{"trade_time": "11:30", "next_day_return": -0.01}] * 10
-        + [{"trade_time": "14:00", "next_day_return": -0.02}] * 10
-    )
+
+    rows = [{"trade_time": "09:30", "next_day_return": 0.02}] * 10 + [{"trade_time": "11:30", "next_day_return": -0.01}] * 10 + [{"trade_time": "14:00", "next_day_return": -0.02}] * 10
     result = compute_intraday_time_segmentation(rows)
     assert result["session_win_rate_spread"] is not None
     assert result["session_win_rate_spread"] >= 0.0
@@ -14561,6 +14952,7 @@ def test_r55_time_seg_row_index_split_segments() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_intraday_time_segmentation
+
     rows = [{"next_day_return": 0.01}] * 5 + [{"next_day_return": -0.01}] * 4 + [{"next_day_return": -0.01}] * 3
     result = compute_intraday_time_segmentation(rows)
     assert result["intraday_time_valid"] is True
@@ -14570,18 +14962,21 @@ def test_r55_time_seg_row_index_split_segments() -> None:
 def test_r55_time_seg_in_comparison_metrics() -> None:
     """time_seg_session_win_rate_spread must appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "time_seg_session_win_rate_spread" in COMPARISON_METRICS
 
 
 def test_r55_time_seg_in_optional_metrics() -> None:
     """time_seg_session_win_rate_spread must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "time_seg_session_win_rate_spread" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r55_time_seg_label() -> None:
     """time_seg_session_win_rate_spread label must be '最佳时段胜率差异'."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("time_seg_session_win_rate_spread") == "最佳时段胜率差异"
 
 
@@ -14593,6 +14988,7 @@ def test_r55_time_seg_label() -> None:
 def test_r55_drawdown_trend_invalid_too_few_windows() -> None:
     """Fewer than 3 valid drawdown values → drawdown_trend_valid=False."""
     from scripts.optimize_profile import compute_cross_window_drawdown_trend
+
     summaries = [{"drawdown_max_drawdown": 0.05}, {"drawdown_max_drawdown": 0.04}]
     result = compute_cross_window_drawdown_trend(summaries)
     assert result["drawdown_trend_valid"] is False
@@ -14601,6 +14997,7 @@ def test_r55_drawdown_trend_invalid_too_few_windows() -> None:
 def test_r55_drawdown_trend_valid_flag() -> None:
     """3+ valid drawdown values → drawdown_trend_valid=True."""
     from scripts.optimize_profile import compute_cross_window_drawdown_trend
+
     summaries = [{"drawdown_max_drawdown": 0.05 - i * 0.005} for i in range(5)]
     result = compute_cross_window_drawdown_trend(summaries)
     assert result["drawdown_trend_valid"] is True
@@ -14609,6 +15006,7 @@ def test_r55_drawdown_trend_valid_flag() -> None:
 def test_r55_drawdown_trend_slope_negative_when_improving() -> None:
     """Decreasing drawdown series → negative slope."""
     from scripts.optimize_profile import compute_cross_window_drawdown_trend
+
     summaries = [{"drawdown_max_drawdown": 0.10 - i * 0.01} for i in range(5)]
     result = compute_cross_window_drawdown_trend(summaries)
     assert result["drawdown_trend_valid"] is True
@@ -14618,6 +15016,7 @@ def test_r55_drawdown_trend_slope_negative_when_improving() -> None:
 def test_r55_drawdown_trend_slope_positive_when_worsening() -> None:
     """Increasing drawdown series → positive slope."""
     from scripts.optimize_profile import compute_cross_window_drawdown_trend
+
     summaries = [{"drawdown_max_drawdown": 0.01 * (i + 1)} for i in range(5)]
     result = compute_cross_window_drawdown_trend(summaries)
     assert result["drawdown_trend_slope"] > 0
@@ -14626,6 +15025,7 @@ def test_r55_drawdown_trend_slope_positive_when_worsening() -> None:
 def test_r55_drawdown_trend_grade_a_steep_decline() -> None:
     """slope < -0.005 → grade A."""
     from scripts.optimize_profile import compute_cross_window_drawdown_trend
+
     summaries = [{"drawdown_max_drawdown": 0.20 - i * 0.05} for i in range(5)]
     result = compute_cross_window_drawdown_trend(summaries)
     assert result["drawdown_trend_valid"] is True
@@ -14636,6 +15036,7 @@ def test_r55_drawdown_trend_grade_a_steep_decline() -> None:
 def test_r55_drawdown_trend_grade_b_mild_decline() -> None:
     """−0.005 ≤ slope < 0 → grade B."""
     from scripts.optimize_profile import compute_cross_window_drawdown_trend
+
     summaries = [{"drawdown_max_drawdown": 0.05 - i * 0.001} for i in range(5)]
     result = compute_cross_window_drawdown_trend(summaries)
     if result["drawdown_trend_slope"] is not None and -0.005 <= result["drawdown_trend_slope"] < 0:
@@ -14645,6 +15046,7 @@ def test_r55_drawdown_trend_grade_b_mild_decline() -> None:
 def test_r55_drawdown_trend_grade_d_sharp_increase() -> None:
     """slope >= 0.005 → grade D."""
     from scripts.optimize_profile import compute_cross_window_drawdown_trend
+
     summaries = [{"drawdown_max_drawdown": 0.01 * (i + 1) * 2} for i in range(5)]
     result = compute_cross_window_drawdown_trend(summaries)
     if result["drawdown_trend_slope"] is not None and result["drawdown_trend_slope"] >= 0.005:
@@ -14654,6 +15056,7 @@ def test_r55_drawdown_trend_grade_d_sharp_increase() -> None:
 def test_r55_drawdown_improving_windows_pct_1() -> None:
     """Decreasing series → drawdown_improving_windows_pct = 1.0."""
     from scripts.optimize_profile import compute_cross_window_drawdown_trend
+
     summaries = [{"drawdown_max_drawdown": 0.10 - i * 0.01} for i in range(6)]
     result = compute_cross_window_drawdown_trend(summaries)
     assert result["drawdown_improving_windows_pct"] == 1.0
@@ -14662,6 +15065,7 @@ def test_r55_drawdown_improving_windows_pct_1() -> None:
 def test_r55_drawdown_improving_windows_pct_0() -> None:
     """Increasing series → drawdown_improving_windows_pct = 0.0."""
     from scripts.optimize_profile import compute_cross_window_drawdown_trend
+
     summaries = [{"drawdown_max_drawdown": 0.01 * (i + 1)} for i in range(6)]
     result = compute_cross_window_drawdown_trend(summaries)
     assert result["drawdown_improving_windows_pct"] == 0.0
@@ -14670,6 +15074,7 @@ def test_r55_drawdown_improving_windows_pct_0() -> None:
 def test_r55_drawdown_trend_skips_none() -> None:
     """None drawdown values are skipped."""
     from scripts.optimize_profile import compute_cross_window_drawdown_trend
+
     summaries = [{"drawdown_max_drawdown": None}, {"drawdown_max_drawdown": 0.05}, {"drawdown_max_drawdown": 0.04}, {"drawdown_max_drawdown": 0.03}]
     result = compute_cross_window_drawdown_trend(summaries)
     assert result["drawdown_trend_valid"] is True
@@ -14678,18 +15083,21 @@ def test_r55_drawdown_trend_skips_none() -> None:
 def test_r55_drawdown_trend_in_comparison_metrics() -> None:
     """drawdown_trend_slope must appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "drawdown_trend_slope" in COMPARISON_METRICS
 
 
 def test_r55_drawdown_trend_in_optional_metrics() -> None:
     """drawdown_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "drawdown_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r55_drawdown_trend_lower_is_better() -> None:
     """drawdown_trend_slope must be in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "drawdown_trend_slope" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
@@ -14698,6 +15106,7 @@ def test_r55_drawdown_trend_cap_registered() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "drawdown_trend_slope" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["drawdown_trend_slope"] == pytest.approx(0.005)
 
@@ -14705,6 +15114,7 @@ def test_r55_drawdown_trend_cap_registered() -> None:
 def test_r55_drawdown_trend_label() -> None:
     """drawdown_trend_slope label must be '最大回撤跨窗趋势'."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("drawdown_trend_slope") == "最大回撤跨窗趋势"
 
 
@@ -14713,6 +15123,7 @@ def test_r55_drawdown_trend_min_max() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_drawdown_trend
+
     vals = [0.05, 0.03, 0.07, 0.02, 0.06]
     summaries = [{"drawdown_max_drawdown": v} for v in vals]
     result = compute_cross_window_drawdown_trend(summaries)
@@ -14728,9 +15139,11 @@ def test_r55_drawdown_trend_min_max() -> None:
 # T1: compute_sector_diversification_analysis
 # ---------------------------------------------------------------------------
 
+
 def test_r56_t1_basic_diversification() -> None:
     """T1 returns valid result with sector-diversified pool."""
     from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+
     rows = [{"sector": "technology"}, {"sector": "finance"}, {"sector": "healthcare"}, {"sector": "technology"}, {"sector": "energy"}]
     result = compute_sector_diversification_analysis(rows)
     assert result["sector_diversification_valid"] is True
@@ -14742,6 +15155,7 @@ def test_r56_t1_basic_diversification() -> None:
 def test_r56_t1_insufficient_rows() -> None:
     """T1 returns invalid when < 3 rows."""
     from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+
     assert compute_sector_diversification_analysis([])["sector_diversification_valid"] is False
     assert compute_sector_diversification_analysis([{"sector": "A"}, {"sector": "B"}])["sector_diversification_valid"] is False
 
@@ -14751,6 +15165,7 @@ def test_r56_t1_all_same_sector() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+
     rows = [{"sector": "tech"}] * 10
     result = compute_sector_diversification_analysis(rows)
     assert result["sector_diversification_valid"] is True
@@ -14763,6 +15178,7 @@ def test_r56_t1_uniform_sectors_high_score() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+
     n = 5
     rows = [{"sector": str(i)} for i in range(n)] * 2
     result = compute_sector_diversification_analysis(rows)
@@ -14774,6 +15190,7 @@ def test_r56_t1_uniform_sectors_high_score() -> None:
 def test_r56_t1_hhi_range() -> None:
     """HHI stays in [0, 1]."""
     from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+
     rows = [{"sector": "A"}, {"sector": "B"}, {"sector": "C"}, {"sector": "A"}, {"sector": "B"}]
     result = compute_sector_diversification_analysis(rows)
     assert 0.0 <= result["sector_hhi"] <= 1.0
@@ -14782,6 +15199,7 @@ def test_r56_t1_hhi_range() -> None:
 def test_r56_t1_grade_a_threshold() -> None:
     """Grade A requires diversification_score ≥ 0.70."""
     from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+
     rows = [{"sector": str(i)} for i in range(10)] * 3
     result = compute_sector_diversification_analysis(rows)
     assert result["sector_diversification_grade"] == "A"
@@ -14790,6 +15208,7 @@ def test_r56_t1_grade_a_threshold() -> None:
 def test_r56_t1_missing_sector_field() -> None:
     """T1 handles rows where sector field is missing."""
     from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+
     rows = [{"close": 10.0}] * 5
     result = compute_sector_diversification_analysis(rows)
     assert result["sector_diversification_valid"] is False
@@ -14800,6 +15219,7 @@ def test_r56_t1_top_sector_name_and_pct() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+
     rows = [{"sector": "A"}, {"sector": "A"}, {"sector": "A"}, {"sector": "B"}, {"sector": "C"}]
     result = compute_sector_diversification_analysis(rows)
     assert result["top_sector_name"] == "A"
@@ -14809,6 +15229,7 @@ def test_r56_t1_top_sector_name_and_pct() -> None:
 def test_r56_t1_surface_keys_present() -> None:
     """build_surface_summary includes sdiv_diversification_score key."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"sector": str(i % 4), "next_close_return": 0.01 * i, "next_high_return": 0.02 * i} for i in range(1, 20)]
     surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "sdiv_diversification_score" in surface
@@ -14820,9 +15241,11 @@ def test_r56_t1_surface_keys_present() -> None:
 # T2: compute_score_rank_stability
 # ---------------------------------------------------------------------------
 
+
 def test_r56_t2_basic_rank_ic() -> None:
     """T2 returns valid rank_ic with sufficient data."""
     from scripts.btst_analysis_utils import compute_score_rank_stability
+
     rows = [{"composite_score": float(i), "next_day_return": 0.01 * i} for i in range(1, 16)]
     result = compute_score_rank_stability(rows)
     assert result["rank_stab_valid"] is True
@@ -14833,6 +15256,7 @@ def test_r56_t2_basic_rank_ic() -> None:
 def test_r56_t2_insufficient_rows() -> None:
     """T2 returns invalid when < 10 rows."""
     from scripts.btst_analysis_utils import compute_score_rank_stability
+
     rows = [{"composite_score": float(i), "next_day_return": 0.01 * i} for i in range(5)]
     result = compute_score_rank_stability(rows)
     assert result["rank_stab_valid"] is False
@@ -14842,6 +15266,7 @@ def test_r56_t2_insufficient_rows() -> None:
 def test_r56_t2_empty_rows() -> None:
     """T2 returns invalid for empty input."""
     from scripts.btst_analysis_utils import compute_score_rank_stability
+
     result = compute_score_rank_stability([])
     assert result["rank_stab_valid"] is False
     assert result["sample_count"] == 0
@@ -14852,6 +15277,7 @@ def test_r56_t2_perfect_positive_ic() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_score_rank_stability
+
     rows = [{"composite_score": float(i), "next_day_return": float(i)} for i in range(1, 15)]
     result = compute_score_rank_stability(rows)
     assert result["rank_ic"] == pytest.approx(1.0, abs=1e-5)
@@ -14863,6 +15289,7 @@ def test_r56_t2_perfect_negative_ic() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_score_rank_stability
+
     n = 12
     rows = [{"composite_score": float(i), "next_day_return": float(n - i)} for i in range(1, n + 1)]
     result = compute_score_rank_stability(rows)
@@ -14873,6 +15300,7 @@ def test_r56_t2_perfect_negative_ic() -> None:
 def test_r56_t2_score_field_priority_runner() -> None:
     """runner_composite_score takes priority over composite_score."""
     from scripts.btst_analysis_utils import compute_score_rank_stability
+
     rows = [{"runner_composite_score": float(i), "composite_score": float(n - i), "next_day_return": float(i)} for i, n in [(j, 15) for j in range(1, 16)]]
     result = compute_score_rank_stability(rows)
     assert result["rank_stab_valid"] is True
@@ -14883,6 +15311,7 @@ def test_r56_t2_score_field_priority_runner() -> None:
 def test_r56_t2_score_field_fallback_to_score() -> None:
     """Falls back to 'score' field when composite_score missing."""
     from scripts.btst_analysis_utils import compute_score_rank_stability
+
     rows = [{"score": float(i), "next_day_return": float(i)} for i in range(1, 15)]
     result = compute_score_rank_stability(rows)
     assert result["rank_stab_valid"] is True
@@ -14894,6 +15323,7 @@ def test_r56_t2_grade_b_threshold() -> None:
     # Construct slightly positive IC just above 0.05 but below 0.10
 
     from scripts.btst_analysis_utils import compute_score_rank_stability
+
     n = 20
     # Use a rank correlation that gives modest positive IC
     rows = [{"composite_score": float(i) + (0.5 if i % 3 == 0 else 0.0), "next_day_return": float(i)} for i in range(1, n + 1)]
@@ -14905,6 +15335,7 @@ def test_r56_t2_grade_b_threshold() -> None:
 def test_r56_t2_surface_keys_present() -> None:
     """build_surface_summary includes rnkstab_rank_ic key."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"composite_score": float(i), "next_day_return": 0.01 * i, "next_close_return": 0.01, "next_high_return": 0.02} for i in range(1, 25)]
     surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "rnkstab_rank_ic" in surface
@@ -14914,6 +15345,7 @@ def test_r56_t2_surface_keys_present() -> None:
 def test_r56_t2_sample_count() -> None:
     """sample_count equals the number of valid (score, return) pairs."""
     from scripts.btst_analysis_utils import compute_score_rank_stability
+
     rows = [{"composite_score": float(i), "next_day_return": float(i)} for i in range(1, 16)]
     result = compute_score_rank_stability(rows)
     assert result["sample_count"] == 15
@@ -14923,9 +15355,11 @@ def test_r56_t2_sample_count() -> None:
 # T3: compute_cross_window_ic_trend
 # ---------------------------------------------------------------------------
 
+
 def test_r56_t3_basic_positive_trend() -> None:
     """T3 returns positive slope when IC is increasing across windows."""
     from scripts.optimize_profile import compute_cross_window_ic_trend
+
     summaries = [{"decay_mean_ic": float(i) * 0.01} for i in range(1, 6)]
     result = compute_cross_window_ic_trend(summaries)
     assert result["ic_trend_valid"] is True
@@ -14935,6 +15369,7 @@ def test_r56_t3_basic_positive_trend() -> None:
 def test_r56_t3_basic_negative_trend() -> None:
     """T3 returns negative slope when IC is decreasing across windows."""
     from scripts.optimize_profile import compute_cross_window_ic_trend
+
     summaries = [{"decay_mean_ic": 0.10 - float(i) * 0.01} for i in range(6)]
     result = compute_cross_window_ic_trend(summaries)
     assert result["ic_trend_valid"] is True
@@ -14944,6 +15379,7 @@ def test_r56_t3_basic_negative_trend() -> None:
 def test_r56_t3_insufficient_windows() -> None:
     """T3 returns invalid when < 3 windows with decay_mean_ic."""
     from scripts.optimize_profile import compute_cross_window_ic_trend
+
     assert compute_cross_window_ic_trend([])["ic_trend_valid"] is False
     assert compute_cross_window_ic_trend([{"decay_mean_ic": 0.05}, {"decay_mean_ic": 0.06}])["ic_trend_valid"] is False
 
@@ -14953,6 +15389,7 @@ def test_r56_t3_min_max_match_series() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_ic_trend
+
     vals = [0.02, 0.05, 0.08, 0.01, 0.09]
     summaries = [{"decay_mean_ic": v} for v in vals]
     result = compute_cross_window_ic_trend(summaries)
@@ -14965,6 +15402,7 @@ def test_r56_t3_mean_value() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_ic_trend
+
     vals = [0.02, 0.04, 0.06, 0.08]
     summaries = [{"decay_mean_ic": v} for v in vals]
     result = compute_cross_window_ic_trend(summaries)
@@ -14974,6 +15412,7 @@ def test_r56_t3_mean_value() -> None:
 def test_r56_t3_grade_a_steep_positive() -> None:
     """T3 grade A when slope > 0.005."""
     from scripts.optimize_profile import compute_cross_window_ic_trend
+
     summaries = [{"decay_mean_ic": float(i) * 0.05} for i in range(5)]
     result = compute_cross_window_ic_trend(summaries)
     assert result["ic_trend_grade"] == "A"
@@ -14982,6 +15421,7 @@ def test_r56_t3_grade_a_steep_positive() -> None:
 def test_r56_t3_grade_d_steep_negative() -> None:
     """T3 grade D when slope < -0.005."""
     from scripts.optimize_profile import compute_cross_window_ic_trend
+
     summaries = [{"decay_mean_ic": 0.20 - float(i) * 0.05} for i in range(5)]
     result = compute_cross_window_ic_trend(summaries)
     assert result["ic_trend_grade"] == "D"
@@ -14992,6 +15432,7 @@ def test_r56_t3_ic_positive_windows_pct() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_ic_trend
+
     vals = [0.05, -0.02, 0.03, 0.0, 0.08]
     summaries = [{"decay_mean_ic": v} for v in vals]
     result = compute_cross_window_ic_trend(summaries)
@@ -15002,6 +15443,7 @@ def test_r56_t3_ic_positive_windows_pct() -> None:
 def test_r56_t3_missing_decay_mean_ic_skipped() -> None:
     """Windows missing decay_mean_ic are skipped; needs ≥ 3 valid."""
     from scripts.optimize_profile import compute_cross_window_ic_trend
+
     summaries = [{"decay_mean_ic": 0.05}, {"other": 1}, {"decay_mean_ic": 0.06}, {"decay_mean_ic": 0.07}]
     result = compute_cross_window_ic_trend(summaries)
     assert result["ic_trend_valid"] is True
@@ -15011,51 +15453,60 @@ def test_r56_t3_missing_decay_mean_ic_skipped() -> None:
 # Metric registration tests
 # ---------------------------------------------------------------------------
 
+
 def test_r56_diversification_score_in_comparison_metrics() -> None:
     """diversification_score must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "diversification_score" in COMPARISON_METRICS
 
 
 def test_r56_rank_ic_in_comparison_metrics() -> None:
     """rank_ic must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "rank_ic" in COMPARISON_METRICS
 
 
 def test_r56_ic_trend_slope_in_comparison_metrics() -> None:
     """ic_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "ic_trend_slope" in COMPARISON_METRICS
 
 
 def test_r56_diversification_score_in_optional_metrics() -> None:
     """diversification_score must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "diversification_score" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r56_rank_ic_in_optional_metrics() -> None:
     """rank_ic must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "rank_ic" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r56_ic_trend_slope_in_optional_metrics() -> None:
     """ic_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "ic_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r56_diversification_score_in_guardrail_keys() -> None:
     """diversification_score must be in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "diversification_score" in _GUARDRAIL_KEYS
 
 
 def test_r56_rank_ic_in_guardrail_keys() -> None:
     """rank_ic must be in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "rank_ic" in _GUARDRAIL_KEYS
 
 
@@ -15064,6 +15515,7 @@ def test_r56_diversification_score_floor() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "diversification_score" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["diversification_score"] == pytest.approx(0.0)
 
@@ -15073,6 +15525,7 @@ def test_r56_rank_ic_floor() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "rank_ic" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["rank_ic"] == pytest.approx(0.0)
 
@@ -15080,6 +15533,7 @@ def test_r56_rank_ic_floor() -> None:
 def test_r56_metric_labels_present() -> None:
     """COMPARISON_METRIC_LABELS must have labels for all three Round 56 metrics."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "diversification_score" in COMPARISON_METRIC_LABELS
     assert "rank_ic" in COMPARISON_METRIC_LABELS
     assert "ic_trend_slope" in COMPARISON_METRIC_LABELS
@@ -15093,6 +15547,7 @@ def test_r56_t3_ols_slope_constant_series() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_ic_trend
+
     summaries = [{"decay_mean_ic": 0.05}] * 5
     result = compute_cross_window_ic_trend(summaries)
     assert result["ic_trend_slope"] == pytest.approx(0.0, abs=1e-8)
@@ -15103,6 +15558,7 @@ def test_r56_t1_diversification_score_plus_hhi_equals_one() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_sector_diversification_analysis
+
     rows = [{"sector": "A"}, {"sector": "B"}, {"sector": "C"}, {"sector": "A"}, {"sector": "B"}, {"sector": "C"}]
     result = compute_sector_diversification_analysis(rows)
     assert result["diversification_score"] == pytest.approx(1.0 - result["sector_hhi"], abs=1e-5)
@@ -15116,9 +15572,11 @@ def test_r56_t1_diversification_score_plus_hhi_equals_one() -> None:
 # T1: compute_market_regime_adaptation
 # ---------------------------------------------------------------------------
 
+
 def test_r57_t1_invalid_too_few_rows() -> None:
     """Returns valid=False when fewer than 12 rows."""
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
+
     rows = [{"next_day_return": 0.01}] * 11
     result = compute_market_regime_adaptation(rows)
     assert result["market_regime_valid"] is False
@@ -15130,6 +15588,7 @@ def test_r57_t1_invalid_too_few_rows() -> None:
 def test_r57_t1_valid_basic() -> None:
     """Returns valid=True with 12 rows."""
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
+
     rows = [{"next_day_return": 0.02}] * 6 + [{"next_day_return": -0.01}] * 6
     result = compute_market_regime_adaptation(rows)
     assert result["market_regime_valid"] is True
@@ -15138,6 +15597,7 @@ def test_r57_t1_valid_basic() -> None:
 def test_r57_t1_invalid_empty() -> None:
     """Returns valid=False when empty list."""
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
+
     result = compute_market_regime_adaptation([])
     assert result["market_regime_valid"] is False
 
@@ -15146,6 +15606,7 @@ def test_r57_t1_bull_win_rate_correct() -> None:
     """bull_win_rate computed correctly as fraction of bull group with return > 0."""
 
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
+
     rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
     rows = [{"next_day_return": r} for r in rets]
     result = compute_market_regime_adaptation(rows)
@@ -15158,6 +15619,7 @@ def test_r57_t1_bear_win_rate_correct() -> None:
     """bear_win_rate is fraction of bear group rows with return > 0."""
 
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
+
     rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
     rows = [{"next_day_return": r} for r in rets]
     result = compute_market_regime_adaptation(rows)
@@ -15170,6 +15632,7 @@ def test_r57_t1_regime_adaptability_is_min() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
+
     rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
     rows = [{"next_day_return": r} for r in rets]
     result = compute_market_regime_adaptation(rows)
@@ -15182,6 +15645,7 @@ def test_r57_t1_bull_bear_spread() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
+
     rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
     rows = [{"next_day_return": r} for r in rets]
     result = compute_market_regime_adaptation(rows)
@@ -15194,6 +15658,7 @@ def test_r57_t1_all_positive_returns() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
+
     rets = [0.01 * (i + 1) for i in range(12)]
     rows = [{"next_day_return": r} for r in rets]
     result = compute_market_regime_adaptation(rows)
@@ -15220,6 +15685,7 @@ def test_r57_t1_mean_returns_correct() -> None:
     """bull_mean_return and bear_mean_return are correctly computed."""
 
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
+
     rets = [0.05, 0.04, 0.03, 0.02, 0.01, 0.015, -0.01, -0.02, -0.03, -0.04, -0.05, -0.015]
     rows = [{"next_day_return": r} for r in rets]
     result = compute_market_regime_adaptation(rows)
@@ -15232,6 +15698,7 @@ def test_r57_t1_mean_returns_correct() -> None:
 def test_r57_t1_exactly_12_rows() -> None:
     """Exactly 12 rows should pass the threshold and return valid=True."""
     from scripts.btst_analysis_utils import compute_market_regime_adaptation
+
     rows = [{"next_day_return": 0.01 * i} for i in range(-6, 6)]
     result = compute_market_regime_adaptation(rows)
     assert result["market_regime_valid"] is True
@@ -15240,18 +15707,21 @@ def test_r57_t1_exactly_12_rows() -> None:
 def test_r57_t1_in_comparison_metrics() -> None:
     """regime_adaptability is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "regime_adaptability" in COMPARISON_METRICS
 
 
 def test_r57_t1_in_optional_metrics() -> None:
     """regime_adaptability is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "regime_adaptability" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r57_t1_in_guardrail_keys() -> None:
     """regime_adaptability is in _GUARDRAIL_KEYS in evaluation_bundle."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "regime_adaptability" in _GUARDRAIL_KEYS
 
 
@@ -15260,6 +15730,7 @@ def test_r57_t1_floor_value() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "regime_adaptability" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["regime_adaptability"] == pytest.approx(0.4)
 
@@ -15267,6 +15738,7 @@ def test_r57_t1_floor_value() -> None:
 def test_r57_t1_label_present() -> None:
     """regime_adaptability has a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "regime_adaptability" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["regime_adaptability"] == "市场状态适应性"
 
@@ -15275,9 +15747,11 @@ def test_r57_t1_label_present() -> None:
 # T2: compute_turnover_efficiency_analysis
 # ---------------------------------------------------------------------------
 
+
 def test_r57_t2_valid_basic() -> None:
     """Returns valid=True with ≥8 rows having float_turnover_rate."""
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+
     rows = [{"float_turnover_rate": 0.01 * (i + 1), "next_day_return": 0.005 * i} for i in range(10)]
     result = compute_turnover_efficiency_analysis(rows)
     assert result["turnover_efficiency_valid"] is True
@@ -15286,6 +15760,7 @@ def test_r57_t2_valid_basic() -> None:
 def test_r57_t2_no_turnover_field() -> None:
     """Returns valid=False when float_turnover_rate field is absent from all rows."""
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+
     rows = [{"next_day_return": 0.01}] * 10
     result = compute_turnover_efficiency_analysis(rows)
     assert result["turnover_efficiency_valid"] is False
@@ -15295,6 +15770,7 @@ def test_r57_t2_no_turnover_field() -> None:
 def test_r57_t2_too_few_valid_rows() -> None:
     """Returns valid=False when fewer than 8 rows have valid float_turnover_rate."""
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+
     rows = [{"float_turnover_rate": 0.01, "next_day_return": 0.01}] * 7
     result = compute_turnover_efficiency_analysis(rows)
     assert result["turnover_efficiency_valid"] is False
@@ -15305,6 +15781,7 @@ def test_r57_t2_turnover_efficiency_calc() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+
     rows = [{"float_turnover_rate": 0.01 * (i + 1), "next_day_return": 0.005 * i - 0.02} for i in range(10)]
     result = compute_turnover_efficiency_analysis(rows)
     assert result["turnover_efficiency_valid"] is True
@@ -15317,7 +15794,7 @@ def test_r57_t2_optimal_turnover_regime_high() -> None:
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
 
     # High turnover rows all win, low turnover rows all lose
-    rows = ([{"float_turnover_rate": 0.1, "next_day_return": 0.05}] * 5 + [{"float_turnover_rate": 0.01, "next_day_return": -0.02}] * 5)
+    rows = [{"float_turnover_rate": 0.1, "next_day_return": 0.05}] * 5 + [{"float_turnover_rate": 0.01, "next_day_return": -0.02}] * 5
     result = compute_turnover_efficiency_analysis(rows)
     if result["turnover_efficiency_valid"] and result["turnover_efficiency"] is not None and result["turnover_efficiency"] > 0:
         assert result["optimal_turnover_regime"] == "high"
@@ -15328,7 +15805,7 @@ def test_r57_t2_optimal_turnover_regime_low() -> None:
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
 
     # Low turnover rows win, high turnover rows lose
-    rows = ([{"float_turnover_rate": 0.1, "next_day_return": -0.02}] * 5 + [{"float_turnover_rate": 0.01, "next_day_return": 0.05}] * 5)
+    rows = [{"float_turnover_rate": 0.1, "next_day_return": -0.02}] * 5 + [{"float_turnover_rate": 0.01, "next_day_return": 0.05}] * 5
     result = compute_turnover_efficiency_analysis(rows)
     if result["turnover_efficiency_valid"] and result["turnover_efficiency"] is not None and result["turnover_efficiency"] <= 0:
         assert result["optimal_turnover_regime"] == "low"
@@ -15337,6 +15814,7 @@ def test_r57_t2_optimal_turnover_regime_low() -> None:
 def test_r57_t2_turnover_ic_spearman_range() -> None:
     """turnover_ic (Spearman IC) is in [-1, 1] range."""
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+
     rows = [{"float_turnover_rate": 0.01 * (i + 1), "next_day_return": 0.005 * i} for i in range(10)]
     result = compute_turnover_efficiency_analysis(rows)
     if result["turnover_ic"] is not None:
@@ -15348,6 +15826,7 @@ def test_r57_t2_turnover_ic_positive_correlation() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+
     rows = [{"float_turnover_rate": float(i), "next_day_return": float(i)} for i in range(10)]
     result = compute_turnover_efficiency_analysis(rows)
     assert result["turnover_efficiency_valid"] is True
@@ -15360,6 +15839,7 @@ def test_r57_t2_turnover_ic_negative_correlation() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_turnover_efficiency_analysis
+
     rows = [{"float_turnover_rate": float(i), "next_day_return": float(9 - i)} for i in range(10)]
     result = compute_turnover_efficiency_analysis(rows)
     assert result["turnover_ic"] == pytest.approx(-1.0, abs=1e-5)
@@ -15368,18 +15848,21 @@ def test_r57_t2_turnover_ic_negative_correlation() -> None:
 def test_r57_t2_in_comparison_metrics() -> None:
     """turnover_efficiency is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "turnover_efficiency" in COMPARISON_METRICS
 
 
 def test_r57_t2_in_optional_metrics() -> None:
     """turnover_efficiency is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "turnover_efficiency" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r57_t2_label_present() -> None:
     """turnover_efficiency has a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "turnover_efficiency" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["turnover_efficiency"] == "换手率效率差异"
 
@@ -15388,9 +15871,11 @@ def test_r57_t2_label_present() -> None:
 # T3: compute_cross_window_rank_ic_trend
 # ---------------------------------------------------------------------------
 
+
 def test_r57_t3_valid_basic() -> None:
     """Returns valid=True with ≥3 windows having rnkstab_rank_ic."""
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+
     summaries = [{"rnkstab_rank_ic": 0.05}, {"rnkstab_rank_ic": 0.07}, {"rnkstab_rank_ic": 0.09}]
     result = compute_cross_window_rank_ic_trend(summaries)
     assert result["rank_ic_trend_valid"] is True
@@ -15399,6 +15884,7 @@ def test_r57_t3_valid_basic() -> None:
 def test_r57_t3_invalid_too_few_windows() -> None:
     """Returns valid=False with fewer than 3 windows."""
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+
     summaries = [{"rnkstab_rank_ic": 0.05}, {"rnkstab_rank_ic": 0.07}]
     result = compute_cross_window_rank_ic_trend(summaries)
     assert result["rank_ic_trend_valid"] is False
@@ -15408,6 +15894,7 @@ def test_r57_t3_invalid_too_few_windows() -> None:
 def test_r57_t3_ols_slope_increasing() -> None:
     """OLS slope is positive for monotonically increasing rank IC."""
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+
     summaries = [{"rnkstab_rank_ic": float(i) * 0.01} for i in range(5)]
     result = compute_cross_window_rank_ic_trend(summaries)
     assert result["rank_ic_trend_valid"] is True
@@ -15417,6 +15904,7 @@ def test_r57_t3_ols_slope_increasing() -> None:
 def test_r57_t3_ols_slope_decreasing() -> None:
     """OLS slope is negative for monotonically decreasing rank IC."""
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+
     summaries = [{"rnkstab_rank_ic": float(4 - i) * 0.01} for i in range(5)]
     result = compute_cross_window_rank_ic_trend(summaries)
     assert result["rank_ic_trend_slope"] < 0
@@ -15427,6 +15915,7 @@ def test_r57_t3_ols_slope_constant() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+
     summaries = [{"rnkstab_rank_ic": 0.05}] * 5
     result = compute_cross_window_rank_ic_trend(summaries)
     assert result["rank_ic_trend_slope"] == pytest.approx(0.0, abs=1e-8)
@@ -15435,6 +15924,7 @@ def test_r57_t3_ols_slope_constant() -> None:
 def test_r57_t3_rank_ic_trend_grade_A() -> None:
     """Grade A when slope > 0.01."""
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+
     summaries = [{"rnkstab_rank_ic": float(i) * 0.05} for i in range(5)]
     result = compute_cross_window_rank_ic_trend(summaries)
     assert result["rank_ic_trend_grade"] == "A"
@@ -15443,6 +15933,7 @@ def test_r57_t3_rank_ic_trend_grade_A() -> None:
 def test_r57_t3_rank_ic_trend_grade_B() -> None:
     """Grade B when slope in (0, 0.01]."""
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+
     summaries = [{"rnkstab_rank_ic": float(i) * 0.002} for i in range(5)]
     result = compute_cross_window_rank_ic_trend(summaries)
     assert result["rank_ic_trend_grade"] in ("A", "B")
@@ -15451,6 +15942,7 @@ def test_r57_t3_rank_ic_trend_grade_B() -> None:
 def test_r57_t3_rank_ic_trend_grade_D() -> None:
     """Grade D when slope <= -0.02."""
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+
     summaries = [{"rnkstab_rank_ic": float(4 - i) * 0.05} for i in range(5)]
     result = compute_cross_window_rank_ic_trend(summaries)
     assert result["rank_ic_trend_grade"] == "D"
@@ -15461,6 +15953,7 @@ def test_r57_t3_rank_ic_positive_windows_pct() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+
     summaries = [{"rnkstab_rank_ic": 0.05}, {"rnkstab_rank_ic": -0.02}, {"rnkstab_rank_ic": 0.03}, {"rnkstab_rank_ic": -0.01}]
     result = compute_cross_window_rank_ic_trend(summaries)
     assert result["rank_ic_positive_windows_pct"] == pytest.approx(0.5, abs=1e-6)
@@ -15471,6 +15964,7 @@ def test_r57_t3_mean_min_max() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+
     vals = [0.05, 0.1, 0.03, 0.08, 0.07]
     summaries = [{"rnkstab_rank_ic": v} for v in vals]
     result = compute_cross_window_rank_ic_trend(summaries)
@@ -15482,6 +15976,7 @@ def test_r57_t3_mean_min_max() -> None:
 def test_r57_t3_fallback_rank_rank_ic_key() -> None:
     """Falls back to rank_rank_ic key if rnkstab_rank_ic is absent."""
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+
     summaries = [{"rank_rank_ic": 0.05}, {"rank_rank_ic": 0.07}, {"rank_rank_ic": 0.09}]
     result = compute_cross_window_rank_ic_trend(summaries)
     assert result["rank_ic_trend_valid"] is True
@@ -15490,12 +15985,14 @@ def test_r57_t3_fallback_rank_rank_ic_key() -> None:
 def test_r57_t3_in_comparison_metrics() -> None:
     """rank_ic_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "rank_ic_trend_slope" in COMPARISON_METRICS
 
 
 def test_r57_t3_in_optional_metrics() -> None:
     """rank_ic_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "rank_ic_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
@@ -15504,6 +16001,7 @@ def test_r57_t3_floor_value() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "rank_ic_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["rank_ic_trend_slope"] == pytest.approx(-0.02)
 
@@ -15511,6 +16009,7 @@ def test_r57_t3_floor_value() -> None:
 def test_r57_t3_label_present() -> None:
     """rank_ic_trend_slope has a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "rank_ic_trend_slope" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["rank_ic_trend_slope"] == "排名IC跨窗趋势"
 
@@ -15518,6 +16017,7 @@ def test_r57_t3_label_present() -> None:
 def test_r57_t3_empty_summaries() -> None:
     """Returns valid=False with empty summaries list."""
     from scripts.optimize_profile import compute_cross_window_rank_ic_trend
+
     result = compute_cross_window_rank_ic_trend([])
     assert result["rank_ic_trend_valid"] is False
 
@@ -15543,6 +16043,7 @@ def _make_r58_scored_rows(n: int, score_start: float = 0.1, score_step: float = 
 def test_r58_t1_too_few_rows() -> None:
     """Returns valid=False with fewer than 15 rows."""
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+
     rows = _make_r58_scored_rows(14)
     result = compute_dynamic_threshold_analysis(rows)
     assert result["dynamic_threshold_valid"] is False
@@ -15552,6 +16053,7 @@ def test_r58_t1_too_few_rows() -> None:
 def test_r58_t1_too_few_valid_pairs() -> None:
     """Returns valid=False when fewer than 15 valid (score, return) pairs after filtering."""
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+
     rows = [{"runner_composite_score": None, "next_day_return": 0.01}] * 20
     result = compute_dynamic_threshold_analysis(rows)
     assert result["dynamic_threshold_valid"] is False
@@ -15560,6 +16062,7 @@ def test_r58_t1_too_few_valid_pairs() -> None:
 def test_r58_t1_valid_result_structure() -> None:
     """Valid input returns all expected keys."""
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+
     rows = _make_r58_scored_rows(30)
     result = compute_dynamic_threshold_analysis(rows)
     assert result["dynamic_threshold_valid"] is True
@@ -15570,6 +16073,7 @@ def test_r58_t1_valid_result_structure() -> None:
 def test_r58_t1_threshold_win_rates_has_five_keys() -> None:
     """threshold_win_rates dict contains exactly p40, p50, p60, p70, p80."""
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+
     rows = _make_r58_scored_rows(30)
     result = compute_dynamic_threshold_analysis(rows)
     twr = result["threshold_win_rates"]
@@ -15579,6 +16083,7 @@ def test_r58_t1_threshold_win_rates_has_five_keys() -> None:
 def test_r58_t1_optimal_threshold_is_valid_pname() -> None:
     """optimal_threshold is one of p40, p50, p60, p70, p80."""
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+
     rows = _make_r58_scored_rows(30)
     result = compute_dynamic_threshold_analysis(rows)
     assert result["optimal_threshold"] in {"p40", "p50", "p60", "p70", "p80"}
@@ -15589,6 +16094,7 @@ def test_r58_t1_all_positive_returns_win_rate_one() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+
     rows = _make_r58_scored_rows(30, ret_positive=True)
     result = compute_dynamic_threshold_analysis(rows)
     assert result["optimal_win_rate"] == pytest.approx(1.0, abs=1e-6)
@@ -15599,6 +16105,7 @@ def test_r58_t1_all_negative_returns_win_rate_zero() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+
     rows = _make_r58_scored_rows(30, ret_positive=False)
     result = compute_dynamic_threshold_analysis(rows)
     assert result["optimal_win_rate"] == pytest.approx(0.0, abs=1e-6)
@@ -15607,6 +16114,7 @@ def test_r58_t1_all_negative_returns_win_rate_zero() -> None:
 def test_r58_t1_score_field_priority_composite_score() -> None:
     """Uses composite_score when runner_composite_score is absent."""
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+
     rows = [{"composite_score": round(0.1 + i * 0.05, 6), "next_day_return": 0.01} for i in range(30)]
     result = compute_dynamic_threshold_analysis(rows)
     assert result["dynamic_threshold_valid"] is True
@@ -15615,6 +16123,7 @@ def test_r58_t1_score_field_priority_composite_score() -> None:
 def test_r58_t1_score_field_priority_score_fallback() -> None:
     """Uses score field when both runner_composite_score and composite_score are absent."""
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+
     rows = [{"score": round(0.1 + i * 0.05, 6), "next_day_return": 0.01} for i in range(30)]
     result = compute_dynamic_threshold_analysis(rows)
     assert result["dynamic_threshold_valid"] is True
@@ -15636,6 +16145,7 @@ def test_r58_t1_threshold_monotonicity_computed() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_dynamic_threshold_analysis
+
     rows = _make_r58_scored_rows(30)
     result = compute_dynamic_threshold_analysis(rows)
     twr = result["threshold_win_rates"]
@@ -15647,12 +16157,14 @@ def test_r58_t1_threshold_monotonicity_computed() -> None:
 def test_r58_t1_in_comparison_metrics() -> None:
     """optimal_win_rate is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "optimal_win_rate" in COMPARISON_METRICS
 
 
 def test_r58_t1_in_optional_comparison_metrics() -> None:
     """optimal_win_rate is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "optimal_win_rate" in OPTIONAL_COMPARISON_METRICS
 
 
@@ -15661,6 +16173,7 @@ def test_r58_t1_floor_value() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "optimal_win_rate" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["optimal_win_rate"] == pytest.approx(0.5)
 
@@ -15668,12 +16181,14 @@ def test_r58_t1_floor_value() -> None:
 def test_r58_t1_guardrail_key() -> None:
     """optimal_win_rate is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "optimal_win_rate" in _GUARDRAIL_KEYS
 
 
 def test_r58_t1_label_present() -> None:
     """optimal_win_rate has label '最优阈值胜率' in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("optimal_win_rate") == "最优阈值胜率"
 
 
@@ -15685,6 +16200,7 @@ def test_r58_t1_label_present() -> None:
 def _make_factor_rows(n: int, with_return: bool = True) -> list[dict]:
     """Helper: build N rows with all 7 core factors and next_day_return."""
     import math
+
     factor_names = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
     rows = []
     for i in range(n):
@@ -15700,6 +16216,7 @@ def _make_factor_rows(n: int, with_return: bool = True) -> list[dict]:
 def test_r58_t2_too_few_rows() -> None:
     """Returns valid=False with fewer than 10 rows."""
     from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+
     rows = _make_factor_rows(9)
     result = compute_factor_contribution_analysis(rows)
     assert result["factor_contribution_valid"] is False
@@ -15709,6 +16226,7 @@ def test_r58_t2_too_few_rows() -> None:
 def test_r58_t2_valid_result_structure() -> None:
     """Valid input returns all expected keys."""
     from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+
     rows = _make_factor_rows(20)
     result = compute_factor_contribution_analysis(rows)
     assert result["factor_contribution_valid"] is True
@@ -15719,6 +16237,7 @@ def test_r58_t2_valid_result_structure() -> None:
 def test_r58_t2_factor_r2_scores_has_seven_keys() -> None:
     """factor_r2_scores contains exactly the 7 core factor names."""
     from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+
     rows = _make_factor_rows(20)
     result = compute_factor_contribution_analysis(rows)
     expected_keys = {"close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"}
@@ -15728,6 +16247,7 @@ def test_r58_t2_factor_r2_scores_has_seven_keys() -> None:
 def test_r58_t2_r2_values_in_0_1_range() -> None:
     """All non-None r² values are in [0, 1]."""
     from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+
     rows = _make_factor_rows(20)
     result = compute_factor_contribution_analysis(rows)
     for v in result["factor_r2_scores"].values():
@@ -15740,6 +16260,7 @@ def test_r58_t2_total_explained_variance_equals_sum() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+
     rows = _make_factor_rows(20)
     result = compute_factor_contribution_analysis(rows)
     if result["total_explained_variance"] is not None:
@@ -15750,6 +16271,7 @@ def test_r58_t2_total_explained_variance_equals_sum() -> None:
 def test_r58_t2_top_contributor_has_max_r2() -> None:
     """top_contributor maps to the factor with the highest r² value."""
     from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+
     rows = _make_factor_rows(20)
     result = compute_factor_contribution_analysis(rows)
     if result["top_contributor"] is not None:
@@ -15762,6 +16284,7 @@ def test_r58_t2_top_contributor_has_max_r2() -> None:
 def test_r58_t2_bottom_contributor_has_min_r2() -> None:
     """bottom_contributor maps to the factor with the lowest r² value."""
     from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+
     rows = _make_factor_rows(20)
     result = compute_factor_contribution_analysis(rows)
     if result["bottom_contributor"] is not None:
@@ -15774,6 +16297,7 @@ def test_r58_t2_bottom_contributor_has_min_r2() -> None:
 def test_r58_t2_contribution_concentration_in_0_1() -> None:
     """contribution_concentration is in (0, 1]."""
     from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+
     rows = _make_factor_rows(20)
     result = compute_factor_contribution_analysis(rows)
     cc = result["contribution_concentration"]
@@ -15798,6 +16322,7 @@ def test_r58_t2_perfect_correlation_r2_is_one() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_factor_contribution_analysis
+
     n = 20
     factor_names = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
     rows = []
@@ -15815,18 +16340,21 @@ def test_r58_t2_perfect_correlation_r2_is_one() -> None:
 def test_r58_t2_in_comparison_metrics() -> None:
     """total_explained_variance is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "total_explained_variance" in COMPARISON_METRICS
 
 
 def test_r58_t2_in_optional_comparison_metrics() -> None:
     """total_explained_variance is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "total_explained_variance" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r58_t2_label_present() -> None:
     """total_explained_variance has label '因子总解释方差' in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("total_explained_variance") == "因子总解释方差"
 
 
@@ -15838,6 +16366,7 @@ def test_r58_t2_label_present() -> None:
 def test_r58_t3_empty_summaries() -> None:
     """Returns valid=False with empty summaries list."""
     from scripts.optimize_profile import compute_cross_window_regime_trend
+
     result = compute_cross_window_regime_trend([])
     assert result["regime_trend_valid"] is False
     assert result["regime_trend_slope"] is None
@@ -15846,6 +16375,7 @@ def test_r58_t3_empty_summaries() -> None:
 def test_r58_t3_too_few_windows() -> None:
     """Returns valid=False with fewer than 3 windows having the key."""
     from scripts.optimize_profile import compute_cross_window_regime_trend
+
     summaries = [{"regime_regime_adaptability": 0.5}, {"regime_regime_adaptability": 0.6}]
     result = compute_cross_window_regime_trend(summaries)
     assert result["regime_trend_valid"] is False
@@ -15854,6 +16384,7 @@ def test_r58_t3_too_few_windows() -> None:
 def test_r58_t3_valid_result_structure() -> None:
     """Valid input returns all expected keys."""
     from scripts.optimize_profile import compute_cross_window_regime_trend
+
     summaries = [{"regime_regime_adaptability": 0.5 + i * 0.01} for i in range(5)]
     result = compute_cross_window_regime_trend(summaries)
     assert result["regime_trend_valid"] is True
@@ -15864,6 +16395,7 @@ def test_r58_t3_valid_result_structure() -> None:
 def test_r58_t3_ols_slope_increasing() -> None:
     """OLS slope is positive for monotonically increasing regime adaptability."""
     from scripts.optimize_profile import compute_cross_window_regime_trend
+
     summaries = [{"regime_regime_adaptability": float(i) * 0.05} for i in range(5)]
     result = compute_cross_window_regime_trend(summaries)
     assert result["regime_trend_valid"] is True
@@ -15873,6 +16405,7 @@ def test_r58_t3_ols_slope_increasing() -> None:
 def test_r58_t3_ols_slope_decreasing() -> None:
     """OLS slope is negative for monotonically decreasing regime adaptability."""
     from scripts.optimize_profile import compute_cross_window_regime_trend
+
     summaries = [{"regime_regime_adaptability": float(4 - i) * 0.05} for i in range(5)]
     result = compute_cross_window_regime_trend(summaries)
     assert result["regime_trend_slope"] < 0
@@ -15881,6 +16414,7 @@ def test_r58_t3_ols_slope_decreasing() -> None:
 def test_r58_t3_grade_A_when_slope_above_0_01() -> None:
     """Grade A when slope > 0.01."""
     from scripts.optimize_profile import compute_cross_window_regime_trend
+
     summaries = [{"regime_regime_adaptability": float(i) * 0.1} for i in range(5)]
     result = compute_cross_window_regime_trend(summaries)
     assert result["regime_trend_grade"] == "A"
@@ -15889,6 +16423,7 @@ def test_r58_t3_grade_A_when_slope_above_0_01() -> None:
 def test_r58_t3_grade_D_when_slope_below_minus_0_02() -> None:
     """Grade D when slope <= -0.02."""
     from scripts.optimize_profile import compute_cross_window_regime_trend
+
     summaries = [{"regime_regime_adaptability": float(4 - i) * 0.1} for i in range(5)]
     result = compute_cross_window_regime_trend(summaries)
     assert result["regime_trend_grade"] == "D"
@@ -15911,6 +16446,7 @@ def test_r58_t3_mean_min_max_correct() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_regime_trend
+
     vals = [0.4, 0.5, 0.6, 0.7, 0.8]
     summaries = [{"regime_regime_adaptability": v} for v in vals]
     result = compute_cross_window_regime_trend(summaries)
@@ -15922,12 +16458,14 @@ def test_r58_t3_mean_min_max_correct() -> None:
 def test_r58_t3_in_comparison_metrics() -> None:
     """regime_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "regime_trend_slope" in COMPARISON_METRICS
 
 
 def test_r58_t3_in_optional_comparison_metrics() -> None:
     """regime_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "regime_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
@@ -15936,6 +16474,7 @@ def test_r58_t3_floor_value() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "regime_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["regime_trend_slope"] == pytest.approx(-0.02)
 
@@ -15943,6 +16482,7 @@ def test_r58_t3_floor_value() -> None:
 def test_r58_t3_label_present() -> None:
     """regime_trend_slope has label '市场适应性跨窗趋势' in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("regime_trend_slope") == "市场适应性跨窗趋势"
 
 
@@ -15951,6 +16491,7 @@ def test_r58_t3_constant_series_slope_zero() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_regime_trend
+
     summaries = [{"regime_regime_adaptability": 0.55}] * 5
     result = compute_cross_window_regime_trend(summaries)
     assert result["regime_trend_slope"] == pytest.approx(0.0, abs=1e-8)
@@ -15963,9 +16504,11 @@ def test_r58_t3_constant_series_slope_zero() -> None:
 
 # T1: compute_return_dist_moments
 
+
 def test_r59_t1_invalid_too_few_rows() -> None:
     """Returns invalid dict when fewer than 10 rows provided."""
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     result = compute_return_dist_moments([{"next_day_return": 0.01}] * 9)
     assert result["return_distribution_valid"] is False
     assert result["skewness"] is None
@@ -15974,6 +16517,7 @@ def test_r59_t1_invalid_too_few_rows() -> None:
 def test_r59_t1_invalid_empty_rows() -> None:
     """Returns invalid dict when rows is empty."""
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     result = compute_return_dist_moments([])
     assert result["return_distribution_valid"] is False
 
@@ -15981,6 +16525,7 @@ def test_r59_t1_invalid_empty_rows() -> None:
 def test_r59_t1_invalid_no_next_day_return() -> None:
     """Returns invalid when no rows have next_day_return field."""
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     result = compute_return_dist_moments([{"score": 0.5}] * 12)
     assert result["return_distribution_valid"] is False
 
@@ -15989,6 +16534,7 @@ def test_r59_t1_valid_basic() -> None:
     """Returns valid result with >=10 rows."""
 
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     rows = [{"next_day_return": 0.01 * i} for i in range(12)]
     result = compute_return_dist_moments(rows)
     assert result["return_distribution_valid"] is True
@@ -16001,6 +16547,7 @@ def test_r59_t1_symmetric_skewness_near_zero() -> None:
     """Symmetric distribution should have skewness near 0."""
 
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     returns = [-0.05, -0.04, -0.03, -0.02, -0.01, 0.01, 0.02, 0.03, 0.04, 0.05]
     result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
     assert result["return_distribution_valid"] is True
@@ -16011,6 +16558,7 @@ def test_r59_t1_positive_skewness() -> None:
     """Right-skewed distribution should have positive skewness."""
 
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     returns = [0.01] * 8 + [0.10, 0.20]  # 10 items, two large positive outliers
     result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
     assert result["return_distribution_valid"] is True
@@ -16021,6 +16569,7 @@ def test_r59_t1_negative_skewness() -> None:
     """Left-skewed distribution should have negative skewness."""
 
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     returns = [-0.20, -0.10] + [0.01] * 8
     result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
     assert result["return_distribution_valid"] is True
@@ -16032,6 +16581,7 @@ def test_r59_t1_skewness_manual_precision() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     returns = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
     n = len(returns)
     mean_r = sum(returns) / n
@@ -16046,6 +16596,7 @@ def test_r59_t1_excess_kurtosis_manual_precision() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     returns = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
     n = len(returns)
     mean_r = sum(returns) / n
@@ -16060,12 +16611,13 @@ def test_r59_t1_jarque_bera_formula() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     returns = [0.01 * i - 0.05 for i in range(10)]
     result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
     n = 10
     S = result["skewness"]
     K = result["excess_kurtosis"]
-    expected_jb = n / 6 * (S ** 2 + K ** 2 / 4)
+    expected_jb = n / 6 * (S**2 + K**2 / 4)
     assert result["jarque_bera_stat"] == pytest.approx(expected_jb, abs=1e-9)
 
 
@@ -16086,6 +16638,7 @@ def test_r59_t1_normality_violation_true_for_large_jb() -> None:
 def test_r59_t1_normality_violation_false_for_small_jb() -> None:
     """normality_violation is False when JB <= 10 (near-symmetric returns)."""
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     returns = [-0.05, -0.04, -0.03, -0.02, -0.01, 0.01, 0.02, 0.03, 0.04, 0.05]
     result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
     assert result["normality_violation"] is False
@@ -16096,6 +16649,7 @@ def test_r59_t1_mean_median_divergence() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     returns = list(range(1, 11))  # [1..10]
     result = compute_return_dist_moments([{"next_day_return": float(r)} for r in returns])
     expected = sum(returns) / 10 - 5.5  # mean=5.5, median=5.5
@@ -16117,6 +16671,7 @@ def test_r59_t1_distribution_grade_A() -> None:
 def test_r59_t1_distribution_grade_D() -> None:
     """Grade D when skewness <= -0.2."""
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     returns = [-1.0, -0.5] + [0.001] * 8
     result = compute_return_dist_moments([{"next_day_return": r} for r in returns])
     assert result["return_distribution_valid"] is True
@@ -16129,6 +16684,7 @@ def test_r59_t1_std_return_uses_n_minus_1() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_return_dist_moments
+
     returns = [float(i) for i in range(1, 11)]
     n = len(returns)
     mean_r = sum(returns) / n
@@ -16139,9 +16695,11 @@ def test_r59_t1_std_return_uses_n_minus_1() -> None:
 
 # T2: compute_composite_quality_score
 
+
 def test_r59_t2_invalid_too_few_rows() -> None:
     """Returns invalid when fewer than 5 rows."""
     from scripts.btst_analysis_utils import compute_composite_quality_score
+
     result = compute_composite_quality_score([{"next_day_return": 0.01}] * 4)
     assert result["composite_quality_valid"] is False
     assert result["composite_quality_score"] is None
@@ -16150,6 +16708,7 @@ def test_r59_t2_invalid_too_few_rows() -> None:
 def test_r59_t2_invalid_empty_rows() -> None:
     """Returns invalid when rows is empty."""
     from scripts.btst_analysis_utils import compute_composite_quality_score
+
     result = compute_composite_quality_score([])
     assert result["composite_quality_valid"] is False
 
@@ -16157,6 +16716,7 @@ def test_r59_t2_invalid_empty_rows() -> None:
 def test_r59_t2_valid_basic() -> None:
     """Returns valid result with >=5 rows with next_day_return."""
     from scripts.btst_analysis_utils import compute_composite_quality_score
+
     rows = [{"next_day_return": 0.01 * i} for i in range(6)]
     result = compute_composite_quality_score(rows)
     assert result["composite_quality_valid"] is True
@@ -16167,6 +16727,7 @@ def test_r59_t2_valid_basic() -> None:
 def test_r59_t2_all_positive_returns_high_score() -> None:
     """All positive returns should produce a decent score."""
     from scripts.btst_analysis_utils import compute_composite_quality_score
+
     rows = [{"next_day_return": 0.01 * (i + 1)} for i in range(10)]
     result = compute_composite_quality_score(rows)
     assert result["composite_quality_valid"] is True
@@ -16176,6 +16737,7 @@ def test_r59_t2_all_positive_returns_high_score() -> None:
 def test_r59_t2_all_negative_returns_low_score() -> None:
     """All negative returns should produce a low score."""
     from scripts.btst_analysis_utils import compute_composite_quality_score
+
     rows = [{"next_day_return": -0.01 * (i + 1)} for i in range(10)]
     result = compute_composite_quality_score(rows)
     assert result["composite_quality_valid"] is True
@@ -16185,6 +16747,7 @@ def test_r59_t2_all_negative_returns_low_score() -> None:
 def test_r59_t2_active_dimensions_count() -> None:
     """active_dimensions counts only dimensions with valid data."""
     from scripts.btst_analysis_utils import compute_composite_quality_score
+
     rows = [{"next_day_return": 0.01}] * 6
     result = compute_composite_quality_score(rows)
     assert result["active_dimensions"] >= 3  # at least win_rate, profit_factor, IR
@@ -16193,6 +16756,7 @@ def test_r59_t2_active_dimensions_count() -> None:
 def test_r59_t2_weight_normalization_with_extra_dims() -> None:
     """Score with 6 dimensions should be >= score with fewer when all are positive."""
     from scripts.btst_analysis_utils import compute_composite_quality_score
+
     base_rows = [{"next_day_return": 0.02}] * 6
     extra_rows = [{"next_day_return": 0.02, "regime_regime_adaptability": 0.8, "rank_rank_ic": 0.3, "sector_div_diversification_score": 0.7}] * 6
     r_base = compute_composite_quality_score(base_rows)
@@ -16217,6 +16781,7 @@ def test_r59_t2_quality_grade_A_boundary() -> None:
 def test_r59_t2_quality_grade_D_boundary() -> None:
     """Grade D when composite_quality_score < 40."""
     from scripts.btst_analysis_utils import compute_composite_quality_score
+
     rows = [{"next_day_return": -0.05}] * 10
     result = compute_composite_quality_score(rows)
     assert result["composite_quality_valid"] is True
@@ -16248,12 +16813,14 @@ def test_r59_t2_quality_grade_ordering() -> None:
 def test_r59_t2_in_comparison_metrics() -> None:
     """composite_quality_score is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "composite_quality_score" in COMPARISON_METRICS
 
 
 def test_r59_t2_in_optional_comparison_metrics() -> None:
     """composite_quality_score is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "composite_quality_score" in OPTIONAL_COMPARISON_METRICS
 
 
@@ -16262,6 +16829,7 @@ def test_r59_t2_floor_value() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "composite_quality_score" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["composite_quality_score"] == pytest.approx(40.0)
 
@@ -16269,12 +16837,14 @@ def test_r59_t2_floor_value() -> None:
 def test_r59_t1_in_comparison_metrics() -> None:
     """skewness is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "skewness" in COMPARISON_METRICS
 
 
 def test_r59_t1_in_optional_comparison_metrics() -> None:
     """skewness is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "skewness" in OPTIONAL_COMPARISON_METRICS
 
 
@@ -16283,6 +16853,7 @@ def test_r59_t1_floor_value() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "skewness" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["skewness"] == pytest.approx(0.0)
 
@@ -16290,20 +16861,24 @@ def test_r59_t1_floor_value() -> None:
 def test_r59_t1_guardrail_key_present() -> None:
     """skewness is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "skewness" in _GUARDRAIL_KEYS
 
 
 def test_r59_t2_guardrail_key_present() -> None:
     """composite_quality_score is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "composite_quality_score" in _GUARDRAIL_KEYS
 
 
 # T3: compute_cross_window_threshold_trend
 
+
 def test_r59_t3_invalid_too_few_windows() -> None:
     """Returns invalid when fewer than 3 valid windows."""
     from scripts.optimize_profile import compute_cross_window_threshold_trend
+
     summaries = [{"dyn_thresh_optimal_win_rate": 0.55}, {"dyn_thresh_optimal_win_rate": 0.60}]
     result = compute_cross_window_threshold_trend(summaries)
     assert result["threshold_trend_valid"] is False
@@ -16313,6 +16888,7 @@ def test_r59_t3_invalid_too_few_windows() -> None:
 def test_r59_t3_invalid_no_key() -> None:
     """Returns invalid when key is missing from all summaries."""
     from scripts.optimize_profile import compute_cross_window_threshold_trend
+
     result = compute_cross_window_threshold_trend([{"other": 0.5}] * 5)
     assert result["threshold_trend_valid"] is False
 
@@ -16321,6 +16897,7 @@ def test_r59_t3_ols_slope_increasing() -> None:
     """OLS slope is positive for monotonically increasing win rates."""
 
     from scripts.optimize_profile import compute_cross_window_threshold_trend
+
     summaries = [{"dyn_thresh_optimal_win_rate": 0.5 + 0.05 * i} for i in range(5)]
     result = compute_cross_window_threshold_trend(summaries)
     assert result["threshold_win_rate_trend_slope"] > 0
@@ -16329,6 +16906,7 @@ def test_r59_t3_ols_slope_increasing() -> None:
 def test_r59_t3_ols_slope_decreasing() -> None:
     """OLS slope is negative for monotonically decreasing win rates."""
     from scripts.optimize_profile import compute_cross_window_threshold_trend
+
     summaries = [{"dyn_thresh_optimal_win_rate": 0.8 - 0.05 * i} for i in range(5)]
     result = compute_cross_window_threshold_trend(summaries)
     assert result["threshold_win_rate_trend_slope"] < 0
@@ -16337,6 +16915,7 @@ def test_r59_t3_ols_slope_decreasing() -> None:
 def test_r59_t3_grade_A_when_slope_above_0_01() -> None:
     """Grade A when slope > 0.01."""
     from scripts.optimize_profile import compute_cross_window_threshold_trend
+
     summaries = [{"dyn_thresh_optimal_win_rate": 0.5 + 0.1 * i} for i in range(5)]
     result = compute_cross_window_threshold_trend(summaries)
     assert result["threshold_trend_grade"] == "A"
@@ -16345,6 +16924,7 @@ def test_r59_t3_grade_A_when_slope_above_0_01() -> None:
 def test_r59_t3_grade_D_when_slope_below_minus_0_02() -> None:
     """Grade D when slope <= -0.02."""
     from scripts.optimize_profile import compute_cross_window_threshold_trend
+
     summaries = [{"dyn_thresh_optimal_win_rate": 0.8 - 0.1 * i} for i in range(5)]
     result = compute_cross_window_threshold_trend(summaries)
     assert result["threshold_trend_grade"] == "D"
@@ -16355,6 +16935,7 @@ def test_r59_t3_threshold_above_floor_pct() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_threshold_trend
+
     summaries = [{"dyn_thresh_optimal_win_rate": v} for v in [0.55, 0.45, 0.60, 0.70]]
     result = compute_cross_window_threshold_trend(summaries)
     assert result["threshold_above_floor_pct"] == pytest.approx(3 / 4, abs=1e-6)
@@ -16365,6 +16946,7 @@ def test_r59_t3_mean_min_max_correct() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_threshold_trend
+
     vals = [0.5, 0.55, 0.60, 0.65, 0.70]
     summaries = [{"dyn_thresh_optimal_win_rate": v} for v in vals]
     result = compute_cross_window_threshold_trend(summaries)
@@ -16376,12 +16958,14 @@ def test_r59_t3_mean_min_max_correct() -> None:
 def test_r59_t3_in_comparison_metrics() -> None:
     """threshold_win_rate_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "threshold_win_rate_trend_slope" in COMPARISON_METRICS
 
 
 def test_r59_t3_in_optional_comparison_metrics() -> None:
     """threshold_win_rate_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "threshold_win_rate_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
@@ -16390,6 +16974,7 @@ def test_r59_t3_floor_value() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "threshold_win_rate_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["threshold_win_rate_trend_slope"] == pytest.approx(-0.02)
 
@@ -16397,6 +16982,7 @@ def test_r59_t3_floor_value() -> None:
 def test_r59_t3_label_present() -> None:
     """threshold_win_rate_trend_slope has label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "threshold_win_rate_trend_slope" in COMPARISON_METRIC_LABELS
 
 
@@ -16405,6 +16991,7 @@ def test_r59_t3_constant_series_slope_zero() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_threshold_trend
+
     summaries = [{"dyn_thresh_optimal_win_rate": 0.60}] * 5
     result = compute_cross_window_threshold_trend(summaries)
     assert result["threshold_win_rate_trend_slope"] == pytest.approx(0.0, abs=1e-8)
@@ -16417,9 +17004,11 @@ def test_r59_t3_constant_series_slope_zero() -> None:
 
 # --- T1: compute_signal_consistency_check ---
 
+
 def test_r60_t1_invalid_when_too_few_rows() -> None:
     """Returns invalid sentinel when fewer than 8 rows provided."""
     from scripts.btst_analysis_utils import compute_signal_consistency_check
+
     result = compute_signal_consistency_check([])
     assert result["signal_consistency_valid"] is False
     assert result["high_consistency_win_rate"] is None
@@ -16431,6 +17020,7 @@ def test_r60_t1_invalid_when_too_few_rows() -> None:
 def test_r60_t1_valid_with_sufficient_rows() -> None:
     """Returns valid=True when >= 8 rows with factor data."""
     from scripts.btst_analysis_utils import compute_signal_consistency_check
+
     rows = [{"close_strength": 0.8, "volume_expansion_quality": 0.9, "next_day_return": 0.02} for _ in range(10)]
     result = compute_signal_consistency_check(rows)
     assert result["signal_consistency_valid"] is True
@@ -16439,6 +17029,7 @@ def test_r60_t1_valid_with_sufficient_rows() -> None:
 def test_r60_t1_high_rows_bucket_populated() -> None:
     """High-consistency bucket is populated when >= 70% factors are above median."""
     from scripts.btst_analysis_utils import compute_signal_consistency_check
+
     strong = {"close_strength": 1.0, "volume_expansion_quality": 1.0, "sector_resonance": 1.0, "rs_sector_rank": 1.0, "t0_estimated_net_inflow_ratio": 1.0, "breakout_quality_score": 1.0, "momentum_slope_20d": 1.0, "next_day_return": 0.03}
     weak = {"close_strength": 0.0, "volume_expansion_quality": 0.0, "sector_resonance": 0.0, "rs_sector_rank": 0.0, "t0_estimated_net_inflow_ratio": 0.0, "breakout_quality_score": 0.0, "momentum_slope_20d": 0.0, "next_day_return": -0.02}
     rows = [strong] * 10 + [weak] * 10
@@ -16452,6 +17043,7 @@ def test_r60_t1_lift_is_high_minus_low_win_rate() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_signal_consistency_check
+
     strong = {"close_strength": 1.0, "volume_expansion_quality": 1.0, "sector_resonance": 1.0, "rs_sector_rank": 1.0, "t0_estimated_net_inflow_ratio": 1.0, "breakout_quality_score": 1.0, "momentum_slope_20d": 1.0, "next_day_return": 0.03}
     weak = {"close_strength": 0.0, "volume_expansion_quality": 0.0, "sector_resonance": 0.0, "rs_sector_rank": 0.0, "t0_estimated_net_inflow_ratio": 0.0, "breakout_quality_score": 0.0, "momentum_slope_20d": 0.0, "next_day_return": -0.02}
     rows = [strong] * 15 + [weak] * 15
@@ -16465,6 +17057,7 @@ def test_r60_t1_lift_is_high_minus_low_win_rate() -> None:
 def test_r60_t1_high_consistency_pct_within_range() -> None:
     """high_consistency_pct is between 0 and 1."""
     from scripts.btst_analysis_utils import compute_signal_consistency_check
+
     rows = [{"close_strength": 0.5, "next_day_return": 0.01} for _ in range(12)]
     result = compute_signal_consistency_check(rows)
     assert 0.0 <= result["high_consistency_pct"] <= 1.0
@@ -16473,6 +17066,7 @@ def test_r60_t1_high_consistency_pct_within_range() -> None:
 def test_r60_t1_row_counts_sum_to_total() -> None:
     """high + low + mixed == total row count."""
     from scripts.btst_analysis_utils import compute_signal_consistency_check
+
     strong = {"close_strength": 1.0, "volume_expansion_quality": 1.0, "sector_resonance": 1.0, "rs_sector_rank": 1.0, "t0_estimated_net_inflow_ratio": 1.0, "breakout_quality_score": 1.0, "momentum_slope_20d": 1.0, "next_day_return": 0.02}
     rows = [strong] * 10
     result = compute_signal_consistency_check(rows)
@@ -16483,6 +17077,7 @@ def test_r60_t1_row_counts_sum_to_total() -> None:
 def test_r60_t1_missing_factor_data_goes_to_mixed() -> None:
     """Rows with no valid factor data are classified as mixed."""
     from scripts.btst_analysis_utils import compute_signal_consistency_check
+
     rows = [{"next_day_return": 0.01} for _ in range(10)]
     result = compute_signal_consistency_check(rows)
     assert result["mixed_signal_rows"] == 10
@@ -16491,6 +17086,7 @@ def test_r60_t1_missing_factor_data_goes_to_mixed() -> None:
 def test_r60_t1_win_rate_none_when_bucket_too_small() -> None:
     """Win rate is None when a bucket has fewer than 3 rows."""
     from scripts.btst_analysis_utils import compute_signal_consistency_check
+
     strong = {"close_strength": 1.0, "volume_expansion_quality": 1.0, "sector_resonance": 1.0, "rs_sector_rank": 1.0, "t0_estimated_net_inflow_ratio": 1.0, "breakout_quality_score": 1.0, "momentum_slope_20d": 1.0, "next_day_return": 0.02}
     mixed = {"close_strength": 0.5, "next_day_return": 0.01}
     rows = [strong] * 8 + [mixed] * 2
@@ -16502,6 +17098,7 @@ def test_r60_t1_win_rate_none_when_bucket_too_small() -> None:
 def test_r60_t1_in_surface_summary() -> None:
     """build_surface_summary includes sig_consist_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"close": 10.0, "next_day_return": 0.01} for _ in range(10)]
     result = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "sig_consist_signal_consistency_valid" in result
@@ -16510,6 +17107,7 @@ def test_r60_t1_in_surface_summary() -> None:
 def test_r60_t1_lift_none_when_bucket_insufficient() -> None:
     """signal_consistency_lift is None when either high or low win rate is None."""
     from scripts.btst_analysis_utils import compute_signal_consistency_check
+
     rows = [{"close_strength": 0.5, "next_day_return": 0.01} for _ in range(10)]
     result = compute_signal_consistency_check(rows)
     # all rows go to mixed when no strong/weak split, so lift may be None
@@ -16519,9 +17117,11 @@ def test_r60_t1_lift_none_when_bucket_insufficient() -> None:
 
 # --- T2: compute_holding_period_optimization ---
 
+
 def test_r60_t2_invalid_when_too_few_rows() -> None:
     """Returns invalid when fewer than 8 rows."""
     from scripts.btst_analysis_utils import compute_holding_period_optimization
+
     result = compute_holding_period_optimization([])
     assert result["holding_period_valid"] is False
     assert result["t1_win_rate"] is None
@@ -16533,6 +17133,7 @@ def test_r60_t2_invalid_when_too_few_rows() -> None:
 def test_r60_t2_valid_with_next_day_return() -> None:
     """Returns valid=True when >= 8 rows with next_day_return."""
     from scripts.btst_analysis_utils import compute_holding_period_optimization
+
     rows = [{"next_day_return": 0.02 if i % 2 == 0 else -0.01} for i in range(10)]
     result = compute_holding_period_optimization(rows)
     assert result["holding_period_valid"] is True
@@ -16543,6 +17144,7 @@ def test_r60_t2_t1_win_rate_correct() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_holding_period_optimization
+
     rows = [{"next_day_return": 0.02} for _ in range(6)] + [{"next_day_return": -0.01} for _ in range(4)]
     result = compute_holding_period_optimization(rows)
     assert result["t1_win_rate"] == pytest.approx(0.6, abs=1e-6)
@@ -16553,6 +17155,7 @@ def test_r60_t2_t2_win_rate_uses_day2_return() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_holding_period_optimization
+
     rows = [{"next_day_return": 0.01, "day2_return": 0.02} for _ in range(6)] + [{"next_day_return": 0.01, "day2_return": -0.01} for _ in range(4)]
     result = compute_holding_period_optimization(rows)
     assert result["t2_win_rate"] == pytest.approx(0.6, abs=1e-6)
@@ -16561,6 +17164,7 @@ def test_r60_t2_t2_win_rate_uses_day2_return() -> None:
 def test_r60_t2_optimal_period_is_best_wr() -> None:
     """optimal_holding_period is the period with highest win rate."""
     from scripts.btst_analysis_utils import compute_holding_period_optimization
+
     rows = [{"next_day_return": 0.01, "day2_return": 0.02, "day3_return": 0.015} for _ in range(10)]
     result = compute_holding_period_optimization(rows)
     assert result["optimal_holding_period"] in ("t1", "t2", "t3")
@@ -16569,6 +17173,7 @@ def test_r60_t2_optimal_period_is_best_wr() -> None:
 def test_r60_t2_consistency_one_when_all_above_50pct() -> None:
     """holding_period_consistency is 1.0 when all available win rates > 0.5."""
     from scripts.btst_analysis_utils import compute_holding_period_optimization
+
     rows = [{"next_day_return": 0.02, "day2_return": 0.02, "day3_return": 0.02} for _ in range(10)]
     result = compute_holding_period_optimization(rows)
     assert result["holding_period_consistency"] == 1.0
@@ -16577,6 +17182,7 @@ def test_r60_t2_consistency_one_when_all_above_50pct() -> None:
 def test_r60_t2_consistency_zero_when_all_below_50pct() -> None:
     """holding_period_consistency is 0.0 when all available win rates <= 0.5."""
     from scripts.btst_analysis_utils import compute_holding_period_optimization
+
     rows = [{"next_day_return": -0.01, "day2_return": -0.01, "day3_return": -0.01} for _ in range(10)]
     result = compute_holding_period_optimization(rows)
     assert result["holding_period_consistency"] == 0.0
@@ -16585,6 +17191,7 @@ def test_r60_t2_consistency_zero_when_all_below_50pct() -> None:
 def test_r60_t2_t1_sharpe_computed() -> None:
     """t1_sharpe is computed when t1 returns are sufficient."""
     from scripts.btst_analysis_utils import compute_holding_period_optimization
+
     rows = [{"next_day_return": 0.02 if i % 3 != 0 else -0.01} for i in range(12)]
     result = compute_holding_period_optimization(rows)
     assert result["t1_sharpe"] is not None
@@ -16593,6 +17200,7 @@ def test_r60_t2_t1_sharpe_computed() -> None:
 def test_r60_t2_in_surface_summary() -> None:
     """build_surface_summary includes hold_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"close": 10.0, "next_day_return": 0.01} for _ in range(10)]
     result = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "hold_holding_period_valid" in result
@@ -16601,26 +17209,31 @@ def test_r60_t2_in_surface_summary() -> None:
 def test_r60_t2_t1_win_rate_in_comparison_metrics() -> None:
     """t1_win_rate is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "t1_win_rate" in COMPARISON_METRICS
 
 
 def test_r60_t2_t1_win_rate_in_optional_comparison_metrics() -> None:
     """t1_win_rate is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "t1_win_rate" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r60_t2_t1_win_rate_label_present() -> None:
     """t1_win_rate has label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "t1_win_rate" in COMPARISON_METRIC_LABELS
 
 
 # --- T3: compute_cross_window_quality_trend ---
 
+
 def test_r60_t3_invalid_when_fewer_than_3_summaries() -> None:
     """Returns invalid when fewer than 3 summaries."""
     from scripts.optimize_profile import compute_cross_window_quality_trend
+
     result = compute_cross_window_quality_trend([])
     assert result["quality_trend_valid"] is False
     assert result["quality_score_trend_slope"] is None
@@ -16632,6 +17245,7 @@ def test_r60_t3_invalid_when_fewer_than_3_summaries() -> None:
 def test_r60_t3_valid_with_sufficient_summaries() -> None:
     """Returns valid=True with >= 3 summaries."""
     from scripts.optimize_profile import compute_cross_window_quality_trend
+
     summaries = [{"quality_composite_quality_score": 50.0 + i * 2} for i in range(5)]
     result = compute_cross_window_quality_trend(summaries)
     assert result["quality_trend_valid"] is True
@@ -16640,6 +17254,7 @@ def test_r60_t3_valid_with_sufficient_summaries() -> None:
 def test_r60_t3_positive_slope_for_increasing_quality() -> None:
     """Slope is positive for monotonically increasing quality scores."""
     from scripts.optimize_profile import compute_cross_window_quality_trend
+
     summaries = [{"quality_composite_quality_score": 40.0 + 5 * i} for i in range(5)]
     result = compute_cross_window_quality_trend(summaries)
     assert result["quality_score_trend_slope"] > 0
@@ -16648,6 +17263,7 @@ def test_r60_t3_positive_slope_for_increasing_quality() -> None:
 def test_r60_t3_negative_slope_for_decreasing_quality() -> None:
     """Slope is negative for monotonically decreasing quality scores."""
     from scripts.optimize_profile import compute_cross_window_quality_trend
+
     summaries = [{"quality_composite_quality_score": 80.0 - 5 * i} for i in range(5)]
     result = compute_cross_window_quality_trend(summaries)
     assert result["quality_score_trend_slope"] < 0
@@ -16656,6 +17272,7 @@ def test_r60_t3_negative_slope_for_decreasing_quality() -> None:
 def test_r60_t3_grade_A_when_slope_above_0_5() -> None:
     """Grade A when slope > 0.5."""
     from scripts.optimize_profile import compute_cross_window_quality_trend
+
     summaries = [{"quality_composite_quality_score": 40.0 + 10 * i} for i in range(6)]
     result = compute_cross_window_quality_trend(summaries)
     assert result["quality_trend_grade"] == "A"
@@ -16664,6 +17281,7 @@ def test_r60_t3_grade_A_when_slope_above_0_5() -> None:
 def test_r60_t3_grade_D_when_slope_below_minus_1() -> None:
     """Grade D when slope < -1.0."""
     from scripts.optimize_profile import compute_cross_window_quality_trend
+
     summaries = [{"quality_composite_quality_score": 80.0 - 10 * i} for i in range(6)]
     result = compute_cross_window_quality_trend(summaries)
     assert result["quality_trend_grade"] == "D"
@@ -16674,6 +17292,7 @@ def test_r60_t3_quality_above_floor_pct() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_quality_trend
+
     summaries = [{"quality_composite_quality_score": v} for v in [45.0, 35.0, 55.0, 65.0]]
     result = compute_cross_window_quality_trend(summaries)
     assert result["quality_above_floor_pct"] == pytest.approx(3 / 4, abs=1e-6)
@@ -16684,6 +17303,7 @@ def test_r60_t3_mean_min_max_correct() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_quality_trend
+
     vals = [50.0, 55.0, 60.0, 65.0, 70.0]
     summaries = [{"quality_composite_quality_score": v} for v in vals]
     result = compute_cross_window_quality_trend(summaries)
@@ -16695,18 +17315,21 @@ def test_r60_t3_mean_min_max_correct() -> None:
 def test_r60_t3_in_comparison_metrics() -> None:
     """quality_score_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "quality_score_trend_slope" in COMPARISON_METRICS
 
 
 def test_r60_t3_in_optional_comparison_metrics() -> None:
     """quality_score_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "quality_score_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r60_t3_label_present() -> None:
     """quality_score_trend_slope has label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "quality_score_trend_slope" in COMPARISON_METRIC_LABELS
 
 
@@ -16715,6 +17338,7 @@ def test_r60_t3_quality_trend_slope_floor_in_evaluation_bundle() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "quality_score_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["quality_score_trend_slope"] == pytest.approx(-1.0)
 
@@ -16724,6 +17348,7 @@ def test_r60_t1_signal_consistency_lift_floor_in_evaluation_bundle() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "signal_consistency_lift" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["signal_consistency_lift"] == pytest.approx(0.0)
 
@@ -16731,24 +17356,28 @@ def test_r60_t1_signal_consistency_lift_floor_in_evaluation_bundle() -> None:
 def test_r60_t1_signal_consistency_lift_in_guardrail_keys() -> None:
     """signal_consistency_lift is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "signal_consistency_lift" in _GUARDRAIL_KEYS
 
 
 def test_r60_t1_signal_consistency_lift_in_comparison_metrics() -> None:
     """signal_consistency_lift is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "signal_consistency_lift" in COMPARISON_METRICS
 
 
 def test_r60_t1_signal_consistency_lift_in_optional_comparison_metrics() -> None:
     """signal_consistency_lift is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "signal_consistency_lift" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r60_t1_signal_consistency_lift_label_present() -> None:
     """signal_consistency_lift has label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "signal_consistency_lift" in COMPARISON_METRIC_LABELS
 
 
@@ -16757,6 +17386,7 @@ def test_r60_t3_constant_quality_slope_zero() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_quality_trend
+
     summaries = [{"quality_composite_quality_score": 55.0}] * 5
     result = compute_cross_window_quality_trend(summaries)
     assert result["quality_score_trend_slope"] == pytest.approx(0.0, abs=1e-8)
@@ -16767,8 +17397,10 @@ def test_r60_t3_constant_quality_slope_zero() -> None:
 # Round 61 tests
 # ---------------------------------------------------------------------------
 
+
 def _make_rows_r61(n: int = 20, win_frac: float = 0.6) -> list[dict]:
     import random
+
     random.seed(42)
     rows = []
     for i in range(n):
@@ -16779,15 +17411,18 @@ def _make_rows_r61(n: int = 20, win_frac: float = 0.6) -> list[dict]:
 
 # --- T1: compute_overfitting_risk_indicators ---
 
+
 def test_r61_t1_import() -> None:
     """compute_overfitting_risk_indicators is importable."""
     from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+
     assert callable(compute_overfitting_risk_indicators)
 
 
 def test_r61_t1_invalid_empty() -> None:
     """Empty rows returns invalid result."""
     from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+
     result = compute_overfitting_risk_indicators([])
     assert result["overfitting_risk_valid"] is False
     assert result["sample_size"] is None
@@ -16796,6 +17431,7 @@ def test_r61_t1_invalid_empty() -> None:
 def test_r61_t1_invalid_too_few() -> None:
     """Fewer than 15 rows returns invalid."""
     from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+
     rows = [{"next_day_return": 0.01}] * 10
     result = compute_overfitting_risk_indicators(rows)
     assert result["overfitting_risk_valid"] is False
@@ -16804,6 +17440,7 @@ def test_r61_t1_invalid_too_few() -> None:
 def test_r61_t1_valid_result_keys() -> None:
     """Valid input returns all expected keys."""
     from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+
     rows = _make_rows_r61(20)
     result = compute_overfitting_risk_indicators(rows)
     assert result["overfitting_risk_valid"] is True
@@ -16814,6 +17451,7 @@ def test_r61_t1_valid_result_keys() -> None:
 def test_r61_t1_sample_size() -> None:
     """sample_size equals number of rows with next_day_return."""
     from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+
     rows = _make_rows_r61(25)
     result = compute_overfitting_risk_indicators(rows)
     assert result["sample_size"] == 25
@@ -16822,6 +17460,7 @@ def test_r61_t1_sample_size() -> None:
 def test_r61_t1_top5_contribution_range() -> None:
     """top5_contribution is between 0 and 1."""
     from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+
     rows = _make_rows_r61(20)
     result = compute_overfitting_risk_indicators(rows)
     if result["top5_contribution"] is not None:
@@ -16831,6 +17470,7 @@ def test_r61_t1_top5_contribution_range() -> None:
 def test_r61_t1_concentration_risk_range() -> None:
     """concentration_risk is between 0 and 1."""
     from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+
     rows = _make_rows_r61(20)
     result = compute_overfitting_risk_indicators(rows)
     if result["concentration_risk"] is not None:
@@ -16840,6 +17480,7 @@ def test_r61_t1_concentration_risk_range() -> None:
 def test_r61_t1_grade_values() -> None:
     """overfitting_risk_grade is one of A, B, C, D."""
     from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+
     rows = _make_rows_r61(20)
     result = compute_overfitting_risk_indicators(rows)
     assert result["overfitting_risk_grade"] in ("A", "B", "C", "D")
@@ -16848,6 +17489,7 @@ def test_r61_t1_grade_values() -> None:
 def test_r61_t1_streak_ratio_nonneg() -> None:
     """streak_ratio is non-negative."""
     from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+
     rows = _make_rows_r61(20)
     result = compute_overfitting_risk_indicators(rows)
     assert result["streak_ratio"] >= 0.0
@@ -16856,6 +17498,7 @@ def test_r61_t1_streak_ratio_nonneg() -> None:
 def test_r61_t1_all_wins_streak() -> None:
     """All winning rows gives loss_streak_max=0 and high streak_ratio."""
     from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+
     rows = [{"next_day_return": 0.02}] * 20
     result = compute_overfitting_risk_indicators(rows)
     assert result["overfitting_risk_valid"] is True
@@ -16866,6 +17509,7 @@ def test_r61_t1_all_wins_streak() -> None:
 def test_r61_t1_high_concentration_grade_d() -> None:
     """Very concentrated returns (5 big wins, rest small) gives grade C or D."""
     from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+
     rows = [{"next_day_return": 1.0}] * 5 + [{"next_day_return": 0.001}] * 15
     result = compute_overfitting_risk_indicators(rows)
     assert result["overfitting_risk_valid"] is True
@@ -16875,6 +17519,7 @@ def test_r61_t1_high_concentration_grade_d() -> None:
 def test_r61_t1_effective_trades_count() -> None:
     """effective_trades counts non-zero returns."""
     from scripts.btst_analysis_utils import compute_overfitting_risk_indicators
+
     rows = [{"next_day_return": 0.01}] * 10 + [{"next_day_return": 0.0}] * 5 + [{"next_day_return": -0.01}] * 5
     result = compute_overfitting_risk_indicators(rows)
     assert result["effective_trades"] == 15
@@ -16883,6 +17528,7 @@ def test_r61_t1_effective_trades_count() -> None:
 def test_r61_t1_wired_into_surface_summary() -> None:
     """build_surface_summary includes overfit_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = _make_rows_r61(20)
     summary = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "overfit_overfitting_risk_valid" in summary
@@ -16891,15 +17537,18 @@ def test_r61_t1_wired_into_surface_summary() -> None:
 
 # --- T2: compute_extreme_market_resilience ---
 
+
 def test_r61_t2_import() -> None:
     """compute_extreme_market_resilience is importable."""
     from scripts.btst_analysis_utils import compute_extreme_market_resilience
+
     assert callable(compute_extreme_market_resilience)
 
 
 def test_r61_t2_invalid_empty() -> None:
     """Empty rows returns invalid result."""
     from scripts.btst_analysis_utils import compute_extreme_market_resilience
+
     result = compute_extreme_market_resilience([])
     assert result["extreme_market_valid"] is False
 
@@ -16907,6 +17556,7 @@ def test_r61_t2_invalid_empty() -> None:
 def test_r61_t2_invalid_too_few() -> None:
     """Fewer than 10 rows returns invalid."""
     from scripts.btst_analysis_utils import compute_extreme_market_resilience
+
     rows = [{"next_day_return": 0.01}] * 5
     result = compute_extreme_market_resilience(rows)
     assert result["extreme_market_valid"] is False
@@ -16915,6 +17565,7 @@ def test_r61_t2_invalid_too_few() -> None:
 def test_r61_t2_valid_result_keys() -> None:
     """Valid input returns all expected keys."""
     from scripts.btst_analysis_utils import compute_extreme_market_resilience
+
     rows = _make_rows_r61(30)
     result = compute_extreme_market_resilience(rows)
     assert result["extreme_market_valid"] is True
@@ -16925,6 +17576,7 @@ def test_r61_t2_valid_result_keys() -> None:
 def test_r61_t2_p10_p90_ordering() -> None:
     """extreme_down_threshold <= extreme_up_threshold."""
     from scripts.btst_analysis_utils import compute_extreme_market_resilience
+
     rows = [{"next_day_return": float(i) / 100} for i in range(-10, 20)]
     result = compute_extreme_market_resilience(rows)
     assert result["extreme_market_valid"] is True
@@ -16934,6 +17586,7 @@ def test_r61_t2_p10_p90_ordering() -> None:
 def test_r61_t2_resilience_score_nonneg_floor() -> None:
     """resilience_score (win rate) is between 0 and 1."""
     from scripts.btst_analysis_utils import compute_extreme_market_resilience
+
     rows = _make_rows_r61(30)
     result = compute_extreme_market_resilience(rows)
     if result["resilience_score"] is not None:
@@ -16943,6 +17596,7 @@ def test_r61_t2_resilience_score_nonneg_floor() -> None:
 def test_r61_t2_wired_into_surface_summary() -> None:
     """build_surface_summary includes extreme_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = _make_rows_r61(30)
     summary = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "extreme_extreme_market_valid" in summary
@@ -16951,15 +17605,18 @@ def test_r61_t2_wired_into_surface_summary() -> None:
 
 # --- T3: compute_cross_window_consistency_trend ---
 
+
 def test_r61_t3_import() -> None:
     """compute_cross_window_consistency_trend is importable."""
     from scripts.optimize_profile import compute_cross_window_consistency_trend
+
     assert callable(compute_cross_window_consistency_trend)
 
 
 def test_r61_t3_invalid_empty() -> None:
     """Empty summaries returns invalid."""
     from scripts.optimize_profile import compute_cross_window_consistency_trend
+
     result = compute_cross_window_consistency_trend([])
     assert result["consistency_trend_valid"] is False
 
@@ -16967,6 +17624,7 @@ def test_r61_t3_invalid_empty() -> None:
 def test_r61_t3_invalid_too_few() -> None:
     """Fewer than 3 valid values returns invalid."""
     from scripts.optimize_profile import compute_cross_window_consistency_trend
+
     summaries = [{"sig_consist_signal_consistency_lift": 0.1}] * 2
     result = compute_cross_window_consistency_trend(summaries)
     assert result["consistency_trend_valid"] is False
@@ -16976,6 +17634,7 @@ def test_r61_t3_valid_keys() -> None:
     """Valid summaries produce all expected keys."""
 
     from scripts.optimize_profile import compute_cross_window_consistency_trend
+
     summaries = [{"sig_consist_signal_consistency_lift": float(i) * 0.01} for i in range(5)]
     result = compute_cross_window_consistency_trend(summaries)
     assert result["consistency_trend_valid"] is True
@@ -16986,6 +17645,7 @@ def test_r61_t3_valid_keys() -> None:
 def test_r61_t3_increasing_series_grade_a() -> None:
     """Steeply increasing series gives grade A."""
     from scripts.optimize_profile import compute_cross_window_consistency_trend
+
     summaries = [{"sig_consist_signal_consistency_lift": float(i) * 0.1} for i in range(10)]
     result = compute_cross_window_consistency_trend(summaries)
     assert result["consistency_trend_grade"] == "A"
@@ -16995,6 +17655,7 @@ def test_r61_t3_increasing_series_grade_a() -> None:
 def test_r61_t3_decreasing_series_grade_d() -> None:
     """Steeply decreasing series gives grade D."""
     from scripts.optimize_profile import compute_cross_window_consistency_trend
+
     summaries = [{"sig_consist_signal_consistency_lift": 1.0 - float(i) * 0.2} for i in range(10)]
     result = compute_cross_window_consistency_trend(summaries)
     assert result["consistency_trend_grade"] == "D"
@@ -17005,6 +17666,7 @@ def test_r61_t3_constant_series_slope_zero() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_consistency_trend
+
     summaries = [{"sig_consist_signal_consistency_lift": 0.05}] * 6
     result = compute_cross_window_consistency_trend(summaries)
     assert result["consistency_trend_slope"] == pytest.approx(0.0, abs=1e-8)
@@ -17013,6 +17675,7 @@ def test_r61_t3_constant_series_slope_zero() -> None:
 def test_r61_t3_missing_field_skipped() -> None:
     """Summaries without the field are skipped."""
     from scripts.optimize_profile import compute_cross_window_consistency_trend
+
     summaries = [{"sig_consist_signal_consistency_lift": 0.1}] * 3 + [{"other_key": 99}] * 3
     result = compute_cross_window_consistency_trend(summaries)
     assert result["consistency_trend_valid"] is True
@@ -17021,51 +17684,60 @@ def test_r61_t3_missing_field_skipped() -> None:
 
 # --- Metric registration tests ---
 
+
 def test_r61_concentration_risk_in_comparison_metrics() -> None:
     """concentration_risk is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "concentration_risk" in COMPARISON_METRICS
 
 
 def test_r61_resilience_score_in_comparison_metrics() -> None:
     """resilience_score is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "resilience_score" in COMPARISON_METRICS
 
 
 def test_r61_consistency_trend_slope_in_comparison_metrics() -> None:
     """consistency_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "consistency_trend_slope" in COMPARISON_METRICS
 
 
 def test_r61_concentration_risk_in_optional_metrics() -> None:
     """concentration_risk is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "concentration_risk" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r61_resilience_score_in_optional_metrics() -> None:
     """resilience_score is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "resilience_score" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r61_consistency_trend_slope_in_optional_metrics() -> None:
     """consistency_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "consistency_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r61_concentration_risk_lower_is_better() -> None:
     """concentration_risk is in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "concentration_risk" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r61_labels_concentration_risk() -> None:
     """concentration_risk has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "concentration_risk" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["concentration_risk"]) > 0
 
@@ -17073,30 +17745,35 @@ def test_r61_labels_concentration_risk() -> None:
 def test_r61_labels_resilience_score() -> None:
     """resilience_score has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "resilience_score" in COMPARISON_METRIC_LABELS
 
 
 def test_r61_labels_consistency_trend_slope() -> None:
     """consistency_trend_slope has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "consistency_trend_slope" in COMPARISON_METRIC_LABELS
 
 
 def test_r61_guardrail_keys_concentration_risk() -> None:
     """concentration_risk is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "concentration_risk" in _GUARDRAIL_KEYS
 
 
 def test_r61_guardrail_keys_resilience_score() -> None:
     """resilience_score is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "resilience_score" in _GUARDRAIL_KEYS
 
 
 def test_r61_quality_floors_resilience_score() -> None:
     """BTST_QUALITY_FLOORS has resilience_score floor of 0.3."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "resilience_score" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["resilience_score"] == 0.3
 
@@ -17104,6 +17781,7 @@ def test_r61_quality_floors_resilience_score() -> None:
 def test_r61_quality_floors_consistency_trend_slope() -> None:
     """BTST_QUALITY_FLOORS has consistency_trend_slope floor of -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "consistency_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["consistency_trend_slope"] == -0.01
 
@@ -17111,6 +17789,7 @@ def test_r61_quality_floors_consistency_trend_slope() -> None:
 def test_r61_quality_caps_concentration_risk() -> None:
     """BTST_QUALITY_CAPS has concentration_risk cap of 0.7."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "concentration_risk" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["concentration_risk"] == 0.7
 
@@ -17123,9 +17802,11 @@ def test_r61_quality_caps_concentration_risk() -> None:
 # T1: compute_liquidity_risk_analysis
 # ---------------------------------------------------------------------------
 
+
 def test_r62_liquidity_invalid_no_rows() -> None:
     """Empty rows → liquidity_risk_valid=False."""
     from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+
     result = compute_liquidity_risk_analysis([])
     assert result["liquidity_risk_valid"] is False
     assert result["mean_turnover"] is None
@@ -17134,6 +17815,7 @@ def test_r62_liquidity_invalid_no_rows() -> None:
 def test_r62_liquidity_invalid_too_few_rows() -> None:
     """Fewer than 5 rows → liquidity_risk_valid=False."""
     from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+
     rows = [{"float_turnover_rate": 0.05, "next_day_return": 0.01}] * 4
     result = compute_liquidity_risk_analysis(rows)
     assert result["liquidity_risk_valid"] is False
@@ -17142,6 +17824,7 @@ def test_r62_liquidity_invalid_too_few_rows() -> None:
 def test_r62_liquidity_invalid_no_field() -> None:
     """No float_turnover_rate field → liquidity_risk_valid=False."""
     from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+
     rows = [{"next_day_return": 0.01}] * 10
     result = compute_liquidity_risk_analysis(rows)
     assert result["liquidity_risk_valid"] is False
@@ -17150,6 +17833,7 @@ def test_r62_liquidity_invalid_no_field() -> None:
 def test_r62_liquidity_invalid_all_none_turnover() -> None:
     """All float_turnover_rate values are None → valid=False after filtering."""
     from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+
     rows = [{"float_turnover_rate": None}] * 10
     result = compute_liquidity_risk_analysis(rows)
     assert result["liquidity_risk_valid"] is False
@@ -17158,6 +17842,7 @@ def test_r62_liquidity_invalid_all_none_turnover() -> None:
 def test_r62_liquidity_valid_basic() -> None:
     """Valid path: 10 rows with float_turnover_rate → all keys present."""
     from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+
     rows = [{"float_turnover_rate": 0.05 + i * 0.01, "next_day_return": 0.01} for i in range(10)]
     result = compute_liquidity_risk_analysis(rows)
     assert result["liquidity_risk_valid"] is True
@@ -17173,6 +17858,7 @@ def test_r62_liquidity_valid_basic() -> None:
 def test_r62_liquidity_low_pct_calculation() -> None:
     """low_liquidity_pct: fraction with turnover < 0.02."""
     from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+
     rows = [{"float_turnover_rate": 0.01}] * 3 + [{"float_turnover_rate": 0.05}] * 7
     result = compute_liquidity_risk_analysis(rows)
     assert result["liquidity_risk_valid"] is True
@@ -17182,6 +17868,7 @@ def test_r62_liquidity_low_pct_calculation() -> None:
 def test_r62_liquidity_high_pct_calculation() -> None:
     """high_liquidity_pct: fraction with turnover > 0.10."""
     from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+
     rows = [{"float_turnover_rate": 0.15}] * 4 + [{"float_turnover_rate": 0.05}] * 6
     result = compute_liquidity_risk_analysis(rows)
     assert result["liquidity_risk_valid"] is True
@@ -17191,6 +17878,7 @@ def test_r62_liquidity_high_pct_calculation() -> None:
 def test_r62_liquidity_grade_A() -> None:
     """Grade A: low_liquidity_pct < 0.1 and high_liquidity_pct > 0.3."""
     from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+
     rows = [{"float_turnover_rate": 0.12}] * 4 + [{"float_turnover_rate": 0.08}] * 6
     result = compute_liquidity_risk_analysis(rows)
     assert result["liquidity_risk_valid"] is True
@@ -17200,6 +17888,7 @@ def test_r62_liquidity_grade_A() -> None:
 def test_r62_liquidity_grade_D() -> None:
     """Grade D: low_liquidity_pct >= 0.4."""
     from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+
     rows = [{"float_turnover_rate": 0.005}] * 5 + [{"float_turnover_rate": 0.05}] * 5
     result = compute_liquidity_risk_analysis(rows)
     assert result["liquidity_risk_valid"] is True
@@ -17209,6 +17898,7 @@ def test_r62_liquidity_grade_D() -> None:
 def test_r62_liquidity_turnover_cv_positive() -> None:
     """turnover_cv >= 0 when mean > 0."""
     from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+
     rows = [{"float_turnover_rate": 0.03 + i * 0.005} for i in range(10)]
     result = compute_liquidity_risk_analysis(rows)
     assert result["liquidity_risk_valid"] is True
@@ -17218,6 +17908,7 @@ def test_r62_liquidity_turnover_cv_positive() -> None:
 def test_r62_liquidity_concentration_ratio() -> None:
     """liquidity_concentration = low_liquidity_pct / (high_liquidity_pct + 0.001)."""
     from scripts.btst_analysis_utils import compute_liquidity_risk_analysis
+
     rows = [{"float_turnover_rate": 0.01}] * 2 + [{"float_turnover_rate": 0.12}] * 4 + [{"float_turnover_rate": 0.05}] * 4
     result = compute_liquidity_risk_analysis(rows)
     assert result["liquidity_risk_valid"] is True
@@ -17228,30 +17919,35 @@ def test_r62_liquidity_concentration_ratio() -> None:
 def test_r62_liquidity_in_comparison_metrics() -> None:
     """low_liquidity_pct is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "low_liquidity_pct" in COMPARISON_METRICS
 
 
 def test_r62_liquidity_in_optional_metrics() -> None:
     """low_liquidity_pct is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "low_liquidity_pct" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r62_liquidity_in_lower_is_better() -> None:
     """low_liquidity_pct is in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "low_liquidity_pct" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r62_liquidity_in_guardrail_keys() -> None:
     """low_liquidity_pct is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "low_liquidity_pct" in _GUARDRAIL_KEYS
 
 
 def test_r62_liquidity_cap_value() -> None:
     """BTST_QUALITY_CAPS has low_liquidity_pct cap of 0.4."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "low_liquidity_pct" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["low_liquidity_pct"] == 0.4
 
@@ -17259,6 +17955,7 @@ def test_r62_liquidity_cap_value() -> None:
 def test_r62_liquidity_label() -> None:
     """low_liquidity_pct has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "low_liquidity_pct" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["low_liquidity_pct"]) > 0
 
@@ -17267,9 +17964,11 @@ def test_r62_liquidity_label() -> None:
 # T2: compute_transaction_cost_impact
 # ---------------------------------------------------------------------------
 
+
 def test_r62_cost_invalid_no_rows() -> None:
     """Empty rows → transaction_cost_valid=False."""
     from scripts.btst_analysis_utils import compute_transaction_cost_impact
+
     result = compute_transaction_cost_impact([])
     assert result["transaction_cost_valid"] is False
     assert result["gross_win_rate"] is None
@@ -17278,6 +17977,7 @@ def test_r62_cost_invalid_no_rows() -> None:
 def test_r62_cost_invalid_too_few_rows() -> None:
     """Fewer than 5 rows → transaction_cost_valid=False."""
     from scripts.btst_analysis_utils import compute_transaction_cost_impact
+
     rows = [{"next_day_return": 0.01}] * 4
     result = compute_transaction_cost_impact(rows)
     assert result["transaction_cost_valid"] is False
@@ -17286,6 +17986,7 @@ def test_r62_cost_invalid_too_few_rows() -> None:
 def test_r62_cost_valid_basic() -> None:
     """Valid path: all expected keys present."""
     from scripts.btst_analysis_utils import compute_transaction_cost_impact
+
     rows = [{"next_day_return": 0.02 - i * 0.005} for i in range(10)]
     result = compute_transaction_cost_impact(rows)
     assert result["transaction_cost_valid"] is True
@@ -17301,6 +18002,7 @@ def test_r62_cost_valid_basic() -> None:
 def test_r62_cost_net_win_rate_lower_than_gross() -> None:
     """net_win_rate ≤ gross_win_rate (cost reduces wins)."""
     from scripts.btst_analysis_utils import compute_transaction_cost_impact
+
     rows = [{"next_day_return": 0.002}] * 5 + [{"next_day_return": -0.01}] * 5
     result = compute_transaction_cost_impact(rows)
     assert result["transaction_cost_valid"] is True
@@ -17310,6 +18012,7 @@ def test_r62_cost_net_win_rate_lower_than_gross() -> None:
 def test_r62_cost_drag_non_negative() -> None:
     """cost_drag = gross_win_rate - net_win_rate >= 0."""
     from scripts.btst_analysis_utils import compute_transaction_cost_impact
+
     rows = [{"next_day_return": 0.005}] * 6 + [{"next_day_return": -0.01}] * 4
     result = compute_transaction_cost_impact(rows)
     assert result["transaction_cost_valid"] is True
@@ -17319,6 +18022,7 @@ def test_r62_cost_drag_non_negative() -> None:
 def test_r62_cost_net_win_rate_precision() -> None:
     """net_win_rate counts (next_day_return - 0.003) > 0 correctly."""
     from scripts.btst_analysis_utils import compute_transaction_cost_impact
+
     rows = [{"next_day_return": 0.01}] * 7 + [{"next_day_return": 0.001}] * 3
     result = compute_transaction_cost_impact(rows)
     assert result["transaction_cost_valid"] is True
@@ -17329,6 +18033,7 @@ def test_r62_cost_net_win_rate_precision() -> None:
 def test_r62_cost_adjusted_pf_clamped_to_5() -> None:
     """cost_adjusted_profit_factor clamped to 5.0 when no net losses."""
     from scripts.btst_analysis_utils import compute_transaction_cost_impact
+
     rows = [{"next_day_return": 0.05}] * 10
     result = compute_transaction_cost_impact(rows)
     assert result["transaction_cost_valid"] is True
@@ -17338,6 +18043,7 @@ def test_r62_cost_adjusted_pf_clamped_to_5() -> None:
 def test_r62_cost_adjusted_pf_with_losses() -> None:
     """cost_adjusted_profit_factor < 5.0 when some net losses present."""
     from scripts.btst_analysis_utils import compute_transaction_cost_impact
+
     rows = [{"next_day_return": 0.01}] * 5 + [{"next_day_return": -0.02}] * 5
     result = compute_transaction_cost_impact(rows)
     assert result["transaction_cost_valid"] is True
@@ -17347,30 +18053,35 @@ def test_r62_cost_adjusted_pf_with_losses() -> None:
 def test_r62_cost_in_comparison_metrics() -> None:
     """cost_adjusted_profit_factor is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "cost_adjusted_profit_factor" in COMPARISON_METRICS
 
 
 def test_r62_cost_in_optional_metrics() -> None:
     """cost_adjusted_profit_factor is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "cost_adjusted_profit_factor" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r62_cost_not_in_lower_is_better() -> None:
     """cost_adjusted_profit_factor is NOT in LOWER_IS_BETTER (higher is better)."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "cost_adjusted_profit_factor" not in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r62_cost_in_guardrail_keys() -> None:
     """cost_adjusted_profit_factor is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "cost_adjusted_profit_factor" in _GUARDRAIL_KEYS
 
 
 def test_r62_cost_floor_value() -> None:
     """BTST_QUALITY_FLOORS has cost_adjusted_profit_factor floor of 1.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "cost_adjusted_profit_factor" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["cost_adjusted_profit_factor"] == 1.0
 
@@ -17378,6 +18089,7 @@ def test_r62_cost_floor_value() -> None:
 def test_r62_cost_label() -> None:
     """cost_adjusted_profit_factor has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "cost_adjusted_profit_factor" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["cost_adjusted_profit_factor"]) > 0
 
@@ -17386,9 +18098,11 @@ def test_r62_cost_label() -> None:
 # T3: compute_cross_window_resilience_trend
 # ---------------------------------------------------------------------------
 
+
 def test_r62_resilience_trend_invalid_no_windows() -> None:
     """Empty windows → resilience_trend_valid=False."""
     from scripts.optimize_profile import compute_cross_window_resilience_trend
+
     result = compute_cross_window_resilience_trend([])
     assert result["resilience_trend_valid"] is False
     assert result["resilience_trend_slope"] is None
@@ -17397,6 +18111,7 @@ def test_r62_resilience_trend_invalid_no_windows() -> None:
 def test_r62_resilience_trend_invalid_too_few_values() -> None:
     """Fewer than 3 valid values → invalid."""
     from scripts.optimize_profile import compute_cross_window_resilience_trend
+
     summaries = [{"extreme_resilience_score": 0.5}, {"extreme_resilience_score": None}]
     result = compute_cross_window_resilience_trend(summaries)
     assert result["resilience_trend_valid"] is False
@@ -17405,6 +18120,7 @@ def test_r62_resilience_trend_invalid_too_few_values() -> None:
 def test_r62_resilience_trend_valid_basic() -> None:
     """3+ valid resilience scores → all keys present."""
     from scripts.optimize_profile import compute_cross_window_resilience_trend
+
     summaries = [{"extreme_resilience_score": 0.4 + i * 0.02} for i in range(5)]
     result = compute_cross_window_resilience_trend(summaries)
     assert result["resilience_trend_valid"] is True
@@ -17419,6 +18135,7 @@ def test_r62_resilience_trend_valid_basic() -> None:
 def test_r62_resilience_trend_positive_slope_grade_A() -> None:
     """slope > 0.01 → grade A."""
     from scripts.optimize_profile import compute_cross_window_resilience_trend
+
     summaries = [{"extreme_resilience_score": 0.3 + i * 0.05} for i in range(5)]
     result = compute_cross_window_resilience_trend(summaries)
     assert result["resilience_trend_valid"] is True
@@ -17429,6 +18146,7 @@ def test_r62_resilience_trend_positive_slope_grade_A() -> None:
 def test_r62_resilience_trend_negative_slope_grade_D() -> None:
     """slope <= -0.02 → grade D."""
     from scripts.optimize_profile import compute_cross_window_resilience_trend
+
     summaries = [{"extreme_resilience_score": 0.9 - i * 0.08} for i in range(5)]
     result = compute_cross_window_resilience_trend(summaries)
     assert result["resilience_trend_valid"] is True
@@ -17439,6 +18157,7 @@ def test_r62_resilience_trend_negative_slope_grade_D() -> None:
 def test_r62_resilience_trend_above_floor_pct() -> None:
     """resilience_above_floor_pct: fraction of windows with score >= 0.3."""
     from scripts.optimize_profile import compute_cross_window_resilience_trend
+
     summaries = [{"extreme_resilience_score": 0.4}] * 3 + [{"extreme_resilience_score": 0.2}] * 2
     result = compute_cross_window_resilience_trend(summaries)
     assert result["resilience_trend_valid"] is True
@@ -17448,18 +18167,21 @@ def test_r62_resilience_trend_above_floor_pct() -> None:
 def test_r62_resilience_trend_in_comparison_metrics() -> None:
     """resilience_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "resilience_trend_slope" in COMPARISON_METRICS
 
 
 def test_r62_resilience_trend_in_optional_metrics() -> None:
     """resilience_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "resilience_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r62_resilience_trend_floor_value() -> None:
     """BTST_QUALITY_FLOORS has resilience_trend_slope floor of -0.02."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "resilience_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["resilience_trend_slope"] == -0.02
 
@@ -17467,6 +18189,7 @@ def test_r62_resilience_trend_floor_value() -> None:
 def test_r62_resilience_trend_label() -> None:
     """resilience_trend_slope has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "resilience_trend_slope" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["resilience_trend_slope"]) > 0
 
@@ -17474,6 +18197,7 @@ def test_r62_resilience_trend_label() -> None:
 def test_r62_resilience_trend_ols_slope_accuracy() -> None:
     """OLS slope should match manual computation for known data."""
     from scripts.optimize_profile import compute_cross_window_resilience_trend
+
     values = [0.3, 0.4, 0.5, 0.6, 0.7]
     summaries = [{"extreme_resilience_score": v} for v in values]
     result = compute_cross_window_resilience_trend(summaries)
@@ -17485,6 +18209,7 @@ def test_r62_resilience_trend_ols_slope_accuracy() -> None:
 def test_r62_surface_summary_has_liq_prefix() -> None:
     """build_surface_summary output includes liq_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"next_day_return": 0.01, "next_high_return": 0.02, "float_turnover_rate": 0.05, "t_plus_2_close_return": 0.01, "t_plus_3_close_return": 0.01} for _ in range(20)]
     result = build_surface_summary(rows, next_high_hit_threshold=0.02)
     liq_keys = [k for k in result if k.startswith("liq_")]
@@ -17494,6 +18219,7 @@ def test_r62_surface_summary_has_liq_prefix() -> None:
 def test_r62_surface_summary_has_cost_prefix() -> None:
     """build_surface_summary output includes cost_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"next_day_return": 0.01, "next_high_return": 0.02, "float_turnover_rate": 0.05, "t_plus_2_close_return": 0.01, "t_plus_3_close_return": 0.01} for _ in range(20)]
     result = build_surface_summary(rows, next_high_hit_threshold=0.02)
     cost_keys = [k for k in result if k.startswith("cost_")]
@@ -17508,9 +18234,11 @@ def test_r62_surface_summary_has_cost_prefix() -> None:
 # T1: compute_stop_loss_take_profit_analysis
 # ---------------------------------------------------------------------------
 
+
 def test_r63_sltp_invalid_empty() -> None:
     """Empty rows → stop_loss_take_profit_valid=False."""
     from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+
     result = compute_stop_loss_take_profit_analysis([])
     assert result["stop_loss_take_profit_valid"] is False
     assert result["best_profit_factor"] is None
@@ -17519,6 +18247,7 @@ def test_r63_sltp_invalid_empty() -> None:
 def test_r63_sltp_invalid_too_few_rows() -> None:
     """Fewer than 10 rows → invalid."""
     from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+
     rows = [{"next_day_return": 0.01}] * 9
     result = compute_stop_loss_take_profit_analysis(rows)
     assert result["stop_loss_take_profit_valid"] is False
@@ -17527,6 +18256,7 @@ def test_r63_sltp_invalid_too_few_rows() -> None:
 def test_r63_sltp_valid_basic() -> None:
     """10+ rows → all keys present and valid=True."""
     from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+
     rows = [{"next_day_return": 0.02}] * 6 + [{"next_day_return": -0.01}] * 4
     result = compute_stop_loss_take_profit_analysis(rows)
     assert result["stop_loss_take_profit_valid"] is True
@@ -17539,17 +18269,20 @@ def test_r63_sltp_valid_basic() -> None:
 def test_r63_sltp_nine_combos_explored() -> None:
     """3 stop_losses × 3 take_profits = 9 combinations explored via non-None best combo."""
     from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+
     rows = [{"next_day_return": 0.03 + i * 0.001} for i in range(6)] + [{"next_day_return": -0.015} for _ in range(4)]
     result = compute_stop_loss_take_profit_analysis(rows)
     assert result["stop_loss_take_profit_valid"] is True
     # best combo name must follow slX_tpY format
     import re
+
     assert re.match(r"sl\d+_tp\d+", result["best_sl_tp_combo"]), f"Got: {result['best_sl_tp_combo']}"
 
 
 def test_r63_sltp_combo_name_format() -> None:
     """Combo names are sl{int(abs(sl)*100)}_tp{int(tp*100)} format."""
     from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+
     rows = [{"next_day_return": 0.05}] * 7 + [{"next_day_return": -0.01}] * 3
     result = compute_stop_loss_take_profit_analysis(rows)
     assert result["stop_loss_take_profit_valid"] is True
@@ -17585,6 +18318,7 @@ def test_r63_sltp_improvement_can_be_negative() -> None:
 def test_r63_sltp_raw_profit_factor_all_wins() -> None:
     """raw_profit_factor = 5.0 when no losses in raw data."""
     from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+
     rows = [{"next_day_return": 0.01}] * 15
     result = compute_stop_loss_take_profit_analysis(rows)
     assert result["stop_loss_take_profit_valid"] is True
@@ -17594,6 +18328,7 @@ def test_r63_sltp_raw_profit_factor_all_wins() -> None:
 def test_r63_sltp_best_profit_factor_gte_raw_or_close() -> None:
     """best_profit_factor should generally be >= raw_profit_factor for tail-clipping cases."""
     from scripts.btst_analysis_utils import compute_stop_loss_take_profit_analysis
+
     rows = [{"next_day_return": 0.02}] * 7 + [{"next_day_return": -0.08}] * 3
     result = compute_stop_loss_take_profit_analysis(rows)
     assert result["stop_loss_take_profit_valid"] is True
@@ -17604,30 +18339,35 @@ def test_r63_sltp_best_profit_factor_gte_raw_or_close() -> None:
 def test_r63_sltp_in_comparison_metrics() -> None:
     """best_profit_factor is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "best_profit_factor" in COMPARISON_METRICS
 
 
 def test_r63_sltp_in_optional_metrics() -> None:
     """best_profit_factor is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "best_profit_factor" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r63_sltp_not_in_lower_is_better() -> None:
     """best_profit_factor is NOT in LOWER_IS_BETTER (higher is better)."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "best_profit_factor" not in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r63_sltp_in_guardrail_keys() -> None:
     """best_profit_factor is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "best_profit_factor" in _GUARDRAIL_KEYS
 
 
 def test_r63_sltp_floor_value() -> None:
     """BTST_QUALITY_FLOORS has best_profit_factor floor of 1.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "best_profit_factor" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["best_profit_factor"] == 1.0
 
@@ -17635,6 +18375,7 @@ def test_r63_sltp_floor_value() -> None:
 def test_r63_sltp_label() -> None:
     """best_profit_factor has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "best_profit_factor" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["best_profit_factor"]) > 0
 
@@ -17642,6 +18383,7 @@ def test_r63_sltp_label() -> None:
 def test_r63_surface_summary_has_sltp_prefix() -> None:
     """build_surface_summary output includes sltp_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"next_day_return": 0.02, "next_high_return": 0.03, "float_turnover_rate": 0.05, "t_plus_2_close_return": 0.01, "t_plus_3_close_return": 0.01} for _ in range(20)]
     result = build_surface_summary(rows, next_high_hit_threshold=0.02)
     sltp_keys = [k for k in result if k.startswith("sltp_")]
@@ -17652,9 +18394,11 @@ def test_r63_surface_summary_has_sltp_prefix() -> None:
 # T2: compute_factor_combination_score
 # ---------------------------------------------------------------------------
 
+
 def test_r63_combo_invalid_empty() -> None:
     """Empty rows → factor_combination_valid=False."""
     from scripts.btst_analysis_utils import compute_factor_combination_score
+
     result = compute_factor_combination_score([])
     assert result["factor_combination_valid"] is False
     assert result["best_combo_win_rate"] is None
@@ -17663,6 +18407,7 @@ def test_r63_combo_invalid_empty() -> None:
 def test_r63_combo_invalid_too_few_rows() -> None:
     """Fewer than 10 rows → invalid."""
     from scripts.btst_analysis_utils import compute_factor_combination_score
+
     rows = [{"next_day_return": 0.01}] * 9
     result = compute_factor_combination_score(rows)
     assert result["factor_combination_valid"] is False
@@ -17671,6 +18416,7 @@ def test_r63_combo_invalid_too_few_rows() -> None:
 def test_r63_combo_valid_basic() -> None:
     """10+ rows → valid=True with all keys."""
     from scripts.btst_analysis_utils import compute_factor_combination_score
+
     rows = [{"next_day_return": 0.02, "rs_sector_rank": float(i), "momentum_slope_20d": float(i), "breakout_quality_score": float(i), "volume_expansion_quality": float(i), "t0_estimated_net_inflow_ratio": float(i), "close_strength": float(i), "sector_resonance": float(i)} for i in range(20)]
     result = compute_factor_combination_score(rows)
     assert result["factor_combination_valid"] is True
@@ -17698,16 +18444,18 @@ def test_r63_combo_best_selection_by_win_rate() -> None:
     # Build rows where only rank factor is above median for many
     rows = []
     for i in range(20):
-        rows.append({
-            "next_day_return": 0.02 if i < 15 else -0.01,
-            "rs_sector_rank": float(i),  # rank above median for top 10
-            "momentum_slope_20d": 1.0,  # all same → no above-median
-            "breakout_quality_score": 1.0,
-            "volume_expansion_quality": 1.0,
-            "t0_estimated_net_inflow_ratio": 1.0,
-            "close_strength": 1.0,
-            "sector_resonance": 1.0,
-        })
+        rows.append(
+            {
+                "next_day_return": 0.02 if i < 15 else -0.01,
+                "rs_sector_rank": float(i),  # rank above median for top 10
+                "momentum_slope_20d": 1.0,  # all same → no above-median
+                "breakout_quality_score": 1.0,
+                "volume_expansion_quality": 1.0,
+                "t0_estimated_net_inflow_ratio": 1.0,
+                "close_strength": 1.0,
+                "sector_resonance": 1.0,
+            }
+        )
     result = compute_factor_combination_score(rows)
     assert result["factor_combination_valid"] is True
     # Only "rank" combo will produce valid rows; others will have None win rate
@@ -17721,16 +18469,18 @@ def test_r63_combo_spread_none_with_one_valid() -> None:
     # Same factor values for all multi-factor combos → only rank may pass
     rows = []
     for i in range(20):
-        rows.append({
-            "next_day_return": 0.01,
-            "rs_sector_rank": float(i),
-            "momentum_slope_20d": 1.0,
-            "breakout_quality_score": 1.0,
-            "volume_expansion_quality": 1.0,
-            "t0_estimated_net_inflow_ratio": 1.0,
-            "close_strength": 1.0,
-            "sector_resonance": 1.0,
-        })
+        rows.append(
+            {
+                "next_day_return": 0.01,
+                "rs_sector_rank": float(i),
+                "momentum_slope_20d": 1.0,
+                "breakout_quality_score": 1.0,
+                "volume_expansion_quality": 1.0,
+                "t0_estimated_net_inflow_ratio": 1.0,
+                "close_strength": 1.0,
+                "sector_resonance": 1.0,
+            }
+        )
     result = compute_factor_combination_score(rows)
     assert result["factor_combination_valid"] is True
     # If only 1 valid combo, combo_spread should be None
@@ -17746,16 +18496,18 @@ def test_r63_combo_and_condition_filtering() -> None:
     # Make 10 rows where momentum is high but breakout is low → should be excluded for momentum combo
     rows = []
     for i in range(20):
-        rows.append({
-            "next_day_return": 0.02 if i % 2 == 0 else -0.01,
-            "rs_sector_rank": float(i),
-            "momentum_slope_20d": float(i),  # range 0-19, median ~9.5
-            "breakout_quality_score": 19.0 - float(i),  # inversely correlated
-            "volume_expansion_quality": float(i),
-            "t0_estimated_net_inflow_ratio": float(i),
-            "close_strength": float(i),
-            "sector_resonance": float(i),
-        })
+        rows.append(
+            {
+                "next_day_return": 0.02 if i % 2 == 0 else -0.01,
+                "rs_sector_rank": float(i),
+                "momentum_slope_20d": float(i),  # range 0-19, median ~9.5
+                "breakout_quality_score": 19.0 - float(i),  # inversely correlated
+                "volume_expansion_quality": float(i),
+                "t0_estimated_net_inflow_ratio": float(i),
+                "close_strength": float(i),
+                "sector_resonance": float(i),
+            }
+        )
     result = compute_factor_combination_score(rows)
     assert result["factor_combination_valid"] is True
     # momentum combo requires BOTH momentum_slope_20d > median AND breakout_quality_score > median
@@ -17768,6 +18520,7 @@ def test_r63_combo_and_condition_filtering() -> None:
 def test_r63_combo_win_rates_dict_has_four_keys() -> None:
     """combo_win_rates has exactly 4 keys: momentum, volume, quality, rank."""
     from scripts.btst_analysis_utils import compute_factor_combination_score
+
     rows = [{"next_day_return": 0.01, "rs_sector_rank": float(i), "momentum_slope_20d": float(i), "breakout_quality_score": float(i), "volume_expansion_quality": float(i), "t0_estimated_net_inflow_ratio": float(i), "close_strength": float(i), "sector_resonance": float(i)} for i in range(20)]
     result = compute_factor_combination_score(rows)
     assert result["factor_combination_valid"] is True
@@ -17777,30 +18530,35 @@ def test_r63_combo_win_rates_dict_has_four_keys() -> None:
 def test_r63_combo_in_comparison_metrics() -> None:
     """best_combo_win_rate is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "best_combo_win_rate" in COMPARISON_METRICS
 
 
 def test_r63_combo_in_optional_metrics() -> None:
     """best_combo_win_rate is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "best_combo_win_rate" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r63_combo_not_in_lower_is_better() -> None:
     """best_combo_win_rate is NOT in LOWER_IS_BETTER."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "best_combo_win_rate" not in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r63_combo_in_guardrail_keys() -> None:
     """best_combo_win_rate is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "best_combo_win_rate" in _GUARDRAIL_KEYS
 
 
 def test_r63_combo_floor_value() -> None:
     """BTST_QUALITY_FLOORS has best_combo_win_rate floor of 0.5."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "best_combo_win_rate" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["best_combo_win_rate"] == 0.5
 
@@ -17808,6 +18566,7 @@ def test_r63_combo_floor_value() -> None:
 def test_r63_combo_label() -> None:
     """best_combo_win_rate has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "best_combo_win_rate" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["best_combo_win_rate"]) > 0
 
@@ -17815,6 +18574,7 @@ def test_r63_combo_label() -> None:
 def test_r63_surface_summary_has_combo_prefix() -> None:
     """build_surface_summary output includes combo_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"next_day_return": 0.02, "next_high_return": 0.03, "float_turnover_rate": 0.05, "t_plus_2_close_return": 0.01, "t_plus_3_close_return": 0.01} for _ in range(20)]
     result = build_surface_summary(rows, next_high_hit_threshold=0.02)
     combo_keys = [k for k in result if k.startswith("combo_")]
@@ -17825,9 +18585,11 @@ def test_r63_surface_summary_has_combo_prefix() -> None:
 # T3: compute_cross_window_cost_trend
 # ---------------------------------------------------------------------------
 
+
 def test_r63_cost_trend_invalid_no_windows() -> None:
     """Empty windows → cost_pf_trend_valid=False."""
     from scripts.optimize_profile import compute_cross_window_cost_trend
+
     result = compute_cross_window_cost_trend([])
     assert result["cost_pf_trend_valid"] is False
     assert result["cost_pf_trend_slope"] is None
@@ -17836,6 +18598,7 @@ def test_r63_cost_trend_invalid_no_windows() -> None:
 def test_r63_cost_trend_invalid_too_few_values() -> None:
     """Fewer than 3 valid values → invalid."""
     from scripts.optimize_profile import compute_cross_window_cost_trend
+
     summaries = [{"cost_cost_adjusted_profit_factor": 1.2}, {"cost_cost_adjusted_profit_factor": None}]
     result = compute_cross_window_cost_trend(summaries)
     assert result["cost_pf_trend_valid"] is False
@@ -17844,6 +18607,7 @@ def test_r63_cost_trend_invalid_too_few_values() -> None:
 def test_r63_cost_trend_valid_basic() -> None:
     """3+ valid values → all keys present."""
     from scripts.optimize_profile import compute_cross_window_cost_trend
+
     summaries = [{"cost_cost_adjusted_profit_factor": 1.0 + i * 0.1} for i in range(5)]
     result = compute_cross_window_cost_trend(summaries)
     assert result["cost_pf_trend_valid"] is True
@@ -17858,6 +18622,7 @@ def test_r63_cost_trend_valid_basic() -> None:
 def test_r63_cost_trend_ols_slope_accuracy() -> None:
     """OLS slope should match expected value for linear data."""
     from scripts.optimize_profile import compute_cross_window_cost_trend
+
     values = [1.0, 1.1, 1.2, 1.3, 1.4]
     summaries = [{"cost_cost_adjusted_profit_factor": v} for v in values]
     result = compute_cross_window_cost_trend(summaries)
@@ -17868,6 +18633,7 @@ def test_r63_cost_trend_ols_slope_accuracy() -> None:
 def test_r63_cost_trend_grade_A_steep_positive() -> None:
     """slope > 0.05 → grade A."""
     from scripts.optimize_profile import compute_cross_window_cost_trend
+
     summaries = [{"cost_cost_adjusted_profit_factor": 1.0 + i * 0.1} for i in range(5)]
     result = compute_cross_window_cost_trend(summaries)
     assert result["cost_pf_trend_valid"] is True
@@ -17878,6 +18644,7 @@ def test_r63_cost_trend_grade_A_steep_positive() -> None:
 def test_r63_cost_trend_grade_B_gentle_positive() -> None:
     """0 < slope <= 0.05 → grade B."""
     from scripts.optimize_profile import compute_cross_window_cost_trend
+
     values = [1.0, 1.01, 1.02, 1.03, 1.04]
     summaries = [{"cost_cost_adjusted_profit_factor": v} for v in values]
     result = compute_cross_window_cost_trend(summaries)
@@ -17889,6 +18656,7 @@ def test_r63_cost_trend_grade_B_gentle_positive() -> None:
 def test_r63_cost_trend_grade_C_mild_negative() -> None:
     """-0.1 < slope <= 0 → grade C."""
     from scripts.optimize_profile import compute_cross_window_cost_trend
+
     values = [1.1, 1.08, 1.06, 1.04, 1.02]
     summaries = [{"cost_cost_adjusted_profit_factor": v} for v in values]
     result = compute_cross_window_cost_trend(summaries)
@@ -17900,6 +18668,7 @@ def test_r63_cost_trend_grade_C_mild_negative() -> None:
 def test_r63_cost_trend_grade_D_steep_negative() -> None:
     """slope <= -0.1 → grade D."""
     from scripts.optimize_profile import compute_cross_window_cost_trend
+
     summaries = [{"cost_cost_adjusted_profit_factor": 2.0 - i * 0.3} for i in range(5)]
     result = compute_cross_window_cost_trend(summaries)
     assert result["cost_pf_trend_valid"] is True
@@ -17910,6 +18679,7 @@ def test_r63_cost_trend_grade_D_steep_negative() -> None:
 def test_r63_cost_trend_above_floor_pct() -> None:
     """cost_pf_above_floor_pct: fraction of windows with cost PF >= 1.0."""
     from scripts.optimize_profile import compute_cross_window_cost_trend
+
     summaries = [{"cost_cost_adjusted_profit_factor": 1.2}] * 3 + [{"cost_cost_adjusted_profit_factor": 0.8}] * 2
     result = compute_cross_window_cost_trend(summaries)
     assert result["cost_pf_trend_valid"] is True
@@ -17919,24 +18689,28 @@ def test_r63_cost_trend_above_floor_pct() -> None:
 def test_r63_cost_trend_in_comparison_metrics() -> None:
     """cost_pf_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "cost_pf_trend_slope" in COMPARISON_METRICS
 
 
 def test_r63_cost_trend_in_optional_metrics() -> None:
     """cost_pf_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "cost_pf_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r63_cost_trend_not_in_lower_is_better() -> None:
     """cost_pf_trend_slope is NOT in LOWER_IS_BETTER."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "cost_pf_trend_slope" not in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r63_cost_trend_floor_value() -> None:
     """BTST_QUALITY_FLOORS has cost_pf_trend_slope floor of -0.1."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "cost_pf_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["cost_pf_trend_slope"] == -0.1
 
@@ -17944,6 +18718,7 @@ def test_r63_cost_trend_floor_value() -> None:
 def test_r63_cost_trend_label() -> None:
     """cost_pf_trend_slope has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "cost_pf_trend_slope" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["cost_pf_trend_slope"]) > 0
 
@@ -17951,6 +18726,7 @@ def test_r63_cost_trend_label() -> None:
 # ---------------------------------------------------------------------------
 # Round 64 tests
 # ---------------------------------------------------------------------------
+
 
 def _r64_make_rows(n: int, base_factor: float = 0.5, base_return: float = 0.02) -> list:
     """Helper: build n rows with all 7 BTST factors and next_day_return."""
@@ -17960,9 +18736,11 @@ def _r64_make_rows(n: int, base_factor: float = 0.5, base_return: float = 0.02) 
 
 # ── compute_adaptive_weight_suggestion ──────────────────────────────────────
 
+
 def test_r64_aws_empty_rows_returns_invalid() -> None:
     """Empty row list → adaptive_weight_valid=False, no crash."""
     from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+
     result = compute_adaptive_weight_suggestion([])
     assert result["adaptive_weight_valid"] is False
     assert result["suggested_weights"] is None
@@ -17971,6 +18749,7 @@ def test_r64_aws_empty_rows_returns_invalid() -> None:
 def test_r64_aws_too_few_rows_returns_invalid() -> None:
     """< 10 rows → invalid."""
     from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+
     rows = _r64_make_rows(9)
     result = compute_adaptive_weight_suggestion(rows)
     assert result["adaptive_weight_valid"] is False
@@ -17979,6 +18758,7 @@ def test_r64_aws_too_few_rows_returns_invalid() -> None:
 def test_r64_aws_weight_sum_is_one() -> None:
     """With sufficient rows the non-zero weights sum to 1.0."""
     from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+
     rows = _r64_make_rows(30)
     result = compute_adaptive_weight_suggestion(rows)
     assert result["adaptive_weight_valid"] is True
@@ -17989,6 +18769,7 @@ def test_r64_aws_weight_sum_is_one() -> None:
 def test_r64_aws_entropy_non_negative() -> None:
     """weight_entropy must be >= 0."""
     from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+
     rows = _r64_make_rows(30)
     result = compute_adaptive_weight_suggestion(rows)
     assert result["adaptive_weight_valid"] is True
@@ -17998,6 +18779,7 @@ def test_r64_aws_entropy_non_negative() -> None:
 def test_r64_aws_effective_factor_count_positive() -> None:
     """effective_factor_count > 0 for data with valid factors."""
     from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+
     rows = _r64_make_rows(30)
     result = compute_adaptive_weight_suggestion(rows)
     assert result["adaptive_weight_valid"] is True
@@ -18007,6 +18789,7 @@ def test_r64_aws_effective_factor_count_positive() -> None:
 def test_r64_aws_top_weight_factor_is_string() -> None:
     """top_weight_factor is a non-empty string when valid."""
     from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+
     rows = _r64_make_rows(30)
     result = compute_adaptive_weight_suggestion(rows)
     assert result["adaptive_weight_valid"] is True
@@ -18017,6 +18800,7 @@ def test_r64_aws_top_weight_factor_is_string() -> None:
 def test_r64_aws_concentration_in_range() -> None:
     """weight_concentration is a positive number when valid."""
     from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+
     rows = _r64_make_rows(30)
     result = compute_adaptive_weight_suggestion(rows)
     assert result["adaptive_weight_valid"] is True
@@ -18027,6 +18811,7 @@ def test_r64_aws_concentration_in_range() -> None:
 def test_r64_aws_suggested_weights_is_dict() -> None:
     """suggested_weights is a dict keyed by factor names."""
     from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+
     rows = _r64_make_rows(30)
     result = compute_adaptive_weight_suggestion(rows)
     assert result["adaptive_weight_valid"] is True
@@ -18037,6 +18822,7 @@ def test_r64_aws_suggested_weights_is_dict() -> None:
 def test_r64_aws_null_returns_gives_invalid() -> None:
     """Rows without next_day_return produce invalid result (< 5 valid pairs)."""
     from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+
     rows = [{"close_strength": 0.5} for _ in range(30)]
     result = compute_adaptive_weight_suggestion(rows)
     # valid=True but effective_factor_count can be 0 (all ICs None) — should not crash
@@ -18046,6 +18832,7 @@ def test_r64_aws_null_returns_gives_invalid() -> None:
 def test_r64_aws_exact_10_rows_valid() -> None:
     """Exactly 10 rows is the minimum threshold → valid."""
     from scripts.btst_analysis_utils import compute_adaptive_weight_suggestion
+
     rows = _r64_make_rows(10)
     result = compute_adaptive_weight_suggestion(rows)
     assert result["adaptive_weight_valid"] is True
@@ -18053,9 +18840,11 @@ def test_r64_aws_exact_10_rows_valid() -> None:
 
 # ── compute_factor_validity_window ──────────────────────────────────────────
 
+
 def test_r64_fvw_empty_rows_returns_invalid() -> None:
     """Empty list → factor_validity_valid=False."""
     from scripts.btst_analysis_utils import compute_factor_validity_window
+
     result = compute_factor_validity_window([])
     assert result["factor_validity_valid"] is False
     assert result["ic_stability"] is None
@@ -18064,6 +18853,7 @@ def test_r64_fvw_empty_rows_returns_invalid() -> None:
 def test_r64_fvw_too_few_rows_invalid() -> None:
     """< 20 rows → invalid."""
     from scripts.btst_analysis_utils import compute_factor_validity_window
+
     rows = _r64_make_rows(19)
     result = compute_factor_validity_window(rows)
     assert result["factor_validity_valid"] is False
@@ -18072,6 +18862,7 @@ def test_r64_fvw_too_few_rows_invalid() -> None:
 def test_r64_fvw_exact_20_rows_valid() -> None:
     """20 rows is the minimum threshold → valid."""
     from scripts.btst_analysis_utils import compute_factor_validity_window
+
     rows = _r64_make_rows(20)
     result = compute_factor_validity_window(rows)
     assert result["factor_validity_valid"] is True
@@ -18080,6 +18871,7 @@ def test_r64_fvw_exact_20_rows_valid() -> None:
 def test_r64_fvw_returns_three_segment_ics() -> None:
     """early_ic, mid_ic, late_ic all present in output."""
     from scripts.btst_analysis_utils import compute_factor_validity_window
+
     rows = _r64_make_rows(60)
     result = compute_factor_validity_window(rows)
     assert result["factor_validity_valid"] is True
@@ -18091,6 +18883,7 @@ def test_r64_fvw_returns_three_segment_ics() -> None:
 def test_r64_fvw_ic_stability_non_negative() -> None:
     """ic_stability (std dev of segment ICs) is >= 0."""
     from scripts.btst_analysis_utils import compute_factor_validity_window
+
     rows = _r64_make_rows(60)
     result = compute_factor_validity_window(rows)
     assert result["factor_validity_valid"] is True
@@ -18101,6 +18894,7 @@ def test_r64_fvw_ic_stability_non_negative() -> None:
 def test_r64_fvw_ic_trend_direction_valid_values() -> None:
     """ic_trend_direction is one of the allowed string values."""
     from scripts.btst_analysis_utils import compute_factor_validity_window
+
     rows = _r64_make_rows(60)
     result = compute_factor_validity_window(rows)
     assert result["factor_validity_valid"] is True
@@ -18131,6 +18925,7 @@ def test_r64_fvw_declining_trend_direction() -> None:
 def test_r64_fvw_stable_data_gives_low_stability() -> None:
     """Perfectly consistent factor-return correlation → ic_stability near 0."""
     from scripts.btst_analysis_utils import compute_factor_validity_window
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(60)]
     result = compute_factor_validity_window(rows)
     assert result["factor_validity_valid"] is True
@@ -18141,9 +18936,11 @@ def test_r64_fvw_stable_data_gives_low_stability() -> None:
 
 # ── compute_cross_window_combo_trend ────────────────────────────────────────
 
+
 def test_r64_ccwt_too_few_windows_invalid() -> None:
     """< 3 windows with valid combo_best_combo_win_rate → valid=False."""
     from scripts.optimize_profile import compute_cross_window_combo_trend
+
     summaries = [{"combo_best_combo_win_rate": 0.6}, {"combo_best_combo_win_rate": 0.65}]
     result = compute_cross_window_combo_trend(summaries)
     assert result["combo_trend_valid"] is False
@@ -18153,6 +18950,7 @@ def test_r64_ccwt_too_few_windows_invalid() -> None:
 def test_r64_ccwt_empty_windows_invalid() -> None:
     """Empty list → combo_trend_valid=False."""
     from scripts.optimize_profile import compute_cross_window_combo_trend
+
     result = compute_cross_window_combo_trend([])
     assert result["combo_trend_valid"] is False
 
@@ -18160,6 +18958,7 @@ def test_r64_ccwt_empty_windows_invalid() -> None:
 def test_r64_ccwt_grade_A_steep_positive_slope() -> None:
     """slope > 0.01 → grade A."""
     from scripts.optimize_profile import compute_cross_window_combo_trend
+
     summaries = [{"combo_best_combo_win_rate": 0.5 + i * 0.05} for i in range(5)]
     result = compute_cross_window_combo_trend(summaries)
     assert result["combo_trend_valid"] is True
@@ -18170,6 +18969,7 @@ def test_r64_ccwt_grade_A_steep_positive_slope() -> None:
 def test_r64_ccwt_grade_B_gentle_positive_slope() -> None:
     """0 < slope <= 0.01 → grade B."""
     from scripts.optimize_profile import compute_cross_window_combo_trend
+
     values = [0.60, 0.605, 0.610, 0.615, 0.620]
     summaries = [{"combo_best_combo_win_rate": v} for v in values]
     result = compute_cross_window_combo_trend(summaries)
@@ -18181,6 +18981,7 @@ def test_r64_ccwt_grade_B_gentle_positive_slope() -> None:
 def test_r64_ccwt_grade_C_mild_negative_slope() -> None:
     """-0.02 < slope <= 0 → grade C."""
     from scripts.optimize_profile import compute_cross_window_combo_trend
+
     values = [0.62, 0.61, 0.605, 0.60, 0.595]
     summaries = [{"combo_best_combo_win_rate": v} for v in values]
     result = compute_cross_window_combo_trend(summaries)
@@ -18192,6 +18993,7 @@ def test_r64_ccwt_grade_C_mild_negative_slope() -> None:
 def test_r64_ccwt_grade_D_steep_negative_slope() -> None:
     """slope <= -0.02 → grade D."""
     from scripts.optimize_profile import compute_cross_window_combo_trend
+
     summaries = [{"combo_best_combo_win_rate": 0.8 - i * 0.1} for i in range(5)]
     result = compute_cross_window_combo_trend(summaries)
     assert result["combo_trend_valid"] is True
@@ -18202,6 +19004,7 @@ def test_r64_ccwt_grade_D_steep_negative_slope() -> None:
 def test_r64_ccwt_above_floor_pct_correct() -> None:
     """combo_above_floor_pct: fraction of windows with win_rate >= 0.5."""
     from scripts.optimize_profile import compute_cross_window_combo_trend
+
     summaries = [{"combo_best_combo_win_rate": 0.6}] * 4 + [{"combo_best_combo_win_rate": 0.4}]
     result = compute_cross_window_combo_trend(summaries)
     assert result["combo_trend_valid"] is True
@@ -18211,6 +19014,7 @@ def test_r64_ccwt_above_floor_pct_correct() -> None:
 def test_r64_ccwt_min_max_mean_returned() -> None:
     """combo_win_rate_trend_min, max, mean are all present and sensible."""
     from scripts.optimize_profile import compute_cross_window_combo_trend
+
     values = [0.55, 0.60, 0.65, 0.70, 0.75]
     summaries = [{"combo_best_combo_win_rate": v} for v in values]
     result = compute_cross_window_combo_trend(summaries)
@@ -18222,27 +19026,32 @@ def test_r64_ccwt_min_max_mean_returned() -> None:
 
 # ── Metric registration tests ────────────────────────────────────────────────
 
+
 def test_r64_combo_trend_in_comparison_metrics() -> None:
     """combo_win_rate_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "combo_win_rate_trend_slope" in COMPARISON_METRICS
 
 
 def test_r64_combo_trend_in_optional_metrics() -> None:
     """combo_win_rate_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "combo_win_rate_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r64_combo_trend_not_in_lower_is_better() -> None:
     """combo_win_rate_trend_slope is NOT in LOWER_IS_BETTER (higher slope = better)."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "combo_win_rate_trend_slope" not in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r64_combo_trend_floor_value() -> None:
     """BTST_QUALITY_FLOORS has combo_win_rate_trend_slope floor of -0.02."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "combo_win_rate_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["combo_win_rate_trend_slope"] == -0.02
 
@@ -18250,6 +19059,7 @@ def test_r64_combo_trend_floor_value() -> None:
 def test_r64_combo_trend_label() -> None:
     """combo_win_rate_trend_slope has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "combo_win_rate_trend_slope" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["combo_win_rate_trend_slope"]) > 0
 
@@ -18257,18 +19067,21 @@ def test_r64_combo_trend_label() -> None:
 def test_r64_aws_in_comparison_metrics() -> None:
     """adaptive_weight_effective_factor_count is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "adaptive_weight_effective_factor_count" in COMPARISON_METRICS
 
 
 def test_r64_aws_in_optional_metrics() -> None:
     """adaptive_weight_effective_factor_count is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "adaptive_weight_effective_factor_count" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r64_aws_label() -> None:
     """adaptive_weight_effective_factor_count has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "adaptive_weight_effective_factor_count" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["adaptive_weight_effective_factor_count"]) > 0
 
@@ -18276,24 +19089,28 @@ def test_r64_aws_label() -> None:
 def test_r64_ic_stability_in_comparison_metrics() -> None:
     """ic_stability is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "ic_stability" in COMPARISON_METRICS
 
 
 def test_r64_ic_stability_in_optional_metrics() -> None:
     """ic_stability is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "ic_stability" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r64_ic_stability_in_lower_is_better() -> None:
     """ic_stability IS in LOWER_IS_BETTER (lower std = more stable = better)."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "ic_stability" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r64_ic_stability_cap_value() -> None:
     """BTST_QUALITY_CAPS has ic_stability cap of 0.2."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "ic_stability" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["ic_stability"] == 0.2
 
@@ -18301,12 +19118,14 @@ def test_r64_ic_stability_cap_value() -> None:
 def test_r64_ic_stability_in_guardrail_keys() -> None:
     """ic_stability is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "ic_stability" in _GUARDRAIL_KEYS
 
 
 def test_r64_ic_stability_label() -> None:
     """ic_stability has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "ic_stability" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["ic_stability"]) > 0
 
@@ -18317,26 +19136,30 @@ def test_r64_ic_stability_label() -> None:
 
 # ── T1: compute_return_attribution ──────────────────────────────────────────
 
+
 def _make_attribution_rows(n: int = 20) -> list[dict]:
     """Helper: build rows with all 7 factors + next_day_return."""
     rows = []
     for i in range(n):
-        rows.append({
-            "composite_score": 0.5 + i * 0.01,
-            "momentum_score": 0.4 + i * 0.02,
-            "volume_score": 0.3 + i * 0.015,
-            "technical_score": 0.6 - i * 0.01,
-            "sentiment_score": 0.5 + i * 0.005,
-            "breakout_score": 0.4 + i * 0.008,
-            "risk_score": 0.6 - i * 0.005,
-            "next_day_return": 0.01 * (i - n / 2),
-        })
+        rows.append(
+            {
+                "composite_score": 0.5 + i * 0.01,
+                "momentum_score": 0.4 + i * 0.02,
+                "volume_score": 0.3 + i * 0.015,
+                "technical_score": 0.6 - i * 0.01,
+                "sentiment_score": 0.5 + i * 0.005,
+                "breakout_score": 0.4 + i * 0.008,
+                "risk_score": 0.6 - i * 0.005,
+                "next_day_return": 0.01 * (i - n / 2),
+            }
+        )
     return rows
 
 
 def test_r65_return_attribution_too_few_rows_invalid() -> None:
     """compute_return_attribution returns invalid when fewer than 15 rows."""
     from scripts.btst_analysis_utils import compute_return_attribution
+
     result = compute_return_attribution(_make_attribution_rows(10))
     assert result["return_attribution_valid"] is False
     assert result["total_attribution"] is None
@@ -18345,6 +19168,7 @@ def test_r65_return_attribution_too_few_rows_invalid() -> None:
 def test_r65_return_attribution_exact_15_rows_valid() -> None:
     """compute_return_attribution is valid with exactly 15 complete rows."""
     from scripts.btst_analysis_utils import compute_return_attribution
+
     result = compute_return_attribution(_make_attribution_rows(15))
     assert result["return_attribution_valid"] is True
 
@@ -18352,6 +19176,7 @@ def test_r65_return_attribution_exact_15_rows_valid() -> None:
 def test_r65_return_attribution_empty_rows_invalid() -> None:
     """compute_return_attribution returns invalid on empty input."""
     from scripts.btst_analysis_utils import compute_return_attribution
+
     result = compute_return_attribution([])
     assert result["return_attribution_valid"] is False
 
@@ -18359,6 +19184,7 @@ def test_r65_return_attribution_empty_rows_invalid() -> None:
 def test_r65_return_attribution_total_attribution_nonnegative() -> None:
     """total_attribution is always non-negative (sum of absolute values)."""
     from scripts.btst_analysis_utils import compute_return_attribution
+
     result = compute_return_attribution(_make_attribution_rows(25))
     assert result["return_attribution_valid"] is True
     assert result["total_attribution"] >= 0.0
@@ -18367,6 +19193,7 @@ def test_r65_return_attribution_total_attribution_nonnegative() -> None:
 def test_r65_return_attribution_7_factors_in_dict() -> None:
     """factor_contributions has exactly 7 keys."""
     from scripts.btst_analysis_utils import compute_return_attribution
+
     result = compute_return_attribution(_make_attribution_rows(25))
     assert result["return_attribution_valid"] is True
     assert set(result["factor_contributions"].keys()) == {"composite_score", "momentum_score", "volume_score", "technical_score", "sentiment_score", "breakout_score", "risk_score"}
@@ -18375,6 +19202,7 @@ def test_r65_return_attribution_7_factors_in_dict() -> None:
 def test_r65_return_attribution_positive_count_valid_range() -> None:
     """positive_attribution_count is between 0 and 7."""
     from scripts.btst_analysis_utils import compute_return_attribution
+
     result = compute_return_attribution(_make_attribution_rows(25))
     assert result["return_attribution_valid"] is True
     assert 0 <= result["positive_attribution_count"] <= 7
@@ -18383,6 +19211,7 @@ def test_r65_return_attribution_positive_count_valid_range() -> None:
 def test_r65_return_attribution_balance_in_01() -> None:
     """attribution_balance is in [0, 1]."""
     from scripts.btst_analysis_utils import compute_return_attribution
+
     result = compute_return_attribution(_make_attribution_rows(25))
     assert result["return_attribution_valid"] is True
     assert 0.0 <= result["attribution_balance"] <= 1.0
@@ -18391,6 +19220,7 @@ def test_r65_return_attribution_balance_in_01() -> None:
 def test_r65_return_attribution_balance_neutral_when_zero_total() -> None:
     """attribution_balance is 0.5 when total_attribution is 0 (flat returns)."""
     from scripts.btst_analysis_utils import compute_return_attribution
+
     rows = []
     for i in range(20):
         rows.append({"composite_score": 0.5, "momentum_score": 0.5, "volume_score": 0.5, "technical_score": 0.5, "sentiment_score": 0.5, "breakout_score": 0.5, "risk_score": 0.5, "next_day_return": 0.0})
@@ -18402,6 +19232,7 @@ def test_r65_return_attribution_balance_neutral_when_zero_total() -> None:
 def test_r65_return_attribution_top_positive_factor_in_factors() -> None:
     """top_positive_factor is one of the 7 factor names (or None)."""
     from scripts.btst_analysis_utils import compute_return_attribution
+
     _FACTORS = {"composite_score", "momentum_score", "volume_score", "technical_score", "sentiment_score", "breakout_score", "risk_score"}
     result = compute_return_attribution(_make_attribution_rows(25))
     assert result["return_attribution_valid"] is True
@@ -18412,6 +19243,7 @@ def test_r65_return_attribution_top_positive_factor_in_factors() -> None:
 def test_r65_return_attribution_top_negative_factor_in_factors() -> None:
     """top_negative_factor is one of the 7 factor names (or None)."""
     from scripts.btst_analysis_utils import compute_return_attribution
+
     _FACTORS = {"composite_score", "momentum_score", "volume_score", "technical_score", "sentiment_score", "breakout_score", "risk_score"}
     result = compute_return_attribution(_make_attribution_rows(25))
     assert result["return_attribution_valid"] is True
@@ -18422,6 +19254,7 @@ def test_r65_return_attribution_top_negative_factor_in_factors() -> None:
 def test_r65_return_attribution_uses_runner_composite_score_fallback() -> None:
     """compute_return_attribution uses runner_composite_score when composite_score absent."""
     from scripts.btst_analysis_utils import compute_return_attribution
+
     rows = []
     for i in range(20):
         rows.append({"runner_composite_score": 0.5 + i * 0.01, "momentum_score": 0.4 + i * 0.02, "volume_score": 0.3, "technical_score": 0.6, "sentiment_score": 0.5, "breakout_score": 0.4, "risk_score": 0.6, "next_day_return": 0.01 * (i - 10)})
@@ -18432,6 +19265,7 @@ def test_r65_return_attribution_uses_runner_composite_score_fallback() -> None:
 def test_r65_return_attribution_insufficient_complete_rows_invalid() -> None:
     """compute_return_attribution returns invalid when fewer than 10 complete rows."""
     from scripts.btst_analysis_utils import compute_return_attribution
+
     rows = _make_attribution_rows(20)
     for r in rows[:12]:
         r["momentum_score"] = None
@@ -18440,6 +19274,7 @@ def test_r65_return_attribution_insufficient_complete_rows_invalid() -> None:
 
 
 # ── T2: compute_multi_timeframe_consistency ──────────────────────────────────
+
 
 def _make_mtf_rows(n: int = 20, score_trend: str = "up", wr_trend: str = "up") -> list[dict]:
     """Build rows simulating score/win-rate trends."""
@@ -18456,6 +19291,7 @@ def _make_mtf_rows(n: int = 20, score_trend: str = "up", wr_trend: str = "up") -
 def test_r65_mtf_too_few_rows_invalid() -> None:
     """compute_multi_timeframe_consistency returns invalid with fewer than 12 rows."""
     from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+
     result = compute_multi_timeframe_consistency(_make_mtf_rows(8))
     assert result["multi_timeframe_valid"] is False
 
@@ -18463,6 +19299,7 @@ def test_r65_mtf_too_few_rows_invalid() -> None:
 def test_r65_mtf_exact_12_rows_valid() -> None:
     """compute_multi_timeframe_consistency is valid with exactly 12 rows."""
     from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+
     result = compute_multi_timeframe_consistency(_make_mtf_rows(12))
     assert result["multi_timeframe_valid"] is True
 
@@ -18470,6 +19307,7 @@ def test_r65_mtf_exact_12_rows_valid() -> None:
 def test_r65_mtf_empty_rows_invalid() -> None:
     """compute_multi_timeframe_consistency returns invalid on empty input."""
     from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+
     result = compute_multi_timeframe_consistency([])
     assert result["multi_timeframe_valid"] is False
 
@@ -18477,6 +19315,7 @@ def test_r65_mtf_empty_rows_invalid() -> None:
 def test_r65_mtf_grade_A_both_improving() -> None:
     """Grade A when both score_trend > 0 and win_rate_trend > 0."""
     from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+
     rows = []
     for i in range(20):
         score = 0.5 + i * 0.05
@@ -18491,6 +19330,7 @@ def test_r65_mtf_grade_A_both_improving() -> None:
 def test_r65_mtf_grade_D_both_deteriorating() -> None:
     """Grade D when both score_trend < 0 and win_rate_trend < 0."""
     from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+
     rows = []
     for i in range(20):
         score = 0.9 - i * 0.05
@@ -18505,6 +19345,7 @@ def test_r65_mtf_grade_D_both_deteriorating() -> None:
 def test_r65_mtf_grade_B_inconsistent_win_rate_up() -> None:
     """Grade B when consistency=0.5 and win_rate_trend > 0."""
     from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+
     rows = []
     for i in range(20):
         score = 0.9 - i * 0.05
@@ -18519,6 +19360,7 @@ def test_r65_mtf_grade_B_inconsistent_win_rate_up() -> None:
 def test_r65_mtf_win_rates_in_01() -> None:
     """early_win_rate and late_win_rate are both in [0, 1]."""
     from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+
     result = compute_multi_timeframe_consistency(_make_mtf_rows(20))
     assert result["multi_timeframe_valid"] is True
     assert 0.0 <= result["early_win_rate"] <= 1.0
@@ -18528,6 +19370,7 @@ def test_r65_mtf_win_rates_in_01() -> None:
 def test_r65_mtf_consistency_values_are_valid() -> None:
     """timeframe_consistency is one of 0.0, 0.5, or 1.0."""
     from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+
     result = compute_multi_timeframe_consistency(_make_mtf_rows(20))
     assert result["multi_timeframe_valid"] is True
     assert result["timeframe_consistency"] in (0.0, 0.5, 1.0)
@@ -18536,6 +19379,7 @@ def test_r65_mtf_consistency_values_are_valid() -> None:
 def test_r65_mtf_consistency_grade_values_valid() -> None:
     """consistency_grade is one of A, B, C, D."""
     from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+
     result = compute_multi_timeframe_consistency(_make_mtf_rows(20))
     assert result["multi_timeframe_valid"] is True
     assert result["consistency_grade"] in ("A", "B", "C", "D")
@@ -18544,6 +19388,7 @@ def test_r65_mtf_consistency_grade_values_valid() -> None:
 def test_r65_mtf_score_trend_direction_correct() -> None:
     """score_trend = late_mean_score - early_mean_score, should be positive for increasing scores."""
     from scripts.btst_analysis_utils import compute_multi_timeframe_consistency
+
     rows = [{"runner_composite_score": float(i), "next_day_return": 0.01} for i in range(20)]
     result = compute_multi_timeframe_consistency(rows)
     assert result["multi_timeframe_valid"] is True
@@ -18553,12 +19398,14 @@ def test_r65_mtf_score_trend_direction_correct() -> None:
 def test_r65_mtf_build_surface_summary_includes_mtf_prefix() -> None:
     """build_surface_summary includes mtf_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"composite_score": 0.5, "runner_composite_score": 0.5, "next_close": 10.2, "prev_close": 10.0, "next_day_return": 0.02, "date": f"2024-01-{i+1:02d}", "momentum_score": 0.5, "volume_score": 0.5, "technical_score": 0.5, "sentiment_score": 0.5, "breakout_score": 0.5, "risk_score": 0.5} for i in range(15)]
     result = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "mtf_multi_timeframe_valid" in result
 
 
 # ── T3: compute_cross_window_validity_trend ──────────────────────────────────
+
 
 def _make_validity_summaries(vals: list[float]) -> list[dict]:
     """Build window summaries with validity_ic_stability values."""
@@ -18568,6 +19415,7 @@ def _make_validity_summaries(vals: list[float]) -> list[dict]:
 def test_r65_cvt_too_few_windows_invalid() -> None:
     """compute_cross_window_validity_trend returns invalid with fewer than 3 windows."""
     from scripts.optimize_profile import compute_cross_window_validity_trend
+
     result = compute_cross_window_validity_trend(_make_validity_summaries([0.1, 0.15]))
     assert result["ic_stability_trend_valid"] is False
     assert result["ic_stability_trend_slope"] is None
@@ -18576,6 +19424,7 @@ def test_r65_cvt_too_few_windows_invalid() -> None:
 def test_r65_cvt_empty_windows_invalid() -> None:
     """compute_cross_window_validity_trend returns invalid on empty input."""
     from scripts.optimize_profile import compute_cross_window_validity_trend
+
     result = compute_cross_window_validity_trend([])
     assert result["ic_stability_trend_valid"] is False
 
@@ -18583,6 +19432,7 @@ def test_r65_cvt_empty_windows_invalid() -> None:
 def test_r65_cvt_exact_3_windows_valid() -> None:
     """compute_cross_window_validity_trend is valid with exactly 3 windows."""
     from scripts.optimize_profile import compute_cross_window_validity_trend
+
     result = compute_cross_window_validity_trend(_make_validity_summaries([0.3, 0.2, 0.1]))
     assert result["ic_stability_trend_valid"] is True
 
@@ -18590,6 +19440,7 @@ def test_r65_cvt_exact_3_windows_valid() -> None:
 def test_r65_cvt_negative_slope_grade_A() -> None:
     """Grade A when slope < -0.005 (rapidly improving stability)."""
     from scripts.optimize_profile import compute_cross_window_validity_trend
+
     vals = [0.30, 0.20, 0.10, 0.05, 0.01]
     result = compute_cross_window_validity_trend(_make_validity_summaries(vals))
     assert result["ic_stability_trend_valid"] is True
@@ -18600,6 +19451,7 @@ def test_r65_cvt_negative_slope_grade_A() -> None:
 def test_r65_cvt_slight_negative_slope_grade_B() -> None:
     """Grade B when slope < 0 but > -0.005."""
     from scripts.optimize_profile import compute_cross_window_validity_trend
+
     vals = [0.150, 0.148, 0.146, 0.144, 0.142]
     result = compute_cross_window_validity_trend(_make_validity_summaries(vals))
     assert result["ic_stability_trend_valid"] is True
@@ -18610,6 +19462,7 @@ def test_r65_cvt_slight_negative_slope_grade_B() -> None:
 def test_r65_cvt_mild_positive_slope_grade_C() -> None:
     """Grade C when 0 <= slope < 0.01."""
     from scripts.optimize_profile import compute_cross_window_validity_trend
+
     vals = [0.10, 0.105, 0.11, 0.115, 0.12]
     result = compute_cross_window_validity_trend(_make_validity_summaries(vals))
     assert result["ic_stability_trend_valid"] is True
@@ -18620,6 +19473,7 @@ def test_r65_cvt_mild_positive_slope_grade_C() -> None:
 def test_r65_cvt_steep_positive_slope_grade_D() -> None:
     """Grade D when slope >= 0.01 (rapidly worsening stability)."""
     from scripts.optimize_profile import compute_cross_window_validity_trend
+
     vals = [0.05, 0.15, 0.25, 0.35, 0.45]
     result = compute_cross_window_validity_trend(_make_validity_summaries(vals))
     assert result["ic_stability_trend_valid"] is True
@@ -18630,6 +19484,7 @@ def test_r65_cvt_steep_positive_slope_grade_D() -> None:
 def test_r65_cvt_below_cap_pct_correct() -> None:
     """ic_stability_below_cap_pct counts windows where ic_stability <= 0.2."""
     from scripts.optimize_profile import compute_cross_window_validity_trend
+
     vals = [0.10, 0.15, 0.20, 0.25, 0.30]
     result = compute_cross_window_validity_trend(_make_validity_summaries(vals))
     assert result["ic_stability_trend_valid"] is True
@@ -18639,6 +19494,7 @@ def test_r65_cvt_below_cap_pct_correct() -> None:
 def test_r65_cvt_mean_min_max_correct() -> None:
     """ic_stability_trend_mean/min/max are calculated correctly."""
     from scripts.optimize_profile import compute_cross_window_validity_trend
+
     vals = [0.10, 0.20, 0.30]
     result = compute_cross_window_validity_trend(_make_validity_summaries(vals))
     assert result["ic_stability_trend_valid"] is True
@@ -18650,6 +19506,7 @@ def test_r65_cvt_mean_min_max_correct() -> None:
 def test_r65_cvt_ignores_none_values() -> None:
     """compute_cross_window_validity_trend skips windows with no validity_ic_stability."""
     from scripts.optimize_profile import compute_cross_window_validity_trend
+
     summaries = [{"validity_ic_stability": 0.3}, {"other_key": 0.1}, {"validity_ic_stability": 0.2}, {"validity_ic_stability": 0.1}]
     result = compute_cross_window_validity_trend(summaries)
     assert result["ic_stability_trend_valid"] is True
@@ -18658,27 +19515,32 @@ def test_r65_cvt_ignores_none_values() -> None:
 
 # ── Metric registration tests ────────────────────────────────────────────────
 
+
 def test_r65_total_attribution_in_comparison_metrics() -> None:
     """total_attribution is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "total_attribution" in COMPARISON_METRICS
 
 
 def test_r65_total_attribution_in_optional_metrics() -> None:
     """total_attribution is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "total_attribution" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r65_total_attribution_not_in_lower_is_better() -> None:
     """total_attribution is NOT in LOWER_IS_BETTER (higher = more explanatory power)."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "total_attribution" not in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r65_total_attribution_floor_value() -> None:
     """BTST_QUALITY_FLOORS has total_attribution floor of 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "total_attribution" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["total_attribution"] == 0.0
 
@@ -18686,12 +19548,14 @@ def test_r65_total_attribution_floor_value() -> None:
 def test_r65_total_attribution_in_guardrail_keys() -> None:
     """total_attribution is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "total_attribution" in _GUARDRAIL_KEYS
 
 
 def test_r65_total_attribution_label() -> None:
     """total_attribution has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "total_attribution" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["total_attribution"]) > 0
 
@@ -18699,24 +19563,28 @@ def test_r65_total_attribution_label() -> None:
 def test_r65_timeframe_consistency_in_comparison_metrics() -> None:
     """timeframe_consistency is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "timeframe_consistency" in COMPARISON_METRICS
 
 
 def test_r65_timeframe_consistency_in_optional_metrics() -> None:
     """timeframe_consistency is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "timeframe_consistency" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r65_timeframe_consistency_not_in_lower_is_better() -> None:
     """timeframe_consistency is NOT in LOWER_IS_BETTER (higher = more consistent)."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "timeframe_consistency" not in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r65_timeframe_consistency_floor_value() -> None:
     """BTST_QUALITY_FLOORS has timeframe_consistency floor of 0.5."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "timeframe_consistency" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["timeframe_consistency"] == 0.5
 
@@ -18724,12 +19592,14 @@ def test_r65_timeframe_consistency_floor_value() -> None:
 def test_r65_timeframe_consistency_in_guardrail_keys() -> None:
     """timeframe_consistency is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "timeframe_consistency" in _GUARDRAIL_KEYS
 
 
 def test_r65_timeframe_consistency_label() -> None:
     """timeframe_consistency has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "timeframe_consistency" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["timeframe_consistency"]) > 0
 
@@ -18737,24 +19607,28 @@ def test_r65_timeframe_consistency_label() -> None:
 def test_r65_ic_stability_trend_slope_in_comparison_metrics() -> None:
     """ic_stability_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "ic_stability_trend_slope" in COMPARISON_METRICS
 
 
 def test_r65_ic_stability_trend_slope_in_optional_metrics() -> None:
     """ic_stability_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "ic_stability_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r65_ic_stability_trend_slope_in_lower_is_better() -> None:
     """ic_stability_trend_slope IS in LOWER_IS_BETTER (negative slope = improving stability)."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "ic_stability_trend_slope" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r65_ic_stability_trend_slope_cap_value() -> None:
     """BTST_QUALITY_CAPS has ic_stability_trend_slope cap of 0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "ic_stability_trend_slope" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["ic_stability_trend_slope"] == 0.01
 
@@ -18762,6 +19636,7 @@ def test_r65_ic_stability_trend_slope_cap_value() -> None:
 def test_r65_ic_stability_trend_slope_label() -> None:
     """ic_stability_trend_slope has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "ic_stability_trend_slope" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["ic_stability_trend_slope"]) > 0
 
@@ -18769,6 +19644,7 @@ def test_r65_ic_stability_trend_slope_label() -> None:
 def test_r65_build_surface_summary_includes_attr_prefix() -> None:
     """build_surface_summary includes attr_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"composite_score": 0.5, "runner_composite_score": 0.5, "next_close": 10.2, "prev_close": 10.0, "next_day_return": 0.02, "date": f"2024-01-{i+1:02d}", "momentum_score": 0.5, "volume_score": 0.5, "technical_score": 0.5, "sentiment_score": 0.5, "breakout_score": 0.5, "risk_score": 0.5} for i in range(15)]
     result = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "attr_return_attribution_valid" in result
@@ -18777,6 +19653,7 @@ def test_r65_build_surface_summary_includes_attr_prefix() -> None:
 def test_r65_cap_breach_blockers_triggered_for_high_ic_stability_trend() -> None:
     """build_btst_quality_cap_blockers fires for ic_stability_trend_slope above 0.01."""
     from src.backtesting.evaluation_bundle import build_btst_quality_cap_blockers
+
     metrics = {"ic_stability_trend_slope": 0.05}
     blockers = build_btst_quality_cap_blockers(metrics)
     assert any("ic_stability_trend_slope" in b for b in blockers)
@@ -18785,6 +19662,7 @@ def test_r65_cap_breach_blockers_triggered_for_high_ic_stability_trend() -> None
 def test_r65_floor_breach_blockers_triggered_for_low_timeframe_consistency() -> None:
     """build_btst_quality_floor_blockers fires for timeframe_consistency below 0.5."""
     from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
+
     metrics = {"timeframe_consistency": 0.0}
     blockers = build_btst_quality_floor_blockers(metrics)
     assert any("timeframe_consistency" in b for b in blockers)
@@ -18798,9 +19676,11 @@ def test_r65_floor_breach_blockers_triggered_for_low_timeframe_consistency() -> 
 # T1: compute_volatility_regime_analysis
 # ---------------------------------------------------------------------------
 
+
 def test_r66_vra_empty_input() -> None:
     """compute_volatility_regime_analysis returns invalid result for empty input."""
     from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+
     result = compute_volatility_regime_analysis([])
     assert result["valid"] is False
     assert result["edge"] is None
@@ -18809,6 +19689,7 @@ def test_r66_vra_empty_input() -> None:
 def test_r66_vra_insufficient_rows() -> None:
     """compute_volatility_regime_analysis returns invalid for fewer than 20 rows."""
     from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+
     rows = [{"next_day_return": 0.01 * i} for i in range(10)]
     result = compute_volatility_regime_analysis(rows)
     assert result["valid"] is False
@@ -18817,6 +19698,7 @@ def test_r66_vra_insufficient_rows() -> None:
 def test_r66_vra_normal_case() -> None:
     """compute_volatility_regime_analysis produces valid result for sufficient rows."""
     from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+
     rows = [{"next_day_return": 0.01 * (i % 10 - 5)} for i in range(40)]
     result = compute_volatility_regime_analysis(rows)
     assert result["valid"] is True
@@ -18830,6 +19712,7 @@ def test_r66_vra_normal_case() -> None:
 def test_r66_vra_edge_is_difference() -> None:
     """edge = low_vol_win_rate - high_vol_win_rate (correct arithmetic)."""
     from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+
     rows = [{"next_day_return": 0.01 * (i % 10 - 5)} for i in range(40)]
     result = compute_volatility_regime_analysis(rows)
     assert abs(result["edge"] - (result["low_vol_win_rate"] - result["high_vol_win_rate"])) < 1e-5
@@ -18838,6 +19721,7 @@ def test_r66_vra_edge_is_difference() -> None:
 def test_r66_vra_win_rates_in_range() -> None:
     """Win rates are in [0, 1]."""
     from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+
     rows = [{"next_day_return": 0.005 * (i - 20)} for i in range(50)]
     result = compute_volatility_regime_analysis(rows)
     if result["valid"]:
@@ -18848,6 +19732,7 @@ def test_r66_vra_win_rates_in_range() -> None:
 def test_r66_vra_missing_next_day_return() -> None:
     """Rows with missing next_day_return are excluded gracefully."""
     from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+
     rows = [{"next_day_return": 0.01 * i} for i in range(30)]
     rows.extend([{"other": 1} for _ in range(5)])
     result = compute_volatility_regime_analysis(rows)
@@ -18857,6 +19742,7 @@ def test_r66_vra_missing_next_day_return() -> None:
 def test_r66_vra_count_sum_equals_total_valid() -> None:
     """low_vol_count + high_vol_count equals total rows with next_day_return."""
     from scripts.btst_analysis_utils import compute_volatility_regime_analysis
+
     rows = [{"next_day_return": 0.01 * (i - 15)} for i in range(35)]
     result = compute_volatility_regime_analysis(rows)
     if result["valid"]:
@@ -18866,6 +19752,7 @@ def test_r66_vra_count_sum_equals_total_valid() -> None:
 def test_r66_vra_build_surface_summary_includes_vol_regime_edge() -> None:
     """build_surface_summary includes vol_regime_edge key."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"composite_score": 0.5, "runner_composite_score": 0.5, "next_close": 10.2, "prev_close": 10.0, "next_day_return": 0.01 * (i - 15), "date": f"2024-01-{(i % 28) + 1:02d}", "momentum_score": 0.5, "volume_score": 0.5, "technical_score": 0.5, "sentiment_score": 0.5, "breakout_score": 0.5, "risk_score": 0.5} for i in range(30)]
     result = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "vol_regime_edge" in result
@@ -18874,18 +19761,21 @@ def test_r66_vra_build_surface_summary_includes_vol_regime_edge() -> None:
 def test_r66_vra_in_comparison_metrics() -> None:
     """vol_regime_edge is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "vol_regime_edge" in COMPARISON_METRICS
 
 
 def test_r66_vra_in_optional_comparison_metrics() -> None:
     """vol_regime_edge is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "vol_regime_edge" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r66_vra_label_is_chinese() -> None:
     """vol_regime_edge has a non-empty Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "vol_regime_edge" in COMPARISON_METRIC_LABELS
     label = COMPARISON_METRIC_LABELS["vol_regime_edge"]
     assert len(label) > 0 and label == "低波动环境胜率优势"
@@ -18895,9 +19785,11 @@ def test_r66_vra_label_is_chinese() -> None:
 # T2: compute_nonlinear_factor_interaction
 # ---------------------------------------------------------------------------
 
+
 def test_r66_nfi_empty_input() -> None:
     """compute_nonlinear_factor_interaction returns invalid for empty input."""
     from scripts.btst_analysis_utils import compute_nonlinear_factor_interaction
+
     result = compute_nonlinear_factor_interaction([])
     assert result["valid"] is False
     assert result["mean_interaction_effect"] is None
@@ -18906,6 +19798,7 @@ def test_r66_nfi_empty_input() -> None:
 def test_r66_nfi_insufficient_rows() -> None:
     """compute_nonlinear_factor_interaction returns invalid for fewer than 15 rows."""
     from scripts.btst_analysis_utils import compute_nonlinear_factor_interaction
+
     rows = [{"close_strength": 0.5, "next_day_return": 0.01} for _ in range(10)]
     result = compute_nonlinear_factor_interaction(rows)
     assert result["valid"] is False
@@ -18914,6 +19807,7 @@ def test_r66_nfi_insufficient_rows() -> None:
 def test_r66_nfi_normal_case() -> None:
     """compute_nonlinear_factor_interaction returns valid result when all factors present."""
     from scripts.btst_analysis_utils import compute_nonlinear_factor_interaction
+
     rows = [{"close_strength": 0.1 * i, "volume_expansion_quality": 0.05 * i, "sector_resonance": 0.2 * (i % 5), "rs_sector_rank": float(i % 7), "t0_estimated_net_inflow_ratio": 0.01 * i, "breakout_quality_score": 0.3 * (i % 4), "momentum_slope_20d": 0.02 * (i - 10), "next_day_return": 0.005 * (i - 10)} for i in range(20)]
     result = compute_nonlinear_factor_interaction(rows)
     assert result["valid"] is True
@@ -18925,6 +19819,7 @@ def test_r66_nfi_normal_case() -> None:
 def test_r66_nfi_mean_effect_nonnegative() -> None:
     """mean_interaction_effect is non-negative (it's mean absolute IC)."""
     from scripts.btst_analysis_utils import compute_nonlinear_factor_interaction
+
     rows = [{"close_strength": 0.1 * i, "volume_expansion_quality": 0.05 * i, "sector_resonance": 0.2 * (i % 5), "rs_sector_rank": float(i % 7), "t0_estimated_net_inflow_ratio": 0.01 * i, "breakout_quality_score": 0.3 * (i % 4), "momentum_slope_20d": 0.02 * (i - 10), "next_day_return": 0.005 * (i - 10)} for i in range(20)]
     result = compute_nonlinear_factor_interaction(rows)
     if result["valid"]:
@@ -18934,6 +19829,7 @@ def test_r66_nfi_mean_effect_nonnegative() -> None:
 def test_r66_nfi_interaction_count_positive() -> None:
     """interaction_count is positive when result is valid."""
     from scripts.btst_analysis_utils import compute_nonlinear_factor_interaction
+
     rows = [{"close_strength": 0.1 * i, "volume_expansion_quality": 0.05 * i, "sector_resonance": 0.2 * (i % 5), "rs_sector_rank": float(i % 7), "t0_estimated_net_inflow_ratio": 0.01 * i, "breakout_quality_score": 0.3 * (i % 4), "momentum_slope_20d": 0.02 * (i - 10), "next_day_return": 0.005 * (i - 10)} for i in range(20)]
     result = compute_nonlinear_factor_interaction(rows)
     if result["valid"]:
@@ -18943,6 +19839,7 @@ def test_r66_nfi_interaction_count_positive() -> None:
 def test_r66_nfi_all_factors_missing() -> None:
     """compute_nonlinear_factor_interaction returns invalid when all factor columns are absent."""
     from scripts.btst_analysis_utils import compute_nonlinear_factor_interaction
+
     rows = [{"next_day_return": 0.01 * i} for i in range(20)]
     result = compute_nonlinear_factor_interaction(rows)
     assert result["valid"] is False
@@ -18951,18 +19848,21 @@ def test_r66_nfi_all_factors_missing() -> None:
 def test_r66_nfi_in_comparison_metrics() -> None:
     """interact_mean_interaction_effect is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "interact_mean_interaction_effect" in COMPARISON_METRICS
 
 
 def test_r66_nfi_in_optional_comparison_metrics() -> None:
     """interact_mean_interaction_effect is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "interact_mean_interaction_effect" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r66_nfi_label_is_chinese() -> None:
     """interact_mean_interaction_effect has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "interact_mean_interaction_effect" in COMPARISON_METRIC_LABELS
     label = COMPARISON_METRIC_LABELS["interact_mean_interaction_effect"]
     assert len(label) > 0 and label == "最强非线性交互效应"
@@ -18971,6 +19871,7 @@ def test_r66_nfi_label_is_chinese() -> None:
 def test_r66_nfi_build_surface_summary_includes_interact_prefix() -> None:
     """build_surface_summary includes interact_valid key."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"composite_score": 0.5, "runner_composite_score": 0.5, "next_close": 10.2, "prev_close": 10.0, "next_day_return": 0.005 * (i - 10), "date": f"2024-01-{(i % 28) + 1:02d}", "momentum_score": 0.5, "volume_score": 0.5, "technical_score": 0.5, "sentiment_score": 0.5, "breakout_score": 0.5, "risk_score": 0.5} for i in range(20)]
     result = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "interact_valid" in result
@@ -18980,9 +19881,11 @@ def test_r66_nfi_build_surface_summary_includes_interact_prefix() -> None:
 # T3: compute_cross_window_attribution_trend / attribution_trend_slope
 # ---------------------------------------------------------------------------
 
+
 def test_r66_cat_empty_input() -> None:
     """compute_cross_window_attribution_trend returns invalid for empty input."""
     from scripts.optimize_profile import compute_cross_window_attribution_trend
+
     result = compute_cross_window_attribution_trend([])
     assert result["attribution_trend_valid"] is False
     assert result["attribution_trend_slope"] is None
@@ -18991,6 +19894,7 @@ def test_r66_cat_empty_input() -> None:
 def test_r66_cat_insufficient_windows() -> None:
     """compute_cross_window_attribution_trend returns invalid for fewer than 3 windows."""
     from scripts.optimize_profile import compute_cross_window_attribution_trend
+
     surfaces = [{"attr_total_attribution": 0.5}, {"attr_total_attribution": 0.6}]
     result = compute_cross_window_attribution_trend(surfaces)
     assert result["attribution_trend_valid"] is False
@@ -18999,6 +19903,7 @@ def test_r66_cat_insufficient_windows() -> None:
 def test_r66_cat_positive_slope() -> None:
     """compute_cross_window_attribution_trend detects positive (improving) trend."""
     from scripts.optimize_profile import compute_cross_window_attribution_trend
+
     surfaces = [{"attr_total_attribution": float(i) * 0.1} for i in range(1, 6)]
     result = compute_cross_window_attribution_trend(surfaces)
     assert result["attribution_trend_valid"] is True
@@ -19008,6 +19913,7 @@ def test_r66_cat_positive_slope() -> None:
 def test_r66_cat_negative_slope() -> None:
     """compute_cross_window_attribution_trend detects negative (declining) trend."""
     from scripts.optimize_profile import compute_cross_window_attribution_trend
+
     surfaces = [{"attr_total_attribution": 0.5 - float(i) * 0.05} for i in range(5)]
     result = compute_cross_window_attribution_trend(surfaces)
     assert result["attribution_trend_valid"] is True
@@ -19017,6 +19923,7 @@ def test_r66_cat_negative_slope() -> None:
 def test_r66_cat_grade_a_for_strong_positive() -> None:
     """Grade A when slope > 0.02."""
     from scripts.optimize_profile import compute_cross_window_attribution_trend
+
     surfaces = [{"attr_total_attribution": float(i) * 0.5} for i in range(1, 8)]
     result = compute_cross_window_attribution_trend(surfaces)
     assert result["attribution_trend_grade"] == "A"
@@ -19025,6 +19932,7 @@ def test_r66_cat_grade_a_for_strong_positive() -> None:
 def test_r66_cat_grade_d_for_strong_negative() -> None:
     """Grade D when slope < -0.02."""
     from scripts.optimize_profile import compute_cross_window_attribution_trend
+
     surfaces = [{"attr_total_attribution": 1.0 - float(i) * 0.5} for i in range(8)]
     result = compute_cross_window_attribution_trend(surfaces)
     assert result["attribution_trend_grade"] == "D"
@@ -19033,6 +19941,7 @@ def test_r66_cat_grade_d_for_strong_negative() -> None:
 def test_r66_cat_missing_values_skipped() -> None:
     """Windows without attr_total_attribution are skipped."""
     from scripts.optimize_profile import compute_cross_window_attribution_trend
+
     surfaces = [{"attr_total_attribution": 0.3}, {"other": 1}, {"attr_total_attribution": 0.5}, {"attr_total_attribution": 0.7}]
     result = compute_cross_window_attribution_trend(surfaces)
     assert result["attribution_trend_valid"] is True
@@ -19042,24 +19951,28 @@ def test_r66_cat_missing_values_skipped() -> None:
 def test_r66_cat_in_comparison_metrics() -> None:
     """attribution_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "attribution_trend_slope" in COMPARISON_METRICS
 
 
 def test_r66_cat_in_optional_comparison_metrics() -> None:
     """attribution_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "attribution_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r66_cat_in_lower_is_better() -> None:
     """attribution_trend_slope is in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "attribution_trend_slope" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r66_cat_label_is_chinese() -> None:
     """attribution_trend_slope has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "attribution_trend_slope" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["attribution_trend_slope"] == "因子归因力跨窗趋势"
 
@@ -19067,6 +19980,7 @@ def test_r66_cat_label_is_chinese() -> None:
 def test_r66_attribution_trend_slope_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has attribution_trend_slope floor of -0.02."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "attribution_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["attribution_trend_slope"] == -0.02
 
@@ -19074,12 +19988,14 @@ def test_r66_attribution_trend_slope_floor_in_quality_floors() -> None:
 def test_r66_attribution_trend_slope_in_guardrail_keys() -> None:
     """attribution_trend_slope is in _GUARDRAIL_KEYS."""
     from src.backtesting.evaluation_bundle import _GUARDRAIL_KEYS
+
     assert "attribution_trend_slope" in _GUARDRAIL_KEYS
 
 
 def test_r66_floor_breach_triggers_for_very_negative_attribution_slope() -> None:
     """build_btst_quality_floor_blockers fires for attribution_trend_slope below -0.02."""
     from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
+
     metrics = {"attribution_trend_slope": -0.10}
     blockers = build_btst_quality_floor_blockers(metrics)
     assert any("attribution_trend_slope" in b for b in blockers)
@@ -19088,6 +20004,7 @@ def test_r66_floor_breach_triggers_for_very_negative_attribution_slope() -> None
 def test_r66_no_floor_breach_when_attribution_slope_acceptable() -> None:
     """No floor breach when attribution_trend_slope is above -0.02."""
     from src.backtesting.evaluation_bundle import build_btst_quality_floor_blockers
+
     metrics = {"attribution_trend_slope": 0.01}
     blockers = build_btst_quality_floor_blockers(metrics)
     assert not any("attribution_trend_slope" in b for b in blockers)
@@ -19096,6 +20013,7 @@ def test_r66_no_floor_breach_when_attribution_slope_acceptable() -> None:
 def test_r66_all_three_metrics_in_comparison_metrics() -> None:
     """All three Round 66 metrics appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     for key in ("vol_regime_edge", "interact_mean_interaction_effect", "attribution_trend_slope"):
         assert key in COMPARISON_METRICS
 
@@ -19103,6 +20021,7 @@ def test_r66_all_three_metrics_in_comparison_metrics() -> None:
 def test_r66_all_three_metrics_in_optional() -> None:
     """All three Round 66 metrics are OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for key in ("vol_regime_edge", "interact_mean_interaction_effect", "attribution_trend_slope"):
         assert key in OPTIONAL_COMPARISON_METRICS
 
@@ -19110,6 +20029,7 @@ def test_r66_all_three_metrics_in_optional() -> None:
 def test_r66_all_three_metrics_have_labels() -> None:
     """All three Round 66 metrics have non-empty labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     for key in ("vol_regime_edge", "interact_mean_interaction_effect", "attribution_trend_slope"):
         assert key in COMPARISON_METRIC_LABELS
         assert len(COMPARISON_METRIC_LABELS[key]) > 0
@@ -19121,9 +20041,11 @@ def test_r66_all_three_metrics_have_labels() -> None:
 
 # --- T1: compute_score_dispersion_analysis ---
 
+
 def test_r67_t1_invalid_too_few_rows() -> None:
     """compute_score_dispersion_analysis returns valid=False when fewer than 8 rows."""
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     rows = [{"score": 0.5, "next_day_return": 0.01}] * 7
     result = compute_score_dispersion_analysis(rows)
     assert result["score_dispersion_valid"] is False
@@ -19133,6 +20055,7 @@ def test_r67_t1_invalid_too_few_rows() -> None:
 def test_r67_t1_invalid_not_enough_scored_rows() -> None:
     """compute_score_dispersion_analysis returns valid=False when <8 rows have score."""
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     rows = [{"next_day_return": 0.01}] * 15
     result = compute_score_dispersion_analysis(rows)
     assert result["score_dispersion_valid"] is False
@@ -19141,6 +20064,7 @@ def test_r67_t1_invalid_not_enough_scored_rows() -> None:
 def test_r67_t1_valid_basic() -> None:
     """compute_score_dispersion_analysis returns valid=True with enough rows."""
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     rows = [{"score": float(i), "next_day_return": 0.01 if i > 5 else -0.01} for i in range(1, 17)]
     result = compute_score_dispersion_analysis(rows)
     assert result["score_dispersion_valid"] is True
@@ -19153,6 +20077,7 @@ def test_r67_t1_valid_basic() -> None:
 def test_r67_t1_score_mean_correct() -> None:
     """compute_score_dispersion_analysis: score_mean is arithmetic mean."""
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     scores = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
     rows = [{"score": s, "next_day_return": 0.01} for s in scores]
     result = compute_score_dispersion_analysis(rows)
@@ -19163,6 +20088,7 @@ def test_r67_t1_score_mean_correct() -> None:
 def test_r67_t1_score_range_correct() -> None:
     """compute_score_dispersion_analysis: score_range is max - min."""
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     scores = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
     rows = [{"score": s, "next_day_return": 0.01} for s in scores]
     result = compute_score_dispersion_analysis(rows)
@@ -19172,6 +20098,7 @@ def test_r67_t1_score_range_correct() -> None:
 def test_r67_t1_score_iqr_nonnegative() -> None:
     """compute_score_dispersion_analysis: score_iqr >= 0."""
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     scores = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
     rows = [{"score": s, "next_day_return": 0.01} for s in scores]
     result = compute_score_dispersion_analysis(rows)
@@ -19181,6 +20108,7 @@ def test_r67_t1_score_iqr_nonnegative() -> None:
 def test_r67_t1_score_cv_none_when_mean_zero() -> None:
     """compute_score_dispersion_analysis: score_cv is None when mean is 0."""
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     scores = [-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 0.0]
     rows = [{"score": s, "next_day_return": 0.01} for s in scores]
     result = compute_score_dispersion_analysis(rows)
@@ -19191,6 +20119,7 @@ def test_r67_t1_score_cv_none_when_mean_zero() -> None:
 def test_r67_t1_score_win_rate_spread_high_minus_low() -> None:
     """compute_score_dispersion_analysis: score_win_rate_spread = high group WR - low group WR."""
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     rows = [{"score": float(i), "next_day_return": 0.05 if i >= 8 else -0.05} for i in range(1, 17)]
     result = compute_score_dispersion_analysis(rows)
     assert result["score_dispersion_valid"] is True
@@ -19202,6 +20131,7 @@ def test_r67_t1_grade_a_high_cv_high_spread() -> None:
     """compute_score_dispersion_analysis: grade A when cv > 0.3 and spread > 0.1."""
 
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     rows = [{"score": float(i * 5), "next_day_return": 0.05 if i > 8 else -0.05} for i in range(1, 17)]
     result = compute_score_dispersion_analysis(rows)
     assert result["score_dispersion_valid"] is True
@@ -19212,6 +20142,7 @@ def test_r67_t1_grade_a_high_cv_high_spread() -> None:
 def test_r67_t1_grade_b_low_cv_high_spread() -> None:
     """compute_score_dispersion_analysis: grade B when spread > 0.1 but cv <= 0.3."""
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     rows = [{"score": 1.0 if i <= 8 else 1.1, "next_day_return": 0.05 if i > 8 else -0.05} for i in range(1, 17)]
     result = compute_score_dispersion_analysis(rows)
     assert result["score_dispersion_valid"] is True
@@ -19222,6 +20153,7 @@ def test_r67_t1_grade_b_low_cv_high_spread() -> None:
 def test_r67_t1_grade_c_small_positive_spread() -> None:
     """compute_score_dispersion_analysis: grade C when spread in (0, 0.1]."""
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     rows = [{"score": float(i), "next_day_return": 0.05 if i > 9 else -0.05} for i in range(1, 17)]
     result = compute_score_dispersion_analysis(rows)
     assert result["score_dispersion_valid"] is True
@@ -19233,6 +20165,7 @@ def test_r67_t1_grade_c_small_positive_spread() -> None:
 def test_r67_t1_grade_d_zero_or_negative_spread() -> None:
     """compute_score_dispersion_analysis: grade D when spread <= 0."""
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     rows = [{"score": float(i), "next_day_return": 0.05 if i <= 8 else -0.05} for i in range(1, 17)]
     result = compute_score_dispersion_analysis(rows)
     assert result["score_dispersion_valid"] is True
@@ -19243,6 +20176,7 @@ def test_r67_t1_grade_d_zero_or_negative_spread() -> None:
 def test_r67_t1_runner_composite_score_priority() -> None:
     """compute_score_dispersion_analysis: uses runner_composite_score over composite_score or score."""
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     rows = [{"runner_composite_score": float(i), "composite_score": 0.0, "score": 0.0, "next_day_return": 0.01} for i in range(1, 17)]
     result = compute_score_dispersion_analysis(rows)
     assert result["score_dispersion_valid"] is True
@@ -19252,6 +20186,7 @@ def test_r67_t1_runner_composite_score_priority() -> None:
 def test_r67_t1_composite_score_fallback() -> None:
     """compute_score_dispersion_analysis: falls back to composite_score when runner_composite_score absent."""
     from scripts.btst_analysis_utils import compute_score_dispersion_analysis
+
     rows = [{"composite_score": float(i), "score": 0.0, "next_day_return": 0.01} for i in range(1, 17)]
     result = compute_score_dispersion_analysis(rows)
     assert result["score_dispersion_valid"] is True
@@ -19261,18 +20196,21 @@ def test_r67_t1_composite_score_fallback() -> None:
 def test_r67_t1_in_comparison_metrics() -> None:
     """score_win_rate_spread is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "score_win_rate_spread" in COMPARISON_METRICS
 
 
 def test_r67_t1_in_optional_comparison_metrics() -> None:
     """score_win_rate_spread is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "score_win_rate_spread" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r67_t1_has_label() -> None:
     """score_win_rate_spread has a non-empty label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "score_win_rate_spread" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["score_win_rate_spread"]) > 0
 
@@ -19280,15 +20218,18 @@ def test_r67_t1_has_label() -> None:
 def test_r67_t1_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has score_win_rate_spread floor of 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "score_win_rate_spread" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["score_win_rate_spread"] == 0.0
 
 
 # --- T2: compute_fund_flow_consistency ---
 
+
 def test_r67_t2_invalid_too_few_rows() -> None:
     """compute_fund_flow_consistency returns valid=False when fewer than 10 rows."""
     from scripts.btst_analysis_utils import compute_fund_flow_consistency
+
     rows = [{"t0_estimated_net_inflow_ratio": 0.5, "breakout_quality_score": 0.5, "next_day_return": 0.01}] * 9
     result = compute_fund_flow_consistency(rows)
     assert result["fund_flow_consistency_valid"] is False
@@ -19297,6 +20238,7 @@ def test_r67_t2_invalid_too_few_rows() -> None:
 def test_r67_t2_invalid_not_enough_valid_rows() -> None:
     """compute_fund_flow_consistency returns valid=False when <8 rows have both fields."""
     from scripts.btst_analysis_utils import compute_fund_flow_consistency
+
     rows = [{"next_day_return": 0.01}] * 15
     result = compute_fund_flow_consistency(rows)
     assert result["fund_flow_consistency_valid"] is False
@@ -19305,6 +20247,7 @@ def test_r67_t2_invalid_not_enough_valid_rows() -> None:
 def test_r67_t2_valid_basic() -> None:
     """compute_fund_flow_consistency returns valid=True with enough rows."""
     from scripts.btst_analysis_utils import compute_fund_flow_consistency
+
     rows = [{"t0_estimated_net_inflow_ratio": float(i % 4) / 3.0, "breakout_quality_score": float(i % 3) / 2.0, "next_day_return": 0.01 if i % 2 == 0 else -0.01} for i in range(20)]
     result = compute_fund_flow_consistency(rows)
     assert result["fund_flow_consistency_valid"] is True
@@ -19313,6 +20256,7 @@ def test_r67_t2_valid_basic() -> None:
 def test_r67_t2_four_quadrant_keys_present() -> None:
     """compute_fund_flow_consistency returns all four quadrant win-rate keys."""
     from scripts.btst_analysis_utils import compute_fund_flow_consistency
+
     rows = [{"t0_estimated_net_inflow_ratio": float(i % 4) / 3.0, "breakout_quality_score": float(i % 3) / 2.0, "next_day_return": 0.01} for i in range(20)]
     result = compute_fund_flow_consistency(rows)
     for k in ("high_flow_high_breakout_win_rate", "high_flow_low_breakout_win_rate", "low_flow_high_breakout_win_rate", "low_flow_low_breakout_win_rate"):
@@ -19322,6 +20266,7 @@ def test_r67_t2_four_quadrant_keys_present() -> None:
 def test_r67_t2_flow_breakout_synergy_equals_hfhb() -> None:
     """compute_fund_flow_consistency: flow_breakout_synergy equals high_flow_high_breakout_win_rate."""
     from scripts.btst_analysis_utils import compute_fund_flow_consistency
+
     rows = [{"t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "next_day_return": 0.01 if i > 10 else -0.01} for i in range(1, 21)]
     result = compute_fund_flow_consistency(rows)
     assert result["fund_flow_consistency_valid"] is True
@@ -19331,6 +20276,7 @@ def test_r67_t2_flow_breakout_synergy_equals_hfhb() -> None:
 def test_r67_t2_best_ge_worst_win_rate() -> None:
     """compute_fund_flow_consistency: best_quadrant_win_rate >= worst_quadrant_win_rate."""
     from scripts.btst_analysis_utils import compute_fund_flow_consistency
+
     rows = [{"t0_estimated_net_inflow_ratio": float(i % 4) / 3.0, "breakout_quality_score": float(i % 3) / 2.0, "next_day_return": 0.01 if i % 2 == 0 else -0.01} for i in range(24)]
     result = compute_fund_flow_consistency(rows)
     if result["fund_flow_consistency_valid"] and result["best_quadrant_win_rate"] is not None and result["worst_quadrant_win_rate"] is not None:
@@ -19340,6 +20286,7 @@ def test_r67_t2_best_ge_worst_win_rate() -> None:
 def test_r67_t2_quadrant_spread_nonneg() -> None:
     """compute_fund_flow_consistency: quadrant_spread >= 0 when both best and worst are not None."""
     from scripts.btst_analysis_utils import compute_fund_flow_consistency
+
     rows = [{"t0_estimated_net_inflow_ratio": float(i % 4) / 3.0, "breakout_quality_score": float(i % 3) / 2.0, "next_day_return": 0.01 if i % 2 == 0 else -0.01} for i in range(24)]
     result = compute_fund_flow_consistency(rows)
     if result["fund_flow_consistency_valid"] and result["quadrant_spread"] is not None:
@@ -19349,18 +20296,21 @@ def test_r67_t2_quadrant_spread_nonneg() -> None:
 def test_r67_t2_in_comparison_metrics() -> None:
     """flow_breakout_synergy is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "flow_breakout_synergy" in COMPARISON_METRICS
 
 
 def test_r67_t2_in_optional_comparison_metrics() -> None:
     """flow_breakout_synergy is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "flow_breakout_synergy" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r67_t2_has_label() -> None:
     """flow_breakout_synergy has a non-empty label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "flow_breakout_synergy" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["flow_breakout_synergy"]) > 0
 
@@ -19368,15 +20318,18 @@ def test_r67_t2_has_label() -> None:
 def test_r67_t2_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has flow_breakout_synergy floor of 0.5."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "flow_breakout_synergy" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["flow_breakout_synergy"] == 0.5
 
 
 # --- T3: compute_cross_window_interaction_trend ---
 
+
 def test_r67_t3_invalid_too_few_windows() -> None:
     """compute_cross_window_interaction_trend returns valid=False when <3 valid values."""
     from scripts.optimize_profile import compute_cross_window_interaction_trend
+
     summaries = [{"interact_mean_interaction_effect": 0.05}, {"interact_mean_interaction_effect": 0.06}]
     result = compute_cross_window_interaction_trend(summaries)
     assert result["interaction_trend_valid"] is False
@@ -19386,6 +20339,7 @@ def test_r67_t3_invalid_too_few_windows() -> None:
 def test_r67_t3_valid_basic() -> None:
     """compute_cross_window_interaction_trend returns valid=True with 3+ values."""
     from scripts.optimize_profile import compute_cross_window_interaction_trend
+
     summaries = [{"interact_mean_interaction_effect": 0.05 + i * 0.01} for i in range(5)]
     result = compute_cross_window_interaction_trend(summaries)
     assert result["interaction_trend_valid"] is True
@@ -19396,6 +20350,7 @@ def test_r67_t3_valid_basic() -> None:
 def test_r67_t3_ols_slope_positive_for_increasing_series() -> None:
     """compute_cross_window_interaction_trend: slope > 0 for strictly increasing values."""
     from scripts.optimize_profile import compute_cross_window_interaction_trend
+
     summaries = [{"interact_mean_interaction_effect": 0.01 * (i + 1)} for i in range(6)]
     result = compute_cross_window_interaction_trend(summaries)
     assert result["interaction_trend_valid"] is True
@@ -19405,6 +20360,7 @@ def test_r67_t3_ols_slope_positive_for_increasing_series() -> None:
 def test_r67_t3_ols_slope_negative_for_decreasing_series() -> None:
     """compute_cross_window_interaction_trend: slope < 0 for strictly decreasing values."""
     from scripts.optimize_profile import compute_cross_window_interaction_trend
+
     summaries = [{"interact_mean_interaction_effect": 0.10 - 0.01 * i} for i in range(6)]
     result = compute_cross_window_interaction_trend(summaries)
     assert result["interaction_trend_valid"] is True
@@ -19414,6 +20370,7 @@ def test_r67_t3_ols_slope_negative_for_decreasing_series() -> None:
 def test_r67_t3_grade_a_steep_positive_slope() -> None:
     """compute_cross_window_interaction_trend: grade A when slope > 0.005."""
     from scripts.optimize_profile import compute_cross_window_interaction_trend
+
     summaries = [{"interact_mean_interaction_effect": 0.01 * (i + 1) * 10} for i in range(6)]
     result = compute_cross_window_interaction_trend(summaries)
     assert result["interaction_trend_valid"] is True
@@ -19424,6 +20381,7 @@ def test_r67_t3_grade_a_steep_positive_slope() -> None:
 def test_r67_t3_grade_d_steep_negative_slope() -> None:
     """compute_cross_window_interaction_trend: grade D when slope <= -0.01."""
     from scripts.optimize_profile import compute_cross_window_interaction_trend
+
     summaries = [{"interact_mean_interaction_effect": 0.10 - 0.05 * i} for i in range(6)]
     result = compute_cross_window_interaction_trend(summaries)
     assert result["interaction_trend_valid"] is True
@@ -19434,6 +20392,7 @@ def test_r67_t3_grade_d_steep_negative_slope() -> None:
 def test_r67_t3_interaction_positive_windows_pct_correct() -> None:
     """compute_cross_window_interaction_trend: interaction_positive_windows_pct correct."""
     from scripts.optimize_profile import compute_cross_window_interaction_trend
+
     summaries = [{"interact_mean_interaction_effect": v} for v in [0.05, 0.03, -0.02, 0.01, 0.0]]
     result = compute_cross_window_interaction_trend(summaries)
     assert result["interaction_trend_valid"] is True
@@ -19443,6 +20402,7 @@ def test_r67_t3_interaction_positive_windows_pct_correct() -> None:
 def test_r67_t3_skips_none_values() -> None:
     """compute_cross_window_interaction_trend skips windows with None interact_mean_interaction_effect."""
     from scripts.optimize_profile import compute_cross_window_interaction_trend
+
     summaries = [{"interact_mean_interaction_effect": None}, {"interact_mean_interaction_effect": 0.05}, {"interact_mean_interaction_effect": 0.06}, {"interact_mean_interaction_effect": 0.07}]
     result = compute_cross_window_interaction_trend(summaries)
     assert result["interaction_trend_valid"] is True
@@ -19451,18 +20411,21 @@ def test_r67_t3_skips_none_values() -> None:
 def test_r67_t3_in_comparison_metrics() -> None:
     """interaction_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "interaction_trend_slope" in COMPARISON_METRICS
 
 
 def test_r67_t3_in_optional_comparison_metrics() -> None:
     """interaction_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "interaction_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r67_t3_has_label() -> None:
     """interaction_trend_slope has a non-empty label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "interaction_trend_slope" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["interaction_trend_slope"]) > 0
 
@@ -19470,6 +20433,7 @@ def test_r67_t3_has_label() -> None:
 def test_r67_t3_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has interaction_trend_slope floor of -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "interaction_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["interaction_trend_slope"] == -0.01
 
@@ -19477,6 +20441,7 @@ def test_r67_t3_floor_in_quality_floors() -> None:
 def test_r67_all_three_metrics_in_comparison_metrics() -> None:
     """All three Round 67 metrics appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     for key in ("score_win_rate_spread", "flow_breakout_synergy", "interaction_trend_slope"):
         assert key in COMPARISON_METRICS
 
@@ -19484,6 +20449,7 @@ def test_r67_all_three_metrics_in_comparison_metrics() -> None:
 def test_r67_all_three_metrics_in_optional() -> None:
     """All three Round 67 metrics are OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for key in ("score_win_rate_spread", "flow_breakout_synergy", "interaction_trend_slope"):
         assert key in OPTIONAL_COMPARISON_METRICS
 
@@ -19491,6 +20457,7 @@ def test_r67_all_three_metrics_in_optional() -> None:
 def test_r67_all_three_metrics_have_labels() -> None:
     """All three Round 67 metrics have non-empty labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     for key in ("score_win_rate_spread", "flow_breakout_synergy", "interaction_trend_slope"):
         assert key in COMPARISON_METRIC_LABELS
         assert len(COMPARISON_METRIC_LABELS[key]) > 0
@@ -19506,6 +20473,7 @@ def test_r67_all_three_metrics_have_labels() -> None:
 def test_r68_t1_invalid_too_few_rows() -> None:
     """compute_tail_event_filter_analysis: returns valid=False when fewer than 10 rows."""
     from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+
     rows = [{"next_day_return": 0.01 * i} for i in range(9)]
     result = compute_tail_event_filter_analysis(rows)
     assert result["tail_event_filter_valid"] is False
@@ -19516,6 +20484,7 @@ def test_r68_t1_invalid_too_few_rows() -> None:
 def test_r68_t1_invalid_too_few_valid_returns() -> None:
     """compute_tail_event_filter_analysis: returns valid=False when fewer than 10 non-None next_day_return."""
     from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+
     rows = [{"next_day_return": None}] * 5 + [{"next_day_return": 0.01 * i} for i in range(4)]
     result = compute_tail_event_filter_analysis(rows)
     assert result["tail_event_filter_valid"] is False
@@ -19524,6 +20493,7 @@ def test_r68_t1_invalid_too_few_valid_returns() -> None:
 def test_r68_t1_valid_basic() -> None:
     """compute_tail_event_filter_analysis: returns valid=True with 20 rows."""
     from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+
     rows = [{"next_day_return": -0.10 + 0.01 * i} for i in range(20)]
     result = compute_tail_event_filter_analysis(rows)
     assert result["tail_event_filter_valid"] is True
@@ -19535,6 +20505,7 @@ def test_r68_t1_valid_basic() -> None:
 def test_r68_t1_counts_sum_to_total() -> None:
     """compute_tail_event_filter_analysis: extreme_loss + extreme_gain + normal = total non-None rows."""
     from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+
     rows = [{"next_day_return": -0.10 + 0.01 * i} for i in range(20)]
     result = compute_tail_event_filter_analysis(rows)
     assert result["tail_event_filter_valid"] is True
@@ -19544,6 +20515,7 @@ def test_r68_t1_counts_sum_to_total() -> None:
 def test_r68_t1_p5_p95_partition() -> None:
     """compute_tail_event_filter_analysis: extreme rates + normal rate sum to ≤1."""
     from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+
     rows = [{"next_day_return": float(i) / 100} for i in range(-10, 15)]
     result = compute_tail_event_filter_analysis(rows)
     assert result["tail_event_filter_valid"] is True
@@ -19554,6 +20526,7 @@ def test_r68_t1_p5_p95_partition() -> None:
 def test_r68_t1_tail_filter_effect_positive_when_extremes_negative() -> None:
     """compute_tail_event_filter_analysis: tail_filter_effect > 0 when tail losses drag down full win rate."""
     from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+
     good = [{"next_day_return": 0.02 + 0.001 * i} for i in range(15)]
     bad = [{"next_day_return": -0.15 - 0.01 * i} for i in range(5)]
     rows = good + bad
@@ -19566,6 +20539,7 @@ def test_r68_t1_tail_filter_effect_positive_when_extremes_negative() -> None:
 def test_r68_t1_tail_risk_score_formula() -> None:
     """compute_tail_event_filter_analysis: tail_risk_score = extreme_loss_rate / (extreme_gain_rate + 0.001)."""
     from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+
     rows = [{"next_day_return": float(i) / 100} for i in range(-15, 20)]
     result = compute_tail_event_filter_analysis(rows)
     assert result["tail_event_filter_valid"] is True
@@ -19576,6 +20550,7 @@ def test_r68_t1_tail_risk_score_formula() -> None:
 def test_r68_t1_normal_win_rate_none_when_normal_count_lt_3() -> None:
     """compute_tail_event_filter_analysis: normal_win_rate is None when normal_count < 3."""
     from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+
     extreme_vals = [-0.20, -0.19, -0.18, -0.17, -0.16, -0.15, 0.30, 0.31, 0.32, 0.33, 0.34, 0.35]
     rows = [{"next_day_return": v} for v in extreme_vals]
     result = compute_tail_event_filter_analysis(rows)
@@ -19587,6 +20562,7 @@ def test_r68_t1_normal_win_rate_none_when_normal_count_lt_3() -> None:
 def test_r68_t1_full_win_rate_correct() -> None:
     """compute_tail_event_filter_analysis: full_win_rate matches manual calculation."""
     from scripts.btst_analysis_utils import compute_tail_event_filter_analysis
+
     rets = [0.01, 0.02, 0.03, -0.01, -0.02, 0.04, 0.05, 0.06, -0.03, 0.07, 0.08, 0.09, -0.10, 0.10, 0.11]
     rows = [{"next_day_return": v} for v in rets]
     result = compute_tail_event_filter_analysis(rows)
@@ -19598,18 +20574,21 @@ def test_r68_t1_full_win_rate_correct() -> None:
 def test_r68_t1_in_comparison_metrics() -> None:
     """tail_filter_effect is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "tail_filter_effect" in COMPARISON_METRICS
 
 
 def test_r68_t1_in_optional_comparison_metrics() -> None:
     """tail_filter_effect is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "tail_filter_effect" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r68_t1_has_label() -> None:
     """tail_filter_effect has a non-empty label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "tail_filter_effect" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["tail_filter_effect"]) > 0
 
@@ -19617,6 +20596,7 @@ def test_r68_t1_has_label() -> None:
 def test_r68_t1_tail_filter_effect_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has tail_filter_effect floor of -0.05."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "tail_filter_effect" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["tail_filter_effect"] == -0.05
 
@@ -19624,6 +20604,7 @@ def test_r68_t1_tail_filter_effect_floor_in_quality_floors() -> None:
 def test_r68_t1_tail_risk_score_cap_in_quality_caps() -> None:
     """BTST_QUALITY_CAPS has tail_risk_score cap of 3.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "tail_risk_score" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["tail_risk_score"] == 3.0
 
@@ -19634,6 +20615,7 @@ def test_r68_t1_tail_risk_score_cap_in_quality_caps() -> None:
 def test_r68_t2_invalid_too_few_rows() -> None:
     """compute_position_concentration_risk: returns valid=False when fewer than 5 rows."""
     from scripts.btst_analysis_utils import compute_position_concentration_risk
+
     rows = [{"sector": "A"}] * 4
     result = compute_position_concentration_risk(rows)
     assert result["position_concentration_valid"] is False
@@ -19643,6 +20625,7 @@ def test_r68_t2_invalid_too_few_rows() -> None:
 def test_r68_t2_invalid_no_sector_field() -> None:
     """compute_position_concentration_risk: returns valid=False when no sector field present."""
     from scripts.btst_analysis_utils import compute_position_concentration_risk
+
     rows = [{"name": "stock_" + str(i)} for i in range(10)]
     result = compute_position_concentration_risk(rows)
     assert result["position_concentration_valid"] is False
@@ -19651,6 +20634,7 @@ def test_r68_t2_invalid_no_sector_field() -> None:
 def test_r68_t2_valid_basic() -> None:
     """compute_position_concentration_risk: returns valid=True with sector field."""
     from scripts.btst_analysis_utils import compute_position_concentration_risk
+
     rows = [{"sector": s} for s in ["A", "A", "B", "C", "D", "A", "B", "C", "D", "E"]]
     result = compute_position_concentration_risk(rows)
     assert result["position_concentration_valid"] is True
@@ -19661,6 +20645,7 @@ def test_r68_t2_valid_basic() -> None:
 def test_r68_t2_hhi_uniform_distribution() -> None:
     """compute_position_concentration_risk: HHI = 1/N for perfectly uniform distribution."""
     from scripts.btst_analysis_utils import compute_position_concentration_risk
+
     n = 5
     rows = [{"sector": str(i)} for i in range(n)] * 4
     result = compute_position_concentration_risk(rows)
@@ -19672,6 +20657,7 @@ def test_r68_t2_hhi_uniform_distribution() -> None:
 def test_r68_t2_hhi_monopoly() -> None:
     """compute_position_concentration_risk: HHI = 1.0 when all stocks same sector."""
     from scripts.btst_analysis_utils import compute_position_concentration_risk
+
     rows = [{"sector": "Tech"} for _ in range(10)]
     result = compute_position_concentration_risk(rows)
     assert result["position_concentration_valid"] is True
@@ -19683,6 +20669,7 @@ def test_r68_t2_hhi_monopoly() -> None:
 def test_r68_t2_concentration_grade_a() -> None:
     """compute_position_concentration_risk: grade A when HHI < 0.2 (6 equal sectors)."""
     from scripts.btst_analysis_utils import compute_position_concentration_risk
+
     rows = [{"sector": str(i)} for i in range(6)] * 3
     result = compute_position_concentration_risk(rows)
     assert result["position_concentration_valid"] is True
@@ -19693,6 +20680,7 @@ def test_r68_t2_concentration_grade_a() -> None:
 def test_r68_t2_concentration_grade_d() -> None:
     """compute_position_concentration_risk: grade D when HHI >= 0.5."""
     from scripts.btst_analysis_utils import compute_position_concentration_risk
+
     rows = [{"sector": "Tech"}] * 8 + [{"sector": "Finance"}] * 2
     result = compute_position_concentration_risk(rows)
     assert result["position_concentration_valid"] is True
@@ -19703,6 +20691,7 @@ def test_r68_t2_concentration_grade_d() -> None:
 def test_r68_t2_sector_count_correct() -> None:
     """compute_position_concentration_risk: sector_count matches distinct sectors."""
     from scripts.btst_analysis_utils import compute_position_concentration_risk
+
     rows = [{"sector": s} for s in ["A", "A", "B", "B", "C", "C", "D", "D", "E", "E"]]
     result = compute_position_concentration_risk(rows)
     assert result["position_concentration_valid"] is True
@@ -19712,6 +20701,7 @@ def test_r68_t2_sector_count_correct() -> None:
 def test_r68_t2_sector_name_fallback() -> None:
     """compute_position_concentration_risk: uses sector_name when sector is absent."""
     from scripts.btst_analysis_utils import compute_position_concentration_risk
+
     rows = [{"sector_name": s} for s in ["X", "X", "Y", "Y", "Z", "Z", "W", "W", "V", "V"]]
     result = compute_position_concentration_risk(rows)
     assert result["position_concentration_valid"] is True
@@ -19720,6 +20710,7 @@ def test_r68_t2_sector_name_fallback() -> None:
 def test_r68_t2_industry_fallback() -> None:
     """compute_position_concentration_risk: uses industry when sector/sector_name absent."""
     from scripts.btst_analysis_utils import compute_position_concentration_risk
+
     rows = [{"industry": s} for s in ["A", "A", "B", "B", "C", "C", "D", "D", "E", "E"]]
     result = compute_position_concentration_risk(rows)
     assert result["position_concentration_valid"] is True
@@ -19728,18 +20719,21 @@ def test_r68_t2_industry_fallback() -> None:
 def test_r68_t2_in_comparison_metrics() -> None:
     """sector_hhi is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "sector_hhi" in COMPARISON_METRICS
 
 
 def test_r68_t2_in_optional_comparison_metrics() -> None:
     """sector_hhi is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "sector_hhi" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r68_t2_has_label() -> None:
     """sector_hhi has a non-empty label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "sector_hhi" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["sector_hhi"]) > 0
 
@@ -19747,6 +20741,7 @@ def test_r68_t2_has_label() -> None:
 def test_r68_t2_sector_hhi_cap_in_quality_caps() -> None:
     """BTST_QUALITY_CAPS has sector_hhi cap of 0.5."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "sector_hhi" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["sector_hhi"] == 0.5
 
@@ -19754,6 +20749,7 @@ def test_r68_t2_sector_hhi_cap_in_quality_caps() -> None:
 def test_r68_t2_sector_hhi_in_lower_is_better() -> None:
     """sector_hhi is in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "sector_hhi" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
@@ -19763,6 +20759,7 @@ def test_r68_t2_sector_hhi_in_lower_is_better() -> None:
 def test_r68_t3_invalid_too_few_windows() -> None:
     """compute_cross_window_dispersion_trend: returns valid=False when fewer than 3 valid values."""
     from scripts.optimize_profile import compute_cross_window_dispersion_trend
+
     summaries = [{"dispersion_score_win_rate_spread": 0.1}, {"dispersion_score_win_rate_spread": 0.2}]
     result = compute_cross_window_dispersion_trend(summaries)
     assert result["dispersion_trend_valid"] is False
@@ -19772,6 +20769,7 @@ def test_r68_t3_invalid_too_few_windows() -> None:
 def test_r68_t3_ols_slope_positive_for_increasing_series() -> None:
     """compute_cross_window_dispersion_trend: slope > 0 for strictly increasing values."""
     from scripts.optimize_profile import compute_cross_window_dispersion_trend
+
     summaries = [{"dispersion_score_win_rate_spread": 0.01 * (i + 1)} for i in range(6)]
     result = compute_cross_window_dispersion_trend(summaries)
     assert result["dispersion_trend_valid"] is True
@@ -19781,6 +20779,7 @@ def test_r68_t3_ols_slope_positive_for_increasing_series() -> None:
 def test_r68_t3_ols_slope_negative_for_decreasing_series() -> None:
     """compute_cross_window_dispersion_trend: slope < 0 for strictly decreasing values."""
     from scripts.optimize_profile import compute_cross_window_dispersion_trend
+
     summaries = [{"dispersion_score_win_rate_spread": 0.10 - 0.01 * i} for i in range(6)]
     result = compute_cross_window_dispersion_trend(summaries)
     assert result["dispersion_trend_valid"] is True
@@ -19790,6 +20789,7 @@ def test_r68_t3_ols_slope_negative_for_decreasing_series() -> None:
 def test_r68_t3_grade_a_steep_positive_slope() -> None:
     """compute_cross_window_dispersion_trend: grade A when slope > 0.005."""
     from scripts.optimize_profile import compute_cross_window_dispersion_trend
+
     summaries = [{"dispersion_score_win_rate_spread": 0.1 * (i + 1)} for i in range(6)]
     result = compute_cross_window_dispersion_trend(summaries)
     assert result["dispersion_trend_valid"] is True
@@ -19800,6 +20800,7 @@ def test_r68_t3_grade_a_steep_positive_slope() -> None:
 def test_r68_t3_grade_b_gentle_positive_slope() -> None:
     """compute_cross_window_dispersion_trend: grade B when 0 < slope <= 0.005."""
     from scripts.optimize_profile import compute_cross_window_dispersion_trend
+
     summaries = [{"dispersion_score_win_rate_spread": 0.001 * i} for i in range(6)]
     result = compute_cross_window_dispersion_trend(summaries)
     assert result["dispersion_trend_valid"] is True
@@ -19810,6 +20811,7 @@ def test_r68_t3_grade_b_gentle_positive_slope() -> None:
 def test_r68_t3_grade_d_steep_negative_slope() -> None:
     """compute_cross_window_dispersion_trend: grade D when slope <= -0.01."""
     from scripts.optimize_profile import compute_cross_window_dispersion_trend
+
     summaries = [{"dispersion_score_win_rate_spread": 0.10 - 0.05 * i} for i in range(6)]
     result = compute_cross_window_dispersion_trend(summaries)
     assert result["dispersion_trend_valid"] is True
@@ -19820,6 +20822,7 @@ def test_r68_t3_grade_d_steep_negative_slope() -> None:
 def test_r68_t3_dispersion_positive_windows_pct_correct() -> None:
     """compute_cross_window_dispersion_trend: dispersion_positive_windows_pct is correct."""
     from scripts.optimize_profile import compute_cross_window_dispersion_trend
+
     summaries = [{"dispersion_score_win_rate_spread": v} for v in [0.05, 0.03, -0.02, 0.01, 0.0]]
     result = compute_cross_window_dispersion_trend(summaries)
     assert result["dispersion_trend_valid"] is True
@@ -19829,6 +20832,7 @@ def test_r68_t3_dispersion_positive_windows_pct_correct() -> None:
 def test_r68_t3_skips_none_values() -> None:
     """compute_cross_window_dispersion_trend: skips windows with None dispersion_score_win_rate_spread."""
     from scripts.optimize_profile import compute_cross_window_dispersion_trend
+
     summaries = [{"dispersion_score_win_rate_spread": None}, {"dispersion_score_win_rate_spread": 0.05}, {"dispersion_score_win_rate_spread": 0.06}, {"dispersion_score_win_rate_spread": 0.07}]
     result = compute_cross_window_dispersion_trend(summaries)
     assert result["dispersion_trend_valid"] is True
@@ -19837,18 +20841,21 @@ def test_r68_t3_skips_none_values() -> None:
 def test_r68_t3_in_comparison_metrics() -> None:
     """dispersion_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "dispersion_trend_slope" in COMPARISON_METRICS
 
 
 def test_r68_t3_in_optional_comparison_metrics() -> None:
     """dispersion_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "dispersion_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r68_t3_has_label() -> None:
     """dispersion_trend_slope has a non-empty label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "dispersion_trend_slope" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["dispersion_trend_slope"]) > 0
 
@@ -19856,6 +20863,7 @@ def test_r68_t3_has_label() -> None:
 def test_r68_t3_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has dispersion_trend_slope floor of -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "dispersion_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["dispersion_trend_slope"] == -0.01
 
@@ -19863,6 +20871,7 @@ def test_r68_t3_floor_in_quality_floors() -> None:
 def test_r68_all_three_metrics_in_comparison_metrics() -> None:
     """All three Round 68 primary metrics appear in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     for key in ("tail_filter_effect", "sector_hhi", "dispersion_trend_slope"):
         assert key in COMPARISON_METRICS
 
@@ -19870,6 +20879,7 @@ def test_r68_all_three_metrics_in_comparison_metrics() -> None:
 def test_r68_all_three_metrics_in_optional() -> None:
     """All three Round 68 primary metrics are in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for key in ("tail_filter_effect", "sector_hhi", "dispersion_trend_slope"):
         assert key in OPTIONAL_COMPARISON_METRICS
 
@@ -19877,6 +20887,7 @@ def test_r68_all_three_metrics_in_optional() -> None:
 def test_r68_all_three_metrics_have_labels() -> None:
     """All three Round 68 primary metrics have non-empty labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     for key in ("tail_filter_effect", "sector_hhi", "dispersion_trend_slope"):
         assert key in COMPARISON_METRIC_LABELS
         assert len(COMPARISON_METRIC_LABELS[key]) > 0
@@ -19890,8 +20901,10 @@ def test_r68_all_three_metrics_have_labels() -> None:
 # T1: compute_relative_strength_ranking
 # ---------------------------------------------------------------------------
 
+
 def _make_r69_rs_rows(n: int, *, with_field: bool = True) -> list[dict]:
     import random
+
     rng = random.Random(42)
     rows = []
     for i in range(n):
@@ -19905,6 +20918,7 @@ def _make_r69_rs_rows(n: int, *, with_field: bool = True) -> list[dict]:
 def test_r69_t1_valid_basic() -> None:
     """compute_relative_strength_ranking returns valid=True with ≥8 rows having rs_sector_rank."""
     from scripts.btst_analysis_utils import compute_relative_strength_ranking
+
     rows = _make_r69_rs_rows(24)
     result = compute_relative_strength_ranking(rows)
     assert result["rs_ranking_valid"] is True
@@ -19914,6 +20928,7 @@ def test_r69_t1_valid_basic() -> None:
 def test_r69_t1_invalid_too_few_rows() -> None:
     """Returns valid=False when fewer than 8 rows."""
     from scripts.btst_analysis_utils import compute_relative_strength_ranking
+
     rows = _make_r69_rs_rows(7)
     result = compute_relative_strength_ranking(rows)
     assert result["rs_ranking_valid"] is False
@@ -19923,6 +20938,7 @@ def test_r69_t1_invalid_too_few_rows() -> None:
 def test_r69_t1_invalid_missing_field() -> None:
     """Returns valid=False when rs_sector_rank field is absent."""
     from scripts.btst_analysis_utils import compute_relative_strength_ranking
+
     rows = _make_r69_rs_rows(20, with_field=False)
     result = compute_relative_strength_ranking(rows)
     assert result["rs_ranking_valid"] is False
@@ -19931,6 +20947,7 @@ def test_r69_t1_invalid_missing_field() -> None:
 def test_r69_t1_invalid_all_none_rs() -> None:
     """Returns valid=False when all rs_sector_rank values are None."""
     from scripts.btst_analysis_utils import compute_relative_strength_ranking
+
     rows = [{"rs_sector_rank": None, "next_day_return": 0.01} for _ in range(20)]
     result = compute_relative_strength_ranking(rows)
     assert result["rs_ranking_valid"] is False
@@ -19955,6 +20972,7 @@ def test_r69_t1_tertile_split_correct() -> None:
 def test_r69_t1_rs_rank_spread_precision() -> None:
     """rs_rank_spread is rounded to 6 decimal places."""
     from scripts.btst_analysis_utils import compute_relative_strength_ranking
+
     rows = _make_r69_rs_rows(30)
     result = compute_relative_strength_ranking(rows)
     if result["rs_rank_spread"] is not None:
@@ -19964,6 +20982,7 @@ def test_r69_t1_rs_rank_spread_precision() -> None:
 def test_r69_t1_rs_monotonicity_true() -> None:
     """rs_monotonicity=True when top > mid > bottom win rate."""
     from scripts.btst_analysis_utils import compute_relative_strength_ranking
+
     rows = []
     for i in range(30):
         if i >= 20:
@@ -19981,6 +21000,7 @@ def test_r69_t1_rs_monotonicity_true() -> None:
 def test_r69_t1_rs_monotonicity_false() -> None:
     """rs_monotonicity=False when monotone order is violated."""
     from scripts.btst_analysis_utils import compute_relative_strength_ranking
+
     rows = []
     for i in range(30):
         if i >= 20:
@@ -19998,6 +21018,7 @@ def test_r69_t1_rs_monotonicity_false() -> None:
 def test_r69_t1_grade_A() -> None:
     """rs_rank_grade=A when spread>0.15 and monotonicity=True."""
     from scripts.btst_analysis_utils import compute_relative_strength_ranking
+
     rows = []
     for i in range(30):
         if i >= 20:
@@ -20014,6 +21035,7 @@ def test_r69_t1_grade_A() -> None:
 def test_r69_t1_grade_D() -> None:
     """rs_rank_grade=D when rs_rank_spread<=0."""
     from scripts.btst_analysis_utils import compute_relative_strength_ranking
+
     rows = []
     for i in range(30):
         ret = -0.05 if i >= 20 else 0.05  # top loses, bot wins
@@ -20025,6 +21047,7 @@ def test_r69_t1_grade_D() -> None:
 def test_r69_t1_grade_unknown() -> None:
     """rs_rank_grade='unknown' when rs_rank_spread is None."""
     from scripts.btst_analysis_utils import compute_relative_strength_ranking
+
     rows = _make_r69_rs_rows(5)  # too few
     result = compute_relative_strength_ranking(rows)
     assert result["rs_rank_grade"] == "unknown"
@@ -20033,18 +21056,21 @@ def test_r69_t1_grade_unknown() -> None:
 def test_r69_t1_in_comparison_metrics() -> None:
     """rs_rank_spread is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "rs_rank_spread" in COMPARISON_METRICS
 
 
 def test_r69_t1_in_optional_metrics() -> None:
     """rs_rank_spread is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "rs_rank_spread" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r69_t1_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has rs_rank_spread floor of 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "rs_rank_spread" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["rs_rank_spread"] == 0.0
 
@@ -20053,8 +21079,10 @@ def test_r69_t1_floor_in_quality_floors() -> None:
 # T2: compute_turnover_behavior_filter
 # ---------------------------------------------------------------------------
 
+
 def _make_r69_turnover_rows(n: int, *, with_field: bool = True) -> list[dict]:
     import random
+
     rng = random.Random(99)
     rows = []
     for i in range(n):
@@ -20068,6 +21096,7 @@ def _make_r69_turnover_rows(n: int, *, with_field: bool = True) -> list[dict]:
 def test_r69_t2_valid_basic() -> None:
     """compute_turnover_behavior_filter returns valid=True with ≥8 rows."""
     from scripts.btst_analysis_utils import compute_turnover_behavior_filter
+
     rows = _make_r69_turnover_rows(24)
     result = compute_turnover_behavior_filter(rows)
     assert result["turnover_behavior_valid"] is True
@@ -20078,6 +21107,7 @@ def test_r69_t2_valid_basic() -> None:
 def test_r69_t2_invalid_too_few() -> None:
     """Returns valid=False when fewer than 8 rows."""
     from scripts.btst_analysis_utils import compute_turnover_behavior_filter
+
     rows = _make_r69_turnover_rows(6)
     result = compute_turnover_behavior_filter(rows)
     assert result["turnover_behavior_valid"] is False
@@ -20087,6 +21117,7 @@ def test_r69_t2_invalid_too_few() -> None:
 def test_r69_t2_invalid_missing_field() -> None:
     """Returns valid=False when volume_expansion_quality is absent."""
     from scripts.btst_analysis_utils import compute_turnover_behavior_filter
+
     rows = _make_r69_turnover_rows(20, with_field=False)
     result = compute_turnover_behavior_filter(rows)
     assert result["turnover_behavior_valid"] is False
@@ -20095,6 +21126,7 @@ def test_r69_t2_invalid_missing_field() -> None:
 def test_r69_t2_p10_p90_split() -> None:
     """Extreme high and low pct are ~10% each for uniform data."""
     from scripts.btst_analysis_utils import compute_turnover_behavior_filter
+
     rows = _make_r69_turnover_rows(100)
     result = compute_turnover_behavior_filter(rows)
     assert result["turnover_behavior_valid"] is True
@@ -20106,6 +21138,7 @@ def test_r69_t2_p10_p90_split() -> None:
 def test_r69_t2_turnover_filter_effect_sign() -> None:
     """turnover_filter_effect = normal_turnover_win_rate - full_win_rate."""
     from scripts.btst_analysis_utils import compute_turnover_behavior_filter
+
     rows = _make_r69_turnover_rows(50)
     result = compute_turnover_behavior_filter(rows)
     if result["turnover_behavior_valid"] and result["turnover_filter_effect"] is not None:
@@ -20115,18 +21148,21 @@ def test_r69_t2_turnover_filter_effect_sign() -> None:
 def test_r69_t2_in_comparison_metrics() -> None:
     """turnover_filter_effect is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "turnover_filter_effect" in COMPARISON_METRICS
 
 
 def test_r69_t2_in_optional_metrics() -> None:
     """turnover_filter_effect is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "turnover_filter_effect" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r69_t2_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has turnover_filter_effect floor of -0.05."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "turnover_filter_effect" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["turnover_filter_effect"] == pytest.approx(-0.05)
 
@@ -20134,6 +21170,7 @@ def test_r69_t2_floor_in_quality_floors() -> None:
 def test_r69_t2_extreme_pcts_sum_leq_1() -> None:
     """extreme_high_pct + extreme_low_pct <= 1.0."""
     from scripts.btst_analysis_utils import compute_turnover_behavior_filter
+
     rows = _make_r69_turnover_rows(40)
     result = compute_turnover_behavior_filter(rows)
     if result["turnover_behavior_valid"]:
@@ -20144,9 +21181,11 @@ def test_r69_t2_extreme_pcts_sum_leq_1() -> None:
 # T3: compute_cross_window_concentration_trend
 # ---------------------------------------------------------------------------
 
+
 def test_r69_t3_valid_basic() -> None:
     """compute_cross_window_concentration_trend returns valid=True with ≥3 valid windows."""
     from scripts.optimize_profile import compute_cross_window_concentration_trend
+
     summaries = [{"conc_sector_hhi": 0.4 - i * 0.01} for i in range(5)]
     result = compute_cross_window_concentration_trend(summaries)
     assert result["concentration_trend_valid"] is True
@@ -20156,6 +21195,7 @@ def test_r69_t3_valid_basic() -> None:
 def test_r69_t3_invalid_too_few_windows() -> None:
     """Returns valid=False with fewer than 3 valid windows."""
     from scripts.optimize_profile import compute_cross_window_concentration_trend
+
     summaries = [{"conc_sector_hhi": 0.4} for _ in range(2)]
     result = compute_cross_window_concentration_trend(summaries)
     assert result["concentration_trend_valid"] is False
@@ -20165,6 +21205,7 @@ def test_r69_t3_invalid_too_few_windows() -> None:
 def test_r69_t3_invalid_missing_field() -> None:
     """Returns valid=False when conc_sector_hhi is absent."""
     from scripts.optimize_profile import compute_cross_window_concentration_trend
+
     summaries = [{"other_field": 0.5} for _ in range(5)]
     result = compute_cross_window_concentration_trend(summaries)
     assert result["concentration_trend_valid"] is False
@@ -20173,6 +21214,7 @@ def test_r69_t3_invalid_missing_field() -> None:
 def test_r69_t3_ols_slope_decreasing() -> None:
     """OLS slope is negative when HHI is decreasing across windows."""
     from scripts.optimize_profile import compute_cross_window_concentration_trend
+
     summaries = [{"conc_sector_hhi": 0.5 - i * 0.05} for i in range(5)]  # decreasing
     result = compute_cross_window_concentration_trend(summaries)
     assert result["concentration_trend_valid"] is True
@@ -20182,6 +21224,7 @@ def test_r69_t3_ols_slope_decreasing() -> None:
 def test_r69_t3_ols_slope_increasing() -> None:
     """OLS slope is positive when HHI is increasing across windows."""
     from scripts.optimize_profile import compute_cross_window_concentration_trend
+
     summaries = [{"conc_sector_hhi": 0.2 + i * 0.05} for i in range(5)]  # increasing
     result = compute_cross_window_concentration_trend(summaries)
     assert result["concentration_trend_valid"] is True
@@ -20191,6 +21234,7 @@ def test_r69_t3_ols_slope_increasing() -> None:
 def test_r69_t3_grade_A() -> None:
     """concentration_trend_grade=A when slope < -0.01."""
     from scripts.optimize_profile import compute_cross_window_concentration_trend
+
     summaries = [{"conc_sector_hhi": 0.6 - i * 0.05} for i in range(6)]  # steep decrease
     result = compute_cross_window_concentration_trend(summaries)
     assert result["concentration_trend_grade"] == "A"
@@ -20199,6 +21243,7 @@ def test_r69_t3_grade_A() -> None:
 def test_r69_t3_grade_D() -> None:
     """concentration_trend_grade=D when slope >= 0.01."""
     from scripts.optimize_profile import compute_cross_window_concentration_trend
+
     summaries = [{"conc_sector_hhi": 0.2 + i * 0.05} for i in range(6)]  # steep increase
     result = compute_cross_window_concentration_trend(summaries)
     assert result["concentration_trend_grade"] == "D"
@@ -20207,6 +21252,7 @@ def test_r69_t3_grade_D() -> None:
 def test_r69_t3_dispersed_windows_pct() -> None:
     """concentration_dispersed_windows_pct counts windows with sector_hhi < 0.35."""
     from scripts.optimize_profile import compute_cross_window_concentration_trend
+
     summaries = [{"conc_sector_hhi": 0.2}, {"conc_sector_hhi": 0.3}, {"conc_sector_hhi": 0.4}, {"conc_sector_hhi": 0.5}]
     result = compute_cross_window_concentration_trend(summaries)
     assert result["concentration_trend_valid"] is True
@@ -20217,12 +21263,14 @@ def test_r69_t3_dispersed_windows_pct() -> None:
 def test_r69_t3_lower_is_better_in_set() -> None:
     """concentration_hhi_slope is in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "concentration_hhi_slope" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r69_t3_cap_in_quality_caps() -> None:
     """BTST_QUALITY_CAPS has concentration_hhi_slope cap of 0.02."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "concentration_hhi_slope" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["concentration_hhi_slope"] == pytest.approx(0.02)
 
@@ -20230,18 +21278,21 @@ def test_r69_t3_cap_in_quality_caps() -> None:
 def test_r69_t3_in_comparison_metrics() -> None:
     """concentration_hhi_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "concentration_hhi_slope" in COMPARISON_METRICS
 
 
 def test_r69_t3_in_optional_metrics() -> None:
     """concentration_hhi_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "concentration_hhi_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r69_all_six_new_metrics_have_labels() -> None:
     """All 6 new Round 69 metrics have non-empty labels in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     for key in ("rs_rank_spread", "turnover_filter_effect", "concentration_hhi_slope"):
         assert key in COMPARISON_METRIC_LABELS
         assert len(COMPARISON_METRIC_LABELS[key]) > 0
@@ -20251,8 +21302,10 @@ def test_r69_all_six_new_metrics_have_labels() -> None:
 # Round 70 tests
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _make_r70_cs_rows(n: int, *, with_field: bool = True, cs_range: tuple = (0.0, 1.0)) -> list[dict]:
     import random
+
     rng = random.Random(7)
     rows = []
     lo, hi = cs_range
@@ -20270,9 +21323,11 @@ def _make_r70_streak_rows(outcomes: list[bool]) -> list[dict]:
 
 # ── T1: compute_price_position_analysis ──────────────────────────────────────
 
+
 def test_r70_t1_valid_basic() -> None:
     """Returns valid=True with ≥8 rows having close_strength."""
     from scripts.btst_analysis_utils import compute_price_position_analysis
+
     rows = _make_r70_cs_rows(24)
     result = compute_price_position_analysis(rows)
     assert result["price_position_valid"] is True
@@ -20282,6 +21337,7 @@ def test_r70_t1_valid_basic() -> None:
 def test_r70_t1_invalid_too_few_rows() -> None:
     """Returns valid=False when fewer than 8 rows."""
     from scripts.btst_analysis_utils import compute_price_position_analysis
+
     rows = _make_r70_cs_rows(7)
     result = compute_price_position_analysis(rows)
     assert result["price_position_valid"] is False
@@ -20291,6 +21347,7 @@ def test_r70_t1_invalid_too_few_rows() -> None:
 def test_r70_t1_invalid_missing_close_strength() -> None:
     """Returns valid=False when close_strength field is absent."""
     from scripts.btst_analysis_utils import compute_price_position_analysis
+
     rows = _make_r70_cs_rows(20, with_field=False)
     result = compute_price_position_analysis(rows)
     assert result["price_position_valid"] is False
@@ -20299,6 +21356,7 @@ def test_r70_t1_invalid_missing_close_strength() -> None:
 def test_r70_t1_invalid_all_none_cs() -> None:
     """Returns valid=False when all close_strength values are None."""
     from scripts.btst_analysis_utils import compute_price_position_analysis
+
     rows = [{"close_strength": None, "next_day_return": 0.01} for _ in range(20)]
     result = compute_price_position_analysis(rows)
     assert result["price_position_valid"] is False
@@ -20307,6 +21365,7 @@ def test_r70_t1_invalid_all_none_cs() -> None:
 def test_r70_t1_sorted_thirds_split() -> None:
     """High third wins all, low third loses all → spread = 1.0."""
     from scripts.btst_analysis_utils import compute_price_position_analysis
+
     rows = []
     for i in range(12):
         ret = 0.05 if i >= 8 else -0.05  # top third (indices 8-11) wins
@@ -20321,6 +21380,7 @@ def test_r70_t1_sorted_thirds_split() -> None:
 def test_r70_t1_cs_win_rate_spread_precision() -> None:
     """cs_win_rate_spread is rounded to 6 decimal places."""
     from scripts.btst_analysis_utils import compute_price_position_analysis
+
     rows = _make_r70_cs_rows(30)
     result = compute_price_position_analysis(rows)
     if result["cs_win_rate_spread"] is not None:
@@ -20330,6 +21390,7 @@ def test_r70_t1_cs_win_rate_spread_precision() -> None:
 def test_r70_t1_cs_premium_positive_when_high_wins() -> None:
     """cs_premium > 0 when high close_strength group has higher average return."""
     from scripts.btst_analysis_utils import compute_price_position_analysis
+
     rows = []
     for i in range(12):
         ret = 0.10 if i >= 8 else -0.05
@@ -20342,6 +21403,7 @@ def test_r70_t1_cs_premium_positive_when_high_wins() -> None:
 def test_r70_t1_grade_A() -> None:
     """price_position_grade=A when spread > 0.12 and premium > 0."""
     from scripts.btst_analysis_utils import compute_price_position_analysis
+
     rows = []
     for i in range(30):
         cs = float(i)
@@ -20370,6 +21432,7 @@ def test_r70_t1_grade_D() -> None:
 def test_r70_t1_grade_unknown_when_no_spread() -> None:
     """price_position_grade='unknown' when cs_win_rate_spread is None."""
     from scripts.btst_analysis_utils import compute_price_position_analysis
+
     rows = _make_r70_cs_rows(7)  # too few → invalid → grade unknown
     result = compute_price_position_analysis(rows)
     assert result["price_position_grade"] == "unknown"
@@ -20378,6 +21441,7 @@ def test_r70_t1_grade_unknown_when_no_spread() -> None:
 def test_r70_t1_cs_mean_std_median_present() -> None:
     """Result includes cs_mean, cs_std, cs_median with valid values."""
     from scripts.btst_analysis_utils import compute_price_position_analysis
+
     rows = [{"close_strength": float(i), "next_day_return": 0.01} for i in range(10)]
     result = compute_price_position_analysis(rows)
     assert result["price_position_valid"] is True
@@ -20389,18 +21453,21 @@ def test_r70_t1_cs_mean_std_median_present() -> None:
 def test_r70_t1_in_comparison_metrics() -> None:
     """cs_win_rate_spread is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "cs_win_rate_spread" in COMPARISON_METRICS
 
 
 def test_r70_t1_in_optional_metrics() -> None:
     """cs_win_rate_spread is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "cs_win_rate_spread" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r70_t1_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has cs_win_rate_spread floor of 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "cs_win_rate_spread" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["cs_win_rate_spread"] == pytest.approx(0.0)
 
@@ -20408,15 +21475,18 @@ def test_r70_t1_floor_in_quality_floors() -> None:
 def test_r70_t1_label_in_comparison_labels() -> None:
     """cs_win_rate_spread has a non-empty label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "cs_win_rate_spread" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["cs_win_rate_spread"]) > 0
 
 
 # ── T2: compute_win_loss_streak_analysis ─────────────────────────────────────
 
+
 def test_r70_t2_valid_basic() -> None:
     """Returns valid=True with ≥10 rows having next_day_return."""
     from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+
     rows = _make_r70_streak_rows([True, False] * 10)
     result = compute_win_loss_streak_analysis(rows)
     assert result["streak_analysis_valid"] is True
@@ -20426,6 +21496,7 @@ def test_r70_t2_valid_basic() -> None:
 def test_r70_t2_invalid_too_few_rows() -> None:
     """Returns valid=False when fewer than 10 rows."""
     from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+
     rows = _make_r70_streak_rows([True, False] * 4)
     result = compute_win_loss_streak_analysis(rows)
     assert result["streak_analysis_valid"] is False
@@ -20447,6 +21518,7 @@ def test_r70_t2_max_win_streak_correct() -> None:
 def test_r70_t2_max_loss_streak_correct() -> None:
     """max_loss_streak correctly identifies the longest loss run."""
     from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+
     outcomes = [True, True, False, False, False, False, True, True, True, True, True]
     rows = _make_r70_streak_rows(outcomes)
     result = compute_win_loss_streak_analysis(rows)
@@ -20456,6 +21528,7 @@ def test_r70_t2_max_loss_streak_correct() -> None:
 def test_r70_t2_streak_ratio_formula() -> None:
     """streak_ratio = max_win_streak / (max_loss_streak + 1)."""
     from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+
     outcomes = [True] * 6 + [False] * 3 + [True] * 2 + [False]
     rows = _make_r70_streak_rows(outcomes)
     result = compute_win_loss_streak_analysis(rows)
@@ -20467,7 +21540,8 @@ def test_r70_t2_streak_ratio_formula() -> None:
 def test_r70_t2_win_after_loss_rate_mean_reversion() -> None:
     """win_after_loss_rate > 0.5 for alternating sequence (mean-reverting)."""
     from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
-    outcomes = ([True, False] * 10)  # perfectly alternating
+
+    outcomes = [True, False] * 10  # perfectly alternating
     rows = _make_r70_streak_rows(outcomes)
     result = compute_win_loss_streak_analysis(rows)
     assert result["win_after_loss_rate"] is not None
@@ -20477,6 +21551,7 @@ def test_r70_t2_win_after_loss_rate_mean_reversion() -> None:
 def test_r70_t2_loss_after_win_rate_momentum() -> None:
     """loss_after_win_rate is low for long win streaks (momentum)."""
     from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+
     outcomes = [True] * 8 + [False] * 2 + [True] * 5 + [False] * 2 + [True] * 3
     rows = _make_r70_streak_rows(outcomes)
     result = compute_win_loss_streak_analysis(rows)
@@ -20499,6 +21574,7 @@ def test_r70_t2_signal_momentum() -> None:
 def test_r70_t2_signal_mean_reversion() -> None:
     """streak_momentum_signal='mean_reversion' for alternating patterns."""
     from scripts.btst_analysis_utils import compute_win_loss_streak_analysis
+
     outcomes = [True, False] * 15  # 30 alternating
     rows = _make_r70_streak_rows(outcomes)
     result = compute_win_loss_streak_analysis(rows)
@@ -20521,23 +21597,27 @@ def test_r70_t2_avg_win_streak_correct() -> None:
 def test_r70_t2_in_comparison_metrics() -> None:
     """streak_ratio is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "streak_ratio" in COMPARISON_METRICS
 
 
 def test_r70_t2_in_optional_metrics() -> None:
     """streak_ratio is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "streak_ratio" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r70_t2_label_in_comparison_labels() -> None:
     """streak_ratio has a non-empty label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "streak_ratio" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["streak_ratio"]) > 0
 
 
 # ── T3: compute_cross_window_rs_rank_trend ────────────────────────────────────
+
 
 def _make_r70_rs_rank_summaries(values: list[float]) -> list[dict]:
     return [{"rs_rank_rs_rank_spread": v} for v in values]
@@ -20546,6 +21626,7 @@ def _make_r70_rs_rank_summaries(values: list[float]) -> list[dict]:
 def test_r70_t3_valid_increasing_trend() -> None:
     """Returns valid=True and positive slope for monotonically increasing rs_rank_spread."""
     from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+
     summaries = _make_r70_rs_rank_summaries([0.05, 0.10, 0.15, 0.20, 0.25])
     result = compute_cross_window_rs_rank_trend(summaries)
     assert result["rs_rank_trend_valid"] is True
@@ -20555,6 +21636,7 @@ def test_r70_t3_valid_increasing_trend() -> None:
 def test_r70_t3_valid_decreasing_trend() -> None:
     """Returns negative slope for monotonically decreasing rs_rank_spread."""
     from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+
     summaries = _make_r70_rs_rank_summaries([0.25, 0.20, 0.15, 0.10, 0.05])
     result = compute_cross_window_rs_rank_trend(summaries)
     assert result["rs_rank_trend_valid"] is True
@@ -20564,6 +21646,7 @@ def test_r70_t3_valid_decreasing_trend() -> None:
 def test_r70_t3_invalid_too_few_windows() -> None:
     """Returns valid=False when fewer than 3 valid windows."""
     from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+
     summaries = _make_r70_rs_rank_summaries([0.10, 0.15])
     result = compute_cross_window_rs_rank_trend(summaries)
     assert result["rs_rank_trend_valid"] is False
@@ -20573,6 +21656,7 @@ def test_r70_t3_invalid_too_few_windows() -> None:
 def test_r70_t3_invalid_missing_field() -> None:
     """Returns valid=False when rs_rank_rs_rank_spread key is absent."""
     from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+
     summaries = [{"other_key": 0.1} for _ in range(5)]
     result = compute_cross_window_rs_rank_trend(summaries)
     assert result["rs_rank_trend_valid"] is False
@@ -20581,6 +21665,7 @@ def test_r70_t3_invalid_missing_field() -> None:
 def test_r70_t3_grade_A() -> None:
     """rs_rank_trend_grade=A when slope > 0.005."""
     from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+
     summaries = _make_r70_rs_rank_summaries([0.00, 0.01, 0.02, 0.03, 0.04])  # slope = 0.01
     result = compute_cross_window_rs_rank_trend(summaries)
     assert result["rs_rank_trend_grade"] == "A"
@@ -20589,6 +21674,7 @@ def test_r70_t3_grade_A() -> None:
 def test_r70_t3_grade_B() -> None:
     """rs_rank_trend_grade=B when 0 < slope ≤ 0.005."""
     from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+
     summaries = _make_r70_rs_rank_summaries([0.100, 0.101, 0.102, 0.103, 0.104])  # slope ~0.001
     result = compute_cross_window_rs_rank_trend(summaries)
     assert result["rs_rank_trend_grade"] == "B"
@@ -20597,6 +21683,7 @@ def test_r70_t3_grade_B() -> None:
 def test_r70_t3_grade_C() -> None:
     """rs_rank_trend_grade=C when -0.01 < slope ≤ 0."""
     from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+
     summaries = _make_r70_rs_rank_summaries([0.100, 0.099, 0.098, 0.097, 0.096])  # slope ~ -0.001
     result = compute_cross_window_rs_rank_trend(summaries)
     assert result["rs_rank_trend_grade"] == "C"
@@ -20605,6 +21692,7 @@ def test_r70_t3_grade_C() -> None:
 def test_r70_t3_grade_D() -> None:
     """rs_rank_trend_grade=D when slope ≤ -0.01."""
     from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+
     summaries = _make_r70_rs_rank_summaries([0.20, 0.15, 0.10, 0.05, 0.00])  # slope = -0.05
     result = compute_cross_window_rs_rank_trend(summaries)
     assert result["rs_rank_trend_grade"] == "D"
@@ -20613,6 +21701,7 @@ def test_r70_t3_grade_D() -> None:
 def test_r70_t3_rs_rank_positive_windows_pct() -> None:
     """rs_rank_positive_windows_pct = fraction of windows with rs_rank_spread > 0."""
     from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+
     summaries = _make_r70_rs_rank_summaries([0.10, 0.05, -0.02, 0.08, -0.01])
     result = compute_cross_window_rs_rank_trend(summaries)
     assert result["rs_rank_trend_valid"] is True
@@ -20622,6 +21711,7 @@ def test_r70_t3_rs_rank_positive_windows_pct() -> None:
 def test_r70_t3_slope_ols_manual() -> None:
     """OLS slope matches manual formula for a simple linear sequence."""
     from scripts.optimize_profile import compute_cross_window_rs_rank_trend
+
     vals = [1.0, 2.0, 3.0, 4.0, 5.0]
     summaries = _make_r70_rs_rank_summaries(vals)
     result = compute_cross_window_rs_rank_trend(summaries)
@@ -20632,18 +21722,21 @@ def test_r70_t3_slope_ols_manual() -> None:
 def test_r70_t3_in_comparison_metrics() -> None:
     """rs_rank_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "rs_rank_trend_slope" in COMPARISON_METRICS
 
 
 def test_r70_t3_in_optional_metrics() -> None:
     """rs_rank_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "rs_rank_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r70_t3_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has rs_rank_trend_slope floor of -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "rs_rank_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["rs_rank_trend_slope"] == pytest.approx(-0.01)
 
@@ -20651,6 +21744,7 @@ def test_r70_t3_floor_in_quality_floors() -> None:
 def test_r70_t3_label_in_comparison_labels() -> None:
     """rs_rank_trend_slope has a non-empty label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "rs_rank_trend_slope" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["rs_rank_trend_slope"]) > 0
 
@@ -20658,15 +21752,16 @@ def test_r70_t3_label_in_comparison_labels() -> None:
 def test_r70_all_three_new_metrics_have_labels() -> None:
     """All 3 new Round 70 metrics have non-empty labels in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     for key in ("cs_win_rate_spread", "streak_ratio", "rs_rank_trend_slope"):
         assert key in COMPARISON_METRIC_LABELS
         assert len(COMPARISON_METRIC_LABELS[key]) > 0
 
 
-
 # ---------------------------------------------------------------------------
 # Round 71 Tests
 # ---------------------------------------------------------------------------
+
 
 def _make_r71_momentum_rows(n: int = 12, win_top: float = 0.8, win_bot: float = 0.4) -> list[dict]:
     """Build rows with momentum_slope_20d spread for T1 tests."""
@@ -20701,9 +21796,11 @@ def _make_r71_price_pos_summaries(vals: list[float]) -> list[dict]:
 
 # -------- T1: compute_sector_momentum_ranking --------
 
+
 def test_r71_t1_valid_basic() -> None:
     """compute_sector_momentum_ranking returns valid=True with enough rows."""
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+
     rows = _make_r71_momentum_rows(12)
     result = compute_sector_momentum_ranking(rows)
     assert result["sector_momentum_ranking_valid"] is True
@@ -20712,6 +21809,7 @@ def test_r71_t1_valid_basic() -> None:
 def test_r71_t1_invalid_too_few_rows() -> None:
     """Returns valid=False when < 8 total rows."""
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+
     rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.01} for i in range(7)]
     result = compute_sector_momentum_ranking(rows)
     assert result["sector_momentum_ranking_valid"] is False
@@ -20721,6 +21819,7 @@ def test_r71_t1_invalid_too_few_rows() -> None:
 def test_r71_t1_invalid_field_missing() -> None:
     """Returns valid=False when momentum_slope_20d field is absent."""
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+
     rows = [{"next_day_return": 0.01} for _ in range(12)]
     result = compute_sector_momentum_ranking(rows)
     assert result["sector_momentum_ranking_valid"] is False
@@ -20729,6 +21828,7 @@ def test_r71_t1_invalid_field_missing() -> None:
 def test_r71_t1_invalid_all_none_slope() -> None:
     """Returns valid=False when all momentum_slope_20d are None."""
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+
     rows = [{"momentum_slope_20d": None, "next_day_return": 0.01} for _ in range(12)]
     result = compute_sector_momentum_ranking(rows)
     assert result["sector_momentum_ranking_valid"] is False
@@ -20737,6 +21837,7 @@ def test_r71_t1_invalid_all_none_slope() -> None:
 def test_r71_t1_invalid_fewer_than_8_valid() -> None:
     """Returns valid=False when fewer than 8 rows have non-None momentum_slope_20d."""
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+
     rows = [{"momentum_slope_20d": float(i) if i < 7 else None, "next_day_return": 0.01} for i in range(12)]
     result = compute_sector_momentum_ranking(rows)
     assert result["sector_momentum_ranking_valid"] is False
@@ -20745,6 +21846,7 @@ def test_r71_t1_invalid_fewer_than_8_valid() -> None:
 def test_r71_t1_three_equal_tertiles() -> None:
     """Tertile sizes are n//3, n//3, n - 2*(n//3) for n=12."""
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+
     rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.01} for i in range(12)]
     result = compute_sector_momentum_ranking(rows)
     assert result["sector_momentum_ranking_valid"] is True
@@ -20759,6 +21861,7 @@ def test_r71_t1_win_spread_precision() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+
     rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.01 if i >= 8 else -0.01} for i in range(12)]
     result = compute_sector_momentum_ranking(rows)
     assert result["sector_momentum_ranking_valid"] is True
@@ -20784,6 +21887,7 @@ def test_r71_t1_grade_A() -> None:
 def test_r71_t1_grade_B() -> None:
     """momentum_rank_grade = B when win_spread in (0.06, 0.12]."""
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+
     rows = []
     for i in range(12):
         # top: 7/8 win = 0.875, bot: 3/4 win = 0.75, spread ~0.08
@@ -20849,6 +21953,7 @@ def test_r71_t1_mean_return_spread_computed() -> None:
     """momentum_mean_return_spread = top group mean return - bot group mean return."""
 
     from scripts.btst_analysis_utils import compute_sector_momentum_ranking
+
     rows = [{"momentum_slope_20d": float(i), "next_day_return": 0.05 * (i - 6) / 12} for i in range(12)]
     result = compute_sector_momentum_ranking(rows)
     assert result["sector_momentum_ranking_valid"] is True
@@ -20858,18 +21963,21 @@ def test_r71_t1_mean_return_spread_computed() -> None:
 def test_r71_t1_in_comparison_metrics() -> None:
     """momentum_win_spread is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "momentum_win_spread" in COMPARISON_METRICS
 
 
 def test_r71_t1_in_optional_metrics() -> None:
     """momentum_win_spread is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "momentum_win_spread" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r71_t1_label_exists() -> None:
     """momentum_win_spread has a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "momentum_win_spread" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["momentum_win_spread"]) > 0
 
@@ -20877,14 +21985,17 @@ def test_r71_t1_label_exists() -> None:
 def test_r71_t1_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has momentum_win_spread = 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "momentum_win_spread" in BTST_QUALITY_FLOORS
     import pytest
+
     assert BTST_QUALITY_FLOORS["momentum_win_spread"] == pytest.approx(0.0)
 
 
 def test_r71_t1_surface_summary_prefix() -> None:
     """build_surface_summary outputs mom_rank_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = _make_r71_momentum_rows(12)
     for r in rows:
         r["next_day_return"] = r.get("next_day_return", 0.01)
@@ -20894,9 +22005,11 @@ def test_r71_t1_surface_summary_prefix() -> None:
 
 # -------- T2: compute_volume_structure_analysis --------
 
+
 def test_r71_t2_valid_basic() -> None:
     """compute_volume_structure_analysis returns valid=True with enough rows."""
     from scripts.btst_analysis_utils import compute_volume_structure_analysis
+
     rows = _make_r71_volume_rows(12)
     result = compute_volume_structure_analysis(rows)
     assert result["volume_structure_valid"] is True
@@ -20905,6 +22018,7 @@ def test_r71_t2_valid_basic() -> None:
 def test_r71_t2_invalid_too_few_rows() -> None:
     """Returns valid=False when < 8 total rows."""
     from scripts.btst_analysis_utils import compute_volume_structure_analysis
+
     rows = [{"volume_expansion_quality": float(i), "next_day_return": 0.01} for i in range(7)]
     result = compute_volume_structure_analysis(rows)
     assert result["volume_structure_valid"] is False
@@ -20914,6 +22028,7 @@ def test_r71_t2_invalid_too_few_rows() -> None:
 def test_r71_t2_invalid_field_missing() -> None:
     """Returns valid=False when volume_expansion_quality field is absent."""
     from scripts.btst_analysis_utils import compute_volume_structure_analysis
+
     rows = [{"next_day_return": 0.01} for _ in range(12)]
     result = compute_volume_structure_analysis(rows)
     assert result["volume_structure_valid"] is False
@@ -20922,6 +22037,7 @@ def test_r71_t2_invalid_field_missing() -> None:
 def test_r71_t2_invalid_all_none() -> None:
     """Returns valid=False when all volume_expansion_quality are None."""
     from scripts.btst_analysis_utils import compute_volume_structure_analysis
+
     rows = [{"volume_expansion_quality": None, "next_day_return": 0.01} for _ in range(12)]
     result = compute_volume_structure_analysis(rows)
     assert result["volume_structure_valid"] is False
@@ -20930,6 +22046,7 @@ def test_r71_t2_invalid_all_none() -> None:
 def test_r71_t2_vol_skewness_zero_when_std_zero() -> None:
     """vol_skewness = 0.0 when all volume_expansion_quality values are equal (std=0)."""
     from scripts.btst_analysis_utils import compute_volume_structure_analysis
+
     rows = [{"volume_expansion_quality": 1.0, "next_day_return": 0.01 if i % 2 == 0 else -0.01} for i in range(12)]
     result = compute_volume_structure_analysis(rows)
     assert result["volume_structure_valid"] is True
@@ -20941,6 +22058,7 @@ def test_r71_t2_vol_skewness_manual_formula() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_volume_structure_analysis
+
     vq_vals = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0]
     rows = [{"volume_expansion_quality": v, "next_day_return": 0.01} for v in vq_vals]
     result = compute_volume_structure_analysis(rows)
@@ -20948,7 +22066,7 @@ def test_r71_t2_vol_skewness_manual_formula() -> None:
     n = len(vq_vals)
     mean_v = sum(vq_vals) / n
     std_v = (sum((x - mean_v) ** 2 for x in vq_vals) / (n - 1)) ** 0.5
-    expected_skew = round(sum((x - mean_v) ** 3 for x in vq_vals) / n / (std_v ** 3), 6)
+    expected_skew = round(sum((x - mean_v) ** 3 for x in vq_vals) / n / (std_v**3), 6)
     assert result["vol_skewness"] == pytest.approx(expected_skew, abs=1e-5)
 
 
@@ -20957,6 +22075,7 @@ def test_r71_t2_vol_positive_pct() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_volume_structure_analysis
+
     rows = [{"volume_expansion_quality": float(i - 4), "next_day_return": 0.01} for i in range(12)]
     result = compute_volume_structure_analysis(rows)
     # i-4: negative for i<4, zero for i=4, positive for i>4
@@ -20969,6 +22088,7 @@ def test_r71_t2_structure_spread_precision() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_volume_structure_analysis
+
     rows = _make_r71_volume_rows(12)
     result = compute_volume_structure_analysis(rows)
     assert result["volume_structure_valid"] is True
@@ -20982,6 +22102,7 @@ def test_r71_t2_structure_spread_precision() -> None:
 def test_r71_t2_grade_A() -> None:
     """vol_structure_grade = A when vol_structure_spread > 0.12."""
     from scripts.btst_analysis_utils import compute_volume_structure_analysis
+
     rows = [{"volume_expansion_quality": float(i), "next_day_return": 0.05 if i >= 16 else -0.05} for i in range(24)]
     result = compute_volume_structure_analysis(rows)
     assert result["vol_structure_grade"] == "A"
@@ -20990,6 +22111,7 @@ def test_r71_t2_grade_A() -> None:
 def test_r71_t2_grade_D() -> None:
     """vol_structure_grade = D when vol_structure_spread <= 0."""
     from scripts.btst_analysis_utils import compute_volume_structure_analysis
+
     rows = [{"volume_expansion_quality": float(i), "next_day_return": 0.01 if i < 4 else -0.01} for i in range(12)]
     result = compute_volume_structure_analysis(rows)
     assert result["vol_structure_grade"] == "D"
@@ -20998,18 +22120,21 @@ def test_r71_t2_grade_D() -> None:
 def test_r71_t2_in_comparison_metrics() -> None:
     """vol_structure_spread is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "vol_structure_spread" in COMPARISON_METRICS
 
 
 def test_r71_t2_in_optional_metrics() -> None:
     """vol_structure_spread is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "vol_structure_spread" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r71_t2_label_exists() -> None:
     """vol_structure_spread has a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "vol_structure_spread" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["vol_structure_spread"]) > 0
 
@@ -21017,14 +22142,17 @@ def test_r71_t2_label_exists() -> None:
 def test_r71_t2_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has vol_structure_spread = 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "vol_structure_spread" in BTST_QUALITY_FLOORS
     import pytest
+
     assert BTST_QUALITY_FLOORS["vol_structure_spread"] == pytest.approx(0.0)
 
 
 def test_r71_t2_surface_summary_prefix() -> None:
     """build_surface_summary outputs vol_struct_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = _make_r71_volume_rows(12)
     for r in rows:
         r["next_day_return"] = r.get("next_day_return", 0.01)
@@ -21034,9 +22162,11 @@ def test_r71_t2_surface_summary_prefix() -> None:
 
 # -------- T3: compute_cross_window_price_pos_trend --------
 
+
 def test_r71_t3_valid_basic() -> None:
     """compute_cross_window_price_pos_trend returns valid=True with ≥3 valid values."""
     from scripts.optimize_profile import compute_cross_window_price_pos_trend
+
     summaries = _make_r71_price_pos_summaries([0.1, 0.2, 0.3, 0.4, 0.5])
     result = compute_cross_window_price_pos_trend(summaries)
     assert result["price_pos_trend_valid"] is True
@@ -21045,6 +22175,7 @@ def test_r71_t3_valid_basic() -> None:
 def test_r71_t3_invalid_too_few() -> None:
     """Returns valid=False when fewer than 3 valid values."""
     from scripts.optimize_profile import compute_cross_window_price_pos_trend
+
     result = compute_cross_window_price_pos_trend([{"price_pos_cs_win_rate_spread": 0.1}, {"price_pos_cs_win_rate_spread": 0.2}])
     assert result["price_pos_trend_valid"] is False
     assert result["price_pos_trend_slope"] is None
@@ -21053,6 +22184,7 @@ def test_r71_t3_invalid_too_few() -> None:
 def test_r71_t3_invalid_all_none() -> None:
     """Returns valid=False when all cs_win_rate_spread values are None."""
     from scripts.optimize_profile import compute_cross_window_price_pos_trend
+
     summaries = [{"price_pos_cs_win_rate_spread": None} for _ in range(5)]
     result = compute_cross_window_price_pos_trend(summaries)
     assert result["price_pos_trend_valid"] is False
@@ -21063,6 +22195,7 @@ def test_r71_t3_ols_slope_positive() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_price_pos_trend
+
     summaries = _make_r71_price_pos_summaries([1.0, 2.0, 3.0, 4.0, 5.0])
     result = compute_cross_window_price_pos_trend(summaries)
     assert result["price_pos_trend_slope"] == pytest.approx(1.0, abs=1e-5)
@@ -21073,6 +22206,7 @@ def test_r71_t3_ols_slope_negative() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_price_pos_trend
+
     summaries = _make_r71_price_pos_summaries([5.0, 4.0, 3.0, 2.0, 1.0])
     result = compute_cross_window_price_pos_trend(summaries)
     assert result["price_pos_trend_slope"] == pytest.approx(-1.0, abs=1e-5)
@@ -21083,6 +22217,7 @@ def test_r71_t3_price_pos_trend_mean() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_price_pos_trend
+
     vals = [0.1, 0.3, 0.5]
     summaries = _make_r71_price_pos_summaries(vals)
     result = compute_cross_window_price_pos_trend(summaries)
@@ -21094,6 +22229,7 @@ def test_r71_t3_positive_windows_pct() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_price_pos_trend
+
     vals = [0.1, -0.1, 0.2, 0.3, -0.2]  # 3/5 positive
     summaries = _make_r71_price_pos_summaries(vals)
     result = compute_cross_window_price_pos_trend(summaries)
@@ -21123,6 +22259,7 @@ def test_r71_t3_grade_B() -> None:
 def test_r71_t3_grade_C() -> None:
     """price_pos_trend_grade = C when slope in (-0.01, 0]."""
     from scripts.optimize_profile import compute_cross_window_price_pos_trend
+
     summaries = _make_r71_price_pos_summaries([0.5, 0.499, 0.498, 0.497, 0.496])
     result = compute_cross_window_price_pos_trend(summaries)
     assert result["price_pos_trend_grade"] == "C"
@@ -21141,18 +22278,21 @@ def test_r71_t3_grade_D() -> None:
 def test_r71_t3_in_comparison_metrics() -> None:
     """price_pos_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "price_pos_trend_slope" in COMPARISON_METRICS
 
 
 def test_r71_t3_in_optional_metrics() -> None:
     """price_pos_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "price_pos_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r71_t3_label_exists() -> None:
     """price_pos_trend_slope has a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "price_pos_trend_slope" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["price_pos_trend_slope"]) > 0
 
@@ -21160,14 +22300,17 @@ def test_r71_t3_label_exists() -> None:
 def test_r71_t3_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has price_pos_trend_slope = -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "price_pos_trend_slope" in BTST_QUALITY_FLOORS
     import pytest
+
     assert BTST_QUALITY_FLOORS["price_pos_trend_slope"] == pytest.approx(-0.01)
 
 
 def test_r71_all_three_new_comparison_metrics() -> None:
     """All 3 new Round 71 metrics are in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     for key in ("momentum_win_spread", "vol_structure_spread", "price_pos_trend_slope"):
         assert key in COMPARISON_METRICS, f"Missing: {key}"
 
@@ -21175,6 +22318,7 @@ def test_r71_all_three_new_comparison_metrics() -> None:
 def test_r71_all_three_new_optional_metrics() -> None:
     """All 3 new Round 71 metrics are in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for key in ("momentum_win_spread", "vol_structure_spread", "price_pos_trend_slope"):
         assert key in OPTIONAL_COMPARISON_METRICS, f"Missing: {key}"
 
@@ -21182,6 +22326,7 @@ def test_r71_all_three_new_optional_metrics() -> None:
 def test_r71_all_three_new_floors() -> None:
     """All 3 new Round 71 metrics have floors in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "momentum_win_spread" in BTST_QUALITY_FLOORS
     assert "vol_structure_spread" in BTST_QUALITY_FLOORS
     assert "price_pos_trend_slope" in BTST_QUALITY_FLOORS
@@ -21193,6 +22338,7 @@ def test_r71_all_three_new_floors() -> None:
 
 # ── T1: compute_multifactor_zscore_grouping ──────────────────────────────
 
+
 def _make_mfz_row(cs=0.5, veq=0.5, sr=0.5, rsr=0.5, tinf=0.5, bqs=0.5, ms=0.5, ret=0.01):
     return {"close_strength": cs, "volume_expansion_quality": veq, "sector_resonance": sr, "rs_sector_rank": rsr, "t0_estimated_net_inflow_ratio": tinf, "breakout_quality_score": bqs, "momentum_slope_20d": ms, "next_day_return": ret}
 
@@ -21200,6 +22346,7 @@ def _make_mfz_row(cs=0.5, veq=0.5, sr=0.5, rsr=0.5, tinf=0.5, bqs=0.5, ms=0.5, r
 def test_r72_t1_invalid_too_few_rows() -> None:
     """Returns valid=False when fewer than 10 rows."""
     from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+
     result = compute_multifactor_zscore_grouping([_make_mfz_row() for _ in range(9)])
     assert result["multifactor_zscore_valid"] is False
     assert result["zscore_win_spread"] is None
@@ -21208,6 +22355,7 @@ def test_r72_t1_invalid_too_few_rows() -> None:
 def test_r72_t1_valid_exactly_10_rows() -> None:
     """Returns valid=True with exactly 10 rows."""
     from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+
     rows = [_make_mfz_row(cs=float(i), ret=0.01 if i > 5 else -0.01) for i in range(10)]
     result = compute_multifactor_zscore_grouping(rows)
     assert result["multifactor_zscore_valid"] is True
@@ -21216,6 +22364,7 @@ def test_r72_t1_valid_exactly_10_rows() -> None:
 def test_r72_t1_all_keys_present() -> None:
     """Result dict has all expected keys."""
     from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+
     rows = [_make_mfz_row(cs=float(i), ret=0.01) for i in range(15)]
     result = compute_multifactor_zscore_grouping(rows)
     for key in ("multifactor_zscore_valid", "top_z_win_rate", "mid_z_win_rate", "bot_z_win_rate", "zscore_win_spread", "zscore_mean_return_spread", "zscore_grade"):
@@ -21234,6 +22383,7 @@ def test_r72_t1_zscore_win_spread_none_when_group_too_small() -> None:
 def test_r72_t1_top_group_higher_win_rate() -> None:
     """High close_strength rows should land in top group with higher win rate."""
     from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+
     rows = []
     for i in range(30):
         # High cs → positive return; low cs → negative return
@@ -21250,6 +22400,7 @@ def test_r72_t1_top_group_higher_win_rate() -> None:
 def test_r72_t1_grade_A_when_large_spread() -> None:
     """Grade=A when zscore_win_spread > 0.15."""
     from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+
     rows = []
     for i in range(30):
         cs = float(i)
@@ -21262,6 +22413,7 @@ def test_r72_t1_grade_A_when_large_spread() -> None:
 def test_r72_t1_grade_D_when_negative_spread() -> None:
     """Grade=D when zscore_win_spread <= 0."""
     from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+
     rows = []
     for i in range(30):
         cs = float(i)
@@ -21275,6 +22427,7 @@ def test_r72_t1_grade_D_when_negative_spread() -> None:
 def test_r72_t1_none_factor_treated_as_neutral() -> None:
     """None factor values are treated as z=0.0 (neutral), no crash."""
     from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+
     rows = [{"close_strength": None, "volume_expansion_quality": None, "sector_resonance": None, "rs_sector_rank": None, "t0_estimated_net_inflow_ratio": None, "breakout_quality_score": None, "momentum_slope_20d": None, "next_day_return": 0.01} for _ in range(12)]
     result = compute_multifactor_zscore_grouping(rows)
     assert result["multifactor_zscore_valid"] is True
@@ -21283,6 +22436,7 @@ def test_r72_t1_none_factor_treated_as_neutral() -> None:
 def test_r72_t1_std_zero_factor_gets_z_zero() -> None:
     """When all values of a factor are equal (std=0), z=0 for that factor."""
     from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+
     rows = []
     for i in range(15):
         rows.append({"close_strength": 1.0, "volume_expansion_quality": float(i), "sector_resonance": 0.5, "rs_sector_rank": 0.5, "t0_estimated_net_inflow_ratio": 0.5, "breakout_quality_score": 0.5, "momentum_slope_20d": 0.5, "next_day_return": 0.01})
@@ -21293,6 +22447,7 @@ def test_r72_t1_std_zero_factor_gets_z_zero() -> None:
 def test_r72_t1_zscore_mean_return_spread_computed() -> None:
     """zscore_mean_return_spread is computed when groups are large enough."""
     from scripts.btst_analysis_utils import compute_multifactor_zscore_grouping
+
     rows = [_make_mfz_row(cs=float(i), ret=float(i) * 0.001) for i in range(20)]
     result = compute_multifactor_zscore_grouping(rows)
     assert result["multifactor_zscore_valid"] is True
@@ -21303,18 +22458,21 @@ def test_r72_t1_zscore_mean_return_spread_computed() -> None:
 def test_r72_t1_in_comparison_metrics() -> None:
     """zscore_win_spread is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "zscore_win_spread" in COMPARISON_METRICS
 
 
 def test_r72_t1_in_optional_metrics() -> None:
     """zscore_win_spread is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "zscore_win_spread" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r72_t1_label_exists() -> None:
     """zscore_win_spread has a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "zscore_win_spread" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["zscore_win_spread"]) > 0
 
@@ -21322,11 +22480,13 @@ def test_r72_t1_label_exists() -> None:
 def test_r72_t1_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has zscore_win_spread = 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "zscore_win_spread" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["zscore_win_spread"] == pytest.approx(0.0)
 
 
 # ── T2: compute_return_persistence_analysis ──────────────────────────────
+
 
 def _make_persist_rows(returns):
     return [{"next_day_return": r} for r in returns]
@@ -21335,6 +22495,7 @@ def _make_persist_rows(returns):
 def test_r72_t2_invalid_too_few_rows() -> None:
     """Returns valid=False when fewer than 10 rows."""
     from scripts.btst_analysis_utils import compute_return_persistence_analysis
+
     result = compute_return_persistence_analysis(_make_persist_rows([0.01] * 9))
     assert result["return_persistence_valid"] is False
     assert result["persistence_score"] is None
@@ -21343,6 +22504,7 @@ def test_r72_t2_invalid_too_few_rows() -> None:
 def test_r72_t2_valid_exactly_10_rows() -> None:
     """Returns valid=True with exactly 10 rows."""
     from scripts.btst_analysis_utils import compute_return_persistence_analysis
+
     result = compute_return_persistence_analysis(_make_persist_rows([0.01] * 10))
     assert result["return_persistence_valid"] is True
 
@@ -21350,6 +22512,7 @@ def test_r72_t2_valid_exactly_10_rows() -> None:
 def test_r72_t2_all_keys_present() -> None:
     """Result dict has all expected keys."""
     from scripts.btst_analysis_utils import compute_return_persistence_analysis
+
     result = compute_return_persistence_analysis(_make_persist_rows([0.01] * 15))
     for key in ("return_persistence_valid", "rolling_win_rate_mean", "rolling_win_rate_std", "rolling_consistency", "block_positive_pct", "persistence_score"):
         assert key in result, f"Missing key: {key}"
@@ -21370,6 +22533,7 @@ def test_r72_t2_rolling_3_group_logic() -> None:
 def test_r72_t2_rolling_consistency_is_1_when_std_0() -> None:
     """rolling_consistency = 1.0 when all group win rates are identical."""
     from scripts.btst_analysis_utils import compute_return_persistence_analysis
+
     result = compute_return_persistence_analysis(_make_persist_rows([0.01] * 15))
     assert result["rolling_consistency"] == pytest.approx(1.0)
 
@@ -21398,6 +22562,7 @@ def test_r72_t2_block_positive_pct_none_when_too_few_blocks() -> None:
 def test_r72_t2_persistence_score_uses_both() -> None:
     """persistence_score = 0.5*rolling_consistency + 0.5*block_positive_pct."""
     from scripts.btst_analysis_utils import compute_return_persistence_analysis
+
     returns = [0.01] * 15
     result = compute_return_persistence_analysis(_make_persist_rows(returns))
     assert result["return_persistence_valid"] is True
@@ -21411,6 +22576,7 @@ def test_r72_t2_persistence_score_uses_both() -> None:
 def test_r72_t2_none_returns_skipped() -> None:
     """None values in next_day_return are skipped."""
     from scripts.btst_analysis_utils import compute_return_persistence_analysis
+
     rows = [{"next_day_return": None}] * 5 + _make_persist_rows([0.01] * 10)
     result = compute_return_persistence_analysis(rows)
     assert result["return_persistence_valid"] is True
@@ -21419,18 +22585,21 @@ def test_r72_t2_none_returns_skipped() -> None:
 def test_r72_t2_in_comparison_metrics() -> None:
     """persistence_score is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "persistence_score" in COMPARISON_METRICS
 
 
 def test_r72_t2_in_optional_metrics() -> None:
     """persistence_score is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "persistence_score" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r72_t2_label_exists() -> None:
     """persistence_score has a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "persistence_score" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["persistence_score"]) > 0
 
@@ -21438,15 +22607,18 @@ def test_r72_t2_label_exists() -> None:
 def test_r72_t2_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has persistence_score = 0.4."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "persistence_score" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["persistence_score"] == pytest.approx(0.4)
 
 
 # ── T3: compute_cross_window_momentum_rank_trend ──────────────────────────
 
+
 def test_r72_t3_invalid_too_few_windows() -> None:
     """Returns valid=False when fewer than 3 valid values."""
     from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+
     result = compute_cross_window_momentum_rank_trend([{"mom_rank_momentum_win_spread": 0.1}, {"mom_rank_momentum_win_spread": 0.2}])
     assert result["momentum_rank_trend_valid"] is False
 
@@ -21454,6 +22626,7 @@ def test_r72_t3_invalid_too_few_windows() -> None:
 def test_r72_t3_valid_with_3_windows() -> None:
     """Returns valid=True with exactly 3 valid windows."""
     from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+
     summaries = [{"mom_rank_momentum_win_spread": v} for v in [0.1, 0.2, 0.3]]
     result = compute_cross_window_momentum_rank_trend(summaries)
     assert result["momentum_rank_trend_valid"] is True
@@ -21462,6 +22635,7 @@ def test_r72_t3_valid_with_3_windows() -> None:
 def test_r72_t3_ols_slope_positive() -> None:
     """OLS slope is positive for increasing sequence."""
     from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+
     summaries = [{"mom_rank_momentum_win_spread": float(i) * 0.01} for i in range(5)]
     result = compute_cross_window_momentum_rank_trend(summaries)
     assert result["momentum_rank_trend_slope"] > 0
@@ -21470,6 +22644,7 @@ def test_r72_t3_ols_slope_positive() -> None:
 def test_r72_t3_ols_slope_negative() -> None:
     """OLS slope is negative for decreasing sequence."""
     from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+
     summaries = [{"mom_rank_momentum_win_spread": float(5 - i) * 0.01} for i in range(5)]
     result = compute_cross_window_momentum_rank_trend(summaries)
     assert result["momentum_rank_trend_slope"] < 0
@@ -21478,6 +22653,7 @@ def test_r72_t3_ols_slope_negative() -> None:
 def test_r72_t3_grade_A_when_large_positive_slope() -> None:
     """Grade=A when slope > 0.005."""
     from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+
     summaries = [{"mom_rank_momentum_win_spread": float(i) * 0.1} for i in range(10)]
     result = compute_cross_window_momentum_rank_trend(summaries)
     assert result["momentum_rank_trend_grade"] == "A"
@@ -21486,6 +22662,7 @@ def test_r72_t3_grade_A_when_large_positive_slope() -> None:
 def test_r72_t3_grade_B_when_small_positive_slope() -> None:
     """Grade=B when 0 < slope <= 0.005."""
     from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+
     summaries = [{"mom_rank_momentum_win_spread": float(i) * 0.001} for i in range(10)]
     result = compute_cross_window_momentum_rank_trend(summaries)
     assert result["momentum_rank_trend_grade"] in ("A", "B")
@@ -21494,6 +22671,7 @@ def test_r72_t3_grade_B_when_small_positive_slope() -> None:
 def test_r72_t3_grade_D_when_large_negative_slope() -> None:
     """Grade=D when slope <= -0.01."""
     from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+
     summaries = [{"mom_rank_momentum_win_spread": float(10 - i) * 0.1} for i in range(10)]
     result = compute_cross_window_momentum_rank_trend(summaries)
     assert result["momentum_rank_trend_grade"] == "D"
@@ -21502,6 +22680,7 @@ def test_r72_t3_grade_D_when_large_negative_slope() -> None:
 def test_r72_t3_positive_windows_pct_all_positive() -> None:
     """momentum_rank_positive_windows_pct = 1.0 when all spreads > 0."""
     from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+
     summaries = [{"mom_rank_momentum_win_spread": 0.1} for _ in range(5)]
     result = compute_cross_window_momentum_rank_trend(summaries)
     assert result["momentum_rank_positive_windows_pct"] == pytest.approx(1.0)
@@ -21510,6 +22689,7 @@ def test_r72_t3_positive_windows_pct_all_positive() -> None:
 def test_r72_t3_positive_windows_pct_none_positive() -> None:
     """momentum_rank_positive_windows_pct = 0.0 when all spreads <= 0."""
     from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+
     summaries = [{"mom_rank_momentum_win_spread": -0.1} for _ in range(5)]
     result = compute_cross_window_momentum_rank_trend(summaries)
     assert result["momentum_rank_positive_windows_pct"] == pytest.approx(0.0)
@@ -21518,6 +22698,7 @@ def test_r72_t3_positive_windows_pct_none_positive() -> None:
 def test_r72_t3_skips_none_values() -> None:
     """None values in mom_rank_momentum_win_spread are skipped."""
     from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+
     summaries = [{"mom_rank_momentum_win_spread": None}, {"mom_rank_momentum_win_spread": 0.1}, {"mom_rank_momentum_win_spread": 0.2}, {"mom_rank_momentum_win_spread": 0.3}]
     result = compute_cross_window_momentum_rank_trend(summaries)
     assert result["momentum_rank_trend_valid"] is True
@@ -21526,6 +22707,7 @@ def test_r72_t3_skips_none_values() -> None:
 def test_r72_t3_mean_computed() -> None:
     """momentum_rank_trend_mean is the mean of valid spreads."""
     from scripts.optimize_profile import compute_cross_window_momentum_rank_trend
+
     vals = [0.1, 0.2, 0.3]
     summaries = [{"mom_rank_momentum_win_spread": v} for v in vals]
     result = compute_cross_window_momentum_rank_trend(summaries)
@@ -21535,18 +22717,21 @@ def test_r72_t3_mean_computed() -> None:
 def test_r72_t3_in_comparison_metrics() -> None:
     """momentum_rank_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "momentum_rank_trend_slope" in COMPARISON_METRICS
 
 
 def test_r72_t3_in_optional_metrics() -> None:
     """momentum_rank_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "momentum_rank_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r72_t3_label_exists() -> None:
     """momentum_rank_trend_slope has a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "momentum_rank_trend_slope" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["momentum_rank_trend_slope"]) > 0
 
@@ -21554,6 +22739,7 @@ def test_r72_t3_label_exists() -> None:
 def test_r72_t3_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has momentum_rank_trend_slope = -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "momentum_rank_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["momentum_rank_trend_slope"] == pytest.approx(-0.01)
 
@@ -21561,6 +22747,7 @@ def test_r72_t3_floor_in_quality_floors() -> None:
 def test_r72_t3_all_three_new_metrics_in_comparison() -> None:
     """All 3 new Round 72 metrics are in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     for key in ("zscore_win_spread", "persistence_score", "momentum_rank_trend_slope"):
         assert key in COMPARISON_METRICS, f"Missing: {key}"
 
@@ -21568,6 +22755,7 @@ def test_r72_t3_all_three_new_metrics_in_comparison() -> None:
 def test_r72_t3_all_three_new_metrics_in_optional() -> None:
     """All 3 new Round 72 metrics are in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for key in ("zscore_win_spread", "persistence_score", "momentum_rank_trend_slope"):
         assert key in OPTIONAL_COMPARISON_METRICS, f"Missing: {key}"
 
@@ -21575,6 +22763,7 @@ def test_r72_t3_all_three_new_metrics_in_optional() -> None:
 def test_r72_t3_all_three_floors() -> None:
     """All 3 new Round 72 metrics have floors in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "zscore_win_spread" in BTST_QUALITY_FLOORS
     assert "persistence_score" in BTST_QUALITY_FLOORS
     assert "momentum_rank_trend_slope" in BTST_QUALITY_FLOORS
@@ -21599,9 +22788,11 @@ def _make_breadth_rows(n: int, advance_pct: float = 0.6, with_score: bool = Fals
 
 # ---- T1: compute_market_breadth_indicator ----
 
+
 def test_r73_t1_invalid_too_few_rows() -> None:
     """Returns valid=False when fewer than 8 rows."""
     from scripts.btst_analysis_utils import compute_market_breadth_indicator
+
     result = compute_market_breadth_indicator([{"next_day_return": 0.01}] * 5)
     assert result["market_breadth_valid"] is False
     assert result["breadth_win_rate"] is None
@@ -21611,6 +22802,7 @@ def test_r73_t1_invalid_too_few_rows() -> None:
 def test_r73_t1_valid_basic() -> None:
     """Returns valid=True with ≥8 rows."""
     from scripts.btst_analysis_utils import compute_market_breadth_indicator
+
     rows = _make_breadth_rows(10, advance_pct=0.6)
     result = compute_market_breadth_indicator(rows)
     assert result["market_breadth_valid"] is True
@@ -21622,6 +22814,7 @@ def test_r73_t1_valid_basic() -> None:
 def test_r73_t1_advance_count_accuracy() -> None:
     """advance_count correctly counts positive returns."""
     from scripts.btst_analysis_utils import compute_market_breadth_indicator
+
     rows = [{"next_day_return": 0.01}] * 7 + [{"next_day_return": -0.01}] * 3
     result = compute_market_breadth_indicator(rows)
     assert result["advance_count"] == 7
@@ -21631,6 +22824,7 @@ def test_r73_t1_advance_count_accuracy() -> None:
 def test_r73_t1_flat_count() -> None:
     """flat_count correctly counts zero returns."""
     from scripts.btst_analysis_utils import compute_market_breadth_indicator
+
     rows = [{"next_day_return": 0.0}] * 4 + [{"next_day_return": 0.01}] * 4 + [{"next_day_return": -0.01}] * 2
     result = compute_market_breadth_indicator(rows)
     assert result["flat_count"] == 4
@@ -21639,9 +22833,11 @@ def test_r73_t1_flat_count() -> None:
 def test_r73_t1_advance_decline_ratio() -> None:
     """advance_decline_ratio = advance / (decline + 1) with zero-division guard."""
     from scripts.btst_analysis_utils import compute_market_breadth_indicator
+
     rows = [{"next_day_return": 0.01}] * 8 + [{"next_day_return": -0.01}] * 2
     result = compute_market_breadth_indicator(rows)
     import pytest
+
     assert result["advance_decline_ratio"] == pytest.approx(8 / 3, rel=1e-4)
 
 
@@ -21650,6 +22846,7 @@ def test_r73_t1_breadth_win_rate_accuracy() -> None:
     import pytest
 
     from scripts.btst_analysis_utils import compute_market_breadth_indicator
+
     rows = [{"next_day_return": 0.01}] * 6 + [{"next_day_return": -0.01}] * 4
     result = compute_market_breadth_indicator(rows)
     assert result["breadth_win_rate"] == pytest.approx(0.6, rel=1e-4)
@@ -21658,6 +22855,7 @@ def test_r73_t1_breadth_win_rate_accuracy() -> None:
 def test_r73_t1_breadth_grade_A() -> None:
     """breadth_grade = A when win_rate > 0.6 AND score_edge > 0.1."""
     from scripts.btst_analysis_utils import compute_market_breadth_indicator
+
     rows = []
     for i in range(20):
         sc = 0.5 + (i / 20) * 0.5
@@ -21673,6 +22871,7 @@ def test_r73_t1_breadth_grade_A() -> None:
 def test_r73_t1_breadth_grade_C() -> None:
     """breadth_grade = C when win_rate is between 0.50 and 0.55 and no strong score edge."""
     from scripts.btst_analysis_utils import compute_market_breadth_indicator
+
     rows = [{"next_day_return": 0.01}] * 9 + [{"next_day_return": -0.01}] * 8
     result = compute_market_breadth_indicator(rows)
     assert result["breadth_grade"] in ("C", "D")
@@ -21681,6 +22880,7 @@ def test_r73_t1_breadth_grade_C() -> None:
 def test_r73_t1_breadth_grade_D() -> None:
     """breadth_grade = D when win_rate <= 0.50."""
     from scripts.btst_analysis_utils import compute_market_breadth_indicator
+
     rows = [{"next_day_return": 0.01}] * 4 + [{"next_day_return": -0.01}] * 6
     result = compute_market_breadth_indicator(rows)
     assert result["breadth_grade"] == "D"
@@ -21689,6 +22889,7 @@ def test_r73_t1_breadth_grade_D() -> None:
 def test_r73_t1_score_edge_computed_with_score() -> None:
     """breadth_score_edge is computed when runner_composite_score is present."""
     from scripts.btst_analysis_utils import compute_market_breadth_indicator
+
     rows = _make_breadth_rows(16, advance_pct=0.6, with_score=True)
     result = compute_market_breadth_indicator(rows)
     assert result["high_score_advance_pct"] is not None
@@ -21699,6 +22900,7 @@ def test_r73_t1_score_edge_computed_with_score() -> None:
 def test_r73_t1_no_score_field_graceful() -> None:
     """Without score fields, breadth_score_edge and related fields are None."""
     from scripts.btst_analysis_utils import compute_market_breadth_indicator
+
     rows = [{"next_day_return": 0.01 if i % 2 == 0 else -0.01} for i in range(10)]
     result = compute_market_breadth_indicator(rows)
     assert result["breadth_score_edge"] is None
@@ -21709,18 +22911,21 @@ def test_r73_t1_no_score_field_graceful() -> None:
 def test_r73_t1_in_comparison_metrics() -> None:
     """breadth_win_rate is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "breadth_win_rate" in COMPARISON_METRICS
 
 
 def test_r73_t1_in_optional_metrics() -> None:
     """breadth_win_rate is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "breadth_win_rate" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r73_t1_label_exists() -> None:
     """breadth_win_rate has a Chinese label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "breadth_win_rate" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["breadth_win_rate"]) > 0
 
@@ -21728,14 +22933,17 @@ def test_r73_t1_label_exists() -> None:
 def test_r73_t1_floor_in_quality_floors() -> None:
     """BTST_QUALITY_FLOORS has breadth_win_rate = 0.45."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "breadth_win_rate" in BTST_QUALITY_FLOORS
     import pytest
+
     assert BTST_QUALITY_FLOORS["breadth_win_rate"] == pytest.approx(0.45)
 
 
 def test_r73_t1_skips_none_returns() -> None:
     """Rows where next_day_return is None are excluded from counting."""
     from scripts.btst_analysis_utils import compute_market_breadth_indicator
+
     rows = [{"next_day_return": 0.01}] * 6 + [{"next_day_return": -0.01}] * 4 + [{"next_day_return": None}] * 4
     result = compute_market_breadth_indicator(rows)
     assert result["advance_count"] == 6
@@ -21743,6 +22951,7 @@ def test_r73_t1_skips_none_returns() -> None:
 
 
 # ---- T2: compute_factor_ic_stability_score ----
+
 
 def _make_ic_rows(n: int) -> list[dict]:
     """Create n rows with all 7 core factors and next_day_return."""
@@ -21759,6 +22968,7 @@ def _make_ic_rows(n: int) -> list[dict]:
 def test_r73_t2_invalid_too_few_rows() -> None:
     """Returns valid=False when fewer than 12 rows."""
     from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+
     result = compute_factor_ic_stability_score(_make_ic_rows(10))
     assert result["factor_ic_stability_valid"] is False
     assert result["ic_consistency_ratio"] is None
@@ -21767,6 +22977,7 @@ def test_r73_t2_invalid_too_few_rows() -> None:
 def test_r73_t2_valid_basic() -> None:
     """Returns valid=True with ≥12 rows."""
     from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+
     result = compute_factor_ic_stability_score(_make_ic_rows(20))
     assert result["factor_ic_stability_valid"] is True
     assert result["ic_consistency_ratio"] is not None
@@ -21775,6 +22986,7 @@ def test_r73_t2_valid_basic() -> None:
 def test_r73_t2_half_ic_computed() -> None:
     """half_IC is computed for each of the 7 factors."""
     from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+
     rows = _make_ic_rows(20)
     result = compute_factor_ic_stability_score(rows)
     for f in ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]:
@@ -21784,6 +22996,7 @@ def test_r73_t2_half_ic_computed() -> None:
 def test_r73_t2_ic_consistency_ratio_range() -> None:
     """ic_consistency_ratio is in [0, 1]."""
     from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+
     result = compute_factor_ic_stability_score(_make_ic_rows(20))
     assert 0.0 <= result["ic_consistency_ratio"] <= 1.0
 
@@ -21791,6 +23004,7 @@ def test_r73_t2_ic_consistency_ratio_range() -> None:
 def test_r73_t2_positive_ic_count_correct() -> None:
     """positive_ic_count matches sum of factors with half_IC > 0."""
     from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+
     rows = _make_ic_rows(20)
     result = compute_factor_ic_stability_score(rows)
     computed_positive = sum(1 for f in ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"] if result.get(f"half_ic_{f}") is not None and result[f"half_ic_{f}"] > 0)
@@ -21800,6 +23014,7 @@ def test_r73_t2_positive_ic_count_correct() -> None:
 def test_r73_t2_best_factor_has_max_half_ic() -> None:
     """best_factor corresponds to factor with highest half_IC."""
     from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+
     rows = _make_ic_rows(20)
     result = compute_factor_ic_stability_score(rows)
     if result["best_factor"] is not None:
@@ -21813,6 +23028,7 @@ def test_r73_t2_best_factor_has_max_half_ic() -> None:
 def test_r73_t2_grade_A_when_5_of_7_positive() -> None:
     """ic_stability_grade = A when ic_consistency_ratio >= 5/7."""
     from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+
     rows = []
     for i in range(20):
         row: dict = {"next_day_return": 0.01 if i < 14 else -0.005}
@@ -21827,6 +23043,7 @@ def test_r73_t2_grade_A_when_5_of_7_positive() -> None:
 def test_r73_t2_grade_D_when_all_negative() -> None:
     """ic_stability_grade = D when ic_consistency_ratio < 3/7."""
     from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+
     rows = []
     for i in range(20):
         row: dict = {"next_day_return": 0.01 if i < 5 else -0.02}
@@ -21840,18 +23057,21 @@ def test_r73_t2_grade_D_when_all_negative() -> None:
 def test_r73_t2_in_comparison_metrics() -> None:
     """ic_consistency_ratio is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "ic_consistency_ratio" in COMPARISON_METRICS
 
 
 def test_r73_t2_in_optional_metrics() -> None:
     """ic_consistency_ratio is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "ic_consistency_ratio" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r73_t2_label_exists() -> None:
     """ic_consistency_ratio has a Chinese label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "ic_consistency_ratio" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["ic_consistency_ratio"]) > 0
 
@@ -21861,6 +23081,7 @@ def test_r73_t2_floor_in_quality_floors() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "ic_consistency_ratio" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["ic_consistency_ratio"] == pytest.approx(0.4)
 
@@ -21868,6 +23089,7 @@ def test_r73_t2_floor_in_quality_floors() -> None:
 def test_r73_t2_insufficient_factor_data_graceful() -> None:
     """Factors with < 8 valid rows produce half_IC = None without crash."""
     from scripts.btst_analysis_utils import compute_factor_ic_stability_score
+
     rows = []
     for i in range(12):
         rows.append({"next_day_return": 0.01 if i % 2 == 0 else -0.01})
@@ -21877,9 +23099,11 @@ def test_r73_t2_insufficient_factor_data_graceful() -> None:
 
 # ---- T3: compute_cross_window_zscore_trend ----
 
+
 def test_r73_t3_invalid_too_few_windows() -> None:
     """Returns valid=False when fewer than 3 windows have mfz_zscore_win_spread."""
     from scripts.optimize_profile import compute_cross_window_zscore_trend
+
     summaries = [{"mfz_zscore_win_spread": 0.05}, {"mfz_zscore_win_spread": 0.1}]
     result = compute_cross_window_zscore_trend(summaries)
     assert result["zscore_trend_valid"] is False
@@ -21889,6 +23113,7 @@ def test_r73_t3_invalid_too_few_windows() -> None:
 def test_r73_t3_valid_with_3_windows() -> None:
     """Returns valid=True when ≥3 windows have mfz_zscore_win_spread."""
     from scripts.optimize_profile import compute_cross_window_zscore_trend
+
     summaries = [{"mfz_zscore_win_spread": 0.05}, {"mfz_zscore_win_spread": 0.08}, {"mfz_zscore_win_spread": 0.12}]
     result = compute_cross_window_zscore_trend(summaries)
     assert result["zscore_trend_valid"] is True
@@ -21898,6 +23123,7 @@ def test_r73_t3_valid_with_3_windows() -> None:
 def test_r73_t3_ols_slope_positive() -> None:
     """Positive trend series produces positive slope."""
     from scripts.optimize_profile import compute_cross_window_zscore_trend
+
     summaries = [{"mfz_zscore_win_spread": float(v)} for v in [0.05, 0.10, 0.15, 0.20]]
     result = compute_cross_window_zscore_trend(summaries)
     assert result["zscore_trend_slope"] > 0
@@ -21906,6 +23132,7 @@ def test_r73_t3_ols_slope_positive() -> None:
 def test_r73_t3_ols_slope_negative() -> None:
     """Negative trend series produces negative slope."""
     from scripts.optimize_profile import compute_cross_window_zscore_trend
+
     summaries = [{"mfz_zscore_win_spread": float(v)} for v in [0.20, 0.15, 0.10, 0.05]]
     result = compute_cross_window_zscore_trend(summaries)
     assert result["zscore_trend_slope"] < 0
@@ -21914,6 +23141,7 @@ def test_r73_t3_ols_slope_negative() -> None:
 def test_r73_t3_grade_A_large_positive_slope() -> None:
     """zscore_trend_grade = A when slope > 0.005."""
     from scripts.optimize_profile import compute_cross_window_zscore_trend
+
     summaries = [{"mfz_zscore_win_spread": 0.01 * i} for i in range(1, 8)]
     result = compute_cross_window_zscore_trend(summaries)
     if result["zscore_trend_slope"] is not None and result["zscore_trend_slope"] > 0.005:
@@ -21923,6 +23151,7 @@ def test_r73_t3_grade_A_large_positive_slope() -> None:
 def test_r73_t3_grade_D_large_negative_slope() -> None:
     """zscore_trend_grade = D when slope <= -0.01."""
     from scripts.optimize_profile import compute_cross_window_zscore_trend
+
     summaries = [{"mfz_zscore_win_spread": 0.05 - 0.02 * i} for i in range(6)]
     result = compute_cross_window_zscore_trend(summaries)
     if result["zscore_trend_slope"] is not None and result["zscore_trend_slope"] <= -0.01:
@@ -21934,6 +23163,7 @@ def test_r73_t3_zscore_positive_windows_pct_all_positive() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_zscore_trend
+
     summaries = [{"mfz_zscore_win_spread": 0.1}, {"mfz_zscore_win_spread": 0.2}, {"mfz_zscore_win_spread": 0.05}]
     result = compute_cross_window_zscore_trend(summaries)
     assert result["zscore_positive_windows_pct"] == pytest.approx(1.0)
@@ -21944,6 +23174,7 @@ def test_r73_t3_zscore_positive_windows_pct_none_positive() -> None:
     import pytest
 
     from scripts.optimize_profile import compute_cross_window_zscore_trend
+
     summaries = [{"mfz_zscore_win_spread": -0.1}, {"mfz_zscore_win_spread": -0.2}, {"mfz_zscore_win_spread": -0.05}]
     result = compute_cross_window_zscore_trend(summaries)
     assert result["zscore_positive_windows_pct"] == pytest.approx(0.0)
@@ -21952,6 +23183,7 @@ def test_r73_t3_zscore_positive_windows_pct_none_positive() -> None:
 def test_r73_t3_skips_none_values() -> None:
     """Summaries without mfz_zscore_win_spread key are skipped."""
     from scripts.optimize_profile import compute_cross_window_zscore_trend
+
     summaries = [{"mfz_zscore_win_spread": 0.1}, {"other_key": 0.5}, {"mfz_zscore_win_spread": 0.2}, {"mfz_zscore_win_spread": 0.15}]
     result = compute_cross_window_zscore_trend(summaries)
     assert result["zscore_trend_valid"] is True
@@ -21960,18 +23192,21 @@ def test_r73_t3_skips_none_values() -> None:
 def test_r73_t3_in_comparison_metrics() -> None:
     """zscore_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "zscore_trend_slope" in COMPARISON_METRICS
 
 
 def test_r73_t3_in_optional_metrics() -> None:
     """zscore_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "zscore_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r73_t3_label_exists() -> None:
     """zscore_trend_slope has a Chinese label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "zscore_trend_slope" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["zscore_trend_slope"]) > 0
 
@@ -21981,6 +23216,7 @@ def test_r73_t3_floor_in_quality_floors() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "zscore_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["zscore_trend_slope"] == pytest.approx(-0.01)
 
@@ -21988,6 +23224,7 @@ def test_r73_t3_floor_in_quality_floors() -> None:
 def test_r73_all_six_new_metrics_in_comparison() -> None:
     """All 6 new Round 73 metrics are in COMPARISON_METRICS (T1+T2+T3)."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     for key in ("breadth_win_rate", "ic_consistency_ratio", "zscore_trend_slope"):
         assert key in COMPARISON_METRICS, f"Missing: {key}"
 
@@ -21995,6 +23232,7 @@ def test_r73_all_six_new_metrics_in_comparison() -> None:
 def test_r73_all_six_new_metrics_in_optional() -> None:
     """All 3 new Round 73 metrics are in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for key in ("breadth_win_rate", "ic_consistency_ratio", "zscore_trend_slope"):
         assert key in OPTIONAL_COMPARISON_METRICS, f"Missing: {key}"
 
@@ -22002,6 +23240,7 @@ def test_r73_all_six_new_metrics_in_optional() -> None:
 def test_r73_all_floors_present() -> None:
     """All 3 new Round 73 metrics have floors in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "breadth_win_rate" in BTST_QUALITY_FLOORS
     assert "ic_consistency_ratio" in BTST_QUALITY_FLOORS
     assert "zscore_trend_slope" in BTST_QUALITY_FLOORS
@@ -22014,6 +23253,7 @@ def test_r73_all_floors_present() -> None:
 # ---------------------------------------------------------------------------
 # Helpers shared by R74 tests
 # ---------------------------------------------------------------------------
+
 
 def _make_scored_rows(n: int, score_start: float = 0.1, score_step: float = 0.05, win_pattern: str = "monotone") -> list[dict]:
     """Create n rows with score field and next_close_positive reflecting win_pattern."""
@@ -22036,9 +23276,11 @@ def _make_scored_rows(n: int, score_start: float = 0.1, score_step: float = 0.05
 # T1: compute_signal_strength_stratification
 # ---------------------------------------------------------------------------
 
+
 def test_r74_t1_invalid_too_few_rows() -> None:
     """Returns valid=False when fewer than 15 rows."""
     from scripts.btst_analysis_utils import compute_signal_strength_stratification
+
     result = compute_signal_strength_stratification(_make_scored_rows(10))
     assert result["signal_stratification_valid"] is False
     assert result["stratification_spread"] is None
@@ -22049,6 +23291,7 @@ def test_r74_t1_invalid_too_few_rows() -> None:
 def test_r74_t1_invalid_exactly_14_rows() -> None:
     """Returns valid=False for exactly 14 rows."""
     from scripts.btst_analysis_utils import compute_signal_strength_stratification
+
     result = compute_signal_strength_stratification(_make_scored_rows(14))
     assert result["signal_stratification_valid"] is False
 
@@ -22056,6 +23299,7 @@ def test_r74_t1_invalid_exactly_14_rows() -> None:
 def test_r74_t1_valid_15_rows() -> None:
     """Returns valid=True for exactly 15 rows."""
     from scripts.btst_analysis_utils import compute_signal_strength_stratification
+
     result = compute_signal_strength_stratification(_make_scored_rows(15))
     assert result["signal_stratification_valid"] is True
 
@@ -22063,6 +23307,7 @@ def test_r74_t1_valid_15_rows() -> None:
 def test_r74_t1_invalid_no_score_field() -> None:
     """Returns valid=False when rows have no score field."""
     from scripts.btst_analysis_utils import compute_signal_strength_stratification
+
     rows = [{"next_close_positive": 1} for _ in range(20)]
     result = compute_signal_strength_stratification(rows)
     assert result["signal_stratification_valid"] is False
@@ -22071,6 +23316,7 @@ def test_r74_t1_invalid_no_score_field() -> None:
 def test_r74_t1_uses_runner_composite_score() -> None:
     """Uses runner_composite_score preferentially."""
     from scripts.btst_analysis_utils import compute_signal_strength_stratification
+
     rows = [{"runner_composite_score": float(i), "composite_score": 99.0, "score": 99.0, "next_close_positive": 1 if i >= 10 else 0} for i in range(20)]
     result = compute_signal_strength_stratification(rows)
     assert result["signal_stratification_valid"] is True
@@ -22079,6 +23325,7 @@ def test_r74_t1_uses_runner_composite_score() -> None:
 def test_r74_t1_five_quintiles_present() -> None:
     """All five quintile win rates are returned."""
     from scripts.btst_analysis_utils import compute_signal_strength_stratification
+
     result = compute_signal_strength_stratification(_make_scored_rows(25, win_pattern="monotone"))
     assert result["signal_stratification_valid"] is True
     for k in ("q1_win_rate", "q2_win_rate", "q3_win_rate", "q4_win_rate", "q5_win_rate"):
@@ -22088,6 +23335,7 @@ def test_r74_t1_five_quintiles_present() -> None:
 def test_r74_t1_q5_higher_than_q1_monotone() -> None:
     """In a monotone win pattern q5_win_rate >= q1_win_rate."""
     from scripts.btst_analysis_utils import compute_signal_strength_stratification
+
     rows = [{"score": float(i), "next_close_positive": 1 if i >= 15 else 0} for i in range(25)]
     result = compute_signal_strength_stratification(rows)
     if result["q5_win_rate"] is not None and result["q1_win_rate"] is not None:
@@ -22097,6 +23345,7 @@ def test_r74_t1_q5_higher_than_q1_monotone() -> None:
 def test_r74_t1_stratification_spread_positive() -> None:
     """stratification_spread is positive when top quintile wins more."""
     from scripts.btst_analysis_utils import compute_signal_strength_stratification
+
     rows = [{"score": float(i), "next_close_positive": 1 if i >= 16 else 0} for i in range(25)]
     result = compute_signal_strength_stratification(rows)
     if result["stratification_spread"] is not None:
@@ -22106,6 +23355,7 @@ def test_r74_t1_stratification_spread_positive() -> None:
 def test_r74_t1_all_win_spread_zero() -> None:
     """When all rows win, spread is 0."""
     from scripts.btst_analysis_utils import compute_signal_strength_stratification
+
     rows = [{"score": float(i), "next_close_positive": 1} for i in range(25)]
     result = compute_signal_strength_stratification(rows)
     assert result["signal_stratification_valid"] is True
@@ -22115,6 +23365,7 @@ def test_r74_t1_all_win_spread_zero() -> None:
 def test_r74_t1_monotonicity_score_range() -> None:
     """monotonicity_score is in [0, 1]."""
     from scripts.btst_analysis_utils import compute_signal_strength_stratification
+
     result = compute_signal_strength_stratification(_make_scored_rows(25))
     if result["monotonicity_score"] is not None:
         assert 0.0 <= result["monotonicity_score"] <= 1.0
@@ -22139,6 +23390,7 @@ def test_r74_t1_grade_A() -> None:
 def test_r74_t1_grade_D_inverted() -> None:
     """Grade D when higher score has LOWER win rate (inverted)."""
     from scripts.btst_analysis_utils import compute_signal_strength_stratification
+
     rows = [{"score": float(i), "next_close_positive": 1 if i <= 5 else 0} for i in range(25)]
     result = compute_signal_strength_stratification(rows)
     assert result["stratification_grade"] in ("C", "D")
@@ -22147,18 +23399,21 @@ def test_r74_t1_grade_D_inverted() -> None:
 def test_r74_t1_in_comparison_metrics() -> None:
     """stratification_spread is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "stratification_spread" in COMPARISON_METRICS
 
 
 def test_r74_t1_in_optional_metrics() -> None:
     """stratification_spread is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "stratification_spread" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r74_t1_label_exists() -> None:
     """stratification_spread has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "stratification_spread" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["stratification_spread"]) > 0
 
@@ -22168,6 +23423,7 @@ def test_r74_t1_floor_in_quality_floors() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "stratification_spread" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["stratification_spread"] == pytest.approx(0.0)
 
@@ -22175,6 +23431,7 @@ def test_r74_t1_floor_in_quality_floors() -> None:
 def test_r74_t1_surface_summary_prefix() -> None:
     """build_surface_summary outputs strat_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"score": float(i), "next_close_positive": 1 if i >= 10 else 0, "t0_date": "20240101", "t0_close": 10.0, "t0_high": 10.5, "t1_close": 10.1, "t1_high": 10.6, "t2_close": 10.2, "t3_close": 10.3, "runner_composite_score": float(i), "composite_score": float(i)} for i in range(20)]
     result = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "strat_signal_stratification_valid" in result
@@ -22184,9 +23441,11 @@ def test_r74_t1_surface_summary_prefix() -> None:
 # T2: compute_conditional_momentum_filter
 # ---------------------------------------------------------------------------
 
+
 def test_r74_t2_invalid_too_few_rows() -> None:
     """Returns valid=False when fewer than 10 rows."""
     from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+
     rows = [{"momentum_slope_20d": 0.1, "t0_estimated_net_inflow_ratio": 0.1, "next_close_positive": 1} for _ in range(8)]
     result = compute_conditional_momentum_filter(rows)
     assert result["conditional_momentum_valid"] is False
@@ -22195,6 +23454,7 @@ def test_r74_t2_invalid_too_few_rows() -> None:
 def test_r74_t2_invalid_no_factors() -> None:
     """Returns valid=False when neither factor is present."""
     from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+
     rows = [{"next_close_positive": 1} for _ in range(15)]
     result = compute_conditional_momentum_filter(rows)
     assert result["conditional_momentum_valid"] is False
@@ -22203,6 +23463,7 @@ def test_r74_t2_invalid_no_factors() -> None:
 def test_r74_t2_dual_factor_mode() -> None:
     """Dual factor mode when both factors present."""
     from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+
     rows = _make_scored_rows(20)
     result = compute_conditional_momentum_filter(rows)
     assert result["conditional_momentum_valid"] is True
@@ -22212,6 +23473,7 @@ def test_r74_t2_dual_factor_mode() -> None:
 def test_r74_t2_single_factor_mode_no_flow() -> None:
     """Single factor mode when flow factor absent."""
     from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+
     rows = [{"momentum_slope_20d": float(i) * 0.1, "next_close_positive": 1 if i >= 5 else 0} for i in range(15)]
     result = compute_conditional_momentum_filter(rows)
     assert result["conditional_momentum_valid"] is True
@@ -22221,6 +23483,7 @@ def test_r74_t2_single_factor_mode_no_flow() -> None:
 def test_r74_t2_single_factor_mode_no_mom() -> None:
     """Single factor mode when momentum factor absent."""
     from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+
     rows = [{"t0_estimated_net_inflow_ratio": float(i) * 0.1, "next_close_positive": 1 if i >= 5 else 0} for i in range(15)]
     result = compute_conditional_momentum_filter(rows)
     assert result["conditional_momentum_valid"] is True
@@ -22230,6 +23493,7 @@ def test_r74_t2_single_factor_mode_no_mom() -> None:
 def test_r74_t2_conditional_momentum_edge_dual() -> None:
     """conditional_momentum_edge computed for dual mode."""
     from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+
     rows = _make_scored_rows(20)
     result = compute_conditional_momentum_filter(rows)
     assert result["conditional_momentum_valid"] is True
@@ -22241,6 +23505,7 @@ def test_r74_t2_conditional_momentum_edge_dual() -> None:
 def test_r74_t2_best_condition_dual_strong() -> None:
     """best_condition = 'dual_strong' when dual strong win rate is present."""
     from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+
     rows = _make_scored_rows(20)
     result = compute_conditional_momentum_filter(rows)
     if result["conditional_momentum_valid"] and not result["single_factor_mode"]:
@@ -22250,6 +23515,7 @@ def test_r74_t2_best_condition_dual_strong() -> None:
 def test_r74_t2_best_condition_high_factor_single() -> None:
     """best_condition = 'high_factor' in single factor mode."""
     from scripts.btst_analysis_utils import compute_conditional_momentum_filter
+
     rows = [{"momentum_slope_20d": float(i) * 0.1, "next_close_positive": 1 if i >= 5 else 0} for i in range(15)]
     result = compute_conditional_momentum_filter(rows)
     if result["conditional_momentum_valid"]:
@@ -22259,18 +23525,21 @@ def test_r74_t2_best_condition_high_factor_single() -> None:
 def test_r74_t2_in_comparison_metrics() -> None:
     """conditional_momentum_edge is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "conditional_momentum_edge" in COMPARISON_METRICS
 
 
 def test_r74_t2_in_optional_metrics() -> None:
     """conditional_momentum_edge is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "conditional_momentum_edge" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r74_t2_label_exists() -> None:
     """conditional_momentum_edge has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "conditional_momentum_edge" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["conditional_momentum_edge"]) > 0
 
@@ -22280,6 +23549,7 @@ def test_r74_t2_floor_in_quality_floors() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "conditional_momentum_edge" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["conditional_momentum_edge"] == pytest.approx(0.0)
 
@@ -22287,6 +23557,7 @@ def test_r74_t2_floor_in_quality_floors() -> None:
 def test_r74_t2_surface_summary_prefix() -> None:
     """build_surface_summary outputs cond_mom_ prefixed keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"momentum_slope_20d": float(i) * 0.1, "t0_estimated_net_inflow_ratio": float(i) * 0.05, "next_close_positive": i % 2, "t0_date": "20240101", "t0_close": 10.0, "t0_high": 10.5, "t1_close": 10.1, "t1_high": 10.6, "t2_close": 10.2, "t3_close": 10.3} for i in range(15)]
     result = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "cond_mom_conditional_momentum_valid" in result
@@ -22296,9 +23567,11 @@ def test_r74_t2_surface_summary_prefix() -> None:
 # T3: compute_cross_window_breadth_trend
 # ---------------------------------------------------------------------------
 
+
 def test_r74_t3_invalid_too_few_windows() -> None:
     """Returns valid=False when fewer than 3 windows have breadth data."""
     from scripts.optimize_profile import compute_cross_window_breadth_trend
+
     summaries = [{"breadth_breadth_win_rate": 0.6}, {"breadth_breadth_win_rate": 0.55}]
     result = compute_cross_window_breadth_trend(summaries)
     assert result["breadth_trend_valid"] is False
@@ -22308,6 +23581,7 @@ def test_r74_t3_invalid_too_few_windows() -> None:
 def test_r74_t3_invalid_missing_field() -> None:
     """Returns valid=False when breadth_breadth_win_rate key absent."""
     from scripts.optimize_profile import compute_cross_window_breadth_trend
+
     summaries = [{"other": 1}, {"other": 2}, {"other": 3}]
     result = compute_cross_window_breadth_trend(summaries)
     assert result["breadth_trend_valid"] is False
@@ -22316,6 +23590,7 @@ def test_r74_t3_invalid_missing_field() -> None:
 def test_r74_t3_valid_three_windows() -> None:
     """Returns valid=True with exactly 3 valid windows."""
     from scripts.optimize_profile import compute_cross_window_breadth_trend
+
     summaries = [{"breadth_breadth_win_rate": 0.5}, {"breadth_breadth_win_rate": 0.55}, {"breadth_breadth_win_rate": 0.6}]
     result = compute_cross_window_breadth_trend(summaries)
     assert result["breadth_trend_valid"] is True
@@ -22325,6 +23600,7 @@ def test_r74_t3_valid_three_windows() -> None:
 def test_r74_t3_positive_slope_rising() -> None:
     """Positive OLS slope when breadth win rates are increasing."""
     from scripts.optimize_profile import compute_cross_window_breadth_trend
+
     summaries = [{"breadth_breadth_win_rate": 0.4 + i * 0.05} for i in range(5)]
     result = compute_cross_window_breadth_trend(summaries)
     assert result["breadth_trend_valid"] is True
@@ -22334,6 +23610,7 @@ def test_r74_t3_positive_slope_rising() -> None:
 def test_r74_t3_negative_slope_falling() -> None:
     """Negative OLS slope when breadth win rates are decreasing."""
     from scripts.optimize_profile import compute_cross_window_breadth_trend
+
     summaries = [{"breadth_breadth_win_rate": 0.8 - i * 0.05} for i in range(5)]
     result = compute_cross_window_breadth_trend(summaries)
     assert result["breadth_trend_valid"] is True
@@ -22343,6 +23620,7 @@ def test_r74_t3_negative_slope_falling() -> None:
 def test_r74_t3_grade_A_strong_rise() -> None:
     """Grade A when slope > 0.005."""
     from scripts.optimize_profile import compute_cross_window_breadth_trend
+
     summaries = [{"breadth_breadth_win_rate": 0.5 + i * 0.05} for i in range(5)]
     result = compute_cross_window_breadth_trend(summaries)
     if result["breadth_trend_valid"] and result["breadth_trend_slope"] is not None and result["breadth_trend_slope"] > 0.005:
@@ -22352,6 +23630,7 @@ def test_r74_t3_grade_A_strong_rise() -> None:
 def test_r74_t3_grade_D_strong_fall() -> None:
     """Grade D when slope <= -0.01."""
     from scripts.optimize_profile import compute_cross_window_breadth_trend
+
     summaries = [{"breadth_breadth_win_rate": 0.9 - i * 0.1} for i in range(5)]
     result = compute_cross_window_breadth_trend(summaries)
     if result["breadth_trend_valid"] and result["breadth_trend_slope"] is not None and result["breadth_trend_slope"] <= -0.01:
@@ -22361,6 +23640,7 @@ def test_r74_t3_grade_D_strong_fall() -> None:
 def test_r74_t3_breadth_above_threshold_pct() -> None:
     """breadth_above_threshold_pct counts windows with win_rate > 0.5."""
     from scripts.optimize_profile import compute_cross_window_breadth_trend
+
     summaries = [{"breadth_breadth_win_rate": v} for v in [0.4, 0.6, 0.55, 0.45, 0.7]]
     result = compute_cross_window_breadth_trend(summaries)
     assert result["breadth_trend_valid"] is True
@@ -22371,28 +23651,33 @@ def test_r74_t3_breadth_above_threshold_pct() -> None:
 def test_r74_t3_breadth_trend_mean() -> None:
     """breadth_trend_mean equals the average of breadth win rates."""
     from scripts.optimize_profile import compute_cross_window_breadth_trend
+
     vals = [0.5, 0.6, 0.7]
     summaries = [{"breadth_breadth_win_rate": v} for v in vals]
     result = compute_cross_window_breadth_trend(summaries)
     import pytest
+
     assert result["breadth_trend_mean"] == pytest.approx(sum(vals) / len(vals), abs=1e-5)
 
 
 def test_r74_t3_in_comparison_metrics() -> None:
     """breadth_trend_slope is in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "breadth_trend_slope" in COMPARISON_METRICS
 
 
 def test_r74_t3_in_optional_metrics() -> None:
     """breadth_trend_slope is in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "breadth_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r74_t3_label_exists() -> None:
     """breadth_trend_slope has a Chinese label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "breadth_trend_slope" in COMPARISON_METRIC_LABELS
     assert len(COMPARISON_METRIC_LABELS["breadth_trend_slope"]) > 0
 
@@ -22402,6 +23687,7 @@ def test_r74_t3_floor_in_quality_floors() -> None:
     import pytest
 
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "breadth_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["breadth_trend_slope"] == pytest.approx(-0.01)
 
@@ -22409,6 +23695,7 @@ def test_r74_t3_floor_in_quality_floors() -> None:
 def test_r74_all_new_metrics_in_comparison() -> None:
     """All 3 new Round 74 metrics are in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     for key in ("stratification_spread", "conditional_momentum_edge", "breadth_trend_slope"):
         assert key in COMPARISON_METRICS, f"Missing: {key}"
 
@@ -22416,6 +23703,7 @@ def test_r74_all_new_metrics_in_comparison() -> None:
 def test_r74_all_new_metrics_in_optional() -> None:
     """All 3 new Round 74 metrics are in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for key in ("stratification_spread", "conditional_momentum_edge", "breadth_trend_slope"):
         assert key in OPTIONAL_COMPARISON_METRICS, f"Missing: {key}"
 
@@ -22423,6 +23711,7 @@ def test_r74_all_new_metrics_in_optional() -> None:
 def test_r74_all_floors_present() -> None:
     """All 3 new Round 74 metrics have floors in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "stratification_spread" in BTST_QUALITY_FLOORS
     assert "conditional_momentum_edge" in BTST_QUALITY_FLOORS
     assert "breadth_trend_slope" in BTST_QUALITY_FLOORS
@@ -22440,6 +23729,7 @@ def test_r74_all_floors_present() -> None:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _r75_sharpe_rows(rets):
     """Build minimal rows list with next_day_return for T1 tests."""
     return [{"next_day_return": r} for r in rets]
@@ -22449,15 +23739,17 @@ def _r75_colin_rows(n=20):
     """Build rows with 4 factor-pair keys perfectly correlated for T2 tests."""
     rows = []
     for i in range(n):
-        rows.append({
-            "close_strength": float(i),
-            "momentum_slope_20d": float(i) * 0.9 + 0.1,
-            "volume_expansion_quality": float(i) * 0.5,
-            "t0_estimated_net_inflow_ratio": float(i) * 0.5 + 0.2,
-            "sector_resonance": float(n - i),
-            "rs_sector_rank": float(n - i) * 1.1,
-            "breakout_quality_score": float(i) * 2.0,
-        })
+        rows.append(
+            {
+                "close_strength": float(i),
+                "momentum_slope_20d": float(i) * 0.9 + 0.1,
+                "volume_expansion_quality": float(i) * 0.5,
+                "t0_estimated_net_inflow_ratio": float(i) * 0.5 + 0.2,
+                "sector_resonance": float(n - i),
+                "rs_sector_rank": float(n - i) * 1.1,
+                "breakout_quality_score": float(i) * 2.0,
+            }
+        )
     return rows
 
 
@@ -22470,9 +23762,11 @@ def _r75_strat_windows(vals):
 # T1: compute_sharpe_ratio_analysis
 # ---------------------------------------------------------------------------
 
+
 def test_r75_t1_invalid_too_few_rows() -> None:
     """Returns valid=False when fewer than 8 rows."""
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows([0.01, 0.02, 0.03]))
     assert result["sharpe_analysis_valid"] is False
     assert result["sharpe_ratio"] is None
@@ -22481,6 +23775,7 @@ def test_r75_t1_invalid_too_few_rows() -> None:
 def test_r75_t1_invalid_no_return_field() -> None:
     """Returns valid=False when next_day_return values are all None."""
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     rows = [{"other_field": i} for i in range(10)]
     result = compute_sharpe_ratio_analysis(rows)
     assert result["sharpe_analysis_valid"] is False
@@ -22489,6 +23784,7 @@ def test_r75_t1_invalid_no_return_field() -> None:
 def test_r75_t1_valid_basic() -> None:
     """Returns valid=True with ≥8 valid next_day_return rows."""
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     rets = [0.01, -0.005, 0.02, 0.015, -0.01, 0.005, 0.03, 0.008]
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
     assert result["sharpe_analysis_valid"] is True
@@ -22499,6 +23795,7 @@ def test_r75_t1_valid_basic() -> None:
 def test_r75_t1_return_mean_precision() -> None:
     """return_mean is rounded to 8 decimal places."""
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     rets = [0.01] * 8
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
     assert result["return_mean"] == round(0.01, 8)
@@ -22508,6 +23805,7 @@ def test_r75_t1_sharpe_ratio_formula() -> None:
     """sharpe_ratio = return_mean / return_std (both non-zero)."""
 
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     rets = [0.02, 0.01, -0.01, 0.03, 0.005, -0.005, 0.015, 0.025]
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
     assert result["sharpe_analysis_valid"] is True
@@ -22521,6 +23819,7 @@ def test_r75_t1_annualized_sharpe_formula() -> None:
     import math
 
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     rets = [0.02, 0.01, -0.01, 0.03, 0.005, -0.005, 0.015, 0.025]
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
     if result["sharpe_ratio"] is not None:
@@ -22531,6 +23830,7 @@ def test_r75_t1_annualized_sharpe_formula() -> None:
 def test_r75_t1_std_zero_returns_none_sharpe() -> None:
     """When all returns identical (std=0), sharpe_ratio and annualized_sharpe are None."""
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     rets = [0.01] * 10
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
     assert result["sharpe_ratio"] is None
@@ -22540,6 +23840,7 @@ def test_r75_t1_std_zero_returns_none_sharpe() -> None:
 def test_r75_t1_std_zero_grade_D() -> None:
     """When std=0 → grade must be D."""
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     rets = [0.01] * 10
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
     assert result["sharpe_grade"] == "D"
@@ -22559,6 +23860,7 @@ def test_r75_t1_grade_A_high_sharpe() -> None:
 def test_r75_t1_grade_D_negative_sharpe() -> None:
     """Grade D when annualized_sharpe <= 0."""
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     rets = [-0.02, -0.01, -0.03, -0.015, -0.025, -0.005, -0.01, -0.02, -0.03, -0.01]
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
     if result["annualized_sharpe"] is not None and result["annualized_sharpe"] <= 0:
@@ -22568,6 +23870,7 @@ def test_r75_t1_grade_D_negative_sharpe() -> None:
 def test_r75_t1_calmar_proxy_none_when_all_positive() -> None:
     """calmar_proxy is None when all returns are non-negative."""
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     rets = [0.01, 0.02, 0.03, 0.005, 0.015, 0.025, 0.01, 0.02]
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
     assert result["calmar_proxy"] is None
@@ -22576,6 +23879,7 @@ def test_r75_t1_calmar_proxy_none_when_all_positive() -> None:
 def test_r75_t1_calmar_proxy_computed_when_negative_present() -> None:
     """calmar_proxy is a float when at least one negative return exists."""
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     rets = [0.02, -0.05, 0.01, 0.03, 0.005, -0.01, 0.015, 0.025]
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
     assert result["calmar_proxy"] is not None
@@ -22585,6 +23889,7 @@ def test_r75_t1_calmar_proxy_computed_when_negative_present() -> None:
 def test_r75_t1_sortino_none_when_no_downside() -> None:
     """sortino_ratio is None when no negative returns (downside_std=0)."""
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     rets = [0.01, 0.02, 0.03, 0.005, 0.015, 0.025, 0.01, 0.02]
     result = compute_sharpe_ratio_analysis(_r75_sharpe_rows(rets))
     assert result["sortino_ratio"] is None
@@ -22593,6 +23898,7 @@ def test_r75_t1_sortino_none_when_no_downside() -> None:
 def test_r75_t1_default_grade_D_in_null() -> None:
     """Null result has sharpe_grade='D' (not None)."""
     from scripts.btst_analysis_utils import compute_sharpe_ratio_analysis
+
     result = compute_sharpe_ratio_analysis([])
     assert result["sharpe_grade"] == "D"
 
@@ -22601,9 +23907,11 @@ def test_r75_t1_default_grade_D_in_null() -> None:
 # T2: compute_factor_collinearity_check
 # ---------------------------------------------------------------------------
 
+
 def test_r75_t2_invalid_too_few_rows() -> None:
     """Returns valid=False when fewer than 10 rows."""
     from scripts.btst_analysis_utils import compute_factor_collinearity_check
+
     rows = _r75_colin_rows(5)
     result = compute_factor_collinearity_check(rows)
     assert result["factor_collinearity_valid"] is False
@@ -22612,6 +23920,7 @@ def test_r75_t2_invalid_too_few_rows() -> None:
 def test_r75_t2_invalid_high_collinearity_pairs_is_list() -> None:
     """high_collinearity_pairs is always a list (not None) even on invalid input."""
     from scripts.btst_analysis_utils import compute_factor_collinearity_check
+
     result = compute_factor_collinearity_check([])
     assert isinstance(result["high_collinearity_pairs"], list)
 
@@ -22619,6 +23928,7 @@ def test_r75_t2_invalid_high_collinearity_pairs_is_list() -> None:
 def test_r75_t2_valid_basic() -> None:
     """Returns valid=True with ≥10 rows containing required keys."""
     from scripts.btst_analysis_utils import compute_factor_collinearity_check
+
     result = compute_factor_collinearity_check(_r75_colin_rows(20))
     assert result["factor_collinearity_valid"] is True
     assert result["pair_correlations"] is not None
@@ -22627,6 +23937,7 @@ def test_r75_t2_valid_basic() -> None:
 def test_r75_t2_pair_correlations_has_4_pairs() -> None:
     """pair_correlations dict has exactly 4 keys."""
     from scripts.btst_analysis_utils import compute_factor_collinearity_check
+
     result = compute_factor_collinearity_check(_r75_colin_rows(20))
     assert result["factor_collinearity_valid"] is True
     assert set(result["pair_correlations"].keys()) == {"price_momentum", "vol_flow", "sector", "breakout_momentum"}
@@ -22635,6 +23946,7 @@ def test_r75_t2_pair_correlations_has_4_pairs() -> None:
 def test_r75_t2_max_collinearity_is_float() -> None:
     """max_collinearity is a float when valid."""
     from scripts.btst_analysis_utils import compute_factor_collinearity_check
+
     result = compute_factor_collinearity_check(_r75_colin_rows(20))
     assert result["factor_collinearity_valid"] is True
     assert isinstance(result["max_collinearity"], float)
@@ -22643,6 +23955,7 @@ def test_r75_t2_max_collinearity_is_float() -> None:
 def test_r75_t2_max_collinearity_between_0_and_1() -> None:
     """max_collinearity is in [0.0, 1.0] for valid result."""
     from scripts.btst_analysis_utils import compute_factor_collinearity_check
+
     result = compute_factor_collinearity_check(_r75_colin_rows(20))
     if result["factor_collinearity_valid"]:
         assert 0.0 <= result["max_collinearity"] <= 1.0
@@ -22651,6 +23964,7 @@ def test_r75_t2_max_collinearity_between_0_and_1() -> None:
 def test_r75_t2_high_collinearity_pairs_is_list_valid() -> None:
     """high_collinearity_pairs is a list on valid input."""
     from scripts.btst_analysis_utils import compute_factor_collinearity_check
+
     result = compute_factor_collinearity_check(_r75_colin_rows(20))
     assert isinstance(result["high_collinearity_pairs"], list)
 
@@ -22661,12 +23975,10 @@ def test_r75_t2_grade_A_low_collinearity() -> None:
     import random
 
     from scripts.btst_analysis_utils import compute_factor_collinearity_check
+
     random.seed(42)
     n = 30
-    rows = [{"close_strength": random.gauss(0, 1), "momentum_slope_20d": random.gauss(0, 1),
-             "volume_expansion_quality": random.gauss(0, 1), "t0_estimated_net_inflow_ratio": random.gauss(0, 1),
-             "sector_resonance": random.gauss(0, 1), "rs_sector_rank": random.gauss(0, 1),
-             "breakout_quality_score": random.gauss(0, 1)} for _ in range(n)]
+    rows = [{"close_strength": random.gauss(0, 1), "momentum_slope_20d": random.gauss(0, 1), "volume_expansion_quality": random.gauss(0, 1), "t0_estimated_net_inflow_ratio": random.gauss(0, 1), "sector_resonance": random.gauss(0, 1), "rs_sector_rank": random.gauss(0, 1), "breakout_quality_score": random.gauss(0, 1)} for _ in range(n)]
     result = compute_factor_collinearity_check(rows)
     if result["factor_collinearity_valid"] and result["max_collinearity"] is not None and result["max_collinearity"] < 0.5:
         assert result["collinearity_grade"] == "A"
@@ -22678,10 +23990,7 @@ def test_r75_t2_grade_D_perfect_collinearity() -> None:
 
     # Perfect linear correlation between close_strength and momentum_slope_20d
     n = 20
-    rows = [{"close_strength": float(i), "momentum_slope_20d": float(i),
-             "volume_expansion_quality": float(i), "t0_estimated_net_inflow_ratio": float(i),
-             "sector_resonance": float(i), "rs_sector_rank": float(i),
-             "breakout_quality_score": float(i)} for i in range(n)]
+    rows = [{"close_strength": float(i), "momentum_slope_20d": float(i), "volume_expansion_quality": float(i), "t0_estimated_net_inflow_ratio": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "breakout_quality_score": float(i)} for i in range(n)]
     result = compute_factor_collinearity_check(rows)
     if result["factor_collinearity_valid"] and result["max_collinearity"] is not None and result["max_collinearity"] >= 0.85:
         assert result["collinearity_grade"] == "D"
@@ -22690,6 +23999,7 @@ def test_r75_t2_grade_D_perfect_collinearity() -> None:
 def test_r75_t2_effective_factor_count_formula() -> None:
     """effective_factor_count = 7 - len(high_collinearity_pairs)."""
     from scripts.btst_analysis_utils import compute_factor_collinearity_check
+
     result = compute_factor_collinearity_check(_r75_colin_rows(20))
     if result["factor_collinearity_valid"]:
         expected = 7 - len(result["high_collinearity_pairs"])
@@ -22712,9 +24022,11 @@ def test_r75_t2_missing_keys_returns_none_correlations() -> None:
 # T3: compute_cross_window_stratification_trend
 # ---------------------------------------------------------------------------
 
+
 def test_r75_t3_invalid_too_few_windows() -> None:
     """Returns valid=False when fewer than 3 valid windows."""
     from scripts.optimize_profile import compute_cross_window_stratification_trend
+
     result = compute_cross_window_stratification_trend(_r75_strat_windows([0.6, 0.55]))
     assert result["stratification_trend_valid"] is False
     assert result["stratification_trend_slope"] is None
@@ -22723,6 +24035,7 @@ def test_r75_t3_invalid_too_few_windows() -> None:
 def test_r75_t3_invalid_missing_strat_key() -> None:
     """Returns valid=False when strat_stratification_spread key absent."""
     from scripts.optimize_profile import compute_cross_window_stratification_trend
+
     summaries = [{"other": 1}, {"other": 2}, {"other": 3}]
     result = compute_cross_window_stratification_trend(summaries)
     assert result["stratification_trend_valid"] is False
@@ -22731,6 +24044,7 @@ def test_r75_t3_invalid_missing_strat_key() -> None:
 def test_r75_t3_valid_three_windows() -> None:
     """Returns valid=True with exactly 3 valid windows."""
     from scripts.optimize_profile import compute_cross_window_stratification_trend
+
     result = compute_cross_window_stratification_trend(_r75_strat_windows([0.1, 0.15, 0.2]))
     assert result["stratification_trend_valid"] is True
     assert result["stratification_trend_slope"] is not None
@@ -22739,6 +24053,7 @@ def test_r75_t3_valid_three_windows() -> None:
 def test_r75_t3_positive_slope_rising() -> None:
     """Positive OLS slope when stratification_spread is increasing."""
     from scripts.optimize_profile import compute_cross_window_stratification_trend
+
     result = compute_cross_window_stratification_trend(_r75_strat_windows([0.05 * i for i in range(1, 6)]))
     assert result["stratification_trend_valid"] is True
     assert result["stratification_trend_slope"] > 0
@@ -22747,6 +24062,7 @@ def test_r75_t3_positive_slope_rising() -> None:
 def test_r75_t3_negative_slope_falling() -> None:
     """Negative OLS slope when stratification_spread is decreasing."""
     from scripts.optimize_profile import compute_cross_window_stratification_trend
+
     result = compute_cross_window_stratification_trend(_r75_strat_windows([0.3 - 0.05 * i for i in range(5)]))
     assert result["stratification_trend_valid"] is True
     assert result["stratification_trend_slope"] < 0
@@ -22777,6 +24093,7 @@ def test_r75_t3_grade_B_slight_rise() -> None:
 def test_r75_t3_grade_D_strong_fall() -> None:
     """Grade D when slope <= -0.01."""
     from scripts.optimize_profile import compute_cross_window_stratification_trend
+
     vals = [0.5 - 0.1 * i for i in range(7)]
     result = compute_cross_window_stratification_trend(_r75_strat_windows(vals))
     if result["stratification_trend_valid"] and result["stratification_trend_slope"] is not None and result["stratification_trend_slope"] <= -0.01:
@@ -22786,6 +24103,7 @@ def test_r75_t3_grade_D_strong_fall() -> None:
 def test_r75_t3_positive_windows_pct() -> None:
     """stratification_positive_windows_pct counts windows with spread > 0."""
     from scripts.optimize_profile import compute_cross_window_stratification_trend
+
     vals = [0.1, -0.05, 0.2, -0.1, 0.3]
     result = compute_cross_window_stratification_trend(_r75_strat_windows(vals))
     assert result["stratification_trend_valid"] is True
@@ -22796,6 +24114,7 @@ def test_r75_t3_positive_windows_pct() -> None:
 def test_r75_t3_mean_computed_correctly() -> None:
     """stratification_trend_mean equals the arithmetic mean of spread values."""
     from scripts.optimize_profile import compute_cross_window_stratification_trend
+
     vals = [0.1, 0.2, 0.3, 0.4, 0.5]
     result = compute_cross_window_stratification_trend(_r75_strat_windows(vals))
     assert result["stratification_trend_valid"] is True
@@ -22807,9 +24126,11 @@ def test_r75_t3_mean_computed_correctly() -> None:
 # Registration / FLOORS / CAPS checks
 # ---------------------------------------------------------------------------
 
+
 def test_r75_all_new_metrics_in_comparison() -> None:
     """All 3 new Round 75 metrics are in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     for key in ("sharpe_ratio", "max_collinearity", "stratification_trend_slope"):
         assert key in COMPARISON_METRICS, f"Missing from COMPARISON_METRICS: {key}"
 
@@ -22817,6 +24138,7 @@ def test_r75_all_new_metrics_in_comparison() -> None:
 def test_r75_all_new_metrics_in_optional() -> None:
     """All 3 new Round 75 metrics are in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for key in ("sharpe_ratio", "max_collinearity", "stratification_trend_slope"):
         assert key in OPTIONAL_COMPARISON_METRICS, f"Missing from OPTIONAL_COMPARISON_METRICS: {key}"
 
@@ -22824,12 +24146,14 @@ def test_r75_all_new_metrics_in_optional() -> None:
 def test_r75_max_collinearity_in_lower_is_better() -> None:
     """max_collinearity is in LOWER_IS_BETTER_COMPARISON_METRICS."""
     from scripts.optimize_profile import LOWER_IS_BETTER_COMPARISON_METRICS
+
     assert "max_collinearity" in LOWER_IS_BETTER_COMPARISON_METRICS
 
 
 def test_r75_labels_present() -> None:
     """All 3 new Round 75 metrics have Chinese labels in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     for key in ("sharpe_ratio", "max_collinearity", "stratification_trend_slope"):
         assert key in COMPARISON_METRIC_LABELS, f"Missing label for: {key}"
         assert len(COMPARISON_METRIC_LABELS[key]) > 0
@@ -22838,6 +24162,7 @@ def test_r75_labels_present() -> None:
 def test_r75_floors_sharpe_ratio() -> None:
     """sharpe_ratio has a floor in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "sharpe_ratio" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["sharpe_ratio"] == 0.0
 
@@ -22845,6 +24170,7 @@ def test_r75_floors_sharpe_ratio() -> None:
 def test_r75_floors_stratification_trend_slope() -> None:
     """stratification_trend_slope has a floor in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "stratification_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["stratification_trend_slope"] == -0.01
 
@@ -22852,9 +24178,9 @@ def test_r75_floors_stratification_trend_slope() -> None:
 def test_r75_caps_max_collinearity() -> None:
     """max_collinearity has a cap of 0.85 in BTST_QUALITY_CAPS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_CAPS
+
     assert "max_collinearity" in BTST_QUALITY_CAPS
     assert BTST_QUALITY_CAPS["max_collinearity"] == 0.85
-
 
 
 # ===========================================================================
@@ -22867,6 +24193,7 @@ def test_r75_caps_max_collinearity() -> None:
 def test_r76_t1_empty_returns() -> None:
     """compute_return_skew_quality returns valid=False when rows is empty."""
     from scripts.btst_analysis_utils import compute_return_skew_quality
+
     result = compute_return_skew_quality([])
     assert result["return_skew_quality_valid"] is False
     assert result["gain_loss_ratio"] is None
@@ -22876,6 +24203,7 @@ def test_r76_t1_empty_returns() -> None:
 def test_r76_t1_too_few_rows() -> None:
     """compute_return_skew_quality needs >=10 rows to compute."""
     from scripts.btst_analysis_utils import compute_return_skew_quality
+
     rows = [{"next_day_return": 0.01}] * 9
     result = compute_return_skew_quality(rows)
     assert result["return_skew_quality_valid"] is False
@@ -22884,6 +24212,7 @@ def test_r76_t1_too_few_rows() -> None:
 def test_r76_t1_valid_with_ten_rows() -> None:
     """compute_return_skew_quality returns valid=True with >=10 valid rows."""
     from scripts.btst_analysis_utils import compute_return_skew_quality
+
     rows = [{"next_day_return": 0.01 * (i - 5)} for i in range(10)]
     result = compute_return_skew_quality(rows)
     assert result["return_skew_quality_valid"] is True
@@ -22906,6 +24235,7 @@ def test_r76_t1_grade_a_positive_skew_high_glr() -> None:
 def test_r76_t1_grade_b_positive_skew() -> None:
     """Grade B when skewness>0 and gain_loss_ratio>1.0 but not grade-A threshold."""
     from scripts.btst_analysis_utils import compute_return_skew_quality
+
     rows = [{"next_day_return": v} for v in [0.01, 0.02, 0.03, 0.04, 0.05, -0.01, -0.01, -0.01, -0.01, -0.01, 0.01, 0.02]]
     result = compute_return_skew_quality(rows)
     assert result["return_skew_quality_valid"] is True
@@ -22915,6 +24245,7 @@ def test_r76_t1_grade_b_positive_skew() -> None:
 def test_r76_t1_grade_d_strongly_negative_skew() -> None:
     """Grade D when skewness <= -0.3."""
     from scripts.btst_analysis_utils import compute_return_skew_quality
+
     rows = [{"next_day_return": v} for v in [0.001, 0.001, 0.001] + [-0.5] * 7]
     result = compute_return_skew_quality(rows)
     assert result["return_skew_quality_valid"] is True
@@ -22925,6 +24256,7 @@ def test_r76_t1_grade_d_strongly_negative_skew() -> None:
 def test_r76_t1_gain_loss_ratio_formula() -> None:
     """gain_loss_ratio = abs(positive_mean) / (abs(negative_mean) + 0.001)."""
     from scripts.btst_analysis_utils import compute_return_skew_quality
+
     rows = [{"next_day_return": 0.06}] * 6 + [{"next_day_return": -0.03}] * 6
     result = compute_return_skew_quality(rows)
     assert result["return_skew_quality_valid"] is True
@@ -22936,6 +24268,7 @@ def test_r76_t1_gain_loss_ratio_formula() -> None:
 def test_r76_t1_tail_asymmetry_score_equals_right_minus_left() -> None:
     """tail_asymmetry_score = right_tail_pct - left_tail_pct."""
     from scripts.btst_analysis_utils import compute_return_skew_quality
+
     rows = [{"next_day_return": v} for v in [0.01, 0.02, 0.01, -0.01, -0.01, 0.01, 0.02, -0.02, 0.01, 0.01, 0.03, -0.01]]
     result = compute_return_skew_quality(rows)
     assert result["return_skew_quality_valid"] is True
@@ -22946,6 +24279,7 @@ def test_r76_t1_tail_asymmetry_score_equals_right_minus_left() -> None:
 def test_r76_t1_all_positive_returns_high_glr() -> None:
     """When no negative returns exist, gain_loss_ratio is None (no divisor available)."""
     from scripts.btst_analysis_utils import compute_return_skew_quality
+
     rows = [{"next_day_return": 0.01 + i * 0.005} for i in range(10)]
     result = compute_return_skew_quality(rows)
     assert result["return_skew_quality_valid"] is True
@@ -22957,6 +24291,7 @@ def test_r76_t1_all_positive_returns_high_glr() -> None:
 def test_r76_t1_missing_return_key_rows_skipped() -> None:
     """Rows missing 'next_day_return' or with None should be skipped gracefully."""
     from scripts.btst_analysis_utils import compute_return_skew_quality
+
     rows = [{"next_day_return": 0.01}] * 5 + [{"other": 123}] * 3 + [{"next_day_return": None}] * 2 + [{"next_day_return": -0.01}] * 5
     result = compute_return_skew_quality(rows)
     assert isinstance(result, dict)
@@ -22966,6 +24301,7 @@ def test_r76_t1_missing_return_key_rows_skipped() -> None:
 def test_r76_t1_metrics_in_comparison_metrics() -> None:
     """gain_loss_ratio and tail_asymmetry_score must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "gain_loss_ratio" in COMPARISON_METRICS
     assert "tail_asymmetry_score" in COMPARISON_METRICS
 
@@ -22973,6 +24309,7 @@ def test_r76_t1_metrics_in_comparison_metrics() -> None:
 def test_r76_t1_metrics_in_optional_comparison_metrics() -> None:
     """gain_loss_ratio and tail_asymmetry_score must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "gain_loss_ratio" in OPTIONAL_COMPARISON_METRICS
     assert "tail_asymmetry_score" in OPTIONAL_COMPARISON_METRICS
 
@@ -22980,6 +24317,7 @@ def test_r76_t1_metrics_in_optional_comparison_metrics() -> None:
 def test_r76_t1_gain_loss_ratio_floor_registered() -> None:
     """gain_loss_ratio must have floor 1.0 in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "gain_loss_ratio" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["gain_loss_ratio"] == pytest.approx(1.0)
 
@@ -22987,6 +24325,7 @@ def test_r76_t1_gain_loss_ratio_floor_registered() -> None:
 def test_r76_t1_tail_asymmetry_floor_registered() -> None:
     """tail_asymmetry_score must have floor -0.05 in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "tail_asymmetry_score" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["tail_asymmetry_score"] == pytest.approx(-0.05)
 
@@ -22997,6 +24336,7 @@ def test_r76_t1_tail_asymmetry_floor_registered() -> None:
 def test_r76_t2_empty_rows() -> None:
     """compute_factor_orthogonality_score returns valid=False when rows is empty."""
     from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+
     result = compute_factor_orthogonality_score([])
     assert result["factor_orthogonality_valid"] is False
     assert result["orthogonality_score"] is None
@@ -23005,6 +24345,7 @@ def test_r76_t2_empty_rows() -> None:
 def test_r76_t2_too_few_rows() -> None:
     """compute_factor_orthogonality_score needs >=10 rows to compute."""
     from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+
     rows = [{"close_strength": 1.0}] * 9
     result = compute_factor_orthogonality_score(rows)
     assert result["factor_orthogonality_valid"] is False
@@ -23013,6 +24354,7 @@ def test_r76_t2_too_few_rows() -> None:
 def test_r76_t2_identical_factors_low_orthogonality() -> None:
     """When all factors move identically, orthogonality_score is near 0."""
     from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+
     rows = [{"close_strength": v, "volume_expansion_quality": v, "sector_resonance": v, "rs_sector_rank": v, "t0_estimated_net_inflow_ratio": v, "breakout_quality_score": v, "momentum_slope_20d": v} for v in range(1, 21)]
     result = compute_factor_orthogonality_score(rows)
     assert result["factor_orthogonality_valid"] is True
@@ -23023,6 +24365,7 @@ def test_r76_t2_identical_factors_low_orthogonality() -> None:
 def test_r76_t2_grade_d_below_threshold() -> None:
     """When orthogonality_score <= 0.5, grade should be D."""
     from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+
     rows = [{"close_strength": v, "volume_expansion_quality": v + 0.01, "sector_resonance": v - 0.01, "rs_sector_rank": v, "t0_estimated_net_inflow_ratio": v + 0.02, "breakout_quality_score": v, "momentum_slope_20d": v + 0.03} for v in range(1, 21)]
     result = compute_factor_orthogonality_score(rows)
     assert result["factor_orthogonality_valid"] is True
@@ -23033,6 +24376,7 @@ def test_r76_t2_grade_d_below_threshold() -> None:
 def test_r76_t2_orthogonality_score_range_01() -> None:
     """orthogonality_score must be in [0.0, 1.0]."""
     from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(-i), "sector_resonance": float(i * 2), "rs_sector_rank": float(i * 0.5), "t0_estimated_net_inflow_ratio": float(i + 1), "breakout_quality_score": float(-i * 2), "momentum_slope_20d": float(i * 3)} for i in range(1, 20)]
     result = compute_factor_orthogonality_score(rows)
     assert result["factor_orthogonality_valid"] is True
@@ -23044,6 +24388,7 @@ def test_r76_t2_orthogonality_score_range_01() -> None:
 def test_r76_t2_orthogonality_score_formula() -> None:
     """orthogonality_score = 1.0 - mean_abs_correlation."""
     from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i * 2), "sector_resonance": float(i * 0.5), "rs_sector_rank": float(i + 1), "t0_estimated_net_inflow_ratio": float(i * 3), "breakout_quality_score": float(i * 1.5), "momentum_slope_20d": float(i + 0.1)} for i in range(1, 16)]
     result = compute_factor_orthogonality_score(rows)
     assert result["factor_orthogonality_valid"] is True
@@ -23055,18 +24400,21 @@ def test_r76_t2_orthogonality_score_formula() -> None:
 def test_r76_t2_orthogonality_metric_in_comparison_metrics() -> None:
     """orthogonality_score must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "orthogonality_score" in COMPARISON_METRICS
 
 
 def test_r76_t2_orthogonality_metric_in_optional_comparison_metrics() -> None:
     """orthogonality_score must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "orthogonality_score" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r76_t2_orthogonality_floor_registered() -> None:
     """orthogonality_score must have floor 0.5 in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "orthogonality_score" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["orthogonality_score"] == pytest.approx(0.5)
 
@@ -23076,6 +24424,7 @@ def test_r76_t2_orthogonality_grade_a_high_independence() -> None:
     import random
 
     from scripts.btst_analysis_utils import compute_factor_orthogonality_score
+
     rng = random.Random(42)
     n = 30
     factors = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
@@ -23093,6 +24442,7 @@ def test_r76_t2_orthogonality_grade_a_high_independence() -> None:
 def test_r76_t3_sharpe_trend_collects_sharpe_sharpe_ratio() -> None:
     """Updated function collects sharpe_sharpe_ratio key (R75 T1 output)."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_sharpe_ratio": 0.5 + i * 0.02} for i in range(5)]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_valid"] is True
@@ -23102,6 +24452,7 @@ def test_r76_t3_sharpe_trend_collects_sharpe_sharpe_ratio() -> None:
 def test_r76_t3_sharpe_trend_falls_back_to_legacy_key() -> None:
     """Updated function falls back to sharpe_ratio key for backward compatibility."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_ratio": 0.3 + i * 0.01} for i in range(5)]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_valid"] is True
@@ -23111,6 +24462,7 @@ def test_r76_t3_sharpe_trend_falls_back_to_legacy_key() -> None:
 def test_r76_t3_sharpe_trend_grade_a_slope_above_001() -> None:
     """Grade A when OLS slope > 0.01."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_sharpe_ratio": float(i) * 0.1} for i in range(10)]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_valid"] is True
@@ -23121,6 +24473,7 @@ def test_r76_t3_sharpe_trend_grade_a_slope_above_001() -> None:
 def test_r76_t3_sharpe_trend_grade_b_slope_between_0_and_001() -> None:
     """Grade B when 0 < OLS slope <= 0.01."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_sharpe_ratio": 1.0 + i * 0.001} for i in range(10)]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_valid"] is True
@@ -23131,6 +24484,7 @@ def test_r76_t3_sharpe_trend_grade_b_slope_between_0_and_001() -> None:
 def test_r76_t3_sharpe_trend_grade_c_mild_decline() -> None:
     """Grade C when -0.02 < OLS slope <= 0."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_sharpe_ratio": 2.0 - i * 0.001} for i in range(10)]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_valid"] is True
@@ -23141,6 +24495,7 @@ def test_r76_t3_sharpe_trend_grade_c_mild_decline() -> None:
 def test_r76_t3_sharpe_trend_grade_d_steep_decline() -> None:
     """Grade D when OLS slope <= -0.02."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_sharpe_ratio": 2.0 - i * 0.05} for i in range(10)]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_valid"] is True
@@ -23151,6 +24506,7 @@ def test_r76_t3_sharpe_trend_grade_d_steep_decline() -> None:
 def test_r76_t3_sharpe_trend_mean_key_present() -> None:
     """Updated function returns sharpe_trend_mean alongside legacy sharpe_mean."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_sharpe_ratio": float(i) * 0.1} for i in range(5)]
     result = compute_cross_window_sharpe_trend(summaries)
     assert "sharpe_trend_mean" in result
@@ -23161,6 +24517,7 @@ def test_r76_t3_sharpe_trend_mean_key_present() -> None:
 def test_r76_t3_sharpe_trend_floor_updated_to_minus002() -> None:
     """sharpe_trend_slope floor must be -0.02 (tightened from -0.10 in Round 76)."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "sharpe_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["sharpe_trend_slope"] == pytest.approx(-0.02)
 
@@ -23168,6 +24525,7 @@ def test_r76_t3_sharpe_trend_floor_updated_to_minus002() -> None:
 def test_r76_t3_sharpe_positive_windows_pct_correct() -> None:
     """sharpe_positive_windows_pct is fraction of windows where sharpe > 0."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     values = [0.5, -0.1, 0.3, -0.2, 0.4, -0.05, 0.6, -0.3, 0.1, 0.2]
     summaries = [{"sharpe_sharpe_ratio": v} for v in values]
     result = compute_cross_window_sharpe_trend(summaries)
@@ -23179,6 +24537,7 @@ def test_r76_t3_sharpe_positive_windows_pct_correct() -> None:
 def test_r76_t3_sharpe_trend_too_few_windows() -> None:
     """sharpe_trend_valid=False when fewer than 3 windows provide a sharpe value."""
     from scripts.optimize_profile import compute_cross_window_sharpe_trend
+
     summaries = [{"sharpe_sharpe_ratio": 0.5}, {"sharpe_sharpe_ratio": 0.6}]
     result = compute_cross_window_sharpe_trend(summaries)
     assert result["sharpe_trend_valid"] is False
@@ -23194,6 +24553,7 @@ def test_r76_t3_sharpe_trend_too_few_windows() -> None:
 def test_r77_t1_too_few_rows_returns_invalid() -> None:
     """compute_adaptive_score_threshold returns valid=False when rows < 12."""
     from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+
     result = compute_adaptive_score_threshold([{"score": 1.0, "next_day_return": 0.01}] * 11)
     assert result["adaptive_score_threshold_valid"] is False
     assert result["best_threshold_pct"] is None
@@ -23202,6 +24562,7 @@ def test_r77_t1_too_few_rows_returns_invalid() -> None:
 def test_r77_t1_empty_rows_returns_invalid() -> None:
     """compute_adaptive_score_threshold returns valid=False for empty input."""
     from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+
     result = compute_adaptive_score_threshold([])
     assert result["adaptive_score_threshold_valid"] is False
 
@@ -23209,6 +24570,7 @@ def test_r77_t1_empty_rows_returns_invalid() -> None:
 def test_r77_t1_no_score_field_returns_invalid() -> None:
     """compute_adaptive_score_threshold returns valid=False when no score field found."""
     from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+
     rows = [{"next_day_return": 0.01} for _ in range(15)]
     result = compute_adaptive_score_threshold(rows)
     assert result["adaptive_score_threshold_valid"] is False
@@ -23217,6 +24579,7 @@ def test_r77_t1_no_score_field_returns_invalid() -> None:
 def test_r77_t1_no_return_data_returns_invalid() -> None:
     """compute_adaptive_score_threshold returns valid=False when overall_count=0."""
     from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+
     rows = [{"score": float(i)} for i in range(15)]
     result = compute_adaptive_score_threshold(rows)
     assert result["adaptive_score_threshold_valid"] is False
@@ -23225,6 +24588,7 @@ def test_r77_t1_no_return_data_returns_invalid() -> None:
 def test_r77_t1_valid_result_keys() -> None:
     """compute_adaptive_score_threshold returns all expected keys when valid."""
     from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+
     rows = [{"score": float(i), "next_day_return": 0.01 if i > 5 else -0.01} for i in range(20)]
     result = compute_adaptive_score_threshold(rows)
     assert "adaptive_score_threshold_valid" in result
@@ -23238,6 +24602,7 @@ def test_r77_t1_valid_result_keys() -> None:
 def test_r77_t1_threshold_win_rates_dict() -> None:
     """threshold_win_rates contains P50/P60/P70/P80/P90 keys."""
     from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+
     rows = [{"score": float(i), "next_day_return": 0.01 if i > 5 else -0.01} for i in range(20)]
     result = compute_adaptive_score_threshold(rows)
     if result["adaptive_score_threshold_valid"]:
@@ -23274,6 +24639,7 @@ def test_r77_t1_grade_d_no_lift() -> None:
 def test_r77_t1_uses_runner_composite_score() -> None:
     """compute_adaptive_score_threshold reads runner_composite_score first."""
     from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+
     rows = [{"runner_composite_score": float(i), "next_day_return": 0.01} for i in range(20)]
     result = compute_adaptive_score_threshold(rows)
     assert result["adaptive_score_threshold_valid"] is True
@@ -23282,6 +24648,7 @@ def test_r77_t1_uses_runner_composite_score() -> None:
 def test_r77_t1_uses_composite_score_fallback() -> None:
     """compute_adaptive_score_threshold falls back to composite_score."""
     from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+
     rows = [{"composite_score": float(i), "next_day_return": 0.01} for i in range(20)]
     result = compute_adaptive_score_threshold(rows)
     assert result["adaptive_score_threshold_valid"] is True
@@ -23290,6 +24657,7 @@ def test_r77_t1_uses_composite_score_fallback() -> None:
 def test_r77_t1_best_threshold_pct_is_valid() -> None:
     """best_threshold_pct must be one of 50,60,70,80,90 when valid."""
     from scripts.btst_analysis_utils import compute_adaptive_score_threshold
+
     rows = [{"score": float(i), "next_day_return": 0.01 if i > 10 else -0.01} for i in range(20)]
     result = compute_adaptive_score_threshold(rows)
     if result["adaptive_score_threshold_valid"] and result["best_threshold_pct"] is not None:
@@ -23299,24 +24667,28 @@ def test_r77_t1_best_threshold_pct_is_valid() -> None:
 def test_r77_t1_metric_in_comparison_metrics() -> None:
     """threshold_lift must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "threshold_lift" in COMPARISON_METRICS
 
 
 def test_r77_t1_metric_in_optional_comparison_metrics() -> None:
     """threshold_lift must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "threshold_lift" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r77_t1_metric_label_registered() -> None:
     """threshold_lift must have a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "threshold_lift" in COMPARISON_METRIC_LABELS
 
 
 def test_r77_t1_floor_registered() -> None:
     """threshold_lift floor must be 0.0 in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "threshold_lift" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["threshold_lift"] == pytest.approx(0.0)
 
@@ -23327,6 +24699,7 @@ def test_r77_t1_floor_registered() -> None:
 def test_r77_t2_too_few_rows_returns_invalid() -> None:
     """compute_sector_rotation_signal returns valid=False when rows < 8."""
     from scripts.btst_analysis_utils import compute_sector_rotation_signal
+
     rows = [{"sector": "tech", "next_day_return": 0.01}] * 7
     result = compute_sector_rotation_signal(rows)
     assert result["sector_rotation_valid"] is False
@@ -23335,6 +24708,7 @@ def test_r77_t2_too_few_rows_returns_invalid() -> None:
 def test_r77_t2_no_sector_field_returns_invalid() -> None:
     """compute_sector_rotation_signal returns valid=False when no sector field found."""
     from scripts.btst_analysis_utils import compute_sector_rotation_signal
+
     rows = [{"next_day_return": 0.01} for _ in range(10)]
     result = compute_sector_rotation_signal(rows)
     assert result["sector_rotation_valid"] is False
@@ -23343,6 +24717,7 @@ def test_r77_t2_no_sector_field_returns_invalid() -> None:
 def test_r77_t2_valid_result_keys() -> None:
     """compute_sector_rotation_signal returns all expected keys."""
     from scripts.btst_analysis_utils import compute_sector_rotation_signal
+
     rows = [{"sector": "A", "next_day_return": 0.01}] * 5 + [{"sector": "B", "next_day_return": -0.01}] * 5
     result = compute_sector_rotation_signal(rows)
     for key in ("sector_rotation_valid", "sector_win_rates", "best_sector", "best_sector_win_rate", "worst_sector_win_rate", "sector_win_rate_dispersion", "top_inflow_sector", "rotation_score"):
@@ -23352,6 +24727,7 @@ def test_r77_t2_valid_result_keys() -> None:
 def test_r77_t2_sector_win_rates_computed() -> None:
     """sector_win_rates correctly counts wins per sector."""
     from scripts.btst_analysis_utils import compute_sector_rotation_signal
+
     rows = [{"sector": "tech", "next_day_return": 0.01}] * 4 + [{"sector": "tech", "next_day_return": -0.01}] * 2 + [{"sector": "finance", "next_day_return": -0.01}] * 4 + [{"sector": "finance", "next_day_return": 0.01}] * 2
     result = compute_sector_rotation_signal(rows)
     assert result["sector_rotation_valid"] is True
@@ -23365,6 +24741,7 @@ def test_r77_t2_sector_win_rates_computed() -> None:
 def test_r77_t2_best_sector_is_max_win_rate() -> None:
     """best_sector is the sector with the highest win rate."""
     from scripts.btst_analysis_utils import compute_sector_rotation_signal
+
     rows = [{"sector": "A", "next_day_return": 0.01}] * 8 + [{"sector": "B", "next_day_return": -0.01}] * 8
     result = compute_sector_rotation_signal(rows)
     assert result["best_sector"] == "A"
@@ -23374,6 +24751,7 @@ def test_r77_t2_best_sector_is_max_win_rate() -> None:
 def test_r77_t2_dispersion_is_best_minus_worst() -> None:
     """sector_win_rate_dispersion == best_sector_win_rate - worst_sector_win_rate."""
     from scripts.btst_analysis_utils import compute_sector_rotation_signal
+
     rows = [{"sector": "X", "next_day_return": 0.01}] * 6 + [{"sector": "X", "next_day_return": -0.01}] * 2 + [{"sector": "Y", "next_day_return": 0.01}] * 2 + [{"sector": "Y", "next_day_return": -0.01}] * 6
     result = compute_sector_rotation_signal(rows)
     assert result["sector_win_rate_dispersion"] == pytest.approx(result["best_sector_win_rate"] - result["worst_sector_win_rate"])
@@ -23382,6 +24760,7 @@ def test_r77_t2_dispersion_is_best_minus_worst() -> None:
 def test_r77_t2_single_sector_dispersion_zero() -> None:
     """When all rows belong to one sector, best==worst, dispersion==0."""
     from scripts.btst_analysis_utils import compute_sector_rotation_signal
+
     rows = [{"sector": "tech", "next_day_return": 0.01 if i % 2 == 0 else -0.01} for i in range(10)]
     result = compute_sector_rotation_signal(rows)
     assert result["sector_rotation_valid"] is True
@@ -23391,6 +24770,7 @@ def test_r77_t2_single_sector_dispersion_zero() -> None:
 def test_r77_t2_uses_sector_name_field() -> None:
     """compute_sector_rotation_signal also reads sector_name field."""
     from scripts.btst_analysis_utils import compute_sector_rotation_signal
+
     rows = [{"sector_name": "tech", "next_day_return": 0.01}] * 5 + [{"sector_name": "finance", "next_day_return": -0.01}] * 5
     result = compute_sector_rotation_signal(rows)
     assert result["sector_rotation_valid"] is True
@@ -23399,6 +24779,7 @@ def test_r77_t2_uses_sector_name_field() -> None:
 def test_r77_t2_uses_industry_field() -> None:
     """compute_sector_rotation_signal also reads industry field."""
     from scripts.btst_analysis_utils import compute_sector_rotation_signal
+
     rows = [{"industry": "biotech", "next_day_return": 0.02}] * 5 + [{"industry": "energy", "next_day_return": -0.01}] * 5
     result = compute_sector_rotation_signal(rows)
     assert result["sector_rotation_valid"] is True
@@ -23407,6 +24788,7 @@ def test_r77_t2_uses_industry_field() -> None:
 def test_r77_t2_top_inflow_sector_with_inflow_data() -> None:
     """top_inflow_sector is the sector with highest mean inflow when data present."""
     from scripts.btst_analysis_utils import compute_sector_rotation_signal
+
     rows = [{"sector": "A", "next_day_return": 0.01, "t0_estimated_net_inflow_ratio": 0.5}] * 3 + [{"sector": "A", "next_day_return": -0.01, "t0_estimated_net_inflow_ratio": 0.5}] * 3 + [{"sector": "B", "next_day_return": 0.01, "t0_estimated_net_inflow_ratio": 0.1}] * 3 + [{"sector": "B", "next_day_return": -0.01, "t0_estimated_net_inflow_ratio": 0.1}] * 3
     result = compute_sector_rotation_signal(rows)
     assert result["top_inflow_sector"] == "A"
@@ -23415,18 +24797,21 @@ def test_r77_t2_top_inflow_sector_with_inflow_data() -> None:
 def test_r77_t2_metric_in_comparison_metrics() -> None:
     """sector_win_rate_dispersion must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "sector_win_rate_dispersion" in COMPARISON_METRICS
 
 
 def test_r77_t2_metric_in_optional_comparison_metrics() -> None:
     """sector_win_rate_dispersion must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "sector_win_rate_dispersion" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r77_t2_metric_label_registered() -> None:
     """sector_win_rate_dispersion must have a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "sector_win_rate_dispersion" in COMPARISON_METRIC_LABELS
 
 
@@ -23436,6 +24821,7 @@ def test_r77_t2_metric_label_registered() -> None:
 def test_r77_t3_too_few_windows_returns_invalid() -> None:
     """compute_cross_window_skew_trend returns valid=False when fewer than 3 windows."""
     from scripts.optimize_profile import compute_cross_window_skew_trend
+
     summaries = [{"skew_qual_gain_loss_ratio": 1.2}, {"skew_qual_gain_loss_ratio": 1.3}]
     result = compute_cross_window_skew_trend(summaries)
     assert result["skew_trend_valid"] is False
@@ -23445,6 +24831,7 @@ def test_r77_t3_too_few_windows_returns_invalid() -> None:
 def test_r77_t3_empty_summaries_returns_invalid() -> None:
     """compute_cross_window_skew_trend returns valid=False for empty input."""
     from scripts.optimize_profile import compute_cross_window_skew_trend
+
     result = compute_cross_window_skew_trend([])
     assert result["skew_trend_valid"] is False
 
@@ -23452,6 +24839,7 @@ def test_r77_t3_empty_summaries_returns_invalid() -> None:
 def test_r77_t3_valid_result_keys() -> None:
     """compute_cross_window_skew_trend returns all expected keys when valid."""
     from scripts.optimize_profile import compute_cross_window_skew_trend
+
     summaries = [{"skew_qual_gain_loss_ratio": float(i)} for i in range(1, 6)]
     result = compute_cross_window_skew_trend(summaries)
     for key in ("skew_trend_valid", "skew_trend_slope", "skew_trend_mean", "skew_favorable_windows_pct", "skew_trend_grade"):
@@ -23483,6 +24871,7 @@ def test_r77_t3_grade_d_steep_decline() -> None:
 def test_r77_t3_slope_positive_for_increasing_series() -> None:
     """skew_trend_slope is positive for a monotonically increasing series."""
     from scripts.optimize_profile import compute_cross_window_skew_trend
+
     summaries = [{"skew_qual_gain_loss_ratio": 1.0 + 0.1 * i} for i in range(5)]
     result = compute_cross_window_skew_trend(summaries)
     assert result["skew_trend_valid"] is True
@@ -23492,6 +24881,7 @@ def test_r77_t3_slope_positive_for_increasing_series() -> None:
 def test_r77_t3_favorable_windows_pct_correct() -> None:
     """skew_favorable_windows_pct is fraction of windows where gain_loss_ratio > 1.0."""
     from scripts.optimize_profile import compute_cross_window_skew_trend
+
     values = [1.5, 0.8, 1.2, 0.9, 1.1, 0.7, 1.3, 1.0, 0.95, 1.4]
     summaries = [{"skew_qual_gain_loss_ratio": v} for v in values]
     result = compute_cross_window_skew_trend(summaries)
@@ -23503,6 +24893,7 @@ def test_r77_t3_favorable_windows_pct_correct() -> None:
 def test_r77_t3_mean_computed_correctly() -> None:
     """skew_trend_mean equals the arithmetic mean of the series."""
     from scripts.optimize_profile import compute_cross_window_skew_trend
+
     values = [1.0, 1.5, 2.0, 2.5, 3.0]
     summaries = [{"skew_qual_gain_loss_ratio": v} for v in values]
     result = compute_cross_window_skew_trend(summaries)
@@ -23513,6 +24904,7 @@ def test_r77_t3_mean_computed_correctly() -> None:
 def test_r77_t3_skips_missing_values() -> None:
     """compute_cross_window_skew_trend ignores windows without skew_qual_gain_loss_ratio."""
     from scripts.optimize_profile import compute_cross_window_skew_trend
+
     summaries = [{"skew_qual_gain_loss_ratio": 1.0}, {}, {"skew_qual_gain_loss_ratio": 1.5}, {"other": 99}, {"skew_qual_gain_loss_ratio": 2.0}]
     result = compute_cross_window_skew_trend(summaries)
     assert result["skew_trend_valid"] is True
@@ -23522,24 +24914,28 @@ def test_r77_t3_skips_missing_values() -> None:
 def test_r77_t3_metric_in_comparison_metrics() -> None:
     """skew_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "skew_trend_slope" in COMPARISON_METRICS
 
 
 def test_r77_t3_metric_in_optional_comparison_metrics() -> None:
     """skew_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "skew_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r77_t3_metric_label_registered() -> None:
     """skew_trend_slope must have a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "skew_trend_slope" in COMPARISON_METRIC_LABELS
 
 
 def test_r77_t3_floor_registered() -> None:
     """skew_trend_slope floor must be -0.02 in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "skew_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["skew_trend_slope"] == pytest.approx(-0.02)
 
@@ -23576,9 +24972,11 @@ def test_r77_t3_grade_c_mild_decline() -> None:
 # T1: compute_hotstock_concentration_analysis
 # ---------------------------------------------------------------------------
 
+
 def test_r78_t1_too_few_rows_returns_invalid() -> None:
     """Returns valid=False when fewer than 10 rows."""
     from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+
     rows = [{"score": i, "next_day_return": 0.01} for i in range(9)]
     result = compute_hotstock_concentration_analysis(rows)
     assert result["hotstock_concentration_valid"] is False
@@ -23588,6 +24986,7 @@ def test_r78_t1_too_few_rows_returns_invalid() -> None:
 def test_r78_t1_no_score_field_returns_invalid() -> None:
     """Returns valid=False when no score field is present."""
     from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+
     rows = [{"next_day_return": 0.01} for _ in range(15)]
     result = compute_hotstock_concentration_analysis(rows)
     assert result["hotstock_concentration_valid"] is False
@@ -23596,6 +24995,7 @@ def test_r78_t1_no_score_field_returns_invalid() -> None:
 def test_r78_t1_valid_basic() -> None:
     """Returns valid=True with sufficient rows and score."""
     from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+
     rows = [{"score": float(i), "next_day_return": 0.01 if i >= 5 else -0.01} for i in range(20)]
     result = compute_hotstock_concentration_analysis(rows)
     assert result["hotstock_concentration_valid"] is True
@@ -23606,6 +25006,7 @@ def test_r78_t1_valid_basic() -> None:
 def test_r78_t1_uses_runner_composite_score_first() -> None:
     """Prefers runner_composite_score over composite_score over score."""
     from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+
     rows = [{"runner_composite_score": float(i), "composite_score": 0.0, "score": 0.0, "next_day_return": 0.01} for i in range(20)]
     result = compute_hotstock_concentration_analysis(rows)
     assert result["hotstock_concentration_valid"] is True
@@ -23615,6 +25016,7 @@ def test_r78_t1_uses_runner_composite_score_first() -> None:
 def test_r78_t1_p75_threshold_correct() -> None:
     """P75 threshold correctly selects top 25% of scores."""
     from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+
     rows = [{"score": float(i), "next_day_return": 0.01} for i in range(20)]
     result = compute_hotstock_concentration_analysis(rows)
     assert result["hotstock_concentration_valid"] is True
@@ -23652,6 +25054,7 @@ def test_r78_t1_hotstock_edge_none_when_insufficient() -> None:
 def test_r78_t1_hotstock_return_premium_positive() -> None:
     """hotstock_return_premium > 0 when hotstocks have higher mean return."""
     from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+
     rows = [{"score": float(i), "next_day_return": 0.1 if i >= 15 else 0.0} for i in range(20)]
     result = compute_hotstock_concentration_analysis(rows)
     assert result["hotstock_concentration_valid"] is True
@@ -23686,6 +25089,7 @@ def test_r78_t1_grade_d_negative_edge() -> None:
 def test_r78_t1_overall_mean_return_correct() -> None:
     """overall_mean_return is mean of all next_day_return values."""
     from scripts.btst_analysis_utils import compute_hotstock_concentration_analysis
+
     rows = [{"score": float(i), "next_day_return": float(i)} for i in range(20)]
     result = compute_hotstock_concentration_analysis(rows)
     assert result["hotstock_concentration_valid"] is True
@@ -23696,18 +25100,21 @@ def test_r78_t1_overall_mean_return_correct() -> None:
 def test_r78_t1_metric_in_comparison_metrics() -> None:
     """hotstock_edge must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "hotstock_edge" in COMPARISON_METRICS
 
 
 def test_r78_t1_metric_in_optional_comparison_metrics() -> None:
     """hotstock_edge must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "hotstock_edge" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r78_t1_floor_registered() -> None:
     """hotstock_edge floor must be 0.0 in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "hotstock_edge" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["hotstock_edge"] == pytest.approx(0.0)
 
@@ -23716,9 +25123,11 @@ def test_r78_t1_floor_registered() -> None:
 # T2: compute_factor_robustness_check
 # ---------------------------------------------------------------------------
 
+
 def test_r78_t2_too_few_rows_returns_invalid() -> None:
     """Returns valid=False when fewer than 12 rows."""
     from scripts.btst_analysis_utils import compute_factor_robustness_check
+
     rows = [{"close_strength": float(i), "next_day_return": 0.01} for i in range(11)]
     result = compute_factor_robustness_check(rows)
     assert result["factor_robustness_valid"] is False
@@ -23728,6 +25137,7 @@ def test_r78_t2_too_few_rows_returns_invalid() -> None:
 def test_r78_t2_valid_basic() -> None:
     """Returns valid=True with sufficient rows."""
     from scripts.btst_analysis_utils import compute_factor_robustness_check
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
     result = compute_factor_robustness_check(rows)
     assert result["factor_robustness_valid"] is True
@@ -23737,6 +25147,7 @@ def test_r78_t2_valid_basic() -> None:
 def test_r78_t2_consistent_factor_count_range() -> None:
     """consistent_factor_count is between 0 and 7."""
     from scripts.btst_analysis_utils import compute_factor_robustness_check
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
     result = compute_factor_robustness_check(rows)
     assert 0 <= result["consistent_factor_count"] <= 7
@@ -23745,6 +25156,7 @@ def test_r78_t2_consistent_factor_count_range() -> None:
 def test_r78_t2_robustness_ratio_precision() -> None:
     """robustness_ratio = consistent_factor_count / 7."""
     from scripts.btst_analysis_utils import compute_factor_robustness_check
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
     result = compute_factor_robustness_check(rows)
     assert result["robustness_ratio"] == pytest.approx(result["consistent_factor_count"] / 7, rel=1e-5)
@@ -23767,6 +25179,7 @@ def test_r78_t2_split_half_partition() -> None:
 def test_r78_t2_ic_sign_consistent_true_for_monotone() -> None:
     """ic_sign_consistent is True when both halves have same IC sign."""
     from scripts.btst_analysis_utils import compute_factor_robustness_check
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
     result = compute_factor_robustness_check(rows)
     for factor in ["close_strength", "volume_expansion_quality"]:
@@ -23778,6 +25191,7 @@ def test_r78_t2_ic_sign_consistent_true_for_monotone() -> None:
 def test_r78_t2_grade_a_high_ratio() -> None:
     """Grade A when robustness_ratio >= 5/7."""
     from scripts.btst_analysis_utils import compute_factor_robustness_check
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(24)]
     result = compute_factor_robustness_check(rows)
     if result["robustness_ratio"] is not None and result["robustness_ratio"] >= 5 / 7:
@@ -23800,6 +25214,7 @@ def test_r78_t2_grade_d_low_ratio() -> None:
 def test_r78_t2_most_robust_factor_has_consistent_ic() -> None:
     """most_robust_factor must have ic_sign_consistent=True."""
     from scripts.btst_analysis_utils import compute_factor_robustness_check
+
     rows = [{"close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i), "next_day_return": float(i) * 0.01} for i in range(20)]
     result = compute_factor_robustness_check(rows)
     mrf = result.get("most_robust_factor")
@@ -23810,18 +25225,21 @@ def test_r78_t2_most_robust_factor_has_consistent_ic() -> None:
 def test_r78_t2_metric_in_comparison_metrics() -> None:
     """robustness_ratio must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "robustness_ratio" in COMPARISON_METRICS
 
 
 def test_r78_t2_metric_in_optional_comparison_metrics() -> None:
     """robustness_ratio must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "robustness_ratio" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r78_t2_floor_registered() -> None:
     """robustness_ratio floor must be 0.4 in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "robustness_ratio" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["robustness_ratio"] == pytest.approx(0.4)
 
@@ -23829,6 +25247,7 @@ def test_r78_t2_floor_registered() -> None:
 def test_r78_t2_label_registered() -> None:
     """robustness_ratio must have a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "robustness_ratio" in COMPARISON_METRIC_LABELS
 
 
@@ -23836,9 +25255,11 @@ def test_r78_t2_label_registered() -> None:
 # T3: compute_cross_window_threshold_lift_trend
 # ---------------------------------------------------------------------------
 
+
 def test_r78_t3_too_few_windows_returns_invalid() -> None:
     """Returns valid=False when fewer than 3 valid threshold_lift values."""
     from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+
     summaries = [{"adapt_thr_threshold_lift": 0.05}, {"adapt_thr_threshold_lift": 0.03}]
     result = compute_cross_window_threshold_lift_trend(summaries)
     assert result["threshold_lift_trend_valid"] is False
@@ -23848,6 +25269,7 @@ def test_r78_t3_too_few_windows_returns_invalid() -> None:
 def test_r78_t3_valid_basic() -> None:
     """Returns valid=True with 3+ valid values."""
     from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+
     summaries = [{"adapt_thr_threshold_lift": 0.05 + 0.01 * i} for i in range(5)]
     result = compute_cross_window_threshold_lift_trend(summaries)
     assert result["threshold_lift_trend_valid"] is True
@@ -23857,6 +25279,7 @@ def test_r78_t3_valid_basic() -> None:
 def test_r78_t3_ols_slope_positive_for_increasing_series() -> None:
     """OLS slope is positive for monotone increasing series."""
     from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+
     summaries = [{"adapt_thr_threshold_lift": 0.01 * i} for i in range(6)]
     result = compute_cross_window_threshold_lift_trend(summaries)
     assert result["threshold_lift_trend_valid"] is True
@@ -23866,6 +25289,7 @@ def test_r78_t3_ols_slope_positive_for_increasing_series() -> None:
 def test_r78_t3_ols_slope_negative_for_decreasing_series() -> None:
     """OLS slope is negative for monotone decreasing series."""
     from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+
     summaries = [{"adapt_thr_threshold_lift": 0.1 - 0.01 * i} for i in range(6)]
     result = compute_cross_window_threshold_lift_trend(summaries)
     assert result["threshold_lift_trend_valid"] is True
@@ -23875,6 +25299,7 @@ def test_r78_t3_ols_slope_negative_for_decreasing_series() -> None:
 def test_r78_t3_mean_correct() -> None:
     """threshold_lift_trend_mean equals arithmetic mean of values."""
     from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+
     values = [0.05, 0.07, 0.06, 0.08, 0.09]
     summaries = [{"adapt_thr_threshold_lift": v} for v in values]
     result = compute_cross_window_threshold_lift_trend(summaries)
@@ -23884,6 +25309,7 @@ def test_r78_t3_mean_correct() -> None:
 def test_r78_t3_positive_windows_pct() -> None:
     """threshold_lift_positive_windows_pct is fraction of values > 0."""
     from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+
     values = [0.05, -0.02, 0.03, -0.01, 0.08]
     summaries = [{"adapt_thr_threshold_lift": v} for v in values]
     result = compute_cross_window_threshold_lift_trend(summaries)
@@ -23927,6 +25353,7 @@ def test_r78_t3_grade_d_slope_le_neg001() -> None:
 def test_r78_t3_skips_missing_values() -> None:
     """Ignores windows without adapt_thr_threshold_lift key."""
     from scripts.optimize_profile import compute_cross_window_threshold_lift_trend
+
     summaries = [{"adapt_thr_threshold_lift": 0.05}, {}, {"adapt_thr_threshold_lift": 0.06}, {"other": 99}, {"adapt_thr_threshold_lift": 0.07}]
     result = compute_cross_window_threshold_lift_trend(summaries)
     assert result["threshold_lift_trend_valid"] is True
@@ -23936,18 +25363,21 @@ def test_r78_t3_skips_missing_values() -> None:
 def test_r78_t3_metric_in_comparison_metrics() -> None:
     """threshold_lift_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "threshold_lift_trend_slope" in COMPARISON_METRICS
 
 
 def test_r78_t3_metric_in_optional_comparison_metrics() -> None:
     """threshold_lift_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "threshold_lift_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r78_t3_floor_registered() -> None:
     """threshold_lift_trend_slope floor must be -0.01 in BTST_QUALITY_FLOORS."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "threshold_lift_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["threshold_lift_trend_slope"] == pytest.approx(-0.01)
 
@@ -23955,7 +25385,9 @@ def test_r78_t3_floor_registered() -> None:
 def test_r78_t3_label_registered() -> None:
     """threshold_lift_trend_slope must have a label in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "threshold_lift_trend_slope" in COMPARISON_METRIC_LABELS
+
 
 # ===========================================================================
 # Round 79, Task 1 (Alpha): compute_score_quintile_consistency
@@ -23965,6 +25397,7 @@ def test_r78_t3_label_registered() -> None:
 def test_r79_t1_too_few_rows_returns_invalid() -> None:
     """Fewer than 25 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_score_quintile_consistency
+
     rows = [{"score": float(i), "actual_return": 0.01} for i in range(24)]
     result = compute_score_quintile_consistency(rows)
     assert result["valid"] is False
@@ -23973,6 +25406,7 @@ def test_r79_t1_too_few_rows_returns_invalid() -> None:
 def test_r79_t1_actual_return_all_none_returns_invalid() -> None:
     """All actual_return=None → valid=False."""
     from scripts.btst_analysis_utils import compute_score_quintile_consistency
+
     rows = [{"score": float(i), "actual_return": None} for i in range(30)]
     result = compute_score_quintile_consistency(rows)
     assert result["valid"] is False
@@ -23981,6 +25415,7 @@ def test_r79_t1_actual_return_all_none_returns_invalid() -> None:
 def test_r79_t1_no_score_field_returns_invalid() -> None:
     """No score fields → valid=False."""
     from scripts.btst_analysis_utils import compute_score_quintile_consistency
+
     rows = [{"actual_return": 0.01} for _ in range(30)]
     result = compute_score_quintile_consistency(rows)
     assert result["valid"] is False
@@ -23989,6 +25424,7 @@ def test_r79_t1_no_score_field_returns_invalid() -> None:
 def test_r79_t1_perfect_monotonicity() -> None:
     """Strictly increasing win-rate across quintiles → monotonicity_score=1.0."""
     from scripts.btst_analysis_utils import compute_score_quintile_consistency
+
     rows = []
     # Q1: 0 wins (0%), Q2: 20%, Q3: 40%, Q4: 60%, Q5: 80%
     for q in range(5):
@@ -24004,6 +25440,7 @@ def test_r79_t1_perfect_monotonicity() -> None:
 def test_r79_t1_partial_monotonicity() -> None:
     """3 out of 4 adjacent pairs monotone → score=0.75."""
     from scripts.btst_analysis_utils import compute_score_quintile_consistency
+
     rows = []
     # win rates: 0.1, 0.3, 0.5, 0.4, 0.7 → monotone pairs: (0,1),(1,2),(3,4) = 3 out of 4
     win_rates = [0.1, 0.3, 0.5, 0.4, 0.7]
@@ -24019,6 +25456,7 @@ def test_r79_t1_partial_monotonicity() -> None:
 def test_r79_t1_top_bottom_spread_positive_when_q5_better() -> None:
     """q5_win_rate > q1_win_rate → top_bottom_spread > 0."""
     from scripts.btst_analysis_utils import compute_score_quintile_consistency
+
     rows = []
     # Q1: 20% win, Q5: 80% win, others in between
     win_rates = [0.2, 0.3, 0.5, 0.6, 0.8]
@@ -24034,6 +25472,7 @@ def test_r79_t1_top_bottom_spread_positive_when_q5_better() -> None:
 def test_r79_t1_uses_runner_composite_score_first() -> None:
     """runner_composite_score takes priority over score."""
     from scripts.btst_analysis_utils import compute_score_quintile_consistency
+
     rows = []
     for i in range(50):
         rows.append({"runner_composite_score": float(i), "score": 99.0, "actual_return": 0.01 if i > 25 else -0.01})
@@ -24044,6 +25483,7 @@ def test_r79_t1_uses_runner_composite_score_first() -> None:
 def test_r79_t1_uses_composite_score_fallback() -> None:
     """composite_score is used when runner_composite_score absent."""
     from scripts.btst_analysis_utils import compute_score_quintile_consistency
+
     rows = []
     for i in range(50):
         rows.append({"composite_score": float(i), "actual_return": 0.01 if i > 25 else -0.01})
@@ -24054,14 +25494,15 @@ def test_r79_t1_uses_composite_score_fallback() -> None:
 def test_r79_t1_q5_q1_win_rate_values_match_quintiles() -> None:
     """q5_win_rate and q1_win_rate correspond to top and bottom quintile."""
     from scripts.btst_analysis_utils import compute_score_quintile_consistency
+
     rows = []
     # All bottom 10 lose, all top 10 win
     for i in range(10):
         rows.append({"score": float(i), "actual_return": -0.01})  # Q1
     for i in range(10, 40):
-        rows.append({"score": float(i), "actual_return": 0.01})   # Q2-Q4
+        rows.append({"score": float(i), "actual_return": 0.01})  # Q2-Q4
     for i in range(40, 50):
-        rows.append({"score": float(i), "actual_return": 0.01})   # Q5
+        rows.append({"score": float(i), "actual_return": 0.01})  # Q5
     result = compute_score_quintile_consistency(rows)
     assert result["valid"] is True
     assert result["q1_win_rate"] == pytest.approx(0.0)
@@ -24071,30 +25512,35 @@ def test_r79_t1_q5_q1_win_rate_values_match_quintiles() -> None:
 def test_r79_t1_metric_in_comparison_metrics() -> None:
     """sq_consist_quintile_monotonicity_score must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "sq_consist_quintile_monotonicity_score" in COMPARISON_METRICS
 
 
 def test_r79_t1_spread_metric_in_comparison_metrics() -> None:
     """sq_consist_quintile_top_bottom_spread must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "sq_consist_quintile_top_bottom_spread" in COMPARISON_METRICS
 
 
 def test_r79_t1_metric_in_optional_comparison_metrics() -> None:
     """sq_consist_quintile_monotonicity_score must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "sq_consist_quintile_monotonicity_score" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r79_t1_spread_in_optional_comparison_metrics() -> None:
     """sq_consist_quintile_top_bottom_spread must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "sq_consist_quintile_top_bottom_spread" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r79_t1_floor_registered() -> None:
     """sq_consist_quintile_monotonicity_score floor must be 0.4."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "sq_consist_quintile_monotonicity_score" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["sq_consist_quintile_monotonicity_score"] == pytest.approx(0.4)
 
@@ -24102,6 +25548,7 @@ def test_r79_t1_floor_registered() -> None:
 def test_r79_t1_label_registered() -> None:
     """sq_consist_quintile_monotonicity_score must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "sq_consist_quintile_monotonicity_score" in COMPARISON_METRIC_LABELS
 
 
@@ -24113,6 +25560,7 @@ def test_r79_t1_label_registered() -> None:
 def test_r79_t2_too_few_rows_returns_invalid() -> None:
     """Fewer than 20 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_entry_quality_filter
+
     rows = [{"actual_return": 0.01, "volume_expansion_quality": 0.8, "close_strength": 0.8} for _ in range(19)]
     result = compute_entry_quality_filter(rows)
     assert result["valid"] is False
@@ -24121,6 +25569,7 @@ def test_r79_t2_too_few_rows_returns_invalid() -> None:
 def test_r79_t2_missing_volume_expansion_quality_returns_invalid() -> None:
     """Missing volume_expansion_quality → valid=False."""
     from scripts.btst_analysis_utils import compute_entry_quality_filter
+
     rows = [{"actual_return": 0.01, "close_strength": 0.8} for _ in range(30)]
     result = compute_entry_quality_filter(rows)
     assert result["valid"] is False
@@ -24129,6 +25578,7 @@ def test_r79_t2_missing_volume_expansion_quality_returns_invalid() -> None:
 def test_r79_t2_missing_close_strength_returns_invalid() -> None:
     """Missing close_strength → valid=False."""
     from scripts.btst_analysis_utils import compute_entry_quality_filter
+
     rows = [{"actual_return": 0.01, "volume_expansion_quality": 0.8} for _ in range(30)]
     result = compute_entry_quality_filter(rows)
     assert result["valid"] is False
@@ -24137,6 +25587,7 @@ def test_r79_t2_missing_close_strength_returns_invalid() -> None:
 def test_r79_t2_high_quality_fewer_than_5_returns_invalid() -> None:
     """High-quality entries < 5 → valid=False."""
     from scripts.btst_analysis_utils import compute_entry_quality_filter
+
     rows = []
     for i in range(20):
         rows.append({"actual_return": 0.01, "volume_expansion_quality": 0.3, "close_strength": 0.3})
@@ -24150,6 +25601,7 @@ def test_r79_t2_high_quality_fewer_than_5_returns_invalid() -> None:
 def test_r79_t2_high_quality_entry_edge_positive() -> None:
     """High-quality entries with all wins → positive edge."""
     from scripts.btst_analysis_utils import compute_entry_quality_filter
+
     rows = []
     # 20 low-quality rows: 50% win
     for i in range(20):
@@ -24165,6 +25617,7 @@ def test_r79_t2_high_quality_entry_edge_positive() -> None:
 def test_r79_t2_baseline_win_rate_correct() -> None:
     """baseline_win_rate covers all valid rows."""
     from scripts.btst_analysis_utils import compute_entry_quality_filter
+
     rows = []
     # 30 rows: 15 wins + 15 losses, 10 high-quality all wins
     for i in range(20):
@@ -24180,6 +25633,7 @@ def test_r79_t2_baseline_win_rate_correct() -> None:
 def test_r79_t2_quality_entry_ratio_correct() -> None:
     """quality_entry_ratio = high_quality / total."""
     from scripts.btst_analysis_utils import compute_entry_quality_filter
+
     rows = []
     for i in range(20):
         rows.append({"actual_return": 0.01, "volume_expansion_quality": 0.3, "close_strength": 0.3})
@@ -24193,30 +25647,35 @@ def test_r79_t2_quality_entry_ratio_correct() -> None:
 def test_r79_t2_metric_in_comparison_metrics() -> None:
     """entry_qual_high_quality_entry_win_rate must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "entry_qual_high_quality_entry_win_rate" in COMPARISON_METRICS
 
 
 def test_r79_t2_edge_in_comparison_metrics() -> None:
     """entry_qual_quality_entry_edge must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "entry_qual_quality_entry_edge" in COMPARISON_METRICS
 
 
 def test_r79_t2_metric_in_optional_comparison_metrics() -> None:
     """entry_qual_high_quality_entry_win_rate must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "entry_qual_high_quality_entry_win_rate" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r79_t2_edge_in_optional_comparison_metrics() -> None:
     """entry_qual_quality_entry_edge must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "entry_qual_quality_entry_edge" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r79_t2_floor_registered() -> None:
     """entry_qual_quality_entry_edge floor must be 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "entry_qual_quality_entry_edge" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["entry_qual_quality_entry_edge"] == pytest.approx(0.0)
 
@@ -24224,6 +25683,7 @@ def test_r79_t2_floor_registered() -> None:
 def test_r79_t2_label_registered() -> None:
     """entry_qual_quality_entry_edge must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "entry_qual_quality_entry_edge" in COMPARISON_METRIC_LABELS
 
 
@@ -24235,6 +25695,7 @@ def test_r79_t2_label_registered() -> None:
 def test_r79_t3_too_few_windows_returns_invalid() -> None:
     """Fewer than 3 windows → valid=False."""
     from scripts.optimize_profile import compute_cross_window_robustness_trend
+
     summaries = [{"robust_robustness_ratio": 0.5}, {"robust_robustness_ratio": 0.6}]
     result = compute_cross_window_robustness_trend(summaries)
     assert result["valid"] is False
@@ -24243,6 +25704,7 @@ def test_r79_t3_too_few_windows_returns_invalid() -> None:
 def test_r79_t3_no_robustness_ratio_values_returns_invalid() -> None:
     """No robust_robustness_ratio values → valid=False."""
     from scripts.optimize_profile import compute_cross_window_robustness_trend
+
     summaries = [{"other": 1}, {"other": 2}, {"other": 3}]
     result = compute_cross_window_robustness_trend(summaries)
     assert result["valid"] is False
@@ -24251,6 +25713,7 @@ def test_r79_t3_no_robustness_ratio_values_returns_invalid() -> None:
 def test_r79_t3_rising_trend_positive_slope() -> None:
     """Rising robustness_ratio values → positive slope."""
     from scripts.optimize_profile import compute_cross_window_robustness_trend
+
     summaries = [{"robust_robustness_ratio": 0.4}, {"robust_robustness_ratio": 0.5}, {"robust_robustness_ratio": 0.6}, {"robust_robustness_ratio": 0.7}]
     result = compute_cross_window_robustness_trend(summaries)
     assert result["valid"] is True
@@ -24260,6 +25723,7 @@ def test_r79_t3_rising_trend_positive_slope() -> None:
 def test_r79_t3_falling_trend_negative_slope() -> None:
     """Falling robustness_ratio values → negative slope."""
     from scripts.optimize_profile import compute_cross_window_robustness_trend
+
     summaries = [{"robust_robustness_ratio": 0.8}, {"robust_robustness_ratio": 0.6}, {"robust_robustness_ratio": 0.4}, {"robust_robustness_ratio": 0.2}]
     result = compute_cross_window_robustness_trend(summaries)
     assert result["valid"] is True
@@ -24304,6 +25768,7 @@ def test_r79_t3_grade_c_small_negative_slope() -> None:
 def test_r79_t3_grade_d_large_negative_slope() -> None:
     """Slope <= -0.01 → grade=D."""
     from scripts.optimize_profile import compute_cross_window_robustness_trend
+
     summaries = [{"robust_robustness_ratio": 0.8}, {"robust_robustness_ratio": 0.5}, {"robust_robustness_ratio": 0.2}]
     result = compute_cross_window_robustness_trend(summaries)
     assert result["valid"] is True
@@ -24313,6 +25778,7 @@ def test_r79_t3_grade_d_large_negative_slope() -> None:
 def test_r79_t3_ols_slope_numerical_accuracy() -> None:
     """OLS slope for [0,1,2] x=[0,1,2] must equal 1.0."""
     from scripts.optimize_profile import compute_cross_window_robustness_trend
+
     summaries = [{"robust_robustness_ratio": 0.0}, {"robust_robustness_ratio": 1.0}, {"robust_robustness_ratio": 2.0}]
     result = compute_cross_window_robustness_trend(summaries)
     assert result["valid"] is True
@@ -24322,6 +25788,7 @@ def test_r79_t3_ols_slope_numerical_accuracy() -> None:
 def test_r79_t3_window_count_correct() -> None:
     """robustness_window_count must match valid data points."""
     from scripts.optimize_profile import compute_cross_window_robustness_trend
+
     summaries = [{"robust_robustness_ratio": 0.5}, {}, {"robust_robustness_ratio": 0.6}, {"other": 99}, {"robust_robustness_ratio": 0.7}]
     result = compute_cross_window_robustness_trend(summaries)
     assert result["valid"] is True
@@ -24331,18 +25798,21 @@ def test_r79_t3_window_count_correct() -> None:
 def test_r79_t3_metric_in_comparison_metrics() -> None:
     """robustness_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "robustness_trend_slope" in COMPARISON_METRICS
 
 
 def test_r79_t3_metric_in_optional_comparison_metrics() -> None:
     """robustness_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "robustness_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r79_t3_floor_registered() -> None:
     """robustness_trend_slope floor must be -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "robustness_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["robustness_trend_slope"] == pytest.approx(-0.01)
 
@@ -24350,6 +25820,7 @@ def test_r79_t3_floor_registered() -> None:
 def test_r79_t3_label_registered() -> None:
     """robustness_trend_slope must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "robustness_trend_slope" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["robustness_trend_slope"] == "稳健性跨窗趋势斜率"
 
@@ -24362,6 +25833,7 @@ def test_r79_t3_label_registered() -> None:
 def test_r80_t1_too_few_rows_returns_invalid() -> None:
     """Fewer than 15 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_return_quantile_lift
+
     rows = [{"score": float(i), "actual_return": 0.01} for i in range(14)]
     result = compute_return_quantile_lift(rows)
     assert result["valid"] is False
@@ -24370,6 +25842,7 @@ def test_r80_t1_too_few_rows_returns_invalid() -> None:
 def test_r80_t1_actual_return_all_none_returns_invalid() -> None:
     """All actual_return=None → valid=False."""
     from scripts.btst_analysis_utils import compute_return_quantile_lift
+
     rows = [{"score": float(i), "actual_return": None} for i in range(20)]
     result = compute_return_quantile_lift(rows)
     assert result["valid"] is False
@@ -24378,6 +25851,7 @@ def test_r80_t1_actual_return_all_none_returns_invalid() -> None:
 def test_r80_t1_no_score_field_returns_invalid() -> None:
     """No score fields at all → valid=False."""
     from scripts.btst_analysis_utils import compute_return_quantile_lift
+
     rows = [{"actual_return": 0.01} for _ in range(20)]
     result = compute_return_quantile_lift(rows)
     assert result["valid"] is False
@@ -24386,6 +25860,7 @@ def test_r80_t1_no_score_field_returns_invalid() -> None:
 def test_r80_t1_high_score_group_higher_return() -> None:
     """High-score group median return > low-score group → median_return_lift > 0."""
     from scripts.btst_analysis_utils import compute_return_quantile_lift
+
     rows = []
     # Low scores: returns around -0.02; high scores: returns around 0.05
     for i in range(10):
@@ -24400,6 +25875,7 @@ def test_r80_t1_high_score_group_higher_return() -> None:
 def test_r80_t1_even_row_median_correct() -> None:
     """Even-length list median uses average of two middle elements."""
     from scripts.btst_analysis_utils import compute_return_quantile_lift
+
     rows = []
     # 30 rows: low-score 10 rows with return -0.02, mid 10 with 0.01, high 10 with 0.06
     for i in range(10):
@@ -24417,6 +25893,7 @@ def test_r80_t1_even_row_median_correct() -> None:
 def test_r80_t1_lift_equals_top_minus_bot() -> None:
     """median_return_lift = top_median_return - bot_median_return."""
     from scripts.btst_analysis_utils import compute_return_quantile_lift
+
     rows = [{"score": float(i), "actual_return": float(i) * 0.01 - 0.1} for i in range(30)]
     result = compute_return_quantile_lift(rows)
     assert result["valid"] is True
@@ -24427,6 +25904,7 @@ def test_r80_t1_lift_equals_top_minus_bot() -> None:
 def test_r80_t1_uses_runner_composite_score_first() -> None:
     """runner_composite_score takes priority over composite_score and score."""
     from scripts.btst_analysis_utils import compute_return_quantile_lift
+
     rows = []
     for i in range(30):
         rows.append({"runner_composite_score": float(i), "composite_score": 99.0, "score": 99.0, "actual_return": float(i) * 0.001})
@@ -24437,6 +25915,7 @@ def test_r80_t1_uses_runner_composite_score_first() -> None:
 def test_r80_t1_uses_composite_score_fallback() -> None:
     """composite_score used when runner_composite_score missing."""
     from scripts.btst_analysis_utils import compute_return_quantile_lift
+
     rows = [{"composite_score": float(i), "actual_return": float(i) * 0.001} for i in range(20)]
     result = compute_return_quantile_lift(rows)
     assert result["valid"] is True
@@ -24445,6 +25924,7 @@ def test_r80_t1_uses_composite_score_fallback() -> None:
 def test_r80_t1_top_p75_return_in_top_group() -> None:
     """top_p75_return is the 75th percentile of top-group returns."""
     from scripts.btst_analysis_utils import compute_return_quantile_lift
+
     rows = [{"score": float(i), "actual_return": float(i) * 0.01} for i in range(30)]
     result = compute_return_quantile_lift(rows)
     assert result["valid"] is True
@@ -24456,6 +25936,7 @@ def test_r80_t1_top_p75_return_in_top_group() -> None:
 def test_r80_t1_minimum_15_rows_passes() -> None:
     """Exactly 15 rows → valid=True."""
     from scripts.btst_analysis_utils import compute_return_quantile_lift
+
     rows = [{"score": float(i), "actual_return": 0.01 if i > 7 else -0.01} for i in range(15)]
     result = compute_return_quantile_lift(rows)
     assert result["valid"] is True
@@ -24464,30 +25945,35 @@ def test_r80_t1_minimum_15_rows_passes() -> None:
 def test_r80_t1_metric_in_comparison_metrics() -> None:
     """ret_qlift_median_return_lift must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "ret_qlift_median_return_lift" in COMPARISON_METRICS
 
 
 def test_r80_t1_top_median_in_comparison_metrics() -> None:
     """ret_qlift_top_median_return must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "ret_qlift_top_median_return" in COMPARISON_METRICS
 
 
 def test_r80_t1_lift_in_optional_metrics() -> None:
     """ret_qlift_median_return_lift must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "ret_qlift_median_return_lift" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r80_t1_top_median_in_optional_metrics() -> None:
     """ret_qlift_top_median_return must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "ret_qlift_top_median_return" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r80_t1_floor_registered() -> None:
     """ret_qlift_median_return_lift floor must be 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "ret_qlift_median_return_lift" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["ret_qlift_median_return_lift"] == pytest.approx(0.0)
 
@@ -24495,6 +25981,7 @@ def test_r80_t1_floor_registered() -> None:
 def test_r80_t1_label_registered() -> None:
     """ret_qlift_median_return_lift must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "ret_qlift_median_return_lift" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["ret_qlift_median_return_lift"] == "高低分组中位收益差"
 
@@ -24507,6 +25994,7 @@ def test_r80_t1_label_registered() -> None:
 def test_r80_t2_too_few_rows_returns_invalid() -> None:
     """Fewer than 20 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+
     rows = [{"actual_return": 0.01, "close_strength": 0.9} for _ in range(19)]
     result = compute_near_high_stock_analysis(rows)
     assert result["valid"] is False
@@ -24515,6 +26003,7 @@ def test_r80_t2_too_few_rows_returns_invalid() -> None:
 def test_r80_t2_missing_close_strength_returns_invalid() -> None:
     """No close_strength field → valid=False (filtered out, < 20 valid)."""
     from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+
     rows = [{"actual_return": 0.01} for _ in range(30)]
     result = compute_near_high_stock_analysis(rows)
     assert result["valid"] is False
@@ -24523,6 +26012,7 @@ def test_r80_t2_missing_close_strength_returns_invalid() -> None:
 def test_r80_t2_near_high_rows_fewer_than_5_invalid() -> None:
     """near_high_rows < 5 → valid=False."""
     from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+
     rows = []
     for _ in range(20):
         rows.append({"actual_return": 0.01, "close_strength": 0.5})
@@ -24535,6 +26025,7 @@ def test_r80_t2_near_high_rows_fewer_than_5_invalid() -> None:
 def test_r80_t2_near_high_win_rate_computed_correctly() -> None:
     """near_high_win_rate: all near-high return > 0 → 1.0."""
     from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+
     rows = []
     for _ in range(15):
         rows.append({"actual_return": -0.01, "close_strength": 0.5})
@@ -24548,6 +26039,7 @@ def test_r80_t2_near_high_win_rate_computed_correctly() -> None:
 def test_r80_t2_near_high_edge_equals_difference() -> None:
     """near_high_edge = near_high_win_rate - baseline_win_rate."""
     from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+
     rows = []
     # 20 non-near-high: 10 positive, 10 negative → baseline partial
     for i in range(20):
@@ -24564,6 +26056,7 @@ def test_r80_t2_near_high_edge_equals_difference() -> None:
 def test_r80_t2_near_high_ratio_correct() -> None:
     """near_high_ratio = len(near_high) / len(valid)."""
     from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+
     rows = []
     for _ in range(20):
         rows.append({"actual_return": -0.01, "close_strength": 0.5})
@@ -24577,6 +26070,7 @@ def test_r80_t2_near_high_ratio_correct() -> None:
 def test_r80_t2_non_near_high_win_rate_computed() -> None:
     """non_near_high_win_rate is computed when non-near-high rows exist."""
     from scripts.btst_analysis_utils import compute_near_high_stock_analysis
+
     rows = []
     for i in range(20):
         rows.append({"actual_return": 0.01 if i % 2 == 0 else -0.01, "close_strength": 0.5})
@@ -24591,30 +26085,35 @@ def test_r80_t2_non_near_high_win_rate_computed() -> None:
 def test_r80_t2_metric_in_comparison_metrics() -> None:
     """nh_near_high_win_rate must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "nh_near_high_win_rate" in COMPARISON_METRICS
 
 
 def test_r80_t2_edge_in_comparison_metrics() -> None:
     """nh_near_high_edge must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "nh_near_high_edge" in COMPARISON_METRICS
 
 
 def test_r80_t2_metric_in_optional_metrics() -> None:
     """nh_near_high_win_rate must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "nh_near_high_win_rate" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r80_t2_edge_in_optional_metrics() -> None:
     """nh_near_high_edge must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "nh_near_high_edge" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r80_t2_floor_registered() -> None:
     """nh_near_high_edge floor must be 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "nh_near_high_edge" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["nh_near_high_edge"] == pytest.approx(0.0)
 
@@ -24622,6 +26121,7 @@ def test_r80_t2_floor_registered() -> None:
 def test_r80_t2_label_registered() -> None:
     """nh_near_high_edge must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "nh_near_high_edge" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["nh_near_high_edge"] == "近高位股胜率溢价"
 
@@ -24634,6 +26134,7 @@ def test_r80_t2_label_registered() -> None:
 def test_r80_t3_too_few_windows_returns_invalid() -> None:
     """Fewer than 3 windows → valid=False."""
     from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+
     summaries = [{"entry_qual_quality_entry_edge": 0.05}, {"entry_qual_quality_entry_edge": 0.06}]
     result = compute_cross_window_entry_quality_trend(summaries)
     assert result["valid"] is False
@@ -24642,6 +26143,7 @@ def test_r80_t3_too_few_windows_returns_invalid() -> None:
 def test_r80_t3_no_entry_quality_values_invalid() -> None:
     """No entry_qual_quality_entry_edge values → valid=False."""
     from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+
     summaries = [{"other": 1}, {"other": 2}, {"other": 3}]
     result = compute_cross_window_entry_quality_trend(summaries)
     assert result["valid"] is False
@@ -24650,6 +26152,7 @@ def test_r80_t3_no_entry_quality_values_invalid() -> None:
 def test_r80_t3_rising_trend_positive_slope() -> None:
     """Rising entry_qual_quality_entry_edge → positive slope."""
     from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+
     summaries = [{"entry_qual_quality_entry_edge": 0.04}, {"entry_qual_quality_entry_edge": 0.06}, {"entry_qual_quality_entry_edge": 0.08}, {"entry_qual_quality_entry_edge": 0.10}]
     result = compute_cross_window_entry_quality_trend(summaries)
     assert result["valid"] is True
@@ -24659,6 +26162,7 @@ def test_r80_t3_rising_trend_positive_slope() -> None:
 def test_r80_t3_falling_trend_negative_slope() -> None:
     """Falling entry_qual_quality_entry_edge → negative slope."""
     from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+
     summaries = [{"entry_qual_quality_entry_edge": 0.10}, {"entry_qual_quality_entry_edge": 0.07}, {"entry_qual_quality_entry_edge": 0.04}, {"entry_qual_quality_entry_edge": 0.01}]
     result = compute_cross_window_entry_quality_trend(summaries)
     assert result["valid"] is True
@@ -24668,6 +26172,7 @@ def test_r80_t3_falling_trend_negative_slope() -> None:
 def test_r80_t3_grade_a_large_positive_slope() -> None:
     """Slope > 0.005 → grade=A."""
     from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+
     summaries = [{"entry_qual_quality_entry_edge": 0.0}, {"entry_qual_quality_entry_edge": 0.1}, {"entry_qual_quality_entry_edge": 0.2}]
     result = compute_cross_window_entry_quality_trend(summaries)
     assert result["valid"] is True
@@ -24689,6 +26194,7 @@ def test_r80_t3_grade_b_small_positive_slope() -> None:
 def test_r80_t3_grade_d_large_negative_slope() -> None:
     """Slope <= -0.01 → grade=D."""
     from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+
     summaries = [{"entry_qual_quality_entry_edge": 0.3}, {"entry_qual_quality_entry_edge": 0.1}, {"entry_qual_quality_entry_edge": -0.1}]
     result = compute_cross_window_entry_quality_trend(summaries)
     assert result["valid"] is True
@@ -24698,6 +26204,7 @@ def test_r80_t3_grade_d_large_negative_slope() -> None:
 def test_r80_t3_ols_slope_linear_sequence() -> None:
     """OLS slope for y=[0,1,2] must equal 1.0."""
     from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+
     summaries = [{"entry_qual_quality_entry_edge": 0.0}, {"entry_qual_quality_entry_edge": 1.0}, {"entry_qual_quality_entry_edge": 2.0}]
     result = compute_cross_window_entry_quality_trend(summaries)
     assert result["valid"] is True
@@ -24707,6 +26214,7 @@ def test_r80_t3_ols_slope_linear_sequence() -> None:
 def test_r80_t3_window_count_correct() -> None:
     """entry_quality_window_count must match valid data points."""
     from scripts.optimize_profile import compute_cross_window_entry_quality_trend
+
     summaries = [{"entry_qual_quality_entry_edge": 0.05}, {}, {"entry_qual_quality_entry_edge": 0.06}, {"other": 99}, {"entry_qual_quality_entry_edge": 0.07}]
     result = compute_cross_window_entry_quality_trend(summaries)
     assert result["valid"] is True
@@ -24716,18 +26224,21 @@ def test_r80_t3_window_count_correct() -> None:
 def test_r80_t3_metric_in_comparison_metrics() -> None:
     """entry_quality_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "entry_quality_trend_slope" in COMPARISON_METRICS
 
 
 def test_r80_t3_metric_in_optional_metrics() -> None:
     """entry_quality_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "entry_quality_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r80_t3_floor_registered() -> None:
     """entry_quality_trend_slope floor must be -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "entry_quality_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["entry_quality_trend_slope"] == pytest.approx(-0.01)
 
@@ -24735,6 +26246,7 @@ def test_r80_t3_floor_registered() -> None:
 def test_r80_t3_label_registered() -> None:
     """entry_quality_trend_slope must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "entry_quality_trend_slope" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["entry_quality_trend_slope"] == "入场质量跨窗趋势斜率"
 
@@ -24742,6 +26254,7 @@ def test_r80_t3_label_registered() -> None:
 # ---------------------------------------------------------------------------
 # Round 81, Task 1 (Alpha): compute_expected_value_analysis tests
 # ---------------------------------------------------------------------------
+
 
 def _make_r81_ev_rows(n: int = 20, win_rate: float = 0.6, avg_win: float = 0.05, avg_loss: float = -0.02) -> list[dict]:
     """Helper: generate synthetic rows for R81 EV analysis."""
@@ -24755,6 +26268,7 @@ def _make_r81_ev_rows(n: int = 20, win_rate: float = 0.6, avg_win: float = 0.05,
 def test_r81_t1_basic_valid_result() -> None:
     """compute_expected_value_analysis returns valid=True with >= 15 rows."""
     from scripts.btst_analysis_utils import compute_expected_value_analysis
+
     rows = _make_r81_ev_rows(30)
     result = compute_expected_value_analysis(rows)
     assert result["valid"] is True
@@ -24766,6 +26280,7 @@ def test_r81_t1_basic_valid_result() -> None:
 def test_r81_t1_too_few_rows_returns_invalid() -> None:
     """Fewer than 15 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_expected_value_analysis
+
     rows = [{"runner_composite_score": float(i), "actual_return": 0.01} for i in range(14)]
     result = compute_expected_value_analysis(rows)
     assert result["valid"] is False
@@ -24775,6 +26290,7 @@ def test_r81_t1_too_few_rows_returns_invalid() -> None:
 def test_r81_t1_ev_spread_equals_top_minus_bot() -> None:
     """ev_spread must equal top_ev - bot_ev."""
     from scripts.btst_analysis_utils import compute_expected_value_analysis
+
     rows = _make_r81_ev_rows(30)
     result = compute_expected_value_analysis(rows)
     assert result["valid"] is True
@@ -24784,6 +26300,7 @@ def test_r81_t1_ev_spread_equals_top_minus_bot() -> None:
 def test_r81_t1_top_ev_formula_correct() -> None:
     """Manually verify top_ev = win_rate * avg_win + (1-win_rate) * avg_loss."""
     from scripts.btst_analysis_utils import compute_expected_value_analysis
+
     rows = _make_r81_ev_rows(30)
     result = compute_expected_value_analysis(rows)
     assert result["valid"] is True
@@ -24797,6 +26314,7 @@ def test_r81_t1_top_ev_formula_correct() -> None:
 def test_r81_t1_all_winners_top_avg_loss_zero() -> None:
     """When top group has only winners, top_avg_loss = 0.0."""
     from scripts.btst_analysis_utils import compute_expected_value_analysis
+
     rows = [{"runner_composite_score": float(i), "actual_return": 0.05} for i in range(30)]
     result = compute_expected_value_analysis(rows)
     assert result["valid"] is True
@@ -24806,6 +26324,7 @@ def test_r81_t1_all_winners_top_avg_loss_zero() -> None:
 def test_r81_t1_all_losers_top_avg_win_zero() -> None:
     """When top group has only losers, top_avg_win = 0.0."""
     from scripts.btst_analysis_utils import compute_expected_value_analysis
+
     rows = [{"runner_composite_score": float(i), "actual_return": -0.03} for i in range(30)]
     result = compute_expected_value_analysis(rows)
     assert result["valid"] is True
@@ -24815,6 +26334,7 @@ def test_r81_t1_all_losers_top_avg_win_zero() -> None:
 def test_r81_t1_score_priority_runner_composite() -> None:
     """runner_composite_score takes priority over composite_score and score."""
     from scripts.btst_analysis_utils import compute_expected_value_analysis
+
     rows = [{"runner_composite_score": float(i), "composite_score": 0.0, "score": 0.0, "actual_return": 0.01 if i > 15 else -0.01} for i in range(30)]
     result = compute_expected_value_analysis(rows)
     assert result["valid"] is True
@@ -24823,6 +26343,7 @@ def test_r81_t1_score_priority_runner_composite() -> None:
 def test_r81_t1_score_fallback_composite_score() -> None:
     """Falls back to composite_score when runner_composite_score is absent."""
     from scripts.btst_analysis_utils import compute_expected_value_analysis
+
     rows = [{"composite_score": float(i), "actual_return": 0.02} for i in range(20)]
     result = compute_expected_value_analysis(rows)
     assert result["valid"] is True
@@ -24831,6 +26352,7 @@ def test_r81_t1_score_fallback_composite_score() -> None:
 def test_r81_t1_missing_actual_return_excluded() -> None:
     """Rows with actual_return=None are excluded from analysis."""
     from scripts.btst_analysis_utils import compute_expected_value_analysis
+
     rows = [{"runner_composite_score": float(i), "actual_return": None} for i in range(20)]
     result = compute_expected_value_analysis(rows)
     assert result["valid"] is False
@@ -24850,30 +26372,35 @@ def test_r81_t1_ev_spread_positive_when_top_better() -> None:
 def test_r81_t1_metric_in_comparison_metrics() -> None:
     """ev_top_ev must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "ev_top_ev" in COMPARISON_METRICS
 
 
 def test_r81_t1_spread_metric_in_comparison_metrics() -> None:
     """ev_ev_spread must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "ev_ev_spread" in COMPARISON_METRICS
 
 
 def test_r81_t1_metric_in_optional_metrics() -> None:
     """ev_top_ev must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "ev_top_ev" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r81_t1_spread_metric_in_optional_metrics() -> None:
     """ev_ev_spread must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "ev_ev_spread" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r81_t1_floor_registered() -> None:
     """ev_top_ev floor must be 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "ev_top_ev" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["ev_top_ev"] == pytest.approx(0.0)
 
@@ -24881,6 +26408,7 @@ def test_r81_t1_floor_registered() -> None:
 def test_r81_t1_labels_registered() -> None:
     """ev_top_ev and ev_ev_spread must have Chinese labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "ev_top_ev" in COMPARISON_METRIC_LABELS
     assert "ev_ev_spread" in COMPARISON_METRIC_LABELS
 
@@ -24889,9 +26417,11 @@ def test_r81_t1_labels_registered() -> None:
 # Round 81, Task 2 (Beta): compute_high_inflow_premium tests
 # ---------------------------------------------------------------------------
 
+
 def _make_r81_inflow_rows(n: int = 30, inflow_values: list | None = None, win_rate: float = 0.55) -> list[dict]:
     """Helper: generate rows with t0_estimated_net_inflow_ratio for R81."""
     import random
+
     random.seed(42)
     rows = []
     for i in range(n):
@@ -24904,6 +26434,7 @@ def _make_r81_inflow_rows(n: int = 30, inflow_values: list | None = None, win_ra
 def test_r81_t2_basic_valid_result() -> None:
     """compute_high_inflow_premium returns valid=True with >= 20 rows."""
     from scripts.btst_analysis_utils import compute_high_inflow_premium
+
     rows = _make_r81_inflow_rows(30)
     result = compute_high_inflow_premium(rows)
     assert result["valid"] is True
@@ -24914,6 +26445,7 @@ def test_r81_t2_basic_valid_result() -> None:
 def test_r81_t2_too_few_rows_invalid() -> None:
     """Fewer than 20 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_high_inflow_premium
+
     rows = _make_r81_inflow_rows(19)
     result = compute_high_inflow_premium(rows)
     assert result["valid"] is False
@@ -24922,6 +26454,7 @@ def test_r81_t2_too_few_rows_invalid() -> None:
 def test_r81_t2_missing_inflow_field_invalid() -> None:
     """Rows without t0_estimated_net_inflow_ratio are excluded, causing invalid if not enough."""
     from scripts.btst_analysis_utils import compute_high_inflow_premium
+
     rows = [{"actual_return": 0.01} for _ in range(25)]
     result = compute_high_inflow_premium(rows)
     assert result["valid"] is False
@@ -24943,6 +26476,7 @@ def test_r81_t2_edge_equals_winrate_minus_baseline() -> None:
 def test_r81_t2_p75_threshold_correct() -> None:
     """P75 threshold must select ~25% of rows as high inflow."""
     from scripts.btst_analysis_utils import compute_high_inflow_premium
+
     rows = [{"t0_estimated_net_inflow_ratio": float(i) / 100.0, "actual_return": 0.01 if i > 50 else -0.01} for i in range(100)]
     result = compute_high_inflow_premium(rows)
     assert result["valid"] is True
@@ -24975,30 +26509,35 @@ def test_r81_t2_high_inflow_too_few_invalid() -> None:
 def test_r81_t2_metric_in_comparison_metrics() -> None:
     """hi_inflow_high_inflow_win_rate must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "hi_inflow_high_inflow_win_rate" in COMPARISON_METRICS
 
 
 def test_r81_t2_edge_in_comparison_metrics() -> None:
     """hi_inflow_high_inflow_edge must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "hi_inflow_high_inflow_edge" in COMPARISON_METRICS
 
 
 def test_r81_t2_win_rate_in_optional_metrics() -> None:
     """hi_inflow_high_inflow_win_rate must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "hi_inflow_high_inflow_win_rate" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r81_t2_edge_in_optional_metrics() -> None:
     """hi_inflow_high_inflow_edge must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "hi_inflow_high_inflow_edge" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r81_t2_floor_registered() -> None:
     """hi_inflow_high_inflow_edge floor must be 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "hi_inflow_high_inflow_edge" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["hi_inflow_high_inflow_edge"] == pytest.approx(0.0)
 
@@ -25006,6 +26545,7 @@ def test_r81_t2_floor_registered() -> None:
 def test_r81_t2_labels_registered() -> None:
     """hi_inflow labels must exist in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "hi_inflow_high_inflow_win_rate" in COMPARISON_METRIC_LABELS
     assert "hi_inflow_high_inflow_edge" in COMPARISON_METRIC_LABELS
 
@@ -25014,9 +26554,11 @@ def test_r81_t2_labels_registered() -> None:
 # Round 81, Task 3 (Gamma): compute_cross_window_near_high_trend tests
 # ---------------------------------------------------------------------------
 
+
 def test_r81_t3_too_few_windows_invalid() -> None:
     """Fewer than 3 windows → valid=False."""
     from scripts.optimize_profile import compute_cross_window_near_high_trend
+
     summaries = [{"nh_near_high_edge": 0.05}, {"nh_near_high_edge": 0.06}]
     result = compute_cross_window_near_high_trend(summaries)
     assert result["valid"] is False
@@ -25026,6 +26568,7 @@ def test_r81_t3_too_few_windows_invalid() -> None:
 def test_r81_t3_no_valid_values_invalid() -> None:
     """Windows without nh_near_high_edge → valid=False."""
     from scripts.optimize_profile import compute_cross_window_near_high_trend
+
     summaries = [{"other_metric": 1.0}, {"other_metric": 2.0}, {"other_metric": 3.0}]
     result = compute_cross_window_near_high_trend(summaries)
     assert result["valid"] is False
@@ -25034,6 +26577,7 @@ def test_r81_t3_no_valid_values_invalid() -> None:
 def test_r81_t3_rising_trend_positive_slope() -> None:
     """Monotonically rising values → positive slope."""
     from scripts.optimize_profile import compute_cross_window_near_high_trend
+
     summaries = [{"nh_near_high_edge": 0.01 * i} for i in range(5)]
     result = compute_cross_window_near_high_trend(summaries)
     assert result["valid"] is True
@@ -25043,6 +26587,7 @@ def test_r81_t3_rising_trend_positive_slope() -> None:
 def test_r81_t3_falling_trend_negative_slope() -> None:
     """Monotonically falling values → negative slope."""
     from scripts.optimize_profile import compute_cross_window_near_high_trend
+
     summaries = [{"nh_near_high_edge": 0.1 - 0.02 * i} for i in range(5)]
     result = compute_cross_window_near_high_trend(summaries)
     assert result["valid"] is True
@@ -25052,6 +26597,7 @@ def test_r81_t3_falling_trend_negative_slope() -> None:
 def test_r81_t3_grade_a_large_positive_slope() -> None:
     """Slope > 0.005 → grade=A."""
     from scripts.optimize_profile import compute_cross_window_near_high_trend
+
     summaries = [{"nh_near_high_edge": float(i) * 0.01} for i in range(4)]
     result = compute_cross_window_near_high_trend(summaries)
     assert result["valid"] is True
@@ -25062,6 +26608,7 @@ def test_r81_t3_grade_a_large_positive_slope() -> None:
 def test_r81_t3_grade_b_small_positive_slope() -> None:
     """0 < slope <= 0.005 → grade=B."""
     from scripts.optimize_profile import compute_cross_window_near_high_trend
+
     summaries = [{"nh_near_high_edge": 0.500 + i * 0.001} for i in range(3)]
     result = compute_cross_window_near_high_trend(summaries)
     assert result["valid"] is True
@@ -25071,6 +26618,7 @@ def test_r81_t3_grade_b_small_positive_slope() -> None:
 def test_r81_t3_grade_d_large_negative_slope() -> None:
     """Slope <= -0.01 → grade=D."""
     from scripts.optimize_profile import compute_cross_window_near_high_trend
+
     summaries = [{"nh_near_high_edge": 0.3 - 0.1 * i} for i in range(4)]
     result = compute_cross_window_near_high_trend(summaries)
     assert result["valid"] is True
@@ -25080,6 +26628,7 @@ def test_r81_t3_grade_d_large_negative_slope() -> None:
 def test_r81_t3_ols_slope_linear_sequence() -> None:
     """OLS slope for y=[0,1,2] must equal 1.0."""
     from scripts.optimize_profile import compute_cross_window_near_high_trend
+
     summaries = [{"nh_near_high_edge": float(i)} for i in range(3)]
     result = compute_cross_window_near_high_trend(summaries)
     assert result["valid"] is True
@@ -25089,6 +26638,7 @@ def test_r81_t3_ols_slope_linear_sequence() -> None:
 def test_r81_t3_window_count_correct() -> None:
     """near_high_trend_window_count must match number of valid data points."""
     from scripts.optimize_profile import compute_cross_window_near_high_trend
+
     summaries = [{"nh_near_high_edge": 0.05}, {}, {"nh_near_high_edge": 0.06}, {"other": 99}, {"nh_near_high_edge": 0.07}]
     result = compute_cross_window_near_high_trend(summaries)
     assert result["valid"] is True
@@ -25098,18 +26648,21 @@ def test_r81_t3_window_count_correct() -> None:
 def test_r81_t3_metric_in_comparison_metrics() -> None:
     """near_high_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "near_high_trend_slope" in COMPARISON_METRICS
 
 
 def test_r81_t3_metric_in_optional_metrics() -> None:
     """near_high_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "near_high_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r81_t3_floor_registered() -> None:
     """near_high_trend_slope floor must be -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "near_high_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["near_high_trend_slope"] == pytest.approx(-0.01)
 
@@ -25117,6 +26670,7 @@ def test_r81_t3_floor_registered() -> None:
 def test_r81_t3_label_registered() -> None:
     """near_high_trend_slope must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "near_high_trend_slope" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["near_high_trend_slope"] == "近高位股跨窗趋势斜率"
 
@@ -25124,6 +26678,7 @@ def test_r81_t3_label_registered() -> None:
 # =============================================================================
 # Round 82 helpers
 # =============================================================================
+
 
 def _make_r82_score_rows(n: int = 20, *, high_win: bool = True) -> list[dict]:
     """Generate rows with score and actual_return for T1 tests."""
@@ -25142,12 +26697,14 @@ def _make_r82_score_rows_priority(n: int = 20) -> list[dict]:
     """Rows that have runner_composite_score, composite_score, and score — priority check."""
     rows = []
     for i in range(n):
-        rows.append({
-            "runner_composite_score": float(i),
-            "composite_score": float(n - i),  # deliberately inverted
-            "score": float(n + i),
-            "actual_return": 0.05 if i >= n // 2 else -0.02,
-        })
+        rows.append(
+            {
+                "runner_composite_score": float(i),
+                "composite_score": float(n - i),  # deliberately inverted
+                "score": float(n + i),
+                "actual_return": 0.05 if i >= n // 2 else -0.02,
+            }
+        )
     return rows
 
 
@@ -25185,9 +26742,11 @@ def _make_r82_ev_windows(slopes: list[float]) -> list[dict]:
 # Round 82, Task 1 (Alpha): compute_score_prediction_accuracy
 # =============================================================================
 
+
 def test_r82_t1_basic_valid() -> None:
     """20 rows with clear high-score win pattern → valid=True."""
     from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+
     rows = _make_r82_score_rows(20, high_win=True)
     result = compute_score_prediction_accuracy(rows)
     assert result["valid"] is True
@@ -25208,6 +26767,7 @@ def test_r82_t1_precision_value() -> None:
 def test_r82_t1_recall_value() -> None:
     """Recall = TP/(TP+FN). With all high-score rows winning, recall=1."""
     from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+
     rows = _make_r82_score_rows(10, high_win=True)
     result = compute_score_prediction_accuracy(rows)
     assert result["valid"] is True
@@ -25217,6 +26777,7 @@ def test_r82_t1_recall_value() -> None:
 def test_r82_t1_f1_formula() -> None:
     """F1 = 2*P*R/(P+R) verified."""
     from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+
     rows = _make_r82_score_rows(20, high_win=True)
     result = compute_score_prediction_accuracy(rows)
     p = result["high_score_precision"]
@@ -25228,6 +26789,7 @@ def test_r82_t1_f1_formula() -> None:
 def test_r82_t1_too_few_rows() -> None:
     """Fewer than 10 valid rows → valid=False, all metrics None."""
     from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+
     rows = _make_r82_score_rows(9, high_win=True)
     result = compute_score_prediction_accuracy(rows)
     assert result["valid"] is False
@@ -25240,6 +26802,7 @@ def test_r82_t1_too_few_rows() -> None:
 def test_r82_t1_all_positive_returns() -> None:
     """If all actual_return > 0 and 20 rows, half are above median (TP=10, FN=10) → recall=0.5."""
     from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+
     rows = [{"score": float(i), "actual_return": 0.05} for i in range(20)]
     result = compute_score_prediction_accuracy(rows)
     assert result["valid"] is True
@@ -25250,6 +26813,7 @@ def test_r82_t1_all_positive_returns() -> None:
 def test_r82_t1_score_priority_runner() -> None:
     """runner_composite_score is preferred over composite_score and score."""
     from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+
     rows = _make_r82_score_rows_priority(20)
     # runner_composite_score = 0..19 (ascending) → same as high_win=True expectation
     result_priority = compute_score_prediction_accuracy(rows)
@@ -25262,13 +26826,16 @@ def test_r82_t1_score_priority_runner() -> None:
 def test_r82_t1_score_priority_composite_over_score() -> None:
     """composite_score is used when runner_composite_score is absent."""
     from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+
     rows = []
     for i in range(20):
-        rows.append({
-            "composite_score": float(i),
-            "score": float(20 - i),  # inverted — should be ignored
-            "actual_return": 0.05 if i >= 10 else -0.02,
-        })
+        rows.append(
+            {
+                "composite_score": float(i),
+                "score": float(20 - i),  # inverted — should be ignored
+                "actual_return": 0.05 if i >= 10 else -0.02,
+            }
+        )
     result = compute_score_prediction_accuracy(rows)
     assert result["valid"] is True
     # With composite_score ascending, high-score correctly predicts positive return
@@ -25278,6 +26845,7 @@ def test_r82_t1_score_priority_composite_over_score() -> None:
 def test_r82_t1_score_median_even() -> None:
     """Even count: median is average of two middle values."""
     from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+
     rows = [{"score": float(i), "actual_return": 0.05} for i in range(20)]
     result = compute_score_prediction_accuracy(rows)
     # sorted scores 0..19, median = (9+10)/2 = 9.5
@@ -25287,6 +26855,7 @@ def test_r82_t1_score_median_even() -> None:
 def test_r82_t1_score_median_odd() -> None:
     """Odd count: median is the middle element."""
     from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+
     rows = [{"score": float(i), "actual_return": 0.05} for i in range(11)]
     result = compute_score_prediction_accuracy(rows)
     # sorted scores 0..10, median = 5
@@ -25296,6 +26865,7 @@ def test_r82_t1_score_median_odd() -> None:
 def test_r82_t1_metric_in_comparison_metrics() -> None:
     """clf_high_score_precision and clf_f1_score must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "clf_high_score_precision" in COMPARISON_METRICS
     assert "clf_f1_score" in COMPARISON_METRICS
 
@@ -25303,6 +26873,7 @@ def test_r82_t1_metric_in_comparison_metrics() -> None:
 def test_r82_t1_metric_in_optional_metrics() -> None:
     """clf_high_score_precision and clf_f1_score must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "clf_high_score_precision" in OPTIONAL_COMPARISON_METRICS
     assert "clf_f1_score" in OPTIONAL_COMPARISON_METRICS
 
@@ -25310,6 +26881,7 @@ def test_r82_t1_metric_in_optional_metrics() -> None:
 def test_r82_t1_floor_registered() -> None:
     """clf_high_score_precision floor must be 0.5."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "clf_high_score_precision" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["clf_high_score_precision"] == pytest.approx(0.5)
 
@@ -25317,6 +26889,7 @@ def test_r82_t1_floor_registered() -> None:
 def test_r82_t1_missing_score_field() -> None:
     """Rows without any score field are skipped; too few valid → valid=False."""
     from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+
     rows = [{"actual_return": 0.05} for _ in range(20)]
     result = compute_score_prediction_accuracy(rows)
     assert result["valid"] is False
@@ -25325,6 +26898,7 @@ def test_r82_t1_missing_score_field() -> None:
 def test_r82_t1_missing_return_field() -> None:
     """Rows without actual_return are skipped."""
     from scripts.btst_analysis_utils import compute_score_prediction_accuracy
+
     rows = [{"score": float(i)} for i in range(20)]
     result = compute_score_prediction_accuracy(rows)
     assert result["valid"] is False
@@ -25334,9 +26908,11 @@ def test_r82_t1_missing_return_field() -> None:
 # Round 82, Task 2 (Beta): compute_volume_price_divergence_filter
 # =============================================================================
 
+
 def test_r82_t2_basic_valid() -> None:
     """40 rows with 4-quadrant data → valid=True."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_filter
+
     rows = _make_r82_vpd_rows(40)
     result = compute_volume_price_divergence_filter(rows)
     assert result["valid"] is True
@@ -25345,6 +26921,7 @@ def test_r82_t2_basic_valid() -> None:
 def test_r82_t2_divergence_penalty_formula() -> None:
     """divergence_penalty = full_confirm_win_rate - vol_diverge_win_rate."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_filter
+
     rows = _make_r82_vpd_rows(40, quadrant_wins={"fc": 0.8, "vd": 0.4, "po": 0.6, "ll": 0.3})
     result = compute_volume_price_divergence_filter(rows)
     assert result["valid"] is True
@@ -25356,6 +26933,7 @@ def test_r82_t2_divergence_penalty_formula() -> None:
 def test_r82_t2_too_few_rows() -> None:
     """Fewer than 20 valid rows → valid=False."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_filter
+
     rows = _make_r82_vpd_rows(16)
     result = compute_volume_price_divergence_filter(rows)
     assert result["valid"] is False
@@ -25366,6 +26944,7 @@ def test_r82_t2_too_few_rows() -> None:
 def test_r82_t2_missing_vol_field() -> None:
     """Missing volume_expansion_quality → valid=False."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_filter
+
     rows = [{"close_strength": 0.5, "actual_return": 0.05} for _ in range(40)]
     result = compute_volume_price_divergence_filter(rows)
     assert result["valid"] is False
@@ -25374,6 +26953,7 @@ def test_r82_t2_missing_vol_field() -> None:
 def test_r82_t2_missing_cs_field() -> None:
     """Missing close_strength → valid=False."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_filter
+
     rows = [{"volume_expansion_quality": 0.5, "actual_return": 0.05} for _ in range(40)]
     result = compute_volume_price_divergence_filter(rows)
     assert result["valid"] is False
@@ -25406,6 +26986,7 @@ def test_r82_t2_quadrant_with_fewer_than_3_rows_gives_none() -> None:
 def test_r82_t2_metric_in_comparison_metrics() -> None:
     """vpd_full_confirm_win_rate and vpd_divergence_penalty must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "vpd_full_confirm_win_rate" in COMPARISON_METRICS
     assert "vpd_divergence_penalty" in COMPARISON_METRICS
 
@@ -25413,6 +26994,7 @@ def test_r82_t2_metric_in_comparison_metrics() -> None:
 def test_r82_t2_metric_in_optional_metrics() -> None:
     """vpd metrics must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "vpd_full_confirm_win_rate" in OPTIONAL_COMPARISON_METRICS
     assert "vpd_divergence_penalty" in OPTIONAL_COMPARISON_METRICS
 
@@ -25420,6 +27002,7 @@ def test_r82_t2_metric_in_optional_metrics() -> None:
 def test_r82_t2_floor_registered() -> None:
     """vpd_divergence_penalty floor must be 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "vpd_divergence_penalty" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["vpd_divergence_penalty"] == pytest.approx(0.0)
 
@@ -25427,6 +27010,7 @@ def test_r82_t2_floor_registered() -> None:
 def test_r82_t2_label_registered() -> None:
     """vpd metrics must have labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "vpd_full_confirm_win_rate" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["vpd_full_confirm_win_rate"] == "量价双高胜率"
     assert "vpd_divergence_penalty" in COMPARISON_METRIC_LABELS
@@ -25437,9 +27021,11 @@ def test_r82_t2_label_registered() -> None:
 # Round 82, Task 3 (Gamma): compute_cross_window_ev_spread_trend
 # =============================================================================
 
+
 def test_r82_t3_rising_trend_slope_positive() -> None:
     """Rising ev_ev_spread values → positive slope."""
     from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+
     windows = _make_r82_ev_windows([0.1, 0.2, 0.3, 0.4, 0.5])
     result = compute_cross_window_ev_spread_trend(windows)
     assert result["valid"] is True
@@ -25449,6 +27035,7 @@ def test_r82_t3_rising_trend_slope_positive() -> None:
 def test_r82_t3_falling_trend_grade_d() -> None:
     """Sharply falling trend → grade D."""
     from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+
     windows = _make_r82_ev_windows([0.5, 0.3, 0.1, -0.1, -0.3])
     result = compute_cross_window_ev_spread_trend(windows)
     assert result["valid"] is True
@@ -25458,6 +27045,7 @@ def test_r82_t3_falling_trend_grade_d() -> None:
 def test_r82_t3_too_few_windows() -> None:
     """Fewer than 3 windows → valid=False."""
     from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+
     windows = _make_r82_ev_windows([0.1, 0.2])
     result = compute_cross_window_ev_spread_trend(windows)
     assert result["valid"] is False
@@ -25468,6 +27056,7 @@ def test_r82_t3_too_few_windows() -> None:
 def test_r82_t3_ols_slope_manual() -> None:
     """Verify OLS slope manually for 3 points: y=[1,2,3], x=[0,1,2]."""
     from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+
     windows = _make_r82_ev_windows([1.0, 2.0, 3.0])
     result = compute_cross_window_ev_spread_trend(windows)
     assert result["valid"] is True
@@ -25481,6 +27070,7 @@ def test_r82_t3_ols_slope_manual() -> None:
 def test_r82_t3_window_count_correct() -> None:
     """ev_spread_window_count equals the number of windows with ev_ev_spread."""
     from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+
     windows = _make_r82_ev_windows([0.1, 0.2, 0.3, 0.4])
     result = compute_cross_window_ev_spread_trend(windows)
     assert result["ev_spread_window_count"] == 4
@@ -25489,6 +27079,7 @@ def test_r82_t3_window_count_correct() -> None:
 def test_r82_t3_missing_ev_spread_skipped() -> None:
     """Windows without ev_ev_spread are skipped; count only valid windows."""
     from scripts.optimize_profile import compute_cross_window_ev_spread_trend
+
     windows = [{"ev_ev_spread": 0.1}, {"other_key": 0.5}, {"ev_ev_spread": 0.2}, {"ev_ev_spread": 0.3}]
     result = compute_cross_window_ev_spread_trend(windows)
     assert result["valid"] is True
@@ -25518,18 +27109,21 @@ def test_r82_t3_grade_b_mild_rising() -> None:
 def test_r82_t3_metric_in_comparison_metrics() -> None:
     """ev_spread_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "ev_spread_trend_slope" in COMPARISON_METRICS
 
 
 def test_r82_t3_metric_in_optional_metrics() -> None:
     """ev_spread_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "ev_spread_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r82_t3_floor_registered() -> None:
     """ev_spread_trend_slope floor must be -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "ev_spread_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["ev_spread_trend_slope"] == pytest.approx(-0.01)
 
@@ -25537,6 +27131,7 @@ def test_r82_t3_floor_registered() -> None:
 def test_r82_t3_label_registered() -> None:
     """ev_spread_trend_slope must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "ev_spread_trend_slope" in COMPARISON_METRIC_LABELS
     assert COMPARISON_METRIC_LABELS["ev_spread_trend_slope"] == "EV差跨窗趋势斜率"
 
@@ -25554,7 +27149,7 @@ import pytest
 
 def _make_r83_kelly_rows(n: int, win_rate: float, avg_win: float, avg_loss: float) -> list[dict]:
     """Make rows with controlled win_rate, avg_win, avg_loss for Kelly tests.
-    
+
     Alternates winners/losers across score range so all thirds have a mix.
     """
     rows: list[dict] = []
@@ -25596,6 +27191,7 @@ def test_r83_t1_kelly_formula_verification() -> None:
 def test_r83_t1_kelly_too_few_rows() -> None:
     """Fewer than 15 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+
     rows = _make_r83_kelly_rows(14, 0.6, 0.03, 0.02)
     result = compute_kelly_criterion_analysis(rows)
     assert result["valid"] is False
@@ -25660,6 +27256,7 @@ def test_r83_t1_kelly_spread_computed() -> None:
 def test_r83_t1_kelly_valid_flag_requires_top_kelly() -> None:
     """valid=True only when top_kelly is not None."""
     from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+
     rows = _make_r83_kelly_rows(30, 0.6, 0.03, 0.02)
     result = compute_kelly_criterion_analysis(rows)
     assert result["valid"] == (result["top_kelly"] is not None)
@@ -25678,6 +27275,7 @@ def test_r83_t1_kelly_runner_composite_score_priority() -> None:
 def test_r83_t1_kelly_composite_score_fallback() -> None:
     """composite_score used when runner_composite_score is absent."""
     from scripts.btst_analysis_utils import compute_kelly_criterion_analysis
+
     rows = [{"composite_score": float(i), "actual_return": 0.03 if i > 20 else -0.02} for i in range(30)]
     result = compute_kelly_criterion_analysis(rows)
     assert result["valid"] is True
@@ -25697,6 +27295,7 @@ def test_r83_t1_kelly_none_actual_return_filtered() -> None:
 def test_r83_t1_kelly_in_comparison_metrics() -> None:
     """kelly_top_kelly and kelly_kelly_spread must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "kelly_top_kelly" in COMPARISON_METRICS
     assert "kelly_kelly_spread" in COMPARISON_METRICS
 
@@ -25704,6 +27303,7 @@ def test_r83_t1_kelly_in_comparison_metrics() -> None:
 def test_r83_t1_kelly_in_optional_metrics() -> None:
     """kelly_top_kelly and kelly_kelly_spread must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "kelly_top_kelly" in OPTIONAL_COMPARISON_METRICS
     assert "kelly_kelly_spread" in OPTIONAL_COMPARISON_METRICS
 
@@ -25711,6 +27311,7 @@ def test_r83_t1_kelly_in_optional_metrics() -> None:
 def test_r83_t1_kelly_labels_registered() -> None:
     """Kelly metrics must have labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("kelly_top_kelly") == "高分组凯利仓位"
     assert COMPARISON_METRIC_LABELS.get("kelly_kelly_spread") == "高低分组凯利差"
 
@@ -25718,6 +27319,7 @@ def test_r83_t1_kelly_labels_registered() -> None:
 def test_r83_t1_kelly_floor_registered() -> None:
     """kelly_top_kelly floor must be 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "kelly_top_kelly" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["kelly_top_kelly"] == pytest.approx(0.0)
 
@@ -25735,6 +27337,7 @@ def _make_r83_rpp_rows(n: int = 30) -> list[dict]:
 def test_r83_t2_rpp_p25_p50_p75_p90_valid() -> None:
     """30 rows → valid=True with all percentile fields populated."""
     from scripts.btst_analysis_utils import compute_return_percentile_profile
+
     rows = _make_r83_rpp_rows(30)
     result = compute_return_percentile_profile(rows)
     assert result["valid"] is True
@@ -25747,6 +27350,7 @@ def test_r83_t2_rpp_p25_p50_p75_p90_valid() -> None:
 def test_r83_t2_rpp_too_few_rows() -> None:
     """Fewer than 15 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_return_percentile_profile
+
     rows = _make_r83_rpp_rows(14)
     result = compute_return_percentile_profile(rows)
     assert result["valid"] is False
@@ -25766,6 +27370,7 @@ def test_r83_t2_rpp_top_group_too_small() -> None:
 def test_r83_t2_rpp_upside_asymmetry_formula() -> None:
     """upside_asymmetry = top_return_p75 - abs(top_return_p25)."""
     from scripts.btst_analysis_utils import compute_return_percentile_profile
+
     rows = _make_r83_rpp_rows(30)
     result = compute_return_percentile_profile(rows)
     assert result["valid"] is True
@@ -25776,6 +27381,7 @@ def test_r83_t2_rpp_upside_asymmetry_formula() -> None:
 def test_r83_t2_rpp_percentile_ordering() -> None:
     """P25 <= P50 <= P75 <= P90 for sorted returns."""
     from scripts.btst_analysis_utils import compute_return_percentile_profile
+
     rows = _make_r83_rpp_rows(30)
     result = compute_return_percentile_profile(rows)
     assert result["valid"] is True
@@ -25799,6 +27405,7 @@ def test_r83_t2_rpp_known_values() -> None:
 def test_r83_t2_rpp_runner_composite_score_priority() -> None:
     """runner_composite_score is preferred over composite_score."""
     from scripts.btst_analysis_utils import compute_return_percentile_profile
+
     rows = [{"runner_composite_score": float(i), "composite_score": 999.0, "actual_return": 0.01 * i} for i in range(30)]
     result = compute_return_percentile_profile(rows)
     assert result["valid"] is True
@@ -25807,6 +27414,7 @@ def test_r83_t2_rpp_runner_composite_score_priority() -> None:
 def test_r83_t2_rpp_none_return_filtered() -> None:
     """Rows with None actual_return are excluded."""
     from scripts.btst_analysis_utils import compute_return_percentile_profile
+
     rows = _make_r83_rpp_rows(20)
     rows += [{"score": 99.0, "actual_return": None}] * 5
     result = compute_return_percentile_profile(rows)
@@ -25816,6 +27424,7 @@ def test_r83_t2_rpp_none_return_filtered() -> None:
 def test_r83_t2_rpp_in_comparison_metrics() -> None:
     """rpp_top_return_p75 and rpp_upside_asymmetry must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "rpp_top_return_p75" in COMPARISON_METRICS
     assert "rpp_upside_asymmetry" in COMPARISON_METRICS
 
@@ -25823,6 +27432,7 @@ def test_r83_t2_rpp_in_comparison_metrics() -> None:
 def test_r83_t2_rpp_in_optional_metrics() -> None:
     """rpp metrics must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "rpp_top_return_p75" in OPTIONAL_COMPARISON_METRICS
     assert "rpp_upside_asymmetry" in OPTIONAL_COMPARISON_METRICS
 
@@ -25830,6 +27440,7 @@ def test_r83_t2_rpp_in_optional_metrics() -> None:
 def test_r83_t2_rpp_labels_registered() -> None:
     """RPP metrics must have labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("rpp_top_return_p75") == "高分组P75收益"
     assert COMPARISON_METRIC_LABELS.get("rpp_upside_asymmetry") == "上下行不对称性"
 
@@ -25837,6 +27448,7 @@ def test_r83_t2_rpp_labels_registered() -> None:
 def test_r83_t2_rpp_floor_registered() -> None:
     """rpp_upside_asymmetry floor must be 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "rpp_upside_asymmetry" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["rpp_upside_asymmetry"] == pytest.approx(0.0)
 
@@ -25849,6 +27461,7 @@ def test_r83_t2_rpp_floor_registered() -> None:
 def test_r83_t3_rising_trend_slope_positive() -> None:
     """Rising precision values → positive slope."""
     from scripts.optimize_profile import compute_cross_window_precision_trend
+
     windows = _make_r83_precision_windows([0.5, 0.6, 0.7, 0.8, 0.9])
     result = compute_cross_window_precision_trend(windows)
     assert result["valid"] is True
@@ -25858,6 +27471,7 @@ def test_r83_t3_rising_trend_slope_positive() -> None:
 def test_r83_t3_falling_trend_grade_d() -> None:
     """Sharply falling trend → grade C or D."""
     from scripts.optimize_profile import compute_cross_window_precision_trend
+
     windows = _make_r83_precision_windows([0.9, 0.7, 0.5, 0.3, 0.1])
     result = compute_cross_window_precision_trend(windows)
     assert result["valid"] is True
@@ -25867,6 +27481,7 @@ def test_r83_t3_falling_trend_grade_d() -> None:
 def test_r83_t3_too_few_windows() -> None:
     """Fewer than 3 windows → valid=False."""
     from scripts.optimize_profile import compute_cross_window_precision_trend
+
     windows = _make_r83_precision_windows([0.6, 0.7])
     result = compute_cross_window_precision_trend(windows)
     assert result["valid"] is False
@@ -25876,6 +27491,7 @@ def test_r83_t3_too_few_windows() -> None:
 def test_r83_t3_ols_slope_manual() -> None:
     """OLS slope for y=[1,2,3], x=[0,1,2] should be 1.0."""
     from scripts.optimize_profile import compute_cross_window_precision_trend
+
     windows = _make_r83_precision_windows([1.0, 2.0, 3.0])
     result = compute_cross_window_precision_trend(windows)
     assert result["valid"] is True
@@ -25887,6 +27503,7 @@ def test_r83_t3_ols_slope_manual() -> None:
 def test_r83_t3_grade_a_strong_rising() -> None:
     """Slope > 0.005 → grade A."""
     from scripts.optimize_profile import compute_cross_window_precision_trend
+
     windows = _make_r83_precision_windows([0.0, 0.01, 0.02, 0.03, 0.04])
     result = compute_cross_window_precision_trend(windows)
     assert result["precision_trend_grade"] == "A"
@@ -25895,6 +27512,7 @@ def test_r83_t3_grade_a_strong_rising() -> None:
 def test_r83_t3_grade_b_mild_rising() -> None:
     """0 < slope <= 0.005 → grade B."""
     from scripts.optimize_profile import compute_cross_window_precision_trend
+
     windows = _make_r83_precision_windows([0.0, 0.001, 0.002, 0.003, 0.004])
     result = compute_cross_window_precision_trend(windows)
     assert result["precision_trend_grade"] == "B"
@@ -25903,6 +27521,7 @@ def test_r83_t3_grade_b_mild_rising() -> None:
 def test_r83_t3_grade_c_mild_falling() -> None:
     """-0.01 < slope <= 0 → grade C."""
     from scripts.optimize_profile import compute_cross_window_precision_trend
+
     windows = _make_r83_precision_windows([0.004, 0.003, 0.002, 0.001, 0.0])
     result = compute_cross_window_precision_trend(windows)
     assert result["precision_trend_grade"] == "C"
@@ -25911,6 +27530,7 @@ def test_r83_t3_grade_c_mild_falling() -> None:
 def test_r83_t3_window_count_correct() -> None:
     """precision_trend_window_count equals windows with clf_high_score_precision."""
     from scripts.optimize_profile import compute_cross_window_precision_trend
+
     windows = _make_r83_precision_windows([0.6, 0.7, 0.8, 0.9])
     result = compute_cross_window_precision_trend(windows)
     assert result["precision_trend_window_count"] == 4
@@ -25919,6 +27539,7 @@ def test_r83_t3_window_count_correct() -> None:
 def test_r83_t3_missing_precision_skipped() -> None:
     """Windows without clf_high_score_precision are skipped."""
     from scripts.optimize_profile import compute_cross_window_precision_trend
+
     windows = [{"clf_high_score_precision": 0.6}, {"other_key": 0.5}, {"clf_high_score_precision": 0.7}, {"clf_high_score_precision": 0.8}]
     result = compute_cross_window_precision_trend(windows)
     assert result["valid"] is True
@@ -25928,24 +27549,28 @@ def test_r83_t3_missing_precision_skipped() -> None:
 def test_r83_t3_metric_in_comparison_metrics() -> None:
     """precision_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "precision_trend_slope" in COMPARISON_METRICS
 
 
 def test_r83_t3_metric_in_optional_metrics() -> None:
     """precision_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "precision_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r83_t3_label_registered() -> None:
     """precision_trend_slope must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("precision_trend_slope") == "精确率跨窗趋势斜率"
 
 
 def test_r83_t3_floor_registered() -> None:
     """precision_trend_slope floor must be -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "precision_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["precision_trend_slope"] == pytest.approx(-0.01)
 
@@ -25953,6 +27578,7 @@ def test_r83_t3_floor_registered() -> None:
 def test_r83_t3_flat_trend_grade_c() -> None:
     """Flat trend (slope=0) → grade C."""
     from scripts.optimize_profile import compute_cross_window_precision_trend
+
     windows = _make_r83_precision_windows([0.7, 0.7, 0.7, 0.7, 0.7])
     result = compute_cross_window_precision_trend(windows)
     assert result["valid"] is True
@@ -25960,10 +27586,10 @@ def test_r83_t3_flat_trend_grade_c() -> None:
     assert result["precision_trend_grade"] == "C"
 
 
-
 def test_r83_t3_exactly_3_windows() -> None:
     """Exactly 3 windows → valid result (minimum threshold)."""
     from scripts.optimize_profile import compute_cross_window_precision_trend
+
     windows = _make_r83_precision_windows([0.6, 0.7, 0.8])
     result = compute_cross_window_precision_trend(windows)
     assert result["valid"] is True
@@ -25978,6 +27604,7 @@ def test_r83_t3_exactly_3_windows() -> None:
 def _make_r84_momentum_rows(n: int, momentum_vals: list[float], win_rate: float) -> list[dict]:
     """Make rows with actual_return and momentum_slope_20d."""
     import random
+
     random.seed(42)
     rows = []
     for i in range(n):
@@ -25990,6 +27617,7 @@ def _make_r84_momentum_rows(n: int, momentum_vals: list[float], win_rate: float)
 def _make_r84_tailwind_rows(n: int, close_strengths: list[float], sector_resonances: list[float], win_rate: float) -> list[dict]:
     """Make rows with actual_return, close_strength, and sector_resonance."""
     import random
+
     random.seed(99)
     rows = []
     for i in range(n):
@@ -26013,6 +27641,7 @@ def _make_r84_asymmetry_windows(asym_vals: list[float]) -> list[dict]:
 def test_r84_t1_basic_valid() -> None:
     """Basic call with sufficient data returns valid=True."""
     from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+
     mom_vals = list(range(1, 41))
     rows = [{"actual_return": 0.01 if i % 2 == 0 else -0.01, "momentum_slope_20d": float(v)} for i, v in enumerate(mom_vals)]
     result = compute_momentum_reversal_analysis(rows)
@@ -26026,6 +27655,7 @@ def test_r84_t1_basic_valid() -> None:
 def test_r84_t1_too_few_rows() -> None:
     """Fewer than 20 valid rows → valid=False."""
     from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+
     rows = [{"actual_return": 0.01, "momentum_slope_20d": float(i)} for i in range(19)]
     result = compute_momentum_reversal_analysis(rows)
     assert result["valid"] is False
@@ -26035,6 +27665,7 @@ def test_r84_t1_too_few_rows() -> None:
 def test_r84_t1_exactly_20_rows() -> None:
     """Exactly 20 valid rows → can be valid."""
     from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+
     rows = [{"actual_return": 0.01, "momentum_slope_20d": float(i)} for i in range(20)]
     result = compute_momentum_reversal_analysis(rows)
     assert result["valid"] in (True, False)
@@ -26043,6 +27674,7 @@ def test_r84_t1_exactly_20_rows() -> None:
 def test_r84_t1_missing_momentum_slope_filtered() -> None:
     """Rows missing momentum_slope_20d are filtered out → valid=False if too few remain."""
     from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+
     rows = [{"actual_return": 0.01, "momentum_slope_20d": None}] * 30
     result = compute_momentum_reversal_analysis(rows)
     assert result["valid"] is False
@@ -26051,6 +27683,7 @@ def test_r84_t1_missing_momentum_slope_filtered() -> None:
 def test_r84_t1_missing_actual_return_filtered() -> None:
     """Rows missing actual_return are filtered out → valid=False if too few remain."""
     from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+
     rows = [{"actual_return": None, "momentum_slope_20d": 1.0}] * 30
     result = compute_momentum_reversal_analysis(rows)
     assert result["valid"] is False
@@ -26072,6 +27705,7 @@ def test_r84_t1_p80_p40_threshold_logic() -> None:
 def test_r84_t1_momentum_breadth_effect_formula() -> None:
     """momentum_breadth_effect = extreme_win_rate - moderate_win_rate."""
     from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+
     rows = [{"actual_return": 0.01, "momentum_slope_20d": float(i + 1)} for i in range(20)]
     result = compute_momentum_reversal_analysis(rows)
     if result["valid"]:
@@ -26096,6 +27730,7 @@ def test_r84_t1_extreme_group_all_wins() -> None:
 def test_r84_t1_negative_breadth_effect_means_reversal() -> None:
     """Negative breadth effect: extreme momentum has lower win rate than moderate."""
     from scripts.btst_analysis_utils import compute_momentum_reversal_analysis
+
     rows = []
     for i in range(30):
         mom = float(i + 1)
@@ -26115,6 +27750,7 @@ def test_r84_t1_negative_breadth_effect_means_reversal() -> None:
 def test_r84_t1_in_comparison_metrics() -> None:
     """mom_rev_extreme_momentum_win_rate must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "mom_rev_extreme_momentum_win_rate" in COMPARISON_METRICS
     assert "mom_rev_momentum_breadth_effect" in COMPARISON_METRICS
 
@@ -26122,6 +27758,7 @@ def test_r84_t1_in_comparison_metrics() -> None:
 def test_r84_t1_in_optional_metrics() -> None:
     """mom_rev metrics must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "mom_rev_extreme_momentum_win_rate" in OPTIONAL_COMPARISON_METRICS
     assert "mom_rev_momentum_breadth_effect" in OPTIONAL_COMPARISON_METRICS
 
@@ -26129,6 +27766,7 @@ def test_r84_t1_in_optional_metrics() -> None:
 def test_r84_t1_labels_registered() -> None:
     """mom_rev metrics must have labels in COMPARISON_METRIC_LABELS."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("mom_rev_extreme_momentum_win_rate") == "极端动量胜率"
     assert COMPARISON_METRIC_LABELS.get("mom_rev_momentum_breadth_effect") == "动量广度效应"
 
@@ -26136,6 +27774,7 @@ def test_r84_t1_labels_registered() -> None:
 def test_r84_t1_floor_registered() -> None:
     """mom_rev_extreme_momentum_win_rate floor must be 0.4."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "mom_rev_extreme_momentum_win_rate" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["mom_rev_extreme_momentum_win_rate"] == pytest.approx(0.4)
 
@@ -26148,6 +27787,7 @@ def test_r84_t1_floor_registered() -> None:
 def test_r84_t2_basic_valid() -> None:
     """Basic call with sufficient data returns valid=True."""
     from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+
     rows = [{"actual_return": 0.01 if i % 2 == 0 else -0.01, "close_strength": float(i % 10) / 10.0, "sector_resonance": float(i % 5) / 5.0} for i in range(40)]
     result = compute_sector_tailwind_protection(rows)
     assert result["valid"] is True
@@ -26160,6 +27800,7 @@ def test_r84_t2_basic_valid() -> None:
 def test_r84_t2_too_few_rows() -> None:
     """Fewer than 20 valid rows → valid=False."""
     from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+
     rows = [{"actual_return": 0.01, "close_strength": 0.5, "sector_resonance": 0.5} for _ in range(19)]
     result = compute_sector_tailwind_protection(rows)
     assert result["valid"] is False
@@ -26168,6 +27809,7 @@ def test_r84_t2_too_few_rows() -> None:
 def test_r84_t2_missing_sector_resonance_filtered() -> None:
     """Rows missing sector_resonance are filtered → valid=False if too few remain."""
     from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+
     rows = [{"actual_return": 0.01, "close_strength": 0.5, "sector_resonance": None}] * 30
     result = compute_sector_tailwind_protection(rows)
     assert result["valid"] is False
@@ -26176,6 +27818,7 @@ def test_r84_t2_missing_sector_resonance_filtered() -> None:
 def test_r84_t2_missing_close_strength_filtered() -> None:
     """Rows missing close_strength are filtered → valid=False if too few remain."""
     from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+
     rows = [{"actual_return": 0.01, "close_strength": None, "sector_resonance": 0.5}] * 30
     result = compute_sector_tailwind_protection(rows)
     assert result["valid"] is False
@@ -26213,6 +27856,7 @@ def test_r84_t2_p75_threshold_logic() -> None:
 def test_r84_t2_gap_protection_effect_formula() -> None:
     """gap_protection_effect = protected_win_rate - exposed_win_rate."""
     from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+
     rows = [{"actual_return": 0.01 if i % 3 != 0 else -0.01, "close_strength": float(i % 10) / 10.0 + 0.1, "sector_resonance": float(i % 6) / 6.0} for i in range(40)]
     result = compute_sector_tailwind_protection(rows)
     if result["valid"]:
@@ -26222,6 +27866,7 @@ def test_r84_t2_gap_protection_effect_formula() -> None:
 def test_r84_t2_protected_all_wins() -> None:
     """If all protected rows win, protected_win_rate = 1.0."""
     from scripts.btst_analysis_utils import compute_sector_tailwind_protection
+
     rows = []
     for i in range(40):
         cs = 1.0  # all high cs
@@ -26236,6 +27881,7 @@ def test_r84_t2_protected_all_wins() -> None:
 def test_r84_t2_in_comparison_metrics() -> None:
     """tailwind metrics must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "tailwind_protected_win_rate" in COMPARISON_METRICS
     assert "tailwind_gap_protection_effect" in COMPARISON_METRICS
 
@@ -26243,6 +27889,7 @@ def test_r84_t2_in_comparison_metrics() -> None:
 def test_r84_t2_in_optional_metrics() -> None:
     """tailwind metrics must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "tailwind_protected_win_rate" in OPTIONAL_COMPARISON_METRICS
     assert "tailwind_gap_protection_effect" in OPTIONAL_COMPARISON_METRICS
 
@@ -26250,6 +27897,7 @@ def test_r84_t2_in_optional_metrics() -> None:
 def test_r84_t2_labels_registered() -> None:
     """tailwind metrics must have labels."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("tailwind_protected_win_rate") == "顺风高强度胜率"
     assert COMPARISON_METRIC_LABELS.get("tailwind_gap_protection_effect") == "板块保护效应"
 
@@ -26257,6 +27905,7 @@ def test_r84_t2_labels_registered() -> None:
 def test_r84_t2_floor_registered() -> None:
     """tailwind_gap_protection_effect floor must be 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "tailwind_gap_protection_effect" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["tailwind_gap_protection_effect"] == pytest.approx(0.0)
 
@@ -26269,6 +27918,7 @@ def test_r84_t2_floor_registered() -> None:
 def test_r84_t3_rising_trend_grade_a() -> None:
     """Strongly rising rpp_upside_asymmetry → grade A."""
     from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+
     windows = _make_r84_asymmetry_windows([0.0, 0.01, 0.02, 0.03, 0.04])
     result = compute_cross_window_upside_asymmetry_trend(windows)
     assert result["valid"] is True
@@ -26278,6 +27928,7 @@ def test_r84_t3_rising_trend_grade_a() -> None:
 def test_r84_t3_mild_rising_grade_b() -> None:
     """Mildly rising (slope 0..0.005] → grade B."""
     from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+
     windows = _make_r84_asymmetry_windows([0.0, 0.001, 0.002, 0.003, 0.004])
     result = compute_cross_window_upside_asymmetry_trend(windows)
     assert result["valid"] is True
@@ -26287,6 +27938,7 @@ def test_r84_t3_mild_rising_grade_b() -> None:
 def test_r84_t3_flat_trend_grade_c() -> None:
     """Flat trend → grade C."""
     from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+
     windows = _make_r84_asymmetry_windows([0.5, 0.5, 0.5, 0.5, 0.5])
     result = compute_cross_window_upside_asymmetry_trend(windows)
     assert result["valid"] is True
@@ -26297,6 +27949,7 @@ def test_r84_t3_flat_trend_grade_c() -> None:
 def test_r84_t3_strongly_falling_grade_d() -> None:
     """Strongly falling → grade D."""
     from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+
     windows = _make_r84_asymmetry_windows([0.04, 0.02, 0.0, -0.02, -0.04])
     result = compute_cross_window_upside_asymmetry_trend(windows)
     assert result["valid"] is True
@@ -26306,6 +27959,7 @@ def test_r84_t3_strongly_falling_grade_d() -> None:
 def test_r84_t3_too_few_windows() -> None:
     """Fewer than 3 valid windows → valid=False."""
     from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+
     windows = _make_r84_asymmetry_windows([0.1, 0.2])
     result = compute_cross_window_upside_asymmetry_trend(windows)
     assert result["valid"] is False
@@ -26315,6 +27969,7 @@ def test_r84_t3_too_few_windows() -> None:
 def test_r84_t3_exactly_3_windows() -> None:
     """Exactly 3 windows → valid."""
     from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+
     windows = _make_r84_asymmetry_windows([0.1, 0.2, 0.3])
     result = compute_cross_window_upside_asymmetry_trend(windows)
     assert result["valid"] is True
@@ -26324,6 +27979,7 @@ def test_r84_t3_exactly_3_windows() -> None:
 def test_r84_t3_ols_slope_numerical_check() -> None:
     """Verify OLS slope numerically: y=0,1,2,3,4 → slope=1."""
     from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+
     windows = _make_r84_asymmetry_windows([0.0, 1.0, 2.0, 3.0, 4.0])
     result = compute_cross_window_upside_asymmetry_trend(windows)
     assert result["valid"] is True
@@ -26333,6 +27989,7 @@ def test_r84_t3_ols_slope_numerical_check() -> None:
 def test_r84_t3_missing_rpp_upside_asymmetry_skipped() -> None:
     """Windows without rpp_upside_asymmetry are skipped."""
     from scripts.optimize_profile import compute_cross_window_upside_asymmetry_trend
+
     windows = [{"rpp_upside_asymmetry": 0.1}, {"other_key": 0.5}, {"rpp_upside_asymmetry": 0.2}, {"rpp_upside_asymmetry": 0.3}]
     result = compute_cross_window_upside_asymmetry_trend(windows)
     assert result["valid"] is True
@@ -26342,24 +27999,28 @@ def test_r84_t3_missing_rpp_upside_asymmetry_skipped() -> None:
 def test_r84_t3_in_comparison_metrics() -> None:
     """upside_asymmetry_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "upside_asymmetry_trend_slope" in COMPARISON_METRICS
 
 
 def test_r84_t3_in_optional_metrics() -> None:
     """upside_asymmetry_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "upside_asymmetry_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r84_t3_label_registered() -> None:
     """upside_asymmetry_trend_slope must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("upside_asymmetry_trend_slope") == "上行不对称跨窗趋势斜率"
 
 
 def test_r84_t3_floor_registered() -> None:
     """upside_asymmetry_trend_slope floor must be -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "upside_asymmetry_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["upside_asymmetry_trend_slope"] == pytest.approx(-0.01)
 
@@ -26396,6 +28057,7 @@ def _make_r85_momentum_windows(vals: list[float]) -> list[dict]:
 def test_r85_t1_basic_valid_15_rows() -> None:
     """15 rows → valid=True, three batches of 5."""
     from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+
     rows = _make_r85_batch_rows([True] * 8 + [False] * 7)
     result = compute_batch_consistency_analysis(rows)
     assert result["valid"] is True
@@ -26407,6 +28069,7 @@ def test_r85_t1_basic_valid_15_rows() -> None:
 def test_r85_t1_too_few_rows_invalid() -> None:
     """14 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+
     rows = _make_r85_batch_rows([True] * 7 + [False] * 7)
     result = compute_batch_consistency_analysis(rows)
     assert result["valid"] is False
@@ -26415,6 +28078,7 @@ def test_r85_t1_too_few_rows_invalid() -> None:
 def test_r85_t1_empty_rows_invalid() -> None:
     """0 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+
     result = compute_batch_consistency_analysis([])
     assert result["valid"] is False
 
@@ -26435,6 +28099,7 @@ def test_r85_t1_three_equal_batches_n15() -> None:
 def test_r85_t1_consistency_score_perfect() -> None:
     """All win_rates equal → std=0 → consistency_score=1.0."""
     from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+
     rows = _make_r85_batch_rows([True] * 15)
     result = compute_batch_consistency_analysis(rows)
     assert result["batch_consistency_score"] == pytest.approx(1.0)
@@ -26451,7 +28116,7 @@ def test_r85_t1_consistency_score_formula() -> None:
     result = compute_batch_consistency_analysis(rows)
     assert result["valid"] is True
     expected_mean = (1.0 + 0.6 + 0.2) / 3
-    expected_std = math.sqrt(((1.0 - expected_mean)**2 + (0.6 - expected_mean)**2 + (0.2 - expected_mean)**2) / 3)
+    expected_std = math.sqrt(((1.0 - expected_mean) ** 2 + (0.6 - expected_mean) ** 2 + (0.2 - expected_mean) ** 2) / 3)
     expected_score = 1.0 - expected_std / expected_mean
     assert result["batch_consistency_score"] == pytest.approx(expected_score, abs=1e-6)
 
@@ -26459,6 +28124,7 @@ def test_r85_t1_consistency_score_formula() -> None:
 def test_r85_t1_mean_zero_consistency_zero() -> None:
     """mean_wr=0 → consistency_score=0.0 (no crash)."""
     from scripts.btst_analysis_utils import compute_batch_consistency_analysis
+
     rows = _make_r85_batch_rows([False] * 15)
     result = compute_batch_consistency_analysis(rows)
     assert result["valid"] is True
@@ -26522,6 +28188,7 @@ def test_r85_t1_consistency_score_can_be_negative() -> None:
 def test_r85_t1_in_comparison_metrics() -> None:
     """batch_batch_consistency_score must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "batch_batch_consistency_score" in COMPARISON_METRICS
     assert "batch_batch3_win_rate" in COMPARISON_METRICS
 
@@ -26529,6 +28196,7 @@ def test_r85_t1_in_comparison_metrics() -> None:
 def test_r85_t1_in_optional_metrics() -> None:
     """batch metrics must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "batch_batch_consistency_score" in OPTIONAL_COMPARISON_METRICS
     assert "batch_batch3_win_rate" in OPTIONAL_COMPARISON_METRICS
 
@@ -26536,6 +28204,7 @@ def test_r85_t1_in_optional_metrics() -> None:
 def test_r85_t1_labels_registered() -> None:
     """Batch metric labels must be registered."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("batch_batch_consistency_score") == "批次时序一致性分数"
     assert COMPARISON_METRIC_LABELS.get("batch_batch3_win_rate") == "最新批次胜率"
 
@@ -26543,6 +28212,7 @@ def test_r85_t1_labels_registered() -> None:
 def test_r85_t1_floor_registered() -> None:
     """batch_batch_consistency_score floor must be 0.5."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "batch_batch_consistency_score" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["batch_batch_consistency_score"] == pytest.approx(0.5)
 
@@ -26555,6 +28225,7 @@ def test_r85_t1_floor_registered() -> None:
 def test_r85_t2_basic_valid() -> None:
     """15 rows with turnover_rate → valid=True."""
     from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+
     rows = _make_r85_liq_rows([0.01] * 10 + [-0.01] * 5, [2.0] * 15)
     result = compute_liquidity_weighted_return_analysis(rows)
     assert result["valid"] is True
@@ -26563,6 +28234,7 @@ def test_r85_t2_basic_valid() -> None:
 def test_r85_t2_no_turnover_rate_invalid() -> None:
     """Rows without turnover_rate field → valid=False."""
     from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+
     rows = [{"actual_return": 0.01}] * 20
     result = compute_liquidity_weighted_return_analysis(rows)
     assert result["valid"] is False
@@ -26571,6 +28243,7 @@ def test_r85_t2_no_turnover_rate_invalid() -> None:
 def test_r85_t2_too_few_rows_invalid() -> None:
     """14 valid rows → valid=False."""
     from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+
     rows = _make_r85_liq_rows([0.01] * 14, [1.0] * 14)
     result = compute_liquidity_weighted_return_analysis(rows)
     assert result["valid"] is False
@@ -26579,6 +28252,7 @@ def test_r85_t2_too_few_rows_invalid() -> None:
 def test_r85_t2_ew_win_rate_correct() -> None:
     """ew_win_rate = 10/15 when 10 wins."""
     from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+
     rows = _make_r85_liq_rows([0.01] * 10 + [-0.01] * 5, [1.0] * 15)
     result = compute_liquidity_weighted_return_analysis(rows)
     assert result["ew_win_rate"] == pytest.approx(10 / 15, abs=1e-6)
@@ -26587,6 +28261,7 @@ def test_r85_t2_ew_win_rate_correct() -> None:
 def test_r85_t2_lw_win_rate_equal_weights() -> None:
     """With equal turnover_rates, lw_win_rate should equal ew_win_rate."""
     from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+
     rows = _make_r85_liq_rows([0.01] * 10 + [-0.01] * 5, [2.0] * 15)
     result = compute_liquidity_weighted_return_analysis(rows)
     assert result["lw_win_rate"] == pytest.approx(result["ew_win_rate"], abs=1e-6)
@@ -26605,6 +28280,7 @@ def test_r85_t2_lw_win_rate_weighted() -> None:
 def test_r85_t2_liquidity_bias_formula() -> None:
     """liquidity_bias = lw_win_rate - ew_win_rate."""
     from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+
     rows = _make_r85_liq_rows([0.01] * 10 + [-0.01] * 5, [3.0] * 10 + [1.0] * 5)
     result = compute_liquidity_weighted_return_analysis(rows)
     assert result["liquidity_bias"] == pytest.approx(result["lw_win_rate"] - result["ew_win_rate"], abs=1e-8)
@@ -26624,6 +28300,7 @@ def test_r85_t2_high_liquidity_win_rate_p75() -> None:
 def test_r85_t2_zero_turnover_excluded() -> None:
     """Rows with turnover_rate=0 are excluded from valid rows."""
     from scripts.btst_analysis_utils import compute_liquidity_weighted_return_analysis
+
     rows = _make_r85_liq_rows([0.01] * 15, [0.0] * 15)
     result = compute_liquidity_weighted_return_analysis(rows)
     assert result["valid"] is False
@@ -26632,6 +28309,7 @@ def test_r85_t2_zero_turnover_excluded() -> None:
 def test_r85_t2_in_comparison_metrics() -> None:
     """liq metrics must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "liq_lw_win_rate" in COMPARISON_METRICS
     assert "liq_liquidity_bias" in COMPARISON_METRICS
 
@@ -26639,6 +28317,7 @@ def test_r85_t2_in_comparison_metrics() -> None:
 def test_r85_t2_in_optional_metrics() -> None:
     """liq metrics must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "liq_lw_win_rate" in OPTIONAL_COMPARISON_METRICS
     assert "liq_liquidity_bias" in OPTIONAL_COMPARISON_METRICS
 
@@ -26646,6 +28325,7 @@ def test_r85_t2_in_optional_metrics() -> None:
 def test_r85_t2_labels_registered() -> None:
     """Liquidity metric labels must be registered."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("liq_lw_win_rate") == "流动性加权胜率"
     assert COMPARISON_METRIC_LABELS.get("liq_liquidity_bias") == "流动性执行偏差"
 
@@ -26653,6 +28333,7 @@ def test_r85_t2_labels_registered() -> None:
 def test_r85_t2_floor_registered() -> None:
     """liq_liquidity_bias floor must be -0.05."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "liq_liquidity_bias" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["liq_liquidity_bias"] == pytest.approx(-0.05)
 
@@ -26665,6 +28346,7 @@ def test_r85_t2_floor_registered() -> None:
 def test_r85_t3_rising_trend_grade_a() -> None:
     """Strongly rising trend → slope > 0.005 → grade A."""
     from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+
     windows = _make_r85_momentum_windows([0.0, 0.01, 0.02, 0.03, 0.04])
     result = compute_cross_window_momentum_reversal_trend(windows)
     assert result["valid"] is True
@@ -26675,6 +28357,7 @@ def test_r85_t3_rising_trend_grade_a() -> None:
 def test_r85_t3_mild_rising_grade_b() -> None:
     """Mildly rising trend (0 < slope <= 0.005) → grade B."""
     from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+
     windows = _make_r85_momentum_windows([0.0, 0.001, 0.002, 0.003, 0.004])
     result = compute_cross_window_momentum_reversal_trend(windows)
     assert result["valid"] is True
@@ -26684,6 +28367,7 @@ def test_r85_t3_mild_rising_grade_b() -> None:
 def test_r85_t3_flat_trend_grade_c() -> None:
     """Flat trend (slope=0) → grade C."""
     from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+
     windows = _make_r85_momentum_windows([0.5, 0.5, 0.5, 0.5, 0.5])
     result = compute_cross_window_momentum_reversal_trend(windows)
     assert result["valid"] is True
@@ -26693,6 +28377,7 @@ def test_r85_t3_flat_trend_grade_c() -> None:
 def test_r85_t3_strongly_falling_grade_d() -> None:
     """Strongly falling trend → slope < -0.01 → grade D."""
     from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+
     windows = _make_r85_momentum_windows([0.04, 0.02, 0.0, -0.02, -0.04])
     result = compute_cross_window_momentum_reversal_trend(windows)
     assert result["valid"] is True
@@ -26702,6 +28387,7 @@ def test_r85_t3_strongly_falling_grade_d() -> None:
 def test_r85_t3_too_few_windows() -> None:
     """Fewer than 3 valid windows → valid=False."""
     from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+
     windows = _make_r85_momentum_windows([0.1, 0.2])
     result = compute_cross_window_momentum_reversal_trend(windows)
     assert result["valid"] is False
@@ -26710,6 +28396,7 @@ def test_r85_t3_too_few_windows() -> None:
 def test_r85_t3_exactly_3_windows() -> None:
     """Exactly 3 windows → valid=True."""
     from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+
     windows = _make_r85_momentum_windows([0.1, 0.2, 0.3])
     result = compute_cross_window_momentum_reversal_trend(windows)
     assert result["valid"] is True
@@ -26719,6 +28406,7 @@ def test_r85_t3_exactly_3_windows() -> None:
 def test_r85_t3_ols_slope_numerical() -> None:
     """Verify OLS slope for y=[0,1,2,3,4] x=[0,1,2,3,4] → slope=1.0."""
     from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+
     windows = _make_r85_momentum_windows([0.0, 1.0, 2.0, 3.0, 4.0])
     result = compute_cross_window_momentum_reversal_trend(windows)
     assert result["valid"] is True
@@ -26728,6 +28416,7 @@ def test_r85_t3_ols_slope_numerical() -> None:
 def test_r85_t3_missing_key_skipped() -> None:
     """Windows missing mom_rev_momentum_breadth_effect are skipped."""
     from scripts.optimize_profile import compute_cross_window_momentum_reversal_trend
+
     windows = [{"mom_rev_momentum_breadth_effect": 0.1}, {"other_key": 0.5}, {"mom_rev_momentum_breadth_effect": 0.2}, {"mom_rev_momentum_breadth_effect": 0.3}]
     result = compute_cross_window_momentum_reversal_trend(windows)
     assert result["valid"] is True
@@ -26737,24 +28426,28 @@ def test_r85_t3_missing_key_skipped() -> None:
 def test_r85_t3_in_comparison_metrics() -> None:
     """momentum_reversal_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "momentum_reversal_trend_slope" in COMPARISON_METRICS
 
 
 def test_r85_t3_in_optional_metrics() -> None:
     """momentum_reversal_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "momentum_reversal_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r85_t3_label_registered() -> None:
     """momentum_reversal_trend_slope must have a label."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("momentum_reversal_trend_slope") == "动量广度效应跨窗趋势"
 
 
 def test_r85_t3_floor_registered() -> None:
     """momentum_reversal_trend_slope floor must be -0.02."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "momentum_reversal_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["momentum_reversal_trend_slope"] == pytest.approx(-0.02)
 
@@ -26787,6 +28480,7 @@ def _make_r86_bq_rows(bq_vals: list[float], returns: list[float]) -> list[dict]:
 def test_r86_t1_basic_valid() -> None:
     """15 rows with all 7 factors → valid=True."""
     from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+
     rows = _make_r86_frc_rows(list(range(1, 16)), [r * 0.01 for r in range(1, 16)])
     result = compute_factor_rank_correlation_stability(rows)
     assert result["valid"] is True
@@ -26795,6 +28489,7 @@ def test_r86_t1_basic_valid() -> None:
 def test_r86_t1_too_few_rows_invalid() -> None:
     """Fewer than 15 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+
     rows = _make_r86_frc_rows(list(range(1, 14)), [r * 0.01 for r in range(1, 14)])
     result = compute_factor_rank_correlation_stability(rows)
     assert result["valid"] is False
@@ -26816,6 +28511,7 @@ def test_r86_t1_all_factors_positive_ic() -> None:
 def test_r86_t1_all_factors_negative_ic() -> None:
     """Perfectly anti-correlated factors and returns → all ICs < 0, consistency_ratio=0.0."""
     from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+
     n = 20
     rows = _make_r86_frc_rows(list(range(1, n + 1)), [r * (-0.005) for r in range(1, n + 1)])
     result = compute_factor_rank_correlation_stability(rows)
@@ -26827,6 +28523,7 @@ def test_r86_t1_all_factors_negative_ic() -> None:
 def test_r86_t1_consistency_ratio_formula() -> None:
     """consistency_ratio = positive_ic_count / total_factors_evaluated."""
     from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+
     rows = _make_r86_frc_rows(list(range(1, 21)), [r * 0.005 for r in range(1, 21)])
     result = compute_factor_rank_correlation_stability(rows)
     assert result["valid"] is True
@@ -26837,6 +28534,7 @@ def test_r86_t1_consistency_ratio_formula() -> None:
 def test_r86_t1_mean_ic_positive_when_all_positive() -> None:
     """mean_factor_ic > 0 when all factors have positive IC."""
     from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+
     rows = _make_r86_frc_rows(list(range(1, 21)), [r * 0.005 for r in range(1, 21)])
     result = compute_factor_rank_correlation_stability(rows)
     assert result["valid"] is True
@@ -26858,6 +28556,7 @@ def test_r86_t1_missing_factor_skipped() -> None:
 def test_r86_t1_no_actual_return_invalid() -> None:
     """Rows with no actual_return → valid=False."""
     from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+
     rows = [{"close_strength": float(i)} for i in range(1, 21)]
     result = compute_factor_rank_correlation_stability(rows)
     assert result["valid"] is False
@@ -26866,6 +28565,7 @@ def test_r86_t1_no_actual_return_invalid() -> None:
 def test_r86_t1_empty_rows_invalid() -> None:
     """Empty rows → valid=False."""
     from scripts.btst_analysis_utils import compute_factor_rank_correlation_stability
+
     result = compute_factor_rank_correlation_stability([])
     assert result["valid"] is False
 
@@ -26873,12 +28573,14 @@ def test_r86_t1_empty_rows_invalid() -> None:
 def test_r86_t1_in_comparison_metrics() -> None:
     """frc_factor_ic_consistency_ratio must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "frc_factor_ic_consistency_ratio" in COMPARISON_METRICS
 
 
 def test_r86_t1_in_optional_metrics() -> None:
     """frc metrics must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "frc_factor_ic_consistency_ratio" in OPTIONAL_COMPARISON_METRICS
     assert "frc_positive_ic_count" in OPTIONAL_COMPARISON_METRICS
     assert "frc_mean_factor_ic" in OPTIONAL_COMPARISON_METRICS
@@ -26887,12 +28589,14 @@ def test_r86_t1_in_optional_metrics() -> None:
 def test_r86_t1_labels_registered() -> None:
     """frc_factor_ic_consistency_ratio label must be registered."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("frc_factor_ic_consistency_ratio") == "7核心因子IC一致性比率"
 
 
 def test_r86_t1_floor_registered() -> None:
     """frc_factor_ic_consistency_ratio floor must be 0.5."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "frc_factor_ic_consistency_ratio" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["frc_factor_ic_consistency_ratio"] == pytest.approx(0.5)
 
@@ -26900,6 +28604,7 @@ def test_r86_t1_floor_registered() -> None:
 def test_r86_t1_surface_wired() -> None:
     """build_surface_summary wires frc_ keys when valid."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"runner_composite_score": float(i), "actual_return": float(i) * 0.01, "close_strength": float(i), "volume_expansion_quality": float(i), "sector_resonance": float(i), "rs_sector_rank": float(i), "t0_estimated_net_inflow_ratio": float(i), "breakout_quality_score": float(i), "momentum_slope_20d": float(i)} for i in range(1, 21)]
     surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "frc_factor_ic_consistency_ratio" in surface
@@ -26914,6 +28619,7 @@ def test_r86_t1_surface_wired() -> None:
 def test_r86_t2_basic_valid() -> None:
     """20 rows with breakout_quality_score → valid=True."""
     from scripts.btst_analysis_utils import compute_breakout_quality_premium
+
     rows = _make_r86_bq_rows(list(range(1, 21)), [0.01] * 14 + [-0.01] * 6)
     result = compute_breakout_quality_premium(rows)
     assert result["valid"] is True
@@ -26922,6 +28628,7 @@ def test_r86_t2_basic_valid() -> None:
 def test_r86_t2_too_few_rows_invalid() -> None:
     """Fewer than 15 rows → valid=False."""
     from scripts.btst_analysis_utils import compute_breakout_quality_premium
+
     rows = _make_r86_bq_rows(list(range(1, 14)), [0.01] * 13)
     result = compute_breakout_quality_premium(rows)
     assert result["valid"] is False
@@ -26930,6 +28637,7 @@ def test_r86_t2_too_few_rows_invalid() -> None:
 def test_r86_t2_no_breakout_score_invalid() -> None:
     """Rows missing breakout_quality_score → valid=False."""
     from scripts.btst_analysis_utils import compute_breakout_quality_premium
+
     rows = [{"actual_return": 0.01} for _ in range(20)]
     result = compute_breakout_quality_premium(rows)
     assert result["valid"] is False
@@ -26977,6 +28685,7 @@ def test_r86_t2_premium_edge_negative_when_high_underperforms() -> None:
 def test_r86_t2_avg_return_high_group() -> None:
     """high_breakout_avg_return is mean return of P75+ rows."""
     from scripts.btst_analysis_utils import compute_breakout_quality_premium
+
     bq_vals = list(range(1, 21))
     returns = [0.0] * 15 + [0.1, 0.2, 0.3, 0.4, 0.5]
     rows = _make_r86_bq_rows(bq_vals, returns)
@@ -26988,6 +28697,7 @@ def test_r86_t2_avg_return_high_group() -> None:
 def test_r86_t2_edge_value_exact() -> None:
     """Verify edge = high_win_rate - all_win_rate numerically."""
     from scripts.btst_analysis_utils import compute_breakout_quality_premium
+
     bq_vals = list(range(1, 21))
     returns = [-0.01] * 15 + [0.02] * 5
     rows = _make_r86_bq_rows(bq_vals, returns)
@@ -26999,12 +28709,14 @@ def test_r86_t2_edge_value_exact() -> None:
 def test_r86_t2_in_comparison_metrics() -> None:
     """bq_breakout_premium_edge must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "bq_breakout_premium_edge" in COMPARISON_METRICS
 
 
 def test_r86_t2_in_optional_metrics() -> None:
     """bq metrics must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "bq_breakout_premium_edge" in OPTIONAL_COMPARISON_METRICS
     assert "bq_high_breakout_win_rate" in OPTIONAL_COMPARISON_METRICS
     assert "bq_high_breakout_avg_return" in OPTIONAL_COMPARISON_METRICS
@@ -27013,12 +28725,14 @@ def test_r86_t2_in_optional_metrics() -> None:
 def test_r86_t2_label_registered() -> None:
     """bq_breakout_premium_edge label must be registered."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("bq_breakout_premium_edge") == "突破质量P75胜率溢价"
 
 
 def test_r86_t2_floor_registered() -> None:
     """bq_breakout_premium_edge floor must be 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "bq_breakout_premium_edge" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["bq_breakout_premium_edge"] == pytest.approx(0.0)
 
@@ -27026,6 +28740,7 @@ def test_r86_t2_floor_registered() -> None:
 def test_r86_t2_surface_wired() -> None:
     """build_surface_summary wires bq_ keys when valid."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = [{"runner_composite_score": float(i), "actual_return": float(i) * 0.01, "breakout_quality_score": float(i)} for i in range(1, 21)]
     surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "bq_breakout_premium_edge" in surface
@@ -27039,6 +28754,7 @@ def test_r86_t2_surface_wired() -> None:
 def test_r86_t3_rising_trend_grade_a() -> None:
     """Strongly rising batch_consistency → grade=A."""
     from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+
     windows = [{"batch_batch_consistency_score": 0.5 + i * 0.1} for i in range(6)]
     result = compute_cross_window_batch_consistency_trend(windows)
     assert result["valid"] is True
@@ -27048,6 +28764,7 @@ def test_r86_t3_rising_trend_grade_a() -> None:
 def test_r86_t3_mild_rising_grade_b() -> None:
     """Mildly rising consistency → grade=B."""
     from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+
     windows = [{"batch_batch_consistency_score": 0.6 + i * 0.001} for i in range(5)]
     result = compute_cross_window_batch_consistency_trend(windows)
     assert result["valid"] is True
@@ -27057,6 +28774,7 @@ def test_r86_t3_mild_rising_grade_b() -> None:
 def test_r86_t3_flat_trend_grade_c() -> None:
     """Mildly declining consistency → grade=C."""
     from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+
     windows = [{"batch_batch_consistency_score": 0.7 - i * 0.005} for i in range(5)]
     result = compute_cross_window_batch_consistency_trend(windows)
     assert result["valid"] is True
@@ -27066,6 +28784,7 @@ def test_r86_t3_flat_trend_grade_c() -> None:
 def test_r86_t3_strongly_falling_grade_d() -> None:
     """Sharply declining consistency → grade=D."""
     from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+
     windows = [{"batch_batch_consistency_score": 0.9 - i * 0.05} for i in range(6)]
     result = compute_cross_window_batch_consistency_trend(windows)
     assert result["valid"] is True
@@ -27075,6 +28794,7 @@ def test_r86_t3_strongly_falling_grade_d() -> None:
 def test_r86_t3_too_few_windows() -> None:
     """Fewer than 3 windows → valid=False."""
     from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+
     windows = [{"batch_batch_consistency_score": 0.7}, {"batch_batch_consistency_score": 0.8}]
     result = compute_cross_window_batch_consistency_trend(windows)
     assert result["valid"] is False
@@ -27084,6 +28804,7 @@ def test_r86_t3_too_few_windows() -> None:
 def test_r86_t3_exactly_3_windows() -> None:
     """Exactly 3 windows → valid=True."""
     from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+
     windows = [{"batch_batch_consistency_score": v} for v in [0.5, 0.6, 0.7]]
     result = compute_cross_window_batch_consistency_trend(windows)
     assert result["valid"] is True
@@ -27093,6 +28814,7 @@ def test_r86_t3_exactly_3_windows() -> None:
 def test_r86_t3_ols_slope_numerical() -> None:
     """OLS slope matches manual calculation."""
     from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+
     vals = [0.5, 0.6, 0.7, 0.8, 0.9]
     windows = [{"batch_batch_consistency_score": v} for v in vals]
     result = compute_cross_window_batch_consistency_trend(windows)
@@ -27111,6 +28833,7 @@ def test_r86_t3_ols_slope_numerical() -> None:
 def test_r86_t3_missing_key_skipped() -> None:
     """Windows without batch_batch_consistency_score are skipped."""
     from scripts.optimize_profile import compute_cross_window_batch_consistency_trend
+
     windows = [{"other_metric": 0.5}, {"batch_batch_consistency_score": 0.6}, {"batch_batch_consistency_score": 0.7}, {"batch_batch_consistency_score": 0.8}]
     result = compute_cross_window_batch_consistency_trend(windows)
     assert result["valid"] is True
@@ -27120,24 +28843,28 @@ def test_r86_t3_missing_key_skipped() -> None:
 def test_r86_t3_in_comparison_metrics() -> None:
     """batch_consistency_trend_slope must be in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "batch_consistency_trend_slope" in COMPARISON_METRICS
 
 
 def test_r86_t3_in_optional_metrics() -> None:
     """batch_consistency_trend_slope must be in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "batch_consistency_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r86_t3_label_registered() -> None:
     """batch_consistency_trend_slope label must be registered."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert COMPARISON_METRIC_LABELS.get("batch_consistency_trend_slope") == "批次一致性跨窗趋势斜率"
 
 
 def test_r86_t3_floor_registered() -> None:
     """batch_consistency_trend_slope floor must be -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "batch_consistency_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["batch_consistency_trend_slope"] == pytest.approx(-0.01)
 
@@ -27150,9 +28877,11 @@ def test_r86_t3_floor_registered() -> None:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_r87_regime_rows(n: int = 20, high_wins: bool = True) -> list[dict]:
     """Generate rows with close_strength and actual_return for T1 tests."""
     import random
+
     random.seed(42)
     rows = []
     for i in range(n):
@@ -27184,9 +28913,11 @@ def _make_r87_signal_rows(n: int = 30, top_wins: bool = True) -> list[dict]:
 # T1: compute_regime_adaptive_winrate
 # ---------------------------------------------------------------------------
 
+
 def test_r87_t1_basic_valid() -> None:
     """Basic valid case returns expected keys."""
     from scripts.btst_analysis_utils import compute_regime_adaptive_winrate
+
     rows = _make_r87_regime_rows(20)
     result = compute_regime_adaptive_winrate(rows)
     assert result["valid"] is True
@@ -27199,6 +28930,7 @@ def test_r87_t1_basic_valid() -> None:
 def test_r87_t1_too_few_rows_invalid() -> None:
     """Fewer than 15 valid rows → valid=False."""
     from scripts.btst_analysis_utils import compute_regime_adaptive_winrate
+
     rows = [{"close_strength": 0.5, "actual_return": 0.01}] * 10
     result = compute_regime_adaptive_winrate(rows)
     assert result["valid"] is False
@@ -27208,6 +28940,7 @@ def test_r87_t1_too_few_rows_invalid() -> None:
 def test_r87_t1_no_close_strength_invalid() -> None:
     """Rows without close_strength → valid=False."""
     from scripts.btst_analysis_utils import compute_regime_adaptive_winrate
+
     rows = [{"actual_return": 0.01} for _ in range(20)]
     result = compute_regime_adaptive_winrate(rows)
     assert result["valid"] is False
@@ -27216,6 +28949,7 @@ def test_r87_t1_no_close_strength_invalid() -> None:
 def test_r87_t1_high_regime_outperforms() -> None:
     """High-regime win rate > low-regime win rate when constructed so."""
     from scripts.btst_analysis_utils import compute_regime_adaptive_winrate
+
     rows = _make_r87_regime_rows(20, high_wins=True)
     result = compute_regime_adaptive_winrate(rows)
     assert result["valid"] is True
@@ -27225,6 +28959,7 @@ def test_r87_t1_high_regime_outperforms() -> None:
 def test_r87_t1_regime_spread_formula() -> None:
     """regime_spread == high_win_rate - low_win_rate."""
     from scripts.btst_analysis_utils import compute_regime_adaptive_winrate
+
     rows = _make_r87_regime_rows(20)
     result = compute_regime_adaptive_winrate(rows)
     assert result["valid"] is True
@@ -27235,6 +28970,7 @@ def test_r87_t1_regime_spread_formula() -> None:
 def test_r87_t1_regime_stability_is_min() -> None:
     """regime_stability == min(high_win_rate, low_win_rate)."""
     from scripts.btst_analysis_utils import compute_regime_adaptive_winrate
+
     rows = _make_r87_regime_rows(20)
     result = compute_regime_adaptive_winrate(rows)
     assert result["valid"] is True
@@ -27245,24 +28981,28 @@ def test_r87_t1_regime_stability_is_min() -> None:
 def test_r87_t1_in_comparison_metrics() -> None:
     """regime_regime_spread in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "regime_regime_spread" in COMPARISON_METRICS
 
 
 def test_r87_t1_in_optional_metrics() -> None:
     """regime_regime_spread in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "regime_regime_spread" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r87_t1_labels_registered() -> None:
     """regime_regime_spread label registered."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "regime_regime_spread" in COMPARISON_METRIC_LABELS
 
 
 def test_r87_t1_floor_registered() -> None:
     """regime_regime_spread floor == 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "regime_regime_spread" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["regime_regime_spread"] == pytest.approx(0.0)
 
@@ -27270,6 +29010,7 @@ def test_r87_t1_floor_registered() -> None:
 def test_r87_t1_surface_keys_wired() -> None:
     """build_surface_summary wires regime_ keys when valid."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = _make_r87_regime_rows(20)
     for r in rows:
         r["next_close_return"] = r["actual_return"]
@@ -27281,9 +29022,11 @@ def test_r87_t1_surface_keys_wired() -> None:
 # T2: compute_consecutive_signal_quality
 # ---------------------------------------------------------------------------
 
+
 def test_r87_t2_basic_valid() -> None:
     """Basic valid case returns expected keys."""
     from scripts.btst_analysis_utils import compute_consecutive_signal_quality
+
     rows = _make_r87_signal_rows(30)
     result = compute_consecutive_signal_quality(rows)
     assert result["valid"] is True
@@ -27296,6 +29039,7 @@ def test_r87_t2_basic_valid() -> None:
 def test_r87_t2_too_few_rows_invalid() -> None:
     """Fewer than 15 valid rows → valid=False."""
     from scripts.btst_analysis_utils import compute_consecutive_signal_quality
+
     rows = [{"score": float(i), "actual_return": 0.01} for i in range(10)]
     result = compute_consecutive_signal_quality(rows)
     assert result["valid"] is False
@@ -27305,6 +29049,7 @@ def test_r87_t2_too_few_rows_invalid() -> None:
 def test_r87_t2_no_score_field_invalid() -> None:
     """Rows without any score field → valid=False."""
     from scripts.btst_analysis_utils import compute_consecutive_signal_quality
+
     rows = [{"actual_return": 0.01} for _ in range(20)]
     result = compute_consecutive_signal_quality(rows)
     assert result["valid"] is False
@@ -27313,6 +29058,7 @@ def test_r87_t2_no_score_field_invalid() -> None:
 def test_r87_t2_edge_positive_when_top_wins() -> None:
     """signal_persistence_edge > 0 when top third wins more."""
     from scripts.btst_analysis_utils import compute_consecutive_signal_quality
+
     rows = _make_r87_signal_rows(30, top_wins=True)
     result = compute_consecutive_signal_quality(rows)
     assert result["valid"] is True
@@ -27322,6 +29068,7 @@ def test_r87_t2_edge_positive_when_top_wins() -> None:
 def test_r87_t2_edge_negative_when_top_loses() -> None:
     """signal_persistence_edge < 0 when top third loses more."""
     from scripts.btst_analysis_utils import compute_consecutive_signal_quality
+
     rows = _make_r87_signal_rows(30, top_wins=False)
     result = compute_consecutive_signal_quality(rows)
     assert result["valid"] is True
@@ -27331,6 +29078,7 @@ def test_r87_t2_edge_negative_when_top_loses() -> None:
 def test_r87_t2_persistence_count_correct() -> None:
     """top_signal_count == n - 2*(n//3)."""
     from scripts.btst_analysis_utils import compute_consecutive_signal_quality
+
     n = 30
     rows = _make_r87_signal_rows(n)
     result = compute_consecutive_signal_quality(rows)
@@ -27342,24 +29090,28 @@ def test_r87_t2_persistence_count_correct() -> None:
 def test_r87_t2_in_comparison_metrics() -> None:
     """sig_signal_persistence_edge in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "sig_signal_persistence_edge" in COMPARISON_METRICS
 
 
 def test_r87_t2_in_optional_metrics() -> None:
     """sig_signal_persistence_edge in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "sig_signal_persistence_edge" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r87_t2_labels_registered() -> None:
     """sig_signal_persistence_edge label registered."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "sig_signal_persistence_edge" in COMPARISON_METRIC_LABELS
 
 
 def test_r87_t2_floor_registered() -> None:
     """sig_signal_persistence_edge floor == 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "sig_signal_persistence_edge" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["sig_signal_persistence_edge"] == pytest.approx(0.0)
 
@@ -27367,6 +29119,7 @@ def test_r87_t2_floor_registered() -> None:
 def test_r87_t2_surface_keys_wired() -> None:
     """build_surface_summary wires sig_ keys when valid."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = _make_r87_signal_rows(30)
     for r in rows:
         r["next_close_return"] = r["actual_return"]
@@ -27378,9 +29131,11 @@ def test_r87_t2_surface_keys_wired() -> None:
 # T3: compute_cross_window_regime_spread_trend
 # ---------------------------------------------------------------------------
 
+
 def test_r87_t3_rising_grade_a() -> None:
     """Strongly rising regime_spread → grade=A."""
     from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+
     windows = [{"regime_regime_spread": v} for v in [0.1, 0.15, 0.2, 0.25, 0.3]]
     result = compute_cross_window_regime_spread_trend(windows)
     assert result["valid"] is True
@@ -27391,6 +29146,7 @@ def test_r87_t3_rising_grade_a() -> None:
 def test_r87_t3_mild_rising_grade_b() -> None:
     """Mildly rising (0 < slope <= 0.005) → grade=B."""
     from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+
     windows = [{"regime_regime_spread": v} for v in [0.2, 0.2001, 0.2002, 0.2003, 0.2004]]
     result = compute_cross_window_regime_spread_trend(windows)
     assert result["valid"] is True
@@ -27400,6 +29156,7 @@ def test_r87_t3_mild_rising_grade_b() -> None:
 def test_r87_t3_flat_grade_c() -> None:
     """Slightly negative slope (-0.01 < slope <= 0) → grade=C."""
     from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+
     windows = [{"regime_regime_spread": v} for v in [0.3, 0.299, 0.298, 0.297, 0.296]]
     result = compute_cross_window_regime_spread_trend(windows)
     assert result["valid"] is True
@@ -27409,6 +29166,7 @@ def test_r87_t3_flat_grade_c() -> None:
 def test_r87_t3_falling_grade_d() -> None:
     """Strongly falling regime_spread → grade=D."""
     from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+
     windows = [{"regime_regime_spread": v} for v in [0.5, 0.3, 0.1, -0.1, -0.3]]
     result = compute_cross_window_regime_spread_trend(windows)
     assert result["valid"] is True
@@ -27418,6 +29176,7 @@ def test_r87_t3_falling_grade_d() -> None:
 def test_r87_t3_too_few_windows() -> None:
     """Fewer than 3 windows → valid=False."""
     from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+
     windows = [{"regime_regime_spread": 0.2}, {"regime_regime_spread": 0.3}]
     result = compute_cross_window_regime_spread_trend(windows)
     assert result["valid"] is False
@@ -27427,6 +29186,7 @@ def test_r87_t3_too_few_windows() -> None:
 def test_r87_t3_exactly_3_windows() -> None:
     """Exactly 3 windows → valid=True."""
     from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+
     windows = [{"regime_regime_spread": v} for v in [0.1, 0.2, 0.3]]
     result = compute_cross_window_regime_spread_trend(windows)
     assert result["valid"] is True
@@ -27436,6 +29196,7 @@ def test_r87_t3_exactly_3_windows() -> None:
 def test_r87_t3_ols_slope_numerical() -> None:
     """OLS slope matches manual calculation."""
     from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+
     vals = [0.1, 0.2, 0.3, 0.4, 0.5]
     windows = [{"regime_regime_spread": v} for v in vals]
     result = compute_cross_window_regime_spread_trend(windows)
@@ -27454,6 +29215,7 @@ def test_r87_t3_ols_slope_numerical() -> None:
 def test_r87_t3_missing_key_skipped() -> None:
     """Windows without regime_regime_spread are skipped."""
     from scripts.optimize_profile import compute_cross_window_regime_spread_trend
+
     windows = [{"other": 0.5}, {"regime_regime_spread": 0.2}, {"regime_regime_spread": 0.3}, {"regime_regime_spread": 0.4}]
     result = compute_cross_window_regime_spread_trend(windows)
     assert result["valid"] is True
@@ -27463,24 +29225,28 @@ def test_r87_t3_missing_key_skipped() -> None:
 def test_r87_t3_in_comparison_metrics() -> None:
     """regime_spread_trend_slope in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "regime_spread_trend_slope" in COMPARISON_METRICS
 
 
 def test_r87_t3_in_optional_metrics() -> None:
     """regime_spread_trend_slope in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "regime_spread_trend_slope" in OPTIONAL_COMPARISON_METRICS
 
 
 def test_r87_t3_label_registered() -> None:
     """regime_spread_trend_slope label registered."""
     from scripts.optimize_profile import COMPARISON_METRIC_LABELS
+
     assert "regime_spread_trend_slope" in COMPARISON_METRIC_LABELS
 
 
 def test_r87_t3_floor_registered() -> None:
     """regime_spread_trend_slope floor == -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "regime_spread_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["regime_spread_trend_slope"] == pytest.approx(-0.01)
 
@@ -27501,11 +29267,13 @@ def _make_r88_vp_rows(n: int, high_vol_wins: bool = True) -> list[dict]:
             ret = 0.05 if high_vol_wins else -0.05
         else:
             ret = -0.01 if high_vol_wins else 0.04
-        rows.append({
-            "actual_return": ret,
-            "volume_expansion_quality": vol_q,
-            "next_close_return": ret,
-        })
+        rows.append(
+            {
+                "actual_return": ret,
+                "volume_expansion_quality": vol_q,
+                "next_close_return": ret,
+            }
+        )
     return rows
 
 
@@ -27518,11 +29286,13 @@ def _make_r88_et_rows(n: int, high_inflow_wins: bool = True) -> list[dict]:
             ret = 0.04 if high_inflow_wins else -0.04
         else:
             ret = -0.02 if high_inflow_wins else 0.04
-        rows.append({
-            "t0_estimated_net_inflow_ratio": inflow,
-            "actual_return": ret,
-            "next_close_return": ret,
-        })
+        rows.append(
+            {
+                "t0_estimated_net_inflow_ratio": inflow,
+                "actual_return": ret,
+                "next_close_return": ret,
+            }
+        )
     return rows
 
 
@@ -27534,6 +29304,7 @@ def _make_r88_et_rows(n: int, high_inflow_wins: bool = True) -> list[dict]:
 def test_r88_t1_basic_valid() -> None:
     """20 rows with valid fields returns valid=True."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+
     rows = _make_r88_vp_rows(20)
     result = compute_volume_price_divergence_score(rows)
     assert result["valid"] is True
@@ -27546,6 +29317,7 @@ def test_r88_t1_basic_valid() -> None:
 def test_r88_t1_too_few_rows() -> None:
     """14 rows returns valid=False."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+
     rows = _make_r88_vp_rows(14)
     result = compute_volume_price_divergence_score(rows)
     assert result["valid"] is False
@@ -27569,6 +29341,7 @@ def test_r88_t1_high_vol_group_small() -> None:
 def test_r88_t1_perfect_alignment() -> None:
     """Perfect vol-return alignment gives positive correlation."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+
     rows = [{"actual_return": float(i), "volume_expansion_quality": float(i)} for i in range(20)]
     result = compute_volume_price_divergence_score(rows)
     assert result["valid"] is True
@@ -27578,6 +29351,7 @@ def test_r88_t1_perfect_alignment() -> None:
 def test_r88_t1_negative_alignment() -> None:
     """When returns decrease as volume increases, alignment < 0."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+
     rows = [{"actual_return": float(19 - i), "volume_expansion_quality": float(i)} for i in range(20)]
     result = compute_volume_price_divergence_score(rows)
     assert result["valid"] is True
@@ -27587,6 +29361,7 @@ def test_r88_t1_negative_alignment() -> None:
 def test_r88_t1_zero_std_volume() -> None:
     """When volume_expansion_quality is constant, correlation = 0.0 (no crash)."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+
     rows = [{"actual_return": float(i % 2) * 0.01, "volume_expansion_quality": 0.5} for i in range(20)]
     result = compute_volume_price_divergence_score(rows)
     # P75 group all equal → alignment = 0.0, but high group size might be 0 or = n
@@ -27598,6 +29373,7 @@ def test_r88_t1_zero_std_volume() -> None:
 def test_r88_t1_premium_edge_positive() -> None:
     """high_vol rows have higher avg_return → premium_edge > 0."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+
     rows = _make_r88_vp_rows(20, high_vol_wins=True)
     result = compute_volume_price_divergence_score(rows)
     assert result["valid"] is True
@@ -27607,6 +29383,7 @@ def test_r88_t1_premium_edge_positive() -> None:
 def test_r88_t1_premium_edge_negative() -> None:
     """high_vol rows have lower avg_return → premium_edge < 0."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+
     rows = _make_r88_vp_rows(20, high_vol_wins=False)
     result = compute_volume_price_divergence_score(rows)
     assert result["valid"] is True
@@ -27616,6 +29393,7 @@ def test_r88_t1_premium_edge_negative() -> None:
 def test_r88_t1_surface_keys() -> None:
     """build_surface_summary includes vp_* keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = _make_r88_vp_rows(20)
     surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "vp_volume_return_alignment" in surface
@@ -27627,6 +29405,7 @@ def test_r88_t1_surface_keys() -> None:
 def test_r88_t1_valid_flag() -> None:
     """20 rows sets valid=True."""
     from scripts.btst_analysis_utils import compute_volume_price_divergence_score
+
     rows = _make_r88_vp_rows(20)
     result = compute_volume_price_divergence_score(rows)
     assert result["valid"] is True
@@ -27635,6 +29414,7 @@ def test_r88_t1_valid_flag() -> None:
 def test_r88_t1_floor_key_exists() -> None:
     """vp_volume_premium_edge in BTST_QUALITY_FLOORS with floor 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "vp_volume_premium_edge" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["vp_volume_premium_edge"] == pytest.approx(0.0)
 
@@ -27642,6 +29422,7 @@ def test_r88_t1_floor_key_exists() -> None:
 def test_r88_t1_optional_metric_key() -> None:
     """vp_* keys in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "vp_volume_return_alignment" in OPTIONAL_COMPARISON_METRICS
     assert "vp_high_vol_win_rate" in OPTIONAL_COMPARISON_METRICS
     assert "vp_volume_premium_edge" in OPTIONAL_COMPARISON_METRICS
@@ -27656,6 +29437,7 @@ def test_r88_t1_optional_metric_key() -> None:
 def test_r88_t2_basic_valid() -> None:
     """10 rows with valid fields returns valid=True."""
     from scripts.btst_analysis_utils import compute_entry_timing_quality
+
     rows = _make_r88_et_rows(20)
     result = compute_entry_timing_quality(rows)
     assert result["valid"] is True
@@ -27668,6 +29450,7 @@ def test_r88_t2_basic_valid() -> None:
 def test_r88_t2_too_few_rows() -> None:
     """9 rows returns valid=False."""
     from scripts.btst_analysis_utils import compute_entry_timing_quality
+
     rows = _make_r88_et_rows(9)
     result = compute_entry_timing_quality(rows)
     assert result["valid"] is False
@@ -27676,6 +29459,7 @@ def test_r88_t2_too_few_rows() -> None:
 def test_r88_t2_equal_split() -> None:
     """With 20 rows, two groups each have 10 rows (>= 3)."""
     from scripts.btst_analysis_utils import compute_entry_timing_quality
+
     rows = _make_r88_et_rows(20)
     result = compute_entry_timing_quality(rows)
     assert result["valid"] is True
@@ -27684,6 +29468,7 @@ def test_r88_t2_equal_split() -> None:
 def test_r88_t2_edge_positive() -> None:
     """high_inflow_wins=True → timing_edge > 0."""
     from scripts.btst_analysis_utils import compute_entry_timing_quality
+
     rows = _make_r88_et_rows(20, high_inflow_wins=True)
     result = compute_entry_timing_quality(rows)
     assert result["valid"] is True
@@ -27693,6 +29478,7 @@ def test_r88_t2_edge_positive() -> None:
 def test_r88_t2_edge_negative() -> None:
     """high_inflow_wins=False → timing_edge < 0."""
     from scripts.btst_analysis_utils import compute_entry_timing_quality
+
     rows = _make_r88_et_rows(20, high_inflow_wins=False)
     result = compute_entry_timing_quality(rows)
     assert result["valid"] is True
@@ -27702,6 +29488,7 @@ def test_r88_t2_edge_negative() -> None:
 def test_r88_t2_all_win() -> None:
     """All rows win → both groups win_rate=1.0, edge=0."""
     from scripts.btst_analysis_utils import compute_entry_timing_quality
+
     rows = [{"t0_estimated_net_inflow_ratio": float(i), "actual_return": 0.03} for i in range(20)]
     result = compute_entry_timing_quality(rows)
     assert result["valid"] is True
@@ -27713,6 +29500,7 @@ def test_r88_t2_all_win() -> None:
 def test_r88_t2_all_lose() -> None:
     """All rows lose → both groups win_rate=0.0, edge=0."""
     from scripts.btst_analysis_utils import compute_entry_timing_quality
+
     rows = [{"t0_estimated_net_inflow_ratio": float(i), "actual_return": -0.03} for i in range(20)]
     result = compute_entry_timing_quality(rows)
     assert result["valid"] is True
@@ -27724,6 +29512,7 @@ def test_r88_t2_all_lose() -> None:
 def test_r88_t2_surface_wired() -> None:
     """build_surface_summary includes et_* keys."""
     from scripts.btst_analysis_utils import build_surface_summary
+
     rows = _make_r88_et_rows(20)
     surface = build_surface_summary(rows, next_high_hit_threshold=0.02)
     assert "et_high_inflow_win_rate" in surface
@@ -27735,6 +29524,7 @@ def test_r88_t2_surface_wired() -> None:
 def test_r88_t2_valid_flag() -> None:
     """10 rows sets valid=True."""
     from scripts.btst_analysis_utils import compute_entry_timing_quality
+
     rows = _make_r88_et_rows(10)
     result = compute_entry_timing_quality(rows)
     assert result["valid"] is True
@@ -27743,6 +29533,7 @@ def test_r88_t2_valid_flag() -> None:
 def test_r88_t2_floor_key_exists() -> None:
     """et_inflow_timing_edge in BTST_QUALITY_FLOORS with floor 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "et_inflow_timing_edge" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["et_inflow_timing_edge"] == pytest.approx(0.0)
 
@@ -27750,6 +29541,7 @@ def test_r88_t2_floor_key_exists() -> None:
 def test_r88_t2_optional_metric_key() -> None:
     """et_* keys in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "et_high_inflow_win_rate" in OPTIONAL_COMPARISON_METRICS
     assert "et_low_inflow_win_rate" in OPTIONAL_COMPARISON_METRICS
     assert "et_inflow_timing_edge" in OPTIONAL_COMPARISON_METRICS
@@ -27759,6 +29551,7 @@ def test_r88_t2_optional_metric_key() -> None:
 def test_r88_t2_high_inflow_avg_return() -> None:
     """et_high_inflow_avg_return is mean of high-inflow group returns."""
     from scripts.btst_analysis_utils import compute_entry_timing_quality
+
     rows = [{"t0_estimated_net_inflow_ratio": float(i), "actual_return": float(i) * 0.01} for i in range(20)]
     result = compute_entry_timing_quality(rows)
     assert result["valid"] is True
@@ -27775,6 +29568,7 @@ def test_r88_t2_high_inflow_avg_return() -> None:
 def test_r88_t3_basic_valid() -> None:
     """3+ windows with sig_signal_persistence_edge returns valid=True."""
     from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+
     windows = [{"sig_signal_persistence_edge": v} for v in [0.1, 0.2, 0.3]]
     result = compute_cross_window_signal_quality_trend(windows)
     assert result["valid"] is True
@@ -27786,6 +29580,7 @@ def test_r88_t3_basic_valid() -> None:
 def test_r88_t3_too_few_windows() -> None:
     """2 windows returns valid=False."""
     from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+
     windows = [{"sig_signal_persistence_edge": 0.1}, {"sig_signal_persistence_edge": 0.2}]
     result = compute_cross_window_signal_quality_trend(windows)
     assert result["valid"] is False
@@ -27794,6 +29589,7 @@ def test_r88_t3_too_few_windows() -> None:
 def test_r88_t3_negative_slope() -> None:
     """Decreasing values produce negative slope."""
     from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+
     windows = [{"sig_signal_persistence_edge": v} for v in [0.5, 0.3, 0.1]]
     result = compute_cross_window_signal_quality_trend(windows)
     assert result["valid"] is True
@@ -27803,6 +29599,7 @@ def test_r88_t3_negative_slope() -> None:
 def test_r88_t3_flat_slope() -> None:
     """Constant values produce zero slope."""
     from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+
     windows = [{"sig_signal_persistence_edge": 0.3} for _ in range(5)]
     result = compute_cross_window_signal_quality_trend(windows)
     assert result["valid"] is True
@@ -27856,6 +29653,7 @@ def test_r88_t3_grade_d() -> None:
 def test_r88_t3_missing_field() -> None:
     """Windows without sig_signal_persistence_edge are skipped."""
     from scripts.optimize_profile import compute_cross_window_signal_quality_trend
+
     windows = [
         {"other_key": 0.5},
         {"sig_signal_persistence_edge": 0.2},
@@ -27870,6 +29668,7 @@ def test_r88_t3_missing_field() -> None:
 def test_r88_t3_floor_key_exists() -> None:
     """signal_quality_trend_slope in BTST_QUALITY_FLOORS with floor -0.01."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "signal_quality_trend_slope" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["signal_quality_trend_slope"] == pytest.approx(-0.01)
 
@@ -27877,6 +29676,7 @@ def test_r88_t3_floor_key_exists() -> None:
 def test_r88_t3_optional_metric_key() -> None:
     """signal_quality_trend_* in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     assert "signal_quality_trend_slope" in OPTIONAL_COMPARISON_METRICS
     assert "signal_quality_trend_grade" in OPTIONAL_COMPARISON_METRICS
     assert "signal_quality_trend_n" in OPTIONAL_COMPARISON_METRICS
@@ -27902,16 +29702,19 @@ def _make_r89_ogp_rows(n: int, high_gap_wins: bool = True) -> list[dict]:
             ret = -0.03 if high_gap_wins else 0.05
         else:
             ret = 0.01
-        rows.append({
-            "next_open_return": gap,
-            "actual_return": ret,
-        })
+        rows.append(
+            {
+                "next_open_return": gap,
+                "actual_return": ret,
+            }
+        )
     return rows
 
 
 def test_r89_t1_basic_valid() -> None:
     """20 rows with valid fields returns valid=True and expected keys."""
     from scripts.btst_analysis_utils import compute_open_gap_intraday_persistence
+
     rows = _make_r89_ogp_rows(20)
     result = compute_open_gap_intraday_persistence(rows)
     assert result["valid"] is True
@@ -27925,6 +29728,7 @@ def test_r89_t1_basic_valid() -> None:
 def test_r89_t1_insufficient_rows() -> None:
     """Fewer than 15 rows returns valid=False."""
     from scripts.btst_analysis_utils import compute_open_gap_intraday_persistence
+
     rows = _make_r89_ogp_rows(14)
     result = compute_open_gap_intraday_persistence(rows)
     assert result["valid"] is False
@@ -27934,6 +29738,7 @@ def test_r89_t1_insufficient_rows() -> None:
 def test_r89_t1_high_gap_wins() -> None:
     """When high-gap rows win more, ogp_gap_win_rate_premium > 0."""
     from scripts.btst_analysis_utils import compute_open_gap_intraday_persistence
+
     rows = _make_r89_ogp_rows(40, high_gap_wins=True)
     result = compute_open_gap_intraday_persistence(rows)
     assert result["valid"] is True
@@ -27943,6 +29748,7 @@ def test_r89_t1_high_gap_wins() -> None:
 def test_r89_t1_low_gap_wins() -> None:
     """When low-gap rows win more, ogp_gap_win_rate_premium < 0."""
     from scripts.btst_analysis_utils import compute_open_gap_intraday_persistence
+
     rows = _make_r89_ogp_rows(40, high_gap_wins=False)
     result = compute_open_gap_intraday_persistence(rows)
     assert result["valid"] is True
@@ -27952,6 +29758,7 @@ def test_r89_t1_low_gap_wins() -> None:
 def test_r89_t1_missing_fields_skipped() -> None:
     """Rows without next_open_return or actual_return are skipped; large n stays valid."""
     from scripts.btst_analysis_utils import compute_open_gap_intraday_persistence
+
     rows = _make_r89_ogp_rows(40)
     # Remove several middle rows; both tails remain large enough
     for i in (15, 16, 17, 18, 19):
@@ -27964,6 +29771,7 @@ def test_r89_t1_missing_fields_skipped() -> None:
 def test_r89_t1_floor_key_exists() -> None:
     """ogp_gap_win_rate_premium in BTST_QUALITY_FLOORS with floor 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "ogp_gap_win_rate_premium" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["ogp_gap_win_rate_premium"] == pytest.approx(0.0)
 
@@ -27984,17 +29792,20 @@ def _make_r89_tf_rows(n: int, high_flow_wins: bool = True) -> list[dict]:
             ret = -0.03 if high_flow_wins else 0.06
         else:
             ret = 0.01
-        rows.append({
-            "t0_tail_strength": pos,
-            "t0_estimated_net_inflow_ratio": pos,
-            "actual_return": ret,
-        })
+        rows.append(
+            {
+                "t0_tail_strength": pos,
+                "t0_estimated_net_inflow_ratio": pos,
+                "actual_return": ret,
+            }
+        )
     return rows
 
 
 def test_r89_t2_basic_valid() -> None:
     """20 rows with valid fields returns valid=True and expected keys."""
     from scripts.btst_analysis_utils import compute_tail_flow_quality_score
+
     rows = _make_r89_tf_rows(20)
     result = compute_tail_flow_quality_score(rows)
     assert result["valid"] is True
@@ -28007,6 +29818,7 @@ def test_r89_t2_basic_valid() -> None:
 def test_r89_t2_insufficient_rows() -> None:
     """Fewer than 15 rows returns valid=False."""
     from scripts.btst_analysis_utils import compute_tail_flow_quality_score
+
     rows = _make_r89_tf_rows(14)
     result = compute_tail_flow_quality_score(rows)
     assert result["valid"] is False
@@ -28015,6 +29827,7 @@ def test_r89_t2_insufficient_rows() -> None:
 def test_r89_t2_high_flow_wins() -> None:
     """When high composite-score rows win, tf_composite_win_rate_premium > 0."""
     from scripts.btst_analysis_utils import compute_tail_flow_quality_score
+
     rows = _make_r89_tf_rows(40, high_flow_wins=True)
     result = compute_tail_flow_quality_score(rows)
     assert result["valid"] is True
@@ -28024,6 +29837,7 @@ def test_r89_t2_high_flow_wins() -> None:
 def test_r89_t2_low_flow_wins() -> None:
     """When low composite-score rows win, tf_composite_win_rate_premium < 0."""
     from scripts.btst_analysis_utils import compute_tail_flow_quality_score
+
     rows = _make_r89_tf_rows(40, high_flow_wins=False)
     result = compute_tail_flow_quality_score(rows)
     assert result["valid"] is True
@@ -28033,6 +29847,7 @@ def test_r89_t2_low_flow_wins() -> None:
 def test_r89_t2_missing_inflow_skipped() -> None:
     """Rows missing t0_estimated_net_inflow_ratio are skipped gracefully; large n stays valid."""
     from scripts.btst_analysis_utils import compute_tail_flow_quality_score
+
     rows = _make_r89_tf_rows(40)
     # Remove middle rows; both tail groups remain >= 5
     for r in rows[15:20]:
@@ -28045,6 +29860,7 @@ def test_r89_t2_missing_inflow_skipped() -> None:
 def test_r89_t2_floor_key_exists() -> None:
     """tf_composite_win_rate_premium in BTST_QUALITY_FLOORS with floor 0.0."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "tf_composite_win_rate_premium" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["tf_composite_win_rate_premium"] == pytest.approx(0.0)
 
@@ -28066,16 +29882,19 @@ def _make_r89_mc_rows(n: int, momentum_wins: bool = True) -> list[dict]:
             ret = -0.03 if momentum_wins else 0.06
         else:
             ret = 0.01
-        rows.append({
-            "momentum_confirmation_score": mcs,
-            "actual_return": ret,
-        })
+        rows.append(
+            {
+                "momentum_confirmation_score": mcs,
+                "actual_return": ret,
+            }
+        )
     return rows
 
 
 def test_r89_t3_per_window_basic_valid() -> None:
     """20 rows returns valid=True with expected keys."""
     from scripts.btst_analysis_utils import compute_momentum_ic_consistency
+
     rows = _make_r89_mc_rows(20)
     result = compute_momentum_ic_consistency(rows)
     assert result["valid"] is True
@@ -28087,6 +29906,7 @@ def test_r89_t3_per_window_basic_valid() -> None:
 def test_r89_t3_per_window_insufficient() -> None:
     """Fewer than 10 rows returns valid=False."""
     from scripts.btst_analysis_utils import compute_momentum_ic_consistency
+
     rows = _make_r89_mc_rows(9)
     result = compute_momentum_ic_consistency(rows)
     assert result["valid"] is False
@@ -28095,6 +29915,7 @@ def test_r89_t3_per_window_insufficient() -> None:
 def test_r89_t3_per_window_momentum_wins() -> None:
     """When high-momentum rows win, mc_momentum_win_rate_premium > 0 and IC > 0."""
     from scripts.btst_analysis_utils import compute_momentum_ic_consistency
+
     rows = _make_r89_mc_rows(40, momentum_wins=True)
     result = compute_momentum_ic_consistency(rows)
     assert result["valid"] is True
@@ -28105,6 +29926,7 @@ def test_r89_t3_per_window_momentum_wins() -> None:
 def test_r89_t3_fallback_to_components() -> None:
     """When momentum_confirmation_score absent, falls back to breakout_freshness × close_strength."""
     from scripts.btst_analysis_utils import compute_momentum_ic_consistency
+
     rows = []
     for i in range(20):
         bf = float(i) / 20
@@ -28118,6 +29940,7 @@ def test_r89_t3_fallback_to_components() -> None:
 def test_r89_t3_cross_window_basic() -> None:
     """All positive-IC windows → consistency_score 1.0 and gate_passed=True."""
     from scripts.optimize_profile import compute_cross_window_momentum_ic_consistency
+
     windows = [{"mc_momentum_ic": 0.1 * (i + 1)} for i in range(5)]
     result = compute_cross_window_momentum_ic_consistency(windows)
     assert result["valid"] is True
@@ -28128,6 +29951,7 @@ def test_r89_t3_cross_window_basic() -> None:
 def test_r89_t3_cross_window_mixed() -> None:
     """3 positive + 2 negative → consistency_score = 0.6, gate_passed=True."""
     from scripts.optimize_profile import compute_cross_window_momentum_ic_consistency
+
     windows = [{"mc_momentum_ic": 0.1}, {"mc_momentum_ic": 0.2}, {"mc_momentum_ic": 0.05}, {"mc_momentum_ic": -0.1}, {"mc_momentum_ic": -0.05}]
     result = compute_cross_window_momentum_ic_consistency(windows)
     assert result["valid"] is True
@@ -28138,6 +29962,7 @@ def test_r89_t3_cross_window_mixed() -> None:
 def test_r89_t3_cross_window_insufficient() -> None:
     """Fewer than 3 windows returns valid=False."""
     from scripts.optimize_profile import compute_cross_window_momentum_ic_consistency
+
     windows = [{"mc_momentum_ic": 0.1}, {"mc_momentum_ic": 0.2}]
     result = compute_cross_window_momentum_ic_consistency(windows)
     assert result["valid"] is False
@@ -28146,6 +29971,7 @@ def test_r89_t3_cross_window_insufficient() -> None:
 def test_r89_t3_cross_window_all_negative() -> None:
     """All negative IC → consistency_score 0.0, gate_passed=False."""
     from scripts.optimize_profile import compute_cross_window_momentum_ic_consistency
+
     windows = [{"mc_momentum_ic": -0.05 * (i + 1)} for i in range(5)]
     result = compute_cross_window_momentum_ic_consistency(windows)
     assert result["valid"] is True
@@ -28156,6 +29982,7 @@ def test_r89_t3_cross_window_all_negative() -> None:
 def test_r89_t3_floor_key_exists() -> None:
     """mc_ic_consistency_score in BTST_QUALITY_FLOORS with floor 0.40."""
     from src.backtesting.evaluation_bundle import BTST_QUALITY_FLOORS
+
     assert "mc_ic_consistency_score" in BTST_QUALITY_FLOORS
     assert BTST_QUALITY_FLOORS["mc_ic_consistency_score"] == pytest.approx(0.40)
 
@@ -28163,6 +29990,7 @@ def test_r89_t3_floor_key_exists() -> None:
 def test_r89_t3_optional_metric_keys() -> None:
     """All Round 89 Task 3 metric keys in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for key in ("mc_momentum_ic", "mc_momentum_win_rate_premium", "mc_ic_consistency_score", "mc_ic_gate_passed", "mc_ic_mean"):
         assert key in OPTIONAL_COMPARISON_METRICS, f"{key} missing from OPTIONAL_COMPARISON_METRICS"
 
@@ -28170,6 +29998,7 @@ def test_r89_t3_optional_metric_keys() -> None:
 def test_r89_t1_optional_metric_keys() -> None:
     """All Round 89 Task 1 metric keys in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for key in ("ogp_gap_vs_full_day_ic", "ogp_gap_win_rate_premium", "ogp_high_gap_win_rate", "ogp_trend_slope"):
         assert key in OPTIONAL_COMPARISON_METRICS, f"{key} missing from OPTIONAL_COMPARISON_METRICS"
 
@@ -28177,6 +30006,7 @@ def test_r89_t1_optional_metric_keys() -> None:
 def test_r89_t2_optional_metric_keys() -> None:
     """All Round 89 Task 2 metric keys in OPTIONAL_COMPARISON_METRICS."""
     from scripts.optimize_profile import OPTIONAL_COMPARISON_METRICS
+
     for key in ("tf_composite_win_rate_premium", "tf_high_flow_win_rate", "tf_trend_slope"):
         assert key in OPTIONAL_COMPARISON_METRICS, f"{key} missing from OPTIONAL_COMPARISON_METRICS"
 
@@ -28184,24 +30014,28 @@ def test_r89_t2_optional_metric_keys() -> None:
 def test_r89_t1_comparison_metric_rank() -> None:
     """ogp_gap_win_rate_premium in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "ogp_gap_win_rate_premium" in COMPARISON_METRICS
 
 
 def test_r89_t2_comparison_metric_rank() -> None:
     """tf_composite_win_rate_premium in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "tf_composite_win_rate_premium" in COMPARISON_METRICS
 
 
 def test_r89_t3_comparison_metric_rank() -> None:
     """mc_ic_consistency_score in COMPARISON_METRICS."""
     from scripts.optimize_profile import COMPARISON_METRICS
+
     assert "mc_ic_consistency_score" in COMPARISON_METRICS
 
 
 def test_r89_ogp_cross_window_trend_positive() -> None:
     """Rising ogp_gap_win_rate_premium across windows → grade A or B."""
     from scripts.optimize_profile import compute_cross_window_open_gap_persistence_trend
+
     windows = [{"ogp_gap_win_rate_premium": 0.01 * i} for i in range(6)]
     result = compute_cross_window_open_gap_persistence_trend(windows)
     assert result["valid"] is True
@@ -28211,6 +30045,7 @@ def test_r89_ogp_cross_window_trend_positive() -> None:
 def test_r89_tf_cross_window_trend_negative() -> None:
     """Falling tf_composite_win_rate_premium across windows → grade C or D."""
     from scripts.optimize_profile import compute_cross_window_tail_flow_quality_trend
+
     windows = [{"tf_composite_win_rate_premium": 0.1 - 0.02 * i} for i in range(6)]
     result = compute_cross_window_tail_flow_quality_trend(windows)
     assert result["valid"] is True
@@ -28226,10 +30061,10 @@ def test_build_rollout_recommendation_payload_surfaces_win_rate_first_accepted(m
     comparison_summary = {
         "default": {
             "next_close_positive_rate_delta": 0.03,  # positive win-rate signal
-            "next_high_hit_rate_delta": 0.02,        # positive win-rate signal
-            "next_close_expectancy_delta": 0.004,    # positive expectancy (no regression)
-            "realized_payoff_ratio_delta": -0.005,   # modest payoff degradation (bounded, within epsilon)
-            "window_coverage_delta": -0.001,         # modest coverage degradation (bounded, within epsilon)
+            "next_high_hit_rate_delta": 0.02,  # positive win-rate signal
+            "next_close_expectancy_delta": 0.004,  # positive expectancy (no regression)
+            "realized_payoff_ratio_delta": -0.005,  # modest payoff degradation (bounded, within epsilon)
+            "window_coverage_delta": -0.001,  # modest coverage degradation (bounded, within epsilon)
             "downside_p10_delta": 0.001,
             "liquidity_capacity_raw_100_delta": 1.0,
             "crowding_risk_raw_100_delta": -1.0,
@@ -28257,7 +30092,7 @@ def test_build_rollout_recommendation_payload_blocks_win_rate_first_when_win_rat
     comparison_summary = {
         "default": {
             "next_close_positive_rate_delta": 0.00,  # no win-rate uplift
-            "next_high_hit_rate_delta": 0.00,        # no win-rate uplift
+            "next_high_hit_rate_delta": 0.00,  # no win-rate uplift
             "next_close_expectancy_delta": 0.004,
             "realized_payoff_ratio_delta": 0.10,
             "window_coverage_delta": 0.03,
@@ -28283,9 +30118,9 @@ def test_build_rollout_recommendation_payload_blocks_win_rate_first_when_payoff_
     comparison_summary = {
         "default": {
             "next_close_positive_rate_delta": 0.03,  # positive win-rate signal
-            "next_high_hit_rate_delta": 0.02,        # positive win-rate signal
-            "next_close_expectancy_delta": -0.010,   # large payoff degradation (unbounded)
-            "realized_payoff_ratio_delta": -0.20,    # large payoff degradation (unbounded)
+            "next_high_hit_rate_delta": 0.02,  # positive win-rate signal
+            "next_close_expectancy_delta": -0.010,  # large payoff degradation (unbounded)
+            "realized_payoff_ratio_delta": -0.20,  # large payoff degradation (unbounded)
             "window_coverage_delta": 0.03,
             "downside_p10_delta": 0.001,
             "liquidity_capacity_raw_100_delta": 1.0,
@@ -28309,10 +30144,10 @@ def test_build_rollout_recommendation_payload_blocks_win_rate_first_when_coverag
     comparison_summary = {
         "default": {
             "next_close_positive_rate_delta": 0.03,  # positive win-rate signal
-            "next_high_hit_rate_delta": 0.02,        # positive win-rate signal
+            "next_high_hit_rate_delta": 0.02,  # positive win-rate signal
             "next_close_expectancy_delta": 0.004,
             "realized_payoff_ratio_delta": 0.10,
-            "window_coverage_delta": -0.10,          # large coverage degradation (unbounded)
+            "window_coverage_delta": -0.10,  # large coverage degradation (unbounded)
             "downside_p10_delta": 0.001,
             "liquidity_capacity_raw_100_delta": 1.0,
             "crowding_risk_raw_100_delta": -1.0,
@@ -28368,7 +30203,7 @@ def test_build_rollout_recommendation_payload_win_rate_first_uses_expectancy_fal
             "next_close_positive_rate_delta": 0.03,
             "next_high_hit_rate_delta": 0.02,
             "next_close_expectancy_delta": 0.001,  # positive (no regression blocker), used as payoff proxy
-            "window_coverage_delta": -0.001,       # within epsilon
+            "window_coverage_delta": -0.001,  # within epsilon
             "downside_p10_delta": 0.001,
             "liquidity_capacity_raw_100_delta": 1.0,
             "crowding_risk_raw_100_delta": -1.0,
@@ -28386,7 +30221,6 @@ def test_build_rollout_recommendation_payload_win_rate_first_uses_expectancy_fal
     assert payload["win_rate_first_decision"]["bounded_tradeoffs"]["next_close_expectancy_delta"] == 0.001
 
 
-
 def test_build_rollout_recommendation_payload_surfaces_rollout_blocked_when_blockers_present(monkeypatch: pytest.MonkeyPatch) -> None:
     """When strict/structural/baseline blockers are present, win_rate_first_verdict_detail must surface rollout_blocked as dominant reason."""
     monkeypatch.setattr(
@@ -28398,7 +30232,7 @@ def test_build_rollout_recommendation_payload_surfaces_rollout_blocked_when_bloc
         "default": {
             # Win-rate-first would be rejected for missing uplift
             "next_close_positive_rate_delta": 0.001,  # below threshold
-            "next_high_hit_rate_delta": 0.001,        # below threshold
+            "next_high_hit_rate_delta": 0.001,  # below threshold
             "next_close_expectancy_delta": -0.002,
             "realized_payoff_ratio_delta": -0.05,
             "window_coverage_delta": -0.01,
@@ -28416,14 +30250,14 @@ def test_build_rollout_recommendation_payload_surfaces_rollout_blocked_when_bloc
     # Action should be "hold" due to strict blocker
     assert payload["action"] == "hold"
     assert "rejected_outperforms_tradeable_surface" in payload["blockers"]
-    
+
     # Win-rate-first decision should be rejected
     assert payload["win_rate_first_decision"]["verdict"] == "rejected"
-    
+
     # The critical assertion: when blockers are present, verdict_reason should be "rollout_blocked"
     # NOT "win_rate_uplift_missing" or "bounded_tradeoff_check_failed"
     assert payload["win_rate_first_verdict_detail"]["verdict_reason"] == "rollout_blocked"
-    
+
     # NEW: rejection_reasons must also include "rollout_blocked" when non-win-rate blockers are present
     assert "rollout_blocked" in payload["win_rate_first_verdict_detail"]["rejection_reasons"]
 
@@ -28431,12 +30265,12 @@ def test_build_rollout_recommendation_payload_surfaces_rollout_blocked_when_bloc
 def test_persist_search_metadata_renders_win_rate_first_verdict_detail_in_markdown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Markdown output must explicitly render win-rate-first verdict detail when rollout recommendation details are present."""
     from scripts.optimize_profile import _persist_search_metadata
-    
+
     md_path = tmp_path / "report.md"
     json_path = tmp_path / "report.json"
     md_path.write_text("# Parameter Search Report\nExisting content\n", encoding="utf-8")
     json_path.write_text("{}", encoding="utf-8")
-    
+
     metadata = {"search_stage": "full", "checkpoint_path": "none"}
     comparison_summary = {
         "default": {
@@ -28453,13 +30287,16 @@ def test_persist_search_metadata_renders_win_rate_first_verdict_detail_in_markdo
             "rejection_reasons": [],
         },
     }
-    
+
     _persist_search_metadata(
-        md_path=md_path, json_path=json_path, metadata=metadata,
-        comparison_summary=comparison_summary, rollout_recommendation="promote",
+        md_path=md_path,
+        json_path=json_path,
+        metadata=metadata,
+        comparison_summary=comparison_summary,
+        rollout_recommendation="promote",
         rollout_recommendation_details=rollout_recommendation_details,
     )
-    
+
     md_text = md_path.read_text(encoding="utf-8")
     assert "Win-rate-first verdict:" in md_text or "Win-Rate-First" in md_text
     assert "accepted" in md_text or "meets_win_rate_first_criteria" in md_text

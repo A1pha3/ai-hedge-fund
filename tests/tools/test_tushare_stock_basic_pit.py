@@ -140,8 +140,7 @@ def test_filter_stock_basic_as_of_preserves_other_columns() -> None:
     unchanged."""
     df = pd.DataFrame(
         [
-            {"ts_code": "000001.SZ", "name": "ALIVE", "list_date": "20100101", "delist_date": "",
-             "industry": "银行", "market": "主板"},
+            {"ts_code": "000001.SZ", "name": "ALIVE", "list_date": "20100101", "delist_date": "", "industry": "银行", "market": "主板"},
         ]
     )
     kept = filter_stock_basic_as_of(df, as_of=_AS_OF)

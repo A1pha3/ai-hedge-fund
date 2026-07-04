@@ -18,15 +18,7 @@ def test_audit_btst_outputs_month_detects_missing_refs_and_mismatch(tmp_path: Pa
     out_dir = repo_root / "outputs" / "202605" / "20260523"
     out_dir.mkdir(parents=True)
 
-    md = (
-        "# BTST 多智能体详细计划（20260521 -> 20260522）\n\n"
-        "## 来源\n\n"
-        "- 会话索引：`data/reports/run1/session_summary.json`\n"
-        "- 主报告目录：`data/reports/run1`\n"
-        "- 缺失引用：`data/reports/run1/missing.json`\n"
-        "- 信号日：`20260521`\n"
-        "- 下一交易日：`20260522`\n"
-    )
+    md = "# BTST 多智能体详细计划（20260521 -> 20260522）\n\n" "## 来源\n\n" "- 会话索引：`data/reports/run1/session_summary.json`\n" "- 主报告目录：`data/reports/run1`\n" "- 缺失引用：`data/reports/run1/missing.json`\n" "- 信号日：`20260521`\n" "- 下一交易日：`20260522`\n"
     (out_dir / "BTST-LLM-20260521.md").write_text(md, encoding="utf-8")
 
     result = audit_btst_outputs_month(month="202605", outputs_dir="outputs", repo_root=repo_root)

@@ -30,11 +30,7 @@ class TestResolveBatchFetcherForAvgAmountObservability:
         运维需要知道 batch fetcher 不可用。
         """
         # 注入一个会抛 ImportError 的 import 钩子
-        real_import = (
-            __builtins__["__import__"]
-            if isinstance(__builtins__, dict)
-            else __builtins__.__import__
-        )
+        real_import = __builtins__["__import__"] if isinstance(__builtins__, dict) else __builtins__.__import__
 
         def _import_side_effect(name, *args, **kwargs):
             if name == "src.screening.batch_data_fetcher":
@@ -48,9 +44,7 @@ class TestResolveBatchFetcherForAvgAmountObservability:
 
         assert result is None
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warnings) == 1, (
-            f"expected 1 WARNING for import failure, got {warnings}"
-        )
+        assert len(warnings) == 1, f"expected 1 WARNING for import failure, got {warnings}"
         msg = warnings[0].getMessage()
         assert "batch_data_fetcher import failed" in msg
         assert "simulated batch_data_fetcher import failure" in msg
@@ -78,9 +72,7 @@ class TestResolveBatchFetcherForAvgAmountObservability:
 
         assert result is None
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warnings) == 1, (
-            f"expected 1 WARNING for init failure, got {warnings}"
-        )
+        assert len(warnings) == 1, f"expected 1 WARNING for init failure, got {warnings}"
         msg = warnings[0].getMessage()
         assert "get_global_batch_data_fetcher() init failed" in msg
         assert "simulated batch_data_fetcher init failure" in msg

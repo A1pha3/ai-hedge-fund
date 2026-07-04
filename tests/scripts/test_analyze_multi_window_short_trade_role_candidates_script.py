@@ -18,11 +18,7 @@ def test_analyze_multi_window_short_trade_role_candidates_marks_emergent_local_b
         json.dumps(
             {
                 "trade_date": "2026-03-23",
-                "layer_b": {
-                    "tickers": [
-                        {"ticker": "600821", "reason": "below_fast_score_threshold", "score_b": 0.1, "decision": "neutral", "rank": 1}
-                    ]
-                },
+                "layer_b": {"tickers": [{"ticker": "600821", "reason": "below_fast_score_threshold", "score_b": 0.1, "decision": "neutral", "rank": 1}]},
             },
             ensure_ascii=False,
         )

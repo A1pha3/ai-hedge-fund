@@ -4,6 +4,7 @@ The module has 6 pure formatting functions used across display paths with zero
 direct test coverage. These tests cover the 3 simplest pure functions; the
 build_*_table_rows helpers (colorama-formatted) are deferred.
 """
+
 from __future__ import annotations
 
 import json
@@ -26,7 +27,7 @@ class TestStringifyReasoning:
     def test_dict_json_is_indented(self) -> None:
         """Dicts are serialized with indent=2."""
         result = stringify_reasoning({"key": "value"})
-        assert '\n' in result  # indented multiline
+        assert "\n" in result  # indented multiline
 
     def test_int_to_string(self) -> None:
         assert stringify_reasoning(42) == "42"

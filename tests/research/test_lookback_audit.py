@@ -65,6 +65,7 @@ def _make_prices(
 ) -> list[Price]:
     """Create a simple price series."""
     from datetime import timedelta
+
     prices: list[Price] = []
     dt = datetime.strptime(start_date, "%Y-%m-%d")
     for i in range(days):
@@ -81,14 +82,16 @@ def _make_prices(
                 price = base_price * (1 + 0.05 * 2 - 0.08 * (i - 2))
         else:
             price = base_price
-        prices.append(Price(
-            open=price,
-            close=price,
-            high=price * 1.01,
-            low=price * 0.99,
-            volume=1000000,
-            time=date_str,
-        ))
+        prices.append(
+            Price(
+                open=price,
+                close=price,
+                high=price * 1.01,
+                low=price * 0.99,
+                volume=1000000,
+                time=date_str,
+            )
+        )
         dt += timedelta(days=1)
     return prices
 
@@ -108,6 +111,7 @@ class MockPriceFetcher(PriceFetcher):
 # Tests: date formatting
 # ---------------------------------------------------------------------------
 
+
 class TestDateFormatting:
     def test_format_yyyymmdd(self) -> None:
         assert _format_date("20260505") == "2026-05-05"
@@ -125,6 +129,7 @@ class TestDateFormatting:
 # ---------------------------------------------------------------------------
 # Tests: snapshot reading and extraction
 # ---------------------------------------------------------------------------
+
 
 class TestSnapshotExtraction:
     def test_extract_top_tickers_default(self) -> None:
@@ -147,11 +152,13 @@ class TestSnapshotExtraction:
         assert tickers == []
 
     def test_extract_skips_empty_symbols(self) -> None:
-        snapshot = _make_snapshot(selected=[
-            {"symbol": "000001", "score_final": 0.9},
-            {"symbol": "", "score_final": 0.8},
-            {"symbol": "600519", "score_final": 0.7},
-        ])
+        snapshot = _make_snapshot(
+            selected=[
+                {"symbol": "000001", "score_final": 0.9},
+                {"symbol": "", "score_final": 0.8},
+                {"symbol": "600519", "score_final": 0.7},
+            ]
+        )
         tickers = _extract_top_tickers(snapshot)
         assert len(tickers) == 2
         assert tickers[0]["ticker"] == "000001"
@@ -161,9 +168,7 @@ class TestSnapshotExtraction:
         day_dir = tmp_path / "2026-05-05"
         day_dir.mkdir()
         snapshot = _make_snapshot()
-        (day_dir / "selection_snapshot.json").write_text(
-            json.dumps(snapshot), encoding="utf-8"
-        )
+        (day_dir / "selection_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
         result = _read_selection_snapshot(tmp_path, "2026-05-05")
         assert result["trade_date"] == "2026-05-05"
 
@@ -175,15 +180,11 @@ class TestSnapshotExtraction:
         day_dir = tmp_path / "2026-05-05"
         day_dir.mkdir()
         snapshot = _make_snapshot()
-        (day_dir / "selection_snapshot.json").write_text(
-            json.dumps(snapshot), encoding="utf-8"
-        )
+        (day_dir / "selection_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
         result = _read_selection_snapshot(tmp_path, "20260505")
         assert result["trade_date"] == "2026-05-05"
 
-    def test_read_snapshot_corrupt_raises_file_not_found(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_read_snapshot_corrupt_raises_file_not_found(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
         """R88 drain: 损坏的 snapshot (部分写入/磁盘错误) 应包装为 FileNotFoundError
         让 caller 的 graceful 分支处理, 并发 warning 诊断 -- 而非裸 JSONDecodeError
         崩溃整个 --lookback-audit CLI。
@@ -198,14 +199,13 @@ class TestSnapshotExtraction:
             with pytest.raises(FileNotFoundError):
                 _read_selection_snapshot(tmp_path, "2026-05-05")
         warn_msgs = [r.message for r in caplog.records if r.levelno >= _logging.WARNING]
-        assert any("损坏" in m for m in warn_msgs), (
-            f"损坏 snapshot 应触发 warning 诊断; got warnings={warn_msgs!r}"
-        )
+        assert any("损坏" in m for m in warn_msgs), f"损坏 snapshot 应触发 warning 诊断; got warnings={warn_msgs!r}"
 
 
 # ---------------------------------------------------------------------------
 # Tests: price calculations
 # ---------------------------------------------------------------------------
+
 
 class TestPriceCalculations:
     def test_max_drawdown_mono_up(self) -> None:
@@ -267,6 +267,7 @@ class TestPriceCalculations:
 # Tests: full audit
 # ---------------------------------------------------------------------------
 
+
 class TestRunLookbackAudit:
     def test_audit_with_full_data(self, tmp_path: Path) -> None:
         """Full audit with complete price data for all tickers."""
@@ -274,16 +275,16 @@ class TestRunLookbackAudit:
         day_dir = tmp_path / "2026-05-05"
         day_dir.mkdir()
         snapshot = _make_snapshot()
-        (day_dir / "selection_snapshot.json").write_text(
-            json.dumps(snapshot), encoding="utf-8"
-        )
+        (day_dir / "selection_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
         # Mock price data
-        mock_fetcher = MockPriceFetcher({
-            "000001": _make_prices(base_price=10.0, days=31, start_date="2026-05-05", trend="up"),
-            "600519": _make_prices(base_price=100.0, days=31, start_date="2026-05-05", trend="down"),
-            "300724": _make_prices(base_price=50.0, days=31, start_date="2026-05-05", trend="volatile"),
-        })
+        mock_fetcher = MockPriceFetcher(
+            {
+                "000001": _make_prices(base_price=10.0, days=31, start_date="2026-05-05", trend="up"),
+                "600519": _make_prices(base_price=100.0, days=31, start_date="2026-05-05", trend="down"),
+                "300724": _make_prices(base_price=50.0, days=31, start_date="2026-05-05", trend="volatile"),
+            }
+        )
 
         result = run_lookback_audit(
             audit_date="20260505",
@@ -329,9 +330,7 @@ class TestRunLookbackAudit:
         day_dir = tmp_path / "2026-05-05"
         day_dir.mkdir()
         snapshot = _make_snapshot(selected=[])
-        (day_dir / "selection_snapshot.json").write_text(
-            json.dumps(snapshot), encoding="utf-8"
-        )
+        (day_dir / "selection_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
         result = run_lookback_audit(
             audit_date="20260505",
@@ -345,15 +344,15 @@ class TestRunLookbackAudit:
         day_dir = tmp_path / "2026-05-05"
         day_dir.mkdir()
         snapshot = _make_snapshot()
-        (day_dir / "selection_snapshot.json").write_text(
-            json.dumps(snapshot), encoding="utf-8"
-        )
+        (day_dir / "selection_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
         # Only one ticker has data
-        mock_fetcher = MockPriceFetcher({
-            "000001": _make_prices(base_price=10.0, days=5, start_date="2026-05-05"),
-            # 600519 and 300724: no data
-        })
+        mock_fetcher = MockPriceFetcher(
+            {
+                "000001": _make_prices(base_price=10.0, days=5, start_date="2026-05-05"),
+                # 600519 and 300724: no data
+            }
+        )
 
         result = run_lookback_audit(
             audit_date="20260505",
@@ -370,19 +369,21 @@ class TestRunLookbackAudit:
         """Audit when entry price is zero (delisted/suspended stock)."""
         day_dir = tmp_path / "2026-05-05"
         day_dir.mkdir()
-        snapshot = _make_snapshot(selected=[
-            {"symbol": "000001", "score_final": 0.85},
-        ])
-        (day_dir / "selection_snapshot.json").write_text(
-            json.dumps(snapshot), encoding="utf-8"
+        snapshot = _make_snapshot(
+            selected=[
+                {"symbol": "000001", "score_final": 0.85},
+            ]
         )
+        (day_dir / "selection_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
-        mock_fetcher = MockPriceFetcher({
-            "000001": [
-                Price(open=0, close=0, high=0, low=0, volume=0, time="2026-05-05"),
-                Price(open=5, close=5, high=5, low=5, volume=1000, time="2026-05-06"),
-            ],
-        })
+        mock_fetcher = MockPriceFetcher(
+            {
+                "000001": [
+                    Price(open=0, close=0, high=0, low=0, volume=0, time="2026-05-05"),
+                    Price(open=5, close=5, high=5, low=5, volume=1000, time="2026-05-06"),
+                ],
+            }
+        )
 
         result = run_lookback_audit(
             audit_date="20260505",
@@ -396,17 +397,19 @@ class TestRunLookbackAudit:
         """Audit when price data doesn't cover full lookforward window."""
         day_dir = tmp_path / "2026-05-05"
         day_dir.mkdir()
-        snapshot = _make_snapshot(selected=[
-            {"symbol": "000001", "score_final": 0.85},
-        ])
-        (day_dir / "selection_snapshot.json").write_text(
-            json.dumps(snapshot), encoding="utf-8"
+        snapshot = _make_snapshot(
+            selected=[
+                {"symbol": "000001", "score_final": 0.85},
+            ]
         )
+        (day_dir / "selection_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
         # Only 3 days of data instead of 30
-        mock_fetcher = MockPriceFetcher({
-            "000001": _make_prices(base_price=10.0, days=3, start_date="2026-05-05"),
-        })
+        mock_fetcher = MockPriceFetcher(
+            {
+                "000001": _make_prices(base_price=10.0, days=3, start_date="2026-05-05"),
+            }
+        )
 
         result = run_lookback_audit(
             audit_date="20260505",
@@ -426,9 +429,7 @@ class TestRunLookbackAudit:
         day_dir = tmp_path / "2026-05-05"
         day_dir.mkdir()
         snapshot = _make_snapshot()
-        (day_dir / "selection_snapshot.json").write_text(
-            json.dumps(snapshot), encoding="utf-8"
-        )
+        (day_dir / "selection_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
         result1 = run_lookback_audit(
             audit_date="20260505",
@@ -447,25 +448,28 @@ class TestRunLookbackAudit:
 # Tests: summary statistics
 # ---------------------------------------------------------------------------
 
+
 class TestSummaryStatistics:
     def test_hit_rate_calculation(self, tmp_path: Path) -> None:
         """Verify hit_rate = fraction of positive returns."""
         day_dir = tmp_path / "2026-05-05"
         day_dir.mkdir()
-        snapshot = _make_snapshot(selected=[
-            {"symbol": "TICK1", "score_final": 0.9},
-            {"symbol": "TICK2", "score_final": 0.8},
-            {"symbol": "TICK3", "score_final": 0.7},
-        ])
-        (day_dir / "selection_snapshot.json").write_text(
-            json.dumps(snapshot), encoding="utf-8"
+        snapshot = _make_snapshot(
+            selected=[
+                {"symbol": "TICK1", "score_final": 0.9},
+                {"symbol": "TICK2", "score_final": 0.8},
+                {"symbol": "TICK3", "score_final": 0.7},
+            ]
         )
+        (day_dir / "selection_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
-        mock_fetcher = MockPriceFetcher({
-            "TICK1": _make_prices(base_price=10.0, days=5, trend="up"),
-            "TICK2": _make_prices(base_price=10.0, days=5, trend="down"),
-            "TICK3": _make_prices(base_price=10.0, days=5, trend="up"),
-        })
+        mock_fetcher = MockPriceFetcher(
+            {
+                "TICK1": _make_prices(base_price=10.0, days=5, trend="up"),
+                "TICK2": _make_prices(base_price=10.0, days=5, trend="down"),
+                "TICK3": _make_prices(base_price=10.0, days=5, trend="up"),
+            }
+        )
 
         result = run_lookback_audit(
             audit_date="20260505",
@@ -479,9 +483,7 @@ class TestSummaryStatistics:
         day_dir = tmp_path / "2026-05-05"
         day_dir.mkdir()
         snapshot = _make_snapshot()
-        (day_dir / "selection_snapshot.json").write_text(
-            json.dumps(snapshot), encoding="utf-8"
-        )
+        (day_dir / "selection_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
         result = run_lookback_audit(
             audit_date="20260505",
@@ -494,6 +496,7 @@ class TestSummaryStatistics:
 # ---------------------------------------------------------------------------
 # Tests: format_audit_table
 # ---------------------------------------------------------------------------
+
 
 class TestFormatAuditTable:
     def test_table_output_contains_headers(self) -> None:
@@ -541,6 +544,7 @@ class TestFormatAuditTable:
 # Tests: CLI
 # ---------------------------------------------------------------------------
 
+
 class TestCLI:
     def test_cli_parse_args(self) -> None:
         import io
@@ -556,6 +560,7 @@ class TestCLI:
 # ---------------------------------------------------------------------------
 # Tests: dataclass serialization
 # ---------------------------------------------------------------------------
+
 
 class TestSerialization:
     def test_ticker_audit_result_to_dict(self) -> None:
@@ -579,6 +584,7 @@ class TestSerialization:
 
     def test_lookback_audit_result_to_dict(self) -> None:
         from dataclasses import asdict
+
         result = LookbackAuditResult(
             audit_date="2026-05-05",
             lookforward_days=30,
@@ -605,21 +611,23 @@ class TestNaNPriceGuards:
         remaining rows to produce a well-defined return_pct."""
         day_dir = tmp_path / "2026-05-05"
         day_dir.mkdir()
-        snapshot = _make_snapshot(selected=[
-            {"symbol": "AAPL", "score_final": 0.85},
-        ])
-        (day_dir / "selection_snapshot.json").write_text(
-            json.dumps(snapshot), encoding="utf-8"
+        snapshot = _make_snapshot(
+            selected=[
+                {"symbol": "AAPL", "score_final": 0.85},
+            ]
         )
+        (day_dir / "selection_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
-        mock_fetcher = MockPriceFetcher({
-            "AAPL": [
-                Price(open=10, close=10, high=10, low=10, volume=1000, time="2026-05-05"),
-                # NaN close must be dropped
-                Price(open=11, close=float("nan"), high=11, low=11, volume=1000, time="2026-05-06"),
-                Price(open=12, close=12, high=12, low=12, volume=1000, time="2026-05-07"),
-            ],
-        })
+        mock_fetcher = MockPriceFetcher(
+            {
+                "AAPL": [
+                    Price(open=10, close=10, high=10, low=10, volume=1000, time="2026-05-05"),
+                    # NaN close must be dropped
+                    Price(open=11, close=float("nan"), high=11, low=11, volume=1000, time="2026-05-06"),
+                    Price(open=12, close=12, high=12, low=12, volume=1000, time="2026-05-07"),
+                ],
+            }
+        )
 
         result = run_lookback_audit(
             audit_date="20260505",
@@ -638,19 +646,21 @@ class TestNaNPriceGuards:
         """If every forward row has a NaN close, no audit can be produced."""
         day_dir = tmp_path / "2026-05-05"
         day_dir.mkdir()
-        snapshot = _make_snapshot(selected=[
-            {"symbol": "AAPL", "score_final": 0.85},
-        ])
-        (day_dir / "selection_snapshot.json").write_text(
-            json.dumps(snapshot), encoding="utf-8"
+        snapshot = _make_snapshot(
+            selected=[
+                {"symbol": "AAPL", "score_final": 0.85},
+            ]
         )
+        (day_dir / "selection_snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
-        mock_fetcher = MockPriceFetcher({
-            "AAPL": [
-                Price(open=10, close=float("nan"), high=10, low=10, volume=1000, time="2026-05-05"),
-                Price(open=11, close=float("nan"), high=11, low=11, volume=1000, time="2026-05-06"),
-            ],
-        })
+        mock_fetcher = MockPriceFetcher(
+            {
+                "AAPL": [
+                    Price(open=10, close=float("nan"), high=10, low=10, volume=1000, time="2026-05-05"),
+                    Price(open=11, close=float("nan"), high=11, low=11, volume=1000, time="2026-05-06"),
+                ],
+            }
+        )
 
         result = run_lookback_audit(
             audit_date="20260505",

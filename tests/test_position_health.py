@@ -1,4 +1,5 @@
 """Tests for position_health.py — P15-1 position health check."""
+
 from __future__ import annotations
 
 import json
@@ -55,9 +56,7 @@ def _make_rec(ticker: str, name: str, score_b: float, **kwargs: Any) -> dict[str
 
 class TestFindTickerInHistory:
     def test_found_in_latest(self) -> None:
-        history = [
-            {"payload": {"recommendations": [{"ticker": "000001", "score_b": 0.5}]}}
-        ]
+        history = [{"payload": {"recommendations": [{"ticker": "000001", "score_b": 0.5}]}}]
         result = _find_ticker_in_history("000001", history)
         assert result is not None
         assert result["score_b"] == 0.5
@@ -347,9 +346,7 @@ class TestRunPositionCheck:
             "src.screening.position_health.resolve_report_dir",
             lambda: tmp_path,
         )
-        rc = run_position_check(
-            ["--tickers=000001", "--sell-threshold=0.2", "--watch-threshold=0.4"]
-        )
+        rc = run_position_check(["--tickers=000001", "--sell-threshold=0.2", "--watch-threshold=0.4"])
         assert rc == 0
 
     def test_invalid_threshold_falls_back_silently(

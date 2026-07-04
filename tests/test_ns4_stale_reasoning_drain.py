@@ -27,6 +27,7 @@ Fix: align reasoning text with post-NS-4 signal semantics.
   - stat_arb bullish (neg-skew)     → text describes 左偏 + 动量延续看涨
   - stat_arb bearish (pos-skew)     → text describes 右偏 + 动量延续看跌
 """
+
 from __future__ import annotations
 
 from src.agents.technicals_reasoning_helpers import (
@@ -34,10 +35,10 @@ from src.agents.technicals_reasoning_helpers import (
     _build_stat_arb_lines,
 )
 
-
 # ---------------------------------------------------------------------------
 # _build_mean_reversion_lines — post-NS-4 semantics
 # ---------------------------------------------------------------------------
+
 
 class TestNS4MeanReversionReasoningDirection:
     """_build_mean_reversion_lines must align with NS-4 flip:
@@ -52,15 +53,9 @@ class TestNS4MeanReversionReasoningDirection:
         lines = _build_mean_reversion_lines(metrics, signal="bullish")
         interp = _extract_interp(lines)
         # Post-NS-4: bullish = overbought → 解读 must mention 高于均值/上轨 (overbought)
-        assert "高于均值" in interp or "上轨" in interp, (
-            f"NS-4 flip: bullish=overbought, 解读 must describe overbought state (高于均值/上轨); "
-            f"got interp: {interp!r}"
-        )
+        assert "高于均值" in interp or "上轨" in interp, f"NS-4 flip: bullish=overbought, 解读 must describe overbought state (高于均值/上轨); " f"got interp: {interp!r}"
         # Must NOT describe oversold state (the pre-NS-4 bullish meaning)
-        assert "低于均值" not in interp and "下轨" not in interp, (
-            f"NS-4 flip: bullish=overbought, 解读 must NOT describe oversold (低于均值/下轨); "
-            f"got interp: {interp!r}"
-        )
+        assert "低于均值" not in interp and "下轨" not in interp, f"NS-4 flip: bullish=overbought, 解读 must NOT describe oversold (低于均值/下轨); " f"got interp: {interp!r}"
 
     def test_bearish_describes_oversold_not_overbought(self) -> None:
         """NS-4: bearish signal now means OVERSOLD (z<-2, price_vs_bb<0.2).
@@ -70,15 +65,9 @@ class TestNS4MeanReversionReasoningDirection:
         lines = _build_mean_reversion_lines(metrics, signal="bearish")
         interp = _extract_interp(lines)
         # Post-NS-4: bearish = oversold → 解读 must mention 低于均值/下轨
-        assert "低于均值" in interp or "下轨" in interp, (
-            f"NS-4 flip: bearish=oversold, 解读 must describe oversold state (低于均值/下轨); "
-            f"got interp: {interp!r}"
-        )
+        assert "低于均值" in interp or "下轨" in interp, f"NS-4 flip: bearish=oversold, 解读 must describe oversold state (低于均值/下轨); " f"got interp: {interp!r}"
         # Must NOT describe overbought state (the pre-NS-4 bearish meaning)
-        assert "高于均值" not in interp and "上轨" not in interp, (
-            f"NS-4 flip: bearish=oversold, 解读 must NOT describe overbought (高于均值/上轨); "
-            f"got interp: {interp!r}"
-        )
+        assert "高于均值" not in interp and "上轨" not in interp, f"NS-4 flip: bearish=oversold, 解读 must NOT describe overbought (高于均值/上轨); " f"got interp: {interp!r}"
 
     def test_neutral_unchanged(self) -> None:
         """Neutral branch is unaffected by NS-4 (no direction semantics)."""
@@ -93,6 +82,7 @@ class TestNS4MeanReversionReasoningDirection:
 # _build_stat_arb_lines — post-NS-4 semantics
 # ---------------------------------------------------------------------------
 
+
 class TestNS4StatArbReasoningDirection:
     """_build_stat_arb_lines must align with NS-4 flip:
     bullish = negative skew (左偏); bearish = positive skew (右偏).
@@ -105,12 +95,8 @@ class TestNS4StatArbReasoningDirection:
         metrics = {"hurst_exponent": 0.35, "skewness": -1.5, "kurtosis": 2.0}
         lines = _build_stat_arb_lines(metrics, signal="bullish")
         interp = _extract_interp(lines)
-        assert "左偏" in interp, (
-            f"NS-4 flip: bullish=neg-skew (左偏), 解读 must describe 左偏; got interp: {interp!r}"
-        )
-        assert "右偏" not in interp, (
-            f"NS-4 flip: bullish=neg-skew, 解读 must NOT describe 右偏; got interp: {interp!r}"
-        )
+        assert "左偏" in interp, f"NS-4 flip: bullish=neg-skew (左偏), 解读 must describe 左偏; got interp: {interp!r}"
+        assert "右偏" not in interp, f"NS-4 flip: bullish=neg-skew, 解读 must NOT describe 右偏; got interp: {interp!r}"
 
     def test_bearish_describes_right_skew_not_left(self) -> None:
         """NS-4: bearish signal now means POSITIVE skew (右偏).
@@ -119,12 +105,8 @@ class TestNS4StatArbReasoningDirection:
         metrics = {"hurst_exponent": 0.35, "skewness": 1.5, "kurtosis": 2.0}
         lines = _build_stat_arb_lines(metrics, signal="bearish")
         interp = _extract_interp(lines)
-        assert "右偏" in interp, (
-            f"NS-4 flip: bearish=pos-skew (右偏), 解读 must describe 右偏; got interp: {interp!r}"
-        )
-        assert "左偏" not in interp, (
-            f"NS-4 flip: bearish=pos-skew, 解读 must NOT describe 左偏; got interp: {interp!r}"
-        )
+        assert "右偏" in interp, f"NS-4 flip: bearish=pos-skew (右偏), 解读 must describe 右偏; got interp: {interp!r}"
+        assert "左偏" not in interp, f"NS-4 flip: bearish=pos-skew, 解读 must NOT describe 左偏; got interp: {interp!r}"
 
     def test_neutral_unchanged(self) -> None:
         """Neutral branch is unaffected by NS-4."""

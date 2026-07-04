@@ -373,13 +373,7 @@ def _write_replay_input_with_missing_rejected_entry_source_but_stored_watchlist_
             "buy_order_ticker_count": 0,
         },
         "watchlist": [],
-        "rejected_entries": [
-            {
-                key: value
-                for key, value in rejected_entry.items()
-                if key not in {"candidate_source", "candidate_reason_codes"}
-            }
-        ],
+        "rejected_entries": [{key: value for key, value in rejected_entry.items() if key not in {"candidate_source", "candidate_reason_codes"}}],
         "supplemental_short_trade_entries": [],
         "buy_order_tickers": [],
         "selection_targets": {ticker: evaluation.model_dump(mode="json") for ticker, evaluation in selection_targets.items()},
@@ -1607,11 +1601,7 @@ def test_replay_selection_target_candidate_entry_metric_grid_finds_selective_thr
     assert first_row is not None
     assert first_row["structural_variant"] == "baseline"
     assert first_row["filtered_candidate_entry_counts"] == {"watchlist_avoid_boundary_weak_structure_entry": 1}
-    selective_row = next(
-        row
-        for row in analysis["rows"]
-        if row["breakout_freshness_max"] == 0.05 and row["volume_expansion_quality_max"] == 0.05 and row["catalyst_freshness_max"] == 0.05
-    )
+    selective_row = next(row for row in analysis["rows"] if row["breakout_freshness_max"] == 0.05 and row["volume_expansion_quality_max"] == 0.05 and row["catalyst_freshness_max"] == 0.05)
     assert selective_row["candidate_entry_filter_observability"] == {
         "watchlist_avoid_boundary_weak_structure_entry": {
             "precondition_match_count": 2,

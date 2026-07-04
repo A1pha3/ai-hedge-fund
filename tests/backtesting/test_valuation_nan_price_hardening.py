@@ -16,6 +16,7 @@ the 5 calculators never produced NaN (latent defense-in-depth on the critical
 scoring path). Same principle here for the NAV core. Fix: treat NaN price as
 0.0 (position unvalued — conservative, the position cannot be marked).
 """
+
 from __future__ import annotations
 
 import math
@@ -40,11 +41,7 @@ def test_calculate_portfolio_value_nan_price_does_not_corrupt_nav(portfolio) -> 
     nan_prices = {"AAPL": 100.0, "MSFT": float("nan")}
     nan_nav = calculate_portfolio_value(portfolio, nan_prices)
     assert isinstance(nan_nav, float)
-    assert math.isfinite(nan_nav), (
-        "NaN price for one position must not make the entire NAV NaN; "
-        "a single NaN poisons sharpe/sortino/drawdown silently. Treat NaN "
-        "price as 0.0 (position unvalued), not as NaN propagation"
-    )
+    assert math.isfinite(nan_nav), "NaN price for one position must not make the entire NAV NaN; " "a single NaN poisons sharpe/sortino/drawdown silently. Treat NaN " "price as 0.0 (position unvalued), not as NaN propagation"
     # MSFT (NaN price) contributes 0; AAPL contributes 10*100=1000
     # nan_nav should equal cash + margin_used + 1000 (AAPL only)
     snap = portfolio.get_snapshot()
@@ -61,9 +58,7 @@ def test_compute_exposures_nan_price_does_not_corrupt(portfolio) -> None:
     exp = compute_exposures(portfolio, nan_prices)
     # All exposure values must be finite
     for key in ("Long Exposure", "Short Exposure", "Gross Exposure", "Net Exposure"):
-        assert math.isfinite(float(exp[key])), (
-            f"{key} must be finite — NaN price must not propagate to exposures"
-        )
+        assert math.isfinite(float(exp[key])), f"{key} must be finite — NaN price must not propagate to exposures"
     # AAPL contributes 1000 long; MSFT (NaN) contributes 0
     assert exp["Long Exposure"] == pytest.approx(1000.0)
 

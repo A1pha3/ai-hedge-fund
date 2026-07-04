@@ -233,9 +233,7 @@ def test_router_set_and_get_use_consistent_provider_tag():
 
     cache = _RouterTestCache()
     price_payload = [SimpleNamespace(model_dump=lambda: {"close": 10})]
-    router = DataRouter(
-        [_StubRouterProvider("good", price=DataResponse(data=price_payload, source="good"))]
-    )
+    router = DataRouter([_StubRouterProvider("good", price=DataResponse(data=price_payload, source="good"))])
     router.cache = cache
     router._last_health_check = datetime.now()  # skip _check_health
 

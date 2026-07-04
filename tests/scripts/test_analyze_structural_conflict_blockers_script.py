@@ -135,4 +135,3 @@ def test_analyze_structural_conflict_blockers_can_filter_trade_dates(tmp_path):
     assert analysis["trade_day_count"] == 1
     assert analysis["blocked_count"] == 1
     assert analysis["candidate_source_counts"] == {"watchlist_filter_diagnostics": 1}
-

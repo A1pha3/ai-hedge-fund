@@ -18,6 +18,7 @@ C234 (2026-06-28) 加了 as_of + staleness 诚实披露 + daily scheduling 重�
 绕过 conftest autouse fixture (默认 disable JSON loading 保 existing tests
 deterministic).
 """
+
 from __future__ import annotations
 
 import json
@@ -31,7 +32,6 @@ from src.screening.regime_winrate import (
     render_regime_multihorizon_line,
     load_latest_regime_recompute,
 )
-
 
 # ---------------------------------------------------------------------------
 # 测试辅助: 合成 JSON artifact + 显式恢复 loader
@@ -95,7 +95,7 @@ def _write_synthetic_json(
         },
         "regime_multihorizon_medians": {
             "crisis": {
-                "t5":  {"median": 3.98, "winrate": 0.689, "n": 1763},
+                "t5": {"median": 3.98, "winrate": 0.689, "n": 1763},
                 "t10": {"median": 4.66, "winrate": 0.646, "n": 1763},
                 "t15": {"median": t15_crisis_median, "winrate": 0.607, "n": 1763},
                 "t20": {"median": t20_crisis_median, "winrate": 0.587, "n": 1763},
@@ -103,7 +103,7 @@ def _write_synthetic_json(
                 "t30": {"median": t30_crisis_median, "winrate": 0.531, "n": t30_crisis_n},
             },
             "normal": {
-                "t5":  {"median": 1.12, "winrate": 0.567, "n": 5610},
+                "t5": {"median": 1.12, "winrate": 0.567, "n": 5610},
                 "t10": {"median": 1.78, "winrate": 0.565, "n": 5610},
                 "t15": {"median": 1.49, "winrate": 0.543, "n": 5610},
                 "t20": {"median": 0.11, "winrate": 0.502, "n": 5610},
@@ -111,7 +111,7 @@ def _write_synthetic_json(
                 "t30": {"median": -3.09, "winrate": 0.444, "n": 5610},
             },
             "risk_off": {
-                "t5":  {"median": 0.80, "winrate": 0.527, "n": 620},
+                "t5": {"median": 0.80, "winrate": 0.527, "n": 620},
                 "t10": {"median": 4.91, "winrate": 0.692, "n": 620},
                 "t15": {"median": 0.32, "winrate": 0.506, "n": 620},
                 "t20": {"median": -2.80, "winrate": 0.415, "n": 620},
@@ -309,9 +309,7 @@ class TestRenderRegimeMultihorizonLineJsonOverride:
         _restore_real_loader(monkeypatch)
         # as_of = today, 不 stale
         _write_synthetic_json(tmp_path, as_of=date.today().isoformat())
-        line = render_regime_multihorizon_line(
-            "crisis", reports_dir=tmp_path, today=date.today()
-        )
+        line = render_regime_multihorizon_line("crisis", reports_dir=tmp_path, today=date.today())
         assert "过时" not in line
 
 

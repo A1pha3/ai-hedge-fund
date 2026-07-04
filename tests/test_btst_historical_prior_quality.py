@@ -10,6 +10,7 @@ When off: behaviour identical to baseline (P3 is a no-op).
 
 Prior quality classification returns one of: execution_ready / watch_only / reject
 """
+
 from __future__ import annotations
 
 import pytest
@@ -394,9 +395,7 @@ class TestClassifyPriorQualityProfileThresholds:
             next_close_positive_rate=0.60,
             min_n_selected=10,
         )
-        assert result.selected_blocked is True, (
-            "n=7 must be selected_blocked when min_n_selected=10"
-        )
+        assert result.selected_blocked is True, "n=7 must be selected_blocked when min_n_selected=10"
 
     def test_custom_min_n_selected_below_default_relaxes_bar(self):
         """When min_n_selected=3, n=4 must not block selected (default threshold of 5 would block)."""
@@ -406,9 +405,7 @@ class TestClassifyPriorQualityProfileThresholds:
             next_close_positive_rate=0.60,
             min_n_selected=3,
         )
-        assert result.selected_blocked is False, (
-            "n=4 must NOT be selected_blocked when min_n_selected=3"
-        )
+        assert result.selected_blocked is False, "n=4 must NOT be selected_blocked when min_n_selected=3"
 
     def test_custom_min_n_near_miss_raises_bar(self):
         """When min_n_near_miss=5, n=3 must block near_miss (default of 3 would allow it)."""
@@ -419,9 +416,7 @@ class TestClassifyPriorQualityProfileThresholds:
             min_n_selected=5,
             min_n_near_miss=5,
         )
-        assert result.near_miss_blocked is True, (
-            "n=3 must be near_miss_blocked when min_n_near_miss=5"
-        )
+        assert result.near_miss_blocked is True, "n=3 must be near_miss_blocked when min_n_near_miss=5"
 
     def test_custom_min_n_near_miss_below_default_relaxes_bar(self):
         """When min_n_near_miss=1, n=2 must not block near_miss (default of 3 would block)."""
@@ -431,9 +426,7 @@ class TestClassifyPriorQualityProfileThresholds:
             next_close_positive_rate=0.60,
             min_n_near_miss=1,
         )
-        assert result.near_miss_blocked is False, (
-            "n=2 must NOT be near_miss_blocked when min_n_near_miss=1"
-        )
+        assert result.near_miss_blocked is False, "n=2 must NOT be near_miss_blocked when min_n_near_miss=1"
 
     def test_custom_close_positive_min_raises_bar(self):
         """When close_positive_min=0.70, rate=0.55 must be watch_only (default 0.50 would pass)."""
@@ -443,9 +436,7 @@ class TestClassifyPriorQualityProfileThresholds:
             next_close_positive_rate=0.55,
             close_positive_min=0.70,
         )
-        assert result.label == PriorQualityLabel.WATCH_ONLY, (
-            "rate=0.55 must be WATCH_ONLY when close_positive_min=0.70"
-        )
+        assert result.label == PriorQualityLabel.WATCH_ONLY, "rate=0.55 must be WATCH_ONLY when close_positive_min=0.70"
 
     def test_custom_close_positive_min_below_default_relaxes_bar(self):
         """When close_positive_min=0.30, rate=0.40 must not be watch_only (default 0.50 would)."""
@@ -455,9 +446,7 @@ class TestClassifyPriorQualityProfileThresholds:
             next_close_positive_rate=0.40,
             close_positive_min=0.30,
         )
-        assert result.label == PriorQualityLabel.EXECUTION_READY, (
-            "rate=0.40 must be EXECUTION_READY when close_positive_min=0.30"
-        )
+        assert result.label == PriorQualityLabel.EXECUTION_READY, "rate=0.40 must be EXECUTION_READY when close_positive_min=0.30"
 
     def test_default_thresholds_unchanged(self):
         """Verify default thresholds still produce same outcomes as the spec."""
@@ -516,16 +505,10 @@ class TestApplyGateHonorsProfileThresholds:
         }
         targets = {"000001": ev}
 
-        with use_short_trade_target_profile(
-            overrides={"p3_prior_quality_min_n_selected": 10}
-        ):
-            apply_p3_prior_quality_gate_to_selection_targets(
-                targets, mode="enforce", prior_by_ticker={"000001": prior}
-            )
+        with use_short_trade_target_profile(overrides={"p3_prior_quality_min_n_selected": 10}):
+            apply_p3_prior_quality_gate_to_selection_targets(targets, mode="enforce", prior_by_ticker={"000001": prior})
 
-        assert ev.p3_execution_blocked is True, (
-            "n=7 must be selected_blocked when profile.p3_prior_quality_min_n_selected=10"
-        )
+        assert ev.p3_execution_blocked is True, "n=7 must be selected_blocked when profile.p3_prior_quality_min_n_selected=10"
 
     def test_profile_min_n_selected_relaxed_allows_lower_n(self):
         """When active profile has min_n_selected=3, n=4 must NOT be blocked."""
@@ -546,16 +529,10 @@ class TestApplyGateHonorsProfileThresholds:
         }
         targets = {"000002": ev}
 
-        with use_short_trade_target_profile(
-            overrides={"p3_prior_quality_min_n_selected": 3}
-        ):
-            apply_p3_prior_quality_gate_to_selection_targets(
-                targets, mode="enforce", prior_by_ticker={"000002": prior}
-            )
+        with use_short_trade_target_profile(overrides={"p3_prior_quality_min_n_selected": 3}):
+            apply_p3_prior_quality_gate_to_selection_targets(targets, mode="enforce", prior_by_ticker={"000002": prior})
 
-        assert ev.p3_execution_blocked is False, (
-            "n=4 must NOT be blocked when profile.p3_prior_quality_min_n_selected=3"
-        )
+        assert ev.p3_execution_blocked is False, "n=4 must NOT be blocked when profile.p3_prior_quality_min_n_selected=3"
 
     def test_profile_min_n_near_miss_overrides_default(self):
         """When active profile has min_n_near_miss=5, n=3 must block near_miss."""
@@ -582,13 +559,9 @@ class TestApplyGateHonorsProfileThresholds:
                 "p3_prior_quality_min_n_selected": 5,
             }
         ):
-            apply_p3_prior_quality_gate_to_selection_targets(
-                targets, mode="enforce", prior_by_ticker={"000003": prior}
-            )
+            apply_p3_prior_quality_gate_to_selection_targets(targets, mode="enforce", prior_by_ticker={"000003": prior})
 
-        assert ev.p3_execution_blocked is True, (
-            "n=3 near_miss must be blocked when profile.p3_prior_quality_min_n_near_miss=5"
-        )
+        assert ev.p3_execution_blocked is True, "n=3 near_miss must be blocked when profile.p3_prior_quality_min_n_near_miss=5"
 
     def test_profile_close_positive_min_overrides_default(self):
         """When active profile has close_positive_min=0.70, rate=0.55 must be watch_only/blocked."""
@@ -609,16 +582,10 @@ class TestApplyGateHonorsProfileThresholds:
         }
         targets = {"000004": ev}
 
-        with use_short_trade_target_profile(
-            overrides={"p3_prior_quality_close_positive_min": 0.70}
-        ):
-            apply_p3_prior_quality_gate_to_selection_targets(
-                targets, mode="enforce", prior_by_ticker={"000004": prior}
-            )
+        with use_short_trade_target_profile(overrides={"p3_prior_quality_close_positive_min": 0.70}):
+            apply_p3_prior_quality_gate_to_selection_targets(targets, mode="enforce", prior_by_ticker={"000004": prior})
 
-        assert ev.p3_execution_blocked is True, (
-            "rate=0.55 must be blocked when profile.p3_prior_quality_close_positive_min=0.70"
-        )
+        assert ev.p3_execution_blocked is True, "rate=0.55 must be blocked when profile.p3_prior_quality_close_positive_min=0.70"
 
     def test_default_profile_produces_same_behavior_as_hardcoded(self):
         """Default profile thresholds must produce identical outcomes to old hardcoded behavior."""
@@ -641,10 +608,6 @@ class TestApplyGateHonorsProfileThresholds:
         targets = {"000005": ev}
         # Use default profile (no overrides)
         with use_short_trade_target_profile():
-            apply_p3_prior_quality_gate_to_selection_targets(
-                targets, mode="enforce", prior_by_ticker={"000005": prior}
-            )
+            apply_p3_prior_quality_gate_to_selection_targets(targets, mode="enforce", prior_by_ticker={"000005": prior})
 
-        assert ev.p3_execution_blocked is True, (
-            "n=4 must still be blocked under default profile (backward compat)"
-        )
+        assert ev.p3_execution_blocked is True, "n=4 must still be blocked under default profile (backward compat)"

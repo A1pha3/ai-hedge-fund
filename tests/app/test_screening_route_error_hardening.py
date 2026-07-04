@@ -170,15 +170,8 @@ def test_all_screening_routes_are_safe_route_wrapped() -> None:
     the wrapper. A bare handler has no such attribute, so this detects any
     future endpoint added without the decorator.
     """
-    route_paths = {
-        r.path for r in screening_router.routes if hasattr(r, "path")
-    }
+    route_paths = {r.path for r in screening_router.routes if hasattr(r, "path")}
     assert _EXPECTED_SAFE_ROUTE_PATHS <= route_paths
 
-    unwrapped = [
-        r.path
-        for r in screening_router.routes
-        if hasattr(r, "path") and r.path in _EXPECTED_SAFE_ROUTE_PATHS
-        and not hasattr(r.endpoint, "__wrapped__")
-    ]
+    unwrapped = [r.path for r in screening_router.routes if hasattr(r, "path") and r.path in _EXPECTED_SAFE_ROUTE_PATHS and not hasattr(r.endpoint, "__wrapped__")]
     assert unwrapped == [], f"screening routes missing @safe_route: {unwrapped}"

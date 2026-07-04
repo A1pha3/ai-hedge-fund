@@ -19,8 +19,7 @@ def _patch_backfill_deps(monkeypatch, report_dir: Path, lock_path: Path, lock_ac
     import src.screening.recommendation_tracker as tracker
 
     monkeypatch.setattr(consec, "resolve_report_dir", lambda: report_dir)
-    monkeypatch.setattr(main_mod, "compute_auto_screening_results",
-                        lambda td, top_n=300: {"date": td, "recommendations": []})
+    monkeypatch.setattr(main_mod, "compute_auto_screening_results", lambda td, top_n=300: {"date": td, "recommendations": []})
     monkeypatch.setattr(tracker, "update_tracking_history", lambda **kw: 0)
 
     # patch c292 锁 helper (backfill 从 src.main import)
@@ -60,11 +59,7 @@ def test_backfill_one_date_writes_report_atomically(tmp_path: Path, monkeypatch)
         pass
 
     raw = report_path.read_text(encoding="utf-8")
-    assert raw.strip(), (
-        "prior backfill report must not be truncated-empty after a crashed write — "
-        "non-atomic write_text truncates on open (R88 corrupt-report CRASH vector, "
-        "backfill 路径绕过 c293 _save_json_report 的同族残留)"
-    )
+    assert raw.strip(), "prior backfill report must not be truncated-empty after a crashed write — " "non-atomic write_text truncates on open (R88 corrupt-report CRASH vector, " "backfill 路径绕过 c293 _save_json_report 的同族残留)"
     json.loads(raw)
 
 

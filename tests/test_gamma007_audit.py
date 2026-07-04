@@ -59,9 +59,7 @@ class TestVolatilityAdjustedLimitContinuity:
         """Higher volatility must always produce lower or equal allocation."""
         limits = [calculate_volatility_adjusted_limit(v) for v in np.linspace(0.01, 1.5, 100)]
         for i in range(1, len(limits)):
-            assert limits[i] <= limits[i - 1] + 1e-10, (
-                f"Non-monotonic at index {i}: {limits[i]:.6f} > {limits[i-1]:.6f}"
-            )
+            assert limits[i] <= limits[i - 1] + 1e-10, f"Non-monotonic at index {i}: {limits[i]:.6f} > {limits[i-1]:.6f}"
 
     def test_anchor_points_match_expected(self):
         """The five anchor points must produce the documented allocations."""

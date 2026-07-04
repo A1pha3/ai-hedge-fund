@@ -7,6 +7,7 @@
   - 同行业同 score_b (ties)
   - 无 industry_sw 标记 → 归入 "未知"
 """
+
 from __future__ import annotations
 
 from src.screening.models import FusedScore

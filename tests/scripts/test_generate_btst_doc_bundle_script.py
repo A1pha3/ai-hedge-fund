@@ -877,9 +877,7 @@ def test_compare_btst_doc_bundle_profiles_surfaces_market_gate_override_in_decis
     assert any("市场门控" in reason for reason in decision_card["recommendation_reasons"])
 
 
-def test_compare_btst_doc_bundle_profiles_does_not_mark_market_gate_override_when_buy_orders_cleared_is_false_without_enforcement(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_compare_btst_doc_bundle_profiles_does_not_mark_market_gate_override_when_buy_orders_cleared_is_false_without_enforcement(tmp_path: Path, monkeypatch) -> None:
     """P0A correctness (2026-06-04): `buy_orders_cleared=False` alone is ambiguous and must NOT trigger
     market_gate_override. Override must be derived from `enforced=True`, `veto_owner=market_gate`,
     `market_gate=halt`, or `regime_gate_level in {crisis, halt, risk_off}`.
@@ -932,9 +930,7 @@ def test_compare_btst_doc_bundle_profiles_does_not_mark_market_gate_override_whe
     assert decision_card["buy_orders_cleared"] is False
 
 
-def test_compare_btst_doc_bundle_profiles_marks_market_gate_override_when_halt_with_enforcement(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_compare_btst_doc_bundle_profiles_marks_market_gate_override_when_halt_with_enforcement(tmp_path: Path, monkeypatch) -> None:
     """P0A correctness (2026-06-04): `market_gate=halt` + `gate_enforced=True` must still activate override,
     even when no orders were cleared (blocked gate that had no orders to clear is a real override).
     """
@@ -987,9 +983,7 @@ def test_compare_btst_doc_bundle_profiles_marks_market_gate_override_when_halt_w
     assert any("市场门控" in reason for reason in decision_card["recommendation_reasons"])
 
 
-def test_compare_btst_doc_bundle_profiles_does_not_treat_risk_off_as_market_gate_value(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_compare_btst_doc_bundle_profiles_does_not_treat_risk_off_as_market_gate_value(tmp_path: Path, monkeypatch) -> None:
     """P0A correctness (2026-06-04): `risk_off` is a regime_gate_level, not a market_gate value.
     Market_gate must not be set to `risk_off`; override activation flows from regime_gate_level mapping.
     """
@@ -1037,7 +1031,6 @@ def test_compare_btst_doc_bundle_profiles_does_not_treat_risk_off_as_market_gate
     assert decision_card["market_gate"] != "risk_off"
     assert decision_card["market_gate"] == "shadow_only"
     assert decision_card["regime_gate_level"] == "risk_off"
-
 
 
 def test_p0b_comparison_scope_is_always_doc_bundle_rendering(tmp_path: Path, monkeypatch) -> None:
@@ -1901,9 +1894,7 @@ def test_generate_btst_doc_bundle_renders_institutional_control_sections(tmp_pat
     checklist_doc = (output_dir / "BTST-20260529-EXEC-CHECKLIST.md").read_text(encoding="utf-8")
     quality_summary_path = Path(result["quality_summary_json_path"])
     quality_summary = json.loads(quality_summary_path.read_text(encoding="utf-8"))
-    ledger_payload = json.loads(
-        (output_dir / "20260529-btst-decision-review-ledger.json").read_text(encoding="utf-8")
-    )
+    ledger_payload = json.loads((output_dir / "20260529-btst-decision-review-ledger.json").read_text(encoding="utf-8"))
 
     assert "## 盘前控制塔" in llm_doc
     assert "模型原始倾向：`trade_allowed`" in llm_doc
@@ -2043,19 +2034,21 @@ def _generate_btst_doc_bundle_gate_outputs(tmp_path: Path, *, gate_locked: bool)
                 "position_scale": 0.75 if gate_locked else 1.0,
                 "regime_gate_reasons": ["breadth_weak", "position_scale_reduced"] if gate_locked else ["breadth_supportive"],
             },
-            "buy_orders": [
-                {
-                    "ticker": "300408",
-                    "shares": 400,
-                    "amount": 4000.0,
-                    "risk_budget_ratio": 0.5,
-                    "risk_budget_gate": "halt_relief",
-                    "execution_contract_bucket": "halt_promoted",
-                    "constraint_binding": "vol",
-                }
-            ]
-            if gate_locked
-            else [],
+            "buy_orders": (
+                [
+                    {
+                        "ticker": "300408",
+                        "shares": 400,
+                        "amount": 4000.0,
+                        "risk_budget_ratio": 0.5,
+                        "risk_budget_gate": "halt_relief",
+                        "execution_contract_bucket": "halt_promoted",
+                        "constraint_binding": "vol",
+                    }
+                ]
+                if gate_locked
+                else []
+            ),
             "funnel_diagnostics": {
                 "btst_regime_gate_enforcement": {
                     "enforced": gate_locked,
@@ -2397,14 +2390,7 @@ def test_generate_btst_doc_bundle_prefers_canonical_names_from_sibling_snapshots
         "# 600176（XD中国巨）数据快照 - 2026-05-29\n\n- **股票名称**：XD中国巨\n",
         encoding="utf-8",
     )
-    clean_summary = (
-        reports_root
-        / "paper_trading_20260408_20260408_live_m2_7_short_trade_only_20260409_plan"
-        / "data_snapshots"
-        / "600176"
-        / "2026-04-08"
-        / "summary.md"
-    )
+    clean_summary = reports_root / "paper_trading_20260408_20260408_live_m2_7_short_trade_only_20260409_plan" / "data_snapshots" / "600176" / "2026-04-08" / "summary.md"
     clean_summary.parent.mkdir(parents=True, exist_ok=True)
     clean_summary.write_text(
         "# 600176（中国巨石）数据快照 - 2026-04-08\n\n- **股票名称**：中国巨石\n",

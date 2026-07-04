@@ -127,6 +127,4 @@ class TestBatchVsSerial:
         batch_elapsed = time.perf_counter() - t0
 
         # 批量应显著快于串行 (至少 5x)
-        assert batch_elapsed * 5 < serial_elapsed, (
-            f"batch={batch_elapsed:.3f}s should be much less than serial={serial_elapsed:.3f}s"
-        )
+        assert batch_elapsed * 5 < serial_elapsed, f"batch={batch_elapsed:.3f}s should be much less than serial={serial_elapsed:.3f}s"

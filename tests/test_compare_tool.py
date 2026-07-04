@@ -363,6 +363,7 @@ class TestMissingData:
         for m in report.metrics:
             # normalized 不应是 NaN
             import math as _math
+
             assert not _math.isnan(m.normalized), f"{m.ticker}/{m.metric_name} NaN normalized"
             assert 0.0 <= m.normalized <= 100.0
 
@@ -497,6 +498,7 @@ class TestWebEndpoint:
         from fastapi.testclient import TestClient
 
         from app.backend.routes.screening import router
+
         app = FastAPI()
         app.include_router(router)
         client = TestClient(app)
@@ -523,6 +525,7 @@ class TestWebEndpoint:
         from fastapi.testclient import TestClient
 
         from app.backend.routes.screening import router
+
         app = FastAPI()
         app.include_router(router)
         client = TestClient(app)
@@ -539,6 +542,7 @@ class TestWebEndpoint:
         from fastapi.testclient import TestClient
 
         from app.backend.routes.screening import router
+
         app = FastAPI()
         app.include_router(router)
         client = TestClient(app)

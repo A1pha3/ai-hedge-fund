@@ -46,9 +46,7 @@ def test_build_focus_tickers_backfills_high_value_strict_no_candidate_misses() -
                     "t_plus_2_close_return": 0.3953,
                 },
             ],
-            "no_candidate_entry_summary": {
-                "top_ticker_rows": [{"ticker": "300720"}, {"ticker": "003036"}, {"ticker": "603778"}]
-            },
+            "no_candidate_entry_summary": {"top_ticker_rows": [{"ticker": "300720"}, {"ticker": "003036"}, {"ticker": "603778"}]},
         },
         {
             "top_absent_from_candidate_pool_tickers": ["300720", "003036", "603778"],
@@ -546,16 +544,16 @@ def test_analyze_btst_candidate_pool_recall_dossier_marks_legacy_unknown_shadow_
     _write_json(
         snapshots_root / "candidate_pool_20260327_top300.json",
         [
-                {
-                    "ticker": "600001",
-                    "name": "A",
-                    "industry_sw": "银行",
-                    "market_cap": 10.0,
-                    "avg_volume_20d": 165000.0,
-                    "listing_date": "20200101",
-                }
-            ],
-        )
+            {
+                "ticker": "600001",
+                "name": "A",
+                "industry_sw": "银行",
+                "market_cap": 10.0,
+                "avg_volume_20d": 165000.0,
+                "listing_date": "20200101",
+            }
+        ],
+    )
     _write_json(
         snapshots_root / "candidate_pool_20260327_top300_shadow.json",
         {
@@ -647,7 +645,7 @@ def test_analyze_btst_candidate_pool_recall_dossier_uses_local_prices_fallback_f
                 "name": "A",
                 "industry_sw": "银行",
                 "market_cap": 10.0,
-                    "avg_volume_20d": 165000.0,
+                "avg_volume_20d": 165000.0,
                 "listing_date": "20200101",
             }
         ],
@@ -996,6 +994,7 @@ def test_analyze_btst_candidate_pool_recall_dossier_backfills_latest_shadow_visi
     assert analysis["shadow_visible_focus_tickers"] == ["300683"]
     assert analysis["shadow_visible_focus_profiles"][0]["candidate_pool_shadow_lane"] == "layer_a_liquidity_corridor"
 
+
 def test_analyze_btst_candidate_pool_recall_dossier_uses_tradeable_pool_stock_basic_fallback(monkeypatch, tmp_path: Path) -> None:
     reports_root = tmp_path / "data" / "reports"
     snapshots_root = tmp_path / "data" / "snapshots"
@@ -1039,16 +1038,16 @@ def test_analyze_btst_candidate_pool_recall_dossier_uses_tradeable_pool_stock_ba
     _write_json(
         snapshots_root / "candidate_pool_20260331_top300.json",
         [
-                {
-                    "ticker": "600001",
-                    "name": "A",
-                    "industry_sw": "银行",
-                    "market_cap": 10.0,
-                    "avg_volume_20d": 165000.0,
-                    "listing_date": "20200101",
-                }
-            ],
-        )
+            {
+                "ticker": "600001",
+                "name": "A",
+                "industry_sw": "银行",
+                "market_cap": 10.0,
+                "avg_volume_20d": 165000.0,
+                "listing_date": "20200101",
+            }
+        ],
+    )
     _write_json(
         snapshots_root / "candidate_pool_20260331_top300_shadow.json",
         {
@@ -1058,10 +1057,10 @@ def test_analyze_btst_candidate_pool_recall_dossier_uses_tradeable_pool_stock_ba
                 "pool_size": 300,
                 "selected_count": 300,
                 "overflow_count": 10,
-                    "selected_cutoff_avg_volume_20d": 165000.0,
-                    "shadow_recall_complete": True,
-                    "shadow_recall_status": "computed",
-                    "selected_tickers": [],
+                "selected_cutoff_avg_volume_20d": 165000.0,
+                "shadow_recall_complete": True,
+                "shadow_recall_status": "computed",
+                "selected_tickers": [],
                 "tickers": [],
             },
         },

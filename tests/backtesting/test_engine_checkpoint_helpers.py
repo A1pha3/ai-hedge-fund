@@ -15,6 +15,7 @@ These tests lock in two guarantees:
    (treats it as missing) instead of raising, so a stale corrupt file can never
    wedge the session.
 """
+
 from __future__ import annotations
 
 import json

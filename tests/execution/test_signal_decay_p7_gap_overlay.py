@@ -153,10 +153,7 @@ def test_apply_signal_decay_p7_warn_branch_preserves_zero_risk_budget_r20_17_reg
 
     assert len(plan.buy_orders) == 1
     # 关键: 折扣后应保持 0.0, 而非被 0.85 覆盖为 ~0.85
-    assert plan.buy_orders[0].risk_budget_ratio == 0.0, (
-        f"risk_budget_ratio=0.0 折扣后应保持 0, 实际 {plan.buy_orders[0].risk_budget_ratio} "
-        f"(R20.17 Bug C 回归: or 1.0)"
-    )
+    assert plan.buy_orders[0].risk_budget_ratio == 0.0, f"risk_budget_ratio=0.0 折扣后应保持 0, 实际 {plan.buy_orders[0].risk_budget_ratio} " f"(R20.17 Bug C 回归: or 1.0)"
 
 
 def test_apply_signal_decay_p7_warn_branch_default_risk_budget_1_0(monkeypatch):
@@ -171,9 +168,7 @@ def test_apply_signal_decay_p7_warn_branch_default_risk_budget_1_0(monkeypatch):
 
     assert len(plan.buy_orders) == 1
     # 默认 P7 warn discount = 0.5; 1.0 * 0.5 = 0.5
-    assert plan.buy_orders[0].risk_budget_ratio == pytest.approx(0.5), (
-        f"默认 risk_budget_ratio=1.0 折扣后应 = 0.5, 实际 {plan.buy_orders[0].risk_budget_ratio}"
-    )
+    assert plan.buy_orders[0].risk_budget_ratio == pytest.approx(0.5), f"默认 risk_budget_ratio=1.0 折扣后应 = 0.5, 实际 {plan.buy_orders[0].risk_budget_ratio}"
 
 
 def test_apply_signal_decay_zero_atr_does_not_cancel_normal_gap_up(monkeypatch):
@@ -191,13 +186,11 @@ def test_apply_signal_decay_zero_atr_does_not_cancel_normal_gap_up(monkeypatch):
         plan,
         "20240304",
         open_gap_pct={"000001": 0.001},  # tiny normal gap up (0.1%)
-        atr_values={"000001": 0.0},      # invalid / unknown ATR
+        atr_values={"000001": 0.0},  # invalid / unknown ATR
     )
 
     # Order must survive — a tiny gap with unknown ATR is not an abnormal gap.
-    assert len(plan.buy_orders) == 1, (
-        f"ATR=0 + 0.1% gap should NOT cancel the buy order, got alerts: {plan.risk_alerts}"
-    )
+    assert len(plan.buy_orders) == 1, f"ATR=0 + 0.1% gap should NOT cancel the buy order, got alerts: {plan.risk_alerts}"
     assert not any("cancel_buy_gap_open" in alert for alert in plan.risk_alerts)
 
 

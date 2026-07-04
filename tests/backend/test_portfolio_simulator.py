@@ -104,7 +104,11 @@ class TestApplyAdjustments:
         adjustments = [AdjustmentItem(ticker="AAPL", operation="cancel")]
 
         adj_pos, adj_dec, results, _ = apply_adjustments(
-            positions, {"AAPL": 190.0}, decisions, 10000.0, adjustments,
+            positions,
+            {"AAPL": 190.0},
+            decisions,
+            10000.0,
+            adjustments,
         )
 
         assert results["AAPL"].simulated_action == "hold"
@@ -120,7 +124,11 @@ class TestApplyAdjustments:
         adjustments = [AdjustmentItem(ticker="MSFT", operation="reduce", reduce_pct=0.5)]
 
         adj_pos, _, results, adj_cash = apply_adjustments(
-            positions, {"MSFT": 420.0}, decisions, 10000.0, adjustments,
+            positions,
+            {"MSFT": 420.0},
+            decisions,
+            10000.0,
+            adjustments,
         )
 
         assert results["MSFT"].simulated_action == "sell"
@@ -137,7 +145,11 @@ class TestApplyAdjustments:
         adjustments = [AdjustmentItem(ticker="NVDA", operation="reduce", reduce_pct=0.5)]
 
         adj_pos, _, results, adj_cash = apply_adjustments(
-            positions, {"NVDA": 510.0}, decisions, 10000.0, adjustments,
+            positions,
+            {"NVDA": 510.0},
+            decisions,
+            10000.0,
+            adjustments,
         )
 
         assert results["NVDA"].simulated_action == "cover"
@@ -151,7 +163,11 @@ class TestApplyAdjustments:
         decisions = {"AAPL": DecisionInput(action="hold", quantity=0)}
 
         adj_pos, _, results, _ = apply_adjustments(
-            positions, {"AAPL": 190.0}, decisions, 10000.0, [],
+            positions,
+            {"AAPL": 190.0},
+            decisions,
+            10000.0,
+            [],
         )
 
         assert results["AAPL"].operation_applied is None
@@ -165,7 +181,11 @@ class TestApplyAdjustments:
         adjustments = [AdjustmentItem(ticker="TSLA", operation="reduce", reduce_pct=0.25)]
 
         adj_pos, _, results, adj_cash = apply_adjustments(
-            positions, {"TSLA": 260.0}, {}, 50000.0, adjustments,
+            positions,
+            {"TSLA": 260.0},
+            {},
+            50000.0,
+            adjustments,
         )
 
         assert results["TSLA"].simulated_action == "sell"
@@ -226,10 +246,13 @@ class TestSimulateAdjustmentEndpoint:
         assert body["before"]["total_long"] > body["after"]["total_long"]
 
     def test_empty_payload_returns_400(self, client):
-        resp = client.post("/portfolio/simulate-adjustment", json={
-            "positions": {},
-            "decisions": {},
-        })
+        resp = client.post(
+            "/portfolio/simulate-adjustment",
+            json={
+                "positions": {},
+                "decisions": {},
+            },
+        )
         assert resp.status_code == 400
 
     def test_reduce_half_decreases_position_count_if_fully_sold(self, client):

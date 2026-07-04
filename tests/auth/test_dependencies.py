@@ -95,6 +95,7 @@ def auth_header(token: str) -> dict:
 
 # ---- get_current_user ----
 
+
 class TestGetCurrentUser:
     """Tests for the get_current_user dependency."""
 
@@ -150,6 +151,7 @@ class TestGetCurrentUser:
 
 # ---- require_admin ----
 
+
 class TestRequireAdmin:
     """Tests for the require_admin dependency."""
 
@@ -171,6 +173,7 @@ class TestRequireAdmin:
 
 
 # ---- Locked account ----
+
 
 class TestLockedAccount:
     """Test locked account rejection in get_current_user."""
@@ -194,7 +197,7 @@ class TestLockedAccount:
 
         # Create a locked user
         db = TS()
-        from datetime import timedelta
+
         locked_user = User(
             username="locked_guy",
             password_hash=hash_password("Lock1234"),
@@ -221,6 +224,7 @@ class TestLockedAccount:
 
 
 # ---- AUTH_DISABLED ----
+
 
 class TestAuthDisabled:
     """Tests for AUTH_DISABLED=true (development bypass)."""

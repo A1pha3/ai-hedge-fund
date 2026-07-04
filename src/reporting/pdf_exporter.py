@@ -294,7 +294,7 @@ class _ScreeningPDF(FPDF):
                 self.ln(_TABLE_HEADER_H)
                 self._set_font("", self.config.table_row_size)
 
-            use_alt = (idx % 2 == 1)
+            use_alt = idx % 2 == 1
             for i, cell in enumerate(row):
                 if use_alt:
                     self.set_fill_color(*_COLOR_ROW_ALT)
@@ -304,7 +304,7 @@ class _ScreeningPDF(FPDF):
                 self.set_text_color(*color)
                 text = _safe_text("" if cell is None else str(cell), self.font_name)
                 # 数字列右对齐
-                align = "R" if i > 0 and any(ch.isdigit() for ch in text) and not any('一' <= c <= '鿿' for c in text) else "C"
+                align = "R" if i > 0 and any(ch.isdigit() for ch in text) and not any("一" <= c <= "鿿" for c in text) else "C"
                 # 第一列 (ticker / 行业名) 左对齐
                 if i == 0:
                     align = "L"
@@ -361,11 +361,7 @@ def _render_title_page(pdf: _ScreeningPDF, report_data: dict) -> None:
 
     pdf.ln(4)
     pdf._section("免责声明")
-    pdf._paragraph(
-        "本报告由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。"
-        "报告中所有信号、评分、决策均为模型输出, 实际投资需结合个人风险承受能力与最新市场情况。"
-        "历史回测表现不代表未来收益。"
-    )
+    pdf._paragraph("本报告由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。" "报告中所有信号、评分、决策均为模型输出, 实际投资需结合个人风险承受能力与最新市场情况。" "历史回测表现不代表未来收益。")
 
 
 def _render_market_state(pdf: _ScreeningPDF, report_data: dict) -> None:
@@ -404,12 +400,14 @@ def _render_industry_rotation(pdf: _ScreeningPDF, report_data: dict) -> None:
         # null 降级 0.0 让 section 继续渲染。
         momentum = safe_float(sig.get("momentum_score"))
         color = _COLOR_BUY if momentum > 5 else (_COLOR_AVOID if momentum < -5 else _COLOR_WATCH)
-        rows.append([
-            sig.get("industry_name", ""),
-            f"{momentum:+.1f}",
-            f"{safe_float(sig.get('avg_score_b')):+.2f}",
-            int(sig.get("candidate_count", 0) or 0),
-        ])
+        rows.append(
+            [
+                sig.get("industry_name", ""),
+                f"{momentum:+.1f}",
+                f"{safe_float(sig.get('avg_score_b')):+.2f}",
+                int(sig.get("candidate_count", 0) or 0),
+            ]
+        )
         row_colors.append([_COLOR_TEXT, color, _COLOR_TEXT, _COLOR_TEXT])
     pdf._table(headers, widths, rows, row_colors=row_colors)
 
@@ -463,26 +461,30 @@ def _render_recommendations(pdf: _ScreeningPDF, report_data: dict) -> None:
         # PDF 单元格显示 "n/a" 而非 "+0.0000", 让用户一眼区分"真实 0 分"
         # vs "数据残缺降级为 0", 不会把降级 0.0 误读为真实评分校准信任度。
         score_b_display = "n/a" if score_b_is_missing else f"{score_b:+.4f}"
-        rows.append([
-            rec.get("ticker", ""),
-            rec.get("name", "") or "-",
-            rec.get("industry_sw", "") or "-",
-            score_b_display,
-            decision,
-            consecutive_days,
-            decay_text,
-        ])
-        row_colors.append([
-            _COLOR_TEXT,
-            _COLOR_TEXT,
-            _COLOR_MUTED,
-            # 残缺 score_b 用 _COLOR_MUTED (灰) 区分, 不触发 BUY/AVOID 着色
-            # (避免把降级 0.0 染成红色 AVOID 误导用户)。
-            _COLOR_MUTED if score_b_is_missing else (_COLOR_BUY if score_b > 0 else _COLOR_AVOID),
-            decision_color,
-            _COLOR_BUY if consecutive_days >= 3 else _COLOR_TEXT,
-            decay_color,
-        ])
+        rows.append(
+            [
+                rec.get("ticker", ""),
+                rec.get("name", "") or "-",
+                rec.get("industry_sw", "") or "-",
+                score_b_display,
+                decision,
+                consecutive_days,
+                decay_text,
+            ]
+        )
+        row_colors.append(
+            [
+                _COLOR_TEXT,
+                _COLOR_TEXT,
+                _COLOR_MUTED,
+                # 残缺 score_b 用 _COLOR_MUTED (灰) 区分, 不触发 BUY/AVOID 着色
+                # (避免把降级 0.0 染成红色 AVOID 误导用户)。
+                _COLOR_MUTED if score_b_is_missing else (_COLOR_BUY if score_b > 0 else _COLOR_AVOID),
+                decision_color,
+                _COLOR_BUY if consecutive_days >= 3 else _COLOR_TEXT,
+                decay_color,
+            ]
+        )
     pdf._table(headers, widths, rows, row_colors=row_colors)
 
     # 因子贡献度 (Top 3 因子)
@@ -520,6 +522,7 @@ def _render_tracking_summary(pdf: _ScreeningPDF, report_data: dict) -> None:
         return
     pdf._section("追踪总结 (近 30 天胜率)")
     pdf._kv_line("总推荐数", summary.get("total_recommendations", 0))
+
     # BH-019: tracking_summary producer (recommendation_tracker._summarize_history /
     # get_tracking_summary) populates the full 6-horizon ladder under keys
     # ``win_rate_day{N}`` / ``avg_return_day{N}`` / ``tracked_count_day{N}``

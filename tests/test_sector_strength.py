@@ -1,4 +1,5 @@
 """Tests for sector_strength.py — P10-2."""
+
 from __future__ import annotations
 
 import json

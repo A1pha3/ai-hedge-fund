@@ -117,13 +117,9 @@ class TestCheckDataFreshness:
         # Graceful: returns empty dict (no crash).
         assert result == {}
         # Observability: warns that the audit was unavailable.
-        assert any("cache freshness audit unavailable" in rec.message.lower() for rec in caplog.records), (
-            f"Expected cache-audit warning, got: {[rec.message for rec in caplog.records]}"
-        )
+        assert any("cache freshness audit unavailable" in rec.message.lower() for rec in caplog.records), f"Expected cache-audit warning, got: {[rec.message for rec in caplog.records]}"
 
-    def test_per_source_query_failure_marks_freshness_unknown_not_fresh(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_per_source_query_failure_marks_freshness_unknown_not_fresh(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """R118 / 新鲜度门正确性: 单源新鲜度查询失败时, 该源应标记为"未知"
         (不确定), 让 ``check_data_freshness`` 保守判 ``fresh=False``,
         不能让查询失败被静默吞掉后误判 "all fresh"。
@@ -175,10 +171,7 @@ class TestCheckDataFreshness:
         result = dfg.check_data_freshness(trade_date="20260611", cache_path=cache)
 
         # 保守安全默认: 单源查询失败 → fresh=False (不能误判 all fresh)
-        assert result["fresh"] is False, (
-            "新鲜度门正确性: daily_prices 查询失败时该源应标记未知, "
-            "check_data_freshness 应保守判 fresh=False, 不能误报 all-fresh 绕过数据安全门"
-        )
+        assert result["fresh"] is False, "新鲜度门正确性: daily_prices 查询失败时该源应标记未知, " "check_data_freshness 应保守判 fresh=False, 不能误报 all-fresh 绕过数据安全门"
 
 
 class TestApplyFreshnessConfidencePenalty:
@@ -256,10 +249,7 @@ class TestApplyFreshnessConfidencePenalty:
         }
         result = apply_freshness_confidence_penalty(recs, freshness)
         # 0.0 必须保留 (0.0 * 0.7 = 0.0), 不得被 or 100 改成 70.0
-        assert result[0]["confidence"] == pytest.approx(0.0, abs=0.01), (
-            f"confidence=0.0 应保留为 0.0 (合法'完全无信心'), 不得被 falsy-zero `or 100` "
-            f"静默覆盖为满信心。实际: {result[0]['confidence']}"
-        )
+        assert result[0]["confidence"] == pytest.approx(0.0, abs=0.01), f"confidence=0.0 应保留为 0.0 (合法'完全无信心'), 不得被 falsy-zero `or 100` " f"静默覆盖为满信心。实际: {result[0]['confidence']}"
 
     def test_confidence_missing_defaults_to_100_r96(self) -> None:
         """对照组: missing confidence 字段应走默认 100 (满信心, 与历史行为一致)。
@@ -275,9 +265,7 @@ class TestApplyFreshnessConfidencePenalty:
         }
         result = apply_freshness_confidence_penalty(recs, freshness)
         # missing → 默认 100, HIGH penalty ×0.7 → 70.0
-        assert result[0]["confidence"] == pytest.approx(70.0, abs=0.1), (
-            "missing confidence 应默认 100, 然后 HIGH penalty ×0.7 = 70.0"
-        )
+        assert result[0]["confidence"] == pytest.approx(70.0, abs=0.1), "missing confidence 应默认 100, 然后 HIGH penalty ×0.7 = 70.0"
 
 
 class TestRenderFreshnessSummary:

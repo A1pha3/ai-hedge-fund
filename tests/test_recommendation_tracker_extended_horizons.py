@@ -365,4 +365,3 @@ def test_update_tracking_history_populates_day15_day25(tmp_path: Path):
     rec = records[0]
     assert rec.get("next_15day_return") is not None
     assert rec.get("next_25day_return") is not None
-

@@ -2,7 +2,7 @@ import pandas as pd
 import pytest
 
 from src.backtesting.promotion_gate import build_promotion_gate_summary
-from src.backtesting.walk_forward import (
+from src.backtesting.walk_forward import (  # noqa: E402
     build_walk_forward_windows,
     classify_runner_rollout_verdict,
     classify_win_rate_first_rollout_verdict,
@@ -41,8 +41,11 @@ def test_build_walk_forward_windows_rejects_overlapping_tests_by_default():
     By default this raises ValueError to prevent double-counting trades."""
     with pytest.raises(ValueError, match="overlapping test windows"):
         build_walk_forward_windows(
-            "2025-01-01", "2025-12-31",
-            train_months=2, test_months=2, step_months=1,
+            "2025-01-01",
+            "2025-12-31",
+            train_months=2,
+            test_months=2,
+            step_months=1,
         )
 
 
@@ -50,8 +53,11 @@ def test_build_walk_forward_windows_allows_overlap_when_opted_in():
     """ALPHA-005: allow_overlapping_tests=True bypasses the guard (for
     the "extended" preset and other intentional overlap scenarios)."""
     windows = build_walk_forward_windows(
-        "2025-01-01", "2025-12-31",
-        train_months=2, test_months=2, step_months=1,
+        "2025-01-01",
+        "2025-12-31",
+        train_months=2,
+        test_months=2,
+        step_months=1,
         allow_overlapping_tests=True,
     )
     assert len(windows) > 0
@@ -65,15 +71,15 @@ def test_build_walk_forward_windows_allows_overlap_when_opted_in():
 def test_build_walk_forward_windows_non_overlapping_passes_validation():
     """Standard preset (step==test) should produce non-overlapping windows."""
     windows = build_walk_forward_windows(
-        "2025-01-01", "2025-12-31",
-        train_months=2, test_months=1, step_months=1,
+        "2025-01-01",
+        "2025-12-31",
+        train_months=2,
+        test_months=1,
+        step_months=1,
     )
     assert len(windows) > 1
     for i in range(len(windows) - 1):
-        assert windows[i].test_end < windows[i + 1].test_start, (
-            f"Window {i} test_end ({windows[i].test_end}) must be < "
-            f"window {i+1} test_start ({windows[i+1].test_start})"
-        )
+        assert windows[i].test_end < windows[i + 1].test_start, f"Window {i} test_end ({windows[i].test_end}) must be < " f"window {i+1} test_start ({windows[i+1].test_start})"
 
 
 def test_build_walk_forward_windows_truncates_test_range_to_max_trading_days(monkeypatch):
@@ -576,10 +582,7 @@ def test_fast_preset_has_no_tushare_dependency():
     from src.backtesting.walk_forward import WALK_FORWARD_PRESETS
 
     preset = WALK_FORWARD_PRESETS["fast"]
-    assert "max_test_trading_days" not in preset, (
-        "fast preset must not include max_test_trading_days; "
-        "use --max-test-trading-days explicitly when Tushare is available"
-    )
+    assert "max_test_trading_days" not in preset, "fast preset must not include max_test_trading_days; " "use --max-test-trading-days explicitly when Tushare is available"
     windows = build_walk_forward_windows(
         "2026-01-01",
         "2026-04-30",
@@ -724,17 +727,13 @@ def test_summarize_walk_forward_verdict_keep_when_low_tail_hit():
 
 
 def test_classify_runner_rollout_verdict_promotable_no_baseline():
-    verdict, detail = classify_runner_rollout_verdict(
-        {"avg_runner_tail_hit_rate": 0.18, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
-    )
+    verdict, detail = classify_runner_rollout_verdict({"avg_runner_tail_hit_rate": 0.18, "next_close_positive_rate": 0.60, "downside_p10": -0.02})
     assert verdict == "promotable_runner_profile"
     assert detail["verdict_reason"] == "meets_all_runner_criteria"
 
 
 def test_classify_runner_rollout_verdict_keep_precision_baseline_below_floor():
-    verdict, detail = classify_runner_rollout_verdict(
-        {"avg_runner_tail_hit_rate": 0.08, "next_close_positive_rate": 0.60, "downside_p10": -0.02}
-    )
+    verdict, detail = classify_runner_rollout_verdict({"avg_runner_tail_hit_rate": 0.08, "next_close_positive_rate": 0.60, "downside_p10": -0.02})
     assert verdict == "keep_precision_baseline"
     assert detail["verdict_reason"] == "tail_hit_below_absolute_min"
 
@@ -878,23 +877,22 @@ def test_classify_win_rate_first_rollout_verdict_prioritizes_blocker_reason_over
     # Win rate deltas are too small (< 0.005), so we'd have both
     # rollout_blocked AND win_rate_uplift_missing in rejection_reasons.
     # But verdict_reason should prioritize rollout_blocked.
-    
+
     verdict, detail = classify_win_rate_first_rollout_verdict(candidate, baseline)
-    
+
     assert verdict == "rejected"
     assert "rollout_blocked" in detail["rejection_reasons"]
     assert "win_rate_uplift_missing" in detail["rejection_reasons"]
     # The spec gap: currently this would be "bounded_tradeoff_check_failed"
     # but it MUST be "rollout_blocked" when blockers are present
-    assert detail["verdict_reason"] == "rollout_blocked", \
-        "verdict_reason must prioritize rollout_blocked when blockers are present, even with other rejection reasons"
+    assert detail["verdict_reason"] == "rollout_blocked", "verdict_reason must prioritize rollout_blocked when blockers are present, even with other rejection reasons"
 
 
 # ---------------------------------------------------------------------------
 # Round 11 Task 4 — Walk-forward recency weighting
 # ---------------------------------------------------------------------------
 
-from src.backtesting.walk_forward import (
+from src.backtesting.walk_forward import (  # noqa: E402
     _compute_walk_forward_recency_weight,
     WALK_FORWARD_RECENCY_DECAY_MIN_FACTOR,
     WALK_FORWARD_RECENCY_HALF_LIFE_DAYS,
@@ -934,6 +932,7 @@ def test_summarize_walk_forward_time_weights_btst_quality_metrics() -> None:
     The recent window (large next_close_positive_rate) must pull the weighted average up
     compared to an equal-weight average.
     """
+
     def _make_result(test_start: str, next_close_positive_rate: float) -> WalkForwardResult:
         return WalkForwardResult(
             window=WalkForwardWindow(
@@ -964,9 +963,7 @@ def test_summarize_walk_forward_time_weights_btst_quality_metrics() -> None:
     weighted_avg = summary.get("next_close_positive_rate")
     simple_avg = 0.60  # (0.30 + 0.90) / 2
     assert weighted_avg is not None
-    assert float(weighted_avg) > simple_avg, (
-        f"Recency-weighted avg {weighted_avg:.3f} should exceed simple avg {simple_avg:.3f}"
-    )
+    assert float(weighted_avg) > simple_avg, f"Recency-weighted avg {weighted_avg:.3f} should exceed simple avg {simple_avg:.3f}"
 
 
 def test_summarize_walk_forward_single_window_unaffected_by_recency() -> None:
@@ -1009,7 +1006,7 @@ def test_summarize_walk_forward_exposes_recency_half_life_days() -> None:
 # Round 12 Task 2 — Multi-candidate rollout selection
 # ---------------------------------------------------------------------------
 
-from src.backtesting.walk_forward import select_best_promotable_candidate
+from src.backtesting.walk_forward import select_best_promotable_candidate  # noqa: E402
 
 
 def _promotable_summary(tail_hit: float = 0.20) -> dict:
@@ -1134,10 +1131,7 @@ def test_summarize_walk_forward_blocks_avg_escape_gap_cost_floor_breach() -> Non
 
     summary = summarize_walk_forward(results)
 
-    assert "btst_quality_avg_escape_gap_cost_floor_breach" in summary.get("rollout_blockers", []), (
-        "Expected floor-breach blocker for avg_escape_gap_cost but got: "
-        f"{summary.get('rollout_blockers')}"
-    )
+    assert "btst_quality_avg_escape_gap_cost_floor_breach" in summary.get("rollout_blockers", []), "Expected floor-breach blocker for avg_escape_gap_cost but got: " f"{summary.get('rollout_blockers')}"
 
 
 def test_summarize_walk_forward_no_blocker_when_avg_escape_gap_cost_acceptable() -> None:
@@ -1166,10 +1160,7 @@ def test_summarize_walk_forward_no_blocker_when_avg_escape_gap_cost_acceptable()
 
     summary = summarize_walk_forward(results)
 
-    assert "btst_quality_avg_escape_gap_cost_floor_breach" not in summary.get("rollout_blockers", []), (
-        "Unexpected floor-breach blocker when avg_escape_gap_cost is acceptable: "
-        f"{summary.get('rollout_blockers')}"
-    )
+    assert "btst_quality_avg_escape_gap_cost_floor_breach" not in summary.get("rollout_blockers", []), "Unexpected floor-breach blocker when avg_escape_gap_cost is acceptable: " f"{summary.get('rollout_blockers')}"
 
 
 def test_summarize_walk_forward_avg_escape_gap_cost_missing_does_not_raise() -> None:
@@ -1239,10 +1230,7 @@ def test_summarize_walk_forward_blocks_next_close_return_kurtosis_cap_breach() -
 
     summary = summarize_walk_forward(results)
 
-    assert "btst_quality_next_close_return_kurtosis_cap_breach" in summary.get("rollout_blockers", []), (
-        "Expected cap-breach blocker for next_close_return_kurtosis but got: "
-        f"{summary.get('rollout_blockers')}"
-    )
+    assert "btst_quality_next_close_return_kurtosis_cap_breach" in summary.get("rollout_blockers", []), "Expected cap-breach blocker for next_close_return_kurtosis but got: " f"{summary.get('rollout_blockers')}"
 
 
 def test_summarize_walk_forward_no_blocker_when_kurtosis_below_cap() -> None:
@@ -1271,10 +1259,7 @@ def test_summarize_walk_forward_no_blocker_when_kurtosis_below_cap() -> None:
 
     summary = summarize_walk_forward(results)
 
-    assert "btst_quality_next_close_return_kurtosis_cap_breach" not in summary.get("rollout_blockers", []), (
-        "Unexpected cap-breach blocker when kurtosis is acceptable: "
-        f"{summary.get('rollout_blockers')}"
-    )
+    assert "btst_quality_next_close_return_kurtosis_cap_breach" not in summary.get("rollout_blockers", []), "Unexpected cap-breach blocker when kurtosis is acceptable: " f"{summary.get('rollout_blockers')}"
 
 
 def test_summarize_walk_forward_kurtosis_multi_window_plain_average() -> None:
@@ -1283,6 +1268,7 @@ def test_summarize_walk_forward_kurtosis_multi_window_plain_average() -> None:
     Two windows with very different kurtosis values and very different test_start dates must produce
     a plain arithmetic average, not a recency-biased average.
     """
+
     def _make_result(test_start: str, kurtosis: float) -> WalkForwardResult:
         return WalkForwardResult(
             window=WalkForwardWindow(
@@ -1312,9 +1298,7 @@ def test_summarize_walk_forward_kurtosis_multi_window_plain_average() -> None:
     # Plain average is 4.0 (no cap breach).  Recency-weighted would be >> 4.0 (would breach cap).
     kurtosis_avg = summary.get("next_close_return_kurtosis")
     assert kurtosis_avg is not None
-    assert float(kurtosis_avg) == pytest.approx(4.0, abs=0.05), (
-        f"Expected plain average ~4.0 but got {kurtosis_avg}"
-    )
+    assert float(kurtosis_avg) == pytest.approx(4.0, abs=0.05), f"Expected plain average ~4.0 but got {kurtosis_avg}"
     # 4.0 ≤ 5.0 cap → no blocker expected
     assert "btst_quality_next_close_return_kurtosis_cap_breach" not in summary.get("rollout_blockers", [])
 
@@ -1323,7 +1307,7 @@ def test_summarize_walk_forward_kurtosis_multi_window_plain_average() -> None:
 # Round 14 — Task 1: Consecutive Window Consistency (assess_profile_stability)
 # ---------------------------------------------------------------------------
 
-from src.backtesting.walk_forward import (
+from src.backtesting.walk_forward import (  # noqa: E402
     assess_profile_stability,
     PROFILE_STABILITY_NON_PROMOTABLE_FRACTION_THRESHOLD,
     PROFILE_STABILITY_NON_PROMOTABLE_STREAK_THRESHOLD,
@@ -1433,6 +1417,7 @@ def test_summarize_walk_forward_unstable_profile_adds_blocker() -> None:
     Force instability: populate two consecutive windows where avg_runner_tail_hit_rate is below
     the absolute floor (< 0.12), which forces verdict='keep_precision_baseline'.
     """
+
     def _non_promotable_window(test_start: str) -> WalkForwardResult:
         return WalkForwardResult(
             window=WalkForwardWindow(train_start="2025-12-01", train_end="2025-12-31", test_start=test_start, test_end=test_start),
@@ -1455,9 +1440,7 @@ def test_summarize_walk_forward_unstable_profile_adds_blocker() -> None:
         ),
     ]
     summary = summarize_walk_forward(results)
-    assert "profile_stability_unstable" in summary.get("rollout_blockers", []), (
-        f"Expected profile_stability_unstable blocker but got: {summary.get('rollout_blockers')}"
-    )
+    assert "profile_stability_unstable" in summary.get("rollout_blockers", []), f"Expected profile_stability_unstable blocker but got: {summary.get('rollout_blockers')}"
     assert summary.get("profile_stability_verdict") == "unstable_profile"
 
 
@@ -1468,16 +1451,14 @@ def test_summarize_walk_forward_stable_profile_no_stability_blocker() -> None:
         metrics={"sharpe_ratio": 1.5, "sortino_ratio": 2.0, "max_drawdown": -2.5, "test_trading_days": 20},
     )
     summary = summarize_walk_forward([result])
-    assert "profile_stability_unstable" not in summary.get("rollout_blockers", []), (
-        f"Unexpected stability blocker: {summary.get('rollout_blockers')}"
-    )
+    assert "profile_stability_unstable" not in summary.get("rollout_blockers", []), f"Unexpected stability blocker: {summary.get('rollout_blockers')}"
 
 
 # ---------------------------------------------------------------------------
 # Round 14 — Task 2: Candidate Pool Size Adaptive Awareness
 # ---------------------------------------------------------------------------
 
-from src.backtesting.walk_forward import (
+from src.backtesting.walk_forward import (  # noqa: E402
     CANDIDATE_POOL_ABUNDANT_THRESHOLD,
     CANDIDATE_POOL_SCARCE_THRESHOLD,
 )
@@ -1586,7 +1567,7 @@ def test_summarize_walk_forward_exposes_win_rate_first_verdict_fields():
     assert "win_rate_first_verdict" in summary, "summary must include win_rate_first_verdict"
     assert "win_rate_first_verdict_detail" in summary, "summary must include win_rate_first_verdict_detail"
     assert summary["win_rate_first_verdict"] in {"accepted", "rejected", "neutral"}
-    
+
     # The detail payload should have the standard structure from classify_win_rate_first_rollout_verdict
     detail = summary["win_rate_first_verdict_detail"]
     assert "verdict_reason" in detail
@@ -1625,14 +1606,12 @@ def test_summarize_walk_forward_without_baseline_returns_not_evaluable_verdict()
     # Must NOT falsely reject with win_rate_uplift_missing when no baseline/deltas available
     verdict = summary["win_rate_first_verdict"]
     detail = summary["win_rate_first_verdict_detail"]
-    
+
     # Expect a neutral verdict, not rejected
-    assert verdict != "rejected" or detail["verdict_reason"] != "win_rate_uplift_missing", \
-        "Without baseline/deltas, verdict must not be win_rate_uplift_missing rejection"
-    
+    assert verdict != "rejected" or detail["verdict_reason"] != "win_rate_uplift_missing", "Without baseline/deltas, verdict must not be win_rate_uplift_missing rejection"
+
     # Should be neutral/not-evaluable
-    assert detail["verdict_reason"] in ["not_evaluable", "insufficient_baseline"], \
-        f"Expected neutral verdict reason, got: {detail['verdict_reason']}"
+    assert detail["verdict_reason"] in ["not_evaluable", "insufficient_baseline"], f"Expected neutral verdict reason, got: {detail['verdict_reason']}"
 
 
 def test_summarize_walk_forward_with_baseline_computes_real_verdict():
@@ -1654,14 +1633,14 @@ def test_summarize_walk_forward_with_baseline_computes_real_verdict():
                 "max_drawdown": -3.5,
                 "test_trading_days": 12,
                 "next_close_positive_rate": 0.68,  # +0.06 vs baseline
-                "next_high_hit_rate": 0.70,        # +0.07 vs baseline
-                "realized_payoff_ratio": 1.85,     # -0.05 vs baseline (acceptable)
+                "next_high_hit_rate": 0.70,  # +0.07 vs baseline
+                "realized_payoff_ratio": 1.85,  # -0.05 vs baseline (acceptable)
                 "next_close_expectancy": 0.020,
-                "window_coverage": 0.90,           # +0.02 vs baseline
+                "window_coverage": 0.90,  # +0.02 vs baseline
             }
 
     results = run_walk_forward(windows, lambda window: CandidateEngine())
-    
+
     baseline_summary = {
         "next_close_positive_rate": 0.62,
         "next_high_hit_rate": 0.63,
@@ -1670,16 +1649,16 @@ def test_summarize_walk_forward_with_baseline_computes_real_verdict():
         "window_coverage": 0.88,
         "rollout_blockers": [],
     }
-    
+
     summary = summarize_walk_forward(results, baseline_summary=baseline_summary)
 
     # Must accept based on real deltas computed from baseline
     verdict = summary["win_rate_first_verdict"]
     detail = summary["win_rate_first_verdict_detail"]
-    
+
     assert verdict == "accepted", f"Expected accepted verdict with good uplifts, got {verdict}"
     assert detail["verdict_reason"] == "meets_win_rate_first_criteria"
-    
+
     # Verify deltas were computed from baseline
     assert detail["next_close_positive_rate_delta"] == pytest.approx(0.06, abs=0.01)
     assert detail["next_high_hit_rate_delta"] == pytest.approx(0.07, abs=0.01)

@@ -693,4 +693,3 @@ def test_daily_board_includes_p0a_board_provenance(tmp_path: Path, monkeypatch) 
     assert provenance["source"] == "analyze_btst_early_runner_v1"
     assert "T+1" in provenance["note"]
     assert "confirmed_entries" in provenance["note"]
-

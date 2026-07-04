@@ -313,9 +313,7 @@ class TestCoerceTradeActionSilentFailure:
             assert coerce_trade_action("hold") is Action.HOLD
 
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert not warning_records, (
-            f"valid signal strings must NOT emit warning, got {warning_records}"
-        )
+        assert not warning_records, f"valid signal strings must NOT emit warning, got {warning_records}"
 
     def test_action_enum_passthrough_no_warning(self, caplog) -> None:
         import logging
@@ -348,14 +346,10 @@ class TestCoerceTradeActionSilentFailure:
 
         assert result is Action.HOLD  # best-effort contract preserved
         warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert warning_records, (
-            f"expected >=1 WARNING record for unknown signal, got {caplog.records}"
-        )
+        assert warning_records, f"expected >=1 WARNING record for unknown signal, got {caplog.records}"
         msg = warning_records[0].getMessage()
         # Must name the function / feature so operators can grep it.
-        assert "coerce_trade_action" in msg, (
-            f"warning must name the degraded function, got: {msg!r}"
-        )
+        assert "coerce_trade_action" in msg, f"warning must name the degraded function, got: {msg!r}"
         # Must include the offending value so operators can trace the upstream agent.
         assert "unknown" in msg, f"warning must include the bad value, got: {msg!r}"
 

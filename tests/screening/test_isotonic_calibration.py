@@ -3,6 +3,7 @@
 RED→GREEN: PAV 算法 + isotonic fit/apply + insufficient bucket.
 R-5.C 第 2/4 项: isotonic 单调校准 + n<20 诚实标注.
 """
+
 from __future__ import annotations
 
 import pytest

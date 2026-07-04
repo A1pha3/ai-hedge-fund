@@ -20,6 +20,7 @@ does NOT catch a volume>0 / NaN-close row. Fix: skip NaN-close rows the same
 way suspended rows are skipped (R83 canonical "skip bad row"). This is the
 R83 NaN-row-skip family sibling in the backtest price-dict path.
 """
+
 from __future__ import annotations
 
 import math
@@ -62,13 +63,17 @@ class TestLoadCurrentPricesNaNCloseSkip:
         # close is NaN — partial feed). 000002: clean.
         def fake_get_price_data(ticker, start, end, api_key=None):
             if ticker == "000001":
-                return _make_price_frame([
-                    {"date": "2024-01-14", "close": 10.0, "volume": 1_000_000},
-                    {"date": "2024-01-15", "close": float("nan"), "volume": 1_000_000},
-                ])
-            return _make_price_frame([
-                {"date": "2024-01-15", "close": 20.0, "volume": 1_000_000},
-            ])
+                return _make_price_frame(
+                    [
+                        {"date": "2024-01-14", "close": 10.0, "volume": 1_000_000},
+                        {"date": "2024-01-15", "close": float("nan"), "volume": 1_000_000},
+                    ]
+                )
+            return _make_price_frame(
+                [
+                    {"date": "2024-01-15", "close": 20.0, "volume": 1_000_000},
+                ]
+            )
 
         monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
         prices = loader.load_current_prices(["000001", "000002"], "2024-01-01", "2024-01-15")
@@ -77,11 +82,7 @@ class TestLoadCurrentPricesNaNCloseSkip:
         assert prices is not None
         assert prices["000002"] == 20.0
         # 000001 must NOT be present (NaN-close row skipped), NOT stored as NaN
-        assert "000001" not in prices, (
-            "NaN-close row must be skipped (R83 canonical); currently "
-            "load_current_prices stores float(nan) in current_prices, silently "
-            "corrupting the entire backtest NAV via calculate_portfolio_value"
-        )
+        assert "000001" not in prices, "NaN-close row must be skipped (R83 canonical); currently " "load_current_prices stores float(nan) in current_prices, silently " "corrupting the entire backtest NAV via calculate_portfolio_value"
 
     def test_nan_close_on_earlier_row_uses_last_valid(self, monkeypatch) -> None:
         """If an earlier row has NaN close but the last row is valid, the last
@@ -91,10 +92,12 @@ class TestLoadCurrentPricesNaNCloseSkip:
         loader = _make_loader(["000001"])
 
         def fake_get_price_data(ticker, start, end, api_key=None):
-            return _make_price_frame([
-                {"date": "2024-01-14", "close": float("nan"), "volume": 1_000_000},
-                {"date": "2024-01-15", "close": 11.0, "volume": 1_000_000},
-            ])
+            return _make_price_frame(
+                [
+                    {"date": "2024-01-14", "close": float("nan"), "volume": 1_000_000},
+                    {"date": "2024-01-15", "close": 11.0, "volume": 1_000_000},
+                ]
+            )
 
         monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
         prices = loader.load_current_prices(["000001"], "2024-01-01", "2024-01-15")

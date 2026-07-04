@@ -135,7 +135,7 @@ def test_build_decision_card_selects_first_confirmable_candidate() -> None:
             },
             role="formal_selected",
             early_runner_status="exact",
-        )
+        ),
     ]
 
     card = build_decision_card(

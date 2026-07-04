@@ -69,6 +69,7 @@ def test_run_pipeline_publishes_manifest_only_when_assessment_promotes(monkeypat
     assert result["manifest_result"]["status"] == "published"
     # Assert manifest_path is canonical
     from scripts.run_btst_momentum_threshold_governance import REPO_ROOT
+
     expected_manifest_path = REPO_ROOT / "data" / "reports" / "btst_latest_optimized_profile.json"
     # Accept Path or str for published["manifest_path"]
     if isinstance(published["manifest_path"], str):

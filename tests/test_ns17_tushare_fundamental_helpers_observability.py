@@ -49,8 +49,7 @@ class TestLineItemsFetchFailureObservability:
             df_fin, df_bal, df_cash, df_income = tushare_line_items_helpers.fetch_line_item_statement_frames(_boom, None, "000001.SZ", 10)
 
         assert df_fin is None
-        assert any("财务指标" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), \
-            "fina_indicator 失败必须发 logger.warning"
+        assert any("财务指标" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), "fina_indicator 失败必须发 logger.warning"
 
     def test_optional_frame_failure_emits_warning(self, caplog) -> None:
         def _boom(*a, **k):
@@ -60,8 +59,7 @@ class TestLineItemsFetchFailureObservability:
             df = tushare_line_items_helpers._fetch_optional_frame(_boom, None, "balancesheet", "000001.SZ", 10, "资产负债表")
 
         assert df is None
-        assert any("资产负债表" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), \
-            "可选报表失败必须发 logger.warning"
+        assert any("资产负债表" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), "可选报表失败必须发 logger.warning"
 
 
 class TestDailyBasicHelpersModuleLogger:
@@ -99,8 +97,7 @@ class TestDailyBasicBatchFailureObservability:
         # 失败时回退空 DataFrame (非 None)
         assert df is not None
         assert df.empty
-        assert any("daily_basic" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), \
-            "daily_basic 批量拉取失败必须发 logger.warning"
+        assert any("daily_basic" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), "daily_basic 批量拉取失败必须发 logger.warning"
 
     def test_date_parse_failure_emits_warning(self, caplog) -> None:
         """anchor_date 格式异常导致日期解析失败必须发 logger.warning (NS-17 c273).

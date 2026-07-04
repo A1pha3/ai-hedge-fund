@@ -88,8 +88,6 @@ def test_main_writes_recommendation_outputs(tmp_path: Path) -> None:
         ),
     ],
 )
-def test_render_triage_recommendation_markdown_fails_closed_on_invalid_governance_payload(
-    payload: dict[str, object], expected_message: str
-) -> None:
+def test_render_triage_recommendation_markdown_fails_closed_on_invalid_governance_payload(payload: dict[str, object], expected_message: str) -> None:
     with pytest.raises(SystemExit, match=expected_message):
         recommendation.render_momentum_rollout_triage_recommendation_markdown(payload)

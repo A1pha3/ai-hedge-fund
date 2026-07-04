@@ -3,6 +3,7 @@
 Verifies the script produces the required JSON and Markdown report shape
 from sample selection_artifact snapshots containing historical_prior payloads.
 """
+
 from __future__ import annotations
 
 import json
@@ -49,10 +50,13 @@ class TestAnalyzeBtstHistoricalPriorQualityBasicShape:
         report_dir = tmp_path / "paper_trading_window_sample"
         _write_json(
             report_dir / "selection_artifacts" / "2026-04-06" / "selection_snapshot.json",
-            _sample_snapshot("2026-04-06", [
-                _entry_with_prior("000001", "selected", 8, 0.45, 0.60),
-                _entry_with_prior("000002", "near_miss", 3, 0.30, 0.55),
-            ]),
+            _sample_snapshot(
+                "2026-04-06",
+                [
+                    _entry_with_prior("000001", "selected", 8, 0.45, 0.60),
+                    _entry_with_prior("000002", "near_miss", 3, 0.30, 0.55),
+                ],
+            ),
         )
         result = analyze_btst_historical_prior_quality(report_dir)
 
@@ -81,9 +85,12 @@ class TestAnalyzeBtstHistoricalPriorQualityClassification:
         report_dir = tmp_path / "paper_trading_window_sample"
         _write_json(
             report_dir / "selection_artifacts" / "2026-04-06" / "selection_snapshot.json",
-            _sample_snapshot("2026-04-06", [
-                _entry_with_prior("000001", "selected", 10, 0.0, 0.65),  # zero high hit → reject
-            ]),
+            _sample_snapshot(
+                "2026-04-06",
+                [
+                    _entry_with_prior("000001", "selected", 10, 0.0, 0.65),  # zero high hit → reject
+                ],
+            ),
         )
         result = analyze_btst_historical_prior_quality(report_dir)
         assert result["prior_quality_distribution"].get("reject", 0) >= 1
@@ -92,9 +99,12 @@ class TestAnalyzeBtstHistoricalPriorQualityClassification:
         report_dir = tmp_path / "paper_trading_window_sample"
         _write_json(
             report_dir / "selection_artifacts" / "2026-04-06" / "selection_snapshot.json",
-            _sample_snapshot("2026-04-06", [
-                _entry_with_prior("000001", "selected", 10, 0.35, 0.40),  # low close+ → watch_only
-            ]),
+            _sample_snapshot(
+                "2026-04-06",
+                [
+                    _entry_with_prior("000001", "selected", 10, 0.35, 0.40),  # low close+ → watch_only
+                ],
+            ),
         )
         result = analyze_btst_historical_prior_quality(report_dir)
         assert result["prior_quality_distribution"].get("watch_only", 0) >= 1
@@ -103,9 +113,12 @@ class TestAnalyzeBtstHistoricalPriorQualityClassification:
         report_dir = tmp_path / "paper_trading_window_sample"
         _write_json(
             report_dir / "selection_artifacts" / "2026-04-06" / "selection_snapshot.json",
-            _sample_snapshot("2026-04-06", [
-                _entry_with_prior("000001", "selected", 8, 0.45, 0.62),  # good prior
-            ]),
+            _sample_snapshot(
+                "2026-04-06",
+                [
+                    _entry_with_prior("000001", "selected", 8, 0.45, 0.62),  # good prior
+                ],
+            ),
         )
         result = analyze_btst_historical_prior_quality(report_dir)
         assert result["prior_quality_distribution"].get("execution_ready", 0) >= 1
@@ -118,11 +131,14 @@ class TestAnalyzeBtstHistoricalPriorQualityBeforeAfterComparison:
         report_dir = tmp_path / "paper_trading_window_sample"
         _write_json(
             report_dir / "selection_artifacts" / "2026-04-06" / "selection_snapshot.json",
-            _sample_snapshot("2026-04-06", [
-                _entry_with_prior("000001", "selected", 10, 0.0, 0.65),   # reject
-                _entry_with_prior("000002", "selected", 8, 0.45, 0.60),   # execution_ready
-                _entry_with_prior("000003", "near_miss", 4, 0.35, 0.55),  # near_miss skipped for selected
-            ]),
+            _sample_snapshot(
+                "2026-04-06",
+                [
+                    _entry_with_prior("000001", "selected", 10, 0.0, 0.65),  # reject
+                    _entry_with_prior("000002", "selected", 8, 0.45, 0.60),  # execution_ready
+                    _entry_with_prior("000003", "near_miss", 4, 0.35, 0.55),  # near_miss skipped for selected
+                ],
+            ),
         )
         result = analyze_btst_historical_prior_quality(report_dir)
         # before = all selected entries regardless of prior quality
@@ -132,10 +148,13 @@ class TestAnalyzeBtstHistoricalPriorQualityBeforeAfterComparison:
         report_dir = tmp_path / "paper_trading_window_sample"
         _write_json(
             report_dir / "selection_artifacts" / "2026-04-06" / "selection_snapshot.json",
-            _sample_snapshot("2026-04-06", [
-                _entry_with_prior("000001", "selected", 10, 0.0, 0.65),   # reject → blocked
-                _entry_with_prior("000002", "selected", 8, 0.45, 0.60),   # execution_ready → kept
-            ]),
+            _sample_snapshot(
+                "2026-04-06",
+                [
+                    _entry_with_prior("000001", "selected", 10, 0.0, 0.65),  # reject → blocked
+                    _entry_with_prior("000002", "selected", 8, 0.45, 0.60),  # execution_ready → kept
+                ],
+            ),
         )
         result = analyze_btst_historical_prior_quality(report_dir)
         # after = only execution_ready selected entries
@@ -145,10 +164,13 @@ class TestAnalyzeBtstHistoricalPriorQualityBeforeAfterComparison:
         report_dir = tmp_path / "paper_trading_window_sample"
         _write_json(
             report_dir / "selection_artifacts" / "2026-04-06" / "selection_snapshot.json",
-            _sample_snapshot("2026-04-06", [
-                _entry_with_prior("000001", "selected", 10, 0.0, 0.65),  # reject
-                _entry_with_prior("000002", "selected", 2, 0.35, 0.55),  # tiny n
-            ]),
+            _sample_snapshot(
+                "2026-04-06",
+                [
+                    _entry_with_prior("000001", "selected", 10, 0.0, 0.65),  # reject
+                    _entry_with_prior("000002", "selected", 2, 0.35, 0.55),  # tiny n
+                ],
+            ),
         )
         result = analyze_btst_historical_prior_quality(report_dir)
         assert isinstance(result["downgrade_reasons"], dict)

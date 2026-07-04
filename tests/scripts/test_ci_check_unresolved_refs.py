@@ -1,4 +1,5 @@
 """Tests for CI check_unresolved_refs script."""
+
 import sys
 from pathlib import Path
 
@@ -112,6 +113,7 @@ X = Bar  # OK, Bar is imported via TYPE_CHECKING
 
 def test_is_main_check():
     import ast
+
     tree = ast.parse("if __name__ == '__main__':\n    pass\n")
     if_node = tree.body[0]
     assert _is_main_check(if_node) is True
@@ -119,6 +121,7 @@ def test_is_main_check():
 
 def test_is_type_checking_guard():
     import ast
+
     tree = ast.parse("if TYPE_CHECKING:\n    pass\n")
     if_node = tree.body[0]
     assert _is_type_checking_guard(if_node) is True
@@ -127,6 +130,7 @@ def test_is_type_checking_guard():
 def test_main_runs_without_error():
     """End-to-end: run main() on src/ and ensure it doesn't crash."""
     from pathlib import Path
+
     src = Path("src")
     if not src.exists():
         return  # Skip if src not found
@@ -134,6 +138,7 @@ def test_main_runs_without_error():
     result = main() if False else None
     # Manually invoke with mocked argv
     import sys
+
     old_argv = sys.argv
     try:
         sys.argv = ["ci_check_unresolved_refs.py", "src"]

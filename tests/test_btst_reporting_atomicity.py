@@ -41,11 +41,6 @@ def test_write_analysis_artifacts_json_write_is_atomic(tmp_path: Path, monkeypat
         pass  # acceptable: the write reported failure; the guard is about file state
 
     raw = output_json.read_text(encoding="utf-8")
-    assert raw.strip(), (
-        "prior analysis.json must not be truncated-empty after a crashed write — "
-        "non-atomic write_text truncates on open (R88 corrupt-report CRASH vector root cause)"
-    )
+    assert raw.strip(), "prior analysis.json must not be truncated-empty after a crashed write — " "non-atomic write_text truncates on open (R88 corrupt-report CRASH vector root cause)"
     parsed = json.loads(raw)  # must parse cleanly — no half-written corrupt file
-    assert parsed.get("keep") == "alive" or parsed.get("new") == "analysis", (
-        "final artifact must hold either the prior or the new complete payload — never a corrupt half-write"
-    )
+    assert parsed.get("keep") == "alive" or parsed.get("new") == "analysis", "final artifact must hold either the prior or the new complete payload — never a corrupt half-write"

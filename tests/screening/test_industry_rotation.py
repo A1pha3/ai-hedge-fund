@@ -68,6 +68,7 @@ class TestExtractMomentumFromSignal:
         class Sig:
             direction = 1
             confidence = 75.0
+
         assert _extract_momentum_from_signal(Sig()) == pytest.approx(75.0)
 
     def test_direction_truncated_to_range(self) -> None:
@@ -181,10 +182,7 @@ class TestCalculateIndustryRotation:
 
 class TestTopBottomIndustries:
     def _make_signals(self, n: int = 5) -> list[IndustrySignal]:
-        return [
-            IndustrySignal(industry_name=f"行业{i}", momentum_score=float(n - i), rank=i)
-            for i in range(1, n + 1)
-        ]
+        return [IndustrySignal(industry_name=f"行业{i}", momentum_score=float(n - i), rank=i) for i in range(1, n + 1)]
 
     def test_top_strong(self) -> None:
         signals = self._make_signals(5)

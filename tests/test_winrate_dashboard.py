@@ -527,10 +527,7 @@ class TestLookbackAnchoredToData:
         path = _write_history(tmp_path, records)
         summary = compute_winrate_dashboard(path, lookback_days=30)
         # Data-anchored cutoff (latest=2026-01-20) → all three days within window.
-        assert summary.total_days == 3, (
-            f"BUG R61: backfilled 2026-01 history silently dropped under wall-clock "
-            f"lookback (got total_days={summary.total_days}, expected 3)"
-        )
+        assert summary.total_days == 3, f"BUG R61: backfilled 2026-01 history silently dropped under wall-clock " f"lookback (got total_days={summary.total_days}, expected 3)"
         assert summary.total_recommendations == 3
 
     def test_as_of_override_anchors_cutoff_explicitly(self, tmp_path: Path) -> None:

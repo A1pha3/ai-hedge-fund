@@ -112,10 +112,12 @@ def test_analyze_btst_candidate_pool_lane_objective_support_ranks_positive_false
 
     def _fake_extract(ticker: str, trade_date: str, price_cache: dict[tuple[str, str], object]) -> dict[str, object]:
         payload = dict(outcome_map[(ticker, trade_date)])
-        payload.update({
-            "cycle_status": "closed_cycle",
-            "data_status": "ok",
-        })
+        payload.update(
+            {
+                "cycle_status": "closed_cycle",
+                "data_status": "ok",
+            }
+        )
         return payload
 
     monkeypatch.setattr(lane_script.btst_utils, "extract_btst_price_outcome", _fake_extract)

@@ -1,4 +1,5 @@
 """Tests for trend_resonance.py — P14-1 multi-timeframe trend resonance."""
+
 from __future__ import annotations
 
 import json
@@ -159,10 +160,7 @@ class TestExtractScoreHistory:
         assert result == []
 
     def test_max_days_limit(self) -> None:
-        history = [
-            {"payload": {"recommendations": [{"ticker": "000001", "score_b": float(i / 100)}]}}
-            for i in range(100)
-        ]
+        history = [{"payload": {"recommendations": [{"ticker": "000001", "score_b": float(i / 100)}]}} for i in range(100)]
         result = _extract_score_history("000001", history, max_days=30)
         assert len(result) == 30
 
@@ -196,15 +194,9 @@ class TestComputeTrendResonance:
     def test_five_days_trending_up(self, tmp_path: Path) -> None:
         """5 days of rising scores should detect uptrend."""
         for i in range(5):
-            report_data = {
-                "recommendations": [
-                    {"ticker": "000001", "name": "Test", "score_b": 0.1 + i * 0.1}
-                ]
-            }
+            report_data = {"recommendations": [{"ticker": "000001", "name": "Test", "score_b": 0.1 + i * 0.1}]}
             date_str = f"2026060{i + 1}"
-            (tmp_path / f"auto_screening_{date_str}.json").write_text(
-                json.dumps(report_data), encoding="utf-8"
-            )
+            (tmp_path / f"auto_screening_{date_str}.json").write_text(json.dumps(report_data), encoding="utf-8")
 
         report = compute_trend_resonance(top_n=10, reports_dir=tmp_path)
         assert len(report.items) == 1
@@ -216,15 +208,9 @@ class TestComputeTrendResonance:
     def test_five_days_trending_down(self, tmp_path: Path) -> None:
         """5 days of falling scores should detect downtrend."""
         for i in range(5):
-            report_data = {
-                "recommendations": [
-                    {"ticker": "000001", "name": "Test", "score_b": 0.5 - i * 0.1}
-                ]
-            }
+            report_data = {"recommendations": [{"ticker": "000001", "name": "Test", "score_b": 0.5 - i * 0.1}]}
             date_str = f"2026060{i + 1}"
-            (tmp_path / f"auto_screening_{date_str}.json").write_text(
-                json.dumps(report_data), encoding="utf-8"
-            )
+            (tmp_path / f"auto_screening_{date_str}.json").write_text(json.dumps(report_data), encoding="utf-8")
 
         report = compute_trend_resonance(top_n=10, reports_dir=tmp_path)
         entry = report.items[0]
@@ -234,16 +220,9 @@ class TestComputeTrendResonance:
     def test_top_n_limits_results(self, tmp_path: Path) -> None:
         """Only top_n recommendations are analyzed."""
         for i in range(5):
-            report_data = {
-                "recommendations": [
-                    {"ticker": f"00000{j}", "name": f"Stock{j}", "score_b": 0.5}
-                    for j in range(1, 11)
-                ]
-            }
+            report_data = {"recommendations": [{"ticker": f"00000{j}", "name": f"Stock{j}", "score_b": 0.5} for j in range(1, 11)]}
             date_str = f"2026060{i + 1}"
-            (tmp_path / f"auto_screening_{date_str}.json").write_text(
-                json.dumps(report_data), encoding="utf-8"
-            )
+            (tmp_path / f"auto_screening_{date_str}.json").write_text(json.dumps(report_data), encoding="utf-8")
 
         report = compute_trend_resonance(top_n=3, reports_dir=tmp_path)
         assert len(report.items) <= 3

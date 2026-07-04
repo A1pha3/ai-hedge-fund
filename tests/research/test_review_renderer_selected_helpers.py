@@ -81,19 +81,19 @@ def test_execution_bridge_no_fields() -> None:
 def test_execution_bridge_block_reason() -> None:
     cand = _candidate(execution_bridge={"block_reason": "low_liquidity"})
     lines = _render_execution_bridge(cand)
-    assert any("buy_order_blocker: low_liquidity" in l for l in lines)
+    assert any("buy_order_blocker: low_liquidity" in ln for ln in lines)
 
 
 def test_execution_bridge_block_reason_with_binding() -> None:
     cand = _candidate(execution_bridge={"block_reason": "x", "constraint_binding": "max_positions"})
     lines = _render_execution_bridge(cand)
-    assert any("binding=max_positions" in l for l in lines)
+    assert any("binding=max_positions" in ln for ln in lines)
 
 
 def test_execution_bridge_reentry_review_until() -> None:
     cand = _candidate(execution_bridge={"reentry_review_until": "20260701"})
     lines = _render_execution_bridge(cand)
-    assert any("reentry_review_until: 20260701" in l for l in lines)
+    assert any("reentry_review_until: 20260701" in ln for ln in lines)
 
 
 # ---------------------------------------------------------------------------
@@ -148,24 +148,24 @@ def test_downgrade_section_existing_reasons() -> None:
     cand = _candidate(target_context={"downgrade_reasons": ["low_volume", "st_filter"]})
     lines = _render_downgrade_section(cand)
     assert lines[0] == "- 为何被降级:"
-    assert any("low_volume" in l for l in lines)
-    assert any("st_filter" in l for l in lines)
+    assert any("low_volume" in ln for ln in lines)
+    assert any("st_filter" in ln for ln in lines)
 
 
 def test_downgrade_section_empty_default_message() -> None:
     cand = _candidate()
     lines = _render_downgrade_section(cand)
     assert lines[0] == "- 为何被降级:"
-    assert any("无，保留正式执行资格" in l for l in lines)
+    assert any("无，保留正式执行资格" in ln for ln in lines)
 
 
 def test_downgrade_section_strips_blank_reasons() -> None:
     cand = _candidate(target_context={"downgrade_reasons": ["valid", "  ", ""]})
     lines = _render_downgrade_section(cand)
     # Only "valid" survives after strip
-    assert any("valid" in l for l in lines)
+    assert any("valid" in ln for ln in lines)
     # Cap at 3 reasons → only 1 here
-    assert sum(1 for l in lines if l.startswith("  - ")) == 1
+    assert sum(1 for ln in lines if ln.startswith("  - ")) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -177,13 +177,13 @@ def test_eligibility_eligible() -> None:
     cand = _candidate(target_context={"execution_eligible": True})
     lines = _render_execution_eligibility_section(cand)
     assert lines[0] == "- 是否可执行:"
-    assert any("是" in l for l in lines)
+    assert any("是" in ln for ln in lines)
 
 
 def test_eligibility_not_eligible() -> None:
     cand = _candidate(target_context={"execution_eligible": False})
     lines = _render_execution_eligibility_section(cand)
-    assert any("否" in l for l in lines)
+    assert any("否" in ln for ln in lines)
 
 
 def test_eligibility_with_details() -> None:
@@ -194,9 +194,9 @@ def test_eligibility_with_details() -> None:
         "short_trade_reporting_decision": "shadow_only",
     })
     lines = _render_execution_eligibility_section(cand)
-    assert any("gate=halt" in l for l in lines)
-    assert any("prior=low" in l for l in lines)
-    assert any("reporting=shadow_only" in l for l in lines)
+    assert any("gate=halt" in ln for ln in lines)
+    assert any("prior=low" in ln for ln in lines)
+    assert any("reporting=shadow_only" in ln for ln in lines)
 
 
 def test_eligibility_with_formal_block_flags() -> None:
@@ -205,7 +205,7 @@ def test_eligibility_with_formal_block_flags() -> None:
         "formal_execution_block_flags": ["p3_hard_cliff", "p5_low_confidence"],
     })
     lines = _render_execution_eligibility_section(cand)
-    assert any("formal_block=p3_hard_cliff+p5_low_confidence" in l for l in lines)
+    assert any("formal_block=p3_hard_cliff+p5_low_confidence" in ln for ln in lines)
 
 
 def test_eligibility_empty_target_context() -> None:
@@ -213,7 +213,7 @@ def test_eligibility_empty_target_context() -> None:
     lines = _render_execution_eligibility_section(cand)
     assert lines[0] == "- 是否可执行:"
     # No details → just "否"
-    assert any("否" in l for l in lines)
+    assert any("否" in ln for ln in lines)
 
 
 # ---------------------------------------------------------------------------
@@ -230,8 +230,8 @@ def test_render_selected_candidate_basic() -> None:
         cand, index=1, format_target_decision=lambda c, m: "", format_layer_b_factor=lambda f: ""
     )
     assert lines[0].startswith("### 1. 000001 平安银行")
-    assert any("final_score: 0.7500" in l for l in lines)
-    assert any("buy_order: yes" in l for l in lines)
+    assert any("final_score: 0.7500" in ln for ln in lines)
+    assert any("buy_order: yes" in ln for ln in lines)
     # Trailing empty line
     assert lines[-1] == ""
 
@@ -241,4 +241,4 @@ def test_render_selected_candidate_buy_order_no() -> None:
     lines = render_selected_candidate(
         cand, index=1, format_target_decision=lambda c, m: "", format_layer_b_factor=lambda f: ""
     )
-    assert any("buy_order: no" in l for l in lines)
+    assert any("buy_order: no" in ln for ln in lines)

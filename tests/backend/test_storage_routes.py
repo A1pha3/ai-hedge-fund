@@ -38,16 +38,14 @@ def test_save_json_atomic_crash_preserves_prior(tmp_path, monkeypatch):
     client = TestClient(app)
 
     from unittest.mock import patch
+
     with patch("app.backend.routes.storage.json.dump", side_effect=RuntimeError("simulated crash")):
         resp = client.post("/storage/save-json", json={"filename": "user_report.json", "data": {"new": 1}})
 
     assert resp.status_code == 500  # caught by except Exception → HTTPException(500)
 
     raw = target.read_text(encoding="utf-8")
-    assert raw.strip(), (
-        "prior user file must not be truncated-empty after a crashed write — "
-        "non-atomic open('w') truncates immediately (R88 corrupt-file CRASH vector root cause, 用户输入丢失)"
-    )
+    assert raw.strip(), "prior user file must not be truncated-empty after a crashed write — " "non-atomic open('w') truncates immediately (R88 corrupt-file CRASH vector root cause, 用户输入丢失)"
     _json.loads(raw)  # must parse cleanly
 
 
@@ -91,8 +89,4 @@ def test_save_json_unexpected_exception_is_logged_not_swallowed(tmp_path, monkey
 
     # A swallowed exception produces zero ERROR records. @safe_route calls
     # logger.exception(...) which emits at ERROR with exc_info attached.
-    assert "simulated disk full" in caplog.text, (
-        "storage.save_json_file must log the original exception (via @safe_route) — "
-        "silent except→500 loses the traceback permanently and the operator cannot "
-        "diagnose disk-full / permission / encoding failures (NS-17 drain scope gap, c292)"
-    )
+    assert "simulated disk full" in caplog.text, "storage.save_json_file must log the original exception (via @safe_route) — " "silent except→500 loses the traceback permanently and the operator cannot " "diagnose disk-full / permission / encoding failures (NS-17 drain scope gap, c292)"

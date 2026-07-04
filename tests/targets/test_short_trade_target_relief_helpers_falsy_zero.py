@@ -17,6 +17,7 @@ override. A user (or shadow strategy) explicitly setting the override to 0.0
 to maximize relief gets silently overridden back to the base threshold —
 corrupting the relief decision.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -35,10 +36,7 @@ def test_explicit_zero_near_miss_threshold_is_not_overridden_by_base() -> None:
         base_select_threshold=0.55,
         strong_carryover_history_min_evaluable_count=3,
     )
-    assert config["near_miss_threshold_override"] == 0.0, (
-        f"explicit near_miss_threshold=0.0 must survive, got {config['near_miss_threshold_override']!r} "
-        "(falsy-zero `or` silently overrode to base 0.42)"
-    )
+    assert config["near_miss_threshold_override"] == 0.0, f"explicit near_miss_threshold=0.0 must survive, got {config['near_miss_threshold_override']!r} " "(falsy-zero `or` silently overrode to base 0.42)"
 
 
 def test_explicit_zero_select_threshold_is_not_overridden_by_base() -> None:
@@ -49,10 +47,7 @@ def test_explicit_zero_select_threshold_is_not_overridden_by_base() -> None:
         base_select_threshold=0.55,
         strong_carryover_history_min_evaluable_count=3,
     )
-    assert config["select_threshold_override"] == 0.0, (
-        f"explicit selected_threshold=0.0 must survive, got {config['select_threshold_override']!r} "
-        "(falsy-zero `or` silently overrode to base 0.55)"
-    )
+    assert config["select_threshold_override"] == 0.0, f"explicit selected_threshold=0.0 must survive, got {config['select_threshold_override']!r} " "(falsy-zero `or` silently overrode to base 0.55)"
 
 
 def test_explicit_zero_min_evaluable_count_is_not_overridden_by_carryover_default() -> None:
@@ -63,11 +58,7 @@ def test_explicit_zero_min_evaluable_count_is_not_overridden_by_carryover_defaul
         base_select_threshold=0.55,
         strong_carryover_history_min_evaluable_count=3,
     )
-    assert config["carryover_min_historical_evaluable_count"] == 0, (
-        f"explicit min_historical_evaluable_count=0 must survive, got "
-        f"{config['carryover_min_historical_evaluable_count']!r} "
-        "(falsy-zero `or` silently overrode to carryover default 3)"
-    )
+    assert config["carryover_min_historical_evaluable_count"] == 0, f"explicit min_historical_evaluable_count=0 must survive, got " f"{config['carryover_min_historical_evaluable_count']!r} " "(falsy-zero `or` silently overrode to carryover default 3)"
 
 
 def test_missing_keys_fall_back_to_base_defaults() -> None:
@@ -115,10 +106,7 @@ def test_vg_explicit_zero_near_miss_override_is_not_replaced_by_base() -> None:
         profile=_vg_profile(visibility_gap_continuation_near_miss_threshold=0.0),
         base_near_miss_threshold=0.46,
     )
-    assert config["near_miss_threshold_override"] == 0.0, (
-        f"explicit override 0.0 must survive, got {config['near_miss_threshold_override']!r} "
-        "(falsy-zero `or` silently overrode to base 0.46)"
-    )
+    assert config["near_miss_threshold_override"] == 0.0, f"explicit override 0.0 must survive, got {config['near_miss_threshold_override']!r} " "(falsy-zero `or` silently overrode to base 0.46)"
 
 
 def test_vg_nonzero_override_is_preserved() -> None:

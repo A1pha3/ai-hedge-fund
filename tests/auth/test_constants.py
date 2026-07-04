@@ -21,30 +21,36 @@ from app.backend.auth.constants import (
 class TestPasswordPattern:
     """Tests for PASSWORD_PATTERN regex validation."""
 
-    @pytest.mark.parametrize("password", [
-        "Abcdef12",       # Exactly 8 chars, meets all rules
-        "Password1",      # Common but valid
-        "MyP@ssw0rd",     # With special chars
-        "ABCDEFgh1",      # Uppercase heavy
-        "aB3defgh",       # Lowercase heavy
-        "A" * 50 + "b1",  # Very long
-    ])
+    @pytest.mark.parametrize(
+        "password",
+        [
+            "Abcdef12",  # Exactly 8 chars, meets all rules
+            "Password1",  # Common but valid
+            "MyP@ssw0rd",  # With special chars
+            "ABCDEFgh1",  # Uppercase heavy
+            "aB3defgh",  # Lowercase heavy
+            "A" * 50 + "b1",  # Very long
+        ],
+    )
     def test_valid_passwords(self, password):
         assert PASSWORD_PATTERN.match(password), f"Should be valid: {password}"
 
-    @pytest.mark.parametrize("password,reason", [
-        ("abc1234", "Too short (7 chars)"),
-        ("abcdefgh", "No uppercase, no digit"),
-        ("ABCDEFGH", "No lowercase, no digit"),
-        ("12345678", "No letters"),
-        ("abcdefG1", "Valid - 8 chars"),  # Actually valid, will be excluded
-        ("abcdef1", "Too short, no uppercase"),
-        ("ABCDEF1", "Too short, no lowercase"),
-        ("Abcdefg", "No digit"),
-        ("1234567A", "No lowercase"),
-        ("", "Empty string"),
-        ("Ab1", "Way too short"),
-    ])
+    @pytest.mark.parametrize(
+        "password,reason",
+        [
+            ("abc1234", "Too short (7 chars)"),
+            ("abcdefgh", "No uppercase, no digit"),
+            ("ABCDEFGH", "No lowercase, no digit"),
+            ("12345678", "No letters"),
+            ("abcdefG1", "Valid - 8 chars"),  # Actually valid, will be excluded
+            ("abcdef1", "Too short, no uppercase"),
+            ("ABCDEF1", "Too short, no lowercase"),
+            ("Abcdefg", "No digit"),
+            ("1234567A", "No lowercase"),
+            ("", "Empty string"),
+            ("Ab1", "Way too short"),
+        ],
+    )
     def test_invalid_passwords(self, password, reason):
         if password == "abcdefG1":
             pytest.skip("This is actually valid")
@@ -60,6 +66,7 @@ class TestPasswordPattern:
 
 # ---- Constants ----
 
+
 class TestConstants:
     """Tests for auth constants."""
 
@@ -70,6 +77,7 @@ class TestConstants:
 
 
 # ---- Exception Hierarchy ----
+
 
 class TestExceptionHierarchy:
     """Tests for custom exception classes."""

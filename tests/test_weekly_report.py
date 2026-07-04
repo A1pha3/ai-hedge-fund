@@ -333,12 +333,8 @@ def test_weekly_report_preserves_explicit_position_scale_zero_r20_17_regression(
     )
 
     # 0% 仓位应保留 (而非被 or 1.0 覆盖为 100%)
-    assert "仓位系数 0%" in report, (
-        f"position_scale=0.0 应保留显示 0%, 实际报告不含此字符串 (R20.17 Bug D 回归)。报告片段: {report[:500]}"
-    )
-    assert "仓位系数 100%" not in report, (
-        "position_scale=0.0 不应被覆盖为 100%"
-    )
+    assert "仓位系数 0%" in report, f"position_scale=0.0 应保留显示 0%, 实际报告不含此字符串 (R20.17 Bug D 回归)。报告片段: {report[:500]}"
+    assert "仓位系数 100%" not in report, "position_scale=0.0 不应被覆盖为 100%"
 
 
 def test_weekly_report_default_position_scale_1_0_when_missing(tmp_path: Path) -> None:
@@ -396,23 +392,13 @@ class TestCorruptJsonGracefulR94:
             )
 
         # 不崩溃, 输出本周归因降级提示
-        assert "本周无持仓数据" in report, (
-            f"损坏 positions.json 应降级为'本周无持仓数据', 实际报告: {report[:500]}"
-        )
+        assert "本周无持仓数据" in report, f"损坏 positions.json 应降级为'本周无持仓数据', 实际报告: {report[:500]}"
         # 其他区块仍正常 (不因一个坏文件中断整份周报)
         assert "退出调仓" in report
         # 降级必须有 warning 诊断, 且区分"文件损坏"(数据问题)而非笼统"归因异常"(代码 bug)
-        assert any(
-            "positions" in rec.message.lower() or "持仓" in rec.message or "损坏" in rec.message or "corrupt" in rec.message.lower()
-            for rec in caplog.records
-        ), (
-            f"损坏 positions.json 应发含文件名/损坏关键词的 warning 诊断 (区分数据损坏 vs 计算异常), "
-            f"caplog: {[r.message for r in caplog.records]}"
-        )
+        assert any("positions" in rec.message.lower() or "持仓" in rec.message or "损坏" in rec.message or "corrupt" in rec.message.lower() for rec in caplog.records), f"损坏 positions.json 应发含文件名/损坏关键词的 warning 诊断 (区分数据损坏 vs 计算异常), " f"caplog: {[r.message for r in caplog.records]}"
 
-    def test_corrupt_tracking_history_degrades_with_diagnostic_r94(
-        self, tmp_report_dir: Path, caplog: "pytest.LogCaptureFixture"
-    ) -> None:
+    def test_corrupt_tracking_history_degrades_with_diagnostic_r94(self, tmp_report_dir: Path, caplog: "pytest.LogCaptureFixture") -> None:
         """_block_exit_rebalance_summary: 损坏的 tracking_history.json 优雅降级 + warning。"""
         from src.notification.weekly_report import generate_weekly_report
         import logging
@@ -428,17 +414,9 @@ class TestCorruptJsonGracefulR94:
             )
 
         assert "本周无交易记录" in report
-        assert any(
-            "tracking" in rec.message.lower() or "交易" in rec.message or "history" in rec.message.lower() or "损坏" in rec.message or "corrupt" in rec.message.lower()
-            for rec in caplog.records
-        ), (
-            f"损坏 tracking_history 应发含文件名/损坏关键词的 warning 诊断 (区分数据损坏 vs 计算异常), "
-            f"caplog: {[r.message for r in caplog.records]}"
-        )
+        assert any("tracking" in rec.message.lower() or "交易" in rec.message or "history" in rec.message.lower() or "损坏" in rec.message or "corrupt" in rec.message.lower() for rec in caplog.records), f"损坏 tracking_history 应发含文件名/损坏关键词的 warning 诊断 (区分数据损坏 vs 计算异常), " f"caplog: {[r.message for r in caplog.records]}"
 
-    def test_corrupt_auto_screening_degrades_with_diagnostic_r94(
-        self, tmp_report_dir: Path, caplog: "pytest.LogCaptureFixture"
-    ) -> None:
+    def test_corrupt_auto_screening_degrades_with_diagnostic_r94(self, tmp_report_dir: Path, caplog: "pytest.LogCaptureFixture") -> None:
         """_block_next_week_watch: 损坏的最新 auto_screening.json 优雅降级 + warning。"""
         from src.notification.weekly_report import generate_weekly_report
         import logging
@@ -454,13 +432,7 @@ class TestCorruptJsonGracefulR94:
             )
 
         assert "暂无最新选股报告" in report
-        assert any(
-            "auto_screening" in rec.message.lower() or "选股" in rec.message or "损坏" in rec.message or "corrupt" in rec.message.lower()
-            for rec in caplog.records
-        ), (
-            f"损坏 auto_screening 应发含文件名/损坏关键词的 warning 诊断 (区分数据损坏 vs 计算异常), "
-            f"caplog: {[r.message for r in caplog.records]}"
-        )
+        assert any("auto_screening" in rec.message.lower() or "选股" in rec.message or "损坏" in rec.message or "corrupt" in rec.message.lower() for rec in caplog.records), f"损坏 auto_screening 应发含文件名/损坏关键词的 warning 诊断 (区分数据损坏 vs 计算异常), " f"caplog: {[r.message for r in caplog.records]}"
 
 
 def test_risk_metrics_block_reads_custom_report_dir_not_hardcoded_r94(tmp_path: Path) -> None:
@@ -489,10 +461,7 @@ def test_risk_metrics_block_reads_custom_report_dir_not_hardcoded_r94(tmp_path: 
     )
 
     # 必须从自定义 report_dir 读到 attribution 数据, 输出风险指标 (而非"无足够历史数据")
-    assert "Sharpe:" in report, (
-        f"自定义 report_dir 的 attribution_daily 应被读取并计算风险指标, "
-        f"实际报告风险区块: {[l for l in report.split(chr(10)) if '风险' in l or 'Sharpe' in l]}"
-    )
+    assert "Sharpe:" in report, f"自定义 report_dir 的 attribution_daily 应被读取并计算风险指标, " f"实际报告风险区块: {[l for l in report.split(chr(10)) if '风险' in l or 'Sharpe' in l]}"
 
 
 def test_weekly_report_includes_disclaimer_r95(tmp_report_dir: Path) -> None:
@@ -513,8 +482,5 @@ def test_weekly_report_includes_disclaimer_r95(tmp_report_dir: Path) -> None:
     )
 
     # footer 必须含研究用途 disclaimer (与 R71-R77 七个面 + PDF/backtest 一致)
-    assert "不构成" in report and ("投资建议" in report or "投资" in report), (
-        f"--weekly-report footer 必须含研究用途 disclaimer (R71-R77 同族第 8 个决策面), "
-        f"实际 footer: {[l for l in report.split(chr(10))[-6:]]}"
-    )
+    assert "不构成" in report and ("投资建议" in report or "投资" in report), f"--weekly-report footer 必须含研究用途 disclaimer (R71-R77 同族第 8 个决策面), " f"实际 footer: {[l for l in report.split(chr(10))[-6:]]}"
     assert "研究" in report, "disclaimer 应含'研究'用途说明"

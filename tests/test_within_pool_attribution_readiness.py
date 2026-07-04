@@ -13,6 +13,7 @@ c316 发现: blocker 正在解除. _inject_score_decomposition (8a5d54e8) 已上
 attribution, 而非干等或反复手动查. 纯逻辑 (覆盖率统计 + 就绪估算) 必须可测:
 误判就绪会跑出 insufficient 浪费精力; 误判未就绪会干等过久.
 """
+
 from __future__ import annotations
 
 import math
@@ -25,7 +26,6 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 from scripts._diag_within_pool_attribution_readiness import (  # noqa: E402
     attribution_readiness,
 )
-
 
 # ---------------------------------------------------------------------------
 # attribution_readiness — coverage stats + ready verdict + ETA
@@ -55,11 +55,11 @@ def test_readiness_counts_only_sd_plus_horizon_records():
     Records missing either don't count toward readiness (don't fake it)."""
     sd = {"base_contributions": {"trend": 0.1}}
     recs = [
-        _rec("20260701", sd=sd, ret5=0.02),    # valid
-        _rec("20260701", sd=sd, ret5=None),    # no horizon return — invalid
+        _rec("20260701", sd=sd, ret5=0.02),  # valid
+        _rec("20260701", sd=sd, ret5=None),  # no horizon return — invalid
         _rec("20260701", sd=None, ret5=0.02),  # no decomposition — invalid
         _rec("20260701", sd="garbage", ret5=0.02),  # decomposition not dict — invalid
-        _rec("20260702", sd=sd, ret5=-0.01),   # valid
+        _rec("20260702", sd=sd, ret5=-0.01),  # valid
     ]
     r = attribution_readiness(recs, min_n=15, horizon_field="next_5day_return")
     assert r["valid_count"] == 2  # only the two fully-valid records

@@ -562,9 +562,7 @@ def test_build_target_input_preserves_explicit_quality_score_zero_r20_17_regress
         },
         normalized_reason_codes_fn=lambda raw: [str(item) for item in raw] if isinstance(raw, list) else [],
     )
-    assert result.quality_score == 0.0, (
-        f"quality_score=0.0 应保留, 实际 {result.quality_score} (R20.17 Bug A 回归: or 0.5)"
-    )
+    assert result.quality_score == 0.0, f"quality_score=0.0 应保留, 实际 {result.quality_score} (R20.17 Bug A 回归: or 0.5)"
 
     # 不传 quality_score → 应走默认值 0.5
     result_missing = build_target_input_from_entry(
@@ -576,9 +574,7 @@ def test_build_target_input_preserves_explicit_quality_score_zero_r20_17_regress
         },
         normalized_reason_codes_fn=lambda raw: [str(item) for item in raw] if isinstance(raw, list) else [],
     )
-    assert result_missing.quality_score == 0.5, (
-        f"missing quality_score 应默认 0.5, 实际 {result_missing.quality_score}"
-    )
+    assert result_missing.quality_score == 0.5, f"missing quality_score 应默认 0.5, 实际 {result_missing.quality_score}"
 
     # quality_score=None → 应走默认值 0.5 (区分"未传"与"传了 0.0")
     result_none = build_target_input_from_entry(
@@ -5678,7 +5674,7 @@ def test_event_catalyst_boundary_relief_promotes_frontier_case_to_near_miss() ->
     assert relief_result.metrics_payload["event_catalyst"]["applied"] is True
     assert relief_result.metrics_payload["event_catalyst"]["gate_hits"]["eligible_source"] is True
     assert relief_result.explainability_payload["event_catalyst"]["score"] >= 0.40
-    
+
     # Task 2 spec-review requirements: positive tag and top-reason when event catalyst changes decision
     assert "event_catalyst_applied" in relief_result.positive_tags
     assert any("event_catalyst" in str(reason).lower() for reason in relief_result.top_reasons)
@@ -5686,7 +5682,7 @@ def test_event_catalyst_boundary_relief_promotes_frontier_case_to_near_miss() ->
 
 def test_event_catalyst_blocked_by_high_extension_penalty() -> None:
     """Test that event catalyst is blocked when extension penalty exceeds max threshold.
-    
+
     This test verifies that the event catalyst assessment sees real penalty values,
     not the hardcoded 0.0 values. A candidate with high long_trend_strength and
     volatility should trigger extension_without_room_penalty that blocks the catalyst.
@@ -5696,18 +5692,18 @@ def test_event_catalyst_blocked_by_high_extension_penalty() -> None:
     # - High volatility_strength (volatility confidence)
     # - High score_final for penalty formula
     entry = _make_profitability_hard_cliff_boundary_frontier_entry(catalyst_ready=True)
-    
+
     # Modify signals to trigger high extension penalty
     entry["strategy_signals"]["trend"]["sub_factors"]["long_trend_alignment"]["confidence"] = 95.0  # High long trend
     entry["strategy_signals"]["trend"]["sub_factors"]["volatility"]["confidence"] = 85.0  # High volatility
     entry["score_final"] = 0.78  # High score for extension component
-    
+
     baseline_result = evaluate_short_trade_rejected_target(
         trade_date="20260324",
         entry=entry,
         profile_overrides={"event_catalyst_enabled": False},
     )
-    
+
     relief_result = evaluate_short_trade_rejected_target(
         trade_date="20260324",
         entry=entry,
@@ -5721,15 +5717,15 @@ def test_event_catalyst_blocked_by_high_extension_penalty() -> None:
             "event_catalyst_extension_penalty_max": 0.50,  # Set threshold that should block
         },
     )
-    
+
     # Event catalyst should NOT be applied because extension penalty exceeds max
     assert "event_catalyst" not in relief_result.metrics_payload or relief_result.metrics_payload["event_catalyst"]["applied"] is False
     assert "event_catalyst_applied" not in relief_result.positive_tags
-    
+
     # Verify that extension penalty was actually computed and high
     assert "extension_without_room_penalty" in relief_result.metrics_payload
     assert relief_result.metrics_payload["extension_without_room_penalty"] > 0.50
-    
+
     # Verify gate_hits show extension_ok as False
     if "event_catalyst" in relief_result.metrics_payload:
         assert relief_result.metrics_payload["event_catalyst"]["gate_hits"]["extension_ok"] is False

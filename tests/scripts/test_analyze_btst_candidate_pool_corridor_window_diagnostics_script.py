@@ -113,15 +113,11 @@ def test_analyze_btst_candidate_pool_corridor_window_diagnostics_flags_narrow_ga
     )
     _write_json(
         visibility_gap_dir / "selection_artifacts" / "2026-03-27" / "selection_target_replay_input.json",
-        {
-            "selection_targets": {"300720": {"short_trade": {"decision": "near_miss"}}}
-        },
+        {"selection_targets": {"300720": {"short_trade": {"decision": "near_miss"}}}},
     )
     _write_json(
         visibility_gap_dir / "selection_artifacts" / "2026-03-27" / "selection_snapshot.json",
-        {
-            "near_miss_entries": [{"ticker": "300720"}]
-        },
+        {"near_miss_entries": [{"ticker": "300720"}]},
     )
 
     analysis = analyze_btst_candidate_pool_corridor_window_diagnostics(
@@ -204,9 +200,7 @@ def test_diagnostics_auto_derives_dossier_for_actual_focus_ticker(tmp_path: Path
         _reports_dir=reports_root,
     )
 
-    assert analysis["focus_ticker"] == "300683", (
-        "Diagnostics must re-anchor to command board focus_ticker (300683), not stale 300720 default"
-    )
+    assert analysis["focus_ticker"] == "300683", "Diagnostics must re-anchor to command board focus_ticker (300683), not stale 300720 default"
     # source_reports must point to the 300683 dossier, not 300720
     assert "300683" in analysis["source_reports"]["candidate_dossier"]
     assert "300720" not in analysis["source_reports"]["candidate_dossier"]
@@ -245,9 +239,7 @@ def test_diagnostics_degrades_gracefully_when_focus_ticker_has_no_dossier_file(t
         _reports_dir=reports_root,
     )
 
-    assert analysis["focus_ticker"] == "300683", (
-        "Even with no dossier file, focus_ticker must be 300683 from command board"
-    )
+    assert analysis["focus_ticker"] == "300683", "Even with no dossier file, focus_ticker must be 300683 from command board"
     assert analysis["selected_anchor_window"] is not None
     assert analysis["near_miss_upgrade_window"] is not None
     assert analysis["visibility_gap_window"] is not None
@@ -323,9 +315,7 @@ def test_diagnostics_reanchors_when_stale_mismatch_dossier_path_provided(tmp_pat
     )
 
     assert analysis["focus_ticker"] == "300683", "focus_ticker must still come from command board"
-    assert "300683" in analysis["source_reports"]["candidate_dossier"], (
-        "Source dossier must be re-anchored to 300683, not the stale 300720 path"
-    )
+    assert "300683" in analysis["source_reports"]["candidate_dossier"], "Source dossier must be re-anchored to 300683, not the stale 300720 path"
 
 
 def test_diagnostics_loads_dossier_next_to_custom_command_board_without_reports_dir_hook(tmp_path: Path) -> None:
@@ -390,19 +380,13 @@ def test_diagnostics_loads_dossier_next_to_custom_command_board_without_reports_
         command_board_path=command_board_path,
     )
 
-    assert analysis["focus_ticker"] == "300999", (
-        "focus_ticker must come from the custom command board"
-    )
+    assert analysis["focus_ticker"] == "300999", "focus_ticker must come from the custom command board"
     # The dossier must have been resolved from board_dir, not from the module-level REPORTS_DIR.
     # Check that the resolved dossier path lives INSIDE board_dir, not under data/reports.
-    assert str(board_dir) in analysis["source_reports"]["candidate_dossier"], (
-        "Dossier path must be resolved next to command_board_path, not under the module REPORTS_DIR"
-    )
+    assert str(board_dir) in analysis["source_reports"]["candidate_dossier"], "Dossier path must be resolved next to command_board_path, not under the module REPORTS_DIR"
     # Dossier was found and loaded (not fallen back to graceful-degradation empty skeleton):
     # the near-miss score_target must come from the real file, not be None.
-    assert analysis["near_miss_upgrade_window"]["score_target"] == 0.44, (
-        "Near-miss score_target must be loaded from the actual dossier file beside the command board"
-    )
+    assert analysis["near_miss_upgrade_window"]["score_target"] == 0.44, "Near-miss score_target must be loaded from the actual dossier file beside the command board"
 
 
 def test_diagnostics_uses_command_board_action_row_when_dossier_anchor_is_empty(tmp_path: Path) -> None:

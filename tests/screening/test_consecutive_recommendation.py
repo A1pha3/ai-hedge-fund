@@ -116,9 +116,7 @@ class TestLoadAutoScreeningHistory:
 
     def test_skips_corrupt_files(self, tmp_path) -> None:
         (tmp_path / "auto_screening_20260101.json").write_text("NOT JSON", encoding="utf-8")
-        (tmp_path / "auto_screening_20260102.json").write_text(
-            json.dumps({"recommendations": []}), encoding="utf-8"
-        )
+        (tmp_path / "auto_screening_20260102.json").write_text(json.dumps({"recommendations": []}), encoding="utf-8")
         result = load_auto_screening_history(lookback_days=5, report_dir=tmp_path, end_date="20260102")
         assert len(result) == 1
 
@@ -142,17 +140,13 @@ class TestLoadTrackingHistory:
         assert load_tracking_history(tmp_path) == []
 
     def test_loads_records(self, tmp_path) -> None:
-        (tmp_path / "tracking_history.json").write_text(
-            json.dumps({"records": [{"ticker": "000001", "return_pct": 5.0}]}), encoding="utf-8"
-        )
+        (tmp_path / "tracking_history.json").write_text(json.dumps({"records": [{"ticker": "000001", "return_pct": 5.0}]}), encoding="utf-8")
         result = load_tracking_history(tmp_path)
         assert len(result) == 1
         assert result[0]["ticker"] == "000001"
 
     def test_loads_list(self, tmp_path) -> None:
-        (tmp_path / "tracking_history.json").write_text(
-            json.dumps([{"ticker": "000001"}]), encoding="utf-8"
-        )
+        (tmp_path / "tracking_history.json").write_text(json.dumps([{"ticker": "000001"}]), encoding="utf-8")
         result = load_tracking_history(tmp_path)
         assert len(result) == 1
 
@@ -365,15 +359,9 @@ class TestComputeConsecutiveRecommendations:
         20260101 (Thu) score=0.2, 20260102 (Fri) absent, 20260105 (Mon)
         score=0.2 — too low to qualify for re-entry signal threshold.
         """
-        (tmp_path / "auto_screening_20260101.json").write_text(
-            json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.2}]}), encoding="utf-8"
-        )
-        (tmp_path / "auto_screening_20260102.json").write_text(
-            json.dumps({"recommendations": [{"ticker": "000002", "score_b": 0.3}]}), encoding="utf-8"
-        )
-        (tmp_path / "auto_screening_20260105.json").write_text(
-            json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.2}]}), encoding="utf-8"
-        )
+        (tmp_path / "auto_screening_20260101.json").write_text(json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.2}]}), encoding="utf-8")
+        (tmp_path / "auto_screening_20260102.json").write_text(json.dumps({"recommendations": [{"ticker": "000002", "score_b": 0.3}]}), encoding="utf-8")
+        (tmp_path / "auto_screening_20260105.json").write_text(json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.2}]}), encoding="utf-8")
         result = compute_consecutive_recommendations(
             lookback_days=5,
             report_dir=tmp_path,
@@ -385,9 +373,7 @@ class TestComputeConsecutiveRecommendations:
     def test_consecutive_not_misclassified_as_reentry(self, tmp_path) -> None:
         """BH-016 ported: continuous Thu-Fri-Mon stays CONSECUTIVE_3PLUS, not REENTRY."""
         for date_str in ["20260101", "20260102", "20260105"]:
-            (tmp_path / f"auto_screening_{date_str}.json").write_text(
-                json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.5}]}), encoding="utf-8"
-            )
+            (tmp_path / f"auto_screening_{date_str}.json").write_text(json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.5}]}), encoding="utf-8")
         result = compute_consecutive_recommendations(
             lookback_days=5,
             report_dir=tmp_path,
@@ -398,9 +384,7 @@ class TestComputeConsecutiveRecommendations:
 
     def test_first_appearance_does_not_trigger_reentry(self, tmp_path) -> None:
         """BH-016 ported: only 1 appearance in window → FIRST_APPEARANCE."""
-        (tmp_path / "auto_screening_20260105.json").write_text(
-            json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.5}]}), encoding="utf-8"
-        )
+        (tmp_path / "auto_screening_20260105.json").write_text(json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.5}]}), encoding="utf-8")
         result = compute_consecutive_recommendations(
             lookback_days=3,
             report_dir=tmp_path,
@@ -411,15 +395,9 @@ class TestComputeConsecutiveRecommendations:
     def test_reentry_bonus_strictly_between_first_and_consecutive(self, tmp_path) -> None:
         """BH-016 ported: REENTRY bonus must be 0 < bonus < 10 (between
         FIRST_APPEARANCE and CONSECUTIVE_3PLUS)."""
-        (tmp_path / "auto_screening_20260101.json").write_text(
-            json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.5}]}), encoding="utf-8"
-        )
-        (tmp_path / "auto_screening_20260102.json").write_text(
-            json.dumps({"recommendations": [{"ticker": "000002", "score_b": 0.3}]}), encoding="utf-8"
-        )
-        (tmp_path / "auto_screening_20260105.json").write_text(
-            json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.4}]}), encoding="utf-8"
-        )
+        (tmp_path / "auto_screening_20260101.json").write_text(json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.5}]}), encoding="utf-8")
+        (tmp_path / "auto_screening_20260102.json").write_text(json.dumps({"recommendations": [{"ticker": "000002", "score_b": 0.3}]}), encoding="utf-8")
+        (tmp_path / "auto_screening_20260105.json").write_text(json.dumps({"recommendations": [{"ticker": "000001", "score_b": 0.4}]}), encoding="utf-8")
         result = compute_consecutive_recommendations(
             lookback_days=5,
             report_dir=tmp_path,

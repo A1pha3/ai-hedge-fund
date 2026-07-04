@@ -72,10 +72,7 @@ def test_exit_signal_sell_ratio_always_within_unit_interval():
                     signal = check_exit_signal(holding, current_price=current_price, trade_date="20260610", atr_14=0.5)
                     if signal is not None:
                         assert isinstance(signal, ExitSignal)
-                        assert 0.0 <= signal.sell_ratio <= 1.0, (
-                            f"sell_ratio={signal.sell_ratio} 越界 [0,1] "
-                            f"pnl={pnl_pct} days={holding_days} quality={quality_score} stage={profit_take_stage}"
-                        )
+                        assert 0.0 <= signal.sell_ratio <= 1.0, f"sell_ratio={signal.sell_ratio} 越界 [0,1] " f"pnl={pnl_pct} days={holding_days} quality={quality_score} stage={profit_take_stage}"
 
 
 def test_exit_signal_level_from_closed_enum():
@@ -100,6 +97,7 @@ def test_exit_signal_level_from_closed_enum():
 
 # I-3: position calculation non-negative
 
+
 @pytest.mark.parametrize("avg_volume_20d", [float("nan"), 0.0, 1.0, 7_000.0, 100_000.0, 1e9])
 def test_calculate_position_shares_non_negative(avg_volume_20d):
     """I-3: 任何 avg_volume_20d (含 NaN / 0 / 极大值) 下 shares 必须 ≥ 0。"""
@@ -118,14 +116,12 @@ def test_calculate_position_shares_non_negative(avg_volume_20d):
 
 # I-4: daily trade limit aggregate cap
 
+
 def test_enforce_daily_trade_limit_total_amount_never_exceeds_cap():
     """I-4: enforce_daily_trade_limit 选出的 plan 总额 ≤ portfolio_nav * limit_ratio。"""
     from src.portfolio.models import PositionPlan
 
-    plans = [
-        PositionPlan(ticker=f"T{i}", shares=100, amount=90_000.0, constraint_binding="cash", score_final=0.9 - i * 0.05, execution_ratio=1.0)
-        for i in range(10)
-    ]
+    plans = [PositionPlan(ticker=f"T{i}", shares=100, amount=90_000.0, constraint_binding="cash", score_final=0.9 - i * 0.05, execution_ratio=1.0) for i in range(10)]
     portfolio_nav = 1_000_000
     limit_ratio = 0.20
     selected = enforce_daily_trade_limit(plans, portfolio_nav=portfolio_nav, limit_ratio=limit_ratio, max_new_positions=5)
@@ -135,6 +131,7 @@ def test_enforce_daily_trade_limit_total_amount_never_exceeds_cap():
 
 
 # I-5: crisis position_cap domain
+
 
 @pytest.mark.parametrize(
     "hs300_ret, limit_down, volumes, drawdown",
@@ -162,6 +159,7 @@ def test_crisis_position_cap_within_unit_interval(hs300_ret, limit_down, volumes
 
 # I-6: three limit-down days forces risk_reduce_others
 
+
 def test_pending_sell_three_consecutive_limit_down_forces_risk_reduce():
     """I-6: 持续跌停后必须最终触发 risk_reduce_others (而非无限 keep)。
 
@@ -179,6 +177,7 @@ def test_pending_sell_three_consecutive_limit_down_forces_risk_reduce():
 
 
 # I-7: suspension release_ratio domain
+
 
 def test_suspension_release_ratio_capped_at_half():
     """I-7: handle_suspension_emergency 的 release_ratio 必须 ∈ (0, 0.5]。"""

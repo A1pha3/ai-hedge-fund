@@ -129,6 +129,7 @@ def test_get_financial_metrics_uses_provider_tag_for_ashare(monkeypatch):
 
     monkeypatch.setattr(api, "_cache", _Cache())
     monkeypatch.setattr(api, "is_ashare", lambda ticker: True)
+
     # Mock must return list of objects with .model_dump(); api.py writes
     # via [m.model_dump() for m in metrics].
     class _MetricStub:
@@ -168,7 +169,7 @@ def test_search_line_items_uses_provider_tag_for_ashare(monkeypatch):
     assert result == sentinel
     # Single key, provider-tagged, regardless of which line items were selected.
     assert len(cache_items) == 1
-    (cached_key, _), = cache_items.items()
+    ((cached_key, _),) = cache_items.items()
     assert cached_key.startswith("tushare::000001_revenue_ttm_2024-12-31_10")
     assert "000001_revenue_ttm_2024-12-31_10" not in cache_items  # negative
 

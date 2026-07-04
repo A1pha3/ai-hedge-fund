@@ -14,9 +14,7 @@ def test_validate_prices_preserves_only_valid_rows_and_warning_messages(caplog):
         result = DataValidator.validate_prices(prices)
 
     assert result == [{"time": "2024-01-01", "open": 10, "high": 12, "low": 9, "close": 11, "volume": 1000}]
-    assert caplog.messages == [
-        "Price validation errors: ['Price[1]: high < max(open, close)', 'Price[2]: invalid date format']"
-    ]
+    assert caplog.messages == ["Price validation errors: ['Price[1]: high < max(open, close)', 'Price[2]: invalid date format']"]
 
 
 def test_validate_prices_preserves_empty_input():

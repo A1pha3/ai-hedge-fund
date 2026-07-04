@@ -59,7 +59,4 @@ def test_calculate_fcf_volatility_swallow_is_now_logged(caplog, monkeypatch):
     # Behavior preserved: silent fallback still returns the documented 0.5.
     assert result == 0.5
     # Observability: the swallow is now logged (at DEBUG or higher).
-    assert any(
-        "fcf_volatility" in rec.message.lower() or "volatility" in rec.message.lower()
-        for rec in caplog.records
-    ), f"expected a log record mentioning volatility, got: {[r.message for r in caplog.records]}"
+    assert any("fcf_volatility" in rec.message.lower() or "volatility" in rec.message.lower() for rec in caplog.records), f"expected a log record mentioning volatility, got: {[r.message for r in caplog.records]}"

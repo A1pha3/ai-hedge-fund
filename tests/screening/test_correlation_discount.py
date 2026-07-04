@@ -11,7 +11,6 @@ from src.screening.correlation_discount import (
     render_correlation_note,
 )
 
-
 # ---------------------------------------------------------------------------
 # _correlation_proxy
 # ---------------------------------------------------------------------------

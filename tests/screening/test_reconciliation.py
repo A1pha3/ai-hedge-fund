@@ -18,9 +18,7 @@ from src.screening.reconciliation import (
 
 def _seed_report(dir_path: Path, date_str: str, recs: list[dict]) -> None:
     payload = {"date": date_str, "recommendations": recs}
-    (dir_path / f"auto_screening_{date_str}.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
+    (dir_path / f"auto_screening_{date_str}.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 def _seed_tracking(dir_path: Path, records: list[dict]) -> None:
@@ -47,9 +45,12 @@ def _write_trade_log(dir_path: Path, rows: list[dict]) -> Path:
 
 class TestLoadTradeLog:
     def test_parses_csv(self, tmp_path: Path) -> None:
-        path = _write_trade_log(tmp_path, [
-            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.5, "sell_date": "20260131", "sell_price": 11.2},
-        ])
+        path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.5, "sell_date": "20260131", "sell_price": 11.2},
+            ],
+        )
         trades = _load_trade_log(path)
         assert len(trades) == 1
         t = trades[0]
@@ -61,10 +62,7 @@ class TestLoadTradeLog:
     def test_skips_header_and_blank(self, tmp_path: Path) -> None:
         path = tmp_path / "trade_log.csv"
         path.write_text(
-            "ticker,buy_date,buy_price,sell_date,sell_price\n"
-            "000001,20260101,10,20260131,11\n"
-            "\n"
-            "   \n",
+            "ticker,buy_date,buy_price,sell_date,sell_price\n" "000001,20260101,10,20260131,11\n" "\n" "   \n",
             encoding="utf-8",
         )
         trades = _load_trade_log(path)
@@ -84,8 +82,7 @@ class TestLoadTradeLog:
         path = tmp_path / "broker_export.csv"
         # Extra leading "账户" column; columns in different order than positional default
         path.write_text(
-            "账户,代码,买入日期,买入价,卖出日期,卖出价\n"
-            "ACC1,000001,2026-01-01,10.5,2026-01-31,11.2\n",
+            "账户,代码,买入日期,买入价,卖出日期,卖出价\n" "ACC1,000001,2026-01-01,10.5,2026-01-31,11.2\n",
             encoding="utf-8",
         )
         trades = _load_trade_log(path)
@@ -100,8 +97,7 @@ class TestLoadTradeLog:
         """NS-22: English header keywords also trigger column mapping."""
         path = tmp_path / "trade_log.csv"
         path.write_text(
-            "id,ticker,buy_date,buy_price,sell_date,sell_price,note\n"
-            "1,000002,2026-02-01,20,2026-02-28,22,extra\n",
+            "id,ticker,buy_date,buy_price,sell_date,sell_price,note\n" "1,000002,2026-02-01,20,2026-02-28,22,extra\n",
             encoding="utf-8",
         )
         trades = _load_trade_log(path)
@@ -113,8 +109,7 @@ class TestLoadTradeLog:
         """NS-22: CSV with no recognizable header → positional [0..4] (backward compat)."""
         path = tmp_path / "trade_log.csv"
         path.write_text(
-            "000001,20260101,10.5,20260131,11.2\n"
-            "000002,20260101,20,20260131,22\n",
+            "000001,20260101,10.5,20260131,11.2\n" "000002,20260101,20,20260131,22\n",
             encoding="utf-8",
         )
         trades = _load_trade_log(path)
@@ -132,12 +127,15 @@ class TestComputeReconciliation:
     def test_warns_when_mostly_unmatched(self, tmp_path: Path) -> None:
         """NS-22: unmatched >50% → warning in report (likely column misalignment / date / dir issue)."""
         # No reports seeded → every trade is unmatched (no score_b on buy_date)
-        trade_path = _write_trade_log(tmp_path, [
-            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
-            {"ticker": "000002", "buy_date": "20260101", "buy_price": 20.0, "sell_date": "20260131", "sell_price": 21.0},
-            {"ticker": "000003", "buy_date": "20260101", "buy_price": 30.0, "sell_date": "20260131", "sell_price": 31.0},
-            {"ticker": "000004", "buy_date": "20260101", "buy_price": 40.0, "sell_date": "20260131", "sell_price": 41.0},
-        ])
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
+                {"ticker": "000002", "buy_date": "20260101", "buy_price": 20.0, "sell_date": "20260131", "sell_price": 21.0},
+                {"ticker": "000003", "buy_date": "20260101", "buy_price": 30.0, "sell_date": "20260131", "sell_price": 31.0},
+                {"ticker": "000004", "buy_date": "20260101", "buy_price": 40.0, "sell_date": "20260131", "sell_price": 41.0},
+            ],
+        )
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
         assert report.unmatched_count == 4
         assert report.matched_count == 0
@@ -153,20 +151,30 @@ class TestComputeReconciliation:
         intentional honest labeling, not a spurious NS-22 warning. This test
         only asserts the NS-22 unmatched warning is absent.
         """
-        _seed_report(tmp_path, "20260101", [
-            {"ticker": "000001", "score_b": 0.75},
-            {"ticker": "000002", "score_b": 0.75},
-            {"ticker": "000003", "score_b": 0.75},
-        ])
-        _seed_tracking(tmp_path, [
-            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
-        ])
-        trade_path = _write_trade_log(tmp_path, [
-            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
-            {"ticker": "000002", "buy_date": "20260101", "buy_price": 20.0, "sell_date": "20260131", "sell_price": 21.0},
-            {"ticker": "000003", "buy_date": "20260101", "buy_price": 30.0, "sell_date": "20260131", "sell_price": 31.0},
-            {"ticker": "999999", "buy_date": "20260101", "buy_price": 40.0, "sell_date": "20260131", "sell_price": 41.0},
-        ])
+        _seed_report(
+            tmp_path,
+            "20260101",
+            [
+                {"ticker": "000001", "score_b": 0.75},
+                {"ticker": "000002", "score_b": 0.75},
+                {"ticker": "000003", "score_b": 0.75},
+            ],
+        )
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
+            ],
+        )
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
+                {"ticker": "000002", "buy_date": "20260101", "buy_price": 20.0, "sell_date": "20260131", "sell_price": 21.0},
+                {"ticker": "000003", "buy_date": "20260101", "buy_price": 30.0, "sell_date": "20260131", "sell_price": 31.0},
+                {"ticker": "999999", "buy_date": "20260101", "buy_price": 40.0, "sell_date": "20260131", "sell_price": 41.0},
+            ],
+        )
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
         # NS-22 unmatched warning must NOT be present (majority matched)
         assert not any("未匹配率" in w for w in report.warnings)
@@ -176,12 +184,18 @@ class TestComputeReconciliation:
         # report on buy_date has the ticker with score_b → bucket "中高 (0.7-0.8)"
         _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}])
         # tracking_history gives the bucket a T+30 avg return of +5% (via 1 matured record)
-        _seed_tracking(tmp_path, [
-            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
-        ])
-        trade_path = _write_trade_log(tmp_path, [
-            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.67},
-        ])
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
+            ],
+        )
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.67},
+            ],
+        )
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
         assert len(report.rows) == 1
         row = report.rows[0]
@@ -196,12 +210,18 @@ class TestComputeReconciliation:
     def test_directional_mismatch(self, tmp_path: Path) -> None:
         """Predicted positive but actual negative → directional_match False."""
         _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}])
-        _seed_tracking(tmp_path, [
-            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
-        ])
-        trade_path = _write_trade_log(tmp_path, [
-            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 9.5},
-        ])
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
+            ],
+        )
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 9.5},
+            ],
+        )
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
         row = report.rows[0]
         assert row.actual_return < 0
@@ -212,9 +232,12 @@ class TestComputeReconciliation:
         """Trade for a ticker not in the buy-date report → row with predicted=None, unmatched."""
         _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}])
         _seed_tracking(tmp_path, [])
-        trade_path = _write_trade_log(tmp_path, [
-            {"ticker": "999999", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
-        ])
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "999999", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
+            ],
+        )
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
         assert len(report.rows) == 1
         assert report.rows[0].predicted_return is None
@@ -236,17 +259,27 @@ class TestComputeReconciliation:
         # (a) ticker 999999 absent from report
         # (b) ticker 000001 present with score_b=0.75 (中高 bucket), but the only
         #     tracking record scores 0.55 (中低 bucket) → 中高 has 0 samples
-        _seed_report(tmp_path, "20260101", [
-            {"ticker": "000001", "score_b": 0.75},  # 中高 bucket
-        ])
-        _seed_tracking(tmp_path, [
-            # tracking record in 中低 (0.5-0.6), NOT 中高 → 中高 bucket empty
-            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.55, "next_30day_return": 5.0},
-        ])
-        trade_path = _write_trade_log(tmp_path, [
-            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},  # (b)
-            {"ticker": "999999", "buy_date": "20260101", "buy_price": 20.0, "sell_date": "20260131", "sell_price": 21.0},  # (a)
-        ])
+        _seed_report(
+            tmp_path,
+            "20260101",
+            [
+                {"ticker": "000001", "score_b": 0.75},  # 中高 bucket
+            ],
+        )
+        _seed_tracking(
+            tmp_path,
+            [
+                # tracking record in 中低 (0.5-0.6), NOT 中高 → 中高 bucket empty
+                {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.55, "next_30day_return": 5.0},
+            ],
+        )
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},  # (b)
+                {"ticker": "999999", "buy_date": "20260101", "buy_price": 20.0, "sell_date": "20260131", "sell_price": 21.0},  # (a)
+            ],
+        )
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
         assert report.unmatched_count == 2
         by_ticker = {r.ticker: r for r in report.rows}
@@ -254,20 +287,14 @@ class TestComputeReconciliation:
         absent_row = by_ticker["999999"]
         assert absent_row.predicted_return is None
         reason_a = getattr(absent_row, "unmatched_reason", None)
-        assert reason_a is not None and "报告无该标的" in reason_a, (
-            f"ticker-absent row must carry unmatched_reason mentioning 报告无该标的; got {reason_a!r}"
-        )
+        assert reason_a is not None and "报告无该标的" in reason_a, f"ticker-absent row must carry unmatched_reason mentioning 报告无该标的; got {reason_a!r}"
         # (b) bucket-empty: 000001 found but 中高 bucket has 0 calibration samples
         bucket_row = by_ticker["000001"]
         assert bucket_row.predicted_return is None
         reason_b = getattr(bucket_row, "unmatched_reason", None)
-        assert reason_b is not None and ("分桶无样本" in reason_b or "校准无样本" in reason_b), (
-            f"bucket-empty row must carry unmatched_reason mentioning 分桶无样本/校准无样本; got {reason_b!r}"
-        )
+        assert reason_b is not None and ("分桶无样本" in reason_b or "校准无样本" in reason_b), f"bucket-empty row must carry unmatched_reason mentioning 分桶无样本/校准无样本; got {reason_b!r}"
         # the two reasons must differ (the whole point — distinguish causes)
-        assert reason_a != reason_b, (
-            f"the two unmatched causes must produce DIFFERENT reasons; both={reason_a!r}"
-        )
+        assert reason_a != reason_b, f"the two unmatched causes must produce DIFFERENT reasons; both={reason_a!r}"
 
     def test_render_shows_unmatched_reason(self, tmp_path: Path) -> None:
         """NS-18/c286: render must surface the unmatched reason, not a bare '—'.
@@ -279,19 +306,23 @@ class TestComputeReconciliation:
         from src.screening.reconciliation import render_reconciliation
 
         _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}])
-        _seed_tracking(tmp_path, [
-            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.55, "next_30day_return": 5.0},
-        ])
-        trade_path = _write_trade_log(tmp_path, [
-            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
-        ])
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.55, "next_30day_return": 5.0},
+            ],
+        )
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
+            ],
+        )
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
         out = render_reconciliation(report)
         # 000001 row: ticker found but 中高 bucket empty → reason must appear
         assert "000001" in out
-        assert ("分桶无样本" in out or "校准无样本" in out), (
-            f"render must surface bucket-empty reason for 000001; got:\n{out}"
-        )
+        assert "分桶无样本" in out or "校准无样本" in out, f"render must surface bucket-empty reason for 000001; got:\n{out}"
 
     def test_render_shows_per_row_median_prediction(self, tmp_path: Path) -> None:
         """c287: render must surface per-row median prediction, not just mean.
@@ -312,57 +343,63 @@ class TestComputeReconciliation:
         # score_b=0.45 → 低 (<0.5) bucket
         _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.45}])
         # tracking returns [3.0, 3.0, -30.0] → mean=-8.0, median=3.0 (median != mean)
-        _seed_tracking(tmp_path, [
-            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.40, "next_30day_return": 3.0},
-            {"ticker": "000098", "recommended_date": "20251201", "recommendation_score": 0.40, "next_30day_return": 3.0},
-            {"ticker": "000097", "recommended_date": "20251201", "recommendation_score": 0.40, "next_30day_return": -30.0},
-        ])
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.40, "next_30day_return": 3.0},
+                {"ticker": "000098", "recommended_date": "20251201", "recommendation_score": 0.40, "next_30day_return": 3.0},
+                {"ticker": "000097", "recommended_date": "20251201", "recommendation_score": 0.40, "next_30day_return": -30.0},
+            ],
+        )
         # actual = 10.40/10.0 - 1 = +4.0% (distinct from median 3.0% and mean -8.0%)
-        trade_path = _write_trade_log(tmp_path, [
-            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.40},
-        ])
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.40},
+            ],
+        )
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
         row = report.rows[0]
         # both centers computed and distinct
         assert row.predicted_return is not None  # mean = -8.0
         assert row.predicted_return_median is not None  # median = 3.0
-        assert row.predicted_return != row.predicted_return_median, (
-            "fixture must produce mean != median so the render distinction is meaningful"
-        )
-        assert abs(row.actual_return - row.predicted_return_median) > 0.5, (
-            "actual must differ from median so median-in-data-row can't be confused with actual"
-        )
+        assert row.predicted_return != row.predicted_return_median, "fixture must produce mean != median so the render distinction is meaningful"
+        assert abs(row.actual_return - row.predicted_return_median) > 0.5, "actual must differ from median so median-in-data-row can't be confused with actual"
         out = render_reconciliation(report)
         import re
+
         clean = re.sub(r"\x1b\[[0-9;]*m", "", out)
-        data_rows = [
-            ln for ln in clean.splitlines()
-            if ln.strip().startswith("000001") and "聚合" not in ln and "MAE" not in ln
-        ]
+        data_rows = [ln for ln in clean.splitlines() if ln.strip().startswith("000001") and "聚合" not in ln and "MAE" not in ln]
         assert data_rows, f"000001 data row missing; got:\n{clean}"
         data_row = data_rows[0]
         # median=3.0% — distinct from mean(-8.0%) and actual(+4.0%). Only present
         # in the data row if reconcile genuinely renders the median per row.
         median_val_str = f"{row.predicted_return_median:+.1f}%"
-        assert median_val_str in data_row, (
-            f"per-row median {median_val_str} (distinct from mean {row.predicted_return:+.1f}% "
-            f"and actual {row.actual_return:+.1f}%) must render in the data row; "
-            f"data row={data_row!r}"
-        )
+        assert median_val_str in data_row, f"per-row median {median_val_str} (distinct from mean {row.predicted_return:+.1f}% " f"and actual {row.actual_return:+.1f}%) must render in the data row; " f"data row={data_row!r}"
 
     def test_aggregate_stats(self, tmp_path: Path) -> None:
         """2 matched trades → aggregate MAE + directional accuracy computed."""
-        _seed_report(tmp_path, "20260101", [
-            {"ticker": "000001", "score_b": 0.75},
-            {"ticker": "000002", "score_b": 0.72},
-        ])
-        _seed_tracking(tmp_path, [
-            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
-        ])
-        trade_path = _write_trade_log(tmp_path, [
-            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.67},  # actual +6.7%, pred +5%
-            {"ticker": "000002", "buy_date": "20260101", "buy_price": 20.0, "sell_date": "20260131", "sell_price": 19.0},  # actual -5%, pred +5%
-        ])
+        _seed_report(
+            tmp_path,
+            "20260101",
+            [
+                {"ticker": "000001", "score_b": 0.75},
+                {"ticker": "000002", "score_b": 0.72},
+            ],
+        )
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
+            ],
+        )
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.67},  # actual +6.7%, pred +5%
+                {"ticker": "000002", "buy_date": "20260101", "buy_price": 20.0, "sell_date": "20260131", "sell_price": 19.0},  # actual -5%, pred +5%
+            ],
+        )
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
         assert report.matched_count == 2
         assert report.directional_accuracy == pytest.approx(0.5, abs=1e-3)  # 1 of 2 matched direction
@@ -388,7 +425,10 @@ class TestRenderReconciliation:
             rows=[
                 ReconciliationRow(ticker="000001", buy_date="20260101", predicted_return=5.0, actual_return=6.7, error=1.7, directional_match=True),
             ],
-            matched_count=1, unmatched_count=0, mae=1.7, directional_accuracy=1.0,
+            matched_count=1,
+            unmatched_count=0,
+            mae=1.7,
+            directional_accuracy=1.0,
         )
         result = render_reconciliation(report)
         assert "000001" in result
@@ -414,14 +454,20 @@ class TestReconcileMedianPrediction:
         """Each matched row carries both predicted_return (mean) and predicted_return_median."""
         _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}])
         # bucket 中高: give it T+30 returns so mean != median (outlier scenario)
-        _seed_tracking(tmp_path, [
-            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": -1.0},
-            {"ticker": "000098", "recommended_date": "20251202", "recommendation_score": 0.71, "next_30day_return": 3.0},
-            {"ticker": "000097", "recommended_date": "20251203", "recommendation_score": 0.78, "next_30day_return": 112.0},  # outlier
-        ])
-        trade_path = _write_trade_log(tmp_path, [
-            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.5},
-        ])
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": -1.0},
+                {"ticker": "000098", "recommended_date": "20251202", "recommendation_score": 0.71, "next_30day_return": 3.0},
+                {"ticker": "000097", "recommended_date": "20251203", "recommendation_score": 0.78, "next_30day_return": 112.0},  # outlier
+            ],
+        )
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.5},
+            ],
+        )
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
         row = report.rows[0]
         # mean = (-1+3+112)/3 ≈ 38; median = 3.0 → both populated, differ
@@ -433,9 +479,12 @@ class TestReconcileMedianPrediction:
         """Bucket with no matured T+30 → median None (same as mean)."""
         _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}])
         _seed_tracking(tmp_path, [])  # empty → bucket t30 all None
-        trade_path = _write_trade_log(tmp_path, [
-            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.5},
-        ])
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.5},
+            ],
+        )
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
         row = report.rows[0]
         assert row.predicted_return is None
@@ -444,12 +493,18 @@ class TestReconcileMedianPrediction:
     def test_report_has_mae_median(self, tmp_path: Path) -> None:
         """ReconciliationReport carries mae_median (median-based MAE) alongside mae."""
         _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}])
-        _seed_tracking(tmp_path, [
-            {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
-        ])
-        trade_path = _write_trade_log(tmp_path, [
-            {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.67},
-        ])
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
+            ],
+        )
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.67},
+            ],
+        )
         report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
         assert report.mae is not None
         assert report.mae_median is not None
@@ -457,10 +512,10 @@ class TestReconcileMedianPrediction:
     def test_render_shows_both_centers(self, tmp_path: Path) -> None:
         """render_reconciliation output mentions both mean and median predictions."""
         report = ReconciliationReport(
-            rows=[ReconciliationRow(ticker="000001", buy_date="20260101",
-                                    predicted_return=38.0, predicted_return_median=3.0,
-                                    actual_return=5.0, error=-33.0, directional_match=True)],
-            matched_count=1, mae=33.0, mae_median=2.0,
+            rows=[ReconciliationRow(ticker="000001", buy_date="20260101", predicted_return=38.0, predicted_return_median=3.0, actual_return=5.0, error=-33.0, directional_match=True)],
+            matched_count=1,
+            mae=33.0,
+            mae_median=2.0,
         )
         out = render_reconciliation(report)
         # both MAE stats surfaced
@@ -485,12 +540,7 @@ class TestReconcileIsotonicCalibration:
         """
         # Seed tracking: bucket 中高 (0.6-0.8) with T+30 returns around +5%
         # (so predicted_return ≈ 5.0 for all rows in this bucket).
-        tracking_recs = [
-            {"ticker": f"00009{i}", "recommended_date": f"202511{i+1:02d}",
-             "recommendation_score": 0.70 + i * 0.01,
-             "next_30day_return": 5.0 + i * 0.1}
-            for i in range(min(n_trades + 2, 30))  # extra matured for bucket stability
-        ]
+        tracking_recs = [{"ticker": f"00009{i}", "recommended_date": f"202511{i+1:02d}", "recommendation_score": 0.70 + i * 0.01, "next_30day_return": 5.0 + i * 0.1} for i in range(min(n_trades + 2, 30))]  # extra matured for bucket stability
         _seed_tracking(tmp_path, tracking_recs)
 
         # Seed n_trades daily reports, each containing one ticker at score_b=0.75
@@ -507,10 +557,15 @@ class TestReconcileIsotonicCalibration:
         for i in range(n_trades):
             day = f"202601{i+1:02d}"
             sell_day = f"202602{i+1:02d}"  # next month, same day (≥30 days later)
-            trade_rows.append({
-                "ticker": f"60000{i}", "buy_date": day,
-                "buy_price": 10.0, "sell_date": sell_day, "sell_price": 10.5,
-            })
+            trade_rows.append(
+                {
+                    "ticker": f"60000{i}",
+                    "buy_date": day,
+                    "buy_price": 10.0,
+                    "sell_date": sell_day,
+                    "sell_price": 10.5,
+                }
+            )
         trade_path = _write_trade_log(tmp_path, trade_rows)
         return compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
 
@@ -555,6 +610,7 @@ class TestReconcileIsotonicCalibration:
         assert r20.calibration_sufficient is True
         # 19 → insufficient (need a fresh tmp_path)
         import tempfile
+
         with tempfile.TemporaryDirectory() as td:
             r19 = self._seed_and_reconcile(Path(td), n_trades=19)
             assert r19.calibration_sufficient is False

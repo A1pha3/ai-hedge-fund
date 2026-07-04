@@ -9,32 +9,44 @@ from src.screening.candidate_pool_frontier_helpers import (
 
 
 def test_classify_candidate_pool_frontier_source_family_maps_corridor_and_post_gate() -> None:
-    assert classify_candidate_pool_frontier_source_family(
-        {
-            "candidate_source": "upstream_liquidity_corridor_shadow",
-            "candidate_pool_lane": "layer_a_liquidity_corridor",
-        }
-    ) == "upstream_liquidity_corridor_shadow"
-    assert classify_candidate_pool_frontier_source_family(
-        {
-            "candidate_source": "post_gate_liquidity_competition_shadow",
-            "candidate_pool_lane": "post_gate_liquidity_competition",
-        }
-    ) == "post_gate_liquidity_competition_shadow"
+    assert (
+        classify_candidate_pool_frontier_source_family(
+            {
+                "candidate_source": "upstream_liquidity_corridor_shadow",
+                "candidate_pool_lane": "layer_a_liquidity_corridor",
+            }
+        )
+        == "upstream_liquidity_corridor_shadow"
+    )
+    assert (
+        classify_candidate_pool_frontier_source_family(
+            {
+                "candidate_source": "post_gate_liquidity_competition_shadow",
+                "candidate_pool_lane": "post_gate_liquidity_competition",
+            }
+        )
+        == "post_gate_liquidity_competition_shadow"
+    )
 
 
 def test_classify_candidate_pool_frontier_source_family_falls_back_to_lane_when_source_missing_or_unknown() -> None:
-    assert classify_candidate_pool_frontier_source_family(
-        {
-            "candidate_pool_lane": "layer_a_liquidity_corridor",
-        }
-    ) == "upstream_liquidity_corridor_shadow"
-    assert classify_candidate_pool_frontier_source_family(
-        {
-            "candidate_source": "unknown_source",
-            "candidate_pool_lane": "post_gate_liquidity_competition",
-        }
-    ) == "post_gate_liquidity_competition_shadow"
+    assert (
+        classify_candidate_pool_frontier_source_family(
+            {
+                "candidate_pool_lane": "layer_a_liquidity_corridor",
+            }
+        )
+        == "upstream_liquidity_corridor_shadow"
+    )
+    assert (
+        classify_candidate_pool_frontier_source_family(
+            {
+                "candidate_source": "unknown_source",
+                "candidate_pool_lane": "post_gate_liquidity_competition",
+            }
+        )
+        == "post_gate_liquidity_competition_shadow"
+    )
 
 
 def test_classify_candidate_pool_frontier_source_family_returns_none_for_unknown_input() -> None:

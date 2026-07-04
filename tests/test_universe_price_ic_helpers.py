@@ -6,6 +6,7 @@ universe +0.049; not an actionable within-pool signal) rests on
 `scripts/_diag_universe_price_ic.py`. Extracted from inline in c308; this test
 pins the thresholds so a future change can't silently flip the verdict.
 """
+
 from __future__ import annotations
 
 import sys

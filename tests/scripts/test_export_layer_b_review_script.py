@@ -63,9 +63,7 @@ def test_build_rows_leaves_layer_c_scores_blank_for_layer_b_filtered_entries(mon
     monkeypatch.setattr(
         export_layer_b_review,
         "build_candidate_pool",
-        lambda trade_date, use_cache=True: [
-            SimpleNamespace(ticker="600089", name="示例股", industry_sw="银行", market_cap=10.0)
-        ],
+        lambda trade_date, use_cache=True: [SimpleNamespace(ticker="600089", name="示例股", industry_sw="银行", market_cap=10.0)],
     )
     monkeypatch.setattr(
         export_layer_b_review,

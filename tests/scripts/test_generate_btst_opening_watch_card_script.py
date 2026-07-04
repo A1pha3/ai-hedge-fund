@@ -419,7 +419,7 @@ def test_generate_btst_opening_watch_card_orders_primary_watch_and_opportunity(t
                             },
                             "explainability_payload": {"candidate_source": "short_trade_boundary"},
                         },
-                    }
+                    },
                 },
             },
             ensure_ascii=False,

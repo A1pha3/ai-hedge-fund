@@ -88,9 +88,7 @@ def test_filtered_entry_appends_reasons() -> None:
     def _classify(c):
         return "decision_avoid", ["decision_avoid", "score_final_below_watchlist_threshold"]
 
-    entry, primary, reasons = _build_watchlist_filtered_entry(
-        item=item, payload=payload, classify_watchlist_filter=_classify
-    )
+    entry, primary, reasons = _build_watchlist_filtered_entry(item=item, payload=payload, classify_watchlist_filter=_classify)
     assert entry["ticker"] == "000001"
     assert entry["reason"] == "decision_avoid"
     assert entry["reasons"] == ["decision_avoid", "score_final_below_watchlist_threshold"]
@@ -108,9 +106,7 @@ def test_ranked_shadow_entry_scores_and_dict() -> None:
     entry_reasons = ["x"]
     config = _config()
 
-    score_final, score_b, entry = _build_ranked_watchlist_shadow_entry(
-        item=item, reasons=entry_reasons, release_reason="test_reason", config=config
-    )
+    score_final, score_b, entry = _build_ranked_watchlist_shadow_entry(item=item, reasons=entry_reasons, release_reason="test_reason", config=config)
     assert score_final == 0.8
     assert score_b == 0.6
     assert isinstance(entry, dict)
@@ -128,9 +124,7 @@ def test_append_shadow_entries_sorts_by_score_descending() -> None:
         (0.8, 0.3, {"ticker": "000001"}),
         (0.5, 0.2, {"ticker": "000002"}),
     ]
-    _append_ranked_watchlist_shadow_entries(
-        ranked_entries=ranked, released_shadow_entries=released, shadow_release_max_tickers=3
-    )
+    _append_ranked_watchlist_shadow_entries(ranked_entries=ranked, released_shadow_entries=released, shadow_release_max_tickers=3)
     tickers = [e["ticker"] for e in released]
     assert tickers == ["000001", "000002", "000003"]
     # Ranks assigned 1..3
@@ -140,9 +134,7 @@ def test_append_shadow_entries_sorts_by_score_descending() -> None:
 def test_append_shadow_entries_caps_at_max() -> None:
     released: list = []
     ranked = [(float(i), float(i), {"ticker": f"{i:06d}"}) for i in range(1, 6)]
-    _append_ranked_watchlist_shadow_entries(
-        ranked_entries=ranked, released_shadow_entries=released, shadow_release_max_tickers=2
-    )
+    _append_ranked_watchlist_shadow_entries(ranked_entries=ranked, released_shadow_entries=released, shadow_release_max_tickers=2)
     assert len(released) == 2
     assert released[0]["ticker"] == "000005"  # highest score
     assert released[1]["ticker"] == "000004"
@@ -156,9 +148,7 @@ def test_append_shadow_entries_tiebreak_by_ticker_descending() -> None:
         (0.5, 0.3, {"ticker": "000001"}),
         (0.5, 0.3, {"ticker": "000002"}),
     ]
-    _append_ranked_watchlist_shadow_entries(
-        ranked_entries=ranked, released_shadow_entries=released, shadow_release_max_tickers=2
-    )
+    _append_ranked_watchlist_shadow_entries(ranked_entries=ranked, released_shadow_entries=released, shadow_release_max_tickers=2)
     # reverse=True on string → "000002" > "000001" → 000002 first
     assert released[0]["ticker"] == "000002"
     assert released[1]["ticker"] == "000001"
@@ -170,9 +160,7 @@ def test_append_shadow_entries_tiebreak_by_ticker_descending() -> None:
 
 
 def test_selection_thresholds_no_merge_approved() -> None:
-    result = _build_watchlist_selection_thresholds(
-        merge_approved_tickers=set(), threshold_relaxation=0.05, watchlist_score_threshold=0.2
-    )
+    result = _build_watchlist_selection_thresholds(merge_approved_tickers=set(), threshold_relaxation=0.05, watchlist_score_threshold=0.2)
     assert result == {
         "default_score_final_min": 0.2,
         "merge_approved_score_final_min": 0.15,  # 0.2 - 0.05
@@ -225,9 +213,7 @@ def test_prefilter_thresholds_rounds_and_sorts() -> None:
 
 
 def test_selected_summary_passthrough() -> None:
-    result = _build_watchlist_selected_summary(
-        selected_tickers=["000001"], selected_entries=[{"ticker": "000001"}]
-    )
+    result = _build_watchlist_selected_summary(selected_tickers=["000001"], selected_entries=[{"ticker": "000001"}])
     assert result == {"selected_tickers": ["000001"], "selected_entries": [{"ticker": "000001"}]}
 
 
@@ -256,9 +242,7 @@ def test_released_shadow_summary_empty() -> None:
 
 def test_threshold_summaries_combines_both() -> None:
     config = _config()
-    result = _build_watchlist_threshold_summaries(
-        merge_approved_tickers={"000001"}, threshold_relaxation=0.05, config=config
-    )
+    result = _build_watchlist_threshold_summaries(merge_approved_tickers={"000001"}, threshold_relaxation=0.05, config=config)
     assert "prefilter_thresholds" in result
     assert "selection_thresholds" in result
     assert result["selection_thresholds"]["merge_approved_tickers"] == ["000001"]
@@ -275,9 +259,7 @@ def test_build_merge_approved_watchlist_basic() -> None:
         _layer_c("000002", score_final=0.1, decision="buy"),  # below threshold
         _layer_c("000003", score_final=0.5, decision="avoid"),  # avoid
     ]
-    result = build_merge_approved_watchlist(
-        items, merge_approved_tickers=set(), threshold_relaxation=0.0, watchlist_score_threshold=0.2
-    )
+    result = build_merge_approved_watchlist(items, merge_approved_tickers=set(), threshold_relaxation=0.0, watchlist_score_threshold=0.2)
     assert [item.ticker for item in result] == ["000001"]
 
 
@@ -300,9 +282,7 @@ def test_build_merge_approved_watchlist_excludes_avoid() -> None:
     items = [
         _layer_c("000001", score_final=0.5, decision="avoid"),  # exclude even if merge_approved
     ]
-    result = build_merge_approved_watchlist(
-        items, merge_approved_tickers={"000001"}, threshold_relaxation=0.0, watchlist_score_threshold=0.2
-    )
+    result = build_merge_approved_watchlist(items, merge_approved_tickers={"000001"}, threshold_relaxation=0.0, watchlist_score_threshold=0.2)
     assert result == []
 
 

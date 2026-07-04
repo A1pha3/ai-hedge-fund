@@ -75,6 +75,7 @@ class TestProgressHandlerSignature:
 # LLM error classification
 # ---------------------------------------------------------------------------
 
+
 class TestLLMErrorClassification:
     def test_rate_limit_429(self):
         assert _is_rate_limit_error(Exception("429 Too Many Requests"))
@@ -105,6 +106,7 @@ class TestLLMErrorClassification:
 # Retry delay computation
 # ---------------------------------------------------------------------------
 
+
 class TestRetryDelay:
     def test_rate_limit_backoff_bounded(self):
         error = Exception("429")
@@ -125,6 +127,7 @@ class TestRetryDelay:
 # ---------------------------------------------------------------------------
 # JSON extraction
 # ---------------------------------------------------------------------------
+
 
 class TestJsonExtraction:
     def test_try_json_loads_valid(self):
@@ -154,6 +157,7 @@ class TestJsonExtraction:
 # ---------------------------------------------------------------------------
 # Numeric helpers
 # ---------------------------------------------------------------------------
+
 
 class TestNumericHelpers:
     def test_clip_within_range(self):
@@ -208,6 +212,7 @@ class TestNumericHelpers:
 # ---------------------------------------------------------------------------
 # Default response creation
 # ---------------------------------------------------------------------------
+
 
 class TestDefaultResponse:
     def test_create_default_response_with_basic_types(self):

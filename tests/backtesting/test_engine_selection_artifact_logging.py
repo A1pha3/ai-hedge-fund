@@ -14,6 +14,7 @@ observability gap in the backtest artifact path.
 Fix: add ``logger.debug(..., exc_info=True)`` to the except block (consistent
 with R113's pattern), zero behavior change (plan dict still records failure).
 """
+
 from __future__ import annotations
 
 import logging
@@ -113,11 +114,4 @@ def test_selection_artifact_write_failure_is_logged(tmp_path: Path, caplog) -> N
         ):
             engine._write_selection_artifacts(plan2, "20260320")
 
-    assert any(
-        "selection artifact" in record.message.lower() or "artifact" in record.message.lower()
-        for record in caplog.records
-    ), (
-        "selection-artifact write failure must be logged (BH-017 observability); "
-        "currently the engine records the failure only in plan.selection_artifacts "
-        "with no log, so operators monitoring logs miss silently-stopped writes"
-    )
+    assert any("selection artifact" in record.message.lower() or "artifact" in record.message.lower() for record in caplog.records), "selection-artifact write failure must be logged (BH-017 observability); " "currently the engine records the failure only in plan.selection_artifacts " "with no log, so operators monitoring logs miss silently-stopped writes"

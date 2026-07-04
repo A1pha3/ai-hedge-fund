@@ -39,6 +39,7 @@ def db():
 
 # ---- service.py line 198: reset token single-use (iat < updated_at) ----
 
+
 class TestResetTokenSingleUse:
     """Cover the branch where token_iat < last_update_ts (service.py L198)."""
 
@@ -77,6 +78,7 @@ class TestResetTokenSingleUse:
 
 
 # ---- get_user_info with None dates ----
+
 
 class TestGetUserInfo:
     """Cover get_user_info edge cases."""
@@ -120,6 +122,7 @@ class TestGetUserInfo:
 
 # ---- Route-level supplemental tests ----
 
+
 class TestRouteSupplemental:
     """Additional route-level tests for previously uncovered paths."""
 
@@ -142,6 +145,7 @@ class TestRouteSupplemental:
                 db.close()
 
         from app.backend.main import app
+
         app.dependency_overrides[get_db] = override
 
         # Seed admin
@@ -177,34 +181,44 @@ class TestRouteSupplemental:
         db.close()
 
         from fastapi.testclient import TestClient
+
         yield TestClient(app)
         app.dependency_overrides.clear()
 
     def test_forgot_password_nonexistent_user(self, client):
         """Forgot password for non-existent user returns 200 (no enumeration) with null token."""
-        resp = client.post("/auth/forgot-password", json={
-            "username": "ghost",
-            "email": "ghost@test.com",
-        })
+        resp = client.post(
+            "/auth/forgot-password",
+            json={
+                "username": "ghost",
+                "email": "ghost@test.com",
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["reset_token"] is None
 
     def test_forgot_password_email_mismatch(self, client):
         """Forgot password with wrong email returns 200 (no enumeration) with null token."""
-        resp = client.post("/auth/forgot-password", json={
-            "username": "routeuser",
-            "email": "wrong@test.com",
-        })
+        resp = client.post(
+            "/auth/forgot-password",
+            json={
+                "username": "routeuser",
+                "email": "wrong@test.com",
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["reset_token"] is None
 
     def test_register_duplicate_username(self, client):
         """Registering with existing username should fail (IntegrityError catch)."""
-        resp = client.post("/auth/register", json={
-            "username": "routeuser",
-            "password": "NewPass123",
-            "invitation_code": "INV-ROUTE-TEST01",
-        })
+        resp = client.post(
+            "/auth/register",
+            json={
+                "username": "routeuser",
+                "password": "NewPass123",
+                "invitation_code": "INV-ROUTE-TEST01",
+            },
+        )
         assert resp.status_code == 400 or resp.status_code == 409
 
     def test_bind_email_success(self, client):

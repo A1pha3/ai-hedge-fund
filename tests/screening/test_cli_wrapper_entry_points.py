@@ -7,6 +7,7 @@ exit-code contract for the 4 screening run_xxx entry points that had zero
 direct coverage (same gap pattern as run_position_check, fixed in the
 prior session).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -48,45 +49,35 @@ WRAPPERS = [
 
 
 @pytest.mark.parametrize("func,patch_target,_supported", WRAPPERS)
-def test_returns_zero_with_none_argv(
-    func, patch_target, _supported, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_returns_zero_with_none_argv(func, patch_target, _supported, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """argv=None → uses defaults, returns 0."""
     monkeypatch.setattr(patch_target, lambda: tmp_path)
     assert func(None) == 0
 
 
 @pytest.mark.parametrize("func,patch_target,_supported", WRAPPERS)
-def test_returns_zero_with_empty_argv(
-    func, patch_target, _supported, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_returns_zero_with_empty_argv(func, patch_target, _supported, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """argv=[] → uses defaults, returns 0."""
     monkeypatch.setattr(patch_target, lambda: tmp_path)
     assert func([]) == 0
 
 
 @pytest.mark.parametrize("func,patch_target,supported", WRAPPERS)
-def test_supported_args_parsed(
-    func, patch_target, supported, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_supported_args_parsed(func, patch_target, supported, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Each wrapper's supported args parse without error, returns 0."""
     monkeypatch.setattr(patch_target, lambda: tmp_path)
     assert func(supported) == 0
 
 
 @pytest.mark.parametrize("func,patch_target,_supported", WRAPPERS)
-def test_invalid_int_arg_falls_back_silently(
-    func, patch_target, _supported, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_invalid_int_arg_falls_back_silently(func, patch_target, _supported, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Non-numeric --top-n=abc → no crash, returns 0 (uses default)."""
     monkeypatch.setattr(patch_target, lambda: tmp_path)
     assert func(["--top-n=abc"]) == 0
 
 
 @pytest.mark.parametrize("func,patch_target,_supported", WRAPPERS)
-def test_unknown_arg_ignored(
-    func, patch_target, _supported, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_unknown_arg_ignored(func, patch_target, _supported, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Unrecognized args are silently ignored, returns 0."""
     monkeypatch.setattr(patch_target, lambda: tmp_path)
     assert func(["--unknown-flag=x"]) == 0

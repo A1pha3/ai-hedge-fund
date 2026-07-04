@@ -3,6 +3,7 @@
 get_currency_context (25 call sites) and get_currency_symbol had zero direct
 test coverage. Tests lock down the A-share (CNY/¥) vs US (USD/$) contract.
 """
+
 from __future__ import annotations
 
 import pytest

@@ -101,9 +101,7 @@ def test_run_backtest_async_threads_run_id_to_graph_for_sse_isolation(monkeypatc
     asyncio.run(service.run_backtest_async(run_id="BT_RUN_1"))
 
     assert captured, "run_graph_async was not invoked"
-    assert all(rid == "BT_RUN_1" for rid in captured), (
-        f"run_id not threaded to run_graph_async for backtest SSE isolation: {captured}"
-    )
+    assert all(rid == "BT_RUN_1" for rid in captured), f"run_id not threaded to run_graph_async for backtest SSE isolation: {captured}"
 
 
 def test_run_backtest_async_seeds_anchor_before_first_bar_not_on_it(monkeypatch):
@@ -338,9 +336,7 @@ def test_run_graph_for_date_exception_emits_logger_warning_not_print(monkeypatch
     )
 
     with caplog.at_level(logging.WARNING, logger="app.backend.services.backtest_service"):
-        result = asyncio.run(
-            service._run_graph_for_date("2026-01-01", "2026-01-05", run_id="r1")
-        )
+        result = asyncio.run(service._run_graph_for_date("2026-01-01", "2026-01-05", run_id="r1"))
 
     # Behavior unchanged: empty dicts on failure.
     assert result == ({}, {})

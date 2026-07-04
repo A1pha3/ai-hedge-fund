@@ -61,12 +61,24 @@ def _make_rec(
     if composite_score is not None:
         rec["composite_score"] = composite_score
     # 默认填充让 BUY gate 通过的 horizon 数据
-    rec["expected_returns"] = expected_returns if expected_returns is not None else {
-        "t5": 0.02, "t10": 0.025, "t30": 0.03,
-    }
-    rec["win_rates"] = win_rates if win_rates is not None else {
-        "t5": 0.60, "t10": 0.62, "t30": 0.55,
-    }
+    rec["expected_returns"] = (
+        expected_returns
+        if expected_returns is not None
+        else {
+            "t5": 0.02,
+            "t10": 0.025,
+            "t30": 0.03,
+        }
+    )
+    rec["win_rates"] = (
+        win_rates
+        if win_rates is not None
+        else {
+            "t5": 0.60,
+            "t10": 0.62,
+            "t30": 0.55,
+        }
+    )
     return rec
 
 
@@ -83,39 +95,29 @@ class TestMarketRegimeUnknownHonestLabel:
         rec = _make_rec()
         verdict = build_front_door_verdict(rec, market_regime="unknown")
         reasons = verdict["invalidation_reason"]
-        assert "regime 未识别" in reasons, (
-            f"regime='unknown' should label 'regime 未识别'; got reasons={reasons}"
-        )
-        assert "市场门控转弱" not in reasons, (
-            f"regime='unknown' should NOT label '市场门控转弱' (misleading); got reasons={reasons}"
-        )
+        assert "regime 未识别" in reasons, f"regime='unknown' should label 'regime 未识别'; got reasons={reasons}"
+        assert "市场门控转弱" not in reasons, f"regime='unknown' should NOT label '市场门控转弱' (misleading); got reasons={reasons}"
 
     def test_regime_empty_labels_as_unrecognized(self) -> None:
         """regime='' → 'regime 未识别' (空字符串 = 未识别)."""
         rec = _make_rec()
         verdict = build_front_door_verdict(rec, market_regime="")
         reasons = verdict["invalidation_reason"]
-        assert "regime 未识别" in reasons, (
-            f"regime='' should label 'regime 未识别'; got reasons={reasons}"
-        )
+        assert "regime 未识别" in reasons, f"regime='' should label 'regime 未识别'; got reasons={reasons}"
 
     def test_regime_typo_labels_as_unrecognized(self) -> None:
         """regime='risky' (拼写错误) → 'regime 未识别'."""
         rec = _make_rec()
         verdict = build_front_door_verdict(rec, market_regime="risky")
         reasons = verdict["invalidation_reason"]
-        assert "regime 未识别" in reasons, (
-            f"regime='risky' (typo) should label 'regime 未识别'; got reasons={reasons}"
-        )
+        assert "regime 未识别" in reasons, f"regime='risky' (typo) should label 'regime 未识别'; got reasons={reasons}"
 
     def test_regime_cautious_labels_as_weakening(self) -> None:
         """regime='cautious' → '市场门控转弱' (向后兼容, 已知非 risk-off)."""
         rec = _make_rec()
         verdict = build_front_door_verdict(rec, market_regime="cautious")
         reasons = verdict["invalidation_reason"]
-        assert "市场门控转弱" in reasons, (
-            f"regime='cautious' should label '市场门控转弱' (backward compat); got reasons={reasons}"
-        )
+        assert "市场门控转弱" in reasons, f"regime='cautious' should label '市场门控转弱' (backward compat); got reasons={reasons}"
         assert "regime 未识别" not in reasons
 
     def test_regime_normal_labels_as_weakening(self) -> None:
@@ -162,18 +164,14 @@ class TestHorizonDataMissingHonestLabel:
         rec = _make_rec(expected_returns={})
         verdict = build_front_door_verdict(rec, market_regime="normal")
         reasons = verdict["invalidation_reason"]
-        assert "horizon 数据缺失" in reasons, (
-            f"empty expected_returns should label 'horizon 数据缺失'; got reasons={reasons}"
-        )
+        assert "horizon 数据缺失" in reasons, f"empty expected_returns should label 'horizon 数据缺失'; got reasons={reasons}"
 
     def test_empty_win_rates_labels_horizon_missing(self) -> None:
         """sample_count>0 + empty win_rates → 'horizon 数据缺失'."""
         rec = _make_rec(win_rates={})
         verdict = build_front_door_verdict(rec, market_regime="normal")
         reasons = verdict["invalidation_reason"]
-        assert "horizon 数据缺失" in reasons, (
-            f"empty win_rates should label 'horizon 数据缺失'; got reasons={reasons}"
-        )
+        assert "horizon 数据缺失" in reasons, f"empty win_rates should label 'horizon 数据缺失'; got reasons={reasons}"
 
     def test_missing_expected_returns_key_labels_horizon_missing(self) -> None:
         """sample_count>0 + expected_returns key absent → 'horizon 数据缺失'.
@@ -192,9 +190,7 @@ class TestHorizonDataMissingHonestLabel:
         rec = _make_rec()  # 默认填充完整 horizon
         verdict = build_front_door_verdict(rec, market_regime="normal")
         reasons = verdict["invalidation_reason"]
-        assert "horizon 数据缺失" not in reasons, (
-            f"full horizon dicts should NOT label 'horizon 数据缺失'; got reasons={reasons}"
-        )
+        assert "horizon 数据缺失" not in reasons, f"full horizon dicts should NOT label 'horizon 数据缺失'; got reasons={reasons}"
 
     def test_sample_count_zero_with_empty_horizon_no_horizon_missing_label(self) -> None:
         """sample_count=0 + empty horizon → 只标 '数据缺失', 不标 'horizon 数据缺失'.
@@ -207,10 +203,7 @@ class TestHorizonDataMissingHonestLabel:
         verdict = build_front_door_verdict(rec, market_regime="normal")
         reasons = verdict["invalidation_reason"]
         assert "数据缺失" in reasons  # 完全无数据
-        assert "horizon 数据缺失" not in reasons, (
-            f"sample_count=0 should NOT also label 'horizon 数据缺失' (redundant); "
-            f"got reasons={reasons}"
-        )
+        assert "horizon 数据缺失" not in reasons, f"sample_count=0 should NOT also label 'horizon 数据缺失' (redundant); " f"got reasons={reasons}"
 
 
 # ---------------------------------------------------------------------------
@@ -234,15 +227,10 @@ class TestMissingCompositeDiscount:
         )
         verdict = build_front_door_verdict(rec, market_regime="normal")
         # action 应该是 BUY (0.54 >= 0.5 + horizon passes)
-        assert verdict["action"] == "BUY", (
-            f"score_b=0.60 missing-composite → 0.54 >= 0.5 → BUY; "
-            f"got action={verdict['action']}"
-        )
+        assert verdict["action"] == "BUY", f"score_b=0.60 missing-composite → 0.54 >= 0.5 → BUY; " f"got action={verdict['action']}"
         # invalidation_reason 应标 "composite 缺失(已折扣)"
         reasons = verdict["invalidation_reason"]
-        assert "composite 缺失(已折扣)" in reasons, (
-            f"missing-composite should label 'composite 缺失(已折扣)'; got reasons={reasons}"
-        )
+        assert "composite 缺失(已折扣)" in reasons, f"missing-composite should label 'composite 缺失(已折扣)'; got reasons={reasons}"
 
     def test_missing_composite_score_b_055_not_buy(self) -> None:
         """score_b=0.55 missing-composite → 0.495 < 0.5 → NOT BUY (R39 intent).
@@ -256,10 +244,7 @@ class TestMissingCompositeDiscount:
             score_b=0.55,
         )
         verdict = build_front_door_verdict(rec, market_regime="normal")
-        assert verdict["action"] != "BUY", (
-            f"score_b=0.55 missing-composite → 0.495 < 0.5 → NOT BUY (R39 intent); "
-            f"got action={verdict['action']}"
-        )
+        assert verdict["action"] != "BUY", f"score_b=0.55 missing-composite → 0.495 < 0.5 → NOT BUY (R39 intent); " f"got action={verdict['action']}"
 
     def test_present_composite_no_discount_no_label(self) -> None:
         """composite_score_gated 存在 → 直接用, 无折扣, 无 'composite 缺失' 标注."""
@@ -268,9 +253,7 @@ class TestMissingCompositeDiscount:
         # 应该用 composite_score_gated=0.65 (无折扣)
         assert verdict["action"] == "BUY"  # 0.65 >= 0.5
         reasons = verdict["invalidation_reason"]
-        assert "composite 缺失(已折扣)" not in reasons, (
-            f"present composite should NOT label 'composite 缺失(已折扣)'; got reasons={reasons}"
-        )
+        assert "composite 缺失(已折扣)" not in reasons, f"present composite should NOT label 'composite 缺失(已折扣)'; got reasons={reasons}"
 
     def test_composite_score_gated_missing_falls_back_to_composite_score(self) -> None:
         """composite_score_gated 缺失但 composite_score 存在 → 用 composite_score, 无折扣.
@@ -287,9 +270,7 @@ class TestMissingCompositeDiscount:
         # 应该用 composite_score=0.58 (无折扣)
         assert verdict["action"] == "BUY"  # 0.58 >= 0.5
         reasons = verdict["invalidation_reason"]
-        assert "composite 缺失(已折扣)" not in reasons, (
-            f"composite_score present should NOT label 'composite 缺失(已折扣)'; got reasons={reasons}"
-        )
+        assert "composite 缺失(已折扣)" not in reasons, f"composite_score present should NOT label 'composite 缺失(已折扣)'; got reasons={reasons}"
 
 
 # ---------------------------------------------------------------------------
@@ -359,10 +340,7 @@ class TestMissingCompositeDisclosureRankerPath:
         rec = self._ranker_missing_composite_rec(score_b=0.55)
         verdict = build_front_door_verdict(rec, market_regime="normal")
         reasons = verdict["invalidation_reason"]
-        assert "composite 缺失(已折扣)" in reasons, (
-            f"ranker-path missing-composite (composite_verified=False) must label "
-            f"'composite 缺失(已折扣)' in verdict invalidation_reason; got reasons={reasons}"
-        )
+        assert "composite 缺失(已折扣)" in reasons, f"ranker-path missing-composite (composite_verified=False) must label " f"'composite 缺失(已折扣)' in verdict invalidation_reason; got reasons={reasons}"
 
     def test_ranker_path_missing_composite_no_double_discount(self) -> None:
         """ranker-path discount 不重复: composite_score 已是 0.9*score_b, verdict 不再打 0.9.
@@ -374,10 +352,7 @@ class TestMissingCompositeDisclosureRankerPath:
         rec = self._ranker_missing_composite_rec(score_b=0.60)
         # composite_score = round(0.60 * 0.9, 4) = 0.54 >= 0.5 → 应 BUY
         verdict = build_front_door_verdict(rec, market_regime="normal")
-        assert verdict["action"] == "BUY", (
-            f"ranker-path: score_b=0.60 → composite_score=0.54 (ranker 已折扣) >= 0.5 → BUY; "
-            f"double-discount would push to <0.5 → non-BUY. got action={verdict['action']}"
-        )
+        assert verdict["action"] == "BUY", f"ranker-path: score_b=0.60 → composite_score=0.54 (ranker 已折扣) >= 0.5 → BUY; " f"double-discount would push to <0.5 → non-BUY. got action={verdict['action']}"
 
     def test_ranker_path_verified_composite_no_missing_label(self) -> None:
         """composite_verified=True (真实 composite) → 不标 'composite 缺失(已折扣)'."""
@@ -386,9 +361,7 @@ class TestMissingCompositeDisclosureRankerPath:
         rec["composite_score"] = 0.60  # 真实分, 非 0.9 折扣值
         verdict = build_front_door_verdict(rec, market_regime="normal")
         reasons = verdict["invalidation_reason"]
-        assert "composite 缺失(已折扣)" not in reasons, (
-            f"composite_verified=True must NOT label 'composite 缺失(已折扣)'; got reasons={reasons}"
-        )
+        assert "composite 缺失(已折扣)" not in reasons, f"composite_verified=True must NOT label 'composite 缺失(已折扣)'; got reasons={reasons}"
 
     def test_composite_verified_none_legacy_no_missing_label(self) -> None:
         """composite_verified 缺失 (None, 旧报告/未走 ranker) → 不标, 向后兼容.
@@ -401,9 +374,7 @@ class TestMissingCompositeDisclosureRankerPath:
         rec["composite_score"] = 0.60  # 真实分
         verdict = build_front_door_verdict(rec, market_regime="normal")
         reasons = verdict["invalidation_reason"]
-        assert "composite 缺失(已折扣)" not in reasons, (
-            f"composite_verified missing (None/legacy) must NOT label; got reasons={reasons}"
-        )
+        assert "composite 缺失(已折扣)" not in reasons, f"composite_verified missing (None/legacy) must NOT label; got reasons={reasons}"
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +406,4 @@ class TestExistingBehaviorPreserved:
         """crisis regime 下 BUY gate 降级为 HOLD/AVOID (NS-23 C245 行为不变)."""
         rec = _make_rec()  # 默认通过 BUY gate
         verdict = build_front_door_verdict(rec, market_regime="crisis")
-        assert verdict["action"] in ("HOLD", "AVOID"), (
-            f"crisis regime should downgrade to HOLD/AVOID; got action={verdict['action']}"
-        )
+        assert verdict["action"] in ("HOLD", "AVOID"), f"crisis regime should downgrade to HOLD/AVOID; got action={verdict['action']}"

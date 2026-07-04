@@ -122,7 +122,7 @@ def test_run_agent_mode_records_long_entry_date_on_buy(monkeypatch):
 
 def test_agent_mode_t_plus_1_blocks_same_day_sell(monkeypatch):
     """Test that T+1 enforcement works in agent mode: same-day sell is blocked."""
-    
+
     def buy_then_sell_agent(**kwargs):
         """Agent that buys AAPL on first call, sells on second."""
         tickers = kwargs["tickers"]
@@ -137,7 +137,7 @@ def test_agent_mode_t_plus_1_blocks_same_day_sell(monkeypatch):
             "decisions": {tickers[0]: {"action": "buy", "quantity": "10"}},
             "analyst_signals": {},
         }
-    
+
     engine = BacktestEngine(
         agent=buy_then_sell_agent,
         tickers=["AAPL"],
@@ -156,7 +156,7 @@ def test_agent_mode_t_plus_1_blocks_same_day_sell(monkeypatch):
 
     # Execute buy on day 1
     engine._run_agent_mode(pd.DatetimeIndex([pd.Timestamp("2024-03-04")]))
-    
+
     # Verify buy executed and entry_date recorded
     positions_after_buy = engine._portfolio.get_positions()
     assert positions_after_buy["AAPL"]["long"] == 10
@@ -164,7 +164,7 @@ def test_agent_mode_t_plus_1_blocks_same_day_sell(monkeypatch):
 
     # Attempt to sell on the same day (should be blocked by T+1)
     engine._run_agent_mode(pd.DatetimeIndex([pd.Timestamp("2024-03-04")]))
-    
+
     # Position should remain intact (sell was blocked)
     positions_after_sell_attempt = engine._portfolio.get_positions()
     assert positions_after_sell_attempt["AAPL"]["long"] == 10, "T+1 must block same-day sell in agent mode"
@@ -310,10 +310,7 @@ def test_prefetch_data_clamps_end_date_to_data_through(monkeypatch):
     for ticker in ["001309", "000300.SH"]:
         assert ticker in captured_price_windows, f"{ticker} not fetched"
         _, end = captured_price_windows[ticker]
-        assert end == "2026-04-10", (
-            f"GAMMA-007 regression: {ticker} fetched through {end}, expected 2026-04-10 "
-            "(embargo bound must clamp the feature window)"
-        )
+        assert end == "2026-04-10", f"GAMMA-007 regression: {ticker} fetched through {end}, expected 2026-04-10 " "(embargo bound must clamp the feature window)"
 
 
 def test_prefetch_data_default_uses_end_date_when_data_through_absent(monkeypatch):
@@ -491,9 +488,7 @@ def test_prepare_run_dates_seeds_anchor_before_first_bar_not_on_it(monkeypatch):
         initial_margin_requirement=0.0,
         backtest_mode="agent",
     )
-    fixed_dates = pd.DatetimeIndex(
-        [pd.Timestamp("2024-03-04"), pd.Timestamp("2024-03-05")]
-    )
+    fixed_dates = pd.DatetimeIndex([pd.Timestamp("2024-03-04"), pd.Timestamp("2024-03-05")])
     monkeypatch.setattr(engine, "_iter_backtest_dates", lambda: fixed_dates)
     # Fresh run (no checkpoint) → seed path under test.
     monkeypatch.setattr(engine, "_load_checkpoint", lambda: (None, None))

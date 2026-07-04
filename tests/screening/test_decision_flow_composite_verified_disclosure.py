@@ -16,6 +16,7 @@ Fix: mirror R111 — append "估" to the composite score when
 ``composite_verified is explicitly False``. Verified/missing-flag items render
 unchanged (behavior preserved).
 """
+
 from __future__ import annotations
 
 import json
@@ -30,9 +31,7 @@ def _seed_report(tmp_path: Path, recs: list[dict]) -> Path:
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir()
     report = {"date": "20260611", "recommendations": recs}
-    (reports_dir / "auto_screening_20260611.json").write_text(
-        json.dumps(report), encoding="utf-8"
-    )
+    (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(report), encoding="utf-8")
     return reports_dir
 
 
@@ -58,11 +57,7 @@ def test_fallback_top_investable_discloses_estimate_marker(tmp_path: Path, capsy
     assert "error" not in result, f"flow should succeed, got: {result}"
     out = capsys.readouterr().out
     assert "Top investable" in out
-    assert "估" in out, (
-        "composite_verified=False Top investable must disclose an estimate marker; "
-        "currently --decision-flow renders a conservative-estimate composite "
-        "identically to a verified composite (R111 cross-layer sibling miss)"
-    )
+    assert "估" in out, "composite_verified=False Top investable must disclose an estimate marker; " "currently --decision-flow renders a conservative-estimate composite " "identically to a verified composite (R111 cross-layer sibling miss)"
 
 
 def test_verified_top_investable_has_no_estimate_marker(tmp_path: Path, capsys) -> None:
@@ -92,6 +87,4 @@ def test_verified_top_investable_has_no_estimate_marker(tmp_path: Path, capsys) 
     assert "error" not in result, f"flow should succeed, got: {result}"
     out = capsys.readouterr().out
     assert "Top investable" in out
-    assert "估" not in out, (
-        "verified composite pick must NOT show an estimate marker"
-    )
+    assert "估" not in out, "verified composite pick must NOT show an estimate marker"

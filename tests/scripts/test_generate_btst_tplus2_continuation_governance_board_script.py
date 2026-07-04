@@ -59,7 +59,7 @@ def test_generate_btst_tplus2_continuation_governance_board_single_ticker_observ
                 "per_window_summaries": [
                     {"window_verdict": "supports_tplus2_lane"},
                     {"window_verdict": "mixed_or_weak"},
-                ]
+                ],
             }
         ),
         encoding="utf-8",

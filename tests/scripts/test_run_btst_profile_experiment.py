@@ -5,6 +5,7 @@ Key invariants:
   2. Sufficient samples → win_rate, CI, coverage all computed.
   3. Missing regimes → explicit warning in report.
 """
+
 from __future__ import annotations
 
 import json
@@ -46,7 +47,9 @@ def _make_outcome_ledger(
             )
         )
     header = build_ledger_header(
-        decision_id=decision_id, signal_date=signal_date, outcomes=outcomes,
+        decision_id=decision_id,
+        signal_date=signal_date,
+        outcomes=outcomes,
     )
     write_outcome_ledger(header, outcomes, path)
     return path
@@ -142,21 +145,13 @@ class TestAggregation:
         # The aggregation result must carry skipped-ledger diagnostics.
         assert isinstance(result, dict), "aggregate must return a dict"
         skipped = result.get("_skipped_ledgers")
-        assert skipped is not None and len(skipped) == 2, (
-            f"2 corrupt ledgers must be recorded under _skipped_ledgers; got result keys={list(result.keys())}"
-        )
+        assert skipped is not None and len(skipped) == 2, f"2 corrupt ledgers must be recorded under _skipped_ledgers; got result keys={list(result.keys())}"
         skipped_paths = {s["path"] for s in skipped}
-        assert str(corrupt_path) in skipped_paths and str(missing_keys_path) in skipped_paths, (
-            f"skipped ledgers must name both corrupt files; got {skipped_paths}"
-        )
+        assert str(corrupt_path) in skipped_paths and str(missing_keys_path) in skipped_paths, f"skipped ledgers must name both corrupt files; got {skipped_paths}"
         # the rendered report must surface the warning (operator-visible)
         md = render_profile_experiment_report(aggregated=result)
-        assert "跳过" in md or "skipped" in md.lower(), (
-            f"rendered report must warn about skipped ledgers; got:\n{md}"
-        )
-        assert str(corrupt_path.name) in md, (
-            f"rendered report must name the skipped corrupt ledger file; got:\n{md}"
-        )
+        assert "跳过" in md or "skipped" in md.lower(), f"rendered report must warn about skipped ledgers; got:\n{md}"
+        assert str(corrupt_path.name) in md, f"rendered report must name the skipped corrupt ledger file; got:\n{md}"
 
     def test_ci_95_computed_when_decided_gt_0(self, tmp_path: Path) -> None:
         ledger_path = tmp_path / "ledger.json"

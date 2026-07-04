@@ -817,9 +817,7 @@ def test_refresh_selection_artifacts_from_daily_events_keeps_plain_corridor_shad
     assert selection_snapshot["selection_targets"]["300720"]["short_trade"]["decision"] == "near_miss"
 
 
-def test_refresh_selection_artifacts_from_daily_events_injects_historical_prior_into_boundary_candidate(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-):
+def test_refresh_selection_artifacts_from_daily_events_injects_historical_prior_into_boundary_candidate(tmp_path, monkeypatch: pytest.MonkeyPatch):
     report_dir = tmp_path / "paper_trading_20260406_20260406_refresh_boundary"
     (report_dir / "selection_artifacts").mkdir(parents=True)
     trade_date = "20260406"
@@ -954,9 +952,7 @@ def test_refresh_selection_artifacts_from_daily_events_injects_historical_prior_
     assert short_trade["metrics_payload"]["historical_execution_relief"]["execution_quality_label"] == "gap_chase_risk"
 
 
-def test_refresh_selection_artifacts_from_daily_events_preserves_catalyst_theme_candidates(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-):
+def test_refresh_selection_artifacts_from_daily_events_preserves_catalyst_theme_candidates(tmp_path, monkeypatch: pytest.MonkeyPatch):
     report_dir = tmp_path / "paper_trading_20260409_20260409_refresh_catalyst_theme"
     (report_dir / "selection_artifacts").mkdir(parents=True)
     trade_date = "20260409"
@@ -1025,9 +1021,7 @@ def test_refresh_selection_artifacts_from_daily_events_preserves_catalyst_theme_
     assert short_trade["metrics_payload"]["thresholds"]["effective_select_threshold"] == 0.40
 
 
-def test_refresh_selection_artifacts_from_daily_events_prefers_rebuilt_catalyst_theme_rerun_artifact(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-):
+def test_refresh_selection_artifacts_from_daily_events_prefers_rebuilt_catalyst_theme_rerun_artifact(tmp_path, monkeypatch: pytest.MonkeyPatch):
     report_dir = tmp_path / "paper_trading_20260410_20260410_refresh_catalyst_rerun_override"
     selection_dir = report_dir / "selection_artifacts" / "2026-04-10"
     selection_dir.mkdir(parents=True)
@@ -1132,9 +1126,7 @@ def test_refresh_selection_artifacts_from_daily_events_prefers_rebuilt_catalyst_
     assert "002001" not in selection_snapshot["selection_targets"]
 
 
-def test_refresh_selection_artifacts_from_daily_events_honors_empty_rebuilt_catalyst_theme_rerun_artifact(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-):
+def test_refresh_selection_artifacts_from_daily_events_honors_empty_rebuilt_catalyst_theme_rerun_artifact(tmp_path, monkeypatch: pytest.MonkeyPatch):
     report_dir = tmp_path / "paper_trading_20260410_20260410_refresh_empty_catalyst_rerun_override"
     selection_dir = report_dir / "selection_artifacts" / "2026-04-10"
     selection_dir.mkdir(parents=True)
@@ -1238,9 +1230,7 @@ def test_refresh_selection_artifacts_from_daily_events_honors_empty_rebuilt_cata
     assert catalyst_theme_filter["filtered_reason_counts"] == {}
 
 
-def test_refresh_selection_artifacts_from_daily_events_uses_catalyst_theme_metric_overrides(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-):
+def test_refresh_selection_artifacts_from_daily_events_uses_catalyst_theme_metric_overrides(tmp_path, monkeypatch: pytest.MonkeyPatch):
     report_dir = tmp_path / "paper_trading_20260409_20260409_refresh_catalyst_metric_override"
     (report_dir / "selection_artifacts").mkdir(parents=True)
     trade_date = "20260409"
@@ -1773,9 +1763,7 @@ def test_rebuild_selection_targets_for_plan_uses_selection_target_historical_pri
     assert preserved_entry["historical_prior"]["next_close_positive_rate"] == 1.0
 
 
-def test_refresh_selection_artifacts_from_daily_events_passthroughs_carryover_evidence_deficiency(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-):
+def test_refresh_selection_artifacts_from_daily_events_passthroughs_carryover_evidence_deficiency(tmp_path, monkeypatch: pytest.MonkeyPatch):
     report_dir = tmp_path / "paper_trading_20260409_20260409_refresh_carryover_evidence"
     (report_dir / "selection_artifacts").mkdir(parents=True)
     trade_date = "20260409"
@@ -1853,10 +1841,7 @@ def test_refresh_selection_artifacts_from_daily_events_passthroughs_carryover_ev
     snapshot_entry = next(entry for entry in selection_snapshot["catalyst_theme_candidates"] if entry["ticker"] == "688498")
     assert snapshot_entry["negative_tags"][0] == "evidence_deficient_broad_family_only"
     assert snapshot_entry["carryover_evidence_deficiency"]["evidence_deficient"] is True
-    assert (
-        selection_snapshot["selection_targets"]["688498"]["short_trade"]["metrics_payload"]["carryover_evidence_deficiency"]["evidence_deficient"]
-        is True
-    )
+    assert selection_snapshot["selection_targets"]["688498"]["short_trade"]["metrics_payload"]["carryover_evidence_deficiency"]["evidence_deficient"] is True
 
 
 def test_refresh_selection_artifacts_from_daily_events_rehydrates_strategy_signals_for_supplemental_entries_from_existing_replay_input(

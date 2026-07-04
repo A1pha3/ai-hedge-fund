@@ -295,6 +295,7 @@ def test_apply_estimated_liquidity_filter_with_map_filters(capfd: pytest.Capture
 
 def test_load_amount_map_batch_hit_returns_true() -> None:
     """When the batch fn returns a populated map, short-circuit (True)."""
+
     def _batch_map(pro, codes, date):
         return {"000001.SZ": 500.0, "000002.SZ": 50.0}
 
@@ -321,6 +322,7 @@ def test_load_amount_map_batch_hit_returns_true() -> None:
 
 def test_load_amount_map_fallback_per_ticker_returns_false() -> None:
     """When batch fn returns empty map, fall back to per-ticker (False)."""
+
     def _batch_map(pro, codes, date):
         return {}
 

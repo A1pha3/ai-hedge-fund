@@ -1,4 +1,5 @@
 """Tests for signal_momentum.py — P10-1."""
+
 from __future__ import annotations
 
 import json

@@ -242,9 +242,7 @@ def test_main_writes_rollout_recheck_comparison_outputs(tmp_path: Path) -> None:
                         "next_close_payoff_ratio_delta": 0.1398,
                     }
                 },
-                "rollout_recommendation_details": {
-                    "baseline_verdicts": {"momentum_optimized": {"status": "blocked", "blockers": ["next_close_positive_rate_regressed_vs_momentum_optimized"]}}
-                },
+                "rollout_recommendation_details": {"baseline_verdicts": {"momentum_optimized": {"status": "blocked", "blockers": ["next_close_positive_rate_regressed_vs_momentum_optimized"]}}},
             }
         ),
         encoding="utf-8",

@@ -24,6 +24,7 @@ def test_run_sync_passes_kwargs() -> None:
     async def _run():
         def _sync_fn(positional, *, keyword):
             return (positional, keyword)
+
         return await prov._run_sync(_sync_fn, "sh688766", keyword="daily")
 
     assert asyncio.run(_run()) == ("sh688766", "daily")
@@ -36,6 +37,7 @@ def test_run_sync_positional_only() -> None:
     async def _run():
         def _fn(a, b):
             return a + b
+
         return await prov._run_sync(_fn, 2, 3)
 
     assert asyncio.run(_run()) == 5
@@ -69,6 +71,7 @@ def test_tushare_run_sync_passes_kwargs() -> None:
     async def _run():
         def _sync_fn(positional, *, keyword):
             return (positional, keyword)
+
         return await prov._run_sync(_sync_fn, "000001.SZ", keyword="daily")
 
     assert asyncio.run(_run()) == ("000001.SZ", "daily")

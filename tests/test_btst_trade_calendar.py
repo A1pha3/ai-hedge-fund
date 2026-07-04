@@ -34,9 +34,7 @@ def test_load_open_trade_dates_falls_back_to_akshare(monkeypatch):
     monkeypatch.setattr(cal, "_get_pro", lambda: object())
     monkeypatch.setattr(cal, "_cached_tushare_dataframe_call", lambda *_args, **_kwargs: None)
 
-    stub_ak = types.SimpleNamespace(
-        tool_trade_date_hist_sina=lambda: pd.DataFrame({"trade_date": pd.to_datetime(["2026-06-05", "2026-06-08"])})
-    )
+    stub_ak = types.SimpleNamespace(tool_trade_date_hist_sina=lambda: pd.DataFrame({"trade_date": pd.to_datetime(["2026-06-05", "2026-06-08"])}))
     monkeypatch.setitem(sys.modules, "akshare", stub_ak)
 
     dates, source = cal._load_open_trade_dates_cn_sse("20260605", "20260608")

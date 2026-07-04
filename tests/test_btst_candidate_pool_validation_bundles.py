@@ -216,9 +216,7 @@ def test_corridor_validation_pack_reports_parallel_probe_ready(tmp_path: Path) -
     _write_json(
         branch_priority_path,
         {
-            "branch_rows": [
-                {"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}
-            ],
+            "branch_rows": [{"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}],
             "corridor_ticker_rows": [
                 {"ticker": "300720", "corridor_priority_rank": 1, "tractability_tier": "primary", "uplift_to_cutoff_multiple_mean": 1.2},
                 {"ticker": "003036", "corridor_priority_rank": 2, "tractability_tier": "parallel", "uplift_to_cutoff_multiple_mean": 1.1},
@@ -274,12 +272,8 @@ def test_corridor_validation_pack_promotes_strong_corridor_candidate_readiness(t
     _write_json(
         branch_priority_path,
         {
-            "branch_rows": [
-                {"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}
-            ],
-            "corridor_ticker_rows": [
-                {"ticker": "300683", "corridor_priority_rank": 1, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 6.4382}
-            ],
+            "branch_rows": [{"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}],
+            "corridor_ticker_rows": [{"ticker": "300683", "corridor_priority_rank": 1, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 6.4382}],
         },
     )
 
@@ -324,9 +318,7 @@ def test_corridor_validation_pack_excludes_low_gate_tail_without_backfilling_new
     _write_json(
         branch_priority_path,
         {
-            "branch_rows": [
-                {"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}
-            ],
+            "branch_rows": [{"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}],
             "corridor_ticker_rows": [
                 {"ticker": "300683", "corridor_priority_rank": 1, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 6.3291},
                 {"ticker": "688796", "corridor_priority_rank": 2, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 8.9123},
@@ -385,9 +377,7 @@ def test_corridor_validation_pack_emits_strict_release_contract_for_retained_cor
     _write_json(
         branch_priority_path,
         {
-            "branch_rows": [
-                {"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}
-            ],
+            "branch_rows": [{"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}],
             "corridor_ticker_rows": [
                 {"ticker": "300683", "corridor_priority_rank": 1, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 6.3291},
                 {"ticker": "688796", "corridor_priority_rank": 2, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 8.9123},
@@ -448,9 +438,7 @@ def test_corridor_validation_pack_uses_deepest_focus_truth_outside_top_parallel_
     _write_json(
         branch_priority_path,
         {
-            "branch_rows": [
-                {"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}
-            ],
+            "branch_rows": [{"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}],
             "corridor_ticker_rows": [
                 {"ticker": "300683", "corridor_priority_rank": 1, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 6.3291},
                 {"ticker": "688796", "corridor_priority_rank": 2, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 8.9123},
@@ -510,9 +498,7 @@ def test_corridor_validation_pack_does_not_backfill_parallel_strict_release_with
     _write_json(
         branch_priority_path,
         {
-            "branch_rows": [
-                {"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}
-            ],
+            "branch_rows": [{"priority_handoff": "layer_a_liquidity_corridor", "execution_priority_rank": 1, "prototype_readiness": "parallel_probe"}],
             "corridor_ticker_rows": [
                 {"ticker": "300683", "corridor_priority_rank": 1, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 6.3291},
                 {"ticker": "688796", "corridor_priority_rank": 2, "tractability_tier": "second_shadow_probe", "uplift_to_cutoff_multiple_mean": 8.9123},
@@ -1083,15 +1069,9 @@ def test_lane_pair_board_upgrades_corridor_primary_governance_when_shadow_recall
     )
 
     rows_by_ticker = {row["ticker"]: row for row in analysis["candidates"]}
-    assert rows_by_ticker["300683"]["governance_blocker"] == "shadow_recall_not_persistent", (
-        "governance_blocker should remain shadow_recall_not_persistent so corridor persistence dossier handles it correctly"
-    )
-    assert rows_by_ticker["300683"]["governance_status"] != "transient_probe_only", (
-        "active corridor primary should not show transient_probe_only; expected corridor_primary_active_replay_pending"
-    )
-    assert rows_by_ticker["300683"]["governance_status"] == "corridor_primary_active_replay_pending", (
-        "active corridor primary with shadow_recall_not_persistent history should be upgraded to corridor_primary_active_replay_pending"
-    )
+    assert rows_by_ticker["300683"]["governance_blocker"] == "shadow_recall_not_persistent", "governance_blocker should remain shadow_recall_not_persistent so corridor persistence dossier handles it correctly"
+    assert rows_by_ticker["300683"]["governance_status"] != "transient_probe_only", "active corridor primary should not show transient_probe_only; expected corridor_primary_active_replay_pending"
+    assert rows_by_ticker["300683"]["governance_status"] == "corridor_primary_active_replay_pending", "active corridor primary with shadow_recall_not_persistent history should be upgraded to corridor_primary_active_replay_pending"
 
 
 def test_upstream_handoff_board_prioritizes_watchlist_break_before_lane_probe(tmp_path: Path) -> None:
@@ -1888,22 +1868,12 @@ def test_corridor_shadow_pack_keeps_diagnostic_primary_replay_when_dossier_shows
 
     # The persistence gate must override the validation pack's optimistic strict-release status,
     # while preserving the active primary for diagnostic shadow replay.
-    assert analysis["strict_release_status"] == "strict_release_blocked_by_persistence", (
-        f"Expected strict_release_blocked_by_persistence but got {analysis['strict_release_status']!r}"
-    )
-    assert analysis["shadow_status"] == "diagnostic_primary_shadow_replay_only", (
-        f"Expected diagnostic_primary_shadow_replay_only but got {analysis['shadow_status']!r}"
-    )
-    assert analysis.get("strict_release_tickers", []) == [], (
-        f"strict_release_tickers must be empty when persistence gate fires, got {analysis.get('strict_release_tickers', [])!r}"
-    )
-    assert analysis["primary_shadow_replay"].get("ticker") == "300683", (
-        "300683 should remain the diagnostic primary shadow replay while persistence is still under-sampled"
-    )
+    assert analysis["strict_release_status"] == "strict_release_blocked_by_persistence", f"Expected strict_release_blocked_by_persistence but got {analysis['strict_release_status']!r}"
+    assert analysis["shadow_status"] == "diagnostic_primary_shadow_replay_only", f"Expected diagnostic_primary_shadow_replay_only but got {analysis['shadow_status']!r}"
+    assert analysis.get("strict_release_tickers", []) == [], f"strict_release_tickers must be empty when persistence gate fires, got {analysis.get('strict_release_tickers', [])!r}"
+    assert analysis["primary_shadow_replay"].get("ticker") == "300683", "300683 should remain the diagnostic primary shadow replay while persistence is still under-sampled"
     assert analysis["shadow_replay_commands"], "diagnostic replay should still emit shadow replay refresh commands"
-    assert any("run_btst_candidate_pool_corridor_shadow_pack.py" in command for command in analysis["shadow_replay_commands"]), (
-        f"Expected a shadow-pack refresh command in shadow_replay_commands, got {analysis['shadow_replay_commands']!r}"
-    )
+    assert any("run_btst_candidate_pool_corridor_shadow_pack.py" in command for command in analysis["shadow_replay_commands"]), f"Expected a shadow-pack refresh command in shadow_replay_commands, got {analysis['shadow_replay_commands']!r}"
 
 
 def test_corridor_shadow_pack_not_blocked_by_persistence_gate_when_dossier_verdict_is_merge_ready(tmp_path: Path) -> None:
@@ -1952,9 +1922,7 @@ def test_corridor_shadow_pack_not_blocked_by_persistence_gate_when_dossier_verdi
     )
 
     # No persistence blocker — status must pass through from validation pack.
-    assert analysis["strict_release_status"] == "strict_release_ready", (
-        f"Expected strict_release_ready but got {analysis['strict_release_status']!r}"
-    )
+    assert analysis["strict_release_status"] == "strict_release_ready", f"Expected strict_release_ready but got {analysis['strict_release_status']!r}"
 
 
 def test_corridor_shadow_pack_refresh_commands_include_persistence_dossier_path(tmp_path: Path) -> None:
@@ -1972,9 +1940,7 @@ def test_corridor_shadow_pack_refresh_commands_include_persistence_dossier_path(
 
     shadow_pack_cmds = [cmd for cmd in analysis["refresh_commands"] if "run_btst_candidate_pool_corridor_shadow_pack.py" in cmd]
     assert shadow_pack_cmds, "No shadow pack refresh command found in refresh_commands"
-    assert any("--persistence-dossier-path" in cmd for cmd in shadow_pack_cmds), (
-        f"Expected --persistence-dossier-path in shadow pack refresh command, got: {shadow_pack_cmds}"
-    )
+    assert any("--persistence-dossier-path" in cmd for cmd in shadow_pack_cmds), f"Expected --persistence-dossier-path in shadow pack refresh command, got: {shadow_pack_cmds}"
 
 
 def test_corridor_shadow_pack_shadow_replay_commands_include_persistence_dossier_path(tmp_path: Path) -> None:
@@ -2000,9 +1966,7 @@ def test_corridor_shadow_pack_shadow_replay_commands_include_persistence_dossier
     )
 
     assert analysis["shadow_replay_commands"], "Expected non-empty shadow_replay_commands"
-    assert any("--persistence-dossier-path" in cmd for cmd in analysis["shadow_replay_commands"]), (
-        f"Expected --persistence-dossier-path in shadow_replay_commands, got: {analysis['shadow_replay_commands']}"
-    )
+    assert any("--persistence-dossier-path" in cmd for cmd in analysis["shadow_replay_commands"]), f"Expected --persistence-dossier-path in shadow_replay_commands, got: {analysis['shadow_replay_commands']}"
 
 
 def test_corridor_shadow_pack_cli_accepts_and_passes_persistence_dossier_path(tmp_path: Path) -> None:
@@ -2017,9 +1981,7 @@ def test_corridor_shadow_pack_cli_accepts_and_passes_persistence_dossier_path(tm
         {
             "pack_status": "parallel_probe_ready",
             "strict_release_status": "strict_release_ready",
-            "strict_release_candidates": [
-                {"ticker": "300683", "tractability_tier": "second_shadow_probe", "corridor_priority_rank": 1}
-            ],
+            "strict_release_candidates": [{"ticker": "300683", "tractability_tier": "second_shadow_probe", "corridor_priority_rank": 1}],
             "strict_release_tickers": ["300683"],
         },
     )
@@ -2036,10 +1998,14 @@ def test_corridor_shadow_pack_cli_accepts_and_passes_persistence_dossier_path(tm
         [
             sys.executable,
             "scripts/run_btst_candidate_pool_corridor_shadow_pack.py",
-            "--corridor-validation-pack-path", str(corridor_validation_pack_path),
-            "--persistence-dossier-path", str(persistence_dossier_path),
-            "--output-json", str(output_json),
-            "--output-md", str(output_md),
+            "--corridor-validation-pack-path",
+            str(corridor_validation_pack_path),
+            "--persistence-dossier-path",
+            str(persistence_dossier_path),
+            "--output-json",
+            str(output_json),
+            "--output-md",
+            str(output_md),
         ],
         capture_output=True,
         text=True,
@@ -2047,9 +2013,7 @@ def test_corridor_shadow_pack_cli_accepts_and_passes_persistence_dossier_path(tm
     )
     assert result.returncode == 0, f"CLI exited non-zero: {result.stderr}"
     analysis = json.loads(output_json.read_text())
-    assert analysis["strict_release_status"] == "strict_release_blocked_by_persistence", (
-        f"Persistence gate must fire via CLI --persistence-dossier-path, got: {analysis['strict_release_status']!r}"
-    )
+    assert analysis["strict_release_status"] == "strict_release_blocked_by_persistence", f"Persistence gate must fire via CLI --persistence-dossier-path, got: {analysis['strict_release_status']!r}"
 
 
 def test_corridor_uplift_runbook_execution_commands_include_persistence_dossier_path(tmp_path: Path) -> None:
@@ -2086,9 +2050,7 @@ def test_corridor_uplift_runbook_execution_commands_include_persistence_dossier_
 
     shadow_pack_cmds = [cmd for cmd in analysis["execution_commands"] if "run_btst_candidate_pool_corridor_shadow_pack.py" in cmd]
     assert shadow_pack_cmds, "No shadow pack command found in execution_commands"
-    assert any("--persistence-dossier-path" in cmd for cmd in shadow_pack_cmds), (
-        f"Expected --persistence-dossier-path in shadow pack execution command, got: {shadow_pack_cmds}"
-    )
+    assert any("--persistence-dossier-path" in cmd for cmd in shadow_pack_cmds), f"Expected --persistence-dossier-path in shadow pack execution command, got: {shadow_pack_cmds}"
 
 
 def test_corridor_uplift_runbook_execution_commands_uplift_runbook_step_includes_persistence_dossier_path(tmp_path: Path) -> None:
@@ -2125,9 +2087,7 @@ def test_corridor_uplift_runbook_execution_commands_uplift_runbook_step_includes
 
     uplift_cmds = [cmd for cmd in analysis["execution_commands"] if "run_btst_candidate_pool_corridor_uplift_runbook.py" in cmd]
     assert uplift_cmds, "No uplift runbook command found in execution_commands"
-    assert any("--persistence-dossier-path" in cmd for cmd in uplift_cmds), (
-        f"Expected --persistence-dossier-path in uplift runbook execution command, got: {uplift_cmds}"
-    )
+    assert any("--persistence-dossier-path" in cmd for cmd in uplift_cmds), f"Expected --persistence-dossier-path in uplift runbook execution command, got: {uplift_cmds}"
 
 
 def test_corridor_uplift_runbook_fallback_shadow_pack_passes_persistence_dossier_path(tmp_path: Path) -> None:
@@ -2172,14 +2132,8 @@ def test_corridor_uplift_runbook_fallback_shadow_pack_passes_persistence_dossier
 
     assert mock_shadow_pack.called, "analyze_btst_candidate_pool_corridor_shadow_pack was not called (fallback not triggered)"
     _, call_kwargs = mock_shadow_pack.call_args
-    assert "persistence_dossier_path" in call_kwargs, (
-        f"Fallback call to analyze_btst_candidate_pool_corridor_shadow_pack must pass persistence_dossier_path, "
-        f"got kwargs: {call_kwargs}"
-    )
-    assert call_kwargs["persistence_dossier_path"] == persistence_dossier_path, (
-        f"persistence_dossier_path passed to fallback must match the one provided to the runbook, "
-        f"got: {call_kwargs['persistence_dossier_path']!r}"
-    )
+    assert "persistence_dossier_path" in call_kwargs, f"Fallback call to analyze_btst_candidate_pool_corridor_shadow_pack must pass persistence_dossier_path, " f"got kwargs: {call_kwargs}"
+    assert call_kwargs["persistence_dossier_path"] == persistence_dossier_path, f"persistence_dossier_path passed to fallback must match the one provided to the runbook, " f"got: {call_kwargs['persistence_dossier_path']!r}"
 
 
 def test_corridor_shadow_pack_script_has_sys_path_bootstrap_for_direct_cli_execution() -> None:
@@ -2191,13 +2145,7 @@ def test_corridor_shadow_pack_script_has_sys_path_bootstrap_for_direct_cli_execu
     when invoked via any Python that lacks the editable-install .pth (system Python, CI, etc.).
     """
     source = Path("scripts/run_btst_candidate_pool_corridor_shadow_pack.py").read_text()
-    assert "sys.path.insert" in source, (
-        "Script is missing sys.path.insert bootstrap. "
-        "Direct CLI execution 'python scripts/run_btst_candidate_pool_corridor_shadow_pack.py' "
-        "fails with ModuleNotFoundError on any Python without the venv editable-install .pth. "
-        "Add: sys.path.insert(0, str(Path(__file__).resolve().parent.parent)) "
-        "before any 'from scripts.' import."
-    )
+    assert "sys.path.insert" in source, "Script is missing sys.path.insert bootstrap. " "Direct CLI execution 'python scripts/run_btst_candidate_pool_corridor_shadow_pack.py' " "fails with ModuleNotFoundError on any Python without the venv editable-install .pth. " "Add: sys.path.insert(0, str(Path(__file__).resolve().parent.parent)) " "before any 'from scripts.' import."
 
 
 def test_corridor_shadow_pack_script_direct_cli_execution_works() -> None:
@@ -2231,15 +2179,8 @@ def test_corridor_shadow_pack_script_direct_cli_execution_works() -> None:
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, (
-        "Direct CLI execution of scripts/run_btst_candidate_pool_corridor_shadow_pack.py --help "
-        "failed in a no-.pth environment.  This usually means the sys.path bootstrap is missing or broken.\n"
-        f"stdout: {result.stdout}\nstderr: {result.stderr}"
-    )
-    assert "usage:" in result.stdout.lower() or "usage:" in result.stderr.lower(), (
-        "Expected argparse usage text in output of --help invocation, "
-        f"got stdout={result.stdout!r} stderr={result.stderr!r}"
-    )
+    assert result.returncode == 0, "Direct CLI execution of scripts/run_btst_candidate_pool_corridor_shadow_pack.py --help " "failed in a no-.pth environment.  This usually means the sys.path bootstrap is missing or broken.\n" f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    assert "usage:" in result.stdout.lower() or "usage:" in result.stderr.lower(), "Expected argparse usage text in output of --help invocation, " f"got stdout={result.stdout!r} stderr={result.stderr!r}"
 
 
 def test_corridor_shadow_pack_persistence_gate_with_multiple_candidates_keeps_blocked_primary_as_diagnostic_replay(tmp_path: Path) -> None:
@@ -2301,19 +2242,11 @@ def test_corridor_shadow_pack_persistence_gate_with_multiple_candidates_keeps_bl
         persistence_dossier_path=persistence_dossier_path,
     )
 
-    assert analysis["strict_release_status"] == "strict_release_blocked_by_persistence", (
-        f"Expected strict_release_blocked_by_persistence but got {analysis['strict_release_status']!r}"
-    )
-    assert analysis["shadow_status"] == "diagnostic_primary_shadow_replay_only", (
-        f"Expected diagnostic_primary_shadow_replay_only but got {analysis['shadow_status']!r}"
-    )
-    assert analysis["primary_shadow_replay"].get("ticker") == "300683", (
-        "300683 should remain the diagnostic primary shadow replay when persistence is still under-sampled"
-    )
+    assert analysis["strict_release_status"] == "strict_release_blocked_by_persistence", f"Expected strict_release_blocked_by_persistence but got {analysis['strict_release_status']!r}"
+    assert analysis["shadow_status"] == "diagnostic_primary_shadow_replay_only", f"Expected diagnostic_primary_shadow_replay_only but got {analysis['shadow_status']!r}"
+    assert analysis["primary_shadow_replay"].get("ticker") == "300683", "300683 should remain the diagnostic primary shadow replay when persistence is still under-sampled"
     assert analysis["shadow_replay_commands"], "diagnostic replay should still emit replay refresh commands"
-    assert "300720" not in json.dumps(analysis["primary_shadow_replay"], ensure_ascii=False), (
-        f"300720 must NOT be silently promoted as secondary-becomes-primary, got {analysis['primary_shadow_replay']!r}"
-    )
+    assert "300720" not in json.dumps(analysis["primary_shadow_replay"], ensure_ascii=False), f"300720 must NOT be silently promoted as secondary-becomes-primary, got {analysis['primary_shadow_replay']!r}"
 
 
 def test_corridor_shadow_pack_diagnostic_primary_replay_next_step_mentions_replay_but_keeps_release_blocked(tmp_path: Path) -> None:
@@ -2363,12 +2296,8 @@ def test_corridor_shadow_pack_diagnostic_primary_replay_next_step_mentions_repla
 
     assert analysis["shadow_status"] == "diagnostic_primary_shadow_replay_only"
     next_step = analysis.get("next_step") or ""
-    assert "保持" in next_step and "shadow replay" in next_step.lower(), (
-        f"next_step should preserve active replay guidance for diagnostic sampling, got: {next_step!r}"
-    )
-    assert "strict release" in next_step.lower() or "paper-trading" in next_step.lower() or "阻断" in next_step, (
-        f"next_step must still reference the persistence block on strict release/paper trading, got: {next_step!r}"
-    )
+    assert "保持" in next_step and "shadow replay" in next_step.lower(), f"next_step should preserve active replay guidance for diagnostic sampling, got: {next_step!r}"
+    assert "strict release" in next_step.lower() or "paper-trading" in next_step.lower() or "阻断" in next_step, f"next_step must still reference the persistence block on strict release/paper trading, got: {next_step!r}"
 
 
 def test_corridor_shadow_pack_no_active_primary_next_step_is_noop(tmp_path: Path) -> None:
@@ -2382,10 +2311,7 @@ def test_corridor_shadow_pack_no_active_primary_next_step_is_noop(tmp_path: Path
 
     assert analysis["shadow_status"] == "skipped_no_corridor_lane"
     next_step = analysis.get("next_step") or ""
-    assert "shadow replay" not in next_step.lower(), (
-        f"next_step must NOT contain replay-oriented guidance when there is no active primary, "
-        f"got: {next_step!r}"
-    )
+    assert "shadow replay" not in next_step.lower(), f"next_step must NOT contain replay-oriented guidance when there is no active primary, " f"got: {next_step!r}"
 
 
 def test_corridor_uplift_runbook_blocked_shadow_pack_suppresses_paper_trading_commands(tmp_path: Path) -> None:
@@ -2432,10 +2358,7 @@ def test_corridor_uplift_runbook_blocked_shadow_pack_suppresses_paper_trading_co
     )
 
     paper_trading_cmds = [cmd for cmd in analysis["execution_commands"] if "run_paper_trading.py" in cmd]
-    assert paper_trading_cmds == [], (
-        f"execution_commands must NOT include run_paper_trading.py when shadow pack is blocked, "
-        f"got: {paper_trading_cmds}"
-    )
+    assert paper_trading_cmds == [], f"execution_commands must NOT include run_paper_trading.py when shadow pack is blocked, " f"got: {paper_trading_cmds}"
 
 
 def test_corridor_uplift_runbook_diagnostic_primary_replay_only_suppresses_paper_trading_commands(tmp_path: Path) -> None:
@@ -2465,9 +2388,7 @@ def test_corridor_uplift_runbook_diagnostic_primary_replay_only_suppresses_paper
             "strict_release_status": "strict_release_blocked_by_persistence",
             "primary_shadow_replay": {"ticker": "300683"},
             "parallel_watch_lanes": [],
-            "shadow_replay_commands": [
-                "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py --corridor-validation-pack-path /tmp/pack.json"
-            ],
+            "shadow_replay_commands": ["python scripts/run_btst_candidate_pool_corridor_shadow_pack.py --corridor-validation-pack-path /tmp/pack.json"],
             "success_criteria": [],
             "guardrails": [],
         },
@@ -2481,10 +2402,7 @@ def test_corridor_uplift_runbook_diagnostic_primary_replay_only_suppresses_paper
     )
 
     paper_trading_cmds = [cmd for cmd in analysis["execution_commands"] if "run_paper_trading.py" in cmd]
-    assert paper_trading_cmds == [], (
-        "execution_commands must NOT include run_paper_trading.py when strict release is blocked by persistence, "
-        f"got: {paper_trading_cmds}"
-    )
+    assert paper_trading_cmds == [], "execution_commands must NOT include run_paper_trading.py when strict release is blocked by persistence, " f"got: {paper_trading_cmds}"
 
 
 def test_corridor_uplift_runbook_blocked_shadow_pack_next_step_is_not_replay_oriented(tmp_path: Path) -> None:
@@ -2516,9 +2434,7 @@ def test_corridor_uplift_runbook_blocked_shadow_pack_next_step_is_not_replay_ori
     )
 
     next_step = analysis.get("next_step") or ""
-    assert "primary shadow replay 槽位" not in next_step, (
-        f"next_step must NOT be replay-oriented when shadow pack is blocked, got: {next_step!r}"
-    )
+    assert "primary shadow replay 槽位" not in next_step, f"next_step must NOT be replay-oriented when shadow pack is blocked, got: {next_step!r}"
 
 
 def test_corridor_uplift_runbook_execution_commands_preserve_custom_corridor_validation_pack_path(tmp_path: Path) -> None:
@@ -2562,11 +2478,7 @@ def test_corridor_uplift_runbook_execution_commands_preserve_custom_corridor_val
     shadow_pack_cmds = [cmd for cmd in analysis["execution_commands"] if "run_btst_candidate_pool_corridor_shadow_pack.py" in cmd]
     assert shadow_pack_cmds, "No shadow pack command found in execution_commands"
     resolved_cvp = str(corridor_validation_pack_path.resolve())
-    assert any(resolved_cvp in cmd for cmd in shadow_pack_cmds), (
-        f"Custom corridor_validation_pack_path {resolved_cvp!r} must appear in the shadow-pack "
-        f"execution_command so re-running it operates on the same inputs. "
-        f"Got: {shadow_pack_cmds}"
-    )
+    assert any(resolved_cvp in cmd for cmd in shadow_pack_cmds), f"Custom corridor_validation_pack_path {resolved_cvp!r} must appear in the shadow-pack " f"execution_command so re-running it operates on the same inputs. " f"Got: {shadow_pack_cmds}"
 
 
 def test_corridor_uplift_runbook_fallback_shadow_pack_uses_custom_corridor_validation_pack_path(tmp_path: Path) -> None:
@@ -2616,10 +2528,7 @@ def test_corridor_uplift_runbook_fallback_shadow_pack_uses_custom_corridor_valid
     # First positional arg must be our custom validation pack path (resolved or as-is)
     used_path = Path(call_args[0][0]).resolve() if call_args[0] else None
     expected_path = corridor_validation_pack_path.resolve()
-    assert used_path == expected_path, (
-        f"Fallback must pass the custom corridor_validation_pack_path to shadow pack regeneration. "
-        f"Expected {expected_path!r}, got {used_path!r}"
-    )
+    assert used_path == expected_path, f"Fallback must pass the custom corridor_validation_pack_path to shadow pack regeneration. " f"Expected {expected_path!r}, got {used_path!r}"
 
 
 def test_corridor_uplift_runbook_script_direct_cli_execution_works() -> None:
@@ -2656,15 +2565,8 @@ def test_corridor_uplift_runbook_script_direct_cli_execution_works() -> None:
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, (
-        "Direct CLI execution of scripts/run_btst_candidate_pool_corridor_uplift_runbook.py --help "
-        "failed in a no-.pth environment.  This usually means the sys.path bootstrap is missing or broken.\n"
-        f"stdout: {result.stdout}\nstderr: {result.stderr}"
-    )
-    assert "usage:" in result.stdout.lower() or "usage:" in result.stderr.lower(), (
-        "Expected argparse usage text in output of --help invocation, "
-        f"got stdout={result.stdout!r} stderr={result.stderr!r}"
-    )
+    assert result.returncode == 0, "Direct CLI execution of scripts/run_btst_candidate_pool_corridor_uplift_runbook.py --help " "failed in a no-.pth environment.  This usually means the sys.path bootstrap is missing or broken.\n" f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    assert "usage:" in result.stdout.lower() or "usage:" in result.stderr.lower(), "Expected argparse usage text in output of --help invocation, " f"got stdout={result.stdout!r} stderr={result.stderr!r}"
 
 
 def test_corridor_uplift_runbook_self_rerun_command_includes_corridor_validation_pack_path(tmp_path: Path) -> None:
@@ -2705,10 +2607,7 @@ def test_corridor_uplift_runbook_self_rerun_command_includes_corridor_validation
     uplift_cmds = [cmd for cmd in analysis["execution_commands"] if "run_btst_candidate_pool_corridor_uplift_runbook.py" in cmd]
     assert uplift_cmds, "No uplift runbook self-rerun command found in execution_commands"
     resolved_pack_path = str(corridor_validation_pack_path.expanduser().resolve())
-    assert any(f"--corridor-validation-pack-path {resolved_pack_path}" in cmd for cmd in uplift_cmds), (
-        f"Expected '--corridor-validation-pack-path {resolved_pack_path}' in uplift runbook self-rerun command, "
-        f"got: {uplift_cmds}"
-    )
+    assert any(f"--corridor-validation-pack-path {resolved_pack_path}" in cmd for cmd in uplift_cmds), f"Expected '--corridor-validation-pack-path {resolved_pack_path}' in uplift runbook self-rerun command, " f"got: {uplift_cmds}"
 
 
 def test_lane_pair_board_fallback_passes_persistence_dossier_path(tmp_path: Path) -> None:
@@ -2751,7 +2650,4 @@ def test_lane_pair_board_fallback_passes_persistence_dossier_path(tmp_path: Path
         )
 
     assert len(captured) == 1, "fallback should have called analyze_btst_candidate_pool_corridor_shadow_pack"
-    assert "persistence_dossier_path" in captured[0]["kwargs"], (
-        "fallback must forward persistence_dossier_path to preserve fail-closed semantics; "
-        f"got kwargs: {captured[0]['kwargs']}"
-    )
+    assert "persistence_dossier_path" in captured[0]["kwargs"], "fallback must forward persistence_dossier_path to preserve fail-closed semantics; " f"got kwargs: {captured[0]['kwargs']}"

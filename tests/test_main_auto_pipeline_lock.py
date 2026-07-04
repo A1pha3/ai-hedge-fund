@@ -30,10 +30,7 @@ def test_try_acquire_pipeline_lock_serializes_concurrent_callers(tmp_path: Path)
     assert fd1 is not None, "first acquire must succeed"
     try:
         fd2 = _try_acquire_pipeline_lock(lock)
-        assert fd2 is None, (
-            "second acquire while the first holds the lock must be denied — "
-            "concurrent --auto runs must serialize to avoid report/tracking_history corruption"
-        )
+        assert fd2 is None, "second acquire while the first holds the lock must be denied — " "concurrent --auto runs must serialize to avoid report/tracking_history corruption"
     finally:
         os.close(fd1)
     # After release, the next acquire must succeed.

@@ -75,6 +75,7 @@ def test_momentum_threshold_rollout_holds_when_zero_validation_windows() -> None
     # Blockers should be precise
     assert len([b for b in assessment["blockers"] if b == "multi_window_validation_missing"]) == 1
 
+
 def test_momentum_threshold_rollout_holds_when_window_validation_keeps_baseline() -> None:
     backtest_summary = {
         "profile_name": "momentum_tuned_governed_v1",
@@ -171,12 +172,18 @@ def test_cli_main_creates_output_files_and_validates_content(tmp_path: pytest.Te
     backtest_json.write_text(json.dumps(_PROMOTE_BACKTEST_SUMMARY), encoding="utf-8")
     multi_window_json.write_text(json.dumps(_PROMOTE_MULTI_WINDOW), encoding="utf-8")
 
-    exit_code = main([
-        "--backtest-json", str(backtest_json),
-        "--multi-window-json", str(multi_window_json),
-        "--output-json", str(out_json),
-        "--output-md", str(out_md),
-    ])
+    exit_code = main(
+        [
+            "--backtest-json",
+            str(backtest_json),
+            "--multi-window-json",
+            str(multi_window_json),
+            "--output-json",
+            str(out_json),
+            "--output-md",
+            str(out_md),
+        ]
+    )
 
     assert exit_code == 0
     assert out_json.exists(), "JSON output not created"

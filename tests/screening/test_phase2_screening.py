@@ -138,8 +138,26 @@ def test_ema_period_override():
 
 def test_long_trend_alignment_enabled_by_default():
     close_values = [
-        152.46, 151.14, 151.19, 150.84, 150.68, 147.49, 150.15, 150.08, 151.24, 151.02,
-        148.47, 148.79, 146.07, 148.89, 151.54, 148.69, 145.24, 141.79, 140.93, 144.56,
+        152.46,
+        151.14,
+        151.19,
+        150.84,
+        150.68,
+        147.49,
+        150.15,
+        150.08,
+        151.24,
+        151.02,
+        148.47,
+        148.79,
+        146.07,
+        148.89,
+        151.54,
+        148.69,
+        145.24,
+        141.79,
+        140.93,
+        144.56,
     ]
     prices_df = _make_price_frame_from_close([80.0] * 220 + close_values)
 
@@ -176,32 +194,38 @@ def test_event_decay():
 
 def test_trend_market_weights():
     index_df = _make_index_frame(adx_close_move=15.0)
-    price_batch = pd.DataFrame([
-        {"pct_chg": 2.1},
-        {"pct_chg": 1.8},
-        {"pct_chg": 0.7},
-        {"pct_chg": 0.4},
-        {"pct_chg": -0.3},
-    ])
-    limit_df = pd.DataFrame([
-        {"limit": "U"}, {"limit": "U"}, {"limit": "U"}, {"limit": "D"}
-    ])
-    daily_basic = pd.DataFrame([
-        {"circ_mv": 5_000_000, "turnover_rate": 2.0},
-        {"circ_mv": 4_000_000, "turnover_rate": 2.0},
-    ])
-    northbound = pd.DataFrame([
-        {"trade_date": "20260303", "north_money": 10},
-        {"trade_date": "20260304", "north_money": 12},
-        {"trade_date": "20260305", "north_money": 8},
-    ])
-    with patch("src.screening.market_state.get_index_daily", return_value=index_df), \
-         patch("src.screening.market_state.get_daily_price_batch", return_value=price_batch), \
-         patch("src.screening.market_state.get_limit_list", return_value=limit_df), \
-         patch("src.screening.market_state.get_daily_basic_batch", return_value=daily_basic), \
-         patch("src.screening.market_state.get_northbound_flow", return_value=northbound), \
-         patch("src.screening.market_state_helpers.calculate_adx", return_value=pd.DataFrame({"adx": [35.0], "+di": [40.0], "-di": [20.0]})), \
-         patch("src.screening.market_state_helpers.calculate_atr", return_value=pd.Series([0.1])):
+    price_batch = pd.DataFrame(
+        [
+            {"pct_chg": 2.1},
+            {"pct_chg": 1.8},
+            {"pct_chg": 0.7},
+            {"pct_chg": 0.4},
+            {"pct_chg": -0.3},
+        ]
+    )
+    limit_df = pd.DataFrame([{"limit": "U"}, {"limit": "U"}, {"limit": "U"}, {"limit": "D"}])
+    daily_basic = pd.DataFrame(
+        [
+            {"circ_mv": 5_000_000, "turnover_rate": 2.0},
+            {"circ_mv": 4_000_000, "turnover_rate": 2.0},
+        ]
+    )
+    northbound = pd.DataFrame(
+        [
+            {"trade_date": "20260303", "north_money": 10},
+            {"trade_date": "20260304", "north_money": 12},
+            {"trade_date": "20260305", "north_money": 8},
+        ]
+    )
+    with (
+        patch("src.screening.market_state.get_index_daily", return_value=index_df),
+        patch("src.screening.market_state.get_daily_price_batch", return_value=price_batch),
+        patch("src.screening.market_state.get_limit_list", return_value=limit_df),
+        patch("src.screening.market_state.get_daily_basic_batch", return_value=daily_basic),
+        patch("src.screening.market_state.get_northbound_flow", return_value=northbound),
+        patch("src.screening.market_state_helpers.calculate_adx", return_value=pd.DataFrame({"adx": [35.0], "+di": [40.0], "-di": [20.0]})),
+        patch("src.screening.market_state_helpers.calculate_atr", return_value=pd.Series([0.1])),
+    ):
         state = detect_market_state("20260305")
     assert state.state_type == MarketStateType.TREND
     assert abs(sum(state.adjusted_weights.values()) - 1.0) < 1e-6
@@ -210,15 +234,19 @@ def test_trend_market_weights():
 
 def test_low_volume_position_scale():
     index_df = _make_index_frame(adx_close_move=0.1)
-    daily_basic = pd.DataFrame([
-        {"circ_mv": 100_000, "turnover_rate": 1.0},
-        {"circ_mv": 200_000, "turnover_rate": 1.0},
-    ])
-    with patch("src.screening.market_state.get_index_daily", return_value=index_df), \
-         patch("src.screening.market_state.get_daily_price_batch", return_value=pd.DataFrame()), \
-         patch("src.screening.market_state.get_limit_list", return_value=pd.DataFrame()), \
-         patch("src.screening.market_state.get_daily_basic_batch", return_value=daily_basic), \
-         patch("src.screening.market_state.get_northbound_flow", return_value=pd.DataFrame()):
+    daily_basic = pd.DataFrame(
+        [
+            {"circ_mv": 100_000, "turnover_rate": 1.0},
+            {"circ_mv": 200_000, "turnover_rate": 1.0},
+        ]
+    )
+    with (
+        patch("src.screening.market_state.get_index_daily", return_value=index_df),
+        patch("src.screening.market_state.get_daily_price_batch", return_value=pd.DataFrame()),
+        patch("src.screening.market_state.get_limit_list", return_value=pd.DataFrame()),
+        patch("src.screening.market_state.get_daily_basic_batch", return_value=daily_basic),
+        patch("src.screening.market_state.get_northbound_flow", return_value=pd.DataFrame()),
+    ):
         state = detect_market_state("20260305")
     assert state.is_low_volume is True
     assert state.position_scale == 0.5
@@ -235,16 +263,20 @@ def test_weak_breadth_reduces_position_scale_and_trend_weight():
             {"pct_chg": 0.4},
         ]
     )
-    daily_basic = pd.DataFrame([
-        {"circ_mv": 2_500_000_000, "turnover_rate": 2.2},
-        {"circ_mv": 2_000_000_000, "turnover_rate": 2.0},
-    ])
+    daily_basic = pd.DataFrame(
+        [
+            {"circ_mv": 2_500_000_000, "turnover_rate": 2.2},
+            {"circ_mv": 2_000_000_000, "turnover_rate": 2.0},
+        ]
+    )
 
-    with patch("src.screening.market_state.get_index_daily", return_value=index_df), \
-         patch("src.screening.market_state.get_daily_price_batch", return_value=price_batch), \
-         patch("src.screening.market_state.get_limit_list", return_value=pd.DataFrame()), \
-         patch("src.screening.market_state.get_daily_basic_batch", return_value=daily_basic), \
-         patch("src.screening.market_state.get_northbound_flow", return_value=pd.DataFrame()):
+    with (
+        patch("src.screening.market_state.get_index_daily", return_value=index_df),
+        patch("src.screening.market_state.get_daily_price_batch", return_value=price_batch),
+        patch("src.screening.market_state.get_limit_list", return_value=pd.DataFrame()),
+        patch("src.screening.market_state.get_daily_basic_batch", return_value=daily_basic),
+        patch("src.screening.market_state.get_northbound_flow", return_value=pd.DataFrame()),
+    ):
         state = detect_market_state("20260305")
 
     assert state.breadth_ratio < 0.42
@@ -262,8 +294,7 @@ def test_safety_first_rule():
     }
     temp_dir = Path(mkdtemp())
     cooldown_file = temp_dir / "cooldown.json"
-    with patch("src.screening.candidate_pool._SNAPSHOT_DIR", temp_dir), \
-         patch("src.screening.candidate_pool._COOLDOWN_FILE", cooldown_file):
+    with patch("src.screening.candidate_pool._SNAPSHOT_DIR", temp_dir), patch("src.screening.candidate_pool._COOLDOWN_FILE", cooldown_file):
         fused = fuse_signals_for_ticker("000001", signals, market_state, "20260305")
         registry = load_cooldown_registry()
     assert fused.decision == "strong_sell"
@@ -372,8 +403,7 @@ def test_quality_first_guard_can_be_disabled_when_analyzing_other_hypotheses():
 def test_cooldown_early_release():
     temp_dir = Path(mkdtemp())
     cooldown_file = temp_dir / "cooldown.json"
-    with patch("src.screening.candidate_pool._SNAPSHOT_DIR", temp_dir), \
-         patch("src.screening.candidate_pool._COOLDOWN_FILE", cooldown_file):
+    with patch("src.screening.candidate_pool._SNAPSHOT_DIR", temp_dir), patch("src.screening.candidate_pool._COOLDOWN_FILE", cooldown_file):
         save_cooldown_registry({"000001": "20260320"})
         released = maybe_release_cooldown_early("000001", "20260307", _signal(1, 85))
         registry = load_cooldown_registry()
@@ -621,9 +651,7 @@ def test_bearish_consensus_bonus_direction_via_compute_score_b():
     }
     base_score = compute_score_b(bearish_signals, weights, [])
     bonus_score = compute_score_b(bearish_signals, weights, ["consensus_bonus"])
-    assert bonus_score < base_score, (
-        f"GAMMA-016: bearish bonus should decrease score, got bonus={bonus_score} > base={base_score}"
-    )
+    assert bonus_score < base_score, f"GAMMA-016: bearish bonus should decrease score, got bonus={bonus_score} > base={base_score}"
     assert -1.0 <= bonus_score <= 1.0
 
     # Also verify bullish consensus still works
@@ -635,6 +663,4 @@ def test_bearish_consensus_bonus_direction_via_compute_score_b():
     }
     bull_base = compute_score_b(bullish_signals, weights, [])
     bull_bonus = compute_score_b(bullish_signals, weights, ["consensus_bonus"])
-    assert bull_bonus > bull_base, (
-        f"Bullish bonus should increase score, got bonus={bull_bonus} <= base={bull_base}"
-    )
+    assert bull_bonus > bull_base, f"Bullish bonus should increase score, got bonus={bull_bonus} <= base={bull_base}"

@@ -27,8 +27,7 @@ def test_analyze_btst_carryover_aligned_peer_harvest_prioritizes_open_cycle_scor
     }
   ]
 }
-""".strip()
-        + "\n",
+""".strip() + "\n",
         encoding="utf-8",
     )
 

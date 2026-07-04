@@ -90,6 +90,7 @@ class TestBatchDataCache:
 # BatchDataFetcher 批量接口测试
 # ============================================================================
 
+
 def _make_daily_prices_df(rows: list[dict]) -> pd.DataFrame:
     defaults = {"ts_code": "", "trade_date": "20260305", "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.2, "pre_close": 10.0, "vol": 1.0, "amount": 1000.0, "pct_chg": 2.0}
     return pd.DataFrame([{**defaults, **r} for r in rows])
@@ -97,11 +98,22 @@ def _make_daily_prices_df(rows: list[dict]) -> pd.DataFrame:
 
 def _make_daily_basic_df(rows: list[dict]) -> pd.DataFrame:
     defaults = {
-        "ts_code": "", "trade_date": "20260305", "close": 10.0,
-        "turnover_rate": 1.0, "pe": 15.0, "pe_ttm": 14.0, "pb": 1.5,
-        "ps": 2.0, "ps_ttm": 1.8, "dv_ratio": 2.0, "dv_ttm": 2.0,
-        "total_share": 100000, "float_share": 80000, "free_share": 60000,
-        "total_mv": 1000000, "circ_mv": 800000,
+        "ts_code": "",
+        "trade_date": "20260305",
+        "close": 10.0,
+        "turnover_rate": 1.0,
+        "pe": 15.0,
+        "pe_ttm": 14.0,
+        "pb": 1.5,
+        "ps": 2.0,
+        "ps_ttm": 1.8,
+        "dv_ratio": 2.0,
+        "dv_ttm": 2.0,
+        "total_share": 100000,
+        "float_share": 80000,
+        "free_share": 60000,
+        "total_mv": 1000000,
+        "circ_mv": 800000,
     }
     return pd.DataFrame([{**defaults, **r} for r in rows])
 
@@ -110,10 +122,12 @@ class TestBatchDataFetcherBatchPaths:
     def test_fetch_daily_prices_batch_returns_dataframe(self):
         """批量 daily 拉取 — 返回 DataFrame 且含 ts_code 列。"""
         fetcher = BatchDataFetcher(use_batch=True, max_concurrency=4)
-        expected = _make_daily_prices_df([
-            {"ts_code": "000001.SZ", "close": 10.0},
-            {"ts_code": "000002.SZ", "close": 20.0},
-        ])
+        expected = _make_daily_prices_df(
+            [
+                {"ts_code": "000001.SZ", "close": 10.0},
+                {"ts_code": "000002.SZ", "close": 20.0},
+            ]
+        )
         with patch("src.screening.batch_data_fetcher.get_daily_price_batch", return_value=expected) as mock_batch:
             result = fetcher.fetch_daily_prices_batch("20260305")
         assert isinstance(result, pd.DataFrame)
@@ -124,10 +138,12 @@ class TestBatchDataFetcherBatchPaths:
     def test_fetch_daily_basic_batch_returns_dataframe(self):
         """批量 daily_basic 拉取 — 返回 DataFrame 且含 ts_code 列。"""
         fetcher = BatchDataFetcher(use_batch=True, max_concurrency=4)
-        expected = _make_daily_basic_df([
-            {"ts_code": "000001.SZ", "turnover_rate": 1.5},
-            {"ts_code": "000002.SZ", "turnover_rate": 2.5},
-        ])
+        expected = _make_daily_basic_df(
+            [
+                {"ts_code": "000001.SZ", "turnover_rate": 1.5},
+                {"ts_code": "000002.SZ", "turnover_rate": 2.5},
+            ]
+        )
         with patch("src.screening.batch_data_fetcher.get_daily_basic_batch", return_value=expected) as mock_batch:
             result = fetcher.fetch_daily_basic_batch("20260305")
         assert isinstance(result, pd.DataFrame)
@@ -160,6 +176,7 @@ class TestBatchDataFetcherBatchPaths:
 # ============================================================================
 # USE_BATCH_FETCHER 环境变量 / 单 ticker 路径
 # ============================================================================
+
 
 class TestBatchDataFetcherEnvSwitch:
     def setup_method(self):
@@ -203,6 +220,7 @@ class TestBatchDataFetcherEnvSwitch:
 # 并发 / Semaphore 行为
 # ============================================================================
 
+
 class TestBatchDataFetcherConcurrency:
     def test_semaphore_limits_concurrent_single_ticker_calls(self):
         """semaphore 应限制并发数不超过 max_concurrency。"""
@@ -238,6 +256,7 @@ class TestBatchDataFetcherConcurrency:
 # Stats / 健康度
 # ============================================================================
 
+
 class TestBatchDataFetcherStats:
     def test_stats_tracks_batch_calls_and_fallbacks(self):
         """stats 应记录 batch_calls, batch_failures, single_ticker_calls, cache_hits。"""
@@ -254,6 +273,7 @@ class TestBatchDataFetcherStats:
 # ============================================================================
 # reset_stats() — 全局单例多次调用间状态重置
 # ============================================================================
+
 
 class TestBatchDataFetcherResetStats:
     def test_reset_stats_clears_counters(self):
@@ -315,6 +335,7 @@ class TestBatchDataFetcherResetStats:
 # Integration gap test: batch_fetcher is NOT passed to downstream scoring
 # ============================================================================
 
+
 class TestBatchFetcherIntegrationGap:
     def test_score_batch_signature_has_no_batch_fetcher_param(self):
         """GAMMA-008: score_batch() does not accept a batch_fetcher parameter.
@@ -330,9 +351,7 @@ class TestBatchFetcherIntegrationGap:
         from src.screening.strategy_scorer import score_batch
 
         sig = inspect.signature(score_batch)
-        assert "batch_fetcher" not in sig.parameters, (
-            "score_batch now accepts batch_fetcher — update this test and remove the integration gap note"
-        )
+        assert "batch_fetcher" not in sig.parameters, "score_batch now accepts batch_fetcher — update this test and remove the integration gap note"
 
     def test_build_candidate_pool_signature_has_no_batch_fetcher_param(self):
         """GAMMA-008: build_candidate_pool() does not accept batch_fetcher."""
@@ -341,9 +360,7 @@ class TestBatchFetcherIntegrationGap:
         from src.screening.candidate_pool import build_candidate_pool
 
         sig = inspect.signature(build_candidate_pool)
-        assert "batch_fetcher" not in sig.parameters, (
-            "build_candidate_pool now accepts batch_fetcher — update this test and remove the integration gap note"
-        )
+        assert "batch_fetcher" not in sig.parameters, "build_candidate_pool now accepts batch_fetcher — update this test and remove the integration gap note"
 
     def test_fuse_batch_signature_has_no_batch_fetcher_param(self):
         """GAMMA-008: fuse_batch() does not accept batch_fetcher."""
@@ -352,9 +369,7 @@ class TestBatchFetcherIntegrationGap:
         from src.screening.signal_fusion import fuse_batch
 
         sig = inspect.signature(fuse_batch)
-        assert "batch_fetcher" not in sig.parameters, (
-            "fuse_batch now accepts batch_fetcher — update this test and remove the integration gap note"
-        )
+        assert "batch_fetcher" not in sig.parameters, "fuse_batch now accepts batch_fetcher — update this test and remove the integration gap note"
 
 
 # ============================================================================
@@ -400,10 +415,12 @@ class TestSingleTickerBatchCacheSharing:
         """批量缓存命中时, 单 ticker 路径直接 filter, 不调 tushare。"""
         fetcher = BatchDataFetcher(use_batch=True, max_concurrency=2)
         # 预先填充批量缓存
-        batch_df = _make_daily_prices_df([
-            {"ts_code": "000001.SZ", "close": 10.5, "trade_date": "20260601"},
-            {"ts_code": "000002.SZ", "close": 20.5, "trade_date": "20260601"},
-        ])
+        batch_df = _make_daily_prices_df(
+            [
+                {"ts_code": "000001.SZ", "close": 10.5, "trade_date": "20260601"},
+                {"ts_code": "000002.SZ", "close": 20.5, "trade_date": "20260601"},
+            ]
+        )
         fetcher._cache.set("daily_price_batch:20260601", batch_df)
 
         # 不 patch 底层 tushare, 走原同步方法
@@ -418,9 +435,11 @@ class TestSingleTickerBatchCacheSharing:
     def test_single_ticker_not_in_batch_returns_empty(self):
         """批量缓存命中但 ticker 不在批量结果中 -> 返回空列表 (视为停牌/未上市)。"""
         fetcher = BatchDataFetcher(use_batch=True, max_concurrency=2)
-        batch_df = _make_daily_prices_df([
-            {"ts_code": "000001.SZ", "close": 10.5, "trade_date": "20260601"},
-        ])
+        batch_df = _make_daily_prices_df(
+            [
+                {"ts_code": "000001.SZ", "close": 10.5, "trade_date": "20260601"},
+            ]
+        )
         fetcher._cache.set("daily_price_batch:20260601", batch_df)
 
         result = fetcher._fetch_single_ticker_prices_sync("000999", "20260601", "20260601")
@@ -433,9 +452,11 @@ class TestSingleTickerBatchCacheSharing:
         # 内部使用的是函数体内 import 的本地引用)
         import src.tools.tushare_api as tushare_api_module
 
-        mock_df = _make_daily_prices_df([
-            {"ts_code": "000001.SZ", "close": 10.5, "trade_date": "20260601"},
-        ])
+        mock_df = _make_daily_prices_df(
+            [
+                {"ts_code": "000001.SZ", "close": 10.5, "trade_date": "20260601"},
+            ]
+        )
 
         with patch.object(tushare_api_module, "_get_pro", return_value=MagicMock()):
             with patch.object(tushare_api_module, "_cached_tushare_dataframe_call", return_value=mock_df) as mock_call:
@@ -537,10 +558,12 @@ class TestPreheatSingleTickerIntegration:
         try:
             from src.data.cache_preheater import _fetch_daily_prices
 
-            sample = _make_daily_prices_df([
-                {"ts_code": "000001.SZ", "close": 10.5, "trade_date": "20260601"},
-                {"ts_code": "000002.SZ", "close": 20.5, "trade_date": "20260601"},
-            ])
+            sample = _make_daily_prices_df(
+                [
+                    {"ts_code": "000001.SZ", "close": 10.5, "trade_date": "20260601"},
+                    {"ts_code": "000002.SZ", "close": 20.5, "trade_date": "20260601"},
+                ]
+            )
             with patch.object(batch_data_fetcher, "get_daily_price_batch", return_value=sample):
                 preheat_result = _fetch_daily_prices("20260601", force=True)
             assert preheat_result is not None
@@ -550,8 +573,7 @@ class TestPreheatSingleTickerIntegration:
             import src.tools.tushare_api as tushare_api_module
 
             fetcher = get_global_batch_data_fetcher()
-            with patch.object(tushare_api_module, "_get_pro") as mock_pro, \
-                 patch.object(tushare_api_module, "_cached_tushare_dataframe_call") as mock_tushare_call:
+            with patch.object(tushare_api_module, "_get_pro") as mock_pro, patch.object(tushare_api_module, "_cached_tushare_dataframe_call") as mock_tushare_call:
                 mock_pro.return_value = MagicMock()
                 result = fetcher._fetch_single_ticker_prices_sync("000001", "20260601", "20260601")
 

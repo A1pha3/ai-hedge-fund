@@ -23,7 +23,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # API path: attach_conditional_orders_to_payload (L504)
 # ---------------------------------------------------------------------------
@@ -64,21 +63,10 @@ def test_api_path_price_provider_failure_emits_warning(caplog) -> None:
     # best-effort: 不抛异常, 返回 1 条 degraded advice
     assert len(results) == 1
     advice = results[0]
-    assert advice["degraded"] is True, (
-        f"price_provider 失败 → history=[] → degraded advice; 实际 degraded={advice['degraded']}"
-    )
+    assert advice["degraded"] is True, f"price_provider 失败 → history=[] → degraded advice; 实际 degraded={advice['degraded']}"
     # WARNING 发出, 含 ticker + lookback + exc
-    warn_records = [
-        r
-        for r in caplog.records
-        if r.levelno == logging.WARNING
-        and "price_provider failed" in r.getMessage()
-        and "ticker=APIFAIL" in r.getMessage()
-        and "lookback=30" in r.getMessage()
-    ]
-    assert len(warn_records) == 1, (
-        f"expected 1 WARNING for API path price_provider failure, got {warn_records}"
-    )
+    warn_records = [r for r in caplog.records if r.levelno == logging.WARNING and "price_provider failed" in r.getMessage() and "ticker=APIFAIL" in r.getMessage() and "lookback=30" in r.getMessage()]
+    assert len(warn_records) == 1, f"expected 1 WARNING for API path price_provider failure, got {warn_records}"
     # exc_info 不强制要求 (warning 文本已含 exc str)
 
 
@@ -98,11 +86,7 @@ def test_api_path_price_provider_success_no_warning(caplog) -> None:
         )
     assert len(results) == 1
     # 正常路径不应发 WARNING
-    warn_records = [
-        r
-        for r in caplog.records
-        if r.levelno == logging.WARNING and "price_provider failed" in r.getMessage()
-    ]
+    warn_records = [r for r in caplog.records if r.levelno == logging.WARNING and "price_provider failed" in r.getMessage()]
     assert len(warn_records) == 0, f"success path should not emit WARNING, got {warn_records}"
 
 
@@ -133,16 +117,8 @@ def test_api_path_warning_distinguishes_ticker(caplog) -> None:
     # 两条都返回 (best-effort)
     assert len(results) == 2
     # BADTICKER 应有 WARNING, GOODTICKER 不应有
-    bad_warns = [
-        r
-        for r in caplog.records
-        if r.levelno == logging.WARNING and "ticker=BADTICKER" in r.getMessage()
-    ]
-    good_warns = [
-        r
-        for r in caplog.records
-        if r.levelno == logging.WARNING and "ticker=GOODTICKER" in r.getMessage()
-    ]
+    bad_warns = [r for r in caplog.records if r.levelno == logging.WARNING and "ticker=BADTICKER" in r.getMessage()]
+    good_warns = [r for r in caplog.records if r.levelno == logging.WARNING and "ticker=GOODTICKER" in r.getMessage()]
     assert len(bad_warns) == 1, f"BADTICKER should emit WARNING, got {bad_warns}"
     assert len(good_warns) == 0, f"GOODTICKER should not emit WARNING, got {good_warns}"
 
@@ -152,9 +128,7 @@ def test_api_path_warning_distinguishes_ticker(caplog) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cli_path_price_provider_failure_emits_warning(
-    caplog, monkeypatch
-) -> None:
+def test_cli_path_price_provider_failure_emits_warning(caplog, monkeypatch) -> None:
     """L615 CLI path: price_provider raise → WARNING with "(CLI)" prefix + ticker.
 
     Best-effort preserved (history=[] → degraded advice, CLI 仍输出).
@@ -179,19 +153,8 @@ def test_cli_path_price_provider_failure_emits_warning(
     # CLI 返回 0 (成功, 虽然是 degraded advice)
     assert rc == 0, f"CLI should return 0 on best-effort degraded advice, got {rc}"
     # WARNING 发出, 含 "(CLI)" prefix + ticker
-    warn_records = [
-        r
-        for r in caplog.records
-        if r.levelno == logging.WARNING
-        and "(CLI)" in r.getMessage()
-        and "price_provider failed" in r.getMessage()
-        and "ticker=CLIFAIL" in r.getMessage()
-        and "lookback=30" in r.getMessage()
-    ]
-    assert len(warn_records) == 1, (
-        f"expected 1 WARNING for CLI path price_provider failure with (CLI) prefix, "
-        f"got {warn_records}"
-    )
+    warn_records = [r for r in caplog.records if r.levelno == logging.WARNING and "(CLI)" in r.getMessage() and "price_provider failed" in r.getMessage() and "ticker=CLIFAIL" in r.getMessage() and "lookback=30" in r.getMessage()]
+    assert len(warn_records) == 1, f"expected 1 WARNING for CLI path price_provider failure with (CLI) prefix, " f"got {warn_records}"
 
 
 def test_cli_path_price_provider_success_no_warning(caplog, monkeypatch) -> None:
@@ -216,9 +179,5 @@ def test_cli_path_price_provider_success_no_warning(caplog, monkeypatch) -> None
             lookback_sessions=30,
         )
     assert rc == 0
-    warn_records = [
-        r
-        for r in caplog.records
-        if r.levelno == logging.WARNING and "price_provider failed" in r.getMessage()
-    ]
+    warn_records = [r for r in caplog.records if r.levelno == logging.WARNING and "price_provider failed" in r.getMessage()]
     assert len(warn_records) == 0, f"success path should not emit WARNING, got {warn_records}"

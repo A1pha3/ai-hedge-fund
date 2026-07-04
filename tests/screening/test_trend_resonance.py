@@ -150,10 +150,7 @@ class TestExtractScoreHistory:
     def test_max_days_truncation(self) -> None:
         # score_b ∈ [-1.0, 1.0]; use i/10 so dummy values are in range
         # (coerce_score_b clamps out-of-range, which would mask ordering).
-        history = [
-            {"payload": {"recommendations": [{"ticker": "A", "score_b": float(i) / 10.0}]}}
-            for i in range(10)
-        ]
+        history = [{"payload": {"recommendations": [{"ticker": "A", "score_b": float(i) / 10.0}]}} for i in range(10)]
         scores = _extract_score_history("A", history, max_days=5)
         assert len(scores) == 5
         # reversed(history) iterates oldest first. history[0]=0.0 (newest),
@@ -177,6 +174,7 @@ class TestExtractScoreHistory:
         exact reason (BH-012-drain comment); trend_resonance missed it.
         """
         import math
+
         history = [
             {"payload": {"recommendations": [{"ticker": "A", "score_b": float("nan")}]}},
         ]

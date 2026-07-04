@@ -619,13 +619,13 @@ def test_strategy_unknown_for_unprefixed_factor() -> None:
         (1.5, True),
         (0, True),
         (-0.3, True),
-        ("2.5", True),          # numeric string coerces
-        ("abc", False),          # non-numeric string
+        ("2.5", True),  # numeric string coerces
+        ("abc", False),  # non-numeric string
         (None, False),
         (float("nan"), False),
         (float("inf"), False),
         (float("-inf"), False),
-        ([1.0], False),          # unhashable / non-numeric → TypeError
+        ([1.0], False),  # unhashable / non-numeric → TypeError
     ],
 )
 def test_is_finite_parity(value, expected_finite) -> None:

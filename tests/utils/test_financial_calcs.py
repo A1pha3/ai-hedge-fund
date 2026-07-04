@@ -6,6 +6,7 @@ the A-share YTD-aware calculation contracts.
 
 LineItem objects are simulated with SimpleNamespace (the functions use getattr).
 """
+
 from __future__ import annotations
 
 import math

@@ -84,7 +84,7 @@ def test_analyze_recurring_frontier_transition_candidates_accepts_discovered_rep
         encoding="utf-8",
     )
     (old_report / "selection_artifacts" / "2026-03-23" / "selection_snapshot.json").write_text(
-        json.dumps({"trade_date": "2026-03-23", "layer_b": {"tickers": [{"ticker": "600821", "reason": "below_fast_score_threshold", "score_b": 0.1, "decision": "neutral", "rank": 1}]}} , ensure_ascii=False) + "\n",
+        json.dumps({"trade_date": "2026-03-23", "layer_b": {"tickers": [{"ticker": "600821", "reason": "below_fast_score_threshold", "score_b": 0.1, "decision": "neutral", "rank": 1}]}}, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
     for trade_date in ["2026-03-24", "2026-03-25"]:

@@ -48,8 +48,7 @@ def _write_report(
             "regime_gate_level": "normal",
         },
         "top_n": top_n,
-        "recommendations": recommendations
-        or [_make_rec("300724", 0.78), _make_rec("600519", 0.65), _make_rec("000001", 0.55)],
+        "recommendations": recommendations or [_make_rec("300724", 0.78), _make_rec("600519", 0.65), _make_rec("000001", 0.55)],
     }
     path = reports_dir / f"auto_screening_{trade_date}.json"
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -162,8 +161,7 @@ def test_score_b_null_does_not_crash_confidence_block(tmp_path: Path, capsys) ->
     recs = [
         _make_rec("300724", 0.80),
         # 模拟一条 score_b=null 的残缺推荐 (例如 scoring 中途失败)
-        {"ticker": "600519", "name": "贵州茅台", "score_b": None, "decision": "neutral",
-         "strategy_signals": {}},
+        {"ticker": "600519", "name": "贵州茅台", "score_b": None, "decision": "neutral", "strategy_signals": {}},
     ]
     _write_report(reports_dir, recommendations=recs)
 
@@ -184,8 +182,7 @@ def test_score_b_null_in_already_recommended_does_not_crash(tmp_path: Path, caps
     """
     reports_dir = tmp_path / "data" / "reports"
     recs = [
-        {"ticker": "000001", "name": "平安银行", "score_b": None, "decision": "neutral",
-         "strategy_signals": {}},
+        {"ticker": "000001", "name": "平安银行", "score_b": None, "decision": "neutral", "strategy_signals": {}},
     ]
     _write_report(reports_dir, recommendations=recs)
 

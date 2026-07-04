@@ -20,6 +20,7 @@ presence check (R68/R96 canonical — ``is_finite_number`` on the raw value
 before _safe_metric). 0.0 is a valid (if extreme) win rate and must trigger
 the flag; None/NaN (missing/corrupt) must not.
 """
+
 from __future__ import annotations
 
 from src.screening.investability import build_front_door_verdict
@@ -51,11 +52,7 @@ def test_actual_zero_win_rate_flags_below_50() -> None:
     ``if t30_win_rate and ...`` guard short-circuits on falsy 0.0 and misses it."""
     v = build_front_door_verdict(_base_avoid_rec(0.0), market_regime="normal")
     assert v["action"] == "AVOID"
-    assert _has_win_rate_flag(v), (
-        "actual 0.0 (0%) T+30 win rate must trigger '胜率跌破 50%' flag — "
-        "currently `if t30_win_rate and t30_win_rate < 0.5` short-circuits "
-        "on falsy 0.0 (R68/R96 falsy-zero family)"
-    )
+    assert _has_win_rate_flag(v), "actual 0.0 (0%) T+30 win rate must trigger '胜率跌破 50%' flag — " "currently `if t30_win_rate and t30_win_rate < 0.5` short-circuits " "on falsy 0.0 (R68/R96 falsy-zero family)"
 
 
 def test_low_nonzero_win_rate_flags_below_50() -> None:
@@ -71,9 +68,7 @@ def test_missing_win_rate_data_does_not_flag() -> None:
     rec = _base_avoid_rec(0.0)
     rec["win_rates"] = {}  # missing — no t30 key
     v = build_front_door_verdict(rec, market_regime="normal")
-    assert not _has_win_rate_flag(v), (
-        "missing win-rate data must not trigger the flag (no data to evaluate)"
-    )
+    assert not _has_win_rate_flag(v), "missing win-rate data must not trigger the flag (no data to evaluate)"
 
 
 def test_high_win_rate_does_not_flag() -> None:

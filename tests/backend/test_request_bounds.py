@@ -176,6 +176,6 @@ def test_both_multipliers_bounded_simultaneously(monkeypatch):
     with pytest.raises(ValidationError):
         HedgeFundRequest(
             tickers=["000001"] * 4,  # exceeds tickers cap
-            graph_nodes=_nodes(4),   # also exceeds graph_nodes cap
+            graph_nodes=_nodes(4),  # also exceeds graph_nodes cap
             graph_edges=[],
         )

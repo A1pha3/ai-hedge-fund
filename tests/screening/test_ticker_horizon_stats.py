@@ -7,6 +7,7 @@ historical_prior_opportunity._summarize_next_close_payoff 的 T+1 算法
 关联: C219 (tracking_history 回填 7993 records + 7201 mature),
 C220 (BUY gate horizon T+5/T+10 OR), C221 (signal_horizon 呈现层).
 """
+
 from __future__ import annotations
 
 import json
@@ -19,7 +20,6 @@ from src.screening.ticker_horizon_stats import (
     compute_ticker_horizon_stats,
     load_tracking_records,
 )
-
 
 # ---------------------------------------------------------------------------
 # 纯函数测试 — compute_ticker_horizon_stats
@@ -184,12 +184,8 @@ class TestNanInfGuard:
         ]
         stats = compute_ticker_horizon_stats(records, "002463")
         # NaN 应被过滤 → sample_count=2, expectancy=(1.5+2.5)/2=2.0
-        assert stats["t5"].sample_count == 2, (
-            f"NaN 应被过滤, sample_count=2; got {stats['t5'].sample_count}"
-        )
-        assert stats["t5"].expectancy == pytest.approx(2.0, abs=0.01), (
-            f"NaN 过滤后 expectancy=2.0; got {stats['t5'].expectancy}"
-        )
+        assert stats["t5"].sample_count == 2, f"NaN 应被过滤, sample_count=2; got {stats['t5'].sample_count}"
+        assert stats["t5"].expectancy == pytest.approx(2.0, abs=0.01), f"NaN 过滤后 expectancy=2.0; got {stats['t5'].expectancy}"
         assert not math.isnan(stats["t5"].expectancy), "expectancy 不应是 NaN"
 
     def test_nan_return_skipped_does_not_dilute_winrate(self) -> None:
@@ -201,9 +197,7 @@ class TestNanInfGuard:
         ]
         stats = compute_ticker_horizon_stats(records, "002463")
         # NaN 过滤后: 1 win / 2 total = 0.5; BUG: NaN 不过滤 → 1/3 = 0.333
-        assert stats["t5"].winrate == pytest.approx(0.5, abs=0.01), (
-            f"NaN 过滤后 winrate=0.5; got {stats['t5'].winrate} (NaN 稀释分母 bug)"
-        )
+        assert stats["t5"].winrate == pytest.approx(0.5, abs=0.01), f"NaN 过滤后 winrate=0.5; got {stats['t5'].winrate} (NaN 稀释分母 bug)"
 
     def test_inf_return_skipped_does_not_pollute_stats(self) -> None:
         """Inf 在 returns 中应被过滤."""
@@ -215,9 +209,7 @@ class TestNanInfGuard:
         ]
         stats = compute_ticker_horizon_stats(records, "002463")
         # Inf 应被过滤 → sample_count=2
-        assert stats["t5"].sample_count == 2, (
-            f"Inf 应被过滤, sample_count=2; got {stats['t5'].sample_count}"
-        )
+        assert stats["t5"].sample_count == 2, f"Inf 应被过滤, sample_count=2; got {stats['t5'].sample_count}"
         assert stats["t5"].expectancy == pytest.approx(2.0, abs=0.01)
 
     def test_all_nan_returns_yields_empty_stats(self) -> None:
@@ -238,9 +230,7 @@ class TestNanInfGuard:
             {"ticker": "002463", "next_5day_return": 1.5},
         ]
         stats = compute_ticker_horizon_stats(records, "002463")
-        assert stats["t5"].sample_count == 1, (
-            f"'nan' 转 float 后应被过滤, sample_count=1; got {stats['t5'].sample_count}"
-        )
+        assert stats["t5"].sample_count == 1, f"'nan' 转 float 后应被过滤, sample_count=1; got {stats['t5'].sample_count}"
         assert stats["t5"].winrate == 1.0
 
     def test_valid_floats_pass_through_unchanged(self) -> None:
@@ -276,24 +266,18 @@ class TestLoadTrackingRecords:
             ],
             "updated_at": "2026-06-29T00:00:00",
         }
-        (tmp_path / "tracking_history.json").write_text(
-            json.dumps(tracking_data), encoding="utf-8"
-        )
+        (tmp_path / "tracking_history.json").write_text(json.dumps(tracking_data), encoding="utf-8")
         result = load_tracking_records(tmp_path)
         assert len(result) == 2
         assert result[0]["ticker"] == "002463"
 
     def test_returns_empty_list_when_records_key_missing(self, tmp_path: Path) -> None:
-        (tmp_path / "tracking_history.json").write_text(
-            json.dumps({"updated_at": "2026-06-29"}), encoding="utf-8"
-        )
+        (tmp_path / "tracking_history.json").write_text(json.dumps({"updated_at": "2026-06-29"}), encoding="utf-8")
         result = load_tracking_records(tmp_path)
         assert result == []
 
     def test_returns_empty_list_when_json_corrupted(self, tmp_path: Path) -> None:
-        (tmp_path / "tracking_history.json").write_text(
-            "not valid json {{{", encoding="utf-8"
-        )
+        (tmp_path / "tracking_history.json").write_text("not valid json {{{", encoding="utf-8")
         result = load_tracking_records(tmp_path)
         assert result == []
 

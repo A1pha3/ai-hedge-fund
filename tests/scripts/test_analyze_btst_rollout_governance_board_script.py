@@ -166,10 +166,7 @@ def test_analyze_btst_rollout_governance_board_prioritizes_primary_then_recurrin
                     "variant_family": "penalty_coupled",
                     "guardrail_status": "fails_closed_tradeable_guardrails",
                     "closed_cycle_tradeable_count": 2,
-                    "tradeable_cases": [
-                        "2026-03-26:300724:near_miss",
-                        "2026-03-26:300724:selected"
-                    ],
+                    "tradeable_cases": ["2026-03-26:300724:near_miss", "2026-03-26:300724:selected"],
                     "focus_tradeable_cases": [],
                 },
                 "recommendation": "当前窗口 broad penalty relief 不构成 rollout 路线。",

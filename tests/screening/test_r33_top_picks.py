@@ -8,6 +8,7 @@ reuses per-pick ``expected_returns.t5`` / ``t10`` and ``win_rates.t5`` /
 T+30 is retained only as the long-term invalidation horizon (see
 ``_extract_t30_metrics`` docstring).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -58,16 +59,20 @@ def _pick(
 @pytest.fixture
 def all_buy(monkeypatch):
     """Force every pick to be classified BUY regardless of edge/winrate."""
+
     def _always_buy(recommendation, *, market_regime):
         return {"action": "BUY", "market_regime": market_regime, "invalidation_reason": ""}
+
     monkeypatch.setattr(top_picks, "build_front_door_verdict", _always_buy)
 
 
 @pytest.fixture
 def all_avoid(monkeypatch):
     """Force every pick to be classified AVOID (no BUY)."""
+
     def _always_avoid(recommendation, *, market_regime):
         return {"action": "AVOID", "market_regime": market_regime, "invalidation_reason": ""}
+
     monkeypatch.setattr(top_picks, "build_front_door_verdict", _always_avoid)
 
 
@@ -225,8 +230,4 @@ class TestLowSampleNeverBuyGuard:
             "bucket_sample_count": sample_count,
         }
         verdict = build_front_door_verdict(pick, market_regime=regime)
-        assert verdict["action"] != "BUY", (
-            f"low-sample pick (sample={sample_count}, regime={regime}) became BUY — "
-            "the R33 equal-weighting assumption is broken; a low-sample weighting "
-            "scheme would be needed again"
-        )
+        assert verdict["action"] != "BUY", f"low-sample pick (sample={sample_count}, regime={regime}) became BUY — " "the R33 equal-weighting assumption is broken; a low-sample weighting " "scheme would be needed again"

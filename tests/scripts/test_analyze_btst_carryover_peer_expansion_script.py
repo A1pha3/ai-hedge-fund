@@ -49,8 +49,7 @@ def test_analyze_btst_carryover_peer_expansion_separates_priority_queue_from_his
     }
   ]
 }
-""".strip()
-        + "\n",
+""".strip() + "\n",
         encoding="utf-8",
     )
     multiday_audit_path.write_text(
@@ -72,8 +71,7 @@ def test_analyze_btst_carryover_peer_expansion_separates_priority_queue_from_his
     }
   ]
 }
-""".strip()
-        + "\n",
+""".strip() + "\n",
         encoding="utf-8",
     )
 

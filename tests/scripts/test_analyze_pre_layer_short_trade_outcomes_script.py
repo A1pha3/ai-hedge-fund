@@ -68,19 +68,27 @@ def test_analyze_pre_layer_short_trade_outcomes_summarizes_next_day_returns(tmp_
 
     def fake_get_price_data(ticker: str, start_date: str, end_date: str):
         if ticker == "300724":
-            return pd.DataFrame(
-                [
-                    {"date": "2026-03-25", "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.0, "volume": 1000},
-                    {"date": "2026-03-26", "open": 10.1, "high": 10.6, "low": 10.0, "close": 10.3, "volume": 1200},
-                ]
-            ).assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize()).set_index("date")
+            return (
+                pd.DataFrame(
+                    [
+                        {"date": "2026-03-25", "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.0, "volume": 1000},
+                        {"date": "2026-03-26", "open": 10.1, "high": 10.6, "low": 10.0, "close": 10.3, "volume": 1200},
+                    ]
+                )
+                .assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize())
+                .set_index("date")
+            )
         if ticker == "300111":
-            return pd.DataFrame(
-                [
-                    {"date": "2026-03-26", "open": 8.0, "high": 8.1, "low": 7.8, "close": 8.0, "volume": 900},
-                    {"date": "2026-03-27", "open": 7.9, "high": 8.0, "low": 7.5, "close": 7.7, "volume": 950},
-                ]
-            ).assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize()).set_index("date")
+            return (
+                pd.DataFrame(
+                    [
+                        {"date": "2026-03-26", "open": 8.0, "high": 8.1, "low": 7.8, "close": 8.0, "volume": 900},
+                        {"date": "2026-03-27", "open": 7.9, "high": 8.0, "low": 7.5, "close": 7.7, "volume": 950},
+                    ]
+                )
+                .assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize())
+                .set_index("date")
+            )
         raise AssertionError(f"Unexpected ticker: {ticker}")
 
     monkeypatch.setattr("scripts.analyze_pre_layer_short_trade_outcomes.get_price_data", fake_get_price_data)
@@ -152,12 +160,16 @@ def test_analyze_pre_layer_short_trade_outcomes_treats_nan_price_bars_as_incompl
     def fake_get_price_data(ticker: str, start_date: str, end_date: str):
         if ticker != "300724":
             raise AssertionError(f"Unexpected ticker: {ticker}")
-        return pd.DataFrame(
-            [
-                {"date": "2026-03-25", "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.0, "volume": 1000},
-                {"date": "2026-03-26", "open": 10.1, "high": float("nan"), "low": 10.0, "close": 10.3, "volume": 1200},
-            ]
-        ).assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize()).set_index("date")
+        return (
+            pd.DataFrame(
+                [
+                    {"date": "2026-03-25", "open": 10.0, "high": 10.2, "low": 9.9, "close": 10.0, "volume": 1000},
+                    {"date": "2026-03-26", "open": 10.1, "high": float("nan"), "low": 10.0, "close": 10.3, "volume": 1200},
+                ]
+            )
+            .assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize())
+            .set_index("date")
+        )
 
     monkeypatch.setattr("scripts.analyze_pre_layer_short_trade_outcomes.get_price_data", fake_get_price_data)
 
@@ -233,12 +245,16 @@ def test_analyze_pre_layer_short_trade_outcomes_filters_tickers(tmp_path, monkey
     def fake_get_price_data(ticker: str, start_date: str, end_date: str):
         if ticker != "300383":
             raise AssertionError(f"Unexpected ticker: {ticker}")
-        return pd.DataFrame(
-            [
-                {"date": "2026-03-26", "open": 12.0, "high": 12.3, "low": 11.9, "close": 12.0, "volume": 1000},
-                {"date": "2026-03-27", "open": 12.1, "high": 12.7, "low": 12.0, "close": 12.5, "volume": 1300},
-            ]
-        ).assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize()).set_index("date")
+        return (
+            pd.DataFrame(
+                [
+                    {"date": "2026-03-26", "open": 12.0, "high": 12.3, "low": 11.9, "close": 12.0, "volume": 1000},
+                    {"date": "2026-03-27", "open": 12.1, "high": 12.7, "low": 12.0, "close": 12.5, "volume": 1300},
+                ]
+            )
+            .assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize())
+            .set_index("date")
+        )
 
     monkeypatch.setattr("scripts.analyze_pre_layer_short_trade_outcomes.get_price_data", fake_get_price_data)
 
@@ -481,7 +497,7 @@ def test_analyze_pre_layer_short_trade_outcomes_breaks_down_results_by_board(tmp
 
 def test_analyze_pre_layer_short_trade_outcomes_computes_walk_forward_windows(tmp_path, monkeypatch):
     report_dir = tmp_path / "report"
-    
+
     # Create 4 months of data for walk-forward
     for month_offset in range(4):
         for day_offset in range(3):
@@ -521,7 +537,7 @@ def test_analyze_pre_layer_short_trade_outcomes_computes_walk_forward_windows(tm
     monkeypatch.setattr("scripts.analyze_pre_layer_short_trade_outcomes.get_price_data", fake_get_price_data)
 
     analysis = analyze_pre_layer_short_trade_outcomes(
-        report_dir, 
+        report_dir,
         candidate_sources={"short_trade_boundary"},
         walk_forward_preset="standard",
         walk_forward_window_mode="rolling",
@@ -533,7 +549,7 @@ def test_analyze_pre_layer_short_trade_outcomes_computes_walk_forward_windows(tm
     assert "summary" in analysis["walk_forward"]
     assert "windows" in analysis["walk_forward"]
     assert isinstance(analysis["walk_forward"]["windows"], list)
-    
+
     if len(analysis["walk_forward"]["windows"]) > 0:
         first_window = analysis["walk_forward"]["windows"][0]
         assert "train_start" in first_window
@@ -548,7 +564,7 @@ def test_analyze_pre_layer_short_trade_outcomes_computes_walk_forward_windows(tm
         assert "fast_confirm_rate" in first_window
         assert "retention_rate" in first_window
         assert "tail_20_rate" in first_window
-    
+
     summary = analysis["walk_forward"]["summary"]
     assert "window_count" in summary
     assert "candidate_count" in summary
@@ -837,7 +853,7 @@ def test_render_pre_layer_short_trade_outcomes_markdown_shows_empty_state_for_ga
     gate_section_start = markdown.find("## Regime Gate Breakdown")
     gate_section_end = markdown.find("## Board Breakdown")
     gate_section = markdown[gate_section_start:gate_section_end]
-    
+
     assert "## Regime Gate Breakdown" in markdown
     assert "(no regime gate data available)" in gate_section
 
@@ -870,7 +886,7 @@ def test_render_pre_layer_short_trade_outcomes_markdown_shows_empty_state_for_bo
     board_section_start = markdown.find("## Board Breakdown")
     board_section_end = markdown.find("## Walk-Forward Validation")
     board_section = markdown[board_section_start:board_section_end]
-    
+
     assert "## Board Breakdown" in markdown
     assert "(no board classification data available)" in board_section
 
@@ -903,6 +919,6 @@ def test_render_pre_layer_short_trade_outcomes_markdown_shows_empty_state_for_wa
     wf_section_start = markdown.find("## Walk-Forward Validation")
     wf_section_end = markdown.find("## Top Cases")
     wf_section = markdown[wf_section_start:wf_section_end]
-    
+
     assert "## Walk-Forward Validation" in markdown
     assert "(no walk-forward windows generated" in wf_section

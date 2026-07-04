@@ -5,6 +5,7 @@ orchestrators extracted from the LLM call path. They had zero direct test
 coverage. Tests use mock Callables to verify the routing + JSON-extraction
 contracts without touching real LLM providers.
 """
+
 from __future__ import annotations
 
 from typing import Any

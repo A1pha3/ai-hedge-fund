@@ -13,7 +13,6 @@ from src.screening.investability import (
     select_representative_candidates,
 )
 
-
 # ---------------------------------------------------------------------------
 # NS-13: _safe_metric NaN/Inf guard (ranking determinism)
 # ---------------------------------------------------------------------------
@@ -49,6 +48,7 @@ class TestSafeMetricNanGuard:
         is unstable). Two NaN-bearing recs must now tie-break deterministically.
         """
         import random
+
         recs = [
             {"ticker": "AAA", "name": "A", "score_b": float("nan"), "composite_score": float("nan")},
             {"ticker": "BBB", "name": "B", "score_b": float("nan"), "composite_score": float("nan")},
@@ -60,9 +60,7 @@ class TestSafeMetricNanGuard:
         order_a = rank_recommendations_by_investability(list(recs), cr, er)
         shuffled = list(reversed(recs))
         order_b = rank_recommendations_by_investability(shuffled, cr, er)
-        assert [r["ticker"] for r in order_a] == [r["ticker"] for r in order_b], (
-            "NaN in sort key produced non-deterministic ranking"
-        )
+        assert [r["ticker"] for r in order_a] == [r["ticker"] for r in order_b], "NaN in sort key produced non-deterministic ranking"
         # sane ordering: CCC (finite 0.5) should rank ahead of the two NaN-defaulted recs
         assert order_a[0]["ticker"] == "CCC"
 
@@ -224,16 +222,14 @@ def test_build_front_door_verdict_lists_edge_turn_negative_only_when_negative() 
     # Positive edge → HOLD (composite 0.4) → no "转负" reason.
     # C219: t5/t10 正值让 is_watchable 通过 → HOLD
     pos = build_front_door_verdict(
-        {"decision": "bullish", "composite_score": 0.4, "expected_returns": {"t5": 1.8, "t10": 2.0, "t30": 2.0},
-         "win_rates": {"t5": 0.51, "t10": 0.52, "t30": 0.52}, "bucket_sample_count": 48},
+        {"decision": "bullish", "composite_score": 0.4, "expected_returns": {"t5": 1.8, "t10": 2.0, "t30": 2.0}, "win_rates": {"t5": 0.51, "t10": 0.52, "t30": 0.52}, "bucket_sample_count": 48},
         market_regime="trend",
     )
     assert "转负" not in pos["invalidation_reason"]
     # Negative edge → AVOID → "转负" reason present.
     # C219: t5/t10 负值让 is_watchable 不通过 → AVOID
     neg = build_front_door_verdict(
-        {"decision": "bullish", "composite_score": 0.4, "expected_returns": {"t5": -1.2, "t10": -1.5, "t30": -1.5},
-         "win_rates": {"t5": 0.45, "t10": 0.45, "t30": 0.45}, "bucket_sample_count": 48},
+        {"decision": "bullish", "composite_score": 0.4, "expected_returns": {"t5": -1.2, "t10": -1.5, "t30": -1.5}, "win_rates": {"t5": 0.45, "t10": 0.45, "t30": 0.45}, "bucket_sample_count": 48},
         market_regime="trend",
     )
     assert "转负" in neg["invalidation_reason"]
@@ -279,9 +275,7 @@ def test_build_front_door_verdict_buy_requires_mature_t30_sample() -> None:
         },
         market_regime="trend",
     )
-    assert verdict["action"] != "BUY", (
-        "BUY must require a meaningful mature T+30 sample, not just raw count"
-    )
+    assert verdict["action"] != "BUY", "BUY must require a meaningful mature T+30 sample, not just raw count"
 
 
 def test_build_front_door_verdict_buy_ok_when_mature_sample_sufficient() -> None:
@@ -354,10 +348,7 @@ def test_build_front_door_verdict_risk_off_hold_not_blocked_by_zero_mature_count
         },
         market_regime="risk_off",
     )
-    assert verdict["action"] == "HOLD", (
-        "risk_off HOLD must reflect pick quality, not tracking age; a populated "
-        "bucket with no matured samples should still HOLD a high-quality pick"
-    )
+    assert verdict["action"] == "HOLD", "risk_off HOLD must reflect pick quality, not tracking age; a populated " "bucket with no matured samples should still HOLD a high-quality pick"
 
 
 def test_build_front_door_verdict_buy_still_requires_mature_sample_when_zero() -> None:
@@ -377,10 +368,7 @@ def test_build_front_door_verdict_buy_still_requires_mature_sample_when_zero() -
         },
         market_regime="trend",
     )
-    assert verdict["action"] != "BUY", (
-        "BUY must still require mature T+30 evidence; zero mature samples must "
-        "not promote to BUY even with a large raw sample count"
-    )
+    assert verdict["action"] != "BUY", "BUY must still require mature T+30 evidence; zero mature samples must " "not promote to BUY even with a large raw sample count"
 
 
 # ---------------------------------------------------------------------------
@@ -517,9 +505,7 @@ def test_c221_signal_horizon_t5_only() -> None:
         market_regime="trend",
     )
     assert verdict["action"] == "BUY"
-    assert verdict["signal_horizon"] == "T+5", (
-        "T+5 单独通过时 signal_horizon 必须为 'T+5', 让用户知道这是 T+5 反弹票"
-    )
+    assert verdict["signal_horizon"] == "T+5", "T+5 单独通过时 signal_horizon 必须为 'T+5', 让用户知道这是 T+5 反弹票"
 
 
 def test_c221_signal_horizon_t10_only() -> None:
@@ -537,9 +523,7 @@ def test_c221_signal_horizon_t10_only() -> None:
         market_regime="trend",
     )
     assert verdict["action"] == "BUY"
-    assert verdict["signal_horizon"] == "T+10", (
-        "T+10 单独通过时 signal_horizon 必须为 'T+10', 让用户知道这是 T+10 反弹票"
-    )
+    assert verdict["signal_horizon"] == "T+10", "T+10 单独通过时 signal_horizon 必须为 'T+10', 让用户知道这是 T+10 反弹票"
 
 
 def test_c221_signal_horizon_both() -> None:
@@ -556,9 +540,7 @@ def test_c221_signal_horizon_both() -> None:
         market_regime="trend",
     )
     assert verdict["action"] == "BUY"
-    assert verdict["signal_horizon"] == "T+5+T+10", (
-        "T+5 和 T+10 都通过时 signal_horizon 必须为 'T+5+T+10', 标识双信号更强的反弹票"
-    )
+    assert verdict["signal_horizon"] == "T+5+T+10", "T+5 和 T+10 都通过时 signal_horizon 必须为 'T+5+T+10', 标识双信号更强的反弹票"
 
 
 def test_c221_signal_horizon_empty_when_neither_passes() -> None:
@@ -577,9 +559,7 @@ def test_c221_signal_horizon_empty_when_neither_passes() -> None:
     # 不是 BUY (composite 0.4 < 0.5)
     assert verdict["action"] != "BUY"
     # signal_horizon 为空, 呈现层不展示 (避免误导用户)
-    assert verdict["signal_horizon"] == "", (
-        "T+5/T+10 都不通过时 signal_horizon 必须为空, 不展示短期反弹信号"
-    )
+    assert verdict["signal_horizon"] == "", "T+5/T+10 都不通过时 signal_horizon 必须为空, 不展示短期反弹信号"
 
 
 def test_c221_signal_horizon_preserved_under_risk_off_downgrade() -> None:
@@ -603,9 +583,7 @@ def test_c221_signal_horizon_preserved_under_risk_off_downgrade() -> None:
     # risk_off 降级为 HOLD
     assert verdict["action"] == "HOLD"
     # 但 signal_horizon 仍标注 (让用户知道本可 BUY)
-    assert verdict["signal_horizon"] == "T+5+T+10", (
-        "risk_off 降级不应丢失 signal_horizon — 用户需知道本可 BUY 的短期反弹信号"
-    )
+    assert verdict["signal_horizon"] == "T+5+T+10", "risk_off 降级不应丢失 signal_horizon — 用户需知道本可 BUY 的短期反弹信号"
 
 
 # ---------------------------------------------------------------------------
@@ -638,15 +616,9 @@ def test_ns11_buy_gate_uses_pre_bonus_composite_score_gated() -> None:
         market_regime="trend",
     )
     # composite_score_gated=0.47 < 0.5 → 不 BUY, 降级 HOLD (is_watchable: 0.47>=0.25)
-    assert verdict["action"] != "BUY", (
-        "NS-11: BUY gate 必须用 pre-bonus composite_score_gated; 0.47 真分 + "
-        "0.05 bonus = 0.52 不应越过 BUY gate (>=0.5) — bonus 是排序 tie-break, "
-        "不是放水 gate"
-    )
+    assert verdict["action"] != "BUY", "NS-11: BUY gate 必须用 pre-bonus composite_score_gated; 0.47 真分 + " "0.05 bonus = 0.52 不应越过 BUY gate (>=0.5) — bonus 是排序 tie-break, " "不是放水 gate"
     # is_watchable 用 pre-bonus score: 0.47 >= 0.25 → HOLD (非 AVOID)
-    assert verdict["action"] == "HOLD", (
-        "NS-11: composite_score_gated=0.47 >= 0.25 (is_watchable 阈值) → HOLD, 非 AVOID"
-    )
+    assert verdict["action"] == "HOLD", "NS-11: composite_score_gated=0.47 >= 0.25 (is_watchable 阈值) → HOLD, 非 AVOID"
 
 
 def test_ns11_buy_passes_when_composite_score_gated_above_threshold() -> None:
@@ -663,9 +635,7 @@ def test_ns11_buy_passes_when_composite_score_gated_above_threshold() -> None:
         },
         market_regime="trend",
     )
-    assert verdict["action"] == "BUY", (
-        "NS-11: composite_score_gated=0.50 >= 0.5 → BUY (bonus 仅排序, 不影响 gate)"
-    )
+    assert verdict["action"] == "BUY", "NS-11: composite_score_gated=0.50 >= 0.5 → BUY (bonus 仅排序, 不影响 gate)"
 
 
 def test_ns11_falls_back_to_composite_score_when_gated_absent() -> None:
@@ -684,9 +654,7 @@ def test_ns11_falls_back_to_composite_score_when_gated_absent() -> None:
         },
         market_regime="trend",
     )
-    assert verdict["action"] == "BUY", (
-        "NS-11: 缺省 composite_score_gated 时回退 composite_score 判 BUY gate (向后兼容)"
-    )
+    assert verdict["action"] == "BUY", "NS-11: 缺省 composite_score_gated 时回退 composite_score 判 BUY gate (向后兼容)"
 
 
 def test_ns11_watchable_uses_pre_bonus_composite_score_gated() -> None:
@@ -706,10 +674,7 @@ def test_ns11_watchable_uses_pre_bonus_composite_score_gated() -> None:
         market_regime="trend",
     )
     # composite_score_gated=0.22 < 0.25 → 不 watchable → AVOID
-    assert verdict["action"] == "AVOID", (
-        "NS-11: is_watchable 用 composite_score_gated; 0.22 真分 + 0.05 bonus "
-        "= 0.27 不应越过 watchable 阈值 (>=0.25) → AVOID"
-    )
+    assert verdict["action"] == "AVOID", "NS-11: is_watchable 用 composite_score_gated; 0.22 真分 + 0.05 bonus " "= 0.27 不应越过 watchable 阈值 (>=0.25) → AVOID"
 
 
 # ---------------------------------------------------------------------------
@@ -898,11 +863,7 @@ def test_ns23_crisis_t5_only_does_not_pass_gate() -> None:
         },
         market_regime="crisis",
     )
-    assert verdict["action"] == "AVOID", (
-        "NS-23: crisis regime 下 T+5 alone 不应放行 — 全期 T+5 winrate 0.61 让 "
-        "_t5_passes=True, 但 crisis 实际 T+5 winrate=43.59% < 50% 不可靠. "
-        "T+10 弱 (winrate 0.45) → _short_term_passes 应为 False → AVOID (非 HOLD)"
-    )
+    assert verdict["action"] == "AVOID", "NS-23: crisis regime 下 T+5 alone 不应放行 — 全期 T+5 winrate 0.61 让 " "_t5_passes=True, 但 crisis 实际 T+5 winrate=43.59% < 50% 不可靠. " "T+10 弱 (winrate 0.45) → _short_term_passes 应为 False → AVOID (非 HOLD)"
 
 
 def test_ns23_crisis_t10_passes_still_hold() -> None:
@@ -923,10 +884,7 @@ def test_ns23_crisis_t10_passes_still_hold() -> None:
         },
         market_regime="crisis",
     )
-    assert verdict["action"] == "HOLD", (
-        "NS-23: crisis regime 下 T+10 通过仍可 HOLD — T+10 相对靠谱 (用户 evidence), "
-        "crisis 下 _short_term_passes=_t10_passes=True → is_high_quality_for_hold=True → HOLD"
-    )
+    assert verdict["action"] == "HOLD", "NS-23: crisis regime 下 T+10 通过仍可 HOLD — T+10 相对靠谱 (用户 evidence), " "crisis 下 _short_term_passes=_t10_passes=True → is_high_quality_for_hold=True → HOLD"
 
 
 def test_ns23_crisis_both_pass_still_hold() -> None:
@@ -968,9 +926,7 @@ def test_ns23_risk_off_t5_only_does_not_pass_gate() -> None:
         },
         market_regime="risk_off",
     )
-    assert verdict["action"] == "AVOID", (
-        "NS-23: risk_off 同 crisis — T+5 alone 不应放行 (T+10 弱 → AVOID 非 HOLD)"
-    )
+    assert verdict["action"] == "AVOID", "NS-23: risk_off 同 crisis — T+5 alone 不应放行 (T+10 弱 → AVOID 非 HOLD)"
 
 
 def test_ns23_non_crisis_keeps_or_logic() -> None:
@@ -991,10 +947,7 @@ def test_ns23_non_crisis_keeps_or_logic() -> None:
         },
         market_regime="trend",
     )
-    assert verdict["action"] == "BUY", (
-        "NS-23: 非 crisis regime 保持 C220 OR 逻辑 — T+5 强 → _t5_passes=True "
-        "→ _short_term_passes=True → BUY (crisis 调整不影响非 crisis)"
-    )
+    assert verdict["action"] == "BUY", "NS-23: 非 crisis regime 保持 C220 OR 逻辑 — T+5 强 → _t5_passes=True " "→ _short_term_passes=True → BUY (crisis 调整不影响非 crisis)"
 
 
 def test_ns23_crisis_t5_only_signal_horizon_preserved() -> None:
@@ -1018,10 +971,7 @@ def test_ns23_crisis_t5_only_signal_horizon_preserved() -> None:
     # action=AVOID (T+5 alone crisis 下不放行)
     assert verdict["action"] == "AVOID"
     # signal_horizon 仍标注 'T+5' (raw 信号, 让用户知道有 T+5 信号但被 crisis 门控)
-    assert verdict["signal_horizon"] == "T+5", (
-        "NS-23: crisis 下 T+5-only 被 AVOID 但 signal_horizon 仍标注 'T+5' — "
-        "raw 信号展示, 让用户知道有 T+5 信号但 crisis 下不可靠"
-    )
+    assert verdict["signal_horizon"] == "T+5", "NS-23: crisis 下 T+5-only 被 AVOID 但 signal_horizon 仍标注 'T+5' — " "raw 信号展示, 让用户知道有 T+5 信号但 crisis 下不可靠"
 
 
 # ---------------------------------------------------------------------------
@@ -1051,15 +1001,25 @@ def test_profit_aware_ranks_by_empirical_winrate_not_composite() -> None:
         ],
     )
     expected = ExpectedReturnReport(
-        trade_date="20260612", lookback_days=60, total_samples=100,
+        trade_date="20260612",
+        lookback_days=60,
+        total_samples=100,
         items=[
             ExpectedReturn(
-                ticker="AAA", score_b=0.80, bucket_label="高 (>0.8)", bucket_sample_count=40,
-                expected_returns={"t5": 1.0, "t10": 1.0}, win_rates={"t5": 0.42, "t10": 0.42},
+                ticker="AAA",
+                score_b=0.80,
+                bucket_label="高 (>0.8)",
+                bucket_sample_count=40,
+                expected_returns={"t5": 1.0, "t10": 1.0},
+                win_rates={"t5": 0.42, "t10": 0.42},
             ),
             ExpectedReturn(
-                ticker="BBB", score_b=0.30, bucket_label="低 (<0.3)", bucket_sample_count=50,
-                expected_returns={"t5": 3.0, "t10": 3.0}, win_rates={"t5": 0.62, "t10": 0.62},
+                ticker="BBB",
+                score_b=0.30,
+                bucket_label="低 (<0.3)",
+                bucket_sample_count=50,
+                expected_returns={"t5": 3.0, "t10": 3.0},
+                win_rates={"t5": 0.62, "t10": 0.62},
             ),
         ],
     )
@@ -1068,16 +1028,14 @@ def test_profit_aware_ranks_by_empirical_winrate_not_composite() -> None:
     assert [r["ticker"] for r in ranked_default] == ["AAA", "BBB"], "default mode unchanged (composite-first)"
     # profit-aware mode: empirical winrate first → BBB (0.62) > AAA (0.42)
     ranked_pa = rank_recommendations_by_investability(recommendations, composite, expected, profit_aware=True)
-    assert [r["ticker"] for r in ranked_pa] == ["BBB", "AAA"], (
-        "profit-aware mode must rank by empirical bucket winrate, not composite_score "
-        "— c272 backtest proved composite has negative predictive value (47% vs 60%)"
-    )
+    assert [r["ticker"] for r in ranked_pa] == ["BBB", "AAA"], "profit-aware mode must rank by empirical bucket winrate, not composite_score " "— c272 backtest proved composite has negative predictive value (47% vs 60%)"
 
 
 def test_profit_aware_default_is_off() -> None:
     """C273 safety: profit_aware defaults to False (opt-in). Verifies the
     parameter exists and defaults off — existing callers see no behavior change."""
     import inspect
+
     sig = inspect.signature(rank_recommendations_by_investability)
     assert "profit_aware" in sig.parameters
     assert sig.parameters["profit_aware"].default is False
@@ -1114,15 +1072,25 @@ def test_profit_aware_survives_consecutive_bonus_resort() -> None:
         ],
     )
     expected = ExpectedReturnReport(
-        trade_date="20260612", lookback_days=60, total_samples=100,
+        trade_date="20260612",
+        lookback_days=60,
+        total_samples=100,
         items=[
             ExpectedReturn(
-                ticker="AAA", score_b=0.80, bucket_label="高 (>0.8)", bucket_sample_count=40,
-                expected_returns={"t5": 1.0, "t10": 1.0}, win_rates={"t5": 0.42, "t10": 0.42},
+                ticker="AAA",
+                score_b=0.80,
+                bucket_label="高 (>0.8)",
+                bucket_sample_count=40,
+                expected_returns={"t5": 1.0, "t10": 1.0},
+                win_rates={"t5": 0.42, "t10": 0.42},
             ),
             ExpectedReturn(
-                ticker="BBB", score_b=0.30, bucket_label="低 (<0.3)", bucket_sample_count=50,
-                expected_returns={"t5": 3.0, "t10": 3.0}, win_rates={"t5": 0.62, "t10": 0.62},
+                ticker="BBB",
+                score_b=0.30,
+                bucket_label="低 (<0.3)",
+                bucket_sample_count=50,
+                expected_returns={"t5": 3.0, "t10": 3.0},
+                win_rates={"t5": 0.62, "t10": 0.62},
             ),
         ],
     )
@@ -1134,12 +1102,7 @@ def test_profit_aware_survives_consecutive_bonus_resort() -> None:
     # This must NOT revert the profit-aware winrate ordering back to composite-score order.
     # (profit_aware threads through _build_ranked_candidates → resort, mirroring the wired path.)
     ranked_after_resort = _apply_consecutive_bonus_and_resort([dict(r) for r in ranked_pa], profit_aware=True)
-    assert [r["ticker"] for r in ranked_after_resort] == ["BBB", "AAA"], (
-        "profit-aware ordering was reverted by _apply_consecutive_bonus_and_resort — the "
-        "--profit-aware flag is a no-op in the wired run_top_picks path (the resort re-sorts "
-        "on composite_score primary, undoing the ranker's winrate re-keying). c273's claimed "
-        "47%→62% improvement is not delivered."
-    )
+    assert [r["ticker"] for r in ranked_after_resort] == ["BBB", "AAA"], "profit-aware ordering was reverted by _apply_consecutive_bonus_and_resort — the " "--profit-aware flag is a no-op in the wired run_top_picks path (the resort re-sorts " "on composite_score primary, undoing the ranker's winrate re-keying). c273's claimed " "47%→62% improvement is not delivered."
 
 
 # ---------------------------------------------------------------------------
@@ -1167,9 +1130,7 @@ def test_invalidation_reasons_marks_zero_sample_as_data_missing() -> None:
         },
         market_regime="trend",
     )
-    assert "数据缺失" in verdict["invalidation_reason"], (
-        f"sample_count==0 必须标 '数据缺失', got: {verdict['invalidation_reason']}"
-    )
+    assert "数据缺失" in verdict["invalidation_reason"], f"sample_count==0 必须标 '数据缺失', got: {verdict['invalidation_reason']}"
 
 
 def test_invalidation_reasons_marks_insufficient_mature_sample() -> None:
@@ -1190,13 +1151,9 @@ def test_invalidation_reasons_marks_insufficient_mature_sample() -> None:
         },
         market_regime="trend",
     )
-    assert "成熟样本不足 20" in verdict["invalidation_reason"], (
-        f"backing_sample<20 必须标 '成熟样本不足 20', got: {verdict['invalidation_reason']}"
-    )
+    assert "成熟样本不足 20" in verdict["invalidation_reason"], f"backing_sample<20 必须标 '成熟样本不足 20', got: {verdict['invalidation_reason']}"
     # 不应同时标 '样本量不足 20' (raw count=40 充足)
-    assert "样本量不足 20" not in verdict["invalidation_reason"], (
-        f"raw count=40 充足时不应标 '样本量不足 20', got: {verdict['invalidation_reason']}"
-    )
+    assert "样本量不足 20" not in verdict["invalidation_reason"], f"raw count=40 充足时不应标 '样本量不足 20', got: {verdict['invalidation_reason']}"
 
 
 def test_invalidation_reasons_legacy_path_marks_insufficient_raw_sample() -> None:
@@ -1216,9 +1173,7 @@ def test_invalidation_reasons_legacy_path_marks_insufficient_raw_sample() -> Non
         },
         market_regime="trend",
     )
-    assert "样本量不足 20" in verdict["invalidation_reason"], (
-        f"旧路径 raw count<20 必须标 '样本量不足 20', got: {verdict['invalidation_reason']}"
-    )
+    assert "样本量不足 20" in verdict["invalidation_reason"], f"旧路径 raw count<20 必须标 '样本量不足 20', got: {verdict['invalidation_reason']}"
     # 不应标 '成熟样本不足 20' (无 mature 字段)
     assert "成熟样本不足 20" not in verdict["invalidation_reason"]
 
@@ -1307,14 +1262,8 @@ class TestBearishDecisionForcesAvoid:
         rec = self._strong_metrics()
         rec["decision"] = "bearish"
         verdict = build_front_door_verdict(rec, market_regime="trend")
-        assert verdict["action"] != "BUY", (
-            "bearish decision must never BUY — supports_long gate failed "
-            "(money-safety: a bearish pick is an inverted long thesis)"
-        )
-        assert verdict["action"] == "AVOID", (
-            f"bearish with strong metrics must AVOID (not HOLD) — supports_long "
-            f"also gates is_watchable. got {verdict['action']!r}"
-        )
+        assert verdict["action"] != "BUY", "bearish decision must never BUY — supports_long gate failed " "(money-safety: a bearish pick is an inverted long thesis)"
+        assert verdict["action"] == "AVOID", f"bearish with strong metrics must AVOID (not HOLD) — supports_long " f"also gates is_watchable. got {verdict['action']!r}"
 
     def test_bearish_forces_avoid_not_buy_even_in_crisis(self) -> None:
         """Crisis regime never returns BUY anyway, but bearish must not even HOLD
@@ -1322,10 +1271,7 @@ class TestBearishDecisionForcesAvoid:
         rec = self._strong_metrics()
         rec["decision"] = "bearish"
         verdict = build_front_door_verdict(rec, market_regime="crisis")
-        assert verdict["action"] == "AVOID", (
-            f"bearish in crisis must AVOID (supports_long gates HOLD path too). "
-            f"got {verdict['action']!r}"
-        )
+        assert verdict["action"] == "AVOID", f"bearish in crisis must AVOID (supports_long gates HOLD path too). " f"got {verdict['action']!r}"
 
     def test_bearish_gate_is_decision_value_not_score(self) -> None:
         """The gate keys on the ``decision`` field, not composite_score. A bearish
@@ -1335,11 +1281,7 @@ class TestBearishDecisionForcesAvoid:
         rec["decision"] = "bearish"
         rec["composite_score"] = 0.95  # near-max conviction
         verdict = build_front_door_verdict(rec, market_regime="trend")
-        assert verdict["action"] == "AVOID", (
-            "supports_long must gate on decision='bearish' regardless of "
-            "composite_score magnitude — high conviction on an inverted thesis "
-            "is still not a long. got {verdict['action']!r}".format(verdict=verdict)
-        )
+        assert verdict["action"] == "AVOID", "supports_long must gate on decision='bearish' regardless of " "composite_score magnitude — high conviction on an inverted thesis " "is still not a long. got {verdict['action']!r}".format(verdict=verdict)
 
     def test_bearish_forces_avoid_in_risk_off_regime(self) -> None:
         """Risk_off regime + bearish → AVOID (crisis branch + supports_long).
@@ -1351,10 +1293,7 @@ class TestBearishDecisionForcesAvoid:
         rec = self._strong_metrics()
         rec["decision"] = "bearish"
         verdict = build_front_door_verdict(rec, market_regime="risk_off")
-        assert verdict["action"] == "AVOID", (
-            f"bearish in risk_off must AVOID (supports_long gates both quality "
-            f"and watchable paths). got {verdict['action']!r}"
-        )
+        assert verdict["action"] == "AVOID", f"bearish in risk_off must AVOID (supports_long gates both quality " f"and watchable paths). got {verdict['action']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -1404,15 +1343,14 @@ class TestBuyGateBoundaryValues:
         If a refactor changed ``>= 0.55`` to ``> 0.55``, a 55%-winrate pick
         would wrongly downgrade. This pins the inclusive direction.
         """
-        rec = self._buy_eligible({
-            "win_rates": {"t5": 0.55, "t10": 0.55, "t30": 0.55},  # exactly at bar
-            "expected_returns": {"t5": 5.0, "t10": 5.0, "t30": 3.0},
-        })
-        verdict = build_front_door_verdict(rec, market_regime="trend")
-        assert verdict["action"] == "BUY", (
-            "winrate==0.55 must BUY (gate is >=); got "
-            f"{verdict['action']!r} — operator may have flipped to strict >"
+        rec = self._buy_eligible(
+            {
+                "win_rates": {"t5": 0.55, "t10": 0.55, "t30": 0.55},  # exactly at bar
+                "expected_returns": {"t5": 5.0, "t10": 5.0, "t30": 3.0},
+            }
         )
+        verdict = build_front_door_verdict(rec, market_regime="trend")
+        assert verdict["action"] == "BUY", "winrate==0.55 must BUY (gate is >=); got " f"{verdict['action']!r} — operator may have flipped to strict >"
 
     def test_edge_exactly_0_does_not_buy(self) -> None:
         """edge == 0 must NOT pass the BUY gate (operator is strict ``>``).
@@ -1422,16 +1360,14 @@ class TestBuyGateBoundaryValues:
         silently BUY. The strict ``>`` is the guard. If a refactor changed
         ``> 0`` to ``>= 0``, a pick with NO horizon edge data would pass.
         """
-        rec = self._buy_eligible({
-            "win_rates": {"t5": 0.60, "t10": 0.60, "t30": 0.58},
-            "expected_returns": {"t5": 0.0, "t10": 0.0, "t30": 0.0},  # edge exactly 0
-        })
-        verdict = build_front_door_verdict(rec, market_regime="trend")
-        assert verdict["action"] != "BUY", (
-            "edge==0 must NOT BUY (gate is strict >) — flipping to >= would let "
-            "missing-horizon-data (default 0.0) silently BUY. got "
-            f"{verdict['action']!r}"
+        rec = self._buy_eligible(
+            {
+                "win_rates": {"t5": 0.60, "t10": 0.60, "t30": 0.58},
+                "expected_returns": {"t5": 0.0, "t10": 0.0, "t30": 0.0},  # edge exactly 0
+            }
         )
+        verdict = build_front_door_verdict(rec, market_regime="trend")
+        assert verdict["action"] != "BUY", "edge==0 must NOT BUY (gate is strict >) — flipping to >= would let " "missing-horizon-data (default 0.0) silently BUY. got " f"{verdict['action']!r}"
 
     def test_composite_exactly_0_5_buys(self) -> None:
         """composite_score == 0.5 must BUY (operator is ``>= 0.5``).
@@ -1441,10 +1377,7 @@ class TestBuyGateBoundaryValues:
         """
         rec = self._buy_eligible({"composite_score": 0.5})  # exactly at BUY bar
         verdict = build_front_door_verdict(rec, market_regime="trend")
-        assert verdict["action"] == "BUY", (
-            "composite_score==0.5 must BUY (gate is >= 0.5); got "
-            f"{verdict['action']!r}"
-        )
+        assert verdict["action"] == "BUY", "composite_score==0.5 must BUY (gate is >= 0.5); got " f"{verdict['action']!r}"
 
     def test_composite_just_below_0_5_does_not_buy(self) -> None:
         """composite_score = 0.4999 must NOT BUY (the other side of the boundary).
@@ -1453,10 +1386,7 @@ class TestBuyGateBoundaryValues:
         """
         rec = self._buy_eligible({"composite_score": 0.4999})
         verdict = build_front_door_verdict(rec, market_regime="trend")
-        assert verdict["action"] != "BUY", (
-            "composite_score=0.4999 must NOT BUY (< 0.5 bar); got "
-            f"{verdict['action']!r}"
-        )
+        assert verdict["action"] != "BUY", "composite_score=0.4999 must NOT BUY (< 0.5 bar); got " f"{verdict['action']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -1511,10 +1441,7 @@ class TestNaNInputsNeverCauseBuy:
         rec["composite_score"] = nan
         rec["composite_score_gated"] = nan
         verdict = build_front_door_verdict(rec, market_regime="trend")
-        assert verdict["action"] != "BUY", (
-            "NaN composite_score must NOT BUY — safe_float→0.0 < 0.5 bar; "
-            f"got {verdict['action']!r}"
-        )
+        assert verdict["action"] != "BUY", "NaN composite_score must NOT BUY — safe_float→0.0 < 0.5 bar; " f"got {verdict['action']!r}"
 
     def test_nan_in_all_horizon_winrates_does_not_buy(self) -> None:
         """NaN in BOTH T+5 and T+10 win_rates must NOT BUY.
@@ -1526,10 +1453,7 @@ class TestNaNInputsNeverCauseBuy:
         rec = self._buy_eligible()
         rec["win_rates"] = {"t5": nan, "t10": nan, "t30": 0.60}
         verdict = build_front_door_verdict(rec, market_regime="trend")
-        assert verdict["action"] != "BUY", (
-            "NaN in both horizon win_rates must NOT BUY (both →0.0 < 0.55); "
-            f"got {verdict['action']!r}"
-        )
+        assert verdict["action"] != "BUY", "NaN in both horizon win_rates must NOT BUY (both →0.0 < 0.55); " f"got {verdict['action']!r}"
 
     def test_nan_in_all_horizon_edges_does_not_buy(self) -> None:
         """NaN in BOTH T+5 and T+10 expected_returns (edges) must NOT BUY.
@@ -1542,10 +1466,7 @@ class TestNaNInputsNeverCauseBuy:
         rec = self._buy_eligible()
         rec["expected_returns"] = {"t5": nan, "t10": nan, "t30": 2.0}
         verdict = build_front_door_verdict(rec, market_regime="trend")
-        assert verdict["action"] != "BUY", (
-            "NaN in both horizon edges must NOT BUY (both →0.0, fail strict >); "
-            f"got {verdict['action']!r}"
-        )
+        assert verdict["action"] != "BUY", "NaN in both horizon edges must NOT BUY (both →0.0, fail strict >); " f"got {verdict['action']!r}"
 
     def test_nan_in_one_horizon_other_clean_still_buys_with_honest_horizon(self) -> None:
         """NaN in ONE horizon (the other clean-passing) → BUY on the clean horizon.
@@ -1563,15 +1484,8 @@ class TestNaNInputsNeverCauseBuy:
         rec["expected_returns"] = {"t5": nan, "t10": 9.0, "t30": 2.0}
         rec["win_rates"] = {"t5": nan, "t10": 0.62, "t30": 0.60}
         verdict = build_front_door_verdict(rec, market_regime="trend")
-        assert verdict["action"] == "BUY", (
-            "NaN in T+5 with clean T+10 should still BUY (OR-logic, clean "
-            f"horizon suffices); got {verdict['action']!r}"
-        )
-        assert verdict["signal_horizon"] == "T+10", (
-            "BUY must be attributed to the CLEAN horizon (T+10), not the NaN "
-            f"one — operator must know which horizon drove the signal. got "
-            f"{verdict.get('signal_horizon')!r}"
-        )
+        assert verdict["action"] == "BUY", "NaN in T+5 with clean T+10 should still BUY (OR-logic, clean " f"horizon suffices); got {verdict['action']!r}"
+        assert verdict["signal_horizon"] == "T+10", "BUY must be attributed to the CLEAN horizon (T+10), not the NaN " f"one — operator must know which horizon drove the signal. got " f"{verdict.get('signal_horizon')!r}"
 
     def test_nan_inputs_never_crash_verdict(self) -> None:
         """NaN in every gate input must not raise — the verdict must always
@@ -1592,10 +1506,7 @@ class TestNaNInputsNeverCauseBuy:
         verdict = build_front_door_verdict(rec, market_regime="trend")
         assert isinstance(verdict, dict), "verdict must always return a dict"
         assert verdict["action"] in {"BUY", "HOLD", "AVOID"}
-        assert verdict["action"] != "BUY", (
-            "all-NaN inputs must never BUY; got "
-            f"{verdict['action']!r}"
-        )
+        assert verdict["action"] != "BUY", "all-NaN inputs must never BUY; got " f"{verdict['action']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -1630,13 +1541,19 @@ class TestRankerNanInNestedHorizonDicts:
         nan = float("nan")
         recs = [
             {
-                "ticker": "AAA", "name": "A", "score_b": 0.5, "composite_score": 0.5,
+                "ticker": "AAA",
+                "name": "A",
+                "score_b": 0.5,
+                "composite_score": 0.5,
                 # NaN inside the nested horizon dicts (the masked-coercion path)
                 "expected_returns": {"t5": nan, "t10": nan, "t30": nan},
                 "win_rates": {"t5": nan, "t10": nan, "t30": nan},
             },
             {
-                "ticker": "BBB", "name": "B", "score_b": 0.5, "composite_score": 0.5,
+                "ticker": "BBB",
+                "name": "B",
+                "score_b": 0.5,
+                "composite_score": 0.5,
                 "expected_returns": {"t5": nan, "t10": nan, "t30": nan},
                 "win_rates": {"t5": nan, "t10": nan, "t30": nan},
             },
@@ -1645,7 +1562,4 @@ class TestRankerNanInNestedHorizonDicts:
         er = ExpectedReturnReport(trade_date="20260101", items=[], lookback_days=60, total_samples=0)
         order_a = rank_recommendations_by_investability(list(recs), cr, er)
         order_b = rank_recommendations_by_investability(list(reversed(recs)), cr, er)
-        assert [r["ticker"] for r in order_a] == [r["ticker"] for r in order_b], (
-            "NaN in nested horizon dicts produced non-deterministic ranking "
-            "(masked coercion at investability.py:46-50 may have regressed)"
-        )
+        assert [r["ticker"] for r in order_a] == [r["ticker"] for r in order_b], "NaN in nested horizon dicts produced non-deterministic ranking " "(masked coercion at investability.py:46-50 may have regressed)"

@@ -335,13 +335,17 @@ def test_analyze_btst_profile_frontier_finds_staged_breakout_surface(tmp_path, m
     def fake_get_price_data(ticker: str, start_date: str, end_date: str):
         assert ticker == "300620"
         assert start_date == "2026-03-22"
-        return pd.DataFrame(
-            [
-                {"date": "2026-03-22", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
-                {"date": "2026-03-23", "open": 10.1, "high": 10.4, "low": 10.0, "close": 10.2},
-                {"date": "2026-03-24", "open": 10.2, "high": 10.5, "low": 10.1, "close": 10.3},
-            ]
-        ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
+        return (
+            pd.DataFrame(
+                [
+                    {"date": "2026-03-22", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
+                    {"date": "2026-03-23", "open": 10.1, "high": 10.4, "low": 10.0, "close": 10.2},
+                    {"date": "2026-03-24", "open": 10.2, "high": 10.5, "low": 10.1, "close": 10.3},
+                ]
+            )
+            .assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize())
+            .set_index("date")
+        )
 
     monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
 
@@ -372,13 +376,17 @@ def test_analyze_btst_profile_frontier_finds_profitability_relief_surface(tmp_pa
     def fake_get_price_data(ticker: str, start_date: str, end_date: str):
         assert ticker == "300987"
         assert start_date == "2026-03-22"
-        return pd.DataFrame(
-            [
-                {"date": "2026-03-22", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
-                {"date": "2026-03-23", "open": 10.0, "high": 10.4, "low": 9.95, "close": 10.2},
-                {"date": "2026-03-24", "open": 10.2, "high": 10.3, "low": 10.05, "close": 10.18},
-            ]
-        ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
+        return (
+            pd.DataFrame(
+                [
+                    {"date": "2026-03-22", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
+                    {"date": "2026-03-23", "open": 10.0, "high": 10.4, "low": 9.95, "close": 10.2},
+                    {"date": "2026-03-24", "open": 10.2, "high": 10.3, "low": 10.05, "close": 10.18},
+                ]
+            )
+            .assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize())
+            .set_index("date")
+        )
 
     monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
 
@@ -407,13 +415,17 @@ def test_analyze_btst_profile_frontier_accepts_watchlist_zero_catalyst_guard_rel
 
     def fake_get_price_data(ticker: str, start_date: str, end_date: str):
         assert ticker == "300987"
-        return pd.DataFrame(
-            [
-                {"date": "2026-03-22", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
-                {"date": "2026-03-23", "open": 10.0, "high": 10.4, "low": 9.95, "close": 10.2},
-                {"date": "2026-03-24", "open": 10.2, "high": 10.3, "low": 10.05, "close": 10.18},
-            ]
-        ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
+        return (
+            pd.DataFrame(
+                [
+                    {"date": "2026-03-22", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
+                    {"date": "2026-03-23", "open": 10.0, "high": 10.4, "low": 9.95, "close": 10.2},
+                    {"date": "2026-03-24", "open": 10.2, "high": 10.3, "low": 10.05, "close": 10.18},
+                ]
+            )
+            .assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize())
+            .set_index("date")
+        )
 
     monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
 
@@ -439,13 +451,17 @@ def test_analyze_btst_profile_frontier_supports_event_catalyst_guarded(tmp_path,
     def fake_get_price_data(ticker: str, start_date: str, end_date: str):
         assert ticker == "300724"
         assert start_date == "2026-03-24"
-        return pd.DataFrame(
-            [
-                {"date": "2026-03-24", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
-                {"date": "2026-03-25", "open": 10.1, "high": 10.4, "low": 10.0, "close": 10.2},
-                {"date": "2026-03-26", "open": 10.2, "high": 10.5, "low": 10.1, "close": 10.3},
-            ]
-        ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
+        return (
+            pd.DataFrame(
+                [
+                    {"date": "2026-03-24", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
+                    {"date": "2026-03-25", "open": 10.1, "high": 10.4, "low": 10.0, "close": 10.2},
+                    {"date": "2026-03-26", "open": 10.2, "high": 10.5, "low": 10.1, "close": 10.3},
+                ]
+            )
+            .assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize())
+            .set_index("date")
+        )
 
     monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
 
@@ -474,13 +490,17 @@ def test_analyze_btst_profile_frontier_surfaces_selected_only_shrink_deltas(tmp_
     def fake_get_price_data(ticker: str, start_date: str, end_date: str):
         assert ticker == "601869"
         assert start_date == "2026-03-28"
-        return pd.DataFrame(
-            [
-                {"date": "2026-03-28", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
-                {"date": "2026-03-31", "open": 10.1, "high": 10.4, "low": 10.0, "close": 10.2},
-                {"date": "2026-04-01", "open": 10.2, "high": 10.3, "low": 10.05, "close": 10.18},
-            ]
-        ).assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize()).set_index("date")
+        return (
+            pd.DataFrame(
+                [
+                    {"date": "2026-03-28", "open": 10.0, "high": 10.1, "low": 9.9, "close": 10.0},
+                    {"date": "2026-03-31", "open": 10.1, "high": 10.4, "low": 10.0, "close": 10.2},
+                    {"date": "2026-04-01", "open": 10.2, "high": 10.3, "low": 10.05, "close": 10.18},
+                ]
+            )
+            .assign(date=lambda data: pd.to_datetime(data["date"]).dt.normalize())
+            .set_index("date")
+        )
 
     monkeypatch.setattr("scripts.btst_analysis_utils.get_price_data", fake_get_price_data)
 

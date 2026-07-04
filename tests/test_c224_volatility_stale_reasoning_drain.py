@@ -34,14 +34,15 @@ Fix: align reasoning text + regime-scale comment with post-C224/C236 semantics.
   - bearish (low-vol per C224)    → text describes 低波动区间 + 动量延续看跌/停滞
   - regime-scale comment          → 0.9/1.1 (C236 B_narrow)
 """
+
 from __future__ import annotations
 
 from src.agents.technicals_reasoning_helpers import _build_volatility_lines
 
-
 # ---------------------------------------------------------------------------
 # _build_volatility_lines — post-C224 semantics
 # ---------------------------------------------------------------------------
+
 
 class TestC224VolatilityReasoningDirection:
     """_build_volatility_lines must align with C224 flip:
@@ -62,15 +63,9 @@ class TestC224VolatilityReasoningDirection:
         lines = _build_volatility_lines(metrics, signal="bullish")
         interp = _extract_interp(lines)
         # Post-C224: bullish = high-vol → 解读 must mention 高波动
-        assert "高波动" in interp, (
-            f"C224 flip: bullish=high-vol regime, 解读 must describe 高波动区间; "
-            f"got interp: {interp!r}"
-        )
+        assert "高波动" in interp, f"C224 flip: bullish=high-vol regime, 解读 must describe 高波动区间; " f"got interp: {interp!r}"
         # Must NOT describe 低波动 (the pre-C224 bullish meaning)
-        assert "低波动" not in interp, (
-            f"C224 flip: bullish=high-vol regime, 解读 must NOT describe 低波动 (pre-C224 stale); "
-            f"got interp: {interp!r}"
-        )
+        assert "低波动" not in interp, f"C224 flip: bullish=high-vol regime, 解读 must NOT describe 低波动 (pre-C224 stale); " f"got interp: {interp!r}"
 
     def test_bearish_describes_low_vol_not_high_vol(self) -> None:
         """C224: bearish signal now means LOW-VOL regime (stagnation).
@@ -84,15 +79,9 @@ class TestC224VolatilityReasoningDirection:
         lines = _build_volatility_lines(metrics, signal="bearish")
         interp = _extract_interp(lines)
         # Post-C224: bearish = low-vol → 解读 must mention 低波动
-        assert "低波动" in interp, (
-            f"C224 flip: bearish=low-vol regime, 解读 must describe 低波动区间; "
-            f"got interp: {interp!r}"
-        )
+        assert "低波动" in interp, f"C224 flip: bearish=low-vol regime, 解读 must describe 低波动区间; " f"got interp: {interp!r}"
         # Must NOT describe 高波动 (the pre-C224 bearish meaning)
-        assert "高波动" not in interp, (
-            f"C224 flip: bearish=low-vol regime, 解读 must NOT describe 高波动 (pre-C224 stale); "
-            f"got interp: {interp!r}"
-        )
+        assert "高波动" not in interp, f"C224 flip: bearish=low-vol regime, 解读 must NOT describe 高波动 (pre-C224 stale); " f"got interp: {interp!r}"
 
     def test_bullish_mentions_momentum_continuation(self) -> None:
         """C224 rationale: high-vol regime = recent winners → momentum continuation.
@@ -105,10 +94,7 @@ class TestC224VolatilityReasoningDirection:
         }
         lines = _build_volatility_lines(metrics, signal="bullish")
         interp = _extract_interp(lines)
-        assert "动量延续" in interp or "动量" in interp, (
-            f"C224: bullish=high-vol=momentum continuation, 解读 should mention 动量延续; "
-            f"got interp: {interp!r}"
-        )
+        assert "动量延续" in interp or "动量" in interp, f"C224: bullish=high-vol=momentum continuation, 解读 should mention 动量延续; " f"got interp: {interp!r}"
 
     def test_bearish_mentions_stagnation(self) -> None:
         """C224 rationale: low-vol regime = stagnation (no recent momentum).
@@ -122,10 +108,7 @@ class TestC224VolatilityReasoningDirection:
         }
         lines = _build_volatility_lines(metrics, signal="bearish")
         interp = _extract_interp(lines)
-        assert "停滞" in interp, (
-            f"C224: bearish=low-vol=stagnation, 解读 should mention 停滞; "
-            f"got interp: {interp!r}"
-        )
+        assert "停滞" in interp, f"C224: bearish=low-vol=stagnation, 解读 should mention 停滞; " f"got interp: {interp!r}"
 
     def test_regime_scale_comment_uses_c236_thresholds(self) -> None:
         """C236 B_narrow: VOL_LOW_THRESHOLD 0.8→0.9, VOL_HIGH_THRESHOLD 1.2→1.1.
@@ -140,20 +123,15 @@ class TestC224VolatilityReasoningDirection:
         lines = _build_volatility_lines(metrics, signal="neutral")
         # Find the regime-scale line (波动率区间)
         regime_line = next((ln for ln in lines if "波动率区间" in ln), "")
-        assert "0.9" in regime_line and "1.1" in regime_line, (
-            f"C236 B_narrow: regime-scale comment must reference 0.9/1.1 (was 0.8/1.2); "
-            f"got regime_line: {regime_line!r}"
-        )
+        assert "0.9" in regime_line and "1.1" in regime_line, f"C236 B_narrow: regime-scale comment must reference 0.9/1.1 (was 0.8/1.2); " f"got regime_line: {regime_line!r}"
         # Must NOT reference stale 0.8/1.2 thresholds
-        assert "0.8" not in regime_line and "1.2" not in regime_line, (
-            f"C236 B_narrow: regime-scale comment must NOT reference stale 0.8/1.2; "
-            f"got regime_line: {regime_line!r}"
-        )
+        assert "0.8" not in regime_line and "1.2" not in regime_line, f"C236 B_narrow: regime-scale comment must NOT reference stale 0.8/1.2; " f"got regime_line: {regime_line!r}"
 
 
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 def _extract_interp(lines: list[str]) -> str:
     """Extract the 解读 line from _build_volatility_lines output."""

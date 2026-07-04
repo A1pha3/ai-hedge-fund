@@ -1,4 +1,5 @@
 """Tests for scripts/diff_screening_results.py — diff between two auto-screening reports."""
+
 from __future__ import annotations
 
 import json
@@ -43,14 +44,22 @@ def test_build_index_empty_report() -> None:
 
 def test_compute_diff_detects_new_entrants_and_dropouts() -> None:
     """Tickers in idx2 but not idx1 = new entrants; reverse = dropouts."""
-    idx1 = diff_mod._build_index(_make_report([
-        {"ticker": "000001", "score_b": 0.5, "name": "A", "industry_sw": "X"},
-        {"ticker": "000002", "score_b": 0.4, "name": "B", "industry_sw": "Y"},
-    ]))
-    idx2 = diff_mod._build_index(_make_report([
-        {"ticker": "000001", "score_b": 0.5, "name": "A", "industry_sw": "X"},
-        {"ticker": "000003", "score_b": 0.6, "name": "C", "industry_sw": "Z"},
-    ]))
+    idx1 = diff_mod._build_index(
+        _make_report(
+            [
+                {"ticker": "000001", "score_b": 0.5, "name": "A", "industry_sw": "X"},
+                {"ticker": "000002", "score_b": 0.4, "name": "B", "industry_sw": "Y"},
+            ]
+        )
+    )
+    idx2 = diff_mod._build_index(
+        _make_report(
+            [
+                {"ticker": "000001", "score_b": 0.5, "name": "A", "industry_sw": "X"},
+                {"ticker": "000003", "score_b": 0.6, "name": "C", "industry_sw": "Z"},
+            ]
+        )
+    )
     diff = diff_mod.compute_diff(idx1, idx2)
     new_tickers = [e["ticker"] for e in diff["new_entrants"]]
     drop_tickers = [e["ticker"] for e in diff["dropouts"]]
@@ -61,14 +70,22 @@ def test_compute_diff_detects_new_entrants_and_dropouts() -> None:
 
 def test_compute_diff_detects_rank_movers() -> None:
     """Tickers in both with different ranks should appear in rank_movers."""
-    idx1 = diff_mod._build_index(_make_report([
-        {"ticker": "000001", "score_b": 0.3, "name": "A", "industry_sw": "X"},
-        {"ticker": "000002", "score_b": 0.5, "name": "B", "industry_sw": "Y"},
-    ]))
-    idx2 = diff_mod._build_index(_make_report([
-        {"ticker": "000002", "score_b": 0.5, "name": "B", "industry_sw": "Y"},
-        {"ticker": "000001", "score_b": 0.4, "name": "A", "industry_sw": "X"},
-    ]))
+    idx1 = diff_mod._build_index(
+        _make_report(
+            [
+                {"ticker": "000001", "score_b": 0.3, "name": "A", "industry_sw": "X"},
+                {"ticker": "000002", "score_b": 0.5, "name": "B", "industry_sw": "Y"},
+            ]
+        )
+    )
+    idx2 = diff_mod._build_index(
+        _make_report(
+            [
+                {"ticker": "000002", "score_b": 0.5, "name": "B", "industry_sw": "Y"},
+                {"ticker": "000001", "score_b": 0.4, "name": "A", "industry_sw": "X"},
+            ]
+        )
+    )
     diff = diff_mod.compute_diff(idx1, idx2)
     movers = {m["ticker"]: m for m in diff["rank_movers"]}
     assert "000001" in movers
@@ -111,14 +128,20 @@ def test_latest_date_returns_none_when_empty() -> None:
 
 def test_main_runs_end_to_end(tmp_path: Path, capsys) -> None:
     """main() should load two reports, compute diff, and save JSON output."""
-    r1 = _make_report([
-        {"ticker": "000001", "score_b": 0.5, "name": "A", "industry_sw": "银行"},
-        {"ticker": "000002", "score_b": 0.4, "name": "B", "industry_sw": "电子"},
-    ], date="20260601")
-    r2 = _make_report([
-        {"ticker": "000001", "score_b": 0.6, "name": "A", "industry_sw": "银行"},
-        {"ticker": "000003", "score_b": 0.7, "name": "C", "industry_sw": "医药"},
-    ], date="20260602")
+    r1 = _make_report(
+        [
+            {"ticker": "000001", "score_b": 0.5, "name": "A", "industry_sw": "银行"},
+            {"ticker": "000002", "score_b": 0.4, "name": "B", "industry_sw": "电子"},
+        ],
+        date="20260601",
+    )
+    r2 = _make_report(
+        [
+            {"ticker": "000001", "score_b": 0.6, "name": "A", "industry_sw": "银行"},
+            {"ticker": "000003", "score_b": 0.7, "name": "C", "industry_sw": "医药"},
+        ],
+        date="20260602",
+    )
     (tmp_path / "auto_screening_20260601.json").write_text(json.dumps(r1))
     (tmp_path / "auto_screening_20260602.json").write_text(json.dumps(r2))
 

@@ -6,6 +6,7 @@ Key invariants from the plan:
   3. ``--reuse-existing`` does not invoke expensive refresh steps.
   4. ONE-PAGER does not contain fields unavailable at the current phase.
 """
+
 from __future__ import annotations
 
 import json
@@ -210,9 +211,7 @@ class TestIdempotency:
 
 
 class TestRefreshOnceInvariant:
-    def test_profile_compare_does_not_refresh_early_runner_twice(
-        self, tmp_path: Path
-    ) -> None:
+    def test_profile_compare_does_not_refresh_early_runner_twice(self, tmp_path: Path) -> None:
         """P0D (2026-06-04): profile compare must never refresh early-runner a second time.
 
         Plan invariant: "保证 early-runner 整次运行最多刷新一次" — even when both

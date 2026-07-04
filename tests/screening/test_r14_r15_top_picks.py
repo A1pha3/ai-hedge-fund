@@ -1,4 +1,5 @@
 """Tests for R14 (sector rotation direction) and R15 (factor attribution) in top_picks."""
+
 from __future__ import annotations
 
 from src.screening.top_picks import (

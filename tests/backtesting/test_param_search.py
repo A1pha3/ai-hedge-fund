@@ -243,13 +243,9 @@ def test_load_checkpoint_corrupt_falls_back_to_empty(tmp_path, caplog):
     with caplog.at_level(_logging.WARNING, logger="src.backtesting.param_search"):
         result = _load_checkpoint(cp_path)
     # 应回退空 checkpoint (空 completed_trials), 而非抛 JSONDecodeError
-    assert result == {"completed_trials": []}, (
-        f"损坏 checkpoint 应回退空结构而非崩溃; got result={result!r}"
-    )
+    assert result == {"completed_trials": []}, f"损坏 checkpoint 应回退空结构而非崩溃; got result={result!r}"
     warn_msgs = [r.message for r in caplog.records if r.levelno >= _logging.WARNING]
-    assert any("checkpoint" in m.lower() or "损坏" in m for m in warn_msgs), (
-        f"损坏 checkpoint 应触发 warning 诊断; got warnings={warn_msgs!r}"
-    )
+    assert any("checkpoint" in m.lower() or "损坏" in m for m in warn_msgs), f"损坏 checkpoint 应触发 warning 诊断; got warnings={warn_msgs!r}"
 
 
 def test_save_checkpoint_is_atomic_no_partial_file_on_crash(tmp_path, monkeypatch):
@@ -302,10 +298,7 @@ def test_save_checkpoint_is_atomic_no_partial_file_on_crash(tmp_path, monkeypatc
     #    never a truncated/partial file. This is the atomic-write guarantee.
     assert cp_path.exists(), "canonical checkpoint must remain after failed rename"
     recovered = _load_checkpoint(cp_path)
-    assert recovered == baseline_data, (
-        f"atomic write must preserve prior valid checkpoint on crash; "
-        f"got {recovered!r}, expected baseline {baseline_data!r}"
-    )
+    assert recovered == baseline_data, f"atomic write must preserve prior valid checkpoint on crash; " f"got {recovered!r}, expected baseline {baseline_data!r}"
 
     # 4. No stray temp files left in the directory (cleanup-on-failure).
     stray_tmps = [p for p in tmp_path.iterdir() if p.suffix == ".tmp"]
@@ -810,8 +803,6 @@ def test_save_search_report_md_writes_utf8_non_ascii(tmp_path, monkeypatch):
     )
 
     # Record every write_text call's kwargs so we can assert encoding is explicit.
-    from pathlib import Path
-
     real_write_text = Path.write_text
     recorded_encodings: list[object] = []
 
@@ -825,9 +816,7 @@ def test_save_search_report_md_writes_utf8_non_ascii(tmp_path, monkeypatch):
     save_search_payload(report, tmp_path / "report.json")
 
     # Both write_text calls must pass an explicit UTF-8 encoding (not None = locale default).
-    assert recorded_encodings == ["utf-8", "utf-8"], (
-        f"expected explicit utf-8 encoding on both write_text calls, got {recorded_encodings}"
-    )
+    assert recorded_encodings == ["utf-8", "utf-8"], f"expected explicit utf-8 encoding on both write_text calls, got {recorded_encodings}"
 
     # Round-trip: Chinese A-share param labels survive as raw UTF-8 bytes in both files.
     md_bytes = (tmp_path / "report.md").read_bytes()

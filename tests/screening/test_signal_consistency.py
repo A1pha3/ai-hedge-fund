@@ -28,12 +28,19 @@ def _make_rec(
 
 class TestCheckSignalConsistency:
     def test_all_bullish_is_high_consistency(self) -> None:
-        recs = [_make_rec("000001", "Test", 0.8, {
-            "trend": {"signal": "bullish", "confidence": 80},
-            "mean_reversion": {"signal": "bullish", "confidence": 70},
-            "fundamental": {"signal": "bullish", "confidence": 90},
-            "event_sentiment": {"signal": "bullish", "confidence": 85},
-        })]
+        recs = [
+            _make_rec(
+                "000001",
+                "Test",
+                0.8,
+                {
+                    "trend": {"signal": "bullish", "confidence": 80},
+                    "mean_reversion": {"signal": "bullish", "confidence": 70},
+                    "fundamental": {"signal": "bullish", "confidence": 90},
+                    "event_sentiment": {"signal": "bullish", "confidence": 85},
+                },
+            )
+        ]
         results = check_signal_consistency(recs)
         assert len(results) == 1
         assert results[0]["consistency_level"] == "high"
@@ -42,12 +49,19 @@ class TestCheckSignalConsistency:
         assert results[0]["conflicting_strategies"] == []
 
     def test_split_signals_is_low_consistency(self) -> None:
-        recs = [_make_rec("000001", "Test", 0.5, {
-            "trend": {"signal": "bullish", "confidence": 80},
-            "mean_reversion": {"signal": "bearish", "confidence": 70},
-            "fundamental": {"signal": "bullish", "confidence": 60},
-            "event_sentiment": {"signal": "bearish", "confidence": 65},
-        })]
+        recs = [
+            _make_rec(
+                "000001",
+                "Test",
+                0.5,
+                {
+                    "trend": {"signal": "bullish", "confidence": 80},
+                    "mean_reversion": {"signal": "bearish", "confidence": 70},
+                    "fundamental": {"signal": "bullish", "confidence": 60},
+                    "event_sentiment": {"signal": "bearish", "confidence": 65},
+                },
+            )
+        ]
         results = check_signal_consistency(recs)
         assert results[0]["consistency_level"] in ("low", "medium")
         assert results[0]["agreement_ratio"] == 0.5
@@ -55,12 +69,19 @@ class TestCheckSignalConsistency:
         assert results[0]["bearish_count"] == 2
 
     def test_three_to_one_is_medium(self) -> None:
-        recs = [_make_rec("000001", "Test", 0.6, {
-            "trend": {"signal": "bullish", "confidence": 80},
-            "mean_reversion": {"signal": "bearish", "confidence": 70},
-            "fundamental": {"signal": "bullish", "confidence": 90},
-            "event_sentiment": {"signal": "bullish", "confidence": 85},
-        })]
+        recs = [
+            _make_rec(
+                "000001",
+                "Test",
+                0.6,
+                {
+                    "trend": {"signal": "bullish", "confidence": 80},
+                    "mean_reversion": {"signal": "bearish", "confidence": 70},
+                    "fundamental": {"signal": "bullish", "confidence": 90},
+                    "event_sentiment": {"signal": "bullish", "confidence": 85},
+                },
+            )
+        ]
         results = check_signal_consistency(recs)
         assert results[0]["consistency_level"] == "high"
         assert results[0]["agreement_ratio"] == 0.75
@@ -73,10 +94,17 @@ class TestCheckSignalConsistency:
         assert results[0]["total_strategies"] == 0
 
     def test_neutral_signals(self) -> None:
-        recs = [_make_rec("000001", "Test", 0.3, {
-            "trend": {"signal": "neutral", "confidence": 50},
-            "mean_reversion": {"signal": "neutral", "confidence": 50},
-        })]
+        recs = [
+            _make_rec(
+                "000001",
+                "Test",
+                0.3,
+                {
+                    "trend": {"signal": "neutral", "confidence": 50},
+                    "mean_reversion": {"signal": "neutral", "confidence": 50},
+                },
+            )
+        ]
         results = check_signal_consistency(recs)
         assert results[0]["neutral_count"] >= 2
         assert results[0]["agreement_ratio"] == 1.0
@@ -95,12 +123,19 @@ class TestCheckSignalConsistency:
         conflicting_strategies (bearish flagged as conflicting against a
         bullish "dominant" that doesn't reflect the neutral-majority reality).
         """
-        recs = [_make_rec("000001", "Test", 0.4, {
-            "trend": {"signal": "neutral", "confidence": 50},
-            "mean_reversion": {"signal": "neutral", "confidence": 50},
-            "fundamental": {"signal": "bullish", "confidence": 80},
-            "event_sentiment": {"signal": "bearish", "confidence": 70},
-        })]
+        recs = [
+            _make_rec(
+                "000001",
+                "Test",
+                0.4,
+                {
+                    "trend": {"signal": "neutral", "confidence": 50},
+                    "mean_reversion": {"signal": "neutral", "confidence": 50},
+                    "fundamental": {"signal": "bullish", "confidence": 80},
+                    "event_sentiment": {"signal": "bearish", "confidence": 70},
+                },
+            )
+        ]
         results = check_signal_consistency(recs)
         # neutral(2) is the plurality -> dominant must be "neutral"
         assert results[0]["dominant_direction"] == "neutral"
@@ -112,12 +147,19 @@ class TestCheckSignalConsistency:
         Previously ``bullish(0) >= bearish(0)`` was True -> dominant="bullish",
         misreporting an all-undecided stock as bullish-led.
         """
-        recs = [_make_rec("000001", "Test", 0.3, {
-            "trend": {"signal": "neutral", "confidence": 50},
-            "mean_reversion": {"signal": "neutral", "confidence": 50},
-            "fundamental": {"signal": "neutral", "confidence": 50},
-            "event_sentiment": {"signal": "neutral", "confidence": 50},
-        })]
+        recs = [
+            _make_rec(
+                "000001",
+                "Test",
+                0.3,
+                {
+                    "trend": {"signal": "neutral", "confidence": 50},
+                    "mean_reversion": {"signal": "neutral", "confidence": 50},
+                    "fundamental": {"signal": "neutral", "confidence": 50},
+                    "event_sentiment": {"signal": "neutral", "confidence": 50},
+                },
+            )
+        ]
         results = check_signal_consistency(recs)
         assert results[0]["dominant_direction"] == "neutral"
 
@@ -133,11 +175,18 @@ class TestCheckSignalConsistency:
         strategies and artifacts._serialize_strategy_signals persists only
         surviving keys, so <4-key strategy_signals is reachable in practice.
         """
-        recs = [_make_rec("000001", "Test", 0.8, {
-            "trend": {"signal": "bullish", "confidence": 80},
-            "fundamental": {"signal": "bullish", "confidence": 90},
-            # mean_reversion + event_sentiment ABSENT (not neutral)
-        })]
+        recs = [
+            _make_rec(
+                "000001",
+                "Test",
+                0.8,
+                {
+                    "trend": {"signal": "bullish", "confidence": 80},
+                    "fundamental": {"signal": "bullish", "confidence": 90},
+                    # mean_reversion + event_sentiment ABSENT (not neutral)
+                },
+            )
+        ]
         results = check_signal_consistency(recs)
         assert results[0]["bullish_count"] == 2
         assert results[0]["neutral_count"] == 0  # absent ≠ neutral
@@ -188,9 +237,7 @@ class TestRenderConsistencyReport:
 
     def test_renders_summary(self) -> None:
         results = [
-            {"ticker": "000001", "name": "A", "consistency_level": "high", "agreement_ratio": 1.0,
-             "bullish_count": 4, "bearish_count": 0, "neutral_count": 0, "total_strategies": 4,
-             "dominant_direction": "bullish", "conflicting_strategies": [], "score_b": 0.8},
+            {"ticker": "000001", "name": "A", "consistency_level": "high", "agreement_ratio": 1.0, "bullish_count": 4, "bearish_count": 0, "neutral_count": 0, "total_strategies": 4, "dominant_direction": "bullish", "conflicting_strategies": [], "score_b": 0.8},
         ]
         output = render_consistency_report(results)
         assert "Signal Consistency" in output

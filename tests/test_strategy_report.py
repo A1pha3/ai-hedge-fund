@@ -1,4 +1,5 @@
 """Tests for strategy_report.py — P15-2 strategy performance report."""
+
 from __future__ import annotations
 
 import json

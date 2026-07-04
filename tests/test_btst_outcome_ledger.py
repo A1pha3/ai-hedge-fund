@@ -7,6 +7,7 @@ Key invariants from the plan:
   4. 历史摘要不被 outcome 回写修改.
   5. regime 覆盖至少覆盖 normal_trade / shadow_only / halt, 缺失时显式说明.
 """
+
 from __future__ import annotations
 
 import json
@@ -169,13 +170,7 @@ class TestIncrementalEvidence:
         assert evidence["sample_count"] == 2
 
     def test_sufficient_when_many_samples(self) -> None:
-        outcomes = [
-            build_ticker_outcome(**_base_outcome_kwargs(ticker=f"300{i:03d}", verdict="profit"))
-            for i in range(15)
-        ] + [
-            build_ticker_outcome(**_base_outcome_kwargs(ticker=f"301{i:03d}", verdict="loss"))
-            for i in range(10)
-        ]
+        outcomes = [build_ticker_outcome(**_base_outcome_kwargs(ticker=f"300{i:03d}", verdict="profit")) for i in range(15)] + [build_ticker_outcome(**_base_outcome_kwargs(ticker=f"301{i:03d}", verdict="loss")) for i in range(10)]
         header = build_ledger_header(
             decision_id="test",
             signal_date="20260602",
@@ -217,7 +212,9 @@ class TestAtomicWrite:
             build_ticker_outcome(**_base_outcome_kwargs(ticker="300001", verdict="profit")),
         ]
         header_v1 = build_ledger_header(
-            decision_id="test", signal_date="20260602", outcomes=outcomes_v1,
+            decision_id="test",
+            signal_date="20260602",
+            outcomes=outcomes_v1,
         )
         path = tmp_path / "outcome_ledger.json"
         write_outcome_ledger(header_v1, outcomes_v1, path)
@@ -227,7 +224,9 @@ class TestAtomicWrite:
             build_ticker_outcome(**_base_outcome_kwargs(ticker="300002", verdict="loss")),
         ]
         header_v2 = build_ledger_header(
-            decision_id="test", signal_date="20260602", outcomes=outcomes_v2,
+            decision_id="test",
+            signal_date="20260602",
+            outcomes=outcomes_v2,
         )
         write_outcome_ledger(header_v2, outcomes_v2, path)
 
@@ -262,7 +261,9 @@ class TestOutcomeDoesNotModifySummary:
             build_ticker_outcome(**_base_outcome_kwargs(ticker="300001", verdict="profit")),
         ]
         header = build_ledger_header(
-            decision_id="test", signal_date="20260602", outcomes=outcomes,
+            decision_id="test",
+            signal_date="20260602",
+            outcomes=outcomes,
         )
         ledger_path = tmp_path / "outcome_ledger.json"
         write_outcome_ledger(header, outcomes, ledger_path)

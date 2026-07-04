@@ -36,10 +36,7 @@ def test_fisher_valuation_market_cap_zero_returns_insufficient_data():
     ]
     # market_cap=0 (e.g. corrupt snapshot / unknown-cap stock)
     result = analyze_fisher_valuation(financial_line_items, 0)
-    assert result["score"] == 0, (
-        f"market_cap=0 应与 None 一样返回 score=0 (insufficient data); got score={result['score']} "
-        f"details={result['details']!r} — 这意味着 0 市值票被当合法标的评分 (R65 latent bug)"
-    )
+    assert result["score"] == 0, f"market_cap=0 应与 None 一样返回 score=0 (insufficient data); got score={result['score']} " f"details={result['details']!r} — 这意味着 0 市值票被当合法标的评分 (R65 latent bug)"
 
 
 def test_druckenmiller_valuation_market_cap_zero_returns_insufficient_data():
@@ -55,10 +52,7 @@ def test_druckenmiller_valuation_market_cap_zero_returns_insufficient_data():
         )
     ]
     result = analyze_druckenmiller_valuation(financial_line_items, 0)
-    assert result["score"] == 0, (
-        f"market_cap=0 应与 None 一样返回 score=0; got score={result['score']} "
-        f"details={result['details']!r}"
-    )
+    assert result["score"] == 0, f"market_cap=0 应与 None 一样返回 score=0; got score={result['score']} " f"details={result['details']!r}"
 
 
 def test_lynch_valuation_market_cap_zero_returns_insufficient_data():
@@ -71,7 +65,4 @@ def test_lynch_valuation_market_cap_zero_returns_insufficient_data():
         )
     ]
     result = analyze_lynch_valuation(financial_line_items, 0)
-    assert result["score"] == 0, (
-        f"market_cap=0 应与 None 一样返回 score=0; got score={result['score']} "
-        f"details={result['details']!r}"
-    )
+    assert result["score"] == 0, f"market_cap=0 应与 None 一样返回 score=0; got score={result['score']} " f"details={result['details']!r}"

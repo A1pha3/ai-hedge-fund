@@ -10,6 +10,7 @@ C246 drained buffett/ackman-ROE; C247 drained rakesh liabilities/debt numerator.
 
 Fix: `is not None` guard (与 C246/C247 同模板). 0.0 是 computed value, None 是 missing.
 """
+
 from __future__ import annotations
 
 from src.agents.fundamentals_helpers import _analyze_fundamentals_health
@@ -84,9 +85,7 @@ class TestDebtToEquityFalsyZero:
         )
         signal, reasoning = _analyze_fundamentals_health(metrics)
         # 3 个 +1 → bullish (health_score >= 2)
-        assert signal == "bullish", (
-            f"D/E=0.0 (零负债) 应 +1 → bullish; got {signal} (truthiness 短路 bug)"
-        )
+        assert signal == "bullish", f"D/E=0.0 (零负债) 应 +1 → bullish; got {signal} (truthiness 短路 bug)"
 
     def test_zero_debt_to_equity_alone_is_bullish(self):
         """D/E=0.0 单独 +1, 配合 current_ratio>1.5 → bullish."""
@@ -97,9 +96,7 @@ class TestDebtToEquityFalsyZero:
             earnings_per_share=None,
         )
         signal, _ = _analyze_fundamentals_health(metrics)
-        assert signal == "bullish", (
-            f"D/E=0.0 + current_ratio>1.5 应 bullish; got {signal}"
-        )
+        assert signal == "bullish", f"D/E=0.0 + current_ratio>1.5 应 bullish; got {signal}"
 
     def test_none_debt_to_equity_does_not_score(self):
         """D/E=None (missing) 不 +1 (regression guard)."""
@@ -111,9 +108,7 @@ class TestDebtToEquityFalsyZero:
         )
         signal, _ = _analyze_fundamentals_health(metrics)
         # 只有 current_ratio +1 → health_score=1 → neutral
-        assert signal == "neutral", (
-            f"D/E=None + current_ratio>1.5 应 neutral (1/3); got {signal}"
-        )
+        assert signal == "neutral", f"D/E=None + current_ratio>1.5 应 neutral (1/3); got {signal}"
 
 
 class TestFreeCashFlowFalsyZero:
@@ -128,9 +123,7 @@ class TestFreeCashFlowFalsyZero:
             earnings_per_share=-1.0,  # 0.0 > -1.0*0.8=-0.8 → True, 应 +1
         )
         signal, _ = _analyze_fundamentals_health(metrics)
-        assert signal == "bullish", (
-            f"FCF=0.0 + EPS=-1.0 应 +1 → bullish; got {signal} (truthiness 短路 bug)"
-        )
+        assert signal == "bullish", f"FCF=0.0 + EPS=-1.0 应 +1 → bullish; got {signal} (truthiness 短路 bug)"
 
     def test_zero_fcf_with_positive_eps_does_not_score(self):
         """FCF=0.0 + EPS=4.0 → 0.0 > 3.2 → False, 不 +1 (regression guard)."""
@@ -142,9 +135,7 @@ class TestFreeCashFlowFalsyZero:
         )
         signal, _ = _analyze_fundamentals_health(metrics)
         # health_score=0 → bearish
-        assert signal == "bearish", (
-            f"FCF=0.0 + EPS=4.0 不 +1 → bearish; got {signal}"
-        )
+        assert signal == "bearish", f"FCF=0.0 + EPS=4.0 不 +1 → bearish; got {signal}"
 
     def test_none_fcf_does_not_score(self):
         """FCF=None (missing) 不 +1 (regression guard)."""
@@ -155,9 +146,7 @@ class TestFreeCashFlowFalsyZero:
             earnings_per_share=4.0,
         )
         signal, _ = _analyze_fundamentals_health(metrics)
-        assert signal == "bearish", (
-            f"FCF=None 不 +1 → bearish; got {signal}"
-        )
+        assert signal == "bearish", f"FCF=None 不 +1 → bearish; got {signal}"
 
     def test_none_eps_does_not_score(self):
         """EPS=None (missing) 不 +1 (regression guard)."""
@@ -168,9 +157,7 @@ class TestFreeCashFlowFalsyZero:
             earnings_per_share=None,  # missing
         )
         signal, _ = _analyze_fundamentals_health(metrics)
-        assert signal == "bearish", (
-            f"EPS=None 不 +1 → bearish; got {signal}"
-        )
+        assert signal == "bearish", f"EPS=None 不 +1 → bearish; got {signal}"
 
 
 class TestCurrentRatioFalsyZero:
@@ -185,9 +172,7 @@ class TestCurrentRatioFalsyZero:
             earnings_per_share=None,
         )
         signal, _ = _analyze_fundamentals_health(metrics)
-        assert signal == "bearish", (
-            f"current_ratio=0.0 不 +1 → bearish; got {signal}"
-        )
+        assert signal == "bearish", f"current_ratio=0.0 不 +1 → bearish; got {signal}"
 
     def test_none_current_ratio_does_not_score(self):
         """current_ratio=None (missing) 不 +1 (regression guard)."""
@@ -198,9 +183,7 @@ class TestCurrentRatioFalsyZero:
             earnings_per_share=None,
         )
         signal, _ = _analyze_fundamentals_health(metrics)
-        assert signal == "bearish", (
-            f"全 None → bearish; got {signal}"
-        )
+        assert signal == "bearish", f"全 None → bearish; got {signal}"
 
 
 class TestNonzeroRegressionGuard:

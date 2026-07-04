@@ -45,9 +45,7 @@ def test_analyze_btst_structural_shadow_runbook_freezes_negative_post_release_ca
     outcome_report.write_text(
         json.dumps(
             {
-                "target_cases": [
-                    {"trade_date": "2026-03-25", "ticker": "300724", "after_decision": "near_miss"}
-                ],
+                "target_cases": [{"trade_date": "2026-03-25", "ticker": "300724", "after_decision": "near_miss"}],
                 "next_high_return_mean": -0.007,
                 "next_close_return_mean": -0.0443,
                 "next_close_positive_rate": 0.0,

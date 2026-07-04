@@ -8,6 +8,7 @@ state_type_calibration 结构。纯诊断, 不改因子/gate/仓位。
   tracking_history (realized T+5/T+10 return) JOIN 历史报告 recommendations
   (score_decomposition.base_contributions + market_state.state_type) on (ticker, date).
 """
+
 from __future__ import annotations
 
 from src.screening.factor_attribution_by_state import (
@@ -90,6 +91,7 @@ class TestScoreControlledFactorAttribution:
     def test_real_factor_inversion_survives_score_control(self) -> None:
         """真实因子效应: 同 score bucket 内, 高贡献→低胜率 (经 control 仍倒挂)."""
         from src.screening.factor_attribution_by_state import compute_factor_attribution_score_controlled_from_loaded
+
         recs = []
         # 全在 low bucket (score~0.2), 排除 score confound; event_sentiment 高→负return
         for i in range(60):
@@ -104,6 +106,7 @@ class TestScoreControlledFactorAttribution:
     def test_score_confound_filtered_out(self) -> None:
         """纯 score confound (无真实因子效应): score-controlled 后不报倒挂."""
         from src.screening.factor_attribution_by_state import compute_factor_attribution_score_controlled_from_loaded
+
         recs = []
         # factor 贡献完全跟随 score (无独立效应); winrate 由 score 决定非 factor
         # low bucket: factor 低 + 高 winrate; high bucket: factor 高 + 低 winrate
@@ -122,6 +125,7 @@ class TestScoreControlledFactorAttribution:
     def test_score_controlled_inversion_carries_bootstrap_ci(self) -> None:
         """c321/autodev-36: score-controlled 因子倒挂携带 bootstrap CI (镜像 c317)."""
         from src.screening.factor_attribution_by_state import compute_factor_attribution_score_controlled_from_loaded
+
         recs = []
         # 全 low bucket, event_sentiment 高→负 (强倒挂, ~720 条)
         for i in range(120):
@@ -142,17 +146,26 @@ class TestScoreControlledFactorAttribution:
     def test_score_controlled_render_shows_ci_bracket(self) -> None:
         """c321: render_score_controlled_factor_line 展示 CI 括号."""
         from src.screening.factor_attribution_by_state import (
-            ScoreControlledFactorInversion, ScoreControlledFactorReport,
+            ScoreControlledFactorInversion,
+            ScoreControlledFactorReport,
             render_score_controlled_factor_line,
         )
+
         inv = ScoreControlledFactorInversion(
-            factor="event_sentiment", stratified_inversion=0.15,
-            high_winrate=0.40, low_winrate=0.55, n=200, survives=True,
-            inversion_ci_low=0.05, inversion_ci_high=0.25,
+            factor="event_sentiment",
+            stratified_inversion=0.15,
+            high_winrate=0.40,
+            low_winrate=0.55,
+            n=200,
+            survives=True,
+            inversion_ci_low=0.05,
+            inversion_ci_high=0.25,
         )
         report = ScoreControlledFactorReport(
-            inversions=[inv], sample_count=500,
-            horizon_label="T+5", verdict="ok",
+            inversions=[inv],
+            sample_count=500,
+            horizon_label="T+5",
+            verdict="ok",
         )
         line = render_score_controlled_factor_line(report)
         assert "CI[" in line
@@ -163,18 +176,21 @@ class TestScoreControlledFactorAttribution:
     def test_score_controlled_render_silent_when_insufficient(self) -> None:
         """insufficient 时 render 返回空串."""
         from src.screening.factor_attribution_by_state import (
-            ScoreControlledFactorReport, render_score_controlled_factor_line,
+            ScoreControlledFactorReport,
+            render_score_controlled_factor_line,
         )
+
         report = ScoreControlledFactorReport(verdict="insufficient")
         assert render_score_controlled_factor_line(report) == ""
 
     def test_bootstrap_inversion_ci_contains_point_estimate(self) -> None:
         """c346/autodev-36: 统计学基本性质 — CI 必须包含点估计."""
         from src.screening.factor_attribution_by_state import _bootstrap_inversion_ci
+
         # 60% low winrate, 30% high winrate → inversion point estimate = 0.30
-        high_ret = [-1.0] * 70 + [1.0] * 30   # 30% winrate
-        low_ret = [1.0] * 60 + [-1.0] * 40     # 60% winrate
-        point = (60/100) - (30/100)  # 0.30
+        high_ret = [-1.0] * 70 + [1.0] * 30  # 30% winrate
+        low_ret = [1.0] * 60 + [-1.0] * 40  # 60% winrate
+        point = (60 / 100) - (30 / 100)  # 0.30
         lo, hi = _bootstrap_inversion_ci(high_ret, low_ret, n_bootstrap=2000, seed=42)
         assert lo is not None and hi is not None
         assert lo <= point <= hi, f"CI [{lo:.3f}, {hi:.3f}] must contain point estimate {point:.3f}"
@@ -182,6 +198,7 @@ class TestScoreControlledFactorAttribution:
     def test_bootstrap_inversion_ci_upper_ge_lower(self) -> None:
         """_bootstrap_inversion_ci 单调性: upper >= lower (幂等 seed 相同)."""
         from src.screening.factor_attribution_by_state import _bootstrap_inversion_ci
+
         high_ret = [-2.0, -1.0, -3.0, -5.0, -1.5, -0.5, -4.0, -2.0, -3.5, -1.0]
         low_ret = [3.0, 5.0, 2.0, 1.0, 4.0, 3.5, 2.5, 1.5, 4.5, 3.0]
         lo, hi = _bootstrap_inversion_ci(high_ret, low_ret, n_bootstrap=500, seed=42)
@@ -193,6 +210,7 @@ class TestScoreControlledFactorAttribution:
     def test_bootstrap_inversion_ci_deterministic(self) -> None:
         """同 seed → 同 CI (幂等)."""
         from src.screening.factor_attribution_by_state import _bootstrap_inversion_ci
+
         high_ret = [-2.0, -1.0, -3.0, -5.0] * 5
         low_ret = [3.0, 5.0, 2.0, 1.0] * 5
         lo1, hi1 = _bootstrap_inversion_ci(high_ret, low_ret, n_bootstrap=500, seed=42)
@@ -202,6 +220,7 @@ class TestScoreControlledFactorAttribution:
     def test_bootstrap_inversion_ci_returns_none_for_empty(self) -> None:
         """空输入 → None, None."""
         from src.screening.factor_attribution_by_state import _bootstrap_inversion_ci
+
         lo, hi = _bootstrap_inversion_ci([], [1.0, 2.0])
         assert lo is None and hi is None
         lo, hi = _bootstrap_inversion_ci([1.0, 2.0], [])
@@ -224,14 +243,22 @@ class TestScoreControlledFactorAttribution:
     def test_factor_state_render_shows_ci_bracket(self) -> None:
         """render_factor_attribution_by_state_line 展示 CI 括号."""
         inv = FactorStateInversion(
-            state_type="MIXED", factor="MR",
-            high_contrib_winrate=0.22, low_contrib_winrate=0.50,
-            inversion=0.28, high_n=30, low_n=30,
-            inversion_ci_low=0.10, inversion_ci_high=0.42,
+            state_type="MIXED",
+            factor="MR",
+            high_contrib_winrate=0.22,
+            low_contrib_winrate=0.50,
+            inversion=0.28,
+            high_n=30,
+            low_n=30,
+            inversion_ci_low=0.10,
+            inversion_ci_high=0.42,
         )
         report = FactorAttributionByStateReport(
-            inversions=[inv], sample_count=100,
-            state_types=["MIXED"], horizon_label="T+5", verdict="ok",
+            inversions=[inv],
+            sample_count=100,
+            state_types=["MIXED"],
+            horizon_label="T+5",
+            verdict="ok",
         )
         line = render_factor_attribution_by_state_line(report)
         assert "CI[" in line
@@ -241,14 +268,22 @@ class TestScoreControlledFactorAttribution:
     def test_factor_state_render_no_ci_fallback(self) -> None:
         """CI unavailable 时 fallback 到 bare estimate (无 CI)."""
         inv = FactorStateInversion(
-            state_type="MIXED", factor="ES",
-            high_contrib_winrate=0.30, low_contrib_winrate=0.55,
-            inversion=0.25, high_n=30, low_n=30,
-            inversion_ci_low=None, inversion_ci_high=None,
+            state_type="MIXED",
+            factor="ES",
+            high_contrib_winrate=0.30,
+            low_contrib_winrate=0.55,
+            inversion=0.25,
+            high_n=30,
+            low_n=30,
+            inversion_ci_low=None,
+            inversion_ci_high=None,
         )
         report = FactorAttributionByStateReport(
-            inversions=[inv], sample_count=60,
-            state_types=["MIXED"], horizon_label="T+5", verdict="ok",
+            inversions=[inv],
+            sample_count=60,
+            state_types=["MIXED"],
+            horizon_label="T+5",
+            verdict="ok",
         )
         line = render_factor_attribution_by_state_line(report)
         assert "CI[" not in line
@@ -257,14 +292,22 @@ class TestScoreControlledFactorAttribution:
     def test_factor_state_render_shows_n(self) -> None:
         """c332/autodev-36: n 现在展示 (镜像 _format_one_score_controlled)."""
         inv = FactorStateInversion(
-            state_type="MIXED", factor="MR",
-            high_contrib_winrate=0.30, low_contrib_winrate=0.55,
-            inversion=0.25, high_n=40, low_n=60,
-            inversion_ci_low=0.10, inversion_ci_high=0.40,
+            state_type="MIXED",
+            factor="MR",
+            high_contrib_winrate=0.30,
+            low_contrib_winrate=0.55,
+            inversion=0.25,
+            high_n=40,
+            low_n=60,
+            inversion_ci_low=0.10,
+            inversion_ci_high=0.40,
         )
         report = FactorAttributionByStateReport(
-            inversions=[inv], sample_count=100,
-            state_types=["MIXED"], horizon_label="T+5", verdict="ok",
+            inversions=[inv],
+            sample_count=100,
+            state_types=["MIXED"],
+            horizon_label="T+5",
+            verdict="ok",
         )
         line = render_factor_attribution_by_state_line(report)
         assert "n=100" in line  # total_n = high_n + low_n = 40 + 60
@@ -286,6 +329,7 @@ class TestAsOf:
 
     def test_score_controlled_report_has_as_of(self) -> None:
         from src.screening.factor_attribution_by_state import compute_factor_attribution_score_controlled_from_loaded
+
         recs = [
             {"score_decomposition": {"base_contributions": {"ES": 0.02}, "total": 0.3}, "next_5day_return": -2.0, "recommended_date": "20260701"},
             {"score_decomposition": {"base_contributions": {"ES": -0.05}, "total": 0.3}, "next_5day_return": +3.0, "recommended_date": "20260702"},
@@ -296,14 +340,22 @@ class TestAsOf:
     def test_render_shows_as_of(self) -> None:
         """render 展示 | 数据时点."""
         inv = FactorStateInversion(
-            state_type="MIXED", factor="MR",
-            high_contrib_winrate=0.30, low_contrib_winrate=0.55,
-            inversion=0.25, high_n=20, low_n=20,
-            inversion_ci_low=0.10, inversion_ci_high=0.40,
+            state_type="MIXED",
+            factor="MR",
+            high_contrib_winrate=0.30,
+            low_contrib_winrate=0.55,
+            inversion=0.25,
+            high_n=20,
+            low_n=20,
+            inversion_ci_low=0.10,
+            inversion_ci_high=0.40,
         )
         report = FactorAttributionByStateReport(
-            inversions=[inv], sample_count=40,
-            state_types=["MIXED"], horizon_label="T+5", verdict="ok",
+            inversions=[inv],
+            sample_count=40,
+            state_types=["MIXED"],
+            horizon_label="T+5",
+            verdict="ok",
             as_of="20260703",
         )
         line = render_factor_attribution_by_state_line(report)
@@ -313,13 +365,20 @@ class TestAsOf:
     def test_render_no_as_of_when_none(self) -> None:
         """as_of=None 时不显示数据时点."""
         inv = FactorStateInversion(
-            state_type="MIXED", factor="ES",
-            high_contrib_winrate=0.30, low_contrib_winrate=0.55,
-            inversion=0.25, high_n=20, low_n=20,
+            state_type="MIXED",
+            factor="ES",
+            high_contrib_winrate=0.30,
+            low_contrib_winrate=0.55,
+            inversion=0.25,
+            high_n=20,
+            low_n=20,
         )
         report = FactorAttributionByStateReport(
-            inversions=[inv], sample_count=40,
-            state_types=["MIXED"], horizon_label="T+5", verdict="ok",
+            inversions=[inv],
+            sample_count=40,
+            state_types=["MIXED"],
+            horizon_label="T+5",
+            verdict="ok",
         )
         line = render_factor_attribution_by_state_line(report)
         assert "数据时点" not in line
@@ -331,6 +390,7 @@ class TestDeterministicStrHash:
     def test_known_values(self) -> None:
         """Lock the Java String.hashCode() algorithm to known outputs."""
         from src.screening.factor_attribution_by_state import _deterministic_str_hash
+
         assert _deterministic_str_hash("") == 0
         assert _deterministic_str_hash("a") == 97
         assert _deterministic_str_hash("ab") == 3105  # 31*97 + 98
@@ -340,5 +400,6 @@ class TestDeterministicStrHash:
         from src.screening.factor_attribution_by_state import _deterministic_str_hash as h1
         from src.screening.north_star_pnl import _deterministic_str_hash as h2
         from src.screening.model_version_comparison import _deterministic_str_hash as h3
+
         for s in ["event_sentiment", "trend", "score_desc"]:
             assert h1(s) == h2(s) == h3(s)

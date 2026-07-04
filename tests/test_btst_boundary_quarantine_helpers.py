@@ -6,20 +6,26 @@ from scripts.btst_boundary_quarantine_helpers import (
 
 
 def test_is_boundary_without_explainability_target_accepts_only_target_bucket() -> None:
-    assert is_boundary_without_explainability_target(
-        {
-            "root_cause": "boundary_without_explainability",
-            "bucket": "missing_all_core_features",
-            "candidate_source": "short_trade_boundary",
-        }
-    ) is True
-    assert is_boundary_without_explainability_target(
-        {
-            "root_cause": "diagnostic_probe_without_core_features",
-            "bucket": "missing_all_core_features",
-            "candidate_source": "watchlist_filter_diagnostics",
-        }
-    ) is False
+    assert (
+        is_boundary_without_explainability_target(
+            {
+                "root_cause": "boundary_without_explainability",
+                "bucket": "missing_all_core_features",
+                "candidate_source": "short_trade_boundary",
+            }
+        )
+        is True
+    )
+    assert (
+        is_boundary_without_explainability_target(
+            {
+                "root_cause": "diagnostic_probe_without_core_features",
+                "bucket": "missing_all_core_features",
+                "candidate_source": "watchlist_filter_diagnostics",
+            }
+        )
+        is False
+    )
 
 
 def test_classify_boundary_quarantine_decision_marks_target_rows_quarantine() -> None:

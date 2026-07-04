@@ -1,4 +1,5 @@
 """Tests for sector concentration guard and run_explain feature."""
+
 from __future__ import annotations
 
 import json
@@ -17,10 +18,16 @@ def test_check_sector_concentration_high_concentration_warns() -> None:
             self.industry_sw = industry_sw
 
     top_results = [
-        _MockItem("银行"), _MockItem("银行"), _MockItem("银行"),
-        _MockItem("银行"), _MockItem("银行"),
-        _MockItem("电子"), _MockItem("电子"),
-        _MockItem("医药"), _MockItem("汽车"), _MockItem("化工"),
+        _MockItem("银行"),
+        _MockItem("银行"),
+        _MockItem("银行"),
+        _MockItem("银行"),
+        _MockItem("银行"),
+        _MockItem("电子"),
+        _MockItem("电子"),
+        _MockItem("医药"),
+        _MockItem("汽车"),
+        _MockItem("化工"),
     ]
     warnings = _check_sector_concentration(top_results, threshold=0.4)
     assert len(warnings) == 1
@@ -37,9 +44,15 @@ def test_check_sector_concentration_no_warning_when_diverse() -> None:
             self.industry_sw = industry_sw
 
     top_results = [
-        _MockItem("银行"), _MockItem("电子"), _MockItem("医药"),
-        _MockItem("汽车"), _MockItem("化工"), _MockItem("地产"),
-        _MockItem("食品"), _MockItem("能源"), _MockItem("钢铁"),
+        _MockItem("银行"),
+        _MockItem("电子"),
+        _MockItem("医药"),
+        _MockItem("汽车"),
+        _MockItem("化工"),
+        _MockItem("地产"),
+        _MockItem("食品"),
+        _MockItem("能源"),
+        _MockItem("钢铁"),
         _MockItem("传媒"),
     ]
     warnings = _check_sector_concentration(top_results, threshold=0.4)
@@ -89,15 +102,15 @@ def test_run_explain_finds_ticker_in_latest_report(tmp_path: Path, capsys) -> No
     with tempfile.TemporaryDirectory() as td:
         # Monkey-patch the reports dir
         import src.main
+
         orig = getattr(src.main, "_REPORT_DIR", None)
         reports_dir = Path(td)
         (reports_dir / "auto_screening_20260601.json").write_text(json.dumps(report))
         # Patch by overriding the function's path lookup
         # run_explain uses a hard-coded relative path; we'll inject via mocking
         from unittest.mock import patch
-        with patch("pathlib.Path.exists", return_value=True), \
-             patch("pathlib.Path.glob", return_value=[reports_dir / "auto_screening_20260601.json"]), \
-             patch("pathlib.Path.open", reports_dir.joinpath("auto_screening_20260601.json").open):
+
+        with patch("pathlib.Path.exists", return_value=True), patch("pathlib.Path.glob", return_value=[reports_dir / "auto_screening_20260601.json"]), patch("pathlib.Path.open", reports_dir.joinpath("auto_screening_20260601.json").open):
             result = run_explain("000001")
 
     assert result == 0
@@ -116,8 +129,7 @@ def test_run_explain_ticker_not_found(tmp_path: Path, capsys) -> None:
         "date": "20260601",
         "market_state": {},
         "recommendations": [
-            {"ticker": "000001", "name": "A", "industry_sw": "X",
-             "score_b": 0.1, "decision": "neutral", "strategy_signals": {}},
+            {"ticker": "000001", "name": "A", "industry_sw": "X", "score_b": 0.1, "decision": "neutral", "strategy_signals": {}},
         ],
     }
 
@@ -125,8 +137,8 @@ def test_run_explain_ticker_not_found(tmp_path: Path, capsys) -> None:
         reports_dir = Path(td)
         (reports_dir / "auto_screening_20260601.json").write_text(json.dumps(report))
         from unittest.mock import patch
-        with patch("pathlib.Path.exists", return_value=True), \
-             patch("pathlib.Path.glob", return_value=[reports_dir / "auto_screening_20260601.json"]):
+
+        with patch("pathlib.Path.exists", return_value=True), patch("pathlib.Path.glob", return_value=[reports_dir / "auto_screening_20260601.json"]):
             result = run_explain("999999")
 
     assert result == 1

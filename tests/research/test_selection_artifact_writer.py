@@ -1056,6 +1056,7 @@ def test_file_selection_artifact_writer_returns_partial_success_when_snapshot_wr
     # Path.write_text, 故 mock 点从 write_text 移到 _atomic_write_json。意图不变
     # (snapshot 写失败 → partial_success, review/feedback/replay_input 已先成功)。
     from src.research import artifacts as _artifacts_mod
+
     _original_atomic = _artifacts_mod._atomic_write_json
 
     def _patched_atomic(path, payload):  # noqa: ANN001

@@ -106,6 +106,7 @@ def auth_header(token: str) -> dict:
 
 # ---- POST /auth/login ----
 
+
 class TestLoginRoute:
     """Integration tests for the login endpoint."""
 
@@ -140,55 +141,72 @@ class TestLoginRoute:
 
 # ---- POST /auth/register ----
 
+
 class TestRegisterRoute:
     """Integration tests for the register endpoint."""
 
     def test_register_success(self, client):
-        resp = client.post("/auth/register", json={
-            "username": "newuser",
-            "password": "NewPass1234",
-            "invitation_code": "INV-VALIDTEST01",
-        })
+        resp = client.post(
+            "/auth/register",
+            json={
+                "username": "newuser",
+                "password": "NewPass1234",
+                "invitation_code": "INV-VALIDTEST01",
+            },
+        )
         assert resp.status_code == 201
         assert resp.json()["username"] == "newuser"
         assert resp.json()["role"] == "member"  # legacy "user" normalized to "member"
 
     def test_register_invalid_invite(self, client):
-        resp = client.post("/auth/register", json={
-            "username": "newuser2",
-            "password": "NewPass1234",
-            "invitation_code": "INV-DOESNTEXIST",
-        })
+        resp = client.post(
+            "/auth/register",
+            json={
+                "username": "newuser2",
+                "password": "NewPass1234",
+                "invitation_code": "INV-DOESNTEXIST",
+            },
+        )
         assert resp.status_code == 400
 
     def test_register_weak_password(self, client):
-        resp = client.post("/auth/register", json={
-            "username": "weakuser",
-            "password": "weak",
-            "invitation_code": "INV-VALIDTEST01",
-        })
+        resp = client.post(
+            "/auth/register",
+            json={
+                "username": "weakuser",
+                "password": "weak",
+                "invitation_code": "INV-VALIDTEST01",
+            },
+        )
         # Either 422 from Pydantic (min_length) or from WeakPasswordError
         assert resp.status_code == 422
 
     def test_register_duplicate_username(self, client):
-        resp = client.post("/auth/register", json={
-            "username": "testuser",
-            "password": "NewPass1234",
-            "invitation_code": "INV-VALIDTEST01",
-        })
+        resp = client.post(
+            "/auth/register",
+            json={
+                "username": "testuser",
+                "password": "NewPass1234",
+                "invitation_code": "INV-VALIDTEST01",
+            },
+        )
         assert resp.status_code == 400
 
     def test_register_username_validation(self, client):
         """Username should match ^[a-zA-Z0-9_]+$ pattern."""
-        resp = client.post("/auth/register", json={
-            "username": "bad user!",
-            "password": "NewPass1234",
-            "invitation_code": "INV-VALIDTEST01",
-        })
+        resp = client.post(
+            "/auth/register",
+            json={
+                "username": "bad user!",
+                "password": "NewPass1234",
+                "invitation_code": "INV-VALIDTEST01",
+            },
+        )
         assert resp.status_code == 422  # Pydantic pattern validation
 
 
 # ---- GET /auth/me ----
+
 
 class TestMeRoute:
     """Tests for the /auth/me endpoint."""
@@ -212,61 +230,90 @@ class TestMeRoute:
 
 # ---- PUT /auth/password ----
 
+
 class TestChangePasswordRoute:
     """Tests for the password change endpoint."""
 
     def test_change_password_success(self, client, auth_token):
-        resp = client.put("/auth/password", json={
-            "old_password": "Test1234",
-            "new_password": "NewPass456",
-        }, headers=auth_header(auth_token))
+        resp = client.put(
+            "/auth/password",
+            json={
+                "old_password": "Test1234",
+                "new_password": "NewPass456",
+            },
+            headers=auth_header(auth_token),
+        )
         assert resp.status_code == 200
         assert "成功" in resp.json()["message"]
 
     def test_change_password_wrong_old(self, client, auth_token):
-        resp = client.put("/auth/password", json={
-            "old_password": "WrongOld1",
-            "new_password": "NewPass456",
-        }, headers=auth_header(auth_token))
+        resp = client.put(
+            "/auth/password",
+            json={
+                "old_password": "WrongOld1",
+                "new_password": "NewPass456",
+            },
+            headers=auth_header(auth_token),
+        )
         assert resp.status_code == 400
 
     def test_change_password_weak_new(self, client, auth_token):
-        resp = client.put("/auth/password", json={
-            "old_password": "Test1234",
-            "new_password": "weak",
-        }, headers=auth_header(auth_token))
+        resp = client.put(
+            "/auth/password",
+            json={
+                "old_password": "Test1234",
+                "new_password": "weak",
+            },
+            headers=auth_header(auth_token),
+        )
         assert resp.status_code == 422
 
     def test_change_password_no_auth(self, client):
-        resp = client.put("/auth/password", json={
-            "old_password": "Test1234",
-            "new_password": "NewPass456",
-        })
+        resp = client.put(
+            "/auth/password",
+            json={
+                "old_password": "Test1234",
+                "new_password": "NewPass456",
+            },
+        )
         assert resp.status_code == 401
 
     def test_change_password_admin_blocked(self, client, admin_token):
-        resp = client.put("/auth/password", json={
-            "old_password": "Admin123",
-            "new_password": "NewAdmin456",
-        }, headers=auth_header(admin_token))
+        resp = client.put(
+            "/auth/password",
+            json={
+                "old_password": "Admin123",
+                "new_password": "NewAdmin456",
+            },
+            headers=auth_header(admin_token),
+        )
         assert resp.status_code == 403
 
 
 # ---- PUT /auth/email ----
 
+
 class TestBindEmailRoute:
     """Tests for the email binding endpoint."""
 
     def test_bind_email_success(self, client, admin_token):
-        resp = client.put("/auth/email", json={
-            "email": "admin@hedge.fund",
-        }, headers=auth_header(admin_token))
+        resp = client.put(
+            "/auth/email",
+            json={
+                "email": "admin@hedge.fund",
+            },
+            headers=auth_header(admin_token),
+        )
         assert resp.status_code == 200
 
     def test_bind_email_invalid_format(self, client, auth_token):
-        resp = client.put("/auth/email", json={
-            "email": "not-an-email",
-        }, headers=auth_header(auth_token))
+        resp = client.put(
+            "/auth/email",
+            json={
+                "email": "not-an-email",
+            },
+            headers=auth_header(auth_token),
+        )
         assert resp.status_code == 422
 
     def test_bind_email_no_auth(self, client):
@@ -276,14 +323,18 @@ class TestBindEmailRoute:
 
 # ---- POST /auth/forgot-password ----
 
+
 class TestForgotPasswordRoute:
     """Tests for the forgot-password endpoint."""
 
     def test_forgot_password_valid(self, client):
-        resp = client.post("/auth/forgot-password", json={
-            "username": "testuser",
-            "email": "test@example.com",
-        })
+        resp = client.post(
+            "/auth/forgot-password",
+            json={
+                "username": "testuser",
+                "email": "test@example.com",
+            },
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert "message" in data
@@ -291,10 +342,13 @@ class TestForgotPasswordRoute:
         assert data.get("reset_token") is not None
 
     def test_forgot_password_wrong_email(self, client):
-        resp = client.post("/auth/forgot-password", json={
-            "username": "testuser",
-            "email": "wrong@example.com",
-        })
+        resp = client.post(
+            "/auth/forgot-password",
+            json={
+                "username": "testuser",
+                "email": "wrong@example.com",
+            },
+        )
         assert resp.status_code == 200  # Always 200 to prevent enumeration
         data = resp.json()
         assert "message" in data
@@ -302,14 +356,20 @@ class TestForgotPasswordRoute:
 
     def test_forgot_password_consistent_message(self, client):
         """Both valid and invalid should return the same message text."""
-        valid = client.post("/auth/forgot-password", json={
-            "username": "testuser",
-            "email": "test@example.com",
-        })
-        invalid = client.post("/auth/forgot-password", json={
-            "username": "nobody",
-            "email": "nobody@example.com",
-        })
+        valid = client.post(
+            "/auth/forgot-password",
+            json={
+                "username": "testuser",
+                "email": "test@example.com",
+            },
+        )
+        invalid = client.post(
+            "/auth/forgot-password",
+            json={
+                "username": "nobody",
+                "email": "nobody@example.com",
+            },
+        )
         assert valid.json()["message"] == invalid.json()["message"]
 
     def test_forgot_password_hides_reset_token_in_production(self, client, monkeypatch):
@@ -317,10 +377,13 @@ class TestForgotPasswordRoute:
         monkeypatch.setenv("AUTH_SECRET_KEY", "prod-test-secret")
         monkeypatch.delenv("AUTH_SHOW_RESET_TOKEN", raising=False)
 
-        resp = client.post("/auth/forgot-password", json={
-            "username": "testuser",
-            "email": "test@example.com",
-        })
+        resp = client.post(
+            "/auth/forgot-password",
+            json={
+                "username": "testuser",
+                "email": "test@example.com",
+            },
+        )
 
         assert resp.status_code == 200
         assert resp.json()["reset_token"] is None
@@ -328,49 +391,68 @@ class TestForgotPasswordRoute:
 
 # ---- POST /auth/reset-password ----
 
+
 class TestResetPasswordRoute:
     """Tests for the reset-password endpoint."""
 
     def test_reset_password_success(self, client):
         # First get a reset token
-        resp = client.post("/auth/forgot-password", json={
-            "username": "testuser",
-            "email": "test@example.com",
-        })
+        resp = client.post(
+            "/auth/forgot-password",
+            json={
+                "username": "testuser",
+                "email": "test@example.com",
+            },
+        )
         reset_token = resp.json()["reset_token"]
 
         # Reset password
-        resp = client.post("/auth/reset-password", json={
-            "token": reset_token,
-            "new_password": "ResetPass1",
-        })
+        resp = client.post(
+            "/auth/reset-password",
+            json={
+                "token": reset_token,
+                "new_password": "ResetPass1",
+            },
+        )
         assert resp.status_code == 200
         assert "成功" in resp.json()["message"]
 
         # Verify login with new password works
-        resp = client.post("/auth/login", json={
-            "username": "testuser",
-            "password": "ResetPass1",
-        })
+        resp = client.post(
+            "/auth/login",
+            json={
+                "username": "testuser",
+                "password": "ResetPass1",
+            },
+        )
         assert resp.status_code == 200
 
     def test_reset_password_invalid_token(self, client):
-        resp = client.post("/auth/reset-password", json={
-            "token": "invalid.token",
-            "new_password": "ResetPass1",
-        })
+        resp = client.post(
+            "/auth/reset-password",
+            json={
+                "token": "invalid.token",
+                "new_password": "ResetPass1",
+            },
+        )
         assert resp.status_code == 400
 
     def test_reset_password_weak_new_password(self, client):
         # Get valid token
-        resp = client.post("/auth/forgot-password", json={
-            "username": "testuser",
-            "email": "test@example.com",
-        })
+        resp = client.post(
+            "/auth/forgot-password",
+            json={
+                "username": "testuser",
+                "email": "test@example.com",
+            },
+        )
         reset_token = resp.json()["reset_token"]
 
-        resp = client.post("/auth/reset-password", json={
-            "token": reset_token,
-            "new_password": "weak",
-        })
+        resp = client.post(
+            "/auth/reset-password",
+            json={
+                "token": reset_token,
+                "new_password": "weak",
+            },
+        )
         assert resp.status_code == 422

@@ -8,6 +8,7 @@ so a corrupt ``score_b`` survives a round-trip and re-poisons ranking (see
 floats to ``None`` so the on-disk report is always strict JSON and readers
 coerce ``None`` to ``0.0``.
 """
+
 from __future__ import annotations
 
 import json
@@ -161,10 +162,7 @@ class TestSaveJsonReportAtomicity:
         report_dir = tmp_path / "data" / "reports"
         raw = (report_dir / "atomic_test.json").read_text(encoding="utf-8")
         parsed = json.loads(raw)  # must parse cleanly (no half-written truncated file)
-        assert parsed == prior, (
-            "prior report must survive a crashed write — non-atomic open('w') truncates "
-            "immediately, so a crash mid-dump leaves the must-win report corrupt (R88 root cause)"
-        )
+        assert parsed == prior, "prior report must survive a crashed write — non-atomic open('w') truncates " "immediately, so a crash mid-dump leaves the must-win report corrupt (R88 root cause)"
 
     def test_crashed_write_leaves_no_temp_residue(self, tmp_path: Path, monkeypatch) -> None:
         """A crashed atomic write must clean up its temp file (no .tmp leaked to reports/)."""

@@ -4,6 +4,7 @@ Pins the canonical PEG formula behavior so the redundant ``/100`` then ``*100``
 conversion in the implementation can be safely simplified without changing
 output. Standard PEG: PE=20, growth=10% -> PEG = 20/10 = 2.0.
 """
+
 from __future__ import annotations
 
 import math

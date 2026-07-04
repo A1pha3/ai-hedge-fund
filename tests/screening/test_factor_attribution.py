@@ -3,6 +3,7 @@
 不依赖真实 decomposition 数据 — 全部用内联合成 records.
 旧 records 无 score_decomposition → insufficient (诚实静默).
 """
+
 from __future__ import annotations
 
 from src.screening.factor_attribution import (

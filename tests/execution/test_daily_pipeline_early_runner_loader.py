@@ -45,9 +45,7 @@ def test_corrupt_artifact_logs_debug_and_returns_empty(
     has no signal to trace the corrupt-artifact root cause.
     """
     artifact = _write_artifact(tmp_path, "{not valid json")
-    monkeypatch.setattr(
-        daily_pipeline_module, "_EARLY_RUNNER_RUNTIME_ARTIFACT", artifact
-    )
+    monkeypatch.setattr(daily_pipeline_module, "_EARLY_RUNNER_RUNTIME_ARTIFACT", artifact)
 
     with caplog.at_level(logging.DEBUG, logger="src.execution.daily_pipeline"):
         result = _load_early_runner_runtime_entries("20260617")
@@ -55,13 +53,7 @@ def test_corrupt_artifact_logs_debug_and_returns_empty(
     # Behavior preserved: corrupt artifact → empty list (graceful degradation).
     assert result == []
     # Observability: degradation must be logged (the BH-033 fix).
-    assert any(
-        "early" in rec.message.lower() and ("runner" in rec.message.lower() or "artifact" in rec.message.lower())
-        for rec in caplog.records
-    ), (
-        "BH-033: corrupt early-runner artifact must emit a debug diagnostic; "
-        f"got records: {[r.message for r in caplog.records]}"
-    )
+    assert any("early" in rec.message.lower() and ("runner" in rec.message.lower() or "artifact" in rec.message.lower()) for rec in caplog.records), "BH-033: corrupt early-runner artifact must emit a debug diagnostic; " f"got records: {[r.message for r in caplog.records]}"
 
 
 def test_missing_artifact_returns_empty_silently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -71,9 +63,7 @@ def test_missing_artifact_returns_empty_silently(tmp_path: Path, monkeypatch: py
     degradation warning (no failure occurred). Guards against over-warning.
     """
     missing = tmp_path / "does_not_exist.json"
-    monkeypatch.setattr(
-        daily_pipeline_module, "_EARLY_RUNNER_RUNTIME_ARTIFACT", missing
-    )
+    monkeypatch.setattr(daily_pipeline_module, "_EARLY_RUNNER_RUNTIME_ARTIFACT", missing)
     result = _load_early_runner_runtime_entries("20260617")
     assert result == []
 
@@ -99,11 +89,4 @@ def test_malformed_shadow_strategy_signal_logs_debug(caplog: pytest.LogCaptureFi
         result = _coerce_upstream_shadow_strategy_signal(malformed)
 
     assert result is None
-    assert any(
-        "shadow" in rec.message.lower() and "signal" in rec.message.lower()
-        for rec in caplog.records
-    ), (
-        "BH-033 same-class: malformed shadow signal must emit a debug diagnostic; "
-        f"got records: {[r.message for r in caplog.records]}"
-    )
-
+    assert any("shadow" in rec.message.lower() and "signal" in rec.message.lower() for rec in caplog.records), "BH-033 same-class: malformed shadow signal must emit a debug diagnostic; " f"got records: {[r.message for r in caplog.records]}"

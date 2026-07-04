@@ -9,6 +9,7 @@
 
 不实际访问 tushare / akshare / LLM — 所有 I/O 通过 ``unittest.mock.patch`` 替换。
 """
+
 from __future__ import annotations
 
 import json
@@ -558,9 +559,7 @@ def test_e2e_selected_strategies_branch_injects_score_decomposition(tmp_path, mo
 
     assert len(payload["recommendations"]) == 3
     for rec in payload["recommendations"]:
-        assert "score_decomposition" in rec, (
-            f"selected_strategies 分支未注入 score_decomposition: {rec.get('ticker')}"
-        )
+        assert "score_decomposition" in rec, f"selected_strategies 分支未注入 score_decomposition: {rec.get('ticker')}"
         decomp = rec["score_decomposition"]
         assert isinstance(decomp, dict), f"score_decomposition 非 dict: {decomp}"
         assert "base_contributions" in decomp

@@ -1022,11 +1022,7 @@ def _patch_market_data(monkeypatch, closes_by_ticker: dict[str, dict[str, float]
 
     def fake_get_price_data(ticker: str, start_date: str, end_date: str, api_key=None):
         closes = closes_by_ticker[ticker]
-        rows = [
-            {"date": date_str, "close": close, "open": close, "high": close, "low": close, "volume": 1_000_000}
-            for date_str, close in closes.items()
-            if start_date <= date_str <= end_date
-        ]
+        rows = [{"date": date_str, "close": close, "open": close, "high": close, "low": close, "volume": 1_000_000} for date_str, close in closes.items() if start_date <= date_str <= end_date]
         frame = pd.DataFrame(rows)
         if frame.empty:
             return frame
@@ -2224,11 +2220,7 @@ def test_run_paper_trading_session_frozen_replay_long_window_preserves_artifact_
         for index, trade_date in enumerate(trade_dates)
     ]
     source_path.write_text(
-        "\n".join(
-            json.dumps({"event": "paper_trading_day", "trade_date": trade_date, "current_plan": plan.model_dump()}, ensure_ascii=False)
-            for trade_date, plan in zip(trade_dates, plans, strict=True)
-        )
-        + "\n",
+        "\n".join(json.dumps({"event": "paper_trading_day", "trade_date": trade_date, "current_plan": plan.model_dump()}, ensure_ascii=False) for trade_date, plan in zip(trade_dates, plans, strict=True)) + "\n",
         encoding="utf-8",
     )
 
@@ -2560,7 +2552,8 @@ def test_run_paper_trading_session_applies_p3_prior_quality_enforcement_from_sid
                 },
             },
             ensure_ascii=False,
-        ) + "\n",
+        )
+        + "\n",
         encoding="utf-8",
     )
 

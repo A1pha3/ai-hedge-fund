@@ -32,9 +32,7 @@ class TestAkshareApiModuleLogger:
 
     def test_module_logger_exists(self) -> None:
         """模块必须有 logger (此前无 logging, 3 处 print 不入结构化日志)。"""
-        assert hasattr(akshare_api, "logger"), (
-            "akshare_api 必须有 module logger (NS-17 / BH-017 family 可观测性要求)"
-        )
+        assert hasattr(akshare_api, "logger"), "akshare_api 必须有 module logger (NS-17 / BH-017 family 可观测性要求)"
         assert isinstance(akshare_api.logger, logging.Logger)
         assert akshare_api.logger.name == "src.tools.akshare_api"
 
@@ -43,15 +41,8 @@ class TestAkshareApiModuleLogger:
         import inspect
 
         source = inspect.getsource(akshare_api)
-        code_lines = [
-            line
-            for line in source.splitlines()
-            if line.lstrip().startswith("print(")
-            and not line.lstrip().startswith("#")
-        ]
-        assert not code_lines, (
-            f"akshare_api 不应再有裸 print() 调用, 发现: {code_lines}"
-        )
+        code_lines = [line for line in source.splitlines() if line.lstrip().startswith("print(") and not line.lstrip().startswith("#")]
+        assert not code_lines, f"akshare_api 不应再有裸 print() 调用, 发现: {code_lines}"
 
 
 class TestNewsFetchObservability:
@@ -63,6 +54,7 @@ class TestNewsFetchObservability:
 
     def test_news_fetch_failure_emits_warning(self, monkeypatch, caplog) -> None:
         """新闻拉取异常须发 logger.warning, 返回 []。"""
+
         # 让 load_company_news_results 抛异常, 触发 get_ashare_company_news 的 except 块
         def _boom(**kwargs):
             raise RuntimeError("simulated news fetch failure")
@@ -73,7 +65,4 @@ class TestNewsFetchObservability:
             result = akshare_api.get_ashare_company_news("000001", end_date="2026-01-01")
 
         assert result == []
-        assert any(
-            "新闻" in r.getMessage() and r.levelno >= logging.WARNING
-            for r in caplog.records
-        ), "新闻拉取失败必须发 logger.warning"
+        assert any("新闻" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), "新闻拉取失败必须发 logger.warning"

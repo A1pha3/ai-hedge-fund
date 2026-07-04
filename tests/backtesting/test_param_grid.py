@@ -8,6 +8,7 @@ Coverage breakdown:
   * Best-trial selection under failures / missing metrics
   * Console / Markdown / CSV / JSON rendering
 """
+
 from __future__ import annotations
 
 import json

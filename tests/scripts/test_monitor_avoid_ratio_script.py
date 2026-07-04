@@ -16,11 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-SCRIPT_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "scripts"
-    / "monitor_avoid_ratio.py"
-)
+SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "monitor_avoid_ratio.py"
 
 
 def _load_module() -> object:
@@ -137,9 +133,7 @@ class TestComputeVerdictDistribution:
 
 
 class TestFindReports:
-    def test_find_latest_skips_malformed_filenames(
-        self, tmp_path: Path, caplog
-    ) -> None:
+    def test_find_latest_skips_malformed_filenames(self, tmp_path: Path, caplog) -> None:
         mod = _load_module()
         # Malformed: letters in date segment should be skipped
         (tmp_path / "auto_screening_garbage.json").write_text("{}", encoding="utf-8")
@@ -159,9 +153,7 @@ class TestFindReports:
         mod = _load_module()
         assert mod._find_latest_report(tmp_path) is None
 
-    def test_find_report_by_date_invalid_format_warns(
-        self, tmp_path: Path, caplog
-    ) -> None:
+    def test_find_report_by_date_invalid_format_warns(self, tmp_path: Path, caplog) -> None:
         mod = _load_module()
         with caplog.at_level(logging.WARNING, logger="monitor_avoid_ratio"):
             result = mod._find_report_by_date(tmp_path, "not-a-date")
@@ -169,9 +161,7 @@ class TestFindReports:
         warn_msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
         assert any("invalid --report-date" in m for m in warn_msgs)
 
-    def test_find_report_by_date_invalid_calendar_date_warns(
-        self, tmp_path: Path, caplog
-    ) -> None:
+    def test_find_report_by_date_invalid_calendar_date_warns(self, tmp_path: Path, caplog) -> None:
         """20260631 (June has 30 days) must be rejected."""
         mod = _load_module()
         with caplog.at_level(logging.WARNING, logger="monitor_avoid_ratio"):
@@ -218,9 +208,7 @@ class TestLoadReportObservability:
         warn_msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
         assert any("report read failed" in m for m in warn_msgs)
 
-    def test_json_parse_failure_emits_warning(
-        self, tmp_path: Path, caplog
-    ) -> None:
+    def test_json_parse_failure_emits_warning(self, tmp_path: Path, caplog) -> None:
         mod = _load_module()
         path = tmp_path / "auto_screening_20260701.json"
         path.write_text("{not valid json", encoding="utf-8")
@@ -252,9 +240,7 @@ class TestTrackingJsonl:
         tracking = tmp_path / "does_not_exist.jsonl"
         assert mod._read_existing_dates(tracking) == set()
 
-    def test_read_existing_dates_skips_malformed_lines(
-        self, tmp_path: Path, caplog
-    ) -> None:
+    def test_read_existing_dates_skips_malformed_lines(self, tmp_path: Path, caplog) -> None:
         mod = _load_module()
         tracking = tmp_path / "tracking.jsonl"
         tracking.write_text(
@@ -357,9 +343,7 @@ class TestProcessReportDedup:
         lines = tracking.read_text(encoding="utf-8").splitlines()
         assert len(lines) == 2
 
-    def test_malformed_filename_skipped_with_warning(
-        self, tmp_path: Path, caplog
-    ) -> None:
+    def test_malformed_filename_skipped_with_warning(self, tmp_path: Path, caplog) -> None:
         mod = _load_module()
         reports_dir = tmp_path / "reports"
         reports_dir.mkdir()
@@ -483,9 +467,7 @@ class TestCliMain:
         )
         return reports_dir
 
-    def test_trend_mode_empty_tracking_prints_placeholder(
-        self, tmp_path: Path, capsys
-    ) -> None:
+    def test_trend_mode_empty_tracking_prints_placeholder(self, tmp_path: Path, capsys) -> None:
         mod = _load_module()
         tracking = tmp_path / "tracking.jsonl"
         rc = mod.main(["--trend", "--tracking-file", str(tracking)])
@@ -493,9 +475,7 @@ class TestCliMain:
         out = capsys.readouterr().out
         assert "no tracking data" in out
 
-    def test_default_mode_appends_latest_report(
-        self, tmp_path: Path, capsys
-    ) -> None:
+    def test_default_mode_appends_latest_report(self, tmp_path: Path, capsys) -> None:
         mod = _load_module()
         reports_dir = self._make_reports_dir(tmp_path, "20260701")
         tracking = tmp_path / "tracking.jsonl"
@@ -541,17 +521,13 @@ class TestCliMain:
             "src.screening.investability.build_front_door_verdict",
             return_value={"action": "AVOID"},
         ):
-            rc1 = mod.main(
-                ["--backfill", "--reports-dir", str(reports_dir), "--tracking-file", str(tracking)]
-            )
+            rc1 = mod.main(["--backfill", "--reports-dir", str(reports_dir), "--tracking-file", str(tracking)])
             assert rc1 == 0
             first_count = len(tracking.read_text(encoding="utf-8").splitlines())
             assert first_count == 3
 
             # Second run must not append (idempotent dedup by trade_date)
-            rc2 = mod.main(
-                ["--backfill", "--reports-dir", str(reports_dir), "--tracking-file", str(tracking)]
-            )
+            rc2 = mod.main(["--backfill", "--reports-dir", str(reports_dir), "--tracking-file", str(tracking)])
             assert rc2 == 0
             second_count = len(tracking.read_text(encoding="utf-8").splitlines())
             assert second_count == first_count

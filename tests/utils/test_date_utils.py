@@ -3,6 +3,7 @@
 format_date and parse_date had zero direct test coverage despite being used
 across date-handling paths. Tests lock down the YYYYMMDD ↔ YYYY-MM-DD contract.
 """
+
 from __future__ import annotations
 
 from datetime import datetime

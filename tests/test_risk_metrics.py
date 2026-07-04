@@ -426,9 +426,7 @@ def test_cvar_tail_excludes_var_boundary_observation() -> None:
 
     # CVaR should average only the single worst observation: -cleaned[0] = 0.10
     # (NOT the average of cleaned[0] and cleaned[1] = 0.095)
-    assert math.isclose(cvar_95, 0.10, abs_tol=1e-6), (
-        f"CVaR={cvar_95} should be 0.10 (single worst), not 0.095 (average of 2)"
-    )
+    assert math.isclose(cvar_95, 0.10, abs_tol=1e-6), f"CVaR={cvar_95} should be 0.10 (single worst), not 0.095 (average of 2)"
 
     # CVaR must be >= VaR (tail risk is always at least as bad as VaR)
     assert cvar_95 >= var_95
@@ -472,10 +470,7 @@ def test_beta_uses_aggregated_portfolio_returns_not_per_ticker_rows() -> None:
 
     snapshot = compute_risk_snapshot(positions, lookback, benchmark_returns=bench)
     # Expected value-weighted portfolio beta = (2.0 + 0.5) / 2 = 1.25
-    assert math.isclose(snapshot.beta_adjusted, 1.25, abs_tol=0.05), (
-        f"beta_adjusted={snapshot.beta_adjusted} should be ~1.25 (value-weighted avg of "
-        f"2.0 and 0.5), got a per-ticker-rows regression result instead"
-    )
+    assert math.isclose(snapshot.beta_adjusted, 1.25, abs_tol=0.05), f"beta_adjusted={snapshot.beta_adjusted} should be ~1.25 (value-weighted avg of " f"2.0 and 0.5), got a per-ticker-rows regression result instead"
 
 
 def test_beta_single_ticker_matches_its_own_slope() -> None:
@@ -516,9 +511,7 @@ def test_beta_length_mismatch_falls_back_to_market_neutral(caplog) -> None:
     bench = [0.010 * (1 if i % 2 == 0 else -1) for i in range(20)]
     # Single ticker perfectly tracking the benchmark (true beta = 1.0), but drop
     # day index 5 to simulate a no-observation day being skipped.
-    lookback = [
-        _return(f"d{i}", "A", bench[i]) for i in range(20) if i != 5
-    ]  # 19 days vs 20-day benchmark -> length mismatch
+    lookback = [_return(f"d{i}", "A", bench[i]) for i in range(20) if i != 5]  # 19 days vs 20-day benchmark -> length mismatch
     positions = [_position("A", 100_000.0)]
 
     with caplog.at_level(logging.WARNING, logger="src.portfolio.risk_metrics"):
@@ -526,11 +519,5 @@ def test_beta_length_mismatch_falls_back_to_market_neutral(caplog) -> None:
 
     # A length-misaligned series must not yield a wrong-sign beta; fall back to
     # the market-neutral proxy and warn so the degradation is observable.
-    assert snapshot.beta_adjusted == 1.0, (
-        f"length-mismatched portfolio/benchmark must fall back to market-neutral "
-        f"1.0, got {snapshot.beta_adjusted} (silent date misalignment)"
-    )
-    assert any(
-        "beta" in rec.message.lower() and ("mismatch" in rec.message.lower() or "align" in rec.message.lower())
-        for rec in caplog.records
-    ), "beta length-mismatch degradation must emit a diagnosable warning (BH-030)"
+    assert snapshot.beta_adjusted == 1.0, f"length-mismatched portfolio/benchmark must fall back to market-neutral " f"1.0, got {snapshot.beta_adjusted} (silent date misalignment)"
+    assert any("beta" in rec.message.lower() and ("mismatch" in rec.message.lower() or "align" in rec.message.lower()) for rec in caplog.records), "beta length-mismatch degradation must emit a diagnosable warning (BH-030)"

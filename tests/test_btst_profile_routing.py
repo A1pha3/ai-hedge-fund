@@ -5,6 +5,7 @@ Key invariants:
   2. Default contract is valid and balanced.
   3. Override mechanism preserves invariants.
 """
+
 from __future__ import annotations
 
 import pytest

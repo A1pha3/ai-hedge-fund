@@ -84,18 +84,16 @@ class TestCalibrateWeights:
         that contradicts the module's "保守校准" + "避免某个策略权重为 0
         完全失效" contract."""
         summaries = [
-            StrategyICSummary(strategy_name="trend", avg_ir=3.0),          # strong
+            StrategyICSummary(strategy_name="trend", avg_ir=3.0),  # strong
             StrategyICSummary(strategy_name="mean_reversion", avg_ir=0.0),  # floored
-            StrategyICSummary(strategy_name="fundamental", avg_ir=0.0),     # floored
-            StrategyICSummary(strategy_name="event_sentiment", avg_ir=0.0), # floored
+            StrategyICSummary(strategy_name="fundamental", avg_ir=0.0),  # floored
+            StrategyICSummary(strategy_name="event_sentiment", avg_ir=0.0),  # floored
         ]
         result = _calibrate_weights(summaries, DEFAULT_EQUAL_WEIGHTS)
         assert abs(sum(result.values()) - 1.0) < 0.001
         # Every strategy must stay >= WEIGHT_FLOOR post-normalization.
         for strat, w in result.items():
-            assert w >= WEIGHT_FLOOR - 1e-9, (
-                f"BH-027 regression: {strat}={w:.4f} < WEIGHT_FLOOR={WEIGHT_FLOOR}"
-            )
+            assert w >= WEIGHT_FLOOR - 1e-9, f"BH-027 regression: {strat}={w:.4f} < WEIGHT_FLOOR={WEIGHT_FLOOR}"
 
     def test_bh027_no_data_strategy_not_worse_than_zero_ir(self):
         """BH-027: a strategy with no IC data should not be treated worse
@@ -114,9 +112,7 @@ class TestCalibrateWeights:
 
 class TestComputeWeightCalibration:
     def test_empty_data(self):
-        result = compute_weight_calibration(
-            factor_history={}, return_history=[]
-        )
+        result = compute_weight_calibration(factor_history={}, return_history=[])
         assert result.calibration_skipped is True
         assert result.n_factors == 0
 
@@ -127,9 +123,7 @@ class TestComputeWeightCalibration:
             "fundamental.pe_ratio": [0.05, 0.06, 0.07],
         }
         return_history = [0.01, 0.02, 0.03]
-        result = compute_weight_calibration(
-            factor_history=factor_history, return_history=return_history
-        )
+        result = compute_weight_calibration(factor_history=factor_history, return_history=return_history)
         # Will be skipped due to insufficient observations
         assert result.calibration_skipped is True
         # Should fall back to default weights
@@ -171,9 +165,7 @@ class TestComputeWeightCalibration:
         }
         return_history = [0.1 * i for i in range(10)]
 
-        result = compute_weight_calibration(
-            factor_history=factor_history, return_history=return_history
-        )
+        result = compute_weight_calibration(factor_history=factor_history, return_history=return_history)
         # 3 strategies
         strat_names = {s.strategy_name for s in result.strategy_summaries}
         assert "trend" in strat_names
@@ -188,9 +180,7 @@ class TestRenderWeightCalibration:
             "fundamental.pe_ratio": [0.01 * i for i in range(10)],
         }
         return_history = [0.1 * i for i in range(10)]
-        result = compute_weight_calibration(
-            factor_history=factor_history, return_history=return_history
-        )
+        result = compute_weight_calibration(factor_history=factor_history, return_history=return_history)
         output = render_weight_calibration(result)
         assert "策略权重校准" in output
         assert "权重对比" in output

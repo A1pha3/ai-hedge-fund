@@ -152,21 +152,29 @@ def test_analyze_catalyst_theme_frontier_summarizes_t1_t2_outcomes(tmp_path: Pat
 
     def fake_get_price_data(ticker: str, start_date: str, end_date: str):
         if ticker == "300999":
-            return pd.DataFrame(
-                [
-                    {"date": "2026-03-31", "open": 10.0, "high": 10.0, "low": 9.8, "close": 10.0},
-                    {"date": "2026-04-01", "open": 10.1, "high": 10.5, "low": 10.0, "close": 10.4},
-                    {"date": "2026-04-02", "open": 10.3, "high": 10.8, "low": 10.2, "close": 10.6},
-                ]
-            ).assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize()).set_index("date")
+            return (
+                pd.DataFrame(
+                    [
+                        {"date": "2026-03-31", "open": 10.0, "high": 10.0, "low": 9.8, "close": 10.0},
+                        {"date": "2026-04-01", "open": 10.1, "high": 10.5, "low": 10.0, "close": 10.4},
+                        {"date": "2026-04-02", "open": 10.3, "high": 10.8, "low": 10.2, "close": 10.6},
+                    ]
+                )
+                .assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize())
+                .set_index("date")
+            )
         if ticker == "301001":
-            return pd.DataFrame(
-                [
-                    {"date": "2026-03-31", "open": 8.0, "high": 8.0, "low": 7.9, "close": 8.0},
-                    {"date": "2026-04-01", "open": 8.1, "high": 8.3, "low": 7.9, "close": 7.95},
-                    {"date": "2026-04-02", "open": 7.9, "high": 8.0, "low": 7.7, "close": 7.8},
-                ]
-            ).assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize()).set_index("date")
+            return (
+                pd.DataFrame(
+                    [
+                        {"date": "2026-03-31", "open": 8.0, "high": 8.0, "low": 7.9, "close": 8.0},
+                        {"date": "2026-04-01", "open": 8.1, "high": 8.3, "low": 7.9, "close": 7.95},
+                        {"date": "2026-04-02", "open": 7.9, "high": 8.0, "low": 7.7, "close": 7.8},
+                    ]
+                )
+                .assign(date=lambda frame: pd.to_datetime(frame["date"]).dt.normalize())
+                .set_index("date")
+            )
         raise AssertionError(f"Unexpected ticker: {ticker}")
 
     monkeypatch.setattr("scripts.analyze_catalyst_theme_frontier.get_price_data", fake_get_price_data)

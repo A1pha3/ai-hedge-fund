@@ -8,6 +8,7 @@ When enforce:
 When off: behaviour identical to baseline (P2 is a no-op).
 P1 shadow path must remain unaffected when only P1 flag is on.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -52,11 +53,7 @@ def _make_plan(gate_level: str, *, with_buy_orders: bool = True) -> ExecutionPla
         "normal_trade": 0.22,
         "aggressive_trade": 0.15,
     }
-    buy_orders = (
-        [PositionPlan(ticker="000001", shares=100, amount=10000.0)]
-        if with_buy_orders
-        else []
-    )
+    buy_orders = [PositionPlan(ticker="000001", shares=100, amount=10000.0)] if with_buy_orders else []
     return ExecutionPlan(
         date="20260410",
         market_state=MarketState(
@@ -149,8 +146,7 @@ class TestP2EnforceAllowsStrongAndNormalDays:
 
         updated = _enforce_btst_regime_gate_p2(plan)
 
-        assert [o.ticker for o in updated.buy_orders] == original_tickers, \
-            "normal_trade gate must not block buy_orders"
+        assert [o.ticker for o in updated.buy_orders] == original_tickers, "normal_trade gate must not block buy_orders"
 
     def test_aggressive_trade_keeps_buy_orders_when_enforce(self, monkeypatch):
         monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
@@ -159,8 +155,7 @@ class TestP2EnforceAllowsStrongAndNormalDays:
 
         updated = _enforce_btst_regime_gate_p2(plan)
 
-        assert [o.ticker for o in updated.buy_orders] == original_tickers, \
-            "aggressive_trade gate must not block buy_orders"
+        assert [o.ticker for o in updated.buy_orders] == original_tickers, "aggressive_trade gate must not block buy_orders"
 
 
 class TestP1ShadowUnaffectedByP2:
@@ -248,6 +243,7 @@ class TestP2RecordsEnforcementInFunnelDiagnostics:
 # Gap 1: Router-level semantics — p2_execution_blocked in selection_targets
 # ---------------------------------------------------------------------------
 
+
 class TestP2RouterLevelExecutionBlocked:
     """P2 enforcement must mark selection_targets as p2_execution_blocked, not only clear buy_orders."""
 
@@ -256,9 +252,11 @@ class TestP2RouterLevelExecutionBlocked:
         from src.targets.router import (
             apply_p2_regime_gate_enforcement_to_selection_targets,
         )
+
         monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
         evaluation = DualTargetEvaluation(
-            ticker="000001", trade_date="20260410",
+            ticker="000001",
+            trade_date="20260410",
             research=TargetEvaluationResult(target_type="research", decision="selected"),
         )
         targets = {"000001": evaluation}
@@ -271,8 +269,10 @@ class TestP2RouterLevelExecutionBlocked:
         from src.targets.router import (
             apply_p2_regime_gate_enforcement_to_selection_targets,
         )
+
         evaluation = DualTargetEvaluation(
-            ticker="000001", trade_date="20260410",
+            ticker="000001",
+            trade_date="20260410",
             research=TargetEvaluationResult(target_type="research", decision="selected", execution_eligible=True),
             short_trade=TargetEvaluationResult(target_type="short_trade", decision="selected", execution_eligible=True),
             execution_eligible=True,
@@ -289,8 +289,10 @@ class TestP2RouterLevelExecutionBlocked:
         from src.targets.router import (
             apply_p2_regime_gate_enforcement_to_selection_targets,
         )
+
         evaluation = DualTargetEvaluation(
-            ticker="000001", trade_date="20260410",
+            ticker="000001",
+            trade_date="20260410",
             research=TargetEvaluationResult(target_type="research", decision="selected"),
         )
         targets = {"000001": evaluation}
@@ -303,8 +305,10 @@ class TestP2RouterLevelExecutionBlocked:
         from src.targets.router import (
             apply_p2_regime_gate_enforcement_to_selection_targets,
         )
+
         evaluation = DualTargetEvaluation(
-            ticker="000001", trade_date="20260410",
+            ticker="000001",
+            trade_date="20260410",
             research=TargetEvaluationResult(target_type="research", decision="selected"),
         )
         targets = {"000001": evaluation}
@@ -319,12 +323,15 @@ class TestP2RouterLevelExecutionBlocked:
             apply_p2_regime_gate_enforcement_to_selection_targets,
             summarize_selection_targets,
         )
+
         e1 = DualTargetEvaluation(
-            ticker="000001", trade_date="20260410",
+            ticker="000001",
+            trade_date="20260410",
             research=TargetEvaluationResult(target_type="research", decision="selected"),
         )
         e2 = DualTargetEvaluation(
-            ticker="000002", trade_date="20260410",
+            ticker="000002",
+            trade_date="20260410",
             research=TargetEvaluationResult(target_type="research", decision="near_miss"),
         )
         targets = {"000001": e1, "000002": e2}
@@ -336,11 +343,13 @@ class TestP2RouterLevelExecutionBlocked:
         """_enforce_btst_regime_gate_p2 must update plan.selection_targets when present."""
         from src.execution.daily_pipeline import _enforce_btst_regime_gate_p2
         from src.targets.models import DualTargetEvaluation, TargetEvaluationResult
+
         monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
         plan = _make_plan("halt")
         plan.selection_targets = {
             "000001": DualTargetEvaluation(
-                ticker="000001", trade_date="20260410",
+                ticker="000001",
+                trade_date="20260410",
                 research=TargetEvaluationResult(target_type="research", decision="selected"),
             )
         }
@@ -355,6 +364,7 @@ class TestP2RouterLevelExecutionBlocked:
 # Gap 2: Artifact/config propagation — pipeline_config_snapshot records P2 flag
 # ---------------------------------------------------------------------------
 
+
 class TestP2ArtifactConfigPropagation:
     """pipeline_config_snapshot must record both P1 and P2 regime gate flags."""
 
@@ -363,6 +373,7 @@ class TestP2ArtifactConfigPropagation:
 
         from src.execution.models import ExecutionPlan
         from src.research.artifacts import _build_pipeline_config_snapshot
+
         monkeypatch.setenv("BTST_0422_P1_REGIME_GATE_MODE", "shadow")
         monkeypatch.setenv("BTST_0422_P2_REGIME_GATE_MODE", "enforce")
         plan = ExecutionPlan(date="20260410", portfolio_snapshot={})
@@ -374,6 +385,7 @@ class TestP2ArtifactConfigPropagation:
     def test_pipeline_config_snapshot_p2_flag_is_off_by_default(self, monkeypatch):
         from src.execution.models import ExecutionPlan
         from src.research.artifacts import _build_pipeline_config_snapshot
+
         monkeypatch.delenv("BTST_0422_P2_REGIME_GATE_MODE", raising=False)
         plan = ExecutionPlan(date="20260410", portfolio_snapshot={})
         snapshot = _build_pipeline_config_snapshot(plan, None, None)
@@ -395,9 +407,8 @@ class TestP2BlockedGatesSingleSource:
             _P2_BLOCKED_GATES as pipeline_gates,  # type: ignore[attr-defined]
         )
         from src.targets.router import _P2_BLOCKED_GATES as router_gates
-        assert router_gates == pipeline_gates, (
-            "_P2_BLOCKED_GATES must have identical values in router and daily_pipeline"
-        )
+
+        assert router_gates == pipeline_gates, "_P2_BLOCKED_GATES must have identical values in router and daily_pipeline"
 
     def test_pipeline_imports_gates_from_router(self):
         """daily_pipeline._P2_BLOCKED_GATES must be the exact same object as router._P2_BLOCKED_GATES.
@@ -409,12 +420,11 @@ class TestP2BlockedGatesSingleSource:
             _P2_BLOCKED_GATES as pipeline_gates,  # type: ignore[attr-defined]
         )
         from src.targets.router import _P2_BLOCKED_GATES as router_gates
-        assert pipeline_gates is router_gates, (
-            "daily_pipeline._P2_BLOCKED_GATES must be the same object as router._P2_BLOCKED_GATES "
-            "(imported, not redefined)"
-        )
+
+        assert pipeline_gates is router_gates, "daily_pipeline._P2_BLOCKED_GATES must be the same object as router._P2_BLOCKED_GATES " "(imported, not redefined)"
 
     def test_blocked_gates_contains_halt_and_shadow_only(self):
         from src.targets.router import _P2_BLOCKED_GATES
+
         assert "halt" in _P2_BLOCKED_GATES
         assert "shadow_only" in _P2_BLOCKED_GATES

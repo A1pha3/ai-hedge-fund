@@ -43,9 +43,7 @@ def test_monotonicity_footer_warns_on_significance_failure(caplog: object) -> No
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert warnings, "expected a WARNING when the significance footer block fails (was silent before c267)"
-    assert any("significance" in r.getMessage() for r in warnings), (
-        "warning should name the failing block so the owner can diagnose which diagnostic dropped"
-    )
+    assert any("significance" in r.getMessage() for r in warnings), "warning should name the failing block so the owner can diagnose which diagnostic dropped"
 
 
 def test_monotonicity_footer_never_raises_on_diagnostic_failure(caplog: object) -> None:

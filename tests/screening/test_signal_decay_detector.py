@@ -22,11 +22,13 @@ from src.screening.signal_decay_detector import (
 class TestParseDate:
     def test_yyyymmdd(self) -> None:
         from datetime import datetime
+
         dt = _parse_date("20260101")
         assert dt == datetime(2026, 1, 1)
 
     def test_yyyy_mm_dd(self) -> None:
         from datetime import datetime
+
         dt = _parse_date("2026-01-01")
         assert dt == datetime(2026, 1, 1)
 
@@ -177,9 +179,7 @@ class TestDetectSignalDecay:
 
         # Create a previous day's report
         prev_report = {"recommendations": [{"ticker": "000001", "score_b": 0.5}]}
-        (tmp_path / "auto_screening_20260109.json").write_text(
-            json.dumps(prev_report), encoding="utf-8"
-        )
+        (tmp_path / "auto_screening_20260109.json").write_text(json.dumps(prev_report), encoding="utf-8")
 
         recs = [{"ticker": "000001", "score_b": 0.3}]
         result = detect_signal_decay(recs, report_dir=tmp_path, end_date="20260110", lookback_days=3)
@@ -191,10 +191,9 @@ class TestDetectSignalDecay:
     def test_with_history_improving(self, tmp_path) -> None:
         """Improving score → NONE."""
         import json
+
         prev_report = {"recommendations": [{"ticker": "000001", "score_b": 0.3}]}
-        (tmp_path / "auto_screening_20260109.json").write_text(
-            json.dumps(prev_report), encoding="utf-8"
-        )
+        (tmp_path / "auto_screening_20260109.json").write_text(json.dumps(prev_report), encoding="utf-8")
 
         recs = [{"ticker": "000001", "score_b": 0.5}]
         result = detect_signal_decay(recs, report_dir=tmp_path, end_date="20260110", lookback_days=3)
@@ -202,15 +201,14 @@ class TestDetectSignalDecay:
 
     def test_multiple_tickers(self, tmp_path) -> None:
         import json
+
         prev_report = {
             "recommendations": [
                 {"ticker": "000001", "score_b": 0.5},
                 {"ticker": "000002", "score_b": 0.4},
             ],
         }
-        (tmp_path / "auto_screening_20260109.json").write_text(
-            json.dumps(prev_report), encoding="utf-8"
-        )
+        (tmp_path / "auto_screening_20260109.json").write_text(json.dumps(prev_report), encoding="utf-8")
 
         recs = [
             {"ticker": "000001", "score_b": 0.3},  # decay

@@ -6,6 +6,7 @@ on `summarize_r6_diagnostic` + `r6_selection_bias_verdict` in
 extracted them. This test pins their math so a future bug can't silently corrupt
 the R6 verdict.
 """
+
 from __future__ import annotations
 
 import sys
@@ -18,7 +19,6 @@ from scripts._diag_r6_full_universe import (  # noqa: E402
     r6_selection_bias_verdict,
     summarize_r6_diagnostic,
 )
-
 
 # ---------------------------------------------------------------------------
 # summarize_r6_diagnostic — aggregation math

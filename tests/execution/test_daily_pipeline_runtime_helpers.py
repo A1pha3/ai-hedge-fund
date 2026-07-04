@@ -61,6 +61,7 @@ def test_load_bundle_legacy_path_uses_simple_candidates() -> None:
 
 def test_load_bundle_shadow_path_invokes_shadow_fn() -> None:
     """When both fns are the originals → uses shadow fn directly."""
+
     def _build(date):
         raise AssertionError("should not be called on shadow path")
 
@@ -246,58 +247,44 @@ def test_merge_rank_missing_fields_default_zero() -> None:
 def test_preserve_exact_upstream_true() -> None:
     embedded = {"applied_scope": "candidate_source", "execution_quality_label": "balanced_confirmation"}
     latest = {"applied_scope": "same_ticker", "execution_quality_label": "intraday_only"}
-    assert _should_preserve_exact_upstream_embedded_prior(
-        candidate_source=EXACT_UPSTREAM_SOURCE, embedded_historical_prior=embedded, latest_historical_prior=latest
-    ) is True
+    assert _should_preserve_exact_upstream_embedded_prior(candidate_source=EXACT_UPSTREAM_SOURCE, embedded_historical_prior=embedded, latest_historical_prior=latest) is True
 
 
 def test_preserve_exact_upstream_wrong_source_false() -> None:
     embedded = {"applied_scope": "candidate_source", "execution_quality_label": "balanced_confirmation"}
     latest = {"applied_scope": "same_ticker", "execution_quality_label": "intraday_only"}
-    assert _should_preserve_exact_upstream_embedded_prior(
-        candidate_source="other_source", embedded_historical_prior=embedded, latest_historical_prior=latest
-    ) is False
+    assert _should_preserve_exact_upstream_embedded_prior(candidate_source="other_source", embedded_historical_prior=embedded, latest_historical_prior=latest) is False
 
 
 def test_preserve_exact_upstream_embedded_scope_not_in_set_false() -> None:
     embedded = {"applied_scope": "same_ticker", "execution_quality_label": "balanced_confirmation"}
     latest = {"applied_scope": "source_score", "execution_quality_label": "intraday_only"}
-    assert _should_preserve_exact_upstream_embedded_prior(
-        candidate_source=EXACT_UPSTREAM_SOURCE, embedded_historical_prior=embedded, latest_historical_prior=latest
-    ) is False
+    assert _should_preserve_exact_upstream_embedded_prior(candidate_source=EXACT_UPSTREAM_SOURCE, embedded_historical_prior=embedded, latest_historical_prior=latest) is False
 
 
 def test_preserve_exact_upstream_latest_scope_in_set_false() -> None:
     """If latest scope is also in the upstream scopes, do NOT preserve embedded."""
     embedded = {"applied_scope": "candidate_source", "execution_quality_label": "balanced_confirmation"}
     latest = {"applied_scope": "candidate_source", "execution_quality_label": "intraday_only"}
-    assert _should_preserve_exact_upstream_embedded_prior(
-        candidate_source=EXACT_UPSTREAM_SOURCE, embedded_historical_prior=embedded, latest_historical_prior=latest
-    ) is False
+    assert _should_preserve_exact_upstream_embedded_prior(candidate_source=EXACT_UPSTREAM_SOURCE, embedded_historical_prior=embedded, latest_historical_prior=latest) is False
 
 
 def test_preserve_exact_upstream_embedded_label_unknown_false() -> None:
     embedded = {"applied_scope": "candidate_source", "execution_quality_label": "unknown"}
     latest = {"applied_scope": "same_ticker", "execution_quality_label": "intraday_only"}
-    assert _should_preserve_exact_upstream_embedded_prior(
-        candidate_source=EXACT_UPSTREAM_SOURCE, embedded_historical_prior=embedded, latest_historical_prior=latest
-    ) is False
+    assert _should_preserve_exact_upstream_embedded_prior(candidate_source=EXACT_UPSTREAM_SOURCE, embedded_historical_prior=embedded, latest_historical_prior=latest) is False
 
 
 def test_preserve_exact_upstream_latest_label_empty_false() -> None:
     embedded = {"applied_scope": "candidate_source", "execution_quality_label": "balanced_confirmation"}
     latest = {"applied_scope": "same_ticker", "execution_quality_label": ""}
-    assert _should_preserve_exact_upstream_embedded_prior(
-        candidate_source=EXACT_UPSTREAM_SOURCE, embedded_historical_prior=embedded, latest_historical_prior=latest
-    ) is False
+    assert _should_preserve_exact_upstream_embedded_prior(candidate_source=EXACT_UPSTREAM_SOURCE, embedded_historical_prior=embedded, latest_historical_prior=latest) is False
 
 
 def test_preserve_exact_upstream_same_labels_false() -> None:
     embedded = {"applied_scope": "candidate_source", "execution_quality_label": "balanced_confirmation"}
     latest = {"applied_scope": "same_ticker", "execution_quality_label": "balanced_confirmation"}
-    assert _should_preserve_exact_upstream_embedded_prior(
-        candidate_source=EXACT_UPSTREAM_SOURCE, embedded_historical_prior=embedded, latest_historical_prior=latest
-    ) is False
+    assert _should_preserve_exact_upstream_embedded_prior(candidate_source=EXACT_UPSTREAM_SOURCE, embedded_historical_prior=embedded, latest_historical_prior=latest) is False
 
 
 # ---------------------------------------------------------------------------
@@ -306,16 +293,12 @@ def test_preserve_exact_upstream_same_labels_false() -> None:
 
 
 def test_resolve_no_embedded_returns_latest() -> None:
-    result = resolve_historical_prior_for_ticker(
-        ticker="000001", historical_prior=None, prior_by_ticker={"000001": {"next_close": 0.7}}
-    )
+    result = resolve_historical_prior_for_ticker(ticker="000001", historical_prior=None, prior_by_ticker={"000001": {"next_close": 0.7}})
     assert result == {"next_close": 0.7}
 
 
 def test_resolve_no_latest_returns_embedded() -> None:
-    result = resolve_historical_prior_for_ticker(
-        ticker="000001", historical_prior={"next_close": 0.6}, prior_by_ticker={}
-    )
+    result = resolve_historical_prior_for_ticker(ticker="000001", historical_prior={"next_close": 0.6}, prior_by_ticker={})
     assert result == {"next_close": 0.6}
 
 
@@ -335,9 +318,7 @@ def test_resolve_both_prefers_higher_merge_rank() -> None:
         "execution_quality_label": "zero_follow_through",  # rank 5
         "next_open_to_close": 0.3,
     }
-    result = resolve_historical_prior_for_ticker(
-        ticker="000001", historical_prior=embedded, prior_by_ticker={"000001": latest}
-    )
+    result = resolve_historical_prior_for_ticker(ticker="000001", historical_prior=embedded, prior_by_ticker={"000001": latest})
     # Preferred = embedded (higher rank); fallback = latest fills missing fields
     assert result["next_close"] == 0.7
     assert result["next_open_to_close"] == 0.3
@@ -352,9 +333,7 @@ def test_resolve_preserves_exact_upstream_uses_embedded() -> None:
         "applied_scope": "same_ticker",
         "execution_quality_label": "intraday_only",
     }
-    result = resolve_historical_prior_for_ticker(
-        ticker="000001", historical_prior=embedded, prior_by_ticker={"000001": latest}, candidate_source=EXACT_UPSTREAM_SOURCE
-    )
+    result = resolve_historical_prior_for_ticker(ticker="000001", historical_prior=embedded, prior_by_ticker={"000001": latest}, candidate_source=EXACT_UPSTREAM_SOURCE)
     # Embedded preferred (exact-upstream preserve path)
     assert result["execution_quality_label"] == "balanced_confirmation"
 
@@ -363,9 +342,7 @@ def test_resolve_fills_missing_from_fallback() -> None:
     """Preferred has missing fields → fallback fills them in."""
     embedded = {"evaluable_count": 1, "applied_scope": "candidate_source", "execution_quality_label": "close_continuation"}  # rank 1,1
     latest = {"evaluable_count": 10, "applied_scope": "same_ticker", "execution_quality_label": "zero_follow_through", "next_open_to_close": 0.4}  # rank 6,5 → higher → preferred
-    result = resolve_historical_prior_for_ticker(
-        ticker="000001", historical_prior=embedded, prior_by_ticker={"000001": latest}
-    )
+    result = resolve_historical_prior_for_ticker(ticker="000001", historical_prior=embedded, prior_by_ticker={"000001": latest})
     # latest preferred; embedded fills missing (but evaluable_count exists → not filled)
     # Actually preferred=latest fills from embedded fallback
     assert result["next_open_to_close"] == 0.4  # from preferred (latest)

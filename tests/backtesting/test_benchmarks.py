@@ -23,10 +23,7 @@ def calculator() -> BenchmarkCalculator:
 
 def _make_price_df(close_values: list[float]) -> pd.DataFrame:
     """Build a minimal price frame matching ``prices_to_df`` schema."""
-    rows = [
-        {"time": f"2024-01-0{i+1}", "open": c, "close": c, "high": c, "low": c, "volume": 1000}
-        for i, c in enumerate(close_values)
-    ]
+    rows = [{"time": f"2024-01-0{i+1}", "open": c, "close": c, "high": c, "low": c, "volume": 1000} for i, c in enumerate(close_values)]
     df = pd.DataFrame(rows)
     df["Date"] = pd.to_datetime(df["time"])
     df.set_index("Date", inplace=True)
@@ -76,10 +73,7 @@ def test_get_return_pct_data_fetch_failure_logs_degradation(calculator: Benchmar
     with caplog.at_level(logging.DEBUG, logger="src.backtesting.benchmarks"):
         result = calculator.get_return_pct("SH000300", "2024-01-01", "2024-01-02")
     assert result is None
-    assert any(
-        "benchmark" in rec.message.lower() and "sh000300" in rec.message.lower()
-        for rec in caplog.records
-    ), "benchmark fetch failure must emit a diagnosable debug log (BH-017 family)"
+    assert any("benchmark" in rec.message.lower() and "sh000300" in rec.message.lower() for rec in caplog.records), "benchmark fetch failure must emit a diagnosable debug log (BH-017 family)"
 
 
 def test_get_daily_turnovers_per_ticker_failure_logs_degradation(monkeypatch, caplog):
@@ -106,6 +100,4 @@ def test_get_daily_turnovers_per_ticker_failure_logs_degradation(monkeypatch, ca
     with caplog.at_level(logging.DEBUG, logger="src.backtesting.engine_market_data"):
         result = loader.get_daily_turnovers(["000001"], "2024-01-01", "2024-01-02")
     assert result == {}
-    assert any(
-        "000001" in rec.message and "turnover" in rec.message.lower() for rec in caplog.records
-    ), "per-ticker turnover fetch failure must emit a diagnosable debug log (BH-017 family)"
+    assert any("000001" in rec.message and "turnover" in rec.message.lower() for rec in caplog.records), "per-ticker turnover fetch failure must emit a diagnosable debug log (BH-017 family)"

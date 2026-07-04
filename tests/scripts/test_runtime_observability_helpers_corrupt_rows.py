@@ -13,6 +13,7 @@ Same NS-17/BH-017 silent-skip family as c288 (which fixed the experiment
 harness). This fixes the observability path's inconsistency with
 frozen_replay.
 """
+
 from __future__ import annotations
 
 import json
@@ -53,9 +54,7 @@ def test_iter_paper_trading_day_payloads_warns_on_corrupt_rows(
     # 2 good rows parsed, 1 corrupt skipped
     assert len(payloads) == 2, f"expected 2 good payloads, got {len(payloads)}"
     # the corrupt row must produce a WARNING (not silent skip)
-    assert any("损坏" in r.message or "corrupt" in r.message.lower() or "JSONDecodeError" in r.message for r in caplog.records), (
-        f"corrupt jsonl row must emit a warning; got records={[r.message for r in caplog.records]}"
-    )
+    assert any("损坏" in r.message or "corrupt" in r.message.lower() or "JSONDecodeError" in r.message for r in caplog.records), f"corrupt jsonl row must emit a warning; got records={[r.message for r in caplog.records]}"
 
 
 def test_dual_target_session_summary_surfaces_corrupt_row_count(tmp_path: Path) -> None:
@@ -74,9 +73,7 @@ def test_dual_target_session_summary_surfaces_corrupt_row_count(tmp_path: Path) 
     summary = build_dual_target_session_summary(p)
     # the summary must surface the corrupt-row count (implementation-flexible key)
     corrupt_count = summary.get("corrupt_rows") or summary.get("skipped_corrupt_rows") or summary.get("corrupt_lines")
-    assert corrupt_count is not None and corrupt_count >= 1, (
-        f"session summary must report corrupt-skipped row count; got keys={list(summary.keys())}"
-    )
+    assert corrupt_count is not None and corrupt_count >= 1, f"session summary must report corrupt-skipped row count; got keys={list(summary.keys())}"
 
 
 def _write_llm_metrics(path: Path, lines: list[str]) -> None:
@@ -110,20 +107,14 @@ def test_build_llm_observability_summary_surfaces_corrupt_entries(tmp_path: Path
 
     # (a) corrupt-entry count must be surfaced (implementation-flexible key)
     corrupt = summary.get("corrupt_entries") or summary.get("corrupt_rows") or summary.get("skipped_corrupt_entries")
-    assert corrupt is not None and corrupt >= 1, (
-        f"llm_observability summary must report corrupt-skipped entry count; got keys={list(summary.keys())}"
-    )
+    assert corrupt is not None and corrupt >= 1, f"llm_observability summary must report corrupt-skipped entry count; got keys={list(summary.keys())}"
     # (b) entry_count keeps total-lines semantics so operator sees the gap
-    assert summary["entry_count"] == 3, (
-        f"entry_count must remain total non-empty lines (3); got {summary['entry_count']} — if this counts only parsed entries the operator loses the corrupt signal"
-    )
+    assert summary["entry_count"] == 3, f"entry_count must remain total non-empty lines (3); got {summary['entry_count']} — if this counts only parsed entries the operator loses the corrupt signal"
     # (c) only the 2 good entries aggregated
     assert summary["by_trade_date"]["20260629"]["attempts"] == 2
 
 
-def test_build_llm_observability_summary_warns_on_corrupt_entries(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_build_llm_observability_summary_warns_on_corrupt_entries(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """NS-17/c295 mirror of c289: a corrupt llm_metrics row must emit a warning,
     not silently skip — so the observability path is consistent with the
     daily_events path (c289) and with frozen_replay (line 217)."""
@@ -135,7 +126,4 @@ def test_build_llm_observability_summary_warns_on_corrupt_entries(
     with caplog.at_level("WARNING"):
         build_llm_observability_summary(p)
 
-    assert any(
-        "损坏" in r.message or "corrupt" in r.message.lower() or "JSONDecodeError" in r.message
-        for r in caplog.records
-    ), f"corrupt llm_metrics row must emit a warning; got records={[r.message for r in caplog.records]}"
+    assert any("损坏" in r.message or "corrupt" in r.message.lower() or "JSONDecodeError" in r.message for r in caplog.records), f"corrupt llm_metrics row must emit a warning; got records={[r.message for r in caplog.records]}"

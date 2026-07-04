@@ -46,8 +46,7 @@ class TestSwIndustryMemberFetchObservability:
             result = tushare_sw_industry_helpers.build_sw_industry_mapping(_boom, None, index_df)
 
         assert result == {}  # 失败的行业被跳过
-        assert any("农林牧渔" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), \
-            "行业成分拉取失败必须发 logger.warning"
+        assert any("农林牧渔" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), "行业成分拉取失败必须发 logger.warning"
 
 
 class TestAkshareNewsHelpersLogger:
@@ -74,8 +73,7 @@ class TestNewsDedupObservability:
             result = akshare_news_helpers.deduplicate_news([a1, a2])
 
         assert len(result) == 1
-        assert any("去重" in r.getMessage() and r.levelno == logging.INFO for r in caplog.records), \
-            "去重计数必须经 logger.info 可观测"
+        assert any("去重" in r.getMessage() and r.levelno == logging.INFO for r in caplog.records), "去重计数必须经 logger.info 可观测"
 
 
 class TestAkshareMarketHelpersLogger:

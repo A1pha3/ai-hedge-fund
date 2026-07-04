@@ -169,4 +169,3 @@ def test_cache_benchmark_subprocess_has_timeout():
     # 默认值应该是合理的（>= 60s, <= 1800s）
     default = sig.parameters["timeout_seconds"].default
     assert 60.0 <= default <= 1800.0
-

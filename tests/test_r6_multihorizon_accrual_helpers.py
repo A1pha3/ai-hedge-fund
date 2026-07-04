@@ -18,6 +18,7 @@ Pure helpers under test (in scripts/_diag_r6_multihorizon_accrual.py):
   - plan_next_batch: which test_dates are NOT yet done → the resume slice
   - maturity_for_window: per-horizon how many rows are mature (informational)
 """
+
 from __future__ import annotations
 
 import json
@@ -34,7 +35,6 @@ from scripts._diag_r6_multihorizon_accrual import (  # noqa: E402
     plan_next_batch,
     maturity_for_window,
 )
-
 
 # ---------------------------------------------------------------------------
 # load_state / save_state — atomic, missing-file-safe, schema-validated
@@ -59,6 +59,7 @@ def test_load_state_roundtrip(tmp_path):
         ],
     }
     import scripts._diag_r6_multihorizon_accrual as m
+
     m.save_state(p, state)
     loaded = load_state(p)
     assert loaded["days_done"] == ["20260601", "20260602"]
@@ -86,7 +87,7 @@ def test_load_state_valid_json_non_dict_returns_empty_not_raise(tmp_path):
     contradicting the documented guard. JSONDecodeError + wrong-shape-dict
     were handled; valid-non-dict-JSON was the hole.
     """
-    for bad_content in ("42", "null", "[]", "\"hello\"", "true"):
+    for bad_content in ("42", "null", "[]", '"hello"', "true"):
         p = tmp_path / f"nondict_{bad_content[:4]}.json"
         p.write_text(bad_content)
         s = load_state(p)  # must NOT raise AttributeError
@@ -192,8 +193,8 @@ def test_maturity_counts_only_non_none_rets():
         {"trend_direction": 1, "rets": {"1": 0.3, "5": None, "10": None}},
     ]
     m = maturity_for_window(rows, horizons=(1, 5, 10))
-    assert m["1"] == 3   # all three matured at T+1
-    assert m["5"] == 1   # only the first row
+    assert m["1"] == 3  # all three matured at T+1
+    assert m["5"] == 1  # only the first row
     assert m["10"] == 1  # only the first row
 
 
@@ -231,6 +232,7 @@ def test_accrual_invariant_batched_equals_single_run():
     # Path B: simulate 4 separate resume runs (load → merge → save → reload)
     import scripts._diag_r6_multihorizon_accrual as m
     import tempfile
+
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "state.json"
         m.save_state(p, {"days_done": [], "rows": []})

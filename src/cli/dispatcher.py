@@ -131,7 +131,7 @@ def _resolve_performance_report(argv: list[str]) -> int | None:
     if "--performance-report" not in argv:
         return None
     period_raw = _get_kv(argv, "--period")
-    period = (period_raw.strip().lower() if period_raw else "weekly")
+    period = period_raw.strip().lower() if period_raw else "weekly"
     if period not in ("weekly", "monthly"):
         period = "weekly"
     end_date_raw = _get_kv(argv, "--pr-end-date")
@@ -342,10 +342,7 @@ def _resolve_stock_detail(argv: list[str]) -> int | None:
     if not ticker:
         from colorama import Fore, Style
 
-        print(
-            f"{Fore.RED}[StockDetail] 用法: --stock-detail 300750 [--sd-date YYYYMMDD]"
-            f"{Style.RESET_ALL}"
-        )
+        print(f"{Fore.RED}[StockDetail] 用法: --stock-detail 300750 [--sd-date YYYYMMDD]" f"{Style.RESET_ALL}")
         return 1
     trade_date = _get_kv(argv, "--sd-date")
     if trade_date:
@@ -384,10 +381,7 @@ def _resolve_compare(argv: list[str]) -> int | None:
     if not tickers_arg:
         from colorama import Fore, Style
 
-        print(
-            f"{Fore.RED}[Compare] 用法: --compare 300750,600519,000001 "
-            f"[--metrics trend_score,score_b] [--no-radar]{Style.RESET_ALL}"
-        )
+        print(f"{Fore.RED}[Compare] 用法: --compare 300750,600519,000001 " f"[--metrics trend_score,score_b] [--no-radar]{Style.RESET_ALL}")
         return 1
     metrics_arg = _get_kv(argv, "--metrics")
     no_radar = "--no-radar" in argv
@@ -578,9 +572,7 @@ def _resolve_conviction_ranking(argv: list[str]) -> int | None:
     total = sum(weights.values())
     if not (0.99 <= total <= 1.01):
         print(
-            f"Error: weights must sum to 1.0 (got {total:.3f} = "
-            f"{score_w} + {consec_w} + {quality_w} + {calib_w}). "
-            f"Adjust --score-weight / --consecutive-weight / --quality-weight / --calibration-weight.",
+            f"Error: weights must sum to 1.0 (got {total:.3f} = " f"{score_w} + {consec_w} + {quality_w} + {calib_w}). " f"Adjust --score-weight / --consecutive-weight / --quality-weight / --calibration-weight.",
             file=sys.stderr,
         )
         return 2  # CLI 错误退出码
@@ -662,6 +654,7 @@ def _resolve_top(argv: list[str]) -> int | None:
 # 命令注册表: flag -> handler function
 # 顺序敏感 — 越靠前越先匹配。``--auto`` 走主 parser (它本来 require_tickers=False)
 
+
 def _resolve_check_freshness(argv: list[str]) -> int | None:
     """P6-1 data freshness check. Supports --trade-date."""
     if "--check-freshness" not in argv:
@@ -669,14 +662,17 @@ def _resolve_check_freshness(argv: list[str]) -> int | None:
     trade_date = _get_kv(argv, "--trade-date") or ""
     if not trade_date:
         from datetime import date
+
         trade_date = date.today().strftime("%Y%m%d")
     from src.screening.data_freshness_guard import (
         _render_freshness_summary,
         check_data_freshness,
     )
+
     reports_dir = None
     try:
         from src.screening.consecutive_recommendation import resolve_report_dir
+
         reports_dir = resolve_report_dir()
     except Exception as exc:
         # BH-021 family: reports_dir 解析失败时静默回退 None, 运维无法区分
@@ -694,6 +690,7 @@ def _resolve_daily_delta(argv: list[str]) -> int | None:
     top_n = _parse_int(_get_kv(argv, "--top-n"), 20)
     lookback = _parse_int(_get_kv(argv, "--delta-lookback"), 5)
     from src.screening.daily_delta import compute_daily_delta, render_daily_delta
+
     delta = compute_daily_delta(top_n=top_n, lookback_days=lookback)
     print(render_daily_delta(delta))
     return 0
@@ -705,6 +702,7 @@ def _resolve_signal_consistency(argv: list[str]) -> int | None:
         return None
     top_n = _parse_int(_get_kv(argv, "--top-n"), 20)
     from src.screening.signal_consistency import run_consistency_check
+
     return run_consistency_check(top_n=top_n)
 
 
@@ -713,6 +711,7 @@ def _resolve_dynamic_threshold(argv: list[str]) -> int | None:
     if "--dynamic-threshold" not in argv:
         return None
     from src.screening.dynamic_threshold import run_dynamic_threshold
+
     return run_dynamic_threshold(argv)
 
 
@@ -723,6 +722,7 @@ def _resolve_decision_flow(argv: list[str]) -> int | None:
     top_n = _parse_int(_get_kv(argv, "--top-n"), 10)
     lookback = _parse_int(_get_kv(argv, "--lookback"), 30)
     from src.screening.decision_flow import run_decision_flow
+
     run_decision_flow(top_n=top_n, lookback_days=lookback)
     return 0
 
@@ -732,6 +732,7 @@ def _resolve_outlier_detect(argv: list[str]) -> int | None:
     if "--outlier-detect" not in argv:
         return None
     from src.screening.outlier_detect import run_outlier_detect
+
     return run_outlier_detect(argv)
 
 
@@ -751,6 +752,7 @@ def _resolve_expected_returns(argv: list[str]) -> int | None:
         render_expected_returns,
     )
     from src.utils.display import Fore, Style
+
     reports_dir = resolve_report_dir()
     report_path = _find_latest_report(reports_dir)
     if report_path is None:
@@ -860,10 +862,7 @@ def _resolve_reconcile(argv: list[str]) -> int | None:
         except (ValueError, IndexError):
             trade_path_raw = ""
     if not trade_path_raw:
-        print(
-            f"{Fore.RED}Usage: --reconcile <trade_log.csv>{Style.RESET_ALL}\n"
-            f"  v1 format: ticker,buy_date,buy_price,sell_date,sell_price"
-        )
+        print(f"{Fore.RED}Usage: --reconcile <trade_log.csv>{Style.RESET_ALL}\n" f"  v1 format: ticker,buy_date,buy_price,sell_date,sell_price")
         return 1
     trade_path = Path(trade_path_raw).expanduser()
     if not trade_path.exists():
@@ -896,7 +895,6 @@ def _resolve_refresh_regime_winrates(argv: list[str]) -> int | None:
     return run_refresh_cli(output_path=output_path, min_samples=min_samples)
 
 
-
 def _resolve_flywheel_health(argv: list[str]) -> int | None:
     """NS-5: on-demand data-flywheel health check.
 
@@ -909,10 +907,12 @@ def _resolve_flywheel_health(argv: list[str]) -> int | None:
         return None
     import json as _json
     from src.screening.flywheel_health import assess_tracking_history
+
     result = assess_tracking_history()
     # human-readable + machine-parseable (JSON) so scripts/cron can grep it
     print(_json.dumps(result, ensure_ascii=False))
     return 0
+
 
 COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--preheat", _resolve_preheat),

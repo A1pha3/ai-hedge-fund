@@ -66,9 +66,7 @@ def test_analyze_druckenmiller_valuation_preserves_attractive_multi_metric_path(
 
 
 def test_analyze_druckenmiller_valuation_preserves_zero_score_sparse_path():
-    financial_line_items = [
-        SimpleNamespace(net_income=None, free_cash_flow=-10.0, ebit=0.0, ebitda=None, total_debt=20.0, cash_and_equivalents=30.0)
-    ]
+    financial_line_items = [SimpleNamespace(net_income=None, free_cash_flow=-10.0, ebit=0.0, ebitda=None, total_debt=20.0, cash_and_equivalents=30.0)]
 
     assert analyze_druckenmiller_valuation(financial_line_items, 1000.0) == {
         "score": 0.0,
@@ -98,16 +96,10 @@ def test_druckenmiller_price_momentum_uses_30d_window_not_full_history():
     from src.agents.stanley_druckenmiller_helpers import _score_druckenmiller_price_momentum
 
     # 前 11 bar: 100 → 150 (斜坡上涨, idx<11); 后 31 bar: 全部 150 (近期走平, idx>=11)
-    prices = [
-        SimpleNamespace(time=index, close=(100 + index * 5 if index < 11 else 150))
-        for index in range(42)
-    ]
+    prices = [SimpleNamespace(time=index, close=(100 + index * 5 if index < 11 else 150)) for index in range(42)]
 
     points, details = _score_druckenmiller_price_momentum(prices)
 
     # 30-bar 窗口 (近 30 bar 全在 150) → 0% 动量 → "Negative" (0 points)
     # bug 代码会用整段历史 (+50% → "Moderate" 2 points)
-    assert points == 0, (
-        f"动量窗口不一致: 应度量近 30 bar 动量 (近期走平 → 0% → 0 points), "
-        f"但用了整段历史 (+50%) 误判为 Moderate, got points={points}, details={details!r}"
-    )
+    assert points == 0, f"动量窗口不一致: 应度量近 30 bar 动量 (近期走平 → 0% → 0 points), " f"但用了整段历史 (+50%) 误判为 Moderate, got points={points}, details={details!r}"

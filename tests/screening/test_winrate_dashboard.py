@@ -128,45 +128,21 @@ class TestDetermineTrend:
 
     def test_improving(self) -> None:
         # 14 days, recent 7 = 0.7, earlier 7 = 0.3 → diff=0.4 > 0.05 → improving
-        days = [
-            DailyWinRate(date=f"202601{i:02d}", t1_win_rate=0.3)
-            for i in range(1, 8)
-        ] + [
-            DailyWinRate(date=f"202602{i:02d}", t1_win_rate=0.7)
-            for i in range(1, 8)
-        ]
+        days = [DailyWinRate(date=f"202601{i:02d}", t1_win_rate=0.3) for i in range(1, 8)] + [DailyWinRate(date=f"202602{i:02d}", t1_win_rate=0.7) for i in range(1, 8)]
         assert _determine_trend(days) == "improving"
 
     def test_declining(self) -> None:
-        days = [
-            DailyWinRate(date=f"202601{i:02d}", t1_win_rate=0.7)
-            for i in range(1, 8)
-        ] + [
-            DailyWinRate(date=f"202602{i:02d}", t1_win_rate=0.3)
-            for i in range(1, 8)
-        ]
+        days = [DailyWinRate(date=f"202601{i:02d}", t1_win_rate=0.7) for i in range(1, 8)] + [DailyWinRate(date=f"202602{i:02d}", t1_win_rate=0.3) for i in range(1, 8)]
         assert _determine_trend(days) == "declining"
 
     def test_stable_small_diff(self) -> None:
         """14 days, recent=0.50, earlier=0.48 → diff=0.02 ≤ 0.05 → stable."""
-        days = [
-            DailyWinRate(date=f"202601{i:02d}", t1_win_rate=0.48)
-            for i in range(1, 8)
-        ] + [
-            DailyWinRate(date=f"202602{i:02d}", t1_win_rate=0.50)
-            for i in range(1, 8)
-        ]
+        days = [DailyWinRate(date=f"202601{i:02d}", t1_win_rate=0.48) for i in range(1, 8)] + [DailyWinRate(date=f"202602{i:02d}", t1_win_rate=0.50) for i in range(1, 8)]
         assert _determine_trend(days) == "stable"
 
     def test_boundary_improving(self) -> None:
         """14 days, recent=0.6, earlier=0.5 → diff=0.1 > 0.05 → improving."""
-        days = [
-            DailyWinRate(date=f"202601{i:02d}", t1_win_rate=0.50)
-            for i in range(1, 8)
-        ] + [
-            DailyWinRate(date=f"202602{i:02d}", t1_win_rate=0.60)
-            for i in range(1, 8)
-        ]
+        days = [DailyWinRate(date=f"202601{i:02d}", t1_win_rate=0.50) for i in range(1, 8)] + [DailyWinRate(date=f"202602{i:02d}", t1_win_rate=0.60) for i in range(1, 8)]
         assert _determine_trend(days) == "improving"
 
     def test_few_days_uses_midpoint(self) -> None:
@@ -253,9 +229,7 @@ class TestComputeWinrateDashboard:
         assert result.total_days == 1
         assert result.total_recommendations == 1
         # 显式 as_of=now 钉死墙钟锚点 → 60 天前记录确实落在 30d 窗口外
-        result_strict = compute_winrate_dashboard(
-            path, lookback_days=30, as_of=datetime.now().strftime("%Y%m%d")
-        )
+        result_strict = compute_winrate_dashboard(path, lookback_days=30, as_of=datetime.now().strftime("%Y%m%d"))
         assert result_strict.total_days == 0
 
     def test_invalid_date_excluded(self, tmp_path) -> None:

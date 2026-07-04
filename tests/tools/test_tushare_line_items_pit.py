@@ -180,6 +180,7 @@ class TestBuildLineItemsFromFramesPIT:
 # R128: falsy-zero field-fallback in tushare data layer
 # ---------------------------------------------------------------------------
 
+
 class TestFalsyZeroFieldFallback:
     """R68/R69/R96/R107/R122-R124 falsy-zero family: ``get(A) or get(B)``
     field-to-field fallback skips a legitimate ``0.0`` in field A and silently

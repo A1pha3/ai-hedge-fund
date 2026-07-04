@@ -22,7 +22,6 @@ from unittest.mock import patch
 
 import pandas as pd
 
-
 # ---------------------------------------------------------------------------
 # akshare_news_helpers — sort_news_dataframe (WARNING, MEDIUM)
 # ---------------------------------------------------------------------------
@@ -31,9 +30,7 @@ import pandas as pd
 class TestSortNewsDataframeObservability:
     """sort_news_dataframe 失败必须发 warning (触及新闻时序数据质量)."""
 
-    def test_sort_failure_emits_warning_and_returns_original_df(
-        self, caplog
-    ) -> None:
+    def test_sort_failure_emits_warning_and_returns_original_df(self, caplog) -> None:
         from src.tools.akshare_news_helpers import sort_news_dataframe
 
         df = pd.DataFrame({"发布时间": ["2026-07-01", "2026-06-30"]})
@@ -97,9 +94,7 @@ class TestResolveStockNameObservability:
         debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
         assert len(debug_records) == 0
 
-    def test_resolve_ticker_equals_stock_name_returns_empty_no_debug(
-        self, caplog
-    ) -> None:
+    def test_resolve_ticker_equals_stock_name_returns_empty_no_debug(self, caplog) -> None:
         """当 stock_name == ticker (合法的"无中文名"情况) 不应发 debug."""
         from src.tools.akshare_news_helpers import resolve_stock_name
 
@@ -120,9 +115,7 @@ class TestResolveStockNameObservability:
 
 
 class TestIsOllamaInstalledObservability:
-    def test_which_failure_emits_debug_and_returns_false(
-        self, caplog
-    ) -> None:
+    def test_which_failure_emits_debug_and_returns_false(self, caplog) -> None:
         from src.utils.ollama import is_ollama_installed
 
         with patch("platform.system", return_value="Darwin"):
@@ -168,9 +161,7 @@ class TestIsOllamaInstalledObservability:
 class TestEnhancedCacheCloseObservability:
     """DiskCache _ensure_conn 重连时旧连接关闭失败必须发 debug."""
 
-    def test_ensure_conn_close_failure_emits_debug(
-        self, tmp_path: Path, caplog
-    ) -> None:
+    def test_ensure_conn_close_failure_emits_debug(self, tmp_path: Path, caplog) -> None:
         """When _ensure_conn reconnects AND old connection close fails, debug log emitted."""
         from src.data.enhanced_cache import DiskCache
 
@@ -182,9 +173,7 @@ class TestEnhancedCacheCloseObservability:
             "FakeConn",
             (),
             {
-                "close": lambda self: (_ for _ in ()).throw(
-                    RuntimeError("close dead boom")
-                ),
+                "close": lambda self: (_ for _ in ()).throw(RuntimeError("close dead boom")),
                 "row_factory": None,
             },
         )()
@@ -193,21 +182,14 @@ class TestEnhancedCacheCloseObservability:
 
         # Force _is_alive to return False so _ensure_conn tries reconnect
         with patch.object(cache, "_is_alive", return_value=False):
-            with patch.object(
-                cache, "_open_connection", return_value=type("NewConn", (), {"row_factory": None})()
-            ):
+            with patch.object(cache, "_open_connection", return_value=type("NewConn", (), {"row_factory": None})()):
                 with caplog.at_level(logging.DEBUG, logger="src.data.enhanced_cache"):
                     result = cache._ensure_conn()
 
         # Reconnect succeeded (new connection returned)
         assert result is not None
-        debug_records = [
-            r for r in caplog.records
-            if r.levelno == logging.DEBUG and "dead connection close" in r.getMessage()
-        ]
-        assert len(debug_records) == 1, (
-            f"expected 1 DEBUG for dead conn close, got {debug_records}"
-        )
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG and "dead connection close" in r.getMessage()]
+        assert len(debug_records) == 1, f"expected 1 DEBUG for dead conn close, got {debug_records}"
 
 
 # ---------------------------------------------------------------------------
@@ -233,13 +215,8 @@ class TestPdfExporterFontRegisterObservability:
 
         # Regular variant succeeded → returns name
         assert result is not None
-        debug_records = [
-            r for r in caplog.records
-            if r.levelno == logging.DEBUG and "bold variant" in r.getMessage()
-        ]
-        assert len(debug_records) == 1, (
-            f"expected 1 DEBUG for bold variant failure, got {debug_records}"
-        )
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG and "bold variant" in r.getMessage()]
+        assert len(debug_records) == 1, f"expected 1 DEBUG for bold variant failure, got {debug_records}"
 
     def test_candidate_failure_emits_debug(self, caplog) -> None:
         """When entire candidate font add_font fails, debug log emitted (not silent continue)."""
@@ -255,14 +232,9 @@ class TestPdfExporterFontRegisterObservability:
 
         # All candidates failed → returns None
         assert result is None
-        debug_records = [
-            r for r in caplog.records
-            if r.levelno == logging.DEBUG and "candidate register failed" in r.getMessage()
-        ]
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG and "candidate register failed" in r.getMessage()]
         # Multiple candidates may fail, each emits a debug log
-        assert len(debug_records) >= 1, (
-            f"expected >=1 DEBUG for candidate failures, got {debug_records}"
-        )
+        assert len(debug_records) >= 1, f"expected >=1 DEBUG for candidate failures, got {debug_records}"
 
     def test_success_no_debug(self, caplog) -> None:
         from src.reporting.pdf_exporter import _register_cjk_font

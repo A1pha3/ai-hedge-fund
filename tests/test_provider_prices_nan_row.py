@@ -73,9 +73,7 @@ def test_tushare_provider_get_prices_skips_nan_volume_row() -> None:
 
     response = asyncio.run(_run())
     # Before fix: data=[] (全部被 TypeError 吞掉). After fix: 应保留非 NaN 行 (>=1).
-    assert len(response.data) >= 1, (
-        f"NaN vol 行不应吞掉整个 ticker 价格序列; got data=[] error={response.error!r}"
-    )
+    assert len(response.data) >= 1, f"NaN vol 行不应吞掉整个 ticker 价格序列; got data=[] error={response.error!r}"
     # 没有一行的 close 是 NaN
     for price in response.data:
         assert price.close == price.close  # NaN != NaN
@@ -102,8 +100,6 @@ def test_akshare_provider_get_prices_skips_nan_volume_row() -> None:
         return await provider.get_prices("600519", "2024-01-01", "2024-01-03")
 
     response = asyncio.run(_run())
-    assert len(response.data) >= 1, (
-        f"NaN 成交量行不应吞掉整个 ticker 价格序列; got data=[] error={response.error!r}"
-    )
+    assert len(response.data) >= 1, f"NaN 成交量行不应吞掉整个 ticker 价格序列; got data=[] error={response.error!r}"
     for price in response.data:
         assert price.close == price.close

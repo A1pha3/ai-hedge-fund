@@ -37,10 +37,7 @@ def test_write_json_atomic_crash_preserves_prior(tmp_path: Path, monkeypatch) ->
         pass  # acceptable: 写失败; 我们关心的是文件状态
 
     raw = target.read_text(encoding="utf-8")
-    assert raw.strip(), (
-        "prior snapshot must not be truncated-empty after a crashed write — "
-        "non-atomic write_text truncates on open (R88 corrupt-snapshot CRASH vector root cause)"
-    )
+    assert raw.strip(), "prior snapshot must not be truncated-empty after a crashed write — " "non-atomic write_text truncates on open (R88 corrupt-snapshot CRASH vector root cause)"
     json.loads(raw)  # must parse cleanly — no half-written corrupt file
 
 

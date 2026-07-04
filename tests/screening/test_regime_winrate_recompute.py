@@ -15,6 +15,7 @@ date_to_regime map (YYYYMMDD → normal/crisis/risk_off) → 按 regime 分组�
 per-horizon winrate/avg/median → 匹配 REGIME_HISTORICAL_WINRATES /
 REGIME_MULTIHORIZON_MEDIANS 结构 (让 owner 可直接替换硬编码值).
 """
+
 from __future__ import annotations
 
 import json
@@ -30,7 +31,6 @@ from src.screening.regime_winrate_recompute import (
     compute_regime_historical_winrates_from_records,
     run_refresh_cli,
 )
-
 
 # ---------------------------------------------------------------------------
 # bootstrap CI 纯函数测试 — _winrate_bootstrap_ci
@@ -88,6 +88,7 @@ class TestWinrateBootstrapCi:
         # 真正验证: 同 seed 幂等 (已 assert) 且不同 seed 产生不同 bootstrap 抽样
         # (用内部 PRNG 而非 global random)
         import random as _global_random
+
         before = _global_random.random()
         _winrate_bootstrap_ci([1.0, -1.0, 1.0, -1.0, 1.0], n_bootstrap=200, seed=42)
         after = _global_random.random()
@@ -135,10 +136,7 @@ class TestWinrateBootstrapCi:
         _, large_high = _winrate_bootstrap_ci(large, n_bootstrap=1000, seed=42)
         small_width = small_high - 0.5
         large_width = large_high - 0.5
-        assert small_width > large_width, (
-            f"n=10 upper-half {small_width} should be wider than "
-            f"n=200 {large_width}"
-        )
+        assert small_width > large_width, f"n=10 upper-half {small_width} should be wider than " f"n=200 {large_width}"
 
 
 # ---------------------------------------------------------------------------
@@ -395,9 +393,7 @@ class TestBuildDateToRegimeMap:
             "date": "20260601",
             "market_state": {"regime_gate_level": "crisis"},
         }
-        (tmp_path / "auto_screening_20260601.json").write_text(
-            json.dumps(report), encoding="utf-8"
-        )
+        (tmp_path / "auto_screening_20260601.json").write_text(json.dumps(report), encoding="utf-8")
 
         result = build_date_to_regime_map(tmp_path)
 
@@ -411,9 +407,7 @@ class TestBuildDateToRegimeMap:
             ("20260603", "risk_off"),
         ]:
             report = {"date": d, "market_state": {"regime_gate_level": r}}
-            (tmp_path / f"auto_screening_{d}.json").write_text(
-                json.dumps(report), encoding="utf-8"
-            )
+            (tmp_path / f"auto_screening_{d}.json").write_text(json.dumps(report), encoding="utf-8")
 
         result = build_date_to_regime_map(tmp_path)
 
@@ -426,9 +420,7 @@ class TestBuildDateToRegimeMap:
     def test_report_missing_regime_defaults_to_normal(self, tmp_path: Path) -> None:
         """报告缺 regime_gate_level → 默认 'normal' (与 market_state_helpers 一致)."""
         report = {"date": "20260601", "market_state": {}}  # 无 regime_gate_level
-        (tmp_path / "auto_screening_20260601.json").write_text(
-            json.dumps(report), encoding="utf-8"
-        )
+        (tmp_path / "auto_screening_20260601.json").write_text(json.dumps(report), encoding="utf-8")
 
         result = build_date_to_regime_map(tmp_path)
 
@@ -448,14 +440,10 @@ class TestBuildDateToRegimeMap:
 
     def test_malformed_json_skipped(self, tmp_path: Path) -> None:
         """损坏 JSON 文件 → 跳过 (不 raise)."""
-        (tmp_path / "auto_screening_20260601.json").write_text(
-            "not valid json {{{", encoding="utf-8"
-        )
+        (tmp_path / "auto_screening_20260601.json").write_text("not valid json {{{", encoding="utf-8")
         # 一个有效文件仍能处理
         valid = {"date": "20260602", "market_state": {"regime_gate_level": "normal"}}
-        (tmp_path / "auto_screening_20260602.json").write_text(
-            json.dumps(valid), encoding="utf-8"
-        )
+        (tmp_path / "auto_screening_20260602.json").write_text(json.dumps(valid), encoding="utf-8")
 
         result = build_date_to_regime_map(tmp_path)
 
@@ -495,30 +483,22 @@ class TestRegimeRecomputeResultSerialization:
 def _write_tracking_history(reports_dir: Path, records: list[dict]) -> None:
     """写入 tracking_history.json (与 recommendation_tracker._save_history 结构一致)."""
     payload = {"records": records, "updated_at": "20260629000000"}
-    (reports_dir / "tracking_history.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
+    (reports_dir / "tracking_history.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _write_auto_screening_report(
-    reports_dir: Path, date_str: str, regime: str
-) -> None:
+def _write_auto_screening_report(reports_dir: Path, date_str: str, regime: str) -> None:
     """写入最小 auto_screening_{date}.json (含 date + market_state.regime_gate_level)."""
     payload = {
         "date": date_str,
         "market_state": {"regime_gate_level": regime},
     }
-    (reports_dir / f"auto_screening_{date_str}.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
+    (reports_dir / f"auto_screening_{date_str}.json").write_text(json.dumps(payload), encoding="utf-8")
 
 
 class TestRunRefreshCli:
     """NS-5 CLI runner — 端到端流程: load + build + compute + output JSON."""
 
-    def test_end_to_end_outputs_json_to_stdout(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_end_to_end_outputs_json_to_stdout(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """合成 reports_dir + tracking_history.json → stdout 输出 JSON."""
         reports_dir = tmp_path / "reports"
         reports_dir.mkdir()
@@ -528,12 +508,8 @@ class TestRunRefreshCli:
         _write_auto_screening_report(reports_dir, "20260602", "normal")
 
         # 写入 tracking_history records (12 条 crisis + 12 条 normal, 都 t30 mature)
-        crisis_recs = [
-            _rec(date_str="20260601", t5=+1.0, t10=+2.0, t30=+3.0) for _ in range(12)
-        ]
-        normal_recs = [
-            _rec(date_str="20260602", t5=-1.0, t10=-2.0, t30=-3.0) for _ in range(12)
-        ]
+        crisis_recs = [_rec(date_str="20260601", t5=+1.0, t10=+2.0, t30=+3.0) for _ in range(12)]
+        normal_recs = [_rec(date_str="20260602", t5=-1.0, t10=-2.0, t30=-3.0) for _ in range(12)]
         _write_tracking_history(reports_dir, crisis_recs + normal_recs)
 
         rc = run_refresh_cli(reports_dir=reports_dir, min_samples=10)
@@ -587,9 +563,7 @@ class TestRunRefreshCli:
         rc = run_refresh_cli(reports_dir=reports_dir, min_samples=10)
         assert rc == 1
 
-    def test_returns_1_when_no_auto_screening_reports(
-        self, tmp_path: Path
-    ) -> None:
+    def test_returns_1_when_no_auto_screening_reports(self, tmp_path: Path) -> None:
         """auto_screening_*.json 缺失 → date_to_regime 空 → 返回 1."""
         reports_dir = tmp_path / "reports"
         reports_dir.mkdir()
@@ -610,9 +584,7 @@ class TestRunRefreshCli:
         )
         assert rc == 1
 
-    def test_min_samples_filter_applied(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_min_samples_filter_applied(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """min_samples=20 → n=12 的 regime 被过滤掉 (regime_winrates 为空)."""
         reports_dir = tmp_path / "reports"
         reports_dir.mkdir()
@@ -645,9 +617,7 @@ class TestRecomputeToRenderIntegration:
     (recompute 写 winrate_ci_low, render 读不到 → 不显示, 不报错).
     """
 
-    def test_full_pipeline_ci_flows_through(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_full_pipeline_ci_flows_through(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """recompute 写 CI → JSON → load → render 显示 CI 标记."""
         reports_dir = tmp_path / "reports"
         reports_dir.mkdir()
@@ -665,9 +635,7 @@ class TestRecomputeToRenderIntegration:
 
         # Step 1: run_refresh_cli 写 JSON artifact (含 bootstrap CI)
         output_path = reports_dir / "regime_winrates_recomputed_20260601.json"
-        rc = run_refresh_cli(
-            reports_dir=reports_dir, output_path=output_path, min_samples=10
-        )
+        rc = run_refresh_cli(reports_dir=reports_dir, output_path=output_path, min_samples=10)
         assert rc == 0
         assert output_path.exists()
 
@@ -698,9 +666,7 @@ class TestRecomputeToRenderIntegration:
         assert summary.winrate_ci_high is not None
 
         # Step 4: render 输出含 CI 标记
-        line = render_regime_winrate_line(
-            "crisis", today=date(2026, 6, 1), reports_dir=reports_dir
-        )
+        line = render_regime_winrate_line("crisis", today=date(2026, 6, 1), reports_dir=reports_dir)
         assert "CI" in line, f"line={line}"
         # winrate ~67% → "67%" 出现
         assert "67%" in line

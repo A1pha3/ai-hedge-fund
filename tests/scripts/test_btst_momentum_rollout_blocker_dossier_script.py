@@ -81,15 +81,7 @@ def test_main_fails_closed_when_rollout_blockers_section_is_missing(tmp_path: Pa
 
 
 def test_parse_rollout_blockers_keeps_blockers_after_blank_lines() -> None:
-    markdown_text = (
-        "# Parameter Search Report\n\n"
-        "Rollout Blockers:\n"
-        "- `missing_projected_theme_exposure_delta_vs_default`\n"
-        "\n"
-        "- `downside_p10_regressed_vs_default`\n"
-        "\n"
-        "- `unknown_hold_reason`\n"
-    )
+    markdown_text = "# Parameter Search Report\n\n" "Rollout Blockers:\n" "- `missing_projected_theme_exposure_delta_vs_default`\n" "\n" "- `downside_p10_regressed_vs_default`\n" "\n" "- `unknown_hold_reason`\n"
 
     assert dossier.parse_rollout_blockers_from_markdown(markdown_text) == [
         "missing_projected_theme_exposure_delta_vs_default",

@@ -25,7 +25,6 @@ import pytest
 from src.data.providers.tushare_provider import TushareProvider
 from src.tools.ashare_data_sources import TushareDataSource
 
-
 # ---------------------------------------------------------------------------
 # Fixtures: raw daily + adj_factor with a known ex-dividend gap
 # ---------------------------------------------------------------------------
@@ -130,9 +129,7 @@ def test_ns9_tushare_provider_applies_qfq_adjustment() -> None:
         return await provider.get_prices("600519", "2026-01-09", "2026-01-12")
 
     response = asyncio.run(_run())
-    assert response.error is None or response.error == "", (
-        f"unexpected error: {response.error}"
-    )
+    assert response.error is None or response.error == "", f"unexpected error: {response.error}"
     assert len(response.data) == 2, f"expected 2 prices, got {len(response.data)}"
 
     # qfq day1 close = raw * adj_factor / latest_adj = 10 * 1.2 / 1.0 = 12.0
@@ -140,10 +137,7 @@ def test_ns9_tushare_provider_applies_qfq_adjustment() -> None:
     day1 = response.data[0]  # prices.reverse() → oldest first
     day2 = response.data[1]
     expected_day1_close = _expected_qfq_day1_close()
-    assert day1.close == pytest.approx(expected_day1_close, abs=0.01), (
-        f"NS-9: TushareProvider day1 close should be qfq-adjusted to {expected_day1_close}, "
-        f"got {day1.close} (raw=10.0). adj_factor=1.2/1.0 not applied."
-    )
+    assert day1.close == pytest.approx(expected_day1_close, abs=0.01), f"NS-9: TushareProvider day1 close should be qfq-adjusted to {expected_day1_close}, " f"got {day1.close} (raw=10.0). adj_factor=1.2/1.0 not applied."
     # day2 close unchanged (latest anchor)
     assert day2.close == pytest.approx(9.5, abs=0.01)
 
@@ -183,9 +177,7 @@ def _patch_tushare_datasource_cached_call(
     re-binds the (now patched) attribute, which is exactly the behaviour we need.
     """
 
-    def fake_cached_call(
-        _pro: Any, api_name: str, **_kwargs: Any
-    ) -> pd.DataFrame | None:
+    def fake_cached_call(_pro: Any, api_name: str, **_kwargs: Any) -> pd.DataFrame | None:
         if api_name == "daily":
             return raw_df
         if api_name == "adj_factor":
@@ -209,9 +201,7 @@ def test_ns9_tushare_datasource_applies_qfq_adjustment(
     """
     _patch_tushare_datasource_cached_call(monkeypatch)
     # Bypass _init_tushare (TUSHARE_TOKEN not set in test env)
-    monkeypatch.setattr(
-        TushareDataSource, "_init_tushare", classmethod(lambda cls: True)
-    )
+    monkeypatch.setattr(TushareDataSource, "_init_tushare", classmethod(lambda cls: True))
     monkeypatch.setattr(TushareDataSource, "_pro", object(), raising=False)
 
     prices = TushareDataSource.get_prices("600519", "2026-01-09", "2026-01-12")
@@ -222,10 +212,7 @@ def test_ns9_tushare_datasource_applies_qfq_adjustment(
     day1 = prices[0]  # prices.reverse() → oldest first
     day2 = prices[1]
     expected_day1_close = _expected_qfq_day1_close()
-    assert day1.close == pytest.approx(expected_day1_close, abs=0.01), (
-        f"NS-9: TushareDataSource day1 close should be qfq-adjusted to {expected_day1_close}, "
-        f"got {day1.close} (raw=10.0). adj_factor=1.2/1.0 not applied."
-    )
+    assert day1.close == pytest.approx(expected_day1_close, abs=0.01), f"NS-9: TushareDataSource day1 close should be qfq-adjusted to {expected_day1_close}, " f"got {day1.close} (raw=10.0). adj_factor=1.2/1.0 not applied."
     assert day2.close == pytest.approx(9.5, abs=0.01)
 
 
@@ -234,9 +221,7 @@ def test_ns9_tushare_datasource_falls_back_to_raw_when_no_adj_factor(
 ) -> None:
     """TushareDataSource.get_prices must degrade gracefully if adj_factor fetch fails."""
     _patch_tushare_datasource_cached_call(monkeypatch, adj_df=None)
-    monkeypatch.setattr(
-        TushareDataSource, "_init_tushare", classmethod(lambda cls: True)
-    )
+    monkeypatch.setattr(TushareDataSource, "_init_tushare", classmethod(lambda cls: True))
     monkeypatch.setattr(TushareDataSource, "_pro", object(), raising=False)
 
     prices = TushareDataSource.get_prices("600519", "2026-01-09", "2026-01-12")
@@ -263,9 +248,7 @@ def _patch_tushare_datasource_cached_call_raising_on_adj(
     instead of returning None — exercises the new logger.warning drain path
     (silent swallow → observable degrade)."""
 
-    def fake_cached_call(
-        _pro: Any, api_name: str, **_kwargs: Any
-    ) -> pd.DataFrame | None:
+    def fake_cached_call(_pro: Any, api_name: str, **_kwargs: Any) -> pd.DataFrame | None:
         if api_name == "daily":
             return raw_df
         if api_name == "adj_factor":
@@ -291,9 +274,7 @@ def test_ns9_tushare_datasource_adj_factor_exception_logs_and_degrades(
     import logging
 
     _patch_tushare_datasource_cached_call_raising_on_adj(monkeypatch)
-    monkeypatch.setattr(
-        TushareDataSource, "_init_tushare", classmethod(lambda cls: True)
-    )
+    monkeypatch.setattr(TushareDataSource, "_init_tushare", classmethod(lambda cls: True))
     monkeypatch.setattr(TushareDataSource, "_pro", object(), raising=False)
 
     with caplog.at_level(logging.WARNING, logger="src.tools.ashare_data_sources"):
@@ -305,9 +286,7 @@ def test_ns9_tushare_datasource_adj_factor_exception_logs_and_degrades(
     assert day1.close == pytest.approx(10.0, abs=0.01)
 
     warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert len(warning_records) >= 1, (
-        f"expected >=1 WARNING record from adj_factor fetch exception, got {caplog.records}"
-    )
+    assert len(warning_records) >= 1, f"expected >=1 WARNING record from adj_factor fetch exception, got {caplog.records}"
     msg = warning_records[0].getMessage()
     assert "adj_factor" in msg
     assert "600519" in msg or "600519.SH" in msg

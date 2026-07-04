@@ -24,12 +24,7 @@ class TestApiNoPrintRemains:
         import inspect
 
         source = inspect.getsource(api)
-        code_lines = [
-            ln
-            for ln in source.splitlines()
-            if ln.lstrip().startswith("print(")
-            and not ln.lstrip().startswith("#")
-        ]
+        code_lines = [ln for ln in source.splitlines() if ln.lstrip().startswith("print(") and not ln.lstrip().startswith("#")]
         assert not code_lines, f"api.py 不应再有裸 print() 调用, 发现: {code_lines}"
 
     def test_module_logger_exists(self) -> None:
@@ -49,6 +44,7 @@ class TestMakeApiRequestObservability:
             def __getattr__(self, name):
                 def _raise(*a, **k):
                     raise requests.RequestException("simulated request error")
+
                 return _raise
 
         monkeypatch.setattr(requests, "post", _BoomSession().post)
@@ -58,10 +54,7 @@ class TestMakeApiRequestObservability:
             result = api._make_api_request("http://example.com", headers={}, method="GET", max_retries=0)
 
         assert result is None
-        assert any(
-            "Request error" in r.getMessage() and r.levelno >= logging.WARNING
-            for r in caplog.records
-        ), "RequestException 必须发 logger.warning (不再 print)"
+        assert any("Request error" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), "RequestException 必须发 logger.warning (不再 print)"
 
     def test_rate_limit_emits_warning(self, monkeypatch, caplog) -> None:
         """429 限速重试须发 logger.warning, 不再 print。"""
@@ -80,7 +73,4 @@ class TestMakeApiRequestObservability:
             # max_retries=1 让它重试一次 (触发 rate-limit 日志), 第二次仍 429 返回
             api._make_api_request("http://example.com", headers={}, method="GET", max_retries=1)
 
-        assert any(
-            "429" in r.getMessage() or "Rate limited" in r.getMessage()
-            for r in caplog.records
-        ), "429 限速重试必须发 logger.warning (不再 print)"
+        assert any("429" in r.getMessage() or "Rate limited" in r.getMessage() for r in caplog.records), "429 限速重试必须发 logger.warning (不再 print)"

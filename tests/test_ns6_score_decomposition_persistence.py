@@ -29,7 +29,6 @@ from src.screening.recommendation_tracker import (
     update_tracking_history,
 )
 
-
 # ---------------------------------------------------------------------------
 # 1. TrackingRecord — score_decomposition 字段默认 None
 # ---------------------------------------------------------------------------
@@ -155,9 +154,7 @@ def test_update_tracking_history_persists_score_decomposition(tmp_path: Path) ->
         history = json.load(f)
 
     record = history["records"][0]
-    assert record["score_decomposition"] == decomp, (
-        f"TrackingRecord 缺少 score_decomposition 或值不匹配: {record}"
-    )
+    assert record["score_decomposition"] == decomp, f"TrackingRecord 缺少 score_decomposition 或值不匹配: {record}"
 
 
 def test_update_tracking_history_missing_score_decomposition_defaults_none(

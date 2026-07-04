@@ -47,18 +47,12 @@ def test_r43_pit_invariant_r41_fundamental_ann_date_excludes_future_filings() ->
     trap: a 2023 annual report (period 20231231) often isn't *announced* until
     2024-04; a January backtest must not read it."""
     # Legitimate: announced 2024-01-10, before AS_OF (2024-01-15).
-    legit = _should_include_financial_period(
-        "20231231", "annual", ann_date_str="20240110", as_of_date=AS_OF
-    )
+    legit = _should_include_financial_period("20231231", "annual", ann_date_str="20240110", as_of_date=AS_OF)
     assert legit is True, "a report announced before AS_OF is PIT-legitimate"
 
     # Look-ahead: same 2023 annual report, but announced 2024-04-30 (after AS_OF).
-    lookahead = _should_include_financial_period(
-        "20231231", "annual", ann_date_str="20240430", as_of_date=AS_OF
-    )
-    assert lookahead is False, (
-        "a report announced after AS_OF is look-ahead even if its period predates AS_OF"
-    )
+    lookahead = _should_include_financial_period("20231231", "annual", ann_date_str="20240430", as_of_date=AS_OF)
+    assert lookahead is False, "a report announced after AS_OF is look-ahead even if its period predates AS_OF"
 
 
 def test_r43_pit_invariant_r40_macro_excludes_future_readings() -> None:
@@ -70,16 +64,14 @@ def test_r43_pit_invariant_r40_macro_excludes_future_readings() -> None:
 
     df = pd.DataFrame(
         [
-            {"month": "202311", "indicator": "cpi", "value": 0.2},   # legit (before)
-            {"month": "202401", "indicator": "cpi", "value": 0.3},   # legit (on AS_OF month)
-            {"month": "202403", "indicator": "cpi", "value": 0.5},   # look-ahead (after)
+            {"month": "202311", "indicator": "cpi", "value": 0.2},  # legit (before)
+            {"month": "202401", "indicator": "cpi", "value": 0.3},  # legit (on AS_OF month)
+            {"month": "202403", "indicator": "cpi", "value": 0.5},  # look-ahead (after)
         ]
     )
     filtered = _filter_df_as_of(df, as_of_month)
     months = set(filtered["month"])
-    assert months == {"202311", "202401"}, (
-        "macro filter must keep on-or-before AS_OF month and drop future months"
-    )
+    assert months == {"202311", "202401"}, "macro filter must keep on-or-before AS_OF month and drop future months"
     assert "202403" not in months, "a future macro reading must not leak through"
 
 
@@ -111,19 +103,13 @@ def test_r43_pit_invariant_r37_qfq_uses_only_factors_known_on_or_before_as_of() 
     *latest supplied* factor (which, for a PIT-correct caller, is the AS_OF
     factor), not some global latest."""
     # Suppose the caller (correctly) supplies adj_factors only up to AS_OF.
-    raw = pd.DataFrame(
-        {"trade_date": ["20240110", "20240112", "20240115"], "close": [10.0, 10.5, 11.0]}
-    )
-    adj_pit = pd.DataFrame(
-        {"trade_date": ["20240110", "20240112", "20240115"], "adj_factor": [1.0, 1.02, 1.05]}
-    )
+    raw = pd.DataFrame({"trade_date": ["20240110", "20240112", "20240115"], "close": [10.0, 10.5, 11.0]})
+    adj_pit = pd.DataFrame({"trade_date": ["20240110", "20240112", "20240115"], "adj_factor": [1.0, 1.02, 1.05]})
     adjusted = _apply_qfq_adjustment(raw, adj_pit)
     # qfq anchors latest price: ratio_i = adj_i / adj_latest.
     # latest adj = 1.05; close on 20240115 must be unchanged (ratio 1.0).
     last_row = adjusted[adjusted["trade_date"] == "20240115"].iloc[0]
-    assert abs(float(last_row["close"]) - 11.0) < 1e-6, (
-        "qfq must anchor the latest supplied price (ratio 1.0 on the AS_OF row)"
-    )
+    assert abs(float(last_row["close"]) - 11.0) < 1e-6, "qfq must anchor the latest supplied price (ratio 1.0 on the AS_OF row)"
     # And the adjustment is monotonic in the adj_factor ratio (no future leak).
     first_ratio = 1.0 / 1.05
     first_close = float(adjusted[adjusted["trade_date"] == "20240110"].iloc[0]["close"])
@@ -149,10 +135,7 @@ def test_r43_pit_invariant_all_primitives_agree_on_the_shared_as_of() -> None:
     assert set(filtered_macro["month"]) == {"202401"}
 
     # R42 universe
-    universe = pd.DataFrame(
-        [{"ts_code": "L.SZ", "list_date": "20240115", "delist_date": ""},
-         {"ts_code": "F.SZ", "list_date": "20240116", "delist_date": ""}]
-    )
+    universe = pd.DataFrame([{"ts_code": "L.SZ", "list_date": "20240115", "delist_date": ""}, {"ts_code": "F.SZ", "list_date": "20240116", "delist_date": ""}])
     kept_universe = filter_stock_basic_as_of(universe, as_of=AS_OF)
     assert set(kept_universe["ts_code"]) == {"L.SZ"}
 
@@ -167,18 +150,12 @@ def test_r74_pit_invariant_line_items_ann_date_excludes_future_filings() -> None
     must NOT be visible to a January (AS_OF=20240115) backtest that consumes
     ``search_line_items`` → ``get_ashare_line_items_with_tushare``."""
     # Legitimate: announced 2024-01-10, before AS_OF.
-    legit = _line_items_should_include_period(
-        "20231231", "annual", ann_date_str="20240110", as_of_date=AS_OF
-    )
+    legit = _line_items_should_include_period("20231231", "annual", ann_date_str="20240110", as_of_date=AS_OF)
     assert legit is True, "line_items report announced before AS_OF is PIT-legitimate"
 
     # Look-ahead: same 2023 annual report, but announced 2024-04-30 (after AS_OF).
-    lookahead = _line_items_should_include_period(
-        "20231231", "annual", ann_date_str="20240430", as_of_date=AS_OF
-    )
-    assert lookahead is False, (
-        "line_items report announced after AS_OF is look-ahead and must be excluded"
-    )
+    lookahead = _line_items_should_include_period("20231231", "annual", ann_date_str="20240430", as_of_date=AS_OF)
+    assert lookahead is False, "line_items report announced after AS_OF is look-ahead and must be excluded"
 
     # Live-mode fallback: missing ann_date → no PIT filter (live path unchanged).
     live = _line_items_should_include_period("20231231", "annual", ann_date_str=None, as_of_date=AS_OF)

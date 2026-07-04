@@ -27,6 +27,7 @@ Fix: guard NaN/None at the top of each function. NaN/None volatility → neutral
 baseline (0.20); NaN/None correlation → conservative neutral (1.0). Behavior-
 preserving for current callers (they never pass NaN/None).
 """
+
 from __future__ import annotations
 
 import math

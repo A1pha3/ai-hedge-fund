@@ -198,9 +198,7 @@ def test_calculate_enhanced_dcf_value_preserves_zero_revenue_growth():
         market_cap=1000.0,
         revenue_growth=0.05,
     )
-    assert result < result_with_growth, (
-        f"Zero-growth DCF ({result}) should be less than 5%-growth DCF ({result_with_growth})"
-    )
+    assert result < result_with_growth, f"Zero-growth DCF ({result}) should be less than 5%-growth DCF ({result_with_growth})"
 
 
 def test_calculate_enhanced_dcf_transition_fcf_is_monotonic():
@@ -235,10 +233,7 @@ def test_calculate_enhanced_dcf_transition_fcf_is_monotonic():
     higher["revenue_growth"] = 0.12
     higher["growth_metrics"] = {"revenue_growth": 0.12, "fcf_growth": 0.12, "earnings_growth": 0.12}
     high = valuation.calculate_enhanced_dcf_value(**higher)
-    assert high > low, (
-        f"Higher growth (0.12) must raise DCF ({high}) above lower-growth (0.08) DCF ({low}); "
-        f"a decrease signals the non-monotonic transition-FCF bug (BH-009)."
-    )
+    assert high > low, f"Higher growth (0.12) must raise DCF ({high}) above lower-growth (0.08) DCF ({low}); " f"a decrease signals the non-monotonic transition-FCF bug (BH-009)."
 
 
 def test_calculate_dcf_scenarios_preserves_zero_revenue_growth():
@@ -267,10 +262,7 @@ def test_calculate_dcf_scenarios_preserves_zero_revenue_growth():
     assert isinstance(result_default["expected_value"], float)
 
     # revenue_growth=0.0 should give LOWER values than revenue_growth=None (which defaults to 0.05)
-    assert result_zero["expected_value"] < result_default["expected_value"], (
-        f"Zero-growth scenario ({result_zero['expected_value']}) should be less than "
-        f"default-growth scenario ({result_default['expected_value']})"
-    )
+    assert result_zero["expected_value"] < result_default["expected_value"], f"Zero-growth scenario ({result_zero['expected_value']}) should be less than " f"default-growth scenario ({result_default['expected_value']})"
 
 
 def test_calculate_enhanced_dcf_value_handles_none_revenue_growth():

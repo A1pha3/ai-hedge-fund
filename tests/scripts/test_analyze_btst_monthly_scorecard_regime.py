@@ -6,9 +6,7 @@ from pathlib import Path
 import scripts.analyze_btst_monthly_scorecard as scorecard
 
 
-def test_analyze_btst_monthly_scorecard_adds_regime_gate_buckets_when_daily_events_available(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_analyze_btst_monthly_scorecard_adds_regime_gate_buckets_when_daily_events_available(tmp_path: Path, monkeypatch) -> None:
     reports_dir = tmp_path / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
@@ -18,9 +16,7 @@ def test_analyze_btst_monthly_scorecard_adds_regime_gate_buckets_when_daily_even
             {
                 "trade_date": "20260506",
                 "next_date": "20260507",
-                "high_confidence": [
-                    {"ticker": "000001", "name": "PingAn", "score": 0.9, "pct_chg": 6.0, "close_strength": 1.0, "catalyst_freshness": 0.8}
-                ],
+                "high_confidence": [{"ticker": "000001", "name": "PingAn", "score": 0.9, "pct_chg": 6.0, "close_strength": 1.0, "catalyst_freshness": 0.8}],
             },
             ensure_ascii=False,
             indent=2,

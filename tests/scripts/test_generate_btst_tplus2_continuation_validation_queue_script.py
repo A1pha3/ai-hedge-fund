@@ -137,9 +137,7 @@ def test_generate_btst_tplus2_continuation_validation_queue_escalates_merge_read
     assert analysis["queue_rows"][0]["next_step"] == "Escalate into default BTST merge review under explicit governance approval."
 
 
-def test_generate_btst_tplus2_continuation_validation_queue_keeps_seed_order_when_board_focus_is_non_governance(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_generate_btst_tplus2_continuation_validation_queue_keeps_seed_order_when_board_focus_is_non_governance(monkeypatch, tmp_path: Path) -> None:
     reports_root = tmp_path / "reports"
     reports_root.mkdir()
 

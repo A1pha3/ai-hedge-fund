@@ -264,6 +264,7 @@ def test_idempotency():
 
     # 相同数据再次导出
     import time
+
     time.sleep(0.1)  # 确保 mtime 有差异
     exporter.export_prices("IDEM", "2025-02-01", prices, "test")
     mtime2 = (snapshot_dir / "prices.json").stat().st_mtime

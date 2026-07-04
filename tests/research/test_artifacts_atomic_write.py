@@ -31,10 +31,7 @@ def test_atomic_write_json_crash_preserves_prior(tmp_path: Path, monkeypatch) ->
         pass
 
     raw = target.read_text(encoding="utf-8")
-    assert raw.strip(), (
-        "prior artifact must not be truncated-empty after a crashed write — "
-        "non-atomic write_text truncates on open (R88 corrupt-snapshot CRASH vector root cause)"
-    )
+    assert raw.strip(), "prior artifact must not be truncated-empty after a crashed write — " "non-atomic write_text truncates on open (R88 corrupt-snapshot CRASH vector root cause)"
     json.loads(raw)
 
 

@@ -176,10 +176,14 @@ def test_reweight_with_balanced_weights_matches_average() -> None:
     recs = [
         _make_rec(
             "X",
-            trend=1, trend_conf=100.0,
-            mr=1, mr_conf=80.0,
-            fund=1, fund_conf=60.0,
-            es=1, es_conf=40.0,
+            trend=1,
+            trend_conf=100.0,
+            mr=1,
+            mr_conf=80.0,
+            fund=1,
+            fund_conf=60.0,
+            es=1,
+            es_conf=40.0,
         )
     ]
     w = StrategyWeights()
@@ -237,9 +241,7 @@ def test_reweight_clears_stale_bucket_when_crossing_boundary() -> None:
     r = out[0]
     assert abs(r["score_b"] - expected_new) < 1e-9, f"new score_b should be {expected_new}"
     # 越过桶边界 → 校准数据 reset 为未知
-    assert r["bucket_label"] == "未知", (
-        f"crossed bucket boundary → bucket_label must reset to '未知'; got {r['bucket_label']!r}"
-    )
+    assert r["bucket_label"] == "未知", f"crossed bucket boundary → bucket_label must reset to '未知'; got {r['bucket_label']!r}"
     assert r["bucket_sample_count"] == 0
     assert r["bucket_t30_mature_count"] == 0
     assert r["expected_returns"] == {}
@@ -267,17 +269,13 @@ def test_reweight_preserves_composite_score_when_crossing() -> None:
     dogfood 证实 (auto_screening vs custom_weights 同 ticker composite_score 完全一致),
     reweight 只改 score_b 不改 composite_score. 越界 reset 只清 bucket 校准, 不动 composite.
     """
-    rec, _ = _make_rec_with_calibration(
-        "X", score_b=0.55, new_score_b=0.80, composite_score=0.72
-    )
+    rec, _ = _make_rec_with_calibration("X", score_b=0.55, new_score_b=0.80, composite_score=0.72)
     w = StrategyWeights(trend=1.0, mean_reversion=0.0, fundamental=0.0, event_sentiment=0.0)
     out = reweight_recommendations([rec], w)
     r = out[0]
     # bucket 越界 reset, 但 composite_score 保留
     assert r["bucket_label"] == "未知"
-    assert r["composite_score"] == 0.72, (
-        "composite_score is score_b-independent; must survive bucket reset"
-    )
+    assert r["composite_score"] == 0.72, "composite_score is score_b-independent; must survive bucket reset"
     assert r["composite_verified"] is True
 
 
@@ -309,18 +307,12 @@ def test_print_custom_weights_warns_on_recalibration_needed(capsys: pytest.Captu
     assert _print_custom_weights_results(top, w) is True
     out = capsys.readouterr().out
     # 末尾汇总: 提及越界 + 复核指引
-    assert "越过桶边界" in out or "越界" in out, (
-        f"CLI must summarize recalibration-needed picks; got stdout={out!r}"
-    )
-    assert "--top-picks" in out, (
-        f"CLI must point operator to --top-picks for re-validation; got stdout={out!r}"
-    )
+    assert "越过桶边界" in out or "越界" in out, f"CLI must summarize recalibration-needed picks; got stdout={out!r}"
+    assert "--top-picks" in out, f"CLI must point operator to --top-picks for re-validation; got stdout={out!r}"
     # 越界 pick (X) 行应带可视标记区分 (Y 不带)
     x_line = [ln for ln in out.splitlines() if "X" in ln and "测试_X" in ln]
     assert x_line, f"X pick line missing; stdout={out!r}"
-    assert "重权" in x_line[0] or "越界" in x_line[0] or "⚠" in x_line[0], (
-        f"crossed pick X must carry a visible marker; got {x_line[0]!r}"
-    )
+    assert "重权" in x_line[0] or "越界" in x_line[0] or "⚠" in x_line[0], f"crossed pick X must carry a visible marker; got {x_line[0]!r}"
 
 
 # ===========================================================================
@@ -447,9 +439,7 @@ def test_web_custom_weights_endpoint_smoke(tmp_path: Path, monkeypatch: pytest.M
     ]
     reports_dir = tmp_path / "data" / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
-    (reports_dir / "auto_screening_20260607.json").write_text(
-        json.dumps({"recommendations": recs}), encoding="utf-8"
-    )
+    (reports_dir / "auto_screening_20260607.json").write_text(json.dumps({"recommendations": recs}), encoding="utf-8")
 
     app = FastAPI()
     app.include_router(screening_router)  # screening_router 已含 /api/screening 前缀

@@ -10,6 +10,7 @@ Note: full remediation requires owner to rotate the token at tushare.pro and
 optionally scrub git history (destructive, owner-only). This test only guards
 against re-introduction in current source.
 """
+
 from __future__ import annotations
 
 import re
@@ -58,10 +59,7 @@ def test_no_leaked_tushare_token_in_source() -> None:
             continue
         if _LEAKED_TUSHARE_TOKEN in content:
             offenders.append(str(path))
-    assert not offenders, (
-        f"泄露的 TUSHARE_TOKEN 仍出现在源文件中 (c272 回归): {offenders}. "
-        f"请用 os.getenv('TUSHARE_TOKEN', '') + 缺失时 raise 替代硬编码 fallback."
-    )
+    assert not offenders, f"泄露的 TUSHARE_TOKEN 仍出现在源文件中 (c272 回归): {offenders}. " f"请用 os.getenv('TUSHARE_TOKEN', '') + 缺失时 raise 替代硬编码 fallback."
 
 
 def test_no_hardcoded_credential_fallback_in_source() -> None:
@@ -78,10 +76,7 @@ def test_no_hardcoded_credential_fallback_in_source() -> None:
             continue
         for match in _HARDCODED_TOKEN_FALLBACK_PATTERN.finditer(content):
             offenders.append(f"{path}: hardcoded credential fallback -> {match.group(0)[:80]}...")
-    assert not offenders, (
-        f"检测到硬编码凭证 fallback 模式 (c272 防扩散): {offenders}. "
-        f"凭证必须通过环境变量管理, 禁止硬编码 fallback default."
-    )
+    assert not offenders, f"检测到硬编码凭证 fallback 模式 (c272 防扩散): {offenders}. " f"凭证必须通过环境变量管理, 禁止硬编码 fallback default."
 
 
 def test_tushare_token_documented_in_env_example() -> None:
@@ -90,9 +85,7 @@ def test_tushare_token_documented_in_env_example() -> None:
     env_example = repo_root / ".env.example"
     assert env_example.exists(), ".env.example should exist"
     content = env_example.read_text(encoding="utf-8")
-    assert "TUSHARE_TOKEN" in content, (
-        "TUSHARE_TOKEN 必须在 .env.example 文档化, 让 operators 知道如何配置"
-    )
+    assert "TUSHARE_TOKEN" in content, "TUSHARE_TOKEN 必须在 .env.example 文档化, 让 operators 知道如何配置"
 
 
 def test_btst_factor_ic_analysis_raises_without_token(monkeypatch, tmp_path) -> None:

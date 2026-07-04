@@ -17,6 +17,7 @@ DOES catch NaN — inconsistent guarding within the same function. Fix: use the
 author's own ``fillna`` pattern so NaN close → 0.0 (matching the documented
 ``or 0.0`` fallback intent for None/missing), not NaN propagation.
 """
+
 from __future__ import annotations
 
 import math
@@ -86,13 +87,6 @@ def test_nan_open_first_bar_does_not_propagate_nan_open_price(monkeypatch) -> No
     # open_price must be finite — NaN open must not propagate via 'or' chain
     open_price = inputs["open_price"]
     assert isinstance(open_price, (int, float))
-    assert math.isfinite(open_price), (
-        f"NaN open on first bar must not propagate to NaN open_price; "
-        f"got {open_price} (float(NaN or close or 0.0) = NaN because NaN is "
-        f"truthy and short-circuits the 'or' chain; sibling vwap lines use "
-        f"fillna which catches NaN — inconsistent)"
-    )
+    assert math.isfinite(open_price), f"NaN open on first bar must not propagate to NaN open_price; " f"got {open_price} (float(NaN or close or 0.0) = NaN because NaN is " f"truthy and short-circuits the 'or' chain; sibling vwap lines use " f"fillna which catches NaN — inconsistent)"
     # breakout_anchor (max(prev_close, open_price)) must also be finite
-    assert math.isfinite(float(inputs["breakout_anchor"])), (
-        "breakout_anchor must be finite — NaN open_price propagates here too"
-    )
+    assert math.isfinite(float(inputs["breakout_anchor"])), "breakout_anchor must be finite — NaN open_price propagates here too"

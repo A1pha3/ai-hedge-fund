@@ -109,9 +109,7 @@ def test_attach_prior_to_entries_uses_resolver() -> None:
         calls.append({"ticker": ticker, "source": candidate_source})
         return {"next_close_positive_rate": 0.7} if ticker == "000001" else None
 
-    result = attach_historical_prior_to_entries(
-        entries, prior_by_ticker={"000001": {"x": 1}}, resolve_historical_prior_for_ticker_fn=_resolve
-    )
+    result = attach_historical_prior_to_entries(entries, prior_by_ticker={"000001": {"x": 1}}, resolve_historical_prior_for_ticker_fn=_resolve)
     assert len(result) == 2
     assert result[0]["historical_prior"] == {"next_close_positive_rate": 0.7}
     # 000002 resolver returned None → no historical_prior key added
@@ -163,9 +161,7 @@ def _layer_c(ticker: str) -> LayerCResult:
 
 def test_attach_prior_to_watchlist_attaches_when_present() -> None:
     watchlist = [_layer_c("000001"), _layer_c("000002")]
-    result = attach_historical_prior_to_watchlist(
-        watchlist, prior_by_ticker={"000001": {"next_close_positive_rate": 0.7}}
-    )
+    result = attach_historical_prior_to_watchlist(watchlist, prior_by_ticker={"000001": {"next_close_positive_rate": 0.7}})
     assert result[0].historical_prior == {"next_close_positive_rate": 0.7}
     # 000002 not in prior → unchanged (no historical_prior)
     assert result[1].ticker == "000002"

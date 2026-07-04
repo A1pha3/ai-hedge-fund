@@ -1,4 +1,5 @@
 """Tests for volume_confirmation.py — P11-2."""
+
 from __future__ import annotations
 
 import json
@@ -233,7 +234,7 @@ class TestComputeVolumeConfirmation:
                 ],
                 "20260610": [
                     _make_vol_rec("000001", "A", 0.5, 1500),  # confirmed
-                    _make_vol_rec("000002", "B", 0.5, 800),   # divergence
+                    _make_vol_rec("000002", "B", 0.5, 800),  # divergence
                 ],
             },
         )

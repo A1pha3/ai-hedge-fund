@@ -153,10 +153,7 @@ class TestStrongWeakNoOverlap:
         # Unit-level invariant: strong_sectors and weak_sectors must be disjoint
         strong = set(report.strong_sectors)
         weak = set(report.weak_sectors)
-        assert strong.isdisjoint(weak), (
-            f"strong_sectors {strong} and weak_sectors {weak} overlap: "
-            f"a sector cannot be both strong and weak"
-        )
+        assert strong.isdisjoint(weak), f"strong_sectors {strong} and weak_sectors {weak} overlap: " f"a sector cannot be both strong and weak"
 
     def test_fewer_sectors_than_counts_are_disjoint(self) -> None:
         """When total sectors < N, all are strong → weak must be empty or
@@ -167,10 +164,7 @@ class TestStrongWeakNoOverlap:
         strong = set(report.strong_sectors)
         weak = set(report.weak_sectors)
         overlap = strong & weak
-        assert not overlap, (
-            f"strong_sectors and weak_sectors overlap: {overlap}. "
-            f"Sectors in both confuse the user and are misleading."
-        )
+        assert not overlap, f"strong_sectors and weak_sectors overlap: {overlap}. " f"Sectors in both confuse the user and are misleading."
 
 
 class TestStrengthLabelColored:

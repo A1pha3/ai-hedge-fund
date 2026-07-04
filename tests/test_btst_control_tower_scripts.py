@@ -1712,9 +1712,7 @@ def test_build_btst_open_ready_delta_payload_threads_summary_sections(tmp_path: 
                 "focus_next_day_contract_verdict": "next_close_confirmed_wait_t_plus_2",
                 "focus_t_plus_2_contract_verdict": "t_plus_2_confirmed",
             },
-            "next_actions": [
-                {"task_id": "carryover_gate_ready_priority", "title": "优先复核 300408 carryover gate-ready 扩容资格", "source": "carryover_gate_ready"}
-            ],
+            "next_actions": [{"task_id": "carryover_gate_ready_priority", "title": "优先复核 300408 carryover gate-ready 扩容资格", "source": "carryover_gate_ready"}],
         },
         "source_paths": {},
     }
@@ -1736,9 +1734,7 @@ def test_build_btst_open_ready_delta_payload_threads_summary_sections(tmp_path: 
                 "focus_next_day_contract_verdict": "pending_next_day",
                 "focus_t_plus_2_contract_verdict": "pending_t_plus_2",
             },
-            "next_actions": [
-                {"task_id": "carryover_contract_priority", "title": "固化 002001 carryover 合约并盯 300408 闭环", "source": "carryover_contract"}
-            ],
+            "next_actions": [{"task_id": "carryover_contract_priority", "title": "固化 002001 carryover 合约并盯 300408 闭环", "source": "carryover_contract"}],
         },
         "source_paths": {},
     }
@@ -2073,10 +2069,7 @@ def _write_btst_followup_report(
                 "mode": mode,
             },
             "selection_target": selection_target,
-            "portfolio_values": [
-                {"Portfolio Value": value}
-                for value in (portfolio_values or [100000.0, 101000.0])
-            ],
+            "portfolio_values": [{"Portfolio Value": value} for value in (portfolio_values or [100000.0, 101000.0])],
             "performance_metrics": {
                 "max_drawdown": max_drawdown,
                 "sharpe_ratio": sharpe_ratio,
@@ -2255,9 +2248,7 @@ def test_btst_governance_synthesis_and_validation_merge_current_lane_state(tmp_p
                 {"ticker": "300383", "action_tier": "shadow_entry", "next_step": "shadow monitor"},
                 {"ticker": "300724", "action_tier": "structural_shadow_hold", "next_step": "keep frozen"},
             ],
-            "next_3_tasks": [
-                {"task_id": "rerun_001309", "title": "补跑 001309 第二窗口", "why_now": "主 lane 仍缺第二窗口。", "next_step": "python rerun_001309.py"}
-            ],
+            "next_3_tasks": [{"task_id": "rerun_001309", "title": "补跑 001309 第二窗口", "why_now": "主 lane 仍缺第二窗口。", "next_step": "python rerun_001309.py"}],
             "recommendation": "001309 继续主推进，300383 保持 shadow，300724 保持 structural hold。",
         },
     )
@@ -2271,9 +2262,7 @@ def test_btst_governance_synthesis_and_validation_merge_current_lane_state(tmp_p
                 {"ticker": "600821", "governance_tier": "recurring_intraday_control", "status": "await_new_independent_window_data", "blocker": "cross_window_stability_missing", "next_step": "wait new intraday control window"},
                 {"ticker": "300724", "governance_tier": "structural_shadow_hold_only", "status": "structural_shadow_hold_only", "blocker": "post_release_quality_negative", "next_step": "keep frozen"},
             ],
-            "next_3_tasks": [
-                {"task_id": "shadow_300383", "title": "继续 shadow 300383", "why_now": "单票 shadow lane 仍是低成本验证位。", "next_step": "shadow follow 300383"}
-            ],
+            "next_3_tasks": [{"task_id": "shadow_300383", "title": "继续 shadow 300383", "why_now": "单票 shadow lane 仍是低成本验证位。", "next_step": "shadow follow 300383"}],
             "recommendation": "001309 继续主推进，300383 保持 shadow，300724 保持 structural hold。",
         },
     )
@@ -2612,9 +2601,7 @@ def test_btst_governance_synthesis_merges_same_trade_date_followups_to_strongest
     assert merged_followup["entries"][0]["historical_execution_quality_label"] == "intraday_only"
     assert merged_followup["entries"][0]["historical_entry_timing_bias"] == "confirm_then_reduce"
 
-    upstream_intraday_constraint = next(
-        row for row in synthesis["execution_surface_constraints"] if row["constraint_id"] == "upstream_shadow_selected_intraday_bias"
-    )
+    upstream_intraday_constraint = next(row for row in synthesis["execution_surface_constraints"] if row["constraint_id"] == "upstream_shadow_selected_intraday_bias")
     assert upstream_intraday_constraint["status"] == "continuation_confirm_only_intraday_bias"
     assert upstream_intraday_constraint["blocker"] == "weak_overnight_follow_through_after_shadow_recall"
     assert upstream_intraday_constraint["focus_tickers"] == ["300720"]
@@ -3037,9 +3024,7 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
                 {"ticker": "300383", "action_tier": "shadow_keep", "next_step": "shadow monitor"},
                 {"ticker": "300724", "action_tier": "structural_shadow_hold", "next_step": "keep frozen"},
             ],
-            "next_3_tasks": [
-                {"task_id": "rerun_001309", "title": "补跑 001309 第二窗口", "why_now": "主 lane 仍缺第二窗口。", "next_step": "python rerun_001309.py"}
-            ],
+            "next_3_tasks": [{"task_id": "rerun_001309", "title": "补跑 001309 第二窗口", "why_now": "主 lane 仍缺第二窗口。", "next_step": "python rerun_001309.py"}],
             "recommendation": "优先推进 001309，保持 300383 shadow，保持 300724 structural hold。",
         },
     )
@@ -3054,9 +3039,7 @@ def test_btst_nightly_control_tower_generates_one_click_bundle_and_reindexes_man
                 {"ticker": "600821", "governance_tier": "recurring_intraday_control", "status": "await_new_intraday_control_window", "blocker": "cross_window_stability_missing", "next_step": "wait intraday control"},
                 {"ticker": "300724", "governance_tier": "structural_shadow_hold_only", "status": "structural_shadow_hold_only", "blocker": "post_release_quality_negative", "next_step": "keep frozen"},
             ],
-            "next_3_tasks": [
-                {"task_id": "primary_roll_forward", "title": "推进 001309", "why_now": "仍是唯一 primary lane。", "next_step": "collect second window"}
-            ],
+            "next_3_tasks": [{"task_id": "primary_roll_forward", "title": "推进 001309", "why_now": "仍是唯一 primary lane。", "next_step": "collect second window"}],
             "recommendation": "当前 rollout 治理应分三条车道：001309 主推进，300383 shadow，300724 structural hold。",
         },
     )
@@ -3814,9 +3797,7 @@ def test_btst_control_tower_overlay_uses_formal_reporting_truth_for_demoted_shad
                 "research_upside_radar_count": 0,
             },
             "recommendation": "转入 downstream followup。",
-            "upstream_shadow_recall_summary": {
-                "top_focus_tickers": ["002028", "600522", "301292"]
-            },
+            "upstream_shadow_recall_summary": {"top_focus_tickers": ["002028", "600522", "301292"]},
             "near_miss_entries": [
                 {
                     "ticker": "002028",
@@ -3878,9 +3859,7 @@ def test_btst_control_tower_overlay_uses_formal_reporting_truth_for_demoted_shad
         {
             "priority_stage_counts": {"candidate_pool_truncated_after_filters": 1},
             "dominant_stage": "candidate_pool_truncated_after_filters",
-            "top_stage_tickers": {
-                "candidate_pool_truncated_after_filters": ["301292"]
-            },
+            "top_stage_tickers": {"candidate_pool_truncated_after_filters": ["301292"]},
             "upstream_handoff_board_status": "mixed_upstream_and_post_recall_followup",
             "upstream_handoff_board_summary": {
                 "board_status": "mixed_upstream_and_post_recall_followup",
@@ -3922,13 +3901,9 @@ def test_btst_control_tower_overlay_uses_formal_reporting_truth_for_demoted_shad
         "candidate_entry_shadow_refresh": {
             "status": "refreshed",
             "no_candidate_entry_action_board_json": str(action_board_json.resolve()),
-            "no_candidate_entry_failure_dossier_json": str(
-                failure_dossier_json.resolve()
-            ),
+            "no_candidate_entry_failure_dossier_json": str(failure_dossier_json.resolve()),
             "watchlist_recall_dossier_json": str(watchlist_dossier_json.resolve()),
-            "candidate_pool_recall_dossier_json": str(
-                candidate_pool_dossier_json.resolve()
-            ),
+            "candidate_pool_recall_dossier_json": str(candidate_pool_dossier_json.resolve()),
             "candidate_pool_upstream_handoff_board_status": "mixed_upstream_and_post_recall_followup",
             "candidate_pool_upstream_handoff_board_summary": {
                 "board_status": "mixed_upstream_and_post_recall_followup",
@@ -4222,9 +4197,7 @@ def test_control_tower_prioritizes_recall_and_primary_lane_when_latest_btst_has_
             "recommendation": "聚焦 recall 和 primary lane。",
             "lane_status_counts": {"primary_controlled_follow_through": 1, "ready_for_shadow_validation": 1},
             "closed_frontiers": [],
-            "next_actions": [
-                {"task_id": "existing", "title": "旧任务", "why_now": "旧排序", "next_step": "legacy step", "source": "legacy"}
-            ],
+            "next_actions": [{"task_id": "existing", "title": "旧任务", "why_now": "旧排序", "next_step": "legacy step", "source": "legacy"}],
         },
     )
     _write_json(validation_json, {"overall_verdict": "pass", "warn_count": 0, "fail_count": 0})
@@ -4661,9 +4634,7 @@ def test_btst_open_ready_delta_compares_against_previous_nightly_snapshot(tmp_pa
                 {"ticker": "300383", "action_tier": "shadow_keep", "next_step": "shadow monitor"},
                 {"ticker": "300724", "action_tier": "structural_shadow_hold", "next_step": "keep frozen"},
             ],
-            "next_3_tasks": [
-                {"task_id": "rerun_001309", "title": "补跑 001309 第二窗口", "why_now": "主 lane 仍缺第二窗口。", "next_step": "python rerun_001309.py"}
-            ],
+            "next_3_tasks": [{"task_id": "rerun_001309", "title": "补跑 001309 第二窗口", "why_now": "主 lane 仍缺第二窗口。", "next_step": "python rerun_001309.py"}],
             "recommendation": "优先推进 001309，保持 300383 shadow，保持 300724 structural hold。",
         },
     )

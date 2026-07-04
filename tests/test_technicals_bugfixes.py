@@ -94,6 +94,7 @@ def _make_custom_df(
 # RSI division-by-zero when avg_loss == 0
 # ---------------------------------------------------------------------------
 
+
 class TestRSIDivisionByZero:
     def test_all_up_returns_rsi_100(self):
         """When every bar closes higher, avg_loss is 0 and RSI should be 100."""
@@ -121,6 +122,7 @@ class TestRSIDivisionByZero:
 # ---------------------------------------------------------------------------
 # ADX division-by-zero and DataFrame mutation
 # ---------------------------------------------------------------------------
+
 
 class TestADXDivisionByZero:
     def test_constant_prices_no_exception(self):
@@ -171,6 +173,7 @@ class TestAdxDxDivisionByZero:
 # Bollinger-Band width division-by-zero
 # ---------------------------------------------------------------------------
 
+
 class TestBollingerBandsDivisionByZero:
     def test_flat_prices_no_crash(self):
         """Flat prices produce zero-width BB; mean-reversion must not crash."""
@@ -191,6 +194,7 @@ class TestBollingerBandsDivisionByZero:
 # Mean reversion z-score with zero std
 # ---------------------------------------------------------------------------
 
+
 class TestMeanReversionZeroStd:
     def test_constant_prices_z_score(self):
         """Constant prices => std=0, z_score should be NaN, not crash."""
@@ -203,6 +207,7 @@ class TestMeanReversionZeroStd:
 # ---------------------------------------------------------------------------
 # Volatility regime division-by-zero and NaN propagation
 # ---------------------------------------------------------------------------
+
 
 class TestVolatilityZScoreDivisionByZero:
     def test_flat_prices_no_crash(self):
@@ -293,17 +298,11 @@ class TestVolatilityBNarrowThreshold:
 
     def test_vol_low_threshold_narrowed_to_0_9(self):
         """B_narrow: VOL_LOW_THRESHOLD 0.8 → 0.9 (收缩中性带上界)."""
-        assert VOL_LOW_THRESHOLD == 0.9, (
-            "B_narrow: VOL_LOW_THRESHOLD should be 0.9 (was 0.8); "
-            "shrinks neutral band to reduce 53% dir=0 rate"
-        )
+        assert VOL_LOW_THRESHOLD == 0.9, "B_narrow: VOL_LOW_THRESHOLD should be 0.9 (was 0.8); " "shrinks neutral band to reduce 53% dir=0 rate"
 
     def test_vol_high_threshold_narrowed_to_1_1(self):
         """B_narrow: VOL_HIGH_THRESHOLD 1.2 → 1.1 (收缩中性带下界)."""
-        assert VOL_HIGH_THRESHOLD == 1.1, (
-            "B_narrow: VOL_HIGH_THRESHOLD should be 1.1 (was 1.2); "
-            "shrinks neutral band to reduce 53% dir=0 rate"
-        )
+        assert VOL_HIGH_THRESHOLD == 1.1, "B_narrow: VOL_HIGH_THRESHOLD should be 1.1 (was 1.2); " "shrinks neutral band to reduce 53% dir=0 rate"
 
     @staticmethod
     def _make_mild_regime_df(mild_spike: bool) -> pd.DataFrame:
@@ -333,34 +332,18 @@ class TestVolatilityBNarrowThreshold:
         df = self._make_mild_regime_df(mild_spike=True)
         result = calculate_volatility_signals(df)
         m = result["metrics"]
-        assert 1.1 < m["volatility_regime"] < 1.2, (
-            f"fixture must produce regime in [1.1, 1.2] for mild-high-vol test, "
-            f"got regime={m['volatility_regime']:.4f}"
-        )
-        assert m["volatility_z_score"] > 1.0, (
-            f"fixture must produce z > 1 for mild-high-vol test, got z={m['volatility_z_score']:.4f}"
-        )
-        assert result["signal"] == "bullish", (
-            "B_narrow: mild high-vol regime (1.1<regime<1.2, z>1) → bullish; "
-            "was 'neutral' with old VOL_HIGH_THRESHOLD=1.2"
-        )
+        assert 1.1 < m["volatility_regime"] < 1.2, f"fixture must produce regime in [1.1, 1.2] for mild-high-vol test, " f"got regime={m['volatility_regime']:.4f}"
+        assert m["volatility_z_score"] > 1.0, f"fixture must produce z > 1 for mild-high-vol test, got z={m['volatility_z_score']:.4f}"
+        assert result["signal"] == "bullish", "B_narrow: mild high-vol regime (1.1<regime<1.2, z>1) → bullish; " "was 'neutral' with old VOL_HIGH_THRESHOLD=1.2"
 
     def test_mild_low_vol_regime_now_bearish(self):
         """Mild low-vol (regime in [0.8, 0.9], z < -1) → bearish (B_narrow; was neutral with old 0.8)."""
         df = self._make_mild_regime_df(mild_spike=False)
         result = calculate_volatility_signals(df)
         m = result["metrics"]
-        assert 0.8 < m["volatility_regime"] < 0.9, (
-            f"fixture must produce regime in [0.8, 0.9] for mild-low-vol test, "
-            f"got regime={m['volatility_regime']:.4f}"
-        )
-        assert m["volatility_z_score"] < -1.0, (
-            f"fixture must produce z < -1 for mild-low-vol test, got z={m['volatility_z_score']:.4f}"
-        )
-        assert result["signal"] == "bearish", (
-            "B_narrow: mild low-vol regime (0.8<regime<0.9, z<-1) → bearish; "
-            "was 'neutral' with old VOL_LOW_THRESHOLD=0.8"
-        )
+        assert 0.8 < m["volatility_regime"] < 0.9, f"fixture must produce regime in [0.8, 0.9] for mild-low-vol test, " f"got regime={m['volatility_regime']:.4f}"
+        assert m["volatility_z_score"] < -1.0, f"fixture must produce z < -1 for mild-low-vol test, got z={m['volatility_z_score']:.4f}"
+        assert result["signal"] == "bearish", "B_narrow: mild low-vol regime (0.8<regime<0.9, z<-1) → bearish; " "was 'neutral' with old VOL_LOW_THRESHOLD=0.8"
 
     def test_strict_high_vol_regime_still_bullish(self):
         """Strict high-vol (regime > 1.2, z > 1) → bullish (no regression from C224)."""
@@ -399,6 +382,7 @@ class TestVolatilityBNarrowThreshold:
 # Momentum volume division-by-zero
 # ---------------------------------------------------------------------------
 
+
 class TestMomentumVolumeDivisionByZero:
     def test_zero_volume_no_crash(self):
         """When volume is zero, volume_momentum must not produce inf."""
@@ -414,6 +398,7 @@ class TestMomentumVolumeDivisionByZero:
 # ATR edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestATREdgeCases:
     def test_constant_prices(self):
         df = _make_custom_df([100.0] * 30)
@@ -424,6 +409,7 @@ class TestATREdgeCases:
 # ---------------------------------------------------------------------------
 # Hurst exponent edge cases
 # ---------------------------------------------------------------------------
+
 
 class TestHurstExponent:
     def test_short_series_returns_half(self):
@@ -469,6 +455,7 @@ class TestHurstExponent:
 # ---------------------------------------------------------------------------
 # weighted_signal_combination bounds
 # ---------------------------------------------------------------------------
+
 
 class TestWeightedSignalCombinationBounds:
     def test_neutral_confidence_bounded_to_one(self):
@@ -517,6 +504,7 @@ class TestWeightedSignalCombinationBounds:
 # ---------------------------------------------------------------------------
 # Helpers: safe_float / safe_confidence
 # ---------------------------------------------------------------------------
+
 
 class TestSafeHelpers:
     def test_safe_float_nan(self):

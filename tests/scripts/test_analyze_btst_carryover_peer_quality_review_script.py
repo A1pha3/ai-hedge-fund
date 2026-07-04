@@ -24,8 +24,7 @@ def test_analyze_btst_carryover_peer_quality_review_flags_missing_strong_peer(tm
     }
   ]
 }
-""".strip()
-        + "\n",
+""".strip() + "\n",
         encoding="utf-8",
     )
 

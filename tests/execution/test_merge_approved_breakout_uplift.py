@@ -30,7 +30,6 @@ from src.execution.merge_approved_breakout_uplift import (
 )
 from src.screening.models import StrategySignal
 
-
 # ===========================================================================
 # R152a — _clamp_confidence NaN/inf 不再 escalate 到 100.0
 # ===========================================================================
@@ -124,10 +123,6 @@ def test_nan_momentum_confidence_does_not_qualify_for_uplift() -> None:
     trend = _signal_with_nan_momentum_confidence()
     signals = {"trend": trend}
     _updated, diagnostics = apply_merge_approved_breakout_uplift_to_signal_map(signals, score_b=0.3)
-    assert diagnostics["gate_hits"]["momentum_subfactor"] is False, (
-        "NaN-confidence momentum must fail its gate, not escalate to pass"
-    )
-    assert diagnostics["eligible"] is False, (
-        "A stock with NaN (garbage) momentum confidence must not qualify for the breakout uplift"
-    )
+    assert diagnostics["gate_hits"]["momentum_subfactor"] is False, "NaN-confidence momentum must fail its gate, not escalate to pass"
+    assert diagnostics["eligible"] is False, "A stock with NaN (garbage) momentum confidence must not qualify for the breakout uplift"
     assert diagnostics["applied"] is False

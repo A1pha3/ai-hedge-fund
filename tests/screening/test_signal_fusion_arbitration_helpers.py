@@ -132,7 +132,8 @@ class TestApplyHurstConflictResolution:
         signals = {
             "trend": _make_signal(direction=1, confidence=80.0),
             "mean_reversion": _make_signal(
-                direction=-1, confidence=80.0,
+                direction=-1,
+                confidence=80.0,
                 sub_factors={"hurst_regime": {"metrics": {"hurst_exponent": 0.6}}},
             ),
         }
@@ -147,7 +148,8 @@ class TestApplyHurstConflictResolution:
         signals = {
             "trend": _make_signal(direction=1, confidence=80.0),
             "mean_reversion": _make_signal(
-                direction=-1, confidence=80.0,
+                direction=-1,
+                confidence=80.0,
                 sub_factors={"hurst_regime": {"metrics": {"hurst_exponent": 0.3}}},
             ),
         }
@@ -162,7 +164,8 @@ class TestApplyHurstConflictResolution:
         signals = {
             "trend": _make_signal(direction=1, confidence=80.0),
             "mean_reversion": _make_signal(
-                direction=-1, confidence=80.0,
+                direction=-1,
+                confidence=80.0,
                 sub_factors={"hurst_regime": {"metrics": {"hurst_exponent": 0.5}}},
             ),
         }

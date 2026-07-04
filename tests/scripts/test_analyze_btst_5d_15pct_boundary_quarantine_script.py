@@ -91,7 +91,7 @@ def test_analyze_btst_5d_15pct_boundary_quarantine_excludes_repaired_contract_ro
     snapshot_dir = report_dir / "selection_artifacts" / "2026-03-24"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     snapshot_dir.joinpath("selection_snapshot.json").write_text(
-        '''
+        """
         {
           "trade_date": "20260324",
           "selection_targets": {
@@ -111,7 +111,7 @@ def test_analyze_btst_5d_15pct_boundary_quarantine_excludes_repaired_contract_ro
             }
           }
         }
-        '''.strip(),
+        """.strip(),
         encoding="utf-8",
     )
 

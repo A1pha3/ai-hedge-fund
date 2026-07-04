@@ -35,9 +35,7 @@ def test_ranking_degradation_logs_warning(monkeypatch: pytest.MonkeyPatch, caplo
     # Behavior preserved: unranked pool returned unchanged.
     assert result == ranking_pool
     # BH-017 observability: a warning must be logged.
-    assert any("investability" in rec.message.lower() or "ranking" in rec.message.lower() for rec in caplog.records), (
-        f"Expected a warning about ranking degradation, got: {[rec.message for rec in caplog.records]}"
-    )
+    assert any("investability" in rec.message.lower() or "ranking" in rec.message.lower() for rec in caplog.records), f"Expected a warning about ranking degradation, got: {[rec.message for rec in caplog.records]}"
 
 
 def test_ranking_normal_path_no_warning(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:

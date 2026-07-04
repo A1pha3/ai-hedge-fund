@@ -18,6 +18,7 @@ passes _support_score_100 which floors at 20.0, so 0.0 is currently unreachable)
 but the function is a public-enough helper whose boundary contract must not
 silently corrupt an explicit 0.0 input.
 """
+
 from __future__ import annotations
 
 import math
@@ -36,10 +37,7 @@ def test_explicit_zero_support_score_is_shrunk_not_promoted_to_neutral_50() -> N
     """
     # evidence_weight=0 -> multiplier=0.70 (max shrink)
     result = _shrink_support_score_for_evidence(0.0, 0.0)
-    assert result < 50.0, (
-        f"explicit base_support_score_100=0.0 must shrink below 50 (preserve bearish tilt), "
-        f"got {result!r} — falsy-zero `or 50.0` silently promoted 0.0 to neutral 50.0"
-    )
+    assert result < 50.0, f"explicit base_support_score_100=0.0 must shrink below 50 (preserve bearish tilt), " f"got {result!r} — falsy-zero `or 50.0` silently promoted 0.0 to neutral 50.0"
     # The mathematically correct value: 50 + (0-50)*0.70 = 50 - 35 = 15.0
     assert math.isclose(result, 15.0), f"expected 15.0 (50 + (0-50)*0.70), got {result!r}"
 

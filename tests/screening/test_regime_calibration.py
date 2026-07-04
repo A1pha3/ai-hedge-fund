@@ -39,14 +39,17 @@ class TestComputeRegimeCalibration:
         """normal regime: 2 winners / 4 recs; cautious: 1 winner / 2 recs."""
         _seed_report_with_regime(tmp_path, "20260101", "normal", ["000001", "000002", "000003", "000004"])
         _seed_report_with_regime(tmp_path, "20260102", "cautious", ["000005", "000006"])
-        _seed_tracking(tmp_path, [
-            {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.7, "next_30day_return": 5.0},   # win
-            {"ticker": "000002", "recommended_date": "20260101", "recommendation_score": 0.7, "next_30day_return": -3.0},  # loss
-            {"ticker": "000003", "recommended_date": "20260101", "recommendation_score": 0.7, "next_30day_return": 2.0},   # win
-            {"ticker": "000004", "recommended_date": "20260101", "recommendation_score": 0.7, "next_30day_return": -1.0},  # loss
-            {"ticker": "000005", "recommended_date": "20260102", "recommendation_score": 0.7, "next_30day_return": 4.0},   # win
-            {"ticker": "000006", "recommended_date": "20260102", "recommendation_score": 0.7, "next_30day_return": -2.0},  # loss
-        ])
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.7, "next_30day_return": 5.0},  # win
+                {"ticker": "000002", "recommended_date": "20260101", "recommendation_score": 0.7, "next_30day_return": -3.0},  # loss
+                {"ticker": "000003", "recommended_date": "20260101", "recommendation_score": 0.7, "next_30day_return": 2.0},  # win
+                {"ticker": "000004", "recommended_date": "20260101", "recommendation_score": 0.7, "next_30day_return": -1.0},  # loss
+                {"ticker": "000005", "recommended_date": "20260102", "recommendation_score": 0.7, "next_30day_return": 4.0},  # win
+                {"ticker": "000006", "recommended_date": "20260102", "recommendation_score": 0.7, "next_30day_return": -2.0},  # loss
+            ],
+        )
         report = compute_regime_calibration(reports_dir=tmp_path, lookback_days=30)
         by_regime = {r.regime: r for r in report.rows}
         assert "normal" in by_regime
@@ -60,19 +63,25 @@ class TestComputeRegimeCalibration:
     def test_record_without_report_date_counts_unknown(self, tmp_path: Path) -> None:
         """A tracking record whose date has no report → unknown regime bucket."""
         _seed_report_with_regime(tmp_path, "20260101", "normal", ["000001"])
-        _seed_tracking(tmp_path, [
-            {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.7, "next_30day_return": 3.0},
-            {"ticker": "000099", "recommended_date": "20260109", "recommendation_score": 0.7, "next_30day_return": 5.0},  # no report on 20260109
-        ])
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.7, "next_30day_return": 3.0},
+                {"ticker": "000099", "recommended_date": "20260109", "recommendation_score": 0.7, "next_30day_return": 5.0},  # no report on 20260109
+            ],
+        )
         report = compute_regime_calibration(reports_dir=tmp_path, lookback_days=30)
         assert report.unknown_regime_count >= 1
 
     def test_no_t30_data_win_rate_none(self, tmp_path: Path) -> None:
         """Regime with no matured T+30 returns → win_rate None (honest, not 0)."""
         _seed_report_with_regime(tmp_path, "20260101", "normal", ["000001"])
-        _seed_tracking(tmp_path, [
-            {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.7},  # no next_30day_return
-        ])
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.7},  # no next_30day_return
+            ],
+        )
         report = compute_regime_calibration(reports_dir=tmp_path, lookback_days=30)
         normal = next(r for r in report.rows if r.regime == "normal")
         assert normal.t30_win_rate is None
@@ -88,13 +97,7 @@ class TestComputeRegimeCalibration:
         """The product question: does win-rate differ by regime? This characterizes the computation."""
         _seed_report_with_regime(tmp_path, "20260101", "normal", [f"{i:06d}" for i in range(1, 5)])
         _seed_report_with_regime(tmp_path, "20260102", "risk_off", [f"{i:06d}" for i in range(5, 9)])
-        _seed_tracking(tmp_path, [
-            {"ticker": f"{i:06d}", "recommended_date": "20260101", "recommendation_score": 0.7, "next_30day_return": 3.0}
-            for i in range(1, 5)  # 4/4 win in normal
-        ] + [
-            {"ticker": f"{i:06d}", "recommended_date": "20260102", "recommendation_score": 0.7, "next_30day_return": -4.0}
-            for i in range(5, 9)  # 0/4 win in risk_off
-        ])
+        _seed_tracking(tmp_path, [{"ticker": f"{i:06d}", "recommended_date": "20260101", "recommendation_score": 0.7, "next_30day_return": 3.0} for i in range(1, 5)] + [{"ticker": f"{i:06d}", "recommended_date": "20260102", "recommendation_score": 0.7, "next_30day_return": -4.0} for i in range(5, 9)])  # 4/4 win in normal  # 0/4 win in risk_off
         report = compute_regime_calibration(reports_dir=tmp_path, lookback_days=30)
         by_regime = {r.regime: r for r in report.rows}
         assert by_regime["normal"].t30_win_rate == 1.0

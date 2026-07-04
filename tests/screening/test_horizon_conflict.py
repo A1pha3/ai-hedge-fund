@@ -10,7 +10,6 @@ from src.screening.horizon_conflict import (
     render_horizon_conflict,
 )
 
-
 # ---------------------------------------------------------------------------
 # detect_horizon_conflict
 # ---------------------------------------------------------------------------
@@ -79,8 +78,10 @@ class TestRenderHorizonConflict:
     def test_renders_conflict(self) -> None:
         c = HorizonConflict(
             has_conflict=True,
-            short_label="T+1", short_value=2.0,
-            long_label="T+30", long_value=-1.5,
+            short_label="T+1",
+            short_value=2.0,
+            long_label="T+30",
+            long_value=-1.5,
         )
         out = render_horizon_conflict(c)
         assert "冲突" in out

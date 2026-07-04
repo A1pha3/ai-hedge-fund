@@ -46,9 +46,7 @@ def test_build_theme_radar_context_by_ticker_promotes_multi_name_theme_breadth()
             {"ticker": "300001", "theme_name": "AI Agent", "theme_category": "application", "candidate_source": "catalyst_theme"},
             {"ticker": "300002", "theme_name": "AI Agent", "theme_category": "application", "candidate_source": "catalyst_theme"},
         ],
-        catalyst_theme_shadow_candidates=[
-            {"ticker": "300003", "theme_name": "AI Agent", "theme_category": "application", "candidate_source": "catalyst_theme_shadow"}
-        ],
+        catalyst_theme_shadow_candidates=[{"ticker": "300003", "theme_name": "AI Agent", "theme_category": "application", "candidate_source": "catalyst_theme_shadow"}],
     )
 
     assert theme_summary["hot_theme_board"] == ["AI Agent"]

@@ -162,10 +162,7 @@ class TestAutoScreeningTrackingDashboard:
         # 模拟价格 fetcher — 所有标的 T+1 都涨 2%
         def mock_price_fetcher(ticker: str, start: str, end: str) -> list[dict]:
             base_date = datetime.strptime(start.replace("-", ""), "%Y%m%d")
-            return [
-                {"time": (base_date + timedelta(days=i)).strftime("%Y-%m-%d"), "close": 10.0 + i * 0.2}
-                for i in range(10)
-            ]
+            return [{"time": (base_date + timedelta(days=i)).strftime("%Y-%m-%d"), "close": 10.0 + i * 0.2} for i in range(10)]
 
         # Phase 1: 写入 day1 推荐
         updated_1 = update_tracking_history(
@@ -631,9 +628,7 @@ class TestPreheatCacheHit:
         # cache, or (b) mock the underlying BatchDataFetcher method to return None (simulating cache hit).
         # We use approach (b) — mock the _fetch_* functions to return None for "cached" tasks.
 
-        with patch("src.data.cache_preheater._fetch_daily_basic", return_value=None) as mock_db, \
-             patch("src.data.cache_preheater._fetch_daily_prices", return_value=None) as mock_dp, \
-             patch("src.data.cache_preheater._fetch_industry_classify") as mock_industry:
+        with patch("src.data.cache_preheater._fetch_daily_basic", return_value=None) as mock_db, patch("src.data.cache_preheater._fetch_daily_prices", return_value=None) as mock_dp, patch("src.data.cache_preheater._fetch_industry_classify") as mock_industry:
 
             import pandas as pd
 
@@ -705,17 +700,11 @@ class TestPreheatKeyAlignment:
 
             # 获取 BatchDataFetcher 单例, 检查 BatchDataCache 是否含正确的 key
             global_fetcher = get_global_batch_data_fetcher()
-            assert global_fetcher._cache.get("daily_basic_batch:20260601") is not None, (  # type: ignore[attr-defined]
-                "下游 BatchDataFetcher.fetch_daily_basic_batch() 读取的 key 'daily_basic_batch:20260601' 必须存在"
-            )
-            assert global_fetcher._cache.get("daily_price_batch:20260601") is not None, (  # type: ignore[attr-defined]
-                "下游 BatchDataFetcher.fetch_daily_prices_batch() 读取的 key 'daily_price_batch:20260601' 必须存在"
-            )
+            assert global_fetcher._cache.get("daily_basic_batch:20260601") is not None, "下游 BatchDataFetcher.fetch_daily_basic_batch() 读取的 key 'daily_basic_batch:20260601' 必须存在"  # type: ignore[attr-defined]
+            assert global_fetcher._cache.get("daily_price_batch:20260601") is not None, "下游 BatchDataFetcher.fetch_daily_prices_batch() 读取的 key 'daily_price_batch:20260601' 必须存在"  # type: ignore[attr-defined]
 
             # 关键回归断言: 旧的 buggy preheat:* 键不应再出现在 BatchDataCache
-            assert global_fetcher._cache.get("preheat:daily_basic:20260601") is None, (  # type: ignore[attr-defined]
-                "R17 修复: preheat 不应再写 'preheat:' 前缀的 key 到 BatchDataCache"
-            )
+            assert global_fetcher._cache.get("preheat:daily_basic:20260601") is None, "R17 修复: preheat 不应再写 'preheat:' 前缀的 key 到 BatchDataCache"  # type: ignore[attr-defined]
         finally:
             reset_global_batch_data_fetcher()
 
@@ -748,9 +737,7 @@ class TestPreheatKeyAlignment:
 
             after_hits = global_fetcher._cache_hits  # type: ignore[attr-defined]
             assert downstream_result is not None
-            assert after_hits == before_hits + 1, (
-                f"下游调用应触发 cache hit 计数 +1 (before={before_hits}, after={after_hits})"
-            )
+            assert after_hits == before_hits + 1, f"下游调用应触发 cache hit 计数 +1 (before={before_hits}, after={after_hits})"
             # 关键: 下游命中缓存时, 底层 tushare 调用不应该被触发
             mock_tushare.assert_not_called()
         finally:

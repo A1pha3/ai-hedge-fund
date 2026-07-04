@@ -13,6 +13,7 @@ Fix: when composite_verified is explicitly False, show a marker next to the
 grade so the user can calibrate trust. Verified/missing-flag items render
 unchanged (behavior preserved).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -55,9 +56,7 @@ def test_verified_composite_pick_has_no_estimate_marker(capsys) -> None:
     _print_pick_entry(idx=1, item=_verified_item(), context=_context())
     out = capsys.readouterr().out
     # Verified pick: no estimate marker should appear next to the grade
-    assert "估" not in out and "‡" not in out, (
-        "verified composite pick must NOT show an estimate marker"
-    )
+    assert "估" not in out and "‡" not in out, "verified composite pick must NOT show an estimate marker"
 
 
 def test_fallback_composite_pick_discloses_estimate_marker(capsys) -> None:
@@ -65,8 +64,4 @@ def test_fallback_composite_pick_discloses_estimate_marker(capsys) -> None:
     out = capsys.readouterr().out
     # Fallback (unverified) pick: must disclose an estimate marker so the user
     # can calibrate trust (composite_verified=False = conservative estimate).
-    assert "估" in out or "‡" in out, (
-        "composite_verified=False pick must disclose an estimate marker; "
-        "currently the front door shows a fallback score with no visual "
-        "distinction from a verified composite score (trust-calibration gap)"
-    )
+    assert "估" in out or "‡" in out, "composite_verified=False pick must disclose an estimate marker; " "currently the front door shows a fallback score with no visual " "distinction from a verified composite score (trust-calibration gap)"

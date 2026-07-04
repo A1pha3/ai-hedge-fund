@@ -69,16 +69,12 @@ def test_build_runtime_supplemental_entries_respects_tradeable_gate_and_confirme
             {
                 "trade_date": "2026-03-30",
                 "gate_action": "tradeable",
-                "confirmed_entries": [
-                    {"ticker": "300383", "confirm_score": 0.82, "pre_score": 0.71, "hot_theme_board": "AI Agent"}
-                ],
+                "confirmed_entries": [{"ticker": "300383", "confirm_score": 0.82, "pre_score": 0.71, "hot_theme_board": "AI Agent"}],
             },
             {
                 "trade_date": "2026-03-31",
                 "gate_action": "research_only",
-                "confirmed_entries": [
-                    {"ticker": "002015", "confirm_score": 0.76, "pre_score": 0.64}
-                ],
+                "confirmed_entries": [{"ticker": "002015", "confirm_score": 0.76, "pre_score": 0.64}],
             },
         ]
     }

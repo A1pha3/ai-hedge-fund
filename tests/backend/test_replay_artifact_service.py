@@ -2547,9 +2547,7 @@ class TestLedgerIoReadCorruptTolerance:
             result = helper._read_json(corrupt)
 
         assert result == {}, "corrupt JSON must degrade to empty dict, not crash"
-        assert any("损坏" in r.message or "corrupt" in r.message.lower() or "json" in r.message.lower() for r in caplog.records), (
-            "corrupt-JSON degradation must emit a warning breadcrumb (R101 pattern)"
-        )
+        assert any("损坏" in r.message or "corrupt" in r.message.lower() or "json" in r.message.lower() for r in caplog.records), "corrupt-JSON degradation must emit a warning breadcrumb (R101 pattern)"
 
     def test_read_json_still_raises_for_missing_file(self, tmp_path: Path) -> None:
         """The missing-file contract (raise FileNotFoundError) must be preserved — callers depend on it."""
@@ -2558,6 +2556,7 @@ class TestLedgerIoReadCorruptTolerance:
         service = _build_service_with_db(tmp_path)
         helper = ReplayLedgerIoHelper(service)
         import pytest
+
         with pytest.raises(FileNotFoundError):
             helper._read_json(tmp_path / "does_not_exist.json")
 
@@ -2615,14 +2614,9 @@ class TestLedgerIoWriteAtomicity:
             pass  # acceptable: the write reported failure; the guard is about file state
 
         raw = session_summary.read_text(encoding="utf-8")
-        assert raw.strip(), (
-            "prior session_summary must not be truncated-empty after a crashed write — "
-            "non-atomic write_text truncates on open (R88 corrupt-sidecar CRASH vector root cause)"
-        )
+        assert raw.strip(), "prior session_summary must not be truncated-empty after a crashed write — " "non-atomic write_text truncates on open (R88 corrupt-sidecar CRASH vector root cause)"
         parsed = json.loads(raw)  # must parse cleanly — no half-written corrupt file
-        assert parsed.get("session_id") == "keep-alive", (
-            "prior summary fields must survive a crashed write attempt (prior or new-complete, never corrupt)"
-        )
+        assert parsed.get("session_id") == "keep-alive", "prior summary fields must survive a crashed write attempt (prior or new-complete, never corrupt)"
 
 
 class TestSelectionFeedbackSummaryAtomicity:
@@ -2643,8 +2637,7 @@ class TestSelectionFeedbackSummaryAtomicity:
         )
         _write_json(
             day_dir / "selection_snapshot.json",
-            {"artifact_version": "v1", "run_id": "r1", "trade_date": "2026-03-11",
-             "selected": [{"symbol": "300724"}], "rejected": []},
+            {"artifact_version": "v1", "run_id": "r1", "trade_date": "2026-03-11", "selected": [{"symbol": "300724"}], "rejected": []},
         )
         (day_dir / "selection_review.md").write_text("review", encoding="utf-8")
         (day_dir / "research_feedback.jsonl").write_text("", encoding="utf-8")
@@ -2684,8 +2677,5 @@ class TestSelectionFeedbackSummaryAtomicity:
             pass  # acceptable: the write reported failure; the guard is about file state
 
         raw = summary_path.read_text(encoding="utf-8")
-        assert raw.strip(), (
-            "prior research_feedback_summary must not be truncated-empty after a crashed write — "
-            "non-atomic write_text truncates on open (R88 corrupt-sidecar CRASH vector root cause)"
-        )
+        assert raw.strip(), "prior research_feedback_summary must not be truncated-empty after a crashed write — " "non-atomic write_text truncates on open (R88 corrupt-sidecar CRASH vector root cause)"
         json.loads(raw)  # must parse cleanly — no half-written corrupt file

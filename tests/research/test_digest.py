@@ -224,7 +224,8 @@ class TestRunDigest:
         dates = ["2026-05-01", "2026-05-02", "2026-05-03"]
         for i, d in enumerate(dates):
             _write_snapshot(
-                tmp_path, d,
+                tmp_path,
+                d,
                 _make_snapshot(
                     d,
                     selected=[
@@ -299,7 +300,8 @@ class TestRunDigest:
     def test_single_day(self, tmp_path: Path) -> None:
         """Single day of data works correctly."""
         _write_snapshot(
-            tmp_path, "2026-05-01",
+            tmp_path,
+            "2026-05-01",
             _make_snapshot("2026-05-01", selected=[_make_candidate("300724", 0.8)]),
         )
         result = run_digest(start_date="2026-05-01", end_date="2026-05-01", artifact_root=tmp_path)
@@ -567,7 +569,8 @@ class TestCLI:
         from src.research.digest import main
 
         _write_snapshot(
-            tmp_path, "2026-05-01",
+            tmp_path,
+            "2026-05-01",
             _make_snapshot("2026-05-01", selected=[_make_candidate("300724", 0.7)]),
         )
         main(["--start", "2026-05-01", "--end", "2026-05-01", "--artifact-root", str(tmp_path), "--format", "json"])
@@ -581,7 +584,8 @@ class TestCLI:
 
         today = datetime.now().strftime("%Y-%m-%d")
         _write_snapshot(
-            tmp_path, today,
+            tmp_path,
+            today,
             _make_snapshot(today, selected=[_make_candidate("300724", 0.7)]),
         )
         main(["--last", "1", "--artifact-root", str(tmp_path), "--format", "json"])
@@ -601,7 +605,8 @@ class TestCLI:
         from src.research.digest import main
 
         _write_snapshot(
-            tmp_path, "2026-05-01",
+            tmp_path,
+            "2026-05-01",
             _make_snapshot("2026-05-01", selected=[_make_candidate("300724", 0.7)]),
         )
         main(["--start", "2026-05-01", "--end", "2026-05-01", "--artifact-root", str(tmp_path)])
@@ -621,7 +626,8 @@ class TestEdgeCases:
         for i in range(30):
             d = (start + timedelta(days=i)).strftime("%Y-%m-%d")
             _write_snapshot(
-                tmp_path, d,
+                tmp_path,
+                d,
                 _make_snapshot(d, selected=[_make_candidate(f"T{i:04d}", 0.5 + i * 0.01)]),
             )
 
@@ -636,7 +642,8 @@ class TestEdgeCases:
     def test_snapshot_with_no_selected_key(self, tmp_path: Path) -> None:
         """Snapshot missing 'selected' key is handled."""
         _write_snapshot(
-            tmp_path, "2026-05-01",
+            tmp_path,
+            "2026-05-01",
             {"trade_date": "2026-05-01", "market_state": {}},
         )
         result = run_digest(start_date="2026-05-01", end_date="2026-05-01", artifact_root=tmp_path)
@@ -646,7 +653,8 @@ class TestEdgeCases:
     def test_candidate_with_empty_symbol(self, tmp_path: Path) -> None:
         """Candidates with empty symbols are skipped in top_tickers."""
         _write_snapshot(
-            tmp_path, "2026-05-01",
+            tmp_path,
+            "2026-05-01",
             _make_snapshot(
                 "2026-05-01",
                 selected=[
@@ -667,12 +675,14 @@ class TestEdgeCases:
 
         # root_a has day 1
         _write_snapshot(
-            root_a, "2026-05-01",
+            root_a,
+            "2026-05-01",
             _make_snapshot("2026-05-01", selected=[_make_candidate("300724", 0.7)]),
         )
         # root_b has day 2
         _write_snapshot(
-            root_b, "2026-05-02",
+            root_b,
+            "2026-05-02",
             _make_snapshot("2026-05-02", selected=[_make_candidate("000001", 0.6)]),
         )
 
@@ -707,7 +717,8 @@ class TestEdgeCases:
         """Score std is computed across all daily avg_scores."""
         for i, d in enumerate(["2026-05-01", "2026-05-02", "2026-05-03"]):
             _write_snapshot(
-                tmp_path, d,
+                tmp_path,
+                d,
                 _make_snapshot(d, selected=[_make_candidate("300724", 0.5 + i * 0.2)]),
             )
         result = run_digest(start_date="2026-05-01", end_date="2026-05-03", artifact_root=tmp_path)
@@ -716,6 +727,7 @@ class TestEdgeCases:
         # sample std = sqrt(((0.5-0.7)^2 + (0.7-0.7)^2 + (0.9-0.7)^2) / (3-1))
         #            = sqrt((0.04 + 0 + 0.04) / 2) = sqrt(0.08/2) = 0.2
         import math
+
         expected = math.sqrt(0.08 / 2)
         assert abs(result.summary["score_std"] - expected) < 0.001
 
@@ -731,7 +743,8 @@ class TestEdgeCases:
 
         # Day 1: 合法 snapshot
         _write_snapshot(
-            tmp_path, "2026-05-01",
+            tmp_path,
+            "2026-05-01",
             _make_snapshot("2026-05-01", selected=[_make_candidate("300724", 0.8)]),
         )
         # Day 2: 损坏 JSON (部分写入 -- e.g. 进程被中断)
@@ -740,21 +753,16 @@ class TestEdgeCases:
         (corrupt_dir / "selection_snapshot.json").write_text("{not valid json", encoding="utf-8")
         # Day 3: 合法 snapshot
         _write_snapshot(
-            tmp_path, "2026-05-03",
+            tmp_path,
+            "2026-05-03",
             _make_snapshot("2026-05-03", selected=[_make_candidate("000001", 0.9)]),
         )
 
         with caplog.at_level(_logging.WARNING, logger="src.research.digest"):
-            result = run_digest(
-                start_date="2026-05-01", end_date="2026-05-03", artifact_root=tmp_path
-            )
+            result = run_digest(start_date="2026-05-01", end_date="2026-05-03", artifact_root=tmp_path)
         # 损坏天被跳过, 合法的两天仍聚合
-        assert result.days_with_data == 2, (
-            f"损坏 snapshot 应被跳过而非中断整个聚合; got days_with_data={result.days_with_data}"
-        )
+        assert result.days_with_data == 2, f"损坏 snapshot 应被跳过而非中断整个聚合; got days_with_data={result.days_with_data}"
         assert {d.date for d in result.daily} == {"2026-05-01", "2026-05-03"}
         # 应有 warning 提到损坏文件
         warn_msgs = [r.message for r in caplog.records if r.levelno >= _logging.WARNING]
-        assert any("2026-05-02" in m or "snapshot" in m.lower() for m in warn_msgs), (
-            f"损坏 snapshot 应触发 warning 诊断; got warnings={warn_msgs!r}"
-        )
+        assert any("2026-05-02" in m or "snapshot" in m.lower() for m in warn_msgs), f"损坏 snapshot 应触发 warning 诊断; got warnings={warn_msgs!r}"

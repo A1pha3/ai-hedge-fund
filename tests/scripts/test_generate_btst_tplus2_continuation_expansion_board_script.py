@@ -151,9 +151,7 @@ def test_generate_btst_tplus2_continuation_expansion_board_prioritizes_governanc
     assert analysis["next_validation_candidates"][0]["ticker"] == "600989"
 
 
-def test_generate_btst_tplus2_continuation_expansion_board_reserves_slot_for_strong_thin_near_cluster_candidate(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_generate_btst_tplus2_continuation_expansion_board_reserves_slot_for_strong_thin_near_cluster_candidate(monkeypatch, tmp_path: Path) -> None:
     reports_root = tmp_path / "reports"
     reports_root.mkdir()
 

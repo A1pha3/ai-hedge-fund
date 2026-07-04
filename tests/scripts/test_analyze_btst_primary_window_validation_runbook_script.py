@@ -19,9 +19,7 @@ def test_analyze_btst_primary_window_validation_runbook_flags_missing_new_window
         json.dumps(
             {
                 "report_dirs": [str(report_dir)],
-                "candidates": [
-                    {"ticker": "001309", "distinct_window_count": 1, "window_keys": ["20260323_20260326"]}
-                ],
+                "candidates": [{"ticker": "001309", "distinct_window_count": 1, "window_keys": ["20260323_20260326"]}],
             },
             ensure_ascii=False,
         )

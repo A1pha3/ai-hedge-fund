@@ -152,9 +152,15 @@ def test_gtja_csv_format(sample_advices: list[ConditionalOrderAdvice], fixed_tod
 def test_gtja_sell_side_code_1(fixed_today: date) -> None:
     """卖出方向 → 委托类别 1。"""
     sell_order = BrokerConditionalOrder(
-        ticker="000001", name="测试", side="卖出",
-        entry_price=100.0, stop_loss_price=96.0, take_profit_price=106.0,
-        trigger_price=100.0, valid_until="20260612", quantity=100,
+        ticker="000001",
+        name="测试",
+        side="卖出",
+        entry_price=100.0,
+        stop_loss_price=96.0,
+        take_profit_price=106.0,
+        trigger_price=100.0,
+        valid_until="20260612",
+        quantity=100,
         trigger_condition=">=",
     )
     csv_text = gtja_adapter([sell_order])
@@ -231,9 +237,7 @@ def test_empty_advice_returns_empty() -> None:
 
 def test_export_writes_file(tmp_path: Path, sample_advices: list[ConditionalOrderAdvice], fixed_today: date) -> None:
     """export_conditional_orders 输出写入磁盘后可正确读回。"""
-    csv_content = export_conditional_orders(
-        sample_advices, "huatai", today=fixed_today
-    )
+    csv_content = export_conditional_orders(sample_advices, "huatai", today=fixed_today)
     out_file = tmp_path / "test_huatai.csv"
     out_file.write_text(csv_content, encoding="utf-8-sig")
 
@@ -243,9 +247,7 @@ def test_export_writes_file(tmp_path: Path, sample_advices: list[ConditionalOrde
     assert "股票代码" in raw
 
     # 同花顺 JSON
-    json_content = export_conditional_orders(
-        sample_advices, "ths", today=fixed_today
-    )
+    json_content = export_conditional_orders(sample_advices, "ths", today=fixed_today)
     out_json = tmp_path / "test_ths.json"
     out_json.write_text(json_content, encoding="utf-8")
     parsed = json.loads(out_json.read_text(encoding="utf-8"))
@@ -399,7 +401,10 @@ def _make_degraded_advice(ticker: str = "300999", name: str = "新股") -> Condi
     current_price > 0, 但 ATR 用占位值 (current×0.005), 生成极紧的无意义止损。
     """
     advice = compute_conditional_advice(
-        ticker=ticker, name=name, current_price=50.0, price_history=[50.0, 49.5, 50.2],
+        ticker=ticker,
+        name=name,
+        current_price=50.0,
+        price_history=[50.0, 49.5, 50.2],
     )
     assert advice.degraded is True  # n_sessions=3 < MIN_PRICE_SESSIONS=5
     return advice
@@ -491,16 +496,10 @@ def test_next_business_day_uses_trade_cal_not_calendar_days(monkeypatch) -> None
 
     # 周四 + 3 交易日 = 周二 (不是周日!)
     result = _next_business_day(date(2026, 6, 11), n_days=3)
-    assert result == "20260616", (
-        f"Expected 20260616 (Tue, 3rd trading day after Thu), got {result}"
-    )
+    assert result == "20260616", f"Expected 20260616 (Tue, 3rd trading day after Thu), got {result}"
     # 关键断言: 绝不能返回周末日期
-    assert result != "20260614", (
-        "Must not return Sunday — broker rejects weekend-expiring orders"
-    )
-    assert result != "20260613", (
-        "Must not return Saturday — broker rejects weekend-expiring orders"
-    )
+    assert result != "20260614", "Must not return Sunday — broker rejects weekend-expiring orders"
+    assert result != "20260613", "Must not return Saturday — broker rejects weekend-expiring orders"
 
 
 def test_next_business_day_falls_back_to_weekday_when_no_trade_cal(monkeypatch) -> None:
@@ -518,13 +517,9 @@ def test_next_business_day_falls_back_to_weekday_when_no_trade_cal(monkeypatch) 
 
     # 周四 + 3 weekdays = 周二 (Fri=1, Mon=2, Tue=3)
     result = _next_business_day(date(2026, 6, 11), n_days=3)
-    assert result == "20260616", (
-        f"Weekday fallback: Expected 20260616 (Tue), got {result}"
-    )
+    assert result == "20260616", f"Weekday fallback: Expected 20260616 (Tue), got {result}"
     # 绝不能是周日
-    assert result != "20260614", (
-        "Weekday fallback must skip weekend — got Sunday (broker rejects)"
-    )
+    assert result != "20260614", "Weekday fallback must skip weekend — got Sunday (broker rejects)"
 
 
 def test_next_business_day_friday_plus_one_not_saturday(monkeypatch) -> None:
@@ -539,9 +534,7 @@ def test_next_business_day_friday_plus_one_not_saturday(monkeypatch) -> None:
 
     # 周五 2026-06-12 + 1 weekday = 周一 2026-06-15
     result = _next_business_day(date(2026, 6, 12), n_days=1)
-    assert result == "20260615", (
-        f"Fri+1 weekday = Mon; got {result}"
-    )
+    assert result == "20260615", f"Fri+1 weekday = Mon; got {result}"
 
 
 def test_next_business_day_preserves_weekday_only_behavior_when_no_weekend(monkeypatch) -> None:
@@ -557,9 +550,7 @@ def test_next_business_day_preserves_weekday_only_behavior_when_no_weekend(monke
 
     # 周二 2026-06-09 + 3 weekdays = 周五 2026-06-12 (Tue→Wed→Thu→Fri)
     result = _next_business_day(date(2026, 6, 9), n_days=3)
-    assert result == "20260612", (
-        f"Tue+3 weekdays = Fri (no weekend cross); got {result}"
-    )
+    assert result == "20260612", f"Tue+3 weekdays = Fri (no weekend cross); got {result}"
 
 
 def test_advice_to_broker_order_valid_until_uses_trade_cal(monkeypatch, fixed_today: date) -> None:
@@ -570,8 +561,12 @@ def test_advice_to_broker_order_valid_until_uses_trade_cal(monkeypatch, fixed_to
     的断言 `valid_until == "20260612"` 一致 (不破坏既有契约)。
     """
     real_open_dates = [
-        "20260609", "20260610", "20260611", "20260612",  # Tue-Fri
-        "20260615", "20260616",  # Mon-Tue next week
+        "20260609",
+        "20260610",
+        "20260611",
+        "20260612",  # Tue-Fri
+        "20260615",
+        "20260616",  # Mon-Tue next week
     ]
 
     def mock_get_open(start: str, end: str) -> list[str]:
@@ -586,7 +581,6 @@ def test_advice_to_broker_order_valid_until_uses_trade_cal(monkeypatch, fixed_to
     order = advice_to_broker_order(advice, today=fixed_today, valid_days=3)
     # Tuesday + 3 trading days = Friday (Wed/Thu/Fri)
     assert order.valid_until == "20260612"
-
 
 
 # ===========================================================================
@@ -642,9 +636,7 @@ def test_compute_equal_weight_quantities_basic() -> None:
         _make_explicit_advice("300750", "宁德时代", 250.0, (245.0, 255.0)),
     ]
     result = compute_equal_weight_quantities(advices, nav=120000.0)
-    assert result == {"000001": 400, "600519": 0, "300750": 100}, (
-        f"expected 400/0/100, got {result}"
-    )
+    assert result == {"000001": 400, "600519": 0, "300750": 100}, f"expected 400/0/100, got {result}"
 
 
 def test_compute_equal_weight_quantities_rounds_down_to_lot() -> None:
@@ -674,9 +666,7 @@ def test_compute_equal_weight_quantities_filters_degraded() -> None:
         _make_explicit_advice("600519", "贵州茅台", 1800.0, (1790.0, 1810.0), degraded=True),
     ]
     result = compute_equal_weight_quantities(advices, nav=100000.0)
-    assert result == {"000001": 1000}, (
-        f"degraded should be excluded; expected only 000001=1000, got {result}"
-    )
+    assert result == {"000001": 1000}, f"degraded should be excluded; expected only 000001=1000, got {result}"
 
 
 def test_compute_equal_weight_quantities_empty_or_zero_nav() -> None:
@@ -696,9 +686,7 @@ def test_export_with_quantity_map_uses_per_ticker(fixed_today: date) -> None:
         _make_explicit_advice("300750", "宁德时代", 250.0, (245.0, 255.0)),
     ]
     quantity_map = {"000001": 500, "300750": 200}
-    content = export_conditional_orders(
-        advices, "huatai", quantity_map=quantity_map, today=fixed_today
-    )
+    content = export_conditional_orders(advices, "huatai", quantity_map=quantity_map, today=fixed_today)
     assert "500" in content, f"000001 quantity=500 not in output:\n{content}"
     assert "200" in content, f"300750 quantity=200 not in output:\n{content}"
 
@@ -710,9 +698,7 @@ def test_export_with_quantity_map_skips_zero(fixed_today: date) -> None:
         _make_explicit_advice("600519", "贵州茅台", 1800.0, (1790.0, 1810.0)),
     ]
     quantity_map = {"000001": 300, "600519": 0}
-    content = export_conditional_orders(
-        advices, "huatai", quantity_map=quantity_map, today=fixed_today
-    )
+    content = export_conditional_orders(advices, "huatai", quantity_map=quantity_map, today=fixed_today)
     assert "000001" in content, "000001 should be exported"
     assert "600519" not in content, "600519 (quantity=0) should be skipped"
 
@@ -723,15 +709,9 @@ def test_export_quantity_map_none_backward_compat(fixed_today: date) -> None:
         _make_explicit_advice("000001", "平安银行", 100.0, (98.0, 102.0)),
     ]
     content_default = export_conditional_orders(advices, "huatai", today=fixed_today)
-    content_explicit = export_conditional_orders(
-        advices, "huatai", quantity=DEFAULT_QUANTITY, today=fixed_today
-    )
-    content_none_map = export_conditional_orders(
-        advices, "huatai", quantity_map=None, today=fixed_today
-    )
-    assert content_default == content_explicit == content_none_map, (
-        "quantity_map=None should be backward compatible with quantity param"
-    )
+    content_explicit = export_conditional_orders(advices, "huatai", quantity=DEFAULT_QUANTITY, today=fixed_today)
+    content_none_map = export_conditional_orders(advices, "huatai", quantity_map=None, today=fixed_today)
+    assert content_default == content_explicit == content_none_map, "quantity_map=None should be backward compatible with quantity param"
 
 
 def test_export_from_dicts_with_quantity_map(fixed_today: date) -> None:
@@ -742,8 +722,6 @@ def test_export_from_dicts_with_quantity_map(fixed_today: date) -> None:
     ]
     dicts = [a.to_dict() for a in advices]
     quantity_map = {"000001": 400, "300750": 100}
-    content = export_from_dicts(
-        dicts, "huatai", quantity_map=quantity_map, today=fixed_today
-    )
+    content = export_from_dicts(dicts, "huatai", quantity_map=quantity_map, today=fixed_today)
     assert "400" in content, f"000001 quantity=400 not in output:\n{content}"
     assert "100" in content, f"300750 quantity=100 not in output:\n{content}"

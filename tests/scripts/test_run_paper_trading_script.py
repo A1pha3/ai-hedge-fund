@@ -198,6 +198,7 @@ def test_resolve_runtime_inputs_keeps_governed_precision_env_untouched_for_follo
             "visibility_gap_post_gate_liquidity_competition": [],
         },
     )
+
     def fake_resolve_btst_optimized_profile_manifest(_path: str | Path) -> dict[str, object]:
         return {
             "mode": "optimized",
@@ -272,6 +273,7 @@ def test_resolve_runtime_inputs_preserves_preexisting_false_governed_precision(m
         },
     )
     try:
+
         def fake_resolve_btst_optimized_profile_manifest(_path: str | Path) -> dict[str, object]:
             return {
                 "mode": "optimized",

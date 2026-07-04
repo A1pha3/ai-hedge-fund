@@ -4,6 +4,7 @@ Both modules render markdown from dicts but had zero direct test coverage.
 Tests cover the pure dict→list[str] helpers (the complex multi-Callable
 orchestrators like build_trading_report_lines are deferred).
 """
+
 from __future__ import annotations
 
 import json

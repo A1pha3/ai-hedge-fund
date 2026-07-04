@@ -35,9 +35,7 @@ class TestDetectMarketStateMacro:
         from src.screening import market_state as ms_mod
 
         # Minimal non-empty index frame so detect_market_state does not early-return.
-        idx_df = pd.DataFrame(
-            {"open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0], "vol": [1.0]}
-        )
+        idx_df = pd.DataFrame({"open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0], "vol": [1.0]})
         monkeypatch.setattr(ms_mod, "get_index_daily", lambda *a, **k: idx_df)
         monkeypatch.setattr(ms_mod, "get_daily_price_batch", lambda *a, **k: None)
         monkeypatch.setattr(ms_mod, "get_limit_list", lambda *a, **k: None)

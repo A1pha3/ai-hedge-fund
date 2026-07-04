@@ -316,10 +316,7 @@ def test_analyze_btst_prepared_breakout_cohort_surfaces_soft_selected_relief_pee
         "scripts.analyze_btst_prepared_breakout_cohort.discover_nested_report_dirs",
         lambda report_root_dirs, report_name_contains="": report_dirs,
     )
-    trade_dates_by_report_dir = {
-        report_dir: f"2026-03-2{index}"
-        for index, report_dir in enumerate(report_dirs, start=3)
-    }
+    trade_dates_by_report_dir = {report_dir: f"2026-03-2{index}" for index, report_dir in enumerate(report_dirs, start=3)}
     monkeypatch.setattr(
         "scripts.analyze_btst_prepared_breakout_cohort.load_selection_target_replay_sources",
         lambda report_dir: [(report_dir / "selection_artifacts" / trade_dates_by_report_dir[report_dir] / "selection_target_replay_input.json", {"selection_targets": {"300505": {}, "000792": {}}})],

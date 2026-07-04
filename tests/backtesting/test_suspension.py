@@ -6,6 +6,7 @@
 - 数据源缺 volume 列 → 兼容 (按有价格处理)
 - 全部停牌 → 返回 None (回测引擎会跳过该日)
 """
+
 from __future__ import annotations
 
 import pandas as pd
@@ -45,9 +46,11 @@ class TestSuspensionHandling:
         loader = _make_loader(["000001"])
 
         def fake_get_price_data(ticker, start, end, api_key=None):
-            return _make_price_frame([
-                {"date": "2024-01-15", "close": 10.0, "volume": 1_000_000},
-            ])
+            return _make_price_frame(
+                [
+                    {"date": "2024-01-15", "close": 10.0, "volume": 1_000_000},
+                ]
+            )
 
         monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
         prices = loader.load_current_prices(["000001"], "2024-01-01", "2024-01-15")
@@ -59,9 +62,11 @@ class TestSuspensionHandling:
         loader = _make_loader(["000001"])
 
         def fake_get_price_data(ticker, start, end, api_key=None):
-            return _make_price_frame([
-                {"date": "2024-01-15", "close": 10.0, "volume": 0},
-            ])
+            return _make_price_frame(
+                [
+                    {"date": "2024-01-15", "close": 10.0, "volume": 0},
+                ]
+            )
 
         monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
         prices = loader.load_current_prices(["000001"], "2024-01-01", "2024-01-15")
@@ -74,13 +79,17 @@ class TestSuspensionHandling:
 
         def fake_get_price_data(ticker, start, end, api_key=None):
             if ticker == "000001":
-                return _make_price_frame([
-                    {"date": "2024-01-15", "close": 10.0, "volume": 1_000_000},
-                ])
+                return _make_price_frame(
+                    [
+                        {"date": "2024-01-15", "close": 10.0, "volume": 1_000_000},
+                    ]
+                )
             # 000002 停牌
-            return _make_price_frame([
-                {"date": "2024-01-15", "close": 20.0, "volume": 0},
-            ])
+            return _make_price_frame(
+                [
+                    {"date": "2024-01-15", "close": 20.0, "volume": 0},
+                ]
+            )
 
         monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
         prices = loader.load_current_prices(["000001", "000002"], "2024-01-01", "2024-01-15")
@@ -94,9 +103,11 @@ class TestSuspensionHandling:
 
         def fake_get_price_data(ticker, start, end, api_key=None):
             # 缺 volume 列
-            return _make_price_frame([
-                {"date": "2024-01-15", "close": 10.0},
-            ])
+            return _make_price_frame(
+                [
+                    {"date": "2024-01-15", "close": 10.0},
+                ]
+            )
 
         monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
         prices = loader.load_current_prices(["000001"], "2024-01-01", "2024-01-15")
@@ -108,9 +119,11 @@ class TestSuspensionHandling:
         loader = _make_loader(["000001", "000002"])
 
         def fake_get_price_data(ticker, start, end, api_key=None):
-            return _make_price_frame([
-                {"date": "2024-01-15", "close": 10.0, "volume": 0},
-            ])
+            return _make_price_frame(
+                [
+                    {"date": "2024-01-15", "close": 10.0, "volume": 0},
+                ]
+            )
 
         monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
         prices = loader.load_current_prices(["000001", "000002"], "2024-01-01", "2024-01-15")
@@ -151,9 +164,11 @@ class TestHydrateSuspendedPosition:
 
         def fake_get_price_data(ticker, start, end, api_key=None):
             # 停牌: volume=0, 但 close 仍是 carry-forward 价格 25.0
-            return _make_price_frame([
-                {"date": "2024-01-15", "close": 25.0, "volume": 0},
-            ])
+            return _make_price_frame(
+                [
+                    {"date": "2024-01-15", "close": 25.0, "volume": 0},
+                ]
+            )
 
         monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
         # current_prices 为空 (000001 已被 load_current_prices 因停牌排除)
@@ -168,9 +183,11 @@ class TestHydrateSuspendedPosition:
         loader._portfolio.apply_long_buy("000001", price=10.0, quantity=100)
 
         def fake_get_price_data(ticker, start, end, api_key=None):
-            return _make_price_frame([
-                {"date": "2024-01-15", "close": 12.0, "volume": 1_000_000},
-            ])
+            return _make_price_frame(
+                [
+                    {"date": "2024-01-15", "close": 12.0, "volume": 1_000_000},
+                ]
+            )
 
         monkeypatch.setattr("src.backtesting.engine_market_data.get_price_data", fake_get_price_data)
         hydrated = loader.hydrate_position_prices({}, "2024-01-01", "2024-01-15")

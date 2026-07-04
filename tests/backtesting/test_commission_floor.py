@@ -9,6 +9,7 @@
 - 平仓侧 (apply_short_cover via execute_cover_trade)  — NS-19(2) 对称性
 - 零名义金额 → 边界 (不崩)
 """
+
 from __future__ import annotations
 
 from src.backtesting.portfolio import Portfolio
@@ -135,9 +136,7 @@ class TestExecuteSellWithFloor:
         cash_after = portfolio.get_cash()
         actual_proceeds = cash_after - cash_before
         expected_proceeds = 100 * 10 * (1 - 0.005 - 0.0005)
-        assert abs(actual_proceeds - expected_proceeds) < 1e-6, (
-            f"Expected proceeds {expected_proceeds}, got {actual_proceeds}"
-        )
+        assert abs(actual_proceeds - expected_proceeds) < 1e-6, f"Expected proceeds {expected_proceeds}, got {actual_proceeds}"
 
     def test_large_sell_uses_raw_rate(self) -> None:
         """卖出 1000 股 @ ¥100 (¥100000) — raw rate 适用。"""
@@ -200,9 +199,7 @@ class TestExecuteShortWithFloor:
         # floor: 9.95 * 100 * 1.0 = 995.0
         # no-floor (buggy): 9.9975 * 100 * 1.0 = 999.75
         margin_used = portfolio._portfolio["margin_used"]  # noqa: SLF001
-        assert abs(margin_used - 995.0) < 1e-6, (
-            f"Expected margin_used 995.0 (floor applied), got {margin_used}"
-        )
+        assert abs(margin_used - 995.0) < 1e-6, f"Expected margin_used 995.0 (floor applied), got {margin_used}"
 
     def test_large_short_uses_raw_rate(self) -> None:
         """做空 1000 股 @ ¥100 (¥100000) — raw rate 适用 (不触发下限)。"""
@@ -258,9 +255,7 @@ class TestExecuteCoverWithFloor:
         cash_after = portfolio.get_cash()
         actual_cover_cost = cash_before - cash_after  # net cash decrease
         # floor: margin_release(1000) - cover_cost(1005) = -5 net decrease
-        assert abs(actual_cover_cost - 5.0) < 1e-6, (
-            f"Expected net cash decrease 5.0 (floor applied), got {actual_cover_cost}"
-        )
+        assert abs(actual_cover_cost - 5.0) < 1e-6, f"Expected net cash decrease 5.0 (floor applied), got {actual_cover_cost}"
 
     def test_large_cover_uses_raw_rate(self) -> None:
         """平仓 1000 股 @ ¥100 (¥100000) — raw rate 适用。"""

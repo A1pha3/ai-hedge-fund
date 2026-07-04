@@ -65,6 +65,7 @@ class TestPasswordHashing:
 
 # ---- JWT Tokens ----
 
+
 class TestJWTTokens:
     """Tests for create_access_token(), decode_token(), create_reset_token()."""
 
@@ -128,13 +129,7 @@ class TestJWTTokens:
         with caplog.at_level(logging.WARNING):
             result = decode_token(tampered)
         assert result is None  # fail-closed (unchanged)
-        assert any(
-            r.levelno == logging.WARNING and "decode failed" in r.message.lower()
-            for r in caplog.records
-        ), (
-            f"tampered-signature token must log WARNING for attack detection; "
-            f"got {[r.message for r in caplog.records]}"
-        )
+        assert any(r.levelno == logging.WARNING and "decode failed" in r.message.lower() for r in caplog.records), f"tampered-signature token must log WARNING for attack detection; " f"got {[r.message for r in caplog.records]}"
 
     def test_decode_token_logs_info_not_warning_on_expired(self, caplog):
         """An expired token is BENIGN (user re-login) — must NOT warn (cry wolf).
@@ -149,17 +144,9 @@ class TestJWTTokens:
             result = decode_token(expired)
         assert result is None
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert not any("decode failed" in r.message.lower() for r in warnings), (
-            f"expired token is benign — must NOT warn; got warnings={[r.message for r in warnings]}"
-        )
+        assert not any("decode failed" in r.message.lower() for r in warnings), f"expired token is benign — must NOT warn; got warnings={[r.message for r in warnings]}"
         # must emit an INFO (benign) — not silent, not WARNING
-        assert any(
-            r.levelno == logging.INFO and "expired" in r.message.lower() for r in caplog.records
-        ), (
-            f"expired token must log an INFO message (benign, not silent); "
-            f"got {[r.message for r in caplog.records]}"
-        )
-
+        assert any(r.levelno == logging.INFO and "expired" in r.message.lower() for r in caplog.records), f"expired token must log an INFO message (benign, not silent); " f"got {[r.message for r in caplog.records]}"
 
     def test_create_reset_token(self):
         token = create_reset_token("testuser")
@@ -243,6 +230,7 @@ class TestEnvironmentGuards:
 
 
 # ---- Invitation Code Generation ----
+
 
 class TestInvitationCodeGeneration:
     """Tests for generate_invitation_code()."""

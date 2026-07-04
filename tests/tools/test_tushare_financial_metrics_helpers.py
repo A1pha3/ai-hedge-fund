@@ -8,6 +8,7 @@ propagates through TTM synthesis and is swallowed by the outer ``except`` in
 ``get_ashare_financial_metrics_with_tushare``, silently dropping ALL financial
 metrics for the ticker. One bad row poisons the whole batch.
 """
+
 from __future__ import annotations
 
 import pandas as pd
@@ -171,7 +172,11 @@ def test_safe_cached_statement_call_logs_degradation_on_silent_failure(caplog):
     mock_pro = object()
     with caplog.at_level(logging.DEBUG, logger="src.tools.tushare_financial_metrics_helpers"):
         result = _safe_cached_statement_call(
-            failing_cached_call, mock_pro, "cashflow", "000001.SZ", 8,
+            failing_cached_call,
+            mock_pro,
+            "cashflow",
+            "000001.SZ",
+            8,
         )
 
     # 行为零变更: 仍返回 None (consumer 继续按缺报表处理)
@@ -199,7 +204,11 @@ def test_merge_financial_metric_extra_fields_logs_degradation_on_silent_failure(
     mock_pro = object()
     with caplog.at_level(logging.DEBUG, logger="src.tools.tushare_financial_metrics_helpers"):
         result = _merge_financial_metric_extra_fields(
-            failing_cached_dataframe_call, mock_pro, "000001.SZ", 8, df_fin,
+            failing_cached_dataframe_call,
+            mock_pro,
+            "000001.SZ",
+            8,
+            df_fin,
         )
 
     # 行为零变更: 仍返回核心 df_fin (无 extra 指标)
@@ -211,10 +220,10 @@ def test_merge_financial_metric_extra_fields_logs_degradation_on_silent_failure(
     assert "000001.SZ" in joined, "降级日志必须命名受影响的 ticker"
 
 
-
 # ---------------------------------------------------------------------------
 # R128: falsy-zero field-fallback in _resolve_interest_expense raw path
 # ---------------------------------------------------------------------------
+
 
 class TestResolveInterestExpenseFalsyZero:
     """R68/R69 falsy-zero family: the TTM path (lines 416-420) already uses

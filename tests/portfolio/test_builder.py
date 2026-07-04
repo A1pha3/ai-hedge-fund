@@ -1,4 +1,5 @@
 """Tests for P3-4: portfolio builder."""
+
 import pytest
 
 from src.portfolio.builder import (

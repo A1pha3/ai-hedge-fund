@@ -235,9 +235,7 @@ class TestNS18DynamicThresholdFieldNameStabilization:
             }
             for i in range(6)
         ]
-        (tmp_path / "tracking_history.json").write_text(
-            json.dumps({"records": records}), encoding="utf-8"
-        )
+        (tmp_path / "tracking_history.json").write_text(json.dumps({"records": records}), encoding="utf-8")
         hit_rate, size = _load_recent_hit_rate(tmp_path, 30)
         assert hit_rate is not None
         assert abs(hit_rate - (4 / 6)) < 1e-6
@@ -257,9 +255,7 @@ class TestNS18DynamicThresholdFieldNameStabilization:
             }
             for i in range(6)
         ]
-        (tmp_path / "tracking_history.json").write_text(
-            json.dumps({"records": records}), encoding="utf-8"
-        )
+        (tmp_path / "tracking_history.json").write_text(json.dumps({"records": records}), encoding="utf-8")
         hit_rate, size = _load_recent_hit_rate(tmp_path, 30)
         # No next_5day_return → records skipped → no outcomes → None
         assert hit_rate is None
@@ -276,9 +272,7 @@ class TestNS18DynamicThresholdFieldNameStabilization:
             }
             for i in range(6)
         ]
-        (tmp_path / "tracking_history.json").write_text(
-            json.dumps({"records": records}), encoding="utf-8"
-        )
+        (tmp_path / "tracking_history.json").write_text(json.dumps({"records": records}), encoding="utf-8")
         hit_rate, size = _load_recent_hit_rate(tmp_path, 30)
         assert hit_rate is None
         assert size == 0
@@ -296,9 +290,7 @@ class TestNS18DynamicThresholdFieldNameStabilization:
             }
             for i in range(6)
         ]
-        (tmp_path / "tracking_history.json").write_text(
-            json.dumps({"records": records}), encoding="utf-8"
-        )
+        (tmp_path / "tracking_history.json").write_text(json.dumps({"records": records}), encoding="utf-8")
         hit_rate, size = _load_recent_hit_rate(tmp_path, 30)
         # Legacy field name not read → no outcomes → None
         assert hit_rate is None
@@ -321,9 +313,7 @@ class TestNS18DynamicThresholdFieldNameStabilization:
             {"ticker": "000007", "tracking_status": "complete", "next_3day_return": 0.05},
             {"ticker": "000008", "tracking_status": "complete", "next_3day_return": 0.05},
         ]
-        (tmp_path / "tracking_history.json").write_text(
-            json.dumps({"records": records}), encoding="utf-8"
-        )
+        (tmp_path / "tracking_history.json").write_text(json.dumps({"records": records}), encoding="utf-8")
         hit_rate, size = _load_recent_hit_rate(tmp_path, 30)
         assert hit_rate is not None
         assert abs(hit_rate - (4 / 6)) < 1e-6

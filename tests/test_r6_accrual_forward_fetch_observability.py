@@ -14,6 +14,7 @@ was an API error. Same NS-17 disease class as c267-c295 / c317b.
 This test asserts the failure is now OBSERVABLE (a warning fires naming the
 failed date + exception), without hitting the network (monkeypatches pro.daily).
 """
+
 from __future__ import annotations
 
 import logging
@@ -33,11 +34,11 @@ def test_forward_fetch_failure_is_logged_not_silent(caplog):
     """A pro.daily() failure in the forward-window fetch must emit a warning
     naming the failed trade_date + the exception (NS-17 drain). Pre-fix the
     bare ``except Exception:`` swallowed it silently into fwd_cache[td]={}."""
-    trade_dates = ["20260601", "20260602", "20260603", "20260604",
-                   "20260605", "20260606", "20260607"]
+    trade_dates = ["20260601", "20260602", "20260603", "20260604", "20260605", "20260606", "20260607"]
 
     class _BoomPro:
         """Fake pro whose daily() always raises (simulates API rate-limit/timeout)."""
+
         def daily(self, trade_date: str):
             raise RuntimeError("simulated API rate-limit")
 
@@ -49,24 +50,19 @@ def test_forward_fetch_failure_is_logged_not_silent(caplog):
         # — that's fine; we only care that the forward-fetch warnings fired FIRST.
         try:
             m._collect_one_date(
-                _BoomPro(), test_date="20260601", di=0,
-                trade_dates=trade_dates, horizons=(1, 5, 10),
+                _BoomPro(),
+                test_date="20260601",
+                di=0,
+                trade_dates=trade_dates,
+                horizons=(1, 5, 10),
                 stock_basic=pd.DataFrame({"ts_code": ["000001.SZ"]}),
                 fwd_cache=fwd_cache,
             )
         except Exception:
             pass  # downstream universe-fetch crash expected with fake pro
     # The failed forward dates must each have triggered a warning (not silent).
-    warnings_about_fetch = [
-        r for r in caplog.records
-        if r.levelno == logging.WARNING and "fetch" in r.getMessage().lower()
-    ]
-    assert warnings_about_fetch, (
-        "forward-window fetch failure must emit a WARNING (was silent pre-fix); "
-        f"got records: {[r.getMessage() for r in caplog.records]}"
-    )
+    warnings_about_fetch = [r for r in caplog.records if r.levelno == logging.WARNING and "fetch" in r.getMessage().lower()]
+    assert warnings_about_fetch, "forward-window fetch failure must emit a WARNING (was silent pre-fix); " f"got records: {[r.getMessage() for r in caplog.records]}"
     # The warning must name a failed trade_date (so operator can locate it).
     joined = " ".join(r.getMessage() for r in warnings_about_fetch)
-    assert any(d in joined for d in trade_dates[1:]), (
-        f"warning should name the failed trade_date, got: {joined!r}"
-    )
+    assert any(d in joined for d in trade_dates[1:]), f"warning should name the failed trade_date, got: {joined!r}"

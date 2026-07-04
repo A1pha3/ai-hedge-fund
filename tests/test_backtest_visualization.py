@@ -12,9 +12,7 @@ from app.backend.auth.dependencies import require_write_access
 
 def _load_endpoint_module():
     """Load the backtest_visualization module without going through full app init."""
-    spec = importlib.util.spec_from_file_location(
-        "backtest_visualization", "app/backend/routes/backtest_visualization.py"
-    )
+    spec = importlib.util.spec_from_file_location("backtest_visualization", "app/backend/routes/backtest_visualization.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -51,7 +49,7 @@ def test_compute_equity_curve_monthly_aggregation():
     daily = []
     for i in range(45):  # 1.5 months
         date = f"2026-04-{(i % 30) + 1:02d}" if i < 30 else f"2026-05-{(i % 30) + 1:02d}"
-        daily.append({"date": date, "portfolio_value": 1_000_000.0 * (1.001 ** i), "portfolio_return": 0.001})
+        daily.append({"date": date, "portfolio_value": 1_000_000.0 * (1.001**i), "portfolio_return": 0.001})
 
     points, monthly, summary = mod._compute_equity_curve(daily, 1_000_000.0)
     assert len(monthly) >= 1

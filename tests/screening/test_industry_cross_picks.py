@@ -1,4 +1,5 @@
 """Tests for P3-3: industry_cross_picks module."""
+
 from src.screening.industry_cross_picks import (
     _extract_top_picks_for_industry,
     compute_cross_picks,

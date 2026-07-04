@@ -118,7 +118,9 @@ class TestExpectedReturnReport:
             total_samples=200,
             items=[
                 ExpectedReturn(
-                    ticker="000001", score_b=0.85, bucket_label="高 (>0.8)",
+                    ticker="000001",
+                    score_b=0.85,
+                    bucket_label="高 (>0.8)",
                     bucket_sample_count=40,
                     expected_returns={"t1": 1.0, "t5": 3.5, "t10": 5.2, "t20": None, "t30": None},
                     win_rates={"t1": 0.55, "t5": 0.60, "t10": 0.58, "t20": None, "t30": None},
@@ -315,12 +317,7 @@ class TestRenderExpectedReturns:
         report = compute_expected_returns(recommendations=recs, lookback_days=60)
         text = render_expected_returns(report)
         assert "T+30胜率" in text or "T30胜率" in text
-        assert "少" in text or "⚠" in text or "不足" in text, (
-            "render_expected_returns (full --expected-returns table) must flag T+30 winrate "
-            "low-confidence when mature sample < 5 — c271 added this to the compact renderer "
-            "but missed the full renderer (same _fmt_winrate, same bucket_t30_mature_count). "
-            "A green 100% on n=1 misleads users of a 赚钱工具."
-        )
+        assert "少" in text or "⚠" in text or "不足" in text, "render_expected_returns (full --expected-returns table) must flag T+30 winrate " "low-confidence when mature sample < 5 — c271 added this to the compact renderer " "but missed the full renderer (same _fmt_winrate, same bucket_t30_mature_count). " "A green 100% on n=1 misleads users of a 赚钱工具."
 
     @patch("src.screening.expected_return._load_tracking_records")
     @patch("src.screening.expected_return.compute_calibration")
@@ -384,10 +381,7 @@ class TestRenderCompact:
         text = render_expected_returns_compact(report)
         # winrate is present (100% on n=1) but flagged low-confidence
         assert "T30熟=1" in text or "T30熟= 1" in text
-        assert "少" in text or "⚠" in text or "不足" in text, (
-            "T+30 winrate based on <5 mature samples must carry a low-confidence marker "
-            "— a green 100% on n=1 misleads users of a 赚钱工具."
-        )
+        assert "少" in text or "⚠" in text or "不足" in text, "T+30 winrate based on <5 mature samples must carry a low-confidence marker " "— a green 100% on n=1 misleads users of a 赚钱工具."
 
     @patch("src.screening.expected_return._load_tracking_records")
     @patch("src.screening.expected_return.compute_calibration")

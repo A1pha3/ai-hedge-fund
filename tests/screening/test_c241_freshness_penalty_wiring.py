@@ -64,9 +64,7 @@ class TestC241FreshnessPenaltyWiring:
         reports_dir.mkdir()
         rec = _make_rec("000001", "A", 0.8, confidence=80.0)
         today = _make_report("20260611", [rec])
-        (reports_dir / "auto_screening_20260611.json").write_text(
-            json.dumps(today), encoding="utf-8"
-        )
+        (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(today), encoding="utf-8")
 
         stale_freshness = {
             "fresh": False,
@@ -84,9 +82,7 @@ class TestC241FreshnessPenaltyWiring:
             "warning_count": 1,
             "summary": "stale",
         }
-        with mock.patch.object(
-            data_freshness_guard, "check_data_freshness", return_value=stale_freshness
-        ):
+        with mock.patch.object(data_freshness_guard, "check_data_freshness", return_value=stale_freshness):
             with mock.patch.object(
                 data_freshness_guard,
                 "apply_freshness_confidence_penalty",
@@ -95,18 +91,12 @@ class TestC241FreshnessPenaltyWiring:
                 result = run_decision_flow(top_n=10, reports_dir=reports_dir)
 
         assert "error" not in result, f"flow errored: {result}"
-        assert spy.called, (
-            "apply_freshness_confidence_penalty must be called when "
-            "check_data_freshness returns fresh=False (R96/R118 design intent)"
-        )
+        assert spy.called, "apply_freshness_confidence_penalty must be called when " "check_data_freshness returns fresh=False (R96/R118 design intent)"
         # The spy wraps the real function, which mutates recs in place.
         # Verify the confidence was actually reduced (HIGH penalty = 0.7).
         called_args, _ = spy.call_args
         recs_arg = called_args[0]
-        assert recs_arg[0]["confidence"] == round(80.0 * 0.7, 1), (
-            f"confidence should be penalized to 56.0 (80 * 0.7), "
-            f"got {recs_arg[0]['confidence']}"
-        )
+        assert recs_arg[0]["confidence"] == round(80.0 * 0.7, 1), f"confidence should be penalized to 56.0 (80 * 0.7), " f"got {recs_arg[0]['confidence']}"
         assert recs_arg[0].get("confidence_penalty") == 0.3
         assert recs_arg[0].get("confidence_penalty_reason") == "data_freshness_warning"
 
@@ -117,9 +107,7 @@ class TestC241FreshnessPenaltyWiring:
         reports_dir.mkdir()
         rec = _make_rec("000001", "A", 0.8, confidence=80.0)
         today = _make_report("20260611", [rec])
-        (reports_dir / "auto_screening_20260611.json").write_text(
-            json.dumps(today), encoding="utf-8"
-        )
+        (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(today), encoding="utf-8")
 
         fresh_report = {
             "fresh": True,
@@ -128,16 +116,9 @@ class TestC241FreshnessPenaltyWiring:
             "warning_count": 0,
             "summary": "fresh",
         }
-        with mock.patch.object(
-            data_freshness_guard, "check_data_freshness", return_value=fresh_report
-        ):
-            with mock.patch.object(
-                data_freshness_guard, "apply_freshness_confidence_penalty"
-            ) as spy:
+        with mock.patch.object(data_freshness_guard, "check_data_freshness", return_value=fresh_report):
+            with mock.patch.object(data_freshness_guard, "apply_freshness_confidence_penalty") as spy:
                 result = run_decision_flow(top_n=10, reports_dir=reports_dir)
 
         assert "error" not in result, f"flow errored: {result}"
-        assert not spy.called, (
-            "apply_freshness_confidence_penalty must NOT be called when "
-            "freshness check passes (fresh=True)"
-        )
+        assert not spy.called, "apply_freshness_confidence_penalty must NOT be called when " "freshness check passes (fresh=True)"

@@ -34,6 +34,7 @@ def cli_db():
 
 # ---- _cmd_init ----
 
+
 class TestCmdInit:
     """Tests for the 'init' CLI command."""
 
@@ -78,6 +79,7 @@ class TestCmdInit:
 
 
 # ---- _cmd_gen_invite ----
+
 
 class TestCmdGenInvite:
     """Tests for the 'gen-invite' CLI command."""
@@ -130,6 +132,7 @@ class TestCmdGenInvite:
 
 
 # ---- _cmd_reset_admin_password ----
+
 
 class TestCmdResetAdminPassword:
     """Tests for the 'reset-admin-password' CLI command."""
@@ -206,6 +209,7 @@ class TestCmdResetAdminPassword:
 
 # ---- _cmd_list_users ----
 
+
 class TestCmdListUsers:
     """Tests for the 'list-users' CLI command."""
 
@@ -232,6 +236,7 @@ class TestCmdListUsers:
 
 
 # ---- _cmd_list_invites ----
+
 
 class TestCmdListInvites:
     """Tests for the 'list-invites' CLI command."""
@@ -280,6 +285,7 @@ class TestCmdListInvites:
 
 
 # ---- main() ----
+
 
 class TestMainEntrypoint:
     """Tests for the CLI main() entrypoint."""

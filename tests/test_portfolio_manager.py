@@ -237,21 +237,15 @@ def test_r100_accumulate_signal_weights_conf_null_does_not_crash():
     易传 null。safe_float 在边界 fail-soft 而非崩整个决策。
     """
     # conf=None (key present, value null) must not raise.
-    bullish, bearish, neutral, total = _accumulate_signal_weights(
-        {"agent_a": {"sig": "bullish", "conf": None}}
-    )
+    bullish, bearish, neutral, total = _accumulate_signal_weights({"agent_a": {"sig": "bullish", "conf": None}})
     assert bullish == 0.0
     assert total == 0.0
     # Missing key still defaults to 0 (no regression).
-    bullish2, _, _, total2 = _accumulate_signal_weights(
-        {"agent_a": {"sig": "bullish"}}
-    )
+    bullish2, _, _, total2 = _accumulate_signal_weights({"agent_a": {"sig": "bullish"}})
     assert bullish2 == 0.0
     assert total2 == 0.0
     # Normal confidence still accumulates correctly.
-    bullish3, _, _, total3 = _accumulate_signal_weights(
-        {"agent_a": {"sig": "bullish", "conf": 80}}
-    )
+    bullish3, _, _, total3 = _accumulate_signal_weights({"agent_a": {"sig": "bullish", "conf": 80}})
     assert bullish3 == 80.0
     assert total3 == 80.0
 
@@ -260,14 +254,10 @@ def test_r100_collect_signal_counts_conf_null_does_not_crash():
     """R100: 同族 _collect_signal_counts 也用 ``or 0`` (null-safe 但带
     falsy-zero 潜在风险)。统一 safe_float 消除 decision-path confidence
     解析的语义分裂。conf=None / conf=0.0 都必须忠实保留为 0 贡献。"""
-    counts, top = _collect_signal_counts(
-        {"agent_a": {"sig": "bullish", "conf": None}}
-    )
+    counts, top = _collect_signal_counts({"agent_a": {"sig": "bullish", "conf": None}})
     assert counts["bullish"] == 1
     assert top["bullish"][0] == ("agent_a", 0.0)
     # conf=0.0 (真实"零信心") must be preserved as 0.0, not coerced weirdly.
-    counts2, top2 = _collect_signal_counts(
-        {"agent_a": {"sig": "bearish", "conf": 0.0}}
-    )
+    counts2, top2 = _collect_signal_counts({"agent_a": {"sig": "bearish", "conf": 0.0}})
     assert counts2["bearish"] == 1
     assert top2["bearish"][0] == ("agent_a", 0.0)

@@ -3,6 +3,7 @@
 extract_download_progress and render_download_progress had zero direct test
 coverage. stream_download_progress (TextIO streaming) is deferred.
 """
+
 from __future__ import annotations
 
 from src.utils.ollama_download_helpers import (

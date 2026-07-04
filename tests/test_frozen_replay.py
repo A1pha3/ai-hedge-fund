@@ -237,9 +237,7 @@ def test_load_frozen_post_market_plans_hydrates_sparse_replay_watchlist_signals_
                                             "direction": 1,
                                             "confidence": 68.0,
                                             "completeness": 1.0,
-                                            "sub_factors": {
-                                                "ema_alignment": {"direction": 1, "confidence": 84.0, "completeness": 1.0}
-                                            },
+                                            "sub_factors": {"ema_alignment": {"direction": 1, "confidence": 84.0, "completeness": 1.0}},
                                         }
                                     },
                                     "agent_contribution_summary": {"cohort_contributions": {"analyst": 0.44}},
@@ -264,10 +262,7 @@ def test_load_frozen_post_market_plans_hydrates_sparse_replay_watchlist_signals_
 
 
 def test_replay_frozen_post_market_sequence_preserves_execution_eligibility_for_original_buy_orders() -> None:
-    source_path = (
-        Path(__file__).resolve().parents[1]
-        / "data/reports/paper_trading_20260522_20260522_live_m2_7_short_trade_only_20260525_plan/daily_events.jsonl"
-    )
+    source_path = Path(__file__).resolve().parents[1] / "data/reports/paper_trading_20260522_20260522_live_m2_7_short_trade_only_20260525_plan/daily_events.jsonl"
 
     plans = replay_frozen_post_market_sequence(
         source_path,
@@ -293,9 +288,7 @@ def test_replay_frozen_post_market_sequence_preserves_execution_eligibility_for_
         assert ev.short_trade.execution_eligible is False, f"{ticker}: short_trade is not execution_eligible"
         assert ev.execution_eligible is False, f"{ticker}: outer follows short_trade in short_trade_only mode"
         assert ev.delta_classification == "research_pass_short_reject"
-        assert "selected_rank_cap_exceeded" in (ev.short_trade.blockers or []), (
-            f"{ticker}: rejection reason must be the documented rank_cap blocker"
-        )
+        assert "selected_rank_cap_exceeded" in (ev.short_trade.blockers or []), f"{ticker}: rejection reason must be the documented rank_cap blocker"
 
 
 def test_build_recent_generated_buy_blocks_skips_malformed_dates() -> None:
@@ -304,19 +297,22 @@ def test_build_recent_generated_buy_blocks_skips_malformed_dates() -> None:
     row can't take down the entire frozen replay session.
     """
     # Malformed current_trade_date -> empty dict (no crash).
-    assert _build_recent_generated_buy_blocks(
-        latest_buy_trade_by_ticker={"300724": "20260420"},
-        current_trade_date="not-a-date",
-    ) == {}
+    assert (
+        _build_recent_generated_buy_blocks(
+            latest_buy_trade_by_ticker={"300724": "20260420"},
+            current_trade_date="not-a-date",
+        )
+        == {}
+    )
 
     # Malformed buy_trade_date rows are skipped while well-formed rows
     # in the cooldown window still produce blocks.
     blocks = _build_recent_generated_buy_blocks(
         latest_buy_trade_by_ticker={
-            "300724": "20260420",          # valid, within cooldown
-            "600519": "garbage",            # invalid -> skipped
-            "000001": "",                   # invalid -> skipped
-            "999999": "20260301",           # out of cooldown -> skipped
+            "300724": "20260420",  # valid, within cooldown
+            "600519": "garbage",  # invalid -> skipped
+            "000001": "",  # invalid -> skipped
+            "999999": "20260301",  # out of cooldown -> skipped
         },
         current_trade_date="20260421",
         cooldown_calendar_days=2,
@@ -377,10 +373,7 @@ def test_load_frozen_post_market_plans_skips_corrupt_line(tmp_path, caplog) -> N
     assert set(plans.keys()) == {"20260420", "20260421"}
     # Diagnostic warning emitted so operators can distinguish "no record"
     # from "corrupt record silently dropped".
-    assert any(
-        "corrupt" in rec.message.lower() or "损坏" in rec.message or "skip" in rec.message.lower()
-        for rec in caplog.records
-    ), [r.message for r in caplog.records]
+    assert any("corrupt" in rec.message.lower() or "损坏" in rec.message or "skip" in rec.message.lower() for rec in caplog.records), [r.message for r in caplog.records]
 
 
 def test_load_sidecar_replay_input_payload_tolerates_corrupt_json(tmp_path, caplog) -> None:
@@ -402,9 +395,7 @@ def test_load_sidecar_replay_input_payload_tolerates_corrupt_json(tmp_path, capl
     sel_root = tmp_path / "selection_artifacts" / "2026-04-21"
     sel_root.mkdir(parents=True)
     # corrupt replay input (partial write)
-    (sel_root / "selection_target_replay_input.json").write_text(
-        "{corrupt:not json", encoding="utf-8"
-    )
+    (sel_root / "selection_target_replay_input.json").write_text("{corrupt:not json", encoding="utf-8")
 
     import logging
 
@@ -413,10 +404,7 @@ def test_load_sidecar_replay_input_payload_tolerates_corrupt_json(tmp_path, capl
 
     # Degrade to empty dict, do not crash.
     assert result == {}
-    assert any(
-        "corrupt" in rec.message.lower() or "损坏" in rec.message
-        for rec in caplog.records
-    ), [r.message for r in caplog.records]
+    assert any("corrupt" in rec.message.lower() or "损坏" in rec.message for rec in caplog.records), [r.message for r in caplog.records]
 
 
 def test_load_sidecar_prior_by_ticker_tolerates_corrupt_json(tmp_path, caplog) -> None:
@@ -434,9 +422,7 @@ def test_load_sidecar_prior_by_ticker_tolerates_corrupt_json(tmp_path, caplog) -
     sel_root = tmp_path / "selection_artifacts" / "2026-04-21"
     sel_root.mkdir(parents=True)
     # corrupt snapshot (partial write)
-    (sel_root / "selection_snapshot.json").write_text(
-        "{corrupt:not json", encoding="utf-8"
-    )
+    (sel_root / "selection_snapshot.json").write_text("{corrupt:not json", encoding="utf-8")
 
     import logging
 
@@ -444,10 +430,7 @@ def test_load_sidecar_prior_by_ticker_tolerates_corrupt_json(tmp_path, caplog) -
         result = _load_sidecar_prior_by_ticker(source_path, "20260421")
 
     assert result == {}
-    assert any(
-        "corrupt" in rec.message.lower() or "损坏" in rec.message
-        for rec in caplog.records
-    ), [r.message for r in caplog.records]
+    assert any("corrupt" in rec.message.lower() or "损坏" in rec.message for rec in caplog.records), [r.message for r in caplog.records]
 
 
 def test_load_frozen_post_market_plans_partial_degradation_warns_with_counts(tmp_path, caplog) -> None:
@@ -470,10 +453,7 @@ def test_load_frozen_post_market_plans_partial_degradation_warns_with_counts(tmp
 
     assert set(plans.keys()) == {"20260420", "20260421"}
     # Partial-degradation warning names both counts so user can calibrate.
-    degradation_msgs = [
-        r.message for r in caplog.records
-        if "完整性已降级" in r.message or "degraded" in r.message.lower()
-    ]
+    degradation_msgs = [r.message for r in caplog.records if "完整性已降级" in r.message or "degraded" in r.message.lower()]
     assert degradation_msgs, [r.message for r in caplog.records]
     msg = degradation_msgs[0]
     assert "2" in msg  # 2 corrupt lines skipped

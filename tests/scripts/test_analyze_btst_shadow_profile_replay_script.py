@@ -97,17 +97,19 @@ def _build_frozen_plan(*, trade_date: str = "20260421", include_existing_buy_ord
         short_trade_target_profile_name="btst_precision_v2",
         short_trade_target_profile_config=_serialize_short_trade_target_profile(baseline_profile),
         portfolio_snapshot={"cash": 100000.0, "positions": {}},
-        buy_orders=[
-            {
-                "ticker": "300620",
-                "shares": 100,
-                "amount": 12000.0,
-                "score_final": 0.52,
-                "execution_ratio": 0.3,
-            }
-        ]
-        if include_existing_buy_order
-        else [],
+        buy_orders=(
+            [
+                {
+                    "ticker": "300620",
+                    "shares": 100,
+                    "amount": 12000.0,
+                    "score_final": 0.52,
+                    "execution_ratio": 0.3,
+                }
+            ]
+            if include_existing_buy_order
+            else []
+        ),
     )
 
 

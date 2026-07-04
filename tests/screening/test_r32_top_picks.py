@@ -3,6 +3,7 @@
 R32 adds a compact ``理由: ... | 风险: 低/中/高(ATR X%)`` line to each pick,
 reusing R15 factor attribution (top-2 factors) and R8 ATR data (risk level).
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace

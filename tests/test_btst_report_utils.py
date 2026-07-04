@@ -118,9 +118,7 @@ def test_r101_load_json_corrupt_file_degrades_to_empty_dict(tmp_path: Path) -> N
     assert _load_json(valid) == {"k": 1}
 
 
-def test_r101_load_selection_replay_input_corrupt_sibling_does_not_crash(
-    tmp_path: Path, caplog
-) -> None:
+def test_r101_load_selection_replay_input_corrupt_sibling_does_not_crash(tmp_path: Path, caplog) -> None:
     """R101 caller-path: corrupt ``selection_target_replay_input.json`` sibling
     of a valid ``selection_snapshot.json`` must NOT crash
     ``_load_selection_replay_input``; degrade to ``{}`` + warning (operator
@@ -174,9 +172,7 @@ class TestWriteJsonAtomicity:
         raw = target.read_text(encoding="utf-8")
         assert raw.strip(), "final path must not be truncated-empty after a crashed write attempt"
         parsed = json.loads(raw)  # must parse cleanly — no half-written corrupt file
-        assert parsed in ({"artifact": "PRIOR", "v": 1}, {"artifact": "NEW", "v": 2}), (
-            "final path must hold either the prior or the new complete payload — never a corrupt half-write"
-        )
+        assert parsed in ({"artifact": "PRIOR", "v": 1}, {"artifact": "NEW", "v": 2}), "final path must hold either the prior or the new complete payload — never a corrupt half-write"
 
     def test_serialization_crash_preserves_prior_and_cleans_temp(self, tmp_path: Path) -> None:
         """When serialization itself fails, the prior sidecar is intact and no temp leaks.

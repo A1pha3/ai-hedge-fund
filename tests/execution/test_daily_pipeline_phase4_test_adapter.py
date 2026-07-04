@@ -55,6 +55,7 @@ def test_run_with_phase4_test_overrides_syncs_before_invoking_callback():
     payload, sentinel_builder = _build_phase4_override_payload()
 
     try:
+
         def callback(prefix: str) -> str:
             assert short_trade_helpers.build_short_trade_target_snapshot_from_entry is sentinel_builder
             assert upstream_shadow_helpers.UPSTREAM_SHADOW_RELEASE_MAX_TICKERS == 2

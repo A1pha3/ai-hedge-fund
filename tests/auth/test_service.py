@@ -42,6 +42,7 @@ class TestUtcNow:
 
 # ---- _validate_password ----
 
+
 class TestValidatePassword:
     """Tests for password validation helper."""
 
@@ -66,6 +67,7 @@ class TestValidatePassword:
 
 
 # ---- Login ----
+
 
 class TestLogin:
     """Tests for AuthService.login()."""
@@ -130,6 +132,7 @@ class TestLogin:
 
 # ---- Brute-force lockout ----
 
+
 class TestBruteForceLockout:
     """Tests for account locking after repeated failed logins."""
 
@@ -156,6 +159,7 @@ class TestBruteForceLockout:
 
 
 # ---- Register ----
+
 
 class TestRegister:
     """Tests for AuthService.register()."""
@@ -197,6 +201,7 @@ class TestRegister:
 
 # ---- Change Password ----
 
+
 class TestChangePassword:
     """Tests for AuthService.change_password()."""
 
@@ -229,6 +234,7 @@ class TestChangePassword:
 
 # ---- Bind Email ----
 
+
 class TestBindEmail:
     """Tests for AuthService.bind_email()."""
 
@@ -250,6 +256,7 @@ class TestBindEmail:
 
 
 # ---- Forgot Password ----
+
 
 class TestForgotPassword:
     """Tests for AuthService.forgot_password()."""
@@ -293,6 +300,7 @@ class TestForgotPassword:
 
 # ---- Reset Password ----
 
+
 class TestResetPassword:
     """Tests for AuthService.reset_password()."""
 
@@ -317,6 +325,7 @@ class TestResetPassword:
     def test_reset_password_non_reset_token(self, db_session, regular_user):
         """Access tokens should not work as reset tokens."""
         from app.backend.auth.utils import create_access_token
+
         token = create_access_token({"sub": "testuser", "role": "user"})
         service = AuthService(db_session)
         with pytest.raises(InvalidTokenError, match="无效的重置令牌"):
@@ -358,6 +367,7 @@ class TestResetPassword:
 
 
 # ---- Get User Info ----
+
 
 class TestGetUserInfo:
     """Tests for AuthService.get_user_info()."""

@@ -466,8 +466,7 @@ def test_power_analysis_from_loaded_current_vs_required():
     # low: 105 records, 53 win (50%); high: 38 records, 15 win (39%)
     low = [1.0] * 53 + [-1.0] * 52  # 53/105 = 50%
     high = [1.0] * 15 + [-1.0] * 23  # 15/38 = 39%
-    recs = [{"recommended_date": "20250101", "recommendation_score": 0.10, "next_30day_return": r} for r in low] + \
-           [{"recommended_date": "20250101", "recommendation_score": 0.60, "next_30day_return": r} for r in high]
+    recs = [{"recommended_date": "20250101", "recommendation_score": 0.10, "next_30day_return": r} for r in low] + [{"recommended_date": "20250101", "recommendation_score": 0.60, "next_30day_return": r} for r in high]
     res = compute_power_analysis_from_loaded(recs, min_n=20)
     assert res.current_high_n == 38
     assert res.required_n_per_group is not None
@@ -484,8 +483,7 @@ def test_power_analysis_no_high_bucket():
 def test_render_power_line_shows_required_and_current():
     low = [1.0] * 53 + [-1.0] * 52
     high = [1.0] * 15 + [-1.0] * 23
-    recs = [{"recommended_date": "20250101", "recommendation_score": 0.10, "next_30day_return": r} for r in low] + \
-           [{"recommended_date": "20250101", "recommendation_score": 0.60, "next_30day_return": r} for r in high]
+    recs = [{"recommended_date": "20250101", "recommendation_score": 0.10, "next_30day_return": r} for r in low] + [{"recommended_date": "20250101", "recommendation_score": 0.60, "next_30day_return": r} for r in high]
     res = compute_power_analysis_from_loaded(recs, min_n=20)
     line = render_power_line(res)
     assert line

@@ -104,10 +104,10 @@ def test_daily_trade_limit_prefers_higher_quality_when_scores_tie():
     assert [plan.ticker for plan in selected] == ["B", "C"]
 
 
-
 # ---------------------------------------------------------------------------
 # BETA-005: pending buy queue max expiry
 # ---------------------------------------------------------------------------
+
 
 def test_pending_buy_expires_after_max_queue_days():
     """BETA-005: a pending buy order that stays in the queue beyond
@@ -121,10 +121,14 @@ def test_pending_buy_expires_after_max_queue_days():
         result = process_pending_buy(order, current_score=0.45, is_limit_up=False, opened_board=False, current_price=10.0, reference_close=10.0)
         if result["action"] == "keep":
             order = PendingOrder(
-                ticker=order.ticker, order_type=order.order_type,
-                original_score=order.original_score, queue_date=order.queue_date,
-                queue_days=result["queue_days"], reason=order.reason,
-                shares=order.shares, amount=order.amount,
+                ticker=order.ticker,
+                order_type=order.order_type,
+                original_score=order.original_score,
+                queue_date=order.queue_date,
+                queue_days=result["queue_days"],
+                reason=order.reason,
+                shares=order.shares,
+                amount=order.amount,
             )
     # After MAX days, the next call should expire
     result = process_pending_buy(order, current_score=0.45, is_limit_up=False, opened_board=False, current_price=10.0, reference_close=10.0)

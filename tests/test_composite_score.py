@@ -1,4 +1,5 @@
 """Tests for composite_score.py — P11-1."""
+
 from __future__ import annotations
 
 import json

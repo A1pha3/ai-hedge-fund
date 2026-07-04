@@ -21,6 +21,7 @@ build_front_door_verdict (reading market_regime from payload market_state
 regime_gate_level), matching CLI behavior. This is additive — existing
 rec fields unchanged, verdict is a new per-rec key the frontend can render.
 """
+
 from __future__ import annotations
 
 from app.backend.routes.screening import _build_screening_response
@@ -100,15 +101,17 @@ def test_verdict_uses_market_regime_from_payload_market_state() -> None:
     """
     payload = _make_payload(regime="crisis", n_recs=2)
     resp = _build_screening_response(
-        payload, trade_date="20260607", score_threshold=0.0,
-        use_explain=False, strategies=None, execution_time_seconds=1.0,
+        payload,
+        trade_date="20260607",
+        score_threshold=0.0,
+        use_explain=False,
+        strategies=None,
+        execution_time_seconds=1.0,
     )
     for rec in resp.recommendations:
         v = rec["verdict"]
         # crisis regime must be reflected in the verdict's market_regime
-        assert "crisis" in v["market_regime"] or "risk_off" in v["market_regime"], (
-            f"crisis payload → verdict market_regime must reflect crisis; got {v['market_regime']!r}"
-        )
+        assert "crisis" in v["market_regime"] or "risk_off" in v["market_regime"], f"crisis payload → verdict market_regime must reflect crisis; got {v['market_regime']!r}"
 
 
 def test_verdict_absent_when_market_state_missing_does_not_crash() -> None:
@@ -122,18 +125,18 @@ def test_verdict_absent_when_market_state_missing_does_not_crash() -> None:
     payload = _make_payload(regime="normal", n_recs=1)
     del payload["market_state"]  # simulate degraded pipeline (no market_state)
     resp = _build_screening_response(
-        payload, trade_date="20260607", score_threshold=0.0,
-        use_explain=False, strategies=None, execution_time_seconds=1.0,
+        payload,
+        trade_date="20260607",
+        score_threshold=0.0,
+        use_explain=False,
+        strategies=None,
+        execution_time_seconds=1.0,
     )
     rec = resp.recommendations[0]
     v = rec["verdict"]
-    assert v["market_regime"] == "unknown", (
-        f"missing market_state → verdict market_regime must be 'unknown' (not crash); got {v['market_regime']!r}"
-    )
+    assert v["market_regime"] == "unknown", f"missing market_state → verdict market_regime must be 'unknown' (not crash); got {v['market_regime']!r}"
     # and the invalidation_reason must flag regime 未识别 (c282 honest label)
-    assert "regime 未识别" in v["invalidation_reason"], (
-        f"unknown regime must disclose 'regime 未识别' (c282); got {v['invalidation_reason']!r}"
-    )
+    assert "regime 未识别" in v["invalidation_reason"], f"unknown regime must disclose 'regime 未识别' (c282); got {v['invalidation_reason']!r}"
 
 
 def test_verdict_compute_exception_is_logged_not_swallowed(monkeypatch, caplog) -> None:
@@ -162,8 +165,12 @@ def test_verdict_compute_exception_is_logged_not_swallowed(monkeypatch, caplog) 
 
     with caplog.at_level(logging.WARNING, logger="app.backend.routes.screening"):
         resp = _build_screening_response(
-            payload, trade_date="20260607", score_threshold=0.0,
-            use_explain=False, strategies=None, execution_time_seconds=1.0,
+            payload,
+            trade_date="20260607",
+            score_threshold=0.0,
+            use_explain=False,
+            strategies=None,
+            execution_time_seconds=1.0,
         )
 
     # defensive AVOID still attaches (response must not crash)
@@ -172,11 +179,6 @@ def test_verdict_compute_exception_is_logged_not_swallowed(monkeypatch, caplog) 
         assert "verdict 计算失败" in rec["verdict"]["invalidation_reason"]
     # AND the failure is logged (not swallowed) — the NS-17 fix
     joined = " ".join(r.getMessage() for r in caplog.records)
-    assert "verdict" in joined.lower(), (
-        f"verdict-compute exception must be logged for operator diagnosis; "
-        f"got records: {caplog.records!r}"
-    )
+    assert "verdict" in joined.lower(), f"verdict-compute exception must be logged for operator diagnosis; " f"got records: {caplog.records!r}"
     # the exception detail itself should reach the log (exc_info or message)
-    assert any("simulated verdict compute failure" in (r.getMessage() + str(getattr(r, "exc_text", "") or "")) for r in caplog.records), (
-        "the underlying exception message must reach the log so the operator can diagnose"
-    )
+    assert any("simulated verdict compute failure" in (r.getMessage() + str(getattr(r, "exc_text", "") or "")) for r in caplog.records), "the underlying exception message must reach the log so the operator can diagnose"

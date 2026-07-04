@@ -51,6 +51,7 @@ def _stock_df(rows: list[dict] | None = None) -> pd.DataFrame:
 def _recorder(calls: list) -> Any:
     def _fn(diag, **kwargs):
         calls.append(kwargs.get("stage"))
+
     return _fn
 
 
@@ -62,9 +63,7 @@ def _recorder(calls: list) -> Any:
 def test_dataclasses_are_frozen() -> None:
     ctx = CandidatePoolComputationContext(pro="p", stock_df=_stock_df(), focus_filter_diagnostics={})
     universe = CandidatePoolPreparedUniverse(stock_df=_stock_df(), cooldown_review_df=pd.DataFrame())
-    state = CandidatePoolLiquidityState(
-        stock_df=_stock_df(), cooldown_review_df=pd.DataFrame(), amount_map={}, mv_map={}
-    )
+    state = CandidatePoolLiquidityState(stock_df=_stock_df(), cooldown_review_df=pd.DataFrame(), amount_map={}, mv_map={})
     for obj in (ctx, universe, state):
         with pytest.raises((AttributeError, Exception)):
             obj.pro = "x"  # type: ignore[misc]  # frozen dataclass
@@ -135,9 +134,7 @@ def test_record_cooldown_filter_stage_unions_stock_and_review_symbols() -> None:
 
     stock_df = _stock_df([{"symbol": "000001", "ts_code": "000001.SZ"}])
     review_df = _stock_df([{"symbol": "000099", "ts_code": "000099.SZ"}])
-    _record_cooldown_filter_stage(
-        stock_df=stock_df, cooldown_review_df=review_df, focus_filter_diagnostics={}, record_focus_filter_stage_fn=_rec
-    )
+    _record_cooldown_filter_stage(stock_df=stock_df, cooldown_review_df=review_df, focus_filter_diagnostics={}, record_focus_filter_stage_fn=_rec)
     assert calls[0]["stage"] == "cooldown_filter"
     assert calls[0]["active_symbols"] == {"000001", "000099"}
 
@@ -151,9 +148,7 @@ def test_apply_stock_dataframe_filter_removes_masked_rows(capfd: pytest.CaptureF
     df = _stock_df()
     mask = pd.Series([False, True, False])  # remove row 1 (ST万科)
     calls: list = []
-    out = _apply_stock_dataframe_filter(
-        stock_df=df, mask=mask, label="排除 ST 后", focus_filter_diagnostics={}, stage="st_filter", record_focus_filter_stage_fn=_recorder(calls)
-    )
+    out = _apply_stock_dataframe_filter(stock_df=df, mask=mask, label="排除 ST 后", focus_filter_diagnostics={}, stage="st_filter", record_focus_filter_stage_fn=_recorder(calls))
     assert list(out["symbol"]) == ["000001", "000003"]
     assert calls == ["st_filter"]
     assert "排除 ST 后" in capfd.readouterr().out
@@ -163,9 +158,7 @@ def test_apply_stock_dataframe_filter_no_removal_records_stage() -> None:
     df = _stock_df()
     mask = pd.Series([False, False, False])
     calls: list = []
-    out = _apply_stock_dataframe_filter(
-        stock_df=df, mask=mask, label="X", focus_filter_diagnostics={}, stage="s", record_focus_filter_stage_fn=_recorder(calls)
-    )
+    out = _apply_stock_dataframe_filter(stock_df=df, mask=mask, label="X", focus_filter_diagnostics={}, stage="s", record_focus_filter_stage_fn=_recorder(calls))
     assert len(out) == 3
     assert calls == ["s"]
 
@@ -178,9 +171,7 @@ def test_apply_stock_dataframe_filter_no_removal_records_stage() -> None:
 def test_apply_optional_ts_code_filter_none_passthrough() -> None:
     df = _stock_df()
     calls: list = []
-    out = _apply_optional_ts_code_filter(
-        stock_df=df, filter_df=None, code_column="ts_code", label="X", focus_filter_diagnostics={}, stage="s", record_focus_filter_stage_fn=_recorder(calls)
-    )
+    out = _apply_optional_ts_code_filter(stock_df=df, filter_df=None, code_column="ts_code", label="X", focus_filter_diagnostics={}, stage="s", record_focus_filter_stage_fn=_recorder(calls))
     assert len(out) == 3
     assert calls == ["s"]
 
@@ -188,18 +179,14 @@ def test_apply_optional_ts_code_filter_none_passthrough() -> None:
 def test_apply_optional_ts_code_filter_empty_df_passthrough() -> None:
     df = _stock_df()
     calls: list = []
-    out = _apply_optional_ts_code_filter(
-        stock_df=df, filter_df=pd.DataFrame(), code_column="ts_code", label="X", focus_filter_diagnostics={}, stage="s", record_focus_filter_stage_fn=_recorder(calls)
-    )
+    out = _apply_optional_ts_code_filter(stock_df=df, filter_df=pd.DataFrame(), code_column="ts_code", label="X", focus_filter_diagnostics={}, stage="s", record_focus_filter_stage_fn=_recorder(calls))
     assert len(out) == 3
 
 
 def test_apply_optional_ts_code_filter_removes_matching() -> None:
     df = _stock_df()
     suspend_df = pd.DataFrame({"ts_code": ["000001.SZ"]})
-    out = _apply_optional_ts_code_filter(
-        stock_df=df, filter_df=suspend_df, code_column="ts_code", label="排除停牌后", focus_filter_diagnostics={}, stage="suspend", record_focus_filter_stage_fn=_recorder([])
-    )
+    out = _apply_optional_ts_code_filter(stock_df=df, filter_df=suspend_df, code_column="ts_code", label="排除停牌后", focus_filter_diagnostics={}, stage="suspend", record_focus_filter_stage_fn=_recorder([]))
     assert list(out["symbol"]) == ["000002", "000003"]
 
 
@@ -366,9 +353,7 @@ def test_apply_preliminary_filters_cooldown_applied() -> None:
         mask = stock["symbol"] == "000001"
         return stock[~mask].copy(), stock.iloc[0:0].copy(), int(mask.sum())
 
-    out, _ = _apply_preliminary_candidate_filters(
-        **_prelim_kwargs(df, resolve_cooldown_tickers_fn=lambda **k: {"000001"}, apply_cooldown_filter_fn=_cooldown_filter)
-    )
+    out, _ = _apply_preliminary_candidate_filters(**_prelim_kwargs(df, resolve_cooldown_tickers_fn=lambda **k: {"000001"}, apply_cooldown_filter_fn=_cooldown_filter))
     assert list(out["symbol"]) == ["000002"]
 
 

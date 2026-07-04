@@ -4,11 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 
-SCRIPT_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "scripts"
-    / "aggregate_screening_daily_digest.py"
-)
+SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "aggregate_screening_daily_digest.py"
 
 
 def _load_module() -> object:
@@ -79,12 +75,8 @@ def test_collect_trade_dates_reads_artifact_subdirs_and_snapshot_files(tmp_path:
     (artifact_root / "2026-06-02").mkdir(parents=True)
     (snapshot_root / "candidate_pool_20260603_top300.json").write_text("[]", encoding="utf-8")
     # Shadow file with hash suffix should NOT contribute bogus date
-    (snapshot_root / "candidate_pool_20260603_top300_shadow_f0f00ee31a.json").write_text(
-        "{}", encoding="utf-8"
-    )
-    dates = mod._collect_trade_dates(
-        None, None, snapshot_dir=snapshot_root, artifact_dir=artifact_root
-    )
+    (snapshot_root / "candidate_pool_20260603_top300_shadow_f0f00ee31a.json").write_text("{}", encoding="utf-8")
+    dates = mod._collect_trade_dates(None, None, snapshot_dir=snapshot_root, artifact_dir=artifact_root)
     # The shadow variant has the same prefix as the top300 file, so the date "2026-06-03" only appears once
     assert dates == ["2026-06-01", "2026-06-02", "2026-06-03"]
     # And no bogus "f0f00ee31a" string leaks into the result
@@ -97,8 +89,10 @@ def test_collect_trade_dates_respects_window(tmp_path: Path) -> None:
     for iso in ("2026-05-30", "2026-06-01", "2026-06-02", "2026-06-10"):
         (artifact_root / iso).mkdir(parents=True)
     dates = mod._collect_trade_dates(
-        "2026-06-01", "2026-06-05",
-        snapshot_dir=tmp_path / "snaps", artifact_dir=artifact_root,
+        "2026-06-01",
+        "2026-06-05",
+        snapshot_dir=tmp_path / "snaps",
+        artifact_dir=artifact_root,
     )
     assert dates == ["2026-06-01", "2026-06-02"]
 
@@ -107,14 +101,11 @@ def test_summarize_snapshot_extracts_decision_and_scores() -> None:
     mod = _load_module()
     snapshot = {
         "selected": [
-            {"symbol": "000001", "decision": "buy", "score_final": 0.8,
-             "score_b": 0.7, "score_c": 0.9},
-            {"symbol": "000002", "decision": "buy", "score_final": 0.6,
-             "score_b": 0.5, "score_c": 0.7},
+            {"symbol": "000001", "decision": "buy", "score_final": 0.8, "score_b": 0.7, "score_c": 0.9},
+            {"symbol": "000002", "decision": "buy", "score_final": 0.6, "score_b": 0.5, "score_c": 0.7},
         ],
         "rejected": [
-            {"symbol": "000003", "decision": "sell", "score_final": -0.3,
-             "score_b": -0.4, "score_c": -0.2},
+            {"symbol": "000003", "decision": "sell", "score_final": -0.3, "score_b": -0.4, "score_c": -0.2},
         ],
         "watchlist": [{"ticker": "000099"}],
         "market_state": {"label": "trend"},
@@ -161,9 +152,7 @@ def test_aggregate_digest_includes_pool_size_from_snapshot_only(tmp_path: Path) 
     snapshot_dir = tmp_path / "snaps"
     artifact_dir.mkdir()
     snapshot_dir.mkdir()
-    (snapshot_dir / "candidate_pool_20260601_top300.json").write_text(
-        json.dumps([{"ticker": str(i)} for i in range(100)]), encoding="utf-8"
-    )
+    (snapshot_dir / "candidate_pool_20260601_top300.json").write_text(json.dumps([{"ticker": str(i)} for i in range(100)]), encoding="utf-8")
     snap = artifact_dir / "2026-06-01"
     snap.mkdir()
     (snap / "selection_snapshot.json").write_text(
@@ -297,11 +286,16 @@ def test_main_with_explicit_year_month_creates_outputs(tmp_path: Path, capsys, m
         "sys.argv",
         [
             "aggregate_screening_daily_digest.py",
-            "--year", "2026",
-            "--month", "6",
-            "--snapshot-dir", str(tmp_path / "snaps"),
-            "--artifact-dir", str(artifact_dir),
-            "--output-dir", str(output_dir),
+            "--year",
+            "2026",
+            "--month",
+            "6",
+            "--snapshot-dir",
+            str(tmp_path / "snaps"),
+            "--artifact-dir",
+            str(artifact_dir),
+            "--output-dir",
+            str(output_dir),
         ],
     )
     rc = mod.main()

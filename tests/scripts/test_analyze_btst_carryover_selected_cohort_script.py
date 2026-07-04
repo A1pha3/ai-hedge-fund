@@ -286,9 +286,7 @@ def test_build_recommendation_highlights_broad_family_only_gap():
 def test_analyze_btst_carryover_selected_cohort_threads_counts_and_summaries(monkeypatch, tmp_path):
     raw_rows = [{"ticker": "300001", "trade_date": "2026-04-10"}, {"ticker": "300002", "trade_date": "2026-04-09"}]
     deduped_rows = [{"ticker": "300001", "trade_date": "2026-04-10"}]
-    enriched_rows = [
-        {"ticker": "300001", "trade_date": "2026-04-10", "decision": "near_miss", "relief_applied": False, "historical_execution_quality_label": "close_continuation", "historical_entry_timing_bias": "confirm_then_hold", "historical_next_close_positive_rate": 0.9}
-    ]
+    enriched_rows = [{"ticker": "300001", "trade_date": "2026-04-10", "decision": "near_miss", "relief_applied": False, "historical_execution_quality_label": "close_continuation", "historical_entry_timing_bias": "confirm_then_hold", "historical_next_close_positive_rate": 0.9}]
 
     monkeypatch.setattr("scripts.analyze_btst_carryover_selected_cohort._iter_case_rows", lambda root: raw_rows)
     monkeypatch.setattr("scripts.analyze_btst_carryover_selected_cohort._deduplicate_case_rows", lambda rows: deduped_rows)

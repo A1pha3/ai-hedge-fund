@@ -255,9 +255,7 @@ def test_render_btst_premarket_execution_card_markdown_emits_sections_and_source
 
 
 def test_premarket_action_guidance_names_payoff_reconfirmation_mode():
-    posture, trigger_rules = btst_reporting._selected_action_posture(
-        "payoff_reconfirmation_only"
-    )
+    posture, trigger_rules = btst_reporting._selected_action_posture("payoff_reconfirmation_only")
     _, action_guidance = _entry_mode_action_guidance(
         "payoff_reconfirmation_only",
         default_action="默认动作",
@@ -557,9 +555,7 @@ def test_analyze_btst_premarket_execution_card_p7_gap_overlay_guardrail_toggle(m
 
     monkeypatch.setenv("BTST_0422_P7_GAP_OVERLAY_MODE", "off")
     card = btst_reporting.analyze_btst_premarket_execution_card(brief)
-    assert not any(
-        "Gap overlay" in str(item) for item in list(card.get("global_guardrails") or [])
-    )
+    assert not any("Gap overlay" in str(item) for item in list(card.get("global_guardrails") or []))
 
     monkeypatch.setenv("BTST_0422_P7_GAP_OVERLAY_MODE", "report")
     monkeypatch.setenv("BTST_0422_P7_GAP_WARN_THRESHOLD", "0.005")

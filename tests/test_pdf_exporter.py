@@ -587,6 +587,7 @@ def test_render_recommendations_null_score_b_shows_na_not_zero(tmp_path: Path) -
     config = PDFReportConfig(max_recommendations=10)
 
     import unittest.mock as _mock
+
     with _mock.patch.object(_ScreeningPDF, "_table", _spy_table):
         result = generate_screening_pdf(report, out, config=config)
     assert result.exists()
@@ -636,6 +637,7 @@ def test_render_recommendations_section_title_shows_total_when_truncated(tmp_pat
     config = PDFReportConfig(max_recommendations=30)
 
     import unittest.mock as _mock
+
     with _mock.patch.object(_ScreeningPDF, "_section", _spy_section):
         result = generate_screening_pdf(report, out, config=config)
     assert result.exists()
@@ -673,6 +675,7 @@ def test_render_recommendations_section_title_no_total_when_not_truncated(tmp_pa
     config = PDFReportConfig(max_recommendations=30)
 
     import unittest.mock as _mock
+
     with _mock.patch.object(_ScreeningPDF, "_section", _spy_section):
         result = generate_screening_pdf(report, out, config=config)
     assert result.exists()

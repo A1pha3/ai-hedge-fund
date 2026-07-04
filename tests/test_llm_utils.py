@@ -103,7 +103,7 @@ def setup_function():
 
 
 def test_extract_json_from_response_strips_think_tags():
-    content = '''
+    content = """
 <think>
 Need to reason first.
 </think>
@@ -113,7 +113,7 @@ Need to reason first.
   "reasoning": "Margins are weakening.",
   "reasoning_cn": "利润率正在走弱。"
 }
-'''
+"""
 
     parsed = extract_json_from_response(content)
 
@@ -123,7 +123,7 @@ Need to reason first.
 
 
 def test_extract_json_from_response_handles_braces_inside_string():
-    content = '''
+    content = """
 Analysis summary before JSON.
 {
   "signal": "neutral",
@@ -132,7 +132,7 @@ Analysis summary before JSON.
   "reasoning_cn": "管理层提到短期需求压力，但指引保持稳定。"
 }
 Trailing notes.
-'''
+"""
 
     parsed = extract_json_from_response(content)
 
@@ -142,7 +142,7 @@ Trailing notes.
 
 
 def test_extract_json_from_response_handles_json_code_block_after_thinking():
-    content = '''
+    content = """
 <thinking>
 internal chain of thought
 </thinking>
@@ -155,7 +155,7 @@ internal chain of thought
   "reasoning_cn": "收入加速且订单可见性较强。"
 }
 ```
-'''
+"""
 
     parsed = extract_json_from_response(content)
 
@@ -165,7 +165,7 @@ internal chain of thought
 
 
 def test_extract_json_from_response_handles_trailing_comma_in_code_block():
-        content = '''
+    content = """
 ```json
 {
     "signal": "neutral",
@@ -174,17 +174,17 @@ def test_extract_json_from_response_handles_trailing_comma_in_code_block():
     "reasoning_cn": "库存正在企稳。",
 }
 ```
-'''
+"""
 
-        parsed = extract_json_from_response(content)
+    parsed = extract_json_from_response(content)
 
-        assert parsed is not None
-        assert parsed["signal"] == "neutral"
-        assert parsed["confidence"] == 55
+    assert parsed is not None
+    assert parsed["signal"] == "neutral"
+    assert parsed["confidence"] == 55
 
 
 def test_extract_json_from_response_recovers_common_signal_schema_with_unescaped_quotes():
-        content = '''
+    content = """
 ```json
 {
     "signal": "neutral",
@@ -193,15 +193,15 @@ def test_extract_json_from_response_recovers_common_signal_schema_with_unescaped
     "reasoning_cn": "这是一个"GARP 梦想"式的成长组合。"
 }
 ```
-'''
+"""
 
-        parsed = extract_json_from_response(content)
+    parsed = extract_json_from_response(content)
 
-        assert parsed is not None
-        assert parsed["signal"] == "neutral"
-        assert parsed["confidence"] == 55
-        assert 'GARP dream' in parsed["reasoning"]
-        assert 'GARP 梦想' in parsed["reasoning_cn"]
+    assert parsed is not None
+    assert parsed["signal"] == "neutral"
+    assert parsed["confidence"] == 55
+    assert "GARP dream" in parsed["reasoning"]
+    assert "GARP 梦想" in parsed["reasoning_cn"]
 
 
 def test_call_llm_prefers_coding_plan_before_other_supported_providers(monkeypatch):

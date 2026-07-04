@@ -76,12 +76,7 @@ def _realistic_prices(n: int = 60) -> list[float]:
     # 简单伪随机 — 用固定 seed 思路, 手动写一组可复现数据
     base = 100.0
     series = [base]
-    moves = [0.5, -0.3, 0.7, -0.2, 0.4, -0.6, 0.8, -0.1, 0.3, -0.4,
-             0.6, -0.5, 0.2, 0.5, -0.3, 0.7, -0.2, 0.4, -0.6, 0.8,
-             0.1, 0.3, -0.4, 0.6, -0.5, 0.2, 0.5, -0.3, 0.7, -0.2,
-             0.4, -0.6, 0.8, 0.1, 0.3, -0.4, 0.6, -0.5, 0.2, 0.5,
-             -0.3, 0.7, -0.2, 0.4, -0.6, 0.8, 0.1, 0.3, -0.4, 0.6,
-             -0.5, 0.2, 0.5, -0.3, 0.7, -0.2, 0.4, -0.6, 0.8, 0.1]
+    moves = [0.5, -0.3, 0.7, -0.2, 0.4, -0.6, 0.8, -0.1, 0.3, -0.4, 0.6, -0.5, 0.2, 0.5, -0.3, 0.7, -0.2, 0.4, -0.6, 0.8, 0.1, 0.3, -0.4, 0.6, -0.5, 0.2, 0.5, -0.3, 0.7, -0.2, 0.4, -0.6, 0.8, 0.1, 0.3, -0.4, 0.6, -0.5, 0.2, 0.5, -0.3, 0.7, -0.2, 0.4, -0.6, 0.8, 0.1, 0.3, -0.4, 0.6, -0.5, 0.2, 0.5, -0.3, 0.7, -0.2, 0.4, -0.6, 0.8, 0.1]
     for m in moves[: n - 1]:
         series.append(max(0.01, series[-1] + m))
     return series[:n]
@@ -125,8 +120,7 @@ def test_compute_atr_short_series_falls_back() -> None:
 
 def test_compute_atr_nan_safe() -> None:
     """NaN 输入应被过滤, 不影响计算。"""
-    series = [100.0, 101.0, float("nan"), 102.0, 99.0, 100.5, 101.2, 99.8, 100.1, 100.3,
-              99.5, 100.7, 101.0, 100.0, 99.0, 100.5]
+    series = [100.0, 101.0, float("nan"), 102.0, 99.0, 100.5, 101.2, 99.8, 100.1, 100.3, 99.5, 100.7, 101.0, 100.0, 99.0, 100.5]
     atr = compute_atr(series, period=14)
     # 清理后 15 个有效点, 最后 15 个 diff 平均
     assert atr > 0.0
@@ -181,7 +175,7 @@ def test_stop_loss_and_take_profit_distance() -> None:
         ticker="000001",
         current_price=100.0,
         price_history=series,
-        stop_loss_atr=2.0,    # 止损 -2 × 2 = -4 → 96
+        stop_loss_atr=2.0,  # 止损 -2 × 2 = -4 → 96
         take_profit_atr=3.0,  # 止盈 +3 × 2 = +6 → 106
     )
     assert math.isclose(advice.suggested_stop_loss, 96.0, abs_tol=1e-9)
@@ -504,9 +498,7 @@ def test_to_dict_sanitizes_nan() -> None:
     )
     d = advice.to_dict()
     # 关键字段必须是有限值或 None
-    for key in ("current_price", "atr", "suggested_stop_loss",
-                "suggested_take_profit", "confidence", "historical_hit_rate",
-                "risk_reward_ratio"):
+    for key in ("current_price", "atr", "suggested_stop_loss", "suggested_take_profit", "confidence", "historical_hit_rate", "risk_reward_ratio"):
         v = d[key]
         assert v is None or (isinstance(v, (int, float)) and math.isfinite(float(v)))
 
@@ -542,6 +534,7 @@ def test_attach_to_payload_handles_none_tail_in_price_history() -> None:
     不应崩溃 -- 应用 _safe_float 降级为 0.0 触发降级路径, 而非 TypeError 中断
     整个 attach_conditional_orders_to_payload (web 端点 / CLI 共用入口)。
     """
+
     # 历史 [100.0, 101.0, None] -- 最后一天停牌/无数据
     def _mock_price_provider(ticker: str, n: int) -> list[float]:
         return [100.0, 101.0, None]  # type: ignore[list-item]
@@ -584,9 +577,7 @@ def test_attach_to_payload_logs_debug_when_price_tail_invalid(caplog) -> None:
         )
     # 应有一条 debug 提到尾部无效
     debug_msgs = [r.message for r in caplog.records if r.levelno == _logging.DEBUG]
-    assert any("尾部无效" in m for m in debug_msgs), (
-        f"价格尾部 NaN 应触发 debug 降级诊断; got debug msgs={debug_msgs!r}"
-    )
+    assert any("尾部无效" in m for m in debug_msgs), f"价格尾部 NaN 应触发 debug 降级诊断; got debug msgs={debug_msgs!r}"
 
 
 def test_attach_to_payload_with_recommendations() -> None:
@@ -624,9 +615,7 @@ def test_attach_to_payload_top_n_limits() -> None:
     def _mock(ticker: str, n: int) -> list[float]:
         return _oscillating_prices(n=30)
 
-    payload: dict[str, Any] = {
-        "recommendations": [{"ticker": f"T{i:06d}", "name": f"X{i}"} for i in range(10)]
-    }
+    payload: dict[str, Any] = {"recommendations": [{"ticker": f"T{i:06d}", "name": f"X{i}"} for i in range(10)]}
     result = attach_conditional_orders_to_payload(payload, price_provider=_mock, top_n=3)
     assert len(result) == 3
 
@@ -637,9 +626,7 @@ def test_attach_to_payload_provider_failure() -> None:
     def _bad_provider(ticker: str, n: int) -> list[float]:
         raise RuntimeError("network error")
 
-    payload: dict[str, Any] = {
-        "recommendations": [{"ticker": "000001", "name": "X"}]
-    }
+    payload: dict[str, Any] = {"recommendations": [{"ticker": "000001", "name": "X"}]}
     result = attach_conditional_orders_to_payload(payload, price_provider=_bad_provider)
     assert len(result) == 1
     assert result[0]["degraded"] is True
@@ -881,6 +868,7 @@ def test_compute_auto_screening_payload_contains_conditional_orders_field() -> N
     import inspect
 
     from src.main import compute_auto_screening_results
+
     sig = inspect.signature(compute_auto_screening_results)
     # 签名包含 trade_date / top_n / selected_strategies — 这是当前 contract
     assert "trade_date" in sig.parameters

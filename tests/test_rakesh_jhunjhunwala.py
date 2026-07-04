@@ -30,9 +30,7 @@ def test_analyze_profitability_preserves_high_score_path():
 
 
 def test_analyze_profitability_preserves_missing_data_messages():
-    financial_line_items = [
-        SimpleNamespace(net_income=None, total_assets=None, total_liabilities=None, operating_income=None, revenue=None, earnings_per_share=1.0)
-    ]
+    financial_line_items = [SimpleNamespace(net_income=None, total_assets=None, total_liabilities=None, operating_income=None, revenue=None, earnings_per_share=1.0)]
 
     assert analyze_profitability(financial_line_items) == {
         "score": 0,
@@ -71,9 +69,7 @@ def test_analyze_growth_preserves_negative_income_cagr_wording():
 
 
 def test_analyze_balance_sheet_preserves_strength_and_missing_messages():
-    strong_financials = [
-        SimpleNamespace(total_assets=1000.0, total_liabilities=300.0, current_assets=420.0, current_liabilities=180.0)
-    ]
+    strong_financials = [SimpleNamespace(total_assets=1000.0, total_liabilities=300.0, current_assets=420.0, current_liabilities=180.0)]
     missing_financials = [SimpleNamespace(total_assets=None, total_liabilities=None, current_assets=None, current_liabilities=None)]
 
     assert analyze_balance_sheet(strong_financials) == {
@@ -87,9 +83,7 @@ def test_analyze_balance_sheet_preserves_strength_and_missing_messages():
 
 
 def test_analyze_cash_flow_preserves_positive_and_missing_dividend_paths():
-    shareholder_friendly = [
-        SimpleNamespace(free_cash_flow=125.0, dividends_and_other_cash_distributions=-12.0)
-    ]
+    shareholder_friendly = [SimpleNamespace(free_cash_flow=125.0, dividends_and_other_cash_distributions=-12.0)]
     missing_cash_flow = [SimpleNamespace(free_cash_flow=None, dividends_and_other_cash_distributions=None)]
 
     assert analyze_cash_flow(shareholder_friendly) == {
@@ -213,9 +207,7 @@ def test_score_rakesh_quality_debt_factor_zero_liabilities_is_best_not_neutral()
 def test_analyze_balance_sheet_zero_liability_company_earns_low_debt_credit():
     """End-to-end through analyze_balance_sheet: a zero-liability company must
     earn the low-debt credit (score 2 from debt ratio), not 'Insufficient data'."""
-    financial_line_items = [
-        SimpleNamespace(total_assets=1000.0, total_liabilities=0.0, current_assets=420.0, current_liabilities=180.0)
-    ]
+    financial_line_items = [SimpleNamespace(total_assets=1000.0, total_liabilities=0.0, current_assets=420.0, current_liabilities=180.0)]
     result = analyze_balance_sheet(financial_line_items)
     assert "Low debt ratio: 0.00" in result["details"]
     assert "Insufficient data to calculate debt ratio" not in result["details"]

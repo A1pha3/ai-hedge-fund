@@ -121,21 +121,15 @@ def test_round89_rollout_assessment_main_writes_json_and_markdown(tmp_path: Path
         json.dumps(
             {
                 "trend_corrected_v1": {
-                    "selected": [
-                        {"date": "20260415", "win_rate": 0.49, "avg_ret": 0.43, "payoff_ratio": 1.56, "expectancy": 0.43, "downside_p10": -3.50}
-                    ],
+                    "selected": [{"date": "20260415", "win_rate": 0.49, "avg_ret": 0.43, "payoff_ratio": 1.56, "expectancy": 0.43, "downside_p10": -3.50}],
                     "near_miss": [],
                 },
                 "ic_v5": {
-                    "selected": [
-                        {"date": "20260415", "win_rate": 0.48, "avg_ret": 0.34, "payoff_ratio": 1.51, "expectancy": 0.34, "downside_p10": -3.38}
-                    ],
+                    "selected": [{"date": "20260415", "win_rate": 0.48, "avg_ret": 0.34, "payoff_ratio": 1.51, "expectancy": 0.34, "downside_p10": -3.38}],
                     "near_miss": [],
                 },
                 "momentum_optimized": {
-                    "selected": [
-                        {"date": "20260415", "win_rate": 0.50, "avg_ret": 0.38, "payoff_ratio": 1.55, "expectancy": 0.38, "downside_p10": -3.10}
-                    ],
+                    "selected": [{"date": "20260415", "win_rate": 0.50, "avg_ret": 0.38, "payoff_ratio": 1.55, "expectancy": 0.38, "downside_p10": -3.10}],
                     "near_miss": [],
                 },
             },
@@ -172,21 +166,15 @@ def test_round89_rollout_assessment_script_runs_as_python_entrypoint(tmp_path: P
         json.dumps(
             {
                 "trend_corrected_v1": {
-                    "selected": [
-                        {"date": "20260415", "win_rate": 0.55, "avg_ret": 0.50, "payoff_ratio": 1.70, "expectancy": 0.50, "downside_p10": -2.80}
-                    ],
+                    "selected": [{"date": "20260415", "win_rate": 0.55, "avg_ret": 0.50, "payoff_ratio": 1.70, "expectancy": 0.50, "downside_p10": -2.80}],
                     "near_miss": [],
                 },
                 "ic_v5": {
-                    "selected": [
-                        {"date": "20260415", "win_rate": 0.48, "avg_ret": 0.34, "payoff_ratio": 1.51, "expectancy": 0.34, "downside_p10": -3.38}
-                    ],
+                    "selected": [{"date": "20260415", "win_rate": 0.48, "avg_ret": 0.34, "payoff_ratio": 1.51, "expectancy": 0.34, "downside_p10": -3.38}],
                     "near_miss": [],
                 },
                 "momentum_optimized": {
-                    "selected": [
-                        {"date": "20260415", "win_rate": 0.50, "avg_ret": 0.38, "payoff_ratio": 1.55, "expectancy": 0.38, "downside_p10": -3.10}
-                    ],
+                    "selected": [{"date": "20260415", "win_rate": 0.50, "avg_ret": 0.38, "payoff_ratio": 1.55, "expectancy": 0.38, "downside_p10": -3.10}],
                     "near_miss": [],
                 },
             },

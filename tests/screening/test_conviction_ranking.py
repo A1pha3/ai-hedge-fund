@@ -81,10 +81,7 @@ def _make_rec(ticker: str, score: float, completeness: float = 0.8, consecutive_
         "industry_sw": "电子",
         "score_b": score,
         "consecutive_days": consecutive_days,
-        "strategy_signals": {
-            s: {"direction": 1, "confidence": 80.0, "completeness": completeness, "sub_factors": {}}
-            for s in STRATEGY_ORDER
-        },
+        "strategy_signals": {s: {"direction": 1, "confidence": 80.0, "completeness": completeness, "sub_factors": {}} for s in STRATEGY_ORDER},
         "metrics": {},
     }
 

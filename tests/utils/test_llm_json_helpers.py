@@ -5,6 +5,7 @@ JSON-extraction strategies (raw, markdown block, balanced-scan, fallback).
 It had zero direct test coverage (extract_balanced_json_candidates has some
 coverage in test_utils_bugfixes.py).
 """
+
 from __future__ import annotations
 
 import json

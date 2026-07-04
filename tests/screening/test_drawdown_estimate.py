@@ -11,7 +11,6 @@ from src.screening.drawdown_estimate import (
     render_drawdown_line,
 )
 
-
 # ---------------------------------------------------------------------------
 # _estimate_path_max_drawdown
 # ---------------------------------------------------------------------------

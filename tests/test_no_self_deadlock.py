@@ -149,9 +149,7 @@ def _scan_self_deadlocks(src_root: Path) -> list[str]:
         owner = f"{cls}." if cls else ""
         for callee, lock in call_list:
             if lock in held_locks.get((cls, callee), set()):
-                deadlocks.append(
-                    f"{owner}{meth}() 持 [{lock}] 调用 {owner}{callee}() 也获取 [{lock}]  ←  非重入锁自死锁"
-                )
+                deadlocks.append(f"{owner}{meth}() 持 [{lock}] 调用 {owner}{callee}() 也获取 [{lock}]  ←  非重入锁自死锁")
     return deadlocks
 
 
@@ -168,11 +166,7 @@ def test_no_non_reentrant_self_deadlock_in_src():
 
     deadlocks = _scan_self_deadlocks(src_root)
     if deadlocks:
-        pytest.fail(
-            "检测到非重入锁自死锁 (R20.25 bug 类):\n  - "
-            + "\n  - ".join(deadlocks)
-            + "\n修复: 将内部调用移出 with-lock 块, 或改用 RLock。"
-        )
+        pytest.fail("检测到非重入锁自死锁 (R20.25 bug 类):\n  - " + "\n  - ".join(deadlocks) + "\n修复: 将内部调用移出 with-lock 块, 或改用 RLock。")
 
 
 def test_r20_25_known_fixes_hold():
@@ -197,9 +191,7 @@ def test_r20_25_known_fixes_hold():
     call_pos = get_cache_body.find("get_enhanced_cache()")
     with_pos = get_cache_body.find("with _singleton_lock")
     assert call_pos != -1 and with_pos != -1, "get_cache 结构变更, 请更新本金丝雀"
-    assert call_pos < with_pos, (
-        "R20.25 回归: get_cache() 在持 _singleton_lock 后才调 get_enhanced_cache() → 自死锁"
-    )
+    assert call_pos < with_pos, "R20.25 回归: get_cache() 在持 _singleton_lock 后才调 get_enhanced_cache() → 自死锁"
 
     # get_sw_industry_classification 不应在持 _sw_industry_cache_lock 时调 _cache_sw_industry_mapping
     ts_src = tushare.read_text(encoding="utf-8")

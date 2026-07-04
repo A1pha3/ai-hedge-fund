@@ -163,14 +163,7 @@ def test_main_runs_engine_with_non_interactive_model_and_analysts(monkeypatch, c
     ]
 
     captured = capsys.readouterr()
-    assert captured.out == (
-        "\nSelected \x1b[36mopenai\x1b[0m model: \x1b[32m\x1b[1mgpt-test\x1b[0m\n\n"
-        "\n\x1b[37m\x1b[1mENGINE RUN COMPLETE\x1b[0m\n"
-        "Total Return: \x1b[32m5.00%\x1b[0m\n"
-        "Sharpe: 1.20\n"
-        "Sortino: 1.50\n"
-        "Max DD: 3.50%\n"
-    )
+    assert captured.out == ("\nSelected \x1b[36mopenai\x1b[0m model: \x1b[32m\x1b[1mgpt-test\x1b[0m\n\n" "\n\x1b[37m\x1b[1mENGINE RUN COMPLETE\x1b[0m\n" "Total Return: \x1b[32m5.00%\x1b[0m\n" "Sharpe: 1.20\n" "Sortino: 1.50\n" "Max DD: 3.50%\n")
 
 
 def test_run_walk_forward_mode_prints_rollout_and_promotion_summary(capsys):
@@ -272,6 +265,7 @@ def test_main_dispatches_to_param_grid_runner(monkeypatch, tmp_path):
     # dispatch in cli._run_param_grid_mode imports it lazily each call, so
     # mutating the module is sufficient.
     from scripts import run_backtest_param_grid as grid_module
+
     monkeypatch.setattr(grid_module, "main", fake_grid_main)
 
     monkeypatch.setattr(cli, "build_backtest_parser", lambda: _ParserStub(args))
