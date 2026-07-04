@@ -16,6 +16,7 @@ These tests guard the two engineering deliverables that prevent recurrence:
    ProgramArguments (boot-volume /bin/bash -c wrapper, NO /Volumes path keys),
    so the plist can never regress into the EX_CONFIG trap.
 """
+
 from __future__ import annotations
 
 import os
@@ -35,44 +36,39 @@ class TestCheckFlywheelHealth:
 
     def test_fresh_run_is_healthy(self):
         from src.screening.flywheel_health import check_flywheel_health
-        result = check_flywheel_health(
-            tracking_history_mtime=_ts(0.1), latest_record_date="2026-06-30"
-        )
+
+        result = check_flywheel_health(tracking_history_mtime=_ts(0.1), latest_record_date="2026-06-30")
         assert result["status"] == "healthy"
         assert result["stale"] is False
         assert "days_since_last_write" in result
 
     def test_stale_run_is_flagged(self):
         from src.screening.flywheel_health import check_flywheel_health
-        result = check_flywheel_health(
-            tracking_history_mtime=_ts(4.0), latest_record_date="2026-06-26"
-        )
+
+        result = check_flywheel_health(tracking_history_mtime=_ts(4.0), latest_record_date="2026-06-26")
         assert result["stale"] is True
         assert result["status"] in ("stale", "warning")
         assert result["days_since_last_write"] >= 3
 
     def test_dead_run_is_critical(self):
         from src.screening.flywheel_health import check_flywheel_health
-        result = check_flywheel_health(
-            tracking_history_mtime=_ts(7.5), latest_record_date="2026-06-22"
-        )
+
+        result = check_flywheel_health(tracking_history_mtime=_ts(7.5), latest_record_date="2026-06-22")
         assert result["status"] == "critical"
         assert result["stale"] is True
         assert result["days_since_last_write"] >= 7
 
     def test_missing_history_is_critical(self):
         from src.screening.flywheel_health import check_flywheel_health
-        result = check_flywheel_health(
-            tracking_history_mtime=None, latest_record_date=None
-        )
+
+        result = check_flywheel_health(tracking_history_mtime=None, latest_record_date=None)
         assert result["status"] == "critical"
         assert result["stale"] is True
 
     def test_message_is_human_readable_and_includes_dates(self):
         from src.screening.flywheel_health import check_flywheel_health
-        result = check_flywheel_health(
-            tracking_history_mtime=_ts(5.0), latest_record_date="2026-06-25"
-        )
+
+        result = check_flywheel_health(tracking_history_mtime=_ts(5.0), latest_record_date="2026-06-25")
         msg = result["message"]
         assert isinstance(msg, str) and len(msg) > 10
         assert "2026-06-25" in msg or "day" in msg.lower()
@@ -83,9 +79,8 @@ class TestBuildLaunchdInvocation:
 
     def test_uses_bash_c_not_direct_script_exec(self):
         from src.screening.flywheel_health import build_launchd_invocation
-        inv = build_launchd_invocation(
-            repo_path="/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork"
-        )
+
+        inv = build_launchd_invocation(repo_path="/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork")
         argv = inv["program_arguments"]
         # launchd spawns /bin/bash (a boot-volume, trusted binary)
         assert argv[0] == "/bin/bash"
@@ -95,20 +90,16 @@ class TestBuildLaunchdInvocation:
         """Regression guard: every plist path key must live on the boot volume,
         otherwise launchd returns EX_CONFIG (78) and the job dies silently."""
         from src.screening.flywheel_health import build_launchd_invocation
-        inv = build_launchd_invocation(
-            repo_path="/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork"
-        )
+
+        inv = build_launchd_invocation(repo_path="/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork")
         for key in ("working_directory", "standard_out_path", "standard_error_path"):
             if inv.get(key):
-                assert not inv[key].startswith("/Volumes/"), (
-                    f"{key}={inv[key]!r} references external volume -> EX_CONFIG trap"
-                )
+                assert not inv[key].startswith("/Volumes/"), f"{key}={inv[key]!r} references external volume -> EX_CONFIG trap"
 
     def test_invocation_body_cd_into_repo_and_runs_launcher(self):
         from src.screening.flywheel_health import build_launchd_invocation
-        inv = build_launchd_invocation(
-            repo_path="/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork"
-        )
+
+        inv = build_launchd_invocation(repo_path="/Volumes/mini_matrix/github/a1pha3/quant/ai-hedge-fund-fork")
         body = inv["program_arguments"][2]
         assert "run_daily_auto.sh" in body
         # the inline body cd's into the repo (so the script runs in-context)
@@ -146,14 +137,16 @@ class TestRunDailyRegimeRefresh:
 
     def test_returns_success_when_recompute_succeeds(self, tmp_path):
         from src.screening.flywheel_health import run_daily_regime_refresh
+
         # Simulate run_refresh_cli writing a payload to an output path.
         def _succ(**kw):
-            kw["output_path"].write_text(
-                '{"regime_winrates": {"normal": {"winrate": 0.55, "n": 60}}, '
-                '"as_of": "2026-06-30", "matched_records": 60}', encoding="utf-8")
+            kw["output_path"].write_text('{"regime_winrates": {"normal": {"winrate": 0.55, "n": 60}}, ' '"as_of": "2026-06-30", "matched_records": 60}', encoding="utf-8")
             return (kw["output_path"], 0)
+
         result = run_daily_regime_refresh(
-            reports_dir=tmp_path, output_dir=tmp_path, _runner=_succ,
+            reports_dir=tmp_path,
+            output_dir=tmp_path,
+            _runner=_succ,
         )
         assert result["status"] == "ok"
         assert result["rc"] == 0
@@ -162,6 +155,7 @@ class TestRunDailyRegimeRefresh:
 
     def test_returns_skipped_when_recompute_returns_nonzero(self, tmp_path):
         from src.screening.flywheel_health import run_daily_regime_refresh
+
         result = run_daily_regime_refresh(
             reports_dir=tmp_path,
             output_dir=tmp_path,
@@ -173,26 +167,33 @@ class TestRunDailyRegimeRefresh:
 
     def test_output_path_is_dated_and_in_output_dir(self, tmp_path):
         from src.screening.flywheel_health import run_daily_regime_refresh
+
         captured = {}
+
         def fake_runner(**kw):
             captured["path"] = kw["output_path"]
             kw["output_path"].write_text("{}", encoding="utf-8")
             return (kw["output_path"], 0)
+
         run_daily_regime_refresh(reports_dir=tmp_path, output_dir=tmp_path, _runner=fake_runner)
         name = captured["path"].name
         assert name.startswith("regime_winrates_recomputed_")
         assert name.endswith(".json")
         # contains a YYYYMMDD date stamp
         import re
+
         assert re.search(r"\d{8}", name), f"date stamp missing in {name}"
 
     def test_default_min_samples_is_10(self, tmp_path):
         from src.screening.flywheel_health import run_daily_regime_refresh
+
         captured = {}
+
         def fake_runner(**kw):
             captured["min_samples"] = kw.get("min_samples")
             kw["output_path"].write_text("{}", encoding="utf-8")
             return (kw["output_path"], 0)
+
         run_daily_regime_refresh(reports_dir=tmp_path, output_dir=tmp_path, _runner=fake_runner)
         assert captured["min_samples"] == 10
 
@@ -205,13 +206,16 @@ class TestFlywheelHealthCli:
 
     def test_resolver_returns_none_when_flag_absent(self):
         from src.cli.dispatcher import _resolve_flywheel_health
+
         assert _resolve_flywheel_health([]) is None
         assert _resolve_flywheel_health(["--top-n", "5"]) is None
 
     def test_resolver_returns_zero_and_prints_health_when_flag_present(self, capsys, tmp_path, monkeypatch):
         from src.cli import dispatcher
+
         # point assess_tracking_history at a controlled report_dir with a fresh file
-        import os, time
+        import time
+
         th = tmp_path / "tracking_history.json"
         th.write_text("[]")
         os.utime(th, (time.time(), time.time()))  # fresh mtime
@@ -228,6 +232,7 @@ class TestFlywheelHealthCli:
 
     def test_resolver_handles_missing_history_gracefully(self, capsys, tmp_path, monkeypatch):
         from src.cli import dispatcher
+
         monkeypatch.setattr(
             "src.screening.consecutive_recommendation.resolve_report_dir",
             lambda: tmp_path,

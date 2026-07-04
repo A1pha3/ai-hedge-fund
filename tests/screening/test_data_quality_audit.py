@@ -27,10 +27,7 @@ def _make_rec(ticker: str, completeness: dict[str, float], score_b: float = 0.7,
         "name": name,
         "industry_sw": "电子",
         "score_b": score_b,
-        "strategy_signals": {
-            s: {"direction": 1, "confidence": 80.0, "completeness": completeness.get(s, 0.0), "sub_factors": {}}
-            for s in STRATEGY_ORDER
-        },
+        "strategy_signals": {s: {"direction": 1, "confidence": 80.0, "completeness": completeness.get(s, 0.0), "sub_factors": {}} for s in STRATEGY_ORDER},
         "metrics": {},
     }
 
@@ -207,7 +204,6 @@ def test_find_latest_report_skips_malformed_filename(tmp_path: Path):
     # 必须选合法日期文件，而非 malformed（garbage 字母排序在数字之前）
     assert latest is not None
     assert latest.name == "auto_screening_20260609.json"
-
 
 
 def test_load_latest_recommendations_picks_most_recent(tmp_path: Path):

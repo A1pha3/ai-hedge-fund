@@ -153,9 +153,7 @@ class TestFmtAdj:
 
 class TestComputeCompositeScoresForRecommendations:
     def test_empty_recommendations(self) -> None:
-        report = compute_composite_scores_for_recommendations(
-            recommendations=[], trade_date="2026-01-01"
-        )
+        report = compute_composite_scores_for_recommendations(recommendations=[], trade_date="2026-01-01")
         assert report.trade_date == "2026-01-01"
         assert report.items == []
 
@@ -211,11 +209,13 @@ class TestComputeCompositeScoresForRecommendations:
             _make_rec(ticker="000003", score_b=0.5),
         ]
         report_a = compute_composite_scores_for_recommendations(
-            recommendations=list(base_recs), trade_date="2026-01-01",
+            recommendations=list(base_recs),
+            trade_date="2026-01-01",
         )
         # Reverse input order — result must be identical (deterministic).
         report_b = compute_composite_scores_for_recommendations(
-            recommendations=list(reversed(base_recs)), trade_date="2026-01-01",
+            recommendations=list(reversed(base_recs)),
+            trade_date="2026-01-01",
         )
         order_a = [it.ticker for it in report_a.items]
         order_b = [it.ticker for it in report_b.items]
@@ -330,11 +330,24 @@ class TestComputeCompositeScoresForRecommendations:
         def _momentum_returning_nan(**kwargs):
             # 模拟未来 dimension calculator 回归产生 NaN bonus
             ticker = "CORRUPT_DIM"
-            return type("FakeReport", (), {"items": [MomentumInfo(
-                ticker=ticker, name="坏维度", score_current=0.5,
-                score_history=[0.5], slope=nan, momentum_label="stable",
-                momentum_bonus=nan, days_observed=1,
-            )]})()
+            return type(
+                "FakeReport",
+                (),
+                {
+                    "items": [
+                        MomentumInfo(
+                            ticker=ticker,
+                            name="坏维度",
+                            score_current=0.5,
+                            score_history=[0.5],
+                            slope=nan,
+                            momentum_label="stable",
+                            momentum_bonus=nan,
+                            days_observed=1,
+                        )
+                    ]
+                },
+            )()
 
         monkeypatch.setattr(cs, "compute_signal_momentum", _momentum_returning_nan)
 
@@ -401,10 +414,7 @@ class TestRenderCompositeCompact:
         assert "无综合评分数据" in result
 
     def test_shows_top_5(self) -> None:
-        items = [
-            CompositeEntry(ticker=f"T{i:03d}", name=f"N{i}", composite_score=0.5 - i * 0.05)
-            for i in range(8)
-        ]
+        items = [CompositeEntry(ticker=f"T{i:03d}", name=f"N{i}", composite_score=0.5 - i * 0.05) for i in range(8)]
         report = CompositeReport(trade_date="2026-01-01", items=items)
         result = render_composite_compact(report)
         assert "Top 5" in result
@@ -445,7 +455,8 @@ class TestComputeCompositeScores:
 
 
 def test_compute_composite_scores_for_recommendations_logs_dimension_degradation(
-    tmp_path, caplog,
+    tmp_path,
+    caplog,
 ):
     """BH-021 / R48 BH-017 同族: composite 5 维度任一瞬时失败必须发降级诊断。
 
@@ -469,7 +480,9 @@ def test_compute_composite_scores_for_recommendations_logs_dimension_degradation
     ):
         with caplog.at_level(logging.DEBUG, logger="src.screening.composite_score"):
             report = compute_composite_scores_for_recommendations(
-                recommendations=rec, trade_date="20260304", reports_dir=tmp_path,
+                recommendations=rec,
+                trade_date="20260304",
+                reports_dir=tmp_path,
             )
 
     # 行为零变更: 仍正常返回 report (momentum 维度降级为空 map)
@@ -479,4 +492,3 @@ def test_compute_composite_scores_for_recommendations_logs_dimension_degradation
     assert debug_records, "composite 维度降级时必须发 DEBUG 级诊断"
     joined = "\n".join(r.getMessage() for r in debug_records)
     assert "momentum" in joined, "降级日志必须命名降级的维度"
-

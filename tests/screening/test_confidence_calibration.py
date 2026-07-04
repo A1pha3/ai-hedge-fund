@@ -545,8 +545,6 @@ class TestT30MedianReturn:
 
 def test_score_bucket_stats_has_t15_t25_fields():
     """Task 4: ScoreBucketStats must accept t15/t25 win_rate + avg_return kwargs."""
-    from src.screening.confidence_calibration import ScoreBucketStats
-
     stats = ScoreBucketStats(
         label="low", score_low=0.0, score_high=0.4, sample_count=10,
         t15_win_rate=0.5, t25_win_rate=0.6,
@@ -590,8 +588,6 @@ def test_compute_calibration_t15_t25_from_records():
 
 def test_t15_t25_fields_serialize_in_to_dict():
     """Task 4: t15/t25 fields must appear in to_dict() for downstream consumers."""
-    from src.screening.confidence_calibration import ScoreBucketStats
-
     stats = ScoreBucketStats(
         label="low", score_low=0.0, score_high=0.4,
         t15_win_rate=0.5, t25_win_rate=0.6,
