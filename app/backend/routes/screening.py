@@ -242,26 +242,22 @@ def _load_latest_auto_screening_payload(trade_date: str | None = None) -> dict[s
     raise HTTPException(status_code=404, detail=f"未找到 auto_screening 报告 (trade_date={trade_date or 'latest'})")
 
 
-def _build_screening_response(
-    payload: dict[str, Any],
-    *,
-    trade_date: str,
-    score_threshold: float,
-    use_explain: bool,
-    strategies: list[str] | None,
-    execution_time_seconds: float,
-) -> ScreeningResponse:
-    raw_recs = payload.get("recommendations", []) or []
-    recs = _apply_score_threshold(raw_recs, score_threshold)
-    recs = _attach_explain(recs, use_explain)
-    # c290: CLI↔web front-door parity — attach the BUY/HOLD/AVOID verdict +
-    # invalidation_reason + signal_horizon + market_regime to each rec, exactly
-    # as the CLI `--top-picks` does at top_picks.py:228. The web front door is a
-    # pre-production auth-gated surface where users act on real picks; it must
-    # not silently omit the trust-calibration disclosure (c282/c283, NS-18) the
-    # CLI has. Reads market_regime from payload market_state regime_gate_level
-    # (same field CLI's _render_market_gate reads); missing market_state →
-    # 'unknown' (build_front_door_verdict handles it honestly per c282 gap 1).
+def _attach_front_door_verdicts(recs: list[dict[str, Any]], payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Attach the BUY/HOLD/AVOID front-door verdict to each rec (CLI↔web parity).
+
+    c290 / c329: the CLI ``--top-picks`` attaches ``build_front_door_verdict``
+    per pick (action + invalidation_reason + signal_horizon + market_regime).
+    The web front door — /auto, /latest, AND /custom-weights — is a
+    pre-production auth-gated surface where users act on real picks; it must
+    not silently omit the trust-calibration disclosure (c282/c283, NS-18).
+    Reads market_regime from payload market_state regime_gate_level (same
+    field CLI's _render_market_gate reads); missing market_state → 'unknown'
+    (build_front_door_verdict handles it honestly per c282 gap 1).
+
+    Defensive: verdict must never crash the web response. c314: LOG failures
+    (exc_info) so an operator seeing a cluster of AVOID 'verdict 计算失败'
+    picks can diagnose the root cause (NS-17 silent-except disease class).
+    """
     market_state = payload.get("market_state") or {}
     _regime_raw = market_state.get("regime_gate_level") if isinstance(market_state, dict) else None
     market_regime = str(_regime_raw).lower() if _regime_raw else "unknown"
@@ -269,13 +265,6 @@ def _build_screening_response(
         try:
             rec["verdict"] = build_front_door_verdict(rec, market_regime=market_regime)
         except Exception:
-            # Defensive: verdict must never crash the web response. A pick
-            # without verdict is strictly worse than one with, but a 500 on
-            # the whole screening endpoint is worse still. c314: LOG the
-            # failure (exc_info) so an operator seeing a cluster of AVOID
-            # 'verdict 计算失败' picks can diagnose the root cause — this is
-            # the NS-17 silent-except disease class (the prior 'Log via meta
-            # below' comment described a log that did not exist).
             logger.warning(
                 "verdict compute failed for %s (regime=%s) — falling back to AVOID",
                 rec.get("ticker"),
@@ -288,6 +277,24 @@ def _build_screening_response(
                 "invalidation_reason": "verdict 计算失败 (请复核)",
                 "signal_horizon": "",
             }
+    return recs
+
+
+def _build_screening_response(
+    payload: dict[str, Any],
+    *,
+    trade_date: str,
+    score_threshold: float,
+    use_explain: bool,
+    strategies: list[str] | None,
+    execution_time_seconds: float,
+) -> ScreeningResponse:
+    raw_recs = payload.get("recommendations", []) or []
+    recs = _apply_score_threshold(raw_recs, score_threshold)
+    recs = _attach_explain(recs, use_explain)
+    # c290: attach the front-door verdict to each rec (extracted into
+    # _attach_front_door_verdicts so /custom-weights reuses it — c329).
+    recs = _attach_front_door_verdicts(recs, payload)
     return ScreeningResponse(
         trade_date=trade_date,
         recommendations=_sanitize_nan(recs),
@@ -729,14 +736,20 @@ async def apply_custom_weights(req: CustomWeightsRequest) -> ScreeningResponse:
     if req.trade_date:
         resolved_date = _normalize_trade_date(req.trade_date)
 
-    # 3. 加载 + 重算
+    # 3. 加载 (full payload — 需要 market_state 给 verdict) + 重算
     from src.screening.custom_weights import (
-        load_latest_recommendations,
         reweight_recommendations,
         StrategyWeights,
     )
 
-    recs = load_latest_recommendations(trade_date=resolved_date)
+    # c329 (loop 84): use the full-payload loader (not the recs-only one) so
+    # market_state is available for the front-door verdict. The recs-only
+    # loader discarded the payload, leaving custom-weights picks with NO
+    # BUY/AVOID verdict + invalidation disclosure — the c290 verdict-parity
+    # disease in a sibling route (frontend renders both through the same
+    # ScreeningResultsPanel, so the missing verdict silently drops the badge).
+    payload = _load_latest_auto_screening_payload(trade_date=resolved_date)
+    recs = list(payload.get("recommendations") or [])
     if not recs:
         raise HTTPException(
             status_code=404,
@@ -751,11 +764,13 @@ async def apply_custom_weights(req: CustomWeightsRequest) -> ScreeningResponse:
     )
     reweighted = reweight_recommendations(recs, weights)
     top = reweighted[: max(1, req.top_n)]
+    # c329: attach the front-door verdict (same helper /auto and /latest use).
+    top = _attach_front_door_verdicts(top, payload)
 
     return ScreeningResponse(
         trade_date=resolved_date or _resolve_default_trade_date(),
         recommendations=_sanitize_nan(top),
-        market_state=None,
+        market_state=_sanitize_nan(payload.get("market_state")),
         tracking_summary=None,
         consecutive_recommendation=None,
         industry_rotation=None,

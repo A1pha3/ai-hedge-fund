@@ -182,3 +182,67 @@ def test_verdict_compute_exception_is_logged_not_swallowed(monkeypatch, caplog) 
     assert "verdict" in joined.lower(), f"verdict-compute exception must be logged for operator diagnosis; " f"got records: {caplog.records!r}"
     # the exception detail itself should reach the log (exc_info or message)
     assert any("simulated verdict compute failure" in (r.getMessage() + str(getattr(r, "exc_text", "") or "")) for r in caplog.records), "the underlying exception message must reach the log so the operator can diagnose"
+
+
+# ---------------------------------------------------------------------------
+# c329 (loop 84): /api/screening/custom-weights must attach verdict too —
+# the c290 verdict-parity fix shipped only on /auto and /latest. The custom-
+# weights endpoint renders through the SAME ScreeningResultsPanel frontend
+# component, so an operator doing weight sensitivity analysis sees picks
+# with NO BUY/AVOID badge, no invalidation_reason, no regime gate — exactly
+# the trust-calibration disclosure the contract requires on the BUY surface.
+# ---------------------------------------------------------------------------
+
+
+def test_custom_weights_endpoint_attaches_verdict(monkeypatch) -> None:
+    """c329: the custom-weights endpoint must attach build_front_door_verdict
+    to each rec, mirroring /auto and /latest. The frontend renders custom-
+    weights picks through the same panel, so a missing verdict silently
+    drops the BUY/AVOID badge + invalidation disclosure."""
+    from app.backend.routes import screening as screening_mod
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    # Mock the payload loader to return a controlled payload (isolates from
+    # real data/reports/ — important so the test doesn't pass by accident
+    # when a real report happens to exist at the requested date).
+    payload = _make_payload(regime="normal", n_recs=2)
+    monkeypatch.setattr(
+        screening_mod,
+        "_load_latest_auto_screening_payload",
+        lambda trade_date=None: payload,
+    )
+    # Stub the reweight to pass-through (we're testing verdict attachment, not
+    # the reweight math).
+    monkeypatch.setattr(
+        "src.screening.custom_weights.reweight_recommendations",
+        lambda recs, weights: recs,
+    )
+
+    app = FastAPI()
+    app.include_router(screening_mod.router)
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/api/screening/custom-weights",
+        json={
+            "trade_date": "20260607",
+            "trend": 0.4,
+            "mean_reversion": 0.2,
+            "fundamental": 0.2,
+            "event_sentiment": 0.2,
+            "top_n": 2,
+        },
+    )
+    assert response.status_code == 200, f"expected 200, got {response.status_code}: {response.text}"
+    body = response.json()
+    assert len(body["recommendations"]) == 2
+    for rec in body["recommendations"]:
+        verdict = rec.get("verdict")
+        assert verdict is not None, (
+            f"custom-weights rec must carry a verdict (c329 parity with /auto); "
+            f"got keys={list(rec.keys())}"
+        )
+        assert verdict["action"] in {"BUY", "HOLD", "AVOID"}, f"verdict action must be valid; got {verdict['action']!r}"
+        assert "invalidation_reason" in verdict, "verdict must disclose invalidation (c283)"
+        assert "market_regime" in verdict, "verdict must carry market_regime"

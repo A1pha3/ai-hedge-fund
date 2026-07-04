@@ -109,7 +109,7 @@ _PATTERN_A_CASES = [
     pytest.param(
         "post",
         "/api/screening/custom-weights",
-        "src.screening.custom_weights.load_latest_recommendations",
+        "app.backend.routes.screening._load_latest_auto_screening_payload",
         {
             "trend": 0.4,
             "mean_reversion": 0.2,
