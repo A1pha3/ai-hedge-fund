@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 import pandas as pd
 
@@ -101,8 +102,8 @@ def calculate_market_state_metrics(
     limit_df: pd.DataFrame | None,
     daily_basic: pd.DataFrame | None,
     northbound_df: pd.DataFrame | None,
-    market_breadth_ratio: callable,
-    northbound_streak: callable,
+    market_breadth_ratio: Callable[..., float],
+    northbound_streak: Callable[..., float],
 ) -> MarketStateMetrics:
     signal_frame = frame[["high", "low", "close"]].assign(volume=frame.get("volume", 0)).copy()
     adx_df = calculate_adx(signal_frame, 20)
@@ -302,7 +303,7 @@ def _reuse_btst_regime_gate_payload(payload: object) -> dict[str, object] | None
     }
 
 
-def build_market_state_from_metrics(*, metrics: MarketStateMetrics, normalize_weights: callable) -> MarketState:
+def build_market_state_from_metrics(*, metrics: MarketStateMetrics, normalize_weights: Callable[[dict], dict]) -> MarketState:
     adjusted = DEFAULT_STRATEGY_WEIGHTS.copy()
     position_scale = 0.5 if metrics.is_low_volume else 1.0
     state_type, position_scale = _apply_base_state_adjustments(metrics=metrics, adjusted=adjusted, position_scale=position_scale)
