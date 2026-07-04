@@ -461,7 +461,7 @@ def test_risk_metrics_block_reads_custom_report_dir_not_hardcoded_r94(tmp_path: 
     )
 
     # 必须从自定义 report_dir 读到 attribution 数据, 输出风险指标 (而非"无足够历史数据")
-    assert "Sharpe:" in report, f"自定义 report_dir 的 attribution_daily 应被读取并计算风险指标, " f"实际报告风险区块: {[l for l in report.split(chr(10)) if '风险' in l or 'Sharpe' in l]}"
+    assert "Sharpe:" in report, f"自定义 report_dir 的 attribution_daily 应被读取并计算风险指标, " f"实际报告风险区块: {[l for l in report.split(chr(10)) if '风险' in l or 'Sharpe' in l]}"  # noqa: E741
 
 
 def test_weekly_report_includes_disclaimer_r95(tmp_report_dir: Path) -> None:
@@ -482,5 +482,5 @@ def test_weekly_report_includes_disclaimer_r95(tmp_report_dir: Path) -> None:
     )
 
     # footer 必须含研究用途 disclaimer (与 R71-R77 七个面 + PDF/backtest 一致)
-    assert "不构成" in report and ("投资建议" in report or "投资" in report), f"--weekly-report footer 必须含研究用途 disclaimer (R71-R77 同族第 8 个决策面), " f"实际 footer: {[l for l in report.split(chr(10))[-6:]]}"
+    assert "不构成" in report and ("投资建议" in report or "投资" in report), f"--weekly-report footer 必须含研究用途 disclaimer (R71-R77 同族第 8 个决策面), " f"实际 footer: {[l for l in report.split(chr(10))[-6:]]}"  # noqa: E741
     assert "研究" in report, "disclaimer 应含'研究'用途说明"

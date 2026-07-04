@@ -91,7 +91,7 @@ class TestPrintScoreDecomposition:
         _print_score_decomposition([item], {})
         output = capsys.readouterr().out
         # Should have space, not star
-        lines = [l for l in output.split("\n") if "000005" in l]
+        lines = [l for l in output.split("\n") if "000005" in l]  # noqa: E741
         assert len(lines) == 1
         assert "★" not in lines[0]
 

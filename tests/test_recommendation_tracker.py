@@ -896,4 +896,4 @@ class TestUpdateTrackingHistoryFileLock:
             os.close(fd)
 
 
-import os  # 供上面的测试 helper 用
+import os  # 供上面的测试 helper 用  # noqa: E402

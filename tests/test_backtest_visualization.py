@@ -158,4 +158,4 @@ def test_param_compare_post_round_trips_report(monkeypatch):
     assert saved_payloads == [report]
 
 
-import pytest
+import pytest  # noqa: E402

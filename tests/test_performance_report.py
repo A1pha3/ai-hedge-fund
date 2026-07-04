@@ -411,7 +411,7 @@ def test_top_winners_losers_pnl_zero_does_not_fall_through():
     # pnl=0 trade should NOT appear in winners (it's flat, not positive)
     assert all(w["ticker"] != "A" for w in winners), "Flat trade (pnl=0) should not be a winner"
     # pnl=0 trade should NOT appear in losers (it's flat, not negative)
-    assert all(l["ticker"] != "A" for l in losers), "Flat trade (pnl=0) should not be a loser"
+    assert all(l["ticker"] != "A" for l in losers), "Flat trade (pnl=0) should not be a loser"  # noqa: E741
     # Winner should be B with pnl=0.10 (not A with return_pct=0.05)
     assert len(winners) == 1
     assert winners[0]["ticker"] == "B"
