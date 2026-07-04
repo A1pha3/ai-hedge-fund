@@ -103,8 +103,9 @@ class RegimeRecomputeResult:
         }
 
 
-# 默认 bootstrap 参数 (匹配 factor_attribution 的 c317 模式: 1000 重采样, 95% CI, seed=42).
-_DEFAULT_N_BOOTSTRAP: int = 1000
+# 默认 bootstrap 参数 (c344/autodev-36: 2000 重采样, 与 factor_attribution 系列一致;
+# c342 5x 加速后 2000 开销可忽略).
+_DEFAULT_N_BOOTSTRAP: int = 2000
 _DEFAULT_CI_LEVEL: float = 0.95
 _DEFAULT_BOOTSTRAP_SEED: int = 42
 
