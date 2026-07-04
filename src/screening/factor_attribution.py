@@ -115,7 +115,7 @@ def compute_factor_attribution_from_loaded(
     *,
     min_n: int = 15,
     horizon_field: str = "next_5day_return",
-    n_bootstrap: int = 1000,
+    n_bootstrap: int = 2000,
     ci_level: float = 0.95,
     seed: int = 42,
 ) -> FactorAttributionReport:
