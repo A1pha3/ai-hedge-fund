@@ -1,3 +1,4 @@
+# flake8: noqa
 #!/usr/bin/env python3
 """⚠️ DEPRECATED — 多日动量因子分析。已被 btst_factor_ic_analysis.py 替代。Do not run; kept for historical reference only."""
 

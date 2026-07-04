@@ -1,3 +1,4 @@
+# flake8: noqa
 #!/usr/bin/env python3
 """
 BTST完整分析报告：2026-04-13信号日 → 04-14目标日

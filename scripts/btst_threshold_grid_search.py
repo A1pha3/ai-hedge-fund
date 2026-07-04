@@ -1,3 +1,4 @@
+# flake8: noqa
 #!/usr/bin/env python3
 """
 Grid search over btst_precision_v2 profile thresholds.

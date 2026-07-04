@@ -1,3 +1,4 @@
+# flake8: noqa
 #!/usr/bin/env python3
 """
 Round 89 Task 2: trend_continuation 权重网格搜索

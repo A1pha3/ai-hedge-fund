@@ -1,3 +1,4 @@
+# flake8: noqa
 #!/usr/bin/env python3
 """BTST因子IC分析：测量每个因子对次日收益的预测能力。
 

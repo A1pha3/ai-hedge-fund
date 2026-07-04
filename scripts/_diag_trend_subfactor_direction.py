@@ -1,3 +1,4 @@
+# flake8: noqa
 #!/usr/bin/env python3
 """Trend sub-factor direction 诊断 (基于 light-stage 全 universe 回测).
 

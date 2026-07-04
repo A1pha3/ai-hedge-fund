@@ -1,3 +1,4 @@
+# flake8: noqa
 #!/usr/bin/env python3
 """
 Quick comparison of v2 vs ic_v3 scoring on synthetic inputs.

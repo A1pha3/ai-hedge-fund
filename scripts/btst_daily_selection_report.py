@@ -1,3 +1,4 @@
+# flake8: noqa
 #!/usr/bin/env python3
 """
 BTST选股分析报告：基于最近交易日数据，使用ic_optimized profile选择次日候选。

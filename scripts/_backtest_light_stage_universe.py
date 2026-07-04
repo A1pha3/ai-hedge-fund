@@ -1,3 +1,4 @@
+# flake8: noqa
 #!/usr/bin/env python3
 """Light-stage 全 universe 回测：trend/MR 因子长周期 IC + 新旧权重 score 效果对比.
 

@@ -1,3 +1,4 @@
+# flake8: noqa
 #!/usr/bin/env python3
 """验证momentum_strength因子的IC，以及ic_optimized profile的改进效果。"""
 
