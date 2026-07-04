@@ -351,6 +351,17 @@ class TestBootstrapCI:
         lo, hi = _bootstrap_delta_winrate_ci([], [1.0, 2.0])
         assert lo is None and hi is None
 
+    def test_delta_ci_contains_point_estimate(self) -> None:
+        """c346/autodev-36: 统计学基本性质 — CI 必须包含点估计."""
+        from src.screening.model_version_comparison import _bootstrap_delta_winrate_ci
+        # candidate 70% winrate, baseline 40% winrate → delta point estimate = 0.30
+        cand = [1.0] * 70 + [-1.0] * 30
+        base = [1.0] * 40 + [-1.0] * 60
+        point = 0.70 - 0.40  # 0.30
+        lo, hi = _bootstrap_delta_winrate_ci(cand, base, n_bootstrap=2000, seed=42)
+        assert lo is not None and hi is not None
+        assert lo <= point <= hi, f"CI [{lo:.3f}, {hi:.3f}] must contain point estimate {point:.3f}"
+
 
 class TestDeterministicStrHash:
     """c337/autodev-36 regression: _deterministic_str_hash must be stable

@@ -168,6 +168,17 @@ class TestScoreControlledFactorAttribution:
         report = ScoreControlledFactorReport(verdict="insufficient")
         assert render_score_controlled_factor_line(report) == ""
 
+    def test_bootstrap_inversion_ci_contains_point_estimate(self) -> None:
+        """c346/autodev-36: 统计学基本性质 — CI 必须包含点估计."""
+        from src.screening.factor_attribution_by_state import _bootstrap_inversion_ci
+        # 60% low winrate, 30% high winrate → inversion point estimate = 0.30
+        high_ret = [-1.0] * 70 + [1.0] * 30   # 30% winrate
+        low_ret = [1.0] * 60 + [-1.0] * 40     # 60% winrate
+        point = (60/100) - (30/100)  # 0.30
+        lo, hi = _bootstrap_inversion_ci(high_ret, low_ret, n_bootstrap=2000, seed=42)
+        assert lo is not None and hi is not None
+        assert lo <= point <= hi, f"CI [{lo:.3f}, {hi:.3f}] must contain point estimate {point:.3f}"
+
     def test_bootstrap_inversion_ci_upper_ge_lower(self) -> None:
         """_bootstrap_inversion_ci 单调性: upper >= lower (幂等 seed 相同)."""
         from src.screening.factor_attribution_by_state import _bootstrap_inversion_ci

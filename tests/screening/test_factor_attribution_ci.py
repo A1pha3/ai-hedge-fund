@@ -90,6 +90,18 @@ def test_ci_is_deterministic_with_seed():
     assert t1.inversion_ci_high == t2.inversion_ci_high
 
 
+def test_ci_contains_point_estimate():
+    """c346/autodev-36: 统计学基本性质 — CI 必须包含点估计 (inversion)."""
+    from src.screening.factor_attribution import _bootstrap_inversion_ci
+    # high 30% winrate, low 60% winrate → inversion point = 0.30
+    high = [-1.0] * 70 + [1.0] * 30
+    low = [1.0] * 60 + [-1.0] * 40
+    point = 0.60 - 0.30
+    lo, hi = _bootstrap_inversion_ci(high, low, n_bootstrap=100, ci_level=0.95, seed=42)
+    assert lo is not None and hi is not None
+    assert lo <= point <= hi, f"CI [{lo:.3f}, {hi:.3f}] must contain point {point:.3f}"
+
+
 def test_factor_without_enough_samples_has_no_ci():
     """insufficient 因子 (third<min_n) 不应有 CI (None), 保持 stub. """
     # 单一因子 + min_n=10, 但只有 11 条 → third=3 < 10
