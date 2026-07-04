@@ -218,7 +218,13 @@ def _load_auto_screening_reports(reports_dir: Path, lookback_days: int) -> list[
                 data = json.load(f)
             data["_report_date"] = date_str
             reports.append(data)
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as exc:
+            # NS-17 / c289 family (c327, loop 81): silent skip shrinks the
+            # hit-rate denominator without signal — operator sees "T+5 胜率=58%
+            # | 数据时点 2026-07-03" and trusts both, unaware some days in the
+            # lookback window were dropped. Sibling _load_regime_date_mapping
+            # (regime_winrate_recompute.py:385) already logs this pattern.
+            logger.warning("[Verify] 跳过损坏报告 %s (lookback denominator 缩减): %s", path.name, exc)
             continue
     return reports[:lookback_days]
 

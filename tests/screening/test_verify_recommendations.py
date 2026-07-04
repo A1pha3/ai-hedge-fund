@@ -141,6 +141,30 @@ class TestLoadTrackingHistory:
         result = _load_tracking_history(tmp_path)
         assert result == records
 
+    def test_corrupt_report_logs_warning(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        """loop 81 (NS-17 / c289 disease class): a corrupt auto_screening_*.json
+        in the lookback window must surface, not silently drop from the
+        denominator. This loader feeds compute_verify_recommendations → the
+        freshly-stamped hit-rate footer; silent skips shrink the winrate
+        denominator without signal. Sibling _load_regime_date_mapping
+        (regime_winrate_recompute.py:385) already logs the identical pattern.
+        """
+        # Two valid reports + one corrupt in window
+        for date_str in ("20260610", "20260611"):
+            (tmp_path / f"auto_screening_{date_str}.json").write_text(json.dumps({"recommendations": []}), encoding="utf-8")
+        (tmp_path / "auto_screening_20260612.json").write_text("NOT JSON", encoding="utf-8")
+
+        with caplog.at_level("WARNING", logger="src.screening.verify_recommendations"):
+            result = _load_auto_screening_reports(tmp_path, lookback_days=30)
+
+        # The 2 valid reports still load (best-effort, never break)
+        assert len(result) == 2
+        # But the corrupt one must surface — not silent skip
+        assert any(
+            "auto_screening_20260612" in r.message and r.levelname == "WARNING"
+            for r in caplog.records
+        ), f"expected WARNING mentioning the corrupt report, got: {[r.message for r in caplog.records]}"
+
 
 class TestComputeVerifyRecommendations:
     def test_basic_computation(self, reports_dir: Path):

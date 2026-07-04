@@ -150,6 +150,26 @@ class TestLoadTrackingHistory:
         result = load_tracking_history(tmp_path)
         assert len(result) == 1
 
+    def test_corrupt_file_logs_warning(self, tmp_path, caplog: pytest.LogCaptureFixture) -> None:
+        """loop 80 (NS-17 / c289 disease class): a corrupt tracking_history.json
+        must surface to the operator, not silently return []. This single loader
+        feeds 6+ --top-picks footer blocks (monotonicity / factor_attribution /
+        model_version / north_star / selection_profitability). A silent [] makes
+        all of them degrade to "insufficient" with no signal that the data file
+        is broken vs genuinely empty — masking the freshly-added 数据时点 stamps.
+        Sibling load_auto_screening_history (same file, line 273) already logs.
+        """
+        (tmp_path / "tracking_history.json").write_text("NOT JSON", encoding="utf-8")
+        with caplog.at_level("WARNING", logger="src.screening.consecutive_recommendation"):
+            result = load_tracking_history(tmp_path)
+        # Still best-effort fallback (never break the front door)
+        assert result == []
+        # But must surface — not silent
+        assert any(
+            "tracking_history.json" in r.message and r.levelname == "WARNING"
+            for r in caplog.records
+        ), f"expected WARNING mentioning tracking_history.json, got: {[r.message for r in caplog.records]}"
+
 
 # ---------------------------------------------------------------------------
 # compute_consecutive_recommendations

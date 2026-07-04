@@ -111,7 +111,16 @@ def load_tracking_history(report_dir: Path) -> list[dict[str, Any]]:
     try:
         with path.open(encoding="utf-8") as f:
             payload = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        # NS-17 / c289 family (c326, loop 80): this single loader feeds 6+
+        # --top-picks footer blocks (monotonicity / factor_attribution /
+        # factor_attribution_by_state / model_version / north_star /
+        # selection_profitability). A silent [] makes all of them degrade to
+        # "insufficient" with no signal that the data file is broken vs
+        # genuinely empty — masking the freshly-added 数据时点 stamps. Sibling
+        # load_auto_screening_history (same file, line 273) already logs this
+        # pattern; this was an asymmetric gap within the same module.
+        logger.warning("[ConsecutiveRec] tracking_history.json 损坏, footer 诊断将退化到无数据: %s", exc)
         return []
     records = payload.get("records") if isinstance(payload, dict) else payload
     return list(records) if isinstance(records, list) else []
