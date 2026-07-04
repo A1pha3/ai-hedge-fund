@@ -807,7 +807,6 @@ class TestCrossModuleEdgeCases:
 
     def test_nan_inf_propagation_blocked(self) -> None:
         """NaN / Inf 输入不应跨模块传播。"""
-        import math
 
         from src.portfolio.rebalance_advisor import compute_rebalance_actions
         from src.screening.conditional_order_advisor import compute_conditional_advice

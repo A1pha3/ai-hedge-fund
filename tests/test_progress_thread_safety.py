@@ -16,8 +16,10 @@ def test_progress_handler_register_is_thread_safe() -> None:
     errors: list[BaseException] = []
 
     def hammer_register() -> None:
+        def _noop(*_args, **_kwargs):
+            return None
         for _ in range(200):
-            handler = lambda *_args, **_kwargs: None
+            handler = _noop
             progress.register_handler(handler)
 
     def hammer_unregister() -> None:
