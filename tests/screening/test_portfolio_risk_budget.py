@@ -15,8 +15,8 @@ import pytest
 
 from src.screening.portfolio_risk_budget import (
     PortfolioRiskSummary,
-    summarize_portfolio_risk,
     render_portfolio_risk_line,
+    summarize_portfolio_risk,
 )
 
 

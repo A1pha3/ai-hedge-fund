@@ -14,8 +14,8 @@ early-vs-late WITHIN that window.
 from __future__ import annotations
 
 from src.screening.exit_timing import (
-    ExitTimingAdvice,
     compute_exit_timing,
+    ExitTimingAdvice,
     render_exit_timing,
 )
 

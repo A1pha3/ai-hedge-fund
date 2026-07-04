@@ -7,8 +7,8 @@
 from __future__ import annotations
 
 from src.screening.factor_attribution import (
-    FactorAttributionReport,
     compute_factor_attribution_from_loaded,
+    FactorAttributionReport,
     render_factor_attribution_line,
 )
 

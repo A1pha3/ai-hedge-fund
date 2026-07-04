@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from src.screening.portfolio_concentration import (
-    IndustryConcentrationReport,
     compute_industry_concentration,
+    IndustryConcentrationReport,
     render_concentration_line,
 )
 

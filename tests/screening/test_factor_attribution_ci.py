@@ -11,8 +11,8 @@ lesson 的同型问题 (bootstrap CI 在 R6 winrate 问题上决策关键). 这�
 from __future__ import annotations
 
 from src.screening.factor_attribution import (
-    FactorContributionWinrate,
     compute_factor_attribution_from_loaded,
+    FactorContributionWinrate,
     render_factor_attribution_line,
 )
 
@@ -170,6 +170,7 @@ def test_empty_strategy_keys_is_insufficient_not_ok():
 def test_bootstrap_does_not_pollute_global_random():
     """bootstrap 用独立 Random, 不影响全局 random 状态."""
     import random as _r
+
     from src.screening import factor_attribution as fa
 
     _r.seed(999)

@@ -20,9 +20,10 @@ from src.agents.technicals import (
     calculate_volatility_signals,
     safe_confidence,
     safe_float,
+    VOL_HIGH_THRESHOLD,
+    VOL_LOW_THRESHOLD,
     weighted_signal_combination,
 )
-from src.agents.technicals import VOL_HIGH_THRESHOLD, VOL_LOW_THRESHOLD
 
 # ---------------------------------------------------------------------------
 # Fixtures

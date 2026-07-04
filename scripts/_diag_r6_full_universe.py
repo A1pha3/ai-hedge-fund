@@ -43,13 +43,13 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 # 复用 _backtest_light_stage_universe 的 helpers (模块级函数, run_backtest 由 __main__ 守卫)
 from scripts._backtest_light_stage_universe import (  # noqa: E402
-    WEIGHTS_OLD,
+    _get_pro,
     compute_factor_snapshot,
     get_history_batch,
     get_trading_dates,
     get_universe_for_date,
     provisional_score,
-    _get_pro,
+    WEIGHTS_OLD,
 )
 
 logger = logging.getLogger("r6_full_universe_diag")

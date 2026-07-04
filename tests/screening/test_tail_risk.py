@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 
 from src.screening.tail_risk import (
-    TailRiskReport,
     _percentile_or_none,
     compute_tail_risk,
     render_tail_risk_line,
+    TailRiskReport,
 )
 
 # ---------------------------------------------------------------------------

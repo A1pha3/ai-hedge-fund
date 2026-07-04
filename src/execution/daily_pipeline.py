@@ -16,9 +16,8 @@ from scripts.btst_latest_followup_utils import (
     load_latest_btst_historical_prior_by_ticker,
     load_recent_btst_buy_order_cooldowns,
 )
+from src.execution.buy_signal_confirmation import confirm_buy_signal
 from src.execution.crisis_handler import evaluate_crisis_response
-from src.utils.numeric import is_finite_number as _is_finite_number
-from src.utils.numeric import safe_float as _safe_float
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
     _apply_btst_risk_budget_overlay_to_plan,
     _enforce_btst_daily_trade_limit,
@@ -30,11 +29,10 @@ from src.execution.daily_pipeline_buy_diagnostics_helpers import (
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
     build_reentry_filter_payload,
 )
-from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (
-    _build_catalyst_theme_candidate_diagnostics,
-)
+
 # Re-exported for test access (tests/execution/test_phase4_execution.py).
 from src.execution.daily_pipeline_catalyst_diagnostics_helpers import (  # noqa: F401
+    _build_catalyst_theme_candidate_diagnostics,
     _build_catalyst_theme_entry,
     _qualifies_catalyst_theme_candidate,
 )
@@ -204,32 +202,31 @@ from src.execution.daily_pipeline_short_trade_diagnostics_helpers import (
     build_short_trade_candidate_diagnostics_with_defaults as _build_short_trade_candidate_diagnostics_impl,
 )
 
-# Body-used upstream-shadow helpers.
-from src.execution.daily_pipeline_upstream_shadow_helpers import (
-    _mark_upstream_shadow_watchlist_promotions,
-    _merge_watchlist_with_upstream_shadow_promotions,
-)
-from src.execution.daily_pipeline_upstream_shadow_helpers import (
-    _select_upstream_shadow_watchlist_entries,
-)
 # Re-exported for test access (tests/execution/test_phase4_execution.py).
+# Body-used upstream-shadow helpers.
 from src.execution.daily_pipeline_upstream_shadow_helpers import (  # noqa: F401
     _build_catalyst_theme_short_trade_carryover_relief_config,
     _build_upstream_shadow_catalyst_relief_config,
-    _summarize_upstream_shadow_release_historical_support,
+    _mark_upstream_shadow_watchlist_promotions,
+    _merge_watchlist_with_upstream_shadow_promotions,
 )
 from src.execution.daily_pipeline_upstream_shadow_helpers import (  # noqa: F401
     _select_upstream_shadow_release_entries as _select_upstream_shadow_release_entries_impl,
 )
+from src.execution.daily_pipeline_upstream_shadow_helpers import (  # noqa: F401
+    _select_upstream_shadow_watchlist_entries,
+)
 from src.execution.daily_pipeline_upstream_shadow_helpers import (
     _should_release_upstream_shadow_candidate as _should_release_upstream_shadow_candidate_impl,
+)
+from src.execution.daily_pipeline_upstream_shadow_helpers import (  # noqa: F401
+    _summarize_upstream_shadow_release_historical_support,
 )
 from src.execution.layer_c_aggregator import aggregate_layer_c_results
 from src.execution.merge_approved_loader import load_merge_approved_tickers
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.execution.plan_generator import generate_execution_plan
 from src.execution.signal_decay import apply_signal_decay
-from src.execution.buy_signal_confirmation import confirm_buy_signal
 from src.llm.defaults import get_default_model_config
 from src.portfolio.exit_manager import check_exit_signal
 from src.portfolio.models import HoldingState
@@ -251,17 +248,20 @@ from src.targets.profiles import (
     build_short_trade_target_profile,
     use_short_trade_target_profile,
 )
+
+# Re-exported for test access (tests/execution/test_phase4_execution.py).
+from src.targets.router import _P2_BLOCKED_GATES  # noqa: F401
 from src.targets.router import (
     build_selection_targets,
     summarize_selection_targets,
 )
-# Re-exported for test access (tests/execution/test_phase4_execution.py).
-from src.targets.router import _P2_BLOCKED_GATES  # noqa: F401
 from src.targets.short_trade_target import (  # noqa: F401 — re-exported for scripts/tests
     build_short_trade_target_snapshot_from_entry,
 )
 from src.tools.ashare_board_utils import to_tushare_code
 from src.tools.tushare_api import get_daily_basic_batch
+from src.utils.numeric import is_finite_number as _is_finite_number
+from src.utils.numeric import safe_float as _safe_float
 
 AgentRunner = Callable[[list[str], str, str], dict[str, dict[str, dict]]]
 ExitChecker = Callable[..., list]

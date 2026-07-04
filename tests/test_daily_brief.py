@@ -328,11 +328,11 @@ class TestDailyBriefHelpers:
         """
         import logging as _logging
 
-        from src.cli.daily_brief import _print_watchlist_health
-
         # monkeypatch load_watchlist 让它抛异常 -- 通过 sys.modules 注入坏模块
         import sys as _sys
         from types import ModuleType
+
+        from src.cli.daily_brief import _print_watchlist_health
 
         bad_mod = ModuleType("src.screening.watchlist")
 

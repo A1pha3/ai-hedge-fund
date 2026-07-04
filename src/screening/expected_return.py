@@ -28,10 +28,10 @@ from src.screening.confidence_calibration import (
     CalibrationSummary,
     compute_calibration,
 )
-from src.utils.numeric import safe_float  # NS-13: NaN-rejecting coercion
 from src.screening.consecutive_recommendation import resolve_report_dir
 from src.screening.drawdown_estimate import compute_drawdown_estimate
 from src.utils.display import Fore, Style
+from src.utils.numeric import safe_float  # NS-13: NaN-rejecting coercion
 
 # ---------------------------------------------------------------------------
 # Data types

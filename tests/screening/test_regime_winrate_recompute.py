@@ -25,10 +25,10 @@ from pathlib import Path
 import pytest
 
 from src.screening.regime_winrate_recompute import (
-    RegimeRecomputeResult,
     _winrate_bootstrap_ci,
     build_date_to_regime_map,
     compute_regime_historical_winrates_from_records,
+    RegimeRecomputeResult,
     run_refresh_cli,
 )
 
@@ -648,13 +648,12 @@ class TestRecomputeToRenderIntegration:
         assert crisis["winrate_ci_high"] is not None
 
         # Step 3: regime_winrate.load_latest_regime_recompute 读到 CI
+        # 撤销 conftest autouse fixture 的 patch
+        import src.screening.regime_winrate as rw
         from src.screening.regime_winrate import (
             compute_regime_winrate_summary,
             render_regime_winrate_line,
         )
-
-        # 撤销 conftest autouse fixture 的 patch
-        import src.screening.regime_winrate as rw
 
         real = getattr(rw, "_real_load_latest_regime_recompute", None)
         if real is not None:

@@ -333,8 +333,8 @@ def test_fetch_actual_returns_computes_day25():
 def test_update_tracking_history_populates_day15_day25(tmp_path: Path):
     """update_tracking_history 必须填充 next_15day_return / next_25day_return."""
     from src.screening.recommendation_tracker import (
-        update_tracking_history,
         _load_history,
+        update_tracking_history,
     )
 
     # Phase 1: 注册 20260201 当日推荐

@@ -181,8 +181,8 @@ def test_render_shows_horizon_label():
 # ---------------------------------------------------------------------------
 
 from src.screening.north_star_pnl import (  # noqa: E402
-    HoldingPeriodPoint,
     compute_holding_period_curve_from_loaded,
+    HoldingPeriodPoint,
     render_holding_period_line,
 )
 
@@ -252,8 +252,8 @@ def test_finite_float_skips_nan_in_curve():
 # ---------------------------------------------------------------------------
 
 from src.screening.north_star_pnl import (  # noqa: E402
-    PayoffAnalysisResult,
     compute_payoff_analysis_from_loaded,
+    PayoffAnalysisResult,
     render_payoff_line,
 )
 

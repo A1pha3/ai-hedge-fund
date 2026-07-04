@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 
 from src.screening.correlation_discount import (
-    CorrelationDiscountReport,
     _correlation_proxy,
     compute_correlation_discount,
+    CorrelationDiscountReport,
     render_correlation_note,
 )
 

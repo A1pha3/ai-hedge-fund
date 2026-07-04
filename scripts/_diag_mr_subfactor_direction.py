@@ -26,8 +26,15 @@ import pandas as pd
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from scripts._diag_trend_subfactor_direction import get_history_batch, get_trading_dates, get_universe_for_date, _get_pro  # noqa: E402
-from src.screening.strategy_scorer_mean_reversion import score_mean_reversion_strategy  # noqa: E402
+from scripts._diag_trend_subfactor_direction import (  # noqa: E402
+    _get_pro,
+    get_history_batch,
+    get_trading_dates,
+    get_universe_for_date,
+)
+from src.screening.strategy_scorer_mean_reversion import (  # noqa: E402
+    score_mean_reversion_strategy,
+)
 
 MR_SUBFACTORS = ["zscore_bbands", "rsi_extreme", "stat_arb", "hurst_regime"]
 

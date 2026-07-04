@@ -211,10 +211,10 @@ class TestFlywheelHealthCli:
         assert _resolve_flywheel_health(["--top-n", "5"]) is None
 
     def test_resolver_returns_zero_and_prints_health_when_flag_present(self, capsys, tmp_path, monkeypatch):
-        from src.cli import dispatcher
-
         # point assess_tracking_history at a controlled report_dir with a fresh file
         import time
+
+        from src.cli import dispatcher
 
         th = tmp_path / "tracking_history.json"
         th.write_text("[]")

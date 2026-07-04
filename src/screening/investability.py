@@ -16,7 +16,6 @@ from src.screening.composite_score import CompositeReport
 from src.screening.expected_return import ExpectedReturnReport
 from src.utils.numeric import is_finite_number
 
-
 #: C222 (2026-06-28 horizon 一致性): BUY gate 主决策 horizon 是 T+5 OR T+10
 #: (见 ``_meets_quality_bar`` line 198-207). 排序键 tie-breaker 必须与 BUY gate
 #: horizon 一致 — 用 max(t5, t10) 取短期 horizon 最优 metric. T+30 metric 排除出

@@ -51,7 +51,9 @@ def test_api_path_price_provider_failure_emits_warning(caplog) -> None:
 
     Best-effort preserved (history=[] → degraded advice), but now observable.
     """
-    from src.screening.conditional_order_advisor import attach_conditional_orders_to_payload
+    from src.screening.conditional_order_advisor import (
+        attach_conditional_orders_to_payload,
+    )
 
     payload = _make_payload(ticker="APIFAIL")
     with caplog.at_level(logging.WARNING, logger="src.screening.conditional_order_advisor"):
@@ -72,7 +74,9 @@ def test_api_path_price_provider_failure_emits_warning(caplog) -> None:
 
 def test_api_path_price_provider_success_no_warning(caplog) -> None:
     """L504 API path: 正常路径不应发 WARNING."""
-    from src.screening.conditional_order_advisor import attach_conditional_orders_to_payload
+    from src.screening.conditional_order_advisor import (
+        attach_conditional_orders_to_payload,
+    )
 
     def _good_provider(ticker: str, n: int) -> list[float]:
         return [100.0 + i * 0.5 for i in range(n)]
@@ -95,7 +99,9 @@ def test_api_path_warning_distinguishes_ticker(caplog) -> None:
 
     多标的时, 单个标的的 provider 失败不应被其他标的的成功掩盖.
     """
-    from src.screening.conditional_order_advisor import attach_conditional_orders_to_payload
+    from src.screening.conditional_order_advisor import (
+        attach_conditional_orders_to_payload,
+    )
 
     def _mixed_provider(ticker: str, n: int) -> list[float]:
         if ticker == "BADTICKER":

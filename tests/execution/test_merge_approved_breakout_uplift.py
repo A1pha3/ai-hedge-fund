@@ -22,11 +22,11 @@ from __future__ import annotations
 import math
 
 from src.execution.merge_approved_breakout_uplift import (
-    MERGE_APPROVED_BREAKOUT_UPLIFT_TREND_CONFIDENCE_MIN,
     _clamp_confidence,
     _positive_complete,
     _signal_snapshot,
     apply_merge_approved_breakout_uplift_to_signal_map,
+    MERGE_APPROVED_BREAKOUT_UPLIFT_TREND_CONFIDENCE_MIN,
 )
 from src.screening.models import StrategySignal
 

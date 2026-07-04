@@ -2736,7 +2736,9 @@ def test_r25_health_score_surface_summary_exposes_health_fields() -> None:
 
 def test_r25_churn_stable_windows_low_volatility() -> None:
     """Near-constant win-rate across windows must yield low volatility."""
-    from scripts.btst_analysis_utils import compute_selection_churn_metrics  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_selection_churn_metrics,
+    )
 
     windows = [{"next_close_positive_rate": 0.60 + i * 0.001} for i in range(6)]
     result = compute_selection_churn_metrics(windows)
@@ -2746,7 +2748,9 @@ def test_r25_churn_stable_windows_low_volatility() -> None:
 
 def test_r25_churn_unstable_windows_high_volatility() -> None:
     """Large swings between adjacent windows must yield high volatility."""
-    from scripts.btst_analysis_utils import compute_selection_churn_metrics  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_selection_churn_metrics,
+    )
 
     windows = [{"next_close_positive_rate": 0.40 if i % 2 == 0 else 0.80} for i in range(6)]
     result = compute_selection_churn_metrics(windows)
@@ -2756,7 +2760,9 @@ def test_r25_churn_unstable_windows_high_volatility() -> None:
 
 def test_r25_churn_trend_positive_when_improving() -> None:
     """Consistently rising win-rate must produce a positive trend slope."""
-    from scripts.btst_analysis_utils import compute_selection_churn_metrics  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_selection_churn_metrics,
+    )
 
     windows = [{"next_close_positive_rate": 0.40 + i * 0.05} for i in range(6)]
     result = compute_selection_churn_metrics(windows)
@@ -2766,7 +2772,9 @@ def test_r25_churn_trend_positive_when_improving() -> None:
 
 def test_r25_churn_single_window_returns_none() -> None:
     """With fewer than 2 windows, all rate-change fields must be None."""
-    from scripts.btst_analysis_utils import compute_selection_churn_metrics  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_selection_churn_metrics,
+    )
 
     result_empty = compute_selection_churn_metrics([])
     result_one = compute_selection_churn_metrics([{"next_close_positive_rate": 0.60}])
@@ -2779,7 +2787,9 @@ def test_r25_churn_single_window_returns_none() -> None:
 
 def test_r25_churn_cost_drag_formula() -> None:
     """estimated_cost_drag_bps must equal volatility × 60 (30 × 2)."""
-    from scripts.btst_analysis_utils import compute_selection_churn_metrics  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_selection_churn_metrics,
+    )
 
     windows = [{"next_close_positive_rate": 0.50 + i * 0.10} for i in range(4)]
     result = compute_selection_churn_metrics(windows)
@@ -2911,7 +2921,9 @@ def test_r26_runner_composite_score_zero_new_weights_matches_baseline() -> None:
 
 def test_r26_alpha_positive_when_btst_beats_benchmark() -> None:
     """alpha_avg_return must be positive when BTST consistently beats HS300."""
-    from scripts.btst_analysis_utils import compute_benchmark_adjusted_alpha  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_benchmark_adjusted_alpha,
+    )
 
     rows = [{"next_close_return": 0.03 + i * 0.001, "hs300_daily_return": 0.01} for i in range(10)]
     result = compute_benchmark_adjusted_alpha(rows)
@@ -2921,7 +2933,9 @@ def test_r26_alpha_positive_when_btst_beats_benchmark() -> None:
 
 def test_r26_alpha_win_rate_one_when_all_btst_beats_benchmark() -> None:
     """alpha_win_rate must be 1.0 when every BTST return exceeds the benchmark."""
-    from scripts.btst_analysis_utils import compute_benchmark_adjusted_alpha  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_benchmark_adjusted_alpha,
+    )
 
     rows = [{"next_close_return": 0.05, "hs300_daily_return": 0.01} for _ in range(10)]
     result = compute_benchmark_adjusted_alpha(rows)
@@ -2930,7 +2944,9 @@ def test_r26_alpha_win_rate_one_when_all_btst_beats_benchmark() -> None:
 
 def test_r26_alpha_degrades_when_no_hs300_field() -> None:
     """When hs300_daily_return is absent from all rows, most fields must be None."""
-    from scripts.btst_analysis_utils import compute_benchmark_adjusted_alpha  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_benchmark_adjusted_alpha,
+    )
 
     rows = [{"next_close_return": 0.03} for _ in range(10)]
     result = compute_benchmark_adjusted_alpha(rows)
@@ -2941,7 +2957,9 @@ def test_r26_alpha_degrades_when_no_hs300_field() -> None:
 
 def test_r26_beta_exposure_near_one_for_identical_returns() -> None:
     """Beta exposure must be near 1.0 when BTST returns are identical to benchmark."""
-    from scripts.btst_analysis_utils import compute_benchmark_adjusted_alpha  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_benchmark_adjusted_alpha,
+    )
 
     rows = [{"next_close_return": float(i) * 0.01, "hs300_daily_return": float(i) * 0.01} for i in range(1, 11)]
     result = compute_benchmark_adjusted_alpha(rows)
@@ -2951,7 +2969,9 @@ def test_r26_beta_exposure_near_one_for_identical_returns() -> None:
 
 def test_r26_information_ratio_positive_when_alpha_positive() -> None:
     """information_ratio must be positive when alpha_avg_return > 0."""
-    from scripts.btst_analysis_utils import compute_benchmark_adjusted_alpha  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_benchmark_adjusted_alpha,
+    )
 
     rows = [{"next_close_return": 0.04 + i * 0.005, "hs300_daily_return": 0.01} for i in range(15)]
     result = compute_benchmark_adjusted_alpha(rows)
@@ -2966,7 +2986,9 @@ def test_r26_information_ratio_positive_when_alpha_positive() -> None:
 
 def test_r26_stop_loss_tight_when_low_trigger_rate() -> None:
     """Low 2% trigger rate must suggest a 2% stop-loss with high confidence."""
-    from scripts.btst_analysis_utils import compute_dynamic_stop_loss_suggestion  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_dynamic_stop_loss_suggestion,
+    )
 
     surface = {"stop_loss_trigger_rate_2pct": 0.05, "stop_loss_trigger_rate_3pct": 0.12, "stop_loss_trigger_rate_5pct": 0.18}
     result = compute_dynamic_stop_loss_suggestion(surface)
@@ -2977,7 +2999,9 @@ def test_r26_stop_loss_tight_when_low_trigger_rate() -> None:
 
 def test_r26_stop_loss_moderate_when_medium_trigger_rate() -> None:
     """Moderate trigger rates must suggest a 3% stop-loss."""
-    from scripts.btst_analysis_utils import compute_dynamic_stop_loss_suggestion  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_dynamic_stop_loss_suggestion,
+    )
 
     surface = {"stop_loss_trigger_rate_2pct": 0.15, "stop_loss_trigger_rate_3pct": 0.18, "stop_loss_trigger_rate_5pct": 0.25}
     result = compute_dynamic_stop_loss_suggestion(surface)
@@ -2987,7 +3011,9 @@ def test_r26_stop_loss_moderate_when_medium_trigger_rate() -> None:
 
 def test_r26_stop_loss_warns_loose_when_high_5pct_rate() -> None:
     """loose_stop_warned must be True when stop_loss_trigger_rate_5pct > 35%."""
-    from scripts.btst_analysis_utils import compute_dynamic_stop_loss_suggestion  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_dynamic_stop_loss_suggestion,
+    )
 
     surface = {"stop_loss_trigger_rate_2pct": 0.20, "stop_loss_trigger_rate_3pct": 0.25, "stop_loss_trigger_rate_5pct": 0.40}
     result = compute_dynamic_stop_loss_suggestion(surface)
@@ -2996,7 +3022,9 @@ def test_r26_stop_loss_warns_loose_when_high_5pct_rate() -> None:
 
 def test_r26_stop_loss_default_when_no_data() -> None:
     """Missing stop-loss fields must produce default 3% suggestion with low confidence."""
-    from scripts.btst_analysis_utils import compute_dynamic_stop_loss_suggestion  # noqa: E402
+    from scripts.btst_analysis_utils import (  # noqa: E402
+        compute_dynamic_stop_loss_suggestion,
+    )
 
     result = compute_dynamic_stop_loss_suggestion({})
     assert result["suggested_stop_loss_pct"] == pytest.approx(0.03, abs=1e-6)

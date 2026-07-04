@@ -16,8 +16,8 @@ verdict=insufficient (诚实, 不强行下结论).
 from __future__ import annotations
 
 from src.screening.model_version_comparison import (
-    compute_model_version_metrics,
     compare_model_versions,
+    compute_model_version_metrics,
     render_model_version_comparison_line,
 )
 

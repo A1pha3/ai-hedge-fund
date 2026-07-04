@@ -29,12 +29,13 @@ from dotenv import load_dotenv
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
+from scipy.stats import spearmanr  # noqa: E402
+
 from scripts._backtest_light_stage_universe import (  # noqa: E402
+    _get_pro,
     get_trading_dates,
     get_universe_for_date,
-    _get_pro,
 )
-from scipy.stats import spearmanr  # noqa: E402
 
 BUCKETS = [(0, 10), (10, 20), (20, 40), (40, 80), (80, 200), (200, 1e9)]
 

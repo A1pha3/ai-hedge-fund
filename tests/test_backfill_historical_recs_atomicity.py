@@ -14,8 +14,8 @@ from pathlib import Path
 
 def _patch_backfill_deps(monkeypatch, report_dir: Path, lock_path: Path, lock_acquired: list):
     """patch backfill_one_date 函数内 import 的依赖 (函数内 import → patch 源模块)。"""
-    import src.screening.consecutive_recommendation as consec
     import src.main as main_mod
+    import src.screening.consecutive_recommendation as consec
     import src.screening.recommendation_tracker as tracker
 
     monkeypatch.setattr(consec, "resolve_report_dir", lambda: report_dir)

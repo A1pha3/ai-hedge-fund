@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 
-from src.tools import tushare_line_items_helpers, tushare_daily_basic_helpers
+from src.tools import tushare_daily_basic_helpers, tushare_line_items_helpers
 
 
 class TestLineItemsHelpersModuleLogger:

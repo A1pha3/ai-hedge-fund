@@ -460,6 +460,7 @@ class TestRankDeltaStr:
 def test_conviction_score_nan_score_b_returns_finite():
     """NS-13: NaN score_b must coerce to 0.0 (was: float('nan' or 0.0) = nan — NaN is truthy)."""
     import math
+
     from src.screening.confidence_calibration import CalibrationSummary
     from src.screening.conviction_ranking import compute_conviction_row
 

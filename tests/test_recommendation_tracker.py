@@ -832,6 +832,7 @@ class TestUpdateTrackingHistoryFileLock:
         """在 _save_history 执行瞬间, 另一个对同锁文件的 LOCK_EX|LOCK_NB 获取必须失败
         (证明 update_tracking_history 持有排他锁)。"""
         import fcntl as _fcntl
+
         from src.screening import recommendation_tracker as rt
         from src.screening.recommendation_tracker import update_tracking_history
 
@@ -871,6 +872,7 @@ class TestUpdateTrackingHistoryFileLock:
     def test_update_tracking_history_releases_lock_after_write(self, tmp_path: Path) -> None:
         """update_tracking_history 返回后锁必须释放 (后续 caller 能获取)。"""
         import fcntl as _fcntl
+
         from src.screening import recommendation_tracker as rt
         from src.screening.recommendation_tracker import update_tracking_history
 

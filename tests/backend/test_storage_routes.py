@@ -23,9 +23,11 @@ def test_save_json_atomic_crash_preserves_prior(tmp_path, monkeypatch):
     用户通过 web 存的 JSON, crash 落在 open('w') truncate 之后会丢用户输入。
     当前实现 catch Exception→500, 但文件已被 truncate 成空。原子写让 prior 完整。"""
     import json as _json
-    import app.backend.routes.storage as storage_mod
+
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
+    import app.backend.routes.storage as storage_mod
 
     monkeypatch.setattr(storage_mod, "_PROJECT_ROOT", tmp_path)
     outputs = tmp_path / "outputs"
@@ -66,9 +68,10 @@ def test_save_json_unexpected_exception_is_logged_not_swallowed(tmp_path, monkey
     import logging
     from unittest.mock import patch
 
-    import app.backend.routes.storage as storage_mod
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
+
+    import app.backend.routes.storage as storage_mod
 
     monkeypatch.setattr(storage_mod, "_PROJECT_ROOT", tmp_path)
     (tmp_path / "outputs").mkdir()

@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 
 from src.screening.drawdown_estimate import (
-    DrawdownEstimate,
     _estimate_path_max_drawdown,
     compute_drawdown_estimate,
+    DrawdownEstimate,
     render_drawdown_line,
 )
 

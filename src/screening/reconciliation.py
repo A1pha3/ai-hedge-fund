@@ -32,7 +32,6 @@ from typing import Any
 from src.screening.isotonic_calibration import MIN_BUCKET_SAMPLES
 from src.utils.display import Fore, Style
 
-
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
@@ -255,8 +254,8 @@ def compute_reconciliation(
         resolve_report_dir,
     )
     from src.screening.isotonic_calibration import (
-        fit_isotonic,
         apply_isotonic,
+        fit_isotonic,
         is_bucket_insufficient,
     )
 
@@ -301,7 +300,9 @@ def compute_reconciliation(
         # score_b is None → buy_date 报告无该标的; score_b 有但 predicted None →
         # 该 score_b 分桶在 calibration 里 0 mature 样本 (dogfood 20260702: 600000
         # score_b=0.7 落 中高 桶, 该桶 0 样本). 区分让操作者能 self-audit 裸 "—".
-        from src.screening.confidence_calibration import _find_bucket as _find_cal_bucket
+        from src.screening.confidence_calibration import (
+            _find_bucket as _find_cal_bucket,
+        )
 
         if score_b is None:
             _unmatched_reason: str | None = "报告无该标的"

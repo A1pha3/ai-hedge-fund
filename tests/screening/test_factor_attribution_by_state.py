@@ -12,9 +12,9 @@ state_type_calibration 结构。纯诊断, 不改因子/gate/仓位。
 from __future__ import annotations
 
 from src.screening.factor_attribution_by_state import (
+    compute_factor_attribution_by_state_from_loaded,
     FactorAttributionByStateReport,
     FactorStateInversion,
-    compute_factor_attribution_by_state_from_loaded,
     render_factor_attribution_by_state_line,
 )
 
@@ -90,7 +90,9 @@ class TestScoreControlledFactorAttribution:
 
     def test_real_factor_inversion_survives_score_control(self) -> None:
         """真实因子效应: 同 score bucket 内, 高贡献→低胜率 (经 control 仍倒挂)."""
-        from src.screening.factor_attribution_by_state import compute_factor_attribution_score_controlled_from_loaded
+        from src.screening.factor_attribution_by_state import (
+            compute_factor_attribution_score_controlled_from_loaded,
+        )
 
         recs = []
         # 全在 low bucket (score~0.2), 排除 score confound; event_sentiment 高→负return
@@ -105,7 +107,9 @@ class TestScoreControlledFactorAttribution:
 
     def test_score_confound_filtered_out(self) -> None:
         """纯 score confound (无真实因子效应): score-controlled 后不报倒挂."""
-        from src.screening.factor_attribution_by_state import compute_factor_attribution_score_controlled_from_loaded
+        from src.screening.factor_attribution_by_state import (
+            compute_factor_attribution_score_controlled_from_loaded,
+        )
 
         recs = []
         # factor 贡献完全跟随 score (无独立效应); winrate 由 score 决定非 factor
@@ -124,7 +128,9 @@ class TestScoreControlledFactorAttribution:
 
     def test_score_controlled_inversion_carries_bootstrap_ci(self) -> None:
         """c321/autodev-36: score-controlled 因子倒挂携带 bootstrap CI (镜像 c317)."""
-        from src.screening.factor_attribution_by_state import compute_factor_attribution_score_controlled_from_loaded
+        from src.screening.factor_attribution_by_state import (
+            compute_factor_attribution_score_controlled_from_loaded,
+        )
 
         recs = []
         # 全 low bucket, event_sentiment 高→负 (强倒挂, ~720 条)
@@ -146,9 +152,9 @@ class TestScoreControlledFactorAttribution:
     def test_score_controlled_render_shows_ci_bracket(self) -> None:
         """c321: render_score_controlled_factor_line 展示 CI 括号."""
         from src.screening.factor_attribution_by_state import (
+            render_score_controlled_factor_line,
             ScoreControlledFactorInversion,
             ScoreControlledFactorReport,
-            render_score_controlled_factor_line,
         )
 
         inv = ScoreControlledFactorInversion(
@@ -176,8 +182,8 @@ class TestScoreControlledFactorAttribution:
     def test_score_controlled_render_silent_when_insufficient(self) -> None:
         """insufficient 时 render 返回空串."""
         from src.screening.factor_attribution_by_state import (
-            ScoreControlledFactorReport,
             render_score_controlled_factor_line,
+            ScoreControlledFactorReport,
         )
 
         report = ScoreControlledFactorReport(verdict="insufficient")
@@ -328,7 +334,9 @@ class TestAsOf:
         assert report.as_of == "20260703"
 
     def test_score_controlled_report_has_as_of(self) -> None:
-        from src.screening.factor_attribution_by_state import compute_factor_attribution_score_controlled_from_loaded
+        from src.screening.factor_attribution_by_state import (
+            compute_factor_attribution_score_controlled_from_loaded,
+        )
 
         recs = [
             {"score_decomposition": {"base_contributions": {"ES": 0.02}, "total": 0.3}, "next_5day_return": -2.0, "recommended_date": "20260701"},
@@ -397,9 +405,11 @@ class TestDeterministicStrHash:
 
     def test_consistent_with_sibling_modules(self) -> None:
         """All 3 implementations must produce identical hashes."""
-        from src.screening.factor_attribution_by_state import _deterministic_str_hash as h1
-        from src.screening.north_star_pnl import _deterministic_str_hash as h2
+        from src.screening.factor_attribution_by_state import (
+            _deterministic_str_hash as h1,
+        )
         from src.screening.model_version_comparison import _deterministic_str_hash as h3
+        from src.screening.north_star_pnl import _deterministic_str_hash as h2
 
         for s in ["event_sentiment", "trend", "score_desc"]:
             assert h1(s) == h2(s) == h3(s)

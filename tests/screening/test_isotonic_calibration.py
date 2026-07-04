@@ -9,11 +9,11 @@ from __future__ import annotations
 import pytest
 
 from src.screening.isotonic_calibration import (
-    MIN_BUCKET_SAMPLES,
-    IsotonicModel,
     apply_isotonic,
     fit_isotonic,
     is_bucket_insufficient,
+    IsotonicModel,
+    MIN_BUCKET_SAMPLES,
     pool_adjacent_violators,
 )
 

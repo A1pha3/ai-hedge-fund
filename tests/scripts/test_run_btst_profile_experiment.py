@@ -139,7 +139,10 @@ class TestAggregation:
         # aggregate_outcomes_by_profile must return skipped-ledger info so the
         # render can warn. The return contract carries skips under a non-profile
         # "_skipped_ledgers" key (profiles are lowercase, no collision).
-        from scripts.run_btst_profile_experiment import aggregate_outcomes_by_profile, render_profile_experiment_report
+        from scripts.run_btst_profile_experiment import (
+            aggregate_outcomes_by_profile,
+            render_profile_experiment_report,
+        )
 
         result = aggregate_outcomes_by_profile([valid_path, corrupt_path, missing_keys_path])
         # The aggregation result must carry skipped-ledger diagnostics.

@@ -131,9 +131,9 @@ def test_render_shows_equal_weight_benchmark_ci() -> None:
     satisfy a "[X%-Y%]" substring check.
     """
     from src.screening.north_star_pnl import (
+        render_selection_profitability_line,
         SelectionProfitabilityReport,
         SelectionStrategyResult,
-        render_selection_profitability_line,
     )
 
     def _strat(name: str, wr: float, lo: float, hi: float, median: float = 0.0) -> SelectionStrategyResult:

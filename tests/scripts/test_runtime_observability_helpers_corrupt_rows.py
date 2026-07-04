@@ -22,9 +22,9 @@ from pathlib import Path
 import pytest
 
 from src.paper_trading.runtime_observability_helpers import (
+    _iter_paper_trading_day_payloads,
     build_dual_target_session_summary,
     build_llm_observability_summary,
-    _iter_paper_trading_day_payloads,
 )
 
 

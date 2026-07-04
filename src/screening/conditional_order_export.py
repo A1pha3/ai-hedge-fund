@@ -90,7 +90,9 @@ def _next_business_day(start: date, n_days: int = DEFAULT_VALID_DAYS) -> str:
 
     # 1. 优先用 trade_cal (拉取足够窗口: n_days 个交易日 + 21 天节假日缓冲)
     try:
-        from src.tools.tushare_api import get_open_trade_dates  # local import: keep startup light
+        from src.tools.tushare_api import (
+            get_open_trade_dates,  # local import: keep startup light
+        )
 
         fetch_end = start + timedelta(days=n_days + 21)
         open_dates = get_open_trade_dates(start_str, fetch_end.strftime("%Y%m%d"))

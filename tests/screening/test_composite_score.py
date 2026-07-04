@@ -470,7 +470,9 @@ def test_compute_composite_scores_for_recommendations_logs_dimension_degradation
     import unittest.mock as mock
 
     from src.screening import composite_score
-    from src.screening.composite_score import compute_composite_scores_for_recommendations
+    from src.screening.composite_score import (
+        compute_composite_scores_for_recommendations,
+    )
 
     rec = [{"ticker": "000001", "name": "测试", "score_b": 0.5}]
     with mock.patch.object(

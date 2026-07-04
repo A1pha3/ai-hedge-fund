@@ -16,9 +16,9 @@ from pathlib import Path
 import pytest
 
 from src.screening.ticker_horizon_stats import (
-    TickerHorizonStats,
     compute_ticker_horizon_stats,
     load_tracking_records,
+    TickerHorizonStats,
 )
 
 # ---------------------------------------------------------------------------

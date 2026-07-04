@@ -21,10 +21,10 @@ from typing import Any, Callable
 
 from src.screening.consecutive_recommendation import resolve_report_dir
 from src.screening.recommendation_tracker import (
-    HISTORY_FILENAME,
     _load_history,
     _record_key,
     fetch_actual_returns,
+    HISTORY_FILENAME,
 )
 
 logger = logging.getLogger(__name__)

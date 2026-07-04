@@ -400,8 +400,9 @@ class TestCorruptJsonGracefulR94:
 
     def test_corrupt_tracking_history_degrades_with_diagnostic_r94(self, tmp_report_dir: Path, caplog: "pytest.LogCaptureFixture") -> None:
         """_block_exit_rebalance_summary: 损坏的 tracking_history.json 优雅降级 + warning。"""
-        from src.notification.weekly_report import generate_weekly_report
         import logging
+
+        from src.notification.weekly_report import generate_weekly_report
 
         corrupt = tmp_report_dir / "tracking_history.json"
         corrupt.write_text("}{corrupted", encoding="utf-8")
@@ -418,8 +419,9 @@ class TestCorruptJsonGracefulR94:
 
     def test_corrupt_auto_screening_degrades_with_diagnostic_r94(self, tmp_report_dir: Path, caplog: "pytest.LogCaptureFixture") -> None:
         """_block_next_week_watch: 损坏的最新 auto_screening.json 优雅降级 + warning。"""
-        from src.notification.weekly_report import generate_weekly_report
         import logging
+
+        from src.notification.weekly_report import generate_weekly_report
 
         corrupt = tmp_report_dir / "auto_screening_20260606.json"
         corrupt.write_text("not json at all {{{", encoding="utf-8")

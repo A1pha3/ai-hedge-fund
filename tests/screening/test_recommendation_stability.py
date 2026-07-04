@@ -6,10 +6,10 @@ import json
 from pathlib import Path
 
 from src.screening.recommendation_stability import (
-    RecommendationStabilityReport,
     _jaccard,
     _top_n_tickers,
     compute_recommendation_stability,
+    RecommendationStabilityReport,
     render_stability_line,
 )
 

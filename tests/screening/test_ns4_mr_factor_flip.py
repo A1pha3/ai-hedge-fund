@@ -28,9 +28,9 @@ from src.agents.technicals import (
     calculate_stat_arb_signals,
 )
 from src.screening.strategy_scorer_mean_reversion import (
-    HurstRegimeSnapshot,
     _resolve_hurst_regime_signal,
     _resolve_rsi_extreme_signal,
+    HurstRegimeSnapshot,
     score_mean_reversion_strategy,
 )
 

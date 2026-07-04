@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from src.screening.consecutive_recommendation import resolve_report_dir
+
 # Canonical 4-strategy key order — single source of truth (see custom_weights).
 from src.screening.custom_weights import STRATEGY_KEYS
 from src.utils.display import Fore, Style

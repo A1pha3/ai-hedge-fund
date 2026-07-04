@@ -52,11 +52,11 @@ from dotenv import load_dotenv
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 from scripts._backtest_light_stage_universe import (  # noqa: E402
+    _get_pro,
     compute_factor_snapshot,
     get_history_batch,
     get_trading_dates,
     get_universe_for_date,
-    _get_pro,
 )
 
 logger = logging.getLogger("trend_pool_filter_diag")

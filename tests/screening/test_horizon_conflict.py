@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from src.screening.horizon_conflict import (
-    HorizonConflict,
     detect_horizon_conflict,
+    HorizonConflict,
     render_horizon_conflict,
 )
 

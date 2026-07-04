@@ -31,9 +31,9 @@ sys.path.insert(0, str(_PROJECT_ROOT))
 
 from scripts._diag_r6_multihorizon_accrual import (  # noqa: E402
     load_state,
+    maturity_for_window,
     merge_day_rows,
     plan_next_batch,
-    maturity_for_window,
 )
 
 # ---------------------------------------------------------------------------
@@ -230,8 +230,9 @@ def test_accrual_invariant_batched_equals_single_run():
         state_a = merge_day_rows(state_a, d, day_rows[d])
 
     # Path B: simulate 4 separate resume runs (load → merge → save → reload)
-    import scripts._diag_r6_multihorizon_accrual as m
     import tempfile
+
+    import scripts._diag_r6_multihorizon_accrual as m
 
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "state.json"

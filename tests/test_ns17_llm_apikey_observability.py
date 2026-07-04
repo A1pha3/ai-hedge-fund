@@ -20,7 +20,7 @@ import logging
 
 import pytest
 
-from src.llm import models, model_builder_helpers
+from src.llm import model_builder_helpers, models
 
 
 class TestLlmModelsModuleLogger:

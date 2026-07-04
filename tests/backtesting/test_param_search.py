@@ -263,10 +263,10 @@ def test_save_checkpoint_is_atomic_no_partial_file_on_crash(tmp_path, monkeypatc
     the atomic rename — the canonical path must remain in its prior valid
     state (or absent if first write), never a partial file.
     """
-    import os
     import json
+    import os
 
-    from src.backtesting.param_search import _save_checkpoint, _load_checkpoint
+    from src.backtesting.param_search import _load_checkpoint, _save_checkpoint
 
     cp_path = tmp_path / "checkpoint.json"
 

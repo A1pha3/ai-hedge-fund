@@ -9,13 +9,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from src.screening.top_picks import (
-    _RISK_HIGH_THRESHOLD,
-    _RISK_LOW_THRESHOLD,
     _compute_factor_reason,
     _format_stop_loss_take_profit,
     _render_factor_attribution,
     _render_reason_and_risk,
+    _RISK_HIGH_THRESHOLD,
     _risk_label_from_advice,
+    _RISK_LOW_THRESHOLD,
 )
 from src.utils.display import Fore, Style
 

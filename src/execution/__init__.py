@@ -1,5 +1,6 @@
 # Execution package - 日度执行流水线
 
+from src.execution.buy_signal_confirmation import confirm_buy_signal
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.daily_pipeline import DailyPipeline
 from src.execution.layer_c_aggregator import (
@@ -8,7 +9,6 @@ from src.execution.layer_c_aggregator import (
 )
 from src.execution.plan_generator import generate_execution_plan
 from src.execution.signal_decay import apply_signal_decay
-from src.execution.buy_signal_confirmation import confirm_buy_signal
 
 __all__ = [
     "DailyPipeline",

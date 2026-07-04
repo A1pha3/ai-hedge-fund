@@ -5,6 +5,8 @@ from collections import Counter
 from datetime import datetime
 from typing import Any, TYPE_CHECKING
 
+# c296 reusable atomic-write helper (same _replay_artifacts subsystem).
+from app.backend.services._replay_artifacts.ledger_io import _atomic_write_json
 from src.research.feedback import (
     append_research_feedback,
     read_research_feedback,
@@ -16,9 +18,6 @@ from src.research.models import (
     RESEARCH_FEEDBACK_ALLOWED_TAGS,
     ResearchFeedbackRecord,
 )
-
-# c296 reusable atomic-write helper (same _replay_artifacts subsystem).
-from app.backend.services._replay_artifacts.ledger_io import _atomic_write_json
 
 if TYPE_CHECKING:
     from app.backend.services.replay_artifact_service import ReplayArtifactService

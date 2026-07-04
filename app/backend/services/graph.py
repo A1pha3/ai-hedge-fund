@@ -167,6 +167,7 @@ async def run_graph_async(graph, portfolio, tickers, start_date, end_date, model
     loop = asyncio.get_running_loop()
     if run_id is not None:
         import contextvars
+
         from src.utils.progress import attach_run_id
 
         ctx = attach_run_id(contextvars.copy_context(), run_id)

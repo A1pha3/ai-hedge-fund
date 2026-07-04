@@ -47,7 +47,10 @@ def test_q1_groups_t30_by_state_type_with_winrate_and_median():
 # Task 2: 问2 震荡市 score-bucket 细分
 # ---------------------------------------------------------------------------
 
-from src.screening.state_type_calibration import _score_bucket, compute_state_type_bucket_subdivision  # noqa: E402
+from src.screening.state_type_calibration import (  # noqa: E402
+    _score_bucket,
+    compute_state_type_bucket_subdivision,
+)
 
 
 def test_score_bucket_bands():
@@ -86,7 +89,9 @@ def test_q2_subdivides_target_state_types_by_score_bucket():
 # Task 3: 问3 留一时段样本外验证 (防 in-sample 过拟合核心)
 # ---------------------------------------------------------------------------
 
-from src.screening.state_type_calibration import leave_one_period_out_validation  # noqa: E402
+from src.screening.state_type_calibration import (  # noqa: E402
+    leave_one_period_out_validation,
+)
 
 
 def test_q3_lopo_rediscovers_real_signal_out_of_sample():
@@ -125,11 +130,11 @@ def test_q3_lopo_rejects_in_sample_artifact():
 # ---------------------------------------------------------------------------
 
 from src.screening.state_type_calibration import (  # noqa: E402
+    aggregate_verdict,
+    DiagnosisVerdict,
+    LopoReport,
     StateTypeCalibrationReport,
     StateTypeWinRate,
-    LopoReport,
-    DiagnosisVerdict,
-    aggregate_verdict,
 )
 
 

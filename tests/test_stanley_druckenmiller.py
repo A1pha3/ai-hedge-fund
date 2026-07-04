@@ -93,7 +93,9 @@ def test_druckenmiller_price_momentum_uses_30d_window_not_full_history():
     - fix (30 bar 窗口): close[-31]=150 (idx 11) → close[-1]=150 → 0% → "Negative"
     前 11 bar ramp 落在 30-bar 窗口 (idx 11-41) 之外, 保证窗口全平。
     """
-    from src.agents.stanley_druckenmiller_helpers import _score_druckenmiller_price_momentum
+    from src.agents.stanley_druckenmiller_helpers import (
+        _score_druckenmiller_price_momentum,
+    )
 
     # 前 11 bar: 100 → 150 (斜坡上涨, idx<11); 后 31 bar: 全部 150 (近期走平, idx>=11)
     prices = [SimpleNamespace(time=index, close=(100 + index * 5 if index < 11 else 150)) for index in range(42)]

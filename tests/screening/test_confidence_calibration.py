@@ -621,6 +621,7 @@ def test_t15_t25_fields_serialize_in_to_dict():
 def test_optional_float_rejects_nan_inf():
     """NS-13: _optional_float must return None for NaN/Inf (else bucket averages poisoned)."""
     import math
+
     from src.screening.confidence_calibration import _optional_float
 
     assert _optional_float(float("nan")) is None

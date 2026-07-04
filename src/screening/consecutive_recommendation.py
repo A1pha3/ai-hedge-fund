@@ -162,7 +162,9 @@ def _resolve_real_open_trade_dates(window_start_dt: datetime, end_dt: datetime) 
     extra slack before the lookback window's earliest report.
     """
     try:
-        from src.tools.tushare_api import get_open_trade_dates  # local import to keep module light
+        from src.tools.tushare_api import (
+            get_open_trade_dates,  # local import to keep module light
+        )
     except Exception:  # pragma: no cover — defensive: should never raise on import
         return None
 

@@ -46,7 +46,9 @@ def test_explicit_zero_min_evaluable_count_is_preserved(monkeypatch: pytest.Monk
 
 def test_missing_keys_fall_back_to_default(monkeypatch: pytest.MonkeyPatch) -> None:
     """Missing keys still fall back to the WEAK_NEAR_MISS default (behavior preserved)."""
-    from src.paper_trading.btst_reporting_utils import WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT
+    from src.paper_trading.btst_reporting_utils import (
+        WEAK_NEAR_MISS_DEMOTION_MIN_EVALUABLE_COUNT,
+    )
 
     monkeypatch.setattr(entry_builders, "resolve_strategy_thresholds", lambda: {})
     thresholds = entry_builders._resolve_selected_execution_quality_thresholds()

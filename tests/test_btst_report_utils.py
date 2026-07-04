@@ -153,7 +153,9 @@ class TestWriteJsonAtomicity:
         the full payload is committed, so the worst case is the prior content — never a
         corrupt half-file (R101 / R88 corrupt-sidecar root cause from the CRASH vector).
         """
-        from src.paper_trading.btst_reporting_utils import _write_json as _write_json_prod
+        from src.paper_trading.btst_reporting_utils import (
+            _write_json as _write_json_prod,
+        )
 
         target = tmp_path / "sidecar.json"
         _write_json_prod(target, {"artifact": "PRIOR", "v": 1})
@@ -180,9 +182,13 @@ class TestWriteJsonAtomicity:
         Guards the atomic implementation's ``except BaseException`` cleanup: a failed
         serialization must unlink the temp file and leave the prior final-path artifact intact.
         """
-        import pytest
         from unittest.mock import patch
-        from src.paper_trading.btst_reporting_utils import _write_json as _write_json_prod
+
+        import pytest
+
+        from src.paper_trading.btst_reporting_utils import (
+            _write_json as _write_json_prod,
+        )
 
         target = tmp_path / "sidecar.json"
         _write_json_prod(target, {"artifact": "PRIOR", "v": 1})

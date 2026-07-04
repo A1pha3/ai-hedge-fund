@@ -1,5 +1,5 @@
-from collections.abc import Callable
 import logging
+from collections.abc import Callable
 
 import pandas as pd
 

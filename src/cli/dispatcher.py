@@ -868,7 +868,10 @@ def _resolve_reconcile(argv: list[str]) -> int | None:
     if not trade_path.exists():
         print(f"{Fore.RED}交易日志不存在: {trade_path}{Style.RESET_ALL}")
         return 1
-    from src.screening.reconciliation import compute_reconciliation, render_reconciliation
+    from src.screening.reconciliation import (
+        compute_reconciliation,
+        render_reconciliation,
+    )
 
     report = compute_reconciliation(trade_log_path=trade_path)
     print(render_reconciliation(report))
@@ -906,6 +909,7 @@ def _resolve_flywheel_health(argv: list[str]) -> int | None:
     if "--flywheel-health" not in argv:
         return None
     import json as _json
+
     from src.screening.flywheel_health import assess_tracking_history
 
     result = assess_tracking_history()

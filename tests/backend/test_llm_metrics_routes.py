@@ -229,6 +229,7 @@ def test_collect_metrics_discloses_missing_logs_dir(tmp_path, monkeypatch):
 def test_collect_metrics_discloses_oserror_file_skip(tmp_path, monkeypatch, caplog):
     """A JSONL file that raises OSError on open must be counted + logged, not silently dropped."""
     import logging
+
     import app.backend.routes.llm_metrics as mod
 
     monkeypatch.setenv("LLM_METRICS_DIR", str(tmp_path))

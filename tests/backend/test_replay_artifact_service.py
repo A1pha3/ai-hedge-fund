@@ -2536,7 +2536,10 @@ class TestLedgerIoReadCorruptTolerance:
     def test_read_json_degrades_to_empty_on_corrupt(self, tmp_path: Path, caplog) -> None:
         """Corrupt session_summary.json → degrade to {} + warning, not JSONDecodeError crash."""
         import logging as _logging
-        from app.backend.services._replay_artifacts.ledger_io import ReplayLedgerIoHelper
+
+        from app.backend.services._replay_artifacts.ledger_io import (
+            ReplayLedgerIoHelper,
+        )
 
         service = _build_service_with_db(tmp_path)
         helper = ReplayLedgerIoHelper(service)
@@ -2551,7 +2554,9 @@ class TestLedgerIoReadCorruptTolerance:
 
     def test_read_json_still_raises_for_missing_file(self, tmp_path: Path) -> None:
         """The missing-file contract (raise FileNotFoundError) must be preserved — callers depend on it."""
-        from app.backend.services._replay_artifacts.ledger_io import ReplayLedgerIoHelper
+        from app.backend.services._replay_artifacts.ledger_io import (
+            ReplayLedgerIoHelper,
+        )
 
         service = _build_service_with_db(tmp_path)
         helper = ReplayLedgerIoHelper(service)
@@ -2564,7 +2569,10 @@ class TestLedgerIoReadCorruptTolerance:
         """R60/R102 JSONL pattern: a single corrupt line in a feedback JSONL ledger
         is skipped (with warning), valid rows preserved — not a whole-read crash."""
         import logging as _logging
-        from app.backend.services._replay_artifacts.ledger_io import ReplayLedgerIoHelper
+
+        from app.backend.services._replay_artifacts.ledger_io import (
+            ReplayLedgerIoHelper,
+        )
 
         service = _build_service_with_db(tmp_path)
         helper = ReplayLedgerIoHelper(service)
@@ -2586,7 +2594,9 @@ class TestLedgerIoWriteAtomicity:
     """
 
     def test_crash_during_summary_write_never_leaves_truncated_file(self, tmp_path: Path, monkeypatch) -> None:
-        from app.backend.services._replay_artifacts.ledger_io import ReplayLedgerIoHelper
+        from app.backend.services._replay_artifacts.ledger_io import (
+            ReplayLedgerIoHelper,
+        )
 
         service = _build_service_with_db(tmp_path)
         helper = ReplayLedgerIoHelper(service)

@@ -466,8 +466,8 @@ def test_mean_reversion_not_reversed_by_default() -> None:
     Post-NS-4 语义: bullish = overbought (动量延续看涨); bearish = oversold
     (动量延续看跌). multiplier=1.0 时 MR bullish → score += 正值 (与 T+1 对齐).
     """
-    from src.screening.signal_fusion import compute_score_b
     from src.screening.models import STRATEGY_DIRECTION_MULTIPLIER
+    from src.screening.signal_fusion import compute_score_b
 
     assert STRATEGY_DIRECTION_MULTIPLIER.get("mean_reversion") == 1.0, "NS-4 已在 generator 层对齐 T+1 方向, multiplier 保持 1.0"
 
@@ -1461,6 +1461,7 @@ def test_fuse_emits_per_ticker_debug_breakdown(caplog):
     arbitration + score_b for opt-in diagnosis (LOG_LEVEL=DEBUG).
     """
     import logging
+
     from src.screening.signal_fusion import fuse_signals_for_ticker
 
     with caplog.at_level(logging.DEBUG, logger="src.screening.signal_fusion"):

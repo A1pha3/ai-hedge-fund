@@ -32,9 +32,9 @@ from src.paper_trading.btst_decision_enrichment import (
 )
 from src.paper_trading.btst_reporting_utils import _format_rollout_value
 from src.screening.ticker_horizon_stats import (
-    TickerHorizonStats,
     compute_ticker_horizon_stats,
     load_tracking_records,
+    TickerHorizonStats,
 )
 
 REPORTS_DIR = Path("data/reports")

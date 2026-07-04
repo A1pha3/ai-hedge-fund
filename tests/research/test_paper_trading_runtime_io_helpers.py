@@ -81,6 +81,7 @@ def test_write_research_feedback_summary_atomic_crash_preserves_prior(tmp_path: 
     """R88 corrupt-sidecar CRASH vector: write_research_feedback_summary must write
     atomically — a crash mid-write leaves any prior summary intact, not truncated."""
     import json as _json
+
     from src.paper_trading.runtime_io_helpers import write_research_feedback_summary
 
     artifact_root = tmp_path / "selection_artifacts"
@@ -117,6 +118,7 @@ def test_write_research_feedback_summary_atomic_crash_preserves_prior(tmp_path: 
 def test_write_runtime_summary_atomic_crash_preserves_prior(tmp_path: Path, monkeypatch) -> None:
     """R88 corrupt-sidecar CRASH vector: write_runtime_summary must write atomically."""
     import json as _json
+
     from src.paper_trading.runtime_io_helpers import write_runtime_summary
 
     summary_path = tmp_path / "runtime_summary.json"

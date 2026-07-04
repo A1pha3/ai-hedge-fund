@@ -21,9 +21,9 @@ from pathlib import Path
 
 from src.main import _build_auto_screening_payload, _compute_model_version
 from src.screening.recommendation_tracker import (
-    TrackingRecord,
     load_pending_recommendations,
     load_pending_recommendations_with_version,
+    TrackingRecord,
     update_tracking_history,
 )
 

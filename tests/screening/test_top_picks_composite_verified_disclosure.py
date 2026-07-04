@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.screening.top_picks import TopPicksRenderContext, _print_pick_entry
+from src.screening.top_picks import _print_pick_entry, TopPicksRenderContext
 
 
 def _context() -> TopPicksRenderContext:

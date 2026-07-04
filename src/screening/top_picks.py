@@ -49,8 +49,8 @@ from src.screening.investability import (
 )
 from src.screening.signal_decay_detector import detect_signal_decay
 from src.screening.verify_recommendations import compute_verify_recommendations
-from src.utils.numeric import safe_float as _safe_float_value
 from src.utils.display import Fore, Style
+from src.utils.numeric import safe_float as _safe_float_value
 
 logger = logging.getLogger(__name__)
 
@@ -1074,9 +1074,9 @@ def _real_trading_days_between(start: datetime, end: datetime) -> int | None:
     ``_trading_days_between`` semantics.
     """
     try:
-        from src.tools.tushare_api import (
+        from src.tools.tushare_api import (  # local import: keep startup light
             get_open_trade_dates,
-        )  # local import: keep startup light
+        )
     except Exception:  # pragma: no cover — defensive
         return None
     start_compact = start.strftime("%Y%m%d")
@@ -1630,8 +1630,8 @@ def _print_pick_entry(
     # R-1: 多周期冲突 (short vs long horizon sign disagreement) — any pick
     from src.screening.horizon_conflict import (
         detect_horizon_conflict,
-        render_horizon_conflict as _render_hc,
     )
+    from src.screening.horizon_conflict import render_horizon_conflict as _render_hc
 
     hc = detect_horizon_conflict(item.get("expected_returns"))
     hc_line = _render_hc(hc)
@@ -1833,8 +1833,8 @@ def _print_regime_winrate_block(market_regime: str) -> None:
     """
     try:
         from src.screening.regime_winrate import (
-            render_regime_winrate_line,
             render_regime_multihorizon_line,
+            render_regime_winrate_line,
         )
 
         line = render_regime_winrate_line(market_regime)
@@ -1862,6 +1862,9 @@ def _print_monotonicity_block(report_dir: Path) -> None:
     regime_winrate / portfolio_concentration 的 best-effort footer-block 模式.
     """
     try:
+        from src.screening.consecutive_recommendation import (
+            load_tracking_history,
+        )
         from src.screening.rank_monotonicity import (
             compute_high_vs_low_significance_from_loaded,
             compute_horizon_monotonicity_from_loaded,
@@ -1872,9 +1875,6 @@ def _print_monotonicity_block(report_dir: Path) -> None:
             render_per_state_type_monotonicity_line,
             render_period_breakdown_line,
             render_significance_line,
-        )
-        from src.screening.consecutive_recommendation import (
-            load_tracking_history,
         )
 
         report = compute_rank_monotonicity(reports_dir=report_dir)
@@ -1908,6 +1908,8 @@ def _print_monotonicity_block(report_dir: Path) -> None:
         try:
             from src.screening.rank_monotonicity import (
                 compute_power_analysis_from_loaded as _compute_power,
+            )
+            from src.screening.rank_monotonicity import (
                 render_power_line as _render_power,
             )
 
@@ -1964,11 +1966,11 @@ def _print_factor_attribution_block(report_dir: Path) -> None:
     owner 跑 --auto (新代码注入 decomposition) 累积新 records 后激活.
     """
     try:
+        from src.screening.consecutive_recommendation import load_tracking_history
         from src.screening.factor_attribution import (
             compute_factor_attribution_from_loaded,
             render_factor_attribution_line,
         )
-        from src.screening.consecutive_recommendation import load_tracking_history
 
         records = load_tracking_history(report_dir)
         report = compute_factor_attribution_from_loaded(records, min_n=15)
@@ -2062,6 +2064,7 @@ def _print_north_star_block(report_dir: Path) -> None:
     negative⚠ (亏) / insufficient 静默. 纯诊断不改 gate/factor/仓位.
     """
     try:
+        from src.screening.consecutive_recommendation import load_tracking_history
         from src.screening.north_star_pnl import (
             compute_holding_period_curve_from_loaded,
             compute_north_star_pnl,
@@ -2070,7 +2073,6 @@ def _print_north_star_block(report_dir: Path) -> None:
             render_north_star_line,
             render_payoff_line,
         )
-        from src.screening.consecutive_recommendation import load_tracking_history
 
         report = compute_north_star_pnl(reports_dir=report_dir)
     except Exception as exc:  # noqa: BLE001 — best-effort display; never break the front door  (c279: was silent return → observable)
@@ -2117,6 +2119,8 @@ def _print_north_star_block(report_dir: Path) -> None:
         try:
             from src.screening.north_star_pnl import (
                 compute_pruning_strategy_from_loaded as _compute_pruning,
+            )
+            from src.screening.north_star_pnl import (
                 render_pruning_line as _render_pruning,
             )
 
@@ -2135,6 +2139,8 @@ def _print_north_star_block(report_dir: Path) -> None:
         try:
             from src.screening.north_star_pnl import (
                 compute_bootstrap_ci_from_loaded as _compute_bootstrap,
+            )
+            from src.screening.north_star_pnl import (
                 render_bootstrap_ci_line as _render_bootstrap,
             )
 

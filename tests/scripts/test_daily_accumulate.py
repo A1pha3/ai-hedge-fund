@@ -5,8 +5,8 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from scripts.daily_accumulate import (
-    POWER_THRESHOLD,
     get_accumulation_progress,
+    POWER_THRESHOLD,
 )
 
 

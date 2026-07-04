@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any
 
 from src.screening.consecutive_recommendation import resolve_report_dir
-
 from src.screening.custom_weights import STRATEGY_KEYS
 from src.utils.display import Fore, Style
 from src.utils.numeric import safe_float as _safe_float

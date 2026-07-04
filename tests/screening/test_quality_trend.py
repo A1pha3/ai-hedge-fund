@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 
 from src.screening.quality_trend import (
+    compute_quality_trend,
     QualityTrendReport,
     QualityWindow,
-    compute_quality_trend,
     render_quality_trend_line,
 )
 

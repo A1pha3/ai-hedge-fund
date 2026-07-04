@@ -106,11 +106,8 @@ def _install_trade_logger(floor_yuan: float) -> None:
     sufficient to intercept every SHORT/COVER routed through the engine.
     """
     import src.backtesting.trader as trader_mod
-
-    from src.backtesting.trader_helpers import (
-        execute_cover_trade as orig_cover,
-        execute_short_trade as orig_short,
-    )
+    from src.backtesting.trader_helpers import execute_cover_trade as orig_cover
+    from src.backtesting.trader_helpers import execute_short_trade as orig_short
 
     def logged_short(ticker, quantity, current_price, portfolio, slippage_rate, commission_rate, daily_turnover=None, commission_floor_yuan=5.0):
         eff = _apply_commission_floor(commission_rate, quantity, current_price, commission_floor_yuan)

@@ -525,6 +525,7 @@ class TestClassifyReturnRhythm:
         or safe_float guards so the function returns '—' for corrupt data.
         """
         import math
+
         from src.screening.top_picks import _classify_return_rhythm
 
         nan = math.nan
@@ -554,6 +555,7 @@ class TestDecisionHorizonMetricsWithNan:
 
     def test_extract_nan_horizon_returns_none(self) -> None:
         import math
+
         from src.screening.top_picks import _extract_decision_horizon_metrics
 
         edge, winrate = _extract_decision_horizon_metrics(
@@ -567,6 +569,7 @@ class TestDecisionHorizonMetricsWithNan:
 
     def test_extract_mixed_nan_horizon_returns_clean(self) -> None:
         import math
+
         from src.screening.top_picks import _extract_decision_horizon_metrics
 
         edge, winrate = _extract_decision_horizon_metrics(
@@ -589,6 +592,7 @@ class TestNanDoesNotRenderNanInPositionSizing:
 
     def test_nan_expected_returns_gives_zero_position(self) -> None:
         import math
+
         from src.screening.top_picks import _suggest_position_pct
 
         pos = _suggest_position_pct(
@@ -600,6 +604,7 @@ class TestNanDoesNotRenderNanInPositionSizing:
 
     def test_nan_winrate_with_finite_edge_gives_position(self) -> None:
         import math
+
         from src.screening.top_picks import _suggest_position_pct
 
         # NaN winrate should not crash — confidence should be treated safely

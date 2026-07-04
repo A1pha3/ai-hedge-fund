@@ -239,7 +239,9 @@ class TestResolveInterestExpenseFalsyZero:
         let 0.0 fall through to int_exp=100. With an explicit None-check the
         TTM path and raw path agree: 0.0 is a real value.
         """
-        from src.tools.tushare_financial_metrics_helpers import _resolve_interest_expense
+        from src.tools.tushare_financial_metrics_helpers import (
+            _resolve_interest_expense,
+        )
 
         # Empty TTM map -> forces the raw fallback path
         result = _resolve_interest_expense({}, "20240331", {"fin_exp_int_exp": 0.0, "int_exp": 100.0})
@@ -260,7 +262,9 @@ class TestRoaValidatorSelection:
         validate_margin (±100%) → None. Previously validate_roe (±200%)
         retained 1.5 as if it were a legitimate 150% return on assets."""
         from src.tools.tushare_api import _validate_margin, _validate_roe
-        from src.tools.tushare_financial_metrics_helpers import _build_profitability_metrics
+        from src.tools.tushare_financial_metrics_helpers import (
+            _build_profitability_metrics,
+        )
 
         result = _build_profitability_metrics(
             row={"roa": 150.0, "grossprofit_margin": 40.0},
@@ -278,7 +282,9 @@ class TestRoaValidatorSelection:
         """roa=8.0 (8%, normal) → 0.08 — within ±100%, preserved by both
         validators. Guards against an over-broad fix that would null real ROA."""
         from src.tools.tushare_api import _validate_margin, _validate_roe
-        from src.tools.tushare_financial_metrics_helpers import _build_profitability_metrics
+        from src.tools.tushare_financial_metrics_helpers import (
+            _build_profitability_metrics,
+        )
 
         result = _build_profitability_metrics(
             row={"roa": 8.0},

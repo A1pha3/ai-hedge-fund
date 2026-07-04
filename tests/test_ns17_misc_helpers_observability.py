@@ -18,7 +18,11 @@ from __future__ import annotations
 
 import logging
 
-from src.tools import tushare_sw_industry_helpers, akshare_news_helpers, akshare_market_helpers
+from src.tools import (
+    akshare_market_helpers,
+    akshare_news_helpers,
+    tushare_sw_industry_helpers,
+)
 
 
 class TestTushareSwIndustryHelpersLogger:

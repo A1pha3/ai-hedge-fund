@@ -34,7 +34,9 @@ import pandas as pd
 from src.data.macro_data import _as_of_month, _filter_df_as_of
 from src.tools.tushare_api import _apply_qfq_adjustment, filter_stock_basic_as_of
 from src.tools.tushare_financial_metrics_helpers import _should_include_financial_period
-from src.tools.tushare_line_items_helpers import should_include_period as _line_items_should_include_period
+from src.tools.tushare_line_items_helpers import (
+    should_include_period as _line_items_should_include_period,
+)
 
 # Shared anchor: the simulated trade date. Every look-ahead datum in this
 # scenario is "known to us today" but was NOT knowable on AS_OF.

@@ -10,6 +10,7 @@ import pytest
 import src.execution.daily_pipeline as daily_pipeline_module
 import src.execution.daily_pipeline_catalyst_diagnostics_helpers as catalyst_helpers_module
 import src.execution.layer_c_aggregator as layer_c_aggregator_module
+from src.execution.buy_signal_confirmation import confirm_buy_signal
 from src.execution.crisis_handler import evaluate_crisis_response
 from src.execution.daily_pipeline import DailyPipeline, WATCHLIST_SCORE_THRESHOLD
 from src.execution.daily_pipeline_buy_diagnostics_helpers import (
@@ -30,7 +31,6 @@ from src.execution.merge_approved_breakout_uplift import (
 )
 from src.execution.models import ExecutionPlan, LayerCResult
 from src.execution.signal_decay import apply_signal_decay
-from src.execution.buy_signal_confirmation import confirm_buy_signal
 from src.portfolio.models import PositionPlan
 from src.screening.models import (
     CandidateStock,

@@ -531,6 +531,7 @@ class TestBucketT30StdPropagation:
     def test_expected_return_carries_t30_std(self, tmp_path):
         """ExpectedReturn must expose bucket_t30_std_return from calibration."""
         import json
+
         from src.screening.expected_return import compute_expected_returns
 
         # 3 records in "高 (>0.8)" with distinct T+30 returns → std is computable
@@ -550,6 +551,7 @@ class TestBucketT30StdPropagation:
     def test_expected_return_std_none_when_insufficient(self, tmp_path):
         """<2 matured T+30 records → std None (honest, not a fake 0)."""
         import json
+
         from src.screening.expected_return import compute_expected_returns
 
         records = [
@@ -563,7 +565,11 @@ class TestBucketT30StdPropagation:
     def test_compact_render_shows_dispersion(self, tmp_path):
         """P-2: compact render must show ±std 离散 next to T+30 edge."""
         import json
-        from src.screening.expected_return import compute_expected_returns, render_expected_returns_compact
+
+        from src.screening.expected_return import (
+            compute_expected_returns,
+            render_expected_returns_compact,
+        )
 
         records = [
             {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.85, "next_30day_return": 10.0},
@@ -586,6 +592,7 @@ class TestBucketT30StdPropagation:
 def test_expected_return_nan_score_b_does_not_corrupt_bucket():
     """NS-13: a NaN score_b must fall to 0.0 (was: float('nan' or 0.0) = nan, NaN is truthy)."""
     import math
+
     from src.screening.expected_return import compute_expected_returns
 
     recs = [{"ticker": "000001", "name": "X", "score_b": float("nan")}]
@@ -611,6 +618,7 @@ class TestBucketT30MedianPropagation:
     def test_expected_return_carries_t30_median(self, tmp_path):
         """ExpectedReturn must expose bucket_t30_median_return from calibration."""
         import json
+
         from src.screening.expected_return import compute_expected_returns
 
         # 5 records in "高 (>0.8)" with skewed T+30 returns → median ≠ mean
@@ -639,6 +647,7 @@ class TestBucketT30MedianPropagation:
     def test_expected_return_median_none_when_no_matured(self, tmp_path):
         """No matured T+30 records → median None (honest, not a fake 0)."""
         import json
+
         from src.screening.expected_return import compute_expected_returns
 
         # Records without next_30day_return → no matured T+30 → median None
@@ -653,6 +662,7 @@ class TestBucketT30MedianPropagation:
     def test_to_dict_serializes_median(self, tmp_path):
         """R-5.C: to_dict must serialize bucket_t30_median_return (None and value)."""
         import json
+
         from src.screening.expected_return import ExpectedReturn, HORIZONS
 
         # Case 1: median value → rounded to 4 decimals
@@ -683,7 +693,11 @@ class TestBucketT30MedianPropagation:
     def test_full_render_shows_median_column(self, tmp_path):
         """R-5.C: render_expected_returns must show T+30中位 column header and value."""
         import json
-        from src.screening.expected_return import compute_expected_returns, render_expected_returns
+
+        from src.screening.expected_return import (
+            compute_expected_returns,
+            render_expected_returns,
+        )
 
         records = [
             {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.85, "next_30day_return": 3.0},
@@ -700,7 +714,11 @@ class TestBucketT30MedianPropagation:
     def test_compact_render_shows_median(self, tmp_path):
         """R-5.C: compact render must show T+30中位= next to T+30 mean."""
         import json
-        from src.screening.expected_return import compute_expected_returns, render_expected_returns_compact
+
+        from src.screening.expected_return import (
+            compute_expected_returns,
+            render_expected_returns_compact,
+        )
 
         records = [
             {"ticker": "000001", "recommended_date": "20260101", "recommendation_score": 0.85, "next_30day_return": 3.0},
@@ -715,7 +733,11 @@ class TestBucketT30MedianPropagation:
     def test_compact_render_omits_median_when_none(self, tmp_path):
         """R-5.C: when median is None, compact render must omit T+30中位 (no fake 0)."""
         import json
-        from src.screening.expected_return import compute_expected_returns, render_expected_returns_compact
+
+        from src.screening.expected_return import (
+            compute_expected_returns,
+            render_expected_returns_compact,
+        )
 
         # Records without next_30day_return → median None
         records = [
