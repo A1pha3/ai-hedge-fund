@@ -429,45 +429,50 @@ def test_web_custom_weights_endpoint_smoke(tmp_path: Path, monkeypatch: pytest.M
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.backend.routes.screening import router as screening_router
+    from app.backend.routes import screening as screening_mod
 
-    # 准备临时报告
-    monkeypatch.chdir(tmp_path)
+    # 准备测试数据 (不含 market_state 也可 — 会在 _attach_front_door_verdicts
+    # 中 fallback 为 "unknown", c282 honest disclosure)
     recs = [
         _make_rec("A", trend=1, trend_conf=80.0, score_b=0.5),
         _make_rec("B", trend=1, trend_conf=60.0, score_b=0.3),
     ]
-    reports_dir = tmp_path / "data" / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    (reports_dir / "auto_screening_20260607.json").write_text(json.dumps({"recommendations": recs}), encoding="utf-8")
+    payload = {"recommendations": recs, "market_state": {"regime_gate_level": "normal"}}
+
+    # c329: _load_latest_auto_screening_payload 使用 __file__ 定位,
+    # monkeypatch.chdir(tmp_path) 无效 → mock 整个 loader.
+    monkeypatch.setattr(
+        screening_mod,
+        "_load_latest_auto_screening_payload",
+        lambda trade_date=None: payload,
+    )
 
     app = FastAPI()
-    app.include_router(screening_router)  # screening_router 已含 /api/screening 前缀
+    app.include_router(screening_mod.router)
     client = TestClient(app)
 
-    payload = {
+    req_payload = {
         "trend": 0.4,
         "mean_reversion": 0.1,
         "fundamental": 0.3,
         "event_sentiment": 0.2,
         "top_n": 5,
     }
-    resp = client.post("/api/screening/custom-weights", json=payload)
-    assert resp.status_code in (200, 404), resp.text  # 找不到报告 (data dir 隔离) 也接受
-    if resp.status_code == 200:
-        data = resp.json()
-        assert "recommendations" in data
-        assert "meta" in data
-        # meta.weights 仅含四策略权重, 不含 top_n
-        assert data["meta"]["weights"] == {
-            "trend": 0.4,
-            "mean_reversion": 0.1,
-            "fundamental": 0.3,
-            "event_sentiment": 0.2,
-        }
-        # 报告里的 ticker 应在结果中
-        tickers = [r["ticker"] for r in data["recommendations"]]
-        assert "A" in tickers
+    resp = client.post("/api/screening/custom-weights", json=req_payload)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert "recommendations" in data
+    assert "meta" in data
+    # meta.weights 仅含四策略权重, 不含 top_n
+    assert data["meta"]["weights"] == {
+        "trend": 0.4,
+        "mean_reversion": 0.1,
+        "fundamental": 0.3,
+        "event_sentiment": 0.2,
+    }
+    # 报告里的 ticker 应在结果中
+    tickers = [r["ticker"] for r in data["recommendations"]]
+    assert "A" in tickers
 
 
 def test_web_custom_weights_invalid_sum_returns_422() -> None:
