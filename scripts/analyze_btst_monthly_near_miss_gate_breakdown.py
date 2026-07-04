@@ -178,12 +178,7 @@ def analyze_btst_monthly_near_miss_gate_breakdown(
                 c[str(f)] += 1
         return dict(sorted(c.items(), key=lambda kv: (-kv[1], kv[0])))
 
-    high_potential = [
-        r
-        for r in rows
-        if (r.prior_evidence_count or 0) >= int(min_prior_evidence)
-        and (r.effective_close_pos_rate is not None and float(r.effective_close_pos_rate) >= float(high_close_pos_rate))
-    ]
+    high_potential = [r for r in rows if (r.prior_evidence_count or 0) >= int(min_prior_evidence) and (r.effective_close_pos_rate is not None and float(r.effective_close_pos_rate) >= float(high_close_pos_rate))]
 
     overall = {
         "month": str(month),
@@ -237,9 +232,7 @@ def render_btst_monthly_near_miss_gate_breakdown_markdown(analysis: dict[str, An
     lines.append("## Overall")
     lines.append(f"- source: {overall.get('source')}")
     lines.append(f"- trade_date_count: {overall.get('trade_date_count')}, near_miss_row_count: {overall.get('near_miss_row_count')}")
-    lines.append(
-        f"- high_potential filter: prior_evidence_count>={overall.get('min_prior_evidence')} AND effective_close_pos_rate>={overall.get('high_close_pos_rate')}"
-    )
+    lines.append(f"- high_potential filter: prior_evidence_count>={overall.get('min_prior_evidence')} AND effective_close_pos_rate>={overall.get('high_close_pos_rate')}")
     lines.append(f"- high_potential_row_count: {overall.get('high_potential_row_count')}")
 
     def section(title: str, key: str) -> None:

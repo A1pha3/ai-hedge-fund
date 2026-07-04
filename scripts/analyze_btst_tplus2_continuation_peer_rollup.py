@@ -54,8 +54,7 @@ def _collect_risk_flags(board_rows: list[dict[str, Any]]) -> list[dict[str, Any]
             "next_close_positive_rate": row.get("next_close_positive_rate"),
         }
         for row in board_rows
-        if (row.get("t_plus_2_close_return_mean") is not None and float(row.get("t_plus_2_close_return_mean")) <= 0.0)
-        or (row.get("next_close_positive_rate") is not None and float(row.get("next_close_positive_rate")) <= 0.0)
+        if (row.get("t_plus_2_close_return_mean") is not None and float(row.get("t_plus_2_close_return_mean")) <= 0.0) or (row.get("next_close_positive_rate") is not None and float(row.get("next_close_positive_rate")) <= 0.0)
     ]
 
 
@@ -68,10 +67,7 @@ def _resolve_rollup_outcome(expansion_board: dict[str, Any], top_candidate: dict
     if int(expansion_board.get("near_cluster_count") or 0) > 0:
         return (
             "first_near_cluster_breakthrough",
-            "Continuation expansion has moved beyond a single-name pattern, but only into the near-cluster tier. "
-            f"Top candidate recent_tier_verdict={top_candidate.get('recent_tier_verdict')} "
-            f"({top_candidate.get('recent_tier_window_count')}/{top_candidate.get('recent_window_count')}). "
-            "Focus next work on validating the top near-cluster candidate across new windows.",
+            "Continuation expansion has moved beyond a single-name pattern, but only into the near-cluster tier. " f"Top candidate recent_tier_verdict={top_candidate.get('recent_tier_verdict')} " f"({top_candidate.get('recent_tier_window_count')}/{top_candidate.get('recent_window_count')}). " "Focus next work on validating the top near-cluster candidate across new windows.",
         )
     if expansion_board.get("board_rows"):
         return (
@@ -137,21 +133,13 @@ def render_btst_tplus2_continuation_peer_rollup_markdown(analysis: dict[str, Any
     lines.append("")
     lines.append("## Next Validation Candidates")
     for item in list(analysis.get("next_validation_candidates") or []):
-        lines.append(
-            f"- ticker={item['ticker']} tier={item['tier']} rank={item['priority_rank']} "
-            f"recent_tier_verdict={item['recent_tier_verdict']} "
-            f"recent_tier_window_count={item['recent_tier_window_count']}/{item['recent_window_count']} "
-            f"recent_tier_ratio={item['recent_tier_ratio']}"
-        )
+        lines.append(f"- ticker={item['ticker']} tier={item['tier']} rank={item['priority_rank']} " f"recent_tier_verdict={item['recent_tier_verdict']} " f"recent_tier_window_count={item['recent_tier_window_count']}/{item['recent_window_count']} " f"recent_tier_ratio={item['recent_tier_ratio']}")
     if not list(analysis.get("next_validation_candidates") or []):
         lines.append("- none")
     lines.append("")
     lines.append("## Risk Flags")
     for item in list(analysis.get("risk_flags") or []):
-        lines.append(
-            f"- ticker={item['ticker']} tier={item['tier']} reason={item['reason']} "
-            f"t_plus_2_close_return_mean={item['t_plus_2_close_return_mean']} next_close_positive_rate={item['next_close_positive_rate']}"
-        )
+        lines.append(f"- ticker={item['ticker']} tier={item['tier']} reason={item['reason']} " f"t_plus_2_close_return_mean={item['t_plus_2_close_return_mean']} next_close_positive_rate={item['next_close_positive_rate']}")
     if not list(analysis.get("risk_flags") or []):
         lines.append("- none")
     lines.append("")

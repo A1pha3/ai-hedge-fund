@@ -206,13 +206,7 @@ def render_btst_5d_15pct_trend_gate_confirmation_grid_markdown(grid: dict[str, A
     lines.append("")
     lines.append("## Confirmation Grid Board")
     for row in list(grid.get("grid_board") or []):
-        lines.append(
-            f"- {row.get('confirmation_id')}: "
-            f"closed={row.get('candidate_unique_closed')} "
-            f"hit_rate={row.get('candidate_unique_hit_rate_15pct')} "
-            f"mean_return={row.get('candidate_unique_mean_max_return')} "
-            f"sample_gap={row.get('sample_gap_to_min_closed')}"
-        )
+        lines.append(f"- {row.get('confirmation_id')}: " f"closed={row.get('candidate_unique_closed')} " f"hit_rate={row.get('candidate_unique_hit_rate_15pct')} " f"mean_return={row.get('candidate_unique_mean_max_return')} " f"sample_gap={row.get('sample_gap_to_min_closed')}")
     lines.append("")
     return "\n".join(lines)
 

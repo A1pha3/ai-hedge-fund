@@ -1,4 +1,5 @@
 """⚠️ DEPRECATED — 5d_15pct boundary quarantine decision analysis. One-time experiment from 2026-Q1; kept for historical reference only."""
+
 from __future__ import annotations
 
 import argparse
@@ -92,9 +93,7 @@ def render_btst_5d_15pct_boundary_quarantine_markdown(analysis: dict[str, Any]) 
         "## source_summary_board",
     ]
     for row in list(analysis.get("source_summary_board") or []):
-        lines.append(
-            f"- {row.get('candidate_source')}: row_count={row.get('row_count')}, quarantine_count={row.get('quarantine_count')}, separate_surface_count={row.get('separate_surface_count')}, allow_count={row.get('allow_count')}"
-        )
+        lines.append(f"- {row.get('candidate_source')}: row_count={row.get('row_count')}, quarantine_count={row.get('quarantine_count')}, separate_surface_count={row.get('separate_surface_count')}, allow_count={row.get('allow_count')}")
     if not list(analysis.get("source_summary_board") or []):
         lines.append("- none")
     lines.extend(["", "## governance_decision_board"])

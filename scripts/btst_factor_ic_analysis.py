@@ -7,6 +7,7 @@
 - 分位数收益: 因子分位数组合的日均收益
 - 胜率: 各分位数的正收益比例
 """
+
 from __future__ import annotations
 
 import os
@@ -31,7 +32,8 @@ def _spearmanr(x: np.ndarray, y: np.ndarray) -> float:
     rank_x = pd.Series(x).rank().values
     rank_y = pd.Series(y).rank().values
     d = rank_x - rank_y
-    return 1.0 - 6.0 * np.sum(d ** 2) / (n * (n ** 2 - 1))
+    return 1.0 - 6.0 * np.sum(d**2) / (n * (n**2 - 1))
+
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -40,10 +42,7 @@ import tushare as ts
 
 TUSHARE_TOKEN = os.getenv("TUSHARE_TOKEN", "")
 if not TUSHARE_TOKEN:
-    raise RuntimeError(
-        "TUSHARE_TOKEN 环境变量未设置。请从 https://tushare.pro/ 获取 token 并设置 TUSHARE_TOKEN 环境变量。"
-        " (c272: 修复硬编码 token 安全漏洞 — 历史 token 已泄露于 git history, owner 需旋转)"
-    )
+    raise RuntimeError("TUSHARE_TOKEN 环境变量未设置。请从 https://tushare.pro/ 获取 token 并设置 TUSHARE_TOKEN 环境变量。" " (c272: 修复硬编码 token 安全漏洞 — 历史 token 已泄露于 git history, owner 需旋转)")
 ts.set_token(TUSHARE_TOKEN)
 pro = ts.pro_api()
 
@@ -51,6 +50,7 @@ pro = ts.pro_api()
 # ─────────────────────────────────────────────
 # 1. 获取股票池和数据
 # ─────────────────────────────────────────────
+
 
 def get_liquid_stock_pool(date: str, min_amount: float = 100000) -> pd.DataFrame:
     """获取某日流动性足够的股票池（剔除ST、退市、涨跌停）。
@@ -107,6 +107,7 @@ def get_multi_day_data(ts_codes: list[str], start_date: str, end_date: str) -> p
 # 2. 因子计算
 # ─────────────────────────────────────────────
 
+
 def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     """计算BTST相关的所有因子。df必须按ts_code和trade_date排序。"""
     grouped = df.groupby("ts_code")
@@ -119,11 +120,7 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     df["ema60"] = grouped["close"].transform(lambda x: x.ewm(span=60, adjust=False).mean())
 
     # EMA对齐度：短期均线在长期均线之上的程度
-    df["ema_alignment"] = (
-        0.4 * (df["ema5"] > df["ema10"]).astype(float)
-        + 0.35 * (df["ema10"] > df["ema20"]).astype(float)
-        + 0.25 * (df["ema20"] > df["ema60"]).astype(float)
-    )
+    df["ema_alignment"] = 0.4 * (df["ema5"] > df["ema10"]).astype(float) + 0.35 * (df["ema10"] > df["ema20"]).astype(float) + 0.25 * (df["ema20"] > df["ema60"]).astype(float)
     # 加权距离
     ema5_gap = (df["ema5"] / df["ema20"] - 1).clip(-0.1, 0.1)
     df["ema_alignment"] = df["ema_alignment"] * 0.6 + ema5_gap.clip(lower=0) * 10 * 0.4
@@ -146,11 +143,7 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     df["vol_ma5"] = grouped["vol"].transform(lambda x: x.rolling(5).mean())
     df["vol_ma20"] = grouped["vol"].transform(lambda x: x.rolling(20).mean())
     df["volume_expansion"] = (df["vol"] / df["vol_ma5"]).clip(0.3, 5.0)
-    df["volume_expansion_quality"] = (
-        0.5 * (df["volume_expansion"] > 1.2).astype(float)
-        + 0.3 * (df["volume_expansion"] - 1.0).clip(0, 2) / 2
-        + 0.2 * (df["pct_chg"] > 0).astype(float) * (df["volume_expansion"] > 1.0).astype(float)
-    )
+    df["volume_expansion_quality"] = 0.5 * (df["volume_expansion"] > 1.2).astype(float) + 0.3 * (df["volume_expansion"] - 1.0).clip(0, 2) / 2 + 0.2 * (df["pct_chg"] > 0).astype(float) * (df["volume_expansion"] > 1.0).astype(float)
 
     # ── 收盘强度因子 ──
     day_range = (df["high"] - df["low"]).clip(lower=0.01)
@@ -160,10 +153,7 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     df["high_20d"] = grouped["high"].transform(lambda x: x.rolling(20).max())
     df["low_20d"] = grouped["low"].transform(lambda x: x.rolling(20).min())
     df["breakout_freshness"] = ((df["close"] - df["high_20d"].shift(1)) / df["high_20d"].shift(1)).clip(-0.1, 0.1)
-    df.loc[df["breakout_freshness"] <= 0, "breakout_freshness"] = (
-        (df["close"] - df["low_20d"].shift(1))
-        / (df["high_20d"].shift(1) - df["low_20d"].shift(1)).clip(lower=0.01)
-    ).clip(0, 1) * 0.3  # 没有突破的给予部分分
+    df.loc[df["breakout_freshness"] <= 0, "breakout_freshness"] = ((df["close"] - df["low_20d"].shift(1)) / (df["high_20d"].shift(1) - df["low_20d"].shift(1)).clip(lower=0.01)).clip(0, 1) * 0.3  # 没有突破的给予部分分
 
     # ── 趋势加速度 ──
     df["ema5_prev"] = grouped["ema5"].shift(1)
@@ -176,9 +166,7 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     df["rsi_14"] = grouped["close"].transform(_calc_rsi)
 
     # ── 均值回归因子 ──
-    df["zscore_20"] = grouped["close"].transform(
-        lambda x: ((x - x.rolling(20).mean()) / x.rolling(20).std()).clip(-3, 3)
-    )
+    df["zscore_20"] = grouped["close"].transform(lambda x: ((x - x.rolling(20).mean()) / x.rolling(20).std()).clip(-3, 3))
 
     # ── 次日收益标签 ──
     df["next_open"] = grouped["open"].shift(-1)
@@ -193,7 +181,7 @@ def compute_factors(df: pd.DataFrame) -> pd.DataFrame:
     # 次日高点收益（T日收盘 → T+1最高）
     df["ret_t1_high"] = ((df["next_high"] / df["close"]) - 1) * 100
     # T+2收益
-    df["ret_t2"] = ((df["next2_pct_chg"]))
+    df["ret_t2"] = df["next2_pct_chg"]
     # 次日开盘收益（T日收盘 → T+1开盘）
     df["gap_return"] = ((df["next_open"] / df["close"]) - 1) * 100
     # 日内收益（T+1开盘 → T+1收盘）
@@ -262,6 +250,7 @@ RETURN_NAMES = {
 
 def compute_daily_ic(df: pd.DataFrame, factor_name: str, return_name: str) -> pd.Series:
     """计算每日IC（Spearman rank correlation）。"""
+
     def _spearman(group):
         if len(group) < 10:
             return np.nan
@@ -310,12 +299,14 @@ def compute_quantile_returns(df: pd.DataFrame, factor_name: str, return_name: st
         return pd.DataFrame()
 
     # Average across days
-    result = daily_stats.groupby(level=1).agg({
-        "mean": "mean",
-        "median": "mean",
-        "count": "sum",
-        "win_rate": "mean",
-    })
+    result = daily_stats.groupby(level=1).agg(
+        {
+            "mean": "mean",
+            "median": "mean",
+            "count": "sum",
+            "win_rate": "mean",
+        }
+    )
     return result
 
 
@@ -428,10 +419,7 @@ def run_analysis(start_date: str = "20260101", end_date: str = "20260413", sampl
 
             long_short_diff = (hit_high or 0) - (hit_low or 0)
 
-            print(
-                f"{factor_name:<30} {ic_mean:>8.4f} {ic_std:>8.4f} {icir:>8.4f} {ic_positive_rate:>7.1%} "
-                f"{hit_high:>7.1%} {hit_low:>7.1%} {long_short_diff:>7.1%}"
-            )
+            print(f"{factor_name:<30} {ic_mean:>8.4f} {ic_std:>8.4f} {icir:>8.4f} {ic_positive_rate:>7.1%} " f"{hit_high:>7.1%} {hit_low:>7.1%} {long_short_diff:>7.1%}")
 
             factor_results[factor_name] = {
                 "ic_mean": ic_mean,

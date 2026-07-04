@@ -152,11 +152,7 @@ def _build_penalty_threshold_frontier(
                             profile_overrides=profile_overrides,
                         )
                         adjustment_cost = round(
-                            (float(default_profile.layer_c_avoid_penalty) - float(avoid_penalty))
-                            + (float(default_profile.stale_score_penalty_weight) - float(stale_weight))
-                            + (float(default_profile.extension_score_penalty_weight) - float(extension_weight))
-                            + (float(default_profile.select_threshold) - float(select_threshold))
-                            + (float(default_profile.near_miss_threshold) - float(near_miss_threshold)),
+                            (float(default_profile.layer_c_avoid_penalty) - float(avoid_penalty)) + (float(default_profile.stale_score_penalty_weight) - float(stale_weight)) + (float(default_profile.extension_score_penalty_weight) - float(extension_weight)) + (float(default_profile.select_threshold) - float(select_threshold)) + (float(default_profile.near_miss_threshold) - float(near_miss_threshold)),
                             4,
                         )
                         rows.append(
@@ -228,9 +224,7 @@ def render_structural_conflict_rescue_markdown(analysis: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Variants")
     for row in analysis["variant_results"]:
-        lines.append(
-            f"- {row['variant']}: decision={row['decision']}, score_target={row['score_target']}, gap_to_near_miss={row['gap_to_near_miss']}, blockers={row['blockers']}, penalties={row['penalties']}"
-        )
+        lines.append(f"- {row['variant']}: decision={row['decision']}, score_target={row['score_target']}, gap_to_near_miss={row['gap_to_near_miss']}, blockers={row['blockers']}, penalties={row['penalties']}")
     penalty_threshold_frontier = dict(analysis.get("penalty_threshold_frontier") or {})
     if penalty_threshold_frontier:
         lines.append("")
@@ -252,9 +246,7 @@ def render_structural_conflict_rescue_markdown(analysis: dict[str, Any]) -> str:
         else:
             lines.append("- minimal_selected_row: none")
         if best_score_row:
-            lines.append(
-                f"- best_score_row: decision={best_score_row['decision']}, score_target={best_score_row['score_target']}, adjustment_cost={best_score_row['adjustment_cost']}, stale_weight={best_score_row['stale_score_penalty_weight']}, extension_weight={best_score_row['extension_score_penalty_weight']}, select={best_score_row['select_threshold']}, near_miss={best_score_row['near_miss_threshold']}"
-            )
+            lines.append(f"- best_score_row: decision={best_score_row['decision']}, score_target={best_score_row['score_target']}, adjustment_cost={best_score_row['adjustment_cost']}, stale_weight={best_score_row['stale_score_penalty_weight']}, extension_weight={best_score_row['extension_score_penalty_weight']}, select={best_score_row['select_threshold']}, near_miss={best_score_row['near_miss_threshold']}")
     lines.append("")
     lines.append("## Recommendation")
     lines.append(f"- {analysis['recommendation']}")
@@ -339,11 +331,7 @@ def analyze_structural_conflict_rescue(
     )
     minimal_near_miss_row = penalty_threshold_frontier.get("minimal_near_miss_row")
     minimal_selected_row = penalty_threshold_frontier.get("minimal_selected_row")
-    recommendation = (
-        f"最佳释放路径是 {best_variant['variant']}，score_target={best_variant['score_target']}，decision={best_variant['decision']}。"
-        if variant_results
-        else "未生成任何变体结果。"
-    )
+    recommendation = f"最佳释放路径是 {best_variant['variant']}，score_target={best_variant['score_target']}，decision={best_variant['decision']}。" if variant_results else "未生成任何变体结果。"
     if minimal_near_miss_row:
         recommendation += (
             " 在去掉 conflict hard block 与 surcharge 后，最小 near_miss frontier 为 "
@@ -354,11 +342,7 @@ def analyze_structural_conflict_rescue(
     else:
         recommendation += " 在当前 penalty+threshold 搜索空间内仍未找到 near_miss rescue row。"
     if minimal_selected_row:
-        recommendation += (
-            f" 最小 selected frontier 为 stale_weight={minimal_selected_row['stale_score_penalty_weight']}、"
-            f"extension_weight={minimal_selected_row['extension_score_penalty_weight']}、select_threshold={minimal_selected_row['select_threshold']}、"
-            f"near_miss_threshold={minimal_selected_row['near_miss_threshold']}，adjustment_cost={minimal_selected_row['adjustment_cost']}。"
-        )
+        recommendation += f" 最小 selected frontier 为 stale_weight={minimal_selected_row['stale_score_penalty_weight']}、" f"extension_weight={minimal_selected_row['extension_score_penalty_weight']}、select_threshold={minimal_selected_row['select_threshold']}、" f"near_miss_threshold={minimal_selected_row['near_miss_threshold']}，adjustment_cost={minimal_selected_row['adjustment_cost']}。"
 
     return {
         "report_dir": str(report_path),

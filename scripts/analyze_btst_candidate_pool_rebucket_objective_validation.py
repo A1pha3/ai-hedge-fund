@@ -22,11 +22,7 @@ def _load_json(path: str | Path) -> dict[str, Any]:
 
 
 def _select_rebucket_experiment(dossier: dict[str, Any], *, ticker: str | None = None) -> dict[str, Any] | None:
-    queue = [
-        dict(row)
-        for row in list(dossier.get("priority_handoff_branch_experiment_queue") or [])
-        if str(row.get("prototype_type") or "") == "post_gate_competition_rebucket_probe"
-    ]
+    queue = [dict(row) for row in list(dossier.get("priority_handoff_branch_experiment_queue") or []) if str(row.get("prototype_type") or "") == "post_gate_competition_rebucket_probe"]
     if ticker:
         queue = [row for row in queue if ticker in list(row.get("tickers") or [])]
     if not queue:
@@ -53,19 +49,11 @@ def analyze_btst_candidate_pool_rebucket_objective_validation(
         )
 
     branch_row = next(
-        (
-            dict(row)
-            for row in list(lane_support.get("branch_rows") or [])
-            if str(row.get("priority_handoff") or "") == "post_gate_liquidity_competition"
-        ),
+        (dict(row) for row in list(lane_support.get("branch_rows") or []) if str(row.get("priority_handoff") or "") == "post_gate_liquidity_competition"),
         {},
     )
     target_tickers = [str(value) for value in list((experiment or {}).get("tickers") or []) if str(value or "").strip()]
-    ticker_rows = [
-        dict(row)
-        for row in list(lane_support.get("ticker_rows") or [])
-        if str(row.get("ticker") or "") in target_tickers
-    ]
+    ticker_rows = [dict(row) for row in list(lane_support.get("ticker_rows") or []) if str(row.get("ticker") or "") in target_tickers]
 
     if experiment is None:
         validation_status = "skipped_no_rebucket_candidate"
@@ -101,26 +89,13 @@ def analyze_btst_candidate_pool_rebucket_objective_validation(
     else:
         validation_status = "hold_structure_only"
 
-    recommendation = (
-        f"当前 rebucket lane 的后验 verdict={support_verdict}，"
-        f"closed_cycle_count={branch_row.get('closed_cycle_count')}，"
-        f"mean_t_plus_2_return={branch_row.get('mean_t_plus_2_return')}。"
-    )
+    recommendation = f"当前 rebucket lane 的后验 verdict={support_verdict}，" f"closed_cycle_count={branch_row.get('closed_cycle_count')}，" f"mean_t_plus_2_return={branch_row.get('mean_t_plus_2_return')}。"
     if validation_status == "advance_shadow_replay_comparison":
-        recommendation = (
-            f"{recommendation} 它已不只是结构上可疑，而是后验上同时不弱于当前 tradeable surface，"
-            "应进入真正的 shadow replay 对照比较。"
-        )
+        recommendation = f"{recommendation} 它已不只是结构上可疑，而是后验上同时不弱于当前 tradeable surface，" "应进入真正的 shadow replay 对照比较。"
     elif validation_status == "keep_first_priority_shadow_validation":
-        recommendation = (
-            f"{recommendation} 它已经显示正向后验 edge，虽然还没全面超过 tradeable surface，"
-            "但仍应保持 candidate-pool recall 的第一优先验证 lane。"
-        )
+        recommendation = f"{recommendation} 它已经显示正向后验 edge，虽然还没全面超过 tradeable surface，" "但仍应保持 candidate-pool recall 的第一优先验证 lane。"
     elif validation_status == "accumulate_more_closed_cycle_support":
-        recommendation = (
-            f"{recommendation} 它暂时只证明自己优于 non-tradeable surface，"
-            "还不能据此讨论升级，应继续积累 closed-cycle 证据。"
-        )
+        recommendation = f"{recommendation} 它暂时只证明自己优于 non-tradeable surface，" "还不能据此讨论升级，应继续积累 closed-cycle 证据。"
     else:
         recommendation = f"{recommendation} 当前更像结构性研究线索，暂时不足以支持收益导向的优先升级。"
 
@@ -158,21 +133,13 @@ def render_btst_candidate_pool_rebucket_objective_validation_markdown(analysis: 
     lines.append("")
     lines.append("## Objective Verdict")
     branch_row = dict(analysis.get("branch_objective_row") or {})
-    lines.append(
-        f"- validation_status: {analysis.get('validation_status')}"
-    )
-    lines.append(
-        f"- support_verdict: {branch_row.get('support_verdict')} closed_cycle_count={branch_row.get('closed_cycle_count')} positive_rate={branch_row.get('t_plus_2_positive_rate')} return_hit_rate={branch_row.get('t_plus_2_return_hit_rate_at_target')} mean_t_plus_2_return={branch_row.get('mean_t_plus_2_return')}"
-    )
-    lines.append(
-        f"- delta_vs_tradeable_surface: mean_return={analysis.get('mean_return_delta_vs_tradeable_surface')} return_hit_rate={analysis.get('return_hit_rate_delta_vs_tradeable_surface')}"
-    )
+    lines.append(f"- validation_status: {analysis.get('validation_status')}")
+    lines.append(f"- support_verdict: {branch_row.get('support_verdict')} closed_cycle_count={branch_row.get('closed_cycle_count')} positive_rate={branch_row.get('t_plus_2_positive_rate')} return_hit_rate={branch_row.get('t_plus_2_return_hit_rate_at_target')} mean_t_plus_2_return={branch_row.get('mean_t_plus_2_return')}")
+    lines.append(f"- delta_vs_tradeable_surface: mean_return={analysis.get('mean_return_delta_vs_tradeable_surface')} return_hit_rate={analysis.get('return_hit_rate_delta_vs_tradeable_surface')}")
     lines.append("")
     lines.append("## Target Tickers")
     for row in list(analysis.get("target_ticker_rows") or []):
-        lines.append(
-            f"- ticker={row.get('ticker')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} positive_rate={row.get('t_plus_2_positive_rate')} return_hit_rate={row.get('t_plus_2_return_hit_rate_at_target')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
-        )
+        lines.append(f"- ticker={row.get('ticker')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} positive_rate={row.get('t_plus_2_positive_rate')} return_hit_rate={row.get('t_plus_2_return_hit_rate_at_target')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}")
     if not list(analysis.get("target_ticker_rows") or []):
         lines.append("- none")
     lines.append("")

@@ -71,9 +71,7 @@ def render_recurring_frontier_ticker_release_markdown(analysis: dict[str, Any]) 
     lines.append("")
     lines.append("## Changed Cases")
     for row in analysis["changed_cases"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, before_score={row['before_score_target']}, after_score={row['after_score_target']}, near_miss_threshold={row['near_miss_threshold']}, stale_weight={row['stale_weight']}, extension_weight={row['extension_weight']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, before_score={row['before_score_target']}, after_score={row['after_score_target']}, near_miss_threshold={row['near_miss_threshold']}, stale_weight={row['stale_weight']}, extension_weight={row['extension_weight']}")
     if not analysis["changed_cases"]:
         lines.append("- none")
     lines.append("")
@@ -160,10 +158,7 @@ def analyze_recurring_frontier_ticker_release(
     changed_non_target_case_count = 0
 
     if promoted_target_case_count == len(changed_cases) and changed_cases:
-        recommendation = (
-            f"{normalized_ticker} 的 recurring frontier release 已在 {promoted_target_case_count} 个样本上全部进入 "
-            "near_miss/selected，可作为该 ticker 的局部 frontier 实验基线。"
-        )
+        recommendation = f"{normalized_ticker} 的 recurring frontier release 已在 {promoted_target_case_count} 个样本上全部进入 " "near_miss/selected，可作为该 ticker 的局部 frontier 实验基线。"
     elif changed_cases:
         recommendation = f"{normalized_ticker} 的 recurring frontier release 只在部分样本上生效，当前更适合保留为条件性实验。"
     else:

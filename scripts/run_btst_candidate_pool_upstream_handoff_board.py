@@ -72,15 +72,9 @@ def _build_validated_followup_next_step(ticker: str, followup_row: dict[str, Any
     if decision == "blocked":
         return f"把 {ticker} 转入 blocked-truth formal execution removal followup，保留 {priority_handoff_token} lane 背景，只做非执行观察与 blocker diagnostics，不再重复 upstream recall probe。"
     if decision == "near_miss" and candidate_source == "post_gate_liquidity_competition_shadow" and bottleneck == "catalyst_relief_validated":
-        return (
-            f"保持 {ticker} 的 {priority_handoff_token} lane 背景，转入 T+2 continuation confirm-then-review，"
-            "只做 continuation / observation followup，不再重复 upstream recall probe。"
-        )
+        return f"保持 {ticker} 的 {priority_handoff_token} lane 背景，转入 T+2 continuation confirm-then-review，" "只做 continuation / observation followup，不再重复 upstream recall probe。"
     if decision == "near_miss" and candidate_source == "upstream_liquidity_corridor_shadow" and "profitability_hard_cliff" in top_reasons:
-        return (
-            f"保持 {ticker} 的 {priority_handoff_token} lane 背景，仅作为 corridor parallel watch 跟踪，"
-            "不把这类 profitability-cliff near_miss 直接升级成默认 BTST promotion。"
-        )
+        return f"保持 {ticker} 的 {priority_handoff_token} lane 背景，仅作为 corridor parallel watch 跟踪，" "不把这类 profitability-cliff near_miss 直接升级成默认 BTST promotion。"
     if decision == "near_miss":
         return f"保持 {ticker} 的 {priority_handoff_token} lane 背景，仅转入 near_miss opening watch / downstream observation，不再重复 upstream recall probe。"
     if bottleneck == "profitability_hard_cliff":
@@ -101,10 +95,7 @@ def _classify_downstream_followup_lane(ticker: str, followup_row: dict[str, Any]
             "downstream_followup_lane": "formal_execution_removal",
             "downstream_followup_status": "remove_from_formal_execution",
             "downstream_followup_blocker": "blocked_truth_halt_block_prior_gate",
-            "downstream_followup_summary": (
-                f"{ticker} 已完成 shadow recall，但最新正式 followup 已把它归档为 blocked truth；"
-                "当前应从 formal execution 名单移除，只保留非执行观察层与 blocker diagnostics。"
-            ),
+            "downstream_followup_summary": (f"{ticker} 已完成 shadow recall，但最新正式 followup 已把它归档为 blocked truth；" "当前应从 formal execution 名单移除，只保留非执行观察层与 blocker diagnostics。"),
         }
 
     if decision == "near_miss" and candidate_source == "post_gate_liquidity_competition_shadow" and bottleneck == "catalyst_relief_validated":
@@ -112,10 +103,7 @@ def _classify_downstream_followup_lane(ticker: str, followup_row: dict[str, Any]
             "downstream_followup_lane": "t_plus_2_continuation_review",
             "downstream_followup_status": "continuation_confirm_then_review",
             "downstream_followup_blocker": "no_selected_persistence_or_independent_edge",
-            "downstream_followup_summary": (
-                f"{ticker} 已完成 shadow recall，并进入 near_miss；下一步应按 T+2 continuation / confirm-then-review 处理，"
-                "而不是把它重新解释成 upstream recall 缺口。"
-            ),
+            "downstream_followup_summary": (f"{ticker} 已完成 shadow recall，并进入 near_miss；下一步应按 T+2 continuation / confirm-then-review 处理，" "而不是把它重新解释成 upstream recall 缺口。"),
         }
 
     if decision == "selected" and candidate_source == "post_gate_liquidity_competition_shadow":
@@ -123,10 +111,7 @@ def _classify_downstream_followup_lane(ticker: str, followup_row: dict[str, Any]
             "downstream_followup_lane": "t_plus_2_continuation_review",
             "downstream_followup_status": "continuation_only_confirm_then_review",
             "downstream_followup_blocker": "no_selected_persistence_or_independent_edge",
-            "downstream_followup_summary": (
-                f"{ticker} 已完成 shadow recall，并晋级为 selected；但在形成第二个独立 trade_date 之前，"
-                "仍只允许 continuation-only confirm-then-review，不可直接视作默认 BTST merge-ready。"
-            ),
+            "downstream_followup_summary": (f"{ticker} 已完成 shadow recall，并晋级为 selected；但在形成第二个独立 trade_date 之前，" "仍只允许 continuation-only confirm-then-review，不可直接视作默认 BTST merge-ready。"),
         }
 
     if decision == "near_miss" and candidate_source == "upstream_liquidity_corridor_shadow" and "profitability_hard_cliff" in top_reasons:
@@ -134,10 +119,7 @@ def _classify_downstream_followup_lane(ticker: str, followup_row: dict[str, Any]
             "downstream_followup_lane": "corridor_parallel_watch",
             "downstream_followup_status": "parallel_watch_only_not_default_ready",
             "downstream_followup_blocker": "profitability_hard_cliff_and_weak_same_source_payoff",
-            "downstream_followup_summary": (
-                f"{ticker} 虽已进入 near_miss，但仍带 profitability_hard_cliff；当前只适合作为 corridor parallel watch，"
-                "不应升格为默认 BTST promotion 语义。"
-            ),
+            "downstream_followup_summary": (f"{ticker} 虽已进入 near_miss，但仍带 profitability_hard_cliff；当前只适合作为 corridor parallel watch，" "不应升格为默认 BTST promotion 语义。"),
         }
 
     if decision == "rejected" and bottleneck == "profitability_hard_cliff":
@@ -145,9 +127,7 @@ def _classify_downstream_followup_lane(ticker: str, followup_row: dict[str, Any]
             "downstream_followup_lane": "shadow_profitability_diagnostics",
             "downstream_followup_status": "execution_blocked_shadow_diagnostics",
             "downstream_followup_blocker": "profitability_hard_cliff",
-            "downstream_followup_summary": (
-                f"{ticker} 已完成 shadow recall，但下游仍被 profitability_hard_cliff 阻断，只应继续做 shadow diagnostics。"
-            ),
+            "downstream_followup_summary": (f"{ticker} 已完成 shadow recall，但下游仍被 profitability_hard_cliff 阻断，只应继续做 shadow diagnostics。"),
         }
 
     return {
@@ -165,10 +145,7 @@ def _classify_historical_shadow_probe_gap(ticker: str, followup_row: dict[str, A
     lane_label = "shadow_recall_persistence_diagnostics"
     if candidate_source == "post_gate_liquidity_competition_shadow":
         lane_label = "rebucket_persistence_diagnostics"
-    summary = (
-        f"{ticker} 曾在 {trade_date or '历史窗口'} 的 shadow replay 中被召回，"
-        "但最新 active followup 已不再可见；这说明当前问题不是“从未召回”，而是 recall 缺少跨日 persistence。"
-    )
+    summary = f"{ticker} 曾在 {trade_date or '历史窗口'} 的 shadow replay 中被召回，" "但最新 active followup 已不再可见；这说明当前问题不是“从未召回”，而是 recall 缺少跨日 persistence。"
     if bottleneck == "profitability_hard_cliff":
         summary = f"{summary} 同时该历史 probe 还暴露了 profitability_hard_cliff，进一步说明不能把单次召回误当成可执行升级。"
     return {
@@ -221,15 +198,9 @@ def _classify_corridor_uplift_bucket(
 
 def _build_corridor_next_step(ticker: str, corridor_uplift_bucket: str | None, prototype_summary: str, profile_summary: str | None) -> str:
     if corridor_uplift_bucket == "deepest_corridor_focus":
-        return (
-            f"{ticker} 已落入 retained deepest corridor focus；先补 upstream handoff / persistence 断点，"
-            "再进入 corridor uplift runbook，不把更厚的 low-gate tail 一起带入 shadow pack。"
-        )
+        return f"{ticker} 已落入 retained deepest corridor focus；先补 upstream handoff / persistence 断点，" "再进入 corridor uplift runbook，不把更厚的 low-gate tail 一起带入 shadow pack。"
     if corridor_uplift_bucket == "excluded_low_gate_tail":
-        return (
-            f"{ticker} 当前属于 thicker low-gate tail（avg_amount/cutoff 高于 retained deepest corridor 上限），"
-            "先回补 replay input -> watchlist -> candidate_pool 断点，不进入 retained deepest corridor shadow pack。"
-        )
+        return f"{ticker} 当前属于 thicker low-gate tail（avg_amount/cutoff 高于 retained deepest corridor 上限），" "先回补 replay input -> watchlist -> candidate_pool 断点，不进入 retained deepest corridor shadow pack。"
     return prototype_summary or str(profile_summary or "").strip()
 
 
@@ -254,11 +225,7 @@ def _build_handoff_commands(*, ticker: str, priority_handoff: str | None, corrid
             f"# focus_ticker={ticker}"
         )
     elif normalized_priority_handoff == "post_gate_liquidity_competition":
-        commands.append(
-            "python scripts/run_btst_candidate_pool_rebucket_shadow_pack.py "
-            "--dossier-path data/reports/btst_candidate_pool_recall_dossier_latest.json "
-            f"--ticker {ticker} --output-dir data/reports"
-        )
+        commands.append("python scripts/run_btst_candidate_pool_rebucket_shadow_pack.py " "--dossier-path data/reports/btst_candidate_pool_recall_dossier_latest.json " f"--ticker {ticker} --output-dir data/reports")
         commands.append(
             "python scripts/analyze_btst_candidate_pool_rebucket_objective_validation.py "
             "--dossier-path data/reports/btst_candidate_pool_recall_dossier_latest.json "
@@ -336,27 +303,12 @@ def _build_upstream_handoff_board_row(
     elif latest_followup_row:
         first_broken_handoff = "transient_shadow_recall_without_persistence"
         board_phase = "historical_shadow_probe_gap"
-        failure_reason = (
-            f"{ticker} 曾在历史 shadow replay 中短暂进入 recalled-shadow 诊断层，但当前最新 active followup 已不再可见，"
-            "说明主要问题转为 upstream recall persistence，而不是简单的从未召回。"
-        )
+        failure_reason = f"{ticker} 曾在历史 shadow replay 中短暂进入 recalled-shadow 诊断层，但当前最新 active followup 已不再可见，" "说明主要问题转为 upstream recall persistence，而不是简单的从未召回。"
         if str(truncation_profile.get("priority_handoff") or "").strip() == "post_gate_liquidity_competition":
-            next_step = (
-                f"不要直接放宽 {ticker} 的默认召回边界；先围绕历史 rebucket shadow probe 补 persistence diagnostics，"
-                "只保留 shadow probe，不进入 selective exemption review。"
-            )
+            next_step = f"不要直接放宽 {ticker} 的默认召回边界；先围绕历史 rebucket shadow probe 补 persistence diagnostics，" "只保留 shadow probe，不进入 selective exemption review。"
         else:
-            next_step = (
-                f"不要直接放宽 {ticker} 的默认召回边界；先围绕历史 shadow probe 补 persistence diagnostics，"
-                "确认它是 transient probe 还是可复现的 recall lane。"
-            )
-    downstream_followup_classification = (
-        _classify_downstream_followup_lane(ticker, latest_followup_row)
-        if latest_followup_row and is_active_followup
-        else _classify_historical_shadow_probe_gap(ticker, latest_followup_row)
-        if latest_followup_row
-        else {}
-    )
+            next_step = f"不要直接放宽 {ticker} 的默认召回边界；先围绕历史 shadow probe 补 persistence diagnostics，" "确认它是 transient probe 还是可复现的 recall lane。"
+    downstream_followup_classification = _classify_downstream_followup_lane(ticker, latest_followup_row) if latest_followup_row and is_active_followup else _classify_historical_shadow_probe_gap(ticker, latest_followup_row) if latest_followup_row else {}
     return {
         "ticker": ticker,
         "board_phase": board_phase,
@@ -419,33 +371,20 @@ def _summarize_upstream_handoff_board(board_rows: list[dict[str, Any]], focus_ti
         return stage_summary, "skipped_no_focus_tickers", "当前没有可执行的 upstream handoff 焦点票。", []
 
     if validated_rows and unresolved_rows:
-        recommendation = (
-            f"upstream handoff board 当前分成两段：{[row.get('ticker') for row in unresolved_rows[:3]]} 仍是 upstream recall gap，"
-            f"而 {[row.get('ticker') for row in validated_rows[:3]]} 已在最新正式 shadow rerun 中完成 downstream 分层验证，不应再按 absent_from_watchlist 处理。"
-        )
+        recommendation = f"upstream handoff board 当前分成两段：{[row.get('ticker') for row in unresolved_rows[:3]]} 仍是 upstream recall gap，" f"而 {[row.get('ticker') for row in validated_rows[:3]]} 已在最新正式 shadow rerun 中完成 downstream 分层验证，不应再按 absent_from_watchlist 处理。"
         board_status = "mixed_upstream_and_post_recall_followup"
     elif validated_rows:
-        recommendation = (
-            f"当前焦点票 {[row.get('ticker') for row in validated_rows[:3]]} 已在最新正式 shadow rerun 中完成 downstream 分层验证，"
-            "下一步应按当前 short-trade decision 继续 followup，而不是重复 upstream recall probe。"
-        )
+        recommendation = f"当前焦点票 {[row.get('ticker') for row in validated_rows[:3]]} 已在最新正式 shadow rerun 中完成 downstream 分层验证，" "下一步应按当前 short-trade decision 继续 followup，而不是重复 upstream recall probe。"
         board_status = "post_recall_followup_ready"
     else:
-        recommendation = (
-            f"upstream handoff board 已收敛到 {focus_tickers[:3]}。"
-            " 这些票当前都不该再下钻 candidate-entry 语义，而应先沿 replay input -> watchlist -> candidate_pool 的断点回补。"
-        )
+        recommendation = f"upstream handoff board 已收敛到 {focus_tickers[:3]}。" " 这些票当前都不该再下钻 candidate-entry 语义，而应先沿 replay input -> watchlist -> candidate_pool 的断点回补。"
         board_status = "ready_for_upstream_handoff_execution"
 
     next_actions: list[str] = []
     for row in unresolved_rows[:2]:
-        next_actions.append(
-            f"先补 {row.get('ticker')} 的 first_broken_handoff={row.get('first_broken_handoff')}，再进入 {row.get('priority_handoff')} lane 的 downstream probe。"
-        )
+        next_actions.append(f"先补 {row.get('ticker')} 的 first_broken_handoff={row.get('first_broken_handoff')}，再进入 {row.get('priority_handoff')} lane 的 downstream probe。")
     for row in validated_rows[:2]:
-        next_actions.append(
-            f"{row.get('ticker')} 已完成正式 shadow recall 验证，当前转入 lane={row.get('downstream_followup_lane') or row.get('latest_followup_decision')} 的 downstream followup。"
-        )
+        next_actions.append(f"{row.get('ticker')} 已完成正式 shadow recall 验证，当前转入 lane={row.get('downstream_followup_lane') or row.get('latest_followup_decision')} 的 downstream followup。")
     return stage_summary, board_status, recommendation, next_actions
 
 
@@ -459,21 +398,9 @@ def analyze_btst_candidate_pool_upstream_handoff_board(
     watchlist_dossier = _maybe_load_json(watchlist_recall_dossier_path)
     recall_dossier = _maybe_load_json(candidate_pool_recall_dossier_path)
 
-    failure_rows = {
-        str(row.get("ticker") or ""): dict(row)
-        for row in list(failure_dossier.get("priority_ticker_dossiers") or [])
-        if str(row.get("ticker") or "").strip()
-    }
-    watchlist_rows = {
-        str(row.get("ticker") or ""): dict(row)
-        for row in list(watchlist_dossier.get("priority_ticker_dossiers") or [])
-        if str(row.get("ticker") or "").strip()
-    }
-    recall_action_rows = {
-        str(row.get("ticker") or ""): dict(row)
-        for row in list(recall_dossier.get("action_queue") or [])
-        if str(row.get("ticker") or "").strip()
-    }
+    failure_rows = {str(row.get("ticker") or ""): dict(row) for row in list(failure_dossier.get("priority_ticker_dossiers") or []) if str(row.get("ticker") or "").strip()}
+    watchlist_rows = {str(row.get("ticker") or ""): dict(row) for row in list(watchlist_dossier.get("priority_ticker_dossiers") or []) if str(row.get("ticker") or "").strip()}
+    recall_action_rows = {str(row.get("ticker") or ""): dict(row) for row in list(recall_dossier.get("action_queue") or []) if str(row.get("ticker") or "").strip()}
     experiment_queue = [dict(row) for row in list(recall_dossier.get("priority_handoff_branch_experiment_queue") or [])]
     latest_followup_summary = load_latest_upstream_shadow_followup_summary(
         _resolved_reports_root(
@@ -546,9 +473,7 @@ def render_btst_candidate_pool_upstream_handoff_board_markdown(analysis: dict[st
         if row.get("selective_exemption_summary"):
             lines.append(f"  selective_exemption_summary: {row.get('selective_exemption_summary')}")
         if row.get("latest_followup_decision"):
-            lines.append(
-                f"  latest_followup: decision={row.get('latest_followup_decision')} bottleneck={row.get('latest_followup_downstream_bottleneck')} lane={row.get('downstream_followup_lane')} status={row.get('downstream_followup_status')} blocker={row.get('downstream_followup_blocker')} top_reasons={row.get('latest_followup_top_reasons')}"
-            )
+            lines.append(f"  latest_followup: decision={row.get('latest_followup_decision')} bottleneck={row.get('latest_followup_downstream_bottleneck')} lane={row.get('downstream_followup_lane')} status={row.get('downstream_followup_status')} blocker={row.get('downstream_followup_blocker')} top_reasons={row.get('latest_followup_top_reasons')}")
         if row.get("downstream_followup_summary"):
             lines.append(f"  downstream_followup_summary: {row.get('downstream_followup_summary')}")
         for command in list(row.get("recommended_commands") or []):

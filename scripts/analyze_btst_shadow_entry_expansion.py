@@ -89,10 +89,7 @@ def analyze_btst_shadow_entry_expansion(
 
     if unique_threshold_only and not same_rule_expansion_ready:
         expansion_verdict = "hold_shadow_only_no_same_rule_expansion"
-        recommendation = (
-            "300383 可以继续保留在 shadow queue，但不能把同一条 threshold-only 放松直接扩成默认或批量规则。"
-            " 如果要扩大 shadow 实验范围，应优先转向已有 outcome 证据的 recurring frontier lane，而不是克隆 300383 的单票 release。"
-        )
+        recommendation = "300383 可以继续保留在 shadow queue，但不能把同一条 threshold-only 放松直接扩成默认或批量规则。" " 如果要扩大 shadow 实验范围，应优先转向已有 outcome 证据的 recurring frontier lane，而不是克隆 300383 的单票 release。"
     elif same_rule_expansion_ready:
         expansion_verdict = "shadow_peer_scan_ready"
         recommendation = "300383 之外还存在同类 threshold-only peer，可继续做受控 shadow peer scan。"
@@ -147,9 +144,7 @@ def render_btst_shadow_entry_expansion_markdown(analysis: dict[str, Any]) -> str
     lines.append("")
     lines.append("## Priority Peers")
     for row in analysis["priority_peer_rows"]:
-        lines.append(
-            f"- ticker={row['ticker']} peer_class={row['peer_class']} adjustment_cost={row['adjustment_cost']} scoreboard_rank={row['scoreboard_rank']} lane_type={row['lane_type']} has_existing_release_outcome={row['has_existing_release_outcome']}"
-        )
+        lines.append(f"- ticker={row['ticker']} peer_class={row['peer_class']} adjustment_cost={row['adjustment_cost']} scoreboard_rank={row['scoreboard_rank']} lane_type={row['lane_type']} has_existing_release_outcome={row['has_existing_release_outcome']}")
     if not analysis["priority_peer_rows"]:
         lines.append("- none")
     lines.append("")

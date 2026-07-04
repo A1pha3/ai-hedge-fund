@@ -225,9 +225,7 @@ def render_btst_monthly_execution_health_markdown(analysis: dict[str, Any]) -> s
 
     lines.append("")
     lines.append("## Daily breakdown")
-    lines.append(
-        "| trade_date | selected | near_miss | opp_pool | p2_blocked | short_sel | short_nm | short_blocked | short_rej |"
-    )
+    lines.append("| trade_date | selected | near_miss | opp_pool | p2_blocked | short_sel | short_nm | short_blocked | short_rej |")
     lines.append("|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
 
     for row in list(analysis.get("daily") or []):

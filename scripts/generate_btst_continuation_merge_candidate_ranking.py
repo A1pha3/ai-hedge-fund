@@ -44,24 +44,12 @@ def _build_candidate_row(dossier: dict[str, Any], default_surface: dict[str, Any
     candidate_mean_return = surface.get("mean_t_plus_2_return") or dict(surface.get("t_plus_2_close_return_distribution") or {}).get("mean")
     default_positive_rate = default_surface.get("t_plus_2_positive_rate")
     default_mean_return = default_surface.get("mean_t_plus_2_return")
-    positive_rate_delta = (
-        round(float(candidate_positive_rate) - float(default_positive_rate), 4)
-        if candidate_positive_rate is not None and default_positive_rate is not None
-        else None
-    )
-    mean_return_delta = (
-        round(float(candidate_mean_return) - float(default_mean_return), 4)
-        if candidate_mean_return is not None and default_mean_return is not None
-        else None
-    )
+    positive_rate_delta = round(float(candidate_positive_rate) - float(default_positive_rate), 4) if candidate_positive_rate is not None and default_positive_rate is not None else None
+    mean_return_delta = round(float(candidate_mean_return) - float(default_mean_return), 4) if candidate_mean_return is not None and default_mean_return is not None else None
     recent_support_ratio = float(dossier.get("recent_support_ratio") or 0.0)
     observed_independent_window_count = dossier.get("observed_independent_window_count")
     ranking_score = round(
-        _stage_rank(dossier) * 100
-        + closed_cycle_count
-        + recent_support_ratio * 20
-        + (float(positive_rate_delta) * 100 if positive_rate_delta is not None else 0.0)
-        + (float(mean_return_delta) * 100 if mean_return_delta is not None else 0.0),
+        _stage_rank(dossier) * 100 + closed_cycle_count + recent_support_ratio * 20 + (float(positive_rate_delta) * 100 if positive_rate_delta is not None else 0.0) + (float(mean_return_delta) * 100 if mean_return_delta is not None else 0.0),
         4,
     )
     return {
@@ -111,10 +99,7 @@ def generate_btst_continuation_merge_candidate_ranking(
 
     top_candidate = rows[0] if rows else {}
     recommendation = (
-        f"当前最值得继续推进 merge path 的 continuation 候选是 {top_candidate.get('ticker')}，"
-        f"stage={top_candidate.get('promotion_path_status') or top_candidate.get('promotion_readiness_verdict')},"
-        f" positive_rate_delta={top_candidate.get('t_plus_2_positive_rate_delta_vs_default_btst')},"
-        f" mean_return_delta={top_candidate.get('mean_t_plus_2_return_delta_vs_default_btst')}。"
+        f"当前最值得继续推进 merge path 的 continuation 候选是 {top_candidate.get('ticker')}，" f"stage={top_candidate.get('promotion_path_status') or top_candidate.get('promotion_readiness_verdict')}," f" positive_rate_delta={top_candidate.get('t_plus_2_positive_rate_delta_vs_default_btst')}," f" mean_return_delta={top_candidate.get('mean_t_plus_2_return_delta_vs_default_btst')}。"
         if top_candidate
         else "当前没有可用的 continuation candidate dossier，无法构建 merge candidate ranking。"
     )
@@ -143,9 +128,7 @@ def render_btst_continuation_merge_candidate_ranking_markdown(analysis: dict[str
         "## Top Ranked Candidates",
     ]
     for row in list(analysis.get("ranked_candidates") or [])[:5]:
-        lines.append(
-            f"- rank={row.get('merge_candidate_rank')} ticker={row.get('ticker')} stage={row.get('promotion_path_status') or row.get('promotion_readiness_verdict')} ranking_score={row.get('ranking_score')} positive_rate_delta={row.get('t_plus_2_positive_rate_delta_vs_default_btst')} mean_return_delta={row.get('mean_t_plus_2_return_delta_vs_default_btst')}"
-        )
+        lines.append(f"- rank={row.get('merge_candidate_rank')} ticker={row.get('ticker')} stage={row.get('promotion_path_status') or row.get('promotion_readiness_verdict')} ranking_score={row.get('ranking_score')} positive_rate_delta={row.get('t_plus_2_positive_rate_delta_vs_default_btst')} mean_return_delta={row.get('mean_t_plus_2_return_delta_vs_default_btst')}")
     lines.extend(["", "## Recommendation", f"- {analysis.get('recommendation')}"])
     return "\n".join(lines) + "\n"
 

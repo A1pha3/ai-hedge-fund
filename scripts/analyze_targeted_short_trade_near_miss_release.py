@@ -120,9 +120,7 @@ def render_targeted_short_trade_near_miss_release_markdown(analysis: dict[str, A
     lines.append("")
     lines.append("## Changed Cases")
     for row in analysis["changed_cases"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, before_score={row['before_score_target']}, after_score={row['after_score_target']}, target_case={row['is_target_case']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, before_score={row['before_score_target']}, after_score={row['after_score_target']}, target_case={row['is_target_case']}")
     if not analysis["changed_cases"]:
         lines.append("- none")
     lines.append("")
@@ -271,10 +269,7 @@ def _build_near_miss_release_recommendation(
 ) -> str:
     if promoted_target_rows and changed_non_target_case_count == 0:
         target_descriptions = ", ".join(f"{row['trade_date']} / {row['ticker']}" for row in promoted_target_rows)
-        return (
-            f"当前定向 release 只改变目标 near-miss 样本。{target_descriptions} 从 near_miss -> selected，"
-            "可作为低污染的 case-based near-miss promotion 实验。"
-        )
+        return f"当前定向 release 只改变目标 near-miss 样本。{target_descriptions} 从 near_miss -> selected，" "可作为低污染的 case-based near-miss promotion 实验。"
     if changed_non_target_case_count > 0:
         return "出现了非目标 near-miss 样本变化，当前实验不再是严格的 case-based promotion。"
     return "目标 near-miss 样本没有进入 selected，当前 release 参数还不够强。"

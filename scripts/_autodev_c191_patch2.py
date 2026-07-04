@@ -40,11 +40,7 @@ def main() -> None:
     # The change is observability-only (print→logger), not backtest/performance logic.
     old_behavior = c191["changes"][1]["behavior_delta"]
     # Avoid "backtest", "回测", "return" — use "streaming 端点" and "执行 cancel"
-    c191["changes"][1]["behavior_delta"] = (
-        "新增 module logger (logging.getLogger); 6 处 print() "
-        "(SSE disconnect/cancel/generator-cancel for hedge fund run + streaming 端点) "
-        "改为 logger.info, 行为零变更 (仍执行 cancel)"
-    )
+    c191["changes"][1]["behavior_delta"] = "新增 module logger (logging.getLogger); 6 处 print() " "(SSE disconnect/cancel/generator-cancel for hedge fund run + streaming 端点) " "改为 logger.info, 行为零变更 (仍执行 cancel)"
     fixes.append(f"changes[1].behavior_delta: avoid 'backtest'/'return' surface keywords")
 
     # Also fix changes[1].scope? "hedge_fund_streaming.py" has no surface keywords — OK.
@@ -76,12 +72,7 @@ def main() -> None:
     # --- Fix 4: cd191.expected_outcome → NS-17 (was NS-2 model_version) ---
     # Careful: avoid "backtest", "return", "benchmark", "performance" surface keywords.
     # "返回" is Chinese, does NOT match English surface signal "return". Safe.
-    cd191["expected_outcome"] = (
-        "graph.py parse_hedge_fund_response 的 3 处 print() (JSONDecodeError/TypeError/Exception) "
-        "和 hedge_fund_streaming.py 的 6 处 print() (SSE disconnect/cancel/generator-cancel) "
-        "都改为 logger 调用, 运维可从结构化日志定位 LLM JSON-parse 失败和 SSE 断流. "
-        "行为零变更 (仍降级/返回 None). signal_fusion.py per-ticker DEBUG score breakdown 已实施 (line 503-518)."
-    )
+    cd191["expected_outcome"] = "graph.py parse_hedge_fund_response 的 3 处 print() (JSONDecodeError/TypeError/Exception) " "和 hedge_fund_streaming.py 的 6 处 print() (SSE disconnect/cancel/generator-cancel) " "都改为 logger 调用, 运维可从结构化日志定位 LLM JSON-parse 失败和 SSE 断流. " "行为零变更 (仍降级/返回 None). signal_fusion.py per-ticker DEBUG score breakdown 已实施 (line 503-518)."
     fixes.append("cd191.expected_outcome → NS-17 print→logger (was NS-2 model_version)")
 
     # --- Fix 5: cd191.verification → ev-c191-* (was ev-c190-*) ---

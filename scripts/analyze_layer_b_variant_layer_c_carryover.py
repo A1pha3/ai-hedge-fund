@@ -83,22 +83,26 @@ def _compact_agents(entries: list[dict]) -> list[dict[str, object]]:
 
 
 def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
-    fieldnames = list(rows[0].keys()) if rows else [
-        "trade_date",
-        "ticker",
-        "industry_sw",
-        "tags",
-        "variant_score_b",
-        "required_score_c",
-        "replay_score_c",
-        "score_c_gap",
-        "score_final",
-        "decision",
-        "bc_conflict",
-        "would_enter_watchlist",
-        "manual_verdict",
-        "manual_notes",
-    ]
+    fieldnames = (
+        list(rows[0].keys())
+        if rows
+        else [
+            "trade_date",
+            "ticker",
+            "industry_sw",
+            "tags",
+            "variant_score_b",
+            "required_score_c",
+            "replay_score_c",
+            "score_c_gap",
+            "score_final",
+            "decision",
+            "bc_conflict",
+            "would_enter_watchlist",
+            "manual_verdict",
+            "manual_notes",
+        ]
+    )
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -144,13 +148,7 @@ def _render_markdown(payload: dict) -> str:
     for row in payload["rows"]:
         required_score_c_text = "n/a" if row["required_score_c"] is None else f"{float(row['required_score_c']):.4f}"
         score_c_gap_text = "n/a" if row["score_c_gap"] is None else f"{float(row['score_c_gap']):.4f}"
-        lines.append(
-            f"- {row['trade_date']} / {row['ticker']} | industry={row['industry_sw']} | tags={', '.join(row['tags'])} | "
-            f"score_b={row['variant_score_b']:.4f} | score_c={row['replay_score_c']:.4f} | "
-            f"required_c={required_score_c_text} | "
-            f"gap={score_c_gap_text} | "
-            f"final={row['score_final']:.4f} | decision={row['decision']} | watchlist={'yes' if row['would_enter_watchlist'] else 'no'}"
-        )
+        lines.append(f"- {row['trade_date']} / {row['ticker']} | industry={row['industry_sw']} | tags={', '.join(row['tags'])} | " f"score_b={row['variant_score_b']:.4f} | score_c={row['replay_score_c']:.4f} | " f"required_c={required_score_c_text} | " f"gap={score_c_gap_text} | " f"final={row['score_final']:.4f} | decision={row['decision']} | watchlist={'yes' if row['would_enter_watchlist'] else 'no'}")
         if row["bc_conflict"]:
             lines.append(f"  - bc_conflict: {row['bc_conflict']}")
         if row["top_positive_agents"]:

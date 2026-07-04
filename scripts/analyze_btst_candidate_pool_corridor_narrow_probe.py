@@ -48,10 +48,7 @@ def _analyze_deepest_corridor_split(candidate_pool_recall_dossier: dict[str, Any
             continue
         cutoff_share = _safe_float(profile.get("avg_amount_share_of_cutoff_mean"))
         min_gate_share = _safe_float(profile.get("avg_amount_share_of_min_gate_mean"))
-        low_gate_focus = (
-            min_gate_share is not None
-            and SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE <= min_gate_share < SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE
-        )
+        low_gate_focus = min_gate_share is not None and SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE <= min_gate_share < SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE
         keep_for_deepest_probe = low_gate_focus and cutoff_share is not None and cutoff_share <= SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE
         corridor_rows.append(
             {
@@ -77,11 +74,7 @@ def _analyze_deepest_corridor_split(candidate_pool_recall_dossier: dict[str, Any
     low_gate_excluded_rows = [row for row in ranked_rows if row.get("is_low_gate_focus") and not row.get("keep_for_deepest_probe")]
     standard_corridor_rows = [row for row in ranked_rows if not row.get("is_low_gate_focus")]
     verdict = "deepest_corridor_split_ready" if retained_rows else "no_retainable_deepest_corridor_focus"
-    recommendation = (
-        "Keep only the deepest low-gate corridor names whose avg_amount/cutoff stays at or below "
-        f"{SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE}; route thicker low-gate tails back to "
-        "upstream base-liquidity uplift instead of keeping them in the same shadow probe."
-    )
+    recommendation = "Keep only the deepest low-gate corridor names whose avg_amount/cutoff stays at or below " f"{SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE}; route thicker low-gate tails back to " "upstream base-liquidity uplift instead of keeping them in the same shadow probe."
     if low_gate_excluded_rows:
         recommendation += f" Current excluded low-gate tail: {[row['ticker'] for row in low_gate_excluded_rows]}."
     if standard_corridor_rows:
@@ -140,10 +133,7 @@ def analyze_btst_candidate_pool_corridor_narrow_probe(
     command_board_path: str | Path = DEFAULT_COMMAND_BOARD_PATH,
 ) -> dict[str, Any]:
     resolved_recall_dossier_path = Path(candidate_pool_recall_dossier_path).expanduser().resolve()
-    legacy_mode_requested = (
-        Path(candidate_dossier_path).expanduser().resolve() != DEFAULT_CANDIDATE_DOSSIER_PATH.expanduser().resolve()
-        or Path(command_board_path).expanduser().resolve() != DEFAULT_COMMAND_BOARD_PATH.expanduser().resolve()
-    )
+    legacy_mode_requested = Path(candidate_dossier_path).expanduser().resolve() != DEFAULT_CANDIDATE_DOSSIER_PATH.expanduser().resolve() or Path(command_board_path).expanduser().resolve() != DEFAULT_COMMAND_BOARD_PATH.expanduser().resolve()
     if not legacy_mode_requested:
         recall_dossier = _load_optional_json(candidate_pool_recall_dossier_path)
         if recall_dossier:
@@ -174,10 +164,7 @@ def analyze_btst_candidate_pool_corridor_narrow_probe(
     else:
         verdict = "score_weight_gap_requires_deeper_probe"
 
-    recommendation = (
-        "Prioritize lane-specific override parity inspection before adding any new score uplift; "
-        "2026-04-06 already matches the anchor on breakout stage and relief state."
-    )
+    recommendation = "Prioritize lane-specific override parity inspection before adding any new score uplift; " "2026-04-06 already matches the anchor on breakout stage and relief state."
     return {
         "focus_ticker": diagnostics.get("focus_ticker"),
         "anchor_trade_date": selected_anchor.get("trade_date"),
@@ -193,8 +180,7 @@ def analyze_btst_candidate_pool_corridor_narrow_probe(
         "target_gap_to_selected": threshold_gap_to_selected,
         "anchor_gap_to_selected": anchor_threshold_gap,
         "same_breakout_stage": near_miss_metrics.get("breakout_stage") == selected_metrics.get("breakout_stage"),
-        "same_upstream_shadow_catalyst_relief_state": near_miss_metrics.get("upstream_shadow_catalyst_relief_applied")
-        == selected_metrics.get("upstream_shadow_catalyst_relief_applied"),
+        "same_upstream_shadow_catalyst_relief_state": near_miss_metrics.get("upstream_shadow_catalyst_relief_applied") == selected_metrics.get("upstream_shadow_catalyst_relief_applied"),
         "verdict": verdict,
         "recommendation": recommendation,
         "source_reports": dict(diagnostics.get("source_reports") or {}),

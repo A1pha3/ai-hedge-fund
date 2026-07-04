@@ -10,6 +10,7 @@ Output (printed + saved to data/reports/screening_diff_{date1}_{date2}.json):
 - RANK MOVERS: tickers in both, sorted by absolute rank delta
 - SCORE MOVERS: tickers in both, sorted by absolute score delta
 """
+
 from __future__ import annotations
 
 import argparse
@@ -98,12 +99,8 @@ def compute_diff(
     score_movers.sort(key=lambda x: -abs(x["score_delta"]))
 
     return {
-        "new_entrants": [
-            {"ticker": t, **index2[t]} for t in new_entrants
-        ],
-        "dropouts": [
-            {"ticker": t, **index1[t]} for t in dropouts
-        ],
+        "new_entrants": [{"ticker": t, **index2[t]} for t in new_entrants],
+        "dropouts": [{"ticker": t, **index1[t]} for t in dropouts],
         "rank_movers": rank_movers,
         "score_movers": score_movers,
     }
@@ -120,30 +117,20 @@ def format_table(diff: dict, date1: str, date2: str) -> str:
     if new:
         lines.append(f"\n[NEW ENTRANTS] {len(new)} 只新进 Top N:")
         for e in new:
-            lines.append(
-                f"  + {e['ticker']} {e['name']} ({e['industry_sw']}) "
-                f"rank={e['rank']} score_b={e['score_b']:+.4f}"
-            )
+            lines.append(f"  + {e['ticker']} {e['name']} ({e['industry_sw']}) " f"rank={e['rank']} score_b={e['score_b']:+.4f}")
 
     dropouts = diff["dropouts"]
     if dropouts:
         lines.append(f"\n[DROPPED OUT] {len(dropouts)} 只掉出 Top N:")
         for e in dropouts:
-            lines.append(
-                f"  - {e['ticker']} {e['name']} ({e['industry_sw']}) "
-                f"was rank={e['rank']} score_b={e['score_b']:+.4f}"
-            )
+            lines.append(f"  - {e['ticker']} {e['name']} ({e['industry_sw']}) " f"was rank={e['rank']} score_b={e['score_b']:+.4f}")
 
     movers = diff["rank_movers"]
     if movers:
         lines.append(f"\n[RANK MOVERS] {len(movers)} 只排名变化:")
         for m in movers[:10]:  # top-10 movers
             arrow = "↑" if m["rank_delta"] > 0 else "↓"
-            lines.append(
-                f"  {arrow} {m['ticker']} {m['name']} ({m['industry_sw']}) "
-                f"#{m['rank_from']} → #{m['rank_to']} (Δ={m['rank_delta']:+d}) "
-                f"score_b: {m['score_from']:+.4f} → {m['score_to']:+.4f}"
-            )
+            lines.append(f"  {arrow} {m['ticker']} {m['name']} ({m['industry_sw']}) " f"#{m['rank_from']} → #{m['rank_to']} (Δ={m['rank_delta']:+d}) " f"score_b: {m['score_from']:+.4f} → {m['score_to']:+.4f}")
 
     if not (new or dropouts or movers):
         lines.append("\n  无变化: 两次 Top N 完全相同")
@@ -153,9 +140,7 @@ def format_table(diff: dict, date1: str, date2: str) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Compare two auto-screening reports to surface new entrants, dropouts, and rank movers"
-    )
+    parser = argparse.ArgumentParser(description="Compare two auto-screening reports to surface new entrants, dropouts, and rank movers")
     parser.add_argument(
         "--date1",
         type=str,

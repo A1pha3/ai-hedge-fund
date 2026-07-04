@@ -100,11 +100,7 @@ def analyze_short_trade_boundary_recurring_frontier_dossiers(
 
     if dossiers:
         lead = dossiers[0]
-        recommendation = (
-            f"当前 recurring frontier 应先看 {lead['ticker']}。它维持 priority_rank=1，"
-            f"minimal_adjustment_cost={lead['minimal_adjustment_cost']}，"
-            f"同时真实 outcome 模式为 {lead['pattern_label']}。"
-        )
+        recommendation = f"当前 recurring frontier 应先看 {lead['ticker']}。它维持 priority_rank=1，" f"minimal_adjustment_cost={lead['minimal_adjustment_cost']}，" f"同时真实 outcome 模式为 {lead['pattern_label']}。"
     else:
         recommendation = "当前没有可生成 dossier 的 recurring frontier ticker。"
 

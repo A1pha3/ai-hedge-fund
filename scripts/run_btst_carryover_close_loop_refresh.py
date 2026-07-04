@@ -337,15 +337,15 @@ def _build_close_loop_bundle(
         "recommendation": (
             f"已刷新 {focus_ticker} 的 selected contract 与 peer close-loop 队列；"
             f" 当前 peer focus={peer_expansion.get('focus_ticker')} ({peer_expansion.get('focus_status')})，"
-             f" proof_focus={peer_proof_board.get('focus_ticker')} ({peer_proof_board.get('focus_promotion_review_verdict')})，"
-             f" promotion_gate_focus={peer_promotion_gate.get('focus_ticker')} ({peer_promotion_gate.get('focus_gate_verdict')})，"
-             f" default_expansion_status={peer_promotion_gate.get('default_expansion_status')}，"
-             f" priority_expansion={peer_expansion.get('priority_expansion_tickers')}，"
-             f" ready_for_promotion_review={peer_proof_board.get('ready_for_promotion_review_tickers')}，"
-             f" promotion_gate_ready={peer_promotion_gate.get('ready_tickers')}，"
-             f" pending_t_plus_2={peer_promotion_gate.get('pending_t_plus_2_tickers')}，"
-             f" pending_next_day={peer_promotion_gate.get('pending_next_day_tickers')}，"
-                f" watch_with_risk={peer_expansion.get('watch_with_risk_tickers')}。"
+            f" proof_focus={peer_proof_board.get('focus_ticker')} ({peer_proof_board.get('focus_promotion_review_verdict')})，"
+            f" promotion_gate_focus={peer_promotion_gate.get('focus_ticker')} ({peer_promotion_gate.get('focus_gate_verdict')})，"
+            f" default_expansion_status={peer_promotion_gate.get('default_expansion_status')}，"
+            f" priority_expansion={peer_expansion.get('priority_expansion_tickers')}，"
+            f" ready_for_promotion_review={peer_proof_board.get('ready_for_promotion_review_tickers')}，"
+            f" promotion_gate_ready={peer_promotion_gate.get('ready_tickers')}，"
+            f" pending_t_plus_2={peer_promotion_gate.get('pending_t_plus_2_tickers')}，"
+            f" pending_next_day={peer_promotion_gate.get('pending_next_day_tickers')}，"
+            f" watch_with_risk={peer_expansion.get('watch_with_risk_tickers')}。"
         ),
     }
 

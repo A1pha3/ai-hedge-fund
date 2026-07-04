@@ -258,18 +258,10 @@ def _build_aligned_peer_proof_analysis(
     selected_refresh: dict[str, Any],
     entries: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    ready_for_promotion_review_tickers = [
-        str(entry.get("ticker") or "") for entry in entries if str(entry.get("promotion_review_verdict") or "") == "ready_for_promotion_review"
-    ][:4]
-    risk_review_tickers = [
-        str(entry.get("ticker") or "") for entry in entries if str(entry.get("promotion_review_verdict") or "") == "requires_history_risk_review"
-    ][:4]
-    pending_next_day_tickers = [
-        str(entry.get("ticker") or "") for entry in entries if str(entry.get("promotion_review_verdict") or "") == "await_next_day_close"
-    ][:4]
-    pending_t_plus_2_tickers = [
-        str(entry.get("ticker") or "") for entry in entries if str(entry.get("promotion_review_verdict") or "") == "await_t_plus_2_close"
-    ][:4]
+    ready_for_promotion_review_tickers = [str(entry.get("ticker") or "") for entry in entries if str(entry.get("promotion_review_verdict") or "") == "ready_for_promotion_review"][:4]
+    risk_review_tickers = [str(entry.get("ticker") or "") for entry in entries if str(entry.get("promotion_review_verdict") or "") == "requires_history_risk_review"][:4]
+    pending_next_day_tickers = [str(entry.get("ticker") or "") for entry in entries if str(entry.get("promotion_review_verdict") or "") == "await_next_day_close"][:4]
+    pending_t_plus_2_tickers = [str(entry.get("ticker") or "") for entry in entries if str(entry.get("promotion_review_verdict") or "") == "await_t_plus_2_close"][:4]
     command_rows = _build_command_rows(entries)
     priority_board_status = _build_priority_board_status(command_rows)
     focus = entries[0] if entries else {}
@@ -287,20 +279,11 @@ def _build_aligned_peer_proof_analysis(
         selected_contract_verdict = str(selected_focus.get("overall_contract_verdict") or "").strip()
         selected_preferred_entry_mode = str(selected_focus.get("preferred_entry_mode") or "").strip()
         if "violated" in selected_contract_verdict:
-            recommendation_parts.append(
-                f"formal selected {selected_focus.get('ticker')} 当前 contract={selected_contract_verdict}，应先收紧 carryover 主叙事，不再把它维持为 T+2 bias 锚点。"
-            )
-        elif (
-            "observed_without_positive_expectation" in selected_contract_verdict
-            or selected_preferred_entry_mode == "intraday_confirmation_only"
-        ):
-            recommendation_parts.append(
-                f"formal selected {selected_focus.get('ticker')} 当前 contract={selected_contract_verdict}，应继续只按 intraday confirmation-only / execution-quality 语义管理，在第二个 aligned peer 真正闭环前不要把它外推成 T+2 bias 锚点。"
-            )
+            recommendation_parts.append(f"formal selected {selected_focus.get('ticker')} 当前 contract={selected_contract_verdict}，应先收紧 carryover 主叙事，不再把它维持为 T+2 bias 锚点。")
+        elif "observed_without_positive_expectation" in selected_contract_verdict or selected_preferred_entry_mode == "intraday_confirmation_only":
+            recommendation_parts.append(f"formal selected {selected_focus.get('ticker')} 当前 contract={selected_contract_verdict}，应继续只按 intraday confirmation-only / execution-quality 语义管理，在第二个 aligned peer 真正闭环前不要把它外推成 T+2 bias 锚点。")
         else:
-            recommendation_parts.append(
-                f"formal selected {selected_focus.get('ticker')} 当前 contract={selected_contract_verdict}，在第二个 aligned peer 真正闭环前仍维持 T+2 bias 语义。"
-            )
+            recommendation_parts.append(f"formal selected {selected_focus.get('ticker')} 当前 contract={selected_contract_verdict}，在第二个 aligned peer 真正闭环前仍维持 T+2 bias 语义。")
     recommendation = " ".join(recommendation_parts) if recommendation_parts else "当前没有可用于 aligned peer promotion proof 的有效 close-loop。"
     return {
         "selected_ticker": selected_focus.get("ticker") or peer_expansion.get("selected_ticker") or harvest.get("ticker"),
@@ -309,10 +292,7 @@ def _build_aligned_peer_proof_analysis(
         "selected_contract_verdict": selected_focus.get("overall_contract_verdict"),
         "peer_count": len(entries),
         "proof_verdict_counts": {verdict: sum(1 for entry in entries if str(entry.get("proof_verdict") or "") == verdict) for verdict in sorted({str(entry.get("proof_verdict") or "") for entry in entries})},
-        "promotion_review_verdict_counts": {
-            verdict: sum(1 for entry in entries if str(entry.get("promotion_review_verdict") or "") == verdict)
-            for verdict in sorted({str(entry.get("promotion_review_verdict") or "") for entry in entries})
-        },
+        "promotion_review_verdict_counts": {verdict: sum(1 for entry in entries if str(entry.get("promotion_review_verdict") or "") == verdict) for verdict in sorted({str(entry.get("promotion_review_verdict") or "") for entry in entries})},
         "ready_for_promotion_review_tickers": ready_for_promotion_review_tickers,
         "risk_review_tickers": risk_review_tickers,
         "pending_next_day_tickers": pending_next_day_tickers,
@@ -356,9 +336,7 @@ def render_btst_carryover_aligned_peer_proof_board_markdown(analysis: dict[str, 
         phase_rows = [row for row in command_rows if str(row.get("harvest_phase") or "") == harvest_phase]
         if phase_rows:
             for row in phase_rows:
-                lines.append(
-                    f"- {row.get('ticker')} | {row.get('harvest_phase')} | why_now={row.get('why_now')} | next_step={row.get('next_step')} | promotion_review_verdict={row.get('promotion_review_verdict')}"
-                )
+                lines.append(f"- {row.get('ticker')} | {row.get('harvest_phase')} | why_now={row.get('why_now')} | next_step={row.get('next_step')} | promotion_review_verdict={row.get('promotion_review_verdict')}")
         else:
             lines.append("- none")
     lines.append("")

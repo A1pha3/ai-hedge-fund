@@ -11,6 +11,7 @@ invalidation_reasons 保留 t30 检查作为长期衰退信号.
 Usage:
   uv run python scripts/_autodev_c220_state.py
 """
+
 from __future__ import annotations
 
 import json

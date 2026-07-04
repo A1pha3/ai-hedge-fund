@@ -77,11 +77,7 @@ def analyze_btst_candidate_pool_corridor_persistence_dossier(
     resolved_focus_ticker = _resolve_focus_ticker(corridor_pack, lane_pair_board, focus_ticker)
     focus_corridor_row = _find_corridor_row(corridor_pack, resolved_focus_ticker)
     focus_lane_pair_row = _find_lane_pair_candidate(lane_pair_board, resolved_focus_ticker)
-    parallel_watch_rows = [
-        dict(row or {})
-        for row in list(lane_pair_board.get("candidates") or [])
-        if str(row.get("role") or "") == "parallel_watch"
-    ]
+    parallel_watch_rows = [dict(row or {}) for row in list(lane_pair_board.get("candidates") or []) if str(row.get("role") or "") == "parallel_watch"]
     parallel_watch_row = dict(parallel_watch_rows[0] or {}) if parallel_watch_rows else {}
     tradeable_surface = dict(objective_monitor.get("tradeable_surface") or {})
 
@@ -89,11 +85,7 @@ def analyze_btst_candidate_pool_corridor_persistence_dossier(
     same_source_positive_rate = focus_lane_pair_row.get("governance_same_source_next_close_positive_rate")
     same_source_return_mean = focus_lane_pair_row.get("governance_same_source_next_close_return_mean")
     target_independent_sample_count = 2
-    missing_independent_sample_count = (
-        max(target_independent_sample_count - int(same_source_sample_count or 0), 0)
-        if same_source_sample_count is not None
-        else None
-    )
+    missing_independent_sample_count = max(target_independent_sample_count - int(same_source_sample_count or 0), 0) if same_source_sample_count is not None else None
 
     continuation_readiness = {
         "governance_status": focus_lane_pair_row.get("governance_status"),
@@ -134,20 +126,12 @@ def analyze_btst_candidate_pool_corridor_persistence_dossier(
     blocker = str(focus_lane_pair_row.get("governance_blocker") or "").strip()
     if blocker in {"no_selected_persistence_or_independent_edge", "shadow_recall_not_persistent"}:
         verdict = "await_second_independent_selected_window"
-        next_confirmation_requirement = (
-            f"{resolved_focus_ticker} still needs {missing_independent_sample_count if missing_independent_sample_count is not None else 'additional'} "
-            "independent selected sample(s) before merge-readiness can be reconsidered."
-        )
-        recommendation = (
-            f"Keep {resolved_focus_ticker} as corridor primary shadow replay. Do not widen default BTST yet; "
-            "the objective edge is already strong, but persistence is still under-sampled."
-        )
+        next_confirmation_requirement = f"{resolved_focus_ticker} still needs {missing_independent_sample_count if missing_independent_sample_count is not None else 'additional'} " "independent selected sample(s) before merge-readiness can be reconsidered."
+        recommendation = f"Keep {resolved_focus_ticker} as corridor primary shadow replay. Do not widen default BTST yet; " "the objective edge is already strong, but persistence is still under-sampled."
     elif same_source_positive_rate is not None and float(same_source_positive_rate) <= 0.5:
         verdict = "same_source_edge_not_confirmed"
         next_confirmation_requirement = f"{resolved_focus_ticker} needs another independent selected sample with positive same-source follow-through."
-        recommendation = (
-            f"{resolved_focus_ticker} remains the corridor leader, but same-source continuation quality is still too weak for default BTST merge review."
-        )
+        recommendation = f"{resolved_focus_ticker} remains the corridor leader, but same-source continuation quality is still too weak for default BTST merge review."
     else:
         verdict = "corridor_merge_review_probe_ready"
         next_confirmation_requirement = "The corridor leader has enough persistence and same-source edge to justify merge-review probing."

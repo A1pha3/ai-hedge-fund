@@ -11,6 +11,7 @@ extracts 4 MR sub-factors (zscore_bbands / rsi_extreme / stat_arb / hurst_regime
 measures sep = T+1(dir=+1) - T+1(dir=-1) per sub-factor. sep>0 = direction correct.
 WIP-compatible: read-only diagnostic, no src/ change.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,8 +26,7 @@ import pandas as pd
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from scripts._diag_trend_subfactor_direction import (  # noqa: E402
-    get_history_batch, get_trading_dates, get_universe_for_date, _get_pro)
+from scripts._diag_trend_subfactor_direction import get_history_batch, get_trading_dates, get_universe_for_date, _get_pro  # noqa: E402
 from src.screening.strategy_scorer_mean_reversion import score_mean_reversion_strategy  # noqa: E402
 
 MR_SUBFACTORS = ["zscore_bbands", "rsi_extreme", "stat_arb", "hurst_regime"]
@@ -42,8 +42,7 @@ def run(n_dates, sample_n, end_date=None, seed=42):
     test_dates = trade_dates[:-1]
     rng = np.random.default_rng(seed)
     rows = []
-    print(f"\nMR sub-factor direction audit: {test_dates[0]}~{test_dates[-1]} "
-          f"({len(test_dates)} dates, sample={sample_n}/date)")
+    print(f"\nMR sub-factor direction audit: {test_dates[0]}~{test_dates[-1]} " f"({len(test_dates)} dates, sample={sample_n}/date)")
     print("=" * 78)
     for di, td in enumerate(test_dates):
         next_date = trade_dates[di + 1]
@@ -81,12 +80,14 @@ def run(n_dates, sample_n, end_date=None, seed=42):
             for sf_name, sf_dump in mr.sub_factors.items():
                 if sf_name not in MR_SUBFACTORS:
                     continue
-                rows.append({
-                    "subfactor": sf_name,
-                    "direction": int(sf_dump.get("direction", 0)),
-                    "completeness": float(sf_dump.get("completeness", 0.0)),
-                    "next_ret": float(nr),
-                })
+                rows.append(
+                    {
+                        "subfactor": sf_name,
+                        "direction": int(sf_dump.get("direction", 0)),
+                        "completeness": float(sf_dump.get("completeness", 0.0)),
+                        "next_ret": float(nr),
+                    }
+                )
                 n_ok += 1
         print(f"[{di + 1}/{len(test_dates)}] {td} records={n_ok} ({time.time() - t0:.1f}s)")
     if not rows:
@@ -101,8 +102,7 @@ def _analyze(rows):
     baseline = float(df["next_ret"].mean())
     print(f"\n样本: {len(df)} records (valid completeness>0: {len(valid)}), 全样本基准 T+1={baseline:+.3f}%")
     print("=" * 78)
-    print(f"{'sub-factor':<18s} {'valid':>7s} {'dir=+1':>8s} {'dir=0':>8s} {'dir=-1':>8s}"
-          f" {'T+1(+1)':>10s} {'T+1(-1)':>10s} {'sep':>9s}")
+    print(f"{'sub-factor':<18s} {'valid':>7s} {'dir=+1':>8s} {'dir=0':>8s} {'dir=-1':>8s}" f" {'T+1(+1)':>10s} {'T+1(-1)':>10s} {'sep':>9s}")
     print("-" * 78)
     for sf in MR_SUBFACTORS:
         sub = valid[valid["subfactor"] == sf]
@@ -116,8 +116,7 @@ def _analyze(rows):
         nr = float(neg["next_ret"].mean()) if not neg.empty else float("nan")
         sep = (pr - nr) if (np.isfinite(pr) and np.isfinite(nr)) else float("nan")
         flag = "✓正确" if (np.isfinite(sep) and sep > 0) else "?反向" if (np.isfinite(sep) and sep < 0) else "—"
-        print(f"{sf:<18s} {len(sub):>7d} {len(pos):>8d} {len(zero):>8d} {len(neg):>8d}"
-              f" {pr:>+9.3f} {nr:>+9.3f} {sep:>+8.3f}  {flag}")
+        print(f"{sf:<18s} {len(sub):>7d} {len(pos):>8d} {len(zero):>8d} {len(neg):>8d}" f" {pr:>+9.3f} {nr:>+9.3f} {sep:>+8.3f}  {flag}")
     print("\n判定: sep = T+1(bullish) - T+1(bearish); >0 正确, <0 反向 (同 volatility C222).")
 
 

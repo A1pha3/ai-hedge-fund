@@ -233,11 +233,7 @@ def render_scoped_missing_price_manifest_markdown(manifest: dict[str, Any], *, r
     lines.append("## Top补数 Rows")
     for row in list(manifest.get("manifest_rows") or [])[:row_limit]:
         tags = ",".join(list(row.get("slice_tags") or []))
-        lines.append(
-            f"- #{row.get('priority_rank')} {row.get('priority_bucket')} {row.get('ticker')} {row.get('trade_date')} "
-            f"{row.get('event_prototype')} reason={row.get('local_price_missing_reason')} score={row.get('priority_score')} "
-            f"occurrences={row.get('occurrence_count')} tags={tags}"
-        )
+        lines.append(f"- #{row.get('priority_rank')} {row.get('priority_bucket')} {row.get('ticker')} {row.get('trade_date')} " f"{row.get('event_prototype')} reason={row.get('local_price_missing_reason')} score={row.get('priority_score')} " f"occurrences={row.get('occurrence_count')} tags={tags}")
     lines.append("")
     return "\n".join(lines)
 

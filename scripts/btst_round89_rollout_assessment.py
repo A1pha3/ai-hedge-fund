@@ -23,7 +23,7 @@ def _render_markdown(assessment: dict) -> str:
     surface_name = str(assessment.get("surface_name") or "selected")
     surface_summaries = assessment.get("surface_summaries") or {}
     comparison_summary = assessment.get("comparison_summary") or {}
-    candidate_summary = ((surface_summaries.get(candidate_profile) or {}).get(surface_name) or {})
+    candidate_summary = (surface_summaries.get(candidate_profile) or {}).get(surface_name) or {}
     blockers = list(assessment.get("blockers") or [])
 
     lines = [

@@ -28,29 +28,16 @@ def check_api_key(provider):
         ModelProvider.AZURE_OPENAI: ["AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_DEPLOYMENT_NAME"],
         ModelProvider.ZHIPU: "ZHIPU_API_KEY",
         ModelProvider.MINIMAX: "MINIMAX_API_KEY",
-        ModelProvider.OLLAMA: None  # Ollama不需要API key
+        ModelProvider.OLLAMA: None,  # Ollama不需要API key
     }
-    
+
     # 定义默认占位符值
-    default_values = [
-        "your-financial-datasets-api-key",
-        "your-openai-api-key",
-        "your-anthropic-api-key",
-        "your-groq-api-key",
-        "your-google-api-key",
-        "your-xai-api-key",
-        "your-gigachat-api-key",
-        "your-openrouter-api-key",
-        "your-azure-openai-api-key",
-        "your-azure-openai-endpoint",
-        "your-azure-openai-deployment-name",
-        "your_api_key_here"  # 智谱的默认值
-    ]
-    
+    default_values = ["your-financial-datasets-api-key", "your-openai-api-key", "your-anthropic-api-key", "your-groq-api-key", "your-google-api-key", "your-xai-api-key", "your-gigachat-api-key", "your-openrouter-api-key", "your-azure-openai-api-key", "your-azure-openai-endpoint", "your-azure-openai-deployment-name", "your_api_key_here"]  # 智谱的默认值
+
     env_vars = api_key_env_map.get(provider)
     if env_vars is None:
         return "不需要API key"
-    
+
     def is_valid_api_key(value):
         """检查API key是否有效"""
         # 检查值是否存在、非空、不是默认值
@@ -59,7 +46,7 @@ def check_api_key(provider):
         value_str = str(value)
         # 检查值是否为空字符串或默认值
         return len(value_str.strip()) > 0 and value_str not in default_values
-    
+
     if isinstance(env_vars, list):
         # 检查多个环境变量
         for env_var in env_vars:
@@ -89,10 +76,10 @@ def main():
 
     print("可用大模型列表:")
     print("-" * 80)
-    
+
     # 收集已配置API key的模型
     configured_models = []
-    
+
     # 显示API模型
     print("API模型:")
     print("-" * 60)
@@ -108,11 +95,11 @@ def main():
         elif model.provider == ModelProvider.MINIMAX:
             print(f"调试信息: MINIMAX_API_KEY = {os.getenv('MINIMAX_API_KEY')}")
         print("-" * 60)
-        
+
         # 收集已配置的模型
         if api_key_status == "已配置":
             configured_models.append((model.model_name, model.provider))
-    
+
     # 显示Ollama模型
     print("\nOllama本地模型:")
     print("-" * 60)
@@ -121,16 +108,16 @@ def main():
         print(f"型号: {model.model_name}")
         print("API Key状态: 不需要API key")
         print("-" * 60)
-        
+
         # Ollama模型不需要API key，也算作可用
         configured_models.append((model.model_name, model.provider))
-    
+
     # 显示已配置的模型列表
     print("\n已配置API key的模型（可直接使用）:")
     print("-" * 80)
     for model_name, provider in configured_models:
         print(f"- {model_name}")
-    
+
     # 显示使用示例，使用已配置的模型
     print("\n使用示例:")
     print(f"  ./.venv/bin/python scripts/list-models.py  # 当前默认: {default_model_provider} / {default_model_name}")
@@ -138,12 +125,12 @@ def main():
         # 使用第一个已配置的模型
         first_model = configured_models[0]
         print(f"  ./scripts/run-hedge-fund.sh --ticker 600158 --model {first_model[0]}")
-        
+
         # 如果有多个已配置的模型，显示更多示例
         if len(configured_models) > 1:
             second_model = configured_models[1]
             print(f"  ./scripts/run-hedge-fund.sh --ticker AAPL --model {second_model[0]}")
-        
+
         # 显示一个Ollama示例
         ollama_models = [m for m in configured_models if m[1] == ModelProvider.OLLAMA]
         if ollama_models:
@@ -151,7 +138,7 @@ def main():
             print(f"  ./scripts/run-hedge-fund.sh --ticker TSLA --model {ollama_model[0]} --ollama")
     else:
         print("  暂无已配置API key的模型，请先配置API key")
-    
+
     # 显示如何配置API key
     print("\n如何配置API key:")
     print("1. 复制 .env.example 文件为 .env")

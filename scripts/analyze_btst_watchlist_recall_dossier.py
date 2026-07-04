@@ -139,19 +139,11 @@ def _classify_recall_stage(*, candidate_pool_visible: bool, system_seen_stage: s
 
 def _build_focus_tickers(tradeable_pool: dict[str, Any], failure_dossier: dict[str, Any], *, priority_limit: int) -> list[str]:
     priority_limit = max(int(priority_limit), 0)
-    top_absent_from_watchlist_tickers = [
-        str(value)
-        for value in list(failure_dossier.get("top_absent_from_watchlist_tickers") or [])
-        if str(value or "").strip()
-    ]
+    top_absent_from_watchlist_tickers = [str(value) for value in list(failure_dossier.get("top_absent_from_watchlist_tickers") or []) if str(value or "").strip()]
     if top_absent_from_watchlist_tickers:
         return top_absent_from_watchlist_tickers[:priority_limit]
 
-    top_ticker_rows = [
-        dict(row)
-        for row in list(dict(tradeable_pool.get("no_candidate_entry_summary") or {}).get("top_ticker_rows") or [])
-        if str(row.get("ticker") or "").strip()
-    ]
+    top_ticker_rows = [dict(row) for row in list(dict(tradeable_pool.get("no_candidate_entry_summary") or {}).get("top_ticker_rows") or []) if str(row.get("ticker") or "").strip()]
     return [str(row.get("ticker") or "") for row in top_ticker_rows[:priority_limit] if str(row.get("ticker") or "").strip()]
 
 
@@ -309,11 +301,7 @@ def _build_priority_ticker_dossier(
     action_tier, title, next_step = _build_recall_action(dominant_recall_stage or "missing_candidate_pool_snapshot", subject=ticker)
     candidate_pool_visible_count = sum(1 for row in occurrence_evidence if bool(row.get("candidate_pool_visible")))
     layer_b_visible_count = sum(1 for row in occurrence_evidence if str(row.get("system_seen_stage") or "") == "boundary")
-    watchlist_visible_count = sum(
-        1
-        for row in occurrence_evidence
-        if str(row.get("system_seen_stage") or "") == "candidate_entry" or str(row.get("candidate_source") or "") in {"watchlist_filter_diagnostics", "layer_c_watchlist"}
-    )
+    watchlist_visible_count = sum(1 for row in occurrence_evidence if str(row.get("system_seen_stage") or "") == "candidate_entry" or str(row.get("candidate_source") or "") in {"watchlist_filter_diagnostics", "layer_c_watchlist"})
     strict_goal_case_count = sum(1 for row in occurrence_evidence if bool(row.get("strict_btst_goal_case")))
     return {
         "priority_rank": priority_rank,
@@ -342,11 +330,7 @@ def _build_priority_ticker_dossiers(
     snapshots_root: Path,
     snapshot_cache: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    no_candidate_rows = [
-        dict(row)
-        for row in list(tradeable_pool.get("rows") or [])
-        if str(row.get("first_kill_switch") or "") == "no_candidate_entry"
-    ]
+    no_candidate_rows = [dict(row) for row in list(tradeable_pool.get("rows") or []) if str(row.get("first_kill_switch") or "") == "no_candidate_entry"]
     return [
         _build_priority_ticker_dossier(
             ticker=ticker,
@@ -360,11 +344,7 @@ def _build_priority_ticker_dossiers(
 
 
 def _top_tickers_by_recall_stage(priority_ticker_dossiers: list[dict[str, Any]], recall_stage: str) -> list[str]:
-    return [
-        str(row.get("ticker") or "")
-        for row in priority_ticker_dossiers
-        if str(row.get("dominant_recall_stage") or "") == recall_stage and str(row.get("ticker") or "").strip()
-    ][:3]
+    return [str(row.get("ticker") or "") for row in priority_ticker_dossiers if str(row.get("dominant_recall_stage") or "") == recall_stage and str(row.get("ticker") or "").strip()][:3]
 
 
 def _build_action_queue(priority_ticker_dossiers: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -397,20 +377,11 @@ def _build_recommendation(
     top_layer_b_visible_but_missing_watchlist_tickers: list[str],
 ) -> str:
     if top_absent_from_candidate_pool_tickers:
-        return (
-            f"当前 watchlist recall backlog 的主矛盾已经进一步前移到 candidate_pool：{top_absent_from_candidate_pool_tickers} 连 candidate_pool snapshot 都没有进入。"
-            "下一步应先补 Layer A 候选池召回与池内截断观测，而不是继续调 watchlist 阈值或 candidate-entry 语义。"
-        )
+        return f"当前 watchlist recall backlog 的主矛盾已经进一步前移到 candidate_pool：{top_absent_from_candidate_pool_tickers} 连 candidate_pool snapshot 都没有进入。" "下一步应先补 Layer A 候选池召回与池内截断观测，而不是继续调 watchlist 阈值或 candidate-entry 语义。"
     if top_candidate_pool_visible_but_missing_layer_b_tickers:
-        return (
-            f"当前 watchlist recall backlog 的主矛盾落在 candidate_pool -> layer_b：{top_candidate_pool_visible_but_missing_layer_b_tickers} 已进入 candidate_pool，"
-            "但没有进入 layer_b 过滤诊断。下一步应先核对 Layer B 计分/融合 handoff。"
-        )
+        return f"当前 watchlist recall backlog 的主矛盾落在 candidate_pool -> layer_b：{top_candidate_pool_visible_but_missing_layer_b_tickers} 已进入 candidate_pool，" "但没有进入 layer_b 过滤诊断。下一步应先核对 Layer B 计分/融合 handoff。"
     if top_layer_b_visible_but_missing_watchlist_tickers:
-        return (
-            f"当前 watchlist recall backlog 的主矛盾落在 layer_b -> watchlist gate：{top_layer_b_visible_but_missing_watchlist_tickers} 已进入 layer_b，"
-            "但没有进入 watchlist。下一步应先回查 score_final、decision_avoid 与 watchlist 阈值。"
-        )
+        return f"当前 watchlist recall backlog 的主矛盾落在 layer_b -> watchlist gate：{top_layer_b_visible_but_missing_watchlist_tickers} 已进入 layer_b，" "但没有进入 watchlist。下一步应先回查 score_final、decision_avoid 与 watchlist 阈值。"
     return "当前 watchlist recall dossier 没有形成单一主矛盾，继续累积 occurrence 证据再推进。"
 
 
@@ -447,16 +418,12 @@ def _append_watchlist_overview_markdown(lines: list[str], analysis: dict[str, An
 def _append_watchlist_priority_ticker_dossiers_markdown(lines: list[str], rows: list[dict[str, Any]]) -> None:
     lines.append("## Priority Ticker Dossiers")
     for row in rows:
-        lines.append(
-            f"- rank={row.get('priority_rank')} ticker={row.get('ticker')} dominant_recall_stage={row.get('dominant_recall_stage')} occurrence_count={row.get('occurrence_count')} candidate_pool_visible_count={row.get('candidate_pool_visible_count')} layer_b_visible_count={row.get('layer_b_visible_count')}"
-        )
+        lines.append(f"- rank={row.get('priority_rank')} ticker={row.get('ticker')} dominant_recall_stage={row.get('dominant_recall_stage')} occurrence_count={row.get('occurrence_count')} candidate_pool_visible_count={row.get('candidate_pool_visible_count')} layer_b_visible_count={row.get('layer_b_visible_count')}")
         lines.append(f"  recall_stage_counts: {row.get('recall_stage_counts')}")
         lines.append(f"  failure_reason: {row.get('failure_reason')}")
         lines.append(f"  next_step: {row.get('next_step')}")
         for evidence_row in list(row.get("occurrence_evidence") or [])[:6]:
-            lines.append(
-                f"  occurrence: trade_date={evidence_row.get('trade_date')} report_dir={evidence_row.get('report_dir')} recall_stage={evidence_row.get('recall_stage')} candidate_pool_visible={evidence_row.get('candidate_pool_visible')} candidate_pool_rank={evidence_row.get('candidate_pool_rank')} system_seen_stage={evidence_row.get('system_seen_stage')}"
-            )
+            lines.append(f"  occurrence: trade_date={evidence_row.get('trade_date')} report_dir={evidence_row.get('report_dir')} recall_stage={evidence_row.get('recall_stage')} candidate_pool_visible={evidence_row.get('candidate_pool_visible')} candidate_pool_rank={evidence_row.get('candidate_pool_rank')} system_seen_stage={evidence_row.get('system_seen_stage')}")
     if not rows:
         lines.append("- none")
     lines.append("")
@@ -465,9 +432,7 @@ def _append_watchlist_priority_ticker_dossiers_markdown(lines: list[str], rows: 
 def _append_watchlist_action_queue_markdown(lines: list[str], rows: list[dict[str, Any]]) -> None:
     lines.append("## Action Queue")
     for row in rows:
-        lines.append(
-            f"- task_id={row.get('task_id')} ticker={row.get('ticker')} action_tier={row.get('action_tier')} dominant_recall_stage={row.get('dominant_recall_stage')}"
-        )
+        lines.append(f"- task_id={row.get('task_id')} ticker={row.get('ticker')} action_tier={row.get('action_tier')} dominant_recall_stage={row.get('dominant_recall_stage')}")
         lines.append(f"  why_now: {row.get('why_now')}")
         lines.append(f"  next_step: {row.get('next_step')}")
     if not rows:
@@ -516,9 +481,7 @@ def _build_watchlist_recall_analysis(
 ) -> dict[str, Any]:
     priority_recall_stage_counts = _count_recall_stages(priority_ticker_dossiers, key="dominant_recall_stage")
     top_absent_from_candidate_pool_tickers = _top_tickers_by_recall_stage(priority_ticker_dossiers, "absent_from_candidate_pool")
-    top_candidate_pool_visible_but_missing_layer_b_tickers = _top_tickers_by_recall_stage(
-        priority_ticker_dossiers, "candidate_pool_visible_but_missing_layer_b"
-    )
+    top_candidate_pool_visible_but_missing_layer_b_tickers = _top_tickers_by_recall_stage(priority_ticker_dossiers, "candidate_pool_visible_but_missing_layer_b")
     top_layer_b_visible_but_missing_watchlist_tickers = _top_tickers_by_recall_stage(priority_ticker_dossiers, "layer_b_visible_but_missing_watchlist")
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),

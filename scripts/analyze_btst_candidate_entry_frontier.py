@@ -95,11 +95,7 @@ def _extract_variant_rule_summary(structural_overrides: dict[str, Any]) -> list[
                 "name": str(rule.get("name") or "unnamed_filter"),
                 "candidate_sources": [str(value) for value in list(rule.get("candidate_sources") or []) if str(value or "").strip()],
                 "all_reason_codes": [str(value) for value in list(rule.get("all_reason_codes") or []) if str(value or "").strip()],
-                "metric_max_thresholds": {
-                    str(metric): round(float(value), 4)
-                    for metric, value in dict(rule.get("metric_max_thresholds") or {}).items()
-                    if value is not None
-                },
+                "metric_max_thresholds": {str(metric): round(float(value), 4) for metric, value in dict(rule.get("metric_max_thresholds") or {}).items() if value is not None},
             }
         )
     return summaries
@@ -322,9 +318,7 @@ def render_btst_candidate_entry_frontier_markdown(analysis: dict[str, Any]) -> s
         lines.append("")
     lines.append("## Baseline Top False Negatives")
     for row in baseline["top_false_negative_rows"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: decision={row['decision']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, score_target={row['score_target']}, reasons={row['false_negative_proxy_reasons']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: decision={row['decision']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, score_target={row['score_target']}, reasons={row['false_negative_proxy_reasons']}")
     if not baseline["top_false_negative_rows"]:
         lines.append("- none")
     lines.append("")
@@ -336,9 +330,7 @@ def render_btst_candidate_entry_frontier_markdown(analysis: dict[str, Any]) -> s
             lines.append("- none")
             continue
         for row in filtered_rows:
-            lines.append(
-                f"- {row['trade_date']} {row['ticker']}: matched_filter={row['matched_filter']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, candidate_source={row['candidate_source']}, metrics={row['metric_snapshot']}"
-            )
+            lines.append(f"- {row['trade_date']} {row['ticker']}: matched_filter={row['matched_filter']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, candidate_source={row['candidate_source']}, metrics={row['metric_snapshot']}")
     lines.append("")
     return "\n".join(lines) + "\n"
 

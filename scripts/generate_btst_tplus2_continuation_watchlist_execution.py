@@ -36,10 +36,7 @@ def _build_watchlist_execution_context(
     focus_ticker = str(promotion_gate.get("focus_ticker") or validation_queue.get("focus_ticker") or "")
     focus_candidate = dict(validation_queue.get("focus_candidate") or {})
     gate_verdict = str(promotion_gate.get("gate_verdict") or "")
-    governance_ready_watch = (
-        str(focus_candidate.get("candidate_tier_focus") or "") == "governance_followup"
-        and str(focus_candidate.get("promotion_readiness_verdict") or "") in {"watch_review_ready", "merge_review_ready"}
-    )
+    governance_ready_watch = str(focus_candidate.get("candidate_tier_focus") or "") == "governance_followup" and str(focus_candidate.get("promotion_readiness_verdict") or "") in {"watch_review_ready", "merge_review_ready"}
     promotion_review_verdict = str(promotion_gate.get("promotion_review_verdict") or "")
     merge_review_ready = promotion_review_verdict == "ready_for_default_btst_merge_review"
     governance_ready_watch = governance_ready_watch or promotion_review_verdict in READY_PROMOTION_REVIEW_VERDICTS
@@ -89,28 +86,16 @@ def _build_adopted_watch_row(context: dict[str, Any], execution_verdict: str) ->
             "priority_score": focus_candidate.get("priority_rank"),
             "lane_stage": lane_rules.get("lane_stage", lane_rulepack.get("lane_stage")),
             "capital_mode": lane_rules.get("capital_mode", lane_rulepack.get("capital_mode")),
-            "promotion_blocker": (
-                DEFAULT_BTST_MERGE_APPROVED_EXECUTION_ACTIVE
-                if merge_review_ready
-                else ("governance_approved_continuation_watch" if governance_ready_watch else "near_cluster_only")
-            ),
+            "promotion_blocker": (DEFAULT_BTST_MERGE_APPROVED_EXECUTION_ACTIVE if merge_review_ready else ("governance_approved_continuation_watch" if governance_ready_watch else "near_cluster_only")),
             "merge_approved_daily_pipeline_active": merge_review_ready,
-            "watchlist_validation_status": (
-                str(focus_candidate.get("recent_tier_verdict") or "governance_followup_payoff_confirmed")
-                if governance_ready_watch
-                else "promoted_from_validation_queue"
-            ),
+            "watchlist_validation_status": (str(focus_candidate.get("recent_tier_verdict") or "governance_followup_payoff_confirmed") if governance_ready_watch else "promoted_from_validation_queue"),
             "recent_supporting_window_count": focus_candidate.get("recent_tier_window_count"),
             "recent_window_count": focus_candidate.get("recent_window_count"),
             "recent_support_ratio": focus_candidate.get("recent_tier_ratio"),
             "next_step": (
                 "Keep this continuation watch candidate visible because merge-approved daily-pipeline uplift is already active; do not demote it back to near-cluster-only handling while governance review completes."
                 if merge_review_ready
-                else (
-                "Track this governance-approved continuation watch candidate under isolated paper-only controls; do not merge it into default BTST."
-                if governance_ready_watch
-                else "Track this adopted validation watch candidate outside eligible_tickers until a strict-peer upgrade appears."
-                )
+                else ("Track this governance-approved continuation watch candidate under isolated paper-only controls; do not merge it into default BTST." if governance_ready_watch else "Track this adopted validation watch candidate outside eligible_tickers until a strict-peer upgrade appears.")
             ),
             "t_plus_2_close_positive_rate": focus_candidate.get("t_plus_2_close_positive_rate"),
             "t_plus_2_close_return_mean": focus_candidate.get("t_plus_2_close_return_mean"),
@@ -125,15 +110,9 @@ def _build_watchlist_execution_recommendation(context: dict[str, Any], execution
     merge_review_ready = context["merge_review_ready"]
     if execution_verdict == "watchlist_extension_applied":
         return (
-            (
-                f"Treat {focus_ticker} as a formal continuation watchlist ticker because merge-approved daily-pipeline uplift is already active; "
-                f"keep eligible_tickers={eligible_tickers} unchanged while governance completes the merge review."
-            )
+            (f"Treat {focus_ticker} as a formal continuation watchlist ticker because merge-approved daily-pipeline uplift is already active; " f"keep eligible_tickers={eligible_tickers} unchanged while governance completes the merge review.")
             if merge_review_ready
-            else (
-                f"Treat {focus_ticker} as a formal continuation watchlist ticker while keeping "
-                f"eligible_tickers={eligible_tickers} unchanged and the continuation lane isolated from default BTST."
-            )
+            else (f"Treat {focus_ticker} as a formal continuation watchlist ticker while keeping " f"eligible_tickers={eligible_tickers} unchanged and the continuation lane isolated from default BTST.")
         )
     if execution_verdict == "watchlist_extension_already_applied":
         return f"{focus_ticker} is already part of the effective continuation watchlist."

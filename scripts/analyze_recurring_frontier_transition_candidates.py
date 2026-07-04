@@ -28,9 +28,7 @@ def render_recurring_frontier_transition_candidates_markdown(analysis: dict[str,
     lines.append("")
     lines.append("## Candidates")
     for row in analysis["candidates"]:
-        lines.append(
-            f"- {row['ticker']}: locality={row['transition_locality']}, occurrence_count={row['occurrence_count']}, minimal_adjustment_cost={row['minimal_adjustment_cost']}, previous_window_role={row['previous_window_role']}, current_window_role_count={row['current_window_role_count']}, recommendation={row['recommendation']}"
-        )
+        lines.append(f"- {row['ticker']}: locality={row['transition_locality']}, occurrence_count={row['occurrence_count']}, minimal_adjustment_cost={row['minimal_adjustment_cost']}, previous_window_role={row['previous_window_role']}, current_window_role_count={row['current_window_role_count']}, recommendation={row['recommendation']}")
     if not analysis["candidates"]:
         lines.append("- none")
     lines.append("")

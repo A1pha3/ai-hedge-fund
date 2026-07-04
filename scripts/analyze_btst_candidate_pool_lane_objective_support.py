@@ -157,41 +157,16 @@ def _summarize_rows(
 
     if not closed_rows:
         support_verdict = "insufficient_closed_cycle_samples"
-    elif (
-        tradeable_positive_rate is not None
-        and tradeable_mean_return is not None
-        and t_plus_2_positive_rate is not None
-        and mean_t_plus_2_return is not None
-        and t_plus_2_positive_rate >= float(tradeable_positive_rate)
-        and mean_t_plus_2_return >= float(tradeable_mean_return)
-    ):
+    elif tradeable_positive_rate is not None and tradeable_mean_return is not None and t_plus_2_positive_rate is not None and mean_t_plus_2_return is not None and t_plus_2_positive_rate >= float(tradeable_positive_rate) and mean_t_plus_2_return >= float(tradeable_mean_return):
         support_verdict = "candidate_pool_false_negative_outperforms_tradeable_surface"
-    elif (
-        t_plus_2_positive_rate is not None
-        and mean_t_plus_2_return is not None
-        and t_plus_2_positive_rate >= 0.5
-        and mean_t_plus_2_return > 0
-    ):
+    elif t_plus_2_positive_rate is not None and mean_t_plus_2_return is not None and t_plus_2_positive_rate >= 0.5 and mean_t_plus_2_return > 0:
         support_verdict = "candidate_pool_false_negative_has_positive_post_hoc_edge"
-    elif (
-        non_tradeable_positive_rate is not None
-        and non_tradeable_mean_return is not None
-        and t_plus_2_positive_rate is not None
-        and mean_t_plus_2_return is not None
-        and (
-            t_plus_2_positive_rate >= float(non_tradeable_positive_rate)
-            or mean_t_plus_2_return >= float(non_tradeable_mean_return)
-        )
-    ):
+    elif non_tradeable_positive_rate is not None and non_tradeable_mean_return is not None and t_plus_2_positive_rate is not None and mean_t_plus_2_return is not None and (t_plus_2_positive_rate >= float(non_tradeable_positive_rate) or mean_t_plus_2_return >= float(non_tradeable_mean_return)):
         support_verdict = "candidate_pool_false_negative_beats_non_tradeable_surface_only"
     else:
         support_verdict = "weak_post_hoc_edge"
 
-    strict_goal_rows = [
-        row
-        for row in closed_rows
-        if row.get("t_plus_2_close_return") is not None and float(row.get("t_plus_2_close_return") or -999.0) >= t_plus_2_return_target
-    ]
+    strict_goal_rows = [row for row in closed_rows if row.get("t_plus_2_close_return") is not None and float(row.get("t_plus_2_close_return") or -999.0) >= t_plus_2_return_target]
     return {
         "occurrence_count": len(rows),
         "next_day_available_count": len(next_day_rows),
@@ -331,11 +306,7 @@ def analyze_btst_candidate_pool_lane_objective_support(
     recommendation = "candidate-pool recall lanes 仍缺足够后验证据，不应仅凭结构解释推进升级。"
     if branch_rows:
         leader = branch_rows[0]
-        recommendation = (
-            f"当前最值得继续保留在 candidate-pool recall 首位验证的 lane 是 {leader.get('priority_handoff')}，"
-            f"因为它的后验 verdict={leader.get('support_verdict')}，"
-            f"closed_cycle_count={leader.get('closed_cycle_count')}，mean_t_plus_2_return={leader.get('mean_t_plus_2_return')}。"
-        )
+        recommendation = f"当前最值得继续保留在 candidate-pool recall 首位验证的 lane 是 {leader.get('priority_handoff')}，" f"因为它的后验 verdict={leader.get('support_verdict')}，" f"closed_cycle_count={leader.get('closed_cycle_count')}，mean_t_plus_2_return={leader.get('mean_t_plus_2_return')}。"
         if ticker_rows:
             recommendation = f"{recommendation} 其中优先跟踪 {ticker_rows[0].get('ticker')}。"
 
@@ -360,9 +331,7 @@ def render_btst_candidate_pool_lane_objective_support_markdown(analysis: dict[st
     lines.append("")
     lines.append("## Baseline")
     tradeable = dict(analysis.get("baseline_tradeable_surface") or {})
-    lines.append(
-        f"- tradeable_surface: closed_cycle_count={tradeable.get('closed_cycle_count')}, positive_rate={tradeable.get('t_plus_2_positive_rate')}, return_hit_rate={tradeable.get('t_plus_2_return_hit_rate_at_target')}, mean_t_plus_2_return={tradeable.get('mean_t_plus_2_return')}, verdict={tradeable.get('verdict')}"
-    )
+    lines.append(f"- tradeable_surface: closed_cycle_count={tradeable.get('closed_cycle_count')}, positive_rate={tradeable.get('t_plus_2_positive_rate')}, return_hit_rate={tradeable.get('t_plus_2_return_hit_rate_at_target')}, mean_t_plus_2_return={tradeable.get('mean_t_plus_2_return')}, verdict={tradeable.get('verdict')}")
     lines.append("")
     lines.append("## Branch Rows")
     for row in list(analysis.get("branch_rows") or []):
@@ -375,9 +344,7 @@ def render_btst_candidate_pool_lane_objective_support_markdown(analysis: dict[st
     lines.append("")
     lines.append("## Ticker Rows")
     for row in list(analysis.get("ticker_rows") or []):
-        lines.append(
-            f"- ticker={row.get('ticker')} handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} positive_rate={row.get('t_plus_2_positive_rate')} return_hit_rate={row.get('t_plus_2_return_hit_rate_at_target')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
-        )
+        lines.append(f"- ticker={row.get('ticker')} handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} positive_rate={row.get('t_plus_2_positive_rate')} return_hit_rate={row.get('t_plus_2_return_hit_rate_at_target')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}")
     if not list(analysis.get("ticker_rows") or []):
         lines.append("- none")
     lines.append("")

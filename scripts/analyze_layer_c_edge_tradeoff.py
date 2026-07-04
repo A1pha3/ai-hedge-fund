@@ -118,11 +118,7 @@ def _load_records(paths: list[Path]) -> list[dict]:
 
 
 def _evaluate_record(record: dict, scenario: dict) -> dict:
-    score_c = (
-        record["cohort_contributions"]["investor"] * float(scenario["investor_scale"])
-        + record["cohort_contributions"]["analyst"] * float(scenario["analyst_scale"])
-        + record["cohort_contributions"]["other"] * float(scenario["other_scale"])
-    )
+    score_c = record["cohort_contributions"]["investor"] * float(scenario["investor_scale"]) + record["cohort_contributions"]["analyst"] * float(scenario["analyst_scale"]) + record["cohort_contributions"]["other"] * float(scenario["other_scale"])
     score_b = float(record["score_b"])
     decision = _classify_score_b(score_b)
     bc_conflict = None
@@ -209,10 +205,7 @@ def _print_summary(report: dict) -> None:
 
 def _scenario_penalty(scenario: dict) -> float:
     return round(
-        ((1.0 - float(scenario["investor_scale"])) * 2.0)
-        + (float(scenario["b_weight"]) - 0.40)
-        + ((0.25 - float(scenario["watchlist_threshold"])) * 2.0)
-        + max(0.0, abs(float(scenario["avoid_score_c_threshold"])) - 0.30 if scenario["avoid_score_c_threshold"] is not None else 0.20),
+        ((1.0 - float(scenario["investor_scale"])) * 2.0) + (float(scenario["b_weight"]) - 0.40) + ((0.25 - float(scenario["watchlist_threshold"])) * 2.0) + max(0.0, abs(float(scenario["avoid_score_c_threshold"])) - 0.30 if scenario["avoid_score_c_threshold"] is not None else 0.20),
         4,
     )
 
@@ -225,12 +218,7 @@ def _build_grid_scenarios() -> dict[str, dict]:
         GRID_WATCHLIST_THRESHOLDS,
         GRID_AVOID_THRESHOLDS,
     ):
-        scenario_name = (
-            f"grid_inv_{int(investor_scale * 1000):03d}_"
-            f"b_{int(b_weight * 1000):03d}_"
-            f"watch_{int(watchlist_threshold * 1000):03d}_"
-            f"avoid_{int(abs(avoid_threshold) * 1000):03d}"
-        )
+        scenario_name = f"grid_inv_{int(investor_scale * 1000):03d}_" f"b_{int(b_weight * 1000):03d}_" f"watch_{int(watchlist_threshold * 1000):03d}_" f"avoid_{int(abs(avoid_threshold) * 1000):03d}"
         scenarios[scenario_name] = {
             "b_weight": b_weight,
             "c_weight": round(1.0 - b_weight, 3),

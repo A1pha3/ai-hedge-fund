@@ -29,15 +29,11 @@ def render_short_trade_boundary_filtered_candidates_markdown(analysis: dict[str,
     lines.append("")
     lines.append("## Closest To Pass")
     for row in analysis["closest_to_pass_rows"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: primary_reason={row['primary_reason']}, total_shortfall={row['total_shortfall']}, failed_thresholds={row['failed_thresholds']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: primary_reason={row['primary_reason']}, total_shortfall={row['total_shortfall']}, failed_thresholds={row['failed_thresholds']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}")
     lines.append("")
     lines.append("## Qualified Top Cases")
     for row in analysis["qualified_top_cases"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: candidate_score={row['candidate_score']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: candidate_score={row['candidate_score']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}")
     lines.append("")
     lines.append("## Recommendation")
     lines.append(f"- {analysis['recommendation']}")
@@ -98,10 +94,7 @@ def analyze_short_trade_boundary_filtered_candidates(
 
     if closest_to_pass_rows:
         first_row = closest_to_pass_rows[0]
-        recommendation = (
-            f"当前最接近放行的是 {first_row['trade_date']} / {first_row['ticker']}，"
-            f"primary_reason={first_row['primary_reason']}，total_shortfall={first_row['total_shortfall']}。"
-        )
+        recommendation = f"当前最接近放行的是 {first_row['trade_date']} / {first_row['ticker']}，" f"primary_reason={first_row['primary_reason']}，total_shortfall={first_row['total_shortfall']}。"
     elif qualified_rows:
         recommendation = "当前候选池里的样本都已通过现有 boundary floor，没有额外 edge candidate 需要审查。"
     else:

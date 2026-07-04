@@ -184,18 +184,14 @@ def _append_surface_summary_markdown(lines: list[str], analysis: dict[str, Any])
         summary = dict(analysis.get(label) or {})
         if not summary:
             continue
-        lines.append(
-            f"- {label}: closed_cycle_count={summary.get('closed_cycle_count')}, hit_rate={summary.get('max_future_high_return_2_5d_hit_rate_at_target')}, mean_max_return={summary.get('mean_max_future_high_return_2_5d')}, verdict={summary.get('verdict')}, objective_fit_score={summary.get('objective_fit_score')}"
-        )
+        lines.append(f"- {label}: closed_cycle_count={summary.get('closed_cycle_count')}, hit_rate={summary.get('max_future_high_return_2_5d_hit_rate_at_target')}, mean_max_return={summary.get('mean_max_future_high_return_2_5d')}, verdict={summary.get('verdict')}, objective_fit_score={summary.get('objective_fit_score')}")
     lines.append("")
 
 
 def _append_leaderboard_markdown(lines: list[str], title: str, rows: list[dict[str, Any]]) -> None:
     lines.append(f"## {title}")
     for row in rows:
-        lines.append(
-            f"- {row.get('group_label')}: closed_cycle_count={row.get('closed_cycle_count')}, hit_rate={row.get('max_future_high_return_2_5d_hit_rate_at_target')}, mean_max_return={row.get('mean_max_future_high_return_2_5d')}, verdict={row.get('verdict')}, objective_fit_score={row.get('objective_fit_score')}"
-        )
+        lines.append(f"- {row.get('group_label')}: closed_cycle_count={row.get('closed_cycle_count')}, hit_rate={row.get('max_future_high_return_2_5d_hit_rate_at_target')}, mean_max_return={row.get('mean_max_future_high_return_2_5d')}, verdict={row.get('verdict')}, objective_fit_score={row.get('objective_fit_score')}")
     if not rows:
         lines.append("- none")
     lines.append("")
@@ -204,9 +200,7 @@ def _append_leaderboard_markdown(lines: list[str], title: str, rows: list[dict[s
 def _append_goal_rows_markdown(lines: list[str], title: str, rows: list[dict[str, Any]]) -> None:
     lines.append(f"## {title}")
     for row in rows:
-        lines.append(
-            f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, source={row.get('candidate_source')}, max_future_high_return_2_5d={row.get('max_future_high_return_2_5d')}, score_target={row.get('score_target')}"
-        )
+        lines.append(f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, source={row.get('candidate_source')}, max_future_high_return_2_5d={row.get('max_future_high_return_2_5d')}, score_target={row.get('score_target')}")
     if not rows:
         lines.append("- none")
     lines.append("")

@@ -129,11 +129,7 @@ def extract_next_day_outcome(ticker: str, trade_date: str, price_cache: dict[tup
 
 def compute_candidate_score(metrics: dict[str, Any]) -> float:
     return round(
-        (0.30 * float(metrics.get("breakout_freshness", 0.0) or 0.0))
-        + (0.25 * float(metrics.get("trend_acceleration", 0.0) or 0.0))
-        + (0.20 * float(metrics.get("volume_expansion_quality", 0.0) or 0.0))
-        + (0.15 * float(metrics.get("catalyst_freshness", 0.0) or 0.0))
-        + (0.10 * float(metrics.get("close_strength", 0.0) or 0.0)),
+        (0.30 * float(metrics.get("breakout_freshness", 0.0) or 0.0)) + (0.25 * float(metrics.get("trend_acceleration", 0.0) or 0.0)) + (0.20 * float(metrics.get("volume_expansion_quality", 0.0) or 0.0)) + (0.15 * float(metrics.get("catalyst_freshness", 0.0) or 0.0)) + (0.10 * float(metrics.get("close_strength", 0.0) or 0.0)),
         4,
     )
 

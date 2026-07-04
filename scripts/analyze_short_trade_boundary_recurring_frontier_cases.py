@@ -26,9 +26,7 @@ def render_short_trade_boundary_recurring_frontier_markdown(analysis: dict[str, 
     lines.append("")
     lines.append("## Priority Queue")
     for row in analysis["priority_queue"]:
-        lines.append(
-            f"- {row['ticker']}: occurrences={row['occurrence_count']}, trade_dates={row['trade_dates']}, baseline_score_mean={row['baseline_score_mean']}, gap_to_near_miss_mean={row['gap_to_near_miss_mean']}, threshold_only_rescue_count={row['threshold_only_rescue_count']}, minimal_adjustment_cost={row['minimal_adjustment_cost']}, dominant_pattern={row['dominant_pattern']}"
-        )
+        lines.append(f"- {row['ticker']}: occurrences={row['occurrence_count']}, trade_dates={row['trade_dates']}, baseline_score_mean={row['baseline_score_mean']}, gap_to_near_miss_mean={row['gap_to_near_miss_mean']}, threshold_only_rescue_count={row['threshold_only_rescue_count']}, minimal_adjustment_cost={row['minimal_adjustment_cost']}, dominant_pattern={row['dominant_pattern']}")
     lines.append("")
     lines.append("## Recommendation")
     lines.append(f"- {analysis['recommendation']}")
@@ -56,11 +54,7 @@ def analyze_short_trade_boundary_recurring_frontier_cases(report_dir: str | Path
         trade_dates = sorted(case["base"]["trade_date"] for case in cases)
         baseline_scores = [float(case["base"]["score_target"]) for case in cases]
         gaps = [float(case["base"]["gap_to_near_miss"]) for case in cases]
-        threshold_only_rescue_count = sum(
-            1
-            for case in cases
-            if float(case["frontier"]["stale_weight"]) == 0.12 and float(case["frontier"]["extension_weight"]) == 0.08
-        )
+        threshold_only_rescue_count = sum(1 for case in cases if float(case["frontier"]["stale_weight"]) == 0.12 and float(case["frontier"]["extension_weight"]) == 0.08)
         dominant_pattern = {
             "near_miss_thresholds": sorted({float(case["frontier"]["near_miss_threshold"]) for case in cases}),
             "stale_weights": sorted({float(case["frontier"]["stale_weight"]) for case in cases}),
@@ -103,11 +97,7 @@ def analyze_short_trade_boundary_recurring_frontier_cases(report_dir: str | Path
 
     if priority_queue:
         lead = priority_queue[0]
-        recommendation = (
-            "当前重复出现的 score frontier 样本应按 recurring ticker 处理，而不是逐天零散讨论。"
-            f" 优先从 {lead['ticker']} 开始，因为它在 {lead['occurrence_count']} 个 trade_date 上重复出现，"
-            f"且最小 rescue cost 只有 {lead['minimal_adjustment_cost']}。"
-        )
+        recommendation = "当前重复出现的 score frontier 样本应按 recurring ticker 处理，而不是逐天零散讨论。" f" 优先从 {lead['ticker']} 开始，因为它在 {lead['occurrence_count']} 个 trade_date 上重复出现，" f"且最小 rescue cost 只有 {lead['minimal_adjustment_cost']}。"
     else:
         recommendation = "当前窗口里没有满足最小重复次数的 recurring short_trade_boundary frontier 样本。"
 

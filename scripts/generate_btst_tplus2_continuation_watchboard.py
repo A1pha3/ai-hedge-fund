@@ -171,11 +171,7 @@ def _build_watchboard_analysis(
 def _append_watchboard_row_section(lines: list[str], title: str, rows: list[dict[str, Any]]) -> None:
     lines.append(title)
     for row in rows:
-        lines.append(
-            f"- ticker={row['ticker']} entry_type={row['entry_type']} lane_stage={row['lane_stage']} "
-            f"t_plus_2_close_positive_rate={row['t_plus_2_close_positive_rate']} "
-            f"t_plus_2_close_return_mean={row['t_plus_2_close_return_mean']}"
-        )
+        lines.append(f"- ticker={row['ticker']} entry_type={row['entry_type']} lane_stage={row['lane_stage']} " f"t_plus_2_close_positive_rate={row['t_plus_2_close_positive_rate']} " f"t_plus_2_close_return_mean={row['t_plus_2_close_return_mean']}")
     if not rows:
         lines.append("- none")
     lines.append("")
@@ -184,10 +180,7 @@ def _append_watchboard_row_section(lines: list[str], title: str, rows: list[dict
 def _append_watchboard_validation_queue_section(lines: list[str], queue_rows: list[dict[str, Any]]) -> None:
     lines.append("## Validation Queue")
     for item in queue_rows:
-        lines.append(
-            f"- ticker={item['ticker']} priority_rank={item['priority_rank']} candidate_tier_focus={item['candidate_tier_focus']} "
-            f"recent_tier_verdict={item['recent_tier_verdict']} promotion_readiness_verdict={item['promotion_readiness_verdict']}"
-        )
+        lines.append(f"- ticker={item['ticker']} priority_rank={item['priority_rank']} candidate_tier_focus={item['candidate_tier_focus']} " f"recent_tier_verdict={item['recent_tier_verdict']} promotion_readiness_verdict={item['promotion_readiness_verdict']}")
     if not queue_rows:
         lines.append("- none")
     lines.append("")
@@ -196,10 +189,7 @@ def _append_watchboard_validation_queue_section(lines: list[str], queue_rows: li
 def _append_watchboard_risk_flags_section(lines: list[str], risk_flags: list[dict[str, Any]]) -> None:
     lines.append("## Risk Flags")
     for item in risk_flags:
-        lines.append(
-            f"- ticker={item['ticker']} tier={item['tier']} reason={item['reason']} "
-            f"t_plus_2_close_return_mean={item['t_plus_2_close_return_mean']}"
-        )
+        lines.append(f"- ticker={item['ticker']} tier={item['tier']} reason={item['reason']} " f"t_plus_2_close_return_mean={item['t_plus_2_close_return_mean']}")
     if not risk_flags:
         lines.append("- none")
     lines.append("")

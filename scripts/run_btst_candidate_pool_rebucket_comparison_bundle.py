@@ -155,26 +155,14 @@ def _build_rebucket_bundle_guidance(
 ) -> tuple[str, str]:
     if bundle_status == "ready_for_parallel_comparison":
         recommendation = (
-            "rebucket lane 已具备进入 parallel comparison bundle 的条件。"
-            " 结构上它仍是第一优先 lane，但相对 corridor 的后验证据差值为 "
-            f"mean_t_plus_2_return_gap={comparison.get('mean_t_plus_2_return_gap_vs_corridor')}、"
-            f"objective_fit_gap={comparison.get('objective_fit_gap_vs_corridor')}；"
-            "因此下一步不是改默认阈值，而是把 rebucket shadow replay 与 corridor parallel validation 放到同一张收益对照板上。"
+            "rebucket lane 已具备进入 parallel comparison bundle 的条件。" " 结构上它仍是第一优先 lane，但相对 corridor 的后验证据差值为 " f"mean_t_plus_2_return_gap={comparison.get('mean_t_plus_2_return_gap_vs_corridor')}、" f"objective_fit_gap={comparison.get('objective_fit_gap_vs_corridor')}；" "因此下一步不是改默认阈值，而是把 rebucket shadow replay 与 corridor parallel validation 放到同一张收益对照板上。"
         )
     elif bundle_status == "skipped_no_rebucket_lane":
         recommendation = "当前 dossier 没有可执行的 rebucket lane，comparison bundle 仅保留为 nightly 空位监控。"
     else:
-        recommendation = (
-            f"rebucket lane 当前 validation_status={validation_status}，"
-            "仍应保留在结构优先队列，但暂不具备升级成收益主线对照实验的条件。"
-        )
+        recommendation = f"rebucket lane 当前 validation_status={validation_status}，" "仍应保留在结构优先队列，但暂不具备升级成收益主线对照实验的条件。"
 
-    next_step = (
-        "当前没有 active rebucket challenger；先修复 persistence / active lane 资格，再讨论是否回到与 corridor 的并行收益对照。"
-        if bundle_status == "skipped_no_rebucket_lane"
-        else "对 301292 保持 rebucket shadow replay，对照 corridor objective leader 的 300720/003036 并行验证结果；"
-        "只有当 rebucket 在新增 closed-cycle 样本里继续维持不弱于 tradeable surface，才讨论进一步治理升级。"
-    )
+    next_step = "当前没有 active rebucket challenger；先修复 persistence / active lane 资格，再讨论是否回到与 corridor 的并行收益对照。" if bundle_status == "skipped_no_rebucket_lane" else "对 301292 保持 rebucket shadow replay，对照 corridor objective leader 的 300720/003036 并行验证结果；" "只有当 rebucket 在新增 closed-cycle 样本里继续维持不弱于 tradeable surface，才讨论进一步治理升级。"
     return recommendation, next_step
 
 
@@ -262,22 +250,14 @@ def render_btst_candidate_pool_rebucket_comparison_bundle_markdown(analysis: dic
     lines.append("## Leaders")
     structural_leader = dict(analysis.get("structural_leader") or {})
     objective_leader = dict(analysis.get("objective_leader") or {})
-    lines.append(
-        f"- structural_leader: handoff={structural_leader.get('priority_handoff')} rank={structural_leader.get('execution_priority_rank')} readiness={structural_leader.get('prototype_readiness')}"
-    )
-    lines.append(
-        f"- objective_leader: handoff={objective_leader.get('priority_handoff')} rank={objective_leader.get('objective_priority_rank')} verdict={objective_leader.get('support_verdict')} mean_t_plus_2_return={objective_leader.get('mean_t_plus_2_return')}"
-    )
+    lines.append(f"- structural_leader: handoff={structural_leader.get('priority_handoff')} rank={structural_leader.get('execution_priority_rank')} readiness={structural_leader.get('prototype_readiness')}")
+    lines.append(f"- objective_leader: handoff={objective_leader.get('priority_handoff')} rank={objective_leader.get('objective_priority_rank')} verdict={objective_leader.get('support_verdict')} mean_t_plus_2_return={objective_leader.get('mean_t_plus_2_return')}")
     lines.append("")
     lines.append("## Rebucket Lane")
     rebucket_objective_row = dict(analysis.get("rebucket_objective_row") or {})
-    lines.append(
-        f"- rebucket_objective: verdict={rebucket_objective_row.get('support_verdict')} closed_cycle_count={rebucket_objective_row.get('closed_cycle_count')} objective_fit_score={rebucket_objective_row.get('objective_fit_score')} mean_t_plus_2_return={rebucket_objective_row.get('mean_t_plus_2_return')}"
-    )
+    lines.append(f"- rebucket_objective: verdict={rebucket_objective_row.get('support_verdict')} closed_cycle_count={rebucket_objective_row.get('closed_cycle_count')} objective_fit_score={rebucket_objective_row.get('objective_fit_score')} mean_t_plus_2_return={rebucket_objective_row.get('mean_t_plus_2_return')}")
     rebucket_validation = dict(analysis.get("rebucket_objective_validation") or {})
-    lines.append(
-        f"- rebucket_validation: validation_status={rebucket_validation.get('validation_status')} recommendation={rebucket_validation.get('recommendation')}"
-    )
+    lines.append(f"- rebucket_validation: validation_status={rebucket_validation.get('validation_status')} recommendation={rebucket_validation.get('recommendation')}")
     lines.append("")
     lines.append("## Comparison")
     for key, value in dict(analysis.get("comparison") or {}).items():

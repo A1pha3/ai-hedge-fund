@@ -120,9 +120,7 @@ def _build_key_conclusions(nightly_payload: dict[str, Any], delta_payload: dict[
     else:
         conclusions.append("本次收盘验证后，系统已经给出正式主票，应优先按主票而不是 near-miss 观察层组织明日动作。")
 
-    conclusions.append(
-        f"当前观察层结构为 near_miss={watch_summary.get('near_miss_count', 0)}、opportunity_pool={watch_summary.get('opportunity_pool_count', 0)}、blocked={watch_summary.get('blocked_count', 0)}、rejected={watch_summary.get('rejected_count', 0)}。"
-    )
+    conclusions.append(f"当前观察层结构为 near_miss={watch_summary.get('near_miss_count', 0)}、opportunity_pool={watch_summary.get('opportunity_pool_count', 0)}、blocked={watch_summary.get('blocked_count', 0)}、rejected={watch_summary.get('rejected_count', 0)}。")
 
     if governance.get("overall_verdict") == "pass":
         conclusions.append("治理链当前保持 pass，说明 lane 分工和治理证据在本轮收盘后没有出现新的内部冲突。")
@@ -145,13 +143,9 @@ def _build_key_conclusions(nightly_payload: dict[str, Any], delta_payload: dict[
         lane_counts = dict(upstream_shadow_context.get("lane_counts") or {})
         lane_summary = ", ".join(f"{key}={value}" for key, value in lane_counts.items()) if lane_counts else "unknown"
         if upstream_shadow_context.get("promotable_count", 0) > 0:
-            conclusions.append(
-                f"上游影子召回已捕获 {upstream_shadow_context.get('shadow_candidate_count', 0)} 支补票样本，其中 {upstream_shadow_context.get('promotable_count', 0)} 支已进入 selected/near-miss 观察层；当前重点为 {top_focus}，lane 分布={lane_summary}。"
-            )
+            conclusions.append(f"上游影子召回已捕获 {upstream_shadow_context.get('shadow_candidate_count', 0)} 支补票样本，其中 {upstream_shadow_context.get('promotable_count', 0)} 支已进入 selected/near-miss 观察层；当前重点为 {top_focus}，lane 分布={lane_summary}。")
         else:
-            conclusions.append(
-                f"上游影子召回已捕获 {upstream_shadow_context.get('shadow_candidate_count', 0)} 支补票样本，但都还停留在非可执行层；当前重点为 {top_focus}，lane 分布={lane_summary}。"
-            )
+            conclusions.append(f"上游影子召回已捕获 {upstream_shadow_context.get('shadow_candidate_count', 0)} 支补票样本，但都还停留在非可执行层；当前重点为 {top_focus}，lane 分布={lane_summary}。")
 
     return conclusions
 
@@ -306,9 +300,7 @@ def _append_latest_close_focus_rows_markdown(lines: list[str], payload: dict[str
     current_followup = dict(payload.get("current_followup") or {})
     lines.extend(["## Focus Rows", ""])
     for row in list(current_followup.get("focus_rows") or []):
-        lines.append(
-            f"- {row.get('ticker')}: lane={row.get('lane')}, actionability={row.get('actionability')}, score_target={row.get('score_target')}, execution_quality={row.get('execution_quality_label')}, suggested_action={row.get('suggested_action')}"
-        )
+        lines.append(f"- {row.get('ticker')}: lane={row.get('lane')}, actionability={row.get('actionability')}, score_target={row.get('score_target')}, execution_quality={row.get('execution_quality_label')}, suggested_action={row.get('suggested_action')}")
     if not list(current_followup.get("focus_rows") or []):
         lines.append("- none")
 
@@ -325,9 +317,7 @@ def _append_latest_close_upstream_shadow_markdown(lines: list[str], payload: dic
     lane_counts = dict(upstream_shadow_context.get("lane_counts") or {})
     lines.append("- lane_counts: " + (", ".join(f"{key}={value}" for key, value in lane_counts.items()) if lane_counts else "none"))
     for row in list(upstream_shadow_context.get("entries") or []):
-        lines.append(
-            f"- {row.get('ticker')}: lane={row.get('candidate_pool_lane')}, source={row.get('candidate_source')}, decision={row.get('decision')}, score_target={row.get('score_target')}, promotion_trigger={row.get('promotion_trigger')}"
-        )
+        lines.append(f"- {row.get('ticker')}: lane={row.get('candidate_pool_lane')}, source={row.get('candidate_source')}, decision={row.get('decision')}, score_target={row.get('score_target')}, promotion_trigger={row.get('promotion_trigger')}")
 
 
 def _append_latest_close_rollforward_delta_markdown(lines: list[str], payload: dict[str, Any]) -> None:
@@ -354,9 +344,7 @@ def _append_latest_close_governance_markdown(lines: list[str], payload: dict[str
         default = "unknown" if key == "overall_verdict" else 0
         lines.append(f"- {key}: {governance_check.get(key) or default}")
     for row in list(governance_check.get("lane_focus") or []):
-        lines.append(
-            f"- lane {row.get('lane_id')}: ticker={row.get('ticker')}, status={row.get('lane_status')}, validation_verdict={row.get('validation_verdict')}, missing_window_count={row.get('missing_window_count')}, next_step={row.get('next_step')}"
-        )
+        lines.append(f"- lane {row.get('lane_id')}: ticker={row.get('ticker')}, status={row.get('lane_status')}, validation_verdict={row.get('validation_verdict')}, missing_window_count={row.get('missing_window_count')}, next_step={row.get('next_step')}")
 
 
 def _append_latest_close_recommendation_markdown(lines: list[str], payload: dict[str, Any]) -> None:

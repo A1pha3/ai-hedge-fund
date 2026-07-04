@@ -202,23 +202,10 @@ def _summarize_candidate_windows(
     recent_labels = {str(item.get("report_label") or "") for item in recent_window_summaries}
     recent_supporting_window_count = sum(1 for item in recent_window_summaries if bool(item.get("supporting_window")))
     recent_support_ratio = round(recent_supporting_window_count / len(recent_window_summaries), 4) if recent_window_summaries else 0.0
-    recent_supporting_rows = [
-        row
-        for row in candidate_rows
-        if str(row.get("report_label") or "") in recent_labels and str(row.get("peer_tier") or "") in {"strict_peer", "near_cluster_peer"}
-    ]
+    recent_supporting_rows = [row for row in candidate_rows if str(row.get("report_label") or "") in recent_labels and str(row.get("peer_tier") or "") in {"strict_peer", "near_cluster_peer"}]
     recent_supporting_surface_summary = build_surface_summary(recent_supporting_rows, next_high_hit_threshold=next_high_hit_threshold)
-    recent_tier_rows = [
-        row
-        for row in candidate_rows
-        if str(row.get("report_label") or "") in recent_labels and str(row.get("peer_tier") or "unclassified") == candidate_tier_focus
-    ]
-    recent_tier_window_count = len(
-        {
-            str(normalize_trade_date(row.get("trade_date")) or row.get("trade_date") or row.get("report_label") or "")
-            for row in recent_tier_rows
-        }
-    )
+    recent_tier_rows = [row for row in candidate_rows if str(row.get("report_label") or "") in recent_labels and str(row.get("peer_tier") or "unclassified") == candidate_tier_focus]
+    recent_tier_window_count = len({str(normalize_trade_date(row.get("trade_date")) or row.get("trade_date") or row.get("report_label") or "") for row in recent_tier_rows})
     recent_tier_ratio = round(recent_tier_window_count / len(recent_window_summaries), 4) if recent_window_summaries else 0.0
     recent_tier_surface_summary = build_surface_summary(recent_tier_rows, next_high_hit_threshold=next_high_hit_threshold)
     return {
@@ -295,29 +282,17 @@ def _load_governance_context(
     if resolved_upstream_handoff_board_path.exists():
         upstream_handoff_board = json.loads(resolved_upstream_handoff_board_path.read_text(encoding="utf-8"))
         governance_followup = next(
-            (
-                dict(row or {})
-                for row in list(upstream_handoff_board.get("board_rows") or [])
-                if str((row or {}).get("ticker") or "") == candidate_ticker
-                and _is_continuation_governance_followup(dict(row or {}))
-            ),
+            (dict(row or {}) for row in list(upstream_handoff_board.get("board_rows") or []) if str((row or {}).get("ticker") or "") == candidate_ticker and _is_continuation_governance_followup(dict(row or {}))),
             {},
         )
     resolved_lane_objective_support_path = Path(lane_objective_support_path or DEFAULT_LANE_OBJECTIVE_SUPPORT_PATH).expanduser().resolve()
     if resolved_lane_objective_support_path.exists():
         lane_objective_support = json.loads(resolved_lane_objective_support_path.read_text(encoding="utf-8"))
         governance_objective_support = next(
-            (
-                dict(row or {})
-                for row in list(lane_objective_support.get("ticker_rows") or [])
-                if str((row or {}).get("ticker") or "") == candidate_ticker
-            ),
+            (dict(row or {}) for row in list(lane_objective_support.get("ticker_rows") or []) if str((row or {}).get("ticker") or "") == candidate_ticker),
             {},
         )
-    governance_recent_followup_rows = [
-        dict(row or {})
-        for row in list(load_upstream_shadow_followup_history_by_ticker(reports_root).get(candidate_ticker) or [])
-    ]
+    governance_recent_followup_rows = [dict(row or {}) for row in list(load_upstream_shadow_followup_history_by_ticker(reports_root).get(candidate_ticker) or [])]
     return {
         "governance_followup": governance_followup,
         "governance_objective_support": governance_objective_support,
@@ -398,10 +373,7 @@ def _resolve_recent_validation_verdict(
         return "recent_support_absent"
     if recent_support_ratio < 0.5:
         return "recent_support_thin"
-    if (
-        float(recent_supporting_surface_summary.get("next_close_positive_rate") or 0.0) >= 0.5
-        and float(recent_supporting_surface_summary.get("t_plus_2_close_positive_rate") or 0.0) >= 0.5
-    ):
+    if float(recent_supporting_surface_summary.get("next_close_positive_rate") or 0.0) >= 0.5 and float(recent_supporting_surface_summary.get("t_plus_2_close_positive_rate") or 0.0) >= 0.5:
         return "recent_support_confirmed"
     return "recent_support_mixed"
 
@@ -731,23 +703,13 @@ def render_btst_tplus2_near_cluster_dossier_markdown(analysis: dict[str, Any]) -
     lines.append("")
     lines.append("## Recent Windows")
     for item in list(analysis.get("recent_window_summaries") or []):
-        lines.append(
-            f"- {item['report_label']}: row_count={item['row_count']}, supporting_window={item['supporting_window']}, "
-            f"supporting_row_count={item['supporting_row_count']}, tier_set={item['tier_set']}, "
-            f"next_close_positive_rate={item['surface_summary'].get('next_close_positive_rate')}, "
-            f"t_plus_2_close_positive_rate={item['surface_summary'].get('t_plus_2_close_positive_rate')}"
-        )
+        lines.append(f"- {item['report_label']}: row_count={item['row_count']}, supporting_window={item['supporting_window']}, " f"supporting_row_count={item['supporting_row_count']}, tier_set={item['tier_set']}, " f"next_close_positive_rate={item['surface_summary'].get('next_close_positive_rate')}, " f"t_plus_2_close_positive_rate={item['surface_summary'].get('t_plus_2_close_positive_rate')}")
     if not list(analysis.get("recent_window_summaries") or []):
         lines.append("- none")
     lines.append("")
     lines.append("## Per-Window")
     for item in list(analysis.get("per_window_summaries") or []):
-        lines.append(
-            f"- {item['report_label']}: row_count={item['row_count']}, supporting_window={item['supporting_window']}, "
-            f"supporting_row_count={item['supporting_row_count']}, tier_set={item['tier_set']}, "
-            f"next_close_positive_rate={item['surface_summary'].get('next_close_positive_rate')}, "
-            f"t_plus_2_close_positive_rate={item['surface_summary'].get('t_plus_2_close_positive_rate')}"
-        )
+        lines.append(f"- {item['report_label']}: row_count={item['row_count']}, supporting_window={item['supporting_window']}, " f"supporting_row_count={item['supporting_row_count']}, tier_set={item['tier_set']}, " f"next_close_positive_rate={item['surface_summary'].get('next_close_positive_rate')}, " f"t_plus_2_close_positive_rate={item['surface_summary'].get('t_plus_2_close_positive_rate')}")
     if not list(analysis.get("per_window_summaries") or []):
         lines.append("- none")
     return "\n".join(lines) + "\n"

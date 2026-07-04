@@ -14,20 +14,8 @@ def extract_carryover_contract_context(control_tower_snapshot: dict[str, Any]) -
     peer_expansion_summary = dict(control_tower_snapshot.get("carryover_peer_expansion_summary") or {})
     peer_proof_summary = dict(control_tower_snapshot.get("carryover_aligned_peer_proof_summary") or {})
     peer_promotion_gate_summary = dict(control_tower_snapshot.get("carryover_peer_promotion_gate_summary") or {})
-    peer_focus_ticker = str(
-        peer_promotion_gate_summary.get("focus_ticker")
-        or peer_proof_summary.get("focus_ticker")
-        or peer_expansion_summary.get("focus_ticker")
-        or peer_summary.get("focus_ticker")
-        or ""
-    ).strip()
-    peer_focus_status = str(
-        peer_promotion_gate_summary.get("focus_gate_verdict")
-        or peer_proof_summary.get("focus_promotion_review_verdict")
-        or peer_expansion_summary.get("focus_status")
-        or peer_summary.get("focus_status")
-        or ""
-    ).strip()
+    peer_focus_ticker = str(peer_promotion_gate_summary.get("focus_ticker") or peer_proof_summary.get("focus_ticker") or peer_expansion_summary.get("focus_ticker") or peer_summary.get("focus_ticker") or "").strip()
+    peer_focus_status = str(peer_promotion_gate_summary.get("focus_gate_verdict") or peer_proof_summary.get("focus_promotion_review_verdict") or peer_expansion_summary.get("focus_status") or peer_summary.get("focus_status") or "").strip()
     return {
         "audit_summary": audit_summary,
         "formal_selected_ticker": str(selected_summary.get("focus_ticker") or audit_summary.get("selected_ticker") or "").strip(),

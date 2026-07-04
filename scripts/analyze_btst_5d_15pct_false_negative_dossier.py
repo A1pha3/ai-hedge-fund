@@ -94,9 +94,7 @@ def render_btst_5d_15pct_false_negative_dossier_markdown(analysis: dict[str, Any
     ]
     rows = list(analysis.get("rows") or [])
     for row in rows:
-        lines.append(
-            f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, candidate_source={row.get('candidate_source')}, score_target={row.get('score_target')}, max_future_high_return_2_5d={row.get('max_future_high_return_2_5d')}, time_to_hit_15pct={row.get('time_to_hit_15pct')}"
-        )
+        lines.append(f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, candidate_source={row.get('candidate_source')}, score_target={row.get('score_target')}, max_future_high_return_2_5d={row.get('max_future_high_return_2_5d')}, time_to_hit_15pct={row.get('time_to_hit_15pct')}")
     if not rows:
         lines.append("- none")
     lines.extend(["", "## Recommendation", f"- {analysis.get('recommendation')}", ""])

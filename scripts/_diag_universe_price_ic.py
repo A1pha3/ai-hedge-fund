@@ -12,6 +12,7 @@ Spearman IC = +0.176 (p=2e-56), 单调: ¥0-10 winrate 53% → ¥200+ 71%.
 lean 设计: 只需 universe + 当日 close + 次日 pct_chg, 不算因子 → 快 (~2 API/日)。
 复用 _backtest_light_stage_universe 的 _get_pro/get_trading_dates/get_universe_for_date。
 """
+
 from __future__ import annotations
 
 import logging
@@ -93,20 +94,13 @@ def render_price_verdict(
         f"  amplification: {amp_str} (pool / universe)",
     ]
     if verdict == "bias_amplified":
-        lines.append(
-            f"  ✅ 全 universe price-IC ≈ {universe_ic:+.3f} (~0 或负, 小盘溢价) 但池内 {pool_ic:+.3f} "
-            f"→ **选择偏差伪象** ({amp_str} 放大)"
-        )
+        lines.append(f"  ✅ 全 universe price-IC ≈ {universe_ic:+.3f} (~0 或负, 小盘溢价) 但池内 {pool_ic:+.3f} " f"→ **选择偏差伪象** ({amp_str} 放大)")
         lines.append("     池反转了 price 效应 (像 score 那样); price 不是真实可用的排序 signal。")
     elif verdict == "real_factor":
-        lines.append(
-            f"  ⚠️ 全 universe price-IC ≈ {universe_ic:+.3f} (正, 与池内同向) → price 是真实 factor (高价=质量代理)。"
-        )
+        lines.append(f"  ⚠️ 全 universe price-IC ≈ {universe_ic:+.3f} (正, 与池内同向) → price 是真实 factor (高价=质量代理)。")
         lines.append("     可考虑作为池内排序辅助 signal (但需 T+5/T+10 + 全模型确认)。")
     else:  # mixed
-        lines.append(
-            f"  ≈ 全 universe price-IC ≈ {universe_ic:+.3f} (弱) — 池内 {pool_ic:+.3f} 部分是真实, 部分是偏差放大 ({amp_str})。"
-        )
+        lines.append(f"  ≈ 全 universe price-IC ≈ {universe_ic:+.3f} (弱) — 池内 {pool_ic:+.3f} 部分是真实, 部分是偏差放大 ({amp_str})。")
     return lines
 
 
@@ -184,6 +178,7 @@ def main() -> None:
     load_dotenv()
     logging.basicConfig(level=logging.WARNING)
     import argparse
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-days", type=int, default=20)
     ap.add_argument("--end-date", default="")

@@ -42,12 +42,7 @@ def _load_default_merge_review_inputs(
     promotion_review = _load_optional_json(promotion_review_path)
     governance_board = _load_optional_json(governance_board_path)
     continuation_summary = dict(manifest.get("continuation_promotion_ready_summary") or {})
-    focus_ticker = str(
-        continuation_summary.get("focus_ticker")
-        or promotion_review.get("focus_ticker")
-        or governance_board.get("focus_ticker")
-        or ""
-    ).strip()
+    focus_ticker = str(continuation_summary.get("focus_ticker") or promotion_review.get("focus_ticker") or governance_board.get("focus_ticker") or "").strip()
     resolved_focus_dossier_path = _resolve_focus_dossier_path(Path(manifest_path).expanduser().resolve().parent, focus_ticker, focus_dossier_path)
     focus_dossier = _load_optional_json(resolved_focus_dossier_path)
     return {
@@ -70,16 +65,8 @@ def _build_counterfactual_validation(continuation_summary: dict[str, Any]) -> di
     required_mean_return_delta = continuation_summary.get("required_mean_return_delta_vs_default_btst")
     positive_rate_delta = continuation_summary.get("t_plus_2_positive_rate_delta_vs_default_btst")
     mean_return_delta = continuation_summary.get("t_plus_2_mean_return_delta_vs_default_btst")
-    positive_rate_margin = (
-        round(float(positive_rate_delta) - float(required_positive_rate_delta), 4)
-        if positive_rate_delta is not None and required_positive_rate_delta is not None
-        else None
-    )
-    mean_return_margin = (
-        round(float(mean_return_delta) - float(required_mean_return_delta), 4)
-        if mean_return_delta is not None and required_mean_return_delta is not None
-        else None
-    )
+    positive_rate_margin = round(float(positive_rate_delta) - float(required_positive_rate_delta), 4) if positive_rate_delta is not None and required_positive_rate_delta is not None else None
+    mean_return_margin = round(float(mean_return_delta) - float(required_mean_return_delta), 4) if mean_return_delta is not None and required_mean_return_delta is not None else None
     if positive_rate_margin is None or mean_return_margin is None:
         counterfactual_verdict = "insufficient_merge_threshold_context"
     elif positive_rate_margin >= 0 and mean_return_margin >= 0:

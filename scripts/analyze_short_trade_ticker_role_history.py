@@ -113,9 +113,7 @@ def render_short_trade_ticker_role_history_markdown(analysis: dict[str, Any]) ->
         lines.append("")
         lines.append("### Observations")
         for row in ticker_summary["observations"]:
-            lines.append(
-                f"- {row['report_label']} {row['trade_date']} role={row['role']}, candidate_source={row.get('candidate_source')}, target_decision={row.get('target_decision')}, score_target={row.get('score_target')}, reason={row.get('reason')}, rank={row.get('rank')}"
-            )
+            lines.append(f"- {row['report_label']} {row['trade_date']} role={row['role']}, candidate_source={row.get('candidate_source')}, target_decision={row.get('target_decision')}, score_target={row.get('score_target')}, reason={row.get('reason')}, rank={row.get('rank')}")
         if not ticker_summary["observations"]:
             lines.append("- none")
         lines.append("")
@@ -155,11 +153,8 @@ def analyze_short_trade_ticker_role_history(report_dirs: list[str | Path], *, ti
                         first_short_trade_report_dir = report_dir.name
 
         observations.sort(key=lambda row: (row["report_label"], row["trade_date"]))
-        if recurring_short_trade_trade_date_count >= 2 and first_short_trade_report_dir and len({row['report_label'] for row in observations if str(row.get('role') or '').startswith('short_trade_') or str(row.get('role') or '').startswith('short_trade_boundary')}) == 1:
-            recommendation = (
-                f"{ticker} 已在当前窗口形成 recurring short-trade pattern，但 short-trade 角色仍只出现在 {first_short_trade_report_dir}，"
-                "暂时应视为窗口内成立的局部 baseline，而不是历史稳定规则。"
-            )
+        if recurring_short_trade_trade_date_count >= 2 and first_short_trade_report_dir and len({row["report_label"] for row in observations if str(row.get("role") or "").startswith("short_trade_") or str(row.get("role") or "").startswith("short_trade_boundary")}) == 1:
+            recommendation = f"{ticker} 已在当前窗口形成 recurring short-trade pattern，但 short-trade 角色仍只出现在 {first_short_trade_report_dir}，" "暂时应视为窗口内成立的局部 baseline，而不是历史稳定规则。"
         elif recurring_short_trade_trade_date_count >= 2:
             recommendation = f"{ticker} 已在多个报告中重复进入 short-trade 角色，可继续推进更正式的 profile validation。"
         elif observations:

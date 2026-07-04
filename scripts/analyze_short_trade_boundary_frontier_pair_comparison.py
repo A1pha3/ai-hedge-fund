@@ -62,13 +62,9 @@ def analyze_short_trade_boundary_frontier_pair_comparison(
     }
 
     if float(left.get("minimal_adjustment_cost") or 999.0) < float(right.get("minimal_adjustment_cost") or 999.0) and float(left.get("next_high_return_mean") or -999.0) > float(right.get("next_high_return_mean") or -999.0):
-        recommendation = (
-            f"{left_ticker} 仍应排在 {right_ticker} 之前，因为它同时具备更低 rescue cost 和更高 intraday upside。"
-        )
+        recommendation = f"{left_ticker} 仍应排在 {right_ticker} 之前，因为它同时具备更低 rescue cost 和更高 intraday upside。"
     elif float(left.get("next_close_positive_rate") or -999.0) < float(right.get("next_close_positive_rate") or -999.0):
-        recommendation = (
-            f"{right_ticker} 更适合作为 close continuation 对照样本，而 {left_ticker} 更像 intraday frontier。"
-        )
+        recommendation = f"{right_ticker} 更适合作为 close continuation 对照样本，而 {left_ticker} 更像 intraday frontier。"
     else:
         recommendation = f"{left_ticker} 与 {right_ticker} 仍需继续观察，当前没有单一维度足够覆盖两者差异。"
 

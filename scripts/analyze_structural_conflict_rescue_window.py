@@ -73,15 +73,11 @@ def render_structural_conflict_rescue_window_markdown(analysis: dict[str, Any]) 
     lines.append("")
     lines.append("## Priority Queue")
     for row in analysis["priority_queue"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: baseline={row['baseline_score_target']}, minimal_near_miss_cost={row['minimal_near_miss_adjustment_cost']}, minimal_selected_cost={row['minimal_selected_adjustment_cost']}, candidate_source={row['candidate_source']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: baseline={row['baseline_score_target']}, minimal_near_miss_cost={row['minimal_near_miss_adjustment_cost']}, minimal_selected_cost={row['minimal_selected_adjustment_cost']}, candidate_source={row['candidate_source']}")
     lines.append("")
     lines.append("## Unrescued Cases")
     for row in analysis["unrescued_cases"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: baseline={row['baseline_score_target']}, candidate_source={row['candidate_source']}, reason=no_near_miss_row_within_grid"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: baseline={row['baseline_score_target']}, candidate_source={row['candidate_source']}, reason=no_near_miss_row_within_grid")
     lines.append("")
     lines.append("## Recommendation")
     lines.append(f"- {analysis['recommendation']}")
@@ -146,10 +142,7 @@ def analyze_structural_conflict_rescue_window(
 
     if priority_queue:
         best_row = priority_queue[0]
-        recommendation = (
-            f"优先审 {best_row['trade_date']} / {best_row['ticker']}。它在当前搜索空间内的最小 near_miss adjustment_cost="
-            f"{best_row['minimal_near_miss_adjustment_cost']}，baseline_score_target={best_row['baseline_score_target']}。"
-        )
+        recommendation = f"优先审 {best_row['trade_date']} / {best_row['ticker']}。它在当前搜索空间内的最小 near_miss adjustment_cost=" f"{best_row['minimal_near_miss_adjustment_cost']}，baseline_score_target={best_row['baseline_score_target']}。"
     elif case_rows:
         recommendation = "当前搜索空间内没有任何 blocked 样本能被释放到 near_miss，优先回到 candidate-entry 或 score construction 设计。"
     else:

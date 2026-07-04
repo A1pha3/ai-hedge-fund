@@ -108,10 +108,7 @@ def analyze_report(report_dir: Path) -> dict:
             "model_provider": session_summary.get("model_provider"),
             "model_name": session_summary.get("model_name"),
             "daily_event_stats": session_summary.get("daily_event_stats", {}),
-            "final_positions": {
-                ticker: int(position.get("long", 0) or 0)
-                for ticker, position in session_summary.get("final_portfolio_snapshot", {}).get("positions", {}).items()
-            },
+            "final_positions": {ticker: int(position.get("long", 0) or 0) for ticker, position in session_summary.get("final_portfolio_snapshot", {}).get("positions", {}).items()},
         },
         "current_code_defaults": {
             "fast_agent_score_threshold": FAST_AGENT_SCORE_THRESHOLD,

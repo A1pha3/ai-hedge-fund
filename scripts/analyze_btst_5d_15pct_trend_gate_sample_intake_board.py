@@ -126,16 +126,8 @@ def analyze_btst_5d_15pct_trend_gate_sample_intake_board(
     pre_execution_rows = [row for row in top_rows if predicate(row)]
     unique_rows = _dedupe_signal_rows(pre_execution_rows)
     counts = _status_counts(unique_rows, max_entry_gap=max_entry_gap)
-    executable_rows = [
-        row
-        for row in unique_rows
-        if _sample_status(row, max_entry_gap=max_entry_gap) in {"closed_hit", "closed_miss", "pending_cycle"}
-    ]
-    closed_rows = [
-        row
-        for row in unique_rows
-        if _sample_status(row, max_entry_gap=max_entry_gap) in {"closed_hit", "closed_miss"}
-    ]
+    executable_rows = [row for row in unique_rows if _sample_status(row, max_entry_gap=max_entry_gap) in {"closed_hit", "closed_miss", "pending_cycle"}]
+    closed_rows = [row for row in unique_rows if _sample_status(row, max_entry_gap=max_entry_gap) in {"closed_hit", "closed_miss"}]
     closed_summary = _summary(executable_rows, min_closed_cycle_count=min_closed_cycle_count)
     sample_gap = max(0, min_closed_cycle_count - len(closed_rows))
     records = sorted(
@@ -192,11 +184,7 @@ def render_btst_5d_15pct_trend_gate_sample_intake_board_markdown(board: dict[str
     lines.append("")
     lines.append("## Candidate Records")
     for row in list(board.get("candidate_records") or [])[:row_limit]:
-        lines.append(
-            f"- {row.get('sample_status')} {row.get('ticker')} {row.get('trade_date')} "
-            f"next_open_return={row.get('next_open_return')} hit={row.get('future_high_hit_15pct_2_5d')} "
-            f"max_return={row.get('max_future_high_return_2_5d')} reason={row.get('local_price_missing_reason')}"
-        )
+        lines.append(f"- {row.get('sample_status')} {row.get('ticker')} {row.get('trade_date')} " f"next_open_return={row.get('next_open_return')} hit={row.get('future_high_hit_15pct_2_5d')} " f"max_return={row.get('max_future_high_return_2_5d')} reason={row.get('local_price_missing_reason')}")
     lines.append("")
     return "\n".join(lines)
 

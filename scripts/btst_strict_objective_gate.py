@@ -73,8 +73,8 @@ def parse_objective_monitor_markdown(path: str | Path) -> dict[str, Any]:
 
 def build_strict_btst_objective_gate(objective_monitor: dict[str, Any], structural_guardrail: dict[str, Any] | None = None) -> dict[str, Any]:
     blockers: list[str] = []
-    tradeable = (((objective_monitor.get("Surface Summary") or {}).get("tradeable_surface")) or {})
-    rejected = (((objective_monitor.get("Decision Leaderboard") or {}).get("rejected")) or {})
+    tradeable = ((objective_monitor.get("Surface Summary") or {}).get("tradeable_surface")) or {}
+    rejected = ((objective_monitor.get("Decision Leaderboard") or {}).get("rejected")) or {}
     false_negatives = list(objective_monitor.get("False Negative Strict Goal Cases") or [])
     structural_guardrail = structural_guardrail or None
 
@@ -93,9 +93,7 @@ def build_strict_btst_objective_gate(objective_monitor: dict[str, Any], structur
         has_execution_eligible_evidence = "non_halt_execution_eligible_count" in structural_guardrail or "has_positive_execution_eligible_evidence" in structural_guardrail
         if has_execution_eligible_evidence:
             non_halt_execution_eligible_count = int(structural_guardrail.get("non_halt_execution_eligible_count") or 0)
-            has_positive_execution_eligible_evidence = bool(
-                structural_guardrail.get("has_positive_execution_eligible_evidence", non_halt_execution_eligible_count > 0)
-            )
+            has_positive_execution_eligible_evidence = bool(structural_guardrail.get("has_positive_execution_eligible_evidence", non_halt_execution_eligible_count > 0))
             execution_eligible_evidence = {
                 "non_halt_execution_eligible_count": non_halt_execution_eligible_count,
                 "has_positive_execution_eligible_evidence": has_positive_execution_eligible_evidence,

@@ -101,9 +101,7 @@ def _build_recommendation(rows: list[dict[str, Any]], summary: dict[str, Any]) -
     closed_rows = [row for row in rows if row.get("t_plus_2_close_return") is not None]
     if not closed_rows:
         return "当前 low-sample broad-family-only 样本还没有足够 closed-cycle 数据，先继续观察，不做策略放松。"
-    promotable_counterfactual_rows = [
-        row for row in closed_rows if float(row.get("counterfactual_score_without_stale_extension") or 0.0) >= float(row.get("effective_near_miss_threshold") or 0.0)
-    ]
+    promotable_counterfactual_rows = [row for row in closed_rows if float(row.get("counterfactual_score_without_stale_extension") or 0.0) >= float(row.get("effective_near_miss_threshold") or 0.0)]
     if promotable_counterfactual_rows and all(float(row.get("next_close_return") or 0.0) <= 0.0 for row in promotable_counterfactual_rows):
         return "即使移除 stale/extension penalty，这批 low-sample broad-family-only 样本也只会更早进入观察/准入，但已闭环收益没有兑现，说明 penalty 更像在保护胜率。"
     if summary.get("t_plus_2_close_positive_rate") is not None and float(summary["t_plus_2_close_positive_rate"]) <= 0.0:
@@ -114,18 +112,9 @@ def _build_recommendation(rows: list[dict[str, Any]], summary: dict[str, Any]) -
 def analyze_btst_low_sample_penalty_audit(reports_root: str | Path) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
     deduped_rows = _deduplicate_case_rows(_iter_case_rows(resolved_reports_root))
-    candidate_rows = [
-        row
-        for row in deduped_rows
-        if str(row.get("historical_execution_quality_label") or "") == "close_continuation"
-        and str(row.get("historical_entry_timing_bias") or "") == "confirm_then_hold"
-        and int(row.get("historical_evaluable_count") or 0) <= 1
-        and str(row.get("decision") or "") != "selected"
-    ]
+    candidate_rows = [row for row in deduped_rows if str(row.get("historical_execution_quality_label") or "") == "close_continuation" and str(row.get("historical_entry_timing_bias") or "") == "confirm_then_hold" and int(row.get("historical_evaluable_count") or 0) <= 1 and str(row.get("decision") or "") != "selected"]
     penalty_rows = _attach_outcomes(_attach_penalty_context(candidate_rows))
-    audited_rows = [
-        row for row in penalty_rows if str(row.get("peer_evidence_status") or "") in {"broad_family_only", "no_peer_support"}
-    ]
+    audited_rows = [row for row in penalty_rows if str(row.get("peer_evidence_status") or "") in {"broad_family_only", "no_peer_support"}]
     audited_rows.sort(key=lambda row: (float(row.get("gap_to_selected") or 999.0), str(row.get("trade_date") or ""), str(row.get("ticker") or "")))
     closed_cycle_summary = _summarize_closed_cycle(audited_rows)
     return {

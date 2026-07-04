@@ -44,11 +44,7 @@ def _target_paths(row: dict[str, Any], reports_root: Path) -> list[Path]:
         report_dir_names = [str(row.get("report_dir_name"))]
     ticker = str(row.get("ticker") or "")
     trade_date = str(row.get("trade_date") or "")
-    paths = [
-        reports_root / str(report_dir_name) / "data_snapshots" / ticker / trade_date / "prices.json"
-        for report_dir_name in report_dir_names
-        if report_dir_name and ticker and trade_date
-    ]
+    paths = [reports_root / str(report_dir_name) / "data_snapshots" / ticker / trade_date / "prices.json" for report_dir_name in report_dir_names if report_dir_name and ticker and trade_date]
     return sorted(dict.fromkeys(paths))
 
 
@@ -149,11 +145,7 @@ def _find_local_price_source(
                 cached.append((path, rows))
         local_price_cache[ticker] = cached
 
-    candidates = [
-        (path, rows)
-        for path, rows in local_price_cache[ticker]
-        if _prices_cover_repair_window(rows, trade_date, missing_reason=missing_reason)
-    ]
+    candidates = [(path, rows) for path, rows in local_price_cache[ticker] if _prices_cover_repair_window(rows, trade_date, missing_reason=missing_reason)]
     if not candidates:
         return None
     return sorted(candidates, key=lambda item: (-len(item[1]), str(item[0])))[0]
@@ -166,11 +158,7 @@ def _default_fetch_prices(ticker: str, start_date: str, end_date: str) -> Iterab
 
 
 def _select_manifest_rows(manifest: dict[str, Any], priority_buckets: set[str], max_requests: int | None) -> list[dict[str, Any]]:
-    rows = [
-        dict(row)
-        for row in list(manifest.get("manifest_rows") or [])
-        if str(row.get("priority_bucket") or "") in priority_buckets
-    ]
+    rows = [dict(row) for row in list(manifest.get("manifest_rows") or []) if str(row.get("priority_bucket") or "") in priority_buckets]
     rows.sort(key=lambda row: int(row.get("priority_rank") or 999999))
     return rows if not max_requests or max_requests <= 0 else rows[:max_requests]
 
@@ -353,11 +341,7 @@ def render_btst_scoped_price_backfill_markdown(result: dict[str, Any], *, row_li
     lines.append("")
     lines.append("## Requests")
     for row in list(result.get("result_rows") or [])[:row_limit]:
-        lines.append(
-            f"- #{row.get('priority_rank')} {row.get('status')} {row.get('priority_bucket')} "
-            f"{row.get('ticker')} {row.get('trade_date')} targets={len(row.get('target_paths') or [])} "
-            f"prices={row.get('price_row_count')}"
-        )
+        lines.append(f"- #{row.get('priority_rank')} {row.get('status')} {row.get('priority_bucket')} " f"{row.get('ticker')} {row.get('trade_date')} targets={len(row.get('target_paths') or [])} " f"prices={row.get('price_row_count')}")
     lines.append("")
     return "\n".join(lines)
 

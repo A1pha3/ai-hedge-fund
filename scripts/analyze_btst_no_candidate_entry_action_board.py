@@ -47,11 +47,7 @@ def _row_priority_key(row: dict[str, Any]) -> tuple[float, float, float, str, st
 
 
 def _mean_metric(rows: list[dict[str, Any]], key: str) -> float | None:
-    values = [
-        float(value)
-        for value in (safe_float(row.get(key)) for row in rows)
-        if value is not None
-    ]
+    values = [float(value) for value in (safe_float(row.get(key)) for row in rows) if value is not None]
     if not values:
         return None
     return round(sum(values) / len(values), 4)
@@ -122,11 +118,7 @@ def _build_window_scan_command(*, focus_tickers: list[str], preserve_tickers: li
 def _build_minimal_rows_from_summary(analysis: dict[str, Any]) -> list[dict[str, Any]]:
     no_candidate_entry_summary = dict(analysis.get("no_candidate_entry_summary") or {})
     trade_date_contexts = dict(analysis.get("trade_date_contexts") or {})
-    top_ticker_rows = {
-        str(row.get("ticker") or ""): dict(row)
-        for row in list(no_candidate_entry_summary.get("top_ticker_rows") or [])
-        if str(row.get("ticker") or "").strip()
-    }
+    top_ticker_rows = {str(row.get("ticker") or ""): dict(row) for row in list(no_candidate_entry_summary.get("top_ticker_rows") or []) if str(row.get("ticker") or "").strip()}
     strict_goal_threshold = safe_float(dict(analysis.get("thresholds") or {}).get("strict_btst_goal_threshold"))
     strict_goal_threshold = float(strict_goal_threshold) if strict_goal_threshold is not None else 0.05
 
@@ -152,11 +144,7 @@ def _build_minimal_rows_from_summary(analysis: dict[str, Any]) -> list[dict[str,
 
 
 def _collect_no_candidate_rows(analysis: dict[str, Any]) -> list[dict[str, Any]]:
-    rows = [
-        dict(row)
-        for row in list(analysis.get("rows") or [])
-        if str(row.get("first_kill_switch") or "") == "no_candidate_entry"
-    ]
+    rows = [dict(row) for row in list(analysis.get("rows") or []) if str(row.get("first_kill_switch") or "") == "no_candidate_entry"]
     if rows:
         return rows
     return _build_minimal_rows_from_summary(analysis)
@@ -189,10 +177,7 @@ def _build_priority_queue(no_candidate_rows: list[dict[str, Any]], *, preserve_t
             preserve_tickers=preserve_tickers,
             output_suffix=f"{_slug_token(ticker)}_{_slug_token(lead_row.get('trade_date'))}",
         )
-        why_now = (
-            f"{ticker} 在 no_candidate_entry 队列中重复出现 {len(ticker_rows)} 次，"
-            f"其中 strict_goal_case={strict_goal_case_count}，且已覆盖 {distinct_report_count} 个 report_dir。"
-        )
+        why_now = f"{ticker} 在 no_candidate_entry 队列中重复出现 {len(ticker_rows)} 次，" f"其中 strict_goal_case={strict_goal_case_count}，且已覆盖 {distinct_report_count} 个 report_dir。"
         if action_tier == "cross_window_semantic_replay":
             why_now += "它已经具备跨窗口语义回放优先级，适合作为 candidate entry selective recall 的焦点票。"
         elif action_tier == "strict_goal_recall_probe":
@@ -219,10 +204,7 @@ def _build_priority_queue(no_candidate_rows: list[dict[str, Any]], *, preserve_t
                 "mean_next_close_return": _mean_metric(ticker_rows, "next_close_return"),
                 "mean_t_plus_2_close_return": _mean_metric(ticker_rows, "t_plus_2_close_return"),
                 "why_now": why_now,
-                "next_step": (
-                    f"先用 {ticker} 作为 focus_ticker 重跑 {primary_report_dir or '对应 report_dir'} 的 candidate-entry frontier，"
-                    f"验证它是否能在不误伤 {preserve_tickers} 的前提下形成 selective recall 语义。"
-                ),
+                "next_step": (f"先用 {ticker} 作为 focus_ticker 重跑 {primary_report_dir or '对应 report_dir'} 的 candidate-entry frontier，" f"验证它是否能在不误伤 {preserve_tickers} 的前提下形成 selective recall 语义。"),
                 "frontier_command": frontier_command,
             }
         )
@@ -280,14 +262,8 @@ def _build_window_hotspot_rows(no_candidate_rows: list[dict[str, Any]], *, prese
                 "mean_t_plus_2_close_return": _mean_metric(report_rows, "t_plus_2_close_return"),
                 "report_modes": {key: int(value) for key, value in Counter(str(row.get("report_mode") or "unknown") for row in report_rows).most_common(3)},
                 "selection_targets": {key: int(value) for key, value in Counter(str(row.get("report_selection_target") or "unknown") for row in report_rows).most_common(3)},
-                "why_now": (
-                    f"{report_dir} 在 {len(trade_dates)} 个 trade_date 上累计出现 {len(report_rows)} 个 no_candidate_entry 样本，"
-                    f"其中 strict_goal_case={strict_goal_case_count}。"
-                ),
-                "next_step": (
-                    f"优先回放 {report_dir}，围绕 {focus_tickers} 验证 candidate entry selective semantics，"
-                    f"先确认能否在不误伤 {preserve_tickers} 的前提下形成可复用入口语义。"
-                ),
+                "why_now": (f"{report_dir} 在 {len(trade_dates)} 个 trade_date 上累计出现 {len(report_rows)} 个 no_candidate_entry 样本，" f"其中 strict_goal_case={strict_goal_case_count}。"),
+                "next_step": (f"优先回放 {report_dir}，围绕 {focus_tickers} 验证 candidate entry selective semantics，" f"先确认能否在不误伤 {preserve_tickers} 的前提下形成可复用入口语义。"),
                 "frontier_command": frontier_command,
             }
         )
@@ -381,11 +357,7 @@ def analyze_btst_no_candidate_entry_action_board(
     no_candidate_entry_count = int(dict(analysis.get("no_candidate_entry_summary") or {}).get("count") or len(no_candidate_rows))
     tradeable_opportunity_pool_count = int(analysis.get("tradeable_opportunity_pool_count") or 0)
     no_candidate_entry_share = round_or_none(safe_float(dict(analysis.get("no_candidate_entry_summary") or {}).get("share_of_tradeable_pool")))
-    recommendation = (
-        f"当前 no_candidate_entry backlog 占 tradeable pool 的 {no_candidate_entry_share}，"
-        f"应优先围绕 {top_priority_tickers or ['无']} 和 {top_hotspot_report_dirs or ['无']} 做 candidate entry replay / window scan，"
-        "先补 watchlist recall 与 selective semantics，再决定是否需要继续推进其他入口治理动作。"
-    )
+    recommendation = f"当前 no_candidate_entry backlog 占 tradeable pool 的 {no_candidate_entry_share}，" f"应优先围绕 {top_priority_tickers or ['无']} 和 {top_hotspot_report_dirs or ['无']} 做 candidate entry replay / window scan，" "先补 watchlist recall 与 selective semantics，再决定是否需要继续推进其他入口治理动作。"
     if not priority_queue:
         recommendation = "当前没有可执行的 no_candidate_entry backlog，候选入口行动板为空。"
 
@@ -439,9 +411,7 @@ def render_btst_no_candidate_entry_action_board_markdown(analysis: dict[str, Any
     lines.append("")
     lines.append("## Priority Queue")
     for row in list(analysis.get("priority_queue") or []):
-        lines.append(
-            f"- rank={row.get('priority_rank')} ticker={row.get('ticker')} action_tier={row.get('action_tier')} strict_goal_case_count={row.get('strict_goal_case_count')} occurrence_count={row.get('occurrence_count')} distinct_report_count={row.get('distinct_report_count')} latest_trade_date={row.get('latest_trade_date')}"
-        )
+        lines.append(f"- rank={row.get('priority_rank')} ticker={row.get('ticker')} action_tier={row.get('action_tier')} strict_goal_case_count={row.get('strict_goal_case_count')} occurrence_count={row.get('occurrence_count')} distinct_report_count={row.get('distinct_report_count')} latest_trade_date={row.get('latest_trade_date')}")
         lines.append(f"  why_now: {row.get('why_now')}")
         lines.append(f"  next_step: {row.get('next_step')}")
     if not list(analysis.get("priority_queue") or []):
@@ -449,9 +419,7 @@ def render_btst_no_candidate_entry_action_board_markdown(analysis: dict[str, Any
     lines.append("")
     lines.append("## Window Hotspots")
     for row in list(analysis.get("window_hotspot_rows") or []):
-        lines.append(
-            f"- rank={row.get('priority_rank')} report_dir={row.get('report_dir')} action_tier={row.get('action_tier')} no_candidate_entry_count={row.get('no_candidate_entry_count')} strict_goal_case_count={row.get('strict_goal_case_count')} trade_date_count={row.get('trade_date_count')} top_focus_tickers={row.get('top_focus_tickers')}"
-        )
+        lines.append(f"- rank={row.get('priority_rank')} report_dir={row.get('report_dir')} action_tier={row.get('action_tier')} no_candidate_entry_count={row.get('no_candidate_entry_count')} strict_goal_case_count={row.get('strict_goal_case_count')} trade_date_count={row.get('trade_date_count')} top_focus_tickers={row.get('top_focus_tickers')}")
         lines.append(f"  why_now: {row.get('why_now')}")
         lines.append(f"  next_step: {row.get('next_step')}")
     if not list(analysis.get("window_hotspot_rows") or []):

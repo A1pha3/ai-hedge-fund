@@ -151,13 +151,7 @@ def _build_continuation_focus_summary(reports_root: Path) -> dict[str, Any]:
     execution_overlay = _optional_report_json(reports_root / "btst_tplus2_continuation_execution_overlay_latest.json")
     governance_board = _optional_report_json(reports_root / "btst_tplus2_continuation_governance_board_latest.json")
     watchboard = _optional_report_json(reports_root / "btst_tplus2_continuation_watchboard_latest.json")
-    focus_ticker = str(
-        promotion_review.get("focus_ticker")
-        or promotion_gate.get("focus_ticker")
-        or watchlist_execution.get("focus_ticker")
-        or governance_board.get("focus_promotion_ticker")
-        or ""
-    ).strip()
+    focus_ticker = str(promotion_review.get("focus_ticker") or promotion_gate.get("focus_ticker") or watchlist_execution.get("focus_ticker") or governance_board.get("focus_promotion_ticker") or "").strip()
     if not focus_ticker:
         return {}
     adopted_watch_row = dict(watchlist_execution.get("adopted_watch_row") or {})
@@ -212,12 +206,8 @@ def _build_execution_constraint_rollup(reports_root: Path) -> dict[str, Any]:
     constraints = [dict(row or {}) for row in list(governance_synthesis.get("execution_surface_constraints") or [])]
     if not constraints:
         return {}
-    continuation_constraints = [
-        row for row in constraints if str(row.get("status") or "").strip() == "continuation_only_confirm_then_review"
-    ]
-    shadow_constraints = [
-        row for row in constraints if str(row.get("status") or "").strip() == "shadow_recall_not_execution_ready"
-    ]
+    continuation_constraints = [row for row in constraints if str(row.get("status") or "").strip() == "continuation_only_confirm_then_review"]
+    shadow_constraints = [row for row in constraints if str(row.get("status") or "").strip() == "shadow_recall_not_execution_ready"]
     return {
         "constraint_count": len(constraints),
         "continuation_focus_tickers": [ticker for row in continuation_constraints for ticker in list(row.get("focus_tickers") or [])[:3]][:3],
@@ -234,12 +224,8 @@ def _qualify_continuation_window_focus_entries(entries: list[dict[str, Any]], fo
     qualifying_bucket_allowlist = ["near_miss_entries", "selected_entries"]
     merge_review_bucket_allowlist = ["selected_entries"]
     has_bucket_data = bool(focus_buckets)
-    qualifies = bool(focus_entries) and (
-        not has_bucket_data or any(bucket in qualifying_bucket_allowlist for bucket in focus_buckets)
-    )
-    merge_review_qualifies = bool(focus_entries) and (
-        not has_bucket_data or any(bucket in merge_review_bucket_allowlist for bucket in focus_buckets)
-    )
+    qualifies = bool(focus_entries) and (not has_bucket_data or any(bucket in qualifying_bucket_allowlist for bucket in focus_buckets))
+    merge_review_qualifies = bool(focus_entries) and (not has_bucket_data or any(bucket in merge_review_bucket_allowlist for bucket in focus_buckets))
     return {
         "focus_entries": focus_entries,
         "focus_buckets": focus_buckets,
@@ -267,11 +253,7 @@ def _extract_candidate_dossier_support_trade_dates(reports_root: Path, focus_tic
     if not dossier:
         return {}
 
-    supporting_windows = [
-        dict(item or {})
-        for item in list(dossier.get("recent_window_summaries") or dossier.get("per_window_summaries") or [])
-        if bool(dict(item or {}).get("supporting_window"))
-    ]
+    supporting_windows = [dict(item or {}) for item in list(dossier.get("recent_window_summaries") or dossier.get("per_window_summaries") or []) if bool(dict(item or {}).get("supporting_window"))]
     supporting_trade_dates: list[str] = []
     for item in supporting_windows:
         report_label = _normalize_trade_date(item.get("report_label"))
@@ -434,16 +416,8 @@ def _build_continuation_promotion_edge_summary(
     default_positive_rate = tradeable_surface.get("t_plus_2_positive_rate")
     focus_mean_return = adopted_execution_row.get("t_plus_2_close_return_mean")
     default_mean_return = tradeable_surface.get("mean_t_plus_2_return")
-    positive_rate_delta = (
-        round(float(focus_positive_rate) - float(default_positive_rate), 4)
-        if focus_positive_rate is not None and default_positive_rate is not None
-        else None
-    )
-    mean_return_delta = (
-        round(float(focus_mean_return) - float(default_mean_return), 4)
-        if focus_mean_return is not None and default_mean_return is not None
-        else None
-    )
+    positive_rate_delta = round(float(focus_positive_rate) - float(default_positive_rate), 4) if focus_positive_rate is not None and default_positive_rate is not None else None
+    mean_return_delta = round(float(focus_mean_return) - float(default_mean_return), 4) if focus_mean_return is not None and default_mean_return is not None else None
     if positive_rate_delta is None or mean_return_delta is None:
         edge_verdict = "insufficient_default_btst_edge_data"
     elif positive_rate_delta > 0 and mean_return_delta > 0:
@@ -453,12 +427,8 @@ def _build_continuation_promotion_edge_summary(
     else:
         edge_verdict = "not_outperforming_default_btst"
 
-    positive_rate_delta_gap_to_threshold = (
-        round(required_positive_rate_delta - float(positive_rate_delta), 4) if positive_rate_delta is not None else None
-    )
-    mean_return_delta_gap_to_threshold = (
-        round(required_mean_return_delta - float(mean_return_delta), 4) if mean_return_delta is not None else None
-    )
+    positive_rate_delta_gap_to_threshold = round(required_positive_rate_delta - float(positive_rate_delta), 4) if positive_rate_delta is not None else None
+    mean_return_delta_gap_to_threshold = round(required_mean_return_delta - float(mean_return_delta), 4) if mean_return_delta is not None else None
     if positive_rate_delta is None or mean_return_delta is None:
         edge_threshold_verdict = "insufficient_default_btst_edge_data"
     elif positive_rate_delta >= required_positive_rate_delta and mean_return_delta >= required_mean_return_delta:
@@ -494,11 +464,7 @@ def _build_continuation_promotion_path_summary(
     distinct_trade_dates: list[str],
 ) -> dict[str, Any]:
     missing_window_count = max(target_window_count - observed_window_count, 0)
-    persistence_verdict = (
-        "independent_window_requirement_satisfied"
-        if observed_window_count >= target_window_count
-        else "await_additional_independent_window_persistence"
-    )
+    persistence_verdict = "independent_window_requirement_satisfied" if observed_window_count >= target_window_count else "await_additional_independent_window_persistence"
     if persistence_verdict != "independent_window_requirement_satisfied":
         promotion_merge_review_verdict = "await_additional_independent_window_persistence"
     elif edge_threshold_verdict != "edge_threshold_satisfied":
@@ -511,49 +477,15 @@ def _build_continuation_promotion_path_summary(
         unresolved_requirements.append("new_independent_trade_date")
     if edge_threshold_verdict != "edge_threshold_satisfied":
         unresolved_requirements.append("edge_threshold_vs_default_btst")
-    ready_after_next_qualifying_window = bool(
-        missing_window_count == 1 and edge_threshold_verdict == "edge_threshold_satisfied"
-    )
-    promotion_path_status = (
-        "merge_review_ready"
-        if promotion_merge_review_verdict == "ready_for_default_btst_merge_review"
-        else (
-            "one_qualifying_window_away"
-            if ready_after_next_qualifying_window
-            else (
-                "collect_more_independent_windows"
-                if missing_window_count > 0
-                else "repair_edge_threshold"
-            )
-        )
-    )
-    next_window_requirement = (
-        "capture_one_new_independent_trade_date_with_edge_thresholds_still_satisfied"
-        if ready_after_next_qualifying_window
-        else "collect_additional_independent_window_and_recheck_edge_thresholds"
-    )
-    next_window_trade_date_rule = (
-        f"must be a new trade_date outside {distinct_trade_dates}"
-        if distinct_trade_dates
-        else "must be a newly observed independent continuation trade_date"
-    )
-    next_window_qualified_merge_review_verdict = (
-        "ready_for_default_btst_merge_review"
-        if ready_after_next_qualifying_window
-        else (
-            "await_additional_independent_window_persistence"
-            if missing_window_count > 1
-            else promotion_merge_review_verdict
-        )
-    )
+    ready_after_next_qualifying_window = bool(missing_window_count == 1 and edge_threshold_verdict == "edge_threshold_satisfied")
+    promotion_path_status = "merge_review_ready" if promotion_merge_review_verdict == "ready_for_default_btst_merge_review" else ("one_qualifying_window_away" if ready_after_next_qualifying_window else ("collect_more_independent_windows" if missing_window_count > 0 else "repair_edge_threshold"))
+    next_window_requirement = "capture_one_new_independent_trade_date_with_edge_thresholds_still_satisfied" if ready_after_next_qualifying_window else "collect_additional_independent_window_and_recheck_edge_thresholds"
+    next_window_trade_date_rule = f"must be a new trade_date outside {distinct_trade_dates}" if distinct_trade_dates else "must be a newly observed independent continuation trade_date"
+    next_window_qualified_merge_review_verdict = "ready_for_default_btst_merge_review" if ready_after_next_qualifying_window else ("await_additional_independent_window_persistence" if missing_window_count > 1 else promotion_merge_review_verdict)
     next_step = (
         "Wait for one more independent continuation window before governance can evaluate merge readiness."
         if promotion_merge_review_verdict == "await_additional_independent_window_persistence"
-        else (
-            "Independent-window requirement is satisfied; keep the lane isolated until its edge exceeds the default BTST merge thresholds."
-            if promotion_merge_review_verdict == "await_stronger_edge_vs_default_btst"
-            else "Independent-window and edge thresholds are satisfied; governance can review whether the continuation lane is ready to merge into default BTST."
-        )
+        else ("Independent-window requirement is satisfied; keep the lane isolated until its edge exceeds the default BTST merge thresholds." if promotion_merge_review_verdict == "await_stronger_edge_vs_default_btst" else "Independent-window and edge thresholds are satisfied; governance can review whether the continuation lane is ready to merge into default BTST.")
     )
 
     return {
@@ -846,11 +778,7 @@ def _build_carryover_aligned_peer_harvest_summary(reports_root: Path) -> dict[st
     if not harvest:
         return {}
     entries, focus_entry = _load_entries_and_focus_entry(harvest, entries_key="harvest_entries")
-    fresh_open_cycle_tickers = [
-        str(entry.get("ticker") or "")
-        for entry in entries
-        if str(entry.get("harvest_status") or "") == "fresh_open_cycle" and entry.get("ticker")
-    ][:4]
+    fresh_open_cycle_tickers = [str(entry.get("ticker") or "") for entry in entries if str(entry.get("harvest_status") or "") == "fresh_open_cycle" and entry.get("ticker")][:4]
     return {
         "ticker": harvest.get("ticker"),
         "peer_row_count": harvest.get("peer_row_count"),
@@ -1016,6 +944,8 @@ def _collect_governance_synthesis_evidence_dirs(reports_root: Path, latest_btst_
         seen.add(report_dir)
         deduped_dirs.append(report_dir)
     return deduped_dirs
+
+
 CANDIDATE_ENTRY_FRONTIER_JSON = "btst_candidate_entry_frontier_20260330.json"
 CANDIDATE_ENTRY_STRUCTURAL_VALIDATION_JSON = "selection_target_structural_variants_candidate_entry_current_window_20260330.json"
 CANDIDATE_ENTRY_SCORE_FRONTIER_JSON = "btst_score_construction_frontier_20260330.json"
@@ -2355,11 +2285,7 @@ def _build_static_entries(repo_root: Path) -> list[dict[str, Any]]:
                 glob_pattern=STATIC_ENTRY_GLOB_OVERRIDES[spec["id"]],
             )
         question = spec["question"]
-        if (
-            corridor_focus_ticker
-            and corridor_focus_ticker != _CORRIDOR_FOCUS_ENTRY_DEFAULT_TICKER
-            and spec["id"] in _CORRIDOR_FOCUS_ENTRY_IDS
-        ):
+        if corridor_focus_ticker and corridor_focus_ticker != _CORRIDOR_FOCUS_ENTRY_DEFAULT_TICKER and spec["id"] in _CORRIDOR_FOCUS_ENTRY_IDS:
             question = question.replace(_CORRIDOR_FOCUS_ENTRY_DEFAULT_TICKER, corridor_focus_ticker)
         entry = _build_entry(
             entry_id=spec["id"],
@@ -2902,16 +2828,8 @@ def refresh_btst_score_fail_frontier_artifacts(
         "rescueable_case_count": score_fail_frontier_analysis.get("rescueable_case_count"),
         "threshold_only_rescue_count": score_fail_frontier_analysis.get("rescueable_with_threshold_only_count"),
         "recurring_case_count": recurring_frontier_analysis.get("recurring_case_count"),
-        "priority_queue_tickers": [
-            str(row.get("ticker") or "")
-            for row in list(recurring_frontier_analysis.get("priority_queue") or [])[:3]
-            if row.get("ticker")
-        ],
-        "top_rescue_tickers": [
-            str(row.get("ticker") or "")
-            for row in list(score_fail_frontier_analysis.get("minimal_near_miss_rows") or [])[:3]
-            if row.get("ticker")
-        ],
+        "priority_queue_tickers": [str(row.get("ticker") or "") for row in list(recurring_frontier_analysis.get("priority_queue") or [])[:3] if row.get("ticker")],
+        "top_rescue_tickers": [str(row.get("ticker") or "") for row in list(score_fail_frontier_analysis.get("minimal_near_miss_rows") or [])[:3] if row.get("ticker")],
         "analysis_json": analysis_json_path.as_posix(),
         "analysis_markdown": analysis_md_path.as_posix(),
         "frontier_json": frontier_json_path.as_posix(),
@@ -2963,11 +2881,7 @@ def refresh_btst_score_fail_frontier_artifacts(
             glob_pattern="btst_recurring_shadow_close_bundle_*.json",
         ),
     }
-    missing_recurring_shadow_inputs = [
-        label
-        for label, path in recurring_shadow_inputs.items()
-        if path is None or not Path(path).exists()
-    ]
+    missing_recurring_shadow_inputs = [label for label, path in recurring_shadow_inputs.items() if path is None or not Path(path).exists()]
     if missing_recurring_shadow_inputs:
         refresh["recurring_shadow_refresh_status"] = "skipped_missing_inputs"
         refresh["missing_recurring_shadow_inputs"] = missing_recurring_shadow_inputs
@@ -3634,9 +3548,7 @@ def _append_candidate_entry_shadow_experiment_queue(lines: list[str], payload: d
     lines.append("- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_experiment_queue: structured_summary")
     lines.append(f"- candidate_entry_shadow_candidate_pool_recall_priority_handoff_branch_experiment_queue_count: {len(branch_experiment_queue)}")
     for experiment in branch_experiment_queue[:3]:
-        lines.append(
-            f"- candidate_entry_shadow_branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}"
-        )
+        lines.append(f"- candidate_entry_shadow_branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}")
         lines.append(f"  prototype_summary: {experiment.get('prototype_summary')}")
         lines.append(f"  evaluation_summary: {experiment.get('evaluation_summary')}")
         lines.append(f"  guardrail_summary: {experiment.get('guardrail_summary')}")
@@ -3644,13 +3556,9 @@ def _append_candidate_entry_shadow_experiment_queue(lines: list[str], payload: d
 
 def _append_candidate_entry_shadow_board_rows(lines: list[str], payload: dict[str, Any]) -> None:
     for row in list(payload.get("candidate_pool_branch_priority_board_rows") or [])[:3]:
-        lines.append(
-            f"- candidate_entry_shadow_candidate_pool_branch_priority: handoff={row.get('priority_handoff')} readiness={row.get('prototype_readiness')} execution_priority_rank={row.get('execution_priority_rank')} tickers={row.get('tickers')}"
-        )
+        lines.append(f"- candidate_entry_shadow_candidate_pool_branch_priority: handoff={row.get('priority_handoff')} readiness={row.get('prototype_readiness')} execution_priority_rank={row.get('execution_priority_rank')} tickers={row.get('tickers')}")
     for row in list(payload.get("candidate_pool_lane_objective_support_rows") or [])[:3]:
-        lines.append(
-            f"- candidate_entry_shadow_candidate_pool_lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}"
-        )
+        lines.append(f"- candidate_entry_shadow_candidate_pool_lane_objective_support: handoff={row.get('priority_handoff')} verdict={row.get('support_verdict')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')}")
 
 
 def _append_candidate_entry_shadow_summary_rows(lines: list[str], payload: dict[str, Any]) -> None:
@@ -3730,38 +3638,105 @@ def _manifest_summary_section_specs() -> tuple[tuple[str, Any], ...]:
             "carryover_multiday_continuation_audit_summary",
             lambda summary: f"- carryover_multiday_continuation_audit_summary: selected_ticker={summary.get('selected_ticker')} supportive_case_count={summary.get('supportive_case_count')} peer_status_counts={summary.get('peer_status_counts')} selected_path_t2_bias_only={summary.get('selected_path_t2_bias_only')} broad_family_only_multiday_unsupported={summary.get('broad_family_only_multiday_unsupported')} aligned_peer_multiday_ready={summary.get('aligned_peer_multiday_ready')} open_selected_case_count={summary.get('open_selected_case_count')} selected_t_plus_3_close_positive_rate={summary.get('selected_t_plus_3_close_positive_rate')} broad_family_only_next_close_positive_rate={summary.get('broad_family_only_next_close_positive_rate')}",
         ),
-        ("carryover_aligned_peer_harvest_summary", lambda summary: f"- carryover_aligned_peer_harvest_summary: focus_ticker={summary.get('focus_ticker')} focus_status={summary.get('focus_status')} focus_latest_trade_date={summary.get('focus_latest_trade_date')} focus_latest_scope={summary.get('focus_latest_scope')} focus_closed_cycle_count={summary.get('focus_closed_cycle_count')} focus_next_day_available_count={summary.get('focus_next_day_available_count')} fresh_open_cycle_tickers={summary.get('fresh_open_cycle_tickers')}"),
+        (
+            "carryover_aligned_peer_harvest_summary",
+            lambda summary: f"- carryover_aligned_peer_harvest_summary: focus_ticker={summary.get('focus_ticker')} focus_status={summary.get('focus_status')} focus_latest_trade_date={summary.get('focus_latest_trade_date')} focus_latest_scope={summary.get('focus_latest_scope')} focus_closed_cycle_count={summary.get('focus_closed_cycle_count')} focus_next_day_available_count={summary.get('focus_next_day_available_count')} fresh_open_cycle_tickers={summary.get('fresh_open_cycle_tickers')}",
+        ),
         ("carryover_peer_expansion_summary", lambda summary: f"- carryover_peer_expansion_summary: focus_ticker={summary.get('focus_ticker')} focus_status={summary.get('focus_status')} priority_expansion_tickers={summary.get('priority_expansion_tickers')} watch_with_risk_tickers={summary.get('watch_with_risk_tickers')} expansion_status_counts={summary.get('expansion_status_counts')}"),
-        ("carryover_aligned_peer_proof_summary", lambda summary: f"- carryover_aligned_peer_proof_summary: focus_ticker={summary.get('focus_ticker')} focus_proof_verdict={summary.get('focus_proof_verdict')} focus_promotion_review_verdict={summary.get('focus_promotion_review_verdict')} ready_for_promotion_review_tickers={summary.get('ready_for_promotion_review_tickers')} risk_review_tickers={summary.get('risk_review_tickers')} pending_t_plus_2_tickers={summary.get('pending_t_plus_2_tickers')}"),
-        ("carryover_peer_promotion_gate_summary", lambda summary: f"- carryover_peer_promotion_gate_summary: focus_ticker={summary.get('focus_ticker')} focus_gate_verdict={summary.get('focus_gate_verdict')} ready_tickers={summary.get('ready_tickers')} blocked_open_tickers={summary.get('blocked_open_tickers')} risk_review_tickers={summary.get('risk_review_tickers')} pending_t_plus_2_tickers={summary.get('pending_t_plus_2_tickers')}"),
-        ("continuation_promotion_ready_summary", lambda summary: f"- continuation_promotion_ready_summary: focus_ticker={summary.get('focus_ticker')} promotion_path_status={summary.get('promotion_path_status')} blockers_remaining_count={summary.get('blockers_remaining_count')} observed_independent_window_count={summary.get('observed_independent_window_count')} weighted_observed_window_credit={summary.get('weighted_observed_window_credit')} missing_independent_window_count={summary.get('missing_independent_window_count')} weighted_missing_window_credit={summary.get('weighted_missing_window_credit')} candidate_dossier_support_trade_date_count={summary.get('candidate_dossier_support_trade_date_count')} candidate_dossier_same_trade_date_variant_count={summary.get('candidate_dossier_same_trade_date_variant_count')} candidate_dossier_same_trade_date_variant_credit={summary.get('candidate_dossier_same_trade_date_variant_credit')} persistence_verdict={summary.get('persistence_verdict')} provisional_default_btst_edge_verdict={summary.get('provisional_default_btst_edge_verdict')} edge_threshold_verdict={summary.get('edge_threshold_verdict')} promotion_merge_review_verdict={summary.get('promotion_merge_review_verdict')} ready_after_next_qualifying_window={summary.get('ready_after_next_qualifying_window')} next_window_requirement={summary.get('next_window_requirement')} next_window_duplicate_trade_date_verdict={summary.get('next_window_duplicate_trade_date_verdict')} next_window_quality_requirement={summary.get('next_window_quality_requirement')} next_window_disqualified_bucket_verdict={summary.get('next_window_disqualified_bucket_verdict')} next_window_qualified_merge_review_verdict={summary.get('next_window_qualified_merge_review_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_mean_return_delta_vs_default_btst={summary.get('t_plus_2_mean_return_delta_vs_default_btst')}"),
-        ("default_merge_review_summary", lambda summary: f"- default_merge_review_summary: focus_ticker={summary.get('focus_ticker')} merge_review_verdict={summary.get('merge_review_verdict')} operator_action={summary.get('operator_action')} counterfactual_verdict={dict(summary.get('counterfactual_validation') or {}).get('counterfactual_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_positive_rate_margin_vs_threshold={dict(summary.get('counterfactual_validation') or {}).get('t_plus_2_positive_rate_margin_vs_threshold')} t_plus_2_mean_return_delta_vs_default_btst={summary.get('t_plus_2_mean_return_delta_vs_default_btst')} t_plus_2_mean_return_margin_vs_threshold={dict(summary.get('counterfactual_validation') or {}).get('t_plus_2_mean_return_margin_vs_threshold')}"),
-        ("default_merge_historical_counterfactual_summary", lambda summary: f"- default_merge_historical_counterfactual_summary: focus_ticker={summary.get('focus_ticker')} counterfactual_verdict={summary.get('counterfactual_verdict')} merged_positive_rate_uplift={dict(summary.get('uplift_vs_default_btst') or {}).get('t_plus_2_positive_rate_uplift')} merged_mean_return_uplift={dict(summary.get('uplift_vs_default_btst') or {}).get('mean_t_plus_2_return_uplift')}"),
-        ("continuation_merge_candidate_ranking_summary", lambda summary: f"- continuation_merge_candidate_ranking_summary: candidate_count={summary.get('candidate_count')} top_ticker={dict(summary.get('top_candidate') or {}).get('ticker')} top_stage={dict(summary.get('top_candidate') or {}).get('promotion_path_status') or dict(summary.get('top_candidate') or {}).get('promotion_readiness_verdict')} top_positive_rate_delta={dict(summary.get('top_candidate') or {}).get('t_plus_2_positive_rate_delta_vs_default_btst')} top_mean_return_delta={dict(summary.get('top_candidate') or {}).get('t_plus_2_mean_return_delta_vs_default_btst')}"),
-        ("default_merge_strict_counterfactual_summary", lambda summary: f"- default_merge_strict_counterfactual_summary: focus_ticker={summary.get('focus_ticker')} strict_counterfactual_verdict={summary.get('strict_counterfactual_verdict')} overlap_case_count={dict(summary.get('overlap_diagnostics') or {}).get('overlap_case_count')} strict_positive_rate_uplift={dict(summary.get('strict_uplift_vs_default_btst') or {}).get('t_plus_2_positive_rate_uplift')} strict_mean_return_uplift={dict(summary.get('strict_uplift_vs_default_btst') or {}).get('mean_t_plus_2_return_uplift')}"),
-        ("merge_replay_validation_summary", lambda summary: f"- merge_replay_validation_summary: overall_verdict={summary.get('overall_verdict')} focus_tickers={summary.get('focus_tickers')} promoted_to_selected_count={summary.get('promoted_to_selected_count')} promoted_to_near_miss_count={summary.get('promoted_to_near_miss_count')} relief_applied_count={summary.get('relief_applied_count')} relief_actionable_applied_count={summary.get('relief_actionable_applied_count')} relief_already_selected_count={summary.get('relief_already_selected_count')} relief_positive_promotion_precision={summary.get('relief_positive_promotion_precision')} relief_actionable_positive_promotion_precision={summary.get('relief_actionable_positive_promotion_precision')} relief_no_promotion_ratio={summary.get('relief_no_promotion_ratio')} relief_actionable_no_promotion_ratio={summary.get('relief_actionable_no_promotion_ratio')} relief_decision_deteriorated_count={summary.get('relief_decision_deteriorated_count')} recommended_next_lever={summary.get('recommended_next_lever')} recommended_signal_levers={summary.get('recommended_signal_levers')}"),
-        ("prepared_breakout_relief_validation_summary", lambda summary: f"- prepared_breakout_relief_validation_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} selected_relief_window_count={summary.get('selected_relief_window_count')} selected_relief_alignment_rate={summary.get('selected_relief_alignment_rate')} outcome_support={dict(summary.get('outcome_support') or {}).get('evidence_status')}"),
+        (
+            "carryover_aligned_peer_proof_summary",
+            lambda summary: f"- carryover_aligned_peer_proof_summary: focus_ticker={summary.get('focus_ticker')} focus_proof_verdict={summary.get('focus_proof_verdict')} focus_promotion_review_verdict={summary.get('focus_promotion_review_verdict')} ready_for_promotion_review_tickers={summary.get('ready_for_promotion_review_tickers')} risk_review_tickers={summary.get('risk_review_tickers')} pending_t_plus_2_tickers={summary.get('pending_t_plus_2_tickers')}",
+        ),
+        (
+            "carryover_peer_promotion_gate_summary",
+            lambda summary: f"- carryover_peer_promotion_gate_summary: focus_ticker={summary.get('focus_ticker')} focus_gate_verdict={summary.get('focus_gate_verdict')} ready_tickers={summary.get('ready_tickers')} blocked_open_tickers={summary.get('blocked_open_tickers')} risk_review_tickers={summary.get('risk_review_tickers')} pending_t_plus_2_tickers={summary.get('pending_t_plus_2_tickers')}",
+        ),
+        (
+            "continuation_promotion_ready_summary",
+            lambda summary: f"- continuation_promotion_ready_summary: focus_ticker={summary.get('focus_ticker')} promotion_path_status={summary.get('promotion_path_status')} blockers_remaining_count={summary.get('blockers_remaining_count')} observed_independent_window_count={summary.get('observed_independent_window_count')} weighted_observed_window_credit={summary.get('weighted_observed_window_credit')} missing_independent_window_count={summary.get('missing_independent_window_count')} weighted_missing_window_credit={summary.get('weighted_missing_window_credit')} candidate_dossier_support_trade_date_count={summary.get('candidate_dossier_support_trade_date_count')} candidate_dossier_same_trade_date_variant_count={summary.get('candidate_dossier_same_trade_date_variant_count')} candidate_dossier_same_trade_date_variant_credit={summary.get('candidate_dossier_same_trade_date_variant_credit')} persistence_verdict={summary.get('persistence_verdict')} provisional_default_btst_edge_verdict={summary.get('provisional_default_btst_edge_verdict')} edge_threshold_verdict={summary.get('edge_threshold_verdict')} promotion_merge_review_verdict={summary.get('promotion_merge_review_verdict')} ready_after_next_qualifying_window={summary.get('ready_after_next_qualifying_window')} next_window_requirement={summary.get('next_window_requirement')} next_window_duplicate_trade_date_verdict={summary.get('next_window_duplicate_trade_date_verdict')} next_window_quality_requirement={summary.get('next_window_quality_requirement')} next_window_disqualified_bucket_verdict={summary.get('next_window_disqualified_bucket_verdict')} next_window_qualified_merge_review_verdict={summary.get('next_window_qualified_merge_review_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_mean_return_delta_vs_default_btst={summary.get('t_plus_2_mean_return_delta_vs_default_btst')}",
+        ),
+        (
+            "default_merge_review_summary",
+            lambda summary: f"- default_merge_review_summary: focus_ticker={summary.get('focus_ticker')} merge_review_verdict={summary.get('merge_review_verdict')} operator_action={summary.get('operator_action')} counterfactual_verdict={dict(summary.get('counterfactual_validation') or {}).get('counterfactual_verdict')} t_plus_2_positive_rate_delta_vs_default_btst={summary.get('t_plus_2_positive_rate_delta_vs_default_btst')} t_plus_2_positive_rate_margin_vs_threshold={dict(summary.get('counterfactual_validation') or {}).get('t_plus_2_positive_rate_margin_vs_threshold')} t_plus_2_mean_return_delta_vs_default_btst={summary.get('t_plus_2_mean_return_delta_vs_default_btst')} t_plus_2_mean_return_margin_vs_threshold={dict(summary.get('counterfactual_validation') or {}).get('t_plus_2_mean_return_margin_vs_threshold')}",
+        ),
+        (
+            "default_merge_historical_counterfactual_summary",
+            lambda summary: f"- default_merge_historical_counterfactual_summary: focus_ticker={summary.get('focus_ticker')} counterfactual_verdict={summary.get('counterfactual_verdict')} merged_positive_rate_uplift={dict(summary.get('uplift_vs_default_btst') or {}).get('t_plus_2_positive_rate_uplift')} merged_mean_return_uplift={dict(summary.get('uplift_vs_default_btst') or {}).get('mean_t_plus_2_return_uplift')}",
+        ),
+        (
+            "continuation_merge_candidate_ranking_summary",
+            lambda summary: f"- continuation_merge_candidate_ranking_summary: candidate_count={summary.get('candidate_count')} top_ticker={dict(summary.get('top_candidate') or {}).get('ticker')} top_stage={dict(summary.get('top_candidate') or {}).get('promotion_path_status') or dict(summary.get('top_candidate') or {}).get('promotion_readiness_verdict')} top_positive_rate_delta={dict(summary.get('top_candidate') or {}).get('t_plus_2_positive_rate_delta_vs_default_btst')} top_mean_return_delta={dict(summary.get('top_candidate') or {}).get('t_plus_2_mean_return_delta_vs_default_btst')}",
+        ),
+        (
+            "default_merge_strict_counterfactual_summary",
+            lambda summary: f"- default_merge_strict_counterfactual_summary: focus_ticker={summary.get('focus_ticker')} strict_counterfactual_verdict={summary.get('strict_counterfactual_verdict')} overlap_case_count={dict(summary.get('overlap_diagnostics') or {}).get('overlap_case_count')} strict_positive_rate_uplift={dict(summary.get('strict_uplift_vs_default_btst') or {}).get('t_plus_2_positive_rate_uplift')} strict_mean_return_uplift={dict(summary.get('strict_uplift_vs_default_btst') or {}).get('mean_t_plus_2_return_uplift')}",
+        ),
+        (
+            "merge_replay_validation_summary",
+            lambda summary: f"- merge_replay_validation_summary: overall_verdict={summary.get('overall_verdict')} focus_tickers={summary.get('focus_tickers')} promoted_to_selected_count={summary.get('promoted_to_selected_count')} promoted_to_near_miss_count={summary.get('promoted_to_near_miss_count')} relief_applied_count={summary.get('relief_applied_count')} relief_actionable_applied_count={summary.get('relief_actionable_applied_count')} relief_already_selected_count={summary.get('relief_already_selected_count')} relief_positive_promotion_precision={summary.get('relief_positive_promotion_precision')} relief_actionable_positive_promotion_precision={summary.get('relief_actionable_positive_promotion_precision')} relief_no_promotion_ratio={summary.get('relief_no_promotion_ratio')} relief_actionable_no_promotion_ratio={summary.get('relief_actionable_no_promotion_ratio')} relief_decision_deteriorated_count={summary.get('relief_decision_deteriorated_count')} recommended_next_lever={summary.get('recommended_next_lever')} recommended_signal_levers={summary.get('recommended_signal_levers')}",
+        ),
+        (
+            "prepared_breakout_relief_validation_summary",
+            lambda summary: f"- prepared_breakout_relief_validation_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} selected_relief_window_count={summary.get('selected_relief_window_count')} selected_relief_alignment_rate={summary.get('selected_relief_alignment_rate')} outcome_support={dict(summary.get('outcome_support') or {}).get('evidence_status')}",
+        ),
         ("prepared_breakout_cohort_summary", lambda summary: f"- prepared_breakout_cohort_summary: verdict={summary.get('verdict')} candidate_count={summary.get('candidate_count')} selected_frontier_candidate_count={summary.get('selected_frontier_candidate_count')} next_candidate={dict(summary.get('next_candidate') or {}).get('ticker')}"),
         ("prepared_breakout_residual_surface_summary", lambda summary: f"- prepared_breakout_residual_surface_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} focus_report_dir_count={summary.get('focus_report_dir_count')}"),
         ("candidate_pool_corridor_persistence_dossier_summary", lambda summary: f"- candidate_pool_corridor_persistence_dossier_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} next_confirmation_requirement={summary.get('next_confirmation_requirement')}"),
         ("candidate_pool_corridor_window_command_board_summary", lambda summary: f"- candidate_pool_corridor_window_command_board_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} next_target_trade_dates={summary.get('next_target_trade_dates')}"),
         ("candidate_pool_corridor_window_diagnostics_summary", lambda summary: f"- candidate_pool_corridor_window_diagnostics_summary: focus_ticker={summary.get('focus_ticker')} near_miss_verdict={dict(summary.get('near_miss_upgrade_window') or {}).get('verdict')} visibility_gap_verdict={dict(summary.get('visibility_gap_window') or {}).get('verdict')} recommendation={summary.get('recommendation')}"),
         ("candidate_pool_corridor_narrow_probe_summary", lambda summary: f"- candidate_pool_corridor_narrow_probe_summary: focus_ticker={summary.get('focus_ticker')} verdict={summary.get('verdict')} threshold_override_gap_vs_anchor={summary.get('threshold_override_gap_vs_anchor')} target_gap_to_selected={summary.get('target_gap_to_selected')}"),
-        ("transient_probe_summary", lambda summary: f"- transient_probe_summary: ticker={summary.get('ticker')} status={summary.get('status')} blocker={summary.get('blocker')} candidate_source={summary.get('candidate_source')} score_state={summary.get('score_state')} downstream_bottleneck={summary.get('downstream_bottleneck')} historical_sample_count={summary.get('historical_sample_count')} historical_next_close_positive_rate={summary.get('historical_next_close_positive_rate')}"),
+        (
+            "transient_probe_summary",
+            lambda summary: f"- transient_probe_summary: ticker={summary.get('ticker')} status={summary.get('status')} blocker={summary.get('blocker')} candidate_source={summary.get('candidate_source')} score_state={summary.get('score_state')} downstream_bottleneck={summary.get('downstream_bottleneck')} historical_sample_count={summary.get('historical_sample_count')} historical_next_close_positive_rate={summary.get('historical_next_close_positive_rate')}",
+        ),
         ("execution_constraint_rollup", lambda summary: f"- execution_constraint_rollup: constraint_count={summary.get('constraint_count')} continuation_focus_tickers={summary.get('continuation_focus_tickers')} continuation_blockers={summary.get('continuation_blockers')} shadow_focus_tickers={summary.get('shadow_focus_tickers')} shadow_blockers={summary.get('shadow_blockers')}"),
     )
 
 
 def _append_manifest_trailing_refreshes(lines: list[str], manifest: dict[str, Any]) -> None:
     for refresh_key, field_specs in (
-        ("btst_score_fail_frontier_refresh", [("btst_score_fail_frontier_refresh_status", "status", "always"), ("btst_score_fail_frontier_rejected_case_count", "rejected_short_trade_boundary_count", "always"), ("btst_score_fail_frontier_rescueable_case_count", "rescueable_case_count", "always"), ("btst_score_fail_frontier_recurring_case_count", "recurring_case_count", "always"), ("btst_score_fail_frontier_transition_refresh_status", "transition_refresh_status", "always"), ("btst_score_fail_frontier_recurring_shadow_refresh_status", "recurring_shadow_refresh_status", "always")]),
+        (
+            "btst_score_fail_frontier_refresh",
+            [
+                ("btst_score_fail_frontier_refresh_status", "status", "always"),
+                ("btst_score_fail_frontier_rejected_case_count", "rejected_short_trade_boundary_count", "always"),
+                ("btst_score_fail_frontier_rescueable_case_count", "rescueable_case_count", "always"),
+                ("btst_score_fail_frontier_recurring_case_count", "recurring_case_count", "always"),
+                ("btst_score_fail_frontier_transition_refresh_status", "transition_refresh_status", "always"),
+                ("btst_score_fail_frontier_recurring_shadow_refresh_status", "recurring_shadow_refresh_status", "always"),
+            ],
+        ),
         ("btst_rollout_governance_refresh", [("btst_rollout_governance_refresh_status", "status", "always"), ("btst_rollout_governance_row_count", "governance_row_count", "always"), ("btst_rollout_governance_penalty_status", "penalty_frontier_status", "always")]),
         ("btst_governance_synthesis_refresh", [("btst_governance_synthesis_status", "status", "always"), ("btst_governance_synthesis_waiting_lane_count", "waiting_lane_count", "always"), ("btst_governance_synthesis_ready_lane_count", "ready_lane_count", "always")]),
         ("btst_governance_validation_refresh", [("btst_governance_validation_status", "status", "always"), ("btst_governance_validation_overall_verdict", "overall_verdict", "always")]),
         ("btst_replay_cohort_refresh", [("btst_replay_cohort_status", "status", "always"), ("btst_replay_cohort_report_count", "report_count", "always"), ("btst_replay_cohort_short_trade_only_report_count", "short_trade_only_report_count", "always")]),
         ("btst_independent_window_monitor_refresh", [("btst_independent_window_monitor_status", "status", "always"), ("btst_independent_window_monitor_report_dir_count", "report_dir_count", "always"), ("btst_independent_window_monitor_ready_lane_count", "ready_lane_count", "always"), ("btst_independent_window_monitor_waiting_lane_count", "waiting_lane_count", "always")]),
-        ("btst_tplus1_tplus2_objective_monitor_refresh", [("btst_tplus1_tplus2_objective_monitor_status", "status", "always"), ("btst_tplus1_tplus2_objective_monitor_report_dir_count", "report_dir_count", "always"), ("btst_tplus1_tplus2_objective_monitor_tradeable_closed_cycle_count", "tradeable_closed_cycle_count", "always"), ("btst_tplus1_tplus2_objective_monitor_tradeable_positive_rate", "tradeable_positive_rate", "always"), ("btst_tplus1_tplus2_objective_monitor_tradeable_return_hit_rate", "tradeable_return_hit_rate", "always"), ("btst_tplus1_tplus2_objective_monitor_best_ticker", "best_ticker", "always")]),
-        ("btst_tradeable_opportunity_pool_refresh", [("btst_tradeable_opportunity_pool_refresh_status", "status", "always"), ("btst_tradeable_opportunity_pool_result_truth_count", "result_truth_pool_count", "always"), ("btst_tradeable_opportunity_pool_tradeable_count", "tradeable_opportunity_pool_count", "always"), ("btst_tradeable_opportunity_pool_capture_rate", "tradeable_pool_capture_rate", "always"), ("btst_tradeable_opportunity_pool_selected_or_near_miss_rate", "tradeable_pool_selected_or_near_miss_rate", "always"), ("btst_tradeable_opportunity_pool_strict_goal_false_negative_count", "strict_goal_false_negative_count", "always"), ("btst_tradeable_opportunity_pool_top_kill_switches", "top_tradeable_kill_switch_labels", "always"), ("btst_tradeable_opportunity_pool_no_candidate_entry_count", "no_candidate_entry_count", "always"), ("btst_tradeable_opportunity_pool_top_no_candidate_entry_industries", "top_no_candidate_entry_industries", "always"), ("btst_tradeable_opportunity_pool_top_no_candidate_entry_tickers", "top_no_candidate_entry_tickers", "always")]),
+        (
+            "btst_tplus1_tplus2_objective_monitor_refresh",
+            [
+                ("btst_tplus1_tplus2_objective_monitor_status", "status", "always"),
+                ("btst_tplus1_tplus2_objective_monitor_report_dir_count", "report_dir_count", "always"),
+                ("btst_tplus1_tplus2_objective_monitor_tradeable_closed_cycle_count", "tradeable_closed_cycle_count", "always"),
+                ("btst_tplus1_tplus2_objective_monitor_tradeable_positive_rate", "tradeable_positive_rate", "always"),
+                ("btst_tplus1_tplus2_objective_monitor_tradeable_return_hit_rate", "tradeable_return_hit_rate", "always"),
+                ("btst_tplus1_tplus2_objective_monitor_best_ticker", "best_ticker", "always"),
+            ],
+        ),
+        (
+            "btst_tradeable_opportunity_pool_refresh",
+            [
+                ("btst_tradeable_opportunity_pool_refresh_status", "status", "always"),
+                ("btst_tradeable_opportunity_pool_result_truth_count", "result_truth_pool_count", "always"),
+                ("btst_tradeable_opportunity_pool_tradeable_count", "tradeable_opportunity_pool_count", "always"),
+                ("btst_tradeable_opportunity_pool_capture_rate", "tradeable_pool_capture_rate", "always"),
+                ("btst_tradeable_opportunity_pool_selected_or_near_miss_rate", "tradeable_pool_selected_or_near_miss_rate", "always"),
+                ("btst_tradeable_opportunity_pool_strict_goal_false_negative_count", "strict_goal_false_negative_count", "always"),
+                ("btst_tradeable_opportunity_pool_top_kill_switches", "top_tradeable_kill_switch_labels", "always"),
+                ("btst_tradeable_opportunity_pool_no_candidate_entry_count", "no_candidate_entry_count", "always"),
+                ("btst_tradeable_opportunity_pool_top_no_candidate_entry_industries", "top_no_candidate_entry_industries", "always"),
+                ("btst_tradeable_opportunity_pool_top_no_candidate_entry_tickers", "top_no_candidate_entry_tickers", "always"),
+            ],
+        ),
         ("latest_btst_run", [("latest_btst_report_dir", "report_dir", "always"), ("latest_btst_trade_date", "trade_date", "always"), ("latest_btst_next_trade_date", "next_trade_date", "always"), ("latest_btst_selection_target", "selection_target", "always")]),
     ):
         payload = dict(manifest.get(refresh_key) or {})

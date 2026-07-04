@@ -71,20 +71,13 @@ def _score_stats(values: list[Any]) -> dict[str, float | None]:
 def _average_mapping(rows: list[dict[str, Any]], field: str, keys: tuple[str, ...]) -> dict[str, float]:
     result: dict[str, float] = {}
     for key in keys:
-        numeric_values = [
-            float(dict(row.get(field) or {}).get(key))
-            for row in rows
-            if isinstance(dict(row.get(field) or {}).get(key), (int, float))
-        ]
+        numeric_values = [float(dict(row.get(field) or {}).get(key)) for row in rows if isinstance(dict(row.get(field) or {}).get(key), (int, float))]
         result[key] = round(sum(numeric_values) / len(numeric_values), 4) if numeric_values else 0.0
     return result
 
 
 def _difference_mapping(left: dict[str, float], right: dict[str, float], keys: tuple[str, ...]) -> dict[str, float]:
-    return {
-        key: round(float(left.get(key) or 0.0) - float(right.get(key) or 0.0), 4)
-        for key in keys
-    }
+    return {key: round(float(left.get(key) or 0.0) - float(right.get(key) or 0.0), 4) for key in keys}
 
 
 def _resolve_focus_ticker(cohort: dict[str, Any], focus_ticker: str | None) -> str:
@@ -162,11 +155,7 @@ def _build_gate_miss_counts(rows: list[dict[str, Any]]) -> dict[str, dict[str, i
 def _build_relief_counts(rows: list[dict[str, Any]], status_key: str) -> dict[str, int]:
     counts: dict[str, int] = {}
     for relief_field in RELIEF_FIELDS:
-        counts[relief_field] = sum(
-            1
-            for row in rows
-            if bool(dict(dict(row.get("explainability") or {}).get(relief_field) or {}).get(status_key))
-        )
+        counts[relief_field] = sum(1 for row in rows if bool(dict(dict(row.get("explainability") or {}).get(relief_field) or {}).get(status_key)))
     return counts
 
 
@@ -245,10 +234,7 @@ def analyze_btst_prepared_breakout_residual_surface(
     resolved_focus_ticker = _resolve_focus_ticker(cohort, focus_ticker)
     focus_report_dirs = _build_focus_report_dirs(cohort, resolved_focus_ticker, reference_ticker)
 
-    focused_rows = [
-        _normalize_diagnostic_row(row)
-        for row in _collect_focused_rows(focus_report_dirs, focus_tickers=[resolved_focus_ticker, reference_ticker], profile_name=profile_name)
-    ]
+    focused_rows = [_normalize_diagnostic_row(row) for row in _collect_focused_rows(focus_report_dirs, focus_tickers=[resolved_focus_ticker, reference_ticker], profile_name=profile_name)]
     rows_by_ticker: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in focused_rows:
         rows_by_ticker[str(row.get("ticker") or "")].append(row)
@@ -265,14 +251,7 @@ def analyze_btst_prepared_breakout_residual_surface(
     focus_eligible_counts = dict(focus_surface.get("relief_eligible_window_counts") or {})
     focus_applied_counts = dict(focus_surface.get("relief_applied_window_counts") or {})
 
-    if (
-        int(focus_decision_counts.get("selected", 0)) == 0
-        and int(focus_decision_counts.get("near_miss", 0)) == 0
-        and isinstance(focus_gap_stats.get("min"), (int, float))
-        and float(focus_gap_stats.get("min")) > 0.15
-        and sum(int(value) for value in focus_eligible_counts.values()) == 0
-        and sum(int(value) for value in focus_applied_counts.values()) == 0
-    ):
+    if int(focus_decision_counts.get("selected", 0)) == 0 and int(focus_decision_counts.get("near_miss", 0)) == 0 and isinstance(focus_gap_stats.get("min"), (int, float)) and float(focus_gap_stats.get("min")) > 0.15 and sum(int(value) for value in focus_eligible_counts.values()) == 0 and sum(int(value) for value in focus_applied_counts.values()) == 0:
         verdict = "non_actionable_score_surface"
         recommendation = f"{resolved_focus_ticker} should stay outside the prepared-breakout uplift lane; it is a broad score-deficit surface, not a narrow missing-relief case like {reference_ticker}."
     elif int(focus_decision_counts.get("near_miss", 0)) > 0 and isinstance(focus_gap_stats.get("min"), (int, float)) and float(focus_gap_stats.get("min")) <= 0.12:
@@ -287,13 +266,11 @@ def analyze_btst_prepared_breakout_residual_surface(
         comparison_vs_reference = {
             "reference_ticker": reference_ticker,
             "score_target_mean_delta": round(
-                float(dict(focus_surface.get("score_target_stats") or {}).get("mean") or 0.0)
-                - float(dict(reference_surface.get("score_target_stats") or {}).get("mean") or 0.0),
+                float(dict(focus_surface.get("score_target_stats") or {}).get("mean") or 0.0) - float(dict(reference_surface.get("score_target_stats") or {}).get("mean") or 0.0),
                 4,
             ),
             "required_score_uplift_to_selected_mean_delta": round(
-                float(dict(focus_surface.get("required_score_uplift_to_selected_stats") or {}).get("mean") or 0.0)
-                - float(dict(reference_surface.get("required_score_uplift_to_selected_stats") or {}).get("mean") or 0.0),
+                float(dict(focus_surface.get("required_score_uplift_to_selected_stats") or {}).get("mean") or 0.0) - float(dict(reference_surface.get("required_score_uplift_to_selected_stats") or {}).get("mean") or 0.0),
                 4,
             ),
             "positive_contribution_deltas": _difference_mapping(
@@ -362,11 +339,7 @@ def render_btst_prepared_breakout_residual_surface_markdown(analysis: dict[str, 
         lines.append("")
     lines.append("## Residual Priority Board")
     for row in list(analysis.get("priority_residual_candidates") or []):
-        lines.append(
-            f"- {row.get('ticker')}: verdict={row.get('verdict')} decision_counts={row.get('decision_counts')} "
-            f"selected_relief_window_count={row.get('selected_relief_window_count')} "
-            f"required_score_uplift_to_selected_min={row.get('required_score_uplift_to_selected_min')}"
-        )
+        lines.append(f"- {row.get('ticker')}: verdict={row.get('verdict')} decision_counts={row.get('decision_counts')} " f"selected_relief_window_count={row.get('selected_relief_window_count')} " f"required_score_uplift_to_selected_min={row.get('required_score_uplift_to_selected_min')}")
     if not list(analysis.get("priority_residual_candidates") or []):
         lines.append("- none")
     lines.append("")

@@ -106,9 +106,7 @@ def render_btst_5d_15pct_near_trend_threshold_recovery_markdown(analysis: dict[s
     ]
     for label in ("recovered_cohort", "unrecovered_bucket_baseline", "trend_baseline"):
         row = dict(analysis.get(label) or {})
-        lines.append(
-            f"- {label}: row_count={row.get('row_count')}, closed_cycle_count={row.get('closed_cycle_count')}, hit_rate_15pct={row.get('hit_rate_15pct')}, mean_max_future_high_return_2_5d={row.get('mean_max_future_high_return_2_5d')}, beta_tradeable_rate={row.get('beta_tradeable_rate')}, tickers={row.get('tickers')}"
-        )
+        lines.append(f"- {label}: row_count={row.get('row_count')}, closed_cycle_count={row.get('closed_cycle_count')}, hit_rate_15pct={row.get('hit_rate_15pct')}, mean_max_future_high_return_2_5d={row.get('mean_max_future_high_return_2_5d')}, beta_tradeable_rate={row.get('beta_tradeable_rate')}, tickers={row.get('tickers')}")
     lines.append("")
     return "\n".join(lines)
 

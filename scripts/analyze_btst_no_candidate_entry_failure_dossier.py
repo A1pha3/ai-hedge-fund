@@ -48,11 +48,7 @@ def _safe_load_json(path: str | Path | None) -> dict[str, Any]:
 
 
 def _build_watchlist_recall_stage_map(watchlist_recall_dossier: dict[str, Any]) -> dict[str, str]:
-    return {
-        str(row.get("ticker") or "").strip(): str(row.get("dominant_recall_stage") or "").strip()
-        for row in list(watchlist_recall_dossier.get("priority_ticker_dossiers") or [])
-        if str(row.get("ticker") or "").strip() and str(row.get("dominant_recall_stage") or "").strip()
-    }
+    return {str(row.get("ticker") or "").strip(): str(row.get("dominant_recall_stage") or "").strip() for row in list(watchlist_recall_dossier.get("priority_ticker_dossiers") or []) if str(row.get("ticker") or "").strip() and str(row.get("dominant_recall_stage") or "").strip()}
 
 
 def _unique_strings(values: list[Any]) -> list[str]:
@@ -125,11 +121,7 @@ def _build_hotspot_rows(action_board: dict[str, Any], *, hotspot_limit: int) -> 
 
 
 def _collect_no_candidate_rows(tradeable_pool: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        dict(row)
-        for row in list(tradeable_pool.get("rows") or [])
-        if str(row.get("first_kill_switch") or "") == "no_candidate_entry"
-    ]
+    return [dict(row) for row in list(tradeable_pool.get("rows") or []) if str(row.get("first_kill_switch") or "") == "no_candidate_entry"]
 
 
 def _report_dir_path(reports_root: Path, report_dir_name: str | None) -> Path | None:
@@ -169,10 +161,7 @@ def _load_report_context(
     replay_inputs: list[tuple[str, dict[str, Any]]] = []
     try:
         replay_input_sources = _iter_replay_input_sources(report_path)
-        replay_inputs = [
-            (path.relative_to(report_path).as_posix(), payload)
-            for path, payload in replay_input_sources
-        ]
+        replay_inputs = [(path.relative_to(report_path).as_posix(), payload) for path, payload in replay_input_sources]
     except Exception:
         replay_inputs = []
 
@@ -203,18 +192,12 @@ def _collect_source_presence(payload: dict[str, Any], ticker: str) -> tuple[Coun
     rejected_matches = _matching_entries(list(payload.get("rejected_entries") or []), ticker)
     if rejected_matches:
         source_counts["rejected_entries"] += len(rejected_matches)
-        candidate_sources.extend(
-            str(match.get("candidate_source") or match.get("source") or "watchlist_filter_diagnostics")
-            for match in rejected_matches
-        )
+        candidate_sources.extend(str(match.get("candidate_source") or match.get("source") or "watchlist_filter_diagnostics") for match in rejected_matches)
 
     supplemental_matches = _matching_entries(list(payload.get("supplemental_short_trade_entries") or []), ticker)
     if supplemental_matches:
         source_counts["supplemental_short_trade_entries"] += len(supplemental_matches)
-        candidate_sources.extend(
-            str(match.get("candidate_source") or match.get("source") or "layer_b_boundary")
-            for match in supplemental_matches
-        )
+        candidate_sources.extend(str(match.get("candidate_source") or match.get("source") or "layer_b_boundary") for match in supplemental_matches)
 
     selection_targets = dict(payload.get("selection_targets") or {})
     selection_target = dict(selection_targets.get(str(ticker).strip()) or {})
@@ -464,11 +447,7 @@ def _inspect_report_dir_for_ticker(
 
 
 def _ranked_report_dirs(priority_row: dict[str, Any], ticker_rows: list[dict[str, Any]]) -> list[str]:
-    report_dir_counts = Counter(
-        str(row.get("report_dir") or "").strip()
-        for row in ticker_rows
-        if str(row.get("report_dir") or "").strip()
-    )
+    report_dir_counts = Counter(str(row.get("report_dir") or "").strip() for row in ticker_rows if str(row.get("report_dir") or "").strip())
     prioritized: list[str] = []
     primary_report_dir = str(priority_row.get("primary_report_dir") or "").strip()
     if primary_report_dir:
@@ -612,24 +591,22 @@ def _build_priority_ticker_dossiers(
     return [
         dossier
         for priority_row in priority_rows
-        if (dossier := _build_priority_ticker_dossier(
-            priority_row=priority_row,
-            no_candidate_rows=no_candidate_rows,
-            reports_root=reports_root,
-            replay_rows_by_ticker=replay_rows_by_ticker,
-            watchlist_recall_stage_map=watchlist_recall_stage_map,
-            report_cache=report_cache,
-        ))
+        if (
+            dossier := _build_priority_ticker_dossier(
+                priority_row=priority_row,
+                no_candidate_rows=no_candidate_rows,
+                reports_root=reports_root,
+                replay_rows_by_ticker=replay_rows_by_ticker,
+                watchlist_recall_stage_map=watchlist_recall_stage_map,
+                report_cache=report_cache,
+            )
+        )
         is not None
     ]
 
 
 def _build_priority_replay_rows_by_ticker(replay_bundle: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {
-        str(row.get("ticker") or "").strip(): dict(row)
-        for row in list(replay_bundle.get("priority_replay_rows") or [])
-        if str(row.get("ticker") or "").strip()
-    }
+    return {str(row.get("ticker") or "").strip(): dict(row) for row in list(replay_bundle.get("priority_replay_rows") or []) if str(row.get("ticker") or "").strip()}
 
 
 def _collect_priority_report_dir_evidence(
@@ -687,11 +664,7 @@ def _build_priority_ticker_dossier(
         return None
 
     ticker_rows = [row for row in no_candidate_rows if str(row.get("ticker") or "").strip() == ticker]
-    report_dir_counts = Counter(
-        str(row.get("report_dir") or "").strip()
-        for row in ticker_rows
-        if str(row.get("report_dir") or "").strip()
-    )
+    report_dir_counts = Counter(str(row.get("report_dir") or "").strip() for row in ticker_rows if str(row.get("report_dir") or "").strip())
     report_dir_evidence = _collect_priority_report_dir_evidence(
         priority_row=priority_row,
         ticker=ticker,
@@ -750,22 +723,20 @@ def _build_hotspot_report_dossiers(
     return [
         dossier
         for hotspot_row in hotspot_rows
-        if (dossier := _build_hotspot_report_dossier(
-            hotspot_row=hotspot_row,
-            reports_root=reports_root,
-            replay_rows_by_report_dir=replay_rows_by_report_dir,
-            report_cache=report_cache,
-        ))
+        if (
+            dossier := _build_hotspot_report_dossier(
+                hotspot_row=hotspot_row,
+                reports_root=reports_root,
+                replay_rows_by_report_dir=replay_rows_by_report_dir,
+                report_cache=report_cache,
+            )
+        )
         is not None
     ]
 
 
 def _build_hotspot_replay_rows_by_report_dir(replay_bundle: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {
-        str(row.get("report_dir") or "").strip(): dict(row)
-        for row in list(replay_bundle.get("hotspot_replay_rows") or [])
-        if str(row.get("report_dir") or "").strip()
-    }
+    return {str(row.get("report_dir") or "").strip(): dict(row) for row in list(replay_bundle.get("hotspot_replay_rows") or []) if str(row.get("report_dir") or "").strip()}
 
 
 def _collect_hotspot_focus_ticker_evidence(
@@ -800,11 +771,7 @@ def _build_hotspot_report_dossier(
     if not report_dir:
         return None
 
-    focus_tickers = [
-        str(value)
-        for value in list(hotspot_row.get("top_focus_tickers") or hotspot_row.get("focus_tickers") or [])
-        if str(value or "").strip()
-    ]
+    focus_tickers = [str(value) for value in list(hotspot_row.get("top_focus_tickers") or hotspot_row.get("focus_tickers") or []) if str(value or "").strip()]
     focus_ticker_evidence = _collect_hotspot_focus_ticker_evidence(
         report_dir=report_dir,
         focus_tickers=focus_tickers,
@@ -836,27 +803,15 @@ def _build_hotspot_report_dossier(
 
 
 def _top_tickers_by_failure(priority_ticker_dossiers: list[dict[str, Any]], failure_class: str) -> list[str]:
-    return [
-        str(row.get("ticker") or "")
-        for row in priority_ticker_dossiers
-        if str(row.get("primary_failure_class") or "") == failure_class and str(row.get("ticker") or "").strip()
-    ][:3]
+    return [str(row.get("ticker") or "") for row in priority_ticker_dossiers if str(row.get("primary_failure_class") or "") == failure_class and str(row.get("ticker") or "").strip()][:3]
 
 
 def _top_report_dirs_by_failure(hotspot_report_dossiers: list[dict[str, Any]], failure_class: str) -> list[str]:
-    return [
-        str(row.get("report_dir") or "")
-        for row in hotspot_report_dossiers
-        if str(row.get("primary_failure_class") or "") == failure_class and str(row.get("report_dir") or "").strip()
-    ][:3]
+    return [str(row.get("report_dir") or "") for row in hotspot_report_dossiers if str(row.get("primary_failure_class") or "") == failure_class and str(row.get("report_dir") or "").strip()][:3]
 
 
 def _top_tickers_by_handoff_stage(priority_ticker_dossiers: list[dict[str, Any]], handoff_stage: str) -> list[str]:
-    return [
-        str(row.get("ticker") or "")
-        for row in priority_ticker_dossiers
-        if str(row.get("handoff_stage") or "") == handoff_stage and str(row.get("ticker") or "").strip()
-    ][:3]
+    return [str(row.get("ticker") or "") for row in priority_ticker_dossiers if str(row.get("handoff_stage") or "") == handoff_stage and str(row.get("ticker") or "").strip()][:3]
 
 
 def _build_recommendation(
@@ -873,49 +828,22 @@ def _build_recommendation(
 ) -> str:
     if top_upstream_absence_tickers:
         if top_absent_from_candidate_pool_breakpoint_tickers:
-            return (
-                f"当前 top no-entry backlog 的主矛盾是上游 absence，而且真断点比 watchlist 更早：{top_absent_from_candidate_pool_breakpoint_tickers} 连 candidate_pool snapshot 都没有进入。"
-                "下一步应先补 Layer A candidate_pool 召回与池内截断观测，而不是继续调 watchlist 阈值或 candidate-entry semantic。"
-            )
+            return f"当前 top no-entry backlog 的主矛盾是上游 absence，而且真断点比 watchlist 更早：{top_absent_from_candidate_pool_breakpoint_tickers} 连 candidate_pool snapshot 都没有进入。" "下一步应先补 Layer A candidate_pool 召回与池内截断观测，而不是继续调 watchlist 阈值或 candidate-entry semantic。"
         if top_absent_from_watchlist_tickers:
-            return (
-                f"当前 top no-entry backlog 的主矛盾是上游 absence，而且具体断点先落在 watchlist 之前：{top_absent_from_watchlist_tickers} 连 watchlist 都没有进入。"
-                "下一步应先补 candidate pool -> watchlist 的召回观测，而不是继续 candidate-entry semantic 调参。"
-            )
-        return (
-            f"当前 top no-entry backlog 的主矛盾是上游 absence：{top_upstream_absence_tickers} 在 replay input / candidate-entry source 中没有被看见。"
-            "下一步应先补 observability 与上游 handoff，而不是继续 candidate-entry semantic 调参。"
-        )
+            return f"当前 top no-entry backlog 的主矛盾是上游 absence，而且具体断点先落在 watchlist 之前：{top_absent_from_watchlist_tickers} 连 watchlist 都没有进入。" "下一步应先补 candidate pool -> watchlist 的召回观测，而不是继续 candidate-entry semantic 调参。"
+        return f"当前 top no-entry backlog 的主矛盾是上游 absence：{top_upstream_absence_tickers} 在 replay input / candidate-entry source 中没有被看见。" "下一步应先补 observability 与上游 handoff，而不是继续 candidate-entry semantic 调参。"
     if top_watchlist_handoff_gap_tickers:
-        return (
-            f"当前 top no-entry backlog 的主矛盾已经收敛到 watchlist handoff gap：{top_watchlist_handoff_gap_tickers} 已进入 watchlist，"
-            "但没有进入 candidate-entry 候选源。下一步应优先回查 watchlist filter diagnostics 与 short-trade candidate handoff。"
-        )
+        return f"当前 top no-entry backlog 的主矛盾已经收敛到 watchlist handoff gap：{top_watchlist_handoff_gap_tickers} 已进入 watchlist，" "但没有进入 candidate-entry 候选源。下一步应优先回查 watchlist filter diagnostics 与 short-trade candidate handoff。"
     if top_candidate_entry_to_target_gap_tickers:
-        return (
-            f"当前 top no-entry backlog 的主矛盾已经收敛到 candidate-entry -> selection_target gap：{top_candidate_entry_to_target_gap_tickers} 已进入候选源，"
-            "但没有挂上 selection_targets。下一步应优先检查 target attachment contract。"
-        )
+        return f"当前 top no-entry backlog 的主矛盾已经收敛到 candidate-entry -> selection_target gap：{top_candidate_entry_to_target_gap_tickers} 已进入候选源，" "但没有挂上 selection_targets。下一步应优先检查 target attachment contract。"
     if top_outside_candidate_entry_tickers:
-        return (
-            f"当前 top no-entry backlog 的主矛盾是 handoff gap：{top_outside_candidate_entry_tickers} 已出现在 replay input，"
-            "但没有进入 candidate-entry 候选源。下一步应先补 watchlist 到 candidate-entry 的交接解释。"
-        )
+        return f"当前 top no-entry backlog 的主矛盾是 handoff gap：{top_outside_candidate_entry_tickers} 已出现在 replay input，" "但没有进入 candidate-entry 候选源。下一步应先补 watchlist 到 candidate-entry 的交接解释。"
     if top_semantic_miss_tickers:
-        return (
-            f"当前 top no-entry backlog 的主矛盾已经下沉到 candidate-entry semantic miss：{top_semantic_miss_tickers} 已进入候选源，"
-            "但 frontier 仍没命中 focus。下一步应继续 semantic replay，而不是上游补数。"
-        )
+        return f"当前 top no-entry backlog 的主矛盾已经下沉到 candidate-entry semantic miss：{top_semantic_miss_tickers} 已进入候选源，" "但 frontier 仍没命中 focus。下一步应继续 semantic replay，而不是上游补数。"
     if promising_priority_tickers:
-        return (
-            f"当前 no-entry failure backlog 已经为 {promising_priority_tickers} 找到 preserve-safe recall probe。"
-            "下一步应优先把它们接回 shadow governance。"
-        )
+        return f"当前 no-entry failure backlog 已经为 {promising_priority_tickers} 找到 preserve-safe recall probe。" "下一步应优先把它们接回 shadow governance。"
     dominant_failure_class = next(iter(priority_failure_class_counts.keys()), "no_priority_tickers")
-    return (
-        f"当前 no-entry failure backlog 仍以 {dominant_failure_class} 为主，"
-        "应继续保留 research-only 审查，不要直接把 candidate-entry frontier 当作默认放松路线。"
-    )
+    return f"当前 no-entry failure backlog 仍以 {dominant_failure_class} 为主，" "应继续保留 research-only 审查，不要直接把 candidate-entry frontier 当作默认放松路线。"
 
 
 def _build_next_actions(
@@ -952,9 +880,7 @@ def _build_upstream_absence_actions(
 ) -> list[str]:
     actions: list[str] = []
     if top_absent_from_candidate_pool_breakpoint_tickers:
-        actions.append(
-            f"先补 {top_absent_from_candidate_pool_breakpoint_tickers} 的 Layer A candidate_pool 召回观测，确认它们为何连 candidate_pool snapshot 都没进入。"
-        )
+        actions.append(f"先补 {top_absent_from_candidate_pool_breakpoint_tickers} 的 Layer A candidate_pool 召回观测，确认它们为何连 candidate_pool snapshot 都没进入。")
     if top_absent_from_watchlist_tickers:
         actions.append(f"先补 {top_absent_from_watchlist_tickers} 的 candidate pool -> watchlist 召回观测，确认它们为何连 watchlist 都没进入。")
     if top_upstream_absence_tickers:
@@ -1011,9 +937,7 @@ def _append_priority_ticker_dossiers_markdown(lines: list[str], rows: list[dict[
         lines.append(f"  failure_reason: {row.get('failure_reason')}")
         lines.append(f"  next_step: {row.get('next_step')}")
         for evidence_row in list(row.get("report_dir_evidence") or [])[:4]:
-            lines.append(
-                f"  report_evidence: report_dir={evidence_row.get('report_dir')} presence_class={evidence_row.get('presence_class')} replay_input_count={evidence_row.get('replay_input_count')} source_presence_counts={evidence_row.get('source_presence_counts')}"
-            )
+            lines.append(f"  report_evidence: report_dir={evidence_row.get('report_dir')} presence_class={evidence_row.get('presence_class')} replay_input_count={evidence_row.get('replay_input_count')} source_presence_counts={evidence_row.get('source_presence_counts')}")
     if not rows:
         lines.append("- none")
     lines.append("")
@@ -1022,16 +946,12 @@ def _append_priority_ticker_dossiers_markdown(lines: list[str], rows: list[dict[
 def _append_hotspot_report_dossiers_markdown(lines: list[str], rows: list[dict[str, Any]]) -> None:
     lines.append("## Hotspot Report Dossiers")
     for row in rows:
-        lines.append(
-            f"- rank={row.get('priority_rank')} report_dir={row.get('report_dir')} failure_class={row.get('primary_failure_class')} dominant_handoff_stage={row.get('dominant_handoff_stage')} frontier_status={row.get('frontier_status')} focus_tickers={row.get('focus_tickers')}"
-        )
+        lines.append(f"- rank={row.get('priority_rank')} report_dir={row.get('report_dir')} failure_class={row.get('primary_failure_class')} dominant_handoff_stage={row.get('dominant_handoff_stage')} frontier_status={row.get('frontier_status')} focus_tickers={row.get('focus_tickers')}")
         lines.append(f"  failure_reason: {row.get('failure_reason')}")
         lines.append(f"  next_step: {row.get('next_step')}")
         lines.append(f"  focus_ticker_handoff_stage_counts: {row.get('focus_ticker_handoff_stage_counts')}")
         for evidence_row in list(row.get("focus_ticker_evidence") or []):
-            lines.append(
-                f"  focus_evidence: ticker={evidence_row.get('ticker')} presence_class={evidence_row.get('presence_class')} handoff_stage={evidence_row.get('handoff_stage')} replay_input_count={evidence_row.get('replay_input_count')} source_presence_counts={evidence_row.get('source_presence_counts')}"
-            )
+            lines.append(f"  focus_evidence: ticker={evidence_row.get('ticker')} presence_class={evidence_row.get('presence_class')} handoff_stage={evidence_row.get('handoff_stage')} replay_input_count={evidence_row.get('replay_input_count')} source_presence_counts={evidence_row.get('source_presence_counts')}")
     if not rows:
         lines.append("- none")
     lines.append("")
@@ -1044,15 +964,11 @@ def _append_handoff_action_queue_markdown(
 ) -> None:
     lines.append("## Handoff Action Queue")
     for row in priority_rows:
-        lines.append(
-            f"- task_id={row.get('task_id')} ticker={row.get('ticker')} action_tier={row.get('action_tier')} handoff_stage={row.get('handoff_stage')}"
-        )
+        lines.append(f"- task_id={row.get('task_id')} ticker={row.get('ticker')} action_tier={row.get('action_tier')} handoff_stage={row.get('handoff_stage')}")
         lines.append(f"  why_now: {row.get('why_now')}")
         lines.append(f"  next_step: {row.get('next_step')}")
     for row in hotspot_rows:
-        lines.append(
-            f"- hotspot_task_id={row.get('task_id')} report_dir={row.get('report_dir')} action_tier={row.get('action_tier')} handoff_stage={row.get('handoff_stage')}"
-        )
+        lines.append(f"- hotspot_task_id={row.get('task_id')} report_dir={row.get('report_dir')} action_tier={row.get('action_tier')} handoff_stage={row.get('handoff_stage')}")
         lines.append(f"  why_now: {row.get('why_now')}")
         lines.append(f"  next_step: {row.get('next_step')}")
     if not priority_rows and not hotspot_rows:
@@ -1105,33 +1021,17 @@ def _summarize_no_entry_failure_dossiers(
     priority_ticker_dossiers: list[dict[str, Any]],
     hotspot_report_dossiers: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    priority_failure_class_counts: Counter[str] = Counter(
-        str(row.get("primary_failure_class") or "unknown")
-        for row in priority_ticker_dossiers
-    )
-    hotspot_failure_class_counts: Counter[str] = Counter(
-        str(row.get("primary_failure_class") or "unknown")
-        for row in hotspot_report_dossiers
-    )
+    priority_failure_class_counts: Counter[str] = Counter(str(row.get("primary_failure_class") or "unknown") for row in priority_ticker_dossiers)
+    hotspot_failure_class_counts: Counter[str] = Counter(str(row.get("primary_failure_class") or "unknown") for row in hotspot_report_dossiers)
     return {
         "priority_failure_class_counts": priority_failure_class_counts,
         "hotspot_failure_class_counts": hotspot_failure_class_counts,
         "priority_handoff_stage_counts": _count_handoff_stages(priority_ticker_dossiers),
         "hotspot_handoff_stage_counts": _count_handoff_stages(hotspot_report_dossiers, key="dominant_handoff_stage"),
-        "promising_priority_tickers": [
-            str(row.get("ticker") or "")
-            for row in priority_ticker_dossiers
-            if str(row.get("primary_failure_class") or "") == "preserve_safe_recall_probe" and str(row.get("ticker") or "").strip()
-        ],
+        "promising_priority_tickers": [str(row.get("ticker") or "") for row in priority_ticker_dossiers if str(row.get("primary_failure_class") or "") == "preserve_safe_recall_probe" and str(row.get("ticker") or "").strip()],
         "top_upstream_absence_tickers": _top_tickers_by_failure(priority_ticker_dossiers, "upstream_absent_from_replay_inputs"),
         "top_absent_from_watchlist_tickers": _top_tickers_by_handoff_stage(priority_ticker_dossiers, "absent_from_watchlist"),
-        "top_absent_from_candidate_pool_breakpoint_tickers": [
-            str(row.get("ticker") or "")
-            for row in priority_ticker_dossiers
-            if str(row.get("handoff_stage") or "") == "absent_from_watchlist"
-            and str(row.get("watchlist_recall_stage") or "") == "absent_from_candidate_pool"
-            and str(row.get("ticker") or "").strip()
-        ][:3],
+        "top_absent_from_candidate_pool_breakpoint_tickers": [str(row.get("ticker") or "") for row in priority_ticker_dossiers if str(row.get("handoff_stage") or "") == "absent_from_watchlist" and str(row.get("watchlist_recall_stage") or "") == "absent_from_candidate_pool" and str(row.get("ticker") or "").strip()][:3],
         "top_watchlist_handoff_gap_tickers": _top_tickers_by_handoff_stage(priority_ticker_dossiers, "watchlist_visible_but_not_candidate_entry"),
         "top_candidate_entry_to_target_gap_tickers": _top_tickers_by_handoff_stage(priority_ticker_dossiers, "candidate_entry_visible_but_not_selection_target"),
         "top_outside_candidate_entry_tickers": _top_tickers_by_failure(priority_ticker_dossiers, "present_but_outside_candidate_entry_universe"),

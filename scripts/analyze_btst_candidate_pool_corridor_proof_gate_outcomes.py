@@ -263,9 +263,7 @@ def render_btst_candidate_pool_corridor_proof_gate_outcomes_markdown(analysis: d
     for row in list(analysis.get("rows") or []):
         outcome = dict(row.get("outcome") or {})
         proof = dict(row.get("selected_historical_proof_deficiency") or {})
-        lines.append(
-            f"- {row.get('trade_date')} decision={row.get('decision')} score_target={row.get('score_target')} proof_missing={proof.get('proof_missing')} outcome_status={outcome.get('data_status')} next_trade_date={outcome.get('next_trade_date')} next_close_return={outcome.get('next_close_return')} t_plus_2_close_return={outcome.get('t_plus_2_close_return')}"
-        )
+        lines.append(f"- {row.get('trade_date')} decision={row.get('decision')} score_target={row.get('score_target')} proof_missing={proof.get('proof_missing')} outcome_status={outcome.get('data_status')} next_trade_date={outcome.get('next_trade_date')} next_close_return={outcome.get('next_close_return')} t_plus_2_close_return={outcome.get('t_plus_2_close_return')}")
     lines.append("")
     lines.append("## Recommendation")
     lines.append(f"- {analysis.get('recommendation')}")

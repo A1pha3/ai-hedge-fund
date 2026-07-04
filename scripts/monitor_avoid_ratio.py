@@ -166,10 +166,7 @@ def compute_verdict_distribution(
         action = verdict.get("action", "AVOID")
         counts[action] = counts.get(action, 0) + 1
     total = sum(counts.values())
-    ratios = {
-        k: (v / total if total else 0.0)
-        for k, v in counts.items()
-    }
+    ratios = {k: (v / total if total else 0.0) for k, v in counts.items()}
     return {
         "market_regime": market_regime,
         "total_recommendations": total,
@@ -186,9 +183,7 @@ def _build_tracking_entry(
     """Assemble a single JSONL tracking record."""
     return {
         "trade_date": trade_date,
-        "report_path": str(report_path.relative_to(PROJECT_ROOT))
-        if report_path.is_relative_to(PROJECT_ROOT)
-        else str(report_path),
+        "report_path": str(report_path.relative_to(PROJECT_ROOT)) if report_path.is_relative_to(PROJECT_ROOT) else str(report_path),
         "market_regime": distribution["market_regime"],
         "total_recommendations": distribution["total_recommendations"],
         "verdict_counts": distribution["verdict_counts"],
@@ -306,8 +301,7 @@ def render_trend(entries: list[dict[str, Any]], days: int) -> str:
     tail = entries[-days:] if days > 0 else entries
     lines = [
         f"\n  Verdict distribution trend (last {len(tail)} days)",
-        f"  {'trade_date':<10}  {'regime':<10}  {'BUY':>5}  {'HOLD':>5}  "
-        f"{'AVOID':>5}  {'AVOID%':>7}  {'ΔAVOID%':>8}",
+        f"  {'trade_date':<10}  {'regime':<10}  {'BUY':>5}  {'HOLD':>5}  " f"{'AVOID':>5}  {'AVOID%':>7}  {'ΔAVOID%':>8}",
     ]
     prev_avoid_ratio: float | None = None
     for e in tail:
@@ -319,15 +313,7 @@ def render_trend(entries: list[dict[str, Any]], days: int) -> str:
             delta = avoid_ratio - prev_avoid_ratio
             sign = "+" if delta >= 0 else ""
             delta_str = f"{sign}{delta * 100:+.1f}"
-        lines.append(
-            f"  {str(e.get('trade_date') or ''):<10}  "
-            f"{str(e.get('market_regime') or ''):<10}  "
-            f"{int(counts.get('BUY') or 0):>5}  "
-            f"{int(counts.get('HOLD') or 0):>5}  "
-            f"{int(counts.get('AVOID') or 0):>5}  "
-            f"{avoid_ratio * 100:>6.1f}%  "
-            f"{delta_str:>8}"
-        )
+        lines.append(f"  {str(e.get('trade_date') or ''):<10}  " f"{str(e.get('market_regime') or ''):<10}  " f"{int(counts.get('BUY') or 0):>5}  " f"{int(counts.get('HOLD') or 0):>5}  " f"{int(counts.get('AVOID') or 0):>5}  " f"{avoid_ratio * 100:>6.1f}%  " f"{delta_str:>8}")
         prev_avoid_ratio = avoid_ratio
     return "\n".join(lines)
 
@@ -429,11 +415,7 @@ def main(argv: list[str] | None = None) -> int:
     # Echo a single-line summary so the owner sees the day's verdict mix
     counts = entry["verdict_counts"]
     ratios = entry["verdict_ratios"]
-    print(
-        f"{entry['trade_date']} regime={entry['market_regime']} "
-        f"BUY={counts['BUY']} HOLD={counts['HOLD']} AVOID={counts['AVOID']} "
-        f"(AVOID={ratios['AVOID'] * 100:.1f}%)"
-    )
+    print(f"{entry['trade_date']} regime={entry['market_regime']} " f"BUY={counts['BUY']} HOLD={counts['HOLD']} AVOID={counts['AVOID']} " f"(AVOID={ratios['AVOID'] * 100:.1f}%)")
     return 0
 
 

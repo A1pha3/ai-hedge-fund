@@ -2,6 +2,7 @@
 
 Validates optimization_profile_resolution and emits JSON + Markdown artifacts.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -9,10 +10,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
-DEFAULT_INPUT = (
-    Path("data/reports/paper_trading_20260512_20260512_live_m2_7_short_trade_only_20260513_plan_optimized_verify")
-    / "session_summary.json"
-)
+DEFAULT_INPUT = Path("data/reports/paper_trading_20260512_20260512_live_m2_7_short_trade_only_20260513_plan_optimized_verify") / "session_summary.json"
 DEFAULT_JSON_OUT = Path("data/reports/btst_momentum_active_baseline_snapshot.json")
 DEFAULT_MD_OUT = Path("data/reports/btst_momentum_active_baseline_snapshot.md")
 
@@ -40,9 +38,7 @@ def build_active_baseline_snapshot(*, session_summary: Dict[str, Any]) -> Dict[s
     status = opr.get("status")
     fallback_reason = opr.get("fallback_reason")
     if mode != "optimized" or status != "ready" or fallback_reason is not None:
-        raise SystemExit(
-            "optimization_profile_resolution must have mode==optimized, status==ready, and fallback_reason==None"
-        )
+        raise SystemExit("optimization_profile_resolution must have mode==optimized, status==ready, and fallback_reason==None")
 
     # required string fields
     required_strs = ["profile_name", "source_type", "source_path", "validated_by", "manifest_path"]

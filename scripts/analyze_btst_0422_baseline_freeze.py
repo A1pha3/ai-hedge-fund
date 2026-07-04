@@ -209,10 +209,7 @@ def build_btst_0422_baseline_freeze(
             "",
             "## Feature Flags",
             "",
-            *[
-                f"- {flag_name}: {payload['planned_flag']} @ {payload['injection_point']} (default={payload['default_mode']})"
-                for flag_name, payload in report["feature_flag_injection_points"].items()
-            ],
+            *[f"- {flag_name}: {payload['planned_flag']} @ {payload['injection_point']} (default={payload['default_mode']})" for flag_name, payload in report["feature_flag_injection_points"].items()],
             "",
         ]
     )

@@ -157,16 +157,10 @@ def analyze_btst_prepared_breakout_relief_validation(
     merge_decisions = _count_values([row.get("merge_replayed_decision") for row in rows])
     remaining_leverage_counts = _count_values([row.get("remaining_leverage_classification") for row in rows])
     recommended_primary_lever_counts = _count_values([row.get("recommended_primary_lever") for row in rows])
-    relief_applied_window_counts = {
-        field: sum(1 for row in rows if row["reliefs"].get(field)) for field in RELIEF_FIELDS
-    }
+    relief_applied_window_counts = {field: sum(1 for row in rows if row["reliefs"].get(field)) for field in RELIEF_FIELDS}
     selected_window_count = merge_decisions.get("selected", 0)
     selected_relief_window_count = relief_applied_window_counts["prepared_breakout_selected_catalyst_relief"]
-    selected_relief_selected_alignment_count = sum(
-        1
-        for row in rows
-        if row["reliefs"].get("prepared_breakout_selected_catalyst_relief") and row.get("merge_replayed_decision") == "selected"
-    )
+    selected_relief_selected_alignment_count = sum(1 for row in rows if row["reliefs"].get("prepared_breakout_selected_catalyst_relief") and row.get("merge_replayed_decision") == "selected")
     row_count = len(rows)
     all_rows_selected = row_count > 0 and selected_window_count == row_count
 
@@ -182,10 +176,7 @@ def analyze_btst_prepared_breakout_relief_validation(
         recommendation = "Do not broaden the uplift yet; some selected-relief windows still fail to land in selected."
     elif all_rows_selected and outcome_support["evidence_status"] in {"strong_t1_t2_support", "close_support_only", "intraday_support_only"}:
         verdict = "prepared_breakout_selected_relief_supported"
-        recommendation = (
-            f"{resolved_focus_ticker} currently shows stable prepared-breakout selected relief across observed windows "
-            f"with {outcome_support['evidence_status']}."
-        )
+        recommendation = f"{resolved_focus_ticker} currently shows stable prepared-breakout selected relief across observed windows " f"with {outcome_support['evidence_status']}."
     elif all_rows_selected:
         verdict = "prepared_breakout_selected_relief_needs_more_outcome_evidence"
         recommendation = "The replay side is stable, but more realized outcome evidence is still needed before generalizing the uplift."

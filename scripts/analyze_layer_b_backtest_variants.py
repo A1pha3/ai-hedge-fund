@@ -55,10 +55,7 @@ def main() -> int:
         output_dir=args.output_dir,
     )
 
-    output_path = args.output or str(
-        (Path(args.output_dir) if args.output_dir else Path(__file__).resolve().parents[1] / "data" / "reports").resolve()
-        / f"layer_b_backtest_variants_{args.start_date.replace('-', '')}_{args.end_date.replace('-', '')}.json"
-    )
+    output_path = args.output or str((Path(args.output_dir) if args.output_dir else Path(__file__).resolve().parents[1] / "data" / "reports").resolve() / f"layer_b_backtest_variants_{args.start_date.replace('-', '')}_{args.end_date.replace('-', '')}.json")
     saved_path = save_rule_variant_backtests(report, output_path)
 
     print(f"Using model route: {resolved_model_provider} / {resolved_model_name}")
@@ -69,10 +66,7 @@ def main() -> int:
         total_return = portfolio_summary.get("total_return_pct")
         layer_b_days = timing_summary.get("nonzero_layer_b_days")
         buy_days = timing_summary.get("nonzero_buy_order_days")
-        print(
-            f"{variant_name}: return={total_return if total_return is not None else 'n/a'} "
-            f"nonzero_layer_b_days={layer_b_days} nonzero_buy_order_days={buy_days}"
-        )
+        print(f"{variant_name}: return={total_return if total_return is not None else 'n/a'} " f"nonzero_layer_b_days={layer_b_days} nonzero_buy_order_days={buy_days}")
     return 0
 
 

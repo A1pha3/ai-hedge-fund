@@ -9,15 +9,7 @@ def build_near_trend_recovery_candidate(row: dict[str, Any]) -> dict[str, Any]:
     trend = safe_float(row.get("trend_acceleration"))
     close = safe_float(row.get("close_strength"))
     is_target_bucket = str(row.get("bucket") or "") == "near_trend_threshold"
-    is_recovery_candidate = (
-        is_target_bucket
-        and trend is not None
-        and close is not None
-        and 0.50 <= trend < 0.55
-        and 0.55 <= close < 0.60
-        and row.get("beta_tradeable") is True
-        and row.get("gamma_closed_cycle") is True
-    )
+    is_recovery_candidate = is_target_bucket and trend is not None and close is not None and 0.50 <= trend < 0.55 and 0.55 <= close < 0.60 and row.get("beta_tradeable") is True and row.get("gamma_closed_cycle") is True
     return {
         **row,
         "is_recovery_candidate": is_recovery_candidate,

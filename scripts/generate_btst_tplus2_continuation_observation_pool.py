@@ -31,9 +31,7 @@ def _build_anchor_entries(cluster_analysis: dict[str, Any]) -> list[dict[str, An
                 "entry_type": "anchor_cluster",
                 "lane_stage": "observation_only",
                 "priority_score": round(
-                    (float(item.get("distinct_report_count") or 0) * 10.0)
-                    + (float(surface.get("t_plus_2_close_positive_rate") or 0.0) * 5.0)
-                    + (float(dict(surface.get("t_plus_2_close_return_distribution") or {}).get("mean") or 0.0) * 100.0),
+                    (float(item.get("distinct_report_count") or 0) * 10.0) + (float(surface.get("t_plus_2_close_positive_rate") or 0.0) * 5.0) + (float(dict(surface.get("t_plus_2_close_return_distribution") or {}).get("mean") or 0.0) * 100.0),
                     4,
                 ),
                 "distinct_report_count": item.get("distinct_report_count"),
@@ -58,9 +56,7 @@ def _build_peer_entries(peer_analysis: dict[str, Any]) -> list[dict[str, Any]]:
                 "entry_type": "same_cluster_peer",
                 "lane_stage": "observation_only",
                 "priority_score": round(
-                    (float(item.get("distinct_report_count") or 0) * 10.0)
-                    + (float(surface.get("t_plus_2_close_positive_rate") or 0.0) * 5.0)
-                    - float(item.get("mean_similarity_score") or 0.0),
+                    (float(item.get("distinct_report_count") or 0) * 10.0) + (float(surface.get("t_plus_2_close_positive_rate") or 0.0) * 5.0) - float(item.get("mean_similarity_score") or 0.0),
                     4,
                 ),
                 "distinct_report_count": item.get("distinct_report_count"),
@@ -85,9 +81,7 @@ def _build_watch_entries(peer_analysis: dict[str, Any]) -> list[dict[str, Any]]:
                 "entry_type": "near_cluster_watch",
                 "lane_stage": "validation_watch",
                 "priority_score": round(
-                    (float(item.get("distinct_report_count") or 0) * 1.5)
-                    + (float(surface.get("t_plus_2_close_positive_rate") or 0.0) * 5.0)
-                    - float(item.get("mean_similarity_score") or 0.0),
+                    (float(item.get("distinct_report_count") or 0) * 1.5) + (float(surface.get("t_plus_2_close_positive_rate") or 0.0) * 5.0) - float(item.get("mean_similarity_score") or 0.0),
                     4,
                 ),
                 "distinct_report_count": item.get("distinct_report_count"),
@@ -130,8 +124,7 @@ def _build_governance_followup_entries(upstream_handoff_board: dict[str, Any]) -
                 "t_plus_2_close_return_mean": None,
                 "governance_status": row.get("downstream_followup_status"),
                 "governance_blocker": row.get("downstream_followup_blocker"),
-                "rationale": row.get("downstream_followup_summary")
-                or "Post-recall continuation review candidate sourced from the upstream handoff board.",
+                "rationale": row.get("downstream_followup_summary") or "Post-recall continuation review candidate sourced from the upstream handoff board.",
             }
         )
     return entries
@@ -163,12 +156,7 @@ def generate_btst_tplus2_continuation_observation_pool(
     )
     upstream_handoff_board = _maybe_load_json(upstream_handoff_board_path or DEFAULT_UPSTREAM_HANDOFF_BOARD_PATH)
 
-    entries = (
-        _build_governance_followup_entries(upstream_handoff_board)
-        + _build_anchor_entries(cluster_analysis)
-        + _build_peer_entries(peer_analysis)
-        + _build_watch_entries(peer_analysis)
-    )
+    entries = _build_governance_followup_entries(upstream_handoff_board) + _build_anchor_entries(cluster_analysis) + _build_peer_entries(peer_analysis) + _build_watch_entries(peer_analysis)
     entries.sort(key=lambda item: (float(item.get("priority_score") or -999.0), str(item.get("ticker") or "")), reverse=True)
 
     if entries:
@@ -212,16 +200,9 @@ def render_btst_tplus2_continuation_observation_pool_markdown(analysis: dict[str
     lines.append("")
     lines.append("## Observation Entries")
     for item in list(analysis.get("entries") or []):
-        lines.append(
-            f"- {item['ticker']}: entry_type={item['entry_type']}, lane_stage={item['lane_stage']}, "
-            f"priority_score={item['priority_score']}, next_close_positive_rate={item.get('next_close_positive_rate')}, "
-            f"t_plus_2_close_positive_rate={item.get('t_plus_2_close_positive_rate')}, "
-            f"t_plus_2_close_return_mean={item.get('t_plus_2_close_return_mean')}"
-        )
+        lines.append(f"- {item['ticker']}: entry_type={item['entry_type']}, lane_stage={item['lane_stage']}, " f"priority_score={item['priority_score']}, next_close_positive_rate={item.get('next_close_positive_rate')}, " f"t_plus_2_close_positive_rate={item.get('t_plus_2_close_positive_rate')}, " f"t_plus_2_close_return_mean={item.get('t_plus_2_close_return_mean')}")
         if item.get("governance_status"):
-            lines.append(
-                f"  governance: status={item.get('governance_status')} blocker={item.get('governance_blocker')}"
-            )
+            lines.append(f"  governance: status={item.get('governance_status')} blocker={item.get('governance_blocker')}")
     if not list(analysis.get("entries") or []):
         lines.append("- none")
     lines.append("")

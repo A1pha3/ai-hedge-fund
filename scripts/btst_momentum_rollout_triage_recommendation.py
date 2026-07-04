@@ -103,9 +103,7 @@ def _normalize_recommendation_payload(payload: dict[str, Any]) -> dict[str, Any]
 
     blocker_count = _require_non_negative_int("blocker_count", normalized_payload.get("blocker_count"))
     window_count = _require_non_negative_int("window_count", normalized_payload.get("window_count"))
-    missing_theme_exposure_window_count = _require_non_negative_int(
-        "missing_theme_exposure_window_count", normalized_payload.get("missing_theme_exposure_window_count")
-    )
+    missing_theme_exposure_window_count = _require_non_negative_int("missing_theme_exposure_window_count", normalized_payload.get("missing_theme_exposure_window_count"))
     windows_missing_theme_exposure = _load_missing_theme_exposure_windows(normalized_payload.get("windows_missing_theme_exposure", []))
     if missing_theme_exposure_window_count != len(windows_missing_theme_exposure):
         raise SystemExit("missing_theme_exposure_window_count must match windows_missing_theme_exposure.")

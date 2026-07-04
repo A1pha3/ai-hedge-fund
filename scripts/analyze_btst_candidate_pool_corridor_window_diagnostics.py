@@ -56,22 +56,14 @@ def _choose_anchor_window(candidate_dossier: dict[str, Any], trade_date: str) ->
                 str(row.get("report_dir") or ""),
             ),
         )
-    recent_windows = {
-        _normalize_trade_date(row.get("report_label")): dict(row or {})
-        for row in list(candidate_dossier.get("recent_window_summaries") or [])
-        if _normalize_trade_date(row.get("report_label"))
-    }
+    recent_windows = {_normalize_trade_date(row.get("report_label")): dict(row or {}) for row in list(candidate_dossier.get("recent_window_summaries") or []) if _normalize_trade_date(row.get("report_label"))}
     return dict(recent_windows.get(trade_date) or {})
 
 
 def _choose_action_row_anchor(command_board: dict[str, Any], trade_date: str) -> dict[str, Any]:
     if not trade_date:
         return {}
-    matching_rows = [
-        dict(row or {})
-        for row in list(command_board.get("action_rows") or [])
-        if _normalize_trade_date(row.get("trade_date")) == trade_date
-    ]
+    matching_rows = [dict(row or {}) for row in list(command_board.get("action_rows") or []) if _normalize_trade_date(row.get("trade_date")) == trade_date]
     if not matching_rows:
         return {}
     return max(
@@ -230,16 +222,10 @@ def analyze_btst_candidate_pool_corridor_window_diagnostics(
         "volume_expansion_quality_delta": _delta(near_miss_metrics.get("volume_expansion_quality"), selected_metrics.get("volume_expansion_quality")),
         "effective_select_threshold_delta": _delta(near_miss_metrics.get("effective_select_threshold"), selected_metrics.get("effective_select_threshold")),
         "same_breakout_stage": near_miss_metrics.get("breakout_stage") == selected_metrics.get("breakout_stage"),
-        "same_upstream_shadow_catalyst_relief_state": near_miss_metrics.get("upstream_shadow_catalyst_relief_applied")
-        == selected_metrics.get("upstream_shadow_catalyst_relief_applied"),
+        "same_upstream_shadow_catalyst_relief_state": near_miss_metrics.get("upstream_shadow_catalyst_relief_applied") == selected_metrics.get("upstream_shadow_catalyst_relief_applied"),
     }
 
-    if (
-        near_miss_delta_vs_selected.get("score_target_delta") is not None
-        and abs(float(near_miss_delta_vs_selected["score_target_delta"])) <= 0.01
-        and near_miss_delta_vs_selected.get("same_breakout_stage")
-        and near_miss_delta_vs_selected.get("same_upstream_shadow_catalyst_relief_state")
-    ):
+    if near_miss_delta_vs_selected.get("score_target_delta") is not None and abs(float(near_miss_delta_vs_selected["score_target_delta"])) <= 0.01 and near_miss_delta_vs_selected.get("same_breakout_stage") and near_miss_delta_vs_selected.get("same_upstream_shadow_catalyst_relief_state"):
         near_miss_verdict = "narrow_selected_gap_candidate"
     else:
         near_miss_verdict = "broad_gap_candidate"
@@ -247,21 +233,10 @@ def analyze_btst_candidate_pool_corridor_window_diagnostics(
     visibility_gap_trade_dates = list(command_board.get("visibility_gap_trade_dates") or [])
     visibility_gap_report_dirs = list(dict(candidate_dossier.get("current_plan_visibility_summary") or {}).get("current_plan_visibility_gap_report_dirs") or [])
     visibility_gap_scan_rows = [_scan_visibility_gap_report_dir(report_dir, focus_ticker) for report_dir in visibility_gap_report_dirs]
-    recoverable_count = sum(
-        1
-        for row in visibility_gap_scan_rows
-        if (not row.get("semantic_current_plan_has_ticker")) and row.get("replay_input_has_ticker") and row.get("selection_snapshot_has_ticker")
-    )
-    visibility_gap_verdict = (
-        "recoverable_current_plan_visibility_gap"
-        if recoverable_count > 0
-        else "non_actionable_visibility_gap"
-    )
+    recoverable_count = sum(1 for row in visibility_gap_scan_rows if (not row.get("semantic_current_plan_has_ticker")) and row.get("replay_input_has_ticker") and row.get("selection_snapshot_has_ticker"))
+    visibility_gap_verdict = "recoverable_current_plan_visibility_gap" if recoverable_count > 0 else "non_actionable_visibility_gap"
 
-    recommendation = (
-        f"Prioritize {near_miss_trade_date} as a narrow upgrade probe for {focus_ticker}; "
-        f"use {visibility_gap_trade_dates[:1]} as a visibility-audit lane, not as a global uplift trigger."
-    )
+    recommendation = f"Prioritize {near_miss_trade_date} as a narrow upgrade probe for {focus_ticker}; " f"use {visibility_gap_trade_dates[:1]} as a visibility-audit lane, not as a global uplift trigger."
 
     return {
         "focus_ticker": focus_ticker,

@@ -95,13 +95,9 @@ def _build_summary_payload(
     catalyst_false_negative = dict((catalyst_variant.get("false_negative_proxy_summary") or {}).get("surface_metrics") or {})
     catalyst_session_aggregate = dict(catalyst_variant.get("session_summary_aggregate") or {})
 
-    conclusion = (
-        "3 月验证继续支持当前研究主线：baseline 仍然主要表现为漏机会，而 catalyst floor zero 变体已经把 closed-cycle tradeable surface 从 0 推高到正值，下一步应优先围绕 short_trade_boundary score fail、candidate entry semantics 和局部结构治理推进。"
-    )
+    conclusion = "3 月验证继续支持当前研究主线：baseline 仍然主要表现为漏机会，而 catalyst floor zero 变体已经把 closed-cycle tradeable surface 从 0 推高到正值，下一步应优先围绕 short_trade_boundary score fail、candidate entry semantics 和局部结构治理推进。"
     if catalyst_variant.get("artifact_status") == "missing_selection_artifacts" and not catalyst_tradeable.get("total_count"):
-        conclusion = (
-            "3 月 fresh baseline 与 fresh forward 已完成并可直接解读；fresh catalyst floor zero 运行本身完成，但报告目录缺少 selection_artifacts，导致 closed-cycle surface 无法自动重建。当前可确认的 only-safe 结论是：baseline 仍存在明显漏机会，forward 端仍有可交易 near-miss，而 catalyst fresh 版本在 session_summary 聚合口径下累计给出 1 个 selected、12 个 near_miss、10 个 blocked、56 个 rejected，下一步优先修复 variant 产物完整性后再做严格 surface 对比。"
-        )
+        conclusion = "3 月 fresh baseline 与 fresh forward 已完成并可直接解读；fresh catalyst floor zero 运行本身完成，但报告目录缺少 selection_artifacts，导致 closed-cycle surface 无法自动重建。当前可确认的 only-safe 结论是：baseline 仍存在明显漏机会，forward 端仍有可交易 near-miss，而 catalyst fresh 版本在 session_summary 聚合口径下累计给出 1 个 selected、12 个 near_miss、10 个 blocked、56 个 rejected，下一步优先修复 variant 产物完整性后再做严格 surface 对比。"
 
     return {
         "artifact_paths": artifact_paths,

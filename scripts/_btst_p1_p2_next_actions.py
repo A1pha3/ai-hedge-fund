@@ -75,6 +75,8 @@ PRIORITY_FIELDS = [
     "top_reasons",
     "priority_reason",
 ]
+
+
 def load_json(path: Path) -> Any:
     return json.loads(path.read_text())
 

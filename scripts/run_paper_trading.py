@@ -86,7 +86,6 @@ def refresh_btst_nightly_control_tower(report_dir: Path) -> dict[str, str] | Non
     }
 
 
-
 DEFAULT_SHORT_TRADE_TARGET_PROFILE = "default"
 BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE_ENV = "BTST_0422_P5_WIN_RATE_FIRST_PRECISION_MODE"
 
@@ -369,10 +368,7 @@ def _qualifies_for_corridor_shadow_focus(avg_amount_share_of_min_gate: Any, avg_
         return False
     if avg_amount_share_of_cutoff is None or float(avg_amount_share_of_cutoff) > AUTO_SHADOW_CORRIDOR_MAX_CUTOFF_SHARE:
         return False
-    return not (
-        float(avg_amount_share_of_min_gate) < AUTO_SHADOW_CORRIDOR_STANDARD_MIN_GATE_SHARE
-        and float(avg_amount_share_of_cutoff) > AUTO_SHADOW_CORRIDOR_LOW_GATE_MAX_CUTOFF_SHARE
-    )
+    return not (float(avg_amount_share_of_min_gate) < AUTO_SHADOW_CORRIDOR_STANDARD_MIN_GATE_SHARE and float(avg_amount_share_of_cutoff) > AUTO_SHADOW_CORRIDOR_LOW_GATE_MAX_CUTOFF_SHARE)
 
 
 def _qualifies_for_rebucket_shadow_focus(payload: dict[str, Any], avg_amount_share_of_min_gate: Any) -> bool:
@@ -448,12 +444,7 @@ def _update_shadow_focus_from_candidate_dossier(
     downstream_followup_status = str(governance_followup.get("downstream_followup_status") or "").strip()
     current_plan_visibility_summary = dict(dossier.get("current_plan_visibility_summary") or {})
     has_visibility_gap = int(current_plan_visibility_summary.get("current_plan_visibility_gap_trade_date_count") or 0) > 0
-    if (
-        not ticker
-        or latest_followup_decision not in {"near_miss", "selected"}
-        or downstream_followup_status not in {"continuation_confirm_then_review", "continuation_only_confirm_then_review"}
-        or not _latest_followup_supports_overnight_shadow_focus(dossier)
-    ):
+    if not ticker or latest_followup_decision not in {"near_miss", "selected"} or downstream_followup_status not in {"continuation_confirm_then_review", "continuation_only_confirm_then_review"} or not _latest_followup_supports_overnight_shadow_focus(dossier):
         return
 
     all_focus.add(ticker)
@@ -599,9 +590,7 @@ def _resolve_paper_trading_runtime_inputs(args: argparse.Namespace) -> dict[str,
         optimization_profile_resolution = dict(optimization_profile_resolution)
         optimization_profile_resolution["governed_precision_runtime_adoption"] = governed_precision_runtime_adoption
     short_trade_target_profile = explicit_short_trade_target_profile or str(optimization_profile_resolution.get("profile_name") or "")
-    short_trade_target_overrides = (
-        explicit_short_trade_target_overrides if explicit_short_trade_target_overrides is not None else optimization_profile_resolution.get("profile_overrides", {})
-    )
+    short_trade_target_overrides = explicit_short_trade_target_overrides if explicit_short_trade_target_overrides is not None else optimization_profile_resolution.get("profile_overrides", {})
     return {
         "tickers": _parse_csv_tokens(args.tickers),
         "selected_analysts": _resolve_selected_analysts(args.analysts, args.analysts_all),
@@ -616,27 +605,13 @@ def _resolve_paper_trading_runtime_inputs(args: argparse.Namespace) -> dict[str,
 
 def _apply_shadow_focus_env_overrides(args: argparse.Namespace, auto_shadow_focus: dict[str, list[str]]) -> dict[str, str]:
     resolved_shadow_focus_tickers = _join_csv_tokens(_parse_csv_tokens(args.candidate_pool_shadow_focus_tickers) + list(auto_shadow_focus["all"]))
-    resolved_shadow_corridor_focus_tickers = _join_csv_tokens(
-        _parse_csv_tokens(args.candidate_pool_shadow_corridor_focus_tickers) + list(auto_shadow_focus["layer_a_liquidity_corridor"])
-    )
-    resolved_shadow_rebucket_focus_tickers = _join_csv_tokens(
-        _parse_csv_tokens(args.candidate_pool_shadow_rebucket_focus_tickers) + list(auto_shadow_focus["post_gate_liquidity_competition"])
-    )
+    resolved_shadow_corridor_focus_tickers = _join_csv_tokens(_parse_csv_tokens(args.candidate_pool_shadow_corridor_focus_tickers) + list(auto_shadow_focus["layer_a_liquidity_corridor"]))
+    resolved_shadow_rebucket_focus_tickers = _join_csv_tokens(_parse_csv_tokens(args.candidate_pool_shadow_rebucket_focus_tickers) + list(auto_shadow_focus["post_gate_liquidity_competition"]))
     resolved_shadow_visibility_gap_tickers = _join_csv_tokens(_parse_csv_tokens(os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_TICKERS")) + list(auto_shadow_focus["visibility_gap_all"]))
-    resolved_shadow_visibility_gap_corridor_tickers = _join_csv_tokens(
-        _parse_csv_tokens(os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS")) + list(auto_shadow_focus["visibility_gap_layer_a_liquidity_corridor"])
-    )
-    resolved_shadow_visibility_gap_rebucket_tickers = _join_csv_tokens(
-        _parse_csv_tokens(os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS")) + list(auto_shadow_focus["visibility_gap_post_gate_liquidity_competition"])
-    )
-    resolved_release_priority_corridor_tickers = _join_csv_tokens(
-        _parse_csv_tokens(os.getenv("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_PRIORITY_LIQUIDITY_CORRIDOR_TICKERS"))
-        + list(auto_shadow_focus["release_priority_layer_a_liquidity_corridor"])
-    )
-    resolved_release_priority_rebucket_tickers = _join_csv_tokens(
-        _parse_csv_tokens(os.getenv("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_PRIORITY_POST_GATE_REBUCKET_TICKERS"))
-        + list(auto_shadow_focus["release_priority_post_gate_liquidity_competition"])
-    )
+    resolved_shadow_visibility_gap_corridor_tickers = _join_csv_tokens(_parse_csv_tokens(os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS")) + list(auto_shadow_focus["visibility_gap_layer_a_liquidity_corridor"]))
+    resolved_shadow_visibility_gap_rebucket_tickers = _join_csv_tokens(_parse_csv_tokens(os.getenv("CANDIDATE_POOL_SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS")) + list(auto_shadow_focus["visibility_gap_post_gate_liquidity_competition"]))
+    resolved_release_priority_corridor_tickers = _join_csv_tokens(_parse_csv_tokens(os.getenv("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_PRIORITY_LIQUIDITY_CORRIDOR_TICKERS")) + list(auto_shadow_focus["release_priority_layer_a_liquidity_corridor"]))
+    resolved_release_priority_rebucket_tickers = _join_csv_tokens(_parse_csv_tokens(os.getenv("DAILY_PIPELINE_UPSTREAM_SHADOW_RELEASE_PRIORITY_POST_GATE_REBUCKET_TICKERS")) + list(auto_shadow_focus["release_priority_post_gate_liquidity_competition"]))
     _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_TICKERS", resolved_shadow_focus_tickers)
     _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS", resolved_shadow_corridor_focus_tickers)
     _apply_optional_env_override("CANDIDATE_POOL_SHADOW_FOCUS_REBUCKET_TICKERS", resolved_shadow_rebucket_focus_tickers)
@@ -719,35 +694,17 @@ def _print_paper_trading_runtime_summary(
             print(f"paper_trading_optimization_profile_fallback_reason={optimization_profile_resolution['fallback_reason']}")
         governed_precision_runtime_adoption = dict(optimization_profile_resolution.get("governed_precision_runtime_adoption") or {})
         if governed_precision_runtime_adoption:
-            print(
-                "paper_trading_governed_precision_auto_enabled="
-                f"{str(bool(governed_precision_runtime_adoption.get('auto_enabled'))).lower()}"
-            )
+            print("paper_trading_governed_precision_auto_enabled=" f"{str(bool(governed_precision_runtime_adoption.get('auto_enabled'))).lower()}")
             if governed_precision_runtime_adoption.get("reason"):
-                print(
-                    "paper_trading_governed_precision_reason="
-                    f"{governed_precision_runtime_adoption['reason']}"
-                )
+                print("paper_trading_governed_precision_reason=" f"{governed_precision_runtime_adoption['reason']}")
             if governed_precision_runtime_adoption.get("env_name"):
-                print(
-                    "paper_trading_governed_precision_env_name="
-                    f"{governed_precision_runtime_adoption['env_name']}"
-                )
+                print("paper_trading_governed_precision_env_name=" f"{governed_precision_runtime_adoption['env_name']}")
             if governed_precision_runtime_adoption.get("resolved_value") is not None:
-                print(
-                    "paper_trading_governed_precision_resolved_value="
-                    f"{governed_precision_runtime_adoption['resolved_value']}"
-                )
+                print("paper_trading_governed_precision_resolved_value=" f"{governed_precision_runtime_adoption['resolved_value']}")
 
 
 def _print_shadow_focus_summary(auto_shadow_focus: dict[str, list[str]], shadow_focus_env: dict[str, str]) -> None:
-    if (
-        auto_shadow_focus["all"]
-        or auto_shadow_focus["layer_a_liquidity_corridor"]
-        or auto_shadow_focus["post_gate_liquidity_competition"]
-        or auto_shadow_focus["release_priority_layer_a_liquidity_corridor"]
-        or auto_shadow_focus["release_priority_post_gate_liquidity_competition"]
-    ):
+    if auto_shadow_focus["all"] or auto_shadow_focus["layer_a_liquidity_corridor"] or auto_shadow_focus["post_gate_liquidity_competition"] or auto_shadow_focus["release_priority_layer_a_liquidity_corridor"] or auto_shadow_focus["release_priority_post_gate_liquidity_competition"]:
         print(f"paper_trading_auto_shadow_focus={json.dumps(auto_shadow_focus, ensure_ascii=False, sort_keys=True)}")
     if shadow_focus_env["resolved_shadow_focus_tickers"]:
         print(f"paper_trading_shadow_focus_tickers={shadow_focus_env['resolved_shadow_focus_tickers']}")

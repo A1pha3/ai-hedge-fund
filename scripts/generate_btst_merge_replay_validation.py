@@ -65,11 +65,7 @@ def _rank_signal_headroom(metrics_payload: dict[str, Any]) -> list[dict[str, Any
         "catalyst_freshness",
         "layer_c_alignment",
     )
-    weights = {
-        str(name): float(value)
-        for name, value in dict(metrics_payload.get("positive_score_weights") or {}).items()
-        if str(name or "").strip()
-    }
+    weights = {str(name): float(value) for name, value in dict(metrics_payload.get("positive_score_weights") or {}).items() if str(name or "").strip()}
     ranked_rows: list[dict[str, Any]] = []
     for metric_name in metric_names:
         if metric_name not in metrics_payload:
@@ -273,9 +269,7 @@ def _summarize_focus_row(
         "breakout_signal_uplift_confidence_delta": dict(breakout_signal_uplift.get("confidence_delta") or {}),
         "volume_signal_uplift_applied": bool(breakout_signal_uplift.get("volume_carryover_applied")),
         "volume_signal_uplift_eligible": bool(dict(breakout_signal_uplift.get("gate_hits") or {}).get("volatility_subfactor")),
-        "volume_signal_uplift_confidence_delta": {
-            "volatility_confidence": dict(breakout_signal_uplift.get("confidence_delta") or {}).get("volatility_confidence")
-        },
+        "volume_signal_uplift_confidence_delta": {"volatility_confidence": dict(breakout_signal_uplift.get("confidence_delta") or {}).get("volatility_confidence")},
         "layer_c_alignment_uplift_applied": bool(layer_c_alignment_uplift.get("applied")),
         "layer_c_alignment_uplift_eligible": bool(layer_c_alignment_uplift.get("eligible")),
         "layer_c_alignment_uplift_delta": dict(layer_c_alignment_uplift.get("delta") or {}),
@@ -286,74 +280,82 @@ def _summarize_focus_row(
         "prepared_breakout_penalty_relief_eligible": bool(prepared_breakout_penalty_relief.get("eligible")),
         "prepared_breakout_penalty_relief_gate_hits": dict(prepared_breakout_penalty_relief.get("gate_hits") or {}),
         "prepared_breakout_penalty_relief_penalty_delta": {
-            "stale_score_penalty_weight": None
-            if prepared_breakout_penalty_relief.get("effective_stale_score_penalty_weight") is None
-            else round(
-                float(prepared_breakout_penalty_relief.get("effective_stale_score_penalty_weight") or 0.0)
-                - float(prepared_breakout_penalty_relief.get("base_stale_score_penalty_weight") or 0.0),
-                4,
+            "stale_score_penalty_weight": (
+                None
+                if prepared_breakout_penalty_relief.get("effective_stale_score_penalty_weight") is None
+                else round(
+                    float(prepared_breakout_penalty_relief.get("effective_stale_score_penalty_weight") or 0.0) - float(prepared_breakout_penalty_relief.get("base_stale_score_penalty_weight") or 0.0),
+                    4,
+                )
             ),
-            "extension_score_penalty_weight": None
-            if prepared_breakout_penalty_relief.get("effective_extension_score_penalty_weight") is None
-            else round(
-                float(prepared_breakout_penalty_relief.get("effective_extension_score_penalty_weight") or 0.0)
-                - float(prepared_breakout_penalty_relief.get("base_extension_score_penalty_weight") or 0.0),
-                4,
+            "extension_score_penalty_weight": (
+                None
+                if prepared_breakout_penalty_relief.get("effective_extension_score_penalty_weight") is None
+                else round(
+                    float(prepared_breakout_penalty_relief.get("effective_extension_score_penalty_weight") or 0.0) - float(prepared_breakout_penalty_relief.get("base_extension_score_penalty_weight") or 0.0),
+                    4,
+                )
             ),
         },
         "prepared_breakout_catalyst_relief_applied": bool(prepared_breakout_catalyst_relief.get("applied")),
         "prepared_breakout_catalyst_relief_eligible": bool(prepared_breakout_catalyst_relief.get("eligible")),
         "prepared_breakout_catalyst_relief_gate_hits": dict(prepared_breakout_catalyst_relief.get("gate_hits") or {}),
-        "prepared_breakout_catalyst_relief_catalyst_delta": None
-        if prepared_breakout_catalyst_relief.get("effective_catalyst_freshness") is None
-        else round(
-            float(prepared_breakout_catalyst_relief.get("effective_catalyst_freshness") or 0.0)
-            - float(prepared_breakout_catalyst_relief.get("base_catalyst_freshness") or 0.0),
-            4,
+        "prepared_breakout_catalyst_relief_catalyst_delta": (
+            None
+            if prepared_breakout_catalyst_relief.get("effective_catalyst_freshness") is None
+            else round(
+                float(prepared_breakout_catalyst_relief.get("effective_catalyst_freshness") or 0.0) - float(prepared_breakout_catalyst_relief.get("base_catalyst_freshness") or 0.0),
+                4,
+            )
         ),
         "prepared_breakout_volume_relief_applied": bool(prepared_breakout_volume_relief.get("applied")),
         "prepared_breakout_volume_relief_eligible": bool(prepared_breakout_volume_relief.get("eligible")),
         "prepared_breakout_volume_relief_gate_hits": dict(prepared_breakout_volume_relief.get("gate_hits") or {}),
-        "prepared_breakout_volume_relief_volume_delta": None
-        if prepared_breakout_volume_relief.get("effective_volume_expansion_quality") is None
-        else round(
-            float(prepared_breakout_volume_relief.get("effective_volume_expansion_quality") or 0.0)
-            - float(prepared_breakout_volume_relief.get("base_volume_expansion_quality") or 0.0),
-            4,
+        "prepared_breakout_volume_relief_volume_delta": (
+            None
+            if prepared_breakout_volume_relief.get("effective_volume_expansion_quality") is None
+            else round(
+                float(prepared_breakout_volume_relief.get("effective_volume_expansion_quality") or 0.0) - float(prepared_breakout_volume_relief.get("base_volume_expansion_quality") or 0.0),
+                4,
+            )
         ),
         "prepared_breakout_continuation_relief_applied": bool(prepared_breakout_continuation_relief.get("applied")),
         "prepared_breakout_continuation_relief_eligible": bool(prepared_breakout_continuation_relief.get("eligible")),
         "prepared_breakout_continuation_relief_gate_hits": dict(prepared_breakout_continuation_relief.get("gate_hits") or {}),
-        "prepared_breakout_continuation_relief_breakout_delta": None
-        if prepared_breakout_continuation_relief.get("effective_breakout_freshness") is None
-        else round(
-            float(prepared_breakout_continuation_relief.get("effective_breakout_freshness") or 0.0)
-            - float(prepared_breakout_continuation_relief.get("base_breakout_freshness") or 0.0),
-            4,
+        "prepared_breakout_continuation_relief_breakout_delta": (
+            None
+            if prepared_breakout_continuation_relief.get("effective_breakout_freshness") is None
+            else round(
+                float(prepared_breakout_continuation_relief.get("effective_breakout_freshness") or 0.0) - float(prepared_breakout_continuation_relief.get("base_breakout_freshness") or 0.0),
+                4,
+            )
         ),
-        "prepared_breakout_continuation_relief_trend_delta": None
-        if prepared_breakout_continuation_relief.get("effective_trend_acceleration") is None
-        else round(
-            float(prepared_breakout_continuation_relief.get("effective_trend_acceleration") or 0.0)
-            - float(prepared_breakout_continuation_relief.get("base_trend_acceleration") or 0.0),
-            4,
+        "prepared_breakout_continuation_relief_trend_delta": (
+            None
+            if prepared_breakout_continuation_relief.get("effective_trend_acceleration") is None
+            else round(
+                float(prepared_breakout_continuation_relief.get("effective_trend_acceleration") or 0.0) - float(prepared_breakout_continuation_relief.get("base_trend_acceleration") or 0.0),
+                4,
+            )
         ),
         "prepared_breakout_selected_catalyst_relief_applied": bool(prepared_breakout_selected_catalyst_relief.get("applied")),
         "prepared_breakout_selected_catalyst_relief_eligible": bool(prepared_breakout_selected_catalyst_relief.get("eligible")),
         "prepared_breakout_selected_catalyst_relief_gate_hits": dict(prepared_breakout_selected_catalyst_relief.get("gate_hits") or {}),
-        "prepared_breakout_selected_catalyst_relief_breakout_delta": None
-        if prepared_breakout_selected_catalyst_relief.get("effective_breakout_freshness") is None
-        else round(
-            float(prepared_breakout_selected_catalyst_relief.get("effective_breakout_freshness") or 0.0)
-            - float(prepared_breakout_selected_catalyst_relief.get("base_breakout_freshness") or 0.0),
-            4,
+        "prepared_breakout_selected_catalyst_relief_breakout_delta": (
+            None
+            if prepared_breakout_selected_catalyst_relief.get("effective_breakout_freshness") is None
+            else round(
+                float(prepared_breakout_selected_catalyst_relief.get("effective_breakout_freshness") or 0.0) - float(prepared_breakout_selected_catalyst_relief.get("base_breakout_freshness") or 0.0),
+                4,
+            )
         ),
-        "prepared_breakout_selected_catalyst_relief_catalyst_delta": None
-        if prepared_breakout_selected_catalyst_relief.get("effective_catalyst_freshness") is None
-        else round(
-            float(prepared_breakout_selected_catalyst_relief.get("effective_catalyst_freshness") or 0.0)
-            - float(prepared_breakout_selected_catalyst_relief.get("base_catalyst_freshness") or 0.0),
-            4,
+        "prepared_breakout_selected_catalyst_relief_catalyst_delta": (
+            None
+            if prepared_breakout_selected_catalyst_relief.get("effective_catalyst_freshness") is None
+            else round(
+                float(prepared_breakout_selected_catalyst_relief.get("effective_catalyst_freshness") or 0.0) - float(prepared_breakout_selected_catalyst_relief.get("base_catalyst_freshness") or 0.0),
+                4,
+            )
         ),
         "merge_relief_applied": bool(merge_relief.get("applied")),
         "merge_relief_eligible": bool(merge_relief.get("eligible")),
@@ -370,10 +372,7 @@ def _analyze_report_dir(report_dir: Path, focus_ticker: str, *, profile_name: st
         focus_tickers=[focus_ticker],
         refresh_latest_historical_prior=True,
     )
-    merge_sources = [
-        (path, _inject_merge_approved_context(payload, focus_ticker))
-        for path, payload in load_selection_target_replay_sources(report_dir)
-    ]
+    merge_sources = [(path, _inject_merge_approved_context(payload, focus_ticker)) for path, payload in load_selection_target_replay_sources(report_dir)]
     merge = analyze_selection_target_replay_sources(
         merge_sources,
         profile_name=profile_name,
@@ -407,12 +406,8 @@ def _candidate_recommendation(rows: list[dict[str, Any]]) -> str:
         return "supports_merge_approved_watchlist_followup"
     if any(bool(row.get("merge_relief_applied")) and str(row.get("decision_uplift_classification")) == "decision_deteriorated" for row in rows):
         return "merge_relief_regression_risk"
-    actionable_relief_rows = [
-        row for row in rows if bool(row.get("merge_relief_applied")) and str(row.get("baseline_replayed_decision")) != "selected"
-    ]
-    already_selected_relief_rows = [
-        row for row in rows if bool(row.get("merge_relief_applied")) and str(row.get("baseline_replayed_decision")) == "selected"
-    ]
+    actionable_relief_rows = [row for row in rows if bool(row.get("merge_relief_applied")) and str(row.get("baseline_replayed_decision")) != "selected"]
+    already_selected_relief_rows = [row for row in rows if bool(row.get("merge_relief_applied")) and str(row.get("baseline_replayed_decision")) == "selected"]
     if any(str(row.get("remaining_leverage_classification")) == "strong_upstream_signal_uplift_required" for row in rows):
         return "upstream_signal_uplift_required"
     if any(str(row.get("remaining_leverage_classification")) == "strong_execution_signal_uplift_required" for row in rows if row.get("merge_relief_applied")):
@@ -450,60 +445,25 @@ def _summarize_candidate_result(*, focus_ticker: str, report_rows: list[dict[str
     relief_promoted_to_selected_count = sum(1 for row in relief_rows if row.get("decision_uplift_classification") == "promoted_to_selected")
     relief_promoted_to_near_miss_count = sum(1 for row in relief_rows if row.get("decision_uplift_classification") == "promoted_to_near_miss")
     relief_positive_promotion_count = relief_promoted_to_selected_count + relief_promoted_to_near_miss_count
-    relief_without_decision_promotion_count = sum(
-        1 for row in relief_rows if row.get("decision_uplift_classification") not in {"promoted_to_selected", "promoted_to_near_miss"}
-    )
+    relief_without_decision_promotion_count = sum(1 for row in relief_rows if row.get("decision_uplift_classification") not in {"promoted_to_selected", "promoted_to_near_miss"})
     relief_decision_deteriorated_count = sum(1 for row in relief_rows if row.get("decision_uplift_classification") == "decision_deteriorated")
     relief_actionable_applied_count = len(actionable_relief_rows)
     relief_already_selected_count = len(already_selected_relief_rows)
-    relief_already_selected_score_shift_only_count = sum(
-        1 for row in already_selected_relief_rows if row.get("decision_uplift_classification") == "score_shift_only"
-    )
-    relief_actionable_promoted_to_selected_count = sum(
-        1 for row in actionable_relief_rows if row.get("decision_uplift_classification") == "promoted_to_selected"
-    )
-    relief_actionable_promoted_to_near_miss_count = sum(
-        1 for row in actionable_relief_rows if row.get("decision_uplift_classification") == "promoted_to_near_miss"
-    )
-    relief_actionable_positive_promotion_count = (
-        relief_actionable_promoted_to_selected_count + relief_actionable_promoted_to_near_miss_count
-    )
-    relief_actionable_without_decision_promotion_count = sum(
-        1 for row in actionable_relief_rows if row.get("decision_uplift_classification") not in {"promoted_to_selected", "promoted_to_near_miss"}
-    )
-    relief_positive_promotion_precision = (
-        round(relief_positive_promotion_count / relief_applied_count, 4) if relief_applied_count else None
-    )
-    relief_selected_promotion_precision = (
-        round(relief_promoted_to_selected_count / relief_applied_count, 4) if relief_applied_count else None
-    )
-    relief_no_promotion_ratio = (
-        round(relief_without_decision_promotion_count / relief_applied_count, 4) if relief_applied_count else None
-    )
-    relief_actionable_positive_promotion_precision = (
-        round(relief_actionable_positive_promotion_count / relief_actionable_applied_count, 4)
-        if relief_actionable_applied_count
-        else None
-    )
-    relief_actionable_selected_promotion_precision = (
-        round(relief_actionable_promoted_to_selected_count / relief_actionable_applied_count, 4)
-        if relief_actionable_applied_count
-        else None
-    )
-    relief_actionable_no_promotion_ratio = (
-        round(relief_actionable_without_decision_promotion_count / relief_actionable_applied_count, 4)
-        if relief_actionable_applied_count
-        else None
-    )
+    relief_already_selected_score_shift_only_count = sum(1 for row in already_selected_relief_rows if row.get("decision_uplift_classification") == "score_shift_only")
+    relief_actionable_promoted_to_selected_count = sum(1 for row in actionable_relief_rows if row.get("decision_uplift_classification") == "promoted_to_selected")
+    relief_actionable_promoted_to_near_miss_count = sum(1 for row in actionable_relief_rows if row.get("decision_uplift_classification") == "promoted_to_near_miss")
+    relief_actionable_positive_promotion_count = relief_actionable_promoted_to_selected_count + relief_actionable_promoted_to_near_miss_count
+    relief_actionable_without_decision_promotion_count = sum(1 for row in actionable_relief_rows if row.get("decision_uplift_classification") not in {"promoted_to_selected", "promoted_to_near_miss"})
+    relief_positive_promotion_precision = round(relief_positive_promotion_count / relief_applied_count, 4) if relief_applied_count else None
+    relief_selected_promotion_precision = round(relief_promoted_to_selected_count / relief_applied_count, 4) if relief_applied_count else None
+    relief_no_promotion_ratio = round(relief_without_decision_promotion_count / relief_applied_count, 4) if relief_applied_count else None
+    relief_actionable_positive_promotion_precision = round(relief_actionable_positive_promotion_count / relief_actionable_applied_count, 4) if relief_actionable_applied_count else None
+    relief_actionable_selected_promotion_precision = round(relief_actionable_promoted_to_selected_count / relief_actionable_applied_count, 4) if relief_actionable_applied_count else None
+    relief_actionable_no_promotion_ratio = round(relief_actionable_without_decision_promotion_count / relief_actionable_applied_count, 4) if relief_actionable_applied_count else None
     lever_source_rows = relief_rows or all_rows
     required_selected_values = [float(row["required_score_uplift_to_selected"]) for row in lever_source_rows if row.get("required_score_uplift_to_selected") is not None]
     recommended_primary_levers = [str(row.get("recommended_primary_lever")) for row in lever_source_rows if str(row.get("recommended_primary_lever") or "").strip()]
-    recommended_signal_levers = [
-        lever
-        for row in lever_source_rows
-        for lever in list(row.get("priority_signal_levers") or [])[:2]
-        if str(lever or "").strip()
-    ]
+    recommended_signal_levers = [lever for row in lever_source_rows for lever in list(row.get("priority_signal_levers") or [])[:2] if str(lever or "").strip()]
     best_row = min(lever_source_rows, key=lambda row: float(row.get("required_score_uplift_to_selected") or 999.0), default=None)
     return {
         "focus_ticker": focus_ticker,
@@ -600,26 +560,16 @@ def generate_btst_merge_replay_validation(
     relief_applied_count = sum(int(summary.get("relief_applied_count") or 0) for summary in candidate_summaries)
     relief_actionable_applied_count = sum(int(summary.get("relief_actionable_applied_count") or 0) for summary in candidate_summaries)
     relief_already_selected_count = sum(int(summary.get("relief_already_selected_count") or 0) for summary in candidate_summaries)
-    relief_already_selected_score_shift_only_count = sum(
-        int(summary.get("relief_already_selected_score_shift_only_count") or 0) for summary in candidate_summaries
-    )
+    relief_already_selected_score_shift_only_count = sum(int(summary.get("relief_already_selected_score_shift_only_count") or 0) for summary in candidate_summaries)
     relief_promoted_to_selected_count = sum(int(summary.get("relief_promoted_to_selected_count") or 0) for summary in candidate_summaries)
     relief_promoted_to_near_miss_count = sum(int(summary.get("relief_promoted_to_near_miss_count") or 0) for summary in candidate_summaries)
     relief_positive_promotion_count = sum(int(summary.get("relief_positive_promotion_count") or 0) for summary in candidate_summaries)
     relief_without_decision_promotion_count = sum(int(summary.get("relief_without_decision_promotion_count") or 0) for summary in candidate_summaries)
     relief_decision_deteriorated_count = sum(int(summary.get("relief_decision_deteriorated_count") or 0) for summary in candidate_summaries)
-    relief_actionable_promoted_to_selected_count = sum(
-        int(summary.get("relief_actionable_promoted_to_selected_count") or 0) for summary in candidate_summaries
-    )
-    relief_actionable_promoted_to_near_miss_count = sum(
-        int(summary.get("relief_actionable_promoted_to_near_miss_count") or 0) for summary in candidate_summaries
-    )
-    relief_actionable_positive_promotion_count = sum(
-        int(summary.get("relief_actionable_positive_promotion_count") or 0) for summary in candidate_summaries
-    )
-    relief_actionable_without_decision_promotion_count = sum(
-        int(summary.get("relief_actionable_without_decision_promotion_count") or 0) for summary in candidate_summaries
-    )
+    relief_actionable_promoted_to_selected_count = sum(int(summary.get("relief_actionable_promoted_to_selected_count") or 0) for summary in candidate_summaries)
+    relief_actionable_promoted_to_near_miss_count = sum(int(summary.get("relief_actionable_promoted_to_near_miss_count") or 0) for summary in candidate_summaries)
+    relief_actionable_positive_promotion_count = sum(int(summary.get("relief_actionable_positive_promotion_count") or 0) for summary in candidate_summaries)
+    relief_actionable_without_decision_promotion_count = sum(int(summary.get("relief_actionable_without_decision_promotion_count") or 0) for summary in candidate_summaries)
     breakout_signal_uplift_applied_count = sum(int(summary.get("breakout_signal_uplift_applied_count") or 0) for summary in candidate_summaries)
     volume_signal_uplift_applied_count = sum(int(summary.get("volume_signal_uplift_applied_count") or 0) for summary in candidate_summaries)
     layer_c_alignment_uplift_applied_count = sum(int(summary.get("layer_c_alignment_uplift_applied_count") or 0) for summary in candidate_summaries)
@@ -631,12 +581,7 @@ def generate_btst_merge_replay_validation(
     prepared_breakout_selected_catalyst_relief_applied_count = sum(int(summary.get("prepared_breakout_selected_catalyst_relief_applied_count") or 0) for summary in candidate_summaries)
     leverage_source_summaries = [summary for summary in candidate_summaries if int(summary.get("relief_applied_count") or 0) > 0] or candidate_summaries
     recommended_primary_levers = [str(summary.get("recommended_primary_lever")) for summary in leverage_source_summaries if str(summary.get("recommended_primary_lever") or "").strip()]
-    recommended_signal_levers = [
-        lever
-        for summary in leverage_source_summaries
-        for lever in list(summary.get("recommended_signal_levers") or [])[:2]
-        if str(lever or "").strip()
-    ]
+    recommended_signal_levers = [lever for summary in leverage_source_summaries for lever in list(summary.get("recommended_signal_levers") or [])[:2] if str(lever or "").strip()]
     overall_verdict = "no_merge_replay_uplift"
     if promoted_to_selected_count > 0:
         overall_verdict = "merge_replay_promotes_selected"
@@ -651,21 +596,9 @@ def generate_btst_merge_replay_validation(
     relief_positive_promotion_precision = round(relief_positive_promotion_count / relief_applied_count, 4) if relief_applied_count else None
     relief_selected_promotion_precision = round(relief_promoted_to_selected_count / relief_applied_count, 4) if relief_applied_count else None
     relief_no_promotion_ratio = round(relief_without_decision_promotion_count / relief_applied_count, 4) if relief_applied_count else None
-    relief_actionable_positive_promotion_precision = (
-        round(relief_actionable_positive_promotion_count / relief_actionable_applied_count, 4)
-        if relief_actionable_applied_count
-        else None
-    )
-    relief_actionable_selected_promotion_precision = (
-        round(relief_actionable_promoted_to_selected_count / relief_actionable_applied_count, 4)
-        if relief_actionable_applied_count
-        else None
-    )
-    relief_actionable_no_promotion_ratio = (
-        round(relief_actionable_without_decision_promotion_count / relief_actionable_applied_count, 4)
-        if relief_actionable_applied_count
-        else None
-    )
+    relief_actionable_positive_promotion_precision = round(relief_actionable_positive_promotion_count / relief_actionable_applied_count, 4) if relief_actionable_applied_count else None
+    relief_actionable_selected_promotion_precision = round(relief_actionable_promoted_to_selected_count / relief_actionable_applied_count, 4) if relief_actionable_applied_count else None
+    relief_actionable_no_promotion_ratio = round(relief_actionable_without_decision_promotion_count / relief_actionable_applied_count, 4) if relief_actionable_applied_count else None
 
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),

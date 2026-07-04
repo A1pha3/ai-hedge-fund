@@ -79,10 +79,7 @@ def _resolve_promotion_gate_decision(context: dict[str, Any], gate_blockers: lis
 
 def _build_promotion_gate_recommendation(gate_verdict: str, *, focus_ticker: str, eligible_tickers: list[str]) -> str:
     if gate_verdict == "approve_watchlist_promotion":
-        return (
-            f"Approve {focus_ticker} as an additional near-cluster watchlist ticker while keeping "
-            f"eligible_tickers={eligible_tickers} unchanged and the continuation lane isolated from default BTST."
-        )
+        return f"Approve {focus_ticker} as an additional near-cluster watchlist ticker while keeping " f"eligible_tickers={eligible_tickers} unchanged and the continuation lane isolated from default BTST."
     if gate_verdict == "already_on_watchlist":
         return f"{focus_ticker} is already on watchlist_tickers; no additional governance action is required."
     return "Hold watchlist promotion and keep the focus candidate inside validation review until the gate blockers clear."
@@ -150,8 +147,8 @@ def _attach_promotion_gate_source_reports(
     return {
         **analysis,
         "source_reports": {
-        "lane_rulepack": str(Path(lane_rulepack_path).expanduser().resolve()),
-        "promotion_review": str(Path(promotion_review_path).expanduser().resolve()),
+            "lane_rulepack": str(Path(lane_rulepack_path).expanduser().resolve()),
+            "promotion_review": str(Path(promotion_review_path).expanduser().resolve()),
         },
     }
 

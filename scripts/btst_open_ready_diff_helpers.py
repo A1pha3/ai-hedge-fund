@@ -345,10 +345,7 @@ def diff_replay(
     if previous_report_snapshot:
         previous_summary = extract_priority_summary(previous_report_snapshot.get("brief_summary") or {})
         current_summary = extract_priority_summary(current_latest_btst.get("brief_summary") or {})
-        summary_delta = {
-            key: int(current_summary.get(key) or 0) - int(previous_summary.get(key) or 0)
-            for key in ("primary_count", "near_miss_count", "opportunity_pool_count", "research_upside_radar_count", "catalyst_theme_count", "catalyst_theme_shadow_count")
-        }
+        summary_delta = {key: int(current_summary.get(key) or 0) - int(previous_summary.get(key) or 0) for key in ("primary_count", "near_miss_count", "opportunity_pool_count", "research_upside_radar_count", "catalyst_theme_count", "catalyst_theme_shadow_count")}
         has_changes = any(value != 0 for value in summary_delta.values()) or str(previous_report_snapshot.get("report_dir") or "") != str(current_payload.get("latest_btst_run", {}).get("report_dir") or "")
         return {
             "available": True,
@@ -392,8 +389,7 @@ def diff_ticker_lists(current_tickers: list[Any], previous_tickers: list[Any]) -
 
 def build_catalyst_frontier_count_deltas(current_summary: dict[str, Any], previous_summary: dict[str, Any]) -> dict[str, int]:
     return {
-        "promoted_shadow_count_delta": int(current_summary.get("recommended_promoted_shadow_count") or 0)
-        - int(previous_summary.get("recommended_promoted_shadow_count") or 0),
+        "promoted_shadow_count_delta": int(current_summary.get("recommended_promoted_shadow_count") or 0) - int(previous_summary.get("recommended_promoted_shadow_count") or 0),
         "shadow_candidate_count_delta": int(current_summary.get("shadow_candidate_count") or 0) - int(previous_summary.get("shadow_candidate_count") or 0),
         "baseline_selected_count_delta": int(current_summary.get("baseline_selected_count") or 0) - int(previous_summary.get("baseline_selected_count") or 0),
     }
@@ -469,14 +465,11 @@ def extract_score_fail_frontier_summaries(
 
 def build_score_fail_frontier_count_deltas(current_summary: dict[str, Any], previous_summary: dict[str, Any]) -> dict[str, int]:
     return {
-        "rejected_case_count_delta": int(current_summary.get("rejected_short_trade_boundary_count") or 0)
-        - int(previous_summary.get("rejected_short_trade_boundary_count") or 0),
+        "rejected_case_count_delta": int(current_summary.get("rejected_short_trade_boundary_count") or 0) - int(previous_summary.get("rejected_short_trade_boundary_count") or 0),
         "rescueable_case_count_delta": int(current_summary.get("rescueable_case_count") or 0) - int(previous_summary.get("rescueable_case_count") or 0),
-        "threshold_only_rescue_count_delta": int(current_summary.get("threshold_only_rescue_count") or 0)
-        - int(previous_summary.get("threshold_only_rescue_count") or 0),
+        "threshold_only_rescue_count_delta": int(current_summary.get("threshold_only_rescue_count") or 0) - int(previous_summary.get("threshold_only_rescue_count") or 0),
         "recurring_case_count_delta": int(current_summary.get("recurring_case_count") or 0) - int(previous_summary.get("recurring_case_count") or 0),
-        "transition_candidate_count_delta": int(current_summary.get("transition_candidate_count") or 0)
-        - int(previous_summary.get("transition_candidate_count") or 0),
+        "transition_candidate_count_delta": int(current_summary.get("transition_candidate_count") or 0) - int(previous_summary.get("transition_candidate_count") or 0),
     }
 
 
@@ -660,10 +653,8 @@ def build_carryover_promotion_gate_field_changes(current_summary: dict[str, Any]
     return {
         "focus_ticker_changed": str(current_summary.get("focus_ticker") or "") != str(previous_summary.get("focus_ticker") or ""),
         "focus_gate_verdict_changed": str(current_summary.get("focus_gate_verdict") or "") != str(previous_summary.get("focus_gate_verdict") or ""),
-        "selected_contract_verdict_changed": str(current_summary.get("selected_contract_verdict") or "")
-        != str(previous_summary.get("selected_contract_verdict") or ""),
-        "default_expansion_status_changed": str(current_summary.get("default_expansion_status") or "")
-        != str(previous_summary.get("default_expansion_status") or ""),
+        "selected_contract_verdict_changed": str(current_summary.get("selected_contract_verdict") or "") != str(previous_summary.get("selected_contract_verdict") or ""),
+        "default_expansion_status_changed": str(current_summary.get("default_expansion_status") or "") != str(previous_summary.get("default_expansion_status") or ""),
     }
 
 

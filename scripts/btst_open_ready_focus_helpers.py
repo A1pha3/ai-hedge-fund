@@ -46,9 +46,7 @@ def append_open_ready_replay_focus(operator_focus: list[str], replay_delta: dict
     if not (replay_delta.get("available") and replay_delta.get("has_changes")):
         return
     if replay_delta.get("comparison_basis") == "nightly_history":
-        operator_focus.append(
-            f"replay cohort 变化: report_count {replay_delta.get('report_count_delta'):+d}, short_trade_only {replay_delta.get('short_trade_only_report_count_delta'):+d}。"
-        )
+        operator_focus.append(f"replay cohort 变化: report_count {replay_delta.get('report_count_delta'):+d}, short_trade_only {replay_delta.get('short_trade_only_report_count_delta'):+d}。")
         return
     if replay_delta.get("comparison_basis") == "previous_btst_report":
         summary_delta = dict(replay_delta.get("summary_delta") or {})
@@ -75,22 +73,11 @@ def append_open_ready_action_focus(operator_focus: list[str], delta_sections: di
     carryover_peer_proof_delta = dict(delta_sections.get("carryover_peer_proof_delta") or {})
     carryover_promotion_gate_delta = dict(delta_sections.get("carryover_promotion_gate_delta") or {})
     if top_priority_action_delta.get("available") and top_priority_action_delta.get("has_changes"):
-        operator_focus.append(
-            f"control tower 顶级动作切换: {top_priority_action_delta.get('previous_source') or 'n/a'} -> {top_priority_action_delta.get('current_source') or 'n/a'} "
-            f"({top_priority_action_delta.get('previous_title') or 'n/a'} -> {top_priority_action_delta.get('current_title') or 'n/a'})."
-        )
+        operator_focus.append(f"control tower 顶级动作切换: {top_priority_action_delta.get('previous_source') or 'n/a'} -> {top_priority_action_delta.get('current_source') or 'n/a'} " f"({top_priority_action_delta.get('previous_title') or 'n/a'} -> {top_priority_action_delta.get('current_title') or 'n/a'}).")
     if selected_outcome_contract_delta.get("available") and selected_outcome_contract_delta.get("has_changes"):
-        operator_focus.append(
-            f"selected contract 变化: {selected_outcome_contract_delta.get('previous_focus_ticker') or 'n/a'} / "
-            f"{selected_outcome_contract_delta.get('previous_focus_overall_contract_verdict') or 'n/a'} -> "
-            f"{selected_outcome_contract_delta.get('current_focus_ticker') or 'n/a'} / "
-            f"{selected_outcome_contract_delta.get('current_focus_overall_contract_verdict') or 'n/a'}。"
-        )
+        operator_focus.append(f"selected contract 变化: {selected_outcome_contract_delta.get('previous_focus_ticker') or 'n/a'} / " f"{selected_outcome_contract_delta.get('previous_focus_overall_contract_verdict') or 'n/a'} -> " f"{selected_outcome_contract_delta.get('current_focus_ticker') or 'n/a'} / " f"{selected_outcome_contract_delta.get('current_focus_overall_contract_verdict') or 'n/a'}。")
     if carryover_peer_proof_delta.get("available") and carryover_peer_proof_delta.get("has_changes"):
-        operator_focus.append(
-            f"carryover peer proof 变化: focus {carryover_peer_proof_delta.get('previous_focus_ticker') or 'n/a'} -> {carryover_peer_proof_delta.get('current_focus_ticker') or 'n/a'}, "
-            f"promotion review {carryover_peer_proof_delta.get('previous_focus_promotion_review_verdict') or 'n/a'} -> {carryover_peer_proof_delta.get('current_focus_promotion_review_verdict') or 'n/a'}。"
-        )
+        operator_focus.append(f"carryover peer proof 变化: focus {carryover_peer_proof_delta.get('previous_focus_ticker') or 'n/a'} -> {carryover_peer_proof_delta.get('current_focus_ticker') or 'n/a'}, " f"promotion review {carryover_peer_proof_delta.get('previous_focus_promotion_review_verdict') or 'n/a'} -> {carryover_peer_proof_delta.get('current_focus_promotion_review_verdict') or 'n/a'}。")
     if carryover_promotion_gate_delta.get("available") and carryover_promotion_gate_delta.get("has_changes"):
         operator_focus.append(
             f"carryover promotion gate 变化: focus {carryover_promotion_gate_delta.get('previous_focus_ticker') or 'n/a'} -> {carryover_promotion_gate_delta.get('current_focus_ticker') or 'n/a'}, "
@@ -112,9 +99,7 @@ def append_open_ready_score_fail_focus(operator_focus: list[str], score_fail_del
 
 def append_open_ready_stability_focus(operator_focus: list[str]) -> None:
     if not operator_focus:
-        operator_focus.append(
-            "本轮相对上一轮没有检测到 priority / governance / early runner / replay / score-fail frontier / top priority action / selected contract / carryover peer proof / carryover promotion gate 的结构变化，可视为稳定复跑。"
-        )
+        operator_focus.append("本轮相对上一轮没有检测到 priority / governance / early runner / replay / score-fail frontier / top priority action / selected contract / carryover peer proof / carryover promotion gate 的结构变化，可视为稳定复跑。")
 
 
 def build_open_ready_operator_focus(comparison_basis: str, comparison_scope: str, delta_sections: dict[str, Any]) -> list[str]:

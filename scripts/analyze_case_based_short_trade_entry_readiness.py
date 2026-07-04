@@ -113,12 +113,7 @@ def _build_entry(report_path: str | Path) -> dict[str, Any]:
     changed_non_target_case_count = _infer_non_target_change_count(report)
     promoted_all_targets = target_case_count > 0 and promoted_target_case_count == target_case_count
     low_pollution = changed_non_target_case_count == 0 if changed_non_target_case_count is not None else None
-    strong_close_follow_through = bool(
-        next_close_return_mean is not None
-        and next_close_return_mean > 0
-        and next_close_positive_rate is not None
-        and next_close_positive_rate >= 0.75
-    )
+    strong_close_follow_through = bool(next_close_return_mean is not None and next_close_return_mean > 0 and next_close_positive_rate is not None and next_close_positive_rate >= 0.75)
     low_adjustment_cost = bool(adjustment_cost is not None and adjustment_cost <= 0.04)
 
     if promoted_all_targets and low_adjustment_cost and strong_close_follow_through and target_case_count >= 2 and low_pollution is not False:
@@ -201,9 +196,7 @@ def render_case_based_short_trade_entry_readiness_markdown(analysis: dict[str, A
     lines.append("")
     lines.append("## Entries")
     for entry in analysis["entries"]:
-        lines.append(
-            f"- rank={entry['priority_rank']} ticker={entry['ticker']} tier={entry['readiness_tier']} lane_type={entry['lane_type']} target_case_count={entry['target_case_count']} adjustment_cost={entry['adjustment_cost']} next_close_return_mean={entry['next_close_return_mean']} next_close_positive_rate={entry['next_close_positive_rate']} low_pollution={entry['low_pollution']}"
-        )
+        lines.append(f"- rank={entry['priority_rank']} ticker={entry['ticker']} tier={entry['readiness_tier']} lane_type={entry['lane_type']} target_case_count={entry['target_case_count']} adjustment_cost={entry['adjustment_cost']} next_close_return_mean={entry['next_close_return_mean']} next_close_positive_rate={entry['next_close_positive_rate']} low_pollution={entry['low_pollution']}")
         lines.append(f"  recommendation: {entry['recommendation']}")
     if not analysis["entries"]:
         lines.append("- none")

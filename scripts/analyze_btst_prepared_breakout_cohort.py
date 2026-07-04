@@ -87,10 +87,7 @@ def _load_candidate_dossier(reports_root: Path, ticker: str) -> dict[str, Any]:
 
 
 def _resolve_relief_flags(metrics_payload: dict[str, Any]) -> dict[str, bool]:
-    return {
-        field: bool(dict(metrics_payload.get(field) or {}).get("applied"))
-        for field in RELIEF_FIELDS
-    }
+    return {field: bool(dict(metrics_payload.get(field) or {}).get("applied")) for field in RELIEF_FIELDS}
 
 
 def _collect_prepared_breakout_rows(
@@ -103,14 +100,7 @@ def _collect_prepared_breakout_rows(
     for report_dir in report_dirs:
         replay_sources = load_selection_target_replay_sources(report_dir)
         replay_input_count += len(replay_sources)
-        tickers = sorted(
-            {
-                str(ticker or "").strip()
-                for _, payload in replay_sources
-                for ticker in list((payload.get("selection_targets") or {}).keys())
-                if str(ticker or "").strip()
-            }
-        )
+        tickers = sorted({str(ticker or "").strip() for _, payload in replay_sources for ticker in list((payload.get("selection_targets") or {}).keys()) if str(ticker or "").strip()})
         if not tickers:
             continue
         analysis = analyze_selection_target_replay_sources(
@@ -156,16 +146,9 @@ def _collect_prepared_breakout_rows(
 
 def _build_candidate_summary(ticker: str, rows: list[dict[str, Any]], *, reports_root: Path) -> dict[str, Any]:
     decision_counts = Counter(str(row.get("replayed_decision") or "unknown") for row in rows)
-    relief_window_counts = {
-        field: sum(1 for row in rows if row["reliefs"].get(field))
-        for field in RELIEF_FIELDS
-    }
+    relief_window_counts = {field: sum(1 for row in rows if row["reliefs"].get(field)) for field in RELIEF_FIELDS}
     selected_relief_window_count = relief_window_counts["prepared_breakout_selected_catalyst_relief"]
-    selected_relief_alignment_count = sum(
-        1
-        for row in rows
-        if row["reliefs"].get("prepared_breakout_selected_catalyst_relief") and row.get("replayed_decision") == "selected"
-    )
+    selected_relief_alignment_count = sum(1 for row in rows if row["reliefs"].get("prepared_breakout_selected_catalyst_relief") and row.get("replayed_decision") == "selected")
     selected_relief_alignment_rate = round(selected_relief_alignment_count / selected_relief_window_count, 4) if selected_relief_window_count else None
     distinct_report_count = len({str(row.get("report_label") or "") for row in rows})
     distinct_window_count = len({str(row.get("window_key") or "") for row in rows})
@@ -180,13 +163,7 @@ def _build_candidate_summary(ticker: str, rows: list[dict[str, Any]], *, reports
     near_miss_count = decision_counts.get("near_miss", 0)
     all_rows_selected = row_count > 0 and selected_count == row_count
     min_gap_to_selected = gap_to_selected_stats.get("min")
-    has_soft_selected_relief_alignment = (
-        ticker != REFERENCE_TICKER
-        and selected_relief_window_count >= 4
-        and selected_relief_alignment_rate is not None
-        and 0.75 <= float(selected_relief_alignment_rate) < 1.0
-        and outcome_support_status in NON_WEAK_OUTCOME_SUPPORT_STATUSES
-    )
+    has_soft_selected_relief_alignment = ticker != REFERENCE_TICKER and selected_relief_window_count >= 4 and selected_relief_alignment_rate is not None and 0.75 <= float(selected_relief_alignment_rate) < 1.0 and outcome_support_status in NON_WEAK_OUTCOME_SUPPORT_STATUSES
 
     if ticker == REFERENCE_TICKER and all_rows_selected and selected_relief_window_count == row_count:
         verdict = "reference_selected_relief_anchor"
@@ -196,10 +173,7 @@ def _build_candidate_summary(ticker: str, rows: list[dict[str, Any]], *, reports
         recommendation = f"{ticker} already behaves like a stable prepared-breakout selected-relief peer under the current profile."
     elif has_soft_selected_relief_alignment:
         verdict = "soft_selected_relief_peer"
-        recommendation = (
-            f"{ticker} shows conservative progress toward a second selected-relief anchor, "
-            "but still lacks the perfect replay alignment required for stable-peer status."
-        )
+        recommendation = f"{ticker} shows conservative progress toward a second selected-relief anchor, " "but still lacks the perfect replay alignment required for stable-peer status."
     elif near_miss_count > 0 and min_gap_to_selected is not None and float(min_gap_to_selected) <= 0.12:
         verdict = "prepared_breakout_selected_frontier"
         recommendation = f"{ticker} is the closest non-anchor prepared-breakout frontier; validate whether its remaining selected gap is safe to close."
@@ -210,11 +184,7 @@ def _build_candidate_summary(ticker: str, rows: list[dict[str, Any]], *, reports
         verdict = "prepared_breakout_rejected_surface"
         recommendation = f"{ticker} remains a prepared-breakout replay surface without enough near-miss/selected quality to justify widening the uplift."
 
-    non_selected_gaps = [
-        float(row["replayed_gap_to_selected"])
-        for row in rows
-        if row.get("replayed_decision") != "selected" and isinstance(row.get("replayed_gap_to_selected"), (int, float))
-    ]
+    non_selected_gaps = [float(row["replayed_gap_to_selected"]) for row in rows if row.get("replayed_decision") != "selected" and isinstance(row.get("replayed_gap_to_selected"), (int, float))]
 
     return {
         "ticker": ticker,
@@ -273,10 +243,7 @@ def analyze_btst_prepared_breakout_cohort(
         if ticker:
             rows_by_ticker[ticker].append(row)
 
-    candidate_rows = [
-        _build_candidate_summary(ticker, ticker_rows, reports_root=resolved_reports_root)
-        for ticker, ticker_rows in rows_by_ticker.items()
-    ]
+    candidate_rows = [_build_candidate_summary(ticker, ticker_rows, reports_root=resolved_reports_root) for ticker, ticker_rows in rows_by_ticker.items()]
     candidate_rows.sort(key=_candidate_sort_key)
 
     reference_anchor = next((row for row in candidate_rows if row.get("ticker") == REFERENCE_TICKER), None)
@@ -297,10 +264,7 @@ def analyze_btst_prepared_breakout_cohort(
         recommendation = f"{next_candidate['ticker']} is the strongest non-anchor peer; validate false-positive risk before broadening the selected-relief lane."
     elif next_candidate.get("verdict") == "soft_selected_relief_peer":
         verdict = "soft_selected_relief_peer_found"
-        recommendation = (
-            f"{next_candidate['ticker']} is the strongest conservative second-anchor candidate so far; "
-            "keep it ahead of frontier names, but require more replay stability before broadening the uplift."
-        )
+        recommendation = f"{next_candidate['ticker']} is the strongest conservative second-anchor candidate so far; " "keep it ahead of frontier names, but require more replay stability before broadening the uplift."
     elif next_candidate.get("verdict") == "prepared_breakout_selected_frontier":
         verdict = "selected_frontier_peer_found"
         recommendation = f"{next_candidate['ticker']} is the next prepared-breakout frontier to validate after 300505; its remaining selected gap is the tightest in the cohort."
@@ -355,22 +319,12 @@ def render_btst_prepared_breakout_cohort_markdown(analysis: dict[str, Any]) -> s
     if analysis.get("reference_anchor"):
         anchor = dict(analysis.get("reference_anchor") or {})
         lines.append("## Reference Anchor")
-        lines.append(
-            f"- {anchor.get('ticker')}: verdict={anchor.get('verdict')} decision_counts={anchor.get('decision_counts')} "
-            f"selected_relief_window_count={anchor.get('selected_relief_window_count')} "
-            f"selected_relief_alignment_rate={anchor.get('selected_relief_alignment_rate')} "
-            f"outcome_support={dict(anchor.get('outcome_support') or {}).get('evidence_status')}"
-        )
+        lines.append(f"- {anchor.get('ticker')}: verdict={anchor.get('verdict')} decision_counts={anchor.get('decision_counts')} " f"selected_relief_window_count={anchor.get('selected_relief_window_count')} " f"selected_relief_alignment_rate={anchor.get('selected_relief_alignment_rate')} " f"outcome_support={dict(anchor.get('outcome_support') or {}).get('evidence_status')}")
         lines.append("")
     lines.append("## Next Candidate")
     next_candidate = dict(analysis.get("next_candidate") or {})
     if next_candidate:
-        lines.append(
-            f"- {next_candidate.get('ticker')}: verdict={next_candidate.get('verdict')} "
-            f"decision_counts={next_candidate.get('decision_counts')} "
-            f"required_score_uplift_to_selected_stats={next_candidate.get('required_score_uplift_to_selected_stats')} "
-            f"outcome_support={dict(next_candidate.get('outcome_support') or {}).get('evidence_status')}"
-        )
+        lines.append(f"- {next_candidate.get('ticker')}: verdict={next_candidate.get('verdict')} " f"decision_counts={next_candidate.get('decision_counts')} " f"required_score_uplift_to_selected_stats={next_candidate.get('required_score_uplift_to_selected_stats')} " f"outcome_support={dict(next_candidate.get('outcome_support') or {}).get('evidence_status')}")
     else:
         lines.append("- none")
     lines.append("")

@@ -129,11 +129,7 @@ def _build_ticker_timeline_board(ticker_timeline: dict[str, list[dict[str, Any]]
 
 def _build_recommendation(trace_status_split: Counter[str]) -> str:
     # Task 4: Always prioritize attachment repair if any of the three key statuses are present
-    if (
-        int(trace_status_split.get("missing_upstream_prior") or 0) > 0
-        or int(trace_status_split.get("latest_prior_missing") or 0) > 0
-        or int(trace_status_split.get("resolve_dropped_stronger_prior") or 0) > 0
-    ):
+    if int(trace_status_split.get("missing_upstream_prior") or 0) > 0 or int(trace_status_split.get("latest_prior_missing") or 0) > 0 or int(trace_status_split.get("resolve_dropped_stronger_prior") or 0) > 0:
         return "Prioritize attachment repair before any label-generation audit."
     if int(trace_status_split.get("resolved_but_low_sample") or 0) > 0:
         return "Prioritize weak-prior fallback analysis before any new rollout change."
@@ -172,11 +168,7 @@ def analyze_btst_upstream_shadow_unknown_prior_audit(reports_root: str | Path) -
             if _extract_btst_candidate(report_dir) is None:
                 rows_skipped_for_missing_report_inputs += 1
             continue
-        final_rows_by_key = {
-            (str(row.get("trade_date") or ""), str(row.get("ticker") or "")): dict(row)
-            for row in collect_short_trade_rows(report_dir)
-            if str(row.get("candidate_source") or "") == UPSTREAM_SHADOW_SOURCE
-        }
+        final_rows_by_key = {(str(row.get("trade_date") or ""), str(row.get("ticker") or "")): dict(row) for row in collect_short_trade_rows(report_dir) if str(row.get("candidate_source") or "") == UPSTREAM_SHADOW_SOURCE}
         for followup_row in followup_rows:
             key = (str(followup_row.get("trade_date") or ""), str(followup_row.get("ticker") or ""))
             final_row = final_rows_by_key.get(key)

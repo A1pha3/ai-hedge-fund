@@ -137,6 +137,7 @@ def _resolve_shared_reports_root() -> Path:
     # Fallback to local DEFAULT_REPORTS_ROOT
     return DEFAULT_REPORTS_ROOT
 
+
 def run_multi_window_validation(*, output_root: str | Path) -> dict[str, Any]:
     resolved_output_root = Path(output_root).expanduser().resolve()
     resolved_output_root.mkdir(parents=True, exist_ok=True)

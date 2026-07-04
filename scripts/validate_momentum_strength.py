@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """验证momentum_strength因子的IC，以及ic_optimized profile的改进效果。"""
+
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ except ModuleNotFoundError:
     from btst_data_utils import build_beijing_exchange_mask
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 
 # --- IC计算 ---
 def spearman_ic(x, y):
@@ -36,7 +38,7 @@ def compute_momentum_strength(prices):
     """
     if len(prices) < 22:  # 至少需要1个月数据
         return np.nan
-    close = prices['close'].values
+    close = prices["close"].values
     mom_1m = (close[-1] / close[-22] - 1) if len(close) >= 23 else 0
     mom_3m = (close[-1] / close[-66] - 1) if len(close) >= 67 else 0
     mom_6m = (close[-1] / close[-132] - 1) if len(close) >= 133 else 0
@@ -58,16 +60,17 @@ def compute_momentum_strength(prices):
 
 def main():
     import tushare as ts
-    ts.set_token(os.getenv('TUSHARE_TOKEN'))
+
+    ts.set_token(os.getenv("TUSHARE_TOKEN"))
     pro = ts.pro_api()
 
     # 获取测试日期范围: 最近20个交易日 (排除最后1天无次日数据)
-    end_date = '20260414'
-    start_date = '20260220'
-    cal = pro.trade_cal(exchange='SSE', start_date=start_date, end_date=end_date, is_open='1')
-    all_trade_dates = sorted(cal['cal_date'].tolist())
+    end_date = "20260414"
+    start_date = "20260220"
+    cal = pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_date, is_open="1")
+    all_trade_dates = sorted(cal["cal_date"].tolist())
     # 取测试日期范围
-    test_dates = [d for d in all_trade_dates if d <= '20260410']  # 最后一天必须有次日数据
+    test_dates = [d for d in all_trade_dates if d <= "20260410"]  # 最后一天必须有次日数据
     test_dates = test_dates[-20:]
 
     # 构建交易日映射: test_date -> next_trade_date
@@ -77,10 +80,10 @@ def main():
             next_date_map[d] = all_trade_dates[i + 1]
 
     print(f"测试日期范围: {test_dates[0]} ~ {test_dates[-1]} ({len(test_dates)}个交易日)")
-    print("="*70)
+    print("=" * 70)
 
     # 获取股票池
-    sb = pro.stock_basic(exchange='', list_status='L', fields='ts_code,name')
+    sb = pro.stock_basic(exchange="", list_status="L", fields="ts_code,name")
 
     all_results = []
 
@@ -99,29 +102,29 @@ def main():
             continue
 
         # 基本过滤
-        df = df.merge(sb, on='ts_code', how='left')
-        df = df[df['amount'] >= 100000]  # 千元，约10万元
-        df = df[~df['name'].str.contains('ST|退', na=False)]
-        df = df[~build_beijing_exchange_mask(df['ts_code'])]
-        df = df[df['pct_chg'].between(-9.5, 9.5)]
+        df = df.merge(sb, on="ts_code", how="left")
+        df = df[df["amount"] >= 100000]  # 千元，约10万元
+        df = df[~df["name"].str.contains("ST|退", na=False)]
+        df = df[~build_beijing_exchange_mask(df["ts_code"])]
+        df = df[df["pct_chg"].between(-9.5, 9.5)]
 
         if len(df) < 100:
             continue
 
         # 获取次日收益
         try:
-            dfn = pro.daily(trade_date=next_date)[['ts_code', 'pct_chg']].rename(columns={'pct_chg': 'next_ret'})
+            dfn = pro.daily(trade_date=next_date)[["ts_code", "pct_chg"]].rename(columns={"pct_chg": "next_ret"})
         except Exception:
             continue
-        df = df.merge(dfn, on='ts_code')
+        df = df.merge(dfn, on="ts_code")
 
         # 获取历史价格计算动量
-        codes = df['ts_code'].tolist()
+        codes = df["ts_code"].tolist()
         history = []
         for i in range(0, len(codes), 80):
-            batch = codes[i:i+80]
+            batch = codes[i : i + 80]
             try:
-                h = pro.daily(ts_code=','.join(batch), start_date='20250601', end_date=test_date)
+                h = pro.daily(ts_code=",".join(batch), start_date="20250601", end_date=test_date)
                 if h is not None and not h.empty:
                     history.append(h)
             except Exception:
@@ -131,64 +134,64 @@ def main():
             continue
 
         hist = pd.concat(history, ignore_index=True)
-        hist['trade_date'] = pd.to_datetime(hist['trade_date'], format='%Y%m%d')
-        hist = hist.sort_values(['ts_code', 'trade_date'])
+        hist["trade_date"] = pd.to_datetime(hist["trade_date"], format="%Y%m%d")
+        hist = hist.sort_values(["ts_code", "trade_date"])
 
         # 计算momentum_strength
         mom_data = []
-        for code, g in hist.groupby('ts_code'):
+        for code, g in hist.groupby("ts_code"):
             if len(g) < 22:
                 continue
-            g.set_index('trade_date')['close'].sort_index()
-            ms = compute_momentum_strength(g.sort_values('trade_date'))
+            g.set_index("trade_date")["close"].sort_index()
+            ms = compute_momentum_strength(g.sort_values("trade_date"))
             if np.isnan(ms):
                 continue
-            mom_data.append({'ts_code': code, 'momentum_strength': ms})
+            mom_data.append({"ts_code": code, "momentum_strength": ms})
 
         if not mom_data:
             continue
 
         mom_df = pd.DataFrame(mom_data)
-        result = df[['ts_code', 'pct_chg', 'next_ret', 'close', 'open']].merge(mom_df, on='ts_code', how='inner')
-        result['is_bull'] = result['close'] > result['open']
+        result = df[["ts_code", "pct_chg", "next_ret", "close", "open"]].merge(mom_df, on="ts_code", how="inner")
+        result["is_bull"] = result["close"] > result["open"]
 
         if len(result) < 50:
             continue
 
         # 计算IC
-        ic_val = spearman_ic(result['momentum_strength'].values, result['next_ret'].values)
+        ic_val = spearman_ic(result["momentum_strength"].values, result["next_ret"].values)
         if np.isnan(ic_val):
             continue
 
         # 分桶分析
-        n_bins = min(5, result['momentum_strength'].nunique())
+        n_bins = min(5, result["momentum_strength"].nunique())
         if n_bins < 2:
             continue
-        result['mom_q'] = pd.qcut(result['momentum_strength'], n_bins, labels=False, duplicates='drop')
-        bucket_stats = result.groupby('mom_q').agg(
-            count=('next_ret', 'count'),
-            win_rate=('next_ret', lambda x: (x > 0).mean()),
-            avg_ret=('next_ret', 'mean'),
-            big_win=('next_ret', lambda x: (x > 3).mean()),
+        result["mom_q"] = pd.qcut(result["momentum_strength"], n_bins, labels=False, duplicates="drop")
+        bucket_stats = result.groupby("mom_q").agg(
+            count=("next_ret", "count"),
+            win_rate=("next_ret", lambda x: (x > 0).mean()),
+            avg_ret=("next_ret", "mean"),
+            big_win=("next_ret", lambda x: (x > 3).mean()),
         )
 
         q_lo = bucket_stats.index.min()
         q_hi = bucket_stats.index.max()
-        all_results.append({
-            'date': test_date,
-            'next_date': next_date,
-            'n_stocks': len(result),
-            'ic': ic_val,
-            'q5_win': bucket_stats.loc[q_hi, 'win_rate'],
-            'q1_win': bucket_stats.loc[q_lo, 'win_rate'],
-            'q5_avg': bucket_stats.loc[q_hi, 'avg_ret'],
-            'q1_avg': bucket_stats.loc[q_lo, 'avg_ret'],
-        })
+        all_results.append(
+            {
+                "date": test_date,
+                "next_date": next_date,
+                "n_stocks": len(result),
+                "ic": ic_val,
+                "q5_win": bucket_stats.loc[q_hi, "win_rate"],
+                "q1_win": bucket_stats.loc[q_lo, "win_rate"],
+                "q5_avg": bucket_stats.loc[q_hi, "avg_ret"],
+                "q1_avg": bucket_stats.loc[q_lo, "avg_ret"],
+            }
+        )
 
         print(f"[{di+1}/{len(test_dates)}] {test_date}→{next_date}: N={len(result)}, IC={ic_val:+.4f}")
-        print(f"  Q_lo(win={bucket_stats.loc[q_lo,'win_rate']:.0%}, avg={bucket_stats.loc[q_lo,'avg_ret']:+.2f}%) "
-              f"Q_hi(win={bucket_stats.loc[q_hi,'win_rate']:.0%}, avg={bucket_stats.loc[q_hi,'avg_ret']:+.2f}%) "
-              f"Q_hi-Q_lo avg={bucket_stats.loc[q_hi,'avg_ret']-bucket_stats.loc[q_lo,'avg_ret']:+.2f}%")
+        print(f"  Q_lo(win={bucket_stats.loc[q_lo,'win_rate']:.0%}, avg={bucket_stats.loc[q_lo,'avg_ret']:+.2f}%) " f"Q_hi(win={bucket_stats.loc[q_hi,'win_rate']:.0%}, avg={bucket_stats.loc[q_hi,'avg_ret']:+.2f}%) " f"Q_hi-Q_lo avg={bucket_stats.loc[q_hi,'avg_ret']-bucket_stats.loc[q_lo,'avg_ret']:+.2f}%")
 
     if not all_results:
         print("无有效数据")
@@ -211,23 +214,28 @@ def main():
     # 保存结果
     out_path = Path(__file__).resolve().parent.parent / "data" / "reports" / "momentum_strength_validation.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, 'w') as f:
-        json.dump({
-            'summary': {
-                'mean_ic': round(summary['ic'].mean(), 4),
-                'ic_std': round(summary['ic'].std(), 4),
-                'icir': round(summary['ic'].mean()/summary['ic'].std(), 2) if summary['ic'].std() > 0 else 0,
-                'ic_positive_rate': round(float((summary['ic'] > 0).mean()), 4),
-                'q5_avg_win_rate': round(float(summary['q5_win'].mean()), 4),
-                'q1_avg_win_rate': round(float(summary['q1_win'].mean()), 4),
-                'q5_avg_return': round(float(summary['q5_avg'].mean()), 4),
-                'q1_avg_return': round(float(summary['q1_avg'].mean()), 4),
-                'n_test_dates': len(summary),
+    with open(out_path, "w") as f:
+        json.dump(
+            {
+                "summary": {
+                    "mean_ic": round(summary["ic"].mean(), 4),
+                    "ic_std": round(summary["ic"].std(), 4),
+                    "icir": round(summary["ic"].mean() / summary["ic"].std(), 2) if summary["ic"].std() > 0 else 0,
+                    "ic_positive_rate": round(float((summary["ic"] > 0).mean()), 4),
+                    "q5_avg_win_rate": round(float(summary["q5_win"].mean()), 4),
+                    "q1_avg_win_rate": round(float(summary["q1_win"].mean()), 4),
+                    "q5_avg_return": round(float(summary["q5_avg"].mean()), 4),
+                    "q1_avg_return": round(float(summary["q1_avg"].mean()), 4),
+                    "n_test_dates": len(summary),
+                },
+                "daily_results": all_results,
             },
-            'daily_results': all_results,
-        }, f, indent=2, ensure_ascii=False)
+            f,
+            indent=2,
+            ensure_ascii=False,
+        )
     print(f"\n结果已保存到 {out_path}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

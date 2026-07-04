@@ -38,11 +38,7 @@ def _round(value: float) -> float:
 
 
 def _adjustment_cost(*, default_thresholds: dict[str, float], near_miss_threshold: float, stale_weight: float, extension_weight: float) -> float:
-    return _round(
-        max(0.0, default_thresholds["near_miss_threshold"] - near_miss_threshold)
-        + max(0.0, default_thresholds["stale_score_penalty_weight"] - stale_weight)
-        + max(0.0, default_thresholds["extension_score_penalty_weight"] - extension_weight)
-    )
+    return _round(max(0.0, default_thresholds["near_miss_threshold"] - near_miss_threshold) + max(0.0, default_thresholds["stale_score_penalty_weight"] - stale_weight) + max(0.0, default_thresholds["extension_score_penalty_weight"] - extension_weight))
 
 
 def render_short_trade_boundary_score_failure_frontier_markdown(analysis: dict[str, Any]) -> str:
@@ -58,9 +54,7 @@ def render_short_trade_boundary_score_failure_frontier_markdown(analysis: dict[s
     lines.append("")
     lines.append("## Minimal Rescue Rows")
     for row in analysis["minimal_near_miss_rows"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: baseline_score={row['baseline_score_target']}, replayed_score={row['replayed_score_target']}, near_miss_threshold={row['near_miss_threshold']}, stale_weight={row['stale_weight']}, extension_weight={row['extension_weight']}, adjustment_cost={row['adjustment_cost']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: baseline_score={row['baseline_score_target']}, replayed_score={row['replayed_score_target']}, near_miss_threshold={row['near_miss_threshold']}, stale_weight={row['stale_weight']}, extension_weight={row['extension_weight']}, adjustment_cost={row['adjustment_cost']}")
     lines.append("")
     lines.append("## Recommendation")
     lines.append(f"- {analysis['recommendation']}")
@@ -136,17 +130,10 @@ def analyze_short_trade_boundary_score_failures_frontier(
         "cost<=0.12": sum(1 for row in minimal_rows if row["adjustment_cost"] <= 0.12),
         "cost>0.12": sum(1 for row in minimal_rows if row["adjustment_cost"] > 0.12),
     }
-    rescueable_with_threshold_only_count = sum(
-        1
-        for row in minimal_rows
-        if row["stale_weight"] == DEFAULT_STALE_WEIGHT and row["extension_weight"] == DEFAULT_EXTENSION_WEIGHT
-    )
+    rescueable_with_threshold_only_count = sum(1 for row in minimal_rows if row["stale_weight"] == DEFAULT_STALE_WEIGHT and row["extension_weight"] == DEFAULT_EXTENSION_WEIGHT)
 
     if minimal_rows:
-        recommendation = (
-            f"当前 rejected short_trade_boundary 样本里共有 {len(minimal_rows)}/{len(rows)} 个在扫描空间内存在 near_miss rescue row。"
-            f" 其中仅 {rescueable_with_threshold_only_count} 个可以只靠 near_miss threshold 放松获得释放；其余可救样本需要 stale/extension penalty 联动下调，因此后续实验应优先做 score frontier，而不是继续放 admission floor。"
-        )
+        recommendation = f"当前 rejected short_trade_boundary 样本里共有 {len(minimal_rows)}/{len(rows)} 个在扫描空间内存在 near_miss rescue row。" f" 其中仅 {rescueable_with_threshold_only_count} 个可以只靠 near_miss threshold 放松获得释放；其余可救样本需要 stale/extension penalty 联动下调，因此后续实验应优先做 score frontier，而不是继续放 admission floor。"
     else:
         recommendation = "当前 rejected short_trade_boundary 样本在给定 threshold/penalty 扫描空间内没有 near_miss rescue row，应优先回到更上游的 score construction 审查。"
 

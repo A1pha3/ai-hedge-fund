@@ -154,10 +154,7 @@ def analyze_btst_top3_post_execution_action_board(
     recurring_close_ticker = str(recurring_close.get("ticker") or "")
     recurring_intraday_ticker = str(recurring_intraday.get("ticker") or "")
     if recurring_close_ticker and recurring_intraday_ticker:
-        recommendation = (
-            f"{recommendation} 同时，300383 之后的影子扩展不再复制 threshold-only 规则，而应把 {recurring_close_ticker} 固定为 recurring close-candidate，"
-            f"把 {recurring_intraday_ticker} 固定为 intraday control；300724 继续 structural shadow hold，不做 cluster-wide 放松。"
-        )
+        recommendation = f"{recommendation} 同时，300383 之后的影子扩展不再复制 threshold-only 规则，而应把 {recurring_close_ticker} 固定为 recurring close-candidate，" f"把 {recurring_intraday_ticker} 固定为 intraday control；300724 继续 structural shadow hold，不做 cluster-wide 放松。"
     return {
         "generated_on": execution_summary.get("generated_on"),
         "source_reports": {
@@ -185,9 +182,7 @@ def render_btst_top3_post_execution_action_board_markdown(analysis: dict[str, An
     lines.append("")
     lines.append("## Board")
     for row in analysis["board_rows"]:
-        lines.append(
-            f"- rank={row['priority_rank']} ticker={row['ticker']} action_tier={row['action_tier']} execution_verdict={row['execution_verdict']} readiness_tier={row['readiness_tier']} scoreboard_rank={row['scoreboard_rank']} next_high_return_mean={row['next_high_return_mean']} next_close_return_mean={row['next_close_return_mean']}"
-        )
+        lines.append(f"- rank={row['priority_rank']} ticker={row['ticker']} action_tier={row['action_tier']} execution_verdict={row['execution_verdict']} readiness_tier={row['readiness_tier']} scoreboard_rank={row['scoreboard_rank']} next_high_return_mean={row['next_high_return_mean']} next_close_return_mean={row['next_close_return_mean']}")
         lines.append(f"  action_summary: {row['action_summary']}")
         lines.append(f"  next_step: {row['next_step']}")
     lines.append("")

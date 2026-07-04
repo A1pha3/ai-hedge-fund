@@ -38,11 +38,7 @@ def _surface_metric(summary: dict[str, Any], key: str) -> float:
 
 
 def _is_seed_eligible(row: dict[str, Any]) -> bool:
-    return (
-        str(row.get("recent_tier_verdict") or "") in {"recent_tier_confirmed", "recent_tier_mixed", "recent_tier_thin"}
-        and (row.get("next_close_positive_rate") is None or float(row.get("next_close_positive_rate")) > 0.0)
-        and (row.get("t_plus_2_close_return_mean") is None or float(row.get("t_plus_2_close_return_mean")) > 0.0)
-    )
+    return str(row.get("recent_tier_verdict") or "") in {"recent_tier_confirmed", "recent_tier_mixed", "recent_tier_thin"} and (row.get("next_close_positive_rate") is None or float(row.get("next_close_positive_rate")) > 0.0) and (row.get("t_plus_2_close_return_mean") is None or float(row.get("t_plus_2_close_return_mean")) > 0.0)
 
 
 def _is_strong_thin_near_cluster_seed(row: dict[str, Any]) -> bool:
@@ -62,11 +58,7 @@ def _build_next_validation_candidates(board_rows: list[dict[str, Any]]) -> list[
 
     if NEXT_VALIDATION_CANDIDATE_LIMIT >= 3:
         thin_seed = next(
-            (
-                row
-                for row in eligible_rows
-                if str(row.get("ticker") or "") not in seeded_tickers and _is_strong_thin_near_cluster_seed(row)
-            ),
+            (row for row in eligible_rows if str(row.get("ticker") or "") not in seeded_tickers and _is_strong_thin_near_cluster_seed(row)),
             None,
         )
         if thin_seed is not None:
@@ -128,10 +120,7 @@ def _build_governance_followup_rows(upstream_handoff_board: dict[str, Any]) -> l
                 "next_close_positive_rate": None,
                 "t_plus_2_close_positive_rate": None,
                 "t_plus_2_close_return_mean": None,
-                "next_step": (
-                    f"Prioritize immediate continuation validation for {row.get('ticker')} from post-recall followup; "
-                    "keep it outside the default BTST lane until continuation review confirms payoff."
-                ),
+                "next_step": (f"Prioritize immediate continuation validation for {row.get('ticker')} from post-recall followup; " "keep it outside the default BTST lane until continuation review confirms payoff."),
                 "governance_source_lane": row.get("downstream_followup_lane"),
                 "governance_status": row.get("downstream_followup_status"),
                 "governance_blocker": row.get("downstream_followup_blocker"),
@@ -179,13 +168,7 @@ def generate_btst_tplus2_continuation_expansion_board(
                     "next_close_positive_rate": surface.get("next_close_positive_rate"),
                     "t_plus_2_close_positive_rate": surface.get("t_plus_2_close_positive_rate"),
                     "t_plus_2_close_return_mean": dict(surface.get("t_plus_2_close_return_distribution") or {}).get("mean"),
-                    "next_step": (
-                        "Promote into the dedicated continuation observation lane immediately."
-                        if tier_key == "strict_peer"
-                        else "Track as the first expansion candidate and wait for another confirming window."
-                        if tier_key == "near_cluster_peer"
-                        else "Keep outside the tradeable surface and use only as a loose observation candidate."
-                    ),
+                    "next_step": ("Promote into the dedicated continuation observation lane immediately." if tier_key == "strict_peer" else "Track as the first expansion candidate and wait for another confirming window." if tier_key == "near_cluster_peer" else "Keep outside the tradeable surface and use only as a loose observation candidate."),
                 }
             )
 
@@ -244,11 +227,7 @@ def generate_btst_tplus2_continuation_expansion_board(
 
     if board_rows:
         leader = board_rows[0]
-        recommendation = (
-            f"Current top continuation expansion candidate is {leader['ticker']} in tier={leader['tier']}. "
-            f"Recent tier verdict={leader.get('recent_tier_verdict')} ({leader.get('recent_tier_window_count')}/{leader.get('recent_window_count')}). "
-            "Do not widen default BTST; route follow-up through the isolated continuation lane only."
-        )
+        recommendation = f"Current top continuation expansion candidate is {leader['ticker']} in tier={leader['tier']}. " f"Recent tier verdict={leader.get('recent_tier_verdict')} ({leader.get('recent_tier_window_count')}/{leader.get('recent_window_count')}). " "Do not widen default BTST; route follow-up through the isolated continuation lane only."
     else:
         recommendation = "No continuation expansion candidates are available yet; keep the lane as a single-ticker observation path."
 
@@ -290,21 +269,14 @@ def render_btst_tplus2_continuation_expansion_board_markdown(analysis: dict[str,
             f"t_plus_2_close_positive_rate={row['t_plus_2_close_positive_rate']}"
         )
         if row.get("governance_status"):
-            lines.append(
-                f"  governance: source_lane={row.get('governance_source_lane')} status={row.get('governance_status')} blocker={row.get('governance_blocker')}"
-            )
+            lines.append(f"  governance: source_lane={row.get('governance_source_lane')} status={row.get('governance_status')} blocker={row.get('governance_blocker')}")
         lines.append(f"  next_step: {row['next_step']}")
     if not list(analysis.get("board_rows") or []):
         lines.append("- none")
     lines.append("")
     lines.append("## Next Validation Candidates")
     for row in list(analysis.get("next_validation_candidates") or []):
-        lines.append(
-            f"- rank={row['priority_rank']} ticker={row['ticker']} tier={row['tier']} "
-            f"recent_tier_verdict={row['recent_tier_verdict']} "
-            f"recent_tier_window_count={row['recent_tier_window_count']}/{row['recent_window_count']} "
-            f"recent_tier_ratio={row['recent_tier_ratio']}"
-        )
+        lines.append(f"- rank={row['priority_rank']} ticker={row['ticker']} tier={row['tier']} " f"recent_tier_verdict={row['recent_tier_verdict']} " f"recent_tier_window_count={row['recent_tier_window_count']}/{row['recent_window_count']} " f"recent_tier_ratio={row['recent_tier_ratio']}")
     if not list(analysis.get("next_validation_candidates") or []):
         lines.append("- none")
     lines.append("")

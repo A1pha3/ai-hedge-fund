@@ -84,10 +84,7 @@ def _collect_legacy_matches(filename: str, content: str, processed_tickers: set[
 
         print(f"警告: 报告 {filename} 中 {ticker} 详情缺失，正在尝试使用 Tushare 补充...")
         details = _fetch_details_with_retry(ticker)
-        entry = (
-            f"| {ticker} | {details.get('name', name)} | {details.get('pct_chg', 'N/A')} | {details.get('pre_close', 'N/A')} | {details.get('close', 'N/A')} | "
-            f"{details.get('area', 'N/A')} | {details.get('industry', 'N/A')} | {details.get('market', 'N/A')} | {details.get('list_date', 'N/A')} | **{action}** | {confidence} |"
-        )
+        entry = f"| {ticker} | {details.get('name', name)} | {details.get('pct_chg', 'N/A')} | {details.get('pre_close', 'N/A')} | {details.get('close', 'N/A')} | " f"{details.get('area', 'N/A')} | {details.get('industry', 'N/A')} | {details.get('market', 'N/A')} | {details.get('list_date', 'N/A')} | **{action}** | {confidence} |"
         _append_entry(action, entry, ticker, buy_list, hold_list, short_list, ticker_category)
         time.sleep(0.3)
 

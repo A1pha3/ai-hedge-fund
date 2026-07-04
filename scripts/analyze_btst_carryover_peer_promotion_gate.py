@@ -202,9 +202,7 @@ def _build_peer_promotion_gate_analysis(
         recommendation_parts.append(f"当前最关键的是等待 {pending_next_day_tickers} 的 next-day 闭环。")
     elif focus.get("ticker"):
         recommendation_parts.append(f"当前 promotion gate focus 是 {focus.get('ticker')}，gate_verdict={focus.get('gate_verdict')}。")
-    recommendation_parts.append(
-        f"formal selected {selected_focus.get('ticker') or proof_board.get('selected_ticker')} 当前 contract={selected_contract_verdict or 'pending_next_day'}。"
-    )
+    recommendation_parts.append(f"formal selected {selected_focus.get('ticker') or proof_board.get('selected_ticker')} 当前 contract={selected_contract_verdict or 'pending_next_day'}。")
     return {
         "selected_ticker": selected_focus.get("ticker") or proof_board.get("selected_ticker"),
         "selected_trade_date": selected_focus.get("trade_date") or proof_board.get("selected_trade_date"),
@@ -247,9 +245,7 @@ def render_btst_carryover_peer_promotion_gate_markdown(analysis: dict[str, Any])
     lines.append("")
     lines.append("## Entries")
     for entry in list(analysis.get("entries") or []):
-        lines.append(
-            f"- {entry.get('ticker')}: gate_verdict={entry.get('gate_verdict')}, proof_verdict={entry.get('proof_verdict')}, promotion_review_verdict={entry.get('promotion_review_verdict')}, gate_blockers={entry.get('gate_blockers')}"
-        )
+        lines.append(f"- {entry.get('ticker')}: gate_verdict={entry.get('gate_verdict')}, proof_verdict={entry.get('proof_verdict')}, promotion_review_verdict={entry.get('promotion_review_verdict')}, gate_blockers={entry.get('gate_blockers')}")
         lines.append(f"  recommendation: {entry.get('recommendation')}")
     if not list(analysis.get("entries") or []):
         lines.append("- none")

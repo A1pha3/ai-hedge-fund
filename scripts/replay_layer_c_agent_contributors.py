@@ -270,11 +270,7 @@ def _process_trade_date_targets(
 def _print_comparison_rows(comparison_rows: list[dict]) -> None:
     for row in comparison_rows:
         replay = row["replay"]
-        print(
-            f"{row['trade_date']} {row['variant']} {row['ticker']} "
-            f"logged_score_c={row['logged']['score_c']:.4f} replay_score_c={replay['score_c']:.4f} "
-            f"logged_conflict={row['logged']['bc_conflict']} replay_conflict={replay['bc_conflict']}"
-        )
+        print(f"{row['trade_date']} {row['variant']} {row['ticker']} " f"logged_score_c={row['logged']['score_c']:.4f} replay_score_c={replay['score_c']:.4f} " f"logged_conflict={row['logged']['bc_conflict']} replay_conflict={replay['bc_conflict']}")
         print(f"  top_negative_agents={replay['agent_contribution_summary']['top_negative_agents']}")
 
 

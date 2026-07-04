@@ -83,11 +83,7 @@ def _build_adopted_eligible_row(context: dict[str, Any], execution_verdict: str)
             "recent_supporting_window_count": adopted_watch_row.get("recent_supporting_window_count"),
             "recent_window_count": adopted_watch_row.get("recent_window_count"),
             "recent_support_ratio": adopted_watch_row.get("recent_support_ratio"),
-            "next_step": (
-                "Keep this ticker in the effective eligible continuation set because merge-approved daily-pipeline uplift is already active."
-                if merge_review_ready
-                else "Treat this as an effective eligible continuation name while keeping capital_mode=paper_only until broader lane governance changes."
-            ),
+            "next_step": ("Keep this ticker in the effective eligible continuation set because merge-approved daily-pipeline uplift is already active." if merge_review_ready else "Treat this as an effective eligible continuation name while keeping capital_mode=paper_only until broader lane governance changes."),
             "t_plus_2_close_positive_rate": adopted_watch_row.get("t_plus_2_close_positive_rate"),
             "t_plus_2_close_return_mean": adopted_watch_row.get("t_plus_2_close_return_mean"),
             "next_close_positive_rate": adopted_watch_row.get("next_close_positive_rate"),
@@ -99,9 +95,7 @@ def _build_eligible_execution_recommendation(context: dict[str, Any], execution_
     focus_ticker = context["focus_ticker"]
     merge_review_ready = context["merge_review_ready"]
     if execution_verdict == "eligible_extension_applied" and merge_review_ready:
-        return (
-            f"Keep {focus_ticker} in the effective eligible continuation set because merge-approved daily-pipeline uplift is already active; leave the base rulepack unchanged while governance finishes the merge review."
-        )
+        return f"Keep {focus_ticker} in the effective eligible continuation set because merge-approved daily-pipeline uplift is already active; leave the base rulepack unchanged while governance finishes the merge review."
     if execution_verdict == "eligible_extension_applied":
         return f"Treat {focus_ticker} as an effective eligible continuation ticker while keeping the base rulepack unchanged."
     if execution_verdict == "eligible_extension_already_applied":

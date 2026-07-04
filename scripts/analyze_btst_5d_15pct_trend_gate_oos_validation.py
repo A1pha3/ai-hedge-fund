@@ -104,12 +104,7 @@ def _meets_thresholds(
     target_mean_return: float,
     min_beta_tradeable_rate: float,
 ) -> bool:
-    return (
-        int(summary.get("closed_cycle_count") or 0) >= min_closed_cycle_count
-        and float(summary.get("hit_rate_15pct") or 0.0) >= target_hit_rate
-        and float(summary.get("mean_max_future_high_return_2_5d") or 0.0) >= target_mean_return
-        and float(summary.get("beta_tradeable_rate") or 0.0) >= min_beta_tradeable_rate
-    )
+    return int(summary.get("closed_cycle_count") or 0) >= min_closed_cycle_count and float(summary.get("hit_rate_15pct") or 0.0) >= target_hit_rate and float(summary.get("mean_max_future_high_return_2_5d") or 0.0) >= target_mean_return and float(summary.get("beta_tradeable_rate") or 0.0) >= min_beta_tradeable_rate
 
 
 def _monthly_board(
@@ -242,12 +237,8 @@ def analyze_btst_5d_15pct_trend_gate_oos_validation(
     candidate_summary.update(
         {
             "gate_id": gate_id,
-            "hit_rate_uplift_vs_base_unique": _round_or_none(float(candidate_summary.get("hit_rate_15pct") or 0.0) - float(base_summary.get("hit_rate_15pct") or 0.0))
-            if candidate_summary.get("hit_rate_15pct") is not None and base_summary.get("hit_rate_15pct") is not None
-            else None,
-            "mean_return_uplift_vs_base_unique": _round_or_none(float(candidate_summary.get("mean_max_future_high_return_2_5d") or 0.0) - float(base_summary.get("mean_max_future_high_return_2_5d") or 0.0))
-            if candidate_summary.get("mean_max_future_high_return_2_5d") is not None and base_summary.get("mean_max_future_high_return_2_5d") is not None
-            else None,
+            "hit_rate_uplift_vs_base_unique": _round_or_none(float(candidate_summary.get("hit_rate_15pct") or 0.0) - float(base_summary.get("hit_rate_15pct") or 0.0)) if candidate_summary.get("hit_rate_15pct") is not None and base_summary.get("hit_rate_15pct") is not None else None,
+            "mean_return_uplift_vs_base_unique": _round_or_none(float(candidate_summary.get("mean_max_future_high_return_2_5d") or 0.0) - float(base_summary.get("mean_max_future_high_return_2_5d") or 0.0)) if candidate_summary.get("mean_max_future_high_return_2_5d") is not None and base_summary.get("mean_max_future_high_return_2_5d") is not None else None,
         }
     )
     monthly = _monthly_board(
@@ -323,20 +314,12 @@ def render_btst_5d_15pct_trend_gate_oos_validation_markdown(validation: dict[str
     lines.append("")
     lines.append("## Monthly Board")
     for row in list(validation.get("monthly_board") or []):
-        lines.append(
-            f"- {row.get('month')}: closed={row.get('closed_cycle_count')}, hit_rate_15pct={row.get('hit_rate_15pct')}, "
-            f"mean_max_return={row.get('mean_max_future_high_return_2_5d')}, beta_tradeable_rate={row.get('beta_tradeable_rate')}, "
-            f"pass_oos_threshold={row.get('pass_oos_threshold')}"
-        )
+        lines.append(f"- {row.get('month')}: closed={row.get('closed_cycle_count')}, hit_rate_15pct={row.get('hit_rate_15pct')}, " f"mean_max_return={row.get('mean_max_future_high_return_2_5d')}, beta_tradeable_rate={row.get('beta_tradeable_rate')}, " f"pass_oos_threshold={row.get('pass_oos_threshold')}")
     lines.append("")
     lines.append("## Rolling Splits")
     for row in list(validation.get("rolling_splits") or []):
         test_summary = dict(row.get("test_summary") or {})
-        lines.append(
-            f"- train={','.join(list(row.get('train_months') or []))} -> test={row.get('test_month')}: "
-            f"test_closed={test_summary.get('closed_cycle_count')}, test_hit_rate_15pct={test_summary.get('hit_rate_15pct')}, "
-            f"test_pass={test_summary.get('pass_oos_threshold')}"
-        )
+        lines.append(f"- train={','.join(list(row.get('train_months') or []))} -> test={row.get('test_month')}: " f"test_closed={test_summary.get('closed_cycle_count')}, test_hit_rate_15pct={test_summary.get('hit_rate_15pct')}, " f"test_pass={test_summary.get('pass_oos_threshold')}")
     lines.append("")
     return "\n".join(lines)
 

@@ -83,9 +83,7 @@ def render_targeted_short_trade_boundary_release_markdown(analysis: dict[str, An
     lines.append("")
     lines.append("## Changed Cases")
     for row in analysis["changed_cases"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, before_score={row['before_score_target']}, after_score={row['after_score_target']}, target_case={row['is_target_case']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, before_score={row['before_score_target']}, after_score={row['after_score_target']}, target_case={row['is_target_case']}")
     if not analysis["changed_cases"]:
         lines.append("- none")
     lines.append("")
@@ -157,10 +155,7 @@ def analyze_targeted_short_trade_boundary_release(
         promoted_rows = [row for row in target_changed_cases if row["after_decision"] in {"near_miss", "selected"}]
         if promoted_rows:
             first = promoted_rows[0]
-            recommendation = (
-                f"当前定向 release 只改变目标样本。{first['trade_date']} / {first['ticker']} 从 rejected -> {first['after_decision']}，"
-                "可作为低污染的 case-based short_trade_boundary rescue 实验。"
-            )
+            recommendation = f"当前定向 release 只改变目标样本。{first['trade_date']} / {first['ticker']} 从 rejected -> {first['after_decision']}，" "可作为低污染的 case-based short_trade_boundary rescue 实验。"
         else:
             recommendation = "目标样本分数变化了，但还没有进入 near_miss/selected，当前 release 参数不够强。"
     elif changed_non_target_case_count > 0:

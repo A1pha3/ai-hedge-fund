@@ -55,12 +55,7 @@ def _adjustment_cost(
     stale_weight: float,
     extension_weight: float,
 ) -> float:
-    return _round(
-        max(0.0, default_near_miss_threshold - near_miss_threshold)
-        + max(0.0, default_layer_c_avoid_penalty - layer_c_avoid_penalty)
-        + max(0.0, default_stale_weight - stale_weight)
-        + max(0.0, default_extension_weight - extension_weight)
-    )
+    return _round(max(0.0, default_near_miss_threshold - near_miss_threshold) + max(0.0, default_layer_c_avoid_penalty - layer_c_avoid_penalty) + max(0.0, default_stale_weight - stale_weight) + max(0.0, default_extension_weight - extension_weight))
 
 
 def _variant_family(
@@ -75,11 +70,7 @@ def _variant_family(
     extension_weight: float,
 ) -> str:
     threshold_relief = _round(near_miss_threshold) < _round(default_near_miss_threshold)
-    penalty_relief = (
-        _round(layer_c_avoid_penalty) < _round(default_layer_c_avoid_penalty)
-        or _round(stale_weight) < _round(default_stale_weight)
-        or _round(extension_weight) < _round(default_extension_weight)
-    )
+    penalty_relief = _round(layer_c_avoid_penalty) < _round(default_layer_c_avoid_penalty) or _round(stale_weight) < _round(default_stale_weight) or _round(extension_weight) < _round(default_extension_weight)
     if threshold_relief and not penalty_relief:
         return "threshold_only"
     if penalty_relief:
@@ -94,12 +85,7 @@ def _build_variant_name(
     stale_weight: float,
     extension_weight: float,
 ) -> str:
-    return (
-        f"nm_{_round(near_miss_threshold):.2f}"
-        f"__avoid_{_round(layer_c_avoid_penalty):.2f}"
-        f"__stale_{_round(stale_weight):.2f}"
-        f"__ext_{_round(extension_weight):.2f}"
-    )
+    return f"nm_{_round(near_miss_threshold):.2f}" f"__avoid_{_round(layer_c_avoid_penalty):.2f}" f"__stale_{_round(stale_weight):.2f}" f"__ext_{_round(extension_weight):.2f}"
 
 
 def _sort_variant_key(row: dict[str, Any]) -> tuple[Any, ...]:
@@ -143,28 +129,16 @@ def _build_recommendation(
     minimal_passing_variant: dict[str, Any] | None,
 ) -> str:
     if not passing_variants:
-        return (
-            "当前窗口在给定 near_miss/stale/extension 扫描空间内仍然没有形成通过 closed-tradeable guardrail 的 penalty frontier。"
-            " 这说明 stale/extension 放松暂时还不能作为 broad rollout 杠杆，后续仍应维持 300383 单票 shadow 与 recurring lane 的分层治理。"
-        )
+        return "当前窗口在给定 near_miss/stale/extension 扫描空间内仍然没有形成通过 closed-tradeable guardrail 的 penalty frontier。" " 这说明 stale/extension 放松暂时还不能作为 broad rollout 杠杆，后续仍应维持 300383 单票 shadow 与 recurring lane 的分层治理。"
 
     passing_family_counts = Counter(str(row.get("variant_family") or "unknown") for row in passing_variants)
     if minimal_passing_variant is None:
         return "当前 penalty frontier 已出现 passing variant，但仍缺少最小 passing row，请优先检查排序逻辑。"
     if passing_family_counts.get("threshold_only", 0) == len(passing_variants):
-        return (
-            f"当前所有通过 guardrail 的 release 仍停留在 threshold-only lane，最小 passing row 为 {minimal_passing_variant['variant_name']}。"
-            " 说明 broad penalty relief 不是当前窗口的必要条件，继续维持低污染单票 shadow 更稳妥。"
-        )
+        return f"当前所有通过 guardrail 的 release 仍停留在 threshold-only lane，最小 passing row 为 {minimal_passing_variant['variant_name']}。" " 说明 broad penalty relief 不是当前窗口的必要条件，继续维持低污染单票 shadow 更稳妥。"
     if passing_family_counts.get("threshold_only", 0) == 0:
-        return (
-            f"当前能通过 guardrail 的 row 全部属于 penalty-coupled lane，最小 passing row 为 {minimal_passing_variant['variant_name']}。"
-            " 说明若要继续释放当前窗口的 score frontier，必须接受 stale/extension 联动放松；但在新增独立窗口前，它仍只适合 shadow/research，不适合默认 rollout。"
-        )
-    return (
-        f"当前窗口同时存在 threshold-only 与 penalty-coupled passing rows，但最小成本解仍是 {minimal_passing_variant['variant_name']}。"
-        " 因此 broad penalty relief 仍不该直接并入默认主线，应继续把 threshold-only 与 recurring penalty lane 分开治理。"
-    )
+        return f"当前能通过 guardrail 的 row 全部属于 penalty-coupled lane，最小 passing row 为 {minimal_passing_variant['variant_name']}。" " 说明若要继续释放当前窗口的 score frontier，必须接受 stale/extension 联动放松；但在新增独立窗口前，它仍只适合 shadow/research，不适合默认 rollout。"
+    return f"当前窗口同时存在 threshold-only 与 penalty-coupled passing rows，但最小成本解仍是 {minimal_passing_variant['variant_name']}。" " 因此 broad penalty relief 仍不该直接并入默认主线，应继续把 threshold-only 与 recurring penalty lane 分开治理。"
 
 
 def analyze_btst_penalty_frontier(
@@ -219,12 +193,7 @@ def analyze_btst_penalty_frontier(
         for layer_c_avoid_penalty in layer_c_avoid_penalty_values:
             for stale_weight in stale_values:
                 for extension_weight in extension_values:
-                    if (
-                        _round(near_miss_threshold) == _round(default_near_miss_threshold)
-                        and _round(layer_c_avoid_penalty) == _round(default_layer_c_avoid_penalty)
-                        and _round(stale_weight) == _round(default_stale_weight)
-                        and _round(extension_weight) == _round(default_extension_weight)
-                    ):
+                    if _round(near_miss_threshold) == _round(default_near_miss_threshold) and _round(layer_c_avoid_penalty) == _round(default_layer_c_avoid_penalty) and _round(stale_weight) == _round(default_stale_weight) and _round(extension_weight) == _round(default_extension_weight):
                         continue
 
                     variant_name = _build_variant_name(
@@ -322,10 +291,7 @@ def analyze_btst_penalty_frontier(
         "guardrail_next_close_positive_rate": effective_guardrail_next_close_positive_rate,
         "focus_tickers": sorted(focus_ticker_set),
         "passing_variant_count": len(passing_variants),
-        "passing_case_frequency": [
-            {"case_key": case_key, "passing_variant_count": int(count)}
-            for case_key, count in passing_case_frequency.most_common()
-        ],
+        "passing_case_frequency": [{"case_key": case_key, "passing_variant_count": int(count)} for case_key, count in passing_case_frequency.most_common()],
         "recommendation": _build_recommendation(
             passing_variants=passing_variants,
             minimal_passing_variant=minimal_passing_variant,

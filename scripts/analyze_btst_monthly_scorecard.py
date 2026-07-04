@@ -81,9 +81,7 @@ def _iter_daily_events_candidates(*, daily_events_root: Path, trade_date: str) -
         return []
 
     # Prefer the canonical live plan folder (trade_date == signal_date).
-    preferred = sorted(
-        daily_events_root.glob(f"paper_trading_{token}_{token}_live_*_plan/daily_events.jsonl")
-    )
+    preferred = sorted(daily_events_root.glob(f"paper_trading_{token}_{token}_live_*_plan/daily_events.jsonl"))
     if preferred:
         return [path for path in preferred if path.is_file()]
 
@@ -147,15 +145,9 @@ def _daily_metrics(outcomes: list[dict[str, Any]]) -> DailyScorecard:
     ok = [row for row in outcomes if row.get("data_status") == "ok"]
     close_returns = [float(row["next_close_return"]) for row in ok if row.get("next_close_return") is not None]
     open_returns = [float(row["next_open_return"]) for row in ok if row.get("next_open_return") is not None]
-    intraday_returns = [
-        float(row["next_open_to_close_return"]) for row in ok if row.get("next_open_to_close_return") is not None
-    ]
+    intraday_returns = [float(row["next_open_to_close_return"]) for row in ok if row.get("next_open_to_close_return") is not None]
 
-    hits = [
-        1.0
-        for row in ok
-        if row.get("max_high_t1_t5_from_open") is not None and float(row["max_high_t1_t5_from_open"]) >= 0.15
-    ]
+    hits = [1.0 for row in ok if row.get("max_high_t1_t5_from_open") is not None and float(row["max_high_t1_t5_from_open"]) >= 0.15]
     eligible_hits = [1.0 for row in ok if row.get("max_high_t1_t5_from_open") is not None]
 
     win_rate = None
@@ -183,9 +175,7 @@ def _daily_metrics(outcomes: list[dict[str, Any]]) -> DailyScorecard:
 def _segment_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     close_returns = [float(row["next_close_return"]) for row in rows if row.get("next_close_return") is not None]
     open_returns = [float(row["next_open_return"]) for row in rows if row.get("next_open_return") is not None]
-    max_high = [
-        float(row["max_high_t1_t5_from_open"]) for row in rows if row.get("max_high_t1_t5_from_open") is not None
-    ]
+    max_high = [float(row["max_high_t1_t5_from_open"]) for row in rows if row.get("max_high_t1_t5_from_open") is not None]
 
     negative_gap_rate = None
     if open_returns:
@@ -265,12 +255,7 @@ def _gap_overlay_counterfactual(rows: list[dict[str, Any]], cutoffs: list[float]
     if not rows:
         return overlays
     for cutoff in cutoffs:
-        kept = [
-            row
-            for row in rows
-            if _as_float(row.get("next_open_return")) is not None
-            and float(row["next_open_return"]) >= float(cutoff)
-        ]
+        kept = [row for row in rows if _as_float(row.get("next_open_return")) is not None and float(row["next_open_return"]) >= float(cutoff)]
         overlays[_format_gap_cutoff_label(float(cutoff))] = {
             "cutoff": float(cutoff),
             "kept_rate": float(len(kept) / len(rows)) if rows else None,
@@ -314,11 +299,7 @@ def _suggest_gap_overlay_cutoff(overlays: dict[str, Any]) -> dict[str, Any] | No
     best_win_rate = float(best_win["win_rate_next_close"])
 
     tolerance = 0.02
-    near_best = [
-        item
-        for item in candidates
-        if float(item["win_rate_next_close"]) >= best_win_rate - tolerance
-    ]
+    near_best = [item for item in candidates if float(item["win_rate_next_close"]) >= best_win_rate - tolerance]
     best_tradeoff = max(near_best, key=lambda item: float(item["kept_rate"]))
 
     return {
@@ -390,17 +371,11 @@ def analyze_btst_monthly_scorecard(
     ok_all = [row for row in ticker_rows if row.get("data_status") == "ok"]
     close_all = [float(row["next_close_return"]) for row in ok_all if row.get("next_close_return") is not None]
     open_all = [float(row["next_open_return"]) for row in ok_all if row.get("next_open_return") is not None]
-    intraday_all = [
-        float(row["next_open_to_close_return"]) for row in ok_all if row.get("next_open_to_close_return") is not None
-    ]
-    max_high_all = [
-        float(row["max_high_t1_t5_from_open"]) for row in ok_all if row.get("max_high_t1_t5_from_open") is not None
-    ]
+    intraday_all = [float(row["next_open_to_close_return"]) for row in ok_all if row.get("next_open_to_close_return") is not None]
+    max_high_all = [float(row["max_high_t1_t5_from_open"]) for row in ok_all if row.get("max_high_t1_t5_from_open") is not None]
 
     gap_neg = [row for row in ok_all if _as_float(row.get("next_open_return")) is not None and float(row["next_open_return"]) < 0]
-    gap_nonneg = [
-        row for row in ok_all if _as_float(row.get("next_open_return")) is not None and float(row["next_open_return"]) >= 0
-    ]
+    gap_nonneg = [row for row in ok_all if _as_float(row.get("next_open_return")) is not None and float(row["next_open_return"]) >= 0]
 
     pct_buckets: dict[str, list[dict[str, Any]]] = {}
     for row in ok_all:
@@ -456,13 +431,8 @@ def analyze_btst_monthly_scorecard(
         "pct_chg_buckets": {label: _segment_summary(rows) for label, rows in pct_buckets.items()},
         "regime_gate_day_counts": dict(regime_day_counts),
         "regime_gate_buckets": {label: _segment_summary(rows) for label, rows in sorted(regime_buckets.items())},
-        "regime_gate_gap_overlay_counterfactual": {
-            label: _gap_overlay_counterfactual(rows, resolved_gap_cutoffs) for label, rows in sorted(regime_buckets.items())
-        },
-        "regime_gate_gap_overlay_suggestions": {
-            label: _suggest_gap_overlay_cutoff(_gap_overlay_counterfactual(rows, resolved_gap_cutoffs))
-            for label, rows in sorted(regime_buckets.items())
-        },
+        "regime_gate_gap_overlay_counterfactual": {label: _gap_overlay_counterfactual(rows, resolved_gap_cutoffs) for label, rows in sorted(regime_buckets.items())},
+        "regime_gate_gap_overlay_suggestions": {label: _suggest_gap_overlay_cutoff(_gap_overlay_counterfactual(rows, resolved_gap_cutoffs)) for label, rows in sorted(regime_buckets.items())},
     }
 
     return {
@@ -503,12 +473,8 @@ def render_btst_monthly_scorecard_markdown(analysis: dict[str, Any]) -> str:
     neg = dict(gap_segments.get("negative") or {})
     nonneg = dict(gap_segments.get("non_negative") or {})
     if gap_segments:
-        lines.append(
-            f"- gap<0: n={neg.get('count')}, win_rate={pct(neg.get('win_rate_next_close'))}, mean_close={ret(neg.get('mean_next_close_return'))}, hit_5d_15={pct(neg.get('hit_rate_5d_15'))}"
-        )
-        lines.append(
-            f"- gap>=0: n={nonneg.get('count')}, win_rate={pct(nonneg.get('win_rate_next_close'))}, mean_close={ret(nonneg.get('mean_next_close_return'))}, hit_5d_15={pct(nonneg.get('hit_rate_5d_15'))}"
-        )
+        lines.append(f"- gap<0: n={neg.get('count')}, win_rate={pct(neg.get('win_rate_next_close'))}, mean_close={ret(neg.get('mean_next_close_return'))}, hit_5d_15={pct(neg.get('hit_rate_5d_15'))}")
+        lines.append(f"- gap>=0: n={nonneg.get('count')}, win_rate={pct(nonneg.get('win_rate_next_close'))}, mean_close={ret(nonneg.get('mean_next_close_return'))}, hit_5d_15={pct(nonneg.get('hit_rate_5d_15'))}")
 
     overlays = dict(overall.get("gap_overlay_counterfactual") or {})
     if overlays:
@@ -543,9 +509,7 @@ def render_btst_monthly_scorecard_markdown(analysis: dict[str, Any]) -> str:
         picked = dict(suggestion.get("picked") or {})
         if picked:
             lines.append("")
-            lines.append(
-                f"- suggestion: {picked.get('label')} (win_rate={pct(picked.get('win_rate_next_close'))}, kept_rate={pct(picked.get('kept_rate'))}, n={picked.get('kept_count')})"
-            )
+            lines.append(f"- suggestion: {picked.get('label')} (win_rate={pct(picked.get('win_rate_next_close'))}, kept_rate={pct(picked.get('kept_rate'))}, n={picked.get('kept_count')})")
 
     pct_buckets = dict(overall.get("pct_chg_buckets") or {})
     if pct_buckets:

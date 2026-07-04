@@ -31,9 +31,7 @@ def render_targeted_short_trade_near_miss_release_outcomes_markdown(analysis: di
     lines.append("")
     lines.append("## Target Cases")
     for row in analysis["target_cases"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, before_score={row['before_score_target']}, after_score={row['after_score_target']}, next_open_return={row['next_open_return']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, promotion_verdict={row['promotion_verdict']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, before_score={row['before_score_target']}, after_score={row['after_score_target']}, next_open_return={row['next_open_return']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, promotion_verdict={row['promotion_verdict']}")
     if not analysis["target_cases"]:
         lines.append("- none")
     lines.append("")
@@ -139,10 +137,7 @@ def _build_near_miss_release_outcomes_recommendation(
     ticker: str,
 ) -> str:
     if target_cases and promoted_target_case_count == len(target_cases) and positive_next_close_count == len(target_cases):
-        return (
-            f"当前 near-miss promotion 值得继续保留。{ticker} 的 {len(target_cases)} 个目标样本都被提升到 selected，"
-            f"且 next_close_positive_rate={next_close_positive_rate}，说明 promotion 与次日 follow-through 一致。"
-        )
+        return f"当前 near-miss promotion 值得继续保留。{ticker} 的 {len(target_cases)} 个目标样本都被提升到 selected，" f"且 next_close_positive_rate={next_close_positive_rate}，说明 promotion 与次日 follow-through 一致。"
     if target_cases and promoted_target_case_count == len(target_cases) and high_hit_count == len(target_cases):
         return "当前 near-miss promotion 至少兑现了稳定的 intraday upside，但收盘延续仍需继续观察。"
     if target_cases:
@@ -158,10 +153,7 @@ def analyze_targeted_short_trade_near_miss_release_outcomes(
     outcome_analysis = _load_json(outcome_report)
 
     targets = {token for token in list(release_analysis.get("targets") or [])}
-    outcome_by_case = {
-        f"{row.get('trade_date')}:{row.get('ticker')}": row
-        for row in list(outcome_analysis.get("rows") or [])
-    }
+    outcome_by_case = {f"{row.get('trade_date')}:{row.get('ticker')}": row for row in list(outcome_analysis.get("rows") or [])}
     next_high_hit_threshold = float(outcome_analysis.get("next_high_hit_threshold") or 0.02)
     select_threshold = release_analysis.get("select_threshold")
     enrichment = _enrich_near_miss_release_outcome_rows(

@@ -41,8 +41,7 @@ def quick_score_comparison(trade_date: str = "20260410"):
 
     # Show key differences
     print("\nKey differences:")
-    for attr in ["trend_acceleration_weight", "short_term_reversal_weight", "intraday_strength_weight", "reversal_2d_weight",
-                 "breakout_freshness_weight", "close_strength_weight", "catalyst_freshness_weight"]:
+    for attr in ["trend_acceleration_weight", "short_term_reversal_weight", "intraday_strength_weight", "reversal_2d_weight", "breakout_freshness_weight", "close_strength_weight", "catalyst_freshness_weight"]:
         v2_val = getattr(v2, attr, 0.0)
         ic_v3_val = getattr(ic_v3, attr, 0.0)
         if v2_val != ic_v3_val:

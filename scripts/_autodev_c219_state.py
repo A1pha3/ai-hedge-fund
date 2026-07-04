@@ -11,6 +11,7 @@
 Usage:
   uv run python scripts/_autodev_c219_state.py
 """
+
 from __future__ import annotations
 
 import json

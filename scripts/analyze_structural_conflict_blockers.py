@@ -67,20 +67,16 @@ def render_structural_conflict_markdown(analysis: dict[str, Any]) -> str:
     lines.append(f"- mean_positive_metrics: {analysis['mean_positive_metrics']}")
     lines.append("")
     lines.append("## Day Breakdown")
-    for row in analysis['day_breakdown']:
-        lines.append(
-            f"- {row['trade_date']}: blocked={row['blocked_count']}, mean_score_target={row['mean_score_target']}, mean_gap_to_near_miss={row['mean_gap_to_near_miss']}"
-        )
+    for row in analysis["day_breakdown"]:
+        lines.append(f"- {row['trade_date']}: blocked={row['blocked_count']}, mean_score_target={row['mean_score_target']}, mean_gap_to_near_miss={row['mean_gap_to_near_miss']}")
     lines.append("")
     lines.append("## Recommended Focus")
-    for row in analysis['recommended_focus_areas']:
+    for row in analysis["recommended_focus_areas"]:
         lines.append(f"- P{row['priority']}: {row['focus_area']} -> {row['why']}")
     lines.append("")
     lines.append("## Representative Cases")
-    for row in analysis['top_examples']:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: source={row['candidate_source']}, score_target={row['score_target']}, gap_to_near_miss={row['gap_to_near_miss']}, penalties={row['penalties']}, top_reasons={row['top_reasons']}"
-        )
+    for row in analysis["top_examples"]:
+        lines.append(f"- {row['trade_date']} {row['ticker']}: source={row['candidate_source']}, score_target={row['score_target']}, gap_to_near_miss={row['gap_to_near_miss']}, penalties={row['penalties']}, top_reasons={row['top_reasons']}")
     return "\n".join(lines) + "\n"
 
 

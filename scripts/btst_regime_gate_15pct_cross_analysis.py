@@ -356,11 +356,7 @@ def render_markdown(data: dict[str, Any]) -> str:
             stats = by_regime.get(regime, {})
             if not stats or stats.get("day_count", 0) == 0:
                 continue
-            lines.append(
-                f"| {regime} | {stats.get('day_count', 0)} | {stats.get('total_selected', 0)} | "
-                f"{stats.get('total_evaluable', 0)} | {stats.get('hit_15pct_rate', 'N/A')} | "
-                f"{stats.get('mean_max_high_return', 'N/A')} | {stats.get('avg_daily_win_rate', 'N/A')} |"
-            )
+            lines.append(f"| {regime} | {stats.get('day_count', 0)} | {stats.get('total_selected', 0)} | " f"{stats.get('total_evaluable', 0)} | {stats.get('hit_15pct_rate', 'N/A')} | " f"{stats.get('mean_max_high_return', 'N/A')} | {stats.get('avg_daily_win_rate', 'N/A')} |")
         lines.append("")
 
         lines.append("### Daily Detail")
@@ -368,12 +364,7 @@ def render_markdown(data: dict[str, Any]) -> str:
         lines.append("| Date | Regime | Breadth | Daily Ret | Selected | 15% Hit | Mean Max Ret |")
         lines.append("|------|--------|---------|-----------|----------|---------|-------------|")
         for rec in profile_result.get("daily_records", []):
-            lines.append(
-                f"| {rec.get('trade_date', '')} | {rec.get('regime', '')} | "
-                f"{rec.get('breadth_proxy', 'N/A')} | {rec.get('daily_return', 'N/A')} | "
-                f"{rec.get('n_evaluable', 0)} | {rec.get('hit_15pct_rate', 'N/A')} | "
-                f"{rec.get('mean_max_high_return', 'N/A')} |"
-            )
+            lines.append(f"| {rec.get('trade_date', '')} | {rec.get('regime', '')} | " f"{rec.get('breadth_proxy', 'N/A')} | {rec.get('daily_return', 'N/A')} | " f"{rec.get('n_evaluable', 0)} | {rec.get('hit_15pct_rate', 'N/A')} | " f"{rec.get('mean_max_high_return', 'N/A')} |")
         lines.append("")
 
     return "\n".join(lines)

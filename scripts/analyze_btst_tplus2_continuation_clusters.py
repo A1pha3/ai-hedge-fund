@@ -43,15 +43,7 @@ def _summarize_ticker(rows: list[dict[str, Any]], *, next_high_hit_threshold: fl
     next_close_median = dict(surface_summary.get("next_close_return_distribution") or {}).get("median")
     t_plus_2_median = dict(surface_summary.get("t_plus_2_close_return_distribution") or {}).get("median")
 
-    if (
-        len(report_labels) >= 2
-        and next_close_positive_rate is not None
-        and t_plus_2_close_positive_rate is not None
-        and float(t_plus_2_close_positive_rate) > float(next_close_positive_rate)
-        and next_close_median is not None
-        and t_plus_2_median is not None
-        and float(t_plus_2_median) > float(next_close_median)
-    ):
+    if len(report_labels) >= 2 and next_close_positive_rate is not None and t_plus_2_close_positive_rate is not None and float(t_plus_2_close_positive_rate) > float(next_close_positive_rate) and next_close_median is not None and t_plus_2_median is not None and float(t_plus_2_median) > float(next_close_median):
         pattern_label = "recurring_tplus2_continuation_cluster"
         recommendation = f"{sorted_rows[0]['ticker']} 已呈现跨窗口 recurring continuation 画像，优先作为独立 T+2 观察簇而不是 BTST 默认放行样本。"
     elif t_plus_2_close_positive_rate is not None and next_close_positive_rate is not None and float(t_plus_2_close_positive_rate) > float(next_close_positive_rate):
@@ -111,11 +103,7 @@ def analyze_btst_tplus2_continuation_clusters(
         grouped_rows.setdefault(str(row.get("ticker") or ""), []).append(row)
 
     ticker_summaries = sorted(
-        (
-            _summarize_ticker(rows, next_high_hit_threshold=next_high_hit_threshold)
-            for ticker, rows in grouped_rows.items()
-            if ticker
-        ),
+        (_summarize_ticker(rows, next_high_hit_threshold=next_high_hit_threshold) for ticker, rows in grouped_rows.items() if ticker),
         key=lambda item: (
             int(item["distinct_report_count"]),
             int(item["observation_count"]),
@@ -127,13 +115,7 @@ def analyze_btst_tplus2_continuation_clusters(
     )
 
     recurring_cluster_count = sum(1 for item in ticker_summaries if item["distinct_report_count"] >= 2)
-    strong_t_plus_2_edge_count = sum(
-        1
-        for item in ticker_summaries
-        if item["surface_summary"].get("t_plus_2_close_positive_rate") is not None
-        and item["surface_summary"].get("next_close_positive_rate") is not None
-        and float(item["surface_summary"]["t_plus_2_close_positive_rate"]) > float(item["surface_summary"]["next_close_positive_rate"])
-    )
+    strong_t_plus_2_edge_count = sum(1 for item in ticker_summaries if item["surface_summary"].get("t_plus_2_close_positive_rate") is not None and item["surface_summary"].get("next_close_positive_rate") is not None and float(item["surface_summary"]["t_plus_2_close_positive_rate"]) > float(item["surface_summary"]["next_close_positive_rate"]))
 
     if recurring_cluster_count > 0 and strong_t_plus_2_edge_count > 0:
         recommendation = "Detected recurring T+2 continuation clusters. Next step should focus on same-cluster ticker search and a dedicated observation lane rather than loosening default BTST gates."
@@ -181,12 +163,7 @@ def render_btst_tplus2_continuation_clusters_markdown(analysis: dict[str, Any]) 
     lines.append("## Ticker Clusters")
     for summary in list(analysis.get("ticker_summaries") or []):
         surface = dict(summary.get("surface_summary") or {})
-        lines.append(
-            f"- {summary['ticker']}: reports={summary['distinct_report_count']}, observations={summary['observation_count']}, "
-            f"next_close_positive_rate={surface.get('next_close_positive_rate')}, "
-            f"t_plus_2_close_positive_rate={surface.get('t_plus_2_close_positive_rate')}, "
-            f"pattern={summary['pattern_label']}"
-        )
+        lines.append(f"- {summary['ticker']}: reports={summary['distinct_report_count']}, observations={summary['observation_count']}, " f"next_close_positive_rate={surface.get('next_close_positive_rate')}, " f"t_plus_2_close_positive_rate={surface.get('t_plus_2_close_positive_rate')}, " f"pattern={summary['pattern_label']}")
     if not list(analysis.get("ticker_summaries") or []):
         lines.append("- none")
     lines.append("")

@@ -198,9 +198,7 @@ def render_btst_candidate_entry_window_scan_markdown(analysis: dict[str, Any]) -
     lines.append("")
     lines.append("## Window Rows")
     for row in list(analysis.get("rows") or []):
-        lines.append(
-            f"- report={row['report_name']} window_key={row['window_key']} status={row['window_status']} filtered_count={row['filtered_candidate_entry_count']} released_from_blocked={row['released_from_blocked']} focus_filtered={row['focus_filtered_tickers']} preserve_filtered={row['preserve_filtered_tickers']}"
-        )
+        lines.append(f"- report={row['report_name']} window_key={row['window_key']} status={row['window_status']} filtered_count={row['filtered_candidate_entry_count']} released_from_blocked={row['released_from_blocked']} focus_filtered={row['focus_filtered_tickers']} preserve_filtered={row['preserve_filtered_tickers']}")
     if not analysis.get("rows"):
         lines.append("- none")
     lines.append("")

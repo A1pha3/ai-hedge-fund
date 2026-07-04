@@ -31,7 +31,6 @@ from scripts.btst_data_utils import normalize_price_frame as _normalize_price_fr
 from scripts.btst_report_utils import discover_nested_report_dirs as discover_report_dirs
 from scripts.btst_round1_factor_mining_helpers import build_round1_research_row
 
-
 REPORTS_DIR = Path("data/reports")
 DEFAULT_REPORTS_ROOT = REPORTS_DIR
 DEFAULT_OUTPUT_JSON = REPORTS_DIR / "btst_5d_15pct_trend_breakout_drilldown_latest.json"

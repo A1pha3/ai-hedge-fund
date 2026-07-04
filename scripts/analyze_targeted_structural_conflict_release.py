@@ -110,9 +110,7 @@ def render_targeted_structural_conflict_release_markdown(analysis: dict[str, Any
     lines.append("")
     lines.append("## Changed Cases")
     for row in analysis["changed_cases"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, before_score={row['before_score_target']}, after_score={row['after_score_target']}, target_case={row['is_target_case']}, candidate_source={row['candidate_source']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, before_score={row['before_score_target']}, after_score={row['after_score_target']}, target_case={row['is_target_case']}, candidate_source={row['candidate_source']}")
     if not analysis["changed_cases"]:
         lines.append("- none")
     lines.append("")
@@ -281,10 +279,7 @@ def _build_structural_conflict_release_recommendation(
         promoted_rows = [row for row in target_changed_cases if row["after_decision"] in {"near_miss", "selected"}]
         if promoted_rows:
             head = promoted_rows[0]
-            return (
-                f"当前 case-based 定向释放只改变目标样本。{head['trade_date']} / {head['ticker']} 从 {head['before_decision']} -> {head['after_decision']}，"
-                f"未污染其它 {total_case_count - len(target_changed_cases)} 个样本，可作为 300724-only 受控实验入口。"
-            )
+            return f"当前 case-based 定向释放只改变目标样本。{head['trade_date']} / {head['ticker']} 从 {head['before_decision']} -> {head['after_decision']}，" f"未污染其它 {total_case_count - len(target_changed_cases)} 个样本，可作为 300724-only 受控实验入口。"
         return "目标样本被重新评估，但未进入 near_miss/selected；当前 overrides 不足以形成有效 release。"
     if non_target_changed_cases:
         return "出现了非目标样本变化，当前实验语义不再是严格的 300724-only 受控释放。"

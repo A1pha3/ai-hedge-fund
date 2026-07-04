@@ -21,18 +21,10 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _selected_tickers_from_snapshot(snapshot: dict[str, Any]) -> list[str]:
-    tickers = [
-        str(ticker)
-        for ticker, payload in dict(snapshot.get("selection_targets") or {}).items()
-        if str(((payload or {}).get("short_trade") or {}).get("decision") or "") == "selected"
-    ]
+    tickers = [str(ticker) for ticker, payload in dict(snapshot.get("selection_targets") or {}).items() if str(((payload or {}).get("short_trade") or {}).get("decision") or "") == "selected"]
     if tickers:
         return sorted(tickers)
-    return sorted(
-        str(entry.get("ticker") or "")
-        for entry in list(snapshot.get("target_context") or [])
-        if str(entry.get("ticker") or "").strip() and str(((entry or {}).get("short_trade") or {}).get("decision") or "") == "selected"
-    )
+    return sorted(str(entry.get("ticker") or "") for entry in list(snapshot.get("target_context") or []) if str(entry.get("ticker") or "").strip() and str(((entry or {}).get("short_trade") or {}).get("decision") or "") == "selected")
 
 
 def _resolve_latest_selected_snapshot(reports_root: str | Path) -> tuple[Path, dict[str, Any]]:
@@ -59,9 +51,7 @@ def _build_recommendation(entries: list[dict[str, Any]]) -> str:
     if not entries:
         return "当前没有 formal selected，refresh board 暂无可跟踪主票。"
     confirmed_entries = [entry for entry in entries if str(entry.get("overall_contract_verdict") or "") == "t_plus_2_confirmed"]
-    closed_without_positive_expectation_entries = [
-        entry for entry in entries if "observed_without_positive_expectation" in str(entry.get("overall_contract_verdict") or "")
-    ]
+    closed_without_positive_expectation_entries = [entry for entry in entries if "observed_without_positive_expectation" in str(entry.get("overall_contract_verdict") or "")]
     violated_entries = [entry for entry in entries if "violated" in str(entry.get("overall_contract_verdict") or "")]
     open_entries = [entry for entry in entries if str(entry.get("current_cycle_status") or "").startswith("missing") or entry.get("current_cycle_status") == "missing_next_day"]
     t1_entries = [entry for entry in entries if str(entry.get("current_cycle_status") or "") == "t1_only"]

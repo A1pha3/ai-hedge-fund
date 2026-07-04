@@ -54,10 +54,14 @@ def resolve_open_ready_previous_context(
     reports_root: str | Path,
     select_previous_btst_report_snapshot: SelectPreviousBtstReportSnapshot,
 ) -> tuple[dict[str, Any], dict[str, Any], str, dict[str, Any]]:
-    previous_report_snapshot = {} if previous_payload else select_previous_btst_report_snapshot(
-        reports_root,
-        current_report_dir=latest_btst_run.get("report_dir_abs"),
-        selection_target=latest_btst_run.get("selection_target"),
+    previous_report_snapshot = (
+        {}
+        if previous_payload
+        else select_previous_btst_report_snapshot(
+            reports_root,
+            current_report_dir=latest_btst_run.get("report_dir_abs"),
+            selection_target=latest_btst_run.get("selection_target"),
+        )
     )
     if previous_payload:
         previous_priority_board = dict(previous_payload.get("latest_priority_board_snapshot") or {})

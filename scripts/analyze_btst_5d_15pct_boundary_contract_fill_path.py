@@ -88,17 +88,15 @@ def render_btst_5d_15pct_boundary_contract_fill_path_markdown(analysis: dict[str
         "## repair_source_summary_board",
     ]
     for row in list(analysis.get("repair_source_summary_board") or []):
-        lines.append(
-            f"- {row.get('candidate_source')}: row_count={row.get('row_count')}, fully_repaired_row_count={row.get('fully_repaired_row_count')}, partially_repaired_row_count={row.get('partially_repaired_row_count')}, irrecoverable_row_count={row.get('irrecoverable_row_count')}"
-        )
+        lines.append(f"- {row.get('candidate_source')}: row_count={row.get('row_count')}, fully_repaired_row_count={row.get('fully_repaired_row_count')}, partially_repaired_row_count={row.get('partially_repaired_row_count')}, irrecoverable_row_count={row.get('irrecoverable_row_count')}")
     if not list(analysis.get("repair_source_summary_board") or []):
         lines.append("- none")
     lines.extend(
         [
             "",
-        "## governance_decision_board",
-        f"- {governance.get('action')}: {governance.get('reason')}",
-        "",
+            "## governance_decision_board",
+            f"- {governance.get('action')}: {governance.get('reason')}",
+            "",
         ]
     )
     return "\n".join(lines)

@@ -81,9 +81,7 @@ def refresh_btst_5d_15pct_priors(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Refresh BTST 5D/+15% prior artifacts (boundary + trend gate) into *_latest.json/*.md."
-    )
+    parser = argparse.ArgumentParser(description="Refresh BTST 5D/+15% prior artifacts (boundary + trend gate) into *_latest.json/*.md.")
     parser.add_argument("--reports-root", default="data/reports")
     parser.add_argument("--boundary-output-json", default=str(DEFAULT_BOUNDARY_OUTPUT_JSON))
     parser.add_argument("--boundary-output-md", default=str(DEFAULT_BOUNDARY_OUTPUT_MD))

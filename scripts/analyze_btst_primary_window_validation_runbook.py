@@ -67,9 +67,7 @@ def analyze_btst_primary_window_validation_runbook(
     current_short_trade_window_keys = list(candidate_row.get("window_keys") or [])
     for window_key, rows in sorted(by_window_key.items()):
         role_counts = Counter(str(row.get("role") or "unknown") for row in rows)
-        short_trade_rows = [
-            row for row in rows if str(row.get("role") or "").startswith("short_trade_") or str(row.get("role") or "").startswith("short_trade_boundary")
-        ]
+        short_trade_rows = [row for row in rows if str(row.get("role") or "").startswith("short_trade_") or str(row.get("role") or "").startswith("short_trade_boundary")]
         non_short_trade_rows = [row for row in rows if row not in short_trade_rows]
         if short_trade_rows and window_key in current_short_trade_window_keys:
             status = "current_qualified_window"
@@ -94,25 +92,16 @@ def analyze_btst_primary_window_validation_runbook(
     missing_window_count = int(primary_window_gap.get("missing_window_count") or 0)
     target_window_count = int(primary_window_gap.get("target_window_count") or 0)
     distinct_window_count = int(candidate_row.get("distinct_window_count") or 0)
-    validation_verdict = (
-        "independent_window_requirement_satisfied"
-        if not missing_window_count and distinct_window_count >= max(1, target_window_count)
-        else "await_new_independent_window_data"
-    )
+    validation_verdict = "independent_window_requirement_satisfied" if not missing_window_count and distinct_window_count >= max(1, target_window_count) else "await_new_independent_window_data"
     rerun_commands = [
         "python scripts/analyze_multi_window_short_trade_role_candidates.py --report-root-dirs data/reports --report-name-contains paper_trading_window --min-short-trade-trade-dates 2 --output-json data/reports/multi_window_short_trade_role_candidates_YYYYMMDD.json --output-md data/reports/multi_window_short_trade_role_candidates_YYYYMMDD.md",
         f"python scripts/analyze_btst_primary_window_validation_runbook.py --ticker {normalized_ticker} --candidate-report data/reports/multi_window_short_trade_role_candidates_YYYYMMDD.json --output-json data/reports/p7_primary_window_validation_runbook_{normalized_ticker}_YYYYMMDD.json --output-md data/reports/p7_primary_window_validation_runbook_{normalized_ticker}_YYYYMMDD.md",
         f"python scripts/analyze_btst_primary_roll_forward.py --ticker {normalized_ticker} --candidate-report data/reports/multi_window_short_trade_role_candidates_YYYYMMDD.json --output-json data/reports/p4_primary_roll_forward_validation_{normalized_ticker}_YYYYMMDD.json --output-md data/reports/p4_primary_roll_forward_validation_{normalized_ticker}_YYYYMMDD.md",
     ]
     if validation_verdict == "independent_window_requirement_satisfied":
-        recommendation = (
-            f"{normalized_ticker} 已满足 distinct_window_count>=2 的独立窗口要求，当前 primary window validation 已完成，可转入默认升级评审。"
-        )
+        recommendation = f"{normalized_ticker} 已满足 distinct_window_count>=2 的独立窗口要求，当前 primary window validation 已完成，可转入默认升级评审。"
     else:
-        recommendation = (
-            f"{normalized_ticker} 的 primary roll-forward 方法链已经完整，当前缺的不是额外规则，而是新增独立窗口数据。"
-            " 只要新的 paper_trading_window 落地，就按 rerun_commands 重新扫描并判定是否达到 distinct_window_count>=2。"
-        )
+        recommendation = f"{normalized_ticker} 的 primary roll-forward 方法链已经完整，当前缺的不是额外规则，而是新增独立窗口数据。" " 只要新的 paper_trading_window 落地，就按 rerun_commands 重新扫描并判定是否达到 distinct_window_count>=2。"
 
     return {
         "generated_on": primary_roll_forward.get("generated_on"),
@@ -145,9 +134,7 @@ def render_btst_primary_window_validation_runbook_markdown(analysis: dict[str, A
     lines.append("")
     lines.append("## Window Scan")
     for row in analysis["window_scan_rows"]:
-        lines.append(
-            f"- window_key={row['window_key']} status={row['status']} short_trade_observation_count={row['short_trade_observation_count']} dominant_role={row['dominant_role']} report_labels={row['report_labels']}"
-        )
+        lines.append(f"- window_key={row['window_key']} status={row['status']} short_trade_observation_count={row['short_trade_observation_count']} dominant_role={row['dominant_role']} report_labels={row['report_labels']}")
     if not analysis["window_scan_rows"]:
         lines.append("- none")
     lines.append("")

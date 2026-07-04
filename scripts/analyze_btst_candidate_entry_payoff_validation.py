@@ -31,13 +31,7 @@ def build_variant_structural_overrides(
     close_strength_max: float | None = None,
     catalyst_freshness_max: float | None = None,
 ) -> dict[str, Any] | None:
-    if (
-        breakout_freshness_max is None
-        and trend_acceleration_max is None
-        and volume_expansion_quality_max is None
-        and close_strength_max is None
-        and catalyst_freshness_max is None
-    ):
+    if breakout_freshness_max is None and trend_acceleration_max is None and volume_expansion_quality_max is None and close_strength_max is None and catalyst_freshness_max is None:
         return None
     return {
         "exclude_candidate_entries": [
@@ -70,21 +64,9 @@ def _classify_window(*, comparison: dict[str, Any], baseline: dict[str, Any], va
         return "keep_baseline_default"
     if next_close_positive_rate_delta is not None and float(next_close_positive_rate_delta) >= 0 and next_close_return_p10_delta is not None and float(next_close_return_p10_delta) >= 0 and (float(next_close_positive_rate_delta) > 0 or float(next_close_return_p10_delta) > 0):
         return "variant_supports_t1_actionable_edge"
-    if (
-        filtered_delta > 0
-        and int(tradeable_delta.get("total_count") or 0) == 0
-        and int(selected_delta.get("total_count") or 0) == 0
-        and execution_eligible_count_delta == 0
-        and false_negative_delta == 0
-    ):
+    if filtered_delta > 0 and int(tradeable_delta.get("total_count") or 0) == 0 and int(selected_delta.get("total_count") or 0) == 0 and execution_eligible_count_delta == 0 and false_negative_delta == 0:
         return "entry_cleanup_without_actionable_delta"
-    if (
-        filtered_delta > 0
-        and int(tradeable_delta.get("total_count") or 0) == 0
-        and int(selected_delta.get("total_count") or 0) == 0
-        and execution_eligible_count_delta == 0
-        and false_negative_delta < 0
-    ):
+    if filtered_delta > 0 and int(tradeable_delta.get("total_count") or 0) == 0 and int(selected_delta.get("total_count") or 0) == 0 and execution_eligible_count_delta == 0 and false_negative_delta < 0:
         return "entry_cleanup_reduces_false_negative_proxy"
     return "mixed"
 
@@ -221,10 +203,7 @@ def render_btst_candidate_entry_payoff_validation_markdown(analysis: dict[str, A
             f"false_negative_delta={row['false_negative_proxy_delta'].get('count')}"
         )
         if row.get("variant_filtered_candidate_entry_surface"):
-            lines.append(
-                "  - "
-                f"filtered_candidate_entry_surface={row['variant_filtered_candidate_entry_surface']}"
-            )
+            lines.append("  - " f"filtered_candidate_entry_surface={row['variant_filtered_candidate_entry_surface']}")
         if row.get("variant_structural_overrides"):
             lines.append(f"  - variant_structural_overrides={row['variant_structural_overrides']}")
         if row.get("comparison_note"):

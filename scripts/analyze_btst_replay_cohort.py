@@ -97,11 +97,7 @@ def _extract_report_row(report_dir: Path) -> dict[str, Any] | None:
 def _build_cohort_summary(rows: list[dict[str, Any]], *, label: str) -> dict[str, Any]:
     live_rows = [row for row in rows if not row.get("is_frozen_replay")]
     frozen_rows = [row for row in rows if row.get("is_frozen_replay")]
-    actionable_rows = [
-        row
-        for row in rows
-        if int(row.get("selected_count") or 0) > 0 or int(row.get("near_miss_count") or 0) > 0 or int(row.get("opportunity_pool_count") or 0) > 0
-    ]
+    actionable_rows = [row for row in rows if int(row.get("selected_count") or 0) > 0 or int(row.get("near_miss_count") or 0) > 0 or int(row.get("opportunity_pool_count") or 0) > 0]
     latest_row = rows[0] if rows else None
     return {
         "label": label,
@@ -120,11 +116,7 @@ def _build_cohort_summary(rows: list[dict[str, Any]], *, label: str) -> dict[str
 
 def analyze_btst_replay_cohort(reports_root: str | Path) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
-    rows = [
-        row
-        for row in (_extract_report_row(path) for path in resolved_reports_root.iterdir())
-        if row is not None
-    ]
+    rows = [row for row in (_extract_report_row(path) for path in resolved_reports_root.iterdir()) if row is not None]
     rows.sort(
         key=lambda row: (
             row.get("selection_target") == "short_trade_only",
@@ -147,15 +139,9 @@ def analyze_btst_replay_cohort(reports_root: str | Path) -> dict[str, Any]:
 
     recommendation = "当前 BTST replay cohort 仍缺足够长的短线闭环样本，应优先把它当作 coverage / watchlist 质量监控，而不是过度解读收益率。"
     if short_trade_rows:
-        actionable_short_trade_count = sum(
-            1
-            for row in short_trade_rows
-            if int(row.get("selected_count") or 0) > 0 or int(row.get("near_miss_count") or 0) > 0 or int(row.get("opportunity_pool_count") or 0) > 0
-        )
+        actionable_short_trade_count = sum(1 for row in short_trade_rows if int(row.get("selected_count") or 0) > 0 or int(row.get("near_miss_count") or 0) > 0 or int(row.get("opportunity_pool_count") or 0) > 0)
         if actionable_short_trade_count > 0:
-            recommendation = (
-                "short_trade_only cohort 已出现可操作观察层样本，但当前成交天数和闭环收益样本仍偏少；应继续把它作为 next-day priority board 的历史支撑，而不是提前当成稳定收益证据。"
-            )
+            recommendation = "short_trade_only cohort 已出现可操作观察层样本，但当前成交天数和闭环收益样本仍偏少；应继续把它作为 next-day priority board 的历史支撑，而不是提前当成稳定收益证据。"
 
     return {
         "reports_root": str(resolved_reports_root),
@@ -217,18 +203,14 @@ def render_btst_replay_cohort_markdown(analysis: dict[str, Any]) -> str:
 
     lines.append("## Top Return Rows")
     for row in list(analysis.get("top_return_rows") or []):
-        lines.append(
-            f"- {row.get('report_dir_name')}: selection_target={row.get('selection_target')} mode={row.get('plan_mode')} total_return_pct={row.get('total_return_pct')} selected_count={row.get('selected_count')} near_miss_count={row.get('near_miss_count')} opportunity_pool_count={row.get('opportunity_pool_count')}"
-        )
+        lines.append(f"- {row.get('report_dir_name')}: selection_target={row.get('selection_target')} mode={row.get('plan_mode')} total_return_pct={row.get('total_return_pct')} selected_count={row.get('selected_count')} near_miss_count={row.get('near_miss_count')} opportunity_pool_count={row.get('opportunity_pool_count')}")
     if not list(analysis.get("top_return_rows") or []):
         lines.append("- none")
     lines.append("")
 
     lines.append("## Recent Report Rows")
     for row in list(analysis.get("report_rows") or [])[:12]:
-        lines.append(
-            f"- {row.get('report_dir_name')}: selection_target={row.get('selection_target')} mode={row.get('plan_mode')} trade_date={row.get('trade_date')} total_return_pct={row.get('total_return_pct')} selected_count={row.get('selected_count')} near_miss_count={row.get('near_miss_count')} opportunity_pool_count={row.get('opportunity_pool_count')}"
-        )
+        lines.append(f"- {row.get('report_dir_name')}: selection_target={row.get('selection_target')} mode={row.get('plan_mode')} trade_date={row.get('trade_date')} total_return_pct={row.get('total_return_pct')} selected_count={row.get('selected_count')} near_miss_count={row.get('near_miss_count')} opportunity_pool_count={row.get('opportunity_pool_count')}")
     lines.append("")
     return "\n".join(lines) + "\n"
 

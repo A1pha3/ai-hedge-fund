@@ -178,9 +178,7 @@ def render_btst_profile_frontier_markdown(analysis: dict[str, Any]) -> str:
             lines.append("")
     lines.append("## Baseline Top False Negatives")
     for row in baseline["top_false_negative_rows"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: decision={row['decision']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, score_target={row['score_target']}, reasons={row['false_negative_proxy_reasons']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: decision={row['decision']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, score_target={row['score_target']}, reasons={row['false_negative_proxy_reasons']}")
     if not baseline["top_false_negative_rows"]:
         lines.append("- none")
     lines.append("")

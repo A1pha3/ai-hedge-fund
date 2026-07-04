@@ -19,6 +19,7 @@
   - 未成熟 horizon 诚实跳过 (None), 不用 T+1 替代 (NS-17 maturity-faking).
   - 同一 test_date 重跑去重 (merge_day_rows), 不重复计数 (否则 fakes N).
 """
+
 from __future__ import annotations
 
 import json
@@ -97,9 +98,7 @@ def save_state(path: Path, state: dict[str, Any]) -> None:
     tmp.replace(path)  # 原子 rename
 
 
-def merge_day_rows(
-    state: dict[str, Any], test_date: str, new_rows: list[dict[str, Any]]
-) -> dict[str, Any]:
+def merge_day_rows(state: dict[str, Any], test_date: str, new_rows: list[dict[str, Any]]) -> dict[str, Any]:
     """把一天的 rows 并入状态. 已完成的 test_date 去重 (不重复计数).
 
     决策关键: 重复计数某天会 fakes N, 可能翻转方向 delta 判读. 空 new_rows
@@ -115,9 +114,7 @@ def merge_day_rows(
     }
 
 
-def plan_next_batch(
-    test_dates: list[str], days_done: list[str], batch_size: int
-) -> list[str]:
+def plan_next_batch(test_dates: list[str], days_done: list[str], batch_size: int) -> list[str]:
     """哪些 test_dates 还没跑, 按 chronological 顺序, cap 到 batch_size.
 
     保持 test_dates 原始顺序 (不是 set 迭代顺序) — 顺序对 maturity + 可复现重要.
@@ -127,9 +124,7 @@ def plan_next_batch(
     return pending[:batch_size]
 
 
-def maturity_for_window(
-    rows: list[dict[str, Any]], horizons: tuple[int, ...]
-) -> dict[str, int]:
+def maturity_for_window(rows: list[dict[str, Any]], horizons: tuple[int, ...]) -> dict[str, int]:
     """每个 horizon 有多少 rows 是成熟的 (rets[h] 非 None). 仅信息性诚实.
 
     与 c312 aggregate_horizon 同一 maturity 原则: rets[h] is None = 未成熟,
@@ -148,8 +143,13 @@ def maturity_for_window(
 
 
 def _collect_one_date(
-    pro, test_date: str, di: int, trade_dates: list[str], horizons: tuple[int, ...],
-    stock_basic: pd.DataFrame, fwd_cache: dict[str, dict[str, float]],
+    pro,
+    test_date: str,
+    di: int,
+    trade_dates: list[str],
+    horizons: tuple[int, ...],
+    stock_basic: pd.DataFrame,
+    fwd_cache: dict[str, dict[str, float]],
 ) -> list[dict[str, Any]]:
     """收集一个 test_date 的 per-stock rows (trend_direction + per-horizon rets).
 
@@ -162,10 +162,7 @@ def _collect_one_date(
         if fi < len(trade_dates) and trade_dates[fi] not in fwd_cache:
             try:
                 dfn = pro.daily(trade_date=trade_dates[fi])
-                fwd_cache[trade_dates[fi]] = (
-                    dict(zip(dfn["ts_code"].tolist(), dfn["pct_chg"].astype(float).tolist()))
-                    if dfn is not None and not dfn.empty else {}
-                )
+                fwd_cache[trade_dates[fi]] = dict(zip(dfn["ts_code"].tolist(), dfn["pct_chg"].astype(float).tolist())) if dfn is not None and not dfn.empty else {}
             except Exception as exc:
                 # c317c (loop 51): NS-17 drain. This script is the direct instrument
                 # for the R6 direction-sign verdict; its own docstring warns silent
@@ -174,9 +171,10 @@ def _collect_one_date(
                 # from a genuine empty trading day — silently reducing per-horizon
                 # maturity. Log so the operator can tell 'API hiccup' from 'no data'.
                 logger.warning(
-                    "forward-window fetch failed for %s: %s: %s (recording as empty; "
-                    "maturity for this date will be reduced)",
-                    trade_dates[fi], type(exc).__name__, exc,
+                    "forward-window fetch failed for %s: %s: %s (recording as empty; " "maturity for this date will be reduced)",
+                    trade_dates[fi],
+                    type(exc).__name__,
+                    exc,
                 )
                 fwd_cache[trade_dates[fi]] = {}
 
@@ -221,11 +219,13 @@ def _collect_one_date(
                     break
                 pcts.append(p)
             rets[str(h)] = cumulative_horizon_return(pcts, h) if ok else None
-        rows.append({
-            "ts_code": r["ts_code"],
-            "trend_direction": int(snap.trend_direction),
-            "rets": rets,
-        })
+        rows.append(
+            {
+                "ts_code": r["ts_code"],
+                "trend_direction": int(snap.trend_direction),
+                "rets": rets,
+            }
+        )
     return rows
 
 
@@ -265,9 +265,7 @@ def run(
         di = test_dates.index(test_date)
         t0 = time.time()
         try:
-            new_rows = _collect_one_date(
-                pro, test_date, di, trade_dates, horizons, stock_basic, fwd_cache
-            )
+            new_rows = _collect_one_date(pro, test_date, di, trade_dates, horizons, stock_basic, fwd_cache)
         except Exception as e:
             print(f"  [{test_date}] 失败 ({e}); 跳过 (不标记 done, 下次重试)")
             continue
@@ -276,15 +274,13 @@ def run(
             continue
         state = merge_day_rows(state, test_date, new_rows)
         save_state(sp, state)  # 每天存一次, 断点续跑
-        print(f"  [{test_date}] +{len(new_rows)} rows ({time.time()-t0:.1f}s); "
-              f"累计 {len(state['days_done'])}/{n_days} 日")
+        print(f"  [{test_date}] +{len(new_rows)} rows ({time.time()-t0:.1f}s); " f"累计 {len(state['days_done'])}/{n_days} 日")
 
     print(f"\n{'=' * 90}")
     print(f"累计状态: {len(state['days_done'])}/{n_days} 日, {len(state['rows'])} rows")
     if len(state["days_done"]) < n_days:
         remaining = n_days - len(state["days_done"])
-        print(f"  未完成 {remaining} 日. 再跑 `python {sys.argv[0]} --n-days {n_days} "
-              f"--batch-size {batch_size} --state {sp}` 续跑.")
+        print(f"  未完成 {remaining} 日. 再跑 `python {sys.argv[0]} --n-days {n_days} " f"--batch-size {batch_size} --state {sp}` 续跑.")
         print(f"  (API 限速 ~3min/日; 完成需约 {remaining} 次运行)")
         return
 
@@ -320,14 +316,14 @@ def _report(rows: list[dict[str, Any]], horizons: tuple[int, ...]) -> None:
     else:
         print("  → T+5/T+10 方向符号不一致: trend 方向在不同 horizon 行为不同.")
         print("     → C-R6-POOL-FILTER-REDESIGN: 需 horizon-specific 设计.")
-    print(f"\n注意: light-stage (0 LLM) + multi-horizon + n={len(rows)} records. "
-          f"完整确认需全模型. 此判读基于 n_days 累积, 非 4 日窗口——可直接进决策包.")
+    print(f"\n注意: light-stage (0 LLM) + multi-horizon + n={len(rows)} records. " f"完整确认需全模型. 此判读基于 n_days 累积, 非 4 日窗口——可直接进决策包.")
 
 
 def main() -> None:
     load_dotenv()
     logging.basicConfig(level=logging.WARNING)
     import argparse
+
     ap = argparse.ArgumentParser(description="R6 多 horizon 增量积累诊断 — 把 n=4 提升到 n=20+")
     ap.add_argument("--n-days", type=int, default=20, help="目标总天数 (default 20)")
     ap.add_argument("--batch-size", type=int, default=4, help="每次运行跑几天 (default 4, 受 API 限速)")

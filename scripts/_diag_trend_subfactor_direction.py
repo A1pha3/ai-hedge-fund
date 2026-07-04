@@ -12,6 +12,7 @@ volatility / long_trend_alignment) 的 direction 判定把 trend 信号压制了
 
 复用 _backtest_light_stage_universe.py 的数据获取逻辑 (重新跑, 不依赖中间文件).
 """
+
 from __future__ import annotations
 
 import logging
@@ -56,8 +57,10 @@ TREND_SUBFACTORS = [
 # 数据获取 (复用 _backtest_light_stage_universe.py 的逻辑)
 # ---------------------------------------------------------------------------
 
+
 def _get_pro():
     import tushare as ts
+
     token = os.getenv("TUSHARE_TOKEN")
     if not token:
         raise RuntimeError("TUSHARE_TOKEN 未设置")
@@ -100,7 +103,7 @@ def get_history_batch(pro, codes: list[str], start_date: str, end_date: str, bat
     """
     frames: list[pd.DataFrame] = []
     for i in range(0, len(codes), batch_size):
-        batch = codes[i:i + batch_size]
+        batch = codes[i : i + batch_size]
         for attempt in range(3):
             try:
                 h = pro.daily(ts_code=",".join(batch), start_date=start_date, end_date=end_date)
@@ -123,6 +126,7 @@ def get_history_batch(pro, codes: list[str], start_date: str, end_date: str, bat
 # ---------------------------------------------------------------------------
 # 诊断主流程
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SubFactorRow:
@@ -209,15 +213,17 @@ def run_diagnosis(n_days: int = 30, end_date: str | None = None) -> None:
                 confidence = float(sf_dump.get("confidence", 0.0))
                 completeness = float(sf_dump.get("completeness", 0.0))
                 weight = float(sf_dump.get("weight", 0.0))
-                day_rows.append(SubFactorRow(
-                    ticker=code,
-                    subfactor=sf_name,
-                    direction=direction,
-                    confidence=confidence,
-                    completeness=completeness,
-                    weight=weight,
-                    next_ret=float(next_ret),
-                ))
+                day_rows.append(
+                    SubFactorRow(
+                        ticker=code,
+                        subfactor=sf_name,
+                        direction=direction,
+                        confidence=confidence,
+                        completeness=completeness,
+                        weight=weight,
+                        next_ret=float(next_ret),
+                    )
+                )
                 direction_counts[sf_name][direction] += 1
 
         all_rows.extend(day_rows)
@@ -225,13 +231,8 @@ def run_diagnosis(n_days: int = 30, end_date: str | None = None) -> None:
 
         # 当日 direction 分布 (简短一行)
         n_stocks = len(set(r.ticker for r in day_rows))
-        dist_str = " ".join(
-            f"{sf[:8]}={direction_counts[sf][1]:+d}/{direction_counts[sf][0]}/{direction_counts[sf][-1]:-d}"
-            for sf in TREND_SUBFACTORS
-        )
-        print(f"[{di + 1}/{len(test_dates)}] {test_date} n={n_stocks} "
-              f"(len: >126={len_bins['>=126']} 50-126={len_bins['50-126']} <50={len_bins['<50']}) "
-              f"(+1/0/-1: {dist_str}) ({elapsed:.1f}s)")
+        dist_str = " ".join(f"{sf[:8]}={direction_counts[sf][1]:+d}/{direction_counts[sf][0]}/{direction_counts[sf][-1]:-d}" for sf in TREND_SUBFACTORS)
+        print(f"[{di + 1}/{len(test_dates)}] {test_date} n={n_stocks} " f"(len: >126={len_bins['>=126']} 50-126={len_bins['50-126']} <50={len_bins['<50']}) " f"(+1/0/-1: {dist_str}) ({elapsed:.1f}s)")
 
         daily_summary.append({"trade_date": test_date, "n_stocks": n_stocks, **{f"{sf}_pos": direction_counts[sf][1] for sf in TREND_SUBFACTORS}})
 
@@ -243,11 +244,7 @@ def run_diagnosis(n_days: int = 30, end_date: str | None = None) -> None:
 
 
 def _print_diagnosis(rows: list[SubFactorRow], *, n_days: int) -> None:
-    df = pd.DataFrame([
-        {"subfactor": r.subfactor, "direction": r.direction, "confidence": r.confidence,
-         "completeness": r.completeness, "weight": r.weight, "next_ret": r.next_ret}
-        for r in rows
-    ])
+    df = pd.DataFrame([{"subfactor": r.subfactor, "direction": r.direction, "confidence": r.confidence, "completeness": r.completeness, "weight": r.weight, "next_ret": r.next_ret} for r in rows])
 
     print(f"\n{'=' * 110}")
     print(f"汇总: {n_days} 个交易日, {len(df)} 条 sub-factor 记录")
@@ -273,8 +270,7 @@ def _print_diagnosis(rows: list[SubFactorRow], *, n_days: int) -> None:
         pos_rate = float((valid["direction"] == 1).mean())
         zero_rate = float((valid["direction"] == 0).mean())
         neg_rate = float((valid["direction"] == -1).mean())
-        print(f"{sf:<24s} {n:>8d} {float(sub['completeness'].mean()):>11.1%} "
-              f"{pos_rate:>13.1%} {zero_rate:>11.1%} {neg_rate:>13.1%}")
+        print(f"{sf:<24s} {n:>8d} {float(sub['completeness'].mean()):>11.1%} " f"{pos_rate:>13.1%} {zero_rate:>11.1%} {neg_rate:>13.1%}")
 
     # ====== Block 2: 各 sub-factor × direction 的 T+1 收益 ======
     print(f"\n[Block 2] sub-factor × direction → T+1 平均收益 (关键诊断)")
@@ -351,13 +347,13 @@ def _print_diagnosis(rows: list[SubFactorRow], *, n_days: int) -> None:
         if sub.empty:
             continue
         conf = sub["confidence"]
-        print(f"{sf:<24s} {float(conf.mean()):>9.2f} {float(conf.median()):>9.2f} "
-              f"{float((conf < 10).mean()):>11.1%} {float((conf > 50).mean()):>11.1%}")
+        print(f"{sf:<24s} {float(conf.mean()):>9.2f} {float(conf.median()):>9.2f} " f"{float((conf < 10).mean()):>11.1%} {float((conf > 50).mean()):>11.1%}")
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     import argparse
+
     parser = argparse.ArgumentParser(description="Trend sub-factor direction 诊断")
     parser.add_argument("--n-days", type=int, default=30, help="诊断交易日数 (默认 30, 够看分布了)")
     parser.add_argument("--end-date", default="", help="结束日期 YYYYMMDD")

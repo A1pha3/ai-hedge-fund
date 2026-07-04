@@ -120,9 +120,7 @@ def render_short_trade_boundary_score_failure_markdown(analysis: dict[str, Any])
     lines.append("")
     lines.append("## Representative Rows")
     for row in analysis["representative_cases"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: gap_band={row['gap_band']}, score_target={row['score_target']}, total_positive={row['total_positive_contribution']}, total_negative={row['total_negative_contribution']}, top_reasons={row['top_reasons']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: gap_band={row['gap_band']}, score_target={row['score_target']}, total_positive={row['total_positive_contribution']}, total_negative={row['total_negative_contribution']}, top_reasons={row['top_reasons']}")
     lines.append("")
     lines.append("## Recommendation")
     lines.append(f"- {analysis['recommendation']}")

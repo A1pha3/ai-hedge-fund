@@ -1,4 +1,5 @@
 """⚠️ DEPRECATED — Summarize 600519 P1 live replay metrics. One-time script; kept for historical reference only."""
+
 from __future__ import annotations
 
 import argparse
@@ -59,7 +60,7 @@ def _markdown_for_row(row: dict, source_path: Path) -> str:
     logged = row.get("logged") or {}
     replay = row.get("replay") or {}
     delta = row.get("delta") or {}
-    summary = (replay.get("agent_contribution_summary") or {})
+    summary = replay.get("agent_contribution_summary") or {}
     cohorts = summary.get("cohort_contributions") or {}
     status, note = _status_for_row(row)
     previous = EXPECTED_BASELINES.get(trade_date, {})

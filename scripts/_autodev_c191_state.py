@@ -47,26 +47,14 @@ def main() -> None:
         "summary": "NS-17 切片 2: graph.py parse_hedge_fund_response + hedge_fund_streaming.py SSE cancel 之前用 print() 吞错误/事件, 运维无法从结构化日志定位'为何某 ticker 缺 strategy signal'以及'为何某次 hedge fund run/backtest 中途断流'。修复: 两个文件新增 module logger, 9 处 print() → logger.warning (JSON parse 失败) / logger.info (SSE cancel 事件), 行为零变更, 但 LLM 打分链路与 SSE 流式的降级/中断完全可观测。",
         "root_cause": "graph.py parse_hedge_fund_response 的 3 处 print() (JSONDecodeError/TypeError/Exception) 和 hedge_fund_streaming.py 的 6 处 print() (SSE cancel/task cancel/generator cancel) 都不入结构化日志, 运维无法从 logs 定位 LLM JSON-parse 失败和 SSE 断流。NS-17 描述明确指出这两个文件是 must-win workflow 可观测性缺口。",
         "fix": "graph.py: 新增 module logger + 3 处 print() → logger.warning (含 parse_hedge_fund_response 标记 + response repr)。hedge_fund_streaming.py: 新增 module logger + 6 处 print() → logger.info (SSE disconnect/cancel 是正常运行事件)。7 个 TDD caplog 守卫 (3 graph parse + 2 module logger exists + 2 no print remain)。",
-        "residual_risk": "signal_fusion.py 的 NS-17 核心部分 (per-ticker DEBUG score breakdown) 此前已实施 (line 503-518 logger.debug), 本次切片只覆盖剩余的 graph.py + hedge_fund_streaming.py。无残余风险 — 行为零变更 (仍降级/返回 None), 只增加了结构化日志输出。"
+        "residual_risk": "signal_fusion.py 的 NS-17 核心部分 (per-ticker DEBUG score breakdown) 此前已实施 (line 503-518 logger.debug), 本次切片只覆盖剩余的 graph.py + hedge_fund_streaming.py。无残余风险 — 行为零变更 (仍降级/返回 None), 只增加了结构化日志输出。",
     }
 
     # 修改 changes (scope/behavior delta)
     c191["changes"] = [
-        {
-            "scope": "app/backend/services/graph.py",
-            "behavior_delta": "新增 module logger (logging.getLogger); parse_hedge_fund_response 的 3 处 print() (JSONDecodeError/TypeError/Exception) 改为 logger.warning, 含 parse_hedge_fund_response 标记 + response repr, 行为零变更 (仍返回 None)",
-            "evidence_refs": ["ev-c191-diff", "ev-c191-lint"]
-        },
-        {
-            "scope": "app/backend/routes/hedge_fund_streaming.py",
-            "behavior_delta": "新增 module logger (logging.getLogger); 6 处 print() (SSE disconnect/cancel/generator-cancel for hedge fund run + backtest) 改为 logger.info, 行为零变更 (仍 return/cancel)",
-            "evidence_refs": ["ev-c191-diff", "ev-c191-lint"]
-        },
-        {
-            "scope": "tests/backend/test_ns17_observability.py",
-            "behavior_delta": "新增 7 个 TDD 守卫: 3 个 graph parse_hedge_fund_response caplog (JSONDecodeError/TypeError/valid) + 2 个 hedge_fund_streaming module logger + no-print + 2 个 graph module logger + no-print",
-            "evidence_refs": ["ev-c191-tdd", "ev-c191-regression"]
-        }
+        {"scope": "app/backend/services/graph.py", "behavior_delta": "新增 module logger (logging.getLogger); parse_hedge_fund_response 的 3 处 print() (JSONDecodeError/TypeError/Exception) 改为 logger.warning, 含 parse_hedge_fund_response 标记 + response repr, 行为零变更 (仍返回 None)", "evidence_refs": ["ev-c191-diff", "ev-c191-lint"]},
+        {"scope": "app/backend/routes/hedge_fund_streaming.py", "behavior_delta": "新增 module logger (logging.getLogger); 6 处 print() (SSE disconnect/cancel/generator-cancel for hedge fund run + backtest) 改为 logger.info, 行为零变更 (仍 return/cancel)", "evidence_refs": ["ev-c191-diff", "ev-c191-lint"]},
+        {"scope": "tests/backend/test_ns17_observability.py", "behavior_delta": "新增 7 个 TDD 守卫: 3 个 graph parse_hedge_fund_response caplog (JSONDecodeError/TypeError/valid) + 2 个 hedge_fund_streaming module logger + no-print + 2 个 graph module logger + no-print", "evidence_refs": ["ev-c191-tdd", "ev-c191-regression"]},
     ]
 
     # 修改 affected_surfaces (observability, 不是 market_data/backtest/performance_claim)
@@ -98,9 +86,7 @@ def main() -> None:
         # policy_digest 保持与 campaign 相同 (candidate_selection/pre_closure)
         # lenses 保持结构, 修改 findings_or_candidates
         for role, lens in review.get("lenses", {}).items():
-            lens["findings_or_candidates"] = [
-                "NS-17 切片 2: graph.py + hedge_fund_streaming.py print→logger drain"
-            ]
+            lens["findings_or_candidates"] = ["NS-17 切片 2: graph.py + hedge_fund_streaming.py print→logger drain"]
 
     # 修改 closure_receipts
     for receipt in c191["closure_receipts"]:
@@ -133,7 +119,7 @@ def main() -> None:
             "campaign_id": "c191-ns17-scoring-observability",
             "workflow_id": "wf-top-picks-must-win",
             "subject": "wf-top-picks-must-win",
-            "raw_ref": "git diff: app/backend/services/graph.py + app/backend/routes/hedge_fund_streaming.py (print→logger) + tests/backend/test_ns17_observability.py (new)"
+            "raw_ref": "git diff: app/backend/services/graph.py + app/backend/routes/hedge_fund_streaming.py (print→logger) + tests/backend/test_ns17_observability.py (new)",
         },
         {
             "id": "ev-c191-tdd",
@@ -144,19 +130,9 @@ def main() -> None:
             "campaign_id": "c191-ns17-scoring-observability",
             "workflow_id": "wf-top-picks-must-win",
             "subject": "wf-top-picks-must-win",
-            "raw_ref": "uv run python -m pytest tests/backend/test_ns17_observability.py -v → 7 passed (3 graph parse caplog + 2 hedge_fund_streaming module logger + 2 graph module logger)"
+            "raw_ref": "uv run python -m pytest tests/backend/test_ns17_observability.py -v → 7 passed (3 graph parse caplog + 2 hedge_fund_streaming module logger + 2 graph module logger)",
         },
-        {
-            "id": "ev-c191-regression",
-            "kind": "test_result",
-            "attestation": "command_observed",
-            "environment": "local",
-            "observed_at": _now(),
-            "campaign_id": "c191-ns17-scoring-observability",
-            "workflow_id": "wf-top-picks-must-win",
-            "subject": "wf-top-picks-must-win",
-            "raw_ref": "uv run python -m pytest tests/backend/test_hedge_fund_streaming.py tests/test_graph_state.py -v → 11 passed (回归无破坏)"
-        },
+        {"id": "ev-c191-regression", "kind": "test_result", "attestation": "command_observed", "environment": "local", "observed_at": _now(), "campaign_id": "c191-ns17-scoring-observability", "workflow_id": "wf-top-picks-must-win", "subject": "wf-top-picks-must-win", "raw_ref": "uv run python -m pytest tests/backend/test_hedge_fund_streaming.py tests/test_graph_state.py -v → 11 passed (回归无破坏)"},
         {
             "id": "ev-c191-lint",
             "kind": "static_analysis",
@@ -166,8 +142,8 @@ def main() -> None:
             "campaign_id": "c191-ns17-scoring-observability",
             "workflow_id": "wf-top-picks-must-win",
             "subject": "wf-top-picks-must-win",
-            "raw_ref": "uv run ruff check app/backend/services/graph.py app/backend/routes/hedge_fund_streaming.py tests/backend/test_ns17_observability.py → All checks passed!"
-        }
+            "raw_ref": "uv run ruff check app/backend/services/graph.py app/backend/routes/hedge_fund_streaming.py tests/backend/test_ns17_observability.py → All checks passed!",
+        },
     ]
     state["evidence_catalog"].extend(new_evidence)
 
@@ -194,7 +170,7 @@ def main() -> None:
         "rationale": "C190 NS-2 切片 1 (model_version infra) + C191 NS-17 切片 2 (print→logger drain) 是同 workflow 的正交 stabilization, code site 完全独立 (main.py/recommendation_tracker.py vs graph.py/hedge_fund_streaming.py), 可一起 release",
         "release_owner_or_trigger": "user commit authorization (两场 campaign 代码改动均已验证: TDD + regression + lint GREEN)",
         "attribution_plan": "per-intervention evidence_profile 保持独立 (unobserved + focused_tests/full_regression/static_analysis), 聚合 release 时分别 commit 或合并 commit",
-        "member_effect_isolation": {}
+        "member_effect_isolation": {},
     }
     state["release_batches"].append(release_batch)
 
@@ -204,13 +180,7 @@ def main() -> None:
     cd191["id"] = "cd191-ns17-scoring-observability"
     cd191["family_id"] = "ns17-scoring-observability"
     cd191["source_refs"] = ["ev-c191-diff", "ev-c191-tdd"]
-    cd191["provenance_chain"] = [
-        {
-            "source_kind": "product_backlog",
-            "source_ref": "ev-c191-diff",
-            "node": "§三·6 NS-17 (P1): 打分可观测性 — graph.py + hedge_fund_streaming.py print→logger drain"
-        }
-    ]
+    cd191["provenance_chain"] = [{"source_kind": "product_backlog", "source_ref": "ev-c191-diff", "node": "§三·6 NS-17 (P1): 打分可观测性 — graph.py + hedge_fund_streaming.py print→logger drain"}]
     # change_risk=1 (行为零变更, 只加 logger), domain_impact_risk=1 (observability, 不触及 finance-quant surfaces)
     cd191["change_risk"] = 1
     cd191["domain_impact_risk"] = 1
@@ -225,7 +195,7 @@ def main() -> None:
         "action": "awaiting_release",
         "target_workflow_id": "wf-top-picks-must-win",
         "action_class": "stabilization",
-        "next_trigger": "Campaign 2/3 (C191 NS-17 切片 2 graph.py + hedge_fund_streaming.py print→logger) completed delivered but committed_unreleased — iv035 + iv036 同 workflow delivered, release batch rb-ns17-observability 已创建, 等待 user commit authorization 后 release。剩余 1 场额度可做正交 stabilization (如 NS-13 NaN guard) 或停止。"
+        "next_trigger": "Campaign 2/3 (C191 NS-17 切片 2 graph.py + hedge_fund_streaming.py print→logger) completed delivered but committed_unreleased — iv035 + iv036 同 workflow delivered, release batch rb-ns17-observability 已创建, 等待 user commit authorization 后 release。剩余 1 场额度可做正交 stabilization (如 NS-13 NaN guard) 或停止。",
     }
 
     # 10. 写回 state.json

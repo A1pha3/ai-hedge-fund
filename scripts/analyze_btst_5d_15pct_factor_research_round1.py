@@ -36,11 +36,7 @@ def _load_boundary_quarantine_lists(path: str | Path | None) -> dict[str, set[st
         return lists
     payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     for disposition in lists:
-        lists[disposition] = {
-            ticker_str
-            for ticker in list(dict(payload.get("research_surface_lists") or {}).get(disposition) or [])
-            if ticker is not None and (ticker_str := str(ticker))
-        }
+        lists[disposition] = {ticker_str for ticker in list(dict(payload.get("research_surface_lists") or {}).get(disposition) or []) if ticker is not None and (ticker_str := str(ticker))}
     return lists
 
 
@@ -170,9 +166,7 @@ def render_btst_5d_15pct_factor_research_round1_markdown(analysis: dict[str, Any
         if not rows:
             lines.append("- none")
         for row in rows:
-            lines.append(
-                f"- {row.get('group_label')}: hit_rate_15pct={row.get('hit_rate_15pct')}, mean_max_return={row.get('mean_max_future_high_return_2_5d')}, beta_tradeable_rate={row.get('beta_tradeable_rate')}, gates=({row.get('alpha_pass')}, {row.get('beta_pass')}, {row.get('gamma_pass')})"
-            )
+            lines.append(f"- {row.get('group_label')}: hit_rate_15pct={row.get('hit_rate_15pct')}, mean_max_return={row.get('mean_max_future_high_return_2_5d')}, beta_tradeable_rate={row.get('beta_tradeable_rate')}, gates=({row.get('alpha_pass')}, {row.get('beta_pass')}, {row.get('gamma_pass')})")
         lines.append("")
     return "\n".join(lines)
 

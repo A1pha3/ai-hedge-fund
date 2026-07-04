@@ -202,10 +202,7 @@ def render_trend_gate_missing_price_manifest_markdown(manifest: dict[str, Any], 
     lines.append("")
     lines.append("## Top补数 Rows")
     for row in list(manifest.get("manifest_rows") or [])[:row_limit]:
-        lines.append(
-            f"- #{row.get('priority_rank')} {row.get('priority_bucket')} {row.get('ticker')} {row.get('trade_date')} "
-            f"reason={row.get('local_price_missing_reason')} score={row.get('priority_score')} occurrences={row.get('occurrence_count')}"
-        )
+        lines.append(f"- #{row.get('priority_rank')} {row.get('priority_bucket')} {row.get('ticker')} {row.get('trade_date')} " f"reason={row.get('local_price_missing_reason')} score={row.get('priority_score')} occurrences={row.get('occurrence_count')}")
     lines.append("")
     return "\n".join(lines)
 

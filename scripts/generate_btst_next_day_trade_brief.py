@@ -20,11 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--register-followup",
         action="store_true",
-        help=(
-            "Generate and register the full BTST follow-up bundle (brief + execution card + boards). "
-            "This updates session_summary.json and *_latest aliases under the report directory. "
-            "Only supported when input_path is a report directory; ignores --output-dir."
-        ),
+        help=("Generate and register the full BTST follow-up bundle (brief + execution card + boards). " "This updates session_summary.json and *_latest aliases under the report directory. " "Only supported when input_path is a report directory; ignores --output-dir."),
     )
     parser.add_argument("--output-dir", default="data/reports", help="Directory where the brief artifacts will be written")
     return parser.parse_args()

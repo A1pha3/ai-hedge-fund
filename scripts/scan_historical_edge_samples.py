@@ -193,10 +193,7 @@ def scan_reports(reports_dir: Path, lower_bound: float, near_min: float, near_ma
         "files_scanned": len(files),
         "raw_record_count": len(raw_records),
         "deduped_record_count": len(deduped),
-        "bands": {
-            bucket: _summarize_bucket(records)
-            for bucket, records in classified.items()
-        },
+        "bands": {bucket: _summarize_bucket(records) for bucket, records in classified.items()},
     }
 
 

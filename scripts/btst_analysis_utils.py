@@ -159,8 +159,8 @@ def compute_all_factor_ics(rows: list[dict[str, Any]], return_col: str = "next_c
 # the factor is a strong predictor and its weight can be raised.  These thresholds are used
 # by compute_ic_weight_suggestions to generate per-factor recommendations that are written
 # into the surface report so the optimizer can pick them up in the next search round.
-IC_WEIGHT_DOWNGRADE_THRESHOLD: float = 0.02   # IC below this → suggest reducing weight
-IC_WEIGHT_UPGRADE_THRESHOLD: float = 0.05     # IC above this → suggest maintaining / increasing
+IC_WEIGHT_DOWNGRADE_THRESHOLD: float = 0.02  # IC below this → suggest reducing weight
+IC_WEIGHT_UPGRADE_THRESHOLD: float = 0.05  # IC above this → suggest maintaining / increasing
 
 
 def compute_ic_weight_suggestions(avg_factor_ics: dict[str, float | None]) -> dict[str, str]:
@@ -193,6 +193,7 @@ def compute_ic_weight_suggestions(avg_factor_ics: dict[str, float | None]) -> di
         else:
             suggestions[factor] = "maintain"
     return suggestions
+
 
 import pandas as pd
 
@@ -370,6 +371,7 @@ def extract_btst_price_outcome(ticker: str, trade_date: str, price_cache: dict[t
         max_idx = future_horizon_rows[future_horizon_rows["high"].astype(float) == max_future_high].index[0]
         max_future_high_trade_date_2_5d = max_idx.strftime("%Y-%m-%d")
     max_future_high_return_2_5d = None if max_future_high is None else round((max_future_high / trade_close) - 1.0, 4)
+
     def _resolve_runner_threshold_metrics(threshold: float) -> tuple[bool, int | None]:
         hit_rows = future_horizon_rows.loc[(future_horizon_rows["high"].astype(float) / trade_close) - 1.0 >= threshold]
         if hit_rows.empty:
@@ -481,7 +483,7 @@ def compute_excess_kurtosis(values: list[float]) -> float | None:
     if variance <= 0.0:
         return None
     fourth_moment = sum((x - m) ** 4 for x in values) / n
-    return round(fourth_moment / (variance ** 2) - 3.0, 4)
+    return round(fourth_moment / (variance**2) - 3.0, 4)
 
 
 def _build_return_edge_metrics(returns: list[float]) -> dict[str, float | int | None]:
@@ -527,7 +529,6 @@ def _build_return_edge_metrics(returns: list[float]) -> dict[str, float | int | 
     }
 
 
-
 # ---------------------------------------------------------------------------
 # Task 5 (Round 14): Regime-conditional backtesting constants and helpers.
 # ---------------------------------------------------------------------------
@@ -536,7 +537,7 @@ def _build_return_edge_metrics(returns: list[float]) -> dict[str, float | int | 
 # Symmetrically, a "bear day" is below REGIME_BEAR_DAY_RETURN_THRESHOLD.
 # All other days are classified as "sideways".
 # This self-contained proxy requires no external market-index data.
-REGIME_BULL_DAY_RETURN_THRESHOLD: float = 0.003   # avg daily return > +0.3 % → bull
+REGIME_BULL_DAY_RETURN_THRESHOLD: float = 0.003  # avg daily return > +0.3 % → bull
 REGIME_BEAR_DAY_RETURN_THRESHOLD: float = -0.003  # avg daily return < −0.3 % → bear
 
 
@@ -578,6 +579,7 @@ def build_regime_conditional_stats(rows: list[dict[str, Any]]) -> dict[str, Any]
 
     # Step 1: compute per-date average next_close_return (using only rows where the field is present).
     from collections import defaultdict as _defaultdict
+
     date_returns: dict[str, list[float]] = _defaultdict(list)
     for row in rows:
         td = str(row.get("trade_date") or "")
@@ -749,7 +751,7 @@ def compute_cross_day_autocorrelation(t1_returns: list[float], t2_returns: list[
 # during the T+1 session (next_open_to_close_return > 0).
 # A high gap_continuation_rate (≥ 0.50) favours "buy at open" execution;
 # a low rate suggests waiting for intraday confirmation before entry.
-GAP_CONTINUATION_OPEN_THRESHOLD: float = 0.02   # ≥ 2 % open gap triggers the computation
+GAP_CONTINUATION_OPEN_THRESHOLD: float = 0.02  # ≥ 2 % open gap triggers the computation
 
 
 def compute_gap_continuation_rate(rows: list[dict[str, Any]], open_gap_threshold: float = GAP_CONTINUATION_OPEN_THRESHOLD) -> dict[str, float | int | None]:
@@ -801,9 +803,9 @@ def compute_gap_continuation_rate(rows: list[dict[str, Any]], open_gap_threshold
 # Uses T0 bar range (high − low) / open as a single-bar proxy for next-day volatility.
 # Wired into stop_loss linkage: when p75(predicted_range_pct) > 4 % AND stop_loss_3pct rate > 25 %,
 # the combined flag warns that the strategy is operating in a high-volatility / high-stop regime.
-UP_BAR_PRICE_CHANGE_MIN: float = 0.02       # T0 up bar threshold to check for divergence
+UP_BAR_PRICE_CHANGE_MIN: float = 0.02  # T0 up bar threshold to check for divergence
 UPPER_SHADOW_DIVERGENCE_THRESHOLD: float = 0.45  # upper shadow > 45 % of range → divergence flag
-HIGH_VOL_RANGE_THRESHOLD: float = 0.04     # T0 range > 4 % of open → high-volatility bar
+HIGH_VOL_RANGE_THRESHOLD: float = 0.04  # T0 range > 4 % of open → high-volatility bar
 HIGH_VOL_STOP_LOSS_RATE_THRESHOLD: float = 0.25  # stop_loss_3pct > 25 % jointly triggers warning
 
 
@@ -838,11 +840,7 @@ def compute_t0_bar_metrics(trade_open: float, trade_high: float, trade_low: floa
         volume_price_divergence_score = round(1.0 - lower_shadow_pct, 4)
 
     price_change_pct: float = (trade_close - trade_open) / safe_open
-    volume_price_divergence_flag: bool = bool(
-        is_up_bar
-        and price_change_pct >= UP_BAR_PRICE_CHANGE_MIN
-        and upper_shadow_pct > UPPER_SHADOW_DIVERGENCE_THRESHOLD
-    )
+    volume_price_divergence_flag: bool = bool(is_up_bar and price_change_pct >= UP_BAR_PRICE_CHANGE_MIN and upper_shadow_pct > UPPER_SHADOW_DIVERGENCE_THRESHOLD)
 
     # Task 3 — T0 bar range as fraction of open (volatility proxy)
     t0_predicted_range_pct: float = round((trade_high - trade_low) / safe_open, 4)
@@ -883,10 +881,7 @@ def compute_predicted_range_stop_loss_linkage(predicted_range_pcts: list[float],
 
     predicted_range_stop_loss_warning: bool | None = None
     if predicted_range_pct_p75 is not None and stop_loss_trigger_rate_3pct is not None:
-        predicted_range_stop_loss_warning = bool(
-            predicted_range_pct_p75 > HIGH_VOL_RANGE_THRESHOLD
-            and stop_loss_trigger_rate_3pct > HIGH_VOL_STOP_LOSS_RATE_THRESHOLD
-        )
+        predicted_range_stop_loss_warning = bool(predicted_range_pct_p75 > HIGH_VOL_RANGE_THRESHOLD and stop_loss_trigger_rate_3pct > HIGH_VOL_STOP_LOSS_RATE_THRESHOLD)
 
     return {
         "high_volatility_warning_rate": high_volatility_warning_rate,
@@ -1036,12 +1031,12 @@ def compute_sell_timing_analysis(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if any(v is None for v in (next_open, next_high, next_close, trade_close, nor, ncr)):
             continue
         try:
-            f_open = float(next_open)   # type: ignore[arg-type]
-            f_high = float(next_high)   # type: ignore[arg-type]
-            f_close = float(next_close) # type: ignore[arg-type]
-            f_tc = float(trade_close)   # type: ignore[arg-type]
-            f_nor = float(nor)          # type: ignore[arg-type]
-            f_ncr = float(ncr)          # type: ignore[arg-type]
+            f_open = float(next_open)  # type: ignore[arg-type]
+            f_high = float(next_high)  # type: ignore[arg-type]
+            f_close = float(next_close)  # type: ignore[arg-type]
+            f_tc = float(trade_close)  # type: ignore[arg-type]
+            f_nor = float(nor)  # type: ignore[arg-type]
+            f_ncr = float(ncr)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             continue
         if f_high <= 0 or f_close == 0 or f_tc <= 0:
@@ -1382,6 +1377,7 @@ def compute_sector_concentration_gini(rows: list[dict[str, Any]]) -> dict[str, A
         - ``sample_count`` (int): rows with a non-empty ``industry`` label.
     """
     from collections import Counter
+
     industries: list[str] = [str(row["industry"]) for row in rows if row.get("industry")]
     if not industries:
         return {"sector_concentration_gini": None, "sector_distribution": {}, "sector_count": 0, "sample_count": 0}
@@ -1589,7 +1585,7 @@ def compute_optimal_hold_period(rows: list[dict[str, Any]]) -> dict[str, Any]:
         n: int = len(vals)
         mean: float = sum(vals) / n
         variance: float = sum((v - mean) ** 2 for v in vals) / (n - 1) if n >= 2 else 0.0
-        std: float = variance ** 0.5
+        std: float = variance**0.5
         sharpe: float | None = round(mean / std, 4) if std > 1e-9 else (round(mean, 4) if mean != 0.0 else None)
         win_rate: float = round(sum(1 for v in vals if v > 0.0) / n, 4)
         avg_return: float = round(mean, 4)
@@ -1671,11 +1667,7 @@ def compute_score_position_tiers(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """
     _MIN_TIER_ROWS: int = 3
 
-    scored_pairs: list[tuple[float, float]] = [
-        (float(row["runner_composite_score"]), float(row["next_close_return"]))
-        for row in rows
-        if row.get("runner_composite_score") is not None and row.get("next_close_return") is not None
-    ]
+    scored_pairs: list[tuple[float, float]] = [(float(row["runner_composite_score"]), float(row["next_close_return"])) for row in rows if row.get("runner_composite_score") is not None and row.get("next_close_return") is not None]
 
     if not scored_pairs:
         return {"score_p33": None, "score_p67": None, "tier_high_win_rate": None, "tier_high_avg_payoff": None, "tier_mid_win_rate": None, "tier_mid_avg_payoff": None, "tier_low_win_rate": None, "tier_low_avg_payoff": None, "tier_monotone_win_rate": False, "tier_win_rate_spread": None, "tier_payoff_spread": None}
@@ -1707,7 +1699,7 @@ def compute_score_position_tiers(rows: list[dict[str, Any]]) -> dict[str, Any]:
     tier_mid_win_rate, tier_mid_avg_payoff = _tier_stats(mid_rets)
     tier_low_win_rate, tier_low_avg_payoff = _tier_stats(low_rets)
 
-    tier_monotone_win_rate: bool = (tier_high_win_rate is not None and tier_mid_win_rate is not None and tier_low_win_rate is not None and tier_high_win_rate > tier_mid_win_rate > tier_low_win_rate)
+    tier_monotone_win_rate: bool = tier_high_win_rate is not None and tier_mid_win_rate is not None and tier_low_win_rate is not None and tier_high_win_rate > tier_mid_win_rate > tier_low_win_rate
 
     tier_win_rate_spread: float | None = round(tier_high_win_rate - tier_low_win_rate, 4) if tier_high_win_rate is not None and tier_low_win_rate is not None else None
     tier_payoff_spread: float | None = round(tier_high_avg_payoff - tier_low_avg_payoff, 4) if tier_high_avg_payoff is not None and tier_low_avg_payoff is not None else None
@@ -2060,7 +2052,7 @@ def compute_benchmark_adjusted_alpha(rows: list[dict[str, Any]]) -> dict[str, An
     if n >= 2:
         alpha_mean = sum(alpha_series) / n
         alpha_var = sum((a - alpha_mean) ** 2 for a in alpha_series) / (n - 1)
-        tracking_error: float = alpha_var ** 0.5
+        tracking_error: float = alpha_var**0.5
         alpha_sharpe: float | None = round(alpha_avg / tracking_error, 4) if tracking_error > 1e-9 else None
         information_ratio: float | None = alpha_sharpe  # same formula (alpha / TE)
     else:
@@ -2224,7 +2216,7 @@ def compute_return_distribution_shape(rows: list[dict]) -> dict:
     # Sample mean and std.
     mean_r: float = sum(rets) / n
     variance: float = sum((x - mean_r) ** 2 for x in rets) / (n - 1)  # sample variance
-    std_r: float = variance ** 0.5
+    std_r: float = variance**0.5
     if std_r == 0.0:
         return _null
 
@@ -2387,6 +2379,7 @@ def compute_liquidity_position_guidance(surface_summary: dict[str, Any]) -> dict
         - ``pool_size_stability``: str — "stable" | "variable" | "scarce".
     """
     import math
+
     avg_pool: float = float(surface_summary["avg_candidate_pool_size"]) if surface_summary.get("avg_candidate_pool_size") is not None else 50.0
     scarce_count: int = int(surface_summary.get("scarce_market_window_count") or 0)
     market_class: str = str(surface_summary.get("market_size_classification") or "unknown")
@@ -2713,7 +2706,7 @@ def compute_factor_pca_analysis(rows: list[dict]) -> dict:
     ka = len(active_cols)
     # SVD-based PCA: X_s = U S Vt; rows of Vt are principal components (PC loadings).
     U, S, Vt = np.linalg.svd(X_s, full_matrices=False)
-    ev = S ** 2
+    ev = S**2
     evr_arr = ev / ev.sum()
     evr: list[float] = evr_arr.tolist()
     # effective_factor_rank = number of PCs needed to reach 80 % cumulative explained variance.
@@ -3240,22 +3233,18 @@ def build_surface_summary(rows: list[dict[str, Any]], *, next_high_hit_threshold
     # score_win_rate_lift: score_weighted_win_rate − simple_win_rate; positive lift validates scoring.
     # high_confidence_win_rate: win rate restricted to composite_score ≥ 0.65 rows (min 5 samples).
     _HIGH_CONFIDENCE_SCORE_THRESHOLD: float = 0.65
-    _score_return_pairs: list[tuple[float, float]] = [
-        (float(row["runner_composite_score"]), float(row["next_close_return"]))
-        for row in next_day_rows
-        if row.get("runner_composite_score") is not None and row.get("next_close_return") is not None
-    ]
+    _score_return_pairs: list[tuple[float, float]] = [(float(row["runner_composite_score"]), float(row["next_close_return"])) for row in next_day_rows if row.get("runner_composite_score") is not None and row.get("next_close_return") is not None]
     _total_score_sum: float = sum(s for s, _ in _score_return_pairs)
     _score_weighted_win_rate: float | None
     if _total_score_sum > 0.0 and _score_return_pairs:
         _score_weighted_win_rate = round(sum(s for s, ret in _score_return_pairs if ret > 0.0) / _total_score_sum, 4)
     else:
         _score_weighted_win_rate = None
-    _simple_win_rate: float | None = (round(next_close_positive / len(next_day_rows), 4) if next_day_rows else None)
-    _score_win_rate_lift: float | None = (round(_score_weighted_win_rate - _simple_win_rate, 4) if _score_weighted_win_rate is not None and _simple_win_rate is not None else None)
+    _simple_win_rate: float | None = round(next_close_positive / len(next_day_rows), 4) if next_day_rows else None
+    _score_win_rate_lift: float | None = round(_score_weighted_win_rate - _simple_win_rate, 4) if _score_weighted_win_rate is not None and _simple_win_rate is not None else None
     _hc_rows: list[dict[str, Any]] = [row for row in next_day_rows if row.get("runner_composite_score") is not None and float(row["runner_composite_score"]) >= _HIGH_CONFIDENCE_SCORE_THRESHOLD]
     _hc_returns: list[float] = [float(row["next_close_return"]) for row in _hc_rows if row.get("next_close_return") is not None]
-    _high_confidence_selection_rate: float | None = (round(len(_hc_rows) / len(rows), 4) if rows else None)
+    _high_confidence_selection_rate: float | None = round(len(_hc_rows) / len(rows), 4) if rows else None
     _high_confidence_win_rate: float | None
     if len(_hc_returns) >= 5:
         _high_confidence_win_rate = round(sum(1 for r in _hc_returns if r > 0.0) / len(_hc_returns), 4)
@@ -5219,10 +5208,14 @@ def compute_profile_health_score(surface_summary: dict[str, Any]) -> dict[str, A
         subscores["win_rate_score"] = _NEUTRAL
     else:
         wr = float(wr_raw)
-        if wr >= 0.65: subscores["win_rate_score"] = 10.0
-        elif wr >= 0.55: subscores["win_rate_score"] = 7.0
-        elif wr >= 0.45: subscores["win_rate_score"] = 4.0
-        else: subscores["win_rate_score"] = 0.0
+        if wr >= 0.65:
+            subscores["win_rate_score"] = 10.0
+        elif wr >= 0.55:
+            subscores["win_rate_score"] = 7.0
+        elif wr >= 0.45:
+            subscores["win_rate_score"] = 4.0
+        else:
+            subscores["win_rate_score"] = 0.0
 
     # 2. payoff_score
     payoff_raw = surface_summary.get("realized_payoff_ratio")
@@ -5230,10 +5223,14 @@ def compute_profile_health_score(surface_summary: dict[str, Any]) -> dict[str, A
         subscores["payoff_score"] = _NEUTRAL
     else:
         payoff = float(payoff_raw)
-        if payoff >= 2.0: subscores["payoff_score"] = 10.0
-        elif payoff >= 1.5: subscores["payoff_score"] = 7.0
-        elif payoff >= 1.0: subscores["payoff_score"] = 4.0
-        else: subscores["payoff_score"] = 0.0
+        if payoff >= 2.0:
+            subscores["payoff_score"] = 10.0
+        elif payoff >= 1.5:
+            subscores["payoff_score"] = 7.0
+        elif payoff >= 1.0:
+            subscores["payoff_score"] = 4.0
+        else:
+            subscores["payoff_score"] = 0.0
 
     # 3. kelly_score
     kelly_pos_raw = surface_summary.get("kelly_positive")
@@ -5242,9 +5239,12 @@ def compute_profile_health_score(surface_summary: dict[str, Any]) -> dict[str, A
         subscores["kelly_score"] = _NEUTRAL
     elif bool(kelly_pos_raw):
         kelly_half = float(kelly_half_raw) if kelly_half_raw is not None else None
-        if kelly_half is not None and kelly_half >= 0.05: subscores["kelly_score"] = 10.0
-        elif kelly_half is not None and kelly_half >= 0.02: subscores["kelly_score"] = 6.0
-        else: subscores["kelly_score"] = 3.0
+        if kelly_half is not None and kelly_half >= 0.05:
+            subscores["kelly_score"] = 10.0
+        elif kelly_half is not None and kelly_half >= 0.02:
+            subscores["kelly_score"] = 6.0
+        else:
+            subscores["kelly_score"] = 3.0
     else:
         subscores["kelly_score"] = 0.0
 
@@ -5254,10 +5254,14 @@ def compute_profile_health_score(surface_summary: dict[str, Any]) -> dict[str, A
         subscores["regime_score"] = _NEUTRAL
     else:
         rcs = float(rcs_raw)
-        if rcs >= 0.85: subscores["regime_score"] = 10.0
-        elif rcs >= 0.70: subscores["regime_score"] = 7.0
-        elif rcs >= 0.55: subscores["regime_score"] = 4.0
-        else: subscores["regime_score"] = 0.0
+        if rcs >= 0.85:
+            subscores["regime_score"] = 10.0
+        elif rcs >= 0.70:
+            subscores["regime_score"] = 7.0
+        elif rcs >= 0.55:
+            subscores["regime_score"] = 4.0
+        else:
+            subscores["regime_score"] = 0.0
 
     # 5. tier_score
     tier_mono_raw = surface_summary.get("tier_monotone_win_rate")
@@ -5266,8 +5270,10 @@ def compute_profile_health_score(surface_summary: dict[str, Any]) -> dict[str, A
         subscores["tier_score"] = _NEUTRAL
     elif bool(tier_mono_raw):
         tier_spread = float(tier_spread_raw) if tier_spread_raw is not None else None
-        if tier_spread is not None and tier_spread >= 0.10: subscores["tier_score"] = 10.0
-        else: subscores["tier_score"] = 6.0
+        if tier_spread is not None and tier_spread >= 0.10:
+            subscores["tier_score"] = 10.0
+        else:
+            subscores["tier_score"] = 6.0
     else:
         subscores["tier_score"] = 0.0
 
@@ -5277,10 +5283,14 @@ def compute_profile_health_score(surface_summary: dict[str, Any]) -> dict[str, A
         subscores["ic_score"] = _NEUTRAL
     else:
         ic_frac = float(ic_frac_raw)
-        if ic_frac >= 0.80: subscores["ic_score"] = 10.0
-        elif ic_frac >= 0.60: subscores["ic_score"] = 6.0
-        elif ic_frac >= 0.40: subscores["ic_score"] = 3.0
-        else: subscores["ic_score"] = 0.0
+        if ic_frac >= 0.80:
+            subscores["ic_score"] = 10.0
+        elif ic_frac >= 0.60:
+            subscores["ic_score"] = 6.0
+        elif ic_frac >= 0.40:
+            subscores["ic_score"] = 3.0
+        else:
+            subscores["ic_score"] = 0.0
 
     # 7. stability_score
     rob_raw = surface_summary.get("regime_robustness_flag")
@@ -5289,8 +5299,10 @@ def compute_profile_health_score(surface_summary: dict[str, Any]) -> dict[str, A
         subscores["stability_score"] = _NEUTRAL
     elif bool(rob_raw):
         deficit = float(deficit_raw) if deficit_raw is not None else None
-        if deficit is not None and deficit < 0.10: subscores["stability_score"] = 10.0
-        else: subscores["stability_score"] = 7.0
+        if deficit is not None and deficit < 0.10:
+            subscores["stability_score"] = 10.0
+        else:
+            subscores["stability_score"] = 7.0
     else:
         subscores["stability_score"] = 3.0
 
@@ -5300,10 +5312,14 @@ def compute_profile_health_score(surface_summary: dict[str, Any]) -> dict[str, A
         subscores["drawdown_score"] = _NEUTRAL
     else:
         dd = float(dd_raw)
-        if dd > -0.02: subscores["drawdown_score"] = 10.0
-        elif dd > -0.05: subscores["drawdown_score"] = 7.0
-        elif dd > -0.08: subscores["drawdown_score"] = 4.0
-        else: subscores["drawdown_score"] = 0.0
+        if dd > -0.02:
+            subscores["drawdown_score"] = 10.0
+        elif dd > -0.05:
+            subscores["drawdown_score"] = 7.0
+        elif dd > -0.08:
+            subscores["drawdown_score"] = 4.0
+        else:
+            subscores["drawdown_score"] = 0.0
 
     # 9. hold_score
     hold_conf_raw = surface_summary.get("hold_period_confidence")
@@ -5311,9 +5327,12 @@ def compute_profile_health_score(surface_summary: dict[str, Any]) -> dict[str, A
         subscores["hold_score"] = _NEUTRAL
     else:
         hold_conf = float(hold_conf_raw)
-        if hold_conf >= 0.30: subscores["hold_score"] = 10.0
-        elif hold_conf >= 0.15: subscores["hold_score"] = 6.0
-        else: subscores["hold_score"] = 3.0
+        if hold_conf >= 0.30:
+            subscores["hold_score"] = 10.0
+        elif hold_conf >= 0.15:
+            subscores["hold_score"] = 6.0
+        else:
+            subscores["hold_score"] = 3.0
 
     # 10. execution_score
     exec_conf_raw = surface_summary.get("execution_timing_confidence")
@@ -5321,15 +5340,22 @@ def compute_profile_health_score(surface_summary: dict[str, Any]) -> dict[str, A
         subscores["execution_score"] = _NEUTRAL
     else:
         exec_conf = float(exec_conf_raw)
-        if exec_conf >= 0.20: subscores["execution_score"] = 10.0
-        elif exec_conf >= 0.10: subscores["execution_score"] = 6.0
-        else: subscores["execution_score"] = 3.0
+        if exec_conf >= 0.20:
+            subscores["execution_score"] = 10.0
+        elif exec_conf >= 0.10:
+            subscores["execution_score"] = 6.0
+        else:
+            subscores["execution_score"] = 3.0
 
     total_score = round(sum(subscores.values()), 2)
-    if total_score >= 80.0: grade = "A"
-    elif total_score >= 60.0: grade = "B"
-    elif total_score >= 40.0: grade = "C"
-    else: grade = "D"
+    if total_score >= 80.0:
+        grade = "A"
+    elif total_score >= 60.0:
+        grade = "B"
+    elif total_score >= 40.0:
+        grade = "C"
+    else:
+        grade = "D"
 
     weakest_area = min(subscores, key=lambda k: subscores[k])
     strongest_area = max(subscores, key=lambda k: subscores[k])
@@ -5379,12 +5405,16 @@ def compute_selection_churn_metrics(all_window_summaries: list[dict[str, Any]]) 
     for s in all_window_summaries:
         wr_raw = s.get("next_close_positive_rate")
         if wr_raw is not None:
-            try: wr_values.append(float(wr_raw))
-            except (TypeError, ValueError): pass
+            try:
+                wr_values.append(float(wr_raw))
+            except (TypeError, ValueError):
+                pass
         pr_raw = s.get("realized_payoff_ratio")
         if pr_raw is not None:
-            try: payoff_values.append(float(pr_raw))
-            except (TypeError, ValueError): pass
+            try:
+                payoff_values.append(float(pr_raw))
+            except (TypeError, ValueError):
+                pass
 
     if len(wr_values) < 2:
         return {**_null, "window_count": len(all_window_summaries)}
@@ -6133,9 +6163,7 @@ def compute_volume_anomaly_metrics(rows: list[dict]) -> dict:
         "volume_inflow_alignment": None,
     }
 
-    def _bucket_stats(
-        pairs: list[tuple[float, float]], p33: float, p67: float
-    ) -> tuple[dict | None, dict | None, dict | None]:
+    def _bucket_stats(pairs: list[tuple[float, float]], p33: float, p67: float) -> tuple[dict | None, dict | None, dict | None]:
         """Return (low_stats, mid_stats, high_stats) or None buckets when bucket < 3 rows."""
         low = [(sc, ret) for sc, ret in pairs if sc < p33]
         mid = [(sc, ret) for sc, ret in pairs if p33 <= sc < p67]
@@ -6154,11 +6182,7 @@ def compute_volume_anomaly_metrics(rows: list[dict]) -> dict:
     result = dict(_null)
 
     # --- Volume expansion quality analysis ---
-    veq_pairs: list[tuple[float, float]] = [
-        (float(row["volume_expansion_quality"]), float(row["next_close_return"]))
-        for row in rows
-        if row.get("volume_expansion_quality") is not None and row.get("next_close_return") is not None
-    ]
+    veq_pairs: list[tuple[float, float]] = [(float(row["volume_expansion_quality"]), float(row["next_close_return"])) for row in rows if row.get("volume_expansion_quality") is not None and row.get("next_close_return") is not None]
     if len(veq_pairs) >= 9:
         sorted_veq = sorted(v for v, _ in veq_pairs)
         n_veq = len(sorted_veq)
@@ -6176,23 +6200,13 @@ def compute_volume_anomaly_metrics(rows: list[dict]) -> dict:
             result["volume_high_avg_return"] = high_s["avg_return"]
 
         if low_s is not None and mid_s is not None and high_s is not None:
-            result["volume_monotone_win_rate"] = bool(
-                high_s["win_rate"] >= mid_s["win_rate"] >= low_s["win_rate"]
-            )
-            result["extreme_volume_win_rate_premium"] = round(
-                high_s["win_rate"] - low_s["win_rate"], 6
-            )
+            result["volume_monotone_win_rate"] = bool(high_s["win_rate"] >= mid_s["win_rate"] >= low_s["win_rate"])
+            result["extreme_volume_win_rate_premium"] = round(high_s["win_rate"] - low_s["win_rate"], 6)
         elif low_s is not None and high_s is not None:
-            result["extreme_volume_win_rate_premium"] = round(
-                high_s["win_rate"] - low_s["win_rate"], 6
-            )
+            result["extreme_volume_win_rate_premium"] = round(high_s["win_rate"] - low_s["win_rate"], 6)
 
     # --- Net inflow ratio analysis ---
-    enir_pairs: list[tuple[float, float]] = [
-        (float(row["t0_estimated_net_inflow_ratio"]), float(row["next_close_return"]))
-        for row in rows
-        if row.get("t0_estimated_net_inflow_ratio") is not None and row.get("next_close_return") is not None
-    ]
+    enir_pairs: list[tuple[float, float]] = [(float(row["t0_estimated_net_inflow_ratio"]), float(row["next_close_return"])) for row in rows if row.get("t0_estimated_net_inflow_ratio") is not None and row.get("next_close_return") is not None]
     if len(enir_pairs) >= 9:
         sorted_enir = sorted(v for v, _ in enir_pairs)
         n_enir = len(sorted_enir)
@@ -6821,7 +6835,7 @@ def compute_candidate_diversity_score(rows: list[dict]) -> dict:
     total = len(valid)
     freq = {s: c / total for s, c in counts.items()}
 
-    sector_hhi = sum(f ** 2 for f in freq.values())
+    sector_hhi = sum(f**2 for f in freq.values())
     diversity_score = round(1.0 - sector_hhi, 4)
     sector_count = len(counts)
     dominant_sector_share = max(freq.values())
@@ -6874,11 +6888,20 @@ def compute_return_percentile_breakdown(rows: list[dict]) -> dict:
         Returns all-None dict when fewer than 10 valid rows are available.
     """
     _null: dict = {
-        "p5": None, "p10": None, "p25": None, "p50": None,
-        "p75": None, "p90": None, "p95": None,
-        "right_tail_dominance": None, "iqr": None, "iqr_ratio": None,
-        "upper_fence": None, "lower_fence": None,
-        "right_outlier_rate": None, "left_outlier_rate": None,
+        "p5": None,
+        "p10": None,
+        "p25": None,
+        "p50": None,
+        "p75": None,
+        "p90": None,
+        "p95": None,
+        "right_tail_dominance": None,
+        "iqr": None,
+        "iqr_ratio": None,
+        "upper_fence": None,
+        "lower_fence": None,
+        "right_outlier_rate": None,
+        "left_outlier_rate": None,
         "tail_asymmetry_index": None,
     }
     returns = [float(r["next_close_return"]) for r in rows if r.get("next_close_return") is not None]
@@ -6897,8 +6920,13 @@ def compute_return_percentile_breakdown(rows: list[dict]) -> dict:
     right_tail_dominance = min(5.0, (p95 - p50) / max(abs(p5 - p50), 1e-6))
     right_tail_dominance = max(0.0, right_tail_dominance)
     return {
-        "p5": round(p5, 6), "p10": round(p10, 6), "p25": round(p25, 6),
-        "p50": round(p50, 6), "p75": round(p75, 6), "p90": round(p90, 6), "p95": round(p95, 6),
+        "p5": round(p5, 6),
+        "p10": round(p10, 6),
+        "p25": round(p25, 6),
+        "p50": round(p50, 6),
+        "p75": round(p75, 6),
+        "p90": round(p90, 6),
+        "p95": round(p95, 6),
         "right_tail_dominance": round(right_tail_dominance, 4),
         "iqr": round(iqr, 6),
         "iqr_ratio": round(iqr_ratio, 4),
@@ -6937,8 +6965,11 @@ def compute_composite_score_ic(rows: list[dict]) -> dict:
         10 paired observations are available.
     """
     _null: dict = {
-        "composite_ic": None, "composite_ic_positive": None,
-        "composite_ic_magnitude": None, "ic_t_stat": None, "ic_significant": None,
+        "composite_ic": None,
+        "composite_ic_positive": None,
+        "composite_ic_magnitude": None,
+        "ic_t_stat": None,
+        "ic_significant": None,
     }
 
     def _spearman_ic(x: list[float], y: list[float]) -> float:
@@ -6979,7 +7010,7 @@ def compute_composite_score_ic(rows: list[dict]) -> dict:
     n = len(pairs)
     ic_raw = _spearman_ic(scores_list, returns_list)
     ic = max(-1.0, min(1.0, ic_raw))
-    ic_t_stat = ic * ((n - 2) ** 0.5) / max((1 - ic ** 2) ** 0.5, 1e-8)
+    ic_t_stat = ic * ((n - 2) ** 0.5) / max((1 - ic**2) ** 0.5, 1e-8)
     if abs(ic) > 0.10:
         magnitude = "strong"
     elif abs(ic) > 0.05:
@@ -7024,8 +7055,12 @@ def compute_win_rate_confidence_interval(rows: list[dict]) -> dict:
     import random
 
     _null: dict = {
-        "observed_win_rate": None, "ci_lower": None, "ci_upper": None,
-        "ci_width": None, "win_rate_reliable": None, "win_rate_ci_grade": None,
+        "observed_win_rate": None,
+        "ci_lower": None,
+        "ci_upper": None,
+        "ci_width": None,
+        "win_rate_reliable": None,
+        "win_rate_ci_grade": None,
     }
     returns = [float(r["next_close_return"]) for r in rows if r.get("next_close_return") is not None]
     if len(returns) < 10:
@@ -7439,10 +7474,18 @@ def compute_market_environment_sensitivity(rows: list[dict]) -> dict:
 # Round 38, Task 2 (Beta): Factor importance ranking — per-factor Spearman IC
 # ---------------------------------------------------------------------------
 _FACTORS_TO_RANK: list[str] = [
-    "close_strength", "volume_expansion_quality", "sector_resonance",
-    "breakout_quality_score", "momentum_slope_20d", "volume_price_divergence",
-    "catalyst_theme_score", "relative_strength_rank", "market_cap_score",
-    "news_sentiment_score", "float_turnover_rate", "t0_estimated_net_inflow_ratio",
+    "close_strength",
+    "volume_expansion_quality",
+    "sector_resonance",
+    "breakout_quality_score",
+    "momentum_slope_20d",
+    "volume_price_divergence",
+    "catalyst_theme_score",
+    "relative_strength_rank",
+    "market_cap_score",
+    "news_sentiment_score",
+    "float_turnover_rate",
+    "t0_estimated_net_inflow_ratio",
     "rs_sector_rank",
 ]
 
@@ -7493,10 +7536,7 @@ def compute_factor_importance_ranking(rows: list[dict]) -> dict:
         mean_rx = sum(rx) / m
         mean_ry = sum(ry) / m
         num = sum((rx[i] - mean_rx) * (ry[i] - mean_ry) for i in range(m))
-        den = (
-            sum((rx[i] - mean_rx) ** 2 for i in range(m))
-            * sum((ry[i] - mean_ry) ** 2 for i in range(m))
-        ) ** 0.5
+        den = (sum((rx[i] - mean_rx) ** 2 for i in range(m)) * sum((ry[i] - mean_ry) ** 2 for i in range(m))) ** 0.5
         return num / max(den, 1e-8)
 
     ret_rows = [r for r in rows if r.get("next_close_return") is not None]
@@ -7507,11 +7547,7 @@ def compute_factor_importance_ranking(rows: list[dict]) -> dict:
 
     factor_ic: dict[str, float | None] = {}
     for factor in _FACTORS_TO_RANK:
-        paired: list[tuple[float, float]] = [
-            (float(r.get(factor)), returns[i])
-            for i, r in enumerate(ret_rows)
-            if r.get(factor) is not None
-        ]
+        paired: list[tuple[float, float]] = [(float(r.get(factor)), returns[i]) for i, r in enumerate(ret_rows) if r.get(factor) is not None]
         if len(paired) >= 5:
             xs = [p[0] for p in paired]
             ys = [p[1] for p in paired]
@@ -7569,8 +7605,11 @@ def compute_score_bucket_win_rates(rows: list[dict]) -> dict:
         Returns all-None dict when fewer than 15 valid paired rows are available.
     """
     _null: dict = {
-        "win_rate_q1": None, "win_rate_q2": None, "win_rate_q3": None,
-        "win_rate_q4": None, "win_rate_q5": None,
+        "win_rate_q1": None,
+        "win_rate_q2": None,
+        "win_rate_q3": None,
+        "win_rate_q4": None,
+        "win_rate_q5": None,
         "score_monotone": None,
         "score_near_monotone": None,
         "top_quintile_premium": None,
@@ -7654,10 +7693,7 @@ def compute_score_bucket_win_rates(rows: list[dict]) -> dict:
         mean_rx = sum(rx) / m
         mean_ry = sum(ry) / m
         num = sum((rx[i] - mean_rx) * (ry[i] - mean_ry) for i in range(m))
-        den = (
-            sum((rx[i] - mean_rx) ** 2 for i in range(m))
-            * sum((ry[i] - mean_ry) ** 2 for i in range(m))
-        ) ** 0.5
+        den = (sum((rx[i] - mean_rx) ** 2 for i in range(m)) * sum((ry[i] - mean_ry) ** 2 for i in range(m))) ** 0.5
         score_rank_ic = round(max(-1.0, min(1.0, num / max(den, 1e-8))), 4)
 
     score_discriminates_well: bool | None = top_quintile_premium is not None and top_quintile_premium > 0.10
@@ -8009,16 +8045,13 @@ def compute_factor_synergy_matrix(rows: list[dict]) -> dict:
     synergy_pair_count = 0
 
     from itertools import combinations as _combinations
+
     for f1, f2 in _combinations(_SYNERGY_FACTORS, 2):
         p67_f1 = p67_map.get(f1)
         p67_f2 = p67_map.get(f2)
         if p67_f1 is None or p67_f2 is None:
             continue
-        both_high = [
-            r for r in valid_rows
-            if r.get(f1) is not None and r.get(f2) is not None
-            and float(r[f1]) >= p67_f1 and float(r[f2]) >= p67_f2
-        ]
+        both_high = [r for r in valid_rows if r.get(f1) is not None and r.get(f2) is not None and float(r[f1]) >= p67_f1 and float(r[f2]) >= p67_f2]
         if len(both_high) < 5:
             continue
         pair_win_rate = sum(1 for r in both_high if float(r["next_close_return"]) > 0) / max(len(both_high), 1)
@@ -8090,10 +8123,7 @@ def compute_float_turnover_analysis(rows: list[dict]) -> dict:
     if all(r.get("float_turnover_rate") is None for r in rows):
         return _null
 
-    valid = [
-        r for r in rows
-        if r.get("next_close_return") is not None and r.get("float_turnover_rate") is not None
-    ]
+    valid = [r for r in rows if r.get("next_close_return") is not None and r.get("float_turnover_rate") is not None]
     if len(valid) < 10:
         return _null
 
@@ -8229,23 +8259,15 @@ def compute_volume_price_alignment(rows: list[dict]) -> dict:
             low_vq_rows = [r for r in veq_valid if float(r["volume_expansion_quality"]) < p50_veq]
 
             # aligned: high VEQ AND return>0  OR  low VEQ AND return<0
-            aligned_count = sum(
-                1 for r in veq_valid
-                if (float(r["volume_expansion_quality"]) >= p50_veq and float(r["next_close_return"]) > 0)
-                or (float(r["volume_expansion_quality"]) < p50_veq and float(r["next_close_return"]) < 0)
-            )
+            aligned_count = sum(1 for r in veq_valid if (float(r["volume_expansion_quality"]) >= p50_veq and float(r["next_close_return"]) > 0) or (float(r["volume_expansion_quality"]) < p50_veq and float(r["next_close_return"]) < 0))
             alignment_rate = round(aligned_count / max(len(veq_valid), 1), 6)
             result["vol_price_alignment_rate"] = alignment_rate
             result["vol_price_alignment_strong"] = alignment_rate > 0.55
 
             if len(high_vq_rows) >= 5:
-                result["aligned_win_rate"] = round(
-                    sum(1 for r in high_vq_rows if float(r["next_close_return"]) > 0) / max(len(high_vq_rows), 1), 6
-                )
+                result["aligned_win_rate"] = round(sum(1 for r in high_vq_rows if float(r["next_close_return"]) > 0) / max(len(high_vq_rows), 1), 6)
             if len(low_vq_rows) >= 5:
-                result["misaligned_win_rate"] = round(
-                    sum(1 for r in low_vq_rows if float(r["next_close_return"]) > 0) / max(len(low_vq_rows), 1), 6
-                )
+                result["misaligned_win_rate"] = round(sum(1 for r in low_vq_rows if float(r["next_close_return"]) > 0) / max(len(low_vq_rows), 1), 6)
 
     # ------------------------------------------------------------------
     # Scenario 2: t0_estimated_net_inflow_ratio >= 0 vs < 0
@@ -8259,13 +8281,9 @@ def compute_volume_price_alignment(rows: list[dict]) -> dict:
             inflow_wr: float | None = None
             outflow_wr: float | None = None
             if len(inflow_rows) >= 5:
-                inflow_wr = round(
-                    sum(1 for r in inflow_rows if float(r["next_close_return"]) > 0) / max(len(inflow_rows), 1), 6
-                )
+                inflow_wr = round(sum(1 for r in inflow_rows if float(r["next_close_return"]) > 0) / max(len(inflow_rows), 1), 6)
             if len(outflow_rows) >= 5:
-                outflow_wr = round(
-                    sum(1 for r in outflow_rows if float(r["next_close_return"]) > 0) / max(len(outflow_rows), 1), 6
-                )
+                outflow_wr = round(sum(1 for r in outflow_rows if float(r["next_close_return"]) > 0) / max(len(outflow_rows), 1), 6)
             result["inflow_win_rate"] = inflow_wr
             result["outflow_win_rate"] = outflow_wr
             if inflow_wr is not None and outflow_wr is not None:
@@ -8334,9 +8352,10 @@ def compute_statistical_significance_tests(rows: list[dict]) -> dict:
 
     # Binomial z-test (normal approximation)
     z_wr = (p_hat - 0.5) / max((0.25 / n) ** 0.5, 1e-8)
+
     # Two-sided p-value using normal CDF approximation via math.erf
     def _normal_cdf(z: float) -> float:
-        return 0.5 * (1.0 + math.erf(z / (2.0 ** 0.5)))
+        return 0.5 * (1.0 + math.erf(z / (2.0**0.5)))
 
     win_rate_p_value = round(2.0 * (1.0 - _normal_cdf(abs(z_wr))), 8)
     wr_sig90 = z_wr > 1.282
@@ -8345,14 +8364,12 @@ def compute_statistical_significance_tests(rows: list[dict]) -> dict:
     # One-sample t-test (mean > 0)
     mean_r = sum(returns) / n
     variance_r = sum((r - mean_r) ** 2 for r in returns) / max(n - 1, 1)
-    std_r = variance_r ** 0.5
-    t_stat = mean_r / max(std_r / max(n ** 0.5, 1e-8), 1e-8)
+    std_r = variance_r**0.5
+    t_stat = mean_r / max(std_r / max(n**0.5, 1e-8), 1e-8)
     ret_sig90 = t_stat > 1.282
     ret_sig95 = t_stat > 1.645
 
-    combined_score = round(
-        (int(wr_sig90) + int(wr_sig95) + int(ret_sig90) + int(ret_sig95)) / 4.0, 6
-    )
+    combined_score = round((int(wr_sig90) + int(wr_sig95) + int(ret_sig90) + int(ret_sig95)) / 4.0, 6)
     strategy_valid = wr_sig90 and ret_sig90
 
     return {
@@ -9471,14 +9488,14 @@ def compute_score_distribution_moments(rows: list[dict]) -> dict:
     n = len(scores)
     mu = sum(scores) / n
     var = sum((x - mu) ** 2 for x in scores) / (n - 1)
-    std = var ** 0.5
+    std = var**0.5
 
     if std < 1e-12:
         skewness = 0.0
         kurtosis = 0.0
     else:
-        skewness = (sum((x - mu) ** 3 for x in scores) / n) / (std ** 3)
-        kurtosis = (sum((x - mu) ** 4 for x in scores) / n) / (std ** 4) - 3.0
+        skewness = (sum((x - mu) ** 3 for x in scores) / n) / (std**3)
+        kurtosis = (sum((x - mu) ** 4 for x in scores) / n) / (std**4) - 3.0
 
     positive_pct = sum(1 for s in scores if s > 0) / n
 
@@ -10051,14 +10068,17 @@ def compute_score_decile_analysis(rows: list[dict]) -> dict:
         ``bottom_decile_win_rate``, ``top_decile_premium``, ``decile_monotone_count``,
         ``top_half_vs_bottom_half_lift``, ``decile_valid``.
     """
-    _null: dict = {**{f"d{i}_win_rate": None for i in range(1, 11)}, **{
-        "top_decile_win_rate": None,
-        "bottom_decile_win_rate": None,
-        "top_decile_premium": None,
-        "decile_monotone_count": None,
-        "top_half_vs_bottom_half_lift": None,
-        "decile_valid": False,
-    }}
+    _null: dict = {
+        **{f"d{i}_win_rate": None for i in range(1, 11)},
+        **{
+            "top_decile_win_rate": None,
+            "bottom_decile_win_rate": None,
+            "top_decile_premium": None,
+            "decile_monotone_count": None,
+            "top_half_vs_bottom_half_lift": None,
+            "decile_valid": False,
+        },
+    }
     if not rows or len(rows) < 20:
         return _null
 
@@ -10270,6 +10290,7 @@ def compute_factor_redundancy_analysis(rows: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Round 50, Task 2 (Beta): Extended Holding Period Analysis
 # ---------------------------------------------------------------------------
+
 
 def compute_extended_holding_period(rows: list[dict]) -> dict:
     """Compute multi-day (T+1, T+2, T+3) win-rate and return statistics.
@@ -10597,7 +10618,7 @@ def compute_information_ratio_analysis(rows: list[dict]) -> dict:
     std_ret: "float | None" = None
     if n >= 2:
         variance = sum((r - mean_ret) ** 2 for r in rets) / (n - 1)
-        std_ret = variance ** 0.5
+        std_ret = variance**0.5
 
     ir: "float | None" = None
     if std_ret is not None:
@@ -11120,7 +11141,7 @@ def compute_factor_decay_analysis(rows: list[dict]) -> dict:
         denom_sq = sum((rank_x[i] - mean_rx) ** 2 for i in range(n)) * sum((rank_y[i] - mean_ry) ** 2 for i in range(n))
         if denom_sq <= 0:
             return None
-        return num / (denom_sq ** 0.5)
+        return num / (denom_sq**0.5)
 
     factor_ic_scores: dict[str, float | None] = {}
     for fk in _FACTOR_KEYS:
@@ -11273,7 +11294,7 @@ def compute_score_rank_stability(rows: list[dict]) -> dict:
         denom_sq = sum((rx[i] - mean_rx) ** 2 for i in range(n)) * sum((ry[i] - mean_ry) ** 2 for i in range(n))
         if denom_sq <= 0:
             return None
-        return num / (denom_sq ** 0.5)
+        return num / (denom_sq**0.5)
 
     if not rows or len(rows) < 10:
         return _null
@@ -11392,8 +11413,8 @@ def compute_intraday_time_segmentation(rows: list[dict]) -> dict:
             return _null
         seg_size = n // 3
         early = valid_rets[:seg_size]
-        late = valid_rets[n - seg_size:]
-        mid = valid_rets[seg_size: n - seg_size]
+        late = valid_rets[n - seg_size :]
+        mid = valid_rets[seg_size : n - seg_size]
 
     early_wr, early_mr = _seg_stats(early)
     mid_wr, mid_mr = _seg_stats(mid)
@@ -11676,7 +11697,7 @@ def compute_factor_contribution_analysis(rows: list[dict]) -> dict:
         if ss_x <= 0 or ss_y <= 0:
             factor_r2_scores[fname] = 0.0
             continue
-        r = cov_sum / (ss_x ** 0.5 * ss_y ** 0.5)
+        r = cov_sum / (ss_x**0.5 * ss_y**0.5)
         factor_r2_scores[fname] = round(r * r, 8)
     valid_r2: dict[str, float] = {k: v for k, v in factor_r2_scores.items() if v is not None}
     if not valid_r2:
@@ -11710,14 +11731,14 @@ def compute_return_dist_moments(rows: list[dict]) -> dict:
     mid = n // 2
     median_r = sorted_r[mid] if n % 2 == 1 else (sorted_r[mid - 1] + sorted_r[mid]) / 2
     variance = sum((r - mean_r) ** 2 for r in returns) / (n - 1)
-    std_r = variance ** 0.5
+    std_r = variance**0.5
     if std_r == 0:
         return invalid
     # Use population std (n denominator) for moment calculations
     pop_std = (sum((r - mean_r) ** 2 for r in returns) / n) ** 0.5
     skewness = sum(((r - mean_r) / pop_std) ** 3 for r in returns) / n
     excess_kurtosis = sum(((r - mean_r) / pop_std) ** 4 for r in returns) / n - 3
-    jarque_bera_stat = n / 6 * (skewness ** 2 + excess_kurtosis ** 2 / 4)
+    jarque_bera_stat = n / 6 * (skewness**2 + excess_kurtosis**2 / 4)
     normality_violation = jarque_bera_stat > 10
     mean_median_divergence = mean_r - median_r
     if skewness > 0.2 and excess_kurtosis < 3:
@@ -11764,7 +11785,7 @@ def compute_composite_quality_score(rows: list[dict]) -> dict:
         n = len(returns)
         mean_r = sum(returns) / n
         std_r = (sum((r - mean_r) ** 2 for r in returns) / (n - 1)) ** 0.5
-        ir = (mean_r / std_r * (252 ** 0.5)) if std_r > 0 else 0.0
+        ir = (mean_r / std_r * (252**0.5)) if std_r > 0 else 0.0
         scores["information_ratio"] = max(0.0, min(1.0, ir / 2.0 + 0.5))
     # Dimension 4: regime_adaptability
     ra_val = None
@@ -11815,6 +11836,7 @@ def compute_composite_quality_score(rows: list[dict]) -> dict:
 # Round 60, Task 1 (Alpha): Multi-signal consistency check
 # ---------------------------------------------------------------------------
 
+
 def compute_signal_consistency_check(rows: list[dict]) -> dict:
     """检验多信号系统的一致性（各信号是否互相确认还是互相矛盾）"""
     invalid = {"signal_consistency_valid": False, "high_consistency_win_rate": None, "low_consistency_win_rate": None, "mixed_signal_win_rate": None, "signal_consistency_lift": None, "high_consistency_pct": None, "high_consistency_rows": None, "low_consistency_rows": None, "mixed_signal_rows": None}
@@ -11845,6 +11867,7 @@ def compute_signal_consistency_check(rows: list[dict]) -> dict:
             low_rows.append(row)
         else:
             mixed_rows.append(row)
+
     def _wr(group: list[dict]) -> "float | None":
         if len(group) < 3:
             return None
@@ -11852,6 +11875,7 @@ def compute_signal_consistency_check(rows: list[dict]) -> dict:
         if not rets:
             return None
         return round(sum(1 for r in rets if r > 0) / len(rets), 6)
+
     high_wr = _wr(high_rows)
     low_wr = _wr(low_rows)
     mixed_wr = _wr(mixed_rows)
@@ -11864,19 +11888,23 @@ def compute_signal_consistency_check(rows: list[dict]) -> dict:
 # Round 60, Task 2 (Beta): Holding period optimization analysis
 # ---------------------------------------------------------------------------
 
+
 def compute_holding_period_optimization(rows: list[dict]) -> dict:
     """比较T+1/T+2/T+3持仓期的收益特征，找出最优持仓期"""
     invalid = {"holding_period_valid": False, "t1_win_rate": None, "t2_win_rate": None, "t3_win_rate": None, "t1_mean_return": None, "t2_mean_return": None, "t3_mean_return": None, "t1_sharpe": None, "optimal_holding_period": None, "holding_period_consistency": None}
     if not rows or len(rows) < 8:
         return invalid
+
     def _get_returns(field_primary: str, field_backup: str) -> list[float]:
         vals = [float(r[field_primary]) for r in rows if r.get(field_primary) is not None]
         if not vals:
             vals = [float(r[field_backup]) for r in rows if r.get(field_backup) is not None]
         return vals
+
     t1_rets = _get_returns("next_day_return", "t1_return")
     t2_rets = _get_returns("day2_return", "t2_return")
     t3_rets = _get_returns("day3_return", "t3_return")
+
     def _stats(rets: list[float]) -> "tuple[float|None, float|None, float|None]":
         if len(rets) < 8:
             return None, None, None
@@ -11884,9 +11912,10 @@ def compute_holding_period_optimization(rows: list[dict]) -> dict:
         mean_r = round(sum(rets) / len(rets), 6)
         n = len(rets)
         var = sum((r - mean_r) ** 2 for r in rets) / (n - 1)
-        std = var ** 0.5
-        sharpe = round(mean_r / std * (252 ** 0.5), 6) if std > 0 else None
+        std = var**0.5
+        sharpe = round(mean_r / std * (252**0.5), 6) if std > 0 else None
         return wr, mean_r, sharpe
+
     t1_wr, t1_mean, t1_sharpe = _stats(t1_rets)
     t2_wr, t2_mean, _t2_sharpe = _stats(t2_rets)
     t3_wr, t3_mean, _t3_sharpe = _stats(t3_rets)
@@ -11923,6 +11952,7 @@ def compute_holding_period_optimization(rows: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Round 61, Task 1 (Alpha): Overfitting risk indicators
 # ---------------------------------------------------------------------------
+
 
 def compute_overfitting_risk_indicators(rows: list[dict]) -> dict:
     """量化策略过拟合风险指标（信号是否依赖少数幸运样本）"""
@@ -11990,6 +12020,7 @@ def compute_overfitting_risk_indicators(rows: list[dict]) -> dict:
 # Round 61, Task 2 (Beta): Extreme market resilience
 # ---------------------------------------------------------------------------
 
+
 def compute_extreme_market_resilience(rows: list[dict]) -> dict:
     """分析极端行情（大涨/大跌日）下策略的抗压能力"""
     invalid = {"extreme_market_valid": False, "extreme_up_threshold": None, "extreme_down_threshold": None, "extreme_up_win_rate": None, "extreme_down_win_rate": None, "normal_win_rate": None, "resilience_score": None, "extreme_divergence": None}
@@ -12005,10 +12036,12 @@ def compute_extreme_market_resilience(rows: list[dict]) -> dict:
     extreme_up = [r for r in rets if r >= p90]
     extreme_down = [r for r in rets if r <= p10]
     normal = [r for r in rets if r < p90 and r > p10]
+
     def _wr(group: list) -> "float | None":
         if len(group) < 3:
             return None
         return round(sum(1 for r in group if r > 0) / len(group), 6)
+
     extreme_up_win_rate = _wr(extreme_up)
     extreme_down_win_rate = _wr(extreme_down)
     normal_win_rate = _wr(normal)
@@ -12028,6 +12061,7 @@ def compute_extreme_market_resilience(rows: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Round 62, Task 1 (Alpha): Liquidity risk analysis
 # ---------------------------------------------------------------------------
+
 
 def compute_liquidity_risk_analysis(rows: list[dict]) -> dict:
     """量化候选标的的流动性风险（换手率不足导致滑点放大、成交困难）"""
@@ -12049,7 +12083,7 @@ def compute_liquidity_risk_analysis(rows: list[dict]) -> dict:
     high_liquidity_pct = round(sum(1 for t in turnovers if t > 0.10) / n, 8)
     liquidity_concentration = round(low_liquidity_pct / (high_liquidity_pct + 0.001), 8)
     variance = sum((t - mean_turnover) ** 2 for t in turnovers) / (n - 1) if n > 1 else 0.0
-    std_turnover = variance ** 0.5
+    std_turnover = variance**0.5
     turnover_cv = round(std_turnover / mean_turnover, 8) if mean_turnover != 0 else None
     if low_liquidity_pct < 0.1 and high_liquidity_pct > 0.3:
         grade = "A"
@@ -12065,6 +12099,7 @@ def compute_liquidity_risk_analysis(rows: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Round 62, Task 2 (Beta): Transaction cost impact
 # ---------------------------------------------------------------------------
+
 
 def compute_transaction_cost_impact(rows: list[dict]) -> dict:
     """估算交易成本对净收益的影响（A股双边交易成本约0.3%）"""
@@ -12096,6 +12131,7 @@ def compute_transaction_cost_impact(rows: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Round 63, Task 1 (Alpha): Stop-loss / take-profit threshold optimization
 # ---------------------------------------------------------------------------
+
 
 def compute_stop_loss_take_profit_analysis(rows: list[dict]) -> dict:
     """分析最优止损/止盈阈值组合对盈利因子和胜率的影响（3×3=9组合矩阵）"""
@@ -12139,6 +12175,7 @@ def compute_stop_loss_take_profit_analysis(rows: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Round 63, Task 2 (Beta): Factor combination score
 # ---------------------------------------------------------------------------
+
 
 def compute_factor_combination_score(rows: list[dict]) -> dict:
     """测试4个预定义因子子集组合的胜率，寻找最优因子组合（AND条件筛选）"""
@@ -12190,12 +12227,15 @@ def compute_factor_combination_score(rows: list[dict]) -> dict:
 # Round 64, Task 1 (Alpha): Adaptive weight suggestion
 # ---------------------------------------------------------------------------
 
+
 def compute_adaptive_weight_suggestion(rows):
     import math
+
     FACTORS = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
     if len(rows) < 10:
         return {"adaptive_weight_valid": False, "suggested_weights": None, "top_weight_factor": None, "weight_concentration": None, "effective_factor_count": None, "weight_entropy": None}
     rets = [r.get("next_day_return") for r in rows]
+
     def _spearman_ic(xs, ys):
         pairs = [(x, y) for x, y in zip(xs, ys) if x is not None and y is not None]
         if len(pairs) < 5:
@@ -12203,19 +12243,21 @@ def compute_adaptive_weight_suggestion(rows):
         n = len(pairs)
         xs2 = [p[0] for p in pairs]
         ys2 = [p[1] for p in pairs]
+
         def _rank(arr):
             sorted_idx = sorted(range(len(arr)), key=lambda i: arr[i])
             ranks = [0.0] * len(arr)
             i = 0
             while i < len(arr):
                 j = i
-                while j < len(arr) - 1 and arr[sorted_idx[j+1]] == arr[sorted_idx[j]]:
+                while j < len(arr) - 1 and arr[sorted_idx[j + 1]] == arr[sorted_idx[j]]:
                     j += 1
                 avg = (i + j) / 2.0 + 1
-                for k in range(i, j+1):
+                for k in range(i, j + 1):
                     ranks[sorted_idx[k]] = avg
                 i = j + 1
             return ranks
+
         rx = _rank(xs2)
         ry = _rank(ys2)
         mx = sum(rx) / n
@@ -12226,6 +12268,7 @@ def compute_adaptive_weight_suggestion(rows):
         if dx == 0 or dy == 0:
             return None
         return num / math.sqrt(dx * dy)
+
     ic_map = {}
     for f in FACTORS:
         xs = [r.get(f) for r in rows]
@@ -12252,8 +12295,10 @@ def compute_adaptive_weight_suggestion(rows):
 # Round 64, Task 2 (Beta): Factor validity window
 # ---------------------------------------------------------------------------
 
+
 def compute_factor_validity_window(rows):
     import math
+
     FACTORS = ["close_strength", "volume_expansion_quality", "sector_resonance", "rs_sector_rank", "t0_estimated_net_inflow_ratio", "breakout_quality_score", "momentum_slope_20d"]
     if len(rows) < 20:
         return {"factor_validity_valid": False, "early_ic": None, "mid_ic": None, "late_ic": None, "ic_stability": None, "ic_trend_direction": None}
@@ -12261,6 +12306,7 @@ def compute_factor_validity_window(rows):
     t1 = n // 3
     t2 = 2 * (n // 3)
     segments = [rows[:t1], rows[t1:t2], rows[t2:]]
+
     def _spearman_ic(xs, ys):
         pairs = [(x, y) for x, y in zip(xs, ys) if x is not None and y is not None]
         if len(pairs) < 3:
@@ -12268,19 +12314,21 @@ def compute_factor_validity_window(rows):
         n2 = len(pairs)
         xs2 = [p[0] for p in pairs]
         ys2 = [p[1] for p in pairs]
+
         def _rank(arr):
             sorted_idx = sorted(range(len(arr)), key=lambda i: arr[i])
             ranks = [0.0] * len(arr)
             i = 0
             while i < len(arr):
                 j = i
-                while j < len(arr) - 1 and arr[sorted_idx[j+1]] == arr[sorted_idx[j]]:
+                while j < len(arr) - 1 and arr[sorted_idx[j + 1]] == arr[sorted_idx[j]]:
                     j += 1
                 avg = (i + j) / 2.0 + 1
-                for k in range(i, j+1):
+                for k in range(i, j + 1):
                     ranks[sorted_idx[k]] = avg
                 i = j + 1
             return ranks
+
         rx = _rank(xs2)
         ry = _rank(ys2)
         mx = sum(rx) / n2
@@ -12291,6 +12339,7 @@ def compute_factor_validity_window(rows):
         if dx == 0 or dy == 0:
             return None
         return num / math.sqrt(dx * dy)
+
     seg_ics = []
     for seg in segments:
         rets = [r.get("next_day_return") for r in seg]
@@ -12322,6 +12371,7 @@ def compute_factor_validity_window(rows):
 # ---------------------------------------------------------------------------
 # Round 65, Task 1 (Alpha): Return attribution (multi-linear regression approximation)
 # ---------------------------------------------------------------------------
+
 
 def compute_return_attribution(rows: list[dict]) -> dict:
     """Decompose total return into standardized partial-correlation factor contributions.
@@ -12398,6 +12448,7 @@ def compute_return_attribution(rows: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Round 65, Task 2 (Beta): Multi-timeframe consistency
 # ---------------------------------------------------------------------------
+
 
 def compute_multi_timeframe_consistency(rows: list[dict]) -> dict:
     """Check signal consistency across early/late halves of the data sample.
@@ -12609,11 +12660,13 @@ def compute_score_dispersion_analysis(rows: list[dict]) -> dict:
     median_score = (sorted_vals[mid_idx - 1] + sorted_vals[mid_idx]) / 2.0 if n % 2 == 0 else sorted_vals[mid_idx]
     high_rows = [r for s, r in scored_rows if s >= median_score]
     low_rows = [r for s, r in scored_rows if s < median_score]
+
     def _win_rate(group: list) -> "float | None":
         rets = [r.get("next_day_return") for r in group if r.get("next_day_return") is not None]
         if len(rets) < 3:
             return None
         return round(sum(1 for v in rets if float(v) > 0) / len(rets), 6)
+
     high_score_win_rate = _win_rate(high_rows)
     low_score_win_rate = _win_rate(low_rows)
     if high_score_win_rate is not None and low_score_win_rate is not None:
@@ -12679,11 +12732,13 @@ def compute_fund_flow_consistency(rows: list[dict]) -> dict:
             q_lfhb.append(ret)
         else:
             q_lflb.append(ret)
+
     def _qwr(group: list) -> "float | None":
         rets = [float(v) for v in group if v is not None]
         if len(rets) < 2:
             return None
         return round(sum(1 for v in rets if v > 0) / len(rets), 6)
+
     hfhb_wr = _qwr(q_hfhb)
     hflb_wr = _qwr(q_hflb)
     lfhb_wr = _qwr(q_lfhb)
@@ -12841,9 +12896,9 @@ def compute_relative_strength_ranking(rows: list[dict]) -> dict:
         return _null
     sorted_rows = sorted(valid_rows, key=lambda r: float(r["rs_sector_rank"]))
     n = len(sorted_rows)
-    bot_third = sorted_rows[:n // 3]
-    mid_third = sorted_rows[n // 3:2 * n // 3]
-    top_third = sorted_rows[2 * n // 3:]
+    bot_third = sorted_rows[: n // 3]
+    mid_third = sorted_rows[n // 3 : 2 * n // 3]
+    top_third = sorted_rows[2 * n // 3 :]
 
     def _win_rate(grp: list[dict]) -> "float | None":
         if len(grp) < 2:
@@ -12968,9 +13023,9 @@ def compute_price_position_analysis(rows: list[dict]) -> dict:
     cs_std = (sum((v - cs_mean) ** 2 for v in cs_vals) / (n - 1)) ** 0.5 if n >= 2 else 0.0
     mid_idx = n // 2
     cs_median = cs_vals[mid_idx] if n % 2 == 1 else (cs_vals[mid_idx - 1] + cs_vals[mid_idx]) / 2.0
-    low_cs = sorted_rows[:n // 3]
-    mid_cs = sorted_rows[n // 3:2 * n // 3]
-    high_cs = sorted_rows[2 * n // 3:]
+    low_cs = sorted_rows[: n // 3]
+    mid_cs = sorted_rows[n // 3 : 2 * n // 3]
+    high_cs = sorted_rows[2 * n // 3 :]
 
     def _wr(grp: list[dict]) -> "float | None":
         if len(grp) < 2:
@@ -13091,6 +13146,7 @@ def compute_win_loss_streak_analysis(rows: list[dict]) -> dict:
 # Round 71, Task 1 (Alpha): Sector momentum ranking analysis
 # ---------------------------------------------------------------------------
 
+
 def compute_sector_momentum_ranking(rows: list[dict]) -> dict:
     """分析板块动量因子排名与次日收益的关系。
 
@@ -13119,16 +13175,19 @@ def compute_sector_momentum_ranking(rows: list[dict]) -> dict:
     bot = sorted_rows[: n // 3]
     mid = sorted_rows[n // 3 : 2 * n // 3]
     top = sorted_rows[2 * n // 3 :]
+
     def _win_rate(group: list[dict]) -> "float | None":
         if len(group) < 2:
             return None
         wins = sum(1 for r in group if r.get("next_day_return") is not None and float(r["next_day_return"]) > 0)
         return round(wins / len(group), 6)
+
     def _mean_return(group: list[dict]) -> "float | None":
         vals = [float(r["next_day_return"]) for r in group if r.get("next_day_return") is not None]
         if len(vals) < 2:
             return None
         return round(sum(vals) / len(vals), 6)
+
     high_wr = _win_rate(top)
     mid_wr = _win_rate(mid)
     low_wr = _win_rate(bot)
@@ -13152,6 +13211,7 @@ def compute_sector_momentum_ranking(rows: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Round 71, Task 2 (Beta): Volume structure analysis
 # ---------------------------------------------------------------------------
+
 
 def compute_volume_structure_analysis(rows: list[dict]) -> dict:
     """分析成交量结构（量比分布形态）对次日收益的预测意义。
@@ -13181,22 +13241,24 @@ def compute_volume_structure_analysis(rows: list[dict]) -> dict:
     m = len(vq_vals)
     vol_mean = sum(vq_vals) / m
     variance = sum((x - vol_mean) ** 2 for x in vq_vals) / (m - 1) if m > 1 else 0.0
-    vol_std = variance ** 0.5
+    vol_std = variance**0.5
     if vol_std == 0:
         vol_skewness = 0.0
     else:
-        vol_skewness = round(sum((x - vol_mean) ** 3 for x in vq_vals) / m / (vol_std ** 3), 6)
+        vol_skewness = round(sum((x - vol_mean) ** 3 for x in vq_vals) / m / (vol_std**3), 6)
     vol_positive_pct = round(sum(1 for x in vq_vals if x > 0) / m, 6)
     sorted_rows = sorted(valid_rows, key=lambda r: float(r["volume_expansion_quality"]))
     n = len(sorted_rows)
     bot = sorted_rows[: n // 3]
     mid = sorted_rows[n // 3 : 2 * n // 3]
     top = sorted_rows[2 * n // 3 :]
+
     def _win_rate(group: list[dict]) -> "float | None":
         if len(group) < 2:
             return None
         wins = sum(1 for r in group if r.get("next_day_return") is not None and float(r["next_day_return"]) > 0)
         return round(wins / len(group), 6)
+
     high_wr = _win_rate(top)
     mid_wr = _win_rate(mid)
     low_wr = _win_rate(bot)
@@ -13217,6 +13279,7 @@ def compute_volume_structure_analysis(rows: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Round 72, Task 1 (Alpha): Multi-factor composite Z-score grouping analysis
 # ---------------------------------------------------------------------------
+
 
 def compute_multifactor_zscore_grouping(rows: list[dict]) -> dict:
     """将7个核心因子标准化为Z分数后加总，形成综合Z分数排名，分析其与次日收益的关系。
@@ -13253,7 +13316,7 @@ def compute_multifactor_zscore_grouping(rows: list[dict]) -> dict:
         else:
             m = sum(vals) / len(vals)
             variance = sum((x - m) ** 2 for x in vals) / (len(vals) - 1)
-            factor_stats[f] = (m, variance ** 0.5)
+            factor_stats[f] = (m, variance**0.5)
     composite_z_rows: list[tuple[float, dict]] = []
     for r in rows:
         cz = 0.0
@@ -13274,16 +13337,19 @@ def compute_multifactor_zscore_grouping(rows: list[dict]) -> dict:
     bot_rows = [x[1] for x in composite_z_rows[: n // 3]]
     mid_rows = [x[1] for x in composite_z_rows[n // 3 : 2 * n // 3]]
     top_rows = [x[1] for x in composite_z_rows[2 * n // 3 :]]
+
     def _win_rate(group: list[dict]) -> "float | None":
         if len(group) < 2:
             return None
         wins = sum(1 for r in group if r.get("next_day_return") is not None and float(r["next_day_return"]) > 0)
         return round(wins / len(group), 6)
+
     def _mean_return(group: list[dict]) -> "float | None":
         vals2 = [float(r["next_day_return"]) for r in group if r.get("next_day_return") is not None]
         if len(vals2) < 2:
             return None
         return round(sum(vals2) / len(vals2), 6)
+
     top_z_wr = _win_rate(top_rows)
     mid_z_wr = _win_rate(mid_rows)
     bot_z_wr = _win_rate(bot_rows)
@@ -13307,6 +13373,7 @@ def compute_multifactor_zscore_grouping(rows: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Round 72, Task 2 (Beta): Return persistence analysis
 # ---------------------------------------------------------------------------
+
 
 def compute_return_persistence_analysis(rows: list[dict]) -> dict:
     """分析BTST策略在不同市场日期/周期中的收益持续性（consecutive win consistency）。
@@ -13349,7 +13416,7 @@ def compute_return_persistence_analysis(rows: list[dict]) -> dict:
         if len(block_win_rates_3) >= 2:
             m3 = sum(block_win_rates_3) / len(block_win_rates_3)
             var3 = sum((x - m3) ** 2 for x in block_win_rates_3) / (len(block_win_rates_3) - 1)
-            rolling_win_rate_std = round(var3 ** 0.5, 6)
+            rolling_win_rate_std = round(var3**0.5, 6)
         else:
             rolling_win_rate_std = 0.0
         rolling_consistency = round(1.0 - rolling_win_rate_std, 6) if rolling_win_rate_std is not None else None
@@ -13568,7 +13635,7 @@ def compute_signal_strength_stratification(rows: list[dict]) -> dict:
         return _null
     scored_rows.sort(key=lambda x: x[0])
     n = len(scored_rows)
-    groups = [scored_rows[i * n // 5:(i + 1) * n // 5] for i in range(5)]
+    groups = [scored_rows[i * n // 5 : (i + 1) * n // 5] for i in range(5)]
     qwr: list = []
     for g in groups:
         if len(g) < 2:
@@ -13691,6 +13758,7 @@ def compute_sharpe_ratio_analysis(rows: list[dict]) -> dict:
         ``sharpe_grade``.
     """
     import math as _math
+
     _null: dict = {"sharpe_analysis_valid": False, "return_mean": None, "return_std": None, "sharpe_ratio": None, "annualized_sharpe": None, "sortino_ratio": None, "calmar_proxy": None, "sharpe_grade": "D"}
     if len(rows) < 8:
         return _null
@@ -13759,6 +13827,7 @@ def compute_factor_collinearity_check(rows: list[dict]) -> dict:
         ``collinearity_grade``.
     """
     import math as _math
+
     _null: dict = {"factor_collinearity_valid": False, "pair_correlations": None, "max_collinearity": None, "high_collinearity_pairs": [], "effective_factor_count": None, "collinearity_grade": "D"}
     if len(rows) < 10:
         return _null
@@ -13824,6 +13893,7 @@ def compute_return_skew_quality(rows: list[dict]) -> dict:
         ``skew_quality_grade``.
     """
     import math as _math
+
     _null: dict = {"return_skew_quality_valid": False, "skewness": None, "excess_kurtosis": None, "positive_return_mean": None, "negative_return_mean": None, "gain_loss_ratio": None, "right_tail_pct": None, "left_tail_pct": None, "tail_asymmetry_score": None, "skew_quality_grade": "D"}
     if len(rows) < 10:
         return _null
@@ -13839,8 +13909,8 @@ def compute_return_skew_quality(rows: list[dict]) -> dict:
         skewness = 0.0
         excess_kurtosis = 0.0
     else:
-        skewness = round(sum((r - mean_r) ** 3 for r in rets) / n / (std_r ** 3), 8)
-        excess_kurtosis = round(sum((r - mean_r) ** 4 for r in rets) / n / (std_r ** 4) - 3.0, 8)
+        skewness = round(sum((r - mean_r) ** 3 for r in rets) / n / (std_r**3), 8)
+        excess_kurtosis = round(sum((r - mean_r) ** 4 for r in rets) / n / (std_r**4) - 3.0, 8)
     pos_rets = [r for r in rets if r > 0]
     neg_rets = [r for r in rets if r < 0]
     positive_return_mean = round(sum(pos_rets) / len(pos_rets), 8) if pos_rets else None
@@ -13884,6 +13954,7 @@ def compute_factor_orthogonality_score(rows: list[dict]) -> dict:
         ``orthogonality_grade``.
     """
     import math as _math
+
     _null: dict = {"factor_orthogonality_valid": False, "mean_abs_correlation": None, "max_abs_correlation": None, "low_corr_pair_pct": None, "orthogonality_score": None, "orthogonality_grade": "D"}
     if len(rows) < 10:
         return _null
@@ -14221,6 +14292,7 @@ def compute_factor_robustness_check(rows: list[dict]) -> dict:
     ic_second: dict[str, "float | None"] = {}
     ic_sign_consistent: dict[str, "bool | None"] = {}
     for factor in _FACTORS_R78:
+
         def _collect_pairs(rlist):
             pairs = []
             for r in rlist:
@@ -14232,6 +14304,7 @@ def compute_factor_robustness_check(rows: list[dict]) -> dict:
                     except (TypeError, ValueError):
                         pass
             return pairs
+
         full_pairs = _collect_pairs(rows)
         first_pairs = _collect_pairs(first_rows)
         second_pairs = _collect_pairs(second_rows)
@@ -14294,7 +14367,7 @@ def compute_score_quintile_consistency(rows: list[dict]) -> dict:
     if n < 25:
         return EMPTY
     sorted_rows: list[dict] = sorted(valid_rows, key=lambda x: x["score"])
-    groups: list[list[dict]] = [sorted_rows[i * n // 5:(i + 1) * n // 5] for i in range(5)]
+    groups: list[list[dict]] = [sorted_rows[i * n // 5 : (i + 1) * n // 5] for i in range(5)]
     win_rates: list[float] = []
     for g in groups:
         if len(g) == 0:
@@ -14355,7 +14428,8 @@ def compute_return_quantile_lift(rows: list[dict]) -> dict:
         if score_val is None or r.get("actual_return") is None:
             continue
         try:
-            s_f = float(score_val); ret_f = float(r["actual_return"])
+            s_f = float(score_val)
+            ret_f = float(r["actual_return"])
         except (TypeError, ValueError):
             continue
         valid_rows.append({"score": s_f, "actual_return": ret_f})
@@ -14363,12 +14437,15 @@ def compute_return_quantile_lift(rows: list[dict]) -> dict:
         return EMPTY
     sorted_rows: list[dict] = sorted(valid_rows, key=lambda x: x["score"])
     n: int = len(sorted_rows)
-    top: list[dict] = sorted_rows[2 * n // 3:]
+    top: list[dict] = sorted_rows[2 * n // 3 :]
     bot: list[dict] = sorted_rows[: n // 3]
     top_returns: list[float] = sorted([r["actual_return"] for r in top])
     bot_returns: list[float] = sorted([r["actual_return"] for r in bot])
+
     def _median(lst: list[float]) -> float:
-        m = len(lst); return lst[m // 2] if m % 2 == 1 else (lst[m // 2 - 1] + lst[m // 2]) / 2
+        m = len(lst)
+        return lst[m // 2] if m % 2 == 1 else (lst[m // 2 - 1] + lst[m // 2]) / 2
+
     top_median_return: float = round(_median(top_returns), 6)
     bot_median_return: float = round(_median(bot_returns), 6)
     median_return_lift: float = round(top_median_return - bot_median_return, 6)
@@ -14392,7 +14469,8 @@ def compute_near_high_stock_analysis(rows: list[dict]) -> dict:
         if r.get("actual_return") is None or r.get("close_strength") is None:
             continue
         try:
-            ret_f = float(r["actual_return"]); cs_f = float(r["close_strength"])
+            ret_f = float(r["actual_return"])
+            cs_f = float(r["close_strength"])
         except (TypeError, ValueError):
             continue
         valid_rows.append({"actual_return": ret_f, "close_strength": cs_f})
@@ -14431,8 +14509,8 @@ def compute_expected_value_analysis(rows: list[dict]) -> dict:
         return EMPTY
     sorted_rows: list[dict] = sorted(valid_rows, key=lambda x: x["score"])
     n: int = len(sorted_rows)
-    top: list[dict] = sorted_rows[2 * n // 3:]
-    bot: list[dict] = sorted_rows[:n // 3]
+    top: list[dict] = sorted_rows[2 * n // 3 :]
+    bot: list[dict] = sorted_rows[: n // 3]
     top_winners: list[float] = [r["actual_return"] for r in top if r["actual_return"] > 0]
     top_losers: list[float] = [r["actual_return"] for r in top if r["actual_return"] <= 0]
     top_win_rate: float = len(top_winners) / len(top)
@@ -14567,8 +14645,8 @@ def compute_kelly_criterion_analysis(rows: list[dict]) -> dict:
         return EMPTY
     sorted_rows: list[dict] = sorted(valid_rows, key=lambda x: x["score"])
     n: int = len(sorted_rows)
-    top_rows: list[dict] = sorted_rows[2 * n // 3:]
-    bot_rows: list[dict] = sorted_rows[:n // 3]
+    top_rows: list[dict] = sorted_rows[2 * n // 3 :]
+    bot_rows: list[dict] = sorted_rows[: n // 3]
 
     def _calc_kelly(group_rows: list[dict]) -> "float | None":
         if len(group_rows) == 0:
@@ -14619,7 +14697,7 @@ def compute_return_percentile_profile(rows: list[dict]) -> dict:
         return EMPTY
     sorted_rows: list[dict] = sorted(valid_rows, key=lambda x: x["score"])
     n: int = len(sorted_rows)
-    top_rows: list[dict] = sorted_rows[2 * n // 3:]
+    top_rows: list[dict] = sorted_rows[2 * n // 3 :]
     if len(top_rows) < 5:
         return EMPTY
     top_returns: list[float] = sorted(r["actual_return"] for r in top_rows)
@@ -14722,6 +14800,7 @@ def compute_sector_tailwind_protection(rows: list[dict]) -> dict:
 def compute_batch_consistency_analysis(rows: list[dict]) -> dict:
     """批次时序一致性：窗口内3等份时序批次的胜率稳定性。"""
     import math as _math
+
     EMPTY: dict = {"valid": False, "batch1_win_rate": None, "batch2_win_rate": None, "batch3_win_rate": None, "batch_consistency_score": None, "batch_trend_direction": None}
     valid_rows: list[dict] = []
     for r in rows:
@@ -15011,9 +15090,7 @@ def compute_volume_price_divergence_score(rows: list[dict]) -> dict:
     if len(high_vol_rows) < 5:
         return _INVALID
     vp_high_vol_count: int = len(high_vol_rows)
-    vp_high_vol_win_rate: float = round(
-        sum(1 for r in high_vol_rows if r["ret"] > 0) / vp_high_vol_count, 8
-    )
+    vp_high_vol_win_rate: float = round(sum(1 for r in high_vol_rows if r["ret"] > 0) / vp_high_vol_count, 8)
     if low_vol_rows:
         low_vol_avg_return: float = sum(r["ret"] for r in low_vol_rows) / len(low_vol_rows)
     else:
@@ -15072,23 +15149,15 @@ def compute_entry_timing_quality(rows: list[dict]) -> dict:
     n: int = len(valid_rows)
     sorted_inflow: list[float] = sorted(r["inflow"] for r in valid_rows)
     mid: int = n // 2
-    median_inflow: float = (
-        sorted_inflow[mid] if n % 2 == 1 else (sorted_inflow[mid - 1] + sorted_inflow[mid]) / 2.0
-    )
+    median_inflow: float = sorted_inflow[mid] if n % 2 == 1 else (sorted_inflow[mid - 1] + sorted_inflow[mid]) / 2.0
     high_inflow_rows: list[dict] = [r for r in valid_rows if r["inflow"] >= median_inflow]
     low_inflow_rows: list[dict] = [r for r in valid_rows if r["inflow"] < median_inflow]
     if len(high_inflow_rows) < 3 or len(low_inflow_rows) < 3:
         return _INVALID
-    et_high_inflow_win_rate: float = round(
-        sum(1 for r in high_inflow_rows if r["ret"] > 0) / len(high_inflow_rows), 8
-    )
-    et_low_inflow_win_rate: float = round(
-        sum(1 for r in low_inflow_rows if r["ret"] > 0) / len(low_inflow_rows), 8
-    )
+    et_high_inflow_win_rate: float = round(sum(1 for r in high_inflow_rows if r["ret"] > 0) / len(high_inflow_rows), 8)
+    et_low_inflow_win_rate: float = round(sum(1 for r in low_inflow_rows if r["ret"] > 0) / len(low_inflow_rows), 8)
     et_inflow_timing_edge: float = round(et_high_inflow_win_rate - et_low_inflow_win_rate, 8)
-    et_high_inflow_avg_return: float = round(
-        sum(r["ret"] for r in high_inflow_rows) / len(high_inflow_rows), 8
-    )
+    et_high_inflow_avg_return: float = round(sum(r["ret"] for r in high_inflow_rows) / len(high_inflow_rows), 8)
     return {
         "valid": True,
         "et_high_inflow_win_rate": et_high_inflow_win_rate,
@@ -15238,14 +15307,13 @@ def compute_tail_flow_quality_score(rows: list[dict]) -> dict:
     # Min-max normalise each signal to [0, 1] within the window
     tail_vals: list[float] = [r["tail"] for r in valid_rows]
     inflow_vals: list[float] = [r["inflow"] for r in valid_rows]
-    t_min: float = min(tail_vals); t_max: float = max(tail_vals)
-    i_min: float = min(inflow_vals); i_max: float = max(inflow_vals)
+    t_min: float = min(tail_vals)
+    t_max: float = max(tail_vals)
+    i_min: float = min(inflow_vals)
+    i_max: float = max(inflow_vals)
     t_range: float = t_max - t_min if t_max != t_min else 1.0
     i_range: float = i_max - i_min if i_max != i_min else 1.0
-    composite_scores: list[float] = [
-        ((r["tail"] - t_min) / t_range + (r["inflow"] - i_min) / i_range) / 2.0
-        for r in valid_rows
-    ]
+    composite_scores: list[float] = [((r["tail"] - t_min) / t_range + (r["inflow"] - i_min) / i_range) / 2.0 for r in valid_rows]
     # P75/P25 split by composite score
     sorted_scores: list[float] = sorted(composite_scores)
     p75_idx: int = int(n * 0.75)

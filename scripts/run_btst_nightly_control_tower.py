@@ -985,11 +985,7 @@ def _collect_control_tower_ticker_set(control_tower_snapshot: dict[str, Any], ke
 
 def _find_candidate_pool_focus_liquidity_profile(control_tower_snapshot: dict[str, Any], focus_ticker: str) -> dict[str, Any]:
     return next(
-        (
-            dict(row or {})
-            for row in list(control_tower_snapshot.get("candidate_pool_recall_focus_liquidity_profiles") or [])
-            if str(dict(row or {}).get("ticker") or "").strip() == focus_ticker
-        ),
+        (dict(row or {}) for row in list(control_tower_snapshot.get("candidate_pool_recall_focus_liquidity_profiles") or []) if str(dict(row or {}).get("ticker") or "").strip() == focus_ticker),
         {},
     )
 
@@ -1517,13 +1513,15 @@ def _build_gate_ready_next_steps(context: dict[str, Any]) -> list[str]:
     ready_tickers = list(context.get("ready_tickers") or [])
     selected_ticker = str(context.get("selected_ticker") or "").strip()
     selected_contract_verdict = str(context.get("selected_contract_verdict") or "").strip()
-    next_steps = [
-        f"立刻把 {ready_tickers} 作为第二个 aligned peer expansion review 的最高优先级，先复核 closed-cycle 兑现与执行约束，再决定是否在极窄 carryover lane 中扩容。"
-    ]
-    safeguard_step = _build_peer_selected_contract_safeguard_step(
-        selected_contract_verdict or "pending",
-        template=f"同步确认 {selected_ticker} 当前合约仍保持 {{selected_contract_verdict}}，避免主票未闭环时误扩容。",
-    ) if selected_ticker else None
+    next_steps = [f"立刻把 {ready_tickers} 作为第二个 aligned peer expansion review 的最高优先级，先复核 closed-cycle 兑现与执行约束，再决定是否在极窄 carryover lane 中扩容。"]
+    safeguard_step = (
+        _build_peer_selected_contract_safeguard_step(
+            selected_contract_verdict or "pending",
+            template=f"同步确认 {selected_ticker} 当前合约仍保持 {{selected_contract_verdict}}，避免主票未闭环时误扩容。",
+        )
+        if selected_ticker
+        else None
+    )
     if safeguard_step:
         next_steps.append(safeguard_step)
     return next_steps
@@ -1587,9 +1585,7 @@ def _build_peer_proof_why_now_parts(context: dict[str, Any]) -> list[str]:
 def _build_peer_proof_next_steps(context: dict[str, Any]) -> list[str]:
     ready_for_promotion_review_tickers = list(context.get("ready_for_promotion_review_tickers") or [])
     selected_contract_verdict = str(context.get("selected_contract_verdict") or "").strip()
-    next_steps = [
-        f"立刻复核 {ready_for_promotion_review_tickers} 的第二个 aligned peer close-loop 证据，确认它们是否足以进入 promotion review，但在 gate 未 ready 前不要提前扩容。"
-    ]
+    next_steps = [f"立刻复核 {ready_for_promotion_review_tickers} 的第二个 aligned peer close-loop 证据，确认它们是否足以进入 promotion review，但在 gate 未 ready 前不要提前扩容。"]
     safeguard_step = _build_peer_selected_contract_safeguard_step(
         selected_contract_verdict,
         template="同步确认 formal selected contract 当前仍为 {selected_contract_verdict}，避免 peer proof-ready 被误读成已可扩容。",
@@ -1645,19 +1641,9 @@ def _resolve_peer_close_loop_phase(context: dict[str, Any]) -> str:
     focus_gate_verdict = str(context.get("focus_gate_verdict") or "").strip()
     pending_next_day_tickers = list(context.get("pending_next_day_tickers") or [])
     pending_t_plus_2_tickers = list(context.get("pending_t_plus_2_tickers") or [])
-    if focus_ticker and (
-        focus_proof_verdict == "pending_next_day_close"
-        or focus_promotion_review_verdict == "await_next_day_close"
-        or focus_gate_verdict == "await_peer_next_day_close"
-        or focus_ticker in pending_next_day_tickers
-    ):
+    if focus_ticker and (focus_proof_verdict == "pending_next_day_close" or focus_promotion_review_verdict == "await_next_day_close" or focus_gate_verdict == "await_peer_next_day_close" or focus_ticker in pending_next_day_tickers):
         return "next_day"
-    if focus_ticker and (
-        focus_proof_verdict == "pending_t_plus_2_close"
-        or focus_promotion_review_verdict == "await_t_plus_2_close"
-        or focus_gate_verdict == "await_peer_t_plus_2_close"
-        or focus_ticker in pending_t_plus_2_tickers
-    ):
+    if focus_ticker and (focus_proof_verdict == "pending_t_plus_2_close" or focus_promotion_review_verdict == "await_t_plus_2_close" or focus_gate_verdict == "await_peer_t_plus_2_close" or focus_ticker in pending_t_plus_2_tickers):
         return "t_plus_2"
     return ""
 
@@ -2458,27 +2444,17 @@ def render_btst_open_ready_delta_markdown(payload: dict[str, Any], *, output_par
     )
 
 
-def _surface_zero_executable_blocked_recommendation(
-    latest_btst_snapshot: dict[str, Any], recommendation: Any
-) -> Any:
+def _surface_zero_executable_blocked_recommendation(latest_btst_snapshot: dict[str, Any], recommendation: Any) -> Any:
     brief_summary = dict(latest_btst_snapshot.get("brief_summary") or {})
     if int(brief_summary.get("short_trade_selected_count") or 0) > 0:
         return recommendation
     blocked_count = int(brief_summary.get("execution_blocked_candidate_count") or 0)
     if blocked_count <= 0:
         return recommendation
-    blocked_tickers = [
-        str(ticker)
-        for ticker in list(brief_summary.get("execution_blocked_tickers") or [])
-        if str(ticker or "").strip()
-    ]
+    blocked_tickers = [str(ticker) for ticker in list(brief_summary.get("execution_blocked_tickers") or []) if str(ticker or "").strip()]
     preview = ", ".join(blocked_tickers[:3])
     suffix = " 等" if len(blocked_tickers) > 3 else ""
-    blocked_message = (
-        f"当前 formal BTST 执行名单为空；{preview}{suffix} 已被 halt/block/prior gate 拦截，只保留非执行观察层。"
-        if preview
-        else "当前 formal BTST 执行名单为空；halt/block/prior gate 仍未解除，只保留非执行观察层。"
-    )
+    blocked_message = f"当前 formal BTST 执行名单为空；{preview}{suffix} 已被 halt/block/prior gate 拦截，只保留非执行观察层。" if preview else "当前 formal BTST 执行名单为空；halt/block/prior gate 仍未解除，只保留非执行观察层。"
     if isinstance(recommendation, str) and recommendation.lstrip().startswith("当前 formal BTST 执行名单为空；"):
         return recommendation
     if not recommendation:
@@ -2492,17 +2468,9 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
     control_tower_snapshot["next_actions"] = _prioritize_control_tower_next_actions(latest_btst_snapshot, control_tower_snapshot)
     replay_cohort_snapshot = _extract_replay_cohort_snapshot(manifest)
     default_merge_review_summary = dict(control_tower_snapshot.get("default_merge_review_summary") or {})
-    default_merge_review_ready = (
-        str(default_merge_review_summary.get("merge_review_verdict") or "").strip() == "ready_for_default_btst_merge_review"
-    )
-    effective_brief_recommendation = (
-        default_merge_review_summary.get("recommendation")
-        if default_merge_review_ready and default_merge_review_summary.get("recommendation")
-        else latest_btst_snapshot.get("brief_recommendation") or default_merge_review_summary.get("recommendation")
-    )
-    effective_brief_recommendation = _surface_zero_executable_blocked_recommendation(
-        latest_btst_snapshot, effective_brief_recommendation
-    )
+    default_merge_review_ready = str(default_merge_review_summary.get("merge_review_verdict") or "").strip() == "ready_for_default_btst_merge_review"
+    effective_brief_recommendation = default_merge_review_summary.get("recommendation") if default_merge_review_ready and default_merge_review_summary.get("recommendation") else latest_btst_snapshot.get("brief_recommendation") or default_merge_review_summary.get("recommendation")
+    effective_brief_recommendation = _surface_zero_executable_blocked_recommendation(latest_btst_snapshot, effective_brief_recommendation)
     recommended_reading_order = _build_nightly_recommended_reading_order(manifest)
     source_paths = _build_nightly_source_paths(manifest, latest_btst_snapshot)
     return _build_nightly_control_tower_analysis(
@@ -2514,7 +2482,6 @@ def build_btst_nightly_control_tower_payload(manifest: dict[str, Any]) -> dict[s
         recommended_reading_order,
         source_paths,
     )
-
 
 
 def _append_nightly_overview_candidate_pool_priority_markdown(lines: list[str], control_tower_snapshot: dict[str, Any]) -> None:
@@ -2541,9 +2508,7 @@ def _append_nightly_overview_candidate_pool_corridor_markdown(lines: list[str], 
     lines.append(f"- candidate_pool_corridor_validation_pack_status: {control_tower_snapshot.get('candidate_pool_corridor_validation_pack_status')}")
     corridor_validation_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_validation_pack_summary") or {})
     if corridor_validation_summary:
-        lines.append(
-            f"- candidate_pool_corridor_validation_pack_summary: pack_status={corridor_validation_summary.get('pack_status')} primary_validation_ticker={corridor_validation_summary.get('primary_validation_ticker')} promotion_readiness_status={corridor_validation_summary.get('promotion_readiness_status')} parallel_watch_tickers={corridor_validation_summary.get('parallel_watch_tickers')}"
-        )
+        lines.append(f"- candidate_pool_corridor_validation_pack_summary: pack_status={corridor_validation_summary.get('pack_status')} primary_validation_ticker={corridor_validation_summary.get('primary_validation_ticker')} promotion_readiness_status={corridor_validation_summary.get('promotion_readiness_status')} parallel_watch_tickers={corridor_validation_summary.get('parallel_watch_tickers')}")
     lines.append(f"- candidate_pool_corridor_shadow_pack_status: {control_tower_snapshot.get('candidate_pool_corridor_shadow_pack_status')}")
     corridor_shadow_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_shadow_pack_summary") or {})
     if corridor_shadow_summary:
@@ -2563,8 +2528,9 @@ def _append_nightly_overview_candidate_pool_corridor_markdown(lines: list[str], 
     lines.append(f"- candidate_pool_lane_pair_board_status: {control_tower_snapshot.get('candidate_pool_lane_pair_board_status')}")
     lane_pair_board_summary = dict(control_tower_snapshot.get("candidate_pool_lane_pair_board_summary") or {})
     if lane_pair_board_summary:
-        lines.append(f"- candidate_pool_lane_pair_board_summary: pair_status={lane_pair_board_summary.get('pair_status')} board_leader={lane_pair_board_summary.get('board_leader')} leader_lane_family={lane_pair_board_summary.get('leader_lane_family')} leader_governance_status={lane_pair_board_summary.get('leader_governance_status')} leader_governance_execution_quality={lane_pair_board_summary.get('leader_governance_execution_quality')} leader_governance_entry_timing_bias={lane_pair_board_summary.get('leader_governance_entry_timing_bias')} parallel_watch_ticker={lane_pair_board_summary.get('parallel_watch_ticker')} parallel_watch_governance_blocker={lane_pair_board_summary.get('parallel_watch_governance_blocker')} parallel_watch_same_source_sample_count={lane_pair_board_summary.get('parallel_watch_same_source_sample_count')} parallel_watch_next_close_positive_rate={lane_pair_board_summary.get('parallel_watch_next_close_positive_rate')} parallel_watch_next_close_return_mean={lane_pair_board_summary.get('parallel_watch_next_close_return_mean')}")
-
+        lines.append(
+            f"- candidate_pool_lane_pair_board_summary: pair_status={lane_pair_board_summary.get('pair_status')} board_leader={lane_pair_board_summary.get('board_leader')} leader_lane_family={lane_pair_board_summary.get('leader_lane_family')} leader_governance_status={lane_pair_board_summary.get('leader_governance_status')} leader_governance_execution_quality={lane_pair_board_summary.get('leader_governance_execution_quality')} leader_governance_entry_timing_bias={lane_pair_board_summary.get('leader_governance_entry_timing_bias')} parallel_watch_ticker={lane_pair_board_summary.get('parallel_watch_ticker')} parallel_watch_governance_blocker={lane_pair_board_summary.get('parallel_watch_governance_blocker')} parallel_watch_same_source_sample_count={lane_pair_board_summary.get('parallel_watch_same_source_sample_count')} parallel_watch_next_close_positive_rate={lane_pair_board_summary.get('parallel_watch_next_close_positive_rate')} parallel_watch_next_close_return_mean={lane_pair_board_summary.get('parallel_watch_next_close_return_mean')}"
+        )
 
 
 def _append_nightly_overview_candidate_pool_continuation_markdown(lines: list[str], control_tower_snapshot: dict[str, Any]) -> None:
@@ -2741,7 +2707,6 @@ def _append_no_candidate_entry_failure_dossier_markdown(lines: list[str], summar
 
 def _append_watchlist_recall_dossier_markdown(lines: list[str], summary: dict[str, Any], overlay: dict[str, Any]) -> None:
     _append_watchlist_recall_dossier_markdown_impl(lines, summary, overlay)
-
 
 
 def _append_candidate_pool_recall_priority_details_markdown(lines: list[str], summary: dict[str, Any]) -> None:

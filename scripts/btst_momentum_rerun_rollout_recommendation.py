@@ -47,9 +47,7 @@ def _require_non_negative_int(name: str, value: Any) -> int:
 def _normalize_candidate(name: str, candidate: Any) -> dict[str, Any]:
     normalized_candidate = _require_object(name, candidate)
     normalized_candidate["trial_index"] = _require_non_negative_int(f"{name} trial_index", normalized_candidate.get("trial_index"))
-    normalized_candidate["cross_window_blocker_count"] = _require_non_negative_int(
-        f"{name} cross_window_blocker_count", normalized_candidate.get("cross_window_blocker_count")
-    )
+    normalized_candidate["cross_window_blocker_count"] = _require_non_negative_int(f"{name} cross_window_blocker_count", normalized_candidate.get("cross_window_blocker_count"))
     normalized_candidate["risk_blocker_count"] = _require_non_negative_int(f"{name} risk_blocker_count", normalized_candidate.get("risk_blocker_count"))
     return normalized_candidate
 
@@ -67,9 +65,7 @@ def build_momentum_rerun_rollout_recommendation(*, pack: dict[str, object]) -> d
     if not dominant_family:
         raise SystemExit("pack dominant_family must be a non-empty string.")
 
-    missing_theme_exposure_window_count = _require_non_negative_int(
-        "pack missing_theme_exposure_window_count", normalized_pack.get("missing_theme_exposure_window_count")
-    )
+    missing_theme_exposure_window_count = _require_non_negative_int("pack missing_theme_exposure_window_count", normalized_pack.get("missing_theme_exposure_window_count"))
 
     if dominant_family == "missing_observability" and missing_theme_exposure_window_count > 0:
         action = "fallback_measurement_repair"
@@ -115,15 +111,11 @@ def render_momentum_rerun_rollout_recommendation_markdown(payload: dict[str, Any
     ]
     lines.extend(f"- `{guardrail}`" for guardrail in normalized_payload["guardrails"])
     lines.extend(["", "## Winner", ""])
-    lines.append(
-        f"- trial {winner['trial_index']}: cross_window={winner['cross_window_blocker_count']}, risk={winner['risk_blocker_count']}"
-    )
+    lines.append(f"- trial {winner['trial_index']}: cross_window={winner['cross_window_blocker_count']}, risk={winner['risk_blocker_count']}")
     lines.extend(["", "## Challengers", ""])
     if challengers:
         for challenger in challengers:
-            lines.append(
-                f"- trial {challenger['trial_index']}: cross_window={challenger['cross_window_blocker_count']}, risk={challenger['risk_blocker_count']}"
-            )
+            lines.append(f"- trial {challenger['trial_index']}: cross_window={challenger['cross_window_blocker_count']}, risk={challenger['risk_blocker_count']}")
     else:
         lines.append("- _none_")
     lines.append("")

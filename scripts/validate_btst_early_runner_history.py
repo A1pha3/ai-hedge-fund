@@ -32,6 +32,7 @@ def _default_strategy_thresholds() -> dict[str, Any]:
     """Return the default conservative thresholds for scheme-A strategy suggestions."""
     return default_strategy_thresholds()
 
+
 def _resolve_strategy_thresholds(
     overrides: dict[str, Any] | None = None,
     *,
@@ -66,9 +67,7 @@ def _historical_positive_expectation(value: Any) -> bool | None:
 def _resolve_row_expectation(row: dict[str, Any], key: str) -> bool | None:
     """Resolve one row's historical expectation from nested prior fields when available."""
     historical_prior = dict(row.get("historical_prior") or {})
-    return _historical_positive_expectation(
-        historical_prior.get(key) if historical_prior else row.get(key)
-    )
+    return _historical_positive_expectation(historical_prior.get(key) if historical_prior else row.get(key))
 
 
 def _build_bucket_outcome_stats(rows: list[dict[str, Any]], trade_date: str, price_cache: dict[tuple[str, str], Any]) -> dict[str, Any]:
@@ -241,23 +240,13 @@ def _build_strategy_recommendations(summary: dict[str, Any], thresholds: dict[st
     only_rate = float(only_early_runner.get("next_close_positive_rate") or 0.0)
     intersection_mean = intersection.get("next_close_mean_return")
     only_mean = only_early_runner.get("next_close_mean_return")
-    if int(intersection.get("candidate_count") or 0) >= int(thresholds["intersection_min_candidate_count"]) and (
-        intersection_rate >= only_rate + float(thresholds["intersection_uplift_rate_threshold"])
-        or (
-            intersection_mean is not None
-            and only_mean is not None
-            and float(intersection_mean) >= float(only_mean) + float(thresholds["intersection_uplift_mean_return_threshold"])
-        )
-    ):
+    if int(intersection.get("candidate_count") or 0) >= int(thresholds["intersection_min_candidate_count"]) and (intersection_rate >= only_rate + float(thresholds["intersection_uplift_rate_threshold"]) or (intersection_mean is not None and only_mean is not None and float(intersection_mean) >= float(only_mean) + float(thresholds["intersection_uplift_mean_return_threshold"]))):
         recommendations.append(
             {
                 "id": "raise-intersection-priority",
                 "level": "high",
                 "action": "提高交集优先复审层权重",
-                "reason": (
-                    f"交集层 next_close 正收益率 `{intersection_rate:.2%}`，"
-                    f"相对补充层 `{only_rate:.2%}` 已出现明显优势。"
-                ),
+                "reason": (f"交集层 next_close 正收益率 `{intersection_rate:.2%}`，" f"相对补充层 `{only_rate:.2%}` 已出现明显优势。"),
             }
         )
     elif int(intersection.get("candidate_count") or 0) == 0:
@@ -271,22 +260,14 @@ def _build_strategy_recommendations(summary: dict[str, Any], thresholds: dict[st
         )
 
     if int(only_early_runner.get("candidate_count") or 0) >= int(thresholds["only_early_runner_min_candidate_count"]) and (
-        only_rate < float(thresholds["only_early_runner_max_positive_rate"])
-        or (only_mean is not None and float(only_mean) < 0)
-        or (
-            int(intersection.get("candidate_count") or 0) >= int(thresholds["intersection_min_candidate_count"])
-            and intersection_rate >= only_rate + float(thresholds["intersection_uplift_rate_threshold"])
-        )
+        only_rate < float(thresholds["only_early_runner_max_positive_rate"]) or (only_mean is not None and float(only_mean) < 0) or (int(intersection.get("candidate_count") or 0) >= int(thresholds["intersection_min_candidate_count"]) and intersection_rate >= only_rate + float(thresholds["intersection_uplift_rate_threshold"]))
     ):
         recommendations.append(
             {
                 "id": "tighten-only-early-runner",
                 "level": "high",
                 "action": "收紧 only early-runner 曝光",
-                "reason": (
-                    f"补充层 next_close 正收益率 `{only_rate:.2%}`，"
-                    f"平均收益 `{_fmt_return(only_mean)}`，更像补充观察而不是主执行来源。"
-                ),
+                "reason": (f"补充层 next_close 正收益率 `{only_rate:.2%}`，" f"平均收益 `{_fmt_return(only_mean)}`，更像补充观察而不是主执行来源。"),
             }
         )
     elif int(only_early_runner.get("candidate_count") or 0) > 0:
@@ -301,24 +282,16 @@ def _build_strategy_recommendations(summary: dict[str, Any], thresholds: dict[st
 
     second_next_close_mean = second_entry.get("next_close_mean_return")
     second_t2_mean = second_entry.get("t_plus_2_mean_return")
-    if int(second_entry.get("candidate_count") or 0) >= int(thresholds["second_entry_min_candidate_count"]) and second_t2_mean is not None and (
-        second_next_close_mean is None or float(second_t2_mean) > float(second_next_close_mean) + float(thresholds["second_entry_t2_advantage_threshold"])
-    ):
+    if int(second_entry.get("candidate_count") or 0) >= int(thresholds["second_entry_min_candidate_count"]) and second_t2_mean is not None and (second_next_close_mean is None or float(second_t2_mean) > float(second_next_close_mean) + float(thresholds["second_entry_t2_advantage_threshold"])):
         recommendations.append(
             {
                 "id": "delay-second-entry-confirmation",
                 "level": "medium",
                 "action": "保留 second-entry，但只用于延后确认/回补",
-                "reason": (
-                    f"回补层 T+2 平均收益 `{_fmt_return(second_t2_mean)}`"
-                    f" 高于 next_close `{_fmt_return(second_next_close_mean)}`，更适合延后确认。"
-                ),
+                "reason": (f"回补层 T+2 平均收益 `{_fmt_return(second_t2_mean)}`" f" 高于 next_close `{_fmt_return(second_next_close_mean)}`，更适合延后确认。"),
             }
         )
-    elif int(second_entry.get("candidate_count") or 0) >= int(thresholds["second_entry_min_candidate_count"]) and (
-        (second_next_close_mean is not None and float(second_next_close_mean) < 0)
-        and (second_t2_mean is None or float(second_t2_mean) <= 0)
-    ):
+    elif int(second_entry.get("candidate_count") or 0) >= int(thresholds["second_entry_min_candidate_count"]) and ((second_next_close_mean is not None and float(second_next_close_mean) < 0) and (second_t2_mean is None or float(second_t2_mean) <= 0)):
         recommendations.append(
             {
                 "id": "shrink-second-entry",
@@ -438,14 +411,7 @@ def _build_summary(
     total_second_entry_count = sum(int(row.get("second_entry_count") or 0) for row in rows)
     recent_exact_streak = _count_recent_exact_streak(rows)
     meets_recent_exact_gate = recent_exact_streak >= int(thresholds["min_recent_exact_streak"])
-    meets_minimum_directory_switch_gate = (
-        meets_recent_exact_gate
-        and intersection_positive_count >= int(thresholds["min_intersection_positive_days"])
-        and (
-            not bool(thresholds["require_zero_unavailable_days_for_directory_switch"])
-            or unavailable_count == 0
-        )
-    )
+    meets_minimum_directory_switch_gate = meets_recent_exact_gate and intersection_positive_count >= int(thresholds["min_intersection_positive_days"]) and (not bool(thresholds["require_zero_unavailable_days_for_directory_switch"]) or unavailable_count == 0)
     intersection_outcome_summary = _build_group_summary(rows, "intersection")
     only_early_runner_outcome_summary = _build_group_summary(rows, "only_early_runner")
     second_entry_outcome_summary = _build_group_summary(rows, "second_entry")
@@ -572,9 +538,7 @@ def _render_markdown(month_prefix: str, summary: dict[str, Any], rows: list[dict
     lines.extend(_render_group_outcome_lines("回补机会层", dict(summary.get("second_entry_outcome_summary") or {})))
     lines.extend(["## 自动策略建议", ""])
     for item in list(summary.get("strategy_recommendations") or []):
-        lines.append(
-            f"- [{item.get('level')}] {item.get('action')}：{item.get('reason')}"
-        )
+        lines.append(f"- [{item.get('level')}] {item.get('action')}：{item.get('reason')}")
     if not list(summary.get("strategy_recommendations") or []):
         lines.append("- 当前样本不足，暂不输出自动策略建议。")
     lines.append("")
@@ -587,9 +551,7 @@ def _render_markdown(month_prefix: str, summary: dict[str, Any], rows: list[dict
         ]
     )
     for row in rows:
-        lines.append(
-            f"| {row['signal_date']} | {row['next_trade_date']} | {row['early_runner_status']} | {row['early_runner_latest_trade_date']} | {row['formal_count']} | {row['intersection_count']} | {row['only_early_runner_count']} | {row['second_entry_count']} | {row['intersection_tickers']} | {row['only_early_runner_tickers']} | {row['second_entry_tickers']} |"
-        )
+        lines.append(f"| {row['signal_date']} | {row['next_trade_date']} | {row['early_runner_status']} | {row['early_runner_latest_trade_date']} | {row['formal_count']} | {row['intersection_count']} | {row['only_early_runner_count']} | {row['second_entry_count']} | {row['intersection_tickers']} | {row['only_early_runner_tickers']} | {row['second_entry_tickers']} |")
     return "\n".join(lines) + "\n"
 
 
@@ -629,12 +591,8 @@ def _build_profile_comparison(profile_results: dict[str, dict[str, Any]]) -> dic
         if len(ranked_profiles) >= 2:
             top = ranked_profiles[0]
             runner_up = ranked_profiles[1]
-            reasons.append(
-                f"`{top['profile']}` 的交集层 next_close 正收益率更高：`{_fmt_pct(top.get('intersection_next_close_positive_rate'))}` vs `{_fmt_pct(runner_up.get('intersection_next_close_positive_rate'))}`。"
-            )
-            reasons.append(
-                f"`{top['profile']}` 的交集层平均收益更好：`{_fmt_return(top.get('intersection_next_close_mean_return'))}` vs `{_fmt_return(runner_up.get('intersection_next_close_mean_return'))}`。"
-            )
+            reasons.append(f"`{top['profile']}` 的交集层 next_close 正收益率更高：`{_fmt_pct(top.get('intersection_next_close_positive_rate'))}` vs `{_fmt_pct(runner_up.get('intersection_next_close_positive_rate'))}`。")
+            reasons.append(f"`{top['profile']}` 的交集层平均收益更好：`{_fmt_return(top.get('intersection_next_close_mean_return'))}` vs `{_fmt_return(runner_up.get('intersection_next_close_mean_return'))}`。")
     return {
         "profiles": sorted_profiles,
         "recommended_profile": recommended_profile,
@@ -665,7 +623,6 @@ def _render_profile_comparison_markdown(month_prefix: str, comparison: dict[str,
     else:
         lines.append("- 当前样本不足，尚未形成明显 profile 优势。")
     return "\n".join(lines) + "\n"
-
 
 
 def validate_btst_early_runner_history(

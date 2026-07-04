@@ -12,6 +12,7 @@ seed 进 tracking_history, 复用 update_tracking_history 的 R164 tushare 路�
 Usage:
   set -a && source .env && set +a && uv run python scripts/_backfill_historical_recs.py [--max-dates N] [--dry-run]
 """
+
 from __future__ import annotations
 
 import argparse
@@ -82,11 +83,12 @@ def backfill_one_date(trade_date: str, top_n: int = 300) -> dict:
     _lock_fd = _try_acquire_pipeline_lock(_AUTO_PIPELINE_LOCK_PATH)
     if _lock_fd is None:
         logging.warning("backfill %s 跳过: 另一个 --auto/backfill 实例持锁", trade_date)
-        return {"date": trade_date, "n_recs": 0, "n_low": 0, "seeded": 0, "updated": 0,
-                "elapsed_s": 0.0, "success": False, "skipped": "pipeline_lock_held"}
+        return {"date": trade_date, "n_recs": 0, "n_low": 0, "seeded": 0, "updated": 0, "elapsed_s": 0.0, "success": False, "skipped": "pipeline_lock_held"}
     try:
         return _backfill_one_date_locked(
-            trade_date=trade_date, top_n=top_n, report_dir=report_dir,
+            trade_date=trade_date,
+            top_n=top_n,
+            report_dir=report_dir,
             compute_fn=compute_auto_screening_results,
             save_report_fn=_save_json_report,
             update_history_fn=update_tracking_history,
@@ -95,14 +97,21 @@ def backfill_one_date(trade_date: str, top_n: int = 300) -> dict:
     finally:
         try:
             import os as _os
+
             _os.close(_lock_fd)
         except OSError:
             pass
 
 
 def _backfill_one_date_locked(
-    *, trade_date: str, top_n: int, report_dir: Path,
-    compute_fn, save_report_fn, update_history_fn, t0: float,
+    *,
+    trade_date: str,
+    top_n: int,
+    report_dir: Path,
+    compute_fn,
+    save_report_fn,
+    update_history_fn,
+    t0: float,
 ) -> dict:
     """backfill_one_date 临界区主体 (调用方已持 c292 pipeline 锁)。"""
     # Step 1: 跑历史日期 --auto (纯函数, 不写文件)
@@ -153,11 +162,7 @@ def main(max_dates: int = 0, dry_run: bool = False, top_n: int = 300) -> None:
 
     # 回填前 baseline
     records = load_tracking_history(resolve_report_dir())
-    low_before = sum(
-        1 for r in records
-        if _score_bucket(r.get("recommendation_score", r.get("score_b"))) == "low"
-        and r.get("next_30day_return") is not None
-    )
+    low_before = sum(1 for r in records if _score_bucket(r.get("recommendation_score", r.get("score_b"))) == "low" and r.get("next_30day_return") is not None)
     print(f"=== Baseline: {len(records)} records, low bucket mature={low_before} ===")
 
     # bootstrap CI baseline
@@ -201,11 +206,7 @@ def main(max_dates: int = 0, dry_run: bool = False, top_n: int = 300) -> None:
 
     # 回填后统计
     records_after = load_tracking_history(resolve_report_dir())
-    low_after = sum(
-        1 for r in records_after
-        if _score_bucket(r.get("recommendation_score", r.get("score_b"))) == "low"
-        and r.get("next_30day_return") is not None
-    )
+    low_after = sum(1 for r in records_after if _score_bucket(r.get("recommendation_score", r.get("score_b"))) == "low" and r.get("next_30day_return") is not None)
     print(f"\n=== After: {len(records_after)} records, low bucket mature={low_after} (+{low_after - low_before}) ===")
 
     # bootstrap CI after

@@ -9,6 +9,7 @@ C221 在 build_front_door_verdict 返回值加 signal_horizon 字段
 Usage:
   uv run python scripts/_autodev_c221_state.py
 """
+
 from __future__ import annotations
 
 import json
@@ -26,12 +27,7 @@ def main() -> None:
         {
             "id": "ev-c221-diff",
             "kind": "diff",
-            "attestation": (
-                "investability.py build_front_door_verdict 返回值加 signal_horizon 字段 "
-                "(T+5/T+10/T+5+T+10/\"\"); 基于 _t5_passes 和 _t10_passes 两个 sub-signal 标注; "
-                "risk_off 降级 HOLD 仍保留 signal_horizon (让用户知道本可 BUY); "
-                "top_picks.py _print_pick_entry 展示 \"信号=T+5\" 等 (空时不展示)"
-            ),
+            "attestation": ("investability.py build_front_door_verdict 返回值加 signal_horizon 字段 " '(T+5/T+10/T+5+T+10/""); 基于 _t5_passes 和 _t10_passes 两个 sub-signal 标注; ' "risk_off 降级 HOLD 仍保留 signal_horizon (让用户知道本可 BUY); " 'top_picks.py _print_pick_entry 展示 "信号=T+5" 等 (空时不展示)'),
             "environment": "local",
             "observed_at": "2026-06-28T01:30:00+08:00",
             "campaign_id": "c221-ns3-m14b-signal-horizon-display",
@@ -42,10 +38,7 @@ def main() -> None:
         {
             "id": "ev-c221-tdd",
             "kind": "test",
-            "attestation": (
-                "5 新 C221 TDD: t5_only/t10_only/both/empty/risk_off_preserved; "
-                "覆盖 signal_horizon 字段所有分支"
-            ),
+            "attestation": ("5 新 C221 TDD: t5_only/t10_only/both/empty/risk_off_preserved; " "覆盖 signal_horizon 字段所有分支"),
             "environment": "local",
             "observed_at": "2026-06-28T01:30:00+08:00",
             "campaign_id": "c221-ns3-m14b-signal-horizon-display",
@@ -56,11 +49,7 @@ def main() -> None:
         {
             "id": "ev-c221-regression",
             "kind": "test",
-            "attestation": (
-                "tests/ 10121 passed, 1 skipped, 0 failed, flake8 clean — 无回归 "
-                "(含修复 test_top_picks.py 6 处 mock + 2 helper 和 test_investability_representative.py "
-                "2 helper 加 t5/t10 字段, C219 遗漏)"
-            ),
+            "attestation": ("tests/ 10121 passed, 1 skipped, 0 failed, flake8 clean — 无回归 " "(含修复 test_top_picks.py 6 处 mock + 2 helper 和 test_investability_representative.py " "2 helper 加 t5/t10 字段, C219 遗漏)"),
             "environment": "local",
             "observed_at": "2026-06-28T01:30:00+08:00",
             "campaign_id": "c221-ns3-m14b-signal-horizon-display",
@@ -97,7 +86,7 @@ def main() -> None:
         "family_scope": "M14b signal horizon display",
         "type": "feature",
         "goal_alignment": "用户体验 — 让用户区分 BUY 信号来源 (T+5/T+10), 灵活组合资金避免 horizon 误用",
-        "expected_outcome": "用户看到 \"信号=T+5\" 知道是 T+5 反弹票快进快出; \"信号=T+5+T+10\" 知道双信号更强可加仓",
+        "expected_outcome": '用户看到 "信号=T+5" 知道是 T+5 反弹票快进快出; "信号=T+5+T+10" 知道双信号更强可加仓',
         "evidence_confidence": 5,
         "cost_of_delay": 2,
         "effort": "S",
@@ -138,11 +127,11 @@ def main() -> None:
         "design_decision_packet": {
             "problem": "C219 改 BUY gate 为 T+5 OR T+10 OR, 但呈现层只显示 action=BUY, 用户无法区分是 T+5 反弹还是 T+10 反弹, 容易把 T+5 票当 T+10 持有增加风险.",
             "invariants": [
-                "build_front_door_verdict 返回值加 signal_horizon 字段 (T+5/T+10/T+5+T+10/\"\")",
+                'build_front_door_verdict 返回值加 signal_horizon 字段 (T+5/T+10/T+5+T+10/"")',
                 "基于 _t5_passes 和 _t10_passes 两个 sub-signal 标注 (复用 C219 计算结果, 零额外计算)",
                 "risk_off 降级 HOLD 仍保留 signal_horizon (让用户知道本可 BUY 的短期反弹信号)",
                 "signal_horizon 为空 (HOLD/AVOID 无短期信号) 时呈现层不展示, 保持简洁",
-                "top_picks.py 展示 \"信号=T+5\" 等, 不染色 (action 已染色)",
+                'top_picks.py 展示 "信号=T+5" 等, 不染色 (action 已染色)',
             ],
             "options": [
                 "A signal_horizon 字段 + 呈现层展示 (推荐, 显式标注 horizon)",
@@ -151,15 +140,15 @@ def main() -> None:
             ],
             "recommendation": "A — 加 signal_horizon 字段, 保持 action 域干净, 呈现层条件展示",
             "acceptance_tests": [
-                "T+5 单独通过 → signal_horizon=\"T+5\"",
-                "T+10 单独通过 → signal_horizon=\"T+10\"",
-                "T+5 和 T+10 都通过 → signal_horizon=\"T+5+T+10\"",
-                "T+5/T+10 都不通过 → signal_horizon=\"\" (不展示)",
+                'T+5 单独通过 → signal_horizon="T+5"',
+                'T+10 单独通过 → signal_horizon="T+10"',
+                'T+5 和 T+10 都通过 → signal_horizon="T+5+T+10"',
+                'T+5/T+10 都不通过 → signal_horizon="" (不展示)',
                 "risk_off 降级 HOLD 仍保留 signal_horizon (本可 BUY 的短期反弹信号)",
             ],
             "rollback": "git revert c221 commit; investability.py 移除 signal_horizon 字段; top_picks.py 移除展示",
             "decision_authority": "engineering (呈现层 UX 改进, 标准做法)",
-            "next_trigger": "owner 观察用户反馈; 如需更细分 (如 \"信号强度\" T+5+T+10 > T+5) 可后续迭代",
+            "next_trigger": 'owner 观察用户反馈; 如需更细分 (如 "信号强度" T+5+T+10 > T+5) 可后续迭代',
         },
         "domain_context": {
             "loaded_overlays": ["finance-quant"],
@@ -217,8 +206,8 @@ def main() -> None:
                     "beta": {"findings_or_candidates": ["10121 回归全通过 (含修复 C219 遗漏的 test_top_picks.py + test_investability_representative.py 测试数据), flake8 clean"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""},
                     "gamma": {
                         "findings_or_candidates": [
-                            "用户现在看到 \"操作=BUY 信号=T+5+T+10\" 知道双信号更强可加仓",
-                            "\"操作=BUY 信号=T+5\" 知道快进快出",
+                            '用户现在看到 "操作=BUY 信号=T+5+T+10" 知道双信号更强可加仓',
+                            '"操作=BUY 信号=T+5" 知道快进快出',
                             "risk_off 降级 HOLD 仍标注 signal_horizon (本可 BUY 的短期反弹信号)",
                         ],
                         "verdict": "pass",
@@ -254,7 +243,7 @@ def main() -> None:
             },
         },
         "issue_outcome": {
-            "summary": "M14b signal_horizon 呈现层标注. investability.py build_front_door_verdict 返回值加 signal_horizon 字段 (T+5/T+10/T+5+T+10/\"\"); top_picks.py _print_pick_entry 展示 \"信号=T+5\" 等; risk_off 降级 HOLD 仍保留 signal_horizon. 5 新 TDD + 10121 回归全通过.",
+            "summary": 'M14b signal_horizon 呈现层标注. investability.py build_front_door_verdict 返回值加 signal_horizon 字段 (T+5/T+10/T+5+T+10/""); top_picks.py _print_pick_entry 展示 "信号=T+5" 等; risk_off 降级 HOLD 仍保留 signal_horizon. 5 新 TDD + 10121 回归全通过.',
             "root_cause": "C219 改 BUY gate T+5 OR T+10 OR 但呈现层未跟进标注 horizon, 用户无法区分 T+5/T+10 反弹票",
             "prediction": "用户看到信号标注后能灵活组合资金 (T+5 快进快出, T+5+T+10 加仓), 减少 horizon 误用风险",
             "observed_outcome": "待 live 验证 (下一次 --auto 跑)",
@@ -262,12 +251,12 @@ def main() -> None:
         "changes": [
             {
                 "scope": "src/screening/investability.py",
-                "behavior_delta": "build_front_door_verdict: +signal_horizon 字段 (T+5/T+10/T+5+T+10/\"\"); 基于 _t5_passes 和 _t10_passes 标注; risk_off 降级仍保留",
+                "behavior_delta": 'build_front_door_verdict: +signal_horizon 字段 (T+5/T+10/T+5+T+10/""); 基于 _t5_passes 和 _t10_passes 标注; risk_off 降级仍保留',
                 "evidence_refs": ["ev-c221-diff", "ev-c221-tdd"],
             },
             {
                 "scope": "src/screening/top_picks.py",
-                "behavior_delta": "_print_pick_entry: 展示 \"信号=T+5\" 等 (空时不展示), 加在 action 后",
+                "behavior_delta": '_print_pick_entry: 展示 "信号=T+5" 等 (空时不展示), 加在 action 后',
                 "evidence_refs": ["ev-c221-diff"],
             },
             {
@@ -323,14 +312,7 @@ def main() -> None:
         "action": "wait",
         "target_workflow_id": "wf-top-picks-must-win",
         "action_class": "delivery",
-        "next_trigger": (
-            "M14b signal_horizon 呈现层标注已交付. 用户现在看到 \"操作=BUY 信号=T+5/T+10/T+5+T+10\" "
-            "可灵活组合资金 (T+5 快进快出, T+10 持有更久, T+5+T+10 加仓). "
-            "5 新 TDD + 10121 回归全通过. "
-            "下个 owner 选择: (1) live --auto 跑验证信号标注清晰度; "
-            "(2) 修复 volatility 因子 (dir=0 55.7% + 反向 -0.453%); "
-            "(3) 监控 MR 因子 IC 走势. 模型 factor 仍 owner 范畴."
-        ),
+        "next_trigger": ('M14b signal_horizon 呈现层标注已交付. 用户现在看到 "操作=BUY 信号=T+5/T+10/T+5+T+10" ' "可灵活组合资金 (T+5 快进快出, T+10 持有更久, T+5+T+10 加仓). " "5 新 TDD + 10121 回归全通过. " "下个 owner 选择: (1) live --auto 跑验证信号标注清晰度; " "(2) 修复 volatility 因子 (dir=0 55.7% + 反向 -0.453%); " "(3) 监控 MR 因子 IC 走势. 模型 factor 仍 owner 范畴."),
     }
 
     with open(STATE_PATH, "w", encoding="utf-8") as f:

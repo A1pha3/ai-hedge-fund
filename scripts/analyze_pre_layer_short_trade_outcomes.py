@@ -209,13 +209,13 @@ def _compute_walk_forward_validation(
     # Validate preset and window_mode explicitly upfront
     if preset not in WALK_FORWARD_PRESETS:
         raise ValueError(f"Unknown walk-forward preset: {preset}. Valid presets: {', '.join(WALK_FORWARD_PRESETS.keys())}")
-    
+
     valid_window_modes = {"rolling", "expanding"}
     if window_mode not in valid_window_modes:
         raise ValueError(f"Invalid walk-forward window mode: {window_mode}. Valid modes: {', '.join(sorted(valid_window_modes))}")
-    
+
     ok_rows = [row for row in candidate_rows if row.get("data_status") == "ok" and row.get("trade_date")]
-    
+
     if not ok_rows:
         return {
             "preset": preset,
@@ -237,9 +237,9 @@ def _compute_walk_forward_validation(
     trade_dates = sorted(row["trade_date"] for row in ok_rows)
     start_date = trade_dates[0]
     end_date = trade_dates[-1]
-    
+
     preset_config = WALK_FORWARD_PRESETS[preset]
-    
+
     windows = build_walk_forward_windows(
         start_date=start_date,
         end_date=end_date,
@@ -256,19 +256,15 @@ def _compute_walk_forward_validation(
     for window in windows:
         test_start = pd.Timestamp(window.test_start)
         test_end = pd.Timestamp(window.test_end)
-        
-        window_rows = [
-            row
-            for row in ok_rows
-            if test_start <= pd.Timestamp(row["trade_date"]) <= test_end
-        ]
+
+        window_rows = [row for row in ok_rows if test_start <= pd.Timestamp(row["trade_date"]) <= test_end]
         window_rows = _dedupe_theme_event_rows(window_rows)
-        
+
         if not window_rows:
             continue
-        
+
         all_window_candidates.extend(window_rows)
-        
+
         high_returns = [float(row["next_high_return"]) for row in window_rows]
         close_returns = [float(row["next_close_return"]) for row in window_rows]
         high_hits = sum(1 for value in high_returns if value >= next_high_hit_threshold)
@@ -278,20 +274,22 @@ def _compute_walk_forward_validation(
         tail_hits = sum(1 for row in window_rows if bool(row.get("label_tail_20")))
         count = len(window_rows)
 
-        window_metrics.append({
-            "train_start": window.train_start,
-            "train_end": window.train_end,
-            "test_start": window.test_start,
-            "test_end": window.test_end,
-            "count": count,
-            "next_high_return_mean": round(mean(high_returns), 4) if high_returns else None,
-            "next_close_return_mean": round(mean(close_returns), 4) if close_returns else None,
-            "next_high_hit_rate_at_threshold": None if count == 0 else round(high_hits / count, 4),
-            "next_close_positive_rate": None if count == 0 else round(close_positive / count, 4),
-            "fast_confirm_rate": None if count == 0 else round(fast_confirm_hits / count, 4),
-            "retention_rate": None if count == 0 else round(retention_hits / count, 4),
-            "tail_20_rate": None if count == 0 else round(tail_hits / count, 4),
-        })
+        window_metrics.append(
+            {
+                "train_start": window.train_start,
+                "train_end": window.train_end,
+                "test_start": window.test_start,
+                "test_end": window.test_end,
+                "count": count,
+                "next_high_return_mean": round(mean(high_returns), 4) if high_returns else None,
+                "next_close_return_mean": round(mean(close_returns), 4) if close_returns else None,
+                "next_high_hit_rate_at_threshold": None if count == 0 else round(high_hits / count, 4),
+                "next_close_positive_rate": None if count == 0 else round(close_positive / count, 4),
+                "fast_confirm_rate": None if count == 0 else round(fast_confirm_hits / count, 4),
+                "retention_rate": None if count == 0 else round(retention_hits / count, 4),
+                "tail_20_rate": None if count == 0 else round(tail_hits / count, 4),
+            }
+        )
 
     if all_window_candidates:
         all_high_returns = [float(row["next_high_return"]) for row in all_window_candidates]
@@ -361,17 +359,13 @@ def render_pre_layer_short_trade_outcomes_markdown(analysis: dict[str, Any]) -> 
     lines.append("")
     lines.append("## Source Breakdown")
     for source, summary in analysis["source_breakdown"].items():
-        lines.append(
-            f"- {source}: count={summary['count']}, next_high_mean={summary['next_high_return_mean']}, next_close_mean={summary['next_close_return_mean']}, high_hit_rate={summary['next_high_hit_rate_at_threshold']}, close_positive_rate={summary['next_close_positive_rate']}"
-        )
+        lines.append(f"- {source}: count={summary['count']}, next_high_mean={summary['next_high_return_mean']}, next_close_mean={summary['next_close_return_mean']}, high_hit_rate={summary['next_high_hit_rate_at_threshold']}, close_positive_rate={summary['next_close_positive_rate']}")
     lines.append("")
     lines.append("## Regime Gate Breakdown")
     gate_breakdown = analysis.get("gate_breakdown", {})
     if gate_breakdown:
         for gate, summary in gate_breakdown.items():
-            lines.append(
-                f"- {gate}: count={summary['count']}, next_high_mean={summary['next_high_return_mean']}, next_close_mean={summary['next_close_return_mean']}, high_hit_rate={summary['next_high_hit_rate_at_threshold']}, close_positive_rate={summary['next_close_positive_rate']}, fast_confirm_rate={summary['fast_confirm_rate']}, retention_rate={summary['retention_rate']}, tail_20_rate={summary['tail_20_rate']}"
-            )
+            lines.append(f"- {gate}: count={summary['count']}, next_high_mean={summary['next_high_return_mean']}, next_close_mean={summary['next_close_return_mean']}, high_hit_rate={summary['next_high_hit_rate_at_threshold']}, close_positive_rate={summary['next_close_positive_rate']}, fast_confirm_rate={summary['fast_confirm_rate']}, retention_rate={summary['retention_rate']}, tail_20_rate={summary['tail_20_rate']}")
     else:
         lines.append("(no regime gate data available)")
     lines.append("")
@@ -390,7 +384,7 @@ def render_pre_layer_short_trade_outcomes_markdown(analysis: dict[str, Any]) -> 
     if walk_forward:
         lines.append(f"- preset={walk_forward.get('preset')}, window_mode={walk_forward.get('window_mode')}")
         summary = walk_forward.get("summary", {})
-        window_count = summary.get('window_count', 0)
+        window_count = summary.get("window_count", 0)
         lines.append(
             f"- summary: window_count={window_count}, candidate_count={summary.get('candidate_count')}, "
             f"next_high_mean={summary.get('next_high_return_mean')}, next_close_mean={summary.get('next_close_return_mean')}, "
@@ -411,14 +405,7 @@ def render_pre_layer_short_trade_outcomes_markdown(analysis: dict[str, Any]) -> 
     lines.append("")
     lines.append("## Top Cases")
     for row in analysis["top_cases"]:
-        lines.append(
-            f"- {row.get('trade_date')} {row.get('ticker')}: "
-            f"source={row.get('candidate_source')}, "
-            f"candidate_score={row.get('candidate_score')}, "
-            f"data_status={row.get('data_status')}, "
-            f"next_high_return={row.get('next_high_return')}, "
-            f"next_close_return={row.get('next_close_return')}"
-        )
+        lines.append(f"- {row.get('trade_date')} {row.get('ticker')}: " f"source={row.get('candidate_source')}, " f"candidate_score={row.get('candidate_score')}, " f"data_status={row.get('data_status')}, " f"next_high_return={row.get('next_high_return')}, " f"next_close_return={row.get('next_close_return')}")
     lines.append("")
     lines.append("## Recommendation")
     lines.append(f"- {analysis['recommendation']}")
@@ -442,12 +429,8 @@ def analyze_pre_layer_short_trade_outcomes(
     data_status_counts: Counter[str] = Counter()
     candidate_source_counts: Counter[str] = Counter()
     source_return_buckets: dict[str, dict[str, list[float] | int]] = defaultdict(lambda: {"next_high": [], "next_close": [], "count": 0, "high_hits": 0, "close_positive": 0})
-    gate_return_buckets: dict[str, dict[str, list[float] | int]] = defaultdict(
-        lambda: {"next_high": [], "next_close": [], "count": 0, "high_hits": 0, "close_positive": 0, "fast_confirm_hits": 0, "retention_hits": 0, "tail_hits": 0}
-    )
-    board_return_buckets: dict[str, dict[str, list[float] | int]] = defaultdict(
-        lambda: {"next_high": [], "next_close": [], "count": 0, "high_hits": 0, "close_positive": 0, "fast_confirm_hits": 0, "retention_hits": 0, "tail_hits": 0}
-    )
+    gate_return_buckets: dict[str, dict[str, list[float] | int]] = defaultdict(lambda: {"next_high": [], "next_close": [], "count": 0, "high_hits": 0, "close_positive": 0, "fast_confirm_hits": 0, "retention_hits": 0, "tail_hits": 0})
+    board_return_buckets: dict[str, dict[str, list[float] | int]] = defaultdict(lambda: {"next_high": [], "next_close": [], "count": 0, "high_hits": 0, "close_positive": 0, "fast_confirm_hits": 0, "retention_hits": 0, "tail_hits": 0})
 
     for _, replay_input in _iter_replay_inputs(report_path):
         trade_date = str(replay_input.get("trade_date") or "")
@@ -598,10 +581,7 @@ def analyze_pre_layer_short_trade_outcomes(
     candidate_rows.sort(key=lambda row: (float(row.get("next_high_return") or -999.0), str(row.get("trade_date") or ""), str(row.get("ticker") or "")), reverse=True)
 
     if ok_rows:
-        recommendation = (
-            f"当前前置短线候选共有 {len(ok_rows)} 个拿到了次日行情；next_high 命中阈值 {round(next_high_hit_threshold, 4)} 的比例为 "
-            f"{round(next_high_hits / len(ok_rows), 4)}，next_close 为正的比例为 {round(next_close_positive / len(ok_rows), 4)}。"
-        )
+        recommendation = f"当前前置短线候选共有 {len(ok_rows)} 个拿到了次日行情；next_high 命中阈值 {round(next_high_hit_threshold, 4)} 的比例为 " f"{round(next_high_hits / len(ok_rows), 4)}，next_close 为正的比例为 {round(next_close_positive / len(ok_rows), 4)}。"
     else:
         recommendation = "当前报告里没有拿到可用次日行情的前置短线候选，先补齐价格数据后再做前置策略优化。"
 

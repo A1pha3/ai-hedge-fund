@@ -10,6 +10,7 @@ Usage:
   python scripts/daily_accumulate.py [--dry-run]
   # owner cron: 0 18 * * 1-5 cd /repo && python scripts/daily_accumulate.py
 """
+
 from __future__ import annotations
 
 import argparse
@@ -58,12 +59,7 @@ def get_accumulation_progress() -> dict:
 
     total = len(records)
     with_decomp = sum(1 for r in records if r.get("score_decomposition"))
-    high_matured = sum(
-        1
-        for r in records
-        if _score_bucket(r.get("recommendation_score", r.get("score_b"))) == "high"
-        and r.get("next_30day_return") is not None
-    )
+    high_matured = sum(1 for r in records if _score_bucket(r.get("recommendation_score", r.get("score_b"))) == "high" and r.get("next_30day_return") is not None)
 
     return {
         "total_records": total,
@@ -100,12 +96,7 @@ def main(dry_run: bool = False) -> None:
         return
 
     progress = get_accumulation_progress()
-    print(
-        f"累积进度: {progress['total_records']} records, "
-        f"{progress['with_decomposition']} 有 decomposition, "
-        f"high bucket matured={progress['high_bucket_matured']}/{progress['target']} "
-        f"({progress['high_bucket_pct']}%)"
-    )
+    print(f"累积进度: {progress['total_records']} records, " f"{progress['with_decomposition']} 有 decomposition, " f"high bucket matured={progress['high_bucket_matured']}/{progress['target']} " f"({progress['high_bucket_pct']}%)")
 
     if dry_run:
         print("dry-run, 不跑 --auto")
@@ -118,14 +109,8 @@ def main(dry_run: bool = False) -> None:
     progress2 = get_accumulation_progress()
     delta_total = progress2["total_records"] - progress["total_records"]
     delta_decomp = progress2["with_decomposition"] - progress["with_decomposition"]
-    print(
-        f"完成后: {progress2['total_records']} records (+{delta_total}), "
-        f"{progress2['with_decomposition']} 有 decomposition (+{delta_decomp})"
-    )
-    print(
-        f"high bucket: {progress2['high_bucket_matured']}/{progress2['target']} "
-        f"({progress2['high_bucket_pct']}%)"
-    )
+    print(f"完成后: {progress2['total_records']} records (+{delta_total}), " f"{progress2['with_decomposition']} 有 decomposition (+{delta_decomp})")
+    print(f"high bucket: {progress2['high_bucket_matured']}/{progress2['target']} " f"({progress2['high_bucket_pct']}%)")
 
     if progress2["high_bucket_matured"] >= progress2["target"]:
         print("✓ high bucket 达到 power threshold! M1 因子归因可可靠运行")

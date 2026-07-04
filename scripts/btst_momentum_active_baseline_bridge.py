@@ -4,6 +4,7 @@
 Reads a governed active-baseline snapshot and a BTST-v2 report and emits
 an interoperable bridge artifact (JSON + Markdown).
 """
+
 from __future__ import annotations
 
 import argparse

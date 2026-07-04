@@ -333,11 +333,7 @@ def main() -> int:
         frozen_gate_noop_warning = None
         frozen_gate_margin_scan = None
         if plan_generation_mode == "frozen_current_plan_replay" and overridden_frozen_gate_keys:
-            frozen_gate_noop_warning = (
-                "Frozen current_plan replay reuses stored post-market plans. "
-                "These env overrides do not regenerate Layer B / Layer C / watchlist decisions, "
-                "so the replay result should not be interpreted as a valid gate-sensitivity outcome."
-            )
+            frozen_gate_noop_warning = "Frozen current_plan replay reuses stored post-market plans. " "These env overrides do not regenerate Layer B / Layer C / watchlist decisions, " "so the replay result should not be interpreted as a valid gate-sensitivity outcome."
             frozen_gate_margin_scan = _build_frozen_gate_margin_scan(output_dir, env_updates)
 
         report["variants"][variant_name] = {
@@ -363,11 +359,7 @@ def main() -> int:
         if exit_code != 0:
             print(f"{variant_name}: failed exit_code={exit_code}")
             continue
-        print(
-            f"{variant_name}: high_pool={artifact_summary.get('total_high_pool_count')} "
-            f"watchlist={artifact_summary.get('total_watchlist_count')} "
-            f"buy_orders={artifact_summary.get('total_buy_order_count')}"
-        )
+        print(f"{variant_name}: high_pool={artifact_summary.get('total_high_pool_count')} " f"watchlist={artifact_summary.get('total_watchlist_count')} " f"buy_orders={artifact_summary.get('total_buy_order_count')}")
         warning = payload.get("frozen_gate_noop_warning")
         if warning:
             print(f"{variant_name}: warning={warning}")

@@ -163,11 +163,7 @@ def _summarize_returns(rows: list[dict[str, Any]]) -> dict[str, Any]:
     loss_abs = abs(sum(v for v in next_close_returns if v < 0))
     profit_factor = (gains / loss_abs) if loss_abs > 0 else (float("inf") if gains > 0 else None)
 
-    hit_5d_15 = (
-        sum(1 for v in max_high_from_open if v >= 0.15) / len(max_high_from_open)
-        if max_high_from_open
-        else None
-    )
+    hit_5d_15 = sum(1 for v in max_high_from_open if v >= 0.15) / len(max_high_from_open) if max_high_from_open else None
 
     return {
         "pick_count": len(rows),
@@ -279,9 +275,7 @@ def analyze_btst_monthly_zero_pick_promotion_counterfactual(
         "trade_date_count": len(brief_paths),
         "zero_pick_day_count": len(zero_pick_days),
         "promoted_day_count": len({r["trade_date"] for r in promoted_rows}),
-        "promotion_ticker_counts": dict(
-            sorted(Counter([r["ticker"] for r in promoted_rows]).items(), key=lambda kv: (-kv[1], kv[0]))
-        ),
+        "promotion_ticker_counts": dict(sorted(Counter([r["ticker"] for r in promoted_rows]).items(), key=lambda kv: (-kv[1], kv[0]))),
         "baseline": _summarize_returns(baseline_rows),
         "promoted_only": _summarize_returns(promoted_rows),
         "combined": _summarize_returns(combined_rows),

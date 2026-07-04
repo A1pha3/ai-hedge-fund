@@ -175,16 +175,9 @@ def _recommendation(
     best_decision = decision_leaderboard[0] if decision_leaderboard else {}
     best_ticker = ticker_leaderboard[0] if ticker_leaderboard else {}
     if false_negative_rows:
-        return (
-            "当前没有任何稳定车道达到 80% 胜率与 5% 收益目标；优先做两件事："
-            f"第一，围绕 {best_decision.get('group_label') or '当前最优决策层'} 提升可交易面；"
-            f"第二，复盘 {false_negative_rows[0].get('ticker') or '最高优先级 false negative'} 这类已命中 5% 目标却未放行的样本。"
-        )
+        return "当前没有任何稳定车道达到 80% 胜率与 5% 收益目标；优先做两件事：" f"第一，围绕 {best_decision.get('group_label') or '当前最优决策层'} 提升可交易面；" f"第二，复盘 {false_negative_rows[0].get('ticker') or '最高优先级 false negative'} 这类已命中 5% 目标却未放行的样本。"
     if best_ticker:
-        return (
-            "当前没有任何稳定车道达到 80% 胜率与 5% 收益目标；"
-            f"最接近目标的是 {best_ticker.get('group_label')}，但仍应先累积更多 closed-cycle 样本，再考虑升级。"
-        )
+        return "当前没有任何稳定车道达到 80% 胜率与 5% 收益目标；" f"最接近目标的是 {best_ticker.get('group_label')}，但仍应先累积更多 closed-cycle 样本，再考虑升级。"
     return "当前 closed-cycle 证据不足或整体未达标，默认结论应继续保持观察优先，不应为了覆盖而主动放松执行阈值。"
 
 
@@ -206,18 +199,14 @@ def _append_objective_monitor_surface_summary_markdown(lines: list[str], analysi
     lines.append("## Surface Summary")
     for label in ("all_surface", "tradeable_surface", "selected_surface", "near_miss_surface", "non_tradeable_surface"):
         summary = dict(analysis.get(label) or {})
-        lines.append(
-            f"- {label}: closed_cycle_count={summary.get('closed_cycle_count')}, positive_rate={summary.get('t_plus_2_positive_rate')}, return_hit_rate={summary.get('t_plus_2_return_hit_rate_at_target')}, mean_t_plus_2_return={summary.get('mean_t_plus_2_return')}, verdict={summary.get('verdict')}, objective_fit_score={summary.get('objective_fit_score')}"
-        )
+        lines.append(f"- {label}: closed_cycle_count={summary.get('closed_cycle_count')}, positive_rate={summary.get('t_plus_2_positive_rate')}, return_hit_rate={summary.get('t_plus_2_return_hit_rate_at_target')}, mean_t_plus_2_return={summary.get('mean_t_plus_2_return')}, verdict={summary.get('verdict')}, objective_fit_score={summary.get('objective_fit_score')}")
     lines.append("")
 
 
 def _append_objective_monitor_leaderboard_markdown(lines: list[str], title: str, rows: list[dict[str, Any]]) -> None:
     lines.append(f"## {title}")
     for row in rows:
-        lines.append(
-            f"- {row.get('group_label')}: closed_cycle_count={row.get('closed_cycle_count')}, positive_rate={row.get('t_plus_2_positive_rate')}, return_hit_rate={row.get('t_plus_2_return_hit_rate_at_target')}, mean_t_plus_2_return={row.get('mean_t_plus_2_return')}, verdict={row.get('verdict')}, objective_fit_score={row.get('objective_fit_score')}"
-        )
+        lines.append(f"- {row.get('group_label')}: closed_cycle_count={row.get('closed_cycle_count')}, positive_rate={row.get('t_plus_2_positive_rate')}, return_hit_rate={row.get('t_plus_2_return_hit_rate_at_target')}, mean_t_plus_2_return={row.get('mean_t_plus_2_return')}, verdict={row.get('verdict')}, objective_fit_score={row.get('objective_fit_score')}")
     if not rows:
         lines.append("- none")
     lines.append("")
@@ -226,9 +215,7 @@ def _append_objective_monitor_leaderboard_markdown(lines: list[str], title: str,
 def _append_objective_monitor_goal_rows_markdown(lines: list[str], title: str, rows: list[dict[str, Any]]) -> None:
     lines.append(f"## {title}")
     for row in rows:
-        lines.append(
-            f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, source={row.get('candidate_source')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, score_target={row.get('score_target')}"
-        )
+        lines.append(f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, source={row.get('candidate_source')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, score_target={row.get('score_target')}")
     if not rows:
         lines.append("- none")
     lines.append("")

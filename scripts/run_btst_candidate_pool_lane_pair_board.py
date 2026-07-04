@@ -100,43 +100,24 @@ def _apply_governance_constraint_overlays(
 def _resolve_followup_governance_override(entry: dict[str, Any]) -> dict[str, Any]:
     historical_next_close_positive_rate = entry.get("historical_next_close_positive_rate")
     top_reasons = [str(reason) for reason in list(entry.get("top_reasons") or []) if str(reason).strip()]
-    if (
-        entry.get("candidate_source") == "upstream_liquidity_corridor_shadow"
-        and entry.get("decision") == "selected"
-        and entry.get("historical_execution_quality_label") in {"intraday_only", "gap_chase_risk"}
-    ):
+    if entry.get("candidate_source") == "upstream_liquidity_corridor_shadow" and entry.get("decision") == "selected" and entry.get("historical_execution_quality_label") in {"intraday_only", "gap_chase_risk"}:
         return {
             "governance_status": "continuation_confirm_only_intraday_bias",
             "governance_blocker": "weak_overnight_follow_through_after_shadow_recall",
-            "governance_summary": (
-                "Latest upstream shadow selected row still behaves like a confirmation-only setup; "
-                "historical payoff is stronger intraday than overnight, so keep it out of standard BTST hold assumptions."
-            ),
+            "governance_summary": ("Latest upstream shadow selected row still behaves like a confirmation-only setup; " "historical payoff is stronger intraday than overnight, so keep it out of standard BTST hold assumptions."),
         }
 
-    if (
-        entry.get("candidate_source") == "upstream_liquidity_corridor_shadow"
-        and entry.get("decision") == "near_miss"
-        and "profitability_hard_cliff" in top_reasons
-    ):
+    if entry.get("candidate_source") == "upstream_liquidity_corridor_shadow" and entry.get("decision") == "near_miss" and "profitability_hard_cliff" in top_reasons:
         sample_count = entry.get("historical_sample_count")
         next_close_positive_rate = entry.get("historical_next_close_positive_rate")
         next_close_return_mean = entry.get("historical_next_close_return_mean")
         weak_payoff_suffix = ""
         if sample_count is not None or next_close_positive_rate is not None or next_close_return_mean is not None:
-            weak_payoff_suffix = (
-                " Historical same-source near-miss payoff remains weak"
-                f" (samples={sample_count}, next_close_positive_rate={next_close_positive_rate},"
-                f" next_close_return_mean={next_close_return_mean})."
-            )
+            weak_payoff_suffix = " Historical same-source near-miss payoff remains weak" f" (samples={sample_count}, next_close_positive_rate={next_close_positive_rate}," f" next_close_return_mean={next_close_return_mean})."
         return {
             "governance_status": "parallel_watch_only_not_default_ready",
             "governance_blocker": "profitability_hard_cliff_and_weak_same_source_payoff",
-            "governance_summary": (
-                "Keep corridor profitability-cliff names as confirmatory parallel watch only; "
-                "do not treat a single-window near-miss uplift as a default BTST upgrade."
-                f"{weak_payoff_suffix}"
-            ),
+            "governance_summary": ("Keep corridor profitability-cliff names as confirmatory parallel watch only; " "do not treat a single-window near-miss uplift as a default BTST upgrade." f"{weak_payoff_suffix}"),
         }
 
     if historical_next_close_positive_rate is not None and float(historical_next_close_positive_rate) <= 0.2:
@@ -187,11 +168,7 @@ def _build_governance_overlays(governance_synthesis: dict[str, Any]) -> dict[str
         [dict(row or {}) for row in list(governance_synthesis.get("evidence_btst_followups") or [])],
     )
 
-    return {
-        ticker: overlay
-        for ticker, overlay in raw_overlays.items()
-        if overlay.get("governance_status") or overlay.get("governance_blocker") or overlay.get("governance_summary")
-    }
+    return {ticker: overlay for ticker, overlay in raw_overlays.items() if overlay.get("governance_status") or overlay.get("governance_blocker") or overlay.get("governance_summary")}
 
 
 def _resolve_upstream_handoff_board_path(
@@ -214,20 +191,8 @@ def _build_upstream_handoff_overlays(upstream_handoff_board: dict[str, Any]) -> 
         governance_status = row.get("downstream_followup_status")
         governance_blocker = row.get("downstream_followup_blocker")
         governance_summary = row.get("downstream_followup_summary")
-        if (
-            governance_blocker == "profitability_hard_cliff_and_weak_same_source_payoff"
-            and (
-                row.get("latest_followup_historical_sample_count") is not None
-                or row.get("latest_followup_historical_next_close_positive_rate") is not None
-                or row.get("latest_followup_historical_next_close_return_mean") is not None
-            )
-        ):
-            governance_summary = (
-                f"{governance_summary} Historical same-source near-miss payoff remains weak"
-                f" (samples={row.get('latest_followup_historical_sample_count')},"
-                f" next_close_positive_rate={row.get('latest_followup_historical_next_close_positive_rate')},"
-                f" next_close_return_mean={row.get('latest_followup_historical_next_close_return_mean')})."
-            )
+        if governance_blocker == "profitability_hard_cliff_and_weak_same_source_payoff" and (row.get("latest_followup_historical_sample_count") is not None or row.get("latest_followup_historical_next_close_positive_rate") is not None or row.get("latest_followup_historical_next_close_return_mean") is not None):
+            governance_summary = f"{governance_summary} Historical same-source near-miss payoff remains weak" f" (samples={row.get('latest_followup_historical_sample_count')}," f" next_close_positive_rate={row.get('latest_followup_historical_next_close_positive_rate')}," f" next_close_return_mean={row.get('latest_followup_historical_next_close_return_mean')})."
         if governance_status or governance_blocker or governance_summary:
             overlays[ticker] = {
                 "current_decision": row.get("latest_followup_decision"),
@@ -356,30 +321,16 @@ def _build_lane_pair_guidance(
 ) -> tuple[str, list[str]]:
     has_active_rebucket_challenger = bool(comparison.get("rebucket_ticker"))
     if board_leader.get("lane_family") == "corridor":
-        recommendation = (
-            f"lane pair board 当前仍应由 corridor 主导，首选 ticker={board_leader.get('ticker')}。"
-            + (
-                f" rebucket ticker={comparison.get('rebucket_ticker')} 保留为结构 challenger，用于并行收益对照。"
-                if has_active_rebucket_challenger
-                else " 当前没有 active rebucket challenger，不应分散主槽位注意力。"
-            )
-        )
+        recommendation = f"lane pair board 当前仍应由 corridor 主导，首选 ticker={board_leader.get('ticker')}。" + (f" rebucket ticker={comparison.get('rebucket_ticker')} 保留为结构 challenger，用于并行收益对照。" if has_active_rebucket_challenger else " 当前没有 active rebucket challenger，不应分散主槽位注意力。")
     elif board_leader:
-        recommendation = (
-            f"rebucket 当前在 pair board 中反超，ticker={board_leader.get('ticker')}。"
-            " 但只有在新增窗口继续成立时，才允许它挤占 corridor primary replay 槽位。"
-        )
+        recommendation = f"rebucket 当前在 pair board 中反超，ticker={board_leader.get('ticker')}。" " 但只有在新增窗口继续成立时，才允许它挤占 corridor primary replay 槽位。"
     else:
         recommendation = "当前没有可排名的 corridor/rebucket lane 候选。"
 
     next_actions = [
         f"保持 corridor primary ticker {primary.get('ticker') or 'N/A'} 为第一 replay 槽位。",
         "parallel_watch 只承担 confirmatory evidence，不允许直接替换 primary replay 优先级。",
-        (
-            f"保持 rebucket ticker {comparison.get('rebucket_ticker')} 为结构 challenger，对照 corridor 主槽位表现。"
-            if has_active_rebucket_challenger
-            else "当前没有 active rebucket challenger；先修复 persistence / active lane 资格，再恢复并行收益对照。"
-        ),
+        (f"保持 rebucket ticker {comparison.get('rebucket_ticker')} 为结构 challenger，对照 corridor 主槽位表现。" if has_active_rebucket_challenger else "当前没有 active rebucket challenger；先修复 persistence / active lane 资格，再恢复并行收益对照。"),
     ]
     if governance_overlays.get("300720", {}).get("governance_status"):
         if governance_overlays.get("300720", {}).get("governance_status") == "continuation_confirm_only_intraday_bias":
@@ -469,9 +420,7 @@ def render_btst_candidate_pool_lane_pair_board_markdown(analysis: dict[str, Any]
     lines.append(f"- pair_status: {analysis.get('pair_status')}")
     leader = dict(analysis.get("board_leader") or {})
     if leader:
-        lines.append(
-            f"- board_leader: ticker={leader.get('ticker')} lane_family={leader.get('lane_family')} role={leader.get('role')} board_rank={leader.get('board_rank')}"
-        )
+        lines.append(f"- board_leader: ticker={leader.get('ticker')} lane_family={leader.get('lane_family')} role={leader.get('role')} board_rank={leader.get('board_rank')}")
     lines.append("")
     lines.append("## Candidates")
     for row in list(analysis.get("candidates") or []):

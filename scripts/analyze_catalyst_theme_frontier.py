@@ -177,13 +177,7 @@ def default_catalyst_theme_frontier_grids() -> dict[str, list[float]]:
 
 
 def _build_variant_name(thresholds: dict[str, float]) -> str:
-    return (
-        f"candidate_{thresholds['candidate_score_min']:.2f}_"
-        f"breakout_{thresholds['breakout_freshness_min']:.2f}_"
-        f"close_{thresholds['close_strength_min']:.2f}_"
-        f"sector_{thresholds['sector_resonance_min']:.2f}_"
-        f"catalyst_{thresholds['catalyst_freshness_min']:.2f}"
-    )
+    return f"candidate_{thresholds['candidate_score_min']:.2f}_" f"breakout_{thresholds['breakout_freshness_min']:.2f}_" f"close_{thresholds['close_strength_min']:.2f}_" f"sector_{thresholds['sector_resonance_min']:.2f}_" f"catalyst_{thresholds['catalyst_freshness_min']:.2f}"
 
 
 def _iter_selection_snapshots(report_dir: Path):
@@ -464,21 +458,11 @@ def analyze_catalyst_theme_frontier(
     if not rows:
         recommendation = "当前报告中没有题材催化正式池或影子池样本，无法做前沿诊断。"
     elif recommended_variant and recommended_variant is not baseline_variant and int(recommended_variant.get("promoted_shadow_count") or 0) > 0:
-        recommendation = (
-            f"诊断上优先查看 {recommended_variant['variant_name']}：在每个 trade_date 最多保留 {int(max_candidates_per_trade_date)} 个样本的前提下，"
-            f"可额外提升 {recommended_variant['promoted_shadow_count']} 个影子候选进入题材催化正式池；"
-            f"这是基于最小阈值放宽成本 {recommended_variant['threshold_relaxation_cost']:.4f} 的解释性前沿，不代表直接采用该阈值。"
-        )
+        recommendation = f"诊断上优先查看 {recommended_variant['variant_name']}：在每个 trade_date 最多保留 {int(max_candidates_per_trade_date)} 个样本的前提下，" f"可额外提升 {recommended_variant['promoted_shadow_count']} 个影子候选进入题材催化正式池；" f"这是基于最小阈值放宽成本 {recommended_variant['threshold_relaxation_cost']:.4f} 的解释性前沿，不代表直接采用该阈值。"
     else:
         dominant_primary_reason = next(iter(candidate_payload["shadow_filter_reason_counts"]), "shadow_blockers_unclassified")
         dominant_metric_counts = shadow_threshold_blocker_summary.get("threshold_metric_counts") or {}
-        recommendation = (
-            "baseline 下没有可提升到正式题材研究池的影子候选；"
-            f"当前影子池虽然主要记为 {dominant_primary_reason}，"
-            f"但真实短板分布为 {dominant_metric_counts}，"
-            "说明更像多重弱结构共振，而不是单一 catalyst floor 过严。"
-            "当前应优先补充影子池短板分层诊断，不应直接放松 catalyst-theme 默认阈值。"
-        )
+        recommendation = "baseline 下没有可提升到正式题材研究池的影子候选；" f"当前影子池虽然主要记为 {dominant_primary_reason}，" f"但真实短板分布为 {dominant_metric_counts}，" "说明更像多重弱结构共振，而不是单一 catalyst floor 过严。" "当前应优先补充影子池短板分层诊断，不应直接放松 catalyst-theme 默认阈值。"
 
     return {
         "report_dir": candidate_payload["report_dir"],
@@ -549,9 +533,7 @@ def render_catalyst_theme_frontier_markdown(analysis: dict[str, Any]) -> str:
 
     lines.append("## Variant Ranking")
     for variant in list(analysis.get("variants") or [])[:10]:
-        lines.append(
-            f"- {variant.get('variant_name')}: selected={variant.get('selected_candidate_count')}, promoted_shadow={variant.get('promoted_shadow_count')}, relaxation_cost={variant.get('threshold_relaxation_cost')}, filtered_reason_counts={variant.get('filtered_reason_counts')}"
-        )
+        lines.append(f"- {variant.get('variant_name')}: selected={variant.get('selected_candidate_count')}, promoted_shadow={variant.get('promoted_shadow_count')}, relaxation_cost={variant.get('threshold_relaxation_cost')}, filtered_reason_counts={variant.get('filtered_reason_counts')}")
     lines.append("")
 
     lines.append("## Promoted Shadow Examples")
@@ -560,9 +542,7 @@ def render_catalyst_theme_frontier_markdown(analysis: dict[str, Any]) -> str:
         lines.append("- none")
     else:
         for row in top_promoted_rows:
-            lines.append(
-                f"- {row.get('trade_date')} {row.get('ticker')}: filter_reason={row.get('filter_reason') or 'n/a'}, candidate_score={row.get('candidate_score')}, total_shortfall={row.get('total_shortfall')}, threshold_shortfalls={row.get('threshold_shortfalls')}"
-            )
+            lines.append(f"- {row.get('trade_date')} {row.get('ticker')}: filter_reason={row.get('filter_reason') or 'n/a'}, candidate_score={row.get('candidate_score')}, total_shortfall={row.get('total_shortfall')}, threshold_shortfalls={row.get('threshold_shortfalls')}")
     lines.append("")
 
     lines.append("## Recommendation")

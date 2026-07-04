@@ -63,15 +63,9 @@ def analyze_recurring_frontier_release_pair_comparison(
     right_close_positive = float(right.get("next_close_positive_rate") or -999.0)
 
     if right_close_mean > left_close_mean and right_close_positive > left_close_positive and left_high >= right_high - 0.01:
-        recommendation = (
-            f"{left_ticker} 更适合作为 recurring release 的 intraday 主样本，"
-            f"{right_ticker} 更适合作为 close-continuation 对照样本。"
-        )
+        recommendation = f"{left_ticker} 更适合作为 recurring release 的 intraday 主样本，" f"{right_ticker} 更适合作为 close-continuation 对照样本。"
     elif left_high > right_high and left_close_positive < right_close_positive:
-        recommendation = (
-            f"{left_ticker} 更适合作为 recurring release 的 intraday 主样本，"
-            f"{right_ticker} 更适合作为 close-continuation 对照样本。"
-        )
+        recommendation = f"{left_ticker} 更适合作为 recurring release 的 intraday 主样本，" f"{right_ticker} 更适合作为 close-continuation 对照样本。"
     elif left_close_mean > right_close_mean:
         recommendation = f"{left_ticker} 在 release 后整体 follow-through 更强，应继续优先推进。"
     else:

@@ -33,6 +33,7 @@ R20.31 在三处模块拆分中遗漏了依赖导入 (导致 NameError 崩溃):
   0 - 无顶层未解析引用
   1 - 发现问题 (需要人工审查)
 """
+
 from __future__ import annotations
 
 import argparse

@@ -110,10 +110,7 @@ def build_nightly_recommended_reading_order(
 
 
 def _build_report_root_source_paths(reports_root: Path) -> dict[str, str]:
-    return {
-        key: str((reports_root / filename).expanduser().resolve())
-        for key, filename in REPORT_ROOT_SOURCE_FILES
-    }
+    return {key: str((reports_root / filename).expanduser().resolve()) for key, filename in REPORT_ROOT_SOURCE_FILES}
 
 
 def _build_manifest_source_paths(
@@ -121,17 +118,11 @@ def _build_manifest_source_paths(
     *,
     entry_by_id: EntryById,
 ) -> dict[str, Any]:
-    return {
-        key: entry_by_id(manifest, entry_id).get("absolute_path")
-        for key, entry_id in MANIFEST_SOURCE_PATHS
-    }
+    return {key: entry_by_id(manifest, entry_id).get("absolute_path") for key, entry_id in MANIFEST_SOURCE_PATHS}
 
 
 def _build_latest_btst_source_paths(latest_btst_snapshot: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: latest_btst_snapshot.get(snapshot_key)
-        for key, snapshot_key in LATEST_BTST_SOURCE_PATHS
-    }
+    return {key: latest_btst_snapshot.get(snapshot_key) for key, snapshot_key in LATEST_BTST_SOURCE_PATHS}
 
 
 def build_nightly_source_paths(

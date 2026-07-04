@@ -83,12 +83,7 @@ def _build_repeat_ticker_board(rows: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 def _build_blocker_clusters(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    counts = Counter(
-        normalized_blocker
-        for row in rows
-        for blocker in list(row.get("blockers") or [])
-        if (normalized_blocker := str(blocker or "").strip())
-    )
+    counts = Counter(normalized_blocker for row in rows for blocker in list(row.get("blockers") or []) if (normalized_blocker := str(blocker or "").strip()))
     return [{"blocker": blocker, "count": count} for blocker, count in counts.most_common()]
 
 
@@ -145,10 +140,7 @@ def _classify_upstream_shadow_row(row: dict[str, Any]) -> str | None:
 
     if decision != "selected" and has_clearly_positive_follow_through:
         return "false_negative"
-    if decision in {"selected", "near_miss"} and has_complete_observed_outcome and (
-        ((next_close_return is not None and next_close_return <= 0.0) and (t_plus_2_close_return is None or t_plus_2_close_return <= 0.0))
-        or (quality_label == "balanced_confirmation" and has_complete_observed_outcome and has_weak_or_poor_follow_through and not has_clearly_positive_follow_through)
-    ):
+    if decision in {"selected", "near_miss"} and has_complete_observed_outcome and (((next_close_return is not None and next_close_return <= 0.0) and (t_plus_2_close_return is None or t_plus_2_close_return <= 0.0)) or (quality_label == "balanced_confirmation" and has_complete_observed_outcome and has_weak_or_poor_follow_through and not has_clearly_positive_follow_through)):
         return "false_positive"
     return None
 
@@ -238,10 +230,12 @@ def render_btst_upstream_shadow_fnfp_dossier_markdown(analysis: dict[str, Any]) 
         lines.append(f"- {repeat_row}")
     if not list(analysis.get("repeat_ticker_board") or []):
         lines.append("- none")
-    lines.extend([
-        "",
-        "## Blocker Clusters",
-    ])
+    lines.extend(
+        [
+            "",
+            "## Blocker Clusters",
+        ]
+    )
     for cluster in list(analysis.get("blocker_clusters") or []):
         lines.append(f"- {cluster}")
     if not list(analysis.get("blocker_clusters") or []):

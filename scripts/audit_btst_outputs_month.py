@@ -142,13 +142,7 @@ def audit_btst_outputs_month(
             signal_dates |= s_dates
             next_dates |= n_dates
 
-        missing = sorted(
-            {
-                ref
-                for ref in referenced
-                if not (root / ref).exists()
-            }
-        )
+        missing = sorted({ref for ref in referenced if not (root / ref).exists()})
         missing_total |= set(missing)
 
         metadata_consistent = len(signal_dates) <= 1 and len(next_dates) <= 1
@@ -193,9 +187,7 @@ def audit_btst_outputs_month(
         if is_date_folder and filename_date_matches_folder is False:
             filename_mismatch_folders.append(day_dir.name)
 
-        if is_date_folder and (
-            folder_date_role in {"unknown", "mismatch"} or not metadata_consistent
-        ):
+        if is_date_folder and (folder_date_role in {"unknown", "mismatch"} or not metadata_consistent):
             inconsistent_folders.append(day_dir.name)
 
         folders.append(

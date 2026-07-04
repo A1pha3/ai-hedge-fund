@@ -45,12 +45,8 @@ def _build_promotion_review_context(queue: dict[str, Any], focus_dossier: dict[s
         recent_tier_window_count=focus_recent_tier_window_count,
         recent_window_count=focus_recent_window_count,
     )
-    focus_t_plus_2_mean = float(
-        dict(tier_focus_surface_summary.get("t_plus_2_close_return_distribution") or {}).get("mean") or 0.0
-    )
-    benchmark_t_plus_2_mean = float(
-        dict(dict(watch_dossier.get("recent_supporting_surface_summary") or {}).get("t_plus_2_close_return_distribution") or {}).get("mean") or 0.0
-    )
+    focus_t_plus_2_mean = float(dict(tier_focus_surface_summary.get("t_plus_2_close_return_distribution") or {}).get("mean") or 0.0)
+    benchmark_t_plus_2_mean = float(dict(dict(watch_dossier.get("recent_supporting_surface_summary") or {}).get("t_plus_2_close_return_distribution") or {}).get("mean") or 0.0)
     return {
         "focus_candidate": focus_candidate,
         "focus_ticker": str(focus_candidate.get("ticker") or focus_dossier.get("candidate_ticker") or ""),
@@ -91,9 +87,7 @@ def _collect_promotion_review_blockers(context: dict[str, Any]) -> list[str]:
         blockers.append("insufficient_recent_windows")
     if context["candidate_tier_focus"] != "governance_followup" and context["focus_next_close_positive_rate"] < 0.5:
         blockers.append("weak_next_close_follow_through")
-    if context["candidate_tier_focus"] != "governance_followup" and (
-        context["focus_t_plus_2_positive_rate"] < 0.5 or context["focus_t_plus_2_mean"] <= 0.0
-    ):
+    if context["candidate_tier_focus"] != "governance_followup" and (context["focus_t_plus_2_positive_rate"] < 0.5 or context["focus_t_plus_2_mean"] <= 0.0):
         blockers.append("weak_t_plus_2_follow_through")
     if context["candidate_tier_focus"] == "governance_followup" and not context["has_historical_objective_support"]:
         blockers.append("historical_objective_support_missing")

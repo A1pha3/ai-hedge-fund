@@ -167,28 +167,20 @@ def _historical_prior_has_payoff_details(prior: dict[str, Any]) -> bool:
     return False
 
 
-def _backfill_historical_prior_payoff_fields(
-    preferred: dict[str, Any], supplement: dict[str, Any]
-) -> dict[str, Any]:
+def _backfill_historical_prior_payoff_fields(preferred: dict[str, Any], supplement: dict[str, Any]) -> dict[str, Any]:
     merged = dict(preferred)
     for key in _HISTORICAL_PRIOR_PAYOFF_KEYS:
-        if _historical_prior_value_missing(merged.get(key)) and not _historical_prior_value_missing(
-            supplement.get(key)
-        ):
+        if _historical_prior_value_missing(merged.get(key)) and not _historical_prior_value_missing(supplement.get(key)):
             merged[key] = supplement.get(key)
     return merged
 
 
-def _should_prefer_more_specific_incoming_prior(
-    current: dict[str, Any], incoming: dict[str, Any]
-) -> bool:
+def _should_prefer_more_specific_incoming_prior(current: dict[str, Any], incoming: dict[str, Any]) -> bool:
     if _historical_prior_has_payoff_details(current):
         return False
     if not _historical_prior_has_payoff_details(incoming):
         return False
-    return _historical_prior_scope_rank(incoming) >= _historical_prior_scope_rank(
-        current
-    )
+    return _historical_prior_scope_rank(incoming) >= _historical_prior_scope_rank(current)
 
 
 def _choose_preferred_historical_prior(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
@@ -331,11 +323,7 @@ def select_latest_btst_followup_candidate(reports_root: str | Path) -> dict[str,
 
 def select_latest_upstream_shadow_followup_candidate(reports_root: str | Path) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
-    candidates = [
-        candidate
-        for candidate in (_extract_btst_candidate(path) for path in _discover_report_dirs(resolved_reports_root))
-        if candidate and int(candidate.get("upstream_shadow_followup_row_count") or 0) > 0
-    ]
+    candidates = [candidate for candidate in (_extract_btst_candidate(path) for path in _discover_report_dirs(resolved_reports_root)) if candidate and int(candidate.get("upstream_shadow_followup_row_count") or 0) > 0]
     if not candidates:
         return {}
     return max(candidates, key=lambda candidate: candidate["rank"])
@@ -768,16 +756,8 @@ def _build_upstream_shadow_followup_ticker_groups(rows: list[dict[str, Any]]) ->
     blocked_tickers = [str(row.get("ticker") or "") for row in rows if str(row.get("decision") or "") == "blocked"]
     selected_tickers = [str(row.get("ticker") or "") for row in rows if str(row.get("decision") or "") == "selected"]
     near_miss_tickers = [str(row.get("ticker") or "") for row in rows if str(row.get("decision") or "") == "near_miss"]
-    rejected_profitability_tickers = [
-        str(row.get("ticker") or "")
-        for row in rows
-        if str(row.get("decision") or "") == "rejected" and str(row.get("downstream_bottleneck") or "") == "profitability_hard_cliff"
-    ]
-    generic_rejected_tickers = [
-        str(row.get("ticker") or "")
-        for row in rows
-        if str(row.get("decision") or "") == "rejected" and str(row.get("downstream_bottleneck") or "") != "profitability_hard_cliff"
-    ]
+    rejected_profitability_tickers = [str(row.get("ticker") or "") for row in rows if str(row.get("decision") or "") == "rejected" and str(row.get("downstream_bottleneck") or "") == "profitability_hard_cliff"]
+    generic_rejected_tickers = [str(row.get("ticker") or "") for row in rows if str(row.get("decision") or "") == "rejected" and str(row.get("downstream_bottleneck") or "") != "profitability_hard_cliff"]
     return {
         "decision_counts": {key: int(value) for key, value in decision_counts.items()},
         "validated_tickers": validated_tickers,
@@ -808,25 +788,15 @@ def _build_unavailable_upstream_shadow_followup_summary(
 def _build_upstream_shadow_followup_recommendation(ticker_groups: dict[str, Any]) -> str:
     recommendation_parts: list[str] = []
     if ticker_groups["blocked_tickers"]:
-        recommendation_parts.append(
-            f"最新正式 shadow rerun 已验证 {ticker_groups['blocked_tickers']} 属于 blocked truth，当前应从 formal execution 名单移除。"
-        )
+        recommendation_parts.append(f"最新正式 shadow rerun 已验证 {ticker_groups['blocked_tickers']} 属于 blocked truth，当前应从 formal execution 名单移除。")
     if ticker_groups["selected_tickers"]:
-        recommendation_parts.append(
-            f"最新正式 shadow rerun 已验证 {ticker_groups['selected_tickers']} 可进入 selected，当前不应再按 upstream absence 处理。"
-        )
+        recommendation_parts.append(f"最新正式 shadow rerun 已验证 {ticker_groups['selected_tickers']} 可进入 selected，当前不应再按 upstream absence 处理。")
     if ticker_groups["near_miss_tickers"]:
-        recommendation_parts.append(
-            f"最新正式 shadow rerun 已验证 {ticker_groups['near_miss_tickers']} 可进入 near_miss，当前不应再按 upstream absence 处理。"
-        )
+        recommendation_parts.append(f"最新正式 shadow rerun 已验证 {ticker_groups['near_miss_tickers']} 可进入 near_miss，当前不应再按 upstream absence 处理。")
     if ticker_groups["rejected_profitability_tickers"]:
-        recommendation_parts.append(
-            f"{ticker_groups['rejected_profitability_tickers']} 已完成上游召回验证，但当前主矛盾转为 profitability_hard_cliff。"
-        )
+        recommendation_parts.append(f"{ticker_groups['rejected_profitability_tickers']} 已完成上游召回验证，但当前主矛盾转为 profitability_hard_cliff。")
     if ticker_groups["generic_rejected_tickers"]:
-        recommendation_parts.append(
-            f"{ticker_groups['generic_rejected_tickers']} 已完成上游召回验证，但仍停留在 recalled-shadow rejected 层。"
-        )
+        recommendation_parts.append(f"{ticker_groups['generic_rejected_tickers']} 已完成上游召回验证，但仍停留在 recalled-shadow rejected 层。")
     if not recommendation_parts:
         recommendation_parts.append("最新正式 shadow rerun 已形成 upstream recall 下游验证样本，应按当前 short-trade decision 分层处理。")
     return " ".join(recommendation_parts)
@@ -892,7 +862,4 @@ def load_upstream_shadow_followup_history_by_ticker(reports_root: str | Path) ->
             candidate_rank = _upstream_shadow_row_rank(row, candidate)
             grouped.setdefault(ticker, []).append((candidate_rank, dict(row)))
 
-    return {
-        ticker: [row for _rank, row in sorted(items, key=lambda item: item[0], reverse=True)]
-        for ticker, items in grouped.items()
-    }
+    return {ticker: [row for _rank, row in sorted(items, key=lambda item: item[0], reverse=True)] for ticker, items in grouped.items()}

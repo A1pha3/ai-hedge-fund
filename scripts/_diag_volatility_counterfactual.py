@@ -21,6 +21,7 @@
 复用 _diag_trend_subfactor_direction.py 的 universe/history 获取逻辑 (tushare, 全 A, 剔除 ST/退/北交所/流动性<10万/|pct_chg|>9.5%).
 WIP-compatible: 纯只读诊断, 不改 technicals.py / screening, 不污染 C220 BUY-gate-horizon 归因.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -50,7 +51,7 @@ load_dotenv(_PROJECT_ROOT / ".env")
 logger = logging.getLogger("vol_counterfactual")
 
 VOL_LOW, VOL_HIGH, VOL_Z = 0.8, 1.2, 1.0  # current thresholds (technicals.py)
-VOL_LOW_B, VOL_HIGH_B = 0.9, 1.1          # option B narrow band
+VOL_LOW_B, VOL_HIGH_B = 0.9, 1.1  # option B narrow band
 
 
 def _dir_current(r, z):
@@ -91,6 +92,7 @@ VARIANTS = {"current_AND": _dir_current, "A_OR": _dir_A_or, "B_narrow": _dir_B_n
 
 def _get_pro():
     import tushare as ts
+
     token = os.getenv("TUSHARE_TOKEN")
     if not token:
         raise RuntimeError("TUSHARE_TOKEN 未设置")
@@ -101,8 +103,7 @@ def _get_pro():
 def get_trading_dates(pro, n_days, end_date=None):
     end = datetime.strptime(end_date, "%Y%m%d") if end_date else datetime.now()
     start = end - timedelta(days=n_days * 2 + 60)
-    cal = pro.trade_cal(exchange="SSE", start_date=start.strftime("%Y%m%d"),
-                        end_date=end.strftime("%Y%m%d"), is_open="1")
+    cal = pro.trade_cal(exchange="SSE", start_date=start.strftime("%Y%m%d"), end_date=end.strftime("%Y%m%d"), is_open="1")
     return sorted(cal["cal_date"].tolist())[-n_days:]
 
 
@@ -121,7 +122,7 @@ def get_universe_for_date(pro, trade_date, stock_basic):
 def get_history_batch(pro, codes, start_date, end_date, batch_size=10):
     frames = []
     for i in range(0, len(codes), batch_size):
-        batch = codes[i:i + batch_size]
+        batch = codes[i : i + batch_size]
         for attempt in range(3):
             try:
                 h = pro.daily(ts_code=",".join(batch), start_date=start_date, end_date=end_date)
@@ -209,8 +210,7 @@ def _analyze(rows, test_dates):
     df = pd.DataFrame(rows)
     print(f"\n样本: {len(df)} stock-days, {df['trade_date'].nunique()} 日期, {df['ticker'].nunique()} 票")
     print("=" * 92)
-    print(f"\n{'variant':<16s} {'dir=+1':>8s} {'dir=0':>8s} {'dir=-1':>8s} {'%neutral':>10s}"
-          f" {'T+1(+1)':>10s} {'T+1(0)':>10s} {'T+1(-1)':>10s} {'sep(+--)':>10s}")
+    print(f"\n{'variant':<16s} {'dir=+1':>8s} {'dir=0':>8s} {'dir=-1':>8s} {'%neutral':>10s}" f" {'T+1(+1)':>10s} {'T+1(0)':>10s} {'T+1(-1)':>10s} {'sep(+--)':>10s}")
     print("-" * 92)
     results = {}
     for v in VARIANTS:
@@ -222,16 +222,13 @@ def _analyze(rows, test_dates):
         t0 = df.loc[d == 0, "next_ret"].mean()
         tm = df.loc[d == -1, "next_ret"].mean()
         sep = (t1 - tm) if (np.isfinite(t1) and np.isfinite(tm)) else float("nan")
-        results[v] = dict(n_pos=n1, n_zero=n0, n_neg=nm, pct_neutral=100.0*n0/len(df),
-                          t1_pos=t1, t1_zero=t0, t1_neg=tm, sep=sep)
-        print(f"{v:<16s} {n1:>8d} {n0:>8d} {nm:>8d} {100.0*n0/len(df):>9.1f}%"
-              f" {t1:>10.3f} {t0:>10.3f} {tm:>10.3f} {sep:>+10.3f}")
+        results[v] = dict(n_pos=n1, n_zero=n0, n_neg=nm, pct_neutral=100.0 * n0 / len(df), t1_pos=t1, t1_zero=t0, t1_neg=tm, sep=sep)
+        print(f"{v:<16s} {n1:>8d} {n0:>8d} {nm:>8d} {100.0*n0/len(df):>9.1f}%" f" {t1:>10.3f} {t0:>10.3f} {tm:>10.3f} {sep:>+10.3f}")
 
     cur = results["current_AND"]
     print("\n" + "=" * 92)
     print("判定 (sep = T+1(bullish) - T+1(bearish); 正=方向正确, 负=反向):")
-    print(f"  current: %neutral={cur['pct_neutral']:.1f}%, sep={cur['sep']:+.3f}"
-          f" (症状复现预期: ~55% neutral, sep<0 反向)")
+    print(f"  current: %neutral={cur['pct_neutral']:.1f}%, sep={cur['sep']:+.3f}" f" (症状复现预期: ~55% neutral, sep<0 反向)")
     best_sep = max(results.items(), key=lambda kv: kv[1]["sep"])
     least_neutral = min(results.items(), key=lambda kv: kv[1]["pct_neutral"])
     print(f"  方向最正 (max sep): {best_sep[0]} sep={best_sep[1]['sep']:+.3f} %neutral={best_sep[1]['pct_neutral']:.1f}%")
@@ -245,13 +242,22 @@ def _analyze(rows, test_dates):
         if isinstance(o, float) and not np.isfinite(o):
             return None
         return o
+
     out = _PROJECT_ROOT / "data/reports/volatility_counterfactual_diag_latest.json"
-    out.write_text(json.dumps({
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "n_stock_days": len(df), "n_dates": int(df["trade_date"].nunique()),
-        "n_tickers": int(df["ticker"].nunique()), "test_dates": test_dates,
-        "variants": {k: {kk: _clean(vv) for kk, vv in v.items()} for k, v in results.items()},
-    }, ensure_ascii=False, indent=2))
+    out.write_text(
+        json.dumps(
+            {
+                "generated_at": datetime.now().isoformat(timespec="seconds"),
+                "n_stock_days": len(df),
+                "n_dates": int(df["trade_date"].nunique()),
+                "n_tickers": int(df["ticker"].nunique()),
+                "test_dates": test_dates,
+                "variants": {k: {kk: _clean(vv) for kk, vv in v.items()} for k, v in results.items()},
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
     print(f"\n结果已写: {out.relative_to(_PROJECT_ROOT)}")
 
 

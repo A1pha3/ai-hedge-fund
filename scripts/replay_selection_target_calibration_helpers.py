@@ -101,12 +101,7 @@ def _recover_candidate_metadata_from_selection_target(
         stored_short_trade = dict(stored_evaluation.get("short_trade") or {})
         explainability_payload = dict(stored_short_trade.get("explainability_payload") or {})
         replay_context = dict(explainability_payload.get("replay_context") or {})
-        candidate_source = (
-            stored_evaluation.get("candidate_source")
-            or explainability_payload.get("candidate_source")
-            or explainability_payload.get("source")
-            or replay_context.get("source")
-        )
+        candidate_source = stored_evaluation.get("candidate_source") or explainability_payload.get("candidate_source") or explainability_payload.get("source") or replay_context.get("source")
         if candidate_source:
             recovered_entry["candidate_source"] = candidate_source
     if not recovered_entry.get("candidate_reason_codes"):
@@ -134,19 +129,10 @@ def prepare_replay_source_context(
     trade_date = str(payload.get("trade_date") or "")
     target_mode = str(payload.get("target_mode") or "research_only")
     selection_targets = dict(payload.get("selection_targets") or {})
-    watchlist_entries = [
-        _recover_candidate_metadata_from_selection_target(dict(entry or {}), selection_targets=selection_targets)
-        for entry in list(payload.get("watchlist") or [])
-    ]
+    watchlist_entries = [_recover_candidate_metadata_from_selection_target(dict(entry or {}), selection_targets=selection_targets) for entry in list(payload.get("watchlist") or [])]
     replay_short_trade_entries, upstream_shadow_observation_entries = merge_replay_entries(payload)
-    replay_short_trade_entries = [
-        _recover_candidate_metadata_from_selection_target(dict(entry or {}), selection_targets=selection_targets)
-        for entry in replay_short_trade_entries
-    ]
-    rejected_entries_input = [
-        _recover_candidate_metadata_from_selection_target(dict(entry or {}), selection_targets=selection_targets)
-        for entry in list(payload.get("rejected_entries") or [])
-    ]
+    replay_short_trade_entries = [_recover_candidate_metadata_from_selection_target(dict(entry or {}), selection_targets=selection_targets) for entry in replay_short_trade_entries]
+    rejected_entries_input = [_recover_candidate_metadata_from_selection_target(dict(entry or {}), selection_targets=selection_targets) for entry in list(payload.get("rejected_entries") or [])]
 
     rejected_filter_observability = summarize_filter_observability(
         rejected_entries_input,
@@ -173,16 +159,8 @@ def prepare_replay_source_context(
         default_candidate_source=supplemental_default_source,
     )
 
-    filtered_entry_index = {
-        str(entry.get("ticker") or ""): entry
-        for entry in filtered_rejected_entries + filtered_supplemental_entries
-        if str(entry.get("ticker") or "").strip()
-    }
-    replay_entry_index = {
-        str(entry.get("ticker") or ""): entry
-        for entry in list(watchlist_entries) + rejected_entries + supplemental_entries
-        if str(entry.get("ticker") or "").strip()
-    }
+    filtered_entry_index = {str(entry.get("ticker") or ""): entry for entry in filtered_rejected_entries + filtered_supplemental_entries if str(entry.get("ticker") or "").strip()}
+    replay_entry_index = {str(entry.get("ticker") or ""): entry for entry in list(watchlist_entries) + rejected_entries + supplemental_entries if str(entry.get("ticker") or "").strip()}
     buy_order_tickers = {str(ticker) for ticker in list(payload.get("buy_order_tickers") or []) if str(ticker or "").strip()}
     watchlist = coerce_watchlist_entries(watchlist_entries)
     signal_availability, signal_name_counts = summarize_signal_availability(watchlist_entries + supplemental_entries)
@@ -226,9 +204,7 @@ def ingest_replay_source_analysis(
     state.focused_score_diagnostics.extend(source_analysis["focused_score_diagnostics"])
     state.overall_signal_availability.update(source_context.signal_availability)
     state.overall_signal_name_counts.update(source_context.signal_name_counts)
-    state.filtered_candidate_entry_counts.update(
-        entry["matched_filter"] for entry in source_context.filtered_rejected_entries + source_context.filtered_supplemental_entries
-    )
+    state.filtered_candidate_entry_counts.update(entry["matched_filter"] for entry in source_context.filtered_rejected_entries + source_context.filtered_supplemental_entries)
     state.per_day.append(
         build_replay_day_summary(
             source_context=source_context,
@@ -263,10 +239,7 @@ def build_replay_day_summary(
         "decision_mismatch_count": day_mismatch_count,
         "source_summary": dict(source_context.payload.get("source_summary") or {}),
         "upstream_shadow_observation_entry_count": len(source_context.upstream_shadow_observation_entries),
-        "candidate_entry_filter_observability": {
-            rule_name: {key: int(value) for key, value in counters.items()}
-            for rule_name, counters in sorted(source_context.day_candidate_entry_filter_observability.items())
-        },
+        "candidate_entry_filter_observability": {rule_name: {key: int(value) for key, value in counters.items()} for rule_name, counters in sorted(source_context.day_candidate_entry_filter_observability.items())},
         "filtered_candidate_entries": source_context.filtered_rejected_entries + source_context.filtered_supplemental_entries,
         "signal_availability": source_context.signal_availability,
         "available_strategy_signal_counts": source_context.signal_name_counts,
@@ -297,10 +270,7 @@ def build_replay_analysis_result(
         "candidate_source_counts": dict(state.candidate_source_counts.most_common()),
         "entry_filter_rules": config.entry_filter_rules,
         "filtered_candidate_entry_counts": dict(state.filtered_candidate_entry_counts.most_common()),
-        "candidate_entry_filter_observability": {
-            rule_name: {key: int(value) for key, value in counters.items()}
-            for rule_name, counters in sorted(state.candidate_entry_filter_observability.items())
-        },
+        "candidate_entry_filter_observability": {rule_name: {key: int(value) for key, value in counters.items()} for rule_name, counters in sorted(state.candidate_entry_filter_observability.items())},
         "signal_availability": dict(state.overall_signal_availability.most_common()),
         "available_strategy_signal_counts": dict(state.overall_signal_name_counts.most_common()),
         "by_trade_date": sorted(state.per_day, key=lambda row: row["trade_date"]),

@@ -78,8 +78,7 @@ def _build_adopted_execution_row(context: dict[str, Any], execution_verdict: str
             "next_step": (
                 "Keep this paper execution candidate visible because merge-approved daily-pipeline uplift is already active; if governance completes the review, promote it through the default BTST merge path."
                 if merge_review_ready
-                else "Use only as an isolated paper execution candidate; require selected persistence across independent windows "
-                "plus a repeatable edge versus default BTST before merging into default selected/near_miss."
+                else "Use only as an isolated paper execution candidate; require selected persistence across independent windows " "plus a repeatable edge versus default BTST before merging into default selected/near_miss."
             ),
             "t_plus_2_close_positive_rate": adopted_eligible_row.get("t_plus_2_close_positive_rate"),
             "t_plus_2_close_return_mean": adopted_eligible_row.get("t_plus_2_close_return_mean"),
@@ -93,9 +92,7 @@ def _build_execution_overlay_recommendation(context: dict[str, Any], execution_v
     focus_ticker = context["focus_ticker"]
     merge_review_ready = context["merge_review_ready"]
     if execution_verdict == "execution_candidate_applied" and merge_review_ready:
-        return (
-            f"Keep {focus_ticker} as a paper execution candidate because merge-approved daily-pipeline uplift is already active while governance finalizes the merge review."
-        )
+        return f"Keep {focus_ticker} as a paper execution candidate because merge-approved daily-pipeline uplift is already active while governance finalizes the merge review."
     if execution_verdict == "execution_candidate_applied":
         return f"Treat {focus_ticker} as an isolated paper execution candidate while keeping the continuation lane outside default BTST."
     return "Keep the execution overlay empty until the stricter execution gate approves a candidate."

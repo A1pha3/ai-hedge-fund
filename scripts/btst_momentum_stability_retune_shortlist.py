@@ -213,9 +213,7 @@ def main(argv: list[str] | None = None) -> int:
         "## Candidates",
     ]
     for candidate in payload["candidates"]:
-        md.append(
-            f"- trial {candidate['trial_index']}: cross_window={candidate['cross_window_blocker_count']}, risk={candidate['risk_blocker_count']}"
-        )
+        md.append(f"- trial {candidate['trial_index']}: cross_window={candidate['cross_window_blocker_count']}, risk={candidate['risk_blocker_count']}")
     _write_output_file(Path(args.output_md), content="\n".join(md) + "\n", label="output markdown")
 
     return 0

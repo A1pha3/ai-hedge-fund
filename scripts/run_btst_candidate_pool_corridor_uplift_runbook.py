@@ -50,12 +50,7 @@ def _build_corridor_uplift_commands(
     focus_tickers = [ticker for ticker in [primary_shadow_replay, *(parallel_watch_tickers or [])] if ticker]
     focus_arg = f" --candidate-pool-shadow-focus-tickers {','.join(focus_tickers)}" if focus_tickers else ""
     corridor_focus_arg = f" --candidate-pool-shadow-corridor-focus-tickers {','.join(focus_tickers)}" if focus_tickers else ""
-    shadow_pack_cmd = (
-        "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py "
-        f"--corridor-validation-pack-path {resolved_corridor_validation_pack_path} "
-        "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json "
-        "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md"
-    )
+    shadow_pack_cmd = "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py " f"--corridor-validation-pack-path {resolved_corridor_validation_pack_path} " "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json " "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md"
     persistence_arg = ""
     if persistence_dossier_path:
         resolved_persistence_dossier_path = Path(persistence_dossier_path).expanduser().resolve()
@@ -63,11 +58,7 @@ def _build_corridor_uplift_commands(
         persistence_arg = f" --persistence-dossier-path {resolved_persistence_dossier_path}"
     commands = [
         shadow_pack_cmd,
-        "python scripts/run_btst_candidate_pool_lane_pair_board.py "
-        f"--corridor-shadow-pack-path {resolved_corridor_shadow_pack_path} "
-        "--rebucket-comparison-bundle-path data/reports/btst_candidate_pool_rebucket_comparison_bundle_latest.json "
-        "--output-json data/reports/btst_candidate_pool_lane_pair_board_latest.json "
-        "--output-md data/reports/btst_candidate_pool_lane_pair_board_latest.md",
+        "python scripts/run_btst_candidate_pool_lane_pair_board.py " f"--corridor-shadow-pack-path {resolved_corridor_shadow_pack_path} " "--rebucket-comparison-bundle-path data/reports/btst_candidate_pool_rebucket_comparison_bundle_latest.json " "--output-json data/reports/btst_candidate_pool_lane_pair_board_latest.json " "--output-md data/reports/btst_candidate_pool_lane_pair_board_latest.md",
         "python scripts/run_btst_candidate_pool_corridor_uplift_runbook.py "
         f"--candidate-pool-recall-dossier-path {resolved_recall_dossier_path} "
         f"--corridor-validation-pack-path {resolved_corridor_validation_pack_path} "
@@ -79,11 +70,7 @@ def _build_corridor_uplift_commands(
     # Only emit the paper-trading command when there is an active primary to replay;
     # in blocked / no-active-primary states, emitting it violates fail-closed semantics.
     if not shadow_blocked and not paper_trading_blocked and primary_shadow_replay:
-        commands.append(
-            "python scripts/run_paper_trading.py --start-date YYYY-MM-DD --end-date YYYY-MM-DD "
-            "--selection-target short_trade_only --model-provider MiniMax --model-name MiniMax-M2.7"
-            f"{focus_arg}{corridor_focus_arg}"
-        )
+        commands.append("python scripts/run_paper_trading.py --start-date YYYY-MM-DD --end-date YYYY-MM-DD " "--selection-target short_trade_only --model-provider MiniMax --model-name MiniMax-M2.7" f"{focus_arg}{corridor_focus_arg}")
     return commands
 
 
@@ -112,11 +99,7 @@ def _filter_parallel_watch_lanes(
     parallel_watch: list[dict[str, Any]],
     corridor_narrow_probe: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    excluded_tickers = {
-        str(ticker or "").strip()
-        for ticker in list(corridor_narrow_probe.get("excluded_low_gate_tail_tickers") or [])
-        if str(ticker or "").strip()
-    }
+    excluded_tickers = {str(ticker or "").strip() for ticker in list(corridor_narrow_probe.get("excluded_low_gate_tail_tickers") or []) if str(ticker or "").strip()}
     if not excluded_tickers:
         return parallel_watch, []
     filtered = [row for row in parallel_watch if str(row.get("ticker") or "").strip() not in excluded_tickers]
@@ -155,20 +138,11 @@ def _build_runbook_recommendation(
     validation_pack_recommendation = str(corridor_validation_pack.get("recommendation") or "").strip()
 
     if runbook_status == "ready_for_corridor_promotion_candidate":
-        recommendation = (
-            f"corridor uplift runbook 当前围绕 {primary_ticker} 进入 promotion-candidate review，"
-            f"同时保持 {board_leader_ticker} 的 lane pair leader 语义不变。"
-        )
+        recommendation = f"corridor uplift runbook 当前围绕 {primary_ticker} 进入 promotion-candidate review，" f"同时保持 {board_leader_ticker} 的 lane pair leader 语义不变。"
     elif runbook_status == "accumulate_more_corridor_evidence":
-        recommendation = (
-            f"corridor uplift runbook 当前仍以 {primary_ticker} 为 primary shadow replay，"
-            "但还不足以升级为 promotion-candidate，应继续积累 closed-cycle 证据。"
-        )
+        recommendation = f"corridor uplift runbook 当前仍以 {primary_ticker} 为 primary shadow replay，" "但还不足以升级为 promotion-candidate，应继续积累 closed-cycle 证据。"
     else:
-        recommendation = (
-            f"corridor uplift runbook 当前应围绕 {primary_ticker} 展开，"
-            f"并保持 {board_leader_ticker} 的 lane pair leader 语义不变。"
-        )
+        recommendation = f"corridor uplift runbook 当前应围绕 {primary_ticker} 展开，" f"并保持 {board_leader_ticker} 的 lane pair leader 语义不变。"
 
     if validation_pack_recommendation:
         recommendation += f" {validation_pack_recommendation}"

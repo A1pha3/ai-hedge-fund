@@ -138,9 +138,7 @@ def _render_markdown(analysis: dict[str, Any]) -> str:
     samples = list(analysis.get("comparison_samples") or [])
     if samples:
         for row in samples:
-            lines.append(
-                f"| {row.get('ticker', '')} | {row.get('semantic_bucket', '')} | {row.get('decision', '')} | {row.get('execution_eligible', False)} | {', '.join(row.get('downgrade_reasons', [])) or 'none'} | {row.get('btst_regime_gate', '') or 'n/a'} | {row.get('historical_prior_quality_level', '') or 'n/a'} |"
-            )
+            lines.append(f"| {row.get('ticker', '')} | {row.get('semantic_bucket', '')} | {row.get('decision', '')} | {row.get('execution_eligible', False)} | {', '.join(row.get('downgrade_reasons', [])) or 'none'} | {row.get('btst_regime_gate', '') or 'n/a'} | {row.get('historical_prior_quality_level', '') or 'n/a'} |")
     else:
         lines.append("| _none_ |  |  |  |  |  |  |")
     return "\n".join(lines) + "\n"

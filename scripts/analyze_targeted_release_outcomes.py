@@ -95,11 +95,7 @@ def _resolve_thresholds(release_analysis: dict[str, Any], target_row: dict[str, 
     profile_overrides = dict(release_analysis.get("profile_overrides") or {})
     return {
         "select_threshold": _safe_float(release_analysis.get("select_threshold") or target_row.get("select_threshold")),
-        "near_miss_threshold": _safe_float(
-            release_analysis.get("near_miss_threshold")
-            or profile_overrides.get("near_miss_threshold")
-            or target_row.get("near_miss_threshold")
-        ),
+        "near_miss_threshold": _safe_float(release_analysis.get("near_miss_threshold") or profile_overrides.get("near_miss_threshold") or target_row.get("near_miss_threshold")),
         "stale_weight": _safe_float(release_analysis.get("stale_weight") or target_row.get("stale_weight")),
         "extension_weight": _safe_float(release_analysis.get("extension_weight") or target_row.get("extension_weight")),
     }
@@ -157,9 +153,7 @@ def render_targeted_release_outcomes_markdown(analysis: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Target Cases")
     for row in analysis["target_cases"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, next_open_return={row.get('next_open_return')}, next_high_return={row.get('next_high_return')}, next_close_return={row.get('next_close_return')}, release_verdict={row['release_verdict']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, next_open_return={row.get('next_open_return')}, next_high_return={row.get('next_high_return')}, next_close_return={row.get('next_close_return')}, release_verdict={row['release_verdict']}")
     if not analysis["target_cases"]:
         lines.append("- none")
     lines.append("")
@@ -265,10 +259,7 @@ def _build_targeted_release_outcomes_recommendation(
     ticker: str,
 ) -> str:
     if enriched_rows and promoted_target_case_count == len(enriched_rows) and positive_next_close_count == len(enriched_rows):
-        return (
-            f"当前 targeted release 值得继续保留。{ticker} 的 {len(enriched_rows)} 个目标样本都完成了目标迁移，"
-            f"且 next_close_positive_rate={next_close_positive_rate}。"
-        )
+        return f"当前 targeted release 值得继续保留。{ticker} 的 {len(enriched_rows)} 个目标样本都完成了目标迁移，" f"且 next_close_positive_rate={next_close_positive_rate}。"
     if enriched_rows and promoted_target_case_count == len(enriched_rows) and high_hit_count == len(enriched_rows):
         return "当前 targeted release 至少兑现了稳定的 intraday upside，但 close continuation 仍需继续观察。"
     if enriched_rows and promoted_target_case_count > 0:
@@ -330,9 +321,7 @@ def analyze_targeted_release_outcomes(
         "next_close_positive_rate": next_close_positive_rate,
         "positive_next_close_count": positive_next_close_count,
         "select_threshold": _safe_float(release_analysis.get("select_threshold")),
-        "near_miss_threshold": _safe_float(
-            release_analysis.get("near_miss_threshold") or dict(release_analysis.get("profile_overrides") or {}).get("near_miss_threshold")
-        ),
+        "near_miss_threshold": _safe_float(release_analysis.get("near_miss_threshold") or dict(release_analysis.get("profile_overrides") or {}).get("near_miss_threshold")),
         "target_cases": enriched_rows,
         "recommendation": recommendation,
     }

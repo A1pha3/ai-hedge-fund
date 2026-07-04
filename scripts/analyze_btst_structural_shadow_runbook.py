@@ -51,23 +51,14 @@ def analyze_btst_structural_shadow_runbook(
     else:
         freeze_verdict = "shadow_recheck_allowed_single_name_only"
 
-    next_step = (
-        f"保持 {normalized_ticker} 为单票 structural shadow 冻结样本；"
-        "只有未来新窗口出现新的 structural conflict 高优先级样本，且定向 release 继续保持零 spillover、"
-        "同时 close continuation 转正，才允许重开 structural lane 评审。"
-    )
+    next_step = f"保持 {normalized_ticker} 为单票 structural shadow 冻结样本；" "只有未来新窗口出现新的 structural conflict 高优先级样本，且定向 release 继续保持零 spillover、" "同时 close continuation 转正，才允许重开 structural lane 评审。"
     rerun_commands = [
         "python scripts/analyze_structural_conflict_rescue_window.py --report-dir data/reports/paper_trading_window_YYYYMMDD_YYYYMMDD_live_m2_7_dual_target_... --output-json data/reports/p8_structural_conflict_rescue_window_YYYYMMDD.json --output-md data/reports/p8_structural_conflict_rescue_window_YYYYMMDD.md",
-        f"python scripts/analyze_targeted_structural_conflict_release.py --report-dir data/reports/paper_trading_window_YYYYMMDD_YYYYMMDD_live_m2_7_dual_target_... --targets YYYY-MM-DD:{normalized_ticker} --profile-overrides-json '{{\"hard_block_bearish_conflicts\":[],\"overhead_conflict_penalty_conflicts\":[],\"near_miss_threshold\":0.42}}' --output-json data/reports/{normalized_ticker}_structural_conflict_shadow_release_YYYYMMDD_release.json --output-md data/reports/{normalized_ticker}_structural_conflict_shadow_release_YYYYMMDD_release.md",
+        f'python scripts/analyze_targeted_structural_conflict_release.py --report-dir data/reports/paper_trading_window_YYYYMMDD_YYYYMMDD_live_m2_7_dual_target_... --targets YYYY-MM-DD:{normalized_ticker} --profile-overrides-json \'{{"hard_block_bearish_conflicts":[],"overhead_conflict_penalty_conflicts":[],"near_miss_threshold":0.42}}\' --output-json data/reports/{normalized_ticker}_structural_conflict_shadow_release_YYYYMMDD_release.json --output-md data/reports/{normalized_ticker}_structural_conflict_shadow_release_YYYYMMDD_release.md',
         f"python scripts/analyze_targeted_release_outcomes.py --release-report data/reports/{normalized_ticker}_structural_conflict_shadow_release_YYYYMMDD_release.json --next-high-hit-threshold 0.02 --output-json data/reports/{normalized_ticker}_structural_conflict_shadow_release_YYYYMMDD_outcomes.json --output-md data/reports/{normalized_ticker}_structural_conflict_shadow_release_YYYYMMDD_outcomes.md",
     ]
 
-    recommendation = (
-        f"{normalized_ticker} 当前不再是‘是否能 rescue’的问题，而是‘rescue 后是否值得扩散’的问题。"
-        " 现有证据表明它虽可单票从 blocked 提升到 near_miss，且不会污染其它样本，"
-        "但次日 intraday 与 close continuation 同时转弱，因此 structural lane 现在应进入治理性冻结，"
-        "而不是继续把 cluster-wide release 当成主线。"
-    )
+    recommendation = f"{normalized_ticker} 当前不再是‘是否能 rescue’的问题，而是‘rescue 后是否值得扩散’的问题。" " 现有证据表明它虽可单票从 blocked 提升到 near_miss，且不会污染其它样本，" "但次日 intraday 与 close continuation 同时转弱，因此 structural lane 现在应进入治理性冻结，" "而不是继续把 cluster-wide release 当成主线。"
 
     return {
         "structural_window_review": str(Path(structural_window_review_path).expanduser().resolve()),

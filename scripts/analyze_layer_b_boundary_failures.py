@@ -84,9 +84,7 @@ def render_layer_b_boundary_markdown(analysis: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Day Breakdown")
     for row in analysis["day_breakdown"]:
-        lines.append(
-            f"- {row['trade_date']}: rejected={row['rejected_count']}, mean_score_target={row['mean_score_target']}, mean_gap_to_near_miss={row['mean_gap_to_near_miss']}, mean_score_b={row['mean_score_b']}"
-        )
+        lines.append(f"- {row['trade_date']}: rejected={row['rejected_count']}, mean_score_target={row['mean_score_target']}, mean_gap_to_near_miss={row['mean_gap_to_near_miss']}, mean_score_b={row['mean_score_b']}")
     lines.append("")
     lines.append("## Recommended Focus")
     for row in analysis["recommended_focus_areas"]:
@@ -94,9 +92,7 @@ def render_layer_b_boundary_markdown(analysis: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Representative Cases")
     for row in analysis["top_examples"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: score_target={row['score_target']}, gap_to_near_miss={row['gap_to_near_miss']}, score_b={row['score_b']}, top_reasons={row['top_reasons']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: score_target={row['score_target']}, gap_to_near_miss={row['gap_to_near_miss']}, score_b={row['score_b']}, top_reasons={row['top_reasons']}")
     return "\n".join(lines) + "\n"
 
 

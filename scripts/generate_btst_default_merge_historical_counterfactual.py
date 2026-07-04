@@ -63,13 +63,7 @@ def generate_btst_default_merge_historical_counterfactual(
     merged_positive_rate_uplift = round(float(merged_positive_rate) - float(default_positive_rate), 4) if merged_positive_rate is not None and default_positive_rate is not None else None
     merged_mean_return_uplift = round(float(merged_mean_return) - float(default_mean_return), 4) if merged_mean_return is not None and default_mean_return is not None else None
 
-    if (
-        str(default_merge_review.get("merge_review_verdict") or "").strip() == "ready_for_default_btst_merge_review"
-        and merged_positive_rate_uplift is not None
-        and merged_mean_return_uplift is not None
-        and merged_positive_rate_uplift > 0
-        and merged_mean_return_uplift > 0
-    ):
+    if str(default_merge_review.get("merge_review_verdict") or "").strip() == "ready_for_default_btst_merge_review" and merged_positive_rate_uplift is not None and merged_mean_return_uplift is not None and merged_positive_rate_uplift > 0 and merged_mean_return_uplift > 0:
         counterfactual_verdict = "merged_default_btst_uplift_positive"
     elif merged_positive_rate_uplift is None or merged_mean_return_uplift is None:
         counterfactual_verdict = "insufficient_historical_counterfactual_data"
@@ -77,10 +71,7 @@ def generate_btst_default_merge_historical_counterfactual(
         counterfactual_verdict = "merged_default_btst_uplift_mixed"
 
     recommendation = (
-        f"若把 {focus_ticker} 代表的 continuation edge 按历史 closed-cycle 近似并入 default BTST，"
-        f" merged_t_plus_2_positive_rate={merged_positive_rate}, merged_mean_t_plus_2_return={merged_mean_return},"
-        f" uplift_positive_rate={merged_positive_rate_uplift}, uplift_mean_return={merged_mean_return_uplift}。"
-        " 这是一份基于历史 surface 的加权近似，不替代最终治理审阅，但足以作为是否推进 merge 的赔率参考。"
+        f"若把 {focus_ticker} 代表的 continuation edge 按历史 closed-cycle 近似并入 default BTST，" f" merged_t_plus_2_positive_rate={merged_positive_rate}, merged_mean_t_plus_2_return={merged_mean_return}," f" uplift_positive_rate={merged_positive_rate_uplift}, uplift_mean_return={merged_mean_return_uplift}。" " 这是一份基于历史 surface 的加权近似，不替代最终治理审阅，但足以作为是否推进 merge 的赔率参考。"
         if focus_ticker
         else "当前没有 focus_ticker，无法构建 default BTST historical merge counterfactual。"
     )

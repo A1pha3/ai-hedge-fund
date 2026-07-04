@@ -112,11 +112,7 @@ def _row_similarity(row: dict[str, Any], *, anchor_profile: dict[str, Any], tole
     if not metric_distances:
         return (999.0, {}, False)
 
-    structure_match = all(
-        float(_metric_payload(row).get(metric)) >= float(summary["min"]) - float(tolerances.get(metric, 0.05))
-        and float(_metric_payload(row).get(metric)) <= float(summary["max"]) + float(tolerances.get(metric, 0.05))
-        for metric, summary in dict(anchor_profile.get("metrics") or {}).items()
-    )
+    structure_match = all(float(_metric_payload(row).get(metric)) >= float(summary["min"]) - float(tolerances.get(metric, 0.05)) and float(_metric_payload(row).get(metric)) <= float(summary["max"]) + float(tolerances.get(metric, 0.05)) for metric, summary in dict(anchor_profile.get("metrics") or {}).items())
     return (round(mean(metric_distances.values()), 4), metric_distances, structure_match)
 
 
@@ -134,12 +130,7 @@ def _is_strong_positive_continuation_window(
     next_close_return: float,
     t_plus_2_close_return: float,
 ) -> bool:
-    return (
-        next_high_return >= 0.08
-        and next_close_return >= 0.05
-        and t_plus_2_close_return >= 0.05
-        and t_plus_2_close_return >= next_close_return - 0.04
-    )
+    return next_high_return >= 0.08 and next_close_return >= 0.05 and t_plus_2_close_return >= 0.05 and t_plus_2_close_return >= next_close_return - 0.04
 
 
 def _classify_recent_tier_verdict(
@@ -160,15 +151,7 @@ def _classify_recent_tier_verdict(
     t_plus_2_close_positive_rate = recent_surface_summary.get("t_plus_2_close_positive_rate")
     next_high_hit_rate = recent_surface_summary.get("next_high_hit_rate_at_threshold")
     t_plus_2_mean = dict(recent_surface_summary.get("t_plus_2_close_return_distribution") or {}).get("mean")
-    if (
-        t_plus_2_close_positive_rate is not None
-        and float(t_plus_2_close_positive_rate) >= 0.5
-        and (
-            (next_close_positive_rate is not None and float(next_close_positive_rate) >= 0.5)
-            or (next_high_hit_rate is not None and float(next_high_hit_rate) >= 0.5)
-            or (t_plus_2_mean is not None and float(t_plus_2_mean) > 0.0)
-        )
-    ):
+    if t_plus_2_close_positive_rate is not None and float(t_plus_2_close_positive_rate) >= 0.5 and ((next_close_positive_rate is not None and float(next_close_positive_rate) >= 0.5) or (next_high_hit_rate is not None and float(next_high_hit_rate) >= 0.5) or (t_plus_2_mean is not None and float(t_plus_2_mean) > 0.0)):
         return "recent_tier_confirmed"
     return "recent_tier_mixed"
 
@@ -208,10 +191,7 @@ def _classify_peer_tier(
         )
     ):
         return "near_cluster_peer"
-    if (
-        similarity_score <= observation_similarity_threshold
-        and (t_plus_2_close_return > 0.0 or next_high_return >= 0.02)
-    ):
+    if similarity_score <= observation_similarity_threshold and (t_plus_2_close_return > 0.0 or next_high_return >= 0.02):
         return "observation_candidate"
     return None
 
@@ -239,9 +219,7 @@ def _summarize_tier_rows(
         recent_tier_rows = [row for row in ticker_rows if str(row.get("report_label") or "") in set(ordered_recent_labels)]
         recent_tier_window_count = len({str(row.get("report_label") or "") for row in recent_tier_rows})
         recent_tier_ratio = round(recent_tier_window_count / recent_window_count, 4) if recent_window_count else 0.0
-        recent_surface_summary = (
-            build_surface_summary(recent_tier_rows, next_high_hit_threshold=next_high_hit_threshold) if recent_tier_rows else {}
-        )
+        recent_surface_summary = build_surface_summary(recent_tier_rows, next_high_hit_threshold=next_high_hit_threshold) if recent_tier_rows else {}
         recent_tier_verdict = _classify_recent_tier_verdict(
             recent_tier_window_count,
             recent_window_count,
@@ -297,11 +275,7 @@ def _classify_peer_candidate_rows(
     grouped_all_candidate_rows: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         ticker = str(row.get("ticker") or "")
-        if (
-            not ticker
-            or ticker == anchor_ticker
-            or str(row.get("candidate_source") or "") not in ALLOWED_CANDIDATE_SOURCES
-        ):
+        if not ticker or ticker == anchor_ticker or str(row.get("candidate_source") or "") not in ALLOWED_CANDIDATE_SOURCES:
             continue
         candidate_row = _build_peer_candidate_row(
             row,

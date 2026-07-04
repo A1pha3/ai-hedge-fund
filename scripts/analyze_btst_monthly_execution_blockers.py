@@ -350,9 +350,7 @@ def render_btst_monthly_execution_blockers_markdown(analysis: dict[str, Any]) ->
     lines.append("")
     lines.append("## Overall")
     lines.append(f"- source: {o.get('source')}")
-    lines.append(
-        f"- selected_run_count: {o.get('selected_run_count')}, day_count: {o.get('day_count')}, missing_snapshot_count: {o.get('missing_snapshot_count')}, blocked_row_count: {o.get('blocked_row_count')}"
-    )
+    lines.append(f"- selected_run_count: {o.get('selected_run_count')}, day_count: {o.get('day_count')}, missing_snapshot_count: {o.get('missing_snapshot_count')}, blocked_row_count: {o.get('blocked_row_count')}")
 
     missing = list(analysis.get("missing_snapshots") or [])
     if missing:
@@ -424,20 +422,7 @@ def render_btst_monthly_execution_blockers_markdown(analysis: dict[str, Any]) ->
             lines.append("### By P2 block reason")
             for name, stats in top_k_stats(p2_realized):
                 s = dict(stats or {})
-                lines.append(
-                    "- "
-                    + str(name)
-                    + ": n="
-                    + str(s.get("sample_count") or 0)
-                    + ", open_to_close_win_rate="
-                    + str(s.get("open_to_close_win_rate") or "n/a")
-                    + ", open_to_close_mean="
-                    + str(s.get("open_to_close_return_mean") or "n/a")
-                    + ", open_to_close_p10="
-                    + str(s.get("open_to_close_return_p10") or "n/a")
-                    + ", open_to_close_min="
-                    + str(s.get("open_to_close_return_min") or "n/a")
-                )
+                lines.append("- " + str(name) + ": n=" + str(s.get("sample_count") or 0) + ", open_to_close_win_rate=" + str(s.get("open_to_close_win_rate") or "n/a") + ", open_to_close_mean=" + str(s.get("open_to_close_return_mean") or "n/a") + ", open_to_close_p10=" + str(s.get("open_to_close_return_p10") or "n/a") + ", open_to_close_min=" + str(s.get("open_to_close_return_min") or "n/a"))
 
         blocker_realized = dict(realized.get("short_trade_blocker") or {})
         if blocker_realized:
@@ -445,20 +430,7 @@ def render_btst_monthly_execution_blockers_markdown(analysis: dict[str, Any]) ->
             lines.append("### By short_trade blocker (multi-tag counts)")
             for name, stats in top_k_stats(blocker_realized):
                 s = dict(stats or {})
-                lines.append(
-                    "- "
-                    + str(name)
-                    + ": n="
-                    + str(s.get("sample_count") or 0)
-                    + ", open_to_close_win_rate="
-                    + str(s.get("open_to_close_win_rate") or "n/a")
-                    + ", open_to_close_mean="
-                    + str(s.get("open_to_close_return_mean") or "n/a")
-                    + ", open_to_close_p10="
-                    + str(s.get("open_to_close_return_p10") or "n/a")
-                    + ", open_to_close_min="
-                    + str(s.get("open_to_close_return_min") or "n/a")
-                )
+                lines.append("- " + str(name) + ": n=" + str(s.get("sample_count") or 0) + ", open_to_close_win_rate=" + str(s.get("open_to_close_win_rate") or "n/a") + ", open_to_close_mean=" + str(s.get("open_to_close_return_mean") or "n/a") + ", open_to_close_p10=" + str(s.get("open_to_close_return_p10") or "n/a") + ", open_to_close_min=" + str(s.get("open_to_close_return_min") or "n/a"))
 
     lines.append("")
     lines.append("## Notes")

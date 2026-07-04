@@ -122,10 +122,7 @@ def run_btst_recurring_shadow_close_bundle(
         "close_candidate_release": close_release,
         "close_candidate_outcomes": close_outcomes,
         "pair_comparison": pair_comparison,
-        "recommendation": (
-            f"{close_candidate_ticker} 已被整理成可直接执行的 recurring shadow close bundle。"
-            f" 若下一轮继续推进 close-candidate shadow replay，应直接复用该 bundle，并与 {intraday_control_ticker} 的 intraday control 结果成对比较。"
-        ),
+        "recommendation": (f"{close_candidate_ticker} 已被整理成可直接执行的 recurring shadow close bundle。" f" 若下一轮继续推进 close-candidate shadow replay，应直接复用该 bundle，并与 {intraday_control_ticker} 的 intraday control 结果成对比较。"),
         "next_step": f"复跑 {close_candidate_ticker} close-candidate shadow replay，并把结果与 {intraday_control_ticker} intraday control 一起回接到 rollout governance。",
     }
     return summary

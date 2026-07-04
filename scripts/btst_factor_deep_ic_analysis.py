@@ -62,14 +62,14 @@ def compute_factors(g):
         momentum_strength = mom_1m_n
 
     # volume_expansion_quality
-    avg_vol_20 = np.mean(volume[-min(20, n):]) if n >= 5 else 1
+    avg_vol_20 = np.mean(volume[-min(20, n) :]) if n >= 5 else 1
     avg_vol_5 = np.mean(volume[-5:]) if n >= 5 else 1
     vol_ratio = avg_vol_5 / avg_vol_20 if avg_vol_20 > 0 else 1.0
     volume_expansion = min(max((vol_ratio - 1.0) / 1.5, 0), 1)
 
     # close_strength
-    high_20 = np.max(close[-min(20, n):])
-    low_20 = np.min(close[-min(20, n):])
+    high_20 = np.max(close[-min(20, n) :])
+    low_20 = np.min(close[-min(20, n) :])
     price_range = high_20 - low_20 if high_20 > low_20 else 1
     close_strength = (last_close - low_20) / price_range
 
@@ -93,7 +93,7 @@ def compute_factors(g):
 
     # catalyst_freshness
     amount = g["amount"].values[-1]
-    avg_amount = np.mean(g["amount"].values[-min(20, n):])
+    avg_amount = np.mean(g["amount"].values[-min(20, n) :])
     amount_ratio = amount / avg_amount if avg_amount > 0 else 1.0
     catalyst_freshness = min(max(0.6 * min(amount_ratio / 3.0, 1) + 0.4 * breakout_freshness, 0), 1)
 
@@ -155,10 +155,19 @@ def compute_factors(g):
 
 
 ALL_FACTORS = [
-    "momentum_strength", "volume_expansion_quality", "close_strength",
-    "breakout_freshness", "trend_acceleration", "sector_resonance",
-    "catalyst_freshness", "layer_c_alignment", "reversal",
-    "reversal_2d", "reversal_10d", "intraday_strength", "vol_weighted_reversal",
+    "momentum_strength",
+    "volume_expansion_quality",
+    "close_strength",
+    "breakout_freshness",
+    "trend_acceleration",
+    "sector_resonance",
+    "catalyst_freshness",
+    "layer_c_alignment",
+    "reversal",
+    "reversal_2d",
+    "reversal_10d",
+    "intraday_strength",
+    "vol_weighted_reversal",
 ]
 
 
@@ -218,7 +227,7 @@ def main():
         codes = df["ts_code"].tolist()
         history = []
         for i in range(0, len(codes), 80):
-            batch = codes[i:i + 80]
+            batch = codes[i : i + 80]
             try:
                 h = pro.daily(ts_code=",".join(batch), start_date="20250601", end_date=test_date)
                 if h is not None and not h.empty:
@@ -250,9 +259,7 @@ def main():
 
         # Map factors to results
         for factor_name in ALL_FACTORS:
-            results[factor_name] = results["ts_code"].map(
-                lambda code, fn=factor_name: float((stock_factors.get(code) or {}).get(fn, 0.0))
-            )
+            results[factor_name] = results["ts_code"].map(lambda code, fn=factor_name: float((stock_factors.get(code) or {}).get(fn, 0.0)))
 
         # Compute IC for each factor vs next_ret
         for factor_name in ALL_FACTORS:
@@ -302,15 +309,17 @@ def main():
         spread = q4_avg - q0_avg
 
         print(f"{factor_name:<30s} {mean_ic:>+8.4f} {ic_positive_rate:>7.0%} {ic_ir:>+8.3f} {spread:>+14.3f}%")
-        factor_summary.append({
-            "factor": factor_name,
-            "mean_ic": mean_ic,
-            "ic_ir": ic_ir,
-            "ic_positive_rate": ic_positive_rate,
-            "q0_avg": q0_avg,
-            "q4_avg": q4_avg,
-            "spread": spread,
-        })
+        factor_summary.append(
+            {
+                "factor": factor_name,
+                "mean_ic": mean_ic,
+                "ic_ir": ic_ir,
+                "ic_positive_rate": ic_positive_rate,
+                "q0_avg": q0_avg,
+                "q4_avg": q4_avg,
+                "spread": spread,
+            }
+        )
 
     # Sort by |mean IC|
     factor_summary.sort(key=lambda x: abs(x["mean_ic"]), reverse=True)

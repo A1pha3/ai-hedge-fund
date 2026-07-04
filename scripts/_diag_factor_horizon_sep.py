@@ -9,6 +9,7 @@ vs momentum 是 horizon-dependent — T+1 上动量主导 (反向), T+5/T+10/T+3
 
 WIP-compatible: read-only diagnostic, no src/ change.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,8 +25,7 @@ import pandas as pd
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from scripts._diag_trend_subfactor_direction import (  # noqa: E402
-    get_history_batch, get_trading_dates, get_universe_for_date, _get_pro)
+from scripts._diag_trend_subfactor_direction import get_history_batch, get_trading_dates, get_universe_for_date, _get_pro  # noqa: E402
 from src.screening.strategy_scorer import score_trend_strategy  # noqa: E402
 from src.screening.strategy_scorer_mean_reversion import score_mean_reversion_strategy  # noqa: E402
 
@@ -106,8 +106,7 @@ def run(n_dates, sample_n, end_date=None, seed=42):
                 d = int(dump.get("direction", 0))
                 fam = "trend" if sf in TREND_FACTORS else "mr"
                 for h in HORIZONS:
-                    rows.append({"family": fam, "factor": sf, "horizon": h,
-                                 "direction": d, "ret": float(rets[h])})
+                    rows.append({"family": fam, "factor": sf, "horizon": h, "direction": d, "ret": float(rets[h])})
             n_ok += 1
         print(f"[{di+1}/{len(test_dates)}] {td} stocks={n_ok} ({time.time()-t0:.1f}s)")
 
@@ -121,8 +120,7 @@ def _analyze(rows):
     df = pd.DataFrame(rows)
     print(f"\n样本: {len(df)} factor×horizon records")
     print("=" * 92)
-    print(f"{'family':<6s} {'factor':<20s} {'horizon':>8s} {'n':>6s} {'dir=+1':>7s} {'dir=-1':>7s}"
-          f" {'T(+1)':>9s} {'T(-1)':>9s} {'sep':>8s}  flag")
+    print(f"{'family':<6s} {'factor':<20s} {'horizon':>8s} {'n':>6s} {'dir=+1':>7s} {'dir=-1':>7s}" f" {'T(+1)':>9s} {'T(-1)':>9s} {'sep':>8s}  flag")
     print("-" * 92)
     for fam in ("trend", "mr"):
         factors = TREND_FACTORS if fam == "trend" else MR_FACTORS
@@ -137,11 +135,9 @@ def _analyze(rows):
                 nr = float(neg["ret"].mean()) if not neg.empty else float("nan")
                 sep = (pr - nr) if (np.isfinite(pr) and np.isfinite(nr)) else float("nan")
                 flag = "✓正确" if (np.isfinite(sep) and sep > 0) else "?反向" if (np.isfinite(sep) and sep < 0) else "—"
-                print(f"{fam:<6s} {sf:<20s} {('T+'+str(h)):>8s} {len(sub):>6d} {len(pos):>7d} {len(neg):>7d}"
-                      f" {pr:>+8.3f} {nr:>+8.3f} {sep:>+7.3f}  {flag}")
+                print(f"{fam:<6s} {sf:<20s} {('T+'+str(h)):>8s} {len(sub):>6d} {len(pos):>7d} {len(neg):>7d}" f" {pr:>+8.3f} {nr:>+8.3f} {sep:>+7.3f}  {flag}")
         print("-" * 92)
-    print("\n判定: BUY gate 决策 horizon = T+5/T+10。若因子在 T+5/T+10 sep>0 (正确), "
-          "则 C224/C226 (基于 T+1 反向) 在决策 horizon 上错误, 应回滚。")
+    print("\n判定: BUY gate 决策 horizon = T+5/T+10。若因子在 T+5/T+10 sep>0 (正确), " "则 C224/C226 (基于 T+1 反向) 在决策 horizon 上错误, 应回滚。")
 
 
 if __name__ == "__main__":

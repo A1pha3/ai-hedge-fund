@@ -44,9 +44,7 @@ def _build_rebucket_commands(*, dossier_path: str | Path, ticker: str | None = N
         "--failure-dossier data/reports/btst_no_candidate_entry_failure_dossier_latest.json "
         "--output-json data/reports/btst_candidate_pool_recall_dossier_latest.json "
         "--output-md data/reports/btst_candidate_pool_recall_dossier_latest.md",
-        "python scripts/run_btst_candidate_pool_rebucket_shadow_pack.py "
-        f"--dossier-path {resolved_dossier_path}{ticker_arg} "
-        "--output-dir data/reports",
+        "python scripts/run_btst_candidate_pool_rebucket_shadow_pack.py " f"--dossier-path {resolved_dossier_path}{ticker_arg} " "--output-dir data/reports",
         "python scripts/analyze_btst_candidate_pool_rebucket_objective_validation.py "
         f"--dossier-path {resolved_dossier_path} "
         "--objective-monitor-path data/reports/btst_tplus1_tplus2_objective_monitor_latest.json "
@@ -63,18 +61,12 @@ def _build_rebucket_commands(*, dossier_path: str | Path, ticker: str | None = N
         "--objective-monitor-path data/reports/btst_tplus1_tplus2_objective_monitor_latest.json "
         "--output-json data/reports/btst_candidate_pool_rebucket_comparison_bundle_latest.json "
         "--output-md data/reports/btst_candidate_pool_rebucket_comparison_bundle_latest.md",
-        "python scripts/run_paper_trading.py --start-date YYYY-MM-DD --end-date YYYY-MM-DD "
-        "--selection-target short_trade_only --model-provider MiniMax --model-name MiniMax-M2.7"
-        f"{paper_trading_ticker_arg}{release_score_arg}",
+        "python scripts/run_paper_trading.py --start-date YYYY-MM-DD --end-date YYYY-MM-DD " "--selection-target short_trade_only --model-provider MiniMax --model-name MiniMax-M2.7" f"{paper_trading_ticker_arg}{release_score_arg}",
     ]
 
 
 def _select_rebucket_experiment(dossier: dict[str, Any], *, ticker: str | None = None) -> dict[str, Any] | None:
-    queue = [
-        dict(row)
-        for row in list(dossier.get("priority_handoff_branch_experiment_queue") or [])
-        if str(row.get("prototype_type") or "") == "post_gate_competition_rebucket_probe"
-    ]
+    queue = [dict(row) for row in list(dossier.get("priority_handoff_branch_experiment_queue") or []) if str(row.get("prototype_type") or "") == "post_gate_competition_rebucket_probe"]
     if ticker:
         queue = [row for row in queue if ticker in list(row.get("tickers") or [])]
     if not queue:
@@ -102,11 +94,7 @@ def _build_skipped_rebucket_shadow_pack(*, dossier_path: str | Path) -> dict[str
 def _find_handoff_row(upstream_handoff_board: dict[str, Any], ticker: str) -> dict[str, Any]:
     normalized_ticker = str(ticker or "").strip()
     return next(
-        (
-            dict(row or {})
-            for row in list(upstream_handoff_board.get("board_rows") or [])
-            if str((row or {}).get("ticker") or "") == normalized_ticker
-        ),
+        (dict(row or {}) for row in list(upstream_handoff_board.get("board_rows") or []) if str((row or {}).get("ticker") or "") == normalized_ticker),
         {},
     )
 
@@ -139,14 +127,9 @@ def _build_persistence_only_pack(
             "--candidate-pool-recall-dossier-path data/reports/btst_candidate_pool_recall_dossier_latest.json "
             "--output-json data/reports/btst_candidate_pool_upstream_handoff_board_latest.json "
             "--output-md data/reports/btst_candidate_pool_upstream_handoff_board_latest.md",
-            "python scripts/run_btst_candidate_pool_rebucket_shadow_pack.py "
-            f"--dossier-path {Path(dossier_path).expanduser().resolve()} --ticker {focus_ticker} "
-            "--upstream-handoff-board-path data/reports/btst_candidate_pool_upstream_handoff_board_latest.json --output-dir data/reports",
+            "python scripts/run_btst_candidate_pool_rebucket_shadow_pack.py " f"--dossier-path {Path(dossier_path).expanduser().resolve()} --ticker {focus_ticker} " "--upstream-handoff-board-path data/reports/btst_candidate_pool_upstream_handoff_board_latest.json --output-dir data/reports",
         ],
-        "recommendation": (
-            f"{focus_ticker or '目标票'} 当前只具备 historical shadow probe 证据，"
-            "应先做 persistence diagnostics，而不是继续当成 ready-for-replay 的 rebucket lane。"
-        ),
+        "recommendation": (f"{focus_ticker or '目标票'} 当前只具备 historical shadow probe 证据，" "应先做 persistence diagnostics，而不是继续当成 ready-for-replay 的 rebucket lane。"),
     }
 
 
@@ -168,16 +151,8 @@ def _build_target_rows(dossier: dict[str, Any], tickers: list[str]) -> list[dict
     rows: list[dict[str, Any]] = []
     for ticker in tickers:
         target_dossier = dossier_by_ticker.get(ticker) or {}
-        occurrences = [
-            dict(row)
-            for row in list(target_dossier.get("occurrence_evidence") or [])
-            if str(row.get("blocking_stage") or "") == "candidate_pool_truncated_after_filters"
-        ]
-        uplift_values = [
-            round(1.0 / float(value), 4)
-            for value in [row.get("pre_truncation_avg_amount_share_of_cutoff") for row in occurrences]
-            if isinstance(value, (int, float)) and float(value) > 0
-        ]
+        occurrences = [dict(row) for row in list(target_dossier.get("occurrence_evidence") or []) if str(row.get("blocking_stage") or "") == "candidate_pool_truncated_after_filters"]
+        uplift_values = [round(1.0 / float(value), 4) for value in [row.get("pre_truncation_avg_amount_share_of_cutoff") for row in occurrences] if isinstance(value, (int, float)) and float(value) > 0]
         lower_cap_counts = [float(row.get("top300_lower_market_cap_hot_peer_count")) for row in occurrences if isinstance(row.get("top300_lower_market_cap_hot_peer_count"), (int, float))]
         rebucket_gaps = [float(row.get("estimated_rank_gap_after_rebucket")) for row in occurrences if isinstance(row.get("estimated_rank_gap_after_rebucket"), (int, float))]
         hot_peer_examples: list[str] = []
@@ -222,9 +197,7 @@ def render_btst_candidate_pool_rebucket_shadow_pack_markdown(pack: dict[str, Any
     lines.append("")
     lines.append("## Target Rows")
     for row in list(pack.get("target_rows") or []):
-        lines.append(
-            f"- ticker={row['ticker']} occurrence_count={row['occurrence_count']} uplift_to_cutoff_multiple_mean={row.get('uplift_to_cutoff_multiple_mean')} lower_cap_hot_peer_count_mean={row.get('top300_lower_market_cap_hot_peer_count_mean')} estimated_rank_gap_after_rebucket_mean={row.get('estimated_rank_gap_after_rebucket_mean')}"
-        )
+        lines.append(f"- ticker={row['ticker']} occurrence_count={row['occurrence_count']} uplift_to_cutoff_multiple_mean={row.get('uplift_to_cutoff_multiple_mean')} lower_cap_hot_peer_count_mean={row.get('top300_lower_market_cap_hot_peer_count_mean')} estimated_rank_gap_after_rebucket_mean={row.get('estimated_rank_gap_after_rebucket_mean')}")
         lines.append(f"  top300_lower_market_cap_hot_peer_examples: {row.get('top300_lower_market_cap_hot_peer_examples')}")
         lines.append(f"  next_step: {row.get('next_step')}")
     if not list(pack.get("target_rows") or []):
@@ -292,10 +265,7 @@ def run_btst_candidate_pool_rebucket_shadow_pack(
         "优先复核 top300_lower_market_cap_hot_peer_examples 是否持续重复出现，避免一次性噪声样本驱动结论。",
         "若 estimated_rank_gap_after_rebucket_mean 仍显著偏大，则回退为 competition-set evidence accumulation，不进入 gate-relief 讨论。",
     ]
-    recommendation = (
-        f"当前应先把 {','.join(tickers) or '目标票'} 作为 post-gate rebucket shadow target，"
-        f"因为 {experiment.get('evaluation_summary') or ''}"
-    )
+    recommendation = f"当前应先把 {','.join(tickers) or '目标票'} 作为 post-gate rebucket shadow target，" f"因为 {experiment.get('evaluation_summary') or ''}"
     run_commands = _build_rebucket_commands(dossier_path=dossier_path, ticker=ticker or (tickers[0] if tickers else None))
     pack = {
         "source_dossier": str(Path(dossier_path).expanduser().resolve()),

@@ -389,10 +389,7 @@ def append_governance_delta_markdown(lines: list[str], delta: dict[str, Any]) ->
 def build_governance_lane_delta_markdown(item: dict[str, Any]) -> str:
     extra_segments = collect_governance_lane_extra_segments(item)
     extra_suffix = f" | {' | '.join(extra_segments)}" if extra_segments else ""
-    return (
-        f"- lane_delta: {item.get('lane_id')} | status {item.get('previous_lane_status')} -> {item.get('current_lane_status')} "
-        f"| blocker {item.get('previous_blocker')} -> {item.get('current_blocker')}{extra_suffix}"
-    )
+    return f"- lane_delta: {item.get('lane_id')} | status {item.get('previous_lane_status')} -> {item.get('current_lane_status')} " f"| blocker {item.get('previous_blocker')} -> {item.get('current_blocker')}{extra_suffix}"
 
 
 def collect_governance_lane_extra_segments(item: dict[str, Any]) -> list[str]:
@@ -400,13 +397,9 @@ def collect_governance_lane_extra_segments(item: dict[str, Any]) -> list[str]:
     if item.get("previous_missing_window_count") is not None or item.get("current_missing_window_count") is not None:
         extra_segments.append(f"missing_window_count {item.get('previous_missing_window_count')} -> {item.get('current_missing_window_count')}")
     if item.get("previous_distinct_window_count_with_filtered_entries") is not None or item.get("current_distinct_window_count_with_filtered_entries") is not None:
-        extra_segments.append(
-            f"distinct_window_count {item.get('previous_distinct_window_count_with_filtered_entries')} -> {item.get('current_distinct_window_count_with_filtered_entries')}"
-        )
+        extra_segments.append(f"distinct_window_count {item.get('previous_distinct_window_count_with_filtered_entries')} -> {item.get('current_distinct_window_count_with_filtered_entries')}")
     if item.get("previous_preserve_misfire_report_count") is not None or item.get("current_preserve_misfire_report_count") is not None:
-        extra_segments.append(
-            f"preserve_misfire_report_count {item.get('previous_preserve_misfire_report_count')} -> {item.get('current_preserve_misfire_report_count')}"
-        )
+        extra_segments.append(f"preserve_misfire_report_count {item.get('previous_preserve_misfire_report_count')} -> {item.get('current_preserve_misfire_report_count')}")
     if item.get("previous_filtered_report_count") is not None or item.get("current_filtered_report_count") is not None:
         extra_segments.append(f"filtered_report_count {item.get('previous_filtered_report_count')} -> {item.get('current_filtered_report_count')}")
     if item.get("previous_upgrade_gap") or item.get("current_upgrade_gap"):

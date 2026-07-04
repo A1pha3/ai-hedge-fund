@@ -11,11 +11,7 @@ TARGET_BOUNDARY_SOURCES = {"short_trade_boundary", "layer_b_boundary"}
 
 
 def is_boundary_without_explainability_target(row: dict[str, Any]) -> bool:
-    return (
-        str(row.get("root_cause") or "") == "boundary_without_explainability"
-        and str(row.get("bucket") or "") == "missing_all_core_features"
-        and str(row.get("candidate_source") or "") in TARGET_BOUNDARY_SOURCES
-    )
+    return str(row.get("root_cause") or "") == "boundary_without_explainability" and str(row.get("bucket") or "") == "missing_all_core_features" and str(row.get("candidate_source") or "") in TARGET_BOUNDARY_SOURCES
 
 
 def classify_boundary_quarantine_decision(row: dict[str, Any]) -> dict[str, Any]:

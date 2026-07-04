@@ -41,16 +41,10 @@ def _build_recommendation(
 ) -> str:
     if aligned_candidates:
         top = aligned_candidates[0]
-        return (
-            f"已出现 aligned carryover peer 候选 {top.get('ticker')}@{top.get('trade_date')}，"
-            "下一步应优先验证其 closed-cycle 质量和 recent-window 稳定性，再决定是否进入极窄 promotion review。"
-        )
+        return f"已出现 aligned carryover peer 候选 {top.get('ticker')}@{top.get('trade_date')}，" "下一步应优先验证其 closed-cycle 质量和 recent-window 稳定性，再决定是否进入极窄 promotion review。"
     if broad_family_only_candidates:
         top = broad_family_only_candidates[0]
-        return (
-            f"当前最接近扩样的是 {top.get('ticker')}@{top.get('trade_date')}，但它只有 broad family 样本，"
-            "没有 aligned family/source peer。下一步应先补 peer evidence 对齐，不能靠继续放松 carryover selected frontier 来扩容。"
-        )
+        return f"当前最接近扩样的是 {top.get('ticker')}@{top.get('trade_date')}，但它只有 broad family 样本，" "没有 aligned family/source peer。下一步应先补 peer evidence 对齐，不能靠继续放松 carryover selected frontier 来扩容。"
     if same_ticker_ready_rows:
         return "当前 carryover peer board 只剩 same-ticker 已验证样本，说明这条路径仍停留在单票模板阶段，应继续积累同类窗口。"
     return "当前没有可用 carryover peer 扩样对象，先继续积累 supportive close-continuation 样本。"
@@ -79,19 +73,11 @@ def _partition_peer_candidates(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     return (
         sorted(
-            [
-                row
-                for row in supportive_rows
-                if str(row.get("peer_evidence_status") or "") in ALIGNED_PEER_STATUSES and str(row.get("decision") or "") != "selected"
-            ],
+            [row for row in supportive_rows if str(row.get("peer_evidence_status") or "") in ALIGNED_PEER_STATUSES and str(row.get("decision") or "") != "selected"],
             key=_candidate_rank,
         ),
         sorted(
-            [
-                row
-                for row in supportive_rows
-                if str(row.get("peer_evidence_status") or "") == "broad_family_only" and str(row.get("decision") or "") != "selected"
-            ],
+            [row for row in supportive_rows if str(row.get("peer_evidence_status") or "") == "broad_family_only" and str(row.get("decision") or "") != "selected"],
             key=_candidate_rank,
         ),
         sorted(
@@ -171,12 +157,7 @@ def render_btst_carryover_peer_board_markdown(analysis: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Same-Ticker Ready Rows")
     for row in list(analysis.get("same_ticker_ready_rows") or []):
-        lines.append(
-            f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, "
-            f"peer_evidence_status={row.get('peer_evidence_status')}, same_ticker_sample_count={row.get('same_ticker_sample_count')}, "
-            f"same_family_source_sample_count={row.get('same_family_source_sample_count')}, "
-            f"same_family_source_score_catalyst_sample_count={row.get('same_family_source_score_catalyst_sample_count')}"
-        )
+        lines.append(f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, " f"peer_evidence_status={row.get('peer_evidence_status')}, same_ticker_sample_count={row.get('same_ticker_sample_count')}, " f"same_family_source_sample_count={row.get('same_family_source_sample_count')}, " f"same_family_source_score_catalyst_sample_count={row.get('same_family_source_score_catalyst_sample_count')}")
     if not list(analysis.get("same_ticker_ready_rows") or []):
         lines.append("- none")
     lines.append("")

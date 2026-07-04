@@ -20,12 +20,7 @@ DEFAULT_OUTPUT_MD = REPORTS_DIR / "btst_candidate_pool_corridor_shadow_pack_late
 
 def _build_refresh_commands(*, corridor_validation_pack_path: str | Path, persistence_dossier_path: str | Path | None = None) -> list[str]:
     resolved_validation_pack_path = Path(corridor_validation_pack_path).expanduser().resolve()
-    shadow_pack_cmd = (
-        "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py "
-        f"--corridor-validation-pack-path {resolved_validation_pack_path} "
-        "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json "
-        "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md"
-    )
+    shadow_pack_cmd = "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py " f"--corridor-validation-pack-path {resolved_validation_pack_path} " "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json " "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md"
     if persistence_dossier_path:
         resolved_persistence_dossier_path = Path(persistence_dossier_path).expanduser().resolve()
         shadow_pack_cmd += f" --persistence-dossier-path {resolved_persistence_dossier_path}"
@@ -104,18 +99,12 @@ def _split_strict_release_lanes(strict_release_candidates: list[dict[str, Any]])
 
 def _build_shadow_pack_recommendation(*, shadow_status: str, primary: dict[str, Any], parallel: list[dict[str, Any]], excluded_low_gate_tail_tickers: list[str]) -> str:
     if shadow_status == "ready_for_primary_shadow_replay":
-        recommendation = (
-            f"corridor lane 已可进入 primary shadow replay，当前首选 ticker={primary.get('ticker')}，"
-            f"并行确认 ticker={[row.get('ticker') for row in parallel if row.get('ticker')]}."
-        )
+        recommendation = f"corridor lane 已可进入 primary shadow replay，当前首选 ticker={primary.get('ticker')}，" f"并行确认 ticker={[row.get('ticker') for row in parallel if row.get('ticker')]}."
         if excluded_low_gate_tail_tickers:
             recommendation += f" excluded low-gate tail={excluded_low_gate_tail_tickers} 保留在 uplift 诊断，不进入 parallel watch。"
         return recommendation
     if shadow_status == "diagnostic_primary_shadow_replay_only":
-        recommendation = (
-            f"保持 {primary.get('ticker') or 'corridor primary'} 作为 diagnostic primary shadow replay，"
-            "继续收集第二个独立 selected window；strict release / paper-trading 继续由 persistence gate 阻断。"
-        )
+        recommendation = f"保持 {primary.get('ticker') or 'corridor primary'} 作为 diagnostic primary shadow replay，" "继续收集第二个独立 selected window；strict release / paper-trading 继续由 persistence gate 阻断。"
         if excluded_low_gate_tail_tickers:
             recommendation += f" excluded low-gate tail={excluded_low_gate_tail_tickers} 保留在 uplift 诊断，不进入 parallel watch。"
         return recommendation
@@ -142,14 +131,7 @@ def _build_corridor_shadow_replay_commands(
     for row in parallel:
         ticker = str(row.get("ticker") or "").strip()
         if ticker:
-            shadow_replay_commands.append(
-                "python scripts/run_btst_candidate_pool_corridor_shadow_pack.py "
-                f"--corridor-validation-pack-path {Path(corridor_validation_pack_path).expanduser().resolve()} "
-                "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json "
-                "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md"
-                f"{persistence_arg} "
-                f"# parallel_watch={ticker}"
-            )
+            shadow_replay_commands.append("python scripts/run_btst_candidate_pool_corridor_shadow_pack.py " f"--corridor-validation-pack-path {Path(corridor_validation_pack_path).expanduser().resolve()} " "--output-json data/reports/btst_candidate_pool_corridor_shadow_pack_latest.json " "--output-md data/reports/btst_candidate_pool_corridor_shadow_pack_latest.md" f"{persistence_arg} " f"# parallel_watch={ticker}")
     return shadow_replay_commands
 
 
@@ -164,7 +146,7 @@ def _apply_persistence_gate(
     strict_release_tickers: list[str],
     persistence_dossier: dict[str, Any],
     primary_ticker: str | None,
-    ) -> tuple[str, str, list[str]]:
+) -> tuple[str, str, list[str]]:
     """Return (strict_release_status, shadow_status, strict_release_tickers) after consulting the persistence dossier.
 
     If the dossier shows a persistence-level governance blocker or an awaiting-second-window verdict for the
@@ -277,15 +259,12 @@ def analyze_btst_candidate_pool_corridor_shadow_pack(
             "persistence gate 已阻断 primary shadow replay，等待 persistence 条件满足后再恢复 corridor lane 执行。"
             if shadow_status == "blocked_by_persistence_gate"
             else (
-                f"保持 {primary.get('ticker') or 'primary corridor ticker'} 作为 diagnostic primary shadow replay，继续等待第二个独立 selected window；strict release / paper-trading 暂不放开。"
+                (f"保持 {primary.get('ticker') or 'primary corridor ticker'} 作为 diagnostic primary shadow replay，继续等待第二个独立 selected window；strict release / paper-trading 暂不放开。")
+                if shadow_status == "diagnostic_primary_shadow_replay_only"
+                else "当前没有可执行的 corridor lane，shadow pack 仅保留为空位监控，暂无 replay 动作。" if shadow_status == "skipped_no_corridor_lane" else f"先对 {primary.get('ticker') or 'primary corridor ticker'} 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。"
             )
-            if shadow_status == "diagnostic_primary_shadow_replay_only"
-            else "当前没有可执行的 corridor lane，shadow pack 仅保留为空位监控，暂无 replay 动作。"
-            if shadow_status == "skipped_no_corridor_lane"
-            else f"先对 {primary.get('ticker') or 'primary corridor ticker'} 保持 corridor uplift shadow replay，再用并行样本确认 lane 稳定性。"
         ),
     }
-
 
 
 def render_btst_candidate_pool_corridor_shadow_pack_markdown(analysis: dict[str, Any]) -> str:
@@ -299,9 +278,7 @@ def render_btst_candidate_pool_corridor_shadow_pack_markdown(analysis: dict[str,
     lines.append("")
     lines.append("## Lanes")
     for row in list(analysis.get("lanes") or []):
-        lines.append(
-            f"- ticker={row.get('ticker')} lane_role={row.get('lane_role')} tractability_tier={row.get('tractability_tier')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')} uplift_to_cutoff_multiple_mean={row.get('uplift_to_cutoff_multiple_mean')}"
-        )
+        lines.append(f"- ticker={row.get('ticker')} lane_role={row.get('lane_role')} tractability_tier={row.get('tractability_tier')} closed_cycle_count={row.get('closed_cycle_count')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')} uplift_to_cutoff_multiple_mean={row.get('uplift_to_cutoff_multiple_mean')}")
     if not list(analysis.get("lanes") or []):
         lines.append("- none")
     for ticker in list(analysis.get("validation_only_tickers") or []):

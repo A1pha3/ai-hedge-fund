@@ -16,6 +16,7 @@ insufficient 也显示状态).
 纯 helper attribution_readiness: 覆盖率统计 + 就绪判读 + ETA (TDD-covered).
 误判就绪会跑出 insufficient 浪费精力; 误判未就绪会干等过久 — 都要避免.
 """
+
 from __future__ import annotations
 
 import json
@@ -162,8 +163,7 @@ def run(
                     horizon_days = int("".join(c for c in horizon_field if c.isdigit()) or "5")
                     accumulate_days = math.ceil(r["min_required"] / sd_accrual) if sd_accrual > 0 else 0
                     real_eta = horizon_days + accumulate_days
-                    print(f"      → sd accrual ~{sd_accrual:.1f}/天; 真实 ETA ≈ {horizon_days}天(成熟) + "
-                          f"{accumulate_days}天(积累) ≈ {real_eta}天")
+                    print(f"      → sd accrual ~{sd_accrual:.1f}/天; 真实 ETA ≈ {horizon_days}天(成熟) + " f"{accumulate_days}天(积累) ≈ {real_eta}天")
             else:
                 print(f"   ETA: 无法估算 (近7日无 accrual — injection 可能停滞, 需排查)")
 
@@ -174,9 +174,8 @@ def run(
             compute_factor_attribution_from_loaded,
             render_factor_attribution_line,
         )
-        report = compute_factor_attribution_from_loaded(
-            records, min_n=min_n, horizon_field=horizon_field
-        )
+
+        report = compute_factor_attribution_from_loaded(records, min_n=min_n, horizon_field=horizon_field)
         print(f"  sample_count: {report.sample_count}")
         print(f"  verdict: {report.verdict}")
         line = render_factor_attribution_line(report)
@@ -191,6 +190,7 @@ def run(
 
 def main() -> None:
     import argparse
+
     logging.basicConfig(level=logging.WARNING)
     ap = argparse.ArgumentParser(description="Within-pool factor attribution 就绪检查 (c316)")
     ap.add_argument("--tracking-history", default="data/reports/tracking_history.json")

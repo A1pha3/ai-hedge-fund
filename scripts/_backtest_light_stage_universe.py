@@ -15,6 +15,7 @@
 
 参考: src/screening/strategy_scorer.py 的 _provisional_score / LIGHT_STRATEGY_WEIGHTS
 """
+
 from __future__ import annotations
 
 import argparse
@@ -62,8 +63,10 @@ WEIGHTS_NEW = {"trend": 0.35, "mean_reversion": 0.65}  # 0e365cdc 之后
 # 1. 数据获取
 # ---------------------------------------------------------------------------
 
+
 def _get_pro():
     import tushare as ts
+
     token = os.getenv("TUSHARE_TOKEN")
     if not token:
         raise RuntimeError("TUSHARE_TOKEN 未设置")
@@ -108,7 +111,7 @@ def get_history_batch(pro, codes: list[str], start_date: str, end_date: str, bat
     """
     frames: list[pd.DataFrame] = []
     for i in range(0, len(codes), batch_size):
-        batch = codes[i:i + batch_size]
+        batch = codes[i : i + batch_size]
         for attempt in range(3):
             try:
                 h = pro.daily(ts_code=",".join(batch), start_date=start_date, end_date=end_date)
@@ -131,6 +134,7 @@ def get_history_batch(pro, codes: list[str], start_date: str, end_date: str, bat
 # ---------------------------------------------------------------------------
 # 2. 因子计算 (复现 light stage)
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class FactorSnapshot:
@@ -187,6 +191,7 @@ def provisional_score(snapshot: FactorSnapshot, weights: dict[str, float]) -> fl
 # 3. IC 计算
 # ---------------------------------------------------------------------------
 
+
 def spearman_ic(x: np.ndarray, y: np.ndarray) -> float:
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -198,12 +203,13 @@ def spearman_ic(x: np.ndarray, y: np.ndarray) -> float:
     ry = pd.Series(y).rank().values
     n = len(rx)
     d = rx - ry
-    return float(1.0 - 6.0 * np.sum(d ** 2) / (n * (n ** 2 - 1)))
+    return float(1.0 - 6.0 * np.sum(d**2) / (n * (n**2 - 1)))
 
 
 # ---------------------------------------------------------------------------
 # 4. 主流程
 # ---------------------------------------------------------------------------
+
 
 def run_backtest(
     n_days: int = 60,
@@ -273,21 +279,23 @@ def run_backtest(
             snap = snapshots.get(r["ts_code"])
             if snap is None:
                 continue
-            rows.append({
-                "ts_code": r["ts_code"],
-                "next_ret": float(r["next_ret"]),
-                "trend_direction": snap.trend_direction,
-                "trend_confidence": snap.trend_confidence,
-                "trend_completeness": snap.trend_completeness,
-                "mr_direction": snap.mr_direction,
-                "mr_confidence": snap.mr_confidence,
-                "mr_completeness": snap.mr_completeness,
-                # 因子原值: direction × confidence × completeness (0 LLM 简化)
-                "trend_factor": snap.trend_direction * (snap.trend_confidence / 100.0) * snap.trend_completeness,
-                "mr_factor": snap.mr_direction * (snap.mr_confidence / 100.0) * snap.mr_completeness,
-                "score_old": provisional_score(snap, WEIGHTS_OLD),
-                "score_new": provisional_score(snap, WEIGHTS_NEW),
-            })
+            rows.append(
+                {
+                    "ts_code": r["ts_code"],
+                    "next_ret": float(r["next_ret"]),
+                    "trend_direction": snap.trend_direction,
+                    "trend_confidence": snap.trend_confidence,
+                    "trend_completeness": snap.trend_completeness,
+                    "mr_direction": snap.mr_direction,
+                    "mr_confidence": snap.mr_confidence,
+                    "mr_completeness": snap.mr_completeness,
+                    # 因子原值: direction × confidence × completeness (0 LLM 简化)
+                    "trend_factor": snap.trend_direction * (snap.trend_confidence / 100.0) * snap.trend_completeness,
+                    "mr_factor": snap.mr_direction * (snap.mr_confidence / 100.0) * snap.mr_completeness,
+                    "score_old": provisional_score(snap, WEIGHTS_OLD),
+                    "score_new": provisional_score(snap, WEIGHTS_NEW),
+                }
+            )
         df_day = pd.DataFrame(rows)
         if df_day.empty:
             continue
@@ -306,27 +314,25 @@ def run_backtest(
         avoid_old = float((df_day["score_old"] <= 0).mean())
         avoid_new = float((df_day["score_new"] <= 0).mean())
 
-        daily_records.append({
-            "trade_date": test_date,
-            "next_date": next_date,
-            "universe_size": len(df_day),
-            "mr_ic": mr_ic,
-            "trend_ic": trend_ic,
-            "top_old_ret": float(top_old["next_ret"].mean()),
-            "top_new_ret": float(top_new["next_ret"].mean()),
-            "top_old_win": float((top_old["next_ret"] > 0).mean()),
-            "top_new_win": float((top_new["next_ret"] > 0).mean()),
-            "overlap": overlap,
-            "avoid_old": avoid_old,
-            "avoid_new": avoid_new,
-        })
+        daily_records.append(
+            {
+                "trade_date": test_date,
+                "next_date": next_date,
+                "universe_size": len(df_day),
+                "mr_ic": mr_ic,
+                "trend_ic": trend_ic,
+                "top_old_ret": float(top_old["next_ret"].mean()),
+                "top_new_ret": float(top_new["next_ret"].mean()),
+                "top_old_win": float((top_old["next_ret"] > 0).mean()),
+                "top_new_win": float((top_new["next_ret"] > 0).mean()),
+                "overlap": overlap,
+                "avoid_old": avoid_old,
+                "avoid_new": avoid_new,
+            }
+        )
 
         elapsed = time.time() - t0
-        print(f"[{di + 1}/{len(test_dates)}] {test_date}→{next_date} "
-              f"n={len(df_day)} MR_IC={mr_ic:+.4f} trend_IC={trend_ic:+.4f} | "
-              f"Top{top_n} OLD={top_old['next_ret'].mean():+.3f}% NEW={top_new['next_ret'].mean():+.3f}% "
-              f"overlap={overlap} AVOID OLD={avoid_old:.0%}/NEW={avoid_new:.0%} "
-              f"({elapsed:.1f}s)")
+        print(f"[{di + 1}/{len(test_dates)}] {test_date}→{next_date} " f"n={len(df_day)} MR_IC={mr_ic:+.4f} trend_IC={trend_ic:+.4f} | " f"Top{top_n} OLD={top_old['next_ret'].mean():+.3f}% NEW={top_new['next_ret'].mean():+.3f}% " f"overlap={overlap} AVOID OLD={avoid_old:.0%}/NEW={avoid_new:.0%} " f"({elapsed:.1f}s)")
 
     if not daily_records:
         print("无有效数据")
@@ -404,8 +410,7 @@ def _print_summary(df: pd.DataFrame, *, top_n: int) -> None:
 
     # 全 universe 平均作为基准
     universe_avg = float(df["universe_size"].apply(lambda n: 0.0).mean())  # placeholder, 实际在 daily 层算
-    for label, ret_col, win_col in [("OLD (trend:0.65/MR:0.35)", "top_old_ret", "top_old_win"),
-                                     ("NEW (trend:0.35/MR:0.65)", "top_new_ret", "top_new_win")]:
+    for label, ret_col, win_col in [("OLD (trend:0.65/MR:0.35)", "top_old_ret", "top_old_win"), ("NEW (trend:0.35/MR:0.65)", "top_new_ret", "top_new_win")]:
         avg_ret = float(df[ret_col].mean())
         win_rate = float(df[win_col].mean())
         # 超额 = Top-N 收益 - 全 universe 平均 (每日 universe 平均无法聚合, 这里用 Top-N 自身对比)
@@ -418,19 +423,16 @@ def _print_summary(df: pd.DataFrame, *, top_n: int) -> None:
     t_stat = mean_diff / (std_diff / np.sqrt(len(diff))) if std_diff > 0 else 0.0
     print(f"\n  NEW - OLD 日均收益差: {mean_diff:+.4f}% (std={std_diff:.4f}, t={t_stat:+.2f}, n={len(diff)})")
     print(f"  NEW 跑赢 OLD 的天数: {int((diff > 0).sum())}/{len(diff)} ({float((diff > 0).mean()):.0%})")
-    print(f"  Top-{top_n} 重叠度均值: {float(df['overlap'].mean()):.1f}/{top_n} "
-          f"(新权重平均替换 {top_n - float(df['overlap'].mean()):.1f} 只)")
+    print(f"  Top-{top_n} 重叠度均值: {float(df['overlap'].mean()):.1f}/{top_n} " f"(新权重平均替换 {top_n - float(df['overlap'].mean()):.1f} 只)")
 
     # ====== Block 3: AVOID=5 比例 ======
     print(f"\n[Block 3] AVOID=5 (score<=0) 比例变化")
     print("-" * 80)
     print(f"{'权重版本':<20s} {'AVOID 平均':>12s} {'中位':>8s} {'最低':>8s} {'最高':>8s}")
     print("-" * 80)
-    for label, col in [("OLD (trend:0.65/MR:0.35)", "avoid_old"),
-                       ("NEW (trend:0.35/MR:0.65)", "avoid_new")]:
+    for label, col in [("OLD (trend:0.65/MR:0.35)", "avoid_old"), ("NEW (trend:0.35/MR:0.65)", "avoid_new")]:
         s = df[col]
-        print(f"{label:<20s} {float(s.mean()):>11.1%} {float(s.median()):>7.1%} "
-              f"{float(s.min()):>7.1%} {float(s.max()):>7.1%}")
+        print(f"{label:<20s} {float(s.mean()):>11.1%} {float(s.median()):>7.1%} " f"{float(s.min()):>7.1%} {float(s.max()):>7.1%}")
     avoid_diff = df["avoid_new"] - df["avoid_old"]
     print(f"\n  NEW - OLD AVOID 比例差: {float(avoid_diff.mean()):+.2%} (NEW 更谨慎为负值)")
     print(f"  NEW 比 OLD 更不谨慎 (AVOID 减少) 的天数: {int((avoid_diff < 0).sum())}/{len(avoid_diff)}")

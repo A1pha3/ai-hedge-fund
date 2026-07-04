@@ -71,10 +71,7 @@ def main() -> None:
         "available_parallel_routes": _serialize_routes("parallel"),
         "available_priority_routes": _serialize_routes("priority"),
         "execution_plan_provenance": execution_plan["execution_provenance"],
-        "sample_agent_assignments": {
-            agent_name: execution_plan["agent_llm_overrides"].get(agent_name, {"model_provider": model_provider, "model_name": model_name})
-            for agent_name in agent_names
-        },
+        "sample_agent_assignments": {agent_name: execution_plan["agent_llm_overrides"].get(agent_name, {"model_provider": model_provider, "model_name": model_name}) for agent_name in agent_names},
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
 

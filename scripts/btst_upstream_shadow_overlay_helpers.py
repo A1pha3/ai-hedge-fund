@@ -40,15 +40,9 @@ def build_upstream_shadow_followup_overlay(
     recommendation = summary.get("recommendation")
     if summary.get("status") == "validated_upstream_shadow_followup_available":
         if active_priority_tickers:
-            recommendation = (
-                f"最新正式 upstream shadow followup 已把 {validated_tickers} 转入 downstream decision 分层；"
-                f"当前 upstream recall backlog 应收敛到 {active_priority_tickers}，避免对已验证票重复做 absent_from_watchlist / candidate_pool recall。"
-            )
+            recommendation = f"最新正式 upstream shadow followup 已把 {validated_tickers} 转入 downstream decision 分层；" f"当前 upstream recall backlog 应收敛到 {active_priority_tickers}，避免对已验证票重复做 absent_from_watchlist / candidate_pool recall。"
         else:
-            recommendation = (
-                f"最新正式 upstream shadow followup 已把 {validated_tickers} 全部转入 downstream decision 分层；"
-                "当前 control tower 不应再把这些票作为 upstream recall 主任务。"
-            )
+            recommendation = f"最新正式 upstream shadow followup 已把 {validated_tickers} 全部转入 downstream decision 分层；" "当前 control tower 不应再把这些票作为 upstream recall 主任务。"
 
     return {
         **summary,

@@ -83,13 +83,7 @@ def analyze_btst_5d_15pct_boundary_contract_inspection(reports_root: str | Path)
                     )
                 )
 
-    boundary_rows = [
-        row
-        for row in rows
-        if row.get("root_cause") == "boundary_without_explainability"
-        and row.get("bucket") == "missing_all_core_features"
-        and row.get("candidate_source") in {"short_trade_boundary", "layer_b_boundary"}
-    ]
+    boundary_rows = [row for row in rows if row.get("root_cause") == "boundary_without_explainability" and row.get("bucket") == "missing_all_core_features" and row.get("candidate_source") in {"short_trade_boundary", "layer_b_boundary"}]
     source_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in boundary_rows:
         source_groups[str(row.get("candidate_source") or "unknown")].append(row)
@@ -136,9 +130,7 @@ def render_btst_5d_15pct_boundary_contract_inspection_markdown(analysis: dict[st
         "## source_comparison_board",
     ]
     for row in list(analysis.get("source_comparison_board") or []):
-        lines.append(
-            f"- {row.get('candidate_source')}: row_count={row.get('row_count')}, decision_counts={row.get('decision_counts')}, metadata_only_rate={row.get('metadata_only_rate')}, top_metadata_keys={row.get('top_metadata_keys')}, core_payload_empty_count={row.get('core_payload_empty_count')}, contract_verdict={row.get('contract_verdict')}, action={row.get('action')}"
-        )
+        lines.append(f"- {row.get('candidate_source')}: row_count={row.get('row_count')}, decision_counts={row.get('decision_counts')}, metadata_only_rate={row.get('metadata_only_rate')}, top_metadata_keys={row.get('top_metadata_keys')}, core_payload_empty_count={row.get('core_payload_empty_count')}, contract_verdict={row.get('contract_verdict')}, action={row.get('action')}")
     if not list(analysis.get("source_comparison_board") or []):
         lines.append("- none")
     lines.extend(["", "## governance_recommendation_board"])

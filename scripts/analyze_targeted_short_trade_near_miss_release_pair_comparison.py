@@ -65,14 +65,9 @@ def analyze_targeted_short_trade_near_miss_release_pair_comparison(
     right_high = float(right.get("next_high_return_mean") or -999.0)
 
     if left_threshold > right_threshold and left_close > right_close and left_close_positive > right_close_positive:
-        recommendation = (
-            f"{left_ticker} 更适合作为 near-miss promotion 的第一优先入口：它需要更少的 threshold 放松，"
-            f"且 close continuation 也强于 {right_ticker}。"
-        )
+        recommendation = f"{left_ticker} 更适合作为 near-miss promotion 的第一优先入口：它需要更少的 threshold 放松，" f"且 close continuation 也强于 {right_ticker}。"
     elif left_high > right_high and left_close_positive <= right_close_positive:
-        recommendation = (
-            f"{left_ticker} 更像 promotion 后的 intraday upside 样本，{right_ticker} 更像 close-continuation 样本。"
-        )
+        recommendation = f"{left_ticker} 更像 promotion 后的 intraday upside 样本，{right_ticker} 更像 close-continuation 样本。"
     else:
         recommendation = f"{left_ticker} 与 {right_ticker} 的 promotion 优先级仍需继续观察。"
 

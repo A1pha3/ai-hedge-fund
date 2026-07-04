@@ -80,9 +80,7 @@ def render_short_trade_release_priority_scoreboard_markdown(analysis: dict[str, 
     lines.append("")
     lines.append("## Ranking")
     for entry in analysis["entries"]:
-        lines.append(
-            f"- rank {entry['priority_rank']}: {entry['ticker']} ({entry['lane_type']}), adjustment_cost={entry['adjustment_cost']}, target_case_count={entry['target_case_count']}, next_high_return_mean={entry['next_high_return_mean']}, next_close_return_mean={entry['next_close_return_mean']}, next_close_positive_rate={entry['next_close_positive_rate']}"
-        )
+        lines.append(f"- rank {entry['priority_rank']}: {entry['ticker']} ({entry['lane_type']}), adjustment_cost={entry['adjustment_cost']}, target_case_count={entry['target_case_count']}, next_high_return_mean={entry['next_high_return_mean']}, next_close_return_mean={entry['next_close_return_mean']}, next_close_positive_rate={entry['next_close_positive_rate']}")
     lines.append("")
     lines.append("## Recommendation")
     lines.append(f"- {analysis['recommendation']}")
@@ -97,10 +95,7 @@ def analyze_short_trade_release_priority_scoreboard(report_paths: list[str]) -> 
 
     if entries:
         leader = entries[0]
-        recommendation = (
-            f"当前统一 scorecard 的第一优先入口是 {leader['ticker']}。"
-            f"它在 {leader['lane_type']} 路径上同时给出更低的 adjustment_cost={leader['adjustment_cost']} 和更强的 close continuation。"
-        )
+        recommendation = f"当前统一 scorecard 的第一优先入口是 {leader['ticker']}。" f"它在 {leader['lane_type']} 路径上同时给出更低的 adjustment_cost={leader['adjustment_cost']} 和更强的 close continuation。"
     else:
         recommendation = "当前没有可用的 release outcome 报告可供排序。"
 

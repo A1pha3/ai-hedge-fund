@@ -75,10 +75,7 @@ def analyze_btst_5d_15pct_unclassified_split_board(reports_root: str | Path) -> 
         source_counts = Counter(str(row.get("candidate_source") or "unknown") for row in group_rows)
         verdict = Counter(str(row.get("recoverability_verdict") or "ignore_noise") for row in group_rows).most_common(1)[0][0]
         hit_rate = _round_or_none(sum(1 for row in group_rows if row.get("future_high_hit_15pct_2_5d") is True) / len(group_rows)) if group_rows else None
-        mean_max_return = _round_or_none(
-            sum(value for value in (_safe_float(row.get("max_future_high_return_2_5d")) for row in group_rows) if value is not None)
-            / max(1, sum(1 for value in (_safe_float(row.get("max_future_high_return_2_5d")) for row in group_rows) if value is not None))
-        )
+        mean_max_return = _round_or_none(sum(value for value in (_safe_float(row.get("max_future_high_return_2_5d")) for row in group_rows) if value is not None) / max(1, sum(1 for value in (_safe_float(row.get("max_future_high_return_2_5d")) for row in group_rows) if value is not None)))
         bucket_board.append(
             {
                 "bucket": bucket,
@@ -121,9 +118,7 @@ def render_btst_5d_15pct_unclassified_split_board_markdown(analysis: dict[str, A
         "## Bucket Board",
     ]
     for row in list(analysis.get("bucket_board") or []):
-        lines.append(
-            f"- {row.get('bucket')}: row_count={row.get('row_count')}, decision_counts={row.get('decision_counts')}, candidate_source_counts={row.get('candidate_source_counts')}, hit_rate_15pct={row.get('hit_rate_15pct')}, mean_max_future_high_return_2_5d={row.get('mean_max_future_high_return_2_5d')}, recoverability_verdict={row.get('recoverability_verdict')}"
-        )
+        lines.append(f"- {row.get('bucket')}: row_count={row.get('row_count')}, decision_counts={row.get('decision_counts')}, candidate_source_counts={row.get('candidate_source_counts')}, hit_rate_15pct={row.get('hit_rate_15pct')}, mean_max_future_high_return_2_5d={row.get('mean_max_future_high_return_2_5d')}, recoverability_verdict={row.get('recoverability_verdict')}")
     if not list(analysis.get("bucket_board") or []):
         lines.append("- none")
     lines.extend(["", "## Recommendation Board"])

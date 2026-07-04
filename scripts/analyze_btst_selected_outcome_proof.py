@@ -68,11 +68,7 @@ def _resolve_latest_selected_snapshot_from_reports_root(resolved: Path) -> tuple
     candidates: list[tuple[tuple[str, int, str], Path, Path]] = []
     for snapshot_path in resolved.glob("**/selection_artifacts/*/selection_snapshot.json"):
         snapshot = _load_json(snapshot_path)
-        selected_count = sum(
-            1
-            for payload in dict(snapshot.get("selection_targets") or {}).values()
-            if str(((payload or {}).get("short_trade") or {}).get("decision") or "") == "selected"
-        ) or len(_legacy_selected_rows(snapshot))
+        selected_count = sum(1 for payload in dict(snapshot.get("selection_targets") or {}).values() if str(((payload or {}).get("short_trade") or {}).get("decision") or "") == "selected") or len(_legacy_selected_rows(snapshot))
         if selected_count <= 0:
             continue
         trade_date = str(snapshot.get("trade_date") or snapshot_path.parent.name)
@@ -148,12 +144,7 @@ def _resolve_selected_score_tolerance(short_trade: dict[str, Any]) -> float:
     metrics_payload = dict(short_trade.get("metrics_payload") or {})
     thresholds = dict(metrics_payload.get("thresholds") or {})
     upstream_relief = dict(explainability.get("upstream_shadow_catalyst_relief") or {})
-    value = (
-        short_trade.get("selected_score_tolerance")
-        or thresholds.get("selected_score_tolerance")
-        or upstream_relief.get("selected_score_tolerance")
-        or 0.0
-    )
+    value = short_trade.get("selected_score_tolerance") or thresholds.get("selected_score_tolerance") or upstream_relief.get("selected_score_tolerance") or 0.0
     resolved = safe_float(value, 0.0)
     return 0.0 if resolved is None else float(resolved)
 
@@ -380,12 +371,7 @@ def _has_supported_t_plus_3(t_plus_3_positive_rate: Any) -> bool:
 
 
 def _has_intraday_only_surface(*, next_high_hit_rate: Any, next_close_positive_rate: Any) -> bool:
-    return (
-        next_high_hit_rate is not None
-        and next_high_hit_rate >= 0.75
-        and next_close_positive_rate is not None
-        and next_close_positive_rate < 0.6
-    )
+    return next_high_hit_rate is not None and next_high_hit_rate >= 0.75 and next_close_positive_rate is not None and next_close_positive_rate < 0.6
 
 
 def _has_strong_next_day_only(next_close_positive_rate: Any) -> bool:
@@ -414,10 +400,7 @@ def _apply_current_contract_guardrail(
     if is_formal_selected:
         return recommendation, contract_status, True
     normalized_decision = str(decision or "unknown")
-    guarded_recommendation = (
-        f"当前 ticker 在 snapshot 中的 short_trade.decision={normalized_decision}，不属于当前 formal selected；"
-        "以下 historical proof 只能作为盘中升级或 close-loop 观察证据，不能当成当前 selected 路径证明。"
-    )
+    guarded_recommendation = f"当前 ticker 在 snapshot 中的 short_trade.decision={normalized_decision}，不属于当前 formal selected；" "以下 historical proof 只能作为盘中升级或 close-loop 观察证据，不能当成当前 selected 路径证明。"
     return guarded_recommendation, contract_status, False
 
 
@@ -509,11 +492,7 @@ def _build_selected_outcome_analysis(
         "effective_select_threshold": round_or_none(effective_select_threshold),
         "selected_score_tolerance": round(selected_score_tolerance, 4),
         "score_gap_to_selected": score_gap_to_selected,
-        "selected_within_tolerance": bool(
-            score_target is not None
-            and effective_select_threshold is not None
-            and score_target >= (effective_select_threshold - selected_score_tolerance)
-        ),
+        "selected_within_tolerance": bool(score_target is not None and effective_select_threshold is not None and score_target >= (effective_select_threshold - selected_score_tolerance)),
         "relief_reason": relief_context["relief_reason"],
         "relief_applied": relief_context["relief_applied"],
         "historical_prior": historical_prior,
@@ -573,9 +552,7 @@ def render_btst_selected_outcome_proof_markdown(analysis: dict[str, Any]) -> str
     lines.append("")
     lines.append("## Evidence Cases")
     for row in list(analysis.get("evidence_rows") or []):
-        lines.append(
-            f"- {row.get('trade_date')} {row.get('ticker')}: source={row.get('candidate_source')}, next_high_return={row.get('next_high_return')}, next_close_return={row.get('next_close_return')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, t_plus_3_close_return={row.get('t_plus_3_close_return')}, t_plus_4_close_return={row.get('t_plus_4_close_return')}, cycle_status={row.get('cycle_status')}"
-        )
+        lines.append(f"- {row.get('trade_date')} {row.get('ticker')}: source={row.get('candidate_source')}, next_high_return={row.get('next_high_return')}, next_close_return={row.get('next_close_return')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, t_plus_3_close_return={row.get('t_plus_3_close_return')}, t_plus_4_close_return={row.get('t_plus_4_close_return')}, cycle_status={row.get('cycle_status')}")
     if not list(analysis.get("evidence_rows") or []):
         lines.append("- none")
     lines.append("")

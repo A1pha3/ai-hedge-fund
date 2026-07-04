@@ -44,14 +44,8 @@ def _build_recommendation_summary(*, recommendation_status: str, execution_eligi
     execution_eligible_reduction = abs(int(execution_eligible_delta))
     buy_order_reduction = abs(int(buy_order_delta))
     if recommendation_status == "governed_shadow_ready":
-        return (
-            f"先收 formal buy：shadow 把 execution_eligible 收缩 {execution_eligible_reduction} 个、buy_order 收缩 {buy_order_reduction} 个，"
-            f"同时 5D/+15% 命中率从 {selected_hit_rate:.4f} 提升到 {shadow_hit_rate:.4f}。"
-        )
-    return (
-        f"继续扩窗验证：当前 5D/+15% 命中率仅从 {selected_hit_rate:.4f} 变化到 {shadow_hit_rate:.4f}，"
-        f"execution_eligible delta={execution_eligible_delta}、buy_order delta={buy_order_delta} 还不足以支持 rollout。"
-    )
+        return f"先收 formal buy：shadow 把 execution_eligible 收缩 {execution_eligible_reduction} 个、buy_order 收缩 {buy_order_reduction} 个，" f"同时 5D/+15% 命中率从 {selected_hit_rate:.4f} 提升到 {shadow_hit_rate:.4f}。"
+    return f"继续扩窗验证：当前 5D/+15% 命中率仅从 {selected_hit_rate:.4f} 变化到 {shadow_hit_rate:.4f}，" f"execution_eligible delta={execution_eligible_delta}、buy_order delta={buy_order_delta} 还不足以支持 rollout。"
 
 
 def analyze_btst_layer_c_rollout_validation(

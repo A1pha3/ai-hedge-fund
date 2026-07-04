@@ -92,11 +92,7 @@ def analyze_multi_window_short_trade_role_candidates(
     candidates: list[dict[str, Any]] = []
     for summary in list(role_history.get("ticker_summaries") or []):
         observations = list(summary.get("observations") or [])
-        short_trade_rows = [
-            row
-            for row in observations
-            if str(row.get("role") or "").startswith("short_trade_") or str(row.get("role") or "").startswith("short_trade_boundary")
-        ]
+        short_trade_rows = [row for row in observations if str(row.get("role") or "").startswith("short_trade_") or str(row.get("role") or "").startswith("short_trade_boundary")]
         short_trade_trade_date_count = len(short_trade_rows)
         if short_trade_trade_date_count < int(min_short_trade_trade_dates):
             continue
@@ -106,11 +102,7 @@ def analyze_multi_window_short_trade_role_candidates(
         previous_window_role = None
         first_short_trade_window_key = window_keys[0] if window_keys else None
         if first_short_trade_window_key:
-            previous_rows = [
-                row
-                for row in observations
-                if _extract_window_key(str(row.get("report_label") or "")) != first_short_trade_window_key
-            ]
+            previous_rows = [row for row in observations if _extract_window_key(str(row.get("report_label") or "")) != first_short_trade_window_key]
             if previous_rows:
                 previous_window_role = str(previous_rows[-1].get("role") or "unknown")
 

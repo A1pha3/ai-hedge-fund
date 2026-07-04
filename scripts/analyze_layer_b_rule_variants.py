@@ -310,10 +310,7 @@ def _replay_variant_records_from_entries(replay_entries: list[dict], *, env_upda
             continue
         market_state = MarketState.model_validate(dict(entry.get("market_state") or {}))
         strategy_signals = _apply_replay_input_env_updates(
-            {
-                name: StrategySignal.model_validate(dict(payload or {}))
-                for name, payload in dict(entry.get("strategy_signals") or {}).items()
-            },
+            {name: StrategySignal.model_validate(dict(payload or {})) for name, payload in dict(entry.get("strategy_signals") or {}).items()},
             env_updates=env_updates,
         )
         fused = fuse_signals_for_ticker(ticker, strategy_signals, market_state)
@@ -374,16 +371,8 @@ def _apply_profitability_zero_pass_mode(
 
 
 def _build_comparison(variant_name: str, baseline: dict, variant: dict) -> dict:
-    baseline_selected = {
-        (trade_date, ticker)
-        for trade_date, payload in baseline["by_date"].items()
-        for ticker in payload["selected_tickers"]
-    }
-    variant_selected = {
-        (trade_date, ticker)
-        for trade_date, payload in variant["by_date"].items()
-        for ticker in payload["selected_tickers"]
-    }
+    baseline_selected = {(trade_date, ticker) for trade_date, payload in baseline["by_date"].items() for ticker in payload["selected_tickers"]}
+    variant_selected = {(trade_date, ticker) for trade_date, payload in variant["by_date"].items() for ticker in payload["selected_tickers"]}
     added_pairs = sorted(variant_selected - baseline_selected)
     removed_pairs = sorted(baseline_selected - variant_selected)
 
@@ -468,11 +457,7 @@ def main() -> None:
         if name in variant_names
     }
     baseline = variant_results["baseline"]
-    comparisons = {
-        name: _build_comparison(name, baseline, result)
-        for name, result in variant_results.items()
-        if name != "baseline"
-    }
+    comparisons = {name: _build_comparison(name, baseline, result) for name, result in variant_results.items() if name != "baseline"}
 
     payload = {
         "trade_dates": trade_dates,

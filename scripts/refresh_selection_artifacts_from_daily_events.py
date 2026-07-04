@@ -228,10 +228,7 @@ def _attach_strategy_signals_to_entries(
     *,
     strategy_signals_by_ticker: dict[str, dict[str, dict[str, Any]]],
 ) -> list[dict[str, Any]]:
-    return [
-        _attach_strategy_signals_to_entry(entry, strategy_signals_by_ticker=strategy_signals_by_ticker)
-        for entry in list(entries or [])
-    ]
+    return [_attach_strategy_signals_to_entry(entry, strategy_signals_by_ticker=strategy_signals_by_ticker) for entry in list(entries or [])]
 
 
 def _coerce_strategy_signal_models(raw_signals: dict[str, dict[str, Any]]) -> dict[str, StrategySignal]:
@@ -295,11 +292,7 @@ def _merge_shadow_metadata(entry: dict[str, Any], shadow_lookup: dict[str, dict[
 
 def _resolve_carryover_evidence_deficiency(entry: dict[str, Any]) -> dict[str, Any]:
     historical_prior = dict(entry.get("historical_prior") or {})
-    candidate_reason_codes = {
-        str(code).strip()
-        for code in list(entry.get("candidate_reason_codes") or [])
-        if str(code or "").strip()
-    }
+    candidate_reason_codes = {str(code).strip() for code in list(entry.get("candidate_reason_codes") or []) if str(code or "").strip()}
     same_ticker_sample_count = int(historical_prior.get("same_ticker_sample_count") or 0)
     same_family_sample_count = int(historical_prior.get("same_family_sample_count") or 0)
     same_family_source_sample_count = int(historical_prior.get("same_family_source_sample_count") or 0)
@@ -417,11 +410,7 @@ def _load_latest_historical_prior_by_ticker(report_dir: Path) -> dict[str, dict[
     rows_by_ticker = load_btst_followup_by_ticker_for_report(report_dir)
     if not rows_by_ticker:
         rows_by_ticker = load_latest_btst_followup_by_ticker(report_dir.parent)
-    return {
-        ticker: dict(row.get("historical_prior") or {})
-        for ticker, row in rows_by_ticker.items()
-        if dict(row.get("historical_prior") or {})
-    }
+    return {ticker: dict(row.get("historical_prior") or {}) for ticker, row in rows_by_ticker.items() if dict(row.get("historical_prior") or {})}
 
 
 def _attach_historical_prior_to_entries(entries: list[dict[str, Any]], *, prior_by_ticker: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -469,20 +458,11 @@ def _extract_historical_prior_from_plan_selection_targets(plan: ExecutionPlan) -
 
 def _normalize_entry_for_historical_prior(entry: dict[str, Any]) -> dict[str, Any]:
     normalized_entry = dict(entry or {})
-    metrics = dict(
-        normalized_entry.get("metrics")
-        or normalized_entry.get("short_trade_boundary_metrics")
-        or normalized_entry.get("catalyst_theme_metrics")
-        or {}
-    )
+    metrics = dict(normalized_entry.get("metrics") or normalized_entry.get("short_trade_boundary_metrics") or normalized_entry.get("catalyst_theme_metrics") or {})
     if metrics and not normalized_entry.get("metrics"):
         normalized_entry["metrics"] = metrics
     if normalized_entry.get("score_target") in (None, ""):
-        fallback_score = (
-            metrics.get("candidate_score")
-            if metrics
-            else normalized_entry.get("shadow_release_candidate_score")
-        )
+        fallback_score = metrics.get("candidate_score") if metrics else normalized_entry.get("shadow_release_candidate_score")
         if fallback_score not in (None, ""):
             normalized_entry["score_target"] = fallback_score
     return normalized_entry
@@ -560,11 +540,7 @@ def _build_selected_catalyst_theme_evaluation(*, trade_date: str, entry: dict[st
     if relief:
         selected_entry["short_trade_catalyst_relief"] = relief
 
-    candidate_reason_codes = [
-        str(reason)
-        for reason in list(selected_entry.get("candidate_reason_codes", selected_entry.get("reasons", [])) or [])
-        if str(reason or "").strip()
-    ]
+    candidate_reason_codes = [str(reason) for reason in list(selected_entry.get("candidate_reason_codes", selected_entry.get("reasons", [])) or []) if str(reason or "").strip()]
     selected_item = SimpleNamespace(
         ticker=str(selected_entry.get("ticker") or ""),
         score_b=float(selected_entry.get("score_b", 0.0) or 0.0),
@@ -600,19 +576,11 @@ def _build_selected_catalyst_theme_evaluation(*, trade_date: str, entry: dict[st
 
 
 def _selected_tickers_from_filter(filter_payload: dict[str, Any]) -> set[str]:
-    return {
-        str(ticker).strip()
-        for ticker in list(filter_payload.get("selected_tickers") or [])
-        if str(ticker or "").strip()
-    }
+    return {str(ticker).strip() for ticker in list(filter_payload.get("selected_tickers") or []) if str(ticker or "").strip()}
 
 
 def _catalyst_theme_entries_by_ticker(filter_payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    return {
-        str(entry.get("ticker") or "").strip(): dict(entry or {})
-        for entry in list(filter_payload.get("tickers") or [])
-        if str((entry or {}).get("ticker") or "").strip()
-    }
+    return {str(entry.get("ticker") or "").strip(): dict(entry or {}) for entry in list(filter_payload.get("tickers") or []) if str((entry or {}).get("ticker") or "").strip()}
 
 
 def _restore_selected_catalyst_theme_targets(
@@ -956,11 +924,7 @@ def _build_frozen_catalyst_replay_universe(
         "source_ticker_counts": {source: sum(1 for tickers in sources_by_ticker.values() if source in tickers) for source in sorted(source_row_counts)},
         "dropped_no_strategy_signals_counts": dict(sorted(dropped_no_strategy_signals_counts.items())),
         "dropped_no_strategy_signal_tickers": sorted(dropped_no_strategy_signal_tickers),
-        "missing_optional_inputs": [
-            str(path.relative_to(report_dir))
-            for path in (selection_snapshot_path, replay_input_path)
-            if not path.exists()
-        ],
+        "missing_optional_inputs": [str(path.relative_to(report_dir)) for path in (selection_snapshot_path, replay_input_path) if not path.exists()],
         "replay_requires_strategy_signals": True,
         "replay_universe_count": len(replay_universe),
         "replay_universe_tickers": sorted(item.ticker for item in replay_universe),
@@ -1096,9 +1060,7 @@ def rebuild_catalyst_theme_diagnostics_for_report(
             trade_date_compact=trade_date_compact,
             strategy_signals_by_ticker=strategy_signals_by_ticker,
         )
-        short_trade_candidate_diagnostics = dict(
-            dict(dict((plan.risk_metrics or {}).get("funnel_diagnostics") or {}).get("filters") or {}).get("short_trade_candidates") or {}
-        )
+        short_trade_candidate_diagnostics = dict(dict(dict((plan.risk_metrics or {}).get("funnel_diagnostics") or {}).get("filters") or {}).get("short_trade_candidates") or {})
         rebuilt_payload = _serialize_catalyst_theme_diagnostics_payload(
             _build_catalyst_theme_candidate_diagnostics(
                 fused=replay_universe,
@@ -1201,11 +1163,7 @@ def refresh_selection_artifacts_for_report(report_dir: str | Path, trade_date: s
                 "write_status": write_result.write_status,
                 "selection_target_count": len(refreshed_plan.selection_targets),
                 "frontier_source_family_counts": dict(frontier_diagnostics.get("source_family_counts") or {}),
-                "short_trade_selected_symbols": list(refreshed_plan.dual_target_summary.short_trade_selected_count and sorted(
-                    ticker
-                    for ticker, evaluation in refreshed_plan.selection_targets.items()
-                    if getattr(getattr(evaluation, "short_trade", None), "decision", "") == "selected"
-                ) or []),
+                "short_trade_selected_symbols": list(refreshed_plan.dual_target_summary.short_trade_selected_count and sorted(ticker for ticker, evaluation in refreshed_plan.selection_targets.items() if getattr(getattr(evaluation, "short_trade", None), "decision", "") == "selected") or []),
             }
         )
 

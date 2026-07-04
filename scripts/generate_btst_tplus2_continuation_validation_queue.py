@@ -42,15 +42,7 @@ def _build_validation_queue_row(*, seed: dict[str, Any], dossier: dict[str, Any]
             else (
                 "Promote into near-cluster watch review under the governance-approved continuation lane."
                 if candidate_tier_focus == "governance_followup" and promotion_readiness_verdict == "watch_review_ready"
-                else (
-                    "Promote into near-cluster watch review if another confirming window appears."
-                    if promotion_readiness_verdict == "validation_queue_ready"
-                    else (
-                        "Keep on queue watch until recent governance followup converts into payoff-confirmed continuation evidence."
-                        if candidate_tier_focus == "governance_followup"
-                        else "Keep on queue watch until recent tier confirmation strengthens."
-                    )
-                )
+                else ("Promote into near-cluster watch review if another confirming window appears." if promotion_readiness_verdict == "validation_queue_ready" else ("Keep on queue watch until recent governance followup converts into payoff-confirmed continuation evidence." if candidate_tier_focus == "governance_followup" else "Keep on queue watch until recent tier confirmation strengthens."))
             )
         ),
     }
@@ -118,10 +110,7 @@ def _build_validation_queue_analysis(
     promotion_review: dict[str, Any] | None,
     queue_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    recommendation = (
-        f"Validation queue ready with {len(queue_rows)} candidates. "
-        f"Focus next review on {resolved_focus_ticker or 'none'} and keep all queue names outside the default BTST surface."
-    )
+    recommendation = f"Validation queue ready with {len(queue_rows)} candidates. " f"Focus next review on {resolved_focus_ticker or 'none'} and keep all queue names outside the default BTST surface."
     return {
         "reports_root": str(Path(reports_root).expanduser().resolve()),
         "anchor_ticker": anchor_ticker,
@@ -154,25 +143,12 @@ def generate_btst_tplus2_continuation_validation_queue(
     expansion_board_rows = [dict(row or {}) for row in list(expansion_board.get("board_rows") or [])]
     implicit_focus_candidate = dict(expansion_board.get("focus_candidate") or {})
     implicit_focus_row = next(
-        (
-            row
-            for row in expansion_board_rows
-            if str(row.get("ticker") or "") == str(implicit_focus_candidate.get("ticker") or "")
-        ),
+        (row for row in expansion_board_rows if str(row.get("ticker") or "") == str(implicit_focus_candidate.get("ticker") or "")),
         {},
     )
-    implicit_focus_ticker = (
-        str(implicit_focus_candidate.get("ticker") or "")
-        if str(implicit_focus_candidate.get("tier") or implicit_focus_row.get("tier") or "") == "governance_followup"
-        else ""
-    )
+    implicit_focus_ticker = str(implicit_focus_candidate.get("ticker") or "") if str(implicit_focus_candidate.get("tier") or implicit_focus_row.get("tier") or "") == "governance_followup" else ""
 
-    resolved_focus_ticker = str(
-        focus_ticker
-        or implicit_focus_ticker
-        or (queue_seed[0].get("ticker") if queue_seed else "")
-        or ""
-    )
+    resolved_focus_ticker = str(focus_ticker or implicit_focus_ticker or (queue_seed[0].get("ticker") if queue_seed else "") or "")
     if resolved_focus_ticker and resolved_focus_ticker not in {str(row.get("ticker") or "") for row in queue_seed}:
         focus_row = next((row for row in expansion_board_rows if str(row.get("ticker") or "") == resolved_focus_ticker), None)
         if focus_row is not None:
@@ -223,12 +199,7 @@ def render_btst_tplus2_continuation_validation_queue_markdown(analysis: dict[str
     lines.append("")
     lines.append("## Queue")
     for row in list(analysis.get("queue_rows") or []):
-        lines.append(
-            f"- rank={row['priority_rank']} ticker={row['ticker']} seed_tier={row['seed_tier']} "
-            f"candidate_tier_focus={row['candidate_tier_focus']} recent_tier_verdict={row['recent_tier_verdict']} "
-            f"recent_tier_window_count={row['recent_tier_window_count']}/{row['recent_window_count']} "
-            f"recent_tier_ratio={row['recent_tier_ratio']} promotion_readiness_verdict={row['promotion_readiness_verdict']}"
-        )
+        lines.append(f"- rank={row['priority_rank']} ticker={row['ticker']} seed_tier={row['seed_tier']} " f"candidate_tier_focus={row['candidate_tier_focus']} recent_tier_verdict={row['recent_tier_verdict']} " f"recent_tier_window_count={row['recent_tier_window_count']}/{row['recent_window_count']} " f"recent_tier_ratio={row['recent_tier_ratio']} promotion_readiness_verdict={row['promotion_readiness_verdict']}")
         lines.append(f"  next_step: {row['next_step']}")
     if not list(analysis.get("queue_rows") or []):
         lines.append("- none")

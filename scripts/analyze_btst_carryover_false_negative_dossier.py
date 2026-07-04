@@ -39,14 +39,7 @@ def _summarize(values: list[float]) -> dict[str, float | int | None]:
 
 
 def _infer_carryover_evidence_deficient(row: dict[str, Any]) -> bool:
-    return (
-        int(row.get("same_ticker_sample_count") or 0) < 2
-        and int(row.get("historical_evaluable_count") or 0) <= 1
-        and int(row.get("same_family_sample_count") or 0) > 0
-        and int(row.get("same_family_source_sample_count") or 0) == 0
-        and int(row.get("same_family_source_score_catalyst_sample_count") or 0) == 0
-        and int(row.get("same_source_score_sample_count") or 0) == 0
-    )
+    return int(row.get("same_ticker_sample_count") or 0) < 2 and int(row.get("historical_evaluable_count") or 0) <= 1 and int(row.get("same_family_sample_count") or 0) > 0 and int(row.get("same_family_source_sample_count") or 0) == 0 and int(row.get("same_family_source_score_catalyst_sample_count") or 0) == 0 and int(row.get("same_source_score_sample_count") or 0) == 0
 
 
 def _build_row(snapshot_path: Path, ticker: str, payload: dict[str, Any], price_cache: dict[tuple[str, str], Any]) -> dict[str, Any] | None:
@@ -158,25 +151,12 @@ def analyze_btst_carryover_false_negative_dossier(reports_root: str | Path) -> d
     if rows:
         lead_row = rows[0]
         lead_reason = str(lead_row.get("top_reasons")[2] if len(lead_row.get("top_reasons") or []) >= 3 else "")
-        if (
-            closed_rows
-            and all(float(row.get("next_close_return") or 0.0) <= 0.0 for row in closed_rows)
-            and all(str(row.get("peer_evidence_status") or "") == "broad_family_only" for row in closed_rows)
-        ):
-            recommendation = (
-                "当前 strong carryover false negatives 的已闭环样本全部属于 broad-family-only / evidence-deficient 低样本，"
-                "且没有兑现次日正收益，说明现阶段更像是 penalty 在保护胜率，而不是错杀了 aligned peer 机会。"
-            )
+        if closed_rows and all(float(row.get("next_close_return") or 0.0) <= 0.0 for row in closed_rows) and all(str(row.get("peer_evidence_status") or "") == "broad_family_only" for row in closed_rows):
+            recommendation = "当前 strong carryover false negatives 的已闭环样本全部属于 broad-family-only / evidence-deficient 低样本，" "且没有兑现次日正收益，说明现阶段更像是 penalty 在保护胜率，而不是错杀了 aligned peer 机会。"
         elif next_close_values and max(next_close_values) <= 0:
-            recommendation = (
-                "当前 strong carryover false negatives 的已闭环样本没有兑现次日正收益，"
-                "说明现阶段更像是 penalty 在保护胜率，而不是错杀该放行的票。"
-            )
+            recommendation = "当前 strong carryover false negatives 的已闭环样本没有兑现次日正收益，" "说明现阶段更像是 penalty 在保护胜率，而不是错杀该放行的票。"
         else:
-            recommendation = (
-                f"当前 strong carryover false negatives 的主导 penalty 为 {lead_reason or 'unknown'}，"
-                "且至少有一部分已闭环样本兑现为正收益，可考虑继续做更窄的 targeted replay。"
-            )
+            recommendation = f"当前 strong carryover false negatives 的主导 penalty 为 {lead_reason or 'unknown'}，" "且至少有一部分已闭环样本兑现为正收益，可考虑继续做更窄的 targeted replay。"
 
     return {
         "reports_root": str(resolved_reports_root),

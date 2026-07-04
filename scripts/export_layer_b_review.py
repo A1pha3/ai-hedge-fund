@@ -274,10 +274,7 @@ def _markdown_summary(rows: list[dict[str, object]], trade_dates: list[str]) -> 
                 lines.extend(["- 无", ""])
                 continue
             for row in section_rows:
-                lines.append(
-                    f"- {row['ticker']} {row['name']} | score_b={row['score_b']} | decision={row['decision_b']} | "
-                    f"L/C={row['layer_c_status']} | top={row['top_factor_1'] or 'n/a'}"
-                )
+                lines.append(f"- {row['ticker']} {row['name']} | score_b={row['score_b']} | decision={row['decision_b']} | " f"L/C={row['layer_c_status']} | top={row['top_factor_1'] or 'n/a'}")
                 if row["downstream_reason"]:
                     lines.append(f"  - downstream_reason: {row['downstream_reason']}")
                 if row["bc_conflict"]:

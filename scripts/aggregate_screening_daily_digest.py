@@ -19,6 +19,7 @@ Usage:
     python scripts/aggregate_screening_daily_digest.py --start 2026-06-01 --end 2026-06-30
     python scripts/aggregate_screening_daily_digest.py --latest-30-days
 """
+
 from __future__ import annotations
 
 import argparse
@@ -216,30 +217,16 @@ def _summarize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     market_state = snapshot.get("market_state") or {}
     if not isinstance(market_state, dict):
         market_state = {}
-    market_label = str(
-        market_state.get("label")
-        or market_state.get("state")
-        or market_state.get("name")
-        or "unknown"
-    )
+    market_label = str(market_state.get("label") or market_state.get("state") or market_state.get("name") or "unknown")
 
     regime_gate = snapshot.get("btst_regime_gate") or snapshot.get("regime_gate") or {}
     if not isinstance(regime_gate, dict):
         regime_gate = {}
-    gate_status = str(
-        regime_gate.get("status")
-        or regime_gate.get("verdict")
-        or regime_gate.get("decision")
-        or "unknown"
-    )
+    gate_status = str(regime_gate.get("status") or regime_gate.get("verdict") or regime_gate.get("decision") or "unknown")
 
     artifact_status = str(snapshot.get("artifact_status") or "unknown")
 
-    top10_tickers = ",".join(
-        str(c.get("symbol") or c.get("ticker") or "")
-        for c in selected[:10]
-        if c.get("symbol") or c.get("ticker")
-    )
+    top10_tickers = ",".join(str(c.get("symbol") or c.get("ticker") or "") for c in selected[:10] if c.get("symbol") or c.get("ticker"))
 
     notes: list[str] = []
     if watchlist:
@@ -314,6 +301,7 @@ def render_csv(digest: dict[str, Any]) -> str:
     """Render the digest as a CSV with a stable column order."""
     import csv
     import io
+
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=DIGEST_COLUMNS, extrasaction="ignore")
     writer.writeheader()
@@ -367,10 +355,7 @@ def render_markdown(digest: dict[str, Any]) -> str:
         pool_s = str(pool) if pool is not None else "n/a"
         sel = r.get("selected_size")
         sel_s = str(sel) if sel is not None else "n/a"
-        lines.append(
-            f"| {r['trade_date']} | {pool_s} | {sel_s} | {avg_s} | "
-            f"{r.get('market_state', '')} | {r.get('regime_gate_status', '')} | {top10} |"
-        )
+        lines.append(f"| {r['trade_date']} | {pool_s} | {sel_s} | {avg_s} | " f"{r.get('market_state', '')} | {r.get('regime_gate_status', '')} | {top10} |")
     return "\n".join(lines) + "\n"
 
 
@@ -437,10 +422,7 @@ def main(argv: list[str] | None = None) -> int:
         artifact_dir=args.artifact_dir,
     )
     json_path, csv_path, md_path = _write_outputs(args.output_dir, digest)
-    print(
-        f"screening_daily_digest: trade_date_count={digest['trade_date_count']} "
-        f"json={json_path.resolve()} csv={csv_path.resolve()} md={md_path.resolve()}"
-    )
+    print(f"screening_daily_digest: trade_date_count={digest['trade_date_count']} " f"json={json_path.resolve()} csv={csv_path.resolve()} md={md_path.resolve()}")
     return 0
 
 

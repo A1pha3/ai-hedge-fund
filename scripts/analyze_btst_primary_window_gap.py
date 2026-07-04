@@ -64,15 +64,9 @@ def analyze_btst_primary_window_gap(
     ]
 
     if missing_window_count > 0:
-        recommendation = (
-            f"{normalized_ticker} 当前并不缺主实验 guardrails，而是缺独立窗口证据。"
-            f" 在 distinct_window_count={distinct_window_count} 仍小于 {target_window_count} 之前，"
-            "后续工作应优先补窗口，而不是继续讨论默认升级。"
-        )
+        recommendation = f"{normalized_ticker} 当前并不缺主实验 guardrails，而是缺独立窗口证据。" f" 在 distinct_window_count={distinct_window_count} 仍小于 {target_window_count} 之前，" "后续工作应优先补窗口，而不是继续讨论默认升级。"
     else:
-        recommendation = (
-            f"{normalized_ticker} 已不再缺独立窗口证据，当前 distinct_window_count={distinct_window_count} 已满足默认升级评审的窗口数量要求。"
-        )
+        recommendation = f"{normalized_ticker} 已不再缺独立窗口证据，当前 distinct_window_count={distinct_window_count} 已满足默认升级评审的窗口数量要求。"
 
     return {
         "generated_on": primary_roll.get("generated_on"),

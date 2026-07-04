@@ -24,20 +24,12 @@ def _window_verdict(summary: dict[str, Any]) -> str:
     next_close_median = dict(summary.get("next_close_return_distribution") or {}).get("median")
     t_plus_2_median = dict(summary.get("t_plus_2_close_return_distribution") or {}).get("median")
 
-    if (
-        next_close_positive_rate is not None
-        and t_plus_2_close_positive_rate is not None
-        and next_close_median is not None
-        and t_plus_2_median is not None
-    ):
+    if next_close_positive_rate is not None and t_plus_2_close_positive_rate is not None and next_close_median is not None and t_plus_2_median is not None:
         next_close_positive_rate = float(next_close_positive_rate)
         t_plus_2_close_positive_rate = float(t_plus_2_close_positive_rate)
         next_close_median = float(next_close_median)
         t_plus_2_median = float(t_plus_2_median)
-        if (
-            (t_plus_2_close_positive_rate > next_close_positive_rate and t_plus_2_median >= next_close_median)
-            or (t_plus_2_close_positive_rate >= next_close_positive_rate and t_plus_2_median > next_close_median)
-        ):
+        if (t_plus_2_close_positive_rate > next_close_positive_rate and t_plus_2_median >= next_close_median) or (t_plus_2_close_positive_rate >= next_close_positive_rate and t_plus_2_median > next_close_median):
             return "supports_tplus2_lane"
     return "mixed_or_weak"
 
@@ -121,11 +113,7 @@ def render_btst_tplus2_continuation_lane_validation_markdown(analysis: dict[str,
     lines.append("")
     lines.append("## Per-Window")
     for item in list(analysis.get("per_window_summaries") or []):
-        lines.append(
-            f"- {item['report_label']}: row_count={item['row_count']}, verdict={item['window_verdict']}, "
-            f"next_close_positive_rate={item['surface_summary'].get('next_close_positive_rate')}, "
-            f"t_plus_2_close_positive_rate={item['surface_summary'].get('t_plus_2_close_positive_rate')}"
-        )
+        lines.append(f"- {item['report_label']}: row_count={item['row_count']}, verdict={item['window_verdict']}, " f"next_close_positive_rate={item['surface_summary'].get('next_close_positive_rate')}, " f"t_plus_2_close_positive_rate={item['surface_summary'].get('t_plus_2_close_positive_rate')}")
     if not list(analysis.get("per_window_summaries") or []):
         lines.append("- none")
     lines.append("")

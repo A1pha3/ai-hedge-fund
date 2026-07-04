@@ -89,18 +89,8 @@ def _resolve_case_threshold_metrics(*, short_trade: dict[str, Any], upstream_rel
     metrics_payload = dict(short_trade.get("metrics_payload") or {})
     thresholds = dict(metrics_payload.get("thresholds") or {})
     score_target = _safe_float(short_trade.get("score_target"))
-    effective_select_threshold = _safe_float(
-        short_trade.get("effective_select_threshold")
-        or upstream_relief.get("effective_select_threshold")
-        or thresholds.get("effective_select_threshold")
-        or 0.58
-    )
-    selected_score_tolerance = _safe_float(
-        short_trade.get("selected_score_tolerance")
-        or thresholds.get("selected_score_tolerance")
-        or upstream_relief.get("selected_score_tolerance")
-        or 0.0
-    )
+    effective_select_threshold = _safe_float(short_trade.get("effective_select_threshold") or upstream_relief.get("effective_select_threshold") or thresholds.get("effective_select_threshold") or 0.58)
+    selected_score_tolerance = _safe_float(short_trade.get("selected_score_tolerance") or thresholds.get("selected_score_tolerance") or upstream_relief.get("selected_score_tolerance") or 0.0)
     return score_target, effective_select_threshold, selected_score_tolerance
 
 
@@ -163,11 +153,7 @@ def _case_row_rank(row: dict[str, Any]) -> tuple[int, int, int, float, float, st
 
 
 def _is_supportive(row: dict[str, Any]) -> bool:
-    return (
-        str(row.get("historical_execution_quality_label") or "") == "close_continuation"
-        and str(row.get("historical_entry_timing_bias") or "") == "confirm_then_hold"
-        and _safe_float(row.get("historical_next_close_positive_rate"), default=-1.0) >= 0.5
-    )
+    return str(row.get("historical_execution_quality_label") or "") == "close_continuation" and str(row.get("historical_entry_timing_bias") or "") == "confirm_then_hold" and _safe_float(row.get("historical_next_close_positive_rate"), default=-1.0) >= 0.5
 
 
 def _peer_evidence_status(row: dict[str, Any]) -> str:
@@ -291,22 +277,12 @@ def _top_candidate_is_low_sample(top_candidate: dict[str, Any]) -> bool:
 def _build_low_sample_recommendation(top_candidate: dict[str, Any]) -> str:
     candidate_label = f"{top_candidate.get('ticker')}@{top_candidate.get('trade_date')}"
     if str(top_candidate.get("peer_evidence_status") or "") == "broad_family_only":
-        return (
-            f"当前最接近 002001 扩样路径的是 {candidate_label}，"
-            "但它只有 broad family 级别的外围样本，没有 aligned family/source peer，且 same_ticker evaluable_count 仍不足。"
-            "下一步应优先补 peer evidence 对齐，而不是继续放松 selected frontier。"
-        )
-    return (
-        f"当前最接近 002001 扩样路径的是 {candidate_label}，"
-        "但它的主阻塞仍是 historical evaluable_count 不足，而不是 score frontier。本阶段应优先扩同票/同类历史样本，而不是继续放松阈值。"
-    )
+        return f"当前最接近 002001 扩样路径的是 {candidate_label}，" "但它只有 broad family 级别的外围样本，没有 aligned family/source peer，且 same_ticker evaluable_count 仍不足。" "下一步应优先补 peer evidence 对齐，而不是继续放松 selected frontier。"
+    return f"当前最接近 002001 扩样路径的是 {candidate_label}，" "但它的主阻塞仍是 historical evaluable_count 不足，而不是 score frontier。本阶段应优先扩同票/同类历史样本，而不是继续放松阈值。"
 
 
 def _build_ready_candidate_recommendation(top_candidate: dict[str, Any]) -> str:
-    return (
-        f"{top_candidate.get('ticker')}@{top_candidate.get('trade_date')} 已具备继续复核价值，"
-        "可作为下一批 carryover selected promotion 的重点候选。"
-    )
+    return f"{top_candidate.get('ticker')}@{top_candidate.get('trade_date')} 已具备继续复核价值，" "可作为下一批 carryover selected promotion 的重点候选。"
 
 
 def analyze_btst_carryover_selected_cohort(reports_root: str | Path) -> dict[str, Any]:
@@ -384,9 +360,7 @@ def render_btst_carryover_selected_cohort_markdown(analysis: dict[str, Any]) -> 
     lines.append("")
     lines.append("## Applied Relief Rows")
     for row in list(analysis.get("applied_relief_rows") or []):
-        lines.append(
-            f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, score_target={row.get('score_target')}, gap_to_selected={row.get('gap_to_selected')}, next_close_return={row.get('next_close_return')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, historical_evaluable_count={row.get('historical_evaluable_count')}"
-        )
+        lines.append(f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, score_target={row.get('score_target')}, gap_to_selected={row.get('gap_to_selected')}, next_close_return={row.get('next_close_return')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, historical_evaluable_count={row.get('historical_evaluable_count')}")
     if not list(analysis.get("applied_relief_rows") or []):
         lines.append("- none")
     lines.append("")

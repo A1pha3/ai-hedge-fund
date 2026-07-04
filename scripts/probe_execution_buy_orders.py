@@ -91,11 +91,7 @@ def _extract_original_buy_order_map(plan: ExecutionPlan) -> dict[str, dict[str, 
 
 def _extract_original_filtered_map(plan: ExecutionPlan) -> dict[str, dict[str, Any]]:
     filters = (((plan.risk_metrics or {}).get("funnel_diagnostics") or {}).get("filters") or {}).get("buy_orders") or {}
-    return {
-        str(entry.get("ticker")): dict(entry)
-        for entry in list(filters.get("tickers") or [])
-        if isinstance(entry, dict) and entry.get("ticker")
-    }
+    return {str(entry.get("ticker")): dict(entry) for entry in list(filters.get("tickers") or []) if isinstance(entry, dict) and entry.get("ticker")}
 
 
 def _price_from_order_like(payload: dict[str, Any]) -> float | None:
@@ -176,11 +172,7 @@ def _resolve_probe_price_map(
 
     missing_prices = [ticker for ticker in probe_tickers if ticker not in resolved_price_map]
     if missing_prices:
-        raise ValueError(
-            "以下 ticker 缺少可信价格，probe 已拒绝继续运行: "
-            + ", ".join(missing_prices)
-            + "。请通过 --price-overrides 传入显式价格，例如 600988=19.87"
-        )
+        raise ValueError("以下 ticker 缺少可信价格，probe 已拒绝继续运行: " + ", ".join(missing_prices) + "。请通过 --price-overrides 传入显式价格，例如 600988=19.87")
 
     return resolved_price_map
 
@@ -227,7 +219,7 @@ def probe_execution_buy_orders(
         probe_tickers,
         price_overrides or {},
     )
-    blocked_buy_tickers = (((current_plan.risk_metrics or {}).get("funnel_diagnostics") or {}).get("blocked_buy_tickers") or {})
+    blocked_buy_tickers = ((current_plan.risk_metrics or {}).get("funnel_diagnostics") or {}).get("blocked_buy_tickers") or {}
 
     threshold_overrides = {key: value for key, value in (threshold_overrides or {}).items() if value is not None}
     with _temporary_env(threshold_overrides):
@@ -240,15 +232,8 @@ def probe_execution_buy_orders(
             blocked_buy_tickers=blocked_buy_tickers,
         )
 
-    recomputed_buy_order_map = {
-        str(order.ticker): order
-        for order in recomputed_buy_orders
-    }
-    recomputed_filtered_map = {
-        str(entry.get("ticker")): dict(entry)
-        for entry in list(recomputed_diagnostics.get("tickers") or [])
-        if isinstance(entry, dict) and entry.get("ticker")
-    }
+    recomputed_buy_order_map = {str(order.ticker): order for order in recomputed_buy_orders}
+    recomputed_filtered_map = {str(entry.get("ticker")): dict(entry) for entry in list(recomputed_diagnostics.get("tickers") or []) if isinstance(entry, dict) and entry.get("ticker")}
     original_buy_order_map = _extract_original_buy_order_map(current_plan)
     original_filtered_map = _extract_original_filtered_map(current_plan)
 

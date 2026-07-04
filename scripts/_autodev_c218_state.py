@@ -7,6 +7,7 @@
 - 1 intervention (iv051-ns3-m12-bootstrap-ci)
 - 更新 next_outer_loop_action (wait — 证据不足以支撑门控翻转)
 """
+
 from __future__ import annotations
 
 import json
@@ -31,7 +32,7 @@ EVIDENCES = [
         "campaign_id": "c218-ns3-m12-bootstrap-ci",
         "workflow_id": "wf-top-picks-must-win",
         "subject": "wf-top-picks-must-win",
-        "raw_ref": "file: git diff 7223b348 — north_star_pnl.py (+BootstrapCIResult +_bootstrap_winrate_ci percentile +compute_bootstrap_ci_from_loaded +render_bootstrap_ci_line) + top_picks.py (footer M12 bootstrap CI 行) + test (+8 TDD M12)"
+        "raw_ref": "file: git diff 7223b348 — north_star_pnl.py (+BootstrapCIResult +_bootstrap_winrate_ci percentile +compute_bootstrap_ci_from_loaded +render_bootstrap_ci_line) + top_picks.py (footer M12 bootstrap CI 行) + test (+8 TDD M12)",
     },
     {
         "id": "ev-c218-tdd",
@@ -42,7 +43,7 @@ EVIDENCES = [
         "campaign_id": "c218-ns3-m12-bootstrap-ci",
         "workflow_id": "wf-top-picks-must-win",
         "subject": "wf-top-picks-must-win",
-        "raw_ref": "cmd: uv run pytest tests/screening/test_north_star_pnl.py -k bootstrap_ci -v (8 TDD passed: percentile bounds / monotonic / idempotent / insufficient / per-bucket / extreme capped / render / silent)"
+        "raw_ref": "cmd: uv run pytest tests/screening/test_north_star_pnl.py -k bootstrap_ci -v (8 TDD passed: percentile bounds / monotonic / idempotent / insufficient / per-bucket / extreme capped / render / silent)",
     },
     {
         "id": "ev-c218-focused",
@@ -53,7 +54,7 @@ EVIDENCES = [
         "campaign_id": "c218-ns3-m12-bootstrap-ci",
         "workflow_id": "wf-top-picks-must-win",
         "subject": "wf-top-picks-must-win",
-        "raw_ref": "cmd: uv run pytest tests/screening/test_north_star_pnl.py -q (35 passed = 27 existing + 8 new M12) + uv run pytest tests/screening/ -q (1831 passed, 0 failed)"
+        "raw_ref": "cmd: uv run pytest tests/screening/test_north_star_pnl.py -q (35 passed = 27 existing + 8 new M12) + uv run pytest tests/screening/ -q (1831 passed, 0 failed)",
     },
     {
         "id": "ev-c218-static",
@@ -64,7 +65,7 @@ EVIDENCES = [
         "campaign_id": "c218-ns3-m12-bootstrap-ci",
         "workflow_id": "wf-top-picks-must-win",
         "subject": "wf-top-picks-must-win",
-        "raw_ref": "cmd: uv run flake8 src/screening/north_star_pnl.py src/screening/top_picks.py tests/screening/test_north_star_pnl.py (no output = clean; E402 修复: import random as _random 移到顶部)"
+        "raw_ref": "cmd: uv run flake8 src/screening/north_star_pnl.py src/screening/top_picks.py tests/screening/test_north_star_pnl.py (no output = clean; E402 修复: import random as _random 移到顶部)",
     },
     {
         "id": "ev-c218-realdata",
@@ -75,8 +76,8 @@ EVIDENCES = [
         "campaign_id": "c218-ns3-m12-bootstrap-ci",
         "workflow_id": "wf-top-picks-must-win",
         "subject": "wf-top-picks-must-win",
-        "raw_ref": "cmd: real-data 493 bootstrap CI (n_boot=10000, seed=42) → low 50.5% [41%, 60%] n=105 | mid_low 46.2% [40%, 53%] n=225 | mid_high 43.2% [34%, 52%] n=125 | high 39.5% [24%, 55%] n=38. ⚠ low CI 下界 41% < 50% — 现有证据不足以稳健支撑门控翻转"
-    }
+        "raw_ref": "cmd: real-data 493 bootstrap CI (n_boot=10000, seed=42) → low 50.5% [41%, 60%] n=105 | mid_low 46.2% [40%, 53%] n=225 | mid_high 43.2% [34%, 52%] n=125 | high 39.5% [24%, 55%] n=38. ⚠ low CI 下界 41% < 50% — 现有证据不足以稳健支撑门控翻转",
+    },
 ]
 
 CAMPAIGN = {
@@ -89,43 +90,17 @@ CAMPAIGN = {
     "product_context_ref": {"revision": 3, "context_digest": PRODUCT_CONTEXT_DIGEST},
     "policy_digest": POLICY_DIGEST,
     "selected_candidate_id": "cd218-ns3-m12-bootstrap-ci",
-    "risk_profile": {
-        "blast_radius": 1,
-        "design_uncertainty": 1,
-        "contract_ambiguity": 0,
-        "verification_gap": 1,
-        "rollback_difficulty": 1,
-        "migration_risk": 0
-    },
+    "risk_profile": {"blast_radius": 1, "design_uncertainty": 1, "contract_ambiguity": 0, "verification_gap": 1, "rollback_difficulty": 1, "migration_risk": 0},
     "change_risk": 1,
     "design_decision_packet": {
         "problem": "owner 需基于 low bucket winrate=50% (n=105) 决策门控翻转, 但正态近似 95% CI (±9.6%, [40%, 60%]) 太宽无法支撑决策",
-        "invariants": [
-            "纯诊断不改 gate/factor (Phase 0 STOP)",
-            "display-only best-effort",
-            "幂等 (固定 seed=42)",
-            "单调 (lower<=upper clamp [0,1])",
-            "无新依赖 (标准库 random)"
-        ],
-        "options": [
-            "A bootstrap percentile CI (免正态假设, per-bucket)",
-            "B 独立脚本 scripts/bootstrap_ci.py (不动 product code)",
-            "C 加到 --decision-flow 现有诊断模块"
-        ],
+        "invariants": ["纯诊断不改 gate/factor (Phase 0 STOP)", "display-only best-effort", "幂等 (固定 seed=42)", "单调 (lower<=upper clamp [0,1])", "无新依赖 (标准库 random)"],
+        "options": ["A bootstrap percentile CI (免正态假设, per-bucket)", "B 独立脚本 scripts/bootstrap_ci.py (不动 product code)", "C 加到 --decision-flow 现有诊断模块"],
         "recommendation": "A — compute_bootstrap_ci_from_loaded (per-bucket, percentile method) + render_bootstrap_ci_line, 与 M10/M11 payoff+pruning 同源",
-        "acceptance_tests": [
-            "bootstrap percentile bounds 计算",
-            "CI 单调 (lower <= upper)",
-            "幂等 (同 seed 同 output)",
-            "小样本 insufficient 静默",
-            "per-bucket 模式",
-            "winrate=100% capped at 1.0",
-            "render 含 bounds + bucket label",
-            "全 insufficient → 空串"
-        ],
+        "acceptance_tests": ["bootstrap percentile bounds 计算", "CI 单调 (lower <= upper)", "幂等 (同 seed 同 output)", "小样本 insufficient 静默", "per-bucket 模式", "winrate=100% capped at 1.0", "render 含 bounds + bucket label", "全 insufficient → 空串"],
         "rollback": "删 BootstrapCIResult + _bootstrap_winrate_ci + compute/render_bootstrap_ci_line + footer 调用",
         "decision_authority": "engineering (bootstrap percentile method 标准做法)",
-        "next_trigger": "owner 据 bootstrap CI 决策门控翻转 (low CI 下界 41% < 50% → 等累积) 或授权 daily_accumulate cron 持续累积"
+        "next_trigger": "owner 据 bootstrap CI 决策门控翻转 (low CI 下界 41% < 50% → 等累积) 或授权 daily_accumulate cron 持续累积",
     },
     "domain_context": {
         "loaded_overlays": ["finance-quant"],
@@ -134,50 +109,14 @@ CAMPAIGN = {
         "domain_impact_risk": 4,
         "evidence_confidence": 2,
         "domain_control_receipts": [
-            {
-                "control_id": "fixture_or_pipeline_check",
-                "status": "passed",
-                "evidence_refs": ["ev-c218-tdd"],
-                "rationale": "portfolio surface: bootstrap CI 是全样本统计, 8 TDD 合成数据覆盖; 不触及真实 portfolio/NAV 计算, 只读 tracking_history",
-                "reason": "portfolio surface triggered (winrate CI 概念)"
-            },
-            {
-                "control_id": "timestamp_alignment",
-                "status": "not_applicable",
-                "evidence_refs": [],
-                "rationale": "静态历史记录, 无时间对齐变更",
-                "reason": "display-only 全样本统计, 无 finance surface triggered"
-            },
-            {
-                "control_id": "reproducibility",
-                "status": "passed",
-                "evidence_refs": ["ev-c218-tdd"],
-                "rationale": "portfolio surface: 纯函数 _bootstrap_winrate_ci 幂等 (固定 seed=42), 8 TDD 验证可复现; test_bootstrap_ci_idempotent_same_seed 锁定",
-                "reason": "portfolio surface triggered"
-            },
-            {
-                "control_id": "cost_and_slippage",
-                "status": "not_applicable",
-                "evidence_refs": [],
-                "rationale": "无 execution 声明",
-                "reason": "display-only 全样本统计, 无 finance surface triggered"
-            },
-            {
-                "control_id": "benchmark_disclosure",
-                "status": "not_applicable",
-                "evidence_refs": [],
-                "rationale": "历史统计, sample_count 已标",
-                "reason": "display-only 全样本统计, 无 finance surface triggered"
-            }
-        ]
+            {"control_id": "fixture_or_pipeline_check", "status": "passed", "evidence_refs": ["ev-c218-tdd"], "rationale": "portfolio surface: bootstrap CI 是全样本统计, 8 TDD 合成数据覆盖; 不触及真实 portfolio/NAV 计算, 只读 tracking_history", "reason": "portfolio surface triggered (winrate CI 概念)"},
+            {"control_id": "timestamp_alignment", "status": "not_applicable", "evidence_refs": [], "rationale": "静态历史记录, 无时间对齐变更", "reason": "display-only 全样本统计, 无 finance surface triggered"},
+            {"control_id": "reproducibility", "status": "passed", "evidence_refs": ["ev-c218-tdd"], "rationale": "portfolio surface: 纯函数 _bootstrap_winrate_ci 幂等 (固定 seed=42), 8 TDD 验证可复现; test_bootstrap_ci_idempotent_same_seed 锁定", "reason": "portfolio surface triggered"},
+            {"control_id": "cost_and_slippage", "status": "not_applicable", "evidence_refs": [], "rationale": "无 execution 声明", "reason": "display-only 全样本统计, 无 finance surface triggered"},
+            {"control_id": "benchmark_disclosure", "status": "not_applicable", "evidence_refs": [], "rationale": "历史统计, sample_count 已标", "reason": "display-only 全样本统计, 无 finance surface triggered"},
+        ],
     },
-    "evidence_profile": {
-        "outcome_source_tier": "unobserved",
-        "outcome_evidence_refs": [],
-        "verification_tiers": ["focused_tests", "static_analysis"],
-        "verification_evidence_refs": ["ev-c218-tdd", "ev-c218-focused", "ev-c218-static"],
-        "value_claim": "delivery_value"
-    },
+    "evidence_profile": {"outcome_source_tier": "unobserved", "outcome_evidence_refs": [], "verification_tiers": ["focused_tests", "static_analysis"], "verification_evidence_refs": ["ev-c218-tdd", "ev-c218-focused", "ev-c218-static"], "value_claim": "delivery_value"},
     "role_reviews": [
         {
             "gate": "startup",
@@ -189,8 +128,8 @@ CAMPAIGN = {
             "lenses": {
                 "alpha": {"findings_or_candidates": ["M12 bootstrap CI 扩展 north_star_pnl (8 新 TDD), focused 35 绿"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""},
                 "beta": {"findings_or_candidates": ["display-only 全样本统计; 不改 gate/factor; flake8 clean"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""},
-                "gamma": {"findings_or_candidates": ["服务 owner winrate>50% 门控决策: 给稳健不确定性估计 (vs 正态近似 ±9.6%)"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""}
-            }
+                "gamma": {"findings_or_candidates": ["服务 owner winrate>50% 门控决策: 给稳健不确定性估计 (vs 正态近似 ±9.6%)"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""},
+            },
         },
         {
             "gate": "candidate_selection",
@@ -202,9 +141,9 @@ CAMPAIGN = {
             "lenses": {
                 "alpha": {"findings_or_candidates": ["cd product_backlog authoritative (NS-3 北极星诊断链); WIP 解锁"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""},
                 "beta": {"findings_or_candidates": ["WIP: c211 concluded; 新 intervention iv051"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""},
-                "gamma": {"findings_or_candidates": ["owner 目标 winrate>50% 门控决策 → 需稳健 CI → autodev 提供 bootstrap percentile"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""}
+                "gamma": {"findings_or_candidates": ["owner 目标 winrate>50% 门控决策 → 需稳健 CI → autodev 提供 bootstrap percentile"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""},
             },
-            "policy_digest": POLICY_DIGEST
+            "policy_digest": POLICY_DIGEST,
         },
         {
             "gate": "pre_implementation",
@@ -216,8 +155,8 @@ CAMPAIGN = {
             "lenses": {
                 "alpha": {"findings_or_candidates": ["_bootstrap_winrate_ci (percentile, 幂等 seed, 单调 clamp) + compute_bootstrap_ci_from_loaded (per-bucket, insufficient 静默) + render_bootstrap_ci_line"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""},
                 "beta": {"findings_or_candidates": ["TDD 8: percentile bounds / monotonic / idempotent / insufficient / per-bucket / extreme capped / render / silent"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""},
-                "gamma": {"findings_or_candidates": ["render bootstrap CI → 给 owner 稳健不确定性估计 (CI 下界 < 50% → 诚实告知证据不足)"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""}
-            }
+                "gamma": {"findings_or_candidates": ["render bootstrap CI → 给 owner 稳健不确定性估计 (CI 下界 < 50% → 诚实告知证据不足)"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""},
+            },
         },
         {
             "gate": "pre_closure",
@@ -229,142 +168,56 @@ CAMPAIGN = {
             "lenses": {
                 "alpha": {"findings_or_candidates": ["8 TDD green, focused 35, full screening 1831, flake8 clean, real-data low 50.5% [41%, 60%] 验证, committed 7223b348"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""},
                 "beta": {"findings_or_candidates": ["无 blocker; controls passed (reproducibility 幂等); full regression 1831 passed (vs 1823 +8 M12)"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""},
-                "gamma": {"findings_or_candidates": ["delivery_value + learning_value (bootstrap CI 下界 41% < 50% → 诚实告知证据不足以支撑门控翻转)"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""}
+                "gamma": {"findings_or_candidates": ["delivery_value + learning_value (bootstrap CI 下界 41% < 50% → 诚实告知证据不足以支撑门控翻转)"], "verdict": "pass", "veto_or_blocker": None, "handoff_delta": ""},
             },
-            "policy_digest": POLICY_DIGEST
-        }
+            "policy_digest": POLICY_DIGEST,
+        },
     ],
     "stage_receipts": {
-        "bug_hunt": {
-            "work_depth": "supporting", "verdict": "pass",
-            "scan_scope": "bootstrap CI 新增 display 无 bug",
-            "finding_count": 0, "candidate_count": 0,
-            "evidence_refs": ["ev-c218-diff"],
-            "verification_refs": ["ev-c218-tdd", "ev-c218-focused"],
-            "exhaustion_or_blocker": "not applicable — delivery",
-            "review_gate": "pre_implementation"
-        },
-        "refactor_batch": {
-            "work_depth": "supporting", "verdict": "pass",
-            "scan_scope": "no refactor",
-            "finding_count": 0, "candidate_count": 0,
-            "evidence_refs": ["ev-c218-diff"],
-            "verification_refs": ["ev-c218-tdd", "ev-c218-focused"],
-            "exhaustion_or_blocker": "not applicable",
-            "review_gate": "pre_implementation"
-        },
-        "product_quality_upgrade": {
-            "work_depth": "supporting", "verdict": "pass",
-            "scan_scope": "no quality upgrade",
-            "finding_count": 0, "candidate_count": 0,
-            "evidence_refs": ["ev-c218-diff"],
-            "verification_refs": ["ev-c218-tdd", "ev-c218-focused"],
-            "exhaustion_or_blocker": "not applicable",
-            "review_gate": "pre_implementation"
-        },
+        "bug_hunt": {"work_depth": "supporting", "verdict": "pass", "scan_scope": "bootstrap CI 新增 display 无 bug", "finding_count": 0, "candidate_count": 0, "evidence_refs": ["ev-c218-diff"], "verification_refs": ["ev-c218-tdd", "ev-c218-focused"], "exhaustion_or_blocker": "not applicable — delivery", "review_gate": "pre_implementation"},
+        "refactor_batch": {"work_depth": "supporting", "verdict": "pass", "scan_scope": "no refactor", "finding_count": 0, "candidate_count": 0, "evidence_refs": ["ev-c218-diff"], "verification_refs": ["ev-c218-tdd", "ev-c218-focused"], "exhaustion_or_blocker": "not applicable", "review_gate": "pre_implementation"},
+        "product_quality_upgrade": {"work_depth": "supporting", "verdict": "pass", "scan_scope": "no quality upgrade", "finding_count": 0, "candidate_count": 0, "evidence_refs": ["ev-c218-diff"], "verification_refs": ["ev-c218-tdd", "ev-c218-focused"], "exhaustion_or_blocker": "not applicable", "review_gate": "pre_implementation"},
         "feature_delivery": {
-            "work_depth": "primary", "verdict": "pass",
+            "work_depth": "primary",
+            "verdict": "pass",
             "scan_scope": "north_star_pnl.py (+BootstrapCIResult +_bootstrap_winrate_ci +compute_bootstrap_ci_from_loaded +render_bootstrap_ci_line) + top_picks.py (footer M12) + test (+8 TDD M12)",
-            "finding_count": 0, "candidate_count": 0,
+            "finding_count": 0,
+            "candidate_count": 0,
             "evidence_refs": ["ev-c218-diff"],
             "verification_refs": ["ev-c218-tdd", "ev-c218-focused"],
             "exhaustion_or_blocker": "delivery complete — bootstrap CI per-bucket [low 50.5% [41%, 60%]] 验证",
-            "review_gate": "pre_closure"
+            "review_gate": "pre_closure",
         },
-        "regression_and_commit": {
-            "work_depth": "primary", "verdict": "pass",
-            "scan_scope": "test_north_star_pnl.py (35) + tests/screening (1831) + flake8",
-            "finding_count": 0, "candidate_count": 0,
-            "evidence_refs": ["ev-c218-diff"],
-            "verification_refs": ["ev-c218-tdd", "ev-c218-focused"],
-            "exhaustion_or_blocker": "35+1831 passed + 0 lint — committed 7223b348",
-            "review_gate": "pre_closure"
-        }
+        "regression_and_commit": {"work_depth": "primary", "verdict": "pass", "scan_scope": "test_north_star_pnl.py (35) + tests/screening (1831) + flake8", "finding_count": 0, "candidate_count": 0, "evidence_refs": ["ev-c218-diff"], "verification_refs": ["ev-c218-tdd", "ev-c218-focused"], "exhaustion_or_blocker": "35+1831 passed + 0 lint — committed 7223b348", "review_gate": "pre_closure"},
     },
     "issue_outcome": {
         "summary": "M12 winrate bootstrap CI. 真实 493 (n_boot=10000, seed=42): low 50.5% [41%, 60%] n=105 | mid_low 46.2% [40%, 53%] n=225 | mid_high 43.2% [34%, 52%] n=125 | high 39.5% [24%, 55%] n=38. ⚠ low CI 下界 41% < 50% — 现有证据不足以稳健支撑 winrate>50% 门控翻转.",
         "root_cause": "owner 需基于 low bucket winrate=50% 决策门控翻转, 但正态近似 ±9.6% 太宽 → 需 bootstrap CI 更稳健",
         "prediction": "owner 据 bootstrap CI 决策: low CI 下界 41% < 50% → 等累积; 或授权 daily_accumulate cron 持续累积到 n≥300 CI 收窄",
-        "observed_outcome": "real-data low 50.5% [41%, 60%] 正确 (CI 下界 41% < 50% 诚实告知证据不足)"
+        "observed_outcome": "real-data low 50.5% [41%, 60%] 正确 (CI 下界 41% < 50% 诚实告知证据不足)",
     },
     "changes": [
-        {
-            "scope": "src/screening/north_star_pnl.py",
-            "behavior_delta": "+BootstrapCIResult +_bootstrap_winrate_ci (percentile, 幂等 seed, 单调 clamp [0,1]) +compute_bootstrap_ci_from_loaded (per-bucket, insufficient 静默) +render_bootstrap_ci_line",
-            "evidence_refs": ["ev-c218-diff", "ev-c218-tdd"]
-        },
-        {
-            "scope": "src/screening/top_picks.py",
-            "behavior_delta": "_print_north_star_block 加 M12 bootstrap CI footer 行 (try/except 隔离, best-effort)",
-            "evidence_refs": ["ev-c218-diff"]
-        },
-        {
-            "scope": "tests/screening/test_north_star_pnl.py",
-            "behavior_delta": "+8 TDD M12 (percentile bounds / monotonic / idempotent / insufficient / per-bucket / extreme capped / render / silent)",
-            "evidence_refs": ["ev-c218-tdd"]
-        }
+        {"scope": "src/screening/north_star_pnl.py", "behavior_delta": "+BootstrapCIResult +_bootstrap_winrate_ci (percentile, 幂等 seed, 单调 clamp [0,1]) +compute_bootstrap_ci_from_loaded (per-bucket, insufficient 静默) +render_bootstrap_ci_line", "evidence_refs": ["ev-c218-diff", "ev-c218-tdd"]},
+        {"scope": "src/screening/top_picks.py", "behavior_delta": "_print_north_star_block 加 M12 bootstrap CI footer 行 (try/except 隔离, best-effort)", "evidence_refs": ["ev-c218-diff"]},
+        {"scope": "tests/screening/test_north_star_pnl.py", "behavior_delta": "+8 TDD M12 (percentile bounds / monotonic / idempotent / insufficient / per-bucket / extreme capped / render / silent)", "evidence_refs": ["ev-c218-tdd"]},
     ],
     "closure_receipts": [
-        {
-            "kind": "git_closure", "status": "pass",
-            "evidence_refs": ["ev-c218-diff", "ev-c218-tdd"],
-            "user_change_isolation": "verified",
-            "recorded_at": NOW,
-            "commit_sha": COMMIT_SHA,
-            "diff_evidence": f"Committed {COMMIT_SHA} feat(NS-3/M12) winrate bootstrap CI"
-        },
-        {
-            "kind": "release_handoff",
-            "intervention_id": "iv051-ns3-m12-bootstrap-ci",
-            "workflow_id": "wf-top-picks-must-win",
-            "status": "concluded",
-            "commit_or_no_diff": f"committed {COMMIT_SHA}",
-            "release_or_observation_refs": ["ev-c218-realdata"],
-            "next_owner_or_trigger": "iv051 conclude (real-data render); owner 据 bootstrap CI 决策门控翻转或授权累积",
-            "recorded_at": NOW
-        },
-        {
-            "kind": "pre_closure_review",
-            "role_gate": "pre_closure",
-            "residual_blockers": None,
-            "evidence_refs": ["ev-c218-tdd", "ev-c218-focused"],
-            "recorded_at": NOW
-        },
-        {
-            "kind": "state_write_intent",
-            "target_campaign_status": "completed",
-            "evidence_refs": ["ev-c218-tdd", "ev-c218-focused"],
-            "recorded_at": NOW
-        }
-    ]
+        {"kind": "git_closure", "status": "pass", "evidence_refs": ["ev-c218-diff", "ev-c218-tdd"], "user_change_isolation": "verified", "recorded_at": NOW, "commit_sha": COMMIT_SHA, "diff_evidence": f"Committed {COMMIT_SHA} feat(NS-3/M12) winrate bootstrap CI"},
+        {"kind": "release_handoff", "intervention_id": "iv051-ns3-m12-bootstrap-ci", "workflow_id": "wf-top-picks-must-win", "status": "concluded", "commit_or_no_diff": f"committed {COMMIT_SHA}", "release_or_observation_refs": ["ev-c218-realdata"], "next_owner_or_trigger": "iv051 conclude (real-data render); owner 据 bootstrap CI 决策门控翻转或授权累积", "recorded_at": NOW},
+        {"kind": "pre_closure_review", "role_gate": "pre_closure", "residual_blockers": None, "evidence_refs": ["ev-c218-tdd", "ev-c218-focused"], "recorded_at": NOW},
+        {"kind": "state_write_intent", "target_campaign_status": "completed", "evidence_refs": ["ev-c218-tdd", "ev-c218-focused"], "recorded_at": NOW},
+    ],
 }
 
 CANDIDATE = {
     "id": "cd218-ns3-m12-bootstrap-ci",
     "source_kind": "product_backlog",
     "source_refs": ["ev-c218-diff"],
-    "provenance_chain": [
-        {
-            "source_kind": "product_backlog",
-            "source_ref": "ev-c218-diff",
-            "node": "owner 需基于 low bucket winrate=50% (n=105) 决策门控翻转, 正态近似 ±9.6% 太宽 → 需 bootstrap CI"
-        },
-        {
-            "source_kind": "product_backlog",
-            "source_ref": "ev-c218-realdata",
-            "node": "真实: low 50.5% [41%, 60%] — CI 下界 41% < 50% 诚实告知证据不足"
-        }
-    ],
+    "provenance_chain": [{"source_kind": "product_backlog", "source_ref": "ev-c218-diff", "node": "owner 需基于 low bucket winrate=50% (n=105) 决策门控翻转, 正态近似 ±9.6% 太宽 → 需 bootstrap CI"}, {"source_kind": "product_backlog", "source_ref": "ev-c218-realdata", "node": "真实: low 50.5% [41%, 60%] — CI 下界 41% < 50% 诚实告知证据不足"}],
     "product_context_ref": {"revision": 3, "context_digest": PRODUCT_CONTEXT_DIGEST},
     "workflow_id": "wf-top-picks-must-win",
     "family_id": "ns3-m12-bootstrap-ci",
-    "family_scope": {
-        "revision": "2026-06-27-r1",
-        "roots": ["north_star_pnl.py (bootstrap CI)"],
-        "dimensions": ["bootstrap-ci", "percentile-method", "uncertainty-quantification", "winrate-confidence-interval"],
-        "exclusions": ["factor changes (Phase 0 STOP)", "BUY 门控变更 (owner semantics)"],
-        "scope_digest": "a8f3c2e9b1d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1"
-    },
+    "family_scope": {"revision": "2026-06-27-r1", "roots": ["north_star_pnl.py (bootstrap CI)"], "dimensions": ["bootstrap-ci", "percentile-method", "uncertainty-quantification", "winrate-confidence-interval"], "exclusions": ["factor changes (Phase 0 STOP)", "BUY 门控变更 (owner semantics)"], "scope_digest": "a8f3c2e9b1d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1"},
     "type": "delivery",
     "goal_alignment": 4,
     "expected_outcome": "winrate bootstrap CI 给 owner 门控决策稳健不确定性估计 (vs 正态近似 ±9.6%)",
@@ -381,12 +234,7 @@ CANDIDATE = {
     "hard_gate_status": "pass",
     "frontier_status": "selected",
     "status": "delivered",
-    "self_generation": {
-        "source_class": "authoritative",
-        "depth_before_selection": 0,
-        "depth_after_selection": 0,
-        "reset_evidence_ref": None
-    }
+    "self_generation": {"source_class": "authoritative", "depth_before_selection": 0, "depth_after_selection": 0, "reset_evidence_ref": None},
 }
 
 INTERVENTION = {
@@ -406,8 +254,8 @@ INTERVENTION = {
         "observed_result": "real-data render: footer 展示 low 50.5% [41%, 60%] (n=105), CI 下界 41% < 50% 诚实告知证据不足",
         "guardrail": "render insufficient 静默 (不破坏前门); 幂等 (seed=42); 单调 (clamp [0,1])",
         "observation_window": "c218 real-data render (493 真实记录) + 8 TDD",
-        "decision": "keep"
-    }
+        "decision": "keep",
+    },
 }
 
 NEXT_ACTION = {
@@ -422,7 +270,7 @@ NEXT_ACTION = {
         "(2) owner 据现有证据决策 (接受小样本风险改门控 or 等累积); "
         "(3) 或启动并行 NS-5 (P1, autodev 可自主, REGIME_HISTORICAL_WINRATES 自动刷新). "
         "模型 factor 仍 owner 范畴."
-    )
+    ),
 }
 
 

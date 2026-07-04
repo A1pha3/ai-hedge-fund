@@ -18,13 +18,7 @@ from scripts.short_trade_boundary_analysis_utils import (
 
 
 def _build_variant_name(thresholds: dict[str, float]) -> str:
-    return (
-        f"candidate_{thresholds['candidate_score_min']:.2f}_"
-        f"breakout_{thresholds['breakout_freshness_min']:.2f}_"
-        f"trend_{thresholds['trend_acceleration_min']:.2f}_"
-        f"volume_{thresholds['volume_expansion_quality_min']:.2f}_"
-        f"catalyst_{thresholds['catalyst_freshness_min']:.2f}"
-    )
+    return f"candidate_{thresholds['candidate_score_min']:.2f}_" f"breakout_{thresholds['breakout_freshness_min']:.2f}_" f"trend_{thresholds['trend_acceleration_min']:.2f}_" f"volume_{thresholds['volume_expansion_quality_min']:.2f}_" f"catalyst_{thresholds['catalyst_freshness_min']:.2f}"
 
 
 def _summarize_variant_rows(rows: list[dict[str, Any]], next_high_hit_threshold: float) -> dict[str, Any]:
@@ -59,14 +53,7 @@ def _pick_recommended_variant(variants: list[dict[str, Any]]) -> dict[str, Any] 
 
 
 def _pick_cold_start_variant(variants: list[dict[str, Any]]) -> dict[str, Any] | None:
-    quality_first = [
-        variant
-        for variant in variants
-        if int(variant.get("selected_candidate_count") or 0) > 0
-        and float(variant.get("next_close_positive_rate") or 0.0) >= 0.6
-        and float(variant.get("next_high_hit_rate_at_threshold") or 0.0) >= 0.6
-        and float(dict(variant.get("next_close_return_distribution") or {}).get("mean") or -999.0) >= 0.0
-    ]
+    quality_first = [variant for variant in variants if int(variant.get("selected_candidate_count") or 0) > 0 and float(variant.get("next_close_positive_rate") or 0.0) >= 0.6 and float(variant.get("next_high_hit_rate_at_threshold") or 0.0) >= 0.6 and float(dict(variant.get("next_close_return_distribution") or {}).get("mean") or -999.0) >= 0.0]
     if quality_first:
         return sorted(quality_first, key=_cold_start_quality_sort_key, reverse=True)[0]
     fallback_positive = [variant for variant in variants if int(variant.get("selected_candidate_count") or 0) > 0]
@@ -162,9 +149,7 @@ def render_short_trade_boundary_coverage_variants_markdown(analysis: dict[str, A
     lines.append("")
     lines.append("## Variant Ranking")
     for variant in analysis["variants"][:10]:
-        lines.append(
-            f"- {variant['variant_name']}: selected={variant['selected_candidate_count']}, qualified_pool={variant['qualified_pool_count']}, close_mean={dict(variant['next_close_return_distribution']).get('mean')}, close_positive_rate={variant['next_close_positive_rate']}, high_hit_rate={variant['next_high_hit_rate_at_threshold']}, filtered_reason_counts={variant['filtered_reason_counts']}"
-        )
+        lines.append(f"- {variant['variant_name']}: selected={variant['selected_candidate_count']}, qualified_pool={variant['qualified_pool_count']}, close_mean={dict(variant['next_close_return_distribution']).get('mean')}, close_positive_rate={variant['next_close_positive_rate']}, high_hit_rate={variant['next_high_hit_rate_at_threshold']}, filtered_reason_counts={variant['filtered_reason_counts']}")
     lines.append("")
     lines.append("## Recommendation")
     lines.append(f"- {analysis['recommendation']}")
@@ -266,10 +251,7 @@ def analyze_short_trade_boundary_coverage_variants(
     recommended_variant = _pick_recommended_variant(variants)
     if baseline_variant and recommended_variant:
         recommendation = (
-            f"在当前候选池上，baseline 可留下 {baseline_variant['selected_candidate_count']} 个样本；"
-            f"推荐变体 {recommended_variant['variant_name']} 可留下 {recommended_variant['selected_candidate_count']} 个样本，"
-            f"next_close_positive_rate={recommended_variant['next_close_positive_rate']}，"
-            f"next_high_hit_rate@{round(next_high_hit_threshold, 4)}={recommended_variant['next_high_hit_rate_at_threshold']}。"
+            f"在当前候选池上，baseline 可留下 {baseline_variant['selected_candidate_count']} 个样本；" f"推荐变体 {recommended_variant['variant_name']} 可留下 {recommended_variant['selected_candidate_count']} 个样本，" f"next_close_positive_rate={recommended_variant['next_close_positive_rate']}，" f"next_high_hit_rate@{round(next_high_hit_threshold, 4)}={recommended_variant['next_high_hit_rate_at_threshold']}。"
         )
     else:
         recommendation = "当前报告里没有可分析的 short-trade supplemental candidates。"

@@ -104,11 +104,7 @@ def extract_tradeable_opportunity_pool_summary(
         "no_candidate_entry_count": refresh.get("no_candidate_entry_count") or dict(analysis.get("no_candidate_entry_summary") or {}).get("count"),
         "no_candidate_entry_share_of_tradeable_pool": refresh.get("no_candidate_entry_share_of_tradeable_pool") or dict(analysis.get("no_candidate_entry_summary") or {}).get("share_of_tradeable_pool"),
         "top_no_candidate_entry_industries": refresh.get("top_no_candidate_entry_industries") or list(dict(dict(analysis.get("no_candidate_entry_summary") or {}).get("industry_counts") or {}).keys())[:3],
-        "top_no_candidate_entry_tickers": refresh.get("top_no_candidate_entry_tickers") or [
-            str(row.get("ticker") or "")
-            for row in list(dict(analysis.get("no_candidate_entry_summary") or {}).get("top_ticker_rows") or [])[:3]
-            if row.get("ticker")
-        ],
+        "top_no_candidate_entry_tickers": refresh.get("top_no_candidate_entry_tickers") or [str(row.get("ticker") or "") for row in list(dict(analysis.get("no_candidate_entry_summary") or {}).get("top_ticker_rows") or [])[:3] if row.get("ticker")],
         "top_tradeable_kill_switches": top_tradeable_kill_switches,
         "top_tradeable_kill_switch_labels": [str(row.get("kill_switch") or "") for row in top_tradeable_kill_switches if row.get("kill_switch")],
         "top_strict_goal_false_negative_tickers": [str(row.get("ticker") or "") for row in top_strict_goal_rows if row.get("ticker")],

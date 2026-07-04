@@ -54,13 +54,7 @@ def analyze_btst_primary_roll_forward(
     promotion_ready = bool(execution_row.get("promotion_ready", True))
     promotion_blockers = [str(item) for item in list(execution_row.get("promotion_blockers") or []) if str(item).strip()]
 
-    keep_guardrails_ok = (
-        str(execution_row.get("action_tier") or "") == "primary_promote"
-        and changed_non_target_case_count == 0
-        and next_close_return_mean > 0
-        and next_close_positive_rate >= 0.75
-        and promotion_ready
-    )
+    keep_guardrails_ok = str(execution_row.get("action_tier") or "") == "primary_promote" and changed_non_target_case_count == 0 and next_close_return_mean > 0 and next_close_positive_rate >= 0.75 and promotion_ready
     multi_window_ready = transition_locality == "multi_window_stable" or distinct_window_count >= 2
     default_upgrade_eligible = keep_guardrails_ok and multi_window_ready
 
@@ -78,10 +72,7 @@ def analyze_btst_primary_roll_forward(
 
     if default_upgrade_eligible:
         roll_forward_verdict = "eligible_for_default_upgrade_review"
-        recommendation = (
-            f"{normalized_ticker} 已同时满足 controlled follow-through guardrails 与 multi-window 稳定性，"
-            "可以进入默认升级评审。"
-        )
+        recommendation = f"{normalized_ticker} 已同时满足 controlled follow-through guardrails 与 multi-window 稳定性，" "可以进入默认升级评审。"
         next_actions = [
             f"启动 {normalized_ticker} 默认升级评审，复核 release/outcome 报告并准备 default-route 变更。",
             "确认默认升级不会引入新的 changed_non_target_case_count 或负向 close continuation 漂移。",
@@ -89,10 +80,7 @@ def analyze_btst_primary_roll_forward(
         ]
     elif keep_guardrails_ok:
         roll_forward_verdict = "continue_controlled_roll_forward"
-        recommendation = (
-            f"{normalized_ticker} 继续作为唯一 primary controlled follow-through 入口推进，"
-            "但当前仍缺跨窗口稳定复现证据，因此只能做滚动复核，不能升级成默认规则。"
-        )
+        recommendation = f"{normalized_ticker} 继续作为唯一 primary controlled follow-through 入口推进，" "但当前仍缺跨窗口稳定复现证据，因此只能做滚动复核，不能升级成默认规则。"
         next_actions = [
             f"继续把 {normalized_ticker} 固定为唯一 primary controlled follow-through 入口。",
             "至少补到一个新增独立窗口后，再讨论默认升级。",
@@ -100,10 +88,7 @@ def analyze_btst_primary_roll_forward(
         ]
     else:
         roll_forward_verdict = "halt_or_rollback"
-        recommendation = (
-            f"{normalized_ticker} 当前不再满足 primary follow-through 的 keep guardrails，"
-            "应暂停滚动推进并重新检查 release 语义。"
-        )
+        recommendation = f"{normalized_ticker} 当前不再满足 primary follow-through 的 keep guardrails，" "应暂停滚动推进并重新检查 release 语义。"
         next_actions = [
             f"暂停 {normalized_ticker} 的默认升级讨论并回退到问题排查。",
             "优先定位 release/outcome 语义或 promotion blocker 的新退化来源。",

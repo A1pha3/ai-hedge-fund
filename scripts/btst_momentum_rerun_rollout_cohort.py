@@ -50,9 +50,7 @@ def _require_non_negative_int(name: str, value: Any) -> int:
 def _normalize_candidate(name: str, candidate: Any) -> dict[str, Any]:
     normalized_candidate = _require_object(name, candidate)
     trial_index = _require_non_negative_int(f"{name} trial_index", normalized_candidate.get("trial_index"))
-    cross_window_blocker_count = _require_non_negative_int(
-        f"{name} cross_window_blocker_count", normalized_candidate.get("cross_window_blocker_count")
-    )
+    cross_window_blocker_count = _require_non_negative_int(f"{name} cross_window_blocker_count", normalized_candidate.get("cross_window_blocker_count"))
     risk_blocker_count = _require_non_negative_int(f"{name} risk_blocker_count", normalized_candidate.get("risk_blocker_count"))
 
     normalized_row: dict[str, Any] = dict(normalized_candidate)
@@ -136,9 +134,7 @@ def render_momentum_rerun_rollout_cohort_markdown(payload: dict[str, Any]) -> st
     challengers = list(normalized_payload.get("challengers") or [])
     if challengers:
         for challenger in challengers:
-            lines.append(
-                f"- trial {challenger['trial_index']}: risk={challenger['risk_blocker_count']}, cross_window={challenger['cross_window_blocker_count']}"
-            )
+            lines.append(f"- trial {challenger['trial_index']}: risk={challenger['risk_blocker_count']}, cross_window={challenger['cross_window_blocker_count']}")
     else:
         lines.append("- _none_")
     lines.append("")

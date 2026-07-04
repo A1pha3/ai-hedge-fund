@@ -123,14 +123,7 @@ def build_momentum_rollout_recheck_decision(*, comparison: dict[str, object]) ->
     win_rate_delta = float(next_close_positive_rate_delta) if _is_finite_number(next_close_positive_rate_delta) else None
     payoff_delta = float(next_close_payoff_ratio_delta) if _is_finite_number(next_close_payoff_ratio_delta) else None
 
-    if (
-        not _has_measurement_evidence(candidate)
-        or not _has_measurement_evidence(baseline)
-        or next_close_positive_rate_delta is None
-        or next_close_payoff_ratio_delta is None
-        or not _is_finite_number(next_close_positive_rate_delta)
-        or not _is_finite_number(next_close_payoff_ratio_delta)
-    ):
+    if not _has_measurement_evidence(candidate) or not _has_measurement_evidence(baseline) or next_close_positive_rate_delta is None or next_close_payoff_ratio_delta is None or not _is_finite_number(next_close_positive_rate_delta) or not _is_finite_number(next_close_payoff_ratio_delta):
         win_rate_delta = None
         payoff_delta = None
         action = "fallback_measurement_repair"

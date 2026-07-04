@@ -142,6 +142,7 @@ def _classify_artifact_freshness(
     # treat as stale. (Future tune: replace with a configurable horizon if needed.)
     try:
         from datetime import datetime
+
         gen = datetime.fromisoformat(analysis_generated_at.replace("Z", "+00:00"))
         dec = datetime.fromisoformat(decision_as_of.replace("Z", "+00:00"))
         delta_hours = abs((gen - dec).total_seconds()) / 3600.0
@@ -171,10 +172,7 @@ def _classify_point_in_time_status(
     if not decision_as_of or not data_as_of:
         return "unknown"
     if decision_phase == "post_close_plan":
-        forbidden_fields_present = [
-            field for field in _FIELDS_FORBIDDEN_IN_POST_CLOSE_PLAN
-            if selected_board.get(field) is not None
-        ]
+        forbidden_fields_present = [field for field in _FIELDS_FORBIDDEN_IN_POST_CLOSE_PLAN if selected_board.get(field) is not None]
         # Also block if any row inside priority/confirmed_entries carries forbidden fields.
         for sub_key in ("early_runner_priority", "confirmed_entries", "early_runner_watchlist"):
             for row in list(selected_board.get(sub_key) or []):
@@ -188,6 +186,7 @@ def _classify_point_in_time_status(
             return "unsafe"
     try:
         from datetime import datetime
+
         dec = datetime.fromisoformat(decision_as_of.replace("Z", "+00:00"))
         data = datetime.fromisoformat(data_as_of.replace("Z", "+00:00"))
     except (ValueError, TypeError):
@@ -223,17 +222,12 @@ def _actionability_for_phase(
     if decision_phase == "t_plus_1_open_confirmation":
         if point_in_time_status != "safe":
             return "research_only"
-        if (
-            source_gate_action == "tradeable"
-            and source_deployment_mode == "formal_runtime_pilot_ready"
-            and runtime_confirmation_passed
-        ):
+        if source_gate_action == "tradeable" and source_deployment_mode == "formal_runtime_pilot_ready" and runtime_confirmation_passed:
             return "executable"
         if runtime_confirmation_passed is False:
             return "confirmation_failed"
         return "research_only"
     return "unavailable"
-
 
 
 def _fmt_pct(value: Any, digits: int = 2) -> str:
@@ -665,10 +659,12 @@ def _render_multihorizon_winrate_section(
         lines.append("- 候选票无 ticker 字段，无法计算 T+5/T+10 horizon 胜率。")
         return lines
 
-    lines.extend([
-        "| 股票 | T+5 胜率 | T+5 盈亏比 | T+5 期望 | n | T+10 胜率 | T+10 盈亏比 | T+10 期望 | n |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-    ])
+    lines.extend(
+        [
+            "| 股票 | T+5 胜率 | T+5 盈亏比 | T+5 期望 | n | T+10 胜率 | T+10 盈亏比 | T+10 期望 | n |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+    )
     has_data = False
     for row in rows[:8]:
         ticker = _extract_ticker(row)
@@ -679,19 +675,17 @@ def _render_multihorizon_winrate_section(
         t10 = stats["t10"]
         if t5.sample_count > 0 or t10.sample_count > 0:
             has_data = True
-        lines.append(
-            f"| {_stock_label(row)} "
-            f"| {_fmt_pct(t5.winrate)} | {_fmt_num(t5.payoff_ratio, 2)} | {_fmt_pct_point(t5.expectancy)} | {t5.sample_count} "
-            f"| {_fmt_pct(t10.winrate)} | {_fmt_num(t10.payoff_ratio, 2)} | {_fmt_pct_point(t10.expectancy)} | {t10.sample_count} |"
-        )
+        lines.append(f"| {_stock_label(row)} " f"| {_fmt_pct(t5.winrate)} | {_fmt_num(t5.payoff_ratio, 2)} | {_fmt_pct_point(t5.expectancy)} | {t5.sample_count} " f"| {_fmt_pct(t10.winrate)} | {_fmt_num(t10.payoff_ratio, 2)} | {_fmt_pct_point(t10.expectancy)} | {t10.sample_count} |")
     if not has_data:
         lines = ["## T+5/T+10 horizon 胜率", "", "- tracking_history 无候选票历史数据 (T+5/T+10 未 mature 或 ticker 无匹配)。"]
-    lines.extend([
-        "",
-        f"- 数据源：tracking_history.json ({len(tracking_records)} records, C219 回填)。",
-        "- 口径：per-ticker same-ticker historical (与 next_close_* 同源), 非 per-bucket。",
-        "- horizon 选择：T+5/T+10 是 BUY gate 决策 horizon (C220), T+30 winrate ~45% 不适合短期反弹票评估 (C219)。",
-    ])
+    lines.extend(
+        [
+            "",
+            f"- 数据源：tracking_history.json ({len(tracking_records)} records, C219 回填)。",
+            "- 口径：per-ticker same-ticker historical (与 next_close_* 同源), 非 per-bucket。",
+            "- horizon 选择：T+5/T+10 是 BUY gate 决策 horizon (C220), T+30 winrate ~45% 不适合短期反弹票评估 (C219)。",
+        ]
+    )
     return lines
 
 
@@ -738,10 +732,7 @@ def _render_alpha_reliability_lines(rows: list[dict[str, Any]]) -> list[str]:
             divergence_label = "中性待确认"
         lane_label = "正式执行层" if str(row.get("role") or "") == "formal_selected" else "正式观察层"
         sample_text = "n/a" if evaluable_count is None else str(int(evaluable_count))
-        lines.append(
-            f"| {_stock_label(row)} | {sample_text} | {_fmt_pct(reliability.get('shrunk_win_rate'))} | "
-            f"{_fmt_num(payoff_ratio, 2)} | {divergence_label} | {lane_label} |"
-        )
+        lines.append(f"| {_stock_label(row)} | {sample_text} | {_fmt_pct(reliability.get('shrunk_win_rate'))} | " f"{_fmt_num(payoff_ratio, 2)} | {divergence_label} | {lane_label} |")
     return lines
 
 
@@ -781,10 +772,7 @@ def _render_alpha_factor_cards(rows: list[dict[str, Any]]) -> list[str]:
         )
         if not negative:
             negative = list(_row_field(row, "candidate_reason_codes") or [])[:2]
-        lines.append(
-            f"- `{_stock_label(row)}`：正向证据：{_compact_code_items(positive)}；"
-            f"风险/负项：{_compact_code_items(negative)}；gate：{_gate_status_text(row)}。"
-        )
+        lines.append(f"- `{_stock_label(row)}`：正向证据：{_compact_code_items(positive)}；" f"风险/负项：{_compact_code_items(negative)}；gate：{_gate_status_text(row)}。")
     return lines
 
 
@@ -839,22 +827,11 @@ def _render_gamma_market_gate_lines(selection_snapshot: dict[str, Any], selected
     funnel_diagnostics = dict(selection_snapshot.get("funnel_diagnostics") or {})
     gate_enforcement = dict(funnel_diagnostics.get("btst_regime_gate_enforcement") or {})
     reasons = list(market_state.get("regime_gate_reasons") or [])
-    lines.append(
-        f"- 市场状态：regime_gate_level：`{market_state.get('regime_gate_level') or 'n/a'}`；"
-        f"breadth_ratio：`{_fmt_pct(market_state.get('breadth_ratio'))}`；"
-        f"daily_return：`{_fmt_pct(market_state.get('daily_return'))}`；"
-        f"涨跌停：`{market_state.get('limit_up_count', 'n/a')}` / `{market_state.get('limit_down_count', 'n/a')}`；"
-        f"position_scale：`{_fmt_pct(market_state.get('position_scale'))}`。"
-    )
+    lines.append(f"- 市场状态：regime_gate_level：`{market_state.get('regime_gate_level') or 'n/a'}`；" f"breadth_ratio：`{_fmt_pct(market_state.get('breadth_ratio'))}`；" f"daily_return：`{_fmt_pct(market_state.get('daily_return'))}`；" f"涨跌停：`{market_state.get('limit_up_count', 'n/a')}` / `{market_state.get('limit_down_count', 'n/a')}`；" f"position_scale：`{_fmt_pct(market_state.get('position_scale'))}`。")
     if reasons:
         lines.append(f"- 门控原因：{_compact_code_items(reasons, limit=6)}。")
     if gate_enforcement:
-        lines.append(
-            f"- regime gate enforcement：gate：`{gate_enforcement.get('gate') or 'n/a'}`；"
-            f"mode：`{gate_enforcement.get('mode') or 'n/a'}`；enforced：`{gate_enforcement.get('enforced')}`；"
-            f"buy_orders_cleared：`{gate_enforcement.get('buy_orders_cleared')}`"
-            f"（count `{gate_enforcement.get('buy_orders_cleared_count', 'n/a')}`）。"
-        )
+        lines.append(f"- regime gate enforcement：gate：`{gate_enforcement.get('gate') or 'n/a'}`；" f"mode：`{gate_enforcement.get('mode') or 'n/a'}`；enforced：`{gate_enforcement.get('enforced')}`；" f"buy_orders_cleared：`{gate_enforcement.get('buy_orders_cleared')}`" f"（count `{gate_enforcement.get('buy_orders_cleared_count', 'n/a')}`）。")
         promoted = gate_enforcement.get("shadow_promotion_tickers")
         if promoted:
             lines.append(f"- shadow promotion tickers：{_compact_code_items(promoted, limit=8)}。")
@@ -863,12 +840,7 @@ def _render_gamma_market_gate_lines(selection_snapshot: dict[str, Any], selected
     if buy_orders:
         lines.append("- 风险预算上限：")
         for order in buy_orders[:5]:
-            lines.append(
-                f"  - `{_buy_order_label(order, rows_by_ticker)}`：shares `{order.get('shares', 'n/a')}`，"
-                f"amount `{_fmt_num(order.get('amount'), 2)}`，risk_budget_ratio `{_fmt_num(order.get('risk_budget_ratio'), 2)}`，"
-                f"gate `{order.get('risk_budget_gate') or 'n/a'}`，contract `{order.get('execution_contract_bucket') or 'n/a'}`，"
-                f"constraint `{order.get('constraint_binding') or 'n/a'}`。"
-            )
+            lines.append(f"  - `{_buy_order_label(order, rows_by_ticker)}`：shares `{order.get('shares', 'n/a')}`，" f"amount `{_fmt_num(order.get('amount'), 2)}`，risk_budget_ratio `{_fmt_num(order.get('risk_budget_ratio'), 2)}`，" f"gate `{order.get('risk_budget_gate') or 'n/a'}`，contract `{order.get('execution_contract_bucket') or 'n/a'}`，" f"constraint `{order.get('constraint_binding') or 'n/a'}`。")
     else:
         lines.append("- 当前 selection_snapshot 没有 buy_orders 风险预算明细。")
     lines.append("- 组合约束：同主题候选不叠加加仓，市场门控为 `halt/risk_off/crisis` 时只允许确认后小仓复核或放弃。")
@@ -1024,9 +996,7 @@ def _normalized_allowed_sections(value: Any) -> list[str]:
 
 
 def _group_rows_by_allowed_sections(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    grouped_rows: dict[str, list[dict[str, Any]]] = {
-        section: [] for section in _ALLOWED_SECTION_ORDER
-    }
+    grouped_rows: dict[str, list[dict[str, Any]]] = {section: [] for section in _ALLOWED_SECTION_ORDER}
     for row in rows:
         for section in _normalized_allowed_sections(row.get("allowed_sections")):
             if section in grouped_rows:
@@ -1137,21 +1107,13 @@ def _build_semantic_conflicts(*, report_mode: str, rows: list[dict[str, Any]]) -
             trade_bias=trade_bias,
         )
         if str(row.get("execution_state") or "").strip() != str(expected_semantics.get("execution_state") or "").strip():
-            conflicts.append(
-                f"{ticker_label}:expected_execution_state={_format_expected(expected_semantics.get('execution_state'))}"
-            )
+            conflicts.append(f"{ticker_label}:expected_execution_state={_format_expected(expected_semantics.get('execution_state'))}")
         if str(row.get("max_allowed_state_today") or "").strip() != str(expected_semantics.get("max_allowed_state_today") or "").strip():
-            conflicts.append(
-                f"{ticker_label}:expected_max_allowed_state_today={_format_expected(expected_semantics.get('max_allowed_state_today'))}"
-            )
+            conflicts.append(f"{ticker_label}:expected_max_allowed_state_today={_format_expected(expected_semantics.get('max_allowed_state_today'))}")
         if row.get("formal_buy_allowed") is not expected_semantics.get("formal_buy_allowed"):
-            conflicts.append(
-                f"{ticker_label}:expected_formal_buy_allowed={_format_expected(expected_semantics.get('formal_buy_allowed'))}"
-            )
+            conflicts.append(f"{ticker_label}:expected_formal_buy_allowed={_format_expected(expected_semantics.get('formal_buy_allowed'))}")
         if _normalized_allowed_sections(row.get("allowed_sections")) != _normalized_allowed_sections(expected_semantics.get("allowed_sections")):
-            conflicts.append(
-                f"{ticker_label}:expected_allowed_sections={_format_expected(expected_semantics.get('allowed_sections'))}"
-            )
+            conflicts.append(f"{ticker_label}:expected_allowed_sections={_format_expected(expected_semantics.get('allowed_sections'))}")
     return conflicts
 
 
@@ -1247,10 +1209,7 @@ def _build_source_of_truth_snapshot(
             for row in semantic_rows
             if str(row.get("role") or "").strip() == "formal_selected"
         ],
-        "render_groups": {
-            section: [str(row.get("ticker") or "") for row in grouped_rows.get(section, [])]
-            for section in _ALLOWED_SECTION_ORDER
-        },
+        "render_groups": {section: [str(row.get("ticker") or "") for row in grouped_rows.get(section, [])] for section in _ALLOWED_SECTION_ORDER},
         "forbidden_semantics_hits": list(forbidden_semantics_hits),
     }
 
@@ -1632,13 +1591,9 @@ def _render_contract_mirror_lines(
     if not primary_action:
         lines.append("- 当前没有 formal 主线，对应 contract 保持空仓观察，release_authority `none`。")
         return lines
-    lines.append(
-        f"- 当前状态 `{primary_action.get('execution_state') or 'n/a'}`；当日上限 `{primary_action.get('max_allowed_state_today') or 'n/a'}`；放行权 `{primary_action.get('release_authority') or 'none'}`；release_authority `{primary_action.get('release_authority') or 'none'}`。"
-    )
+    lines.append(f"- 当前状态 `{primary_action.get('execution_state') or 'n/a'}`；当日上限 `{primary_action.get('max_allowed_state_today') or 'n/a'}`；放行权 `{primary_action.get('release_authority') or 'none'}`；release_authority `{primary_action.get('release_authority') or 'none'}`。")
     if control_tower:
-        lines.append(
-            f"- effective_trade_bias `{control_tower.get('effective_trade_bias') or 'n/a'}`；reason_codes { _compact_code_items(control_tower.get('reason_codes'), limit=6) }。"
-        )
+        lines.append(f"- effective_trade_bias `{control_tower.get('effective_trade_bias') or 'n/a'}`；reason_codes { _compact_code_items(control_tower.get('reason_codes'), limit=6) }。")
     if report_mode == "confirmation_review_only":
         lines.append("- 这里只镜像主执行 contract，不自动等价成正式下单许可。")
     else:
@@ -1743,11 +1698,7 @@ def _render_rule_doc(
         "",
         f"- 信号日：`{signal_date_compact}`；目标交易日：`{rule_report.get('next_date') or brief.get('next_trade_date') or 'n/a'}`。",
         f"- 规则池：`pool_size={rule_report.get('pool_size')}`，`selected_count={rule_report.get('selected_count')}`，`near_miss_count={rule_report.get('near_miss_count')}`。",
-        (
-            "- 多智能体 formal selected：`0`（默认空仓/只观察，不把规则前排当执行清单；若盘中出现确认信号，再以 BTST-LLM/EXEC-CHECKLIST 为准复核）。"
-            if formal_selected_count <= 0
-            else f"- 多智能体 formal selected：`{formal_selected_count}`（执行以 BTST-LLM/EXEC-CHECKLIST 为准）。"
-        ),
+        ("- 多智能体 formal selected：`0`（默认空仓/只观察，不把规则前排当执行清单；若盘中出现确认信号，再以 BTST-LLM/EXEC-CHECKLIST 为准复核）。" if formal_selected_count <= 0 else f"- 多智能体 formal selected：`{formal_selected_count}`（执行以 BTST-LLM/EXEC-CHECKLIST 为准）。"),
         f"- 规则报告来源：`{rule_report_path}`。",
         f"- 多智能体运行目录：`{report_dir}`。",
         "",
@@ -1958,30 +1909,28 @@ def _render_plain_language_doc(
         "",
         "## 先说结论",
         "",
-        (
-            f"确认复核主线仍以 `{_stock_label(primary_action)}` 这条主线为准，early-runner 不是替代品，而是补充观察层。{status_note}"
-            if report_mode == "confirmation_review_only"
-            else f"正式 BTST 仍以 `{_stock_label(primary_action)}` 这条主线为准，early-runner 不是替代品，而是补充观察层。{status_note}"
-        ),
+        (f"确认复核主线仍以 `{_stock_label(primary_action)}` 这条主线为准，early-runner 不是替代品，而是补充观察层。{status_note}" if report_mode == "confirmation_review_only" else f"正式 BTST 仍以 `{_stock_label(primary_action)}` 这条主线为准，early-runner 不是替代品，而是补充观察层。{status_note}"),
         "",
     ]
     lines.extend(_render_primary_contract_lines(primary_action, report_mode=report_mode))
-    lines.extend([
-        "",
-        "## 这次为什么要把 Early Runner 写进来",
-        "",
-        "- 正式 BTST 更适合做最终执行排序。",
-        "- early-runner 更适合做更早的补充观察和盘中复审。",
-        "- 两边都同时命中的票，比只出现在单边的票更值得优先盯。",
-        "",
-        "## 正式 BTST 在看什么",
-        "",
-        f"- 主票是 `{_stock_label(primary_action)}`，执行模式是 `{primary_action.get('preferred_entry_mode') or 'n/a'}`。",
-        f"- 正式 selected 数量是 `{len(selected_actions)}`，watch 数量是 `{len(watch_actions)}`。",
-        "",
-        "## Early Runner 在看什么",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "## 这次为什么要把 Early Runner 写进来",
+            "",
+            "- 正式 BTST 更适合做最终执行排序。",
+            "- early-runner 更适合做更早的补充观察和盘中复审。",
+            "- 两边都同时命中的票，比只出现在单边的票更值得优先盯。",
+            "",
+            "## 正式 BTST 在看什么",
+            "",
+            f"- 主票是 `{_stock_label(primary_action)}`，执行模式是 `{primary_action.get('preferred_entry_mode') or 'n/a'}`。",
+            f"- 正式 selected 数量是 `{len(selected_actions)}`，watch 数量是 `{len(watch_actions)}`。",
+            "",
+            "## Early Runner 在看什么",
+            "",
+        ]
+    )
     lines.extend(_render_early_runner_overlay(early_runner, [*selected_actions, *watch_actions]))
     lines.extend(
         [
@@ -2048,11 +1997,7 @@ def _render_forum_doc(
         "",
         f"这次 early-runner 状态：`{early_runner.get('status')}`；交集高亮 `{overlap}`；{extra_label} `{extra}`。",
         "",
-        (
-            "使用顺序：确认复核主线决定先看谁，early-runner 只做交集优先和补充复审，不替代正式执行单。"
-            if report_mode == "confirmation_review_only"
-            else "使用顺序：正式 BTST 决定主票，early-runner 只做交集优先和补充复审，不替代正式执行单。"
-        ),
+        ("使用顺序：确认复核主线决定先看谁，early-runner 只做交集优先和补充复审，不替代正式执行单。" if report_mode == "confirmation_review_only" else "使用顺序：正式 BTST 决定主票，early-runner 只做交集优先和补充复审，不替代正式执行单。"),
     ]
     return "\n".join(lines) + "\n"
 
@@ -2081,10 +2026,7 @@ def _btst_0422_p7_gap_overlay_guardrail_from_flags(flags: dict[str, Any]) -> str
 
     warn_pct = f"{warn * 100:.1f}%"
     halt_pct = f"{halt * 100:.1f}%"
-    return (
-        f"Gap overlay (BTST 0422 P7/{mode}): 若 T+1 开盘相对 T 收盘跳空低开 ≤ -{warn_pct}，只允许确认后减仓入场；"
-        f"若 ≤ -{halt_pct}，当日禁入。"
-    )
+    return f"Gap overlay (BTST 0422 P7/{mode}): 若 T+1 开盘相对 T 收盘跳空低开 ≤ -{warn_pct}，只允许确认后减仓入场；" f"若 ≤ -{halt_pct}，当日禁入。"
 
 
 def _btst_regime_gate_guardrail_from_snapshot(selection_snapshot: dict[str, Any]) -> str | None:
@@ -2094,10 +2036,7 @@ def _btst_regime_gate_guardrail_from_snapshot(selection_snapshot: dict[str, Any]
         return None
 
     if level == "risk_off":
-        return (
-            "Regime gate (risk_off): 默认不做正式买入，只允许观察/确认性复审；"
-            "若无明确修复信号则空仓。"
-        )
+        return "Regime gate (risk_off): 默认不做正式买入，只允许观察/确认性复审；" "若无明确修复信号则空仓。"
 
     if level in {"crisis", "halt"}:
         return f"Regime gate ({level}): 当日按门控降级执行，只允许确认后小仓试错或空仓。"
@@ -2207,9 +2146,7 @@ def _render_checklist_doc(
     lines.extend(_render_execution_state_table(execution_state_rows, title=section_labels["execution_state_table_title"]))
     lines.extend(["", f"## {section_labels['checklist_execution_title']}", ""])
     if not primary_execution_rows:
-        lines.append(
-            f"- [ ] {section_labels['checklist_execution_item_label']}：无（formal selected=0：默认空仓/只观察；等待盘中确认信号再决定）"
-        )
+        lines.append(f"- [ ] {section_labels['checklist_execution_item_label']}：无（formal selected=0：默认空仓/只观察；等待盘中确认信号再决定）")
     else:
         for row in primary_execution_rows[:3]:
             lines.append(f"- [ ] {section_labels['checklist_execution_item_label']}：`{_stock_label(row)}`，模式 `{row.get('preferred_entry_mode') or 'n/a'}`，" f"收盘胜率 `{_fmt_pct(_row_historical_metric(row, 'next_close_positive_rate'))}`，" f"盈亏比 `{_fmt_num(_row_historical_metric(row, 'next_close_payoff_ratio'), 2)}`，" f"说明：{_historical_reading_note(row)}")
@@ -2223,9 +2160,7 @@ def _render_checklist_doc(
     if blocked_rows:
         lines.extend(["", "## 阻断观察", ""])
         for row in blocked_rows[:6]:
-            lines.append(
-                f"- [ ] 阻断观察：`{_stock_label(row)}`，当前 execution_state `{row.get('execution_state') or 'blocked'}`，只做 blocker 复核，不进入当日执行/观察清单。"
-            )
+            lines.append(f"- [ ] 阻断观察：`{_stock_label(row)}`，当前 execution_state `{row.get('execution_state') or 'blocked'}`，只做 blocker 复核，不进入当日执行/观察清单。")
     lines.extend(["", "## 交集优先复审", ""])
     if _safe_rows(intersection_summary.get("overlap_rows")):
         for row in _safe_rows(intersection_summary.get("overlap_rows"))[:5]:
@@ -2516,15 +2451,9 @@ def generate_btst_doc_bundle(
             probe_rule_report = _read_json(rule_report_path_probe)
         except (OSError, json.JSONDecodeError):
             probe_rule_report = {}
-    data_as_of = (
-        _isoformat(probe_rule_report.get("data_as_of"))
-        or _isoformat(probe_rule_report.get("as_of"))
-        or f"{signal_date_iso}T15:00:00+08:00"
-    )
+    data_as_of = _isoformat(probe_rule_report.get("data_as_of")) or _isoformat(probe_rule_report.get("as_of")) or f"{signal_date_iso}T15:00:00+08:00"
     decision_as_of = f"{signal_date_iso}T23:59:59+08:00"
-    now_iso = _isoformat(probe_rule_report.get("generated_at")) or _isoformat(
-        (probe_rule_report.get("meta") or {}).get("generated_at")
-    ) or data_as_of
+    now_iso = _isoformat(probe_rule_report.get("generated_at")) or _isoformat((probe_rule_report.get("meta") or {}).get("generated_at")) or data_as_of
     session_summary = _read_json(resolved_report_dir / "session_summary.json")
     followup_paths = dict(session_summary.get("btst_followup") or {})
     brief = _read_json(Path(followup_paths["brief_json"]))
@@ -2587,14 +2516,7 @@ def generate_btst_doc_bundle(
     else:
         target_output_dir = resolved_output_dir
 
-    effective_next_trade_date_iso = str(
-        brief.get("next_trade_date")
-        or (
-            calendar_resolution.next_trade_date_iso
-            if calendar_resolution
-            else ""
-        )
-    ).strip()
+    effective_next_trade_date_iso = str(brief.get("next_trade_date") or (calendar_resolution.next_trade_date_iso if calendar_resolution else "")).strip()
 
     early_status = str(early_runner.get("status") or "unavailable")
     control_selected = _enrich_formal_rows(
@@ -2857,23 +2779,10 @@ def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, An
     # `enforced=True` or `veto_owner=market_gate`, not from the absence of
     # `buy_orders_cleared`. `market_gate=risk_off` is also not a real gate value
     # (risk_off is a regime_gate_level, not a market_gate).
-    gate_override_active = bool(
-        shared_report_mode
-        and shared_report_mode != "formal_execution"
-        and (
-            shared_veto_owner == "market_gate"
-            or shared_market_gate == "halt"
-            or shared_regime_gate_level in {"crisis", "halt", "risk_off"}
-            or shared_gate_enforced is True
-        )
-    )
+    gate_override_active = bool(shared_report_mode and shared_report_mode != "formal_execution" and (shared_veto_owner == "market_gate" or shared_market_gate == "halt" or shared_regime_gate_level in {"crisis", "halt", "risk_off"} or shared_gate_enforced is True))
     reasons: list[str] = []
     if gate_override_active:
-        reasons.append(
-            f"两套 profile 都被市场门控压到 `{shared_report_mode}`（gate `{shared_market_gate or 'n/a'}`，"
-            f"regime_gate_level `{shared_regime_gate_level or 'n/a'}`，enforced `{shared_gate_enforced}`，"
-            f"veto_owner `{shared_veto_owner or 'n/a'}`）；今天先按门控做复核，不把 profile 差异当主裁决。"
-        )
+        reasons.append(f"两套 profile 都被市场门控压到 `{shared_report_mode}`（gate `{shared_market_gate or 'n/a'}`，" f"regime_gate_level `{shared_regime_gate_level or 'n/a'}`，enforced `{shared_gate_enforced}`，" f"veto_owner `{shared_veto_owner or 'n/a'}`）；今天先按门控做复核，不把 profile 差异当主裁决。")
     if len(ranked_profiles) >= 2:
         top = ranked_profiles[0]
         runner_up = ranked_profiles[1]
@@ -2928,11 +2837,7 @@ def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, An
     if len(ranked_profiles) >= 2:
         top = ranked_profiles[0]
         runner_up = ranked_profiles[1]
-        has_count_diff = (
-            top["intersection_count"] != runner_up["intersection_count"]
-            or top["only_early_runner_count"] != runner_up["only_early_runner_count"]
-            or top["second_entry_count"] != runner_up["second_entry_count"]
-        )
+        has_count_diff = top["intersection_count"] != runner_up["intersection_count"] or top["only_early_runner_count"] != runner_up["only_early_runner_count"] or top["second_entry_count"] != runner_up["second_entry_count"]
     # effective_decision_diff is true only when profile actually changes the real
     # candidate set or execution semantics.  For now (P0B) this is conservatively
     # set to false because profiles only change doc rendering thresholds, not
@@ -2941,10 +2846,7 @@ def _build_profile_doc_bundle_comparison(profile_results: dict[str, dict[str, An
     effective_decision_diff = False  # P0B: always false; P2 will compute from real diffs.
     # When no effective decision diff exists, suppress strategy-oriented language.
     if not effective_decision_diff and not has_count_diff and not has_layer_diff:
-        reasons.append(
-            "P0B note: 当前 profile 只改变文档展示阈值，未改变真实候选集合或执行语义；"
-            "以下推荐仅反映 conservative 做风控基线的默认选择，不代表已验证的策略优势。"
-        )
+        reasons.append("P0B note: 当前 profile 只改变文档展示阈值，未改变真实候选集合或执行语义；" "以下推荐仅反映 conservative 做风控基线的默认选择，不代表已验证的策略优势。")
     return {
         "profiles": sorted(profiles, key=lambda item: str(item["profile"])),
         "recommended_profile": recommended_profile,
@@ -2978,9 +2880,7 @@ def _render_profile_doc_bundle_comparison_markdown(signal_date_compact: str, com
         "| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
     ]
     for item in list(comparison.get("profiles") or []):
-        lines.append(
-            f"| {item['profile']} | {item.get('early_runner_status')} | {item.get('report_mode') or 'n/a'} | {item.get('market_gate') or 'n/a'} | {item.get('buy_orders_cleared')} | {item.get('intersection_count')} | {item.get('only_early_runner_count')} | {item.get('second_entry_count')} | {item.get('written_file_count')} | {item.get('output_dir')} |"
-        )
+        lines.append(f"| {item['profile']} | {item.get('early_runner_status')} | {item.get('report_mode') or 'n/a'} | {item.get('market_gate') or 'n/a'} | {item.get('buy_orders_cleared')} | {item.get('intersection_count')} | {item.get('only_early_runner_count')} | {item.get('second_entry_count')} | {item.get('written_file_count')} | {item.get('output_dir')} |")
     lines.extend(["", "## 推荐理由", ""])
     if list(comparison.get("recommendation_reasons") or []):
         for reason in list(comparison.get("recommendation_reasons") or []):
@@ -2997,9 +2897,7 @@ def _render_profile_doc_bundle_comparison_markdown(signal_date_compact: str, com
             ]
         )
         for item in layer_differences:
-            lines.append(
-                f"| {item.get('layer_label') or 'n/a'} | {('、'.join(item.get('recommended_unique') or []) or '无')} | {('、'.join(item.get('runner_up_unique') or []) or '无')} | {item.get('summary') or 'n/a'} |"
-            )
+            lines.append(f"| {item.get('layer_label') or 'n/a'} | {('、'.join(item.get('recommended_unique') or []) or '无')} | {('、'.join(item.get('runner_up_unique') or []) or '无')} | {item.get('summary') or 'n/a'} |")
     else:
         lines.append("- 今天两套 profile 在正式执行层、观察层、交集优先复审层、补充复审层和回补机会层都没有票级差异。")
     return "\n".join(lines) + "\n"

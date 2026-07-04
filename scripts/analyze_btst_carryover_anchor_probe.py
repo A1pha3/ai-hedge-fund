@@ -125,11 +125,7 @@ def _summarize_anchor(anchor: dict[str, Any], rows: list[dict[str, Any]]) -> dic
     same_family_rows = [row for row in rows if str(row.get("watch_candidate_family") or "") == family]
     same_source_rows = [row for row in rows if str(row.get("candidate_source") or "") == candidate_source]
     same_family_source_rows = [row for row in same_family_rows if str(row.get("candidate_source") or "") == candidate_source]
-    same_family_source_score_catalyst_rows = [
-        row
-        for row in same_family_source_rows
-        if str(row.get("score_bucket") or "") == score_bucket and str(row.get("catalyst_bucket") or "") == catalyst_bucket
-    ]
+    same_family_source_score_catalyst_rows = [row for row in same_family_source_rows if str(row.get("score_bucket") or "") == score_bucket and str(row.get("catalyst_bucket") or "") == catalyst_bucket]
     same_source_score_rows = [row for row in same_source_rows if str(row.get("score_bucket") or "") == score_bucket]
 
     return {
@@ -186,15 +182,8 @@ def _format_rows(rows: list[dict[str, Any]], limit: int = 10) -> list[dict[str, 
 def _build_recommendation(best_probe: dict[str, Any], target_prior: dict[str, Any]) -> str:
     if bool(best_probe.get("exact_match")) and list(best_probe.get("same_family_source_score_catalyst_rows") or []):
         top_anchor = best_probe.get("anchor") or {}
-        return (
-            f"已找到与当前 prior 指纹完全一致的 anchor：{top_anchor.get('ticker')}@{top_anchor.get('trade_date')}。"
-            "下一步应直接审计其 same-family-source-score-catalyst peer 的 closed-cycle 质量，再决定是否进入极窄 promotion review。"
-        )
-    return (
-        "当前没有完全重建出 backfilled prior 的原始 anchor，说明这条 carryover 链存在 source/family 漂移或跨报告回收。"
-        f" 但最接近的 anchor 与目标指纹距离仅为 {best_probe.get('fingerprint_distance')}，"
-        "可先以它为候选链路继续核验 peer 质量，而不是贸然放松选股阈值。"
-    )
+        return f"已找到与当前 prior 指纹完全一致的 anchor：{top_anchor.get('ticker')}@{top_anchor.get('trade_date')}。" "下一步应直接审计其 same-family-source-score-catalyst peer 的 closed-cycle 质量，再决定是否进入极窄 promotion review。"
+    return "当前没有完全重建出 backfilled prior 的原始 anchor，说明这条 carryover 链存在 source/family 漂移或跨报告回收。" f" 但最接近的 anchor 与目标指纹距离仅为 {best_probe.get('fingerprint_distance')}，" "可先以它为候选链路继续核验 peer 质量，而不是贸然放松选股阈值。"
 
 
 def _build_no_anchor_recommendation(ticker: str) -> str:
@@ -225,10 +214,7 @@ def analyze_btst_carryover_anchor_probe(
         return {
             "ticker": ticker,
             "report_dir": str(resolved_report_dir),
-            "target_row": {
-                key: target_row.get(key)
-                for key in ("ticker", "decision", "candidate_source", "preferred_entry_mode", "historical_execution_quality_label", "historical_entry_timing_bias")
-            },
+            "target_row": {key: target_row.get(key) for key in ("ticker", "decision", "candidate_source", "preferred_entry_mode", "historical_execution_quality_label", "historical_entry_timing_bias")},
             "target_prior_fingerprint": {key: int(target_prior.get(key) or 0) for key in COUNT_KEYS},
             "historical_candidate_count": len(historical_rows),
             "ticker_anchor_candidate_count": 0,
@@ -242,10 +228,7 @@ def analyze_btst_carryover_anchor_probe(
         fingerprint_distance = _fingerprint_distance(summarized["fingerprint"], target_prior)
         probes.append(
             {
-                "anchor": {
-                    key: summarized["anchor"].get(key)
-                    for key in ("trade_date", "ticker", "watch_candidate_family", "candidate_source", "score_bucket", "catalyst_bucket", "decision", "score_target")
-                },
+                "anchor": {key: summarized["anchor"].get(key) for key in ("trade_date", "ticker", "watch_candidate_family", "candidate_source", "score_bucket", "catalyst_bucket", "decision", "score_target")},
                 "fingerprint": summarized["fingerprint"],
                 "fingerprint_distance": fingerprint_distance,
                 "exact_match": fingerprint_distance == 0,
@@ -275,10 +258,7 @@ def analyze_btst_carryover_anchor_probe(
     return {
         "ticker": ticker,
         "report_dir": str(resolved_report_dir),
-        "target_row": {
-            key: target_row.get(key)
-            for key in ("ticker", "decision", "candidate_source", "preferred_entry_mode", "historical_execution_quality_label", "historical_entry_timing_bias")
-        },
+        "target_row": {key: target_row.get(key) for key in ("ticker", "decision", "candidate_source", "preferred_entry_mode", "historical_execution_quality_label", "historical_entry_timing_bias")},
         "target_prior_fingerprint": {key: int(target_prior.get(key) or 0) for key in COUNT_KEYS},
         "historical_candidate_count": len(historical_rows),
         "ticker_anchor_candidate_count": len(ticker_rows),
@@ -301,10 +281,7 @@ def render_btst_carryover_anchor_probe_markdown(analysis: dict[str, Any]) -> str
     lines.append("")
     lines.append("## Top Probes")
     for probe in list(analysis.get("probes") or []):
-        lines.append(
-            f"- anchor={probe.get('anchor')} fingerprint={probe.get('fingerprint')} "
-            f"fingerprint_distance={probe.get('fingerprint_distance')} exact_match={probe.get('exact_match')}"
-        )
+        lines.append(f"- anchor={probe.get('anchor')} fingerprint={probe.get('fingerprint')} " f"fingerprint_distance={probe.get('fingerprint_distance')} exact_match={probe.get('exact_match')}")
         lines.append(f"  - same_family_source_surface_summary={probe.get('same_family_source_surface_summary')}")
         lines.append(f"  - same_family_source_score_catalyst_surface_summary={probe.get('same_family_source_score_catalyst_surface_summary')}")
         lines.append(f"  - same_source_score_surface_summary={probe.get('same_source_score_surface_summary')}")

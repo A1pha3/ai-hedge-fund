@@ -427,9 +427,7 @@ def render_btst_rollout_governance_board_markdown(analysis: dict[str, Any]) -> s
     if not frontier_constraints:
         lines.append("- none")
     for row in frontier_constraints:
-        lines.append(
-            f"- frontier_id={row.get('frontier_id')} status={row.get('status')} passing_variant_count={row.get('passing_variant_count')} headline={row.get('headline')}"
-        )
+        lines.append(f"- frontier_id={row.get('frontier_id')} status={row.get('status')} passing_variant_count={row.get('passing_variant_count')} headline={row.get('headline')}")
         lines.append(f"  best_variant: {row.get('best_variant_name')}")
         lines.append(f"  best_variant_released_tickers: {row.get('best_variant_released_tickers')}")
         lines.append(f"  best_variant_focus_released_tickers: {row.get('best_variant_focus_released_tickers')}")
@@ -437,9 +435,7 @@ def render_btst_rollout_governance_board_markdown(analysis: dict[str, Any]) -> s
     lines.append("")
     lines.append("## Governance Rows")
     for row in analysis["governance_rows"]:
-        lines.append(
-            f"- ticker={row['ticker']} governance_tier={row['governance_tier']} status={row['status']} blocker={row['blocker']}"
-        )
+        lines.append(f"- ticker={row['ticker']} governance_tier={row['governance_tier']} status={row['status']} blocker={row['blocker']}")
         lines.append(f"  next_step: {row['next_step']}")
     lines.append("")
     lines.append("## Immediate Next 3")

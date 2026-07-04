@@ -48,9 +48,7 @@ def _render_table_markdown(payload: dict[str, Any]) -> str:
         lines.append("- none")
         return "\n".join(lines) + "\n"
     for row in entries:
-        lines.append(
-            f"- {row.get('ticker')}: pre_score={row.get('pre_score')} confirm_score={row.get('confirm_score')} candidate_source={row.get('candidate_source')} hot_theme_board={row.get('hot_theme_board')} entry_status={row.get('entry_status')}"
-        )
+        lines.append(f"- {row.get('ticker')}: pre_score={row.get('pre_score')} confirm_score={row.get('confirm_score')} candidate_source={row.get('candidate_source')} hot_theme_board={row.get('hot_theme_board')} entry_status={row.get('entry_status')}")
     return "\n".join(lines) + "\n"
 
 

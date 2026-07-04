@@ -49,11 +49,7 @@ def _first(items: list[Any], default: Any = None) -> Any:
 
 def _collect_closed_frontiers(rollout_governance: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     frontier_constraints = [dict(row or {}) for row in list(rollout_governance.get("frontier_constraints") or [])]
-    closed_frontiers = [
-        row
-        for row in frontier_constraints
-        if "closed" in str(row.get("status") or "")
-    ]
+    closed_frontiers = [row for row in frontier_constraints if "closed" in str(row.get("status") or "")]
     return frontier_constraints, closed_frontiers
 
 
@@ -98,11 +94,7 @@ def _extract_latest_btst_candidate(report_dir: Path) -> dict[str, Any] | None:
 
 def _select_latest_btst_candidate(reports_root: str | Path) -> dict[str, Any] | None:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
-    candidates = [
-        candidate
-        for candidate in (_extract_latest_btst_candidate(path) for path in resolved_reports_root.iterdir())
-        if candidate is not None
-    ]
+    candidates = [candidate for candidate in (_extract_latest_btst_candidate(path) for path in resolved_reports_root.iterdir()) if candidate is not None]
     if not candidates:
         return None
     return max(candidates, key=lambda candidate: candidate["rank"])
@@ -174,9 +166,7 @@ def _merge_btst_followup_payloads(followups: list[dict[str, Any]]) -> dict[str, 
     if not followups:
         return {}
     primary_followup = dict(sorted(followups, key=lambda followup: followup.get("rank"), reverse=True)[0])
-    merged_entries = _merge_btst_followup_entries(
-        [dict(entry or {}) for followup in followups for entry in list(dict(followup or {}).get("entries") or [])]
-    )
+    merged_entries = _merge_btst_followup_entries([dict(entry or {}) for followup in followups for entry in list(dict(followup or {}).get("entries") or [])])
     if merged_entries:
         selected_count = sum(1 for entry in merged_entries if str(entry.get("bucket") or "") == "selected_entries")
         near_miss_count = sum(1 for entry in merged_entries if str(entry.get("bucket") or "") == "near_miss_entries")
@@ -194,11 +184,7 @@ def _merge_btst_followup_payloads(followups: list[dict[str, Any]]) -> dict[str, 
             "opportunity_pool_count": opportunity_pool_count,
             "rejected_count": rejected_count,
             "entries": merged_entries,
-            "evidence_report_dirs": [
-                str(dict(followup or {}).get("report_dir") or "").strip()
-                for followup in followups
-                if str(dict(followup or {}).get("report_dir") or "").strip()
-            ],
+            "evidence_report_dirs": [str(dict(followup or {}).get("report_dir") or "").strip() for followup in followups if str(dict(followup or {}).get("report_dir") or "").strip()],
         }
     )
     return primary_followup
@@ -285,12 +271,7 @@ def _derive_execution_surface_constraints(btst_followups: list[dict[str, Any]]) 
         if not entries:
             continue
 
-        post_gate_continuation_entries = [
-            entry
-            for entry in entries
-            if entry.get("candidate_source") == "post_gate_liquidity_competition_shadow"
-            and entry.get("bucket") in {"selected_entries", "near_miss_entries"}
-        ]
+        post_gate_continuation_entries = [entry for entry in entries if entry.get("candidate_source") == "post_gate_liquidity_competition_shadow" and entry.get("bucket") in {"selected_entries", "near_miss_entries"}]
         if post_gate_continuation_entries:
             continuation_focus_tickers = [entry.get("ticker") for entry in post_gate_continuation_entries if entry.get("ticker")]
             has_selected_post_gate = any(str(entry.get("bucket") or "") == "selected_entries" for entry in post_gate_continuation_entries)
@@ -309,21 +290,11 @@ def _derive_execution_surface_constraints(btst_followups: list[dict[str, Any]]) 
                         "opportunity_pool_count": followup.get("opportunity_pool_count"),
                         "entries": post_gate_continuation_entries,
                     },
-                    "recommendation": (
-                        "Keep post-gate shadow names in continuation review until a selected row persists across independent windows."
-                        if has_selected_post_gate
-                        else "Keep post-gate shadow names in observation / continuation review until a selected row persists across independent windows."
-                    ),
+                    "recommendation": ("Keep post-gate shadow names in continuation review until a selected row persists across independent windows." if has_selected_post_gate else "Keep post-gate shadow names in observation / continuation review until a selected row persists across independent windows."),
                 }
             )
 
-        upstream_intraday_only_selected = [
-            entry
-            for entry in entries
-            if entry.get("candidate_source") == "upstream_liquidity_corridor_shadow"
-            and entry.get("bucket") == "selected_entries"
-            and entry.get("historical_execution_quality_label") in {"intraday_only", "gap_chase_risk"}
-        ]
+        upstream_intraday_only_selected = [entry for entry in entries if entry.get("candidate_source") == "upstream_liquidity_corridor_shadow" and entry.get("bucket") == "selected_entries" and entry.get("historical_execution_quality_label") in {"intraday_only", "gap_chase_risk"}]
         if upstream_intraday_only_selected:
             focus_tickers = [entry.get("ticker") for entry in upstream_intraday_only_selected if entry.get("ticker")]
             constraints.append(
@@ -339,20 +310,11 @@ def _derive_execution_surface_constraints(btst_followups: list[dict[str, Any]]) 
                         "selected_count": len(upstream_intraday_only_selected),
                         "entries": upstream_intraday_only_selected,
                     },
-                    "recommendation": (
-                        "Keep upstream shadow selected names in confirmation-only execution when historical follow-through is intraday-only; "
-                        "do not treat them as standard overnight BTST holds without fresh same-day strength."
-                    ),
+                    "recommendation": ("Keep upstream shadow selected names in confirmation-only execution when historical follow-through is intraday-only; " "do not treat them as standard overnight BTST holds without fresh same-day strength."),
                 }
             )
 
-        shadow_profitability_cliff = [
-            entry
-            for entry in entries
-            if entry.get("candidate_source") in {"post_gate_liquidity_competition_shadow", "upstream_liquidity_corridor_shadow"}
-            and entry.get("bucket") in {"opportunity_pool_entries", "rejected_entries"}
-            and "profitability_hard_cliff" in list(entry.get("top_reasons") or [])
-        ]
+        shadow_profitability_cliff = [entry for entry in entries if entry.get("candidate_source") in {"post_gate_liquidity_competition_shadow", "upstream_liquidity_corridor_shadow"} and entry.get("bucket") in {"opportunity_pool_entries", "rejected_entries"} and "profitability_hard_cliff" in list(entry.get("top_reasons") or [])]
         if shadow_profitability_cliff:
             constraints.append(
                 {
@@ -597,17 +559,8 @@ def analyze_btst_governance_synthesis(
         status = str(row.get("lane_status") or "unknown")
         lane_status_counts[status] = lane_status_counts.get(status, 0) + 1
 
-    waiting_lane_count = sum(
-        1
-        for row in lane_matrix
-        if any(token in str(row.get("lane_status") or "") for token in ("await", "missing", "shadow_only", "hold"))
-    )
-    ready_lane_count = sum(
-        1
-        for row in lane_matrix
-        if str(row.get("lane_status") or "")
-        in {"primary_controlled_follow_through", "ready_for_shadow_validation", "shadow_rollout_review_ready"}
-    )
+    waiting_lane_count = sum(1 for row in lane_matrix if any(token in str(row.get("lane_status") or "") for token in ("await", "missing", "shadow_only", "hold")))
+    ready_lane_count = sum(1 for row in lane_matrix if str(row.get("lane_status") or "") in {"primary_controlled_follow_through", "ready_for_shadow_validation", "shadow_rollout_review_ready"})
 
     recommendation_parts = [
         str(rollout_governance.get("recommendation") or "").strip(),
@@ -615,17 +568,11 @@ def analyze_btst_governance_synthesis(
     ]
     if latest_btst_followup:
         if int(latest_btst_followup.get("selected_count") or 0) <= 0:
-            recommendation_parts.append(
-                f"最新 BTST followup 仍没有 selected，当前应继续把 {latest_btst_followup.get('near_miss_count') or 0} 只 near-miss 和 {latest_btst_followup.get('opportunity_pool_count') or 0} 只 opportunity_pool 当成观察层。"
-            )
+            recommendation_parts.append(f"最新 BTST followup 仍没有 selected，当前应继续把 {latest_btst_followup.get('near_miss_count') or 0} 只 near-miss 和 {latest_btst_followup.get('opportunity_pool_count') or 0} 只 opportunity_pool 当成观察层。")
         if latest_btst_followup.get("priority_board_headline"):
             recommendation_parts.append(str(latest_btst_followup.get("priority_board_headline")))
     if execution_surface_constraints:
-        recommendation_parts.extend(
-            str(row.get("recommendation") or "").strip()
-            for row in execution_surface_constraints
-            if str(row.get("recommendation") or "").strip()
-        )
+        recommendation_parts.extend(str(row.get("recommendation") or "").strip() for row in execution_surface_constraints if str(row.get("recommendation") or "").strip())
 
     return {
         "generated_on": action_board.get("generated_on") or rollout_governance.get("generated_on"),
@@ -709,9 +656,7 @@ def _append_governance_synthesis_constraints_markdown(lines: list[str], analysis
         lines.append("- none")
     else:
         for row in execution_surface_constraints:
-            lines.append(
-                f"- constraint_id={row.get('constraint_id')} lane_id={row.get('lane_id')} status={row.get('status')} blocker={row.get('blocker')}"
-            )
+            lines.append(f"- constraint_id={row.get('constraint_id')} lane_id={row.get('lane_id')} status={row.get('status')} blocker={row.get('blocker')}")
             lines.append(f"  trade_date: {row.get('trade_date')}")
             lines.append(f"  focus_tickers: {row.get('focus_tickers')}")
             lines.append(f"  recommendation: {row.get('recommendation')}")
@@ -721,9 +666,7 @@ def _append_governance_synthesis_constraints_markdown(lines: list[str], analysis
 def _append_governance_synthesis_lane_matrix_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     lines.append("## Lane Matrix")
     for row in list(analysis.get("lane_matrix") or []):
-        lines.append(
-            f"- lane_id={row.get('lane_id')} ticker={row.get('ticker')} governance_tier={row.get('governance_tier')} lane_status={row.get('lane_status')} blocker={row.get('blocker')}"
-        )
+        lines.append(f"- lane_id={row.get('lane_id')} ticker={row.get('ticker')} governance_tier={row.get('governance_tier')} lane_status={row.get('lane_status')} blocker={row.get('blocker')}")
         _append_governance_synthesis_lane_detail(lines, row, "action_tier")
         _append_governance_synthesis_lane_detail(lines, row, "validation_verdict")
         for key in (
@@ -753,9 +696,7 @@ def _append_governance_synthesis_closed_frontiers_markdown(lines: list[str], ana
         lines.append("- none")
     else:
         for row in closed_frontiers:
-            lines.append(
-                f"- frontier_id={row.get('frontier_id')} status={row.get('status')} passing_variant_count={row.get('passing_variant_count')} headline={row.get('headline')}"
-            )
+            lines.append(f"- frontier_id={row.get('frontier_id')} status={row.get('status')} passing_variant_count={row.get('passing_variant_count')} headline={row.get('headline')}")
             lines.append(f"  best_variant: {row.get('best_variant_name')}")
             lines.append(f"  released_tickers: {row.get('best_variant_released_tickers')}")
             lines.append(f"  focus_released_tickers: {row.get('best_variant_focus_released_tickers')}")
@@ -770,7 +711,6 @@ def _append_governance_synthesis_next_actions_markdown(lines: list[str], analysi
         lines.append(f"  next_step: {task.get('next_step')}")
         lines.append(f"  source: {task.get('source')}")
     lines.append("")
-
 
 
 def main() -> None:
@@ -789,11 +729,7 @@ def main() -> None:
     parser.add_argument("--output-md", default=str(DEFAULT_OUTPUT_MD))
     args = parser.parse_args()
 
-    evidence_btst_report_dirs = [
-        item.strip()
-        for item in str(args.evidence_btst_report_dirs or "").split(",")
-        if item.strip()
-    ]
+    evidence_btst_report_dirs = [item.strip() for item in str(args.evidence_btst_report_dirs or "").split(",") if item.strip()]
     analysis = analyze_btst_governance_synthesis(
         args.reports_root,
         action_board_path=args.action_board,

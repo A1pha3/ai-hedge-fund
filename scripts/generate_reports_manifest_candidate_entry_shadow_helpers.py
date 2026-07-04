@@ -118,9 +118,7 @@ class RefreshArtifact:
 
 @dataclass
 class CandidateEntryShadowRefreshState:
-    no_candidate_entry_action_board: RefreshArtifact = field(
-        default_factory=lambda: RefreshArtifact(status="skipped_missing_tradeable_opportunity_pool")
-    )
+    no_candidate_entry_action_board: RefreshArtifact = field(default_factory=lambda: RefreshArtifact(status="skipped_missing_tradeable_opportunity_pool"))
     no_candidate_entry_replay_bundle: RefreshArtifact = field(default_factory=lambda: RefreshArtifact(status="skipped_missing_action_board"))
     no_candidate_entry_failure_dossier: RefreshArtifact = field(default_factory=lambda: RefreshArtifact(status="skipped_missing_action_board"))
     watchlist_recall_dossier: RefreshArtifact = field(default_factory=lambda: RefreshArtifact(status="skipped_missing_failure_dossier"))
@@ -194,16 +192,8 @@ def refresh_candidate_entry_shadow_prerequisites(
     )
     state.no_candidate_entry_action_board.status = "refreshed"
 
-    replay_report_dir_names = {
-        str(row.get("primary_report_dir") or "").strip()
-        for row in list(state.no_candidate_entry_action_board.analysis.get("priority_queue") or [])
-        if str(row.get("primary_report_dir") or "").strip()
-    }
-    replay_report_dir_names.update(
-        str(row.get("report_dir") or "").strip()
-        for row in list(state.no_candidate_entry_action_board.analysis.get("window_hotspot_rows") or [])
-        if str(row.get("report_dir") or "").strip()
-    )
+    replay_report_dir_names = {str(row.get("primary_report_dir") or "").strip() for row in list(state.no_candidate_entry_action_board.analysis.get("priority_queue") or []) if str(row.get("primary_report_dir") or "").strip()}
+    replay_report_dir_names.update(str(row.get("report_dir") or "").strip() for row in list(state.no_candidate_entry_action_board.analysis.get("window_hotspot_rows") or []) if str(row.get("report_dir") or "").strip())
     available_replay_report_dir_names = [report_dir_name for report_dir_name in replay_report_dir_names if (reports_root / report_dir_name).exists()]
     if available_replay_report_dir_names:
         state.no_candidate_entry_replay_bundle.analysis = analyze_btst_no_candidate_entry_replay_bundle(paths.no_candidate_entry_action_board.json)
@@ -298,11 +288,7 @@ def refresh_candidate_entry_shadow_prerequisites(
     )
     state.candidate_pool_corridor_shadow_pack.status = str(state.candidate_pool_corridor_shadow_pack.analysis.get("shadow_status") or "refreshed")
 
-    rebucket_candidates = [
-        dict(row)
-        for row in list(state.candidate_pool_recall_dossier.analysis.get("priority_handoff_branch_experiment_queue") or [])
-        if str(row.get("prototype_type") or "") == "post_gate_competition_rebucket_probe"
-    ]
+    rebucket_candidates = [dict(row) for row in list(state.candidate_pool_recall_dossier.analysis.get("priority_handoff_branch_experiment_queue") or []) if str(row.get("prototype_type") or "") == "post_gate_competition_rebucket_probe"]
     rebucket_ticker = str(list(rebucket_candidates[0].get("tickers") or [None])[0] or "") or None if rebucket_candidates else None
 
     state.candidate_pool_rebucket_shadow_pack.analysis = run_btst_candidate_pool_rebucket_shadow_pack(
@@ -328,11 +314,7 @@ def refresh_candidate_entry_shadow_prerequisites(
         state.candidate_pool_rebucket_objective_validation.analysis,
         render_btst_candidate_pool_rebucket_objective_validation_markdown,
     )
-    state.candidate_pool_rebucket_objective_validation.status = (
-        "refreshed"
-        if rebucket_candidates
-        else str(state.candidate_pool_rebucket_objective_validation.analysis.get("validation_status") or "skipped_no_rebucket_candidate")
-    )
+    state.candidate_pool_rebucket_objective_validation.status = "refreshed" if rebucket_candidates else str(state.candidate_pool_rebucket_objective_validation.analysis.get("validation_status") or "skipped_no_rebucket_candidate")
 
     state.candidate_pool_rebucket_comparison_bundle.analysis = analyze_btst_candidate_pool_rebucket_comparison_bundle(
         paths.candidate_pool_recall_dossier.json,
@@ -666,11 +648,7 @@ def _build_corridor_shadow_pack_summary(analysis: dict[str, Any]) -> dict[str, A
         "strict_release_tickers": strict_release_tickers[:3],
         "primary_shadow_replay": _build_corridor_shadow_pack_ticker_summary(primary_shadow_replay_payload),
         "parallel_watch_tickers": [str(row.get("ticker") or "") for row in list(analysis.get("parallel_watch_lanes") or [])[:3] if str(row.get("ticker") or "").strip()],
-        "parallel_watch_outcome_loop": [
-            _build_corridor_shadow_pack_ticker_summary(dict(row or {}))
-            for row in list(analysis.get("parallel_watch_lanes") or [])[:3]
-            if str(dict(row or {}).get("ticker") or "").strip()
-        ],
+        "parallel_watch_outcome_loop": [_build_corridor_shadow_pack_ticker_summary(dict(row or {})) for row in list(analysis.get("parallel_watch_lanes") or [])[:3] if str(dict(row or {}).get("ticker") or "").strip()],
         "validation_only_tickers": validation_only_tickers[:3],
         "excluded_low_gate_tail_tickers": [str(ticker) for ticker in list(analysis.get("excluded_low_gate_tail_tickers") or [])[:3] if str(ticker).strip()],
     }
@@ -710,11 +688,7 @@ def _build_upstream_handoff_board_summary(analysis: dict[str, Any]) -> dict[str,
         "board_status": analysis.get("board_status"),
         "focus_tickers": list(analysis.get("focus_tickers") or [])[:3],
         "first_broken_handoff_counts": dict(dict(analysis.get("stage_summary") or {}).get("first_broken_handoff_counts") or {}),
-        "historical_shadow_probe_tickers": [
-            str(row.get("ticker") or "")
-            for row in list(analysis.get("board_rows") or [])
-            if str(row.get("board_phase") or "") == "historical_shadow_probe_gap" and str(row.get("ticker") or "").strip()
-        ][:3],
+        "historical_shadow_probe_tickers": [str(row.get("ticker") or "") for row in list(analysis.get("board_rows") or []) if str(row.get("board_phase") or "") == "historical_shadow_probe_gap" and str(row.get("ticker") or "").strip()][:3],
     }
 
 

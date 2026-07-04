@@ -177,10 +177,7 @@ def _extract_shadow_execution_context(
         recommendation = f"shadow execution 已出现反证：focus_tickers={focus_positive_tickers} 在实际 BTST followup 中进入了 selected/near_miss，当前不应继续推进 lane promotion。"
     elif focus_negative_tickers and non_focus_positive_tickers:
         execution_verdict = "focus_ticker_execution_support_with_separation"
-        recommendation = (
-            f"shadow execution 对弱结构入口清洗形成了分离证据：focus_tickers={focus_negative_tickers} 只出现在 opportunity/rejected，"
-            f"而非 focus 的 watchlist_filter_diagnostics 名字 {non_focus_positive_tickers} 仍能进入 selected/near_miss。"
-        )
+        recommendation = f"shadow execution 对弱结构入口清洗形成了分离证据：focus_tickers={focus_negative_tickers} 只出现在 opportunity/rejected，" f"而非 focus 的 watchlist_filter_diagnostics 名字 {non_focus_positive_tickers} 仍能进入 selected/near_miss。"
     elif focus_negative_tickers:
         execution_verdict = "focus_ticker_execution_support"
         recommendation = f"shadow execution 继续支持弱结构入口清洗：focus_tickers={focus_negative_tickers} 只出现在 opportunity/rejected，而没有进入 selected/near_miss。"
@@ -338,11 +335,7 @@ def _extract_watchlist_recall_context(watchlist_recall_dossier: dict[str, Any]) 
 
 
 def _extract_candidate_pool_recall_context(candidate_pool_recall_dossier: dict[str, Any]) -> dict[str, Any]:
-    top_stage_tickers = {
-        str(key): _string_list(list(values or []))
-        for key, values in dict(candidate_pool_recall_dossier.get("top_stage_tickers") or {}).items()
-        if str(key or "").strip()
-    }
+    top_stage_tickers = {str(key): _string_list(list(values or [])) for key, values in dict(candidate_pool_recall_dossier.get("top_stage_tickers") or {}).items() if str(key or "").strip()}
     truncation_frontier_summary = dict(candidate_pool_recall_dossier.get("truncation_frontier_summary") or {})
     focus_liquidity_profile_summary = dict(candidate_pool_recall_dossier.get("focus_liquidity_profile_summary") or {})
     focus_liquidity_profiles = [dict(row) for row in list(focus_liquidity_profile_summary.get("primary_focus_tickers") or [])]
@@ -390,28 +383,16 @@ def _build_rollout_recommendation(
     candidate_pool_recall_context: dict[str, Any],
 ) -> str:
     lane_status = str(window_scan_context["shadow_state"]["lane_status"])
-    recommendation = (
-        "当前 candidate-entry 主结论应收敛为：保留 weak-structure selective rule 作为 shadow-only 入口治理语义，"
-        "不要把 semantic_pair 或 volume-only 规则直接提升为默认，更不要把它误写成 score frontier 的替代品。"
-    )
+    recommendation = "当前 candidate-entry 主结论应收敛为：保留 weak-structure selective rule 作为 shadow-only 入口治理语义，" "不要把 semantic_pair 或 volume-only 规则直接提升为默认，更不要把它误写成 score frontier 的替代品。"
     if lane_status == "shadow_rollout_review_ready":
-        recommendation = (
-            "当前 candidate-entry 主结论应收敛为：weak-structure selective rule 已具备进入 shadow rollout review 的条件，"
-            "但仍不能单独作为默认升级依据，必须继续以 preserve-misfire=0 和新增独立窗口命中作为守门条件。"
-        )
+        recommendation = "当前 candidate-entry 主结论应收敛为：weak-structure selective rule 已具备进入 shadow rollout review 的条件，" "但仍不能单独作为默认升级依据，必须继续以 preserve-misfire=0 和新增独立窗口命中作为守门条件。"
     elif lane_status == "research_only":
-        recommendation = (
-            "当前 candidate-entry 主结论应收敛为：弱结构规则仍停留在 research-only 或单窗证据阶段，"
-            "不能进入 rollout，更不能替代当前 default admission 基线。"
-        )
+        recommendation = "当前 candidate-entry 主结论应收敛为：弱结构规则仍停留在 research-only 或单窗证据阶段，" "不能进入 rollout，更不能替代当前 default admission 基线。"
     recommendation = _append_no_candidate_entry_recommendation(recommendation, no_candidate_entry_context)
     recommendation = _append_watchlist_recall_recommendation(recommendation, watchlist_recall_context)
     recommendation = _append_candidate_pool_recall_recommendation(recommendation, candidate_pool_recall_context)
     if no_candidate_entry_context["promising_tickers"]:
-        recommendation = (
-            f"{recommendation} 当前 replay bundle 已为 {no_candidate_entry_context['promising_tickers']} 找到 preserve-safe recall probe，"
-            "因此下一步应优先接回 shadow governance，而不是继续停留在纯动作板层面。"
-        )
+        recommendation = f"{recommendation} 当前 replay bundle 已为 {no_candidate_entry_context['promising_tickers']} 找到 preserve-safe recall probe，" "因此下一步应优先接回 shadow governance，而不是继续停留在纯动作板层面。"
     shadow_execution_recommendation = str(dict(shadow_execution_context.get("summary") or {}).get("recommendation") or "").strip()
     if shadow_execution_recommendation:
         recommendation = f"{recommendation} {shadow_execution_recommendation}"
@@ -420,51 +401,28 @@ def _build_rollout_recommendation(
 
 def _append_no_candidate_entry_recommendation(recommendation: str, context: dict[str, Any]) -> str:
     if context["top_tickers"]:
-        recommendation = (
-            f"{recommendation} 同时，tradeable pool 里仍有大批 no_candidate_entry backlog，"
-            f"下一批优先回放应收敛到 {context['top_tickers']}，"
-            f"并优先检查 {context['top_hotspot_dirs'] or ['热点窗口']} 的 watchlist recall / selective semantics，"
-            "而不是继续放松 score frontier。"
-        )
+        recommendation = f"{recommendation} 同时，tradeable pool 里仍有大批 no_candidate_entry backlog，" f"下一批优先回放应收敛到 {context['top_tickers']}，" f"并优先检查 {context['top_hotspot_dirs'] or ['热点窗口']} 的 watchlist recall / selective semantics，" "而不是继续放松 score frontier。"
     if context["upstream_absence_tickers"]:
-        recommendation = (
-            f"{recommendation} failure dossier 进一步说明，当前 backlog 的主矛盾首先是 {context['upstream_absence_tickers']} 这批票在 replay input / candidate-entry source 中缺席，"
-            "因此下一步应先补 observability 与上游 handoff，而不是继续 candidate-entry semantic 调参。"
-        )
+        recommendation = f"{recommendation} failure dossier 进一步说明，当前 backlog 的主矛盾首先是 {context['upstream_absence_tickers']} 这批票在 replay input / candidate-entry source 中缺席，" "因此下一步应先补 observability 与上游 handoff，而不是继续 candidate-entry semantic 调参。"
     if context["absent_from_watchlist_tickers"]:
-        recommendation = (
-            f"{recommendation} 进一步拆开后，当前最先要补的是 {context['absent_from_watchlist_tickers']} 这批票的 candidate pool -> watchlist 召回层，"
-            "因为它们连 watchlist 都没有进入。"
-        )
+        recommendation = f"{recommendation} 进一步拆开后，当前最先要补的是 {context['absent_from_watchlist_tickers']} 这批票的 candidate pool -> watchlist 召回层，" "因为它们连 watchlist 都没有进入。"
     return recommendation
 
 
 def _append_watchlist_recall_recommendation(recommendation: str, context: dict[str, Any]) -> str:
     if context["absent_from_candidate_pool_tickers"]:
-        return (
-            f"{recommendation} watchlist recall dossier 继续前推后还说明，{context['absent_from_candidate_pool_tickers']} 连 candidate_pool snapshot 都没有进入，"
-            "因此当前首先要修的不是 watchlist 阈值，而是 Layer A 候选池召回与池内截断观测。"
-        )
+        return f"{recommendation} watchlist recall dossier 继续前推后还说明，{context['absent_from_candidate_pool_tickers']} 连 candidate_pool snapshot 都没有进入，" "因此当前首先要修的不是 watchlist 阈值，而是 Layer A 候选池召回与池内截断观测。"
     if context["candidate_pool_layer_b_gap_tickers"]:
-        return (
-            f"{recommendation} watchlist recall dossier 还说明，{context['candidate_pool_layer_b_gap_tickers']} 已进入 candidate_pool，"
-            "但没有进入 layer_b 过滤诊断，因此下一步应优先检查 candidate_pool -> layer_b handoff。"
-        )
+        return f"{recommendation} watchlist recall dossier 还说明，{context['candidate_pool_layer_b_gap_tickers']} 已进入 candidate_pool，" "但没有进入 layer_b 过滤诊断，因此下一步应优先检查 candidate_pool -> layer_b handoff。"
     if context["layer_b_watchlist_gap_tickers"]:
-        return (
-            f"{recommendation} watchlist recall dossier 还说明，{context['layer_b_watchlist_gap_tickers']} 已进入 layer_b，"
-            "但没有进入 watchlist，因此下一步应优先检查 watchlist gate。"
-        )
+        return f"{recommendation} watchlist recall dossier 还说明，{context['layer_b_watchlist_gap_tickers']} 已进入 layer_b，" "但没有进入 watchlist，因此下一步应优先检查 watchlist gate。"
     return recommendation
 
 
 def _append_candidate_pool_recall_recommendation(recommendation: str, context: dict[str, Any]) -> str:
     dominant_stage = context["dominant_stage"]
     if dominant_stage:
-        recommendation = (
-            f"{recommendation} Layer A candidate_pool recall dossier 进一步确认，当前主导根因是 {dominant_stage}，"
-            f"焦点票主要是 {context['top_stage_tickers'].get(dominant_stage, [])}。"
-        )
+        recommendation = f"{recommendation} Layer A candidate_pool recall dossier 进一步确认，当前主导根因是 {dominant_stage}，" f"焦点票主要是 {context['top_stage_tickers'].get(dominant_stage, [])}。"
     if dominant_stage == "candidate_pool_truncated_after_filters":
         return _append_candidate_pool_truncation_recommendation(recommendation, context)
     return _append_non_truncation_gap_recommendation(recommendation, context)
@@ -480,21 +438,11 @@ def _append_candidate_pool_truncation_recommendation(recommendation: str, contex
             gap_phrase = f"距 cutoff 仅差 {closest_case.get('pre_truncation_rank_gap_to_cutoff')} 名"
         ranking_reason = _build_candidate_pool_ranking_reason(context)
         gap_mode_reason = _build_candidate_pool_gap_mode_reason(context)
-        recommendation = (
-            f"{recommendation} 当前最近的 distinct 截断样本是 {closest_case.get('ticker')}@{closest_case.get('trade_date')}，"
-            f"pre-truncation rank={closest_case.get('pre_truncation_rank')}，{gap_phrase}。"
-            f" {ranking_reason}{gap_mode_reason}"
-        )
+        recommendation = f"{recommendation} 当前最近的 distinct 截断样本是 {closest_case.get('ticker')}@{closest_case.get('trade_date')}，" f"pre-truncation rank={closest_case.get('pre_truncation_rank')}，{gap_phrase}。" f" {ranking_reason}{gap_mode_reason}"
     if context["focus_liquidity_profiles"]:
-        recommendation = (
-            f"{recommendation} 焦点 ticker 画像已进一步拆成 {[(row.get('ticker'), row.get('dominant_liquidity_gap_mode'), row.get('priority_handoff')) for row in context['focus_liquidity_profiles'][:3]]}，"
-            "因此后续不应再把所有截断票当作同一条修复车道。"
-        )
+        recommendation = f"{recommendation} 焦点 ticker 画像已进一步拆成 {[(row.get('ticker'), row.get('dominant_liquidity_gap_mode'), row.get('priority_handoff')) for row in context['focus_liquidity_profiles'][:3]]}，" "因此后续不应再把所有截断票当作同一条修复车道。"
     if context["priority_handoff_branch_diagnoses"]:
-        recommendation = (
-            f"{recommendation} 分支诊断已明确拆成 {[(row.get('priority_handoff'), row.get('tickers')) for row in context['priority_handoff_branch_diagnoses'][:3]]}，"
-            "因此下一步应按车道分别推进 Layer A corridor 与 post-gate competition。"
-        )
+        recommendation = f"{recommendation} 分支诊断已明确拆成 {[(row.get('priority_handoff'), row.get('tickers')) for row in context['priority_handoff_branch_diagnoses'][:3]]}，" "因此下一步应按车道分别推进 Layer A corridor 与 post-gate competition。"
     return _append_candidate_pool_branch_recommendation(recommendation, context)
 
 
@@ -556,27 +504,17 @@ def _build_rollout_next_actions(
         "维持 semantic_pair_300502 与 volume_only_20260326 为研究参考，不进入 rollout 主链",
     ]
     if no_candidate_entry_context["top_tickers"]:
-        next_actions.append(
-            f"沿 no_candidate_entry action board 优先回放 {no_candidate_entry_context['top_tickers']}，并以 {no_candidate_entry_context['top_hotspot_dirs'] or ['热点窗口']} 为第一批窗口复核对象"
-        )
+        next_actions.append(f"沿 no_candidate_entry action board 优先回放 {no_candidate_entry_context['top_tickers']}，并以 {no_candidate_entry_context['top_hotspot_dirs'] or ['热点窗口']} 为第一批窗口复核对象")
     if no_candidate_entry_context["upstream_absence_tickers"]:
-        next_actions.append(
-            f"先补 {no_candidate_entry_context['upstream_absence_tickers']} 的 replay-input / selection-artifacts observability，再继续 candidate-entry frontier"
-        )
+        next_actions.append(f"先补 {no_candidate_entry_context['upstream_absence_tickers']} 的 replay-input / selection-artifacts observability，再继续 candidate-entry frontier")
     if no_candidate_entry_context["absent_from_watchlist_tickers"]:
-        next_actions.append(
-            f"优先回查 {no_candidate_entry_context['absent_from_watchlist_tickers']} 的 candidate pool -> watchlist 召回缺口"
-        )
+        next_actions.append(f"优先回查 {no_candidate_entry_context['absent_from_watchlist_tickers']} 的 candidate pool -> watchlist 召回缺口")
     if watchlist_recall_context["absent_from_candidate_pool_tickers"]:
-        next_actions.append(
-            f"优先回查 {watchlist_recall_context['absent_from_candidate_pool_tickers']} 的 Layer A candidate_pool 召回与池内截断"
-        )
+        next_actions.append(f"优先回查 {watchlist_recall_context['absent_from_candidate_pool_tickers']} 的 Layer A candidate_pool 召回与池内截断")
     next_actions.extend(_build_candidate_pool_recall_next_actions(candidate_pool_recall_context))
     next_actions.extend(_build_handoff_gap_next_actions(no_candidate_entry_context, watchlist_recall_context, candidate_pool_recall_context))
     if no_candidate_entry_context["promising_tickers"]:
-        next_actions.append(
-            f"把 {no_candidate_entry_context['promising_tickers']} 作为 no-entry shadow recall probe 接回治理板，并持续核对 preserve_ticker 0 误伤"
-        )
+        next_actions.append(f"把 {no_candidate_entry_context['promising_tickers']} 作为 no-entry shadow recall probe 接回治理板，并持续核对 preserve_ticker 0 误伤")
     shadow_summary = dict(shadow_execution_context.get("summary") or {})
     shadow_execution_verdict = str(shadow_summary.get("execution_verdict") or "")
     if shadow_execution_verdict == "focus_ticker_execution_contradiction":
@@ -594,9 +532,7 @@ def _build_candidate_pool_recall_next_actions(context: dict[str, Any]) -> list[s
     dominant_stage = context["dominant_stage"]
     if not dominant_stage:
         return []
-    next_actions = [
-        f"沿 candidate_pool recall dossier 优先处理 {dominant_stage}：{context['top_stage_tickers'].get(dominant_stage, [])}"
-    ]
+    next_actions = [f"沿 candidate_pool recall dossier 优先处理 {dominant_stage}：{context['top_stage_tickers'].get(dominant_stage, [])}"]
     if dominant_stage != "candidate_pool_truncated_after_filters":
         return next_actions
     next_actions.extend(_build_candidate_pool_truncation_next_actions(context))
@@ -616,9 +552,7 @@ def _build_candidate_pool_closest_case_action(context: dict[str, Any]) -> list[s
     closest_case = dict(closest_cases[0]) if closest_cases else {}
     if not closest_case:
         return []
-    return [
-        f"优先跟踪 {closest_case.get('ticker')}@{closest_case.get('trade_date')} 的 top300 cutoff gap={closest_case.get('pre_truncation_rank_gap_to_cutoff')}，评估是 rank 微调还是上游入口问题"
-    ]
+    return [f"优先跟踪 {closest_case.get('ticker')}@{closest_case.get('trade_date')} 的 top300 cutoff gap={closest_case.get('pre_truncation_rank_gap_to_cutoff')}，评估是 rank 微调还是上游入口问题"]
 
 
 def _build_candidate_pool_ranking_gap_actions(context: dict[str, Any]) -> list[str]:

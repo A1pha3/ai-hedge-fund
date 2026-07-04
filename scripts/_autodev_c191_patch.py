@@ -43,54 +43,21 @@ def main() -> None:
                 fixes.append(f"stage_receipts.{stage_name}.work_depth → supporting")
 
     # --- Fix 2: stage_receipts scan_scope (currently references NS-2 model_version) ---
-    stage_receipts["bug_hunt"]["scan_scope"] = (
-        "app/backend/services/graph.py parse_hedge_fund_response + "
-        "app/backend/routes/hedge_fund_streaming.py SSE cancel — no bugs (observability drain, not bug fix)"
-    )
-    stage_receipts["refactor_batch"]["scan_scope"] = (
-        "no refactor — delivery only (add module logger + print→logger drain); "
-        "no helper extraction needed"
-    )
-    stage_receipts["product_quality_upgrade"]["scan_scope"] = (
-        "no product quality upgrade — delivery only (observability is prerequisite "
-        "for NS-17 score breakdown, not itself a quality upgrade)"
-    )
+    stage_receipts["bug_hunt"]["scan_scope"] = "app/backend/services/graph.py parse_hedge_fund_response + " "app/backend/routes/hedge_fund_streaming.py SSE cancel — no bugs (observability drain, not bug fix)"
+    stage_receipts["refactor_batch"]["scan_scope"] = "no refactor — delivery only (add module logger + print→logger drain); " "no helper extraction needed"
+    stage_receipts["product_quality_upgrade"]["scan_scope"] = "no product quality upgrade — delivery only (observability is prerequisite " "for NS-17 score breakdown, not itself a quality upgrade)"
     stage_receipts["feature_delivery"]["scan_scope"] = (
-        "app/backend/services/graph.py: module logger + 3 print()→logger.warning "
-        "(JSONDecodeError/TypeError/Exception in parse_hedge_fund_response); "
-        "app/backend/routes/hedge_fund_streaming.py: module logger + 6 print()→logger.info "
-        "(SSE disconnect/cancel/generator-cancel for hedge fund run + backtest); "
-        "tests/backend/test_ns17_observability.py: 7 TDD caplog guards"
+        "app/backend/services/graph.py: module logger + 3 print()→logger.warning " "(JSONDecodeError/TypeError/Exception in parse_hedge_fund_response); " "app/backend/routes/hedge_fund_streaming.py: module logger + 6 print()→logger.info " "(SSE disconnect/cancel/generator-cancel for hedge fund run + backtest); " "tests/backend/test_ns17_observability.py: 7 TDD caplog guards"
     )
-    stage_receipts["regression_and_commit"]["scan_scope"] = (
-        "tests/backend/test_ns17_observability.py (7 tests) + "
-        "tests/backend/test_hedge_fund_streaming.py + tests/test_graph_state.py (regression) + ruff"
-    )
+    stage_receipts["regression_and_commit"]["scan_scope"] = "tests/backend/test_ns17_observability.py (7 tests) + " "tests/backend/test_hedge_fund_streaming.py + tests/test_graph_state.py (regression) + ruff"
     fixes.append("stage_receipts.*.scan_scope → NS-17 scope")
 
     # --- Fix 3: stage_receipts exhaustion_or_blocker (currently references NS-2 model_version) ---
-    stage_receipts["bug_hunt"]["exhaustion_or_blocker"] = (
-        "not applicable — delivery mode, no bug hunt; observability gap is missing-feature "
-        "(no module logger / structured logging) not a bug"
-    )
-    stage_receipts["refactor_batch"]["exhaustion_or_blocker"] = (
-        "not applicable — delivery mode, no refactor batch"
-    )
-    stage_receipts["product_quality_upgrade"]["exhaustion_or_blocker"] = (
-        "not applicable — delivery mode, no product quality upgrade"
-    )
-    stage_receipts["feature_delivery"]["exhaustion_or_blocker"] = (
-        "delivery complete — graph.py: module logger + 3 print()→logger.warning "
-        "(parse_hedge_fund_response JSONDecodeError/TypeError/Exception); "
-        "hedge_fund_streaming.py: module logger + 6 print()→logger.info "
-        "(SSE disconnect/cancel/generator-cancel for hedge fund run + backtest). "
-        "7 TDD caplog guards verify structured logging + no remaining print()."
-    )
-    stage_receipts["regression_and_commit"]["exhaustion_or_blocker"] = (
-        "7 passed in test_ns17_observability, 11 passed regression "
-        "(test_hedge_fund_streaming + test_graph_state), 0 lint issues — "
-        "commit pending user authorization (committed_unreleased)"
-    )
+    stage_receipts["bug_hunt"]["exhaustion_or_blocker"] = "not applicable — delivery mode, no bug hunt; observability gap is missing-feature " "(no module logger / structured logging) not a bug"
+    stage_receipts["refactor_batch"]["exhaustion_or_blocker"] = "not applicable — delivery mode, no refactor batch"
+    stage_receipts["product_quality_upgrade"]["exhaustion_or_blocker"] = "not applicable — delivery mode, no product quality upgrade"
+    stage_receipts["feature_delivery"]["exhaustion_or_blocker"] = "delivery complete — graph.py: module logger + 3 print()→logger.warning " "(parse_hedge_fund_response JSONDecodeError/TypeError/Exception); " "hedge_fund_streaming.py: module logger + 6 print()→logger.info " "(SSE disconnect/cancel/generator-cancel for hedge fund run + backtest). " "7 TDD caplog guards verify structured logging + no remaining print()."
+    stage_receipts["regression_and_commit"]["exhaustion_or_blocker"] = "7 passed in test_ns17_observability, 11 passed regression " "(test_hedge_fund_streaming + test_graph_state), 0 lint issues — " "commit pending user authorization (committed_unreleased)"
     fixes.append("stage_receipts.*.exhaustion_or_blocker → NS-17 outcome")
 
     # --- Fix 4: stages array evidence_refs + scan_scope (currently references C190) ---
@@ -133,11 +100,7 @@ def main() -> None:
 
     # --- Fix 8: design_decision_packet (currently NS-2 model_version — wrong campaign) ---
     c191["design_decision_packet"] = {
-        "problem": (
-            "graph.py parse_hedge_fund_response 的 3 处 print() (JSONDecodeError/TypeError/Exception) "
-            "和 hedge_fund_streaming.py 的 6 处 print() (SSE disconnect/cancel/generator-cancel) "
-            "都吞错误/事件不入结构化日志 — 运维无法从 logs 定位 LLM JSON-parse 失败和 SSE 断流"
-        ),
+        "problem": ("graph.py parse_hedge_fund_response 的 3 处 print() (JSONDecodeError/TypeError/Exception) " "和 hedge_fund_streaming.py 的 6 处 print() (SSE disconnect/cancel/generator-cancel) " "都吞错误/事件不入结构化日志 — 运维无法从 logs 定位 LLM JSON-parse 失败和 SSE 断流"),
         "invariants": [
             "行为零变更 (parse_hedge_fund_response 仍返回 None, SSE cancel 仍 return/cancel)",
             "只增加结构化日志输出 (logger.warning for parse errors, logger.info for SSE events)",
@@ -148,10 +111,7 @@ def main() -> None:
             "B: print() → structlog — 更结构化但需引入新依赖, 超出 NS-17 切片范围",
             "C: print() → 完全删除 — 损失可观测性, 不可取",
         ],
-        "recommendation": (
-            "A — print() → logging.getLogger(__name__). warning 级别用于 parse 失败 "
-            "(异常路径), info 级别用于 SSE cancel (正常运行事件). 零新依赖, 行为零变更."
-        ),
+        "recommendation": ("A — print() → logging.getLogger(__name__). warning 级别用于 parse 失败 " "(异常路径), info 级别用于 SSE cancel (正常运行事件). 零新依赖, 行为零变更."),
         "acceptance_tests": [
             "parse_hedge_fund_response JSONDecodeError 时 logger.warning 被调用 (caplog)",
             "parse_hedge_fund_response TypeError 时 logger.warning 被调用 (caplog)",
@@ -159,15 +119,9 @@ def main() -> None:
             "hedge_fund_streaming module logger 存在 + 无剩余 print()",
             "graph module logger 存在 + 无剩余 print()",
         ],
-        "rollback": (
-            "删除两个文件的 module logger 声明 + 把 logger.warning/logger.info 改回 print() "
-            "+ 删除 tests/backend/test_ns17_observability.py 即完全回滚"
-        ),
+        "rollback": ("删除两个文件的 module logger 声明 + 把 logger.warning/logger.info 改回 print() " "+ 删除 tests/backend/test_ns17_observability.py 即完全回滚"),
         "decision_authority": "engineering (实现选择, 非产品语义/公开契约)",
-        "next_trigger": (
-            "NS-17 后续切片: signal_fusion.py per-ticker DEBUG score breakdown 已实施 "
-            "(line 503-518), 如需进一步可观测性可考虑 logger → structlog 升级"
-        ),
+        "next_trigger": ("NS-17 后续切片: signal_fusion.py per-ticker DEBUG score breakdown 已实施 " "(line 503-518), 如需进一步可观测性可考虑 logger → structlog 升级"),
     }
     fixes.append("design_decision_packet → NS-17 print→logger")
 
@@ -189,23 +143,10 @@ def main() -> None:
     # --- Fix 11: role_reviews scope + review_delta (currently NS-2 model_version) ---
     reviews = c191["role_reviews"]
     reviews[0]["scope"] = "NS-17 打分可观测性切片 2 — graph.py + hedge_fund_streaming.py print→logger drain"
-    reviews[0]["review_delta"] = (
-        "Outcome Review: iv035 (NS-2 model_version infra) delivered but committed_unreleased. "
-        "iv034-iv028 all released. NS-17 切片 1 (signal_fusion.py per-ticker DEBUG score breakdown) "
-        "已实施 (line 503-518). 切片 2 候选: graph.py + hedge_fund_streaming.py print→logger — "
-        "正交 code site, action_class=stabilization 可继续 (不在 {delivery,discovery,full_audit})."
-    )
+    reviews[0]["review_delta"] = "Outcome Review: iv035 (NS-2 model_version infra) delivered but committed_unreleased. " "iv034-iv028 all released. NS-17 切片 1 (signal_fusion.py per-ticker DEBUG score breakdown) " "已实施 (line 503-518). 切片 2 候选: graph.py + hedge_fund_streaming.py print→logger — " "正交 code site, action_class=stabilization 可继续 (不在 {delivery,discovery,full_audit})."
     reviews[1]["scope"] = "Select cd191-ns17-scoring-observability from backlog (NS-17 切片 2: print→logger drain)"
-    reviews[1]["review_delta"] = (
-        "Candidate selected from active backlog (NS-17, P1). source_kind=product_backlog (authoritative). "
-        "design_decision_packet resolved Option A (print→logging.getLogger) over B (structlog, 新依赖) "
-        "and C (delete, 损失可观测性) — engineering-owned decision. Slice 2 only: graph.py + "
-        "hedge_fund_streaming.py; signal_fusion.py 切片 1 已实施."
-    )
-    reviews[2]["scope"] = (
-        "TDD plan: 7 tests for NS-17 切片 2 (3 graph parse_hedge_fund_response caplog + "
-        "2 hedge_fund_streaming module logger + 2 graph module logger)"
-    )
+    reviews[1]["review_delta"] = "Candidate selected from active backlog (NS-17, P1). source_kind=product_backlog (authoritative). " "design_decision_packet resolved Option A (print→logging.getLogger) over B (structlog, 新依赖) " "and C (delete, 损失可观测性) — engineering-owned decision. Slice 2 only: graph.py + " "hedge_fund_streaming.py; signal_fusion.py 切片 1 已实施."
+    reviews[2]["scope"] = "TDD plan: 7 tests for NS-17 切片 2 (3 graph parse_hedge_fund_response caplog + " "2 hedge_fund_streaming module logger + 2 graph module logger)"
     reviews[2]["review_delta"] = (
         "RED confirmed (test_ns17_observability.py 7 tests fail before implementation). "
         "Implementation plan: (1) graph.py 加 module logger + parse_hedge_fund_response "
@@ -215,11 +156,7 @@ def main() -> None:
         "Behavior zero change (仍 return None / cancel)."
     )
     reviews[3]["scope"] = "Final review: 7 tests GREEN + 11 regression + lint clean"
-    reviews[3]["review_delta"] = (
-        "GREEN: 7/7 focused tests pass (test_ns17_observability.py). REGRESSION: 11 passed "
-        "(test_hedge_fund_streaming.py + test_graph_state.py). LINT: ruff All checks passed. "
-        "Diff: 2 src files + 1 new test file. User-change isolation: verified. No residual blockers."
-    )
+    reviews[3]["review_delta"] = "GREEN: 7/7 focused tests pass (test_ns17_observability.py). REGRESSION: 11 passed " "(test_hedge_fund_streaming.py + test_graph_state.py). LINT: ruff All checks passed. " "Diff: 2 src files + 1 new test file. User-change isolation: verified. No residual blockers."
     fixes.append("role_reviews.scope + review_delta → NS-17")
 
     # --- Write back ---

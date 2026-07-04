@@ -59,11 +59,7 @@ def select_previous_btst_report_snapshot(
     extract_catalyst_theme_frontier_summary: ExtractCatalystThemeFrontierSummary,
 ) -> dict[str, Any]:
     resolved_reports_root = Path(reports_root).expanduser().resolve()
-    candidates = [
-        candidate
-        for candidate in (extract_btst_report_candidate(path) for path in resolved_reports_root.iterdir())
-        if candidate and candidate.get("report_dir") != current_report_dir
-    ]
+    candidates = [candidate for candidate in (extract_btst_report_candidate(path) for path in resolved_reports_root.iterdir()) if candidate and candidate.get("report_dir") != current_report_dir]
     if selection_target:
         scoped_candidates = [candidate for candidate in candidates if candidate.get("selection_target") == selection_target]
         if scoped_candidates:

@@ -47,11 +47,7 @@ def _find_branch_row(rows: list[dict[str, Any]], handoff: str) -> dict[str, Any]
 
 
 def _find_corridor_rows(branch_priority_board: dict[str, Any], lane_support: dict[str, Any]) -> list[dict[str, Any]]:
-    corridor_rows_by_ticker = {
-        str(row.get("ticker") or ""): dict(row)
-        for row in list(branch_priority_board.get("corridor_ticker_rows") or [])
-        if str(row.get("ticker") or "")
-    }
+    corridor_rows_by_ticker = {str(row.get("ticker") or ""): dict(row) for row in list(branch_priority_board.get("corridor_ticker_rows") or []) if str(row.get("ticker") or "")}
     merged_rows: list[dict[str, Any]] = []
     for objective_row in list(lane_support.get("ticker_rows") or []):
         if str(objective_row.get("priority_handoff") or "") != "layer_a_liquidity_corridor":
@@ -99,13 +95,7 @@ def _resolve_parallel_watch_rows(
 ) -> list[dict[str, Any]]:
     if not deepest_corridor_focus_tickers:
         return []
-    return [
-        dict(row)
-        for row in corridor_ticker_rows
-        if str(row.get("ticker") or "") in deepest_corridor_focus_tickers
-        and str(row.get("ticker") or "") not in excluded_low_gate_tail_tickers
-        and str(row.get("ticker") or "") != primary_ticker
-    ]
+    return [dict(row) for row in corridor_ticker_rows if str(row.get("ticker") or "") in deepest_corridor_focus_tickers and str(row.get("ticker") or "") not in excluded_low_gate_tail_tickers and str(row.get("ticker") or "") != primary_ticker]
 
 
 def _resolve_validation_only_rows(
@@ -180,17 +170,9 @@ def analyze_btst_candidate_pool_corridor_validation_pack(
         corridor_narrow_probe_path,
         dossier_path=resolved_dossier_path,
     )
-    excluded_low_gate_tail_tickers = {
-        str(ticker).strip()
-        for ticker in list(corridor_narrow_probe.get("excluded_low_gate_tail_tickers") or [])
-        if str(ticker).strip()
-    }
+    excluded_low_gate_tail_tickers = {str(ticker).strip() for ticker in list(corridor_narrow_probe.get("excluded_low_gate_tail_tickers") or []) if str(ticker).strip()}
     primary_ticker_row = dict(corridor_ticker_rows[0]) if corridor_ticker_rows else {}
-    deepest_corridor_focus_tickers = {
-        str(ticker).strip()
-        for ticker in list(corridor_narrow_probe.get("deepest_corridor_focus_tickers") or [])
-        if str(ticker).strip()
-    }
+    deepest_corridor_focus_tickers = {str(ticker).strip() for ticker in list(corridor_narrow_probe.get("deepest_corridor_focus_tickers") or []) if str(ticker).strip()}
     parallel_watch_rows = _resolve_parallel_watch_rows(
         corridor_ticker_rows,
         deepest_corridor_focus_tickers=deepest_corridor_focus_tickers,
@@ -202,11 +184,7 @@ def analyze_btst_candidate_pool_corridor_validation_pack(
         excluded_low_gate_tail_tickers=excluded_low_gate_tail_tickers,
     )
     focus_ticker = str(primary_ticker_row.get("ticker") or "").strip() or None
-    leader_gap_to_target = (
-        round(1.0 - float(primary_ticker_row.get("objective_fit_score")), 4)
-        if isinstance(primary_ticker_row.get("objective_fit_score"), (int, float))
-        else None
-    )
+    leader_gap_to_target = round(1.0 - float(primary_ticker_row.get("objective_fit_score")), 4) if isinstance(primary_ticker_row.get("objective_fit_score"), (int, float)) else None
     promotion_readiness_status = _resolve_promotion_readiness_status(primary_ticker_row)
     strict_release_candidates = _resolve_strict_release_candidates(
         primary_ticker_row=primary_ticker_row,
@@ -220,18 +198,9 @@ def analyze_btst_candidate_pool_corridor_validation_pack(
         recommendation = "当前 dossier 没有 layer_a_liquidity_corridor lane，corridor validation pack 暂时只保留为空位监控。"
     elif str(corridor_objective_row.get("support_verdict") or "") == "candidate_pool_false_negative_outperforms_tradeable_surface":
         pack_status = "parallel_probe_ready"
-        recommendation = (
-            f"corridor lane 当前已是 objective leader，closed_cycle_count={corridor_objective_row.get('closed_cycle_count')}，"
-            f"mean_t_plus_2_return={corridor_objective_row.get('mean_t_plus_2_return')}。"
-            f" 应先验证 {primary_ticker_row.get('ticker')} 的 tractable uplift 路线，并把其余 ticker 作为并行确认样本。"
-        )
+        recommendation = f"corridor lane 当前已是 objective leader，closed_cycle_count={corridor_objective_row.get('closed_cycle_count')}，" f"mean_t_plus_2_return={corridor_objective_row.get('mean_t_plus_2_return')}。" f" 应先验证 {primary_ticker_row.get('ticker')} 的 tractable uplift 路线，并把其余 ticker 作为并行确认样本。"
         if promotion_readiness_status == "corridor_promotion_candidate_ready":
-            recommendation += (
-                f" {primary_ticker_row.get('ticker')} 当前 closed_cycle_count={primary_ticker_row.get('closed_cycle_count')}、"
-                f"t_plus_2_positive_rate={primary_ticker_row.get('t_plus_2_positive_rate')}、"
-                f"t_plus_2_return_hit_rate_at_target={primary_ticker_row.get('t_plus_2_return_hit_rate_at_target')}，"
-                "已进入可升级为 promotion-candidate 的 corridor 强证据区间。"
-            )
+            recommendation += f" {primary_ticker_row.get('ticker')} 当前 closed_cycle_count={primary_ticker_row.get('closed_cycle_count')}、" f"t_plus_2_positive_rate={primary_ticker_row.get('t_plus_2_positive_rate')}、" f"t_plus_2_return_hit_rate_at_target={primary_ticker_row.get('t_plus_2_return_hit_rate_at_target')}，" "已进入可升级为 promotion-candidate 的 corridor 强证据区间。"
         if excluded_low_gate_tail_tickers:
             recommendation += f" 已从并行样本中剔除 excluded low-gate tail={sorted(excluded_low_gate_tail_tickers)}。"
     else:
@@ -277,38 +246,28 @@ def render_btst_candidate_pool_corridor_validation_pack_markdown(analysis: dict[
     lines.append("## Lane")
     lines.append(f"- pack_status: {analysis.get('pack_status')}")
     corridor_objective_row = dict(analysis.get("corridor_objective_row") or {})
-    lines.append(
-        f"- corridor_objective: verdict={corridor_objective_row.get('support_verdict')} closed_cycle_count={corridor_objective_row.get('closed_cycle_count')} objective_fit_score={corridor_objective_row.get('objective_fit_score')} mean_t_plus_2_return={corridor_objective_row.get('mean_t_plus_2_return')}"
-    )
+    lines.append(f"- corridor_objective: verdict={corridor_objective_row.get('support_verdict')} closed_cycle_count={corridor_objective_row.get('closed_cycle_count')} objective_fit_score={corridor_objective_row.get('objective_fit_score')} mean_t_plus_2_return={corridor_objective_row.get('mean_t_plus_2_return')}")
     lines.append("")
     lines.append("## Primary Validation")
     primary = dict(analysis.get("primary_validation_ticker") or {})
-    lines.append(
-        f"- primary_ticker: ticker={primary.get('ticker')} validation_priority_rank={primary.get('validation_priority_rank')} corridor_priority_rank={primary.get('corridor_priority_rank')} tractability_tier={primary.get('tractability_tier')} mean_t_plus_2_return={primary.get('mean_t_plus_2_return')} uplift_to_cutoff_multiple_mean={primary.get('uplift_to_cutoff_multiple_mean')}"
-    )
+    lines.append(f"- primary_ticker: ticker={primary.get('ticker')} validation_priority_rank={primary.get('validation_priority_rank')} corridor_priority_rank={primary.get('corridor_priority_rank')} tractability_tier={primary.get('tractability_tier')} mean_t_plus_2_return={primary.get('mean_t_plus_2_return')} uplift_to_cutoff_multiple_mean={primary.get('uplift_to_cutoff_multiple_mean')}")
     lines.append("")
     lines.append("## Parallel Watch")
     for row in list(analysis.get("parallel_watch_tickers") or []):
-        lines.append(
-            f"- ticker={row.get('ticker')} validation_priority_rank={row.get('validation_priority_rank')} tractability_tier={row.get('tractability_tier')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')} uplift_to_cutoff_multiple_mean={row.get('uplift_to_cutoff_multiple_mean')}"
-        )
+        lines.append(f"- ticker={row.get('ticker')} validation_priority_rank={row.get('validation_priority_rank')} tractability_tier={row.get('tractability_tier')} mean_t_plus_2_return={row.get('mean_t_plus_2_return')} uplift_to_cutoff_multiple_mean={row.get('uplift_to_cutoff_multiple_mean')}")
     if not list(analysis.get("parallel_watch_tickers") or []):
         lines.append("- none")
     lines.append("")
     lines.append("## Strict Release")
     lines.append(f"- strict_release_status: {analysis.get('strict_release_status')}")
     for row in list(analysis.get("strict_release_candidates") or []):
-        lines.append(
-            f"- ticker={row.get('ticker')} validation_priority_rank={row.get('validation_priority_rank')} tractability_tier={row.get('tractability_tier')} corridor_priority_rank={row.get('corridor_priority_rank')}"
-        )
+        lines.append(f"- ticker={row.get('ticker')} validation_priority_rank={row.get('validation_priority_rank')} tractability_tier={row.get('tractability_tier')} corridor_priority_rank={row.get('corridor_priority_rank')}")
     if not list(analysis.get("strict_release_candidates") or []):
         lines.append("- none")
     lines.append("")
     lines.append("## Validation Only")
     for row in list(analysis.get("validation_only_rows") or []):
-        lines.append(
-            f"- ticker={row.get('ticker')} validation_priority_rank={row.get('validation_priority_rank')} tractability_tier={row.get('tractability_tier')} corridor_priority_rank={row.get('corridor_priority_rank')}"
-        )
+        lines.append(f"- ticker={row.get('ticker')} validation_priority_rank={row.get('validation_priority_rank')} tractability_tier={row.get('tractability_tier')} corridor_priority_rank={row.get('corridor_priority_rank')}")
     if not list(analysis.get("validation_only_rows") or []):
         lines.append("- none")
     for ticker in list(analysis.get("excluded_low_gate_tail_tickers") or []):

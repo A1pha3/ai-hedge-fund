@@ -48,11 +48,7 @@ def _extract_window_key(report_label: str) -> str:
 
 def _is_short_trade_role(role: Any) -> bool:
     normalized = str(role or "")
-    return (
-        normalized.startswith("short_trade_")
-        or normalized.startswith("short_trade_boundary")
-        or ("_shadow_" in normalized and normalized.endswith(("_selected", "_near_miss")))
-    )
+    return normalized.startswith("short_trade_") or normalized.startswith("short_trade_boundary") or ("_shadow_" in normalized and normalized.endswith(("_selected", "_near_miss")))
 
 
 def _build_lane_row(summary: dict[str, Any], *, ticker: str) -> dict[str, Any]:
@@ -128,11 +124,7 @@ def analyze_btst_independent_window_monitor(
     monitored_tickers = [str(ticker).strip() for ticker in (tickers or list(DEFAULT_TICKERS)) if str(ticker).strip()]
     report_dirs = discover_report_dirs([resolved_reports_root], report_name_contains=report_name_contains)
     role_history = analyze_short_trade_ticker_role_history(report_dirs, tickers=monitored_tickers)
-    summaries_by_ticker = {
-        str(row.get("ticker") or ""): dict(row or {})
-        for row in list(role_history.get("ticker_summaries") or [])
-        if row.get("ticker")
-    }
+    summaries_by_ticker = {str(row.get("ticker") or ""): dict(row or {}) for row in list(role_history.get("ticker_summaries") or []) if row.get("ticker")}
     rows = [_build_lane_row(summaries_by_ticker.get(ticker, {"ticker": ticker}), ticker=ticker) for ticker in monitored_tickers]
     ready_lane_count = sum(1 for row in rows if row["readiness"] == "ready_for_reassessment")
     waiting_lane_count = sum(1 for row in rows if row["readiness"] == "await_new_independent_window_data")

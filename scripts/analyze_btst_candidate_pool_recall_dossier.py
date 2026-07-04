@@ -257,10 +257,7 @@ def _load_candidate_pool_snapshot(
         shadow_snapshot_payload = _load_candidate_pool_shadow_snapshot(shadow_snapshot_path)
         shadow_summary = dict(shadow_snapshot_payload.get("shadow_summary") or {})
         shadow_summary_priority = _shadow_summary_priority(shadow_summary)
-        if (
-            preferred_shadow_snapshot_path is None
-            or shadow_summary_priority > _shadow_summary_priority(preferred_shadow_summary)
-        ):
+        if preferred_shadow_snapshot_path is None or shadow_summary_priority > _shadow_summary_priority(preferred_shadow_summary):
             preferred_shadow_summary = shadow_summary
             preferred_shadow_snapshot_path = shadow_snapshot_path
         for ticker, blocking_stage in _extract_focus_filter_blocking_stages(shadow_summary).items():
@@ -444,11 +441,7 @@ def _build_trade_date_allowlist(watchlist_recall_dossier: dict[str, Any]) -> dic
         ticker = str(row.get("ticker") or "").strip()
         if not ticker:
             continue
-        trade_dates = {
-            _compact_trade_date(str(evidence.get("trade_date") or ""))
-            for evidence in list(row.get("occurrence_evidence") or [])
-            if str(evidence.get("recall_stage") or "") == "absent_from_candidate_pool"
-        }
+        trade_dates = {_compact_trade_date(str(evidence.get("trade_date") or "")) for evidence in list(row.get("occurrence_evidence") or []) if str(evidence.get("recall_stage") or "") == "absent_from_candidate_pool"}
         if trade_dates:
             allowlist[ticker] = trade_dates
     return allowlist
@@ -647,7 +640,7 @@ def _build_frontier_window(rows: list[dict[str, Any]], *, center_rank: int | Non
         return []
     start_rank = max(1, int(center_rank) - max(int(neighbor_count), 0))
     end_rank = min(len(rows), int(center_rank) + max(int(neighbor_count), 0))
-    return [dict(row) for row in rows[start_rank - 1:end_rank]]
+    return [dict(row) for row in rows[start_rank - 1 : end_rank]]
 
 
 def _classify_pre_truncation_ranking_driver(
@@ -691,12 +684,7 @@ def _classify_pre_truncation_liquidity_gap_mode(
 
 
 def _build_ticker_truncation_ranking_summary(occurrence_evidence: list[dict[str, Any]]) -> dict[str, Any] | None:
-    truncation_rows = [
-        dict(row)
-        for row in occurrence_evidence
-        if str(row.get("blocking_stage") or "") == "candidate_pool_truncated_after_filters"
-        and (row.get("pre_truncation_rank") is not None or row.get("pre_truncation_avg_amount_share_of_cutoff") is not None)
-    ]
+    truncation_rows = [dict(row) for row in occurrence_evidence if str(row.get("blocking_stage") or "") == "candidate_pool_truncated_after_filters" and (row.get("pre_truncation_rank") is not None or row.get("pre_truncation_avg_amount_share_of_cutoff") is not None)]
     if not truncation_rows:
         return None
 
@@ -914,11 +902,7 @@ def _build_empty_focus_liquidity_profile_summary() -> dict[str, Any]:
 
 
 def _build_priority_handoff_lookup(rows: list[dict[str, Any]] | None) -> dict[str, dict[str, Any]]:
-    return {
-        str(row.get("priority_handoff") or "").strip(): dict(row or {})
-        for row in list(rows or [])
-        if str(dict(row or {}).get("priority_handoff") or "").strip()
-    }
+    return {str(row.get("priority_handoff") or "").strip(): dict(row or {}) for row in list(rows or []) if str(dict(row or {}).get("priority_handoff") or "").strip()}
 
 
 def _enrich_focus_liquidity_profile(
@@ -1170,24 +1154,14 @@ def _describe_branch_experiment_prototype(
     nearest_frontier_peer_amount_multiple_min = mechanism.get("nearest_frontier_peer_amount_multiple_min")
     lower_market_cap_higher_liquidity_peer_share = _safe_float(mechanism.get("lower_market_cap_higher_liquidity_peer_share"))
     pressure_peer_cluster_type = str(mechanism.get("pressure_peer_cluster_type") or "").strip() or "generic_pressure_cluster"
-    top_lower_market_cap_hot_peers = [
-        str(row.get("ticker") or "")
-        for row in list(mechanism.get("top_lower_market_cap_hot_peers") or [])[:3]
-        if str(row.get("ticker") or "").strip()
-    ]
+    top_lower_market_cap_hot_peers = [str(row.get("ticker") or "") for row in list(mechanism.get("top_lower_market_cap_hot_peers") or [])[:3] if str(row.get("ticker") or "").strip()]
 
     if priority_handoff == "layer_a_liquidity_corridor":
         low_gate_focus_clause = ""
         low_gate_guardrail_clause = ""
         if avg_amount_share_of_min_gate_mean is not None and SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE <= avg_amount_share_of_min_gate_mean < SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE:
-            low_gate_focus_clause = (
-                f" 对低于 {SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE}x 最低流动性门槛的 focus 子样本，"
-                f"先用 tighter cutoff split（avg_amount/cutoff <= {SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE}）隔离 deepest corridor，再观察是否值得继续保留。"
-            )
-            low_gate_guardrail_clause = (
-                f" 对 low-gate focus 子样本，只有 avg_amount/cutoff 仍不高于 {SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE} 时才允许进入 shadow；"
-                "不得把更厚的 low-gate tail 一起带入 corridor focus。"
-            )
+            low_gate_focus_clause = f" 对低于 {SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE}x 最低流动性门槛的 focus 子样本，" f"先用 tighter cutoff split（avg_amount/cutoff <= {SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE}）隔离 deepest corridor，再观察是否值得继续保留。"
+            low_gate_guardrail_clause = f" 对 low-gate focus 子样本，只有 avg_amount/cutoff 仍不高于 {SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE} 时才允许进入 shadow；" "不得把更厚的 low-gate tail 一起带入 corridor focus。"
         return (
             "upstream_base_liquidity_uplift_probe",
             f"先把 {ticker_label} 收敛到 upstream base-liquidity uplift shadow probe，只验证能否把基础流动性从当前 corridor 系统性抬升，不提前讨论 cutoff 微调。{low_gate_focus_clause}",
@@ -1304,13 +1278,7 @@ def _group_priority_handoff_occurrences_by_branch(
         priority_handoff = str(profile.get("priority_handoff") or "").strip()
         if not priority_handoff:
             continue
-        grouped_occurrences.setdefault(priority_handoff, []).extend(
-            [
-                dict(row)
-                for row in list(dossier.get("occurrence_evidence") or [])
-                if str(row.get("blocking_stage") or "") == "candidate_pool_truncated_after_filters"
-            ]
-        )
+        grouped_occurrences.setdefault(priority_handoff, []).extend([dict(row) for row in list(dossier.get("occurrence_evidence") or []) if str(row.get("blocking_stage") or "") == "candidate_pool_truncated_after_filters"])
     return grouped_occurrences
 
 
@@ -1359,17 +1327,10 @@ def _build_layer_a_experiment_evaluation(
     target_cutoff_avg_amount_20d_mean: float | None,
 ) -> tuple[str, str]:
     prototype_readiness = "shadow_ready_large_gap" if uplift_to_cutoff_multiple_mean >= 3.0 else "shadow_ready_boundary_gap"
-    evaluation_summary = (
-        f"按当前 top300 cutoff 成交额口径，{priority_handoff} 分支平均需要把 20 日成交额抬到当前的 {uplift_to_cutoff_multiple_mean} 倍，"
-        f"目标 cutoff 成交额均值约为 {target_cutoff_avg_amount_20d_mean}；因此现阶段更适合先做 upstream uplift shadow probe，而不是直接讨论 pool-size 或 cutoff 微调。"
-    )
+    evaluation_summary = f"按当前 top300 cutoff 成交额口径，{priority_handoff} 分支平均需要把 20 日成交额抬到当前的 {uplift_to_cutoff_multiple_mean} 倍，" f"目标 cutoff 成交额均值约为 {target_cutoff_avg_amount_20d_mean}；因此现阶段更适合先做 upstream uplift shadow probe，而不是直接讨论 pool-size 或 cutoff 微调。"
     avg_amount_share_of_min_gate_mean = _safe_float(normalized.get("avg_amount_share_of_min_gate_mean"))
     if avg_amount_share_of_min_gate_mean is not None and SHADOW_LIQUIDITY_CORRIDOR_FOCUS_MIN_GATE_SHARE <= avg_amount_share_of_min_gate_mean < SHADOW_LIQUIDITY_CORRIDOR_MIN_GATE_SHARE:
-        evaluation_summary = (
-            f"{evaluation_summary} 其中 low-gate corridor focus 子样本应先走 tighter cutoff split："
-            f"只有 avg_amount/cutoff 不高于 {SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE} 的 deepest corridor 样本才继续保留，"
-            "避免把更厚的低门槛长尾一起放进 shadow probe。"
-        )
+        evaluation_summary = f"{evaluation_summary} 其中 low-gate corridor focus 子样本应先走 tighter cutoff split：" f"只有 avg_amount/cutoff 不高于 {SHADOW_LIQUIDITY_CORRIDOR_FOCUS_LOW_GATE_MAX_CUTOFF_SHARE} 的 deepest corridor 样本才继续保留，" "避免把更厚的低门槛长尾一起放进 shadow probe。"
     return prototype_readiness, evaluation_summary
 
 
@@ -1383,16 +1344,9 @@ def _build_post_gate_experiment_evaluation(
 ) -> tuple[str, str, str | None, str | None]:
     prototype_readiness = "shadow_ready_rebucket_signal" if lower_cap_hot_peer_case_share and lower_cap_hot_peer_case_share > 0 else "shadow_ready_without_rebucket_signal"
     if top300_lower_market_cap_hot_peer_count_mean is not None and estimated_rank_gap_after_rebucket_mean is not None:
-        evaluation_summary = (
-            f"按当前 top300 cutoff 口径，{priority_handoff} 分支平均仍需 {uplift_to_cutoff_multiple_mean} 倍成交额才能贴近 cutoff，"
-            f"但 top300 中平均约有 {top300_lower_market_cap_hot_peer_count_mean} 个更小市值高流动性 peer 挡在前面，"
-            f"若做 rebucket，估算 rank gap 均值可收敛到 {estimated_rank_gap_after_rebucket_mean}。"
-        )
+        evaluation_summary = f"按当前 top300 cutoff 口径，{priority_handoff} 分支平均仍需 {uplift_to_cutoff_multiple_mean} 倍成交额才能贴近 cutoff，" f"但 top300 中平均约有 {top300_lower_market_cap_hot_peer_count_mean} 个更小市值高流动性 peer 挡在前面，" f"若做 rebucket，估算 rank gap 均值可收敛到 {estimated_rank_gap_after_rebucket_mean}。"
     else:
-        evaluation_summary = (
-            f"按当前 top300 cutoff 口径，{priority_handoff} 分支平均仍需 {uplift_to_cutoff_multiple_mean} 倍成交额才能贴近 cutoff，"
-            "但当前还缺稳定的 top300 smaller-cap hot-peer 计数，暂时只宜保持 shadow probe。"
-        )
+        evaluation_summary = f"按当前 top300 cutoff 口径，{priority_handoff} 分支平均仍需 {uplift_to_cutoff_multiple_mean} 倍成交额才能贴近 cutoff，" "但当前还缺稳定的 top300 smaller-cap hot-peer 计数，暂时只宜保持 shadow probe。"
     selective_exemption_readiness, selective_exemption_summary = _classify_post_gate_selective_exemption_readiness(
         lower_cap_hot_peer_case_share=lower_cap_hot_peer_case_share,
         estimated_rank_gap_after_rebucket_mean=estimated_rank_gap_after_rebucket_mean,
@@ -1438,26 +1392,10 @@ def _build_priority_handoff_experiment_queue_row(
 
 
 def _summarize_branch_experiment_occurrences(occurrences: list[dict[str, Any]]) -> dict[str, Any]:
-    uplift_to_cutoff_multiples = [
-        round(1.0 / float(value), 4)
-        for value in [_safe_float(row.get("pre_truncation_avg_amount_share_of_cutoff")) for row in occurrences]
-        if value is not None and value > 0
-    ]
-    cutoff_targets = [
-        float(value)
-        for value in [_safe_float(row.get("pre_truncation_cutoff_avg_amount_20d")) for row in occurrences]
-        if value is not None
-    ]
-    lower_cap_hot_peer_counts = [
-        int(value)
-        for value in [row.get("top300_lower_market_cap_hot_peer_count") for row in occurrences]
-        if value is not None
-    ]
-    rebucket_rank_gaps = [
-        int(value)
-        for value in [row.get("estimated_rank_gap_after_rebucket") for row in occurrences]
-        if value is not None
-    ]
+    uplift_to_cutoff_multiples = [round(1.0 / float(value), 4) for value in [_safe_float(row.get("pre_truncation_avg_amount_share_of_cutoff")) for row in occurrences] if value is not None and value > 0]
+    cutoff_targets = [float(value) for value in [_safe_float(row.get("pre_truncation_cutoff_avg_amount_20d")) for row in occurrences] if value is not None]
+    lower_cap_hot_peer_counts = [int(value) for value in [row.get("top300_lower_market_cap_hot_peer_count") for row in occurrences] if value is not None]
+    rebucket_rank_gaps = [int(value) for value in [row.get("estimated_rank_gap_after_rebucket") for row in occurrences] if value is not None]
     return {
         "uplift_to_cutoff_multiple_mean": round(sum(uplift_to_cutoff_multiples) / len(uplift_to_cutoff_multiples), 4) if uplift_to_cutoff_multiples else None,
         "uplift_to_cutoff_multiple_min": min(uplift_to_cutoff_multiples) if uplift_to_cutoff_multiples else None,
@@ -1559,11 +1497,7 @@ def _build_priority_handoff_mechanism_row(
 
 
 def _group_priority_handoff_occurrences(priority_ticker_dossiers: list[dict[str, Any]]) -> tuple[dict[str, list[dict[str, Any]]], dict[str, set[str]]]:
-    profiles_by_ticker = {
-        str(row.get("ticker") or ""): dict(row.get("truncation_liquidity_profile") or {})
-        for row in priority_ticker_dossiers
-        if str(row.get("ticker") or "").strip() and dict(row.get("truncation_liquidity_profile") or {})
-    }
+    profiles_by_ticker = {str(row.get("ticker") or ""): dict(row.get("truncation_liquidity_profile") or {}) for row in priority_ticker_dossiers if str(row.get("ticker") or "").strip() and dict(row.get("truncation_liquidity_profile") or {})}
     grouped_occurrences: dict[str, list[dict[str, Any]]] = {}
     grouped_tickers: dict[str, set[str]] = {}
     for dossier in priority_ticker_dossiers:
@@ -1572,11 +1506,7 @@ def _group_priority_handoff_occurrences(priority_ticker_dossiers: list[dict[str,
         priority_handoff = str(profile.get("priority_handoff") or "").strip()
         if not ticker or not priority_handoff:
             continue
-        truncation_occurrences = [
-            {**dict(row), "ticker": ticker}
-            for row in list(dossier.get("occurrence_evidence") or [])
-            if str(row.get("blocking_stage") or "") == "candidate_pool_truncated_after_filters"
-        ]
+        truncation_occurrences = [{**dict(row), "ticker": ticker} for row in list(dossier.get("occurrence_evidence") or []) if str(row.get("blocking_stage") or "") == "candidate_pool_truncated_after_filters"]
         if not truncation_occurrences:
             continue
         grouped_occurrences.setdefault(priority_handoff, []).extend(truncation_occurrences)
@@ -1761,15 +1691,9 @@ def _build_priority_handoff_mechanism_summary(
     min_rank_gap_to_cutoff: int | None,
 ) -> str:
     if priority_handoff == "layer_a_liquidity_corridor":
-        return (
-            f"{tickers} 在通过最低流动性门槛后，平均仍只达到 cutoff 成交额的 {avg_amount_share_of_cutoff_mean}，"
-            f"对应 cutoff 对候选的流动性压力倍数约为 {cutoff_to_candidate_liquidity_multiple_mean} 倍，说明主问题是 gate 以上到 cutoff 以下的长尾走廊。"
-        )
+        return f"{tickers} 在通过最低流动性门槛后，平均仍只达到 cutoff 成交额的 {avg_amount_share_of_cutoff_mean}，" f"对应 cutoff 对候选的流动性压力倍数约为 {cutoff_to_candidate_liquidity_multiple_mean} 倍，说明主问题是 gate 以上到 cutoff 以下的长尾走廊。"
     if priority_handoff == "post_gate_liquidity_competition":
-        return (
-            f"{tickers} 已明显过 gate，但 cutoff 竞争者平均仍有约 {cutoff_to_candidate_liquidity_multiple_mean} 倍流动性优势，"
-            f"且最近仍差 {min_rank_gap_to_cutoff} 名，说明主问题是过 gate 后的竞争集压力，而不是 gate 本身。"
-        )
+        return f"{tickers} 已明显过 gate，但 cutoff 竞争者平均仍有约 {cutoff_to_candidate_liquidity_multiple_mean} 倍流动性优势，" f"且最近仍差 {min_rank_gap_to_cutoff} 名，说明主问题是过 gate 后的竞争集压力，而不是 gate 本身。"
     return "当前分支还缺足够样本解释其截断机制。"
 
 
@@ -1879,11 +1803,7 @@ def _build_pre_truncation_market_maps(trade_date_context: dict[str, Any]) -> tup
 def _filter_low_estimated_amount_rows(working_df: pd.DataFrame, estimated_amount_map: dict[str, float]) -> pd.DataFrame:
     if not estimated_amount_map:
         return working_df
-    low_estimated_codes = {
-        ts_code
-        for ts_code in working_df["ts_code"].astype(str).tolist()
-        if 0.0 < float(estimated_amount_map.get(ts_code, 0.0)) < MIN_ESTIMATED_AMOUNT_1D
-    }
+    low_estimated_codes = {ts_code for ts_code in working_df["ts_code"].astype(str).tolist() if 0.0 < float(estimated_amount_map.get(ts_code, 0.0)) < MIN_ESTIMATED_AMOUNT_1D}
     if not low_estimated_codes:
         return working_df
     return working_df[~working_df["ts_code"].astype(str).isin(low_estimated_codes)].copy()
@@ -2032,11 +1952,7 @@ def _resolve_dominant_blocking_stage(stage_counts: dict[str, int]) -> str | None
 
 
 def _top_tickers_by_stage(priority_ticker_dossiers: list[dict[str, Any]], stage: str) -> list[str]:
-    return [
-        str(row.get("ticker") or "")
-        for row in priority_ticker_dossiers
-        if str(row.get("dominant_blocking_stage") or "") == stage and str(row.get("ticker") or "").strip()
-    ][:3]
+    return [str(row.get("ticker") or "") for row in priority_ticker_dossiers if str(row.get("dominant_blocking_stage") or "") == stage and str(row.get("ticker") or "").strip()][:3]
 
 
 def _build_top_stage_tickers(priority_ticker_dossiers: list[dict[str, Any]]) -> dict[str, list[str]]:
@@ -2315,21 +2231,9 @@ def _build_ticker_stage_payload(
 ) -> dict[str, Any]:
     shadow_entry = dict(dict(snapshot.get("shadow_ticker_entries") or {}).get(ticker) or {})
     resolved_shadow_snapshot_path = shadow_entry.get("shadow_snapshot_path") or snapshot.get("shadow_snapshot_path")
-    resolved_shadow_recall_complete = (
-        shadow_entry.get("shadow_recall_complete")
-        if shadow_entry
-        else snapshot.get("shadow_recall_complete")
-    )
-    resolved_shadow_recall_status = (
-        shadow_entry.get("shadow_recall_status")
-        if shadow_entry
-        else snapshot.get("shadow_recall_status")
-    )
-    resolved_shadow_cutoff_avg_volume_20d = (
-        shadow_entry.get("shadow_selected_cutoff_avg_volume_20d")
-        if shadow_entry
-        else snapshot.get("shadow_selected_cutoff_avg_volume_20d")
-    )
+    resolved_shadow_recall_complete = shadow_entry.get("shadow_recall_complete") if shadow_entry else snapshot.get("shadow_recall_complete")
+    resolved_shadow_recall_status = shadow_entry.get("shadow_recall_status") if shadow_entry else snapshot.get("shadow_recall_status")
+    resolved_shadow_cutoff_avg_volume_20d = shadow_entry.get("shadow_selected_cutoff_avg_volume_20d") if shadow_entry else snapshot.get("shadow_selected_cutoff_avg_volume_20d")
     return {
         "ticker": ticker,
         "trade_date": compact_trade_date,
@@ -2805,11 +2709,7 @@ def _build_priority_ticker_dossiers(
     snapshots_root: Path,
     diagnostics_override: dict[tuple[str, str], dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
-    no_candidate_rows = [
-        dict(row)
-        for row in list(tradeable_pool.get("rows") or [])
-        if str(row.get("first_kill_switch") or "") == "no_candidate_entry"
-    ]
+    no_candidate_rows = [dict(row) for row in list(tradeable_pool.get("rows") or []) if str(row.get("first_kill_switch") or "") == "no_candidate_entry"]
     no_candidate_rows = _backfill_tradeable_pool_rows_from_replay_inputs(
         no_candidate_rows,
         reports_root=report_manifest_path.parent,
@@ -2828,9 +2728,7 @@ def _build_priority_ticker_dossiers(
         stock_basic_universe = fallback_stock_basic_universe
     elif not fallback_stock_basic_universe.empty:
         existing_symbols = set(stock_basic_universe["symbol"].astype(str).tolist()) if "symbol" in stock_basic_universe.columns else set()
-        missing_rows = fallback_stock_basic_universe[
-            ~fallback_stock_basic_universe["symbol"].astype(str).isin(existing_symbols)
-        ].copy()
+        missing_rows = fallback_stock_basic_universe[~fallback_stock_basic_universe["symbol"].astype(str).isin(existing_symbols)].copy()
         if not missing_rows.empty:
             stock_basic_universe = pd.concat([stock_basic_universe, missing_rows], ignore_index=True)
     if fallback_stock_basic_by_symbol:
@@ -2878,12 +2776,7 @@ def _filter_priority_ticker_rows(
 ) -> list[dict[str, Any]]:
     ticker_rows = [row for row in no_candidate_rows if str(row.get("ticker") or "").strip() == ticker]
     if allowed_trade_dates:
-        ticker_rows = [
-            row
-            for row in ticker_rows
-            if bool(row.get("shadow_visible_backfill"))
-            or _compact_trade_date(str(row.get("trade_date") or "")) in allowed_trade_dates
-        ]
+        ticker_rows = [row for row in ticker_rows if bool(row.get("shadow_visible_backfill")) or _compact_trade_date(str(row.get("trade_date") or "")) in allowed_trade_dates]
     return ticker_rows
 
 
@@ -2968,11 +2861,7 @@ def _build_priority_ticker_dossier(
         "failure_reason": _build_priority_ticker_failure_reason(ticker, dominant_stage),
         "next_step": next_step,
         "closest_pre_truncation_gap": min(
-            [
-                int(current.get("pre_truncation_rank_gap_to_cutoff"))
-                for current in occurrence_evidence
-                if current.get("pre_truncation_rank_gap_to_cutoff") is not None
-            ],
+            [int(current.get("pre_truncation_rank_gap_to_cutoff")) for current in occurrence_evidence if current.get("pre_truncation_rank_gap_to_cutoff") is not None],
             default=None,
         ),
         "truncation_ranking_summary": truncation_ranking_summary,
@@ -3346,10 +3235,7 @@ def _build_truncation_far_below_cutoff_recommendation(truncation_context: dict[s
 
 
 def _build_default_truncation_stage_recommendation(top_stage_tickers: dict[str, list[str]]) -> str:
-    return (
-        f"当前 Layer A candidate_pool recall backlog 的主矛盾更像 top300 截断：{top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 通过过滤后仍未进入 snapshot。"
-        "下一步应优先补 pre-truncation 排名观测与 frontier，而不是继续下游 recall 诊断。"
-    )
+    return f"当前 Layer A candidate_pool recall backlog 的主矛盾更像 top300 截断：{top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 通过过滤后仍未进入 snapshot。" "下一步应优先补 pre-truncation 排名观测与 frontier，而不是继续下游 recall 诊断。"
 
 
 def _build_branch_split_recommendation(
@@ -3359,11 +3245,7 @@ def _build_branch_split_recommendation(
     branch_experiment_queue: list[dict[str, Any]],
 ) -> str:
     mechanism_suffix = _build_branch_recommendation_suffix(branch_mechanisms, branch_experiment_queue)
-    return (
-        "当前 Layer A candidate_pool recall backlog 的主矛盾虽然都落在 top300 截断，但已拆成分支车道："
-        f"{[(row.get('priority_handoff'), row.get('tickers')) for row in branch_diagnoses[:3]]}。"
-        f" {branch_diagnoses[0].get('diagnosis_summary')}{mechanism_suffix}"
-    )
+    return "当前 Layer A candidate_pool recall backlog 的主矛盾虽然都落在 top300 截断，但已拆成分支车道：" f"{[(row.get('priority_handoff'), row.get('tickers')) for row in branch_diagnoses[:3]]}。" f" {branch_diagnoses[0].get('diagnosis_summary')}{mechanism_suffix}"
 
 
 def _build_branch_recommendation_suffix(branch_mechanisms: list[dict[str, Any]], branch_experiment_queue: list[dict[str, Any]]) -> str:
@@ -3492,32 +3374,19 @@ def _build_non_truncation_stage_recommendation(dominant_stage: str | None, *, to
 
 
 def _build_legacy_shadow_recommendation(top_stage_tickers: dict[str, list[str]]) -> str:
-    return (
-        "当前 Layer A candidate_pool recall backlog 里至少有一部分样本仍停留在 legacy 空 shadow 快照状态："
-        f"{top_stage_tickers.get('shadow_snapshot_legacy_unknown', [])} 还不能被直接解释成真实 upstream absence。"
-        "下一步应先补齐 shadow 证据，再决定是否调整 recall 规则。"
-    )
+    return "当前 Layer A candidate_pool recall backlog 里至少有一部分样本仍停留在 legacy 空 shadow 快照状态：" f"{top_stage_tickers.get('shadow_snapshot_legacy_unknown', [])} 还不能被直接解释成真实 upstream absence。" "下一步应先补齐 shadow 证据，再决定是否调整 recall 规则。"
 
 
 def _build_low_avg_amount_recommendation(top_stage_tickers: dict[str, list[str]]) -> str:
-    return (
-        f"当前 Layer A candidate_pool recall backlog 的主矛盾落在 20 日均成交额门槛：{top_stage_tickers.get('low_avg_amount_20d', [])} 持续卡在 {MIN_AVG_AMOUNT_20D} 万流动性线下。"
-        "下一步应先审 liquidity gate，而不是继续调 watchlist 或 candidate-entry。"
-    )
+    return f"当前 Layer A candidate_pool recall backlog 的主矛盾落在 20 日均成交额门槛：{top_stage_tickers.get('low_avg_amount_20d', [])} 持续卡在 {MIN_AVG_AMOUNT_20D} 万流动性线下。" "下一步应先审 liquidity gate，而不是继续调 watchlist 或 candidate-entry。"
 
 
 def _build_low_estimated_liquidity_recommendation(top_stage_tickers: dict[str, list[str]]) -> str:
-    return (
-        f"当前 Layer A candidate_pool recall backlog 的主矛盾落在当日估算流动性粗筛：{top_stage_tickers.get('low_estimated_liquidity', [])} 先被 1D liquidity gate 拦下。"
-        "下一步应优先核对 turnover_rate/circ_mv 与粗筛门槛。"
-    )
+    return f"当前 Layer A candidate_pool recall backlog 的主矛盾落在当日估算流动性粗筛：{top_stage_tickers.get('low_estimated_liquidity', [])} 先被 1D liquidity gate 拦下。" "下一步应优先核对 turnover_rate/circ_mv 与粗筛门槛。"
 
 
 def _build_hard_filter_stage_recommendation(dominant_stage: str, *, top_stage_tickers: dict[str, list[str]]) -> str:
-    return (
-        f"当前 Layer A candidate_pool recall backlog 的主矛盾落在硬过滤阶段：{top_stage_tickers.get(dominant_stage, [])} 已在候选池前置规则里被挡下。"
-        "下一步应先核对硬过滤规则是否符合当前策略边界。"
-    )
+    return f"当前 Layer A candidate_pool recall backlog 的主矛盾落在硬过滤阶段：{top_stage_tickers.get(dominant_stage, [])} 已在候选池前置规则里被挡下。" "下一步应先核对硬过滤规则是否符合当前策略边界。"
 
 
 def _build_next_actions(
@@ -3752,15 +3621,11 @@ def _build_far_below_cutoff_primary_action(*, top_stage_tickers: dict[str, list[
 
 
 def _build_far_below_cutoff_missing_rank_action(*, top_stage_tickers: dict[str, list[str]], closest_case: dict[str, Any]) -> str:
-    return (
-        f"不要把 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 直接当作 top300 边界微调问题；最近 distinct 样本 {closest_case.get('ticker')} 的 avg_amount/cutoff 也只有 {closest_case.get('pre_truncation_avg_amount_share_of_cutoff')}。"
-    )
+    return f"不要把 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 直接当作 top300 边界微调问题；最近 distinct 样本 {closest_case.get('ticker')} 的 avg_amount/cutoff 也只有 {closest_case.get('pre_truncation_avg_amount_share_of_cutoff')}。"
 
 
 def _build_far_below_cutoff_ranked_action(*, top_stage_tickers: dict[str, list[str]], closest_case: dict[str, Any]) -> str:
-    return (
-        f"不要把 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 直接当作 top300 边界微调问题；最近 distinct 样本 {closest_case.get('ticker')} 也还差 {closest_case.get('pre_truncation_rank_gap_to_cutoff')} 名。"
-    )
+    return f"不要把 {top_stage_tickers.get('candidate_pool_truncated_after_filters', [])} 直接当作 top300 边界微调问题；最近 distinct 样本 {closest_case.get('ticker')} 也还差 {closest_case.get('pre_truncation_rank_gap_to_cutoff')} 名。"
 
 
 def _build_focus_handoff_action(primary_focus_tickers: list[dict[str, Any]]) -> str | None:
@@ -3831,11 +3696,7 @@ def analyze_btst_candidate_pool_recall_dossier(
         tradeable_opportunity_pool_path=tradeable_opportunity_pool_path,
         tradeable_pool=tradeable_pool,
     )
-    resolved_report_manifest_path = (
-        Path(report_manifest_path).expanduser().resolve()
-        if report_manifest_path
-        else reports_root / DEFAULT_REPORT_MANIFEST_PATH.name
-    )
+    resolved_report_manifest_path = Path(report_manifest_path).expanduser().resolve() if report_manifest_path else reports_root / DEFAULT_REPORT_MANIFEST_PATH.name
     focus_tickers = _build_focus_tickers(
         tradeable_pool,
         watchlist_recall_dossier,
@@ -4014,21 +3875,13 @@ def _build_shadow_visible_focus_profiles(
     *,
     focus_liquidity_profile_summary: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    focus_profiles = {
-        str(row.get("ticker") or "").strip(): dict(row)
-        for row in list(dict(focus_liquidity_profile_summary).get("primary_focus_tickers") or [])
-        if str(row.get("ticker") or "").strip()
-    }
+    focus_profiles = {str(row.get("ticker") or "").strip(): dict(row) for row in list(dict(focus_liquidity_profile_summary).get("primary_focus_tickers") or []) if str(row.get("ticker") or "").strip()}
     visible_profiles: list[dict[str, Any]] = []
     for dossier in list(priority_ticker_dossiers or []):
         ticker = str(dossier.get("ticker") or "").strip()
         if not ticker:
             continue
-        visible_occurrences = [
-            dict(row)
-            for row in list(dossier.get("occurrence_evidence") or [])
-            if bool(row.get("candidate_pool_shadow_visible"))
-        ]
+        visible_occurrences = [dict(row) for row in list(dossier.get("occurrence_evidence") or []) if bool(row.get("candidate_pool_shadow_visible"))]
         if not visible_occurrences:
             continue
         visible_occurrences.sort(key=lambda row: str(row.get("trade_date") or ""), reverse=True)
@@ -4079,9 +3932,7 @@ def render_btst_candidate_pool_recall_dossier_markdown(analysis: dict[str, Any])
     lines.append("- priority_handoff_branch_experiment_queue: structured_summary")
     lines.append(f"- priority_handoff_branch_experiment_queue_count: {len(branch_experiment_queue)}")
     for experiment in branch_experiment_queue[:3]:
-        lines.append(
-            f"- branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}"
-        )
+        lines.append(f"- branch_experiment: task_id={experiment.get('task_id')} handoff={experiment.get('priority_handoff')} readiness={experiment.get('prototype_readiness')} tickers={experiment.get('tickers')}")
         lines.append(f"  prototype_summary: {experiment.get('prototype_summary')}")
         lines.append(f"  evaluation_summary: {experiment.get('evaluation_summary')}")
         lines.append(f"  guardrail_summary: {experiment.get('guardrail_summary')}")
@@ -4089,9 +3940,7 @@ def render_btst_candidate_pool_recall_dossier_markdown(analysis: dict[str, Any])
     lines.append("")
     lines.append("## Priority Ticker Dossiers")
     for row in list(analysis.get("priority_ticker_dossiers") or []):
-        lines.append(
-            f"- rank={row.get('priority_rank')} ticker={row.get('ticker')} dominant_blocking_stage={row.get('dominant_blocking_stage')} occurrence_count={row.get('occurrence_count')}"
-        )
+        lines.append(f"- rank={row.get('priority_rank')} ticker={row.get('ticker')} dominant_blocking_stage={row.get('dominant_blocking_stage')} occurrence_count={row.get('occurrence_count')}")
         lines.append(f"  blocking_stage_counts: {row.get('blocking_stage_counts')}")
         lines.append(f"  failure_reason: {row.get('failure_reason')}")
         lines.append(f"  next_step: {row.get('next_step')}")
@@ -4109,9 +3958,7 @@ def render_btst_candidate_pool_recall_dossier_markdown(analysis: dict[str, Any])
     lines.append("")
     lines.append("## Action Queue")
     for row in list(analysis.get("action_queue") or []):
-        lines.append(
-            f"- task_id={row.get('task_id')} ticker={row.get('ticker')} action_tier={row.get('action_tier')} dominant_blocking_stage={row.get('dominant_blocking_stage')}"
-        )
+        lines.append(f"- task_id={row.get('task_id')} ticker={row.get('ticker')} action_tier={row.get('action_tier')} dominant_blocking_stage={row.get('dominant_blocking_stage')}")
         lines.append(f"  why_now: {row.get('why_now')}")
         lines.append(f"  next_step: {row.get('next_step')}")
     if not list(analysis.get("action_queue") or []):

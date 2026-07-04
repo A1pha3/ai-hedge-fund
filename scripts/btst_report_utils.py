@@ -44,13 +44,7 @@ def discover_report_dirs(
     if not resolved.is_dir():
         raise FileNotFoundError(f"Input path does not exist: {resolved}")
 
-    return sorted(
-        candidate
-        for candidate in resolved.iterdir()
-        if looks_like_report_dir(candidate)
-        and (report_name_contains is None or report_name_contains in candidate.name)
-        and (report_name_prefix is None or candidate.name.startswith(report_name_prefix))
-    )
+    return sorted(candidate for candidate in resolved.iterdir() if looks_like_report_dir(candidate) and (report_name_contains is None or report_name_contains in candidate.name) and (report_name_prefix is None or candidate.name.startswith(report_name_prefix)))
 
 
 def discover_nested_report_dirs(report_root_dirs: list[str | Path], *, report_name_contains: str = "") -> list[Path]:

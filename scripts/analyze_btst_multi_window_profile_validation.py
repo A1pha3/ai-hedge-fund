@@ -195,11 +195,7 @@ def _build_runtime_activation_attribution(
     if not activation_change_labels:
         if threshold_probe_active:
             zero_delta_reason = "threshold_probe_without_runtime_activation_delta"
-        elif (
-            watchlist_shrink_diagnostics["watchlist_shrink_guard_applied_count"] > 0
-            and watchlist_shrink_diagnostics["watchlist_shrink_selected_gate_pass_count"] > 0
-            and watchlist_shrink_diagnostics["watchlist_shrink_selected_boundary_overlap_count"] == 0
-        ):
+        elif watchlist_shrink_diagnostics["watchlist_shrink_guard_applied_count"] > 0 and watchlist_shrink_diagnostics["watchlist_shrink_selected_gate_pass_count"] > 0 and watchlist_shrink_diagnostics["watchlist_shrink_selected_boundary_overlap_count"] == 0:
             zero_delta_reason = "watchlist_shrink_guard_without_selected_boundary_overlap"
         elif dict(variant.get("profile_overrides") or {}):
             zero_delta_reason = "profile_override_without_runtime_activation_delta"

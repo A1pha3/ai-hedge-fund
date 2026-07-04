@@ -121,10 +121,7 @@ def _build_weekly_recommendation(
     if selected_shadow_scenarios:
         top_scenario = dict(selected_shadow_scenarios[0] or {})
         surface_summary = dict(top_scenario.get("surface_summary") or {})
-        return (
-            f"本周已形成 {selected_report_count} 个可验证日报；优先继续 shadow-only 验证剔除 {list(top_scenario.get('excluded_candidate_sources') or [])} 的正式层情景，"
-            f"因为该情景下 selected 的 5D/+15% 命中率可提升到 `{surface_summary.get('max_future_high_return_2_5d_hit_rate_at_15pct')}`。"
-        )
+        return f"本周已形成 {selected_report_count} 个可验证日报；优先继续 shadow-only 验证剔除 {list(top_scenario.get('excluded_candidate_sources') or [])} 的正式层情景，" f"因为该情景下 selected 的 5D/+15% 命中率可提升到 `{surface_summary.get('max_future_high_return_2_5d_hit_rate_at_15pct')}`。"
     if float(tradeable_summary.get("next_close_positive_rate") or 0.0) >= 0.6 and float(tradeable_summary.get("next_close_payoff_ratio") or 0.0) >= 1.5:
         return f"本周已形成 {selected_report_count} 个可验证日报，但当前结论仍只用于 shadow-only 周评估，不直接推进默认参数收紧。"
     return f"本周已形成 {selected_report_count} 个可验证日报，但 tradeable surface 仍未达到强势阈值；继续做 shadow-only 参数与候选压缩验证，不扩大候选池。"
@@ -179,11 +176,7 @@ def _build_runner_false_negative_summary(rows: list[dict[str, Any]], *, next_hig
 
 def _build_selected_shadow_scenarios(selected_rows: list[dict[str, Any]], *, next_high_hit_threshold: float) -> tuple[list[str], list[dict[str, Any]]]:
     selected_candidate_source_breakdown = _build_candidate_source_breakdown(selected_rows)
-    payoff_drag_candidate_sources = sorted(
-        str(row.get("candidate_source") or "")
-        for row in selected_candidate_source_breakdown
-        if int(row.get("count") or 0) >= 2 and float(row.get("max_future_high_return_2_5d_hit_rate_at_15pct") or 0.0) <= 0.0
-    )
+    payoff_drag_candidate_sources = sorted(str(row.get("candidate_source") or "") for row in selected_candidate_source_breakdown if int(row.get("count") or 0) >= 2 and float(row.get("max_future_high_return_2_5d_hit_rate_at_15pct") or 0.0) <= 0.0)
     scenarios: list[dict[str, Any]] = []
     if payoff_drag_candidate_sources:
         remaining_rows = [row for row in selected_rows if str(row.get("candidate_source") or "") not in set(payoff_drag_candidate_sources)]
@@ -318,17 +311,13 @@ def render_btst_weekly_validation_markdown(analysis: dict[str, Any]) -> str:
     if list(analysis.get("selected_shadow_scenarios") or []):
         lines.append(f"- payoff_drag_candidate_sources: {analysis.get('selected_payoff_drag_candidate_sources')}")
         for row in list(analysis.get("selected_shadow_scenarios") or []):
-            lines.append(
-                f"- {row.get('scenario_id')}: excluded_candidate_sources={row.get('excluded_candidate_sources')} removed_count={row.get('removed_count')} remaining_count={row.get('remaining_count')} surface_summary={row.get('surface_summary')}"
-            )
+            lines.append(f"- {row.get('scenario_id')}: excluded_candidate_sources={row.get('excluded_candidate_sources')} removed_count={row.get('removed_count')} remaining_count={row.get('remaining_count')} surface_summary={row.get('surface_summary')}")
     else:
         lines.append("- none")
     lines.append("")
     lines.append("## Daily Summaries")
     for row in list(analysis.get("daily_summaries") or []):
-        lines.append(
-            f"- trade_date={row.get('trade_date')} report_dir_name={row.get('report_dir_name')} decision_counts={row.get('decision_counts')} cycle_status_counts={row.get('cycle_status_counts')} tradeable_surface={row.get('tradeable_surface')}"
-        )
+        lines.append(f"- trade_date={row.get('trade_date')} report_dir_name={row.get('report_dir_name')} decision_counts={row.get('decision_counts')} cycle_status_counts={row.get('cycle_status_counts')} tradeable_surface={row.get('tradeable_surface')}")
     if not list(analysis.get("daily_summaries") or []):
         lines.append("- none")
     lines.append("")

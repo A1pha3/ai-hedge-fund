@@ -306,7 +306,7 @@ def summarize_return_stats(
     next_high_pcts: pd.Series | None = None,
 ) -> dict[str, float | None]:
     """汇总次日收益统计。
-    
+
     Round 89 新增:
     - open_to_close_returns: 次日开盘买入→收盘卖出收益（更准确的BTST成本基准）
     - next_high_pcts: 次日最高点相对前收盘涨幅（宽标签：最高点能否触发2%止盈）
@@ -1034,8 +1034,7 @@ def main():
                 avg_open_ret = float(np.mean(open_ret_vals)) if open_ret_vals else 0.0
                 avg_high2 = float(np.mean(high2_vals)) if high2_vals else 0.0
                 avg_high3 = float(np.mean(high3_vals)) if high3_vals else 0.0
-                print(f"    [R89] 开盘买入胜率={avg_open_wr:.0%} 开盘收益={avg_open_ret:+.2f}% "
-                      f"最高≥2%胜率={avg_high2:.0%} 最高≥3%胜率={avg_high3:.0%}")
+                print(f"    [R89] 开盘买入胜率={avg_open_wr:.0%} 开盘收益={avg_open_ret:+.2f}% " f"最高≥2%胜率={avg_high2:.0%} 最高≥3%胜率={avg_high3:.0%}")
             tplus2_entries = [e for e in entries if int(e.get("tplus2_available_count", 0)) > 0]
             if tplus2_entries:
                 tplus2_avg_ret = float(np.mean([float(e.get("tplus2_avg_ret", 0.0)) for e in tplus2_entries]))

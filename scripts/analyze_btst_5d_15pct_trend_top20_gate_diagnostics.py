@@ -34,7 +34,6 @@ from scripts.btst_analysis_utils import (
 from scripts.btst_report_utils import discover_nested_report_dirs as discover_report_dirs
 from scripts.btst_round1_factor_mining_helpers import build_round1_research_row
 
-
 DEFAULT_OUTPUT_JSON = Path("data/reports/btst_5d_15pct_trend_top20_gate_diagnostics_latest.json")
 DEFAULT_OUTPUT_MD = Path("data/reports/btst_5d_15pct_trend_top20_gate_diagnostics_latest.md")
 DEFAULT_REPORT_NAME_CONTAINS = ""
@@ -241,10 +240,7 @@ def analyze_btst_5d_15pct_trend_top20_gate_diagnostics(
     top_label = int(top_fraction * 100)
     base_summary.update({"slice_id": f"trend_acceleration_top_{top_label}pct_gap_le_{int(max_entry_gap * 100)}pct"})
 
-    gate_board = [
-        _gate_record(gate_id=gate_id, rows=[row for row in base_rows if predicate(row)], base_summary=base_summary, min_closed_cycle_count=min_closed_cycle_count)
-        for gate_id, predicate in _gate_specs()
-    ]
+    gate_board = [_gate_record(gate_id=gate_id, rows=[row for row in base_rows if predicate(row)], base_summary=base_summary, min_closed_cycle_count=min_closed_cycle_count) for gate_id, predicate in _gate_specs()]
     gate_board.extend(_candidate_source_records(base_rows, base_summary, min_closed_cycle_count=min_closed_cycle_count))
     gate_board = sorted(
         gate_board,

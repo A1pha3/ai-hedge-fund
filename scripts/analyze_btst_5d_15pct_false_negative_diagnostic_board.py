@@ -121,16 +121,12 @@ def render_btst_5d_15pct_false_negative_diagnostic_board_markdown(analysis: dict
         "## Source Board",
     ]
     for row in list(analysis.get("source_board") or []):
-        lines.append(
-            f"- {row.get('candidate_source')}: false_negative_count={row.get('false_negative_count')}, repeating_ticker_count={row.get('repeating_ticker_count')}, repeating_tickers={row.get('repeating_tickers')}, avg_max_future_high_return_2_5d={row.get('avg_max_future_high_return_2_5d')}, avg_time_to_hit_15pct={row.get('avg_time_to_hit_15pct')}, avg_score_target={row.get('avg_score_target')}"
-        )
+        lines.append(f"- {row.get('candidate_source')}: false_negative_count={row.get('false_negative_count')}, repeating_ticker_count={row.get('repeating_ticker_count')}, repeating_tickers={row.get('repeating_tickers')}, avg_max_future_high_return_2_5d={row.get('avg_max_future_high_return_2_5d')}, avg_time_to_hit_15pct={row.get('avg_time_to_hit_15pct')}, avg_score_target={row.get('avg_score_target')}")
     if not list(analysis.get("source_board") or []):
         lines.append("- none")
     lines.extend(["", "## Ticker Board"])
     for row in list(analysis.get("ticker_board") or []):
-        lines.append(
-            f"- {row.get('ticker')}: false_negative_count={row.get('false_negative_count')}, candidate_sources={row.get('candidate_sources')}, avg_max_future_high_return_2_5d={row.get('avg_max_future_high_return_2_5d')}, avg_time_to_hit_15pct={row.get('avg_time_to_hit_15pct')}, avg_score_target={row.get('avg_score_target')}"
-        )
+        lines.append(f"- {row.get('ticker')}: false_negative_count={row.get('false_negative_count')}, candidate_sources={row.get('candidate_sources')}, avg_max_future_high_return_2_5d={row.get('avg_max_future_high_return_2_5d')}, avg_time_to_hit_15pct={row.get('avg_time_to_hit_15pct')}, avg_score_target={row.get('avg_score_target')}")
     if not list(analysis.get("ticker_board") or []):
         lines.append("- none")
     lines.extend(["", "## Priority Actions"])

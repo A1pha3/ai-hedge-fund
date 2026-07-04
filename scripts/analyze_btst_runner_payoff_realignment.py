@@ -76,24 +76,12 @@ def _extract_formal_payoff_drag_candidate_sources(
 ) -> list[str]:
     source_diagnosis = dict(payload.get("source_diagnosis") or {})
     if "formal_payoff_drag_candidate_sources" in source_diagnosis:
-        return sorted(
-            str(source)
-            for source in list(source_diagnosis.get("formal_payoff_drag_candidate_sources") or [])
-            if str(source or "")
-        )
+        return sorted(str(source) for source in list(source_diagnosis.get("formal_payoff_drag_candidate_sources") or []) if str(source or ""))
 
     if "selected_payoff_drag_candidate_sources" in payload:
-        return sorted(
-            str(source)
-            for source in list(payload.get("selected_payoff_drag_candidate_sources") or [])
-            if str(source or "")
-        )
+        return sorted(str(source) for source in list(payload.get("selected_payoff_drag_candidate_sources") or []) if str(source or ""))
 
-    return sorted(
-        source
-        for source, source_metrics in formal_source_summary.items()
-        if _as_int(source_metrics.get("count")) > 0 and _as_float(source_metrics.get("hit_rate_15pct")) <= selected_hit_rate
-    )
+    return sorted(source for source, source_metrics in formal_source_summary.items() if _as_int(source_metrics.get("count")) > 0 and _as_float(source_metrics.get("hit_rate_15pct")) <= selected_hit_rate)
 
 
 def _normalize_artifactized_report(payload: dict[str, Any]) -> dict[str, Any]:
@@ -104,11 +92,7 @@ def _normalize_artifactized_report(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Artifactized runner-payoff report must not include legacy selected_payoff_drag_candidate_sources")
     if "formal_payoff_drag_candidate_sources" not in source_diagnosis:
         raise ValueError("Artifactized runner-payoff report is missing source_diagnosis.formal_payoff_drag_candidate_sources")
-    formal_payoff_drag_candidate_sources = sorted(
-        str(source)
-        for source in list(source_diagnosis.get("formal_payoff_drag_candidate_sources") or [])
-        if str(source or "")
-    )
+    formal_payoff_drag_candidate_sources = sorted(str(source) for source in list(source_diagnosis.get("formal_payoff_drag_candidate_sources") or []) if str(source or ""))
     return {
         "diagnosis": {
             "primary_problem": str(diagnosis.get("primary_problem") or "selected_payoff_not_underperforming_near_miss"),

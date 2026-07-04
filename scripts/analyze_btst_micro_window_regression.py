@@ -167,14 +167,8 @@ def analyze_btst_micro_window_regression(
         label="baseline",
         next_high_hit_threshold=next_high_hit_threshold,
     )
-    variant_analyses = [
-        analyze_btst_micro_window_report(path, label=label, next_high_hit_threshold=next_high_hit_threshold)
-        for label, path in sorted((variant_reports or {}).items())
-    ]
-    forward_analyses = [
-        analyze_btst_micro_window_report(path, label=label, next_high_hit_threshold=next_high_hit_threshold)
-        for label, path in sorted((forward_reports or {}).items())
-    ]
+    variant_analyses = [analyze_btst_micro_window_report(path, label=label, next_high_hit_threshold=next_high_hit_threshold) for label, path in sorted((variant_reports or {}).items())]
+    forward_analyses = [analyze_btst_micro_window_report(path, label=label, next_high_hit_threshold=next_high_hit_threshold) for label, path in sorted((forward_reports or {}).items())]
     comparisons = [
         _compare_reports(
             baseline,
@@ -246,9 +240,7 @@ def render_btst_micro_window_regression_markdown(analysis: dict[str, Any]) -> st
             lines.append("")
     lines.append("## Baseline Top False Negatives")
     for row in baseline["top_false_negative_rows"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: decision={row['decision']}, source={row['candidate_source']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, t_plus_2_close_return={row['t_plus_2_close_return']}, reasons={row['false_negative_proxy_reasons']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: decision={row['decision']}, source={row['candidate_source']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, t_plus_2_close_return={row['t_plus_2_close_return']}, reasons={row['false_negative_proxy_reasons']}")
     if not baseline["top_false_negative_rows"]:
         lines.append("- none")
     lines.append("")

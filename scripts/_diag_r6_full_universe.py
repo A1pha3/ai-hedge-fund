@@ -23,6 +23,7 @@
 (get_trading_dates/get_universe_for_date/get_history_batch/compute_factor_snapshot/
 provisional_score/WEIGHTS_OLD). 不修改原 script (它做 OLD vs NEW 权重对比).
 """
+
 from __future__ import annotations
 
 import argparse

@@ -31,9 +31,7 @@ def render_recurring_frontier_ticker_release_outcomes_markdown(analysis: dict[st
     lines.append("")
     lines.append("## Target Cases")
     for row in analysis["target_cases"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, release_verdict={row['release_verdict']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: {row['before_decision']} -> {row['after_decision']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, release_verdict={row['release_verdict']}")
     if not analysis["target_cases"]:
         lines.append("- none")
     lines.append("")
@@ -49,10 +47,7 @@ def analyze_recurring_frontier_ticker_release_outcomes(
     release_analysis = _load_json(release_report)
     outcome_analysis = _load_json(outcome_report)
     ticker = str(release_analysis.get("ticker") or "")
-    rows_by_case = {
-        f"{row.get('trade_date')}:{row.get('ticker')}": row
-        for row in list(outcome_analysis.get("rows") or [])
-    }
+    rows_by_case = {f"{row.get('trade_date')}:{row.get('ticker')}": row for row in list(outcome_analysis.get("rows") or [])}
     next_high_hit_threshold = float(outcome_analysis.get("next_high_hit_threshold") or 0.02)
 
     target_cases: list[dict[str, Any]] = []

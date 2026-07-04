@@ -73,11 +73,7 @@ def _summarize_frontier_analysis(
     status = str(best_variant.get("candidate_entry_status") or "no_best_variant")
     focus_filtered_tickers = [str(value) for value in list(best_variant.get("focus_filtered_tickers") or []) if str(value or "").strip()]
     preserve_filtered_tickers = [str(value) for value in list(best_variant.get("preserve_filtered_tickers") or []) if str(value or "").strip()]
-    viable_recall_probe = bool(
-        status in PROMISING_RECALL_STATUSES
-        and not preserve_filtered_tickers
-        and (not focus_tickers or focus_filtered_tickers)
-    )
+    viable_recall_probe = bool(status in PROMISING_RECALL_STATUSES and not preserve_filtered_tickers and (not focus_tickers or focus_filtered_tickers))
     filtered_candidate_entry_count = int(best_variant.get("filtered_candidate_entry_count") or 0)
     return {
         "source_kind": source_kind,
@@ -284,11 +280,7 @@ def _merge_promising_priority_tickers(
             ordered.append(ticker)
 
     corridor_ticker = str(corridor_primary_shadow_ticker or "").strip()
-    available_priority_tickers = {
-        str(row.get("ticker") or "").strip()
-        for row in priority_replay_rows
-        if str(row.get("ticker") or "").strip()
-    }
+    available_priority_tickers = {str(row.get("ticker") or "").strip() for row in priority_replay_rows if str(row.get("ticker") or "").strip()}
     if corridor_ticker and corridor_ticker in available_priority_tickers and corridor_ticker not in ordered:
         ordered.append(corridor_ticker)
     return ordered
@@ -303,24 +295,16 @@ def _build_next_actions(
 ) -> list[str]:
     actions: list[str] = []
     if promising_priority_tickers:
-        actions.append(
-            f"优先把 {promising_priority_tickers[:3]} 保留为 no-entry shadow recall probe，并继续核对 preserve_ticker 0 误伤。"
-        )
+        actions.append(f"优先把 {promising_priority_tickers[:3]} 保留为 no-entry shadow recall probe，并继续核对 preserve_ticker 0 误伤。")
     else:
         actions.append("当前 top no-entry backlog 还没有形成 preserve-safe recall probe，继续保持 research-only，不要放松 score frontier。")
 
-    promising_hotspots = [
-        str(row.get("report_dir") or "")
-        for row in hotspot_replay_rows
-        if row.get("viable_recall_probe") and row.get("report_dir")
-    ]
+    promising_hotspots = [str(row.get("report_dir") or "") for row in hotspot_replay_rows if row.get("viable_recall_probe") and row.get("report_dir")]
     if promising_hotspots:
         actions.append(f"优先回看热点窗口 {promising_hotspots[:2]} 的 candidate-entry selective semantics，确认是否能稳定复现。")
 
     if int(global_window_scan_summary.get("focus_hit_report_count") or 0) > 0:
-        actions.append(
-            f"全局 window scan 已命中 {global_window_scan_summary.get('focus_hit_report_count')} 份报告，下一步按 {global_window_scan_summary.get('rollout_readiness')} 继续 shadow 治理。"
-        )
+        actions.append(f"全局 window scan 已命中 {global_window_scan_summary.get('focus_hit_report_count')} 份报告，下一步按 {global_window_scan_summary.get('rollout_readiness')} 继续 shadow 治理。")
     else:
         actions.append("全局 window scan 还没有对 top no-entry tickers 形成跨窗 focus hit，先累积窗口证据，再讨论 lane promotion。")
     return actions[:3]
@@ -359,40 +343,36 @@ def analyze_btst_no_candidate_entry_replay_bundle(
 
     top_priority_tickers = [str(value) for value in list(action_board.get("top_priority_tickers") or []) if str(value or "").strip()][:global_scan_focus_limit]
     window_report_dirs = [path for path in discover_report_dirs(reports_root) if "paper_trading_window" in path.name]
-    global_window_scan_analysis = analyze_btst_candidate_entry_window_scan(
-        window_report_dirs,
-        structural_variant="exclude_watchlist_avoid_weak_structure_entries",
-        focus_tickers=top_priority_tickers,
-        preserve_tickers=preserve_tickers,
-    ) if window_report_dirs else {
-        "report_count": 0,
-        "filtered_report_count": 0,
-        "focus_hit_report_count": 0,
-        "preserve_misfire_report_count": 0,
-        "distinct_window_count_with_filtered_entries": 0,
-        "rollout_readiness": "no_window_reports",
-        "recommendation": "reports_root 下没有可扫描的 paper_trading_window 报告。",
-        "rows": [],
-        "filtered_ticker_counts": {},
-    }
+    global_window_scan_analysis = (
+        analyze_btst_candidate_entry_window_scan(
+            window_report_dirs,
+            structural_variant="exclude_watchlist_avoid_weak_structure_entries",
+            focus_tickers=top_priority_tickers,
+            preserve_tickers=preserve_tickers,
+        )
+        if window_report_dirs
+        else {
+            "report_count": 0,
+            "filtered_report_count": 0,
+            "focus_hit_report_count": 0,
+            "preserve_misfire_report_count": 0,
+            "distinct_window_count_with_filtered_entries": 0,
+            "rollout_readiness": "no_window_reports",
+            "recommendation": "reports_root 下没有可扫描的 paper_trading_window 报告。",
+            "rows": [],
+            "filtered_ticker_counts": {},
+        }
+    )
     global_window_scan_summary = _summarize_window_scan(global_window_scan_analysis)
 
     all_replay_rows = [*priority_replay_rows, *hotspot_replay_rows]
-    best_variant_counts = Counter(
-        str(row.get("best_variant_name") or "unknown")
-        for row in all_replay_rows
-        if row.get("best_variant_name")
-    )
+    best_variant_counts = Counter(str(row.get("best_variant_name") or "unknown") for row in all_replay_rows if row.get("best_variant_name"))
     candidate_entry_status_counts = Counter(str(row.get("candidate_entry_status") or "unknown") for row in all_replay_rows)
     promising_priority_tickers = _merge_promising_priority_tickers(
         priority_replay_rows,
         corridor_primary_shadow_ticker=corridor_primary_shadow_ticker,
     )
-    promising_hotspot_report_dirs = [
-        str(row.get("report_dir") or "")
-        for row in hotspot_replay_rows
-        if row.get("viable_recall_probe") and row.get("report_dir")
-    ]
+    promising_hotspot_report_dirs = [str(row.get("report_dir") or "") for row in hotspot_replay_rows if row.get("viable_recall_probe") and row.get("report_dir")]
     next_actions = _build_next_actions(
         priority_replay_rows,
         hotspot_replay_rows,
@@ -401,15 +381,9 @@ def analyze_btst_no_candidate_entry_replay_bundle(
     )
 
     if promising_priority_tickers:
-        recommendation = (
-            f"当前 no-entry replay bundle 已为 {promising_priority_tickers[:3]} 找到 preserve-safe shadow recall probe，"
-            "下一步应优先接回 shadow governance，而不是继续放松 score frontier。"
-        )
+        recommendation = f"当前 no-entry replay bundle 已为 {promising_priority_tickers[:3]} 找到 preserve-safe shadow recall probe，" "下一步应优先接回 shadow governance，而不是继续放松 score frontier。"
     else:
-        recommendation = (
-            "当前 no-entry replay bundle 还没有为 top backlog 找到 preserve-safe recall probe，"
-            "应继续保持 no-entry 研究车道，并等待新的窗口证据。"
-        )
+        recommendation = "当前 no-entry replay bundle 还没有为 top backlog 找到 preserve-safe recall probe，" "应继续保持 no-entry 研究车道，并等待新的窗口证据。"
 
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -456,9 +430,7 @@ def render_btst_no_candidate_entry_replay_bundle_markdown(analysis: dict[str, An
     lines.append("")
     lines.append("## Priority Replays")
     for row in list(analysis.get("priority_replay_rows") or []):
-        lines.append(
-            f"- rank={row.get('priority_rank')} ticker={row.get('ticker')} report_dir={row.get('report_dir')} status={row.get('candidate_entry_status')} best_variant={row.get('best_variant_name')} viable_recall_probe={row.get('viable_recall_probe')} filtered_count={row.get('filtered_candidate_entry_count')}"
-        )
+        lines.append(f"- rank={row.get('priority_rank')} ticker={row.get('ticker')} report_dir={row.get('report_dir')} status={row.get('candidate_entry_status')} best_variant={row.get('best_variant_name')} viable_recall_probe={row.get('viable_recall_probe')} filtered_count={row.get('filtered_candidate_entry_count')}")
         lines.append(f"  focus_filtered_tickers: {row.get('focus_filtered_tickers')}")
         lines.append(f"  preserve_filtered_tickers: {row.get('preserve_filtered_tickers')}")
         lines.append(f"  comparison_note: {row.get('comparison_note')}")
@@ -467,9 +439,7 @@ def render_btst_no_candidate_entry_replay_bundle_markdown(analysis: dict[str, An
     lines.append("")
     lines.append("## Hotspot Replays")
     for row in list(analysis.get("hotspot_replay_rows") or []):
-        lines.append(
-            f"- rank={row.get('priority_rank')} report_dir={row.get('report_dir')} focus_tickers={row.get('focus_tickers')} status={row.get('candidate_entry_status')} best_variant={row.get('best_variant_name')} viable_recall_probe={row.get('viable_recall_probe')} filtered_count={row.get('filtered_candidate_entry_count')}"
-        )
+        lines.append(f"- rank={row.get('priority_rank')} report_dir={row.get('report_dir')} focus_tickers={row.get('focus_tickers')} status={row.get('candidate_entry_status')} best_variant={row.get('best_variant_name')} viable_recall_probe={row.get('viable_recall_probe')} filtered_count={row.get('filtered_candidate_entry_count')}")
         lines.append(f"  focus_filtered_tickers: {row.get('focus_filtered_tickers')}")
         lines.append(f"  preserve_filtered_tickers: {row.get('preserve_filtered_tickers')}")
         lines.append(f"  comparison_note: {row.get('comparison_note')}")

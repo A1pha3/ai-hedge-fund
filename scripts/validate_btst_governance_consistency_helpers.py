@@ -189,12 +189,7 @@ def build_candidate_entry_shadow_alignment_check(context: GovernanceCheckContext
             and int(context.candidate_synthesis_lane.get("distinct_window_count_with_filtered_entries") or 0) == distinct_window_count
         )
 
-    is_aligned = (
-        candidate_lane_status == context.candidate_shadow_state.get("lane_status")
-        and candidate_default_status == context.candidate_shadow_state.get("default_upgrade_status")
-        and int(reported_missing_window_count or 0) == expected_missing_window_count
-        and synthesis_projection_aligned
-    )
+    is_aligned = candidate_lane_status == context.candidate_shadow_state.get("lane_status") and candidate_default_status == context.candidate_shadow_state.get("default_upgrade_status") and int(reported_missing_window_count or 0) == expected_missing_window_count and synthesis_projection_aligned
     return _build_check(
         "candidate_entry_shadow_alignment",
         "pass" if is_aligned else "fail",
@@ -221,14 +216,7 @@ def build_topline_recommendation_alignment_check(context: GovernanceCheckContext
     if _missing(recommendation_text, action_recommendation):
         return _build_check("topline_recommendation_alignment", "warn", "缺少 recommendation 文本，无法校验当前主线叙事是否一致。")
 
-    shared_signal = (
-        "001309" in recommendation_text
-        and "300383" in recommendation_text
-        and "300724" in recommendation_text
-        and "001309" in action_recommendation
-        and "300383" in action_recommendation
-        and "300724" in action_recommendation
-    )
+    shared_signal = "001309" in recommendation_text and "300383" in recommendation_text and "300724" in recommendation_text and "001309" in action_recommendation and "300383" in action_recommendation and "300724" in action_recommendation
     return _build_check(
         "topline_recommendation_alignment",
         "pass" if shared_signal else "warn",

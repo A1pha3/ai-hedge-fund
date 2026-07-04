@@ -73,12 +73,8 @@ def _require_guardrails(value: Any) -> list[str]:
 def _normalize_candidate(name: str, candidate: Any) -> dict[str, Any]:
     normalized_candidate = _require_object(name, candidate)
     normalized_candidate["trial_index"] = _require_non_negative_int(f"{name} trial_index", normalized_candidate.get("trial_index"))
-    normalized_candidate["cross_window_blocker_count"] = _require_non_negative_int(
-        f"{name} cross_window_blocker_count", normalized_candidate.get("cross_window_blocker_count")
-    )
-    normalized_candidate["risk_blocker_count"] = _require_non_negative_int(
-        f"{name} risk_blocker_count", normalized_candidate.get("risk_blocker_count")
-    )
+    normalized_candidate["cross_window_blocker_count"] = _require_non_negative_int(f"{name} cross_window_blocker_count", normalized_candidate.get("cross_window_blocker_count"))
+    normalized_candidate["risk_blocker_count"] = _require_non_negative_int(f"{name} risk_blocker_count", normalized_candidate.get("risk_blocker_count"))
     return normalized_candidate
 
 
@@ -95,9 +91,7 @@ def build_momentum_rerun_rollout_pack(*, cohort: dict[str, object], decision: di
         raise SystemExit("decision.release_posture must be hold.")
 
     dominant_family = _require_single_line_string("decision.dominant_family", normalized_decision.get("dominant_family"))
-    missing_theme_exposure_window_count = _require_non_negative_int(
-        "decision.missing_theme_exposure_window_count", normalized_decision.get("missing_theme_exposure_window_count")
-    )
+    missing_theme_exposure_window_count = _require_non_negative_int("decision.missing_theme_exposure_window_count", normalized_decision.get("missing_theme_exposure_window_count"))
 
     winner = _normalize_candidate("cohort winner", normalized_cohort.get("winner"))
     challengers_raw = normalized_cohort.get("challengers")

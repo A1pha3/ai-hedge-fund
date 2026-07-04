@@ -97,9 +97,7 @@ def _build_activation_delta_diagnostics_summary(
     resolved_candidate_profile = str(diagnostics.get("candidate_profile") or diagnostics.get("variant_profile") or "").strip() or None
     report_dir_count, report_dir_count_issue = _parse_required_int_evidence(diagnostics, "report_dir_count") if diagnostics else (None, None)
     all_windows_zero_delta, all_windows_zero_delta_issue = _parse_required_bool_evidence(diagnostics, "all_windows_zero_delta") if diagnostics else (None, None)
-    execution_eligible_positive_window_count, execution_eligible_positive_window_count_issue = (
-        _parse_required_int_evidence(diagnostics, "execution_eligible_positive_window_count") if diagnostics else (None, None)
-    )
+    execution_eligible_positive_window_count, execution_eligible_positive_window_count_issue = _parse_required_int_evidence(diagnostics, "execution_eligible_positive_window_count") if diagnostics else (None, None)
     evidence_issues = [
         issue
         for issue in (
@@ -135,20 +133,18 @@ def _build_activation_delta_calibration_summary(
     best_diagnostics, _ = _coerce_mapping(best_candidate.get("diagnostics"))
     resolved_baseline_profile = str(calibration.get("baseline_profile") or "").strip() or None
     resolved_candidate_profile = str(calibration.get("candidate_profile") or "").strip() or None
-    best_candidate_report_dir_count, best_candidate_report_dir_count_issue = (
-        _parse_required_int_evidence(best_diagnostics, "report_dir_count") if best_candidate else (None, None)
+    best_candidate_report_dir_count, best_candidate_report_dir_count_issue = _parse_required_int_evidence(best_diagnostics, "report_dir_count") if best_candidate else (None, None)
+    best_candidate_execution_eligible_positive_window_count, best_candidate_execution_eligible_positive_window_count_issue = _parse_required_int_evidence(best_diagnostics, "execution_eligible_positive_window_count") if best_candidate else (None, None)
+    best_candidate_all_windows_zero_delta, best_candidate_all_windows_zero_delta_issue = _parse_required_bool_evidence(best_diagnostics, "all_windows_zero_delta") if best_candidate else (None, None)
+    best_candidate_blockers = (
+        build_calibration_candidate_governance_blockers(
+            best_candidate,
+            baseline_profile=baseline_profile,
+            candidate_profile=candidate_profile,
+        )
+        if best_candidate
+        else []
     )
-    best_candidate_execution_eligible_positive_window_count, best_candidate_execution_eligible_positive_window_count_issue = (
-        _parse_required_int_evidence(best_diagnostics, "execution_eligible_positive_window_count") if best_candidate else (None, None)
-    )
-    best_candidate_all_windows_zero_delta, best_candidate_all_windows_zero_delta_issue = (
-        _parse_required_bool_evidence(best_diagnostics, "all_windows_zero_delta") if best_candidate else (None, None)
-    )
-    best_candidate_blockers = build_calibration_candidate_governance_blockers(
-        best_candidate,
-        baseline_profile=baseline_profile,
-        candidate_profile=candidate_profile,
-    ) if best_candidate else []
     if calibration and not best_candidate and not malformed_best_candidate:
         best_candidate_blockers = ["best_candidate_absent", *best_candidate_blockers]
     if malformed_best_candidate:
@@ -228,11 +224,7 @@ def build_trend_continuation_rollout_assessment(
             blockers.append("no_diagnostics_report_dirs")
         if activation_delta_diagnostics_summary["all_windows_zero_delta"] is True:
             blockers.append("no_runtime_activation_delta")
-        if (
-            activation_delta_diagnostics_summary["all_windows_zero_delta"] is False
-            and activation_delta_diagnostics_summary["execution_eligible_positive_window_count"] is not None
-            and activation_delta_diagnostics_summary["execution_eligible_positive_window_count"] <= 0
-        ):
+        if activation_delta_diagnostics_summary["all_windows_zero_delta"] is False and activation_delta_diagnostics_summary["execution_eligible_positive_window_count"] is not None and activation_delta_diagnostics_summary["execution_eligible_positive_window_count"] <= 0:
             blockers.append("activation_delta_without_execution_eligible_support")
     if activation_delta_calibration_summary["malformed_payload"]:
         blockers.append("malformed_calibration_payload")
@@ -243,10 +235,7 @@ def build_trend_continuation_rollout_assessment(
             blockers.append("calibration_profile_mismatch")
         if activation_delta_calibration_summary["ranked_candidate_count"] <= 0:
             blockers.append("no_qualifying_calibration_best_candidate")
-        if (
-            activation_delta_calibration_summary["best_candidate_report_dir_count"] is not None
-            and activation_delta_calibration_summary["best_candidate_report_dir_count"] <= 0
-        ):
+        if activation_delta_calibration_summary["best_candidate_report_dir_count"] is not None and activation_delta_calibration_summary["best_candidate_report_dir_count"] <= 0:
             blockers.append("no_calibration_report_dirs")
         if activation_delta_calibration_summary["best_candidate_name"] is None:
             blockers.append("no_qualifying_calibration_best_candidate")

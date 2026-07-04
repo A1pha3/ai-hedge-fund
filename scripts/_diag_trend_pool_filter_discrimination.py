@@ -34,6 +34,7 @@ loop 44 (c312) 改动:
 (get_trading_dates/get_universe_for_date/get_history_batch/compute_factor_snapshot).
 不修改原 script.
 """
+
 from __future__ import annotations
 
 import logging
@@ -156,9 +157,7 @@ def cumulative_horizon_return(pct_chgs: list[float], horizon: int) -> float:
     return (factor - 1.0) * 100.0
 
 
-def mature_horizons(
-    di_index: int, n_dates: int, horizons: tuple[int, ...]
-) -> frozenset[int]:
+def mature_horizons(di_index: int, n_dates: int, horizons: tuple[int, ...]) -> frozenset[int]:
     """Which forward horizons have a mature return at trade_dates[di_index]? (pure).
 
     Returns the set of h ∈ horizons such that di_index + h is a valid index in
@@ -169,9 +168,7 @@ def mature_horizons(
     return frozenset(h for h in horizons if di_index + h < n_dates)
 
 
-def aggregate_horizon(
-    rows: list[dict[str, Any]], horizon: str
-) -> dict[str, list[Any]]:
+def aggregate_horizon(rows: list[dict[str, Any]], horizon: str) -> dict[str, list[Any]]:
     """Group rows' returns at `horizon` by trend direction (pure).
 
     Each row is {"trend_direction": int, "rets": {horizon_str: float | None}}.
@@ -206,9 +203,7 @@ def aggregate_horizon(
     }
 
 
-def per_horizon_summary(
-    rows: list[dict[str, Any]], horizon: str
-) -> dict[str, Any]:
+def per_horizon_summary(rows: list[dict[str, Any]], horizon: str) -> dict[str, Any]:
     """Distribution + directional edge + verdict for one horizon (pure).
 
     Returns {"n", "bullish_frac", "edge", "verdict"}. Reuses
@@ -233,9 +228,7 @@ def per_horizon_summary(
     return {"n": n, "bullish_frac": dist["bullish"], "edge": edge, "verdict": verdict}
 
 
-def _fetch_forward_pcts(
-    pro, trade_dates: list[str], start_idx: int, end_idx: int
-) -> dict[str, dict[str, float]]:
+def _fetch_forward_pcts(pro, trade_dates: list[str], start_idx: int, end_idx: int) -> dict[str, dict[str, float]]:
     """Fetch per-ts_code daily pct_chg for trade_dates[start_idx:end_idx] (cached by date).
 
     Returns {trade_date: {ts_code: pct_chg}}. A forward date may be shared across
@@ -294,10 +287,7 @@ def run(n_days: int = 20, end_date: str | None = None) -> None:
             if fi < len(trade_dates) and trade_dates[fi] not in fwd_cache:
                 try:
                     dfn = pro.daily(trade_date=trade_dates[fi])
-                    fwd_cache[trade_dates[fi]] = (
-                        dict(zip(dfn["ts_code"].tolist(), dfn["pct_chg"].astype(float).tolist()))
-                        if dfn is not None and not dfn.empty else {}
-                    )
+                    fwd_cache[trade_dates[fi]] = dict(zip(dfn["ts_code"].tolist(), dfn["pct_chg"].astype(float).tolist())) if dfn is not None and not dfn.empty else {}
                 except Exception:
                     fwd_cache[trade_dates[fi]] = {}
         mature = mature_horizons(di, len(trade_dates), horizons)
@@ -341,11 +331,13 @@ def run(n_days: int = 20, end_date: str | None = None) -> None:
                         break
                     pcts.append(p)
                 rets[str(h)] = cumulative_horizon_return(pcts, h) if ok else None
-            rows.append({
-                "ts_code": r["ts_code"],
-                "trend_direction": int(snap.trend_direction),
-                "rets": rets,
-            })
+            rows.append(
+                {
+                    "ts_code": r["ts_code"],
+                    "trend_direction": int(snap.trend_direction),
+                    "rets": rets,
+                }
+            )
         df_day = pd.DataFrame(rows)
         if df_day.empty:
             continue
@@ -355,8 +347,7 @@ def run(n_days: int = 20, end_date: str | None = None) -> None:
             all_rows.append({"trend_direction": int(r["trend_direction"]), "rets": dict(r["rets"])})
         if (di + 1) % 5 == 0 or di == 0 or di == len(test_dates) - 1:
             mature_h = sorted(mature)
-            print(f"  [{di+1}/{len(test_dates)}] {test_date}: n={len(df_day)} mature={'+'.join(f'T{h}' for h in mature_h)} "
-                  f"bullish={dist['bullish']:.1%} neutral={dist['neutral']:.1%} bearish={dist['bearish']:.1%} ({time.time()-t0:.1f}s)")
+            print(f"  [{di+1}/{len(test_dates)}] {test_date}: n={len(df_day)} mature={'+'.join(f'T{h}' for h in mature_h)} " f"bullish={dist['bullish']:.1%} neutral={dist['neutral']:.1%} bearish={dist['bearish']:.1%} ({time.time()-t0:.1f}s)")
 
     if not all_rows:
         print("无数据")
@@ -383,9 +374,7 @@ def run(n_days: int = 20, end_date: str | None = None) -> None:
         bm = s["edge"]["bullish_mean"]
         sm = s["edge"]["bearish_mean"]
         delta = s["edge"]["delta"]
-        print(f"  T+{h:<8} {s['n']:>10} {len(agg['bullish_rets']):>9} {len(agg['bearish_rets']):>9} "
-              f"{(f'{bm:+.3f}%' if not np.isnan(bm) else '-'):>11} {(f'{sm:+.3f}%' if not np.isnan(sm) else '-'):>11} "
-              f"{(f'{delta:+.3f}%' if not np.isnan(delta) else '-'):>9} {s['verdict']:>16}")
+        print(f"  T+{h:<8} {s['n']:>10} {len(agg['bullish_rets']):>9} {len(agg['bearish_rets']):>9} " f"{(f'{bm:+.3f}%' if not np.isnan(bm) else '-'):>11} {(f'{sm:+.3f}%' if not np.isnan(sm) else '-'):>11} " f"{(f'{delta:+.3f}%' if not np.isnan(delta) else '-'):>9} {s['verdict']:>16}")
 
     print(f"\n  预筛增量 (trend-bullish 等权 vs 全 universe 等权), per-horizon:")
     for h in horizon_strs:
@@ -423,8 +412,7 @@ def run(n_days: int = 20, end_date: str | None = None) -> None:
     if not ns:
         print(f"  ⚠️ T+5/T+10 均未成熟 — 当前 test_dates 距末日 <5/10 交易日. 需更早 end_date 或更大 n_days.")
     else:
-        signs = {h: summaries[h]["edge"]["delta"] for h in ("1", "5", "10")
-                 if summaries.get(h, {}).get("n", 0) > 0 and not np.isnan(summaries[h]["edge"]["delta"])}
+        signs = {h: summaries[h]["edge"]["delta"] for h in ("1", "5", "10") if summaries.get(h, {}).get("n", 0) > 0 and not np.isnan(summaries[h]["edge"]["delta"])}
         ns_signs = [signs[h] for h in ("5", "10") if h in signs]
         if all(s < 0 for s in ns_signs):
             print(f"  → 本窗口 T+5/T+10 方向增量均为负: 该窗口内 trend 方向反向.")
@@ -438,23 +426,20 @@ def run(n_days: int = 20, end_date: str | None = None) -> None:
         t1 = signs.get("1")
         if t1 is not None:
             t1_sign = "正" if t1 > 0 else "负"
-            print(f"  ⚠️ 本窗口 T+1 delta = {t1:+.3f}% (c311 不同 4 日窗口 T+1 delta ≈ -1.088%). "
-                  f"n=4 ⇒ 方向符号是窗口噪声, 非 decision-grade.")
-            print(f"     → C-R6-POOL-FILTER-REDESIGN 决策包: aff989be '无区分度' 仍被证伪 "
-                  f"(bullish {avg_bull_frac:.1%} ≠ ~100%), 但方向符号需远大于 4 日的 N 才能定.")
+            print(f"  ⚠️ 本窗口 T+1 delta = {t1:+.3f}% (c311 不同 4 日窗口 T+1 delta ≈ -1.088%). " f"n=4 ⇒ 方向符号是窗口噪声, 非 decision-grade.")
+            print(f"     → C-R6-POOL-FILTER-REDESIGN 决策包: aff989be '无区分度' 仍被证伪 " f"(bullish {avg_bull_frac:.1%} ≠ ~100%), 但方向符号需远大于 4 日的 N 才能定.")
             if t1 < 0:
                 print(f"     → 若多窗口一致为负, pool 预筛可能系统性选错方向; 若摇摆, 方向信号弱.")
             else:
                 print(f"     → 本窗口方向正向且 T+5/T+10 更强, 但单窗口不能排除方向信号是噪声.")
-    print(f"\n注意: light-stage (纯技术 0 LLM) + multi-horizon — 池预筛区分度的 horizon signal; "
-          f"完整确认需全模型 + 远大于 4 日的 N (API 限速 ~3min/日, 大 N 需后台). "
-          f"关键未决: trend 方向符号是否在更大 N 上稳定 (c311 vs 本窗口 T+1 已分歧).")
+    print(f"\n注意: light-stage (纯技术 0 LLM) + multi-horizon — 池预筛区分度的 horizon signal; " f"完整确认需全模型 + 远大于 4 日的 N (API 限速 ~3min/日, 大 N 需后台). " f"关键未决: trend 方向符号是否在更大 N 上稳定 (c311 vs 本窗口 T+1 已分歧).")
 
 
 def main() -> None:
     load_dotenv()
     logging.basicConfig(level=logging.WARNING)
     import argparse
+
     ap = argparse.ArgumentParser(description="全 universe trend 池预筛区分度诊断 — aff989be '无区分度' 断言是否成立")
     ap.add_argument("--n-days", type=int, default=20)
     ap.add_argument("--end-date", default="")

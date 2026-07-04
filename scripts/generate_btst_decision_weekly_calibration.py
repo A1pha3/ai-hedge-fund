@@ -55,9 +55,7 @@ def _render_group(title: str, rows: dict[str, dict[str, Any]]) -> list[str]:
     ]
     for label in sorted(rows):
         item = rows[label]
-        lines.append(
-            f"| {label} | {item.get('row_count')} | {item.get('close_positive_count')} | {_fmt_pct(item.get('close_positive_rate'))} |"
-        )
+        lines.append(f"| {label} | {item.get('row_count')} | {item.get('close_positive_count')} | {_fmt_pct(item.get('close_positive_rate'))} |")
     return lines
 
 

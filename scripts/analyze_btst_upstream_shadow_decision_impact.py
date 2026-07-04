@@ -136,11 +136,11 @@ def analyze_upstream_shadow_decision_impact(*, reports_root: str | Path, output_
     for experiment in EXPERIMENTS:
         result = _normalize_experiment_result(
             _run_experiment(
-            reports_root=reports_root,
-            experiment_name=str(experiment["experiment_name"]),
-            profile_overrides=dict(experiment.get("profile_overrides") or {}),
-            next_high_hit_threshold=next_high_hit_threshold,
-            report_name_contains=report_name_contains,
+                reports_root=reports_root,
+                experiment_name=str(experiment["experiment_name"]),
+                profile_overrides=dict(experiment.get("profile_overrides") or {}),
+                next_high_hit_threshold=next_high_hit_threshold,
+                report_name_contains=report_name_contains,
             )
         )
         if result["experiment_name"] == "current_probe_control":
@@ -195,10 +195,7 @@ def render_upstream_shadow_decision_impact_markdown(analysis: dict[str, Any]) ->
     lines.append("## Ranked Variants")
     for variant in list(analysis.get("ranked_variants") or []):
         upstream_delta = dict(variant.get("aggregate_upstream_shadow_delta") or {})
-        lines.append(
-            f"- {variant.get('experiment_name')}: selected_count_delta={upstream_delta.get('selected_count_delta')}, "
-            f"tradeable_count_delta={upstream_delta.get('tradeable_count_delta')}, recommendation={variant.get('recommendation')}"
-        )
+        lines.append(f"- {variant.get('experiment_name')}: selected_count_delta={upstream_delta.get('selected_count_delta')}, " f"tradeable_count_delta={upstream_delta.get('tradeable_count_delta')}, recommendation={variant.get('recommendation')}")
     if not list(analysis.get("ranked_variants") or []):
         lines.append("- none")
     lines.append("")

@@ -10,6 +10,7 @@ This script does NOT modify upstream candidate selection. It produces a
 report that downstream integration can consume once P2 phase 2 wires up
 the routing.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -26,10 +27,10 @@ from src.paper_trading.btst_profile_routing import (
     ProfileRoutingContract,
 )
 
-
 # ---------------------------------------------------------------------------
 # Aggregation
 # ---------------------------------------------------------------------------
+
 
 def aggregate_outcomes_by_profile(
     ledger_paths: list[Path],
@@ -64,16 +65,19 @@ def aggregate_outcomes_by_profile(
             continue
         for outcome in outcomes:
             profile = str(outcome.profile or "unknown")
-            bucket = groups.setdefault(profile, {
-                "sample_count": 0,
-                "profit_count": 0,
-                "loss_count": 0,
-                "breakeven_count": 0,
-                "no_entry_count": 0,
-                "missing_data_count": 0,
-                "regimes_covered": set(),
-                "decision_ids": set(),
-            })
+            bucket = groups.setdefault(
+                profile,
+                {
+                    "sample_count": 0,
+                    "profit_count": 0,
+                    "loss_count": 0,
+                    "breakeven_count": 0,
+                    "no_entry_count": 0,
+                    "missing_data_count": 0,
+                    "regimes_covered": set(),
+                    "decision_ids": set(),
+                },
+            )
             bucket["sample_count"] += 1
             if outcome.verdict == OutcomeVerdict.PROFIT:
                 bucket["profit_count"] += 1
@@ -132,6 +136,7 @@ def aggregate_outcomes_by_profile(
 # Comparison report
 # ---------------------------------------------------------------------------
 
+
 def render_profile_experiment_report(
     *,
     contract: ProfileRoutingContract | None = None,
@@ -166,11 +171,7 @@ def render_profile_experiment_report(
             lines.append(f"- {rule.description}")
         for gate_key in ("normal_trade", "aggressive_trade", "shadow_only", "halt"):
             hook = rule.hook_for(gate_key)
-            lines.append(
-                f"- **{gate_key}**: select={hook.select_threshold}, "
-                f"rank_cap={hook.rank_cap}, action={hook.gate_action}, "
-                f"confirm={hook.confirmation_required}, size_scale={hook.position_size_scale}"
-            )
+            lines.append(f"- **{gate_key}**: select={hook.select_threshold}, " f"rank_cap={hook.rank_cap}, action={hook.gate_action}, " f"confirm={hook.confirmation_required}, size_scale={hook.position_size_scale}")
         lines.append("")
 
     lines.extend(["## Outcome Aggregation", ""])
@@ -178,10 +179,7 @@ def render_profile_experiment_report(
     # sees data loss before reading stats built on a silently-truncated subset.
     skipped = aggregated.get("_skipped_ledgers") if isinstance(aggregated, dict) else None
     if skipped:
-        lines.append(
-            f"- **⚠ 跳过 {len(skipped)} 个无法读取的 outcome ledger** — 聚合基于剩余可读 ledger, "
-            f"统计可能不代表完整样本. 请检查下列文件 (损坏写入 / schema 漂移 / 部分文件):"
-        )
+        lines.append(f"- **⚠ 跳过 {len(skipped)} 个无法读取的 outcome ledger** — 聚合基于剩余可读 ledger, " f"统计可能不代表完整样本. 请检查下列文件 (损坏写入 / schema 漂移 / 部分文件):")
         for s in skipped:
             lines.append(f"  - `{s['path']}`: {s['error']}")
         lines.append("")
@@ -190,10 +188,12 @@ def render_profile_experiment_report(
         lines.append("")
         return "\n".join(lines) + "\n"
 
-    lines.extend([
-        "| profile | sample_count | decided | profit | loss | breakeven | win_rate | ci_95 | coverage | regimes |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |",
-    ])
+    lines.extend(
+        [
+            "| profile | sample_count | decided | profit | loss | breakeven | win_rate | ci_95 | coverage | regimes |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |",
+        ]
+    )
     for profile_name in ("conservative", "aggressive"):
         if profile_name not in aggregated:
             lines.append(f"| {profile_name} | 0 | 0 | 0 | 0 | 0 | n/a | n/a | n/a | n/a |")
@@ -202,14 +202,7 @@ def render_profile_experiment_report(
         ci = data.get("win_rate_ci_95") or (None, None)
         ci_str = f"[{ci[0]}, {ci[1]}]" if ci[0] is not None else "n/a"
         regimes = ", ".join(data.get("regimes_covered") or []) or "n/a"
-        lines.append(
-            f"| {profile_name} | {data['sample_count']} | {data['decided_count']} | "
-            f"{data['profit_count']} | {data['loss_count']} | {data['breakeven_count']} | "
-            f"{data['win_rate'] if data['win_rate'] is not None else 'n/a'} | "
-            f"{ci_str} | "
-            f"{data['coverage'] if data['coverage'] is not None else 'n/a'} | "
-            f"{regimes} |"
-        )
+        lines.append(f"| {profile_name} | {data['sample_count']} | {data['decided_count']} | " f"{data['profit_count']} | {data['loss_count']} | {data['breakeven_count']} | " f"{data['win_rate'] if data['win_rate'] is not None else 'n/a'} | " f"{ci_str} | " f"{data['coverage'] if data['coverage'] is not None else 'n/a'} | " f"{regimes} |")
     lines.append("")
 
     # Verdict.
@@ -247,6 +240,7 @@ def render_profile_experiment_report(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="BTST profile experiment harness (P2 phase 1).")

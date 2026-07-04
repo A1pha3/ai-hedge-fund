@@ -56,10 +56,7 @@ def build_recall_priority_task(
     next_step_default = str(candidate_pool_recall_dossier.get("recommendation") or "").strip() or "review candidate-pool recall dossier and upstream hard-filter stages"
     prioritized_handoff_next_step = None
     if dominant_stage == "candidate_pool_truncated_after_filters" and active_upstream_focus_tickers:
-        prioritized_handoff_next_step = (
-            f"先补 {active_upstream_focus_tickers} 的 pre-truncation 排名观测与 top300 frontier，"
-            "确认它们为何通过 Layer A 过滤后仍在 candidate_pool truncation 被压掉。"
-        )
+        prioritized_handoff_next_step = f"先补 {active_upstream_focus_tickers} 的 pre-truncation 排名观测与 top300 frontier，" "确认它们为何通过 Layer A 过滤后仍在 candidate_pool truncation 被压掉。"
         if priority_handoff_experiment:
             prioritized_handoff_next_step = "；".join(
                 [
@@ -111,15 +108,7 @@ def build_candidate_pool_corridor_primary_shadow_task(
     corridor_uplift_runbook_summary = dict(control_tower_snapshot.get("candidate_pool_corridor_uplift_runbook_summary") or {})
     append_primary_shadow_replay_context(why_now_parts, primary_shadow_replay)
     shadow_visible_profile = next(
-        (
-            dict(row)
-            for row in list(
-                control_tower_snapshot.get("active_candidate_pool_recall_shadow_visible_focus_profiles")
-                or control_tower_snapshot.get("candidate_pool_recall_shadow_visible_focus_profiles")
-                or []
-            )
-            if str(row.get("ticker") or "").strip() == focus_ticker
-        ),
+        (dict(row) for row in list(control_tower_snapshot.get("active_candidate_pool_recall_shadow_visible_focus_profiles") or control_tower_snapshot.get("candidate_pool_recall_shadow_visible_focus_profiles") or []) if str(row.get("ticker") or "").strip() == focus_ticker),
         {},
     )
     if focus_ticker in active_shadow_visible_focus_tickers:

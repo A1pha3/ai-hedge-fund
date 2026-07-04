@@ -104,35 +104,17 @@ def _build_governance_context(
         "execution_overlay": execution_overlay,
         "lane_stage": lane_rules.get("lane_stage", lane_rulepack.get("lane_stage")),
         "capital_mode": lane_rules.get("capital_mode", lane_rulepack.get("capital_mode")),
-        "focus_ticker": str(
-            promotion_review.get("focus_ticker")
-            or watchlist_execution.get("focus_ticker")
-            or eligible_execution.get("focus_ticker")
-            or execution_overlay.get("focus_ticker")
-            or ""
-        ).strip(),
+        "focus_ticker": str(promotion_review.get("focus_ticker") or watchlist_execution.get("focus_ticker") or eligible_execution.get("focus_ticker") or execution_overlay.get("focus_ticker") or "").strip(),
         "merge_review_ready": str(promotion_review.get("promotion_review_verdict") or "").strip() == "ready_for_default_btst_merge_review",
         "entries": list(observation_pool.get("entries") or []),
         "rulepack_eligible_tickers": list(lane_rulepack.get("eligible_tickers") or lane_validation.get("eligible_tickers") or []),
         "rulepack_watchlist_tickers": list(lane_rulepack.get("watchlist_tickers") or []),
         "support_count": support_count,
         "mixed_count": len(validation_windows) - support_count,
-        "watchlist_validation_status": str(
-            watchlist_validation.get("recent_validation_verdict")
-            or watchlist_validation.get("recent_tier_verdict")
-            or "watchlist_validation_missing"
-        ),
-        "recent_supporting_window_count": int(
-            watchlist_validation.get("recent_supporting_window_count")
-            or watchlist_validation.get("recent_tier_window_count")
-            or 0
-        ),
+        "watchlist_validation_status": str(watchlist_validation.get("recent_validation_verdict") or watchlist_validation.get("recent_tier_verdict") or "watchlist_validation_missing"),
+        "recent_supporting_window_count": int(watchlist_validation.get("recent_supporting_window_count") or watchlist_validation.get("recent_tier_window_count") or 0),
         "recent_window_count": int(watchlist_validation.get("recent_window_count") or 0),
-        "recent_support_ratio": float(
-            watchlist_validation.get("recent_support_ratio")
-            or watchlist_validation.get("recent_tier_ratio")
-            or 0.0
-        ),
+        "recent_support_ratio": float(watchlist_validation.get("recent_support_ratio") or watchlist_validation.get("recent_tier_ratio") or 0.0),
     }
 
 
@@ -239,12 +221,7 @@ def _build_governance_recommendation(context: dict[str, Any], *, governance_stat
         f"Keep the lane at {context['lane_stage']} / {context['capital_mode']} with effective_eligible_tickers={context['eligible_tickers']}. "
         f"Validation support windows={context['support_count']}, mixed windows={context['mixed_count']}, "
         f"watchlist_validation_status={context['watchlist_validation_status']}, recent_support={context['recent_supporting_window_count']}/{context['recent_window_count']}; "
-        f"focus promotion gate={context['promotion_gate'].get('gate_verdict')} eligible_gate={context['eligible_gate'].get('gate_verdict')} execution_gate={context['execution_gate'].get('gate_verdict')}; "
-        + (
-            "escalate the focus ticker into default BTST merge review under explicit governance approval."
-            if context["merge_review_ready"]
-            else "do not merge this lane into default BTST."
-        )
+        f"focus promotion gate={context['promotion_gate'].get('gate_verdict')} eligible_gate={context['eligible_gate'].get('gate_verdict')} execution_gate={context['execution_gate'].get('gate_verdict')}; " + ("escalate the focus ticker into default BTST merge review under explicit governance approval." if context["merge_review_ready"] else "do not merge this lane into default BTST.")
     )
 
 

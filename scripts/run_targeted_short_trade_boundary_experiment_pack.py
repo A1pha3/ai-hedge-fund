@@ -38,11 +38,7 @@ def _compact_date(value: str) -> str:
 
 def _find_frontier_case(frontier_analysis: dict[str, Any], *, ticker: str, trade_date: str | None = None) -> dict[str, Any]:
     rows = list(frontier_analysis.get("minimal_near_miss_rows") or [])
-    matches = [
-        row
-        for row in rows
-        if str(row.get("ticker") or "") == ticker and (trade_date is None or str(row.get("trade_date") or "") == trade_date)
-    ]
+    matches = [row for row in rows if str(row.get("ticker") or "") == ticker and (trade_date is None or str(row.get("trade_date") or "") == trade_date)]
     if trade_date and not matches:
         raise ValueError(f"No frontier row found for {trade_date}:{ticker}")
     if not trade_date and not matches:
@@ -168,10 +164,12 @@ def run_targeted_short_trade_boundary_experiment_pack(
         output_root / f"targeted_short_trade_boundary_experiment_pack_{stem.name}.md",
         render_targeted_short_trade_boundary_experiment_pack_markdown(pack),
     )
-    pack["artifacts"].update({
-        "pack_json": pack_json_path,
-        "pack_md": pack_md_path,
-    })
+    pack["artifacts"].update(
+        {
+            "pack_json": pack_json_path,
+            "pack_md": pack_md_path,
+        }
+    )
     _write_json(Path(pack_json_path), pack)
     _write_markdown(Path(pack_md_path), render_targeted_short_trade_boundary_experiment_pack_markdown(pack))
     return pack

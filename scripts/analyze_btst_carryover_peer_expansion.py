@@ -176,16 +176,8 @@ def _build_peer_expansion_analysis(
     multiday_audit: dict[str, Any],
     entries: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    priority_expansion_tickers = [
-        str(entry.get("ticker") or "")
-        for entry in entries
-        if str(entry.get("expansion_status") or "") in {"promotion_review_ready", "next_day_watch_priority", "open_cycle_priority"}
-    ][:4]
-    watch_with_risk_tickers = [
-        str(entry.get("ticker") or "")
-        for entry in entries
-        if str(entry.get("expansion_status") or "") in {"next_day_watch_with_history_risk", "open_cycle_with_history_risk"}
-    ][:4]
+    priority_expansion_tickers = [str(entry.get("ticker") or "") for entry in entries if str(entry.get("expansion_status") or "") in {"promotion_review_ready", "next_day_watch_priority", "open_cycle_priority"}][:4]
+    watch_with_risk_tickers = [str(entry.get("ticker") or "") for entry in entries if str(entry.get("expansion_status") or "") in {"next_day_watch_with_history_risk", "open_cycle_with_history_risk"}][:4]
     focus = entries[0] if entries else {}
     recommendation_parts: list[str] = []
     if focus:
@@ -231,11 +223,7 @@ def render_btst_carryover_peer_expansion_markdown(analysis: dict[str, Any]) -> s
     lines.append("")
     lines.append("## Expansion Entries")
     for entry in list(analysis.get("entries") or []):
-        lines.append(
-            f"- {entry.get('ticker')}: expansion_status={entry.get('expansion_status')}, harvest_status={entry.get('harvest_status')}, "
-            f"latest_trade_date={entry.get('latest_trade_date')}, latest_scope={entry.get('latest_scope')}, latest_score_target={entry.get('latest_score_target')}, "
-            f"concern_tags={entry.get('concern_tags')}"
-        )
+        lines.append(f"- {entry.get('ticker')}: expansion_status={entry.get('expansion_status')}, harvest_status={entry.get('harvest_status')}, " f"latest_trade_date={entry.get('latest_trade_date')}, latest_scope={entry.get('latest_scope')}, latest_score_target={entry.get('latest_score_target')}, " f"concern_tags={entry.get('concern_tags')}")
         lines.append(f"  recommendation: {entry.get('recommendation')}")
     if not list(analysis.get("entries") or []):
         lines.append("- none")

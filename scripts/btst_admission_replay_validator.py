@@ -101,23 +101,12 @@ def _summarize_structural_guardrail(payload: dict[str, Any] | None, regime_rows:
     multi_window_summary = _summarize_multi_window_validation(payload)
     no_runtime_activation_window_labels: list[str] = []
     if multi_window_summary and int(multi_window_summary.get("report_dir_count") or 0) > 0 and int(multi_window_summary.get("changed_window_count") or 0) == 0:
-        no_runtime_activation_window_labels = [
-            str(row.get("report_label") or "unknown")
-            for row in rows
-        ]
+        no_runtime_activation_window_labels = [str(row.get("report_label") or "unknown") for row in rows]
         blockers.append("no_runtime_activation_delta_across_replay_windows")
 
     raw_selected_count = sum(1 for row in regime_rows if str(row.get("decision") or "").strip() == "selected")
-    execution_eligible_selected_count = sum(
-        1
-        for row in regime_rows
-        if str(row.get("decision") or "").strip() == "selected" and bool(row.get("execution_eligible"))
-    )
-    non_halt_execution_eligible_count = sum(
-        1
-        for row in regime_rows
-        if str(row.get("gate") or "").strip() != "halt" and bool(row.get("execution_eligible"))
-    )
+    execution_eligible_selected_count = sum(1 for row in regime_rows if str(row.get("decision") or "").strip() == "selected" and bool(row.get("execution_eligible")))
+    non_halt_execution_eligible_count = sum(1 for row in regime_rows if str(row.get("gate") or "").strip() != "halt" and bool(row.get("execution_eligible")))
     has_positive_execution_eligible_evidence = non_halt_execution_eligible_count > 0
     if not has_positive_execution_eligible_evidence:
         blockers.append("no_non_halt_execution_eligible_evidence")
@@ -152,10 +141,7 @@ def build_admission_replay_summary(
     prior_audit: dict[str, Any],
     multi_window_validation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    approximate_surface_changed = (
-        baseline_payload.get("selected") != candidate_payload.get("selected")
-        or baseline_payload.get("near_miss") != candidate_payload.get("near_miss")
-    )
+    approximate_surface_changed = baseline_payload.get("selected") != candidate_payload.get("selected") or baseline_payload.get("near_miss") != candidate_payload.get("near_miss")
     regime_counts = _summarize_regime_rows(regime_rows)
     multi_window_summary = _summarize_multi_window_validation(multi_window_validation)
     structural_guardrail = _summarize_structural_guardrail(multi_window_validation, regime_rows)

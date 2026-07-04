@@ -101,11 +101,7 @@ def extract_carryover_aligned_peer_harvest_summary(
         return {}
     entries = [dict(entry or {}) for entry in list(harvest.get("harvest_entries") or [])]
     focus_entry = find_focus_entry(entries, harvest.get("focus_ticker"))
-    fresh_open_cycle_tickers = [
-        str(entry.get("ticker") or "")
-        for entry in entries
-        if str(entry.get("harvest_status") or "") == "fresh_open_cycle" and entry.get("ticker")
-    ][:4]
+    fresh_open_cycle_tickers = [str(entry.get("ticker") or "") for entry in entries if str(entry.get("harvest_status") or "") == "fresh_open_cycle" and entry.get("ticker")][:4]
     return {
         "ticker": harvest.get("ticker"),
         "peer_row_count": harvest.get("peer_row_count"),

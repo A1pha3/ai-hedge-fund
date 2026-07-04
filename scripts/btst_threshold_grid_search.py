@@ -182,7 +182,7 @@ def main():
         codes = df["ts_code"].tolist()
         history = []
         for i in range(0, len(codes), 80):
-            batch = codes[i:i + 80]
+            batch = codes[i : i + 80]
             try:
                 h = pro.daily(ts_code=",".join(batch), start_date="20250601", end_date=test_date)
                 if h is not None and not h.empty:
@@ -263,20 +263,15 @@ def main():
     print(f"{'Rank':>4s} {'ST':>5s} {'NMT':>5s} {'RCR':>5s} {'WinR':>6s} {'AvgR':>7s} {'Exp':>7s} {'Payoff':>7s} {'PosD':>5s} {'P10':>7s} {'N':>6s}")
     print("-" * 80)
     for i, r in enumerate(results_grid[:20]):
-        payoff = f"{r['overall_payoff']:.2f}" if r['overall_payoff'] else "N/A"
-        print(f"{i + 1:4d} {r['select_threshold']:5.2f} {r['near_miss_threshold']:5.2f} {r['rank_cap_ratio']:5.2f} "
-              f"{r['overall_win_rate']:5.0%} {r['overall_avg_ret']:+6.2f}% {r['overall_expectancy']:+6.2f}% "
-              f"{payoff:>7s} {r['positive_days']:3d}/{r['n_days']:2d} "
-              f"{r['downside_p10']:+6.2f}% {r['n_total']:6d}")
+        payoff = f"{r['overall_payoff']:.2f}" if r["overall_payoff"] else "N/A"
+        print(f"{i + 1:4d} {r['select_threshold']:5.2f} {r['near_miss_threshold']:5.2f} {r['rank_cap_ratio']:5.2f} " f"{r['overall_win_rate']:5.0%} {r['overall_avg_ret']:+6.2f}% {r['overall_expectancy']:+6.2f}% " f"{payoff:>7s} {r['positive_days']:3d}/{r['n_days']:2d} " f"{r['downside_p10']:+6.2f}% {r['n_total']:6d}")
 
     # Also show top by positive days
     print("\nTOP 10 by MOST POSITIVE DAYS:")
     by_pos_days = sorted(results_grid, key=lambda x: (x["positive_days"], x["overall_avg_ret"]), reverse=True)
     for i, r in enumerate(by_pos_days[:10]):
-        payoff = f"{r['overall_payoff']:.2f}" if r['overall_payoff'] else "N/A"
-        print(f"{i + 1:4d} ST={r['select_threshold']:.2f} NMT={r['near_miss_threshold']:.2f} RCR={r['rank_cap_ratio']:.2f} "
-              f"WinR={r['overall_win_rate']:.0%} AvgR={r['overall_avg_ret']:+.2f}% Exp={r['overall_expectancy']:+.2f}% "
-              f"PosDays={r['positive_days']}/{r['n_days']} Payoff={payoff} N={r['n_total']}")
+        payoff = f"{r['overall_payoff']:.2f}" if r["overall_payoff"] else "N/A"
+        print(f"{i + 1:4d} ST={r['select_threshold']:.2f} NMT={r['near_miss_threshold']:.2f} RCR={r['rank_cap_ratio']:.2f} " f"WinR={r['overall_win_rate']:.0%} AvgR={r['overall_avg_ret']:+.2f}% Exp={r['overall_expectancy']:+.2f}% " f"PosDays={r['positive_days']}/{r['n_days']} Payoff={payoff} N={r['n_total']}")
 
 
 if __name__ == "__main__":

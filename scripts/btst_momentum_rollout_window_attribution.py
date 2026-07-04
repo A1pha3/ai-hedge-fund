@@ -237,14 +237,7 @@ def build_momentum_rollout_window_attribution(*, rollout_blockers: list[str], wi
         dominant_family = sorted(family_counts.items(), key=lambda item: (-item[1], item[0]))[0][0]
 
     windows_missing_theme_exposure, missing_theme_exposure_surfaces = _windows_missing_theme_exposure(normalized_rows)
-    dominant_family_windows = sorted(
-        {
-            report_label
-            for blocker, report_labels in windows_by_blocker.items()
-            if dominant_family is not None and _classify_blocker(blocker) == dominant_family
-            for report_label in report_labels
-        }
-    )
+    dominant_family_windows = sorted({report_label for blocker, report_labels in windows_by_blocker.items() if dominant_family is not None and _classify_blocker(blocker) == dominant_family for report_label in report_labels})
 
     return {
         "blocker_count": len(normalized_blockers),

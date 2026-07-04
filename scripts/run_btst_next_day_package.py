@@ -7,6 +7,7 @@ Orchestrates doc-bundle generation, optional profile compare,
 P0D (2026-06-04): first working version covering reuse, refresh, dry-run,
 resume and the key invariants from the improvement plan.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -36,6 +37,7 @@ def _resolve_output_dir(output_dir: str | Path | None, signal_date: str) -> Path
 # Step tracking
 # ---------------------------------------------------------------------------
 
+
 def _new_step(name: str) -> dict[str, Any]:
     return {"step_name": name, "started_at": time.time(), "status": "pending"}
 
@@ -54,10 +56,16 @@ def _finish_step(step: dict[str, Any], status: str, *, failure_reason: str | Non
 # ---------------------------------------------------------------------------
 
 _FORBIDDEN_IN_POST_CLOSE = {
-    "filled", "confirmed", "executable",
-    "next_open_return", "next_open_to_close_return",
-    "next_high_return", "next_close_return",
-    "realized_return", "realized_outcome", "t_plus_1_outcome",
+    "filled",
+    "confirmed",
+    "executable",
+    "next_open_return",
+    "next_open_to_close_return",
+    "next_high_return",
+    "next_close_return",
+    "realized_return",
+    "realized_outcome",
+    "t_plus_1_outcome",
 }
 
 
@@ -80,27 +88,31 @@ def _render_one_pager(summary_data: dict[str, Any]) -> str:
 
     # Market section
     market = dict(summary_data.get("market") or {})
-    lines.extend([
-        "## 市场门控",
-        "",
-        f"- regime_gate_level: `{market.get('regime_gate_level') or 'n/a'}`",
-        f"- market_gate: `{market.get('market_gate') or 'n/a'}`",
-        f"- gate_enforced: `{market.get('gate_enforced')}`",
-        f"- buy_orders_cleared: `{market.get('buy_orders_cleared')}`",
-        "",
-    ])
+    lines.extend(
+        [
+            "## 市场门控",
+            "",
+            f"- regime_gate_level: `{market.get('regime_gate_level') or 'n/a'}`",
+            f"- market_gate: `{market.get('market_gate') or 'n/a'}`",
+            f"- gate_enforced: `{market.get('gate_enforced')}`",
+            f"- buy_orders_cleared: `{market.get('buy_orders_cleared')}`",
+            "",
+        ]
+    )
 
     # Execution section
     execution = dict(summary_data.get("execution") or {})
     report_mode = execution.get("report_mode") or "n/a"
-    lines.extend([
-        "## 执行状态",
-        "",
-        f"- report_mode: `{report_mode}`",
-        f"- 正式入选: `{', '.join(execution.get('formal_selected_tickers') or []) or '无'}`",
-        f"- 可下单: `{', '.join(execution.get('orderable_tickers') or []) or '无'}`",
-        f"- 仅确认: `{', '.join(execution.get('confirmation_only_tickers') or []) or '无'}`",
-    ])
+    lines.extend(
+        [
+            "## 执行状态",
+            "",
+            f"- report_mode: `{report_mode}`",
+            f"- 正式入选: `{', '.join(execution.get('formal_selected_tickers') or []) or '无'}`",
+            f"- 可下单: `{', '.join(execution.get('orderable_tickers') or []) or '无'}`",
+            f"- 仅确认: `{', '.join(execution.get('confirmation_only_tickers') or []) or '无'}`",
+        ]
+    )
     first_invalidate = execution.get("first_invalidate_if")
     if first_invalidate:
         lines.append(f"- 第一取消条件: {first_invalidate}")
@@ -108,48 +120,56 @@ def _render_one_pager(summary_data: dict[str, Any]) -> str:
 
     # Early-runner section
     er = dict(summary_data.get("early_runner") or {})
-    lines.extend([
-        "## Early-Runner",
-        "",
-        f"- 日期对齐: `{er.get('board_date_alignment_status') or 'n/a'}`",
-        f"- 产物新鲜度: `{er.get('artifact_freshness_status') or 'n/a'}`",
-        f"- Point-in-time: `{er.get('point_in_time_status') or 'n/a'}`",
-        f"- Actionability: `{er.get('actionability_status') or 'n/a'}`",
-        f"- 交集票: `{er.get('intersection_count', 0)}`",
-        f"- Only early-runner: `{er.get('only_early_runner_count', 0)}`",
-        f"- Second-entry: `{er.get('second_entry_count', 0)}`",
-        "",
-    ])
+    lines.extend(
+        [
+            "## Early-Runner",
+            "",
+            f"- 日期对齐: `{er.get('board_date_alignment_status') or 'n/a'}`",
+            f"- 产物新鲜度: `{er.get('artifact_freshness_status') or 'n/a'}`",
+            f"- Point-in-time: `{er.get('point_in_time_status') or 'n/a'}`",
+            f"- Actionability: `{er.get('actionability_status') or 'n/a'}`",
+            f"- 交集票: `{er.get('intersection_count', 0)}`",
+            f"- Only early-runner: `{er.get('only_early_runner_count', 0)}`",
+            f"- Second-entry: `{er.get('second_entry_count', 0)}`",
+            "",
+        ]
+    )
 
     # Incremental evidence
     ie = dict(summary_data.get("incremental_evidence") or {})
-    lines.extend([
-        "## 历史增量证据",
-        "",
-        f"- 状态: `{ie.get('status', 'insufficient')}`",
-        f"- 样本量: `{ie.get('sample_count', 0)}`",
-    ])
+    lines.extend(
+        [
+            "## 历史增量证据",
+            "",
+            f"- 状态: `{ie.get('status', 'insufficient')}`",
+            f"- 样本量: `{ie.get('sample_count', 0)}`",
+        ]
+    )
     if ie.get("status") == "insufficient":
         lines.append("- **证据不足**，不能声称有或无增量价值。")
     lines.append("")
 
     # P0D: omit fields not available at the current phase.
     if phase == "post_close_plan":
-        lines.extend([
-            "## ⚠️ 阶段限制",
-            "",
-            "当前为 `post_close_plan` 阶段。本 ONE-PAGER 不包含 T+1 确认结果、成交状态或已实现收益。",
-            "",
-        ])
+        lines.extend(
+            [
+                "## ⚠️ 阶段限制",
+                "",
+                "当前为 `post_close_plan` 阶段。本 ONE-PAGER 不包含 T+1 确认结果、成交状态或已实现收益。",
+                "",
+            ]
+        )
 
     # Profile compare
     pc = dict(summary_data.get("profile_compare") or {})
-    lines.extend([
-        "## Profile 对比",
-        "",
-        f"- 比较范围: `{pc.get('comparison_scope', 'n/a')}`",
-        f"- 有效决策差异: `{pc.get('effective_decision_diff', False)}`",
-    ])
+    lines.extend(
+        [
+            "## Profile 对比",
+            "",
+            f"- 比较范围: `{pc.get('comparison_scope', 'n/a')}`",
+            f"- 有效决策差异: `{pc.get('effective_decision_diff', False)}`",
+        ]
+    )
     if not pc.get("effective_decision_diff"):
         lines.append("- 当前 profile 未改变真实候选或执行语义。")
     lines.append("")
@@ -160,6 +180,7 @@ def _render_one_pager(summary_data: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Main orchestration
 # ---------------------------------------------------------------------------
+
 
 def run_btst_next_day_package(
     *,
@@ -217,6 +238,7 @@ def run_btst_next_day_package(
     doc_bundle_result: dict[str, Any] = {}
     try:
         from scripts.generate_btst_doc_bundle import generate_btst_doc_bundle
+
         doc_bundle_result = generate_btst_doc_bundle(
             signal_date,
             reports_root=resolved_reports_root,
@@ -238,6 +260,7 @@ def run_btst_next_day_package(
             from scripts.generate_btst_doc_bundle import (
                 compare_btst_doc_bundle_profiles,
             )
+
             compare_result = compare_btst_doc_bundle_profiles(
                 signal_date,
                 profiles=["conservative", "aggressive"],
@@ -337,6 +360,7 @@ def run_btst_next_day_package(
             if isinstance(summary_data, dict) and "schema_version" in summary_data:
                 atomic_content = json.dumps(summary_data, ensure_ascii=False, indent=2) + "\n"
                 import tempfile
+
                 fd, tmp = tempfile.mkstemp(
                     dir=str(resolved_output_dir),
                     prefix=".operator_summary_",
@@ -366,6 +390,7 @@ def run_btst_next_day_package(
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="BTST next-day package unified entrypoint.")

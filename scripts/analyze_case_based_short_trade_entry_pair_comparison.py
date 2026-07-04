@@ -65,10 +65,7 @@ def analyze_case_based_short_trade_entry_pair_comparison(
     right_cases = int(right.get("target_case_count") or 0)
 
     if left_cost < right_cost and left_close > right_close and left_positive >= right_positive and left_cases >= right_cases:
-        recommendation = (
-            f"{left_ticker} 更适合作为下一轮的第一 case-based 入口：它需要更低的 adjustment_cost，"
-            f"且 close continuation 和样本数都不弱于 {right_ticker}。"
-        )
+        recommendation = f"{left_ticker} 更适合作为下一轮的第一 case-based 入口：它需要更低的 adjustment_cost，" f"且 close continuation 和样本数都不弱于 {right_ticker}。"
     elif left_close > right_close:
         recommendation = f"{left_ticker} 的 follow-through 更强，应优先继续推进。"
     else:

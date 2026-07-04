@@ -74,10 +74,7 @@ def _resolve_selection_artifact_dir(*, reports_root: Path, report_dir_name: str,
     for candidate in candidates:
         if candidate.exists():
             return candidate
-    raise FileNotFoundError(
-        f"Selection artifact directory not found for report={report_dir_name} trade_date={trade_date}: "
-        f"{', '.join(str(candidate) for candidate in candidates)}"
-    )
+    raise FileNotFoundError(f"Selection artifact directory not found for report={report_dir_name} trade_date={trade_date}: " f"{', '.join(str(candidate) for candidate in candidates)}")
 
 
 def _iter_replay_input_candidates(replay_input: dict[str, Any], ticker: str) -> list[tuple[str, dict[str, Any]]]:
@@ -97,19 +94,11 @@ def _locate_replay_input_source_entry(replay_input: dict[str, Any], *, ticker: s
         return None, {}
 
     normalized_candidate_source = str(candidate_source or "")
-    exact_matches = [
-        (bucket, payload)
-        for bucket, payload in matches
-        if str(payload.get("candidate_source") or "") == normalized_candidate_source
-    ]
+    exact_matches = [(bucket, payload) for bucket, payload in matches if str(payload.get("candidate_source") or "") == normalized_candidate_source]
     if exact_matches:
         return exact_matches[0][0], exact_matches[0][1]
 
-    upstream_matches = [
-        (bucket, payload)
-        for bucket, payload in matches
-        if str(payload.get("upstream_candidate_source") or "") == normalized_candidate_source
-    ]
+    upstream_matches = [(bucket, payload) for bucket, payload in matches if str(payload.get("upstream_candidate_source") or "") == normalized_candidate_source]
     if upstream_matches:
         return upstream_matches[0][0], upstream_matches[0][1]
 
@@ -145,9 +134,7 @@ def _reconstruct_boundary_trace_row(boundary_row: dict[str, Any], reports_root: 
     attached_target = _lookup_selection_target(replay_input, ticker)
     snapshot_target = _lookup_selection_target(snapshot, ticker)
     if not snapshot_target:
-        raise ValueError(
-            f"Ticker {ticker} missing from selection_snapshot.json under {artifact_dir}"
-        )
+        raise ValueError(f"Ticker {ticker} missing from selection_snapshot.json under {artifact_dir}")
     if not attached_target:
         attached_target = dict(snapshot_target)
     source_payload = {
@@ -371,9 +358,7 @@ def _build_governance_diagnosis_board(row_traces: list[dict[str, Any]]) -> list[
         for row_trace in action_rows:
             if action == "fix_snapshot_attachment_contract":
                 diagnoses = dict(row_trace["missing_six_key_diagnoses"])
-                affected_keys.update(
-                    key for key, diagnosis in diagnoses.items() if diagnosis in {"nested_only", "lost_after_source"}
-                )
+                affected_keys.update(key for key, diagnosis in diagnoses.items() if diagnosis in {"nested_only", "lost_after_source"})
             elif action == "fix_boundary_source_contract":
                 affected_keys.update(row_trace["missing_everywhere_missing_six_keys"])
             else:
@@ -422,10 +407,7 @@ def analyze_btst_5d_15pct_boundary_missing_six_core_keys_from_rows(rows: list[di
 def analyze_btst_5d_15pct_boundary_missing_six_core_keys(reports_root: str | Path) -> dict[str, Any]:
     resolved_root = Path(reports_root).expanduser().resolve()
     inspection = analyze_btst_5d_15pct_boundary_contract_inspection(resolved_root)
-    live_rows = [
-        _reconstruct_boundary_trace_row(dict(row or {}), resolved_root)
-        for row in list(inspection.get("boundary_rows") or [])
-    ]
+    live_rows = [_reconstruct_boundary_trace_row(dict(row or {}), resolved_root) for row in list(inspection.get("boundary_rows") or [])]
     return {
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "reports_root": str(resolved_root),
@@ -481,11 +463,7 @@ def main() -> None:
         render_btst_5d_15pct_boundary_missing_six_core_keys_markdown(analysis),
         encoding="utf-8",
     )
-    print(
-        "boundary_missing_six_core_keys: "
-        f"boundary_row_count={analysis['boundary_row_count']} "
-        f"json={output_json} md={output_md}"
-    )
+    print("boundary_missing_six_core_keys: " f"boundary_row_count={analysis['boundary_row_count']} " f"json={output_json} md={output_md}")
 
 
 if __name__ == "__main__":

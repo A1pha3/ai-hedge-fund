@@ -88,11 +88,7 @@ def render_btst_tplus2_continuation_lane_rulepack_markdown(analysis: dict[str, A
     lines.append("")
     lines.append("## Observation Entries")
     for item in list(analysis.get("entries") or []):
-        lines.append(
-            f"- {item['ticker']}: entry_type={item['entry_type']}, lane_stage={item['lane_stage']}, "
-            f"priority_score={item['priority_score']}, t_plus_2_close_positive_rate={item.get('t_plus_2_close_positive_rate')}, "
-            f"t_plus_2_close_return_mean={item.get('t_plus_2_close_return_mean')}"
-        )
+        lines.append(f"- {item['ticker']}: entry_type={item['entry_type']}, lane_stage={item['lane_stage']}, " f"priority_score={item['priority_score']}, t_plus_2_close_positive_rate={item.get('t_plus_2_close_positive_rate')}, " f"t_plus_2_close_return_mean={item.get('t_plus_2_close_return_mean')}")
     if not list(analysis.get("entries") or []):
         lines.append("- none")
     lines.append("")

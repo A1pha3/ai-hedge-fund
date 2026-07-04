@@ -35,11 +35,7 @@ def _load_broad_scope_shadow_fallback(reports_root: Path, focus_ticker: str) -> 
     role_history = analyze_short_trade_ticker_role_history(report_dirs, tickers=[focus_ticker])
     ticker_summary = dict(list(role_history.get("ticker_summaries") or [{}])[0] or {})
     observations = [dict(row or {}) for row in list(ticker_summary.get("observations") or [])]
-    shadow_rows = [
-        row
-        for row in observations
-        if "_shadow_" in str(row.get("role") or "") and str(row.get("role") or "").endswith(("_selected", "_near_miss"))
-    ]
+    shadow_rows = [row for row in observations if "_shadow_" in str(row.get("role") or "") and str(row.get("role") or "").endswith(("_selected", "_near_miss"))]
     best_rows_by_trade_date: dict[str, dict[str, Any]] = {}
     for row in shadow_rows:
         trade_date = _normalize_trade_date(row.get("trade_date"))
@@ -68,11 +64,7 @@ def _load_broad_scope_shadow_fallback(reports_root: Path, focus_ticker: str) -> 
             best_rows_by_trade_date[trade_date] = candidate
 
     action_rows = [best_rows_by_trade_date[key] for key in sorted(best_rows_by_trade_date)]
-    confirmed_selected_trade_dates = [
-        str(row.get("trade_date") or "")
-        for row in action_rows
-        if str(row.get("trade_date") or "") and str(row.get("decision") or "") == "selected"
-    ]
+    confirmed_selected_trade_dates = [str(row.get("trade_date") or "") for row in action_rows if str(row.get("trade_date") or "") and str(row.get("decision") or "") == "selected"]
     exploratory_trade_dates = [str(row.get("trade_date") or "") for row in action_rows if str(row.get("trade_date") or "")]
     return {
         "confirmed_selected_trade_dates": confirmed_selected_trade_dates,
@@ -107,10 +99,7 @@ def _should_apply_broad_scope_fallback(
         return False
     if not action_rows:
         return True
-    return all(
-        not str(row.get("report_dir") or "").strip() and not str(row.get("decision") or "").strip()
-        for row in action_rows
-    )
+    return all(not str(row.get("report_dir") or "").strip() and not str(row.get("decision") or "").strip() for row in action_rows)
 
 
 def _merge_action_rows(
@@ -163,11 +152,7 @@ def analyze_btst_candidate_pool_corridor_window_command_board(
     manifest = _load_json(manifest_path)
     persistence = _load_json(persistence_dossier_path)
     continuation_summary = dict(manifest.get("continuation_promotion_ready_summary") or {})
-    focus_ticker = str(
-        persistence.get("focus_ticker")
-        or continuation_summary.get("focus_ticker")
-        or ""
-    ).strip()
+    focus_ticker = str(persistence.get("focus_ticker") or continuation_summary.get("focus_ticker") or "").strip()
     if not focus_ticker:
         raise ValueError("No focus_ticker found for corridor window command board.")
     reports_root = Path(manifest_path).expanduser().resolve().parent
@@ -239,12 +224,8 @@ def analyze_btst_candidate_pool_corridor_window_command_board(
         action_rows=action_rows,
     ):
         broad_scope_fallback = _load_broad_scope_shadow_fallback(reports_root, focus_ticker)
-        confirmed_selected_trade_dates = _dedupe_trade_dates(
-            [*confirmed_selected_trade_dates, *list(broad_scope_fallback.get("confirmed_selected_trade_dates") or [])]
-        )
-        exploratory_trade_dates = _dedupe_trade_dates(
-            [*exploratory_trade_dates, *list(broad_scope_fallback.get("exploratory_trade_dates") or [])]
-        )
+        confirmed_selected_trade_dates = _dedupe_trade_dates([*confirmed_selected_trade_dates, *list(broad_scope_fallback.get("confirmed_selected_trade_dates") or [])])
+        exploratory_trade_dates = _dedupe_trade_dates([*exploratory_trade_dates, *list(broad_scope_fallback.get("exploratory_trade_dates") or [])])
         action_rows = _merge_action_rows(
             action_rows,
             [dict(row or {}) for row in list(broad_scope_fallback.get("action_rows") or [])],
@@ -256,23 +237,13 @@ def analyze_btst_candidate_pool_corridor_window_command_board(
 
     if candidate_dossier:
         verdict = "collect_one_more_selected_window"
-        recommendation = (
-            f"Prioritize the next independent selected window for {focus_ticker}. "
-            f"Confirmed selected dates={confirmed_selected_trade_dates}; next targets={next_target_trade_dates}."
-        )
+        recommendation = f"Prioritize the next independent selected window for {focus_ticker}. " f"Confirmed selected dates={confirmed_selected_trade_dates}; next targets={next_target_trade_dates}."
     else:
         verdict = "missing_candidate_dossier"
         if broad_scope_fallback:
-            recommendation = (
-                f"{focus_ticker} is still missing btst_tplus2_candidate_dossier_latest evidence, "
-                f"but broad-scope shadow history already shows {broad_scope_fallback.get('broad_scope_distinct_window_count')} independent window(s). "
-                f"Formalize trade dates {next_target_trade_dates} into the dossier before corridor governance is re-run."
-            )
+            recommendation = f"{focus_ticker} is still missing btst_tplus2_candidate_dossier_latest evidence, " f"but broad-scope shadow history already shows {broad_scope_fallback.get('broad_scope_distinct_window_count')} independent window(s). " f"Formalize trade dates {next_target_trade_dates} into the dossier before corridor governance is re-run."
         else:
-            recommendation = (
-                f"{focus_ticker} is missing btst_tplus2_candidate_dossier_latest evidence. "
-                f"Use visibility-gap windows {next_target_trade_dates} to rebuild the dossier before merge-review probing."
-            )
+            recommendation = f"{focus_ticker} is missing btst_tplus2_candidate_dossier_latest evidence. " f"Use visibility-gap windows {next_target_trade_dates} to rebuild the dossier before merge-review probing."
 
     return {
         "focus_ticker": focus_ticker,

@@ -16,6 +16,7 @@ Example::
         --param-grid "baseline_pct_threshold=2.0,3.0,4.0;baseline_top_n=5,10" \\
         --output data/reports/param_grid
 """
+
 from __future__ import annotations
 
 import argparse
@@ -93,8 +94,7 @@ def _add_backtest_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--walk-forward",
         action="store_true",
-        help="If set, run walk-forward over the date range and use the per-window Sharpe / drawdown "
-        "averages as the comparison metric.",
+        help="If set, run walk-forward over the date range and use the per-window Sharpe / drawdown " "averages as the comparison metric.",
     )
     parser.add_argument("--train-months", type=int, default=2)
     parser.add_argument("--test-months", type=int, default=1)
@@ -118,8 +118,7 @@ def _add_grid_args(parser: argparse.ArgumentParser) -> None:
         "--param-grid",
         type=str,
         required=True,
-        help='Grid spec: "key1=v1,v2;key2=v3,v4".  Each dimension expands into a list and the '
-        "runner takes the cartesian product.",
+        help='Grid spec: "key1=v1,v2;key2=v3,v4".  Each dimension expands into a list and the ' "runner takes the cartesian product.",
     )
     parser.add_argument(
         "--output",
@@ -131,8 +130,7 @@ def _add_grid_args(parser: argparse.ArgumentParser) -> None:
         "--max-workers",
         type=int,
         default=None,
-        help=f"Override the worker thread count.  Defaults to the {GRID_ENV_VAR} env var "
-        f"({DEFAULT_GRID_MAX_WORKERS} if unset).",
+        help=f"Override the worker thread count.  Defaults to the {GRID_ENV_VAR} env var " f"({DEFAULT_GRID_MAX_WORKERS} if unset).",
     )
     parser.add_argument(
         "--sort-by",
@@ -299,9 +297,7 @@ def make_evaluator(args: argparse.Namespace) -> Any:
         trial_args = dict(base_args)
         for key, value in params.items():
             if key not in SWEEPABLE_KEYS:
-                raise ParamGridError(
-                    f"unsupported grid dimension {key!r}; allowed: {sorted(SWEEPABLE_KEYS)}"
-                )
+                raise ParamGridError(f"unsupported grid dimension {key!r}; allowed: {sorted(SWEEPABLE_KEYS)}")
             # baseline_* dimensions only apply to pipeline-mode backtests;
             # in agent mode they're quietly ignored so the grid can be
             # shared between the two execution modes.

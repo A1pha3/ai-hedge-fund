@@ -20,17 +20,21 @@ def _resolve_trade_dates(raw_trade_dates: str) -> list[str]:
 
 
 def _write_csv(path: Path, rows: list[dict]) -> None:
-    fieldnames = list(rows[0].keys()) if rows else [
-        "trade_date",
-        "ticker",
-        "industry_sw",
-        "baseline_score_b",
-        "variant_score_b",
-        "score_delta",
-        "tags",
-        "manual_verdict",
-        "manual_notes",
-    ]
+    fieldnames = (
+        list(rows[0].keys())
+        if rows
+        else [
+            "trade_date",
+            "ticker",
+            "industry_sw",
+            "baseline_score_b",
+            "variant_score_b",
+            "score_delta",
+            "tags",
+            "manual_verdict",
+            "manual_notes",
+        ]
+    )
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
@@ -60,10 +64,7 @@ def _render_markdown(variant_name: str, comparison: dict) -> str:
         return "\n".join(lines)
 
     for item in comparison["added_samples"]:
-        lines.append(
-            f"- {item['trade_date']} / {item['ticker']} | industry={item['industry_sw']} | "
-            f"baseline={item['baseline_score_b']:.4f} -> variant={item['variant_score_b']:.4f} | delta={item['score_delta']:.4f}"
-        )
+        lines.append(f"- {item['trade_date']} / {item['ticker']} | industry={item['industry_sw']} | " f"baseline={item['baseline_score_b']:.4f} -> variant={item['variant_score_b']:.4f} | delta={item['score_delta']:.4f}")
         lines.append(f"  - tags: {', '.join(item['tags'])}")
         lines.append(f"  - strategy_summary: {json.dumps(item['strategy_summary'], ensure_ascii=False)}")
         lines.append(f"  - profitability: {json.dumps(item['profitability'], ensure_ascii=False)}")

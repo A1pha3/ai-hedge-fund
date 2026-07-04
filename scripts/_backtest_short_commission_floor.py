@@ -11,6 +11,7 @@
   - 终态 NAV / cash / margin_used / realized_gains
   - 全周期 NAV 曲线差异
 """
+
 from __future__ import annotations
 
 import json
@@ -116,19 +117,21 @@ def _install_trade_logger(floor_yuan: float) -> None:
         notional = abs(quantity) * current_price
         raw_comm = notional * commission_rate
         eff_comm = notional * eff
-        TRADE_LOG.append({
-            "side": "SHORT",
-            "ticker": ticker,
-            "qty": quantity,
-            "price": current_price,
-            "notional": notional,
-            "raw_rate": commission_rate,
-            "eff_rate": eff,
-            "raw_comm": raw_comm,
-            "eff_comm": eff_comm,
-            "floor_yuan": commission_floor_yuan,
-            "floor_triggered": eff > commission_rate + 1e-12,
-        })
+        TRADE_LOG.append(
+            {
+                "side": "SHORT",
+                "ticker": ticker,
+                "qty": quantity,
+                "price": current_price,
+                "notional": notional,
+                "raw_rate": commission_rate,
+                "eff_rate": eff,
+                "raw_comm": raw_comm,
+                "eff_comm": eff_comm,
+                "floor_yuan": commission_floor_yuan,
+                "floor_triggered": eff > commission_rate + 1e-12,
+            }
+        )
         return orig_short(ticker, quantity, current_price, portfolio, slippage_rate, commission_rate, daily_turnover, commission_floor_yuan)
 
     def logged_cover(ticker, quantity, current_price, portfolio, slippage_rate, commission_rate, daily_turnover=None, commission_floor_yuan=5.0):
@@ -136,19 +139,21 @@ def _install_trade_logger(floor_yuan: float) -> None:
         notional = abs(quantity) * current_price
         raw_comm = notional * commission_rate
         eff_comm = notional * eff
-        TRADE_LOG.append({
-            "side": "COVER",
-            "ticker": ticker,
-            "qty": quantity,
-            "price": current_price,
-            "notional": notional,
-            "raw_rate": commission_rate,
-            "eff_rate": eff,
-            "raw_comm": raw_comm,
-            "eff_comm": eff_comm,
-            "floor_yuan": commission_floor_yuan,
-            "floor_triggered": eff > commission_rate + 1e-12,
-        })
+        TRADE_LOG.append(
+            {
+                "side": "COVER",
+                "ticker": ticker,
+                "qty": quantity,
+                "price": current_price,
+                "notional": notional,
+                "raw_rate": commission_rate,
+                "eff_rate": eff,
+                "raw_comm": raw_comm,
+                "eff_comm": eff_comm,
+                "floor_yuan": commission_floor_yuan,
+                "floor_triggered": eff > commission_rate + 1e-12,
+            }
+        )
         return orig_cover(ticker, quantity, current_price, portfolio, slippage_rate, commission_rate, daily_turnover, commission_floor_yuan)
 
     trader_mod.execute_short_trade = logged_short

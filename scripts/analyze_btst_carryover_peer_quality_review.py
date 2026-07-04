@@ -106,21 +106,12 @@ def _build_peer_entries(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _build_recommendation(peer_entries: list[dict[str, Any]]) -> str:
     if not peer_entries:
         return "当前 anchor probe 还没有任何 target 之外的 peer 行，不能把 002001 当成可复制 lane。"
-    promotable_peers = [
-        entry
-        for entry in peer_entries
-        if int((entry.get("surface_summary") or {}).get("closed_cycle_count") or 0) > 0
-        and float(((entry.get("surface_summary") or {}).get("next_high_hit_rate_at_threshold") or 0.0)) >= 0.5
-        and float(((entry.get("surface_summary") or {}).get("next_close_positive_rate") or 0.0)) >= 0.5
-    ]
+    promotable_peers = [entry for entry in peer_entries if int((entry.get("surface_summary") or {}).get("closed_cycle_count") or 0) > 0 and float(((entry.get("surface_summary") or {}).get("next_high_hit_rate_at_threshold") or 0.0)) >= 0.5 and float(((entry.get("surface_summary") or {}).get("next_close_positive_rate") or 0.0)) >= 0.5]
     if promotable_peers:
         top = promotable_peers[0]
         return f"{top.get('ticker')} 已出现可复核 closed-cycle 质量，下一步应把它纳入极窄 peer promotion review。"
     best = peer_entries[0]
-    return (
-        f"当前最可见的 peer 是 {best.get('ticker')}，但它还没有形成达标的 closed-cycle 兑现。"
-        " 这条 carryover lane 仍未出现第二只可证实强 peer，暂不支持扩容。"
-    )
+    return f"当前最可见的 peer 是 {best.get('ticker')}，但它还没有形成达标的 closed-cycle 兑现。" " 这条 carryover lane 仍未出现第二只可证实强 peer，暂不支持扩容。"
 
 
 def analyze_btst_carryover_peer_quality_review(anchor_probe_path: str | Path) -> dict[str, Any]:
@@ -163,10 +154,7 @@ def render_btst_carryover_peer_quality_review_markdown(analysis: dict[str, Any])
     lines.append("")
     lines.append("## Peer Entries")
     for entry in list(analysis.get("peer_entries") or []):
-        lines.append(
-            f"- {entry.get('ticker')}: occurrence_count={entry.get('occurrence_count')}, scope_counts={entry.get('scope_counts')}, "
-            f"surface_summary={entry.get('surface_summary')}"
-        )
+        lines.append(f"- {entry.get('ticker')}: occurrence_count={entry.get('occurrence_count')}, scope_counts={entry.get('scope_counts')}, " f"surface_summary={entry.get('surface_summary')}")
     if not list(analysis.get("peer_entries") or []):
         lines.append("- none")
     lines.append("")

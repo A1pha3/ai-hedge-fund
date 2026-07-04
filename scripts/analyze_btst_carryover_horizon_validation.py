@@ -95,10 +95,7 @@ def render_btst_carryover_horizon_validation_markdown(analysis: dict[str, Any]) 
     lines.append("## Evidence Rows")
     for row in list(analysis.get("evidence_rows") or []):
         lines.append(
-            f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, relief_applied={row.get('relief_applied')}, "
-            f"next_close_return={row.get('next_close_return')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, "
-            f"t_plus_3_close_return={row.get('t_plus_3_close_return')}, t_plus_4_close_return={row.get('t_plus_4_close_return')}, "
-            f"cycle_status={row.get('cycle_status')}"
+            f"- {row.get('trade_date')} {row.get('ticker')}: decision={row.get('decision')}, relief_applied={row.get('relief_applied')}, " f"next_close_return={row.get('next_close_return')}, t_plus_2_close_return={row.get('t_plus_2_close_return')}, " f"t_plus_3_close_return={row.get('t_plus_3_close_return')}, t_plus_4_close_return={row.get('t_plus_4_close_return')}, " f"cycle_status={row.get('cycle_status')}"
         )
     if not list(analysis.get("evidence_rows") or []):
         lines.append("- none")

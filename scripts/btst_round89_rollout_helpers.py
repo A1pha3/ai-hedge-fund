@@ -69,11 +69,7 @@ def build_round89_rollout_assessment(
     for profile_name, surfaces in payload.items():
         if not isinstance(surfaces, dict):
             continue
-        profile_surface_summaries = {
-            candidate_surface_name: summarize_round89_surface(candidate_rows)
-            for candidate_surface_name, candidate_rows in surfaces.items()
-            if isinstance(candidate_rows, list)
-        }
+        profile_surface_summaries = {candidate_surface_name: summarize_round89_surface(candidate_rows) for candidate_surface_name, candidate_rows in surfaces.items() if isinstance(candidate_rows, list)}
         surface_summaries[profile_name] = profile_surface_summaries
 
     candidate_surface_summary = surface_summaries.get(candidate_profile, {}).get(surface_name) or {"n_days": 0}

@@ -553,18 +553,10 @@ def _max_single_theme_exposure(rows: list[dict[str, Any]]) -> float:
 
 
 def _failure_log_coverage(actionable_rows: list[dict[str, Any]], failure_log: list[dict[str, Any]]) -> float:
-    attributable_keys = {
-        (str(row.get("trade_date") or ""), str(row.get("ticker") or ""))
-        for row in actionable_rows
-        if str(row.get("entry_status") or "") not in {"", "filled", "research_only"}
-    }
+    attributable_keys = {(str(row.get("trade_date") or ""), str(row.get("ticker") or "")) for row in actionable_rows if str(row.get("entry_status") or "") not in {"", "filled", "research_only"}}
     if not attributable_keys:
         return 1.0
-    covered_keys = {
-        (str(item.get("signal_date") or ""), str(item.get("ticker") or ""))
-        for item in failure_log
-        if str(item.get("ticker") or "")
-    }
+    covered_keys = {(str(item.get("signal_date") or ""), str(item.get("ticker") or "")) for item in failure_log if str(item.get("ticker") or "")}
     return round(len(attributable_keys & covered_keys) / len(attributable_keys), 4)
 
 
@@ -754,10 +746,14 @@ def _confirm_score_fields() -> list[str]:
 def _feature_time_validation() -> dict[str, Any]:
     pre_score_fields = _pre_score_fields()
     confirm_score_fields = _confirm_score_fields()
-    report_fields = set(pre_score_fields) | set(confirm_score_fields) | {
-        "future_high_hit_15pct_2_5d",
-        "max_future_high_return_2_5d",
-    }
+    report_fields = (
+        set(pre_score_fields)
+        | set(confirm_score_fields)
+        | {
+            "future_high_hit_15pct_2_5d",
+            "max_future_high_return_2_5d",
+        }
+    )
     coverage = _safe_ratio(sum(1 for field in report_fields if field in _FEATURE_TIME_MAP), len(report_fields)) or 0.0
     blocked_availability = {"t_plus_1_open", "t_plus_1_30m", "t_plus_1_close", "future_label"}
     no_lookahead = all(str(_FEATURE_TIME_MAP[field]["available_at"]) not in blocked_availability for field in pre_score_fields)
@@ -812,9 +808,7 @@ def _row_from_snapshot(
         ),
     )
     round_trip_cost_rate = round(
-        (resolved_constraints.constraints.base_slippage_rate * 2.0)
-        + (resolved_constraints.constraints.commission_rate * 2.0)
-        + resolved_constraints.constraints.stamp_duty_rate,
+        (resolved_constraints.constraints.base_slippage_rate * 2.0) + (resolved_constraints.constraints.commission_rate * 2.0) + resolved_constraints.constraints.stamp_duty_rate,
         6,
     )
     price_outcome = dict(_extract_btst_price_outcome(ticker, trade_date, price_cache) or {})
@@ -910,13 +904,7 @@ def _is_first_entry_candidate(row: dict[str, Any]) -> bool:
     failed_breakout_10 = _as_float(row.get("failed_breakout_10"), 0.0)
     supply_pressure_60 = _as_float(row.get("supply_pressure_60"), 0.0)
 
-    base_eligible = (
-        trend_acceleration >= 0.75
-        and 0.65 <= close_strength < 0.95
-        and volume_expansion_quality >= 0.20
-        and failed_breakout_10 <= 0.0
-        and supply_pressure_60 <= 0.12
-    )
+    base_eligible = trend_acceleration >= 0.75 and 0.65 <= close_strength < 0.95 and volume_expansion_quality >= 0.20 and failed_breakout_10 <= 0.0 and supply_pressure_60 <= 0.12
     if not base_eligible:
         return False
 
@@ -935,11 +923,7 @@ def _is_first_entry_candidate(row: dict[str, Any]) -> bool:
 
 
 def _is_second_entry_candidate(row: dict[str, Any]) -> bool:
-    return (
-        _as_float(row.get("ret_5d"), 0.0) > 0.25
-        or _as_float(row.get("ret_10d"), 0.0) > 0.50
-        or _as_float(row.get("close_strength"), 0.0) >= 0.95
-    )
+    return _as_float(row.get("ret_5d"), 0.0) > 0.25 or _as_float(row.get("ret_10d"), 0.0) > 0.50 or _as_float(row.get("close_strength"), 0.0) >= 0.95
 
 
 def _bucket_for_row(row: dict[str, Any]) -> str | None:
@@ -1007,8 +991,7 @@ def _collect_daily_board(
         # downstream consumers know which fields are safe to use at which phase.
         "board_provenance": {
             "source": "analyze_btst_early_runner_v1",
-            "note": "confirmed_entries and entry_status contain T+1 data; "
-                    "not safe for post_close_plan consumption without PIT validation.",
+            "note": "confirmed_entries and entry_status contain T+1 data; " "not safe for post_close_plan consumption without PIT validation.",
         },
         "early_runner_watchlist": watchlist,
         "early_runner_priority": priority,
@@ -1243,9 +1226,7 @@ def render_btst_early_runner_v1_markdown(analysis: dict[str, Any]) -> str:
     lines.append(f"- no_lookahead_fields_in_pre_score: {feature_time_validation.get('no_lookahead_fields_in_pre_score')}")
     lines.append(f"- coverage_ratio: {feature_time_validation.get('coverage_ratio')}")
     for field_name, payload in list(dict(analysis.get("feature_time_map") or {}).items())[:8]:
-        lines.append(
-            f"- {field_name}: available_at={payload.get('available_at')} pre={payload.get('allowed_in_pre_score')} confirm={payload.get('allowed_in_confirm_score')} label={payload.get('allowed_as_label')}"
-        )
+        lines.append(f"- {field_name}: available_at={payload.get('available_at')} pre={payload.get('allowed_in_pre_score')} confirm={payload.get('allowed_in_confirm_score')} label={payload.get('allowed_as_label')}")
     lines.append("")
 
     lines.append("## Universe Filter")
@@ -1272,9 +1253,7 @@ def render_btst_early_runner_v1_markdown(analysis: dict[str, Any]) -> str:
         "full_report_confirmation_ledger",
     ):
         ledger = dict(analysis.get(ledger_name) or {})
-        lines.append(
-            f"- {ledger_name}: sample_count={ledger.get('sample_count')} deduped_sample_count={ledger.get('deduped_sample_count')} filled_rate={ledger.get('filled_rate')} unfilled_rate={ledger.get('unfilled_rate')} abandoned_gap_rate={ledger.get('abandoned_gap_rate')} after_cost_expectancy={ledger.get('after_cost_expectancy')}"
-        )
+        lines.append(f"- {ledger_name}: sample_count={ledger.get('sample_count')} deduped_sample_count={ledger.get('deduped_sample_count')} filled_rate={ledger.get('filled_rate')} unfilled_rate={ledger.get('unfilled_rate')} abandoned_gap_rate={ledger.get('abandoned_gap_rate')} after_cost_expectancy={ledger.get('after_cost_expectancy')}")
     lines.append("")
 
     lines.append("## Validation")
@@ -1297,9 +1276,7 @@ def render_btst_early_runner_v1_markdown(analysis: dict[str, Any]) -> str:
     if not failures:
         lines.append("- none")
     for row in failures:
-        lines.append(
-            f"- {row.get('signal_date')} {row.get('ticker')}: entry_status={row.get('entry_status')} failure_reason={row.get('failure_reason')} pre_score={row.get('pre_score')} confirm_score={row.get('confirm_score')}"
-        )
+        lines.append(f"- {row.get('signal_date')} {row.get('ticker')}: entry_status={row.get('entry_status')} failure_reason={row.get('failure_reason')} pre_score={row.get('pre_score')} confirm_score={row.get('confirm_score')}")
     lines.append("")
 
     lines.append("## Walk Forward")

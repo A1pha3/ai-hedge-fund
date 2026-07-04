@@ -11,11 +11,7 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _index_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
-    return {
-        (str(row.get("trade_date") or ""), str(row.get("ticker") or "")): row
-        for row in rows
-        if str(row.get("trade_date") or "").strip() and str(row.get("ticker") or "").strip()
-    }
+    return {(str(row.get("trade_date") or ""), str(row.get("ticker") or "")): row for row in rows if str(row.get("trade_date") or "").strip() and str(row.get("ticker") or "").strip()}
 
 
 def render_short_trade_boundary_expansion_cases_markdown(analysis: dict[str, Any]) -> str:
@@ -31,9 +27,7 @@ def render_short_trade_boundary_expansion_cases_markdown(analysis: dict[str, Any
     lines.append("")
     lines.append("## Added Cases")
     for row in analysis["added_cases"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: trigger={row['release_trigger']}, score_b={row['score_b']}, candidate_score={row['candidate_score']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, failed_thresholds_before={row['failed_thresholds_before']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: trigger={row['release_trigger']}, score_b={row['score_b']}, candidate_score={row['candidate_score']}, next_high_return={row['next_high_return']}, next_close_return={row['next_close_return']}, failed_thresholds_before={row['failed_thresholds_before']}")
     lines.append("")
     lines.append("## Recommendation")
     lines.append(f"- {analysis['recommendation']}")
@@ -87,10 +81,7 @@ def analyze_short_trade_boundary_expansion_cases(
 
     if added_cases:
         catalyst_only_count = sum(1 for row in added_cases if row["release_trigger"] == "catalyst_floor_only")
-        recommendation = (
-            f"当前推荐变体新增 {len(added_cases)} 个样本，其中 {catalyst_only_count} 个属于纯 catalyst floor 放行；"
-            "这说明该变体主要释放的是本来结构已够强、只差事件新鲜度门槛的样本。"
-        )
+        recommendation = f"当前推荐变体新增 {len(added_cases)} 个样本，其中 {catalyst_only_count} 个属于纯 catalyst floor 放行；" "这说明该变体主要释放的是本来结构已够强、只差事件新鲜度门槛的样本。"
     else:
         recommendation = "当前选定变体没有新增样本。"
 

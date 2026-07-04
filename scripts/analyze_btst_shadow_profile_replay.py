@@ -42,11 +42,7 @@ def _summarize_replayed_plans(plans: dict[str, Any], *, profile_name: str, profi
         plan = plans[trade_date]
         selection_targets = dict(getattr(plan, "selection_targets", {}) or {})
         buy_order_tickers_by_date[trade_date] = sorted(str(getattr(order, "ticker", "") or "").strip() for order in list(getattr(plan, "buy_orders", []) or []) if str(getattr(order, "ticker", "") or "").strip())
-        execution_eligible_tickers_by_date[trade_date] = sorted(
-            str(ticker)
-            for ticker, evaluation in selection_targets.items()
-            if bool(getattr(evaluation, "execution_eligible", False))
-        )
+        execution_eligible_tickers_by_date[trade_date] = sorted(str(ticker) for ticker, evaluation in selection_targets.items() if bool(getattr(evaluation, "execution_eligible", False)))
         selected_tickers: list[str] = []
         near_miss_tickers: list[str] = []
         blocked_tickers: list[str] = []
@@ -140,11 +136,7 @@ def _scan_ticker_candidate_source_hits(payload: Any, *, tickers: set[str]) -> di
         counts = dict(source_counts.get(ticker, {}))
         result[ticker] = {
             "total_hits": total,
-            "candidate_source_counts": {
-                key: int(value)
-                for key, value in sorted(counts.items(), key=lambda item: (-int(item[1]), str(item[0])))
-                if str(key).strip()
-            },
+            "candidate_source_counts": {key: int(value) for key, value in sorted(counts.items(), key=lambda item: (-int(item[1]), str(item[0]))) if str(key).strip()},
         }
     return result
 
@@ -196,10 +188,7 @@ def _build_delta_summary(baseline: dict[str, Any], shadow: dict[str, Any]) -> di
         "buy_orders_removed_by_date": buy_orders_removed_by_date,
         "execution_eligibility_lost_by_date": execution_eligibility_lost_by_date,
         "selected_removed_by_date": selected_removed_by_date,
-        "aggregate_count_delta": {
-            key: int(shadow["aggregate_counts"].get(key, 0)) - int(baseline["aggregate_counts"].get(key, 0))
-            for key in baseline["aggregate_counts"]
-        },
+        "aggregate_count_delta": {key: int(shadow["aggregate_counts"].get(key, 0)) - int(baseline["aggregate_counts"].get(key, 0)) for key in baseline["aggregate_counts"]},
     }
 
 

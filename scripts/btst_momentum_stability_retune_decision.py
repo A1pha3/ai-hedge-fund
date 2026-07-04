@@ -49,9 +49,7 @@ def build_momentum_stability_retune_decision(*, shortlist: dict[str, object], tr
     candidate_count = _require_non_negative_int("candidate_count", normalized_shortlist.get("candidate_count"))
     dominant_family = str(normalized_triage.get("dominant_family") or "").strip()
     blocker_count = _require_non_negative_int("blocker_count", normalized_triage.get("blocker_count"))
-    missing_theme_exposure_window_count = _require_non_negative_int(
-        "missing_theme_exposure_window_count", normalized_triage.get("missing_theme_exposure_window_count")
-    )
+    missing_theme_exposure_window_count = _require_non_negative_int("missing_theme_exposure_window_count", normalized_triage.get("missing_theme_exposure_window_count"))
 
     trial_index = _require_non_negative_int("trial_index", best_candidate.get("trial_index"))
     cross_window_blocker_count = _require_non_negative_int("cross_window_blocker_count", best_candidate.get("cross_window_blocker_count"))

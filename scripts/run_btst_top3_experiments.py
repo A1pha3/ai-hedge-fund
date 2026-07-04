@@ -268,9 +268,7 @@ def render_execution_summary_markdown(summary: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Experiments")
     for row in summary["experiments"]:
-        lines.append(
-            f"- rank={row['priority_rank']} id={row['experiment_id']} ticker={row['ticker']} verdict={row['verdict']} action_tier={row['action_tier']} promoted={row['promoted_target_case_count']}/{row['target_case_count']} changed_non_target_case_count={row['changed_non_target_case_count']} next_high_return_mean={row['next_high_return_mean']} next_close_return_mean={row['next_close_return_mean']}"
-        )
+        lines.append(f"- rank={row['priority_rank']} id={row['experiment_id']} ticker={row['ticker']} verdict={row['verdict']} action_tier={row['action_tier']} promoted={row['promoted_target_case_count']}/{row['target_case_count']} changed_non_target_case_count={row['changed_non_target_case_count']} next_high_return_mean={row['next_high_return_mean']} next_close_return_mean={row['next_close_return_mean']}")
         lines.append(f"  rationale: {row['rationale']}")
         lines.append(f"  action_summary: {row['action_summary']}")
         lines.append(f"  release_report: {row['release_report']}")
@@ -305,7 +303,7 @@ def run_btst_top3_experiments(runbook_path: str | Path) -> dict[str, Any]:
                 "priority_rank": experiment["priority_rank"],
                 "experiment_id": experiment["experiment_id"],
                 "track": experiment["track"],
-            "default_mode": experiment.get("default_mode"),
+                "default_mode": experiment.get("default_mode"),
                 "ticker": ticker,
                 "target_case_count": outcome_analysis.get("target_case_count"),
                 "promoted_target_case_count": outcome_analysis.get("promoted_target_case_count"),
@@ -315,7 +313,7 @@ def run_btst_top3_experiments(runbook_path: str | Path) -> dict[str, Any]:
                 "next_close_positive_rate": outcome_analysis.get("next_close_positive_rate"),
                 "verdict": verdict,
                 "rationale": rationale,
-            **action_semantics,
+                **action_semantics,
                 "release_report": str(artifact_paths["release_json"]),
                 "outcome_report": str(artifact_paths["outcome_json"]),
                 "reference_release_report": dict(bundle.get("reference_artifacts") or {}).get("release_report"),

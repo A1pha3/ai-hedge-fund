@@ -8,11 +8,7 @@ EntryById = Callable[[dict[str, Any], str], dict[str, Any]]
 
 
 def _extract_candidate_pool_shadow_visible_focus_profiles(analysis: dict[str, Any]) -> list[dict[str, Any]]:
-    focus_profiles = {
-        str(row.get("ticker") or "").strip(): dict(row)
-        for row in list(dict(analysis.get("focus_liquidity_profile_summary") or {}).get("primary_focus_tickers") or [])
-        if str(row.get("ticker") or "").strip()
-    }
+    focus_profiles = {str(row.get("ticker") or "").strip(): dict(row) for row in list(dict(analysis.get("focus_liquidity_profile_summary") or {}).get("primary_focus_tickers") or []) if str(row.get("ticker") or "").strip()}
     visible_profiles: list[dict[str, Any]] = []
     seen_tickers: set[str] = set()
     for dossier in list(analysis.get("priority_ticker_dossiers") or []):
@@ -20,11 +16,7 @@ def _extract_candidate_pool_shadow_visible_focus_profiles(analysis: dict[str, An
         if not ticker or ticker in seen_tickers:
             continue
         occurrence = next(
-            (
-                dict(row)
-                for row in list(dossier.get("occurrence_evidence") or [])
-                if bool(row.get("candidate_pool_shadow_visible"))
-            ),
+            (dict(row) for row in list(dossier.get("occurrence_evidence") or []) if bool(row.get("candidate_pool_shadow_visible"))),
             None,
         )
         if occurrence is None:
@@ -167,10 +159,7 @@ def extract_candidate_pool_recall_dossier_summary(
     if not any([refresh, analysis, dossier_entry]):
         return {}
 
-    shadow_visible_focus_profiles = (
-        refresh.get("candidate_pool_recall_shadow_visible_focus_profiles")
-        or _extract_candidate_pool_shadow_visible_focus_profiles(analysis)
-    )
+    shadow_visible_focus_profiles = refresh.get("candidate_pool_recall_shadow_visible_focus_profiles") or _extract_candidate_pool_shadow_visible_focus_profiles(analysis)
     return {
         "status": refresh.get("candidate_pool_recall_dossier_status") or ("available" if analysis else None),
         "priority_stage_counts": refresh.get("candidate_pool_recall_stage_counts") or analysis.get("priority_stage_counts"),

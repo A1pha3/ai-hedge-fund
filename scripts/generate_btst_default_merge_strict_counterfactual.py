@@ -98,16 +98,8 @@ def generate_btst_default_merge_strict_counterfactual(
     default_surface = _build_surface(default_tradeable_rows)
     focus_surface = _build_surface(focus_rows)
     merged_surface = _build_surface(merged_rows)
-    positive_rate_uplift = (
-        round(float(merged_surface.get("t_plus_2_positive_rate")) - float(default_surface.get("t_plus_2_positive_rate")), 4)
-        if merged_surface.get("t_plus_2_positive_rate") is not None and default_surface.get("t_plus_2_positive_rate") is not None
-        else None
-    )
-    mean_return_uplift = (
-        round(float(merged_surface.get("mean_t_plus_2_return")) - float(default_surface.get("mean_t_plus_2_return")), 4)
-        if merged_surface.get("mean_t_plus_2_return") is not None and default_surface.get("mean_t_plus_2_return") is not None
-        else None
-    )
+    positive_rate_uplift = round(float(merged_surface.get("t_plus_2_positive_rate")) - float(default_surface.get("t_plus_2_positive_rate")), 4) if merged_surface.get("t_plus_2_positive_rate") is not None and default_surface.get("t_plus_2_positive_rate") is not None else None
+    mean_return_uplift = round(float(merged_surface.get("mean_t_plus_2_return")) - float(default_surface.get("mean_t_plus_2_return")), 4) if merged_surface.get("mean_t_plus_2_return") is not None and default_surface.get("mean_t_plus_2_return") is not None else None
     if positive_rate_uplift is None or mean_return_uplift is None:
         strict_counterfactual_verdict = "insufficient_strict_counterfactual_data"
     elif positive_rate_uplift > 0 and mean_return_uplift > 0:
@@ -115,13 +107,7 @@ def generate_btst_default_merge_strict_counterfactual(
     else:
         strict_counterfactual_verdict = "strict_merge_uplift_mixed"
 
-    recommendation = (
-        f"严格去重后，{focus_ticker} 的 merge uplift verdict={strict_counterfactual_verdict}，"
-        f" overlap_case_count={len(overlap_keys)}， strict_positive_rate_uplift={positive_rate_uplift}，"
-        f" strict_mean_return_uplift={mean_return_uplift}。"
-        if focus_ticker
-        else "当前没有 focus_ticker，无法构建严格去重 merge counterfactual。"
-    )
+    recommendation = f"严格去重后，{focus_ticker} 的 merge uplift verdict={strict_counterfactual_verdict}，" f" overlap_case_count={len(overlap_keys)}， strict_positive_rate_uplift={positive_rate_uplift}，" f" strict_mean_return_uplift={mean_return_uplift}。" if focus_ticker else "当前没有 focus_ticker，无法构建严格去重 merge counterfactual。"
     return {
         "focus_ticker": focus_ticker or None,
         "merge_review_verdict": default_merge_review.get("merge_review_verdict"),

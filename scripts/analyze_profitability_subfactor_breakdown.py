@@ -59,7 +59,7 @@ def _process_profitability_item(item: object, *, candidate_map: dict[str, object
     signals = {name: signal.model_dump() for name, signal in item.strategy_signals.items()}
     fundamental = signals.get("fundamental") or {}
     fundamental_direction = int(fundamental.get("direction", 0) or 0)
-    profitability = ((fundamental.get("sub_factors") or {}).get("profitability") or {})
+    profitability = (fundamental.get("sub_factors") or {}).get("profitability") or {}
     if float(profitability.get("completeness", 0) or 0.0) <= 0:
         return
     stats["blocked_with_profitability_scored"] += 1

@@ -67,15 +67,15 @@ RECENCY_HALF_LIFE_CANDIDATES: tuple[int, ...] = (60, 90, 120, 180)
 # Task 4 (Round 10): params that are consumed by the optimizer framework itself and must NOT
 # be forwarded to build_short_trade_target_profile as profile overrides.
 _OPTIMIZER_ONLY_PARAMS: frozenset[str] = frozenset({"recency_half_life_days"})
-LIQUIDITY_LOW_REGIME_FLOOR: float = 40.0    # below this → severe down-weight
-LIQUIDITY_SOFT_REGIME_FLOOR: float = 50.0   # below this → mild down-weight
+LIQUIDITY_LOW_REGIME_FLOOR: float = 40.0  # below this → severe down-weight
+LIQUIDITY_SOFT_REGIME_FLOOR: float = 50.0  # below this → mild down-weight
 LIQUIDITY_LOW_REGIME_WEIGHT_PENALTY: float = 0.80
 LIQUIDITY_SOFT_REGIME_WEIGHT_PENALTY: float = 0.90
 # Task 1 (Round 11): factor IC guardrail — factors with avg Spearman IC below this threshold
 # are considered uninformative.  ic_positive_factor_fraction < IC_FRACTION_FLOOR is used as
 # an optional guardrail so param combos that deactivate predictive factors are penalised.
-IC_SIGNAL_MIN: float = 0.02          # minimum IC for a factor to be considered active
-IC_FRACTION_FLOOR: float = 0.50      # fraction of factors that must have IC >= IC_SIGNAL_MIN
+IC_SIGNAL_MIN: float = 0.02  # minimum IC for a factor to be considered active
+IC_FRACTION_FLOOR: float = 0.50  # fraction of factors that must have IC >= IC_SIGNAL_MIN
 IC_QUALITY_SAMPLE_WEIGHT_PENALTY: float = 0.90  # multiply sample_weight when IC quality is poor
 DEFAULT_BTST_REPLAY_GUARDRAILS: dict[str, GuardrailSpec] = {
     # Relaxed floor relative to BTST_QUALITY_FLOORS (0.54) so the optimizer can search across
@@ -1206,527 +1206,529 @@ LOWER_IS_BETTER_COMPARISON_METRICS = {
 }
 # Runner metrics are optional — surfaces computed without the runner analysis pipeline
 # will not have these fields, and their absence should not block rollout.
-OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset({
-    "max_future_high_return_2_5d_hit_rate_at_20pct",
-    "time_to_hit_20pct_median",
-    "runner_capture_count",
-    "runner_escape_rate",
-    "avg_composite_score_escaped",
-    "t_plus_2_close_positive_rate",
-    "t_plus_2_close_payoff_ratio",
-    "t_plus_3_close_positive_rate",
-    "t_plus_3_close_expectancy",
-    "t_plus_3_close_payoff_ratio",
-    # Task 1 (Round 11): IC / pool quality metrics are optional because legacy surfaces
-    # may not expose them.  Their absence must not block rollout.
-    "ic_positive_factor_fraction",
-    "candidate_pool_avg_composite_score",
-    # Task 1 (Round 12): intraday drawdown is optional — surfaces produced before Round 12
-    # will not carry this field; its absence must not block rollout.
-    "t_plus_1_intraday_drawdown_p10",
-    # Task 4 (Round 15): stop-loss trigger rates — optional since surfaces before Round 15
-    # will not carry these fields; their absence must not block rollout.
-    "stop_loss_trigger_rate_2pct",
-    "stop_loss_trigger_rate_3pct",
-    "stop_loss_trigger_rate_5pct",
-    # Task 5 (Round 15): cross-day autocorrelation — optional; pre-Round-15 surfaces omit it.
-    "cross_day_autocorr_t1_vs_t2",
-    "cross_day_autocorr_t2_vs_t3",
-    # Task 2 (Round 15): gap continuation rate — optional; pre-Round-15 surfaces omit it.
-    "gap_continuation_rate",
-    # Task 2 (Round 16): volume-price divergence rate — optional; pre-Round-16 surfaces omit it.
-    "volume_price_divergence_rate",
-    # Task 3 (Round 16): predicted range and high-volatility warning — optional; pre-Round-16 surfaces omit these.
-    "predicted_range_pct_p75",
-    "high_volatility_warning_rate",
-    # Task 1 (Round 20, Beta): realized payoff ratio — optional; pre-Round-20 surfaces omit it.
-    "realized_payoff_ratio",
-    # Task 2 (Round 20, Alpha): score-conditioned metrics — optional; pre-Round-20 surfaces omit these.
-    "high_confidence_selection_rate",
-    "score_weighted_win_rate",
-    "score_win_rate_lift",
-    "high_confidence_win_rate",
-    # Task 3 (Round 20, Gamma): limit-up risk statistics — optional; pre-Round-20 surfaces omit these.
-    "consecutive_limit_up_rate",
-    "limit_up_win_rate",
-    "non_limit_up_win_rate",
-    # Task 3 (Round 21, Beta): execution timing signal — optional; pre-Round-21 surfaces omit these.
-    "open_entry_signal_strength",
-    "execution_timing_confidence",
-    # Task 2 (Round 22, Alpha): multi-day hold period — optional; pre-Round-22 surfaces omit these.
-    "t1_vs_t2_sharpe_diff",
-    "hold_period_confidence",
-    # Task 3 (Round 22, Beta): score position tiers — optional; pre-Round-22 surfaces omit these.
-    "tier_win_rate_spread",
-    "tier_monotone_win_rate",
-    # Task 2 (Round 23, Alpha): Kelly fraction — optional; pre-Round-23 surfaces omit these.
-    "kelly_fraction_half",
-    "kelly_positive",
-    # Task 3 (Round 23, Beta): regime consistency — optional; pre-Round-23 surfaces omit these.
-    "regime_consistency_score",
-    "regime_robustness_flag",
-    # Task 1 (Round 24): IC temporal trend — optional; pre-Round-24 outputs omit these.
-    "decaying_factor_count",
-    # Task 2 (Round 24): drawdown-adjusted Kelly — optional; pre-Round-24 surfaces omit these.
-    "kelly_fraction_drawdown_adjusted",
-    "drawdown_adjustment_factor",
-    # Task 3 (Round 24): verdict calibration — optional; pre-Round-24 outputs omit these.
-    "verdict_calibration_score",
-    "verdict_monotone",
-    # Task 1 (Round 25, Gamma): profile health score — optional; pre-Round-25 outputs omit it.
-    "profile_health_score",
-    # Task 2 (Round 25, Beta): selection churn metrics — optional; pre-Round-25 outputs omit these.
-    "win_rate_window_volatility",
-    "win_rate_window_trend",
-    # Task 2 (Round 26, Gamma): benchmark-adjusted Alpha — optional; requires hs300_daily_return field.
-    "alpha_avg_return",
-    "information_ratio",
-    # Task 3 (Round 26, Beta): dynamic stop-loss suggestion — optional; pre-Round-26 outputs omit it.
-    "suggested_stop_loss_pct",
-    # Task 1 (Round 27, Alpha): return distribution shape — optional; pre-Round-27 outputs omit these.
-    "next_close_return_skewness",
-    "win_loss_std_ratio",
-    # Task 2 (Round 27, Gamma): score discrimination power — optional; pre-Round-27 outputs omit it.
-    "score_discrimination_index",
-    # Task 3 (Round 27, Beta): liquidity position guidance — optional; pre-Round-27 outputs omit it.
-    "recommended_max_positions",
-    # Task 1 (Round 28, Alpha): factor cross-correlation — optional; pre-Round-28 outputs omit it.
-    "high_correlation_pair_count",
-    # Task 2 (Round 28, Gamma): regime alpha consistency — optional; requires hs300_daily_return field.
-    "alpha_consistency_score",
-    "all_regimes_positive_alpha",
-    # Task 3 (Round 28, Beta): post-loss recovery — optional; pre-Round-28 outputs omit it.
-    "post_loss_t2_positive_rate",
-    # Task 1 (Round 29, Alpha): PCA factor diversity score — optional; pre-Round-29 outputs omit it.
-    "pca_diversity_score",
-    # Task 2 (Round 29, Gamma): IS/OOS overfit score — optional; pre-Round-29 outputs omit it.
-    "overfit_score",
-    # Task 3 (Round 29, Beta): weekday win-rate spread — optional; pre-Round-29 outputs omit it.
-    "weekday_win_rate_spread",
-    # Task 1 (Round 30, Gamma): parameter drift score — optional; pre-Round-30 outputs omit it.
-    "param_drift_score",
-    # Task 2 (Round 30, Alpha): monthly win-rate spread — optional; pre-Round-30 outputs omit it.
-    "monthly_win_rate_spread",
-    # Task 3 (Round 30, Beta): nonlinear factor count — optional; pre-Round-30 outputs omit it.
-    "nonlinear_factor_count",
-    # Task 1 (Round 31, Alpha): return autocorrelation — optional; pre-Round-31 outputs omit it.
-    "autocorr_lag1",
-    # Task 2 (Round 31, Gamma): score CV across windows — optional; pre-Round-31 outputs omit it.
-    "score_cv_across_windows",
-    # Task 1 (Round 32, Gamma): conditional tail-risk metrics — optional; pre-Round-32 outputs omit these.
-    "score_tail_separation",
-    "tail_risk_asymmetry",
-    "high_score_cvar_5pct",
-    # Task 2 (Round 32, Alpha): volume anomaly metrics — optional; pre-Round-32 outputs omit these.
-    "extreme_volume_win_rate_premium",
-    "inflow_win_rate_premium",
-    # Task 3 (Round 32, Beta): composite gate score — optional; pre-Round-32 outputs omit it.
-    "composite_gate_score",
-    # Task 1 (Round 33, Alpha): expected value per trade — optional; pre-Round-33 outputs omit it.
-    "expected_value_per_trade",
-    # Task 2 (Round 33, Gamma): momentum decay half-life — optional; pre-Round-33 outputs omit it.
-    "momentum_half_life_days",
-    # Task 3 (Round 33, Beta): IC trend metrics — optional; pre-Round-33 outputs omit these.
-    "ic_trend_stability",
-    "factor_ic_trend_deteriorating",
-    # Task 1 (Round 34, Alpha): multi-factor conditional lift — optional; pre-Round-34 outputs omit it.
-    "multi_factor_lift",
-    # Task 2 (Round 34, Gamma): adaptive sizing score — optional; pre-Round-34 outputs omit it.
-    "adaptive_sizing_score",
-    # Task 3 (Round 34, Beta): signal churn metrics — optional; pre-Round-34 outputs omit these.
-    "signal_churn_rate",
-    "avg_signal_persistence",
-    # Task 1 (Round 35, Alpha): Sortino ratio — optional; pre-Round-35 outputs omit it.
-    "sortino_ratio",
-    # Task 2 (Round 35, Gamma): quality trend score — optional; pre-Round-35 outputs omit it.
-    "quality_trend_score",
-    # Task 3 (Round 35, Beta): diversity score — optional; pre-Round-35 outputs omit it.
-    "diversity_score",
-    # Task 1 (Round 36, Alpha): right-tail dominance — optional; pre-Round-36 outputs omit it.
-    "right_tail_dominance",
-    # Task 2 (Round 36, Beta): composite score IC — optional; pre-Round-36 outputs omit it.
-    "composite_ic",
-    # Task 3 (Round 36, Gamma): win-rate CI width — optional; pre-Round-36 outputs omit it.
-    "win_rate_ci_width",
-    # Task 1 (Round 37, Alpha): optimal holding days — optional; pre-Round-37 outputs omit it.
-    "optimal_holding_days",
-    # Task 2 (Round 37, Beta): loss signature strength — optional; pre-Round-37 outputs omit it.
-    "loss_signature_strength",
-    # Task 3 (Round 37, Gamma): score Gini — optional; pre-Round-37 outputs omit it.
-    "score_gini",
-    # Task 1 (Round 38, Alpha): market environment sensitivity — optional; pre-Round-38 outputs omit it.
-    "env_win_rate_gap",
-    # Task 2 (Round 38, Beta): factor importance ranking — optional; pre-Round-38 outputs omit it.
-    "positive_ic_factor_count",
-    # Task 3 (Round 38, Gamma): score bucket win rates — optional; pre-Round-38 outputs omit it.
-    "top_quintile_premium",
-    # Task 1 (Round 39, Alpha): recency vs history win-rate gap — optional; pre-Round-39 outputs omit it.
-    "recency_win_rate_gap",
-    # Task 2 (Round 39, Beta): optimal threshold lift — optional; pre-Round-39 outputs omit it.
-    "optimal_threshold_lift",
-    # Task 3 (Round 39, Gamma): equity curve metrics — optional; pre-Round-39 outputs omit these.
-    "recovery_factor",
-    "max_drawdown_simulated",
-    # Task 1 (Round 40, Alpha): factor synergy lift — optional; pre-Round-40 outputs omit it.
-    "max_synergy_lift",
-    # Task 2 (Round 40, Beta): float turnover lift — optional; pre-Round-40 outputs omit it.
-    "high_vs_low_lift",
-    # Task 3 (Round 40, Gamma): cross-window factor drift score — optional; pre-Round-40 outputs omit it.
-    "factor_drift_score",
-    # Task 1 (Round 41, Alpha): factor rank consistency score — optional; pre-Round-41 outputs omit it.
-    "factor_rank_consistency_score",
-    # Task 2 (Round 41, Beta): volume-price alignment rate — optional; pre-Round-41 outputs omit it.
-    "vol_price_alignment_rate",
-    # Task 3 (Round 41, Gamma): combined statistical significance score — optional; pre-Round-41 outputs omit it.
-    "combined_significance_score",
-    # Task 1 (Round 42, Alpha): calibration slope — optional; pre-Round-42 outputs omit it.
-    "calibration_slope",
-    # Task 2 (Round 42, Beta): close-strength top-quartile premium — optional; pre-Round-42 outputs omit it.
-    "cs_top_quartile_premium",
-    # Task 3 (Round 42, Gamma): cross-window consensus pass rate — optional; pre-Round-42 outputs omit it.
-    "consensus_windows_pct",
-    # Task 1 (Round 43, Alpha): profit factor — optional; pre-Round-43 outputs omit it.
-    "profit_factor",
-    # Task 2 (Round 43, Beta): high-vs-low sentiment lift — optional; field may be absent when news_sentiment_score is absent.
-    "high_vs_low_sentiment_lift",
-    # Task 3 (Round 43, Gamma): score momentum trend — optional; pre-Round-43 outputs omit it.
-    "score_trend_normalized",
-    # Task 1 (Round 44, Alpha): RS top-quartile premium — optional; pre-Round-44 outputs omit it.
-    "rs_top_quartile_premium",
-    # Task 2 (Round 44, Beta): breakout quality lift — optional; pre-Round-44 outputs omit it.
-    "bq_high_vs_low_lift",
-    # Task 3 (Round 44, Gamma): cross-window win-rate CV — optional; pre-Round-44 outputs omit it.
-    "win_rate_cv",
-    # Task 1 (Round 45, Alpha): market-cap high-vs-low lift — optional; pre-Round-45 outputs omit it.
-    "mc_high_vs_low_lift",
-    # Task 2 (Round 45, Beta): catalyst-theme top-quartile premium — optional; pre-Round-45 outputs omit it.
-    "catalyst_top_quartile_premium",
-    # Task 3 (Round 45, Gamma): top-candidate consistency rate — optional; pre-Round-45 outputs omit it.
-    "top_candidate_consistency_rate",
-    # Task 1 (Round 46, Alpha): volume-price divergence lift — optional; pre-Round-46 outputs omit it.
-    "vpd_low_vs_high_lift",
-    # Task 2 (Round 46, Beta): score skewness — optional; pre-Round-46 outputs omit it.
-    "score_skewness",
-    # Task 2 (Round 46, Beta): score positive fraction — optional; pre-Round-46 outputs omit it.
-    "score_positive_pct",
-    # Task 3 (Round 46, Gamma): gate consistency CV — optional; pre-Round-46 outputs omit it.
-    "gate_above_threshold_cv",
-    # Task 1 (Round 47, Alpha): momentum slope lift — optional; pre-Round-47 outputs omit it.
-    "ms_high_vs_low_lift",
-    # Task 2 (Round 47, Beta): inflow ratio lift — optional; pre-Round-47 outputs omit it.
-    "inflow_high_vs_low_lift",
-    # Task 3 (Round 47, Gamma): factor IC consistency rate — optional; pre-Round-47 outputs omit it.
-    "positive_ic_consistency_rate",
-    # Task 1 (Round 48, Alpha): VEQ lift — optional; pre-Round-48 outputs omit it.
-    "veq_high_vs_low_lift",
-    # Task 2 (Round 48, Beta): sector resonance lift — optional; pre-Round-48 outputs omit it.
-    "sr_high_vs_low_lift",
-    # Task 3 (Round 48, Gamma): EV trend slope — optional; pre-Round-48 outputs omit it.
-    "ev_trend_slope",
-    # Task 1 (Round 49, Alpha): multi-factor consensus lift — optional; pre-Round-49 outputs omit it.
-    "consensus_lift",
-    # Task 2 (Round 49, Beta): score decile top premium — optional; pre-Round-49 outputs omit it.
-    "top_decile_premium",
-    # Task 3 (Round 49, Gamma): Sortino trend slope — optional; pre-Round-49 outputs omit it.
-    "sortino_trend_slope",
-    # Task 1 (Round 50, Alpha): factor redundancy — optional; pre-Round-50 outputs omit it.
-    "avg_inter_factor_correlation",
-    # Task 2 (Round 50, Beta): extended holding T+2 premium — optional; pre-Round-50 outputs omit it.
-    "t2_vs_t1_premium",
-    # Task 3 (Round 50, Gamma): Sharpe trend slope — optional; pre-Round-50 outputs omit it.
-    "sharpe_trend_slope",
-    # Task 1 (Round 51, Alpha): win/loss magnitude ratio — optional; pre-Round-51 outputs omit it.
-    "win_loss_magnitude_ratio",
-    # Task 1 (Round 51, Alpha): Kelly fraction — optional; pre-Round-51 outputs omit it.
-    "kelly_fraction",
-    # Task 2 (Round 51, Beta): outlier dependency ratio — optional; pre-Round-51 outputs omit it.
-    "outlier_dependency_ratio",
-    # Task 3 (Round 51, Gamma): profit-factor trend slope — optional; pre-Round-51 outputs omit it.
-    "pf_trend_slope",
-    # Task 1 (Round 52, Alpha): Information Ratio — optional; pre-Round-52 outputs omit it.
-    "information_ratio",
-    # Task 2 (Round 52, Beta): score concentration index — optional; pre-Round-52 outputs omit it.
-    "score_concentration_index",
-    # Task 3 (Round 52, Gamma): Kelly trend slope — optional; pre-Round-52 outputs omit it.
-    "kelly_trend_slope",
-    # Task 1 (Round 53, Alpha): conditional lift — optional; pre-Round-53 outputs omit it.
-    "conditional_lift",
-    # Task 3 (Round 53, Gamma): IR trend slope — optional; pre-Round-53 outputs omit it.
-    "ir_trend_slope",
-    # Task 1 (Round 54, Alpha): tail-risk asymmetry — optional; pre-Round-54 outputs omit it.
-    "tail_asymmetry",
-    # Task 2 (Round 54, Beta): max drawdown — optional; pre-Round-54 outputs omit it.
-    "drawdown_max_drawdown",
-    # Task 3 (Round 54, Gamma): conditional lift trend slope — optional; pre-Round-54 outputs omit it.
-    "conditional_lift_trend_slope",
-    # Task 1 (Round 55, Alpha): multi-factor mean IC — optional; pre-Round-55 outputs omit it.
-    "decay_mean_ic",
-    # Task 2 (Round 55, Beta): intraday session win-rate spread — optional; pre-Round-55 outputs omit it.
-    "time_seg_session_win_rate_spread",
-    # Task 3 (Round 55, Gamma): cross-window drawdown trend slope — optional; pre-Round-55 outputs omit it.
-    "drawdown_trend_slope",
-    # Task 1 (Round 56, Alpha): sector diversification score — optional; pre-Round-56 outputs omit it.
-    "diversification_score",
-    # Task 2 (Round 56, Beta): score rank IC — optional; pre-Round-56 outputs omit it.
-    "rank_ic",
-    # Task 3 (Round 56, Gamma): cross-window mean-IC trend slope — optional; pre-Round-56 outputs omit it.
-    "ic_trend_slope",
-    # Task 1 (Round 57, Alpha): market regime adaptability — optional; pre-Round-57 outputs omit it.
-    "regime_adaptability",
-    # Task 2 (Round 57, Beta): turnover efficiency — optional; field absent when float_turnover_rate missing.
-    "turnover_efficiency",
-    # Task 3 (Round 57, Gamma): cross-window rank-IC trend slope — optional; pre-Round-57 outputs omit it.
-    "rank_ic_trend_slope",
-    # Task 1 (Round 58, Alpha): optimal entry threshold win rate — optional; pre-Round-58 outputs omit it.
-    "optimal_win_rate",
-    # Task 2 (Round 58, Beta): total factor explained variance — optional; pre-Round-58 outputs omit it.
-    "total_explained_variance",
-    # Task 3 (Round 58, Gamma): cross-window regime adaptability trend slope — optional; pre-Round-58 outputs omit it.
-    "regime_trend_slope",
-    # Task 1 (Round 59, Alpha): return distribution skewness — optional; pre-Round-59 outputs omit it.
-    "skewness",
-    # Task 2 (Round 59, Beta): composite quality score — optional; pre-Round-59 outputs omit it.
-    "composite_quality_score",
-    # Task 3 (Round 59, Gamma): cross-window threshold win-rate trend slope — optional; pre-Round-59 outputs omit it.
-    "threshold_win_rate_trend_slope",
-    # Task 1 (Round 60, Alpha): multi-signal consistency lift — optional; pre-Round-60 outputs omit it.
-    "signal_consistency_lift",
-    # Task 2 (Round 60, Beta): T+1 holding period win rate — optional; pre-Round-60 outputs omit it.
-    "t1_win_rate",
-    # Task 3 (Round 60, Gamma): composite quality score cross-window trend slope — optional; pre-Round-60 outputs omit it.
-    "quality_score_trend_slope",
-    # Task 1 (Round 61, Alpha): concentration risk — optional; pre-Round-61 surfaces omit it.
-    "concentration_risk",
-    # Task 2 (Round 61, Beta): extreme market resilience score — optional; pre-Round-61 surfaces omit it.
-    "resilience_score",
-    # Task 3 (Round 61, Gamma): signal consistency trend slope — optional; pre-Round-61 outputs omit it.
-    "consistency_trend_slope",
-    # Task 1 (Round 62, Alpha): low-liquidity fraction — optional; pre-Round-62 surfaces omit it.
-    "low_liquidity_pct",
-    # Task 2 (Round 62, Beta): cost-adjusted profit factor — optional; pre-Round-62 surfaces omit it.
-    "cost_adjusted_profit_factor",
-    # Task 3 (Round 62, Gamma): cross-window resilience trend slope — optional; pre-Round-62 outputs omit it.
-    "resilience_trend_slope",
-    # Task 1 (Round 63, Alpha): best sl/tp profit factor — optional; pre-Round-63 surfaces omit it.
-    "best_profit_factor",
-    # Task 2 (Round 63, Beta): best factor-combination win rate — optional; pre-Round-63 surfaces omit it.
-    "best_combo_win_rate",
-    # Task 3 (Round 63, Gamma): cross-window cost-adjusted PF trend slope — optional; pre-Round-63 outputs omit it.
-    "cost_pf_trend_slope",
-    # Task 3 (Round 64, Gamma): cross-window combo win rate trend slope — optional; pre-Round-64 outputs omit it.
-    "combo_win_rate_trend_slope",
-    # Task 1 (Round 64, Alpha): adaptive weight effective factor count — optional; pre-Round-64 outputs omit it.
-    "adaptive_weight_effective_factor_count",
-    # Task 2 (Round 64, Beta): IC stability — optional; pre-Round-64 outputs omit it.
-    "ic_stability",
-    # Task 1 (Round 65, Alpha): total return attribution — optional; pre-Round-65 outputs omit it.
-    "total_attribution",
-    # Task 2 (Round 65, Beta): multi-timeframe consistency score — optional; pre-Round-65 outputs omit it.
-    "timeframe_consistency",
-    # Task 3 (Round 65, Gamma): IC stability trend slope — optional; pre-Round-65 outputs omit it.
-    "ic_stability_trend_slope",
-    # Task 1 (Round 66, Alpha): volatility regime edge — optional; pre-Round-66 surfaces omit it.
-    "vol_regime_edge",
-    # Task 2 (Round 66, Beta): mean nonlinear interaction effect — optional; pre-Round-66 surfaces omit it.
-    "interact_mean_interaction_effect",
-    # Task 3 (Round 66, Gamma): attribution trend slope — optional; pre-Round-66 outputs omit it.
-    "attribution_trend_slope",
-    # Task 1 (Round 67, Alpha): score dispersion win-rate spread — optional; pre-Round-67 outputs omit it.
-    "score_win_rate_spread",
-    # Task 2 (Round 67, Beta): fund flow breakout synergy — optional; pre-Round-67 outputs omit it.
-    "flow_breakout_synergy",
-    # Task 3 (Round 67, Gamma): interaction trend slope — optional; pre-Round-67 outputs omit it.
-    "interaction_trend_slope",
-    # Task 1 (Round 68, Alpha): tail filter effect — optional; pre-Round-68 outputs omit it.
-    "tail_filter_effect",
-    # Task 2 (Round 68, Beta): position sector HHI — optional; pre-Round-68 outputs omit it.
-    "sector_hhi",
-    # Task 3 (Round 68, Gamma): score dispersion trend slope — optional; pre-Round-68 outputs omit it.
-    "dispersion_trend_slope",
-    # Task 1 (Round 69, Alpha): RS ranking spread — optional; pre-Round-69 outputs omit it.
-    "rs_rank_spread",
-    # Task 2 (Round 69, Beta): turnover filter effect — optional; pre-Round-69 outputs omit it.
-    "turnover_filter_effect",
-    # Task 3 (Round 69, Gamma): concentration HHI trend slope — optional; pre-Round-69 outputs omit it.
-    "concentration_hhi_slope",
-    # Task 1 (Round 70, Alpha): price position win-rate spread — optional; pre-Round-70 outputs omit it.
-    "cs_win_rate_spread",
-    # Task 2 (Round 70, Beta): win/loss streak ratio — optional; pre-Round-70 outputs omit it.
-    "streak_ratio",
-    # Task 3 (Round 70, Gamma): RS rank trend slope — optional; pre-Round-70 outputs omit it.
-    "rs_rank_trend_slope",
-    # Task 1 (Round 71, Alpha): momentum win spread — optional; pre-Round-71 outputs omit it.
-    "momentum_win_spread",
-    # Task 2 (Round 71, Beta): volume structure spread — optional; pre-Round-71 outputs omit it.
-    "vol_structure_spread",
-    # Task 3 (Round 71, Gamma): price position trend slope — optional; pre-Round-71 outputs omit it.
-    "price_pos_trend_slope",
-    # Task 1 (Round 72, Alpha): multi-factor Z-score win-rate spread — optional; pre-Round-72 outputs omit it.
-    "zscore_win_spread",
-    # Task 2 (Round 72, Beta): return persistence score — optional; pre-Round-72 outputs omit it.
-    "persistence_score",
-    # Task 3 (Round 72, Gamma): momentum rank trend slope — optional; pre-Round-72 outputs omit it.
-    "momentum_rank_trend_slope",
-    # Task 1 (Round 73, Alpha): market breadth win rate — optional; pre-Round-73 outputs omit it.
-    "breadth_win_rate",
-    # Task 2 (Round 73, Beta): factor IC consistency ratio — optional; pre-Round-73 outputs omit it.
-    "ic_consistency_ratio",
-    # Task 3 (Round 73, Gamma): Z-score win-spread cross-window trend slope — optional; pre-Round-73 outputs omit it.
-    "zscore_trend_slope",
-    # Task 1 (Round 74, Alpha): signal strength stratification spread — optional; pre-Round-74 outputs omit it.
-    "stratification_spread",
-    # Task 2 (Round 74, Beta): conditional momentum synergy edge — optional; pre-Round-74 outputs omit it.
-    "conditional_momentum_edge",
-    # Task 3 (Round 74, Gamma): market breadth win-rate cross-window trend slope — optional; pre-Round-74 outputs omit it.
-    "breadth_trend_slope",
-    # Task 1 (Round 75, Alpha): simplified Sharpe ratio — optional; pre-Round-75 outputs omit it.
-    "sharpe_ratio",
-    # Task 2 (Round 75, Beta): max factor collinearity — optional; pre-Round-75 outputs omit it.
-    "max_collinearity",
-    # Task 3 (Round 75, Gamma): stratification spread cross-window trend slope — optional; pre-Round-75 outputs omit it.
-    "stratification_trend_slope",
-    # Task 1 (Round 76, Alpha): gain/loss ratio — optional; pre-Round-76 outputs omit it.
-    "gain_loss_ratio",
-    # Task 1 (Round 76, Alpha): tail asymmetry score — optional; pre-Round-76 outputs omit it.
-    "tail_asymmetry_score",
-    # Task 2 (Round 76, Beta): factor orthogonality score — optional; pre-Round-76 outputs omit it.
-    "orthogonality_score",
-    # Task 1 (Round 77, Alpha): adaptive threshold lift — optional; pre-Round-77 outputs omit it.
-    "threshold_lift",
-    # Task 2 (Round 77, Beta): sector win-rate dispersion — optional; pre-Round-77 outputs omit it.
-    "sector_win_rate_dispersion",
-    # Task 3 (Round 77, Gamma): cross-window skew trend slope — optional; pre-Round-77 outputs omit it.
-    "skew_trend_slope",
-    # Task 3 (Round 78, Gamma): cross-window threshold lift trend slope — optional; pre-Round-78 outputs omit it.
-    "threshold_lift_trend_slope",
-    # Task 1 (Round 78, Alpha): hotstock win-rate edge — optional; pre-Round-78 outputs omit it.
-    "hotstock_edge",
-    # Task 2 (Round 78, Beta): factor robustness ratio — optional; pre-Round-78 outputs omit it.
-    "robustness_ratio",
-    # Task 1 (Round 79, Alpha): score quintile monotonicity — optional; pre-Round-79 outputs omit these.
-    "sq_consist_quintile_monotonicity_score",
-    "sq_consist_quintile_top_bottom_spread",
-    # Task 2 (Round 79, Beta): entry quality filter — optional; pre-Round-79 outputs omit these.
-    "entry_qual_high_quality_entry_win_rate",
-    "entry_qual_quality_entry_edge",
-    # Task 3 (Round 79, Gamma): cross-window robustness trend slope — optional; pre-Round-79 outputs omit it.
-    "robustness_trend_slope",
-    # Task 1 (Round 80, Alpha): return quantile lift — optional; pre-Round-80 outputs omit these.
-    "ret_qlift_median_return_lift",
-    "ret_qlift_top_median_return",
-    # Task 2 (Round 80, Beta): near-high stock analysis — optional; pre-Round-80 outputs omit these.
-    "nh_near_high_win_rate",
-    "nh_near_high_edge",
-    # Task 3 (Round 80, Gamma): cross-window entry quality trend slope — optional; pre-Round-80 outputs omit it.
-    "entry_quality_trend_slope",
-    # Task 1 (Round 81, Alpha): expected value analysis — optional; pre-Round-81 outputs omit these.
-    "ev_top_ev",
-    "ev_ev_spread",
-    # Task 2 (Round 81, Beta): high inflow premium — optional; pre-Round-81 outputs omit these.
-    "hi_inflow_high_inflow_win_rate",
-    "hi_inflow_high_inflow_edge",
-    # Task 3 (Round 81, Gamma): cross-window near-high trend slope — optional; pre-Round-81 outputs omit it.
-    "near_high_trend_slope",
-    # Task 1 (Round 82, Alpha): score prediction accuracy metrics — optional; pre-Round-82 surfaces omit these.
-    "clf_high_score_precision",
-    "clf_f1_score",
-    # Task 2 (Round 82, Beta): volume-price divergence metrics — optional; pre-Round-82 surfaces omit these.
-    "vpd_full_confirm_win_rate",
-    "vpd_divergence_penalty",
-    # Task 3 (Round 82, Gamma): EV spread trend slope — optional; pre-Round-82 outputs omit it.
-    "ev_spread_trend_slope",
-    # Task 1 (Round 83, Alpha): Kelly criterion metrics — optional; pre-Round-83 surfaces omit these.
-    "kelly_top_kelly",
-    "kelly_kelly_spread",
-    # Task 2 (Round 83, Beta): return percentile profile metrics — optional; pre-Round-83 surfaces omit these.
-    "rpp_top_return_p75",
-    "rpp_upside_asymmetry",
-    # Task 3 (Round 83, Gamma): precision trend slope — optional; pre-Round-83 outputs omit it.
-    "precision_trend_slope",
-    # Task 1 (Round 84, Alpha): momentum reversal metrics — optional; pre-Round-84 surfaces omit these.
-    "mom_rev_extreme_momentum_win_rate",
-    "mom_rev_momentum_breadth_effect",
-    # Task 2 (Round 84, Beta): sector tailwind protection metrics — optional; pre-Round-84 surfaces omit these.
-    "tailwind_protected_win_rate",
-    "tailwind_gap_protection_effect",
-    # Task 3 (Round 84, Gamma): upside asymmetry trend slope — optional; pre-Round-84 outputs omit it.
-    "upside_asymmetry_trend_slope",
-    # Task 1 (Round 85, Alpha): batch consistency metrics — optional; pre-Round-85 surfaces omit these.
-    "batch_batch_consistency_score",
-    "batch_batch3_win_rate",
-    # Task 2 (Round 85, Beta): liquidity weighted return metrics — optional; pre-Round-85 surfaces omit these.
-    "liq_lw_win_rate",
-    "liq_liquidity_bias",
-    # Task 3 (Round 85, Gamma): momentum reversal trend slope — optional; pre-Round-85 outputs omit it.
-    "momentum_reversal_trend_slope",
-    # Task 1 (Round 86, Alpha): factor IC consistency metrics — optional; pre-Round-86 surfaces omit these.
-    "frc_positive_ic_count",
-    "frc_mean_factor_ic",
-    "frc_factor_ic_consistency_ratio",
-    # Task 2 (Round 86, Beta): breakout quality premium metrics — optional; pre-Round-86 surfaces omit these.
-    "bq_high_breakout_win_rate",
-    "bq_breakout_premium_edge",
-    "bq_high_breakout_avg_return",
-    # Task 3 (Round 86, Gamma): batch consistency trend slope — optional; pre-Round-86 outputs omit it.
-    "batch_consistency_trend_slope",
-    # Task 1 (Round 87, Alpha): regime adaptive win rate metrics — optional; pre-Round-87 surfaces omit these.
-    "regime_high_regime_win_rate",
-    "regime_low_regime_win_rate",
-    "regime_regime_spread",
-    "regime_regime_stability",
-    # Task 2 (Round 87, Beta): consecutive signal quality metrics — optional; pre-Round-87 surfaces omit these.
-    "sig_top_signal_win_rate",
-    "sig_bot_signal_win_rate",
-    "sig_signal_persistence_edge",
-    "sig_top_signal_count",
-    # Task 3 (Round 87, Gamma): regime spread cross-window trend slope — optional; pre-Round-87 outputs omit it.
-    "regime_spread_trend_slope",
-    # Task 1 (Round 88, Alpha): volume-price divergence metrics — optional; pre-Round-88 surfaces omit these.
-    "vp_volume_return_alignment",
-    "vp_high_vol_win_rate",
-    "vp_volume_premium_edge",
-    "vp_high_vol_count",
-    # Task 2 (Round 88, Beta): entry timing quality metrics — optional; pre-Round-88 surfaces omit these.
-    "et_high_inflow_win_rate",
-    "et_low_inflow_win_rate",
-    "et_inflow_timing_edge",
-    "et_high_inflow_avg_return",
-    # Task 3 (Round 88, Gamma): signal quality cross-window trend — optional; pre-Round-88 outputs omit these.
-    "signal_quality_trend_slope",
-    "signal_quality_trend_grade",
-    "signal_quality_trend_n",
-    # Task 1 (Round 89, Alpha): open-gap intraday persistence metrics — optional; pre-Round-89 surfaces omit these.
-    "ogp_gap_vs_full_day_ic",
-    "ogp_high_gap_win_rate",
-    "ogp_low_gap_win_rate",
-    "ogp_gap_win_rate_premium",
-    "ogp_high_gap_avg_return",
-    "ogp_high_gap_count",
-    # Task 2 (Round 89, Beta): tail flow quality metrics — optional; pre-Round-89 surfaces omit these.
-    "tf_composite_win_rate_premium",
-    "tf_high_flow_win_rate",
-    "tf_low_flow_win_rate",
-    "tf_high_flow_avg_return",
-    "tf_high_flow_count",
-    # Task 3 (Round 89, Gamma): momentum IC consistency cross-window metrics — optional; pre-Round-89 outputs omit these.
-    "mc_momentum_ic",
-    "mc_high_mom_win_rate",
-    "mc_low_mom_win_rate",
-    "mc_momentum_win_rate_premium",
-    "mc_high_mom_avg_return",
-    "mc_sample_count",
-    "mc_ic_consistency_score",
-    "mc_ic_positive_window_count",
-    "mc_ic_total_window_count",
-    "mc_ic_gate_passed",
-    "mc_ic_mean",
-    "ogp_trend_slope",
-    "ogp_trend_grade",
-    "ogp_trend_n",
-    "tf_trend_slope",
-    "tf_trend_grade",
-    "tf_trend_n",
-})
+OPTIONAL_COMPARISON_METRICS: frozenset[str] = frozenset(
+    {
+        "max_future_high_return_2_5d_hit_rate_at_20pct",
+        "time_to_hit_20pct_median",
+        "runner_capture_count",
+        "runner_escape_rate",
+        "avg_composite_score_escaped",
+        "t_plus_2_close_positive_rate",
+        "t_plus_2_close_payoff_ratio",
+        "t_plus_3_close_positive_rate",
+        "t_plus_3_close_expectancy",
+        "t_plus_3_close_payoff_ratio",
+        # Task 1 (Round 11): IC / pool quality metrics are optional because legacy surfaces
+        # may not expose them.  Their absence must not block rollout.
+        "ic_positive_factor_fraction",
+        "candidate_pool_avg_composite_score",
+        # Task 1 (Round 12): intraday drawdown is optional — surfaces produced before Round 12
+        # will not carry this field; its absence must not block rollout.
+        "t_plus_1_intraday_drawdown_p10",
+        # Task 4 (Round 15): stop-loss trigger rates — optional since surfaces before Round 15
+        # will not carry these fields; their absence must not block rollout.
+        "stop_loss_trigger_rate_2pct",
+        "stop_loss_trigger_rate_3pct",
+        "stop_loss_trigger_rate_5pct",
+        # Task 5 (Round 15): cross-day autocorrelation — optional; pre-Round-15 surfaces omit it.
+        "cross_day_autocorr_t1_vs_t2",
+        "cross_day_autocorr_t2_vs_t3",
+        # Task 2 (Round 15): gap continuation rate — optional; pre-Round-15 surfaces omit it.
+        "gap_continuation_rate",
+        # Task 2 (Round 16): volume-price divergence rate — optional; pre-Round-16 surfaces omit it.
+        "volume_price_divergence_rate",
+        # Task 3 (Round 16): predicted range and high-volatility warning — optional; pre-Round-16 surfaces omit these.
+        "predicted_range_pct_p75",
+        "high_volatility_warning_rate",
+        # Task 1 (Round 20, Beta): realized payoff ratio — optional; pre-Round-20 surfaces omit it.
+        "realized_payoff_ratio",
+        # Task 2 (Round 20, Alpha): score-conditioned metrics — optional; pre-Round-20 surfaces omit these.
+        "high_confidence_selection_rate",
+        "score_weighted_win_rate",
+        "score_win_rate_lift",
+        "high_confidence_win_rate",
+        # Task 3 (Round 20, Gamma): limit-up risk statistics — optional; pre-Round-20 surfaces omit these.
+        "consecutive_limit_up_rate",
+        "limit_up_win_rate",
+        "non_limit_up_win_rate",
+        # Task 3 (Round 21, Beta): execution timing signal — optional; pre-Round-21 surfaces omit these.
+        "open_entry_signal_strength",
+        "execution_timing_confidence",
+        # Task 2 (Round 22, Alpha): multi-day hold period — optional; pre-Round-22 surfaces omit these.
+        "t1_vs_t2_sharpe_diff",
+        "hold_period_confidence",
+        # Task 3 (Round 22, Beta): score position tiers — optional; pre-Round-22 surfaces omit these.
+        "tier_win_rate_spread",
+        "tier_monotone_win_rate",
+        # Task 2 (Round 23, Alpha): Kelly fraction — optional; pre-Round-23 surfaces omit these.
+        "kelly_fraction_half",
+        "kelly_positive",
+        # Task 3 (Round 23, Beta): regime consistency — optional; pre-Round-23 surfaces omit these.
+        "regime_consistency_score",
+        "regime_robustness_flag",
+        # Task 1 (Round 24): IC temporal trend — optional; pre-Round-24 outputs omit these.
+        "decaying_factor_count",
+        # Task 2 (Round 24): drawdown-adjusted Kelly — optional; pre-Round-24 surfaces omit these.
+        "kelly_fraction_drawdown_adjusted",
+        "drawdown_adjustment_factor",
+        # Task 3 (Round 24): verdict calibration — optional; pre-Round-24 outputs omit these.
+        "verdict_calibration_score",
+        "verdict_monotone",
+        # Task 1 (Round 25, Gamma): profile health score — optional; pre-Round-25 outputs omit it.
+        "profile_health_score",
+        # Task 2 (Round 25, Beta): selection churn metrics — optional; pre-Round-25 outputs omit these.
+        "win_rate_window_volatility",
+        "win_rate_window_trend",
+        # Task 2 (Round 26, Gamma): benchmark-adjusted Alpha — optional; requires hs300_daily_return field.
+        "alpha_avg_return",
+        "information_ratio",
+        # Task 3 (Round 26, Beta): dynamic stop-loss suggestion — optional; pre-Round-26 outputs omit it.
+        "suggested_stop_loss_pct",
+        # Task 1 (Round 27, Alpha): return distribution shape — optional; pre-Round-27 outputs omit these.
+        "next_close_return_skewness",
+        "win_loss_std_ratio",
+        # Task 2 (Round 27, Gamma): score discrimination power — optional; pre-Round-27 outputs omit it.
+        "score_discrimination_index",
+        # Task 3 (Round 27, Beta): liquidity position guidance — optional; pre-Round-27 outputs omit it.
+        "recommended_max_positions",
+        # Task 1 (Round 28, Alpha): factor cross-correlation — optional; pre-Round-28 outputs omit it.
+        "high_correlation_pair_count",
+        # Task 2 (Round 28, Gamma): regime alpha consistency — optional; requires hs300_daily_return field.
+        "alpha_consistency_score",
+        "all_regimes_positive_alpha",
+        # Task 3 (Round 28, Beta): post-loss recovery — optional; pre-Round-28 outputs omit it.
+        "post_loss_t2_positive_rate",
+        # Task 1 (Round 29, Alpha): PCA factor diversity score — optional; pre-Round-29 outputs omit it.
+        "pca_diversity_score",
+        # Task 2 (Round 29, Gamma): IS/OOS overfit score — optional; pre-Round-29 outputs omit it.
+        "overfit_score",
+        # Task 3 (Round 29, Beta): weekday win-rate spread — optional; pre-Round-29 outputs omit it.
+        "weekday_win_rate_spread",
+        # Task 1 (Round 30, Gamma): parameter drift score — optional; pre-Round-30 outputs omit it.
+        "param_drift_score",
+        # Task 2 (Round 30, Alpha): monthly win-rate spread — optional; pre-Round-30 outputs omit it.
+        "monthly_win_rate_spread",
+        # Task 3 (Round 30, Beta): nonlinear factor count — optional; pre-Round-30 outputs omit it.
+        "nonlinear_factor_count",
+        # Task 1 (Round 31, Alpha): return autocorrelation — optional; pre-Round-31 outputs omit it.
+        "autocorr_lag1",
+        # Task 2 (Round 31, Gamma): score CV across windows — optional; pre-Round-31 outputs omit it.
+        "score_cv_across_windows",
+        # Task 1 (Round 32, Gamma): conditional tail-risk metrics — optional; pre-Round-32 outputs omit these.
+        "score_tail_separation",
+        "tail_risk_asymmetry",
+        "high_score_cvar_5pct",
+        # Task 2 (Round 32, Alpha): volume anomaly metrics — optional; pre-Round-32 outputs omit these.
+        "extreme_volume_win_rate_premium",
+        "inflow_win_rate_premium",
+        # Task 3 (Round 32, Beta): composite gate score — optional; pre-Round-32 outputs omit it.
+        "composite_gate_score",
+        # Task 1 (Round 33, Alpha): expected value per trade — optional; pre-Round-33 outputs omit it.
+        "expected_value_per_trade",
+        # Task 2 (Round 33, Gamma): momentum decay half-life — optional; pre-Round-33 outputs omit it.
+        "momentum_half_life_days",
+        # Task 3 (Round 33, Beta): IC trend metrics — optional; pre-Round-33 outputs omit these.
+        "ic_trend_stability",
+        "factor_ic_trend_deteriorating",
+        # Task 1 (Round 34, Alpha): multi-factor conditional lift — optional; pre-Round-34 outputs omit it.
+        "multi_factor_lift",
+        # Task 2 (Round 34, Gamma): adaptive sizing score — optional; pre-Round-34 outputs omit it.
+        "adaptive_sizing_score",
+        # Task 3 (Round 34, Beta): signal churn metrics — optional; pre-Round-34 outputs omit these.
+        "signal_churn_rate",
+        "avg_signal_persistence",
+        # Task 1 (Round 35, Alpha): Sortino ratio — optional; pre-Round-35 outputs omit it.
+        "sortino_ratio",
+        # Task 2 (Round 35, Gamma): quality trend score — optional; pre-Round-35 outputs omit it.
+        "quality_trend_score",
+        # Task 3 (Round 35, Beta): diversity score — optional; pre-Round-35 outputs omit it.
+        "diversity_score",
+        # Task 1 (Round 36, Alpha): right-tail dominance — optional; pre-Round-36 outputs omit it.
+        "right_tail_dominance",
+        # Task 2 (Round 36, Beta): composite score IC — optional; pre-Round-36 outputs omit it.
+        "composite_ic",
+        # Task 3 (Round 36, Gamma): win-rate CI width — optional; pre-Round-36 outputs omit it.
+        "win_rate_ci_width",
+        # Task 1 (Round 37, Alpha): optimal holding days — optional; pre-Round-37 outputs omit it.
+        "optimal_holding_days",
+        # Task 2 (Round 37, Beta): loss signature strength — optional; pre-Round-37 outputs omit it.
+        "loss_signature_strength",
+        # Task 3 (Round 37, Gamma): score Gini — optional; pre-Round-37 outputs omit it.
+        "score_gini",
+        # Task 1 (Round 38, Alpha): market environment sensitivity — optional; pre-Round-38 outputs omit it.
+        "env_win_rate_gap",
+        # Task 2 (Round 38, Beta): factor importance ranking — optional; pre-Round-38 outputs omit it.
+        "positive_ic_factor_count",
+        # Task 3 (Round 38, Gamma): score bucket win rates — optional; pre-Round-38 outputs omit it.
+        "top_quintile_premium",
+        # Task 1 (Round 39, Alpha): recency vs history win-rate gap — optional; pre-Round-39 outputs omit it.
+        "recency_win_rate_gap",
+        # Task 2 (Round 39, Beta): optimal threshold lift — optional; pre-Round-39 outputs omit it.
+        "optimal_threshold_lift",
+        # Task 3 (Round 39, Gamma): equity curve metrics — optional; pre-Round-39 outputs omit these.
+        "recovery_factor",
+        "max_drawdown_simulated",
+        # Task 1 (Round 40, Alpha): factor synergy lift — optional; pre-Round-40 outputs omit it.
+        "max_synergy_lift",
+        # Task 2 (Round 40, Beta): float turnover lift — optional; pre-Round-40 outputs omit it.
+        "high_vs_low_lift",
+        # Task 3 (Round 40, Gamma): cross-window factor drift score — optional; pre-Round-40 outputs omit it.
+        "factor_drift_score",
+        # Task 1 (Round 41, Alpha): factor rank consistency score — optional; pre-Round-41 outputs omit it.
+        "factor_rank_consistency_score",
+        # Task 2 (Round 41, Beta): volume-price alignment rate — optional; pre-Round-41 outputs omit it.
+        "vol_price_alignment_rate",
+        # Task 3 (Round 41, Gamma): combined statistical significance score — optional; pre-Round-41 outputs omit it.
+        "combined_significance_score",
+        # Task 1 (Round 42, Alpha): calibration slope — optional; pre-Round-42 outputs omit it.
+        "calibration_slope",
+        # Task 2 (Round 42, Beta): close-strength top-quartile premium — optional; pre-Round-42 outputs omit it.
+        "cs_top_quartile_premium",
+        # Task 3 (Round 42, Gamma): cross-window consensus pass rate — optional; pre-Round-42 outputs omit it.
+        "consensus_windows_pct",
+        # Task 1 (Round 43, Alpha): profit factor — optional; pre-Round-43 outputs omit it.
+        "profit_factor",
+        # Task 2 (Round 43, Beta): high-vs-low sentiment lift — optional; field may be absent when news_sentiment_score is absent.
+        "high_vs_low_sentiment_lift",
+        # Task 3 (Round 43, Gamma): score momentum trend — optional; pre-Round-43 outputs omit it.
+        "score_trend_normalized",
+        # Task 1 (Round 44, Alpha): RS top-quartile premium — optional; pre-Round-44 outputs omit it.
+        "rs_top_quartile_premium",
+        # Task 2 (Round 44, Beta): breakout quality lift — optional; pre-Round-44 outputs omit it.
+        "bq_high_vs_low_lift",
+        # Task 3 (Round 44, Gamma): cross-window win-rate CV — optional; pre-Round-44 outputs omit it.
+        "win_rate_cv",
+        # Task 1 (Round 45, Alpha): market-cap high-vs-low lift — optional; pre-Round-45 outputs omit it.
+        "mc_high_vs_low_lift",
+        # Task 2 (Round 45, Beta): catalyst-theme top-quartile premium — optional; pre-Round-45 outputs omit it.
+        "catalyst_top_quartile_premium",
+        # Task 3 (Round 45, Gamma): top-candidate consistency rate — optional; pre-Round-45 outputs omit it.
+        "top_candidate_consistency_rate",
+        # Task 1 (Round 46, Alpha): volume-price divergence lift — optional; pre-Round-46 outputs omit it.
+        "vpd_low_vs_high_lift",
+        # Task 2 (Round 46, Beta): score skewness — optional; pre-Round-46 outputs omit it.
+        "score_skewness",
+        # Task 2 (Round 46, Beta): score positive fraction — optional; pre-Round-46 outputs omit it.
+        "score_positive_pct",
+        # Task 3 (Round 46, Gamma): gate consistency CV — optional; pre-Round-46 outputs omit it.
+        "gate_above_threshold_cv",
+        # Task 1 (Round 47, Alpha): momentum slope lift — optional; pre-Round-47 outputs omit it.
+        "ms_high_vs_low_lift",
+        # Task 2 (Round 47, Beta): inflow ratio lift — optional; pre-Round-47 outputs omit it.
+        "inflow_high_vs_low_lift",
+        # Task 3 (Round 47, Gamma): factor IC consistency rate — optional; pre-Round-47 outputs omit it.
+        "positive_ic_consistency_rate",
+        # Task 1 (Round 48, Alpha): VEQ lift — optional; pre-Round-48 outputs omit it.
+        "veq_high_vs_low_lift",
+        # Task 2 (Round 48, Beta): sector resonance lift — optional; pre-Round-48 outputs omit it.
+        "sr_high_vs_low_lift",
+        # Task 3 (Round 48, Gamma): EV trend slope — optional; pre-Round-48 outputs omit it.
+        "ev_trend_slope",
+        # Task 1 (Round 49, Alpha): multi-factor consensus lift — optional; pre-Round-49 outputs omit it.
+        "consensus_lift",
+        # Task 2 (Round 49, Beta): score decile top premium — optional; pre-Round-49 outputs omit it.
+        "top_decile_premium",
+        # Task 3 (Round 49, Gamma): Sortino trend slope — optional; pre-Round-49 outputs omit it.
+        "sortino_trend_slope",
+        # Task 1 (Round 50, Alpha): factor redundancy — optional; pre-Round-50 outputs omit it.
+        "avg_inter_factor_correlation",
+        # Task 2 (Round 50, Beta): extended holding T+2 premium — optional; pre-Round-50 outputs omit it.
+        "t2_vs_t1_premium",
+        # Task 3 (Round 50, Gamma): Sharpe trend slope — optional; pre-Round-50 outputs omit it.
+        "sharpe_trend_slope",
+        # Task 1 (Round 51, Alpha): win/loss magnitude ratio — optional; pre-Round-51 outputs omit it.
+        "win_loss_magnitude_ratio",
+        # Task 1 (Round 51, Alpha): Kelly fraction — optional; pre-Round-51 outputs omit it.
+        "kelly_fraction",
+        # Task 2 (Round 51, Beta): outlier dependency ratio — optional; pre-Round-51 outputs omit it.
+        "outlier_dependency_ratio",
+        # Task 3 (Round 51, Gamma): profit-factor trend slope — optional; pre-Round-51 outputs omit it.
+        "pf_trend_slope",
+        # Task 1 (Round 52, Alpha): Information Ratio — optional; pre-Round-52 outputs omit it.
+        "information_ratio",
+        # Task 2 (Round 52, Beta): score concentration index — optional; pre-Round-52 outputs omit it.
+        "score_concentration_index",
+        # Task 3 (Round 52, Gamma): Kelly trend slope — optional; pre-Round-52 outputs omit it.
+        "kelly_trend_slope",
+        # Task 1 (Round 53, Alpha): conditional lift — optional; pre-Round-53 outputs omit it.
+        "conditional_lift",
+        # Task 3 (Round 53, Gamma): IR trend slope — optional; pre-Round-53 outputs omit it.
+        "ir_trend_slope",
+        # Task 1 (Round 54, Alpha): tail-risk asymmetry — optional; pre-Round-54 outputs omit it.
+        "tail_asymmetry",
+        # Task 2 (Round 54, Beta): max drawdown — optional; pre-Round-54 outputs omit it.
+        "drawdown_max_drawdown",
+        # Task 3 (Round 54, Gamma): conditional lift trend slope — optional; pre-Round-54 outputs omit it.
+        "conditional_lift_trend_slope",
+        # Task 1 (Round 55, Alpha): multi-factor mean IC — optional; pre-Round-55 outputs omit it.
+        "decay_mean_ic",
+        # Task 2 (Round 55, Beta): intraday session win-rate spread — optional; pre-Round-55 outputs omit it.
+        "time_seg_session_win_rate_spread",
+        # Task 3 (Round 55, Gamma): cross-window drawdown trend slope — optional; pre-Round-55 outputs omit it.
+        "drawdown_trend_slope",
+        # Task 1 (Round 56, Alpha): sector diversification score — optional; pre-Round-56 outputs omit it.
+        "diversification_score",
+        # Task 2 (Round 56, Beta): score rank IC — optional; pre-Round-56 outputs omit it.
+        "rank_ic",
+        # Task 3 (Round 56, Gamma): cross-window mean-IC trend slope — optional; pre-Round-56 outputs omit it.
+        "ic_trend_slope",
+        # Task 1 (Round 57, Alpha): market regime adaptability — optional; pre-Round-57 outputs omit it.
+        "regime_adaptability",
+        # Task 2 (Round 57, Beta): turnover efficiency — optional; field absent when float_turnover_rate missing.
+        "turnover_efficiency",
+        # Task 3 (Round 57, Gamma): cross-window rank-IC trend slope — optional; pre-Round-57 outputs omit it.
+        "rank_ic_trend_slope",
+        # Task 1 (Round 58, Alpha): optimal entry threshold win rate — optional; pre-Round-58 outputs omit it.
+        "optimal_win_rate",
+        # Task 2 (Round 58, Beta): total factor explained variance — optional; pre-Round-58 outputs omit it.
+        "total_explained_variance",
+        # Task 3 (Round 58, Gamma): cross-window regime adaptability trend slope — optional; pre-Round-58 outputs omit it.
+        "regime_trend_slope",
+        # Task 1 (Round 59, Alpha): return distribution skewness — optional; pre-Round-59 outputs omit it.
+        "skewness",
+        # Task 2 (Round 59, Beta): composite quality score — optional; pre-Round-59 outputs omit it.
+        "composite_quality_score",
+        # Task 3 (Round 59, Gamma): cross-window threshold win-rate trend slope — optional; pre-Round-59 outputs omit it.
+        "threshold_win_rate_trend_slope",
+        # Task 1 (Round 60, Alpha): multi-signal consistency lift — optional; pre-Round-60 outputs omit it.
+        "signal_consistency_lift",
+        # Task 2 (Round 60, Beta): T+1 holding period win rate — optional; pre-Round-60 outputs omit it.
+        "t1_win_rate",
+        # Task 3 (Round 60, Gamma): composite quality score cross-window trend slope — optional; pre-Round-60 outputs omit it.
+        "quality_score_trend_slope",
+        # Task 1 (Round 61, Alpha): concentration risk — optional; pre-Round-61 surfaces omit it.
+        "concentration_risk",
+        # Task 2 (Round 61, Beta): extreme market resilience score — optional; pre-Round-61 surfaces omit it.
+        "resilience_score",
+        # Task 3 (Round 61, Gamma): signal consistency trend slope — optional; pre-Round-61 outputs omit it.
+        "consistency_trend_slope",
+        # Task 1 (Round 62, Alpha): low-liquidity fraction — optional; pre-Round-62 surfaces omit it.
+        "low_liquidity_pct",
+        # Task 2 (Round 62, Beta): cost-adjusted profit factor — optional; pre-Round-62 surfaces omit it.
+        "cost_adjusted_profit_factor",
+        # Task 3 (Round 62, Gamma): cross-window resilience trend slope — optional; pre-Round-62 outputs omit it.
+        "resilience_trend_slope",
+        # Task 1 (Round 63, Alpha): best sl/tp profit factor — optional; pre-Round-63 surfaces omit it.
+        "best_profit_factor",
+        # Task 2 (Round 63, Beta): best factor-combination win rate — optional; pre-Round-63 surfaces omit it.
+        "best_combo_win_rate",
+        # Task 3 (Round 63, Gamma): cross-window cost-adjusted PF trend slope — optional; pre-Round-63 outputs omit it.
+        "cost_pf_trend_slope",
+        # Task 3 (Round 64, Gamma): cross-window combo win rate trend slope — optional; pre-Round-64 outputs omit it.
+        "combo_win_rate_trend_slope",
+        # Task 1 (Round 64, Alpha): adaptive weight effective factor count — optional; pre-Round-64 outputs omit it.
+        "adaptive_weight_effective_factor_count",
+        # Task 2 (Round 64, Beta): IC stability — optional; pre-Round-64 outputs omit it.
+        "ic_stability",
+        # Task 1 (Round 65, Alpha): total return attribution — optional; pre-Round-65 outputs omit it.
+        "total_attribution",
+        # Task 2 (Round 65, Beta): multi-timeframe consistency score — optional; pre-Round-65 outputs omit it.
+        "timeframe_consistency",
+        # Task 3 (Round 65, Gamma): IC stability trend slope — optional; pre-Round-65 outputs omit it.
+        "ic_stability_trend_slope",
+        # Task 1 (Round 66, Alpha): volatility regime edge — optional; pre-Round-66 surfaces omit it.
+        "vol_regime_edge",
+        # Task 2 (Round 66, Beta): mean nonlinear interaction effect — optional; pre-Round-66 surfaces omit it.
+        "interact_mean_interaction_effect",
+        # Task 3 (Round 66, Gamma): attribution trend slope — optional; pre-Round-66 outputs omit it.
+        "attribution_trend_slope",
+        # Task 1 (Round 67, Alpha): score dispersion win-rate spread — optional; pre-Round-67 outputs omit it.
+        "score_win_rate_spread",
+        # Task 2 (Round 67, Beta): fund flow breakout synergy — optional; pre-Round-67 outputs omit it.
+        "flow_breakout_synergy",
+        # Task 3 (Round 67, Gamma): interaction trend slope — optional; pre-Round-67 outputs omit it.
+        "interaction_trend_slope",
+        # Task 1 (Round 68, Alpha): tail filter effect — optional; pre-Round-68 outputs omit it.
+        "tail_filter_effect",
+        # Task 2 (Round 68, Beta): position sector HHI — optional; pre-Round-68 outputs omit it.
+        "sector_hhi",
+        # Task 3 (Round 68, Gamma): score dispersion trend slope — optional; pre-Round-68 outputs omit it.
+        "dispersion_trend_slope",
+        # Task 1 (Round 69, Alpha): RS ranking spread — optional; pre-Round-69 outputs omit it.
+        "rs_rank_spread",
+        # Task 2 (Round 69, Beta): turnover filter effect — optional; pre-Round-69 outputs omit it.
+        "turnover_filter_effect",
+        # Task 3 (Round 69, Gamma): concentration HHI trend slope — optional; pre-Round-69 outputs omit it.
+        "concentration_hhi_slope",
+        # Task 1 (Round 70, Alpha): price position win-rate spread — optional; pre-Round-70 outputs omit it.
+        "cs_win_rate_spread",
+        # Task 2 (Round 70, Beta): win/loss streak ratio — optional; pre-Round-70 outputs omit it.
+        "streak_ratio",
+        # Task 3 (Round 70, Gamma): RS rank trend slope — optional; pre-Round-70 outputs omit it.
+        "rs_rank_trend_slope",
+        # Task 1 (Round 71, Alpha): momentum win spread — optional; pre-Round-71 outputs omit it.
+        "momentum_win_spread",
+        # Task 2 (Round 71, Beta): volume structure spread — optional; pre-Round-71 outputs omit it.
+        "vol_structure_spread",
+        # Task 3 (Round 71, Gamma): price position trend slope — optional; pre-Round-71 outputs omit it.
+        "price_pos_trend_slope",
+        # Task 1 (Round 72, Alpha): multi-factor Z-score win-rate spread — optional; pre-Round-72 outputs omit it.
+        "zscore_win_spread",
+        # Task 2 (Round 72, Beta): return persistence score — optional; pre-Round-72 outputs omit it.
+        "persistence_score",
+        # Task 3 (Round 72, Gamma): momentum rank trend slope — optional; pre-Round-72 outputs omit it.
+        "momentum_rank_trend_slope",
+        # Task 1 (Round 73, Alpha): market breadth win rate — optional; pre-Round-73 outputs omit it.
+        "breadth_win_rate",
+        # Task 2 (Round 73, Beta): factor IC consistency ratio — optional; pre-Round-73 outputs omit it.
+        "ic_consistency_ratio",
+        # Task 3 (Round 73, Gamma): Z-score win-spread cross-window trend slope — optional; pre-Round-73 outputs omit it.
+        "zscore_trend_slope",
+        # Task 1 (Round 74, Alpha): signal strength stratification spread — optional; pre-Round-74 outputs omit it.
+        "stratification_spread",
+        # Task 2 (Round 74, Beta): conditional momentum synergy edge — optional; pre-Round-74 outputs omit it.
+        "conditional_momentum_edge",
+        # Task 3 (Round 74, Gamma): market breadth win-rate cross-window trend slope — optional; pre-Round-74 outputs omit it.
+        "breadth_trend_slope",
+        # Task 1 (Round 75, Alpha): simplified Sharpe ratio — optional; pre-Round-75 outputs omit it.
+        "sharpe_ratio",
+        # Task 2 (Round 75, Beta): max factor collinearity — optional; pre-Round-75 outputs omit it.
+        "max_collinearity",
+        # Task 3 (Round 75, Gamma): stratification spread cross-window trend slope — optional; pre-Round-75 outputs omit it.
+        "stratification_trend_slope",
+        # Task 1 (Round 76, Alpha): gain/loss ratio — optional; pre-Round-76 outputs omit it.
+        "gain_loss_ratio",
+        # Task 1 (Round 76, Alpha): tail asymmetry score — optional; pre-Round-76 outputs omit it.
+        "tail_asymmetry_score",
+        # Task 2 (Round 76, Beta): factor orthogonality score — optional; pre-Round-76 outputs omit it.
+        "orthogonality_score",
+        # Task 1 (Round 77, Alpha): adaptive threshold lift — optional; pre-Round-77 outputs omit it.
+        "threshold_lift",
+        # Task 2 (Round 77, Beta): sector win-rate dispersion — optional; pre-Round-77 outputs omit it.
+        "sector_win_rate_dispersion",
+        # Task 3 (Round 77, Gamma): cross-window skew trend slope — optional; pre-Round-77 outputs omit it.
+        "skew_trend_slope",
+        # Task 3 (Round 78, Gamma): cross-window threshold lift trend slope — optional; pre-Round-78 outputs omit it.
+        "threshold_lift_trend_slope",
+        # Task 1 (Round 78, Alpha): hotstock win-rate edge — optional; pre-Round-78 outputs omit it.
+        "hotstock_edge",
+        # Task 2 (Round 78, Beta): factor robustness ratio — optional; pre-Round-78 outputs omit it.
+        "robustness_ratio",
+        # Task 1 (Round 79, Alpha): score quintile monotonicity — optional; pre-Round-79 outputs omit these.
+        "sq_consist_quintile_monotonicity_score",
+        "sq_consist_quintile_top_bottom_spread",
+        # Task 2 (Round 79, Beta): entry quality filter — optional; pre-Round-79 outputs omit these.
+        "entry_qual_high_quality_entry_win_rate",
+        "entry_qual_quality_entry_edge",
+        # Task 3 (Round 79, Gamma): cross-window robustness trend slope — optional; pre-Round-79 outputs omit it.
+        "robustness_trend_slope",
+        # Task 1 (Round 80, Alpha): return quantile lift — optional; pre-Round-80 outputs omit these.
+        "ret_qlift_median_return_lift",
+        "ret_qlift_top_median_return",
+        # Task 2 (Round 80, Beta): near-high stock analysis — optional; pre-Round-80 outputs omit these.
+        "nh_near_high_win_rate",
+        "nh_near_high_edge",
+        # Task 3 (Round 80, Gamma): cross-window entry quality trend slope — optional; pre-Round-80 outputs omit it.
+        "entry_quality_trend_slope",
+        # Task 1 (Round 81, Alpha): expected value analysis — optional; pre-Round-81 outputs omit these.
+        "ev_top_ev",
+        "ev_ev_spread",
+        # Task 2 (Round 81, Beta): high inflow premium — optional; pre-Round-81 outputs omit these.
+        "hi_inflow_high_inflow_win_rate",
+        "hi_inflow_high_inflow_edge",
+        # Task 3 (Round 81, Gamma): cross-window near-high trend slope — optional; pre-Round-81 outputs omit it.
+        "near_high_trend_slope",
+        # Task 1 (Round 82, Alpha): score prediction accuracy metrics — optional; pre-Round-82 surfaces omit these.
+        "clf_high_score_precision",
+        "clf_f1_score",
+        # Task 2 (Round 82, Beta): volume-price divergence metrics — optional; pre-Round-82 surfaces omit these.
+        "vpd_full_confirm_win_rate",
+        "vpd_divergence_penalty",
+        # Task 3 (Round 82, Gamma): EV spread trend slope — optional; pre-Round-82 outputs omit it.
+        "ev_spread_trend_slope",
+        # Task 1 (Round 83, Alpha): Kelly criterion metrics — optional; pre-Round-83 surfaces omit these.
+        "kelly_top_kelly",
+        "kelly_kelly_spread",
+        # Task 2 (Round 83, Beta): return percentile profile metrics — optional; pre-Round-83 surfaces omit these.
+        "rpp_top_return_p75",
+        "rpp_upside_asymmetry",
+        # Task 3 (Round 83, Gamma): precision trend slope — optional; pre-Round-83 outputs omit it.
+        "precision_trend_slope",
+        # Task 1 (Round 84, Alpha): momentum reversal metrics — optional; pre-Round-84 surfaces omit these.
+        "mom_rev_extreme_momentum_win_rate",
+        "mom_rev_momentum_breadth_effect",
+        # Task 2 (Round 84, Beta): sector tailwind protection metrics — optional; pre-Round-84 surfaces omit these.
+        "tailwind_protected_win_rate",
+        "tailwind_gap_protection_effect",
+        # Task 3 (Round 84, Gamma): upside asymmetry trend slope — optional; pre-Round-84 outputs omit it.
+        "upside_asymmetry_trend_slope",
+        # Task 1 (Round 85, Alpha): batch consistency metrics — optional; pre-Round-85 surfaces omit these.
+        "batch_batch_consistency_score",
+        "batch_batch3_win_rate",
+        # Task 2 (Round 85, Beta): liquidity weighted return metrics — optional; pre-Round-85 surfaces omit these.
+        "liq_lw_win_rate",
+        "liq_liquidity_bias",
+        # Task 3 (Round 85, Gamma): momentum reversal trend slope — optional; pre-Round-85 outputs omit it.
+        "momentum_reversal_trend_slope",
+        # Task 1 (Round 86, Alpha): factor IC consistency metrics — optional; pre-Round-86 surfaces omit these.
+        "frc_positive_ic_count",
+        "frc_mean_factor_ic",
+        "frc_factor_ic_consistency_ratio",
+        # Task 2 (Round 86, Beta): breakout quality premium metrics — optional; pre-Round-86 surfaces omit these.
+        "bq_high_breakout_win_rate",
+        "bq_breakout_premium_edge",
+        "bq_high_breakout_avg_return",
+        # Task 3 (Round 86, Gamma): batch consistency trend slope — optional; pre-Round-86 outputs omit it.
+        "batch_consistency_trend_slope",
+        # Task 1 (Round 87, Alpha): regime adaptive win rate metrics — optional; pre-Round-87 surfaces omit these.
+        "regime_high_regime_win_rate",
+        "regime_low_regime_win_rate",
+        "regime_regime_spread",
+        "regime_regime_stability",
+        # Task 2 (Round 87, Beta): consecutive signal quality metrics — optional; pre-Round-87 surfaces omit these.
+        "sig_top_signal_win_rate",
+        "sig_bot_signal_win_rate",
+        "sig_signal_persistence_edge",
+        "sig_top_signal_count",
+        # Task 3 (Round 87, Gamma): regime spread cross-window trend slope — optional; pre-Round-87 outputs omit it.
+        "regime_spread_trend_slope",
+        # Task 1 (Round 88, Alpha): volume-price divergence metrics — optional; pre-Round-88 surfaces omit these.
+        "vp_volume_return_alignment",
+        "vp_high_vol_win_rate",
+        "vp_volume_premium_edge",
+        "vp_high_vol_count",
+        # Task 2 (Round 88, Beta): entry timing quality metrics — optional; pre-Round-88 surfaces omit these.
+        "et_high_inflow_win_rate",
+        "et_low_inflow_win_rate",
+        "et_inflow_timing_edge",
+        "et_high_inflow_avg_return",
+        # Task 3 (Round 88, Gamma): signal quality cross-window trend — optional; pre-Round-88 outputs omit these.
+        "signal_quality_trend_slope",
+        "signal_quality_trend_grade",
+        "signal_quality_trend_n",
+        # Task 1 (Round 89, Alpha): open-gap intraday persistence metrics — optional; pre-Round-89 surfaces omit these.
+        "ogp_gap_vs_full_day_ic",
+        "ogp_high_gap_win_rate",
+        "ogp_low_gap_win_rate",
+        "ogp_gap_win_rate_premium",
+        "ogp_high_gap_avg_return",
+        "ogp_high_gap_count",
+        # Task 2 (Round 89, Beta): tail flow quality metrics — optional; pre-Round-89 surfaces omit these.
+        "tf_composite_win_rate_premium",
+        "tf_high_flow_win_rate",
+        "tf_low_flow_win_rate",
+        "tf_high_flow_avg_return",
+        "tf_high_flow_count",
+        # Task 3 (Round 89, Gamma): momentum IC consistency cross-window metrics — optional; pre-Round-89 outputs omit these.
+        "mc_momentum_ic",
+        "mc_high_mom_win_rate",
+        "mc_low_mom_win_rate",
+        "mc_momentum_win_rate_premium",
+        "mc_high_mom_avg_return",
+        "mc_sample_count",
+        "mc_ic_consistency_score",
+        "mc_ic_positive_window_count",
+        "mc_ic_total_window_count",
+        "mc_ic_gate_passed",
+        "mc_ic_mean",
+        "ogp_trend_slope",
+        "ogp_trend_grade",
+        "ogp_trend_n",
+        "tf_trend_slope",
+        "tf_trend_grade",
+        "tf_trend_n",
+    }
+)
 COMPARISON_METRIC_EPSILON: dict[str, float] = {
     "next_close_positive_rate": 0.0,
     "next_high_hit_rate": 0.0,
@@ -2070,11 +2072,7 @@ def _resolve_scope_rows(rows: list[dict[str, Any]], *, primary_scope: str) -> li
 
 
 def _average_scope_metric(rows: list[dict[str, Any]], metric_key: str) -> float | None:
-    numeric_values = [
-        float(value)
-        for value in (_extract_committee_component_metric(row, metric_key) for row in rows)
-        if value is not None
-    ]
+    numeric_values = [float(value) for value in (_extract_committee_component_metric(row, metric_key) for row in rows) if value is not None]
     if not numeric_values:
         return None
     return sum(numeric_values) / len(numeric_values)
@@ -2414,7 +2412,7 @@ def compute_cross_window_factor_exposure(all_windows_summaries: list[dict]) -> d
         n = len(vals)
         mean_val = sum(vals) / n
         variance = sum((v - mean_val) ** 2 for v in vals) / max(n - 1, 1)
-        std_val = variance ** 0.5
+        std_val = variance**0.5
         cv = std_val / max(abs(mean_val), 1e-8)
         metric_cv_map[key] = round(cv, 6)
 
@@ -2578,10 +2576,10 @@ def compute_window_consensus_score(all_windows_summaries: list[dict]) -> dict:
         gate = surf.get("composite_gate_score")
         ev = surf.get("expected_value_per_trade")
         sig = surf.get("combined_significance_score")
-        cond_wr = (wr is not None and float(wr) >= 0.55)
-        cond_gate = (gate is not None and float(gate) >= 60.0)
-        cond_ev = (ev is not None and float(ev) >= 0.005)
-        cond_sig = (sig is not None and float(sig) >= 0.25)
+        cond_wr = wr is not None and float(wr) >= 0.55
+        cond_gate = gate is not None and float(gate) >= 60.0
+        cond_ev = ev is not None and float(ev) >= 0.005
+        cond_sig = sig is not None and float(sig) >= 0.25
         count = int(cond_wr) + int(cond_gate) + int(cond_ev) + int(cond_sig)
         window_passes.append(count >= 3)
         window_condition_counts.append(count)
@@ -2739,7 +2737,7 @@ def compute_win_rate_stability_analysis(all_windows_summaries: list[dict]) -> di
     mean_wr = sum(wr_series) / n
     if n >= 2:
         variance = sum((v - mean_wr) ** 2 for v in wr_series) / (n - 1)
-        std_wr: float | None = variance ** 0.5
+        std_wr: float | None = variance**0.5
     else:
         std_wr = None
 
@@ -2912,7 +2910,7 @@ def compute_cross_window_gate_consistency(all_windows_summaries: list[dict]) -> 
     n = len(gate_vals)
     mean_v = sum(gate_vals) / n
     var_v = sum((x - mean_v) ** 2 for x in gate_vals) / (n - 1) if n > 1 else 0.0
-    std_v = var_v ** 0.5
+    std_v = var_v**0.5
     cv_v = std_v / max(mean_v, 1e-8)
 
     if cv_v < 0.10:
@@ -3091,7 +3089,7 @@ def compute_cross_window_ev_trend(all_windows_summaries: list[dict]) -> dict:
     ev_trend_normalized = slope / max(abs(mean_y), 1e-8)
 
     variance = sum((yi - mean_y) ** 2 for yi in ev_series) / (n - 1) if n > 1 else 0.0
-    std_y = variance ** 0.5
+    std_y = variance**0.5
 
     if slope > 0.001:
         grade = "A"
@@ -3165,7 +3163,7 @@ def compute_cross_window_sortino_trend(all_windows_summaries: list[dict]) -> dic
 
     mean_val = sum_y / n
     variance = sum((v - mean_val) ** 2 for v in sortino_series) / (n - 1) if n > 1 else 0.0
-    std_val = variance ** 0.5
+    std_val = variance**0.5
 
     if slope > 0.10:
         grade = "A"
@@ -3191,6 +3189,7 @@ def compute_cross_window_sortino_trend(all_windows_summaries: list[dict]) -> dic
 # ---------------------------------------------------------------------------
 # Round 50, Task 3 (Gamma): Cross-window Sharpe Trend
 # ---------------------------------------------------------------------------
+
 
 def compute_cross_window_sharpe_trend(all_windows_summaries: list[dict]) -> dict:
     """Compute OLS trend slope of ``sharpe_ratio`` across replay windows.
@@ -3250,7 +3249,7 @@ def compute_cross_window_sharpe_trend(all_windows_summaries: list[dict]) -> dict
 
     mean_val = sum_y / n
     variance = sum((v - mean_val) ** 2 for v in sharpe_series) / (n - 1) if n > 1 else 0.0
-    std_val = variance ** 0.5
+    std_val = variance**0.5
 
     if slope > 0.01:
         grade = "A"
@@ -3578,6 +3577,8 @@ def compute_cross_window_momentum_reversal_trend(all_windows_summaries: list[dic
     slope: float = (n * sum_xy - sum_x * sum_y) / denom
     grade: str = "A" if slope > 0.005 else ("B" if slope > 0 else ("C" if slope > -0.01 else "D"))
     return {"valid": True, "momentum_reversal_trend_slope": round(slope, 8), "momentum_reversal_trend_grade": grade, "momentum_reversal_window_count": n}
+
+
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -3892,7 +3893,7 @@ def compute_cross_window_kelly_trend(all_windows_summaries: list[dict]) -> dict:
 
     mean_val = sum_y / n
     variance = sum((v - mean_val) ** 2 for v in kelly_series) / (n - 1) if n > 1 else 0.0
-    std_val = variance ** 0.5
+    std_val = variance**0.5
 
     if slope > 0.01:
         grade = "A"
@@ -3974,7 +3975,7 @@ def compute_cross_window_ir_trend(all_windows_summaries: list[dict]) -> dict:
 
     mean_val = sum_y / n
     variance = sum((v - mean_val) ** 2 for v in ir_series) / (n - 1) if n > 1 else 0.0
-    std_val = variance ** 0.5
+    std_val = variance**0.5
 
     if slope > 0.01:
         grade = "A"
@@ -4092,7 +4093,7 @@ def compute_cross_window_drawdown_trend(all_windows_summaries: list[dict]) -> di
     else:
         half = n // 2
         first_half_mean = sum(dd_series[:half]) / half if half > 0 else 0.0
-        second_half_mean = sum(dd_series[n - half:]) / half if half > 0 else 0.0
+        second_half_mean = sum(dd_series[n - half :]) / half if half > 0 else 0.0
         improving_pct = 1.0 if second_half_mean < first_half_mean else 0.0
     if slope < -0.005:
         grade = "A"
@@ -4309,6 +4310,7 @@ def compute_cross_window_threshold_trend(all_windows_summaries: list[dict]) -> d
 # Round 60, Task 3 (Gamma): Cross-window composite quality score trend
 # ---------------------------------------------------------------------------
 
+
 def compute_cross_window_quality_trend(all_windows_summaries: list[dict]) -> dict:
     """跨窗口追踪综合质量评分（composite_quality_score）趋势"""
     invalid = {"quality_trend_valid": False, "quality_score_trend_slope": None, "quality_score_trend_mean": None, "quality_score_trend_min": None, "quality_score_trend_max": None, "quality_above_floor_pct": None, "quality_trend_grade": None}
@@ -4389,7 +4391,7 @@ def compute_cross_window_profit_factor_trend(all_windows_summaries: list[dict]) 
 
     mean_val = sum_y / n
     variance = sum((v - mean_val) ** 2 for v in pf_series) / (n - 1) if n > 1 else 0.0
-    std_val = variance ** 0.5
+    std_val = variance**0.5
 
     if slope > 0.10:
         grade = "A"
@@ -4486,6 +4488,7 @@ def compute_cross_window_resilience_trend(all_windows_summaries: list[dict]) -> 
 # Round 63, Task 3 (Gamma): Cross-window cost-adjusted profit factor trend
 # ---------------------------------------------------------------------------
 
+
 def compute_cross_window_cost_trend(all_windows_summaries: list[dict]) -> dict:
     """跨窗口追踪成本调整盈利因子（cost_adjusted_profit_factor）趋势"""
     invalid = {"cost_pf_trend_valid": False, "cost_pf_trend_slope": None, "cost_pf_trend_mean": None, "cost_pf_trend_min": None, "cost_pf_trend_max": None, "cost_pf_above_floor_pct": None, "cost_pf_trend_grade": None}
@@ -4524,6 +4527,7 @@ def compute_cross_window_cost_trend(all_windows_summaries: list[dict]) -> dict:
 # Round 64, Task 3 (Gamma): Cross-window best combo win rate trend
 # ---------------------------------------------------------------------------
 
+
 def compute_cross_window_combo_trend(all_windows_summaries: list[dict]) -> dict:
     """跨窗口追踪最优因子组合胜率（combo_best_combo_win_rate）趋势"""
     vals = [s.get("combo_best_combo_win_rate") for s in all_windows_summaries if s.get("combo_best_combo_win_rate") is not None]
@@ -4554,6 +4558,7 @@ def compute_cross_window_combo_trend(all_windows_summaries: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Round 65, Task 3 (Gamma): IC stability validity trend across windows
 # ---------------------------------------------------------------------------
+
 
 def compute_cross_window_validity_trend(all_windows_summaries: list[dict]) -> dict:
     """Track factor validity stability (ic_stability) trend across replay windows.
@@ -4590,6 +4595,7 @@ def compute_cross_window_validity_trend(all_windows_summaries: list[dict]) -> di
 # ---------------------------------------------------------------------------
 # Round 66, Task 3 (Gamma): Cross-window total attribution trend
 # ---------------------------------------------------------------------------
+
 
 def compute_cross_window_attribution_trend(all_windows_summaries: list[dict]) -> dict:
     """Track OLS trend of ``attr_total_attribution`` (sum of absolute factor ICs) across replay windows.
@@ -4855,6 +4861,7 @@ def compute_cross_window_price_pos_trend(all_windows_summaries: list[dict]) -> d
 # ---------------------------------------------------------------------------
 # Round 72, Task 3 (Gamma): Cross-window momentum rank win-spread trend
 # ---------------------------------------------------------------------------
+
 
 def compute_cross_window_momentum_rank_trend(all_windows_summaries: list[dict]) -> dict:
     """跨窗口追踪动量强弱胜率差（momentum_win_spread）趋势。
@@ -5429,9 +5436,7 @@ def _build_replay_evaluator(
         avg_composite_score_escaped = sum(total_metrics["avg_composite_score_escaped"]) / len(total_metrics["avg_composite_score_escaped"]) if total_metrics["avg_composite_score_escaped"] else None
 
         # Task 1 (Round 11): aggregate IC per factor; compute ic_positive_factor_fraction.
-        avg_factor_ics: dict[str, float | None] = {
-            f: (sum(vals) / len(vals) if vals else None) for f, vals in total_factor_ics.items()
-        }
+        avg_factor_ics: dict[str, float | None] = {f: (sum(vals) / len(vals) if vals else None) for f, vals in total_factor_ics.items()}
         ic_factors_with_data = [f for f, v in avg_factor_ics.items() if v is not None]
         ic_positive_count = sum(1 for f in ic_factors_with_data if (avg_factor_ics[f] or 0.0) >= IC_SIGNAL_MIN)
         ic_positive_factor_fraction: float | None = (float(ic_positive_count) / float(len(ic_factors_with_data))) if ic_factors_with_data else None
@@ -5451,11 +5456,7 @@ def _build_replay_evaluator(
                     return preferred
             return counts.most_common(1)[0][0]
 
-        aggregated_ic_weight_suggestions: dict[str, str] = {
-            f: _mode_suggestion(total_ic_weight_suggestions[f])  # type: ignore[misc]
-            for f in BTST_FACTOR_NAMES
-            if total_ic_weight_suggestions[f]
-        }
+        aggregated_ic_weight_suggestions: dict[str, str] = {f: _mode_suggestion(total_ic_weight_suggestions[f]) for f in BTST_FACTOR_NAMES if total_ic_weight_suggestions[f]}  # type: ignore[misc]
 
         # Task 3 (Round 11): aggregate candidate pool quality across windows.
         avg_candidate_pool_composite_score = (sum(total_metrics["candidate_pool_avg_composite_score"]) / len(total_metrics["candidate_pool_avg_composite_score"])) if total_metrics["candidate_pool_avg_composite_score"] else None
@@ -6296,217 +6297,217 @@ def _build_replay_evaluator(
             "resilience_trend_grade": _crt.get("resilience_trend_grade"),
             "resilience_trend_valid": _crt.get("resilience_trend_valid"),
             # Task 1 (Round 63, Alpha): best stop-loss/take-profit profit factor averaged across windows.
-                "best_profit_factor": avg_best_profit_factor,
-                # Task 2 (Round 63, Beta): best factor-combination win rate averaged across windows.
-                "best_combo_win_rate": avg_best_combo_win_rate,
-                # Task 3 (Round 63, Gamma): cross-window cost-adjusted profit factor trend.
-                "cost_pf_trend_slope": _cpft.get("cost_pf_trend_slope"),
-                "cost_pf_trend_mean": _cpft.get("cost_pf_trend_mean"),
-                "cost_pf_trend_min": _cpft.get("cost_pf_trend_min"),
-                "cost_pf_trend_max": _cpft.get("cost_pf_trend_max"),
-                "cost_pf_above_floor_pct": _cpft.get("cost_pf_above_floor_pct"),
-                "cost_pf_trend_grade": _cpft.get("cost_pf_trend_grade"),
-                "cost_pf_trend_valid": _cpft.get("cost_pf_trend_valid"),
-                # Task 3 (Round 64, Gamma): cross-window best combo win rate trend.
-                "combo_win_rate_trend_slope": _ccwt.get("combo_win_rate_trend_slope"),
-                "combo_win_rate_trend_mean": _ccwt.get("combo_win_rate_trend_mean"),
-                "combo_win_rate_trend_min": _ccwt.get("combo_win_rate_trend_min"),
-                "combo_win_rate_trend_max": _ccwt.get("combo_win_rate_trend_max"),
-                "combo_above_floor_pct": _ccwt.get("combo_above_floor_pct"),
-                "combo_trend_grade": _ccwt.get("combo_trend_grade"),
-                "combo_trend_valid": _ccwt.get("combo_trend_valid"),
-                # Task 1 (Round 64, Alpha): adaptive weight effective factor count averaged across windows.
-                "adaptive_weight_effective_factor_count": avg_adaptive_weight_effective_factor_count,
-                # Task 2 (Round 64, Beta): IC stability averaged across windows.
-                "ic_stability": avg_ic_stability,
-                # Task 1 (Round 65, Alpha): total attribution averaged across windows.
-                "total_attribution": avg_total_attribution,
-                # Task 2 (Round 65, Beta): multi-timeframe consistency averaged across windows.
-                "timeframe_consistency": avg_timeframe_consistency,
-                # Task 3 (Round 65, Gamma): cross-window IC stability trend.
-                "ic_stability_trend_slope": _cvt.get("ic_stability_trend_slope"),
-                "ic_stability_trend_mean": _cvt.get("ic_stability_trend_mean"),
-                "ic_stability_trend_min": _cvt.get("ic_stability_trend_min"),
-                "ic_stability_trend_max": _cvt.get("ic_stability_trend_max"),
-                "ic_stability_below_cap_pct": _cvt.get("ic_stability_below_cap_pct"),
-                "ic_stability_trend_grade": _cvt.get("ic_stability_trend_grade"),
-                "ic_stability_trend_valid": _cvt.get("ic_stability_trend_valid"),
-                # Task 1 (Round 66, Alpha): volatility regime edge averaged across windows.
-                "vol_regime_edge": avg_vol_regime_edge,
-                # Task 2 (Round 66, Beta): mean nonlinear interaction effect averaged across windows.
-                "interact_mean_interaction_effect": avg_interact_mean_interaction_effect,
-                # Task 3 (Round 66, Gamma): cross-window total attribution trend.
-                "attribution_trend_slope": _cat.get("attribution_trend_slope"),
-                "attribution_trend_mean": _cat.get("attribution_trend_mean"),
-                "attribution_trend_min": _cat.get("attribution_trend_min"),
-                "attribution_trend_max": _cat.get("attribution_trend_max"),
-                "attribution_above_floor_pct": _cat.get("attribution_above_floor_pct"),
-                "attribution_trend_grade": _cat.get("attribution_trend_grade"),
-                "attribution_trend_valid": _cat.get("attribution_trend_valid"),
-                # Task 3 (Round 67, Gamma): cross-window nonlinear interaction trend.
-                "interaction_trend_slope": _cwit.get("interaction_trend_slope"),
-                "interaction_trend_mean": _cwit.get("interaction_trend_mean"),
-                "interaction_positive_windows_pct": _cwit.get("interaction_positive_windows_pct"),
-                "interaction_trend_grade": _cwit.get("interaction_trend_grade"),
-                "interaction_trend_valid": _cwit.get("interaction_trend_valid"),
-                # Task 3 (Round 68, Gamma): cross-window score dispersion trend.
-                "dispersion_trend_slope": _cwdt.get("dispersion_trend_slope"),
-                "dispersion_trend_mean": _cwdt.get("dispersion_trend_mean"),
-                "dispersion_positive_windows_pct": _cwdt.get("dispersion_positive_windows_pct"),
-                "dispersion_trend_grade": _cwdt.get("dispersion_trend_grade"),
-                "dispersion_trend_valid": _cwdt.get("dispersion_trend_valid"),
-                # Task 3 (Round 69, Gamma): cross-window position concentration HHI trend.
-                "concentration_hhi_slope": _cwcht.get("concentration_hhi_slope"),
-                "concentration_hhi_mean": _cwcht.get("concentration_hhi_mean"),
-                "concentration_dispersed_windows_pct": _cwcht.get("concentration_dispersed_windows_pct"),
-                "concentration_trend_grade": _cwcht.get("concentration_trend_grade"),
-                "concentration_trend_valid": _cwcht.get("concentration_trend_valid"),
-                # Task 3 (Round 70, Gamma): cross-window RS rank spread trend.
-                "rs_rank_trend_slope": _cwrrt.get("rs_rank_trend_slope"),
-                "rs_rank_trend_mean": _cwrrt.get("rs_rank_trend_mean"),
-                "rs_rank_positive_windows_pct": _cwrrt.get("rs_rank_positive_windows_pct"),
-                "rs_rank_trend_grade": _cwrrt.get("rs_rank_trend_grade"),
-                "rs_rank_trend_valid": _cwrrt.get("rs_rank_trend_valid"),
-                # Task 1 (Round 70, Alpha): price position win-rate spread averaged across windows.
-                "cs_win_rate_spread": avg_cs_win_rate_spread,
-                # Task 2 (Round 70, Beta): win/loss streak ratio averaged across windows.
-                "streak_ratio": avg_streak_ratio,
-                # Task 1 (Round 71, Alpha): sector momentum ranking win-rate spread averaged across windows.
-                "momentum_win_spread": avg_momentum_win_spread,
-                # Task 2 (Round 71, Beta): volume structure win-rate spread averaged across windows.
-                "vol_structure_spread": avg_vol_structure_spread,
-                # Task 3 (Round 71, Gamma): cross-window price position cs_win_rate_spread trend.
-                "price_pos_trend_slope": _cwppt.get("price_pos_trend_slope"),
-                "price_pos_trend_mean": _cwppt.get("price_pos_trend_mean"),
-                "price_pos_positive_windows_pct": _cwppt.get("price_pos_positive_windows_pct"),
-                "price_pos_trend_grade": _cwppt.get("price_pos_trend_grade"),
-                "price_pos_trend_valid": _cwppt.get("price_pos_trend_valid"),
-                # Task 1 (Round 72, Alpha): multi-factor composite Z-score win-rate spread averaged across windows.
-                "zscore_win_spread": avg_zscore_win_spread,
-                # Task 2 (Round 72, Beta): return persistence score averaged across windows.
-                "persistence_score": avg_persistence_score,
-                # Task 3 (Round 72, Gamma): cross-window momentum rank win-spread trend.
-                "momentum_rank_trend_slope": _cwmrt.get("momentum_rank_trend_slope"),
-                "momentum_rank_trend_mean": _cwmrt.get("momentum_rank_trend_mean"),
-                "momentum_rank_positive_windows_pct": _cwmrt.get("momentum_rank_positive_windows_pct"),
-                "momentum_rank_trend_grade": _cwmrt.get("momentum_rank_trend_grade"),
-                "momentum_rank_trend_valid": _cwmrt.get("momentum_rank_trend_valid"),
-                # Task 1 (Round 73, Alpha): market breadth win rate averaged across windows.
-                "breadth_win_rate": avg_breadth_win_rate,
-                # Task 2 (Round 73, Beta): factor IC consistency ratio averaged across windows.
-                "ic_consistency_ratio": avg_ic_consistency_ratio,
-                # Task 3 (Round 73, Gamma): cross-window Z-score win-spread trend.
-                "zscore_trend_slope": _cwzt.get("zscore_trend_slope"),
-                "zscore_trend_mean": _cwzt.get("zscore_trend_mean"),
-                "zscore_positive_windows_pct": _cwzt.get("zscore_positive_windows_pct"),
-                "zscore_trend_grade": _cwzt.get("zscore_trend_grade"),
-                "zscore_trend_valid": _cwzt.get("zscore_trend_valid"),
-                # Task 1 (Round 74, Alpha): signal strength stratification spread averaged across windows.
-                "stratification_spread": avg_stratification_spread,
-                # Task 2 (Round 74, Beta): conditional momentum edge averaged across windows.
-                "conditional_momentum_edge": avg_conditional_momentum_edge,
-                # Task 3 (Round 74, Gamma): cross-window market breadth win-rate trend.
-                "breadth_trend_slope": _cwbt.get("breadth_trend_slope"),
-                "breadth_trend_mean": _cwbt.get("breadth_trend_mean"),
-                "breadth_above_threshold_pct": _cwbt.get("breadth_above_threshold_pct"),
-                "breadth_trend_grade": _cwbt.get("breadth_trend_grade"),
-                "breadth_trend_valid": _cwbt.get("breadth_trend_valid"),
-                # Task 1 (Round 75, Alpha): simplified Sharpe ratio averaged across windows.
-                "max_collinearity": avg_max_collinearity,
-                # Task 3 (Round 75, Gamma): cross-window stratification spread trend.
-                "stratification_trend_slope": _cwsst.get("stratification_trend_slope"),
-                "stratification_trend_mean": _cwsst.get("stratification_trend_mean"),
-                "stratification_positive_windows_pct": _cwsst.get("stratification_positive_windows_pct"),
-                "stratification_trend_grade": _cwsst.get("stratification_trend_grade"),
-                "stratification_trend_valid": _cwsst.get("stratification_trend_valid"),
-                # Task 1 (Round 76, Alpha): gain/loss ratio averaged across windows.
-                "gain_loss_ratio": avg_gain_loss_ratio,
-                # Task 1 (Round 76, Alpha): tail asymmetry score averaged across windows.
-                "tail_asymmetry_score": avg_tail_asymmetry_score,
-                # Task 2 (Round 76, Beta): factor orthogonality score averaged across windows.
-                "orthogonality_score": avg_orthogonality_score,
-                # Task 1 (Round 77, Alpha): adaptive threshold lift averaged across windows.
-                "threshold_lift": avg_threshold_lift,
-                # Task 2 (Round 77, Beta): sector win-rate dispersion averaged across windows.
-                "sector_win_rate_dispersion": avg_sector_win_rate_dispersion,
-                # Task 3 (Round 77, Gamma): cross-window skew quality trend.
-                "skew_trend_slope": _skew_trend.get("skew_trend_slope"),
-                "skew_trend_mean": _skew_trend.get("skew_trend_mean"),
-                "skew_favorable_windows_pct": _skew_trend.get("skew_favorable_windows_pct"),
-                "skew_trend_grade": _skew_trend.get("skew_trend_grade"),
-                "skew_trend_valid": _skew_trend.get("skew_trend_valid"),
-                # Task 3 (Round 78, Gamma): cross-window adaptive threshold lift trend.
-                "threshold_lift_trend_slope": _tlt.get("threshold_lift_trend_slope"),
-                "threshold_lift_trend_mean": _tlt.get("threshold_lift_trend_mean"),
-                "threshold_lift_positive_windows_pct": _tlt.get("threshold_lift_positive_windows_pct"),
-                "threshold_lift_trend_grade": _tlt.get("threshold_lift_trend_grade"),
-                "threshold_lift_trend_valid": _tlt.get("threshold_lift_trend_valid"),
-                # Task 1 (Round 78, Alpha): hotstock win-rate edge averaged across windows.
-                "hotstock_edge": avg_hotstock_edge,
-                # Task 2 (Round 78, Beta): factor robustness ratio averaged across windows.
-                "robustness_ratio": avg_robustness_ratio,
-                # Task 1 (Round 79, Alpha): score quintile monotonicity score averaged across windows.
-                "sq_consist_quintile_monotonicity_score": avg_sq_quintile_monotonicity_score,
-                # Task 1 (Round 79, Alpha): score quintile top-bottom spread averaged across windows.
-                "sq_consist_quintile_top_bottom_spread": avg_sq_quintile_top_bottom_spread,
-                # Task 2 (Round 79, Beta): high-quality entry win rate averaged across windows.
-                "entry_qual_high_quality_entry_win_rate": avg_entry_qual_high_quality_entry_win_rate,
-                # Task 2 (Round 79, Beta): quality entry edge averaged across windows.
-                "entry_qual_quality_entry_edge": avg_entry_qual_quality_entry_edge,
-                # Task 3 (Round 79, Gamma): cross-window factor robustness OLS trend slope.
-                "robustness_trend_slope": _rbt.get("robustness_trend_slope"),
-                "robustness_trend_grade": _rbt.get("robustness_trend_grade"),
-                "robustness_trend_window_count": _rbt.get("robustness_window_count"),
-                # Task 3 (Round 80, Gamma): cross-window entry quality OLS trend slope.
-                "entry_quality_trend_slope": _eqt.get("entry_quality_trend_slope"),
-                "entry_quality_trend_grade": _eqt.get("entry_quality_trend_grade"),
-                "entry_quality_trend_window_count": _eqt.get("entry_quality_window_count"),
-                # Task 3 (Round 81, Gamma): cross-window near-high stock premium OLS trend slope.
-                "near_high_trend_slope": _nht.get("near_high_trend_slope"),
-                "near_high_trend_grade": _nht.get("near_high_trend_grade"),
-                "near_high_trend_window_count": _nht.get("near_high_trend_window_count"),
-                # Task 3 (Round 82, Gamma): cross-window EV spread OLS trend slope.
-                "ev_spread_trend_slope": _evst.get("ev_spread_trend_slope"),
-                "ev_spread_trend_grade": _evst.get("ev_spread_trend_grade"),
-                "ev_spread_trend_window_count": _evst.get("ev_spread_window_count"),
-                # Task 3 (Round 83, Gamma): cross-window precision trend OLS slope.
-                "precision_trend_slope": _pct83.get("precision_trend_slope"),
-                "precision_trend_grade": _pct83.get("precision_trend_grade"),
-                "precision_trend_window_count": _pct83.get("precision_trend_window_count"),
-                # Task 3 (Round 84, Gamma): cross-window upside asymmetry OLS trend slope.
-                "upside_asymmetry_trend_slope": _uat84.get("upside_asymmetry_trend_slope"),
-                "upside_asymmetry_trend_grade": _uat84.get("upside_asymmetry_trend_grade"),
-                "upside_asymmetry_trend_window_count": _uat84.get("upside_asymmetry_window_count"),
-                # Task 3 (Round 85, Gamma): cross-window momentum reversal OLS trend slope.
-                "momentum_reversal_trend_slope": _mrt85.get("momentum_reversal_trend_slope"),
-                "momentum_reversal_trend_grade": _mrt85.get("momentum_reversal_trend_grade"),
-                "momentum_reversal_trend_window_count": _mrt85.get("momentum_reversal_window_count"),
-                # Task 3 (Round 86, Gamma): cross-window batch consistency OLS trend slope.
-                "batch_consistency_trend_slope": _bct86.get("batch_consistency_trend_slope"),
-                "batch_consistency_trend_grade": _bct86.get("batch_consistency_trend_grade"),
-                "batch_consistency_trend_window_count": _bct86.get("batch_consistency_trend_window_count"),
-                # Task 3 (Round 87, Gamma): cross-window regime spread OLS trend slope.
-                "regime_spread_trend_slope": _rsp87.get("regime_spread_trend_slope"),
-                "regime_spread_trend_grade": _rsp87.get("regime_spread_trend_grade"),
-                "regime_spread_trend_window_count": _rsp87.get("regime_spread_trend_window_count"),
-                # Task 3 (Round 88, Gamma): cross-window signal quality OLS trend slope.
-                "signal_quality_trend_slope": _sqt88.get("signal_quality_trend_slope"),
-                "signal_quality_trend_grade": _sqt88.get("signal_quality_trend_grade"),
-                "signal_quality_trend_n": _sqt88.get("signal_quality_trend_n"),
-                # Task 1 (Round 89, Alpha): cross-window open-gap persistence OLS trend.
-                "ogp_trend_slope": _ogp89.get("ogp_trend_slope"),
-                "ogp_trend_grade": _ogp89.get("ogp_trend_grade"),
-                "ogp_trend_n": _ogp89.get("ogp_trend_n"),
-                # Task 2 (Round 89, Beta): cross-window tail flow quality OLS trend.
-                "tf_trend_slope": _tf89.get("tf_trend_slope"),
-                "tf_trend_grade": _tf89.get("tf_trend_grade"),
-                "tf_trend_n": _tf89.get("tf_trend_n"),
-                # Task 3 (Round 89, Gamma): cross-window momentum IC direction consistency.
-                "mc_ic_consistency_score": _mc89.get("mc_ic_consistency_score"),
-                "mc_ic_positive_window_count": _mc89.get("mc_ic_positive_window_count"),
-                "mc_ic_total_window_count": _mc89.get("mc_ic_total_window_count"),
-                "mc_ic_gate_passed": _mc89.get("mc_ic_gate_passed"),
-                "mc_ic_mean": _mc89.get("mc_ic_mean"),
+            "best_profit_factor": avg_best_profit_factor,
+            # Task 2 (Round 63, Beta): best factor-combination win rate averaged across windows.
+            "best_combo_win_rate": avg_best_combo_win_rate,
+            # Task 3 (Round 63, Gamma): cross-window cost-adjusted profit factor trend.
+            "cost_pf_trend_slope": _cpft.get("cost_pf_trend_slope"),
+            "cost_pf_trend_mean": _cpft.get("cost_pf_trend_mean"),
+            "cost_pf_trend_min": _cpft.get("cost_pf_trend_min"),
+            "cost_pf_trend_max": _cpft.get("cost_pf_trend_max"),
+            "cost_pf_above_floor_pct": _cpft.get("cost_pf_above_floor_pct"),
+            "cost_pf_trend_grade": _cpft.get("cost_pf_trend_grade"),
+            "cost_pf_trend_valid": _cpft.get("cost_pf_trend_valid"),
+            # Task 3 (Round 64, Gamma): cross-window best combo win rate trend.
+            "combo_win_rate_trend_slope": _ccwt.get("combo_win_rate_trend_slope"),
+            "combo_win_rate_trend_mean": _ccwt.get("combo_win_rate_trend_mean"),
+            "combo_win_rate_trend_min": _ccwt.get("combo_win_rate_trend_min"),
+            "combo_win_rate_trend_max": _ccwt.get("combo_win_rate_trend_max"),
+            "combo_above_floor_pct": _ccwt.get("combo_above_floor_pct"),
+            "combo_trend_grade": _ccwt.get("combo_trend_grade"),
+            "combo_trend_valid": _ccwt.get("combo_trend_valid"),
+            # Task 1 (Round 64, Alpha): adaptive weight effective factor count averaged across windows.
+            "adaptive_weight_effective_factor_count": avg_adaptive_weight_effective_factor_count,
+            # Task 2 (Round 64, Beta): IC stability averaged across windows.
+            "ic_stability": avg_ic_stability,
+            # Task 1 (Round 65, Alpha): total attribution averaged across windows.
+            "total_attribution": avg_total_attribution,
+            # Task 2 (Round 65, Beta): multi-timeframe consistency averaged across windows.
+            "timeframe_consistency": avg_timeframe_consistency,
+            # Task 3 (Round 65, Gamma): cross-window IC stability trend.
+            "ic_stability_trend_slope": _cvt.get("ic_stability_trend_slope"),
+            "ic_stability_trend_mean": _cvt.get("ic_stability_trend_mean"),
+            "ic_stability_trend_min": _cvt.get("ic_stability_trend_min"),
+            "ic_stability_trend_max": _cvt.get("ic_stability_trend_max"),
+            "ic_stability_below_cap_pct": _cvt.get("ic_stability_below_cap_pct"),
+            "ic_stability_trend_grade": _cvt.get("ic_stability_trend_grade"),
+            "ic_stability_trend_valid": _cvt.get("ic_stability_trend_valid"),
+            # Task 1 (Round 66, Alpha): volatility regime edge averaged across windows.
+            "vol_regime_edge": avg_vol_regime_edge,
+            # Task 2 (Round 66, Beta): mean nonlinear interaction effect averaged across windows.
+            "interact_mean_interaction_effect": avg_interact_mean_interaction_effect,
+            # Task 3 (Round 66, Gamma): cross-window total attribution trend.
+            "attribution_trend_slope": _cat.get("attribution_trend_slope"),
+            "attribution_trend_mean": _cat.get("attribution_trend_mean"),
+            "attribution_trend_min": _cat.get("attribution_trend_min"),
+            "attribution_trend_max": _cat.get("attribution_trend_max"),
+            "attribution_above_floor_pct": _cat.get("attribution_above_floor_pct"),
+            "attribution_trend_grade": _cat.get("attribution_trend_grade"),
+            "attribution_trend_valid": _cat.get("attribution_trend_valid"),
+            # Task 3 (Round 67, Gamma): cross-window nonlinear interaction trend.
+            "interaction_trend_slope": _cwit.get("interaction_trend_slope"),
+            "interaction_trend_mean": _cwit.get("interaction_trend_mean"),
+            "interaction_positive_windows_pct": _cwit.get("interaction_positive_windows_pct"),
+            "interaction_trend_grade": _cwit.get("interaction_trend_grade"),
+            "interaction_trend_valid": _cwit.get("interaction_trend_valid"),
+            # Task 3 (Round 68, Gamma): cross-window score dispersion trend.
+            "dispersion_trend_slope": _cwdt.get("dispersion_trend_slope"),
+            "dispersion_trend_mean": _cwdt.get("dispersion_trend_mean"),
+            "dispersion_positive_windows_pct": _cwdt.get("dispersion_positive_windows_pct"),
+            "dispersion_trend_grade": _cwdt.get("dispersion_trend_grade"),
+            "dispersion_trend_valid": _cwdt.get("dispersion_trend_valid"),
+            # Task 3 (Round 69, Gamma): cross-window position concentration HHI trend.
+            "concentration_hhi_slope": _cwcht.get("concentration_hhi_slope"),
+            "concentration_hhi_mean": _cwcht.get("concentration_hhi_mean"),
+            "concentration_dispersed_windows_pct": _cwcht.get("concentration_dispersed_windows_pct"),
+            "concentration_trend_grade": _cwcht.get("concentration_trend_grade"),
+            "concentration_trend_valid": _cwcht.get("concentration_trend_valid"),
+            # Task 3 (Round 70, Gamma): cross-window RS rank spread trend.
+            "rs_rank_trend_slope": _cwrrt.get("rs_rank_trend_slope"),
+            "rs_rank_trend_mean": _cwrrt.get("rs_rank_trend_mean"),
+            "rs_rank_positive_windows_pct": _cwrrt.get("rs_rank_positive_windows_pct"),
+            "rs_rank_trend_grade": _cwrrt.get("rs_rank_trend_grade"),
+            "rs_rank_trend_valid": _cwrrt.get("rs_rank_trend_valid"),
+            # Task 1 (Round 70, Alpha): price position win-rate spread averaged across windows.
+            "cs_win_rate_spread": avg_cs_win_rate_spread,
+            # Task 2 (Round 70, Beta): win/loss streak ratio averaged across windows.
+            "streak_ratio": avg_streak_ratio,
+            # Task 1 (Round 71, Alpha): sector momentum ranking win-rate spread averaged across windows.
+            "momentum_win_spread": avg_momentum_win_spread,
+            # Task 2 (Round 71, Beta): volume structure win-rate spread averaged across windows.
+            "vol_structure_spread": avg_vol_structure_spread,
+            # Task 3 (Round 71, Gamma): cross-window price position cs_win_rate_spread trend.
+            "price_pos_trend_slope": _cwppt.get("price_pos_trend_slope"),
+            "price_pos_trend_mean": _cwppt.get("price_pos_trend_mean"),
+            "price_pos_positive_windows_pct": _cwppt.get("price_pos_positive_windows_pct"),
+            "price_pos_trend_grade": _cwppt.get("price_pos_trend_grade"),
+            "price_pos_trend_valid": _cwppt.get("price_pos_trend_valid"),
+            # Task 1 (Round 72, Alpha): multi-factor composite Z-score win-rate spread averaged across windows.
+            "zscore_win_spread": avg_zscore_win_spread,
+            # Task 2 (Round 72, Beta): return persistence score averaged across windows.
+            "persistence_score": avg_persistence_score,
+            # Task 3 (Round 72, Gamma): cross-window momentum rank win-spread trend.
+            "momentum_rank_trend_slope": _cwmrt.get("momentum_rank_trend_slope"),
+            "momentum_rank_trend_mean": _cwmrt.get("momentum_rank_trend_mean"),
+            "momentum_rank_positive_windows_pct": _cwmrt.get("momentum_rank_positive_windows_pct"),
+            "momentum_rank_trend_grade": _cwmrt.get("momentum_rank_trend_grade"),
+            "momentum_rank_trend_valid": _cwmrt.get("momentum_rank_trend_valid"),
+            # Task 1 (Round 73, Alpha): market breadth win rate averaged across windows.
+            "breadth_win_rate": avg_breadth_win_rate,
+            # Task 2 (Round 73, Beta): factor IC consistency ratio averaged across windows.
+            "ic_consistency_ratio": avg_ic_consistency_ratio,
+            # Task 3 (Round 73, Gamma): cross-window Z-score win-spread trend.
+            "zscore_trend_slope": _cwzt.get("zscore_trend_slope"),
+            "zscore_trend_mean": _cwzt.get("zscore_trend_mean"),
+            "zscore_positive_windows_pct": _cwzt.get("zscore_positive_windows_pct"),
+            "zscore_trend_grade": _cwzt.get("zscore_trend_grade"),
+            "zscore_trend_valid": _cwzt.get("zscore_trend_valid"),
+            # Task 1 (Round 74, Alpha): signal strength stratification spread averaged across windows.
+            "stratification_spread": avg_stratification_spread,
+            # Task 2 (Round 74, Beta): conditional momentum edge averaged across windows.
+            "conditional_momentum_edge": avg_conditional_momentum_edge,
+            # Task 3 (Round 74, Gamma): cross-window market breadth win-rate trend.
+            "breadth_trend_slope": _cwbt.get("breadth_trend_slope"),
+            "breadth_trend_mean": _cwbt.get("breadth_trend_mean"),
+            "breadth_above_threshold_pct": _cwbt.get("breadth_above_threshold_pct"),
+            "breadth_trend_grade": _cwbt.get("breadth_trend_grade"),
+            "breadth_trend_valid": _cwbt.get("breadth_trend_valid"),
+            # Task 1 (Round 75, Alpha): simplified Sharpe ratio averaged across windows.
+            "max_collinearity": avg_max_collinearity,
+            # Task 3 (Round 75, Gamma): cross-window stratification spread trend.
+            "stratification_trend_slope": _cwsst.get("stratification_trend_slope"),
+            "stratification_trend_mean": _cwsst.get("stratification_trend_mean"),
+            "stratification_positive_windows_pct": _cwsst.get("stratification_positive_windows_pct"),
+            "stratification_trend_grade": _cwsst.get("stratification_trend_grade"),
+            "stratification_trend_valid": _cwsst.get("stratification_trend_valid"),
+            # Task 1 (Round 76, Alpha): gain/loss ratio averaged across windows.
+            "gain_loss_ratio": avg_gain_loss_ratio,
+            # Task 1 (Round 76, Alpha): tail asymmetry score averaged across windows.
+            "tail_asymmetry_score": avg_tail_asymmetry_score,
+            # Task 2 (Round 76, Beta): factor orthogonality score averaged across windows.
+            "orthogonality_score": avg_orthogonality_score,
+            # Task 1 (Round 77, Alpha): adaptive threshold lift averaged across windows.
+            "threshold_lift": avg_threshold_lift,
+            # Task 2 (Round 77, Beta): sector win-rate dispersion averaged across windows.
+            "sector_win_rate_dispersion": avg_sector_win_rate_dispersion,
+            # Task 3 (Round 77, Gamma): cross-window skew quality trend.
+            "skew_trend_slope": _skew_trend.get("skew_trend_slope"),
+            "skew_trend_mean": _skew_trend.get("skew_trend_mean"),
+            "skew_favorable_windows_pct": _skew_trend.get("skew_favorable_windows_pct"),
+            "skew_trend_grade": _skew_trend.get("skew_trend_grade"),
+            "skew_trend_valid": _skew_trend.get("skew_trend_valid"),
+            # Task 3 (Round 78, Gamma): cross-window adaptive threshold lift trend.
+            "threshold_lift_trend_slope": _tlt.get("threshold_lift_trend_slope"),
+            "threshold_lift_trend_mean": _tlt.get("threshold_lift_trend_mean"),
+            "threshold_lift_positive_windows_pct": _tlt.get("threshold_lift_positive_windows_pct"),
+            "threshold_lift_trend_grade": _tlt.get("threshold_lift_trend_grade"),
+            "threshold_lift_trend_valid": _tlt.get("threshold_lift_trend_valid"),
+            # Task 1 (Round 78, Alpha): hotstock win-rate edge averaged across windows.
+            "hotstock_edge": avg_hotstock_edge,
+            # Task 2 (Round 78, Beta): factor robustness ratio averaged across windows.
+            "robustness_ratio": avg_robustness_ratio,
+            # Task 1 (Round 79, Alpha): score quintile monotonicity score averaged across windows.
+            "sq_consist_quintile_monotonicity_score": avg_sq_quintile_monotonicity_score,
+            # Task 1 (Round 79, Alpha): score quintile top-bottom spread averaged across windows.
+            "sq_consist_quintile_top_bottom_spread": avg_sq_quintile_top_bottom_spread,
+            # Task 2 (Round 79, Beta): high-quality entry win rate averaged across windows.
+            "entry_qual_high_quality_entry_win_rate": avg_entry_qual_high_quality_entry_win_rate,
+            # Task 2 (Round 79, Beta): quality entry edge averaged across windows.
+            "entry_qual_quality_entry_edge": avg_entry_qual_quality_entry_edge,
+            # Task 3 (Round 79, Gamma): cross-window factor robustness OLS trend slope.
+            "robustness_trend_slope": _rbt.get("robustness_trend_slope"),
+            "robustness_trend_grade": _rbt.get("robustness_trend_grade"),
+            "robustness_trend_window_count": _rbt.get("robustness_window_count"),
+            # Task 3 (Round 80, Gamma): cross-window entry quality OLS trend slope.
+            "entry_quality_trend_slope": _eqt.get("entry_quality_trend_slope"),
+            "entry_quality_trend_grade": _eqt.get("entry_quality_trend_grade"),
+            "entry_quality_trend_window_count": _eqt.get("entry_quality_window_count"),
+            # Task 3 (Round 81, Gamma): cross-window near-high stock premium OLS trend slope.
+            "near_high_trend_slope": _nht.get("near_high_trend_slope"),
+            "near_high_trend_grade": _nht.get("near_high_trend_grade"),
+            "near_high_trend_window_count": _nht.get("near_high_trend_window_count"),
+            # Task 3 (Round 82, Gamma): cross-window EV spread OLS trend slope.
+            "ev_spread_trend_slope": _evst.get("ev_spread_trend_slope"),
+            "ev_spread_trend_grade": _evst.get("ev_spread_trend_grade"),
+            "ev_spread_trend_window_count": _evst.get("ev_spread_window_count"),
+            # Task 3 (Round 83, Gamma): cross-window precision trend OLS slope.
+            "precision_trend_slope": _pct83.get("precision_trend_slope"),
+            "precision_trend_grade": _pct83.get("precision_trend_grade"),
+            "precision_trend_window_count": _pct83.get("precision_trend_window_count"),
+            # Task 3 (Round 84, Gamma): cross-window upside asymmetry OLS trend slope.
+            "upside_asymmetry_trend_slope": _uat84.get("upside_asymmetry_trend_slope"),
+            "upside_asymmetry_trend_grade": _uat84.get("upside_asymmetry_trend_grade"),
+            "upside_asymmetry_trend_window_count": _uat84.get("upside_asymmetry_window_count"),
+            # Task 3 (Round 85, Gamma): cross-window momentum reversal OLS trend slope.
+            "momentum_reversal_trend_slope": _mrt85.get("momentum_reversal_trend_slope"),
+            "momentum_reversal_trend_grade": _mrt85.get("momentum_reversal_trend_grade"),
+            "momentum_reversal_trend_window_count": _mrt85.get("momentum_reversal_window_count"),
+            # Task 3 (Round 86, Gamma): cross-window batch consistency OLS trend slope.
+            "batch_consistency_trend_slope": _bct86.get("batch_consistency_trend_slope"),
+            "batch_consistency_trend_grade": _bct86.get("batch_consistency_trend_grade"),
+            "batch_consistency_trend_window_count": _bct86.get("batch_consistency_trend_window_count"),
+            # Task 3 (Round 87, Gamma): cross-window regime spread OLS trend slope.
+            "regime_spread_trend_slope": _rsp87.get("regime_spread_trend_slope"),
+            "regime_spread_trend_grade": _rsp87.get("regime_spread_trend_grade"),
+            "regime_spread_trend_window_count": _rsp87.get("regime_spread_trend_window_count"),
+            # Task 3 (Round 88, Gamma): cross-window signal quality OLS trend slope.
+            "signal_quality_trend_slope": _sqt88.get("signal_quality_trend_slope"),
+            "signal_quality_trend_grade": _sqt88.get("signal_quality_trend_grade"),
+            "signal_quality_trend_n": _sqt88.get("signal_quality_trend_n"),
+            # Task 1 (Round 89, Alpha): cross-window open-gap persistence OLS trend.
+            "ogp_trend_slope": _ogp89.get("ogp_trend_slope"),
+            "ogp_trend_grade": _ogp89.get("ogp_trend_grade"),
+            "ogp_trend_n": _ogp89.get("ogp_trend_n"),
+            # Task 2 (Round 89, Beta): cross-window tail flow quality OLS trend.
+            "tf_trend_slope": _tf89.get("tf_trend_slope"),
+            "tf_trend_grade": _tf89.get("tf_trend_grade"),
+            "tf_trend_n": _tf89.get("tf_trend_n"),
+            # Task 3 (Round 89, Gamma): cross-window momentum IC direction consistency.
+            "mc_ic_consistency_score": _mc89.get("mc_ic_consistency_score"),
+            "mc_ic_positive_window_count": _mc89.get("mc_ic_positive_window_count"),
+            "mc_ic_total_window_count": _mc89.get("mc_ic_total_window_count"),
+            "mc_ic_gate_passed": _mc89.get("mc_ic_gate_passed"),
+            "mc_ic_mean": _mc89.get("mc_ic_mean"),
         }
 
     return evaluator
@@ -6539,16 +6540,10 @@ def _build_staged_ignition_evaluator(
     Returns:
         Callable evaluator that returns metrics with baseline-aware fields injected.
     """
-    assert base_profile == "ignition_breakout", (
-        f"_build_staged_ignition_evaluator requires 'ignition_breakout', got '{base_profile}'"
-    )
+    assert base_profile == "ignition_breakout", f"_build_staged_ignition_evaluator requires 'ignition_breakout', got '{base_profile}'"
 
-    _ignition_evaluator = _build_replay_evaluator(
-        input_paths, base_profile="ignition_breakout", next_high_hit_threshold=next_high_hit_threshold
-    )
-    _default_evaluator = _build_replay_evaluator(
-        input_paths, base_profile="default", next_high_hit_threshold=next_high_hit_threshold
-    )
+    _ignition_evaluator = _build_replay_evaluator(input_paths, base_profile="ignition_breakout", next_high_hit_threshold=next_high_hit_threshold)
+    _default_evaluator = _build_replay_evaluator(input_paths, base_profile="default", next_high_hit_threshold=next_high_hit_threshold)
 
     logger.info("Staged ignition evaluator: pre-computing ignition_breakout baseline…")
     ignition_baseline = _ignition_evaluator({})
@@ -6560,20 +6555,11 @@ def _build_staged_ignition_evaluator(
     default_win_rate = default_baseline.get("next_close_positive_rate")
 
     if ignition_win_rate is None:
-        raise RuntimeError(
-            "Staged ignition evaluator: ignition_breakout baseline missing 'next_close_positive_rate'. "
-            "Cannot run stage1 promotion guardrail without a valid baseline."
-        )
+        raise RuntimeError("Staged ignition evaluator: ignition_breakout baseline missing 'next_close_positive_rate'. " "Cannot run stage1 promotion guardrail without a valid baseline.")
     if ignition_expectancy is None:
-        raise RuntimeError(
-            "Staged ignition evaluator: ignition_breakout baseline missing 'next_close_expectancy'. "
-            "Cannot run stage1 promotion guardrail without a valid baseline."
-        )
+        raise RuntimeError("Staged ignition evaluator: ignition_breakout baseline missing 'next_close_expectancy'. " "Cannot run stage1 promotion guardrail without a valid baseline.")
     if default_win_rate is None:
-        raise RuntimeError(
-            "Staged ignition evaluator: default profile baseline missing 'next_close_positive_rate'. "
-            "Cannot run stage1 promotion guardrail without a valid baseline."
-        )
+        raise RuntimeError("Staged ignition evaluator: default profile baseline missing 'next_close_positive_rate'. " "Cannot run stage1 promotion guardrail without a valid baseline.")
 
     logger.info(
         "Baselines — ignition_breakout: win_rate=%.4f expectancy=%.4f | default: win_rate=%.4f",
@@ -6582,9 +6568,7 @@ def _build_staged_ignition_evaluator(
         default_win_rate,
     )
 
-    _candidate_evaluator = _build_replay_evaluator(
-        input_paths, base_profile=base_profile, next_high_hit_threshold=next_high_hit_threshold
-    )
+    _candidate_evaluator = _build_replay_evaluator(input_paths, base_profile=base_profile, next_high_hit_threshold=next_high_hit_threshold)
 
     def staged_evaluator(params: dict[str, Any]) -> dict[str, float | None]:
         metrics: dict[str, Any] = dict(_candidate_evaluator(params))
@@ -6592,23 +6576,14 @@ def _build_staged_ignition_evaluator(
         cand_win_rate = metrics.get("next_close_positive_rate")
         cand_expectancy = metrics.get("next_close_expectancy")
 
-        metrics["baseline_next_close_positive_rate_delta"] = (
-            (float(cand_win_rate) - float(ignition_win_rate)) if cand_win_rate is not None else None
-        )
-        metrics["baseline_next_close_expectancy_delta"] = (
-            (float(cand_expectancy) - float(ignition_expectancy)) if cand_expectancy is not None else None
-        )
+        metrics["baseline_next_close_positive_rate_delta"] = (float(cand_win_rate) - float(ignition_win_rate)) if cand_win_rate is not None else None
+        metrics["baseline_next_close_expectancy_delta"] = (float(cand_expectancy) - float(ignition_expectancy)) if cand_expectancy is not None else None
 
         source_coverage_pass_ratio = float(metrics.get("source_coverage_pass_ratio") or 0.0)
         if cand_win_rate is None or cand_expectancy is None:
             promotion_guardrail_pass = False
         else:
-            promotion_guardrail_pass = (
-                float(cand_win_rate) >= float(ignition_win_rate)
-                and float(cand_expectancy) >= float(ignition_expectancy)
-                and float(cand_win_rate) >= float(default_win_rate)
-                and source_coverage_pass_ratio >= _IGNITION_SOURCE_COVERAGE_MIN_RATIO
-            )
+            promotion_guardrail_pass = float(cand_win_rate) >= float(ignition_win_rate) and float(cand_expectancy) >= float(ignition_expectancy) and float(cand_win_rate) >= float(default_win_rate) and source_coverage_pass_ratio >= _IGNITION_SOURCE_COVERAGE_MIN_RATIO
         metrics["promotion_guardrail_pass"] = promotion_guardrail_pass
 
         return metrics
@@ -6672,9 +6647,7 @@ def _format_staged_ignition_summary(report: SearchReport) -> str:
 
     # Overall verdict is derived from the *full* report.results, not just the displayed shortlist,
     # so that a promotable candidate outside the top-N cap doesn't get silently hidden.
-    any_promotable_in_full_report = any(
-        bool((r.metrics or {}).get("promotion_guardrail_pass", False)) for r in report.results
-    )
+    any_promotable_in_full_report = any(bool((r.metrics or {}).get("promotion_guardrail_pass", False)) for r in report.results)
     if any_promotable_in_full_report:
         lines.append("**Overall verdict: PROMOTION AVAILABLE** — at least one candidate clears all guardrails.")
     else:
@@ -7017,10 +6990,7 @@ def compute_low_impact_probe_axes(
     n_cand: int = len(pruning_candidates)
     n_axes: int = len(low_impact_axes)
     n_ir: int = len(low_ir_factors)
-    pruning_summary: str = (
-        f"{n_cand} probe axis(es) are pruning candidates (low surface corr AND low IC IR): {pruning_candidates}. "
-        f"{n_axes} axis(es) flagged by low surface correlation; {n_ir} factor(s) flagged by low IC IR."
-    )
+    pruning_summary: str = f"{n_cand} probe axis(es) are pruning candidates (low surface corr AND low IC IR): {pruning_candidates}. " f"{n_axes} axis(es) flagged by low surface correlation; {n_ir} factor(s) flagged by low IC IR."
 
     return {
         "low_impact_axes": low_impact_axes,
@@ -7201,6 +7171,7 @@ def apply_ic_feedback_to_probe_grid(
         result[grid_key] = sorted_candidates
     return result
 
+
 IGNITION_STAGE1_GRID: dict[str, list[Any]] = {
     "committee_alpha_min_aggressive_trade": [66.0, 68.0],
     "committee_beta_min_aggressive_trade": [56.0, 58.0],
@@ -7215,6 +7186,7 @@ IGNITION_STAGE1_GRID: dict[str, list[Any]] = {
     "committee_fragile_breakout_fragility_floor": [52.0, 55.0],
     "committee_fragile_breakout_risk_cap": [75.0, 80.0],
 }
+
 
 def resolve_grid_params(
     *,
@@ -7251,9 +7223,7 @@ def resolve_grid_params(
     resolved = _parse_grid_params(grid_params)
     if staged_mode == "ignition_stage1":
         if profile_name != "ignition_breakout":
-            raise ValueError(
-                f"--staged-mode ignition_stage1 is only valid for profile 'ignition_breakout', got '{profile_name}'"
-            )
+            raise ValueError(f"--staged-mode ignition_stage1 is only valid for profile 'ignition_breakout', got '{profile_name}'")
         return {**IGNITION_STAGE1_GRID, **resolved}
     base_momentum_grid = MOMENTUM_OPTIMIZED_STAGE_PRESET_GRIDS.get(search_stage, MOMENTUM_OPTIMIZED_GRID)
     if preset_grid and profile_name == "event_catalyst_guarded":
@@ -7628,16 +7598,7 @@ def _persist_search_metadata(
             "| --- | " + " | ".join("---" for _ in metric_headers) + " |",
         ]
         for baseline_name, entry in comparison_summary.items():
-            comparison_lines.append(
-                "| "
-                + baseline_name
-                + " | "
-                + " | ".join(
-                    f"{float(entry[f'{metric}_delta']):.4f}" if _safe_float(entry.get(f"{metric}_delta")) is not None else "N/A"
-                    for metric in COMPARISON_METRICS
-                )
-                + " |"
-            )
+            comparison_lines.append("| " + baseline_name + " | " + " | ".join(f"{float(entry[f'{metric}_delta']):.4f}" if _safe_float(entry.get(f"{metric}_delta")) is not None else "N/A" for metric in COMPARISON_METRICS) + " |")
         md_sections.append("\n".join(comparison_lines))
     if rollout_recommendation:
         rollout_lines = [f"Rollout Recommendation: **{rollout_recommendation}**"]
@@ -7869,10 +7830,7 @@ def main(argv: list[str] | None = None) -> int:
             )
     elif args.tickers and args.start_date and args.end_date:
         if args.staged_mode == "ignition_stage1":
-            parser.error(
-                "--staged-mode ignition_stage1 requires replay inputs (--input or --reports-root). "
-                "Walk-forward mode does not support staged evaluation."
-            )
+            parser.error("--staged-mode ignition_stage1 requires replay inputs (--input or --reports-root). " "Walk-forward mode does not support staged evaluation.")
         walk_forward_descriptor = "|".join(
             [
                 str(args.tickers),

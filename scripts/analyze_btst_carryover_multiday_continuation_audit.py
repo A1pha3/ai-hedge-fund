@@ -84,36 +84,17 @@ def _build_policy_checks(
     aligned_t4 = aligned_peer_summary.get("t_plus_4_close_positive_rate")
 
     return {
-        "selected_path_t2_bias_only": bool(
-            selected_summary.get("evidence_case_count")
-            and selected_t2 is not None
-            and float(selected_t2) >= 0.5
-            and (selected_t3 is None or float(selected_t3) < 0.5)
-        ),
-        "broad_family_only_multiday_unsupported": bool(
-            broad_family_only_summary.get("evidence_case_count")
-            and (broad_next_close is None or float(broad_next_close) <= 0.0)
-            and (broad_t2 is None or float(broad_t2) <= 0.0)
-        ),
-        "aligned_peer_multiday_ready": bool(
-            aligned_peer_summary.get("evidence_case_count", 0) >= 2
-            and aligned_t3 is not None
-            and aligned_t4 is not None
-            and float(aligned_t3) >= 0.5
-            and float(aligned_t4) >= 0.5
-        ),
-        "open_selected_case_count": int(
-            str(selected_current_outcome.get("cycle_status") or "") in {"missing_next_day", "t1_only"}
-        ),
+        "selected_path_t2_bias_only": bool(selected_summary.get("evidence_case_count") and selected_t2 is not None and float(selected_t2) >= 0.5 and (selected_t3 is None or float(selected_t3) < 0.5)),
+        "broad_family_only_multiday_unsupported": bool(broad_family_only_summary.get("evidence_case_count") and (broad_next_close is None or float(broad_next_close) <= 0.0) and (broad_t2 is None or float(broad_t2) <= 0.0)),
+        "aligned_peer_multiday_ready": bool(aligned_peer_summary.get("evidence_case_count", 0) >= 2 and aligned_t3 is not None and aligned_t4 is not None and float(aligned_t3) >= 0.5 and float(aligned_t4) >= 0.5),
+        "open_selected_case_count": int(str(selected_current_outcome.get("cycle_status") or "") in {"missing_next_day", "t1_only"}),
     }
 
 
 def _build_policy_recommendations(policy_checks: dict[str, Any], *, selected_ticker: str, broad_family_only_count: int, aligned_peer_count: int) -> list[str]:
     recommendations: list[str] = []
     if policy_checks.get("selected_path_t2_bias_only"):
-        recommendations.append(
-            f"{selected_ticker} 的 formal selected 历史 proof 仍只支持 T+2 bias，不应把这条 lane 包装成稳定 T+3/T+4 continuation。"
-        )
+        recommendations.append(f"{selected_ticker} 的 formal selected 历史 proof 仍只支持 T+2 bias，不应把这条 lane 包装成稳定 T+3/T+4 continuation。")
     if broad_family_only_count > 0 and policy_checks.get("broad_family_only_multiday_unsupported"):
         recommendations.append("broad_family_only supportive case 不应获得多日 continuation 合约语义，更不应成为放宽 selected frontier 的依据。")
     if aligned_peer_count <= 0:
@@ -151,11 +132,7 @@ def analyze_btst_carryover_multiday_continuation_audit(reports_root: str | Path)
     cohort_rows = _build_supportive_cohort_rows(resolved_reports_root)
 
     broad_family_only_rows = [row for row in cohort_rows if str(row.get("peer_evidence_status") or "") == "broad_family_only"]
-    aligned_peer_rows = [
-        row
-        for row in cohort_rows
-        if str(row.get("peer_evidence_status") or "") in {"aligned_peer_ready", "aligned_family_source_score_ready", "same_ticker_ready"}
-    ]
+    aligned_peer_rows = [row for row in cohort_rows if str(row.get("peer_evidence_status") or "") in {"aligned_peer_ready", "aligned_family_source_score_ready", "same_ticker_ready"}]
     selected_or_relief_rows = [row for row in cohort_rows if str(row.get("decision") or "") == "selected" or bool(row.get("relief_applied"))]
 
     broad_family_only_summary = _summarize_evidence_rows(broad_family_only_rows, next_high_hit_threshold=0.02)
@@ -242,11 +219,7 @@ def render_btst_carryover_multiday_continuation_audit_markdown(analysis: dict[st
     lines.append("")
     lines.append("## Selected Historical Proof Rows")
     for row in list(analysis.get("selected_historical_proof_rows") or []):
-        lines.append(
-            f"- {row.get('trade_date')} {row.get('ticker')}: next_close_return={row.get('next_close_return')}, "
-            f"t_plus_2_close_return={row.get('t_plus_2_close_return')}, t_plus_3_close_return={row.get('t_plus_3_close_return')}, "
-            f"t_plus_4_close_return={row.get('t_plus_4_close_return')}, cycle_status={row.get('cycle_status')}"
-        )
+        lines.append(f"- {row.get('trade_date')} {row.get('ticker')}: next_close_return={row.get('next_close_return')}, " f"t_plus_2_close_return={row.get('t_plus_2_close_return')}, t_plus_3_close_return={row.get('t_plus_3_close_return')}, " f"t_plus_4_close_return={row.get('t_plus_4_close_return')}, cycle_status={row.get('cycle_status')}")
     if not list(analysis.get("selected_historical_proof_rows") or []):
         lines.append("- none")
     lines.append("")

@@ -118,11 +118,7 @@ def _normalize_snapshot_short_trade_row(
         "candidate_reason_codes": candidate_reason_codes,
         "delta_classification": delta_classification,
         "short_trade": short_trade,
-        "available_strategy_signals": [
-            str(signal_name)
-            for signal_name in list(dict(short_trade.get("explainability_payload") or {}).get("available_strategy_signals") or [])
-            if str(signal_name or "").strip()
-        ],
+        "available_strategy_signals": [str(signal_name) for signal_name in list(dict(short_trade.get("explainability_payload") or {}).get("available_strategy_signals") or []) if str(signal_name or "").strip()],
     }
 
 
@@ -164,21 +160,13 @@ def _normalize_upstream_shadow_observation_row(*, trade_date: str, row: dict[str
             "historical_prior": dict(row.get("historical_prior") or {}),
             **({"filter_reason": recomputed_short_trade["filter_reason"]} if recomputed_short_trade.get("filter_reason") else {}),
         },
-        "available_strategy_signals": [
-            str(signal_name)
-            for signal_name in dict(row.get("strategy_signals") or {}).keys()
-            if str(signal_name or "").strip()
-        ],
+        "available_strategy_signals": [str(signal_name) for signal_name in dict(row.get("strategy_signals") or {}).keys() if str(signal_name or "").strip()],
     }
 
 
 def _load_historical_prior_by_ticker(report_path: Path) -> dict[str, dict[str, Any]]:
     rows_by_ticker = load_btst_followup_by_ticker_for_report(report_path)
-    priors_by_ticker = {
-        ticker: dict(row.get("historical_prior") or {})
-        for ticker, row in rows_by_ticker.items()
-        if dict(row.get("historical_prior") or {})
-    }
+    priors_by_ticker = {ticker: dict(row.get("historical_prior") or {}) for ticker, row in rows_by_ticker.items() if dict(row.get("historical_prior") or {})}
     if priors_by_ticker:
         return priors_by_ticker
     return load_latest_btst_historical_prior_by_ticker(report_path.parent)
@@ -316,29 +304,13 @@ def _extract_filter_reason(short_trade: dict[str, Any]) -> str:
 
 
 def _is_supportive_catalyst_shadow_example(example: dict[str, Any]) -> bool:
-    return (
-        str(example.get("historical_execution_quality_label") or "").strip() == "close_continuation"
-        and int(example.get("historical_evaluable_count") or 0) >= 2
-        and _safe_float(example.get("historical_next_close_positive_rate"), default=-1.0) >= 0.5
-        and _safe_float(example.get("historical_next_open_to_close_return_mean"), default=-1.0) >= 0.0
-    )
+    return str(example.get("historical_execution_quality_label") or "").strip() == "close_continuation" and int(example.get("historical_evaluable_count") or 0) >= 2 and _safe_float(example.get("historical_next_close_positive_rate"), default=-1.0) >= 0.5 and _safe_float(example.get("historical_next_open_to_close_return_mean"), default=-1.0) >= 0.0
 
 
 def _build_supportive_catalyst_shadow_summary(examples: list[dict[str, Any]]) -> dict[str, Any]:
-    catalyst_examples = [
-        dict(example)
-        for example in examples
-        if str(example.get("candidate_source") or "").strip() in {"upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow"}
-        and str(example.get("filter_reason") or "").strip() == "catalyst_freshness_below_short_trade_boundary_floor"
-    ]
-    execution_quality_counts = Counter(
-        str(example.get("historical_execution_quality_label") or "none").strip() or "none"
-        for example in catalyst_examples
-    )
-    support_bucket_counts = Counter(
-        "supportive_close_continuation" if _is_supportive_catalyst_shadow_example(example) else "unsupported_or_missing"
-        for example in catalyst_examples
-    )
+    catalyst_examples = [dict(example) for example in examples if str(example.get("candidate_source") or "").strip() in {"upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow"} and str(example.get("filter_reason") or "").strip() == "catalyst_freshness_below_short_trade_boundary_floor"]
+    execution_quality_counts = Counter(str(example.get("historical_execution_quality_label") or "none").strip() or "none" for example in catalyst_examples)
+    support_bucket_counts = Counter("supportive_close_continuation" if _is_supportive_catalyst_shadow_example(example) else "unsupported_or_missing" for example in catalyst_examples)
     catalyst_examples.sort(key=lambda item: (item["score_target"], item["trade_date"], item["ticker"]), reverse=True)
     supportive_examples = [dict(example) for example in catalyst_examples if _is_supportive_catalyst_shadow_example(example)]
     return {
@@ -379,7 +351,7 @@ def _build_recommended_focus_areas(
                     "failure_mechanism": "catalyst_freshness_below_short_trade_boundary_floor",
                     "count": supportive_catalyst_count,
                     "cluster_count": catalyst_shadow_count,
-                    "top_examples": list(supportive_catalyst_shadow_summary.get('supportive_examples') or [])[:3],
+                    "top_examples": list(supportive_catalyst_shadow_summary.get("supportive_examples") or [])[:3],
                 },
             }
         )
@@ -410,10 +382,7 @@ def _build_recommended_focus_areas(
                 "evidence": {
                     "failure_mechanism": "blocked_trend_not_constructive",
                     "count": trend_not_constructive_blocked,
-                    "candidate_source_breakdown": {
-                        key: candidate_source_breakdown.get(key, {})
-                        for key in ("upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow")
-                    },
+                    "candidate_source_breakdown": {key: candidate_source_breakdown.get(key, {}) for key in ("upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow")},
                 },
             }
         )
@@ -473,9 +442,7 @@ def render_short_trade_blocker_markdown(analysis: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Candidate Source Breakdown")
     for candidate_source, breakdown in analysis["candidate_source_breakdown"].items():
-        lines.append(
-            f"- {candidate_source}: total={breakdown['count']}, decisions={breakdown['decision_counts']}, blockers={breakdown['blocker_counts']}, reasons={breakdown['candidate_reason_code_counts']}, score_mean={breakdown['score_distribution']['mean']}"
-        )
+        lines.append(f"- {candidate_source}: total={breakdown['count']}, decisions={breakdown['decision_counts']}, blockers={breakdown['blocker_counts']}, reasons={breakdown['candidate_reason_code_counts']}, score_mean={breakdown['score_distribution']['mean']}")
     lines.append("")
     lines.append("## Recommended Focus Areas")
     for row in analysis["recommended_focus_areas"]:
@@ -490,15 +457,11 @@ def render_short_trade_blocker_markdown(analysis: dict[str, Any]) -> str:
     lines.append("")
     lines.append("## Day Breakdown")
     for row in analysis["day_breakdown"]:
-        lines.append(
-            f"- {row['trade_date']}: total={row['short_trade_target_count']}, selected={row['selected_count']}, near_miss={row['near_miss_count']}, blocked={row['blocked_count']}, rejected={row['rejected_count']}"
-        )
+        lines.append(f"- {row['trade_date']}: total={row['short_trade_target_count']}, selected={row['selected_count']}, near_miss={row['near_miss_count']}, blocked={row['blocked_count']}, rejected={row['rejected_count']}")
     lines.append("")
     lines.append("## Representative Cases")
     for row in analysis["top_blocked_examples"]:
-        lines.append(
-            f"- {row['trade_date']} {row['ticker']}: score_short={row['score_target']}, source={row['candidate_source']}, blockers={row['blockers']}, top_reasons={row['top_reasons']}"
-        )
+        lines.append(f"- {row['trade_date']} {row['ticker']}: score_short={row['score_target']}, source={row['candidate_source']}, blockers={row['blockers']}, top_reasons={row['top_reasons']}")
     return "\n".join(lines) + "\n"
 
 
@@ -520,13 +483,15 @@ def analyze_short_trade_blockers(report_dir: str | Path, *, trade_dates: set[str
     delta_classification_counts: Counter[str] = Counter()
     gate_status_counts: dict[str, Counter[str]] = defaultdict(Counter)
     score_distribution_by_decision: dict[str, list[float]] = defaultdict(list)
-    candidate_source_breakdown: dict[str, dict[str, Any]] = defaultdict(lambda: {
-        "count": 0,
-        "decision_counts": Counter(),
-        "blocker_counts": Counter(),
-        "candidate_reason_code_counts": Counter(),
-        "scores": [],
-    })
+    candidate_source_breakdown: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {
+            "count": 0,
+            "decision_counts": Counter(),
+            "blocker_counts": Counter(),
+            "candidate_reason_code_counts": Counter(),
+            "scores": [],
+        }
+    )
     top_blocked_examples: list[dict[str, Any]] = []
     top_near_threshold_examples: list[dict[str, Any]] = []
     day_breakdown: list[dict[str, Any]] = []

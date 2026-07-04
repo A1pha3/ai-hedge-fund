@@ -130,9 +130,7 @@ def build_calibration_candidate_governance_blockers(
         blockers.append(f"best_candidate_{all_windows_zero_delta_issue}")
     elif all_windows_zero_delta:
         blockers.append("best_candidate_all_windows_zero_delta")
-    execution_eligible_positive_window_count, execution_eligible_positive_window_count_issue = _parse_required_int_evidence(
-        diagnostics, "execution_eligible_positive_window_count"
-    )
+    execution_eligible_positive_window_count, execution_eligible_positive_window_count_issue = _parse_required_int_evidence(diagnostics, "execution_eligible_positive_window_count")
     if execution_eligible_positive_window_count_issue:
         blockers.append(f"best_candidate_{execution_eligible_positive_window_count_issue}")
     elif execution_eligible_positive_window_count <= 0:
@@ -221,10 +219,7 @@ def render_calibration_markdown(payload: dict[str, Any]) -> str:
     for item in list(payload.get("ranked_candidates") or []):
         diagnostics = dict(item.get("diagnostics") or {})
         analysis = dict(item.get("analysis") or {})
-        lines.append(
-            f"- {item['candidate_name']}: execution_eligible_positive_window_count={diagnostics.get('execution_eligible_positive_window_count')}, "
-            f"variant_supports_t1_count={analysis.get('variant_supports_t1_count')}, mixed_count={analysis.get('mixed_count')}"
-        )
+        lines.append(f"- {item['candidate_name']}: execution_eligible_positive_window_count={diagnostics.get('execution_eligible_positive_window_count')}, " f"variant_supports_t1_count={analysis.get('variant_supports_t1_count')}, mixed_count={analysis.get('mixed_count')}")
     return "\n".join(lines).rstrip() + "\n"
 
 

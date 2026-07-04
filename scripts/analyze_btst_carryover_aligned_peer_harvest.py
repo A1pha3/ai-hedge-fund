@@ -63,12 +63,7 @@ def _classify_harvest_status(rows: list[dict[str, Any]]) -> str:
     next_day_rows = [row for row in rows if row.get("next_close_return") is not None]
     latest_trade_date = max(str(row.get("trade_date") or "") for row in rows) if rows else ""
 
-    if any(
-        float(row.get("t_plus_2_close_return") or 0.0) > 0
-        and float(row.get("next_close_return") or 0.0) > 0
-        and float(row.get("next_high_return") or 0.0) >= 0.02
-        for row in closed_cycle_rows
-    ):
+    if any(float(row.get("t_plus_2_close_return") or 0.0) > 0 and float(row.get("next_close_return") or 0.0) > 0 and float(row.get("next_high_return") or 0.0) >= 0.02 for row in closed_cycle_rows):
         return "promotion_review_ready"
     if closed_cycle_rows:
         return "closed_cycle_weak"
@@ -150,10 +145,7 @@ def _build_recommendation(entries: list[dict[str, Any]]) -> str:
     focus = entries[0]
     if str(focus.get("harvest_status") or "") == "promotion_review_ready":
         return f"{focus.get('ticker')} 已具备 closed-cycle 正兑现，应立刻进入 peer promotion review。"
-    return (
-        f"当前最值得盯的 aligned peer 是 {focus.get('ticker')}，status={focus.get('harvest_status')}。"
-        " 在它进入 T+2 closed-cycle 前，002001 仍然只能被视为单票证据。"
-    )
+    return f"当前最值得盯的 aligned peer 是 {focus.get('ticker')}，status={focus.get('harvest_status')}。" " 在它进入 T+2 closed-cycle 前，002001 仍然只能被视为单票证据。"
 
 
 def analyze_btst_carryover_aligned_peer_harvest(anchor_probe_path: str | Path) -> dict[str, Any]:
@@ -187,11 +179,7 @@ def render_btst_carryover_aligned_peer_harvest_markdown(analysis: dict[str, Any]
     lines.append("")
     lines.append("## Harvest Entries")
     for entry in list(analysis.get("harvest_entries") or []):
-        lines.append(
-            f"- {entry.get('ticker')}: status={entry.get('harvest_status')}, latest_trade_date={entry.get('latest_trade_date')}, "
-            f"latest_scope={entry.get('latest_scope')}, latest_score_target={entry.get('latest_score_target')}, "
-            f"next_day_available_count={entry.get('next_day_available_count')}, closed_cycle_count={entry.get('closed_cycle_count')}"
-        )
+        lines.append(f"- {entry.get('ticker')}: status={entry.get('harvest_status')}, latest_trade_date={entry.get('latest_trade_date')}, " f"latest_scope={entry.get('latest_scope')}, latest_score_target={entry.get('latest_score_target')}, " f"next_day_available_count={entry.get('next_day_available_count')}, closed_cycle_count={entry.get('closed_cycle_count')}")
         lines.append(f"  recommendation: {entry.get('recommendation')}")
     if not list(analysis.get("harvest_entries") or []):
         lines.append("- none")
