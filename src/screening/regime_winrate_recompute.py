@@ -18,7 +18,7 @@ daily scheduling 重算 + JSON artifact 写入, owner NS-5 前门每日自动刷
 - **纯函数 + loader 分离**: 重算逻辑无 I/O 副作用, loader 单独处理 JSON 读取.
   测试用合成 records + 合成 map 即可, 不需真实报告.
 - **bootstrap CI**: 每个 winrate 点估计附带 percentile bootstrap 置信区间
-  (默认 1000 重采样, 95%, seed=42), 本模块 ``_winrate_bootstrap_ci`` 自实现
+  (默认 2000 重采样, 95%, seed=42), 本模块 ``_winrate_bootstrap_ci`` 自实现
   (匹配 ``factor_attribution._bootstrap_inversion_ci`` 的 c317 模式). 幂等: 同 seed+同 input → 同输出.
 - **结构匹配**: 输出 dict 结构与 ``REGIME_HISTORICAL_WINRATES`` /
   ``REGIME_MULTIHORIZON_MEDIANS`` 一致, owner 可直接 copy-paste 替换.
@@ -262,7 +262,7 @@ def compute_regime_historical_winrates_from_records(
             result (insufficient). 默认 0 (无 gate, 让 owner 自决阈值).
         as_of: 重算时点. ``None`` → ``date.today()`` (生产路径).
             测试可注入固定日期以避免时间漂移.
-        n_bootstrap: bootstrap 重采样次数 (默认 1000).
+        n_bootstrap: bootstrap 重采样次数 (默认 2000).
         ci_level: 置信水平 (默认 0.95).
         bootstrap_seed: bootstrap PRNG seed (默认 42, 幂等).
 
