@@ -149,3 +149,34 @@ class TestRenderStabilityLine:
         result = render_stability_line(report)
         assert "50%" in result
         assert "波动" in result
+
+    def test_stamps_data_as_of_when_present(self) -> None:
+        """loop 82 (asymmetric-staleness drain): the stability footer reads
+        multi-day auto_screening_*.json history (stale-prone), but renders no
+        '数据时点' stamp while 9 sibling footer blocks do. On a frozen box the
+        operator sees '推荐稳定性: 近 5 日 Top 3 重叠率 80% (稳定)' with no
+        indication the 5 days are stale — the '稳定' green label directly
+        calibrates trust in system reliability.
+        """
+        report = RecommendationStabilityReport(
+            lookback_days=5,
+            top_n=3,
+            day_count=5,
+            stability_score=0.8,
+            label="稳定",
+            latest_report_date="20260630",
+        )
+        result = render_stability_line(report)
+        assert "推荐稳定性" in result
+        assert "数据时点 2026-06-30" in result, (
+            f"stability footer must stamp 数据时点 when latest_report_date is set, got: {result!r}"
+        )
+
+    def test_omits_stamp_when_no_data_as_of(self) -> None:
+        """No latest_report_date → no stamp (don't fabricate)."""
+        report = RecommendationStabilityReport(
+            lookback_days=5, top_n=3, day_count=5, stability_score=0.8, label="稳定"
+        )
+        result = render_stability_line(report)
+        assert "推荐稳定性" in result
+        assert "数据时点" not in result

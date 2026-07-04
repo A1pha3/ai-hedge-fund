@@ -2107,6 +2107,10 @@ def _print_data_quality_block(report_dir: Path) -> None:
         _date_str, recs = load_latest_recommendations(report_dir=report_dir)
         audits = audit_recommendations(recs)
         summary = summarize_data_quality(audits)
+        # loop 83: thread the loaded report date into the summary so the render
+        # can stamp 数据时点. _date_str was loaded then discarded (the `_` prefix);
+        # it's the freshest auto_screening report date, the right as_of anchor.
+        summary.latest_report_date = _date_str or None
     except Exception as exc:  # noqa: BLE001 — best-effort display; never break the front door  (c279: was silent return → observable)
         logger.warning("[top_picks] data_quality footer block failed (best-effort, skipped): %s", exc)
         return

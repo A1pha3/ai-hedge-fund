@@ -17,6 +17,7 @@ CLI: ``--top-picks`` footer 调用 ``render_stability_line(compute_recommendatio
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,9 @@ class RecommendationStabilityReport:
     #: 每对相邻日的 Jaccard 值（day_count-1 个）
     adjacent_overlaps: list[float] = field(default_factory=list)
     label: str = "数据不足"
+    #: loop 82 (asymmetric-staleness drain): YYYYMMDD, 最新一份报告的日期
+    #: (None → render 不 stamp, 不 fabricate)
+    latest_report_date: str | None = None
 
     @property
     def available(self) -> bool:
@@ -109,6 +113,11 @@ def compute_recommendation_stability(
         day_count=len(history),
     )
 
+    # loop 82: capture newest report date for the render stamp. history is
+    # sorted desc by date (load_auto_screening_history), so history[0] is newest.
+    if history:
+        report.latest_report_date = str(history[0].get("date", "") or "").replace("-", "") or None
+
     if len(history) < 2:
         return report  # stability_score=None, label="数据不足"
 
@@ -136,7 +145,13 @@ def compute_recommendation_stability(
 
 
 def render_stability_line(report: RecommendationStabilityReport) -> str:
-    """渲染一行稳定性摘要（数据不足时返回空串，不渲染）。"""
+    """渲染一行稳定性摘要（数据不足时返回空串，不渲染）。
+
+    loop 82 (asymmetric-staleness drain): 末尾追加 ``| 数据时点 YYYY-MM-DD``
+    mirroring the 9 sibling footer blocks. 稳定性读自多日 auto_screening_*.json
+    history (stale-prone); 无 stamp 时 operator 看不出 "稳定" 裁决是基于新鲜还是
+    过期数据 — 而 "稳定" 绿标直接校准对系统可靠性的信任。
+    """
     if not report.available:
         return ""
     pct = (report.stability_score or 0.0) * 100
@@ -146,7 +161,19 @@ def render_stability_line(report: RecommendationStabilityReport) -> str:
         color = Fore.YELLOW
     else:
         color = Fore.RED
-    return f"  {Fore.CYAN}📊 推荐稳定性:{Style.RESET_ALL} " f"近 {report.day_count} 日 Top {report.top_n} 重叠率 " f"{color}{pct:.0f}% ({report.label}){Style.RESET_ALL}  " f"(相邻日 Jaccard 均值)"
+    body = f"  {Fore.CYAN}📊 推荐稳定性:{Style.RESET_ALL} " f"近 {report.day_count} 日 Top {report.top_n} 重叠率 " f"{color}{pct:.0f}% ({report.label}){Style.RESET_ALL}  " f"(相邻日 Jaccard 均值)"
+    return body + _format_as_of_stamp(report.latest_report_date)
+
+
+def _format_as_of_stamp(latest_report_date: str | None) -> str:
+    """Render `` | 数据时点 YYYY-MM-DD`` from a YYYYMMDD string (None → "")."""
+    if not latest_report_date:
+        return ""
+    try:
+        iso = datetime.strptime(str(latest_report_date), "%Y%m%d").date().isoformat()
+        return f" {Fore.WHITE}| 数据时点 {iso}{Style.RESET_ALL}"
+    except ValueError:
+        return ""
 
 
 __all__ = [

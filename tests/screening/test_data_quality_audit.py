@@ -421,3 +421,29 @@ class TestRenderDataQualitySummary:
         from src.utils.display import Fore
 
         assert Fore.YELLOW in line or Fore.RED in line
+
+    def test_stamps_data_as_of_when_present(self) -> None:
+        """loop 83 (asymmetric-staleness drain): the data-quality footer reads
+        the latest auto_screening_*.json (stale-prone) but renders no 数据时点
+        stamp while 10 sibling footer blocks do. The date IS loaded by
+        load_latest_recommendations but discarded at the call site. A stale
+        '100% complete' green would falsely reassure the operator that today's
+        picks rest on complete data when the underlying report is days old.
+        """
+        rec = _make_rec("000001", {s: 1.0 for s in STRATEGY_ORDER})
+        audits = audit_recommendations([rec])
+        s = summarize_data_quality(audits)
+        s.latest_report_date = "20260630"
+        line = render_data_quality_summary(s)
+        assert "数据完整度" in line
+        assert "数据时点 2026-06-30" in line, (
+            f"data-quality footer must stamp 数据时点 when latest_report_date is set, got: {line!r}"
+        )
+
+    def test_omits_stamp_when_no_data_as_of(self) -> None:
+        """No latest_report_date → no stamp (don't fabricate)."""
+        rec = _make_rec("000001", {s: 1.0 for s in STRATEGY_ORDER})
+        audits = audit_recommendations([rec])
+        line = render_data_quality_summary(summarize_data_quality(audits))
+        assert "数据完整度" in line
+        assert "数据时点" not in line

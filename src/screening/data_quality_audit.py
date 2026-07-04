@@ -263,6 +263,8 @@ class DataQualitySummary:
     strategy_ready_count: int = 0
     #: 各策略平均完整度 ≥ 阈值即视为该策略「就绪」, 对应前门 "N/M 策略就绪"
     strategy_total: int = field(default_factory=lambda: len(STRATEGY_ORDER))
+    #: loop 83 (asymmetric-staleness drain): YYYYMMDD, 最新报告日期 (None → 不 stamp)
+    latest_report_date: str | None = None
 
 
 def summarize_data_quality(audits: list[dict[str, Any]], threshold: float = DEFAULT_QUALITY_THRESHOLD) -> DataQualitySummary:
@@ -303,6 +305,11 @@ def render_data_quality_summary(summary: DataQualitySummary) -> str:
     """渲染单行数据完整度摘要 (无数据 → 空串)。
 
     展示形如: ``  📊 数据完整度: 75%  (3/4 策略就绪)  ⚠ 1 只推荐基于部分数据``
+
+    loop 83 (asymmetric-staleness drain): 末尾追加 ``| 数据时点 YYYY-MM-DD``
+    mirroring the 10 sibling footer blocks. 完整度读自最新 auto_screening_*.json
+    (stale-prone); 无 stamp 时一个 stale 的 "100% complete" 绿标会虚假地让
+    operator 相信今日推荐基于完整数据。
     """
     if not summary.has_data:
         return ""
@@ -322,7 +329,19 @@ def render_data_quality_summary(summary: DataQualitySummary) -> str:
     parts = [f"  📊 数据完整度: {color}{avg:.0%}{Style.RESET_ALL}  ({ready}/{total} 策略就绪)"]
     if summary.low_quality_count > 0:
         parts.append(f"  {Fore.YELLOW}⚠ {summary.low_quality_count} 只推荐基于部分数据{Style.RESET_ALL}")
-    return " ".join(parts)
+    body = " ".join(parts)
+    return body + _format_as_of_stamp(summary.latest_report_date)
+
+
+def _format_as_of_stamp(latest_report_date: str | None) -> str:
+    """Render `` | 数据时点 YYYY-MM-DD`` from a YYYYMMDD string (None → "")."""
+    if not latest_report_date:
+        return ""
+    try:
+        iso = datetime.strptime(str(latest_report_date), "%Y%m%d").date().isoformat()
+        return f" {Fore.WHITE}| 数据时点 {iso}{Style.RESET_ALL}"
+    except ValueError:
+        return ""
 
 
 # ---------------------------------------------------------------------------
