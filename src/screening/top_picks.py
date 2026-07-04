@@ -338,12 +338,20 @@ def _classify_return_rhythm(expected_returns: dict | None) -> str:
     t5 = expected_returns.get("t5")
     t20 = expected_returns.get("t20")
     t30 = expected_returns.get("t30")
-    if not all(isinstance(x, (int, float)) and math.isfinite(x) for x in (t5, t20, t30)):
+    if t5 is None or t20 is None or t30 is None:
         return "—"
-    if t30 <= 0:
+    if not all(isinstance(x, (int, float)) for x in (t5, t20, t30)):
         return "—"
-    early_share = t5 / t30
-    late_share = (t30 - t20) / t30
+    # mypy: t5/t20/t30 are now known to be float by type narrowing
+    t5_val: float = t5  # type: ignore[assignment]
+    t20_val: float = t20
+    t30_val: float = t30
+    if not all(math.isfinite(x) for x in (t5_val, t20_val, t30_val)):
+        return "—"
+    if t30_val <= 0:
+        return "—"
+    early_share = t5_val / t30_val
+    late_share = (t30_val - t20_val) / t30_val
     if early_share >= 0.60:
         return "早"
     if late_share >= 0.40:
@@ -1509,7 +1517,7 @@ def _print_pick_entry(
     )
     from src.screening.horizon_conflict import render_horizon_conflict as _render_hc
 
-    hc = detect_horizon_conflict(item.get("expected_returns"))
+    hc = detect_horizon_conflict(item.get("expected_returns") or {})
     hc_line = _render_hc(hc)
     if hc_line:
         print(f"     {hc_line}")
