@@ -280,11 +280,7 @@ def _resolve_short_trade_snapshot_candidate_reason_codes(
     catalyst_freshness: float,
     trend_acceleration: float,
 ) -> tuple[list[str], bool]:
-    candidate_reason_codes = [
-        str(code)
-        for code in list(input_data.replay_context.get("candidate_reason_codes") or [])
-        if str(code or "").strip()
-    ]
+    candidate_reason_codes = [str(code) for code in list(input_data.replay_context.get("candidate_reason_codes") or []) if str(code or "").strip()]
     payoff_first_runner_recall_candidate = (
         bool(getattr(profile, "payoff_first_runner_recall_enabled", False))
         and str(input_data.replay_context.get("source") or "") == "watchlist_filter_diagnostics"

@@ -131,9 +131,7 @@ def _build_parallel_fallback_entry(
     current_route: ProviderRoute,
     route: ProviderRoute,
 ) -> dict[str, object]:
-    return route.to_execution_config(
-        status_message=f"{current_route.display_name} limited, switching to {_describe_provider_route(route)}"
-    )
+    return route.to_execution_config(status_message=f"{current_route.display_name} limited, switching to {_describe_provider_route(route)}")
 
 
 def _build_provider_slot_sequence(provider_limits: dict[str, int], base_model_provider: str) -> list[str]:
@@ -333,9 +331,7 @@ def _build_parallel_provider_configs(
         if secondary_provider_name == primary_provider_name:
             continue
         secondary_route = secondary_routes[0]
-        provider_configs[secondary_provider_name] = secondary_route.to_execution_config(
-            status_message=f"Switching to {_describe_provider_route(secondary_route)}"
-        )
+        provider_configs[secondary_provider_name] = secondary_route.to_execution_config(status_message=f"Switching to {_describe_provider_route(secondary_route)}")
 
     return provider_configs
 

@@ -187,12 +187,7 @@ def _apply_prior_payoff_asymmetry_to_support_score(base_support_score_100: float
     five_day_evaluable_count = _optional_float(historical_prior, "five_day_evaluable_count")
     five_day_hit_rate_at_15pct = _optional_float(historical_prior, "five_day_hit_rate_at_15pct")
     five_day_mean_max_future_high_return_2_5d = _optional_float(historical_prior, "five_day_mean_max_future_high_return_2_5d")
-    if (
-        five_day_evaluable_count is not None
-        and five_day_evaluable_count >= 8.0
-        and five_day_hit_rate_at_15pct is not None
-        and five_day_mean_max_future_high_return_2_5d is not None
-    ):
+    if five_day_evaluable_count is not None and five_day_evaluable_count >= 8.0 and five_day_hit_rate_at_15pct is not None and five_day_mean_max_future_high_return_2_5d is not None:
         if five_day_hit_rate_at_15pct < 0.25 and five_day_mean_max_future_high_return_2_5d < 0.10:
             penalty_points += 20.0
         elif five_day_hit_rate_at_15pct < 0.35 and five_day_mean_max_future_high_return_2_5d < 0.11:
@@ -201,15 +196,7 @@ def _apply_prior_payoff_asymmetry_to_support_score(base_support_score_100: float
     if penalty_points <= 0.0:
         return round(float(base_support_score_100 or 0.0), 4)
 
-    evidence_weight = clamp_unit_interval(
-        float(
-            historical_prior.get("evidence_weight")
-            or historical_prior.get("prior_evidence_weight")
-            or historical_prior.get("sample_reliability")
-            or min(1.0, (_optional_float(historical_prior, "evaluable_count") or 0.0) / 8.0)
-            or 0.0
-        )
-    )
+    evidence_weight = clamp_unit_interval(float(historical_prior.get("evidence_weight") or historical_prior.get("prior_evidence_weight") or historical_prior.get("sample_reliability") or min(1.0, (_optional_float(historical_prior, "evaluable_count") or 0.0) / 8.0) or 0.0))
     adjusted_score = float(base_support_score_100 or 0.0) - (penalty_points * (0.55 + (0.45 * evidence_weight)))
     return round(max(20.0, adjusted_score), 4)
 

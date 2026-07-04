@@ -115,11 +115,7 @@ def _resolve_btst_prior_quality_label(*, item: Any, selection_target: Any, short
 def _resolve_short_trade_historical_prior(short_trade_result: Any) -> dict[str, Any]:
     metrics_payload = dict(getattr(short_trade_result, "metrics_payload", {}) or {}) if short_trade_result is not None else {}
     explainability_payload = dict(getattr(short_trade_result, "explainability_payload", {}) or {}) if short_trade_result is not None else {}
-    return dict(
-        metrics_payload.get("historical_prior")
-        or explainability_payload.get("historical_prior")
-        or {}
-    )
+    return dict(metrics_payload.get("historical_prior") or explainability_payload.get("historical_prior") or {})
 
 
 def _resolve_btst_daily_limit_priority(*, item: Any, selection_target: Any, budget: dict[str, Any]) -> float:
@@ -424,10 +420,7 @@ def prepare_buy_order_execution_context(
 ) -> dict[str, Any]:
     cash = float(portfolio_snapshot.get("cash", 0.0))
     # Use market price per position when available; fall back to cost basis
-    nav = cash + sum(
-        float(position.get("long", 0)) * float(position.get("current_price") or position.get("last_price") or position.get("long_cost_basis", 0.0))
-        for position in portfolio_snapshot.get("positions", {}).values()
-    )
+    nav = cash + sum(float(position.get("long", 0)) * float(position.get("current_price") or position.get("last_price") or position.get("long_cost_basis", 0.0)) for position in portfolio_snapshot.get("positions", {}).values())
     nav = nav if nav > 0 else cash
     return {
         "cash": cash,

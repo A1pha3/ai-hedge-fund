@@ -33,13 +33,9 @@ def _resolve_brief_analysis(
         if resolved_input.is_file():
             payload = _load_json(resolved_input)
             if "selected_entries" not in payload or "near_miss_entries" not in payload:
-                return _invoke_analyze_brief(
-                    resolved_input, trade_date, next_trade_date
-                )
+                return _invoke_analyze_brief(resolved_input, trade_date, next_trade_date)
         else:
-            return _invoke_analyze_brief(
-                resolved_input, trade_date, next_trade_date
-            )
+            return _invoke_analyze_brief(resolved_input, trade_date, next_trade_date)
 
     if next_trade_date and not payload.get("next_trade_date"):
         payload["next_trade_date"] = _normalize_trade_date(next_trade_date)
@@ -47,15 +43,10 @@ def _resolve_brief_analysis(
     frontier_summary = dict(payload.get("catalyst_theme_frontier_summary") or {})
     frontier_priority = dict(payload.get("catalyst_theme_frontier_priority") or {})
     if not frontier_summary or not frontier_priority:
-        frontier_summary = frontier_summary or _load_catalyst_theme_frontier_summary_eb(
-            payload.get("report_dir")
-        )
-        frontier_priority = (
-            frontier_priority
-            or _build_catalyst_theme_frontier_priority_eb(
-                frontier_summary,
-                list(payload.get("catalyst_theme_shadow_entries") or []),
-            )
+        frontier_summary = frontier_summary or _load_catalyst_theme_frontier_summary_eb(payload.get("report_dir"))
+        frontier_priority = frontier_priority or _build_catalyst_theme_frontier_priority_eb(
+            frontier_summary,
+            list(payload.get("catalyst_theme_shadow_entries") or []),
         )
         payload["catalyst_theme_frontier_summary"] = frontier_summary
         payload["catalyst_theme_frontier_priority"] = frontier_priority
@@ -88,6 +79,4 @@ def _invoke_analyze_brief(
     # Lazy import to avoid circular dependency with btst_reporting.py
     from src.paper_trading.btst_reporting import analyze_btst_next_day_trade_brief
 
-    return analyze_btst_next_day_trade_brief(
-        resolved_input, trade_date=trade_date, next_trade_date=next_trade_date
-    )
+    return analyze_btst_next_day_trade_brief(resolved_input, trade_date=trade_date, next_trade_date=next_trade_date)

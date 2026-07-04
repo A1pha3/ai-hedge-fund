@@ -247,15 +247,17 @@ def huatai_adapter(
     writer.writerow(header)
 
     for o in orders:
-        writer.writerow([
-            o.ticker,
-            o.side,
-            f"{o.trigger_price:.2f}",
-            f"{o.entry_price:.2f}",
-            o.valid_until,
-            str(o.quantity),
-            o.trigger_condition,
-        ])
+        writer.writerow(
+            [
+                o.ticker,
+                o.side,
+                f"{o.trigger_price:.2f}",
+                f"{o.entry_price:.2f}",
+                o.valid_until,
+                str(o.quantity),
+                o.trigger_condition,
+            ]
+        )
 
     return buf.getvalue()
 
@@ -288,14 +290,16 @@ def gtja_adapter(
 
     for o in orders:
         side_code = 0 if o.side == "买入" else 1
-        writer.writerow([
-            o.ticker,
-            str(side_code),
-            f"{o.trigger_price:.2f}",
-            f"{o.entry_price:.2f}",
-            str(o.quantity),
-            o.valid_until,
-        ])
+        writer.writerow(
+            [
+                o.ticker,
+                str(side_code),
+                f"{o.trigger_price:.2f}",
+                f"{o.entry_price:.2f}",
+                str(o.quantity),
+                o.valid_until,
+            ]
+        )
 
     return buf.getvalue()
 
@@ -319,14 +323,16 @@ def ths_adapter(
     """
     items: list[dict[str, Any]] = []
     for o in orders:
-        items.append({
-            "code": o.ticker,
-            "direction": o.side,
-            "price": o.entry_price,
-            "triggerPrice": o.trigger_price,
-            "condition": o.trigger_condition,
-            "validDays": DEFAULT_VALID_DAYS,
-        })
+        items.append(
+            {
+                "code": o.ticker,
+                "direction": o.side,
+                "price": o.entry_price,
+                "triggerPrice": o.trigger_price,
+                "condition": o.trigger_condition,
+                "validDays": DEFAULT_VALID_DAYS,
+            }
+        )
     return json.dumps(items, ensure_ascii=False, indent=2)
 
 
@@ -366,17 +372,14 @@ def export_conditional_orders(
         ValueError: broker 不在支持列表中
     """
     if broker not in SUPPORTED_BROKERS:
-        raise ValueError(
-            f"不支持的券商: {broker!r}, 支持: {', '.join(SUPPORTED_BROKERS)}"
-        )
+        raise ValueError(f"不支持的券商: {broker!r}, 支持: {', '.join(SUPPORTED_BROKERS)}")
 
     # R151: 过滤降级 (数据不足) advice — 不导出为真实券商条件单 (见模块 logger 注释)。
     viable = [a for a in advices if not getattr(a, "degraded", False)]
     skipped = len(advices) - len(viable)
     if skipped > 0:
         logger.warning(
-            "conditional_order_export: 跳过 %d 条降级 (数据不足) advice, "
-            "仅导出 %d 条有效条件单 (降级 advice 自标 '建议仅作参考', 不应进入券商导入)",
+            "conditional_order_export: 跳过 %d 条降级 (数据不足) advice, " "仅导出 %d 条有效条件单 (降级 advice 自标 '建议仅作参考', 不应进入券商导入)",
             skipped,
             len(viable),
         )
@@ -391,9 +394,7 @@ def export_conditional_orders(
                 continue
         else:
             q = quantity
-        orders.append(
-            advice_to_broker_order(a, valid_days=valid_days, quantity=q, today=today)
-        )
+        orders.append(advice_to_broker_order(a, valid_days=valid_days, quantity=q, today=today))
 
     adapter = _ADAPTER_MAP[broker]
     return adapter(orders, broker_name=broker)
@@ -456,7 +457,11 @@ def export_from_dicts(
         advices.append(advice)
 
     return export_conditional_orders(
-        advices, broker, valid_days=valid_days, quantity=quantity, today=today,
+        advices,
+        broker,
+        valid_days=valid_days,
+        quantity=quantity,
+        today=today,
         quantity_map=quantity_map,
     )
 
@@ -532,10 +537,7 @@ def run_export_conditional_orders_cli(
     from colorama import Fore, Style
 
     if broker not in SUPPORTED_BROKERS:
-        print(
-            f"{Fore.RED}[Export] 不支持的券商: {broker!r}, "
-            f"支持: {', '.join(SUPPORTED_BROKERS)}{Style.RESET_ALL}"
-        )
+        print(f"{Fore.RED}[Export] 不支持的券商: {broker!r}, " f"支持: {', '.join(SUPPORTED_BROKERS)}{Style.RESET_ALL}")
         return 2
 
     # 1. 查找最新 auto_screening 报告
@@ -543,10 +545,7 @@ def run_export_conditional_orders_cli(
     pattern = f"{reports_dir}/auto_screening_*.json"
     files = sorted(glob.glob(pattern))
     if not files:
-        print(
-            f"{Fore.YELLOW}[Export] 未找到 auto_screening 报告, "
-            f"请先运行 --conditional-orders 或 --auto{Style.RESET_ALL}"
-        )
+        print(f"{Fore.YELLOW}[Export] 未找到 auto_screening 报告, " f"请先运行 --conditional-orders 或 --auto{Style.RESET_ALL}")
         return 1
 
     latest_file = files[-1]
@@ -574,10 +573,7 @@ def run_export_conditional_orders_cli(
             conditional_orders = attach_conditional_orders_to_payload(payload, top_n=20)
 
     if not conditional_orders:
-        print(
-            f"{Fore.YELLOW}[Export] 报告中无条件单数据, "
-            f"请先运行 --conditional-orders 或 --auto{Style.RESET_ALL}"
-        )
+        print(f"{Fore.YELLOW}[Export] 报告中无条件单数据, " f"请先运行 --conditional-orders 或 --auto{Style.RESET_ALL}")
         return 1
 
     # 4. 导出
@@ -602,23 +598,25 @@ def run_export_conditional_orders_cli(
                 low = float(d.get("suggested_buy_zone_low", 0.0) or 0.0)
                 high = float(d.get("suggested_buy_zone_high", 0.0) or 0.0)
                 zone_tuple = (low, high)
-            advice_objs.append(ConditionalOrderAdvice(
-                ticker=str(d.get("ticker", "")),
-                name=str(d.get("name", "")),
-                current_price=float(d.get("current_price") or 0.0),
-                atr=float(d.get("atr") or 0.0),
-                suggested_buy_zone=zone_tuple,
-                suggested_stop_loss=float(d.get("suggested_stop_loss") or 0.0),
-                suggested_take_profit=float(d.get("suggested_take_profit") or 0.0),
-                confidence=float(d.get("confidence") or 0.0),
-                reasoning=str(d.get("reasoning", "")),
-                historical_hit_rate=float(d.get("historical_hit_rate") or 0.0),
-                risk_reward_ratio=float(d.get("risk_reward_ratio") or 0.0),
-                n_sessions=int(d.get("n_sessions") or 0),
-                degraded=False,
-                atr_period=int(d.get("atr_period") or 14),
-                params=d.get("params") or {},
-            ))
+            advice_objs.append(
+                ConditionalOrderAdvice(
+                    ticker=str(d.get("ticker", "")),
+                    name=str(d.get("name", "")),
+                    current_price=float(d.get("current_price") or 0.0),
+                    atr=float(d.get("atr") or 0.0),
+                    suggested_buy_zone=zone_tuple,
+                    suggested_stop_loss=float(d.get("suggested_stop_loss") or 0.0),
+                    suggested_take_profit=float(d.get("suggested_take_profit") or 0.0),
+                    confidence=float(d.get("confidence") or 0.0),
+                    reasoning=str(d.get("reasoning", "")),
+                    historical_hit_rate=float(d.get("historical_hit_rate") or 0.0),
+                    risk_reward_ratio=float(d.get("risk_reward_ratio") or 0.0),
+                    n_sessions=int(d.get("n_sessions") or 0),
+                    degraded=False,
+                    atr_period=int(d.get("atr_period") or 14),
+                    params=d.get("params") or {},
+                )
+            )
         quantity_map = compute_equal_weight_quantities(advice_objs, nav=nav)
 
     content = export_from_dicts(conditional_orders, broker, quantity_map=quantity_map)
@@ -633,9 +631,7 @@ def run_export_conditional_orders_cli(
     print(f"\n{Fore.CYAN}{Style.BRIGHT}{'=' * 60}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}{Style.BRIGHT}[P1-13] 条件单导出 · {broker.upper()}{Style.RESET_ALL}")
     print(f"  来源: {latest_file}")
-    print(f"  数量: {viable_count} 条有效" + (
-        f" (跳过 {degraded_count} 条降级建议 — 数据不足, 不导出)" if degraded_count else ""
-    ))
+    print(f"  数量: {viable_count} 条有效" + (f" (跳过 {degraded_count} 条降级建议 — 数据不足, 不导出)" if degraded_count else ""))
     print(f"  输出: {output_path}")
     print(f"{Fore.CYAN}{Style.BRIGHT}{'=' * 60}{Style.RESET_ALL}\n")
 

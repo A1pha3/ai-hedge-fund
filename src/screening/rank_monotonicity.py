@@ -28,6 +28,7 @@ C222 (2026-06-28 horizon 一致性): 所有计算函数已参数化 ``horizon_fi
 数据流: load_tracking_history → records (recommendation_score + next_Nday_return);
 load_auto_screening_history → {date → state_type} (per-state_type 细分).
 """
+
 from __future__ import annotations
 
 import math
@@ -228,9 +229,7 @@ def compute_rank_monotonicity(
     search_dir = reports_dir or resolve_report_dir()
     history = load_auto_screening_history(lookback_days=lookback_days, report_dir=search_dir)
     records = load_tracking_history(search_dir)
-    return compute_rank_monotonicity_from_loaded(
-        history, records, min_n=min_n, horizon_field=horizon_field
-    )
+    return compute_rank_monotonicity_from_loaded(history, records, min_n=min_n, horizon_field=horizon_field)
 
 
 # ---------------------------------------------------------------------------
@@ -250,31 +249,18 @@ def render_monotonicity_line(report: RankMonotonicityReport) -> str:
     if report.overall_verdict == "insufficient" or not report.overall_buckets:
         return ""
 
-    parts = [
-        f"{_BUCKET_LABEL.get(b.bucket, b.bucket)}{b.win_rate:.0%}"
-        for b in report.overall_buckets
-        if b.win_rate is not None
-    ]
+    parts = [f"{_BUCKET_LABEL.get(b.bucket, b.bucket)}{b.win_rate:.0%}" for b in report.overall_buckets if b.win_rate is not None]
     if len(parts) < 2:
         return ""
     shape = " → ".join(parts)
     hlabel = f"({report.horizon_label})" if report.horizon_label else ""
 
     if report.overall_verdict == "inverted":
-        return (
-            f"  {Fore.RED}⚠ 排序单调性 {hlabel}: {shape} 倒挂{Style.RESET_ALL}"
-            f" {Fore.RED}(高分票胜率反而更低 — 模型打分质量待改进){Style.RESET_ALL}"
-        )
+        return f"  {Fore.RED}⚠ 排序单调性 {hlabel}: {shape} 倒挂{Style.RESET_ALL}" f" {Fore.RED}(高分票胜率反而更低 — 模型打分质量待改进){Style.RESET_ALL}"
     if report.overall_verdict == "monotonic":
-        return (
-            f"  {Fore.GREEN}✓ 排序单调性 {hlabel}: {shape}{Style.RESET_ALL}"
-            f" {Fore.GREEN}(高分→高胜率){Style.RESET_ALL}"
-        )
+        return f"  {Fore.GREEN}✓ 排序单调性 {hlabel}: {shape}{Style.RESET_ALL}" f" {Fore.GREEN}(高分→高胜率){Style.RESET_ALL}"
     # non_monotonic
-    return (
-        f"  {Fore.YELLOW}⚠ 排序单调性 {hlabel}: {shape} 非单调{Style.RESET_ALL}"
-        f" {Fore.YELLOW}(部分 bucket 倒挂 — 模型打分质量不稳定){Style.RESET_ALL}"
-    )
+    return f"  {Fore.YELLOW}⚠ 排序单调性 {hlabel}: {shape} 非单调{Style.RESET_ALL}" f" {Fore.YELLOW}(部分 bucket 倒挂 — 模型打分质量不稳定){Style.RESET_ALL}"
 
 
 def render_per_state_type_monotonicity_line(report: RankMonotonicityReport) -> str:
@@ -404,9 +390,7 @@ def render_period_breakdown_line(periods: list[PeriodBreakdown]) -> str:
         if p.verdict == "insufficient" or len(p.winrates) < 2:
             return f"{p.label} 样本不足"
         shape = "→".join(f"{w:.0%}" for w in p.winrates)
-        tag = {"inverted": "倒挂⚠", "monotonic": "单调✓", "non_monotonic": "非单调⚠"}.get(
-            p.verdict, p.verdict
-        )
+        tag = {"inverted": "倒挂⚠", "monotonic": "单调✓", "non_monotonic": "非单调⚠"}.get(p.verdict, p.verdict)
         return f"{p.label} {tag} ({shape})"
 
     parts = [_seg(p) for p in periods]
@@ -589,9 +573,7 @@ def compute_high_vs_low_significance_from_loaded(
     kh = sum(1 for x in high_returns if x > 0)
     result = _two_proportion_z(kl, nl, kh, nh)
     if result is None:
-        return SignificanceResult(
-            low_winrate=kl / nl, low_n=nl, high_winrate=kh / nh, high_n=nh, verdict_note="insufficient"
-        )
+        return SignificanceResult(low_winrate=kl / nl, low_n=nl, high_winrate=kh / nh, high_n=nh, verdict_note="insufficient")
     z, p = result
     if p < 0.05:
         note = "significant"
@@ -640,9 +622,7 @@ def render_significance_line(result: SignificanceResult) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _required_sample_size(
-    p1: float, p2: float, *, z_alpha: float = 1.96, z_power: float = 0.84
-) -> int | None:
+def _required_sample_size(p1: float, p2: float, *, z_alpha: float = 1.96, z_power: float = 0.84) -> int | None:
     """检测 p1 vs p2 差异 (two-proportion, 80% power, alpha=0.05) 每组需 n.
 
     z_alpha=1.96 (two-tailed 0.05), z_power=0.84 (80% power) 默认.
@@ -702,9 +682,7 @@ def compute_power_analysis_from_loaded(
     high_p = sum(1 for x in high_returns if x > 0) / nh
     required = _required_sample_size(low_p, high_p)
     if required is None:
-        return PowerAnalysisResult(
-            low_p=low_p, high_p=high_p, gap_pp=0.0, current_high_n=nh, verdict="no_data"
-        )
+        return PowerAnalysisResult(low_p=low_p, high_p=high_p, gap_pp=0.0, current_high_n=nh, verdict="no_data")
     sufficiency = nh / required * 100.0
     verdict = "sufficient" if nh >= required else "insufficient_samples"
     return PowerAnalysisResult(

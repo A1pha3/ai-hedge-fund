@@ -549,9 +549,7 @@ def _update_tracking_history_locked(
             composite_score=_optional_float(rec.get("composite_score")),
             win_rates=_wr if isinstance(_wr, dict) else None,
             expected_returns=_er if isinstance(_er, dict) else None,
-            bucket_sample_count=int(_bsc)
-            if isinstance(_bsc, (int, float)) and not isinstance(_bsc, bool)
-            else None,
+            bucket_sample_count=int(_bsc) if isinstance(_bsc, (int, float)) and not isinstance(_bsc, bool) else None,
         )
         history_index[key] = record.to_dict()
         updated_count += 1
@@ -820,10 +818,7 @@ def render_tracking_summary(
     for day in DEFAULT_HORIZONS:
         tracked = summary[f"tracked_count_day{day}"]
         if tracked > 0:
-            lines.append(
-                f"  T+{day} 胜率: {_fmt_pct(summary[f'win_rate_day{day}'])} "
-                f"({summary[f'win_count_day{day}']}/{tracked})"
-            )
+            lines.append(f"  T+{day} 胜率: {_fmt_pct(summary[f'win_rate_day{day}'])} " f"({summary[f'win_count_day{day}']}/{tracked})")
         else:
             lines.append(f"  T+{day} 胜率: 数据尚未到期")
     for day in DEFAULT_HORIZONS:

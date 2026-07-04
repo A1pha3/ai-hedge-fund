@@ -34,12 +34,7 @@ def _score_fisher_rnd_intensity(financial_line_items: list) -> tuple[int, str]:
     # len(rnd)==len(rev) guard could not detect complementary-missing data
     # (item0 had revenue no R&D, item1 had R&D no revenue -> equal-length lists
     # but rnd[0]=item1.R&D over rev[0]=item0.revenue, a cross-period mismatch).
-    paired = [
-        (fi.research_and_development, fi.revenue)
-        for fi in financial_line_items
-        if getattr(fi, "research_and_development", None) is not None
-        and getattr(fi, "revenue", None) is not None
-    ]
+    paired = [(fi.research_and_development, fi.revenue) for fi in financial_line_items if getattr(fi, "research_and_development", None) is not None and getattr(fi, "revenue", None) is not None]
     if not paired:
         return 0, "Insufficient R&D data to evaluate"
 

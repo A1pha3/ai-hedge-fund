@@ -270,9 +270,7 @@ def download_model(model_name: str) -> bool:
 
 def _should_use_remote_ollama_workflow(ollama_url: str) -> bool:
     env_override = os.environ.get("OLLAMA_BASE_URL")
-    env_override_is_remote = bool(env_override) and (
-        env_override.startswith(("http://ollama:", "http://host.docker.internal:"))
-    )
+    env_override_is_remote = bool(env_override) and (env_override.startswith(("http://ollama:", "http://host.docker.internal:")))
     return env_override_is_remote or ollama_url.startswith(("http://ollama:", "http://host.docker.internal:"))
 
 

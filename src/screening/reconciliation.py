@@ -293,9 +293,7 @@ def compute_reconciliation(
         # R-7: median-based prediction (robust center). Computed even when mean is
         # available, so both centers surface per row; matched/MAE keyed on mean
         # (preserves existing contract — median is a parallel diagnostic).
-        predicted_median = (
-            _predicted_t30_median(score_b, calibration) if score_b is not None else None
-        )
+        predicted_median = _predicted_t30_median(score_b, calibration) if score_b is not None else None
         # NS-18/c286: 确定 unmatched 原因 (predicted is None 的两种情况).
         # score_b is None → buy_date 报告无该标的; score_b 有但 predicted None →
         # 该 score_b 分桶在 calibration 里 0 mature 样本 (dogfood 20260702: 600000
@@ -324,10 +322,13 @@ def compute_reconciliation(
                 directional_hits += 1
             rows.append(
                 ReconciliationRow(
-                    ticker=ticker, buy_date=buy_date,
-                    predicted_return=predicted, predicted_return_median=predicted_median,
+                    ticker=ticker,
+                    buy_date=buy_date,
+                    predicted_return=predicted,
+                    predicted_return_median=predicted_median,
                     actual_return=actual,
-                    error=error, directional_match=dmatch,
+                    error=error,
+                    directional_match=dmatch,
                 )
             )
             # collect pair for isotonic fit (predicted → actual)
@@ -336,10 +337,13 @@ def compute_reconciliation(
             unmatched += 1
             rows.append(
                 ReconciliationRow(
-                    ticker=ticker, buy_date=buy_date,
-                    predicted_return=None, predicted_return_median=predicted_median,
+                    ticker=ticker,
+                    buy_date=buy_date,
+                    predicted_return=None,
+                    predicted_return_median=predicted_median,
                     actual_return=actual,
-                    error=None, directional_match=None,
+                    error=None,
+                    directional_match=None,
                     unmatched_reason=_unmatched_reason,
                 )
             )
@@ -376,16 +380,10 @@ def compute_reconciliation(
     warnings: list[str] = []
     total = matched + unmatched
     if total >= 4 and unmatched / total > 0.5:
-        warnings.append(
-            f"未匹配率 {unmatched}/{total} > 50% — 检查 trade_log 列对齐 (broker 导出前导列)、"
-            "buy_date 与报告日期对齐、reports_dir 是否正确; 高未匹配率下的 MAE/方向准确率不可信"
-        )
+        warnings.append(f"未匹配率 {unmatched}/{total} > 50% — 检查 trade_log 列对齐 (broker 导出前导列)、" "buy_date 与报告日期对齐、reports_dir 是否正确; 高未匹配率下的 MAE/方向准确率不可信")
     # R-5.C #4: 诚实标注 — matched < 20 → isotonic 不可信, 明确告知用户
     if not calibration_sufficient:
-        warnings.append(
-            f"匹配交易 {matched} < {MIN_BUCKET_SAMPLES} — 证据不足, isotonic 校准未执行; "
-            f"收集更多交易后再比较 MAE(保序). 当前 MAE/MAE(中位) 仅供参考, 样本量小不可定论"
-        )
+        warnings.append(f"匹配交易 {matched} < {MIN_BUCKET_SAMPLES} — 证据不足, isotonic 校准未执行; " f"收集更多交易后再比较 MAE(保序). 当前 MAE/MAE(中位) 仅供参考, 样本量小不可定论")
 
     return ReconciliationReport(
         rows=rows,
@@ -411,9 +409,7 @@ def render_reconciliation(report: ReconciliationReport) -> str:
         return f"\n{Fore.CYAN}🧾 实盘对账 (预测 vs 实际){Style.RESET_ALL}\n  无交易日志数据\n"
 
     lines = [f"\n{Fore.CYAN}🧾 实盘对账 (预测 vs 实际){Style.RESET_ALL}", ""]
-    lines.append(
-        f"  {'标的':<8} {'买入日':<10} {'预测T+30':>9} {'中位T+30':>9} {'实际':>9} {'误差':>9}  {'方向':>5}"
-    )
+    lines.append(f"  {'标的':<8} {'买入日':<10} {'预测T+30':>9} {'中位T+30':>9} {'实际':>9} {'误差':>9}  {'方向':>5}")
     lines.append(f"  {'─' * 8} {'─' * 10} {'─' * 9} {'─' * 9} {'─' * 9} {'─' * 9}  {'─' * 5}")
 
     for row in report.rows:
@@ -440,9 +436,7 @@ def render_reconciliation(report: ReconciliationReport) -> str:
         reason_str = ""
         if row.predicted_return is None and row.unmatched_reason:
             reason_str = f"  {Fore.YELLOW}({row.unmatched_reason}){Style.RESET_ALL}"
-        lines.append(
-            f"  {row.ticker:<8} {row.buy_date:<10} {pred:>9} {pred_med:>9} {act:>9} {err:>9}  {dstr:>5}{reason_str}"
-        )
+        lines.append(f"  {row.ticker:<8} {row.buy_date:<10} {pred:>9} {pred_med:>9} {act:>9} {err:>9}  {dstr:>5}{reason_str}")
 
     lines.append("")
     if report.matched_count:
@@ -458,27 +452,15 @@ def render_reconciliation(report: ReconciliationReport) -> str:
         # R-7 + R-5.C: 三中心 MAE 并列 — mean / median / isotonic.
         # mean: 现有 baseline; median: 抗 outlier; isotonic: 单调校准后.
         # 用户可自行比较哪个 MAE 最低, 即为该数据集上最佳预测中心.
-        lines.append(
-            f"  {Fore.CYAN}聚合:{Style.RESET_ALL} 对账 {report.matched_count} 笔"
-            f" (未匹配 {report.unmatched_count})  |  MAE={mae_str}  |  MAE(中位)={mae_median_str}"
-            f"  |  MAE(保序)={mae_iso_str}  |  方向准确率={da_str}"
-        )
+        lines.append(f"  {Fore.CYAN}聚合:{Style.RESET_ALL} 对账 {report.matched_count} 笔" f" (未匹配 {report.unmatched_count})  |  MAE={mae_str}  |  MAE(中位)={mae_median_str}" f"  |  MAE(保序)={mae_iso_str}  |  方向准确率={da_str}")
     else:
-        lines.append(
-            f"  {Fore.YELLOW}无匹配交易 (买入日报告未含日志中的标的){Style.RESET_ALL}"
-        )
+        lines.append(f"  {Fore.YELLOW}无匹配交易 (买入日报告未含日志中的标的){Style.RESET_ALL}")
 
     # R-5.C #4: 把"证据不足"警告以显著方式再次展示 (除了 warnings 列表, 聚合行也提示)
     if not report.calibration_sufficient and report.matched_count > 0:
-        lines.append(
-            f"  {Fore.YELLOW}⚠ isotonic 校准未执行: 匹配交易 {report.matched_count} < "
-            f"{MIN_BUCKET_SAMPLES} 笔, 证据不足. 收集更多交易后再比较 MAE(保序).{Style.RESET_ALL}"
-        )
+        lines.append(f"  {Fore.YELLOW}⚠ isotonic 校准未执行: 匹配交易 {report.matched_count} < " f"{MIN_BUCKET_SAMPLES} 笔, 证据不足. 收集更多交易后再比较 MAE(保序).{Style.RESET_ALL}")
 
-    lines.append(
-        f"  {Fore.WHITE}⚠ 预测侧用当前 calibration (v1 假设); 实际 = sell/buy-1。"
-        f"仅供研究, 不构成投资建议。{Style.RESET_ALL}"
-    )
+    lines.append(f"  {Fore.WHITE}⚠ 预测侧用当前 calibration (v1 假设); 实际 = sell/buy-1。" f"仅供研究, 不构成投资建议。{Style.RESET_ALL}")
     return "\n".join(lines)
 
 

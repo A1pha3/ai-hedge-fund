@@ -18,6 +18,7 @@ Two pure, testable helpers prevent recurrence:
   impossible), delegating the real work to a ``/bin/bash -c`` inline that ``cd``'s
   into the repo at runtime.
 """
+
 from __future__ import annotations
 
 import logging
@@ -71,10 +72,7 @@ def check_flywheel_health(
             "stale": True,
             "days_since_last_write": None,
             "latest_record_date": latest_record_date,
-            "message": (
-                "tracking_history 缺失 — 数据飞轮从未运行或被删除。"
-                "检查 daily_auto launchd job 状态。"
-            ),
+            "message": ("tracking_history 缺失 — 数据飞轮从未运行或被删除。" "检查 daily_auto launchd job 状态。"),
         }
     days = max(0.0, (now - tracking_history_mtime) / 86400.0)
     if days >= critical_days:
@@ -87,15 +85,9 @@ def check_flywheel_health(
     if status == "healthy":
         msg = f"数据飞轮健康 — {days:.1f} 天前更新{date_part}。"
     elif status == "stale":
-        msg = (
-            f"⚠ 数据飞轮停滞 — {days:.1f} 天未更新 (>= {stale_days:.0f} 天阈值){date_part}。"
-            "launchd daily-auto job 可能未触发。"
-        )
+        msg = f"⚠ 数据飞轮停滞 — {days:.1f} 天未更新 (>= {stale_days:.0f} 天阈值){date_part}。" "launchd daily-auto job 可能未触发。"
     else:
-        msg = (
-            f"🔴 数据飞轮已停 — {days:.1f} 天未更新 (>= {critical_days:.0f} 天){date_part}。"
-            "校准/对账数据源已断，需立即修复 launchd job。"
-        )
+        msg = f"🔴 数据飞轮已停 — {days:.1f} 天未更新 (>= {critical_days:.0f} 天){date_part}。" "校准/对账数据源已断，需立即修复 launchd job。"
     return {
         "status": status,
         "stale": status != "healthy",
@@ -126,10 +118,7 @@ def build_launchd_invocation(repo_path: str) -> dict:
     """
     repo = str(Path(repo_path).resolve())
     script = f"{repo}/scripts/run_daily_auto.sh"
-    body = (
-        f"cd {repo} && "
-        f"exec {script} --top-n 10"
-    )
+    body = f"cd {repo} && " f"exec {script} --top-n 10"
     home = str(Path.home())
     log_dir = f"{home}/Library/Logs/ai-hedge-fund"
     return {

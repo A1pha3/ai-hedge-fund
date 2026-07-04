@@ -228,10 +228,7 @@ def _build_provisional_ranking(
             provisional_ranking.append((_provisional_score(light_signals), candidate))
     else:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_candidate = {
-                executor.submit(_compute_light_signals, candidate, trade_date): candidate
-                for candidate in technical_candidates
-            }
+            future_to_candidate = {executor.submit(_compute_light_signals, candidate, trade_date): candidate for candidate in technical_candidates}
             for future in concurrent.futures.as_completed(future_to_candidate):
                 candidate = future_to_candidate[future]
                 try:
@@ -248,9 +245,7 @@ def _build_provisional_ranking(
     return _append_unranked_candidates_to_provisional_ranking(provisional_ranking, candidates)
 
 
-def _append_unranked_candidates_to_provisional_ranking(
-    provisional_ranking: list[tuple[float, CandidateStock]], candidates: list[CandidateStock]
-) -> list[tuple[float, CandidateStock]]:
+def _append_unranked_candidates_to_provisional_ranking(provisional_ranking: list[tuple[float, CandidateStock]], candidates: list[CandidateStock]) -> list[tuple[float, CandidateStock]]:
     ranked_tickers = {ranked_candidate.ticker for _, ranked_candidate in provisional_ranking}
     for candidate in candidates:
         if candidate.ticker in ranked_tickers:
@@ -355,11 +350,7 @@ def _select_fundamental_candidates(
     ranked_candidates: list[tuple[float, CandidateStock]],
     results: dict[str, dict[str, StrategySignal]],
 ) -> list[CandidateStock]:
-    return [
-        candidate
-        for score, candidate in ranked_candidates
-        if _is_heavy_score_eligible(score, results.get(candidate.ticker, {}))
-    ][:FUNDAMENTAL_SCORE_MAX_CANDIDATES]
+    return [candidate for score, candidate in ranked_candidates if _is_heavy_score_eligible(score, results.get(candidate.ticker, {}))][:FUNDAMENTAL_SCORE_MAX_CANDIDATES]
 
 
 def _is_heavy_score_eligible(score: float, signals: dict[str, StrategySignal]) -> bool:
@@ -384,7 +375,10 @@ def _populate_heavy_signals(
     if max_workers <= 1:
         for candidate in fundamental_candidates:
             results[candidate.ticker]["fundamental"] = score_fundamental_strategy(
-                candidate.ticker, trade_date, candidate.industry_sw, industry_pe_medians,
+                candidate.ticker,
+                trade_date,
+                candidate.industry_sw,
+                industry_pe_medians,
             )
         for candidate in _select_event_sentiment_candidates(fundamental_candidates):
             results[candidate.ticker]["event_sentiment"] = score_event_sentiment_strategy(candidate.ticker, trade_date)
@@ -394,16 +388,16 @@ def _populate_heavy_signals(
             fundamental_futures = {
                 executor.submit(
                     score_fundamental_strategy,
-                    candidate.ticker, trade_date, candidate.industry_sw, industry_pe_medians,
+                    candidate.ticker,
+                    trade_date,
+                    candidate.industry_sw,
+                    industry_pe_medians,
                 ): candidate
                 for candidate in fundamental_candidates
             }
             # Submit event_sentiment scoring tasks for eligible candidates
             event_candidates = _select_event_sentiment_candidates(fundamental_candidates)
-            event_futures = {
-                executor.submit(score_event_sentiment_strategy, candidate.ticker, trade_date): candidate
-                for candidate in event_candidates
-            }
+            event_futures = {executor.submit(score_event_sentiment_strategy, candidate.ticker, trade_date): candidate for candidate in event_candidates}
             # Collect fundamental results
             for future in concurrent.futures.as_completed(fundamental_futures):
                 candidate = fundamental_futures[future]
@@ -449,10 +443,7 @@ def _populate_intraday_short_trade_metrics(
             _merge_metrics_into_trend_momentum(trend_signal, intraday_metrics)
     else:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_pair = {
-                executor.submit(_build_intraday_short_trade_metrics, candidate.ticker, trade_date): (candidate, trend_signal)
-                for candidate, trend_signal in eligible
-            }
+            future_to_pair = {executor.submit(_build_intraday_short_trade_metrics, candidate.ticker, trade_date): (candidate, trend_signal) for candidate, trend_signal in eligible}
             for future in concurrent.futures.as_completed(future_to_pair):
                 _candidate, trend_signal = future_to_pair[future]
                 try:
@@ -474,11 +465,7 @@ def _populate_dragon_tiger_bonus_metrics(
     candidates: list[CandidateStock],
     trade_date: str,
 ) -> None:
-    candidates_with_momentum = [
-        candidate
-        for candidate in candidates
-        if _trend_signal_has_momentum_payload(results.get(candidate.ticker, {}).get("trend"))
-    ]
+    candidates_with_momentum = [candidate for candidate in candidates if _trend_signal_has_momentum_payload(results.get(candidate.ticker, {}).get("trend"))]
     if not candidates_with_momentum:
         return
     bonus_map = _build_dragon_tiger_bonus_map([candidate.ticker for candidate in candidates_with_momentum], trade_date)

@@ -171,11 +171,7 @@ def _compute_industry_rank(
     if not industry:
         return None, None
 
-    peers = [
-        (r.get("ticker", ""), _safe_float(r.get("score_b"), 0.0) or 0.0)
-        for r in recommendations
-        if isinstance(r, dict) and r.get("industry_sw") == industry
-    ]
+    peers = [(r.get("ticker", ""), _safe_float(r.get("score_b"), 0.0) or 0.0) for r in recommendations if isinstance(r, dict) and r.get("industry_sw") == industry]
     if not peers:
         return None, None
 

@@ -163,10 +163,7 @@ def resolve_btst_shadow_promotion_payload(*, evaluation: Any, short_trade_result
         historical_prior.get("score_target"),
     )
     has_catalyst_support = bool(positive_tags & _BTST_RELIEF_CATALYST_SUPPORT_TAGS)
-    has_carryover_support = (
-        str(upstream_shadow_catalyst_relief.get("reason") or short_trade_catalyst_relief.get("reason") or "").strip().lower() == "catalyst_theme_short_trade_carryover"
-        and ("catalyst_theme_short_trade_carryover_candidate" in candidate_reason_codes or "catalyst_theme_short_trade_carryover_applied" in positive_tags)
-    )
+    has_carryover_support = str(upstream_shadow_catalyst_relief.get("reason") or short_trade_catalyst_relief.get("reason") or "").strip().lower() == "catalyst_theme_short_trade_carryover" and ("catalyst_theme_short_trade_carryover_candidate" in candidate_reason_codes or "catalyst_theme_short_trade_carryover_applied" in positive_tags)
     relief_context_supported = has_catalyst_support or has_carryover_support
     five_day_quality_signal = resolve_btst_shadow_five_day_quality_signal(historical_prior=historical_prior)
 
@@ -183,16 +180,7 @@ def resolve_btst_shadow_promotion_payload(*, evaluation: Any, short_trade_result
         and (next_high_hit_rate or 0.0) >= float(gate_rule.get("min_next_high_hit_rate") or 0.0)
         and not bool(_read_field(evaluation, "p3_execution_blocked"))
     )
-    carryover_relief_eligible = (
-        bool(gate_rule)
-        and decision == "selected"
-        and candidate_source not in {"research_only", "upgrade_only"}
-        and (score_target or 0.0) >= _BTST_RELIEF_MIN_SCORE_TARGET
-        and preferred_entry_mode == "confirm_then_hold_breakout"
-        and not bool(_read_field(evaluation, "p3_execution_blocked"))
-        and bool(upstream_shadow_catalyst_relief.get("applied"))
-        and has_carryover_support
-    )
+    carryover_relief_eligible = bool(gate_rule) and decision == "selected" and candidate_source not in {"research_only", "upgrade_only"} and (score_target or 0.0) >= _BTST_RELIEF_MIN_SCORE_TARGET and preferred_entry_mode == "confirm_then_hold_breakout" and not bool(_read_field(evaluation, "p3_execution_blocked")) and bool(upstream_shadow_catalyst_relief.get("applied")) and has_carryover_support
     eligible = close_continuation_eligible or carryover_relief_eligible
     relief_reason = ""
     if close_continuation_eligible:

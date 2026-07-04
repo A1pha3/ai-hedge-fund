@@ -65,9 +65,7 @@ def _selected_action_posture(preferred_entry_mode: str | None) -> tuple[str, lis
     )
 
 
-def _selected_holding_contract_note(
-    preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None
-) -> str | None:
+def _selected_holding_contract_note(preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None) -> str | None:
     prior = dict(historical_prior or {})
     if preferred_entry_mode != "confirm_then_hold_breakout":
         return None
@@ -78,9 +76,7 @@ def _selected_holding_contract_note(
     return "默认按 BTST T+2 bias 管理，不把 T+3 连续走强当成基础预期。"
 
 
-def _selected_strict_posture_note(
-    preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None
-) -> str | None:
+def _selected_strict_posture_note(preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None) -> str | None:
     prior = dict(historical_prior or {})
     if preferred_entry_mode == "intraday_confirmation_only":
         return "当前 historical_prior 更像 intraday-only surface，默认不按隔夜持有管理。"
@@ -89,9 +85,7 @@ def _selected_strict_posture_note(
     return None
 
 
-def _augment_execution_note(
-    preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None
-) -> str | None:
+def _augment_execution_note(preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None) -> str | None:
     prior = dict(historical_prior or {})
     base_note = str(prior.get("execution_note") or "").strip()
     strict_posture_note = _selected_strict_posture_note(preferred_entry_mode, prior)

@@ -77,11 +77,7 @@ def extract_plan_risk_metrics(plan: ExecutionPlan | None) -> tuple[dict[str, int
 
 
 def collect_execution_plan_observations(pipeline: Any, trade_date_compact: str) -> list[dict[str, Any]]:
-    return [
-        dict(observation)
-        for observation in list(getattr(pipeline, "execution_plan_provenance_log", []) or [])
-        if str(observation.get("trade_date") or "") == trade_date_compact
-    ]
+    return [dict(observation) for observation in list(getattr(pipeline, "execution_plan_provenance_log", []) or []) if str(observation.get("trade_date") or "") == trade_date_compact]
 
 
 def build_pipeline_timing_payload(

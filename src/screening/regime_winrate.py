@@ -109,7 +109,7 @@ REGIME_HISTORICAL_WINRATES: dict[str, dict] = {
 # 诚实约束: 单次回测样本, 未来 daily scheduling 累积应重算; 当前硬编码避免每次拉 tushare.
 REGIME_MULTIHORIZON_MEDIANS: dict[str, dict[str, dict]] = {
     "crisis": {
-        "t5":  {"median": -0.3, "winrate": 0.457, "n": 173},
+        "t5": {"median": -0.3, "winrate": 0.457, "n": 173},
         "t10": {"median": -0.7, "winrate": 0.494, "n": 168},
         "t15": {"median": -0.0, "winrate": 0.500, "n": 178},
         "t20": {"median": +0.8, "winrate": 0.536, "n": 166},
@@ -117,7 +117,7 @@ REGIME_MULTIHORIZON_MEDIANS: dict[str, dict[str, dict]] = {
         "t30": {"median": -1.6, "winrate": 0.466, "n": 163},
     },
     "normal": {
-        "t5":  {"median": -1.7, "winrate": 0.378, "n": 90},
+        "t5": {"median": -1.7, "winrate": 0.378, "n": 90},
         "t10": {"median": -2.6, "winrate": 0.371, "n": 89},
         "t15": {"median": -5.7, "winrate": 0.303, "n": 89},
         "t20": {"median": -5.5, "winrate": 0.382, "n": 89},
@@ -125,7 +125,7 @@ REGIME_MULTIHORIZON_MEDIANS: dict[str, dict[str, dict]] = {
         "t30": {"median": -6.0, "winrate": 0.391, "n": 87},
     },
     "risk_off": {
-        "t5":  {"median": +1.6, "winrate": 0.55, "n": 20},
+        "t5": {"median": +1.6, "winrate": 0.55, "n": 20},
         "t10": {"median": -3.1, "winrate": 0.35, "n": 20},
         "t15": {"median": -8.2, "winrate": 0.20, "n": 20},
         "t20": {"median": -6.5, "winrate": 0.15, "n": 20},
@@ -426,7 +426,10 @@ def render_regime_multihorizon_line(
 
     # 仅展示 T+15-T+30 (中长周期), T+5/T+10 短期噪声大
     display_horizons = [
-        ("t15", "T+15"), ("t20", "T+20"), ("t25", "T+25"), ("t30", "T+30"),
+        ("t15", "T+15"),
+        ("t20", "T+20"),
+        ("t25", "T+25"),
+        ("t30", "T+30"),
     ]
 
     parts: list[str] = []

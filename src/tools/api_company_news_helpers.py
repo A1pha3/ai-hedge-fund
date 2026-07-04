@@ -61,7 +61,8 @@ def fetch_remote_company_news(make_api_request, ticker: str, end_date: str, star
             # agents 拿到部分新闻做 sentiment 分析，偏差且无信号。发降级诊断。
             logger.debug(
                 "company_news response parse degraded (break pagination) for %s: %s",
-                ticker, exc,
+                ticker,
+                exc,
             )
             break
 

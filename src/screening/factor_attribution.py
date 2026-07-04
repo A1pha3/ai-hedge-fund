@@ -14,6 +14,7 @@ must-win 周期 T+30 → T+5/T+10). 可传 ``next_10day_return`` / ``next_30day_
 **数据流**: FusedScore.compute_score_decomposition → recommendation["score_decomposition"]
 → tracking_history record → 本模块读 base_contributions 算 per-factor 单调性.
 """
+
 from __future__ import annotations
 
 import random as _random
@@ -210,14 +211,14 @@ def compute_factor_attribution_from_loaded(
         inversion = low_wr - high_wr  # 正=倒挂 (贡献高反而胜率低)
         # c317: bootstrap CI on the inversion (决定倒挂是否可信)
         ci_low, ci_high = _bootstrap_inversion_ci(
-            high_returns, low_returns,
-            n_bootstrap=n_bootstrap, ci_level=ci_level, seed=seed,
+            high_returns,
+            low_returns,
+            n_bootstrap=n_bootstrap,
+            ci_level=ci_level,
+            seed=seed,
         )
         # CI 跨 0 → 不能排除 inversion=0 (无倒挂), 即使点估计 >5pp
-        ci_straddles_zero = (
-            ci_low is not None and ci_high is not None
-            and ci_low < 0.0 < ci_high
-        )
+        ci_straddles_zero = ci_low is not None and ci_high is not None and ci_low < 0.0 < ci_high
         if inversion > 0.05 and ci_straddles_zero:
             verdict = "inverted_noisy"  # 倒挂但 CI 含 0 — 不可据 noise 重平衡
         elif inversion > 0.05:  # 5pp 以上倒挂 + CI 不含 0
@@ -227,17 +228,19 @@ def compute_factor_attribution_from_loaded(
         else:
             verdict = "insufficient"
 
-        factors.append(FactorContributionWinrate(
-            strategy=key,
-            high_contrib_winrate=high_wr,
-            low_contrib_winrate=low_wr,
-            high_n=len(high_returns),
-            low_n=len(low_returns),
-            verdict=verdict,
-            inversion=inversion,
-            inversion_ci_low=ci_low,
-            inversion_ci_high=ci_high,
-        ))
+        factors.append(
+            FactorContributionWinrate(
+                strategy=key,
+                high_contrib_winrate=high_wr,
+                low_contrib_winrate=low_wr,
+                high_n=len(high_returns),
+                low_n=len(low_returns),
+                verdict=verdict,
+                inversion=inversion,
+                inversion_ci_low=ci_low,
+                inversion_ci_high=ci_high,
+            )
+        )
 
         if inversion > worst_inversion:
             worst_inversion = inversion
@@ -269,10 +272,7 @@ def render_factor_attribution_line(report: FactorAttributionReport) -> str:
         return ""
 
     # c317: noisy inversions 也要展示 (标噪声), 让 owner 看见但不据此行动.
-    flagged = [
-        f for f in report.factors
-        if f.verdict in ("inverted", "inverted_noisy")
-    ]
+    flagged = [f for f in report.factors if f.verdict in ("inverted", "inverted_noisy")]
     hlabel = f"({report.horizon_label})" if report.horizon_label else ""
     if not flagged:
         # 无倒挂因子 (好信号) 或全 insufficient
@@ -292,9 +292,7 @@ def render_factor_attribution_line(report: FactorAttributionReport) -> str:
         # c333/autodev-36: n 之前 computed-but-unrendered; 镜像 factor_attribution_by_state c332
         total_n = f.high_n + f.low_n
         n_str = f", n={total_n}" if total_n > 0 else ""
-        parts.append(
-            f"{f.strategy} {label} low {(f.low_contrib_winrate or 0):.0%} vs high {(f.high_contrib_winrate or 0):.0%} (Δ{delta:.0%}{ci_str}{n_str})"
-        )
+        parts.append(f"{f.strategy} {label} low {(f.low_contrib_winrate or 0):.0%} vs high {(f.high_contrib_winrate or 0):.0%} (Δ{delta:.0%}{ci_str}{n_str})")
 
     suffix = ""
     if report.worst_factor:

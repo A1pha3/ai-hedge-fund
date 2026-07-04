@@ -177,7 +177,7 @@ async def download_model_with_progress(request: ModelRequest):
             "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "*",
-        }
+        },
     )
 
 

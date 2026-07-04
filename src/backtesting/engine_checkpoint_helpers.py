@@ -106,9 +106,9 @@ def read_checkpoint(path: Path) -> dict[str, Any]:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, ValueError) as exc:
         logger.warning(
-            "read_checkpoint: corrupt checkpoint at %s (%s); quarantining and "
-            "treating as missing so the session can start fresh.",
-            path, exc,
+            "read_checkpoint: corrupt checkpoint at %s (%s); quarantining and " "treating as missing so the session can start fresh.",
+            path,
+            exc,
         )
         corrupt_path = path.with_suffix(path.suffix + ".corrupt")
         try:
@@ -127,10 +127,7 @@ def restore_pending_orders(payloads: list[dict[str, Any]]) -> list[PendingOrder]
 
 
 def restore_exit_reentry_cooldowns(payload: dict[str, dict[str, Any]]) -> dict[str, dict]:
-    return {
-        str(ticker): dict(item or {})
-        for ticker, item in payload.items()
-    }
+    return {str(ticker): dict(item or {}) for ticker, item in payload.items()}
 
 
 def restore_pending_plan(payload: dict[str, Any] | None) -> ExecutionPlan | None:

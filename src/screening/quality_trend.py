@@ -101,9 +101,7 @@ def compute_quality_trend(
 
     report = QualityTrendReport()
     if not latest_date_str:
-        report.windows = [
-            QualityWindow(label=_window_label(i, n_windows)) for i in range(n_windows)
-        ]
+        report.windows = [QualityWindow(label=_window_label(i, n_windows)) for i in range(n_windows)]
         return report
 
     from datetime import datetime, timedelta
@@ -186,10 +184,7 @@ def render_quality_trend_line(report: QualityTrendReport) -> str:
         color = Fore.RED
     else:
         color = Fore.YELLOW
-    return (
-        f"  {Fore.CYAN}📈 推荐质量趋势 (T+30):{Style.RESET_ALL} "
-        f"{' → '.join(parts)}  {color}{trend}{Style.RESET_ALL}"
-    )
+    return f"  {Fore.CYAN}📈 推荐质量趋势 (T+30):{Style.RESET_ALL} " f"{' → '.join(parts)}  {color}{trend}{Style.RESET_ALL}"
 
 
 __all__ = [

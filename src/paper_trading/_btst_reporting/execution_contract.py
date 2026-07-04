@@ -40,23 +40,15 @@ def resolve_selection_snapshot(brief: dict[str, Any]) -> dict[str, Any]:
     source_paths = dict(brief.get("source_paths") or {})
     report_dir_raw = brief.get("report_dir") or source_paths.get("report_dir")
     report_dir = Path(str(report_dir_raw)).expanduser().resolve() if report_dir_raw else None
-    normalized_trade_date = (
-        _normalize_trade_date(str(brief.get("trade_date") or ""))
-        if brief.get("trade_date")
-        else None
-    )
+    normalized_trade_date = _normalize_trade_date(str(brief.get("trade_date") or "")) if brief.get("trade_date") else None
 
     candidate_paths: list[Any] = [
         brief.get("snapshot_path"),
         source_paths.get("snapshot_path"),
     ]
     if report_dir is not None and normalized_trade_date:
-        candidate_paths.append(
-            report_dir / "selection_artifacts" / normalized_trade_date / "selection_snapshot.json"
-        )
-        candidate_paths.append(
-            report_dir / "selection_artifacts" / normalized_trade_date.replace("-", "") / "selection_snapshot.json"
-        )
+        candidate_paths.append(report_dir / "selection_artifacts" / normalized_trade_date / "selection_snapshot.json")
+        candidate_paths.append(report_dir / "selection_artifacts" / normalized_trade_date.replace("-", "") / "selection_snapshot.json")
 
     for raw_path in candidate_paths:
         path = _resolve_existing_json_path(raw_path, report_dir)
@@ -75,10 +67,7 @@ def build_brief_execution_contract(
     selected_entries: list[dict[str, Any]],
     early_runner_status: str = "unavailable",
 ) -> dict[str, Any]:
-    control_selected = [
-        enrich_btst_row(entry, role="formal_selected", early_runner_status=early_runner_status)
-        for entry in selected_entries
-    ]
+    control_selected = [enrich_btst_row(entry, role="formal_selected", early_runner_status=early_runner_status) for entry in selected_entries]
     decision_card = build_decision_card(
         selected_rows=control_selected,
         early_runner_status=early_runner_status,
@@ -113,11 +102,7 @@ def build_brief_execution_contract(
     if control_selected:
         primary_ticker = str(decision_card.get("primary_ticker") or "").strip()
         primary_row = next(
-            (
-                row
-                for row in control_selected
-                if str(row.get("ticker") or "").strip() == primary_ticker
-            ),
+            (row for row in control_selected if str(row.get("ticker") or "").strip() == primary_ticker),
             control_selected[0],
         )
         primary_row = {
@@ -136,17 +121,12 @@ def build_brief_execution_contract(
         "report_mode": report_mode,
         "raw_trade_bias": control_tower.get("raw_trade_bias"),
         "effective_trade_bias": control_tower.get("effective_trade_bias"),
-        "release_authority": primary_semantic_action.get("release_authority")
-        or "none",
+        "release_authority": primary_semantic_action.get("release_authority") or "none",
         "reason_codes": list(control_tower.get("reason_codes") or []),
     }
     if primary_semantic_action:
-        execution_contract["execution_state"] = primary_semantic_action.get(
-            "execution_state"
-        )
-        execution_contract["max_allowed_state_today"] = primary_semantic_action.get(
-            "max_allowed_state_today"
-        )
+        execution_contract["execution_state"] = primary_semantic_action.get("execution_state")
+        execution_contract["max_allowed_state_today"] = primary_semantic_action.get("max_allowed_state_today")
 
     return {
         "selection_snapshot": selection_snapshot,

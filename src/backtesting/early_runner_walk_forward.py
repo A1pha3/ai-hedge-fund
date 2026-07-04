@@ -169,11 +169,7 @@ def build_early_runner_walk_forward_summary(rows: list[dict[str, Any]], *, walk_
     if shared_windows:
         iteration_windows = []
         for window in shared_windows:
-            test_rows = [
-                row
-                for row in candidate_rows
-                if str(window["test_start"]) <= str(row.get("trade_date") or "") <= str(window["test_end"])
-            ]
+            test_rows = [row for row in candidate_rows if str(window["test_start"]) <= str(row.get("trade_date") or "") <= str(window["test_end"])]
             if test_rows:
                 iteration_windows.append((f"{window['window_mode']}:{window['test_start']}->{window['test_end']}", test_rows, window))
     else:

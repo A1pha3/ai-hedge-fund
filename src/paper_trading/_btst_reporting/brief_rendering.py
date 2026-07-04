@@ -125,35 +125,23 @@ def _append_brief_historical_prior_fields(
     include_execution_note: bool = False,
 ) -> None:
     if include_monitor_priority:
-        lines.append(
-            f"- historical_monitor_priority: {historical_prior.get('monitor_priority') or 'n/a'}"
-        )
+        lines.append(f"- historical_monitor_priority: {historical_prior.get('monitor_priority') or 'n/a'}")
     if include_summary:
-        lines.append(
-            f"- historical_summary: {historical_prior.get('summary') or 'n/a'}"
-        )
+        lines.append(f"- historical_summary: {historical_prior.get('summary') or 'n/a'}")
     payoff_note = _format_historical_payoff_note(historical_prior)
     if payoff_note:
         lines.append(f"- historical_win_rate_payoff: {payoff_note}")
     if include_execution_quality:
-        lines.append(
-            f"- historical_execution_quality: {historical_prior.get('execution_quality_label') or 'n/a'}"
-        )
+        lines.append(f"- historical_execution_quality: {historical_prior.get('execution_quality_label') or 'n/a'}")
     if include_execution_note:
-        lines.append(
-            f"- historical_execution_note: {historical_prior.get('execution_note') or 'n/a'}"
-        )
+        lines.append(f"- historical_execution_note: {historical_prior.get('execution_note') or 'n/a'}")
 
 
-def _append_brief_scored_entry_metrics(
-    lines: list[str], metrics: dict[str, Any]
-) -> None:
+def _append_brief_scored_entry_metrics(lines: list[str], metrics: dict[str, Any]) -> None:
     _append_brief_short_trade_metrics(lines, metrics)
 
 
-def _append_brief_short_trade_metrics(
-    lines: list[str], metrics: dict[str, Any]
-) -> None:
+def _append_brief_short_trade_metrics(lines: list[str], metrics: dict[str, Any]) -> None:
     lines.append(
         "- key_metrics: "
         + ", ".join(
@@ -168,33 +156,18 @@ def _append_brief_short_trade_metrics(
     )
 
 
-def _append_brief_historical_recent_examples(
-    lines: list[str], historical_prior: dict[str, Any]
-) -> None:
+def _append_brief_historical_recent_examples(lines: list[str], historical_prior: dict[str, Any]) -> None:
     recent_examples = historical_prior.get("recent_examples") or []
     if recent_examples:
-        lines.append(
-            "- historical_recent_examples: "
-            + "; ".join(
-                f"{sample.get('trade_date')} {sample.get('ticker')} open={_format_float(sample.get('next_open_return'))}, high={_format_float(sample.get('next_high_return'))}, close={_format_float(sample.get('next_close_return'))}"
-                for sample in recent_examples
-            )
-        )
+        lines.append("- historical_recent_examples: " + "; ".join(f"{sample.get('trade_date')} {sample.get('ticker')} open={_format_float(sample.get('next_open_return'))}, high={_format_float(sample.get('next_high_return'))}, close={_format_float(sample.get('next_close_return'))}" for sample in recent_examples))
 
 
 def _append_gate_status_line(lines: list[str], gate_status: dict[str, Any]) -> None:
-    lines.append(
-        "- gate_status: "
-        + ", ".join(f"{key}={value}" for key, value in gate_status.items())
-    )
+    lines.append("- gate_status: " + ", ".join(f"{key}={value}" for key, value in gate_status.items()))
 
 
-def _append_frontier_priority_summary(
-    lines: list[str], frontier_priority: dict[str, Any]
-) -> None:
-    _append_frontier_priority_summary_impl(
-        lines, frontier_priority, format_float=_format_float
-    )
+def _append_frontier_priority_summary(lines: list[str], frontier_priority: dict[str, Any]) -> None:
+    _append_frontier_priority_summary_impl(lines, frontier_priority, format_float=_format_float)
 
 
 def _append_frontier_section(
@@ -248,9 +221,7 @@ def _append_brief_summary_ticker_section(
         lines.append("")
 
 
-def _append_brief_upstream_shadow_summary(
-    lines: list[str], upstream_shadow_summary: dict[str, Any]
-) -> None:
+def _append_brief_upstream_shadow_summary(lines: list[str], upstream_shadow_summary: dict[str, Any]) -> None:
     _append_upstream_shadow_summary(
         lines,
         upstream_shadow_summary,
@@ -262,9 +233,8 @@ def _append_brief_upstream_shadow_summary(
 # Section renderers (inject local callbacks into _impl functions)
 # ---------------------------------------------------------------------------
 
-def _append_brief_scored_entries_markdown(
-    lines: list[str], title: str, entries: list[dict[str, Any]]
-) -> None:
+
+def _append_brief_scored_entries_markdown(lines: list[str], title: str, entries: list[dict[str, Any]]) -> None:
     _append_brief_scored_entries_markdown_impl(
         lines,
         title,
@@ -278,9 +248,7 @@ def _append_brief_scored_entries_markdown(
     )
 
 
-def _append_brief_payoff_review_lane_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_payoff_review_lane_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     _append_brief_payoff_review_lane_markdown_impl(
         lines,
         entries,
@@ -292,9 +260,7 @@ def _append_brief_payoff_review_lane_markdown(
     )
 
 
-def _append_brief_opportunity_pool_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_opportunity_pool_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     _append_brief_opportunity_pool_markdown_impl(
         lines,
         entries,
@@ -323,9 +289,7 @@ def _append_brief_observer_lane_markdown(
     )
 
 
-def _append_brief_pruned_entries_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_pruned_entries_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     _append_brief_pruned_entries_markdown_impl(
         lines,
         entries,
@@ -334,9 +298,7 @@ def _append_brief_pruned_entries_markdown(
     )
 
 
-def _append_brief_research_radar_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_research_radar_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     _append_brief_research_radar_markdown_impl(
         lines,
         entries,
@@ -346,9 +308,7 @@ def _append_brief_research_radar_markdown(
     )
 
 
-def _append_brief_runner_recall_review_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_runner_recall_review_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     def render_entry(inner_lines: list[str], entry: dict[str, Any]) -> None:
         historical_prior = dict(entry.get("historical_prior") or {})
         inner_lines.append(f"- runner_recall_bucket: {entry.get('runner_recall_bucket')}")
@@ -375,9 +335,7 @@ def _append_brief_runner_recall_review_markdown(
     )
 
 
-def _append_brief_catalyst_theme_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_catalyst_theme_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     _append_brief_catalyst_theme_markdown_impl(
         lines,
         entries,
@@ -388,9 +346,7 @@ def _append_brief_catalyst_theme_markdown(
     )
 
 
-def _append_brief_catalyst_frontier_markdown(
-    lines: list[str], frontier_priority: dict[str, Any]
-) -> None:
+def _append_brief_catalyst_frontier_markdown(lines: list[str], frontier_priority: dict[str, Any]) -> None:
     _append_brief_catalyst_frontier_markdown_impl(
         lines,
         frontier_priority,
@@ -401,9 +357,7 @@ def _append_brief_catalyst_frontier_markdown(
     )
 
 
-def _append_brief_catalyst_shadow_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_catalyst_shadow_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     _append_brief_catalyst_shadow_markdown_impl(
         lines,
         entries,
@@ -415,9 +369,7 @@ def _append_brief_catalyst_shadow_markdown(
     )
 
 
-def _append_brief_excluded_research_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_excluded_research_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     _append_brief_excluded_research_markdown_impl(
         lines,
         entries,
@@ -442,9 +394,7 @@ def _append_brief_upstream_shadow_markdown(
     )
 
 
-def _append_brief_source_paths_markdown(
-    lines: list[str], analysis: dict[str, Any]
-) -> None:
+def _append_brief_source_paths_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     _append_source_paths_section(
         lines,
         report_dir=analysis.get("report_dir"),
@@ -459,9 +409,7 @@ def _append_rollout_validation_section(lines: list[str], rollout_validation: dic
     lines.append(f"- status: {rollout_validation.get('status') or 'unavailable'}")
     lines.append(f"- primary_lane: {rollout_validation.get('primary_lane') or 'n/a'}")
     lines.append(f"- summary: {rollout_validation.get('summary') or 'n/a'}")
-    lines.append(
-        f"- selected_hit_rate_15pct: {_format_rollout_value(rollout_validation.get('selected_hit_rate_15pct'), 4)} -> {_format_rollout_value(rollout_validation.get('shadow_hit_rate_15pct'), 4)}"
-    )
+    lines.append(f"- selected_hit_rate_15pct: {_format_rollout_value(rollout_validation.get('selected_hit_rate_15pct'), 4)} -> {_format_rollout_value(rollout_validation.get('shadow_hit_rate_15pct'), 4)}")
     lines.append(f"- selected_count_delta: {_format_rollout_value(rollout_validation.get('selected_count_delta'))}")
     lines.append(f"- execution_eligible_delta: {_format_rollout_value(rollout_validation.get('execution_eligible_delta'))}")
     lines.append(f"- buy_order_delta: {_format_rollout_value(rollout_validation.get('buy_order_delta'))}")
@@ -474,13 +422,9 @@ def _append_rollout_validation_section(lines: list[str], rollout_validation: dic
 # Top-level brief overview (large pure markdown generator)
 # ---------------------------------------------------------------------------
 
+
 def _append_brief_overview_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
-    historical_context = (
-        analysis.get("btst_candidate_historical_context")
-        or analysis.get("watch_candidate_historical_context")
-        or analysis.get("opportunity_pool_historical_context")
-        or {}
-    )
+    historical_context = analysis.get("btst_candidate_historical_context") or analysis.get("watch_candidate_historical_context") or analysis.get("opportunity_pool_historical_context") or {}
     summary = analysis["summary"]
     lines.append("# BTST Next-Day Trade Brief")
     lines.append("")
@@ -489,85 +433,33 @@ def _append_brief_overview_markdown(lines: list[str], analysis: dict[str, Any]) 
     lines.append(f"- next_trade_date: {analysis.get('next_trade_date') or 'n/a'}")
     lines.append(f"- target_mode: {analysis.get('target_mode')}")
     lines.append(f"- selection_target: {analysis.get('selection_target')}")
-    lines.append(
-        f"- short_trade_selected_count: {summary.get('short_trade_selected_count')}"
-    )
-    lines.append(
-        f"- short_trade_near_miss_count: {summary.get('short_trade_near_miss_count')}"
-    )
-    lines.append(
-        f"- short_trade_blocked_count: {summary.get('short_trade_blocked_count')}"
-    )
-    lines.append(
-        f"- short_trade_rejected_count: {summary.get('short_trade_rejected_count')}"
-    )
-    lines.append(
-        f"- short_trade_formal_blocked_selected_count: {summary.get('short_trade_formal_blocked_selected_count', 0)}"
-    )
-    lines.append(
-        f"- short_trade_formal_block_flag_counts: {_format_formal_block_flag_counts(summary)}"
-    )
-    lines.append(
-        f"- short_trade_formal_non_halt_blocked_selected_count: {summary.get('short_trade_formal_non_halt_blocked_selected_count', 0)}"
-    )
-    lines.append(
-        f"- short_trade_formal_non_halt_gate_counts: {_format_named_count_map(summary, 'short_trade_formal_non_halt_gate_counts')}"
-    )
-    lines.append(
-        f"- short_trade_formal_non_halt_prior_quality_counts: {_format_named_count_map(summary, 'short_trade_formal_non_halt_prior_quality_counts')}"
-    )
-    lines.append(
-        f"- short_trade_opportunity_pool_count: {summary.get('short_trade_opportunity_pool_count')}"
-    )
-    lines.append(
-        f"- no_history_observer_count: {summary.get('no_history_observer_count')}"
-    )
-    lines.append(
-        f"- research_upside_radar_count: {summary.get('research_upside_radar_count')}"
-    )
-    lines.append(
-        f"- runner_recall_review_count: {summary.get('runner_recall_review_count')}"
-    )
+    lines.append(f"- short_trade_selected_count: {summary.get('short_trade_selected_count')}")
+    lines.append(f"- short_trade_near_miss_count: {summary.get('short_trade_near_miss_count')}")
+    lines.append(f"- short_trade_blocked_count: {summary.get('short_trade_blocked_count')}")
+    lines.append(f"- short_trade_rejected_count: {summary.get('short_trade_rejected_count')}")
+    lines.append(f"- short_trade_formal_blocked_selected_count: {summary.get('short_trade_formal_blocked_selected_count', 0)}")
+    lines.append(f"- short_trade_formal_block_flag_counts: {_format_formal_block_flag_counts(summary)}")
+    lines.append(f"- short_trade_formal_non_halt_blocked_selected_count: {summary.get('short_trade_formal_non_halt_blocked_selected_count', 0)}")
+    lines.append(f"- short_trade_formal_non_halt_gate_counts: {_format_named_count_map(summary, 'short_trade_formal_non_halt_gate_counts')}")
+    lines.append(f"- short_trade_formal_non_halt_prior_quality_counts: {_format_named_count_map(summary, 'short_trade_formal_non_halt_prior_quality_counts')}")
+    lines.append(f"- short_trade_opportunity_pool_count: {summary.get('short_trade_opportunity_pool_count')}")
+    lines.append(f"- no_history_observer_count: {summary.get('no_history_observer_count')}")
+    lines.append(f"- research_upside_radar_count: {summary.get('research_upside_radar_count')}")
+    lines.append(f"- runner_recall_review_count: {summary.get('runner_recall_review_count')}")
     lines.append(f"- catalyst_theme_count: {summary.get('catalyst_theme_count')}")
-    lines.append(
-        f"- catalyst_theme_shadow_count: {summary.get('catalyst_theme_shadow_count')}"
-    )
-    lines.append(
-        f"- catalyst_theme_frontier_promoted_count: {summary.get('catalyst_theme_frontier_promoted_count')}"
-    )
-    lines.append(
-        f"- upstream_shadow_candidate_count: {summary.get('upstream_shadow_candidate_count')}"
-    )
-    lines.append(
-        f"- upstream_shadow_promotable_count: {summary.get('upstream_shadow_promotable_count')}"
-    )
-    lines.append(
-        f"- opportunity_pool_historical_report_count: {historical_context.get('historical_report_count')}"
-    )
-    lines.append(
-        f"- btst_candidate_historical_count: {historical_context.get('historical_btst_candidate_count')}"
-    )
-    lines.append(
-        f"- watch_candidate_historical_count: {historical_context.get('historical_watch_candidate_count')}"
-    )
-    lines.append(
-        f"- watch_selected_historical_count: {historical_context.get('historical_selected_candidate_count')}"
-    )
-    lines.append(
-        f"- watch_near_miss_historical_count: {historical_context.get('historical_near_miss_candidate_count')}"
-    )
-    lines.append(
-        f"- opportunity_pool_historical_candidate_count: {historical_context.get('historical_opportunity_candidate_count')}"
-    )
-    lines.append(
-        f"- research_upside_radar_historical_count: {historical_context.get('historical_research_upside_radar_count')}"
-    )
-    lines.append(
-        f"- catalyst_theme_historical_count: {historical_context.get('historical_catalyst_theme_count')}"
-    )
-    lines.append(
-        f"- excluded_research_selected_count: {len(analysis.get('excluded_research_entries') or [])}"
-    )
+    lines.append(f"- catalyst_theme_shadow_count: {summary.get('catalyst_theme_shadow_count')}")
+    lines.append(f"- catalyst_theme_frontier_promoted_count: {summary.get('catalyst_theme_frontier_promoted_count')}")
+    lines.append(f"- upstream_shadow_candidate_count: {summary.get('upstream_shadow_candidate_count')}")
+    lines.append(f"- upstream_shadow_promotable_count: {summary.get('upstream_shadow_promotable_count')}")
+    lines.append(f"- opportunity_pool_historical_report_count: {historical_context.get('historical_report_count')}")
+    lines.append(f"- btst_candidate_historical_count: {historical_context.get('historical_btst_candidate_count')}")
+    lines.append(f"- watch_candidate_historical_count: {historical_context.get('historical_watch_candidate_count')}")
+    lines.append(f"- watch_selected_historical_count: {historical_context.get('historical_selected_candidate_count')}")
+    lines.append(f"- watch_near_miss_historical_count: {historical_context.get('historical_near_miss_candidate_count')}")
+    lines.append(f"- opportunity_pool_historical_candidate_count: {historical_context.get('historical_opportunity_candidate_count')}")
+    lines.append(f"- research_upside_radar_historical_count: {historical_context.get('historical_research_upside_radar_count')}")
+    lines.append(f"- catalyst_theme_historical_count: {historical_context.get('historical_catalyst_theme_count')}")
+    lines.append(f"- excluded_research_selected_count: {len(analysis.get('excluded_research_entries') or [])}")
     guardrails = list(analysis.get("global_guardrails") or [])
     if guardrails:
         lines.append("")
@@ -585,21 +477,14 @@ def _append_brief_overview_markdown(lines: list[str], analysis: dict[str, Any]) 
 # Main entry point
 # ---------------------------------------------------------------------------
 
+
 def render_btst_next_day_trade_brief_markdown(analysis: dict[str, Any]) -> str:
     lines: list[str] = []
     _append_brief_overview_markdown(lines, analysis)
-    _append_brief_scored_entries_markdown(
-        lines, "Selected Entries", list(analysis.get("selected_entries") or [])
-    )
-    _append_brief_scored_entries_markdown(
-        lines, "Near-Miss Watchlist", list(analysis.get("near_miss_entries") or [])
-    )
-    _append_brief_payoff_review_lane_markdown(
-        lines, list(analysis.get("payoff_review_entries") or [])
-    )
-    _append_brief_opportunity_pool_markdown(
-        lines, list(analysis.get("opportunity_pool_entries") or [])
-    )
+    _append_brief_scored_entries_markdown(lines, "Selected Entries", list(analysis.get("selected_entries") or []))
+    _append_brief_scored_entries_markdown(lines, "Near-Miss Watchlist", list(analysis.get("near_miss_entries") or []))
+    _append_brief_payoff_review_lane_markdown(lines, list(analysis.get("payoff_review_entries") or []))
+    _append_brief_opportunity_pool_markdown(lines, list(analysis.get("opportunity_pool_entries") or []))
     _append_brief_observer_lane_markdown(
         lines,
         "Risky Observer Lane",
@@ -612,27 +497,13 @@ def render_btst_next_day_trade_brief_markdown(analysis: dict[str, Any]) -> str:
         list(analysis.get("no_history_observer_entries") or []),
         include_execution_note=False,
     )
-    _append_brief_pruned_entries_markdown(
-        lines, list(analysis.get("weak_history_pruned_entries") or [])
-    )
-    _append_brief_research_radar_markdown(
-        lines, list(analysis.get("research_upside_radar_entries") or [])
-    )
-    _append_brief_runner_recall_review_markdown(
-        lines, list(analysis.get("runner_recall_review_entries") or [])
-    )
-    _append_brief_catalyst_theme_markdown(
-        lines, list(analysis.get("catalyst_theme_entries") or [])
-    )
-    _append_brief_catalyst_frontier_markdown(
-        lines, dict(analysis.get("catalyst_theme_frontier_priority") or {})
-    )
-    _append_brief_catalyst_shadow_markdown(
-        lines, list(analysis.get("catalyst_theme_shadow_entries") or [])
-    )
-    _append_brief_excluded_research_markdown(
-        lines, list(analysis.get("excluded_research_entries") or [])
-    )
+    _append_brief_pruned_entries_markdown(lines, list(analysis.get("weak_history_pruned_entries") or []))
+    _append_brief_research_radar_markdown(lines, list(analysis.get("research_upside_radar_entries") or []))
+    _append_brief_runner_recall_review_markdown(lines, list(analysis.get("runner_recall_review_entries") or []))
+    _append_brief_catalyst_theme_markdown(lines, list(analysis.get("catalyst_theme_entries") or []))
+    _append_brief_catalyst_frontier_markdown(lines, dict(analysis.get("catalyst_theme_frontier_priority") or {}))
+    _append_brief_catalyst_shadow_markdown(lines, list(analysis.get("catalyst_theme_shadow_entries") or []))
+    _append_brief_excluded_research_markdown(lines, list(analysis.get("excluded_research_entries") or []))
     _append_brief_upstream_shadow_markdown(
         lines,
         dict(analysis.get("upstream_shadow_summary") or {}),

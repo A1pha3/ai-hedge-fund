@@ -294,15 +294,7 @@ def _resolve_shadow_visibility_gap_tickers(*, lane: str) -> set[str]:
 
 def _resolve_cooldown_shadow_review_tickers() -> set[str]:
     upstream_handoff_focus = _load_upstream_handoff_shadow_focus_tickers(_UPSTREAM_HANDOFF_BOARD_PATH)
-    return (
-        set(SHADOW_FOCUS_TICKERS)
-        | set(upstream_handoff_focus)
-        | set(SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS)
-        | set(SHADOW_FOCUS_REBUCKET_TICKERS)
-        | set(SHADOW_VISIBILITY_GAP_TICKERS)
-        | set(SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS)
-        | set(SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS)
-    )
+    return set(SHADOW_FOCUS_TICKERS) | set(upstream_handoff_focus) | set(SHADOW_FOCUS_LIQUIDITY_CORRIDOR_TICKERS) | set(SHADOW_FOCUS_REBUCKET_TICKERS) | set(SHADOW_VISIBILITY_GAP_TICKERS) | set(SHADOW_VISIBILITY_GAP_LIQUIDITY_CORRIDOR_TICKERS) | set(SHADOW_VISIBILITY_GAP_REBUCKET_TICKERS)
 
 
 def _init_focus_filter_diagnostics(stock_df: pd.DataFrame, *, focus_tickers: set[str]) -> dict[str, dict[str, Any]]:
@@ -548,6 +540,7 @@ def _build_candidate_pool_with_shadow_kwargs(
 # 冷却期注册表（持久化 JSON）
 # ============================================================================
 
+
 def load_cooldown_registry() -> dict[str, str]:
     """加载冷却期注册表：{ticker: expire_date_YYYYMMDD}"""
     return load_cooldown_registry_helper(_COOLDOWN_FILE)
@@ -581,6 +574,7 @@ def get_cooled_tickers(trade_date: str) -> set[str]:
 # ============================================================================
 # 核心筛选逻辑
 # ============================================================================
+
 
 def _is_disclosure_window(trade_date: str) -> bool:
     """判断是否处于财报窗口期（4月/8月/10月）"""
@@ -626,7 +620,9 @@ def _get_avg_amount_20d(pro, ts_code: str, trade_date: str) -> float:
         # 行为零变更（仍 return 0.0），但发降级诊断让瞬时 API 失败可观测。
         logger.debug(
             "avg_amount_20d degraded to 0.0 for %s @ %s: %s",
-            ts_code, trade_date, exc,
+            ts_code,
+            trade_date,
+            exc,
         )
         return 0.0
 
@@ -670,7 +666,9 @@ def _get_recent_open_dates(pro, trade_date: str, lookback_sessions: int = 20) ->
         # 返回空 map → liquidity 过滤无法判流动性。发降级诊断便于排查。
         logger.debug(
             "recent_open_dates degraded to [] for %s (lookback=%s): %s",
-            trade_date, lookback_sessions, exc,
+            trade_date,
+            lookback_sessions,
+            exc,
         )
         return []
 
@@ -762,7 +760,9 @@ def _fetch_avg_amount_daily_frame(
         except Exception as exc:
             # BH-021 同族: batch 路径失败会回退到 tushare 长期缓存路径，发诊断。
             logger.debug(
-                "avg_amount batch fetch degraded for %s: %s", trade_date, exc,
+                "avg_amount batch fetch degraded for %s: %s",
+                trade_date,
+                exc,
             )
             df = None
         if df is not None and not df.empty:
@@ -778,7 +778,9 @@ def _fetch_avg_amount_daily_frame(
         # GAMMA-006: continue to next date instead of aborting entire batch
         # BH-021 同族: 发降级诊断，让该 trade_date 静默跳过可观测。
         logger.debug(
-            "avg_amount daily frame degraded to None for %s: %s", trade_date, exc,
+            "avg_amount daily frame degraded to None for %s: %s",
+            trade_date,
+            exc,
         )
         return None
 
@@ -791,11 +793,7 @@ def _accumulate_daily_amount_rows(filtered: pd.DataFrame, amount_buckets: dict[s
 
 
 def _build_avg_amount_map(amount_buckets: dict[str, list[float]]) -> dict[str, float]:
-    return {
-        ts_code: float(sum(amounts) / len(amounts))
-        for ts_code, amounts in amount_buckets.items()
-        if amounts
-    }
+    return {ts_code: float(sum(amounts) / len(amounts)) for ts_code, amounts in amount_buckets.items() if amounts}
 
 
 def _estimate_amount_from_daily_basic(row: pd.Series) -> float:
@@ -867,6 +865,7 @@ def build_candidate_pool(
 # ============================================================================
 # CLI 入口
 # ============================================================================
+
 
 def main():
     import argparse

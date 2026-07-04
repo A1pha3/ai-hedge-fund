@@ -1,4 +1,5 @@
 """Metrics payload builders for short trade target evaluation."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -86,10 +87,10 @@ def _build_event_catalyst_metrics_payload(event_catalyst_assessment: dict[str, A
     # Only expose payload if actually applied
     selected_uplift = event_catalyst_assessment.get("selected_uplift", 0.0)
     near_miss_relief = event_catalyst_assessment.get("near_miss_threshold_relief", 0.0)
-    
+
     if selected_uplift == 0.0 and near_miss_relief == 0.0:
         return {}
-    
+
     return {
         "score": round(event_catalyst_assessment["score"], 4),
         "applied": event_catalyst_assessment["selected_uplift"] > 0 or event_catalyst_assessment["near_miss_threshold_relief"] > 0,
@@ -756,12 +757,12 @@ def _build_short_trade_relief_metrics_payload(metrics_inputs: dict[str, Any]) ->
             prepared_breakout_selected_catalyst_relief=metrics_inputs["prepared_breakout_selected_catalyst_relief"],
         ),
     }
-    
+
     # Only add event_catalyst payload if it's meaningful (actually applied)
     event_catalyst_payload = _build_event_catalyst_metrics_payload(metrics_inputs["event_catalyst_assessment"])
     if event_catalyst_payload:
         payload["event_catalyst"] = event_catalyst_payload
-    
+
     return payload
 
 

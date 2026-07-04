@@ -231,25 +231,11 @@ def _resolve_short_trade_decision(
     if selected_historical_proof_deficiency["proof_missing"] and decision == "selected":
         gate_status["score"] = "near_miss"
         decision = "near_miss"
-    if (
-        decision == "near_miss"
-        and candidate_source == "upstream_liquidity_corridor_shadow"
-        and profitability_hard_cliff
-        and extension_without_room_penalty >= 0.40
-        and (
-            selected_historical_proof_deficiency["proof_missing"]
-            or gate_status.get("rank") == "selected_cap_exceeded"
-        )
-    ):
+    if decision == "near_miss" and candidate_source == "upstream_liquidity_corridor_shadow" and profitability_hard_cliff and extension_without_room_penalty >= 0.40 and (selected_historical_proof_deficiency["proof_missing"] or gate_status.get("rank") == "selected_cap_exceeded"):
         blockers.append("profitability_unknown_extension_penalty")
         gate_status["score"] = "fail"
         return "rejected"
-    if (
-        decision == "near_miss"
-        and candidate_source == "upstream_liquidity_corridor_shadow"
-        and selected_historical_proof_deficiency["proof_missing"]
-        and trend_acceleration < 0.65
-    ):
+    if decision == "near_miss" and candidate_source == "upstream_liquidity_corridor_shadow" and selected_historical_proof_deficiency["proof_missing"] and trend_acceleration < 0.65:
         blockers.append("selected_historical_proof_low_trend_acceleration")
         gate_status["score"] = "fail"
         return "rejected"
@@ -357,9 +343,7 @@ def _build_short_trade_decision_snapshot_state(snapshot: dict[str, Any]) -> Shor
         effective_select_threshold=float(snapshot["effective_select_threshold"]),
         selected_score_tolerance=float(snapshot["selected_score_tolerance"]),
         positive_tags=list(snapshot["positive_tags"]),
-        negative_tags=[
-            tag for tag in list(snapshot["negative_tags"]) if tag != "watchlist_filter_diagnostics_selected_only_shrink_applied"
-        ],
+        negative_tags=[tag for tag in list(snapshot["negative_tags"]) if tag != "watchlist_filter_diagnostics_selected_only_shrink_applied"],
         blockers=list(snapshot["blockers"]),
         gate_status=dict(snapshot["gate_status"]),
     )
@@ -620,16 +604,8 @@ def build_short_trade_target_result(
             "trend_acceleration": round(thresholds.trend_acceleration, 4),
             "volume_expansion_quality": round(float(snapshot["volume_expansion_quality"]), 4),
             "close_strength": round(float(snapshot["close_strength"]), 4),
-            **(
-                {"trend_continuation": round(float(snapshot["trend_continuation"]), 4)}
-                if "trend_continuation" in snapshot
-                else {}
-            ),
-            **(
-                {"short_term_reversal": round(float(snapshot["short_term_reversal"]), 4)}
-                if "short_term_reversal" in snapshot
-                else {}
-            ),
+            **({"trend_continuation": round(float(snapshot["trend_continuation"]), 4)} if "trend_continuation" in snapshot else {}),
+            **({"short_term_reversal": round(float(snapshot["short_term_reversal"]), 4)} if "short_term_reversal" in snapshot else {}),
         },
         metrics_payload=metrics_payload,
     )

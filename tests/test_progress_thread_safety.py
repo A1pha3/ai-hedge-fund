@@ -18,6 +18,7 @@ def test_progress_handler_register_is_thread_safe() -> None:
     def hammer_register() -> None:
         def _noop(*_args, **_kwargs):
             return None
+
         for _ in range(200):
             handler = _noop
             progress.register_handler(handler)

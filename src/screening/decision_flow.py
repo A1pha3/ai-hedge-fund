@@ -80,10 +80,7 @@ def run_decision_flow(
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
-        print(
-            f"  {Fore.RED}✗ 最新报告 {report_path.name} 损坏或不可读 ({exc}); "
-            f"请重新运行 --auto 生成.{Style.RESET_ALL}"
-        )
+        print(f"  {Fore.RED}✗ 最新报告 {report_path.name} 损坏或不可读 ({exc}); " f"请重新运行 --auto 生成.{Style.RESET_ALL}")
         return {**flow_result, "error": "corrupt_report"}
     recs = (report.get("recommendations") or [])[:top_n]
     trade_date = report.get("date", date.today().strftime("%Y%m%d"))
@@ -272,10 +269,7 @@ def run_decision_flow(
         # flag (old reports) is treated as verified (behavior preserved).
         composite_verified = best.get("composite_verified")
         estimate_marker = "估" if composite_verified is False else ""
-        print(
-            f"  Top investable: {best.get('ticker', '?')} (composite={float(best.get('composite_score', 0.0)):+.3f}{estimate_marker}, "
-            f"决策={decision_str} 胜率={decision_wr_str}, T+30={t30_str} T+30胜率={t30_wr_str}, {sample_str})"
-        )
+        print(f"  Top investable: {best.get('ticker', '?')} (composite={float(best.get('composite_score', 0.0)):+.3f}{estimate_marker}, " f"决策={decision_str} 胜率={decision_wr_str}, T+30={t30_str} T+30胜率={t30_wr_str}, {sample_str})")
     print(f"  Completed in {elapsed:.1f}s")
 
     # R77 (R71/R72/R73/R75/R76 trust-calibration family): this surface emits a
@@ -297,10 +291,7 @@ def _print_decision_flow_disclaimer() -> None:
     Mirrors the R71 ``--top-picks`` disclaimer wording so all user-facing
     decision surfaces stay consistent.
     """
-    print(
-        f"\n  {Fore.WHITE}⚠ 以上决策流摘要由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。"
-        f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}"
-    )
+    print(f"\n  {Fore.WHITE}⚠ 以上决策流摘要由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。" f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}")
 
 
 def render_decision_flow_summary(flow: dict[str, Any]) -> str:

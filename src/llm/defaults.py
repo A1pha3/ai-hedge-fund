@@ -36,11 +36,7 @@ class DefaultModelConfigurationError(ValueError):
 
 
 def _build_missing_default_model_message() -> str:
-    return (
-        "默认模型必须显式配置。请同时设置 LLM_DEFAULT_MODEL_PROVIDER 与 LLM_DEFAULT_MODEL_NAME，"
-        "或同时设置 BACKTEST_MODEL_PROVIDER 与 BACKTEST_MODEL_NAME。为避免静默降级，"
-        "系统不再从 MINIMAX_MODEL、MINIMAX_FALLBACK_MODEL 等 provider 变量推断默认模型。"
-    )
+    return "默认模型必须显式配置。请同时设置 LLM_DEFAULT_MODEL_PROVIDER 与 LLM_DEFAULT_MODEL_NAME，" "或同时设置 BACKTEST_MODEL_PROVIDER 与 BACKTEST_MODEL_NAME。为避免静默降级，" "系统不再从 MINIMAX_MODEL、MINIMAX_FALLBACK_MODEL 等 provider 变量推断默认模型。"
 
 
 def _read_env(*names: str) -> str | None:
@@ -79,10 +75,7 @@ def get_default_model_config() -> tuple[str, str]:
         raise DefaultModelConfigurationError(_build_missing_default_model_message())
 
     if bool(env_model_name) != bool(env_provider):
-        raise DefaultModelConfigurationError(
-            "默认模型配置不完整。LLM_DEFAULT_MODEL_PROVIDER 与 LLM_DEFAULT_MODEL_NAME "
-            "或 BACKTEST_MODEL_PROVIDER 与 BACKTEST_MODEL_NAME 必须成对出现。"
-        )
+        raise DefaultModelConfigurationError("默认模型配置不完整。LLM_DEFAULT_MODEL_PROVIDER 与 LLM_DEFAULT_MODEL_NAME " "或 BACKTEST_MODEL_PROVIDER 与 BACKTEST_MODEL_NAME 必须成对出现。")
 
     return env_model_name or DEFAULT_MODEL_NAME, normalize_provider_name(env_provider or DEFAULT_MODEL_PROVIDER)
 

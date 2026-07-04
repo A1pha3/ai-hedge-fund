@@ -438,13 +438,22 @@ def render_macro_snapshot(macro: MacroSnapshot, regime: dict) -> str:
 
     # Regime summary
     _CN = {
-        "low": "低通胀", "moderate": "温和", "high": "高通胀", "unknown": "未知",
+        "low": "低通胀",
+        "moderate": "温和",
+        "high": "高通胀",
+        "unknown": "未知",
     }
     _CN_M = {
-        "loose": "宽松", "neutral": "中性", "tight": "紧缩", "unknown": "未知",
+        "loose": "宽松",
+        "neutral": "中性",
+        "tight": "紧缩",
+        "unknown": "未知",
     }
     _CN_E = {
-        "expanding": "扩张", "stable": "平稳", "contracting": "收缩", "unknown": "未知",
+        "expanding": "扩张",
+        "stable": "平稳",
+        "contracting": "收缩",
+        "unknown": "未知",
     }
     ip = regime.get("inflation_pressure", "unknown")
     ms = regime.get("monetary_stance", "unknown")
@@ -477,14 +486,16 @@ def run_macro_cli() -> int:
         return 1
 
     # Check if any data was retrieved
-    has_data = any([
-        snapshot.cpi_yoy is not None,
-        snapshot.ppi_yoy is not None,
-        snapshot.pmi_manufacturing is not None,
-        snapshot.m2_yoy is not None,
-        snapshot.social_financing is not None,
-        snapshot.interest_rate_lpr_1y is not None,
-    ])
+    has_data = any(
+        [
+            snapshot.cpi_yoy is not None,
+            snapshot.ppi_yoy is not None,
+            snapshot.pmi_manufacturing is not None,
+            snapshot.m2_yoy is not None,
+            snapshot.social_financing is not None,
+            snapshot.interest_rate_lpr_1y is not None,
+        ]
+    )
 
     if not has_data:
         print(f"{Fore.YELLOW}[Macro] 所有宏观数据均不可用 (tushare token 或接口限制){Style.RESET_ALL}")
@@ -496,5 +507,6 @@ def run_macro_cli() -> int:
 
     # Also print regime dict as JSON for programmatic consumption
     import json
+
     print(f"Regime: {json.dumps(regime, ensure_ascii=False)}")
     return 0

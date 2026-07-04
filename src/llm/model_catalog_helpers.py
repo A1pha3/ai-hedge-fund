@@ -23,11 +23,7 @@ def build_llm_models(model_records: list[dict[str, Any]], model_cls, provider_en
 
 def find_model_in_catalog(all_models: list[Any], model_name: str, provider: Any | None = None) -> Any | None:
     return next(
-        (
-            model
-            for model in all_models
-            if model.model_name == model_name and (provider is None or model.provider == provider)
-        ),
+        (model for model in all_models if model.model_name == model_name and (provider is None or model.provider == provider)),
         None,
     )
 

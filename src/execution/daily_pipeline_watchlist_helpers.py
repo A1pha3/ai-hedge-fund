@@ -72,7 +72,8 @@ def build_merge_approved_watchlist(
         item
         for item in layer_c_results
         if item.decision != "avoid"
-        and item.score_final >= _watchlist_threshold_for_ticker(
+        and item.score_final
+        >= _watchlist_threshold_for_ticker(
             item.ticker,
             merge_approved_tickers,
             threshold_relaxation,
@@ -175,10 +176,7 @@ def _build_watchlist_filter_payload(
             ),
             4,
         ),
-        "strategy_signals": {
-            name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
-            for name, signal in dict(item.strategy_signals or {}).items()
-        },
+        "strategy_signals": {name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {}) for name, signal in dict(item.strategy_signals or {}).items()},
         "agent_contribution_summary": item.agent_contribution_summary,
     }
 
@@ -406,10 +404,7 @@ def _build_watchlist_shadow_release_score_fields(item: LayerCResult) -> dict[str
 
 
 def _build_watchlist_shadow_release_strategy_signals(item: LayerCResult) -> dict[str, Any]:
-    return {
-        name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
-        for name, signal in dict(item.strategy_signals or {}).items()
-    }
+    return {name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {}) for name, signal in dict(item.strategy_signals or {}).items()}
 
 
 def _build_watchlist_shadow_release_agent_summary(item: LayerCResult) -> dict[str, Any]:

@@ -28,11 +28,7 @@ def _score_rakesh_operating_margin(latest) -> tuple[int, str]:
 
 
 def _score_rakesh_eps_cagr(financial_line_items: list) -> tuple[int, str]:
-    eps_values = [
-        getattr(item, "earnings_per_share", None)
-        for item in financial_line_items
-        if getattr(item, "earnings_per_share", None) is not None and getattr(item, "earnings_per_share", None) > 0
-    ]
+    eps_values = [getattr(item, "earnings_per_share", None) for item in financial_line_items if getattr(item, "earnings_per_share", None) is not None and getattr(item, "earnings_per_share", None) > 0]
     if len(eps_values) < 3:
         return 0, "Insufficient EPS data for growth analysis"
 
@@ -67,11 +63,7 @@ def _score_rakesh_revenue_cagr(revenue_cagr: float | None) -> tuple[int, str]:
 
 
 def _score_rakesh_income_cagr(financial_line_items: list) -> tuple[int, str]:
-    net_incomes = [
-        getattr(item, "net_income", None)
-        for item in financial_line_items
-        if getattr(item, "net_income", None) is not None and getattr(item, "net_income", None) > 0
-    ]
+    net_incomes = [getattr(item, "net_income", None) for item in financial_line_items if getattr(item, "net_income", None) is not None and getattr(item, "net_income", None) > 0]
     if len(net_incomes) < 3:
         return 0, "Insufficient net income data for CAGR calculation"
 
@@ -141,11 +133,7 @@ def _score_rakesh_quality_debt_factor(latest) -> float:
 
 
 def _score_rakesh_quality_growth_consistency(financial_line_items: list) -> float:
-    net_incomes = [
-        getattr(item, "net_income", None)
-        for item in financial_line_items[:4]
-        if getattr(item, "net_income", None) is not None and getattr(item, "net_income", None) > 0
-    ]
+    net_incomes = [getattr(item, "net_income", None) for item in financial_line_items[:4] if getattr(item, "net_income", None) is not None and getattr(item, "net_income", None) > 0]
     if len(net_incomes) < 3:
         return 0.5
 

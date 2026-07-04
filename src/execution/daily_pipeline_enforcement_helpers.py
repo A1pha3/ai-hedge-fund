@@ -6,6 +6,7 @@ P6 (risk budget): attaches risk budget metadata and overlays position budgets.
 
 These functions are re-exported from daily_pipeline.py for backward compatibility.
 """
+
 from __future__ import annotations
 
 import os
@@ -36,6 +37,7 @@ BTST_0422_P6_RISK_BUDGET_MODES = frozenset({"off", "enforce"})
 
 
 # ── P3: Prior Quality ──────────────────────────────────────────────────────────
+
 
 def resolve_btst_prior_quality_p3_mode() -> str:
     normalized_mode = str(os.getenv(BTST_0422_P3_PRIOR_QUALITY_MODE_ENV, "off") or "off").strip().lower()
@@ -127,6 +129,7 @@ def enforce_btst_prior_quality_p3(plan: ExecutionPlan, *, prior_by_ticker: dict[
 
 
 # ── P5: Execution Contract ─────────────────────────────────────────────────────
+
 
 def resolve_btst_execution_contract_p5_mode() -> str:
     normalized_mode = str(os.getenv(BTST_0422_P5_EXECUTION_CONTRACT_MODE_ENV, "off") or "off").strip().lower()
@@ -279,6 +282,7 @@ def enforce_btst_execution_contract_p5(plan: ExecutionPlan) -> ExecutionPlan:
 
 
 # ── P6: Risk Budget ────────────────────────────────────────────────────────────
+
 
 def resolve_btst_risk_budget_p6_mode() -> str:
     normalized_mode = str(os.getenv(BTST_0422_P6_RISK_BUDGET_MODE_ENV, "off") or "off").strip().lower()

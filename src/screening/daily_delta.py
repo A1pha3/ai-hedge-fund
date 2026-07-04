@@ -132,24 +132,19 @@ def render_daily_delta(delta: dict[str, Any]) -> str:
     ]
 
     # Summary stats
-    lines.append(f"  {Fore.GREEN}+ 新增: {delta['added_count']}{Style.RESET_ALL}  "
-                 f"{Fore.RED}- 移除: {delta['removed_count']}{Style.RESET_ALL}  "
-                 f"{Fore.YELLOW}↔ 变动: {delta['changed_count']}{Style.RESET_ALL}  "
-                 f"○ 不变: {delta['unchanged_count']}")
+    lines.append(f"  {Fore.GREEN}+ 新增: {delta['added_count']}{Style.RESET_ALL}  " f"{Fore.RED}- 移除: {delta['removed_count']}{Style.RESET_ALL}  " f"{Fore.YELLOW}↔ 变动: {delta['changed_count']}{Style.RESET_ALL}  " f"○ 不变: {delta['unchanged_count']}")
 
     # Added
     if delta.get("added"):
         lines.append(f"\n  {Fore.GREEN}新增标的:{Style.RESET_ALL}")
         for entry in delta["added"][:10]:
-            lines.append(f"    {Fore.GREEN}+{Style.RESET_ALL} {entry['name']} ({entry['ticker']}) "
-                         f"score={entry.get('score_b', '—')}  排名 #{entry.get('rank', '?')}")
+            lines.append(f"    {Fore.GREEN}+{Style.RESET_ALL} {entry['name']} ({entry['ticker']}) " f"score={entry.get('score_b', '—')}  排名 #{entry.get('rank', '?')}")
 
     # Removed
     if delta.get("removed"):
         lines.append(f"\n  {Fore.RED}移除标的:{Style.RESET_ALL}")
         for entry in delta["removed"][:10]:
-            lines.append(f"    {Fore.RED}-{Style.RESET_ALL} {entry['name']} ({entry['ticker']}) "
-                         f"score={entry.get('score_b', '—')}")
+            lines.append(f"    {Fore.RED}-{Style.RESET_ALL} {entry['name']} ({entry['ticker']}) " f"score={entry.get('score_b', '—')}")
 
     # Changed
     if delta.get("changed"):

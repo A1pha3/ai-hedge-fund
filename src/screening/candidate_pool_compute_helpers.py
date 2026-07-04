@@ -55,11 +55,7 @@ def filter_low_estimated_liquidity(
     estimated_amount_map: dict[str, float],
     min_estimated_amount_1d: float,
 ) -> tuple[pd.DataFrame, pd.DataFrame, int]:
-    low_estimated_liq_codes = {
-        ts_code
-        for ts_code in stock_df["ts_code"].tolist()
-        if 0.0 < estimated_amount_map.get(ts_code, 0.0) < min_estimated_amount_1d
-    }
+    low_estimated_liq_codes = {ts_code for ts_code in stock_df["ts_code"].tolist() if 0.0 < estimated_amount_map.get(ts_code, 0.0) < min_estimated_amount_1d}
     if not low_estimated_liq_codes:
         return stock_df, cooldown_review_df, 0
     mask_low_estimated_liq = stock_df["ts_code"].isin(low_estimated_liq_codes)
@@ -110,7 +106,7 @@ def load_amount_map_and_low_liquidity_codes(
         return amount_map, low_liq_codes, True
 
     for index in range(0, len(remaining_codes), batch_size):
-        batch = remaining_codes[index:index + batch_size]
+        batch = remaining_codes[index : index + batch_size]
         batch_started_at = perf_counter()
         for ts_code in batch:
             avg_amt = get_avg_amount_fn(pro, ts_code, trade_date)

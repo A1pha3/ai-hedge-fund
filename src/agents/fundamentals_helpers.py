@@ -20,11 +20,7 @@ def _analyze_fundamentals_profitability(metrics) -> tuple[str, dict]:
     signal = "bullish" if profitability_score >= 2 else "bearish" if profitability_score == 0 else "neutral"
     return signal, {
         "signal": signal,
-        "details": (f"ROE(TTM): {return_on_equity:.2%}" if return_on_equity is not None else "ROE: N/A")
-        + ", "
-        + (f"Net Margin(TTM): {net_margin:.2%}" if net_margin is not None else "Net Margin: N/A")
-        + ", "
-        + (f"Op Margin(TTM): {operating_margin:.2%}" if operating_margin is not None else "Op Margin: N/A"),
+        "details": (f"ROE(TTM): {return_on_equity:.2%}" if return_on_equity is not None else "ROE: N/A") + ", " + (f"Net Margin(TTM): {net_margin:.2%}" if net_margin is not None else "Net Margin: N/A") + ", " + (f"Op Margin(TTM): {operating_margin:.2%}" if operating_margin is not None else "Op Margin: N/A"),
     }
 
 
@@ -45,9 +41,7 @@ def _analyze_fundamentals_growth(metrics) -> tuple[str, dict]:
     signal = "bullish" if growth_score >= 2 else "bearish" if growth_score == 0 else "neutral"
     return signal, {
         "signal": signal,
-        "details": (f"Revenue Growth(TTM YoY): {revenue_growth:.2%}" if revenue_growth is not None else "Revenue Growth: N/A")
-        + ", "
-        + (f"Earnings Growth(TTM YoY): {earnings_growth:.2%}" if earnings_growth is not None else "Earnings Growth: N/A"),
+        "details": (f"Revenue Growth(TTM YoY): {revenue_growth:.2%}" if revenue_growth is not None else "Revenue Growth: N/A") + ", " + (f"Earnings Growth(TTM YoY): {earnings_growth:.2%}" if earnings_growth is not None else "Earnings Growth: N/A"),
     }
 
 
@@ -65,19 +59,13 @@ def _analyze_fundamentals_health(metrics) -> tuple[str, dict]:
         health_score += 1
     if debt_to_equity is not None and debt_to_equity < 0.5:
         health_score += 1
-    if (
-        free_cash_flow_per_share is not None
-        and earnings_per_share is not None
-        and free_cash_flow_per_share > earnings_per_share * 0.8
-    ):
+    if free_cash_flow_per_share is not None and earnings_per_share is not None and free_cash_flow_per_share > earnings_per_share * 0.8:
         health_score += 1
 
     signal = "bullish" if health_score >= 2 else "bearish" if health_score == 0 else "neutral"
     return signal, {
         "signal": signal,
-        "details": (f"Current Ratio: {current_ratio:.2f}" if current_ratio is not None else "Current Ratio: N/A")
-        + ", "
-        + (f"D/E: {debt_to_equity:.2f}" if debt_to_equity is not None else "D/E: N/A"),
+        "details": (f"Current Ratio: {current_ratio:.2f}" if current_ratio is not None else "Current Ratio: N/A") + ", " + (f"D/E: {debt_to_equity:.2f}" if debt_to_equity is not None else "D/E: N/A"),
     }
 
 
@@ -100,11 +88,7 @@ def _analyze_fundamentals_price_ratios(metrics) -> tuple[str, dict]:
 
     return signal, {
         "signal": signal,
-        "details": (f"P/E(TTM): {pe_ratio:.2f}" if pe_ratio is not None else "P/E: N/A")
-        + ", "
-        + (f"P/B: {pb_ratio:.2f}" if pb_ratio is not None else "P/B: N/A")
-        + ", "
-        + (f"P/S: {ps_ratio:.2f}" if ps_ratio is not None else "P/S: N/A"),
+        "details": (f"P/E(TTM): {pe_ratio:.2f}" if pe_ratio is not None else "P/E: N/A") + ", " + (f"P/B: {pb_ratio:.2f}" if pb_ratio is not None else "P/B: N/A") + ", " + (f"P/S: {ps_ratio:.2f}" if ps_ratio is not None else "P/S: N/A"),
     }
 
 

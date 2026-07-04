@@ -100,8 +100,7 @@ def _load_json(path: str | Path) -> dict[str, Any]:
         return json.loads(resolved.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning(
-            "btst_reporting_utils: 损坏的 sidecar JSON %s "
-            "(运行中断/部分写入?): %s; 回退空 dict",
+            "btst_reporting_utils: 损坏的 sidecar JSON %s " "(运行中断/部分写入?): %s; 回退空 dict",
             resolved,
             exc,
         )
@@ -384,11 +383,7 @@ def _iter_selection_snapshot_paths(report_dir: Path) -> list[Path]:
     selection_artifacts_dir = report_dir / "selection_artifacts"
     if not selection_artifacts_dir.exists():
         return []
-    return [
-        snapshot_path
-        for snapshot_path in sorted(selection_artifacts_dir.glob("*/selection_snapshot.json"))
-        if snapshot_path.is_file()
-    ]
+    return [snapshot_path for snapshot_path in sorted(selection_artifacts_dir.glob("*/selection_snapshot.json")) if snapshot_path.is_file()]
 
 
 # ---------------------------------------------------------------------------

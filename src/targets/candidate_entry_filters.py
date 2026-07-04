@@ -91,6 +91,7 @@ def evaluate_candidate_entry_filter_rule(entry: dict[str, Any], rule: dict[str, 
             metric_gate_status = dict(metric_snapshot.get("__gate_status__") or {})
             metric_data_pass = str(metric_gate_status.get("data") or "") == "pass"
             if metric_data_pass:
+
                 def _is_present(raw: Any) -> bool:
                     """Return True only for non-None, finite numeric values.
 
@@ -120,12 +121,7 @@ def evaluate_candidate_entry_filter_rule(entry: dict[str, Any], rule: dict[str, 
         "candidate_source": candidate_source,
         "candidate_reason_codes": sorted(reason_codes),
         "preconditions_match": preconditions_match,
-        "metric_snapshot": {
-            metric_name: metric_snapshot.get(metric_name)
-            for metric_name in sorted(set(metric_max_thresholds) | set(metric_min_thresholds))
-        }
-        if metric_snapshot
-        else {},
+        "metric_snapshot": {metric_name: metric_snapshot.get(metric_name) for metric_name in sorted(set(metric_max_thresholds) | set(metric_min_thresholds))} if metric_snapshot else {},
         "metric_gate_status": metric_gate_status,
         "metric_data_pass": metric_data_pass,
         "metric_thresholds_match": metric_thresholds_match,
@@ -168,10 +164,7 @@ def summarize_candidate_entry_filter_observability(entries: list[dict[str, Any]]
                 counters["metric_data_fail_count"] += 1
             if rule_evaluation["metric_thresholds_match"]:
                 counters["metric_threshold_match_count"] += 1
-    return {
-        rule_name: {key: int(value) for key, value in counters.items()}
-        for rule_name, counters in sorted(summary.items())
-    }
+    return {rule_name: {key: int(value) for key, value in counters.items()} for rule_name, counters in sorted(summary.items())}
 
 
 def apply_candidate_entry_filters(entries: list[dict[str, Any]], filter_rules: list[dict[str, Any]], *, trade_date: str, default_candidate_source: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:

@@ -306,11 +306,7 @@ def generate_trading_decision(
 
         fallback_decision = _make_decision_from_signals(t, compact_signals.get(t, {}), compact_allowed.get(t, {"hold": 0}))
 
-        should_override = (
-            llm_decision.action == "hold"
-            and fallback_decision.action != "hold"
-            and int(llm_decision.confidence) <= 20
-        )
+        should_override = llm_decision.action == "hold" and fallback_decision.action != "hold" and int(llm_decision.confidence) <= 20
 
         chosen = fallback_decision if should_override else llm_decision
 

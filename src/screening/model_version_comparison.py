@@ -314,8 +314,10 @@ def compare_model_versions(
         cand_rets = [r for r in (_horizon_return(rec, horizon_field) for rec in records if _version_key(rec) == candidate.model_version) if r is not None]
         base_rets = [r for r in (_horizon_return(rec, horizon_field) for rec in records if _version_key(rec) == baseline.model_version) if r is not None]
         ci_lo, ci_hi = _bootstrap_delta_winrate_ci(
-            cand_rets, base_rets,
-            n_bootstrap=_N_BOOTSTRAP, seed=_BOOTSTRAP_SEED + _deterministic_str_hash(candidate.model_version) % 1000,
+            cand_rets,
+            base_rets,
+            n_bootstrap=_N_BOOTSTRAP,
+            seed=_BOOTSTRAP_SEED + _deterministic_str_hash(candidate.model_version) % 1000,
         )
         delta_ci_low = ci_lo
         delta_ci_high = ci_hi

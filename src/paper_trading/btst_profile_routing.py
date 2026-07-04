@@ -24,6 +24,7 @@ P2 (2026-06-05): Phase 1 — schema and experimental harness only.
 - Actually apply these rules in upstream code paths.
 - Walk-forward experiments comparing profiles against closed outcomes.
 """
+
 from __future__ import annotations
 
 from enum import Enum
@@ -103,35 +104,17 @@ class ProfileRoutingContract(BaseModel):
             # Skip comparison if either side is None (unconstrained).
             if c.select_threshold is not None and a.select_threshold is not None:
                 if c.select_threshold < a.select_threshold:
-                    raise ValueError(
-                        f"Conservative select_threshold ({c.select_threshold}) must be "
-                        f">= aggressive ({a.select_threshold}) for gate={gate_key}"
-                    )
+                    raise ValueError(f"Conservative select_threshold ({c.select_threshold}) must be " f">= aggressive ({a.select_threshold}) for gate={gate_key}")
             if c.rank_cap is not None and a.rank_cap is not None:
                 if c.rank_cap > a.rank_cap:
-                    raise ValueError(
-                        f"Conservative rank_cap ({c.rank_cap}) must be <= "
-                        f"aggressive ({a.rank_cap}) for gate={gate_key}"
-                    )
+                    raise ValueError(f"Conservative rank_cap ({c.rank_cap}) must be <= " f"aggressive ({a.rank_cap}) for gate={gate_key}")
             if c.gate_action is not None and a.gate_action is not None:
                 if c.gate_action == "admit" and a.gate_action == "block":
-                    raise ValueError(
-                        f"Conservative cannot admit if aggressive blocks for gate={gate_key}"
-                    )
+                    raise ValueError(f"Conservative cannot admit if aggressive blocks for gate={gate_key}")
             if c.confirmation_required is False and a.confirmation_required is True:
-                raise ValueError(
-                    f"Conservative cannot skip confirmation if aggressive requires it "
-                    f"for gate={gate_key}"
-                )
-            if (
-                c.position_size_scale is not None
-                and a.position_size_scale is not None
-                and c.position_size_scale > a.position_size_scale
-            ):
-                raise ValueError(
-                    f"Conservative position_size_scale ({c.position_size_scale}) must be <= "
-                    f"aggressive ({a.position_size_scale}) for gate={gate_key}"
-                )
+                raise ValueError(f"Conservative cannot skip confirmation if aggressive requires it " f"for gate={gate_key}")
+            if c.position_size_scale is not None and a.position_size_scale is not None and c.position_size_scale > a.position_size_scale:
+                raise ValueError(f"Conservative position_size_scale ({c.position_size_scale}) must be <= " f"aggressive ({a.position_size_scale}) for gate={gate_key}")
         return self
 
 

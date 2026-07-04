@@ -15,10 +15,10 @@ from src.utils.numeric import clamp_unit_interval
 
 class EventCatalystProfile(Protocol):
     """Protocol defining the event catalyst configuration interface.
-    
+
     This protocol ensures type safety for profile objects passed to
     event catalyst assessment builders without coupling to concrete types.
-    
+
     All attributes are declared as read-only properties to ensure strict
     compatibility with frozen dataclass implementations.
     """
@@ -100,13 +100,7 @@ def build_event_catalyst_assessment(
     overhead_penalty = float(snapshot.get("overhead_supply_penalty", 0.0) or 0.0)
 
     # Compute weighted score
-    score_raw = (
-        float(profile.event_catalyst_catalyst_freshness_weight) * freshness
-        + float(profile.event_catalyst_sector_resonance_weight) * resonance
-        + float(profile.event_catalyst_volume_expansion_weight) * volume
-        + float(profile.event_catalyst_close_strength_weight) * close
-        + float(profile.event_catalyst_trend_acceleration_weight) * trend
-    )
+    score_raw = float(profile.event_catalyst_catalyst_freshness_weight) * freshness + float(profile.event_catalyst_sector_resonance_weight) * resonance + float(profile.event_catalyst_volume_expansion_weight) * volume + float(profile.event_catalyst_close_strength_weight) * close + float(profile.event_catalyst_trend_acceleration_weight) * trend
     score = clamp_unit_interval(score_raw)
 
     # Check eligibility gates

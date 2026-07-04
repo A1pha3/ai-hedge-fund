@@ -471,7 +471,7 @@ def calculate_enhanced_dcf_value(fcf_history: list[float], growth_metrics: dict,
     cumulative_fcf = base_fcf * (1 + high_growth) ** 3
     for year in range(4, 8):
         transition_rate = transition_growth * (8 - year) / 4  # Declining
-        cumulative_fcf *= (1 + transition_rate)
+        cumulative_fcf *= 1 + transition_rate
         pv += cumulative_fcf / (1 + wacc) ** year
 
     # Terminal value — final_fcf continues from the last transition-year level

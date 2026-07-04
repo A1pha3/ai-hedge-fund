@@ -90,14 +90,9 @@ def _build_historical_prior_summary(
 ) -> str | None:
     if evaluable_count <= 0:
         return None
-    resolved_scope_label = scope_label or (
-        "同票" if applied_scope == "same_ticker" else "同源"
-    )
+    resolved_scope_label = scope_label or ("同票" if applied_scope == "same_ticker" else "同源")
     threshold_pct = OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD * 100.0
-    return (
-        f"{resolved_scope_label}历史 {evaluable_count} 例，next_high>={threshold_pct:.1f}% 命中率={_format_float(hit_rate)}, "
-        f"next_close 正收益率={_format_float(close_positive_rate)}。"
-    )
+    return f"{resolved_scope_label}历史 {evaluable_count} 例，next_high>={threshold_pct:.1f}% 命中率={_format_float(hit_rate)}, " f"next_close 正收益率={_format_float(close_positive_rate)}。"
 
 
 # ---------------------------------------------------------------------------
@@ -110,17 +105,9 @@ def _build_opportunity_pool_historical_prior(
     historical_rows: list[dict[str, Any]],
     price_cache: dict[tuple[str, str], pd.DataFrame],
 ) -> dict[str, Any]:
-    same_ticker_rows = [
-        row for row in historical_rows if row.get("ticker") == entry.get("ticker")
-    ]
-    same_source_rows = [
-        row
-        for row in historical_rows
-        if row.get("candidate_source") == entry.get("candidate_source")
-    ]
-    applied_scope, applied_rows = _resolve_opportunity_pool_historical_scope(
-        same_ticker_rows, same_source_rows
-    )
+    same_ticker_rows = [row for row in historical_rows if row.get("ticker") == entry.get("ticker")]
+    same_source_rows = [row for row in historical_rows if row.get("candidate_source") == entry.get("candidate_source")]
+    applied_scope, applied_rows = _resolve_opportunity_pool_historical_scope(same_ticker_rows, same_source_rows)
 
     stats = _summarize_historical_opportunity_rows(applied_rows, price_cache)
     bias_label, monitor_priority = _classify_historical_prior(
@@ -217,9 +204,7 @@ def _build_watch_candidate_historical_prior(
         decorated_entry=decorated_entry,
         family=family,
     )
-    applied_scope, scope_label, applied_rows = _resolve_watch_candidate_scope_selection(
-        row_buckets
-    )
+    applied_scope, scope_label, applied_rows = _resolve_watch_candidate_scope_selection(row_buckets)
 
     stats = _summarize_historical_opportunity_rows(applied_rows, price_cache)
     bias_label, monitor_priority = _classify_historical_prior(
@@ -275,9 +260,7 @@ def _build_watch_candidate_historical_prior_payload(
         "same_family_sample_count": len(row_buckets["same_family"]),
         "same_candidate_source_sample_count": len(row_buckets["same_source"]),
         "same_family_source_sample_count": len(row_buckets["same_family_source"]),
-        "same_family_source_score_catalyst_sample_count": len(
-            row_buckets["same_family_source_score_catalyst"]
-        ),
+        "same_family_source_score_catalyst_sample_count": len(row_buckets["same_family_source_score_catalyst"]),
         "same_source_score_sample_count": len(row_buckets["same_source_score"]),
         "applied_scope": applied_scope,
         **stats,
@@ -312,35 +295,12 @@ def _build_watch_candidate_historical_row_buckets(
     decorated_entry: dict[str, Any],
     family: str,
 ) -> dict[str, list[dict[str, Any]]]:
-    same_ticker_rows = [
-        row
-        for row in historical_rows
-        if row.get("ticker") == decorated_entry.get("ticker")
-    ]
-    same_family_rows = [
-        row for row in historical_rows if row.get("watch_candidate_family") == family
-    ]
-    same_source_rows = [
-        row
-        for row in historical_rows
-        if row.get("candidate_source") == decorated_entry.get("candidate_source")
-    ]
-    same_family_source_rows = [
-        row
-        for row in same_family_rows
-        if row.get("candidate_source") == decorated_entry.get("candidate_source")
-    ]
-    same_family_source_score_catalyst_rows = [
-        row
-        for row in same_family_source_rows
-        if row.get("score_bucket") == decorated_entry.get("score_bucket")
-        and row.get("catalyst_bucket") == decorated_entry.get("catalyst_bucket")
-    ]
-    same_source_score_rows = [
-        row
-        for row in same_source_rows
-        if row.get("score_bucket") == decorated_entry.get("score_bucket")
-    ]
+    same_ticker_rows = [row for row in historical_rows if row.get("ticker") == decorated_entry.get("ticker")]
+    same_family_rows = [row for row in historical_rows if row.get("watch_candidate_family") == family]
+    same_source_rows = [row for row in historical_rows if row.get("candidate_source") == decorated_entry.get("candidate_source")]
+    same_family_source_rows = [row for row in same_family_rows if row.get("candidate_source") == decorated_entry.get("candidate_source")]
+    same_family_source_score_catalyst_rows = [row for row in same_family_source_rows if row.get("score_bucket") == decorated_entry.get("score_bucket") and row.get("catalyst_bucket") == decorated_entry.get("catalyst_bucket")]
+    same_source_score_rows = [row for row in same_source_rows if row.get("score_bucket") == decorated_entry.get("score_bucket")]
     return {
         "same_ticker": same_ticker_rows,
         "same_family": same_family_rows,
@@ -358,10 +318,7 @@ def _resolve_watch_candidate_scope_selection(
         (
             "same_ticker",
             "同票",
-            row_buckets["same_ticker"]
-            if len(row_buckets["same_ticker"])
-            >= OPPORTUNITY_POOL_HISTORICAL_SAME_TICKER_MIN_SAMPLES
-            else [],
+            row_buckets["same_ticker"] if len(row_buckets["same_ticker"]) >= OPPORTUNITY_POOL_HISTORICAL_SAME_TICKER_MIN_SAMPLES else [],
         ),
         (
             "family_source_score_catalyst",

@@ -69,12 +69,7 @@ def _to_api_key_summary(api_key: ApiKey) -> ApiKeySummaryResponse:
 async def create_or_update_api_key(request: ApiKeyCreateRequest, db: Session = Depends(get_db)):
     """Create a new API key or update existing one"""
     repo = ApiKeyRepository(db)
-    api_key = repo.create_or_update_api_key(
-        provider=request.provider,
-        key_value=request.key_value,
-        description=request.description,
-        is_active=request.is_active
-    )
+    api_key = repo.create_or_update_api_key(provider=request.provider, key_value=request.key_value, description=request.description, is_active=request.is_active)
     return _to_api_key_response(api_key)
 
 
@@ -123,12 +118,7 @@ async def get_api_key(provider: str, db: Session = Depends(get_db)):
 async def update_api_key(provider: str, request: ApiKeyUpdateRequest, db: Session = Depends(get_db)):
     """Update an existing API key"""
     repo = ApiKeyRepository(db)
-    api_key = repo.update_api_key(
-        provider=provider,
-        key_value=request.key_value,
-        description=request.description,
-        is_active=request.is_active
-    )
+    api_key = repo.update_api_key(provider=provider, key_value=request.key_value, description=request.description, is_active=request.is_active)
     if not api_key:
         raise HTTPException(status_code=404, detail="API key not found")
     return _to_api_key_response(api_key)
@@ -183,15 +173,7 @@ async def deactivate_api_key(provider: str, db: Session = Depends(get_db)):
 async def bulk_update_api_keys(request: ApiKeyBulkUpdateRequest, db: Session = Depends(get_db)):
     """Bulk create or update multiple API keys"""
     repo = ApiKeyRepository(db)
-    api_keys_data = [
-        {
-            'provider': key.provider,
-            'key_value': key.key_value,
-            'description': key.description,
-            'is_active': key.is_active
-        }
-        for key in request.api_keys
-    ]
+    api_keys_data = [{"provider": key.provider, "key_value": key.key_value, "description": key.description, "is_active": key.is_active} for key in request.api_keys]
     api_keys = repo.bulk_create_or_update(api_keys_data)
     return [_to_api_key_response(key) for key in api_keys]
 

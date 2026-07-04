@@ -18,12 +18,7 @@ BTST_KILL_SWITCH_RECOVERY_DAY_MIN = 10.0
 
 def extract_btst_kill_switch_metrics(payload: dict[str, Any] | None) -> dict[str, float]:
     normalized_payload = dict(payload or {})
-    nested_metrics = dict(
-        normalized_payload.get("btst_kill_switch_metrics")
-        or normalized_payload.get("committee_kill_switch_metrics")
-        or normalized_payload.get("kill_switch_metrics")
-        or {}
-    )
+    nested_metrics = dict(normalized_payload.get("btst_kill_switch_metrics") or normalized_payload.get("committee_kill_switch_metrics") or normalized_payload.get("kill_switch_metrics") or {})
     metrics_source = nested_metrics or normalized_payload
     extracted: dict[str, float] = {}
     for key, _ in BTST_KILL_SWITCH_CHECKS:
@@ -52,17 +47,8 @@ def resolve_btst_kill_switch(metrics: dict[str, Any] | None, gate: str) -> dict[
     recovery_trade_count = max(float(normalized_metrics.get("kill_switch_recovery_trade_count", 0.0) or 0.0), 0.0)
     recovery_day_count = max(float(normalized_metrics.get("kill_switch_recovery_day_count", 0.0) or 0.0), 0.0)
     recovery_window_observed = any(key in normalized_metrics for key in BTST_KILL_SWITCH_RECOVERY_KEYS)
-    recovery_pending = (
-        not triggered_metrics
-        and recovery_window_observed
-        and recovery_trade_count < BTST_KILL_SWITCH_RECOVERY_TRADE_MIN
-        and recovery_day_count < BTST_KILL_SWITCH_RECOVERY_DAY_MIN
-    )
-    recovery_release_ready = (
-        not triggered_metrics
-        and recovery_window_observed
-        and not recovery_pending
-    )
+    recovery_pending = not triggered_metrics and recovery_window_observed and recovery_trade_count < BTST_KILL_SWITCH_RECOVERY_TRADE_MIN and recovery_day_count < BTST_KILL_SWITCH_RECOVERY_DAY_MIN
+    recovery_release_ready = not triggered_metrics and recovery_window_observed and not recovery_pending
 
     effective_gate = str(gate or "")
     if triggered_metrics or recovery_pending:

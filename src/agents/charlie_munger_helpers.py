@@ -53,11 +53,7 @@ def _score_munger_intangibles(financial_line_items: list) -> tuple[int, list[str
     details: list[str] = []
 
     r_and_d = [item.research_and_development for item in financial_line_items if hasattr(item, "research_and_development") and item.research_and_development is not None]
-    goodwill_and_intangible_assets = [
-        item.goodwill_and_intangible_assets
-        for item in financial_line_items
-        if hasattr(item, "goodwill_and_intangible_assets") and item.goodwill_and_intangible_assets is not None
-    ]
+    goodwill_and_intangible_assets = [item.goodwill_and_intangible_assets for item in financial_line_items if hasattr(item, "goodwill_and_intangible_assets") and item.goodwill_and_intangible_assets is not None]
 
     if r_and_d and sum(r_and_d) > 0:
         score += 1

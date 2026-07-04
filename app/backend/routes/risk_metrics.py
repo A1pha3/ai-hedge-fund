@@ -109,13 +109,7 @@ class RiskSnapshotResponse(BaseModel):
     path="/risk-snapshot",
     response_model=RiskSnapshotResponse,
     summary="Portfolio risk snapshot (VaR / CVaR / drawdown / concentration)",
-    description=(
-        "Returns a real-time risk snapshot for the supplied positions. "
-        "When called without a body the snapshot contains zero-risk values "
-        "(no positions, no lookback) — useful for the dashboard to render "
-        "an empty state. The heavy lifting is in the POST variant which "
-        "accepts a full payload."
-    ),
+    description=("Returns a real-time risk snapshot for the supplied positions. " "When called without a body the snapshot contains zero-risk values " "(no positions, no lookback) — useful for the dashboard to render " "an empty state. The heavy lifting is in the POST variant which " "accepts a full payload."),
 )
 def get_risk_snapshot(
     lookback_days: int = Query(60, ge=1, le=252, description="回溯窗口长度 (1-252 个交易日)"),

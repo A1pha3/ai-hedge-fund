@@ -99,11 +99,7 @@ def _run_walk_forward_mode(args, build_engine) -> int:
     if summary["avg_max_drawdown"] is not None:
         print(f"Average Max Drawdown: {abs(summary['avg_max_drawdown']):.2f}%")
     if summary["positive_sharpe_window_ratio"] is not None:
-        print(
-            "Positive Sharpe Windows: "
-            f"{int(summary['positive_sharpe_window_count'])}/{summary['window_count']} "
-            f"({float(summary['positive_sharpe_window_ratio']):.0%})"
-        )
+        print("Positive Sharpe Windows: " f"{int(summary['positive_sharpe_window_count'])}/{summary['window_count']} " f"({float(summary['positive_sharpe_window_ratio']):.0%})")
     if int(summary.get("zero_sharpe_window_count") or 0) > 0:
         print(f"Zero Sharpe Windows: {int(summary['zero_sharpe_window_count'])}")
     if summary["worst_sharpe"] is not None:
@@ -133,8 +129,7 @@ def _run_walk_forward_mode(args, build_engine) -> int:
     # current-listed A-share universe and disclose that sample boundary
     # explicitly. R74 extended ann_date PIT filtering from the fina_indicator
     # metrics path (R41) to the balancesheet/cashflow/income line_items path.
-    print("ℹ 已加固的前瞻数据路径 (R37-R41, R74): 价格前复权 / A 股真实交易日历 / 宏观 as_of 过滤 / 财报 ann_date 过滤 (含三大报表 line_items)。"
-          "当前股票池口径: 仅覆盖当前上市 A 股；退市标的不进入回测候选池。")
+    print("ℹ 已加固的前瞻数据路径 (R37-R41, R74): 价格前复权 / A 股真实交易日历 / 宏观 as_of 过滤 / 财报 ann_date 过滤 (含三大报表 line_items)。" "当前股票池口径: 仅覆盖当前上市 A 股；退市标的不进入回测候选池。")
     return 0
 
 

@@ -12,6 +12,7 @@ P3-4 在此基础上提供"组合层"建议:
   - **约束友好** — 行业集中度 + 个股权重双约束
   - **降级友好** — 推荐为空时返回空组合
 """
+
 from __future__ import annotations
 
 import logging
@@ -101,9 +102,7 @@ def _allocate_weights(
 
     n = len(score_bs)
     # Sort by score_b desc; preserve original indices
-    indexed = sorted(
-        enumerate(zip(score_bs, industries)), key=lambda x: x[1][0], reverse=True
-    )
+    indexed = sorted(enumerate(zip(score_bs, industries)), key=lambda x: x[1][0], reverse=True)
 
     # Extract scores
     scores_only = [item[1][0] for item in indexed]
@@ -162,10 +161,7 @@ def compute_portfolio(
         return summary
 
     # Select top N by score_b
-    filtered = [
-        rec for rec in recommendations
-        if isinstance(rec, dict) and rec.get("ticker")
-    ]
+    filtered = [rec for rec in recommendations if isinstance(rec, dict) and rec.get("ticker")]
     if not filtered:
         return summary
 
@@ -188,15 +184,10 @@ def compute_portfolio(
 
     # Extract fields
     score_bs = [_safe_float(r.get("score_b", 0.0), 0.0) for r in selected]
-    industries = [
-        str(r.get("industry_sw") or r.get("industry") or "未知").strip()
-        for r in selected
-    ]
+    industries = [str(r.get("industry_sw") or r.get("industry") or "未知").strip() for r in selected]
 
     # Compute weights
-    weights = _allocate_weights(
-        score_bs, industries, position_cap=position_cap, industry_cap=industry_cap
-    )
+    weights = _allocate_weights(score_bs, industries, position_cap=position_cap, industry_cap=industry_cap)
 
     # Build positions
     for rec, w in zip(selected, weights):
@@ -215,9 +206,7 @@ def compute_portfolio(
 
     # Industry breakdown
     for p in summary.positions:
-        summary.industry_breakdown[p.industry] = (
-            summary.industry_breakdown.get(p.industry, 0.0) + p.weight
-        )
+        summary.industry_breakdown[p.industry] = summary.industry_breakdown.get(p.industry, 0.0) + p.weight
 
     # Concentration
     sorted_weights = sorted([p.weight for p in summary.positions], reverse=True)
@@ -255,9 +244,7 @@ def render_portfolio(summary: PortfolioSummary) -> str:
     lines.append(f"  {'ticker':<10} {'行业':<10} {'score_b':>8} {'权重':>8}")
     lines.append("  " + "-" * 42)
     for p in summary.positions:
-        lines.append(
-            f"  {p.ticker:<10} {p.industry:<10} {p.score_b:>+8.4f} {p.weight:>8.2%}"
-        )
+        lines.append(f"  {p.ticker:<10} {p.industry:<10} {p.score_b:>+8.4f} {p.weight:>8.2%}")
     lines.append("")
 
     # Industry breakdown
@@ -277,11 +264,7 @@ def render_portfolio(summary: PortfolioSummary) -> str:
     lines.append(f"    预期 Sharpe (估算): {summary.expected_sharpe:+.4f}")
     lines.append(f"    等权 Sharpe (对比): {summary.equal_weight_sharpe:+.4f}")
 
-    improvement = (
-        (summary.expected_sharpe - summary.equal_weight_sharpe)
-        if summary.equal_weight_sharpe != 0
-        else 0.0
-    )
+    improvement = (summary.expected_sharpe - summary.equal_weight_sharpe) if summary.equal_weight_sharpe != 0 else 0.0
     lines.append(f"    相对等权提升: {improvement:+.4f}")
     lines.append("━" * 70)
     return "\n".join(lines)

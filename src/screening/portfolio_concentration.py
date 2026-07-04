@@ -78,9 +78,7 @@ def compute_industry_concentration(
 
     distribution = {ind: c / valid_count for ind, c in counts.items()}
     # Top industry: highest share; tie → sort by share desc then name for determinism
-    top_industry, top_share = max(
-        distribution.items(), key=lambda kv: (kv[1], kv[0])
-    ) if distribution else ("", 0.0)
+    top_industry, top_share = max(distribution.items(), key=lambda kv: (kv[1], kv[0])) if distribution else ("", 0.0)
     # max() on (share, name) picks the lexicographically-largest name on ties —
     # stable across runs for the same input
 
@@ -100,16 +98,8 @@ def render_concentration_line(report: IndustryConcentrationReport) -> str:
         return ""
     pct = report.top_share * 100
     if report.over_threshold:
-        return (
-            f"  {Fore.CYAN}🏭 组合行业集中度:{Style.RESET_ALL} "
-            f"{report.top_industry} {Fore.RED}{pct:.0f}%{Style.RESET_ALL} "
-            f"{Fore.RED}⚠ > {report.threshold * 100:.0f}% 集中超限, "
-            f"建议分散{Style.RESET_ALL}"
-        )
-    return (
-        f"  {Fore.CYAN}🏭 组合行业集中度:{Style.RESET_ALL} "
-        f"{report.top_industry} {pct:.0f}%  (分散度 OK, 阈值 {report.threshold * 100:.0f}%)"
-    )
+        return f"  {Fore.CYAN}🏭 组合行业集中度:{Style.RESET_ALL} " f"{report.top_industry} {Fore.RED}{pct:.0f}%{Style.RESET_ALL} " f"{Fore.RED}⚠ > {report.threshold * 100:.0f}% 集中超限, " f"建议分散{Style.RESET_ALL}"
+    return f"  {Fore.CYAN}🏭 组合行业集中度:{Style.RESET_ALL} " f"{report.top_industry} {pct:.0f}%  (分散度 OK, 阈值 {report.threshold * 100:.0f}%)"
 
 
 __all__ = [

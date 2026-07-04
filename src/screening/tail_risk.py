@@ -86,14 +86,8 @@ def render_tail_risk_line(report: TailRiskReport) -> str:
         return ""
     p5 = report.p5_return
     if p5 <= _DEEP_TAIL_THRESHOLD:
-        return (
-            f"  {Fore.CYAN}🦎 尾部风险 (5% 分位):{Style.RESET_ALL} "
-            f"{Fore.RED}{p5:.1f}% ⚠ (深尾, n={report.sample_count}){Style.RESET_ALL}"
-        )
-    return (
-        f"  {Fore.CYAN}🦎 尾部风险 (5% 分位):{Style.RESET_ALL} "
-        f"{p5:.1f}%  (n={report.sample_count})"
-    )
+        return f"  {Fore.CYAN}🦎 尾部风险 (5% 分位):{Style.RESET_ALL} " f"{Fore.RED}{p5:.1f}% ⚠ (深尾, n={report.sample_count}){Style.RESET_ALL}"
+    return f"  {Fore.CYAN}🦎 尾部风险 (5% 分位):{Style.RESET_ALL} " f"{p5:.1f}%  (n={report.sample_count})"
 
 
 __all__ = [

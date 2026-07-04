@@ -71,58 +71,20 @@ def _resolve_snapshot_scores(
     alignment_metrics: dict[str, Any],
     clamp_unit_interval_fn: Callable[[float], float],
 ) -> dict[str, float]:
-    breakout_freshness = clamp_unit_interval_fn(
-        (0.40 * trend_metrics["momentum_strength"])
-        + (0.35 * event_metrics["event_freshness_strength"])
-        + (0.25 * event_metrics["event_signal_strength"])
-    )
-    trend_acceleration = clamp_unit_interval_fn(
-        (0.40 * trend_metrics["momentum_strength"])
-        + (0.35 * trend_metrics["adx_strength"])
-        + (0.25 * trend_metrics["ema_strength"])
-    )
-    volume_expansion_quality = clamp_unit_interval_fn(
-        (0.55 * trend_metrics["volatility_strength"])
-        + (0.25 * trend_metrics["momentum_strength"])
-        + (0.20 * event_metrics["event_signal_strength"])
-    )
-    close_strength = clamp_unit_interval_fn(
-        (0.55 * trend_metrics["ema_strength"])
-        + (0.25 * trend_metrics["momentum_strength"])
-        + (0.20 * alignment_metrics["score_b_strength"])
-    )
-    sector_resonance = clamp_unit_interval_fn(
-        (0.45 * alignment_metrics["analyst_alignment"])
-        + (0.20 * alignment_metrics["investor_alignment"])
-        + (0.20 * alignment_metrics["score_c_strength"])
-        + (0.15 * event_metrics["event_signal_strength"])
-    )
-    raw_catalyst_freshness = clamp_unit_interval_fn(
-        (0.65 * event_metrics["event_freshness_strength"])
-        + (0.35 * event_metrics["news_sentiment_strength"])
-    )
-    layer_c_alignment = clamp_unit_interval_fn(
-        (0.55 * alignment_metrics["score_c_strength"])
-        + (0.25 * alignment_metrics["analyst_alignment"])
-        + (0.20 * clamp_unit_interval_fn(1.0 if input_data.layer_c_decision != "avoid" else 0.0))
-    )
+    breakout_freshness = clamp_unit_interval_fn((0.40 * trend_metrics["momentum_strength"]) + (0.35 * event_metrics["event_freshness_strength"]) + (0.25 * event_metrics["event_signal_strength"]))
+    trend_acceleration = clamp_unit_interval_fn((0.40 * trend_metrics["momentum_strength"]) + (0.35 * trend_metrics["adx_strength"]) + (0.25 * trend_metrics["ema_strength"]))
+    volume_expansion_quality = clamp_unit_interval_fn((0.55 * trend_metrics["volatility_strength"]) + (0.25 * trend_metrics["momentum_strength"]) + (0.20 * event_metrics["event_signal_strength"]))
+    close_strength = clamp_unit_interval_fn((0.55 * trend_metrics["ema_strength"]) + (0.25 * trend_metrics["momentum_strength"]) + (0.20 * alignment_metrics["score_b_strength"]))
+    sector_resonance = clamp_unit_interval_fn((0.45 * alignment_metrics["analyst_alignment"]) + (0.20 * alignment_metrics["investor_alignment"]) + (0.20 * alignment_metrics["score_c_strength"]) + (0.15 * event_metrics["event_signal_strength"]))
+    raw_catalyst_freshness = clamp_unit_interval_fn((0.65 * event_metrics["event_freshness_strength"]) + (0.35 * event_metrics["news_sentiment_strength"]))
+    layer_c_alignment = clamp_unit_interval_fn((0.55 * alignment_metrics["score_c_strength"]) + (0.25 * alignment_metrics["analyst_alignment"]) + (0.20 * clamp_unit_interval_fn(1.0 if input_data.layer_c_decision != "avoid" else 0.0)))
     # 短期反转因子: 超跌+均值回归=反弹机会。IC=+0.41, ICIR=+3.55
     # momentum低(近期下跌) * mean_reversion高(超卖) = 反弹信号
-    short_term_reversal = clamp_unit_interval_fn(
-        event_metrics["mean_reversion_strength"] * (1.0 - trend_metrics["momentum_strength"])
-    )
+    short_term_reversal = clamp_unit_interval_fn(event_metrics["mean_reversion_strength"] * (1.0 - trend_metrics["momentum_strength"]))
     # 日内尾盘强度: momentum方向+低波动率+事件确认=收盘强势。IC=+0.133, ICIR=+0.94
-    intraday_strength = clamp_unit_interval_fn(
-        (0.50 * trend_metrics["momentum_strength"])
-        + (0.30 * event_metrics["event_signal_strength"])
-        + (0.20 * trend_metrics["ema_strength"])
-    )
+    intraday_strength = clamp_unit_interval_fn((0.50 * trend_metrics["momentum_strength"]) + (0.30 * event_metrics["event_signal_strength"]) + (0.20 * trend_metrics["ema_strength"]))
     # 2日反转因子: 短期超卖+均值回归信号(更灵敏的reversal变体)。IC=+0.092
-    reversal_2d = clamp_unit_interval_fn(
-        (0.55 * event_metrics["mean_reversion_strength"])
-        * (1.0 - clamp_unit_interval_fn(trend_metrics.get("momentum_1m", trend_metrics["momentum_strength"])))
-        + (0.45 * (1.0 - trend_metrics["momentum_strength"]))
-    )
+    reversal_2d = clamp_unit_interval_fn((0.55 * event_metrics["mean_reversion_strength"]) * (1.0 - clamp_unit_interval_fn(trend_metrics.get("momentum_1m", trend_metrics["momentum_strength"]))) + (0.45 * (1.0 - trend_metrics["momentum_strength"])))
     trend_continuation = clamp_unit_interval_fn(1.0 - short_term_reversal)
     trend_continuation_2d = clamp_unit_interval_fn(1.0 - reversal_2d)
     return {

@@ -145,10 +145,7 @@ def check_exit_signal(
     # Only apply the ATR-based stop when it's *wider* than the hard stop
     # (i.e. 2*atr_14 >= 6% of entry). Otherwise the ATR stop is a no-op that
     # would fire on tiny dips in low-vol names, which is not the intent.
-    atr_wider_than_hard = (
-        atr_14 > 0
-        and (holding.entry_price - atr_stop) >= abs(holding.entry_price * HARD_STOP_LOSS_PCT)
-    )
+    atr_wider_than_hard = atr_14 > 0 and (holding.entry_price - atr_stop) >= abs(holding.entry_price * HARD_STOP_LOSS_PCT)
     if atr_wider_than_hard and current_price < atr_stop:
         return ExitSignal(ticker=holding.ticker, level="L2", trigger_reason="atr_stop_loss", urgency="next_day", sell_ratio=1.0)
 

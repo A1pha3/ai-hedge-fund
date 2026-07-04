@@ -113,15 +113,8 @@ def _resolve_runtime_candidate_reason_codes(short_trade_result: Any | None) -> l
     if short_trade_result is None:
         return []
     explainability_payload = dict(getattr(short_trade_result, "explainability_payload", {}) or {})
-    runtime_reason_codes = [
-        str(reason)
-        for reason in list(explainability_payload.get("candidate_reason_codes") or [])
-        if str(reason or "").strip()
-    ]
-    if (
-        explainability_payload.get("payoff_first_runner_recall_candidate")
-        and "payoff_first_runner_recall_candidate" not in runtime_reason_codes
-    ):
+    runtime_reason_codes = [str(reason) for reason in list(explainability_payload.get("candidate_reason_codes") or []) if str(reason or "").strip()]
+    if explainability_payload.get("payoff_first_runner_recall_candidate") and "payoff_first_runner_recall_candidate" not in runtime_reason_codes:
         runtime_reason_codes.append("payoff_first_runner_recall_candidate")
     return runtime_reason_codes
 

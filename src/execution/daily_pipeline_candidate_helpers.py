@@ -56,13 +56,7 @@ def build_short_trade_boundary_metrics_payload(
         explicit_values=snapshot,
         metrics_payload=raw_candidate_metrics,
     )
-    payload.update(
-        {
-            key: value
-            for key, value in boundary_contract_core_payload.items()
-            if key not in payload or payload.get(key) is None
-        }
-    )
+    payload.update({key: value for key, value in boundary_contract_core_payload.items() if key not in payload or payload.get(key) is None})
     for key, value in dict(raw_candidate_metrics or {}).items():
         payload.setdefault(str(key), value)
     return payload

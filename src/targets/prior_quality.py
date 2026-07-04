@@ -11,6 +11,7 @@ Classification priority: reject > watch_only/selected_blocked > execution_ready
 Only active when BTST_0422_P3_PRIOR_QUALITY_MODE=enforce.
 Default (off) is a no-op: all existing behaviour preserved.
 """
+
 from __future__ import annotations
 
 from enum import Enum
@@ -26,8 +27,8 @@ class PriorQualityLabel(str, Enum):
 
 
 # Thresholds (hard-coded per spec; exposed here for test introspection)
-P3_MIN_N_SELECTED: int = 5     # n < 5 → selected blocked
-P3_MIN_N_NEAR_MISS: int = 3    # n < 3 → near_miss blocked
+P3_MIN_N_SELECTED: int = 5  # n < 5 → selected blocked
+P3_MIN_N_NEAR_MISS: int = 3  # n < 3 → near_miss blocked
 P3_CLOSE_POSITIVE_MIN: float = 0.50  # close+ < 50% → watch_only
 P3_HIGH_HIT_REJECT_THRESHOLD: float = 0.0  # high_hit_rate <= this → reject
 
@@ -143,6 +144,7 @@ def apply_p3_prior_quality_gate_to_selection_targets(
         return
 
     from src.targets.profiles import get_active_short_trade_target_profile
+
     profile = get_active_short_trade_target_profile()
     high_hit_reject_threshold = profile.p3_prior_quality_high_hit_reject_threshold
     min_n_selected = profile.p3_prior_quality_min_n_selected

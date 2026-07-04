@@ -187,12 +187,14 @@ def test_eligibility_not_eligible() -> None:
 
 
 def test_eligibility_with_details() -> None:
-    cand = _candidate(target_context={
-        "execution_eligible": True,
-        "btst_regime_gate": "halt",
-        "historical_prior_quality_level": "low",
-        "short_trade_reporting_decision": "shadow_only",
-    })
+    cand = _candidate(
+        target_context={
+            "execution_eligible": True,
+            "btst_regime_gate": "halt",
+            "historical_prior_quality_level": "low",
+            "short_trade_reporting_decision": "shadow_only",
+        }
+    )
     lines = _render_execution_eligibility_section(cand)
     assert any("gate=halt" in ln for ln in lines)
     assert any("prior=low" in ln for ln in lines)
@@ -200,10 +202,12 @@ def test_eligibility_with_details() -> None:
 
 
 def test_eligibility_with_formal_block_flags() -> None:
-    cand = _candidate(target_context={
-        "execution_eligible": False,
-        "formal_execution_block_flags": ["p3_hard_cliff", "p5_low_confidence"],
-    })
+    cand = _candidate(
+        target_context={
+            "execution_eligible": False,
+            "formal_execution_block_flags": ["p3_hard_cliff", "p5_low_confidence"],
+        }
+    )
     lines = _render_execution_eligibility_section(cand)
     assert any("formal_block=p3_hard_cliff+p5_low_confidence" in ln for ln in lines)
 
@@ -226,9 +230,7 @@ def test_render_selected_candidate_basic() -> None:
         score_final=0.75,
         execution_bridge={"included_in_buy_orders": True},
     )
-    lines = render_selected_candidate(
-        cand, index=1, format_target_decision=lambda c, m: "", format_layer_b_factor=lambda f: ""
-    )
+    lines = render_selected_candidate(cand, index=1, format_target_decision=lambda c, m: "", format_layer_b_factor=lambda f: "")
     assert lines[0].startswith("### 1. 000001 平安银行")
     assert any("final_score: 0.7500" in ln for ln in lines)
     assert any("buy_order: yes" in ln for ln in lines)
@@ -238,7 +240,5 @@ def test_render_selected_candidate_basic() -> None:
 
 def test_render_selected_candidate_buy_order_no() -> None:
     cand = _candidate(execution_bridge={})
-    lines = render_selected_candidate(
-        cand, index=1, format_target_decision=lambda c, m: "", format_layer_b_factor=lambda f: ""
-    )
+    lines = render_selected_candidate(cand, index=1, format_target_decision=lambda c, m: "", format_layer_b_factor=lambda f: "")
     assert any("buy_order: no" in ln for ln in lines)

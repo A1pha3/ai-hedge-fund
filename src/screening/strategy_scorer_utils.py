@@ -54,12 +54,44 @@ EVENT_SUBFACTOR_WEIGHTS = {
 }
 
 POSITIVE_NEWS_KEYWORDS = {
-    "beat", "upgrade", "contract", "growth", "record", "profit", "buyback", "dividend",
-    "approval", "rebound", "breakthrough", "订单", "中标", "回购", "分红", "增长", "盈利", "超预期",
+    "beat",
+    "upgrade",
+    "contract",
+    "growth",
+    "record",
+    "profit",
+    "buyback",
+    "dividend",
+    "approval",
+    "rebound",
+    "breakthrough",
+    "订单",
+    "中标",
+    "回购",
+    "分红",
+    "增长",
+    "盈利",
+    "超预期",
 }
 NEGATIVE_NEWS_KEYWORDS = {
-    "miss", "downgrade", "lawsuit", "fraud", "loss", "probe", "warning", "default",
-    "layoff", "recall", "risk", "亏损", "减持", "调查", "诉讼", "暴雷", "违约", "风险",
+    "miss",
+    "downgrade",
+    "lawsuit",
+    "fraud",
+    "loss",
+    "probe",
+    "warning",
+    "default",
+    "layoff",
+    "recall",
+    "risk",
+    "亏损",
+    "减持",
+    "调查",
+    "诉讼",
+    "暴雷",
+    "违约",
+    "风险",
 }
 
 # ---------------------------------------------------------------------------

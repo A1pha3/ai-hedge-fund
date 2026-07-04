@@ -44,13 +44,7 @@ def _is_sparse_weak_history(
     next_close_positive_rate: float | None,
     next_high_hit_rate: float | None,
 ) -> bool:
-    return (
-        0 < evaluable_count < 3
-        and next_close_positive_rate is not None
-        and next_close_positive_rate <= 0.0
-        and next_high_hit_rate is not None
-        and next_high_hit_rate <= 0.0
-    )
+    return 0 < evaluable_count < 3 and next_close_positive_rate is not None and next_close_positive_rate <= 0.0 and next_high_hit_rate is not None and next_high_hit_rate <= 0.0
 
 
 def _should_suppress_shadow_release(
@@ -64,11 +58,7 @@ def _should_suppress_shadow_release(
 ) -> bool:
     if pruned_from_opportunity_pool and prune_reason == "historical_zero_follow_through":
         return True
-    return evaluable_count >= 3 and (
-        execution_quality_label == "zero_follow_through"
-        or (execution_quality_label == "intraday_only" and (next_close_positive_rate or 0.0) <= 0.0)
-        or (applied_scope == "same_ticker" and execution_quality_label == "intraday_only" and (next_close_positive_rate or 0.0) <= 0.0)
-    )
+    return evaluable_count >= 3 and (execution_quality_label == "zero_follow_through" or (execution_quality_label == "intraday_only" and (next_close_positive_rate or 0.0) <= 0.0) or (applied_scope == "same_ticker" and execution_quality_label == "intraday_only" and (next_close_positive_rate or 0.0) <= 0.0))
 
 
 def _support_verdict(*, suppress_release: bool, support_score: float) -> str:
@@ -163,9 +153,7 @@ def resolve_selected_threshold(
     post_gate_selected_threshold: float,
     post_gate_hard_cliff_selected_threshold: float,
 ) -> tuple[bool, float]:
-    selected_threshold_override_enabled = candidate_pool_lane == "post_gate_liquidity_competition" or (
-        candidate_pool_lane == "layer_a_liquidity_corridor" and shadow_visibility_gap_selected
-    )
+    selected_threshold_override_enabled = candidate_pool_lane == "post_gate_liquidity_competition" or (candidate_pool_lane == "layer_a_liquidity_corridor" and shadow_visibility_gap_selected)
     selected_threshold = post_gate_selected_threshold
     if candidate_pool_lane == "post_gate_liquidity_competition" and profitability_hard_cliff:
         selected_threshold = min(selected_threshold, post_gate_hard_cliff_selected_threshold)
@@ -280,11 +268,7 @@ def build_upstream_shadow_release_entry(
         historical_prior=historical_prior,
         shadow_visibility_gap_selected=bool(candidate_entry.get("shadow_visibility_gap_selected")),
     )
-    resolved_reason_codes = [
-        str(code)
-        for code in list(candidate_entry.get("candidate_reason_codes") or candidate_entry.get("reasons") or [])
-        if str(code or "").strip()
-    ]
+    resolved_reason_codes = [str(code) for code in list(candidate_entry.get("candidate_reason_codes") or candidate_entry.get("reasons") or []) if str(code or "").strip()]
     for code in [filter_reason, release_reason, "upstream_shadow_release_candidate"]:
         if code not in resolved_reason_codes:
             resolved_reason_codes.append(code)

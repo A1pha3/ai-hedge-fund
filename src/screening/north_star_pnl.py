@@ -29,6 +29,7 @@ verdict:
 镜像 rank_monotonicity / regime_winrate 的 footer-block 模式 (best-effort,
 数据不足静默, 永不破坏前门).
 """
+
 from __future__ import annotations
 
 import random as _random
@@ -130,9 +131,7 @@ def compute_north_star_pnl_from_loaded(
 
     # 背离检测: mean 累积正但 winrate<50% 或 median<0 → mean 被少数赢家拉高
     mean_per_record = sum(all_returns) / n
-    divergence = bool(
-        cumulative > 0 and (winrate < 0.5 or (median is not None and median < 0))
-    )
+    divergence = bool(cumulative > 0 and (winrate < 0.5 or (median is not None and median < 0)))
 
     if divergence:
         verdict = "divergent"
@@ -160,7 +159,9 @@ def compute_north_star_pnl_from_loaded(
 
 
 def compute_north_star_pnl(
-    *, reports_dir: Path | None = None, min_n: int = _MIN_N_DEFAULT,
+    *,
+    reports_dir: Path | None = None,
+    min_n: int = _MIN_N_DEFAULT,
     horizon_field: str = "next_5day_return",
 ) -> NorthStarPnlReport:
     """从报告目录加载 tracking_history 算北极星 (镜像 rank_monotonicity IO 包装).
@@ -197,15 +198,10 @@ def render_north_star_line(report: NorthStarPnlReport) -> str:
     cum = f"{report.cumulative_mean_pnl:+.0f}%"
     # c328/autodev-36: 数据时点披露 (移出 color span)
     as_of_suffix = f" | 数据时点 {report.as_of}" if report.as_of else ""
-    base = (
-        f"  🎯 北极星 P&L ({report.horizon_label}): 累积 {cum} (mean) | 胜率 {wr} | 典型 {med}"
-        f" | n={report.sample_count}, {report.sample_dates}日"
-    )
+    base = f"  🎯 北极星 P&L ({report.horizon_label}): 累积 {cum} (mean) | 胜率 {wr} | 典型 {med}" f" | n={report.sample_count}, {report.sample_dates}日"
 
     if report.verdict == "divergent":
-        return (
-            f"{base} {Fore.RED}⚠ mean 被少数赢家拉高, 典型票微亏 — 北极星未真达标{Style.RESET_ALL}{as_of_suffix}"
-        )
+        return f"{base} {Fore.RED}⚠ mean 被少数赢家拉高, 典型票微亏 — 北极星未真达标{Style.RESET_ALL}{as_of_suffix}"
     if report.verdict == "positive":
         # C270 (2026-07-01, empirical dogfood on 2026-06-30 report): the existing
         # `divergent` verdict only flags median<0/winrate<0.5. When mean and median
@@ -215,13 +211,8 @@ def render_north_star_line(report: NorthStarPnlReport) -> str:
         # established median honesty; this render-level warning extends it to the
         # positive verdict without adding a new verdict enum (threshold = 10pp
         # absolute gap, engineering-owned heuristic tuning).
-        if (
-            report.overall_median is not None
-            and report.cumulative_mean_pnl - report.overall_median > 10
-        ):
-            return (
-                f"{base} {Fore.YELLOW}✓ 趋近 >0 但 mean 被少数赢家拉高 (典型 {med} 远低于 mean){Style.RESET_ALL}{as_of_suffix}"
-            )
+        if report.overall_median is not None and report.cumulative_mean_pnl - report.overall_median > 10:
+            return f"{base} {Fore.YELLOW}✓ 趋近 >0 但 mean 被少数赢家拉高 (典型 {med} 远低于 mean){Style.RESET_ALL}{as_of_suffix}"
         return f"{base} {Fore.GREEN}✓ 趋近 >0{Style.RESET_ALL}{as_of_suffix}"
     # negative
     return f"{base} {Fore.RED}⚠ 亏 — 远未达北极星{Style.RESET_ALL}{as_of_suffix}"
@@ -269,11 +260,7 @@ def compute_holding_period_curve_from_loaded(
         avg = sum(returns) / n
         winrate = sum(1 for x in returns if x > 0) / n
         median = _median(returns)
-        out.append(
-            HoldingPeriodPoint(
-                horizon=horizon, avg_return=avg, winrate=winrate, median_return=median, sample_count=n, verdict="ok"
-            )
-        )
+        out.append(HoldingPeriodPoint(horizon=horizon, avg_return=avg, winrate=winrate, median_return=median, sample_count=n, verdict="ok"))
     return out
 
 
@@ -389,15 +376,17 @@ def compute_payoff_analysis_from_loaded(
             continue
         bw = [x for x in bv if x > 0]
         bl = [x for x in bv if x <= 0]
-        per_bucket.append({
-            "bucket": b,
-            "winrate": len(bw) / len(bv),
-            "avg_winner": (sum(bw) / len(bw)) if bw else None,
-            "avg_loser": (sum(bl) / len(bl)) if bl else None,
-            "expectancy": sum(bv) / len(bv),
-            "n": len(bv),
-            "verdict": "ok" if len(bv) >= min_n else "insufficient",
-        })
+        per_bucket.append(
+            {
+                "bucket": b,
+                "winrate": len(bw) / len(bv),
+                "avg_winner": (sum(bw) / len(bw)) if bw else None,
+                "avg_loser": (sum(bl) / len(bl)) if bl else None,
+                "expectancy": sum(bv) / len(bv),
+                "n": len(bv),
+                "verdict": "ok" if len(bv) >= min_n else "insufficient",
+            }
+        )
 
     return PayoffAnalysisResult(
         winrate=len(wins) / n,
@@ -652,18 +641,32 @@ def compute_bootstrap_ci_from_loaded(
         rets = bucket_returns.get(b, [])
         n = len(rets)
         if n < min_n:
-            results.append(BootstrapCIResult(
-                bucket=b, point_estimate=(sum(1 for r in rets if r > 0) / n if n else 0.0),
-                sample_count=n, n_bootstrap=n_bootstrap, ci_level=ci_level, verdict="insufficient",
-            ))
+            results.append(
+                BootstrapCIResult(
+                    bucket=b,
+                    point_estimate=(sum(1 for r in rets if r > 0) / n if n else 0.0),
+                    sample_count=n,
+                    n_bootstrap=n_bootstrap,
+                    ci_level=ci_level,
+                    verdict="insufficient",
+                )
+            )
             continue
         wins = sum(1 for r in rets if r > 0)
         point = wins / n
         lower, upper = _bootstrap_winrate_ci(rets, n_bootstrap=n_bootstrap, ci_level=ci_level, seed=seed)
-        results.append(BootstrapCIResult(
-            bucket=b, point_estimate=point, ci_lower=lower, ci_upper=upper,
-            sample_count=n, n_bootstrap=n_bootstrap, ci_level=ci_level, verdict="ok",
-        ))
+        results.append(
+            BootstrapCIResult(
+                bucket=b,
+                point_estimate=point,
+                ci_lower=lower,
+                ci_upper=upper,
+                sample_count=n,
+                n_bootstrap=n_bootstrap,
+                ci_level=ci_level,
+                verdict="ok",
+            )
+        )
     return results
 
 
@@ -683,10 +686,7 @@ def render_bootstrap_ci_line(results: list[BootstrapCIResult]) -> str:
         lo = f"{ci.ci_lower:.0%}" if ci.ci_lower is not None else "?"
         up = f"{ci.ci_upper:.0%}" if ci.ci_upper is not None else "?"
         parts.append(f"{label} {ci.point_estimate:.0%} [{lo}, {up}] (n={ci.sample_count})")
-    return (
-        f"  📊 winrate CI (bootstrap {ci.ci_level:.0%}, n_boot={ci.n_bootstrap}): "
-        + " | ".join(parts)
-    )
+    return f"  📊 winrate CI (bootstrap {ci.ci_level:.0%}, n_boot={ci.n_bootstrap}): " + " | ".join(parts)
 
 
 __all__ = [
@@ -808,8 +808,11 @@ def compute_selection_profitability_from_loaded(
     days = [picks for picks in by_date.values() if len(picks) >= top_n]
     if len(days) < min_days:
         return SelectionProfitabilityReport(
-            has_data=False, horizon_field=horizon_field, top_n=top_n,
-            strategies=(), verdict="insufficient",
+            has_data=False,
+            horizon_field=horizon_field,
+            top_n=top_n,
+            strategies=(),
+            verdict="insufficient",
         )
 
     # C274 Bug Hunt: iterate days in a DETERMINISTIC order. The prior code used
@@ -839,10 +842,7 @@ def compute_selection_profitability_from_loaded(
     _prior_bucket_returns: dict[str, list[float]] = {b: [] for b in ("low", "mid_low", "mid_high", "high")}
     _bucket_winrate_by_date: dict[str, dict[str, float | None]] = {}
     for _d in sorted(by_date):
-        _bucket_winrate_by_date[_d] = {
-            b: (sum(1 for r in rets if r > 0) / len(rets)) if rets else None
-            for b, rets in _prior_bucket_returns.items()
-        }
+        _bucket_winrate_by_date[_d] = {b: (sum(1 for r in rets if r > 0) / len(rets)) if rets else None for b, rets in _prior_bucket_returns.items()}
         for _pick in by_date[_d]:
             _b = _pick["bucket"]
             if _b in _prior_bucket_returns:
@@ -893,18 +893,18 @@ def compute_selection_profitability_from_loaded(
         # NS-30/R6 (loop 30): bootstrap CI on winrate — owner 决策需要知道策略间
         # 差距是否显著 (n=75 日点估计不够). 复用 M12 _bootstrap_winrate_ci, seed=42
         # 幂等. 独立 seed 偏移避免策略间相关 (每策略自己的重采样序列).
-        ci_lower, ci_upper = _bootstrap_winrate_ci(
-            pr, n_bootstrap=2000, ci_level=0.95, seed=42 + _deterministic_str_hash(strat) % 1000
+        ci_lower, ci_upper = _bootstrap_winrate_ci(pr, n_bootstrap=2000, ci_level=0.95, seed=42 + _deterministic_str_hash(strat) % 1000)
+        results.append(
+            SelectionStrategyResult(
+                strategy=strat,
+                portfolio_winrate=wins / len(pr),
+                mean_return=sum(pr) / len(pr),
+                median_return=_median(pr),
+                sample_days=len(pr),
+                ci_lower=ci_lower,
+                ci_upper=ci_upper,
+            )
         )
-        results.append(SelectionStrategyResult(
-            strategy=strat,
-            portfolio_winrate=wins / len(pr),
-            mean_return=sum(pr) / len(pr),
-            median_return=_median(pr),
-            sample_days=len(pr),
-            ci_lower=ci_lower,
-            ci_upper=ci_upper,
-        ))
 
     sd = next((s for s in results if s.strategy == "score_desc"), None)
     ew = next((s for s in results if s.strategy == "equal_weight_all"), None)
@@ -920,8 +920,11 @@ def compute_selection_profitability_from_loaded(
             verdict = "neutral"
 
     return SelectionProfitabilityReport(
-        has_data=True, horizon_field=horizon_field, top_n=top_n,
-        strategies=tuple(results), verdict=verdict,
+        has_data=True,
+        horizon_field=horizon_field,
+        top_n=top_n,
+        strategies=tuple(results),
+        verdict=verdict,
         as_of=max(by_date.keys()) if by_date else None,
     )
 
@@ -985,14 +988,5 @@ def render_selection_profitability_line(report: SelectionProfitabilityReport) ->
 
     if pa is not None and pa.portfolio_winrate is not None:
         pa_ci = _ci_bracket(pa)
-        return (
-            f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): "
-            f"默认 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%}{sd_ci} (中位 {sd.median_return:+.2f}%{_mean_strat(sd)}) "
-            f"vs profit-aware {pa.portfolio_winrate:.0%}{pa_ci} (中位 {pa.median_return:+.2f}%{_mean_strat(pa)}) "
-            f"vs 等权 {ew.portfolio_winrate:.0%}{ew_ci} | {marker}{pa_marker}{as_of_suffix}"
-        )
-    return (
-        f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): "
-        f"模型分 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%}{sd_ci} (中位 {sd.median_return:+.2f}%{_mean_strat(sd)}) "
-        f"vs 等权 {ew.portfolio_winrate:.0%}{ew_ci} (中位 {ew.median_return:+.2f}%{_mean_strat(ew)}) | {marker}{as_of_suffix}"
-    )
+        return f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): " f"默认 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%}{sd_ci} (中位 {sd.median_return:+.2f}%{_mean_strat(sd)}) " f"vs profit-aware {pa.portfolio_winrate:.0%}{pa_ci} (中位 {pa.median_return:+.2f}%{_mean_strat(pa)}) " f"vs 等权 {ew.portfolio_winrate:.0%}{ew_ci} | {marker}{pa_marker}{as_of_suffix}"
+    return f"  📊 选取盈利性 (top-{report.top_n}, {label}, n日={sd.sample_days}): " f"模型分 top-{report.top_n} 胜率={sd.portfolio_winrate:.0%}{sd_ci} (中位 {sd.median_return:+.2f}%{_mean_strat(sd)}) " f"vs 等权 {ew.portfolio_winrate:.0%}{ew_ci} (中位 {ew.median_return:+.2f}%{_mean_strat(ew)}) | {marker}{as_of_suffix}"

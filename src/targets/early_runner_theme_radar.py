@@ -274,11 +274,7 @@ def build_theme_radar_context_by_ticker(
     catalyst_theme_shadow_candidates: list[dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any], dict[str, Any]]:
     """Build per-ticker radar context plus theme/industry summaries for a trade date."""
-    rows_by_ticker = {
-        str(dict(row or {}).get("ticker") or "").strip(): dict(row or {})
-        for row in list(rows or [])
-        if str(dict(row or {}).get("ticker") or "").strip()
-    }
+    rows_by_ticker = {str(dict(row or {}).get("ticker") or "").strip(): dict(row or {}) for row in list(rows or []) if str(dict(row or {}).get("ticker") or "").strip()}
     theme_summary = build_theme_radar_summary(
         trade_date=trade_date,
         catalyst_theme_candidates=_backfill_candidate_theme_labels(catalyst_theme_candidates, rows_by_ticker=rows_by_ticker),

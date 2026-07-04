@@ -66,18 +66,12 @@ class Portfolio:
         # margin_ratio > 1.0 is semantically valid (over-collateralized), so the
         # guard is >= 0.
         if margin_requirement < 0:
-            raise ValueError(
-                f"margin_requirement 必须为非负数 (got {margin_requirement}); "
-                f"负值会让 apply_short_open 的 margin_required<=cash 判断恒为 True, "
-                f"完全绕过保证金风控"
-            )
+            raise ValueError(f"margin_requirement 必须为非负数 (got {margin_requirement}); " f"负值会让 apply_short_open 的 margin_required<=cash 判断恒为 True, " f"完全绕过保证金风控")
         self._portfolio: PortfolioSnapshot = {
             "cash": float(initial_cash),
             "margin_used": 0.0,
             "margin_requirement": float(margin_requirement),
-            "positions": {
-                ticker: dict(_EMPTY_POSITION) for ticker in tickers
-            },
+            "positions": {ticker: dict(_EMPTY_POSITION) for ticker in tickers},
             "realized_gains": {ticker: {"long": 0.0, "short": 0.0} for ticker in tickers},
         }
 
@@ -144,9 +138,7 @@ class Portfolio:
                 }
                 for ticker, position in snapshot["positions"].items()
             },
-            "realized_gains": {
-                ticker: {"long": float(gains["long"]), "short": float(gains["short"])} for ticker, gains in snapshot["realized_gains"].items()
-            },
+            "realized_gains": {ticker: {"long": float(gains["long"]), "short": float(gains["short"])} for ticker, gains in snapshot["realized_gains"].items()},
         }
 
     def get_cash(self) -> float:
@@ -270,10 +262,7 @@ class Portfolio:
         position = self._portfolio["positions"][ticker]
         commission_rate = float(commission_rate)
         all_in_price = float(price) * (1.0 + commission_rate)
-        assert all_in_price >= float(price), (
-            f"apply_long_buy: all_in_price ({all_in_price}) must be >= raw price ({price}) "
-            f"when commission_rate={commission_rate}"
-        )
+        assert all_in_price >= float(price), f"apply_long_buy: all_in_price ({all_in_price}) must be >= raw price ({price}) " f"when commission_rate={commission_rate}"
         cost = quantity * all_in_price
         if cost <= self._portfolio["cash"]:
             old_shares = position["long"]
@@ -330,9 +319,7 @@ class Portfolio:
         commission_rate = float(commission_rate)
         stamp_duty_rate = float(stamp_duty_rate)
         net_proceeds_price = float(price) * (1.0 - commission_rate - stamp_duty_rate)
-        assert net_proceeds_price <= float(price), (
-            f"apply_long_sell: net_proceeds_price ({net_proceeds_price}) must be <= raw price ({price})"
-        )
+        assert net_proceeds_price <= float(price), f"apply_long_sell: net_proceeds_price ({net_proceeds_price}) must be <= raw price ({price})"
         realized_gain = (net_proceeds_price - avg_cost) * quantity
         self._portfolio["realized_gains"][ticker]["long"] += realized_gain
         position["long"] -= quantity

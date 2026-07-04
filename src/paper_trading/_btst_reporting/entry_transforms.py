@@ -17,51 +17,35 @@ CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES = 3
 
 def _apply_execution_quality_entry_mode(entry: dict[str, Any]) -> dict[str, Any]:
     historical_prior = dict(entry.get("historical_prior") or {})
-    execution_quality_label = str(
-        historical_prior.get("execution_quality_label") or "unknown"
-    )
+    execution_quality_label = str(historical_prior.get("execution_quality_label") or "unknown")
     updated_entry = dict(entry)
     updated_entry["historical_prior"] = historical_prior
 
-    top_reasons = [
-        str(reason)
-        for reason in list(updated_entry.get("top_reasons") or [])
-        if str(reason or "").strip()
-    ]
+    top_reasons = [str(reason) for reason in list(updated_entry.get("top_reasons") or []) if str(reason or "").strip()]
 
     if execution_quality_label == "intraday_only":
         updated_entry["preferred_entry_mode"] = "intraday_confirmation_only"
-        updated_entry["promotion_trigger"] = (
-            "历史更像盘中确认后的 intraday 机会，不把默认隔夜持有当成升级方向。"
-        )
+        updated_entry["promotion_trigger"] = "历史更像盘中确认后的 intraday 机会，不把默认隔夜持有当成升级方向。"
         if "historical_intraday_only_execution" not in top_reasons:
             top_reasons.append("historical_intraday_only_execution")
     elif execution_quality_label == "gap_chase_risk":
         updated_entry["preferred_entry_mode"] = "avoid_open_chase_confirmation"
-        updated_entry["promotion_trigger"] = (
-            "若盘中回踩后重新走强可再确认，避免把开盘追价当成默认动作。"
-        )
+        updated_entry["promotion_trigger"] = "若盘中回踩后重新走强可再确认，避免把开盘追价当成默认动作。"
         if "historical_gap_chase_risk" not in top_reasons:
             top_reasons.append("historical_gap_chase_risk")
     elif execution_quality_label == "close_continuation":
         updated_entry["preferred_entry_mode"] = "confirm_then_hold_breakout"
-        updated_entry["promotion_trigger"] = (
-            "若盘中 continuation 确认后量价延续良好，可升级为 confirm-then-hold，而不是默认快进快出。"
-        )
+        updated_entry["promotion_trigger"] = "若盘中 continuation 确认后量价延续良好，可升级为 confirm-then-hold，而不是默认快进快出。"
         if "historical_close_continuation" not in top_reasons:
             top_reasons.append("historical_close_continuation")
     elif execution_quality_label == "zero_follow_through":
         updated_entry["preferred_entry_mode"] = "strong_reconfirmation_only"
-        updated_entry["promotion_trigger"] = (
-            "历史同层兑现极弱，只有出现新的强确认时才允许重新升级。"
-        )
+        updated_entry["promotion_trigger"] = "历史同层兑现极弱，只有出现新的强确认时才允许重新升级。"
         if "historical_zero_follow_through" not in top_reasons:
             top_reasons.append("historical_zero_follow_through")
     elif execution_quality_label == "payoff_divergence_risk":
         updated_entry["preferred_entry_mode"] = "payoff_reconfirmation_only"
-        updated_entry["promotion_trigger"] = (
-            "历史胜率与盈亏比/期望背离，只有新的强确认才能重新升级。"
-        )
+        updated_entry["promotion_trigger"] = "历史胜率与盈亏比/期望背离，只有新的强确认才能重新升级。"
         if "historical_payoff_divergence_risk" not in top_reasons:
             top_reasons.append("historical_payoff_divergence_risk")
 
@@ -77,9 +61,7 @@ def _build_catalyst_theme_shadow_watch_rows(
     ranked_entries = sorted(
         [dict(entry) for entry in entries if entry and entry.get("ticker")],
         key=lambda entry: (
-            entry.get("total_shortfall")
-            if entry.get("total_shortfall") is not None
-            else 999.0,
+            entry.get("total_shortfall") if entry.get("total_shortfall") is not None else 999.0,
             -_as_float(entry.get("score_target")),
             -_as_float((entry.get("metrics") or {}).get("catalyst_freshness")),
             str(entry.get("ticker") or ""),

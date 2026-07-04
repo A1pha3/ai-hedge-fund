@@ -5,6 +5,7 @@ P2 (enforce): clears buy_orders and marks selection_targets for halt / shadow_on
 
 These functions are re-exported from daily_pipeline.py for backward compatibility.
 """
+
 from __future__ import annotations
 
 import os

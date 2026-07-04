@@ -3,6 +3,7 @@
 Provides grid search over profile parameters evaluated via replay-based
 multi-window analysis. Supports checkpointing and ranked output.
 """
+
 from __future__ import annotations
 
 import itertools
@@ -101,28 +102,14 @@ def compute_objective_score(
         t_plus_2_positive_rate = bundle.lookup("t_plus_2_close_positive_rate")
         downside_p10 = bundle.lookup("downside_p10")
         sample_weight = bundle.lookup("sample_weight")
-        if (
-            win_rate is None
-            or payoff_ratio is None
-            or expectancy is None
-            or next_high_hit_rate is None
-            or t_plus_2_positive_rate is None
-            or downside_p10 is None
-        ):
+        if win_rate is None or payoff_ratio is None or expectancy is None or next_high_hit_rate is None or t_plus_2_positive_rate is None or downside_p10 is None:
             return None
 
         normalized_payoff = clip(float(payoff_ratio) / 3.0, 0.0, 1.0)
         normalized_expectancy = clip((float(expectancy) + 0.03) / 0.06, 0.0, 1.0)
         downside_penalty = clip(abs(float(downside_p10)) / 0.06, 0.0, 1.0)
         effective_sample_weight = clip(float(sample_weight or 0.0), 0.0, 1.0)
-        edge_score = (
-            (0.28 * float(win_rate))
-            + (0.22 * normalized_payoff)
-            + (0.16 * float(next_high_hit_rate))
-            + (0.14 * float(t_plus_2_positive_rate))
-            + (0.20 * normalized_expectancy)
-            - (0.18 * downside_penalty)
-        )
+        edge_score = (0.28 * float(win_rate)) + (0.22 * normalized_payoff) + (0.16 * float(next_high_hit_rate)) + (0.14 * float(t_plus_2_positive_rate)) + (0.20 * normalized_expectancy) - (0.18 * downside_penalty)
         return edge_score * (0.40 + (0.60 * effective_sample_weight))
     if objective == SearchObjective.BTST:
         if metrics.get("promotion_guardrail_pass") is False:
@@ -137,16 +124,7 @@ def compute_objective_score(
         t_plus_3_expectancy = bundle.lookup("t_plus_3_close_expectancy")
         downside_p10 = bundle.lookup("downside_p10")
         sample_weight = bundle.lookup("sample_weight")
-        if (
-            win_rate is None
-            or payoff_ratio is None
-            or expectancy is None
-            or next_high_hit_rate is None
-            or t_plus_2_positive_rate is None
-            or t_plus_3_positive_rate is None
-            or t_plus_3_expectancy is None
-            or downside_p10 is None
-        ):
+        if win_rate is None or payoff_ratio is None or expectancy is None or next_high_hit_rate is None or t_plus_2_positive_rate is None or t_plus_3_positive_rate is None or t_plus_3_expectancy is None or downside_p10 is None:
             return None
 
         normalized_payoff = clip(float(payoff_ratio) / 3.0, 0.0, 1.0)
@@ -155,23 +133,8 @@ def compute_objective_score(
         downside_penalty = clip(abs(float(downside_p10)) / 0.06, 0.0, 1.0)
         effective_sample_weight = clip(float(sample_weight or 0.0), 0.0, 1.0)
 
-        base_score = (
-            (0.28 * float(win_rate))
-            + (0.16 * normalized_payoff)
-            + (0.14 * normalized_expectancy)
-            + (0.14 * float(next_high_hit_rate))
-            + (0.12 * float(t_plus_2_positive_rate))
-            + (0.10 * float(t_plus_3_positive_rate))
-            + (0.10 * normalized_t_plus_3_expectancy)
-            - (0.14 * downside_penalty)
-        )
-        floor_penalty = (
-            (0.50 * max(0.0, 0.54 - float(win_rate)))
-            + (0.28 * max(0.0, 0.56 - float(next_high_hit_rate)))
-            + (0.22 * max(0.0, 0.52 - float(t_plus_2_positive_rate)))
-            + (0.18 * max(0.0, 0.50 - float(t_plus_3_positive_rate)))
-            + (0.12 * max(0.0, 0.0 - float(t_plus_3_expectancy)))
-        )
+        base_score = (0.28 * float(win_rate)) + (0.16 * normalized_payoff) + (0.14 * normalized_expectancy) + (0.14 * float(next_high_hit_rate)) + (0.12 * float(t_plus_2_positive_rate)) + (0.10 * float(t_plus_3_positive_rate)) + (0.10 * normalized_t_plus_3_expectancy) - (0.14 * downside_penalty)
+        floor_penalty = (0.50 * max(0.0, 0.54 - float(win_rate))) + (0.28 * max(0.0, 0.56 - float(next_high_hit_rate))) + (0.22 * max(0.0, 0.52 - float(t_plus_2_positive_rate))) + (0.18 * max(0.0, 0.50 - float(t_plus_3_positive_rate))) + (0.12 * max(0.0, 0.0 - float(t_plus_3_expectancy)))
 
         # Bounded bonus from positive baseline deltas; capped to prevent distortion.
         pos_rate_delta = coerce_numeric_metric_value(metrics.get("baseline_next_close_positive_rate_delta"))
@@ -234,6 +197,7 @@ def check_guardrails(
     Returns:
         List of violated guardrail names (empty when all pass).
     """
+
     def _normalize_guardrail_bounds(spec: GuardrailSpec) -> dict[str, float]:
         if isinstance(spec, dict):
             bounds: dict[str, float] = {}
@@ -298,9 +262,7 @@ def _save_checkpoint(path: Path, data: dict[str, Any]) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_dir = str(path.parent)
-    with tempfile.NamedTemporaryFile(
-        mode="w", encoding="utf-8", dir=tmp_dir, delete=False, suffix=".tmp"
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=tmp_dir, delete=False, suffix=".tmp") as tmp:
         json.dump(data, tmp, indent=2, default=str, ensure_ascii=False)
         tmp.flush()
         os.fsync(tmp.fileno())
@@ -400,19 +362,22 @@ def run_param_search(
 
         if cp_path:
             completed_map[key] = result
-            _save_checkpoint(cp_path, {
-                "completed_trials": [
-                    {
-                        "trial_index": r.trial_index,
-                        "params": r.params,
-                        "metrics": r.metrics,
-                        "window_count": r.window_count,
-                        "score": r.score,
-                        "failed_guardrails": list(r.failed_guardrails),
-                    }
-                    for r in completed_map.values()
-                ]
-            })
+            _save_checkpoint(
+                cp_path,
+                {
+                    "completed_trials": [
+                        {
+                            "trial_index": r.trial_index,
+                            "params": r.params,
+                            "metrics": r.metrics,
+                            "window_count": r.window_count,
+                            "score": r.score,
+                            "failed_guardrails": list(r.failed_guardrails),
+                        }
+                        for r in completed_map.values()
+                    ]
+                },
+            )
 
     # Guardrail-failing trials are always ranked after passing ones regardless
     # of their objective score.  Within each tier, rank by score descending.

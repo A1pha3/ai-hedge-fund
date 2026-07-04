@@ -13,6 +13,7 @@ CLI::
 
     python src/main.py --strategy-report [--lookback=7]
 """
+
 from __future__ import annotations
 
 from collections import defaultdict
@@ -134,10 +135,12 @@ def compute_strategy_report(
     for key in _STRATEGY_KEYS:
         signals = strategy_signals.get(key, [])
         if not signals:
-            stats.append(StrategyStats(
-                strategy=key,
-                name=_STRATEGY_NAMES.get(key, key),
-            ))
+            stats.append(
+                StrategyStats(
+                    strategy=key,
+                    name=_STRATEGY_NAMES.get(key, key),
+                )
+            )
             continue
 
         confidences = []
@@ -166,15 +169,17 @@ def compute_strategy_report(
 
         avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
 
-        stats.append(StrategyStats(
-            strategy=key,
-            name=_STRATEGY_NAMES.get(key, key),
-            signal_count=len(signals),
-            bullish_count=bullish,
-            bearish_count=bearish,
-            avg_confidence=avg_conf,
-            strong_signal_count=strong,
-        ))
+        stats.append(
+            StrategyStats(
+                strategy=key,
+                name=_STRATEGY_NAMES.get(key, key),
+                signal_count=len(signals),
+                bullish_count=bullish,
+                bearish_count=bearish,
+                avg_confidence=avg_conf,
+                strong_signal_count=strong,
+            )
+        )
 
     # Sort by strong signal count descending
     stats.sort(key=lambda s: s.strong_signal_count, reverse=True)
@@ -224,13 +229,7 @@ def render_strategy_report(report: StrategyReport) -> str:
         else:
             color = Fore.RED
 
-        lines.append(
-            f"  {s.name:<12} {s.signal_count:>6} "
-            f"{Fore.GREEN}{s.bullish_count:>6}{Style.RESET_ALL} "
-            f"{Fore.RED}{s.bearish_count:>6}{Style.RESET_ALL} "
-            f"{color}{s.strong_signal_count:>6}{Style.RESET_ALL} "
-            f"{s.avg_confidence:>7.1f}%"
-        )
+        lines.append(f"  {s.name:<12} {s.signal_count:>6} " f"{Fore.GREEN}{s.bullish_count:>6}{Style.RESET_ALL} " f"{Fore.RED}{s.bearish_count:>6}{Style.RESET_ALL} " f"{color}{s.strong_signal_count:>6}{Style.RESET_ALL} " f"{s.avg_confidence:>7.1f}%")
 
     if report.recommendation:
         lines.append("")

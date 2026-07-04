@@ -15,21 +15,9 @@ def _has_weak_profitability_hard_cliff_boundary_history(input_data: TargetEvalua
     historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
     historical_next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
     historical_next_close_return_mean = float(historical_prior.get("next_close_return_mean", 0.0) or 0.0)
-    weak_same_ticker_intraday_history = (
-        historical_applied_scope == "same_ticker"
-        and historical_execution_quality_label == "intraday_only"
-        and historical_evaluable_count >= 3
-        and historical_next_close_positive_rate <= 0.0
-    )
-    weak_zero_follow_through_history = (
-        historical_execution_quality_label == "zero_follow_through"
-        and historical_evaluable_count >= 3
-    )
-    weak_family_source_catalyst_history = (
-        historical_applied_scope in {"family_source_score_catalyst", "same_family_source_score_catalyst"}
-        and historical_evaluable_count >= 8
-        and historical_next_close_return_mean < 0.0
-    )
+    weak_same_ticker_intraday_history = historical_applied_scope == "same_ticker" and historical_execution_quality_label == "intraday_only" and historical_evaluable_count >= 3 and historical_next_close_positive_rate <= 0.0
+    weak_zero_follow_through_history = historical_execution_quality_label == "zero_follow_through" and historical_evaluable_count >= 3
+    weak_family_source_catalyst_history = historical_applied_scope in {"family_source_score_catalyst", "same_family_source_score_catalyst"} and historical_evaluable_count >= 8 and historical_next_close_return_mean < 0.0
     return weak_same_ticker_intraday_history or weak_zero_follow_through_history or weak_family_source_catalyst_history
 
 
@@ -59,12 +47,7 @@ def resolve_profitability_relief_impl(
         "catalyst_freshness": catalyst_freshness >= float(profile.profitability_relief_catalyst_freshness_min),
         "sector_resonance": sector_resonance >= float(profile.profitability_relief_sector_resonance_min),
     }
-    relief_eligible = (
-        bool(profile.profitability_relief_enabled)
-        and input_data.layer_c_decision == "avoid"
-        and hard_cliff
-        and all(relief_gate_hits.values())
-    )
+    relief_eligible = bool(profile.profitability_relief_enabled) and input_data.layer_c_decision == "avoid" and hard_cliff and all(relief_gate_hits.values())
     effective_avoid_penalty = base_layer_c_avoid_penalty
     if relief_eligible and base_layer_c_avoid_penalty > 0:
         effective_avoid_penalty = min(base_layer_c_avoid_penalty, float(profile.profitability_relief_avoid_penalty))

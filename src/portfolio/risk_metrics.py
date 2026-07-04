@@ -284,10 +284,7 @@ def _resolve_beta(
     # date alignment, so fall back to the market-neutral proxy (1.0) and warn.
     if len(portfolio) != len(benchmark_returns):
         logger.warning(
-            "beta: portfolio (%d) and benchmark (%d) return series differ in "
-            "length — likely misaligned dates (portfolio drops no-observation "
-            "days); falling back to market-neutral beta 1.0 to avoid a "
-            "meaningless regression",
+            "beta: portfolio (%d) and benchmark (%d) return series differ in " "length — likely misaligned dates (portfolio drops no-observation " "days); falling back to market-neutral beta 1.0 to avoid a " "meaningless regression",
             len(portfolio),
             len(benchmark_returns),
         )

@@ -20,6 +20,7 @@ CLI::
 Integration:
     ``--composite-score`` includes volume confirmation as a sub-factor.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -275,27 +276,14 @@ def render_volume_confirmation(report: VolumeReport) -> str:
 
     for item in report.items:
         label = _confirmation_colored(item.confirmation)
-        factor_str = (
-            f"{Fore.GREEN}+{item.volume_factor:.2f}{Style.RESET_ALL}"
-            if item.volume_factor > 0
-            else f"{Fore.RED}{item.volume_factor:.2f}{Style.RESET_ALL}"
-            if item.volume_factor < 0
-            else "  0.00"
-        )
-        lines.append(
-            f"  {item.ticker:<8} {item.name[:10]:<10} "
-            f"{item.volume_ratio:>5.2f}x {label:>28} {factor_str:>14}"
-        )
+        factor_str = f"{Fore.GREEN}+{item.volume_factor:.2f}{Style.RESET_ALL}" if item.volume_factor > 0 else f"{Fore.RED}{item.volume_factor:.2f}{Style.RESET_ALL}" if item.volume_factor < 0 else "  0.00"
+        lines.append(f"  {item.ticker:<8} {item.name[:10]:<10} " f"{item.volume_ratio:>5.2f}x {label:>28} {factor_str:>14}")
 
     confirmed = sum(1 for i in report.items if i.confirmation == "confirmed")
     divergence = sum(1 for i in report.items if i.confirmation == "divergence")
     neutral = len(report.items) - confirmed - divergence
     lines.append("")
-    lines.append(
-        f"  {Fore.GREEN}放量确认: {confirmed}{Style.RESET_ALL}  "
-        f"{Fore.WHITE}中性: {neutral}{Style.RESET_ALL}  "
-        f"{Fore.RED}缩量背离: {divergence}{Style.RESET_ALL}"
-    )
+    lines.append(f"  {Fore.GREEN}放量确认: {confirmed}{Style.RESET_ALL}  " f"{Fore.WHITE}中性: {neutral}{Style.RESET_ALL}  " f"{Fore.RED}缩量背离: {divergence}{Style.RESET_ALL}")
     return "\n".join(lines)
 
 

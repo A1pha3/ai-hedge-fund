@@ -93,16 +93,7 @@ def compute_confirm_score(
     if gap_to_limit <= 0.01:
         execution_penalty += 0.10
 
-    score = (
-        (0.25 * open_gap_quality)
-        + (0.22 * vwap_reclaim_or_hold)
-        + (0.16 * intraday_volume_rhythm)
-        + (0.14 * theme_continuation)
-        + (0.10 * no_failed_breakout_intraday)
-        + (0.08 * tradable_liquidity)
-        + (0.05 * pre_score_rank_quality)
-        - execution_penalty
-    )
+    score = (0.25 * open_gap_quality) + (0.22 * vwap_reclaim_or_hold) + (0.16 * intraday_volume_rhythm) + (0.14 * theme_continuation) + (0.10 * no_failed_breakout_intraday) + (0.08 * tradable_liquidity) + (0.05 * pre_score_rank_quality) - execution_penalty
     return round(_clamp_unit_interval(score), 4)
 
 
@@ -165,11 +156,7 @@ def _build_runtime_confirmation_payload(
     # use fillna which catches NaN. Use a NaN-aware first-valid extraction.
     _first_open = first_window.iloc[0].get("open")
     _first_close = first_window.iloc[0].get("close")
-    open_price = (
-        float(_first_open) if pd.notna(_first_open) and _first_open
-        else float(_first_close) if pd.notna(_first_close) and _first_close
-        else 0.0
-    )
+    open_price = float(_first_open) if pd.notna(_first_open) and _first_open else float(_first_close) if pd.notna(_first_close) and _first_close else 0.0
     next_open_return = _safe_float(row.get("next_open_return"))
     prev_close = open_price / (1.0 + next_open_return) if next_open_return is not None and open_price > 0.0 and abs(1.0 + next_open_return) > 1e-6 else 0.0
     _last_close = first_window.iloc[-1].get("close")

@@ -200,12 +200,7 @@ def compute_conviction_row(
     calib_comp = _normalize_calibration(bucket_t5)
 
     # 加权综合 (0-1)
-    conviction = (
-        weights.get("score", 0.0) * score_comp
-        + weights.get("consecutive", 0.0) * consec_comp
-        + weights.get("quality", 0.0) * quality_comp
-        + weights.get("calibration", 0.0) * calib_comp
-    )
+    conviction = weights.get("score", 0.0) * score_comp + weights.get("consecutive", 0.0) * consec_comp + weights.get("quality", 0.0) * quality_comp + weights.get("calibration", 0.0) * calib_comp
     conviction_score = round(max(0.0, min(1.0, conviction)) * 100, 1)
 
     return ConvictionRow(
@@ -304,39 +299,19 @@ def render_conviction_ranking(summary: ConvictionSummary) -> str:
 
     lines: list[str] = []
     w = summary.weights
-    lines.append(
-        f"\n{Fore.CYAN}{Style.BRIGHT}═══ 综合信心排名 (date={summary.date_str or '未知'}) ═══{Style.RESET_ALL}"
-    )
-    lines.append(
-        f"{Fore.CYAN}权重: Score {w['score']:.0%} · 连续 {w['consecutive']:.0%} · "
-        f"数据质量 {w['quality']:.0%} · 历史命中率 {w['calibration']:.0%}{Style.RESET_ALL}"
-    )
+    lines.append(f"\n{Fore.CYAN}{Style.BRIGHT}═══ 综合信心排名 (date={summary.date_str or '未知'}) ═══{Style.RESET_ALL}")
+    lines.append(f"{Fore.CYAN}权重: Score {w['score']:.0%} · 连续 {w['consecutive']:.0%} · " f"数据质量 {w['quality']:.0%} · 历史命中率 {w['calibration']:.0%}{Style.RESET_ALL}")
     if not summary.has_calibration_data:
-        lines.append(
-            f"{Fore.YELLOW}⚠ 无历史校准数据, calibration 分量全部为中性 0.5 (不奖不罚)。"
-            f"多次运行 --auto 积累样本后此列才有区分度。{Style.RESET_ALL}"
-        )
+        lines.append(f"{Fore.YELLOW}⚠ 无历史校准数据, calibration 分量全部为中性 0.5 (不奖不罚)。" f"多次运行 --auto 积累样本后此列才有区分度。{Style.RESET_ALL}")
     lines.append("")
 
-    header = (
-        f"{Fore.CYAN}{'#':<3} {'Ticker':<8} {'名称':<12} {'Conv':>6} {'Δ':>4} "
-        f"{'Score':<8} {'Streak':<8} {'Quality':<8} {'Calib':<8} 桶{Style.RESET_ALL}"
-    )
+    header = f"{Fore.CYAN}{'#':<3} {'Ticker':<8} {'名称':<12} {'Conv':>6} {'Δ':>4} " f"{'Score':<8} {'Streak':<8} {'Quality':<8} {'Calib':<8} 桶{Style.RESET_ALL}"
     lines.append(header)
     lines.append("─" * 95)
 
     for row in summary.rows:
         conv_color = _conviction_color(row.conviction_score)
-        lines.append(
-            f"{row.conviction_rank:<3} {row.ticker:<8} {row.name[:10]:<12} "
-            f"{conv_color}{row.conviction_score:>5.1f}{Style.RESET_ALL} "
-            f"{_rank_delta_str(row.rank_delta):>4} "
-            f"{_component_str(row.score_component)} "
-            f"{_component_str(row.consecutive_component)} "
-            f"{_component_str(row.quality_component)} "
-            f"{_component_str(row.calibration_component)} "
-            f"{row.bucket_label[:8]}"
-        )
+        lines.append(f"{row.conviction_rank:<3} {row.ticker:<8} {row.name[:10]:<12} " f"{conv_color}{row.conviction_score:>5.1f}{Style.RESET_ALL} " f"{_rank_delta_str(row.rank_delta):>4} " f"{_component_str(row.score_component)} " f"{_component_str(row.consecutive_component)} " f"{_component_str(row.quality_component)} " f"{_component_str(row.calibration_component)} " f"{row.bucket_label[:8]}")
 
     lines.append("─" * 95)
     # 显著提升/下降的标的
@@ -377,9 +352,7 @@ def run_conviction_ranking(
     calibration = compute_calibration(records, lookback_days=lookback_days)
     has_calib = calibration.total_samples > 0
 
-    rows = compute_conviction_ranking(
-        recs, calibration=calibration, weights=weights, top_n=top_n
-    )
+    rows = compute_conviction_ranking(recs, calibration=calibration, weights=weights, top_n=top_n)
     summary = ConvictionSummary(
         date_str=date_str,
         weights=weights or DEFAULT_WEIGHTS,

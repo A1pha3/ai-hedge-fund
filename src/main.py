@@ -85,8 +85,8 @@ logger = get_logger(__name__)
 
 # score_b 决策阈值 — 用于表格颜色编码 (绿/黄/红) 与 high_pool 过滤。
 # 同一阈值在多处使用, 集中定义避免分叉; 修改时仅需调整此处。
-SCORE_B_GREEN_FLOOR = 0.35   # >= 此值 → 绿色 (看多) / high_pool 候选
-SCORE_B_YELLOW_FLOOR = 0.0   # >= 此值 (但 < 绿色) → 黄色 (中性); 低于此值 → 红色 (看空)
+SCORE_B_GREEN_FLOOR = 0.35  # >= 此值 → 绿色 (看多) / high_pool 候选
+SCORE_B_YELLOW_FLOOR = 0.0  # >= 此值 (但 < 绿色) → 黄色 (中性); 低于此值 → 红色 (看空)
 
 
 def _compute_model_version() -> str:
@@ -667,8 +667,7 @@ def _inject_score_decomposition(
             injected += 1
         except Exception as exc:  # best-effort: never block the pipeline, but DO log
             logger.warning(
-                "[Auto] score_decomposition injection failed for ticker=%s: %s "
-                "(factor_attribution will be insufficient for this rec)",
+                "[Auto] score_decomposition injection failed for ticker=%s: %s " "(factor_attribution will be insufficient for this rec)",
                 rec.get("ticker", "?"),
                 exc,
             )
@@ -970,13 +969,9 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
     # tracking_history.json. flock auto-releases at process exit (crash-safe).
     _auto_lock_fd = _try_acquire_pipeline_lock(_AUTO_PIPELINE_LOCK_PATH)
     if _auto_lock_fd is None:
-        print(
-            f"\n{Fore.YELLOW}[Auto] 另一个 --auto 实例正在运行 (lock {_AUTO_PIPELINE_LOCK_PATH} 已占用)；"
-            f"跳过本次以避免 auto_screening 报告 / tracking_history 并发写入损坏。{Style.RESET_ALL}\n"
-        )
+        print(f"\n{Fore.YELLOW}[Auto] 另一个 --auto 实例正在运行 (lock {_AUTO_PIPELINE_LOCK_PATH} 已占用)；" f"跳过本次以避免 auto_screening 报告 / tracking_history 并发写入损坏。{Style.RESET_ALL}\n")
         logger.warning(
-            "--auto skipped: another instance holds the pipeline lock (%s) — "
-            "concurrent run would corrupt auto_screening report / tracking_history",
+            "--auto skipped: another instance holds the pipeline lock (%s) — " "concurrent run would corrupt auto_screening report / tracking_history",
             _AUTO_PIPELINE_LOCK_PATH,
         )
         return 0
@@ -1133,16 +1128,10 @@ def _attach_strategy_attribution(report_payload: dict, trade_date: str) -> None:
         attr_positions_path = _resolve_positions_path()
         attr_positions = _load_positions_for_attribution(attr_positions_path)
         if attr_positions:
-            attributions = compute_strategy_daily_attribution(
-                attr_positions, today_date=trade_date
-            )
+            attributions = compute_strategy_daily_attribution(attr_positions, today_date=trade_date)
             if attributions:
                 attr_total_pnl = sum(a.daily_pnl for a in attributions.values())
-                attr_base = sum(
-                    float(p.get("prev_value", 0.0) or 0.0)
-                    for p in attr_positions
-                    if isinstance(p.get("prev_value"), (int, float))
-                )
+                attr_base = sum(float(p.get("prev_value", 0.0) or 0.0) for p in attr_positions if isinstance(p.get("prev_value"), (int, float)))
                 report_payload["strategy_attribution_daily"] = {
                     "date": trade_date,
                     "portfolio_total_pnl": attr_total_pnl,
@@ -1232,9 +1221,7 @@ def _handle_post_screening_tasks(
                     result.duration_ms,
                 )
             success_count = sum(1 for r in push_results if r.success)
-            print(
-                f"{Fore.CYAN}[Auto] P2-3 推送完成: {success_count}/{len(push_results)} 通道成功{Style.RESET_ALL}"
-            )
+            print(f"{Fore.CYAN}[Auto] P2-3 推送完成: {success_count}/{len(push_results)} 通道成功{Style.RESET_ALL}")
     except Exception as exc:  # pragma: no cover - 推送失败不影响主流程
         logger.warning("[Auto] P2-3 推送异常: %s", exc)
 
@@ -1593,12 +1580,7 @@ def _print_score_decomposition(
         else:
             score_color = Fore.RED
 
-        print(
-            f"  {consensus} {Fore.CYAN}{ticker:<8s}{Style.RESET_ALL} "
-            f"{score_color}{score_b:+.4f}{Style.RESET_ALL}  "
-            f"{' | '.join(parts)}  "
-            f"{att_str}  {stab_str}"
-        )
+        print(f"  {consensus} {Fore.CYAN}{ticker:<8s}{Style.RESET_ALL} " f"{score_color}{score_b:+.4f}{Style.RESET_ALL}  " f"{' | '.join(parts)}  " f"{att_str}  {stab_str}")
 
     print(f"{Fore.WHITE}{'━' * 72}{Style.RESET_ALL}")
     print(f"  {Fore.WHITE}T=趋势 MR=均值回归 F=基本面 E=事件情绪  att=注意力  stab=连续推荐加成  ★=共识加成{Style.RESET_ALL}\n")
@@ -1697,12 +1679,7 @@ def _print_cache_hit_summary(fetcher_stats: dict[str, int]) -> None:
     else:
         effective_hit_rate = 0.0
     colour = Fore.GREEN if effective_hit_rate >= 50 else Fore.YELLOW if effective_hit_rate >= 20 else Fore.RED
-    print(
-        f"  {colour}Cache: {effective_hit_rate:.0f}% hit "
-        f"({total_served_from_cache} cached / {total_requests} requests)"
-        f" | Batch: {batch_calls} calls ({batch_failures} failures)"
-        f"{Style.RESET_ALL}"
-    )
+    print(f"  {colour}Cache: {effective_hit_rate:.0f}% hit " f"({total_served_from_cache} cached / {total_requests} requests)" f" | Batch: {batch_calls} calls ({batch_failures} failures)" f"{Style.RESET_ALL}")
 
 
 def _build_auto_screening_table_row(
@@ -2029,7 +2006,9 @@ def _load_positions_for_attribution(positions_path: Path | None) -> list[dict]:
         positions = data.get("positions")
         if isinstance(positions, list):
             return [item for item in positions if isinstance(item, dict)]
-    logger.warning("[Attribution] 持仓文件格式不识别 (期望 list 或 {'positions': [...]})", )
+    logger.warning(
+        "[Attribution] 持仓文件格式不识别 (期望 list 或 {'positions': [...]})",
+    )
     return []
 
 
@@ -2060,11 +2039,7 @@ def run_attribution_daily(trade_date: str, positions_path: Path | None = None) -
 
     attributions = compute_strategy_daily_attribution(positions, today_date=trade_date)
     total_pnl = sum(a.daily_pnl for a in attributions.values())
-    portfolio_value_base = sum(
-        float(p.get("prev_value", 0.0) or 0.0)
-        for p in positions
-        if isinstance(p.get("prev_value"), (int, float))
-    )
+    portfolio_value_base = sum(float(p.get("prev_value", 0.0) or 0.0) for p in positions if isinstance(p.get("prev_value"), (int, float)))
     report_text = render_attribution_report(
         attributions,
         total_pnl,
@@ -2251,10 +2226,7 @@ def run_push_test(
     if init:
         template = build_default_config(enabled_channels=("wecom", "dingtalk", "email", "webhook"))
         if resolved_path.exists():
-            print(
-                f"{Fore.YELLOW}[PushTest] 配置文件已存在, 不会覆盖: {resolved_path}{Style.RESET_ALL}\n"
-                f"  如需重新生成, 请先删除该文件。"
-            )
+            print(f"{Fore.YELLOW}[PushTest] 配置文件已存在, 不会覆盖: {resolved_path}{Style.RESET_ALL}\n" f"  如需重新生成, 请先删除该文件。")
             return 1
         resolved_path.parent.mkdir(parents=True, exist_ok=True)
         resolved_path.write_text(
@@ -2267,10 +2239,7 @@ def run_push_test(
 
     configs = load_push_config(resolved_path, only_enabled=True)
     if not configs:
-        print(
-            f"{Fore.YELLOW}[PushTest] 未找到任何 enabled 通道 ({resolved_path}){Style.RESET_ALL}\n"
-            f"  提示: 使用 --push-test --init 生成默认模板。"
-        )
+        print(f"{Fore.YELLOW}[PushTest] 未找到任何 enabled 通道 ({resolved_path}){Style.RESET_ALL}\n" f"  提示: 使用 --push-test --init 生成默认模板。")
         return 1
 
     if channel:
@@ -2296,11 +2265,7 @@ def run_push_test(
         result = send_push(cfg, test_payload)
         results.append(result)
         marker = f"{Fore.GREEN}OK{Style.RESET_ALL}" if result.success else f"{Fore.RED}FAIL{Style.RESET_ALL}"
-        print(
-            f"  [{marker}] {cfg.channel.value:<14} → {cfg.target}  "
-            f"(attempts={result.attempts}, {result.duration_ms:.0f}ms, "
-            f"truncated={result.truncated})"
-        )
+        print(f"  [{marker}] {cfg.channel.value:<14} → {cfg.target}  " f"(attempts={result.attempts}, {result.duration_ms:.0f}ms, " f"truncated={result.truncated})")
         if result.error:
             print(f"    error: {result.error}")
 
@@ -2324,10 +2289,7 @@ def _print_custom_weights_results(top: list[dict], w: dict) -> bool:
     today = datetime.now().strftime("%Y-%m-%d")
     print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}{Style.BRIGHT}[CustomWeights] 自定义权重推荐 · {today}{Style.RESET_ALL}")
-    print(
-        f"权重: 趋势 {w['trend']:.2f} / 均值回归 {w['mean_reversion']:.2f} / "
-        f"基本面 {w['fundamental']:.2f} / 事件情绪 {w['event_sentiment']:.2f}"
-    )
+    print(f"权重: 趋势 {w['trend']:.2f} / 均值回归 {w['mean_reversion']:.2f} / " f"基本面 {w['fundamental']:.2f} / 事件情绪 {w['event_sentiment']:.2f}")
     print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
     if not top:
         print(f"{Fore.YELLOW}无可用推荐{Style.RESET_ALL}")
@@ -2353,10 +2315,7 @@ def _print_custom_weights_results(top: list[dict], w: dict) -> bool:
             recalib_marker = f"  {Fore.YELLOW}⚠重权越界(校准已重置){Style.RESET_ALL}"
         print(f"  {idx:>2}. {label:<22}  score_b {score_b:+.3f}  (原 {original:+.3f}  Δ {diff_str}){recalib_marker}")
     if recalibration_needed_count > 0:
-        print(
-            f"{Fore.YELLOW}⚠ {recalibration_needed_count} 只标的因重权越过桶边界, "
-            f"bucket 校准已重置为未知 — 请 --top-picks 复核有效校准.{Style.RESET_ALL}"
-        )
+        print(f"{Fore.YELLOW}⚠ {recalibration_needed_count} 只标的因重权越过桶边界, " f"bucket 校准已重置为未知 — 请 --top-picks 复核有效校准.{Style.RESET_ALL}")
     return True
 
 
@@ -2407,10 +2366,7 @@ def run_custom_weights(
     # 2. 加载报告
     recs = load_latest_recommendations(trade_date=trade_date)
     if not recs:
-        print(
-            f"{Fore.YELLOW}[CustomWeights] 未找到可用推荐报告 (trade_date={trade_date or 'latest'}), "
-            f"请先运行 --auto{Style.RESET_ALL}"
-        )
+        print(f"{Fore.YELLOW}[CustomWeights] 未找到可用推荐报告 (trade_date={trade_date or 'latest'}), " f"请先运行 --auto{Style.RESET_ALL}")
         return 1
 
     # 3. 重算
@@ -2982,6 +2938,7 @@ def run_weight_calibration(lookback_days: int = 30) -> int:
     # 尝试从历史报告中提取因子面板
     try:
         from datetime import datetime
+
         end_date = datetime.now().strftime("%Y%m%d")
         factor_panel, return_history = extract_factor_panel_from_history(
             reports_dir=report_dir,
@@ -3062,14 +3019,16 @@ def run_performance_report_cli(period: str = "weekly", end_date: str | None = No
     for rec in tracking_history:
         t1 = rec.get("next_day_return")
         if t1 is not None:
-            trades.append({
-                "date": rec.get("recommended_date", ""),
-                "ticker": rec.get("ticker", ""),
-                "name": rec.get("name", ""),
-                "pnl": _safe_float(t1) / 100.0 if _safe_float(t1) != 0 else 0.0,
-                "return_pct": _safe_float(t1) / 100.0,
-                "strategy": "unknown",
-            })
+            trades.append(
+                {
+                    "date": rec.get("recommended_date", ""),
+                    "ticker": rec.get("ticker", ""),
+                    "name": rec.get("name", ""),
+                    "pnl": _safe_float(t1) / 100.0 if _safe_float(t1) != 0 else 0.0,
+                    "return_pct": _safe_float(t1) / 100.0,
+                    "strategy": "unknown",
+                }
+            )
 
     # 4. 生成报告
     report = generate_performance_report(
@@ -3182,8 +3141,7 @@ def run_explain(ticker: str) -> int:
     # PDF / backtest so users do not read "决策: buy" as a deterministic
     # instruction (serves product goal "更高确信" = confidence includes honest
     # boundary disclosure).
-    print(f"\n  {Fore.WHITE}⚠ 以上解释由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。"
-          f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}")
+    print(f"\n  {Fore.WHITE}⚠ 以上解释由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。" f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}")
     print()
     return 0
 

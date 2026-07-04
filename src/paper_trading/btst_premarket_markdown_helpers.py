@@ -114,10 +114,7 @@ def append_premarket_watch_rules(
     lines.append("- trigger_rules:")
     lines.append(f"  - {item.get('promotion_trigger') or '若催化继续发酵，才允许升级到题材催化研究池。'}")
     if threshold_shortfalls:
-        lines.append(
-            "  - 需先补齐阈值缺口: "
-            + ", ".join(f"{key}={format_float(value)}" for key, value in threshold_shortfalls.items())
-        )
+        lines.append("  - 需先补齐阈值缺口: " + ", ".join(f"{key}={format_float(value)}" for key, value in threshold_shortfalls.items()))
     lines.append("- avoid_rules:")
     lines.append("  - 不进入当日 BTST 交易名单。")
     lines.append(f"  - {second_avoid_rule}")

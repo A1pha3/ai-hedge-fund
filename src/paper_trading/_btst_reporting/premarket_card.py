@@ -54,10 +54,7 @@ def _btst_0422_p7_gap_overlay_guardrail() -> str | None:
 
     warn_pct = f"{warn * 100:.1f}%"
     halt_pct = f"{halt * 100:.1f}%"
-    return (
-        f"Gap overlay (BTST 0422 P7/{mode}): 若 T+1 开盘相对 T 收盘跳空低开 ≤ -{warn_pct}，只允许确认后减仓入场；"
-        f"若 ≤ -{halt_pct}，当日禁入。"
-    )
+    return f"Gap overlay (BTST 0422 P7/{mode}): 若 T+1 开盘相对 T 收盘跳空低开 ≤ -{warn_pct}，只允许确认后减仓入场；" f"若 ≤ -{halt_pct}，当日禁入。"
 
 
 def _btst_regime_gate_guardrail(control_tower: dict[str, Any]) -> str | None:
@@ -66,10 +63,7 @@ def _btst_regime_gate_guardrail(control_tower: dict[str, Any]) -> str | None:
         return None
 
     if level == "risk_off":
-        return (
-            "Regime gate (risk_off): 默认不做正式买入，只允许观察/确认性复审；"
-            "若无明确修复信号则空仓。"
-        )
+        return "Regime gate (risk_off): 默认不做正式买入，只允许观察/确认性复审；" "若无明确修复信号则空仓。"
 
     if level in {"crisis", "halt"}:
         return f"Regime gate ({level}): 当日按门控降级执行，只允许确认后小仓试错或空仓。"
@@ -81,23 +75,20 @@ def _btst_regime_gate_guardrail(control_tower: dict[str, Any]) -> str | None:
 # Action building helpers
 # ---------------------------------------------------------------------------
 
+
 def _build_premarket_primary_action(
     primary_entry: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
     if not primary_entry:
         return None
 
-    posture, trigger_rules = _selected_action_posture(
-        primary_entry.get("preferred_entry_mode")
-    )
+    posture, trigger_rules = _selected_action_posture(primary_entry.get("preferred_entry_mode"))
     historical_prior = dict(primary_entry.get("historical_prior") or {})
     if historical_prior.get("summary"):
         trigger_rules.insert(0, f"历史先验: {historical_prior['summary']}")
     if historical_prior.get("execution_note"):
         trigger_rules.append(f"执行先验: {historical_prior['execution_note']}")
-    holding_contract_note = _selected_holding_contract_note(
-        primary_entry.get("preferred_entry_mode"), historical_prior
-    )
+    holding_contract_note = _selected_holding_contract_note(primary_entry.get("preferred_entry_mode"), historical_prior)
     if holding_contract_note:
         trigger_rules.append(f"持有 contract: {holding_contract_note}")
     return {
@@ -105,8 +96,7 @@ def _build_premarket_primary_action(
         "action_tier": "primary_entry",
         "execution_posture": posture,
         "watch_priority": historical_prior.get("monitor_priority") or "unscored",
-        "execution_quality_label": historical_prior.get("execution_quality_label")
-        or "unknown",
+        "execution_quality_label": historical_prior.get("execution_quality_label") or "unknown",
         "preferred_entry_mode": primary_entry.get("preferred_entry_mode"),
         "trigger_rules": trigger_rules,
         "avoid_rules": [
@@ -147,8 +137,7 @@ def _build_premarket_observer_action(
         "action_tier": action_tier,
         "execution_posture": execution_posture,
         "watch_priority": historical_prior.get("monitor_priority") or "unscored",
-        "execution_quality_label": historical_prior.get("execution_quality_label")
-        or "unknown",
+        "execution_quality_label": historical_prior.get("execution_quality_label") or "unknown",
         "preferred_entry_mode": entry.get("preferred_entry_mode"),
         "trigger_rules": trigger_rules,
         "avoid_rules": avoid_rules,
@@ -159,52 +148,26 @@ def _build_premarket_observer_action(
 
 
 def _build_premarket_action_context(brief: dict[str, Any]) -> dict[str, Any]:
-    selected_entries = _filter_execution_ready_entries(
-        list(brief.get("selected_entries") or [])
-    )
-    near_miss_entries = _filter_execution_ready_entries(
-        list(brief.get("near_miss_entries") or [])
-    )
-    opportunity_pool_entries = _filter_execution_ready_entries(
-        list(brief.get("opportunity_pool_entries") or [])
-    )
-    no_history_observer_entries = _filter_execution_ready_entries(
-        list(brief.get("no_history_observer_entries") or [])
-    )
-    risky_observer_entries = _filter_execution_ready_entries(
-        list(brief.get("risky_observer_entries") or [])
-    )
-    runner_recall_review_entries = _filter_execution_ready_entries(
-        list(brief.get("runner_recall_review_entries") or [])
-    )
-    primary_candidates = _filter_execution_ready_entries(
-        [brief.get("primary_entry")] if brief.get("primary_entry") else []
-    )
-    primary_entry = primary_candidates[0] if primary_candidates else (
-        selected_entries[0] if selected_entries else None
-    )
+    selected_entries = _filter_execution_ready_entries(list(brief.get("selected_entries") or []))
+    near_miss_entries = _filter_execution_ready_entries(list(brief.get("near_miss_entries") or []))
+    opportunity_pool_entries = _filter_execution_ready_entries(list(brief.get("opportunity_pool_entries") or []))
+    no_history_observer_entries = _filter_execution_ready_entries(list(brief.get("no_history_observer_entries") or []))
+    risky_observer_entries = _filter_execution_ready_entries(list(brief.get("risky_observer_entries") or []))
+    runner_recall_review_entries = _filter_execution_ready_entries(list(brief.get("runner_recall_review_entries") or []))
+    primary_candidates = _filter_execution_ready_entries([brief.get("primary_entry")] if brief.get("primary_entry") else [])
+    primary_entry = primary_candidates[0] if primary_candidates else (selected_entries[0] if selected_entries else None)
     return {
         "selected_entries": selected_entries,
         "primary_entry": primary_entry,
-        "catalyst_theme_frontier_priority": dict(
-            brief.get("catalyst_theme_frontier_priority") or {}
-        ),
+        "catalyst_theme_frontier_priority": dict(brief.get("catalyst_theme_frontier_priority") or {}),
         "rollout_validation": dict(brief.get("rollout_validation") or {}),
-        "catalyst_theme_shadow_watch": _build_catalyst_theme_shadow_watch_rows(
-            list(brief.get("catalyst_theme_shadow_entries") or [])
-        ),
+        "catalyst_theme_shadow_watch": _build_catalyst_theme_shadow_watch_rows(list(brief.get("catalyst_theme_shadow_entries") or [])),
         "primary_action": _build_premarket_primary_action(primary_entry),
         "watch_actions": _build_watch_actions(near_miss_entries),
         "opportunity_actions": _build_opportunity_actions(opportunity_pool_entries),
-        "runner_recall_review_actions": _build_runner_recall_review_actions(
-            runner_recall_review_entries
-        ),
-        "no_history_observer_actions": _build_no_history_observer_actions(
-            no_history_observer_entries
-        ),
-        "risky_observer_actions": _build_risky_observer_actions(
-            risky_observer_entries
-        ),
+        "runner_recall_review_actions": _build_runner_recall_review_actions(runner_recall_review_entries),
+        "no_history_observer_actions": _build_no_history_observer_actions(no_history_observer_entries),
+        "risky_observer_actions": _build_risky_observer_actions(risky_observer_entries),
         "upstream_shadow_summary": dict(brief.get("upstream_shadow_summary") or {}),
     }
 
@@ -262,10 +225,7 @@ def _build_opportunity_actions(
             entry,
             action_tier="conditional_watch_upgrade",
             execution_posture="observe_for_upgrade_only",
-            default_action=str(
-                entry.get("promotion_trigger")
-                or "只有盘中新增强度确认时，才允许从机会池升级。"
-            ),
+            default_action=str(entry.get("promotion_trigger") or "只有盘中新增强度确认时，才允许从机会池升级。"),
             secondary_rule="默认不在开盘前直接升级为主票或近似主票。",
             avoid_rules=[
                 "机会池不是默认交易名单，不因情绪拉升直接入场。",
@@ -356,18 +316,10 @@ def _build_premarket_card_summary(
         "runner_recall_review_count": len(runner_recall_review_actions),
         "no_history_observer_count": len(no_history_observer_actions),
         "risky_observer_count": len(risky_observer_actions),
-        "catalyst_theme_frontier_promoted_count": len(
-            catalyst_theme_frontier_priority.get("promoted_tickers") or []
-        ),
-        "catalyst_theme_shadow_count": len(
-            brief.get("catalyst_theme_shadow_entries") or []
-        ),
-        "upstream_shadow_candidate_count": int(
-            upstream_shadow_summary.get("shadow_candidate_count") or 0
-        ),
-        "upstream_shadow_promotable_count": int(
-            upstream_shadow_summary.get("promotable_count") or 0
-        ),
+        "catalyst_theme_frontier_promoted_count": len(catalyst_theme_frontier_priority.get("promoted_tickers") or []),
+        "catalyst_theme_shadow_count": len(brief.get("catalyst_theme_shadow_entries") or []),
+        "upstream_shadow_candidate_count": int(upstream_shadow_summary.get("shadow_candidate_count") or 0),
+        "upstream_shadow_promotable_count": int(upstream_shadow_summary.get("promotable_count") or 0),
         "excluded_research_count": len(brief.get("excluded_research_entries") or []),
     }
 
@@ -376,6 +328,7 @@ def _build_premarket_card_summary(
 # Analysis entry point
 # ---------------------------------------------------------------------------
 
+
 def analyze_btst_premarket_execution_card(
     input_path: str | Path | dict[str, Any],
     trade_date: str | None = None,
@@ -383,18 +336,14 @@ def analyze_btst_premarket_execution_card(
 ) -> dict[str, Any]:
     from src.paper_trading._btst_reporting.brief_resolver import _resolve_brief_analysis
 
-    brief = _resolve_brief_analysis(
-        input_path, trade_date=trade_date, next_trade_date=next_trade_date
-    )
+    brief = _resolve_brief_analysis(input_path, trade_date=trade_date, next_trade_date=next_trade_date)
     action_context = _build_premarket_action_context(brief)
     execution_contract_context = build_brief_execution_contract(
         brief=brief,
         selected_entries=list(action_context["selected_entries"] or []),
         early_runner_status="unavailable",
     )
-    catalyst_theme_frontier_priority = action_context[
-        "catalyst_theme_frontier_priority"
-    ]
+    catalyst_theme_frontier_priority = action_context["catalyst_theme_frontier_priority"]
     catalyst_theme_shadow_watch = action_context["catalyst_theme_shadow_watch"]
     primary_action = _attach_primary_action_contract(
         action_context["primary_action"],
@@ -420,9 +369,7 @@ def analyze_btst_premarket_execution_card(
     if gap_guardrail:
         global_guardrails.append(gap_guardrail)
 
-    regime_guardrail = _btst_regime_gate_guardrail(
-        dict(execution_contract_context.get("control_tower") or {})
-    )
+    regime_guardrail = _btst_regime_gate_guardrail(dict(execution_contract_context.get("control_tower") or {}))
     if regime_guardrail:
         global_guardrails.append(regime_guardrail)
 

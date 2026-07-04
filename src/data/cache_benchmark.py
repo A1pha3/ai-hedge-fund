@@ -80,32 +80,35 @@ def render_cache_benchmark_markdown(payload: dict) -> str:
     status = "confirmed" if summary.get("reuse_confirmed") else "not confirmed"
     clear_first = "yes" if payload.get("clear_first") else "no"
 
-    return "\n".join(
-        [
-            f"# Data Cache Benchmark - {payload.get('trade_date')} - {payload.get('ticker')}",
-            "",
-            "## Run Setup",
-            f"- trade_date: {payload.get('trade_date')}",
-            f"- ticker: {payload.get('ticker')}",
-            f"- clear_first: {clear_first}",
-            f"- reuse_confirmed: {status}",
-            "",
-            "## Cold vs Warm Summary",
-            f"- first_total_rows: {summary.get('first_total_rows', 0)}",
-            f"- second_total_rows: {summary.get('second_total_rows', 0)}",
-            f"- first_disk_hits: {summary.get('first_disk_hits', 0)}",
-            f"- second_disk_hits: {summary.get('second_disk_hits', 0)}",
-            f"- disk_hit_gain: {summary.get('disk_hit_gain', 0)}",
-            f"- first_misses: {summary.get('first_misses', 0)}",
-            f"- second_misses: {summary.get('second_misses', 0)}",
-            f"- miss_reduction: {summary.get('miss_reduction', 0)}",
-            f"- first_sets: {summary.get('first_sets', 0)}",
-            f"- second_sets: {summary.get('second_sets', 0)}",
-            f"- set_reduction: {summary.get('set_reduction', 0)}",
-            f"- first_hit_rate: {summary.get('first_hit_rate', 0.0)}",
-            f"- second_hit_rate: {summary.get('second_hit_rate', 0.0)}",
-        ]
-    ) + "\n"
+    return (
+        "\n".join(
+            [
+                f"# Data Cache Benchmark - {payload.get('trade_date')} - {payload.get('ticker')}",
+                "",
+                "## Run Setup",
+                f"- trade_date: {payload.get('trade_date')}",
+                f"- ticker: {payload.get('ticker')}",
+                f"- clear_first: {clear_first}",
+                f"- reuse_confirmed: {status}",
+                "",
+                "## Cold vs Warm Summary",
+                f"- first_total_rows: {summary.get('first_total_rows', 0)}",
+                f"- second_total_rows: {summary.get('second_total_rows', 0)}",
+                f"- first_disk_hits: {summary.get('first_disk_hits', 0)}",
+                f"- second_disk_hits: {summary.get('second_disk_hits', 0)}",
+                f"- disk_hit_gain: {summary.get('disk_hit_gain', 0)}",
+                f"- first_misses: {summary.get('first_misses', 0)}",
+                f"- second_misses: {summary.get('second_misses', 0)}",
+                f"- miss_reduction: {summary.get('miss_reduction', 0)}",
+                f"- first_sets: {summary.get('first_sets', 0)}",
+                f"- second_sets: {summary.get('second_sets', 0)}",
+                f"- set_reduction: {summary.get('set_reduction', 0)}",
+                f"- first_hit_rate: {summary.get('first_hit_rate', 0.0)}",
+                f"- second_hit_rate: {summary.get('second_hit_rate', 0.0)}",
+            ]
+        )
+        + "\n"
+    )
 
 
 def append_cache_benchmark_markdown(target_path: str | Path, markdown: str) -> None:

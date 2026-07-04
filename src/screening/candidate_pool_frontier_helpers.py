@@ -82,23 +82,9 @@ def _meets_frontier_gate(entry: dict[str, Any], *, source_family: str, bucket: d
     # The tighter gates keep frontier growth controlled while preserving the
     # distinct risk profile of each source family.
     if source_family == "upstream_liquidity_corridor_shadow":
-        return (
-            rank > 0
-            and rank <= 1500
-            and min_gate_share >= 4.0
-            and cutoff_share >= 0.20
-            and trend_acceleration >= 0.70
-            and close_strength >= 0.85
-        )
+        return rank > 0 and rank <= 1500 and min_gate_share >= 4.0 and cutoff_share >= 0.20 and trend_acceleration >= 0.70 and close_strength >= 0.85
     if source_family == "post_gate_liquidity_competition_shadow":
-        return (
-            rank > 0
-            and rank <= 1500
-            and min_gate_share >= 3.0
-            and cutoff_share >= 0.18
-            and trend_acceleration >= 0.75
-            and close_strength >= 0.88
-        )
+        return rank > 0 and rank <= 1500 and min_gate_share >= 3.0 and cutoff_share >= 0.18 and trend_acceleration >= 0.75 and close_strength >= 0.88
     return False
 
 

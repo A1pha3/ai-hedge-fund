@@ -27,6 +27,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 # ---- Request Schemas ----
 
+
 class LoginRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     password: str = Field(..., min_length=1, max_length=128)
@@ -59,6 +60,7 @@ class ResetPasswordRequest(BaseModel):
 
 # ---- Response Schemas ----
 
+
 class UserResponse(BaseModel):
     id: int
     username: str
@@ -86,6 +88,7 @@ class MessageResponse(BaseModel):
 
 
 # ---- Routes ----
+
 
 @router.post("/login", response_model=TokenResponse)
 async def login(request: LoginRequest, db: Session = Depends(get_db)):
@@ -172,6 +175,7 @@ async def forgot_password(request: ForgotPasswordRequest, db: Session = Depends(
 
     if reset_token:
         import logging
+
         logger = logging.getLogger(__name__)
         logger.info(f"Password reset token generated for {request.username}")
 

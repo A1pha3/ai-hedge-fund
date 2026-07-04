@@ -15,15 +15,7 @@ def _select_articles_for_sentiment_analysis(recent_articles: list[CompanyNews], 
 
 
 def _build_news_sentiment_prompt(ticker: str, title: str) -> str:
-    return (
-        f"Please analyze the sentiment of the following news headline "
-        f"with the following context: "
-        f"The stock is {ticker}. "
-        f"Determine if sentiment is 'positive', 'negative', or 'neutral' for the stock {ticker} only. "
-        f"Also provide a confidence score for your prediction from 0 to 100. "
-        f"Respond in JSON format.\n\n"
-        f"Headline: {title}"
-    )
+    return f"Please analyze the sentiment of the following news headline " f"with the following context: " f"The stock is {ticker}. " f"Determine if sentiment is 'positive', 'negative', or 'neutral' for the stock {ticker} only. " f"Also provide a confidence score for your prediction from 0 to 100. " f"Respond in JSON format.\n\n" f"Headline: {title}"
 
 
 def _classify_news_articles(
@@ -105,10 +97,7 @@ def _build_news_sentiment_details(
     if total_signals == 0:
         return "未找到相关新闻文章，无法进行情感分析。"
 
-    details = (
-        f"共分析 {total_signals} 篇新闻文章，其中看涨 {bullish_signals} 篇、看跌 {bearish_signals} 篇、中性 {neutral_signals} 篇。"
-        f"通过 LLM 对 {sentiments_classified_by_llm} 篇文章进行了深度情感分类。"
-    )
+    details = f"共分析 {total_signals} 篇新闻文章，其中看涨 {bullish_signals} 篇、看跌 {bearish_signals} 篇、中性 {neutral_signals} 篇。" f"通过 LLM 对 {sentiments_classified_by_llm} 篇文章进行了深度情感分类。"
     if overall_signal == "bullish":
         details += f"正面新闻占比 {bullish_signals / total_signals * 100:.0f}%，整体新闻情绪偏向积极，发出看涨信号。"
     elif overall_signal == "bearish":

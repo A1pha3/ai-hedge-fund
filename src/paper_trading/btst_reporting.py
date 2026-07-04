@@ -235,9 +235,7 @@ load_project_dotenv()
 CATALYST_THEME_SHADOW_WATCH_MAX_ENTRIES = 3
 
 
-def _extract_upstream_shadow_entry(
-    selection_entry: dict[str, Any], supplemental_entry: dict[str, Any] | None = None
-) -> dict[str, Any] | None:
+def _extract_upstream_shadow_entry(selection_entry: dict[str, Any], supplemental_entry: dict[str, Any] | None = None) -> dict[str, Any] | None:
     return _extract_upstream_shadow_entry_eb(selection_entry, supplemental_entry)
 
 
@@ -251,15 +249,11 @@ def _load_catalyst_theme_frontier_summary(
     return _load_catalyst_theme_frontier_summary_eb(report_dir)
 
 
-def _build_catalyst_theme_frontier_priority(
-    frontier_summary: dict[str, Any], shadow_entries: list[dict[str, Any]]
-) -> dict[str, Any]:
+def _build_catalyst_theme_frontier_priority(frontier_summary: dict[str, Any], shadow_entries: list[dict[str, Any]]) -> dict[str, Any]:
     return _build_catalyst_theme_frontier_priority_eb(frontier_summary, shadow_entries)
 
 
-def _resolve_snapshot_path(
-    input_path: str | Path, trade_date: str | None
-) -> tuple[Path, Path]:
+def _resolve_snapshot_path(input_path: str | Path, trade_date: str | None) -> tuple[Path, Path]:
     return _resolve_snapshot_path_eb(input_path, trade_date)
 
 
@@ -285,9 +279,7 @@ def _apply_execution_quality_entry_mode(entry: dict[str, Any]) -> dict[str, Any]
     return _apply_execution_quality_entry_mode_impl(entry)
 
 
-def _merge_entry_historical_prior(
-    entry: dict[str, Any], historical_prior: dict[str, Any]
-) -> dict[str, Any]:
+def _merge_entry_historical_prior(entry: dict[str, Any], historical_prior: dict[str, Any]) -> dict[str, Any]:
     return _merge_entry_historical_prior_eb(entry, historical_prior)
 
 
@@ -463,12 +455,11 @@ def _append_brief_overview_markdown(lines: list[str], analysis: dict[str, Any]) 
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_brief_overview_markdown as _impl,
     )
+
     _impl(lines, analysis)
 
 
-def _append_brief_scored_entries_markdown(
-    lines: list[str], title: str, entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_scored_entries_markdown(lines: list[str], title: str, entries: list[dict[str, Any]]) -> None:
     _append_brief_scored_entries_markdown_br(lines, title, entries)
 
 
@@ -482,6 +473,7 @@ def _append_brief_ticker_section(
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_brief_ticker_section as _impl,
     )
+
     _impl(lines, title=title, entries=entries, render_entry=render_entry)
 
 
@@ -497,39 +489,35 @@ def _append_brief_historical_prior_fields(
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_brief_historical_prior_fields as _impl,
     )
+
     _impl(lines, historical_prior, include_summary=include_summary, include_monitor_priority=include_monitor_priority, include_execution_quality=include_execution_quality, include_execution_note=include_execution_note)
 
 
-def _append_brief_scored_entry_metrics(
-    lines: list[str], metrics: dict[str, Any]
-) -> None:
+def _append_brief_scored_entry_metrics(lines: list[str], metrics: dict[str, Any]) -> None:
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_brief_scored_entry_metrics as _impl,
     )
+
     _impl(lines, metrics)
 
 
-def _append_brief_short_trade_metrics(
-    lines: list[str], metrics: dict[str, Any]
-) -> None:
+def _append_brief_short_trade_metrics(lines: list[str], metrics: dict[str, Any]) -> None:
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_brief_short_trade_metrics as _impl,
     )
+
     _impl(lines, metrics)
 
 
-def _append_brief_historical_recent_examples(
-    lines: list[str], historical_prior: dict[str, Any]
-) -> None:
+def _append_brief_historical_recent_examples(lines: list[str], historical_prior: dict[str, Any]) -> None:
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_brief_historical_recent_examples as _impl,
     )
+
     _impl(lines, historical_prior)
 
 
-def _append_brief_opportunity_pool_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_opportunity_pool_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     _append_brief_opportunity_pool_markdown_br(lines, entries)
 
 
@@ -537,6 +525,7 @@ def _append_gate_status_line(lines: list[str], gate_status: dict[str, Any]) -> N
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_gate_status_line as _impl,
     )
+
     _impl(lines, gate_status)
 
 
@@ -549,36 +538,31 @@ def _append_brief_observer_lane_markdown(
     _append_brief_observer_lane_markdown_br(lines, title, entries, include_execution_note)
 
 
-def _append_brief_pruned_entries_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_pruned_entries_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_brief_pruned_entries_markdown as _impl,
     )
+
     _impl(lines, entries)
 
 
-def _append_brief_research_radar_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_research_radar_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_brief_research_radar_markdown as _impl,
     )
+
     _impl(lines, entries)
 
 
-def _append_brief_catalyst_theme_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_catalyst_theme_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     _append_brief_catalyst_theme_markdown_br(lines, entries)
 
 
-def _append_frontier_priority_summary(
-    lines: list[str], frontier_priority: dict[str, Any]
-) -> None:
+def _append_frontier_priority_summary(lines: list[str], frontier_priority: dict[str, Any]) -> None:
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_frontier_priority_summary as _impl,
     )
+
     _impl(lines, frontier_priority)
 
 
@@ -590,24 +574,19 @@ def _append_frontier_section(
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_frontier_section as _impl,
     )
+
     _impl(lines, frontier_priority, render_entries)
 
 
-def _append_brief_catalyst_frontier_markdown(
-    lines: list[str], frontier_priority: dict[str, Any]
-) -> None:
+def _append_brief_catalyst_frontier_markdown(lines: list[str], frontier_priority: dict[str, Any]) -> None:
     _append_brief_catalyst_frontier_markdown_br(lines, frontier_priority)
 
 
-def _append_brief_catalyst_shadow_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_catalyst_shadow_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     _append_brief_catalyst_shadow_markdown_br(lines, entries)
 
 
-def _append_brief_excluded_research_markdown(
-    lines: list[str], entries: list[dict[str, Any]]
-) -> None:
+def _append_brief_excluded_research_markdown(lines: list[str], entries: list[dict[str, Any]]) -> None:
     _append_brief_excluded_research_markdown_br(lines, entries)
 
 
@@ -622,15 +601,15 @@ def _append_brief_summary_ticker_section(
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_brief_summary_ticker_section as _impl,
     )
+
     _impl(lines, title=title, entries=entries, append_summary=append_summary, render_entry=render_entry)
 
 
-def _append_brief_upstream_shadow_summary(
-    lines: list[str], upstream_shadow_summary: dict[str, Any]
-) -> None:
+def _append_brief_upstream_shadow_summary(lines: list[str], upstream_shadow_summary: dict[str, Any]) -> None:
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_brief_upstream_shadow_summary as _impl,
     )
+
     _impl(lines, upstream_shadow_summary)
 
 
@@ -657,6 +636,7 @@ def _append_source_paths_section(
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_source_paths_section as _impl,
     )
+
     _impl(lines, report_dir=report_dir, snapshot_path=snapshot_path, session_summary_path=session_summary_path, replay_input_path=replay_input_path)
 
 
@@ -664,6 +644,7 @@ def _append_none_block(lines: list[str]) -> None:
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_none_block as _impl,
     )
+
     _impl(lines)
 
 
@@ -671,15 +652,15 @@ def _append_frontier_promoted_shadow_none_block(lines: list[str]) -> None:
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_frontier_promoted_shadow_none_block as _impl,
     )
+
     _impl(lines)
 
 
-def _append_brief_source_paths_markdown(
-    lines: list[str], analysis: dict[str, Any]
-) -> None:
+def _append_brief_source_paths_markdown(lines: list[str], analysis: dict[str, Any]) -> None:
     from src.paper_trading._btst_reporting.brief_rendering import (
         _append_brief_source_paths_markdown as _impl,
     )
+
     _impl(lines, analysis)
 
 
@@ -695,15 +676,11 @@ def _selected_action_posture(preferred_entry_mode: str | None) -> tuple[str, lis
     return _selected_action_posture_impl(preferred_entry_mode)
 
 
-def _selected_holding_contract_note(
-    preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None
-) -> str | None:
+def _selected_holding_contract_note(preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None) -> str | None:
     return _selected_holding_contract_note_impl(preferred_entry_mode, historical_prior)
 
 
-def _augment_execution_note(
-    preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None
-) -> str | None:
+def _augment_execution_note(preferred_entry_mode: str | None, historical_prior: dict[str, Any] | None) -> str | None:
     return _augment_execution_note_impl(preferred_entry_mode, historical_prior)
 
 
@@ -712,39 +689,34 @@ def analyze_btst_premarket_execution_card(
     trade_date: str | None = None,
     next_trade_date: str | None = None,
 ) -> dict[str, Any]:
-    return _analyze_btst_premarket_execution_card_impl(
-        input_path, trade_date=trade_date, next_trade_date=next_trade_date
-    )
+    return _analyze_btst_premarket_execution_card_impl(input_path, trade_date=trade_date, next_trade_date=next_trade_date)
 
 
 def _append_premarket_overview_markdown(lines: list[str], card: dict[str, Any]) -> None:
     from src.paper_trading._btst_reporting.premarket_rendering import (
         append_premarket_overview_markdown as _extracted_mod,
     )
+
     return _extracted_mod(lines=lines, card=card)
 
 
-def _append_premarket_action_block(
-    lines: list[str], entry: dict[str, Any], *, indexed: int | None = None
-) -> None:
+def _append_premarket_action_block(lines: list[str], entry: dict[str, Any], *, indexed: int | None = None) -> None:
     from src.paper_trading._btst_reporting.premarket_rendering import (
         append_premarket_action_block as _extracted_mod,
     )
+
     return _extracted_mod(lines=lines, entry=entry, indexed=indexed)
 
 
-def _append_premarket_action_section(
-    lines: list[str], title: str, entries: list[dict[str, Any]]
-) -> None:
+def _append_premarket_action_section(lines: list[str], title: str, entries: list[dict[str, Any]]) -> None:
     from src.paper_trading._btst_reporting.premarket_rendering import (
         append_premarket_action_section as _extracted_mod,
     )
+
     return _extracted_mod(lines=lines, title=title, entries=entries)
 
 
-def _append_premarket_frontier_watch_markdown(
-    lines: list[str], frontier_priority: dict[str, Any]
-) -> None:
+def _append_premarket_frontier_watch_markdown(lines: list[str], frontier_priority: dict[str, Any]) -> None:
     _append_premarket_frontier_watch_markdown_impl(
         lines,
         frontier_priority,
@@ -758,9 +730,7 @@ def _append_premarket_frontier_watch_markdown(
     )
 
 
-def _append_premarket_shadow_watch_markdown(
-    lines: list[str], shadow_watch: list[dict[str, Any]]
-) -> None:
+def _append_premarket_shadow_watch_markdown(lines: list[str], shadow_watch: list[dict[str, Any]]) -> None:
     _append_premarket_shadow_watch_markdown_impl(
         lines,
         shadow_watch,
@@ -773,27 +743,23 @@ def _append_premarket_shadow_watch_markdown(
     )
 
 
-def _append_candidate_watch_scoring_fields(
-    lines: list[str], item: dict[str, Any]
-) -> None:
+def _append_candidate_watch_scoring_fields(lines: list[str], item: dict[str, Any]) -> None:
     from src.paper_trading._btst_reporting.premarket_rendering import (
         append_candidate_watch_scoring_fields as _extracted_mod,
     )
+
     return _extracted_mod(lines=lines, item=item)
 
 
-def _append_candidate_watch_reason_tags(
-    lines: list[str], item: dict[str, Any], *, reasons_label: str
-) -> None:
+def _append_candidate_watch_reason_tags(lines: list[str], item: dict[str, Any], *, reasons_label: str) -> None:
     from src.paper_trading._btst_reporting.premarket_rendering import (
         append_candidate_watch_reason_tags as _extracted_mod,
     )
+
     return _extracted_mod(lines=lines, item=item, reasons_label=reasons_label)
 
 
-def _append_threshold_shortfalls_line(
-    lines: list[str], threshold_shortfalls: dict[str, Any]
-) -> None:
+def _append_threshold_shortfalls_line(lines: list[str], threshold_shortfalls: dict[str, Any]) -> None:
     _append_threshold_shortfalls_line_impl(lines, threshold_shortfalls)
 
 
@@ -801,18 +767,15 @@ def _append_catalyst_watch_metrics(lines: list[str], metrics: dict[str, Any]) ->
     _append_catalyst_watch_metrics_impl(lines, metrics)
 
 
-def _append_premarket_excluded_entries_markdown(
-    lines: list[str], excluded_entries: list[dict[str, Any]]
-) -> None:
+def _append_premarket_excluded_entries_markdown(lines: list[str], excluded_entries: list[dict[str, Any]]) -> None:
     from src.paper_trading._btst_reporting.premarket_rendering import (
         append_premarket_excluded_entries_markdown as _extracted_mod,
     )
+
     return _extracted_mod(lines=lines, excluded_entries=excluded_entries)
 
 
-def _append_upstream_shadow_summary_header(
-    lines: list[str], upstream_shadow_summary: dict[str, Any]
-) -> None:
+def _append_upstream_shadow_summary_header(lines: list[str], upstream_shadow_summary: dict[str, Any]) -> None:
     _append_upstream_shadow_summary_header_impl(
         lines,
         upstream_shadow_summary,
@@ -870,9 +833,7 @@ def _append_upstream_shadow_section(
     )
 
 
-def _append_premarket_upstream_shadow_item(
-    lines: list[str], entry: dict[str, Any], index: int
-) -> None:
+def _append_premarket_upstream_shadow_item(lines: list[str], entry: dict[str, Any], index: int) -> None:
     del index
     lines.append(f"### {entry.get('ticker')}")
     _append_upstream_shadow_core_fields(
@@ -896,9 +857,7 @@ def _append_premarket_upstream_shadow_markdown(
     )
 
 
-def _append_opening_upstream_shadow_item(
-    lines: list[str], item: dict[str, Any], index: int
-) -> None:
+def _append_opening_upstream_shadow_item(lines: list[str], item: dict[str, Any], index: int) -> None:
     lines.append(f"### {index}. {item.get('ticker')}")
     lines.append("- focus_tier: upstream_shadow_recall")
     _append_upstream_shadow_core_fields(
@@ -913,82 +872,58 @@ def render_btst_premarket_execution_card_markdown(card: dict[str, Any]) -> str:
     lines: list[str] = []
     _append_premarket_overview_markdown(lines, card)
     _append_premarket_primary_action_markdown(lines, card.get("primary_action"))
-    _append_premarket_action_section(
-        lines, "Watchlist Actions", list(card.get("watch_actions") or [])
-    )
-    _append_premarket_action_section(
-        lines, "Opportunity Pool Actions", list(card.get("opportunity_actions") or [])
-    )
+    _append_premarket_action_section(lines, "Watchlist Actions", list(card.get("watch_actions") or []))
+    _append_premarket_action_section(lines, "Opportunity Pool Actions", list(card.get("opportunity_actions") or []))
     _append_premarket_action_section(
         lines,
         "Runner Recall Review Actions",
         list(card.get("runner_recall_review_actions") or []),
     )
-    _append_premarket_action_section(
-        lines, "Risky Observer Actions", list(card.get("risky_observer_actions") or [])
-    )
+    _append_premarket_action_section(lines, "Risky Observer Actions", list(card.get("risky_observer_actions") or []))
     _append_premarket_action_section(
         lines,
         "No-History Observer Actions",
         list(card.get("no_history_observer_actions") or []),
     )
-    _append_premarket_frontier_watch_markdown(
-        lines, dict(card.get("catalyst_theme_frontier_priority") or {})
-    )
-    _append_premarket_shadow_watch_markdown(
-        lines, list(card.get("catalyst_theme_shadow_watch") or [])
-    )
-    _append_premarket_excluded_entries_markdown(
-        lines, list(card.get("excluded_research_entries") or [])
-    )
+    _append_premarket_frontier_watch_markdown(lines, dict(card.get("catalyst_theme_frontier_priority") or {}))
+    _append_premarket_shadow_watch_markdown(lines, list(card.get("catalyst_theme_shadow_watch") or []))
+    _append_premarket_excluded_entries_markdown(lines, list(card.get("excluded_research_entries") or []))
     _append_premarket_upstream_shadow_markdown(
         lines,
         dict(card.get("upstream_shadow_summary") or {}),
         list(card.get("upstream_shadow_entries") or []),
     )
-    _append_premarket_rollout_validation_markdown(
-        lines, dict(card.get("rollout_validation") or {})
-    )
-    _append_premarket_guardrails_markdown(
-        lines, list(card.get("global_guardrails") or [])
-    )
+    _append_premarket_rollout_validation_markdown(lines, dict(card.get("rollout_validation") or {}))
+    _append_premarket_guardrails_markdown(lines, list(card.get("global_guardrails") or []))
     _append_premarket_source_paths_markdown(lines, dict(card.get("source_paths") or {}))
     return "\n".join(lines) + "\n"
 
 
-def _append_premarket_primary_action_markdown(
-    lines: list[str], primary_action: Any
-) -> None:
+def _append_premarket_primary_action_markdown(lines: list[str], primary_action: Any) -> None:
     from src.paper_trading._btst_reporting.premarket_rendering import (
         append_premarket_primary_action_markdown as _extracted_mod,
     )
+
     return _extracted_mod(lines=lines, primary_action=primary_action)
 
 
-def _append_guardrail_section(
-    lines: list[str], title: str, guardrails: list[str]
-) -> None:
+def _append_guardrail_section(lines: list[str], title: str, guardrails: list[str]) -> None:
     _append_guardrail_section_impl(lines, title, guardrails)
 
 
-def _append_premarket_guardrails_markdown(
-    lines: list[str], guardrails: list[str]
-) -> None:
+def _append_premarket_guardrails_markdown(lines: list[str], guardrails: list[str]) -> None:
     _append_guardrail_section(lines, "## Global Guardrails", guardrails)
 
 
-def _append_premarket_rollout_validation_markdown(
-    lines: list[str], rollout_validation: dict[str, Any]
-) -> None:
+def _append_premarket_rollout_validation_markdown(lines: list[str], rollout_validation: dict[str, Any]) -> None:
     from src.paper_trading._btst_reporting.premarket_rendering import (
         append_premarket_rollout_validation_markdown as _extracted_mod,
     )
+
     return _extracted_mod(lines=lines, rollout_validation=rollout_validation)
 
 
-def _append_premarket_source_paths_markdown(
-    lines: list[str], source_paths: dict[str, Any]
-) -> None:
+def _append_premarket_source_paths_markdown(lines: list[str], source_paths: dict[str, Any]) -> None:
     _append_source_paths_section(
         lines,
         report_dir=source_paths.get("report_dir"),
@@ -1002,20 +937,14 @@ def analyze_btst_opening_watch_card(
     trade_date: str | None = None,
     next_trade_date: str | None = None,
 ) -> dict[str, Any]:
-    return _analyze_btst_opening_watch_card_impl(
-        input_path, trade_date=trade_date, next_trade_date=next_trade_date
-    )
+    return _analyze_btst_opening_watch_card_impl(input_path, trade_date=trade_date, next_trade_date=next_trade_date)
 
 
 def render_btst_opening_watch_card_markdown(card: dict[str, Any]) -> str:
     lines: list[str] = []
     _append_opening_watch_overview_markdown(lines, card)
-    _append_opening_watch_focus_items_markdown(
-        lines, list(card.get("focus_items") or [])
-    )
-    _append_opening_watch_frontier_markdown(
-        lines, dict(card.get("catalyst_theme_frontier_priority") or {})
-    )
+    _append_opening_watch_focus_items_markdown(lines, list(card.get("focus_items") or []))
+    _append_opening_watch_frontier_markdown(lines, dict(card.get("catalyst_theme_frontier_priority") or {}))
     _append_catalyst_theme_watch_markdown(
         lines,
         title="## Catalyst Theme Shadow Watch",
@@ -1029,50 +958,36 @@ def render_btst_opening_watch_card_markdown(card: dict[str, Any]) -> str:
         dict(card.get("upstream_shadow_summary") or {}),
         list(card.get("upstream_shadow_entries") or []),
     )
-    _append_opening_watch_guardrails_markdown(
-        lines, list(card.get("global_guardrails") or [])
-    )
-    _append_opening_watch_source_paths_markdown(
-        lines, dict(card.get("source_paths") or {})
-    )
+    _append_opening_watch_guardrails_markdown(lines, list(card.get("global_guardrails") or []))
+    _append_opening_watch_source_paths_markdown(lines, dict(card.get("source_paths") or {}))
     return "\n".join(lines) + "\n"
 
 
-def _append_opening_watch_overview_markdown(
-    lines: list[str], card: dict[str, Any]
-) -> None:
+def _append_opening_watch_overview_markdown(lines: list[str], card: dict[str, Any]) -> None:
     from src.paper_trading._btst_reporting.opening_watch_rendering import (
         append_opening_watch_overview_markdown as _extracted_mod,
     )
+
     return _extracted_mod(lines=lines, card=card)
 
 
-def _append_opening_watch_frontier_markdown(
-    lines: list[str], catalyst_theme_frontier_priority: dict[str, Any]
-) -> None:
-    _append_frontier_section(
-        lines, catalyst_theme_frontier_priority, _append_opening_frontier_entries
-    )
+def _append_opening_watch_frontier_markdown(lines: list[str], catalyst_theme_frontier_priority: dict[str, Any]) -> None:
+    _append_frontier_section(lines, catalyst_theme_frontier_priority, _append_opening_frontier_entries)
 
 
-def _append_opening_frontier_entries(
-    lines: list[str], items: list[dict[str, Any]]
-) -> None:
+def _append_opening_frontier_entries(lines: list[str], items: list[dict[str, Any]]) -> None:
     from src.paper_trading._btst_reporting.opening_watch_rendering import (
         append_opening_frontier_entries as _extracted_mod,
     )
+
     return _extracted_mod(lines=lines, items=items)
 
 
-def _append_opening_watch_guardrails_markdown(
-    lines: list[str], guardrails: list[str]
-) -> None:
+def _append_opening_watch_guardrails_markdown(lines: list[str], guardrails: list[str]) -> None:
     _append_guardrail_section(lines, "## Guardrails", guardrails)
 
 
-def _append_opening_watch_source_paths_markdown(
-    lines: list[str], source_paths: dict[str, Any]
-) -> None:
+def _append_opening_watch_source_paths_markdown(lines: list[str], source_paths: dict[str, Any]) -> None:
     _append_source_paths_section(
         lines,
         report_dir=source_paths.get("report_dir"),
@@ -1122,9 +1037,7 @@ def _append_titled_indexed_ticker_section(
     )
 
 
-def _append_opening_watch_focus_items_markdown(
-    lines: list[str], focus_items: list[dict[str, Any]]
-) -> None:
+def _append_opening_watch_focus_items_markdown(lines: list[str], focus_items: list[dict[str, Any]]) -> None:
     _append_opening_watch_focus_items_markdown_impl(
         lines,
         focus_items,
@@ -1183,39 +1096,25 @@ def analyze_btst_next_day_priority_board(
     trade_date: str | None = None,
     next_trade_date: str | None = None,
 ) -> dict[str, Any]:
-    return _analyze_btst_next_day_priority_board_impl(
-        input_path, trade_date=trade_date, next_trade_date=next_trade_date
-    )
+    return _analyze_btst_next_day_priority_board_impl(input_path, trade_date=trade_date, next_trade_date=next_trade_date)
 
 
 def render_btst_next_day_priority_board_markdown(board: dict[str, Any]) -> str:
     lines: list[str] = []
     _append_priority_board_overview_markdown(lines, board)
     _append_priority_board_rows_markdown(lines, list(board.get("priority_rows") or []))
-    _append_priority_board_frontier_markdown(
-        lines, dict(board.get("catalyst_theme_frontier_priority") or {})
-    )
-    _append_priority_board_shadow_watch_markdown(
-        lines, list(board.get("catalyst_theme_shadow_watch") or [])
-    )
-    _append_priority_board_guardrails_markdown(
-        lines, list(board.get("global_guardrails") or [])
-    )
-    _append_priority_board_source_paths_markdown(
-        lines, dict(board.get("source_paths") or {})
-    )
+    _append_priority_board_frontier_markdown(lines, dict(board.get("catalyst_theme_frontier_priority") or {}))
+    _append_priority_board_shadow_watch_markdown(lines, list(board.get("catalyst_theme_shadow_watch") or []))
+    _append_priority_board_guardrails_markdown(lines, list(board.get("global_guardrails") or []))
+    _append_priority_board_source_paths_markdown(lines, dict(board.get("source_paths") or {}))
     return "\n".join(lines) + "\n"
 
 
-def _append_priority_board_overview_markdown(
-    lines: list[str], board: dict[str, Any]
-) -> None:
+def _append_priority_board_overview_markdown(lines: list[str], board: dict[str, Any]) -> None:
     _append_priority_board_overview_markdown_impl(lines, board)
 
 
-def _append_priority_board_rows_markdown(
-    lines: list[str], priority_rows: list[dict[str, Any]]
-) -> None:
+def _append_priority_board_rows_markdown(lines: list[str], priority_rows: list[dict[str, Any]]) -> None:
     _append_priority_board_rows_markdown_impl(
         lines,
         priority_rows,
@@ -1224,9 +1123,7 @@ def _append_priority_board_rows_markdown(
     )
 
 
-def _append_priority_board_frontier_markdown(
-    lines: list[str], catalyst_theme_frontier_priority: dict[str, Any]
-) -> None:
+def _append_priority_board_frontier_markdown(lines: list[str], catalyst_theme_frontier_priority: dict[str, Any]) -> None:
     _append_priority_board_frontier_markdown_impl(
         lines,
         catalyst_theme_frontier_priority,
@@ -1238,9 +1135,7 @@ def _append_priority_board_frontier_markdown(
     )
 
 
-def _append_priority_board_shadow_watch_markdown(
-    lines: list[str], catalyst_theme_shadow_watch: list[dict[str, Any]]
-) -> None:
+def _append_priority_board_shadow_watch_markdown(lines: list[str], catalyst_theme_shadow_watch: list[dict[str, Any]]) -> None:
     _append_priority_board_shadow_watch_markdown_impl(
         lines,
         catalyst_theme_shadow_watch,
@@ -1251,15 +1146,11 @@ def _append_priority_board_shadow_watch_markdown(
     )
 
 
-def _append_priority_board_guardrails_markdown(
-    lines: list[str], guardrails: list[str]
-) -> None:
+def _append_priority_board_guardrails_markdown(lines: list[str], guardrails: list[str]) -> None:
     _append_guardrail_section(lines, "## Guardrails", guardrails)
 
 
-def _append_priority_board_source_paths_markdown(
-    lines: list[str], source_paths: dict[str, Any]
-) -> None:
+def _append_priority_board_source_paths_markdown(lines: list[str], source_paths: dict[str, Any]) -> None:
     _append_source_paths_section(
         lines,
         report_dir=source_paths.get("report_dir"),
@@ -1268,9 +1159,7 @@ def _append_priority_board_source_paths_markdown(
     )
 
 
-def _build_output_file_stem(
-    prefix: str, trade_date: str | None, next_trade_date: str | None
-) -> str:
+def _build_output_file_stem(prefix: str, trade_date: str | None, next_trade_date: str | None) -> str:
     compact_trade_date = _compact_trade_date(trade_date) or "unknown"
     compact_next_trade_date = _compact_trade_date(next_trade_date) or "unknown"
     return f"{prefix}_{compact_trade_date}_for_{compact_next_trade_date}"

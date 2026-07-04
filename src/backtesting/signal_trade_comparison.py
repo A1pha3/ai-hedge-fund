@@ -189,9 +189,9 @@ def _compute_price_diff(
     """
     sig_price = signal.price
     trd_price = trade.price
-    if not (isinstance(sig_price, (int, float)) and sig_price == sig_price and abs(sig_price) != float('inf')):
+    if not (isinstance(sig_price, (int, float)) and sig_price == sig_price and abs(sig_price) != float("inf")):
         return 0.0, 0.0
-    if not (isinstance(trd_price, (int, float)) and trd_price == trd_price and abs(trd_price) != float('inf')):
+    if not (isinstance(trd_price, (int, float)) and trd_price == trd_price and abs(trd_price) != float("inf")):
         return 0.0, 0.0
 
     if signal.direction == SignalDirection.BUY:

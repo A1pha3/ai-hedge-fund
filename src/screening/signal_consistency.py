@@ -65,18 +65,20 @@ def check_signal_consistency(
         score_b = float(rec.get("score_b", 0) or 0)
 
         if not strategy_signals:
-            results.append({
-                "ticker": ticker,
-                "name": name,
-                "consistency_level": "unknown",
-                "agreement_ratio": 0.0,
-                "bullish_count": 0,
-                "bearish_count": 0,
-                "neutral_count": 0,
-                "total_strategies": 0,
-                "conflicting_strategies": [],
-                "note": "no strategy signals available",
-            })
+            results.append(
+                {
+                    "ticker": ticker,
+                    "name": name,
+                    "consistency_level": "unknown",
+                    "agreement_ratio": 0.0,
+                    "bullish_count": 0,
+                    "bearish_count": 0,
+                    "neutral_count": 0,
+                    "total_strategies": 0,
+                    "conflicting_strategies": [],
+                    "note": "no strategy signals available",
+                }
+            )
             continue
 
         # Count signal directions
@@ -135,19 +137,21 @@ def check_signal_consistency(
             dominant = "bearish"
         conflicting = [s for s, d in direction_map.items() if d != dominant and d != "neutral"]
 
-        results.append({
-            "ticker": ticker,
-            "name": name,
-            "score_b": round(score_b, 4),
-            "consistency_level": consistency_level,
-            "agreement_ratio": round(agreement_ratio, 2),
-            "bullish_count": bullish,
-            "bearish_count": bearish,
-            "neutral_count": neutral,
-            "total_strategies": total,
-            "dominant_direction": dominant,
-            "conflicting_strategies": conflicting,
-        })
+        results.append(
+            {
+                "ticker": ticker,
+                "name": name,
+                "score_b": round(score_b, 4),
+                "consistency_level": consistency_level,
+                "agreement_ratio": round(agreement_ratio, 2),
+                "bullish_count": bullish,
+                "bearish_count": bearish,
+                "neutral_count": neutral,
+                "total_strategies": total,
+                "dominant_direction": dominant,
+                "conflicting_strategies": conflicting,
+            }
+        )
 
     return results
 
@@ -167,10 +171,7 @@ def filter_by_consistency(
     """
     level_order = {"high": 3, "medium": 2, "low": 1, "unknown": 0}
     min_score = level_order.get(min_consistency, 0)
-    return [
-        rec for rec in recommendations
-        if level_order.get(rec.get("consistency_level", "unknown"), 0) >= min_score
-    ]
+    return [rec for rec in recommendations if level_order.get(rec.get("consistency_level", "unknown"), 0) >= min_score]
 
 
 def render_consistency_report(consistency_results: list[dict[str, Any]]) -> str:
@@ -192,12 +193,7 @@ def render_consistency_report(consistency_results: list[dict[str, Any]]) -> str:
     for r in consistency_results:
         levels[r.get("consistency_level", "unknown")] += 1
 
-    lines.append(
-        f"  {Fore.GREEN}High: {levels['high']}{Style.RESET_ALL}  "
-        f"{Fore.YELLOW}Medium: {levels['medium']}{Style.RESET_ALL}  "
-        f"{Fore.RED}Low: {levels['low']}{Style.RESET_ALL}  "
-        f"Unknown: {levels['unknown']}"
-    )
+    lines.append(f"  {Fore.GREEN}High: {levels['high']}{Style.RESET_ALL}  " f"{Fore.YELLOW}Medium: {levels['medium']}{Style.RESET_ALL}  " f"{Fore.RED}Low: {levels['low']}{Style.RESET_ALL}  " f"Unknown: {levels['unknown']}")
 
     # Flag low-consistency stocks
     low_consistency = [r for r in consistency_results if r.get("consistency_level") == "low"]
@@ -205,24 +201,14 @@ def render_consistency_report(consistency_results: list[dict[str, Any]]) -> str:
         lines.append(f"\n  {Fore.RED}⚠ Low Consistency (internal disagreement):{Style.RESET_ALL}")
         for r in low_consistency[:10]:
             conflict_str = ", ".join(r.get("conflicting_strategies", []))
-            lines.append(
-                f"    {Fore.RED}•{Style.RESET_ALL} {r['name']} ({r['ticker']}) "
-                f"agreement={r['agreement_ratio']:.0%} "
-                f"bull={r['bullish_count']}/bear={r['bearish_count']}/neut={r['neutral_count']}"
-                f"{f' conflicts: [{conflict_str}]' if conflict_str else ''}"
-            )
+            lines.append(f"    {Fore.RED}•{Style.RESET_ALL} {r['name']} ({r['ticker']}) " f"agreement={r['agreement_ratio']:.0%} " f"bull={r['bullish_count']}/bear={r['bearish_count']}/neut={r['neutral_count']}" f"{f' conflicts: [{conflict_str}]' if conflict_str else ''}")
 
     # Show high-consistency stocks
     high_consistency = [r for r in consistency_results if r.get("consistency_level") == "high"]
     if high_consistency:
         lines.append(f"\n  {Fore.GREEN}✓ High Consistency (strong agreement):{Style.RESET_ALL}")
         for r in high_consistency[:5]:
-            lines.append(
-                f"    {Fore.GREEN}•{Style.RESET_ALL} {r['name']} ({r['ticker']}) "
-                f"agreement={r['agreement_ratio']:.0%} "
-                f"direction={r.get('dominant_direction', '?')} "
-                f"score_b={r.get('score_b', '—')}"
-            )
+            lines.append(f"    {Fore.GREEN}•{Style.RESET_ALL} {r['name']} ({r['ticker']}) " f"agreement={r['agreement_ratio']:.0%} " f"direction={r.get('dominant_direction', '?')} " f"score_b={r.get('score_b', '—')}")
 
     return "\n".join(lines)
 
@@ -249,10 +235,7 @@ def run_consistency_check(
     try:
         report = json.loads(report_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
-        print(
-            f"{Fore.YELLOW}⚠ 最新报告 {report_path.name} 损坏或不可读 ({exc}); "
-            f"请重新运行 --auto 生成.{Style.RESET_ALL}"
-        )
+        print(f"{Fore.YELLOW}⚠ 最新报告 {report_path.name} 损坏或不可读 ({exc}); " f"请重新运行 --auto 生成.{Style.RESET_ALL}")
         return 1
     recs = (report.get("recommendations") or [])[:top_n]
 

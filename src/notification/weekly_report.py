@@ -260,10 +260,12 @@ def _block_risk_metrics_delta(start: str, end: str, report_dir: Path | None = No
                         data = json.load(fh)
                     pv = float(data.get("portfolio_value_base", 0.0) or 0.0)
                     if pv > 0:
-                        positions_history.append({
-                            "date": str(data.get("date", "")),
-                            "portfolio_value": pv,
-                        })
+                        positions_history.append(
+                            {
+                                "date": str(data.get("date", "")),
+                                "portfolio_value": pv,
+                            }
+                        )
                 except (OSError, json.JSONDecodeError, ValueError):
                     continue
 

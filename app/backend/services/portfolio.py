@@ -1,4 +1,3 @@
-
 from typing import List, Optional
 
 from app.backend.models.schemas import PortfolioPosition
@@ -28,14 +27,14 @@ def create_portfolio(initial_cash: float, margin_requirement: float, tickers: li
             for ticker in tickers
         },
     }
-    
+
     # If portfolio positions are provided, populate them
     if portfolio_positions:
         for position in portfolio_positions:
             ticker = position.ticker
             quantity = position.quantity
             trade_price = position.trade_price
-            
+
             # Ensure ticker exists in portfolio (it should from tickers list)
             if ticker in portfolio["positions"]:
                 if quantity > 0:
@@ -49,5 +48,5 @@ def create_portfolio(initial_cash: float, margin_requirement: float, tickers: li
                     # Calculate margin used for short position
                     portfolio["positions"][ticker]["short_margin_used"] = abs(quantity) * trade_price * margin_requirement
                     portfolio["margin_used"] += portfolio["positions"][ticker]["short_margin_used"]
-    
+
     return portfolio

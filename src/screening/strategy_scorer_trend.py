@@ -85,6 +85,7 @@ def _calculate_ema_alignment_confidence(ema_values: dict[str, float], close: flo
 # Long trend alignment
 # ---------------------------------------------------------------------------
 
+
 def _score_long_trend_alignment(prices_df: pd.DataFrame, weight: float) -> SubFactor:
     if prices_df.empty or len(prices_df) < 200:
         return _make_sub_factor("long_trend_alignment", 0, 0.0, weight, completeness=0.0)
@@ -135,6 +136,7 @@ def _calculate_long_trend_alignment_confidence(ema_values: dict[str, float], clo
 # ADX strength
 # ---------------------------------------------------------------------------
 
+
 def _score_adx_strength(prices_df: pd.DataFrame, weight: float) -> SubFactor:
     if prices_df.empty or len(prices_df) < 30:
         return _make_sub_factor("adx_strength", 0, 0.0, weight, completeness=0.0)
@@ -176,6 +178,7 @@ def _resolve_adx_strength_direction(adx_metrics: dict[str, float]) -> int:
 # ---------------------------------------------------------------------------
 # Trend strategy orchestrator
 # ---------------------------------------------------------------------------
+
 
 def score_trend_strategy(prices_df: pd.DataFrame, *, ticker: str | None = None) -> StrategySignal:
     trend_weights = _get_trend_subfactor_weights()
@@ -271,12 +274,7 @@ def _compute_attack_slope_258(prices_df: pd.DataFrame) -> float:
         return 0.0
     close = prices_df["close"]
     return round(
-        100.0
-        * (
-            (0.45 * _log_regression_slope(close, 2))
-            + (0.35 * _log_regression_slope(close, 5))
-            + (0.20 * _log_regression_slope(close, 8))
-        ),
+        100.0 * ((0.45 * _log_regression_slope(close, 2)) + (0.35 * _log_regression_slope(close, 5)) + (0.20 * _log_regression_slope(close, 8))),
         4,
     )
 

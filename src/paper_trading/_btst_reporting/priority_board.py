@@ -55,20 +55,14 @@ def _build_priority_board_row(
         )
     if opening_plan_key:
         suggested_action = str(entry.get(opening_plan_key) or suggested_action)
-    execution_note = (
-        _augment_execution_note(entry.get("preferred_entry_mode"), historical_prior)
-        if execution_note_mode == "augment"
-        else historical_prior.get("execution_note")
-    )
+    execution_note = _augment_execution_note(entry.get("preferred_entry_mode"), historical_prior) if execution_note_mode == "augment" else historical_prior.get("execution_note")
     return {
         "ticker": entry.get("ticker"),
         "lane": lane,
         "actionability": actionability,
-        "monitor_priority": historical_prior.get("monitor_priority")
-        or historical_default_monitor_priority,
+        "monitor_priority": historical_prior.get("monitor_priority") or historical_default_monitor_priority,
         "execution_priority": historical_prior.get("execution_priority") or "unscored",
-        "execution_quality_label": historical_prior.get("execution_quality_label")
-        or "unknown",
+        "execution_quality_label": historical_prior.get("execution_quality_label") or "unknown",
         "score_target": entry.get("score_target"),
         "research_score_target": research_score_target,
         "preferred_entry_mode": entry.get("preferred_entry_mode"),
@@ -98,53 +92,19 @@ def _build_priority_board_headline(
     elif risky_observer_entries:
         headline = "当前没有标准 BTST 候选，只有高风险盘中观察与研究跟踪。"
     if catalyst_theme_frontier_priority.get("promoted_tickers"):
-        headline = (
-            headline.rstrip("。")
-            + "；题材催化前沿 research priority 为 "
-            + ", ".join(catalyst_theme_frontier_priority.get("promoted_tickers") or [])
-            + "。"
-        )
+        headline = headline.rstrip("。") + "；题材催化前沿 research priority 为 " + ", ".join(catalyst_theme_frontier_priority.get("promoted_tickers") or []) + "。"
     return headline
 
 
 def _build_priority_board_context(brief: dict[str, Any]) -> dict[str, Any]:
     return {
-        "catalyst_theme_frontier_priority": dict(
-            brief.get("catalyst_theme_frontier_priority") or {}
-        ),
-        "catalyst_theme_shadow_watch": _build_catalyst_theme_shadow_watch_rows(
-            list(brief.get("catalyst_theme_shadow_entries") or [])
-        ),
-        "selected_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in _filter_execution_ready_entries(
-                list(brief.get("selected_entries") or [])
-            )
-        ],
-        "near_miss_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in _filter_execution_ready_entries(
-                list(brief.get("near_miss_entries") or [])
-            )
-        ],
-        "opportunity_pool_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in _filter_execution_ready_entries(
-                list(brief.get("opportunity_pool_entries") or [])
-            )
-        ],
-        "no_history_observer_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in _filter_execution_ready_entries(
-                list(brief.get("no_history_observer_entries") or [])
-            )
-        ],
-        "risky_observer_entries": [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in _filter_execution_ready_entries(
-                list(brief.get("risky_observer_entries") or [])
-            )
-        ],
+        "catalyst_theme_frontier_priority": dict(brief.get("catalyst_theme_frontier_priority") or {}),
+        "catalyst_theme_shadow_watch": _build_catalyst_theme_shadow_watch_rows(list(brief.get("catalyst_theme_shadow_entries") or [])),
+        "selected_entries": [_apply_execution_quality_entry_mode(entry) for entry in _filter_execution_ready_entries(list(brief.get("selected_entries") or []))],
+        "near_miss_entries": [_apply_execution_quality_entry_mode(entry) for entry in _filter_execution_ready_entries(list(brief.get("near_miss_entries") or []))],
+        "opportunity_pool_entries": [_apply_execution_quality_entry_mode(entry) for entry in _filter_execution_ready_entries(list(brief.get("opportunity_pool_entries") or []))],
+        "no_history_observer_entries": [_apply_execution_quality_entry_mode(entry) for entry in _filter_execution_ready_entries(list(brief.get("no_history_observer_entries") or []))],
+        "risky_observer_entries": [_apply_execution_quality_entry_mode(entry) for entry in _filter_execution_ready_entries(list(brief.get("risky_observer_entries") or []))],
     }
 
 
@@ -163,9 +123,7 @@ def _build_priority_board_rows(
         *_build_opportunity_pool_priority_rows(opportunity_pool_entries),
         *_build_no_history_observer_priority_rows(no_history_observer_entries),
         *_build_risky_observer_priority_rows(risky_observer_entries),
-        *_build_research_upside_priority_rows(
-            list(brief.get("research_upside_radar_entries") or [])
-        ),
+        *_build_research_upside_priority_rows(list(brief.get("research_upside_radar_entries") or [])),
     ]
 
 
@@ -210,9 +168,7 @@ def _build_opportunity_pool_priority_rows(
             entry,
             lane="opportunity_pool",
             actionability="upgrade_only",
-            default_action=str(
-                entry.get("promotion_trigger") or "只有盘中新强度确认时才升级。"
-            ),
+            default_action=str(entry.get("promotion_trigger") or "只有盘中新强度确认时才升级。"),
             default_why_now="结构未坏但仍在机会池。",
         )
         for entry in opportunity_pool_entries
@@ -227,10 +183,7 @@ def _build_no_history_observer_priority_rows(
             entry,
             lane="no_history_observer",
             actionability="observe_only_no_history",
-            default_action=str(
-                entry.get("promotion_trigger")
-                or "暂无可评估历史先验，只做盘中新证据观察。"
-            ),
+            default_action=str(entry.get("promotion_trigger") or "暂无可评估历史先验，只做盘中新证据观察。"),
             default_why_now="暂无可评估历史先验。",
         )
         for entry in no_history_observer_entries
@@ -311,9 +264,7 @@ def _build_priority_board_summary(
         "risky_observer_count": len(risky_observer_entries),
         "research_upside_radar_count": len(research_upside_radar_entries),
         "catalyst_theme_count": len(catalyst_theme_entries),
-        "catalyst_theme_frontier_promoted_count": len(
-            catalyst_theme_frontier_priority.get("promoted_tickers") or []
-        ),
+        "catalyst_theme_frontier_promoted_count": len(catalyst_theme_frontier_priority.get("promoted_tickers") or []),
         "catalyst_theme_shadow_count": len(catalyst_theme_shadow_entries),
     }
 
@@ -322,6 +273,7 @@ def _build_priority_board_summary(
 # Analysis entry point
 # ---------------------------------------------------------------------------
 
+
 def analyze_btst_next_day_priority_board(
     input_path: str | Path | dict[str, Any],
     trade_date: str | None = None,
@@ -329,9 +281,7 @@ def analyze_btst_next_day_priority_board(
 ) -> dict[str, Any]:
     from src.paper_trading._btst_reporting.brief_resolver import _resolve_brief_analysis
 
-    brief = _resolve_brief_analysis(
-        input_path, trade_date=trade_date, next_trade_date=next_trade_date
-    )
+    brief = _resolve_brief_analysis(input_path, trade_date=trade_date, next_trade_date=next_trade_date)
     board_context = _build_priority_board_context(brief)
     catalyst_theme_frontier_priority = board_context["catalyst_theme_frontier_priority"]
     catalyst_theme_shadow_watch = board_context["catalyst_theme_shadow_watch"]
@@ -367,16 +317,12 @@ def analyze_btst_next_day_priority_board(
             selected_entries=selected_entries,
             near_miss_entries=near_miss_entries,
             opportunity_pool_entries=opportunity_pool_entries,
-            research_upside_radar_entries=list(
-                brief.get("research_upside_radar_entries") or []
-            ),
+            research_upside_radar_entries=list(brief.get("research_upside_radar_entries") or []),
             catalyst_theme_entries=list(brief.get("catalyst_theme_entries") or []),
             no_history_observer_entries=no_history_observer_entries,
             risky_observer_entries=risky_observer_entries,
             catalyst_theme_frontier_priority=catalyst_theme_frontier_priority,
-            catalyst_theme_shadow_entries=list(
-                brief.get("catalyst_theme_shadow_entries") or []
-            ),
+            catalyst_theme_shadow_entries=list(brief.get("catalyst_theme_shadow_entries") or []),
         ),
         "priority_rows": priority_rows,
         "catalyst_theme_frontier_priority": catalyst_theme_frontier_priority,

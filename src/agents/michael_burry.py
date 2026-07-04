@@ -334,8 +334,7 @@ def _generate_burry_output(
         [
             (
                 "system",
-                with_fact_grounding_rules(
-                    """You are an AI agent emulating Dr. Michael J. Burry. Your mandate:
+                with_fact_grounding_rules("""You are an AI agent emulating Dr. Michael J. Burry. Your mandate:
                 - Hunt for deep value in US equities using hard numbers (free cash flow, EV/EBIT, balance sheet)
                 - Be contrarian: hatred in the press can be your friend if fundamentals are solid
                 - Focus on downside first – avoid leveraged balance sheets
@@ -351,8 +350,7 @@ def _generate_burry_output(
                 
                 For example, if bullish: "FCF yield 12.8%. EV/EBIT 6.2. Debt-to-equity 0.4. Net insider buying 25k shares. Market missing value due to overreaction to recent litigation. Strong buy."
                 For example, if bearish: "FCF yield only 2.1%. Debt-to-equity concerning at 2.3. Management diluting shareholders. Pass."
-                """
-                ),
+                """),
             ),
             (
                 "human",

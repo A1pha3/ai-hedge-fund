@@ -91,10 +91,7 @@ def append_upstream_shadow_summary(
     lane_counts = dict(upstream_shadow_summary.get("lane_counts") or {})
     lines.append(f"- shadow_candidate_count: {upstream_shadow_summary.get('shadow_candidate_count')}")
     lines.append(f"- promotable_count: {upstream_shadow_summary.get('promotable_count')}")
-    lines.append(
-        "- lane_counts: "
-        + (", ".join(f"{key}={value}" for key, value in lane_counts.items()) if lane_counts else empty_lane_counts_label)
-    )
+    lines.append("- lane_counts: " + (", ".join(f"{key}={value}" for key, value in lane_counts.items()) if lane_counts else empty_lane_counts_label))
 
 
 def append_upstream_shadow_core_fields(

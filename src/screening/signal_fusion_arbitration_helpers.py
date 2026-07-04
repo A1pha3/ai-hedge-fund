@@ -91,13 +91,7 @@ def _has_bearish_fundamental_consensus(signals: dict[str, StrategySignal], funda
 
 
 def _has_conflicting_trend_and_reversion(trend_signal: StrategySignal | None, mean_reversion_signal: StrategySignal | None) -> bool:
-    return (
-        trend_signal is not None
-        and mean_reversion_signal is not None
-        and trend_signal.direction != 0
-        and mean_reversion_signal.direction != 0
-        and trend_signal.direction != mean_reversion_signal.direction
-    )
+    return trend_signal is not None and mean_reversion_signal is not None and trend_signal.direction != 0 and mean_reversion_signal.direction != 0 and trend_signal.direction != mean_reversion_signal.direction
 
 
 def _extract_hurst_exponent(mean_reversion_signal: StrategySignal) -> float | None:

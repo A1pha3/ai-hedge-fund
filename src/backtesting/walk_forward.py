@@ -120,13 +120,7 @@ def build_walk_forward_windows(
     if max_test_trading_days is not None and max_test_trading_days <= 0:
         raise ValueError("max_test_trading_days must be positive when provided")
     if step_months < test_months and not allow_overlapping_tests:
-        raise ValueError(
-            f"step_months ({step_months}) < test_months ({test_months}) creates "
-            f"overlapping test windows. Set allow_overlapping_tests=True to "
-            f"proceed anyway, or increase step_months to >= test_months. "
-            f"(ALPHA-005: overlapping windows double-count trades and bias "
-            f"aggregate OOS statistics.)"
-        )
+        raise ValueError(f"step_months ({step_months}) < test_months ({test_months}) creates " f"overlapping test windows. Set allow_overlapping_tests=True to " f"proceed anyway, or increase step_months to >= test_months. " f"(ALPHA-005: overlapping windows double-count trades and bias " f"aggregate OOS statistics.)")
 
     overall_start = datetime.strptime(start_date, "%Y-%m-%d")
     overall_end = datetime.strptime(end_date, "%Y-%m-%d")
@@ -248,6 +242,7 @@ def _compute_walk_forward_recency_weight(
         Decay weight in [WALK_FORWARD_RECENCY_DECAY_MIN_FACTOR, 1.0].
     """
     import math as _math
+
     try:
         start_dt = datetime.strptime(test_start, "%Y-%m-%d")
         ref_dt = datetime.strptime(reference_date, "%Y-%m-%d")
@@ -503,19 +498,13 @@ def summarize_walk_forward(results: Sequence[WalkForwardResult], baseline_summar
     # Task 4 (Round 11): use recency-weighted averages for BTST quality metrics so that more
     # recent walk-forward windows carry proportionally more weight in rollout decisions.
     # The rollout floor checks continue to operate on these weighted averages.
-    btst_quality_summary: dict[str, float | None] = {
-        metric_key: _weighted_average(btst_metric_values[metric_key], btst_metric_weights[metric_key]) for metric_key in btst_metric_keys
-    }
-    btst_quality_summary["window_coverage"] = (
-        float(btst_complete_window_count) / float(len(results)) if btst_complete_window_count > 0 else None
-    )
+    btst_quality_summary: dict[str, float | None] = {metric_key: _weighted_average(btst_metric_values[metric_key], btst_metric_weights[metric_key]) for metric_key in btst_metric_keys}
+    btst_quality_summary["window_coverage"] = float(btst_complete_window_count) / float(len(results)) if btst_complete_window_count > 0 else None
     # Task 2 (Round 13): merge plain-average cap metrics into the quality summary so that
     # build_btst_quality_cap_blockers can inspect them alongside the floor-guarded metrics.
     btst_cap_summary: dict[str, float | None] = {metric_key: _average(btst_cap_metric_values[metric_key]) for metric_key in btst_cap_metric_keys}
     btst_quality_summary.update(btst_cap_summary)
-    execution_summary: dict[str, float | None] = {
-        metric_key: _average(execution_metric_values[metric_key]) for metric_key in execution_metric_keys
-    }
+    execution_summary: dict[str, float | None] = {metric_key: _average(execution_metric_values[metric_key]) for metric_key in execution_metric_keys}
     if any(value is not None for value in btst_quality_summary.values()):
         rollout_blockers.extend(build_btst_quality_floor_blockers(btst_quality_summary))
         rollout_blockers.extend(build_btst_quality_cap_blockers(btst_quality_summary))
@@ -654,7 +643,7 @@ def classify_runner_rollout_verdict(
 
     if baseline_tail_hit is not None:
         improvement = tail_hit - baseline_tail_hit
-        t1_regression = (t1_win_rate - float(baseline_summary.get("next_close_positive_rate") or 0.0))  # type: ignore[arg-type]
+        t1_regression = t1_win_rate - float(baseline_summary.get("next_close_positive_rate") or 0.0)  # type: ignore[arg-type]
         downside_regression = downside - float(baseline_summary.get("downside_p10") or 0.0)  # type: ignore[arg-type]
         t2_win_rate = float(runner_summary.get("t_plus_2_close_positive_rate") or 0.0)
         t3_win_rate = float(runner_summary.get("t_plus_3_close_positive_rate") or 0.0)

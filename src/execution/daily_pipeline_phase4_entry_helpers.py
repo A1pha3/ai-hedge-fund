@@ -110,10 +110,7 @@ def _build_short_trade_boundary_score_fields(item: Any) -> dict[str, float]:
 
 
 def _build_short_trade_boundary_strategy_signals(item: Any) -> dict[str, Any]:
-    return {
-        name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {})
-        for name, signal in dict(item.strategy_signals or {}).items()
-    }
+    return {name: signal.model_dump(mode="json") if hasattr(signal, "model_dump") else dict(signal or {}) for name, signal in dict(item.strategy_signals or {}).items()}
 
 
 def _build_short_trade_boundary_reason_fields(

@@ -76,10 +76,7 @@ def add_common_args(
         type=str,
         default=None,
         metavar="TICKER",
-        help=(
-            "反事实解释: 为什么 TICKER 没被推荐, 需要变什么才能进 Top 推荐"
-            " (reads latest auto-screening report, P0-8)"
-        ),
+        help=("反事实解释: 为什么 TICKER 没被推荐, 需要变什么才能进 Top 推荐" " (reads latest auto-screening report, P0-8)"),
     )
     parser.add_argument(
         "--daily-brief",
@@ -162,10 +159,7 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
     if not use_ollama:
         default_model_name, default_model_provider = get_default_model_config()
         logger.info(f"Using default model from environment: {default_model_provider} - {default_model_name}")
-        print(
-            f"\nUsing default model from environment: {Fore.CYAN}{default_model_provider}{Style.RESET_ALL}"
-            f" - {Fore.GREEN + Style.BRIGHT}{default_model_name}{Style.RESET_ALL}\n"
-        )
+        print(f"\nUsing default model from environment: {Fore.CYAN}{default_model_provider}{Style.RESET_ALL}" f" - {Fore.GREEN + Style.BRIGHT}{default_model_name}{Style.RESET_ALL}\n")
         return default_model_name, default_model_provider
 
     if use_ollama:

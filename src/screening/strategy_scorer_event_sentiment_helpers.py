@@ -121,15 +121,17 @@ def _build_news_sentiment_sub_factor(
     informative_count: int,
     article_metrics: list[dict],
 ) -> SubFactor:
-    return _make_sub_factor(**_build_news_sentiment_sub_factor_payload(
-        direction=direction,
-        confidence=confidence,
-        completeness=completeness,
-        normalized_score=normalized_score,
-        recent_count=recent_count,
-        informative_count=informative_count,
-        article_metrics=article_metrics,
-    ))
+    return _make_sub_factor(
+        **_build_news_sentiment_sub_factor_payload(
+            direction=direction,
+            confidence=confidence,
+            completeness=completeness,
+            normalized_score=normalized_score,
+            recent_count=recent_count,
+            informative_count=informative_count,
+            article_metrics=article_metrics,
+        )
+    )
 
 
 def _build_news_sentiment_sub_factor_payload(
@@ -376,12 +378,8 @@ def score_event_sentiment_strategy(ticker: str, trade_date: str) -> StrategySign
     return _build_event_sentiment_strategy_signal(news_items=news_items, trades=trades, trade_date=trade_date)
 
 
-def _build_event_sentiment_strategy_signal(
-    *, news_items: list[CompanyNews], trades: list[InsiderTrade], trade_date: str
-) -> StrategySignal:
-    return aggregate_sub_factors(
-        _build_event_sentiment_sub_factors(news_items=news_items, trades=trades, trade_date=trade_date)
-    )
+def _build_event_sentiment_strategy_signal(*, news_items: list[CompanyNews], trades: list[InsiderTrade], trade_date: str) -> StrategySignal:
+    return aggregate_sub_factors(_build_event_sentiment_sub_factors(news_items=news_items, trades=trades, trade_date=trade_date))
 
 
 def _resolve_event_sentiment_date_window(trade_date: str) -> tuple[str, str]:
@@ -408,7 +406,5 @@ def _build_event_sentiment_sub_factors(
     )
 
 
-def _assemble_event_sentiment_sub_factors(
-    news_sentiment: SubFactor, insider_conviction: SubFactor, event_freshness: SubFactor
-) -> list[SubFactor]:
+def _assemble_event_sentiment_sub_factors(news_sentiment: SubFactor, insider_conviction: SubFactor, event_freshness: SubFactor) -> list[SubFactor]:
     return [news_sentiment, insider_conviction, event_freshness]

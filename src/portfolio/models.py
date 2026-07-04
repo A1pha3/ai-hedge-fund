@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class PositionPlan(BaseModel):
     """仓位计划（§4.1 四约束取最小值）"""
+
     ticker: str
     shares: int = 0
     amount: float = 0.0
@@ -25,6 +26,7 @@ class PositionPlan(BaseModel):
 
 class ExitSignal(BaseModel):
     """退出信号（§4.3 五层退出级联）"""
+
     ticker: str
     level: str
     trigger_reason: str
@@ -34,6 +36,7 @@ class ExitSignal(BaseModel):
 
 class HoldingState(BaseModel):
     """持仓跟踪状态（需持久化至 JSON）"""
+
     ticker: str
     entry_price: float
     entry_date: str
@@ -52,6 +55,7 @@ class HoldingState(BaseModel):
 
 class IndustryExposure(BaseModel):
     """行业暴露度"""
+
     industry: str
     market_value: float = 0.0
     weight: float = 0.0
@@ -60,6 +64,7 @@ class IndustryExposure(BaseModel):
 
 class PortfolioRiskMetrics(BaseModel):
     """组合风险指标"""
+
     total_nav: float = 0.0
     cash: float = 0.0
     position_count: int = 0

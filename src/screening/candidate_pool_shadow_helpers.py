@@ -25,13 +25,7 @@ def _resolve_source_layer_release_stage(*, lane: str, shadow_focus_selected: boo
 
 def _build_source_layer_release_contract(shadow_entries: list[dict[str, Any]]) -> dict[str, Any]:
     strict_release_tickers = sorted({str(entry.get("ticker") or "") for entry in shadow_entries if str(entry.get("source_layer_release_stage") or "") == "strict_release" and str(entry.get("ticker") or "").strip()})
-    validation_only_tickers = sorted(
-        {
-            str(entry.get("ticker") or "")
-            for entry in shadow_entries
-            if str(entry.get("source_layer_release_stage") or "") == "validation_only" and str(entry.get("ticker") or "").strip()
-        }
-    )
+    validation_only_tickers = sorted({str(entry.get("ticker") or "") for entry in shadow_entries if str(entry.get("source_layer_release_stage") or "") == "validation_only" and str(entry.get("ticker") or "").strip()})
     lane_release_contracts: dict[str, dict[str, list[str]]] = {}
     for entry in shadow_entries:
         lane = str(entry.get("candidate_pool_lane") or "unknown")
@@ -260,43 +254,17 @@ def classify_overflow_candidate(
     )
     if min_gate_share >= corridor_min_gate_share and cutoff_share <= corridor_max_cutoff_share:
         return "layer_a_liquidity_corridor", (min_gate_share, rank, annotated_candidate, False, False)
-    if (
-        candidate.ticker in corridor_visibility_gap_tickers
-        and min_gate_share >= corridor_min_gate_share
-        and cutoff_share <= corridor_visibility_gap_max_cutoff_share
-    ):
+    if candidate.ticker in corridor_visibility_gap_tickers and min_gate_share >= corridor_min_gate_share and cutoff_share <= corridor_visibility_gap_max_cutoff_share:
         return "layer_a_liquidity_corridor", (min_gate_share, rank, annotated_candidate, False, True)
-    if (
-        candidate.ticker in corridor_focus_tickers
-        and min_gate_share >= corridor_min_gate_share
-        and cutoff_share <= corridor_focus_max_cutoff_share
-    ):
+    if candidate.ticker in corridor_focus_tickers and min_gate_share >= corridor_min_gate_share and cutoff_share <= corridor_focus_max_cutoff_share:
         return "layer_a_liquidity_corridor", (min_gate_share, rank, annotated_candidate, True, False)
-    if (
-        candidate.ticker in corridor_focus_tickers
-        and min_gate_share >= corridor_focus_min_gate_share
-        and cutoff_share <= corridor_focus_low_gate_max_cutoff_share
-    ):
+    if candidate.ticker in corridor_focus_tickers and min_gate_share >= corridor_focus_min_gate_share and cutoff_share <= corridor_focus_low_gate_max_cutoff_share:
         return "layer_a_liquidity_corridor", (min_gate_share, rank, annotated_candidate, True, False)
-    if (
-        min_gate_share >= rebucket_min_gate_share
-        and cutoff_share >= rebucket_min_cutoff_share
-        and cutoff_share <= rebucket_max_cutoff_share
-    ):
+    if min_gate_share >= rebucket_min_gate_share and cutoff_share >= rebucket_min_cutoff_share and cutoff_share <= rebucket_max_cutoff_share:
         return "post_gate_liquidity_competition", (cutoff_share, rank, annotated_candidate, False, False)
-    if (
-        candidate.ticker in rebucket_visibility_gap_tickers
-        and min_gate_share >= rebucket_min_gate_share
-        and cutoff_share >= rebucket_visibility_gap_min_cutoff_share
-        and cutoff_share <= rebucket_max_cutoff_share
-    ):
+    if candidate.ticker in rebucket_visibility_gap_tickers and min_gate_share >= rebucket_min_gate_share and cutoff_share >= rebucket_visibility_gap_min_cutoff_share and cutoff_share <= rebucket_max_cutoff_share:
         return "post_gate_liquidity_competition", (cutoff_share, rank, annotated_candidate, False, True)
-    if (
-        candidate.ticker in rebucket_focus_tickers
-        and min_gate_share >= rebucket_min_gate_share
-        and cutoff_share >= rebucket_focus_min_cutoff_share
-        and cutoff_share <= rebucket_max_cutoff_share
-    ):
+    if candidate.ticker in rebucket_focus_tickers and min_gate_share >= rebucket_min_gate_share and cutoff_share >= rebucket_focus_min_cutoff_share and cutoff_share <= rebucket_max_cutoff_share:
         return "post_gate_liquidity_competition", (cutoff_share, rank, annotated_candidate, True, False)
     return None
 

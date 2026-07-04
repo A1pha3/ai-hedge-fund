@@ -190,9 +190,7 @@ def compute_rebalance_actions(
 
     # Pass 2: 检测行业硬约束
     sector_weights = _aggregate_sector_weights(enriched)
-    sector_over_limit: dict[str, float] = {
-        sec: weight for sec, weight in sector_weights.items() if weight > industry_hard_limit
-    }
+    sector_over_limit: dict[str, float] = {sec: weight for sec, weight in sector_weights.items() if weight > industry_hard_limit}
 
     actions: list[RebalanceAction] = []
     handled_tickers: set[str] = set()
@@ -337,7 +335,7 @@ def format_rebalance_actions(
 
     与 CLI ``--rebalance`` 配合使用。Web 端可使用 ``to_dict`` 直接返回 JSON。
     """
-    label = (date_label or datetime.now().strftime("%Y-%m-%d"))
+    label = date_label or datetime.now().strftime("%Y-%m-%d")
     lines: list[str] = []
     lines.append(f"━━━ 组合再平衡建议 · {label} ━━━")
     lines.append("")
@@ -376,9 +374,7 @@ def format_rebalance_actions(
             name_str = f"{a.ticker} {a.name}" if a.name else a.ticker
             direction_label = "减仓" if a.delta_amount < 0 else "加仓"
             amount_str = f"{direction_label} ¥{abs(a.delta_amount):,.0f}"
-            lines.append(
-                f"  {label_str:>4}  {name_str:<18}  当前 {a.current_weight:>5.1%} → 目标 {a.target_weight:>5.1%}  {amount_str}  原因: {a.reason}"
-            )
+            lines.append(f"  {label_str:>4}  {name_str:<18}  当前 {a.current_weight:>5.1%} → 目标 {a.target_weight:>5.1%}  {amount_str}  原因: {a.reason}")
         lines.append("")
 
     if not any(groups.get(p) for p in (1, 2, 3)):

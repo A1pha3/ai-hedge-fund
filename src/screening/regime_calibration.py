@@ -105,9 +105,7 @@ def compute_regime_calibration(
     )
 
     search_dir = reports_dir or resolve_report_dir()
-    history = load_auto_screening_history(
-        lookback_days=lookback_days, report_dir=search_dir
-    )
+    history = load_auto_screening_history(lookback_days=lookback_days, report_dir=search_dir)
     date_regime = _build_date_regime_map(history)
 
     records = load_tracking_history(search_dir)
@@ -156,14 +154,8 @@ def render_regime_calibration_line(report: RegimeCalibrationReport) -> str:
     parts: list[str] = []
     for row in report.rows:
         wr = f"{row.t30_win_rate * 100:.0f}%" if row.t30_win_rate is not None else "—"
-        color = (
-            Fore.GREEN if row.t30_win_rate is not None and row.t30_win_rate >= 0.5
-            else Fore.RED if row.t30_win_rate is not None and row.t30_win_rate < 0.5
-            else Fore.YELLOW
-        )
-        parts.append(
-            f"{row.regime} {color}{wr}{Style.RESET_ALL} (n={row.mature_t30_count})"
-        )
+        color = Fore.GREEN if row.t30_win_rate is not None and row.t30_win_rate >= 0.5 else Fore.RED if row.t30_win_rate is not None and row.t30_win_rate < 0.5 else Fore.YELLOW
+        parts.append(f"{row.regime} {color}{wr}{Style.RESET_ALL} (n={row.mature_t30_count})")
     header = f"  {Fore.CYAN}🌡 市场状态条件胜率 (T+30):{Style.RESET_ALL} "
     suffix = ""
     if report.unknown_regime_count:

@@ -156,9 +156,7 @@ def _build_layer_b_filter_diagnostics(
     build_filter_summary_fn: Any,
 ) -> dict[str, Any]:
     high_tickers = {item.ticker for item in high_pool}
-    return build_filter_summary_fn(
-        [{"ticker": item.ticker, "score_b": float(item.score_b), "decision": item.decision} for item in fused if item.ticker not in high_tickers]
-    )
+    return build_filter_summary_fn([{"ticker": item.ticker, "score_b": float(item.score_b), "decision": item.decision} for item in fused if item.ticker not in high_tickers])
 
 
 def _build_watchlist_filter_diagnostics(

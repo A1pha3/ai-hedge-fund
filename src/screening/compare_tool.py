@@ -236,10 +236,7 @@ def compare_tickers(
             seen.add(ticker)
             ordered_tickers.append(ticker)
     if not (MIN_COMPARE_TICKERS <= len(ordered_tickers) <= MAX_COMPARE_TICKERS):
-        raise ValueError(
-            f"对比标的数量必须为 {MIN_COMPARE_TICKERS}-{MAX_COMPARE_TICKERS} 只, "
-            f"实际: {len(ordered_tickers)}"
-        )
+        raise ValueError(f"对比标的数量必须为 {MIN_COMPARE_TICKERS}-{MAX_COMPARE_TICKERS} 只, " f"实际: {len(ordered_tickers)}")
 
     # 2. 构建 ticker -> rec 查询表
     rec_by_ticker: dict[str, dict[str, Any]] = {}
@@ -575,10 +572,7 @@ def run_compare_cli(
     # 1. 解析 tickers
     raw_tickers = [t.strip() for t in (tickers_arg or "").split(",") if t.strip()]
     if not (MIN_COMPARE_TICKERS <= len(raw_tickers) <= MAX_COMPARE_TICKERS):
-        print(
-            f"{Fore.RED}[Compare] 标的数量必须为 {MIN_COMPARE_TICKERS}-{MAX_COMPARE_TICKERS} 只, "
-            f"实际: {len(raw_tickers)} ({tickers_arg}){Style.RESET_ALL}"
-        )
+        print(f"{Fore.RED}[Compare] 标的数量必须为 {MIN_COMPARE_TICKERS}-{MAX_COMPARE_TICKERS} 只, " f"实际: {len(raw_tickers)} ({tickers_arg}){Style.RESET_ALL}")
         return 1
 
     # 2. 解析 metric_keys
@@ -589,18 +583,13 @@ def run_compare_cli(
         valid_metrics = set(DEFAULT_METRIC_KEYS)
         unknown = [m for m in metric_keys if m not in valid_metrics]
         if unknown:
-            print(
-                f"{Fore.RED}[Compare] 未知指标: {unknown} (合法: {sorted(valid_metrics)}){Style.RESET_ALL}"
-            )
+            print(f"{Fore.RED}[Compare] 未知指标: {unknown} (合法: {sorted(valid_metrics)}){Style.RESET_ALL}")
             return 1
 
     # 3. 加载推荐数据
     recommendations = load_latest_recommendations(report_dir=report_dir, trade_date=trade_date)
     if not recommendations:
-        print(
-            f"{Fore.YELLOW}[Compare] 未找到有效 auto_screening 报告 (trade_date={trade_date or 'latest'}), "
-            f"请先运行 --auto{Style.RESET_ALL}"
-        )
+        print(f"{Fore.YELLOW}[Compare] 未找到有效 auto_screening 报告 (trade_date={trade_date or 'latest'}), " f"请先运行 --auto{Style.RESET_ALL}")
         return 1
 
     # 4. 执行对比

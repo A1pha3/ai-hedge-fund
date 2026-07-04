@@ -9,6 +9,7 @@ P0C (2026-06-04): establishes the canonical schema for ``operator_summary.json``
 - Atomic write via temp-file-and-rename.
 - Same inputs → identical output (idempotent).
 """
+
 from __future__ import annotations
 
 import json
@@ -78,19 +79,22 @@ class IncrementalEvidenceStatus(str, Enum):
 # Forbidden outcome fields — must never appear in a summary
 # ---------------------------------------------------------------------------
 
-_OUTCOME_FIELDS = frozenset({
-    "realized_return",
-    "realized_outcome",
-    "t_plus_1_outcome",
-    "actual_return",
-    "pnl",
-    "exit_price",
-})
+_OUTCOME_FIELDS = frozenset(
+    {
+        "realized_return",
+        "realized_outcome",
+        "t_plus_1_outcome",
+        "actual_return",
+        "pnl",
+        "exit_price",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # Sub-models
 # ---------------------------------------------------------------------------
+
 
 class OptimizationResolution(BaseModel):
     status: str = "unoptimized"
@@ -189,6 +193,7 @@ class SourceConflict(BaseModel):
 # Top-level model
 # ---------------------------------------------------------------------------
 
+
 class OperatorSummary(BaseModel):
     """Top-level schema for ``operator_summary.json``."""
 
@@ -236,15 +241,14 @@ class OperatorSummary(BaseModel):
         raw = self.model_dump()
         found = [k for k in _OUTCOME_FIELDS if raw.get(k) is not None]
         if found:
-            raise ValueError(
-                f"operator_summary must not contain outcome fields: {found}"
-            )
+            raise ValueError(f"operator_summary must not contain outcome fields: {found}")
         return self
 
 
 # ---------------------------------------------------------------------------
 # Builder helpers
 # ---------------------------------------------------------------------------
+
 
 def build_decision_id(*, signal_date: str, decision_phase: str, version: int = 1) -> str:
     """Construct a stable ``decision_id`` string."""
@@ -283,7 +287,9 @@ def build_operator_summary(
     """
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     resolved_decision_id = decision_id or build_decision_id(
-        signal_date=signal_date, decision_phase=decision_phase, version=version,
+        signal_date=signal_date,
+        decision_phase=decision_phase,
+        version=version,
     )
     resolved_decision_as_of = decision_as_of or now
     resolved_data_as_of = data_as_of or now
@@ -317,6 +323,7 @@ def build_operator_summary(
 # I/O
 # ---------------------------------------------------------------------------
 
+
 def write_operator_summary(summary: OperatorSummary, path: Path) -> Path:
     """Write an ``OperatorSummary`` to disk using atomic temp-file-and-rename.
 
@@ -324,11 +331,14 @@ def write_operator_summary(summary: OperatorSummary, path: Path) -> Path:
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    content = json.dumps(
-        summary.model_dump(mode="json"),
-        ensure_ascii=False,
-        indent=2,
-    ) + "\n"
+    content = (
+        json.dumps(
+            summary.model_dump(mode="json"),
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n"
+    )
     fd, tmp_path = tempfile.mkstemp(
         dir=str(path.parent),
         prefix=".operator_summary_",

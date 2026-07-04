@@ -31,16 +31,7 @@ logger = logging.getLogger(__name__)
 async def create_flow(request: FlowCreateRequest, db: Session = Depends(get_db)):
     """Create a new hedge fund flow"""
     repo = FlowRepository(db)
-    flow = repo.create_flow(
-        name=request.name,
-        description=request.description,
-        nodes=request.nodes,
-        edges=request.edges,
-        viewport=request.viewport,
-        data=request.data,
-        is_template=request.is_template,
-        tags=request.tags
-    )
+    flow = repo.create_flow(name=request.name, description=request.description, nodes=request.nodes, edges=request.edges, viewport=request.viewport, data=request.data, is_template=request.is_template, tags=request.tags)
     return FlowResponse.model_validate(flow)
 
 
@@ -89,17 +80,7 @@ async def get_flow(flow_id: int, db: Session = Depends(get_db)):
 async def update_flow(flow_id: int, request: FlowUpdateRequest, db: Session = Depends(get_db)):
     """Update an existing flow"""
     repo = FlowRepository(db)
-    flow = repo.update_flow(
-        flow_id=flow_id,
-        name=request.name,
-        description=request.description,
-        nodes=request.nodes,
-        edges=request.edges,
-        viewport=request.viewport,
-        data=request.data,
-        is_template=request.is_template,
-        tags=request.tags
-    )
+    flow = repo.update_flow(flow_id=flow_id, name=request.name, description=request.description, nodes=request.nodes, edges=request.edges, viewport=request.viewport, data=request.data, is_template=request.is_template, tags=request.tags)
     if not flow:
         raise HTTPException(status_code=404, detail="Flow not found")
     return FlowResponse.model_validate(flow)
@@ -153,4 +134,4 @@ async def search_flows(name: str, db: Session = Depends(get_db)):
     """Search flows by name"""
     repo = FlowRepository(db)
     flows = repo.get_flows_by_name(name)
-    return [FlowSummaryResponse.model_validate(flow) for flow in flows] 
+    return [FlowSummaryResponse.model_validate(flow) for flow in flows]

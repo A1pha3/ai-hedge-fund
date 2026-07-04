@@ -36,7 +36,7 @@ def calculate_industry_exposures(
 
 
 def calculate_portfolio_hhi(exposures: list[IndustryExposure]) -> float:
-    return sum(exposure.weight ** 2 for exposure in exposures)
+    return sum(exposure.weight**2 for exposure in exposures)
 
 
 def get_industry_remaining_quota(

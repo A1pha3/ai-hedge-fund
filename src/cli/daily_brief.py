@@ -68,11 +68,7 @@ def _find_latest_report(report_dir: Path) -> Path | None:
     """
     if not report_dir.exists():
         return None
-    candidates = [
-        path
-        for path in report_dir.glob("auto_screening_*.json")
-        if _parses_as_report_date(path.stem.replace("auto_screening_", ""))
-    ]
+    candidates = [path for path in report_dir.glob("auto_screening_*.json") if _parses_as_report_date(path.stem.replace("auto_screening_", ""))]
     candidates.sort(reverse=True)
     return candidates[0] if candidates else None
 
@@ -361,11 +357,7 @@ def _print_daily_brief(
     state_type = str(market_state.get("state_type", "—") or "—")
     position_scale = _safe_float(market_state.get("position_scale"), 1.0)
     regime = str(market_state.get("regime_gate_level", "normal") or "normal")
-    print(
-        f"{Fore.CYAN}📊 市场状态:{Style.RESET_ALL} {state_type}  |  "
-        f"{Fore.CYAN}仓位系数:{Style.RESET_ALL} {position_scale:.2f}  |  "
-        f"{Fore.CYAN}regime:{Style.RESET_ALL} {regime}"
-    )
+    print(f"{Fore.CYAN}📊 市场状态:{Style.RESET_ALL} {state_type}  |  " f"{Fore.CYAN}仓位系数:{Style.RESET_ALL} {position_scale:.2f}  |  " f"{Fore.CYAN}regime:{Style.RESET_ALL} {regime}")
 
     if not top3:
         print(f"\n{Fore.YELLOW}⚠️  最新报告中无 Top 3 推荐{Style.RESET_ALL}\n")
@@ -534,10 +526,7 @@ def _print_brief_disclaimer() -> None:
     so all four user-facing decision surfaces (--top-picks / --daily-brief /
     PDF export / backtest CLI) carry the same boundary disclosure.
     """
-    print(
-        f"{Fore.WHITE}⚠ 以上盘前决策卡由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。"
-        f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}"
-    )
+    print(f"{Fore.WHITE}⚠ 以上盘前决策卡由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。" f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}")
 
 
 __all__ = ["run_daily_brief"]

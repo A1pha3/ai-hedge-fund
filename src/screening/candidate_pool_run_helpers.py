@@ -33,9 +33,7 @@ def _try_load_cached_candidate_pool_with_shadow(
         try:
             shadow_payload = load_candidate_pool_shadow_snapshot_fn(shadow_snapshot_path)
             write_candidate_pool_snapshot_fn(legacy_snapshot_path, shadow_payload["selected_candidates"])
-            print(
-                f"[CandidatePool] 从缓存加载 {len(shadow_payload['selected_candidates'])} 只候选标的 + {len(shadow_payload['shadow_candidates'])} 只 shadow 标的 ({trade_date}, top{max_candidate_pool_size}{focus_label})"
-            )
+            print(f"[CandidatePool] 从缓存加载 {len(shadow_payload['selected_candidates'])} 只候选标的 + {len(shadow_payload['shadow_candidates'])} 只 shadow 标的 ({trade_date}, top{max_candidate_pool_size}{focus_label})")
             return shadow_payload["selected_candidates"], shadow_payload["shadow_candidates"], shadow_payload["shadow_summary"], cached_selected_candidates
         except Exception as e:
             logger.warning("[CandidatePool] shadow 缓存读取失败，重新计算: %s", e, exc_info=True)
@@ -57,9 +55,7 @@ def _try_load_cached_candidate_pool_with_shadow(
                     shadow_summary=shadow_summary,
                 )
                 write_candidate_pool_snapshot_fn(legacy_snapshot_path, cached_selected_candidates)
-                print(
-                    f"[CandidatePool] 使用已有主池缓存直接回填空 shadow 快照 ({trade_date}, top{max_candidate_pool_size})"
-                )
+                print(f"[CandidatePool] 使用已有主池缓存直接回填空 shadow 快照 ({trade_date}, top{max_candidate_pool_size})")
                 return cached_selected_candidates, [], shadow_summary, cached_selected_candidates
         except Exception as e:
             logger.warning("[CandidatePool] 主池缓存读取失败，无法作为 shadow 补算回退: %s", e, exc_info=True)
@@ -103,9 +99,7 @@ def _finalize_candidate_pool_with_shadow_outputs(
     if len(candidates) > max_candidate_pool_size:
         print(f"[CandidatePool] 候选池截断至 Top {max_candidate_pool_size}（按20日均成交额/市值排序）")
     if shadow_candidates:
-        print(
-            f"[CandidatePool] shadow recall 标的: {len(shadow_candidates)} 只 ({shadow_summary.get('lane_counts')})"
-        )
+        print(f"[CandidatePool] shadow recall 标的: {len(shadow_candidates)} 只 ({shadow_summary.get('lane_counts')})")
     print(f"[CandidatePool] 最终候选池: {len(selected_candidates)} 只 → {snapshot_path}")
     return selected_candidates, shadow_candidates, shadow_summary
 

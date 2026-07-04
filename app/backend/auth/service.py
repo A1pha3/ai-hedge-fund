@@ -89,11 +89,13 @@ class AuthService:
         user.locked_until = None
         self.db.commit()
 
-        token = create_access_token({
-            "sub": user.username,
-            "role": user.role,
-            "tv": user.token_version,  # Token version for invalidation
-        })
+        token = create_access_token(
+            {
+                "sub": user.username,
+                "role": user.role,
+                "tv": user.token_version,  # Token version for invalidation
+            }
+        )
         return {
             "access_token": token,
             "token_type": "bearer",

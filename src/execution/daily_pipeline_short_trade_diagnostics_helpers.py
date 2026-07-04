@@ -666,23 +666,10 @@ def build_short_trade_prefilter_thresholds(
         "upstream_shadow_catalyst_relief_post_gate_selected_threshold": round(upstream_shadow_catalyst_relief_post_gate_selected_threshold, 4),
         "upstream_shadow_catalyst_relief_visibility_gap_corridor_selected_threshold": round(upstream_shadow_catalyst_relief_post_gate_selected_threshold, 4),
         "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff": upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff_default,
-        "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff_by_lane": {
-            lane: resolve_no_profitability_hard_cliff_fn(lane)
-            for lane in sorted(upstream_shadow_release_lanes)
-        },
-        "upstream_shadow_release_lane_score_mins": {
-            lane: round(float(score_min), 4)
-            for lane, score_min in upstream_shadow_release_lane_score_mins.items()
-        },
-        "upstream_shadow_release_lane_max_tickers": {
-            lane: int(limit)
-            for lane, limit in upstream_shadow_release_lane_max_tickers.items()
-        },
-        "upstream_shadow_release_priority_tickers_by_lane": {
-            lane: list(priority_tickers)
-            for lane, priority_tickers in sorted(upstream_shadow_release_priority_tickers_by_lane.items())
-            if priority_tickers
-        },
+        "upstream_shadow_catalyst_relief_require_no_profitability_hard_cliff_by_lane": {lane: resolve_no_profitability_hard_cliff_fn(lane) for lane in sorted(upstream_shadow_release_lanes)},
+        "upstream_shadow_release_lane_score_mins": {lane: round(float(score_min), 4) for lane, score_min in upstream_shadow_release_lane_score_mins.items()},
+        "upstream_shadow_release_lane_max_tickers": {lane: int(limit) for lane, limit in upstream_shadow_release_lane_max_tickers.items()},
+        "upstream_shadow_release_priority_tickers_by_lane": {lane: list(priority_tickers) for lane, priority_tickers in sorted(upstream_shadow_release_priority_tickers_by_lane.items()) if priority_tickers},
     }
 
 

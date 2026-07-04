@@ -158,14 +158,8 @@ def _compute_risk_from_state(
     hhi = sum(w * w for w in weights.values())
 
     # Short ratio
-    total_long = sum(
-        float(pos.get("long", 0)) * prices.get(t, 0.0)
-        for t, pos in positions.items()
-    )
-    total_short = sum(
-        float(pos.get("short", 0)) * prices.get(t, 0.0)
-        for t, pos in positions.items()
-    )
+    total_long = sum(float(pos.get("long", 0)) * prices.get(t, 0.0) for t, pos in positions.items())
+    total_short = sum(float(pos.get("short", 0)) * prices.get(t, 0.0) for t, pos in positions.items())
     gross = total_long + total_short
     short_ratio = total_short / gross if gross > 1e-9 else 0.0
 
@@ -213,10 +207,7 @@ def apply_adjustments(
     Accepts both PositionInput/DecisionInput models and plain dicts for flexibility.
     """
     # Deep-copy positions into plain dicts
-    adj_positions: dict[str, dict[str, Any]] = {
-        t: {"long": int(_pos_val(p, "long")), "short": int(_pos_val(p, "short")), "long_cost_basis": float(_pos_val(p, "long_cost_basis")), "short_cost_basis": float(_pos_val(p, "short_cost_basis"))}
-        for t, p in positions.items()
-    }
+    adj_positions: dict[str, dict[str, Any]] = {t: {"long": int(_pos_val(p, "long")), "short": int(_pos_val(p, "short")), "long_cost_basis": float(_pos_val(p, "long_cost_basis")), "short_cost_basis": float(_pos_val(p, "short_cost_basis"))} for t, p in positions.items()}
 
     # Normalize decisions into DecisionInput objects
     def _norm_decision(d: DecisionInput | dict[str, Any]) -> DecisionInput:
@@ -439,10 +430,7 @@ def simulate_adjustment(req: SimulateAdjustmentRequest) -> SimulateAdjustmentRes
         )
 
     # --- "Before" metrics: simulate all planned decisions on current positions ---
-    before_positions: dict[str, dict[str, Any]] = {
-        t: {"long": p.long, "short": p.short, "long_cost_basis": p.long_cost_basis, "short_cost_basis": p.short_cost_basis}
-        for t, p in req.positions.items()
-    }
+    before_positions: dict[str, dict[str, Any]] = {t: {"long": p.long, "short": p.short, "long_cost_basis": p.long_cost_basis, "short_cost_basis": p.short_cost_basis} for t, p in req.positions.items()}
     before_cash = req.cash
 
     # Apply all decisions to get "before" state (fully executed plan)

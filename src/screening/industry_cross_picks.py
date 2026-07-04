@@ -9,6 +9,7 @@
   - **可配置 Top N** — 默认输出前 5 个行业
   - **降级友好** — 推荐列表为空时返回空结果
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -54,9 +55,7 @@ class CrossPick:
     top_picks: list[IndustryTopPick] = field(default_factory=list)
 
 
-def _extract_top_picks_for_industry(
-    recommendations: list[dict[str, Any]], industry_name: str, max_picks: int = 3
-) -> list[IndustryTopPick]:
+def _extract_top_picks_for_industry(recommendations: list[dict[str, Any]], industry_name: str, max_picks: int = 3) -> list[IndustryTopPick]:
     """从推荐列表中提取指定行业的 Top N 个股。"""
     if not recommendations or not industry_name:
         return []
@@ -155,9 +154,7 @@ def render_cross_picks(cross_picks: list[CrossPick]) -> str:
         if cp.top_picks:
             lines.append("     Top 标的:")
             for pick in cp.top_picks:
-                lines.append(
-                    f"       • {pick.ticker} {pick.name}  score_b={pick.score_b:+.3f}  {pick.decision}"
-                )
+                lines.append(f"       • {pick.ticker} {pick.name}  score_b={pick.score_b:+.3f}  {pick.decision}")
         else:
             lines.append("     Top 标的: (无)")
         lines.append("")

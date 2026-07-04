@@ -249,8 +249,7 @@ class BatchDataFetcher:
             # 计数器增加, 无法定位根因 (网络/限频/鉴权/接口字段变更).
             # warning 级别 (罕见且关键 — 每批次每 trade_date 最多一次, 但触发 fallback 风暴).
             logger.warning(
-                "batch_data_fetcher: batch fetch failed (cache_key=%s, "
-                "falling back to single-ticker path): %s",
+                "batch_data_fetcher: batch fetch failed (cache_key=%s, " "falling back to single-ticker path): %s",
                 cache_key,
                 exc,
                 exc_info=True,
@@ -338,8 +337,7 @@ class BatchDataFetcher:
             # 误标为 cache miss (语义错误 — cache miss 是确定性无数据, fetch error 是异常),
             # 让 stats() 报告失真. 新增 _single_ticker_fetch_errors 计数器严格区分.
             logger.debug(
-                "batch_data_fetcher: single-ticker fetch failed (ticker=%s, "
-                "start=%s, end=%s, returning []): %s",
+                "batch_data_fetcher: single-ticker fetch failed (ticker=%s, " "start=%s, end=%s, returning []): %s",
                 ticker,
                 start_date,
                 end_date,

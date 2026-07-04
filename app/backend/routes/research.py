@@ -18,6 +18,7 @@ router = APIRouter(prefix="/research", tags=["research"])
 # Response models
 # ---------------------------------------------------------------------------
 
+
 class TickerAuditResultResponse(BaseModel):
     ticker: str
     rank: int
@@ -51,6 +52,7 @@ class LookbackAuditErrorResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
 
 @router.get("/lookback-audit", response_model=LookbackAuditResponse | LookbackAuditErrorResponse)
 async def get_lookback_audit(
@@ -89,9 +91,6 @@ async def get_lookback_audit(
         lookforward_days=result.lookforward_days,
         selected_count=result.selected_count,
         audited_count=result.audited_count,
-        ticker_results=[
-            TickerAuditResultResponse(**asdict(tr))
-            for tr in result.ticker_results
-        ],
+        ticker_results=[TickerAuditResultResponse(**asdict(tr)) for tr in result.ticker_results],
         summary=result.summary,
     )

@@ -18,6 +18,7 @@ CLI 入口: ``scripts/analyze_btst_ticker_horizon_stats.py``.
 关联: C219 (tracking_history 回填 7993 records + 7201 mature),
 C220 (BUY gate horizon T+5/T+10 OR), C221 (signal_horizon 呈现层).
 """
+
 from __future__ import annotations
 
 import math
@@ -184,9 +185,7 @@ def _summarize_returns(returns: list[float]) -> TickerHorizonStats:
     )
 
 
-def _compute_payoff_ratio(
-    avg_win: float | None, avg_loss_abs: float | None
-) -> float | None:
+def _compute_payoff_ratio(avg_win: float | None, avg_loss_abs: float | None) -> float | None:
     """盈亏比 = 平均盈利 / 平均亏损绝对值 (与 historical_prior_opportunity 一致)."""
     if avg_win is None or avg_loss_abs is None or avg_loss_abs <= 0:
         return None

@@ -1306,9 +1306,9 @@ SHORT_TRADE_TARGET_PROFILES["btst_runner_probe"] = ShortTradeTargetProfile(
 
 # ============================================================
 # Round 89 - trend_corrected_v1
-# 
+#
 # 核心改进：修正反转因子方向性错误
-# 
+#
 # 问题背景：
 #   - 短期反转因子（reversal）IC = -0.34（显著负向）
 #   - 但原有 profile 都用正权重（0.14-0.50），相当于奖励超卖/下跌股
@@ -1319,7 +1319,7 @@ SHORT_TRADE_TARGET_PROFILES["btst_runner_probe"] = ShortTradeTargetProfile(
 # 设计思路：
 #   - 基于 ic_v5 基础（最优 walk_forward profile 之一）
 #   - 将 short_term_reversal_weight 归零
-#   - 将 reversal_2d_weight 归零  
+#   - 将 reversal_2d_weight 归零
 #   - 引入 trend_continuation_weight = 0.20（IC+0.34 强正向）
 #   - 引入 trend_continuation_2d_weight = 0.12（IC+0.20 中等正向）
 #   - 保留 intraday_strength_weight = 0.20（确认尾盘强度）
@@ -1338,21 +1338,21 @@ SHORT_TRADE_TARGET_PROFILES["trend_corrected_v1"] = ShortTradeTargetProfile(
     selected_rank_cap_relief_allow_risk_off=True,
     selected_rank_cap_relief_allow_crisis=False,
     # 核心因子权重（动量+突破优先，彻底放弃反转误导）
-    breakout_freshness_weight=0.12,           # 突破鲜度：IC最高，保留
-    trend_acceleration_weight=0.18,           # 趋势加速：IC第二，保留
-    volume_expansion_quality_weight=0.16,     # 量能扩张：IC正向，保留
-    close_strength_weight=0.08,               # 收盘强度：正向，适当降低
-    momentum_strength_weight=0.10,            # 动量强度：增加
-    catalyst_freshness_weight=0.10,           # 催化鲜度：保留
-    layer_c_alignment_weight=0.16,            # LLM共识：保留
-    sector_resonance_weight=0.03,             # 板块共振：保留少量
+    breakout_freshness_weight=0.12,  # 突破鲜度：IC最高，保留
+    trend_acceleration_weight=0.18,  # 趋势加速：IC第二，保留
+    volume_expansion_quality_weight=0.16,  # 量能扩张：IC正向，保留
+    close_strength_weight=0.08,  # 收盘强度：正向，适当降低
+    momentum_strength_weight=0.10,  # 动量强度：增加
+    catalyst_freshness_weight=0.10,  # 催化鲜度：保留
+    layer_c_alignment_weight=0.16,  # LLM共识：保留
+    sector_resonance_weight=0.03,  # 板块共振：保留少量
     historical_continuation_score_weight=0.0,
     # === 核心修正：反转因子归零，改用翻转后的趋势延续因子 ===
-    short_term_reversal_weight=0.0,           # 原IC=-0.34正向权重 → 归零！
-    reversal_2d_weight=0.0,                   # 2日反转因子 → 归零！
-    intraday_strength_weight=0.20,            # 盘内强度（尾盘买入确认）
-    trend_continuation_weight=0.20,           # 1-reversal，IC=+0.34 ← 核心新增
-    trend_continuation_2d_weight=0.12,        # 1-reversal_2d，IC=+0.20 ← 新增
+    short_term_reversal_weight=0.0,  # 原IC=-0.34正向权重 → 归零！
+    reversal_2d_weight=0.0,  # 2日反转因子 → 归零！
+    intraday_strength_weight=0.20,  # 盘内强度（尾盘买入确认）
+    trend_continuation_weight=0.20,  # 1-reversal，IC=+0.34 ← 核心新增
+    trend_continuation_2d_weight=0.12,  # 1-reversal_2d，IC=+0.20 ← 新增
     # 质量门槛（与 ic_v5 保持一致）
     selected_breakout_freshness_min=0.10,
     selected_trend_acceleration_min=0.16,

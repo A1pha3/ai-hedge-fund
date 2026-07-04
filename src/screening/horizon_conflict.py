@@ -89,11 +89,7 @@ def render_horizon_conflict(c: HorizonConflict) -> str:
     short_sign = "看多" if c.short_value > 0 else "看空"
     long_sign = "看多" if c.long_value > 0 else "看空"
     narrative = "短线 pop, 长线 fade" if c.short_value > 0 else "短线回调, 长线恢复"
-    return (
-        f"  {Fore.YELLOW}⚠ 多周期冲突:{Style.RESET_ALL} "
-        f"{c.short_label} {c.short_value:+.1f}% ({short_sign}) 但 "
-        f"{c.long_label} {c.long_value:+.1f}% ({long_sign})  ({narrative})"
-    )
+    return f"  {Fore.YELLOW}⚠ 多周期冲突:{Style.RESET_ALL} " f"{c.short_label} {c.short_value:+.1f}% ({short_sign}) 但 " f"{c.long_label} {c.long_value:+.1f}% ({long_sign})  ({narrative})"
 
 
 __all__ = [

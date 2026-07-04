@@ -53,7 +53,9 @@ def _merge_financial_metric_extra_fields(cached_dataframe_call: Callable, pro, t
         # BH-022 / R41 同族: extra 指标 (inv_turn/dp_dt_ratio) 拉取失败时静默
         # 返回核心 df_fin → fundamental agents 缺少这些装饰指标但无信号。发降级诊断。
         logger.debug(
-            "fina_indicator extra fields degraded for %s: %s", ts_code, exc,
+            "fina_indicator extra fields degraded for %s: %s",
+            ts_code,
+            exc,
         )
         return df_fin
     if df_extra is None or df_extra.empty:
@@ -73,7 +75,9 @@ def _safe_cached_statement_call(cached_call: Callable, pro, api_name: str, ts_co
         # 发降级诊断让运维可定位哪个报表降级。
         logger.debug(
             "financial statement %s degraded to None for %s: %s",
-            api_name, ts_code, exc,
+            api_name,
+            ts_code,
+            exc,
         )
         return None
 

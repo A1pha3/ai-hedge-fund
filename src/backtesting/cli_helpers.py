@@ -25,9 +25,7 @@ def _positive_float(value: str) -> float:
     that would trigger divide-by-zero in backtest metrics (drawdown / total_return)."""
     parsed = float(value)
     if not (parsed > 0):
-        raise argparse.ArgumentTypeError(
-            f"必须为正数 (got {parsed}); 0/负数会让 drawdown/total_return 触发 divide-by-zero"
-        )
+        raise argparse.ArgumentTypeError(f"必须为正数 (got {parsed}); 0/负数会让 drawdown/total_return 触发 divide-by-zero")
     return parsed
 
 
@@ -38,9 +36,7 @@ def _non_negative_float(value: str) -> float:
     (no margin required — upstream default); > 1.0 is valid (over-collateralized)."""
     parsed = float(value)
     if parsed < 0:
-        raise argparse.ArgumentTypeError(
-            f"必须为非负数 (got {parsed}); 负值会让保证金风控失效 (margin_required<=cash 恒为 True)"
-        )
+        raise argparse.ArgumentTypeError(f"必须为非负数 (got {parsed}); 负值会让保证金风控失效 (margin_required<=cash 恒为 True)")
     return parsed
 
 
@@ -75,12 +71,7 @@ def build_backtest_parser() -> argparse.ArgumentParser:
         "--param-grid",
         type=str,
         default=None,
-        help=(
-            "Run a batch parameter grid comparison instead of a single backtest. "
-            'Accepts a compact spec like "top_n=10,15,20;min_score=0.5,0.6" and '
-            "expands it into the cartesian product, running each combination in "
-            "parallel and writing a CSV / Markdown / JSON comparison report."
-        ),
+        help=("Run a batch parameter grid comparison instead of a single backtest. " 'Accepts a compact spec like "top_n=10,15,20;min_score=0.5,0.6" and ' "expands it into the cartesian product, running each combination in " "parallel and writing a CSV / Markdown / JSON comparison report."),
     )
     parser.add_argument("--output", type=str, default=None, help="Output directory for the parameter-grid report (default: data/reports/param_grid)")
     parser.add_argument("--max-workers", type=int, default=None, help="Worker thread count for the parameter grid (default: ANALYST_CONCURRENCY_LIMIT env var)")

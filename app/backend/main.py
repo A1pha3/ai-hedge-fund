@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Load environment variables from .env file
-env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
+env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env")
 load_dotenv(dotenv_path=env_path)
 
 from app.backend.auth.utils import (  # noqa: E402
@@ -48,6 +48,7 @@ def _auto_init_admin():
     try:
         from app.backend.auth.constants import ADMIN_USERNAME
         from app.backend.auth.utils import hash_password
+
         db = SessionLocal()
         existing = db.query(User).filter(User.username == ADMIN_USERNAME).first()
         if not existing:

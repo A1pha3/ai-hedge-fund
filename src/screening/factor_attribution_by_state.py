@@ -11,6 +11,7 @@
 镜像 factor_attribution (overall 归因) + state_type_calibration (state_type 维度) +
 rank_monotonicity (footer-block) 结构. **纯诊断, 不改因子/gate/仓位** (越界=过拟合).
 """
+
 from __future__ import annotations
 
 import random as _random
@@ -204,15 +205,24 @@ def compute_factor_attribution_by_state_from_loaded(
                 # c322/autodev-36: bootstrap CI on inversion (same disease class as c317 + c321).
                 # 让 owner 在调整因子权重时看见 uncertainty.
                 ci_lo, ci_hi = _bootstrap_inversion_ci(
-                    high_returns, low_returns,
-                    n_bootstrap=_N_BOOTSTRAP, seed=_BOOTSTRAP_SEED + _deterministic_str_hash(factor) % 1000,
+                    high_returns,
+                    low_returns,
+                    n_bootstrap=_N_BOOTSTRAP,
+                    seed=_BOOTSTRAP_SEED + _deterministic_str_hash(factor) % 1000,
                 )
-                inversions.append(FactorStateInversion(
-                    state_type=state, factor=factor,
-                    high_contrib_winrate=high_wr, low_contrib_winrate=low_wr,
-                    inversion=inversion, high_n=len(high_returns), low_n=len(low_returns),
-                    inversion_ci_low=ci_lo, inversion_ci_high=ci_hi,
-                ))
+                inversions.append(
+                    FactorStateInversion(
+                        state_type=state,
+                        factor=factor,
+                        high_contrib_winrate=high_wr,
+                        low_contrib_winrate=low_wr,
+                        inversion=inversion,
+                        high_n=len(high_returns),
+                        low_n=len(low_returns),
+                        inversion_ci_low=ci_lo,
+                        inversion_ci_high=ci_hi,
+                    )
+                )
 
     return FactorAttributionByStateReport(
         inversions=inversions,
@@ -282,7 +292,7 @@ def load_factor_attribution_by_state_records(
             continue
         market_state = payload.get("market_state") or {}
         state_type = str(market_state.get("state_type") or market_state.get("regime_gate_level") or "").strip()
-        for rec in (payload.get("recommendations") or []):
+        for rec in payload.get("recommendations") or []:
             if not isinstance(rec, dict):
                 continue
             tk = str(rec.get("ticker", "") or "").strip()
@@ -294,34 +304,42 @@ def load_factor_attribution_by_state_records(
             decomp = rec.get("score_decomposition")
             if not isinstance(decomp, dict):
                 continue  # 无因子贡献
-            out.append({
-                "ticker": tk,
-                "recommended_date": date,
-                "state_type": state_type,
-                "score_decomposition": decomp,
-                "next_5day_return": returns.get("next_5day_return"),
-                "next_10day_return": returns.get("next_10day_return"),
-            })
+            out.append(
+                {
+                    "ticker": tk,
+                    "recommended_date": date,
+                    "state_type": state_type,
+                    "score_decomposition": decomp,
+                    "next_5day_return": returns.get("next_5day_return"),
+                    "next_10day_return": returns.get("next_10day_return"),
+                }
+            )
     return out
 
 
 def compute_factor_attribution_by_state(
-    *, reports_dir: Path | None = None, min_n: int = _MIN_N_DEFAULT,
+    *,
+    reports_dir: Path | None = None,
+    min_n: int = _MIN_N_DEFAULT,
     horizon_field: str = "next_5day_return",
 ) -> FactorAttributionByStateReport:
     """IO 包装: load + compute (镜像 rank_monotonicity 模式)."""
     from src.screening.consecutive_recommendation import resolve_report_dir
+
     search_dir = reports_dir or resolve_report_dir()
     records = load_factor_attribution_by_state_records(search_dir)
     return compute_factor_attribution_by_state_from_loaded(records, min_n=min_n, horizon_field=horizon_field)
 
 
 def compute_factor_attribution_score_controlled(
-    *, reports_dir: Path | None = None, min_n: int = _MIN_N_DEFAULT,
+    *,
+    reports_dir: Path | None = None,
+    min_n: int = _MIN_N_DEFAULT,
     horizon_field: str = "next_5day_return",
 ) -> ScoreControlledFactorReport:
     """IO 包装: load + compute score-controlled (镜像 compute_factor_attribution_by_state)."""
     from src.screening.consecutive_recommendation import resolve_report_dir
+
     search_dir = reports_dir or resolve_report_dir()
     records = load_factor_attribution_by_state_records(search_dir)
     return compute_factor_attribution_score_controlled_from_loaded(records, min_n=min_n, horizon_field=horizon_field)
@@ -335,10 +353,7 @@ def render_factor_attribution_by_state_line(report: FactorAttributionByStateRepo
     """
     if report.verdict != "ok" or not report.inversions:
         return ""
-    parts = [
-        _format_one_factor_state(inv)
-        for inv in report.inversions[:4]  # 最多展示 4 个倒挂
-    ]
+    parts = [_format_one_factor_state(inv) for inv in report.inversions[:4]]  # 最多展示 4 个倒挂
     no_inversion_states = [st for st in report.state_types if st not in {inv.state_type for inv in report.inversions}]
     if no_inversion_states:
         parts.append(f"{'/'.join(no_inversion_states[:2])} 无倒挂")
@@ -347,11 +362,7 @@ def render_factor_attribution_by_state_line(report: FactorAttributionByStateRepo
     # c325/autodev-36: 数据时点披露 (镜像 regime_winrate 模式)
     as_of_suffix = f" | 数据时点 {report.as_of}" if report.as_of else ""
 
-    return (
-        f"  {Fore.RED}⚠ 因子归因({report.horizon_label}): {body}{Style.RESET_ALL}"
-        f" {Fore.RED}(某因子高贡献反而低胜率 = 该市场帮倒忙, 供 owner 调优){Style.RESET_ALL}"
-        f"{as_of_suffix}"
-    )
+    return f"  {Fore.RED}⚠ 因子归因({report.horizon_label}): {body}{Style.RESET_ALL}" f" {Fore.RED}(某因子高贡献反而低胜率 = 该市场帮倒忙, 供 owner 调优){Style.RESET_ALL}" f"{as_of_suffix}"
 
 
 def _format_one_factor_state(inv: FactorStateInversion) -> str:
@@ -492,21 +503,27 @@ def compute_factor_attribution_score_controlled_from_loaded(
         if stratified > _INVERSION_THRESHOLD:
             # Bootstrap CI on the inversion (same disease class as c317 factor_attribution CI)
             ci_lo, ci_hi = _bootstrap_inversion_ci(
-                pooled_high_returns, pooled_low_returns,
-                n_bootstrap=_N_BOOTSTRAP, seed=_BOOTSTRAP_SEED + _deterministic_str_hash(factor) % 1000,
+                pooled_high_returns,
+                pooled_low_returns,
+                n_bootstrap=_N_BOOTSTRAP,
+                seed=_BOOTSTRAP_SEED + _deterministic_str_hash(factor) % 1000,
             )
-            inversions.append(ScoreControlledFactorInversion(
-                factor=factor, stratified_inversion=stratified,
-                high_winrate=sum(1 for x in pooled_high_returns if x > 0) / len(pooled_high_returns) if pooled_high_returns else 0.0,
-                low_winrate=sum(1 for x in pooled_low_returns if x > 0) / len(pooled_low_returns) if pooled_low_returns else 0.0,
-                n=len(pooled_high_returns) + len(pooled_low_returns),
-                survives=True,
-                inversion_ci_low=ci_lo,
-                inversion_ci_high=ci_hi,
-            ))
+            inversions.append(
+                ScoreControlledFactorInversion(
+                    factor=factor,
+                    stratified_inversion=stratified,
+                    high_winrate=sum(1 for x in pooled_high_returns if x > 0) / len(pooled_high_returns) if pooled_high_returns else 0.0,
+                    low_winrate=sum(1 for x in pooled_low_returns if x > 0) / len(pooled_low_returns) if pooled_low_returns else 0.0,
+                    n=len(pooled_high_returns) + len(pooled_low_returns),
+                    survives=True,
+                    inversion_ci_low=ci_lo,
+                    inversion_ci_high=ci_hi,
+                )
+            )
 
     return ScoreControlledFactorReport(
-        inversions=inversions, sample_count=len(valid),
+        inversions=inversions,
+        sample_count=len(valid),
         horizon_label=_horizon_label(horizon_field),
         verdict="ok" if inversions else "insufficient",
         as_of=max_date or None,
@@ -521,20 +538,13 @@ def render_score_controlled_factor_line(report: ScoreControlledFactorReport) -> 
     """
     if report.verdict != "ok" or not report.inversions:
         return ""
-    parts = [
-        _format_one_score_controlled(inv)
-        for inv in report.inversions
-    ]
+    parts = [_format_one_score_controlled(inv) for inv in report.inversions]
     body = " | ".join(parts)
 
     # c325/autodev-36: 数据时点披露 (镜像 regime_winrate 模式)
     as_of_suffix = f" | 数据时点 {report.as_of}" if report.as_of else ""
 
-    return (
-        f"  {Fore.RED}⚠ 因子真实倒挂({report.horizon_label}, score-controlled): {body}{Style.RESET_ALL}"
-        f" {Fore.RED}(排除 score-level confound 后的真实因子效应, 供 owner 调优){Style.RESET_ALL}"
-        f"{as_of_suffix}"
-    )
+    return f"  {Fore.RED}⚠ 因子真实倒挂({report.horizon_label}, score-controlled): {body}{Style.RESET_ALL}" f" {Fore.RED}(排除 score-level confound 后的真实因子效应, 供 owner 调优){Style.RESET_ALL}" f"{as_of_suffix}"
 
 
 def _format_one_score_controlled(inv: ScoreControlledFactorInversion) -> str:

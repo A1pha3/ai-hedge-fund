@@ -136,10 +136,7 @@ class BaseHedgeFundRequest(BaseModel):
     def bound_graph_node_count(cls, v: List[GraphNode]) -> List[GraphNode]:
         limit = _max_graph_nodes()
         if len(v) > limit:
-            raise ValueError(
-                f"Too many graph_nodes: {len(v)} (limit {limit}). "
-                f"Raise HEDGE_FUND_MAX_GRAPH_NODES to allow more."
-            )
+            raise ValueError(f"Too many graph_nodes: {len(v)} (limit {limit}). " f"Raise HEDGE_FUND_MAX_GRAPH_NODES to allow more.")
         return v
 
     def get_agent_ids(self) -> List[str]:

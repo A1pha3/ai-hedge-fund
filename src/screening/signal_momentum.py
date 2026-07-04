@@ -17,6 +17,7 @@ Integration:
     ``--conviction-ranking`` now includes ``signal_momentum`` as a factor
     (configurable via ``--momentum-weight``, default 0.15).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -279,21 +280,14 @@ def render_signal_momentum(report: MomentumReport) -> str:
     for item in report.items:
         arrow = _momentum_arrow(item.momentum_bonus)
         label_str = _momentum_label_colored(item.momentum_label)
-        lines.append(
-            f"  {item.ticker:<8} {item.name[:12]:<12} {item.score_current:>7.3f} "
-            f"{arrow:>6} {item.slope:>+9.5f} {label_str:>30} {item.days_observed:>4}"
-        )
+        lines.append(f"  {item.ticker:<8} {item.name[:12]:<12} {item.score_current:>7.3f} " f"{arrow:>6} {item.slope:>+9.5f} {label_str:>30} {item.days_observed:>4}")
 
     # Summary
     improving = sum(1 for i in report.items if i.momentum_bonus > 0)
     declining = sum(1 for i in report.items if i.momentum_bonus < 0)
     stable = len(report.items) - improving - declining
     lines.append("")
-    lines.append(
-        f"  {Fore.GREEN}↑ 改善: {improving}{Style.RESET_ALL}  "
-        f"{Fore.WHITE}→ 稳定: {stable}{Style.RESET_ALL}  "
-        f"{Fore.RED}↓ 下降: {declining}{Style.RESET_ALL}"
-    )
+    lines.append(f"  {Fore.GREEN}↑ 改善: {improving}{Style.RESET_ALL}  " f"{Fore.WHITE}→ 稳定: {stable}{Style.RESET_ALL}  " f"{Fore.RED}↓ 下降: {declining}{Style.RESET_ALL}")
     lines.append(f"  {Fore.WHITE}说明: 动量 = score_b 的线性回归斜率。正值 = 推荐信号持续增强。{Style.RESET_ALL}")
     return "\n".join(lines)
 

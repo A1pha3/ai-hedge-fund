@@ -1836,7 +1836,7 @@ def test_btst_runner_probe_grid_r18_weights_build_valid_profile() -> None:
 
 def test_compute_sector_concentration_gini_empty_rows_returns_none() -> None:
     """compute_sector_concentration_gini on empty rows must return None gini and zero counts."""
-    
+
     result = compute_sector_concentration_gini([])
     assert result["sector_concentration_gini"] is None
     assert result["sector_count"] == 0
@@ -1846,7 +1846,7 @@ def test_compute_sector_concentration_gini_empty_rows_returns_none() -> None:
 
 def test_compute_sector_concentration_gini_no_industry_field_returns_none() -> None:
     """Rows without 'industry' field should be skipped — gini returns None."""
-    
+
     rows = [{"close": 10.0}, {"close": 11.0}, {"ticker": "000001"}]
     result = compute_sector_concentration_gini(rows)
     assert result["sector_concentration_gini"] is None
@@ -1855,7 +1855,7 @@ def test_compute_sector_concentration_gini_no_industry_field_returns_none() -> N
 
 def test_compute_sector_concentration_gini_single_sector_returns_1() -> None:
     """All rows from one sector must return Gini = 1.0 (maximum concentration)."""
-    
+
     rows = [{"industry": "Tech"}, {"industry": "Tech"}, {"industry": "Tech"}]
     result = compute_sector_concentration_gini(rows)
     assert result["sector_concentration_gini"] == 1.0
@@ -1865,7 +1865,7 @@ def test_compute_sector_concentration_gini_single_sector_returns_1() -> None:
 
 def test_compute_sector_concentration_gini_perfectly_equal_distribution() -> None:
     """Equal counts across all sectors must yield Gini = 0.0 (perfect diversity)."""
-    
+
     rows = [{"industry": "Tech"}, {"industry": "Pharma"}, {"industry": "Auto"}, {"industry": "Finance"}, {"industry": "Consumer"}]
     result = compute_sector_concentration_gini(rows)
     assert result["sector_concentration_gini"] == pytest.approx(0.0, abs=1e-4)
@@ -1874,7 +1874,7 @@ def test_compute_sector_concentration_gini_perfectly_equal_distribution() -> Non
 
 def test_compute_sector_concentration_gini_concentrated_pool_higher_than_diverse() -> None:
     """Concentrated pool (most stocks in one sector) must yield higher Gini than diverse pool."""
-    
+
     diverse = [{"industry": s} for s in ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]]
     concentrated = [{"industry": "Tech"}] * 8 + [{"industry": "Pharma"}] * 2
     g_diverse = compute_sector_concentration_gini(diverse)["sector_concentration_gini"]
@@ -1886,7 +1886,7 @@ def test_compute_sector_concentration_gini_concentrated_pool_higher_than_diverse
 
 def test_compute_sector_concentration_gini_result_in_valid_range() -> None:
     """Gini must be in [0.0, 1.0] for any realistic input."""
-    
+
     rows = [{"industry": "Tech"}] * 15 + [{"industry": "Pharma"}] * 3 + [{"industry": "Auto"}] * 2
     result = compute_sector_concentration_gini(rows)
     g = result["sector_concentration_gini"]
@@ -1896,7 +1896,7 @@ def test_compute_sector_concentration_gini_result_in_valid_range() -> None:
 
 def test_compute_sector_concentration_gini_sector_distribution_top10() -> None:
     """sector_distribution must contain fraction (0–1) values summing to ≤ 1.0."""
-    
+
     rows = [{"industry": chr(65 + i % 12)} for i in range(120)]  # 12 distinct sectors
     result = compute_sector_concentration_gini(rows)
     dist = result["sector_distribution"]
@@ -2082,7 +2082,7 @@ def test_btst_runner_probe_grid_momentum_alignment_builds_valid_profile() -> Non
 
 def test_compute_intraday_high_timing_empty_rows() -> None:
     """compute_intraday_high_timing_distribution on empty rows must return None fractions and zero counts."""
-    
+
     result = compute_intraday_high_timing_distribution([])
     assert result["early_fraction"] is None
     assert result["mid_fraction"] is None
@@ -2094,7 +2094,7 @@ def test_compute_intraday_high_timing_empty_rows() -> None:
 
 def test_compute_intraday_high_timing_rows_missing_ohlc_skipped() -> None:
     """Rows without next_open/next_high/next_close must be silently skipped."""
-    
+
     rows = [{"close": 10.0}, {"ticker": "000001"}, {"next_open": 10.0}]  # missing fields
     result = compute_intraday_high_timing_distribution(rows)
     assert result["sample_count"] == 0
@@ -2103,7 +2103,7 @@ def test_compute_intraday_high_timing_rows_missing_ohlc_skipped() -> None:
 
 def test_compute_intraday_high_timing_all_early_session() -> None:
     """When open == high for all rows, all bars should be classified as early and early_dominated=True."""
-    
+
     rows = [{"next_open": 10.2, "next_high": 10.2, "next_close": 9.8} for _ in range(5)]
     result = compute_intraday_high_timing_distribution(rows)
     assert result["early_fraction"] == pytest.approx(1.0, abs=1e-4)
@@ -2116,7 +2116,7 @@ def test_compute_intraday_high_timing_all_early_session() -> None:
 
 def test_compute_intraday_high_timing_all_late_session() -> None:
     """When close ≈ high and open << high for all rows, all should be late and late_dominated=True."""
-    
+
     rows = [{"next_open": 9.5, "next_high": 10.2, "next_close": 10.19} for _ in range(5)]
     result = compute_intraday_high_timing_distribution(rows)
     assert result["late_fraction"] == pytest.approx(1.0, abs=1e-4)
@@ -2127,7 +2127,7 @@ def test_compute_intraday_high_timing_all_late_session() -> None:
 
 def test_compute_intraday_high_timing_all_mid_session() -> None:
     """When neither open nor close is near the high, all bars should be mid-session."""
-    
+
     rows = [{"next_open": 9.5, "next_high": 11.0, "next_close": 9.8} for _ in range(5)]
     result = compute_intraday_high_timing_distribution(rows)
     assert result["mid_fraction"] == pytest.approx(1.0, abs=1e-4)
@@ -2137,7 +2137,7 @@ def test_compute_intraday_high_timing_all_mid_session() -> None:
 
 def test_compute_intraday_high_timing_mixed_distribution() -> None:
     """Mixed early/mid/late bars should produce fractions that sum to 1.0."""
-    
+
     rows = [
         {"next_open": 10.2, "next_high": 10.2, "next_close": 9.8},  # early
         {"next_open": 10.2, "next_high": 10.2, "next_close": 9.9},  # early
@@ -2152,7 +2152,7 @@ def test_compute_intraday_high_timing_mixed_distribution() -> None:
 
 def test_compute_intraday_high_timing_early_dominated_threshold() -> None:
     """early_dominated must be True when more than 50 % of bars are early-session."""
-    
+
     rows = [{"next_open": 10.2, "next_high": 10.2, "next_close": 9.8}] * 6 + [{"next_open": 9.5, "next_high": 11.0, "next_close": 9.8}] * 4  # 6 early  # 4 mid
     result = compute_intraday_high_timing_distribution(rows)
     assert result["early_dominated"] is True
@@ -2160,7 +2160,7 @@ def test_compute_intraday_high_timing_early_dominated_threshold() -> None:
 
 def test_compute_intraday_high_timing_not_dominated_when_split() -> None:
     """early_dominated and late_dominated must both be False when no group exceeds 50 %."""
-    
+
     rows = [{"next_open": 10.2, "next_high": 10.2, "next_close": 9.8}] * 4 + [{"next_open": 9.5, "next_high": 11.0, "next_close": 9.8}] * 3 + [{"next_open": 9.5, "next_high": 10.2, "next_close": 10.19}] * 3  # early  # mid  # late
     result = compute_intraday_high_timing_distribution(rows)
     assert result["early_dominated"] is False

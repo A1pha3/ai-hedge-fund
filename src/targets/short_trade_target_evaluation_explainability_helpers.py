@@ -196,15 +196,9 @@ def _build_short_trade_watchlist_explainability_payload(
             watchlist_filter_diagnostics_flat_trend_guard,
             effective_penalty=float(snapshot["watchlist_filter_diagnostics_flat_trend_penalty"]),
         ),
-        "watchlist_filter_diagnostics_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(
-            watchlist_filter_diagnostics_selected_only_shrink_guard
-        ),
-        "layer_c_watchlist_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(
-            layer_c_watchlist_selected_only_shrink_guard
-        ),
-        "short_trade_boundary_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(
-            short_trade_boundary_selected_only_shrink_guard
-        ),
+        "watchlist_filter_diagnostics_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(watchlist_filter_diagnostics_selected_only_shrink_guard),
+        "layer_c_watchlist_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(layer_c_watchlist_selected_only_shrink_guard),
+        "short_trade_boundary_selected_only_shrink_guard": _build_watchlist_guard_metrics_payload(short_trade_boundary_selected_only_shrink_guard),
         "t_plus_2_continuation_candidate": _build_t_plus_2_continuation_candidate_metrics_payload(t_plus_2_continuation_candidate),
     }
 

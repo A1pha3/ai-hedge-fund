@@ -89,11 +89,7 @@ def resolve_prepared_breakout_penalty_relief(
             base_extension_score_penalty_weight,
             float(profile.prepared_breakout_penalty_relief_extension_score_penalty_weight),
         )
-    applied = eligible and (
-        dict(effective_positive_score_weights) != dict(base_positive_score_weights)
-        or effective_stale_score_penalty_weight < base_stale_score_penalty_weight
-        or effective_extension_score_penalty_weight < base_extension_score_penalty_weight
-    )
+    applied = eligible and (dict(effective_positive_score_weights) != dict(base_positive_score_weights) or effective_stale_score_penalty_weight < base_stale_score_penalty_weight or effective_extension_score_penalty_weight < base_extension_score_penalty_weight)
     return {
         "enabled": True,
         "eligible": eligible,
@@ -313,20 +309,13 @@ def resolve_prepared_breakout_continuation_relief(
             trend_acceleration,
             min(
                 float(profile.prepared_breakout_continuation_relief_trend_acceleration_floor),
-                clamp_unit_interval(
-                    (0.30 * continuation_support)
-                    + (0.35 * ema_strength)
-                    + (0.20 * long_trend_strength)
-                    + (0.15 * close_strength)
-                ),
+                clamp_unit_interval((0.30 * continuation_support) + (0.35 * ema_strength) + (0.20 * long_trend_strength) + (0.15 * close_strength)),
             ),
         )
     return {
         "enabled": True,
         "eligible": eligible,
-        "applied": eligible and (
-            effective_breakout_freshness > breakout_freshness or effective_trend_acceleration > trend_acceleration
-        ),
+        "applied": eligible and (effective_breakout_freshness > breakout_freshness or effective_trend_acceleration > trend_acceleration),
         "candidate_source": source,
         "breakout_stage": breakout_stage,
         "gate_hits": gate_hits,
@@ -413,9 +402,7 @@ def resolve_prepared_breakout_selected_catalyst_relief(
     return {
         "enabled": True,
         "eligible": eligible,
-        "applied": eligible and (
-            effective_breakout_freshness > breakout_freshness or effective_catalyst_freshness > catalyst_freshness
-        ),
+        "applied": eligible and (effective_breakout_freshness > breakout_freshness or effective_catalyst_freshness > catalyst_freshness),
         "candidate_source": source,
         "breakout_stage": breakout_stage,
         "gate_hits": gate_hits,

@@ -15,6 +15,7 @@ CLI::
     python src/main.py --position-check 000001,300750,600519
     python src/main.py --position-check 000001 --sell-threshold=0.2
 """
+
 from __future__ import annotations
 
 import logging
@@ -192,8 +193,7 @@ def compute_position_health(
         composite_map = {item.ticker: item for item in composite_report.items}
     except Exception:  # noqa: BLE001 — best-effort scoring; degrade gracefully
         logger.warning(
-            "position-check composite scoring failed (tickers=%s, trade_date=%s); "
-            "degrading to base score only — health action may be less reliable",
+            "position-check composite scoring failed (tickers=%s, trade_date=%s); " "degrading to base score only — health action may be less reliable",
             [r.get("ticker") for r in held_recs],
             trade_date,
             exc_info=True,
@@ -283,8 +283,11 @@ def compute_position_health(
         # fallback 0.0 to _determine_action.
         if comp is not None:
             action, reason = _determine_action(
-                composite_score, mom_bonus, trf,
-                sell_threshold, watch_threshold,
+                composite_score,
+                mom_bonus,
+                trf,
+                sell_threshold,
+                watch_threshold,
             )
         else:
             action = "HOLD"
@@ -354,16 +357,15 @@ def render_position_health(report: PositionHealthReport) -> str:
     # scorer was unavailable). Surface this so the user does not act on a false
     # signal — serves product goal "更高确信" (R92, R71-R75 trust-calibration family).
     if report.degraded:
-        lines.append(
-            f"  {Fore.YELLOW}⚠ 信号计算部分降级: 综合分/动量/趋势/量价部分指标可能不可靠, "
-            f"请勿仅凭本次结果操作, 建议稍后重试或检查数据源。{Style.RESET_ALL}"
-        )
+        lines.append(f"  {Fore.YELLOW}⚠ 信号计算部分降级: 综合分/动量/趋势/量价部分指标可能不可靠, " f"请勿仅凭本次结果操作, 建议稍后重试或检查数据源。{Style.RESET_ALL}")
         lines.append("")
 
-    lines.extend([
-        f"  {'标的':<8} {'名称':<10} {'综合':>7} {'动量':>6} {'趋势':>6} {'量价':>6}  {'操作':>16}",
-        f"  {'─' * 8} {'─' * 10} {'─' * 7} {'─' * 6} {'─' * 6} {'─' * 6}  {'─' * 16}",
-    ])
+    lines.extend(
+        [
+            f"  {'标的':<8} {'名称':<10} {'综合':>7} {'动量':>6} {'趋势':>6} {'量价':>6}  {'操作':>16}",
+            f"  {'─' * 8} {'─' * 10} {'─' * 7} {'─' * 6} {'─' * 6} {'─' * 6}  {'─' * 16}",
+        ]
+    )
 
     sell_count = 0
     watch_count = 0
@@ -372,14 +374,7 @@ def render_position_health(report: PositionHealthReport) -> str:
     for item in report.items:
         action_str = _action_colored(item.action)
 
-        lines.append(
-            f"  {item.ticker:<8} {item.name[:10]:<10} "
-            f"{item.composite_score:>+7.3f} "
-            f"{_fmt_signed(item.momentum_bonus):>14} "
-            f"{_fmt_signed(item.trend_resonance_factor):>14} "
-            f"{_fmt_signed(item.volume_factor):>14}  "
-            f"{action_str:>28}"
-        )
+        lines.append(f"  {item.ticker:<8} {item.name[:10]:<10} " f"{item.composite_score:>+7.3f} " f"{_fmt_signed(item.momentum_bonus):>14} " f"{_fmt_signed(item.trend_resonance_factor):>14} " f"{_fmt_signed(item.volume_factor):>14}  " f"{action_str:>28}")
         if item.reason:
             lines.append(f"    {'':>28} {Fore.WHITE}{item.reason}{Style.RESET_ALL}")
 
@@ -391,18 +386,11 @@ def render_position_health(report: PositionHealthReport) -> str:
             hold_count += 1
 
     lines.append("")
-    lines.append(
-        f"  {Fore.GREEN}✓ HOLD: {hold_count}{Style.RESET_ALL}  "
-        f"{Fore.YELLOW}⚠ WATCH: {watch_count}{Style.RESET_ALL}  "
-        f"{Fore.RED}✗ SELL: {sell_count}{Style.RESET_ALL}  "
-        f"总计: {len(report.items)}"
-    )
+    lines.append(f"  {Fore.GREEN}✓ HOLD: {hold_count}{Style.RESET_ALL}  " f"{Fore.YELLOW}⚠ WATCH: {watch_count}{Style.RESET_ALL}  " f"{Fore.RED}✗ SELL: {sell_count}{Style.RESET_ALL}  " f"总计: {len(report.items)}")
 
     if sell_count > 0:
         sell_tickers = [i.ticker for i in report.items if i.action == "SELL"]
-        lines.append(
-            f"  {Fore.RED}⚠ 建议立即关注: {', '.join(sell_tickers)}{Style.RESET_ALL}"
-        )
+        lines.append(f"  {Fore.RED}⚠ 建议立即关注: {', '.join(sell_tickers)}{Style.RESET_ALL}")
 
     # Trust-calibration disclaimer: this surface emits explicit SELL/WATCH/HOLD
     # actions. Carry the same non-advice boundary as --top-picks / --daily-brief
@@ -410,10 +398,7 @@ def render_position_health(report: PositionHealthReport) -> str:
     # instruction (serves product goal "更高确信" = confidence includes honest
     # boundary disclosure).
     lines.append("")
-    lines.append(
-        f"  {Fore.WHITE}⚠ 以上持仓健康检查由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。"
-        f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}"
-    )
+    lines.append(f"  {Fore.WHITE}⚠ 以上持仓健康检查由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。" f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}")
 
     return "\n".join(lines)
 

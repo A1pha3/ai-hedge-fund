@@ -17,6 +17,7 @@ CLI::
 Integration:
     ``--composite-score`` includes trend resonance as a sub-factor.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -317,16 +318,8 @@ def render_trend_resonance(report: TrendResonanceReport) -> str:
         d20 = _direction_icon(item.direction_20d)
         d60 = _direction_icon(item.direction_60d)
         resonance = _resonance_colored(item.resonance_label, item.resonance_factor)
-        factor_str = (
-            f"{Fore.GREEN}+{item.resonance_factor:.2f}{Style.RESET_ALL}"
-            if item.resonance_factor > 0
-            else f"{Fore.RED}{item.resonance_factor:.2f}{Style.RESET_ALL}"
-            if item.resonance_factor < 0
-            else "  0.00"
-        )
-        lines.append(
-            f"  {item.ticker:<8} {item.name[:10]:<10} {d5:>4} {d20:>4} {d60:>4}  {resonance:>14}  {factor_str:>14}"
-        )
+        factor_str = f"{Fore.GREEN}+{item.resonance_factor:.2f}{Style.RESET_ALL}" if item.resonance_factor > 0 else f"{Fore.RED}{item.resonance_factor:.2f}{Style.RESET_ALL}" if item.resonance_factor < 0 else "  0.00"
+        lines.append(f"  {item.ticker:<8} {item.name[:10]:<10} {d5:>4} {d20:>4} {d60:>4}  {resonance:>14}  {factor_str:>14}")
 
     resonance_up = sum(1 for i in report.items if i.resonance_label == "resonance_up")
     partial_up = sum(1 for i in report.items if i.resonance_label == "partial_up")
@@ -334,12 +327,7 @@ def render_trend_resonance(report: TrendResonanceReport) -> str:
     neutral = len(report.items) - resonance_up - partial_up - mixed
 
     lines.append("")
-    lines.append(
-        f"  {Fore.GREEN}共振↑: {resonance_up}{Style.RESET_ALL}  "
-        f"{Fore.GREEN}偏多: {partial_up}{Style.RESET_ALL}  "
-        f"{Fore.WHITE}中性: {neutral}{Style.RESET_ALL}  "
-        f"{Fore.YELLOW}冲突: {mixed}{Style.RESET_ALL}"
-    )
+    lines.append(f"  {Fore.GREEN}共振↑: {resonance_up}{Style.RESET_ALL}  " f"{Fore.GREEN}偏多: {partial_up}{Style.RESET_ALL}  " f"{Fore.WHITE}中性: {neutral}{Style.RESET_ALL}  " f"{Fore.YELLOW}冲突: {mixed}{Style.RESET_ALL}")
     return "\n".join(lines)
 
 

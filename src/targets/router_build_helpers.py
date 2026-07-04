@@ -53,11 +53,7 @@ def build_dual_target_summary(*, selection_targets: dict[str, DualTargetEvaluati
 
 def collect_formal_execution_block_flags(evaluation: Any, short_trade_result: Any | None = None) -> list[str]:
     short_trade_result = short_trade_result if short_trade_result is not None else _read_field(evaluation, "short_trade")
-    return [
-        flag
-        for flag in FORMAL_EXECUTION_BLOCK_FLAGS
-        if bool(_read_field(evaluation, flag)) or bool(_read_field(short_trade_result, flag))
-    ]
+    return [flag for flag in FORMAL_EXECUTION_BLOCK_FLAGS if bool(_read_field(evaluation, flag)) or bool(_read_field(short_trade_result, flag))]
 
 
 def resolve_short_trade_reporting_decision(evaluation: Any, short_trade_result: Any | None = None) -> tuple[str, list[str]]:

@@ -10,6 +10,7 @@ provide an *evaluator* callable (params -> metrics dict).  This keeps the
 infrastructure reusable from both the CLI and unit tests, and matches the
 "pluggable evaluator" pattern used by :mod:`src.backtesting.param_search`.
 """
+
 from __future__ import annotations
 
 import csv
@@ -115,9 +116,7 @@ def parse_param_grid(spec: str) -> dict[str, list[Any]]:
         if not dim:
             continue
         if "=" not in dim:
-            raise ParamGridError(
-                f"invalid --param-grid dimension {dim!r}: expected 'key=v1,v2' format"
-            )
+            raise ParamGridError(f"invalid --param-grid dimension {dim!r}: expected 'key=v1,v2' format")
         key, raw_values = dim.split("=", 1)
         key = key.strip()
         if not key:
@@ -229,14 +228,8 @@ class ParamGridReport:
         Non-finite (NaN/Inf) values are treated as missing so a corrupt
         metric can never appear above finite values via IEEE-754 quirks.
         """
-        finite_trials = [
-            t for t in self.trials
-            if t.metrics.get(metric) is not None and _is_finite_number(t.metrics[metric])
-        ]
-        missing_trials = [
-            t for t in self.trials
-            if t.metrics.get(metric) is None or not _is_finite_number(t.metrics[metric])
-        ]
+        finite_trials = [t for t in self.trials if t.metrics.get(metric) is not None and _is_finite_number(t.metrics[metric])]
+        missing_trials = [t for t in self.trials if t.metrics.get(metric) is None or not _is_finite_number(t.metrics[metric])]
         finite_trials.sort(key=lambda t: float(t.metrics[metric]), reverse=descending)
         # ``missing_trials`` keeps its original report order so failed
         # rows render in the same order they were submitted.

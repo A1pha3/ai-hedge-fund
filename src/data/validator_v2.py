@@ -180,10 +180,7 @@ class EnhancedDataValidator:
         # Use the report's error set to identify invalid metric indices.
         # Errors are keyed by (index, field) — collect unique failing indices.
         failing_indices: set[int] = {e.get("index", -1) for e in report.errors}
-        valid_metrics: list[MetricRow] = [
-            metric for i, metric in enumerate(metrics)
-            if i not in failing_indices
-        ]
+        valid_metrics: list[MetricRow] = [metric for i, metric in enumerate(metrics) if i not in failing_indices]
 
         return valid_metrics, report
 

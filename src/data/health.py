@@ -113,9 +113,7 @@ class HealthTracker:
         if not 0.0 < recover_threshold <= 1.0:
             raise ValueError(f"recover_threshold must be in (0, 1], got {recover_threshold}")
         if recover_threshold < degrade_threshold:
-            raise ValueError(
-                f"recover_threshold ({recover_threshold}) must be >= degrade_threshold ({degrade_threshold})"
-            )
+            raise ValueError(f"recover_threshold ({recover_threshold}) must be >= degrade_threshold ({degrade_threshold})")
 
         self.provider_name = provider_name
         self.window_size = window_size

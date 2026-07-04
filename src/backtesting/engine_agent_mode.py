@@ -119,10 +119,7 @@ def build_pipeline_agent_output(decisions: dict[str, dict], active_tickers: Sequ
     ``analyst_signals`` is left empty because the pipeline mode does not
     produce per-analyst breakdowns.
     """
-    normalized = {
-        ticker: decisions.get(ticker, {"action": "hold", "quantity": 0})
-        for ticker in active_tickers
-    }
+    normalized = {ticker: decisions.get(ticker, {"action": "hold", "quantity": 0}) for ticker in active_tickers}
     return {"decisions": normalized, "analyst_signals": {}}
 
 
@@ -184,10 +181,10 @@ def execute_agent_mode_trades(
     for ticker in tickers:
         decision = decisions.get(ticker, {"action": "hold", "quantity": 0})
         action = decision.get("action", "hold")
-        
+
         # Capture position before execution for entry date tracking
         existing_long_before = int(portfolio.get_positions()[ticker]["long"])
-        
+
         executed_qty = executor.execute_trade(
             ticker,
             action,
@@ -198,7 +195,7 @@ def execute_agent_mode_trades(
             trade_date=trade_date,
         )
         executed_trades[ticker] = executed_qty
-        
+
         # Record long entry lifecycle data for successful buy executions
         if executed_qty > 0 and action == "buy" and trade_date is not None:
             _record_agent_mode_buy_execution(
@@ -230,7 +227,7 @@ def _record_agent_mode_buy_execution(
     trade_date_compact: str,
 ) -> None:
     """Record long entry lifecycle data after successful buy execution.
-    
+
     Reuses the same portfolio lifecycle pattern as pipeline mode to ensure
     T+1 enforcement functions correctly in agent mode.
     """

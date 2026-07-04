@@ -268,9 +268,7 @@ class BacktestService:
         # Date index. Mirrors src/backtesting/engine.py _prepare_run_dates_and_plan
         # (BH-001 drain).
         if len(dates) > 0:
-            self.portfolio_values = [
-                {"Date": dates[0] - pd.Timedelta(days=1), "Portfolio Value": self.initial_capital}
-            ]
+            self.portfolio_values = [{"Date": dates[0] - pd.Timedelta(days=1), "Portfolio Value": self.initial_capital}]
         else:
             self.portfolio_values = []
         backtest_results: list[dict[str, Any]] = []

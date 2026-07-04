@@ -161,13 +161,15 @@ def _compute_risk_metrics(
     for ticker, weight in sorted(weights.items(), key=lambda x: -abs(x[1])):
         long_val = float(positions.get(ticker, {}).get("long", 0)) * prices.get(ticker, 0.0)
         short_val = float(positions.get(ticker, {}).get("short", 0)) * prices.get(ticker, 0.0)
-        industry_exposures.append({
-            "ticker": ticker,
-            "weight": round(weight, 4),
-            "long_value": round(long_val, 2),
-            "short_value": round(short_val, 2),
-            "net_value": round(position_values.get(ticker, 0.0), 2),
-        })
+        industry_exposures.append(
+            {
+                "ticker": ticker,
+                "weight": round(weight, 4),
+                "long_value": round(long_val, 2),
+                "short_value": round(short_val, 2),
+                "net_value": round(position_values.get(ticker, 0.0), 2),
+            }
+        )
 
     # Portfolio CVaR proxy: aggregate from per-ticker edge_data disagreement
     # scale, or use a weighted volatility proxy if signals are sparse.
@@ -265,7 +267,7 @@ def _compute_edge_data_for_completion(
         # Map net into a -15%..+15% expected 30d edge.
         expected_edge = round(net * 0.15, 2)
         # Disagreement count drives CVaR (more disagreement = wider tail).
-        disagreement = (len(bull) > 0 and len(bear) > 0)
+        disagreement = len(bull) > 0 and len(bear) > 0
         cvar_95 = round(0.05 + (0.10 if disagreement else 0.0) + (0.02 * min(len(bull) + len(bear), 10)), 4)
 
         # Risk budget ratio: try the risk manager's remaining_position_limit
@@ -375,6 +377,7 @@ async def stream_hedge_fund_run(
     # events don't cross-contaminate each other's SSE queue. The same run_id is bound
     # into run_graph_async's context so the agents' update_status calls match.
     import uuid
+
     run_id = uuid.uuid4().hex
     progress.register_handler(progress_handler, run_id=run_id)
 
@@ -438,6 +441,7 @@ async def stream_backtest(
     # run_id so a concurrent hedge-fund run (or another backtest) doesn't cross-
     # contaminate this stream's SSE progress via the global handler fan-out.
     import uuid
+
     run_id = uuid.uuid4().hex
     progress.register_handler(progress_handler, run_id=run_id)
 

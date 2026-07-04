@@ -31,6 +31,7 @@ daily scheduling 重算 + JSON artifact 写入, owner NS-5 前门每日自动刷
 CLI 入口: ``--refresh-regime-winrates`` (在 main.py), 串联两者 + 输出 JSON
 供 owner 审阅/替换. launchd daily scheduling 由 owner 部署 (autodev 不部署).
 """
+
 from __future__ import annotations
 
 import json
@@ -218,9 +219,7 @@ def _compute_common_stats(
     """
     n = len(returns)
     wins = sum(1 for r in returns if r > 0)
-    ci_low, ci_high = _winrate_bootstrap_ci(
-        returns, n_bootstrap=n_bootstrap, ci_level=ci_level, seed=seed
-    )
+    ci_low, ci_high = _winrate_bootstrap_ci(returns, n_bootstrap=n_bootstrap, ci_level=ci_level, seed=seed)
     result: dict[str, Any] = {
         "winrate": wins / n if n > 0 else 0.0,
         key_median: statistics.median(returns) if n > 0 else 0.0,
@@ -312,10 +311,7 @@ def compute_regime_historical_winrates_from_records(
 
         # T+30 口径 (regime_winrates)
         t30_field = _HORIZON_TO_FIELD["t30"]
-        t30_returns = [
-            r for r in (_optional_float(rec.get(t30_field)) for rec in recs)
-            if r is not None
-        ]
+        t30_returns = [r for r in (_optional_float(rec.get(t30_field)) for rec in recs) if r is not None]
         if not t30_returns:
             continue  # T+30 全部 None (records 全未 mature) → 跳过该 regime
         if len(t30_returns) < min_samples:
@@ -336,10 +332,7 @@ def compute_regime_historical_winrates_from_records(
             field_name = _HORIZON_TO_FIELD.get(horizon)
             if field_name is None:
                 continue
-            horizon_returns = [
-                r for r in (_optional_float(rec.get(field_name)) for rec in recs)
-                if r is not None
-            ]
+            horizon_returns = [r for r in (_optional_float(rec.get(field_name)) for rec in recs) if r is not None]
             if not horizon_returns:
                 continue  # 该 horizon 全 None → 不入 multi
             if len(horizon_returns) < min_samples:
@@ -405,9 +398,7 @@ def build_date_to_regime_map(reports_dir: Path) -> dict[str, str]:
             continue
 
         market_state = payload.get("market_state") or {}
-        regime = str(
-            market_state.get("regime_gate_level") or "normal"
-        ).strip().lower()
+        regime = str(market_state.get("regime_gate_level") or "normal").strip().lower()
 
         mapping[str(report_date)] = regime
 
@@ -452,18 +443,12 @@ def run_refresh_cli(
 
     records = load_tracking_history(reports_dir)
     if not records:
-        print(
-            f"[RefreshRegimeWinrates] tracking_history.json 为空或缺失 "
-            f"(reports_dir={reports_dir})"
-        )
+        print(f"[RefreshRegimeWinrates] tracking_history.json 为空或缺失 " f"(reports_dir={reports_dir})")
         return 1
 
     date_to_regime = build_date_to_regime_map(reports_dir)
     if not date_to_regime:
-        print(
-            f"[RefreshRegimeWinrates] 未从 auto_screening_*.json 构建到 date→regime "
-            f"映射 (reports_dir={reports_dir})"
-        )
+        print(f"[RefreshRegimeWinrates] 未从 auto_screening_*.json 构建到 date→regime " f"映射 (reports_dir={reports_dir})")
         return 1
 
     result = compute_regime_historical_winrates_from_records(
@@ -479,11 +464,7 @@ def run_refresh_cli(
     if output_path is not None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json_str + "\n", encoding="utf-8")
-        print(
-            f"[RefreshRegimeWinrates] 已写入 {output_path} "
-            f"(total={result.total_records}, matched={result.matched_records}, "
-            f"regimes={list(result.regime_winrates.keys())})"
-        )
+        print(f"[RefreshRegimeWinrates] 已写入 {output_path} " f"(total={result.total_records}, matched={result.matched_records}, " f"regimes={list(result.regime_winrates.keys())})")
     else:
         print(json_str)
     return 0

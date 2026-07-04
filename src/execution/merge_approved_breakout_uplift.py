@@ -123,10 +123,13 @@ def apply_merge_approved_breakout_uplift_to_signal_map(
         confidence_min=MERGE_APPROVED_BREAKOUT_UPLIFT_MOMENTUM_CONFIDENCE_MIN,
     )
     event_signal_supported = _positive_complete(event_snapshot, confidence_min=MERGE_APPROVED_BREAKOUT_UPLIFT_EVENT_CONFIDENCE_MIN) or carryover_gate
-    event_freshness_supported = _positive_complete(
-        event_freshness_snapshot,
-        confidence_min=MERGE_APPROVED_BREAKOUT_UPLIFT_EVENT_FRESHNESS_CONFIDENCE_MIN,
-    ) or carryover_gate
+    event_freshness_supported = (
+        _positive_complete(
+            event_freshness_snapshot,
+            confidence_min=MERGE_APPROVED_BREAKOUT_UPLIFT_EVENT_FRESHNESS_CONFIDENCE_MIN,
+        )
+        or carryover_gate
+    )
     volume_carryover_gate = carryover_gate and _volume_carryover_supported(volatility_snapshot)
     gate_hits = {
         "score_b": float(score_b) >= MERGE_APPROVED_BREAKOUT_UPLIFT_SCORE_B_MIN,
@@ -157,17 +160,9 @@ def apply_merge_approved_breakout_uplift_to_signal_map(
         return {name: _coerce_signal(payload) or StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={}) for name, payload in dict(strategy_signals or {}).items()}, diagnostics
 
     boosted_trend_snapshot, trend_changed = _boost_snapshot(trend_snapshot, confidence_floor=MERGE_APPROVED_BREAKOUT_UPLIFT_TREND_CONFIDENCE_FLOOR)
-    boosted_event_snapshot, event_changed = (
-        _boost_snapshot(event_snapshot, confidence_floor=MERGE_APPROVED_BREAKOUT_UPLIFT_EVENT_CONFIDENCE_FLOOR)
-        if _positive_complete(event_snapshot, confidence_min=MERGE_APPROVED_BREAKOUT_UPLIFT_EVENT_CONFIDENCE_MIN)
-        else _carryover_snapshot(event_snapshot, confidence_floor=MERGE_APPROVED_BREAKOUT_UPLIFT_EVENT_CONFIDENCE_FLOOR)
-    )
+    boosted_event_snapshot, event_changed = _boost_snapshot(event_snapshot, confidence_floor=MERGE_APPROVED_BREAKOUT_UPLIFT_EVENT_CONFIDENCE_FLOOR) if _positive_complete(event_snapshot, confidence_min=MERGE_APPROVED_BREAKOUT_UPLIFT_EVENT_CONFIDENCE_MIN) else _carryover_snapshot(event_snapshot, confidence_floor=MERGE_APPROVED_BREAKOUT_UPLIFT_EVENT_CONFIDENCE_FLOOR)
     boosted_momentum_snapshot, momentum_changed = _boost_snapshot(momentum_snapshot, confidence_floor=MERGE_APPROVED_BREAKOUT_UPLIFT_MOMENTUM_CONFIDENCE_FLOOR)
-    boosted_volatility_snapshot, volatility_changed = (
-        _carryover_snapshot(volatility_snapshot, confidence_floor=MERGE_APPROVED_VOLUME_UPLIFT_VOLATILITY_CONFIDENCE_FLOOR)
-        if volume_carryover_gate
-        else (dict(volatility_snapshot), False)
-    )
+    boosted_volatility_snapshot, volatility_changed = _carryover_snapshot(volatility_snapshot, confidence_floor=MERGE_APPROVED_VOLUME_UPLIFT_VOLATILITY_CONFIDENCE_FLOOR) if volume_carryover_gate else (dict(volatility_snapshot), False)
     boosted_event_freshness_snapshot, event_freshness_changed = (
         _boost_snapshot(
             event_freshness_snapshot,
@@ -199,13 +194,8 @@ def apply_merge_approved_breakout_uplift_to_signal_map(
     )
 
     diagnostics["applied"] = bool(trend_changed or event_changed or momentum_changed or volatility_changed or event_freshness_changed)
-    diagnostics["carryover_applied"] = bool(
-        (int(event_snapshot.get("direction", 0) or 0) <= 0 and int(boosted_event_snapshot.get("direction", 0) or 0) > 0)
-        or (int(event_freshness_snapshot.get("direction", 0) or 0) <= 0 and int(boosted_event_freshness_snapshot.get("direction", 0) or 0) > 0)
-    )
-    diagnostics["volume_carryover_applied"] = bool(
-        int(volatility_snapshot.get("direction", 0) or 0) <= 0 and int(boosted_volatility_snapshot.get("direction", 0) or 0) > 0
-    )
+    diagnostics["carryover_applied"] = bool((int(event_snapshot.get("direction", 0) or 0) <= 0 and int(boosted_event_snapshot.get("direction", 0) or 0) > 0) or (int(event_freshness_snapshot.get("direction", 0) or 0) <= 0 and int(boosted_event_freshness_snapshot.get("direction", 0) or 0) > 0))
+    diagnostics["volume_carryover_applied"] = bool(int(volatility_snapshot.get("direction", 0) or 0) <= 0 and int(boosted_volatility_snapshot.get("direction", 0) or 0) > 0)
     diagnostics["after"] = {
         "trend_confidence": round(float(boosted_trend_snapshot["confidence"]), 4),
         "event_confidence": round(float(boosted_event_snapshot["confidence"]), 4),

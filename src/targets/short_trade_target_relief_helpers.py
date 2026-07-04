@@ -179,13 +179,7 @@ def _resolve_historical_execution_relief_support(
     strong_carryover_history_min_evaluable_count: int,
 ) -> tuple[bool, bool]:
     strong_close_continuation_min_evaluable_count = strong_carryover_history_min_evaluable_count if catalyst_theme_carryover_candidate else 2
-    strong_close_continuation_candidate = (
-        historical_context["execution_quality_label"] == "close_continuation"
-        and historical_context["evaluable_count"] >= strong_close_continuation_min_evaluable_count
-        and historical_context["next_close_positive_rate"] >= 0.8
-        and historical_context["next_high_hit_rate"] >= 0.8
-        and historical_context["next_open_to_close_return_mean"] >= 0.02
-    )
+    strong_close_continuation_candidate = historical_context["execution_quality_label"] == "close_continuation" and historical_context["evaluable_count"] >= strong_close_continuation_min_evaluable_count and historical_context["next_close_positive_rate"] >= 0.8 and historical_context["next_high_hit_rate"] >= 0.8 and historical_context["next_open_to_close_return_mean"] >= 0.02
     execution_quality_support = historical_context["execution_quality_label"] in {"gap_chase_risk", "close_continuation"}
     if catalyst_theme_carryover_candidate:
         execution_quality_support = historical_context["execution_quality_label"] == "close_continuation"
@@ -208,9 +202,7 @@ def _build_historical_execution_relief_gate_hits(
         "profitability_hard_cliff": profitability_gate,
         "evaluable_count": historical_context["evaluable_count"] >= 3 or strong_close_continuation_candidate,
         "execution_quality_support": execution_quality_support,
-        "gap_chase_open_to_close_support": (not profitability_gate)
-        or historical_context["execution_quality_label"] != "gap_chase_risk"
-        or historical_context["next_open_to_close_return_mean"] >= 0.0,
+        "gap_chase_open_to_close_support": (not profitability_gate) or historical_context["execution_quality_label"] != "gap_chase_risk" or historical_context["next_open_to_close_return_mean"] >= 0.0,
         "next_close_positive_rate": historical_context["next_close_positive_rate"] >= 0.5,
         "next_high_hit_rate": historical_context["next_high_hit_rate"] >= 0.5,
     }
@@ -223,11 +215,7 @@ def _resolve_historical_execution_relief_source(
 ) -> str:
     source = str(input_data.replay_context.get("source") or "").strip()
     upstream_candidate_source = str(input_data.replay_context.get("upstream_candidate_source") or "").strip()
-    if (
-        source in {"catalyst_theme", "catalyst_theme_shadow"}
-        and upstream_candidate_source in {"upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow"}
-        and "upstream_shadow_release_candidate" in candidate_reason_codes
-    ):
+    if source in {"catalyst_theme", "catalyst_theme_shadow"} and upstream_candidate_source in {"upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow"} and "upstream_shadow_release_candidate" in candidate_reason_codes:
         return upstream_candidate_source
     return source
 
@@ -292,44 +280,20 @@ def _parse_upstream_shadow_catalyst_relief_config(
         # ("无 near-miss 门槛 = 全部给予 relief"), 不能用 `or base` 静默覆盖为 base 阈值,
         # 否则用户/影子策略显式放宽 relief 到 0 会被静默回退, 破坏 relief 决策。
         # 与同函数下方 next_open_to_close_return_mean 的既有 NOTE 同型。
-        "near_miss_threshold_override": clamp_unit_interval(
-            float(
-                relief_config["near_miss_threshold"]
-                if relief_config.get("near_miss_threshold") is not None
-                else base_near_miss_threshold
-            )
-        ),
-        "select_threshold_override": clamp_unit_interval(
-            float(
-                relief_config["selected_threshold"]
-                if relief_config.get("selected_threshold") is not None
-                else base_select_threshold
-            )
-        ),
+        "near_miss_threshold_override": clamp_unit_interval(float(relief_config["near_miss_threshold"] if relief_config.get("near_miss_threshold") is not None else base_near_miss_threshold)),
+        "select_threshold_override": clamp_unit_interval(float(relief_config["selected_threshold"] if relief_config.get("selected_threshold") is not None else base_select_threshold)),
         "breakout_freshness_min": clamp_unit_interval(float(relief_config.get("breakout_freshness_min", 0.0) or 0.0)),
         "trend_acceleration_min": clamp_unit_interval(float(relief_config.get("trend_acceleration_min", 0.0) or 0.0)),
         "close_strength_min": clamp_unit_interval(float(relief_config.get("close_strength_min", 0.0) or 0.0)),
         "require_no_profitability_hard_cliff": bool(relief_config.get("require_no_profitability_hard_cliff", False)),
-        "required_execution_quality_labels": {
-            str(label).strip()
-            for label in list(relief_config.get("required_execution_quality_labels") or [])
-            if str(label or "").strip()
-        },
+        "required_execution_quality_labels": {str(label).strip() for label in list(relief_config.get("required_execution_quality_labels") or []) if str(label or "").strip()},
         "min_historical_evaluable_count": int(relief_config.get("min_historical_evaluable_count", 0) or 0),
         "min_historical_next_close_positive_rate": float(relief_config.get("min_historical_next_close_positive_rate", 0.0) or 0.0),
         # NOTE: 0.0 是合法 next_open_to_close_return_mean (平开平收), 不能用 `or -1.0` 静默覆盖为 -100%。
-        "min_historical_next_open_to_close_return_mean": float(
-            relief_config.get("min_historical_next_open_to_close_return_mean")
-            if relief_config.get("min_historical_next_open_to_close_return_mean") is not None
-            else -1.0
-        ),
+        "min_historical_next_open_to_close_return_mean": float(relief_config.get("min_historical_next_open_to_close_return_mean") if relief_config.get("min_historical_next_open_to_close_return_mean") is not None else -1.0),
         # NOTE (R107 同族): 0 是合法 carryover 最小评估数 ("无历史要求 = 给予 carryover relief"),
         # 不能用 `or strong_carryover...` 静默覆盖为 carryover 默认值, 否则显式放宽到 0 被静默回退。
-        "carryover_min_historical_evaluable_count": int(
-            relief_config.get("min_historical_evaluable_count")
-            if relief_config.get("min_historical_evaluable_count") is not None
-            else strong_carryover_history_min_evaluable_count
-        ),
+        "carryover_min_historical_evaluable_count": int(relief_config.get("min_historical_evaluable_count") if relief_config.get("min_historical_evaluable_count") is not None else strong_carryover_history_min_evaluable_count),
     }
 
 
@@ -341,29 +305,16 @@ def _resolve_upstream_shadow_catalyst_relief_history_support(
 ) -> tuple[bool, bool, bool]:
     carryover_history_supported = True
     if relief_reason == "catalyst_theme_short_trade_carryover":
-        carryover_history_supported = (
-            historical_context["execution_quality_label"] == "close_continuation"
-            and historical_context["entry_timing_bias"] == "confirm_then_hold"
-            and historical_context["evaluable_count"] >= config["carryover_min_historical_evaluable_count"]
-            and historical_context["next_close_positive_rate"] >= 0.5
-        )
+        carryover_history_supported = historical_context["execution_quality_label"] == "close_continuation" and historical_context["entry_timing_bias"] == "confirm_then_hold" and historical_context["evaluable_count"] >= config["carryover_min_historical_evaluable_count"] and historical_context["next_close_positive_rate"] >= 0.5
 
     carryover_strong_close_continuation = (
-        relief_reason == "catalyst_theme_short_trade_carryover"
-        and historical_context["execution_quality_label"] == "close_continuation"
-        and historical_context["evaluable_count"] >= config["carryover_min_historical_evaluable_count"]
-        and historical_context["next_close_positive_rate"] >= 0.8
-        and historical_context["next_high_hit_rate"] >= 0.8
-        and historical_context["next_open_to_close_return_mean"] >= 0.02
+        relief_reason == "catalyst_theme_short_trade_carryover" and historical_context["execution_quality_label"] == "close_continuation" and historical_context["evaluable_count"] >= config["carryover_min_historical_evaluable_count"] and historical_context["next_close_positive_rate"] >= 0.8 and historical_context["next_high_hit_rate"] >= 0.8 and historical_context["next_open_to_close_return_mean"] >= 0.02
     )
 
     upstream_shadow_history_supported = True
     if relief_reason == "upstream_shadow_catalyst_relief" and config["required_execution_quality_labels"]:
         upstream_shadow_history_supported = (
-            historical_context["execution_quality_label"] in config["required_execution_quality_labels"]
-            and historical_context["evaluable_count"] >= config["min_historical_evaluable_count"]
-            and historical_context["next_close_positive_rate"] >= config["min_historical_next_close_positive_rate"]
-            and historical_context["next_open_to_close_return_mean"] >= config["min_historical_next_open_to_close_return_mean"]
+            historical_context["execution_quality_label"] in config["required_execution_quality_labels"] and historical_context["evaluable_count"] >= config["min_historical_evaluable_count"] and historical_context["next_close_positive_rate"] >= config["min_historical_next_close_positive_rate"] and historical_context["next_open_to_close_return_mean"] >= config["min_historical_next_open_to_close_return_mean"]
         )
 
     return carryover_history_supported, carryover_strong_close_continuation, upstream_shadow_history_supported
@@ -386,11 +337,7 @@ def _build_upstream_shadow_catalyst_relief_gate_hits(
         "close_strength": close_strength >= config["close_strength_min"],
         "no_profitability_hard_cliff": (not config["require_no_profitability_hard_cliff"]) or (not profitability_hard_cliff),
         **({"historical_continuation_quality": carryover_history_supported} if relief_reason == "catalyst_theme_short_trade_carryover" else {}),
-        **(
-            {"historical_continuation_quality": upstream_shadow_history_supported}
-            if relief_reason == "upstream_shadow_catalyst_relief" and config["required_execution_quality_labels"]
-            else {}
-        ),
+        **({"historical_continuation_quality": upstream_shadow_history_supported} if relief_reason == "upstream_shadow_catalyst_relief" and config["required_execution_quality_labels"] else {}),
     }
 
 
@@ -430,11 +377,7 @@ def _build_upstream_shadow_catalyst_relief_result(
     historical_context: dict[str, Any],
     carryover_strong_close_continuation: bool,
 ) -> dict[str, Any]:
-    applied = eligible and (
-        effective_catalyst_freshness > catalyst_freshness
-        or effective_near_miss_threshold < base_near_miss_threshold
-        or effective_select_threshold < base_select_threshold
-    )
+    applied = eligible and (effective_catalyst_freshness > catalyst_freshness or effective_near_miss_threshold < base_near_miss_threshold or effective_select_threshold < base_select_threshold)
     return {
         "enabled": True,
         "eligible": eligible,
@@ -465,16 +408,8 @@ def _has_weak_intraday_or_zero_follow_through_history(historical_prior: dict[str
     historical_applied_scope = str(historical_prior.get("applied_scope") or "")
     historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
     historical_next_close_positive_rate = clamp_unit_interval(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
-    weak_same_ticker_intraday_history = (
-        historical_applied_scope == "same_ticker"
-        and historical_execution_quality_label == "intraday_only"
-        and historical_evaluable_count >= 3
-        and historical_next_close_positive_rate <= 0.0
-    )
-    weak_zero_follow_through_history = (
-        historical_execution_quality_label == "zero_follow_through"
-        and historical_evaluable_count >= 3
-    )
+    weak_same_ticker_intraday_history = historical_applied_scope == "same_ticker" and historical_execution_quality_label == "intraday_only" and historical_evaluable_count >= 3 and historical_next_close_positive_rate <= 0.0
+    weak_zero_follow_through_history = historical_execution_quality_label == "zero_follow_through" and historical_evaluable_count >= 3
     return (
         weak_same_ticker_intraday_history or weak_zero_follow_through_history,
         historical_execution_quality_label,
@@ -499,13 +434,7 @@ def _parse_visibility_gap_continuation_relief_config(
         # ("接受全部 relief"), 不能用 `or base_near_miss_threshold` 静默回退, 否则显式
         # 覆盖到 0.0 被静默替换为非零 base (如 0.46), 掩盖用户的放宽意图。参考
         # _parse_upstream_shadow_catalyst_relief_config 同根因修复。
-        "near_miss_threshold_override": clamp_unit_interval(
-            float(
-                profile.visibility_gap_continuation_near_miss_threshold
-                if profile.visibility_gap_continuation_near_miss_threshold is not None
-                else base_near_miss_threshold
-            )
-        ),
+        "near_miss_threshold_override": clamp_unit_interval(float(profile.visibility_gap_continuation_near_miss_threshold if profile.visibility_gap_continuation_near_miss_threshold is not None else base_near_miss_threshold)),
     }
 
 
@@ -641,10 +570,7 @@ def resolve_historical_execution_relief(
     return {
         "enabled": True,
         "eligible": eligible,
-        "applied": eligible and (
-            near_miss_threshold_override < base_near_miss_threshold
-            or select_threshold_override < base_select_threshold
-        ),
+        "applied": eligible and (near_miss_threshold_override < base_near_miss_threshold or select_threshold_override < base_select_threshold),
         "candidate_source": source,
         "execution_quality_label": historical_context["execution_quality_label"],
         "evaluable_count": historical_context["evaluable_count"],
@@ -811,10 +737,7 @@ def resolve_visibility_gap_continuation_relief(
         effective_catalyst_freshness = max(catalyst_freshness, config["catalyst_freshness_floor"])
         effective_near_miss_threshold = min(base_near_miss_threshold, config["near_miss_threshold_override"])
 
-    applied = eligible and (
-        effective_catalyst_freshness > catalyst_freshness
-        or effective_near_miss_threshold < base_near_miss_threshold
-    )
+    applied = eligible and (effective_catalyst_freshness > catalyst_freshness or effective_near_miss_threshold < base_near_miss_threshold)
     return {
         "enabled": True,
         "eligible": eligible,
@@ -849,11 +772,7 @@ def resolve_merge_approved_continuation_relief(
     profile: Any,
     historical_prior_getter: Callable[[TargetEvaluationInput], dict[str, Any]],
 ) -> dict[str, Any]:
-    candidate_reason_codes = {
-        str(code).strip()
-        for code in list(input_data.replay_context.get("candidate_reason_codes") or [])
-        if str(code or "").strip()
-    }
+    candidate_reason_codes = {str(code).strip() for code in list(input_data.replay_context.get("candidate_reason_codes") or []) if str(code or "").strip()}
     historical_prior = historical_prior_getter(input_data)
     base_near_miss_threshold = float(profile.near_miss_threshold)
     base_select_threshold = float(profile.select_threshold)
@@ -891,10 +810,7 @@ def resolve_merge_approved_continuation_relief(
     return {
         "enabled": True,
         "eligible": eligible,
-        "applied": eligible and (
-            effective_near_miss_threshold < base_near_miss_threshold
-            or effective_select_threshold < base_select_threshold
-        ),
+        "applied": eligible and (effective_near_miss_threshold < base_near_miss_threshold or effective_select_threshold < base_select_threshold),
         "reason": "merge_approved_continuation_relief",
         "gate_hits": gate_hits,
         "base_near_miss_threshold": base_near_miss_threshold,

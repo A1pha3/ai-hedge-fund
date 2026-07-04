@@ -88,14 +88,8 @@ def render_drawdown_line(est: DrawdownEstimate) -> str:
     t30 = est.t30_return
     t30_str = f"{t30:+.1f}%" if t30 is not None else "—"
     if dd <= _DEEP_DRAWDOWN_THRESHOLD:
-        return (
-            f"  {Fore.CYAN}📉 回撤预期:{Style.RESET_ALL} "
-            f"T+30 {t30_str}, 平均路径最大回撤 {Fore.RED}{dd:.1f}% ⚠ (深){Style.RESET_ALL}"
-        )
-    return (
-        f"  {Fore.CYAN}📉 回撤预期:{Style.RESET_ALL} "
-        f"T+30 {t30_str}, 平均路径最大回撤 {dd:.1f}%"
-    )
+        return f"  {Fore.CYAN}📉 回撤预期:{Style.RESET_ALL} " f"T+30 {t30_str}, 平均路径最大回撤 {Fore.RED}{dd:.1f}% ⚠ (深){Style.RESET_ALL}"
+    return f"  {Fore.CYAN}📉 回撤预期:{Style.RESET_ALL} " f"T+30 {t30_str}, 平均路径最大回撤 {dd:.1f}%"
 
 
 __all__ = [

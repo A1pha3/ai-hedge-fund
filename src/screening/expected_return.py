@@ -87,26 +87,10 @@ class ExpectedReturn:
             "bucket_label": self.bucket_label,
             "bucket_sample_count": self.bucket_sample_count,
             "bucket_t30_mature_count": self.bucket_t30_mature_count,
-            "bucket_t30_avg_negative_return": (
-                round(self.bucket_t30_avg_negative_return, 4)
-                if self.bucket_t30_avg_negative_return is not None
-                else None
-            ),
-            "bucket_t30_std_return": (
-                round(self.bucket_t30_std_return, 4)
-                if self.bucket_t30_std_return is not None
-                else None
-            ),
-            "bucket_t30_p5_return": (
-                round(self.bucket_t30_p5_return, 4)
-                if self.bucket_t30_p5_return is not None
-                else None
-            ),
-            "bucket_t30_median_return": (
-                round(self.bucket_t30_median_return, 4)
-                if self.bucket_t30_median_return is not None
-                else None
-            ),
+            "bucket_t30_avg_negative_return": (round(self.bucket_t30_avg_negative_return, 4) if self.bucket_t30_avg_negative_return is not None else None),
+            "bucket_t30_std_return": (round(self.bucket_t30_std_return, 4) if self.bucket_t30_std_return is not None else None),
+            "bucket_t30_p5_return": (round(self.bucket_t30_p5_return, 4) if self.bucket_t30_p5_return is not None else None),
+            "bucket_t30_median_return": (round(self.bucket_t30_median_return, 4) if self.bucket_t30_median_return is not None else None),
             "expected_returns": {k: round(v, 4) if v is not None else None for k, v in self.expected_returns.items()},
             "win_rates": {k: round(v, 4) if v is not None else None for k, v in self.win_rates.items()},
         }
@@ -367,8 +351,7 @@ def render_expected_returns(report: ExpectedReturnReport) -> str:
 
     lines = [
         f"\n{Fore.CYAN}📊 预期收益估算{Style.RESET_ALL}",
-        f"  基于最近 {report.lookback_days} 天 {report.total_samples} 条历史推荐"
-        f" (其中 {report.mature_t30_samples} 条已有 T+30 实际收益)",
+        f"  基于最近 {report.lookback_days} 天 {report.total_samples} 条历史推荐" f" (其中 {report.mature_t30_samples} 条已有 T+30 实际收益)",
         "",
         # R52: add T+30 win-rate column. ``win_rates`` is computed for all
         # horizons but the full render previously showed only expected returns
@@ -396,25 +379,11 @@ def render_expected_returns(report: ExpectedReturnReport) -> str:
         # guard: flag when 0 < mature < 5 so a green 100% on n=1 does not mislead.
         if 0 < item.bucket_t30_mature_count < 5:
             wr_t30 = f"{wr_t30} {Fore.YELLOW}⚠少样本{Style.RESET_ALL}"
-        row = (
-            f"  {item.ticker:<8} {item.score_b:>6.3f} {item.bucket_label:>10} {item.bucket_sample_count:>4} {item.bucket_t30_mature_count:>5}"
-            f"  {_fmt_return(er.get('t1')):>18}"
-            f"  {_fmt_return(er.get('t5')):>18}"
-            f"  {_fmt_return(er.get('t10')):>18}"
-            f"  {_fmt_return(er.get('t20')):>19}"
-            f"  {_fmt_return(er.get('t30')):>19}"
-            f"  {_fmt_return(item.bucket_t30_median_return):>19}"
-            f"  {wr_t30:>8}"
-        )
+        row = f"  {item.ticker:<8} {item.score_b:>6.3f} {item.bucket_label:>10} {item.bucket_sample_count:>4} {item.bucket_t30_mature_count:>5}" f"  {_fmt_return(er.get('t1')):>18}" f"  {_fmt_return(er.get('t5')):>18}" f"  {_fmt_return(er.get('t10')):>18}" f"  {_fmt_return(er.get('t20')):>19}" f"  {_fmt_return(er.get('t30')):>19}" f"  {_fmt_return(item.bucket_t30_median_return):>19}" f"  {wr_t30:>8}"
         lines.append(row)
 
     lines.append("")
-    lines.append(
-        f"  {Fore.WHITE}说明: 预期收益 = 历史同 score 分位的平均实际收益;"
-        f"T+30中位 = 同分位 T+30 收益中位数 (R-5.C 诚实窄预测, 抗 outlier)."
-        f"「样本」为该分位全部历史推荐数;「T30熟」为其中已满 30 天、"
-        f"实际贡献 T+30 统计的成熟样本数。仅供参考。{Style.RESET_ALL}"
-    )
+    lines.append(f"  {Fore.WHITE}说明: 预期收益 = 历史同 score 分位的平均实际收益;" f"T+30中位 = 同分位 T+30 收益中位数 (R-5.C 诚实窄预测, 抗 outlier)." f"「样本」为该分位全部历史推荐数;「T30熟」为其中已满 30 天、" f"实际贡献 T+30 统计的成熟样本数。仅供参考。{Style.RESET_ALL}")
     return "\n".join(lines)
 
 
@@ -464,8 +433,6 @@ def render_expected_returns_compact(report: ExpectedReturnReport) -> str:
         # R-5.C: T+30 中位数 (诚实窄预测). 与 mean 并列展示 — 差距大说明本桶被
         # outlier 拉高/拉低, 用户应更信任 median 作为典型票的代表.
         med_str = f"  T+30中位={_fmt_return(item.bucket_t30_median_return)}" if item.bucket_t30_median_return is not None else ""
-        lines.append(
-            f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}{med_str}{std_str}  T+30胜率={wr_str}{dd_str}{p5_str}"
-        )
+        lines.append(f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}{med_str}{std_str}  T+30胜率={wr_str}{dd_str}{p5_str}")
 
     return "\n".join(lines)

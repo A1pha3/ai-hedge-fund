@@ -353,9 +353,7 @@ def _build_target_context(plan: ExecutionPlan, ticker: str) -> dict[str, Any]:
         target_context["candidate_reason_codes"] = candidate_reason_codes
     research_result = getattr(evaluation, "research", None)
     short_trade_result = getattr(evaluation, "short_trade", None)
-    short_trade_reporting_decision, formal_execution_block_flags = resolve_short_trade_reporting_decision(
-        evaluation, short_trade_result
-    )
+    short_trade_reporting_decision, formal_execution_block_flags = resolve_short_trade_reporting_decision(evaluation, short_trade_result)
     if research_result is not None:
         target_context["research_decision"] = str(research_result.decision or "")
     if short_trade_result is not None:

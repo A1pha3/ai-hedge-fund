@@ -850,9 +850,7 @@ def _finalize_short_trade_snapshot_relief_resolution(
         effective_near_miss_threshold=core_state.score_penalty_state.effective_near_miss_threshold,
     )
     effective_watchlist_selected_only_shrink_select_threshold = float(market_state_threshold_adjustment["effective_select_threshold"]) + (
-        core_state.watchlist_penalty_state.effective_watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift
-        + core_state.watchlist_penalty_state.effective_layer_c_watchlist_selected_only_shrink_select_threshold_lift
-        + core_state.watchlist_penalty_state.effective_short_trade_boundary_selected_only_shrink_select_threshold_lift
+        core_state.watchlist_penalty_state.effective_watchlist_filter_diagnostics_selected_only_shrink_select_threshold_lift + core_state.watchlist_penalty_state.effective_layer_c_watchlist_selected_only_shrink_select_threshold_lift + core_state.watchlist_penalty_state.effective_short_trade_boundary_selected_only_shrink_select_threshold_lift
     )
     selected_close_retention_adjustment = _resolve_selected_close_retention_adjustment(
         profile=core_state.profile,

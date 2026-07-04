@@ -259,12 +259,7 @@ def reweight_recommendations(
         # reweight 前后不变), 不在 reset 范围.
         _orig_bucket = _find_score_bucket(original) if math.isfinite(original) else None
         _new_bucket = _find_score_bucket(new_score_b) if math.isfinite(new_score_b) else None
-        if (
-            _orig_bucket is not None
-            and _new_bucket is not None
-            and _orig_bucket[0] != _new_bucket[0]
-            and rec.get("bucket_label") is not None
-        ):
+        if _orig_bucket is not None and _new_bucket is not None and _orig_bucket[0] != _new_bucket[0] and rec.get("bucket_label") is not None:
             rec_copy["bucket_label"] = "未知"
             rec_copy["bucket_sample_count"] = 0
             rec_copy["bucket_t30_mature_count"] = 0

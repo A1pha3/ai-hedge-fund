@@ -17,6 +17,7 @@ Integration:
     ``--auto`` output now includes ``sector_strength`` field per recommendation.
     ``--conviction-ranking`` can include sector strength as a factor.
 """
+
 from __future__ import annotations
 
 import logging
@@ -262,51 +263,27 @@ def render_sector_strength(report: SectorStrengthReport) -> str:
     ]
 
     if report.strong_sectors:
-        lines.append(
-            f"  {Fore.GREEN}强势行业: {', '.join(report.strong_sectors)}{Style.RESET_ALL}"
-        )
+        lines.append(f"  {Fore.GREEN}强势行业: {', '.join(report.strong_sectors)}{Style.RESET_ALL}")
     if report.weak_sectors:
-        lines.append(
-            f"  {Fore.RED}弱势行业: {', '.join(report.weak_sectors)}{Style.RESET_ALL}"
-        )
+        lines.append(f"  {Fore.RED}弱势行业: {', '.join(report.weak_sectors)}{Style.RESET_ALL}")
 
     lines.append("")
-    lines.append(
-        f"  {'标的':<8} {'名称':<12} {'行业':<10} {'行业动量':>8} {'排名':>6} {'强度':>6} {'加权':>6}"
-    )
-    lines.append(
-        f"  {'─' * 8} {'─' * 12} {'─' * 10} {'─' * 8} {'─' * 6} {'─' * 6} {'─' * 6}"
-    )
+    lines.append(f"  {'标的':<8} {'名称':<12} {'行业':<10} {'行业动量':>8} {'排名':>6} {'强度':>6} {'加权':>6}")
+    lines.append(f"  {'─' * 8} {'─' * 12} {'─' * 10} {'─' * 8} {'─' * 6} {'─' * 6} {'─' * 6}")
 
     for item in report.items:
         label = _strength_label_colored(item.strength_label)
-        bonus_str = (
-            f"{Fore.GREEN}+{item.strength_bonus:.2f}{Style.RESET_ALL}"
-            if item.strength_bonus > 0
-            else f"{Fore.RED}{item.strength_bonus:.2f}{Style.RESET_ALL}"
-            if item.strength_bonus < 0
-            else "  0.00"
-        )
+        bonus_str = f"{Fore.GREEN}+{item.strength_bonus:.2f}{Style.RESET_ALL}" if item.strength_bonus > 0 else f"{Fore.RED}{item.strength_bonus:.2f}{Style.RESET_ALL}" if item.strength_bonus < 0 else "  0.00"
         rank_str = f"{item.sector_rank}/{item.sector_total}" if item.sector_total > 0 else "—"
-        lines.append(
-            f"  {item.ticker:<8} {item.name[:12]:<12} {item.industry[:10]:<10} "
-            f"{item.sector_momentum:>+8.4f} {rank_str:>6} {label:>8} {bonus_str:>14}"
-        )
+        lines.append(f"  {item.ticker:<8} {item.name[:12]:<12} {item.industry[:10]:<10} " f"{item.sector_momentum:>+8.4f} {rank_str:>6} {label:>8} {bonus_str:>14}")
 
     # Summary
     strong_count = sum(1 for i in report.items if i.strength_label == "strong")
     weak_count = sum(1 for i in report.items if i.strength_label == "weak")
     neutral_count = len(report.items) - strong_count - weak_count
     lines.append("")
-    lines.append(
-        f"  {Fore.GREEN}强行业: {strong_count}{Style.RESET_ALL}  "
-        f"{Fore.WHITE}中性: {neutral_count}{Style.RESET_ALL}  "
-        f"{Fore.RED}弱行业: {weak_count}{Style.RESET_ALL}"
-    )
-    lines.append(
-        f"  {Fore.WHITE}说明: 强行业标的 +{_STRONG_SECTOR_BONUS:.2f}, "
-        f"弱行业标的 {_WEAK_SECTOR_PENALTY:.2f}{Style.RESET_ALL}"
-    )
+    lines.append(f"  {Fore.GREEN}强行业: {strong_count}{Style.RESET_ALL}  " f"{Fore.WHITE}中性: {neutral_count}{Style.RESET_ALL}  " f"{Fore.RED}弱行业: {weak_count}{Style.RESET_ALL}")
+    lines.append(f"  {Fore.WHITE}说明: 强行业标的 +{_STRONG_SECTOR_BONUS:.2f}, " f"弱行业标的 {_WEAK_SECTOR_PENALTY:.2f}{Style.RESET_ALL}")
     return "\n".join(lines)
 
 

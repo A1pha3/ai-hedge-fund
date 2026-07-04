@@ -37,29 +37,35 @@ ADMIN_ROLES = {ROLE_ADMIN}
 
 class AuthError(Exception):
     """Base exception for authentication errors."""
+
     pass
 
 
 class InvalidCredentialsError(AuthError):
     """Raised when login credentials are invalid."""
+
     pass
 
 
 class AccountLockedError(AuthError):
     """Raised when account is locked due to failed login attempts."""
+
     pass
 
 
 class ForbiddenError(AuthError):
     """Raised when user lacks permission for an action."""
+
     pass
 
 
 class InvalidTokenError(AuthError):
     """Raised when a token is invalid or expired."""
+
     pass
 
 
 class WeakPasswordError(AuthError):
     """Raised when password does not meet complexity requirements."""
+
     pass

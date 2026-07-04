@@ -5,6 +5,7 @@ PAV (Pool Adjacent Violators) 算法, 无 sklearn 依赖, 可注入测试.
 
 纯展示层, 不改推荐门控/排序/BUY 逻辑.
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -51,9 +52,7 @@ class IsotonicModel:
         return self.values[-1]
 
 
-def pool_adjacent_violators(
-    xs: Sequence[float], ys: Sequence[float]
-) -> list[float]:
+def pool_adjacent_violators(xs: Sequence[float], ys: Sequence[float]) -> list[float]:
     """PAV 算法 — 把 ys 调整为单调递增.
 
     输入: xs (已排序), ys (可能违反单调性)
@@ -134,9 +133,7 @@ def fit_isotonic(
     )
 
 
-def apply_isotonic(
-    model: IsotonicModel, xs: Sequence[float]
-) -> list[float | None]:
+def apply_isotonic(model: IsotonicModel, xs: Sequence[float]) -> list[float | None]:
     """对一组 x 值应用 isotonic 校准.
 
     Returns:
@@ -145,9 +142,7 @@ def apply_isotonic(
     return [model.apply(x) for x in xs]
 
 
-def is_bucket_insufficient(
-    sample_count: int, min_samples: int = MIN_BUCKET_SAMPLES
-) -> bool:
+def is_bucket_insufficient(sample_count: int, min_samples: int = MIN_BUCKET_SAMPLES) -> bool:
     """判断 bucket 样本是否不足 (R-5.C 第 4 项).
 
     Args:

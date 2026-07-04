@@ -137,11 +137,7 @@ def render_correlation_note(report: CorrelationDiscountReport) -> str:
         key=lambda kv: kv[1],
     )[:3]
     disc_str = ", ".join(f"{t}×{f:.2f}" for t, f in discounted)
-    return (
-        f"  {Fore.CYAN}🔗 相关性仓位折减:{Style.RESET_ALL} "
-        f"{Fore.RED}⚠ 高相关对: {pairs_str}{Style.RESET_ALL}  "
-        f"→ 建议折减 {disc_str} (同行业/分数邻近 ≠ 独立 bet)"
-    )
+    return f"  {Fore.CYAN}🔗 相关性仓位折减:{Style.RESET_ALL} " f"{Fore.RED}⚠ 高相关对: {pairs_str}{Style.RESET_ALL}  " f"→ 建议折减 {disc_str} (同行业/分数邻近 ≠ 独立 bet)"
 
 
 __all__ = [

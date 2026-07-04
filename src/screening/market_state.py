@@ -92,6 +92,7 @@ def detect_market_state(trade_date: str) -> MarketState:
     # P2-9: 可选宏观数据集成 — 失败不阻塞现有逻辑
     try:
         from src.data.macro_data import compute_macro_regime, fetch_macro_snapshot
+
         macro = fetch_macro_snapshot()
         regime = compute_macro_regime(macro)
         # 仅当至少有一个非 unknown 标签时才附加
@@ -99,8 +100,7 @@ def detect_market_state(trade_date: str) -> MarketState:
             state.macro_context = regime
     except Exception:  # noqa: BLE001 — macro context is best-effort, never blocks market state
         logger.warning(
-            "macro regime integration failed for trade_date=%s; "
-            "market state signal (GO/CAUTION/WAIT) will omit macro context",
+            "macro regime integration failed for trade_date=%s; " "market state signal (GO/CAUTION/WAIT) will omit macro context",
             trade_date,
             exc_info=True,
         )

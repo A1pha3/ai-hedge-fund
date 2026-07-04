@@ -106,13 +106,7 @@ def _score_cathie_rnd_intensity(financial_line_items: list) -> tuple[int, str | 
     # Filtering each field independently then indexing [0] crossed periods when some
     # items lacked one field (item0 had revenue but no R&D -> rd[0]=item1.R&D over
     # rev[0]=item0.revenue). Pair in one comprehension, like the munger sibling.
-    paired = [
-        (item.research_and_development, item.revenue)
-        for item in financial_line_items
-        if hasattr(item, "research_and_development")
-        and item.research_and_development is not None
-        and getattr(item, "revenue", None) is not None
-    ]
+    paired = [(item.research_and_development, item.revenue) for item in financial_line_items if hasattr(item, "research_and_development") and item.research_and_development is not None and getattr(item, "revenue", None) is not None]
     if not paired:
         return 0, "No R&D data available"
 
@@ -131,13 +125,7 @@ def _score_cathie_rnd_trends(financial_line_items: list) -> tuple[int, list[str]
     # R125 / positional-mismatch family: pair R&D with revenue from the SAME period
     # so [0]/[-1] indexing aligns periods (independent filters crossed periods when
     # some items lacked one field, fabricating false "Increasing R&D intensity").
-    paired = [
-        (item.research_and_development, item.revenue)
-        for item in financial_line_items
-        if hasattr(item, "research_and_development")
-        and item.research_and_development is not None
-        and getattr(item, "revenue", None) is not None
-    ]
+    paired = [(item.research_and_development, item.revenue) for item in financial_line_items if hasattr(item, "research_and_development") and item.research_and_development is not None and getattr(item, "revenue", None) is not None]
 
     if not (paired and len(paired) >= 2):
         return 0, ["Insufficient R&D data for trend analysis"]
@@ -199,13 +187,7 @@ def _score_cathie_capex_commitment(financial_line_items: list) -> tuple[int, str
     # R125 / positional-mismatch family: pair capex with revenue from the SAME period
     # so abs(capex[0])/revenues[0] aligns periods (independent filters crossed periods
     # when some items lacked one field, inflating capex_intensity and flipping scores).
-    paired = [
-        (item.capital_expenditure, item.revenue)
-        for item in financial_line_items
-        if hasattr(item, "capital_expenditure")
-        and item.capital_expenditure is not None
-        and getattr(item, "revenue", None) is not None
-    ]
+    paired = [(item.capital_expenditure, item.revenue) for item in financial_line_items if hasattr(item, "capital_expenditure") and item.capital_expenditure is not None and getattr(item, "revenue", None) is not None]
     if not (paired and len(paired) >= 2):
         return 0, "Insufficient CAPEX data"
 
@@ -227,13 +209,7 @@ def _score_cathie_reinvestment_focus(financial_line_items: list) -> tuple[int, s
     # Previously dividends[0]/fcf_vals[0] crossed periods when some items lacked one
     # field (e.g. item0 had zero FCF but no dividends -> fcf[0]=0 triggered the
     # ``else 1`` payout, masking item1's real low payout ratio).
-    paired = [
-        (item.dividends_and_other_cash_distributions, item.free_cash_flow)
-        for item in financial_line_items
-        if hasattr(item, "dividends_and_other_cash_distributions")
-        and item.dividends_and_other_cash_distributions is not None
-        and getattr(item, "free_cash_flow", None) is not None
-    ]
+    paired = [(item.dividends_and_other_cash_distributions, item.free_cash_flow) for item in financial_line_items if hasattr(item, "dividends_and_other_cash_distributions") and item.dividends_and_other_cash_distributions is not None and getattr(item, "free_cash_flow", None) is not None]
     if not paired:
         return 0, "Insufficient dividend data"
 

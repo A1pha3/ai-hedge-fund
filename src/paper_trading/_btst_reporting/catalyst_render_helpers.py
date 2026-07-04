@@ -7,20 +7,8 @@ from typing import Any
 from src.paper_trading.btst_reporting_utils import _format_float
 
 
-def _append_threshold_shortfalls_line(
-    lines: list[str], threshold_shortfalls: dict[str, Any]
-) -> None:
-    lines.append(
-        "- threshold_shortfalls: "
-        + (
-            ", ".join(
-                f"{key}={_format_float(value)}"
-                for key, value in threshold_shortfalls.items()
-            )
-            if threshold_shortfalls
-            else "none"
-        )
-    )
+def _append_threshold_shortfalls_line(lines: list[str], threshold_shortfalls: dict[str, Any]) -> None:
+    lines.append("- threshold_shortfalls: " + (", ".join(f"{key}={_format_float(value)}" for key, value in threshold_shortfalls.items()) if threshold_shortfalls else "none"))
 
 
 def _append_catalyst_watch_metrics(lines: list[str], metrics: dict[str, Any]) -> None:

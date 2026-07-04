@@ -129,7 +129,10 @@ def compute_stock_history_expectation(
         as_of = _parse_date(as_of_date)
 
     returns, period_start, period_end = _filter_window(
-        ticker, trade_rows, as_of, lookback_days,
+        ticker,
+        trade_rows,
+        as_of,
+        lookback_days,
     )
     n = len(returns)
     is_small = n < min_sample

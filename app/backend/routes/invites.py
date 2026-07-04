@@ -20,20 +20,24 @@ router = APIRouter(prefix="/invites", tags=["invites"])
 
 # ---- Request / Response Schemas ----
 
+
 class CreateInviteRequest(BaseModel):
     """Request body for generating a new invitation code."""
+
     role_to_assign: str = Field(default=ROLE_MEMBER, description="Role to assign when code is redeemed")
     expires_days: Optional[int] = Field(default=7, description="Days until expiry (null = no expiry)")
 
 
 class RedeemInviteRequest(BaseModel):
     """Request body for redeeming an invitation code (public registration)."""
+
     username: str = Field(..., min_length=3, max_length=50, pattern=r"^[a-zA-Z0-9_]+$")
     password: str = Field(..., min_length=8, max_length=128)
 
 
 class InviteResponse(BaseModel):
     """Serialized invitation code."""
+
     id: int
     code: str
     is_used: bool
@@ -48,6 +52,7 @@ class InviteResponse(BaseModel):
 
 class UserResponse(BaseModel):
     """Serialized user info returned after redeem."""
+
     id: int
     username: str
     email: Optional[str] = None
@@ -72,6 +77,7 @@ class UserRoleUpdateRequest(BaseModel):
 
 
 # ---- Admin-only Endpoints ----
+
 
 @router.post("/", response_model=InviteResponse, status_code=201)
 async def create_invite(
@@ -136,6 +142,7 @@ async def revoke_invite(
 
 # ---- Public Endpoint ----
 
+
 @router.post("/{code}/redeem", response_model=UserResponse, status_code=201)
 async def redeem_invite(
     code: str,
@@ -159,6 +166,7 @@ async def redeem_invite(
 
 
 # ---- Admin User Management ----
+
 
 @router.get("/users", response_model=list[UserResponse])
 async def list_users(

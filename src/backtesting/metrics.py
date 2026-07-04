@@ -124,7 +124,7 @@ class PerformanceMetricsCalculator:
             if base < 0:
                 annual_return = -1.0
             elif base > 0:
-                annual_return = base ** annualized_factor - 1.0
+                annual_return = base**annualized_factor - 1.0
             else:
                 annual_return = -1.0
             abs_mdd = abs(min_dd) if min_dd < 0 else 0
@@ -171,10 +171,7 @@ class PerformanceMetricsCalculator:
         n = min(len(portfolio_returns), len(benchmark_returns))
         if len(portfolio_returns) != len(benchmark_returns):
             warnings.warn(
-                f"compute_beta: portfolio_returns ({len(portfolio_returns)}) and "
-                f"benchmark_returns ({len(benchmark_returns)}) have different lengths. "
-                f"Using first {n} elements — results may be incorrect if series "
-                f"are not date-aligned (ALPHA-007).",
+                f"compute_beta: portfolio_returns ({len(portfolio_returns)}) and " f"benchmark_returns ({len(benchmark_returns)}) have different lengths. " f"Using first {n} elements — results may be incorrect if series " f"are not date-aligned (ALPHA-007).",
                 stacklevel=2,
             )
         pr = np.array(portfolio_returns[:n])

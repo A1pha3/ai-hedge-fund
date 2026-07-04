@@ -103,12 +103,7 @@ def _supports_upstream_shadow_catalyst_relief_history(historical_prior: dict[str
     evaluable_count = int(historical_prior.get("evaluable_count") or 0)
     next_close_positive_rate = float(historical_prior.get("next_close_positive_rate") or 0.0)
     next_open_to_close_return_mean = float(historical_prior.get("next_open_to_close_return_mean") or 0.0)
-    return (
-        execution_quality_label in UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_REQUIRED_EXECUTION_QUALITY
-        and evaluable_count >= UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_MIN_EVALUABLE_COUNT
-        and next_close_positive_rate >= UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_CLOSE_MIN
-        and next_open_to_close_return_mean >= UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_OPEN_TO_CLOSE_MIN
-    )
+    return execution_quality_label in UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_REQUIRED_EXECUTION_QUALITY and evaluable_count >= UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_MIN_EVALUABLE_COUNT and next_close_positive_rate >= UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_CLOSE_MIN and next_open_to_close_return_mean >= UPSTREAM_SHADOW_CATALYST_RELIEF_HISTORY_NEXT_OPEN_TO_CLOSE_MIN
 
 
 def _compute_short_trade_boundary_candidate_score(snapshot: dict) -> float:
@@ -201,9 +196,7 @@ def _coerce_upstream_shadow_strategy_signal(payload: Any) -> StrategySignal | No
             # BH-033 (same-class drain): malformed shadow strategy signal previously
             # dropped silently. DEBUG diagnostic so ops can trace why a shadow
             # promotion's strategy_signals shrank. Behavior preserved (None).
-            logger.debug(
-                "upstream shadow strategy signal malformed, dropping: error=%s", exc
-            )
+            logger.debug("upstream shadow strategy signal malformed, dropping: error=%s", exc)
             return None
     return None
 

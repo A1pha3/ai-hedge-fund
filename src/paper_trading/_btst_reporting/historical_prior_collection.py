@@ -32,9 +32,7 @@ from src.paper_trading.btst_reporting_utils import (
 )
 
 
-def _collect_historical_opportunity_rows(
-    report_dir: Path, trade_date: str | None
-) -> dict[str, Any]:
+def _collect_historical_opportunity_rows(report_dir: Path, trade_date: str | None) -> dict[str, Any]:
     historical_report_dirs = [
         report_dir,
         *_discover_recent_historical_report_dirs(report_dir, trade_date),
@@ -45,16 +43,12 @@ def _collect_historical_opportunity_rows(
     for historical_report_dir in historical_report_dirs:
         for snapshot_path in _iter_selection_snapshot_paths(historical_report_dir):
             snapshot = _load_json(snapshot_path)
-            snapshot_trade_date = _normalize_trade_date(
-                snapshot.get("trade_date") or snapshot_path.parent.name
-            )
+            snapshot_trade_date = _normalize_trade_date(snapshot.get("trade_date") or snapshot_path.parent.name)
             if trade_date and snapshot_trade_date and snapshot_trade_date >= trade_date:
                 continue
             selection_targets = snapshot.get("selection_targets") or {}
             for selection_entry in selection_targets.values():
-                opportunity_entry = _extract_short_trade_opportunity_entry(
-                    dict(selection_entry)
-                )
+                opportunity_entry = _extract_short_trade_opportunity_entry(dict(selection_entry))
                 if opportunity_entry is None:
                     continue
                 rows.append(
@@ -78,9 +72,7 @@ def _collect_historical_opportunity_rows(
     }
 
 
-def _collect_historical_watch_candidate_rows(
-    report_dir: Path, trade_date: str | None
-) -> dict[str, Any]:
+def _collect_historical_watch_candidate_rows(report_dir: Path, trade_date: str | None) -> dict[str, Any]:
     historical_report_dirs = [
         report_dir,
         *_discover_recent_historical_report_dirs(report_dir, trade_date),
@@ -98,9 +90,7 @@ def _collect_historical_watch_candidate_rows(
     for historical_report_dir in historical_report_dirs:
         for snapshot_path in _iter_selection_snapshot_paths(historical_report_dir):
             snapshot = _load_json(snapshot_path)
-            snapshot_trade_date = _normalize_trade_date(
-                snapshot.get("trade_date") or snapshot_path.parent.name
-            )
+            snapshot_trade_date = _normalize_trade_date(snapshot.get("trade_date") or snapshot_path.parent.name)
             if trade_date and snapshot_trade_date and snapshot_trade_date >= trade_date:
                 continue
             _collect_watch_candidate_rows_from_selection_targets(
@@ -156,12 +146,7 @@ def _collect_watch_candidate_rows_from_selection_targets(
             family_counts=family_counts,
             contributing_reports=contributing_reports,
             report_dir=str(historical_report_dir),
-            family=str(
-                (_extract_short_trade_entry(normalized_selection_entry) or {}).get(
-                    "decision"
-                )
-                or ""
-            ),
+            family=str((_extract_short_trade_entry(normalized_selection_entry) or {}).get("decision") or ""),
             entry=_extract_short_trade_entry(normalized_selection_entry),
             history_context=history_context,
         )
@@ -224,16 +209,12 @@ def _append_watch_candidate_row(
 ) -> None:
     if entry is None:
         return
-    rows.append(
-        {**_decorate_watch_candidate_history_entry(entry, family), **history_context}
-    )
+    rows.append({**_decorate_watch_candidate_history_entry(entry, family), **history_context})
     family_counts[family] = int(family_counts.get(family) or 0) + 1
     contributing_reports.add(report_dir)
 
 
-def _decorate_watch_candidate_history_entry(
-    entry: dict[str, Any], family: str
-) -> dict[str, Any]:
+def _decorate_watch_candidate_history_entry(entry: dict[str, Any], family: str) -> dict[str, Any]:
     metrics = dict(entry.get("metrics") or {})
     return {
         **entry,
@@ -249,24 +230,14 @@ def _build_btst_candidate_historical_context(
     family_counts = dict(historical_payload.get("family_counts") or {})
     return {
         "lookback_report_limit": OPPORTUNITY_POOL_HISTORICAL_LOOKBACK_REPORTS,
-        "historical_report_count": int(
-            historical_payload.get("contributing_report_count") or 0
-        ),
+        "historical_report_count": int(historical_payload.get("contributing_report_count") or 0),
         "historical_btst_candidate_count": len(historical_payload.get("rows") or []),
         "historical_watch_candidate_count": len(historical_payload.get("rows") or []),
         "historical_selected_candidate_count": int(family_counts.get("selected") or 0),
-        "historical_near_miss_candidate_count": int(
-            family_counts.get("near_miss") or 0
-        ),
-        "historical_opportunity_candidate_count": int(
-            family_counts.get("opportunity_pool") or 0
-        ),
-        "historical_research_upside_radar_count": int(
-            family_counts.get("research_upside_radar") or 0
-        ),
-        "historical_catalyst_theme_count": int(
-            family_counts.get("catalyst_theme") or 0
-        ),
+        "historical_near_miss_candidate_count": int(family_counts.get("near_miss") or 0),
+        "historical_opportunity_candidate_count": int(family_counts.get("opportunity_pool") or 0),
+        "historical_research_upside_radar_count": int(family_counts.get("research_upside_radar") or 0),
+        "historical_catalyst_theme_count": int(family_counts.get("catalyst_theme") or 0),
         "next_high_hit_threshold": OPPORTUNITY_POOL_HISTORICAL_NEXT_HIGH_HIT_THRESHOLD,
     }
 

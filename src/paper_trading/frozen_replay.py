@@ -81,8 +81,7 @@ def _safe_load_sidecar_json(path: Path, kind: str) -> tuple[object, bool]:
         return json.loads(path.read_text(encoding="utf-8")), True
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning(
-            "frozen_replay: 损坏的 sidecar %s 文件 %s "
-            "(运行中断/部分写入?): %s; 跳过",
+            "frozen_replay: 损坏的 sidecar %s 文件 %s " "(运行中断/部分写入?): %s; 跳过",
             kind,
             path,
             exc,
@@ -175,9 +174,7 @@ def _load_sidecar_replay_input_payload(source_path: Path, trade_date: str) -> di
             # selection_snapshot 损坏时, replay input 仍可用 (hydration 是
             # best-effort 增强, 缺失不影响 plan 加载核心路径); _safe_load
             # 已发 warning, 这里跳过 hydration 而非中断整个 plan 加载。
-            selection_snapshot_payload, snapshot_ok = _safe_load_sidecar_json(
-                selection_snapshot_path, "selection_snapshot"
-            )
+            selection_snapshot_payload, snapshot_ok = _safe_load_sidecar_json(selection_snapshot_path, "selection_snapshot")
             if snapshot_ok and selection_snapshot_payload:
                 payload = _hydrate_sparse_watchlist_rows(
                     replay_input_payload=payload,
@@ -216,8 +213,7 @@ def load_frozen_post_market_plans(daily_events_path: str | Path) -> dict[str, Ex
             except json.JSONDecodeError as exc:
                 skipped_corrupt_lines += 1
                 logger.warning(
-                    "frozen_replay: 损坏的 daily_events 行 (运行中断/部分写入?): "
-                    "%s; 跳过该行",
+                    "frozen_replay: 损坏的 daily_events 行 (运行中断/部分写入?): " "%s; 跳过该行",
                     exc,
                 )
                 continue
@@ -250,12 +246,7 @@ def load_frozen_post_market_plans(daily_events_path: str | Path) -> dict[str, Ex
         # 还是 corrupt 行被静默跳过导致看似为空 — 后者是数据完整性信号
         # (运行中断 / 磁盘错误 / 部分写入), 需要修文件而非重跑。
         if skipped_corrupt_lines > 0:
-            raise ValueError(
-                f"No loadable current_plan records in frozen replay source "
-                f"{source_path}: all {skipped_corrupt_lines} non-blank line(s) "
-                f"were corrupt JSON (运行中断/部分写入?) and skipped — "
-                f"检查文件完整性或重新生成 frozen replay source"
-            )
+            raise ValueError(f"No loadable current_plan records in frozen replay source " f"{source_path}: all {skipped_corrupt_lines} non-blank line(s) " f"were corrupt JSON (运行中断/部分写入?) and skipped — " f"检查文件完整性或重新生成 frozen replay source")
         raise ValueError(f"No current_plan records found in frozen replay source: {source_path}")
 
     if skipped_corrupt_lines > 0:
@@ -263,8 +254,7 @@ def load_frozen_post_market_plans(daily_events_path: str | Path) -> dict[str, Ex
         # 发 warning 让用户知道完整性降级 (与 R92 degraded banner 同型),
         # 避免用户据不完整 replay 校准策略信任度。
         logger.warning(
-            "frozen_replay: 加载了 %d 个 plan, 但 %d 行因损坏被跳过 "
-            "(运行中断/部分写入?) — replay 完整性已降级, 校准信任度时请知悉",
+            "frozen_replay: 加载了 %d 个 plan, 但 %d 行因损坏被跳过 " "(运行中断/部分写入?) — replay 完整性已降级, 校准信任度时请知悉",
             len(plans_by_date),
             skipped_corrupt_lines,
         )
@@ -358,10 +348,7 @@ def replay_frozen_post_market_sequence(
     from src.execution.daily_pipeline import DailyPipeline
 
     frozen_plan_source = Path(daily_events_path).resolve()
-    frozen_plans = {
-        trade_date: (_clear_frozen_buy_orders(plan) if clear_existing_buy_orders else _reset_frozen_buy_order_filter_summary(plan))
-        for trade_date, plan in load_frozen_post_market_plans(frozen_plan_source).items()
-    }
+    frozen_plans = {trade_date: (_clear_frozen_buy_orders(plan) if clear_existing_buy_orders else _reset_frozen_buy_order_filter_summary(plan)) for trade_date, plan in load_frozen_post_market_plans(frozen_plan_source).items()}
     pipeline = DailyPipeline(
         frozen_post_market_plans=frozen_plans,
         frozen_plan_source=str(frozen_plan_source),

@@ -283,8 +283,7 @@ def generate_graham_output(
         [
             (
                 "system",
-                with_fact_grounding_rules(
-                    """You are a Benjamin Graham AI agent, making investment decisions using his principles:
+                with_fact_grounding_rules("""You are a Benjamin Graham AI agent, making investment decisions using his principles:
             1. Insist on a margin of safety by buying below intrinsic value (e.g., using Graham Number, net-net).
             2. Emphasize the company's financial strength (low leverage, ample current assets).
             3. Prefer stable earnings over multiple years.
@@ -303,8 +302,7 @@ def generate_graham_output(
             For example, if bearish: "Despite consistent earnings, the current price of $50 exceeds our calculated Graham Number of $35, offering no margin of safety. Additionally, the current ratio of only 1.2 falls below Graham's preferred 2.0 threshold..."
             
             Return a rational recommendation: bullish, bearish, or neutral, with a confidence level (0-100) and thorough reasoning.
-            """
-                ),
+            """),
             ),
             (
                 "human",

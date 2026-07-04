@@ -267,10 +267,7 @@ def _record_observability_error(summary: dict, entry: dict) -> None:
         "message": error_message or "n/a",
     }
     sample_key = tuple(sample.values())
-    existing_keys = {
-        tuple(item.get(field) for field in ("trade_date", "pipeline_stage", "model_tier", "provider", "error_type", "message"))
-        for item in sample_errors
-    }
+    existing_keys = {tuple(item.get(field) for field in ("trade_date", "pipeline_stage", "model_tier", "provider", "error_type", "message")) for item in sample_errors}
     if sample_key in existing_keys:
         return
     if len(sample_errors) < 5:
@@ -278,11 +275,7 @@ def _record_observability_error(summary: dict, entry: dict) -> None:
 
 
 def _sorted_error_type_counts(error_type_counts: dict[str, Any], limit: int = 3) -> list[dict[str, Any]]:
-    rows = [
-        {"error_type": str(error_type), "count": int(count or 0)}
-        for error_type, count in dict(error_type_counts or {}).items()
-        if int(count or 0) > 0
-    ]
+    rows = [{"error_type": str(error_type), "count": int(count or 0)} for error_type, count in dict(error_type_counts or {}).items() if int(count or 0) > 0]
     rows.sort(key=lambda item: (-item["count"], item["error_type"]))
     return rows[:limit]
 
@@ -414,8 +407,7 @@ def _iter_paper_trading_day_payloads(lines: list[str]) -> Iterator[dict]:
             # session summary 时无法区分 "corrupt rows 静默丢失" vs "本就少几天".
             # 此前同一文件 frozen_replay 会 log, 本解析器静默 — 不一致.
             logger.warning(
-                "runtime_observability: 损坏的 daily_events 行 (运行中断/部分写入?): "
-                "%s; 跳过该行",
+                "runtime_observability: 损坏的 daily_events 行 (运行中断/部分写入?): " "%s; 跳过该行",
                 exc,
             )
             continue
@@ -441,8 +433,7 @@ def _iter_paper_trading_day_payloads_with_corrupt_count(
         except json.JSONDecodeError as exc:
             corrupt += 1
             logger.warning(
-                "runtime_observability: 损坏的 daily_events 行 (运行中断/部分写入?): "
-                "%s; 跳过该行",
+                "runtime_observability: 损坏的 daily_events 行 (运行中断/部分写入?): " "%s; 跳过该行",
                 exc,
             )
             continue

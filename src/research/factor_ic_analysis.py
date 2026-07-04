@@ -703,10 +703,7 @@ def render_factor_ic_ranking(
         strategy_cn = _STRATEGY_CN_LABELS.get(r.strategy, r.strategy)
         sig_cn = _SIGNIFICANCE_CN_LABELS.get(r.significance, r.significance)
         win_rate = f"{r.ic_positive_rate * 100:.0f}%" if r.ic_positive_rate else "—"
-        lines.append(
-            f"{rank_display:<4} | {r.factor_name:<22} | {strategy_cn:<8} | "
-            f"{r.ic_mean:+.3f}  | {ir_display:<6} | {win_rate:<6} | {sig_cn:<5}"
-        )
+        lines.append(f"{rank_display:<4} | {r.factor_name:<22} | {strategy_cn:<8} | " f"{r.ic_mean:+.3f}  | {ir_display:<6} | {win_rate:<6} | {sig_cn:<5}")
 
     lines.append("")
     high_count = sum(1 for r in results.values() if r.significance == "high")

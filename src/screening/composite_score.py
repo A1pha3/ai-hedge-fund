@@ -22,6 +22,7 @@ CLI::
 Integration:
     ``--decision-flow`` Step 10 outputs composite scores for all recommendations.
 """
+
 from __future__ import annotations
 
 import logging
@@ -207,7 +208,6 @@ def compute_composite_scores_for_recommendations(
     *,
     recommendations: list[dict[str, Any]],
     trade_date: str = "",
-
     lookback_days: int = 5,
     reports_dir: Path | None = None,
 ) -> CompositeReport:
@@ -220,25 +220,34 @@ def compute_composite_scores_for_recommendations(
     top_n = len(recs)
     search_dir = reports_dir or resolve_report_dir()
     momentum_map = _compute_dimension_bonus_map(
-        "momentum", compute_signal_momentum, "momentum_bonus",
-        top_n=top_n, lookback_days=lookback_days, search_dir=search_dir,
+        "momentum",
+        compute_signal_momentum,
+        "momentum_bonus",
+        top_n=top_n,
+        lookback_days=lookback_days,
+        search_dir=search_dir,
     )
     sector_map = _compute_dimension_bonus_map(
-        "sector", compute_sector_strength, "strength_bonus",
-        top_n=top_n, lookback_days=lookback_days, search_dir=search_dir,
+        "sector",
+        compute_sector_strength,
+        "strength_bonus",
+        top_n=top_n,
+        lookback_days=lookback_days,
+        search_dir=search_dir,
     )
     volume_map = _compute_dimension_bonus_map(
-        "volume", compute_volume_confirmation, "volume_factor",
-        top_n=top_n, lookback_days=lookback_days, search_dir=search_dir,
+        "volume",
+        compute_volume_confirmation,
+        "volume_factor",
+        top_n=top_n,
+        lookback_days=lookback_days,
+        search_dir=search_dir,
     )
 
     # Compute signal consistency (P7-1) — distinct shape (dict comprehension), not shared.
     try:
         consistency_results = check_signal_consistency(recs)
-        consistency_map = {
-            item.get("ticker", ""): _CONSISTENCY_ADJ.get(item.get("consistency_level", "unknown"), 0.0)
-            for item in consistency_results
-        }
+        consistency_map = {item.get("ticker", ""): _CONSISTENCY_ADJ.get(item.get("consistency_level", "unknown"), 0.0) for item in consistency_results}
     except Exception as exc:
         # BH-021 / R48 BH-017 同族: consistency 维度降级 → consistency_adj 全部 0。
         logger.debug("composite consistency dimension degraded to {}: %s", exc)
@@ -247,8 +256,11 @@ def compute_composite_scores_for_recommendations(
     # Compute trend resonance (P14-1) — uses _compute_dimension_bonus_map with
     # lookback_days=None (trend only takes top_n + reports_dir).
     trend_map = _compute_dimension_bonus_map(
-        "trend", compute_trend_resonance, "resonance_factor",
-        top_n=top_n, search_dir=search_dir,
+        "trend",
+        compute_trend_resonance,
+        "resonance_factor",
+        top_n=top_n,
+        search_dir=search_dir,
     )
 
     # Build composite entries
@@ -356,23 +368,14 @@ def render_composite_scores(report: CompositeReport) -> str:
 
     for item in report.items:
         grade = _composite_grade(item.composite_score)
-        lines.append(
-            f"  {item.ticker:<8} {item.name[:10]:<10} "
-            f"{item.base_score:>6.3f} {_fmt_adj(item.momentum_bonus):>14} "
-            f"{_fmt_adj(item.sector_bonus):>14} {_fmt_adj(item.consistency_adj):>14} "
-            f"{_fmt_adj(item.volume_factor):>14} {_fmt_adj(item.trend_resonance_factor):>14} "
-            f"{item.composite_score:>+7.3f} {grade:>6}"
-        )
+        lines.append(f"  {item.ticker:<8} {item.name[:10]:<10} " f"{item.base_score:>6.3f} {_fmt_adj(item.momentum_bonus):>14} " f"{_fmt_adj(item.sector_bonus):>14} {_fmt_adj(item.consistency_adj):>14} " f"{_fmt_adj(item.volume_factor):>14} {_fmt_adj(item.trend_resonance_factor):>14} " f"{item.composite_score:>+7.3f} {grade:>6}")
 
     # Summary
     a_count = sum(1 for i in report.items if i.composite_score >= 0.7)
     b_count = sum(1 for i in report.items if 0.5 <= i.composite_score < 0.7)
     weak_count = sum(1 for i in report.items if i.composite_score < 0.3)
     lines.append("")
-    lines.append(
-        f"  A级(≥0.7): {a_count}  B级(0.5-0.7): {b_count}  "
-        f"低信心(<0.3): {weak_count}  总计: {len(report.items)}"
-    )
+    lines.append(f"  A级(≥0.7): {a_count}  B级(0.5-0.7): {b_count}  " f"低信心(<0.3): {weak_count}  总计: {len(report.items)}")
     return "\n".join(lines)
 
 
@@ -384,10 +387,7 @@ def render_composite_compact(report: CompositeReport) -> str:
     lines = [f"  综合信心评分 (Top {min(5, len(report.items))}):"]
     for item in report.items[:5]:
         grade = _composite_grade(item.composite_score)
-        lines.append(
-            f"    {item.ticker:<8} {item.name[:8]:<8} "
-            f"综合={item.composite_score:+.3f} {grade}"
-        )
+        lines.append(f"    {item.ticker:<8} {item.name[:8]:<8} " f"综合={item.composite_score:+.3f} {grade}")
     return "\n".join(lines)
 
 

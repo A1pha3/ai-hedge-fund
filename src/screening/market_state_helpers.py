@@ -59,12 +59,7 @@ def _compute_regime_flip_risk(*, breadth_ratio: float, daily_return: float, nort
     else:
         flow_headwind = 0.0
     return round(
-        clamp_unit_interval(
-            (0.40 * breadth_deterioration)
-            + (0.25 * dispersion_pressure)
-            + (0.20 * index_mismatch)
-            + (0.15 * flow_headwind)
-        ),
+        clamp_unit_interval((0.40 * breadth_deterioration) + (0.25 * dispersion_pressure) + (0.20 * index_mismatch) + (0.15 * flow_headwind)),
         6,
     )
 

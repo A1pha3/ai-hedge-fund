@@ -80,4 +80,5 @@ def _get_route_logger(func: Callable[..., Any]) -> logging.Logger:
 def asyncio_is_coroutine(func: Callable[..., Any]) -> bool:
     """Return True if *func* is a native async function."""
     import asyncio
+
     return asyncio.iscoroutinefunction(func)

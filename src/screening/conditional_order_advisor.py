@@ -304,17 +304,10 @@ def compute_conditional_advice(
 
     # Reasoning
     if degraded:
-        reason = (
-            f"降级: 数据不足 (n_sessions={n_sessions} < {MIN_PRICE_SESSIONS} 或 current_price 异常),"
-            f" 建议仅作参考, 请补充至少 {MIN_PRICE_SESSIONS} 个交易日数据"
-        )
+        reason = f"降级: 数据不足 (n_sessions={n_sessions} < {MIN_PRICE_SESSIONS} 或 current_price 异常)," f" 建议仅作参考, 请补充至少 {MIN_PRICE_SESSIONS} 个交易日数据"
     else:
         # 简明理由
-        reason = (
-            f"基于 {n_sessions} 日历史, ATR(period={atr_period})={atr:.4f}; "
-            f"建议在 ±{zone_width_atr:.1f}×ATR 区间分批买入, "
-            f"止损 {stop_loss_atr:.1f}×ATR, 止盈 {take_profit_atr:.1f}×ATR"
-        )
+        reason = f"基于 {n_sessions} 日历史, ATR(period={atr_period})={atr:.4f}; " f"建议在 ±{zone_width_atr:.1f}×ATR 区间分批买入, " f"止损 {stop_loss_atr:.1f}×ATR, 止盈 {take_profit_atr:.1f}×ATR"
 
     return ConditionalOrderAdvice(
         ticker=str(ticker or "").strip(),
@@ -415,11 +408,7 @@ def format_conditional_advice_table(
         return "\n".join(lines) + "\n"
 
     # 表头
-    header = (
-        f"{'代码':<8} | {'名称':<10} | {'现价':>9} | "
-        f"{'买入区间':<20} | {'止损':>9} | {'止盈':>9} | "
-        f"{'盈亏比':>6} | {'置信度':>6} | {'状态':<4}"
-    )
+    header = f"{'代码':<8} | {'名称':<10} | {'现价':>9} | " f"{'买入区间':<20} | {'止损':>9} | {'止盈':>9} | " f"{'盈亏比':>6} | {'置信度':>6} | {'状态':<4}"
     lines.append(header)
     lines.append("-" * len(header))
 
@@ -440,11 +429,7 @@ def format_conditional_advice_table(
             conf_text = f"{adv.confidence * 100:.0f}%"
         status = "降级" if adv.degraded else "OK"
         name_disp = adv.name[:8] if adv.name else "—"
-        lines.append(
-            f"{adv.ticker:<8} | {name_disp:<10} | {adv.current_price:>9.2f} | "
-            f"{zone_text:<20} | {stop_text:>9} | "
-            f"{profit_text:>9} | {rr_text:>6} | {conf_text:>6} | {status:<4}"
-        )
+        lines.append(f"{adv.ticker:<8} | {name_disp:<10} | {adv.current_price:>9.2f} | " f"{zone_text:<20} | {stop_text:>9} | " f"{profit_text:>9} | {rr_text:>6} | {conf_text:>6} | {status:<4}")
 
     lines.append("")
     ok_count = sum(1 for a in advices if not a.degraded)
@@ -507,8 +492,7 @@ def attach_conditional_orders_to_payload(
                 # degraded advice 但 operator 不知是数据缺失还是 provider 异常.
                 # warning 级别 (决策链, 止损/止盈建议, 触及风控数据质量).
                 logger.warning(
-                    "conditional_order_advisor: price_provider failed (ticker=%s, "
-                    "lookback=%d, falling back to empty history): %s",
+                    "conditional_order_advisor: price_provider failed (ticker=%s, " "lookback=%d, falling back to empty history): %s",
                     ticker,
                     lookback_sessions,
                     exc,
@@ -531,8 +515,7 @@ def attach_conditional_orders_to_payload(
             # 记录 debug 让运维可诊断 -- 与 R48-R50/R57-R60/R63 silent-degradation 家族一致。
             if not _is_finite(tail):
                 logger.debug(
-                    "conditional_order_advisor: ticker=%s 价格历史尾部无效 (%r), "
-                    "已降级为 degraded advice (停牌/退市/partial feed?)",
+                    "conditional_order_advisor: ticker=%s 价格历史尾部无效 (%r), " "已降级为 degraded advice (停牌/退市/partial feed?)",
                     ticker,
                     tail,
                 )
@@ -588,10 +571,7 @@ def run_conditional_orders_cli(
 
     recs = load_latest_recommendations()
     if not recs:
-        print(
-            f"{Fore.YELLOW}[ConditionalOrders] 未找到有效 auto_screening 报告, "
-            f"请先运行 --auto{Style.RESET_ALL}"
-        )
+        print(f"{Fore.YELLOW}[ConditionalOrders] 未找到有效 auto_screening 报告, " f"请先运行 --auto{Style.RESET_ALL}")
         return 1
 
     # 2. 截到 Top N
@@ -617,8 +597,7 @@ def run_conditional_orders_cli(
                 # provider 失败静默 history = [] 让止损/止盈建议基于空历史.
                 # warning 级别 (决策链, 止损/止盈建议, 触及风控数据质量).
                 logger.warning(
-                    "conditional_order_advisor (CLI): price_provider failed (ticker=%s, "
-                    "lookback=%d, falling back to empty history): %s",
+                    "conditional_order_advisor (CLI): price_provider failed (ticker=%s, " "lookback=%d, falling back to empty history): %s",
                     ticker,
                     lookback_sessions,
                     exc,
@@ -639,8 +618,7 @@ def run_conditional_orders_cli(
             # 记录 debug 让运维可诊断 -- 与 R48-R50/R57-R60/R63 silent-degradation 家族一致。
             if not _is_finite(tail):
                 logger.debug(
-                    "conditional_order_advisor (CLI): ticker=%s 价格历史尾部无效 (%r), "
-                    "已降级为 degraded advice (停牌/退市/partial feed?)",
+                    "conditional_order_advisor (CLI): ticker=%s 价格历史尾部无效 (%r), " "已降级为 degraded advice (停牌/退市/partial feed?)",
                     ticker,
                     tail,
                 )

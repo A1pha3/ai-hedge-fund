@@ -230,13 +230,9 @@ def register_btst_followup_artifacts(
     rollout_validation_json = str(rollout_validation.get("source_json_path") or "").strip()
     rollout_validation_markdown = str(rollout_validation.get("source_markdown_path") or "").strip()
     if rollout_validation_json:
-        followup_manifest["rollout_validation_json"] = (
-            Path(rollout_validation_json).expanduser().resolve().as_posix()
-        )
+        followup_manifest["rollout_validation_json"] = Path(rollout_validation_json).expanduser().resolve().as_posix()
     if rollout_validation_markdown:
-        followup_manifest["rollout_validation_markdown"] = (
-            Path(rollout_validation_markdown).expanduser().resolve().as_posix()
-        )
+        followup_manifest["rollout_validation_markdown"] = Path(rollout_validation_markdown).expanduser().resolve().as_posix()
     summary["btst_followup"] = followup_manifest
     artifacts = dict(summary.get("artifacts") or {})
     artifacts.update(_build_followup_summary_artifacts(followup_manifest))

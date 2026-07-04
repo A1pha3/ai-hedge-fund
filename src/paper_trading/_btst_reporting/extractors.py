@@ -22,12 +22,7 @@ def _resolve_upstream_shadow_candidate_source(
     explainability_payload: dict[str, Any],
     replay_context: dict[str, Any],
 ) -> str:
-    return str(
-        explainability_payload.get("candidate_source")
-        or selection_entry.get("candidate_source")
-        or replay_context.get("source")
-        or ""
-    )
+    return str(explainability_payload.get("candidate_source") or selection_entry.get("candidate_source") or replay_context.get("source") or "")
 
 
 def _resolve_upstream_shadow_candidate_reason_codes(
@@ -35,22 +30,12 @@ def _resolve_upstream_shadow_candidate_reason_codes(
     supplemental_entry: dict[str, Any],
     replay_context: dict[str, Any],
 ) -> list[str]:
-    return [
-        str(reason)
-        for reason in (
-            list(selection_entry.get("candidate_reason_codes") or [])
-            or list(supplemental_entry.get("candidate_reason_codes") or [])
-            or list(replay_context.get("candidate_reason_codes") or [])
-        )
-        if str(reason or "").strip()
-    ]
+    return [str(reason) for reason in (list(selection_entry.get("candidate_reason_codes") or []) or list(supplemental_entry.get("candidate_reason_codes") or []) or list(replay_context.get("candidate_reason_codes") or [])) if str(reason or "").strip()]
 
 
 def _build_upstream_shadow_promotion_trigger(decision: str) -> str:
     if decision == "selected":
-        return (
-            "影子召回样本已晋级为正式 short-trade selected，但仍需盘中确认后才能执行。"
-        )
+        return "影子召回样本已晋级为正式 short-trade selected，但仍需盘中确认后才能执行。"
     if decision == "near_miss":
         return "影子召回样本已进入 near-miss 观察层，只能做盘中跟踪，不可预设交易。"
     return "影子召回样本尚未进入可执行层，只有盘中新强度确认后才允许升级。"
@@ -75,53 +60,27 @@ def _extract_upstream_shadow_replay_only_entry(
     if candidate_source not in UPSTREAM_SHADOW_CANDIDATE_SOURCES:
         return None
 
-    metrics_payload = dict(
-        entry.get("metrics") or entry.get("short_trade_boundary_metrics") or {}
-    )
+    metrics_payload = dict(entry.get("metrics") or entry.get("short_trade_boundary_metrics") or {})
     candidate_pool_rank = entry.get("candidate_pool_rank")
     return {
         "ticker": entry.get("ticker"),
         "decision": str(entry.get("decision") or "observation"),
-        "score_target": entry.get("score_target")
-        if entry.get("score_target") is not None
-        else metrics_payload.get("candidate_score"),
+        "score_target": entry.get("score_target") if entry.get("score_target") is not None else metrics_payload.get("candidate_score"),
         "confidence": entry.get("confidence"),
-        "preferred_entry_mode": entry.get("preferred_entry_mode")
-        or "shadow_observation_only",
+        "preferred_entry_mode": entry.get("preferred_entry_mode") or "shadow_observation_only",
         "candidate_source": candidate_source,
-        "candidate_pool_lane": str(
-            entry.get("candidate_pool_lane") or _source_lane_label(candidate_source)
-        ),
+        "candidate_pool_lane": str(entry.get("candidate_pool_lane") or _source_lane_label(candidate_source)),
         "candidate_pool_lane_display": _source_lane_display(candidate_source),
-        "candidate_pool_rank": int(candidate_pool_rank)
-        if candidate_pool_rank not in (None, "")
-        else None,
-        "candidate_pool_avg_amount_share_of_cutoff": _round_or_none(
-            entry.get("candidate_pool_avg_amount_share_of_cutoff")
-        ),
-        "candidate_pool_avg_amount_share_of_min_gate": _round_or_none(
-            entry.get("candidate_pool_avg_amount_share_of_min_gate")
-        ),
-        "upstream_candidate_source": str(
-            entry.get("upstream_candidate_source")
-            or "candidate_pool_truncated_after_filters"
-        ),
-        "candidate_reason_codes": [
-            str(reason)
-            for reason in list(entry.get("candidate_reason_codes") or [])
-            if str(reason or "").strip()
-        ],
+        "candidate_pool_rank": int(candidate_pool_rank) if candidate_pool_rank not in (None, "") else None,
+        "candidate_pool_avg_amount_share_of_cutoff": _round_or_none(entry.get("candidate_pool_avg_amount_share_of_cutoff")),
+        "candidate_pool_avg_amount_share_of_min_gate": _round_or_none(entry.get("candidate_pool_avg_amount_share_of_min_gate")),
+        "upstream_candidate_source": str(entry.get("upstream_candidate_source") or "candidate_pool_truncated_after_filters"),
+        "candidate_reason_codes": [str(reason) for reason in list(entry.get("candidate_reason_codes") or []) if str(reason or "").strip()],
         "top_reasons": list(entry.get("top_reasons") or []),
-        "rejection_reasons": list(
-            entry.get("rejection_reasons")
-            or ([entry.get("filter_reason")] if entry.get("filter_reason") else [])
-        ),
+        "rejection_reasons": list(entry.get("rejection_reasons") or ([entry.get("filter_reason")] if entry.get("filter_reason") else [])),
         "positive_tags": list(entry.get("positive_tags") or []),
         "gate_status": dict(entry.get("gate_status") or {}),
-        "promotion_trigger": str(
-            entry.get("promotion_trigger")
-            or "影子召回样本当前只保留为补票观察层，不自动升级到正式执行名单。"
-        ),
+        "promotion_trigger": str(entry.get("promotion_trigger") or "影子召回样本当前只保留为补票观察层，不自动升级到正式执行名单。"),
         "metrics": _extract_short_trade_core_metrics(metrics_payload),
     }
 
@@ -146,15 +105,9 @@ def _extract_catalyst_theme_frontier_summary(
         "baseline_selected_count": baseline_selected_count,
         "recommended_variant_name": recommended_variant.get("variant_name"),
         "recommended_promoted_shadow_count": promoted_shadow_count,
-        "recommended_relaxation_cost": recommended_variant.get(
-            "threshold_relaxation_cost"
-        ),
+        "recommended_relaxation_cost": recommended_variant.get("threshold_relaxation_cost"),
         "recommended_thresholds": dict(recommended_variant.get("thresholds") or {}),
-        "recommended_promoted_tickers": [
-            str(row.get("ticker") or "")
-            for row in top_promoted_rows
-            if row.get("ticker")
-        ][:3],
+        "recommended_promoted_tickers": [str(row.get("ticker") or "") for row in top_promoted_rows if row.get("ticker")][:3],
         "recommendation": frontier.get("recommendation"),
     }
 
@@ -170,28 +123,16 @@ def _normalize_price_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
     return normalized
 
 
-def _extract_next_day_outcome(
-    ticker: str, trade_date: str, price_cache: dict[tuple[str, str], pd.DataFrame]
-) -> dict[str, Any]:
+def _extract_next_day_outcome(ticker: str, trade_date: str, price_cache: dict[tuple[str, str], pd.DataFrame]) -> dict[str, Any]:
     cache_key = (ticker, trade_date)
     frame = price_cache.get(cache_key)
     if frame is None:
-        end_date = (pd.Timestamp(trade_date) + pd.Timedelta(days=10)).strftime(
-            "%Y-%m-%d"
-        )
+        end_date = (pd.Timestamp(trade_date) + pd.Timedelta(days=10)).strftime("%Y-%m-%d")
         try:
-            frame = _normalize_price_frame(
-                prices_to_df(
-                    get_prices_robust(
-                        ticker, trade_date, end_date, use_mock_on_fail=False
-                    )
-                )
-            )
+            frame = _normalize_price_frame(prices_to_df(get_prices_robust(ticker, trade_date, end_date, use_mock_on_fail=False)))
         except Exception:
             try:
-                frame = _normalize_price_frame(
-                    get_price_data(ticker, trade_date, end_date)
-                )
+                frame = _normalize_price_frame(get_price_data(ticker, trade_date, end_date))
             except Exception:
                 frame = pd.DataFrame()
         price_cache[cache_key] = frame
@@ -215,16 +156,7 @@ def _extract_next_day_outcome(
     # _as_float can return NaN for NaN/None numeric inputs; NaN comparisons
     # are always False, so the <= 0 guard would otherwise let NaN through and
     # silently poison next_open_return / next_close_return computations.
-    if (
-        trade_close != trade_close
-        or next_open != next_open
-        or next_high != next_high
-        or next_close != next_close
-        or trade_close <= 0
-        or next_open <= 0
-        or next_high <= 0
-        or next_close <= 0
-    ):
+    if trade_close != trade_close or next_open != next_open or next_high != next_high or next_close != next_close or trade_close <= 0 or next_open <= 0 or next_high <= 0 or next_close <= 0:
         return {"data_status": "incomplete_price_bar"}
 
     return {
@@ -251,22 +183,9 @@ def _extract_short_trade_entry(
 
     metrics_payload = short_trade_entry.get("metrics_payload") or {}
     explainability_payload = short_trade_entry.get("explainability_payload") or {}
-    candidate_reason_codes = [
-        str(reason)
-        for reason in list(selection_entry.get("candidate_reason_codes") or [])
-        if str(reason or "").strip()
-    ]
-    catalyst_relief = dict(
-        explainability_payload.get("upstream_shadow_catalyst_relief") or {}
-    )
-    short_trade_catalyst_relief_reason = (
-        str(catalyst_relief.get("reason") or "")
-        if catalyst_relief
-        and (
-            bool(catalyst_relief.get("applied")) or bool(catalyst_relief.get("enabled"))
-        )
-        else None
-    )
+    candidate_reason_codes = [str(reason) for reason in list(selection_entry.get("candidate_reason_codes") or []) if str(reason or "").strip()]
+    catalyst_relief = dict(explainability_payload.get("upstream_shadow_catalyst_relief") or {})
+    short_trade_catalyst_relief_reason = str(catalyst_relief.get("reason") or "") if catalyst_relief and (bool(catalyst_relief.get("applied")) or bool(catalyst_relief.get("enabled"))) else None
 
     return {
         "ticker": selection_entry.get("ticker"),
@@ -278,23 +197,16 @@ def _extract_short_trade_entry(
         "preferred_entry_mode": short_trade_entry.get("preferred_entry_mode"),
         "positive_tags": list(short_trade_entry.get("positive_tags") or []),
         "top_reasons": list(short_trade_entry.get("top_reasons") or []),
-        "candidate_source": explainability_payload.get("candidate_source")
-        or selection_entry.get("candidate_source"),
+        "candidate_source": explainability_payload.get("candidate_source") or selection_entry.get("candidate_source"),
         "candidate_reason_codes": candidate_reason_codes,
         "short_trade_catalyst_relief_reason": short_trade_catalyst_relief_reason,
         "gate_status": dict(short_trade_entry.get("gate_status") or {}),
         "metrics": _extract_short_trade_core_metrics(metrics_payload),
-        "historical_prior": dict(
-            short_trade_entry.get("historical_prior")
-            or explainability_payload.get("historical_prior")
-            or {}
-        ),
+        "historical_prior": dict(short_trade_entry.get("historical_prior") or explainability_payload.get("historical_prior") or {}),
     }
 
 
-def _is_short_trade_opportunity_candidate(
-    short_trade_entry: dict[str, Any], gate_status: dict[str, Any]
-) -> bool:
+def _is_short_trade_opportunity_candidate(short_trade_entry: dict[str, Any], gate_status: dict[str, Any]) -> bool:
     if short_trade_entry.get("decision") != "opportunity_pool":
         return False
     return bool(gate_status.get("opportunity_pool_eligible") or False)
@@ -302,25 +214,13 @@ def _is_short_trade_opportunity_candidate(
 
 def _count_short_trade_strong_signals(metrics_payload: dict[str, Any]) -> int:
     count = 0
-    if (
-        _as_float(metrics_payload.get("breakout_freshness"))
-        >= OPPORTUNITY_POOL_STRONG_SIGNAL_MIN
-    ):
+    if _as_float(metrics_payload.get("breakout_freshness")) >= OPPORTUNITY_POOL_STRONG_SIGNAL_MIN:
         count += 1
-    if (
-        _as_float(metrics_payload.get("trend_acceleration"))
-        >= OPPORTUNITY_POOL_STRONG_SIGNAL_MIN
-    ):
+    if _as_float(metrics_payload.get("trend_acceleration")) >= OPPORTUNITY_POOL_STRONG_SIGNAL_MIN:
         count += 1
-    if (
-        _as_float(metrics_payload.get("catalyst_freshness"))
-        >= OPPORTUNITY_POOL_STRONG_SIGNAL_MIN
-    ):
+    if _as_float(metrics_payload.get("catalyst_freshness")) >= OPPORTUNITY_POOL_STRONG_SIGNAL_MIN:
         count += 1
-    if (
-        _as_float(metrics_payload.get("close_strength"))
-        >= OPPORTUNITY_POOL_STRONG_SIGNAL_MIN
-    ):
+    if _as_float(metrics_payload.get("close_strength")) >= OPPORTUNITY_POOL_STRONG_SIGNAL_MIN:
         count += 1
     return count
 
@@ -328,17 +228,8 @@ def _count_short_trade_strong_signals(metrics_payload: dict[str, Any]) -> int:
 def _extract_short_trade_catalyst_relief_reason(
     explainability_payload: dict[str, Any],
 ) -> str | None:
-    catalyst_relief = dict(
-        explainability_payload.get("upstream_shadow_catalyst_relief") or {}
-    )
-    return (
-        str(catalyst_relief.get("reason") or "")
-        if catalyst_relief
-        and (
-            bool(catalyst_relief.get("applied")) or bool(catalyst_relief.get("enabled"))
-        )
-        else None
-    )
+    catalyst_relief = dict(explainability_payload.get("upstream_shadow_catalyst_relief") or {})
+    return str(catalyst_relief.get("reason") or "") if catalyst_relief and (bool(catalyst_relief.get("applied")) or bool(catalyst_relief.get("enabled"))) else None
 
 
 def _extract_short_trade_opportunity_entry(
@@ -365,19 +256,9 @@ def _extract_short_trade_opportunity_entry(
 
     thresholds = dict(metrics_payload.get("thresholds") or {})
     near_miss_threshold = _as_float(thresholds.get("near_miss_threshold"))
-    score_gap_to_near_miss = (
-        round(max(0.0, near_miss_threshold - score_target), 4)
-        if near_miss_threshold > 0
-        else None
-    )
-    candidate_reason_codes = [
-        str(reason)
-        for reason in list(selection_entry.get("candidate_reason_codes") or [])
-        if str(reason or "").strip()
-    ]
-    short_trade_catalyst_relief_reason = _extract_short_trade_catalyst_relief_reason(
-        explainability_payload
-    )
+    score_gap_to_near_miss = round(max(0.0, near_miss_threshold - score_target), 4) if near_miss_threshold > 0 else None
+    candidate_reason_codes = [str(reason) for reason in list(selection_entry.get("candidate_reason_codes") or []) if str(reason or "").strip()]
+    short_trade_catalyst_relief_reason = _extract_short_trade_catalyst_relief_reason(explainability_payload)
 
     return {
         "ticker": selection_entry.get("ticker"),
@@ -387,21 +268,15 @@ def _extract_short_trade_opportunity_entry(
         "confidence": short_trade_entry.get("confidence"),
         "score_gap_to_near_miss": score_gap_to_near_miss,
         "strong_signal_count": strong_signal_count,
-        "preferred_entry_mode": short_trade_entry.get("preferred_entry_mode")
-        or "only_on_strong_confirmation",
+        "preferred_entry_mode": short_trade_entry.get("preferred_entry_mode") or "only_on_strong_confirmation",
         "positive_tags": positive_tags,
         "top_reasons": list(short_trade_entry.get("top_reasons") or []),
-        "candidate_source": explainability_payload.get("candidate_source")
-        or selection_entry.get("candidate_source"),
+        "candidate_source": explainability_payload.get("candidate_source") or selection_entry.get("candidate_source"),
         "candidate_reason_codes": candidate_reason_codes,
         "short_trade_catalyst_relief_reason": short_trade_catalyst_relief_reason,
         "gate_status": gate_status,
         "metrics": _extract_short_trade_core_metrics(metrics_payload),
-        "historical_prior": dict(
-            short_trade_entry.get("historical_prior")
-            or explainability_payload.get("historical_prior")
-            or {}
-        ),
+        "historical_prior": dict(short_trade_entry.get("historical_prior") or explainability_payload.get("historical_prior") or {}),
         "promotion_trigger": "只有盘中新增强度确认时，才允许从机会池升级。",
     }
 
@@ -434,9 +309,7 @@ def _extract_catalyst_theme_entry(candidate: dict[str, Any]) -> dict[str, Any] |
         "theme_category": candidate.get("theme_category"),
         "theme_strength_score": candidate.get("theme_strength_score"),
         "catalyst_trigger": candidate.get("catalyst_trigger"),
-        "related_tickers": [
-            str(t) for t in list(candidate.get("related_tickers") or []) if t
-        ],
+        "related_tickers": [str(t) for t in list(candidate.get("related_tickers") or []) if t],
         "top_ticker": candidate.get("top_ticker"),
         "trend_duration_days": candidate.get("trend_duration_days"),
         "recent_catalyst_count": candidate.get("recent_catalyst_count"),
@@ -453,9 +326,7 @@ def _extract_catalyst_theme_shadow_entry(
 
     entry["shadow_status"] = candidate.get("shadow_status") or "observation"
     entry["promotion_priority"] = candidate.get("promotion_priority") or 0
-    entry["related_short_trade_tickers"] = [
-        str(t) for t in list(candidate.get("related_short_trade_tickers") or []) if t
-    ]
+    entry["related_short_trade_tickers"] = [str(t) for t in list(candidate.get("related_short_trade_tickers") or []) if t]
     return entry
 
 

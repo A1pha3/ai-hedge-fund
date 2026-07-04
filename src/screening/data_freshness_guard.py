@@ -316,10 +316,6 @@ def _render_freshness_summary(fresh: bool, warnings: list[dict[str, Any]]) -> st
     lines = [f"{Fore.YELLOW}⚠ 数据新鲜度警告:{Style.RESET_ALL}"]
     for warning in warnings:
         severity_color = Fore.RED if warning["severity"] == "HIGH" else Fore.YELLOW if warning["severity"] == "MEDIUM" else Fore.WHITE
-        lines.append(
-            f"  {severity_color}[{warning['severity']}]{Style.RESET_ALL} "
-            f"{warning['label']}: 最新数据 {warning['latest_date']} "
-            f"(过期 {warning['stale_days']} 天, 阈值 {warning['max_stale_days']} 天)"
-        )
+        lines.append(f"  {severity_color}[{warning['severity']}]{Style.RESET_ALL} " f"{warning['label']}: 最新数据 {warning['latest_date']} " f"(过期 {warning['stale_days']} 天, 阈值 {warning['max_stale_days']} 天)")
     lines.append("  → 推荐置信度已按最严重等级施加惩罚 (最高 30%)")
     return "\n".join(lines)

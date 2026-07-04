@@ -12,16 +12,8 @@ def _has_weak_t_plus_2_history(*, input_data: TargetEvaluationInput, clamp_unit_
     historical_applied_scope = str(historical_prior.get("applied_scope") or "")
     historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
     historical_next_close_positive_rate = clamp_unit_interval_fn(float(historical_prior.get("next_close_positive_rate", 0.0) or 0.0))
-    weak_same_ticker_intraday_history = (
-        historical_applied_scope == "same_ticker"
-        and historical_execution_quality_label == "intraday_only"
-        and historical_evaluable_count >= 3
-        and historical_next_close_positive_rate <= 0.0
-    )
-    weak_zero_follow_through_history = (
-        historical_execution_quality_label == "zero_follow_through"
-        and historical_evaluable_count >= 3
-    )
+    weak_same_ticker_intraday_history = historical_applied_scope == "same_ticker" and historical_execution_quality_label == "intraday_only" and historical_evaluable_count >= 3 and historical_next_close_positive_rate <= 0.0
+    weak_zero_follow_through_history = historical_execution_quality_label == "zero_follow_through" and historical_evaluable_count >= 3
     return weak_same_ticker_intraday_history or weak_zero_follow_through_history
 
 

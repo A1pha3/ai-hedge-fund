@@ -18,9 +18,7 @@ def append_brief_payoff_review_lane_markdown(
         return
 
     lines.append("## Payoff-first Review Lane")
-    lines.append(
-        "- 复审层（review-only）：不等于下单；用于优先盯 5D payoff 线索，需盘中确认后再决策。"
-    )
+    lines.append("- 复审层（review-only）：不等于下单；用于优先盯 5D payoff 线索，需盘中确认后再决策。")
     lines.append("")
 
     for entry in entries:
@@ -44,12 +42,8 @@ def append_brief_payoff_review_lane_markdown(
             five_day_mean = historical_prior.get("five_day_mean_max_future_high_return_2_5d")
 
         lines.append(f"- review_semantics: {entry.get('review_semantics') or 'review_only'}")
-        lines.append(
-            f"- payoff_review_lane_rank: {int(entry.get('payoff_review_lane_rank') or 0)}"
-        )
-        lines.append(
-            f"- payoff_review_lane_score: {float(entry.get('payoff_review_lane_score') or 0.0):.4f}"
-        )
+        lines.append(f"- payoff_review_lane_rank: {int(entry.get('payoff_review_lane_rank') or 0)}")
+        lines.append(f"- payoff_review_lane_score: {float(entry.get('payoff_review_lane_score') or 0.0):.4f}")
         exec_quality = comps.get("execution_quality_label") or historical_prior.get("execution_quality_label") or "n/a"
         if scoring_version.startswith("v2") and five_day_hit is not None:
             lines.append(
@@ -85,9 +79,7 @@ def append_brief_payoff_review_lane_markdown(
             include_execution_quality=True,
             include_execution_note=True,
         )
-        lines.append(
-            f"- top_reasons: {', '.join(entry.get('top_reasons') or []) or 'n/a'}"
-        )
+        lines.append(f"- top_reasons: {', '.join(entry.get('top_reasons') or []) or 'n/a'}")
         append_brief_short_trade_metrics(lines, dict(entry.get("metrics") or {}))
         append_brief_historical_recent_examples(lines, historical_prior)
         append_gate_status_line(lines, entry.get("gate_status") or {})

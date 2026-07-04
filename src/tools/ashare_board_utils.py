@@ -98,9 +98,4 @@ def build_beijing_exchange_mask(stock_df: pd.DataFrame) -> pd.Series:
     symbol_series = stock_df["symbol"] if "symbol" in stock_df else pd.Series("", index=stock_df.index, dtype="object")
 
     normalized_market = market_series.fillna("").astype(str).str.strip()
-    return (
-        normalized_market.str.upper().eq("BJ")
-        | normalized_market.eq("北交所")
-        | build_beijing_exchange_mask_from_series(ts_code_series)
-        | symbol_series.fillna("").astype(str).str.strip().str.startswith(BEIJING_EXCHANGE_SYMBOL_PREFIXES)
-    )
+    return normalized_market.str.upper().eq("BJ") | normalized_market.eq("北交所") | build_beijing_exchange_mask_from_series(ts_code_series) | symbol_series.fillna("").astype(str).str.strip().str.startswith(BEIJING_EXCHANGE_SYMBOL_PREFIXES)

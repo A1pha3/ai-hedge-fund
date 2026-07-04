@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 class CandidateStock(BaseModel):
     """Layer A 候选池标的"""
+
     ticker: str
     name: str
     industry_sw: str = ""
@@ -34,6 +35,7 @@ class CandidateStock(BaseModel):
 
 class MarketStateType(StrEnum):
     """市场状态类型（§3.2 + §6.1）"""
+
     TREND = "trend"
     RANGE = "range"
     MIXED = "mixed"
@@ -42,6 +44,7 @@ class MarketStateType(StrEnum):
 
 class SubFactor(BaseModel):
     """单个子因子"""
+
     name: str
     direction: int = Field(ge=-1, le=1)
     confidence: float = Field(ge=0, le=100)
@@ -52,6 +55,7 @@ class SubFactor(BaseModel):
 
 class StrategySignal(BaseModel):
     """单策略标准三元组（§2 子因子聚合规则）"""
+
     direction: int = Field(ge=-1, le=1)
     confidence: float = Field(ge=0, le=100)
     completeness: float = Field(ge=0, le=1)
@@ -60,6 +64,7 @@ class StrategySignal(BaseModel):
 
 class MarketState(BaseModel):
     """市场状态检测结果（§3.2 五项指标）"""
+
     state_type: MarketStateType = MarketStateType.MIXED
     adx: float = 0.0
     atr_price_ratio: float = 0.0
@@ -77,12 +82,14 @@ class MarketState(BaseModel):
     regime_gate_reasons: list[str] = Field(default_factory=list)
     btst_kill_switch_metrics: dict[str, float] = Field(default_factory=dict)
     position_scale: float = Field(ge=0, le=1, default=1.0)
-    adjusted_weights: dict[str, float] = Field(default_factory=lambda: {
-        "trend": 0.30,
-        "mean_reversion": 0.20,
-        "fundamental": 0.30,
-        "event_sentiment": 0.20,
-    })
+    adjusted_weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "trend": 0.30,
+            "mean_reversion": 0.20,
+            "fundamental": 0.30,
+            "event_sentiment": 0.20,
+        }
+    )
     # P2-9: 宏观环境标签 (可选 — fetch_macro_snapshot 失败时为 None)
     macro_context: dict | None = None
 
@@ -122,6 +129,7 @@ STRATEGY_DIRECTION_MULTIPLIER: dict[str, float] = {
 
 class FusedScore(BaseModel):
     """单标的 Layer B 融合得分（§3.1 融合公式 + §3.4 决策阈值）"""
+
     ticker: str
     name: str = ""
     industry_sw: str = ""
@@ -151,6 +159,7 @@ class FusedScore(BaseModel):
 
 class ArbitrationAction(StrEnum):
     """冲突仲裁动作"""
+
     AVOID = "avoid"
     SHORT_HOLD = "short_hold"
     LONG_HOLD = "long_hold"

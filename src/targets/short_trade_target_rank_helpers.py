@@ -216,44 +216,22 @@ def _resolve_rank_decision_cap(
         0.0,
         float(getattr(profile, "catalyst_theme_source_specific_rank_cap_close_strength_min", 0.0) or 0.0),
     )
-    catalyst_theme_source_specific_rank_cap_guard_active = (
-        normalized_candidate_source == "catalyst_theme" and "catalyst_theme_short_trade_carryover_candidate" not in normalized_reason_codes
-    )
-    catalyst_theme_source_specific_rank_cap_trend_acceleration_pass = (
-        trend_acceleration >= catalyst_theme_source_specific_rank_cap_trend_acceleration_min
-    )
-    catalyst_theme_source_specific_rank_cap_sector_resonance_pass = (
-        sector_resonance >= catalyst_theme_source_specific_rank_cap_sector_resonance_min
-    )
-    catalyst_theme_source_specific_rank_cap_close_strength_pass = (
-        close_strength >= catalyst_theme_source_specific_rank_cap_close_strength_min
-    )
-    catalyst_theme_source_specific_caps_enabled = (
-        catalyst_theme_source_specific_rank_cap_guard_active
-        and catalyst_theme_source_specific_rank_cap_trend_acceleration_pass
-        and catalyst_theme_source_specific_rank_cap_sector_resonance_pass
-        and catalyst_theme_source_specific_rank_cap_close_strength_pass
-    )
+    catalyst_theme_source_specific_rank_cap_guard_active = normalized_candidate_source == "catalyst_theme" and "catalyst_theme_short_trade_carryover_candidate" not in normalized_reason_codes
+    catalyst_theme_source_specific_rank_cap_trend_acceleration_pass = trend_acceleration >= catalyst_theme_source_specific_rank_cap_trend_acceleration_min
+    catalyst_theme_source_specific_rank_cap_sector_resonance_pass = sector_resonance >= catalyst_theme_source_specific_rank_cap_sector_resonance_min
+    catalyst_theme_source_specific_rank_cap_close_strength_pass = close_strength >= catalyst_theme_source_specific_rank_cap_close_strength_min
+    catalyst_theme_source_specific_caps_enabled = catalyst_theme_source_specific_rank_cap_guard_active and catalyst_theme_source_specific_rank_cap_trend_acceleration_pass and catalyst_theme_source_specific_rank_cap_sector_resonance_pass and catalyst_theme_source_specific_rank_cap_close_strength_pass
     layer_c_watchlist_source_specific_cap_guard_active = normalized_candidate_source == "layer_c_watchlist"
-    layer_c_watchlist_selected_rank_cap = _resolve_rank_cap_override_allow_zero(
-        getattr(profile, "layer_c_watchlist_selected_rank_cap", None)
-    )
-    layer_c_watchlist_near_miss_rank_cap = _resolve_rank_cap_override_allow_zero(
-        getattr(profile, "layer_c_watchlist_near_miss_rank_cap", None)
-    )
-    layer_c_watchlist_source_specific_cap_has_override = (
-        layer_c_watchlist_selected_rank_cap is not _UNSET_RANK_CAP
-        or layer_c_watchlist_near_miss_rank_cap is not _UNSET_RANK_CAP
-    )
+    layer_c_watchlist_selected_rank_cap = _resolve_rank_cap_override_allow_zero(getattr(profile, "layer_c_watchlist_selected_rank_cap", None))
+    layer_c_watchlist_near_miss_rank_cap = _resolve_rank_cap_override_allow_zero(getattr(profile, "layer_c_watchlist_near_miss_rank_cap", None))
+    layer_c_watchlist_source_specific_cap_has_override = layer_c_watchlist_selected_rank_cap is not _UNSET_RANK_CAP or layer_c_watchlist_near_miss_rank_cap is not _UNSET_RANK_CAP
     selected_rank_cap_hard = _normalize_rank_cap(getattr(profile, "selected_rank_cap", 0))
     near_miss_rank_cap_hard = _normalize_rank_cap(getattr(profile, "near_miss_rank_cap", 0))
     selected_rank_cap_ratio = _normalize_rank_cap_ratio(getattr(profile, "selected_rank_cap_ratio", 0.0))
     near_miss_rank_cap_ratio = _normalize_rank_cap_ratio(getattr(profile, "near_miss_rank_cap_ratio", 0.0))
     liquidity_shadow_selected_rank_cap_ratio = _resolve_rank_cap_ratio_override(getattr(profile, "liquidity_shadow_selected_rank_cap_ratio", None))
     liquidity_shadow_near_miss_rank_cap_ratio = _resolve_rank_cap_ratio_override(getattr(profile, "liquidity_shadow_near_miss_rank_cap_ratio", None))
-    liquidity_shadow_source_specific_rank_cap_require_relief_applied = bool(
-        getattr(profile, "liquidity_shadow_source_specific_rank_cap_require_relief_applied", True)
-    )
+    liquidity_shadow_source_specific_rank_cap_require_relief_applied = bool(getattr(profile, "liquidity_shadow_source_specific_rank_cap_require_relief_applied", True))
     upstream_shadow_source_specific_rank_cap_trend_acceleration_min = max(
         0.0,
         float(getattr(profile, "upstream_shadow_source_specific_rank_cap_trend_acceleration_min", 0.0) or 0.0),
@@ -262,34 +240,13 @@ def _resolve_rank_decision_cap(
         0.0,
         float(getattr(profile, "upstream_shadow_source_specific_rank_cap_close_strength_min", 0.0) or 0.0),
     )
-    shadow_source_specific_rank_cap_guard_active = (
-        normalized_candidate_source in {"upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow"}
-        and "upstream_shadow_release_candidate" in normalized_reason_codes
-    )
+    shadow_source_specific_rank_cap_guard_active = normalized_candidate_source in {"upstream_liquidity_corridor_shadow", "post_gate_liquidity_competition_shadow"} and "upstream_shadow_release_candidate" in normalized_reason_codes
     shadow_source_specific_rank_cap_relief_applied = upstream_shadow_catalyst_relief_applied
-    upstream_shadow_source_specific_rank_cap_trend_acceleration_pass = (
-        trend_acceleration >= upstream_shadow_source_specific_rank_cap_trend_acceleration_min
-    )
-    upstream_shadow_source_specific_rank_cap_close_strength_pass = (
-        close_strength >= upstream_shadow_source_specific_rank_cap_close_strength_min
-    )
-    upstream_shadow_source_specific_rank_cap_support_pass = (
-        upstream_shadow_source_specific_rank_cap_trend_acceleration_pass
-        and upstream_shadow_source_specific_rank_cap_close_strength_pass
-    )
-    shadow_source_specific_rank_cap_has_override = (
-        liquidity_shadow_selected_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO
-        or liquidity_shadow_near_miss_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO
-    )
-    shadow_source_specific_caps_enabled = (
-        shadow_source_specific_rank_cap_guard_active
-        and shadow_source_specific_rank_cap_has_override
-        and upstream_shadow_source_specific_rank_cap_support_pass
-        and (
-            shadow_source_specific_rank_cap_relief_applied
-            or not liquidity_shadow_source_specific_rank_cap_require_relief_applied
-        )
-    )
+    upstream_shadow_source_specific_rank_cap_trend_acceleration_pass = trend_acceleration >= upstream_shadow_source_specific_rank_cap_trend_acceleration_min
+    upstream_shadow_source_specific_rank_cap_close_strength_pass = close_strength >= upstream_shadow_source_specific_rank_cap_close_strength_min
+    upstream_shadow_source_specific_rank_cap_support_pass = upstream_shadow_source_specific_rank_cap_trend_acceleration_pass and upstream_shadow_source_specific_rank_cap_close_strength_pass
+    shadow_source_specific_rank_cap_has_override = liquidity_shadow_selected_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO or liquidity_shadow_near_miss_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO
+    shadow_source_specific_caps_enabled = shadow_source_specific_rank_cap_guard_active and shadow_source_specific_rank_cap_has_override and upstream_shadow_source_specific_rank_cap_support_pass and (shadow_source_specific_rank_cap_relief_applied or not liquidity_shadow_source_specific_rank_cap_require_relief_applied)
     if shadow_source_specific_caps_enabled:
         if liquidity_shadow_selected_rank_cap_ratio is not _UNSET_RANK_CAP_RATIO:
             selected_rank_cap_ratio = liquidity_shadow_selected_rank_cap_ratio
@@ -339,9 +296,7 @@ def _resolve_rank_decision_cap(
     selected_rank_cap_relief_require_t_plus_2_candidate = bool(getattr(profile, "selected_rank_cap_relief_require_t_plus_2_candidate", False))
     selected_rank_cap_relief_allow_risk_off = bool(getattr(profile, "selected_rank_cap_relief_allow_risk_off", True))
     selected_rank_cap_relief_allow_crisis = bool(getattr(profile, "selected_rank_cap_relief_allow_crisis", True))
-    selected_rank_cap_relief_catalyst_theme_carryover_support_enabled = bool(
-        getattr(profile, "selected_rank_cap_relief_catalyst_theme_carryover_support_enabled", False)
-    )
+    selected_rank_cap_relief_catalyst_theme_carryover_support_enabled = bool(getattr(profile, "selected_rank_cap_relief_catalyst_theme_carryover_support_enabled", False))
     selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count = max(
         0,
         int(getattr(profile, "selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count", 0) or 0),
@@ -391,40 +346,18 @@ def _resolve_rank_decision_cap(
 
     profitability_hard_cliff_boundary_relief = dict(snapshot.get("profitability_hard_cliff_boundary_relief") or {})
     profitability_hard_cliff_boundary_gate_hits = dict(profitability_hard_cliff_boundary_relief.get("gate_hits") or {})
-    selected_rank_cap_relief_boundary_guard_active = (
-        normalized_candidate_source == "short_trade_boundary"
-        and bool(profitability_hard_cliff_boundary_relief.get("enabled"))
-        and bool(profitability_hard_cliff_boundary_gate_hits.get("profitability_hard_cliff"))
-    )
+    selected_rank_cap_relief_boundary_guard_active = normalized_candidate_source == "short_trade_boundary" and bool(profitability_hard_cliff_boundary_relief.get("enabled")) and bool(profitability_hard_cliff_boundary_gate_hits.get("profitability_hard_cliff"))
     selected_rank_cap_relief_boundary_pass = (not selected_rank_cap_relief_boundary_guard_active) or bool(profitability_hard_cliff_boundary_relief.get("applied"))
 
     historical_prior = dict(snapshot.get("historical_prior") or {})
-    selected_rank_cap_relief_catalyst_theme_carryover_candidate = (
-        normalized_candidate_source == "catalyst_theme"
-        and "catalyst_theme_short_trade_carryover_candidate" in normalized_reason_codes
-    )
-    selected_rank_cap_relief_catalyst_theme_carryover_guard_active = (
-        selected_rank_cap_relief_catalyst_theme_carryover_support_enabled
-        and selected_rank_cap_relief_catalyst_theme_carryover_candidate
-    )
+    selected_rank_cap_relief_catalyst_theme_carryover_candidate = normalized_candidate_source == "catalyst_theme" and "catalyst_theme_short_trade_carryover_candidate" in normalized_reason_codes
+    selected_rank_cap_relief_catalyst_theme_carryover_guard_active = selected_rank_cap_relief_catalyst_theme_carryover_support_enabled and selected_rank_cap_relief_catalyst_theme_carryover_candidate
     selected_rank_cap_relief_catalyst_theme_carryover_historical_evaluable_count = int(historical_prior.get("evaluable_count") or 0)
-    selected_rank_cap_relief_catalyst_theme_carryover_historical_support_pass = (
-        selected_rank_cap_relief_catalyst_theme_carryover_historical_evaluable_count
-        >= selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count
-    )
-    selected_rank_cap_relief_catalyst_theme_carryover_catalyst_support_pass = (
-        catalyst_freshness >= selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min
-    )
+    selected_rank_cap_relief_catalyst_theme_carryover_historical_support_pass = selected_rank_cap_relief_catalyst_theme_carryover_historical_evaluable_count >= selected_rank_cap_relief_catalyst_theme_carryover_min_evaluable_count
+    selected_rank_cap_relief_catalyst_theme_carryover_catalyst_support_pass = catalyst_freshness >= selected_rank_cap_relief_catalyst_theme_carryover_catalyst_freshness_min
     selected_rank_cap_relief_catalyst_theme_carryover_t_plus_2_support_pass = selected_rank_cap_relief_t_plus_2_support_applied
-    selected_rank_cap_relief_catalyst_theme_carryover_support_pass = (
-        (not selected_rank_cap_relief_catalyst_theme_carryover_guard_active)
-        or selected_rank_cap_relief_catalyst_theme_carryover_historical_support_pass
-        or selected_rank_cap_relief_catalyst_theme_carryover_catalyst_support_pass
-        or selected_rank_cap_relief_catalyst_theme_carryover_t_plus_2_support_pass
-    )
-    selected_rank_cap_relief_catalyst_theme_research_enabled = bool(
-        getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_enabled", False)
-    )
+    selected_rank_cap_relief_catalyst_theme_carryover_support_pass = (not selected_rank_cap_relief_catalyst_theme_carryover_guard_active) or selected_rank_cap_relief_catalyst_theme_carryover_historical_support_pass or selected_rank_cap_relief_catalyst_theme_carryover_catalyst_support_pass or selected_rank_cap_relief_catalyst_theme_carryover_t_plus_2_support_pass
+    selected_rank_cap_relief_catalyst_theme_research_enabled = bool(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_enabled", False))
     selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min = max(
         0.0,
         float(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min", 0.0) or 0.0),
@@ -437,32 +370,12 @@ def _resolve_rank_decision_cap(
         1.0,
         max(0.0, float(getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_close_strength_max", 1.0) if getattr(profile, "selected_rank_cap_relief_catalyst_theme_research_close_strength_max", 1.0) is not None else 1.0)),
     )
-    selected_rank_cap_relief_catalyst_theme_research_candidate = (
-        normalized_candidate_source == "catalyst_theme"
-        and "catalyst_theme_research_candidate" in normalized_reason_codes
-        and "catalyst_theme_short_trade_carryover_candidate" not in normalized_reason_codes
-    )
-    selected_rank_cap_relief_catalyst_theme_research_guard_active = (
-        selected_rank_cap_relief_catalyst_theme_research_enabled
-        and selected_rank_cap_relief_catalyst_theme_research_candidate
-    )
-    selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_pass = (
-        trend_acceleration >= selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min
-    )
-    selected_rank_cap_relief_catalyst_theme_research_sector_resonance_pass = (
-        sector_resonance >= selected_rank_cap_relief_catalyst_theme_research_sector_resonance_min
-    )
-    selected_rank_cap_relief_catalyst_theme_research_close_strength_pass = (
-        close_strength <= selected_rank_cap_relief_catalyst_theme_research_close_strength_max
-    )
-    selected_rank_cap_relief_catalyst_theme_research_support_pass = (
-        (not selected_rank_cap_relief_catalyst_theme_research_guard_active)
-        or (
-            selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_pass
-            and selected_rank_cap_relief_catalyst_theme_research_sector_resonance_pass
-            and selected_rank_cap_relief_catalyst_theme_research_close_strength_pass
-        )
-    )
+    selected_rank_cap_relief_catalyst_theme_research_candidate = normalized_candidate_source == "catalyst_theme" and "catalyst_theme_research_candidate" in normalized_reason_codes and "catalyst_theme_short_trade_carryover_candidate" not in normalized_reason_codes
+    selected_rank_cap_relief_catalyst_theme_research_guard_active = selected_rank_cap_relief_catalyst_theme_research_enabled and selected_rank_cap_relief_catalyst_theme_research_candidate
+    selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_pass = trend_acceleration >= selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_min
+    selected_rank_cap_relief_catalyst_theme_research_sector_resonance_pass = sector_resonance >= selected_rank_cap_relief_catalyst_theme_research_sector_resonance_min
+    selected_rank_cap_relief_catalyst_theme_research_close_strength_pass = close_strength <= selected_rank_cap_relief_catalyst_theme_research_close_strength_max
+    selected_rank_cap_relief_catalyst_theme_research_support_pass = (not selected_rank_cap_relief_catalyst_theme_research_guard_active) or (selected_rank_cap_relief_catalyst_theme_research_trend_acceleration_pass and selected_rank_cap_relief_catalyst_theme_research_sector_resonance_pass and selected_rank_cap_relief_catalyst_theme_research_close_strength_pass)
 
     selected_rank_cap_relief_within_buffer = bool(selected_rank_cap_relief_cap is not None and normalized_rank > 0 and normalized_rank <= selected_rank_cap_relief_cap)
     selected_cap_soft_relief_applied = bool(
@@ -591,10 +504,10 @@ def _apply_rank_based_decision_cap(
 # Stocks with strong sector alignment (> PHASE_BOOST_THRESHOLD) receive a convex bonus that
 # rewards "主升浪" participants; stocks below PHASE_PENALTY_THRESHOLD are penalised more
 # aggressively than the neutral 0.5 default to avoid contra-sector stale moves.
-_SECTOR_PHASE_BOOST_THRESHOLD: float = 0.65   # convex amplification begins above this
+_SECTOR_PHASE_BOOST_THRESHOLD: float = 0.65  # convex amplification begins above this
 _SECTOR_PHASE_PENALTY_THRESHOLD: float = 0.35  # progressive penalty below this
-_SECTOR_PHASE_BOOST_GAIN: float = 0.40         # additional gain at sector_resonance == 1.0
-_SECTOR_PHASE_PENALTY_FACTOR: float = 0.60     # multiplier applied in the penalty zone
+_SECTOR_PHASE_BOOST_GAIN: float = 0.40  # additional gain at sector_resonance == 1.0
+_SECTOR_PHASE_PENALTY_FACTOR: float = 0.60  # multiplier applied in the penalty zone
 
 
 def compute_sector_resonance_phase_score(raw_sector: float) -> float:
@@ -759,5 +672,5 @@ def compute_runner_composite_score(snapshot: dict[str, Any], profile: Any = None
     total_weight = w_b + w_t + w_v + w_c + w_cs + w_vr + w_sr + w_qb + w_ni + w_vp + w_ts + w_ma + w_mc + w_vm + w_rs
     if total_weight <= 0.0:
         return 0.0
-    raw = (w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score + w_sr * sector_resonance_score + w_qb * quiet_breakout_score + w_ni * net_inflow_score + w_vp * vp_quality_score + w_ts * t0_tail_score + w_ma * momentum_alignment_score + w_mc * momentum_confirmation_score + w_vm * volume_momentum_score + w_rs * rs_sector_rank_score)
+    raw = w_b * breakout + w_t * trend + w_v * volume + w_c * catalyst + w_cs * close_str + w_vr * volatility_regime_score + w_sr * sector_resonance_score + w_qb * quiet_breakout_score + w_ni * net_inflow_score + w_vp * vp_quality_score + w_ts * t0_tail_score + w_ma * momentum_alignment_score + w_mc * momentum_confirmation_score + w_vm * volume_momentum_score + w_rs * rs_sector_rank_score
     return round(raw / total_weight, 4)

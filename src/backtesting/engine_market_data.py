@@ -45,6 +45,7 @@ DEFAULT_ASHARE_BENCHMARK_TICKER = "000300.SH"
 # Standalone utilities (formerly static methods on BacktestEngine)
 # ---------------------------------------------------------------------------
 
+
 def normalize_ticker(ticker: str) -> str:
     return str(ticker).split(".")[0].upper()
 
@@ -78,6 +79,7 @@ def _is_suspended_row(row) -> bool:
 # ---------------------------------------------------------------------------
 # MarketDataLoader
 # ---------------------------------------------------------------------------
+
 
 class MarketDataLoader:
     """Handles all market data loading, price hydration, limit state, and
@@ -198,14 +200,8 @@ class MarketDataLoader:
         limit_df = get_limit_list(trade_date_compact)
         if limit_df is None or limit_df.empty:
             return set(), set()
-        limit_up = {
-            normalize_ticker(ts_code)
-            for ts_code in limit_df.loc[limit_df["limit"] == "U", "ts_code"].tolist()
-        }
-        limit_down = {
-            normalize_ticker(ts_code)
-            for ts_code in limit_df.loc[limit_df["limit"] == "D", "ts_code"].tolist()
-        }
+        limit_up = {normalize_ticker(ts_code) for ts_code in limit_df.loc[limit_df["limit"] == "U", "ts_code"].tolist()}
+        limit_down = {normalize_ticker(ts_code) for ts_code in limit_df.loc[limit_df["limit"] == "D", "ts_code"].tolist()}
         return limit_up, limit_down
 
     # ------------------------------------------------------------------
@@ -232,7 +228,8 @@ class MarketDataLoader:
                 else:
                     logger.debug(
                         "get_daily_turnovers: skip ticker=%s NaN close/volume (%s)",
-                        ticker, current_date_str,
+                        ticker,
+                        current_date_str,
                     )
             except Exception as exc:
                 # BH-017 family (R50 same-family): per-ticker turnover fetch
@@ -268,7 +265,8 @@ class MarketDataLoader:
                 if _is_suspended_row(row):
                     logger.debug(
                         "load_current_prices: ticker=%s 停牌或零成交 (%s), 跳过",
-                        ticker, current_date_str,
+                        ticker,
+                        current_date_str,
                     )
                     continue
                 # R83 same-class drain: NaN close on the last row (partial /
@@ -285,7 +283,8 @@ class MarketDataLoader:
                 if not pd.notna(close_val):
                     logger.debug(
                         "load_current_prices: ticker=%s NaN close (%s), 跳过",
-                        ticker, current_date_str,
+                        ticker,
+                        current_date_str,
                     )
                     continue
                 current_prices[ticker] = float(close_val)
@@ -321,7 +320,8 @@ class MarketDataLoader:
                     if _is_suspended_row(row):
                         logger.debug(
                             "hydrate_position_prices: ticker=%s 停牌或零成交 (%s), 回退 cost_basis",
-                            ticker, current_date_str,
+                            ticker,
+                            current_date_str,
                         )
                     elif not pd.notna(row["close"]):
                         # R83 same-class drain (sibling of load_current_prices):
@@ -332,7 +332,8 @@ class MarketDataLoader:
                         # to cost basis (same as suspended rows).
                         logger.debug(
                             "hydrate_position_prices: ticker=%s NaN close (%s), 回退 cost_basis",
-                            ticker, current_date_str,
+                            ticker,
+                            current_date_str,
                         )
                     else:
                         hydrated_prices[ticker] = float(row["close"])
@@ -344,7 +345,9 @@ class MarketDataLoader:
                 # back to cost basis for this held position).
                 logger.debug(
                     "hydrate_position_prices: ticker=%s price fetch failed (%s), 回退 cost_basis",
-                    ticker, current_date_str, exc_info=exc,
+                    ticker,
+                    current_date_str,
+                    exc_info=exc,
                 )
             if fallback_price > 0:
                 hydrated_prices[ticker] = fallback_price

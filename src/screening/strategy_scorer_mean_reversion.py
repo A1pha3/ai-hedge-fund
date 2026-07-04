@@ -45,9 +45,7 @@ def score_mean_reversion_strategy(prices_df: pd.DataFrame) -> StrategySignal:
     )
 
 
-def _build_mean_reversion_sub_factors(
-    *, prices_df: pd.DataFrame, mean_reversion_signal: dict | None, stat_arb_signal: dict | None
-) -> list[SubFactor]:
+def _build_mean_reversion_sub_factors(*, prices_df: pd.DataFrame, mean_reversion_signal: dict | None, stat_arb_signal: dict | None) -> list[SubFactor]:
     return [
         _build_optional_mean_reversion_factor("zscore_bbands", mean_reversion_signal),
         _build_rsi_extreme_factor(prices_df),

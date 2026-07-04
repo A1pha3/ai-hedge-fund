@@ -250,8 +250,7 @@ def generate_pabrai_output(
         [
             (
                 "system",
-                with_fact_grounding_rules(
-                    """You are Mohnish Pabrai. Apply my value investing philosophy:
+                with_fact_grounding_rules("""You are Mohnish Pabrai. Apply my value investing philosophy:
 
           - Heads I win; tails I don't lose much: prioritize downside protection first.
           - Buy businesses with simple, understandable models and durable moats.
@@ -262,8 +261,7 @@ def generate_pabrai_output(
           - Avoid leverage, complexity, and fragile balance sheets.
 
             Provide candid, checklist-driven reasoning, with emphasis on capital preservation and expected mispricing.
-            """
-                ),
+            """),
             ),
             (
                 "human",

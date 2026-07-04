@@ -25,28 +25,16 @@ def _normalize_price_frame(frame: pd.DataFrame | None) -> pd.DataFrame:
     return normalized
 
 
-def _extract_next_day_outcome(
-    ticker: str, trade_date: str, price_cache: dict[tuple[str, str], pd.DataFrame]
-) -> dict[str, Any]:
+def _extract_next_day_outcome(ticker: str, trade_date: str, price_cache: dict[tuple[str, str], pd.DataFrame]) -> dict[str, Any]:
     cache_key = (ticker, trade_date)
     frame = price_cache.get(cache_key)
     if frame is None:
-        end_date = (pd.Timestamp(trade_date) + pd.Timedelta(days=10)).strftime(
-            "%Y-%m-%d"
-        )
+        end_date = (pd.Timestamp(trade_date) + pd.Timedelta(days=10)).strftime("%Y-%m-%d")
         try:
-            frame = _normalize_price_frame(
-                prices_to_df(
-                    get_prices_robust(
-                        ticker, trade_date, end_date, use_mock_on_fail=False
-                    )
-                )
-            )
+            frame = _normalize_price_frame(prices_to_df(get_prices_robust(ticker, trade_date, end_date, use_mock_on_fail=False)))
         except Exception:
             try:
-                frame = _normalize_price_frame(
-                    get_price_data(ticker, trade_date, end_date)
-                )
+                frame = _normalize_price_frame(get_price_data(ticker, trade_date, end_date))
             except Exception:
                 frame = pd.DataFrame()
         price_cache[cache_key] = frame
@@ -70,16 +58,7 @@ def _extract_next_day_outcome(
     # _as_float can return NaN for NaN/None numeric inputs; NaN comparisons
     # are always False, so the <= 0 guard would otherwise let NaN through and
     # silently poison next_open_return / next_close_return computations.
-    if (
-        trade_close != trade_close
-        or next_open != next_open
-        or next_high != next_high
-        or next_close != next_close
-        or trade_close <= 0
-        or next_open <= 0
-        or next_high <= 0
-        or next_close <= 0
-    ):
+    if trade_close != trade_close or next_open != next_open or next_high != next_high or next_close != next_close or trade_close <= 0 or next_open <= 0 or next_high <= 0 or next_close <= 0:
         return {"data_status": "incomplete_price_bar"}
 
     return {

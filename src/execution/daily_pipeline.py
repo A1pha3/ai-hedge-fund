@@ -287,8 +287,7 @@ def _load_early_runner_runtime_entries(trade_date: str) -> list[dict[str, Any]]:
         # silently with no trace. Log at DEBUG so ops can diagnose why promoted
         # entries disappeared from short-trade candidates. Behavior preserved ([]).
         logger.debug(
-            "early-runner runtime artifact unreadable, degrading to empty entries: "
-            "path=%s error=%s",
+            "early-runner runtime artifact unreadable, degrading to empty entries: " "path=%s error=%s",
             artifact_path,
             exc,
         )
@@ -941,11 +940,7 @@ def _ensure_plan_target_shells(
     # (meaning the plan was created without explicitly setting a profile config), skip the
     # ensure_plan_target_shells_impl call entirely so the frozen plan is preserved as-is.
     has_shell_inputs = _has_rebuildable_target_shell_inputs(plan, target_mode=target_mode)
-    is_empty_config_mismatch = (
-        profile_mismatch
-        and not existing_profile_config
-        and existing_profile_name == requested_profile.name
-    )
+    is_empty_config_mismatch = profile_mismatch and not existing_profile_config and existing_profile_name == requested_profile.name
     if not has_shell_inputs and not replay_sidecar_can_rebuild and (not profile_mismatch or is_empty_config_mismatch):
         return plan
 
@@ -1175,11 +1170,7 @@ class DailyPipeline:
         # 不兜底, NAV 变 NaN, `nav > 0` 对 NaN 返回 False 触发兜底 nav=1.0 (错误值, 非真实 NAV).
         # 用 safe_float 源头拒绝 NaN, NAV 兜底只在真实 <=0 时触发.
         nav = _safe_float((plan.portfolio_snapshot or {}).get("cash", 0.0), 0.0)
-        nav += sum(
-            _safe_float(position.get("long", 0), 0.0)
-            * _safe_float(position.get("long_cost_basis", 0.0), 0.0)
-            for position in dict((plan.portfolio_snapshot or {}).get("positions", {}) or {}).values()
-        )
+        nav += sum(_safe_float(position.get("long", 0), 0.0) * _safe_float(position.get("long_cost_basis", 0.0), 0.0) for position in dict((plan.portfolio_snapshot or {}).get("positions", {}) or {}).values())
         nav = nav if nav > 0 else 1.0
 
         filtered_entries: list[dict[str, Any]] = []
@@ -1512,19 +1503,12 @@ class DailyPipeline:
         )
         early_runner_runtime_entries = _load_early_runner_runtime_entries(trade_date)
         if early_runner_runtime_entries:
-            existing_short_trade_tickers = {
-                str(dict(entry).get("ticker") or "").strip()
-                for entry in list((short_trade_candidate_diagnostics or {}).get("tickers", []) or [])
-            }
+            existing_short_trade_tickers = {str(dict(entry).get("ticker") or "").strip() for entry in list((short_trade_candidate_diagnostics or {}).get("tickers", []) or [])}
             short_trade_candidate_diagnostics = {
                 **dict(short_trade_candidate_diagnostics or {}),
                 "tickers": [
                     *list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
-                    *[
-                        dict(entry)
-                        for entry in early_runner_runtime_entries
-                        if str(dict(entry).get("ticker") or "").strip() not in existing_short_trade_tickers
-                    ],
+                    *[dict(entry) for entry in early_runner_runtime_entries if str(dict(entry).get("ticker") or "").strip() not in existing_short_trade_tickers],
                 ],
                 "early_runner_promoted_entries": [dict(entry) for entry in early_runner_runtime_entries],
             }

@@ -172,9 +172,7 @@ def _apply_core_candidate_filters(
         stage="beijing_exchange_filter",
         record_focus_filter_stage_fn=record_focus_filter_stage_fn,
     )
-    listing_days_mask = stock_df["list_date"].apply(
-        lambda d: estimate_trading_days_fn(str(d) if pd.notna(d) else "", trade_date) < min_listing_days
-    )
+    listing_days_mask = stock_df["list_date"].apply(lambda d: estimate_trading_days_fn(str(d) if pd.notna(d) else "", trade_date) < min_listing_days)
     return _apply_stock_dataframe_filter(
         stock_df=stock_df,
         mask=listing_days_mask,

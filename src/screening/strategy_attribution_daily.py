@@ -421,16 +421,9 @@ def render_attribution_report(
     for attr in sorted_attrs:
         display_name = STRATEGY_DISPLAY_NAMES.get(attr.strategy_name, attr.strategy_name)
         symbol = _status_symbol(attr.status)
-        contributor = (
-            f"最大贡献: {attr.top_winner}"
-            if attr.top_winner
-            else (f"最大拖累: {attr.top_loser}" if attr.top_loser else "无方向标的")
-        )
+        contributor = f"最大贡献: {attr.top_winner}" if attr.top_winner else (f"最大拖累: {attr.top_loser}" if attr.top_loser else "无方向标的")
         # 第一行: 符号 + 名称 + PnL + 占比 + 命中率 + 最大贡献/拖累
-        lines.append(
-            f"  {symbol} {display_name:<8} {_format_currency(attr.daily_pnl):<10} "
-            f"({attr.attribution_pct:+.1f}%)  命中率 {attr.hit_rate * 100:.0f}%  {contributor}"
-        )
+        lines.append(f"  {symbol} {display_name:<8} {_format_currency(attr.daily_pnl):<10} " f"({attr.attribution_pct:+.1f}%)  命中率 {attr.hit_rate * 100:.0f}%  {contributor}")
         # 第二行: 诊断 (缩进 4 空格 + 箭头)
         lines.append(f"    ─→ {attr.diagnosis}")
 

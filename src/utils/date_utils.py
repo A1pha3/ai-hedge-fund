@@ -37,11 +37,6 @@ def is_announced_after_as_of(ann_date_str: str | None, as_of_date: str | None) -
         return False
     ann_compact = str(ann_date_str).replace("-", "")
     as_of_compact = str(as_of_date).replace("-", "")
-    if (
-        len(ann_compact) == 8
-        and len(as_of_compact) == 8
-        and ann_compact[:8].isdigit()
-        and as_of_compact[:8].isdigit()
-    ):
+    if len(ann_compact) == 8 and len(as_of_compact) == 8 and ann_compact[:8].isdigit() and as_of_compact[:8].isdigit():
         return ann_compact > as_of_compact
     return False

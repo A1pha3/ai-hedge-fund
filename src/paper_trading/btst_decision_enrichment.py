@@ -169,11 +169,7 @@ def estimate_execution_cost_cap(row: dict[str, Any]) -> float:
 
 
 def _scope_label(row: dict[str, Any]) -> str:
-    return str(
-        normalize_historical_metric(row, "applied_scope")
-        or normalize_historical_metric(row, "scope")
-        or ""
-    )
+    return str(normalize_historical_metric(row, "applied_scope") or normalize_historical_metric(row, "scope") or "")
 
 
 def _metric_bundle(row: dict[str, Any]) -> dict[str, Any]:
@@ -185,9 +181,7 @@ def _metric_bundle(row: dict[str, Any]) -> dict[str, Any]:
         "evaluable_count": _to_int(normalize_historical_metric(row, "evaluable_count")),
         "sample_count": _to_int(normalize_historical_metric(row, "sample_count")),
         "scope": _scope_label(row),
-        "win_rate_payoff_divergence": bool(
-            normalize_historical_metric(row, "win_rate_payoff_divergence")
-        ),
+        "win_rate_payoff_divergence": bool(normalize_historical_metric(row, "win_rate_payoff_divergence")),
     }
 
 
@@ -235,27 +229,13 @@ def _base_grade(metrics: dict[str, Any], data_quality: str) -> str:
         return "D"
     if win_rate is None and payoff_ratio is None:
         return "D"
-    if (
-        win_rate is not None
-        and win_rate >= 0.70
-        and payoff_ratio is not None
-        and payoff_ratio >= 1.50
-        and (expectancy is None or expectancy >= 0)
-    ):
+    if win_rate is not None and win_rate >= 0.70 and payoff_ratio is not None and payoff_ratio >= 1.50 and (expectancy is None or expectancy >= 0):
         return "A"
-    if (
-        win_rate is not None
-        and win_rate >= 0.55
-        and payoff_ratio is not None
-        and payoff_ratio >= 1.00
-        and (expectancy is None or expectancy >= 0)
-    ):
+    if win_rate is not None and win_rate >= 0.55 and payoff_ratio is not None and payoff_ratio >= 1.00 and (expectancy is None or expectancy >= 0):
         return "B"
     if win_rate is not None and win_rate >= 0.45:
         return "C"
-    if payoff_ratio is not None and payoff_ratio >= 1.50 and (
-        expectancy is None or expectancy >= 0
-    ):
+    if payoff_ratio is not None and payoff_ratio >= 1.50 and (expectancy is None or expectancy >= 0):
         return "C"
     return "D"
 
@@ -264,11 +244,7 @@ def _cap_grade_for_risks(grade: str, metrics: dict[str, Any], notes: list[str]) 
     if metrics["win_rate_payoff_divergence"]:
         notes.append("胜率和盈亏比/期望背离")
         return "C" if grade in {"A", "B"} else grade
-    if (
-        metrics["payoff_ratio"] is not None
-        and metrics["payoff_ratio"] < 1.0
-        and grade in {"A", "B"}
-    ):
+    if metrics["payoff_ratio"] is not None and metrics["payoff_ratio"] < 1.0 and grade in {"A", "B"}:
         notes.append("盈亏比低于 1.00，不能按高赔率处理")
         return "C"
     return grade
@@ -346,10 +322,7 @@ def build_veto_owner(control_tower: dict[str, Any]) -> str:
     if existing_veto_owner in _VALID_VETO_OWNERS:
         return existing_veto_owner
     reason_codes = _string_list(control_tower.get("reason_codes"))
-    if any(
-        "market_gate" in code or "regime_gate" in code or "buy_orders_cleared" in code
-        for code in reason_codes
-    ):
+    if any("market_gate" in code or "regime_gate" in code or "buy_orders_cleared" in code for code in reason_codes):
         return _VETO_OWNER_MARKET_GATE
     if any("selection_snapshot_missing" in code or "manual_review" in code for code in reason_codes):
         return _VETO_OWNER_MANUAL_REVIEW
@@ -390,11 +363,7 @@ def build_premarket_control_tower(
         reason_codes.append("selection_snapshot_missing")
     elif hard_gate:
         effective_trade_bias = "gate_locked_confirmation_only"
-        reason_codes.append(
-            "market_gate_downgraded_raw_trade_allowed"
-            if raw_trade_bias == "trade_allowed"
-            else "market_gate_requires_confirmation"
-        )
+        reason_codes.append("market_gate_downgraded_raw_trade_allowed" if raw_trade_bias == "trade_allowed" else "market_gate_requires_confirmation")
     else:
         effective_trade_bias = raw_trade_bias
         reason_codes.append("market_gate_passed")
@@ -412,9 +381,7 @@ def build_premarket_control_tower(
         "buy_orders_cleared_count": gate_context.get("buy_orders_cleared_count"),
         "position_scale": gate_context.get("position_scale"),
         "reason_codes": reason_codes,
-        "action": "先按门控降级，只允许 09:25 后重新确认；若盘口承接和市场宽度没有修复，则不执行。"
-        if effective_trade_bias == "gate_locked_confirmation_only"
-        else "沿用模型原始倾向，但仍需完成盘中确认。",
+        "action": "先按门控降级，只允许 09:25 后重新确认；若盘口承接和市场宽度没有修复，则不执行。" if effective_trade_bias == "gate_locked_confirmation_only" else "沿用模型原始倾向，但仍需完成盘中确认。",
     }
 
 
@@ -485,10 +452,7 @@ def build_execution_semantics(
         if normalized_trade_bias == "skip":
             execution_state = "blocked"
             allowed_sections = ["blocked_only"]
-        elif (
-            normalized_role == "formal_selected"
-            and normalized_trade_bias in {"trade_allowed", "confirmation_only"}
-        ):
+        elif normalized_role == "formal_selected" and normalized_trade_bias in {"trade_allowed", "confirmation_only"}:
             execution_state = "confirmable"
             allowed_sections = ["review_queue"]
         else:
@@ -601,11 +565,7 @@ def build_decision_card(
     next_trade_date: str,
 ) -> dict[str, Any]:
     primary = next(
-        (
-            row
-            for row in selected_rows
-            if row.get("trade_bias") in {"trade_allowed", "confirmation_only"}
-        ),
+        (row for row in selected_rows if row.get("trade_bias") in {"trade_allowed", "confirmation_only"}),
         selected_rows[0] if selected_rows else {},
     )
     if not primary:

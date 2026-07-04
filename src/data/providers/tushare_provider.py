@@ -70,17 +70,13 @@ class TushareProvider(BaseDataProvider):
             # tushare runtime 初始化错误, schema change 等) 之前被静默吞掉, 只留
             # "unhealthy" 状态 — 运维无法区分 "未安装" 与 "已配置但失效"。surface
             # 到 logger.warning 让 operators 能从结构化日志定位 init 失败原因。
-            logger.warning(
-                "Tushare pro_api 初始化失败 (非 ImportError): %s", e, exc_info=True
-            )
+            logger.warning("Tushare pro_api 初始化失败 (非 ImportError): %s", e, exc_info=True)
             self.health_status = "unhealthy"
 
     def _is_available(self) -> bool:
         """检查 Tushare 是否可用"""
         if not self._token:
-            raise APIError(
-                "TUSHARE_TOKEN 未设置。请设置环境变量或在初始化时传入 token。"
-            )
+            raise APIError("TUSHARE_TOKEN 未设置。请设置环境变量或在初始化时传入 token。")
         if self._pro is None:
             raise APIError("Tushare 初始化失败。请检查 token 是否有效。")
         return True
@@ -111,9 +107,7 @@ class TushareProvider(BaseDataProvider):
         """
         return await asyncio.to_thread(func, *args, **kwargs)
 
-    async def get_prices(
-        self, ticker: str, start_date: str, end_date: str
-    ) -> DataResponse:
+    async def get_prices(self, ticker: str, start_date: str, end_date: str) -> DataResponse:
         """
         获取价格数据
 
@@ -135,9 +129,7 @@ class TushareProvider(BaseDataProvider):
             end_fmt = end_date.replace("-", "")
 
             # 在线程池中执行同步 Tushare 调用
-            df = await self._run_sync(
-                self._pro.daily, ts_code=ts_code, start_date=start_fmt, end_date=end_fmt
-            )
+            df = await self._run_sync(self._pro.daily, ts_code=ts_code, start_date=start_fmt, end_date=end_fmt)
 
             if df is None or df.empty:
                 return DataResponse(data=[], source=self.name, error="返回空数据")
@@ -230,17 +222,13 @@ class TushareProvider(BaseDataProvider):
 
             # 获取日线行情数据（包含市值等指标）
             # R6-BETA-002: capture daily_basic result for P/E, P/B, market_cap
-            df_basic = await self._run_sync(
-                self._pro.daily_basic, ts_code=ts_code, trade_date=end_fmt
-            )
+            df_basic = await self._run_sync(self._pro.daily_basic, ts_code=ts_code, trade_date=end_fmt)
             basic_row = None
             if df_basic is not None and not df_basic.empty:
                 basic_row = df_basic.iloc[0]
 
             # 获取财务指标数据
-            df_fin = await self._run_sync(
-                self._pro.fina_indicator, ts_code=ts_code, end_date=end_fmt, limit=10
-            )
+            df_fin = await self._run_sync(self._pro.fina_indicator, ts_code=ts_code, end_date=end_fmt, limit=10)
 
             metrics = []
 
@@ -266,19 +254,13 @@ class TushareProvider(BaseDataProvider):
                         "market_cap": market_cap_val,
                         "price_to_earnings_ratio": pe_ratio,
                         "price_to_book_ratio": pb_ratio,
-                        "return_on_equity": float(row.get("roe", 0)) / 100
-                        if pd.notna(row.get("roe"))
-                        else None,
+                        "return_on_equity": float(row.get("roe", 0)) / 100 if pd.notna(row.get("roe")) else None,
                         # R20.11 BETA: Tushare fina_indicator 的 debt_to_assets 是 D/A,
                         # 之前错误地直接写入 debt_to_equity (D/E) 字段, 复刻 GAMMA-017 bug。
                         # 改为 D/A → debt_to_assets, D/E 留 None 由 adapter 推导。
-                        "debt_to_assets": float(row.get("debt_to_assets", 0)) / 100
-                        if pd.notna(row.get("debt_to_assets"))
-                        else None,
+                        "debt_to_assets": float(row.get("debt_to_assets", 0)) / 100 if pd.notna(row.get("debt_to_assets")) else None,
                         "debt_to_equity": None,
-                        "revenue_growth": float(row.get("q_sales_yoy", 0)) / 100
-                        if pd.notna(row.get("q_sales_yoy"))
-                        else None,
+                        "revenue_growth": float(row.get("q_sales_yoy", 0)) / 100 if pd.notna(row.get("q_sales_yoy")) else None,
                     }
                     # R20.11 BETA: 补全 Pydantic v2 strict 必需字段。原实现只填 9 个,
                     # 缺 30+ 字段会 ValidationError → 走 except → 返回空 data。
@@ -327,9 +309,7 @@ class TushareProvider(BaseDataProvider):
         except Exception as e:
             return DataResponse(data=[], source=self.name, error=str(e))
 
-    async def get_company_news(
-        self, ticker: str, start_date: str, end_date: str
-    ) -> DataResponse:
+    async def get_company_news(self, ticker: str, start_date: str, end_date: str) -> DataResponse:
         """
         获取公司新闻
 
@@ -345,9 +325,7 @@ class TushareProvider(BaseDataProvider):
         """
         # Tushare 新闻接口需要额外权限
         # 返回空列表，由其他提供商补充
-        return DataResponse(
-            data=[], source=self.name, error="Tushare 新闻接口需要额外权限"
-        )
+        return DataResponse(data=[], source=self.name, error="Tushare 新闻接口需要额外权限")
 
     async def health_check(self) -> bool:
         """
@@ -363,9 +341,7 @@ class TushareProvider(BaseDataProvider):
                 return False
 
             # 尝试获取股票列表
-            df = await self._run_sync(
-                self._pro.stock_basic, exchange="", list_status="L", limit=5
-            )
+            df = await self._run_sync(self._pro.stock_basic, exchange="", list_status="L", limit=5)
 
             if df is not None and not df.empty:
                 self.health_status = "healthy"

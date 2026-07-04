@@ -26,10 +26,7 @@ def _prepare_shadow_selection_context(
     list[dict[str, Any]],
 ]:
     ranked_candidates = sorted(candidates, key=candidate_liquidity_sort_key_fn, reverse=True)
-    selected_candidates = [
-        candidate.model_copy(update={"candidate_pool_rank": rank})
-        for rank, candidate in enumerate(ranked_candidates[:pool_size], start=1)
-    ]
+    selected_candidates = [candidate.model_copy(update={"candidate_pool_rank": rank}) for rank, candidate in enumerate(ranked_candidates[:pool_size], start=1)]
     resolved_cooldown_review_candidates = list(cooldown_review_candidates or [])
     cutoff_avg_volume = round(float(ranked_candidates[-1].avg_volume_20d), 4) if ranked_candidates else 0.0
     cutoff_reference = max(float(selected_candidates[-1].avg_volume_20d), 1.0) if selected_candidates else 1.0
@@ -199,11 +196,7 @@ def _reserve_default_deep_corridor_probe(
 ) -> list[tuple[float, int, CandidateStock, bool, bool]]:
     if max_tickers < 2 or len(selected_rows) >= len(rows):
         return selected_rows
-    deep_rows = [
-        row
-        for row in rows
-        if 0.0 < float(row[2].candidate_pool_avg_amount_share_of_cutoff or 0.0) <= float(cutoff_share_max)
-    ]
+    deep_rows = [row for row in rows if 0.0 < float(row[2].candidate_pool_avg_amount_share_of_cutoff or 0.0) <= float(cutoff_share_max)]
     if not deep_rows:
         return selected_rows
     selected_tickers = {row[2].ticker for row in selected_rows}
@@ -362,16 +355,20 @@ def _build_shadow_candidate_pool_payload_impl(
     )
 
     if len(ranked_candidates) <= pool_size:
-        return selected_candidates, shadow_candidates, _build_shadow_candidate_pool_summary(
-            pool_size=pool_size,
-            selected_candidates=selected_candidates,
-            overflow_count=0,
-            selected_cutoff_avg_volume_20d=cutoff_avg_volume,
-            shadow_candidates=shadow_candidates,
-            shadow_entries=shadow_entries,
-            shadow_focus_signature_fn=shadow_focus_signature_fn,
-            focus_filter_diagnostics=focus_filter_diagnostics,
-            build_shadow_summary_payload_fn=build_shadow_summary_payload_fn,
+        return (
+            selected_candidates,
+            shadow_candidates,
+            _build_shadow_candidate_pool_summary(
+                pool_size=pool_size,
+                selected_candidates=selected_candidates,
+                overflow_count=0,
+                selected_cutoff_avg_volume_20d=cutoff_avg_volume,
+                shadow_candidates=shadow_candidates,
+                shadow_entries=shadow_entries,
+                shadow_focus_signature_fn=shadow_focus_signature_fn,
+                focus_filter_diagnostics=focus_filter_diagnostics,
+                build_shadow_summary_payload_fn=build_shadow_summary_payload_fn,
+            ),
         )
 
     lane_shadow_candidates, lane_shadow_entries, overflow_count, cutoff_avg_volume = _resolve_shadow_overflow_payload(
@@ -401,16 +398,20 @@ def _build_shadow_candidate_pool_payload_impl(
     shadow_candidates.extend(lane_shadow_candidates)
     shadow_entries.extend(lane_shadow_entries)
 
-    return selected_candidates, shadow_candidates, _build_shadow_candidate_pool_summary(
-        pool_size=pool_size,
-        selected_candidates=selected_candidates,
-        overflow_count=overflow_count,
-        selected_cutoff_avg_volume_20d=cutoff_avg_volume,
-        shadow_candidates=shadow_candidates,
-        shadow_entries=shadow_entries,
-        shadow_focus_signature_fn=shadow_focus_signature_fn,
-        focus_filter_diagnostics=focus_filter_diagnostics,
-        build_shadow_summary_payload_fn=build_shadow_summary_payload_fn,
+    return (
+        selected_candidates,
+        shadow_candidates,
+        _build_shadow_candidate_pool_summary(
+            pool_size=pool_size,
+            selected_candidates=selected_candidates,
+            overflow_count=overflow_count,
+            selected_cutoff_avg_volume_20d=cutoff_avg_volume,
+            shadow_candidates=shadow_candidates,
+            shadow_entries=shadow_entries,
+            shadow_focus_signature_fn=shadow_focus_signature_fn,
+            focus_filter_diagnostics=focus_filter_diagnostics,
+            build_shadow_summary_payload_fn=build_shadow_summary_payload_fn,
+        ),
     )
 
 

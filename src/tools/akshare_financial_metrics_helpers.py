@@ -70,10 +70,7 @@ def load_financial_metrics_with_fallback(
         symbol="利润表",
     )
     if df_profit is None or df_profit.empty:
-        raise error_factory(
-            f"无法获取股票 {ticker} 的财务数据（AKShare 返回空数据）。\n"
-            "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。"
-        )
+        raise error_factory(f"无法获取股票 {ticker} 的财务数据（AKShare 返回空数据）。\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")
 
     return build_metrics_from_sina_profit_df(ticker=ticker, df_profit=df_profit, limit=limit)
 

@@ -48,11 +48,7 @@ def _serialize_market_state(item: Any) -> dict[str, Any]:
 
 def _build_catalyst_theme_origin_metadata(item: Any, *, reason: str) -> tuple[str, list[str]]:
     upstream_candidate_source = str(getattr(item, "candidate_source", "") or "").strip() or "layer_b_fused_universe"
-    candidate_reason_codes = [
-        str(code).strip()
-        for code in list(getattr(item, "candidate_reason_codes", []) or [])
-        if str(code or "").strip()
-    ]
+    candidate_reason_codes = [str(code).strip() for code in list(getattr(item, "candidate_reason_codes", []) or []) if str(code or "").strip()]
     merged_reason_codes = []
     for code in [*candidate_reason_codes, reason, "catalyst_theme_research_candidate"]:
         if code not in merged_reason_codes:
@@ -234,13 +230,7 @@ def resolve_catalyst_theme_close_momentum_relief(
     catalyst_theme_close_momentum_relief_sector_min: float,
     catalyst_theme_sector_min: float,
 ) -> dict[str, Any]:
-    eligible = (
-        catalyst_freshness < catalyst_theme_catalyst_min
-        and breakout_freshness >= catalyst_theme_close_momentum_relief_breakout_min
-        and trend_acceleration >= catalyst_theme_close_momentum_relief_trend_min
-        and close_strength >= catalyst_theme_close_momentum_relief_close_min
-        and sector_resonance >= catalyst_theme_close_momentum_relief_sector_min
-    )
+    eligible = catalyst_freshness < catalyst_theme_catalyst_min and breakout_freshness >= catalyst_theme_close_momentum_relief_breakout_min and trend_acceleration >= catalyst_theme_close_momentum_relief_trend_min and close_strength >= catalyst_theme_close_momentum_relief_close_min and sector_resonance >= catalyst_theme_close_momentum_relief_sector_min
     effective_catalyst_freshness = round(max(catalyst_freshness, catalyst_theme_catalyst_min if eligible else catalyst_freshness), 4)
     effective_sector_min = round(catalyst_theme_close_momentum_relief_sector_min if eligible else catalyst_theme_sector_min, 4)
     return {
@@ -357,11 +347,7 @@ def process_catalyst_theme_candidate_diagnostic(
         return result
 
     carryover_relief_config = build_catalyst_theme_short_trade_carryover_relief_config_fn(metrics_payload=metrics_payload)
-    resolved_reason_codes = [
-        str(code)
-        for code in list(candidate_entry.get("candidate_reason_codes") or candidate_entry.get("reasons") or [])
-        if str(code or "").strip()
-    ]
+    resolved_reason_codes = [str(code) for code in list(candidate_entry.get("candidate_reason_codes") or candidate_entry.get("reasons") or []) if str(code or "").strip()]
     if carryover_relief_config and "catalyst_theme_short_trade_carryover_candidate" not in resolved_reason_codes:
         resolved_reason_codes.append("catalyst_theme_short_trade_carryover_candidate")
 

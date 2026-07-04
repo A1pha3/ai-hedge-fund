@@ -41,12 +41,8 @@ class EquityCurveRequest(BaseModel):
     derived equity curve, drawdown, and monthly returns.
     """
 
-    daily_results: list[dict[str, Any]] = Field(
-        ..., description="Array of per-day backtest results from a backtest run"
-    )
-    initial_capital: float = Field(
-        ..., description="Initial portfolio value (for return calculations)"
-    )
+    daily_results: list[dict[str, Any]] = Field(..., description="Array of per-day backtest results from a backtest run")
+    initial_capital: float = Field(..., description="Initial portfolio value (for return calculations)")
 
 
 class EquityCurvePoint(BaseModel):
@@ -86,9 +82,7 @@ ParamCompareTrial.model_rebuild()
 ParamCompareResponse.model_rebuild()
 
 
-def _compute_equity_curve(
-    daily_results: list[dict[str, Any]], initial_capital: float
-) -> tuple[list[EquityCurvePoint], list[MonthlyReturn], dict[str, Any]]:
+def _compute_equity_curve(daily_results: list[dict[str, Any]], initial_capital: float) -> tuple[list[EquityCurvePoint], list[MonthlyReturn], dict[str, Any]]:
     """Derive equity curve, drawdown, and monthly returns from per-day results."""
     if not daily_results:
         return [], [], {"total_days": 0}
@@ -135,11 +129,9 @@ def _compute_equity_curve(
         # Compound daily returns within the month: (1+r1)(1+r2)...(1+rn) - 1
         compound = 1.0
         for r in returns:
-            compound *= (1.0 + r)
+            compound *= 1.0 + r
         monthly_return = compound - 1.0
-        monthly_returns.append(
-            MonthlyReturn(year_month=ym, return_pct=round(monthly_return, 6))
-        )
+        monthly_returns.append(MonthlyReturn(year_month=ym, return_pct=round(monthly_return, 6)))
 
     final_value = points[-1].portfolio_value
     total_return = (final_value / initial_capital) - 1.0 if initial_capital > 0 else 0.0
@@ -243,9 +235,7 @@ async def compute_equity_curve(request: EquityCurveRequest) -> EquityCurveRespon
     when you have a saved/persisted backtest payload and want to render
     charts without re-running the backtest.
     """
-    points, monthly, summary = _compute_equity_curve(
-        request.daily_results, request.initial_capital
-    )
+    points, monthly, summary = _compute_equity_curve(request.daily_results, request.initial_capital)
     return EquityCurveResponse(
         equity_curve=points,
         monthly_returns=monthly,

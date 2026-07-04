@@ -126,11 +126,7 @@ class AgentProgress:
             handler_run_id = getattr(handler, "_progress_run_id", None)
             # Skip only when BOTH are run-scoped AND differ. Broadcast handlers
             # (handler_run_id None) and system events (update_run_id None) always fire.
-            if (
-                handler_run_id is not None
-                and update_run_id is not None
-                and handler_run_id != update_run_id
-            ):
+            if handler_run_id is not None and update_run_id is not None and handler_run_id != update_run_id:
                 continue
             handler(agent_name, ticker, status, analysis, timestamp)
 

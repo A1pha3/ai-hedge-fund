@@ -85,16 +85,18 @@ def detect_outliers(
 
         if abs_delta >= threshold:
             direction = "surge" if delta > 0 else "drop"
-            outliers.append({
-                "ticker": ticker,
-                "name": name,
-                "today_score": round(today_score, 4),
-                "yesterday_score": round(yesterday_score, 4),
-                "delta": round(delta, 4),
-                "abs_delta": round(abs_delta, 4),
-                "direction": direction,
-                "today_rank": today_recs.index(rec) + 1,
-            })
+            outliers.append(
+                {
+                    "ticker": ticker,
+                    "name": name,
+                    "today_score": round(today_score, 4),
+                    "yesterday_score": round(yesterday_score, 4),
+                    "delta": round(delta, 4),
+                    "abs_delta": round(abs_delta, 4),
+                    "direction": direction,
+                    "today_rank": today_recs.index(rec) + 1,
+                }
+            )
 
     # Sort by absolute delta descending
     outliers.sort(key=lambda x: x["abs_delta"], reverse=True)
@@ -128,11 +130,7 @@ def render_outliers(result: dict[str, Any]) -> str:
         for o in outliers:
             color = Fore.RED if o["direction"] == "drop" else Fore.GREEN if o["direction"] == "surge" else Fore.WHITE
             arrow = "↑" if o["direction"] == "surge" else "↓"
-            lines.append(
-                f"    {color}{arrow}{Style.RESET_ALL} {o['name']} ({o['ticker']}) "
-                f"{o['yesterday_score']:.4f} → {o['today_score']:.4f} "
-                f"(Δ={o['delta']:+.4f}) rank #{o['today_rank']}"
-            )
+            lines.append(f"    {color}{arrow}{Style.RESET_ALL} {o['name']} ({o['ticker']}) " f"{o['yesterday_score']:.4f} → {o['today_score']:.4f} " f"(Δ={o['delta']:+.4f}) rank #{o['today_rank']}")
         lines.append("  → Verify data quality for flagged stocks before trading")
 
     return "\n".join(lines)

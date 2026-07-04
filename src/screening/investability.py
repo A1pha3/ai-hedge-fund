@@ -256,11 +256,7 @@ def build_front_door_verdict(
     # 作为短期 horizon 的保守成熟度代理.
     t30_mature_count_raw = recommendation.get("bucket_t30_mature_count")
     has_mature_field = t30_mature_count_raw is not None
-    backing_sample = (
-        int(_safe_metric(t30_mature_count_raw, 0.0))
-        if has_mature_field
-        else sample_count
-    )
+    backing_sample = int(_safe_metric(t30_mature_count_raw, 0.0)) if has_mature_field else sample_count
 
     supports_long = decision != "bearish"
     # C219: BUY gate 改为 T+5 OR T+10 OR 逻辑 (短期反弹信号). 任一 horizon

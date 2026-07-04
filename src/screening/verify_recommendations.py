@@ -23,6 +23,7 @@ NOTE (BETA-009): 本模块历史上宣称"与沪深 300 对比", 但代码从未
 真正的沪深 300 基准需要实时指数数据, 超出本离线验证路径的范畴。所有面向用户的标签
 均已校正为"推荐均值"。
 """
+
 from __future__ import annotations
 
 import json
@@ -465,9 +466,7 @@ def compute_verify_recommendations(
         # see _compute_benchmark_returns docstring / BETA-009).
         # BH-004: restrict the benchmark to the same basket as the per-day mean
         # so excess_return ≡ 0 holds structurally (no Top-N trimming noise).
-        benchmark_t1 = _compute_benchmark_returns(
-            tracking, rec_date, basket_tickers=set(day_tickers)
-        )
+        benchmark_t1 = _compute_benchmark_returns(tracking, rec_date, basket_tickers=set(day_tickers))
         avg_day_t1 = _mean_or_none(day_t1)
         if benchmark_t1 is not None:
             benchmark_t1_values.append(benchmark_t1)
@@ -595,17 +594,11 @@ def render_verify_recommendations(summary: VerifySummary) -> str:
         lines.append(f"  {'策略':<20} {'次数':>4} {'T+1收益':>8} {'胜率':>6}")
         lines.append("  " + "-" * 42)
         for s in summary.strategy_attribution:
-            lines.append(
-                f"  {s.strategy_name:<20} {s.recommendation_count:>4} {_ret(s.avg_t1_return):>8} {_pct(s.win_rate):>6}"
-            )
+            lines.append(f"  {s.strategy_name:<20} {s.recommendation_count:>4} {_ret(s.avg_t1_return):>8} {_pct(s.win_rate):>6}")
         lines.append("")
 
     # Extended horizons display
-    if any([
-        summary.avg_t10_return is not None,
-        summary.avg_t20_return is not None,
-        summary.avg_t30_return is not None
-    ]):
+    if any([summary.avg_t10_return is not None, summary.avg_t20_return is not None, summary.avg_t30_return is not None]):
         lines.append("  扩展周期 (T+10/T+20/T+30):")
         lines.append("  ┌──────────┬──────────┬──────────┬──────────┐")
         lines.append("  │  指标     │  T+10    │  T+20    │  T+30    │")
@@ -630,11 +623,7 @@ def render_verify_recommendations(summary: VerifySummary) -> str:
         lines.append(f"  {'日期':<10} {'标的数':>5} {'T+1均收':>8} {'基准T+1':>8} {'超额':>7} {'最高分':>7}")
         lines.append("  " + "-" * 52)
         for d in summary.daily_details:
-            lines.append(
-                f"  {d.date:<10} {len(d.tickers):>5} "
-                f"{_ret(d.avg_t1_return):>8} {_ret(d.benchmark_return):>8} "
-                f"{_ret(d.excess_return):>7} {d.top_score:>7.2f}"
-            )
+            lines.append(f"  {d.date:<10} {len(d.tickers):>5} " f"{_ret(d.avg_t1_return):>8} {_ret(d.benchmark_return):>8} " f"{_ret(d.excess_return):>7} {d.top_score:>7.2f}")
         lines.append("")
 
     lines.append("━" * 60)

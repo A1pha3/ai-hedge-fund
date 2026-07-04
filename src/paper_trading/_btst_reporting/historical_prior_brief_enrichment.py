@@ -55,16 +55,8 @@ def _enrich_btst_brief_entries_with_history(
     dict[str, Any],
 ]:
     default_context = _build_empty_btst_candidate_historical_context()
-    no_history_observer_entries, risky_observer_entries, weak_history_pruned_entries = (
-        _build_empty_brief_history_observer_groups()
-    )
-    if not (
-        selected_entries
-        or near_miss_entries
-        or opportunity_pool_entries
-        or research_upside_radar_entries
-        or catalyst_theme_entries
-    ):
+    no_history_observer_entries, risky_observer_entries, weak_history_pruned_entries = _build_empty_brief_history_observer_groups()
+    if not (selected_entries or near_miss_entries or opportunity_pool_entries or research_upside_radar_entries or catalyst_theme_entries):
         return _build_empty_brief_history_enrichment_result(
             selected_entries,
             near_miss_entries,
@@ -77,9 +69,7 @@ def _enrich_btst_brief_entries_with_history(
             default_context,
         )
 
-    historical_payload = _collect_historical_watch_candidate_rows(
-        report_dir, actual_trade_date
-    )
+    historical_payload = _collect_historical_watch_candidate_rows(report_dir, actual_trade_date)
     price_cache: dict[tuple[str, str], pd.DataFrame] = {}
     (
         selected_entries,
@@ -143,9 +133,7 @@ def _enrich_upstream_shadow_entries_with_history(
 ) -> list[dict[str, Any]]:
     if not upstream_shadow_entries:
         return []
-    historical_payload = _collect_historical_watch_candidate_rows(
-        report_dir, actual_trade_date
-    )
+    historical_payload = _collect_historical_watch_candidate_rows(report_dir, actual_trade_date)
     price_cache: dict[tuple[str, str], pd.DataFrame] = {}
     return _apply_historical_prior_to_entries(
         upstream_shadow_entries,
@@ -170,9 +158,7 @@ def _build_empty_btst_candidate_historical_context() -> dict[str, Any]:
     }
 
 
-def _build_empty_brief_history_observer_groups() -> tuple[
-    list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]
-]:
+def _build_empty_brief_history_observer_groups() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     return [], [], []
 
 
@@ -231,12 +217,10 @@ def _postprocess_brief_history_enriched_groups(
     list[dict[str, Any]],
     list[dict[str, Any]],
 ]:
-    selected_entries, near_miss_entries, opportunity_pool_entries = (
-        _apply_and_reclassify_brief_history_groups(
-            selected_entries=selected_entries,
-            near_miss_entries=near_miss_entries,
-            opportunity_pool_entries=opportunity_pool_entries,
-        )
+    selected_entries, near_miss_entries, opportunity_pool_entries = _apply_and_reclassify_brief_history_groups(
+        selected_entries=selected_entries,
+        near_miss_entries=near_miss_entries,
+        opportunity_pool_entries=opportunity_pool_entries,
     )
     (
         near_miss_entries,
@@ -267,12 +251,10 @@ def _apply_and_reclassify_brief_history_groups(
     near_miss_entries: list[dict[str, Any]],
     opportunity_pool_entries: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    selected_entries, near_miss_entries, opportunity_pool_entries = (
-        _apply_execution_quality_modes_to_brief_groups(
-            selected_entries=selected_entries,
-            near_miss_entries=near_miss_entries,
-            opportunity_pool_entries=opportunity_pool_entries,
-        )
+    selected_entries, near_miss_entries, opportunity_pool_entries = _apply_execution_quality_modes_to_brief_groups(
+        selected_entries=selected_entries,
+        near_miss_entries=near_miss_entries,
+        opportunity_pool_entries=opportunity_pool_entries,
     )
     return _reclassify_selected_execution_quality_entries(
         selected_entries,
@@ -394,8 +376,5 @@ def _apply_execution_quality_modes_to_brief_groups(
     return (
         [_apply_execution_quality_entry_mode(entry) for entry in selected_entries],
         [_apply_execution_quality_entry_mode(entry) for entry in near_miss_entries],
-        [
-            _apply_execution_quality_entry_mode(entry)
-            for entry in opportunity_pool_entries
-        ],
+        [_apply_execution_quality_entry_mode(entry) for entry in opportunity_pool_entries],
     )

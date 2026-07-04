@@ -15,6 +15,7 @@
 payload.market_state, 无需重算 detect_market_state); load_tracking_history → 记录
 (recommended_date + score_b + next_30day_return); 两者按 date join.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -263,9 +264,7 @@ class LopoReport:
     heldout_results: list[LopoHeldoutResult] = field(default_factory=list)
 
 
-def _bucket_returns_by_date(
-    records: list[dict[str, Any]], date_st: dict[str, str], target: set[str]
-) -> dict[str, dict[str, list[float]]]:
+def _bucket_returns_by_date(records: list[dict[str, Any]], date_st: dict[str, str], target: set[str]) -> dict[str, dict[str, list[float]]]:
     """→ {date: {bucket: [returns]}} 仅 target state_type, 仅成熟 T+30 记录."""
     out: dict[str, dict[str, list[float]]] = {}
     for rec in records:
@@ -371,11 +370,7 @@ def _q1_is_discriminative(
     """判定问1: TREND 胜率 vs 震荡(RANGE/MIXED)最低胜率, 差 >= 10pp 且样本足."""
     by_st = {r.state_type: r for r in q1.rows}
     trend = by_st.get("TREND")
-    choppy_rows = [
-        r
-        for r in q1.rows
-        if r.state_type in ("RANGE", "MIXED") and r.mature_t30_count >= _Q1_MIN_N
-    ]
+    choppy_rows = [r for r in q1.rows if r.state_type in ("RANGE", "MIXED") and r.mature_t30_count >= _Q1_MIN_N]
     if not trend or trend.mature_t30_count < _Q1_MIN_N or not choppy_rows:
         return False, (trend.t30_win_rate if trend else None), None
     choppy_wr = min(r.t30_win_rate or 0.0 for r in choppy_rows)
@@ -443,18 +438,12 @@ def run_state_type_diagnosis(
     history = load_auto_screening_history(lookback_days=lookback_days, report_dir=search_dir)
     records = load_tracking_history(search_dir)
     q1 = compute_state_type_calibration_from_loaded(history, records)
-    q2_rows = compute_state_type_bucket_subdivision(
-        history, records, target_state_types=target_state_types
-    )
+    q2_rows = compute_state_type_bucket_subdivision(history, records, target_state_types=target_state_types)
     # 问2赢家: target 内胜率最高 且 mature n>=20 的 bucket
-    qualified = [
-        r for r in q2_rows if r.mature_t30_count >= _Q1_MIN_N and r.t30_win_rate is not None
-    ]
+    qualified = [r for r in q2_rows if r.mature_t30_count >= _Q1_MIN_N and r.t30_win_rate is not None]
     q2_best = max(qualified, key=lambda r: r.t30_win_rate) if qualified else None
     # 留一时段 min_n: 真实每个日期的成熟样本可能很少, 用 2 (至少 2 只才算该日有信号)
-    q3 = leave_one_period_out_validation(
-        history, records, target_state_types=target_state_types, min_n=2
-    )
+    q3 = leave_one_period_out_validation(history, records, target_state_types=target_state_types, min_n=2)
     verdict = aggregate_verdict(
         q1=q1,
         q2_best_bucket_winrate=(q2_best.t30_win_rate if q2_best else None),

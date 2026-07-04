@@ -375,6 +375,7 @@ class PipelineDecisionExecutor:
                 buy_order_by_ticker=buy_order_by_ticker,
                 executed_trades=executed_trades,
             )
+
         return _queue_limit_up_buy
 
     def _build_queue_limit_down_sell_fn(self, pending_sell_queue: list[PendingOrder]) -> Callable[..., bool]:
@@ -393,6 +394,7 @@ class PipelineDecisionExecutor:
                 trade_date_compact=trade_date_compact,
                 executed_trades=executed_trades,
             )
+
         return _queue_limit_down_sell
 
     # ------------------------------------------------------------------

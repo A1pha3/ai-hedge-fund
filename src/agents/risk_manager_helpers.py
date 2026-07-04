@@ -50,9 +50,7 @@ def _collect_market_data(
             # a usable price silently propagates NaN through downstream
             # max_shares and remaining_position_limit calculations, leading
             # to undefined division behavior in the portfolio manager.
-            if raw_current_price is None or (
-                isinstance(raw_current_price, float) and raw_current_price != raw_current_price
-            ):
+            if raw_current_price is None or (isinstance(raw_current_price, float) and raw_current_price != raw_current_price):
                 progress_callback(agent_id, ticker, "Warning: NaN price in last bar")
                 current_prices[ticker] = 0
                 volatility_data[ticker] = _fallback_volatility_metrics(len(prices_df))

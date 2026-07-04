@@ -167,6 +167,7 @@ def _filter_prices_in_window(
 # Price fetcher protocol (for testability)
 # ---------------------------------------------------------------------------
 
+
 class PriceFetcher:
     """Fetches forward prices for a given ticker and date range."""
 
@@ -183,9 +184,11 @@ class PriceFetcher:
         try:
             if self._use_robust:
                 from src.tools.akshare_api import get_prices_robust
+
                 return get_prices_robust(ticker, start_date, end_date)
             else:
                 from src.tools.akshare_api import get_prices
+
                 return get_prices(ticker, start_date, end_date)
         except Exception as exc:
             # R103 (BH-017/R48-R50/R57-R60/R63 family): a silent ``return []``
@@ -196,8 +199,7 @@ class PriceFetcher:
             # empty) so operators can distinguish "no forward prices for this
             # ticker" vs "price fetch broke".
             logger.debug(
-                "lookback_audit: forward price fetch failed for %s "
-                "(%s ~ %s): %s; 降级为空价格序列",
+                "lookback_audit: forward price fetch failed for %s " "(%s ~ %s): %s; 降级为空价格序列",
                 ticker,
                 start_date,
                 end_date,
@@ -209,6 +211,7 @@ class PriceFetcher:
 # ---------------------------------------------------------------------------
 # Core audit function
 # ---------------------------------------------------------------------------
+
 
 def run_lookback_audit(
     *,
@@ -286,26 +289,25 @@ def run_lookback_audit(
         # Drop rows with non-finite close (defensive against upstream data
         # corruption — a NaN close would silently propagate into return_pct /
         # max_drawdown_pct / max_return_pct and surface as NaN in JSON).
-        forward_prices = [
-            p for p in forward_prices
-            if isinstance(p.close, (int, float)) and p.close == p.close  # second check filters NaN
-        ]
+        forward_prices = [p for p in forward_prices if isinstance(p.close, (int, float)) and p.close == p.close]  # second check filters NaN
 
         if not forward_prices:
-            ticker_results.append(TickerAuditResult(
-                ticker=ticker,
-                rank=rank,
-                score_final=score_final,
-                entry_date=formatted_audit_date,
-                entry_price=None,
-                exit_date=None,
-                exit_price=None,
-                return_pct=None,
-                max_drawdown_pct=None,
-                max_return_pct=None,
-                trading_days_held=0,
-                data_status="no_forward_data",
-            ))
+            ticker_results.append(
+                TickerAuditResult(
+                    ticker=ticker,
+                    rank=rank,
+                    score_final=score_final,
+                    entry_date=formatted_audit_date,
+                    entry_price=None,
+                    exit_date=None,
+                    exit_price=None,
+                    return_pct=None,
+                    max_drawdown_pct=None,
+                    max_return_pct=None,
+                    trading_days_held=0,
+                    data_status="no_forward_data",
+                )
+            )
             continue
 
         entry_price = forward_prices[0].close
@@ -313,40 +315,44 @@ def run_lookback_audit(
         exit_date = str(forward_prices[-1].time)[:10]
 
         if entry_price <= 0:
-            ticker_results.append(TickerAuditResult(
-                ticker=ticker,
-                rank=rank,
-                score_final=score_final,
-                entry_date=formatted_audit_date,
-                entry_price=entry_price,
-                exit_date=exit_date,
-                exit_price=last_price,
-                return_pct=None,
-                max_drawdown_pct=None,
-                max_return_pct=None,
-                trading_days_held=len(forward_prices),
-                data_status="no_entry_price",
-            ))
+            ticker_results.append(
+                TickerAuditResult(
+                    ticker=ticker,
+                    rank=rank,
+                    score_final=score_final,
+                    entry_date=formatted_audit_date,
+                    entry_price=entry_price,
+                    exit_date=exit_date,
+                    exit_price=last_price,
+                    return_pct=None,
+                    max_drawdown_pct=None,
+                    max_return_pct=None,
+                    trading_days_held=len(forward_prices),
+                    data_status="no_entry_price",
+                )
+            )
             continue
 
         return_pct = round((last_price - entry_price) / entry_price * 100, 4)
         max_dd = _compute_max_drawdown(forward_prices)
         max_ret = _compute_max_return(forward_prices)
 
-        ticker_results.append(TickerAuditResult(
-            ticker=ticker,
-            rank=rank,
-            score_final=score_final,
-            entry_date=formatted_audit_date,
-            entry_price=round(entry_price, 4),
-            exit_date=exit_date,
-            exit_price=round(last_price, 4),
-            return_pct=return_pct,
-            max_drawdown_pct=max_dd,
-            max_return_pct=max_ret,
-            trading_days_held=len(forward_prices),
-            data_status="ok",
-        ))
+        ticker_results.append(
+            TickerAuditResult(
+                ticker=ticker,
+                rank=rank,
+                score_final=score_final,
+                entry_date=formatted_audit_date,
+                entry_price=round(entry_price, 4),
+                exit_date=exit_date,
+                exit_price=round(last_price, 4),
+                return_pct=return_pct,
+                max_drawdown_pct=max_dd,
+                max_return_pct=max_ret,
+                trading_days_held=len(forward_prices),
+                data_status="ok",
+            )
+        )
 
     # Build summary
     ok_results = [r for r in ticker_results if r.data_status == "ok"]
@@ -423,15 +429,13 @@ def _find_artifact_root(audit_date: str) -> Path:
 # Formatting
 # ---------------------------------------------------------------------------
 
+
 def format_audit_table(result: LookbackAuditResult) -> str:
     """Format the audit result as a human-readable table."""
     lines: list[str] = []
     lines.append(f"Lookback Audit: {result.audit_date} +{result.lookforward_days}d")
     lines.append("=" * 80)
-    lines.append(
-        f"{'Rank':>4}  {'Ticker':<8}  {'Score':>8}  {'Entry':>10}  {'Exit':>10}  "
-        f"{'Return%':>9}  {'MaxDD%':>8}  {'MaxRet%':>9}  {'Days':>4}  {'Status':<16}"
-    )
+    lines.append(f"{'Rank':>4}  {'Ticker':<8}  {'Score':>8}  {'Entry':>10}  {'Exit':>10}  " f"{'Return%':>9}  {'MaxDD%':>8}  {'MaxRet%':>9}  {'Days':>4}  {'Status':<16}")
     lines.append("-" * 80)
 
     for tr in result.ticker_results:
@@ -440,22 +444,12 @@ def format_audit_table(result: LookbackAuditResult) -> str:
         mr_str = f"{tr.max_return_pct:+.2f}" if tr.max_return_pct is not None else "N/A"
         entry_str = f"{tr.entry_price:.2f}" if tr.entry_price is not None else "N/A"
         exit_str = f"{tr.exit_price:.2f}" if tr.exit_price is not None else "N/A"
-        lines.append(
-            f"{tr.rank:>4}  {tr.ticker:<8}  {tr.score_final:>8.4f}  {entry_str:>10}  {exit_str:>10}  "
-            f"{ret_str:>9}  {dd_str:>8}  {mr_str:>9}  {tr.trading_days_held:>4}  {tr.data_status:<16}"
-        )
+        lines.append(f"{tr.rank:>4}  {tr.ticker:<8}  {tr.score_final:>8.4f}  {entry_str:>10}  {exit_str:>10}  " f"{ret_str:>9}  {dd_str:>8}  {mr_str:>9}  {tr.trading_days_held:>4}  {tr.data_status:<16}")
 
     lines.append("-" * 80)
     s = result.summary
     if s.get("avg_return_pct") is not None:
-        lines.append(
-            f"Summary: avg_return={s['avg_return_pct']:+.2f}%  "
-            f"median={s.get('median_return_pct', 'N/A')}%  "
-            f"hit_rate={s.get('hit_rate', 'N/A')}  "
-            f"best={s.get('best_return_pct', 'N/A')}%  "
-            f"worst={s.get('worst_return_pct', 'N/A')}%  "
-            f"avg_maxDD={s.get('avg_max_drawdown_pct', 'N/A')}%"
-        )
+        lines.append(f"Summary: avg_return={s['avg_return_pct']:+.2f}%  " f"median={s.get('median_return_pct', 'N/A')}%  " f"hit_rate={s.get('hit_rate', 'N/A')}  " f"best={s.get('best_return_pct', 'N/A')}%  " f"worst={s.get('worst_return_pct', 'N/A')}%  " f"avg_maxDD={s.get('avg_max_drawdown_pct', 'N/A')}%")
     lines.append(f"Audited: {result.audited_count}/{result.selected_count} tickers with data")
     return "\n".join(lines)
 
@@ -464,28 +458,38 @@ def format_audit_table(result: LookbackAuditResult) -> str:
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description="Lookback audit: compare selection results against actual performance",
     )
     parser.add_argument(
-        "--date", required=True,
+        "--date",
+        required=True,
         help="Audit date in YYYYMMDD or YYYY-MM-DD format",
     )
     parser.add_argument(
-        "--days", type=int, default=30,
+        "--days",
+        type=int,
+        default=30,
         help="Lookforward window in calendar days (default: 30)",
     )
     parser.add_argument(
-        "--top-n", type=int, default=10,
+        "--top-n",
+        type=int,
+        default=10,
         help="How many top tickers to audit (default: 10)",
     )
     parser.add_argument(
-        "--artifact-root", type=str, default=None,
+        "--artifact-root",
+        type=str,
+        default=None,
         help="Override artifact root directory",
     )
     parser.add_argument(
-        "--json", action="store_true", dest="output_json",
+        "--json",
+        action="store_true",
+        dest="output_json",
         help="Output as JSON instead of table",
     )
     args = parser.parse_args(argv)

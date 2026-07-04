@@ -30,16 +30,12 @@ class BaseDataSource:
     available: bool = False
 
     @classmethod
-    def get_prices(
-        cls, ticker: str, start_date: str, end_date: str, period: str = "daily"
-    ) -> list[Price]:
+    def get_prices(cls, ticker: str, start_date: str, end_date: str, period: str = "daily") -> list[Price]:
         """获取价格数据"""
         raise NotImplementedError
 
     @classmethod
-    def get_financial_metrics(
-        cls, ticker: str, end_date: str, limit: int = 10
-    ) -> list[FinancialMetrics]:
+    def get_financial_metrics(cls, ticker: str, end_date: str, limit: int = 10) -> list[FinancialMetrics]:
         """获取财务指标"""
         raise NotImplementedError
 
@@ -77,9 +73,7 @@ class TushareDataSource(BaseDataSource):
             return False
 
     @classmethod
-    def get_prices(
-        cls, ticker: str, start_date: str, end_date: str, period: str = "daily"
-    ) -> list[Price]:
+    def get_prices(cls, ticker: str, start_date: str, end_date: str, period: str = "daily") -> list[Price]:
         """
         通过 Tushare 获取价格数据
 
@@ -209,9 +203,7 @@ class BaoStockDataSource(BaseDataSource):
             return False
 
     @classmethod
-    def get_prices(
-        cls, ticker: str, start_date: str, end_date: str, period: str = "daily"
-    ) -> list[Price]:
+    def get_prices(cls, ticker: str, start_date: str, end_date: str, period: str = "daily") -> list[Price]:
         """
         通过 BaoStock 获取价格数据
 
@@ -291,9 +283,7 @@ class SinaDataSource(BaseDataSource):
     available: bool = True
 
     @classmethod
-    def get_prices(
-        cls, ticker: str, start_date: str, end_date: str, period: str = "daily"
-    ) -> list[Price]:
+    def get_prices(cls, ticker: str, start_date: str, end_date: str, period: str = "daily") -> list[Price]:
         """
         通过新浪财经获取历史数据（使用模拟数据，因为真实接口暂时不可用）
 
@@ -321,9 +311,7 @@ class MockDataSource(BaseDataSource):
     available: bool = True
 
     @classmethod
-    def get_prices(
-        cls, ticker: str, start_date: str, end_date: str, period: str = "daily"
-    ) -> list[Price]:
+    def get_prices(cls, ticker: str, start_date: str, end_date: str, period: str = "daily") -> list[Price]:
         """
         获取模拟价格数据
 

@@ -33,9 +33,9 @@ logger = logging.getLogger(__name__)
 _REPORT_FILENAME_PATTERN = re.compile(r"^auto_screening_(\d{8})\.json$")
 
 # Decay thresholds (percentage drop of score_b)
-_MILD_THRESHOLD: float = 10.0       # >= 10% drop
-_MODERATE_THRESHOLD: float = 20.0   # >= 20% drop
-_SEVERE_THRESHOLD: float = 40.0     # >= 40% drop
+_MILD_THRESHOLD: float = 10.0  # >= 10% drop
+_MODERATE_THRESHOLD: float = 20.0  # >= 20% drop
+_SEVERE_THRESHOLD: float = 40.0  # >= 40% drop
 
 
 # ---------------------------------------------------------------------------
@@ -46,10 +46,10 @@ _SEVERE_THRESHOLD: float = 40.0     # >= 40% drop
 class DecayLevel(str, Enum):
     """信号衰减等级枚举。"""
 
-    NONE = "none"           # 无衰减 (下降 < 10% 或上升)
-    MILD = "mild"           # 轻微衰减 (score_b 下降 10-20%)
-    MODERATE = "moderate"   # 中度衰减 (score_b 下降 20-40%)
-    SEVERE = "severe"       # 严重衰减 (score_b 下降 > 40%)
+    NONE = "none"  # 无衰减 (下降 < 10% 或上升)
+    MILD = "mild"  # 轻微衰减 (score_b 下降 10-20%)
+    MODERATE = "moderate"  # 中度衰减 (score_b 下降 20-40%)
+    SEVERE = "severe"  # 严重衰减 (score_b 下降 > 40%)
 
 
 @dataclass
@@ -59,9 +59,9 @@ class DecayInfo:
     ticker: str
     level: DecayLevel
     current_score: float
-    previous_score: float | None   # None = 首次出现
-    change_pct: float | None       # None = 首次出现; None = previous_score 为 0
-    days_since_peak: int           # 距离最高分的天数; 0 = 今天就是最高分
+    previous_score: float | None  # None = 首次出现
+    change_pct: float | None  # None = 首次出现; None = previous_score 为 0
+    days_since_peak: int  # 距离最高分的天数; 0 = 今天就是最高分
 
     def to_dict(self) -> dict[str, Any]:
         """序列化为可 JSON 化的字典。"""

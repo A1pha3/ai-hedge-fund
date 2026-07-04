@@ -224,9 +224,7 @@ def _save_compare_checkpoint(path: Path | None, windows_state: dict[str, dict]) 
     if path is None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        prefix="." + path.name + ".", suffix=".tmp", dir=str(path.parent)
-    )
+    fd, tmp_name = tempfile.mkstemp(prefix="." + path.name + ".", suffix=".tmp", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump({"windows": windows_state}, f, ensure_ascii=False, indent=2)
@@ -300,10 +298,7 @@ def run_ab_comparison_walk_forward(
         preset = WALK_FORWARD_PRESETS.get(walk_forward_preset)
         if preset is None:
             available = ", ".join(sorted(WALK_FORWARD_PRESETS))
-            raise ValueError(
-                f"Unknown walk-forward preset: {walk_forward_preset!r}. "
-                f"Available: {available}"
-            )
+            raise ValueError(f"Unknown walk-forward preset: {walk_forward_preset!r}. " f"Available: {available}")
         train_months = preset.get("train_months", train_months)
         test_months = preset.get("test_months", test_months)
         step_months = preset.get("step_months", step_months)
@@ -445,13 +440,15 @@ def format_ab_comparison_report(results: Sequence[ABWindowMetrics], summary: dic
     if summary.get("avg_runner_tail_hit_delta") is not None:
         runner_delta = float(summary["avg_runner_tail_hit_delta"])
         runner_median_delta = _metric(summary, "avg_runner_tail_median_delta")
-        lines.extend([
-            "",
-            "## Runner Quality",
-            "",
-            f"- Avg Runner Tail Hit Rate Delta (20%): {runner_delta:+.4f}",
-            f"- Avg Runner Tail Median Return Delta: {runner_median_delta:+.4f}",
-        ])
+        lines.extend(
+            [
+                "",
+                "## Runner Quality",
+                "",
+                f"- Avg Runner Tail Hit Rate Delta (20%): {runner_delta:+.4f}",
+                f"- Avg Runner Tail Median Return Delta: {runner_median_delta:+.4f}",
+            ]
+        )
     lines.append("")
     lines.append("注：当前 p 值为正态近似估计，用于轻量化本地验证；若要做正式研究结论，建议后续引入精确统计检验。")
     return "\n".join(lines)

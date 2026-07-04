@@ -66,11 +66,7 @@ def _find_latest_report(report_dir: Path | None = None) -> Path | None:
     ``%Y%m%d`` 后再排序，确保只从合法日期文件里选最新。
     """
     search_dir = report_dir or resolve_report_dir()
-    candidates = [
-        path
-        for path in search_dir.glob("auto_screening_*.json")
-        if _parses_as_report_date(path.stem.replace("auto_screening_", ""))
-    ]
+    candidates = [path for path in search_dir.glob("auto_screening_*.json") if _parses_as_report_date(path.stem.replace("auto_screening_", ""))]
     candidates.sort(reverse=True)
     return candidates[0] if candidates else None
 
@@ -137,10 +133,7 @@ def compute_composite_completeness(strategy_signals: dict[str, Any], weights: di
     total_weight = sum(weights.get(s, 0.0) for s in STRATEGY_ORDER)
     if total_weight <= 0.0:
         return 0.0
-    weighted = sum(
-        _strategy_completeness(strategy_signals, s) * weights.get(s, 0.0)
-        for s in STRATEGY_ORDER
-    )
+    weighted = sum(_strategy_completeness(strategy_signals, s) * weights.get(s, 0.0) for s in STRATEGY_ORDER)
     return round(weighted / total_weight, 4)
 
 
@@ -173,9 +166,7 @@ def audit_recommendation(rec: dict[str, Any], threshold: float = DEFAULT_QUALITY
     }
 
 
-def audit_recommendations(
-    recs: list[dict[str, Any]], threshold: float = DEFAULT_QUALITY_THRESHOLD, top_n: int | None = None
-) -> list[dict[str, Any]]:
+def audit_recommendations(recs: list[dict[str, Any]], threshold: float = DEFAULT_QUALITY_THRESHOLD, top_n: int | None = None) -> list[dict[str, Any]]:
     """审计 Top N 推荐, 返回审计结果列表 (按 composite_completeness 升序)。"""
     if top_n is not None and top_n > 0:
         recs = recs[:top_n]
@@ -202,9 +193,7 @@ def _completeness_bar(value: float, width: int = 10) -> str:
     return f"{color}{bar}{Style.RESET_ALL}"
 
 
-def render_audit_report(
-    audits: list[dict[str, Any]], date_str: str, threshold: float = DEFAULT_QUALITY_THRESHOLD
-) -> str:
+def render_audit_report(audits: list[dict[str, Any]], date_str: str, threshold: float = DEFAULT_QUALITY_THRESHOLD) -> str:
     """渲染审计结果为 markdown + ANSI 着色字符串。"""
     if not audits:
         return f"{Fore.YELLOW}未找到推荐数据 — 请先运行 `--auto` 生成报告。{Style.RESET_ALL}\n"
@@ -232,12 +221,7 @@ def render_audit_report(
 
         status = f"{Fore.RED}⚠️ 低质量{Style.RESET_ALL}" if a["is_low_quality"] else f"{Fore.GREEN}✓ 良好{Style.RESET_ALL}"
         name = a["name"][:12] if a["name"] else "—"
-        line = (
-            f"{a['ticker']:<8} {name:<14} "
-            f"{bar} {comp:.0%}    "
-            f"{strategy_bars[0]}   {strategy_bars[1]}   {strategy_bars[2]}   {strategy_bars[3]}   "
-            f"{status}"
-        )
+        line = f"{a['ticker']:<8} {name:<14} " f"{bar} {comp:.0%}    " f"{strategy_bars[0]}   {strategy_bars[1]}   {strategy_bars[2]}   {strategy_bars[3]}   " f"{status}"
         lines.append(line)
 
     # 摘要
@@ -246,10 +230,7 @@ def render_audit_report(
     avg_comp = sum(a["composite_completeness"] for a in audits) / total if total else 0.0
     lines.append("─" * 110)
     summary_color = Fore.RED if low_count > total / 2 else (Fore.YELLOW if low_count > 0 else Fore.GREEN)
-    lines.append(
-        f"{summary_color}摘要: {total} 只推荐 | 平均完整性 {avg_comp:.0%} | "
-        f"低质量 {low_count} 只 ({low_count / total:.0%}){Style.RESET_ALL}"
-    )
+    lines.append(f"{summary_color}摘要: {total} 只推荐 | 平均完整性 {avg_comp:.0%} | " f"低质量 {low_count} 只 ({low_count / total:.0%}){Style.RESET_ALL}")
 
     if low_count > 0:
         lines.append(f"\n{Fore.YELLOW}提示: 以下推荐基于不完整数据, 建议结合 --why-not 复查:{Style.RESET_ALL}")
@@ -284,9 +265,7 @@ class DataQualitySummary:
     strategy_total: int = field(default_factory=lambda: len(STRATEGY_ORDER))
 
 
-def summarize_data_quality(
-    audits: list[dict[str, Any]], threshold: float = DEFAULT_QUALITY_THRESHOLD
-) -> DataQualitySummary:
+def summarize_data_quality(audits: list[dict[str, Any]], threshold: float = DEFAULT_QUALITY_THRESHOLD) -> DataQualitySummary:
     """聚合逐 pick 审计结果为 run-level 数据完整度摘要。
 
     Args:
@@ -342,9 +321,7 @@ def render_data_quality_summary(summary: DataQualitySummary) -> str:
 
     parts = [f"  📊 数据完整度: {color}{avg:.0%}{Style.RESET_ALL}  ({ready}/{total} 策略就绪)"]
     if summary.low_quality_count > 0:
-        parts.append(
-            f"  {Fore.YELLOW}⚠ {summary.low_quality_count} 只推荐基于部分数据{Style.RESET_ALL}"
-        )
+        parts.append(f"  {Fore.YELLOW}⚠ {summary.low_quality_count} 只推荐基于部分数据{Style.RESET_ALL}")
     return " ".join(parts)
 
 
@@ -353,9 +330,7 @@ def render_data_quality_summary(summary: DataQualitySummary) -> str:
 # ---------------------------------------------------------------------------
 
 
-def run_data_quality_audit(
-    top_n: int = 10, threshold: float = DEFAULT_QUALITY_THRESHOLD, report_dir: Path | None = None
-) -> int:
+def run_data_quality_audit(top_n: int = 10, threshold: float = DEFAULT_QUALITY_THRESHOLD, report_dir: Path | None = None) -> int:
     """CLI 入口: 加载最新报告 → 审计 Top N → 渲染 → 打印。"""
     date_str, recs = load_latest_recommendations(report_dir=report_dir)
     audits = audit_recommendations(recs, threshold=threshold, top_n=top_n)

@@ -82,11 +82,7 @@ def _normalize_active_weights(
 ) -> dict[str, float]:
     excluded_names = excluded_names or set()
     weight_overrides = weight_overrides or {}
-    active = {
-        name: max(weight_overrides.get(name, weights.get(name, 0.0)), 0.0)
-        for name, signal in signals.items()
-        if signal.completeness > 0 and name not in excluded_names
-    }
+    active = {name: max(weight_overrides.get(name, weights.get(name, 0.0)), 0.0) for name, signal in signals.items() if signal.completeness > 0 and name not in excluded_names}
     total = sum(active.values())
     if total <= 0:
         active = {name: DEFAULT_STRATEGY_WEIGHTS.get(name, 0.0) for name in signals if name not in excluded_names}
@@ -136,17 +132,8 @@ def _has_quality_first_red_flag(signals: dict[str, StrategySignal]) -> bool:
     financial_health_confidence = float(financial_health.get("confidence", 0.0) or 0.0)
     growth_direction = growth.get("direction")
 
-    paired_quality_breakdown = (
-        profitability_direction == -1
-        and financial_health_direction == -1
-        and profitability_confidence >= 55
-        and financial_health_confidence >= 55
-    )
-    hard_cliff_with_no_offset = (
-        _is_hard_cliff_profitability(signals)
-        and financial_health_direction in {-1, 0}
-        and growth_direction in {-1, 0, None}
-    )
+    paired_quality_breakdown = profitability_direction == -1 and financial_health_direction == -1 and profitability_confidence >= 55 and financial_health_confidence >= 55
+    hard_cliff_with_no_offset = _is_hard_cliff_profitability(signals) and financial_health_direction in {-1, 0} and growth_direction in {-1, 0, None}
     return paired_quality_breakdown or hard_cliff_with_no_offset
 
 
@@ -284,18 +271,11 @@ def _apply_risk_off_short_term_demotion(
     if not trend_signal and not event_signal:
         return
 
-    short_term_bullish = any(
-        signal is not None and signal.completeness > 0 and signal.direction > 0 and signal.confidence >= 60
-        for signal in (trend_signal, event_signal)
-    )
+    short_term_bullish = any(signal is not None and signal.completeness > 0 and signal.direction > 0 and signal.confidence >= 60 for signal in (trend_signal, event_signal))
     if not short_term_bullish:
         return
 
-    strong_fundamental_support = (
-        fundamental_signal.completeness > 0
-        and fundamental_signal.direction > 0
-        and fundamental_signal.confidence >= 65
-    )
+    strong_fundamental_support = fundamental_signal.completeness > 0 and fundamental_signal.direction > 0 and fundamental_signal.confidence >= 65
     if strong_fundamental_support:
         return
 
@@ -325,11 +305,7 @@ def _should_apply_consensus_bonus(
     breadth_ratio = float(getattr(market_state, "breadth_ratio", 0.5))
     position_scale = float(getattr(market_state, "position_scale", 1.0))
     fundamental_signal = signals.get("fundamental", StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={}))
-    strong_fundamental_support = (
-        fundamental_signal.completeness > 0
-        and fundamental_signal.direction > 0
-        and fundamental_signal.confidence >= 65
-    )
+    strong_fundamental_support = fundamental_signal.completeness > 0 and fundamental_signal.direction > 0 and fundamental_signal.confidence >= 65
     return not ((breadth_ratio <= BREADTH_RATIO_WEAK_FLOOR or position_scale <= POSITION_SCALE_WEAK_FLOOR) and not strong_fundamental_support)
 
 
@@ -433,7 +409,7 @@ def _build_percentile_rank_map(values: dict[str, float]) -> dict[str, float]:
             end_idx += 1
         average_rank = ((idx + 1) + (end_idx + 1)) / 2.0
         percentile = average_rank / total
-        for ticker, _ in sorted_pairs[idx:end_idx + 1]:
+        for ticker, _ in sorted_pairs[idx : end_idx + 1]:
             percentile_map[ticker] = percentile
         idx = end_idx + 1
     return percentile_map
@@ -504,14 +480,14 @@ def fuse_signals_for_ticker(
     # Opt-in via LOG_LEVEL=DEBUG (avoids noise on full-universe runs). Surfaces the
     # arbitration rules applied + per-strategy direction/confidence + final score_b.
     if logger.isEnabledFor(logging.DEBUG):
-        strat_summary = " ".join(
-            f"{name}(d={sig.direction},c={sig.confidence:.0f})"
-            for name, sig in adjusted_signals.items()
-        )
+        strat_summary = " ".join(f"{name}(d={sig.direction},c={sig.confidence:.0f})" for name, sig in adjusted_signals.items())
         logger.debug(
-            "score_b breakdown ticker=%s trade_date=%s decision=%s score_b=%.4f "
-            "forced_avoid=%s arbitration=[%s] weights=%s signals=[%s]",
-            ticker, trade_date, decision, score_b, forced_avoid,
+            "score_b breakdown ticker=%s trade_date=%s decision=%s score_b=%.4f " "forced_avoid=%s arbitration=[%s] weights=%s signals=[%s]",
+            ticker,
+            trade_date,
+            decision,
+            score_b,
+            forced_avoid,
             ", ".join(arbitration_applied) or "none",
             {k: round(float(v), 3) for k, v in weights_used.items()},
             strat_summary,

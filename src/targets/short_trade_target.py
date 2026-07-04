@@ -1003,9 +1003,7 @@ def build_short_trade_target_snapshot_from_entry(
                 trade_date=trade_date,
                 entry=entry,
             )
-    return _build_short_trade_target_snapshot_with_resolved_profile(
-        _build_target_input_from_entry(trade_date=trade_date, entry=entry)
-    )
+    return _build_short_trade_target_snapshot_with_resolved_profile(_build_target_input_from_entry(trade_date=trade_date, entry=entry))
 
 
 def _evaluate_short_trade_target(

@@ -12,4 +12,4 @@ def create_agent_function(agent_function: Callable, agent_id: str) -> Callable[[
     :param agent_id: The ID to be passed to the agent.
     :return: A new function that can be called by LangGraph.
     """
-    return partial(agent_function, agent_id=agent_id) 
+    return partial(agent_function, agent_id=agent_id)

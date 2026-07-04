@@ -265,14 +265,7 @@ def _render_catalyst_theme_section(snapshot: SelectionSnapshot) -> list[str]:
             lines.append(f"- preferred_entry_mode: {entry.get('preferred_entry_mode') or 'n/a'}")
             lines.append(f"- positive_tags: {', '.join(entry.get('positive_tags') or []) or 'n/a'}")
             lines.append(f"- top_reasons: {', '.join(entry.get('top_reasons') or []) or 'n/a'}")
-            lines.append(
-                "- threshold_shortfalls: "
-                + (
-                    ", ".join(f"{key}={float(value or 0.0):.4f}" for key, value in threshold_shortfalls.items())
-                    if threshold_shortfalls
-                    else "none"
-                )
-            )
+            lines.append("- threshold_shortfalls: " + (", ".join(f"{key}={float(value or 0.0):.4f}" for key, value in threshold_shortfalls.items()) if threshold_shortfalls else "none"))
             blockers = list(entry.get("blockers") or [])
             lines.append(f"- blockers: {', '.join(blockers) if blockers else 'none'}")
             gate_status = dict(entry.get("gate_status") or {})

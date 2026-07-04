@@ -29,8 +29,7 @@ def handle_suspension_emergency(
         price = prices.get(holding.ticker)
         if price is None:
             logger.warning(
-                "suspension_handler: no market price for ticker=%s, "
-                "falling back to entry_price=%.4f — market value may be inaccurate",
+                "suspension_handler: no market price for ticker=%s, " "falling back to entry_price=%.4f — market value may be inaccurate",
                 holding.ticker,
                 holding.entry_price,
             )

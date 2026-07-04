@@ -36,10 +36,7 @@ def _assert_finite_mapping(name: str, mapping: Mapping[str, Any]) -> None:
     """Raise ValueError when any value in *mapping* is non-finite (NaN/Inf)."""
     bad = [k for k, v in mapping.items() if not _is_finite(v)]
     if bad:
-        raise ValueError(
-            f"{name} contains non-finite values (NaN/Inf) for: {bad[:5]}"
-            f"{' ...' if len(bad) > 5 else ''}"
-        )
+        raise ValueError(f"{name} contains non-finite values (NaN/Inf) for: {bad[:5]}" f"{' ...' if len(bad) > 5 else ''}")
 
 
 @dataclass(frozen=True)
@@ -168,9 +165,7 @@ def brinson_attribution(
     _assert_finite_mapping("ticker_returns", ticker_returns)
     _assert_finite_mapping("ticker_market_values", ticker_market_values)
     if not _is_finite(total_portfolio_value):
-        raise ValueError(
-            f"total_portfolio_value must be a finite number, got {total_portfolio_value!r}"
-        )
+        raise ValueError(f"total_portfolio_value must be a finite number, got {total_portfolio_value!r}")
     if benchmark_weights is not None:
         _assert_finite_mapping("benchmark_weights", benchmark_weights)
     if benchmark_returns is not None:
@@ -225,9 +220,7 @@ def brinson_attribution(
         )
 
     # Total portfolio return = sum of (weight * return) for each ticker
-    total_portfolio_return = sum(
-        portfolio_weights.get(t, 0.0) * ticker_returns.get(t, 0.0) for t in tickers
-    )
+    total_portfolio_return = sum(portfolio_weights.get(t, 0.0) * ticker_returns.get(t, 0.0) for t in tickers)
 
     # Total benchmark return = sum of (benchmark_weight * benchmark_return)
     total_benchmark_return = sum(b_weights.get(t, 0.0) * b_returns.get(t, 0.0) for t in tickers)

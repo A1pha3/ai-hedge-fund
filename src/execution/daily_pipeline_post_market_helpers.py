@@ -333,9 +333,7 @@ def build_selection_target_inputs(
 ) -> PostMarketSelectionTargetInputs:
     market_state_payload = _serialize_market_state_payload(market_state)
     entry_filter_rules = build_default_btst_candidate_entry_filter_rules()
-    released_shadow_entries = _filter_promoted_upstream_shadow_entries(
-        list((short_trade_candidate_diagnostics or {}).get("released_shadow_entries", []) or [])
-    )
+    released_shadow_entries = _filter_promoted_upstream_shadow_entries(list((short_trade_candidate_diagnostics or {}).get("released_shadow_entries", []) or []))
     rejected_entries = list((watchlist_filter_diagnostics or {}).get("tickers", []) or [])
     supplemental_short_trade_entries = [
         *list((short_trade_candidate_diagnostics or {}).get("tickers", []) or []),
@@ -688,11 +686,7 @@ def build_plan_target_shell_inputs(
     replay_input_watchlist = list(frozen_replay_input.get("watchlist", []) or [])
     replay_input_rejected_entries = list(frozen_replay_input.get("rejected_entries", []) or [])
     replay_input_supplemental_entries = list(frozen_replay_input.get("supplemental_short_trade_entries", []) or [])
-    preserved_buy_order_tickers = {
-        str(ticker or "").strip()
-        for ticker in list(risk_metrics.get("frozen_original_buy_order_tickers", []) or [])
-        if str(ticker or "").strip()
-    }
+    preserved_buy_order_tickers = {str(ticker or "").strip() for ticker in list(risk_metrics.get("frozen_original_buy_order_tickers", []) or []) if str(ticker or "").strip()}
     buy_order_tickers = {order.ticker for order in list(plan.buy_orders or [])}
     resolved_watchlist = _attach_market_state_to_watchlist(
         replay_input_watchlist if replay_input_watchlist else list(plan.watchlist or []),
@@ -749,9 +743,7 @@ def build_plan_target_shell_inputs(
     funnel_filters = dict(funnel_diagnostics.get("filters", {}) or {})
     watchlist_filter_diagnostics = dict(funnel_filters.get("watchlist", {}) or {})
     short_trade_candidate_diagnostics = dict(funnel_filters.get("short_trade_candidates", {}) or {})
-    released_shadow_entries = _filter_promoted_upstream_shadow_entries(
-        list(short_trade_candidate_diagnostics.get("released_shadow_entries", []) or [])
-    )
+    released_shadow_entries = _filter_promoted_upstream_shadow_entries(list(short_trade_candidate_diagnostics.get("released_shadow_entries", []) or []))
     catalyst_theme_candidates = list(dict(funnel_filters.get("catalyst_theme_candidates", {}) or {}).get("tickers", []) or []) if target_mode == "short_trade_only" else []
     return PlanTargetShellInputs(
         rejected_entries=_attach_market_state_to_entries(

@@ -28,8 +28,7 @@ def _load_json(path: Path) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
         _logger.warning(
-            "merge_approved_loader: 损坏的 sidecar JSON %s "
-            "(运行中断/部分写入?): %s; 回退空 dict 让路径继续",
+            "merge_approved_loader: 损坏的 sidecar JSON %s " "(运行中断/部分写入?): %s; 回退空 dict 让路径继续",
             path,
             exc,
         )

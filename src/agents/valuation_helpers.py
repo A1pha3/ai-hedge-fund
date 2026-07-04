@@ -62,12 +62,7 @@ def _build_all_non_positive_result(method_values: dict[str, dict[str, float]], m
             "summary": "All valuation methods returned non-positive intrinsic values while market cap is positive",
             "market_cap": market_cap,
             "method_values": method_value_summary,
-            "details": (
-                f"DCF: {currency_symbol}{method_values['dcf']['value']:,.2f}, "
-                f"Owner Earnings: {currency_symbol}{method_values['owner_earnings']['value']:,.2f}, "
-                f"EV/EBITDA: {currency_symbol}{method_values['ev_ebitda']['value']:,.2f}, "
-                f"Residual Income: {currency_symbol}{method_values['residual_income']['value']:,.2f}"
-            ),
+            "details": (f"DCF: {currency_symbol}{method_values['dcf']['value']:,.2f}, " f"Owner Earnings: {currency_symbol}{method_values['owner_earnings']['value']:,.2f}, " f"EV/EBITDA: {currency_symbol}{method_values['ev_ebitda']['value']:,.2f}, " f"Residual Income: {currency_symbol}{method_values['residual_income']['value']:,.2f}"),
         },
     }
 
@@ -116,11 +111,7 @@ def _build_method_reasoning(method_values: dict[str, dict[str, float]], market_c
     for method_name, values in method_values.items():
         details = _build_method_base_details(method_name, values, market_cap, currency_symbol, free_cash_flow_history)
         if method_name == "dcf":
-            details = (
-                f"{details}\n"
-                f"  WACC: {wacc:.1%}, Bear: {currency_symbol}{dcf_results['downside']:,.2f}, "
-                f"Bull: {currency_symbol}{dcf_results['upside']:,.2f}, Range: {currency_symbol}{dcf_results['range']:,.2f}"
-            )
+            details = f"{details}\n" f"  WACC: {wacc:.1%}, Bear: {currency_symbol}{dcf_results['downside']:,.2f}, " f"Bull: {currency_symbol}{dcf_results['upside']:,.2f}, Range: {currency_symbol}{dcf_results['range']:,.2f}"
         reasoning[f"{method_name}_analysis"] = {
             "signal": _resolve_valuation_signal(values["gap"]) if values["gap"] is not None else "neutral",
             "details": details,

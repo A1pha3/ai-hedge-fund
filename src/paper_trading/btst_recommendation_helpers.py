@@ -16,9 +16,7 @@ def append_primary_and_near_miss_recommendations(
     selected_holding_contract_note: SelectedHoldingContractNoteResolver,
 ) -> None:
     if primary_entry:
-        recommendation_lines.append(
-            f"主入场票为 {primary_entry['ticker']}，应按 {primary_entry['preferred_entry_mode']} 执行，而不是把它视为无条件开盘追价。"
-        )
+        recommendation_lines.append(f"主入场票为 {primary_entry['ticker']}，应按 {primary_entry['preferred_entry_mode']} 执行，而不是把它视为无条件开盘追价。")
         primary_historical = primary_entry.get("historical_prior") or {}
         if primary_historical.get("summary"):
             recommendation_lines.append("主票历史先验参考: " + str(primary_historical.get("summary")))
@@ -32,14 +30,8 @@ def append_primary_and_near_miss_recommendations(
 
     if not near_miss_entries:
         return
-    recommendation_lines.append(
-        "备选观察票为 " + ", ".join(entry["ticker"] for entry in near_miss_entries) + "，仅适合作为盘中跟踪对象。"
-    )
-    near_miss_historical_lines = [
-        f"{entry['ticker']}={entry.get('historical_prior', {}).get('summary')}"
-        for entry in near_miss_entries
-        if (entry.get("historical_prior") or {}).get("summary")
-    ]
+    recommendation_lines.append("备选观察票为 " + ", ".join(entry["ticker"] for entry in near_miss_entries) + "，仅适合作为盘中跟踪对象。")
+    near_miss_historical_lines = [f"{entry['ticker']}={entry.get('historical_prior', {}).get('summary')}" for entry in near_miss_entries if (entry.get("historical_prior") or {}).get("summary")]
     if near_miss_historical_lines:
         recommendation_lines.append("观察票历史先验参考: " + "；".join(near_miss_historical_lines))
 
@@ -221,10 +213,6 @@ def _append_historical_prior_recommendation(
     entries: list[dict[str, Any]],
     prefix: str,
 ) -> None:
-    historical_prior_lines = [
-        f"{entry['ticker']}={entry.get('historical_prior', {}).get('summary')}"
-        for entry in entries
-        if (entry.get("historical_prior") or {}).get("summary")
-    ]
+    historical_prior_lines = [f"{entry['ticker']}={entry.get('historical_prior', {}).get('summary')}" for entry in entries if (entry.get("historical_prior") or {}).get("summary")]
     if historical_prior_lines:
         recommendation_lines.append(prefix + "；".join(historical_prior_lines))

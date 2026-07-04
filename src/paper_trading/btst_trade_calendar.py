@@ -75,6 +75,7 @@ def _load_open_trade_dates_cn_sse(start_compact: str, end_compact: str) -> tuple
                 return dates, "tushare_trade_cal"
         except Exception as exc:
             import logging
+
             logging.getLogger(__name__).warning("tushare trade_cal failed for %s-%s: %s", start_compact, end_compact, exc)
 
     # Fallback: akshare sina trade-date history

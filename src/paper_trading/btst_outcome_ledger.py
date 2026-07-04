@@ -11,6 +11,7 @@ between pre-trade decisions (``operator_summary.json``) and realized results.
 - Idempotent: same ``(decision_id, ticker)`` pair is unique; re-writes replace,
   not append.
 """
+
 from __future__ import annotations
 
 import json
@@ -57,6 +58,7 @@ class OutcomeDataStatus(str, Enum):
 # Sub-models
 # ---------------------------------------------------------------------------
 
+
 class TickerOutcome(BaseModel):
     """Outcome for a single ticker within one decision."""
 
@@ -88,9 +90,7 @@ class TickerOutcome(BaseModel):
     confirm_score: float | None = None
     entry_status: str | None = None
 
-    recorded_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
-    )
+    recorded_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
 
 class OutcomeLedgerHeader(BaseModel):
@@ -101,9 +101,7 @@ class OutcomeLedgerHeader(BaseModel):
     schema_version: int = 1
     decision_id: str
     signal_date: str
-    generated_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
-    )
+    generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
     outcome_count: int = 0
     categories_covered: list[str] = Field(default_factory=list)
     regimes_covered: list[str] = Field(default_factory=list)
@@ -122,6 +120,7 @@ class OutcomeLedgerHeader(BaseModel):
 # ---------------------------------------------------------------------------
 # Builder helpers
 # ---------------------------------------------------------------------------
+
 
 def build_ticker_outcome(
     *,
@@ -217,11 +216,7 @@ def build_ledger_header(
     coverage = round(decided / total, 4) if total > 0 else None
 
     categories = sorted({o.outcome_category.value for o in outcomes})
-    regimes = sorted({
-        o.regime_gate_level
-        for o in outcomes
-        if o.regime_gate_level and o.regime_gate_level != "n/a"
-    })
+    regimes = sorted({o.regime_gate_level for o in outcomes if o.regime_gate_level and o.regime_gate_level != "n/a"})
 
     return OutcomeLedgerHeader(
         decision_id=decision_id,
@@ -244,6 +239,7 @@ def build_ledger_header(
 # Incremental evidence summary (for operator_summary cross-ref)
 # ---------------------------------------------------------------------------
 
+
 def compute_incremental_evidence(
     ledger_headers: list[OutcomeLedgerHeader],
 ) -> dict[str, Any]:
@@ -263,14 +259,11 @@ def compute_incremental_evidence(
 
     total_samples = sum(h.sample_count for h in ledger_headers)
     total_profit = sum(h.profit_count for h in ledger_headers)
-    total_decided = sum(
-        h.profit_count + h.loss_count + h.breakeven_count for h in ledger_headers
-    )
+    total_decided = sum(h.profit_count + h.loss_count + h.breakeven_count for h in ledger_headers)
     overall_win_rate = round(total_profit / total_decided, 4) if total_decided > 0 else None
     overall_coverage = (
         round(
-            sum(h.profit_count + h.loss_count + h.breakeven_count for h in ledger_headers)
-            / total_samples,
+            sum(h.profit_count + h.loss_count + h.breakeven_count for h in ledger_headers) / total_samples,
             4,
         )
         if total_samples > 0
@@ -292,6 +285,7 @@ def compute_incremental_evidence(
 # ---------------------------------------------------------------------------
 # I/O
 # ---------------------------------------------------------------------------
+
 
 def write_outcome_ledger(
     header: OutcomeLedgerHeader,

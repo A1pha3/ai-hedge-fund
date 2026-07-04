@@ -205,11 +205,7 @@ def _extract_daily_digest(snapshot: dict[str, Any], trade_date: str) -> DailyDig
     top_score: float | None = None
     if selected:
         sorted_sel = sorted(selected, key=lambda e: float(e.get("score_final") or 0), reverse=True)
-        top_tickers = [
-            str(e.get("symbol", ""))
-            for e in sorted_sel[:10]
-            if str(e.get("symbol", "")).strip()
-        ]
+        top_tickers = [str(e.get("symbol", "")) for e in sorted_sel[:10] if str(e.get("symbol", "")).strip()]
         top_score = float(sorted_sel[0].get("score_final") or 0)
 
     avg_score: float | None = None
@@ -518,9 +514,7 @@ def format_digest_markdown(result: DigestResult) -> str:
     # NOTE (R108 / R107-R68-R69-R96 falsy-zero `or` family): 0 是合法 min_recurrence
     # ("重复 >= 0 天 = 全部标的"), 不能用 `or 5` 静默覆盖回默认 5, 否则 header 标签
     # ">= 5d" 与 recurring_tickers 实际 >= 0d 过滤口径不一致, 误导用户。
-    min_recurrence_for_header = int(
-        s["min_recurrence"] if s.get("min_recurrence") is not None else 5
-    )
+    min_recurrence_for_header = int(s["min_recurrence"] if s.get("min_recurrence") is not None else 5)
     lines.append(f"| Recurring tickers (>= {min_recurrence_for_header}d) | {len(s.get('recurring_tickers', []))} |")
     lines.append("")
 

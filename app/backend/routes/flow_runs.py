@@ -40,11 +40,7 @@ logger = logging.getLogger(__name__)
     },
 )
 @safe_route
-async def create_flow_run(
-    flow_id: int,
-    request: FlowRunCreateRequest,
-    db: Session = Depends(get_db)
-):
+async def create_flow_run(flow_id: int, request: FlowRunCreateRequest, db: Session = Depends(get_db)):
     """Create a new flow run for the specified flow"""
     flow_repo = FlowRepository(db)
     flow = flow_repo.get_flow_by_id(flow_id)
@@ -52,10 +48,7 @@ async def create_flow_run(
         raise HTTPException(status_code=404, detail="Flow not found")
 
     run_repo = FlowRunRepository(db)
-    flow_run = run_repo.create_flow_run(
-        flow_id=flow_id,
-        request_data=request.request_data
-    )
+    flow_run = run_repo.create_flow_run(flow_id=flow_id, request_data=request.request_data)
     return FlowRunResponse.model_validate(flow_run)
 
 
@@ -68,12 +61,7 @@ async def create_flow_run(
     },
 )
 @safe_route
-async def get_flow_runs(
-    flow_id: int,
-    limit: int = Query(50, ge=1, le=100, description="Maximum number of runs to return"),
-    offset: int = Query(0, ge=0, description="Number of runs to skip"),
-    db: Session = Depends(get_db)
-):
+async def get_flow_runs(flow_id: int, limit: int = Query(50, ge=1, le=100, description="Maximum number of runs to return"), offset: int = Query(0, ge=0, description="Number of runs to skip"), db: Session = Depends(get_db)):
     """Get all runs for the specified flow"""
     flow_repo = FlowRepository(db)
     flow = flow_repo.get_flow_by_id(flow_id)
@@ -182,12 +170,7 @@ async def get_flow_run(flow_id: int, run_id: int, db: Session = Depends(get_db))
     },
 )
 @safe_route
-async def update_flow_run(
-    flow_id: int,
-    run_id: int,
-    request: FlowRunUpdateRequest,
-    db: Session = Depends(get_db)
-):
+async def update_flow_run(flow_id: int, run_id: int, request: FlowRunUpdateRequest, db: Session = Depends(get_db)):
     """Update an existing flow run"""
     flow_repo = FlowRepository(db)
     flow = flow_repo.get_flow_by_id(flow_id)
@@ -199,12 +182,7 @@ async def update_flow_run(
     if not existing_run or existing_run.flow_id != flow_id:
         raise HTTPException(status_code=404, detail="Flow run not found")
 
-    flow_run = run_repo.update_flow_run(
-        run_id=run_id,
-        status=request.status,
-        results=request.results,
-        error_message=request.error_message
-    )
+    flow_run = run_repo.update_flow_run(run_id=run_id, status=request.status, results=request.results, error_message=request.error_message)
 
     if not flow_run:
         raise HTTPException(status_code=404, detail="Flow run not found")
@@ -348,11 +326,7 @@ async def rerun_flow_run(
     source_created = source_run.created_at
     if source_created is not None:
         source_created_iso = source_created.isoformat()
-        source_created_aware = (
-            source_created
-            if source_created.tzinfo is not None
-            else source_created.replace(tzinfo=timezone.utc)
-        )
+        source_created_aware = source_created if source_created.tzinfo is not None else source_created.replace(tzinfo=timezone.utc)
         age_days = (datetime.now(timezone.utc) - source_created_aware).days
     else:
         source_created_iso = ""

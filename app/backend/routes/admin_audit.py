@@ -16,6 +16,7 @@ Session revoke uses the existing token_version mechanism: incrementing
 ``user.token_version`` invalidates every JWT previously issued for that
 user, forcing them to re-authenticate.
 """
+
 from __future__ import annotations
 
 import logging

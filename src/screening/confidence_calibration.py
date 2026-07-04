@@ -230,6 +230,7 @@ def _optional_float(value: Any) -> float | None:
     # poisoned bucket averages (t30_avg_return etc.) used by calibration / R-5.C
     # prediction. NaN in a bucket mean is silently corrupting.
     import math
+
     if not math.isfinite(out):
         return None
     return out
@@ -294,7 +295,7 @@ def _std_or_none(valid_returns: list[float]) -> float | None:
         return None
     mean = sum(valid_returns) / n
     variance = sum((x - mean) ** 2 for x in valid_returns) / (n - 1)
-    return variance ** 0.5
+    return variance**0.5
 
 
 def _p5_or_none(valid_returns: list[float]) -> float | None:
@@ -329,9 +330,7 @@ def _find_bucket(score: float) -> tuple[str, float, float] | None:
     return None
 
 
-def compute_calibration(
-    records: list[dict[str, Any]], lookback_days: int = DEFAULT_LOOKBACK_DAYS
-) -> CalibrationSummary:
+def compute_calibration(records: list[dict[str, Any]], lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> CalibrationSummary:
     """计算 score 分桶校准。
 
     Args:
@@ -511,24 +510,14 @@ def _return_str(ret: float | None) -> str:
 def render_calibration_table(summary: CalibrationSummary) -> str:
     """渲染 score 分桶校准曲线表。"""
     lines: list[str] = []
-    lines.append(
-        f"\n{Fore.CYAN}{Style.BRIGHT}═══ 置信度校准 (lookback={summary.lookback_days}d, "
-        f"样本={summary.total_samples}, 其中 T+30 成熟={summary.total_t30_samples}) ═══{Style.RESET_ALL}"
-    )
+    lines.append(f"\n{Fore.CYAN}{Style.BRIGHT}═══ 置信度校准 (lookback={summary.lookback_days}d, " f"样本={summary.total_samples}, 其中 T+30 成熟={summary.total_t30_samples}) ═══{Style.RESET_ALL}")
 
     if summary.total_samples == 0:
-        lines.append(
-            f"{Fore.YELLOW}无历史推荐追踪数据 — 请先多次运行 `--auto` 并 `update_tracking_history` "
-            f"积累 T+1/T+3/T+5/T+10/T+20/T+30 实际收益样本。{Style.RESET_ALL}"
-        )
+        lines.append(f"{Fore.YELLOW}无历史推荐追踪数据 — 请先多次运行 `--auto` 并 `update_tracking_history` " f"积累 T+1/T+3/T+5/T+10/T+20/T+30 实际收益样本。{Style.RESET_ALL}")
         lines.append("")
         return "\n".join(lines)
 
-    header = (
-        f"{Fore.CYAN}{'Score 桶':<18} {'样本':>5} "
-        f"{'T+1 胜率':>10} {'T+3 胜率':>10} {'T+5 胜率':>10} {'T+10 胜率':>11} {'T+20 胜率':>11} {'T+30 胜率':>11} "
-        f"{'T+1 均收':>10} {'T+5 均收':>10} {'T+10 均收':>11} {'T+20 均收':>11} {'T+30 均收':>11}{Style.RESET_ALL}"
-    )
+    header = f"{Fore.CYAN}{'Score 桶':<18} {'样本':>5} " f"{'T+1 胜率':>10} {'T+3 胜率':>10} {'T+5 胜率':>10} {'T+10 胜率':>11} {'T+20 胜率':>11} {'T+30 胜率':>11} " f"{'T+1 均收':>10} {'T+5 均收':>10} {'T+10 均收':>11} {'T+20 均收':>11} {'T+30 均收':>11}{Style.RESET_ALL}"
     lines.append(header)
     lines.append("─" * 180)
 
@@ -552,23 +541,15 @@ def render_calibration_table(summary: CalibrationSummary) -> str:
     return "\n".join(lines)
 
 
-def render_top_n_calibration(
-    top_recs: list[dict[str, Any]], summary: CalibrationSummary, top_n: int = 10
-) -> str:
+def render_top_n_calibration(top_recs: list[dict[str, Any]], summary: CalibrationSummary, top_n: int = 10) -> str:
     """渲染当前 Top N 推荐的校准结果 (每只票落到哪个桶)。"""
     if not top_recs:
         return ""
-    bucket_lookup: dict[tuple[float, float], ScoreBucketStats] = {
-        (b.score_low, b.score_high): b for b in summary.buckets
-    }
+    bucket_lookup: dict[tuple[float, float], ScoreBucketStats] = {(b.score_low, b.score_high): b for b in summary.buckets}
 
     lines: list[str] = []
     lines.append(f"{Fore.CYAN}{Style.BRIGHT}═══ Top {min(top_n, len(top_recs))} 推荐校准 ═══{Style.RESET_ALL}")
-    header = (
-        f"{Fore.CYAN}{'Ticker':<8} {'名称':<14} {'Score':>7} "
-        f"{'所在桶':<18} {'桶样本':>6} {'T+5 胜率':>10} {'T+10 胜率':>11} {'T+20 胜率':>11} {'T+30 胜率':>11} "
-        f"{'T+5 均收':>10} {'T+10 均收':>11} {'T+20 均收':>11} {'T+30 均收':>11}{Style.RESET_ALL}"
-    )
+    header = f"{Fore.CYAN}{'Ticker':<8} {'名称':<14} {'Score':>7} " f"{'所在桶':<18} {'桶样本':>6} {'T+5 胜率':>10} {'T+10 胜率':>11} {'T+20 胜率':>11} {'T+30 胜率':>11} " f"{'T+5 均收':>10} {'T+10 均收':>11} {'T+20 均收':>11} {'T+30 均收':>11}{Style.RESET_ALL}"
     lines.append(header)
     lines.append("─" * 150)
 
@@ -582,15 +563,10 @@ def render_top_n_calibration(
             continue
         stats = bucket_lookup.get((bucket[1], bucket[2]))
         if stats is None or stats.sample_count == 0:
-            lines.append(
-                f"{ticker:<8} {name:<14} {score:>7.2f}  {bucket[0]:<18} "
-                f"{Fore.YELLOW}{'—':>6} {Fore.YELLOW}无样本, 不可校准{Style.RESET_ALL}"
-            )
+            lines.append(f"{ticker:<8} {name:<14} {score:>7.2f}  {bucket[0]:<18} " f"{Fore.YELLOW}{'—':>6} {Fore.YELLOW}无样本, 不可校准{Style.RESET_ALL}")
             continue
         lines.append(
-            f"{ticker:<8} {name:<14} {score:>7.2f}  {bucket[0]:<18} "
-            f"{stats.sample_count:>6} {_win_rate_str(stats.t5_win_rate):>10} {_win_rate_str(stats.t10_win_rate):>11} {_win_rate_str(stats.t20_win_rate):>11} {_win_rate_str(stats.t30_win_rate):>11} "
-            f"{_return_str(stats.t5_avg_return):>10} {_return_str(stats.t10_avg_return):>11} {_return_str(stats.t20_avg_return):>11} {_return_str(stats.t30_avg_return):>11}"
+            f"{ticker:<8} {name:<14} {score:>7.2f}  {bucket[0]:<18} " f"{stats.sample_count:>6} {_win_rate_str(stats.t5_win_rate):>10} {_win_rate_str(stats.t10_win_rate):>11} {_win_rate_str(stats.t20_win_rate):>11} {_win_rate_str(stats.t30_win_rate):>11} " f"{_return_str(stats.t5_avg_return):>10} {_return_str(stats.t10_avg_return):>11} {_return_str(stats.t20_avg_return):>11} {_return_str(stats.t30_avg_return):>11}"
         )
 
     lines.append("")
@@ -602,9 +578,7 @@ def render_top_n_calibration(
 # ---------------------------------------------------------------------------
 
 
-def run_confidence_calibration(
-    top_n: int = 10, lookback_days: int = DEFAULT_LOOKBACK_DAYS, report_dir: Path | None = None
-) -> int:
+def run_confidence_calibration(top_n: int = 10, lookback_days: int = DEFAULT_LOOKBACK_DAYS, report_dir: Path | None = None) -> int:
     """CLI 入口: 加载历史 → 校准 → 渲染校准表 + Top N 推荐。"""
     records = _load_tracking_records(report_dir=report_dir)
     summary = compute_calibration(records, lookback_days=lookback_days)

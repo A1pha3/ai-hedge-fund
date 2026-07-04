@@ -278,7 +278,9 @@ def _build_screening_response(
             # below' comment described a log that did not exist).
             logger.warning(
                 "verdict compute failed for %s (regime=%s) — falling back to AVOID",
-                rec.get("ticker"), market_regime, exc_info=True,
+                rec.get("ticker"),
+                market_regime,
+                exc_info=True,
             )
             rec["verdict"] = {
                 "action": "AVOID",
@@ -466,10 +468,7 @@ async def compare_endpoint(
     if not (MIN_COMPARE_TICKERS <= len(raw_tickers) <= MAX_COMPARE_TICKERS):
         raise HTTPException(
             status_code=422,
-            detail=(
-                f"tickers 数量必须为 {MIN_COMPARE_TICKERS}-{MAX_COMPARE_TICKERS} 只, "
-                f"实际: {len(raw_tickers)}"
-            ),
+            detail=(f"tickers 数量必须为 {MIN_COMPARE_TICKERS}-{MAX_COMPARE_TICKERS} 只, " f"实际: {len(raw_tickers)}"),
         )
 
     # 2. 解析 + 校验 metrics
@@ -501,10 +500,7 @@ async def compare_endpoint(
     if not recommendations:
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"未找到有效 auto_screening 报告 "
-                f"(trade_date={trade_date or 'latest'}), 请先运行 --auto"
-            ),
+            detail=(f"未找到有效 auto_screening 报告 " f"(trade_date={trade_date or 'latest'}), 请先运行 --auto"),
         )
 
     # 5. 执行对比
@@ -636,10 +632,7 @@ async def conditional_orders_endpoint(
     if not recommendations:
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"未找到有效 auto_screening 报告 "
-                f"(trade_date={trade_date or 'latest'}), 请先运行 --auto"
-            ),
+            detail=(f"未找到有效 auto_screening 报告 " f"(trade_date={trade_date or 'latest'}), 请先运行 --auto"),
         )
 
     # 3. 推断 trade_date
@@ -747,10 +740,7 @@ async def apply_custom_weights(req: CustomWeightsRequest) -> ScreeningResponse:
     if not recs:
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"未找到有效 auto_screening 报告 "
-                f"(trade_date={req.trade_date or 'latest'}), 请先运行 --auto"
-            ),
+            detail=(f"未找到有效 auto_screening 报告 " f"(trade_date={req.trade_date or 'latest'}), 请先运行 --auto"),
         )
 
     weights = StrategyWeights(
@@ -930,10 +920,7 @@ async def get_stock_detail(
     if not recommendations:
         raise HTTPException(
             status_code=404,
-            detail=(
-                f"未找到有效 auto_screening 报告 "
-                f"(trade_date={trade_date or 'latest'}), 请先运行 --auto"
-            ),
+            detail=(f"未找到有效 auto_screening 报告 " f"(trade_date={trade_date or 'latest'}), 请先运行 --auto"),
         )
 
     # 3. 计算详情

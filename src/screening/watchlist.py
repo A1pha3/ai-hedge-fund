@@ -243,11 +243,13 @@ class Watchlist:
         date_str = str(date or _today_iso())
         # 移除同日已有记录, 后续 append 实现覆盖
         entry.score_history = [item for item in entry.score_history if str(item.get("date", "")) != date_str]
-        entry.score_history.append({
-            "date": date_str,
-            "score": float(score) if score is not None else 0.0,
-            "signal": str(signal or ""),
-        })
+        entry.score_history.append(
+            {
+                "date": date_str,
+                "score": float(score) if score is not None else 0.0,
+                "signal": str(signal or ""),
+            }
+        )
         # 排序 + 截断
         entry.score_history.sort(key=lambda item: str(item.get("date", "")))
         if len(entry.score_history) > MAX_SCORE_HISTORY_DAYS:

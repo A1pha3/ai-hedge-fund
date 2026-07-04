@@ -60,11 +60,7 @@ class RecommendationStabilityReport:
 def _top_n_tickers(payload: dict[str, Any], top_n: int) -> set[str]:
     """从报告 payload 提取 Top-N ticker 集（报告已按 score_b 降序）。"""
     recs = payload.get("recommendations") or []
-    return {
-        str(rec.get("ticker", ""))
-        for rec in recs[:top_n]
-        if isinstance(rec, dict) and rec.get("ticker")
-    }
+    return {str(rec.get("ticker", "")) for rec in recs[:top_n] if isinstance(rec, dict) and rec.get("ticker")}
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
@@ -117,14 +113,9 @@ def compute_recommendation_stability(
         return report  # stability_score=None, label="数据不足"
 
     # history 按日期降序（newest first）；Jaccard 对称，顺序不影响均值
-    daily_tops = [
-        _top_n_tickers(item.get("payload", {}), top_n) for item in history
-    ]
+    daily_tops = [_top_n_tickers(item.get("payload", {}), top_n) for item in history]
 
-    overlaps = [
-        _jaccard(daily_tops[i], daily_tops[i + 1])
-        for i in range(len(daily_tops) - 1)
-    ]
+    overlaps = [_jaccard(daily_tops[i], daily_tops[i + 1]) for i in range(len(daily_tops) - 1)]
     report.adjacent_overlaps = overlaps
     score = sum(overlaps) / len(overlaps) if overlaps else 0.0
     report.stability_score = round(score, 4)
@@ -155,12 +146,7 @@ def render_stability_line(report: RecommendationStabilityReport) -> str:
         color = Fore.YELLOW
     else:
         color = Fore.RED
-    return (
-        f"  {Fore.CYAN}📊 推荐稳定性:{Style.RESET_ALL} "
-        f"近 {report.day_count} 日 Top {report.top_n} 重叠率 "
-        f"{color}{pct:.0f}% ({report.label}){Style.RESET_ALL}  "
-        f"(相邻日 Jaccard 均值)"
-    )
+    return f"  {Fore.CYAN}📊 推荐稳定性:{Style.RESET_ALL} " f"近 {report.day_count} 日 Top {report.top_n} 重叠率 " f"{color}{pct:.0f}% ({report.label}){Style.RESET_ALL}  " f"(相邻日 Jaccard 均值)"
 
 
 __all__ = [

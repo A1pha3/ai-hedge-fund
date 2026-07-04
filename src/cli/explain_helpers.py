@@ -3,6 +3,7 @@
 Round 20.14 抽取: 五个 ``run_explain`` 的私有辅助函数, 约 200 行。
 所有函数签名和行为与抽取前完全一致 (纯重构, 无行为变更)。
 """
+
 from __future__ import annotations
 
 from src.screening.custom_weights import STRATEGY_KEYS as _STRATEGY_ORDER

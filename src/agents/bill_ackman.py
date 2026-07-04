@@ -246,7 +246,7 @@ def analyze_valuation(financial_line_items: list, market_cap: float) -> dict:
         return {"score": 0, "details": "No FCF data available for valuation", "intrinsic_value": None}
 
     # Use normalized (average) FCF for DCF, not just the latest
-    normalized_fcf = sum(fcf_values[:min(5, len(fcf_values))]) / min(5, len(fcf_values))
+    normalized_fcf = sum(fcf_values[: min(5, len(fcf_values))]) / min(5, len(fcf_values))
     latest_fcf = fcf_values[0] if fcf_values else 0
     fcf = normalized_fcf if len(fcf_values) >= 3 else latest_fcf
 
@@ -324,8 +324,7 @@ def generate_ackman_output(
         [
             (
                 "system",
-                with_fact_grounding_rules(
-                    """You are a Bill Ackman AI agent, making investment decisions using his principles:
+                with_fact_grounding_rules("""You are a Bill Ackman AI agent, making investment decisions using his principles:
 
             1. Seek high-quality businesses with durable competitive advantages (moats), often in well-known consumer or service brands.
             2. Prioritize consistent free cash flow and growth potential over the long term.
@@ -343,8 +342,7 @@ def generate_ackman_output(
             - Use a confident, analytic, and sometimes confrontational tone when discussing weaknesses or opportunities.
 
             Return your final recommendation (signal: bullish, neutral, or bearish) with a 0-100 confidence and a thorough reasoning section.
-            """
-                ),
+            """),
             ),
             (
                 "human",

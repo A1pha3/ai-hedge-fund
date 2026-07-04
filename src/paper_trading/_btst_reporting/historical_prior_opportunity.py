@@ -31,11 +31,7 @@ def _summarize_historical_opportunity_rows(
             continue
         _accumulate_historical_opportunity_summary(summary_state, evaluated_row)
 
-    next_high_hit_rate, next_close_positive_rate = (
-        _compute_historical_opportunity_rates(
-            summary_state["evaluated_rows"], summary_state
-        )
-    )
+    next_high_hit_rate, next_close_positive_rate = _compute_historical_opportunity_rates(summary_state["evaluated_rows"], summary_state)
     return _build_historical_opportunity_summary_payload(
         rows=rows,
         evaluated_rows=summary_state["evaluated_rows"],
@@ -60,9 +56,7 @@ def _build_empty_historical_opportunity_summary_state() -> dict[str, Any]:
     }
 
 
-def _accumulate_historical_opportunity_summary(
-    summary_state: dict[str, Any], evaluated_row: dict[str, Any]
-) -> None:
+def _accumulate_historical_opportunity_summary(summary_state: dict[str, Any], evaluated_row: dict[str, Any]) -> None:
     next_open_return = evaluated_row.get("next_open_return")
     next_high_return = evaluated_row.get("next_high_return")
     next_close_return = evaluated_row.get("next_close_return")
@@ -87,16 +81,8 @@ def _compute_historical_opportunity_rates(
     summary_state: dict[str, Any],
 ) -> tuple[float | None, float | None]:
     evaluable_count = len(evaluated_rows)
-    next_high_hit_rate = (
-        round(summary_state["hit_count"] / evaluable_count, 4)
-        if evaluable_count
-        else None
-    )
-    next_close_positive_rate = (
-        round(summary_state["positive_close_count"] / evaluable_count, 4)
-        if evaluable_count
-        else None
-    )
+    next_high_hit_rate = round(summary_state["hit_count"] / evaluable_count, 4) if evaluable_count else None
+    next_close_positive_rate = round(summary_state["positive_close_count"] / evaluable_count, 4) if evaluable_count else None
     return next_high_hit_rate, next_close_positive_rate
 
 
@@ -119,9 +105,7 @@ def _evaluate_historical_opportunity_row(
         "next_open_return": _round_or_none(outcome.get("next_open_return")),
         "next_high_return": _round_or_none(outcome.get("next_high_return")),
         "next_close_return": _round_or_none(outcome.get("next_close_return")),
-        "next_open_to_close_return": _round_or_none(
-            outcome.get("next_open_to_close_return")
-        ),
+        "next_open_to_close_return": _round_or_none(outcome.get("next_open_to_close_return")),
     }
 
 
@@ -136,9 +120,7 @@ def _build_historical_opportunity_summary_payload(
     next_high_hit_rate: float | None,
     next_close_positive_rate: float | None,
 ) -> dict[str, Any]:
-    payoff_stats = _summarize_next_close_payoff(
-        next_close_values, next_close_positive_rate=next_close_positive_rate
-    )
+    payoff_stats = _summarize_next_close_payoff(next_close_values, next_close_positive_rate=next_close_positive_rate)
     return {
         "sample_count": len(rows),
         "evaluable_count": len(evaluated_rows),
@@ -182,9 +164,7 @@ def _summarize_next_close_payoff(
     }
 
 
-def _compute_payoff_ratio(
-    average_win: float | None, average_loss_abs: float | None
-) -> float | None:
+def _compute_payoff_ratio(average_win: float | None, average_loss_abs: float | None) -> float | None:
     if average_win is None or average_loss_abs is None or average_loss_abs <= 0:
         return None
     return _round_or_none(average_win / average_loss_abs)
@@ -205,7 +185,4 @@ def _detect_win_rate_payoff_divergence(
 ) -> bool:
     if next_close_positive_rate is None or next_close_positive_rate < 0.6:
         return False
-    return bool(
-        (payoff_ratio is not None and payoff_ratio < 1.0)
-        or (expectancy is not None and expectancy <= 0)
-    )
+    return bool((payoff_ratio is not None and payoff_ratio < 1.0) or (expectancy is not None and expectancy <= 0))

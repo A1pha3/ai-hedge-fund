@@ -264,6 +264,7 @@ class BacktestEngine:
                 limit_down=limit_down,
                 decisions=decisions,
             )
+
         return _process_pending_queues_with_queues
 
     def _resolve_timing_log_path(self) -> Path | None:
@@ -569,13 +570,15 @@ class BacktestEngine:
         if price is None:
             next_pending_buy.append(order)
             return
-        result = self._evaluate_pending_buy_order(**self._build_pending_buy_evaluation_kwargs(
-            order=order,
-            price=price,
-            normalized_ticker=normalized_ticker,
-            watch_scores=watch_scores,
-            limit_up=limit_up,
-        ))
+        result = self._evaluate_pending_buy_order(
+            **self._build_pending_buy_evaluation_kwargs(
+                order=order,
+                price=price,
+                normalized_ticker=normalized_ticker,
+                watch_scores=watch_scores,
+                limit_up=limit_up,
+            )
+        )
         self._apply_pending_buy_result(
             order=order,
             result=result,
@@ -713,15 +716,17 @@ class BacktestEngine:
             return None
         current_prices, daily_turnovers = market_snapshot
         limit_up, limit_down = self._load_pipeline_limit_state(current_date)
-        return build_pipeline_day_context(**self._build_pipeline_day_context_kwargs(
-            current_date=current_date,
-            active_tickers=active_tickers,
-            current_prices=current_prices,
-            daily_turnovers=daily_turnovers,
-            limit_up=limit_up,
-            limit_down=limit_down,
-            stage_started_at=stage_started_at,
-        ))
+        return build_pipeline_day_context(
+            **self._build_pipeline_day_context_kwargs(
+                current_date=current_date,
+                active_tickers=active_tickers,
+                current_prices=current_prices,
+                daily_turnovers=daily_turnovers,
+                limit_up=limit_up,
+                limit_down=limit_down,
+                stage_started_at=stage_started_at,
+            )
+        )
 
     @staticmethod
     def _build_pipeline_day_context_kwargs(
@@ -967,9 +972,7 @@ class BacktestEngine:
             # index. Anchoring one day earlier keeps iloc[0] == initial_capital
             # (so total_return is unchanged) while yielding a unique Date index.
             # See BH-001.
-            self._portfolio_values = [
-                {"Date": dates[0] - pd.Timedelta(days=1), "Portfolio Value": self._initial_capital}
-            ]
+            self._portfolio_values = [{"Date": dates[0] - pd.Timedelta(days=1), "Portfolio Value": self._initial_capital}]
         else:
             self._portfolio_values = []
         return dates, pending_plan

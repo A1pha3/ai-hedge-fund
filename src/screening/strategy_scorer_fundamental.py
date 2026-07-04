@@ -37,6 +37,7 @@ class ProfitabilityEvaluationState:
 # Profitability
 # ---------------------------------------------------------------------------
 
+
 def _score_profitability(metrics: FinancialMetrics) -> SubFactor:
     state = _build_profitability_evaluation_state(metrics)
     if state.available == 0:
@@ -146,6 +147,7 @@ def _resolve_profitability_direction(positive: int, zero_pass_mode: str) -> int:
 # Growth, financial health, growth valuation
 # ---------------------------------------------------------------------------
 
+
 def _score_growth(metrics_list: list[FinancialMetrics]) -> SubFactor:
     if len(metrics_list) < 4:
         return _make_sub_factor("growth", 0, 0.0, FUNDAMENTAL_SUBFACTOR_WEIGHTS["growth"], completeness=0.0)
@@ -199,6 +201,7 @@ def _resolve_growth_valuation_direction_and_confidence(score: float) -> tuple[in
 # ---------------------------------------------------------------------------
 # Industry PE
 # ---------------------------------------------------------------------------
+
 
 def _score_industry_pe(metrics: FinancialMetrics, industry_name: str, industry_pe_medians: dict[str, float] | None) -> SubFactor:
     premium_inputs = _resolve_industry_pe_inputs(metrics, industry_name, industry_pe_medians)
@@ -256,6 +259,7 @@ def _resolve_industry_pe_direction_and_confidence(premium: float) -> tuple[int, 
 # Quality cap
 # ---------------------------------------------------------------------------
 
+
 def _apply_fundamental_quality_cap(signal: StrategySignal) -> StrategySignal:
     if not _should_apply_fundamental_quality_cap(signal):
         return signal
@@ -296,6 +300,7 @@ def _build_fundamental_quality_cap_payload(signal: StrategySignal) -> dict:
 # ---------------------------------------------------------------------------
 # Strategy orchestrator
 # ---------------------------------------------------------------------------
+
 
 def score_fundamental_strategy(
     ticker: str,

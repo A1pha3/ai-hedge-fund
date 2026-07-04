@@ -175,12 +175,12 @@ def _resolve_industry_name(recommendation: dict) -> str:
 
 def _load_historical_reports(reports_dir: str, trade_date: str, lookback_days: int) -> list[dict]:
     """加载历史自动筛选报告 (P5-2)。
-    
+
     Args:
         reports_dir: 报告目录路径
         trade_date: 当前交易日 (YYYYMMDD)
         lookback_days: 回看天数, lookback_days=1 时返回空列表
-    
+
     Returns:
         历史报告列表, 按日期升序排列, 不包含当前日期。
         每个报告为 dict, 至少包含 "date" 和 "recommendations" 字段。
@@ -188,26 +188,26 @@ def _load_historical_reports(reports_dir: str, trade_date: str, lookback_days: i
     import json
     import os
     from datetime import datetime, timedelta
-    
+
     if lookback_days <= 1:
         return []
-    
+
     if not reports_dir or not os.path.exists(reports_dir):
         return []
-    
+
     # 将 trade_date 转换为 datetime
     try:
         current_date = datetime.strptime(trade_date, "%Y%m%d")
     except (ValueError, TypeError):
         return []
-    
+
     # 收集历史报告
     historical_reports = []
     for i in range(1, lookback_days):  # 排除当前日期
         past_date = current_date - timedelta(days=i)
         past_date_str = past_date.strftime("%Y%m%d")
         report_path = os.path.join(reports_dir, f"auto_screening_{past_date_str}.json")
-        
+
         if os.path.exists(report_path):
             try:
                 with open(report_path, encoding="utf-8") as f:
@@ -217,7 +217,7 @@ def _load_historical_reports(reports_dir: str, trade_date: str, lookback_days: i
                         historical_reports.append(report)
             except (json.JSONDecodeError, IOError):
                 continue
-    
+
     # 按日期升序排列
     historical_reports.sort(key=lambda r: r.get("date", ""))
     return historical_reports
@@ -225,43 +225,43 @@ def _load_historical_reports(reports_dir: str, trade_date: str, lookback_days: i
 
 def _compute_industry_history(historical_reports: list[dict]) -> dict[str, dict]:
     """从历史报告计算各行业的历史统计 (P5-2)。
-    
+
     Args:
         historical_reports: 历史报告列表
-    
+
     Returns:
         dict[industry_name, {"presence_count": int, "score_b_sum": float, "score_b_count": int}]
     """
     industry_history: dict[str, dict] = {}
-    
+
     for report in historical_reports:
         recommendations = report.get("recommendations", [])
         # 按行业分组
         industries_in_report = set()
         industry_scores: dict[str, list[float]] = {}
-        
+
         for rec in recommendations:
             if not isinstance(rec, dict):
                 continue
             industry = _resolve_industry_name(rec)
             if not industry or industry == UNKNOWN_INDUSTRY:
                 continue
-            
+
             industries_in_report.add(industry)
             score_b = _safe_score_b(rec.get("score_b"))
             industry_scores.setdefault(industry, []).append(score_b)
-        
+
         # 更新统计
         for industry in industries_in_report:
             if industry not in industry_history:
                 industry_history[industry] = {"presence_count": 0, "score_b_sum": 0.0, "score_b_count": 0}
             industry_history[industry]["presence_count"] += 1
-            
+
             scores = industry_scores.get(industry, [])
             if scores:
                 industry_history[industry]["score_b_sum"] += sum(scores) / len(scores)
                 industry_history[industry]["score_b_count"] += 1
-    
+
     return industry_history
 
 
@@ -306,10 +306,11 @@ def calculate_industry_rotation(
 
     # Step 0: 加载历史报告 (P5-2)
     import os
+
     if not reports_dir:
         reports_dir = os.path.join(os.path.dirname(__file__), "..", "..", "data", "reports")
         reports_dir = os.path.abspath(reports_dir)
-    
+
     historical_reports = _load_historical_reports(reports_dir, trade_date, lookback_days)
     industry_history = _compute_industry_history(historical_reports)
     history_days_considered = len(historical_reports)
@@ -357,7 +358,7 @@ def calculate_industry_rotation(
         history_presence_ratio = 0.0
         history_avg_score_b = 0.0
         history_bonus = 0.0
-        
+
         if industry_name in industry_history and history_days_considered > 0:
             hist = industry_history[industry_name]
             history_presence_ratio = hist["presence_count"] / history_days_considered
@@ -446,7 +447,7 @@ def format_rotation_block(
     lines: list[str] = []
     strong = top_strong_industries(signals, n=top_n)
     weak = bottom_weak_industries(signals, n=bottom_n)
-    
+
     # 检查是否有任何历史数据
     has_history = any(sig.history_bonus > 0 for sig in signals)
 

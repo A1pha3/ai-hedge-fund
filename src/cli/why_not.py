@@ -91,9 +91,7 @@ def _compute_top_score_stats(recs: list[dict[str, Any]]) -> dict[str, float]:
 
 def _aggregate_strategy_directions(recs: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
     """统计 Top N 各策略的方向分布 (bullish / bearish / neutral 计数)。"""
-    agg: dict[str, dict[str, int]] = {
-        s: {"bullish": 0, "bearish": 0, "neutral": 0, "missing": 0} for s in _STRATEGY_ORDER
-    }
+    agg: dict[str, dict[str, int]] = {s: {"bullish": 0, "bearish": 0, "neutral": 0, "missing": 0} for s in _STRATEGY_ORDER}
     for rec in recs:
         signals = rec.get("strategy_signals") or {}
         for strat in _STRATEGY_ORDER:
@@ -126,10 +124,7 @@ def _format_direction_block(strategy_agg: dict[str, dict[str, int]]) -> str:
         if missing == (bullish + bearish + neutral + missing) and missing > 0:
             lines.append(f"    {label:8s}  数据缺失 ({missing}/{missing})")
             continue
-        lines.append(
-            f"    {label:8s}  ↑ {bullish} 只  |  ↓ {bearish} 只  |  — {neutral} 只"
-            + (f"  |  缺失 {missing}" if missing else "")
-        )
+        lines.append(f"    {label:8s}  ↑ {bullish} 只  |  ↓ {bearish} 只  |  — {neutral} 只" + (f"  |  缺失 {missing}" if missing else ""))
     lines.append("")
     lines.append("  简化版判断: 该票不在 Top N 中, 可能:")
     lines.append("    a) 该票至少 1 个策略方向与上述主流方向相反 (冲突扣分)")
@@ -349,9 +344,7 @@ def run_why_not(
     # 市场状态
     ms = data.get("market_state") or {}
     if ms:
-        print(f"{Fore.CYAN}市场状态:{Style.RESET_ALL} {ms.get('state_type', '?')}  |  "
-              f"仓位系数: {ms.get('position_scale', 1.0):.2f}  |  "
-              f"regime: {ms.get('regime_gate_level', 'normal')}")
+        print(f"{Fore.CYAN}市场状态:{Style.RESET_ALL} {ms.get('state_type', '?')}  |  " f"仓位系数: {ms.get('position_scale', 1.0):.2f}  |  " f"regime: {ms.get('regime_gate_level', 'normal')}")
         print()
 
     # 区块 1: 策略方向冲突 (简化版 — 用 Top N 分布对比)
@@ -394,7 +387,4 @@ def _print_why_not_disclaimer() -> None:
     Mirrors the R71 ``--top-picks`` disclaimer (``top_picks._print_disclaimer``)
     wording so all six user-facing decision surfaces stay consistent.
     """
-    print(
-        f"  {Fore.WHITE}⚠ 以上反事实解释由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。"
-        f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}"
-    )
+    print(f"  {Fore.WHITE}⚠ 以上反事实解释由 AI 模型自动生成, 仅供研究 / 学习用途, 不构成任何投资建议。" f"实际投资需结合个人风险承受能力与最新市场情况。{Style.RESET_ALL}")

@@ -54,7 +54,8 @@ def fetch_remote_insider_trades(make_api_request, ticker: str, end_date: str, st
             # 分页 → 内部交易数据缺失且无信号。发降级诊断。
             logger.debug(
                 "insider_trades response parse degraded (break pagination) for %s: %s",
-                ticker, exc,
+                ticker,
+                exc,
             )
             break
 

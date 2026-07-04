@@ -77,19 +77,13 @@ async def get_default_language_model():
 async def get_language_model_providers():
     """Get the list of available model providers with their models grouped."""
     models = get_models_list()
-    
+
     # Group models by provider
     providers = {}
     for model in models:
         provider_name = model["provider"]
         if provider_name not in providers:
-            providers[provider_name] = {
-                "name": provider_name,
-                "models": []
-            }
-        providers[provider_name]["models"].append({
-            "display_name": model["display_name"],
-            "model_name": model["model_name"]
-        })
-    
+            providers[provider_name] = {"name": provider_name, "models": []}
+        providers[provider_name]["models"].append({"display_name": model["display_name"], "model_name": model["model_name"]})
+
     return {"providers": list(providers.values())}

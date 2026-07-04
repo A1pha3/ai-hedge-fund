@@ -26,8 +26,7 @@ def coerce_trade_action(action) -> Action:
         # operators 能感知"信号被吞"并定位上游 agent 输出格式漂移。repr() 避免
         # 空白/不可见字符在日志中消失。
         logger.warning(
-            "coerce_trade_action 无法识别信号, 降级为 HOLD (回测该笔不交易, "
-            "可能掩盖上游 agent 输出格式漂移): action=%r, error=%s",
+            "coerce_trade_action 无法识别信号, 降级为 HOLD (回测该笔不交易, " "可能掩盖上游 agent 输出格式漂移): action=%r, error=%s",
             action,
             e,
         )

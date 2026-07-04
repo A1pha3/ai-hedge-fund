@@ -181,9 +181,7 @@ def _resolve_real_open_trade_dates(window_start_dt: datetime, end_dt: datetime) 
         return None
     if not open_dates:
         logger.debug(
-            "[ConsecutiveRec] get_open_trade_dates(%s, %s) returned empty — "
-            "falling back to weekday approximation (R36). Streak accuracy "
-            "during long holidays (CNY/National Day) will be degraded.",
+            "[ConsecutiveRec] get_open_trade_dates(%s, %s) returned empty — " "falling back to weekday approximation (R36). Streak accuracy " "during long holidays (CNY/National Day) will be degraded.",
             start_compact,
             end_compact,
         )

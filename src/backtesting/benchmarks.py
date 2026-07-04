@@ -36,8 +36,7 @@ class BenchmarkCalculator:
             # log so operators can diagnose why the benchmark column went missing
             # instead of a silent empty column. Behavior unchanged (still None).
             logger.debug(
-                "benchmark return calc failed for %s (%s -> %s): %s — "
-                "excess/benchmark columns will be unavailable",
+                "benchmark return calc failed for %s (%s -> %s): %s — " "excess/benchmark columns will be unavailable",
                 ticker,
                 start_date,
                 end_date,

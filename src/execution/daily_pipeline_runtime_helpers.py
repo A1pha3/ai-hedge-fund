@@ -17,15 +17,19 @@ def load_candidate_pool_bundle(
 ) -> tuple[list[Any], list[Any], dict[str, Any]]:
     if build_candidate_pool is not original_build_candidate_pool and build_candidate_pool_with_shadow is original_build_candidate_pool_with_shadow:
         candidates = build_candidate_pool(trade_date)
-        return candidates, [], {
-            "pool_size": len(candidates),
-            "selected_count": len(candidates),
-            "overflow_count": 0,
-            "selected_cutoff_avg_volume_20d": round(float(candidates[-1].avg_volume_20d), 4) if candidates else 0.0,
-            "lane_counts": {},
-            "selected_tickers": [],
-            "tickers": [],
-        }
+        return (
+            candidates,
+            [],
+            {
+                "pool_size": len(candidates),
+                "selected_count": len(candidates),
+                "overflow_count": 0,
+                "selected_cutoff_avg_volume_20d": round(float(candidates[-1].avg_volume_20d), 4) if candidates else 0.0,
+                "lane_counts": {},
+                "selected_tickers": [],
+                "tickers": [],
+            },
+        )
     return build_candidate_pool_with_shadow(trade_date)
 
 

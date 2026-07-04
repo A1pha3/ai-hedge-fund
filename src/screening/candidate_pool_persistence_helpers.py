@@ -44,8 +44,7 @@ def _safe_load_json(path: Path, *, fallback: Any, context: str) -> Any:
         return fallback
     except (json.JSONDecodeError, OSError) as exc:
         logger.warning(
-            "candidate-pool state file %s is corrupt or unreadable (%s); "
-            "falling back to empty %s — a previous write may have been interrupted",
+            "candidate-pool state file %s is corrupt or unreadable (%s); " "falling back to empty %s — a previous write may have been interrupted",
             path,
             exc,
             context,
@@ -93,15 +92,8 @@ def load_candidate_pool_shadow_snapshot(
         context="shadow snapshot",
     )
     shadow_summary_payload = dict(payload.get("shadow_summary") or {})
-    shadow_summary_rows = {
-        str(entry.get("ticker") or "").strip(): dict(entry)
-        for entry in list(shadow_summary_payload.get("tickers") or [])
-        if str(dict(entry).get("ticker") or "").strip()
-    }
-    shadow_candidates = [
-        candidate_stock_cls(**_hydrate_shadow_candidate_payload(dict(item), shadow_summary_rows.get(str(dict(item).get("ticker") or "").strip())))
-        for item in list(payload.get("shadow_candidates") or [])
-    ]
+    shadow_summary_rows = {str(entry.get("ticker") or "").strip(): dict(entry) for entry in list(shadow_summary_payload.get("tickers") or []) if str(dict(entry).get("ticker") or "").strip()}
+    shadow_candidates = [candidate_stock_cls(**_hydrate_shadow_candidate_payload(dict(item), shadow_summary_rows.get(str(dict(item).get("ticker") or "").strip()))) for item in list(payload.get("shadow_candidates") or [])]
     return {
         "selected_candidates": [candidate_stock_cls(**item) for item in list(payload.get("selected_candidates") or [])],
         "shadow_candidates": shadow_candidates,

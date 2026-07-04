@@ -136,7 +136,7 @@ def _make_api_request(url: str, headers: dict, method: str = "GET", json_data: d
         except requests.RequestException as e:
             logger.warning("Request error for %s: %s", url, e, exc_info=True)
             if attempt < max_retries:
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
                 continue
             return None
 
@@ -267,7 +267,9 @@ def get_financial_metrics(
         # BH-023 / BH-021 同族: 财务指标响应解析失败时静默 return [] →
         # fundamental agents 拿到空指标做分析，偏差且无信号。发降级诊断。
         logger.debug(
-            "get_financial_metrics response parse degraded to [] for %s: %s", ticker, exc,
+            "get_financial_metrics response parse degraded to [] for %s: %s",
+            ticker,
+            exc,
         )
         return []
 
@@ -330,7 +332,9 @@ def search_line_items(
         # BH-023 / BH-021 同族: line items 响应解析失败时静默 return [] →
         # fundamental agents 拿到空 line items 做分析，偏差且无信号。发降级诊断。
         logger.debug(
-            "search_line_items response parse degraded to [] for %s: %s", ticker, exc,
+            "search_line_items response parse degraded to [] for %s: %s",
+            ticker,
+            exc,
         )
         return []
     if not search_results:

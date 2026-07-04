@@ -270,18 +270,8 @@ def analyze_management_efficiency_leverage(financial_line_items: list) -> dict:
     # SAME period. Previously two independent filters + len== guards could not
     # detect complementary-missing data (item0 had NI no equity, item1 had equity
     # no NI -> equal-length lists, cross-period ROE/D-E).
-    ni_equity_pairs = [
-        (fi.net_income, fi.shareholders_equity)
-        for fi in financial_line_items
-        if getattr(fi, "net_income", None) is not None
-        and getattr(fi, "shareholders_equity", None) is not None
-    ]
-    debt_equity_pairs = [
-        (fi.total_debt, fi.shareholders_equity)
-        for fi in financial_line_items
-        if getattr(fi, "total_debt", None) is not None
-        and getattr(fi, "shareholders_equity", None) is not None
-    ]
+    ni_equity_pairs = [(fi.net_income, fi.shareholders_equity) for fi in financial_line_items if getattr(fi, "net_income", None) is not None and getattr(fi, "shareholders_equity", None) is not None]
+    debt_equity_pairs = [(fi.total_debt, fi.shareholders_equity) for fi in financial_line_items if getattr(fi, "total_debt", None) is not None and getattr(fi, "shareholders_equity", None) is not None]
 
     roe_score, roe_detail = _score_fisher_roe(ni_equity_pairs)
     raw_score += roe_score
@@ -437,8 +427,7 @@ def generate_fisher_output(
         [
             (
                 "system",
-                with_fact_grounding_rules(
-                    """You are a Phil Fisher AI agent, making investment decisions using his principles:
+                with_fact_grounding_rules("""You are a Phil Fisher AI agent, making investment decisions using his principles:
   
               1. Emphasize long-term growth potential and quality of management.
               2. Focus on companies investing in R&D for future products/services.
@@ -462,8 +451,7 @@ def generate_fisher_output(
                 - "signal": "bullish" or "bearish" or "neutral"
                 - "confidence": a float between 0 and 100
                 - "reasoning": a detailed explanation
-              """
-                ),
+              """),
             ),
             (
                 "human",

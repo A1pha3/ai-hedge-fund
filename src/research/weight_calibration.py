@@ -13,6 +13,7 @@ P3-2 在此基础上增加"权重校准"功能:
   - **降级友好** — IC 数据不足时返回默认等权 (0.25 each)
   - **保守校准** — 用 IR 而非 IC mean (更稳健, 避免高方差因子权重虚高)
 """
+
 from __future__ import annotations
 
 import logging
@@ -247,9 +248,7 @@ def compute_weight_calibration(
         return result
 
     # Compute IC for each factor
-    factor_results = compute_factor_ic(
-        factor_history, return_history, method=method
-    )
+    factor_results = compute_factor_ic(factor_history, return_history, method=method)
 
     if not factor_results:
         result.calibrated_weights = DEFAULT_STRATEGY_WEIGHTS.copy()
@@ -257,9 +256,7 @@ def compute_weight_calibration(
         return result
 
     result.n_factors = len(factor_results)
-    result.n_observations = min(
-        (r.n_periods for r in factor_results.values()), default=0
-    )
+    result.n_observations = min((r.n_periods for r in factor_results.values()), default=0)
 
     # Aggregate by strategy
     summaries = _aggregate_strategy_ic(factor_results)
@@ -268,16 +265,15 @@ def compute_weight_calibration(
     if result.n_observations < MIN_OBSERVATIONS_FOR_CALIBRATION:
         logger.info(
             "[WeightCalibration] 观测期数 %d < %d, 跳过校准",
-            result.n_observations, MIN_OBSERVATIONS_FOR_CALIBRATION,
+            result.n_observations,
+            MIN_OBSERVATIONS_FOR_CALIBRATION,
         )
         result.calibrated_weights = DEFAULT_STRATEGY_WEIGHTS.copy()
         result.calibration_skipped = True
         return result
 
     # Calibrate
-    result.calibrated_weights = _calibrate_weights(
-        summaries, DEFAULT_STRATEGY_WEIGHTS
-    )
+    result.calibrated_weights = _calibrate_weights(summaries, DEFAULT_STRATEGY_WEIGHTS)
     return result
 
 
@@ -305,9 +301,7 @@ def render_weight_calibration(result: WeightCalibrationResult) -> str:
         lines.append(f"  {'策略':<20} {'因子数':>5} {'avg IC':>8} {'avg IR':>8}")
         lines.append("  " + "-" * 50)
         for s in result.strategy_summaries:
-            lines.append(
-                f"  {s.strategy_name:<20} {s.factor_count:>5} {s.avg_ic:>+8.4f} {s.avg_ir:>+8.4f}"
-            )
+            lines.append(f"  {s.strategy_name:<20} {s.factor_count:>5} {s.avg_ic:>+8.4f} {s.avg_ir:>+8.4f}")
         lines.append("")
 
     lines.append("  权重对比 (校准前 → 校准后):")
@@ -326,18 +320,11 @@ def render_weight_calibration(result: WeightCalibrationResult) -> str:
     # the user cannot tell "5% because IR≈0" from "5% because the floor held
     # it there", which matters for trusting a dominating strategy's 85%.
     if not result.calibration_skipped:
-        floored = sorted(
-            strat
-            for strat, w in result.calibrated_weights.items()
-            if abs(w - WEIGHT_FLOOR) < 1e-9
-        )
+        floored = sorted(strat for strat, w in result.calibrated_weights.items() if abs(w - WEIGHT_FLOOR) < 1e-9)
         if floored:
             names = "、".join(floored)
             lines.append("")
-            lines.append(
-                f"  ⓘ 下限保护 ({WEIGHT_FLOOR:g})：{names} 命中保守下限，"
-                "非 IR 驱动；主导策略权重据此被压缩。"
-            )
+            lines.append(f"  ⓘ 下限保护 ({WEIGHT_FLOOR:g})：{names} 命中保守下限，" "非 IR 驱动；主导策略权重据此被压缩。")
 
     lines.append("━" * 70)
     return "\n".join(lines)
