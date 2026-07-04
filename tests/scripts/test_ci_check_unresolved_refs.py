@@ -5,9 +5,10 @@ from pathlib import Path
 
 # Ensure scripts/ci_check_unresolved_refs is importable as a module
 SCRIPTS_FILE = Path(__file__).parent.parent.parent / "scripts" / "ci_check_unresolved_refs.py"
-import importlib.util
+import importlib.util  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("ci_check_unresolved_refs", SCRIPTS_FILE)
+importlib.util  # suppress unused warning
 _module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_module)
 
@@ -137,7 +138,6 @@ def test_main_runs_without_error():
     # We just want to ensure no exception, exit code may be 0 or 1
     result = main() if False else None
     # Manually invoke with mocked argv
-    import sys
 
     old_argv = sys.argv
     try:

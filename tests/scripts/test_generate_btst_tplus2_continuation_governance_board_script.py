@@ -390,7 +390,6 @@ def test_generate_btst_tplus2_continuation_governance_board_threads_payload(monk
         lambda *args, **kwargs: {
             "resolved_watchlist_validation_path": tmp_path / "btst_tplus2_candidate_dossier_300505_latest.json",
             "focus_ticker": "300505",
-            "eligible_execution": {"effective_eligible_tickers": ["600988", "300505"]},
             "rulepack_eligible_tickers": ["600988"],
             "watchlist_execution": {"effective_watchlist_tickers": ["600989", "300505"], "execution_verdict": "watchlist_extension_applied", "added_watchlist_tickers": ["300505"]},
             "rulepack_watchlist_tickers": ["600989"],

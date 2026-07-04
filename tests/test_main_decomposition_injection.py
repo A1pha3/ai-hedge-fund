@@ -19,8 +19,12 @@ the rec without decomposition, and does NOT block sibling recs.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from src.main import _inject_score_decomposition
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_inject_score_decomposition_success_injects_and_counts() -> None:
@@ -46,7 +50,6 @@ def test_inject_score_decomposition_success_injects_and_counts() -> None:
 def test_inject_score_decomposition_failure_logs_warning_and_continues(caplog: pytest.LogCaptureFixture) -> None:
     """When compute raises for one rec, a warning is logged, that rec is skipped,
     and sibling recs are still processed (best-effort, NOT silent, NOT blocking)."""
-    import pytest  # noqa: F401  (type-only import for the annotation)
 
     fused_a = object()
     fused_b = object()
