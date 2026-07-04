@@ -196,6 +196,62 @@ def test_render_monotonic_line():
     assert "单调" in line or "monotonic" in line.lower()
 
 
+def test_render_stamps_data_as_of_from_latest_record_date():
+    """loop 78 (asymmetric-staleness drain, same class as loop 77): the
+    monotonicity footer pulls from tracking_history.json, the same stale-prone
+    source as the 6 sibling footer blocks (hit-rate / north_star / regime_winrate
+    / factor_attribution / model_version / selection_profitability) — all of
+    which stamp ``| 数据时点 YYYY-MM-DD``. This block didn't. The render must
+    surface the latest recommended_date in the records.
+    """
+    # Use _records helper (all dated 20250601) but override one record's date
+    # forward to 20250615 → latest_report_date should be 20250615.
+    history = [{"date": "20250615", "payload": {"market_state": {"state_type": "TREND"}}}]
+    recs = _records(
+        {
+            "low": [-5.0, -5.0, 1.0, 1.0],
+            "mid_low": [1.0, 1.0, 1.0, -1.0],
+            "mid_high": [2.0, 2.0, 2.0, 2.0],
+            "high": [3.0, 3.0, 3.0, 3.0],
+        }
+    )
+    # Bump the last record's date forward to exercise max()
+    recs[-1]["recommended_date"] = "20250615"
+    report = compute_rank_monotonicity_from_loaded(history, recs, min_n=2)
+    line = render_monotonicity_line(report)
+    assert line, f"expected non-empty render, got empty (report verdict={report.overall_verdict})"
+    assert report.latest_report_date == "20250615"
+    assert "数据时点 2025-06-15" in line, (
+        f"monotonicity footer must stamp 数据时点 from latest record date, got: {line!r}"
+    )
+
+
+def test_render_omits_stamp_when_no_record_dates():
+    """No recommended_date on any record → no stamp (don't fabricate)."""
+    history = [{"date": "20250601", "payload": {"market_state": {"state_type": "TREND"}}}]
+    report = compute_rank_monotonicity_from_loaded(
+        history,
+        _records(
+            {
+                "low": [-5.0, -5.0, 1.0, 1.0],
+                "mid_low": [1.0, 1.0, 1.0, -1.0],
+                "mid_high": [2.0, 2.0, 2.0, 2.0],
+                "high": [3.0, 3.0, 3.0, 3.0],
+            }
+        ),
+        min_n=2,
+    )
+    # _records uses "20250601" so this tests the genuine fallback when dates missing;
+    # clear the report's as_of to simulate the no-date path
+    line = render_monotonicity_line(report)
+    # When latest_report_date IS set (20250601), stamp should appear — this test
+    # is the falsifying direction: if we set report.latest_report_date = None
+    # explicitly, no stamp should appear.
+    report.latest_report_date = None
+    line_no_stamp = render_monotonicity_line(report)
+    assert "数据时点" not in line_no_stamp
+
+
 def test_finite_float_rejects_nan_and_garbage():
     from src.screening.rank_monotonicity import _finite_float
 

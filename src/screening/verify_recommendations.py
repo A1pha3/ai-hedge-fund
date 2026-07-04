@@ -138,6 +138,7 @@ class VerifySummary:
     total_days: int = 0
     total_recommendations: int = 0
     unique_tickers: int = 0
+    latest_report_date: str | None = None
     overall_t1_win_rate: float | None = None
     overall_t3_win_rate: float | None = None
     overall_t5_win_rate: float | None = None
@@ -314,6 +315,14 @@ def compute_verify_recommendations(
         return summary
 
     summary.total_days = len(reports)
+
+    # loop 77 (asymmetric-staleness drain): stamp the latest report date so the
+    # hit-rate footer render can surface ``| 数据时点 YYYY-MM-DD`` mirroring the
+    # 5 sibling footer blocks (north_star / regime_winrate / factor_attribution
+    # / model_version / selection_profitability). reports are sorted desc by
+    # date (see _load_auto_screening_reports), so reports[0] is the newest.
+    # ``_report_date`` is attached by the loader as YYYYMMDD.
+    summary.latest_report_date = reports[0].get("_report_date")
 
     # Accumulate per-day stats
     all_t1: list[float] = []

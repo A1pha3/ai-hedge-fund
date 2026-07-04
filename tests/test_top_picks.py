@@ -842,6 +842,44 @@ class TestHitRateSummary:
         assert "历史命中率速览" in result
         assert "10 个交易日" in result
 
+    def test_summary_stamps_data_as_of_when_present(self) -> None:
+        """loop 77 (asymmetric-staleness drain): the hit-rate footer pulls from
+        tracking_history.json, the same stale-prone source used by 5 sibling
+        footer blocks (north_star / regime_winrate / factor_attribution /
+        model_version / selection_profitability) — all of which stamp
+        ``| 数据时点 YYYY-MM-DD``. This block didn't, implying the winrate was
+        fresh when it could be weeks old. When ``latest_report_date`` is set on
+        the summary, the render must surface it.
+        """
+        summary = SimpleNamespace(
+            total_recommendations=120,
+            total_days=22,
+            unique_tickers=45,
+            lookback_days=30,
+            overall_t5_win_rate=0.58,
+            latest_report_date="20260630",
+        )
+        result = _render_hit_rate_summary(summary)
+        assert "历史命中率速览" in result
+        # ISO-formatted stamp mirroring sibling footer pattern.
+        assert "数据时点 2026-06-30" in result, (
+            f"hit-rate footer must stamp 数据时点 when latest_report_date is set, "
+            f"got: {result!r}"
+        )
+
+    def test_summary_omits_stamp_when_no_data_as_of(self) -> None:
+        """No latest_report_date → no stamp (don't fabricate)."""
+        summary = SimpleNamespace(
+            total_recommendations=120,
+            total_days=22,
+            unique_tickers=45,
+            lookback_days=30,
+            overall_t5_win_rate=0.58,
+        )
+        result = _render_hit_rate_summary(summary)
+        assert "历史命中率速览" in result
+        assert "数据时点" not in result
+
     @patch(
         "src.screening.top_picks.compute_expected_returns",
         return_value=ExpectedReturnReport(

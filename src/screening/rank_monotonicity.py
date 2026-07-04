@@ -34,6 +34,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -93,7 +94,8 @@ class RankMonotonicityReport:
     overall_inverted: bool = False
     per_state_type: dict[str, list[BucketWinRate]] = field(default_factory=dict)
     per_state_type_verdict: dict[str, str] = field(default_factory=dict)
-    horizon_label: str = "T+5"  # 决策 horizon (C229: 默认 T+5; 可传 next_10day_return / next_30day_return)
+    horizon_label: str = "T+5"  # 冨策 horizon (C229: 默认 T+5; 可传 next_10day_return / next_30day_return)
+    latest_report_date: str | None = None  # loop 78: YYYYMMDD, latest recommended_date in records (None → no stamp)
 
 
 def _bucket_returns_by_state(
@@ -188,11 +190,23 @@ def compute_rank_monotonicity_from_loaded(
 
     overall_returns = _bucket_returns_by_state(records, horizon_field=horizon_field)
     overall_verdict, _ = _verdict(overall_returns, min_n)
+    # loop 78 (asymmetric-staleness drain): derive latest recommended_date so the
+    # render can stamp ``| 数据时点 YYYY-MM-DD`` mirroring the 6 sibling footer
+    # blocks. records come from tracking_history.json which can be stale (e.g.
+    # days-old on a frozen box); without a stamp the operator can't tell whether
+    # the monotonicity verdict reflects fresh or stale data.
+    record_dates = [
+        str(rec.get("recommended_date", "") or "").replace("-", "")
+        for rec in records
+        if rec.get("recommended_date")
+    ]
+    latest_report_date = max(record_dates) if record_dates else None
     report = RankMonotonicityReport(
         overall_buckets=_bucket_rows(overall_returns),
         overall_verdict=overall_verdict,
         overall_inverted=(overall_verdict == "inverted"),
         horizon_label=_horizon_label(horizon_field),
+        latest_report_date=latest_report_date,
     )
 
     # per-state_type 细分 (仅出现过的 state_type)
@@ -247,6 +261,10 @@ def render_monotonicity_line(report: RankMonotonicityReport) -> str:
     展示形如:
       ``  ⚠ 排序单调性: 低50%→中低46%→中高43%→高40% 倒挂 (高分票胜率反而更低)``
       ``  ✓ 排序单调性: 低40%→中低45%→中高50%→高55% (高分→高胜率)``
+
+    loop 78 (asymmetric-staleness drain): 末尾追加 ``| 数据时点 YYYY-MM-DD``
+    mirroring the 6 sibling footer blocks. monotonicity 拉自 tracking_history.json
+    (可能 stale), 无 stamp 时 operator 看不出倒挂裁决是基于新鲜还是过期数据。
     """
     if report.overall_verdict == "insufficient" or not report.overall_buckets:
         return ""
@@ -258,11 +276,23 @@ def render_monotonicity_line(report: RankMonotonicityReport) -> str:
     hlabel = f"({report.horizon_label})" if report.horizon_label else ""
 
     if report.overall_verdict == "inverted":
-        return f"  {Fore.RED}⚠ 排序单调性 {hlabel}: {shape} 倒挂{Style.RESET_ALL}" f" {Fore.RED}(高分票胜率反而更低 — 模型打分质量待改进){Style.RESET_ALL}"
-    if report.overall_verdict == "monotonic":
-        return f"  {Fore.GREEN}✓ 排序单调性 {hlabel}: {shape}{Style.RESET_ALL}" f" {Fore.GREEN}(高分→高胜率){Style.RESET_ALL}"
-    # non_monotonic
-    return f"  {Fore.YELLOW}⚠ 排序单调性 {hlabel}: {shape} 非单调{Style.RESET_ALL}" f" {Fore.YELLOW}(部分 bucket 倒挂 — 模型打分质量不稳定){Style.RESET_ALL}"
+        body = f"  {Fore.RED}⚠ 排序单调性 {hlabel}: {shape} 倒挂{Style.RESET_ALL}" f" {Fore.RED}(高分票胜率反而更低 — 模型打分质量待改进){Style.RESET_ALL}"
+    elif report.overall_verdict == "monotonic":
+        body = f"  {Fore.GREEN}✓ 排序单调性 {hlabel}: {shape}{Style.RESET_ALL}" f" {Fore.GREEN}(高分→高胜率){Style.RESET_ALL}"
+    else:  # non_monotonic
+        body = f"  {Fore.YELLOW}⚠ 排序单调性 {hlabel}: {shape} 非单调{Style.RESET_ALL}" f" {Fore.YELLOW}(部分 bucket 倒挂 — 模型打分质量不稳定){Style.RESET_ALL}"
+    return body + _format_as_of_stamp(report.latest_report_date)
+
+
+def _format_as_of_stamp(latest_report_date: str | None) -> str:
+    """Render `` | 数据时点 YYYY-MM-DD`` from a YYYYMMDD string (None → "")."""
+    if not latest_report_date:
+        return ""
+    try:
+        iso = datetime.strptime(str(latest_report_date), "%Y%m%d").date().isoformat()
+        return f" {Fore.WHITE}| 数据时点 {iso}{Style.RESET_ALL}"
+    except ValueError:
+        return ""
 
 
 def render_per_state_type_monotonicity_line(report: RankMonotonicityReport) -> str:

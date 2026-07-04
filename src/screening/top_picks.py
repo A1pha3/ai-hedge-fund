@@ -216,6 +216,18 @@ def _render_hit_rate_summary(verify_summary: object) -> str:
         lines.append(f"  超额收益(vs 推荐均值): {color}{excess:+.2f}%{Style.RESET_ALL}")
 
     lines.append(f"  {Fore.WHITE}💡 历史表现不代表未来收益{Style.RESET_ALL}")
+
+    # loop 77 (asymmetric-staleness drain): stamp 数据时点 mirroring the 5
+    # sibling footer blocks. The hit-rate numbers pull from tracking_history.json
+    # which can be stale (e.g. days-old on a frozen box); without a stamp the
+    # operator can't tell "58% T+5 winrate" is fresh vs weeks old.
+    as_of_raw = getattr(verify_summary, "latest_report_date", None)
+    if as_of_raw:
+        try:
+            as_of_iso = datetime.strptime(str(as_of_raw), "%Y%m%d").date().isoformat()
+            lines.append(f"  {Fore.WHITE}| 数据时点 {as_of_iso}{Style.RESET_ALL}")
+        except ValueError:
+            logger.debug("hit-rate summary: malformed latest_report_date %r — skip stamp", as_of_raw)
     return "\n".join(lines)
 
 
