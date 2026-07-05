@@ -321,7 +321,34 @@ def _check_cache_freshness(
     Now we parse dates embedded in keys (akshare price keys carry ``_YYYYMMDD_``)
     and honestly label sources whose dates cannot be checked from keys as
     ``unavailable`` (schema limit, not stale), distinct from a real stale hit.
+
+    Loop 93 (autodev): defense-in-depth on invalid trade_date, mirroring loop
+    92's ``_check_report_freshness`` boundary guard. Empirical dogfood proved
+    that ``_check_cache_freshness(trade_date=None|""|"invalid"|"20261301")``
+    silently returned ``stale_days=0`` (false fresh-positive) because
+    ``_days_between`` try/except returns 0 on parse error. The function also
+    used the raw ``trade_date`` parameter (YYYYMMDD) directly in
+    ``_days_between`` without normalizing, so even valid YYYYMMDD inputs
+    silently returned ``stale_days=0``. Now: normalize + validate at the
+    boundary; if invalid, mark every source ``{"unknown": True}`` (conservative
+    stale) so ``check_data_freshness`` treats the result as not-fresh.
     """
+    # Loop 93: normalize + validate trade_date at the function boundary.
+    # check_data_freshness already fail-closes on invalid trade_date (loop 92),
+    # but this private helper can be called directly (tests, future code paths).
+    # Without this guard, _days_between(latest, None|"") returns 0 via try/except
+    # → silent false fresh-positive (same disease class as loop 92 (H)).
+    normalized = _normalize_date(trade_date)
+    if not _is_valid_normalized_date(normalized):
+        # Conservative stale for ALL sources — check_data_freshness line 125-138
+        # treats {"unknown": True} as not-fresh, aligning direct-call path with
+        # the production path that fail-closed at check_data_freshness level.
+        return {
+            "daily_prices": {"unknown": True},
+            "financial_metrics": {"unknown": True},
+            "industry_classification": {"unknown": True},
+        }
+
     result: dict[str, dict[str, Any]] = {}
 
     if cache_path is None:
@@ -360,7 +387,11 @@ def _check_cache_freshness(
             else:
                 if latest is not None:
                     latest_formatted = f"{latest[:4]}-{latest[4:6]}-{latest[6:8]}"
-                    stale_days = _days_between(latest_formatted, trade_date)
+                    # Loop 93: use normalized (YYYY-MM-DD), not raw trade_date.
+                    # Previously passed raw `trade_date` (could be YYYYMMDD) to
+                    # _days_between which expects YYYY-MM-DD → strptime failed →
+                    # returned 0 → false fresh-positive even on valid inputs.
+                    stale_days = _days_between(latest_formatted, normalized)
                     result["daily_prices"] = {"latest_date": latest_formatted, "stale_days": stale_days}
                 else:
                     # No akshare keys with parseable dates. Honest 'unavailable'

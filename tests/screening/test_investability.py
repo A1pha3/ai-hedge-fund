@@ -1218,6 +1218,162 @@ def test_invalidation_reasons_zero_sample_with_mature_field_marks_both() -> None
 
 
 # ---------------------------------------------------------------------------
+# Loop 94 (autodev): invalidation_reason [:4] truncation disease
+# ---------------------------------------------------------------------------
+# Disease class: "computed-but-truncated-display" — variant of loop 53/57/90/91
+# "computed-but-never-read". build_front_door_verdict accumulates up to 12
+# invalidation_reasons (T+30 edge / regime / momentum / sector / consistency /
+# volume / trend_resonance / composite-missing / winrate-below-50 / data-missing
+# / horizon-missing / sample-insufficient), but the return statement joins only
+# ``deduped_reasons[:4]`` — silently dropping reasons at position >=4.
+#
+# The insertion order puts the most critical trust-calibration / data-completeness
+# / money-safety reasons (data_missing, horizon_missing, sample_insufficient,
+# composite_missing, winrate_below_50) LATER in the list, so they are the ones
+# most likely to be truncated. Operator sees an incomplete invalidation_reason
+# and cannot self-audit why a pick was AVOID — e.g. "数据缺失" (the real reason)
+# gets dropped, leaving only "regime 未识别 / 动量转负" (cosmetic reasons).
+# ---------------------------------------------------------------------------
+
+
+class TestInvalidationReasonTruncation:
+    """Loop 94: drain ``deduped_reasons[:4]`` truncation disease.
+
+    When 5+ invalidation_reasons trigger, the ``[:4]`` slice silently drops
+    reasons at position >=4. The dropped reasons are disproportionately the
+    critical trust-calibration / data-completeness / money-safety ones
+    (data_missing, composite_missing, winrate_below_50) because they appear
+    later in the insertion order.
+
+    Fix: remove the ``[:4]`` slice (or raise the cap high enough that real-world
+    triggers never hit it). The render layer already handles line length via
+    its own formatting; the verdict function should not pre-truncate honesty.
+    """
+
+    @staticmethod
+    def _five_reason_pick() -> dict:
+        """Construct a pick that triggers exactly 5 invalidation_reasons.
+
+        Reasons triggered (in insertion order):
+        1. T+30 edge 转负  (expected_returns.t30 = -1.0 < 0)
+        2. regime 未识别  (market_regime='trend' not in cautious/range/normal)
+        3. 动量转负       (momentum_bonus = -0.1 < 0)
+        4. 行业转弱       (sector_bonus = -0.1 < 0)
+        5. 数据缺失       (bucket_sample_count == 0)
+
+        The 5th reason ('数据缺失') is the most critical — it tells the operator
+        the AVOID is due to NO DATA, not a soft signal. With ``[:4]`` truncation
+        it gets silently dropped, leaving only cosmetic signal reasons.
+
+        Other reasons deliberately NOT triggered:
+        - 信号分歧扩大 / 量价背离 / 趋势共振失效: consistency_adj / volume_factor /
+          trend_resonance_factor not set → _safe_metric(None, 0.0)=0.0, 0.0<0=False
+        - composite 缺失(已折扣): composite_score=0.68 (present), composite_verified
+          not set → _disclose_missing_composite=False
+        - 同分组胜率跌破 50%: win_rates.t30=0.6 >= 0.5
+        - horizon 数据缺失: sample_count=0 → `sample_count > 0` is False
+        - 成熟样本不足 20 / 样本量不足 20: bucket_t30_mature_count not set →
+          has_mature_field=False, and `0 < 0 < 20` = False
+        """
+        return {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t5": 0.0, "t10": 0.0, "t30": -1.0},
+            "win_rates": {"t5": 0.0, "t10": 0.0, "t30": 0.6},
+            "bucket_sample_count": 0,
+            "momentum_bonus": -0.1,
+            "sector_bonus": -0.1,
+        }
+
+    def test_data_missing_not_truncated_when_5plus_reasons(self) -> None:
+        """'数据缺失' must appear in invalidation_reason even when 4+ other reasons also trigger.
+
+        Without the fix, ``deduped_reasons[:4]`` keeps the first 4 reasons
+        (T+30 edge 转负 / regime 未识别 / 动量转负 / 行业转弱) and silently drops
+        '数据缺失' at position 5 — the operator sees cosmetic signal reasons but
+        not the real 'NO DATA' cause, defeating the NS-18 c275 trust-calibration
+        disclosure that '数据缺失' was added for.
+        """
+        verdict = build_front_door_verdict(
+            self._five_reason_pick(),
+            market_regime="trend",
+        )
+        assert "数据缺失" in verdict["invalidation_reason"], (
+            f"'数据缺失' was truncated by deduped_reasons[:4] — operator cannot "
+            f"see the real AVOID cause (NO DATA). Got: {verdict['invalidation_reason']}"
+        )
+
+    def test_all_triggered_reasons_preserved(self) -> None:
+        """All 5 triggered reasons must appear in invalidation_reason (none truncated)."""
+        verdict = build_front_door_verdict(
+            self._five_reason_pick(),
+            market_regime="trend",
+        )
+        reasons = verdict["invalidation_reason"]
+        for expected in ("T+30 edge 转负", "regime 未识别", "动量转负", "行业转弱", "数据缺失"):
+            assert expected in reasons, (
+                f"Reason '{expected}' was truncated or missing. Got: {reasons}"
+            )
+
+    def test_six_reasons_composite_missing_not_truncated(self) -> None:
+        """'composite 缺失(已折扣)' must appear even when 5 other reasons also trigger.
+
+        Composite-missing is a trust-calibration reason (NS-18 c282/c283) — it
+        tells the operator the composite_score is a 0.9*score_b fallback, not a
+        real composite. Truncating it lets a missing-composite pick look
+        'normally scored' to the operator.
+        """
+        pick = self._five_reason_pick()
+        # Force composite-missing disclosure via ranker-path marker
+        # (composite_verified=False triggers _disclose_missing_composite even
+        # when composite_score is present, mirroring ranker→verdict default path).
+        pick["composite_verified"] = False
+        verdict = build_front_door_verdict(pick, market_regime="trend")
+        reasons = verdict["invalidation_reason"]
+        assert "composite 缺失(已折扣)" in reasons, (
+            f"'composite 缺失(已折扣)' was truncated — operator cannot see the "
+            f"composite is a discounted fallback. Got: {reasons}"
+        )
+
+    def test_seven_reasons_winrate_below_50_not_truncated(self) -> None:
+        """'同分组胜率跌破 50%' must appear even when 6 other reasons also trigger.
+
+        This is a money-safety reason (R68/R96 falsy-zero drain) — it tells the
+        operator the bucket's historical T+30 win rate is below 50%, a direct
+        signal against BUY. Truncating it hides a money-safety flag.
+        """
+        pick = self._five_reason_pick()
+        pick["composite_verified"] = False  # 6th reason: composite 缺失
+        pick["win_rates"] = {"t5": 0.0, "t10": 0.0, "t30": 0.4}  # 7th: 胜率跌破 50%
+        verdict = build_front_door_verdict(pick, market_regime="trend")
+        reasons = verdict["invalidation_reason"]
+        assert "同分组胜率跌破 50%" in reasons, (
+            f"'同分组胜率跌破 50%' was truncated — money-safety flag hidden. "
+            f"Got: {reasons}"
+        )
+
+    def test_no_truncation_when_only_4_reasons(self) -> None:
+        """Regression guard: when only 4 reasons trigger, all 4 must appear.
+
+        The fix (removing/raising [:4]) must not over-reach and drop reasons
+        in the under-4 case. This test pins the 4-reason baseline.
+        """
+        pick = {
+            "decision": "bullish",
+            "composite_score": 0.68,
+            "expected_returns": {"t5": 0.0, "t10": 0.0, "t30": -1.0},  # T+30 edge 转负
+            "win_rates": {"t5": 0.0, "t10": 0.0, "t30": 0.6},
+            "bucket_sample_count": 50,  # no 数据缺失
+            "momentum_bonus": -0.1,  # 动量转负
+            "sector_bonus": -0.1,  # 行业转弱
+        }
+        verdict = build_front_door_verdict(pick, market_regime="trend")
+        reasons = verdict["invalidation_reason"]
+        for expected in ("T+30 edge 转负", "regime 未识别", "动量转负", "行业转弱"):
+            assert expected in reasons, f"Reason '{expected}' missing. Got: {reasons}"
+
+
+# ---------------------------------------------------------------------------
 # loop 62 (autodev): supports_long gate — decision="bearish" must force AVOID
 # ---------------------------------------------------------------------------
 

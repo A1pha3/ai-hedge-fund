@@ -358,6 +358,137 @@ class TestInvalidTradeDateFailClosed:
         )
 
 
+class TestCheckCacheFreshnessFailClosedOnInvalidDate:
+    """Loop 93 (autodev): drain false fresh-positive in _check_cache_freshness.
+
+    Loop 92 added defense-in-depth at the _check_report_freshness boundary but
+    missed the sibling _check_cache_freshness. Empirical dogfood (loop 93)
+    proved that _check_cache_freshness(trade_date=None|""|"invalid", cache_path=<real
+    cache with akshare keys>) silently returns
+    ``{"daily_prices": {"latest_date": "2026-08-14", "stale_days": 0}, ...}`` —
+    a false fresh-positive — because ``_days_between`` try/except returns 0 on
+    parse error (None/""/non-date strings all yield 0 via ValueError/TypeError).
+
+    The upstream guard in check_data_freshness (loop 92, line 89
+    ``if not _is_valid_normalized_date(normalized_date): fail-closed``) IS real,
+    so the production path is safe. But the direct-call path (tests, future code)
+    is silent-open — the same inconsistency loop 92 closed for
+    _check_report_freshness. This class mirrors the loop-92 defense-in-depth
+    pattern at the _check_cache_freshness boundary.
+
+    Fix: when trade_date is invalid, _check_cache_freshness should mark every
+    source ``{"unknown": True}`` (conservative stale) instead of computing a
+    meaningless stale_days=0. check_data_freshness already treats ``unknown``
+    as not-fresh (line 125-138), so this aligns the direct-call path with the
+    production path.
+    """
+
+    @staticmethod
+    def _seed_cache_with_akshare_key(cache: Path) -> None:
+        """Seed a cache with the real production schema + an akshare daily key.
+
+        The akshare key format is ``prices:akshare::ashare_{ticker}_{start}_{end}_daily``
+        (see _extract_latest_date_from_keys). trade_date=20260611 vs latest
+        end_date 20260610 → 1 day stale (within max_stale_days=1, fresh).
+        """
+        import sqlite3
+
+        conn = sqlite3.connect(cache)
+        conn.execute("CREATE TABLE cache (key TEXT, value BLOB, expires_at INTEGER)")
+        conn.execute(
+            "INSERT INTO cache (key, value, expires_at) VALUES (?, ?, ?)",
+            ("prices:akshare::ashare_000001_20260601_20260610_daily", b"", 0),
+        )
+        conn.commit()
+        conn.close()
+
+    def test_none_trade_date_does_not_silently_return_stale_zero(self, tmp_path: Path) -> None:
+        """_check_cache_freshness(trade_date=None) must NOT return stale_days=0."""
+        from src.screening.data_freshness_guard import _check_cache_freshness
+
+        cache = tmp_path / "cache.sqlite"
+        self._seed_cache_with_akshare_key(cache)
+
+        result = _check_cache_freshness(trade_date=None, cache_path=cache)  # type: ignore
+
+        daily = result.get("daily_prices", {})
+        assert daily.get("stale_days") != 0, (
+            "_check_cache_freshness(trade_date=None) silently returned stale_days=0 — "
+            "false fresh-positive. _days_between(latest, None) try/except returns 0, "
+            "making the cache look fresh when trade_date is invalid. Must fail-closed "
+            "(mark 'unknown' conservative-stale) at the function boundary, mirroring "
+            "loop 92's _check_report_freshness defense-in-depth."
+        )
+
+    def test_empty_trade_date_does_not_silently_return_stale_zero(self, tmp_path: Path) -> None:
+        """_check_cache_freshness(trade_date='') must NOT return stale_days=0."""
+        from src.screening.data_freshness_guard import _check_cache_freshness
+
+        cache = tmp_path / "cache.sqlite"
+        self._seed_cache_with_akshare_key(cache)
+
+        result = _check_cache_freshness(trade_date="", cache_path=cache)
+
+        daily = result.get("daily_prices", {})
+        assert daily.get("stale_days") != 0, (
+            "_check_cache_freshness(trade_date='') silently returned stale_days=0 — "
+            "false fresh-positive. Same disease class as None case."
+        )
+
+    def test_invalid_string_trade_date_does_not_silently_return_stale_zero(
+        self, tmp_path: Path
+    ) -> None:
+        """_check_cache_freshness(trade_date='invalid') must NOT return stale_days=0."""
+        from src.screening.data_freshness_guard import _check_cache_freshness
+
+        cache = tmp_path / "cache.sqlite"
+        self._seed_cache_with_akshare_key(cache)
+
+        result = _check_cache_freshness(trade_date="invalid", cache_path=cache)
+
+        daily = result.get("daily_prices", {})
+        assert daily.get("stale_days") != 0, (
+            "_check_cache_freshness(trade_date='invalid') silently returned stale_days=0 — "
+            "false fresh-positive. Non-date strings must not pass through to _days_between."
+        )
+
+    def test_malformed_date_does_not_silently_return_stale_zero(self, tmp_path: Path) -> None:
+        """_check_cache_freshness(trade_date='20261301' month 13) must NOT return stale_days=0."""
+        from src.screening.data_freshness_guard import _check_cache_freshness
+
+        cache = tmp_path / "cache.sqlite"
+        self._seed_cache_with_akshare_key(cache)
+
+        result = _check_cache_freshness(trade_date="20261301", cache_path=cache)
+
+        daily = result.get("daily_prices", {})
+        assert daily.get("stale_days") != 0, (
+            "_check_cache_freshness(trade_date='20261301') silently returned stale_days=0 — "
+            "false fresh-positive. Month 13 is not a valid calendar date; must fail-closed."
+        )
+
+    def test_valid_trade_date_still_computes_real_stale_days(self, tmp_path: Path) -> None:
+        """Regression guard: valid trade_date must still compute real stale_days.
+
+        Loop 93 fix must not over-reach into valid inputs. trade_date=20260611
+        vs akshare key end_date 20260610 → stale_days=1 (within max_stale=1,
+        fresh). The fix must preserve this real computation.
+        """
+        from src.screening.data_freshness_guard import _check_cache_freshness
+
+        cache = tmp_path / "cache.sqlite"
+        self._seed_cache_with_akshare_key(cache)
+
+        result = _check_cache_freshness(trade_date="20260611", cache_path=cache)
+
+        daily = result.get("daily_prices", {})
+        assert daily.get("stale_days") == 1, (
+            f"Valid trade_date='20260611' vs akshare end 20260610 must yield stale_days=1; "
+            f"got {daily}. The loop-93 defense-in-depth must not over-reach into valid inputs."
+        )
+        assert daily.get("latest_date") == "2026-06-10"
+
+
 class TestApplyFreshnessConfidencePenalty:
     def test_no_penalty_when_fresh(self) -> None:
         recs = [{"ticker": "000001", "confidence": 85}]

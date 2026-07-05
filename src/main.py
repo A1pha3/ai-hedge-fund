@@ -3099,10 +3099,38 @@ def run_explain(ticker: str) -> int:
 
     name = match.get("name", "")
     industry = match.get("industry_sw", "")
-    score_b = match.get("score_b", 0.0)
-    decision = match.get("decision", "neutral")
-    signals = match.get("strategy_signals", {})
-    arbitration = match.get("arbitration_applied", [])
+    # Loop 95 (autodev): drain None score_b crash — sibling-disease sweep of
+    # GAMMA-008 (_print_industry_ranking_block None score_b coerced via
+    # _safe_float). dict.get("score_b", 0.0) returns 0.0 only when the KEY is
+    # MISSING; when key is present but value=None (corrupt report / partial
+    # pipeline / upstream None propagation), .get returns None, and
+    # None:+.4f raises TypeError. Mirror GAMMA-008: coerce via safe_float.
+    from src.utils.numeric import safe_float as _safe_float
+
+    score_b = _safe_float(match.get("score_b"), 0.0)
+    # Loop 95 (autodev): drain None/empty decision — sibling-disease sweep of
+    # score_b above. dict.get("decision", "neutral") returns "neutral" only
+    # when the KEY is MISSING; when key is present but value=None (corrupt
+    # report / partial pipeline / upstream None propagation) or empty string,
+    # .get returns the falsy value and the render shows misleading "决策: None"
+    # or "决策:  " (operator sees a confusing label, not the missing-key
+    # default "neutral"). Coerce falsy → "neutral" mirroring score_b.
+    _raw_decision = match.get("decision")
+    decision = _raw_decision if _raw_decision else "neutral"
+    # Loop 96 (autodev): drain None signals/arbitration — sibling-disease
+    # sweep of Loop 95. Same disease class: dict.get(key, default) returns
+    # default only when the KEY is MISSING; when key is present but
+    # value=None (corrupt report / partial pipeline / upstream None
+    # propagation from to_recommendation_dict), .get returns None.
+    # - signals=None crashes _print_strategy_breakdown at
+    #   ``signals.get(strat_name)`` (explain_helpers.py:43) with
+    #   AttributeError. Verified RED before fix.
+    # - arbitration=None is currently absorbed by ``if arbitration:``
+    #   truthiness (works by accident, not by design). Coercion makes the
+    #   intent explicit and protects against future code that iterates
+    #   arbitration outside the truthiness guard.
+    signals = match.get("strategy_signals") or {}
+    arbitration = match.get("arbitration_applied") or []
 
     print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}{Style.BRIGHT}[Explain] {ticker} {name} ({industry}){Style.RESET_ALL}")

@@ -387,10 +387,18 @@ def build_front_door_verdict(
         invalidation_reasons.append("样本量不足 20")
 
     deduped_reasons = list(dict.fromkeys(invalidation_reasons))
+    # Loop 94 (autodev): drain [:4] truncation disease — "computed-but-truncated-
+    # display" variant of loop 53/57/90/91 "computed-but-never-read". The
+    # insertion order puts critical trust-calibration / data-completeness /
+    # money-safety reasons (数据缺失 / horizon 数据缺失 / 成熟样本不足 20 /
+    # composite 缺失 / 同分组胜率跌破 50%) LATER in the list, so [:4] silently
+    # dropped exactly the reasons an operator most needs to self-audit an AVOID.
+    # Render layer (top_picks.py:1542 print, backend route) has no length cap;
+    # push notifications use an independent markdown_body. Safe to surface all.
     return {
         "action": action,
         "market_regime": regime_lower or "unknown",
-        "invalidation_reason": " / ".join(deduped_reasons[:4]),
+        "invalidation_reason": " / ".join(deduped_reasons),
         # C221: 短期反弹信号来源 horizon, 用于呈现层区分 T+5/T+10 反弹票
         "signal_horizon": signal_horizon,
     }

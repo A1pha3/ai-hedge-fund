@@ -609,3 +609,287 @@ class TestHelperFunctions:
         output = capsys.readouterr().out
         # None coerced to 0.0 → ranked last → rank 2/2
         assert "第 2/2 名" in output
+
+
+# ---------------------------------------------------------------------------
+# Loop 95 (autodev): run_explain None-handling — sibling-disease sweep of
+# GAMMA-008 (_print_industry_ranking_block None score_b coerced) to the
+# run_explain main function. GAMMA-008 drained the helper but missed the
+# main function's own score_b read at main.py:3102.
+# ---------------------------------------------------------------------------
+
+
+class TestRunExplainNoneScoreBHandling:
+    """Loop 95: drain None score_b crash in run_explain main function.
+
+    GAMMA-008 (test above) drained ``_print_industry_ranking_block``'s None
+    score_b via ``_safe_float`` coercion. But the sibling read in
+    ``run_explain`` (main.py:3102) was missed:
+
+    .. code-block:: python
+
+        score_b = match.get("score_b", 0.0)        # None if key present, value=None
+        ...
+        print(f"  决策: {decision}  |  Score B: {score_b:+.4f}")  # crash: None:+.4f
+
+    ``dict.get("score_b", 0.0)`` returns ``0.0`` only when the KEY is MISSING.
+    When the key is PRESENT but the value is ``None`` (corrupt report / partial
+    pipeline / upstream None propagation), ``.get`` returns ``None``, and
+    ``None:+.4f`` raises ``TypeError: unsupported format string passed to
+    NoneType.__format__``.
+
+    This is the same falsy-None disease class as R68/R69/R96/R100 (margin_of_safety
+    footgun) and GAMMA-008 (sibling helper). The fix mirrors GAMMA-008: coerce
+    None/NaN to 0.0 before formatting.
+    """
+
+    def test_none_score_b_does_not_crash(self) -> None:
+        """run_explain must not crash when score_b=None (key present, value=None).
+
+        Reproduction: a corrupt/partial report where ``score_b`` is explicitly
+        null (JSON ``null`` → Python ``None``). Without the fix, ``run_explain``
+        crashes with TypeError at the ``score_b:+.4f`` format string, blocking
+        the operator from seeing the rest of the explain output (strategy
+        breakdown, factor detail, events, industry ranking).
+        """
+        rec = _make_recommendation(score_b=None)  # type: ignore[arg-type]
+        report = _make_report(recommendations=[rec])
+        rc, output = _run_explain_capture(report, ticker="000001")
+        assert rc == 0, (
+            f"run_explain crashed on score_b=None (TypeError at score_b:+.4f format). "
+            f"Operator cannot see explain output for corrupt/partial reports. "
+            f"Got rc={rc}, output={output!r}"
+        )
+        # Score B line should show 0.0000 (coerced) not crash
+        assert "Score B:" in output
+
+    def test_missing_score_b_key_still_uses_default(self) -> None:
+        """Regression guard: missing score_b key must still fall back to 0.0.
+
+        The fix (None coercion) must not break the existing missing-key path
+        (dict.get default 0.0). This test pins the missing-key baseline.
+        """
+        rec = _make_recommendation()
+        del rec["score_b"]  # key missing entirely
+        report = _make_report(recommendations=[rec])
+        rc, output = _run_explain_capture(report, ticker="000001")
+        assert rc == 0
+        assert "Score B:" in output
+
+    def test_none_score_b_shows_zero_not_blank(self) -> None:
+        """None score_b must render as 0.0000, not blank or 'None'.
+
+        Honest coercion: operator sees 'Score B: +0.0000' (a real number),
+        not 'Score B: None' or a crash. This lets the operator continue
+        inspecting the pick instead of being blocked.
+        """
+        rec = _make_recommendation(score_b=None)  # type: ignore[arg-type]
+        report = _make_report(recommendations=[rec])
+        rc, output = _run_explain_capture(report, ticker="000001")
+        assert rc == 0
+        assert "+0.0000" in output, (
+            f"None score_b should coerce to 0.0000 for honest display. Got: {output!r}"
+        )
+
+
+class TestRunExplainNoneDecisionHandling:
+    """Loop 95 (sibling): drain None decision misleading-display in run_explain.
+
+    Same disease class as score_b=None (TestRunExplainNoneScoreBHandling above),
+    same module, same None-propagation root cause. ``dict.get("decision", "neutral")``
+    returns "neutral" only when the KEY is MISSING; when key is present but
+    value=None, .get returns None, and the f-string renders "决策: None" —
+    misleading the operator into thinking the pick has a literal "None" decision
+    rather than a missing/unknown one.
+
+    Fix mirrors score_b: coerce None/empty to "neutral" (the existing default).
+    """
+
+    def test_none_decision_shows_neutral_not_none(self) -> None:
+        """decision=None must render as 'neutral', not 'None'.
+
+        Without the fix, a corrupt/partial report with ``decision: null`` shows
+        '决策: None' — operator cannot tell if this is a real decision label
+        or a missing-data artifact. Honest coercion: show 'neutral' (the
+        existing missing-key default).
+        """
+        rec = _make_recommendation(decision=None)  # type: ignore[arg-type]
+        report = _make_report(recommendations=[rec])
+        rc, output = _run_explain_capture(report, ticker="000001")
+        assert rc == 0
+        assert "决策: neutral" in output, (
+            f"None decision should coerce to 'neutral' (the missing-key default), "
+            f"not render as '决策: None'. Got: {output!r}"
+        )
+        assert "None" not in output.replace("Score B:", ""), (
+            f"Literal 'None' should not appear in decision display. Got: {output!r}"
+        )
+
+    def test_empty_string_decision_shows_neutral(self) -> None:
+        """decision='' (empty string) must also coerce to 'neutral'.
+
+        Empty string is another missing-data artifact (e.g. upstream
+        ``decision = pick.get("decision") or ""``). The fix must handle both
+        None and empty string.
+        """
+        rec = _make_recommendation(decision="")
+        report = _make_report(recommendations=[rec])
+        rc, output = _run_explain_capture(report, ticker="000001")
+        assert rc == 0
+        assert "决策: neutral" in output
+
+    def test_valid_decision_preserved(self) -> None:
+        """Regression guard: valid decision must be preserved (not coerced).
+
+        The fix (None/empty coercion) must not over-reach into valid inputs.
+        """
+        rec = _make_recommendation(decision="watch")
+        report = _make_report(recommendations=[rec])
+        rc, output = _run_explain_capture(report, ticker="000001")
+        assert rc == 0
+        assert "决策: watch" in output
+
+
+class TestRunExplainNoneSignalsHandling:
+    """Loop 96 (autodev): drain None strategy_signals crash in run_explain.
+
+    Sibling-disease sweep of Loop 95 score_b/decision None-handling. Same
+    disease class: ``dict.get("strategy_signals", {})`` returns ``{}`` only
+    when the KEY is MISSING; when key is present but value=None (corrupt
+    report / partial pipeline / upstream None propagation from
+    ``to_recommendation_dict``), ``.get`` returns None, and downstream
+    helpers call ``signals.get(strat_name)`` -> ``AttributeError: 'NoneType'
+    object has no attribute 'get'``.
+
+    Crash surface: ``_print_strategy_breakdown(signals)`` (explain_helpers.py:43)
+    and ``_print_factor_detail_block(signals)`` (explain_helpers.py:61).
+
+    Fix mirrors Loop 95: coerce None/empty to ``{}`` (the existing default).
+    """
+
+    def test_none_signals_does_not_crash(self) -> None:
+        """strategy_signals=None must not crash _print_strategy_breakdown.
+
+        Without the fix, None propagates to ``signals.get(...)`` in
+        ``_print_strategy_breakdown`` (explain_helpers.py:43) and raises
+        AttributeError. Honest coercion: treat as missing data, show
+        '数据缺失' for each strategy (existing missing-key path).
+
+        NOTE: bypass _make_recommendation helper — it coerces None → {} via
+        ``strategy_signals or {}``, masking the disease. Construct the dict
+        directly so None actually reaches run_explain.
+        """
+        rec: dict = {
+            "ticker": "000001",
+            "name": "测试银行",
+            "industry_sw": "银行",
+            "score_b": 0.45,
+            "decision": "watch",
+            "strategy_signals": None,  # type: ignore[dict-item]
+            "arbitration_applied": [],
+        }
+        report = _make_report(recommendations=[rec])
+        rc, output = _run_explain_capture(report, ticker="000001")
+        assert rc == 0, (
+            f"None strategy_signals should not crash run_explain. "
+            f"Got rc={rc}, output={output!r}"
+        )
+        # Existing '数据缺失' fallback (explain_helpers.py:45) should fire
+        # for each of the 4 strategies when signals is missing.
+        assert "数据缺失" in output, (
+            f"None strategy_signals should fall back to '数据缺失' label, "
+            f"not crash. Got: {output!r}"
+        )
+
+    def test_missing_signals_key_uses_default(self) -> None:
+        """Regression guard: missing strategy_signals key still uses {} default.
+
+        The fix must not break the existing missing-key path. When the key
+        is absent from the recommendation dict, ``.get("strategy_signals", {})``
+        returns ``{}`` and the 4 strategies show '数据缺失'.
+        """
+        rec = _make_recommendation()
+        del rec["strategy_signals"]
+        report = _make_report(recommendations=[rec])
+        rc, output = _run_explain_capture(report, ticker="000001")
+        assert rc == 0
+        assert "数据缺失" in output
+
+    def test_valid_signals_preserved(self) -> None:
+        """Regression guard: valid strategy_signals must be preserved (not coerced)."""
+        signals = {
+            "trend": _make_strategy_signal(1, 65.0, sub_factors={}),
+            "mean_reversion": _make_strategy_signal(0, 20.0, sub_factors={}),
+            "fundamental": _make_strategy_signal(1, 50.0, sub_factors={}),
+            "event_sentiment": _make_strategy_signal(1, 55.0, sub_factors={}),
+        }
+        rec = _make_recommendation(strategy_signals=signals)
+        report = _make_report(recommendations=[rec])
+        rc, output = _run_explain_capture(report, ticker="000001")
+        assert rc == 0
+        # 策略贡献 block should show the trend strategy with non-zero confidence
+        assert "趋势策略" in output or "trend" in output
+
+
+class TestRunExplainNoneArbitrationHandling:
+    """Loop 96 (autodev): drain None arbitration_applied crash in run_explain.
+
+    Sibling-disease sweep of Loop 95. ``dict.get("arbitration_applied", [])``
+    returns ``[]`` only when the KEY is MISSING; when key is present but
+    value=None, ``.get`` returns None. ``if arbitration:`` (main.py:3148)
+    treats None as falsy, so the crash is NOT in the truthiness check —
+    it is in the ``for rule in arbitration:`` line (main.py:3149) which is
+    guarded by the truthiness check, so None is silently absorbed.
+
+    However the disease is rendered inconsistency: None arbitration →
+    '仲裁规则: 无' (existing fall-through), but the *meaning* is different
+    from empty list (no rules applied) vs None (arbitration stage was
+    skipped / corrupt). Honest coercion: treat None as [] (the existing
+    default) so the '无' label is semantically correct.
+    """
+
+    def test_none_arbitration_shows_wu_not_crash(self) -> None:
+        """arbitration_applied=None must render '无', not crash.
+
+        Without the fix, None passes ``if arbitration:`` (None is falsy) and
+        falls through to the ``else`` branch printing '仲裁规则: 无'. This
+        works by accident (truthiness), not by design. Coercion makes the
+        intent explicit and protects against future code that iterates
+        ``arbitration`` outside the truthiness guard.
+
+        NOTE: bypass _make_recommendation helper — it coerces None → [] via
+        ``arbitration_applied or []``, masking the disease. Construct the
+        dict directly so None actually reaches run_explain.
+        """
+        rec: dict = {
+            "ticker": "000001",
+            "name": "测试银行",
+            "industry_sw": "银行",
+            "score_b": 0.45,
+            "decision": "watch",
+            "strategy_signals": {},
+            "arbitration_applied": None,  # type: ignore[dict-item]
+        }
+        report = _make_report(recommendations=[rec])
+        rc, output = _run_explain_capture(report, ticker="000001")
+        assert rc == 0, (
+            f"None arbitration should not crash run_explain. "
+            f"Got rc={rc}, output={output!r}"
+        )
+        assert "仲裁规则: 无" in output or "无" in output
+
+    def test_empty_list_arbitration_shows_wu(self) -> None:
+        """Regression guard: empty arbitration list still shows '无'."""
+        rec = _make_recommendation(arbitration_applied=[])
+        report = _make_report(recommendations=[rec])
+        rc, output = _run_explain_capture(report, ticker="000001")
+        assert rc == 0
+        assert "无" in output
+
+    def test_valid_arbitration_rendered(self) -> None:
+        """Regression guard: valid arbitration list must be rendered."""
+        rec = _make_recommendation(arbitration_applied=["R1: 截断保护", "R2: 行业上限"])
+        report = _make_report(recommendations=[rec])
+        rc, output = _run_explain_capture(report, ticker="000001")
+        assert rc == 0
+        assert "R1: 截断保护" in output

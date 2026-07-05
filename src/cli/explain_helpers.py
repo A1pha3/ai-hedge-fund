@@ -108,7 +108,11 @@ def _print_recent_events_block(report_data: dict, match: dict) -> None:
         return
 
     # Priority 2: extract from event_sentiment strategy's sub-factors metrics
-    signals = match.get("strategy_signals", {})
+    # Loop 96 (autodev): mirror run_explain None-coercion — when
+    # strategy_signals key is present but value=None (corrupt report /
+    # upstream None propagation), .get returns None and ``signals.get(...)``
+    # crashes with AttributeError. Coerce falsy → {} (the missing-key default).
+    signals = match.get("strategy_signals") or {}
     event_sig = signals.get("event_sentiment")
     if event_sig and isinstance(event_sig, dict):
         sub_factors = event_sig.get("sub_factors")
