@@ -143,6 +143,38 @@ def test_build_parallel_provider_execution_plan_supports_provider_allowlist(monk
     assert plan["execution_provenance"]["primary_provider_name"] == "MiniMax"
 
 
+def test_build_parallel_provider_execution_plan_allowlist_is_case_insensitive(monkeypatch):
+    # BH-021 disclosure-inconsistency drain (loop 94): the parallel allowlist used a
+    # case-sensitive comparison while the route allowlist (provider_route_helpers) is
+    # case-insensitive, so an UPPERCASE .env value (e.g. "MINIMAX,VOLCENGINE") silently
+    # filtered out every route, leaving the operator with zero fallback providers and
+    # no warning. Provider names in the registry are CamelCase ("MiniMax", "Volcengine").
+    monkeypatch.delenv("LLM_PROVIDER_ROUTE_ALLOWLIST", raising=False)
+    monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+    monkeypatch.setenv("ARK_API_KEY", "ark-key")
+    monkeypatch.setenv("MINIMAX_PROVIDER_CONCURRENCY_LIMIT", "5")
+    monkeypatch.setenv("VOLCENGINE_PROVIDER_CONCURRENCY_LIMIT", "3")
+    monkeypatch.setenv("LLM_PRIMARY_PROVIDER", "MiniMax")
+    monkeypatch.setenv("LLM_PARALLEL_PROVIDER_ALLOWLIST", "MINIMAX,VOLCENGINE")
+
+    plan = build_parallel_provider_execution_plan(
+        agent_names=[f"agent_{index}" for index in range(1, 9)],
+        base_model_name="MiniMax-M2.7",
+        base_model_provider="MiniMax",
+        api_keys=None,
+        per_provider_limit=3,
+    )
+
+    overrides = plan["agent_llm_overrides"]
+    providers = [overrides[f"agent_{index}"]["model_provider"] for index in range(1, 9)]
+
+    assert plan["execution_provenance"]["planning_mode"] == "parallel"
+    assert plan["parallel_provider_count"] == 2
+    assert providers.count("MiniMax") == 5
+    assert providers.count("Volcengine") == 3
+    assert plan["execution_provenance"]["active_provider_names"] == ["MiniMax", "Volcengine"]
+
+
 def test_build_parallel_provider_execution_plan_keeps_single_provider_when_key_missing(monkeypatch):
     _clear_provider_allowlists(monkeypatch)
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)

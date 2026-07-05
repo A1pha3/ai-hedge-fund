@@ -55,11 +55,17 @@ def _get_env_int(name: str, default: int) -> int:
 
 
 def _get_parallel_provider_allowlist() -> set[str] | None:
-    """Returns an optional allowlist for providers participating in parallel waves."""
+    """Returns an optional allowlist (lower-cased) for providers participating in parallel waves.
+
+    Lower-casing matches the route allowlist in provider_route_helpers.get_provider_route_allowlist
+    so that an UPPERCASE .env value (e.g. "MINIMAX,VOLCENGINE") matches the CamelCase provider
+    names stored in the registry ("MiniMax", "Volcengine"). Without this normalization the
+    comparison silently dropped every route, leaving the operator with zero fallback providers.
+    """
     raw_value = os.getenv("LLM_PARALLEL_PROVIDER_ALLOWLIST", "").strip()
     if not raw_value:
         return None
-    providers = {item.strip() for item in raw_value.split(",") if item.strip()}
+    providers = {item.strip().lower() for item in raw_value.split(",") if item.strip()}
     return providers or None
 
 
@@ -77,7 +83,7 @@ def _filter_parallel_routes(routes: list[ProviderRoute]) -> list[ProviderRoute]:
     allowlist = _get_parallel_provider_allowlist()
     if not allowlist:
         return routes
-    return [route for route in routes if route.provider_name in allowlist]
+    return [route for route in routes if route.provider_name.lower() in allowlist]
 
 
 def _get_available_provider_keys(api_keys: dict | None) -> dict[str, list[ProviderRoute]]:
