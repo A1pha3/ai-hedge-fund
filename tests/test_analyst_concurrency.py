@@ -226,6 +226,11 @@ def test_build_parallel_provider_execution_plan_respects_global_provider_route_a
 
 
 def test_build_parallel_provider_execution_plan_respects_single_provider_soft_limit(monkeypatch):
+    # Clear both allowlists: this test exercises the route allowlist + per-provider soft limit,
+    # NOT the parallel allowlist. Without clearing LLM_PARALLEL_PROVIDER_ALLOWLIST, the operator's
+    # real .env value leaks in via load_project_dotenv() on import and silently filters MiniMax,
+    # making the test pass for the wrong reason (single-provider fallback instead of soft-limit).
+    _clear_provider_allowlists(monkeypatch)
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
     monkeypatch.delenv("ARK_API_KEY", raising=False)

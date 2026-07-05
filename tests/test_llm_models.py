@@ -17,6 +17,9 @@ def test_provider_registry_exposes_default_profiles():
 
 
 def test_get_provider_routes_orders_registered_routes_by_priority(monkeypatch):
+    # Clear LLM_PROVIDER_ROUTE_ALLOWLIST so the operator's real .env value does not leak in via
+    # load_project_dotenv() on import and silently filter the expected 4-route ordering.
+    monkeypatch.delenv("LLM_PROVIDER_ROUTE_ALLOWLIST", raising=False)
     monkeypatch.setenv("ZHIPU_CODE_API_KEY", "coding-key")
     monkeypatch.setenv("ZHIPU_API_KEY", "standard-key")
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
