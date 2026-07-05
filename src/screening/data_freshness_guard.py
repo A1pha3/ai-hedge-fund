@@ -317,5 +317,16 @@ def _render_freshness_summary(fresh: bool, warnings: list[dict[str, Any]]) -> st
     for warning in warnings:
         severity_color = Fore.RED if warning["severity"] == "HIGH" else Fore.YELLOW if warning["severity"] == "MEDIUM" else Fore.WHITE
         lines.append(f"  {severity_color}[{warning['severity']}]{Style.RESET_ALL} " f"{warning['label']}: 最新数据 {warning['latest_date']} " f"(过期 {warning['stale_days']} 天, 阈值 {warning['max_stale_days']} 天)")
-    lines.append("  → 推荐置信度已按最严重等级施加惩罚 (最高 30%)")
+    # autodev-6 / disease F (silent-display honesty): the penalty acts on
+    # rec.confidence, which composite_score (the actual ranking / BUY-gate key,
+    # see composite_score.py: composite = score_b + adjustments) does NOT read.
+    # apply_freshness_confidence_penalty is called only in decision_flow on
+    # in-memory recs; compute_composite_scores re-reads the report from disk.
+    # So the penalty is cosmetic w.r.t. the decision basis. Disclose this scope
+    # limit so the operator is not misled into thinking stale data lowers the
+    # recommendation's standing — it does not change ordering or BUY verdict.
+    lines.append(
+        "  → 已对 rec.confidence 字段按最严重等级施加惩罚 (最高 30%); "
+        "注意: composite_score / 排序 / BUY 门控不读此字段, 故不影响最终决策依据"
+    )
     return "\n".join(lines)

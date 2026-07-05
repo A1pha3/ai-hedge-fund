@@ -289,3 +289,31 @@ class TestRenderFreshnessSummary:
         summary = _render_freshness_summary(False, warnings)
         assert "最高 30%" in summary
         assert "70%" not in summary
+
+    def test_stale_summary_discloses_penalty_does_not_affect_composite(self) -> None:
+        """autodev-6 / disease F (silent-display): the freshness penalty acts on
+        rec.confidence, which composite_score (the actual ranking / BUY-gate key)
+        does NOT read. The old line "已按最严重等级施加惩罚" implied the penalty
+        reduces recommendation confidence in the decision, but it has zero effect
+        on composite_score / ordering / BUY verdict. The summary must disclose
+        this scope limit so the operator is not misled.
+
+        Reproducer: composite_score = score_b + adjustments; confidence is never
+        read (verified: grep confidence src/screening/composite_score.py shows
+        only docstrings). apply_freshness_confidence_penalty is called only in
+        decision_flow on in-memory recs; compute_composite_scores re-reads the
+        report from disk. So the penalty is cosmetic w.r.t. the decision basis.
+        """
+        warnings = [
+            {
+                "severity": "HIGH",
+                "label": "行情数据",
+                "latest_date": "2026-06-10",
+                "stale_days": 3,
+                "max_stale_days": 1,
+            }
+        ]
+        summary = _render_freshness_summary(False, warnings)
+        # The penalty line must honestly state it does NOT change composite_score
+        # / ordering / BUY verdict (the actual decision basis).
+        assert "不影响" in summary or "不影响排序" in summary or "不传导" in summary
