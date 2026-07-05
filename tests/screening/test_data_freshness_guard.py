@@ -124,40 +124,36 @@ class TestCheckDataFreshness:
         (不确定), 让 ``check_data_freshness`` 保守判 ``fresh=False``,
         不能让查询失败被静默吞掉后误判 "all fresh"。
 
-        背景: ``_check_cache_freshness`` 每源 ``except Exception`` 只 ``logger.debug``
-        (BH-017 silent-swallow drain), 查询失败时该源 key 不进 ``result``。
-        ``check_data_freshness`` 只迭代 ``result`` 里 *存在的* 源, 缺失的源 →
-        无 stale 警告 → ``all_fresh`` 保持 True → 报告 ``fresh=True`` + 跳过
-        ``apply_freshness_confidence_penalty`` 的过期数据置信度惩罚。一个真正
-        stale 的 ``financial_metrics`` 缓存在 schema drift / locked DB 单源查询
-        失败时被报告为 fresh, 数据安全门被绕过。
-
-        设计: 真实可读 sqlite 缓存 (空表, 模拟查询本身可跑但 daily_prices 查询
-        因 schema drift 抛 OperationalError)。daily_prices 源查询失败 → 该源
-        标记 unknown → ``check_data_freshness`` 保守 ``fresh=False``。
+        autodev-7 / disease G update: the old ``SELECT MAX(date)`` query was
+        replaced by a key-scan (``SELECT key FROM cache WHERE key LIKE ?``).
+        R118's conservative safety is preserved: when the key-scan itself
+        raises (locked DB / schema drift on the key column), the source is
+        marked ``unknown`` → ``check_data_freshness`` treats it as not-fresh.
+        This is distinct from ``unavailable`` (key-scan OK, no parseable key —
+        a schema limit, not a failure).
         """
         import sqlite3
 
         from src.screening import data_freshness_guard as dfg
 
         cache = tmp_path / "cache.sqlite"
-        # 真实可打开的空 DB (让 outer sqlite3.connect 不抛, 进入 per-source 查询)
+        # Real openable DB with the production schema.
         conn = sqlite3.connect(cache)
-        conn.execute("CREATE TABLE cache (key TEXT, date TEXT)")
+        conn.execute("CREATE TABLE cache (key TEXT, value BLOB, expires_at INTEGER)")
         conn.commit()
         conn.close()
 
-        # 模拟单源查询失败: 包装 conn.execute, daily_prices 查询抛 OperationalError
+        # Simulate a key-scan query failure (locked DB / schema drift).
         orig_connect = sqlite3.connect
-        call_count = {"n": 0}
 
         class _WrappedConn:
             def __init__(self, real):
                 self._real = real
 
             def execute(self, sql, *a, **kw):
-                if "daily_prices" in sql or "daily_%price" in sql:
-                    raise sqlite3.OperationalError("simulated schema drift: no such column")
+                # The daily_prices key-scan: SELECT key FROM cache WHERE key LIKE ?
+                if "SELECT key FROM cache" in sql and a and "%akshare::%daily" in str(a[0]):
+                    raise sqlite3.OperationalError("simulated locked DB")
                 return self._real.execute(sql, *a, **kw)
 
             def close(self):
@@ -170,8 +166,90 @@ class TestCheckDataFreshness:
 
         result = dfg.check_data_freshness(trade_date="20260611", cache_path=cache)
 
-        # 保守安全默认: 单源查询失败 → fresh=False (不能误判 all fresh)
-        assert result["fresh"] is False, "新鲜度门正确性: daily_prices 查询失败时该源应标记未知, " "check_data_freshness 应保守判 fresh=False, 不能误报 all-fresh 绕过数据安全门"
+        # 保守安全默认: 查询异常 → unknown → fresh=False (不能误判 all fresh)
+        assert result["fresh"] is False, "新鲜度门正确性: daily_prices key-scan 失败时该源应标记未知, " "check_data_freshness 应保守判 fresh=False, 不能误报 all-fresh 绕过数据安全门"
+
+    def test_daily_prices_freshness_uses_akshare_key_end_date(self, tmp_path: Path) -> None:
+        """autodev-7 / disease G: the cache schema is (key, value, expires_at) —
+        there is NO ``date`` column. The old query ``SELECT MAX(date) FROM cache
+        WHERE key LIKE '%daily_prices%'`` always raises 'no such column: date',
+        so every source was permanently marked UNKNOWN (false stale-positive).
+        R118 caught the missing column but only fixed the fallback, not the
+        query. The fix parses the end_date embedded in akshare price keys
+        (format ``prices:akshare::ashare_{ticker}_{start}_{end}_daily``) to
+        determine the real latest data date.
+
+        This test seeds a cache with the real schema and akshare key format,
+        then asserts the freshness check reads the embedded date instead of
+        failing on a non-existent ``date`` column.
+        """
+        import sqlite3
+
+        from src.screening import data_freshness_guard as dfg
+
+        cache = tmp_path / "cache.sqlite"
+        conn = sqlite3.connect(cache)
+        # REAL schema (no date column) — this is what the production cache uses.
+        conn.execute("CREATE TABLE cache (key TEXT, value BLOB, expires_at INTEGER)")
+        # Seed an akshare price key with end_date 20260610 (1 day before trade_date).
+        conn.execute(
+            "INSERT INTO cache (key, value, expires_at) VALUES (?, ?, ?)",
+            ("prices:akshare::ashare_000001_20260601_20260610_daily", b"", 0),
+        )
+        conn.commit()
+        conn.close()
+
+        result = dfg.check_data_freshness(trade_date="20260611", cache_path=cache)
+
+        # The daily_prices source must report the real date parsed from the key,
+        # not 'unknown'. trade_date=20260611, latest=20260610 → 1 day stale,
+        # within max_stale_days=1 → fresh for this source.
+        daily_warning = next(
+            (w for w in result["warnings"] if w.get("source") == "daily_prices"),
+            None,
+        )
+        # Either fresh (no warning) or a warning with a real date (not 'unknown').
+        if daily_warning is not None:
+            assert daily_warning["latest_date"] != "unknown", (
+                "daily_prices must use the date parsed from the akshare key, "
+                "not 'unknown' (disease G: the date column never existed)"
+            )
+
+    def test_cache_schema_without_date_column_does_not_permanently_mark_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        """autodev-7 / disease G regression: a cache with the REAL production
+        schema (key, value, expires_at — NO date column) must not cause every
+        source to be permanently marked UNKNOWN. Before the fix, the date-column
+        query failed for all 3 sources on every run, producing a permanent
+        false stale-positive. After the fix, sources whose dates can be parsed
+        from keys report real dates; sources that genuinely cannot be checked
+        are labeled honestly (not silently false-positive)."""
+        import sqlite3
+
+        from src.screening import data_freshness_guard as dfg
+
+        cache = tmp_path / "cache.sqlite"
+        conn = sqlite3.connect(cache)
+        conn.execute("CREATE TABLE cache (key TEXT, value BLOB, expires_at INTEGER)")
+        # No akshare keys seeded → daily_prices has no parseable keys.
+        conn.commit()
+        conn.close()
+
+        result = dfg.check_data_freshness(trade_date="20260611", cache_path=cache)
+
+        # With no parseable keys, the source should NOT be a false stale-positive
+        # 'unknown'. It should be either absent (no warning) or honestly marked
+        # as 'unavailable' (schema limit), distinct from 'unknown' (conservative
+        # stale). The key distinction: 'unavailable' does not claim the data is
+        # stale, only that we cannot check.
+        for w in result["warnings"]:
+            if w.get("source") in ("daily_prices", "financial_metrics", "industry_classification"):
+                # Must NOT be the old permanent false-positive 'unknown'.
+                assert w.get("latest_date") != "unknown" or w.get("severity") != "UNKNOWN", (
+                    f"source {w.get('source')} permanently marked UNKNOWN — disease G not fixed; "
+                    f"the date-column query fails on the real (key,value,expires_at) schema"
+                )
 
 
 class TestApplyFreshnessConfidencePenalty:

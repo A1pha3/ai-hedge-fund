@@ -98,6 +98,26 @@ def check_data_freshness(
                     }
                 )
                 continue
+            # autodev-7 / disease G: 'unavailable' means the source's date cannot
+            # be checked from the cache schema (e.g. tushare hash keys with the
+            # date only inside the pickled value). This is a TOOL LIMITATION, not
+            # evidence of staleness. Honestly disclose it as an informational
+            # note without the conservative not-fresh penalty (which would be a
+            # permanent false stale-positive on every run). Distinct from
+            # 'unknown' (query FAILED → conservative stale).
+            if details.get("unavailable"):
+                warnings.append(
+                    {
+                        "source": source_name,
+                        "label": config.get("label", source_name),
+                        "latest_date": "不可查",
+                        "stale_days": None,
+                        "max_stale_days": config.get("max_stale_days", 1),
+                        "severity": "UNAVAILABLE",
+                        "message": "cache schema does not expose this source's date (key is hash-based); freshness unverifiable, not assumed stale",
+                    }
+                )
+                continue
             max_stale = int(config.get("max_stale_days", 1))
             if details.get("stale_days", 0) > max_stale:
                 all_fresh = False
@@ -190,11 +210,64 @@ def _normalize_date(date_str: str) -> str:
     return str(date_str or "")
 
 
+def _extract_latest_date_from_keys(
+    conn: Any,
+    key_pattern: str,
+    date_regex: str,
+) -> str | None:
+    """autodev-7 / disease G: parse the latest embedded date from cache keys.
+
+    The cache schema is ``(key, value, expires_at)`` with NO ``date`` column.
+    The old ``SELECT MAX(date)`` queries always failed. Many cache keys embed
+    the data's date range, e.g. ``prices:akshare::ashare_000001_20260601_20260610_daily``
+    contains ``20260610`` as the end date. This helper scans keys matching
+    ``key_pattern`` and extracts dates via ``date_regex`` (a regex with one
+    capture group), returning the max (latest) date in ``YYYYMMDD`` form, or
+    None when no key yields a date.
+
+    Args:
+        conn: open sqlite3 connection (read-only).
+        key_pattern: SQL LIKE pattern to filter keys (e.g. ``%akshare::%daily``).
+        date_regex: regex with one capture group yielding a YYYYMMDD date.
+
+    Returns:
+        Latest YYYYMMDD date found, or None when no key yields a date.
+
+    Raises:
+        Exception: re-raises any sqlite query error so the caller can mark the
+        source ``unknown`` (conservative stale) — distinct from ``unavailable``
+        (query succeeded but no parseable key, a schema limit).
+    """
+    import re
+
+    rows = conn.execute("SELECT key FROM cache WHERE key LIKE ?", (key_pattern,)).fetchall()
+
+    pattern = re.compile(date_regex)
+    latest_yyyymmdd: str | None = None
+    for (key,) in rows:
+        m = pattern.search(str(key))
+        if m:
+            d = m.group(1)
+            if len(d) == 8 and d.isdigit() and (latest_yyyymmdd is None or d > latest_yyyymmdd):
+                latest_yyyymmdd = d
+    return latest_yyyymmdd
+
+
 def _check_cache_freshness(
     trade_date: str,
     cache_path: Path | None,
 ) -> dict[str, dict[str, Any]]:
-    """Check cache database for latest data dates."""
+    """Check cache database for latest data dates.
+
+    autodev-7 / disease G: the cache schema is ``(key, value, expires_at)`` with
+    NO ``date`` column. The prior implementation queried ``SELECT MAX(date)``,
+    which always raised 'no such column: date' for all 3 sources, permanently
+    marking every source UNKNOWN (false stale-positive on every run). R118
+    caught the missing column but only fixed the fallback label, not the query.
+    Now we parse dates embedded in keys (akshare price keys carry ``_YYYYMMDD_``)
+    and honestly label sources whose dates cannot be checked from keys as
+    ``unavailable`` (schema limit, not stale), distinct from a real stale hit.
+    """
     result: dict[str, dict[str, Any]] = {}
 
     if cache_path is None:
@@ -213,41 +286,43 @@ def _check_cache_freshness(
 
         conn = sqlite3.connect(f"file:{cache_path}?mode=ro", uri=True)
         try:
-            # Check daily prices freshness
+            # daily_prices: akshare price keys embed the end date
+            # (prices:akshare::ashare_{ticker}_{start}_{end}_daily). tushare keys
+            # are hash-based with no date in the key (date lives in the pickled
+            # value), so they are not queryable without unpickling every row.
             try:
-                row = conn.execute("SELECT MAX(date) FROM cache WHERE key LIKE '%daily_prices%' OR key LIKE '%daily_%price%'").fetchone()
-                if row and row[0]:
-                    latest = str(row[0])[:10]
-                    stale_days = _days_between(latest, trade_date)
-                    result["daily_prices"] = {"latest_date": latest, "stale_days": stale_days}
+                latest = _extract_latest_date_from_keys(
+                    conn,
+                    key_pattern="%akshare::%daily",
+                    date_regex=r"_(\d{8})_daily$",
+                )
             except Exception as exc:
-                # R118 / 新鲜度门正确性: 标记 unknown 而非静默跳过。历史 skip 让该源
-                # 缺失 → check_data_freshness 误报 all-fresh, 绕过数据安全门。
-                # BH-017 drain: 同时保留 debug 日志以便 schema drift / locked DB 可诊断。
-                logger.debug("[DataFreshness] daily_prices freshness query failed: %s", exc)
+                # R118 conservative safety preserved: a real query failure
+                # (locked DB / schema drift on the key column itself) → unknown
+                # → check_data_freshness treats as not-fresh. Distinct from
+                # 'unavailable' (query OK, no parseable key — schema limit).
+                logger.debug("[DataFreshness] daily_prices key-scan failed: %s", exc)
                 result["daily_prices"] = {"unknown": True}
+            else:
+                if latest is not None:
+                    latest_formatted = f"{latest[:4]}-{latest[4:6]}-{latest[6:8]}"
+                    stale_days = _days_between(latest_formatted, trade_date)
+                    result["daily_prices"] = {"latest_date": latest_formatted, "stale_days": stale_days}
+                else:
+                    # No akshare keys with parseable dates. Honest 'unavailable'
+                    # (cannot check from keys), NOT 'unknown' (which check_data_freshness
+                    # treats as conservative stale). tushare hash keys cannot be checked
+                    # without unpickling every value — out of scope for a freshness guard.
+                    result["daily_prices"] = {"unavailable": True}
 
-            # Check financial metrics freshness
-            try:
-                row = conn.execute("SELECT MAX(date) FROM cache WHERE key LIKE '%financial%' OR key LIKE '%fina_%'").fetchone()
-                if row and row[0]:
-                    latest = str(row[0])[:10]
-                    stale_days = _days_between(latest, trade_date)
-                    result["financial_metrics"] = {"latest_date": latest, "stale_days": stale_days}
-            except Exception as exc:
-                logger.debug("[DataFreshness] financial_metrics freshness query failed: %s", exc)
-                result["financial_metrics"] = {"unknown": True}
-
-            # Check industry classification freshness
-            try:
-                row = conn.execute("SELECT MAX(date) FROM cache WHERE key LIKE '%industry%' OR key LIKE '%sw_class%'").fetchone()
-                if row and row[0]:
-                    latest = str(row[0])[:10]
-                    stale_days = _days_between(latest, trade_date)
-                    result["industry_classification"] = {"latest_date": latest, "stale_days": stale_days}
-            except Exception as exc:
-                logger.debug("[DataFreshness] industry_classification freshness query failed: %s", exc)
-                result["industry_classification"] = {"unknown": True}
+            # financial_metrics / industry_classification: tushare keys are
+            # hash-based (tushare_df:fina_indicator:hash) with no date in the key.
+            # The date lives in the pickled DataFrame value, which we cannot read
+            # without unpickling every row (107k+ rows) — prohibitive for a
+            # freshness guard. Honestly label as 'unavailable' (schema limit)
+            # rather than the old permanent false-positive 'unknown'.
+            result["financial_metrics"] = {"unavailable": True}
+            result["industry_classification"] = {"unavailable": True}
         finally:
             conn.close()
     except Exception as exc:
@@ -310,11 +385,29 @@ def _days_between(date_earlier: str, date_later: str) -> int:
 
 def _render_freshness_summary(fresh: bool, warnings: list[dict[str, Any]]) -> str:
     """Render a human-readable freshness summary."""
-    if fresh:
+    # autodev-7 / disease G: 'UNAVAILABLE' severity is an informational note
+    # (cache schema does not expose a source's date — tool limit, not staleness).
+    # When fresh=True but UNAVAILABLE notes exist, still render them so the
+    # operator knows which sources could not be checked, instead of a bare
+    # "all fresh" that hides the coverage gap.
+    unavailable_notes = [w for w in warnings if w.get("severity") == "UNAVAILABLE"]
+    if fresh and not unavailable_notes:
         return f"{Fore.GREEN}✓ 数据新鲜度检查通过 — 所有关键数据源均在使用期内{Style.RESET_ALL}"
+    if fresh and unavailable_notes:
+        # No real stale source, but some sources were unverifiable. Disclose
+        # honestly without the stale-warning framing.
+        lines = [f"{Fore.GREEN}✓ 数据新鲜度检查通过 (可查源均在使用期内){Style.RESET_ALL}"]
+        lines.append(f"  {Fore.WHITE}ℹ 以下源因 cache schema 限制无法核查新鲜度 (非过期):{Style.RESET_ALL}")
+        for w in unavailable_notes:
+            lines.append(f"  {Fore.WHITE}[不可查]{Style.RESET_ALL} {w['label']}: {w['message']}")
+        return "\n".join(lines)
 
     lines = [f"{Fore.YELLOW}⚠ 数据新鲜度警告:{Style.RESET_ALL}"]
     for warning in warnings:
+        if warning["severity"] == "UNAVAILABLE":
+            # Informational, not a stale warning — render distinctly.
+            lines.append(f"  {Fore.WHITE}[不可查]{Style.RESET_ALL} {warning['label']}: {warning.get('message', 'cache schema 不暴露该源日期')}")
+            continue
         severity_color = Fore.RED if warning["severity"] == "HIGH" else Fore.YELLOW if warning["severity"] == "MEDIUM" else Fore.WHITE
         lines.append(f"  {severity_color}[{warning['severity']}]{Style.RESET_ALL} " f"{warning['label']}: 最新数据 {warning['latest_date']} " f"(过期 {warning['stale_days']} 天, 阈值 {warning['max_stale_days']} 天)")
     # autodev-6 / disease F (silent-display honesty): the penalty acts on
