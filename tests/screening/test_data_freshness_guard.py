@@ -252,6 +252,112 @@ class TestCheckDataFreshness:
                 )
 
 
+class TestInvalidTradeDateFailClosed:
+    """Loop 92 (autodev): drain false fresh-positive on invalid trade_date.
+
+    The (H) note in decision-state said "_check_report_freshness(None) crashes
+    but already guarded upstream — low Δ, not drained". Empirical dogfood
+    falsified this: check_data_freshness(trade_date=None|""|"invalid") returns
+    fresh=True with a green ✓ summary, NOT a crash. This is the same disease
+    class as loop 7 (G) "permanent false fresh-positive" — the glob pattern
+    ``auto_screening_{date_compact}*.json`` degenerates to a wildcard matching
+    ANY report when date_compact is empty, so the function returns fresh=True
+    whenever any report exists, regardless of how stale.
+
+    Upstream guards are NOT comprehensive:
+    - decision_flow.py:117 ``trade_date = report.get("date", today)`` — if the
+      report has ``"date": ""`` or ``"date": null``, this returns "" or None.
+    - dispatcher.py:662 ``trade_date = _get_kv(argv, "--trade-date") or ""`` —
+      passing ``--trade-date ""`` produces trade_date="".
+
+    Fix: fail-closed. When trade_date is None/empty/invalid-format, return
+    fresh=False with an explicit warning instead of silently opening the gate.
+    """
+
+    def test_check_data_freshness_with_none_trade_date_fails_closed(self, tmp_path: Path) -> None:
+        """trade_date=None must NOT return fresh=True (silent open)."""
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        (reports_dir / "auto_screening_20260101.json").write_text("{}", encoding="utf-8")
+
+        result = check_data_freshness(trade_date=None, reports_dir=reports_dir)  # type: ignore
+        assert result["fresh"] is False, (
+            "trade_date=None must fail-closed (fresh=False), not silently open the gate. "
+            "This is the same disease class as loop 7 (G) permanent false fresh-positive."
+        )
+        # Must include a warning explaining why
+        assert result["warning_count"] >= 1
+        warning_sources = [w.get("source") for w in result["warnings"]]
+        assert "trade_date" in warning_sources or "invalid_trade_date" in warning_sources, (
+            f"Expected trade_date-invalid warning, got sources: {warning_sources}"
+        )
+
+    def test_check_data_freshness_with_empty_trade_date_fails_closed(self, tmp_path: Path) -> None:
+        """trade_date="" must NOT return fresh=True (silent open)."""
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        (reports_dir / "auto_screening_20260101.json").write_text("{}", encoding="utf-8")
+
+        result = check_data_freshness(trade_date="", reports_dir=reports_dir)
+        assert result["fresh"] is False, (
+            "trade_date='' must fail-closed — glob 'auto_screening_*.json' degenerates "
+            "to a wildcard matching any report, producing false fresh=True."
+        )
+        assert result["warning_count"] >= 1
+
+    def test_check_data_freshness_with_invalid_trade_date_fails_closed(self, tmp_path: Path) -> None:
+        """trade_date="invalid" must NOT return fresh=True (silent open)."""
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        (reports_dir / "auto_screening_20260101.json").write_text("{}", encoding="utf-8")
+
+        result = check_data_freshness(trade_date="invalid", reports_dir=reports_dir)
+        assert result["fresh"] is False, (
+            "trade_date='invalid' must fail-closed — non-date strings must not silently "
+            "open the freshness gate."
+        )
+        assert result["warning_count"] >= 1
+
+    def test_check_data_freshness_with_malformed_date_fails_closed(self, tmp_path: Path) -> None:
+        """trade_date="20261301" (month 13) must NOT return fresh=True."""
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        (reports_dir / "auto_screening_20260101.json").write_text("{}", encoding="utf-8")
+
+        result = check_data_freshness(trade_date="20261301", reports_dir=reports_dir)
+        assert result["fresh"] is False, (
+            "trade_date='20261301' (month 13) must fail-closed — invalid calendar date "
+            "must not silently open the gate."
+        )
+
+    def test_check_data_freshness_preserves_valid_date_behavior(self, tmp_path: Path) -> None:
+        """Regression guard: valid trade_date must still work correctly (no over-reach)."""
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        (reports_dir / "auto_screening_20260611.json").write_text("{}", encoding="utf-8")
+
+        result = check_data_freshness(trade_date="20260611", reports_dir=reports_dir)
+        assert result["fresh"] is True, (
+            "Valid trade_date with matching report must still return fresh=True — "
+            "the loop-92 fix must not over-reach into valid inputs."
+        )
+
+    def test_check_report_freshness_internal_with_empty_trade_date(self, tmp_path: Path) -> None:
+        """Defense-in-depth: _check_report_freshness itself must validate trade_date."""
+        from src.screening.data_freshness_guard import _check_report_freshness
+
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        (reports_dir / "auto_screening_20260101.json").write_text("{}", encoding="utf-8")
+
+        # Internal function must not crash on None and must not return fresh=True on ""
+        result = _check_report_freshness("", reports_dir)
+        assert result.get("fresh") is False, (
+            "_check_report_freshness('') must fail-closed at the function level, "
+            "not just at check_data_freshness level (defense-in-depth)."
+        )
+
+
 class TestApplyFreshnessConfidencePenalty:
     def test_no_penalty_when_fresh(self) -> None:
         recs = [{"ticker": "000001", "confidence": 85}]

@@ -69,10 +69,48 @@ def check_data_freshness(
 
     Returns:
         新鲜度报告 dict, 含 ``fresh`` (bool), ``warnings`` (list), ``summary`` (str)
+
+    Loop 92 (autodev): fail-closed on invalid trade_date. Previously, None / "" /
+    "invalid" / malformed dates silently returned fresh=True because the glob
+    pattern ``auto_screening_{date_compact}*.json`` degenerated to a wildcard
+    matching any report — same disease class as loop 7 (G) permanent false
+    fresh-positive. Upstream guards exist but are not comprehensive
+    (report.get("date") can return ""; --trade-date "" can be passed).
     """
     normalized_date = _normalize_date(trade_date)
     warnings: list[dict[str, Any]] = []
     all_fresh = True
+
+    # Loop 92: fail-closed on invalid trade_date — defense-in-depth even when
+    # upstream guards exist. An invalid trade_date makes every downstream
+    # comparison meaningless (cache stale_days, report freshness), so the
+    # honest answer is "cannot verify freshness" (conservative not-fresh),
+    # NOT silent fresh=True.
+    if not _is_valid_normalized_date(normalized_date):
+        all_fresh = False
+        warnings.append(
+            {
+                "source": "trade_date",
+                "label": "交易日期",
+                "latest_date": "invalid",
+                "stale_days": None,
+                "max_stale_days": 0,
+                "severity": "HIGH",
+                "message": (
+                    f"trade_date={trade_date!r} is not a valid YYYYMMDD / YYYY-MM-DD date; "
+                    "freshness gate cannot verify — fail-closed (conservative not-fresh). "
+                    "Pass a valid trade_date to evaluate cache/report freshness."
+                ),
+            }
+        )
+        summary = _render_freshness_summary(all_fresh, warnings)
+        return {
+            "fresh": all_fresh,
+            "trade_date": normalized_date,
+            "warnings": warnings,
+            "warning_count": len(warnings),
+            "summary": summary,
+        }
 
     # Check cache freshness
     cache_freshness = _check_cache_freshness(normalized_date, cache_path)
@@ -210,6 +248,22 @@ def _normalize_date(date_str: str) -> str:
     return str(date_str or "")
 
 
+def _is_valid_normalized_date(normalized_date: str) -> bool:
+    """Loop 92: validate that a normalized date is a real calendar date.
+
+    Returns True only for non-empty YYYY-MM-DD strings that parse to a valid
+    calendar date. Used by check_data_freshness to fail-closed on invalid
+    trade_date input (None / "" / "invalid" / "20261301" month 13 etc.).
+    """
+    if not normalized_date:
+        return False
+    try:
+        datetime.strptime(normalized_date, "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
+
+
 def _extract_latest_date_from_keys(
     conn: Any,
     key_pattern: str,
@@ -335,8 +389,33 @@ def _check_cache_freshness(
 
 
 def _check_report_freshness(trade_date: str, reports_dir: Path) -> dict[str, Any]:
-    """Check if a report exists for the trade date."""
-    date_compact = trade_date.replace("-", "")
+    """Check if a report exists for the trade date.
+
+    Loop 92 (autodev): defense-in-depth — validate trade_date at the function
+    boundary. Even though check_data_freshness now fail-closes on invalid
+    trade_date, this function is also called directly in tests and could be
+    called by future code paths. An invalid trade_date previously caused the
+    glob pattern ``auto_screening_{date_compact}*.json`` to degenerate to a
+    wildcard matching ANY report, producing false fresh=True.
+    """
+    normalized = _normalize_date(trade_date)
+    if not _is_valid_normalized_date(normalized):
+        return {
+            "fresh": False,
+            "warning": {
+                "source": "report_file",
+                "label": "选股报告",
+                "latest_date": "invalid",
+                "stale_days": None,
+                "max_stale_days": 1,
+                "severity": "HIGH",
+                "message": (
+                    f"trade_date={trade_date!r} is not a valid date; "
+                    "cannot verify report freshness — fail-closed."
+                ),
+            },
+        }
+    date_compact = normalized.replace("-", "")
     candidates = list(reports_dir.glob(f"auto_screening_{date_compact}*.json"))
     if candidates:
         return {"fresh": True}
@@ -358,7 +437,7 @@ def _check_report_freshness(trade_date: str, reports_dir: Path) -> dict[str, Any
     latest_date = latest_name.replace("auto_screening_", "")[:8]
     if len(latest_date) == 8 and latest_date.isdigit():
         latest_formatted = f"{latest_date[:4]}-{latest_date[4:6]}-{latest_date[6:8]}"
-        stale_days = _days_between(latest_formatted, trade_date)
+        stale_days = _days_between(latest_formatted, normalized)
         return {
             "fresh": stale_days <= 1,
             "warning": {
