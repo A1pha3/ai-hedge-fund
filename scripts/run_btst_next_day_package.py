@@ -74,17 +74,56 @@ def _render_one_pager(summary_data: dict[str, Any]) -> str:
 
     Only reads fields already in the summary; never reads raw artifacts directly.
     Respects the decision_phase — omits fields not available at the current phase.
+
+    Loop 91 (autodev): surfaces computed-but-never-read honesty fields —
+    summary_status, manual_intervention, source_conflicts, missing_required
+    artifacts, bridge.failure_reasons, failed run_steps, optimization fallback.
+    Each optional section renders only when non-empty to keep the output clean.
     """
     phase = str(summary_data.get("decision_phase") or "post_close_plan")
+    summary_status = str(summary_data.get("summary_status") or "complete")
     lines = [
         f"# BTST ONE-PAGER — {summary_data.get('signal_date', 'n/a')}",
         "",
         f"- **决策阶段**: `{phase}`",
+        f"- **Summary Status**: `{summary_status}`",
         f"- **数据截止**: `{summary_data.get('data_as_of', 'n/a')}`",
         f"- **生成时间**: `{summary_data.get('generated_at', 'n/a')}`",
         f"- **Decision ID**: `{summary_data.get('decision_id', 'n/a')}`",
         "",
     ]
+
+    # Manual intervention (only when required — additive disclosure)
+    mi = dict(summary_data.get("manual_intervention") or {})
+    if mi.get("required"):
+        reasons = list(mi.get("reasons") or [])
+        lines.extend(
+            [
+                "## ⚠️ 人工介入 (manual_intervention)",
+                "",
+                f"- required: `True`",
+            ]
+        )
+        if reasons:
+            lines.append("- reasons:")
+            for reason in reasons:
+                lines.append(f"  - {reason}")
+        lines.append("")
+
+    # Source conflicts (only when present)
+    conflicts = list(summary_data.get("source_conflicts") or [])
+    if conflicts:
+        lines.extend(["## ⚠️ 源冲突 (source_conflicts)", ""])
+        for idx, conflict in enumerate(conflicts, start=1):
+            c = dict(conflict)
+            lines.append(f"- conflict #{idx}:")
+            lines.append(f"  - field: `{c.get('field', 'n/a')}`")
+            lines.append(f"  - artifact_a: `{c.get('artifact_a', 'n/a')}`")
+            lines.append(f"  - value_a: `{c.get('value_a')}`")
+            lines.append(f"  - artifact_b: `{c.get('artifact_b', 'n/a')}`")
+            lines.append(f"  - value_b: `{c.get('value_b')}`")
+            lines.append(f"  - resolution: `{c.get('resolution', 'unresolved')}`")
+        lines.append("")
 
     # Market section
     market = dict(summary_data.get("market") or {})
@@ -173,6 +212,71 @@ def _render_one_pager(summary_data: dict[str, Any]) -> str:
     if not pc.get("effective_decision_diff"):
         lines.append("- 当前 profile 未改变真实候选或执行语义。")
     lines.append("")
+
+    # Optimization resolution (only when not default unoptimized)
+    opt = dict(summary_data.get("optimization_resolution") or {})
+    opt_status = str(opt.get("status") or "unoptimized")
+    opt_fallback = opt.get("fallback_reason")
+    if opt_status != "unoptimized" or opt_fallback:
+        lines.extend(
+            [
+                "## 优化状态 (optimization_resolution)",
+                "",
+                f"- status: `{opt_status}`",
+            ]
+        )
+        if opt.get("manifest_ref"):
+            lines.append(f"- manifest_ref: `{opt.get('manifest_ref')}`")
+        if opt_fallback:
+            lines.append(f"- fallback_reason: {opt_fallback}")
+        lines.append("")
+
+    # Missing required artifacts (only when present)
+    artifacts = dict(summary_data.get("artifacts") or {})
+    missing_required = list(artifacts.get("missing_required") or [])
+    missing_optional = list(artifacts.get("missing_optional") or [])
+    if missing_required or missing_optional:
+        lines.extend(["## ⚠️ 产物缺失 (artifacts)", ""])
+        if missing_required:
+            lines.append("- missing_required:")
+            for art in missing_required:
+                lines.append(f"  - {art}")
+        if missing_optional:
+            lines.append("- missing_optional:")
+            for art in missing_optional:
+                lines.append(f"  - {art}")
+        lines.append("")
+
+    # Bridge failures (only when failure_reasons or missing_targets present)
+    bridge = dict(summary_data.get("bridge") or {})
+    bridge_failures = list(bridge.get("failure_reasons") or [])
+    bridge_missing = list(bridge.get("missing_targets") or [])
+    if bridge_failures or bridge_missing:
+        lines.extend(["## ⚠️ 桥接失败 (bridge)", ""])
+        if bridge_failures:
+            lines.append("- failure_reasons:")
+            for reason in bridge_failures:
+                lines.append(f"  - {reason}")
+        if bridge_missing:
+            lines.append("- missing_targets:")
+            for target in bridge_missing:
+                lines.append(f"  - {target}")
+        lines.append("")
+
+    # Failed run steps (only when any failed — noise reduction for all-success)
+    run_steps = list(summary_data.get("run_steps") or [])
+    failed_steps = [s for s in run_steps if str(s.get("status")) == "failed"]
+    if failed_steps:
+        lines.extend(["## ⚠️ 失败步骤 (run_steps)", ""])
+        for step in failed_steps:
+            s = dict(step)
+            lines.append(f"- `{s.get('step_name', 'n/a')}`:")
+            lines.append(f"  - status: `{s.get('status', 'failed')}`")
+            if s.get("failure_reason"):
+                lines.append(f"  - failure_reason: {s.get('failure_reason')}")
+            if s.get("duration_seconds") is not None:
+                lines.append(f"  - duration_seconds: `{s.get('duration_seconds')}`")
+        lines.append("")
 
     return "\n".join(lines) + "\n"
 

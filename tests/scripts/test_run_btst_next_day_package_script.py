@@ -105,6 +105,159 @@ class TestOnePager:
         assert "证据不足" in md
 
 
+class TestOnePagerHonestyDisclosure:
+    """Loop 91 (autodev): surface computed-but-never-read honesty fields.
+
+    The operator_summary.json schema captures summary_status, manual_intervention,
+    source_conflicts, artifacts.missing_required, bridge.failure_reasons,
+    optimization_resolution.fallback_reason, and failed run_steps — but the
+    ONE-PAGER renderer dropped them all. Operator reading the markdown had no
+    visibility into degraded status, conflicts, missing required artifacts,
+    bridge failures, optimization fallbacks, or failed steps.
+    """
+
+    def test_one_pager_renders_summary_status_complete(self) -> None:
+        """summary_status must be visible at the top of the one-pager."""
+        summary = _minimal_summary()
+        summary["summary_status"] = "complete"
+        md = _render_one_pager(summary)
+        assert "complete" in md.lower()
+
+    def test_one_pager_renders_summary_status_degraded(self) -> None:
+        """When summary_status=degraded, surface it prominently."""
+        summary = _minimal_summary()
+        summary["summary_status"] = "degraded"
+        md = _render_one_pager(summary)
+        assert "degraded" in md.lower()
+
+    def test_one_pager_renders_manual_intervention_when_required(self) -> None:
+        """When manual_intervention.required=True, surface reasons."""
+        summary = _minimal_summary()
+        summary["manual_intervention"] = {
+            "required": True,
+            "reasons": ["doc bundle failed: RuntimeError('boom')"],
+        }
+        md = _render_one_pager(summary)
+        assert "manual_intervention" in md.lower() or "人工介入" in md
+        assert "doc bundle failed" in md
+
+    def test_one_pager_omits_manual_intervention_when_not_required(self) -> None:
+        """When manual_intervention.required=False, do not render the section."""
+        summary = _minimal_summary()
+        summary["manual_intervention"] = {"required": False, "reasons": []}
+        md = _render_one_pager(summary)
+        assert "人工介入" not in md
+        assert "manual_intervention" not in md.lower()
+
+    def test_one_pager_renders_source_conflicts_when_present(self) -> None:
+        """When source_conflicts has entries, surface them."""
+        summary = _minimal_summary()
+        summary["source_conflicts"] = [
+            {
+                "field": "formal_selected_tickers",
+                "artifact_a": "doc_bundle",
+                "value_a": ["002463"],
+                "artifact_b": "early_runner",
+                "value_b": ["002463", "600519"],
+                "resolution": "unresolved",
+            }
+        ]
+        md = _render_one_pager(summary)
+        assert "source_conflict" in md.lower() or "源冲突" in md
+        assert "formal_selected_tickers" in md
+        assert "doc_bundle" in md
+        assert "early_runner" in md
+
+    def test_one_pager_omits_source_conflicts_when_empty(self) -> None:
+        """When source_conflicts is empty, do not render the section."""
+        summary = _minimal_summary()
+        summary["source_conflicts"] = []
+        md = _render_one_pager(summary)
+        assert "源冲突" not in md
+        assert "source_conflict" not in md.lower()
+
+    def test_one_pager_renders_missing_required_artifacts(self) -> None:
+        """When artifacts.missing_required is non-empty, surface it."""
+        summary = _minimal_summary()
+        summary["artifacts"] = {
+            "required": ["doc_bundle", "early_runner"],
+            "optional": [],
+            "missing_required": ["early_runner"],
+            "missing_optional": [],
+        }
+        md = _render_one_pager(summary)
+        assert "missing_required" in md.lower() or "缺失必要产物" in md
+        assert "early_runner" in md
+
+    def test_one_pager_renders_bridge_failure_reasons(self) -> None:
+        """When bridge.failure_reasons is non-empty, surface it."""
+        summary = _minimal_summary()
+        summary["bridge"] = {
+            "updated_files": [],
+            "unchanged_files": [],
+            "missing_targets": ["reports/daily.md"],
+            "failure_reasons": ["target file is read-only"],
+        }
+        md = _render_one_pager(summary)
+        assert "bridge" in md.lower() or "桥接" in md
+        assert "target file is read-only" in md
+
+    def test_one_pager_renders_failed_run_steps(self) -> None:
+        """When run_steps has failed entries, surface them."""
+        summary = _minimal_summary()
+        summary["run_steps"] = [
+            {
+                "step_name": "generate_doc_bundle",
+                "status": "failed",
+                "failure_reason": "RuntimeError: boom",
+                "duration_seconds": 1.2,
+            },
+            {
+                "step_name": "render_one_pager",
+                "status": "success",
+                "duration_seconds": 0.1,
+            },
+        ]
+        md = _render_one_pager(summary)
+        assert "generate_doc_bundle" in md
+        assert "failed" in md.lower()
+        assert "RuntimeError: boom" in md
+
+    def test_one_pager_omits_run_steps_when_all_succeeded(self) -> None:
+        """When all run_steps succeeded, do not render the section (noise reduction)."""
+        summary = _minimal_summary()
+        summary["run_steps"] = [
+            {"step_name": "step_a", "status": "success"},
+            {"step_name": "step_b", "status": "success"},
+        ]
+        md = _render_one_pager(summary)
+        # All-success run_steps should not clutter the one-pager.
+        assert "step_a" not in md
+
+    def test_one_pager_renders_optimization_fallback_reason(self) -> None:
+        """When optimization_resolution.fallback_reason is set, surface it."""
+        summary = _minimal_summary()
+        summary["optimization_resolution"] = {
+            "status": "fallback",
+            "manifest_ref": None,
+            "fallback_reason": "optimizer timeout after 30s",
+        }
+        md = _render_one_pager(summary)
+        assert "optimizer timeout" in md
+
+    def test_one_pager_omits_optimization_section_when_unoptimized(self) -> None:
+        """When optimization_resolution.status=unoptimized (default), do not render."""
+        summary = _minimal_summary()
+        summary["optimization_resolution"] = {
+            "status": "unoptimized",
+            "manifest_ref": None,
+            "fallback_reason": None,
+        }
+        md = _render_one_pager(summary)
+        assert "optimization" not in md.lower()
+        assert "优化" not in md
+
+
 class TestWrapperFailedSummary:
     def test_early_exit_writes_failed_summary(self, tmp_path: Path) -> None:
         """When generate_btst_doc_bundle raises, a failed summary is still written."""
