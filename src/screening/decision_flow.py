@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,37 @@ from src.utils.display import Fore, Style
 # ---------------------------------------------------------------------------
 # Core decision flow
 # ---------------------------------------------------------------------------
+
+
+def _check_report_age_vs_today(report_date_str: str) -> str:
+    """autodev-8 / disease J: warn if the report is stale relative to TODAY.
+
+    ``check_data_freshness`` (data_freshness_guard) uses the report's own date
+    as ``trade_date``, so its report_file freshness check compares the report
+    file against itself and always returns fresh=True. This helper closes that
+    gap by checking the report's age against the operator's actual "today"
+    (calendar-day approximation). Mirrors ``top_picks._check_report_freshness``
+    but returns only the warning line (empty when fresh), so the caller can
+    print it inline with the freshness summary.
+
+    A report is flagged when it is more than 3 calendar days old — a coarse
+    proxy that avoids false positives on weekends/holidays without requiring
+    the trade-calendar lookup that the top_picks variant uses.
+    """
+    if not report_date_str or len(report_date_str) != 8 or not report_date_str.isdigit():
+        return ""
+    try:
+        report_dt = datetime.strptime(report_date_str, "%Y%m%d")
+    except ValueError:
+        return ""
+    age_days = (datetime.now() - report_dt).days
+    if age_days > 3:
+        formatted = report_dt.strftime("%Y-%m-%d")
+        return (
+            f"{Fore.YELLOW}⚠ 报告日期 {formatted} 已过期 {age_days} 天 "
+            f"(相对今天, 非报告生成时数据新鲜度); 建议运行 --auto 更新后再决策{Style.RESET_ALL}"
+        )
+    return ""
 
 
 def run_decision_flow(
@@ -98,6 +129,16 @@ def run_decision_flow(
 
     freshness = check_data_freshness(trade_date=trade_date, reports_dir=search_dir)
     print(f"  {_render_freshness_summary(freshness['fresh'], freshness['warnings'])}")
+
+    # autodev-8 / disease J: check_data_freshness uses the report's own date as
+    # trade_date, so its report_file check compares the report against itself
+    # and ALWAYS returns fresh=True. The operator running the flow days after
+    # the report was generated gets no warning that the report is stale relative
+    # to today. --top-picks handles this correctly (datetime.now() vs report_date);
+    # mirror that here so the operator is warned when acting on a stale report.
+    report_age_warning = _check_report_age_vs_today(trade_date)
+    if report_age_warning:
+        print(f"  {report_age_warning}")
     flow_result["freshness"] = freshness
 
     # C241 (R96/R118 family drain): apply_freshness_confidence_penalty was

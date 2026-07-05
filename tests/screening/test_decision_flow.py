@@ -196,3 +196,37 @@ class TestDecisionFlow:
         top_investable_lines = [line for line in captured.out.splitlines() if "Top investable" in line]
         assert top_investable_lines, "Top investable line must be present"
         assert "少样本" not in top_investable_lines[0]
+
+    def test_stale_report_warns_operator_relative_to_today(self, tmp_path: Path, capsys) -> None:
+        """autodev-8 / disease J: --decision-flow checks report freshness using
+        the report's own date as trade_date (report['date']), so
+        data_freshness_guard._check_report_freshness compares the report file
+        against itself and ALWAYS returns fresh=True — even when the operator
+        runs the flow days after the report was generated. The operator gets no
+        warning that the report is stale. --top-picks handles this correctly
+        (uses datetime.now() vs report_date); --decision_flow must do the same.
+
+        This test seeds a report dated far in the past (2026-01-01), so relative
+        to today it is unambiguously stale. The flow must warn the operator.
+        """
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        # Report dated 2026-01-01 — months old, unambiguously stale vs today.
+        old_report = _make_report("20260101", [_make_rec("000001", "A", 0.8)])
+        (reports_dir / "auto_screening_20260101.json").write_text(json.dumps(old_report), encoding="utf-8")
+
+        run_decision_flow(top_n=10, reports_dir=reports_dir)
+
+        captured = capsys.readouterr()
+        # The flow must warn the operator that the report is stale relative to
+        # today (not silently treat it as fresh because trade_date == report_date).
+        # Match the actual warning phrasing: "已过期 N 天" with a "相对今天" qualifier
+        # (distinct from the unavailable-source "非过期" note which contains "过期"
+        # as a substring but means the opposite).
+        out = captured.out
+        has_stale_warning = "已过期" in out and "相对今天" in out
+        assert has_stale_warning, (
+            "decision_flow must warn when the report is stale relative to today, not "
+            "silently report fresh=True because it uses the report's own date as trade_date (disease J). "
+            "Report dated 2026-01-01 is months old but flow reported PASS."
+        )
