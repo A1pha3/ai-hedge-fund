@@ -69,8 +69,13 @@ def _load_latest_report(reports_dir: Path) -> tuple[Path, dict[str, Any]] | None
         return None
 
 
-def _compute_top_score_stats(recs: list[dict[str, Any]]) -> dict[str, float]:
-    """计算 Top N score_b 的统计指标。"""
+def _compute_top_score_stats(recs: list[dict[str, Any]]) -> dict[str, Any]:
+    """计算 Top N score_b 的统计指标。
+
+    Return type is dict[str, Any] because ``min_rec`` is a rec dict (or None
+    when recs is empty), not a float — the previous dict[str, float] annotation
+    caused mypy attr-defined errors on the .get() calls in the caller.
+    """
     if not recs:
         return {"min": 0.0, "median": 0.0, "max": 0.0, "min_rec": None}
     # R76 (R73 同族): score_b 在生产里通常是 float, 但部分推荐 (例如只进了
@@ -201,38 +206,45 @@ def _format_counterfactual_block(ticker: str, recs: list[dict[str, Any]]) -> str
     """格式化「反事实模拟」区块。
 
     必须覆盖至少 3 个策略 (验收标准)。由于无 per-ticker 重跑数据, 采用
-    方向性提示: 对每个策略给出 "如果 X 变化, Y 评分预估变化" 的定性估计。
+    方向性提示: 对每个策略给出 "如果 X 变化, Y 评分方向" 的定性估计。
+
+    Loop 92 (autodev): drained stale-hardcoded-numbers-in-display (loop 55-56
+    _REGIME_ADVICE 同类疾病). 原 cf_lines hardcoded "+0.06 ~ +0.10" /
+    "+0.04 ~ +0.07" / "+0.05 ~ +0.09" / "+0.07 ~ +0.12" 作为 per-ticker 估值呈现,
+    原 disclaimer "本版本仅给趋势" 不准确 (实际覆盖 4 个策略).
+    Fix: 移除具体 ±数字, 保留定性场景描述与方向提示, disclaimer 明确披露
+    所有预估均为定性、未基于该票实际数据计算.
     """
     lines: list[str] = []
     lines.append(f"{Fore.CYAN}区块 4: 反事实模拟 (Counterfactual){Style.RESET_ALL}")
     lines.append(f"  假设 {ticker} 当前未达 Top {len(recs)} 门槛, 以下为方向性提示")
-    lines.append("  (基于策略单调性, 完整反事实需重跑 score_batch, 本版本仅给趋势):")
+    lines.append("  (本区块为定性提示, 未基于该票实际数据计算; 完整反事实需重跑 score_batch)")
     lines.append("")
 
-    # 对每个策略给出 1 行提示
+    # 对每个策略给出 1 行定性提示 (loop 92: 移除 hardcoded ±数字)
     cf_lines: list[tuple[str, str, str, str]] = [
         (
             "trend",
             "再涨 5% (close × 1.05)",
-            "trend 评分预估 +0.06 ~ +0.10",
-            "若 score_b 提升 +0.08, 名次可前进 3-5 名",
+            "trend 评分方向 ↑ (具体幅度需重跑 score_batch)",
+            "若 score_b 提升, 名次可前进 (具体名次变动需重跑)",
         ),
         (
             "mean_reversion",
             "再跌 3% (close × 0.97)",
-            "mean_reversion 评分预估 +0.04 ~ +0.07",
+            "mean_reversion 评分方向 ↑ (具体幅度需重跑)",
             "RSI 越接近超卖, 均值回归信号越强",
         ),
         (
             "fundamental",
             "财报超预期 (ROE +2pct)",
-            "fundamental 评分预估 +0.05 ~ +0.09",
+            "fundamental 评分方向 ↑ (具体幅度需重跑)",
             "需等到下个财报披露窗口, 短期难以触发",
         ),
         (
             "event_sentiment",
             "出现重大利好 (公告/重组/中标)",
-            "event_sentiment 评分预估 +0.07 ~ +0.12",
+            "event_sentiment 评分方向 ↑ (具体幅度需重跑)",
             "事件驱动评分波动较大, 单事件可决定是否进 Top",
         ),
     ]

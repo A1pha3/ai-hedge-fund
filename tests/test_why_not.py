@@ -249,3 +249,91 @@ def test_already_recommended_state_has_disclaimer(tmp_path: Path, capsys) -> Non
     assert rc == 0
     assert "已被推荐" in captured.out
     assert "不构成任何投资建议" in captured.out
+
+
+# ── Loop 92 (autodev): drain stale-hardcoded-numbers-in-display ────────────
+# Disease class: same as loop 55-56 _REGIME_ADVICE — counterfactual block
+# presented hardcoded constants ("+0.06 ~ +0.10" etc.) as if they were
+# per-ticker computed estimates. The line 209 disclaimer "本版本仅给趋势"
+# was inaccurate (all 4 strategies shown) and the specific numbers looked
+# like real per-ticker estimates. Fix pattern (loop 55-56): make qualitative.
+
+
+class TestCounterfactualHardcodedNumbersDrain:
+    """Loop 92 (autodev): --why-not 区块 4 反事实模拟不得展示 stale-hardcoded-numbers。
+
+    Disease: ``_format_counterfactual_block`` hardcoded 4 个策略的 ±score 估值
+    (e.g. "trend 评分预估 +0.06 ~ +0.10", "若 score_b 提升 +0.08, 名次可前进 3-5 名")
+    作为 per-ticker 计算结果呈现。原 line 209 disclaimer "本版本仅给趋势" 不准确
+    (实际覆盖 4 个策略), 且具体数字看起来像真实 per-ticker 估值。
+    """
+
+    def test_counterfactual_does_not_present_hardcoded_score_deltas(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """区块 4 不得输出 hardcoded 估值常数作为 per-ticker 计算结果。"""
+        reports_dir = tmp_path / "data" / "reports"
+        _write_report(reports_dir)
+
+        rc = run_why_not("600777", reports_dir=reports_dir)
+        captured = capsys.readouterr()
+
+        assert rc == 0
+        # 这些是原 hardcoded 估值常数, 不得作为「计算结果」呈现
+        # (loop 55-56 _REGIME_ADVICE 同类疾病: 移除具体数字, 保留定性方向)
+        forbidden_hardcoded_deltas = [
+            "+0.06", "+0.10",   # trend
+            "+0.04", "+0.07",   # mean_reversion
+            "+0.05", "+0.09",   # fundamental
+            "+0.08",            # score_b lift
+            "+0.12",            # event_sentiment
+        ]
+        for delta in forbidden_hardcoded_deltas:
+            assert delta not in captured.out, (
+                f"区块 4 不得展示 hardcoded 估值常数 {delta} 作为 per-ticker 计算: "
+                f"loop 55-56 stale-hardcoded-numbers 同类疾病"
+            )
+
+    def test_counterfactual_disclaimer_accurate_about_illustrative(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """区块 4 disclaimer 必须准确说明: 数字未基于该票实际数据计算。
+
+        原 disclaimer "本版本仅给趋势" 不准确 (实际覆盖 4 个策略), 且没有说明
+        所有数字均为定性/示例而非 per-ticker 估值。
+        """
+        reports_dir = tmp_path / "data" / "reports"
+        _write_report(reports_dir)
+
+        rc = run_why_not("600777", reports_dir=reports_dir)
+        captured = capsys.readouterr()
+
+        assert rc == 0
+        # 必须明确说明未基于该票实际数据计算 (qualitative / illustrative)
+        # 接受任一明确措辞: "定性" / "示例" / "未基于该票" / "方向性" / "需重跑"
+        qualitative_keywords = ["定性", "示例", "未基于该票", "方向性", "需重跑"]
+        assert any(kw in captured.out for kw in qualitative_keywords), (
+            "区块 4 必须明确披露其内容为定性/示例/未基于该票实际计算, "
+            "而非 per-ticker 估值"
+        )
+
+    def test_counterfactual_keeps_at_least_3_strategy_scenarios(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """drain 后区块 4 仍需覆盖至少 3 个策略的场景描述 (保留定性方向)。"""
+        reports_dir = tmp_path / "data" / "reports"
+        _write_report(reports_dir)
+
+        rc = run_why_not("600777", reports_dir=reports_dir)
+        captured = capsys.readouterr()
+
+        assert rc == 0
+        # 区块 4 标题必须保留
+        assert "区块 4: 反事实模拟" in captured.out
+        # 至少 3 个策略场景必须保留 (再涨 5% / RSI / ROE / 事件驱动)
+        scenario_keywords = ["再涨 5%", "RSI", "ROE", "事件驱动", "利好"]
+        found_scenarios = [s for s in scenario_keywords if s in captured.out]
+        assert len(found_scenarios) >= 3, (
+            f"drain 后仍需保留至少 3 个策略的定性场景描述, 实际 {len(found_scenarios)}: "
+            f"{found_scenarios}"
+        )
