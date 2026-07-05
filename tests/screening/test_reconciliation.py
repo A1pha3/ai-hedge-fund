@@ -622,3 +622,205 @@ class TestReconcileIsotonicCalibration:
         assert len(matched_rows) >= 20
         for row in matched_rows:
             assert row.predicted_return_isotonic is not None
+
+
+# ---------------------------------------------------------------------------
+# c318 / autodev-loop-90: median-direction-ignored in --reconcile
+# (autodev-4b catalog subclass 3: --reconcile keys ✓/✗ on mean direction
+#  only though median is the robust center surfaced per-row by c287. When
+#  outlier-inflation makes mean positive but median negative (c287 dogfood:
+#  低 bucket mean +5.8% vs median -2.35%), the operator sees a ✓ on a row
+#  where the robust center was actually wrong. Fix: surface median-direction
+#  ✓/✗ as a parallel column + aggregate 方向准确率(中位), preserving the
+#  existing mean-keyed ✓/✗ contract.)
+# ---------------------------------------------------------------------------
+
+
+class TestReconcileMedianDirection:
+    """c318: reconcile surfaces median-direction alongside mean-direction.
+
+    The per-row ✓/✗ (directional_match) and aggregate 方向准确率 are mean-keyed.
+    Median is the robust center c287 surfaced per-row; its direction is silently
+    ignored. This class locks the median-direction parallel circuit.
+    """
+
+    def test_directional_match_median_field_default_none(self) -> None:
+        """ReconciliationRow.directional_match_median exists and defaults to None."""
+        row = ReconciliationRow(
+            ticker="000001",
+            buy_date="20260101",
+            predicted_return=5.0,
+            actual_return=6.7,
+            error=1.7,
+            directional_match=True,
+        )
+        # default None — parallel to directional_match but independent
+        assert hasattr(row, "directional_match_median")
+        assert row.directional_match_median is None
+
+    def test_directional_match_median_disagrees_with_mean(self, tmp_path: Path) -> None:
+        """Mean predicts up (outlier-inflated), median predicts down, actual up.
+
+        C287 dogfood case: 低 bucket mean +5.8% (outlier-pulled) vs median -2.35%.
+        With actual positive, mean-direction = ✓ but median-direction = ✗.
+        The disagreement is exactly what the operator needs to see.
+        """
+        # score_b=0.45 → 低 bucket (<0.5)
+        _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.45}])
+        # tracking: [30.0, -3.0, -3.0] → mean=+8.0 (outlier-inflated), median=-3.0
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000095", "recommended_date": "20251201", "recommendation_score": 0.40, "next_30day_return": 30.0},
+                {"ticker": "000096", "recommended_date": "20251202", "recommendation_score": 0.40, "next_30day_return": -3.0},
+                {"ticker": "000097", "recommended_date": "20251203", "recommendation_score": 0.40, "next_30day_return": -3.0},
+            ],
+        )
+        # actual = 11.0/10.0 - 1 = +10.0% (positive)
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
+            ],
+        )
+        report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+        row = report.rows[0]
+        # sanity: mean positive, median negative (the disagreement precondition)
+        assert row.predicted_return is not None and row.predicted_return > 0, "fixture must produce positive mean"
+        assert row.predicted_return_median is not None and row.predicted_return_median < 0, "fixture must produce negative median"
+        # the contract under test: mean says ✓, median says ✗
+        assert row.directional_match is True, "mean positive + actual positive → ✓"
+        assert row.directional_match_median is False, "median negative + actual positive → ✗"
+
+    def test_directional_match_median_none_when_predicted_median_none(self, tmp_path: Path) -> None:
+        """When predicted_median is None (no bucket samples), median-direction is None.
+
+        Parallel to directional_match=None semantics. Operator sees '—' for both
+        centers when the bucket is empty.
+        """
+        # score_b=0.75 → 中高 bucket, but tracking has no records in that bucket
+        _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}])
+        _seed_tracking(
+            tmp_path,
+            [
+                # tracking in 中低 (0.5-0.6), NOT 中高 → 中高 bucket empty
+                {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.55, "next_30day_return": 5.0},
+            ],
+        )
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
+            ],
+        )
+        report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+        row = report.rows[0]
+        # precondition: bucket empty → both predictions None
+        assert row.predicted_return is None
+        assert row.predicted_return_median is None
+        # contract: median-direction also None (parallel to mean-direction None)
+        assert row.directional_match is None
+        assert row.directional_match_median is None
+
+    def test_directional_accuracy_median_aggregate(self, tmp_path: Path) -> None:
+        """ReconciliationReport.directional_accuracy_median computed alongside mean.
+
+        2 trades: one where mean+median agree with actual, one where mean ✓ but
+        median ✗ (outlier case). mean directional_accuracy=1.0, median=0.5.
+        """
+        # Trade 1: 中高 bucket, both mean and median positive, actual positive
+        _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}, {"ticker": "000002", "score_b": 0.45}])
+        # bucket 中高: single record → mean=median=+5.0 (no outlier)
+        # bucket 低: [30, -3, -3] → mean=+8.0 (outlier), median=-3.0
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
+                {"ticker": "000095", "recommended_date": "20251201", "recommendation_score": 0.40, "next_30day_return": 30.0},
+                {"ticker": "000096", "recommended_date": "20251202", "recommendation_score": 0.40, "next_30day_return": -3.0},
+                {"ticker": "000097", "recommended_date": "20251203", "recommendation_score": 0.40, "next_30day_return": -3.0},
+            ],
+        )
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                # trade 1: 中高, predicted +5%, actual +6.7% → mean ✓, median ✓
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.67},
+                # trade 2: 低, predicted mean +8% / median -3%, actual +10% → mean ✓, median ✗
+                {"ticker": "000002", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
+            ],
+        )
+        report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+        assert report.matched_count == 2
+        # mean: both ✓ → 1.0
+        assert report.directional_accuracy == pytest.approx(1.0, abs=1e-3)
+        # median: trade1 ✓ (5>0 == 6.7>0), trade2 ✗ (-3>0 != 10>0) → 0.5
+        assert report.directional_accuracy_median == pytest.approx(0.5, abs=1e-3)
+
+    def test_render_per_row_median_direction_column(self, tmp_path: Path) -> None:
+        """render_reconciliation surfaces median ✓/✗ per row, distinct from mean.
+
+        Uses the disagreement fixture (mean ✓, median ✗) so the only way both
+        symbols appear distinctly is genuine median-direction render.
+        """
+        _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.45}])
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000095", "recommended_date": "20251201", "recommendation_score": 0.40, "next_30day_return": 30.0},
+                {"ticker": "000096", "recommended_date": "20251202", "recommendation_score": 0.40, "next_30day_return": -3.0},
+                {"ticker": "000097", "recommended_date": "20251203", "recommendation_score": 0.40, "next_30day_return": -3.0},
+            ],
+        )
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
+            ],
+        )
+        report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+        out = render_reconciliation(report)
+        # strip ANSI for stable assertions
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", out)
+        # header labels both columns
+        assert "方向" in clean, "mean-direction header must remain (backward compat)"
+        assert "方向(中位)" in clean, f"median-direction header must render; got:\n{clean}"
+        # data row must contain BOTH ✓ (mean) and ✗ (median) — the disagreement
+        data_rows = [ln for ln in clean.splitlines() if ln.strip().startswith("000001") and "聚合" not in ln]
+        assert data_rows, f"000001 data row missing; got:\n{clean}"
+        data_row = data_rows[0]
+        assert "✓" in data_row, f"mean ✓ must render in data row; got: {data_row!r}"
+        assert "✗" in data_row, f"median ✗ must render in data row (disagreement case); got: {data_row!r}"
+
+    def test_render_aggregate_median_direction_accuracy(self, tmp_path: Path) -> None:
+        """render聚合 line shows 方向准确率(中位)=X% alongside 方向准确率=Y%."""
+        _seed_report(tmp_path, "20260101", [{"ticker": "000001", "score_b": 0.75}, {"ticker": "000002", "score_b": 0.45}])
+        _seed_tracking(
+            tmp_path,
+            [
+                {"ticker": "000099", "recommended_date": "20251201", "recommendation_score": 0.72, "next_30day_return": 5.0},
+                {"ticker": "000095", "recommended_date": "20251201", "recommendation_score": 0.40, "next_30day_return": 30.0},
+                {"ticker": "000096", "recommended_date": "20251202", "recommendation_score": 0.40, "next_30day_return": -3.0},
+                {"ticker": "000097", "recommended_date": "20251203", "recommendation_score": 0.40, "next_30day_return": -3.0},
+            ],
+        )
+        trade_path = _write_trade_log(
+            tmp_path,
+            [
+                {"ticker": "000001", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 10.67},
+                {"ticker": "000002", "buy_date": "20260101", "buy_price": 10.0, "sell_date": "20260131", "sell_price": 11.0},
+            ],
+        )
+        report = compute_reconciliation(trade_log_path=trade_path, reports_dir=tmp_path)
+        out = render_reconciliation(report)
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", out)
+        # both aggregate stats must surface
+        assert "方向准确率=" in clean, f"mean 方向准确率 must render (backward compat); got:\n{clean}"
+        assert "方向准确率(中位)=" in clean, f"median 方向准确率(中位) must render; got:\n{clean}"
+        # sanity: mean=100% (both ✓), median=50% (one ✗)
+        assert "100%" in clean, "mean directional_accuracy should be 100% for this fixture"
+        assert "50%" in clean, "median directional_accuracy_median should be 50% for this fixture"

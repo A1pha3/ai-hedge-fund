@@ -53,6 +53,11 @@ class ReconciliationRow:
     actual_return: float = 0.0  # sell_price/buy_price - 1
     error: float | None = None  # actual - predicted; None when predicted is None
     directional_match: bool | None = None  # sign(predicted) == sign(actual); None when predicted None
+    #: c318/autodev-loop-90: median 方向匹配 (sign(predicted_median) == sign(actual)).
+    #: 与 directional_match 平行但独立 — 当 mean 被 outlier 拉高/拉低而 median 反向时,
+    #: 操作者能看到两个中心方向不一致 (例: 低 bucket mean +5.8% ✓ vs median -2.35% ✗).
+    #: None 当 predicted_median is None (无成熟 T+30 样本), 与 directional_match=None 语义对齐.
+    directional_match_median: bool | None = None
     #: NS-18/c286: 为什么本笔 unmatched (predicted=None). 区分两种原因让操作者能 self-audit:
     #:   "报告无该标的"      — buy_date 报告里找不到该 ticker (score_b lookup 返回 None)
     #:   "分桶无样本 (X桶)"  — ticker 找到但其 score_b 分桶在 calibration 里 0 mature 样本
@@ -76,7 +81,11 @@ class ReconciliationReport:
     #: R-5.C: 是否有足够样本做 isotonic 校准 (matched >= MIN_BUCKET_SAMPLES).
     #: False 时 mae_isotonic 保持 None, 渲染输出"证据不足"诚实标注.
     calibration_sufficient: bool = True
-    directional_accuracy: float | None = None  # 方向准确率 (仅 matched)
+    directional_accuracy: float | None = None  # 方向准确率 (仅 matched, mean-based)
+    #: c318/autodev-loop-90: median-based 方向准确率 (用 predicted_return_median 方向).
+    #: 与 directional_accuracy 平行 — 当两个中心方向准确率分歧时, 操作者能看到
+    #: outlier 对 mean 方向预测的虚高影响. None 当 matched_count=0.
+    directional_accuracy_median: float | None = None
     #: NS-22: 完整性警告 (如 unmatched>50% 提示 trade_log 列错位 / 日期未对齐 / 错报告目录)
     warnings: list[str] = field(default_factory=list)
 
@@ -280,6 +289,9 @@ def compute_reconciliation(
     # Delayed until after the loop so we can decide sufficiency once.
     iso_pairs: list[tuple[float, float]] = []
 
+    # c318: median-direction hits (parallel to mean-direction directional_hits)
+    directional_hits_median = 0
+
     for trade in trades:
         ticker = trade["ticker"]
         buy_date = trade["buy_date"]
@@ -320,6 +332,15 @@ def compute_reconciliation(
             dmatch = (predicted > 0) == (actual > 0)
             if dmatch:
                 directional_hits += 1
+            # c318: median-direction match (parallel to mean-direction dmatch).
+            # 仅当 predicted_median 有值才计算; 否则 None (与 directional_match=None
+            # 当 predicted=None 语义对齐). 当 mean 被 outlier 拉高/拉低而 median
+            # 反向时, dmatch_median 会与 dmatch 分歧 — 这是操作者需要看到的信号.
+            dmatch_median: bool | None = None
+            if predicted_median is not None:
+                dmatch_median = (predicted_median > 0) == (actual > 0)
+                if dmatch_median:
+                    directional_hits_median += 1
             rows.append(
                 ReconciliationRow(
                     ticker=ticker,
@@ -329,6 +350,7 @@ def compute_reconciliation(
                     actual_return=actual,
                     error=error,
                     directional_match=dmatch,
+                    directional_match_median=dmatch_median,
                 )
             )
             # collect pair for isotonic fit (predicted → actual)
@@ -344,6 +366,7 @@ def compute_reconciliation(
                     actual_return=actual,
                     error=None,
                     directional_match=None,
+                    directional_match_median=None,
                     unmatched_reason=_unmatched_reason,
                 )
             )
@@ -351,6 +374,8 @@ def compute_reconciliation(
     mae = (sum(abs_errors) / len(abs_errors)) if abs_errors else None
     mae_median = (sum(abs_errors_median) / len(abs_errors_median)) if abs_errors_median else None
     directional_accuracy = (directional_hits / matched) if matched else None
+    # c318: median 方向准确率 (matched 笔中 median 方向命中比例).
+    directional_accuracy_median = (directional_hits_median / matched) if matched else None
 
     # R-5.C #3 + #4: isotonic calibration with n<20 honest "证据不足" gate.
     # 只有 matched >= MIN_BUCKET_SAMPLES 才拟合保序回归; 否则保持 mae_isotonic=None,
@@ -394,6 +419,7 @@ def compute_reconciliation(
         mae_isotonic=mae_isotonic,
         calibration_sufficient=calibration_sufficient,
         directional_accuracy=directional_accuracy,
+        directional_accuracy_median=directional_accuracy_median,
         warnings=warnings,
     )
 
@@ -409,8 +435,11 @@ def render_reconciliation(report: ReconciliationReport) -> str:
         return f"\n{Fore.CYAN}🧾 实盘对账 (预测 vs 实际){Style.RESET_ALL}\n  无交易日志数据\n"
 
     lines = [f"\n{Fore.CYAN}🧾 实盘对账 (预测 vs 实际){Style.RESET_ALL}", ""]
-    lines.append(f"  {'标的':<8} {'买入日':<10} {'预测T+30':>9} {'中位T+30':>9} {'实际':>9} {'误差':>9}  {'方向':>5}")
-    lines.append(f"  {'─' * 8} {'─' * 10} {'─' * 9} {'─' * 9} {'─' * 9} {'─' * 9}  {'─' * 5}")
+    # c318: 加 `方向(中位)` 列 — 与 `方向` (mean-based) 平行, 让操作者看到两个中心
+    # 方向是否一致. 当 mean ✓ 但 median ✗ (outlier 拉高 mean) 时, 操作者能立即识别
+    # mean 方向预测的虚高, 而不是误以为模型方向判断正确.
+    lines.append(f"  {'标的':<8} {'买入日':<10} {'预测T+30':>9} {'中位T+30':>9} {'实际':>9} {'误差':>9}  {'方向':>5} {'方向(中位)':>9}")
+    lines.append(f"  {'─' * 8} {'─' * 10} {'─' * 9} {'─' * 9} {'─' * 9} {'─' * 9}  {'─' * 5} {'─' * 9}")
 
     for row in report.rows:
         # values stored in PERCENT (match calibration t30_avg_return convention)
@@ -431,12 +460,22 @@ def render_reconciliation(report: ReconciliationReport) -> str:
             dstr = f"{Fore.GREEN}✓{Style.RESET_ALL}"
         else:
             dstr = f"{Fore.RED}✗{Style.RESET_ALL}"
+        # c318: median-direction ✓/✗ (parallel to mean-direction dstr above).
+        # None when predicted_median is None (无成熟 T+30 样本) — 显示 "—" 与 mean
+        # unmatched 行对齐. 注意 ANSI color 长度不计入显示宽度, f-string >5/>9 用
+        # 实际字符长度 (✓/✗ 各 1 字符 + ANSI reset), 因此显示对齐正常.
+        if row.directional_match_median is None:
+            dstr_med = "—"
+        elif row.directional_match_median:
+            dstr_med = f"{Fore.GREEN}✓{Style.RESET_ALL}"
+        else:
+            dstr_med = f"{Fore.RED}✗{Style.RESET_ALL}"
         # NS-18/c286: unmatched 行附原因 (区分 报告无该标的 / 分桶无样本), 让操作者
         # 能 self-audit 裸 "—". matched 行不附 (保持紧凑).
         reason_str = ""
         if row.predicted_return is None and row.unmatched_reason:
             reason_str = f"  {Fore.YELLOW}({row.unmatched_reason}){Style.RESET_ALL}"
-        lines.append(f"  {row.ticker:<8} {row.buy_date:<10} {pred:>9} {pred_med:>9} {act:>9} {err:>9}  {dstr:>5}{reason_str}")
+        lines.append(f"  {row.ticker:<8} {row.buy_date:<10} {pred:>9} {pred_med:>9} {act:>9} {err:>9}  {dstr:>5} {dstr_med:>9}{reason_str}")
 
     lines.append("")
     if report.matched_count:
@@ -449,10 +488,14 @@ def render_reconciliation(report: ReconciliationReport) -> str:
         else:
             mae_iso_str = f"{Fore.YELLOW}证据不足 (<{MIN_BUCKET_SAMPLES}笔){Style.RESET_ALL}"
         da_str = f"{report.directional_accuracy * 100:.0f}%" if report.directional_accuracy is not None else "—"
+        # c318: median 方向准确率 (parallel to mean-based da_str).
+        da_med_str = f"{report.directional_accuracy_median * 100:.0f}%" if report.directional_accuracy_median is not None else "—"
         # R-7 + R-5.C: 三中心 MAE 并列 — mean / median / isotonic.
         # mean: 现有 baseline; median: 抗 outlier; isotonic: 单调校准后.
         # 用户可自行比较哪个 MAE 最低, 即为该数据集上最佳预测中心.
-        lines.append(f"  {Fore.CYAN}聚合:{Style.RESET_ALL} 对账 {report.matched_count} 笔" f" (未匹配 {report.unmatched_count})  |  MAE={mae_str}  |  MAE(中位)={mae_median_str}" f"  |  MAE(保序)={mae_iso_str}  |  方向准确率={da_str}")
+        # c318: 同时并列 mean/median 方向准确率 — 当 median 方向准确率 > mean 时,
+        # 说明 outlier 干扰了 mean 方向预测, median 是更稳的方向信号.
+        lines.append(f"  {Fore.CYAN}聚合:{Style.RESET_ALL} 对账 {report.matched_count} 笔" f" (未匹配 {report.unmatched_count})  |  MAE={mae_str}  |  MAE(中位)={mae_median_str}" f"  |  MAE(保序)={mae_iso_str}  |  方向准确率={da_str}  |  方向准确率(中位)={da_med_str}")
     else:
         lines.append(f"  {Fore.YELLOW}无匹配交易 (买入日报告未含日志中的标的){Style.RESET_ALL}")
 
