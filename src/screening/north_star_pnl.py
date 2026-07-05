@@ -674,7 +674,13 @@ def render_bootstrap_ci_line(results: list[BootstrapCIResult]) -> str:
     """渲染 per-bucket winrate bootstrap CI (全 insufficient → 空串).
 
     展示形如:
-      ``  📊 winrate CI (bootstrap 95%, n_boot=10000): 低 50% [42%, 58%] (n=105) | 中高 43% [34%, 52%] (n=125)``
+      ``  📊 winrate CI T+30 (bootstrap 95%, n_boot=10000): 低 50% [42%, 58%] (n=105) | 中高 43% [34%, 52%] (n=125)``
+
+    c359/autodev-4 (loop-57 disease: horizon-mislabel): 此行算的是
+    ``next_30day_return`` (T+30) winrate, 但 footer 紧邻北极星 (T+5) 和排序
+    单调性 (T+5) 行 — 不标注 T+30 会让 operator 把 T+30 winrate 误读成 T+5.
+    contract §北极星 BUY 决策 horizon = T+5/T+10, T+30 仅作 invalidation;
+    horizon 必须显式标注, 与 headline '历史真实胜率 T+30' 同口径.
     """
     ok = [ci for ci in results if ci.verdict == "ok"]
     if not ok:
@@ -686,7 +692,7 @@ def render_bootstrap_ci_line(results: list[BootstrapCIResult]) -> str:
         lo = f"{ci.ci_lower:.0%}" if ci.ci_lower is not None else "?"
         up = f"{ci.ci_upper:.0%}" if ci.ci_upper is not None else "?"
         parts.append(f"{label} {ci.point_estimate:.0%} [{lo}, {up}] (n={ci.sample_count})")
-    return f"  📊 winrate CI (bootstrap {ci.ci_level:.0%}, n_boot={ci.n_bootstrap}): " + " | ".join(parts)
+    return f"  📊 winrate CI T+30 (bootstrap {ci.ci_level:.0%}, n_boot={ci.n_bootstrap}): " + " | ".join(parts)
 
 
 __all__ = [

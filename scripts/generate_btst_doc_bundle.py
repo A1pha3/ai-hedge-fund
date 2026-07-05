@@ -733,7 +733,19 @@ def _render_alpha_reliability_lines(rows: list[dict[str, Any]]) -> list[str]:
             divergence_label = "中性待确认"
         lane_label = "正式执行层" if str(row.get("role") or "") == "formal_selected" else "正式观察层"
         sample_text = "n/a" if evaluable_count is None else str(int(evaluable_count))
-        lines.append(f"| {_stock_label(row)} | {sample_text} | {_fmt_pct(reliability.get('shrunk_win_rate'))} | " f"{_fmt_num(payoff_ratio, 2)} | {divergence_label} | {lane_label} |")
+        # c361/autodev-4 (loop-53 drain): surface Wilson CI bracket alongside
+        # the shrunk win rate point estimate. ``win_rate_wilson_low/high`` are
+        # written by build_historical_reliability_metrics (:155-156) and persisted
+        # to the ledger JSON (:666-667) but were never rendered — operator saw a
+        # bare point estimate with no reliability band. n=15 时 Wilson CI 相当宽
+        # (e.g. 82% 的 CI 约 [55%, 95%]); 不显示 CI 会让小样本点估计被当真实
+        # 胜率读. 与 screening footer 的 bootstrap-CI-bracket 同口径 (c346/c359).
+        wilson_low = reliability.get("win_rate_wilson_low")
+        wilson_high = reliability.get("win_rate_wilson_high")
+        win_rate_cell = _fmt_pct(reliability.get("shrunk_win_rate"))
+        if wilson_low is not None and wilson_high is not None:
+            win_rate_cell = f"{win_rate_cell} CI[{_fmt_pct(wilson_low)}, {_fmt_pct(wilson_high)}]"
+        lines.append(f"| {_stock_label(row)} | {sample_text} | {win_rate_cell} | " f"{_fmt_num(payoff_ratio, 2)} | {divergence_label} | {lane_label} |")
     return lines
 
 

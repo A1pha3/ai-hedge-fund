@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from fastapi import APIRouter
@@ -7,6 +8,8 @@ from app.backend.routes._common import safe_route
 from app.backend.services.ollama_service import OllamaService
 from src.llm.defaults import get_default_model_config
 from src.llm.models import get_models_list
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/language-models")
 
@@ -42,10 +45,20 @@ async def get_language_models():
     if not any(model["model_name"] == default_model["model_name"] and model["provider"] == default_model["provider"] for model in models):
         models.insert(0, default_model)
 
-    # Add available Ollama models (isolated -- failure returns [] so cloud models still work)
+    # Add available Ollama models (isolated -- failure returns [] so cloud models still work).
+    # c360/autodev-4 (NS-17 drain): previously bare ``except Exception`` with no log —
+    # operator saw a silently shortened model list when Ollama was broken (not just
+    # not-running) with no trace. Mirrors the screening-route verdict-fallback pattern
+    # (c314: logger.warning + exc_info=True before the degraded path). The service layer
+    # logs at ERROR too, but the route-layer log makes the call-site failure visible in
+    # the route's own observability surface.
     try:
         ollama_models = await ollama_service.get_available_models()
     except Exception:
+        logger.warning(
+            "Ollama models unavailable — serving cloud-only list",
+            exc_info=True,
+        )
         ollama_models = []
     models.extend(ollama_models)
 

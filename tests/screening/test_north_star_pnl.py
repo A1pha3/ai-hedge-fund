@@ -487,6 +487,28 @@ def test_render_bootstrap_ci_silent_when_insufficient():
     assert render_bootstrap_ci_line(result) == ""
 
 
+def test_render_bootstrap_ci_line_discloses_t30_horizon():
+    """c359/autodev-4: bootstrap CI line 必须标注 T+30 horizon.
+
+    loop-57 disease class (misleading-display / horizon-mislabel) recurrence.
+    compute_bootstrap_ci_from_loaded 算的是 ``next_30day_return`` (T+30) winrate
+    (源码 line 629), 但 render_bootstrap_ci_line 此前输出 ``📊 winrate CI
+    (bootstrap 95%, ...): 低 50% [42%, 58%]`` 无 horizon 标注. 该行在前门
+    footer 紧邻北极星 (T+5) 和排序单调性 (T+5) 行 — operator 会把 T+30 winrate
+    误读成 T+5 winrate, 而 T+30 与 T+5 在同 bucket 可差 15pp, 是 horizon 假象
+    不是真实矛盾. contract §北极星 BUY 决策 horizon = T+5/T+10, T+30 仅作
+    invalidation; horizon 必须显式标注, 与 headline '历史真实胜率 T+30' 同口径.
+    """
+    recs = _ci_recs([5.0] * 15 + [-3.0] * 15, [])  # n=30, winrate=50%, T+30
+    result = compute_bootstrap_ci_from_loaded(recs, buckets=["low"], min_n=20, n_bootstrap=500, seed=42)
+    line = render_bootstrap_ci_line(result)
+    assert line
+    # horizon 必须显式标注 T+30 (不能只靠 sample-count 里的 "30" 数字蒙混).
+    # 此前 bare 'winrate CI (bootstrap 95%...)' 无 horizon → operator 把 T+30
+    # 误读成 T+5 (前门 footer 邻近行都是 T+5).
+    assert "T+30" in line, f"bootstrap CI line missing explicit T+30 horizon label (loop-57 disease): {line!r}"
+
+
 # ---------------------------------------------------------------------------
 # C272 (2026-07-01): selection-profitability diagnostic.
 # Backtest the MODEL's top-N-by-score selection vs alternatives (score_asc,
