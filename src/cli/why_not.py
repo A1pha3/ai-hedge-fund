@@ -7,8 +7,8 @@
 2. confidence 不足 — Top N 的 score_b 分布, 给出「需达到多少才能进 Top」
 3. 排除规则 — 5 大排除规则 (ST/北交所/次新/涨停/低流动性) 的命中情况
 4. 反事实模拟 — 至少覆盖 3 个策略 (trend / mean_reversion / fundamental /
-   event_sentiment), 输出方向性提示 (例如 "再涨 5% trend 预估 +0.08 但
-   mean_reversion 预估 -0.05, 净 +0.03 仍不足")
+   event_sentiment), 输出方向性提示 (例如 "再涨 5% 时 trend 评分方向 ↑,
+   具体幅度需重跑 score_batch")
 
 设计上**只读** ``data/reports/auto_screening_*.json``, 不重跑 pipeline,
 不修改 strategy_scorer 的核心逻辑。
@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,10 @@ from colorama import Fore, Style
 
 from src.screening.custom_weights import STRATEGY_KEYS as _STRATEGY_ORDER
 from src.utils.numeric import safe_float
+
+# Loop 93 (autodev): BH-021 family — _load_latest_report 之前吞掉 parse error,
+# 运维无法区分 "无报告文件" vs "文件存在但损坏". 加 module logger 用于上下文追踪.
+logger = logging.getLogger(__name__)
 
 DEFAULT_REPORT_DIR = Path("data/reports")
 
@@ -55,7 +60,14 @@ def _is_bj_ticker(ticker: str) -> bool:
 
 
 def _load_latest_report(reports_dir: Path) -> tuple[Path, dict[str, Any]] | None:
-    """读取 reports_dir 下最新的 auto_screening_*.json; 不存在返回 None。"""
+    """读取 reports_dir 下最新的 auto_screening_*.json; 不存在返回 None。
+
+    Loop 93 (autodev): BH-021 family — 之前 ``except`` 分支静默 ``return None``,
+    与 "no report file" 路径合并, 调用方输出 "未找到 auto_screening_*.json 报告"
+    误导运维 — 文件实际存在但解析失败时, 运维被告知 "请先运行 --auto",
+    实际问题是文件损坏. 现在 parse error 会通过 logger.warning 留下上下文
+    (file path + error type), 便于运维定位.
+    """
     if not reports_dir.exists():
         return None
     report_files = sorted(reports_dir.glob("auto_screening_*.json"), reverse=True)
@@ -65,7 +77,15 @@ def _load_latest_report(reports_dir: Path) -> tuple[Path, dict[str, Any]] | None
     try:
         with open(latest, encoding="utf-8") as f:
             return latest, json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as exc:
+        # Loop 93: surface parse error with context (BH-021 pattern),
+        # so operator can distinguish "no report" from "corrupt report".
+        logger.warning(
+            "why-not: 解析报告失败 (文件存在但损坏): %s — %s",
+            latest.name,
+            exc,
+            exc_info=True,
+        )
         return None
 
 
@@ -311,7 +331,16 @@ def run_why_not(
     target_dir = Path(reports_dir) if reports_dir is not None else DEFAULT_REPORT_DIR
     result = _load_latest_report(target_dir)
     if result is None:
-        print(f"{Fore.RED}未找到 auto_screening_*.json 报告 in {target_dir}, 请先运行 --auto{Style.RESET_ALL}")
+        # Loop 93: 区分 "无报告文件" 与 "文件存在但解析失败".
+        # _load_latest_report 在 parse error 时已通过 logger.warning 留下上下文,
+        # 这里提示运维查看日志以区分两种失败模式 (BH-021 pattern).
+        print(
+            f"{Fore.RED}未找到或读取失败的 auto_screening_*.json 报告 in {target_dir}{Style.RESET_ALL}"
+        )
+        print(
+            f"  若文件存在但解析失败, 详见上方 warning 日志 (file path + error type)"
+        )
+        print(f"  请先运行 --auto 重新生成报告")
         return 1
 
     report_path, data = result

@@ -337,3 +337,91 @@ class TestCounterfactualHardcodedNumbersDrain:
             f"drain 后仍需保留至少 3 个策略的定性场景描述, 实际 {len(found_scenarios)}: "
             f"{found_scenarios}"
         )
+
+
+# ── Loop 93 (autodev): drain silent error swallow + module docstring ──────
+
+
+class TestSilentErrorSwallowDrain:
+    """Loop 93 (autodev): --why-not _load_latest_report 不得静默吞 parse error。
+
+    Disease: ``_load_latest_report`` 在 ``except (OSError, json.JSONDecodeError)``
+    分支 ``return None``, 与 "no report file" 路径合并. 调用方输出
+    "未找到 auto_screening_*.json 报告" 误导运维 — 文件实际存在但解析失败,
+    运维却看到 "未找到" 提示并被告知 "请先运行 --auto", 实际问题是文件损坏.
+
+    Same disease class as BH-021 (dispatcher.py:32 logger family) — surface
+    the swallowed error with context so operator can distinguish
+    "no report" from "corrupt report".
+    """
+
+    def test_corrupt_report_logs_parse_error_with_context(
+        self, tmp_path: Path, capsys, caplog
+    ) -> None:
+        """损坏 JSON 必须在 log 中留下上下文 (file path + error type)."""
+        reports_dir = tmp_path / "data" / "reports"
+        reports_dir.mkdir(parents=True)
+        corrupt_path = reports_dir / "auto_screening_20260609.json"
+        corrupt_path.write_text("{not valid json", encoding="utf-8")
+
+        with caplog.at_level("WARNING", logger="src.cli.why_not"):
+            rc = run_why_not("000001", reports_dir=reports_dir)
+
+        captured = capsys.readouterr()
+        assert rc == 1
+        # logger.warning 必须包含文件路径 (上下文追踪)
+        log_text = "\n".join(r.message for r in caplog.records)
+        assert "auto_screening_20260609.json" in log_text, (
+            "损坏文件路径必须出现在 log 中, 便于运维定位"
+        )
+        assert "解析" in log_text or "JSON" in log_text or "JSONDecodeError" in log_text, (
+            f"log 必须说明是 parse 失败, 实际: {log_text}"
+        )
+
+    def test_corrupt_report_message_distinguishes_from_not_found(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """损坏文件场景下, 操作者看到的提示必须区分 '未找到' 与 '读取失败'."""
+        reports_dir = tmp_path / "data" / "reports"
+        reports_dir.mkdir(parents=True)
+        corrupt_path = reports_dir / "auto_screening_20260609.json"
+        corrupt_path.write_text("{not valid json", encoding="utf-8")
+
+        rc = run_why_not("000001", reports_dir=reports_dir)
+        captured = capsys.readouterr()
+
+        assert rc == 1
+        # 必须出现 "读取失败" 或 "损坏" 或类似明确措辞,
+        # 而非仅 "未找到" (误导运维以为文件不存在)
+        assert any(
+            kw in captured.out for kw in ["读取失败", "损坏", "解析失败", "或读取失败"]
+        ), (
+            "操作者看到的提示必须区分 '未找到' 与 '读取失败', "
+            f"实际 output: {captured.out}"
+        )
+        # 同时保留 "请先运行 --auto" 的修复建议 (与原行为兼容)
+        assert "--auto" in captured.out
+
+
+class TestModuleDocstringStaleNumbersDrain:
+    """Loop 93 (autodev): --why-not 模块 docstring 不得引用 hardcoded 估值常数。
+
+    Disease (loop 56 同类): 模块 docstring 第 9-11 行引用
+    "+0.08" / "-0.05" / "+0.03" 等 hardcoded 数字作为反事实模拟示例,
+    与 loop 92 修复 (_format_counterfactual_block 改为定性提示) 不一致.
+    Docstring 示例数字看起来像真实估值, 误导阅读源码的运维 / 未来开发者.
+    """
+
+    def test_module_docstring_does_not_reference_hardcoded_score_deltas(self) -> None:
+        """模块 docstring 不得引用 hardcoded ±0.XX 估值常数."""
+        from src.cli import why_not as why_not_module
+
+        doc = why_not_module.__doc__ or ""
+        # loop 92 已从 _format_counterfactual_block 移除的 hardcoded 数字
+        # 同样不得残留在 module docstring 中 (loop 56 docstring-disease class)
+        forbidden_docstring_numbers = ["+0.08", "-0.05", "+0.03"]
+        for num in forbidden_docstring_numbers:
+            assert num not in doc, (
+                f"模块 docstring 不得引用 hardcoded 估值常数 {num} "
+                f"(loop 56 docstring-disease 同类, loop 92 已从 _format_counterfactual_block 移除)"
+            )
