@@ -196,6 +196,12 @@ def test_build_parallel_provider_execution_plan_keeps_single_provider_when_key_m
 
 
 def test_build_parallel_provider_execution_plan_respects_global_provider_route_allowlist(monkeypatch):
+    # This test exercises ONLY the route allowlist (LLM_PROVIDER_ROUTE_ALLOWLIST), so the parallel
+    # allowlist (LLM_PARALLEL_PROVIDER_ALLOWLIST) must be cleared. Otherwise the operator's real .env
+    # value (e.g. "DeepSeek,Volcengine") leaks into the pytest environment via load_project_dotenv()
+    # and silently filters MiniMax out of the parallel candidate set, producing active_provider_names=[]
+    # — a spurious failure that masks the route-allowlist behavior under test.
+    _clear_provider_allowlists(monkeypatch)
     monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
     monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-key")
     monkeypatch.setenv("ARK_API_KEY", "ark-key")
