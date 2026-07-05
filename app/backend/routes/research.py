@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from app.backend.routes._common import safe_route
 from src.research.lookback_audit import LookbackAuditResult, run_lookback_audit
 
 router = APIRouter(prefix="/research", tags=["research"])
@@ -55,6 +56,7 @@ class LookbackAuditErrorResponse(BaseModel):
 
 
 @router.get("/lookback-audit", response_model=LookbackAuditResponse | LookbackAuditErrorResponse)
+@safe_route
 async def get_lookback_audit(
     date: str = Query(..., description="Audit date in YYYYMMDD or YYYY-MM-DD format"),
     days: int = Query(30, description="Lookforward window in calendar days", ge=1, le=365),
@@ -66,22 +68,22 @@ async def get_lookback_audit(
     Given a selection date, reads the selection_snapshot.json artifact,
     extracts the top-N selected tickers, fetches forward price data,
     and computes per-ticker return metrics.
+
+    c362/autodev-4: previously this handler caught ``Exception`` and returned
+    a ``LookbackAuditErrorResponse`` body with HTTP 200 — masking systemic
+    failures (artifact schema drift, filesystem permission loss) from any
+    status-code-based monitoring. Now uses ``@safe_route`` (sibling pattern):
+    unhandled exceptions → 500 + ``logger.exception`` for traceability, and
+    the known "no snapshot" case still raises a typed 404 below.
     """
     root = Path(artifact_root) if artifact_root else None
 
-    try:
-        result: LookbackAuditResult = run_lookback_audit(
-            audit_date=date,
-            lookforward_days=days,
-            top_n=top_n,
-            artifact_root=root,
-        )
-    except Exception as exc:
-        return LookbackAuditErrorResponse(
-            error=str(exc),
-            audit_date=date,
-            lookforward_days=days,
-        )
+    result: LookbackAuditResult = run_lookback_audit(
+        audit_date=date,
+        lookforward_days=days,
+        top_n=top_n,
+        artifact_root=root,
+    )
 
     if result.summary.get("error"):
         raise HTTPException(status_code=404, detail=result.summary["error"])

@@ -201,6 +201,16 @@ def _render_hit_rate_summary(verify_summary: object) -> str:
     if ret_parts:
         lines.append("  " + " | ".join(ret_parts))
 
+    # c363/autodev-4 (loop-57 disease class — empty-rendered-block): when recent
+    # picks haven't matured to T+5, compute_verify_recommendations returns
+    # overall_*_win_rate=None + avg_*_return=None. Both blocks above are skipped,
+    # leaving a "📊 历史命中率速览" header with zero numbers + bare disclaimer —
+    # operator scanning the footer sees what looks like a bug, not "data not yet
+    # mature." Emit a fallback explaining the numbers will appear once recent
+    # recommendations reach T+5. (Front-door display honesty; no behavior change.)
+    if not wr_parts and not ret_parts:
+        lines.append(f"  {Fore.YELLOW}⚠ 命中率待成熟 (近 {lookback} 天推荐未到 T+5){Style.RESET_ALL}")
+
     # Excess return vs the picks' own recommended-basket average (a same-day
     # reference point, NOT a market index — see verify_recommendations BETA-009).
     # H1 (Stage 3): the recommended-basket "benchmark" is computed from the SAME

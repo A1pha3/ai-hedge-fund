@@ -862,10 +862,7 @@ class TestHitRateSummary:
         result = _render_hit_rate_summary(summary)
         assert "历史命中率速览" in result
         # ISO-formatted stamp mirroring sibling footer pattern.
-        assert "数据时点 2026-06-30" in result, (
-            f"hit-rate footer must stamp 数据时点 when latest_report_date is set, "
-            f"got: {result!r}"
-        )
+        assert "数据时点 2026-06-30" in result, f"hit-rate footer must stamp 数据时点 when latest_report_date is set, " f"got: {result!r}"
 
     def test_summary_omits_stamp_when_no_data_as_of(self) -> None:
         """No latest_report_date → no stamp (don't fabricate)."""
@@ -879,6 +876,37 @@ class TestHitRateSummary:
         result = _render_hit_rate_summary(summary)
         assert "历史命中率速览" in result
         assert "数据时点" not in result
+
+    def test_summary_data_immature_emits_fallback_not_bare_disclaimer(self) -> None:
+        """c363/autodev-4 (loop-57 disease class — empty-rendered-block):
+
+        When recent picks haven't matured to T+5, ``compute_verify_recommendations``
+        returns ``overall_*_win_rate = None`` and ``avg_*_return = None``. The render
+        previously printed the header ``📊 历史命中率速览`` + sample line
+        ``近 N 天: ...`` then SKIPPED all win-rate/return lines (empty ``wr_parts``
+        / ``ret_parts``), ending with the bare disclaimer ``💡 历史表现不代表未来收益``.
+        Operator scanning the footer for the headline winrate saw a "Hit-Rate
+        Overview" with zero hit-rate numbers and no explanation — looks like a
+        bug, not "data not yet mature." Fix: emit a ``⚠ 命中率待成熟`` fallback line
+        explaining the numbers will appear once recent recommendations reach T+5.
+        """
+        summary = SimpleNamespace(
+            total_recommendations=48,
+            total_days=7,
+            unique_tickers=22,
+            lookback_days=30,
+            # all win rates + returns None → data not yet mature
+            overall_t5_win_rate=None,
+            overall_t10_win_rate=None,
+            overall_t30_win_rate=None,
+            avg_t5_return=None,
+            avg_t10_return=None,
+            avg_t30_return=None,
+        )
+        result = _render_hit_rate_summary(summary)
+        assert "历史命中率速览" in result
+        # The fallback line must be present (not a bare header + disclaimer)
+        assert "待成熟" in result or "未到 T+5" in result or "数据不足" in result, f"empty-rendered-block regression: hit-rate footer shows header with no " f"numbers and no immaturity fallback (operator sees a misleading empty block): {result!r}"
 
     @patch(
         "src.screening.top_picks.compute_expected_returns",
