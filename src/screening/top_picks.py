@@ -1116,18 +1116,37 @@ def _compute_pick_changes(
 
 
 def _render_pick_changes(new: set[str], dropped: set[str], current_items: list[dict]) -> str:
-    """Render a one-line summary of new/dropped picks."""
+    """Render a one-line summary of new/dropped picks.
+
+    autodev-5 / disease A (cross-cluster-mismatch): this footer renders BELOW the
+    displayed Top-N pick list, so the operator reads it as "what changed in the
+    Top-N". Previously ``new``/``dropped`` were computed over the FULL candidate
+    pool (``ranked``) and ``current_items`` was the full pool too — so a ticker
+    that entered the pool but did NOT enter the displayed Top-N showed up under
+    "新入选", sending the operator to look for a pick that is not on screen
+    (dogfood 20260703: footer listed 巨化股份/兆易创新 as 新入选 while the Top-3
+    above showed 鼎龙/新易盛/绿的谐波). Scope ``new`` to the displayed picks
+    (``current_items``) and qualify the line so the operator knows the scope.
+    """
+    # displayed = the tickers actually rendered in the Top-N list above.
+    displayed_tickers = {str(it.get("ticker", "")) for it in current_items if str(it.get("ticker", ""))}
+    name_map = {str(it.get("ticker", "")): str(it.get("name", "") or it.get("ticker", "")) for it in current_items}
+    # Scope new to displayed: a pool-only new ticker is NOT a "新入选" the operator
+    # can act on, because it isn't on the screen above.
+    new_in_display = new & displayed_tickers
     parts = []
-    if new:
-        # Get names for new tickers
-        name_map = {str(it.get("ticker", "")): str(it.get("name", "") or it.get("ticker", "")) for it in current_items}
-        new_labels = [f"{Fore.GREEN}🆕 {name_map.get(t, t)}{Style.RESET_ALL}" for t in sorted(new)[:3]]
-        extra = f" +{len(new) - 3}个" if len(new) > 3 else ""
-        parts.append("新入选: " + ", ".join(new_labels) + extra)
+    if new_in_display:
+        new_labels = [f"{Fore.GREEN}🆕 {name_map.get(t, t)}{Style.RESET_ALL}" for t in sorted(new_in_display)[:3]]
+        extra = f" +{len(new_in_display) - 3}个" if len(new_in_display) > 3 else ""
+        parts.append("新入选(Top-N): " + ", ".join(new_labels) + extra)
     if dropped:
+        # dropped is computed at POOL level (prev pool − current pool); the previous
+        # report did not persist its displayed Top-N, so we cannot truthfully say
+        # "退出 Top-N". Label it as pool-level so the operator does not mistake
+        # these for "was in the displayed list, now gone".
         drop_labels = [f"{Fore.RED}❌ {t}{Style.RESET_ALL}" for t in sorted(dropped)[:3]]
         extra = f" +{len(dropped) - 3}个" if len(dropped) > 3 else ""
-        parts.append("退出: " + ", ".join(drop_labels) + extra)
+        parts.append("退出候选池: " + ", ".join(drop_labels) + extra)
     if not parts:
         return ""
     return "  📊 " + " | ".join(parts)
@@ -1640,7 +1659,11 @@ def _print_top_picks_footer(
         print(sector_rotation)
 
     if new_tickers or dropped_tickers:
-        changes = _render_pick_changes(new_tickers, dropped_tickers, ranked)
+        # autodev-5 / disease A: pass DISPLAYED picks (representative_picks), not
+        # the full `ranked` pool. The footer renders below the Top-N list, so the
+        # operator reads "新入选/退出" as "what changed in the Top-N". Passing the
+        # full pool leaked pool-only tickers into the 新入选 line (dogfood 20260703).
+        changes = _render_pick_changes(new_tickers, dropped_tickers, representative_picks)
         if changes:
             print(changes)
 

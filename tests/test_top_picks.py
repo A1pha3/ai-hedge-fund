@@ -1743,6 +1743,65 @@ class TestPickChanges:
         result = _render_pick_changes(set(), set(), [])
         assert result == ""
 
+    def test_render_pick_changes_limits_to_displayed_top_n(self) -> None:
+        """autodev-5 / disease A: 新入选/退出 must reflect the DISPLAYED Top-N,
+        not the full candidate pool. Previously `_render_pick_changes` received the
+        full `ranked` list as `current_items` and `new_tickers` was computed over
+        the full pool — so a candidate that entered the pool but did NOT enter the
+        displayed Top-N showed up under "新入选", sending the operator to look for
+        a pick that is not on screen. The fix scopes new/dropped to the displayed
+        picks. Verified red on c363 prior behavior.
+        """
+        from src.screening.top_picks import _render_pick_changes
+
+        # new_tickers passes a Top-N outsider (600000) alongside an in-Top-N (300750).
+        # 600000 is in the pool (`ranked`) but NOT in the displayed picks list.
+        # Operator should only see the in-Top-N name.
+        displayed = [
+            {"ticker": "300750", "name": "宁德时代"},
+            {"ticker": "300054", "name": "鼎龙股份"},
+        ]
+        result = _render_pick_changes(
+            {"300750", "600000"},  # 600000 is a pool-only new ticker
+            set(),
+            displayed,
+        )
+        assert "宁德时代" in result  # in-Top-N new pick surfaces
+        assert "600000" not in result  # pool-only new pick must NOT surface
+        # scope qualifier so operator knows it's about displayed Top-N, not the pool
+        assert "Top-N" in result or "候选池" in result
+
+    def test_top_picks_pick_changes_scoped_to_displayed_count(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """autodev-5 / disease A end-to-end: with count=2, a 3rd new pool entrant
+        that does not appear in the displayed Top-2 must not be advertised in the
+        footer's 新入选 line. Reproduces the cross-cluster-mismatch the operator
+        sees (footer mentions picks not shown in the Top-N list above)."""
+        # Previous report: only 999999
+        prev = tmp_path / "auto_screening_20260609.json"
+        prev.write_text(
+            json.dumps({"date": "20260609", "recommendations": [{"ticker": "999999", "name": "Old", "score_b": 0.5}]}),
+            encoding="utf-8",
+        )
+        # Current report: 3 fresh tickers so all are "new" vs previous.
+        # With count=2, only the top-2 by score_b should display; the 3rd must
+        # NOT leak into the 新入选 footer line.
+        recs = [
+            _make_rec("300750", "宁德时代", 0.85),
+            _make_rec("300054", "鼎龙股份", 0.80),
+            _make_rec("600000", "浦发银行", 0.70),
+        ]
+        _write_report(tmp_path, recs, date="20260610")
+        rc = run_top_picks(count=2, reports_dir=tmp_path)
+        assert rc == 0
+        out = capsys.readouterr().out
+        # Top-2 displayed names should appear in the pick list AND in 新入选
+        assert "宁德时代" in out
+        assert "鼎龙股份" in out
+        # The pool-only (not-in-Top-2) pick must NOT be advertised as 新入选
+        assert "浦发银行" not in out
+
     def test_new_badge_appears_in_output(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         # Write previous report with different tickers
         prev = tmp_path / "auto_screening_20260609.json"

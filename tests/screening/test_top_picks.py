@@ -294,9 +294,21 @@ class TestRenderPickChanges:
         assert _render_pick_changes(set(), set(), []) == ""
 
     def test_new_picks(self) -> None:
-        result = _render_pick_changes({"000001"}, set(), [])
+        # autodev-5 / disease A: 新入选 is scoped to the displayed Top-N
+        # (current_items). A new ticker not in current_items is a pool-only
+        # entrant and must NOT be advertised as 新入选. The name (not the bare
+        # ticker) is rendered, matching the displayed pick list.
+        result = _render_pick_changes(
+            {"000001"}, set(), [{"ticker": "000001", "name": "平安银行"}]
+        )
         assert "新入选" in result
-        assert "000001" in result
+        assert "平安银行" in result
+
+    def test_new_picks_pool_only_not_advertised(self) -> None:
+        # autodev-5 / disease A: a pool-only new ticker (not in displayed Top-N)
+        # must not leak into the 新入选 line.
+        result = _render_pick_changes({"000001"}, set(), [])
+        assert result == ""
 
     def test_dropped_picks(self) -> None:
         result = _render_pick_changes(set(), {"000002"}, [])
