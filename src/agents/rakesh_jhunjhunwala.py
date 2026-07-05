@@ -106,7 +106,15 @@ def rakesh_jhunjhunwala_agent(state: AgentState, agent_id: str = "rakesh_jhunjhu
         max_score = 24  # 8(prof) + 7(growth) + 4(bs) + 3(cf) + 2(mgmt) = 24
 
         # Calculate margin of safety
-        margin_of_safety = (intrinsic_value - market_cap) / market_cap if intrinsic_value and market_cap else None
+        # c358/autodev-3 (NS-17 sibling, falsy-zero family R68/R69/R96/R100):
+        # presence check (not truthiness) — intrinsic_value == 0.0 is a real
+        # "worthless company" DCF result and must flow through to margin_of_safety
+        # (= -1.0 → bearish branch), not be silently suppressed to None/neutral.
+        # Mirrors the analyze_rakesh_jhunjhunwala_style sibling ~60 lines below
+        # which already uses is_finite_number() with this same comment family.
+        # (In practice calculate_intrinsic_value gates on positive earnings so it
+        # returns None or a positive float, never exactly 0.0 — latent footgun.)
+        margin_of_safety = (intrinsic_value - market_cap) / market_cap if is_finite_number(intrinsic_value) and is_finite_number(market_cap) and market_cap != 0 else None
 
         # Jhunjhunwala's decision rules (30% minimum margin of safety for conviction)
         if margin_of_safety is not None and margin_of_safety >= 0.30:

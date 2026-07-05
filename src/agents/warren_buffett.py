@@ -137,10 +137,18 @@ def warren_buffett_agent(state: AgentState, agent_id: str = "warren_buffett_agen
         # Update max possible score calculation
         max_possible_score = 10 + moat_analysis["max_score"] + mgmt_analysis["max_score"] + 5 + 5  # fundamental_analysis (ROE, debt, margins, current ratio)  # pricing_power (0-5)  # book_value_growth (0-5)
 
-        # Add margin of safety analysis if we have both intrinsic value and current price
+        # Add margin of safety analysis if we have both intrinsic value and current price.
+        # c358/autodev-3 (NS-17 sibling, falsy-zero family R68/R69/R96/R100):
+        # presence check (not truthiness) — intrinsic_value == 0.0 is a real
+        # "worthless company" DCF result and must flow through to margin_of_safety
+        # (= -1.0 → bearish), not be silently suppressed to None/neutral. Mirrors
+        # the analyze_book_value_growth sibling in this file (line ~404) which
+        # already uses is_finite_number(). (In practice calculate_intrinsic_value
+        # gates on positive owner earnings so it returns None or a positive float,
+        # never exactly 0.0 — latent footgun.)
         margin_of_safety = None
         intrinsic_value = intrinsic_value_analysis["intrinsic_value"]
-        if intrinsic_value and market_cap:
+        if is_finite_number(intrinsic_value) and is_finite_number(market_cap) and market_cap != 0:
             margin_of_safety = (intrinsic_value - market_cap) / market_cap
 
         # Combine all analysis results for LLM evaluation

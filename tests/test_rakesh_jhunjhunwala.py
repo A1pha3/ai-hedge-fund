@@ -171,6 +171,34 @@ def test_analyze_rakesh_jhunjhunwala_style_keeps_zero_intrinsic_value_for_valuat
     assert result["valuation_gap"] == -5.0
 
 
+def test_margin_of_safety_truthiness_footgun_drained():
+    """c358/autodev-3 (NS-17 sibling, falsy-zero family R68/R69/R96/R100):
+
+    ``rakesh_jhunjhunwala_agent`` (line ~109) computed margin_of_safety with
+    ``... if intrinsic_value and market_cap else None``. intrinsic_value == 0.0
+    is a real "worthless company" DCF result; ``0.0 and market_cap`` short-
+    circuits to falsy → margin_of_safety = None → the <= -0.30 bearish branch
+    (line ~114) is silently skipped, degrading a real bearish signal to neutral.
+
+    The CORRECT presence-check pattern already exists 60 lines below in this
+    same file (analyze_rakesh_jhunjhunwala_style, line ~370): the author
+    fixed the sibling bug class there with ``is_finite_number(intrinsic_value)
+    and is_finite_number(current_price)`` + a R68/R69/R96/R100 comment. Line
+    ~109 was the unfixed odd-one-out. This test is a regression guard.
+
+    Note: in practice calculate_intrinsic_value gates on positive earnings
+    (line ~308) so it returns None or a positive float, never exactly 0.0 —
+    making this a latent footgun + internal inconsistency rather than a live
+    signal-suppression today. The drain still closes the R-family residue.
+    """
+    from pathlib import Path
+
+    src_path = Path(__file__).resolve().parents[1] / "src" / "agents" / "rakesh_jhunjhunwala.py"
+    src_text = src_path.read_text(encoding="utf-8")
+    # Locate the *_agent function body (the only site with `intrinsic_value and market_cap`)
+    assert "intrinsic_value and market_cap" not in src_text, "NS-17 falsy-zero regression: rakesh_jhunjhunwala_agent still uses " "truthiness `intrinsic_value and market_cap` for margin_of_safety; " "intrinsic_value == 0.0 (worthless company) is silently suppressed. " "Use is_finite_number() to match the analyze_rakesh_jhunjhunwala_style sibling."
+
+
 # ---------------------------------------------------------------------------
 # Falsy-zero on liabilities numerator (R68/R96 family, part 2)
 # A legitimate total_liabilities == 0.0 (ZERO-LIABILITY company — the cleanest

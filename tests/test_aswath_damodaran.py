@@ -78,3 +78,24 @@ def test_growth_score_revenue_zero_base_not_dropped_into_inflated_cagr():
     # None (undefined from zero base), so no "Revenue CAGR" detail is appended.
     assert "Revenue CAGR" not in details_str
     assert "Revenue data incomplete" in details_str
+
+
+def test_margin_of_safety_truthiness_footgun_drained():
+    """c358/autodev-3 (NS-17 sibling, falsy-zero family R68/R69/R96/R100):
+
+    ``aswath_damodaran_agent`` computed margin_of_safety with
+    ``... if intrinsic_value and market_cap else None``. intrinsic_value == 0.0
+    is a real "worthless company" DCF result; ``0.0 and market_cap`` short-
+    circuits to falsy → margin_of_safety = None → the <= -0.25 bearish branch
+    is silently skipped, degrading a real bearish signal to neutral.
+
+    Note: in practice calculate_intrinsic_value_dcf gates on positive FCFF
+    so it returns None or a positive float, never exactly 0.0 — making this
+    a latent footgun rather than a live signal-suppression today. Still a
+    clean drain of the R-family residue + internal consistency fix.
+    """
+    from pathlib import Path
+
+    src_path = Path(__file__).resolve().parents[1] / "src" / "agents" / "aswath_damodaran.py"
+    src_text = src_path.read_text(encoding="utf-8")
+    assert "intrinsic_value and market_cap" not in src_text, "NS-17 falsy-zero regression: aswath_damodaran_agent still uses " "truthiness `intrinsic_value and market_cap` for margin_of_safety; " "intrinsic_value == 0.0 (worthless company) is silently suppressed. " "Use is_finite_number() to match the rakesh_jhunjhunwala_style sibling pattern."

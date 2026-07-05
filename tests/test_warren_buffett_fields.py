@@ -548,3 +548,24 @@ def test_analyze_fundamentals_zero_debt_company_scores_conservative_credit():
     assert result["score"] == 2
     assert "Conservative debt levels" in result["details"]
     assert "not available" not in result["details"]
+
+
+def test_margin_of_safety_truthiness_footgun_drained():
+    """c358/autodev-3 (NS-17 sibling, falsy-zero family R68/R69/R96/R100):
+
+    ``warren_buffett_agent`` computed margin_of_safety with
+    ``if intrinsic_value and market_cap:``. intrinsic_value == 0.0 is a real
+    "worthless company" DCF result; ``0.0 and market_cap`` short-circuits to
+    falsy → margin_of_safety stays None → the bearish-by-valuation signal
+    branch is silently skipped, degrading a real bearish call to neutral.
+
+    Note: in practice calculate_intrinsic_value gates on positive owner
+    earnings so it returns None or a positive float, never exactly 0.0 —
+    making this a latent footgun rather than a live signal-suppression
+    today. Still a clean drain of the R-family residue.
+    """
+    from pathlib import Path
+
+    src_path = Path(__file__).resolve().parents[1] / "src" / "agents" / "warren_buffett.py"
+    src_text = src_path.read_text(encoding="utf-8")
+    assert "if intrinsic_value and market_cap:" not in src_text, "NS-17 falsy-zero regression: warren_buffett_agent still uses " "truthiness `if intrinsic_value and market_cap:` for margin_of_safety; " "intrinsic_value == 0.0 (worthless company) is silently suppressed. " "Use is_finite_number() to match the R68/R69/R96/R100 sibling pattern."

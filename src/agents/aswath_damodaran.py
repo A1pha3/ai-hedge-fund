@@ -117,7 +117,14 @@ def aswath_damodaran_agent(state: AgentState, agent_id: str = "aswath_damodaran_
         max_score = growth_analysis["max_score"] + risk_analysis["max_score"] + relative_val_analysis["max_score"]
 
         intrinsic_value = intrinsic_val_analysis["intrinsic_value"]
-        margin_of_safety = (intrinsic_value - market_cap) / market_cap if intrinsic_value and market_cap else None
+        # c358/autodev-3 (NS-17 sibling, falsy-zero family R68/R69/R96/R100):
+        # presence check (not truthiness) — intrinsic_value == 0.0 is a real
+        # "worthless company" DCF result and must flow through to margin_of_safety
+        # (= -1.0 → bearish branch), not be silently suppressed to None/neutral.
+        # Mirrors the rakesh_jhunjhunwala_style sibling pattern. (In practice
+        # calculate_intrinsic_value_dcf gates on positive FCFF so it returns None
+        # or a positive float, never exactly 0.0 — latent footgun.)
+        margin_of_safety = (intrinsic_value - market_cap) / market_cap if is_finite_number(intrinsic_value) and is_finite_number(market_cap) and market_cap != 0 else None
 
         # Decision rules (Damodaran tends to act with ~20-25 % MOS)
         if margin_of_safety is not None and margin_of_safety >= 0.25:

@@ -617,6 +617,12 @@ def extract_factor_panel_from_history(
             daily_returns.append(sum(r_values) / len(r_values) if r_values else float("nan"))
         else:
             # 无追踪数据 — 用 score_b 的截面均值作为代理 (粗略, 但能产生可计算序列)
+            # c357/autodev-3 (NS-17 drain): 此前 ``except (OSError, ...): pass``
+            # 会静默吞掉报告损坏 → daily_returns 注入 0.0 → 真实 IC 信号被压成噪声.
+            # 同文件 _load_report_panel (line 444) 和 _load_tracking_returns (line 508)
+            # 对同一异常对都 ``logger.warning``; 此处是漏网的 odd-one-out.
+            # 选 debug 而非 warning: score_b 是 best-effort 代理, 正常路径是
+            # _load_report_panel 已先 parse OK 再二次 read — 损坏罕见; 但留迹可追溯.
             score_b_values: list[float] = []
             try:
                 recs = json.loads(path.read_text(encoding="utf-8")).get("recommendations", [])
@@ -626,8 +632,12 @@ def extract_factor_panel_from_history(
                     sb = _to_finite(rec.get("score_b"))
                     if sb is not None:
                         score_b_values.append(sb)
-            except (OSError, json.JSONDecodeError):
-                pass
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.debug(
+                    "[FactorIC] score_b 代理读取失败 (将用 0.0 占位, 可能压低 IC) %s: %s",
+                    path.name,
+                    exc,
+                )
             if score_b_values:
                 daily_returns.append(sum(score_b_values) / len(score_b_values))
             else:
