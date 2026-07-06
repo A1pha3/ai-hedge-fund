@@ -842,6 +842,90 @@ def _resolve_top_picks(argv: list[str]) -> int | None:
     return run_top_picks(count=count, lookback_days=lookback, profit_aware=profit_aware)
 
 
+def _resolve_top_setups(argv: list[str]) -> int | None:
+    """Phase 1 凸性 setup 检测器 (进攻型 alpha, shadow 模式)。
+
+    扫描最新报告的候选池, 检测已注册 setup 命中, 按 Kelly 排序。
+    ⚠ SHADOW: setup 未经验证 (Phase 0 IS/OOS), 仅供观察。
+    完整使用需先 backfill 资金流 + 跑 Phase 0 build_distribution。
+    """
+    if "--top-setups" not in argv:
+        return None
+    from colorama import Fore, Style
+
+    from src.screening.consecutive_recommendation import resolve_report_dir
+    from src.screening.data_quality_audit import _find_latest_report
+
+    # 最新报告
+    report_dir = resolve_report_dir()
+    latest_path = _find_latest_report(report_dir)
+    if latest_path is None:
+        print(f"{Fore.RED}[TopSetups] 未找到 auto_screening 报告。请先运行 --auto{Style.RESET_ALL}")
+        return 1
+
+    import json
+
+    with open(latest_path, encoding="utf-8") as f:
+        report = json.loads(f.read())
+    recs = report.get("recommendations", [])
+    trade_date = str(report.get("date", ""))
+    if not recs:
+        print(f"{Fore.YELLOW}[TopSetups] 最新报告无推荐, 跳过 setup 检测{Style.RESET_ALL}")
+        return 0
+
+    tickers = [str(r.get("ticker", "")) for r in recs[:30]]  # 扫前 30 (性能)
+
+    # 构造每 ticker 的 context (从报告字段 + 资金流 store 若有)
+    from src.screening.offensive.data.fund_flow_store import FundFlowStore
+
+    store = FundFlowStore(cache_dir="data/fund_flow_cache/")
+    context_by_ticker: dict[str, dict] = {}
+    for rec in recs[:30]:
+        t = str(rec.get("ticker", ""))
+        if not t:
+            continue
+        # 资金流历史 (若 backfill 过)
+        flow_records = store.get_range(t, "20230101", trade_date) if trade_date else []
+        context_by_ticker[t] = {
+            "fund_flow_records": flow_records,
+            "industry_day_pct": float(rec.get("industry_pct_change", 0.0) or 0.0),
+            "industry_2d_pct": float(rec.get("industry_2d_pct", 0.0) or 0.0),
+            "industry_net_flow": float(rec.get("industry_net_flow", 0.0) or 0.0),
+            "stock_today_pct": float(rec.get("pct_change", 0.0) or 0.0),
+        }
+
+    # 分布 lookup: Phase 0 产出前为空 → run_top_setups 会过滤掉无分布的命中
+    # (shadow 模式诚实: 没验证过的 setup 不输出 Kelly 仓位)
+    from src.screening.offensive.top_setups import run_top_setups, render_top_setups
+
+    distribution_lookup: dict = {}  # TODO Phase 0: 用 evaluate_setup 产出填充
+
+    market_temp_inputs = {
+        "n_limit_up": int(report.get("market_state", {}).get("limit_up_count", 0) or 0),
+        "n_total": int(report.get("layer_a_count", 3000) or 3000),
+        "turnover_ratio": 1.0,
+    }
+
+    picks = run_top_setups(
+        tickers=tickers,
+        trade_date=trade_date,
+        context_by_ticker=context_by_ticker,
+        distribution_lookup=distribution_lookup,
+        market_temp_inputs=market_temp_inputs,
+        top_n=10,
+        shadow=True,  # 强制 shadow (Phase 0 未跑)
+    )
+    print(render_top_setups(picks, trade_date or "????????"))
+
+    # 若无 picks (分布未填充), 额外提示下一步
+    if not picks:
+        print(f"{Fore.CYAN}下一步:{Style.RESET_ALL}")
+        print(f"  1. backfill 资金流: 循环 fetch_individual_fund_flow + store.save")
+        print(f"  2. 跑 Phase 0: scripts/setup_research.py evaluate_setup() 产 distribution_lookup")
+        print(f"  3. 把分布填回本命令的 distribution_lookup → 自动出 Kelly picks")
+    return 0
+
+
 def _resolve_reconcile(argv: list[str]) -> int | None:
     """P-3 实盘对账 — trade log vs 模型预测 (realized-evidence path).
 
@@ -971,6 +1055,7 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--position-check", _resolve_position_check),
     ("--strategy-report", _resolve_strategy_report),
     ("--top-picks", _resolve_top_picks),
+    ("--top-setups", _resolve_top_setups),
     ("--reconcile", _resolve_reconcile),
     ("--refresh-regime-winrates", _resolve_refresh_regime_winrates),
 ]
