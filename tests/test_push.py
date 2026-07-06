@@ -600,6 +600,27 @@ def test_format_report_markdown_handles_corrupt_signals() -> None:
     assert "nan" not in body.lower()  # 不应出现 NaN 字样
 
 
+def test_format_report_markdown_surfaces_front_door_verdict() -> None:
+    """推送表格展示 raw decision 时, 必须同时展示前门 BUY/HOLD/AVOID 判决。"""
+    body = format_report_markdown(
+        {
+            "date": "20260607",
+            "market_state": {"state_type": "trend", "position_scale": 0.85, "regime_gate_level": "normal"},
+            "recommendations": [
+                {
+                    "ticker": "300750",
+                    "decision": "buy",
+                    "score_b": 0.78,
+                    "strategy_signals": {},
+                }
+            ],
+        }
+    )
+
+    assert "| # | 代码 | 决策 | 前门判决 | 评分 |" in body
+    assert "| 1 | 300750 | buy | AVOID | +0.7800 |" in body
+
+
 def test_format_report_markdown_truncates_table_rows() -> None:
     """max_rows 参数限制展示行数。"""
     recs = []

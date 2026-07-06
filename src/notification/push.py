@@ -222,9 +222,11 @@ def format_report_markdown(report_data: Mapping[str, Any], *, max_rows: int = 10
     if isinstance(market_state_raw, Mapping):
         state_type = _safe_str(market_state_raw.get("state_type"), "mixed")
         position_scale = _safe_float(market_state_raw.get("position_scale"), 1.0)
+        market_regime = _safe_str(market_state_raw.get("regime_gate_level"), "normal") or "normal"
     else:
         state_type = "mixed"
         position_scale = 1.0
+        market_regime = "normal"
 
     lines: list[str] = []
     lines.append(f"# AI 选股日报 · {date}")
@@ -239,14 +241,24 @@ def format_report_markdown(report_data: Mapping[str, Any], *, max_rows: int = 10
 
     lines.append("## 推荐标的")
     lines.append("")
-    lines.append("| # | 代码 | 决策 | 评分 | 趋势 | 反转 | 基本面 | 事件 |")
-    lines.append("|---|------|------|------|------|------|--------|------|")
+    lines.append("| # | 代码 | 决策 | 前门判决 | 评分 | 趋势 | 反转 | 基本面 | 事件 |")
+    lines.append("|---|------|------|----------|------|------|------|--------|------|")
     for idx, rec in enumerate(recs_raw[:max_rows], 1):
         if not isinstance(rec, Mapping):
             continue
         ticker = _safe_str(rec.get("ticker"), "-")
         decision = _safe_str(rec.get("decision"), "-")
         score_b = _safe_float(rec.get("score_b"), 0.0)
+        try:
+            from src.screening.investability import build_front_door_verdict
+
+            front_door_action = _safe_str(
+                build_front_door_verdict(dict(rec), market_regime=market_regime).get("action"),
+                "AVOID",
+            ) or "AVOID"
+        except Exception as exc:  # noqa: BLE001 — push rendering should degrade, not abort
+            logger.warning("[Push] build_front_door_verdict 失败, 前门判决显示为不可用: %s", exc, exc_info=True)
+            front_door_action = "不可用"
         signals = rec.get("strategy_signals") or {}
         if not isinstance(signals, Mapping):
             signals = {}
@@ -260,7 +272,7 @@ def format_report_markdown(report_data: Mapping[str, Any], *, max_rows: int = 10
             arrow = "↑" if direction > 0 else "↓" if direction < 0 else "—"
             return f"{arrow}{confidence:.0f}"
 
-        lines.append(f"| {idx} | {ticker} | {decision} | {score_b:+.4f} | " f"{_sig('trend')} | {_sig('mean_reversion')} | {_sig('fundamental')} | {_sig('event_sentiment')} |")
+        lines.append(f"| {idx} | {ticker} | {decision} | {front_door_action} | {score_b:+.4f} | " f"{_sig('trend')} | {_sig('mean_reversion')} | {_sig('fundamental')} | {_sig('event_sentiment')} |")
     lines.append("")
     if len(recs_raw) > max_rows:
         lines.append(f"_仅展示 Top {max_rows} / 共 {len(recs_raw)} 条。完整内容请查看 JSON 报告。_")
