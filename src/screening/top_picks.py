@@ -344,6 +344,38 @@ def _format_sample_count(item: dict) -> str:
     return f"{total}"
 
 
+def _format_bucket_tag(item: dict) -> str:
+    """autodev-13 / loop 98: format the score-bucket label as an inline
+    disclosure tag for the per-pick calibration row.
+
+    The 决策 edge / 胜率 / T+30 edge / 样本 / 赔率 rendered on the per-pick row
+    are BUCKET-LEVEL aggregates (the model's shrinkage estimator — every ticker
+    in the same score-bucket shares byte-identical values). Verified empirically
+    on report 20260703: 300054 鼎龙(电子) + 600160 巨化(基础化工) — different
+    industries, different composites (0.683 vs 0.545) — both rendered
+    ``决策=+4.67% 胜率=60% T+30=-2.36% 样本=7793`` because both fall in the
+    低(<0.5) bucket; likewise 688017/300502/688766 shared the 中低 bucket's
+    ``决策=+1.79% 胜率=49% 样本=46``. The composite_score IS per-ticker, which
+    masks the disease: the eye sees different scores and assumes the calibration
+    metrics are per-ticker too. ``_suggest_position_pct`` compounds it — same-bucket
+    picks get identical 建议仓位 the operator believes were individually sized.
+
+    This tag surfaces the bucket label inline so the operator can distinguish
+    "this ticker measured +4.67%" from "this ticker's bucket averages +4.67%."
+    Serves contract §用户可见诚实化 (估计值的清晰披露). Display-only; the
+    bucket estimator is the owner's model choice and is NOT changed.
+
+    Returns ``""`` when ``bucket_label`` is absent (legacy reports) — graceful
+    degradation matching the existing best-effort pattern for optional fields.
+    """
+    label = str(item.get("bucket_label", "") or "").strip()
+    if not label:
+        return ""
+    # Compact "低 (<0.5)" → "低(<0.5)" (drop the cosmetic space for density).
+    compact = label.replace(" (", "(")
+    return f"  bucket={compact}"
+
+
 def _classify_return_rhythm(expected_returns: dict | None) -> str:
     """O-3: classify the T+30 gain pattern as 早 / 匀 / 晚 from the 5-horizon
     cumulative return shape. Serves the product goal's explicit "持续时间综合最优"
@@ -1534,11 +1566,16 @@ def _print_pick_entry(
     signal_horizon_str = ""
     if verdict.get("signal_horizon"):
         signal_horizon_str = f"  信号={verdict['signal_horizon']}"
+    # autodev-13 / loop 98: surface the score-bucket label so the operator can
+    # tell the 决策/胜率/T+30/样本 aggregates are bucket-level estimates shared
+    # across every ticker in this bucket (NOT per-ticker measurements). See
+    # ``_format_bucket_tag`` for the empirical evidence + contract rationale.
+    bucket_tag = _format_bucket_tag(item)
     # C222: per-pick 行展示分两层 — 决策 horizon (max T+5/T+10, BUY verdict 依据)
     # + 长期 horizon (T+30, invalidation 维度). 让用户看到 BUY 票的短期反弹强度
     # (决策=+1.2% 胜率=62%) 与长期走势 (T+30=+0.3% 胜率=48%) 的差异, 避免把
     # T+5/T+10 反弹票当 30 天持有 (C219 snapshot proves low bucket T+30 winrate≈45%;
-    print(f"     操作={verdict['action']}{signal_horizon_str}  " f"决策={decision_edge_str} 胜率={decision_wr_str}  " f"T+30={t30_str} T+30胜率={t30_wr_str}  " f"样本={_format_sample_count(item)}  节奏={rhythm}  " f"赔率(下行)={downside_str}{pos_str}  " f"市场门控={verdict['market_regime']}")
+    print(f"     操作={verdict['action']}{signal_horizon_str}{bucket_tag}  " f"决策={decision_edge_str} 胜率={decision_wr_str}  " f"T+30={t30_str} T+30胜率={t30_wr_str}  " f"样本={_format_sample_count(item)}  节奏={rhythm}  " f"赔率(下行)={downside_str}{pos_str}  " f"市场门控={verdict['market_regime']}")
     print(f"     失效条件: {verdict['invalidation_reason']}")
 
     # Q-1: per-pick 卖时机建议 (BUY 才显示 — HOLD/AVOID 无卖出问题)

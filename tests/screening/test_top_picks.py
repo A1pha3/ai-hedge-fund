@@ -744,6 +744,164 @@ class TestPrintPickEntryT30LowConfidence:
 
 
 # ---------------------------------------------------------------------------
+# _print_pick_entry — bucket-aggregate disclosure (autodev-13 / loop 98)
+# ---------------------------------------------------------------------------
+#
+# EMPIRICAL DOGFOOD on report 20260703 surfaced a high-severity display-honesty
+# disease on the must-win front door: the per-pick calibration metrics
+# (决策 edge, 胜率, T+30 edge/winrate, 样本, 赔率) are BUCKET-LEVEL aggregates,
+# byte-identical for every ticker in the same score-bucket. Two picks with
+# different composite scores and different industries (300054 鼎龙/电子 vs 600160
+# 巨化/基础化工) rendered identical `决策=+4.67% 胜率=60% T+30=-2.36% 样本=7793`
+# because both fall in the 低(<0.5) bucket. The operator reads these as per-ticker
+# measurements; in reality they are the shared bucket shrinkage estimate
+# (legitimate model choice — the disease is the missing disclosure). Worse,
+# `_suggest_position_pct` derives 建议仓位 from the same bucket numbers, so
+# same-bucket picks get identical position suggestions the operator believes
+# were individually sized.
+#
+# Fix scope (display-only, no model change): surface the bucket label inline
+# so the operator can distinguish "this ticker measured +4.67%" from "this
+# ticker's bucket averages +4.67%." Contract §用户可见诚实化: 估计值的清晰披露.
+
+
+class TestPrintPickEntryBucketAggregateDisclosure:
+    """Bucket-level calibration metrics must be labeled as bucket estimates."""
+
+    @patch("src.screening.top_picks.build_front_door_verdict")
+    def test_bucket_label_surfaces_in_per_pick_row(self, mock_verdict, capsys) -> None:
+        """When bucket_label is present, the row must disclose it near the
+        calibration metrics so the operator knows 决策/胜率/T+30/样本 are bucket
+        aggregates, not per-ticker measurements."""
+        mock_verdict.return_value = {
+            "action": "BUY",
+            "market_regime": "NORMAL",
+            "signal_horizon": "T+5+T+10",
+            "invalidation_reason": "",
+        }
+        item = {
+            "ticker": "300054",
+            "name": "鼎龙股份",
+            "score_b": 0.43,
+            "composite_score": 0.683,
+            "win_rates": {"t30": 0.46, "t5": 0.60, "t10": 0.60},
+            "expected_returns": {"t30": -2.36, "t5": 2.91, "t10": 4.67},
+            "bucket_label": "低 (<0.5)",
+            "bucket_sample_count": 7797,
+            "bucket_t30_mature_count": 7775,
+        }
+        ctx = TopPicksRenderContext(
+            market_regime="NORMAL",
+            new_tickers=set(),
+            report_dir=Path("."),
+            trade_date="20260703",
+        )
+        _print_pick_entry(1, item, ctx)
+        out = capsys.readouterr().out
+        # The bucket short-name (低 / 中低 / 中 / 中高 / 高) must appear, anchored
+        # to the calibration row so the operator reads "bucket=低 决策=+4.67%".
+        assert "bucket" in out.lower(), (
+            "Per-pick calibration metrics are bucket-level aggregates (verified "
+            "empirically: same-bucket picks share byte-identical 决策/胜率/样本). "
+            "The operator must see a bucket label to distinguish bucket estimate "
+            "from per-ticker measurement — contract §估计值的清晰披露."
+        )
+
+    @patch("src.screening.top_picks.build_front_door_verdict")
+    def test_no_bucket_tag_when_label_absent(self, mock_verdict, capsys) -> None:
+        """Legacy reports / missing bucket_label must not crash and must not
+        fabricate a bucket tag. The row degrades gracefully (no disclosure),
+        matching the existing best-effort pattern for absent fields."""
+        mock_verdict.return_value = {
+            "action": "HOLD",
+            "market_regime": "NORMAL",
+            "signal_horizon": "",
+            "invalidation_reason": "",
+        }
+        item = {
+            "ticker": "000001",
+            "name": "TestStock",
+            "score_b": 0.85,
+            "composite_score": 0.8,
+            "win_rates": {"t30": 0.6, "t5": 0.6, "t10": 0.6},
+            "expected_returns": {"t30": 0.03, "t5": 0.01, "t10": 0.012},
+            "bucket_sample_count": 50,
+            "bucket_t30_mature_count": 20,
+            # NOTE: bucket_label intentionally absent (legacy report)
+        }
+        ctx = TopPicksRenderContext(
+            market_regime="NORMAL",
+            new_tickers=set(),
+            report_dir=Path("."),
+            trade_date="20260701",
+        )
+        _print_pick_entry(1, item, ctx)  # must NOT raise
+        out = capsys.readouterr().out
+        assert "bucket" not in out.lower()
+
+    @patch("src.screening.top_picks.build_front_door_verdict")
+    def test_same_bucket_two_picks_show_same_bucket_tag(self, mock_verdict, capsys) -> None:
+        """The honesty contract: two picks in the SAME bucket must show the
+        SAME bucket tag, so the operator can visually connect "why do these
+        two different tickers have identical 决策/胜率? — because same bucket."
+        This is the core misreading the disclosure prevents."""
+        mock_verdict.return_value = {
+            "action": "BUY",
+            "market_regime": "NORMAL",
+            "signal_horizon": "T+5+T+10",
+            "invalidation_reason": "",
+        }
+        ctx = TopPicksRenderContext(
+            market_regime="NORMAL",
+            new_tickers=set(),
+            report_dir=Path("."),
+            trade_date="20260703",
+        )
+        # 300054 (composite 0.683) and 600160 (composite 0.545) — DIFFERENT
+        # composites, DIFFERENT industries, SAME 低(<0.5) bucket. Real dogfood
+        # 20260703 pair.
+        pick_a = {
+            "ticker": "300054",
+            "name": "鼎龙股份",
+            "score_b": 0.43,
+            "composite_score": 0.683,
+            "win_rates": {"t30": 0.46, "t5": 0.60, "t10": 0.60},
+            "expected_returns": {"t30": -2.36, "t5": 2.91, "t10": 4.67},
+            "bucket_label": "低 (<0.5)",
+            "bucket_sample_count": 7797,
+            "bucket_t30_mature_count": 7775,
+        }
+        pick_b = {
+            "ticker": "600160",
+            "name": "巨化股份",
+            "score_b": 0.49,
+            "composite_score": 0.545,
+            "win_rates": {"t30": 0.46, "t5": 0.60, "t10": 0.60},
+            "expected_returns": {"t30": -2.36, "t5": 2.91, "t10": 4.67},
+            "bucket_label": "低 (<0.5)",
+            "bucket_sample_count": 7797,
+            "bucket_t30_mature_count": 7775,
+        }
+        _print_pick_entry(1, pick_a, ctx)
+        _print_pick_entry(2, pick_b, ctx)
+        out = capsys.readouterr().out
+
+        import re
+
+        # Both rows must carry a bucket tag, and the tag must be IDENTICAL
+        # across the two picks (same bucket → same disclosure).
+        bucket_tags = re.findall(r"bucket[=: ]*[^\s]+", out, re.IGNORECASE)
+        assert len(bucket_tags) >= 2, f"Expected >=2 bucket tags (one per pick), got {bucket_tags!r}"
+        # Normalize for comparison (case-insensitive)
+        normalized = {t.lower().strip() for t in bucket_tags}
+        assert len(normalized) == 1, (
+            f"Two picks in the SAME 低(<0.5) bucket must show the SAME bucket tag "
+            f"so the operator can connect identical 决策/胜率 to the shared bucket. "
+            f"Got distinct tags: {normalized!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # _apply_consecutive_bonus_and_resort
 # ---------------------------------------------------------------------------
 
