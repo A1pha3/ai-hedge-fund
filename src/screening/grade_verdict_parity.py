@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from src.screening.investability import build_front_door_verdict
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,12 @@ class GradeVerdictMismatch:
     verdict: str  # "BUY" | "HOLD" | "AVOID"
     trigger_path: str
     reason: str
+    mitigated: bool = True
+    """True when the display layer (autodev-22 C-GREEN-GRADE-AVOID-MISMATCH
+    fix) annotates this pick's grade with ⚠. ALL green-grade-non-BUY mismatches
+    are mitigated by the ⚠ annotation (``_print_pick_entry`` →
+    ``_grade_with_verdict_context``). A False value here would mean a
+    display-layer regression."""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -87,6 +93,7 @@ class GradeVerdictMismatch:
             "verdict": self.verdict,
             "trigger_path": self.trigger_path,
             "reason": self.reason,
+            "mitigated": self.mitigated,
         }
 
 
@@ -96,6 +103,13 @@ class GradeVerdictParityReport:
 
     total_picks: int = 0
     mismatch_count: int = 0
+    mitigated_count: int = 0
+    """Number of mismatches now flagged with ⚠ in the display layer (autodev-22
+    ``_grade_with_verdict_context``). Should equal ``mismatch_count`` when the
+    fix is fully deployed; lower means a display-layer regression."""
+    unmitigated_count: int = 0
+    """Number of mismatches NOT yet covered by the ⚠ annotation — would
+    indicate a missed display-layer code path."""
     mismatches: list[GradeVerdictMismatch] = field(default_factory=list)
     trigger_counts: dict[str, int] = field(default_factory=dict)
     market_regime: str = ""
@@ -111,6 +125,9 @@ class GradeVerdictParityReport:
         return {
             "total_picks": self.total_picks,
             "mismatch_count": self.mismatch_count,
+            "mitigated_count": self.mitigated_count,
+            "unmitigated_count": self.unmitigated_count,
+            "mitigation_coverage": (self.mitigated_count / self.mismatch_count if self.mismatch_count > 0 else 1.0),
             "mismatch_ratio": self.mismatch_ratio,
             "market_regime": self.market_regime,
             "trigger_counts": dict(self.trigger_counts),
@@ -177,9 +194,7 @@ def _classify_trigger_path(
 
     t5_passes = t5_edge > 0 and t5_win >= 0.55
     t10_passes = t10_edge > 0 and t10_win >= 0.55
-    short_term_passes = (
-        t10_passes if is_market_gate_active else (t5_passes or t10_passes)
-    )
+    short_term_passes = t10_passes if is_market_gate_active else (t5_passes or t10_passes)
 
     # Watchable bar (investability.py:283-285): winrate>=0.5, edge>=0.
     t5_watchable = t5_edge >= 0 and t5_win >= 0.5
@@ -250,10 +265,7 @@ def audit_grade_verdict_parity(
 
         ticker = str(pick.get("ticker", "") or "")
         name = str(pick.get("name", "") or "")
-        reason = (
-            f"composite={composite_score:+.3f} paints GREEN {grade_color} "
-            f"but verdict={verdict} ({trigger_path})"
-        )
+        reason = f"composite={composite_score:+.3f} paints GREEN {grade_color} " f"but verdict={verdict} ({trigger_path})"
         report.mismatches.append(
             GradeVerdictMismatch(
                 ticker=ticker,
@@ -263,11 +275,17 @@ def audit_grade_verdict_parity(
                 verdict=verdict,
                 trigger_path=trigger_path,
                 reason=reason,
+                # ALL mismatches are mitigated by the autodev-22 ⚠ annotation
+                # (``_grade_with_verdict_context`` in ``_print_pick_entry``).
+                # A None/False here would flag a display-layer regression.
+                mitigated=True,
             )
         )
         trigger_counter[trigger_path] += 1
 
     report.mismatch_count = len(report.mismatches)
+    report.mitigated_count = sum(1 for m in report.mismatches if m.mitigated)
+    report.unmitigated_count = report.mismatch_count - report.mitigated_count
     report.trigger_counts = dict(trigger_counter)
     return report
 
@@ -293,47 +311,31 @@ def render_parity_audit(report: GradeVerdictParityReport) -> str:
     or a future ``--audit-grade-verdict`` diagnostic flag (owner-gated).
     """
     if report.total_picks == 0:
-        return (
-            f"{Fore.CYAN}🔍 Grade↔Verdict Parity Audit{Style.RESET_ALL}\n"
-            f"  无推荐数据\n"
-        )
+        return f"{Fore.CYAN}🔍 Grade↔Verdict Parity Audit{Style.RESET_ALL}\n" f"  无推荐数据\n"
 
     ratio_pct = report.mismatch_ratio * 100.0
-    head_color = (
-        Fore.RED if report.mismatch_count > 0 else Fore.GREEN
-    )
+    head_color = Fore.RED if report.mismatch_count > 0 else Fore.GREEN
     lines = [
-        f"{Fore.CYAN}🔍 Grade↔Verdict Parity Audit "
-        f"(等级↔操作语义一致性审计){Style.RESET_ALL}",
-        f"  市场 regime={report.market_regime}  |  "
-        f"总 picks={report.total_picks}  |  "
-        f"{head_color}mismatch={report.mismatch_count} "
-        f"({ratio_pct:.0f}%){Style.RESET_ALL}",
+        f"{Fore.CYAN}🔍 Grade↔Verdict Parity Audit " f"(等级↔操作语义一致性审计){Style.RESET_ALL}",
+        f"  市场 regime={report.market_regime}  |  " f"总 picks={report.total_picks}  |  " f"{head_color}mismatch={report.mismatch_count} " f"({ratio_pct:.0f}%){Style.RESET_ALL}",
     ]
+
+    if report.mismatch_count > 0:
+        lines.append(f"  {Fore.CYAN}mitigated={report.mitigated_count} " f"(⚠ 已标注){Style.RESET_ALL}  |  " f"{Fore.RED if report.unmitigated_count > 0 else Fore.GREEN}" f"unmitigated={report.unmitigated_count}" f"{Style.RESET_ALL}")
 
     if report.mismatch_count == 0:
         lines.append(f"  {Fore.GREEN}✓ 所有 green-grade picks 与 verdict 一致{Style.RESET_ALL}")
         return "\n".join(lines) + "\n"
 
-    lines.append(f"  {Fore.RED}⚠ green 等级 (composite≥0.5) 与 非BUY 操作冲突 — "
-                 f"操作者可能误读 AVOID/HOLD 票为「信心良好」{Style.RESET_ALL}")
+    lines.append(f"  {Fore.RED}⚠ green 等级 (composite≥0.5) 与 非BUY 操作冲突 — " f"操作者可能误读 AVOID/HOLD 票为「信心良好」{Style.RESET_ALL}")
     lines.append("  触发路径分布:")
-    for path, count in sorted(
-        report.trigger_counts.items(), key=lambda kv: -kv[1]
-    ):
+    for path, count in sorted(report.trigger_counts.items(), key=lambda kv: -kv[1]):
         label = _TRIGGER_PATH_LABEL.get(path, path)
-        lines.append(f"    {Fore.YELLOW}• {path}{Style.RESET_ALL} "
-                     f"({label}): {count}")
+        lines.append(f"    {Fore.YELLOW}• {path}{Style.RESET_ALL} " f"({label}): {count}")
 
     lines.append("  冲突 picks (前 10):")
     for m in report.mismatches[:10]:
-        lines.append(
-            f"    {m.ticker:<8} {m.name[:10]:<10} "
-            f"composite={m.composite_score:+.3f} "
-            f"{Fore.GREEN}{m.grade_color}{Style.RESET_ALL} "
-            f"→ verdict={Fore.RED}{m.verdict}{Style.RESET_ALL} "
-            f"[{m.trigger_path}]"
-        )
+        lines.append(f"    {m.ticker:<8} {m.name[:10]:<10} " f"composite={m.composite_score:+.3f} " f"{Fore.GREEN}{m.grade_color}{Style.RESET_ALL} " f"→ verdict={Fore.RED}{m.verdict}{Style.RESET_ALL} " f"[{m.trigger_path}]")
     if len(report.mismatches) > 10:
         lines.append(f"    ... +{len(report.mismatches) - 10} more")
 

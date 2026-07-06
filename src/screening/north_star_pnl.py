@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 _MIN_N_DEFAULT = 20  # 与 state_type_calibration _Q1_MIN_N 对齐
 _RECENT_DAYS = 5  # 最近 N 日 avg (趋势方向)

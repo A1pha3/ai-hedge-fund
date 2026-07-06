@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 #: regime_gate_level 的合法值排序 (展示顺序); 其余归 "其他"
 _REGIME_ORDER: tuple[str, ...] = ("normal", "cautious", "risk_off", "crisis", "halt")

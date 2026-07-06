@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 #: 趋势方向阈值 (百分点): |last - first| >= 此值才算改善/恶化, 否则平稳
 _TREND_THRESHOLD: float = 0.05  # 5pp

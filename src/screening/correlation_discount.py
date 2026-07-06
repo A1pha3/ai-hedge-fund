@@ -28,7 +28,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 #: industry-overlap 权重 (same industry → +0.6 correlation contribution)
 _W_INDUSTRY: float = 0.6

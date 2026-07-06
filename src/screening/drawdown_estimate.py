@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 #: HORIZON 顺序 (累计收益路径的时间轴)
 _HORIZON_ORDER: tuple[str, ...] = ("t1", "t5", "t10", "t20", "t30")

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 
 @dataclass

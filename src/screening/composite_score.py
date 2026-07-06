@@ -38,7 +38,7 @@ from src.screening.signal_consistency import check_signal_consistency
 from src.screening.signal_momentum import compute_signal_momentum
 from src.screening.trend_resonance import compute_trend_resonance
 from src.screening.volume_confirmation import compute_volume_confirmation
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 from src.utils.numeric import coerce_score_b
 
 # BH-021 / R48-R50 BH-017 同族: composite_score 此前无 module logger。composite score

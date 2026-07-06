@@ -298,9 +298,7 @@ class TestRenderPickChanges:
         # (current_items). A new ticker not in current_items is a pool-only
         # entrant and must NOT be advertised as 新入选. The name (not the bare
         # ticker) is rendered, matching the displayed pick list.
-        result = _render_pick_changes(
-            {"000001"}, set(), [{"ticker": "000001", "name": "平安银行"}]
-        )
+        result = _render_pick_changes({"000001"}, set(), [{"ticker": "000001", "name": "平安银行"}])
         assert "新入选" in result
         assert "平安银行" in result
 
@@ -668,6 +666,87 @@ class TestFormatSampleCount:
 
 
 # ---------------------------------------------------------------------------
+# _grade_with_verdict_context — C-GREEN-GRADE-AVOID-MISMATCH Option B
+# ---------------------------------------------------------------------------
+
+
+class TestGradeWithVerdictContext:
+    """_grade_with_verdict_context — 绿色 grade 但非 BUY 判决时追加 ⚠ 标注。"""
+
+    def test_buy_verdict_unchanged(self) -> None:
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        grade = "\x1b[32mA\x1b[0m"
+        result = _grade_with_verdict_context(grade, "BUY", 0.85)
+        assert result == grade, "BUY 判决时 grade 不应追加 ⚠"
+
+    def test_buy_lowercase_unchanged(self) -> None:
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        grade = "\x1b[32mB\x1b[0m"
+        result = _grade_with_verdict_context(grade, "buy", 0.62)
+        assert result == grade, "BUY 小写判读时 grade 不应追加 ⚠"
+
+    def test_avoid_appends_warning(self) -> None:
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        grade = "\x1b[32mB\x1b[0m"
+        result = _grade_with_verdict_context(grade, "AVOID", 0.55)
+        assert "⚠" in result, "AVOID 判决时应追加 ⚠"
+
+    def test_hold_appends_warning(self) -> None:
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        grade = "\x1b[32mB\x1b[0m"
+        result = _grade_with_verdict_context(grade, "HOLD", 0.51)
+        assert "⚠" in result, "HOLD 判决时应追加 ⚠"
+
+    def test_low_score_no_warning(self) -> None:
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        grade = "\x1b[33mC\x1b[0m"
+        result = _grade_with_verdict_context(grade, "AVOID", 0.35)
+        assert result == grade, "低于绿色阈值时不应追加 ⚠"
+
+    def test_none_verdict_fallback_to_hold(self) -> None:
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        grade = "\x1b[32mA\x1b[0m"
+        result = _grade_with_verdict_context(grade, None, 0.75)
+        assert "⚠" in result, "None 判决应回退 HOLD 并追加 ⚠"
+
+    def test_empty_verdict_fallback_to_hold(self) -> None:
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        grade = "\x1b[32mB\x1b[0m"
+        result = _grade_with_verdict_context(grade, "", 0.60)
+        assert "⚠" in result, "空判决应回退 HOLD 并追加 ⚠"
+
+    def test_bearish_synonym_appends_warning(self) -> None:
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        grade = "\x1b[32mB\x1b[0m"
+        result = _grade_with_verdict_context(grade, "bearish", 0.53)
+        assert "⚠" in result, "bearish 判决应追加 ⚠ (与 avoid/strong_sell 同族)"
+
+    def test_edge_threshold_green_grade_flagged(self) -> None:
+        """精确 0.5 边界 — 仍属于绿色 threshold, 非 BUY 应追加 ⚠。"""
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        grade = "\x1b[32mB\x1b[0m"
+        result = _grade_with_verdict_context(grade, "AVOID", 0.5)
+        assert "⚠" in result, "score == 0.5 仍属绿色 grade, 非 BUY 应追加 ⚠"
+
+    def test_just_below_threshold_no_warning(self) -> None:
+        """精确低于 0.5 边界 — 非绿色 grade, 不应追加 ⚠。"""
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        grade = "\x1b[33mC\x1b[0m"
+        result = _grade_with_verdict_context(grade, "AVOID", 0.4999)
+        assert result == grade, "score 略低于 0.5 时不应追加 ⚠"
+
+
+# ---------------------------------------------------------------------------
 # _print_pick_entry — T+30 winrate low-confidence flag (R51/R52 family)
 # ---------------------------------------------------------------------------
 
@@ -800,12 +879,7 @@ class TestPrintPickEntryBucketAggregateDisclosure:
         out = capsys.readouterr().out
         # The bucket short-name (低 / 中低 / 中 / 中高 / 高) must appear, anchored
         # to the calibration row so the operator reads "bucket=低 决策=+4.67%".
-        assert "bucket" in out.lower(), (
-            "Per-pick calibration metrics are bucket-level aggregates (verified "
-            "empirically: same-bucket picks share byte-identical 决策/胜率/样本). "
-            "The operator must see a bucket label to distinguish bucket estimate "
-            "from per-ticker measurement — contract §估计值的清晰披露."
-        )
+        assert "bucket" in out.lower(), "Per-pick calibration metrics are bucket-level aggregates (verified " "empirically: same-bucket picks share byte-identical 决策/胜率/样本). " "The operator must see a bucket label to distinguish bucket estimate " "from per-ticker measurement — contract §估计值的清晰披露."
 
     @patch("src.screening.top_picks.build_front_door_verdict")
     def test_no_bucket_tag_when_label_absent(self, mock_verdict, capsys) -> None:
@@ -894,11 +968,7 @@ class TestPrintPickEntryBucketAggregateDisclosure:
         assert len(bucket_tags) >= 2, f"Expected >=2 bucket tags (one per pick), got {bucket_tags!r}"
         # Normalize for comparison (case-insensitive)
         normalized = {t.lower().strip() for t in bucket_tags}
-        assert len(normalized) == 1, (
-            f"Two picks in the SAME 低(<0.5) bucket must show the SAME bucket tag "
-            f"so the operator can connect identical 决策/胜率 to the shared bucket. "
-            f"Got distinct tags: {normalized!r}"
-        )
+        assert len(normalized) == 1, f"Two picks in the SAME 低(<0.5) bucket must show the SAME bucket tag " f"so the operator can connect identical 决策/胜率 to the shared bucket. " f"Got distinct tags: {normalized!r}"
 
 
 # ---------------------------------------------------------------------------

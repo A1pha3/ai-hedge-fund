@@ -25,7 +25,7 @@ from src.screening.consecutive_recommendation import (
     resolve_report_dir,
 )
 from src.screening.data_quality_audit import load_latest_recommendations
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 # ---------------------------------------------------------------------------
 # Constants — score buckets

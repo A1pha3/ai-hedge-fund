@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 #: 深尾阈值 (百分点): p5 恶于此 → ⚠ deep-tail warning
 _DEEP_TAIL_THRESHOLD: float = -15.0

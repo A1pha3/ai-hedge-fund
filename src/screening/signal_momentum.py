@@ -28,7 +28,7 @@ from src.screening.consecutive_recommendation import (
     load_auto_screening_history,
     resolve_report_dir,
 )
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 from src.utils.numeric import coerce_score_b
 
 # ---------------------------------------------------------------------------

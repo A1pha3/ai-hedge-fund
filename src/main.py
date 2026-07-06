@@ -69,11 +69,6 @@ from src.screening.recommendation_tracker import (
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
 from src.tools.tushare_api import get_ashare_daily_gainers_with_tushare
-from src.utils.display import (
-    print_trading_output,
-    save_daily_gainers_report,
-    save_trading_report,
-)
 from src.utils.llm import build_parallel_provider_execution_plan
 from src.utils.logging import get_logger, setup_logging
 from src.utils.numeric import is_finite_number as _is_finite_number
@@ -369,6 +364,8 @@ def run_daily_gainers_cli() -> int:
 
     results = get_ashare_daily_gainers_with_tushare(args.trade_date, pct_threshold=args.pct_threshold, include_name=True)
     report_date = results[0].get("trade_date") if results else args.trade_date
+    from src.utils.display import save_daily_gainers_report
+
     report_path = save_daily_gainers_report(results, report_date, args.pct_threshold, output_path=args.output_md)
     if report_path:
         print(f"已保存报告: {report_path}")
@@ -3334,6 +3331,8 @@ if __name__ == "__main__":
         model_name=inputs.model_name,
         model_provider=inputs.model_provider,
     )
+    from src.utils.display import print_trading_output, save_trading_report
+
     print_trading_output(result)
     save_trading_report(
         result=result,

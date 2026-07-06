@@ -24,7 +24,7 @@ import statistics
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 #: 每个版本最少 mature 记录数 (NS-7 backlog: ≥10 交易日; 镜像 north_star_pnl min_n)
 _MIN_SAMPLES_DEFAULT = 10

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from src.screening.state_type_calibration import _score_bucket
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 #: state_type 内每因子高/低组最低样本数 (镜像 rank_monotonicity _MIN_N)
 _MIN_N_DEFAULT = 15

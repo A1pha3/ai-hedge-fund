@@ -29,7 +29,7 @@ from src.screening.recommendation_tracker import (
     _latest_recommended_date,
     _parse_date,
 )
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 # ---------------------------------------------------------------------------
 # Constants

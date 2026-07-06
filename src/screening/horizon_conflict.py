@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 #: materiality 阈值 (百分点): 双侧均值 |value| 须 >= 此值才判定冲突
 _MATERIAL_THRESHOLD: float = 0.5

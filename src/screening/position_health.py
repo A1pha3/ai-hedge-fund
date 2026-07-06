@@ -31,7 +31,7 @@ from src.screening.consecutive_recommendation import (
 from src.screening.signal_momentum import compute_signal_momentum
 from src.screening.trend_resonance import compute_trend_resonance
 from src.screening.volume_confirmation import compute_volume_confirmation
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 from src.utils.numeric import safe_float as _safe_float
 
 logger = logging.getLogger(__name__)

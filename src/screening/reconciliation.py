@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from src.screening.isotonic_calibration import MIN_BUCKET_SAMPLES
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 # ---------------------------------------------------------------------------
 # Data types

@@ -35,7 +35,7 @@ from src.screening.industry_rotation import (
     IndustrySignal,
     top_strong_industries,
 )
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 logger = logging.getLogger(__name__)
 

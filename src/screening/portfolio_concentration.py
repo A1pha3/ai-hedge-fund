@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 #: Top 行业占比 ≥ 此阈值 → ⚠ 集中超限提示 (count-based, 3 只同行业 / 10 只组合)
 _DEFAULT_THRESHOLD: float = 0.30

@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 #: 重叠率 ≥ 此阈值 → "稳定"（≈每日 Top-3 基本不动）
 _STABLE_THRESHOLD: float = 0.67

@@ -22,7 +22,7 @@ from typing import Any
 
 from src.screening.consecutive_recommendation import resolve_report_dir
 from src.utils.date_utils import format_date
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 # ---------------------------------------------------------------------------
 # Constants

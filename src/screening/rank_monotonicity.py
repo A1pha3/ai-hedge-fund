@@ -42,7 +42,7 @@ from src.screening.state_type_calibration import (
     _build_date_state_type_map,
     _score_bucket,
 )
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 # 与 state_type_calibration _score_bucket 边界对齐: low < 0.30 / mid_low < 0.40 /
 # mid_high < 0.50 (BUY 门控) / high >= 0.50.

@@ -37,7 +37,7 @@ from src.screening.data_quality_audit import (
     DEFAULT_QUALITY_THRESHOLD,
     load_latest_recommendations,
 )
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 from src.utils.numeric import safe_float  # NS-13: NaN-rejecting coercion
 
 # ---------------------------------------------------------------------------

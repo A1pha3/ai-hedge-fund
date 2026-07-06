@@ -266,7 +266,7 @@ def render_factor_attribution_line(report: FactorAttributionReport) -> str:
       ``  🔍 因子归因 (T+5): MR ⚠噪声倒挂 low 53% vs high 40% (Δ13pp, CI[-5%, +30%])``
       或 insufficient (旧 records 无 decomposition)
     """
-    from src.utils.display import Fore, Style
+    from colorama import Fore, Style
 
     if report.verdict == "insufficient":
         return ""

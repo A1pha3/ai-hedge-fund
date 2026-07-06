@@ -38,7 +38,6 @@ from src.screening.consecutive_recommendation import (
     enrich_recommendations_with_history,
     resolve_report_dir,
 )
-from src.screening.data_quality_audit import _find_latest_report
 from src.screening.expected_return import compute_expected_returns
 from src.screening.investability import (
     _max_short_horizon_metric,
@@ -49,7 +48,7 @@ from src.screening.investability import (
 )
 from src.screening.signal_decay_detector import detect_signal_decay
 from src.screening.verify_recommendations import compute_verify_recommendations
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 from src.utils.numeric import safe_float as _safe_float_value
 
 logger = logging.getLogger(__name__)
@@ -726,6 +725,10 @@ def _render_score_trend(
     Returns empty string if no decay data or first-time recommendation.
     """
     try:
+        # 函数内延迟加载, 避免模块顶层 import data_quality_audit → display.py →
+        # akshare_api → pandas 不必要地拉入前门路径 (同族 loop 118 pdf_exporter 修复).
+        from src.screening.data_quality_audit import _find_latest_report
+
         # Load the most recent report for current score
         latest_path = _find_latest_report(report_dir)
         if latest_path is None:
@@ -1342,6 +1345,10 @@ def _load_recommendation_context(
     count: int,
 ) -> tuple[Path, dict, list[dict], str] | None:
     """Load the latest screening report and its candidate recommendations."""
+    # 函数内延迟加载, 避免模块顶层 import data_quality_audit → display.py →
+    # akshare_api → pandas 不必要地拉入前门路径 (同族 loop 118 pdf_exporter 修复).
+    from src.screening.data_quality_audit import _find_latest_report
+
     report_path = _find_latest_report(report_dir)
     if report_path is None:
         return None
@@ -1480,6 +1487,30 @@ def _print_pick_entry_details(
         print(f"     {cluster_label} 代表票， 同簇备选: {', '.join(alternatives[:2])}")
 
 
+# ---------------------------------------------------------------------------
+# C-GREEN-GRADE-AVOID-MISMATCH: verdict-contextualized grade
+# ---------------------------------------------------------------------------
+
+_GREEN_GRADE_THRESHOLD: float = 0.5  # mirror _composite_grade
+
+
+def _grade_with_verdict_context(grade: str, verdict_action: str, composite_score: float) -> str:
+    """当 composite_score ≥ 0.5 (green A/B grade) 但前门判决不是 BUY 时,
+    在 grade 后追加 ⚠ 警告, 消除视觉语义冲突 (e.g. green B + AVOID)。
+
+    Grade 本身保持纯 score 语义不变 — 本函数仅追加标注, 不改变 grade 含义。
+    """
+    if composite_score < _GREEN_GRADE_THRESHOLD:
+        return grade
+    verdict_lower = (verdict_action or "").lower()
+    if verdict_lower == "buy":
+        return grade
+    # 非 BUY 绿色 grade → 追加 ⚠ 警告
+    if verdict_lower in ("avoid", "strong_sell", "sell", "bearish"):
+        return f"{grade}{Fore.RED}⚠{Style.RESET_ALL}"
+    return f"{grade}{Fore.YELLOW}⚠{Style.RESET_ALL}"
+
+
 def _print_pick_entry(
     idx: int,
     item: dict,
@@ -1496,6 +1527,10 @@ def _print_pick_entry(
     estimate_marker = "" if composite_verified else ("估" if composite_verified is False else "")
     name = str(item.get("name", "") or item.get("ticker", ""))[:14]
     verdict = build_front_door_verdict(item, market_regime=context.market_regime)
+    # C-GREEN-GRADE-AVOID-MISMATCH Option B: 当 composite_score 达绿色 grade 线
+    # (≥ 0.5, A/B) 但前门判决不是 BUY 时, 在 grade 后追加 ⚠ 消除视觉语义冲突。
+    # Grade 本身保持纯 score 语义不变 — 仅追加标注不改变语义 (autodev-22 第一循环)。
+    grade = _grade_with_verdict_context(grade, verdict.get("action", "HOLD"), composite_score)
 
     is_new = str(item.get("ticker", "")) in context.new_tickers
     new_badge = f" {Fore.GREEN}🆕{Style.RESET_ALL}" if is_new else ""

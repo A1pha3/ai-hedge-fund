@@ -46,7 +46,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from src.utils.display import Fore, Style
+from colorama import Fore, Style
 
 logger = logging.getLogger(__name__)
 
