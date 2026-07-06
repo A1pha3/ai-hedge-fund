@@ -422,18 +422,11 @@ class TestExplainRecentEvents:
         rc, output = _run_explain_capture(report)
 
         assert rc == 0
-        assert "9999天前" not in output, (
-            "days_old=9999 is the upstream sentinel for unparseable date — must "
-            "NOT render as '9999天前' (~27 years), which is absurd on a 近期事件 "
-            "block and misleads the operator."
-        )
+        assert "9999天前" not in output, "days_old=9999 is the upstream sentinel for unparseable date — must " "NOT render as '9999天前' (~27 years), which is absurd on a 近期事件 " "block and misleads the operator."
         # The article title is still real news and should be shown; only the
         # bogus timestamp must be replaced with an honest "unknown" label.
         assert "光刻胶" in output
-        assert "日期未知" in output or "未知" in output, (
-            "When days_old is the unknown-date sentinel, render an honest label "
-            "so the operator knows the article date is unavailable."
-        )
+        assert "日期未知" in output or "未知" in output, "When days_old is the unknown-date sentinel, render an honest label " "so the operator knows the article date is unavailable."
 
 
 # ---------------------------------------------------------------------------
@@ -634,6 +627,88 @@ class TestHelperFunctions:
         output = capsys.readouterr().out
         assert "暂无近期事件数据" in output
 
+    def test_print_recent_events_all_unknown_dates_disclosed(self, capsys):
+        """autodev-23 loop 125: when ALL articles carry the 9999 sentinel, the
+        "(5 日)" recency window is unverifiable. Disclose so the operator does
+        not trust the 5-day label on recency-unverified headlines."""
+        from src.cli.explain_helpers import _print_recent_events_block
+
+        report = {}
+        match = {
+            "strategy_signals": {
+                "event_sentiment": {
+                    "sub_factors": {
+                        "news_sentiment": {
+                            "metrics": {
+                                "articles": [
+                                    {"days_old": "9999", "title": "新闻一"},
+                                    {"days_old": "9999", "title": "新闻二"},
+                                    {"days_old": "9999", "title": "新闻三"},
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _print_recent_events_block(report, match)
+        output = capsys.readouterr().out
+        assert "日期未知" in output
+        assert "5 日窗口无法核实" in output, "When all article dates are unparseable, the display must warn the " "operator that the (5 日) recency window cannot be verified — the " "headlines may be outside the 5-day window."
+
+    def test_print_recent_events_partial_unknown_dates_disclosed(self, capsys):
+        """autodev-23 loop 125: partial unknown dates → softer disclosure."""
+        from src.cli.explain_helpers import _print_recent_events_block
+
+        report = {}
+        match = {
+            "strategy_signals": {
+                "event_sentiment": {
+                    "sub_factors": {
+                        "news_sentiment": {
+                            "metrics": {
+                                "articles": [
+                                    {"days_old": "3", "title": "近期新闻"},
+                                    {"days_old": "9999", "title": "未知日期新闻"},
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _print_recent_events_block(report, match)
+        output = capsys.readouterr().out
+        assert "3天前" in output
+        assert "日期未知" in output
+        assert "1/2" in output or "部分事件可能在 5 日窗口外" in output, "Partial unknown dates must be disclosed with the fraction (e.g. 1/2) " "so the operator knows some headlines may be outside the window."
+
+    def test_print_recent_events_all_known_dates_no_warning(self, capsys):
+        """autodev-23 loop 125: when all dates parse, NO disclosure warning."""
+        from src.cli.explain_helpers import _print_recent_events_block
+
+        report = {}
+        match = {
+            "strategy_signals": {
+                "event_sentiment": {
+                    "sub_factors": {
+                        "news_sentiment": {
+                            "metrics": {
+                                "articles": [
+                                    {"days_old": "2", "title": "新闻一"},
+                                    {"days_old": "4", "title": "新闻二"},
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _print_recent_events_block(report, match)
+        output = capsys.readouterr().out
+        assert "5 日窗口无法核实" not in output
+        assert "部分事件可能在 5 日窗口外" not in output
+
     # --- _print_industry_ranking_block (extracted helper, Block C) ---
 
     def test_print_industry_ranking_no_industry(self, capsys):
@@ -724,11 +799,7 @@ class TestRunExplainNoneScoreBHandling:
         rec = _make_recommendation(score_b=None)  # type: ignore[arg-type]
         report = _make_report(recommendations=[rec])
         rc, output = _run_explain_capture(report, ticker="000001")
-        assert rc == 0, (
-            f"run_explain crashed on score_b=None (TypeError at score_b:+.4f format). "
-            f"Operator cannot see explain output for corrupt/partial reports. "
-            f"Got rc={rc}, output={output!r}"
-        )
+        assert rc == 0, f"run_explain crashed on score_b=None (TypeError at score_b:+.4f format). " f"Operator cannot see explain output for corrupt/partial reports. " f"Got rc={rc}, output={output!r}"
         # Score B line should show 0.0000 (coerced) not crash
         assert "Score B:" in output
 
@@ -756,9 +827,7 @@ class TestRunExplainNoneScoreBHandling:
         report = _make_report(recommendations=[rec])
         rc, output = _run_explain_capture(report, ticker="000001")
         assert rc == 0
-        assert "+0.0000" in output, (
-            f"None score_b should coerce to 0.0000 for honest display. Got: {output!r}"
-        )
+        assert "+0.0000" in output, f"None score_b should coerce to 0.0000 for honest display. Got: {output!r}"
 
 
 class TestRunExplainNoneDecisionHandling:
@@ -786,13 +855,8 @@ class TestRunExplainNoneDecisionHandling:
         report = _make_report(recommendations=[rec])
         rc, output = _run_explain_capture(report, ticker="000001")
         assert rc == 0
-        assert "决策: neutral" in output, (
-            f"None decision should coerce to 'neutral' (the missing-key default), "
-            f"not render as '决策: None'. Got: {output!r}"
-        )
-        assert "None" not in output.replace("Score B:", ""), (
-            f"Literal 'None' should not appear in decision display. Got: {output!r}"
-        )
+        assert "决策: neutral" in output, f"None decision should coerce to 'neutral' (the missing-key default), " f"not render as '决策: None'. Got: {output!r}"
+        assert "None" not in output.replace("Score B:", ""), f"Literal 'None' should not appear in decision display. Got: {output!r}"
 
     def test_empty_string_decision_shows_neutral(self) -> None:
         """decision='' (empty string) must also coerce to 'neutral'.
@@ -859,16 +923,10 @@ class TestRunExplainNoneSignalsHandling:
         }
         report = _make_report(recommendations=[rec])
         rc, output = _run_explain_capture(report, ticker="000001")
-        assert rc == 0, (
-            f"None strategy_signals should not crash run_explain. "
-            f"Got rc={rc}, output={output!r}"
-        )
+        assert rc == 0, f"None strategy_signals should not crash run_explain. " f"Got rc={rc}, output={output!r}"
         # Existing '数据缺失' fallback (explain_helpers.py:45) should fire
         # for each of the 4 strategies when signals is missing.
-        assert "数据缺失" in output, (
-            f"None strategy_signals should fall back to '数据缺失' label, "
-            f"not crash. Got: {output!r}"
-        )
+        assert "数据缺失" in output, f"None strategy_signals should fall back to '数据缺失' label, " f"not crash. Got: {output!r}"
 
     def test_missing_signals_key_uses_default(self) -> None:
         """Regression guard: missing strategy_signals key still uses {} default.
@@ -941,10 +999,7 @@ class TestRunExplainNoneArbitrationHandling:
         }
         report = _make_report(recommendations=[rec])
         rc, output = _run_explain_capture(report, ticker="000001")
-        assert rc == 0, (
-            f"None arbitration should not crash run_explain. "
-            f"Got rc={rc}, output={output!r}"
-        )
+        assert rc == 0, f"None arbitration should not crash run_explain. " f"Got rc={rc}, output={output!r}"
         assert "仲裁规则: 无" in output or "无" in output
 
     def test_empty_list_arbitration_shows_wu(self) -> None:

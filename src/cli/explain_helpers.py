@@ -17,16 +17,19 @@ _STRATEGY_CN_LABELS: dict[str, str] = {
     "event_sentiment": "事件情绪",
 }
 
-#: autodev-13 / loop 100 — upstream sentinel for "unparseable news article date".
+#: Upstream sentinel for "unparseable news article date".
 #: ``_resolve_news_article_days_old`` (strategy_scorer_event_sentiment_helpers.py)
-#: returns 9999 when ``_safe_date`` cannot parse the article date. Empirically
-#: ALL A-share articles carry this sentinel because the akshare ``发布时间`` field
-#: uses relative Chinese formats ("今天", "昨天", "X小时前", "X天前") that
-#: ``_safe_date``'s 3 strptime formats do not handle. Rendering "9999天前"
-#: (~27 years) on a "近期事件 (5 日)" block is absurd; treat the sentinel as an
-#: honest "unknown date" instead. NOTE: this is the DISPLAY-side guard; the
-#: upstream parser gap (which also zeroes ``compute_event_decay`` model-side) is
-#: tracked separately.
+#: returns 9999 when ``_safe_date`` cannot parse the article date.
+#:
+#: History: loop 100 (autodev-13) introduced this DISPLAY-side guard because
+#: pre-loop-101 reports had 100% of articles at days_old=9999 — the akshare
+#: ``发布时间`` field returns "%Y-%m-%d %H:%M:%S" (space-separated) but
+#: ``_safe_date`` only had the T-separated ISO variant. Loop 101 (db1e300d)
+#: fixed the parser by adding the space-separated format. NEW reports no longer
+#: mass-produce the sentinel, but OLD reports (pre-2026-07-06) still carry it,
+#: and any future upstream format regression would reintroduce it. This guard
+#: + the autodev-23 loop-125 "5 日窗口无法核实" disclosure ensure the operator
+#: is never misled by the "(5 日)" label when dates are unparseable.
 _DAYS_OLD_UNKNOWN_SENTINEL: int = 9999
 
 
@@ -132,10 +135,19 @@ def _print_recent_events_block(report_data: dict, match: dict) -> None:
             articles = _extract_articles_from_event_subfactors(sub_factors)
             if articles:
                 printed_any = False
+                # autodev-23 loop 125: track how many rendered articles have
+                # the 9999 "日期未知" sentinel. The "(5 日)" block title
+                # promises a recency window the data cannot verify when all
+                # dates are unparseable (pre-loop-101 reports, or upstream
+                # format regressions). Honest disclosure prevents the operator
+                # from trusting the 5-day label on recency-unverified content.
+                unknown_date_count = 0
+                rendered_count = 0
                 for art in articles[:5]:
                     date_str = str(art.get("days_old", "?"))
                     title = str(art.get("title", ""))
                     if title:
+                        rendered_count += 1
                         if date_str.isdigit():
                             # autodev-13 / loop 100: 9999 is the upstream
                             # sentinel for "unparseable date" (see
@@ -146,6 +158,7 @@ def _print_recent_events_block(report_data: dict, match: dict) -> None:
                             days = int(date_str)
                             if days >= _DAYS_OLD_UNKNOWN_SENTINEL:
                                 day_label = "日期未知"
+                                unknown_date_count += 1
                             else:
                                 day_label = f"{days}天前"
                         else:
@@ -153,6 +166,17 @@ def _print_recent_events_block(report_data: dict, match: dict) -> None:
                         print(f'  {day_label}  新闻: "{title}"')
                         printed_any = True
                 if printed_any:
+                    # autodev-23 loop 125: when ALL rendered articles carry the
+                    # 日期未知 sentinel, the "(5 日)" recency window is
+                    # unverifiable — the dates couldn't be parsed upstream
+                    # (pre-loop-101 reports, or a new upstream format regression).
+                    # Disclose so the operator does not trust the 5-day label on
+                    # recency-unverified headlines. Partial-unknown case (some
+                    # known, some unknown) is also flagged but less severely.
+                    if rendered_count > 0 and unknown_date_count == rendered_count:
+                        print(f"  {Fore.YELLOW}⚠ 全部 {rendered_count} 条事件日期未知, " f"5 日窗口无法核实 (可能在窗口外){Style.RESET_ALL}")
+                    elif unknown_date_count > 0:
+                        print(f"  {Fore.YELLOW}⚠ {unknown_date_count}/{rendered_count} 条事件日期未知, " f"部分事件可能在 5 日窗口外{Style.RESET_ALL}")
                     return
 
     print("  暂无近期事件数据")
