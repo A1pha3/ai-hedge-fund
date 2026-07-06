@@ -1,19 +1,13 @@
+from __future__ import annotations
+
 import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from langchain_anthropic import ChatAnthropic
-from langchain_deepseek import ChatDeepSeek
-from langchain_gigachat import GigaChat
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_groq import ChatGroq
-from langchain_ollama import ChatOllama
-from langchain_openai import AzureChatOpenAI, ChatOpenAI
-from langchain_xai import ChatXAI
 from pydantic import BaseModel
 
 from src.llm.model_builder_helpers import (
@@ -38,6 +32,25 @@ from src.llm.zhipu_model_helpers import (
     resolve_zhipu_route_inputs,
     should_route_zhipu_to_coding_plan,
 )
+
+if TYPE_CHECKING:
+    # langchain provider classes are only needed at runtime by the model
+    # builders below (build_openai_compatible_model / _build_native_provider_model
+    # / _build_openai_family_model / _build_ollama_or_gigachat_model). Keeping
+    # these imports under TYPE_CHECKING + ``from __future__ import annotations``
+    # means ``ModelProvider`` / ``LLMModel`` / ``load_models_from_json`` and the
+    # ``--top`` / ``--custom-icks`` front doors (which never build an LLM client)
+    # stay loadable when a single provider package is absent or upgraded
+    # incompatibly (loop 119 — previously a missing langchain_xai crashed
+    # ``from src.main import run_top`` at import time).
+    from langchain_anthropic import ChatAnthropic
+    from langchain_deepseek import ChatDeepSeek
+    from langchain_gigachat import GigaChat
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_groq import ChatGroq
+    from langchain_ollama import ChatOllama
+    from langchain_openai import AzureChatOpenAI, ChatOpenAI
+    from langchain_xai import ChatXAI
 
 # NS-17 / BH-017 family sibling drain: API key 缺失是 LLM 初始化 #1 失败模式 (整个系统
 # 停摆)。此前 7 处 print() 紧跟 raise (冗余双输出), 且 print 在 cron/launchd 上下文
@@ -360,6 +373,18 @@ def _resolve_openai_compatible_model_kwargs(config: OpenAICompatibleTransportCon
 
 def build_openai_compatible_model(model_name: str, config: OpenAICompatibleTransportConfig, api_keys: dict | None = None) -> ChatOpenAI:
     """Builds a ChatOpenAI-compatible client from transport config."""
+    # Deferred import — loop 119 import isolation: the front doors (--top /
+    # --custom-weights) never build an LLM client, so ``langchain_openai`` must
+    # not be required at module import time. ``globals().get(...)`` fallback
+    # preserves the existing test-injection contract (``monkeypatch.setattr(
+    # llm_models, "ChatOpenAI", FakeChatOpenAI)``) without forcing every test
+    # to patch the underlying package.
+    chat_openai_cls = globals().get("ChatOpenAI")
+    if chat_openai_cls is None:
+        from langchain_openai import ChatOpenAI as _RealChatOpenAI  # noqa: F811
+
+        chat_openai_cls = _RealChatOpenAI
+
     api_key = (api_keys or {}).get(config.api_key_name) or os.getenv(config.api_key_name)
     if not api_key:
         logger.error("API Key Error: Please make sure %s is set in your .env file or provided via API keys.", config.api_key_name)
@@ -379,7 +404,7 @@ def build_openai_compatible_model(model_name: str, config: OpenAICompatibleTrans
     if model_kwargs:
         kwargs["model_kwargs"] = model_kwargs
 
-    return ChatOpenAI(**kwargs)
+    return chat_openai_cls(**kwargs)
 
 
 def get_registered_provider_model(model_name: str, model_provider: str, api_keys: dict | None = None):
@@ -447,20 +472,30 @@ def _get_required_api_key(api_keys: dict | None, key_name: str, provider_label: 
 
 
 def _build_native_provider_model(model_name: str, model_provider: ModelProvider, api_keys: dict | None = None):
+    # Deferred imports — loop 119 import isolation: each provider class is only
+    # needed when its provider branch actually executes. ``# noqa: F811`` because
+    # the same names also appear under TYPE_CHECKING for annotation resolution.
     if model_provider == ModelProvider.GROQ:
+        from langchain_groq import ChatGroq  # noqa: F811
         return ChatGroq(model=model_name, api_key=_get_required_api_key(api_keys, "GROQ_API_KEY", "Groq"))
     if model_provider == ModelProvider.ANTHROPIC:
+        from langchain_anthropic import ChatAnthropic  # noqa: F811
         return ChatAnthropic(model=model_name, api_key=_get_required_api_key(api_keys, "ANTHROPIC_API_KEY", "Anthropic"))
     if model_provider == ModelProvider.DEEPSEEK:
+        from langchain_deepseek import ChatDeepSeek  # noqa: F811
         return ChatDeepSeek(model=model_name, api_key=_get_required_api_key(api_keys, "DEEPSEEK_API_KEY", "DeepSeek"))
     if model_provider == ModelProvider.GOOGLE:
+        from langchain_google_genai import ChatGoogleGenerativeAI  # noqa: F811
         return ChatGoogleGenerativeAI(model=model_name, api_key=_get_required_api_key(api_keys, "GOOGLE_API_KEY", "Google"))
     if model_provider == ModelProvider.XAI:
+        from langchain_xai import ChatXAI  # noqa: F811
         return ChatXAI(model=model_name, api_key=_get_required_api_key(api_keys, "XAI_API_KEY", "xAI"))
     return None
 
 
 def _build_openai_family_model(model_name: str, model_provider: ModelProvider, api_keys: dict | None = None):
+    from langchain_openai import AzureChatOpenAI  # noqa: F811 — deferred, loop 119 import isolation
+
     provider_name = model_provider.value if hasattr(model_provider, "value") else str(model_provider)
     return build_openai_family_model_impl(
         model_name=model_name,
@@ -485,9 +520,11 @@ def _build_registered_route_model(model_name: str, model_provider: ModelProvider
 
 def _build_ollama_or_gigachat_model(model_name: str, model_provider: ModelProvider, api_keys: dict | None = None):
     if model_provider == ModelProvider.OLLAMA:
+        from langchain_ollama import ChatOllama  # noqa: F811 — deferred, loop 119 import isolation
         ollama_host = os.getenv("OLLAMA_HOST", "localhost")
         return ChatOllama(model=model_name, base_url=os.getenv("OLLAMA_BASE_URL", f"http://{ollama_host}:11434"))
     if model_provider == ModelProvider.GIGACHAT:
+        from langchain_gigachat import GigaChat  # noqa: F811 — deferred, loop 119 import isolation
         if os.getenv("GIGACHAT_USER") or os.getenv("GIGACHAT_PASSWORD"):
             return GigaChat(model=model_name)
         api_key = (api_keys or {}).get("GIGACHAT_API_KEY") or os.getenv("GIGACHAT_API_KEY") or os.getenv("GIGACHAT_CREDENTIALS")

@@ -117,7 +117,7 @@ def test_get_registered_provider_model_builds_openai_compatible_client(monkeypat
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI, raising=False)
     monkeypatch.setattr(llm_models, "_PROVIDER_REGISTRY", llm_models.get_provider_registry())
 
     llm_models.register_provider_profile(
@@ -157,7 +157,7 @@ def test_get_registered_provider_model_applies_openai_compatible_timeout_env(mon
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI, raising=False)
     monkeypatch.setenv("LLM_OPENAI_COMPATIBLE_TIMEOUT_SECONDS", "42.5")
     monkeypatch.setattr(llm_models, "_PROVIDER_REGISTRY", llm_models.get_provider_registry())
 
@@ -198,7 +198,7 @@ def test_get_registered_provider_model_applies_default_openai_compatible_timeout
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI, raising=False)
     monkeypatch.delenv("LLM_OPENAI_COMPATIBLE_TIMEOUT_SECONDS", raising=False)
     monkeypatch.setattr(llm_models, "_PROVIDER_REGISTRY", llm_models.get_provider_registry())
 
@@ -243,7 +243,7 @@ def test_get_zhipu_model_uses_standard_key_when_only_standard_key_is_provided(mo
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI, raising=False)
 
     llm_models.get_zhipu_model("glm-4.7", {"ZHIPU_API_KEY": "standard-key"})
 
@@ -262,7 +262,7 @@ def test_get_zhipu_model_prefers_standard_key_when_both_keys_present(monkeypatch
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI, raising=False)
 
     llm_models.get_zhipu_model("glm-4.7", {"ZHIPU_API_KEY": "standard-key", "ZHIPU_CODE_API_KEY": "coding-key"})
 
@@ -281,7 +281,7 @@ def test_get_zhipu_model_uses_coding_plan_when_code_key_present(monkeypatch):
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI, raising=False)
     monkeypatch.delenv("ZHIPU_API_KEY", raising=False)
 
     llm_models.get_zhipu_model("glm-4.7", {"ZHIPU_CODE_API_KEY": "coding-key"})
@@ -301,7 +301,7 @@ def test_get_zhipu_model_uses_coding_plan_when_explicitly_requested(monkeypatch)
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI, raising=False)
 
     llm_models.get_zhipu_model("glm-4.7", {"ZHIPU_API_KEY": "standard-key", "ZHIPU_CODE_API_KEY": "coding-key", "ZHIPU_USE_CODING_PLAN": True})
 
@@ -320,7 +320,7 @@ def test_get_zhipu_model_explicit_api_keys_do_not_leak_env(monkeypatch):
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI, raising=False)
     monkeypatch.setenv("ZHIPU_CODE_API_KEY", "env-coding-key")
 
     llm_models.get_zhipu_model("glm-4.7", {"ZHIPU_API_KEY": "standard-key"})
@@ -340,7 +340,7 @@ def test_get_zhipu_coding_plan_model_keeps_glm5_lowercase(monkeypatch):
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI, raising=False)
 
     llm_models.get_zhipu_coding_plan_model("glm-5", {"ZHIPU_CODE_API_KEY": "coding-key"})
 
@@ -359,7 +359,7 @@ def test_get_registered_provider_model_builds_volcengine_client(monkeypatch):
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI, raising=False)
 
     llm_models.get_registered_provider_model("doubao-seed-2.0-code", "Volcengine", {"ARK_API_KEY": "ark-key"})
 
@@ -411,7 +411,7 @@ def test_get_model_builds_openai_client_with_env_base_url(monkeypatch):
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI)
+    monkeypatch.setattr(llm_models, "ChatOpenAI", FakeChatOpenAI, raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
     monkeypatch.setenv("OPENAI_API_BASE", "https://openai.example/v1")
 
@@ -452,3 +452,81 @@ def test_default_model_config_prefers_explicit_global_model_name(monkeypatch):
 
     assert model_provider == "MiniMax"
     assert model_name == "MiniMax-M2.5"
+
+
+# ---------------------------------------------------------------------------
+# autodev-21 / loop 119: import-isolation — front doors must not crash when a
+# single langchain provider package is absent. Previously models.py imported
+# all 8 langchain_* packages at module top level, so a missing langchain_xai
+# (or any one of them) crashed `from src.main import run_top` even though the
+# --top / --custom-weights front doors never call an LLM. Mirror of loop 118
+# (fpdf) but systemic across the LLM provider surface.
+# ---------------------------------------------------------------------------
+
+
+def test_models_module_importable_when_one_langchain_provider_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``src.llm.models`` 必须在任一 langchain provider 包缺失时仍可导入 —
+    ``ModelProvider`` enum / ``LLMModel`` / ``load_models_from_json`` 等纯辅助
+    不依赖任何 langchain 运行时类; 只有真正构建 client 的函数 (get_model /
+    _build_native_provider_model 等) 才需要。顶层导入全部 8 个 provider 让
+    ``--top`` / ``--custom-weights`` 前门在单个 provider 缺失/升级 break 时
+    整体崩溃 (dogfood 20260706 loop 119: 模拟 langchain_xai 缺失即崩)。"""
+    import builtins
+    import importlib
+    import sys
+
+    real_import = builtins.__import__
+
+    def _block_xai(name: str, *args, **kwargs):
+        if name == "langchain_xai" or name.startswith("langchain_xai."):
+            raise ImportError("simulated langchain_xai not installed (loop-119 isolation test)")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _block_xai)
+    for mod in list(sys.modules):
+        if mod == "langchain_xai" or mod.startswith("langchain_xai."):
+            monkeypatch.delitem(sys.modules, mod, raising=False)
+    monkeypatch.delitem(sys.modules, "src.llm.models", raising=False)
+
+    fresh = importlib.import_module("src.llm.models")
+    # Pure symbols must remain available without the xai provider package.
+    assert hasattr(fresh, "ModelProvider")
+    assert hasattr(fresh, "LLMModel")
+    assert hasattr(fresh, "load_models_from_json")
+    assert fresh.ModelProvider.XAI.value == "xAI"
+
+
+def test_front_door_importable_when_one_langchain_provider_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``run_top_picks`` / ``run_top`` / ``run_custom_weights`` 前门在单个
+    langchain provider 缺失时必须仍可导入 — 这些前门运行时不调用任何 LLM,
+    仅因 ``src.main`` 顶层 ``from src.llm.defaults import ...`` 被传递性拖垮。
+    """
+    import builtins
+    import importlib
+    import sys
+
+    real_import = builtins.__import__
+
+    def _block_xai(name: str, *args, **kwargs):
+        if name == "langchain_xai" or name.startswith("langchain_xai."):
+            raise ImportError("simulated langchain_xai not installed (loop-119 isolation test)")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _block_xai)
+    for mod in list(sys.modules):
+        if mod == "langchain_xai" or mod.startswith("langchain_xai."):
+            monkeypatch.delitem(sys.modules, mod, raising=False)
+    # Force re-import of the polluted chain.
+    for mod in list(sys.modules):
+        if mod in ("src.main", "src.llm.models", "src.llm.defaults") or mod.startswith("src.llm."):
+            monkeypatch.delitem(sys.modules, mod, raising=False)
+
+    fresh_main = importlib.import_module("src.main")
+    assert hasattr(fresh_main, "run_top")
+    assert hasattr(fresh_main, "run_custom_weights")
+    fresh_top_picks = importlib.import_module("src.screening.top_picks")
+    assert hasattr(fresh_top_picks, "run_top_picks")
