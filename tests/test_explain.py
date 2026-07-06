@@ -216,6 +216,31 @@ class TestExplainDisclaimer:
         assert "研究" in output
 
 
+class TestExplainFrontDoorVerdict:
+    def test_explain_surfaces_front_door_verdict_next_to_raw_decision(self):
+        """A raw explain decision can be buy while the front-door BUY gate rates
+        the same pick AVOID because calibration evidence is missing. The
+        explain surface must show the actionable front-door verdict too.
+        """
+        signals = {
+            "trend": _make_strategy_signal(1, 65.0, sub_factors={}),
+            "mean_reversion": _make_strategy_signal(0, 20.0),
+            "fundamental": _make_strategy_signal(1, 50.0),
+            "event_sentiment": _make_strategy_signal(1, 55.0),
+        }
+        rec = _make_recommendation(strategy_signals=signals, decision="buy")
+        report = _make_report(
+            recommendations=[rec],
+            market_state={"regime_gate_level": "normal", "state_type": "mixed", "position_scale": 1.0},
+        )
+
+        rc, output = _run_explain_capture(report)
+
+        assert rc == 0
+        assert "决策: buy" in output
+        assert "前门判决: AVOID" in output
+
+
 # ---------------------------------------------------------------------------
 # Test 2: Industry ranking
 # ---------------------------------------------------------------------------

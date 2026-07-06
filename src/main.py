@@ -3117,6 +3117,15 @@ def run_explain(ticker: str) -> int:
     # default "neutral"). Coerce falsy → "neutral" mirroring score_b.
     _raw_decision = match.get("decision")
     decision = _raw_decision if _raw_decision else "neutral"
+    ms = data.get("market_state", {})
+    regime = str(ms.get("regime_gate_level", "normal") or "normal") if isinstance(ms, dict) else "normal"
+    try:
+        from src.screening.investability import build_front_door_verdict
+
+        front_door_action = str(build_front_door_verdict(match, market_regime=regime).get("action", "AVOID") or "AVOID")
+    except Exception as exc:
+        logger.warning("[Explain] build_front_door_verdict 失败, 前门判决显示为不可用: %s", exc, exc_info=True)
+        front_door_action = "不可用"
     # Loop 96 (autodev): drain None signals/arbitration — sibling-disease
     # sweep of Loop 95. Same disease class: dict.get(key, default) returns
     # default only when the KEY is MISSING; when key is present but
@@ -3135,11 +3144,10 @@ def run_explain(ticker: str) -> int:
     print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}{Style.BRIGHT}[Explain] {ticker} {name} ({industry}){Style.RESET_ALL}")
     print(f"  报告: {latest.name}")
-    print(f"  决策: {decision}  |  Score B: {score_b:+.4f}")
+    print(f"  决策: {decision}  |  前门判决: {front_door_action}  |  Score B: {score_b:+.4f}")
     print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
 
     # Market state at scoring time
-    ms = data.get("market_state", {})
     if ms:
         print(f"{Fore.CYAN}市场状态:{Style.RESET_ALL} {ms.get('state_type', '?')}  |  " f"仓位系数: {ms.get('position_scale', 1.0):.2f}  |  " f"regime: {ms.get('regime_gate_level', 'normal')}")
 
