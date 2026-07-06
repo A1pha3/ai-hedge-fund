@@ -202,6 +202,7 @@ class TestFullData:
         # 系统历史
         assert detail.latest_score_b == 0.72
         assert detail.latest_decision == "strong_buy"
+        assert detail.latest_front_door_action == "AVOID"
 
         # 同行业排名
         assert detail.industry_rank == 1
@@ -552,6 +553,22 @@ class TestRenderOutput:
         output = render_stock_detail(detail)
         assert "第 1/28 名" in output
 
+    def test_render_surfaces_front_door_verdict_next_to_raw_decision(self, full_recommendations: list[dict]) -> None:
+        """Raw latest_decision can be strong_buy while the front-door BUY gate
+        rejects the same row for missing calibration evidence. The detail view
+        must show the actionable front-door verdict, not just the raw decision.
+        """
+        detail = compute_stock_detail(
+            ticker="300750",
+            recommendations=full_recommendations,
+            tracking_history=[],
+        )
+
+        output = render_stock_detail(detail)
+
+        assert "决策: strong_buy" in output
+        assert "前门: AVOID" in output
+
 
 # ============================================================================
 # Test 9: CLI smoke
@@ -621,6 +638,7 @@ class TestWebEndpointSmoke:
             assert data["name"] == "宁德时代"
             assert data["pe_ratio"] == 35.0
             assert data["price"] == 245.0
+            assert data["latest_front_door_action"] == "AVOID"
 
     def test_stock_detail_endpoint_not_found(self, report_dir: Path) -> None:
         """验证无报告时返回 404。"""

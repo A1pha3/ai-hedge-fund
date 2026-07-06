@@ -46,6 +46,7 @@ const DETAIL = {
   recommendation_count_30d: 7,
   latest_score_b: 88.2,
   latest_decision: 'bullish',
+  latest_front_door_action: 'AVOID',
   consecutive_days: 3,
   decay_level: 'none',
   industry_rank: 2,
@@ -64,6 +65,7 @@ describe('stockDetailApi.fetch', () => {
 
     expect(result.ticker).toBe('300724');
     expect(result.latest_score_b).toBe(88.2);
+    expect(result.latest_front_door_action).toBe('AVOID');
     expect(result.dragon_tiger).toBe(true);
     expect(result.industry_rank).toBe(2);
 

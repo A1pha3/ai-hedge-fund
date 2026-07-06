@@ -82,6 +82,9 @@ class StockDetail:
     industry_rank: int | None
     industry_total: int | None
 
+    # 前门 BUY/HOLD/AVOID 判决
+    latest_front_door_action: str | None = None
+
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -222,6 +225,7 @@ def compute_stock_detail(
     decay_map: dict | None = None,
     report_dir: Path | None = None,
     trade_date: str | None = None,
+    market_regime: str = "normal",
 ) -> StockDetail:
     """聚合所有可用数据生成单只标的的深度分析。
 
@@ -236,6 +240,7 @@ def compute_stock_detail(
         decay_map: signal_decay_detector 数据; None 时自动计算
         report_dir: 报告目录; None 时自动解析
         trade_date: 当前日期 YYYYMMDD; None 时从最新报告推断
+        market_regime: 前门 BUY/HOLD/AVOID 判决使用的市场状态; 缺省 normal
 
     Returns:
         StockDetail 实例
@@ -393,6 +398,17 @@ def compute_stock_detail(
     recommendation_count_30d = _count_recommendations_30d(ticker, report_dir, trade_date)
     latest_score_b = _safe_float(match.get("score_b"))
     latest_decision = str(match.get("decision", "neutral") or "neutral")
+    try:
+        from src.screening.investability import build_front_door_verdict
+
+        latest_front_door_action = str(build_front_door_verdict(match, market_regime=market_regime).get("action", "AVOID") or "AVOID")
+    except Exception as e:  # noqa: BLE001 — best-effort detail view; keep rendering
+        logger.warning(
+            "build_front_door_verdict 失败, stock-detail 前门判决不可用: %s",
+            e,
+            exc_info=True,
+        )
+        latest_front_door_action = None
 
     # 连续推荐
     if consecutive_map is None:
@@ -484,6 +500,7 @@ def compute_stock_detail(
         decay_level=decay_level,
         industry_rank=industry_rank,
         industry_total=industry_total,
+        latest_front_door_action=latest_front_door_action,
     )
 
 
@@ -549,7 +566,8 @@ def render_stock_detail(detail: StockDetail) -> str:
     lines.append("── 系统历史 " + "─" * 33)
     score_str = f"{detail.latest_score_b:+.2f}" if detail.latest_score_b is not None else "—"
     decision_str = detail.latest_decision or "—"
-    lines.append(f"近30天推荐: {detail.recommendation_count_30d}次  最新score_b: {score_str}  决策: {decision_str}")
+    front_door_str = detail.latest_front_door_action or "—"
+    lines.append(f"近30天推荐: {detail.recommendation_count_30d}次  最新score_b: {score_str}  决策: {decision_str}  前门: {front_door_str}")
     lines.append(f"连续推荐: {detail.consecutive_days}天  信号衰减: {detail.decay_level}")
 
     # 同行业排名

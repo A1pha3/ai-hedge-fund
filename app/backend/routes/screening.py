@@ -887,6 +887,7 @@ class StockDetailResponse(BaseModel):
     recommendation_count_30d: int = 0
     latest_score_b: float | None = None
     latest_decision: str | None = None
+    latest_front_door_action: str | None = None
     consecutive_days: int = 0
     decay_level: str = "none"
     industry_rank: int | None = None

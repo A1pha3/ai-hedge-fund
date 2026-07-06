@@ -38,6 +38,7 @@ export interface StockDetail {
   recommendation_count_30d: number;
   latest_score_b?: number | null;
   latest_decision?: string | null;
+  latest_front_door_action?: string | null;
   consecutive_days: number;
   decay_level: string;
   industry_rank?: number | null;

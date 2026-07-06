@@ -3,6 +3,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { StockDetailCard, _int, _num, _pct } from '@/components/stock-detail-card';
 import { ScreeningResultsPanel } from '@/components/screening-results-panel';
 import type { StockDetail } from '@/services/stock-detail-api';
@@ -36,6 +37,7 @@ const MOCK_DETAIL: StockDetail = {
   recommendation_count_30d: 5,
   latest_score_b: 0.78,
   latest_decision: 'bullish',
+  latest_front_door_action: 'AVOID',
   consecutive_days: 3,
   decay_level: 'none',
   industry_rank: 2,
@@ -135,6 +137,15 @@ describe('StockDetailCard', () => {
     expect(screen.getByTestId('stock-detail-card')).toBeDefined();
     // 4 tabs present
     expect(screen.getAllByRole('tab').length).toBe(4);
+  });
+
+  it('shows front-door verdict on the history tab', async () => {
+    render(<StockDetailCard detail={MOCK_DETAIL} onClose={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole('tab', { name: /历史/ }));
+
+    expect(screen.getByText('前门判决')).toBeDefined();
+    expect(screen.getByText('AVOID')).toBeDefined();
   });
 });
 

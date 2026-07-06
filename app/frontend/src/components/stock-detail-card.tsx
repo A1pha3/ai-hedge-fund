@@ -180,6 +180,11 @@ export function StockDetailCard({ detail, isLoading = false, onClose }: StockDet
               label="最新决策"
               value={d.latest_decision || '—'}
             />
+            <_MetricRow
+              label="前门判决"
+              value={d.latest_front_door_action || '—'}
+              highlight={d.latest_front_door_action === 'BUY'}
+            />
             <Separator className="my-1" />
             <_MetricRow
               label="连续推荐天数"
