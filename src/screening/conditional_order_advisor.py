@@ -546,6 +546,62 @@ def _fallback_price_provider(ticker: str, n_sessions: int) -> list[float]:
 # ---------------------------------------------------------------------------
 
 
+def _format_front_door_verdict_disclosure(
+    recs: list[dict[str, Any]],
+    *,
+    market_regime: str,
+) -> str:
+    """autodev-13 / loop 104 (C-CONDITIONAL-ORDER-VERDICT-GATE, display option B):
+    format a front-door verdict disclosure line for the conditional-order set.
+
+    Same disease class as loop 102 (--daily-brief raw-decision-without-gate):
+    the conditional-order surface generates stop-loss/take-profit/buy-zone
+    advice for ALL top-N picks without showing the front-door BUY/HOLD/AVOID
+    verdict, so an AVOID-rated pick (e.g. 688019 on report 20260703 — fails the
+    BUY gate on sample/calibration) appears as a conditional order the operator
+    could mistake for an implicit BUY recommendation. The conditional order is
+    a RISK CONSTRAINT (only triggers if price hits the buy-zone), not a BUY
+    directive — but generating one for a gate-rejected pick is misleading on a
+    赚钱工具. Additive disclosure (contract §用户可见诚实化): surface each pick's
+    front-door verdict with ⚠ when the set includes non-BUY picks. Does NOT
+    filter the export (owner-gated real-money behavior).
+
+    Returns ``""`` for empty recs. Otherwise a one-line disclosure:
+    - all BUY → calm "N/N 标的为 BUY (条件单与门控一致)"
+    - any non-BUY → "⚠ 前门判决: M/N 为 BUY; K 个非 BUY (...tickers...) — 条件单
+      仅为风险约束, 非买入建议; 买入决策以 --top-picks 前门为准"
+    """
+    if not recs:
+        return ""
+    from colorama import Fore, Style
+
+    from src.screening.investability import build_front_door_verdict
+
+    counts: dict[str, int] = {"BUY": 0, "HOLD": 0, "AVOID": 0}
+    non_buy: list[tuple[str, str]] = []
+    for rec in recs:
+        if not isinstance(rec, Mapping):
+            continue
+        action = str(build_front_door_verdict(rec, market_regime=market_regime).get("action", "AVOID"))
+        counts[action] = counts.get(action, 0) + 1
+        if action != "BUY":
+            non_buy.append((str(rec.get("ticker", "?")), action))
+
+    total = sum(counts.values())
+    if total == 0:
+        return ""
+    if not non_buy:
+        return f"  {Fore.CYAN}前门判决:{Style.RESET_ALL} {total}/{total} 标的为 BUY (条件单与前门门控一致)"
+    ticker_detail = ", ".join(f"{t}={a}" for t, a in non_buy[:5])
+    extra = f" +{len(non_buy) - 5}个" if len(non_buy) > 5 else ""
+    return (
+        f"  {Fore.RED}⚠ 前门判决:{Style.RESET_ALL} {counts['BUY']}/{total} 为 BUY; "
+        f"{len(non_buy)} 个非 BUY (AVOID×{counts.get('AVOID', 0)}, HOLD×{counts.get('HOLD', 0)}): "
+        f"{Fore.YELLOW}{ticker_detail}{extra}{Style.RESET_ALL}  — "
+        f"{Fore.WHITE}条件单仅为风险约束, 非买入建议; 买入决策以 --top-picks 前门为准{Style.RESET_ALL}"
+    )
+
+
 def run_conditional_orders_cli(
     top_n: int = 20,
     *,
@@ -639,6 +695,28 @@ def run_conditional_orders_cli(
     print(f"  ATR 周期: {atr_period}  |  回溯: {lookback_sessions} 日  |  Top N: {len(advices)}")
     print(f"{Fore.CYAN}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
     print(format_conditional_advice_table(advices), end="")
+    # autodev-13 / loop 104 (C-CONDITIONAL-ORDER-VERDICT-GATE): surface the
+    # front-door verdict for each pick so the operator can see which conditional
+    # orders are on AVOID/HOLD-rated picks (risk constraints, not BUY directives).
+    # Best-effort regime read from the latest report's market_state; default
+    # "normal" — the BUY gate's calibration/sample/edge checks are regime-independent,
+    # so the disclosure catches the main disease (AVOID-on-calibration) regardless.
+    regime = "normal"
+    try:
+        import json as _json
+
+        from src.screening.consecutive_recommendation import resolve_report_dir
+        from src.screening.data_quality_audit import _find_latest_report
+
+        _latest = _find_latest_report(resolve_report_dir())
+        if _latest is not None:
+            _ms = (_json.loads(_latest.read_text(encoding="utf-8"))).get("market_state") or {}
+            regime = str(_ms.get("regime_gate_level", "normal") or "normal")
+    except Exception as exc:  # noqa: BLE001 — best-effort; regime stays "normal"
+        logger.debug("[ConditionalOrders] regime read failed (defaulting to normal): %s", exc)
+    disclosure = _format_front_door_verdict_disclosure(recs, market_regime=regime)
+    if disclosure:
+        print(disclosure)
     return 0
 
 

@@ -87,6 +87,77 @@ def _realistic_prices(n: int = 60) -> list[float]:
 # ===========================================================================
 
 
+# ===========================================================================
+# autodev-13 / loop 104: front-door verdict disclosure for --conditional-orders
+# (C-CONDITIONAL-ORDER-VERDICT-GATE, display option B). Same disease class as
+# loop 102 (--daily-brief raw-decision-without-gate) — the conditional-order
+# surface generates risk levels for ALL top-N picks without showing the
+# front-door BUY/HOLD/AVOID verdict, so AVOID-rated picks appear as conditional
+# orders the operator could mistake for implicit BUY recommendations.
+# ===========================================================================
+
+
+def test_verdict_disclosure_warns_when_avoid_picks_present() -> None:
+    """When the conditional-order set includes AVOID-rated picks, the disclosure
+    must surface them with ⚠ so the operator does not mistake the conditional
+    order (a risk constraint) for an implicit BUY recommendation."""
+    from src.screening.conditional_order_advisor import _format_front_door_verdict_disclosure
+
+    # 300054 passes the BUY gate (calibrated); 688019 fails (no calibration → AVOID).
+    recs = [
+        {
+            "ticker": "300054",
+            "score_b": 0.70,
+            "composite_score": 0.70,
+            "win_rates": {"t5": 0.62, "t10": 0.62},
+            "expected_returns": {"t5": 3.0, "t10": 4.0},
+            "bucket_sample_count": 100,
+            "bucket_t30_mature_count": 90,
+        },
+        {
+            "ticker": "688019",
+            "score_b": 0.61,
+            "composite_score": 0.61,  # no win_rates/bucket_sample → AVOID
+        },
+    ]
+    out = _format_front_door_verdict_disclosure(recs, market_regime="normal")
+    assert "AVOID" in out, (
+        "Conditional-order set includes an AVOID-rated pick (688019, fails BUY "
+        "gate on sample/calibration). The disclosure must surface this so the "
+        "operator does not act on a risk-constraint order for a gate-rejected "
+        "pick (C-CONDITIONAL-ORDER-VERDICT-GATE, loop 102 disease class)."
+    )
+    assert "688019" in out
+    assert "⚠" in out
+
+
+def test_verdict_disclosure_no_alarm_when_all_buy() -> None:
+    """Negative guard: when ALL picks clear the BUY gate, no ⚠ alarm."""
+    from src.screening.conditional_order_advisor import _format_front_door_verdict_disclosure
+
+    recs = [
+        {
+            "ticker": "300054",
+            "score_b": 0.70,
+            "composite_score": 0.70,
+            "win_rates": {"t5": 0.62, "t10": 0.62},
+            "expected_returns": {"t5": 3.0, "t10": 4.0},
+            "bucket_sample_count": 100,
+            "bucket_t30_mature_count": 90,
+        },
+    ]
+    out = _format_front_door_verdict_disclosure(recs, market_regime="normal")
+    assert "BUY" in out
+    assert "⚠" not in out
+
+
+def test_verdict_disclosure_empty_recs_returns_empty() -> None:
+    """Empty recs → empty disclosure (no spurious output)."""
+    from src.screening.conditional_order_advisor import _format_front_door_verdict_disclosure
+
+    assert _format_front_door_verdict_disclosure([], market_regime="normal") == ""
+
+
 def test_compute_atr_rising_series() -> None:
     """稳定上升序列, ATR = 平均单日涨幅。"""
     series = _rising_prices(n=30, base=100.0, step=1.0)
