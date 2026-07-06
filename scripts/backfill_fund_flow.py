@@ -172,7 +172,8 @@ def backfill_batch(
     from src.screening.offensive.data.fund_flow_store import FundFlowStore
 
     if fetch_fn is None:
-        from src.tools.akshare_fund_flow import fetch_individual_fund_flow
+        # 双源 dispatcher (tushare 主 + akshare fallback) — 项目架构约定
+        from src.tools.fund_flow import fetch_individual_fund_flow
 
         fetch_fn = fetch_individual_fund_flow
 
