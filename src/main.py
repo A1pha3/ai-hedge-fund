@@ -1331,7 +1331,7 @@ def _apply_top_filters(recs: list[dict], filters: dict) -> tuple[list[dict], str
     return recs, summary
 
 
-def _build_top_table_row(*, idx: int, rec: dict) -> list:
+def _build_top_table_row(*, idx: int, rec: dict, market_regime: str = "normal") -> list:
     """Build one row of the ``--top`` recommendations table.
 
     Extracted from :func:`run_top` — per-row formatting (score/decision color,
@@ -1342,6 +1342,15 @@ def _build_top_table_row(*, idx: int, rec: dict) -> list:
 
     score_b = _safe_float(rec.get("score_b"), 0.0)
     decision = rec.get("decision", "neutral")
+    try:
+        from src.screening.investability import build_front_door_verdict
+
+        front_door_action = str(
+            build_front_door_verdict(rec, market_regime=market_regime).get("action", "AVOID") or "AVOID"
+        )
+    except Exception as exc:  # noqa: BLE001 — keep legacy top table rendering
+        logger.warning("[Top] build_front_door_verdict 失败, 前门判决显示为不可用: %s", exc, exc_info=True)
+        front_door_action = "不可用"
 
     if score_b >= SCORE_B_GREEN_FLOOR:
         score_colored = f"{Fore.GREEN}{score_b:+.4f}{Style.RESET_ALL}"
@@ -1352,6 +1361,14 @@ def _build_top_table_row(*, idx: int, rec: dict) -> list:
     else:
         score_colored = f"{Fore.RED}{score_b:+.4f}{Style.RESET_ALL}"
         decision_colored = f"{Fore.RED}{decision}{Style.RESET_ALL}"
+    if front_door_action == "BUY":
+        front_door_colored = f"{Fore.GREEN}{front_door_action}{Style.RESET_ALL}"
+    elif front_door_action == "HOLD":
+        front_door_colored = f"{Fore.YELLOW}{front_door_action}{Style.RESET_ALL}"
+    elif front_door_action == "AVOID":
+        front_door_colored = f"{Fore.RED}{front_door_action}{Style.RESET_ALL}"
+    else:
+        front_door_colored = f"{Fore.YELLOW}{front_door_action}{Style.RESET_ALL}"
 
     ticker = rec.get("ticker", "—")
     name = rec.get("name", "")
@@ -1388,7 +1405,7 @@ def _build_top_table_row(*, idx: int, rec: dict) -> list:
         days_tag = f"({days_since_peak}d)" if days_since_peak > 0 else ""
         decay_str = f"{Fore.YELLOW}↓{decay_pct:.0f}%{days_tag}{Style.RESET_ALL}"
 
-    return [idx, ticker_label, industry, score_colored, decision_colored, cons_str, decay_str]
+    return [idx, ticker_label, industry, score_colored, decision_colored, front_door_colored, cons_str, decay_str]
 
 
 def _print_top_score_enhancements(recs: list[dict], top_n: int, report_path) -> None:
@@ -1500,7 +1517,12 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
     recs = recs[:top_n]
     trade_date = payload.get("date", report_path.stem.replace("auto_screening_", ""))
     market_state = payload.get("market_state", {})
-    state_type = market_state.get("state_type", "mixed")
+    if isinstance(market_state, dict):
+        state_type = market_state.get("state_type", "mixed")
+        market_regime = str(market_state.get("regime_gate_level", "normal") or "normal")
+    else:
+        state_type = "mixed"
+        market_regime = "normal"
     pool_size = payload.get("layer_a_count", len(recs))
 
     print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
@@ -1509,10 +1531,10 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
     print(f"  报告路径: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
     print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
 
-    table_data = [_build_top_table_row(idx=idx, rec=rec) for idx, rec in enumerate(recs, 1)]
+    table_data = [_build_top_table_row(idx=idx, rec=rec, market_regime=market_regime) for idx, rec in enumerate(recs, 1)]
 
-    headers = [f"{Fore.WHITE}#", "Ticker", "Industry", "Score B", "Decision", "Consec", "Decay"]
-    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center")))
+    headers = [f"{Fore.WHITE}#", "Ticker", "Industry", "Score B", "Decision", "Front Door", "Consec", "Decay"]
+    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center", "center")))
 
     # Score decomposition + waterfall + expected returns for top 5 (skip on validation failure)
     _print_top_score_enhancements(recs, top_n, report_path)
