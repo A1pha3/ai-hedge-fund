@@ -13,13 +13,31 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
-
-from fpdf import FPDF
+from typing import TYPE_CHECKING, Any
 
 from src.utils.numeric import safe_float
 
+if TYPE_CHECKING:
+    # ``from __future__ import annotations`` makes every annotation below a lazy
+    # string, so the ``FPDF`` symbol is only needed at runtime by
+    # ``_ScreeningPDF`` (the renderer subclass defined below) and by
+    # ``generate_screening_pdf`` / ``_register_cjk_font`` at call time.
+    from fpdf import FPDF
+
 logger = logging.getLogger(__name__)
+
+# Deferred fpdf2 import (loop 118): ``find_latest_report`` / ``load_report`` /
+# ``PDFReportConfig`` / ``_decision_color`` are imported by the ``--top`` and
+# ``--custom-weights`` front doors which never render a PDF. A top-level
+# ``from fpdf import FPDF`` made those front doors crash at import time whenever
+# fpdf2 was absent (fresh checkout, minimal Docker image) or upgraded
+# incompatibly — even though they never touch the renderer. Import lazily so
+# the pure helpers stay loadable; ``generate_screening_pdf`` raises a clear
+# ImportError at call time if fpdf2 is actually missing.
+try:
+    from fpdf import FPDF as _FPDF  # noqa: F401
+except ImportError:  # pragma: no cover - exercised via loop-118 isolation tests
+    _FPDF = None  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
 # 颜色 (RGB 0-255) — 使用低饱和度, 适合打印 + 屏幕
@@ -169,9 +187,17 @@ def _safe_text(text: str, font_name: str | None) -> str:
 # ---------------------------------------------------------------------------
 # PDF 渲染器
 # ---------------------------------------------------------------------------
+#
+# ``_FPDF`` was lazily imported above (loop 118). When fpdf2 is genuinely
+# installed it is the ``FPDF`` base class; when absent it is ``None`` and the
+# subclass definition falls back to ``object`` so the module still loads —
+# ``generate_screening_pdf`` is the only path that needs the real base and it
+# raises a clear ImportError at call time. This keeps ``find_latest_report`` /
+# ``load_report`` (used by the ``--top`` / ``--custom-weights`` front doors)
+# loadable without fpdf2.
 
 
-class _ScreeningPDF(FPDF):
+class _ScreeningPDF(_FPDF if _FPDF is not None else object):  # type: ignore[misc]
     """继承 FPDF, 自动处理页眉 / 页脚 / 分页。"""
 
     def __init__(self, config: PDFReportConfig, font_name: str | None) -> None:
@@ -584,9 +610,14 @@ def generate_screening_pdf(
         ``output_path`` 本身 (供链式调用)。
 
     Raises:
-        ImportError: 未安装 ``fpdf2`` (但 ``pyproject.toml`` 不包含此依赖, 运行时需
-            ``uv pip install fpdf2``)。
+        ImportError: 未安装 ``fpdf2`` (运行时需 ``uv pip install fpdf2``;
+            ``pyproject.toml`` 已声明为依赖, 缺失通常因环境未同步)。
     """
+    if _FPDF is None:  # pragma: no cover - exercised via isolation test setup
+        raise ImportError(
+            "fpdf2 未安装, 无法生成 PDF。请运行 ``uv pip install fpdf2``。"
+            "（find_latest_report / load_report 等纯辅助函数不受影响。）"
+        )
     config = config or PDFReportConfig()
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)

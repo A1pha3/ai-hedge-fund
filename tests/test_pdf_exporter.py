@@ -480,6 +480,70 @@ def test_load_report_missing_file(tmp_path: Path) -> None:
         load_report(tmp_path / "no_such.json")
 
 
+def test_find_latest_report_works_when_fpdf_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """autodev-21 / loop 118: ``find_latest_report`` 是纯 glob 查找, 必须不依赖
+    ``fpdf2``。此前顶层 ``from fpdf import FPDF`` 让任何 ``import pdf_exporter``
+    (含 ``--top`` / ``--custom-weights`` 只用 find/load_report 的前门) 在 fpdf
+    缺失/升级 break 时整体崩溃。延迟 import 后, 无 fpdf 环境也应能找报告。
+
+    Reproduces: ``python -m src.main --top`` 在无 fpdf 的 conda/base 环境报
+    ``No module named 'fpdf'`` (dogfood 20260706 loop 118), 即便 ``--top`` 路径
+    完全不需要 PDF 渲染。
+    """
+    import builtins
+    import importlib
+    import sys
+
+    (tmp_path / "auto_screening_20260607.json").write_text("{}", encoding="utf-8")
+
+    real_import = builtins.__import__
+
+    def _block_fpdf(name: str, *args, **kwargs):
+        if name == "fpdf" or name.startswith("fpdf."):
+            raise ImportError("simulated fpdf2 not installed (loop-118 isolation test)")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _block_fpdf)
+    # 强制重新加载 pdf_exporter, 让顶层 import 重新执行 (此时 fpdf 被拦截)
+    monkeypatch.delitem(sys.modules, "fpdf", raising=False)
+    monkeypatch.delitem(sys.modules, "src.reporting.pdf_exporter", raising=False)
+
+    fresh = importlib.import_module("src.reporting.pdf_exporter")
+    latest = fresh.find_latest_report(tmp_path)
+    assert latest is not None
+    assert latest.name == "auto_screening_20260607.json"
+
+
+def test_load_report_works_when_fpdf_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """autodev-21 / loop 118 sibling: ``load_report`` 是纯 JSON 读取, 同样必须
+    不依赖 ``fpdf2`` (见 test_find_latest_report_works_when_fpdf_unavailable)。"""
+    import builtins
+    import importlib
+    import sys
+
+    p = tmp_path / "auto_screening_20260607.json"
+    p.write_text(json.dumps({"date": "20260607"}), encoding="utf-8")
+
+    real_import = builtins.__import__
+
+    def _block_fpdf(name: str, *args, **kwargs):
+        if name == "fpdf" or name.startswith("fpdf."):
+            raise ImportError("simulated fpdf2 not installed (loop-118 isolation test)")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _block_fpdf)
+    monkeypatch.delitem(sys.modules, "fpdf", raising=False)
+    monkeypatch.delitem(sys.modules, "src.reporting.pdf_exporter", raising=False)
+
+    fresh = importlib.import_module("src.reporting.pdf_exporter")
+    data = fresh.load_report(p)
+    assert data["date"] == "20260607"
+
+
 def test_render_recommendations_tolerates_null_score_b(tmp_path: Path) -> None:
     """R76 same-class drain: recommendations JSON 里部分 rec 的 score_b 为 null
     (candidate_pool 进了但未完成 composite scoring 的标的 / agent 输出 null /
