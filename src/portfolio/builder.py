@@ -42,6 +42,7 @@ class PortfolioPosition:
         name: 股票名
         industry: 申万一级行业
         score_b: 该股 score_b
+        front_door_action: 前门 BUY/HOLD/AVOID 判决 (仅展示, 不参与权重)
         weight: 组合权重 (0~1, sum of all positions = 1.0)
     """
 
@@ -49,6 +50,7 @@ class PortfolioPosition:
     name: str = ""
     industry: str = ""
     score_b: float = 0.0
+    front_door_action: str = "AVOID"
     weight: float = 0.0
 
 
@@ -143,6 +145,7 @@ def compute_portfolio(
     top_n: int = 10,
     position_cap: float = DEFAULT_POSITION_CAP,
     industry_cap: float = DEFAULT_INDUSTRY_CAP,
+    market_regime: str = "normal",
 ) -> PortfolioSummary:
     """主入口: 从 Top N 推荐构建最优组合。
 
@@ -191,12 +194,26 @@ def compute_portfolio(
 
     # Build positions
     for rec, w in zip(selected, weights):
+        try:
+            from src.screening.investability import build_front_door_verdict
+
+            front_door_action = str(
+                build_front_door_verdict(rec, market_regime=market_regime).get("action", "AVOID") or "AVOID"
+            )
+        except Exception as exc:  # noqa: BLE001 — portfolio display should degrade, not abort
+            logger.warning(
+                "portfolio-builder: build_front_door_verdict 失败, 前门判决显示为不可用: %s",
+                exc,
+                exc_info=True,
+            )
+            front_door_action = "不可用"
         summary.positions.append(
             PortfolioPosition(
                 ticker=str(rec.get("ticker", "")),
                 name=str(rec.get("name", "")),
                 industry=str(rec.get("industry_sw") or rec.get("industry") or "未知").strip(),
                 score_b=_safe_float(rec.get("score_b", 0.0), 0.0),
+                front_door_action=front_door_action,
                 weight=round(w, 4),
             )
         )
@@ -241,10 +258,13 @@ def render_portfolio(summary: PortfolioSummary) -> str:
     lines.append("")
 
     # Positions table
-    lines.append(f"  {'ticker':<10} {'行业':<10} {'score_b':>8} {'权重':>8}")
-    lines.append("  " + "-" * 42)
+    lines.append(f"  {'ticker':<10} {'行业':<10} {'score_b':>8} {'前门':>8} {'权重':>8}")
+    lines.append("  " + "-" * 52)
     for p in summary.positions:
-        lines.append(f"  {p.ticker:<10} {p.industry:<10} {p.score_b:>+8.4f} {p.weight:>8.2%}")
+        lines.append(
+            f"  {p.ticker:<10} {p.industry:<10} {p.score_b:>+8.4f} "
+            f"{p.front_door_action:>8} {p.weight:>8.2%}"
+        )
     lines.append("")
 
     # Industry breakdown

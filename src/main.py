@@ -2902,12 +2902,19 @@ def run_portfolio_builder(trade_date: str | None = None, top_n: int = 10, positi
     if not recommendations:
         print(f"{Fore.YELLOW}报告 {date_str} 无推荐数据{Style.RESET_ALL}")
         return 0
+    market_state = payload.get("market_state") or {}
+    market_regime = (
+        str(market_state.get("regime_gate_level", "normal") or "normal")
+        if isinstance(market_state, dict)
+        else "normal"
+    )
 
     summary = compute_portfolio(
         recommendations,
         top_n=top_n,
         position_cap=position_cap,
         industry_cap=industry_cap,
+        market_regime=market_regime,
     )
 
     print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")

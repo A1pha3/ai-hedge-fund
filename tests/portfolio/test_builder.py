@@ -124,6 +124,13 @@ class TestRenderPortfolio:
         assert "行业分布" in output
         assert "组合指标" in output
 
+    def test_renders_front_door_verdict_beside_weighted_positions(self):
+        summary = compute_portfolio(SAMPLE_RECS, top_n=5)
+        output = render_portfolio(summary)
+
+        assert "前门" in output
+        assert "AVOID" in output
+
     def test_renders_empty(self):
         summary = PortfolioSummary()
         output = render_portfolio(summary)
