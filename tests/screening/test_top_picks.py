@@ -972,6 +972,94 @@ class TestPrintPickEntryBucketAggregateDisclosure:
 
 
 # ---------------------------------------------------------------------------
+# _print_pick_entry — grade-verdict ⚠ integration (autodev-22 loop 119 + autodev-23 regression guard)
+# ---------------------------------------------------------------------------
+
+
+class TestPrintPickEntryGradeVerdictWarning:
+    """Integration guard: _print_pick_entry must render ⚠ next to a green
+    grade when the front-door verdict is non-BUY. Locks in the
+    C-GREEN-GRADE-AVOID-MISMATCH Option B fix (autodev-22 loop 119).
+
+    The unit tests in TestGradeWithVerdictContext cover _grade_with_verdict_context
+    in isolation, but if a future refactor removes the ``grade =
+    _grade_with_verdict_context(...)`` call from _print_pick_entry, those unit
+    tests still pass while the front-door display regresses. This integration
+    test catches that by exercising the full _print_pick_entry path.
+    """
+
+    @patch("src.screening.top_picks.build_front_door_verdict")
+    def test_green_grade_avoid_renders_warning(self, mock_verdict, capsys) -> None:
+        """Green B grade (composite≥0.5) + AVOID verdict → ⚠ rendered on the pick row."""
+        mock_verdict.return_value = {
+            "action": "AVOID",
+            "market_regime": "normal",
+            "signal_horizon": "",
+            "invalidation_reason": "样本不足",
+        }
+        item = {
+            "ticker": "688019",
+            "name": "安集科技",
+            "score_b": 0.61,
+            "composite_score": 0.61,  # green B
+            "win_rates": {"t30": 0.4, "t5": 0.48, "t10": 0.48},
+            "expected_returns": {"t30": -0.05, "t5": 0.01, "t10": 0.012},
+            "bucket_sample_count": 100,
+            "bucket_t30_mature_count": 90,
+        }
+        ctx = TopPicksRenderContext(
+            market_regime="normal",
+            new_tickers=set(),
+            report_dir=Path("."),
+            trade_date="20260703",
+        )
+        _print_pick_entry(1, item, ctx)
+        out = capsys.readouterr().out
+        assert "⚠" in out, "A green-grade (composite≥0.5) pick with front-door verdict=AVOID " "must render ⚠ next to the grade to resolve the visual-semantic " "conflict (C-GREEN-GRADE-AVOID-MISMATCH Option B, autodev-22 loop 119)."
+
+    @patch("src.screening.top_picks.build_front_door_verdict")
+    def test_green_grade_buy_no_warning(self, mock_verdict, capsys) -> None:
+        """Green B grade + BUY verdict → NO ⚠ (grade and verdict agree)."""
+        mock_verdict.return_value = {
+            "action": "BUY",
+            "market_regime": "normal",
+            "signal_horizon": "T+5",
+            "invalidation_reason": "",
+        }
+        item = {
+            "ticker": "300054",
+            "name": "鼎龙股份",
+            "score_b": 0.43,
+            "composite_score": 0.55,  # green B
+            "win_rates": {"t30": 0.46, "t5": 0.60, "t10": 0.60},
+            "expected_returns": {"t30": -0.02, "t5": 0.04, "t10": 0.05},
+            "bucket_sample_count": 200,
+            "bucket_t30_mature_count": 180,
+            # Provide non-empty strategy_signals so _render_confluence does not
+            # emit its own ⚠无信号 marker (which would collide with the
+            # grade-verdict ⚠ we are asserting is absent).
+            "strategy_signals": {
+                "trend": {"direction": 1, "confidence": 70},
+                "mean_reversion": {"direction": 1, "confidence": 60},
+                "fundamental": {"direction": 1, "confidence": 50},
+                "event_sentiment": {"direction": 1, "confidence": 40},
+            },
+        }
+        ctx = TopPicksRenderContext(
+            market_regime="normal",
+            new_tickers=set(),
+            report_dir=Path("."),
+            trade_date="20260703",
+        )
+        _print_pick_entry(1, item, ctx)
+        out = capsys.readouterr().out
+        # The grade row is the first print line; isolate it so we don't catch
+        # an unrelated ⚠ from a later row (e.g. 少样本 / 失效条件).
+        grade_row = out.splitlines()[0] if out else ""
+        assert "⚠" not in grade_row, "A green-grade pick with front-door verdict=BUY must NOT render ⚠ " "next to the grade — the grade and verdict agree, no conflict to flag."
+
+
+# ---------------------------------------------------------------------------
 # _apply_consecutive_bonus_and_resort
 # ---------------------------------------------------------------------------
 
