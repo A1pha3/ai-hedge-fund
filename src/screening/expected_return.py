@@ -433,6 +433,6 @@ def render_expected_returns_compact(report: ExpectedReturnReport) -> str:
         # R-5.C: T+30 中位数 (诚实窄预测). 与 mean 并列展示 — 差距大说明本桶被
         # outlier 拉高/拉低, 用户应更信任 median 作为典型票的代表.
         med_str = f"  T+30中位={_fmt_return(item.bucket_t30_median_return)}" if item.bucket_t30_median_return is not None else ""
-        lines.append(f"    {item.ticker:<8} score={item.score_b:.3f}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}{med_str}{std_str}  T+30胜率={wr_str}{dd_str}{p5_str}")
+        lines.append(f"    {item.ticker:<8} score={item.score_b:.3f}  bucket={item.bucket_label}  样本={item.bucket_sample_count:<3d}(T30熟={item.bucket_t30_mature_count:<3d})  T+20={t20}  T+30={t30}{med_str}{std_str}  T+30胜率={wr_str}{dd_str}{p5_str}")
 
     return "\n".join(lines)

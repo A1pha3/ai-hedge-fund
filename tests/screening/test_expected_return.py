@@ -248,6 +248,16 @@ class TestComputeExpectedReturns:
         # Row shows matured T+30 count (10), not the all-records count (40).
         assert "T30熟=10" in text
         assert "样本=40" in text
+        # autodev-13 / loop 109: compact renderer now surfaces the bucket label
+        # per-row (sibling of loops 98/99 bucket-aggregate disclosure on
+        # --top-picks and --decision-flow). Previous iteration only had header
+        # framing ("基于 {total_samples} 条历史"); the actual bucket_label
+        # column was missing — same disease as loop 98 on --top-picks.
+        assert "bucket=高" in text, (
+            "render_expected_returns_compact per-row display must surface "
+            "the bucket label so the operator can tell the T+20/T+30 stats "
+            "are bucket-level aggregates (same disease class as loops 98/99)."
+        )
 
 
 class TestRenderExpectedReturns:
