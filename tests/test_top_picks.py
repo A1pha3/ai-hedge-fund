@@ -1238,7 +1238,7 @@ class TestScoreTrend:
             days_since_peak=0,
         )
         with patch("src.screening.top_picks.detect_signal_decay", return_value={"300750": decay_info}):
-            with patch("src.screening.top_picks._find_latest_report", return_value=tmp_path / "fake.json"):
+            with patch("src.screening.data_quality_audit._find_latest_report", return_value=tmp_path / "fake.json"):
                 (tmp_path / "fake.json").write_text('{"recommendations":[]}', encoding="utf-8")
                 result = _render_score_trend("300750", report_dir=tmp_path)
                 assert "↑↑" in result
@@ -1256,7 +1256,7 @@ class TestScoreTrend:
             days_since_peak=3,
         )
         with patch("src.screening.top_picks.detect_signal_decay", return_value={"300750": decay_info}):
-            with patch("src.screening.top_picks._find_latest_report", return_value=tmp_path / "fake.json"):
+            with patch("src.screening.data_quality_audit._find_latest_report", return_value=tmp_path / "fake.json"):
                 (tmp_path / "fake.json").write_text('{"recommendations":[]}', encoding="utf-8")
                 result = _render_score_trend("300750", report_dir=tmp_path)
                 assert "↓↓" in result
@@ -1274,7 +1274,7 @@ class TestScoreTrend:
             days_since_peak=0,
         )
         with patch("src.screening.top_picks.detect_signal_decay", return_value={"300750": decay_info}):
-            with patch("src.screening.top_picks._find_latest_report", return_value=tmp_path / "fake.json"):
+            with patch("src.screening.data_quality_audit._find_latest_report", return_value=tmp_path / "fake.json"):
                 (tmp_path / "fake.json").write_text('{"recommendations":[]}', encoding="utf-8")
                 result = _render_score_trend("300750", report_dir=tmp_path)
                 assert "→" in result
@@ -1292,7 +1292,7 @@ class TestScoreTrend:
             days_since_peak=0,
         )
         with patch("src.screening.top_picks.detect_signal_decay", return_value={"300750": decay_info}):
-            with patch("src.screening.top_picks._find_latest_report", return_value=tmp_path / "fake.json"):
+            with patch("src.screening.data_quality_audit._find_latest_report", return_value=tmp_path / "fake.json"):
                 (tmp_path / "fake.json").write_text('{"recommendations":[]}', encoding="utf-8")
                 result = _render_score_trend("300750", report_dir=tmp_path)
                 assert result == ""
@@ -1315,7 +1315,7 @@ class TestScoreTrend:
             days_since_peak=0,
         )
         with patch("src.screening.top_picks.detect_signal_decay", return_value={"300750": decay_info}):
-            with patch("src.screening.top_picks._find_latest_report", return_value=tmp_path / "fake.json"):
+            with patch("src.screening.data_quality_audit._find_latest_report", return_value=tmp_path / "fake.json"):
                 (tmp_path / "fake.json").write_text('{"recommendations":[]}', encoding="utf-8")
                 result = _render_score_trend("300750", report_dir=tmp_path)
                 assert result == ""
