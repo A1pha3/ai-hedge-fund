@@ -9,6 +9,7 @@ half-Kelly 默认 (v2 §C.2 + 设计讨论): full Kelly 对估计误差敏感, h
 
 含仓位上限: 单 setup ≤ max_pct (默认 10%)。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -3,6 +3,7 @@
 v2 §C.6 关键: 每个 setup 必须返回 invalidation_condition (失效条件),
 供 risk_framework 用作止损/退出依据。
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

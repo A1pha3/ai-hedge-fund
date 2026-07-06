@@ -1,4 +1,5 @@
 """资金流数据存储测试。用 tmp_path 隔离缓存。"""
+
 from __future__ import annotations
 
 import pandas as pd
@@ -7,13 +8,15 @@ from src.screening.offensive.data.fund_flow_store import FundFlowStore, FundFlow
 
 
 def _sample_df():
-    return pd.DataFrame({
-        "date": pd.to_datetime(["2026-07-01", "2026-07-02", "2026-07-03"]),
-        "close": [10.0, 10.5, 10.2],
-        "pct_change": [1.0, 5.0, -2.86],
-        "main_net_inflow": [1_000_000, -500_000, 200_000],
-        "main_net_pct": [5.0, -2.5, 1.0],
-    })
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-01", "2026-07-02", "2026-07-03"]),
+            "close": [10.0, 10.5, 10.2],
+            "pct_change": [1.0, 5.0, -2.86],
+            "main_net_inflow": [1_000_000, -500_000, 200_000],
+            "main_net_pct": [5.0, -2.5, 1.0],
+        }
+    )
 
 
 def test_save_and_get_roundtrip(tmp_path):

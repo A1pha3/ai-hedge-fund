@@ -2,6 +2,7 @@
 
 Phase 0a 用文件存储 (CSV per ticker); Phase 1+ 数据量上来后再迁 SQLite/Parquet。
 """
+
 from __future__ import annotations
 
 import logging

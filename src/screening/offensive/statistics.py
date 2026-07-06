@@ -2,6 +2,7 @@
 
 纯数学, 无 IO, 无 LLM。可独立单测。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -27,9 +28,7 @@ class Distribution:
     ic: float = 0.0  # vs 全市场基线的 information coefficient (可选)
 
 
-def _bootstrap_expected_return_ci(
-    returns: np.ndarray, n_boot: int = 2000, seed: int = 42, alpha: float = 0.05
-) -> tuple[float, float]:
+def _bootstrap_expected_return_ci(returns: np.ndarray, n_boot: int = 2000, seed: int = 42, alpha: float = 0.05) -> tuple[float, float]:
     """Bootstrap expected_return (均值) 的双侧 CI。"""
     if len(returns) == 0:
         return (0.0, 0.0)

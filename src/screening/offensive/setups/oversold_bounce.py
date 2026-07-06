@@ -9,6 +9,7 @@
 
 危机专属 setup — 直接填补"危机 0 BUY"的痛。
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -93,6 +94,9 @@ class OversoldBounceSetup(Setup):
     @staticmethod
     def _miss(ticker: str, trade_date: str) -> DetectionResult:
         return DetectionResult(
-            hit=False, ticker=ticker, trade_date=trade_date,
-            trigger_strength=0.0, invalidation_condition="",
+            hit=False,
+            ticker=ticker,
+            trade_date=trade_date,
+            trigger_strength=0.0,
+            invalidation_condition="",
         )

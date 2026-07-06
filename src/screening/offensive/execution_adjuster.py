@@ -7,6 +7,7 @@
 
 这是 v2 §C.2 的核心模块 — 不经此调整的回测收益是幻觉。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -2,6 +2,7 @@
 
 验证: 涨停次日不可买 → 剔除样本; T+1 锁; 滑点扣减。
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -16,14 +17,16 @@ from src.screening.offensive.execution_adjuster import (
 
 def _prices(ticker, dates, closes):
     """构造价格 DataFrame: date, close, open, high, low, pct_change。"""
-    return pd.DataFrame({
-        "date": pd.to_datetime(dates),
-        "close": closes,
-        "open": closes,  # 简化: open=close
-        "high": [c * 1.02 for c in closes],
-        "low": [c * 0.98 for c in closes],
-        "pct_change": [0.0] + [(closes[i] / closes[i - 1] - 1) * 100 for i in range(1, len(closes))],
-    })
+    return pd.DataFrame(
+        {
+            "date": pd.to_datetime(dates),
+            "close": closes,
+            "open": closes,  # 简化: open=close
+            "high": [c * 1.02 for c in closes],
+            "low": [c * 0.98 for c in closes],
+            "pct_change": [0.0] + [(closes[i] / closes[i - 1] - 1) * 100 for i in range(1, len(closes))],
+        }
+    )
 
 
 def test_limit_up_next_day_unbuyable_detected():

@@ -5,6 +5,7 @@
 
 Phase 0a 核心: 所有分布都经 execution_adjuster 处理 (v2 §C.2 硬约束)。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

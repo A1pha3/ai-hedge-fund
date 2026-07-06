@@ -1,4 +1,5 @@
 """统计工具测试。纯数学, 无 IO。"""
+
 from __future__ import annotations
 
 import numpy as np
