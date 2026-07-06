@@ -364,6 +364,8 @@ def _print_daily_brief(
         return
 
     print()
+    from src.screening.investability import build_front_door_verdict
+
     for idx, rec in enumerate(top3):
         medal = _RANK_MEDALS[idx] if idx < len(_RANK_MEDALS) else f"#{idx + 1}"
         ticker = str(rec.get("ticker", "—") or "—")
@@ -373,6 +375,29 @@ def _print_daily_brief(
         decision = str(rec.get("decision", "neutral") or "neutral")
         consec = _extract_consecutive_days(rec, _load_history_lookup_cached.get("last") or {})
 
+        # autodev-13 / loop 102: surface the front-door verdict alongside the
+        # raw LLM decision. Empirical dogfood of report 20260703 found ALL 3
+        # daily-brief top picks CONTRADICTED the --top-picks front-door verdict:
+        # 688019/688766 daily-brief "strong_buy" but front-door AVOID (样本不足/
+        # 动量转负/量价背离/winrate<50%); 002463 "watch" but front-door BUY. The
+        # raw ``decision`` field is the pre-gate qualitative read; the front-door
+        # verdict applies the BUY gate (composite ≥ 0.5 AND T+5/T+10 winrate
+        # ≥ 0.55 AND mature sample ≥ 20 AND edge > 0). Without this disclosure
+        # the operator's morning card says "strong_buy #1" for a pick the gate
+        # rejects — directly causing wrong actions on a 赚钱工具. Additive
+        # disclosure: raw decision retained; gated verdict + ⚠ appended. Same
+        # disease class as C268 (composite-only → BUY-verdict) and the
+        # opportunity-index fix.
+        verdict = build_front_door_verdict(rec, market_regime=regime)
+        action = str(verdict.get("action", "AVOID"))
+        _raw_lower = decision.lower()
+        _raw_buyish = any(k in _raw_lower for k in ("buy", "bull", "strong"))
+        # Dangerous contradiction: raw says buy-ish but the gate did not clear
+        # BUY (operator could act on the raw signal and be rejected by the gate).
+        _contradiction = _raw_buyish and action != "BUY"
+        verdict_marker = f" {Fore.RED}⚠{Style.RESET_ALL}" if _contradiction else ""
+        verdict_str = f"{Fore.CYAN}前门:{Style.RESET_ALL} {action}{verdict_marker}"
+
         ticker_label = f"{ticker} {name}" if name else ticker
         score_str = _format_score_colored(score_b)
         decision_str = _format_decision_colored(decision)
@@ -381,7 +406,7 @@ def _print_daily_brief(
         one_liner = _summarize_one_liner(rec, industry)
 
         print(f"  {medal} #{idx + 1}  {Fore.WHITE}{Style.BRIGHT}{ticker_label}{Style.RESET_ALL} ({industry})")
-        print(f"       score_b: {score_str}  |  决策: {decision_str}  |  连续推荐: {consec_str}")
+        print(f"       score_b: {score_str}  |  决策: {decision_str}  |  {verdict_str}  |  连续推荐: {consec_str}")
         print(f"       💡 一句话: {one_liner}")
         print(f"       👉 详情: uv run python src/main.py --explain {ticker}")
         print()

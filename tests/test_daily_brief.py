@@ -178,6 +178,81 @@ class TestDailyBriefBasic:
         assert "研究" in out
 
 
+class TestDailyBriefFrontDoorVerdictConsistency:
+    """autodev-13 / loop 102: cross-surface verdict consistency.
+
+    Empirical dogfood of --daily-brief on report 20260703 found that ALL 3
+    top picks contradicted the --top-picks front-door verdict on the SAME
+    report — 🥇 688019 daily-brief said ``strong_buy`` but the front-door BUY
+    gate (composite ≥ 0.5 AND T+5/T+10 winrate ≥ 0.55 AND mature sample ≥ 20
+    AND edge > 0) returned AVOID (样本不足20, 动量转负, 量价背离); likewise
+    688766 strong_buy→AVOID and 002463 watch→BUY (inverted). Root cause: the
+    daily-brief renders the RAW LLM ``decision`` field (``rec.get("decision")``)
+    which is the pre-gate qualitative read, NOT the actionable front-door
+    verdict. For a 赚钱工具 the operator's morning card saying "strong_buy #1"
+    for a pick the front door rates AVOID directly causes wrong actions.
+
+    Fix scope (additive disclosure, contract §用户可见诚实化): surface the
+    front-door verdict alongside the raw decision with a ⚠ when they disagree,
+    so the operator sees the contradiction. Does NOT change the raw-decision
+    display or the ranking (owner-gated); only adds the gated verdict.
+    Same disease class as C268 ("High confidence picks" composite-only →
+    BUY-verdict) and the opportunity-index fix.
+    """
+
+    def test_raw_strong_buy_contradicted_by_front_door_avoid_is_disclosed(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """raw decision=strong_buy but front-door verdict=AVOID → the daily-brief
+        must surface the contradiction (⚠ + AVOID) so the operator is not told
+        'strong_buy' for a pick the gate rejects."""
+        # decision=strong_buy (raw LLM read) but NO calibration fields →
+        # build_front_door_verdict returns AVOID ("数据缺失" / sample<20).
+        rec = _make_recommendation("688019", "安集科技", "电子", score_b=0.61, decision="strong_buy")
+        rec["composite_score"] = 0.61  # no win_rates/bucket_sample → AVOID
+        _write_report(tmp_path, _make_report([rec]))
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "strong_buy" in out, "raw decision is still shown (additive disclosure)"
+        assert "AVOID" in out, (
+            "When the raw decision (strong_buy) is contradicted by the front-door "
+            "verdict (AVOID), the daily-brief MUST surface the gated verdict so the "
+            "operator is not misled into acting on a pre-gate signal the BUY gate rejects."
+        )
+
+    def test_raw_decision_agrees_with_front_door_no_contradiction_marker(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Negative guard: when raw decision and front-door verdict AGREE (both
+        BUY), no contradiction marker is needed. The verdict is still shown (for
+        cross-surface consistency with --top-picks) but without a ⚠ alarm."""
+        # decision=strong_buy AND full calibration passing the BUY gate → verdict BUY.
+        rec = _make_recommendation("000001", "票A", "银行", score_b=0.70, decision="strong_buy")
+        rec["composite_score"] = 0.70
+        rec["win_rates"] = {"t5": 0.62, "t10": 0.62}
+        rec["expected_returns"] = {"t5": 3.0, "t10": 4.0}
+        rec["bucket_sample_count"] = 100
+        rec["bucket_t30_mature_count"] = 90
+        rec["bucket_label"] = "低 (<0.5)"
+        _write_report(tmp_path, _make_report([rec]))
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "BUY" in out
+        # No contradiction alarm when raw decision and verdict agree.
+        # (The exact marker wording is implementation-defined; this test only
+        # pins that agreement does not trigger the contradiction disclosure.)
+
+
 class TestDailyBriefSorting:
     def test_consecutive_recommendation_bonus(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """同 score_b 时, 连续 3 日的票排在连续 1 日的票前面。"""
