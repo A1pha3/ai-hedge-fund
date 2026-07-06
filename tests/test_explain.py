@@ -366,6 +366,50 @@ class TestExplainRecentEvents:
         assert rc == 0
         assert "暂无近期事件数据" in output
 
+    def test_explain_article_unknown_date_sentinel_not_rendered_as_9999(self):
+        """autodev-13 / loop 100: days_old=9999 is the upstream sentinel for
+        "unparseable date" (_resolve_news_article_days_old returns 9999 when
+        _safe_date cannot parse the article date — empirically ALL 29 articles
+        across all 7 tickers in report 20260703 carry this sentinel because the
+        akshare 发布时间 field uses relative Chinese formats _safe_date doesn't
+        handle). Rendering "9999天前" (~27 years) on a "近期事件 (5 日)" block is
+        absurd and misleads the operator. The sentinel must render as an honest
+        "unknown date" label, NOT "9999天前".
+        """
+        articles = [
+            {"title": "鼎龙股份：上半年光刻胶整体交付规模同比稳步提升", "days_old": 9999},
+            {"title": "鼎龙股份市值破千亿", "days_old": 9999},
+        ]
+        sub_factors_event = {
+            "news_sentiment": _make_sub_factor(
+                "news_sentiment",
+                1,
+                60.0,
+                metrics={"articles": articles},
+            ),
+        }
+        signals = {
+            "event_sentiment": _make_strategy_signal(1, 55.0, sub_factors=sub_factors_event),
+        }
+        rec = _make_recommendation(strategy_signals=signals)
+        report = _make_report(recommendations=[rec])
+
+        rc, output = _run_explain_capture(report)
+
+        assert rc == 0
+        assert "9999天前" not in output, (
+            "days_old=9999 is the upstream sentinel for unparseable date — must "
+            "NOT render as '9999天前' (~27 years), which is absurd on a 近期事件 "
+            "block and misleads the operator."
+        )
+        # The article title is still real news and should be shown; only the
+        # bogus timestamp must be replaced with an honest "unknown" label.
+        assert "光刻胶" in output
+        assert "日期未知" in output or "未知" in output, (
+            "When days_old is the unknown-date sentinel, render an honest label "
+            "so the operator knows the article date is unavailable."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Test 4: Ticker not found (existing logic)

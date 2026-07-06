@@ -17,6 +17,18 @@ _STRATEGY_CN_LABELS: dict[str, str] = {
     "event_sentiment": "事件情绪",
 }
 
+#: autodev-13 / loop 100 — upstream sentinel for "unparseable news article date".
+#: ``_resolve_news_article_days_old`` (strategy_scorer_event_sentiment_helpers.py)
+#: returns 9999 when ``_safe_date`` cannot parse the article date. Empirically
+#: ALL A-share articles carry this sentinel because the akshare ``发布时间`` field
+#: uses relative Chinese formats ("今天", "昨天", "X小时前", "X天前") that
+#: ``_safe_date``'s 3 strptime formats do not handle. Rendering "9999天前"
+#: (~27 years) on a "近期事件 (5 日)" block is absurd; treat the sentinel as an
+#: honest "unknown date" instead. NOTE: this is the DISPLAY-side guard; the
+#: upstream parser gap (which also zeroes ``compute_event_decay`` model-side) is
+#: tracked separately.
+_DAYS_OLD_UNKNOWN_SENTINEL: int = 9999
+
 
 def _build_factor_bar(confidence: float, max_bar_width: int = 10) -> str:
     """Build a 10-cell ASCII bar chart proportional to confidence (0-100)."""
@@ -124,7 +136,20 @@ def _print_recent_events_block(report_data: dict, match: dict) -> None:
                     date_str = str(art.get("days_old", "?"))
                     title = str(art.get("title", ""))
                     if title:
-                        day_label = f"{int(date_str)}天前" if date_str.isdigit() else date_str
+                        if date_str.isdigit():
+                            # autodev-13 / loop 100: 9999 is the upstream
+                            # sentinel for "unparseable date" (see
+                            # _DAYS_OLD_UNKNOWN_SENTINEL). Rendering "9999天前"
+                            # (~27 years) on a 近期事件 block is absurd; show an
+                            # honest "unknown date" label instead so the operator
+                            # is not misled about article recency.
+                            days = int(date_str)
+                            if days >= _DAYS_OLD_UNKNOWN_SENTINEL:
+                                day_label = "日期未知"
+                            else:
+                                day_label = f"{days}天前"
+                        else:
+                            day_label = date_str
                         print(f'  {day_label}  新闻: "{title}"')
                         printed_any = True
                 if printed_any:
