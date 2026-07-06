@@ -1204,6 +1204,34 @@ def test_resolve_news_article_days_old_no_negative_timedelta_floor():
     assert _esh._resolve_news_article_days_old("2026-03-04T08:00:00", datetime(2026, 3, 5)) == 1
 
 
+def test_resolve_news_article_days_old_parses_akshare_space_separated_format():
+    """autodev-13 / loop 101: the akshare ``发布时间`` field (the A-share news
+    source via build_company_news_entry) returns dates in SPACE-separated
+    ``%Y-%m-%d %H:%M:%S`` format (e.g. "2026-07-03 11:22:00" — verified
+    empirically via ak.stock_news_em). _safe_date only tried the T-separated
+    ISO format (%Y-%m-%dT%H:%M:%S), so EVERY A-share article's date was
+    unparseable → _resolve_news_article_days_old returned the 9999 sentinel
+    → compute_event_decay(9999)≈0 → the event_sentiment factor was deaf to
+    A-share article freshness model-wide (all 29 articles across all 7 tickers
+    in report 20260703 carried days_old=9999).
+
+    This is a data-correctness fix: add the space-separated format to _safe_date
+    so the EXISTING freshness logic works as designed on A-share data. It does
+    not change scoring semantics — the model was always designed to weight fresh
+    articles higher; the parser gap silently zeroed that signal.
+    """
+    import src.screening.strategy_scorer_event_sentiment_helpers as _esh
+
+    # Real akshare 发布时间 format (space-separated, verified via ak.stock_news_em).
+    # A same-day article must resolve to 0 (freshest), NOT the 9999 sentinel.
+    assert _esh._resolve_news_article_days_old("2026-07-03 11:22:00", datetime(2026, 7, 3)) == 0
+    # A 2-day-old article must resolve to 2, NOT 9999.
+    assert _esh._resolve_news_article_days_old("2026-07-01 09:00:00", datetime(2026, 7, 3)) == 2
+    # The T-separated format (used by the financialdatasets.ai US-equity path)
+    # must still parse (regression guard).
+    assert _esh._resolve_news_article_days_old("2026-07-03T11:22:00", datetime(2026, 7, 3)) == 0
+
+
 def test_score_mean_reversion_strategy_marks_rsi_oversold_bearish_post_ns4_flip():
     prices_df = pd.DataFrame({"close": [100.0] * 100})
 

@@ -42,7 +42,22 @@ _EVENT_DECAY_LAMBDA = float(os.environ.get("EVENT_DECAY_LAMBDA", "0.35"))
 def _safe_date(date_str: str) -> datetime | None:
     if not date_str:
         return None
-    for fmt in ("%Y%m%d", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
+    # autodev-13 / loop 101: "%Y-%m-%d %H:%M:%S" (space-separated) is the format
+    # akshare's 发布时间 field returns for A-share news (verified via
+    # ak.stock_news_em — e.g. "2026-07-03 11:22:00"). The prior format list only
+    # had the T-separated ISO variant, so EVERY A-share article date was
+    # unparseable → _resolve_news_article_days_old returned the 9999 sentinel →
+    # compute_event_decay(9999)≈0 (event_sentiment deaf to A-share freshness).
+    # Also add "%Y-%m-%d %H:%M" for the no-seconds variant. The %Y-%m-%d entry
+    # remains as a last-resort coarse match (date_str[:19] keeps a 10-char date
+    # intact when no time follows).
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d",
+        "%Y%m%d",
+    ):
         try:
             return datetime.strptime(date_str[:19], fmt)
         except ValueError:
