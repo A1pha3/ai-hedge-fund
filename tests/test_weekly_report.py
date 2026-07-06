@@ -96,6 +96,27 @@ class TestGenerateWeeklyReport:
         assert "下周关注" in report
         assert "组合体检周报" in report
 
+    def test_next_week_watch_includes_front_door_verdict(self, tmp_report_dir: Path, fake_tracking_history: Path, fake_auto_screening: Path) -> None:
+        """autodev-13 / loop 108: the "最新 Top 推荐" line must include the
+        front-door verdict (BUY/HOLD/AVOID) alongside score_b, not just the raw
+        base score — same cross-surface verdict consistency class as loops
+        102/104/105/106. The fixture's rec has no calibration fields → AVOID."""
+        from src.notification.weekly_report import generate_weekly_report
+
+        report = generate_weekly_report(
+            start_date="20260601",
+            end_date="20260606",
+            report_dir=tmp_report_dir,
+        )
+        # The Top 推荐 line should contain the verdict pattern.
+        lines = [ln for ln in report.splitlines() if "Top 推荐" in ln]
+        assert lines, "Weekly report must have a Top 推荐 line"
+        verdict_found = any(k in lines[0] for k in ("BUY", "HOLD", "AVOID"))
+        assert verdict_found, (
+            f"Weekly report Top 推荐 line must include the front-door verdict: "
+            f"{lines[0]!r}"
+        )
+
     def test_brinson_block_graceful_when_no_data(self, tmp_report_dir: Path) -> None:
         """positions_path 不存在 → 区块输出"本周无持仓数据", 整体不崩溃。"""
         from src.notification.weekly_report import generate_weekly_report

@@ -353,7 +353,18 @@ def _block_next_week_watch(report_dir: Path | None = None) -> str:
             ticker = str(top1.get("ticker", "") or "").strip()
             score = float(top1.get("score_b", 0.0) or 0.0)
             if ticker:
-                lines.append(f"- 最新 Top 推荐: {ticker} (score_b={score:+.2f})")
+                # autodev-13 / loop 108: surface the front-door verdict alongside
+                # score_b so the operator does not mistake the raw base score for
+                # the actionable BUY/HOLD/AVOID signal (cross-surface consistency
+                # sweep — same class as loops 102/104/105/106).
+                regime = str(market_state.get("regime_gate_level", "normal") or "normal")
+                try:
+                    from src.screening.investability import build_front_door_verdict
+                    action = str(build_front_door_verdict(top1, market_regime=regime).get("action", "AVOID"))
+                except Exception:  # noqa: BLE001 — best-effort; skip verdict
+                    action = ""
+                verdict_tag = f", {action}" if action else ""
+                lines.append(f"- 最新 Top 推荐: {ticker} (score_b={score:+.2f}{verdict_tag})")
 
         lines.append("")
         return "\n".join(lines)
