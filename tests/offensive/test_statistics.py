@@ -60,3 +60,33 @@ def test_ci_bracket_contains_mean():
     returns = np.random.randn(50) * 0.05 + 0.03
     dist = compute_distribution(returns)
     assert dist.ci_low <= dist.expected_return <= dist.ci_high
+
+
+# ---- Benjamini-Hochberg FDR (v2 §C.5) ----
+
+
+def test_fdr_all_significant_passes():
+    """全部极显著 p-value → 全部通过 FDR。"""
+    from src.screening.offensive.statistics import benjamini_hochberg_fdr
+
+    p = np.array([0.001, 0.002, 0.003])
+    q, sig = benjamini_hochberg_fdr(p, alpha=0.05)
+    assert len(sig) == 3
+
+
+def test_fdr_filters_noise():
+    """几个极小 p + 几个大 p → 大 p 的不通过。"""
+    from src.screening.offensive.statistics import benjamini_hochberg_fdr
+
+    p = np.array([0.001, 0.45, 0.50, 0.60])  # 第 1 个显著, 其余噪声
+    q, sig = benjamini_hochberg_fdr(p, alpha=0.05)
+    assert 0 in sig  # 极显著的通过
+    assert 1 not in sig and 2 not in sig and 3 not in sig  # 噪声的不通过
+
+
+def test_fdr_empty_input():
+    from src.screening.offensive.statistics import benjamini_hochberg_fdr
+
+    q, sig = benjamini_hochberg_fdr(np.array([]))
+    assert len(q) == 0
+    assert sig == []

@@ -102,3 +102,38 @@ def information_coefficient(scores: np.ndarray, forward_returns: np.ndarray) -> 
     from scipy.stats import rankdata
 
     return float(np.corrcoef(rankdata(scores), rankdata(forward_returns))[0, 1])
+
+
+def benjamini_hochberg_fdr(p_values: np.ndarray, alpha: float = 0.05) -> tuple[np.ndarray, list[int]]:
+    """Benjamini-Hochberg FDR 校正 (v2 §C.5 防多重检验 p-hacking)。
+
+    多个 setup 同时回测时, 单个 p-value 显著不等于整体显著 (假阳性膨胀)。
+    BH 校正控制 false discovery rate。
+
+    Args:
+        p_values: N 个检验的原始 p-value
+        alpha: 目标 FDR (默认 0.05)
+
+    Returns:
+        (q_values, significant_indices): 校正后的 q-value 数组 + 显著的索引列表
+    """
+    p_values = np.asarray(p_values, dtype=float)
+    n = len(p_values)
+    if n == 0:
+        return np.array([]), []
+
+    # BH: 排序, q_i = p_i × n / rank_i, 累积 min
+    order = np.argsort(p_values)
+    ranked = p_values[order]
+    q = np.empty(n)
+    prev_q = 1.0
+    for i in range(n - 1, -1, -1):
+        rank = i + 1
+        raw_q = ranked[i] * n / rank
+        prev_q = min(prev_q, raw_q, 1.0)
+        q[i] = prev_q
+    # 还原原顺序
+    q_original_order = np.empty(n)
+    q_original_order[order] = q
+    significant = [i for i in range(n) if q_original_order[i] <= alpha]
+    return q_original_order, significant
