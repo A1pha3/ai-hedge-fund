@@ -28,6 +28,31 @@ from src.utils.display import Fore, Style
 # ---------------------------------------------------------------------------
 
 
+def _format_bucket_tag(item: dict) -> str:
+    """autodev-13 / loop 99: format the score-bucket label as an inline
+    disclosure tag for the Top-investable headline.
+
+    Sibling of ``top_picks._format_bucket_tag`` (loop 98) — same disease class:
+    the 决策 edge / 胜率 / T+30 edge/winrate / 样本 rendered on this headline
+    are BUCKET-LEVEL aggregates (shrinkage estimator). The operator reads
+    "Top investable: 000001 (决策=+4.67% 胜率=60%...)" as 000001's own measured
+    edge when it is actually the 低(<0.5) bucket average. Surfacing the bucket
+    label inline lets the operator distinguish per-ticker measurement from
+    bucket estimate (contract §估计值的清晰披露). Display-only; the bucket
+    estimator is NOT changed.
+
+    Returns ``""`` when ``bucket_label`` is absent (legacy reports) — graceful
+    degradation. Duplicated locally (not imported from top_picks) to follow the
+    codebase precedent for bucket-formatting helpers (``_format_sample_count``
+    is also local to top_picks); kept in sync with ``top_picks._format_bucket_tag``.
+    """
+    label = str(item.get("bucket_label", "") or "").strip()
+    if not label:
+        return ""
+    compact = label.replace(" (", "(")
+    return f"  bucket={compact}"
+
+
 def _check_report_age_vs_today(report_date_str: str) -> str:
     """autodev-8 / disease J: warn if the report is stale relative to TODAY.
 
@@ -310,7 +335,12 @@ def run_decision_flow(
         # flag (old reports) is treated as verified (behavior preserved).
         composite_verified = best.get("composite_verified")
         estimate_marker = "估" if composite_verified is False else ""
-        print(f"  Top investable: {best.get('ticker', '?')} (composite={float(best.get('composite_score', 0.0)):+.3f}{estimate_marker}, " f"决策={decision_str} 胜率={decision_wr_str}, T+30={t30_str} T+30胜率={t30_wr_str}, {sample_str})")
+        # autodev-13 / loop 99: surface the bucket label so the operator can
+        # tell the 决策/胜率/T+30/样本 aggregates are bucket-level estimates
+        # (same-bucket tickers share byte-identical values), NOT this ticker's
+        # own measured edge. See ``_format_bucket_tag`` + top_picks loop 98.
+        bucket_tag = _format_bucket_tag(best)
+        print(f"  Top investable: {best.get('ticker', '?')} (composite={float(best.get('composite_score', 0.0)):+.3f}{estimate_marker},{bucket_tag} " f"决策={decision_str} 胜率={decision_wr_str}, T+30={t30_str} T+30胜率={t30_wr_str}, {sample_str})")
     print(f"  Completed in {elapsed:.1f}s")
 
     # R77 (R71/R72/R73/R75/R76 trust-calibration family): this surface emits a

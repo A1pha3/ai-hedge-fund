@@ -197,6 +197,79 @@ class TestDecisionFlow:
         assert top_investable_lines, "Top investable line must be present"
         assert "少样本" not in top_investable_lines[0]
 
+    @patch("src.screening.investability.rank_recommendations_by_investability")
+    def test_top_investable_discloses_bucket_label(self, mock_rank, tmp_path: Path, capsys) -> None:
+        """autodev-13 / loop 99 (sibling sweep of loop 98): the --decision-flow
+        "Top investable" headline renders the SAME bucket-level calibration
+        metrics as --top-picks (决策 edge / 胜率 / T+30 / 样本 — all bucket
+        aggregates from the shrinkage estimator). Loop 98 found two different
+        tickers in the 低(<0.5) bucket rendered byte-identical 决策=+4.67%
+        胜率=60% on --top-picks; this headline has the same disease — the
+        operator reads "Top investable: 000001 (composite=+0.803, 决策=+4.67%
+        胜率=60%...)" as 000001's own measured edge, when it is actually the
+        低-bucket average. The bucket label must be disclosed inline so the
+        operator can distinguish per-ticker measurement from bucket estimate
+        (contract §估计值的清晰披露).
+        """
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        today = _make_report("20260611", [_make_rec("000001", "A", 0.8)])
+        (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(today), encoding="utf-8")
+
+        mock_rank.return_value = [
+            {
+                "ticker": "000001",
+                "name": "A",
+                "score_b": 0.43,
+                "composite_score": 0.803,
+                "win_rates": {"t30": 0.46, "t5": 0.60, "t10": 0.60},
+                "expected_returns": {"t30": -2.36, "t5": 2.91, "t10": 4.67},
+                "bucket_label": "低 (<0.5)",
+                "bucket_sample_count": 7797,
+                "bucket_t30_mature_count": 7775,
+            }
+        ]
+
+        run_decision_flow(top_n=10, reports_dir=reports_dir)
+        captured = capsys.readouterr()
+        top_investable_lines = [line for line in captured.out.splitlines() if "Top investable" in line]
+        assert top_investable_lines, "Top investable line must be present"
+        assert "bucket" in top_investable_lines[0].lower(), (
+            "--decision-flow Top investable headline renders bucket-aggregate "
+            "决策/胜率/T+30/样本 (same disease as loop 98 on --top-picks). The "
+            "bucket label must be disclosed so the operator does not mistake the "
+            "bucket average for the ticker's own measured edge."
+        )
+
+    @patch("src.screening.investability.rank_recommendations_by_investability")
+    def test_top_investable_no_bucket_tag_when_label_absent(self, mock_rank, tmp_path: Path, capsys) -> None:
+        """Negative guard: legacy reports without bucket_label must not crash
+        and must not fabricate a bucket tag (graceful degradation)."""
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        today = _make_report("20260611", [_make_rec("000001", "A", 0.8)])
+        (reports_dir / "auto_screening_20260611.json").write_text(json.dumps(today), encoding="utf-8")
+
+        mock_rank.return_value = [
+            {
+                "ticker": "000001",
+                "name": "A",
+                "score_b": 0.8,
+                "composite_score": 0.8,
+                "win_rates": {"t30": 0.6, "t5": 0.6, "t10": 0.6},
+                "expected_returns": {"t30": 0.03, "t5": 0.01, "t10": 0.012},
+                "bucket_sample_count": 50,
+                "bucket_t30_mature_count": 20,
+                # bucket_label intentionally absent (legacy report)
+            }
+        ]
+
+        run_decision_flow(top_n=10, reports_dir=reports_dir)  # must NOT raise
+        captured = capsys.readouterr()
+        top_investable_lines = [line for line in captured.out.splitlines() if "Top investable" in line]
+        assert top_investable_lines, "Top investable line must be present"
+        assert "bucket" not in top_investable_lines[0].lower()
+
     def test_stale_report_warns_operator_relative_to_today(self, tmp_path: Path, capsys) -> None:
         """autodev-8 / disease J: --decision-flow checks report freshness using
         the report's own date as trade_date (report['date']), so
