@@ -2825,12 +2825,19 @@ def run_industry_cross_picks(trade_date: str | None = None, top_industries: int 
     if not recommendations:
         print(f"{Fore.YELLOW}报告 {date_str} 无推荐数据{Style.RESET_ALL}")
         return 0
+    market_state = payload.get("market_state") or {}
+    market_regime = (
+        str(market_state.get("regime_gate_level", "normal") or "normal")
+        if isinstance(market_state, dict)
+        else "normal"
+    )
 
     cross_picks = compute_cross_picks(
         recommendations,
         trade_date=date_str,
         top_industries=top_industries,
         picks_per_industry=picks_per_industry,
+        market_regime=market_regime,
     )
 
     print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")

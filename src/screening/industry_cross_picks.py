@@ -12,11 +12,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from src.screening.industry_rotation import calculate_industry_rotation
 from src.utils.numeric import safe_float as _safe_float
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -34,6 +37,7 @@ class IndustryTopPick:
     name: str = ""
     score_b: float = 0.0
     decision: str = ""
+    front_door_action: str = "AVOID"
 
 
 @dataclass
@@ -55,7 +59,13 @@ class CrossPick:
     top_picks: list[IndustryTopPick] = field(default_factory=list)
 
 
-def _extract_top_picks_for_industry(recommendations: list[dict[str, Any]], industry_name: str, max_picks: int = 3) -> list[IndustryTopPick]:
+def _extract_top_picks_for_industry(
+    recommendations: list[dict[str, Any]],
+    industry_name: str,
+    max_picks: int = 3,
+    *,
+    market_regime: str = "normal",
+) -> list[IndustryTopPick]:
     """从推荐列表中提取指定行业的 Top N 个股。"""
     if not recommendations or not industry_name:
         return []
@@ -72,6 +82,19 @@ def _extract_top_picks_for_industry(recommendations: list[dict[str, Any]], indus
         ticker = str(rec.get("ticker", ""))
         if not ticker:
             continue
+        try:
+            from src.screening.investability import build_front_door_verdict
+
+            front_door_action = str(
+                build_front_door_verdict(rec, market_regime=market_regime).get("action", "AVOID") or "AVOID"
+            )
+        except Exception as exc:  # noqa: BLE001 — diagnostic renderer should keep working
+            logger.warning(
+                "industry-cross-picks: build_front_door_verdict 失败, 前门判决显示为不可用: %s",
+                exc,
+                exc_info=True,
+            )
+            front_door_action = "不可用"
 
         picks.append(
             IndustryTopPick(
@@ -79,6 +102,7 @@ def _extract_top_picks_for_industry(recommendations: list[dict[str, Any]], indus
                 name=str(rec.get("name", "")),
                 score_b=_safe_float(rec.get("score_b", 0.0), 0.0),
                 decision=str(rec.get("decision", "")),
+                front_door_action=front_door_action,
             )
         )
 
@@ -93,6 +117,7 @@ def compute_cross_picks(
     trade_date: str = "",
     top_industries: int = 5,
     picks_per_industry: int = 3,
+    market_regime: str = "normal",
 ) -> list[CrossPick]:
     """主入口: 计算行业 + 个股交叉选择。
 
@@ -123,6 +148,7 @@ def compute_cross_picks(
             recommendations,
             industry_name=sig.industry_name,
             max_picks=picks_per_industry,
+            market_regime=market_regime,
         )
         cross_picks.append(
             CrossPick(
@@ -154,7 +180,10 @@ def render_cross_picks(cross_picks: list[CrossPick]) -> str:
         if cp.top_picks:
             lines.append("     Top 标的:")
             for pick in cp.top_picks:
-                lines.append(f"       • {pick.ticker} {pick.name}  score_b={pick.score_b:+.3f}  {pick.decision}")
+                lines.append(
+                    f"       • {pick.ticker} {pick.name}  score_b={pick.score_b:+.3f}  "
+                    f"{pick.decision}  前门={pick.front_door_action}"
+                )
         else:
             lines.append("     Top 标的: (无)")
         lines.append("")

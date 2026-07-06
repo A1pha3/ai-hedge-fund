@@ -84,6 +84,13 @@ class TestRenderCrossPicks:
         assert "动量" in output
         assert "Top 标的" in output
 
+    def test_renders_front_door_verdict_beside_raw_decision(self):
+        result = compute_cross_picks(SAMPLE_RECS, top_industries=2, picks_per_industry=2)
+        output = render_cross_picks(result)
+
+        assert "bullish" in output
+        assert "前门=AVOID" in output
+
     def test_renders_empty(self):
         output = render_cross_picks([])
         assert "无交叉选择数据" in output
