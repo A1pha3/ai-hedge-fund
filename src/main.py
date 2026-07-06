@@ -2275,7 +2275,7 @@ def run_push_test(
     return 0 if success_count == total else 1
 
 
-def _print_custom_weights_results(top: list[dict], w: dict) -> bool:
+def _print_custom_weights_results(top: list[dict], w: dict, *, market_regime: str = "normal") -> bool:
     """打印自定义权重推荐表头与 Top N 明细。
 
     Extracted from :func:`run_custom_weights` — 将表头渲染 (含权重摘要) 与
@@ -2309,11 +2309,27 @@ def _print_custom_weights_results(top: list[dict], w: dict) -> bool:
         diff = score_b - original
         diff_str = f"{diff:+.3f}"
         label = f"{ticker} {name}".strip()
+        try:
+            from src.screening.investability import build_front_door_verdict
+
+            front_door_action = str(
+                build_front_door_verdict(rec, market_regime=market_regime).get("action", "AVOID") or "AVOID"
+            )
+        except Exception as exc:  # noqa: BLE001 — keep custom-weights display rendering
+            logger.warning(
+                "[CustomWeights] build_front_door_verdict 失败, 前门判决显示为不可用: %s",
+                exc,
+                exc_info=True,
+            )
+            front_door_action = "不可用"
         recalib_marker = ""
         if rec.get("bucket_recalibration_needed"):
             recalibration_needed_count += 1
             recalib_marker = f"  {Fore.YELLOW}⚠重权越界(校准已重置){Style.RESET_ALL}"
-        print(f"  {idx:>2}. {label:<22}  score_b {score_b:+.3f}  (原 {original:+.3f}  Δ {diff_str}){recalib_marker}")
+        print(
+            f"  {idx:>2}. {label:<22}  score_b {score_b:+.3f}  "
+            f"前门 {front_door_action:<5}  (原 {original:+.3f}  Δ {diff_str}){recalib_marker}"
+        )
     if recalibration_needed_count > 0:
         print(f"{Fore.YELLOW}⚠ {recalibration_needed_count} 只标的因重权越过桶边界, " f"bucket 校准已重置为未知 — 请 --top-picks 复核有效校准.{Style.RESET_ALL}")
     return True

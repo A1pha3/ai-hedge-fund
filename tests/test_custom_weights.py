@@ -315,6 +315,27 @@ def test_print_custom_weights_warns_on_recalibration_needed(capsys: pytest.Captu
     assert "重权" in x_line[0] or "越界" in x_line[0] or "⚠" in x_line[0], f"crossed pick X must carry a visible marker; got {x_line[0]!r}"
 
 
+def test_print_custom_weights_surfaces_front_door_verdict(capsys: pytest.CaptureFixture) -> None:
+    """CLI 自定义权重展示 score_b 时, 必须同时展示前门 BUY/HOLD/AVOID 判决。"""
+    from src.main import _print_custom_weights_results
+
+    top = [
+        {
+            "ticker": "X",
+            "name": "测试_X",
+            "score_b": 0.80,
+            "original_score_b": 0.55,
+            "decision": "bullish",
+        }
+    ]
+    w = StrategyWeights().to_dict()
+    assert _print_custom_weights_results(top, w) is True
+    out = capsys.readouterr().out
+
+    assert "前门" in out
+    assert "AVOID" in out
+
+
 # ===========================================================================
 # 8. 排序变化
 # ===========================================================================
