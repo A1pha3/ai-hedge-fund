@@ -291,14 +291,32 @@ def _print_header(ticker: str, report_path: Path, top_n: int) -> None:
     print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
 
 
-def _print_already_recommended(ticker: str, match: dict[str, Any]) -> None:
+def _print_already_recommended(
+    ticker: str,
+    match: dict[str, Any],
+    *,
+    market_regime: str = "normal",
+) -> None:
     name = match.get("name", "")
     # R76 (R73 同族): 见 _compute_top_score_stats 同款 null-score_b 守卫, 避免
     # ``{score_b:+.4f}`` 在 None 上抛 TypeError。
     score_b = safe_float(match.get("score_b"))
     decision = match.get("decision", "neutral")
+    try:
+        from src.screening.investability import build_front_door_verdict
+
+        front_door_action = str(
+            build_front_door_verdict(match, market_regime=market_regime).get("action", "AVOID") or "AVOID"
+        )
+    except Exception as exc:  # noqa: BLE001 — keep the diagnostic command rendering
+        logger.warning(
+            "why-not: build_front_door_verdict 失败, 前门判决显示为不可用: %s",
+            exc,
+            exc_info=True,
+        )
+        front_door_action = "不可用"
     print(f"{Fore.GREEN}该票已被推荐, 请用 --explain {ticker} 查看推荐理由 (而非 --why-not){Style.RESET_ALL}")
-    print(f"  当前状态: {decision}  |  Score B: {score_b:+.4f}  |  名称: {name}")
+    print(f"  当前状态: {decision}  |  前门判决: {front_door_action}  |  Score B: {score_b:+.4f}  |  名称: {name}")
 
 
 def _print_not_in_market(ticker: str, report_path: Path) -> None:
@@ -346,12 +364,14 @@ def run_why_not(
     report_path, data = result
     recs = data.get("recommendations", []) or []
     top_n = int(data.get("top_n", len(recs) or 10))
+    ms = data.get("market_state") or {}
+    regime = str(ms.get("regime_gate_level", "normal") or "normal") if isinstance(ms, dict) else "normal"
 
     # State 1: 已在推荐中
     match = next((r for r in recs if r.get("ticker") == ticker), None)
     if match is not None:
         _print_header(ticker, report_path, top_n)
-        _print_already_recommended(ticker, match)
+        _print_already_recommended(ticker, match, market_regime=regime)
         # R76: State 1 也带 decision label (当前状态: bullish/bearish), 同主路径补 disclaimer。
         _print_why_not_disclaimer()
         print()
@@ -383,7 +403,6 @@ def run_why_not(
     _print_header(ticker, report_path, top_n)
 
     # 市场状态
-    ms = data.get("market_state") or {}
     if ms:
         print(f"{Fore.CYAN}市场状态:{Style.RESET_ALL} {ms.get('state_type', '?')}  |  " f"仓位系数: {ms.get('position_scale', 1.0):.2f}  |  " f"regime: {ms.get('regime_gate_level', 'normal')}")
         print()

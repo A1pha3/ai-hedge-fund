@@ -71,6 +71,19 @@ def test_ticker_already_recommended(tmp_path: Path, capsys) -> None:
     assert "--explain" in captured.out
 
 
+def test_already_recommended_surfaces_front_door_verdict(tmp_path: Path, capsys) -> None:
+    """State 1: raw bullish state must still show the front-door BUY/HOLD/AVOID verdict."""
+    reports_dir = tmp_path / "data" / "reports"
+    _write_report(reports_dir, recommendations=[_make_rec("000001", 0.78)])
+
+    rc = run_why_not("000001", reports_dir=reports_dir)
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "当前状态: bullish" in captured.out
+    assert "前门判决: AVOID" in captured.out
+
+
 def test_ticker_not_in_recommendations_outputs_4_blocks(tmp_path: Path, capsys) -> None:
     """State 2: ticker 不在 recommendations → 主战场, 4 个区块全部输出。"""
     reports_dir = tmp_path / "data" / "reports"
