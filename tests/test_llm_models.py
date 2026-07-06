@@ -530,3 +530,39 @@ def test_front_door_importable_when_one_langchain_provider_missing(
     assert hasattr(fresh_main, "run_custom_weights")
     fresh_top_picks = importlib.import_module("src.screening.top_picks")
     assert hasattr(fresh_top_picks, "run_top_picks")
+
+
+def test_front_doors_do_not_pull_agent_modules_at_import(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """autodev-21 / loop 120: ``--top`` / ``--custom-weights`` / ``--top-picks``
+    前门运行时不调用任何 LLM agent (agents 只在 ``--pipeline`` 全流水线模式
+    使用)。此前 ``src/main.py`` 顶层 ``from src.agents.portfolio_manager
+    import ...`` + ``from src.graph.state import AgentState`` 把全部 41 个
+    agent/graph 模块在 import 时拉入 — 前门因此被 agent 依赖的 langchain_core
+    及传递性重依赖绑架 (dogfood 20260706 loop 120: 前门 import 拉入
+    src.agents.* / src.graph.state 共 41 个模块)。
+
+    修复后 (loop 120): agent/graph import 延迟到 ``create_workflow`` 内,
+    前门 import 不应触达 ``src.agents`` 或 ``src.graph.state``。
+    """
+    import importlib
+    import sys
+
+    for mod in list(sys.modules):
+        if mod.startswith("src.main") or mod.startswith("src.screening.top_picks") or mod.startswith("src.agents") or mod.startswith("src.graph"):
+            monkeypatch.delitem(sys.modules, mod, raising=False)
+
+    fresh_main = importlib.import_module("src.main")
+    importlib.import_module("src.screening.top_picks")
+
+    pulled = [m for m in sys.modules if m.startswith("src.agents") or m == "src.graph.state"]
+    # Tolerate src.agents package __init__ if it's a pure namespace, but the
+    # concrete agent modules (warren_buffett, risk_manager, etc.) and graph.state
+    # must NOT be loaded by a front-door import.
+    concrete_agents = [m for m in pulled if m not in ("src.agents",)]
+    assert not concrete_agents, (
+        f"front-door import pulled {len(concrete_agents)} agent/graph modules "
+        f"(should be 0 for --top/--custom-weights which never call agents): "
+        f"{concrete_agents[:5]}..."
+    )

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import fcntl
 import json
@@ -11,11 +13,21 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
-from langgraph.graph import END, StateGraph
 
-from src.agents.portfolio_manager import portfolio_management_agent
-from src.agents.risk_manager import risk_management_agent
+# autodev-21 / loop 120: pipeline-only imports (langchain_core / langgraph /
+# src.agents.* / src.graph.state / src.utils.analysts) are deferred into the
+# functions that actually run the full ``--pipeline`` workflow. The front doors
+# (--top / --custom-weights / --top-picks) never build an agent graph, so they
+# must not pay the import cost of 39 agent/graph modules + langchain_core at
+# module load time — previously a single missing langchain dep broke every
+# front door. Annotations resolve via TYPE_CHECKING below.
+if TYPE_CHECKING:
+    from langchain_core.messages import HumanMessage
+    from langgraph.graph import END, StateGraph
+
+    from src.agents.portfolio_manager import portfolio_management_agent
+    from src.agents.risk_manager import risk_management_agent
+    from src.graph.state import AgentState
 
 # Round 20.14: 从 main.py 抽取到独立模块的 UI 辅助函数 (纯重构, 行为不变)
 from src.cli.explain_helpers import (
@@ -32,7 +44,6 @@ from src.cli.market_status_helpers import (
     _format_market_status_table,
 )
 from src.execution.daily_pipeline import DailyPipeline
-from src.graph.state import AgentState
 from src.llm.defaults import get_default_model_config
 from src.screening.candidate_pool import build_candidate_pool
 from src.screening.consecutive_recommendation import (
@@ -58,7 +69,6 @@ from src.screening.recommendation_tracker import (
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
 from src.tools.tushare_api import get_ashare_daily_gainers_with_tushare
-from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes
 from src.utils.display import (
     print_trading_output,
     save_daily_gainers_report,
@@ -150,6 +160,10 @@ def run_hedge_fund(
 ):
     resolved_model_name, resolved_model_provider = (model_name, model_provider) if model_name and model_provider else get_default_model_config()
 
+    # Deferred imports — loop 120 import isolation: these are pipeline-only.
+    from langchain_core.messages import HumanMessage
+    from src.utils.analysts import get_analyst_nodes
+
     # Start progress tracking
     progress.start()
 
@@ -215,6 +229,13 @@ def _get_compiled_workflow(selected_analysts_key: tuple[str, ...] | None, concur
 
 def create_workflow(selected_analysts=None, concurrency_limit: int | None = None):
     """Create the workflow with selected analysts."""
+    # Deferred imports — loop 120 import isolation: pipeline-only deps.
+    from langgraph.graph import END, StateGraph
+    from src.agents.portfolio_manager import portfolio_management_agent
+    from src.agents.risk_manager import risk_management_agent
+    from src.graph.state import AgentState
+    from src.utils.analysts import get_analyst_nodes
+
     workflow = StateGraph(AgentState)
     workflow.add_node("start_node", start)
 
@@ -268,6 +289,8 @@ def _get_analyst_concurrency_limit() -> int:
 
 
 def _order_selected_analysts(selected_analysts: list[str]) -> list[str]:
+    from src.utils.analysts import ANALYST_ORDER, get_analyst_nodes  # deferred — loop 120
+
     analyst_nodes = get_analyst_nodes()
     ordered_keys = [key for _, key in ANALYST_ORDER if key in analyst_nodes]
     ordered_selected = [key for key in ordered_keys if key in selected_analysts]

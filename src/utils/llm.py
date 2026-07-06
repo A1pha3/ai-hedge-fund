@@ -9,10 +9,18 @@ import os
 import re
 import time
 from time import perf_counter
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from src.graph.state import AgentState
+if TYPE_CHECKING:
+    # ``from __future__ import annotations`` makes the ``AgentState`` annotations
+    # below lazy strings, so the import is only needed for static type checking.
+    # Keeping it under TYPE_CHECKING (loop 120) stops the front-door import chain
+    # (src.main -> src.utils.llm) from pulling src.graph.state + the entire agent
+    # graph at module load time.
+    from src.graph.state import AgentState
+
 from src.llm.defaults import get_default_model_config
 from src.llm.models import (
     get_model,
