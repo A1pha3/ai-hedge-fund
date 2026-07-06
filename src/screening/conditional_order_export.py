@@ -39,7 +39,10 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any, Sequence
 
-from src.screening.conditional_order_advisor import ConditionalOrderAdvice
+from src.screening.conditional_order_advisor import (
+    ConditionalOrderAdvice,
+    _format_front_door_verdict_disclosure,
+)
 
 # R151: 降级 (数据不足) advice 被 advisor 自标为 "建议仅作参考, 请补充数据"
 # (confidence=0.0)。将降级 advice 作为真实券商条件单导出会与该标记矛盾, 且
@@ -634,6 +637,22 @@ def run_export_conditional_orders_cli(
     print(f"  数量: {viable_count} 条有效" + (f" (跳过 {degraded_count} 条降级建议 — 数据不足, 不导出)" if degraded_count else ""))
     print(f"  输出: {output_path}")
     print(f"{Fore.CYAN}{Style.BRIGHT}{'=' * 60}{Style.RESET_ALL}\n")
+
+    # autodev-13 / loop 105 (C-CONDITIONAL-ORDER-VERDICT-GATE, export sibling):
+    # warn which exported orders are on AVOID/HOLD-rated picks. The broker CSV/JSON
+    # cannot carry an arbitrary verdict column (format constraints), so the
+    # disclosure is a CONSOLE warning at export time — the operator sees which
+    # real broker orders are risk constraints for gate-rejected picks BEFORE
+    # placing them. Cross-reference exported tickers with the report's recs
+    # (which carry the verdict data). Additive; does not touch the broker file.
+    exported_tickers = {str(d.get("ticker", "")) for d in conditional_orders if isinstance(d, dict) and not d.get("degraded")}
+    all_recs = payload.get("recommendations") or []
+    exported_recs = [r for r in all_recs if isinstance(r, dict) and str(r.get("ticker", "")) in exported_tickers]
+    _ms = payload.get("market_state") or {}
+    _regime = str(_ms.get("regime_gate_level", "normal") or "normal")
+    disclosure = _format_front_door_verdict_disclosure(exported_recs, market_regime=_regime)
+    if disclosure:
+        print(disclosure + "\n")
 
     # 预览前 3 行
     lines = content.strip().split("\n")

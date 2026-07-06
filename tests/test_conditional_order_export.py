@@ -390,6 +390,37 @@ def test_cli_smoke_invalid_broker() -> None:
     assert rc == 2
 
 
+def test_cli_prints_front_door_verdict_disclosure(monkeypatch, capsys) -> None:
+    """autodev-13 / loop 105: --export-conditional-orders must print the
+    front-door verdict disclosure so the operator sees which exported orders
+    are AVOID-rated BEFORE placing them with the broker (real-money path).
+    Sibling of loop 104 (--conditional-orders CLI display). The export writes
+    a broker CSV/JSON that cannot carry an arbitrary verdict column (broker
+    format constraints), so the disclosure is a CONSOLE warning at export
+    time — additive, does not touch the broker file format."""
+    from src.screening import conditional_order_export as coe
+
+    # Force the helper to return a recognizable sentinel so we can assert the
+    # export wiring invokes it and prints its output. This verifies the
+    # integration (helper is called on the exported tickers) without depending
+    # on the specific report contents.
+    monkeypatch.setattr(
+        coe,
+        "_format_front_door_verdict_disclosure",
+        lambda recs, *, market_regime: "SENTINEL_VERDICT_DISCLOSURE",
+    )
+    rc = run_export_conditional_orders_cli(broker="huatai")
+    out = capsys.readouterr().out
+    # rc==0 means a report existed and the export ran; rc==1 means no report
+    # (no disclosure possible). When the export runs, the sentinel must appear.
+    if rc == 0:
+        assert "SENTINEL_VERDICT_DISCLOSURE" in out, (
+            "--export-conditional-orders must print the front-door verdict "
+            "disclosure so the operator sees AVOID-rated picks before placing "
+            "real broker orders (C-CONDITIONAL-ORDER-VERDICT-GATE export sibling)."
+        )
+
+
 # ===========================================================================
 # 12. R151 — 降级 (数据不足) advice 不导出为券商条件单
 # ===========================================================================
