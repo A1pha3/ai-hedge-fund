@@ -200,9 +200,7 @@ class TestDailyBriefFrontDoorVerdictConsistency:
     BUY-verdict) and the opportunity-index fix.
     """
 
-    def test_raw_strong_buy_contradicted_by_front_door_avoid_is_disclosed(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_raw_strong_buy_contradicted_by_front_door_avoid_is_disclosed(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """raw decision=strong_buy but front-door verdict=AVOID → the daily-brief
         must surface the contradiction (⚠ + AVOID) so the operator is not told
         'strong_buy' for a pick the gate rejects."""
@@ -219,15 +217,9 @@ class TestDailyBriefFrontDoorVerdictConsistency:
 
         assert rc == 0
         assert "strong_buy" in out, "raw decision is still shown (additive disclosure)"
-        assert "AVOID" in out, (
-            "When the raw decision (strong_buy) is contradicted by the front-door "
-            "verdict (AVOID), the daily-brief MUST surface the gated verdict so the "
-            "operator is not misled into acting on a pre-gate signal the BUY gate rejects."
-        )
+        assert "AVOID" in out, "When the raw decision (strong_buy) is contradicted by the front-door " "verdict (AVOID), the daily-brief MUST surface the gated verdict so the " "operator is not misled into acting on a pre-gate signal the BUY gate rejects."
 
-    def test_raw_decision_agrees_with_front_door_no_contradiction_marker(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_raw_decision_agrees_with_front_door_no_contradiction_marker(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Negative guard: when raw decision and front-door verdict AGREE (both
         BUY), no contradiction marker is needed. The verdict is still shown (for
         cross-surface consistency with --top-picks) but without a ⚠ alarm."""
@@ -251,6 +243,74 @@ class TestDailyBriefFrontDoorVerdictConsistency:
         # No contradiction alarm when raw decision and verdict agree.
         # (The exact marker wording is implementation-defined; this test only
         # pins that agreement does not trigger the contradiction disclosure.)
+
+
+class TestDailyBriefVerdictSummary:
+    """autodev-23 / loop 126: top-level front-door verdict summary.
+
+    The per-pick `前门: AVOID ⚠` annotation (loop 102) is buried mid-line
+    under the medal + strong_buy + bullish one-liner. A top-level summary
+    line surfaces the gate's verdict UPFRONT so the operator sees which
+    picks are actually endorsed before reading per-pick details.
+    """
+
+    def test_summary_lists_buy_and_avoid_counts_upfront(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """When top3 mixes BUY and AVOID, the summary must show both counts
+        and the ticker lists so the operator can scan endorsements at a glance."""
+        # 2 AVOID (no calibration) + 1 BUY (full calibration passing the gate)
+        avoid_a = _make_recommendation("688019", "安集科技", "电子", score_b=0.61, decision="strong_buy")
+        avoid_a["composite_score"] = 0.61
+        avoid_b = _make_recommendation("688766", "普冉股份", "电子", score_b=0.52, decision="strong_buy")
+        avoid_b["composite_score"] = 0.52
+        buy_rec = _make_recommendation("002463", "沪电股份", "电子", score_b=0.49, decision="watch")
+        buy_rec["composite_score"] = 0.70
+        buy_rec["win_rates"] = {"t5": 0.62, "t10": 0.62}
+        buy_rec["expected_returns"] = {"t5": 3.0, "t10": 4.0}
+        buy_rec["bucket_sample_count"] = 100
+        buy_rec["bucket_t30_mature_count"] = 90
+        buy_rec["bucket_label"] = "低 (<0.5)"
+        _write_report(tmp_path, _make_report([avoid_a, avoid_b, buy_rec]))
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        # Summary line appears before the per-pick cards
+        summary_idx = out.find("前门判决")
+        first_medal_idx = out.find("🥇")
+        assert summary_idx > 0, "top-level 前门判决 summary must be rendered"
+        assert first_medal_idx > summary_idx, "summary must appear BEFORE per-pick medal cards"
+        # BUY count and ticker list
+        assert "BUY 1/3" in out, "summary must show BUY count out of total"
+        assert "✓ BUY: 002463" in out, "summary must list the BUY ticker"
+        # AVOID count and ticker list
+        assert "AVOID 2" in out
+        assert "⚠ AVOID: 688019, 688766" in out, "summary must list AVOID tickers with warning"
+
+    def test_summary_omits_avoid_line_when_all_buy(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """When all picks are front-door BUY, no AVOID warning line."""
+        buy_recs = []
+        for ticker in ("000001", "000002", "000003"):
+            rec = _make_recommendation(ticker, f"票{ticker}", "银行", score_b=0.70, decision="strong_buy")
+            rec["composite_score"] = 0.70
+            rec["win_rates"] = {"t5": 0.62, "t10": 0.62}
+            rec["expected_returns"] = {"t5": 3.0, "t10": 4.0}
+            rec["bucket_sample_count"] = 100
+            rec["bucket_t30_mature_count"] = 90
+            rec["bucket_label"] = "低 (<0.5)"
+            buy_recs.append(rec)
+        _write_report(tmp_path, _make_report(buy_recs))
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "BUY 3/3" in out
+        assert "⚠ AVOID" not in out, "no AVOID warning when all picks are BUY"
 
 
 class TestDailyBriefSorting:

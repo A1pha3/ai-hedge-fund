@@ -366,6 +366,37 @@ def _print_daily_brief(
     print()
     from src.screening.investability import build_front_door_verdict
 
+    # autodev-23 loop 126: top-level front-door verdict summary. The per-pick
+    # `前门: AVOID ⚠` annotation (loop 102) is buried mid-line under the medal
+    # + strong_buy + bullish one-liner, so the operator's first impression of
+    # an AVOID-rated #1 is still "🥇 buy this". Summarize the front-door
+    # verdict UPFRONT so the operator sees which picks the gate actually
+    # endorses before reading the per-pick details. Same disease class as
+    # C-GREEN-GRADE-AVOID-MISMATCH (visual hierarchy overwhelming the verdict).
+    verdict_groups: dict[str, list[str]] = {"BUY": [], "HOLD": [], "AVOID": []}
+    for rec in top3:
+        v = build_front_door_verdict(rec, market_regime=regime)
+        action = str(v.get("action", "AVOID"))
+        ticker = str(rec.get("ticker", "—") or "—")
+        verdict_groups.setdefault(action, []).append(ticker)
+    buy_tickers = verdict_groups.get("BUY", [])
+    avoid_tickers = verdict_groups.get("AVOID", [])
+    hold_tickers = verdict_groups.get("HOLD", [])
+    total = len(top3)
+    # Prominent summary line: green BUY count first, red AVOID last so the
+    # operator's eye catches the gate-rejected picks even when skimming.
+    summary_parts = [f"{Fore.GREEN}前门 BUY {len(buy_tickers)}/{total}{Style.RESET_ALL}"]
+    if hold_tickers:
+        summary_parts.append(f"{Fore.YELLOW}HOLD {len(hold_tickers)}{Style.RESET_ALL}")
+    if avoid_tickers:
+        summary_parts.append(f"{Fore.RED}AVOID {len(avoid_tickers)}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}🎯 前门判决:{Style.RESET_ALL} " + "  |  ".join(summary_parts))
+    if buy_tickers:
+        print(f"  {Fore.GREEN}✓ BUY: {', '.join(buy_tickers)}{Style.RESET_ALL}")
+    if avoid_tickers:
+        print(f"  {Fore.RED}⚠ AVOID: {', '.join(avoid_tickers)} (前门门控拒绝, 谨慎对待){Style.RESET_ALL}")
+    print()
+
     for idx, rec in enumerate(top3):
         medal = _RANK_MEDALS[idx] if idx < len(_RANK_MEDALS) else f"#{idx + 1}"
         ticker = str(rec.get("ticker", "—") or "—")
