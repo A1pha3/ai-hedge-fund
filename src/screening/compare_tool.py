@@ -546,6 +546,56 @@ def load_latest_recommendations(
 # ---------------------------------------------------------------------------
 
 
+def _format_compare_verdict_disclosure(
+    recs: list[dict[str, Any]],
+    winner: str | None,
+    *,
+    market_regime: str,
+) -> str:
+    """autodev-13 / loop 106: cross-surface verdict consistency for --compare.
+
+    --compare's "推荐首选" picks the ticker with the most raw-factor 胜场 (pairwise
+    min-max normalized factor scores), which can be an AVOID-rated pick. Empirical
+    dogfood (report 20260703): 688019 wins 3/5 factors vs 300054 (2/5) → 推荐首选
+    688019, but 688019 is AVOID-rated by the front-door BUY gate (成熟样本不足 20)
+    while 300054 is BUY-rated. The pairwise factor comparison ignores the gate
+    (calibration winrate + sample + edge). Same disease class as loops 102/104/105.
+
+    Additive disclosure (contract §用户可见诚实化): surface each compared ticker's
+    front-door verdict, with ⚠ when the pairwise winner is NOT BUY-rated. Does NOT
+    change the winner (raw-factor ranking is the surface's purpose); only discloses
+    the gate verdict so the operator does not mistake "推荐首选" for a BUY directive.
+
+    Returns ``""`` for empty recs. Otherwise a one-line disclosure.
+    """
+    if not recs:
+        return ""
+    from colorama import Fore, Style
+
+    from src.screening.investability import build_front_door_verdict
+
+    parts: list[tuple[str, str]] = []
+    winner_action: str | None = None
+    for rec in recs:
+        if not isinstance(rec, dict):
+            continue
+        ticker = str(rec.get("ticker", ""))
+        action = str(build_front_door_verdict(rec, market_regime=market_regime).get("action", "AVOID"))
+        parts.append((ticker, action))
+        if ticker == (winner or ""):
+            winner_action = action
+    if not parts:
+        return ""
+    detail = ", ".join(f"{t}={a}" for t, a in parts)
+    if winner and winner_action and winner_action != "BUY":
+        return (
+            f"  {Fore.RED}⚠ 前门判决:{Style.RESET_ALL} {detail}  — "
+            f"{Fore.YELLOW}对比胜场基于原始因子分, 非买入决策; 推荐首选 {winner} "
+            f"前门为 {winner_action}, 买入决策以 --top-picks 前门为准{Style.RESET_ALL}"
+        )
+    return f"  {Fore.CYAN}前门判决:{Style.RESET_ALL} {detail}"
+
+
 def run_compare_cli(
     tickers_arg: str,
     metrics_arg: str | None = None,
@@ -616,6 +666,26 @@ def run_compare_cli(
         print()
         for ticker in report.tickers:
             print(render_radar_chart(report, ticker))
+    # autodev-13 / loop 106: surface each compared ticker's front-door verdict,
+    # with ⚠ when the pairwise winner (推荐首选) is NOT BUY-rated. Best-effort
+    # regime read from the latest report's market_state; default "normal" — the
+    # BUY gate's calibration/sample/edge checks are regime-independent.
+    regime = "normal"
+    try:
+        from src.screening.consecutive_recommendation import resolve_report_dir
+        from src.screening.data_quality_audit import _find_latest_report
+
+        _latest = _find_latest_report(resolve_report_dir() if report_dir is None else Path(report_dir))
+        if _latest is not None:
+            _ms = (json.loads(_latest.read_text(encoding="utf-8"))).get("market_state") or {}
+            regime = str(_ms.get("regime_gate_level", "normal") or "normal")
+    except Exception as exc:  # noqa: BLE001 — best-effort; regime stays "normal"
+        logger.debug("[Compare] regime read failed (defaulting to normal): %s", exc)
+    # Filter recs to the compared tickers for the disclosure.
+    compared = [r for r in recommendations if isinstance(r, dict) and str(r.get("ticker", "")) in set(report.tickers)]
+    disclosure = _format_compare_verdict_disclosure(compared, winner=report.winner, market_regime=regime)
+    if disclosure:
+        print(disclosure)
     return 0
 
 

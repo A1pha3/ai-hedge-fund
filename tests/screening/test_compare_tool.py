@@ -108,3 +108,69 @@ class TestNormalizeMinmax:
     def test_preserves_order(self) -> None:
         result = _normalize_minmax([10.0, 30.0, 20.0])
         assert result[0] < result[2] < result[1]
+
+
+# ---------------------------------------------------------------------------
+# autodev-13 / loop 106: --compare cross-surface verdict consistency
+# (C-CONDITIONAL-ORDER-VERDICT-GATE disease class sweep — the pairwise "推荐首选"
+# by raw factor 胜场 can be an AVOID-rated pick, contradicting --top-picks).
+# ---------------------------------------------------------------------------
+
+
+class TestCompareVerdictDisclosure:
+    """--compare's "推荐首选" picks the ticker with the most raw-factor wins,
+    which can be an AVOID-rated pick (e.g. 688019 on report 20260703 wins 3/5
+    factors but is AVOID — 成熟样本不足 20). The disclosure surfaces each
+    compared ticker's front-door verdict and warns when the winner is not BUY."""
+
+    def test_warns_when_winner_is_avoid(self) -> None:
+        """When the pairwise winner is AVOID-rated, the disclosure must ⚠ the
+        operator that the '推荐首选' is NOT a BUY (买入决策以 --top-picks 前门为准)."""
+        from src.screening.compare_tool import _format_compare_verdict_disclosure
+
+        # 300054 passes BUY gate; 688019 fails (no calibration → AVOID).
+        # Winner = 688019 (AVOID) — the dangerous case.
+        recs = [
+            {
+                "ticker": "300054",
+                "composite_score": 0.70,
+                "win_rates": {"t5": 0.62, "t10": 0.62},
+                "expected_returns": {"t5": 3.0, "t10": 4.0},
+                "bucket_sample_count": 100,
+                "bucket_t30_mature_count": 90,
+            },
+            {"ticker": "688019", "composite_score": 0.61},  # AVOID
+        ]
+        out = _format_compare_verdict_disclosure(recs, winner="688019", market_regime="normal")
+        assert "AVOID" in out
+        assert "688019" in out
+        assert "⚠" in out, (
+            "When --compare's 推荐首选 (winner) is AVOID-rated, the disclosure "
+            "must warn the operator that the pairwise winner is not a BUY pick."
+        )
+
+    def test_no_alarm_when_winner_is_buy(self) -> None:
+        """Negative guard: when the winner clears the BUY gate, no ⚠ alarm
+        (verdicts still shown for context)."""
+        from src.screening.compare_tool import _format_compare_verdict_disclosure
+
+        recs = [
+            {
+                "ticker": "300054",
+                "composite_score": 0.70,
+                "win_rates": {"t5": 0.62, "t10": 0.62},
+                "expected_returns": {"t5": 3.0, "t10": 4.0},
+                "bucket_sample_count": 100,
+                "bucket_t30_mature_count": 90,
+            },
+            {"ticker": "688019", "composite_score": 0.61},  # AVOID
+        ]
+        out = _format_compare_verdict_disclosure(recs, winner="300054", market_regime="normal")
+        assert "BUY" in out
+        assert "⚠" not in out
+
+    def test_empty_recs_returns_empty(self) -> None:
+        from src.screening.compare_tool import _format_compare_verdict_disclosure
+
+        assert _format_compare_verdict_disclosure([], winner=None, market_regime="normal") == ""
+
