@@ -90,3 +90,51 @@ def test_fdr_empty_input():
     q, sig = benjamini_hochberg_fdr(np.array([]))
     assert len(q) == 0
     assert sig == []
+
+
+# ---- setup_p_value (单样本 t 检验, FDR 的输入) ----
+
+
+def test_setup_p_value_significant_positive():
+    """显著正收益 (n=100, mean≈+5%) → p < 0.05."""
+    from src.screening.offensive.statistics import setup_p_value
+
+    rng = np.random.default_rng(42)
+    returns = rng.normal(0.05, 0.10, 100)  # mean +5%, std 10%
+    p = setup_p_value(returns)
+    assert p < 0.05, f"显著正收益应 p<0.05, got {p}"
+    assert p >= 0.0
+
+
+def test_setup_p_value_noise_not_significant():
+    """噪声 (mean≈0) → p > 0.1 (不拒绝 H0: mean=0)."""
+    from src.screening.offensive.statistics import setup_p_value
+
+    rng = np.random.default_rng(42)
+    returns = rng.normal(0.0, 0.10, 100)  # mean 0, 纯噪声
+    p = setup_p_value(returns)
+    assert p > 0.1, f"噪声应 p>0.1, got {p}"
+
+
+def test_setup_p_value_empty_returns_one():
+    """空输入 → p=1.0 (保守, 不拒绝 H0)."""
+    from src.screening.offensive.statistics import setup_p_value
+
+    assert setup_p_value(np.array([])) == 1.0
+
+
+def test_setup_p_value_insufficient_n_returns_one():
+    """n<2 无法做 t 检验 → p=1.0 (保守)."""
+    from src.screening.offensive.statistics import setup_p_value
+
+    assert setup_p_value(np.array([0.05])) == 1.0  # n=1
+
+
+def test_setup_p_value_zero_variance_returns_one():
+    """方差为 0 (全相同) → t 检验退化 → p=1.0 (保守).
+
+    全零收益 (无 alpha 信号) 应保守判为不显著.
+    """
+    from src.screening.offensive.statistics import setup_p_value
+
+    assert setup_p_value(np.array([0.0, 0.0, 0.0, 0.0])) == 1.0

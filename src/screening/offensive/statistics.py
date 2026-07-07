@@ -104,6 +104,34 @@ def information_coefficient(scores: np.ndarray, forward_returns: np.ndarray) -> 
     return float(np.corrcoef(rankdata(scores), rankdata(forward_returns))[0, 1])
 
 
+def setup_p_value(returns: np.ndarray) -> float:
+    """单样本 t 检验: H0: setup 命中样本的 expected_return = 0 (无 alpha).
+
+    FDR 校正的输入 (v2 §C.5). 每个 (setup, horizon) 检验产生一个 p-value,
+    多个 setup 同时回测时对 p-value 数组做 Benjamini-Hochberg 校正防 p-hacking.
+
+    Args:
+        returns: setup 命中样本的 T+N 收益率序列 (小数). 允许空/不足.
+
+    Returns:
+        双侧 p-value; 输入不足 (n<2) / 方差为 0 → 1.0 (保守, 不拒绝 H0).
+        保守策略: 无法判定时不声称显著, 宁可漏掉边缘 setup 也不放噪声进 Phase 1.
+    """
+    returns = np.asarray(returns, dtype=float)
+    returns = returns[np.isfinite(returns)]
+    if len(returns) < 2:
+        return 1.0
+    if returns.std() == 0:
+        return 1.0  # 方差为 0 → t 检验退化 (除以 0); 全相同收益无信息
+    from scipy.stats import ttest_1samp
+
+    result = ttest_1samp(returns, 0.0)
+    p = float(result.pvalue)
+    if not np.isfinite(p):
+        return 1.0  # 数值异常保守兜底
+    return p
+
+
 def benjamini_hochberg_fdr(p_values: np.ndarray, alpha: float = 0.05) -> tuple[np.ndarray, list[int]]:
     """Benjamini-Hochberg FDR 校正 (v2 §C.5 防多重检验 p-hacking)。
 
