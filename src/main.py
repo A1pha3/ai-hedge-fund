@@ -2460,13 +2460,30 @@ def run_custom_weights(
         print(f"{Fore.YELLOW}[CustomWeights] 未找到可用推荐报告 (trade_date={trade_date or 'latest'}), " f"请先运行 --auto{Style.RESET_ALL}")
         return 1
 
+    # autodev-26 loop 138: 前门判决 regime 必须从报告 market_state 读取,
+    # 不得默认 "normal" (同 loop-137 --stock-detail 修复). 否则 crisis 报告下
+    # --custom-weights 显示 BUY 而 --top-picks 显示 HOLD, 跨 surface 矛盾.
+    regime = "normal"
+    try:
+        import json
+
+        from src.screening.consecutive_recommendation import resolve_report_dir
+        from src.screening.data_quality_audit import _find_latest_report
+
+        _latest = _find_latest_report(resolve_report_dir())
+        if _latest is not None:
+            _ms = json.loads(_latest.read_text(encoding="utf-8")).get("market_state") or {}
+            regime = str(_ms.get("regime_gate_level", "normal") or "normal")
+    except Exception as exc:  # noqa: BLE001 — best-effort; regime stays "normal"
+        logger.debug("[CustomWeights] regime read failed (defaulting to normal): %s", exc)
+
     # 3. 重算
     reweighted = reweight_recommendations(recs, weights)
     top = reweighted[: max(1, top_n)]
 
     # 4. 渲染
     w = weights.to_dict()
-    if not _print_custom_weights_results(top, w):
+    if not _print_custom_weights_results(top, w, market_regime=regime):
         return 0
 
     # 5. 落盘 JSON

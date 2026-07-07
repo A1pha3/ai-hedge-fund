@@ -823,5 +823,77 @@ def test_reweight_skips_non_dict_entries() -> None:
     assert {r["ticker"] for r in out} == {"A", "B"}
 
 
+# ===========================================================================
+# 12. autodev-26 loop 138: regime auto-detection (cross-surface consistency)
+# ===========================================================================
+
+
+class TestCustomWeightsRegimeAutoDetection:
+    """autodev-26 loop 138: run_custom_weights 必须从报告读取 regime_gate_level,
+    不得默认 "normal". 修复 --custom-weights 与 --top-picks 跨 surface regime
+    不一致 (crisis 报告下 --custom-weights 错误显示 BUY).
+    """
+
+    def test_regime_passed_from_report(self, tmp_path: Path, monkeypatch) -> None:
+        """run_custom_weights 应将报告的 regime 传给 _print_custom_weights_results."""
+        import json as _json
+        from unittest.mock import patch
+
+        # 写一个 crisis regime 报告
+        report_dir = tmp_path / "data" / "reports"
+        report_dir.mkdir(parents=True)
+        payload = {
+            "mode": "auto_screening", "date": "20260706",
+            "market_state": {"state_type": "crisis", "regime_gate_level": "crisis"},
+            "recommendations": [
+                _make_rec("A", trend=1, trend_conf=80.0, fund=1, fund_conf=60.0, score_b=0.5),
+            ],
+        }
+        (report_dir / "auto_screening_20260706.json").write_text(_json.dumps(payload, default=str), encoding="utf-8")
+
+        captured_regime = {}
+
+        def fake_print(top, w, *, market_regime="normal"):
+            captured_regime["value"] = market_regime
+            return True
+
+        with patch("src.main._print_custom_weights_results", side_effect=fake_print), \
+             patch("src.screening.custom_weights.load_latest_recommendations", return_value=payload["recommendations"]), \
+             patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=report_dir):
+            from src.main import run_custom_weights
+            rc = run_custom_weights(0.3, 0.2, 0.3, 0.2, top_n=5)
+
+        assert rc == 0
+        # 必须从报告读取 crisis regime, 不是默认 "normal"
+        assert captured_regime.get("value") == "crisis", (
+            f"run_custom_weights 应传 crisis regime, 实际 {captured_regime.get('value')} "
+            f"— autodev-26 loop 138 cross-surface fix"
+        )
+
+    def test_regime_defaults_normal_when_report_missing(self, tmp_path: Path, monkeypatch) -> None:
+        """无报告/读取失败 → 回退 normal (best-effort)."""
+        from unittest.mock import patch
+
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+
+        captured_regime = {}
+
+        def fake_print(top, w, *, market_regime="normal"):
+            captured_regime["value"] = market_regime
+            return True
+
+        recs = [_make_rec("A", trend=1, trend_conf=80.0, fund=1, fund_conf=60.0, score_b=0.5)]
+        with patch("src.main._print_custom_weights_results", side_effect=fake_print), \
+             patch("src.screening.custom_weights.load_latest_recommendations", return_value=recs), \
+             patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=empty_dir):
+            from src.main import run_custom_weights
+            rc = run_custom_weights(0.3, 0.2, 0.3, 0.2, top_n=5)
+
+        assert rc == 0
+        # 无报告 → 回退 normal
+        assert captured_regime.get("value") == "normal"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
