@@ -126,9 +126,9 @@ def _fake_eval_result(setup_name: str, is_returns, oos_returns):
     oos_dist = compute_distribution(oos_returns)
     return {
         "setup_name": setup_name,
-        "natural_horizon": 10,
-        "is": TermStructureDistribution(setup_name, {10: is_dist}, 10, "ALL", "IS", len(is_returns)),
-        "oos": TermStructureDistribution(setup_name, {10: oos_dist}, 10, "ALL", "OOS", len(oos_returns)),
+        "natural_horizon": 3,
+        "is": TermStructureDistribution(setup_name, {3: is_dist}, 3, "ALL", "IS", len(is_returns)),
+        "oos": TermStructureDistribution(setup_name, {3: oos_dist}, 3, "ALL", "OOS", len(oos_returns)),
         "qualified_is": is_setup_qualified(is_dist),
         "qualified_oos": is_setup_qualified(oos_dist),
         "verdict": "PASS" if (is_setup_qualified(is_dist) and is_setup_qualified(oos_dist)) else "FAIL",

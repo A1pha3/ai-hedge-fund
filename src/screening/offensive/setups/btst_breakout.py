@@ -29,7 +29,15 @@ _MAIN_FLOW_LOOKBACK_DAYS = 20
 
 class BtstBreakoutSetup(Setup):
     name = "btst_breakout"
-    natural_horizon = 3  # 涨停动量爆发短, T+1~T+3 最强
+    # 数据驱动的 natural_horizon (全池回测 2020-2026, execution-adjusted):
+    #   T+1  胜率 46.1% 均值 -0.17% 凸性 0.91 (负凸性, 弱)
+    #   T+3  胜率 48.5% 均值 +0.53% 凸性 1.17 (凸性 < 1.5 准入门槛)
+    #   T+5  胜率 47.8% 均值 +1.14% 凸性 1.29
+    #   T+10 胜率 50.6% 均值 +2.57% 凸性 1.53 ← 首次过准入门槛 (convexity≥1.5, winrate≥50%)
+    #   T+20 胜率 49.0% 均值 +4.47% 凸性 1.70
+    # 文档 §3.1 原假设"T+1~T+3 最强"被数据推翻: BTST 的 edge 在长周期, 不是短周期.
+    # T+10 也是 known_distributions.BTST_BREAKOUT_T10 + --daily-action 的口径.
+    natural_horizon = 10
 
     def detect(self, ticker: str, trade_date: str, context: dict[str, Any]) -> DetectionResult:
         prices: pd.DataFrame | None = context.get("prices")
