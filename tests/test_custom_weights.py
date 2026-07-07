@@ -337,6 +337,90 @@ def test_print_custom_weights_surfaces_front_door_verdict(capsys: pytest.Capture
 
 
 # ===========================================================================
+# 7b. autodev-25 loop 134: top-level verdict summary + color-coded rows
+# ===========================================================================
+
+
+class TestCustomWeightsVerdictSummary:
+    """autodev-25 loop 134: --custom-weights 必须在 Top N 明细前渲染 🎯 前门判决
+    汇总行 (extending loop-126/132 pattern), 并对每行 verdict 着色.
+    """
+
+    def test_summary_line_present_when_recs_exist(self, capsys: pytest.CaptureFixture) -> None:
+        from src.main import _print_custom_weights_results
+
+        top = [
+            {"ticker": "A", "name": "A", "score_b": 0.8, "original_score_b": 0.7, "decision": "bullish"},
+            {"ticker": "B", "name": "B", "score_b": 0.5, "original_score_b": 0.5, "decision": "bullish"},
+        ]
+        w = StrategyWeights().to_dict()
+        assert _print_custom_weights_results(top, w) is True
+        out = capsys.readouterr().out
+
+        # 汇总行必须出现
+        assert "前门判决" in out
+        # 必须显示总数 (2 条)
+        assert "/2" in out
+
+    def test_summary_shows_AVOID_tickers_when_present(self, capsys: pytest.CaptureFixture) -> None:
+        from unittest.mock import patch
+
+        from src.main import _print_custom_weights_results
+
+        top = [
+            {"ticker": "GOOD", "name": "好票", "score_b": 0.8, "original_score_b": 0.7, "decision": "bullish"},
+            {"ticker": "BAD", "name": "坏票", "score_b": 0.5, "original_score_b": 0.5, "decision": "bullish"},
+        ]
+        w = StrategyWeights().to_dict()
+
+        # Mock: GOOD=BUY, BAD=AVOID
+        verdicts = [{"action": "BUY"}, {"action": "AVOID"}]
+        with patch("src.screening.investability.build_front_door_verdict", side_effect=verdicts):
+            assert _print_custom_weights_results(top, w) is True
+        out = capsys.readouterr().out
+
+        # 汇总必须显示 BUY 1/2 + AVOID 1
+        assert "BUY 1/2" in out
+        assert "AVOID 1" in out
+        # AVOID ticker 必须列出
+        assert "BAD" in out
+        assert "前门门控拒绝" in out
+
+    def test_summary_shows_HOLD_count(self, capsys: pytest.CaptureFixture) -> None:
+        from unittest.mock import patch
+
+        from src.main import _print_custom_weights_results
+
+        top = [
+            {"ticker": "A", "name": "A", "score_b": 0.8, "original_score_b": 0.7, "decision": "bullish"},
+        ]
+        w = StrategyWeights().to_dict()
+
+        with patch("src.screening.investability.build_front_door_verdict", return_value={"action": "HOLD"}):
+            assert _print_custom_weights_results(top, w) is True
+        out = capsys.readouterr().out
+
+        assert "HOLD 1" in out
+        assert "BUY 0/1" in out
+
+    def test_per_row_verdict_label_visible(self, capsys: pytest.CaptureFixture) -> None:
+        """行内 前门 标签必须保留 (即使着色, 核心词应可见)."""
+        from src.main import _print_custom_weights_results
+
+        top = [
+            {"ticker": "X", "name": "X", "score_b": 0.8, "original_score_b": 0.7, "decision": "bullish"},
+        ]
+        w = StrategyWeights().to_dict()
+        assert _print_custom_weights_results(top, w) is True
+        out = capsys.readouterr().out
+
+        # 行内 "前门" 标签 + verdict 词均应可见
+        assert "前门" in out
+        # 默认测试 rec → AVOID (gate 不够)
+        assert "AVOID" in out or "BUY" in out or "HOLD" in out
+
+
+# ===========================================================================
 # 8. 排序变化
 # ===========================================================================
 

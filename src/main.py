@@ -2328,6 +2328,16 @@ def _print_custom_weights_results(top: list[dict], w: dict, *, market_regime: st
     """
     from colorama import Fore, Style
 
+    from src.screening.investability import build_front_door_verdict
+
+    # 前门判决颜色: BUY=绿, HOLD=黄, AVOID=红, 不可用=黄
+    _front_door_colors = {
+        "BUY": Fore.GREEN,
+        "HOLD": Fore.YELLOW,
+        "AVOID": Fore.RED,
+        "不可用": Fore.YELLOW,
+    }
+
     today = datetime.now().strftime("%Y-%m-%d")
     print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}{Style.BRIGHT}[CustomWeights] 自定义权重推荐 · {today}{Style.RESET_ALL}")
@@ -2337,24 +2347,13 @@ def _print_custom_weights_results(top: list[dict], w: dict, *, market_regime: st
         print(f"{Fore.YELLOW}无可用推荐{Style.RESET_ALL}")
         return False
 
-    print(f"Top {len(top)}:")
-    # c284 observability: reweight 越过桶边界的 pick 其 bucket 校准已被 reset
-    # (见 reweight_recommendations 的 bucket_recalibration_needed 标记). CLI 必须
-    # 让操作者看到 reset 发生 (否则只在 JSON 里, 人读不到) — 行内标记 + 末尾汇总,
-    # 指引去 --top-picks 复核 (那里会重算校准).
-    recalibration_needed_count = 0
-    for idx, rec in enumerate(top, start=1):
-        ticker = str(rec.get("ticker", ""))
-        name = str(rec.get("name", "") or "")
-        score_b = _safe_float(rec.get("score_b"), 0.0)
-        original = _safe_float(rec.get("original_score_b"), 0.0)
-        diff = score_b - original
-        diff_str = f"{diff:+.3f}"
-        label = f"{ticker} {name}".strip()
+    # autodev-25 loop 134: 预计算前门判决, 用于汇总行 + 行内着色 (避免双重计算).
+    # 疾病类: autodev-23 loop-126 visual hierarchy — 每行 前门 {action} 为纯文本,
+    # 且重权越界 ⚠ (黄色) 在同行可能淹没 AVOID 标注. 汇总行先于明细, 行内着色.
+    front_door_actions: list[str] = []
+    for rec in top:
         try:
-            from src.screening.investability import build_front_door_verdict
-
-            front_door_action = str(
+            action = str(
                 build_front_door_verdict(rec, market_regime=market_regime).get("action", "AVOID") or "AVOID"
             )
         except Exception as exc:  # noqa: BLE001 — keep custom-weights display rendering
@@ -2363,14 +2362,48 @@ def _print_custom_weights_results(top: list[dict], w: dict, *, market_regime: st
                 exc,
                 exc_info=True,
             )
-            front_door_action = "不可用"
+            action = "不可用"
+        front_door_actions.append(action)
+
+    # 汇总行 (extending loop-126/132 pattern)
+    buy_count = sum(1 for a in front_door_actions if a == "BUY")
+    hold_count = sum(1 for a in front_door_actions if a == "HOLD")
+    avoid_count = sum(1 for a in front_door_actions if a == "AVOID")
+    total = len(front_door_actions)
+    summary_parts = [f"{Fore.GREEN}前门 BUY {buy_count}/{total}{Style.RESET_ALL}"]
+    if hold_count:
+        summary_parts.append(f"{Fore.YELLOW}HOLD {hold_count}{Style.RESET_ALL}")
+    if avoid_count:
+        summary_parts.append(f"{Fore.RED}AVOID {avoid_count}{Style.RESET_ALL}")
+    print(f"  {Fore.CYAN}🎯 前门判决:{Style.RESET_ALL} " + "  |  ".join(summary_parts))
+    if avoid_count:
+        avoid_tickers = [str(top[i].get("ticker", "")) for i, a in enumerate(front_door_actions) if a == "AVOID"]
+        print(f"  {Fore.RED}⚠ AVOID: {', '.join(avoid_tickers)} (前门门控拒绝, 谨慎对待){Style.RESET_ALL}")
+    print()
+
+    print(f"Top {len(top)}:")
+    # c284 observability: reweight 越过桶边界的 pick 其 bucket 校准已被 reset
+    # (见 reweight_recommendations 的 bucket_recalibration_needed 标记). CLI 必须
+    # 让操作者看到 reset 发生 (否则只在 JSON 里, 人读不到) — 行内标记 + 末尾汇总,
+    # 指引去 --top-picks 复核 (那里会重算校准).
+    recalibration_needed_count = 0
+    for idx, (rec, front_door_action) in enumerate(zip(top, front_door_actions), start=1):
+        ticker = str(rec.get("ticker", ""))
+        name = str(rec.get("name", "") or "")
+        score_b = _safe_float(rec.get("score_b"), 0.0)
+        original = _safe_float(rec.get("original_score_b"), 0.0)
+        diff = score_b - original
+        diff_str = f"{diff:+.3f}"
+        label = f"{ticker} {name}".strip()
+        verdict_color = _front_door_colors.get(front_door_action, Fore.YELLOW)
+        verdict_display = f"{verdict_color}{front_door_action}{Style.RESET_ALL}"
         recalib_marker = ""
         if rec.get("bucket_recalibration_needed"):
             recalibration_needed_count += 1
             recalib_marker = f"  {Fore.YELLOW}⚠重权越界(校准已重置){Style.RESET_ALL}"
         print(
             f"  {idx:>2}. {label:<22}  score_b {score_b:+.3f}  "
-            f"前门 {front_door_action:<5}  (原 {original:+.3f}  Δ {diff_str}){recalib_marker}"
+            f"前门 {verdict_display}  (原 {original:+.3f}  Δ {diff_str}){recalib_marker}"
         )
     if recalibration_needed_count > 0:
         print(f"{Fore.YELLOW}⚠ {recalibration_needed_count} 只标的因重权越过桶边界, " f"bucket 校准已重置为未知 — 请 --top-picks 复核有效校准.{Style.RESET_ALL}")
