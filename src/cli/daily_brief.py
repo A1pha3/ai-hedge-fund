@@ -359,6 +359,19 @@ def _print_daily_brief(
     regime = str(market_state.get("regime_gate_level", "normal") or "normal")
     print(f"{Fore.CYAN}📊 市场状态:{Style.RESET_ALL} {state_type}  |  " f"{Fore.CYAN}仓位系数:{Style.RESET_ALL} {position_scale:.2f}  |  " f"{Fore.CYAN}regime:{Style.RESET_ALL} {regime}")
 
+    # autodev-29 loop 147: 报告时效性披露 (用于 --daily-brief 未跑 --auto 的场景).
+    # 过时报 (≥2 日历天) 提示操作者; 与 --top loop-146 同类.
+    try:
+        from datetime import datetime
+
+        _report_date_str = report_path.stem.replace("auto_screening_", "")
+        _report_dt = datetime.strptime(_report_date_str, "%Y%m%d")
+        _age = (datetime.now() - _report_dt).days
+        if _age >= 2:
+            print(f"  {Fore.YELLOW}⚠ 报告已过 {_age} 天 ({_report_date_str}), 请先运行 --auto 更新{Style.RESET_ALL}")
+    except (ValueError, IndexError):
+        pass  # 无法解析日期时不阻塞
+
     if not top3:
         print(f"\n{Fore.YELLOW}⚠️  最新报告中无 Top 3 推荐{Style.RESET_ALL}\n")
         return

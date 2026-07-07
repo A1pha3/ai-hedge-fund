@@ -477,6 +477,54 @@ class TestDailyBriefErrors:
         assert "失败" in out or "无法" in out or "读取" in out
 
 
+# ── autodev-29 loop 147: report staleness disclosure (daily-brief) ──
+
+
+class TestDailyBriefStaleness:
+    """报告时效性披露 — 过时报 (≥2天) 显示 ⚠ 警告."""
+
+    def test_staleness_warning_shown_for_old_report(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """报告超过 2 天 → 必须显示时效性警告."""
+        from datetime import datetime
+        from unittest.mock import patch
+
+        from src.cli.daily_brief import run_daily_brief
+
+        report_date = "20260704"
+        recs = [_make_recommendation("000001", "A", "银行", score_b=0.5, consecutive_days=0)]
+        _write_report(tmp_path, _make_report(recs, date=report_date), filename=f"auto_screening_{report_date}.json")
+        _write_history(tmp_path, [])
+
+        with patch("src.cli.daily_brief.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 7, 7)
+            mock_dt.strptime = datetime.strptime
+            rc = run_daily_brief(report_dir=tmp_path)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "报告已过 3 天" in out
+        assert "⚠" in out
+
+    def test_staleness_warning_hidden_for_fresh_report(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """报告 1 天内 → 不显示时效性警告."""
+        from datetime import datetime
+        from unittest.mock import patch
+
+        from src.cli.daily_brief import run_daily_brief
+
+        report_date = "20260706"
+        recs = [_make_recommendation("000001", "A", "银行", score_b=0.5, consecutive_days=0)]
+        _write_report(tmp_path, _make_report(recs, date=report_date), filename=f"auto_screening_{report_date}.json")
+        _write_history(tmp_path, [])
+
+        with patch("src.cli.daily_brief.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 7, 7)
+            mock_dt.strptime = datetime.strptime
+            rc = run_daily_brief(report_dir=tmp_path)
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "⚠ 报告已过" not in out
+
+
 class TestDailyBriefHelpers:
     """单元测试 — 内部 helper 函数。"""
 

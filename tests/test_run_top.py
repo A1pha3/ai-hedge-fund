@@ -153,3 +153,46 @@ class TestRunTop:
         assert rc == 0
         output = capsys.readouterr().out
         assert "300750" in output  # ticker shown in table even if decomposition fails
+
+
+# ── autodev-29 loop 146: report staleness disclosure ──
+
+
+class TestRunTopStaleness:
+    """报告时效性披露 — 过时报 (≥2天) 显示 ⚠ 警告."""
+
+    def test_staleness_warning_shown_for_old_report(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+        """报告超过 2 天 → 必须显示时效性警告."""
+        from datetime import datetime
+
+        report_date = "20260704"  # 3 days before 20260707
+        report_path = _write_report(tmp_path, date=report_date)
+
+        with patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=report_path.parent):
+            with patch("src.reporting.pdf_exporter.find_latest_report", return_value=report_path):
+                # Mock datetime.now to 20260707 (3 days after report)
+                with patch("src.main.datetime") as mock_dt:
+                    mock_dt.now.return_value = datetime(2026, 7, 7)
+                    mock_dt.strptime = datetime.strptime
+                    rc = run_top()
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "报告已过 3 天" in output
+        assert "⚠" in output
+
+    def test_staleness_warning_hidden_for_fresh_report(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+        """报告 1 天内 → 不显示时效性警告."""
+        from datetime import datetime
+
+        report_date = "20260706"  # yesterday
+        report_path = _write_report(tmp_path, date=report_date)
+
+        with patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=report_path.parent):
+            with patch("src.reporting.pdf_exporter.find_latest_report", return_value=report_path):
+                with patch("src.main.datetime") as mock_dt:
+                    mock_dt.now.return_value = datetime(2026, 7, 7)
+                    mock_dt.strptime = datetime.strptime
+                    rc = run_top()
+        assert rc == 0
+        output = capsys.readouterr().out
+        assert "⚠ 报告已过" not in output  # 1-day-old report, no warming

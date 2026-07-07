@@ -1549,6 +1549,18 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
     print(f"{Fore.CYAN}{Style.BRIGHT}[Top] 最近推荐{Style.RESET_ALL}")
     print(f"  报告日期: {trade_date}  |  市场状态: {state_type}  |  候选池: {pool_size}")
     print(f"  报告路径: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
+
+    # autodev-29 loop 146: 报告时效性披露. 过时报 (≥2天) 提示操作者
+    # 数据可能不反映最新行情. R-5.D (2026-06-24) 已验证 regime 依赖时效性.
+    _stale_warn_threshold = 2
+    try:
+        _report_date = datetime.strptime(str(trade_date).replace("-", "")[:8], "%Y%m%d")
+        _report_age = (datetime.now() - _report_date).days
+        if _report_age >= _stale_warn_threshold:
+            print(f"  {Fore.YELLOW}⚠ 报告已过 {_report_age} 天 ({trade_date}), 数据可能已过时{Style.RESET_ALL}")
+    except (ValueError, IndexError):
+        pass  # 无法解析日期时静默跳过, 不阻塞显示
+
     print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
 
     table_data = [_build_top_table_row(idx=idx, rec=rec, market_regime=market_regime) for idx, rec in enumerate(recs, 1)]
