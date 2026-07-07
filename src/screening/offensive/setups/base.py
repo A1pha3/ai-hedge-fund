@@ -21,6 +21,11 @@ class DetectionResult:
     trigger_strength: float  # 0-1, 触发强度 (用于 IC 排序)
     invalidation_condition: str  # 失效条件描述 (trigger 反转判定)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # 诚实降级标注 (NS-17 同类病灶): 当某个条件因数据缺失而跳过时, hit 仍可为 True,
+    # 但 degraded=True + reason 披露, 让下游知道这个命中基于残缺条件 (不能当完整 setup 看).
+    # 例: OversoldBounce 的 volume 条件在 price_cache 无 volume 列时跳过.
+    degraded: bool = False
+    degradation_reason: str = ""
 
 
 class Setup(ABC):

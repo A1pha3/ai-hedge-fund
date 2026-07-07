@@ -62,8 +62,20 @@ class OversoldBounceSetup(Setup):
             return self._miss(ticker, trade_date)
 
         # 条件 3: 今日量比 > 1.5
+        # 诚实降级 (NS-17 同类): price_cache 无 volume 列时, 条件3 无法判定.
+        # 此前静默跳过 → OversoldBounce 退化为 2 条件 setup 却无标识, Phase 0 据此
+        # 判 PASS 但那是残缺版. 现在: hit 仍 True (条件1+2 满足), 但 degraded=True
+        # 让下游披露. 数据接入后复跑, 命中集/分布可能变 (条件3 会进一步过滤).
+        degraded = False
+        degradation_reason = ""
         volume_col = "volume" if "volume" in prices.columns else None
-        if volume_col and trigger_idx >= 20:
+        if volume_col is None:
+            degraded = True
+            degradation_reason = "条件3 (量比>1.5) 跳过: price_cache 无 volume 列"
+        elif trigger_idx < 20:
+            degraded = True
+            degradation_reason = f"条件3 (量比>1.5) 跳过: 历史数据不足 (trigger_idx={trigger_idx} < 20)"
+        else:
             today_vol = float(prices.iloc[trigger_idx][volume_col])
             avg_vol = float(prices.iloc[trigger_idx - 20 : trigger_idx][volume_col].mean())
             vol_ratio = today_vol / avg_vol if avg_vol > 0 else 0
@@ -89,6 +101,8 @@ class OversoldBounceSetup(Setup):
                 "drop_30d_pct": drop_pct,
                 "recent_flow_3d": recent_flow,
             },
+            degraded=degraded,
+            degradation_reason=degradation_reason,
         )
 
     @staticmethod

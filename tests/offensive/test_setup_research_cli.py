@@ -134,6 +134,8 @@ def _fake_eval_result(setup_name: str, is_returns, oos_returns):
         "verdict": "PASS" if (is_setup_qualified(is_dist) and is_setup_qualified(oos_dist)) else "FAIL",
         "is_returns": is_returns,
         "oos_returns": oos_returns,
+        "degraded_count": 0,
+        "degraded_ratio": 0.0,
     }
 
 

@@ -124,26 +124,34 @@ def evaluate_setup(
             horizons=horizons, config=config, period=period,
         )
 
-    def _hit_returns(dates_set) -> np.ndarray:
+    def _hit_returns(dates_set) -> tuple[np.ndarray, int, int]:
         """复现 hit 过滤 + adjust_returns, 拿 natural horizon 的命中样本收益序列.
 
         供 FDR p-value 计算. 与 build_distribution 内部逻辑一致 (同 wrapped setup +
         同 adjust_returns), 有一次重复计算, 但避免改 build_distribution 签名.
+
+        Returns:
+            (finite_returns, hit_count, degraded_count) — degraded_count 是命中里
+            因数据缺失降级的数量 (供 Phase 0 报告披露 setup 残缺程度).
         """
         tk, td = _filter(dates_set)
         if not tk:
-            return np.array([])
+            return (np.array([]), 0, 0)
         wrapped = _ContextInjectingSetupWrapper(setup, fund_flow_by_ticker, industry_pct_by_date)
         hit_tickers, hit_dates = [], []
+        degraded_count = 0
         for ticker, date_str in zip(tk, td):
             ctx = {"prices": prices_by_ticker.get(ticker), "regime": regimes_by_date.get(date_str, "normal")}
-            if wrapped.detect(ticker, date_str, ctx).hit:
+            result = wrapped.detect(ticker, date_str, ctx)
+            if result.hit:
                 hit_tickers.append(ticker)
                 hit_dates.append(date_str)
+                if result.degraded:
+                    degraded_count += 1
         if not hit_tickers:
-            return np.array([])
+            return (np.array([]), 0, 0)
         adj = adjust_returns(hit_dates, hit_tickers, prices_by_ticker, horizon=setup.natural_horizon, config=config)
-        return adj[np.isfinite(adj)]
+        return (adj[np.isfinite(adj)], len(hit_tickers), degraded_count)
 
     is_tsd = _build(is_set, "IS") or _empty_tsd(setup, "IS")
     oos_tsd = _build(oos_set, "OOS") or _empty_tsd(setup, "OOS")
@@ -152,6 +160,11 @@ def evaluate_setup(
     qualified_is = is_setup_qualified(is_tsd.horizons.get(nh, _zero_dist()))
     qualified_oos = is_setup_qualified(oos_tsd.horizons.get(nh, _zero_dist()))
     verdict = "PASS" if (qualified_is and qualified_oos) else "FAIL"
+
+    is_ret, is_hits, is_degraded = _hit_returns(is_set)
+    oos_ret, oos_hits, oos_degraded = _hit_returns(oos_set)
+    total_hits = is_hits + oos_hits
+    total_degraded = is_degraded + oos_degraded
 
     return {
         "setup_name": setup.name,
@@ -162,8 +175,11 @@ def evaluate_setup(
         "qualified_oos": qualified_oos,
         "verdict": verdict,
         # natural horizon 的命中样本收益序列 (供 evaluate_setups 算 FDR p-value)
-        "is_returns": _hit_returns(is_set),
-        "oos_returns": _hit_returns(oos_set),
+        "is_returns": is_ret,
+        "oos_returns": oos_ret,
+        # 诚实降级披露 (NS-17 同类): 命中里因数据缺失降级的比例
+        "degraded_count": total_degraded,
+        "degraded_ratio": (total_degraded / total_hits) if total_hits > 0 else 0.0,
     }
 
 
@@ -304,8 +320,8 @@ def render_phase0_report(eval_setups_result: dict) -> str:
         "",
         f"## FDR 校正表 (Benjamini-Hochberg, α={alpha})",
         "",
-        "| Setup | p-value (IS) | q-value (FDR) | FDR 显著 | p-value (OOS) | OOS 达标 |",
-        "|-------|-------------|---------------|----------|--------------|----------|",
+        "| Setup | p-value (IS) | q-value (FDR) | FDR 显著 | p-value (OOS) | OOS 达标 | 降级 |",
+        "|-------|-------------|---------------|----------|--------------|----------|------|",
     ]
     for s in setups:
         p_is = s.get("p_value", 1.0)
@@ -313,9 +329,32 @@ def render_phase0_report(eval_setups_result: dict) -> str:
         fdr_sig = "✅ 是" if s.get("fdr_significant") else "❌ 否"
         p_oos = s.get("p_value_oos", 1.0)
         oos_ok = "✅" if s.get("qualified_oos") else "❌"
+        degraded_ratio = s.get("degraded_ratio", 0.0)
+        degraded_count = s.get("degraded_count", 0)
+        if degraded_ratio > 0:
+            deg_cell = f"⚠️ {degraded_count} ({degraded_ratio:.0%})"
+        else:
+            deg_cell = "—"
         lines.append(
-            f"| {s['setup_name']} | {p_is:.2e} | {q:.2e} | {fdr_sig} | {p_oos:.2e} | {oos_ok} |"
+            f"| {s['setup_name']} | {p_is:.2e} | {q:.2e} | {fdr_sig} | {p_oos:.2e} | {oos_ok} | {deg_cell} |"
         )
+
+    # 降级警告段 (诚实披露: PASS 建立在残缺 setup 上的情况)
+    degraded_setups = [s for s in setups if s.get("degraded_ratio", 0.0) > 0]
+    if degraded_setups:
+        lines.extend([
+            "",
+            "## ⚠️ 数据降级警告",
+            "",
+            "以下 setup 的部分条件因数据缺失而跳过, 当前命中基于残缺条件集.",
+            "数据接入后需复跑 Phase 0 — 命中集/分布可能变, FDR 结论可能翻转:",
+            "",
+        ])
+        for s in degraded_setups:
+            lines.append(
+                f"- **{s['setup_name']}**: {s['degraded_count']} 命中降级 ({s['degraded_ratio']:.0%}) "
+                f"— 条件未全部生效, 当前是残缺版 setup"
+            )
 
     lines.extend([
         "",
