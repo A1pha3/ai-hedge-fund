@@ -150,3 +150,55 @@ class TestComputeCrossPicksVerdictSummary:
         assert buy == []
         assert avoid == ["000001"]
         assert total == 1
+
+
+# ── Integration guard (autodev-24 loop 3): --cross-picks CLI output ──
+
+
+class TestCrossPicksVerdictSummaryIntegration:
+    """Integration guard: run_industry_cross_picks 必须在 CLI 输出中渲染
+    🎯 前门判决 汇总行. Locks in autodev-24 loop 2 fix.
+
+    回归风险: 如果未来重构 run_industry_cross_picks 移除了 compute_cross_picks_verdict_summary
+    调用块, compute_cross_picks_verdict_summary 的单元测试仍 pass, 但 CLI 不再显示
+    汇总. 本集成测试 mock compute_cross_picks 并捕获 stdout, 确保完整路径不变.
+    """
+
+    def test_cli_output_contains_verdict_summary(self, tmp_path, capsys) -> None:
+        """run_industry_cross_picks 的 stdout 必须包含 🎯 前门判决 汇总."""
+        import json
+        from unittest.mock import patch
+
+        report_dir = tmp_path / "data" / "reports"
+        report_dir.mkdir(parents=True)
+        payload = {
+            "mode": "auto_screening", "date": "20260609",
+            "market_state": {"state_type": "trend_up", "regime_gate_level": "normal"},
+            "top_n": 5,
+            "recommendations": [{"ticker": "000001", "industry_sw": "银行", "score_b": 0.5}],
+        }
+        (report_dir / "auto_screening_20260609.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        mock_picks = [
+            CrossPick(industry_name="银行", industry_rank=1, momentum_score=10.0, candidate_count=2,
+                      top_picks=[
+                          IndustryTopPick(ticker="000001", name="A", score_b=0.5, decision="bullish", front_door_action="BUY"),
+                          IndustryTopPick(ticker="002049", name="B", score_b=0.4, decision="bullish", front_door_action="AVOID"),
+                      ]),
+        ]
+
+        from src.screening.consecutive_recommendation import resolve_report_dir
+        with patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=report_dir), \
+             patch("src.screening.industry_cross_picks.compute_cross_picks", return_value=mock_picks):
+            from src.main import run_industry_cross_picks
+            rc = run_industry_cross_picks(trade_date="20260609", top_industries=1, picks_per_industry=2)
+
+        out = capsys.readouterr().out
+        assert rc == 0
+        # 汇总行必须出现在输出中
+        assert "前门判决" in out
+        assert "BUY 1/2" in out
+        assert "AVOID 1" in out
+        # AVOID 个票必须列出
+        assert "002049" in out
+        assert "前门门控拒绝" in out

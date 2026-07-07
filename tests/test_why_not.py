@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from src.cli.why_not import run_why_not
 
@@ -569,3 +570,93 @@ class TestAlreadyRecommendedVerdictColor:
         assert rc == 0
         # 至少 前门判决 + AVOID (入口级降级) 可见
         assert "前门判决" in out
+
+
+# ── Integration guard (autodev-24 loop 3): green-endorsement regression guard ──
+
+
+class TestWhyNotGreenEndorsementRegressionGuard:
+    """Integration guard: _print_already_recommended 的视觉层级修复不得被未来
+    重构破坏. 通过 mock build_front_door_verdict 强制 BUY/AVOID 路径并验证输出.
+
+    与 TestAlreadyRecommendedVerdictColor 的表面测试不同, 本类在模块级 mock
+    build_front_door_verdict, 确保无论 BUY gate 如何计算, 前景色路径都锁定.
+    """
+
+    @patch("src.screening.investability.build_front_door_verdict")
+    def test_verdict_BUY_shows_green_recommended(self, mock_verdict, tmp_path: Path, capsys) -> None:
+        """强制 BUY 判决 → 绿色「该票已被推荐」."""
+        mock_verdict.return_value = {"action": "BUY", "market_regime": "normal"}
+        report_dir = tmp_path / "data" / "reports"
+        report_dir.mkdir(parents=True)
+        rec = {"ticker": "000001", "name": "平安银行", "score_b": 0.78, "decision": "bullish",
+               "strategy_signals": {"trend": {"direction": 1, "confidence": 60.0}}}
+        import json
+        (report_dir / "auto_screening_20260609.json").write_text(json.dumps({
+            "mode": "auto_screening", "date": "20260609",
+            "market_state": {"state_type": "trend_up", "regime_gate_level": "normal"},
+            "top_n": 5, "recommendations": [rec],
+        }, ensure_ascii=False), encoding="utf-8")
+
+        rc = run_why_not("000001", reports_dir=report_dir)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        # BUY → 绿色「已被推荐」必须保留
+        assert "该票已被推荐" in out
+        assert "--explain 000001" in out
+        # BUY 路径不得出现警告措辞
+        assert "前门门控拒绝" not in out
+        assert "前门非买入" not in out
+
+    @patch("src.screening.investability.build_front_door_verdict")
+    def test_verdict_AVOID_shows_warning_not_green(self, mock_verdict, tmp_path: Path, capsys) -> None:
+        """强制 AVOID 判决 → 黄色警告, 不得出现绿色「已被推荐」."""
+        mock_verdict.return_value = {"action": "AVOID", "market_regime": "normal"}
+        report_dir = tmp_path / "data" / "reports"
+        report_dir.mkdir(parents=True)
+        rec = {"ticker": "000001", "name": "平安银行", "score_b": 0.78, "decision": "bullish",
+               "strategy_signals": {"trend": {"direction": 1, "confidence": 60.0}}}
+        import json
+        (report_dir / "auto_screening_20260609.json").write_text(json.dumps({
+            "mode": "auto_screening", "date": "20260609",
+            "market_state": {"state_type": "trend_up", "regime_gate_level": "normal"},
+            "top_n": 5, "recommendations": [rec],
+        }, ensure_ascii=False), encoding="utf-8")
+
+        rc = run_why_not("000001", reports_dir=report_dir)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        # AVOID → 不得出现绿色「已被推荐」
+        assert "该票已被推荐" not in out
+        # 必须出现警告措辞
+        assert "该票在推荐池中" in out
+        assert "前门门控拒绝" in out
+        assert "AVOID" in out
+        # --explain 入口必须保留
+        assert "--explain 000001" in out
+
+    @patch("src.screening.investability.build_front_door_verdict")
+    def test_verdict_HOLD_shows_warning_not_green(self, mock_verdict, tmp_path: Path, capsys) -> None:
+        """强制 HOLD 判决 → 黄色警告 + 「前门非买入」."""
+        mock_verdict.return_value = {"action": "HOLD", "market_regime": "normal"}
+        report_dir = tmp_path / "data" / "reports"
+        report_dir.mkdir(parents=True)
+        rec = {"ticker": "000001", "name": "平安银行", "score_b": 0.78, "decision": "bullish",
+               "strategy_signals": {"trend": {"direction": 1, "confidence": 60.0}}}
+        import json
+        (report_dir / "auto_screening_20260609.json").write_text(json.dumps({
+            "mode": "auto_screening", "date": "20260609",
+            "market_state": {"state_type": "trend_up", "regime_gate_level": "normal"},
+            "top_n": 5, "recommendations": [rec],
+        }, ensure_ascii=False), encoding="utf-8")
+
+        rc = run_why_not("000001", reports_dir=report_dir)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "该票已被推荐" not in out
+        assert "该票在推荐池中" in out
+        assert "前门非买入" in out
+        assert "HOLD" in out
