@@ -97,7 +97,7 @@ def main() -> None:
     ]
     print(f"\nSetups: {[s.name for s in setups]}")
     print("(SectorRotation 跳过: data/ 无 industry_2d_pct / industry_net_flow)")
-    print("(OversoldBounce 退化: price_cache 缺 volume 列, 条件3 量比跳过)")
+    print("(OversoldBounce: volume 已 backfill (commit 后), 条件3 量比>1.5 现已生效)")
 
     print(f"\n跑 evaluate_setups + FDR...")
     result = evaluate_setups(

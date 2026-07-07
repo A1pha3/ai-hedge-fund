@@ -20,6 +20,7 @@ data/reports/*
 !data/reports/p6_btst_risk_budget_overlay_eval.json
 !data/reports/p6_btst_risk_budget_overlay_eval.md
 data/snapshots
+data/price_cache
 
 # Python
 __pycache__/
