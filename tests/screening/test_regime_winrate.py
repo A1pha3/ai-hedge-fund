@@ -24,6 +24,7 @@ import pytest
 from src.screening.regime_winrate import (
     _format_ci_label,
     _optional_float,
+    _optional_int,
     compute_regime_winrate_summary,
     load_latest_regime_recompute,
     REGIME_MULTIHORIZON_MEDIANS,
@@ -32,7 +33,7 @@ from src.screening.regime_winrate import (
 )
 
 # ---------------------------------------------------------------------------
-# 辅助函数测试 — _optional_float / _format_ci_label
+# 辅助函数测试 — _optional_float / _optional_int / _format_ci_label
 # ---------------------------------------------------------------------------
 
 
@@ -48,6 +49,24 @@ class TestOptionalFloat:
 
     def test_inf_returns_none(self) -> None:
         assert _optional_float(float("inf")) is None
+
+
+class TestOptionalInt:
+    def test_none_returns_none(self) -> None:
+        assert _optional_int(None) is None
+
+    def test_int_passthrough(self) -> None:
+        assert _optional_int(1763) == 1763
+
+    def test_numeric_string_coerces(self) -> None:
+        assert _optional_int("620") == 620
+
+    def test_non_numeric_returns_none(self) -> None:
+        assert _optional_int("not-a-number") is None
+
+    def test_negative_returns_none(self) -> None:
+        """Negative n is semantically illegal (sample count can't be negative)."""
+        assert _optional_int(-1) is None
 
 
 class TestFormatCiLabel:
@@ -337,6 +356,114 @@ class TestRegimeWinrateHorizonDisclosure:
         assert "69%" in line, f"T+5 BUY-horizon winrate (69%) is in the JSON but not rendered — " f"the contract north-star winrate is invisible to the operator. line={line!r}"
         # T+10 winrate (65%) likewise.
         assert "65%" in line, f"T+10 BUY-horizon winrate (65%) is in the JSON but not rendered. line={line!r}"
+
+    def test_multihorizon_line_discloses_buy_horizon_sample_size(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """BUY-horizon (T+5/T+10) winrate must disclose its sample size (n).
+
+        ``_compute_multihorizon_stats`` already writes per-horizon ``n``, but the
+        BUY-horizon render segment only reads winrate + CI — never ``n``. Operator
+        sees 'T+5 69% (95% CI 67%-71%)' with no way to tell whether that's n=10 or
+        n=1763. Real artifacts span 9x (risk_off=620 vs normal=5610), so a
+        winrate's reliability is invisible without ``n``. This is the same
+        loop-53 'written but never read' disease class, on the BUY-horizon segment.
+
+        Disclosure contract (additive, mirrors the T+15-T+30 ``(n=...)`` stamp):
+          ``BUY 周期胜率: T+5 胜率 69% (95% CI 67%-71%) n=1763 / T+10 ...``
+
+        The ``n`` must appear AFTER the BUY 周期胜率 segment marker (not borrowed
+        from the T+15-T+30 ``(n=1763+)`` stamp that already exists earlier in the
+        line) — otherwise the BUY-horizon n is still effectively unread.
+        """
+        self._restore_real_loader(monkeypatch)
+        json_dir = tmp_path / "reports"
+        json_dir.mkdir()
+        payload = {
+            "regime_winrates": {
+                "crisis": {
+                    "winrate": 0.53,
+                    "avg_return": 10.1,
+                    "median_return": 1.7,
+                    "sample_count": 1763,
+                }
+            },
+            "regime_multihorizon_medians": {
+                "crisis": {
+                    "t5": {"median": 3.98, "winrate": 0.689, "n": 1763, "winrate_ci_low": 0.665, "winrate_ci_high": 0.709, "ci_level": 0.95},
+                    "t10": {"median": 4.66, "winrate": 0.646, "n": 1763, "winrate_ci_low": 0.624, "winrate_ci_high": 0.668, "ci_level": 0.95},
+                    "t15": {"median": 3.67, "winrate": 0.607, "n": 1763},
+                    "t20": {"median": 4.19, "winrate": 0.587, "n": 1763},
+                    "t25": {"median": 5.47, "winrate": 0.607, "n": 1763},
+                    "t30": {"median": 1.72, "winrate": 0.530, "n": 1763},
+                }
+            },
+            "as_of": "2026-07-03",
+            "total_records": 8000,
+            "matched_records": 8000,
+        }
+        import json
+
+        (json_dir / "regime_winrates_recomputed_20260703.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        line = render_regime_multihorizon_line("crisis", today=date(2026, 7, 4), reports_dir=json_dir)
+        assert "BUY 周期胜率" in line, f"BUY-horizon segment missing entirely. line={line!r}"
+        # The n must appear AFTER the BUY 周期胜率 marker, so it's the BUY segment's
+        # own sample size — not the T+15-T+30 segment's (n=1763+) stamp that happens
+        # to print 1763 earlier in the same line.
+        buy_seg_idx = line.index("BUY 周期胜率")
+        buy_seg = line[buy_seg_idx:]
+        assert "n=1763" in buy_seg, (
+            f"BUY-horizon sample size (n=1763) must be rendered inside the BUY "
+            f"segment itself, not borrowed from the T+15-T+30 stamp. Without it "
+            f"the operator cannot judge whether T+5 69% is n=10 or n=1763. "
+            f"buy_seg={buy_seg!r}"
+        )
+
+    def test_multihorizon_line_buy_horizon_sample_size_reflects_regime(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """BUY-horizon n must reflect THIS regime's sample backing, not a pooled value.
+
+        Real artifacts span ~9x (risk_off n=620 vs normal n=5610). If the BUY
+        segment stamped only a min/max n (like the T+15-T+30 segment does with
+        ``(n=min_n+)``), risk_off's T+5 53% (CI 49%-57%, n=620) would be
+        indistinguishable in sample-backing from normal's T+5 57% (CI 55%-58%,
+        n=5610) — yet the CI widths (8pp vs 3pp) directly reflect that 9x sample
+        gap. Each regime's BUY-horizon winrate must carry its own n.
+        """
+        self._restore_real_loader(monkeypatch)
+        json_dir = tmp_path / "reports"
+        json_dir.mkdir()
+        payload = {
+            "regime_winrates": {
+                "risk_off": {"winrate": 0.53, "avg_return": 1.0, "median_return": 1.0, "sample_count": 620},
+            },
+            "regime_multihorizon_medians": {
+                "risk_off": {
+                    "t5": {"median": 1.0, "winrate": 0.53, "n": 620, "winrate_ci_low": 0.49, "winrate_ci_high": 0.57, "ci_level": 0.95},
+                    "t10": {"median": 2.0, "winrate": 0.69, "n": 620, "winrate_ci_low": 0.66, "winrate_ci_high": 0.73, "ci_level": 0.95},
+                    "t15": {"median": 1.5, "winrate": 0.55, "n": 620},
+                    "t20": {"median": 1.8, "winrate": 0.57, "n": 620},
+                    "t25": {"median": 2.0, "winrate": 0.59, "n": 620},
+                    "t30": {"median": 1.0, "winrate": 0.53, "n": 620},
+                }
+            },
+            "as_of": "2026-07-03",
+            "total_records": 8000,
+            "matched_records": 8000,
+        }
+        import json
+
+        (json_dir / "regime_winrates_recomputed_20260703.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        line = render_regime_multihorizon_line("risk_off", today=date(2026, 7, 4), reports_dir=json_dir)
+        assert "BUY 周期胜率" in line, f"BUY-horizon segment missing entirely. line={line!r}"
+        buy_seg_idx = line.index("BUY 周期胜率")
+        buy_seg = line[buy_seg_idx:]
+        # risk_off has n=620 (not 1763/5610); the BUY segment's n must reflect THIS regime.
+        assert "n=620" in buy_seg, (
+            f"BUY-horizon n must reflect THIS regime's sample backing (620), "
+            f"not a pooled/max value — otherwise the operator can't see that "
+            f"risk_off's CI (8pp) is wider BECAUSE its n is 9x smaller than normal. "
+            f"buy_seg={buy_seg!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

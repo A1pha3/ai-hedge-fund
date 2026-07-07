@@ -283,6 +283,23 @@ def _optional_float(value: Any) -> float | None:
     return result
 
 
+def _optional_int(value: Any) -> int | None:
+    """安全转 int (供样本数 n 渲染); None/非数值/负数 → None.
+
+    与 :func:`_optional_float` 对称: 字段缺失或损坏时静默跳过 n 戳记,
+    不虚假渲染 n=0. 负 n 在语义上非法 (样本数不可能为负), 一并拒绝.
+    """
+    if value is None:
+        return None
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        return None
+    if result < 0:
+        return None
+    return result
+
+
 def _format_ci_label(
     ci_low: float | None,
     ci_high: float | None,
@@ -466,6 +483,13 @@ def render_regime_multihorizon_line(
     # (loop-53 'written but never read' disease). contract §北极星 BUY 决策
     # horizon = T+5/T+10, 但 headline 胜率是 T+30 口径 — 必须单独让 BUY-horizon
     # 胜率可见, 否则 owner 的 F2 north-star (T+5/T+10 winrate > 50%) 是盲的.
+    #
+    # loop 152 (sample-maturity drain): 同一 'written but never read' 病类在 ``n``
+    # 上复发 — ``_compute_multihorizon_stats`` 写了 per-horizon ``n`` 但 BUY 段
+    # 只读 winrate+CI. 真实 artifact 里 BUY-horizon n 跨 9x (risk_off=620 vs
+    # normal=5610), CI 宽度 (8pp vs 3pp) 直接反映这个样本差距, 但 operator 看到
+    # 'T+5 53% (CI 49%-57%)' 时无从判断这是 n=10 还是 n=620. 每个 BUY-horizon
+    # winrate 必须自带 ``n``, 不能借中长周期段的 ``(n=min+)`` 戳记.
     buy_horizons = [("t5", "T+5"), ("t10", "T+10")]
     buy_parts: list[str] = []
     for h, label in buy_horizons:
@@ -479,7 +503,11 @@ def render_regime_multihorizon_line(
         ci_hi = _optional_float(h_data.get("winrate_ci_high"))
         h_ci_level = _optional_float(h_data.get("ci_level")) or 0.95
         ci = _format_ci_label(ci_lo, ci_hi, ci_level=h_ci_level)
-        buy_parts.append(f"{label} 胜率 {wr:.0%}{ci}")
+        part = f"{label} 胜率 {wr:.0%}{ci}"
+        h_n = _optional_int(h_data.get("n"))
+        if h_n is not None:
+            part += f" n={h_n}"
+        buy_parts.append(part)
     if buy_parts:
         out += f" | BUY 周期胜率: {color}{' / '.join(buy_parts)}{Style.RESET_ALL}"
 
