@@ -2902,7 +2902,26 @@ def run_industry_cross_picks(trade_date: str | None = None, top_industries: int 
     print(f"{Fore.CYAN}{Style.BRIGHT}[Cross Picks] 行业+个股交叉选择 (P3-3){Style.RESET_ALL}")
     print(f"  报告日期: {date_str}  |  推荐数: {len(recommendations)}")
     print(f"  行业数: {len(cross_picks)}  |  每行业 Top: {picks_per_industry}")
-    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
+    print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
+
+    # autodev-24 loop 2: 跨行业个票的前门判决汇总 (extending loop-126 pattern
+    # from --daily-brief to --cross-picks). 每个行业的 Top 个票前门判决独立展示,
+    # 但操作者扫读时可能只注意行业动量排名而忽略某只个票的 AVOID 标注.
+    # 汇总行突出非 BUY 个票的数量, 减少视觉层级遗漏.
+    from src.screening.industry_cross_picks import compute_cross_picks_verdict_summary
+
+    buy_tickers, hold_tickers, avoid_tickers, all_count = compute_cross_picks_verdict_summary(cross_picks)
+    if all_count:
+        summary_parts = [f"{Fore.GREEN}前门 BUY {len(buy_tickers)}/{all_count}{Style.RESET_ALL}"]
+        if hold_tickers:
+            summary_parts.append(f"{Fore.YELLOW}HOLD {len(hold_tickers)}{Style.RESET_ALL}")
+        if avoid_tickers:
+            summary_parts.append(f"{Fore.RED}AVOID {len(avoid_tickers)}{Style.RESET_ALL}")
+        print(f"  {Fore.CYAN}🎯 前门判决:{Style.RESET_ALL} " + "  |  ".join(summary_parts))
+        if avoid_tickers:
+            print(f"  {Fore.RED}⚠ AVOID: {', '.join(avoid_tickers)} (前门门控拒绝, 谨慎对待){Style.RESET_ALL}")
+    print()
+
     print(render_cross_picks(cross_picks), end="")
     return 0
 

@@ -3,6 +3,7 @@
 from src.screening.industry_cross_picks import (
     _extract_top_picks_for_industry,
     compute_cross_picks,
+    compute_cross_picks_verdict_summary,
     CrossPick,
     IndustryTopPick,
     render_cross_picks,
@@ -94,3 +95,58 @@ class TestRenderCrossPicks:
     def test_renders_empty(self):
         output = render_cross_picks([])
         assert "无交叉选择数据" in output
+
+
+class TestComputeCrossPicksVerdictSummary:
+    """autodev-24 loop 2: 前门判决汇总 (extending loop126 pattern)."""
+
+    def test_verdict_summary_empty_cross_picks(self):
+        buy, hold, avoid, total = compute_cross_picks_verdict_summary([])
+        assert buy == []
+        assert hold == []
+        assert avoid == []
+        assert total == 0
+
+    def test_verdict_summary_all_AVOID(self):
+        picks = [
+            CrossPick(industry_name="银行", industry_rank=1, momentum_score=10.0, candidate_count=2,
+                      top_picks=[
+                          IndustryTopPick(ticker="000001", name="平安银行", score_b=0.5, decision="bullish", front_door_action="AVOID"),
+                          IndustryTopPick(ticker="600036", name="招商银行", score_b=0.4, decision="bullish", front_door_action="AVOID"),
+                      ]),
+        ]
+        buy, hold, avoid, total = compute_cross_picks_verdict_summary(picks)
+        assert buy == []
+        assert hold == []
+        assert len(avoid) == 2
+        assert "000001" in avoid
+        assert "600036" in avoid
+        assert total == 2
+
+    def test_verdict_summary_mixed(self):
+        picks = [
+            CrossPick(industry_name="银行", industry_rank=1, momentum_score=10.0, candidate_count=3,
+                      top_picks=[
+                          IndustryTopPick(ticker="000001", name="A", score_b=0.5, decision="bullish", front_door_action="BUY"),
+                          IndustryTopPick(ticker="600036", name="B", score_b=0.4, decision="bullish", front_door_action="HOLD"),
+                          IndustryTopPick(ticker="601398", name="C", score_b=0.3, decision="neutral", front_door_action="AVOID"),
+                      ]),
+        ]
+        buy, hold, avoid, total = compute_cross_picks_verdict_summary(picks)
+        assert buy == ["000001"]
+        assert hold == ["600036"]
+        assert avoid == ["601398"]
+        assert total == 3
+
+    def test_verdict_summary_defaults_AVOID_when_front_door_none(self):
+        """front_door_action 为空/Nones → 归类为 AVOID."""
+        picks = [
+            CrossPick(industry_name="测试", industry_rank=1, momentum_score=5.0, candidate_count=1,
+                      top_picks=[
+                          IndustryTopPick(ticker="000001", name="A", score_b=0.5, decision="bullish", front_door_action=""),
+                      ]),
+        ]
+        buy, hold, avoid, total = compute_cross_picks_verdict_summary(picks)
+        assert buy == []
+        assert avoid == ["000001"]
+        assert total == 1

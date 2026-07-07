@@ -189,3 +189,24 @@ def render_cross_picks(cross_picks: list[CrossPick]) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def compute_cross_picks_verdict_summary(
+    cross_picks: list[CrossPick],
+) -> tuple[list[str], list[str], list[str], int]:
+    """遍历 cross-picks 的所有 Top 个票, 按前门判决分组.
+
+    Returns:
+        (buy_tickers, hold_tickers, avoid_tickers, total_count)
+    """
+    verdict_groups: dict[str, list[str]] = {"BUY": [], "HOLD": [], "AVOID": []}
+    for cp in cross_picks:
+        for pick in cp.top_picks:
+            action = str(pick.front_door_action or "AVOID")
+            verdict_groups.setdefault(action, []).append(pick.ticker)
+
+    buy_tickers = verdict_groups.get("BUY", [])
+    hold_tickers = verdict_groups.get("HOLD", [])
+    avoid_tickers = verdict_groups.get("AVOID", [])
+    total_count = sum(len(g) for g in verdict_groups.values())
+    return buy_tickers, hold_tickers, avoid_tickers, total_count
