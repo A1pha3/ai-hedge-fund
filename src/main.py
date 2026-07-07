@@ -1576,7 +1576,29 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
     if fetcher_stats:
         _print_cache_hit_summary(fetcher_stats)
 
-    print(f"  完整报告: {Fore.CYAN}{report_path}{Style.RESET_ALL}\n")
+    print(f"  完整报告: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
+
+    # autodev-30 loop 149: 数据质量摘要 (复用 top_picks 的数据质量审计).
+    # 与 --top-picks 的 _print_data_quality_block 一致: 审计 Top N 策略完整度.
+    try:
+        from src.screening.data_quality_audit import (
+            audit_recommendations,
+            load_latest_recommendations,
+            render_data_quality_summary,
+            summarize_data_quality,
+        )
+
+        _date_str, dq_recs = load_latest_recommendations(report_dir=report_dir)
+        if dq_recs:
+            dq_audits = audit_recommendations(dq_recs)
+            dq_summary = summarize_data_quality(dq_audits)
+            dq_summary.latest_report_date = _date_str or None
+            dq_line = render_data_quality_summary(dq_summary)
+            if dq_line:
+                print(dq_line)
+    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+        pass
+
     return 0
 
 

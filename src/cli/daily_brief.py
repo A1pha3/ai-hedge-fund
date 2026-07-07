@@ -594,6 +594,27 @@ def run_daily_brief(report_dir: Path | None = None) -> int:
     # P16-2: Show watchlist health summary if available
     _print_watchlist_health(actual_dir, recs)
 
+    # autodev-30 loop 150: 数据质量摘要 (复用 top_picks 的数据质量审计).
+    # 与 --top-picks 的 _print_data_quality_block 一致: 审计 Top N 策略完整度.
+    try:
+        from src.screening.data_quality_audit import (
+            audit_recommendations,
+            load_latest_recommendations,
+            render_data_quality_summary,
+            summarize_data_quality,
+        )
+
+        _dq_date_str, dq_recs = load_latest_recommendations(report_dir=actual_dir)
+        if dq_recs:
+            dq_audits = audit_recommendations(dq_recs)
+            dq_summary = summarize_data_quality(dq_audits)
+            dq_summary.latest_report_date = _dq_date_str or None
+            dq_line = render_data_quality_summary(dq_summary)
+            if dq_line:
+                print(dq_line)
+    except Exception:  # noqa: BLE001 — best-effort display; never break the front door
+        pass
+
     # R72 (R71 同族 gamma trust calibration): 盘前决策卡输出具体的 Top 3
     # ticker + score_b + BUY/HOLD/AVOID 决策标签, 与 --top-picks (R71)、PDF
     # exporter、backtest CLI 同属"可能被误读为投资指令的具体决策建议"。footer
