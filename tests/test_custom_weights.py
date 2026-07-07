@@ -421,6 +421,67 @@ class TestCustomWeightsVerdictSummary:
 
 
 # ===========================================================================
+# 7c. autodev-25 loop 136: integration guard — ANSI color + summary invariant
+# ===========================================================================
+
+
+class TestCustomWeightsRegressionGuard:
+    """集成守护: 通过 @patch 强制 BUY/AVOID 路径, 锁定循环 134 的修复。
+
+    如果未来的重构移除了预计算前端或颜色映射,
+    _print_custom_weights_results 会退化回纯文本渲染,
+    此守护将捕获回归。
+    """
+
+    def test_all_BUY_no_warnings(self, capsys: pytest.CaptureFixture) -> None:
+        """所有判决均为 BUY → 不应出现 AVOID 警告."""
+        from unittest.mock import patch
+
+        from src.main import _print_custom_weights_results
+
+        top = [
+            {"ticker": "A", "name": "A", "score_b": 0.8, "original_score_b": 0.7, "decision": "bullish"},
+            {"ticker": "B", "name": "B", "score_b": 0.7, "original_score_b": 0.6, "decision": "bullish"},
+        ]
+        w = StrategyWeights().to_dict()
+        with patch("src.screening.investability.build_front_door_verdict", return_value={"action": "BUY"}):
+            assert _print_custom_weights_results(top, w) is True
+        out = capsys.readouterr().out
+
+        # BUY 汇总, 无 AVOID 部分
+        assert "BUY 2/2" in out
+        assert "AVOID" not in out
+        assert "前门门控拒绝" not in out
+
+    def test_mixed_verdict_shows_color_codes(self, capsys: pytest.CaptureFixture) -> None:
+        """混合判决 → ANSI 颜色码必须出现在行内."""
+        from unittest.mock import patch
+
+        from src.main import _print_custom_weights_results
+
+        top = [
+            {"ticker": "GOOD", "name": "好", "score_b": 0.8, "original_score_b": 0.7, "decision": "bullish"},
+            {"ticker": "BAD", "name": "坏", "score_b": 0.3, "original_score_b": 0.3, "decision": "bearish"},
+            {"ticker": "MID", "name": "中", "score_b": 0.5, "original_score_b": 0.5, "decision": "neutral"},
+        ]
+        w = StrategyWeights().to_dict()
+        verdicts = [{"action": "BUY"}, {"action": "AVOID"}, {"action": "HOLD"}]
+        with patch("src.screening.investability.build_front_door_verdict", side_effect=verdicts):
+            assert _print_custom_weights_results(top, w) is True
+        out = capsys.readouterr().out
+
+        # 汇总行完整
+        assert "BUY 1/3" in out
+        assert "HOLD 1" in out
+        assert "AVOID 1" in out
+        # ANSI 颜色码必须出现 (证明着色未被删除)
+        assert "\x1b[" in out
+        # AVOID 个票必须列出
+        assert "BAD" in out
+        assert "前门门控拒绝" in out
+
+
+# ===========================================================================
 # 8. 排序变化
 # ===========================================================================
 
