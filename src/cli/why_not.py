@@ -315,8 +315,28 @@ def _print_already_recommended(
             exc_info=True,
         )
         front_door_action = "不可用"
-    print(f"{Fore.GREEN}该票已被推荐, 请用 --explain {ticker} 查看推荐理由 (而非 --why-not){Style.RESET_ALL}")
-    print(f"  当前状态: {decision}  |  前门判决: {front_door_action}  |  Score B: {score_b:+.4f}  |  名称: {name}")
+
+    # 前门判决颜色：BUY=绿, HOLD=黄, AVOID=红
+    _front_door_colors = {
+        "BUY": Fore.GREEN,
+        "HOLD": Fore.YELLOW,
+        "AVOID": Fore.RED,
+        "不可用": Fore.YELLOW,
+    }
+    verdict_color = _front_door_colors.get(front_door_action, Fore.YELLOW)
+    verdict_display = f"{verdict_color}{front_door_action}{Style.RESET_ALL}"
+
+    if front_door_action == "BUY":
+        # 所有格子都通过 → 绿色推荐
+        print(f"{Fore.GREEN}该票已被推荐, 请用 --explain {ticker} 查看推荐理由 (而非 --why-not){Style.RESET_ALL}")
+    else:
+        # 前门门控拒绝了该票 → 黄色警告, 避免绿色"推荐"误导
+        reason = "前门门控拒绝" if front_door_action == "AVOID" else "前门非买入"
+        print(
+            f"{Fore.YELLOW}该票在推荐池中, 但 {reason} ({verdict_display}) — "
+            f"原始推荐理由可用 {Fore.CYAN}--explain {ticker}{Style.RESET_ALL} 查看{Style.RESET_ALL}"
+        )
+    print(f"  当前状态: {decision}  |  前门判决: {verdict_display}  |  Score B: {score_b:+.4f}  |  名称: {name}")
 
 
 def _print_not_in_market(ticker: str, report_path: Path) -> None:
