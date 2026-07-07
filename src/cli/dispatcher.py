@@ -931,7 +931,8 @@ def _resolve_daily_action(argv: list[str]) -> int | None:
     产出今日 BUY/SKIP + 止损 + 仓位 + 时间退出 + 失效条件,
     写入 paper_trading journal, drawdown 熔断自动降仓/清仓。
 
-    30 天后用 --reconcile 或 paper tracker 复盘 P&L, 决定是否进 Phase B (新数据源)。
+    闭环: 每次运行先平到期仓位 (T+10 收盘口径) + 回填 realized P&L → 驱动 drawdown,
+    再决定是否出新仓。无需手动复盘命令 — 平仓摘要直接在输出里披露。
     """
     if "--daily-action" not in argv:
         return None

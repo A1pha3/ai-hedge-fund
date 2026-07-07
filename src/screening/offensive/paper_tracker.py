@@ -10,7 +10,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,8 @@ class PaperTracker:
         self._state_path = self._dir / "portfolio_state.json"
         self._open_path = self._dir / "open_positions.json"
         self._state = self._load_state()
+        # close_matured 最近一次平仓摘要 (供 render_daily_action 披露, 不持久化)
+        self.last_closed_positions: list[dict[str, Any]] = []
 
     # ---- portfolio state ----
 
@@ -119,7 +121,16 @@ class PaperTracker:
             )
 
     def record_buy(self, trade_date: str, ticker: str, setup: str, horizon: int, entry_price: float, kelly_pct: float, soft_stop: float, hard_stop: float, invalidation: str, reasoning: str = ""):
-        """便捷方法: 记录买入 + 更新组合。"""
+        """便捷方法: 记录买入 + 更新组合.
+
+        幂等: 同一 (trade_date, ticker) 的 BUY 已存在则跳过 (对齐
+        recommendation_tracker.py:457 natural-key 先例), 防止 --daily-action
+        重跑同一报告日重复下单.
+        """
+        key = (str(trade_date), str(ticker))
+        if key in self._existing_buy_keys():
+            logger.debug("record_buy: %s 已存在, 跳过 (幂等)", key)
+            return
         self.record_action(
             TradeAction(
                 date=trade_date,
@@ -137,6 +148,15 @@ class PaperTracker:
             )
         )
         self._state.open_positions += 1
+        self._save_state()  # 持久化 open_positions (此前缺失 → 新进程读不到增量)
+
+    def _existing_buy_keys(self) -> set[tuple[str, str]]:
+        """journal 中已存在的 BUY natural-key 集合 {(trade_date, ticker)}."""
+        keys: set[tuple[str, str]] = set()
+        for rec in self._load_journal():
+            if rec.get("action") == "BUY":
+                keys.add((str(rec.get("date", "")), str(rec.get("ticker", ""))))
+        return keys
 
     def record_skip(self, date: str, ticker: str, setup: str, horizon: int, reasoning: str = ""):
         """记录跳过的 ticker (日志用, 不更新组合)。"""
@@ -156,6 +176,209 @@ class PaperTracker:
                 reasoning=reasoning,
             )
         )
+
+    # ---- close matured positions (闭环核心) ----
+
+    def _load_journal(self) -> list[dict[str, Any]]:
+        """加载 journal.jsonl 全量记录 (损坏行跳过, 与 daily_brief._load_report 一致)."""
+        if not self._journal_path.exists():
+            return []
+        out: list[dict[str, Any]] = []
+        for line in self._journal_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                logger.warning("paper_tracker: journal 损坏行已跳过: %s", line[:80])
+        return out
+
+    @staticmethod
+    def _is_matured(buy_date: str, horizon: int, as_of: str) -> bool:
+        """到期判断: buy_date + horizon 日历日 <= as_of (日历日近似, 偏保守)."""
+        buy_dt = datetime.strptime(str(buy_date), "%Y%m%d").date()
+        as_of_dt = datetime.strptime(str(as_of), "%Y%m%d").date()
+        return (buy_dt + timedelta(days=horizon)) <= as_of_dt
+
+    def close_matured(
+        self,
+        as_of: str,
+        *,
+        use_data_fetcher: Callable[[str, str, str], list[dict[str, Any]]] | None = None,
+        price_loader: Callable[[str, str], Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        """平掉所有到期仓位, 回填 realized P&L, 驱动 drawdown 熔断.
+
+        闭环核心: 此前 update_pnl 无调用者 → nav 永远 1.0 → drawdown_action() 永远
+        'normal'. 本方法在每次 --daily-action 运行开头被调用, 让组合状态真正演进.
+
+        P&L 口径: T+10 收盘价 (close[D+horizon]/entry_price - 1), 与 BTST 先验分布
+        (E=+2.57%) 和 north-star next_Nday_return 同口径, 保证 paper-pnl 可与先验
+        对比监测 edge 衰减.
+
+        止损披露: 期间 low <= hard_stop 时 stop_would_have_triggered=True (诚实披露
+        渲染层告诉 operator 的止损规则), 但主 P&L 仍用 T+10 收盘口径 (不混入止损
+        滑点这个额外变量, 保可比性).
+
+        幂等: 已有 EXIT 记录的 (buy_date, ticker) 不重复平仓 (对齐
+        recommendation_tracker.py:457 natural-key 先例).
+
+        Args:
+            as_of: 平仓基准日 (YYYYMMDD)
+            use_data_fetcher: ``(ticker, start, end) -> [{"time", "close"}, ...]``
+                注入 seam (测试用), 默认走 fetch_actual_returns 的 _default_price_fetcher
+            price_loader: ``(ticker, report_date) -> DataFrame`` 注入 seam (测试用),
+                用于读 low 序列判断止损触发; 默认 None → 不检测止损触发 (诚实降级)
+
+        Returns:
+            平仓摘要列表, 每项含 ticker/buy_date/realized_pnl/exit_price/
+            stop_would_have_triggered
+        """
+        journal = self._load_journal()
+
+        # 重建 open positions: action=BUY 且无对应 EXIT (幂等: 已平仓的不重平)
+        exit_keys: set[tuple[str, str]] = set()
+        for rec in journal:
+            if rec.get("action") == "EXIT":
+                key = (str(rec.get("date", "")), str(rec.get("ticker", "")))
+                exit_keys.add(key)
+
+        matured: list[dict[str, Any]] = []
+        seen_buy_keys: set[tuple[str, str]] = set()  # 去重: 历史 journal 可能因旧版 record_buy 无幂等而含重复 BUY
+        for rec in journal:
+            if rec.get("action") != "BUY":
+                continue
+            buy_date = str(rec.get("date", ""))
+            ticker = str(rec.get("ticker", ""))
+            key = (buy_date, ticker)
+            if key in exit_keys:
+                continue  # 已平仓 (幂等)
+            if key in seen_buy_keys:
+                continue  # 历史 journal 重复 BUY (旧版无幂等) — 只处理首条
+            horizon = int(rec.get("horizon", 10) or 10)
+            if not self._is_matured(buy_date, horizon, as_of):
+                continue  # 未到期
+            matured.append(rec)
+            seen_buy_keys.add(key)
+
+        if not matured:
+            return []
+
+        # 批量取 T+N 收益 (复用 fetch_actual_returns — 与 north-star 同口径)
+        from src.screening.recommendation_tracker import fetch_actual_returns
+
+        tickers = list({str(r.get("ticker", "")) for r in matured if r.get("ticker")})
+        # from_date 取最早的 buy_date, to_date = as_of
+        earliest = min(str(r.get("date", as_of)) for r in matured)
+        returns_map = fetch_actual_returns(
+            tickers=tickers,
+            from_date=earliest,
+            to_date=as_of,
+            use_data_fetcher=use_data_fetcher,
+        )
+
+        closed: list[dict[str, Any]] = []
+        portfolio_pnl = 0.0  # 本批累计组合层面 P&L (kelly 加权)
+        closed_count = 0
+
+        for rec in matured:
+            ticker = str(rec.get("ticker", ""))
+            buy_date = str(rec.get("date", ""))
+            horizon = int(rec.get("horizon", 10) or 10)
+            entry_price = float(rec.get("entry_price", 0.0) or 0.0)
+            kelly_pct = float(rec.get("kelly_pct", 0.0) or 0.0)
+            hard_stop = float(rec.get("hard_stop", 0.0) or 0.0)
+            if entry_price <= 0:
+                logger.warning("close_matured: %s %s entry_price<=0, 跳过", buy_date, ticker)
+                continue
+
+            ticker_returns = returns_map.get(ticker, {})
+            day_key = f"day_{horizon}"
+            ret_pct = ticker_returns.get(day_key)  # 百分数, e.g. +5.0 = +5%
+            if ret_pct is None:
+                # 数据未成熟或拉取失败 — 诚实跳过, 不虚假平仓
+                logger.info("close_matured: %s %s 无 day_%d 收益数据, 跳过 (数据未成熟?)", buy_date, ticker, horizon)
+                continue
+
+            realized_pnl = ret_pct / 100.0  # 百分数 → 小数
+            exit_price = entry_price * (1 + realized_pnl)
+
+            # 止损触发检测: 期间 low <= hard_stop (披露用, 不影响主 P&L 口径)
+            stop_would_have_triggered = False
+            if price_loader is not None and hard_stop > 0:
+                try:
+                    prices_df = price_loader(ticker, buy_date)
+                    stop_would_have_triggered = self._check_stop_hit(prices_df, buy_date, horizon, hard_stop)
+                except Exception:
+                    logger.debug("close_matured: %s low 序列读取失败, 止损检测降级", ticker, exc_info=True)
+
+            # 写 EXIT 记录 (幂等 key = (date, ticker) 与 BUY 对齐)
+            self.record_action(
+                TradeAction(
+                    date=buy_date,
+                    ticker=ticker,
+                    setup=str(rec.get("setup", "")),
+                    horizon=horizon,
+                    action="EXIT",
+                    kelly_pct=kelly_pct,
+                    entry_price=entry_price,
+                    soft_stop=float(rec.get("soft_stop", 0.0) or 0.0),
+                    hard_stop=hard_stop,
+                    time_exit=f"T+{horizon}",
+                    invalidation_condition=str(rec.get("invalidation_condition", "")),
+                    reasoning=f"T+{horizon} 到期平仓; realized={realized_pnl:+.2%}; stop_would_trigger={stop_would_have_triggered}",
+                )
+            )
+
+            # 组合层面 P&L: 单仓位收益 × kelly 权重 (e.g. +5% × 10% = +0.5% 组合贡献)
+            portfolio_pnl += realized_pnl * kelly_pct
+            closed_count += 1
+            closed.append(
+                {
+                    "ticker": ticker,
+                    "buy_date": buy_date,
+                    "realized_pnl": realized_pnl,
+                    "exit_price": exit_price,
+                    "stop_would_have_triggered": stop_would_have_triggered,
+                }
+            )
+
+        if closed_count > 0:
+            self._state.open_positions = max(0, self._state.open_positions - closed_count)
+            self._state.realized_pnl_pct += portfolio_pnl
+            # 驱动 drawdown: 把本批组合 P&L 一次性喂给 update_pnl → nav/peak/drawdown 演进
+            self.update_pnl(portfolio_pnl)
+
+        # 缓存最近平仓摘要供 render_daily_action 披露 (不持久化, 仅本次运行可见)
+        self.last_closed_positions = closed
+        return closed
+
+    @staticmethod
+    def _check_stop_hit(prices_df: Any, buy_date: str, horizon: int, hard_stop: float) -> bool:
+        """检查 buy_date..buy_date+horizon 期间是否有 low <= hard_stop (盘中止损触发).
+
+        prices_df 来自 _load_prices_for_ticker, 含 'date' (datetime) + 'low' 列.
+        任一日 low <= hard_stop 即视为触发 (保守: 当日盘中触及就当触发, 不要求收盘确认).
+        """
+        if prices_df is None or len(prices_df) == 0:
+            return False
+        if "low" not in prices_df.columns:
+            return False
+        buy_dt = datetime.strptime(str(buy_date), "%Y%m%d").date()
+        end_dt = buy_dt + timedelta(days=horizon)
+        # 过滤到 [buy_date, buy_date+horizon] 区间
+        df = prices_df.copy()
+        if not isinstance(df["date"].dtype, type(prices_df["date"].dtype)):
+            pass  # pandas dtype 比较不可靠, 直接尝试
+        try:
+            mask = (df["date"].dt.date >= buy_dt) & (df["date"].dt.date <= end_dt)
+            window = df.loc[mask, "low"].dropna()
+        except Exception:
+            window = df["low"].dropna()
+        if len(window) == 0:
+            return False
+        return bool((window <= hard_stop).any())
 
     # ---- drawdown check ----
 

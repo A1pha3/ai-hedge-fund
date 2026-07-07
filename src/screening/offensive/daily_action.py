@@ -95,16 +95,30 @@ def _load_prices_for_ticker(ticker: str, report_date: str) -> pd.DataFrame:
     return df
 
 
-def generate_daily_action(report_path: Path | str | None = None, tracker: PaperTracker | None = None, tickers_to_scan: int = 30) -> list[DailyAction]:
+def generate_daily_action(
+    report_path: Path | str | None = None,
+    tracker: PaperTracker | None = None,
+    tickers_to_scan: int = 30,
+    *,
+    use_data_fetcher: Any = None,
+    price_loader: Any = None,
+) -> list[DailyAction]:
     """生成今日机械动作。
 
     流程:
     1. 加载最新报告候选 + fund_flow store + paper_trading 状态
-    2. drawdown 熔断检查 (决定是否允许新仓)
-    3. 对候选跑 BTST detect (T+10 horizon)
-    4. 命中票查 BTST_BREAKOUT_T10 已知分布 → Kelly 仓位
-    5. 风险计划 (止损 + 时间退出 + 失效条件)
-    6. 写入 paper journal
+    2. **先平到期仓位 + 回填 realized P&L** (驱动 drawdown, 保证熔断基于最新 nav)
+    3. drawdown 熔断检查 (决定是否允许新仓)
+    4. 对候选跑 BTST detect (T+10 horizon)
+    5. 命中票查 BTST_BREAKOUT_T10 已知分布 → Kelly 仓位
+    6. 风险计划 (止损 + 时间退出 + 失效条件)
+    7. 写入 paper journal
+
+    Args:
+        use_data_fetcher: ``(ticker, start, end) -> [{"time", "close"}, ...]`` 注入
+            seam, 传给 close_matured 取 T+N 收益 (测试用, 对齐 recommendation_tracker)
+        price_loader: ``(ticker, report_date) -> DataFrame`` 注入 seam, 传给
+            close_matured 读 low 序列检测止损触发 (测试用)
     """
     if tracker is None:
         tracker = PaperTracker()
@@ -124,7 +138,11 @@ def generate_daily_action(report_path: Path | str | None = None, tracker: PaperT
     trade_date = str(report.get("date", ""))
     recs = report.get("recommendations", [])[:tickers_to_scan]
 
-    # 2. drawdown 熔断
+    # 2. 先平到期仓位 + 回填 realized P&L → 驱动 drawdown (闭环核心)
+    #    必须在 drawdown_action() 之前, 否则熔断基于陈旧 nav (永远是初始 1.0).
+    tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=price_loader)
+
+    # 3. drawdown 熔断 (此时基于 close_matured 回填后的最新 nav)
     dd_action = tracker.drawdown_action()
     if dd_action == "liquidate":
         return []  # -20% 清仓, 不出新仓信号
@@ -143,13 +161,14 @@ def generate_daily_action(report_path: Path | str | None = None, tracker: PaperT
     btst = BtstBreakoutSetup()
     actions: list[DailyAction] = []
     portfolio_position_used = 0.0  # 已用仓位 (本批)
+    _load_prices = price_loader if price_loader is not None else _load_prices_for_ticker
 
     for rec in recs:
         ticker = str(rec.get("ticker", ""))
         if not ticker:
             continue
 
-        prices = _load_prices_for_ticker(ticker, trade_date)
+        prices = _load_prices(ticker, trade_date)
         if prices is None or len(prices) == 0:
             continue
         flow_records = store.get_range(ticker, "20200101", trade_date)
@@ -227,9 +246,25 @@ def generate_daily_action(report_path: Path | str | None = None, tracker: PaperT
     return actions
 
 
-def render_daily_action(actions: list[DailyAction], trade_date: str, tracker: PaperTracker) -> str:
-    """渲染机械动作 (decision support, 移除情绪)。"""
+def render_daily_action(
+    actions: list[DailyAction],
+    trade_date: str,
+    tracker: PaperTracker,
+    *,
+    closed_positions: list[dict[str, Any]] | None = None,
+) -> str:
+    """渲染机械动作 (decision support, 移除情绪)。
+
+    Args:
+        closed_positions: close_matured 返回的平仓摘要 (今日到期平仓的仓位).
+            若有, 在组合状态后渲染平仓段, 让 operator 看到 realized P&L 演进.
+            默认从 tracker.last_closed_positions 读 (generate_daily_action 已缓存).
+    """
     from colorama import Fore, Style
+
+    # 默认从 tracker 缓存读 (generate_daily_action 调 close_matured 时已写入)
+    if closed_positions is None:
+        closed_positions = getattr(tracker, "last_closed_positions", None) or []
 
     state = tracker.state
     dd = tracker.drawdown_action()
@@ -244,6 +279,21 @@ def render_daily_action(actions: list[DailyAction], trade_date: str, tracker: Pa
         f"  组合净值: {state.nav:.3f}  回撤: {state.drawdown_pct:+.1%}  风控状态: {dd_tag}",
         f"  持仓数: {state.open_positions}  累计已实现: {state.realized_pnl_pct:+.2%}",
     ]
+
+    # 今日平仓摘要 (闭环核心: operator 看到 realized P&L 演进 + 止损触发披露)
+    if closed_positions:
+        lines.append(f"\n  {Fore.WHITE}📤 今日到期平仓 ({len(closed_positions)} 只):{Style.RESET_ALL}")
+        for c in closed_positions:
+            pnl = c.get("realized_pnl", 0.0)
+            pnl_color = Fore.GREEN if pnl >= 0 else Fore.RED
+            stop_flag = ""
+            if c.get("stop_would_have_triggered"):
+                stop_flag = f"  {Fore.YELLOW}⚠ 期间触硬止损{Style.RESET_ALL}"
+            lines.append(
+                f"  - {Fore.CYAN}{c.get('ticker', '')}{Style.RESET_ALL}  "
+                f"realized {pnl_color}{pnl:+.1%}{Style.RESET_ALL}  "
+                f"exit ~{c.get('exit_price', 0.0):.2f}{stop_flag}"
+            )
 
     if dd == "liquidate":
         lines.append(f"\n  {Fore.RED}⚠ DRAWDOWN 熔断 (-20%) — 不出新仓, 平掉所有持仓{Style.RESET_ALL}")
@@ -265,5 +315,7 @@ def render_daily_action(actions: list[DailyAction], trade_date: str, tracker: Pa
     lines.append(f"  - 触硬止损或失效条件 → 当日收盘平")
     lines.append(f"  - T+10 到期 → 无条件平 (不恋战)")
     lines.append(f"  - 回撤 -15% 自动降仓 / -20% 清仓")
-    lines.append(f"\n  {Fore.WHITE}已写入 paper journal → 30 天后用 --paper-pnl 复盘{Style.RESET_ALL}")
+    # 闭环已自动: close_matured 在 generate_daily_action 开头平到期仓并回填 P&L.
+    # 此前写 "30 天后用 --paper-pnl 复盘" 是死承诺 (该命令从未实现).
+    lines.append(f"\n  {Fore.WHITE}已写入 paper journal (T+10 到期自动平仓 + 回填 realized P&L){Style.RESET_ALL}")
     return "\n".join(lines)
