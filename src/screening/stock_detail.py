@@ -225,7 +225,7 @@ def compute_stock_detail(
     decay_map: dict | None = None,
     report_dir: Path | None = None,
     trade_date: str | None = None,
-    market_regime: str = "normal",
+    market_regime: str | None = None,
 ) -> StockDetail:
     """聚合所有可用数据生成单只标的的深度分析。
 
@@ -240,7 +240,9 @@ def compute_stock_detail(
         decay_map: signal_decay_detector 数据; None 时自动计算
         report_dir: 报告目录; None 时自动解析
         trade_date: 当前日期 YYYYMMDD; None 时从最新报告推断
-        market_regime: 前门 BUY/HOLD/AVOID 判决使用的市场状态; 缺省 normal
+        market_regime: 前门 BUY/HOLD/AVOID 判决使用的市场状态; None 时自动从
+            报告 market_state.regime_gate_level 读取 (autodev-26 loop 137:
+            修复 --stock-detail 与 --top-picks 跨 surface regime 不一致)
 
     Returns:
         StockDetail 实例
@@ -256,6 +258,24 @@ def compute_stock_detail(
             report_dir=report_dir,
             trade_date=trade_date,
         )
+
+    # autodev-26 loop 137: 前门判决 regime 自动从报告 market_state 读取.
+    # 疾病: --stock-detail 原默认 "normal", 与 --top-picks (读 regime_gate_level)
+    # 不一致 — crisis regime 下 --top-picks 显示 HOLD/AVOID 的标的在 --stock-detail
+    # 显示 BUY, 跨 surface 矛盾. Best-effort; 读取失败回退 "normal".
+    if market_regime is None:
+        market_regime = "normal"
+        try:
+            import json
+
+            from src.screening.data_quality_audit import _find_latest_report
+
+            _latest = _find_latest_report(report_dir)
+            if _latest is not None:
+                _ms = json.loads(_latest.read_text(encoding="utf-8")).get("market_state") or {}
+                market_regime = str(_ms.get("regime_gate_level", "normal") or "normal")
+        except Exception as exc:  # noqa: BLE001 — best-effort; regime stays "normal"
+            logger.debug("[StockDetail] regime read failed (defaulting to normal): %s", exc)
 
     # 找到匹配的推荐条目
     match: dict | None = None
@@ -526,6 +546,14 @@ def render_stock_detail(detail: StockDetail) -> str:
         header += f" ({detail.industry_sw})"
     lines.append("━" * 3 + f" {header} " + "━" * 3)
 
+    # autodev-26 loop 137: 前门判决提升到标题下方 (原埋在「系统历史」section 中段).
+    # 单标的 surface 的 visual-hierarchy disease: 操作者看到 PE/技术面/资金流
+    # 后才发现前门 AVOID. 现在第一眼就看到 gate verdict.
+    front_door_action = detail.latest_front_door_action
+    if front_door_action and front_door_action != "—":
+        lines.append("")
+        lines.append(f"🎯 前门判决: {front_door_action}")
+
     # 基本面
     lines.append("")
     lines.append("── 基本面 " + "─" * 33)
@@ -634,6 +662,17 @@ def run_stock_detail_cli(ticker: str, trade_date: str | None = None) -> int:
             print(f"{Fore.CYAN}{Style.BRIGHT}{line}{Style.RESET_ALL}")
         elif line.startswith("─"):
             print(f"{Fore.CYAN}{line}{Style.RESET_ALL}")
+        elif line.startswith("🎯 前门判决"):
+            # autodev-26 loop 137: 颜色随 verdict (BUY=绿/HOLD=黄/AVOID=红)
+            if "AVOID" in line:
+                color = Fore.RED
+            elif "HOLD" in line:
+                color = Fore.YELLOW
+            elif "BUY" in line:
+                color = Fore.GREEN
+            else:
+                color = Fore.YELLOW
+            print(f"{color}{Style.BRIGHT}{line}{Style.RESET_ALL}")
         elif line.startswith("综合评价"):
             print(f"{Fore.GREEN}{Style.BRIGHT}{line}{Style.RESET_ALL}")
         else:
