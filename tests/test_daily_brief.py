@@ -376,6 +376,53 @@ class TestDailyBriefSorting:
         # 000004 (consec=3) 必须出现在 Top 3 中 — 替换了 #3
         assert "000004" in out
 
+    def test_selection_logic_disclosure_shown_when_top3_different(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """autodev-28 loop 143: 当 _select_top3 的 Top 3 与原始报告排序不同时,
+        必须显示排序说明披露."""
+        recs = [
+            _make_recommendation("000001", "A", "银行", score_b=0.70, consecutive_days=0),
+            _make_recommendation("000002", "B", "银行", score_b=0.69, consecutive_days=0),
+            _make_recommendation("000003", "C", "银行", score_b=0.68, consecutive_days=0),  # 原始第 3
+            _make_recommendation("000004", "D", "科技", score_b=0.10, consecutive_days=3),  # 因加成上位
+        ]
+        _write_report(tmp_path, _make_report(recs))
+
+        history = [
+            _make_history_record("000004", "20260607"),
+            _make_history_record("000004", "20260606"),
+            _make_history_record("000004", "20260605"),
+        ]
+        _write_history(tmp_path, history)
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        # 必须有排序说明
+        assert "排序说明" in out
+        assert "连续推荐" in out
+        assert "000004" in out  # 说明中应包含被推荐的标的
+
+    def test_selection_logic_disclosure_omitted_when_top3_matches(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """当 Top 3 与原始报告完全一致时, 不显示排序说明 (减少噪音)."""
+        recs = [
+            _make_recommendation("000001", "A", "银行", score_b=0.70, consecutive_days=0),
+            _make_recommendation("000002", "B", "银行", score_b=0.69, consecutive_days=0),
+            _make_recommendation("000003", "C", "银行", score_b=0.68, consecutive_days=0),
+        ]
+        _write_report(tmp_path, _make_report(recs))
+        _write_history(tmp_path, [])
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        assert "排序说明" not in out  # 无差异时不披露
+
 
 class TestDailyBriefIndustryRotation:
     def test_industry_rotation_top1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

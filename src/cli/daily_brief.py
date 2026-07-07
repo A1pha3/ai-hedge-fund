@@ -448,6 +448,22 @@ def _print_daily_brief(
         industry_count_str = f"{industry_count}/{total_topn}"
     else:
         industry_count_str = "—"
+
+    # autodev-28 loop 143: 跨 surface 选择逻辑差异披露. _select_top3 对 score_b
+    # 加 +0.05/日 连续推荐 bonus 并保证 Top 3 含 ≥2 日连续标的, 可能产生与 --top
+    # (纯 score_b 排序) 不同的 Top 3. 当差异存在时披露, 避免操作者困惑.
+    raw_recs = payload.get("recommendations", []) or []
+    raw_top3_tickers = [str(r.get("ticker", "")) for r in raw_recs[:3]]
+    brief_top3_tickers = [str(r.get("ticker", "")) for r in top3]
+    if raw_top3_tickers != brief_top3_tickers:
+        promoted = [t for t in brief_top3_tickers if t not in raw_top3_tickers]
+        demoted = [t for t in raw_top3_tickers if t not in brief_top3_tickers]
+        parts = ["Top 3 按 score_b + 连续推荐加成 (+0.05/日) 排序"]
+        if promoted:
+            parts.append(f"连续推荐标的 {','.join(promoted)} 因加成上位" + (f" (替换 {','.join(demoted)})" if demoted else ""))
+        print(f"📝 {Fore.CYAN}排序说明:{Style.RESET_ALL} " + "; ".join(parts))
+        print(f"  (与 --top 纯 score_b 排序可能不同; 详情见 --explain <ticker>)")
+
     print(f"🏭 {Fore.CYAN}行业轮动 Top 1:{Style.RESET_ALL} {Fore.GREEN}{Style.BRIGHT}{industry_name}{Style.RESET_ALL} (今日推荐 {industry_count_str}/Top10)")
     print(f"{Fore.WHITE}{Style.BRIGHT}{bar}{Style.RESET_ALL}\n")
 
