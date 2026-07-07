@@ -844,8 +844,6 @@ def _resolve_top_picks(argv: list[str]) -> int | None:
 
 def _resolve_top_setups(argv: list[str]) -> int | None:
     """Phase 1 凸性 setup 检测器 (进攻型 alpha, shadow 模式)。
-
-    扫描最新报告的候选池, 检测已注册 setup 命中, 按 Kelly 排序。
     ⚠ SHADOW: setup 未经验证 (Phase 0 IS/OOS), 仅供观察。
     完整使用需先 backfill 资金流 + 跑 Phase 0 build_distribution。
     """
@@ -923,6 +921,37 @@ def _resolve_top_setups(argv: list[str]) -> int | None:
         print(f"  1. backfill 资金流: 循环 fetch_individual_fund_flow + store.save")
         print(f"  2. 跑 Phase 0: scripts/setup_research.py evaluate_setup() 产 distribution_lookup")
         print(f"  3. 把分布填回本命令的 distribution_lookup → 自动出 Kelly picks")
+    return 0
+
+
+def _resolve_daily_action(argv: list[str]) -> int | None:
+    """Phase A 每日机械交易动作 (BTST T+10, paper trading, 移除情绪决策)。
+
+    用验证过的 BTST T+10 分布 (cv=1.53, n=5374) 作 Kelly 先验,
+    产出今日 BUY/SKIP + 止损 + 仓位 + 时间退出 + 失效条件,
+    写入 paper_trading journal, drawdown 熔断自动降仓/清仓。
+
+    30 天后用 --reconcile 或 paper tracker 复盘 P&L, 决定是否进 Phase B (新数据源)。
+    """
+    if "--daily-action" not in argv:
+        return None
+    from src.screening.offensive.daily_action import generate_daily_action, render_daily_action
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    tracker = PaperTracker()
+    actions = generate_daily_action(tracker=tracker)
+    # 用最新报告日期渲染
+    from src.screening.consecutive_recommendation import resolve_report_dir
+    from src.screening.data_quality_audit import _find_latest_report
+
+    latest = _find_latest_report(resolve_report_dir())
+    trade_date = "????????"
+    if latest is not None:
+        import json
+
+        with open(latest, encoding="utf-8") as f:
+            trade_date = str(json.load(f).get("date", "????????"))
+    print(render_daily_action(actions, trade_date, tracker))
     return 0
 
 
@@ -1033,6 +1062,7 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--daily-brief", _resolve_daily_brief),
     ("--why-not", _resolve_why_not),
     ("--explain", _resolve_explain),
+    ("--daily-action", _resolve_daily_action),
     ("--export-conditional-orders", _resolve_export_conditional_orders),
     ("--weekly-report", _resolve_weekly_report),
     ("--data-quality-audit", _resolve_data_quality_audit),
@@ -1056,6 +1086,7 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--strategy-report", _resolve_strategy_report),
     ("--top-picks", _resolve_top_picks),
     ("--top-setups", _resolve_top_setups),
+    ("--daily-action", _resolve_daily_action),
     ("--reconcile", _resolve_reconcile),
     ("--refresh-regime-winrates", _resolve_refresh_regime_winrates),
 ]
