@@ -1,10 +1,11 @@
 """Phase A 30 天历史回测 — 验证 --daily-action 在真实历史数据上的 P&L。
 
 模拟: 过去 30 个交易日, 每天用 BTST T+10 setup 扫全 300 ticker,
-hit 就次日开盘买入 (10% 仓位), 持有到 T+10 或硬止损 -8%, 平仓后算 P&L。
+hit 就次日开盘买入 (10% 仓位), 持有到 T+10 或硬止损 -10%, 平仓后算 P&L。
 
 输出: 总收益 / 胜率 / 最大回撤 / Sharpe / 交易数 vs 等权基线。
 """
+
 from __future__ import annotations
 
 import json
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 _POSITION_PCT = 0.10  # 单票 10%
 _MAX_POSITIONS = 6  # 最多 6 个并发 (60%)
-_HARD_STOP = -0.08  # -8% 硬止损
+_HARD_STOP = -0.10  # -10% 硬止损 (优化后)
 _SLIPPAGE = 0.003  # 0.3% 单边
 _HORIZON = 10  # T+10
 
@@ -76,7 +77,8 @@ def _load_universe() -> tuple[dict[str, pd.DataFrame], dict[str, list], list[str
 
         flow_by_ticker[ticker] = [
             FundFlowRecord(
-                ticker=ticker, date=str(row["date"]),
+                ticker=ticker,
+                date=str(row["date"]),
                 close=float(row.get("close", 0) or 0),
                 pct_change=float(row.get("pct_change", 0) or 0),
                 main_net_inflow=float(row.get("main_net_inflow", 0) or 0),
@@ -138,7 +140,7 @@ def run_backtest(n_days: int = 30) -> BacktestResult:
                 pos.exit_reason = "hard_stop"
                 trade_ret = (pos.exit_price / pos.entry_price) - 1
                 pos.pnl_pct = pos.size_pct * trade_ret
-                nav *= (1 + pos.pnl_pct)
+                nav *= 1 + pos.pnl_pct
                 closed.append(pos)
                 continue
             # 时间退出: T+10
@@ -148,7 +150,7 @@ def run_backtest(n_days: int = 30) -> BacktestResult:
                 pos.exit_reason = "time_exit"
                 trade_ret = (pos.exit_price / pos.entry_price) - 1
                 pos.pnl_pct = pos.size_pct * trade_ret
-                nav *= (1 + pos.pnl_pct)
+                nav *= 1 + pos.pnl_pct
                 closed.append(pos)
                 continue
             still_open.append(pos)
@@ -189,10 +191,14 @@ def run_backtest(n_days: int = 30) -> BacktestResult:
                 # 次日开盘买入 (× 1+slippage)
                 next_open = float(tdf.iloc[t_idx + 1]["open"])
                 entry_price = next_open * (1 + _SLIPPAGE)
-                positions.append(Position(
-                    ticker=ticker, entry_date=today,
-                    entry_price=entry_price, size_pct=_POSITION_PCT,
-                ))
+                positions.append(
+                    Position(
+                        ticker=ticker,
+                        entry_date=today,
+                        entry_price=entry_price,
+                        size_pct=_POSITION_PCT,
+                    )
+                )
                 new_buys += 1
 
         nav_curve.append((today, nav))
@@ -216,7 +222,7 @@ def run_backtest(n_days: int = 30) -> BacktestResult:
     if len(nav_curve) > 1:
         rets = [nav_curve[i][1] / nav_curve[i - 1][1] - 1 for i in range(1, len(nav_curve)) if nav_curve[i - 1][1] > 0]
         if rets and np.std(rets) > 0:
-            result.sharpe = np.mean(rets) / np.std(rets) * (252 ** 0.5)
+            result.sharpe = np.mean(rets) / np.std(rets) * (252**0.5)
     return result
 
 

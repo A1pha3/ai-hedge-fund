@@ -6,6 +6,7 @@
 
 目标: Phase B 的 edge 是否 > Phase A?
 """
+
 from __future__ import annotations
 
 import logging
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 _POSITION_PCT = 0.10
 _MAX_POSITIONS = 6
-_HARD_STOP = -0.08
+_HARD_STOP = -0.10
 _SLIPPAGE = 0.003
 _HORIZON = 10
 
@@ -97,7 +98,8 @@ def _load_fund_flow_all() -> dict[str, list]:
         df = pd.read_csv(ff, dtype={"date": str})
         flow[t] = [
             FundFlowRecord(
-                ticker=t, date=str(r["date"]),
+                ticker=t,
+                date=str(r["date"]),
                 close=float(r.get("close", 0) or 0),
                 pct_change=float(r.get("pct_change", 0) or 0),
                 main_net_inflow=float(r.get("main_net_inflow", 0) or 0),
@@ -151,7 +153,7 @@ def run_backtest_pb(
                 pos["exit_reason"] = "hard_stop"
                 trade_ret = (pos["exit_price"] / pos["entry_price"]) - 1
                 pos["pnl_pct"] = pos["size_pct"] * trade_ret
-                nav *= (1 + pos["pnl_pct"])
+                nav *= 1 + pos["pnl_pct"]
                 closed.append(pos)
                 continue
             if pos["days_held"] >= _HORIZON:
@@ -160,7 +162,7 @@ def run_backtest_pb(
                 pos["exit_reason"] = "time_exit"
                 trade_ret = (pos["exit_price"] / pos["entry_price"]) - 1
                 pos["pnl_pct"] = pos["size_pct"] * trade_ret
-                nav *= (1 + pos["pnl_pct"])
+                nav *= 1 + pos["pnl_pct"]
                 closed.append(pos)
                 continue
             still_open.append(pos)
@@ -194,11 +196,16 @@ def run_backtest_pb(
                         continue
                     next_open = float(tdf.iloc[row_idx[0] + 1]["open"])
                     entry_price = next_open * (1 + _SLIPPAGE)
-                    positions.append({
-                        "ticker": ticker, "entry_date": today,
-                        "entry_price": entry_price, "size_pct": _POSITION_PCT,
-                        "days_held": 0, "pnl_pct": 0.0,
-                    })
+                    positions.append(
+                        {
+                            "ticker": ticker,
+                            "entry_date": today,
+                            "entry_price": entry_price,
+                            "size_pct": _POSITION_PCT,
+                            "days_held": 0,
+                            "pnl_pct": 0.0,
+                        }
+                    )
                     new_buys += 1
 
             else:
@@ -221,11 +228,16 @@ def run_backtest_pb(
                     if setup.detect(ticker, today, ctx).hit:
                         next_open = float(tdf.iloc[ti + 1]["open"])
                         entry_price = next_open * (1 + _SLIPPAGE)
-                        positions.append({
-                            "ticker": ticker, "entry_date": today,
-                            "entry_price": entry_price, "size_pct": _POSITION_PCT,
-                            "days_held": 0, "pnl_pct": 0.0,
-                        })
+                        positions.append(
+                            {
+                                "ticker": ticker,
+                                "entry_date": today,
+                                "entry_price": entry_price,
+                                "size_pct": _POSITION_PCT,
+                                "days_held": 0,
+                                "pnl_pct": 0.0,
+                            }
+                        )
                         new_buys += 1
 
         nav_curve.append((today, nav))
@@ -237,16 +249,19 @@ def run_backtest_pb(
     rets = [nav_curve[i][1] / nav_curve[i - 1][1] - 1 for i in range(1, len(nav_curve)) if nav_curve[i - 1][1] > 0]
     sharpe = 0.0
     if rets and np.std(rets) > 0:
-        sharpe = float(np.mean(rets) / np.std(rets) * (252 ** 0.5))
+        sharpe = float(np.mean(rets) / np.std(rets) * (252**0.5))
     reasons = {}
     for p in closed:
         reasons[p["exit_reason"]] = reasons.get(p["exit_reason"], 0) + 1
     pnls = [p["pnl_pct"] * 100 for p in closed]
     return {
-        "nav": nav, "total_return": (nav - 1) * 100,
+        "nav": nav,
+        "total_return": (nav - 1) * 100,
         "win_rate": n_wins / n_trades if n_trades > 0 else 0,
-        "max_dd": max_dd * 100, "sharpe": sharpe,
-        "n_trades": n_trades, "n_wins": n_wins,
+        "max_dd": max_dd * 100,
+        "sharpe": sharpe,
+        "n_trades": n_trades,
+        "n_wins": n_wins,
         "exit_reasons": reasons,
         "avg_pnl": np.mean(pnls) if pnls else 0,
         "median_pnl": np.median(pnls) if pnls else 0,
@@ -259,9 +274,7 @@ def main():
     prices_by_ticker = _load_prices_all()
     flow_by_ticker = _load_fund_flow_all()
     # 交易日历
-    all_dates = sorted(set(
-        d for tdf in prices_by_ticker.values() for d in tdf["date"].tolist()
-    ))
+    all_dates = sorted(set(d for tdf in prices_by_ticker.values() for d in tdf["date"].tolist()))
     end_idx = len(all_dates) - _HORIZON
     start_idx = end_idx - 30
     entry_days = all_dates[start_idx:end_idx]
