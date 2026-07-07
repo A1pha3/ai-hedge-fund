@@ -3285,7 +3285,12 @@ def run_explain(ticker: str) -> int:
     print(f"\n{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}")
     print(f"{Fore.CYAN}{Style.BRIGHT}[Explain] {ticker} {name} ({industry}){Style.RESET_ALL}")
     print(f"  报告: {latest.name}")
-    print(f"  决策: {decision}  |  前门判决: {front_door_action}  |  Score B: {score_b:+.4f}")
+    # autodev-27 loop 141: 前门判决着色, 与 --stock-detail/--why-not/--custom-weights
+    # 等跨 surface 一致 (BUY=绿/HOLD=黄/AVOID=红). 原为纯文本, AVOID 不醒目.
+    _explain_verdict_colors = {"BUY": Fore.GREEN, "HOLD": Fore.YELLOW, "AVOID": Fore.RED, "不可用": Fore.YELLOW}
+    _verdict_color = _explain_verdict_colors.get(front_door_action, Fore.YELLOW)
+    _verdict_display = f"{_verdict_color}{front_door_action}{Style.RESET_ALL}"
+    print(f"  决策: {decision}  |  前门判决: {_verdict_display}  |  Score B: {score_b:+.4f}")
     print(f"{Fore.WHITE}{Style.BRIGHT}{'=' * 70}{Style.RESET_ALL}\n")
 
     # Market state at scoring time

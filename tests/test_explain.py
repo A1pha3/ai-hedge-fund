@@ -238,7 +238,30 @@ class TestExplainFrontDoorVerdict:
 
         assert rc == 0
         assert "决策: buy" in output
-        assert "前门判决: AVOID" in output
+        # autodev-27 loop 141: verdict 着色 (ANSI); 核心词仍可见
+        assert "前门判决" in output
+        assert "AVOID" in output
+
+    def test_explain_verdict_is_color_coded(self):
+        """autodev-27 loop 141: 前门判决必须着色 (ANSI 码存在)."""
+        signals = {
+            "trend": _make_strategy_signal(1, 65.0, sub_factors={}),
+            "mean_reversion": _make_strategy_signal(0, 20.0),
+            "fundamental": _make_strategy_signal(1, 50.0),
+            "event_sentiment": _make_strategy_signal(1, 55.0),
+        }
+        rec = _make_recommendation(strategy_signals=signals, decision="buy")
+        report = _make_report(
+            recommendations=[rec],
+            market_state={"regime_gate_level": "normal", "state_type": "mixed", "position_scale": 1.0},
+        )
+
+        rc, output = _run_explain_capture(report)
+
+        assert rc == 0
+        # ANSI 颜色码必须存在于 verdict 行
+        assert "\x1b[" in output
+        assert "前门判决" in output
 
 
 # ---------------------------------------------------------------------------
