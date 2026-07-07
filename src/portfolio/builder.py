@@ -19,9 +19,18 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from colorama import Fore, Style
+
 from src.utils.numeric import safe_float as _safe_float
 
 logger = logging.getLogger(__name__)
+
+#: 前门判决颜色 (autodev-25 loop 135): BUY=绿, HOLD=黄, AVOID=红
+_FRONT_DOOR_COLORS: dict[str, str] = {
+    "BUY": Fore.GREEN,
+    "HOLD": Fore.YELLOW,
+    "AVOID": Fore.RED,
+}
 
 #: 行业集中度上限 (任一行业占总权重)
 DEFAULT_INDUSTRY_CAP: float = 0.30
@@ -255,15 +264,35 @@ def render_portfolio(summary: PortfolioSummary) -> str:
     lines.append("━" * 70)
     lines.append(f"  推荐组合构建器 (P3-4) · {summary.n_positions} 持仓")
     lines.append("━" * 70)
+
+    # autodev-25 loop 135: 前门判决汇总 (extending loop-126/132/134 pattern),
+    # 让操作者一眼了解组合内 BUY / HOLD / AVOID 分布.
+    positions = summary.positions
+    if positions:
+        buy_count = sum(1 for p in positions if p.front_door_action == "BUY")
+        hold_count = sum(1 for p in positions if p.front_door_action == "HOLD")
+        avoid_count = sum(1 for p in positions if p.front_door_action == "AVOID")
+        total = len(positions)
+        summary_parts = [f"{Fore.GREEN}前门 BUY {buy_count}/{total}{Style.RESET_ALL}"]
+        if hold_count:
+            summary_parts.append(f"{Fore.YELLOW}HOLD {hold_count}{Style.RESET_ALL}")
+        if avoid_count:
+            summary_parts.append(f"{Fore.RED}AVOID {avoid_count}{Style.RESET_ALL}")
+        lines.append(f"  {Fore.CYAN}🎯 前门判决:{Style.RESET_ALL} " + "  |  ".join(summary_parts))
+        if avoid_count:
+            avoid_tickers = [p.ticker for p in positions if p.front_door_action == "AVOID"]
+            lines.append(f"  {Fore.RED}⚠ AVOID: {', '.join(avoid_tickers)} (前门门控拒绝, 谨慎对待){Style.RESET_ALL}")
     lines.append("")
 
     # Positions table
     lines.append(f"  {'ticker':<10} {'行业':<10} {'score_b':>8} {'前门':>8} {'权重':>8}")
     lines.append("  " + "-" * 52)
     for p in summary.positions:
+        verdict_color = _FRONT_DOOR_COLORS.get(p.front_door_action, "")
+        verdict_display = f"{verdict_color}{p.front_door_action:>8}{Style.RESET_ALL}" if verdict_color else f"{p.front_door_action:>8}"
         lines.append(
             f"  {p.ticker:<10} {p.industry:<10} {p.score_b:>+8.4f} "
-            f"{p.front_door_action:>8} {p.weight:>8.2%}"
+            f"{verdict_display} {p.weight:>8.2%}"
         )
     lines.append("")
 

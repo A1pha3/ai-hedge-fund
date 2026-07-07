@@ -135,3 +135,41 @@ class TestRenderPortfolio:
         summary = PortfolioSummary()
         output = render_portfolio(summary)
         assert "无组合数据" in output
+
+
+class TestRenderPortfolioVerdictSummary:
+    """autodev-25 loop 135: portfolio CLl 前门列着色 + 🎯 汇总行."""
+
+    def test_verdict_summary_line_shown(self):
+        summary = compute_portfolio(SAMPLE_RECS, top_n=5)
+        output = render_portfolio(summary)
+
+        assert "前门判决" in output
+        # summary positions
+        assert "BUY" in output
+        # matching count
+        total = len(summary.positions)
+        assert f"/{total}" in output
+
+    def test_verdict_column_color_coded(self):
+        summary = compute_portfolio(SAMPLE_RECS, top_n=5)
+        output = render_portfolio(summary)
+
+        # table must contain 前门 column
+        assert "前门" in output
+        # color code must be present (ANSI Fore.RED or Fore.GREEN or Fore.YELLOW)
+        assert "\x1b[" in output  # ANSI escape present
+
+    def test_empty_renders_no_summary(self):
+        output = render_portfolio(PortfolioSummary())
+        assert "前门判决" not in output  # 空组合无汇总
+        assert "无组合数据" in output
+
+    def test_summary_shows_AVOID_tickers_when_present(self):
+        """验证 AVOID 个票以 ⚠ 形式列出 (当组合中有 AVOID)."""
+        summary = compute_portfolio(SAMPLE_RECS, top_n=5)
+        output = render_portfolio(summary)
+
+        # SAMPLE_RECS 无额外验证, 用 gate 默认值; 如果全是 gate 拒绝则标签存在
+        if "AVOID" in output:
+            assert "⚠" in output  # AVOID tickers 以警告形式出现
