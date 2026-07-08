@@ -58,6 +58,31 @@ def test_summarize_setup_performance_from_closed_trades(tmp_path):
     assert oversold.winrate == 1.0
     assert abs(oversold.expected_return - 0.01) < 1e-12
 
+    # skipped_exits: 1 EXIT record without realized marker
+    assert result.skipped_exits == 1, f"expected 1 skipped, got {result.skipped_exits}"
+
+
+def test_summarize_setup_performance_counts_skipped_exits(tmp_path):
+    """EXIT records without parseable realized markers are counted in skipped_exits."""
+    from src.screening.offensive.setup_performance import summarize_setup_performance
+
+    journal = tmp_path / "journal.jsonl"
+    _write_journal(
+        journal,
+        [
+            {"date": "20260701", "ticker": "000001", "setup": "btst", "action": "BUY"},
+            {"date": "20260701", "ticker": "000001", "setup": "btst", "action": "EXIT", "reasoning": "T+10 到期平仓; realized=+5.00%; stop_would_trigger=False"},
+            {"date": "20260702", "ticker": "000002", "setup": "btst", "action": "EXIT", "reasoning": "old format, no realized marker"},
+            {"date": "20260703", "ticker": "000003", "setup": "oversold", "action": "EXIT", "reasoning": "T+5 到期平仓; realized=-2.00%; stop_would_trigger=False"},
+            {"date": "20260704", "ticker": "000004", "setup": "btst", "action": "EXIT"},  # no reasoning at all
+        ],
+    )
+
+    result = summarize_setup_performance(journal)
+    assert result.skipped_exits == 2, f"expected 2 skipped, got {result.skipped_exits}"
+    assert result.by_setup["btst"].n == 1  # only the first btst EXIT has realized marker
+    assert result.by_setup["oversold"].n == 1
+
 
 def test_summarize_setup_performance_splits_by_regime(tmp_path):
     """Regime sizing decisions need actual setup performance by market regime."""

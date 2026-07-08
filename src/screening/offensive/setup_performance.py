@@ -34,6 +34,7 @@ class SetupPerformanceReport:
 
     total_exits: int
     by_setup: dict[str, SetupPerformance]
+    skipped_exits: int = 0  # EXIT records without parseable realized marker (NS-18 disclosure)
 
 
 def _load_jsonl(path: Path) -> list[dict]:
@@ -91,9 +92,11 @@ def summarize_setup_performance(
     by_setup_regime: dict[str, dict[str, list[float]]] = {}
     regimes_by_date = regimes_by_date or {}
 
+    total_journal_exits = 0
     for rec in _load_jsonl(Path(journal_path)):
         if rec.get("action") != "EXIT":
             continue
+        total_journal_exits += 1
         realized = _parse_realized_return(rec.get("reasoning"))
         if realized is None:
             continue
@@ -103,6 +106,8 @@ def summarize_setup_performance(
         regime = regimes_by_date.get(str(rec.get("date") or ""), "")
         if regime:
             by_setup_regime.setdefault(setup, {}).setdefault(str(regime), []).append(realized)
+
+    skipped = total_journal_exits - sum(len(v) for v in by_setup.values())
 
     summaries: dict[str, SetupPerformance] = {}
     for setup, returns in by_setup.items():
@@ -123,4 +128,5 @@ def summarize_setup_performance(
     return SetupPerformanceReport(
         total_exits=sum(summary.n for summary in summaries.values()),
         by_setup=dict(sorted(summaries.items())),
+        skipped_exits=skipped,
     )

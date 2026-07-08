@@ -143,6 +143,9 @@ def _setup_policy_lines(disabled_setups: set[str] | None = None) -> list[str]:
         lines.append(f"启用 setup: {', '.join(active_parts)}")
     if paused_parts:
         lines.append(f"暂停 setup: {', '.join(paused_parts)}")
+    skipped = getattr(report, "skipped_exits", 0)
+    if skipped:
+        lines.append(f"  提示: {skipped} 条平仓记录缺 realized 标记, 已跳过 (不影响统计完整性)")
     return lines
 
 
