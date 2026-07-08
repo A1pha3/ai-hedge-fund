@@ -18,10 +18,14 @@ def _ctx(prices, fund_flow_records=None, industry_pct=3.0, regime="normal"):
 
 
 def _prices_with_limit_up_today():
-    """今天涨停 (+10%), 主力净流入强, 行业涨 3%。"""
+    """今天涨停 (+10%), 主力净流入强, 行业涨 3%.
+
+    条件4: 涨停日/5日前 涨幅 ≤5%. 5日前 close=10.5, 今日 11.0 → 涨幅 4.76% (≤5% ✅).
+    """
     dates = pd.bdate_range("2026-06-01", periods=22)
-    closes = [10.0] * 21 + [11.0]  # 前 21 日平盘, 今日涨停
-    pct = [0.0] * 20 + [0.0, 10.0]  # 今日 +10%
+    closes = [10.0] * 21 + [11.0]
+    closes[-6] = 10.5  # 5 日前 close 设 10.5 (今日 11.0 → 涨幅 4.76%, 过 ≤5% 门槛)
+    pct = [0.0] * 20 + [0.0, 10.0]
     return pd.DataFrame({"date": dates, "close": closes, "open": closes, "high": closes, "low": closes, "pct_change": pct})
 
 
@@ -76,6 +80,50 @@ def test_miss_when_main_inflow_weak():
     setup = BtstBreakoutSetup()
     result = setup.detect("X", today, ctx)
     assert result.hit is False
+
+
+def test_miss_when_pre_runup_too_high():
+    """涨停 + 主力强 + 行业强, 但涨停前5日已涨 >5% (追高) → 不命中 (条件4).
+
+    数据驱动条件: 涨停前涨幅越大后续越弱. ≤5% 保留, >5% 过滤.
+    """
+    prices = _prices_with_limit_up_today()
+    # 把前5日 close 从 10.0 改成 9.0 (今日涨停 11.0, 前5日 9.0 → 涨幅 22% > 5%)
+    prices.loc[prices.index[-6], "close"] = 9.0
+    today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+    recs = [FundFlowRecord(ticker="X", date=today, close=11.0, pct_change=10.0, main_net_inflow=5_000_000, main_net_pct=8.0)]
+    old_recs = []
+    for i in range(1, 21):
+        d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
+        old_recs.append(FundFlowRecord(ticker="X", date=d, close=10.0, pct_change=0.0, main_net_inflow=100_000, main_net_pct=0.5))
+    ctx = _ctx(prices, fund_flow_records=[recs[0]] + old_recs, industry_pct=3.0)
+    setup = BtstBreakoutSetup()
+    result = setup.detect("X", today, ctx)
+    assert result.hit is False  # 前5日涨幅 22% > 5% 阈值
+
+
+def test_hit_when_oversold_then_limit_up():
+    """超跌后首板涨停 (前5日跌后涨停) → 命中, 且 strength 应较高 (反转深度加分).
+
+    数据验证: 前5日<0% 的涨停 T+5 E[r]=+4.17%, 胜率61%, 是最强子集.
+    """
+    prices = _prices_with_limit_up_today()
+    # 前5日 close 设为 12.0 (今日涨停 11.0, 前5日 12.0 → 跌幅 -8.3%)
+    prices.loc[prices.index[-6], "close"] = 12.0
+    today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+    recs = [FundFlowRecord(ticker="X", date=today, close=11.0, pct_change=10.0, main_net_inflow=5_000_000, main_net_pct=8.0)]
+    old_recs = []
+    for i in range(1, 21):
+        d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
+        old_recs.append(FundFlowRecord(ticker="X", date=d, close=10.0, pct_change=0.0, main_net_inflow=100_000, main_net_pct=0.5))
+    ctx = _ctx(prices, fund_flow_records=recs + old_recs, industry_pct=3.0)
+    setup = BtstBreakoutSetup()
+    result = setup.detect("X", today, ctx)
+    assert result.hit is True
+    assert result.trigger_strength > 0
+    # metadata 应含 pre_5d_runup_pct
+    assert "pre_5d_runup_pct" in result.metadata
+    assert result.metadata["pre_5d_runup_pct"] < 0  # 负值 (超跌)
 
 
 def test_natural_horizon_is_10_not_3():

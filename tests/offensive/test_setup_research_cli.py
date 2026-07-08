@@ -107,6 +107,175 @@ def test_evaluate_setup_integration():
     )
     assert "is" in result and "oos" in result
     assert result["setup_name"] == "btst_breakout"
+    # regime 分层字段 (§3.3)
+    assert "regime_breakdown" in result
+    assert "regime_qualified" in result
+    assert "normal" in result["regime_breakdown"]
+
+
+# ---------------------------------------------------------------------------
+# regime 分层准入 (设计文档 §3.3: "regime 分层后至少一个 regime 仍达标")
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_setup_regime_breakdown_structure():
+    """regime_breakdown 含 normal/crisis/risk_off 三层, 每层有 n/qualified/winrate 等字段.
+
+    所有命中归入 normal 时, normal 层有样本, crisis/risk_off 为 n=0.
+    regime_qualified = normal 层达标则 True.
+    """
+    tickers = ["000001", "000002", "000003"]
+    prices_by_ticker = {}
+    for t in tickers:
+        dates = pd.bdate_range("2024-01-01", periods=15)
+        closes = [10.0 + i * 0.1 for i in range(15)]
+        closes[5] = closes[4] * 1.10  # 第 5 日涨停
+        pct = [0.0] * 5 + [10.0] + [0.0] * 9
+        prices_by_ticker[t] = pd.DataFrame(
+            {
+                "date": dates, "close": closes, "open": closes,
+                "high": closes, "low": closes, "pct_change": pct,
+            }
+        )
+
+    from src.screening.offensive.data.fund_flow_store import FundFlowRecord
+
+    fund_flow = {}
+    trade_dates = []
+    for t in tickers:
+        trigger_date = prices_by_ticker[t].iloc[5]["date"].strftime("%Y%m%d")
+        trade_dates.append(trigger_date)
+        fund_flow[t] = [FundFlowRecord(
+            ticker=t, date=trigger_date, close=closes[5],
+            pct_change=10.0, main_net_inflow=5_000_000, main_net_pct=8.0,
+        )]
+
+    result = evaluate_setup(
+        setup=BtstBreakoutSetup(),
+        tickers=tickers, trade_dates=trade_dates,
+        prices_by_ticker=prices_by_ticker, fund_flow_by_ticker=fund_flow,
+        industry_pct_by_date={d: 3.0 for d in trade_dates},
+        regimes_by_date={d: "normal" for d in trade_dates},
+    )
+
+    rb = result["regime_breakdown"]
+    # 三层都存在
+    assert set(rb.keys()) == {"normal", "crisis", "risk_off"}
+    # 每层有必需字段
+    for layer_name, layer in rb.items():
+        assert "n" in layer
+        assert "qualified" in layer
+        assert "winrate" in layer
+        assert "expected_return" in layer
+        assert "convexity_ratio" in layer
+    # 全 normal → normal 层有样本, 其余为 0
+    assert rb["normal"]["n"] >= 0
+    assert rb["crisis"]["n"] == 0
+    assert rb["risk_off"]["n"] == 0
+    # regime_qualified 是 bool
+    assert isinstance(result["regime_qualified"], bool)
+
+
+def test_regime_breakdown_mixed_regimes():
+    """命中样本跨 normal/crisis 两 regime 时, 两层各自有样本且独立判定.
+
+    用 fake setup (总是 hit) 隔离 regime 分组逻辑, 不依赖真实 BTST detect 条件.
+    构造: 60 个样本, 前 30 标 normal, 后 30 标 crisis. 验证两层各 30 hits.
+    """
+    from src.screening.offensive.setups.base import Setup, DetectionResult
+
+    class _AlwaysHitSetup(Setup):
+        name = "fake_always_hit"
+        natural_horizon = 5
+
+        def detect(self, ticker, trade_date, context):
+            return DetectionResult(
+                hit=True, ticker=ticker, trade_date=trade_date,
+                trigger_strength=0.5, invalidation_condition="test",
+            )
+
+    # 构造 60 个样本: 30 normal + 30 crisis. normal 用 2024 年前半年, crisis 用后半年,
+    # 保证 regimes_by_date 的 date 键不冲突 (同一日期只属一个 regime).
+    tickers, trade_dates, regimes = [], [], {}
+    prices_by_ticker = {}
+    for i in range(60):
+        t = f"{i:06d}"
+        tickers.append(t)
+        if i < 30:
+            month = (i % 6) + 1  # 1-6 月 (normal)
+            regime = "normal"
+        else:
+            month = ((i - 30) % 6) + 7  # 7-12 月 (crisis)
+            regime = "crisis"
+        bdates = pd.bdate_range(f"2024-{month:02d}-01", periods=20)
+        trig_idx = 5
+        d = bdates[trig_idx].strftime("%Y%m%d")
+        trade_dates.append(d)
+        regimes[d] = regime
+        closes = [10.0] * 20
+        for j in range(trig_idx + 5, 20):
+            closes[j] = 12.0
+        prices_by_ticker[t] = pd.DataFrame({
+            "date": bdates, "close": closes,
+            "open": [10.0] * 20, "high": [12.0] * 20, "low": [10.0] * 20,
+            "pct_change": [0.0] * 20,
+        })
+
+    result = evaluate_setup(
+        setup=_AlwaysHitSetup(),
+        tickers=tickers, trade_dates=trade_dates,
+        prices_by_ticker=prices_by_ticker, fund_flow_by_ticker={},
+        industry_pct_by_date={d: 3.0 for d in trade_dates},
+        regimes_by_date=regimes,
+    )
+
+    rb = result["regime_breakdown"]
+    # 两层都有样本
+    assert rb["normal"]["n"] > 0, f"normal 层应有样本, got n={rb['normal']['n']}"
+    assert rb["crisis"]["n"] > 0, f"crisis 层应有样本, got n={rb['crisis']['n']}"
+    # regime_qualified 是 bool
+    assert isinstance(result["regime_qualified"], bool)
+
+
+def test_verdict_requires_regime_qualified():
+    """verdict = PASS 需要 IS + OOS + regime 三重达标 (§3.3).
+
+    构造少量命中 (n < 50) → regime 层不达标 → regime_qualified=False → verdict=FAIL,
+    即使分布数字好看也过不了 regime 门槛.
+    """
+    from src.screening.offensive.setups.base import Setup, DetectionResult
+
+    class _AlwaysHitSetup(Setup):
+        name = "fake_few_hits"
+        natural_horizon = 5
+
+        def detect(self, ticker, trade_date, context):
+            return DetectionResult(
+                hit=True, ticker=ticker, trade_date=trade_date,
+                trigger_strength=0.5, invalidation_condition="test",
+            )
+
+    # 只 1 个命中 → regime 层 n=1 < 50 → 不达标
+    bdates = pd.bdate_range("2024-01-01", periods=20)
+    d1 = bdates[5].strftime("%Y%m%d")  # 真实日期, 让 adjust_returns 能匹配
+    tickers = ["000001"]
+    prices = pd.DataFrame({
+        "date": bdates,
+        "close": [10.0] * 10 + [12.0] * 10,
+        "open": [10.0] * 20, "high": [12.0] * 20, "low": [10.0] * 20,
+        "pct_change": [0.0] * 20,
+    })
+    result = evaluate_setup(
+        setup=_AlwaysHitSetup(),
+        tickers=tickers, trade_dates=[d1],
+        prices_by_ticker={"000001": prices},
+        fund_flow_by_ticker={},
+        industry_pct_by_date={d1: 3.0},
+        regimes_by_date={d1: "normal"},
+    )
+    # n=1 远 < 50 → regime 层不达标 → regime_qualified=False → verdict=FAIL
+    assert result["regime_qualified"] is False
+    assert result["verdict"] == "FAIL"
 
 
 # ---------------------------------------------------------------------------
@@ -293,3 +462,44 @@ def test_render_phase0_report_fail_shows_stop(monkeypatch):
     report = sr.render_phase0_report(out)
     assert "FAIL" in report
     assert "0" in report  # n_fdr_significant=0
+
+
+# ---------------------------------------------------------------------------
+# load_industry_2d_pct — SW L1 行业指数 2 日累计涨幅加载
+# ---------------------------------------------------------------------------
+
+
+def test_load_industry_2d_pct_computes_2day_sum(tmp_path):
+    """load_industry_2d_pct 从行业指数 CSV 算 2 日 pct_chg 之和.
+
+    构造合成 CSV: 3 天 pct_chg = [1.0, 2.0, 3.0].
+    2 日累计: 第1天 nan (无前日), 第2天 1.0+2.0=3.0, 第3天 2.0+3.0=5.0.
+    """
+    import json
+    from scripts.setup_research import load_industry_2d_pct
+
+    # 写 _industry_codes.json 映射
+    (tmp_path / "_industry_codes.json").write_text(
+        json.dumps({"801010.SI": "农林牧渔"}), encoding="utf-8"
+    )
+    # 写行业指数 CSV
+    (tmp_path / "801010.SI.csv").write_text(
+        "trade_date,pct_chg\n20240102,1.0\n20240103,2.0\n20240104,3.0\n",
+        encoding="utf-8",
+    )
+
+    result = load_industry_2d_pct(cache_dir=tmp_path)
+    # 第1天无前日 → 不在结果 (nan 被过滤)
+    assert ("农林牧渔", "20240102") not in result
+    # 第2天: 1.0 + 2.0 = 3.0
+    assert abs(result[("农林牧渔", "20240103")] - 3.0) < 1e-9
+    # 第3天: 2.0 + 3.0 = 5.0
+    assert abs(result[("农林牧渔", "20240104")] - 5.0) < 1e-9
+
+
+def test_load_industry_2d_pct_empty_when_no_cache(tmp_path):
+    """cache_dir 不存在 _industry_codes.json → 返回空 dict."""
+    from scripts.setup_research import load_industry_2d_pct
+
+    result = load_industry_2d_pct(cache_dir=tmp_path)
+    assert result == {}

@@ -101,10 +101,10 @@ def test_paper_tracker_state_persists(tmp_path):
 def test_btst_t10_distribution_exists():
     dist = get_known_distribution("btst_breakout", 10)
     assert dist is not None
-    assert dist.n == 5374
-    assert dist.convexity_ratio > 1.0
+    assert dist.n == 915  # 条件4 (涨停前5日涨幅≤5%) 过滤后
+    assert dist.convexity_ratio > 1.5
     assert dist.winrate > 0.5
-    assert abs(dist.expected_return - 0.0257) < 0.001
+    assert abs(dist.expected_return - 0.0446) < 0.001
 
 
 def test_unknown_setup_returns_none():
@@ -373,7 +373,7 @@ def test_generate_daily_action_closes_matured_before_new_buys(tmp_path, monkeypa
     # 实际上 close_matured 接受 use_data_fetcher, 但 generate_daily_action 需要传它下去
 
     # 调用 — 即使新仓全不命中, 过期仓位应被平掉
-    actions = da.generate_daily_action(report_path=report_path, tracker=tracker)
+    actions = da.generate_daily_action(report_path=report_path, tracker=tracker, scan_mode="report")
 
     # close_matured 应已平掉过期仓位
     assert tracker.state.open_positions == 0, (
@@ -472,3 +472,45 @@ def test_render_removes_dead_paper_pnl_promise(tmp_path):
     tracker = PaperTracker(journal_dir=tmp_path)
     out = render_daily_action([], "20260620", tracker)
     assert "--paper-pnl" not in out, f"死承诺 --paper-pnl 仍在渲染: {out!r}"
+
+
+# ---------------------------------------------------------------------------
+# full_market 扫描模式 + 多 setup (v2: 全市场直扫, 不依赖 --auto 候选池)
+# ---------------------------------------------------------------------------
+
+
+def test_full_market_scan_does_not_require_report():
+    """full_market 模式不读 --auto 报告, 直接扫 price_cache 全市场.
+
+    第一性原理: --auto 的 score_b 候选池选"好股票", 凸性 setup 要"极端股票"
+    (涨停/超跌), 两者交集≈0. full_market 绕过候选池, 直扫全市场.
+    """
+    from src.screening.offensive.daily_action import generate_daily_action
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    tracker = PaperTracker()
+    # full_market 模式: 不传 report_path, 不应有异常
+    actions = generate_daily_action(tracker=tracker, scan_mode="full_market")
+    # 能跑完就说明不依赖报告 (trade_date 从 price_cache 推断)
+    assert isinstance(actions, list)
+
+
+def test_oversold_bounce_distribution_registered():
+    """OVERSOLD_BOUNCE_T5 已注册到 KNOWN_DISTRIBUTIONS."""
+    from src.screening.offensive.known_distributions import get_known_distribution
+
+    dist = get_known_distribution("oversold_bounce", 5)
+    assert dist is not None
+    assert dist.n >= 1000
+    assert dist.convexity_ratio > 1.5
+    assert dist.winrate > 0.5
+    assert dist.expected_return > 0.02  # +2% 以上
+
+
+def test_verified_setups_includes_both_btst_and_oversold():
+    """_VERIFIED_SETUPS 应含 BTST + OversoldBounce 两个 setup."""
+    from src.screening.offensive.daily_action import _VERIFIED_SETUPS
+
+    names = [cfg[0] for cfg in _VERIFIED_SETUPS]
+    assert "btst_breakout" in names
+    assert "oversold_bounce" in names

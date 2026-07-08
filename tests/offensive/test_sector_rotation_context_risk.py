@@ -47,6 +47,50 @@ def test_sector_rotation_miss_flow_negative():
     assert SectorRotationSetup().detect("X", "20260701", ctx).hit is False
 
 
+def test_sector_rotation_degraded_when_flow_missing():
+    """industry_net_flow 未注入 (无真实数据源) → 条件3 降级, hit 继续, degraded=True.
+
+    NS-17 同类: 此前条件3 是硬 miss (0.0 <= 0), 导致 SectorRotation 全量 0 hits.
+    现在缺数据时跳过条件3 但标 degraded, 让 setup 退化为 2 条件版参与 Phase 0.
+    """
+    ctx = {
+        "industry_2d_pct": 5.0,  # 行业 2 日涨 5% (条件1 ✅)
+        # industry_net_flow 不提供 → 降级
+        "stock_today_pct": 1.0,  # 龙头今日只涨 1% (< 2.5%, 条件2 ✅)
+        "prices": pd.DataFrame({"close": [10.0]}),
+    }
+    result = SectorRotationSetup().detect("X", "20260701", ctx)
+    assert result.hit is True  # 条件1+2 满足, hit 继续
+    assert result.degraded is True  # 条件3 跳过, 标降级
+    assert "industry_net_flow" in result.degradation_reason or "条件3" in result.degradation_reason
+
+
+def test_sector_rotation_degraded_zero_flow_treated_as_missing():
+    """industry_net_flow=0.0 (默认值) 也算"未注入", 触发降级而非硬 miss."""
+    ctx = {
+        "industry_2d_pct": 4.0,
+        "industry_net_flow": 0.0,  # 默认值, 等同未注入
+        "stock_today_pct": 0.5,
+        "prices": pd.DataFrame({"close": [10.0]}),
+    }
+    result = SectorRotationSetup().detect("X", "20260701", ctx)
+    assert result.hit is True
+    assert result.degraded is True
+
+
+def test_sector_rotation_not_degraded_when_flow_provided_positive():
+    """industry_net_flow 提供了正值 → 条件3 正常判定, 不降级."""
+    ctx = {
+        "industry_2d_pct": 5.0,
+        "industry_net_flow": 5_000_000,  # 真实正值
+        "stock_today_pct": 1.0,
+        "prices": pd.DataFrame({"close": [10.0]}),
+    }
+    result = SectorRotationSetup().detect("X", "20260701", ctx)
+    assert result.hit is True
+    assert result.degraded is False
+
+
 # ---- context_factors ----
 
 

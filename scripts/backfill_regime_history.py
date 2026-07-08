@@ -83,8 +83,39 @@ def _fetch_trading_days() -> list[str]:
 
 
 def _classify_one_day(trade_date: str) -> str | None:
-    """对单日跑 detect_market_state → regime_gate_level. 失败返回 None."""
+    """对单日跑 detect_market_state → regime_gate_level. 失败返回 None.
+
+    性能要点: detect_market_state 的 P2-9 macro 集成会调 cn_m2/cn_sf 等 6 个
+    宏观端点, 这些端点需要较高 tushare 积分, 我们账号无权限 → 每个报"请指定
+    正确的接口名"并重试 2 次, 单日浪费 ~7.4s. 而 regime_gate_level 完全由
+    index/breadth/limit/northbound/daily_basic 决定, macro 只是
+    state.macro_context 的附加注释 (market_state.py:93-106 是 best-effort).
+    本函数 monkey-patch fetch_macro_snapshot 返回空快照, 单日从 ~7.4s 降到
+    ~0.2s (1576 天从 ~5h 降到 ~5 分钟). 通过 REGIME_BACKFILL_MACRO=1 可关掉
+    此优化 (用于诊断 macro 是否影响结果).
+    """
+    import os
+
     from src.screening.market_state import detect_market_state
+
+    skip_macro = os.environ.get("REGIME_BACKFILL_MACRO", "0") != "1"
+    if skip_macro:
+        # 在函数内部 patch (仅影响 backfill 进程, 不污染其他模块的导入),
+        # 避免每次调用都重复 import.
+        from src.data.macro_data import MacroSnapshot, fetch_macro_snapshot as _orig
+
+        # NS-17 family: 不静默 — 在 logger 显式记录一次 patch 应用 (首次调用时).
+        import src.data.macro_data as _macro_mod
+
+        if not getattr(_classify_one_day, "_macro_patched", False):
+            logger.info(
+                "REGIME_BACKFILL_MACRO 未启用 → 跳过 cn_m2/cn_sf 等 6 个宏观端点 "
+                "(账号无权限, 每日省 ~7.4s; regime_gate_level 不受影响). "
+                "设 REGIME_BACKFILL_MACRO=1 可恢复 macro 调用 (诊断用)."
+            )
+            _classify_one_day._macro_patched = True  # type: ignore[attr-defined]
+
+        _macro_mod.fetch_macro_snapshot = lambda **_: MacroSnapshot()
 
     try:
         state = detect_market_state(trade_date)

@@ -28,6 +28,7 @@ class SectorRotationSetup(Setup):
         # 行业 2 日涨幅 + 行业资金流 + 该票今日涨幅 都从 context 传入
         industry_2d_pct = float(context.get("industry_2d_pct", 0.0) or 0.0)
         industry_flow = float(context.get("industry_net_flow", 0.0) or 0.0)
+        flow_provided = context.get("industry_net_flow") is not None and context.get("industry_net_flow") != 0.0
         stock_today_pct = float(context.get("stock_today_pct", 0.0) or 0.0)
 
         # 条件 1: 行业 2 日涨幅 > 3%
@@ -39,8 +40,18 @@ class SectorRotationSetup(Setup):
             return self._miss(ticker, trade_date)
 
         # 条件 3: 行业资金净流入 > 0
-        if industry_flow <= 0:
-            return self._miss(ticker, trade_date)
+        # 诚实降级 (NS-17 同类): industry_net_flow 当前无真实数据源 (tushare 无行业资金流端点,
+        # ftshare eastmoney_sector_flow 未接入). 此前条件3 是硬 miss (0.0 <= 0 → 永远 miss),
+        # 导致 SectorRotation 全量 0 hits. 现在: 数据缺失时跳过条件3 但标 degraded=True,
+        # 让 setup 退化为 2 条件版 (行业动量 + 龙头滞后), 命中集可参与 Phase 0. 数据接入后复跑.
+        degraded = False
+        degradation_reason = ""
+        if flow_provided:
+            if industry_flow <= 0:
+                return self._miss(ticker, trade_date)
+        else:
+            degraded = True
+            degradation_reason = "条件3 (行业资金净流入>0) 跳过: industry_net_flow 无真实数据源"
 
         prices: pd.DataFrame | None = context.get("prices")
         trigger_close = float(prices.iloc[-1]["close"]) if prices is not None and len(prices) > 0 else 0.0
@@ -60,6 +71,8 @@ class SectorRotationSetup(Setup):
                 "stock_today_pct": stock_today_pct,
                 "industry_net_flow": industry_flow,
             },
+            degraded=degraded,
+            degradation_reason=degradation_reason,
         )
 
     @staticmethod

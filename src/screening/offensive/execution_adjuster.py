@@ -50,6 +50,20 @@ def is_limit_up_unbuyable_next_day(prices: pd.DataFrame, trigger_idx: int) -> bo
     return next_open >= trigger_close * 1.095
 
 
+def _build_date_index(prices: pd.DataFrame) -> dict[str, int]:
+    """构建 {YYYYMMDD: row_index} 索引 (一次构建, 多次查).
+
+    性能修复: 此前 adjust_returns 在循环内对每个样本做 prices.copy() +
+    pd.to_datetime 全表转换 (29k 样本 × 1575 行 = 4500 万次操作, ~分钟级).
+    现在外部缓存索引, 定位触发日从 O(n) 全表扫降到 O(1) dict 查.
+    """
+    if hasattr(prices["date"].dt, "strftime"):
+        date_strs = prices["date"].dt.strftime("%Y%m%d")
+    else:
+        date_strs = prices["date"].astype(str).str.replace("-", "", regex=False)
+    return {d: i for i, d in enumerate(date_strs)}
+
+
 def adjust_returns(
     trigger_dates: list[str],
     tickers: list[str],
@@ -73,17 +87,18 @@ def adjust_returns(
     slippage = config.slippage_bps / 10_000.0
     out = np.full(len(trigger_dates), np.nan)
 
+    # 预建每个 ticker 的 date→idx 索引 (per ticker 只算一次, 后续 O(1) 查)
+    date_idx_cache: dict[str, dict[str, int]] = {}
+
     for i, (date_str, ticker) in enumerate(zip(trigger_dates, tickers)):
         prices = prices_by_ticker.get(ticker)
         if prices is None or len(prices) == 0:
             continue
-        prices = prices.copy()
-        prices["date_str"] = pd.to_datetime(prices["date"]).dt.strftime("%Y%m%d")
-        # 定位触发日
-        trigger_rows = prices[prices["date_str"] == date_str]
-        if len(trigger_rows) == 0:
+        if ticker not in date_idx_cache:
+            date_idx_cache[ticker] = _build_date_index(prices)
+        trigger_idx = date_idx_cache[ticker].get(date_str)
+        if trigger_idx is None:
             continue
-        trigger_idx = trigger_rows.index[0]
         exit_idx = trigger_idx + horizon
         if exit_idx >= len(prices):
             continue  # 数据不足

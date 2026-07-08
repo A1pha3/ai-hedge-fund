@@ -18,7 +18,7 @@ from src.screening.offensive.execution_adjuster import (
     adjust_returns,
 )
 from src.screening.offensive.setups.base import Setup
-from src.screening.offensive.statistics import Distribution, compute_distribution
+from src.screening.offensive.statistics import Distribution, compute_distribution, information_coefficient
 
 
 @dataclass(frozen=True)
@@ -54,21 +54,38 @@ def build_distribution(
     assert len(tickers) == len(trade_dates)
     config = config or ExecutionConfig()
 
-    # 1. 过滤命中样本
-    hit_tickers, hit_dates = [], []
+    # 1. 过滤命中样本 + 收集 trigger_strength (供 IC 计算)
+    hit_tickers, hit_dates, hit_strengths = [], [], []
     for ticker, date_str in zip(tickers, trade_dates):
         ctx = {"prices": prices_by_ticker.get(ticker), "regime": regimes_by_date.get(date_str, "normal")}
         result = setup.detect(ticker, date_str, ctx)
         if result.hit:
             hit_tickers.append(ticker)
             hit_dates.append(date_str)
+            hit_strengths.append(result.trigger_strength)
 
-    # 2. 每 horizon 算 execution-adjusted 分布
+    # 2. 每 horizon 算 execution-adjusted 分布 + IC (trigger_strength vs forward_return)
+    # IC 修复: 此前 compute_distribution 不接收 trigger_strength, IC 永远默认 0 →
+    # is_setup_qualified 的 IC>0.05 门槛永远 FAIL (dead code). 现在算真实 Spearman IC.
     horizon_dists: dict[int, Distribution] = {}
+    strengths_arr = np.asarray(hit_strengths, dtype=float) if hit_strengths else np.array([])
     for h in horizons:
         adj = adjust_returns(hit_dates, hit_tickers, prices_by_ticker, horizon=h, config=config)
-        finite = adj[np.isfinite(adj)]
-        horizon_dists[h] = compute_distribution(finite)
+        finite_mask = np.isfinite(adj)
+        finite = adj[finite_mask]
+        dist = compute_distribution(finite)
+        # 算 IC: 需要 trigger_strength 和 forward_return 对齐且都有限.
+        # adjust_returns 可能因涨停不可买返回 nan (剔除), 对应 strength 也要剔除.
+        if len(strengths_arr) == len(adj) and len(finite) >= 5:
+            aligned_strengths = strengths_arr[finite_mask]
+            ic = information_coefficient(aligned_strengths, finite)
+            dist = Distribution(
+                n=dist.n, winrate=dist.winrate, avg_gain=dist.avg_gain,
+                avg_loss=dist.avg_loss, convexity_ratio=dist.convexity_ratio,
+                expected_return=dist.expected_return, ci_low=dist.ci_low,
+                ci_high=dist.ci_high, ic=ic,
+            )
+        horizon_dists[h] = dist
 
     # 3. regime 众数 (假设批次内同 regime)
     if hit_dates:
