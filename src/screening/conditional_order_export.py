@@ -350,6 +350,50 @@ _ADAPTER_MAP = {
 }
 
 
+def _filter_orders_by_verdict_at_export(
+    conditional_orders: list[Any],
+    payload: Mapping[str, Any],
+) -> tuple[list[Any], int]:
+    """autodev-32 /loop session 4: export-time verdict filter safety net.
+
+    When CONDITIONAL_ORDER_FILTER_VERDICT=1, drop non-BUY-verdict conditional
+    orders so the broker CSV never contains them even if the report was
+    generated with the filter off. Returns (filtered_orders, dropped_count).
+    When the env var is off, returns the input unchanged with dropped=0.
+    """
+    from src.screening.conditional_order_advisor import _verdict_filter_enabled
+
+    if not _verdict_filter_enabled():
+        return conditional_orders, 0
+
+    from src.screening.investability import build_front_door_verdict
+
+    rec_by_ticker = {
+        str(r.get("ticker", "")).strip(): r
+        for r in (payload.get("recommendations") or [])
+        if isinstance(r, dict)
+    }
+    regime = str((payload.get("market_state") or {}).get("regime_gate_level", "normal"))
+    before = len(conditional_orders)
+    filtered = [
+        d for d in conditional_orders
+        if not isinstance(d, dict)
+        or str(build_front_door_verdict(
+            rec_by_ticker.get(str(d.get("ticker", "")).strip(), d),
+            market_regime=regime,
+        ).get("action", "AVOID")) == "BUY"
+    ]
+    dropped = before - len(filtered)
+    if dropped:
+        logger.info(
+            "conditional_order_export: CONDITIONAL_ORDER_FILTER_VERDICT dropped "
+            "%d non-BUY order(s) at export (%d kept)",
+            dropped,
+            len(filtered),
+        )
+    return filtered, dropped
+
+
 def export_conditional_orders(
     advices: Sequence[ConditionalOrderAdvice],
     broker: str,
@@ -582,33 +626,11 @@ def run_export_conditional_orders_cli(
     # autodev-32 /loop session 4: CONDITIONAL_ORDER_FILTER_VERDICT safety net.
     # Even if the report was generated with filter off, enforce BUY-only at
     # export time so the broker CSV never contains non-BUY conditional orders
-    # when the operator has opted in. Maps advice→rec by ticker for verdict.
-    from src.screening.conditional_order_advisor import _verdict_filter_enabled
-
-    if _verdict_filter_enabled():
-        from src.screening.investability import build_front_door_verdict
-
-        rec_by_ticker = {str(r.get("ticker", "")).strip(): r for r in (payload.get("recommendations") or []) if isinstance(r, dict)}
-        regime = str((payload.get("market_state") or {}).get("regime_gate_level", "normal"))
-        before = len(conditional_orders)
-        conditional_orders = [
-            d for d in conditional_orders
-            if not isinstance(d, dict)
-            or str(build_front_door_verdict(
-                rec_by_ticker.get(str(d.get("ticker", "")).strip(), d),
-                market_regime=regime,
-            ).get("action", "AVOID")) == "BUY"
-        ]
-        if before != len(conditional_orders):
-            logger.info(
-                "conditional_order_export: CONDITIONAL_ORDER_FILTER_VERDICT dropped "
-                "%d non-BUY order(s) at export (%d kept)",
-                before - len(conditional_orders),
-                len(conditional_orders),
-            )
-            if not conditional_orders:
-                print(f"{Fore.YELLOW}[Export] CONDITIONAL_ORDER_FILTER_VERDICT=1 过滤后无 BUY 条件单{Style.RESET_ALL}")
-                return 0
+    # when the operator has opted in.
+    conditional_orders, dropped = _filter_orders_by_verdict_at_export(conditional_orders, payload)
+    if dropped > 0 and not conditional_orders:
+        print(f"{Fore.YELLOW}[Export] CONDITIONAL_ORDER_FILTER_VERDICT=1 过滤后无 BUY 条件单{Style.RESET_ALL}")
+        return 0
 
     # 4. 导出
     ext = "json" if broker == "ths" else "csv"

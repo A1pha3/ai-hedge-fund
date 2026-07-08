@@ -756,3 +756,71 @@ def test_export_from_dicts_with_quantity_map(fixed_today: date) -> None:
     content = export_from_dicts(dicts, "huatai", quantity_map=quantity_map, today=fixed_today)
     assert "400" in content, f"000001 quantity=400 not in output:\n{content}"
     assert "100" in content, f"300750 quantity=100 not in output:\n{content}"
+
+
+# ===========================================================================
+# 13. autodev-32 /loop session 4: CONDITIONAL_ORDER_FILTER_VERDICT export-time filter
+# ===========================================================================
+
+
+def test_filter_orders_by_verdict_at_export_off(monkeypatch) -> None:
+    """When env var is off, export filter is a no-op (status quo)."""
+    from src.screening.conditional_order_export import _filter_orders_by_verdict_at_export
+
+    monkeypatch.delenv("CONDITIONAL_ORDER_FILTER_VERDICT", raising=False)
+    orders = [{"ticker": "000001"}, {"ticker": "000002"}]
+    payload = {"recommendations": [], "market_state": {}}
+    filtered, dropped = _filter_orders_by_verdict_at_export(orders, payload)
+    assert filtered == orders
+    assert dropped == 0
+
+
+def test_filter_orders_by_verdict_at_export_drops_non_buy(monkeypatch) -> None:
+    """When env var is on, non-BUY orders are dropped at export time."""
+    from src.screening.conditional_order_export import _filter_orders_by_verdict_at_export
+
+    monkeypatch.setenv("CONDITIONAL_ORDER_FILTER_VERDICT", "1")
+    orders = [
+        {"ticker": "000001", "name": "BUY-pick"},
+        {"ticker": "000002", "name": "AVOID-pick"},
+        {"ticker": "000003", "name": "HOLD-pick"},
+    ]
+    payload = {
+        "recommendations": [
+            {"ticker": "000001"}, {"ticker": "000002"}, {"ticker": "000003"},
+        ],
+        "market_state": {"regime_gate_level": "normal"},
+    }
+
+    def fake_verdict(rec, *, market_regime):
+        mapping = {"000001": "BUY", "000002": "AVOID", "000003": "HOLD"}
+        return {"action": mapping.get(rec["ticker"], "AVOID")}
+
+    monkeypatch.setattr(
+        "src.screening.investability.build_front_door_verdict",
+        fake_verdict,
+    )
+
+    filtered, dropped = _filter_orders_by_verdict_at_export(orders, payload)
+    assert dropped == 2
+    assert len(filtered) == 1
+    assert filtered[0]["ticker"] == "000001"
+
+
+def test_filter_orders_by_verdict_at_export_all_buy(monkeypatch) -> None:
+    """When all orders are BUY-verdict, filter keeps them all (dropped=0)."""
+    from src.screening.conditional_order_export import _filter_orders_by_verdict_at_export
+
+    monkeypatch.setenv("CONDITIONAL_ORDER_FILTER_VERDICT", "1")
+    orders = [{"ticker": "000001"}, {"ticker": "000002"}]
+    payload = {"recommendations": [{"ticker": "000001"}, {"ticker": "000002"}], "market_state": {}}
+
+    monkeypatch.setattr(
+        "src.screening.investability.build_front_door_verdict",
+        lambda rec, *, market_regime: {"action": "BUY"},
+    )
+
+    filtered, dropped = _filter_orders_by_verdict_at_export(orders, payload)
+    assert dropped == 0
+    assert len(filtered) == 2
+
