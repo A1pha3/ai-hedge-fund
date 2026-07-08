@@ -1493,19 +1493,53 @@ def _print_pick_entry_details(
 
 _GREEN_GRADE_THRESHOLD: float = 0.5  # mirror _composite_grade
 
+# autodev-32 /loop session 5: C-GREEN-GRADE-AVOID-MISMATCH Option A behind env var.
+# GRADE_RECOLOR_BY_VERDICT=1 recolors the WHOLE grade by verdict (BUY=green,
+# non-BUY=red/yellow) instead of appending ⚠ (Option B, default). Contract
+# §feature-flag permits default-off display-semantics changes.
+_GRADE_RECOLOR_ENV = "GRADE_RECOLOR_BY_VERDICT"
+_ANSI_RE = __import__("re").compile(r"\033\[[0-9;]*m")
+
+
+def _grade_recolor_enabled() -> bool:
+    """Whether grade should be recolored by verdict (Option A) vs ⚠ append (Option B)."""
+    import os
+
+    raw = os.environ.get(_GRADE_RECOLOR_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _recolor_grade_by_verdict(grade: str, verdict_action: str) -> str:
+    """Option A: strip grade's original color, re-apply verdict-based color.
+
+    BUY → keep original (green for A/B); non-BUY → red (AVOID/sell) or yellow (HOLD).
+    """
+    verdict_lower = (verdict_action or "").lower()
+    if verdict_lower == "buy":
+        return grade  # keep original grade color
+    bare = _ANSI_RE.sub("", grade)  # strip ANSI codes, leave the letter
+    if verdict_lower in ("avoid", "strong_sell", "sell", "bearish"):
+        return f"{Fore.RED}{bare}{Style.RESET_ALL}"
+    return f"{Fore.YELLOW}{bare}{Style.RESET_ALL}"
+
 
 def _grade_with_verdict_context(grade: str, verdict_action: str, composite_score: float) -> str:
     """当 composite_score ≥ 0.5 (green A/B grade) 但前门判决不是 BUY 时,
-    在 grade 后追加 ⚠ 警告, 消除视觉语义冲突 (e.g. green B + AVOID)。
+    消除视觉语义冲突 (e.g. green B + AVOID)。
 
-    Grade 本身保持纯 score 语义不变 — 本函数仅追加标注, 不改变 grade 含义。
+    两种模式 (contract §feature-flag, default off):
+    - Option B (default): 在 grade 后追加 ⚠ 警告, grade 本身保持纯 score 语义
+    - Option A (GRADE_RECOLOR_BY_VERDICT=1): 整个 grade 按 verdict 重新着色
     """
     if composite_score < _GREEN_GRADE_THRESHOLD:
         return grade
     verdict_lower = (verdict_action or "").lower()
     if verdict_lower == "buy":
         return grade
-    # 非 BUY 绿色 grade → 追加 ⚠ 警告
+    # Option A: recolor the whole grade by verdict
+    if _grade_recolor_enabled():
+        return _recolor_grade_by_verdict(grade, verdict_action)
+    # Option B (default): append ⚠ warning
     if verdict_lower in ("avoid", "strong_sell", "sell", "bearish"):
         return f"{grade}{Fore.RED}⚠{Style.RESET_ALL}"
     return f"{grade}{Fore.YELLOW}⚠{Style.RESET_ALL}"

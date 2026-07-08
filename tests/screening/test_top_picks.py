@@ -747,6 +747,85 @@ class TestGradeWithVerdictContext:
 
 
 # ---------------------------------------------------------------------------
+# _grade_with_verdict_context Option A — GRADE_RECOLOR_BY_VERDICT env var
+# (autodev-32 /loop session 5)
+# ---------------------------------------------------------------------------
+
+
+class TestGradeRecolorByVerdict:
+    """Option A: GRADE_RECOLOR_BY_VERDICT=1 recolors the whole grade by verdict."""
+
+    def test_recolor_disabled_by_default(self, monkeypatch) -> None:
+        """Without env var, Option B (⚠ append) is used (status quo)."""
+        from src.screening.top_picks import _grade_recolor_enabled
+
+        monkeypatch.delenv("GRADE_RECOLOR_BY_VERDICT", raising=False)
+        assert _grade_recolor_enabled() is False
+
+    def test_recolor_enabled_when_truthy(self, monkeypatch) -> None:
+        from src.screening.top_picks import _grade_recolor_enabled
+
+        for val in ("1", "true", "TRUE", "yes", "on"):
+            monkeypatch.setenv("GRADE_RECOLOR_BY_VERDICT", val)
+            assert _grade_recolor_enabled() is True, f"{val!r} should enable"
+
+    def test_recolor_avoid_red(self, monkeypatch) -> None:
+        """AVOID verdict recolors green grade to red (no ⚠ append)."""
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        monkeypatch.setenv("GRADE_RECOLOR_BY_VERDICT", "1")
+        grade = "\x1b[32mB\x1b[0m"  # green B
+        result = _grade_with_verdict_context(grade, "AVOID", 0.55)
+        # Should be red B, not green B + ⚠
+        assert "\x1b[31m" in result, "AVOID 应着红色"
+        assert "⚠" not in result, "Option A 不追加 ⚠"
+        assert "B" in result
+
+    def test_recolor_hold_yellow(self, monkeypatch) -> None:
+        """HOLD verdict recolors green grade to yellow."""
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        monkeypatch.setenv("GRADE_RECOLOR_BY_VERDICT", "1")
+        grade = "\x1b[32mA\x1b[0m"  # green A
+        result = _grade_with_verdict_context(grade, "HOLD", 0.75)
+        assert "\x1b[33m" in result, "HOLD 应着黄色"
+        assert "⚠" not in result
+
+    def test_recolor_buy_keeps_original(self, monkeypatch) -> None:
+        """BUY verdict keeps the original green grade (no recolor needed)."""
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        monkeypatch.setenv("GRADE_RECOLOR_BY_VERDICT", "1")
+        grade = "\x1b[32mA\x1b[0m"  # green A
+        result = _grade_with_verdict_context(grade, "BUY", 0.85)
+        assert result == grade, "BUY 判决保持原色"
+
+    def test_recolor_low_score_no_change(self, monkeypatch) -> None:
+        """Below green threshold, grade is unchanged regardless of env var."""
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        monkeypatch.setenv("GRADE_RECOLOR_BY_VERDICT", "1")
+        grade = "\x1b[33mC\x1b[0m"  # yellow C (below threshold)
+        result = _grade_with_verdict_context(grade, "AVOID", 0.35)
+        assert result == grade, "低于绿色阈值不 recolor"
+
+    def test_recolor_strips_original_color(self, monkeypatch) -> None:
+        """Option A must strip the original green color before applying verdict color.
+
+        Without stripping, the result would contain BOTH green and red codes
+        (green from _composite_grade, red from recolor) — visually ambiguous.
+        """
+        from src.screening.top_picks import _grade_with_verdict_context
+
+        monkeypatch.setenv("GRADE_RECOLOR_BY_VERDICT", "1")
+        grade = "\x1b[32mB\x1b[0m"  # green B
+        result = _grade_with_verdict_context(grade, "AVOID", 0.55)
+        # Should NOT contain the original green code (32) anymore
+        assert "\x1b[32m" not in result, "原绿色应被剥除, 避免双色歧义"
+        assert "\x1b[31m" in result, "应重新着红色"
+
+
+# ---------------------------------------------------------------------------
 # _print_pick_entry — T+30 winrate low-confidence flag (R51/R52 family)
 # ---------------------------------------------------------------------------
 
