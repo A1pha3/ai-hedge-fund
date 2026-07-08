@@ -1003,6 +1003,33 @@ def _refresh_daily_action_caches_for_auto(
         logger.debug("[Auto] daily-action cache refresh summary save failed: %s", exc)
 
 
+def _attach_freshness_check(trade_date: str, report_payload: dict) -> None:
+    """P6-1 + F5: 在 auto_screening 报告中附加数据源新鲜度信息.
+
+    Best-effort: ``run_auto_screening`` 必须继续渲染, 即使缓存数据库不可达.
+    这是对 ``_check_report_freshness`` (report 文件日期检查) 的补充 —
+    它检查底层缓存数据 (价格/资金流/新闻) 的实际新鲜度.
+    """
+    # Import lazily: data_freshness_guard 的 SQLite 依赖只在 auto 路径按需加载
+    from src.screening.data_freshness_guard import check_data_freshness
+
+    try:
+        freshness = check_data_freshness(trade_date=trade_date)
+    except Exception as exc:  # noqa: BLE001 - 新鲜度检查不应阻塞 auto 主流程
+        logger.warning("[Auto] data freshness check failed (非阻塞): %s", exc)
+        return
+
+    report_payload["data_freshness"] = freshness
+
+    # 控制台: 数据源过期时输出单行摘要 (非打断, 不改变返回码)
+    if freshness.get("fresh") is False:
+        summary = freshness.get("summary", "")
+        if summary:
+            from colorama import Fore, Style
+
+            print(f"  {Fore.YELLOW}⚠ 数据源新鲜度:{Style.RESET_ALL} {summary}")
+
+
 def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
     """一键跑全流程：全市场筛选 -> 因子评分 -> 信号融合 -> Top N 推荐。
 
@@ -1055,6 +1082,9 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         # 调用纯函数 — 复用 Web 端点的核心逻辑
         report_payload = compute_auto_screening_results(trade_date, top_n)
         _refresh_daily_action_caches_for_auto(trade_date, report_payload)
+
+        # P6-1 + F5: data freshness check — 报告新鲜度之外独立检查底层数据源 (缓存/资金流/新闻)
+        _attach_freshness_check(trade_date, report_payload)
 
         # 重建 CLI 展示所需的强类型对象 (top_results / market_state / industry_signals / decay_map)
         top_results, market_state, industry_signals, decay_map = _rebuild_cli_objects(report_payload)

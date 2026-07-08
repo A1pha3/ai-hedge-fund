@@ -61,3 +61,63 @@ def test_refresh_daily_action_caches_for_auto_respects_env_kill_switch(monkeypat
 
     assert called is False
     assert "daily_action_cache_refresh" not in payload
+
+
+def test_attach_freshness_check_adds_data_freshness_field(monkeypatch):
+    """_attach_freshness_check should attach data_freshness to report_payload."""
+    from src import main as main_mod
+
+    payload: dict = {"date": "20260708", "recommendations": []}
+
+    def fake_check(*, trade_date: str, **kwargs) -> dict:
+        assert trade_date == "20260708"
+        return {
+            "fresh": True,
+            "trade_date": "20260708",
+            "warnings": [],
+            "warning_count": 0,
+            "summary": "全部数据源新鲜",
+        }
+
+    monkeypatch.setattr("src.screening.data_freshness_guard.check_data_freshness", fake_check)
+
+    main_mod._attach_freshness_check("20260708", payload)
+    assert "data_freshness" in payload
+    assert payload["data_freshness"]["fresh"] is True
+
+
+def test_attach_freshness_check_handles_exception_gracefully(monkeypatch):
+    """If check_data_freshness raises, _attach_freshness_check should not crash."""
+    from src import main as main_mod
+
+    payload: dict = {"date": "20260708", "recommendations": []}
+
+    def fake_check(*, trade_date: str, **kwargs) -> dict:
+        raise RuntimeError("cache unreachable")
+
+    monkeypatch.setattr("src.screening.data_freshness_guard.check_data_freshness", fake_check)
+
+    main_mod._attach_freshness_check("20260708", payload)
+    assert "data_freshness" not in payload  # no field on failure
+
+
+def test_attach_freshness_check_stale_data_prints_warning(monkeypatch, capsys):
+    """If data is stale, _attach_freshness_check prints a warning line (not fatal)."""
+    from src import main as main_mod
+
+    payload: dict = {"date": "20260708", "recommendations": []}
+
+    def fake_check(*, trade_date: str, **kwargs) -> dict:
+        return {
+            "fresh": False,
+            "trade_date": "20260708",
+            "warnings": [{"source": "fund_flow", "label": "资金流向", "latest_date": "20260701", "stale_days": 7, "max_stale_days": 3, "severity": "HIGH", "message": "资金流数据 7 天未更新"}],
+            "warning_count": 1,
+            "summary": "资金流向: 7 天未更新",
+        }
+
+    monkeypatch.setattr("src.screening.data_freshness_guard.check_data_freshness", fake_check)
+
+    main_mod._attach_freshness_check("20260708", payload)
+    captured = capsys.readouterr()
+    assert "资金流向" in captured.out
