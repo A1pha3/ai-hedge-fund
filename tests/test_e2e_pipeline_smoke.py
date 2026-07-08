@@ -589,3 +589,47 @@ def test_e2e_default_branch_still_injects_score_decomposition(tmp_path, monkeypa
         decomp = rec["score_decomposition"]
         assert isinstance(decomp, dict)
         assert "base_contributions" in decomp
+
+
+# ---------------------------------------------------------------------------
+# 9. 回归: run_auto_screening 管线集成 data_freshness (P6-1 + F5)
+# ---------------------------------------------------------------------------
+
+
+def test_run_auto_screening_integrates_freshness_check(tmp_path, monkeypatch) -> None:
+    """run_auto_screening 的全流程中必须调用 _attach_freshness_check.
+
+    只验证集成 (被调用 + 写入 payload), 不验证 check_data_freshness 内部逻辑
+    (见 test_data_freshness_guard.py 和 test_main_auto_cache_refresh.py).
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TUSHARE_TOKEN", "test_token")
+    monkeypatch.setenv("DISABLE_RICH_LOGGING", "true")
+
+    from src import main as main_mod
+    from unittest.mock import MagicMock
+
+    # 静默所有 I/O 密集操作
+    monkeypatch.setattr(main_mod, "_try_acquire_pipeline_lock", lambda _path: 999)
+    monkeypatch.setattr(main_mod, "_refresh_daily_action_caches_for_auto", lambda *a, **kw: None)
+    monkeypatch.setattr(main_mod, "_enrich_recommendations_with_history", lambda *a, **kw: None)
+    monkeypatch.setattr(main_mod, "_handle_post_screening_tasks", lambda *a, **kw: None)
+    monkeypatch.setattr(main_mod, "_rebuild_cli_objects", lambda p: ([], None, [], {}))
+    monkeypatch.setattr(main_mod, "_print_table_block", lambda *a, **kw: None)
+    monkeypatch.setattr(main_mod, "_save_json_report", lambda *a, **kw: None)
+    monkeypatch.setattr(main_mod, "compute_auto_screening_results", lambda *a, **kw: {"date": "20260709", "recommendations": [], "market_state": {}})
+
+    # Spy on _attach_freshness_check
+    freshness_called = False
+    actual_payload: dict = {}
+
+    def _spy(trade_date: str, report_payload: dict) -> None:
+        nonlocal freshness_called, actual_payload
+        freshness_called = True
+        actual_payload.update(report_payload)
+
+    monkeypatch.setattr(main_mod, "_attach_freshness_check", _spy)
+
+    exit_code = main_mod.run_auto_screening("20260709", top_n=3)
+    assert exit_code == 0
+    assert freshness_called, "run_auto_screening 未调用 _attach_freshness_check"
