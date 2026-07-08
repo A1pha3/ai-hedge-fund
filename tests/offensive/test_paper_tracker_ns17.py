@@ -78,3 +78,27 @@ class TestPaperTrackerNS17Regression:
         state = tracker._state
         assert state.nav == 0.95
         assert state.peak == 1.0  # default
+
+
+def test_reconcile_open_positions_missing_journal_does_not_overwrite(tmp_path):
+    """When journal.jsonl is absent, _reconcile_open_positions should not
+    overwrite a valid persisted open_positions with 0.
+
+    Regression guard for R-PAPERTRACKER-MISSING-JOURNAL-STATE: PaperTracker
+    reconciled valid open_positions to zero when journal file was absent.
+    """
+    import json as _json
+    state_file = tmp_path / "portfolio_state.json"
+    state = {
+        "nav": 1.02, "peak": 1.05, "drawdown_pct": -0.03,
+        "open_positions": 5, "total_trades": 10,
+        "realized_pnl_pct": 0.05, "last_30d_pnl": [],
+    }
+    state_file.write_text(_json.dumps(state), encoding="utf-8")
+
+    # No journal.jsonl exists — the guard in _reconcile_open_positions
+    # must detect its absence and not overwrite open_positions.
+    tracker = PaperTracker(journal_dir=tmp_path)
+    assert tracker.state.open_positions == 5, (
+        f"Expected 5 (persisted), got {tracker.state.open_positions}"
+    )
