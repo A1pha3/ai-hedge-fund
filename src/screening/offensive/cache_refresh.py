@@ -409,6 +409,7 @@ def _latest_fund_flow_date(cache_dir: Path, ticker: str) -> str | None:
     try:
         df = pd.read_csv(path, dtype={"date": str}, usecols=["date"])
     except Exception:
+        logger.warning("cache_refresh: failed to read fund flow cache %s, will re-fetch", path, exc_info=True)
         return None
     if len(df) == 0:
         return None

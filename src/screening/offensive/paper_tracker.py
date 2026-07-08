@@ -77,7 +77,7 @@ class PaperTracker:
                 data = json.loads(self._state_path.read_text(encoding="utf-8"))
                 return PortfolioState(**data)
             except Exception:
-                pass
+                logger.warning("paper_tracker: failed to load portfolio state from %s, starting fresh", self._state_path, exc_info=True)
         return PortfolioState()
 
     def _save_state(self):
@@ -114,6 +114,8 @@ class PaperTracker:
         (BUY 按 (date, ticker) 去重, 与 close_matured 的 seen_buy_keys 同口径)。
         只校正内存 state + 持久化; 不修改 journal 原始记录 (审计完整性)。
         """
+        if not self._journal_path.exists():
+            return
         journal = self._load_journal()
         exit_keys: set[tuple[str, str]] = set()
         for rec in journal:

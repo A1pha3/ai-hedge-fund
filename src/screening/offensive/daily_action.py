@@ -83,6 +83,69 @@ def _env_setup_disable_list() -> set[str]:
     return disabled
 
 
+def _load_backtest_setup_performance() -> Any | None:
+    """Load local paper-backtest setup performance for operator disclosure.
+
+    This is best-effort disclosure only. ``--daily-action`` must still render if
+    the local backtest artifact is absent or corrupt.
+    """
+    try:
+        from src.screening.offensive.setup_performance import summarize_setup_performance
+
+        regimes_by_date: dict[str, str] = {}
+        regime_path = Path("data/reports/regime_history.json")
+        if regime_path.exists():
+            regimes_by_date = {
+                str(k): str(v)
+                for k, v in json.loads(regime_path.read_text(encoding="utf-8")).items()
+            }
+        return summarize_setup_performance(
+            Path("data/paper_trading_backtest/journal.jsonl"),
+            regimes_by_date=regimes_by_date,
+        )
+    except Exception:
+        logger.debug("daily-action setup performance disclosure unavailable", exc_info=True)
+        return None
+
+
+def _format_backtest_stats(stats: Any | None) -> str:
+    if stats is None or getattr(stats, "n", 0) <= 0:
+        return ""
+    return f" (真实回测 n={stats.n} winrate={stats.winrate:.0%} E={stats.expected_return:+.2%})"
+
+
+def _setup_policy_lines(disabled_setups: set[str] | None = None) -> list[str]:
+    """Render active/paused setup policy with first-principles backtest evidence."""
+    disabled = _env_setup_disable_list() if disabled_setups is None else set(disabled_setups)
+    report = _load_backtest_setup_performance()
+    by_setup = getattr(report, "by_setup", {}) if report is not None else {}
+
+    active_parts: list[str] = []
+    paused_parts: list[str] = []
+    for name, _cls, _horizon in _VERIFIED_SETUPS:
+        stats = by_setup.get(name)
+        part = f"{name}{_format_backtest_stats(stats)}"
+        if name in disabled:
+            if name == "oversold_bounce":
+                crisis = getattr(stats, "by_regime", {}).get("crisis") if stats is not None else None
+                crisis_note = (
+                    f"; crisis E={crisis.expected_return:+.2%}"
+                    if crisis is not None and getattr(crisis, "n", 0) > 0
+                    else ""
+                )
+                part = f"{part} — 默认暂停: 2026 实测 E≈0{crisis_note}"
+            paused_parts.append(part)
+        else:
+            active_parts.append(part)
+
+    lines: list[str] = []
+    if active_parts:
+        lines.append(f"启用 setup: {', '.join(active_parts)}")
+    if paused_parts:
+        lines.append(f"暂停 setup: {', '.join(paused_parts)}")
+    return lines
+
+
 def _regime_size_factor(regime: str, setup_name: str = "") -> float:
     """regime + setup → countercyclical 仓位放大系数 (按 setup 区分).
 
@@ -127,6 +190,7 @@ def _load_st_tickers() -> set[str]:
                 st_codes.add(str(row["ts_code"])[:6])
         return st_codes
     except Exception:
+        logger.warning("daily_action: failed to fetch ST tickers from tushare, ST filter offline", exc_info=True)
         return set()
 
 
@@ -137,6 +201,7 @@ def _compact_trade_date(value: object) -> str:
     try:
         return pd.to_datetime(text).strftime("%Y%m%d")
     except Exception:
+        logger.warning("daily_action: _compact_trade_date failed for %r, returning empty", text, exc_info=True)
         return ""
 
 
@@ -669,6 +734,8 @@ def render_daily_action(
         f"  组合净值: {state.nav:.3f}  回撤: {state.drawdown_pct:+.1%}  风控状态: {dd_tag}",
         f"  持仓数: {state.open_positions}  累计已实现: {state.realized_pnl_pct:+.2%}",
     ]
+    for policy_line in _setup_policy_lines():
+        lines.append(f"  {policy_line}")
 
     # 今日平仓摘要 (闭环核心: operator 看到 realized P&L 演进 + 止损触发披露)
     if closed_positions:
@@ -705,19 +772,23 @@ def render_daily_action(
             f"  {Fore.WHITE}{i}. {Fore.CYAN}{a.ticker}{Style.RESET_ALL}  [{a.setup}]  "
             f"仓位 {a.kelly_pct:.1%}  参考价(信号日收盘) ~{a.entry_price:.2f}"
         )
-        lines.append(f"     风险价位: 软止损 {a.soft_stop:.2f} (观察) / 硬止损 {a.hard_stop:.2f} (实际风控)  时间退出: {a.time_exit}")
+        lines.append(
+            f"     风险价位: 软止损 {a.soft_stop:.2f} (观察) / "
+            f"硬止损 {a.hard_stop:.2f} (披露/人工执行参考; paper P&L 不按止损出场)  "
+            f"时间退出: {a.time_exit}"
+        )
         lines.append(f"     先验分布: {a.distribution_summary}")
         lines.append(f"     {Fore.YELLOW}失效: {a.invalidation_condition}{Style.RESET_ALL}\n")
 
     lines.append(f"  {Fore.WHITE}术语说明:{Style.RESET_ALL}")
     lines.append(f"  - 软止损=历史平均亏损x1.5的观察线, 用于风险参考, 不是自动卖出触发")
-    lines.append(f"  - 硬止损=固定-8%的实际风控线; 触发硬止损或失效条件后, 当日收盘平")
+    lines.append(f"  - 硬止损=固定-8%的风控参考线; 止损触发只做披露, paper P&L 按 T+N 收盘回填")
     lines.append(f"  - 先验分布: n=历史样本数, winrate=历史胜率, cv=凸性比, E=历史平均收益")
 
     lines.append(f"\n  {Fore.WHITE}执行规则 (按规则执行):{Style.RESET_ALL}")
     lines.append(f"  - {buy_date_label} 开盘买入 (不追涨, 涨停买不到就放弃)")
     lines.append(f"  - 只执行预先写好的买入/止损/到期规则, 不临盘主观加仓/扛单")
-    lines.append(f"  - 触硬止损或失效条件 → 当日收盘平")
+    lines.append(f"  - 硬止损或失效条件触发 → 规则上应当日收盘处理; 当前 journal 只记录 stop_would_trigger")
     lines.append(f"  - 到期 (setup horizon) → 无条件平 (不恋战)")
     lines.append(f"  - 回撤 -15% 自动降仓 / -20% 清仓")
     # 闭环已自动: close_matured 在 generate_daily_action 开头平到期仓并回填 P&L.

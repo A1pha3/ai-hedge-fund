@@ -927,7 +927,8 @@ def test_render_daily_action_explains_stops_prior_and_rule_execution(tmp_path, m
     out = da.render_daily_action(actions, "20260708", tracker)
 
     assert "软止损=历史平均亏损x1.5的观察线" in out
-    assert "硬止损=固定-8%的实际风控线" in out
+    assert "硬止损=固定-8%的风控参考线" in out
+    assert "止损触发只做披露" in out
     assert "n=历史样本数" in out
     assert "winrate=历史胜率" in out
     assert "cv=凸性比" in out
@@ -935,6 +936,107 @@ def test_render_daily_action_explains_stops_prior_and_rule_execution(tmp_path, m
     assert "执行规则 (按规则执行)" in out
     assert "不临盘主观加仓/扛单" in out
     assert "移除情绪" not in out
+
+
+def test_render_daily_action_does_not_claim_stop_loss_changes_paper_pnl(tmp_path, monkeypatch):
+    """Stop-loss wording must match paper_tracker: disclosure only, P&L exits at T+N."""
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.daily_action import DailyAction
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    monkeypatch.setattr(da, "_setup_policy_lines", lambda: [], raising=False)
+    tracker = PaperTracker(journal_dir=tmp_path)
+    actions = [
+        DailyAction(
+            ticker="603778",
+            setup="btst_breakout",
+            action="BUY",
+            kelly_pct=0.10,
+            entry_price=10.92,
+            soft_stop=10.01,
+            hard_stop=10.05,
+            time_exit="T+10",
+            invalidation_condition="价格跌破 10.05 (-8% 止损线)",
+            distribution_summary="n=1762 winrate=54% cv=1.81 E=+3.4%",
+            reasoning="test",
+        )
+    ]
+
+    out = da.render_daily_action(actions, "20260708", tracker)
+
+    assert "止损触发只做披露" in out
+    assert "paper P&L 按 T+N 收盘回填" in out
+    assert "实际风控线" not in out
+    assert "触硬止损或失效条件 → 当日收盘平" not in out
+
+
+def test_render_daily_action_discloses_setup_policy_from_backtest(tmp_path, monkeypatch):
+    """daily-action must show which setup is active/paused and why."""
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+    from src.screening.offensive.setup_performance import SetupPerformance, SetupPerformanceReport
+
+    monkeypatch.delenv("DAILY_ACTION_DISABLED_SETUPS", raising=False)
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    monkeypatch.setattr(
+        da,
+        "_load_backtest_setup_performance",
+        lambda: SetupPerformanceReport(
+            total_exits=192,
+            by_setup={
+                "btst_breakout": SetupPerformance(
+                    n=133,
+                    winrate=0.68,
+                    expected_return=0.0815,
+                    avg_gain=0.0,
+                    avg_loss=0.0,
+                    by_regime={},
+                ),
+                "oversold_bounce": SetupPerformance(
+                    n=59,
+                    winrate=0.53,
+                    expected_return=0.0034,
+                    avg_gain=0.0,
+                    avg_loss=0.0,
+                    by_regime={
+                        "crisis": SetupPerformance(
+                            n=21,
+                            winrate=0.48,
+                            expected_return=-0.0115,
+                            avg_gain=0.0,
+                            avg_loss=0.0,
+                            by_regime={},
+                        )
+                    },
+                ),
+            },
+        ),
+        raising=False,
+    )
+
+    out = da.render_daily_action([], "20260708", PaperTracker(journal_dir=tmp_path))
+
+    assert "启用 setup: btst_breakout" in out
+    assert "n=133" in out
+    assert "E=+8.15%" in out
+    assert "暂停 setup: oversold_bounce" in out
+    assert "crisis E=-1.15%" in out
+
+
+def test_render_daily_action_setup_policy_respects_env_none(tmp_path, monkeypatch):
+    """DAILY_ACTION_DISABLED_SETUPS=none should remove the paused setup disclosure."""
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setenv("DAILY_ACTION_DISABLED_SETUPS", "none")
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    monkeypatch.setattr(da, "_load_backtest_setup_performance", lambda: None, raising=False)
+
+    out = da.render_daily_action([], "20260708", PaperTracker(journal_dir=tmp_path))
+
+    assert "启用 setup: btst_breakout, oversold_bounce" in out
+    assert "暂停 setup:" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -1287,6 +1389,82 @@ def test_record_buy_idempotent_across_instances(tmp_path):
     tracker2 = PaperTracker(journal_dir=tmp_path)
     tracker2.record_buy("20260706", "688629", "btst_breakout", 10, 50.0, 0.1, 45.0, 46.0, "dup")
     import json as _json
-    lines = [l for l in (tmp_path / "journal.jsonl").read_text().strip().split("\n") if l.strip()]
-    buys = [_json.loads(l) for l in lines if '"BUY"' in l]
+    lines = [line for line in (tmp_path / "journal.jsonl").read_text().strip().split("\n") if line.strip()]
+    buys = [_json.loads(line) for line in lines if '"BUY"' in line]
     assert len(buys) == 1, f"expected 1 BUY, got {len(buys)}"
+
+
+# ---- NS-17 silent-except regression guards (autodev-32) ----
+
+
+def test_compact_trade_date_invalid_logs_warning(caplog):
+    """_compact_trade_date with unparseable input logs warning (not silent)."""
+    from src.screening.offensive.daily_action import _compact_trade_date
+    import logging
+
+    caplog.set_level(logging.WARNING)
+    result = _compact_trade_date(None)
+    assert result == ""
+    assert any(
+        "daily_action" in r.name and "_compact_trade_date failed" in r.message
+        for r in caplog.records
+    ), f"Expected warning log, got: {[r.message for r in caplog.records]}"
+
+
+def test_compact_trade_date_edge_cases():
+    """_compact_trade_date handles valid inputs correctly."""
+    from src.screening.offensive.daily_action import _compact_trade_date
+
+    # Already compact
+    assert _compact_trade_date("20260709") == "20260709"
+    # Timestamp string
+    assert _compact_trade_date("2026-07-09") == "20260709"
+    # Datetime-like
+    assert _compact_trade_date("2026/07/09") == "20260709"
+    # Empty
+    assert _compact_trade_date("") == ""
+    # Invalid
+    assert _compact_trade_date("not-a-date") == ""
+
+
+def test_latest_fund_flow_date_corrupted_csv_logs_warning(caplog, tmp_path):
+    """_latest_fund_flow_date logs warning on corrupted CSV (not silent)."""
+    from src.screening.offensive.cache_refresh import _latest_fund_flow_date
+    import logging
+
+    # Create a corrupted CSV
+    cache_dir = tmp_path / "fund_flow"
+    cache_dir.mkdir()
+    csv_path = cache_dir / "000001.csv"
+    csv_path.write_text("broken,csv,content\nno,proper,columns", encoding="utf-8")
+
+    caplog.set_level(logging.WARNING)
+    result = _latest_fund_flow_date(cache_dir, "000001")
+    assert result is None  # graceful degradation
+    assert any(
+        "cache_refresh" in r.name and "failed to read fund flow cache" in r.message
+        for r in caplog.records
+    ), f"Expected warning log, got: {[r.message for r in caplog.records]}"
+
+
+def test_latest_fund_flow_date_missing_file_returns_none(tmp_path):
+    """Missing fund flow CSV returns None silently (no exception)."""
+    from src.screening.offensive.cache_refresh import _latest_fund_flow_date
+
+    cache_dir = tmp_path / "fund_flow"
+    cache_dir.mkdir()
+    result = _latest_fund_flow_date(cache_dir, "999999")
+    assert result is None
+
+
+def test_latest_fund_flow_date_valid_csv_returns_date(tmp_path):
+    """Healthy fund flow CSV returns max date."""
+    from src.screening.offensive.cache_refresh import _latest_fund_flow_date
+
+    cache_dir = tmp_path / "fund_flow"
+    cache_dir.mkdir()
+    csv_path = cache_dir / "000001.csv"
+    csv_path.write_text("date\n20260707\n20260708\n20260709", encoding="utf-8")
+
+    result = _latest_fund_flow_date(cache_dir, "000001")
+    assert result == "20260709"
