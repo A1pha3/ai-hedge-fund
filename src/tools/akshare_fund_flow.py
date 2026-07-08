@@ -12,6 +12,10 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# 网络/代理错误去重计数器 — 避免批量拉取时每只票都打完整 ProxyError 堆栈。
+# 首次打 WARNING (含原因), 后续同类静默计数, 与 akshare_market_helpers 的模式一致。
+_network_error_counts: dict[str, int] = {}
+
 # 中文列名 → 英文标准化 (akshare stock_individual_fund_flow 实际返回的列)
 _COLUMN_MAP: dict[str, str] = {
     "日期": "date",
@@ -63,7 +67,19 @@ def fetch_individual_fund_flow(ticker: str) -> pd.DataFrame:
     try:
         raw = ak.stock_individual_fund_flow(stock=ticker, market=market)
     except Exception as exc:
-        logger.warning("fund flow fetch failed for %s: %s", ticker, exc)
+        # 区分网络错误 (proxy/timeout, 去重避免刷屏) 和其他错误 (每次都打)。
+        exc_name = type(exc).__name__
+        is_network = exc_name in ("ProxyError", "ConnectionError", "TimeoutError", "SSLError") or "proxy" in str(exc).lower() or "timeout" in str(exc).lower()
+        if is_network:
+            # 去重: 同类网络错误只打第一次完整信息, 后续静默计数
+            _network_error_counts["network"] = _network_error_counts.get("network", 0) + 1
+            count = _network_error_counts["network"]
+            if count == 1:
+                logger.warning("akshare 资金流网络错误 (后续同类将静默): %s — %s", ticker, exc_name)
+            elif count % 50 == 0:
+                logger.info("akshare 资金流已累计 %d 次网络错误 (静默中)", count)
+        else:
+            logger.warning("akshare 资金流获取失败 %s: %s: %s", ticker, exc_name, exc)
         return pd.DataFrame(columns=list(_COLUMN_MAP.values()))
 
     if raw is None or len(raw) == 0:

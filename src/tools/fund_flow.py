@@ -18,6 +18,9 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# 双源均空去重: 批量拉取时北交所/新股会大量触发, 首次打 WARNING, 后续静默计数。
+_empty_source_counts: dict[str, int] = {}
+
 
 def fetch_individual_fund_flow(
     ticker: str,
@@ -50,11 +53,17 @@ def fetch_individual_fund_flow(
             logger.warning("[%s] %s fetcher 异常: %s", ticker, name, exc)
             df = pd.DataFrame()
         if df is not None and len(df) > 0:
-            logger.info("[%s] %s 命中 %d 行", ticker, name, len(df))
+            logger.debug("[%s] %s 命中 %d 行", ticker, name, len(df))
             return df
-        logger.info("[%s] %s 返回空, 尝试下一源", ticker, name)
+        logger.debug("[%s] %s 返回空, 尝试下一源", ticker, name)
 
-    logger.warning("[%s] 双源均失败, 返回空", ticker)
+    # 双源均空去重: 北交所/新股批量触发时, 首次 WARNING (含原因), 后续静默计数。
+    _empty_source_counts["dual_empty"] = _empty_source_counts.get("dual_empty", 0) + 1
+    count = _empty_source_counts["dual_empty"]
+    if count == 1:
+        logger.warning("[%s] 资金流双源均空 — tushare+akshare 均无数据 (可能是北交所/新股等数据源未覆盖, 或当日数据未就绪; 后续同类将静默)", ticker)
+    elif count % 50 == 0:
+        logger.info("资金流双源均空已累计 %d 次 (静默中)", count)
     return pd.DataFrame(columns=["date", "main_net_inflow"])
 
 

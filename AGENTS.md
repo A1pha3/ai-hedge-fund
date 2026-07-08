@@ -1,0 +1,101 @@
+# AGENTS.md — AI 助手项目指令
+
+本文件给 AI 助手（zcode / claude / codex 等）提供本项目的关键上下文。
+**修改代码前必读**，尤其是数据完整性部分。
+
+## 项目概览
+
+A 股每日选股系统。用户每天跑两个命令获取次日买入信号：
+```bash
+uv run python src/main.py --auto           # 收盘后跑全流程, ~4PM 后
+uv run python src/main.py --daily-action   # 读缓存, ~3 秒, 输出次日 BUY 信号
+```
+
+- **`--auto`**：四策略因子评分（trend/mean_reversion/fundamental/event_sentiment）→ score_b → investability 排序 → Top 10。存 `data/reports/auto_screening_YYYYMMDD.json`。
+- **`--daily-action`**：凸性 setup（BTST 涨停突破 T+10、OversoldBounce 超跌反弹 T+5）→ Kelly 仓位 → paper trading。**与 `--auto` 是两套独立系统**，只共享缓存数据。
+- 入口在 `src/cli/dispatcher.py`（命令分发），核心逻辑在 `src/screening/offensive/`。
+
+## 数据完整性（⚠ 最重要，曾因此误判）
+
+### 真实回测成交数据（验证 setup 有效性的**第一性原理依据**）
+
+**位置：`data/paper_trading_backtest/`**（不是 `data/paper_trading/`！）
+
+- `journal.jsonl`：403 条记录，含 **211 笔 BUY + 192 笔 EXIT**，覆盖 2026-01-15 → 2026-07-06。
+- `portfolio_state.json`：nav=2.10，realized_pnl=+110%（2026 上半年回测结果）。
+- **这是验证 setup 表现、regime 分层、止损逻辑的唯一真实数据源。**
+- ⚠️ **不要和 `data/paper_trading/`（运行时实例，0 笔 EXIT）混淆**。曾因此误判系统"0 笔成交"。
+
+### 2026 实测表现（截至 2026-07-09，源自 paper_trading_backtest）
+
+```
+BTST (n=133):           winrate=68%  E[r]=+8.15%   crisis=+16.93%/76%  risk_off=+8.87%/78%  normal=+6.29%/66%
+OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%(亏)  normal=+0.15%/51%
+```
+
+- **BTST 三个 regime 都赚钱**，crisis 最强 → crisis 加仓有数据支持。
+- **OversoldBounce 整体几乎不赚钱，crisis 亏钱** → 已默认暂停（见下）。
+- ⚠️ 样本期仅 6 个月，可能有样本期偏差；补全历史数据重跑前，这些结论是"当前最佳依据"而非定论。
+
+### price_cache（个股价格，回测/扫描数据源）
+
+**位置：`data/price_cache/*.csv`**（每股一个文件，6 位代码命名）
+
+- **深度限制：只有 6 个月**（2026-01-12 → 2026-07-08，约 117 行/股）。
+- 这导致 `scripts/setup_research.py` 直接跑会 **n=0**（IS/OOS 切分按 2020-2026，但价格数据只有 2026）。
+- `data/reports/setup_research/phase0_report_20260708.md` 声称的 n=1762 **无法从本地数据复现**——它在别处（更深历史）生成。
+- ⚠️ **引用 Phase 0 报告的结论前，先与 paper_trading_backtest 真实数据交叉验证。** 曾因盲信 Phase 0 实现了有害的统一 regime 加仓（OversoldBounce crisis 实测亏钱，却加仓 1.2×）。
+
+### 其它历史数据（深度较全）
+
+| 数据源 | 位置 | 深度 |
+|---|---|---|
+| regime_history | `data/reports/regime_history.json` | 2020-2026，1588 天 ✅ 完整 |
+| industry_index_cache | `data/industry_index_cache/*.csv` | 2020-2026，31 个行业，1577 行 ✅ 完整 |
+| fund_flow_cache | `data/fund_flow_cache/*.csv` | 370 文件，深度不一（部分仅 1 行）⚠️ |
+| tracking_history | `data/reports/tracking_history.json` | `--auto` 推荐追踪，跨日 T+1/T+3/T+5 收益 |
+
+## 当前选股系统状态（2026-07-09）
+
+### 凸性 setup（`--daily-action`）
+
+- **BTST 涨停突破（T+10）**：✅ 启用。crisis/risk_off 时加仓（`_regime_size_factor`，BTST crisis=1.2×）。
+- **OversoldBounce 超跌反弹（T+5）**：⏸️ **默认暂停**（2026 实测 E[r]≈0）。
+  - 控制：`DAILY_ACTION_DISABLED_SETUPS` env（默认含 `oversold_bounce`）。
+  - 恢复：`DAILY_ACTION_DISABLED_SETUPS=none`（补全历史数据重跑后再决定去留）。
+- Kelly 仓位：half-Kelly，单票上限 10%（regime 加仓后硬上限 12%），组合上限 60%。
+- 止损：⚠️ **当前是摆设**——`stop_would_have_triggered` 只进 reasoning 字符串，**不影响 realized P&L**（账面按 T+N close）。192 笔回测 0 笔触发（2026 行情好）。
+
+### 因子评分（`--auto`）
+
+- 四策略 → score_b → composite_score → investability 排序。
+- `profit_aware` 排序模式默认关闭（代码注释称 composite_score 有负预测值，但未经本环境验证）。
+
+## 已知数据/逻辑陷阱（避坑）
+
+1. **`data/paper_trading/` vs `data/paper_trading_backtest/`**：前者是运行时（0 EXIT），后者是回测（192 EXIT）。查成交数据用后者。
+2. **price_cache 只有 6 个月**：直接跑 `setup_research.py` 会 n=0。`phase0_report` 的数字不可复现。
+3. **止损是披露用的，不执行**：改风控逻辑时注意 `paper_tracker.py:308` 的 `stop_would_have_triggered` 不进 P&L。
+4. **`known_distributions.py` 是硬编码常量**（n=1762 等），无自动刷新，引用前需交叉验证。
+5. **`--daily-action` 扫描空间 = price_cache 文件名集合**：曾因只含候选池"好股票"而漏掉涨停小盘股（已用涨停注入修复，见 `cache_refresh.py`）。
+
+## 关键文件速查
+
+| 模块 | 文件 |
+|---|---|
+| 命令分发 | `src/cli/dispatcher.py`（`--daily-action` 在 `_resolve_daily_action`） |
+| 凸性 setup 主逻辑 | `src/screening/offensive/daily_action.py`（`generate_daily_action`） |
+| Setup 定义 | `src/screening/offensive/setups/btst_breakout.py`、`oversold_bounce.py` |
+| Kelly 仓位 | `src/screening/offensive/kelly.py` |
+| Paper tracker | `src/screening/offensive/paper_tracker.py`（成交记录、止损、drawdown） |
+| 缓存刷新 | `src/screening/offensive/cache_refresh.py`（`--auto` → `--daily-action` 桥梁） |
+| 回测框架 | `scripts/setup_research.py`（Phase 0，需深历史数据） |
+| 因子评分 | `src/screening/`（candidate_pool / strategy_scorer / signal_fusion / investability） |
+
+## 测试
+
+```bash
+uv run pytest tests/offensive/ -v          # 凸性 setup + paper tracker 全套
+uv run pytest tests/test_main_auto_cache_refresh.py -v  # auto 缓存刷新回归
+uv run pytest tests/offensive/test_daily_action_cache_refresh.py -v  # 涨停注入
+```

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import threading
+import time
 from collections.abc import Callable
 
 import pandas as pd
@@ -14,6 +17,47 @@ logger = logging.getLogger(__name__)
 _network_error_counts: dict[str, int] = {}
 
 
+# ---------------------------------------------------------------------------
+# 东财 push2* 反爬限速 (令牌桶)
+# ---------------------------------------------------------------------------
+# 东方财富 push2his/push2 接口对高频请求会触发反爬: 连接被重置 (RemoteDisconnected)
+# 或返回空响应 (Empty reply), 封禁持续数小时. --auto Step2 对 300 只候选 4 并发
+# 无间隔地打 push2his (~84 req/burst), 必然触发限流.
+#
+# 这里在 load_optional_market_dataframe (所有东财 akshare 调用的必经之路) 加一个
+# 线程安全的令牌桶: 强制两次东财请求之间至少间隔 MIN_INTERVAL 秒. 默认 0.5s (QPS~2),
+# 可通过 AKSHARE_EASTMONEY_MIN_INTERVAL 环境变量调节 (设 0 可关闭限速).
+class _EastMoneyRateLimiter:
+    """线程安全的请求间隔限速器 (minimum interval between requests)."""
+
+    def __init__(self, min_interval: float) -> None:
+        self._min_interval = min_interval
+        self._lock = threading.Lock()
+        self._last_request_time = 0.0
+
+    def acquire(self) -> None:
+        """阻塞直到距上次请求至少 min_interval 秒。"""
+        if self._min_interval <= 0:
+            return
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_request_time
+            if elapsed < self._min_interval:
+                time.sleep(self._min_interval - elapsed)
+            self._last_request_time = time.monotonic()
+
+
+def _get_eastmoney_rate_limiter() -> _EastMoneyRateLimiter:
+    global _eastmoney_rate_limiter
+    if _eastmoney_rate_limiter is None:
+        min_interval = float(os.environ.get("AKSHARE_EASTMONEY_MIN_INTERVAL", "0.5"))
+        _eastmoney_rate_limiter = _EastMoneyRateLimiter(min_interval)
+    return _eastmoney_rate_limiter
+
+
+_eastmoney_rate_limiter: _EastMoneyRateLimiter | None = None
+
+
 def load_optional_market_dataframe(
     *,
     is_available: bool,
@@ -25,6 +69,9 @@ def load_optional_market_dataframe(
     if not is_available:
         logger.warning("%s", unavailable_message)
         return None
+
+    # 东财反爬限速: 强制请求间隔, 避免 --auto 批量调用触发 RemoteDisconnected 封禁.
+    _get_eastmoney_rate_limiter().acquire()
 
     try:
         df = fetch_dataframe_fn()

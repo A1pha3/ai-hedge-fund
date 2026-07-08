@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
@@ -45,6 +46,58 @@ _VERIFIED_SETUPS = [
     ("oversold_bounce", OversoldBounceSetup, 5),
 ]
 
+# Countercyclical regime → 仓位放大系数 (按 setup 区分).
+# 第一性原理: 用 data/paper_trading_backtest (192 笔真实成交, 2026-01→07) 验证后:
+#   BTST:        crisis 76%/+16.93%  risk_off 78%/+8.87%  normal 66%/+6.29%  → crisis/risk_off 加仓
+#   OversoldBounce: crisis 48%/-1.15% (亏钱!)  normal 51%/+0.15%  → 不加仓 (整体 E[r]≈0)
+# 注意: 第二轮曾基于不可复现的 Phase 0 报告对 OversoldBounce 统一加仓, 但真实回测
+# 显示 OversoldBounce 在 crisis 亏钱 → 放大仓位反而有害. 现按 setup 区分.
+# ⚠️ 样本期仅 6 个月 (OversoldBounce crisis n=21), 可能有样本期偏差; 补全历史数据
+# 重跑后应复核. 默认对 OversoldBounce 不加仓是保守选择.
+_REGIME_SIZE_FACTORS_BY_SETUP = {
+    "btst_breakout": {"crisis": 1.2, "risk_off": 1.1, "normal": 1.0},
+    "oversold_bounce": {"crisis": 1.0, "risk_off": 1.0, "normal": 1.0},  # 实测无效, 不加仓
+}
+# regime 加仓的硬上限: 单票最多 _MAX_POSITION_PCT × 此倍数 (10% → 12%).
+# 即使 crisis 触发 1.2×, 防止仓位失控; 组合层 _MAX_PORTFOLO_PCT 仍兜底.
+_REGIME_POSITION_CAP_MULTIPLE = 1.2
+
+# 默认暂停的 setup (运行时不进 setup_configs, 不产生 BUY).
+# OversoldBounce: 2026 实测 E[r]≈0 (n=59), crisis 亏钱; 暂停避免占用仓位/资金流配额.
+# 可通过 DAILY_ACTION_DISABLED_SETUPS=none 恢复 (补全历史数据重跑后再决定去留).
+_DEFAULT_DISABLED_SETUPS = {"oversold_bounce"}
+
+
+def _env_setup_disable_list() -> set[str]:
+    """解析 DAILY_ACTION_DISABLED_SETUPS → 暂停的 setup 名集合.
+
+    默认含 ``_DEFAULT_DISABLED_SETUPS`` (当前为 oversold_bounce). env 可追加逗号分隔的
+    setup 名 (如 ``"oversold_bounce,btst_breakout"``); 特殊值 ``"none"`` 清空默认
+    (恢复全部 setup), 便于补全历史数据重跑后一键恢复验证.
+    """
+    disabled = set(_DEFAULT_DISABLED_SETUPS)
+    raw = os.environ.get("DAILY_ACTION_DISABLED_SETUPS", "")
+    if raw.strip().lower() == "none":
+        return set()
+    disabled.update(s.strip() for s in raw.split(",") if s.strip())
+    return disabled
+
+
+def _regime_size_factor(regime: str, setup_name: str = "") -> float:
+    """regime + setup → countercyclical 仓位放大系数 (按 setup 区分).
+
+    BTST 在 crisis/risk_off 实测表现强 (2026 回测) → 加仓捕获; OversoldBounce 实测
+    无效 (crisis 亏钱) → 不加仓. 可通过 env ``DAILY_ACTION_REGIME_SIZING=false`` 全局
+    关闭 (退化为全部 1.0). 未知 setup / 未知 regime 默认 1.0 (保守).
+    """
+    raw = os.environ.get("DAILY_ACTION_REGIME_SIZING")
+    if raw is not None and raw.strip().lower() in {"0", "false", "no", "off"}:
+        return 1.0
+    regime_key = str(regime or "").strip().lower()
+    setup_key = str(setup_name or "").strip()
+    by_regime = _REGIME_SIZE_FACTORS_BY_SETUP.get(setup_key, {})
+    return by_regime.get(regime_key, 1.0)
+
 
 def _load_st_tickers() -> set[str]:
     """加载 ST/*ST 股票集合 (6位代码), 用于 full_market 扫描时过滤.
@@ -55,8 +108,6 @@ def _load_st_tickers() -> set[str]:
 
     数据源: tushare stock_basic (name 含 ST). 失败时空集 (不阻塞).
     """
-    import os
-
     token = ""
     if os.path.exists(".env"):
         for line in Path(".env").read_text(encoding="utf-8").splitlines():
@@ -425,9 +476,15 @@ def generate_daily_action(
 
     store = FundFlowStore(cache_dir="data/fund_flow_cache/")
 
-    # 5. 预加载每个已验证 setup 的 known_distribution
+    # 5. 预加载每个已验证 setup 的 known_distribution (跳过被 DAILY_ACTION_DISABLED_SETUPS 暂停的)
+    # OversoldBounce 默认暂停: 2026 实测 E[r]≈0 (crisis 亏钱), 避免占用仓位/资金流配额.
+    # 可设 DAILY_ACTION_DISABLED_SETUPS=none 恢复 (补全历史数据重跑后再决定去留).
+    disabled_setups = _env_setup_disable_list()
     setup_configs = []
     for name, cls, horizon in _VERIFIED_SETUPS:
+        if name in disabled_setups:
+            logger.info("setup %s 已通过 DAILY_ACTION_DISABLED_SETUPS 暂停, 跳过", name)
+            continue
         dist = get_known_distribution(name, horizon)
         if dist is None:
             logger.warning("无 %s T+%d 已知分布, 跳过该 setup", name, horizon)
@@ -485,9 +542,15 @@ def generate_daily_action(
                 continue
 
             # Kelly 仓位 (组合总上限稍后在排序后统一分配)
+            # countercyclical regime 加仓 (按 setup 区分): BTST 在 crisis/risk_off 加仓
+            # (2026 实测 E[r]=+16.93%/+8.87%); OversoldBounce 不加仓 (实测 crisis 亏钱).
+            # drawdown 降仓与之叠加, drawdown 优先 (0.5×1.2=0.6 实际降仓).
+            # 单票硬上限 _MAX_POSITION_PCT×1.2 防失控.
+            regime_factor = _regime_size_factor(regime, setup_name)
             kelly = compute_kelly_size(known_dist, max_pct=_MAX_POSITION_PCT)
-            size_factor = 0.5 if dd_action == "decrease" else 1.0
-            kelly_pct = kelly.position_pct * size_factor
+            drawdown_factor = 0.5 if dd_action == "decrease" else 1.0
+            kelly_pct = kelly.position_pct * drawdown_factor * regime_factor
+            kelly_pct = min(kelly_pct, _MAX_POSITION_PCT * _REGIME_POSITION_CAP_MULTIPLE)
             if kelly_pct <= 0:
                 if scan_mode == "report":
                     tracker.record_skip(trade_date, ticker, setup_name, horizon, reasoning="Kelly 仓位为 0")
@@ -518,7 +581,7 @@ def generate_daily_action(
                 time_exit=risk.time_exit,
                 invalidation_condition=result.invalidation_condition,
                 distribution_summary=dist_summary,
-                reasoning=f"{setup_name} T+{horizon} 命中; half-Kelly {kelly_pct:.1%}; drawdown={dd_action}",
+                reasoning=f"{setup_name} T+{horizon} 命中; half-Kelly {kelly_pct:.1%}; regime={regime}×{regime_factor:.1f}; drawdown={dd_action}",
             )
             ranked_candidates.append(
                 (
@@ -550,7 +613,7 @@ def generate_daily_action(
             break
 
         action.kelly_pct = kelly_pct
-        action.reasoning = f"{action.setup} T+{horizon} 命中; half-Kelly {kelly_pct:.1%}; drawdown={dd_action}"
+        action.reasoning = f"{action.setup} T+{horizon} 命中; half-Kelly {kelly_pct:.1%}; regime={regime}×{_regime_size_factor(regime, action.setup):.1f}; drawdown={dd_action}"
         actions.append(action)
         portfolio_position_used += kelly_pct
 

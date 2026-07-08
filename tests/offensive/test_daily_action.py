@@ -1038,3 +1038,255 @@ def test_verified_setups_includes_both_btst_and_oversold():
     names = [cfg[0] for cfg in _VERIFIED_SETUPS]
     assert "btst_breakout" in names
     assert "oversold_bounce" in names
+
+
+# ---- regime 智能加仓 (countercyclical sizing, 按 setup 区分) ----
+
+def _run_daily_action_under_regime(tmp_path, monkeypatch, regime_gate_level: str, setup_name: str = "btst_breakout"):
+    """在指定 regime 下跑一次 generate_daily_action, 返回 (actions, tracker).
+
+    用 report 模式 + FakeSetup 确保命中一只票, 隔离 regime 对 Kelly 仓位的纯效应。
+    setup_name 控制 _VERIFIED_SETUPS 注册名 (决定按 setup 的 regime_factor).
+    默认用 btst_breakout (2026 实测 crisis 加仓有数据支持的 setup).
+    """
+    import pandas as pd
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+    from src.screening.offensive.setups.base import DetectionResult
+    from src.screening.offensive.statistics import Distribution
+
+    class FakeSetup:
+        def detect(self, ticker, trade_date, context):
+            return DetectionResult(
+                hit=True,
+                ticker=ticker,
+                trade_date=trade_date,
+                trigger_strength=1.0,
+                invalidation_condition="fake",
+            )
+
+    # Distribution 让原始 Kelly 较大 (>1.0), 从而触顶 _MAX_POSITION_PCT=0.10,
+    # 这样 regime_factor 的 1.2× 放大才能体现 (0.10 → 0.12).
+    dist = Distribution(
+        n=100, winrate=0.60, avg_gain=0.12, avg_loss=-0.06,
+        convexity_ratio=2.0, expected_return=0.05, ci_low=0.02, ci_high=0.08, ic=0.10,
+    )
+    monkeypatch.setattr(da, "_VERIFIED_SETUPS", [(setup_name, FakeSetup, 10)])
+    monkeypatch.setattr(da, "get_known_distribution", lambda name, horizon: dist)
+    # 清空禁用列表, 让指定 setup 能跑 (测试隔离)
+    monkeypatch.setattr(da, "_env_setup_disable_list", lambda: set())
+
+    report_path = tmp_path / "auto_screening_20260708.json"
+    report_path.write_text(
+        json.dumps({
+            "date": "20260708",
+            "recommendations": [{"ticker": "000001"}],
+            "market_state": {"regime_gate_level": regime_gate_level},
+        }),
+        encoding="utf-8",
+    )
+    prices = pd.DataFrame([{
+        "date": pd.Timestamp("2026-07-08"),
+        "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.0,
+        # BTST 预过滤要求 pct>=9.5 (涨停日); 用 setup 名决定 pct 避免 setup 名触发预过滤
+        "pct_change": 9.5 if setup_name == "btst_breakout" else 0.0,
+    }])
+    tracker = PaperTracker(journal_dir=tmp_path)
+    actions = da.generate_daily_action(
+        report_path=report_path,
+        tracker=tracker,
+        scan_mode="report",
+        price_loader=lambda ticker, report_date: prices.copy(),
+    )
+    return actions, tracker
+
+
+def test_regime_size_factor_btst_crisis_increases_position(tmp_path, monkeypatch):
+    """BTST + crisis regime 下仓位应放大 (2026 回测 E[r]=+16.93% 支持加仓)."""
+    monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
+    actions_crisis, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
+    assert len(actions_crisis) == 1
+    crisis_pct = actions_crisis[0].kelly_pct
+
+    actions_normal, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "normal", "btst_breakout")
+    assert len(actions_normal) == 1
+    normal_pct = actions_normal[0].kelly_pct
+
+    # BTST crisis 应放大 1.2×: normal=0.10 (触顶), crisis=0.12 (regime cap)
+    assert crisis_pct > normal_pct, f"crisis {crisis_pct} should exceed normal {normal_pct}"
+    assert abs(crisis_pct - 0.12) < 1e-6, f"crisis expected 0.12, got {crisis_pct}"
+    assert abs(normal_pct - 0.10) < 1e-6, f"normal expected 0.10, got {normal_pct}"
+
+
+def test_regime_size_factor_oversold_crisis_no_increase():
+    """OversoldBounce + crisis 不加仓 (2026 实测 crisis E[r]=-1.15% 亏钱).
+
+    单元测试 _regime_size_factor: OversoldBounce 在所有 regime 都返回 1.0.
+    (端到端测试需 31 行跌幅数据满足 OversoldBounce 预过滤, 此处用单元测试隔离 regime 逻辑.)
+    """
+    from src.screening.offensive.daily_action import _regime_size_factor
+    assert _regime_size_factor("crisis", "oversold_bounce") == 1.0
+    assert _regime_size_factor("risk_off", "oversold_bounce") == 1.0
+    assert _regime_size_factor("normal", "oversold_bounce") == 1.0
+
+
+def test_regime_size_factor_normal_no_change(tmp_path, monkeypatch):
+    """normal regime 下仓位不放大, 等于 _MAX_POSITION_PCT."""
+    monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
+    actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "normal", "btst_breakout")
+    assert len(actions) == 1
+    assert abs(actions[0].kelly_pct - 0.10) < 1e-6  # _MAX_POSITION_PCT, no regime boost
+
+
+def test_regime_sizing_disabled_via_env(tmp_path, monkeypatch):
+    """DAILY_ACTION_REGIME_SIZING=false 时, BTST crisis regime 也不放大仓位."""
+    monkeypatch.setenv("DAILY_ACTION_REGIME_SIZING", "false")
+    actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
+    assert len(actions) == 1
+    # env 关闭 → regime_factor=1.0 → 仓位退回 _MAX_POSITION_PCT (0.10), 不放大到 0.12
+    assert abs(actions[0].kelly_pct - 0.10) < 1e-6, f"expected 0.10, got {actions[0].kelly_pct}"
+
+
+def test_regime_factor_capped_at_hard_limit(tmp_path, monkeypatch):
+    """regime 放大不超 _MAX_POSITION_PCT × 1.2 硬上限, 即使 factor 更大."""
+    monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
+    # BTST crisis factor=1.2 → 0.10×1.2=0.12, 正好等于硬上限, 不应突破
+    actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
+    assert len(actions) == 1
+    from src.screening.offensive.daily_action import _MAX_POSITION_PCT, _REGIME_POSITION_CAP_MULTIPLE
+    hard_cap = _MAX_POSITION_PCT * _REGIME_POSITION_CAP_MULTIPLE
+    assert actions[0].kelly_pct <= hard_cap + 1e-9
+    assert abs(actions[0].kelly_pct - hard_cap) < 1e-6
+
+
+def test_regime_size_factor_per_setup_and_unknown_defaults():
+    """按 setup 区分的 regime factor + 未知 setup/regime 默认 1.0."""
+    from src.screening.offensive.daily_action import _regime_size_factor
+    # BTST: crisis/risk_off 加仓
+    assert _regime_size_factor("crisis", "btst_breakout") == 1.2
+    assert _regime_size_factor("risk_off", "btst_breakout") == 1.1
+    assert _regime_size_factor("normal", "btst_breakout") == 1.0
+    # OversoldBounce: 全部 1.0 (实测无效)
+    assert _regime_size_factor("crisis", "oversold_bounce") == 1.0
+    assert _regime_size_factor("normal", "oversold_bounce") == 1.0
+    # 未知 setup → 1.0 (保守)
+    assert _regime_size_factor("crisis", "unknown_setup") == 1.0
+    assert _regime_size_factor("crisis", "") == 1.0
+    # 未知 regime → 1.0
+    assert _regime_size_factor("unknown", "btst_breakout") == 1.0
+
+
+def test_regime_sizing_recorded_in_buy_reasoning(tmp_path, monkeypatch):
+    """BUY reasoning 应标注 regime×factor, 供后续 edge 衰减监测追溯."""
+    monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
+    actions, tracker = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
+    assert len(actions) == 1
+    assert "regime=crisis×1.2" in actions[0].reasoning
+
+
+# ---- OversoldBounce 暂停 (DAILY_ACTION_DISABLED_SETUPS) ----
+
+def test_oversold_bounce_disabled_by_default(monkeypatch):
+    """默认配置下 OversoldBounce 在禁用列表中 (2026 实测 E[r]≈0)."""
+    monkeypatch.delenv("DAILY_ACTION_DISABLED_SETUPS", raising=False)
+    from src.screening.offensive.daily_action import _env_setup_disable_list, _DEFAULT_DISABLED_SETUPS
+    disabled = _env_setup_disable_list()
+    assert "oversold_bounce" in disabled
+    assert "oversold_bounce" in _DEFAULT_DISABLED_SETUPS
+
+
+def test_oversold_bounce_reenabled_via_env_none(monkeypatch):
+    """DAILY_ACTION_DISABLED_SETUPS=none 清空默认, 恢复全部 setup."""
+    monkeypatch.setenv("DAILY_ACTION_DISABLED_SETUPS", "none")
+    from src.screening.offensive.daily_action import _env_setup_disable_list
+    assert _env_setup_disable_list() == set()
+
+
+def test_disabled_setup_appended_via_env(monkeypatch):
+    """DAILY_ACTION_DISABLED_SETUPS=btst_breakout 追加禁用 BTST (保留默认)."""
+    monkeypatch.setenv("DAILY_ACTION_DISABLED_SETUPS", "btst_breakout")
+    from src.screening.offensive.daily_action import _env_setup_disable_list
+    disabled = _env_setup_disable_list()
+    assert "btst_breakout" in disabled
+    assert "oversold_bounce" in disabled  # 默认仍保留
+
+
+# ---- paper_tracker 幂等自愈 ----
+
+def test_open_positions_self_heals_from_duplicated_buys(tmp_path):
+    """历史 journal 含重复 BUY 时, open_positions 应从去重真值自愈."""
+    journal = tmp_path / "journal.jsonl"
+    # 模拟真实污染: 688629 重复 4 次 + 1 unique open + 1 closed (EXIT.date = buy_date 约定)
+    import json as _json
+    records = [
+        {"date": "20260706", "ticker": "688629", "action": "BUY", "setup": "btst_breakout",
+         "horizon": 10, "kelly_pct": 0.1, "entry_price": 50.0, "soft_stop": 45.0,
+         "hard_stop": 46.0, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "dupe1"},
+        {"date": "20260706", "ticker": "688629", "action": "BUY", "setup": "btst_breakout",
+         "horizon": 10, "kelly_pct": 0.1, "entry_price": 50.0, "soft_stop": 45.0,
+         "hard_stop": 46.0, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "dupe2"},
+        {"date": "20260706", "ticker": "688629", "action": "BUY", "setup": "btst_breakout",
+         "horizon": 10, "kelly_pct": 0.1, "entry_price": 50.0, "soft_stop": 45.0,
+         "hard_stop": 46.0, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "dupe3"},
+        {"date": "20260706", "ticker": "688629", "action": "BUY", "setup": "btst_breakout",
+         "horizon": 10, "kelly_pct": 0.1, "entry_price": 50.0, "soft_stop": 45.0,
+         "hard_stop": 46.0, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "dupe4"},
+        {"date": "20260706", "ticker": "000559", "action": "BUY", "setup": "btst_breakout",
+         "horizon": 10, "kelly_pct": 0.1, "entry_price": 10.0, "soft_stop": 9.0,
+         "hard_stop": 9.2, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "unique"},
+        {"date": "20260706", "ticker": "002217", "action": "BUY", "setup": "oversold_bounce",
+         "horizon": 5, "kelly_pct": 0.1, "entry_price": 3.0, "soft_stop": 2.7,
+         "hard_stop": 2.76, "time_exit": "T+5", "invalidation_condition": "", "reasoning": "open"},
+    ]
+    journal.write_text("\n".join(_json.dumps(r) for r in records) + "\n", encoding="utf-8")
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    # 688629 去重=1 + 000559=1 + 002217=1 = 3 (无 EXIT)
+    assert tracker.state.open_positions == 3, f"expected 3, got {tracker.state.open_positions}"
+
+
+def test_open_positions_self_heal_subtracts_exits(tmp_path):
+    """有 EXIT 的仓位不计入 open_positions (EXIT.date = buy_date 约定)."""
+    import json as _json
+    journal = tmp_path / "journal.jsonl"
+    records = [
+        {"date": "20260706", "ticker": "000001", "action": "BUY"},
+        {"date": "20260706", "ticker": "000002", "action": "BUY"},
+        {"date": "20260706", "ticker": "000002", "action": "EXIT"},  # closed (buy_date 约定)
+    ]
+    journal.write_text("\n".join(_json.dumps(r) for r in records) + "\n", encoding="utf-8")
+    tracker = PaperTracker(journal_dir=tmp_path)
+    # 000001 open + 000002 closed = 1
+    assert tracker.state.open_positions == 1
+
+
+def test_open_positions_self_heal_persists_correction(tmp_path):
+    """自愈后的正确计数应持久化到 portfolio_state.json."""
+    import json as _json
+    journal = tmp_path / "journal.jsonl"
+    state = tmp_path / "portfolio_state.json"
+    # 预置一个污染的 state (open_positions=99)
+    state.write_text(_json.dumps({
+        "nav": 1.0, "peak": 1.0, "drawdown_pct": 0.0,
+        "open_positions": 99, "total_trades": 0, "realized_pnl_pct": 0.0, "last_30d_pnl": [],
+    }))
+    # journal 只有 1 条 BUY (真实持仓=1)
+    journal.write_text(_json.dumps({"date": "20260706", "ticker": "000001", "action": "BUY"}) + "\n")
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    assert tracker.state.open_positions == 1  # 自愈 99 → 1
+    persisted = _json.loads(state.read_text())
+    assert persisted["open_positions"] == 1  # 已持久化
+
+
+def test_record_buy_idempotent_across_instances(tmp_path):
+    """两个 PaperTracker 实例 (模拟两次进程) 对同一 (date, ticker) 不重复记录."""
+    tracker1 = PaperTracker(journal_dir=tmp_path)
+    tracker1.record_buy("20260706", "688629", "btst_breakout", 10, 50.0, 0.1, 45.0, 46.0, "test")
+    # 第二个实例读同一 journal (跨进程场景)
+    tracker2 = PaperTracker(journal_dir=tmp_path)
+    tracker2.record_buy("20260706", "688629", "btst_breakout", 10, 50.0, 0.1, 45.0, 46.0, "dup")
+    import json as _json
+    lines = [l for l in (tmp_path / "journal.jsonl").read_text().strip().split("\n") if l.strip()]
+    buys = [_json.loads(l) for l in lines if '"BUY"' in l]
+    assert len(buys) == 1, f"expected 1 BUY, got {len(buys)}"

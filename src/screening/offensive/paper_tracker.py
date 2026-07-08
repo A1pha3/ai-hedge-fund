@@ -58,6 +58,10 @@ class PaperTracker:
         self._state_path = self._dir / "portfolio_state.json"
         self._open_path = self._dir / "open_positions.json"
         self._state = self._load_state()
+        # 自愈 open_positions: 历史 journal 可能因旧版 record_buy 无幂等保护而含
+        # 重复 BUY 记录 (如 688629 被写 4 次), 导致持久化的 open_positions 计数虚高,
+        # 污染 drawdown 熔断判断。从 journal 真值 (去重 BUY - EXIT) 重算并校正。
+        self._reconcile_open_positions()
         # close_matured 最近一次平仓摘要 (供 render_daily_action 披露, 不持久化)
         self.last_closed_positions: list[dict[str, Any]] = []
         # generate_daily_action 最近一次实际扫描日期 (供 CLI 标题使用, 不持久化)
@@ -97,6 +101,43 @@ class PaperTracker:
     @property
     def state(self) -> PortfolioState:
         return self._state
+
+    def _reconcile_open_positions(self) -> None:
+        """从 journal 真值重算 open_positions, 自愈历史重复 BUY 导致的计数污染.
+
+        历史 journal 可能含重复 BUY 记录 (旧版 record_buy 无跨进程幂等保护时,
+        多次独立进程运行会重复写入同一 (date, ticker)), 导致持久化的
+        ``open_positions`` 虚高 → drawdown 熔断判断失真。
+
+        重算口径与 ``close_matured`` (line 244-259) 一致:
+            open_positions = 去重后 BUY 数 - EXIT 数
+        (BUY 按 (date, ticker) 去重, 与 close_matured 的 seen_buy_keys 同口径)。
+        只校正内存 state + 持久化; 不修改 journal 原始记录 (审计完整性)。
+        """
+        journal = self._load_journal()
+        exit_keys: set[tuple[str, str]] = set()
+        for rec in journal:
+            if rec.get("action") == "EXIT":
+                exit_keys.add((str(rec.get("date", "")), str(rec.get("ticker", ""))))
+        seen_buy_keys: set[tuple[str, str]] = set()
+        open_count = 0
+        for rec in journal:
+            if rec.get("action") != "BUY":
+                continue
+            key = (str(rec.get("date", "")), str(rec.get("ticker", "")))
+            if key in seen_buy_keys:
+                continue  # 去重: 历史 journal 重复 BUY 只计一次
+            seen_buy_keys.add(key)
+            if key not in exit_keys:
+                open_count += 1
+        if self._state.open_positions != open_count:
+            logger.info(
+                "paper_tracker: open_positions 自愈 %d → %d (journal 去重 BUY - EXIT)",
+                self._state.open_positions,
+                open_count,
+            )
+            self._state.open_positions = open_count
+            self._save_state()
 
     # ---- daily action journal ----
 

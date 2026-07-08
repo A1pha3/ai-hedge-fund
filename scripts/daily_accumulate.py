@@ -26,12 +26,20 @@ POWER_THRESHOLD = 317  # M8: 检测 11pp 差异 (80% power) 需 ~317/组
 
 
 def get_trade_date() -> str | None:
-    """获取今日 A 股交易日 (非交易日返回 None)."""
+    """获取 A 股交易日 (17:00 阈值: 未过17点取前一天作为基准).
+
+    资金流数据约 17:00 后才完成入库。凌晨/盘中跑时今日数据不存在,
+    用 _resolve_default_end_date 的 17:00 阈值取正确基准日, 再用
+    get_open_trade_dates 校验是否交易日。
+    """
     try:
         from src.tools.tushare_api import get_open_trade_dates
 
-        today = datetime.now().strftime("%Y%m%d")
-        dates = get_open_trade_dates(today, today)
+        # 17:00 阈值: 未过17点回退一天 (与 CLI --auto 的 _resolve_default_end_date 一致)
+        from src.cli.input import _resolve_default_end_date
+
+        base_date = _resolve_default_end_date().replace("-", "")
+        dates = get_open_trade_dates(base_date, base_date)
         return dates[0] if dates else None
     except Exception as exc:
         logger.warning("get_trade_date failed: %s", exc)

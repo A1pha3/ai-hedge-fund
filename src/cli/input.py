@@ -1,7 +1,8 @@
 import argparse
+import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import questionary
 from colorama import Fore, Style
@@ -86,21 +87,50 @@ def add_common_args(
     return parser
 
 
+def _resolve_default_end_date() -> str:
+    """数据就绪阈值: 未过 17:00 时默认取前一天, 过了 17:00 取当天。
+
+    A 股资金流 (tushare moneyflow / akshare push2his) 通常在收盘后 ~2 小时
+    (约 17:00) 才完成当日数据入库。在 17:00 之前查询当日数据会得到空结果,
+    导致 cache_refresh 报 "双源均失败"、筛选缺当日资金流信号。
+
+    当不显式指定 --end-date 时, 17:00 前自动回退一天, 避免查到不存在的当日数据;
+    17:00 后 (含) 取当天。非交易日 (周末/节假日) 回退一天不影响正确性 — 下游
+    build_candidate_pool / 数据查询会自然落到最近的交易日。
+
+    阈值可通过环境变量 DATA_READY_HOUR 覆盖 (默认 17)。
+
+    Returns:
+        YYYY-MM-DD 格式的默认结束日期
+    """
+    now = datetime.now()
+    try:
+        ready_hour = int(os.environ.get("DATA_READY_HOUR", "17"))
+    except ValueError:
+        ready_hour = 17
+    if now.hour < ready_hour:
+        return (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    return now.strftime("%Y-%m-%d")
+
+
 def add_date_args(parser: argparse.ArgumentParser, *, default_months_back: int | None = None) -> argparse.ArgumentParser:
     if default_months_back is None:
         parser.add_argument("--start-date", type=str, help="Start date (YYYY-MM-DD)")
-        parser.add_argument("--end-date", type=str, help="End date (YYYY-MM-DD)")
+        parser.add_argument("--end-date", type=str, help="End date (YYYY-MM-DD). Default: previous day if before 17:00, else today")
     else:
+        # end-date 无 argparse default → resolve_dates 里动态计算 (17:00 阈值)。
+        # 这样用户显式传 --end-date 时完全不受影响, 不传时走 _resolve_default_end_date。
         parser.add_argument(
             "--end-date",
             type=str,
-            default=datetime.now().strftime("%Y-%m-%d"),
-            help="End date in YYYY-MM-DD format",
+            default=None,
+            help="End date in YYYY-MM-DD format. Default: previous day if before 17:00, else today",
         )
+        default_end_for_start = _resolve_default_end_date()
         parser.add_argument(
             "--start-date",
             type=str,
-            default=(datetime.now() - relativedelta(months=default_months_back)).strftime("%Y-%m-%d"),
+            default=(datetime.strptime(default_end_for_start, "%Y-%m-%d") - relativedelta(months=default_months_back)).strftime("%Y-%m-%d"),
             help="Start date in YYYY-MM-DD format",
         )
     return parser
@@ -211,7 +241,9 @@ def resolve_dates(start_date: str | None, end_date: str | None, *, default_month
         except ValueError as e:
             raise ValueError("End date must be in YYYY-MM-DD format") from e
 
-    final_end = end_date or datetime.now().strftime("%Y-%m-%d")
+    # 17:00 阈值: 不传 --end-date 时, 未过 17:00 取前一天 (当日资金流数据未就绪)。
+    # 显式传 --end-date 时 end_date 非空, 完全尊重用户指定。
+    final_end = end_date or _resolve_default_end_date()
     if start_date:
         final_start = start_date
     else:

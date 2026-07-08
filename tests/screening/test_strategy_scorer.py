@@ -1477,3 +1477,66 @@ def test_light_weights_trend_dominates_reversed_mr() -> None:
     assert trend_w > mr_w, f"trend weight={trend_w} 必须 > MR={mr_w}. " f"MR 全 4 sub-factor 与 T+1 反向 (C225 IC=-0.128), 不应主导 light score."
     # 权重之和必须为 1.0 (light stage 只有这两个策略)
     assert mr_w + trend_w == 1.0, f"权重和必须为 1.0, got {mr_w + trend_w}"
+
+
+# ---------------------------------------------------------------------------
+# _load_daily_flow_proxy_ratio 重试测试 — akshare push2his 在 proxy 环境下偶发
+# ProxyError, get_money_flow 底层吞成 None. 重试避免资金流因子信号静默丢失.
+# ---------------------------------------------------------------------------
+
+
+def test_flow_proxy_retry_succeeds_after_empty(monkeypatch):
+    """前两次 get_money_flow 返回 None (proxy 抖动), 第三次成功 → 重试后返回有效值。"""
+    monkeypatch.setenv("AKSHARE_FLOW_MAX_RETRIES", "2")
+    monkeypatch.setenv("AKSHARE_FLOW_RETRY_BASE_DELAY", "0.01")
+
+    fake_df = pd.DataFrame({"主力净流入占比": [15.0]})
+    calls = []
+
+    def mock_flow(ticker):
+        calls.append(ticker)
+        if len(calls) < 3:
+            return None  # 模拟 proxy 失败被吞成 None
+        return fake_df
+
+    with patch.object(strategy_scorer_module, "get_money_flow", side_effect=mock_flow):
+        result = strategy_scorer_module._load_daily_flow_proxy_ratio("000021")
+
+    assert len(calls) == 3  # 1 初试 + 2 重试
+    assert result == 0.15  # 15% → 0.15
+
+
+def test_flow_proxy_retry_exhausted_returns_none(monkeypatch):
+    """持续返回 None → 重试耗尽后返回 None (不无限重试)。"""
+    monkeypatch.setenv("AKSHARE_FLOW_MAX_RETRIES", "2")
+    monkeypatch.setenv("AKSHARE_FLOW_RETRY_BASE_DELAY", "0.01")
+
+    calls = []
+
+    def mock_flow(ticker):
+        calls.append(ticker)
+        return None
+
+    with patch.object(strategy_scorer_module, "get_money_flow", side_effect=mock_flow):
+        result = strategy_scorer_module._load_daily_flow_proxy_ratio("000021")
+
+    assert len(calls) == 3  # MAX_RETRIES=2 → 共 3 次
+    assert result is None
+
+
+def test_flow_proxy_no_retry_on_first_success(monkeypatch):
+    """首次成功 → 不重试, 只调一次。"""
+    monkeypatch.setenv("AKSHARE_FLOW_MAX_RETRIES", "2")
+
+    fake_df = pd.DataFrame({"主力净流入占比": [-5.0]})
+    calls = []
+
+    def mock_flow(ticker):
+        calls.append(ticker)
+        return fake_df
+
+    with patch.object(strategy_scorer_module, "get_money_flow", side_effect=mock_flow):
+        result = strategy_scorer_module._load_daily_flow_proxy_ratio("000021")
+
+    assert len(calls) == 1
+    assert result == -0.05  # -5% → -0.05

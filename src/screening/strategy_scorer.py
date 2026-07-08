@@ -6,10 +6,11 @@ import concurrent.futures
 import logging
 import math
 import os
+import random
 from collections import defaultdict
 from datetime import datetime
 from statistics import median
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any
 
 import pandas as pd
@@ -654,7 +655,26 @@ def _extract_intraday_tick_net_flows(
 
 
 def _load_daily_flow_proxy_ratio(ticker: str) -> float | None:
-    money_flow = get_money_flow(ticker)
+    # akshare stock_individual_fund_flow 走 push2his.eastmoney.com, 该 CDN 在
+    # Clash/proxy 环境下偶发 ProxyError/RemoteDisconnected. get_money_flow 底层的
+    # load_optional_market_dataframe 把网络错误吞成 None — 直接返回 None 会让资金流
+    # 因子信号静默丢失, 影响打分. 这里对 None 结果重试, 绝大多数瞬时抖动能自愈.
+    max_retries = int(os.environ.get("AKSHARE_FLOW_MAX_RETRIES", "2"))
+    base_delay = float(os.environ.get("AKSHARE_FLOW_RETRY_BASE_DELAY", "1.0"))
+
+    money_flow = None
+    for attempt in range(max_retries + 1):
+        money_flow = get_money_flow(ticker)
+        if money_flow is not None and not money_flow.empty:
+            break
+        if attempt < max_retries:
+            delay = base_delay * (2 ** attempt) * (1 + random.random() * 0.3)
+            logger.debug(
+                "[flow_proxy] %s 资金流为空 (尝试 %d/%d), %.1fs 后重试",
+                ticker, attempt + 1, max_retries + 1, delay,
+            )
+            sleep(delay)
+
     if money_flow is None or money_flow.empty:
         return None
     ratio_values = money_flow.get("主力净流入占比")

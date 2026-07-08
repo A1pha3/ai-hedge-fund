@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logging
 import os
+import random
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -21,6 +23,17 @@ logger = logging.getLogger(__name__)
 
 # tushare amount 字段单位是万元 → 归一化为元 (×10000)
 _WAN_TO_YUAN = 10_000.0
+
+# 瞬时错误 (网络超时 / 连接中断 / 服务端 5xx) 才重试; 参数/权限/数据类错误不重试。
+_NON_RETRYABLE_EXCEPTIONS = ("TypeError", "ValueError", "AttributeError", "KeyError")
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """检测是否为限速错误 (HTTP 429 / msg 含 rate limit)。与 tushare_api 同族逻辑。"""
+    if type(exc).__name__ in {"HTTPError", "TooManyRequests", "RequestException"}:
+        return True
+    msg = str(exc).lower()
+    return any(kw in msg for kw in ("rate limit", "too many", "限速", "频率", "429"))
 
 
 def _load_token() -> str:
@@ -49,6 +62,58 @@ def _to_ts_code(ticker: str) -> str:
     if t.startswith(("4", "8", "92")):
         return f"{t}.BJ"
     return f"{t}.SZ"  # 默认深圳
+
+
+def _moneyflow_with_retry(pro, *, ts_code: str, start_date: str, end_date: str, ticker: str) -> pd.DataFrame | None:
+    """调用 pro.moneyflow, 带瞬时错误指数退避重试。
+
+    网络抖动 (超时 / 连接中断 / 服务端 5xx) 是资金流批量拉取时 tushare 返回空的主因 —
+    tushare client.py 的 query() 在 requests.post 失败时直接抛异常, 若无重试则整个
+    moneyflow 调用失败, fallback 到不稳定的 akshare push2his。本函数复用 tushare_api
+    的重试策略: 瞬时错误重试 TUSHARE_MAX_RETRIES 次, 指数退避 + jitter; 限速错误走
+    独立通道; 参数/权限错误不重试。
+    """
+    max_retries = int(os.environ.get("TUSHARE_MAX_RETRIES", "2"))
+    base_delay = float(os.environ.get("TUSHARE_RETRY_BASE_DELAY", "1.0"))
+    rate_limit_delay = float(os.environ.get("TUSHARE_RATE_LIMIT_DELAY", "30.0"))
+    rate_limit_max_retries = int(os.environ.get("TUSHARE_RATE_LIMIT_MAX_RETRIES", "2"))
+
+    transient_attempts = 0
+    rate_limit_attempts = 0
+    max_total = max_retries + rate_limit_max_retries + 1
+
+    for _ in range(max_total):
+        try:
+            return pro.moneyflow(ts_code=ts_code, start_date=start_date, end_date=end_date)
+        except Exception as exc:
+            exc_name = type(exc).__name__
+            if exc_name in _NON_RETRYABLE_EXCEPTIONS:
+                logger.warning("tushare moneyflow [%s] 不可重试错误: %s", ticker, exc)
+                return None
+            error_msg = str(exc)
+            if "请指定正确的接口名" in error_msg or "接口名" in error_msg:
+                logger.warning("tushare moneyflow [%s] 无权限 (不可重试): %s", ticker, error_msg)
+                return None
+
+            if _is_rate_limit_error(exc):
+                rate_limit_attempts += 1
+                if rate_limit_attempts > rate_limit_max_retries:
+                    logger.warning("tushare moneyflow [%s] 限速重试已用尽: %s", ticker, exc)
+                    return None
+                delay = rate_limit_delay * (1 + random.random() * 0.3)
+                logger.info("tushare moneyflow [%s] 限速 (尝试 %d/%d), %.1fs 后重试", ticker, rate_limit_attempts, rate_limit_max_retries, delay)
+                time.sleep(delay)
+                continue
+
+            transient_attempts += 1
+            if transient_attempts > max_retries:
+                logger.warning("tushare moneyflow [%s] 重试 %d 次仍失败: %s", ticker, max_retries, exc)
+                return None
+            delay = base_delay * (2 ** (transient_attempts - 1)) * (1 + random.random() * 0.3)
+            logger.info("tushare moneyflow [%s] 瞬时错误 (尝试 %d/%d), %.1fs 后重试: %s", ticker, transient_attempts, max_retries, delay, exc)
+            time.sleep(delay)
+
+    return None
 
 
 def fetch_individual_fund_flow_tushare(
@@ -83,7 +148,7 @@ def fetch_individual_fund_flow_tushare(
 
         ts.set_token(token)
         pro = ts.pro_api()
-        raw = pro.moneyflow(ts_code=_to_ts_code(ticker), start_date=start_date, end_date=end_date)
+        raw = _moneyflow_with_retry(pro, ts_code=_to_ts_code(ticker), start_date=start_date, end_date=end_date, ticker=ticker)
     except Exception as exc:
         logger.warning("tushare moneyflow fetch failed for %s: %s", ticker, exc)
         return pd.DataFrame(columns=["date", "main_net_inflow"])
