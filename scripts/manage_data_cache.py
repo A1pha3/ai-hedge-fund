@@ -4,6 +4,12 @@ import argparse
 import json
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load .env before the cache singleton initializes, so DISK_CACHE_PATH is honored
+# (aligns with src/main.py:84 — otherwise the script sees the HOME default path).
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 from src.data.enhanced_cache import clear_cache, get_cache_runtime_info
 
 

@@ -97,6 +97,10 @@ outputs/
 *.sqlite
 *.sqlite3
 
+# Persistent tushare cache (relocated via DISK_CACHE_PATH) — covers db + WAL sidecars
+# (*.sqlite matches the db but not cache.sqlite-wal / cache.sqlite-shm)
+data/cache/
+
 # Local git worktrees
 .worktrees/
 

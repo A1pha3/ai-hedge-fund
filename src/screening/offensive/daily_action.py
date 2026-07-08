@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,8 @@ logger = logging.getLogger(__name__)
 _MAX_POSITION_PCT = 0.10  # 单票 ≤ 10%
 _MAX_PORTFOLO_PCT = 0.60  # 组合 ≤ 60%
 _USE_TUSHARE_PRICES = True  # akshare 在本 env 代理封了
+_CN_TZ = timezone(timedelta(hours=8), "Asia/Shanghai")
+_ENTRY_WINDOW_CUTOFF = time(9, 30)
 
 # 已验证的 setup 配置 (Phase 0 通过的 setup + 对应 known_distribution)
 # (setup_name, setup_class, horizon)
@@ -102,6 +105,93 @@ def _resolve_trade_date_and_regime() -> tuple[str, str]:
         latest_date = pd.Timestamp.now().strftime("%Y%m%d")
     regime = regimes_by_date.get(latest_date, "normal")
     return latest_date, regime
+
+
+def _latest_auto_report_date() -> str:
+    """返回最新 auto_screening 报告日期; 缺失/解析失败时返回空字符串."""
+    try:
+        from src.screening.consecutive_recommendation import resolve_report_dir
+        from src.screening.data_quality_audit import _find_latest_report
+
+        latest = _find_latest_report(resolve_report_dir())
+        if latest is None:
+            return ""
+        try:
+            payload = json.loads(latest.read_text(encoding="utf-8"))
+            date = str(payload.get("date", "") or "").replace("-", "")
+            if len(date) == 8 and date.isdigit():
+                return date
+        except Exception:
+            pass
+        stem_date = latest.stem.replace("auto_screening_", "")[:8]
+        return stem_date if stem_date.isdigit() else ""
+    except Exception:
+        return ""
+
+
+def _weekday_next_trade_date(trade_date: str) -> str:
+    """Fallback next open day: weekday-only approximation, compact YYYYMMDD."""
+    text = str(trade_date or "").strip().replace("-", "")
+    if len(text) != 8 or not text.isdigit():
+        return ""
+    try:
+        day = datetime.strptime(text, "%Y%m%d")
+    except ValueError:
+        return ""
+    while True:
+        day += timedelta(days=1)
+        if day.weekday() < 5:
+            return day.strftime("%Y%m%d")
+
+
+def _resolve_next_trade_date(trade_date: str) -> str:
+    """Resolve the next A-share trading day after ``trade_date``.
+
+    Prefer the shared BTST SSE calendar resolver, then fall back to weekday-only
+    approximation so the CLI can still render when calendar APIs are unavailable.
+    """
+    try:
+        from src.paper_trading.btst_trade_calendar import resolve_next_trade_date_cn_sse_strict
+
+        return resolve_next_trade_date_cn_sse_strict(trade_date).next_trade_date_compact
+    except Exception:
+        logger.debug("next trade date calendar resolution failed for %s; using weekday fallback", trade_date, exc_info=True)
+        return _weekday_next_trade_date(trade_date)
+
+
+def _current_cn_datetime() -> datetime:
+    """Current wall time in the A-share operating timezone."""
+    return datetime.now(_CN_TZ)
+
+
+def _normalize_now_to_cn(now: datetime) -> datetime:
+    if now.tzinfo is None:
+        return now
+    return now.astimezone(_CN_TZ)
+
+
+def _missed_entry_window_reason(trade_date: str, *, now: datetime | None = None) -> str:
+    """Return a blocking reason when the signal's next-open entry window has passed."""
+    signal_date = str(trade_date or "").strip().replace("-", "")
+    if len(signal_date) != 8 or not signal_date.isdigit():
+        return ""
+
+    next_trade_date = _resolve_next_trade_date(signal_date)
+    if len(next_trade_date) != 8 or not next_trade_date.isdigit():
+        return ""
+
+    now_cn = _normalize_now_to_cn(now or _current_cn_datetime())
+    now_date = now_cn.strftime("%Y%m%d")
+    window_has_passed = now_date > next_trade_date or (now_date == next_trade_date and now_cn.time() >= _ENTRY_WINDOW_CUTOFF)
+    if not window_has_passed:
+        return ""
+
+    return (
+        f"信号日 {signal_date} 对应计划买入日 {next_trade_date} 开盘, "
+        f"当前时间 {now_cn.strftime('%Y%m%d %H:%M')} 已过 09:30 买入窗口已错过; "
+        "为避免盘中追单或事后补单, 本次不输出新 BUY. "
+        f"请在 {next_trade_date} 收盘数据完成后刷新缓存, 再生成下一交易日计划"
+    )
 
 
 @dataclass
@@ -195,6 +285,8 @@ def generate_daily_action(
     """
     if tracker is None:
         tracker = PaperTracker()
+    _load_prices = price_loader if price_loader is not None else _load_prices_for_ticker
+    tracker.last_action_stale_reason = ""
 
     # 1. 确定 trade_date + regime + 候选 ticker 列表
     if scan_mode == "report":
@@ -216,6 +308,20 @@ def generate_daily_action(
     else:
         # full_market: 全市场扫描 (不依赖 --auto 报告的 score_b 候选池)
         trade_date, regime = _resolve_trade_date_and_regime()
+        tracker.last_action_trade_date = trade_date
+        latest_report_date = _latest_auto_report_date()
+        if latest_report_date and trade_date and latest_report_date > trade_date:
+            tracker.last_action_stale_reason = (
+                f"price_cache 最新交易日 {trade_date} 落后于最新 --auto 报告 {latest_report_date}; "
+                "为避免使用过期信号, 本次不输出新 BUY"
+            )
+            tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=_load_prices)
+            return []
+        missed_window_reason = _missed_entry_window_reason(trade_date)
+        if missed_window_reason:
+            tracker.last_action_stale_reason = missed_window_reason
+            tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=_load_prices)
+            return []
         all_cache_tickers = sorted(p.stem for p in Path("data/price_cache").glob("*.csv"))
         # ST 过滤 (安全: --auto 候选池在 Layer A 过滤 ST, full_market 直扫需独立过滤)
         st_tickers = _load_st_tickers()
@@ -228,8 +334,10 @@ def generate_daily_action(
             scan_tickers = all_cache_tickers
         recs = []  # report 模式专用
 
+    tracker.last_action_trade_date = trade_date
+
     # 2. 先平到期仓位 + 回填 realized P&L → 驱动 drawdown (闭环核心)
-    tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=price_loader)
+    tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=_load_prices)
 
     # 3. drawdown 熔断
     dd_action = tracker.drawdown_action()
@@ -253,10 +361,7 @@ def generate_daily_action(
         logger.warning("无任何已验证 setup 的 known_distribution, --daily-action 无法出信号")
         return []
 
-    actions: list[DailyAction] = []
-    portfolio_position_used = 0.0
-    _load_prices = price_loader if price_loader is not None else _load_prices_for_ticker
-
+    ranked_candidates: list[tuple[float, float, float, int, DailyAction]] = []
     for ticker in scan_tickers:
         if not ticker:
             continue
@@ -294,15 +399,13 @@ def generate_daily_action(
                     tracker.record_skip(trade_date, ticker, setup_name, horizon, reasoning=f"未触发 (pct={pct:.1f}%)")
                 continue
 
-            # Kelly 仓位
+            # Kelly 仓位 (组合总上限稍后在排序后统一分配)
             kelly = compute_kelly_size(known_dist, max_pct=_MAX_POSITION_PCT)
             size_factor = 0.5 if dd_action == "decrease" else 1.0
             kelly_pct = kelly.position_pct * size_factor
-            if portfolio_position_used + kelly_pct > _MAX_PORTFOLO_PCT:
-                kelly_pct = max(0, _MAX_PORTFOLO_PCT - portfolio_position_used)
             if kelly_pct <= 0:
                 if scan_mode == "report":
-                    tracker.record_skip(trade_date, ticker, setup_name, horizon, reasoning="组合仓位已满")
+                    tracker.record_skip(trade_date, ticker, setup_name, horizon, reasoning="Kelly 仓位为 0")
                 continue
 
             # 风险计划
@@ -332,22 +435,52 @@ def generate_daily_action(
                 distribution_summary=dist_summary,
                 reasoning=f"{setup_name} T+{horizon} 命中; half-Kelly {kelly_pct:.1%}; drawdown={dd_action}",
             )
-            actions.append(action)
-            portfolio_position_used += kelly_pct
-
-            tracker.record_buy(
-                trade_date=trade_date,
-                ticker=ticker,
-                setup=setup_name,
-                horizon=horizon,
-                entry_price=entry_price,
-                kelly_pct=kelly_pct,
-                soft_stop=soft_stop_price,
-                hard_stop=hard_stop_price,
-                invalidation=result.invalidation_condition,
-                reasoning=action.reasoning,
+            ranked_candidates.append(
+                (
+                    float(known_dist.expected_return),
+                    float(result.trigger_strength),
+                    float(known_dist.convexity_ratio),
+                    horizon,
+                    action,
+                )
             )
             break  # 同票只取第一个命中的 setup (避免重复仓位)
+
+    ranked_candidates.sort(
+        key=lambda item: (
+            -item[0],
+            -item[1],
+            -item[2],
+            item[4].ticker,
+        )
+    )
+
+    actions: list[DailyAction] = []
+    portfolio_position_used = 0.0
+    for _expected_return, _trigger_strength, _convexity, horizon, action in ranked_candidates:
+        kelly_pct = action.kelly_pct
+        if portfolio_position_used + kelly_pct > _MAX_PORTFOLO_PCT:
+            kelly_pct = max(0.0, _MAX_PORTFOLO_PCT - portfolio_position_used)
+        if kelly_pct <= 0:
+            break
+
+        action.kelly_pct = kelly_pct
+        action.reasoning = f"{action.setup} T+{horizon} 命中; half-Kelly {kelly_pct:.1%}; drawdown={dd_action}"
+        actions.append(action)
+        portfolio_position_used += kelly_pct
+
+        tracker.record_buy(
+            trade_date=trade_date,
+            ticker=action.ticker,
+            setup=action.setup,
+            horizon=horizon,
+            entry_price=action.entry_price,
+            kelly_pct=kelly_pct,
+            soft_stop=action.soft_stop,
+            hard_stop=action.hard_stop,
+            invalidation=action.invalidation_condition,
+            reasoning=action.reasoning,
+        )
 
     return actions
 
@@ -379,9 +512,12 @@ def render_daily_action(
         "decrease": f"{Fore.YELLOW}-15%降仓{Style.RESET_ALL}",
         "liquidate": f"{Fore.RED}-20%清仓{Style.RESET_ALL}",
     }[dd]
+    next_trade_date = _resolve_next_trade_date(trade_date)
+    buy_date_label = next_trade_date or "下一交易日"
 
     lines = [
-        f"\n{Fore.CYAN}{Style.BRIGHT}📋 今日机械动作 — {trade_date} (Phase A paper trading){Style.RESET_ALL}",
+        f"\n{Fore.CYAN}{Style.BRIGHT}📋 机械交易计划 — 信号日: {trade_date} (Phase A paper trading){Style.RESET_ALL}",
+        f"  计划买入日: {buy_date_label}  执行价口径: {buy_date_label} 开盘; 当前展示价为信号日收盘参考价",
         f"  组合净值: {state.nav:.3f}  回撤: {state.drawdown_pct:+.1%}  风控状态: {dd_tag}",
         f"  持仓数: {state.open_positions}  累计已实现: {state.realized_pnl_pct:+.2%}",
     ]
@@ -401,6 +537,12 @@ def render_daily_action(
                 f"exit ~{c.get('exit_price', 0.0):.2f}{stop_flag}"
             )
 
+    stale_reason = getattr(tracker, "last_action_stale_reason", "")
+    if stale_reason:
+        lines.append(f"\n  {Fore.RED}⚠ 数据滞后 — {stale_reason}{Style.RESET_ALL}")
+        lines.append(f"  {Fore.YELLOW}本次不输出新 BUY; 请先刷新 data/price_cache / fund_flow_cache 后重跑。{Style.RESET_ALL}")
+        return "\n".join(lines)
+
     if dd == "liquidate":
         lines.append(f"\n  {Fore.RED}⚠ DRAWDOWN 熔断 (-20%) — 不出新仓, 平掉所有持仓{Style.RESET_ALL}")
         return "\n".join(lines)
@@ -409,19 +551,28 @@ def render_daily_action(
         lines.append(f"\n  {Fore.YELLOW}今日无凸性 setup 命中 (空仓等待){Style.RESET_ALL}")
         return "\n".join(lines)
 
-    lines.append(f"\n  {Fore.GREEN}今日 BUY ({len(actions)} 只):{Style.RESET_ALL}\n")
+    lines.append(f"\n  {Fore.GREEN}计划 BUY ({len(actions)} 只, {buy_date_label} 开盘执行):{Style.RESET_ALL}\n")
     for i, a in enumerate(actions, 1):
-        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{a.ticker}{Style.RESET_ALL}  [{a.setup}]  仓位 {a.kelly_pct:.1%}  入场 ~{a.entry_price:.2f}")
-        lines.append(f"     止损: 软 {a.soft_stop:.2f} / 硬 {a.hard_stop:.2f}  时间退出: {a.time_exit}")
+        lines.append(
+            f"  {Fore.WHITE}{i}. {Fore.CYAN}{a.ticker}{Style.RESET_ALL}  [{a.setup}]  "
+            f"仓位 {a.kelly_pct:.1%}  参考价(信号日收盘) ~{a.entry_price:.2f}"
+        )
+        lines.append(f"     风险价位: 软止损 {a.soft_stop:.2f} (观察) / 硬止损 {a.hard_stop:.2f} (实际风控)  时间退出: {a.time_exit}")
         lines.append(f"     先验分布: {a.distribution_summary}")
         lines.append(f"     {Fore.YELLOW}失效: {a.invalidation_condition}{Style.RESET_ALL}\n")
 
-    lines.append(f"  {Fore.WHITE}执行规则 (移除情绪):{Style.RESET_ALL}")
-    lines.append(f"  - 次日开盘买入 (不追涨, 涨停买不到就放弃)")
+    lines.append(f"  {Fore.WHITE}术语说明:{Style.RESET_ALL}")
+    lines.append(f"  - 软止损=历史平均亏损x1.5的观察线, 用于风险参考, 不是自动卖出触发")
+    lines.append(f"  - 硬止损=固定-8%的实际风控线; 触发硬止损或失效条件后, 当日收盘平")
+    lines.append(f"  - 先验分布: n=历史样本数, winrate=历史胜率, cv=凸性比, E=历史平均收益")
+
+    lines.append(f"\n  {Fore.WHITE}执行规则 (按规则执行):{Style.RESET_ALL}")
+    lines.append(f"  - {buy_date_label} 开盘买入 (不追涨, 涨停买不到就放弃)")
+    lines.append(f"  - 只执行预先写好的买入/止损/到期规则, 不临盘主观加仓/扛单")
     lines.append(f"  - 触硬止损或失效条件 → 当日收盘平")
     lines.append(f"  - 到期 (setup horizon) → 无条件平 (不恋战)")
     lines.append(f"  - 回撤 -15% 自动降仓 / -20% 清仓")
     # 闭环已自动: close_matured 在 generate_daily_action 开头平到期仓并回填 P&L.
     # 此前写 "30 天后用 --paper-pnl 复盘" 是死承诺 (该命令从未实现).
-    lines.append(f"\n  {Fore.WHITE}已写入 paper journal (T+10 到期自动平仓 + 回填 realized P&L){Style.RESET_ALL}")
+    lines.append(f"\n  {Fore.WHITE}已写入 paper journal (按各 setup horizon 到期自动平仓 + 回填 realized P&L){Style.RESET_ALL}")
     return "\n".join(lines)

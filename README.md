@@ -253,6 +253,8 @@ You can also save the aggregated result:
 
 Repeated stock-selection, replay, and backtesting windows often reuse the same Tushare and AKShare payloads. The project now persists hot market-data responses through the multi-layer cache in `src/data/enhanced_cache.py`, so overlapping reruns can hit the local SQLite cache instead of refetching from upstream providers.
 
+The per-ticker CSVs under `data/price_cache/` are also local runtime caches for A-share OHLCV snapshots. Keep them on your machine, refresh them through the existing post-market workflows, and do not commit them to Git.
+
 Default cache location:
 
 - `~/.cache/ai-hedge-fund/cache.sqlite`

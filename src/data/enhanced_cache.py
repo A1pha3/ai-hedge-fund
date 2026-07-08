@@ -273,7 +273,9 @@ class DiskCache:
         cache_path = path or os.environ.get("DISK_CACHE_PATH")
         if not cache_path:
             cache_path = os.path.join(os.path.expanduser("~"), ".cache", "ai-hedge-fund", "cache.sqlite")
-        self._path = cache_path
+        # Expand ~ in env-var paths so DISK_CACHE_PATH=~/.cache/... works the
+        # same as the default branch above (which already uses expanduser).
+        self._path = os.path.expanduser(cache_path)
 
         # 长连接 + 写锁 + WAL：避免每次 get/set/delete 都新建 sqlite3 连接，
         # 启用 WAL 模式以降低并发读写时的 SQLITE_BUSY 风险（R20 修复）。

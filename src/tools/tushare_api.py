@@ -267,24 +267,33 @@ def _persist_tushare_dataframe_result(cache_key: str, df: pd.DataFrame, *, api_n
     return df.copy()
 
 
-def _cached_tushare_dataframe_call(pro, api_name: str, dedupe: bool = False, ttl: int | None = None, **kwargs) -> pd.DataFrame | None:
+def _cached_tushare_dataframe_call(
+    pro,
+    api_name: str,
+    dedupe: bool = False,
+    ttl: int | None = None,
+    cache_empty: bool = True,
+    **kwargs,
+) -> pd.DataFrame | None:
     """带进程内 + 持久化缓存的通用 Tushare DataFrame 调用。"""
     cache_key = _make_tushare_query_cache_key(api_name, **kwargs)
 
     cached_df = _get_tushare_cached_df(cache_key)
     if cached_df is not None:
-        return cached_df
+        if cache_empty or not cached_df.empty:
+            return cached_df
 
     persisted_df = _get_persisted_tushare_cached_df(cache_key)
     if persisted_df is not None:
-        return persisted_df
+        if cache_empty or not persisted_df.empty:
+            return persisted_df
 
     df = _call_tushare_dataframe_api(pro, api_name, **kwargs)
 
     if dedupe and df is not None and not df.empty:
         df = _dedupe_tushare_df(df)
 
-    if df is not None:
+    if df is not None and (cache_empty or not df.empty):
         return _persist_tushare_dataframe_result(
             cache_key,
             df,
@@ -292,6 +301,8 @@ def _cached_tushare_dataframe_call(pro, api_name: str, dedupe: bool = False, ttl
             ttl=ttl,
             **kwargs,
         )
+    if df is not None:
+        return df.copy()
 
     return None
 
@@ -1098,6 +1109,7 @@ def _fetch_tushare_daily_basic_batch(pro, trade_date: str) -> pd.DataFrame | Non
         "daily_basic",
         trade_date=trade_date,
         fields="ts_code,trade_date,close,turnover_rate,pe,pe_ttm,pb,ps,ps_ttm," "dv_ratio,dv_ttm,total_share,float_share,free_share,total_mv,circ_mv",
+        cache_empty=False,
     )
 
 
@@ -1138,6 +1150,7 @@ def _fetch_tushare_daily_price_batch(pro, trade_date: str) -> pd.DataFrame | Non
         "daily",
         trade_date=trade_date,
         fields="ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg",
+        cache_empty=False,
     )
 
 

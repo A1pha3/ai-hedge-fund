@@ -504,6 +504,63 @@ def test_get_daily_basic_batch_uses_dataframe_cache(monkeypatch):
     assert len(calls) == 1
 
 
+def test_get_daily_basic_batch_ignores_empty_lower_level_cache(monkeypatch):
+    """当天早些时候空结果不能挡住收盘后的真实 daily_basic batch 数据."""
+    tushare_api._tushare_df_cache.clear()
+    pro = object()
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
+    monkeypatch.setattr(tushare_api, "_get_persisted_tushare_cached_df", lambda _key: None)
+    monkeypatch.setattr(
+        tushare_api,
+        "_persist_tushare_dataframe_result",
+        lambda _cache_key, df, **_kwargs: df.copy(),
+    )
+
+    fields = "ts_code,trade_date,close,turnover_rate,pe,pe_ttm,pb,ps,ps_ttm,dv_ratio,dv_ttm,total_share,float_share,free_share,total_mv,circ_mv"
+    stale_empty_key = tushare_api._make_tushare_query_cache_key(
+        "daily_basic",
+        trade_date="20260708",
+        fields=fields,
+    )
+    tushare_api._store_tushare_cached_df(stale_empty_key, pd.DataFrame())
+
+    calls = []
+
+    def fake_api_call(_pro, api_name, **kwargs):
+        calls.append((api_name, kwargs))
+        return pd.DataFrame(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": "20260708",
+                    "total_mv": 20570273.292,
+                }
+            ]
+        )
+
+    monkeypatch.setattr(tushare_api, "_call_tushare_dataframe_api", fake_api_call)
+
+    result = tushare_api.get_daily_basic_batch("20260708")
+
+    assert result is not None
+    assert result.to_dict("records") == [
+        {
+            "ts_code": "000001.SZ",
+            "trade_date": "20260708",
+            "total_mv": 20570273.292,
+        }
+    ]
+    assert calls == [
+        (
+            "daily_basic",
+            {
+                "trade_date": "20260708",
+                "fields": fields,
+            },
+        )
+    ]
+
+
 def test_get_daily_price_batch_uses_dataframe_cache(monkeypatch):
     tushare_api._tushare_df_cache.clear()
     calls = []
@@ -522,6 +579,57 @@ def test_get_daily_price_batch_uses_dataframe_cache(monkeypatch):
     assert first.to_dict("records") == [{"ts_code": "000001.SZ", "trade_date": "20260410", "close": 10.8}]
     assert second.to_dict("records") == [{"ts_code": "000001.SZ", "trade_date": "20260410", "close": 10.8}]
     assert len(calls) == 1
+
+
+def test_get_daily_price_batch_ignores_empty_lower_level_cache(monkeypatch):
+    """当天早些时候空结果不能挡住收盘后的真实 daily batch 数据."""
+    tushare_api._tushare_df_cache.clear()
+    pro = object()
+    monkeypatch.setattr(tushare_api, "_get_pro", lambda: pro)
+    monkeypatch.setattr(tushare_api, "_get_persisted_tushare_cached_df", lambda _key: None)
+    monkeypatch.setattr(
+        tushare_api,
+        "_persist_tushare_dataframe_result",
+        lambda _cache_key, df, **_kwargs: df.copy(),
+    )
+
+    fields = "ts_code,trade_date,open,high,low,close,pre_close,vol,amount,pct_chg"
+    stale_empty_key = tushare_api._make_tushare_query_cache_key(
+        "daily",
+        trade_date="20260708",
+        fields=fields,
+    )
+    tushare_api._store_tushare_cached_df(stale_empty_key, pd.DataFrame())
+
+    calls = []
+
+    def fake_api_call(_pro, api_name, **kwargs):
+        calls.append((api_name, kwargs))
+        return pd.DataFrame(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": "20260708",
+                    "close": 10.6,
+                }
+            ]
+        )
+
+    monkeypatch.setattr(tushare_api, "_call_tushare_dataframe_api", fake_api_call)
+
+    result = tushare_api.get_daily_price_batch("20260708")
+
+    assert result is not None
+    assert result.to_dict("records") == [{"ts_code": "000001.SZ", "trade_date": "20260708", "close": 10.6}]
+    assert calls == [
+        (
+            "daily",
+            {
+                "trade_date": "20260708",
+                "fields": fields,
+            },
+        )
+    ]
 
 
 def test_get_limit_list_uses_dataframe_cache(monkeypatch):

@@ -941,12 +941,17 @@ def _resolve_daily_action(argv: list[str]) -> int | None:
 
     tracker = PaperTracker()
     actions = generate_daily_action(tracker=tracker)
-    # 用最新报告日期渲染
+    # 用本次实际扫描日期渲染; fallback 仅兼容旧 tracker / 异常路径
+    trade_date = getattr(tracker, "last_action_trade_date", "") or "????????"
+    if trade_date != "????????":
+        print(render_daily_action(actions, trade_date, tracker))
+        return 0
+
+    # 旧 fallback: 用最新报告日期渲染
     from src.screening.consecutive_recommendation import resolve_report_dir
     from src.screening.data_quality_audit import _find_latest_report
 
     latest = _find_latest_report(resolve_report_dir())
-    trade_date = "????????"
     if latest is not None:
         import json
 

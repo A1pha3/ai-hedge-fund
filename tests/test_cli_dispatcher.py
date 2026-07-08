@@ -16,7 +16,9 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from src.cli import dispatcher
@@ -233,6 +235,35 @@ class TestDispatchEarlyFlags(unittest.TestCase):
             rc = dispatch(["--daily-gainers"])
         self.assertEqual(rc, 0)
         mock.assert_called_once()
+
+    def test_daily_action_renders_actual_scan_trade_date(self) -> None:
+        """--daily-action 渲染日期应来自 generate_daily_action 的实际扫描日期."""
+
+        class DummyTracker:
+            last_action_trade_date = ""
+
+        tracker = DummyTracker()
+
+        def fake_generate_daily_action(*, tracker, **_kwargs):
+            tracker.last_action_trade_date = "20260706"
+            return []
+
+        with tempfile.TemporaryDirectory() as tmp:
+            report_path = Path(tmp) / "auto_screening_20260708.json"
+            report_path.write_text('{"date": "20260708", "recommendations": []}', encoding="utf-8")
+
+            with (
+                patch("src.screening.offensive.paper_tracker.PaperTracker", return_value=tracker),
+                patch("src.screening.offensive.daily_action.generate_daily_action", side_effect=fake_generate_daily_action),
+                patch("src.screening.offensive.daily_action.render_daily_action", return_value="rendered") as mock_render,
+                patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=Path(tmp)),
+                patch("src.screening.data_quality_audit._find_latest_report", return_value=report_path),
+                patch("builtins.print"),
+            ):
+                rc = dispatcher._resolve_daily_action(["--daily-action"])
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(mock_render.call_args.args[1], "20260706")
 
     def test_market_status_flag_recognized(self) -> None:
         with patch("src.main.run_market_status", return_value=0) as mock:

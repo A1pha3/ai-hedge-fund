@@ -24,7 +24,9 @@ def test_paper_tracker_update_pnl(tmp_path):
     assert abs(t.state.nav - 1.05) < 1e-9
     assert t.state.drawdown_pct == 0.0  # 新高, 无回撤
     t.update_pnl(-0.03)
-    assert abs(t.state.nav - 1.0185) < 1e-5
+    # daily_pnl_pct 是组合贡献 (sum of realized × kelly), 用加法累加,
+    # 不是对整笔 NAV 复利.
+    assert abs(t.state.nav - 1.02) < 1e-5
     assert t.state.drawdown_pct < 0  # 有回撤
 
 
@@ -323,6 +325,47 @@ def test_close_matured_records_stop_would_trigger(tmp_path):
     assert abs(c["realized_pnl"] - 0.05) < 1e-6, f"主P&L应=T+10收盘, got {c['realized_pnl']}"
 
 
+def test_close_matured_uses_execution_adjusted_return_when_ohlc_available(tmp_path):
+    """有 OHLC price_loader 时, close_matured 应按次日开盘买入 + 滑点算收益.
+
+    根因: setup known_distribution 来自 execution_adjuster, 口径是 next-open entry
+    与买卖滑点. close_matured 若继续用 trigger-close → T+N close, paper P&L 会和
+    Kelly 先验不在同一交易定义上.
+    """
+    import pandas as pd
+    import pytest
+    from datetime import datetime, timedelta
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    tracker.record_buy("20260601", "300502", "btst_breakout", 10, 100.0, 0.10, 85.0, 92.0, "跌破92")
+
+    base_dt = datetime.strptime("20260601", "%Y%m%d")
+    rows = []
+    for i in range(11):
+        rows.append(
+            {
+                "date": base_dt + timedelta(days=i),
+                "open": 110.0 if i == 1 else 100.0 + i,
+                "close": 121.0 if i == 10 else 100.0 + i,
+                "low": 99.0 + i,
+                "pct_change": 0.0,
+            }
+        )
+    prices_df = pd.DataFrame(rows)
+    price_loader = lambda ticker, report_date: prices_df.copy() if ticker == "300502" else pd.DataFrame()  # noqa: E731
+
+    # close-to-close 会给 +21%, 但真实 next-open/slippage 约 +9.34%.
+    fetcher_rows = [{"time": r["date"].strftime("%Y-%m-%d"), "close": r["close"]} for r in rows]
+    fetcher = lambda ticker, start, end: fetcher_rows if ticker == "300502" else []  # noqa: E731
+
+    closed = tracker.close_matured("20260620", use_data_fetcher=fetcher, price_loader=price_loader)
+
+    assert len(closed) == 1
+    expected = (121.0 * 0.997) / (110.0 * 1.003) - 1.0
+    assert closed[0]["realized_pnl"] == pytest.approx(expected, abs=1e-9)
+    assert tracker.state.nav == pytest.approx(1.0 + expected * 0.10, abs=1e-9)
+
+
 # ---------------------------------------------------------------------------
 # generate_daily_action — 接入 close_matured (出新仓前先平到期仓)
 # ---------------------------------------------------------------------------
@@ -411,6 +454,340 @@ def test_generate_daily_action_accepts_price_loader_and_fetcher(tmp_path, monkey
         report_path=report_path, tracker=tracker, use_data_fetcher=fetcher, price_loader=price_loader
     )
     assert tracker.state.open_positions == 0
+
+
+def test_generate_daily_action_exposes_actual_scan_trade_date(tmp_path, monkeypatch):
+    """generate_daily_action 应暴露本次实际扫描日期, 供 CLI 渲染使用.
+
+    根因: --daily-action full_market 从 price_cache 最新日期扫描, 但 dispatcher 曾读取
+    最新 auto_screening 报告日期渲染标题. 当报告日期 > price_cache 最新日期时, 输出会把
+    20260706 的信号显示成 20260708, 误导次日执行.
+    """
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    report_path = tmp_path / "auto_screening_20260620.json"
+    report_path.write_text(
+        json.dumps({"date": "20260620", "recommendations": [], "market_state": {"regime_gate_level": "normal"}}),
+        encoding="utf-8",
+    )
+
+    da.generate_daily_action(report_path=report_path, tracker=tracker, scan_mode="report")
+
+    assert getattr(tracker, "last_action_trade_date", "") == "20260620"
+
+
+def test_generate_daily_action_uses_default_price_loader_for_matured_pnl(tmp_path, monkeypatch):
+    """generate_daily_action 默认应把 _load_prices_for_ticker 传给 close_matured.
+
+    否则真实 --daily-action 路径会退回 close-to-close P&L, 与 execution-adjusted
+    known_distribution 不一致.
+    """
+    import pandas as pd
+    import pytest
+    from datetime import datetime, timedelta
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    tracker.record_buy("20260601", "300502", "btst_breakout", 10, 100.0, 0.10, 85.0, 92.0, "跌破92")
+
+    report_path = tmp_path / "auto_screening_20260620.json"
+    report_path.write_text(
+        json.dumps({"date": "20260620", "recommendations": [], "market_state": {"regime_gate_level": "normal"}}),
+        encoding="utf-8",
+    )
+
+    base_dt = datetime.strptime("20260601", "%Y%m%d")
+    rows = []
+    for i in range(11):
+        rows.append(
+            {
+                "date": base_dt + timedelta(days=i),
+                "open": 110.0 if i == 1 else 100.0 + i,
+                "close": 121.0 if i == 10 else 100.0 + i,
+                "low": 99.0 + i,
+                "pct_change": 0.0,
+            }
+        )
+    prices_df = pd.DataFrame(rows)
+    monkeypatch.setattr(da, "_load_prices_for_ticker", lambda ticker, report_date: prices_df.copy())
+
+    fetcher_rows = [{"time": r["date"].strftime("%Y-%m-%d"), "close": r["close"]} for r in rows]
+    fetcher = lambda ticker, start, end: fetcher_rows if ticker == "300502" else []  # noqa: E731
+
+    da.generate_daily_action(
+        report_path=report_path,
+        tracker=tracker,
+        scan_mode="report",
+        use_data_fetcher=fetcher,
+    )
+
+    expected = (121.0 * 0.997) / (110.0 * 1.003) - 1.0
+    assert tracker.state.nav == pytest.approx(1.0 + expected * 0.10, abs=1e-9)
+
+
+def test_generate_daily_action_blocks_new_buys_when_price_cache_lags_auto_report(tmp_path, monkeypatch):
+    """price_cache 落后于最新 --auto 报告时, full_market 不应输出新 BUY."""
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    monkeypatch.setattr(da, "_resolve_trade_date_and_regime", lambda: ("20260706", "normal"))
+    monkeypatch.setattr(da, "_latest_auto_report_date", lambda: "20260708", raising=False)
+
+    actions = da.generate_daily_action(tracker=tracker, scan_mode="full_market")
+
+    assert actions == []
+    assert "20260706" in tracker.last_action_stale_reason
+    assert "20260708" in tracker.last_action_stale_reason
+
+
+def test_generate_daily_action_blocks_new_buys_after_planned_open_window(tmp_path, monkeypatch):
+    """前一信号日的次日开盘窗口已过时, 不应再输出新 BUY."""
+    import pandas as pd
+    from datetime import datetime
+    from types import SimpleNamespace
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+    from src.screening.offensive.setups.base import DetectionResult
+    from src.screening.offensive.statistics import Distribution
+
+    class FakeSetup:
+        def detect(self, ticker, trade_date, context):
+            return DetectionResult(
+                hit=True,
+                ticker=ticker,
+                trade_date=trade_date,
+                trigger_strength=1.0,
+                invalidation_condition="fake invalidation",
+            )
+
+    dist = Distribution(
+        n=100,
+        winrate=0.60,
+        avg_gain=0.12,
+        avg_loss=-0.06,
+        convexity_ratio=2.0,
+        expected_return=0.05,
+        ci_low=0.02,
+        ci_high=0.08,
+        ic=0.10,
+    )
+    prices = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-07-07"),
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.5,
+                "close": 10.0,
+                "pct_change": 0.0,
+            }
+        ]
+    )
+    tracker = PaperTracker(journal_dir=tmp_path)
+    monkeypatch.setattr(da, "_VERIFIED_SETUPS", [("fake_setup", FakeSetup, 10)])
+    monkeypatch.setattr(da, "get_known_distribution", lambda name, horizon: dist)
+    monkeypatch.setattr(da, "_resolve_trade_date_and_regime", lambda: ("20260707", "normal"))
+    monkeypatch.setattr(da, "_latest_auto_report_date", lambda: "", raising=False)
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260708")
+    monkeypatch.setattr(da, "_current_cn_datetime", lambda: datetime(2026, 7, 8, 12, 0), raising=False)
+    monkeypatch.setattr(da, "_load_st_tickers", lambda: set())
+    monkeypatch.setattr(da, "Path", lambda path: SimpleNamespace(glob=lambda pattern: [SimpleNamespace(stem="000001")]))
+
+    actions = da.generate_daily_action(
+        tracker=tracker,
+        scan_mode="full_market",
+        price_loader=lambda ticker, report_date: prices.copy(),
+    )
+
+    assert actions == []
+    assert "买入窗口已错过" in tracker.last_action_stale_reason
+    assert "20260707" in tracker.last_action_stale_reason
+    assert "20260708" in tracker.last_action_stale_reason
+
+
+def test_entry_window_guard_allows_before_planned_open(monkeypatch):
+    """前一信号日计划仍在开盘前时, 不应被判为过期."""
+    from datetime import datetime
+    from src.screening.offensive import daily_action as da
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260708")
+
+    reason = da._missed_entry_window_reason("20260707", now=datetime(2026, 7, 8, 9, 0))
+
+    assert reason == ""
+
+
+def test_generate_daily_action_ranks_hits_before_portfolio_cap(tmp_path, monkeypatch):
+    """命中数超过组合上限时, 应保留更强 edge, 而不是按 ticker 顺序先到先得."""
+    import pandas as pd
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+    from src.screening.offensive.setups.base import DetectionResult
+    from src.screening.offensive.statistics import Distribution
+
+    strengths = {
+        "000001": 0.10,
+        "000002": 0.20,
+        "000003": 0.30,
+        "000004": 0.40,
+        "000005": 0.50,
+        "000006": 0.60,
+        "000007": 0.90,
+    }
+
+    class FakeSetup:
+        name = "fake_setup"
+        natural_horizon = 10
+
+        def detect(self, ticker, trade_date, context):
+            return DetectionResult(
+                hit=True,
+                ticker=ticker,
+                trade_date=trade_date,
+                trigger_strength=strengths[ticker],
+                invalidation_condition="fake invalidation",
+            )
+
+    dist = Distribution(
+        n=100,
+        winrate=0.60,
+        avg_gain=0.12,
+        avg_loss=-0.06,
+        convexity_ratio=2.0,
+        expected_return=0.05,
+        ci_low=0.02,
+        ci_high=0.08,
+        ic=0.10,
+    )
+
+    monkeypatch.setattr(da, "_VERIFIED_SETUPS", [("fake_setup", FakeSetup, 10)])
+    monkeypatch.setattr(da, "get_known_distribution", lambda name, horizon: dist)
+    monkeypatch.setattr(da, "_load_st_tickers", lambda: set())
+
+    report_path = tmp_path / "auto_screening_20260620.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "date": "20260620",
+                "recommendations": [{"ticker": ticker} for ticker in strengths],
+                "market_state": {"regime_gate_level": "normal"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    prices = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-06-20"),
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.5,
+                "close": 10.0,
+                "pct_change": 0.0,
+            }
+        ]
+    )
+
+    actions = da.generate_daily_action(
+        report_path=report_path,
+        tracker=PaperTracker(journal_dir=tmp_path),
+        scan_mode="report",
+        price_loader=lambda ticker, report_date: prices.copy(),
+    )
+
+    selected = [action.ticker for action in actions]
+    assert len(selected) == 6
+    assert "000007" in selected
+    assert "000001" not in selected
+    assert selected[0] == "000007"
+
+
+def test_render_daily_action_shows_stale_data_guard(tmp_path):
+    """stale guard 触发时, 输出应明确说明数据滞后且不出新 BUY."""
+    from src.screening.offensive.daily_action import render_daily_action
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    tracker.last_action_stale_reason = "price_cache 最新交易日 20260706 落后于最新 --auto 报告 20260708"
+
+    out = render_daily_action([], "20260706", tracker)
+
+    assert "数据滞后" in out
+    assert "不输出新 BUY" in out
+
+
+def test_render_daily_action_labels_signal_and_execution_dates(tmp_path, monkeypatch):
+    """BUY 段必须区分信号日和计划买入日, 避免把次日开盘单写成今日买入."""
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.daily_action import DailyAction
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    tracker = PaperTracker(journal_dir=tmp_path)
+    actions = [
+        DailyAction(
+            ticker="603881",
+            setup="btst_breakout",
+            action="BUY",
+            kelly_pct=0.10,
+            entry_price=24.21,
+            soft_stop=20.70,
+            hard_stop=22.27,
+            time_exit="T+10",
+            invalidation_condition="价格跌破 22.27 (-8% 止损线)",
+            distribution_summary="n=915 winrate=61% cv=2.18 E=+4.5%",
+            reasoning="test",
+        )
+    ]
+
+    out = da.render_daily_action(actions, "20260708", tracker)
+
+    assert "信号日: 20260708" in out
+    assert "计划买入日: 20260709" in out
+    assert "计划 BUY" in out
+    assert "今日 BUY" not in out
+    assert "参考价(信号日收盘)" in out
+
+
+def test_render_daily_action_explains_stops_prior_and_rule_execution(tmp_path, monkeypatch):
+    """渲染层应直接解释术语, operator 不需要回代码理解 soft/hard/cv/E."""
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.daily_action import DailyAction
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    tracker = PaperTracker(journal_dir=tmp_path)
+    actions = [
+        DailyAction(
+            ticker="603778",
+            setup="oversold_bounce",
+            action="BUY",
+            kelly_pct=0.10,
+            entry_price=10.92,
+            soft_stop=10.01,
+            hard_stop=10.05,
+            time_exit="T+5",
+            invalidation_condition="价格跌破 9.59 (30 日低点 -5%)",
+            distribution_summary="n=1113 winrate=59% cv=2.51 E=+3.4%",
+            reasoning="test",
+        )
+    ]
+
+    out = da.render_daily_action(actions, "20260708", tracker)
+
+    assert "软止损=历史平均亏损x1.5的观察线" in out
+    assert "硬止损=固定-8%的实际风控线" in out
+    assert "n=历史样本数" in out
+    assert "winrate=历史胜率" in out
+    assert "cv=凸性比" in out
+    assert "E=历史平均收益" in out
+    assert "执行规则 (按规则执行)" in out
+    assert "不临盘主观加仓/扛单" in out
+    assert "移除情绪" not in out
 
 
 # ---------------------------------------------------------------------------
