@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Iterable, Mapping, Sequence
@@ -473,6 +474,14 @@ def attach_conditional_orders_to_payload(
     if top_n is not None and top_n > 0:
         recs = recs[:top_n]
 
+    # autodev-32 /loop session 4: Option A behind env var (default off).
+    # Filters non-BUY-verdict picks when CONDITIONAL_ORDER_FILTER_VERDICT=1.
+    if _verdict_filter_enabled():
+        recs = _filter_recs_to_buy(
+            recs,
+            market_regime=str((payload.get("market_state") or {}).get("regime_gate_level", "normal")),
+        )
+
     advices: list[dict[str, Any]] = []
     for rec in recs:
         if not isinstance(rec, Mapping):
@@ -544,6 +553,54 @@ def _fallback_price_provider(ticker: str, n_sessions: int) -> list[float]:
 # ---------------------------------------------------------------------------
 # CLI entry
 # ---------------------------------------------------------------------------
+
+# autodev-32 /loop session 4: Option A behind env var (contract §feature-flag).
+# CONDITIONAL_ORDER_FILTER_VERDICT=1 filters non-BUY picks from conditional
+# orders. Default off (status quo: all top-N get conditional orders with
+# additive ⚠ disclosure). Owner can toggle to test impact on broker exports
+# without committing to a default behavior change.
+_CONDITIONAL_ORDER_VERDICT_FILTER_ENV = "CONDITIONAL_ORDER_FILTER_VERDICT"
+
+
+def _verdict_filter_enabled() -> bool:
+    """Whether conditional orders should be filtered to BUY-verdict picks only.
+
+    Reads ``CONDITIONAL_ORDER_FILTER_VERDICT`` env var. Truthy values:
+    ``1``, ``true``, ``yes``, ``on`` (case-insensitive). Default: off.
+    """
+    raw = os.environ.get(_CONDITIONAL_ORDER_VERDICT_FILTER_ENV, "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _filter_recs_to_buy(
+    recs: list[Mapping[str, Any]],
+    *,
+    market_regime: str,
+) -> list[Mapping[str, Any]]:
+    """Filter recs to keep only BUY-verdict picks.
+
+    Used when CONDITIONAL_ORDER_FILTER_VERDICT=1. Logs how many were dropped.
+    """
+    from src.screening.investability import build_front_door_verdict
+
+    kept: list[Mapping[str, Any]] = []
+    dropped = 0
+    for rec in recs:
+        if not isinstance(rec, Mapping):
+            continue
+        action = str(build_front_door_verdict(rec, market_regime=market_regime).get("action", "AVOID"))
+        if action == "BUY":
+            kept.append(rec)
+        else:
+            dropped += 1
+    if dropped:
+        logger.info(
+            "conditional_order_advisor: CONDITIONAL_ORDER_FILTER_VERDICT active — "
+            "dropped %d non-BUY rec(s) (%d BUY kept)",
+            dropped,
+            len(kept),
+        )
+    return kept
 
 
 def _format_front_door_verdict_disclosure(
@@ -635,6 +692,26 @@ def run_conditional_orders_cli(
     if not recs:
         print(f"{Fore.YELLOW}[ConditionalOrders] 报告中无推荐标的{Style.RESET_ALL}")
         return 2
+
+    # autodev-32 /loop session 4: Option A behind env var (default off).
+    regime_for_filter = "normal"
+    if _verdict_filter_enabled():
+        try:
+            import json as _json
+
+            from src.screening.consecutive_recommendation import resolve_report_dir
+            from src.screening.data_quality_audit import _find_latest_report
+
+            _latest = _find_latest_report(resolve_report_dir())
+            if _latest is not None:
+                _ms = (_json.loads(_latest.read_text(encoding="utf-8"))).get("market_state") or {}
+                regime_for_filter = str(_ms.get("regime_gate_level", "normal"))
+        except Exception:  # noqa: BLE001 — best-effort regime read
+            pass
+        recs = _filter_recs_to_buy(recs, market_regime=regime_for_filter)
+        if not recs:
+            print(f"{Fore.YELLOW}[ConditionalOrders] CONDITIONAL_ORDER_FILTER_VERDICT=1 过滤后无 BUY 标的{Style.RESET_ALL}")
+            return 0
 
     # 3. 计算每只标的的条件单建议
     advices: list[ConditionalOrderAdvice] = []

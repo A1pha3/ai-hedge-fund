@@ -579,6 +579,37 @@ def run_export_conditional_orders_cli(
         print(f"{Fore.YELLOW}[Export] 报告中无条件单数据, " f"请先运行 --conditional-orders 或 --auto{Style.RESET_ALL}")
         return 1
 
+    # autodev-32 /loop session 4: CONDITIONAL_ORDER_FILTER_VERDICT safety net.
+    # Even if the report was generated with filter off, enforce BUY-only at
+    # export time so the broker CSV never contains non-BUY conditional orders
+    # when the operator has opted in. Maps advice→rec by ticker for verdict.
+    from src.screening.conditional_order_advisor import _verdict_filter_enabled
+
+    if _verdict_filter_enabled():
+        from src.screening.investability import build_front_door_verdict
+
+        rec_by_ticker = {str(r.get("ticker", "")).strip(): r for r in (payload.get("recommendations") or []) if isinstance(r, dict)}
+        regime = str((payload.get("market_state") or {}).get("regime_gate_level", "normal"))
+        before = len(conditional_orders)
+        conditional_orders = [
+            d for d in conditional_orders
+            if not isinstance(d, dict)
+            or str(build_front_door_verdict(
+                rec_by_ticker.get(str(d.get("ticker", "")).strip(), d),
+                market_regime=regime,
+            ).get("action", "AVOID")) == "BUY"
+        ]
+        if before != len(conditional_orders):
+            logger.info(
+                "conditional_order_export: CONDITIONAL_ORDER_FILTER_VERDICT dropped "
+                "%d non-BUY order(s) at export (%d kept)",
+                before - len(conditional_orders),
+                len(conditional_orders),
+            )
+            if not conditional_orders:
+                print(f"{Fore.YELLOW}[Export] CONDITIONAL_ORDER_FILTER_VERDICT=1 过滤后无 BUY 条件单{Style.RESET_ALL}")
+                return 0
+
     # 4. 导出
     ext = "json" if broker == "ths" else "csv"
     today_str = date.today().strftime("%Y%m%d")

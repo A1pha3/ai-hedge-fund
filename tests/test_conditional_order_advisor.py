@@ -1011,3 +1011,106 @@ class TestCleanPriceSeries:
 
         result = _clean_price_series(["1.5", 2.0])
         assert result == [1.5, 2.0]
+
+
+# ---------------------------------------------------------------------------
+# autodev-32 /loop session 4: CONDITIONAL_ORDER_FILTER_VERDICT env var (Option A)
+# ---------------------------------------------------------------------------
+
+
+class TestVerdictFilterEnvVar:
+    """Option A behind env var — filter non-BUY picks from conditional orders."""
+
+    def test_filter_disabled_by_default(self, monkeypatch):
+        """When env var is unset or 0, filtering is OFF (status quo)."""
+        from src.screening.conditional_order_advisor import _verdict_filter_enabled
+
+        monkeypatch.delenv("CONDITIONAL_ORDER_FILTER_VERDICT", raising=False)
+        assert _verdict_filter_enabled() is False
+
+        monkeypatch.setenv("CONDITIONAL_ORDER_FILTER_VERDICT", "0")
+        assert _verdict_filter_enabled() is False
+
+    def test_filter_enabled_when_truthy(self, monkeypatch):
+        """Truthy values (1/true/yes/on) enable filtering (case-insensitive)."""
+        from src.screening.conditional_order_advisor import _verdict_filter_enabled
+
+        for val in ("1", "true", "TRUE", "yes", "on", "On"):
+            monkeypatch.setenv("CONDITIONAL_ORDER_FILTER_VERDICT", val)
+            assert _verdict_filter_enabled() is True, f"{val!r} should enable"
+
+    def test_filter_recs_drops_non_buy(self, monkeypatch):
+        """_filter_recs_to_buy drops AVOID/HOLD recs, keeps BUY."""
+        from src.screening.conditional_order_advisor import _filter_recs_to_buy
+
+        recs = [
+            {"ticker": "000001", "name": "BUY-pick"},
+            {"ticker": "000002", "name": "AVOID-pick"},
+            {"ticker": "000003", "name": "HOLD-pick"},
+        ]
+
+        # Patch build_front_door_verdict to return deterministic verdicts
+        def fake_verdict(rec, *, market_regime):
+            mapping = {"000001": "BUY", "000002": "AVOID", "000003": "HOLD"}
+            return {"action": mapping.get(rec["ticker"], "AVOID")}
+
+        monkeypatch.setattr(
+            "src.screening.investability.build_front_door_verdict",
+            fake_verdict,
+        )
+
+        result = _filter_recs_to_buy(recs, market_regime="normal")
+        assert len(result) == 1
+        assert result[0]["ticker"] == "000001"
+
+    def test_attach_filters_when_enabled(self, monkeypatch):
+        """attach_conditional_orders_to_payload respects the env var."""
+        from src.screening.conditional_order_advisor import attach_conditional_orders_to_payload
+
+        payload = {
+            "recommendations": [
+                {"ticker": "000001", "name": "BUY", "current_price": 10.0},
+                {"ticker": "000002", "name": "AVOID", "current_price": 20.0},
+            ],
+            "market_state": {"regime_gate_level": "normal"},
+        }
+
+        def fake_verdict(rec, *, market_regime):
+            return {"action": "BUY" if rec["ticker"] == "000001" else "AVOID"}
+
+        monkeypatch.setattr(
+            "src.screening.investability.build_front_door_verdict",
+            fake_verdict,
+        )
+        monkeypatch.setattr(
+            "src.screening.conditional_order_advisor._fallback_price_provider",
+            lambda ticker, n: [10.0, 11.0, 12.0] * 5,
+        )
+        monkeypatch.setenv("CONDITIONAL_ORDER_FILTER_VERDICT", "1")
+
+        advices = attach_conditional_orders_to_payload(payload)
+        tickers = [a["ticker"] for a in advices]
+        assert tickers == ["000001"], f"expected only BUY, got {tickers}"
+
+    def test_attach_no_filter_when_disabled(self, monkeypatch):
+        """Default: all top-N get conditional orders (status quo)."""
+        from src.screening.conditional_order_advisor import attach_conditional_orders_to_payload
+
+        payload = {
+            "recommendations": [
+                {"ticker": "000001", "name": "BUY", "current_price": 10.0},
+                {"ticker": "000002", "name": "AVOID", "current_price": 20.0},
+            ],
+            "market_state": {"regime_gate_level": "normal"},
+        }
+
+        monkeypatch.delenv("CONDITIONAL_ORDER_FILTER_VERDICT", raising=False)
+        monkeypatch.setattr(
+            "src.screening.conditional_order_advisor._fallback_price_provider",
+            lambda ticker, n: [10.0, 11.0, 12.0] * 5,
+        )
+
+        advices = attach_conditional_orders_to_payload(payload)
+        tickers = [a["ticker"] for a in advices]
+        assert set(tickers) == {"000001", "000002"}, f"expected all, got {tickers}"
+
