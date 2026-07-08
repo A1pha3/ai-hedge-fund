@@ -216,6 +216,7 @@ def test_refresh_daily_action_caches_uses_candidate_pool_for_price_and_fund_flow
         ),
         backfill_price_history_fn=lambda *_args: _history_rows(),
         fund_flow_fetch_fn=fund_flow_fetch,
+        refresh_industry_index=False,
         fund_flow_rate_limit_sec=0,
     )
 
@@ -224,6 +225,26 @@ def test_refresh_daily_action_caches_uses_candidate_pool_for_price_and_fund_flow
     assert stats.price_backfilled == 1
     assert stats.fund_flow_total == 2
     assert set(fund_flow_tickers) == {"000001", "000002"}
+
+
+def test_refresh_daily_action_caches_refreshes_industry_index_for_trade_date(tmp_path):
+    from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+
+    calls: list[str] = []
+
+    stats = refresh_daily_action_caches(
+        "20260708",
+        price_cache_dir=tmp_path / "price_cache",
+        fund_flow_cache_dir=tmp_path / "fund_flow_cache",
+        snapshot_dir=tmp_path / "snapshots",
+        daily_prices_df=pd.DataFrame(),
+        refresh_fund_flow=False,
+        industry_index_backfill_fn=lambda *, end_date: calls.append(end_date) or {"农林牧渔": 1502},
+    )
+
+    assert calls == ["20260708"]
+    assert stats.industry_index_total == 1502
+    assert stats.industry_index_failed == 0
 
 
 def test_refresh_price_cache_is_idempotent_for_same_trade_date(tmp_path):

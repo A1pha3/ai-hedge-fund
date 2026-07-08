@@ -129,6 +129,28 @@ def _latest_auto_report_date() -> str:
         return ""
 
 
+def _load_industry_day_pct_by_ticker(trade_date: str, tickers: list[str]) -> dict[str, float]:
+    """Load real SW L1 one-day pct change for the scan date, keyed by ticker."""
+
+    if not tickers:
+        return {}
+    try:
+        from scripts.setup_research import build_ticker_to_industry, load_industry_day_pct
+
+        ticker_to_industry = build_ticker_to_industry(tickers)
+        industry_day_pct = load_industry_day_pct()
+    except Exception as exc:  # noqa: BLE001 - missing context should block BTST, not crash daily action
+        logger.warning("加载行业日涨幅失败, BTST 行业过滤将按 0%% 处理: %s", exc)
+        return {}
+
+    result: dict[str, float] = {}
+    for ticker, industry in ticker_to_industry.items():
+        value = industry_day_pct.get((industry, trade_date))
+        if value is not None:
+            result[ticker] = float(value)
+    return result
+
+
 def _weekday_next_trade_date(trade_date: str) -> str:
     """Fallback next open day: weekday-only approximation, compact YYYYMMDD."""
     text = str(trade_date or "").strip().replace("-", "")
@@ -361,6 +383,11 @@ def generate_daily_action(
         logger.warning("无任何已验证 setup 的 known_distribution, --daily-action 无法出信号")
         return []
 
+    needs_industry_day_pct = any(name == "btst_breakout" for name, *_rest in setup_configs)
+    industry_day_pct_by_ticker = (
+        _load_industry_day_pct_by_ticker(trade_date, scan_tickers) if needs_industry_day_pct else {}
+    )
+
     ranked_candidates: list[tuple[float, float, float, int, DailyAction]] = []
     for ticker in scan_tickers:
         if not ticker:
@@ -386,7 +413,11 @@ def generate_daily_action(
                 if drop30 > -20:
                     continue
 
-            industry_pct = max(pct, 3.0) if pct >= 9.5 else pct
+            industry_pct = (
+                float(industry_day_pct_by_ticker.get(ticker, 0.0) or 0.0)
+                if setup_name == "btst_breakout"
+                else 0.0
+            )
             ctx = {
                 "prices": prices,
                 "fund_flow_records": flow_records,

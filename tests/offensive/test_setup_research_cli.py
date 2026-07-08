@@ -503,3 +503,108 @@ def test_load_industry_2d_pct_empty_when_no_cache(tmp_path):
 
     result = load_industry_2d_pct(cache_dir=tmp_path)
     assert result == {}
+
+
+def test_load_industry_day_pct_reads_one_day_pct(tmp_path):
+    """load_industry_day_pct 直接读取行业指数 pct_chg, 供 BTST 行业过滤使用."""
+    import json
+    from scripts.setup_research import load_industry_day_pct
+
+    (tmp_path / "_industry_codes.json").write_text(
+        json.dumps({"801010.SI": "农林牧渔"}), encoding="utf-8"
+    )
+    (tmp_path / "801010.SI.csv").write_text(
+        "trade_date,pct_chg\n20260707,0.5\n20260708,1.2\n",
+        encoding="utf-8",
+    )
+
+    result = load_industry_day_pct(cache_dir=tmp_path)
+
+    assert result[("农林牧渔", "20260707")] == 0.5
+    assert result[("农林牧渔", "20260708")] == 1.2
+
+
+def test_evaluate_setup_injects_ticker_industry_day_pct():
+    """Phase 0 wrapper 应按 ticker 所属行业注入真实 industry_day_pct."""
+    from scripts import setup_research as sr
+    from src.screening.offensive.setups.base import DetectionResult, Setup
+
+    seen: list[float] = []
+
+    class IndustryGateSetup(Setup):
+        name = "industry_gate"
+        natural_horizon = 5
+
+        def detect(self, ticker, trade_date, context):
+            seen.append(float(context["industry_day_pct"]))
+            return DetectionResult(
+                hit=context["industry_day_pct"] >= 2.0,
+                ticker=ticker,
+                trade_date=trade_date,
+                trigger_strength=1.0,
+                invalidation_condition="industry gate",
+            )
+
+    trade_date = "20260708"
+    prices = pd.DataFrame(
+        {
+            "date": pd.to_datetime(["2026-07-08"]),
+            "close": [10.0],
+            "open": [10.0],
+            "high": [10.2],
+            "low": [9.8],
+            "pct_change": [9.8],
+        }
+    )
+
+    sr.evaluate_setup(
+        setup=IndustryGateSetup(),
+        tickers=["000001"],
+        trade_dates=[trade_date],
+        prices_by_ticker={"000001": prices},
+        fund_flow_by_ticker={},
+        industry_pct_by_date={trade_date: 3.0},
+        regimes_by_date={trade_date: "normal"},
+        industry_day_pct={("农林牧渔", trade_date): 1.0},
+        ticker_to_industry={"000001": "农林牧渔"},
+    )
+
+    assert seen == [1.0]
+
+
+def test_load_backtest_universe_uses_real_industry_day_pct(tmp_path, monkeypatch):
+    """load_backtest_universe 不应再返回 {date: 3.0} 假行业日涨幅."""
+    import json
+    from scripts import setup_research as sr
+
+    price_cache = tmp_path / "price_cache"
+    price_cache.mkdir()
+    dates = pd.bdate_range("2026-04-30", periods=50)
+    pd.DataFrame(
+        {
+            "date": [date.strftime("%Y-%m-%d") for date in dates],
+            "close": [10.0] * 50,
+            "open": [10.0] * 50,
+            "high": [10.2] * 50,
+            "low": [9.8] * 50,
+            "pct_change": [0.0] * 50,
+            "volume": [1000.0] * 50,
+        }
+    ).to_csv(price_cache / "000001.csv", index=False)
+    regime_history = tmp_path / "regime_history.json"
+    regime_history.write_text(json.dumps({"20260708": "normal"}), encoding="utf-8")
+
+    monkeypatch.setattr(sr, "load_industry_day_pct", lambda: {("农林牧渔", "20260708"): 1.2})
+    monkeypatch.setattr(sr, "load_industry_2d_pct", lambda: {})
+    monkeypatch.setattr(sr, "build_ticker_to_industry", lambda tickers: {"000001": "农林牧渔"})
+
+    universe = sr.load_backtest_universe(
+        price_cache_dir=price_cache,
+        fund_flow_cache_dir=tmp_path / "fund_flow_cache",
+        regime_history_path=regime_history,
+        start_date="20260708",
+        end_date="20260708",
+    )
+
+    assert universe["industry_day_pct"] == {("农林牧渔", "20260708"): 1.2}
+    assert universe["industry_pct_by_date"] == {"20260708": 1.2}

@@ -72,6 +72,7 @@ class _ContextInjectingSetupWrapper(Setup):
     """包装 setup, 注入 fund_flow + industry 数据到 context。
 
     industry 数据注入 (v2 §3.1 SectorRotation):
+    - industry_day_pct: 按 (ticker 的行业, trade_date) 查真实 SW 行业指数 1 日涨幅
     - industry_2d_pct: 按 (ticker 的行业, trade_date) 查真实 SW 行业指数 2 日涨幅
     - stock_today_pct: 从 prices 取该 ticker 当日 pct_change
     - industry_net_flow: 不注入 (无真实源, SectorRotation 自动降级)
@@ -87,6 +88,7 @@ class _ContextInjectingSetupWrapper(Setup):
         industry_pct_by_date,
         industry_2d_pct: dict[tuple[str, str], float] | None = None,
         ticker_to_industry: dict[str, str] | None = None,
+        industry_day_pct: dict[tuple[str, str], float] | None = None,
     ):
         self._inner = inner
         self.name = inner.name
@@ -95,6 +97,7 @@ class _ContextInjectingSetupWrapper(Setup):
         self._industry = industry_pct_by_date
         self._industry_2d_pct = industry_2d_pct or {}
         self._ticker_to_industry = ticker_to_industry or {}
+        self._industry_day_pct = industry_day_pct or {}
         # 缓存 ticker → {date_str: pct_change} 索引, 避免每次 detect 全表扫日期
         self._pct_index_cache: dict[str, dict[str, float]] = {}
 
@@ -118,10 +121,13 @@ class _ContextInjectingSetupWrapper(Setup):
     def detect(self, ticker, trade_date, context):
         ctx = dict(context)
         ctx["fund_flow_records"] = self._fund_flow.get(ticker, [])
-        ctx["industry_day_pct"] = self._industry.get(trade_date, 0.0)
+        industry_name = self._ticker_to_industry.get(ticker)
+        if industry_name and self._industry_day_pct:
+            ctx["industry_day_pct"] = self._industry_day_pct.get((industry_name, trade_date), self._industry.get(trade_date, 0.0))
+        else:
+            ctx["industry_day_pct"] = self._industry.get(trade_date, 0.0)
         # SectorRotation 需要的真实行业数据
-        if self._industry_2d_pct and ticker in self._ticker_to_industry:
-            industry_name = self._ticker_to_industry[ticker]
+        if self._industry_2d_pct and industry_name:
             ctx["industry_2d_pct"] = self._industry_2d_pct.get((industry_name, trade_date), 0.0)
         # stock_today_pct: 从缓存的 date→pct 索引取 (O(1), 不全表扫)
         prices = ctx.get("prices")
@@ -154,6 +160,7 @@ def evaluate_setup(
     config: ExecutionConfig | None = None,
     industry_2d_pct: dict[tuple[str, str], float] | None = None,
     ticker_to_industry: dict[str, str] | None = None,
+    industry_day_pct: dict[tuple[str, str], float] | None = None,
 ) -> dict:
     """跑 setup 在样本上, 分 IS/OOS 出 TermStructureDistribution + 准入判定。
 
@@ -220,7 +227,7 @@ def evaluate_setup(
     # 一次的三重重复. 现在只 detect 一次全量.
     wrapped = _ContextInjectingSetupWrapper(
         setup, fund_flow_by_ticker, industry_pct_by_date,
-        industry_2d_pct, ticker_to_industry,
+        industry_2d_pct, ticker_to_industry, industry_day_pct,
     )
     all_hit_tickers, all_hit_dates, all_hit_regimes, all_hit_strengths = [], [], [], []
     total_degraded = 0
@@ -345,6 +352,7 @@ def evaluate_setups(
     config: ExecutionConfig | None = None,
     industry_2d_pct: dict[tuple[str, str], float] | None = None,
     ticker_to_industry: dict[str, str] | None = None,
+    industry_day_pct: dict[tuple[str, str], float] | None = None,
 ) -> dict:
     """批量跑多 setup, 对检验家族做 FDR 校正 (v2 §C.5 反 p-hacking).
 
@@ -370,6 +378,7 @@ def evaluate_setups(
             industry_pct_by_date=industry_pct_by_date, regimes_by_date=regimes_by_date,
             horizons=horizons, config=config,
             industry_2d_pct=industry_2d_pct, ticker_to_industry=ticker_to_industry,
+            industry_day_pct=industry_day_pct,
         )
         # IS 段 p-value (训练段, 用于 FDR)
         p_is = setup_p_value(result["is_returns"])
@@ -422,7 +431,7 @@ def load_backtest_universe(
     替代之前 validate_phase0_multi_setup.py 里重复内联的加载逻辑. 三个关键修正:
       1. 直接遍历 price_cache/*.csv 取 ticker (302个), 不依赖 candidate_pool JSON (300)
       2. regimes_by_date 从 regime_history.json 读真实标签 (此前全硬编码 normal)
-      3. industry_pct_by_date 仍是 {d: 3.0} 假值 (全仓库无逐日行业涨幅源, 显式 TODO)
+      3. industry_pct_by_date 从 SW L1 行业指数单日涨幅聚合, 不再使用固定假值
 
     Returns:
         {tickers, trade_dates, prices_by_ticker, fund_flow_by_ticker,
@@ -458,13 +467,15 @@ def load_backtest_universe(
     # trade_dates: regime_history 覆盖的全部交易日 (权威交易日历)
     trade_dates = sorted(d for d in regimes_by_date if start_date <= d <= end_date)
 
-    # TODO(数据): industry_pct_by_date 无真实源, 全仓库用 {d: 3.0} 假值.
-    # SectorRotation setup 因此无法验证. 需接 tushare sw_industry_daily 或东财行业指数.
-    industry_pct_by_date = {d: 3.0 for d in trade_dates}
-
     # 行业指数数据 (供 SectorRotation): SW L1 真实 2 日涨幅 + ticker→行业映射
     industry_2d_pct = load_industry_2d_pct()
-    ticker_to_industry = build_ticker_to_industry(tickers_with_cache)
+    ticker_to_industry = build_ticker_to_industry(list(prices_by_ticker))
+    industry_day_pct = load_industry_day_pct()
+    industry_pct_by_date = _aggregate_industry_day_pct_by_date(
+        trade_dates,
+        ticker_to_industry,
+        industry_day_pct,
+    )
 
     return {
         "tickers": tickers_with_cache,
@@ -473,6 +484,7 @@ def load_backtest_universe(
         "fund_flow_by_ticker": fund_flow_by_ticker,
         "industry_pct_by_date": industry_pct_by_date,
         "regimes_by_date": regimes_by_date,
+        "industry_day_pct": industry_day_pct,
         "industry_2d_pct": industry_2d_pct,
         "ticker_to_industry": ticker_to_industry,
     }
@@ -562,6 +574,46 @@ def load_industry_2d_pct(
             if pd.notna(v):
                 result[(industry_name, d)] = float(v)
     logger.info("load_industry_2d_pct: %d (industry, date) 条", len(result))
+    return result
+
+
+def load_industry_day_pct(
+    cache_dir: Path = _INDUSTRY_INDEX_CACHE_DIR,
+) -> dict[tuple[str, str], float]:
+    """加载行业指数单日涨幅 → {(industry_name, YYYYMMDD): pct%}."""
+
+    codes_path = cache_dir / "_industry_codes.json"
+    if not codes_path.exists():
+        logger.warning("industry index cache 不存在, 跑 scripts.backfill_industry_index")
+        return {}
+    codes_map: dict[str, str] = json.loads(codes_path.read_text(encoding="utf-8"))
+
+    result: dict[tuple[str, str], float] = {}
+    for index_code, industry_name in codes_map.items():
+        csv_path = cache_dir / f"{index_code}.csv"
+        if not csv_path.exists():
+            continue
+        df = pd.read_csv(csv_path, dtype={"trade_date": str})
+        if "pct_chg" not in df.columns or "trade_date" not in df.columns:
+            continue
+        for _, row in df.iterrows():
+            value = row["pct_chg"]
+            if pd.notna(value):
+                result[(industry_name, str(row["trade_date"]).replace("-", ""))] = float(value)
+    logger.info("load_industry_day_pct: %d (industry, date) 条", len(result))
+    return result
+
+
+def _aggregate_industry_day_pct_by_date(
+    trade_dates: list[str],
+    ticker_to_industry: dict[str, str],
+    industry_day_pct: dict[tuple[str, str], float],
+) -> dict[str, float]:
+    industries = sorted(set(ticker_to_industry.values()))
+    result: dict[str, float] = {}
+    for trade_date in trade_dates:
+        values = [industry_day_pct[(industry, trade_date)] for industry in industries if (industry, trade_date) in industry_day_pct]
+        result[trade_date] = float(sum(values) / len(values)) if values else 0.0
     return result
 
 
@@ -825,6 +877,7 @@ def main():
     fund_flow_by = universe["fund_flow_by_ticker"]
     regimes_by = universe["regimes_by_date"]
     industry_pct = universe["industry_pct_by_date"]
+    industry_day = universe["industry_day_pct"]
     industry_2d = universe["industry_2d_pct"]
     ticker_to_ind = universe["ticker_to_industry"]
 
@@ -850,6 +903,7 @@ def main():
             industry_pct_by_date=industry_pct, regimes_by_date=regimes_by,
             horizons=(5, 10), config=exec_cfg,
             industry_2d_pct=industry_2d, ticker_to_industry=ticker_to_ind,
+            industry_day_pct=industry_day,
         )
         # 算 p-value (IS + OOS)
         result["p_value"] = setup_p_value(result["is_returns"])

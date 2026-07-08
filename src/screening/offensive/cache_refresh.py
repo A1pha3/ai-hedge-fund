@@ -40,6 +40,8 @@ class DailyActionCacheRefreshStats:
     fund_flow_empty: int = 0
     fund_flow_skipped_fresh: int = 0
     fund_flow_failed: int = 0
+    industry_index_total: int = 0
+    industry_index_failed: int = 0
     failed_tickers: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -57,6 +59,8 @@ class DailyActionCacheRefreshStats:
         self.fund_flow_empty += other.fund_flow_empty
         self.fund_flow_skipped_fresh += other.fund_flow_skipped_fresh
         self.fund_flow_failed += other.fund_flow_failed
+        self.industry_index_total += other.industry_index_total
+        self.industry_index_failed += other.industry_index_failed
         self.failed_tickers.extend(other.failed_tickers)
         return self
 
@@ -400,6 +404,27 @@ def refresh_fund_flow_cache(
     return stats
 
 
+def refresh_industry_index_cache(
+    trade_date: str,
+    *,
+    backfill_fn: Callable[..., dict[str, int]] | None = None,
+) -> DailyActionCacheRefreshStats:
+    """Refresh SW L1 industry index cache used by BTST industry confirmation."""
+
+    stats = DailyActionCacheRefreshStats()
+    if backfill_fn is None:
+        from scripts.backfill_industry_index import backfill
+
+        backfill_fn = backfill
+    try:
+        result = backfill_fn(end_date=trade_date)
+        stats.industry_index_total = sum(int(count) for count in (result or {}).values())
+    except Exception as exc:  # noqa: BLE001 - industry cache must not abort --auto
+        logger.warning("Failed to refresh industry_index_cache for %s: %s", trade_date, exc)
+        stats.industry_index_failed = 1
+    return stats
+
+
 def refresh_daily_action_caches(
     trade_date: str,
     *,
@@ -410,7 +435,9 @@ def refresh_daily_action_caches(
     fetch_daily_prices_batch: Callable[[str], pd.DataFrame | None] | None = None,
     target_tickers: list[str] | set[str] | tuple[str, ...] | None = None,
     backfill_price_history_fn: Callable[[str, str, str], pd.DataFrame | None] | None = None,
+    industry_index_backfill_fn: Callable[..., dict[str, int]] | None = None,
     fund_flow_fetch_fn: Callable[..., pd.DataFrame] | None = None,
+    refresh_industry_index: bool | None = None,
     refresh_fund_flow: bool | None = None,
     fund_flow_rate_limit_sec: float | None = None,
     fund_flow_max_tickers: int | None = None,
@@ -427,6 +454,13 @@ def refresh_daily_action_caches(
             include_shadow=_env_enabled("DAILY_ACTION_INCLUDE_SHADOW_CANDIDATES", default=False),
         )
     )
+    stats = DailyActionCacheRefreshStats()
+
+    if refresh_industry_index is None:
+        refresh_industry_index = _env_enabled("DAILY_ACTION_REFRESH_INDUSTRY_INDEX", default=True)
+    if refresh_industry_index:
+        stats.merge(refresh_industry_index_cache(trade_date, backfill_fn=industry_index_backfill_fn))
+
     price_stats = refresh_price_cache_from_daily_batch(
         trade_date,
         price_cache_dir=price_cache_dir,
@@ -435,7 +469,7 @@ def refresh_daily_action_caches(
         target_tickers=tickers,
         backfill_price_history_fn=backfill_price_history_fn,
     )
-    stats = DailyActionCacheRefreshStats().merge(price_stats)
+    stats.merge(price_stats)
 
     if refresh_fund_flow is None:
         refresh_fund_flow = _env_enabled("DAILY_ACTION_REFRESH_FUND_FLOW", default=True)

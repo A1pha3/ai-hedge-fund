@@ -21,6 +21,8 @@ data/reports/*
 !data/reports/p6_btst_risk_budget_overlay_eval.md
 data/snapshots
 data/price_cache
+data/fund_flow_cache
+data/industry_index_cache
 
 # Python
 __pycache__/

@@ -1092,7 +1092,6 @@ COMMAND_REGISTRY: list[tuple[str, Callable[[list[str]], int | None]]] = [
     ("--strategy-report", _resolve_strategy_report),
     ("--top-picks", _resolve_top_picks),
     ("--top-setups", _resolve_top_setups),
-    ("--daily-action", _resolve_daily_action),
     ("--reconcile", _resolve_reconcile),
     ("--refresh-regime-winrates", _resolve_refresh_regime_winrates),
 ]

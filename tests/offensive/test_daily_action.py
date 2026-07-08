@@ -706,6 +706,77 @@ def test_generate_daily_action_ranks_hits_before_portfolio_cap(tmp_path, monkeyp
     assert selected[0] == "000007"
 
 
+def test_generate_daily_action_uses_real_industry_day_pct_for_btst(tmp_path, monkeypatch):
+    """BTST 运行时必须使用真实行业日涨幅, 不能用个股涨停幅度伪造."""
+    import pandas as pd
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+    from src.screening.offensive.setups.base import DetectionResult
+    from src.screening.offensive.statistics import Distribution
+
+    seen_industry_pct: dict[str, float] = {}
+
+    class IndustryAwareBtst:
+        def detect(self, ticker, trade_date, context):
+            seen_industry_pct[ticker] = float(context["industry_day_pct"])
+            return DetectionResult(
+                hit=context["industry_day_pct"] >= 2.0,
+                ticker=ticker,
+                trade_date=trade_date,
+                trigger_strength=1.0,
+                invalidation_condition="行业确认",
+            )
+
+    dist = Distribution(
+        n=100,
+        winrate=0.60,
+        avg_gain=0.12,
+        avg_loss=-0.06,
+        convexity_ratio=2.0,
+        expected_return=0.05,
+        ci_low=0.02,
+        ci_high=0.08,
+        ic=0.10,
+    )
+    report_path = tmp_path / "auto_screening_20260708.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "date": "20260708",
+                "recommendations": [{"ticker": "000001"}],
+                "market_state": {"regime_gate_level": "normal"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    prices = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-07-08"),
+                "open": 10.0,
+                "high": 11.0,
+                "low": 9.8,
+                "close": 11.0,
+                "pct_change": 9.8,
+            }
+        ]
+    )
+
+    monkeypatch.setattr(da, "_VERIFIED_SETUPS", [("btst_breakout", IndustryAwareBtst, 10)])
+    monkeypatch.setattr(da, "get_known_distribution", lambda name, horizon: dist)
+    monkeypatch.setattr(da, "_load_industry_day_pct_by_ticker", lambda trade_date, tickers: {"000001": 1.0}, raising=False)
+
+    actions = da.generate_daily_action(
+        report_path=report_path,
+        tracker=PaperTracker(journal_dir=tmp_path),
+        scan_mode="report",
+        price_loader=lambda ticker, report_date: prices.copy(),
+    )
+
+    assert seen_industry_pct == {"000001": 1.0}
+    assert actions == []
+
+
 def test_render_daily_action_shows_stale_data_guard(tmp_path):
     """stale guard 触发时, 输出应明确说明数据滞后且不出新 BUY."""
     from src.screening.offensive.daily_action import render_daily_action

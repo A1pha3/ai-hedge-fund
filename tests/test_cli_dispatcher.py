@@ -138,6 +138,11 @@ class TestCommandRegistry(unittest.TestCase):
         for flag, handler in COMMAND_REGISTRY:
             self.assertTrue(callable(handler), f"Handler for {flag} is not callable")
 
+    def test_registry_flags_are_unique(self) -> None:
+        flags = [flag for flag, _ in COMMAND_REGISTRY]
+        duplicates = sorted({flag for flag in flags if flags.count(flag) > 1})
+        self.assertEqual(duplicates, [], f"Duplicate flags in registry: {duplicates}")
+
     def test_auto_not_in_registry(self) -> None:
         # ``--auto`` 走主 parser (它本来 ``require_tickers=False``), 不应在这里
         registered = {flag for flag, _ in COMMAND_REGISTRY}
