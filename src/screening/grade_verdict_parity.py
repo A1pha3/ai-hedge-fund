@@ -275,8 +275,10 @@ def audit_grade_verdict_parity(
                 verdict=verdict,
                 trigger_path=trigger_path,
                 reason=reason,
-                # ALL mismatches are mitigated by the autodev-22 ⚠ annotation
-                # (``_grade_with_verdict_context`` in ``_print_pick_entry``).
+                # ALL mismatches are mitigated by the display layer
+                # (``_grade_with_verdict_context`` in ``_print_pick_entry``):
+                # - Option B (default): ⚠ annotation appended to green grade
+                # - Option A (GRADE_RECOLOR_BY_VERDICT=1): whole grade recolored
                 # A None/False here would flag a display-layer regression.
                 mitigated=True,
             )
