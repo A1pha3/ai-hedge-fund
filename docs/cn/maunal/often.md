@@ -16,5 +16,6 @@ uv run python src/main.py --daily-action
 
 数据日期
 --auto：用系统当天日期，必须在收盘后跑（盘中跑会因数据未更新而报错）
---daily-action：自动取 price_cache 最新交易日。如果今天的 --auto 还没跑，它会用昨天的数据
-建议：每天收盘后先 --auto（更新缓存），再 --daily-action（用最新数据出信号）。
+--daily-action：自动取 price_cache 最新交易日。信号日 D 只生成 D+1 开盘计划。
+如果最新缓存仍是昨天的数据，但今天开盘窗口已过，--daily-action 不再输出新 BUY；它会提示等待今天收盘数据刷新后再生成下一交易日计划。
+建议：每天收盘后先 --auto（更新缓存），再 --daily-action（用最新数据出下一交易日计划）。盘前可复查昨日信号对应的今日开盘计划，盘中不补单。

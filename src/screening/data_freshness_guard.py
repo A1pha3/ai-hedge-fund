@@ -18,6 +18,7 @@ CLI:
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -352,8 +353,13 @@ def _check_cache_freshness(
     result: dict[str, dict[str, Any]] = {}
 
     if cache_path is None:
-        # Try default cache path
-        default_cache = Path.home() / ".cache" / "ai-hedge-fund" / "cache.sqlite"
+        # Try default cache path — honor DISK_CACHE_PATH (aligns with
+        # enhanced_cache.py:273 singleton resolution), otherwise fall back to HOME.
+        env_cache = os.environ.get("DISK_CACHE_PATH")
+        if env_cache:
+            default_cache = Path(env_cache).expanduser()
+        else:
+            default_cache = Path.home() / ".cache" / "ai-hedge-fund" / "cache.sqlite"
         if default_cache.exists():
             cache_path = default_cache
         else:

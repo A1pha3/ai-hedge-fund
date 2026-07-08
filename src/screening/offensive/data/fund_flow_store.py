@@ -50,7 +50,7 @@ class FundFlowStore:
 
         path = self._path(ticker)
         if path.exists():
-            old = pd.read_csv(path, dtype={"date": str})
+            old = pd.read_csv(path, dtype={"date": str, "ticker": str})
             combined = pd.concat([old, df], ignore_index=True)
             combined = combined.drop_duplicates(subset=["date"], keep="last")
             combined = combined.sort_values("date").reset_index(drop=True)
@@ -63,7 +63,7 @@ class FundFlowStore:
         path = self._path(ticker)
         if not path.exists():
             return pd.DataFrame()
-        return pd.read_csv(path, dtype={"date": str})
+        return pd.read_csv(path, dtype={"date": str, "ticker": str})
 
     @staticmethod
     def _row_to_record(row: pd.Series) -> FundFlowRecord:

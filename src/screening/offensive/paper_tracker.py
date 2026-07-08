@@ -60,6 +60,10 @@ class PaperTracker:
         self._state = self._load_state()
         # close_matured 最近一次平仓摘要 (供 render_daily_action 披露, 不持久化)
         self.last_closed_positions: list[dict[str, Any]] = []
+        # generate_daily_action 最近一次实际扫描日期 (供 CLI 标题使用, 不持久化)
+        self.last_action_trade_date: str = ""
+        # generate_daily_action 数据滞后保护原因 (触发时不出新 BUY, 不持久化)
+        self.last_action_stale_reason: str = ""
 
     # ---- portfolio state ----
 
@@ -301,17 +305,23 @@ class PaperTracker:
                 logger.info("close_matured: %s %s 无 day_%d 收益数据, 跳过 (数据未成熟?)", buy_date, ticker, horizon)
                 continue
 
-            realized_pnl = ret_pct / 100.0  # 百分数 → 小数
-            exit_price = entry_price * (1 + realized_pnl)
-
             # 止损触发检测: 期间 low <= hard_stop (披露用, 不影响主 P&L 口径)
             stop_would_have_triggered = False
-            if price_loader is not None and hard_stop > 0:
+            execution_result: tuple[float, float] | None = None
+            if price_loader is not None:
                 try:
                     prices_df = price_loader(ticker, buy_date)
-                    stop_would_have_triggered = self._check_stop_hit(prices_df, buy_date, horizon, hard_stop)
+                    if hard_stop > 0:
+                        stop_would_have_triggered = self._check_stop_hit(prices_df, buy_date, horizon, hard_stop)
+                    execution_result = self._execution_adjusted_return(prices_df, buy_date, horizon)
                 except Exception:
                     logger.debug("close_matured: %s low 序列读取失败, 止损检测降级", ticker, exc_info=True)
+
+            if execution_result is not None:
+                realized_pnl, exit_price = execution_result
+            else:
+                realized_pnl = ret_pct / 100.0  # 百分数 → 小数
+                exit_price = entry_price * (1 + realized_pnl)
 
             # 写 EXIT 记录 (幂等 key = (date, ticker) 与 BUY 对齐)
             self.record_action(
@@ -379,6 +389,53 @@ class PaperTracker:
         if len(window) == 0:
             return False
         return bool((window <= hard_stop).any())
+
+    @staticmethod
+    def _execution_adjusted_return(prices_df: Any, buy_date: str, horizon: int) -> tuple[float, float] | None:
+        """按 execution_adjuster 口径计算 next-open entry → T+N close 收益.
+
+        返回 ``(realized_pnl, exit_price)``; OHLC 数据不足时返回 None, 调用方可
+        降级到 close-to-close。这里复用 ExecutionConfig 默认滑点, 保持 paper P&L
+        与 known_distribution/Kelly 先验一致。
+        """
+        if prices_df is None or len(prices_df) == 0:
+            return None
+        required = {"date", "open", "close"}
+        if not required.issubset(set(prices_df.columns)):
+            return None
+
+        from src.screening.offensive.execution_adjuster import ExecutionConfig
+
+        df = prices_df.copy()
+        try:
+            df["date_str"] = df["date"].dt.strftime("%Y%m%d")
+        except Exception:
+            df["date_str"] = df["date"].astype(str).str.replace("-", "", regex=False)
+        df = df.sort_values("date_str").reset_index(drop=True)
+
+        matches = df.index[df["date_str"] == str(buy_date)]
+        if len(matches) == 0:
+            return None
+        trigger_idx = int(matches[0])
+        entry_idx = trigger_idx + 1
+        exit_idx = trigger_idx + int(horizon)
+        if entry_idx >= len(df) or exit_idx >= len(df):
+            return None
+
+        try:
+            entry_open = float(df.iloc[entry_idx]["open"])
+            exit_close = float(df.iloc[exit_idx]["close"])
+        except (TypeError, ValueError):
+            return None
+        if entry_open <= 0 or exit_close <= 0:
+            return None
+
+        slippage = ExecutionConfig().slippage_bps / 10_000.0
+        entry_price = entry_open * (1 + slippage)
+        exit_price = exit_close * (1 - slippage)
+        if entry_price <= 0:
+            return None
+        return (exit_price / entry_price) - 1.0, exit_price
 
     # ---- drawdown check ----
 

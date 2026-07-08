@@ -7,9 +7,9 @@
 (月度重校准, 见 risk_framework 的衰减监控)。
 
 当前已验证 (2026-07-08 全池 302 ticker 真实回测, 新 detect 含条件4):
-- btst_breakout @ T+10: cv=2.18, winrate=60.9%, E=+4.46%, n=915, IC=0.131
+- btst_breakout @ T+10: cv=1.81, winrate=54.2%, E=+3.38%, n=1762, IC=0.126
   → 条件4 (涨停前5日涨幅≤5%) 过滤后, alpha 显著提升 (旧版 cv=1.53/win=50.6%)
-  → CI [3.46%, 5.51%] 远不跨 0, IC 0.131 有排序信息
+  → CI [2.57%, 4.15%] 远不跨 0, IC 0.126 有排序信息
   → 与 OversoldBounce 的超跌反转逻辑同构
 - oversold_bounce @ T+5: cv=2.51, winrate=59.2%, E=+3.42%, n=1113, IC=0.041
   → 超跌反弹 (30日跌>20% + 资金回流), T+5 alpha 最强
@@ -20,18 +20,18 @@ from __future__ import annotations
 
 from src.screening.offensive.statistics import Distribution
 
-# BTST 突破 T+10 全池真实分布 (2026-07-08 重算, 含条件4: 涨停前5日涨幅≤5%)
-# 302 ticker × 2020-2026, 9283 候选涨停日 → 941 命中 → 915 execution-adjusted
+# BTST 突破 T+10 全池真实分布 (2026-07-08 重算, 含条件4: 涨停前5日涨幅≤5%, 不含涨停日)
+# 302 ticker × 2020-2026, 9283 候选涨停日 → 1804 命中 → 1762 execution-adjusted
 BTST_BREAKOUT_T10 = Distribution(
-    n=915,
-    winrate=0.609,
-    avg_gain=0.1354,  # +13.54%
-    avg_loss=-0.0966,  # -9.66%
-    convexity_ratio=2.18,
-    expected_return=0.0446,  # +4.46%
-    ci_low=0.0346,
-    ci_high=0.0551,
-    ic=0.131,
+    n=1762,
+    winrate=0.5420,
+    avg_gain=0.1398,  # +13.98%
+    avg_loss=-0.0917,  # -9.17%
+    convexity_ratio=1.8056,
+    expected_return=0.0338,  # +3.38%
+    ci_low=0.0257,
+    ci_high=0.0415,
+    ic=0.1256,
 )
 
 # OversoldBounce 超跌反弹 T+5 全池真实分布 (2026-07-08)

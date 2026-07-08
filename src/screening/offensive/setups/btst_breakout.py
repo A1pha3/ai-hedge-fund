@@ -42,11 +42,10 @@ _PRE_RUNUP_MAX_PCT = 5.0  # 涨停前 5 日累计涨幅上限 (条件 4)
 class BtstBreakoutSetup(Setup):
     name = "btst_breakout"
     # 数据驱动的 natural_horizon (全池回测 2020-2026, 新 detect 含条件4, execution-adjusted):
-    #   T+5  凸性 ~2.17 胜率 60% E[r] +3.20% (n=1299, 已过准入门槛)
-    #   T+10 凸性 2.18 胜率 60.9% E[r] +4.46% (n=915, IC=0.131) ← known_distributions 口径
+    #   T+10 凸性 1.81 胜率 54.2% E[r] +3.38% (n=1762, IC=0.126) ← known_distributions 口径
     #   T+20 (未单测, 但 E[r] 单调递增 — 慢均值回归特性)
     # 条件4 (涨停前5日涨幅≤5%) 加入后, BTST 从弱 setup (旧 cv=1.33/win=49%) 升级为
-    # 强 setup (cv=2.18/win=61%), 与 OversoldBounce 的超跌反转逻辑同构.
+    # 强 setup (cv=1.81/win=54%), 与 OversoldBounce 的超跌反转逻辑同构.
     natural_horizon = 10
 
     def detect(self, ticker: str, trade_date: str, context: dict[str, Any]) -> DetectionResult:
@@ -84,17 +83,17 @@ class BtstBreakoutSetup(Setup):
         if industry_pct < _INDUSTRY_PCT_MIN:
             return self._miss(ticker, trade_date)
 
-        # 条件 4: 涨停日收盘 / 5 日前收盘 涨幅 ≤ 5% (防追高)
-        # 数据驱动: 此比值越大后续越弱 (单调). 平盘后首板 (比值~1.10) 和超跌后首板
-        # (比值<1.0) 被保留; 涨一波后的涨停 (比值>1.25) 被过滤. 虽然比值含今日涨停涨幅,
-        # 但实测它比"不含今日"口径区分度更高 (凸性 2.17 vs 1.68 at <=5%).
-        # 与 OversoldBounce 的超跌反转逻辑同构.
+        # 条件 4: 涨停前一交易日收盘 / 5 日前收盘 涨幅 ≤ 5% (防追高).
+        # 注意这里不包含涨停当天涨幅; 条件语义是"涨停前"是否已经涨过一波。
+        # 平盘后首板和超跌后首板保留, 涨一波后的涨停过滤。
         ref_idx = trigger_idx - _PRE_RUNUP_LOOKBACK_DAYS
-        if ref_idx < 0:
+        pre_trigger_idx = trigger_idx - 1
+        if ref_idx < 0 or pre_trigger_idx < 0:
             return self._miss(ticker, trade_date)  # 数据不足, 保守 miss
         pre_close = float(prices.iloc[ref_idx]["close"])
+        pre_trigger_close = float(prices.iloc[pre_trigger_idx]["close"])
         trigger_close = float(trigger_row["close"])
-        pre_runup_pct = (trigger_close / pre_close - 1) * 100
+        pre_runup_pct = (pre_trigger_close / pre_close - 1) * 100
         if pre_runup_pct > _PRE_RUNUP_MAX_PCT:
             return self._miss(ticker, trade_date)
 

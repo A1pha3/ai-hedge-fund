@@ -965,6 +965,44 @@ def _try_acquire_pipeline_lock(lock_path: Path) -> int | None:
     return fd
 
 
+def _daily_action_cache_refresh_enabled() -> bool:
+    raw = os.environ.get("DAILY_ACTION_CACHE_REFRESH")
+    if raw is None or raw == "":
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _refresh_daily_action_caches_for_auto(
+    trade_date: str,
+    report_payload: dict,
+    *,
+    refresh_fn=None,
+) -> None:
+    """Best-effort cache refresh for the next ``--daily-action`` run."""
+
+    if not _daily_action_cache_refresh_enabled():
+        logger.info("[Auto] daily-action cache refresh skipped by DAILY_ACTION_CACHE_REFRESH")
+        return
+
+    if refresh_fn is None:
+        from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+
+        refresh_fn = refresh_daily_action_caches
+
+    try:
+        stats = refresh_fn(trade_date)
+        summary = stats.to_dict() if hasattr(stats, "to_dict") else dict(stats)
+    except Exception as exc:  # pragma: no cover - cache refresh must not fail --auto
+        logger.warning("[Auto] daily-action cache refresh failed: %s", exc)
+        summary = {"status": "failed", "error": str(exc)}
+
+    report_payload["daily_action_cache_refresh"] = summary
+    try:
+        _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
+    except Exception as exc:  # pragma: no cover
+        logger.debug("[Auto] daily-action cache refresh summary save failed: %s", exc)
+
+
 def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
     """一键跑全流程：全市场筛选 -> 因子评分 -> 信号融合 -> Top N 推荐。
 
@@ -1016,6 +1054,7 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
 
         # 调用纯函数 — 复用 Web 端点的核心逻辑
         report_payload = compute_auto_screening_results(trade_date, top_n)
+        _refresh_daily_action_caches_for_auto(trade_date, report_payload)
 
         # 重建 CLI 展示所需的强类型对象 (top_results / market_state / industry_signals / decay_map)
         top_results, market_state, industry_signals, decay_map = _rebuild_cli_objects(report_payload)
