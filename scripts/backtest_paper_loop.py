@@ -70,6 +70,19 @@ def _make_offline_fetcher(prices_by: dict[str, pd.DataFrame]):
     return fetcher
 
 
+def _resolve_industry_day_pct(
+    ticker: str,
+    trade_date: str,
+    *,
+    ticker_to_industry: dict[str, str],
+    industry_day_pct: dict[tuple[str, str], float],
+) -> float:
+    industry = ticker_to_industry.get(ticker, "")
+    if not industry:
+        return 0.0
+    return float(industry_day_pct.get((industry, trade_date), 0.0) or 0.0)
+
+
 def backtest_paper_loop(
     start_date: str = "20260101",
     end_date: str = "20260706",
@@ -87,6 +100,11 @@ def backtest_paper_loop(
     fund_flow_by = _load_all_fund_flow()
     trading_days = _get_trading_days(prices_by, start_date, end_date)
     print(f"  价格: {len(prices_by)} ticker, 资金流: {len(fund_flow_by)}, 交易日: {len(trading_days)}")
+    from scripts.setup_research import load_industry_day_pct
+    from src.screening.offensive.daily_action import _load_ticker_to_industry_from_snapshots
+
+    ticker_to_industry = _load_ticker_to_industry_from_snapshots(list(prices_by))
+    industry_day_pct = load_industry_day_pct()
 
     # 预加载 regime + ST
     regime_path = Path("data/reports/regime_history.json")
@@ -141,7 +159,12 @@ def backtest_paper_loop(
                     if drop30 > -20:
                         continue
 
-                industry_pct = max(pct, 3.0) if pct >= 9.5 else pct
+                industry_pct = _resolve_industry_day_pct(
+                    ticker,
+                    trade_date,
+                    ticker_to_industry=ticker_to_industry,
+                    industry_day_pct=industry_day_pct,
+                )
                 ctx = {
                     "prices": df,
                     "fund_flow_records": fund_flow_by.get(ticker, []),

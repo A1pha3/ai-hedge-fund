@@ -103,10 +103,10 @@ def test_paper_tracker_state_persists(tmp_path):
 def test_btst_t10_distribution_exists():
     dist = get_known_distribution("btst_breakout", 10)
     assert dist is not None
-    assert dist.n == 915  # 条件4 (涨停前5日涨幅≤5%) 过滤后
+    assert dist.n == 1762  # 条件4 (涨停前5日涨幅≤5%, 不含涨停日) 过滤后
     assert dist.convexity_ratio > 1.5
     assert dist.winrate > 0.5
-    assert abs(dist.expected_return - 0.0446) < 0.001
+    assert abs(dist.expected_return - 0.0338) < 0.001
 
 
 def test_unknown_setup_returns_none():
@@ -528,6 +528,47 @@ def test_generate_daily_action_uses_default_price_loader_for_matured_pnl(tmp_pat
     assert tracker.state.nav == pytest.approx(1.0 + expected * 0.10, abs=1e-9)
 
 
+def test_load_prices_for_ticker_truncates_cached_rows_to_report_date(tmp_path, monkeypatch):
+    """本地 price_cache 有未来行时, report 模式不能读取信号日之后的数据."""
+    import pandas as pd
+    from src.screening.offensive import daily_action as da
+
+    price_cache = tmp_path / "data" / "price_cache"
+    price_cache.mkdir(parents=True)
+    (price_cache / "000001.csv").write_text(
+        "date,close,open,high,low,pct_change\n"
+        "2026-07-07,10.0,9.8,10.2,9.7,1.0\n"
+        "2026-07-08,11.0,10.1,11.2,10.0,10.0\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+
+    prices = da._load_prices_for_ticker("000001", "20260707")
+
+    assert len(prices) == 1
+    assert prices.iloc[-1]["date"] == pd.Timestamp("2026-07-07")
+    assert prices.iloc[-1]["close"] == 10.0
+
+
+def test_resolve_trade_date_normalizes_mixed_price_cache_date_formats(tmp_path, monkeypatch):
+    """price_cache 混用 YYYYMMDD / YYYY-MM-DD 时, 最新交易日应按日期比较而不是字符串比较."""
+    from src.screening.offensive import daily_action as da
+
+    price_cache = tmp_path / "data" / "price_cache"
+    price_cache.mkdir(parents=True)
+    (price_cache / "000001.csv").write_text(
+        "date,close\n20260706,10.0\n2026-07-08,10.5\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    trade_date, regime = da._resolve_trade_date_and_regime()
+
+    assert trade_date == "20260708"
+    assert regime == "normal"
+
+
 def test_generate_daily_action_blocks_new_buys_when_price_cache_lags_auto_report(tmp_path, monkeypatch):
     """price_cache 落后于最新 --auto 报告时, full_market 不应输出新 BUY."""
     from src.screening.offensive import daily_action as da
@@ -777,6 +818,41 @@ def test_generate_daily_action_uses_real_industry_day_pct_for_btst(tmp_path, mon
     assert actions == []
 
 
+def test_load_industry_day_pct_by_ticker_uses_local_snapshots_without_tushare(tmp_path, monkeypatch):
+    """daily-action 的行业上下文必须从本地缓存读, 不应依赖 Tushare 行业映射."""
+    import json
+    from src.screening.offensive import daily_action as da
+    from scripts import setup_research as sr
+
+    snapshot_dir = tmp_path / "data" / "snapshots"
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "candidate_pool_20260708.json").write_text(
+        json.dumps([{"ticker": "000001", "industry_sw": "农林牧渔"}]),
+        encoding="utf-8",
+    )
+    industry_dir = tmp_path / "data" / "industry_index_cache"
+    industry_dir.mkdir(parents=True)
+    (industry_dir / "_industry_codes.json").write_text(
+        json.dumps({"801010.SI": "农林牧渔"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (industry_dir / "801010.SI.csv").write_text(
+        "trade_date,pct_chg\n20260708,2.4\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sr,
+        "build_ticker_to_industry",
+        lambda _tickers: (_ for _ in ()).throw(AssertionError("network industry mapping should not be called")),
+    )
+
+    result = da._load_industry_day_pct_by_ticker("20260708", ["000001"])
+
+    assert result == {"000001": 2.4}
+
+
 def test_render_daily_action_shows_stale_data_guard(tmp_path):
     """stale guard 触发时, 输出应明确说明数据滞后且不出新 BUY."""
     from src.screening.offensive.daily_action import render_daily_action
@@ -810,7 +886,7 @@ def test_render_daily_action_labels_signal_and_execution_dates(tmp_path, monkeyp
             hard_stop=22.27,
             time_exit="T+10",
             invalidation_condition="价格跌破 22.27 (-8% 止损线)",
-            distribution_summary="n=915 winrate=61% cv=2.18 E=+4.5%",
+            distribution_summary="n=1762 winrate=54% cv=1.81 E=+3.4%",
             reasoning="test",
         )
     ]

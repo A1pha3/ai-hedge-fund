@@ -79,6 +79,16 @@ def _load_st_tickers() -> set[str]:
         return set()
 
 
+def _compact_trade_date(value: object) -> str:
+    text = str(value or "").strip()
+    if len(text) == 8 and text.isdigit():
+        return text
+    try:
+        return pd.to_datetime(text).strftime("%Y%m%d")
+    except Exception:
+        return ""
+
+
 def _resolve_trade_date_and_regime() -> tuple[str, str]:
     """从 price_cache + regime_history 确定 trade_date 和 regime.
 
@@ -96,7 +106,8 @@ def _resolve_trade_date_and_regime() -> tuple[str, str]:
     for csv in price_dir.glob("*.csv"):
         try:
             df = pd.read_csv(csv, dtype={"date": str}, usecols=["date"])
-            d = str(df["date"].max()).replace("-", "")
+            dates = [_compact_trade_date(value) for value in df["date"].dropna()]
+            d = max((value for value in dates if value), default="")
             if d > latest_date:
                 latest_date = d
         except Exception:
@@ -129,15 +140,53 @@ def _latest_auto_report_date() -> str:
         return ""
 
 
+def _load_ticker_to_industry_from_snapshots(
+    tickers: list[str],
+    *,
+    snapshot_dir: Path | str = Path("data/snapshots"),
+) -> dict[str, str]:
+    needed = set(tickers)
+    if not needed:
+        return {}
+
+    result: dict[str, str] = {}
+    snapshots = Path(snapshot_dir)
+    for path in sorted(snapshots.glob("candidate_pool_*.json"), reverse=True):
+        if needed.issubset(result):
+            break
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, list):
+            records = payload
+        elif isinstance(payload, dict):
+            records = []
+            for key in ("recommendations", "candidates", "candidate_pool", "selected_candidates", "shadow_candidates"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    records.extend(value)
+        else:
+            records = []
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            ticker = str(rec.get("ticker") or rec.get("ts_code") or "")[:6]
+            industry = str(rec.get("industry_sw") or rec.get("industry") or "").strip()
+            if ticker in needed and industry and ticker not in result:
+                result[ticker] = industry
+    return result
+
+
 def _load_industry_day_pct_by_ticker(trade_date: str, tickers: list[str]) -> dict[str, float]:
     """Load real SW L1 one-day pct change for the scan date, keyed by ticker."""
 
     if not tickers:
         return {}
     try:
-        from scripts.setup_research import build_ticker_to_industry, load_industry_day_pct
+        from scripts.setup_research import load_industry_day_pct
 
-        ticker_to_industry = build_ticker_to_industry(tickers)
+        ticker_to_industry = _load_ticker_to_industry_from_snapshots(tickers)
         industry_day_pct = load_industry_day_pct()
     except Exception as exc:  # noqa: BLE001 - missing context should block BTST, not crash daily action
         logger.warning("加载行业日涨幅失败, BTST 行业过滤将按 0%% 处理: %s", exc)
@@ -235,11 +284,14 @@ class DailyAction:
 
 def _load_prices_for_ticker(ticker: str, report_date: str) -> pd.DataFrame:
     """加载 ticker 价格 (tushare 优先, 含报告日前的历史)。"""
+    cutoff = pd.to_datetime(str(report_date).replace("-", ""), format="%Y%m%d", errors="coerce")
     cache = Path("data/price_cache") / f"{ticker}.csv"
     if cache.exists():
         df = pd.read_csv(cache, dtype={"date": str})
         df["date"] = pd.to_datetime(df["date"])
-        return df
+        if pd.notna(cutoff):
+            df = df[df["date"] <= cutoff]
+        return df.sort_values("date").reset_index(drop=True)
     # 拉取 (tushare)
     import os
 
@@ -274,6 +326,8 @@ def _load_prices_for_ticker(ticker: str, report_date: str) -> pd.DataFrame:
     )
     cache.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(cache, index=False)
+    if pd.notna(cutoff):
+        df = df[df["date"] <= cutoff]
     return df
 
 

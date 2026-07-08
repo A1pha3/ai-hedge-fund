@@ -311,7 +311,11 @@ def refresh_price_cache_from_daily_batch(
         return stats
 
     by_ticker: dict[str, pd.Series] = {}
+    requested_trade_date = _fund_flow_date(trade_date)
     for _, row in daily_prices_df.iterrows():
+        row_trade_date = _fund_flow_date(row.get("trade_date", requested_trade_date))
+        if row_trade_date != requested_trade_date:
+            continue
         ticker = _code6(row.get("ts_code", ""))
         if ticker:
             by_ticker[ticker] = row

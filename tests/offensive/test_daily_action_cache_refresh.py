@@ -107,6 +107,39 @@ def test_refresh_price_cache_updates_existing_tickers_only(tmp_path):
     assert stats.price_missing == 0
 
 
+def test_refresh_price_cache_rejects_stale_daily_batch_rows(tmp_path):
+    from src.screening.offensive.cache_refresh import refresh_price_cache_from_daily_batch
+
+    price_cache = tmp_path / "price_cache"
+    price_cache.mkdir()
+    (price_cache / "000001.csv").write_text(
+        "date,close,open,high,low,pct_change,volume\n" "2026-07-06,9.8,9.7,9.9,9.6,1.1,1000\n",
+        encoding="utf-8",
+    )
+
+    stats = refresh_price_cache_from_daily_batch(
+        "20260708",
+        price_cache_dir=price_cache,
+        daily_prices_df=_daily_prices(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": "20260706",
+                    "close": 10.6,
+                    "pct_chg": 8.16,
+                    "vol": 3000.0,
+                }
+            ]
+        ),
+    )
+
+    updated = pd.read_csv(price_cache / "000001.csv", dtype={"date": str})
+    assert list(updated["date"]) == ["2026-07-06"]
+    assert updated.iloc[0]["close"] == 9.8
+    assert stats.price_updated == 0
+    assert stats.price_missing == 1
+
+
 def test_refresh_price_cache_backfills_new_target_ticker_before_daily_row(tmp_path):
     from src.screening.offensive.cache_refresh import refresh_price_cache_from_daily_batch
 
