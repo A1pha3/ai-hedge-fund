@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -18,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 _CACHE_DIR = Path("data/industry_index_cache")
 _START_DATE = "20200101"
-_END_DATE = "20260707"
 
 
 def _ensure_token_in_env() -> None:
@@ -55,20 +55,38 @@ def _fetch_industry_codes() -> list[tuple[str, str]]:
     return [(str(r["index_code"]), str(r["industry_name"])) for _, r in idx_df.iterrows()]
 
 
-def _fetch_industry_daily(index_code: str) -> pd.DataFrame:
+def _resolve_end_date(end_date: str | None = None) -> str:
+    if end_date:
+        return end_date.replace("-", "").strip()
+    return datetime.now().strftime("%Y%m%d")
+
+
+def _cache_covers_end_date(path: Path, end_date: str) -> tuple[bool, int]:
+    try:
+        existing = pd.read_csv(path, dtype={"trade_date": str})
+    except Exception:
+        return False, 0
+    if len(existing) == 0 or "trade_date" not in existing.columns:
+        return False, len(existing)
+    latest = max(str(value).replace("-", "") for value in existing["trade_date"].dropna())
+    return latest >= end_date, len(existing)
+
+
+def _fetch_industry_daily(index_code: str, end_date: str | None = None) -> pd.DataFrame:
     """拉单个行业指数的全量日线 (含 pct_chg)."""
     _ensure_token_in_env()
     import tushare as ts
 
     pro = ts.pro_api()
-    df = pro.index_daily(ts_code=index_code, start_date=_START_DATE, end_date=_END_DATE)
+    df = pro.index_daily(ts_code=index_code, start_date=_START_DATE, end_date=_resolve_end_date(end_date))
     if df is None or len(df) == 0:
         return pd.DataFrame()
     return df
 
 
-def backfill() -> dict[str, int]:
+def backfill(end_date: str | None = None) -> dict[str, int]:
     """backfill 全部 SW L1 行业指数. 返回 {industry_name: 行数}."""
+    resolved_end_date = _resolve_end_date(end_date)
     codes = _fetch_industry_codes()
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -82,15 +100,12 @@ def backfill() -> dict[str, int]:
     for i, (index_code, industry_name) in enumerate(codes, 1):
         out_path = _CACHE_DIR / f"{index_code}.csv"
         if out_path.exists():
-            try:
-                existing = pd.read_csv(out_path, dtype={"trade_date": str})
-                if len(existing) > 1500:  # 已有完整数据
-                    result[industry_name] = len(existing)
-                    continue
-            except Exception:
-                pass
+            covers_end_date, row_count = _cache_covers_end_date(out_path, resolved_end_date)
+            if covers_end_date:
+                result[industry_name] = row_count
+                continue
 
-        df = _fetch_industry_daily(index_code)
+        df = _fetch_industry_daily(index_code, resolved_end_date)
         if len(df) == 0:
             logger.warning("行业 %s (%s) 返回空", index_code, industry_name)
             result[industry_name] = 0

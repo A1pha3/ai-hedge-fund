@@ -7,6 +7,7 @@ into those caches, not only emit ``auto_screening_*.json`` reports.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -20,13 +21,18 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_PRICE_CACHE_DIR = Path("data/price_cache")
 _DEFAULT_FUND_FLOW_CACHE_DIR = Path("data/fund_flow_cache")
+_DEFAULT_SNAPSHOT_DIR = Path("data/snapshots")
 _DEFAULT_FUND_FLOW_RATE_LIMIT_SEC = 0.2
+_DEFAULT_PRICE_HISTORY_LOOKBACK_DAYS = 180
+_DEFAULT_MIN_PRICE_HISTORY_ROWS = 31
 
 
 @dataclass
 class DailyActionCacheRefreshStats:
     price_total: int = 0
     price_updated: int = 0
+    price_backfilled: int = 0
+    price_insufficient_history: int = 0
     price_missing: int = 0
     price_failed: int = 0
     fund_flow_total: int = 0
@@ -42,6 +48,8 @@ class DailyActionCacheRefreshStats:
     def merge(self, other: "DailyActionCacheRefreshStats") -> "DailyActionCacheRefreshStats":
         self.price_total += other.price_total
         self.price_updated += other.price_updated
+        self.price_backfilled += other.price_backfilled
+        self.price_insufficient_history += other.price_insufficient_history
         self.price_missing += other.price_missing
         self.price_failed += other.price_failed
         self.fund_flow_total += other.fund_flow_total
@@ -89,6 +97,10 @@ def existing_price_cache_tickers(price_cache_dir: Path | str = _DEFAULT_PRICE_CA
     return sorted(p.stem for p in cache_dir.glob("*.csv") if p.stem.isdigit() and len(p.stem) == 6)
 
 
+def _is_code6(value: str) -> bool:
+    return value.isdigit() and len(value) == 6
+
+
 def _code6(ts_code: object) -> str:
     text = str(ts_code or "").strip()
     if "." in text:
@@ -118,7 +130,12 @@ def _row_value(row: pd.Series, *names: str, default: float | None = None) -> flo
 
 
 def _build_price_row(row: pd.Series, trade_date: str) -> dict:
-    date_value = row["trade_date"] if "trade_date" in row and pd.notna(row["trade_date"]) else trade_date
+    if "trade_date" in row and pd.notna(row["trade_date"]):
+        date_value = row["trade_date"]
+    elif "date" in row and pd.notna(row["date"]):
+        date_value = row["date"]
+    else:
+        date_value = trade_date
     return {
         "date": _price_date(date_value),
         "close": _row_value(row, "close"),
@@ -139,17 +156,141 @@ def _write_price_cache_row(path: Path, row: dict) -> None:
     combined.to_csv(path, index=False)
 
 
+def _snapshot_records(payload: object, *, include_shadow: bool) -> list[object]:
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+
+    records: list[object] = []
+    for key in ("candidates", "candidate_pool", "selected_candidates", "recommendations", "stocks"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            records.extend(value)
+    if include_shadow:
+        value = payload.get("shadow_candidates")
+        if isinstance(value, list):
+            records.extend(value)
+    if any(key in payload for key in ("ticker", "ts_code", "code", "symbol")):
+        records.append(payload)
+    return records
+
+
+def _extract_snapshot_ticker(record: object) -> str | None:
+    if isinstance(record, str):
+        ticker = _code6(record)
+        return ticker if _is_code6(ticker) else None
+    if not isinstance(record, dict):
+        return None
+
+    for key in ("ticker", "ts_code", "code", "symbol"):
+        value = record.get(key)
+        if value is None:
+            continue
+        ticker = _code6(value)
+        if _is_code6(ticker):
+            return ticker
+    return None
+
+
+def _load_candidate_pool_tickers(path: Path, *, include_shadow: bool = False) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 - bad optional snapshot should not stop cache refresh
+        logger.warning("Failed to read candidate snapshot %s: %s", path, exc)
+        return set()
+
+    tickers: set[str] = set()
+    for record in _snapshot_records(payload, include_shadow=include_shadow):
+        ticker = _extract_snapshot_ticker(record)
+        if ticker:
+            tickers.add(ticker)
+    return tickers
+
+
+def resolve_daily_action_refresh_tickers(
+    trade_date: str,
+    *,
+    price_cache_dir: Path | str = _DEFAULT_PRICE_CACHE_DIR,
+    snapshot_dir: Path | str = _DEFAULT_SNAPSHOT_DIR,
+    include_shadow: bool = False,
+) -> list[str]:
+    """Return the ticker universe whose caches must be fresh for ``--daily-action``."""
+
+    tickers = set(existing_price_cache_tickers(price_cache_dir))
+    snapshots = Path(snapshot_dir)
+    if snapshots.exists():
+        for path in sorted(snapshots.glob(f"candidate_pool_{trade_date}*.json")):
+            if "shadow" in path.name and not include_shadow:
+                continue
+            tickers.update(_load_candidate_pool_tickers(path, include_shadow=include_shadow))
+    return sorted(ticker for ticker in tickers if _is_code6(ticker))
+
+
+def _history_start_date(trade_date: str, lookback_days: int = _DEFAULT_PRICE_HISTORY_LOOKBACK_DAYS) -> str:
+    end = pd.to_datetime(str(trade_date), format="%Y%m%d")
+    start = end - pd.Timedelta(days=max(0, lookback_days - 1))
+    return start.strftime("%Y%m%d")
+
+
+def _normalise_price_history(df: pd.DataFrame | None) -> pd.DataFrame:
+    if df is None or len(df) == 0:
+        return pd.DataFrame(columns=["date", "close", "open", "high", "low", "pct_change", "volume"])
+
+    rows = [_build_price_row(row, "") for _, row in df.iterrows()]
+    history = pd.DataFrame(rows)
+    history = history.dropna(subset=["date", "close"])
+    if len(history) == 0:
+        return history
+    history["date"] = history["date"].map(_price_date)
+    history = history.drop_duplicates(subset=["date"], keep="last")
+    return history.sort_values("date").reset_index(drop=True)
+
+
+def _fetch_price_history_with_tushare(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+    from src.tools.tushare_api import get_ashare_prices_with_tushare
+
+    prices = get_ashare_prices_with_tushare(ticker, start_date, end_date)
+    rows: list[dict] = []
+    previous_close: float | None = None
+    for price in sorted(prices, key=lambda item: item.time):
+        close = float(price.close)
+        pct_change = 0.0 if previous_close in (None, 0) else (close / previous_close - 1.0) * 100.0
+        rows.append(
+            {
+                "date": _price_date(price.time),
+                "close": close,
+                "open": float(price.open),
+                "high": float(price.high),
+                "low": float(price.low),
+                "pct_change": pct_change,
+                "volume": float(price.volume),
+            }
+        )
+        previous_close = close
+    return pd.DataFrame(rows)
+
+
 def refresh_price_cache_from_daily_batch(
     trade_date: str,
     *,
     price_cache_dir: Path | str = _DEFAULT_PRICE_CACHE_DIR,
     daily_prices_df: pd.DataFrame | None = None,
     fetch_daily_prices_batch: Callable[[str], pd.DataFrame | None] | None = None,
+    target_tickers: list[str] | set[str] | tuple[str, ...] | None = None,
+    backfill_price_history_fn: Callable[[str, str, str], pd.DataFrame | None] | None = None,
+    min_history_rows: int = _DEFAULT_MIN_PRICE_HISTORY_ROWS,
+    history_start_date: str | None = None,
 ) -> DailyActionCacheRefreshStats:
-    """Append or replace one daily OHLCV row for existing ``price_cache`` tickers."""
+    """Append or replace one daily OHLCV row for tickers consumed by ``--daily-action``."""
 
     cache_dir = Path(price_cache_dir)
-    tickers = existing_price_cache_tickers(cache_dir)
+    if target_tickers is None:
+        tickers = existing_price_cache_tickers(cache_dir)
+    else:
+        tickers = sorted({_code6(ticker) for ticker in target_tickers if _is_code6(_code6(ticker))})
     stats = DailyActionCacheRefreshStats(price_total=len(tickers))
     if not tickers:
         return stats
@@ -177,6 +318,18 @@ def refresh_price_cache_from_daily_batch(
             stats.price_missing += 1
             continue
         try:
+            path = cache_dir / f"{ticker}.csv"
+            if not path.exists():
+                if backfill_price_history_fn is None:
+                    backfill_price_history_fn = _fetch_price_history_with_tushare
+                start_date = history_start_date or _history_start_date(trade_date)
+                history = _normalise_price_history(backfill_price_history_fn(ticker, start_date, trade_date))
+                if len(history) < min_history_rows:
+                    stats.price_insufficient_history += 1
+                    continue
+                path.parent.mkdir(parents=True, exist_ok=True)
+                history.to_csv(path, index=False)
+                stats.price_backfilled += 1
             _write_price_cache_row(cache_dir / f"{ticker}.csv", _build_price_row(row, trade_date))
             stats.price_updated += 1
         except Exception as exc:  # noqa: BLE001 - one bad CSV must not stop the batch
@@ -252,8 +405,11 @@ def refresh_daily_action_caches(
     *,
     price_cache_dir: Path | str = _DEFAULT_PRICE_CACHE_DIR,
     fund_flow_cache_dir: Path | str = _DEFAULT_FUND_FLOW_CACHE_DIR,
+    snapshot_dir: Path | str = _DEFAULT_SNAPSHOT_DIR,
     daily_prices_df: pd.DataFrame | None = None,
     fetch_daily_prices_batch: Callable[[str], pd.DataFrame | None] | None = None,
+    target_tickers: list[str] | set[str] | tuple[str, ...] | None = None,
+    backfill_price_history_fn: Callable[[str, str, str], pd.DataFrame | None] | None = None,
     fund_flow_fetch_fn: Callable[..., pd.DataFrame] | None = None,
     refresh_fund_flow: bool | None = None,
     fund_flow_rate_limit_sec: float | None = None,
@@ -261,11 +417,23 @@ def refresh_daily_action_caches(
 ) -> DailyActionCacheRefreshStats:
     """Refresh all cache files needed by the next ``--daily-action`` run."""
 
+    tickers = (
+        sorted({_code6(ticker) for ticker in target_tickers if _is_code6(_code6(ticker))})
+        if target_tickers is not None
+        else resolve_daily_action_refresh_tickers(
+            trade_date,
+            price_cache_dir=price_cache_dir,
+            snapshot_dir=snapshot_dir,
+            include_shadow=_env_enabled("DAILY_ACTION_INCLUDE_SHADOW_CANDIDATES", default=False),
+        )
+    )
     price_stats = refresh_price_cache_from_daily_batch(
         trade_date,
         price_cache_dir=price_cache_dir,
         daily_prices_df=daily_prices_df,
         fetch_daily_prices_batch=fetch_daily_prices_batch,
+        target_tickers=tickers,
+        backfill_price_history_fn=backfill_price_history_fn,
     )
     stats = DailyActionCacheRefreshStats().merge(price_stats)
 
@@ -276,7 +444,6 @@ def refresh_daily_action_caches(
 
     rate_limit = fund_flow_rate_limit_sec if fund_flow_rate_limit_sec is not None else _env_float("DAILY_ACTION_FUND_FLOW_RATE_LIMIT_SEC", default=_DEFAULT_FUND_FLOW_RATE_LIMIT_SEC)
     max_tickers = fund_flow_max_tickers if fund_flow_max_tickers is not None else _env_int("DAILY_ACTION_FUND_FLOW_MAX_TICKERS", default=0)
-    tickers = existing_price_cache_tickers(price_cache_dir)
     fund_flow_stats = refresh_fund_flow_cache(
         tickers,
         trade_date,
