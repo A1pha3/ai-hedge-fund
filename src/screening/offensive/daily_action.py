@@ -43,6 +43,39 @@ _VERIFIED_SETUPS = [
 ]
 
 
+def _load_st_tickers() -> set[str]:
+    """加载 ST/*ST 股票集合 (6位代码), 用于 full_market 扫描时过滤.
+
+    --auto 的候选池在 Layer A 第一步就过滤 ST (candidate_pool_compute_pipeline_helpers.py:159),
+    但 --daily-action 的 full_market 直扫 price_cache (不经候选池), 需独立过滤.
+    ST 股超跌常见, OversoldBounce 容易误命中 (如 002217 ST合力泰).
+
+    数据源: tushare stock_basic (name 含 ST). 失败时空集 (不阻塞).
+    """
+    import os
+
+    token = ""
+    if os.path.exists(".env"):
+        for line in Path(".env").read_text(encoding="utf-8").splitlines():
+            if line.startswith("TUSHARE_TOKEN="):
+                token = line.split("=", 1)[1].strip().strip("'\"")
+    if not token:
+        return set()
+    try:
+        import tushare as ts
+
+        pro = ts.pro_api()
+        basic = pro.stock_basic(exchange="", list_status="L", fields="ts_code,name")
+        st_codes: set[str] = set()
+        for _, row in basic.iterrows():
+            name = str(row.get("name", ""))
+            if "ST" in name.upper():  # 含 ST, *ST
+                st_codes.add(str(row["ts_code"])[:6])
+        return st_codes
+    except Exception:
+        return set()
+
+
 def _resolve_trade_date_and_regime() -> tuple[str, str]:
     """从 price_cache + regime_history 确定 trade_date 和 regime.
 
@@ -183,7 +216,16 @@ def generate_daily_action(
     else:
         # full_market: 全市场扫描 (不依赖 --auto 报告的 score_b 候选池)
         trade_date, regime = _resolve_trade_date_and_regime()
-        scan_tickers = sorted(p.stem for p in Path("data/price_cache").glob("*.csv"))
+        all_cache_tickers = sorted(p.stem for p in Path("data/price_cache").glob("*.csv"))
+        # ST 过滤 (安全: --auto 候选池在 Layer A 过滤 ST, full_market 直扫需独立过滤)
+        st_tickers = _load_st_tickers()
+        if st_tickers:
+            excluded = [t for t in all_cache_tickers if t in st_tickers]
+            if excluded:
+                logger.info("full_market 扫描排除 %d 只 ST 股: %s", len(excluded), excluded[:5])
+            scan_tickers = [t for t in all_cache_tickers if t not in st_tickers]
+        else:
+            scan_tickers = all_cache_tickers
         recs = []  # report 模式专用
 
     # 2. 先平到期仓位 + 回填 realized P&L → 驱动 drawdown (闭环核心)

@@ -200,6 +200,12 @@ def _call_tushare_dataframe_api(pro, api_name: str, **kwargs) -> pd.DataFrame | 
             if exc_name in non_retryable:
                 logger.warning("[Tushare] API %s 调用失败 (不可重试): %s", api_name, e)
                 return None
+            # "请指定正确的接口名" = 账号无此接口权限 (如 cn_m2/cn_sf 宏观接口),
+            # 重试无意义且每次退避 ~2s, 白白浪费时间. 直接返回 None.
+            error_msg = str(e)
+            if "请指定正确的接口名" in error_msg or "接口名" in error_msg:
+                logger.warning("[Tushare] API %s 无权限 (不可重试): %s", api_name, error_msg)
+                return None
 
             is_rate_limit = _is_tushare_rate_limit_error(e)
 

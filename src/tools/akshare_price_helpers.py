@@ -196,7 +196,23 @@ def load_prices_with_fallback(
             return cache_prices_fn(cache_key, akshare_prices)
     except Exception as error:
         akshare_error = error
-        logger.warning("AKShare 获取数据失败，尝试腾讯接口: %s", error)
+        # 精简网络错误日志: ProxyError/Timeout 等含超长 URL, 只保留错误类型 + ticker.
+        # 同类去重 (302 ticker 同一 ProxyError → 只报前 3 个 + 汇总).
+        error_name = type(error).__name__
+        is_net = "proxy" in str(error).lower() or "timeout" in str(error).lower() or error_name in (
+            "ProxyError", "RemoteDisconnected", "ConnectionError", "MaxRetryError",
+        )
+        if is_net:
+            if not hasattr(load_prices_with_fallback, "_net_count"):
+                load_prices_with_fallback._net_count = 0  # type: ignore[attr-defined]
+            load_prices_with_fallback._net_count += 1  # type: ignore[attr-defined]
+            n = load_prices_with_fallback._net_count  # type: ignore[attr-defined]
+            if n <= 3:
+                logger.warning("AKShare 获取 %s 失败 (%s), 尝试腾讯接口", ticker, error_name)
+            elif n == 4:
+                logger.warning("AKShare 网络失败已连续 %d 次, 后续静默 (代理问题, 非代码bug)", n)
+        else:
+            logger.warning("AKShare 获取数据失败，尝试腾讯接口: %s", error)
 
     try:
         prices = fetch_prices_from_tencent_fn(ticker, start_date, end_date)

@@ -392,8 +392,15 @@ class PaperTracker:
         return "normal"
 
     def update_pnl(self, daily_pnl_pct: float):
-        """更新每日组合 P&L → 净值 + 回撤。"""
-        self._state.nav *= 1 + daily_pnl_pct
+        """更新组合 P&L → 净值 + 回撤.
+
+        口径: daily_pnl_pct 是本批平仓的组合贡献 (sum of realized × kelly),
+        即"本批给组合带来的绝对收益占比". nav 用加法累加 (非复利), 因为每笔
+        仓位的本金是组合的 kelly_pct 部分, 收益是绝对值不是复利.
+        此前用 nav *= 1 + pnl 导致多笔平仓时复利膨胀 (192 笔 × ~0.8% → nav 2.77,
+        实际应该 ~1.9).
+        """
+        self._state.nav += daily_pnl_pct
         self._state.peak = max(self._state.peak, self._state.nav)
         self._state.drawdown_pct = (self._state.nav / self._state.peak) - 1
         self._state.last_30d_pnl.append(daily_pnl_pct)
