@@ -1,7 +1,8 @@
 # Decision Pack: 条件单前门门控 (C-CONDITIONAL-ORDER-VERDICT-GATE)
 
 > **生成**: autodev-32 /loop session 3, 2026-07-09
-> **状态**: 等待 owner 决策
+> **已解决**: autodev-32 /loop session 4, 2026-07-09 (commit fb91ba48)
+> **状态**: ✅ **DELIVERED** — Option A 实现于 `CONDITIONAL_ORDER_FILTER_VERDICT` env var (默认 off)
 > **北极星**: T+5/T+10 赚钱工具 — 条件单是买入建议的下游, 不应在隐含建议买入的列表中包含前门判决为 AVOID/HOLD 的标的
 
 ## 问题
@@ -48,6 +49,24 @@ CONDITIONAL_ORDER_FILTER_VERDICT=0  # 关闭 (默认)
 
 ## 明确问题
 
-**Owner: 你希望实现按前门判决过滤条件单的 env var 吗?**
-- 如果「是」: 默认关闭, operator 通过 `CONDITIONAL_ORDER_FILTER_VERDICT=1` 启用
-- 如果「保持现状」: 当前 additive disclosure (Option B) 已到位, 工程上可关闭此候选
+**~~Owner: 你希望实现按前门判决过滤条件单的 env var 吗?~~** ✅ **已实现**
+
+## 交付结果 (autodev-32 session 4)
+
+**Option A behind env var** 已在 commit `fb91ba48` 实现:
+
+```bash
+# 开启过滤 (所有条件单输出只包含 BUY-verdict 标的)
+CONDITIONAL_ORDER_FILTER_VERDICT=1 uv run python src/main.py --conditional-orders
+CONDITIONAL_ORDER_FILTER_VERDICT=1 uv run python src/main.py --export-conditional-orders
+
+# 默认关闭 (status quo: 全部 top-N 标的都有条件单 + ⚠ 披露)
+uv run python src/main.py --conditional-orders
+```
+
+三个入口点全部过滤:
+1. `attach_conditional_orders_to_payload` — payload 集成路径
+2. `run_conditional_orders_cli` — `--conditional-orders` CLI
+3. `run_export_conditional_orders_cli` — `--export-conditional-orders` 券商导出 (export-time 安全网, 即使报告生成时 filter off)
+
+**Owner 如需切换为默认开启**: 改 `CONDITIONAL_ORDER_FILTER_VERDICT` 默认值即可 (单行代码). 在 owner 明确批准前, 保持默认 off.
