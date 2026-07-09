@@ -129,3 +129,81 @@ def test_build_quality_summary_reports_coverage_and_manifest_failures(tmp_path: 
     }
     assert summary["optional_features"]["daily_fund_flow_metrics"]["provider_failures"] == 1
     assert summary["optional_features"]["daily_fund_flow_metrics"]["missing_tickers"] == 2
+
+
+def test_build_quality_summary_ignores_malformed_manifest(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "feature_cache"
+    cache_dir.mkdir()
+    (cache_dir / "feature_manifest_20260708.json").write_text(
+        "{bad json",
+        encoding="utf-8",
+    )
+
+    summary = OptionalFeatureStore(base_dir=cache_dir).build_quality_summary(
+        "20260708",
+        ["000001"],
+    )
+
+    assert summary["optional_features"]["intraday_short_trade_metrics"]["provider_failures"] == 0
+    assert summary["optional_features"]["daily_fund_flow_metrics"]["provider_failures"] == 0
+
+
+def test_load_intraday_metrics_uses_recent_stale_snapshot_when_allowed(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "feature_cache"
+    cache_dir.mkdir()
+    pd.DataFrame(
+        [
+            {
+                "ticker": "000001",
+                "trade_date": "20260707",
+                "flow_60": 0.09,
+                "flow_60_source": "snapshot",
+            }
+        ]
+    ).to_csv(cache_dir / "intraday_short_trade_metrics_20260707.csv", index=False)
+
+    store = OptionalFeatureStore(base_dir=cache_dir, allow_stale=True, max_stale_days=1)
+
+    result = store.load_intraday_metrics("20260708", ["000001"])
+
+    assert result == {"000001": {"flow_60": 0.09, "flow_60_source": "snapshot"}}
+
+
+def test_build_quality_summary_marks_recent_stale_snapshot(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "feature_cache"
+    cache_dir.mkdir()
+    pd.DataFrame([{"ticker": "000001", "trade_date": "20260707", "flow_60": 0.09}]).to_csv(
+        cache_dir / "intraday_short_trade_metrics_20260707.csv",
+        index=False,
+    )
+
+    summary = OptionalFeatureStore(base_dir=cache_dir, allow_stale=True, max_stale_days=1).build_quality_summary(
+        "20260708",
+        ["000001", "000002"],
+    )
+
+    assert summary["optional_features"]["intraday_short_trade_metrics"] == {
+        "coverage": 0.5,
+        "source": "snapshot",
+        "trade_date": "20260708",
+        "stale": True,
+        "provider_failures": 0,
+        "missing_tickers": 1,
+        "snapshot_date": "20260707",
+    }
+
+
+def test_load_intraday_metrics_ignores_stale_snapshot_outside_window(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "feature_cache"
+    cache_dir.mkdir()
+    pd.DataFrame([{"ticker": "000001", "trade_date": "20260706", "flow_60": 0.09}]).to_csv(
+        cache_dir / "intraday_short_trade_metrics_20260706.csv",
+        index=False,
+    )
+
+    result = OptionalFeatureStore(base_dir=cache_dir, allow_stale=True, max_stale_days=1).load_intraday_metrics(
+        "20260708",
+        ["000001"],
+    )
+
+    assert result == {}

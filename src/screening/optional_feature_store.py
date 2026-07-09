@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,8 +49,11 @@ class OptionalFeatureStore:
         path = self.base_dir / f"{_MANIFEST_PREFIX}_{trade_date}.json"
         if not path.exists():
             return {}
-        with path.open("r", encoding="utf-8") as file:
-            payload = json.load(file)
+        try:
+            with path.open("r", encoding="utf-8") as file:
+                payload = json.load(file)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return {}
         return payload if isinstance(payload, dict) else {}
 
     def build_quality_summary(self, trade_date: str, tickers: list[str]) -> dict[str, Any]:
@@ -75,19 +79,28 @@ class OptionalFeatureStore:
         }
 
     def _load_metrics(self, prefix: str, trade_date: str, tickers: list[str]) -> dict[str, dict[str, Any]]:
-        path = self.base_dir / f"{prefix}_{trade_date}.csv"
-        if not path.exists():
-            return {}
+        return self._load_metrics_with_meta(prefix, trade_date, tickers)[0]
+
+    def _load_metrics_with_meta(
+        self,
+        prefix: str,
+        trade_date: str,
+        tickers: list[str],
+    ) -> tuple[dict[str, dict[str, Any]], str | None, bool]:
+        resolved = self._resolve_snapshot_path(prefix, trade_date)
+        if resolved is None:
+            return {}, None, False
+        path, snapshot_date, is_stale = resolved
         try:
             df = pd.read_csv(path, dtype={"ticker": str, "trade_date": str})
         except (OSError, UnicodeDecodeError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError):
-            return {}
+            return {}, snapshot_date, is_stale
         if df.empty or "ticker" not in df.columns:
-            return {}
+            return {}, snapshot_date, is_stale
         df = df.copy()
         df["ticker"] = df["ticker"].astype(str).str.zfill(6)
         if "trade_date" in df.columns:
-            df = df[df["trade_date"].astype(str) == str(trade_date)]
+            df = df[df["trade_date"].astype(str) == str(snapshot_date)]
         wanted = {str(ticker).zfill(6) for ticker in tickers}
         df = df[df["ticker"].isin(wanted)]
         result: dict[str, dict[str, Any]] = {}
@@ -102,7 +115,36 @@ class OptionalFeatureStore:
                 metrics[column] = value.item() if hasattr(value, "item") else value
             if metrics:
                 result[str(row["ticker"]).zfill(6)] = metrics
-        return result
+        return result, snapshot_date, is_stale
+
+    def _resolve_snapshot_path(self, prefix: str, trade_date: str) -> tuple[Path, str, bool] | None:
+        exact_path = self.base_dir / f"{prefix}_{trade_date}.csv"
+        if exact_path.exists():
+            return exact_path, str(trade_date), False
+        if not self.allow_stale or self.max_stale_days <= 0:
+            return None
+        try:
+            requested = datetime.strptime(str(trade_date), "%Y%m%d")
+        except ValueError:
+            return None
+
+        best: tuple[datetime, Path, str] | None = None
+        for path in self.base_dir.glob(f"{prefix}_*.csv"):
+            snapshot_date = path.stem.removeprefix(f"{prefix}_")
+            if len(snapshot_date) != 8 or not snapshot_date.isdigit():
+                continue
+            try:
+                snapshot_dt = datetime.strptime(snapshot_date, "%Y%m%d")
+            except ValueError:
+                continue
+            stale_days = (requested - snapshot_dt).days
+            if stale_days < 0 or stale_days > self.max_stale_days:
+                continue
+            if best is None or snapshot_dt > best[0]:
+                best = (snapshot_dt, path, snapshot_date)
+        if best is None:
+            return None
+        return best[1], best[2], True
 
     def _quality_for_family(
         self,
@@ -113,16 +155,19 @@ class OptionalFeatureStore:
         tickers: list[str],
         manifest: dict[str, Any],
     ) -> dict[str, Any]:
-        rows = self._load_metrics(prefix, trade_date, tickers)
+        rows, snapshot_date, is_stale = self._load_metrics_with_meta(prefix, trade_date, tickers)
         total = len(tickers)
         feature_manifest = (manifest.get("features") or {}).get(family, {})
         provider_failures = int(feature_manifest.get("provider_failures", 0) or 0)
         missing = total - len(rows)
-        return {
+        quality = {
             "coverage": round((len(rows) / total), 4) if total else 0.0,
             "source": "snapshot" if rows else "missing",
             "trade_date": trade_date,
-            "stale": False,
+            "stale": is_stale,
             "provider_failures": provider_failures,
             "missing_tickers": missing,
         }
+        if is_stale and snapshot_date is not None:
+            quality["snapshot_date"] = snapshot_date
+        return quality

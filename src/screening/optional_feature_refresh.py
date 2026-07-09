@@ -29,7 +29,7 @@ def refresh_optional_features(
     cache_path.mkdir(parents=True, exist_ok=True)
     unique_tickers = sorted({str(ticker).zfill(6) for ticker in tickers})
     enabled = _refresh_enabled()
-    status = "ok" if enabled else "skipped"
+    status = "not_implemented" if enabled else "skipped"
     source = "pending_provider_implementation" if enabled else "not_refreshed"
     manifest = {
         "trade_date": str(trade_date),
