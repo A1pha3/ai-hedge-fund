@@ -244,6 +244,52 @@ def test_score_batch_enriches_intraday_short_trade_metrics_for_heavy_candidates(
     assert metrics["dragon_tiger_bonus"] == pytest.approx(1.0)
 
 
+def test_score_batch_does_not_call_live_intraday_or_money_flow(monkeypatch):
+    candidate = CandidateStock(
+        ticker="000001",
+        name="平安银行",
+        industry_sw="银行",
+        market_cap=100.0,
+        avg_volume_20d=100.0,
+    )
+
+    trend_signal = StrategySignal(
+        direction=1,
+        confidence=80.0,
+        completeness=1.0,
+        sub_factors={"momentum": {"metrics": {}}},
+    )
+    neutral_signal = StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={})
+
+    monkeypatch.setattr(strategy_scorer_module, "_build_industry_pe_medians", lambda trade_date: {})
+    monkeypatch.setattr(strategy_scorer_module, "_initialize_score_batch_results", lambda candidates: {candidate.ticker: {"trend": trend_signal}})
+    monkeypatch.setattr(strategy_scorer_module, "_prepare_heavy_score_candidates", lambda candidates, trade_date, results: candidates)
+    monkeypatch.setattr(strategy_scorer_module, "score_fundamental_strategy", lambda *_args, **_kwargs: neutral_signal)
+    monkeypatch.setattr(strategy_scorer_module, "score_event_sentiment_strategy", lambda *_args, **_kwargs: neutral_signal)
+    monkeypatch.setattr(strategy_scorer_module, "_populate_dragon_tiger_bonus_metrics", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        strategy_scorer_module,
+        "get_intraday_bars",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("intraday network forbidden")),
+    )
+    monkeypatch.setattr(
+        strategy_scorer_module,
+        "get_money_flow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("money flow network forbidden")),
+    )
+
+    class _Store:
+        def load_intraday_metrics(self, trade_date, tickers):
+            return {"000001": {"flow_60": 0.1, "flow_60_source": "snapshot"}}
+
+        def load_fund_flow_metrics(self, trade_date, tickers):
+            return {}
+
+    result = strategy_scorer_module.score_batch([candidate], "20260708", feature_store=_Store())
+
+    assert result["000001"]["trend"].sub_factors["momentum"]["metrics"]["flow_60"] == 0.1
+
+
 def test_populate_intraday_short_trade_metrics_caps_candidate_count():
     candidates = [_candidate("000001"), _candidate("000002"), _candidate("000003")]
     trend_signal = StrategySignal(
