@@ -73,6 +73,21 @@ _REGIME_SIZE_FACTORS_BY_SETUP = {
 # 即使 crisis 触发 1.2×, 防止仓位失控; 组合层 _MAX_PORTFOLO_PCT 仍兜底.
 _REGIME_POSITION_CAP_MULTIPLE = 1.2
 
+
+def _enforce_open_cap() -> bool:
+    """C-PORTFOLIO-CAP (20260710): 组合上限是否计入已开仓位.
+
+    默认 true (修复生效): generate_daily_action 的 portfolio_position_used 从
+    tracker.state.open_exposure 起算, T+10 跨日持仓计入 60% 上限 → 敞口守上限.
+    真实 journal 曾因 per-run 重置峰值 260% (26 仓), 61 天超 60%.
+
+    设 DAILY_ACTION_ENFORCE_OPEN_CAP=false 可恢复旧 per-run 行为 (逃生口,
+    供 owner 对比; 默认行为是修复后的正确口径).
+    """
+    raw = os.environ.get("DAILY_ACTION_ENFORCE_OPEN_CAP", "").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
 # 默认暂停的 setup (运行时不进 setup_configs, 不产生 BUY).
 # OversoldBounce: 2026 实测 E[r]=+0.34% (n=59) 统计上不异于 0 (95% CI 跨 0, p≈0.85),
 # 且尾部亏损比 BTST 更厚 (亏损>10% 占比 20% vs 11%); 暂停避免占用 BTST 的仓位配额.
@@ -107,10 +122,7 @@ def _load_backtest_setup_performance() -> Any | None:
         regimes_by_date: dict[str, str] = {}
         regime_path = Path("data/reports/regime_history.json")
         if regime_path.exists():
-            regimes_by_date = {
-                str(k): str(v)
-                for k, v in json.loads(regime_path.read_text(encoding="utf-8")).items()
-            }
+            regimes_by_date = {str(k): str(v) for k, v in json.loads(regime_path.read_text(encoding="utf-8")).items()}
         return summarize_setup_performance(
             Path("data/paper_trading_backtest/journal.jsonl"),
             regimes_by_date=regimes_by_date,
@@ -420,12 +432,7 @@ def _missed_entry_window_reason(trade_date: str, *, now: datetime | None = None)
         return ""
 
     cutoff_label = f"{_ENTRY_WINDOW_CUTOFF.hour:02d}:{_ENTRY_WINDOW_CUTOFF.minute:02d}"
-    return (
-        f"信号日 {signal_date} 对应计划买入日 {next_trade_date} 开盘, "
-        f"当前时间 {now_cn.strftime('%Y%m%d %H:%M')} 已过 {cutoff_label} 买入窗口已错过; "
-        "为避免盘中追单或事后补单, 本次不输出新 BUY. "
-        f"请在 {next_trade_date} 收盘数据完成后刷新缓存, 再生成下一交易日计划"
-    )
+    return f"信号日 {signal_date} 对应计划买入日 {next_trade_date} 开盘, " f"当前时间 {now_cn.strftime('%Y%m%d %H:%M')} 已过 {cutoff_label} 买入窗口已错过; " "为避免盘中追单或事后补单, 本次不输出新 BUY. " f"请在 {next_trade_date} 收盘数据完成后刷新缓存, 再生成下一交易日计划"
 
 
 @dataclass
@@ -559,10 +566,7 @@ def generate_daily_action(
         tracker.last_action_trade_date = trade_date
         latest_report_date = _latest_auto_report_date()
         if latest_report_date and trade_date and latest_report_date > trade_date:
-            tracker.last_action_stale_reason = (
-                f"price_cache 最新交易日 {trade_date} 落后于最新 --auto 报告 {latest_report_date}; "
-                "为避免使用过期信号, 本次不输出新 BUY"
-            )
+            tracker.last_action_stale_reason = f"price_cache 最新交易日 {trade_date} 落后于最新 --auto 报告 {latest_report_date}; " "为避免使用过期信号, 本次不输出新 BUY"
             tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=_load_prices)
             return []
         missed_window_reason = _missed_entry_window_reason(trade_date)
@@ -616,9 +620,7 @@ def generate_daily_action(
         return []
 
     needs_industry_day_pct = any(name == "btst_breakout" for name, *_rest in setup_configs)
-    industry_day_pct_by_ticker = (
-        _load_industry_day_pct_by_ticker(trade_date, scan_tickers) if needs_industry_day_pct else {}
-    )
+    industry_day_pct_by_ticker = _load_industry_day_pct_by_ticker(trade_date, scan_tickers) if needs_industry_day_pct else {}
 
     ranked_candidates: list[tuple[float, float, float, int, DailyAction]] = []
     for ticker in scan_tickers:
@@ -645,11 +647,7 @@ def generate_daily_action(
                 if drop30 > -20:
                     continue
 
-            industry_pct = (
-                float(industry_day_pct_by_ticker.get(ticker, 0.0) or 0.0)
-                if setup_name == "btst_breakout"
-                else 0.0
-            )
+            industry_pct = float(industry_day_pct_by_ticker.get(ticker, 0.0) or 0.0) if setup_name == "btst_breakout" else 0.0
             ctx = {
                 "prices": prices,
                 "fund_flow_records": flow_records,
@@ -686,10 +684,7 @@ def generate_daily_action(
             entry_price = float(last_row["close"])
             soft_stop_price = entry_price * (1 + risk.stop_loss_pct)
             hard_stop_price = entry_price * (1 + risk.hard_stop_pct)
-            dist_summary = (
-                f"n={known_dist.n} winrate={known_dist.winrate:.0%} "
-                f"cv={known_dist.convexity_ratio:.2f} E=+{known_dist.expected_return:.1%}"
-            )
+            dist_summary = f"n={known_dist.n} winrate={known_dist.winrate:.0%} " f"cv={known_dist.convexity_ratio:.2f} E=+{known_dist.expected_return:.1%}"
 
             action = DailyAction(
                 ticker=ticker,
@@ -725,12 +720,21 @@ def generate_daily_action(
     )
 
     actions: list[DailyAction] = []
-    portfolio_position_used = 0.0
-    for _expected_return, _trigger_strength, _convexity, horizon, action in ranked_candidates:
+    # C-PORTFOLIO-CAP (20260710): 组合上限必须计入已开仓位 (T+10 跨日持仓).
+    # 此前 portfolio_position_used 每次 run 从 0 起算 → 真实敞口峰值 260% (26 仓),
+    # 61 天超 60% 上限. 现从 open_exposure 起算 (默认), 让 "组合 ≤ 60%" 真正按组合执行.
+    # DAILY_ACTION_ENFORCE_OPEN_CAP=false 时恢复旧 per-run 行为 (逃生口).
+    portfolio_position_used = float(getattr(tracker.state, "open_exposure", 0.0) or 0.0) if _enforce_open_cap() else 0.0
+    cap_blocked_count = 0  # 因超上限被跳过的信号数 (render 披露用)
+    for idx, (_expected_return, _trigger_strength, _convexity, horizon, action) in enumerate(ranked_candidates):
         kelly_pct = action.kelly_pct
         if portfolio_position_used + kelly_pct > _MAX_PORTFOLO_PCT:
             kelly_pct = max(0.0, _MAX_PORTFOLO_PCT - portfolio_position_used)
         if kelly_pct <= 0:
+            # 当前信号 + 其后全部剩余信号都因超上限被跳过 (不只 1 个).
+            # 此前 ``+= 1; break`` 只计 1, 低估了被跳过的信号数 → operator 误以为
+            # "只差 1 个就能买", 实际可能 10+ 个被跳过. 修正为剩余全部计数.
+            cap_blocked_count = len(ranked_candidates) - idx
             break
 
         action.kelly_pct = kelly_pct
@@ -751,6 +755,10 @@ def generate_daily_action(
             reasoning=action.reasoning,
         )
 
+    # C-PORTFOLIO-CAP: 暴露组合敞口状态供 render 披露 (operator 须看到为何不出新仓).
+    # total_after = 已开仓敞口 (含历史超配) + 本次新仓; 若超 60% 上限, 剩余信号被跳过.
+    tracker.last_portfolio_exposure = portfolio_position_used
+    tracker.last_cap_blocked_count = cap_blocked_count
     return actions
 
 
@@ -789,7 +797,13 @@ def render_daily_action(
         f"  计划买入日: {buy_date_label}  执行价口径: {buy_date_label} 开盘; 当前展示价为信号日收盘参考价",
         f"  组合净值: {state.nav:.3f}  回撤: {state.drawdown_pct:+.1%}  风控状态: {dd_tag}",
         f"  持仓数: {state.open_positions}  累计已实现: {state.realized_pnl_pct:+.2%}",
+        f"  组合敞口: {state.open_exposure:.0%} / {_MAX_PORTFOLO_PCT:.0%} 上限" + (" ⚠超配" if state.open_exposure > _MAX_PORTFOLO_PCT + 1e-9 else ""),
     ]
+    # C-PORTFOLIO-CAP: 若历史超配 (open_exposure > 60%) 导致本次跳过新信号, 显式披露,
+    # 让 operator 知道 "无新 BUY" 是上限保护而非无信号 (历史 26 仓/260% 超配自然消化期).
+    cap_blocked = getattr(tracker, "last_cap_blocked_count", 0)
+    if cap_blocked > 0 and not actions:
+        lines.append(f"  {Fore.YELLOW}⚠ 组合敞口已达 {_MAX_PORTFOLO_PCT:.0%} 上限 — {cap_blocked} 个新信号被跳过, 待 T+10 仓位释放后恢复{Style.RESET_ALL}")
     for policy_line in _setup_policy_lines():
         lines.append(f"  {policy_line}")
 
@@ -807,11 +821,7 @@ def render_daily_action(
             ticker = c.get("ticker", "")
             name = get_stock_name(ticker) if ticker else ""
             ticker_label = f"{ticker} {name}" if name and name != ticker else ticker
-            lines.append(
-                f"  - {Fore.CYAN}{ticker_label}{Style.RESET_ALL}  "
-                f"realized {pnl_color}{pnl:+.1%}{Style.RESET_ALL}  "
-                f"exit ~{c.get('exit_price', 0.0):.2f}{stop_flag}"
-            )
+            lines.append(f"  - {Fore.CYAN}{ticker_label}{Style.RESET_ALL}  " f"realized {pnl_color}{pnl:+.1%}{Style.RESET_ALL}  " f"exit ~{c.get('exit_price', 0.0):.2f}{stop_flag}")
 
     stale_reason = getattr(tracker, "last_action_stale_reason", "")
     if stale_reason:
@@ -832,15 +842,8 @@ def render_daily_action(
         # ticker + 中文名 (get_stock_name 解析失败时回退 ticker 本身, 不重复显示)
         name = get_stock_name(a.ticker)
         ticker_label = f"{a.ticker} {name}" if name and name != a.ticker else a.ticker
-        lines.append(
-            f"  {Fore.WHITE}{i}. {Fore.CYAN}{ticker_label}{Style.RESET_ALL}  [{a.setup}]  "
-            f"仓位 {a.kelly_pct:.1%}  参考价(信号日收盘) ~{a.entry_price:.2f}"
-        )
-        lines.append(
-            f"     风险价位: 软止损 {a.soft_stop:.2f} (观察) / "
-            f"硬止损 {a.hard_stop:.2f} (披露/人工执行参考; paper P&L 不按止损出场)  "
-            f"时间退出: {a.time_exit}"
-        )
+        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{ticker_label}{Style.RESET_ALL}  [{a.setup}]  " f"仓位 {a.kelly_pct:.1%}  参考价(信号日收盘) ~{a.entry_price:.2f}")
+        lines.append(f"     风险价位: 软止损 {a.soft_stop:.2f} (观察) / " f"硬止损 {a.hard_stop:.2f} (披露/人工执行参考; paper P&L 不按止损出场)  " f"时间退出: {a.time_exit}")
         lines.append(f"     先验分布: {a.distribution_summary}")
         lines.append(f"     {Fore.YELLOW}失效: {a.invalidation_condition}{Style.RESET_ALL}\n")
 

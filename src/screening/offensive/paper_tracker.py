@@ -43,6 +43,10 @@ class PortfolioState:
     peak: float = 1.0  # 历史净值最高点
     drawdown_pct: float = 0.0  # 当前回撤 (负数)
     open_positions: int = 0  # 当前持仓数
+    # C-PORTFOLIO-CAP (20260710): 已开仓位的 kelly_pct 之和 (组合敞口%)。
+    # 供 generate_daily_action 的 60% 组合上限判断 — 此前只数 open_positions (计数),
+    # 不追踪敞口% → 上限每次 run 从 0 起算, 忽略 T+10 跨日持仓 → 真实敞口峰值 260%。
+    open_exposure: float = 0.0
     total_trades: int = 0
     realized_pnl_pct: float = 0.0  # 累计已实现收益%
     last_30d_pnl: list[float] = field(default_factory=list)
@@ -68,6 +72,10 @@ class PaperTracker:
         self.last_action_trade_date: str = ""
         # generate_daily_action 数据滞后保护原因 (触发时不出新 BUY, 不持久化)
         self.last_action_stale_reason: str = ""
+        # C-PORTFOLIO-CAP (20260710): 本次 run 后组合总敞口 (已开+新仓) + 因超 60%
+        # 上限被跳过的剩余信号数. 供 render_daily_action 披露 (不持久化, 仅本次运行可见).
+        self.last_portfolio_exposure: float = float(self._state.open_exposure)
+        self.last_cap_blocked_count: int = 0
 
     # ---- portfolio state ----
 
@@ -88,6 +96,7 @@ class PaperTracker:
                     "peak": self._state.peak,
                     "drawdown_pct": self._state.drawdown_pct,
                     "open_positions": self._state.open_positions,
+                    "open_exposure": self._state.open_exposure,
                     "total_trades": self._state.total_trades,
                     "realized_pnl_pct": self._state.realized_pnl_pct,
                     "last_30d_pnl": self._state.last_30d_pnl[-30:],
@@ -103,7 +112,7 @@ class PaperTracker:
         return self._state
 
     def _reconcile_open_positions(self) -> None:
-        """从 journal 真值重算 open_positions, 自愈历史重复 BUY 导致的计数污染.
+        """从 journal 真值重算 open_positions + open_exposure, 自愈历史重复 BUY / 旧版无字段.
 
         历史 journal 可能含重复 BUY 记录 (旧版 record_buy 无跨进程幂等保护时,
         多次独立进程运行会重复写入同一 (date, ticker)), 导致持久化的
@@ -111,6 +120,7 @@ class PaperTracker:
 
         重算口径与 ``close_matured`` (line 244-259) 一致:
             open_positions = 去重后 BUY 数 - EXIT 数
+            open_exposure  = sum(去重未平仓 BUY.kelly_pct)
         (BUY 按 (date, ticker) 去重, 与 close_matured 的 seen_buy_keys 同口径)。
         只校正内存 state + 持久化; 不修改 journal 原始记录 (审计完整性)。
         """
@@ -123,6 +133,7 @@ class PaperTracker:
                 exit_keys.add((str(rec.get("date", "")), str(rec.get("ticker", ""))))
         seen_buy_keys: set[tuple[str, str]] = set()
         open_count = 0
+        open_exposure = 0.0
         for rec in journal:
             if rec.get("action") != "BUY":
                 continue
@@ -132,13 +143,20 @@ class PaperTracker:
             seen_buy_keys.add(key)
             if key not in exit_keys:
                 open_count += 1
-        if self._state.open_positions != open_count:
+                try:
+                    open_exposure += float(rec.get("kelly_pct", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    pass
+        if self._state.open_positions != open_count or abs(self._state.open_exposure - open_exposure) > 1e-9:
             logger.info(
-                "paper_tracker: open_positions 自愈 %d → %d (journal 去重 BUY - EXIT)",
+                "paper_tracker: open_positions 自愈 %d → %d, open_exposure 自愈 %.4f → %.4f (journal 去重 BUY - EXIT)",
                 self._state.open_positions,
                 open_count,
+                self._state.open_exposure,
+                open_exposure,
             )
             self._state.open_positions = open_count
+            self._state.open_exposure = open_exposure
             self._save_state()
 
     # ---- daily action journal ----
@@ -195,6 +213,9 @@ class PaperTracker:
             )
         )
         self._state.open_positions += 1
+        # C-PORTFOLIO-CAP: 累加单仓敞口 (kelly_pct), 供 generate_daily_action
+        # 的组合 60% 上限判断 — 计入已开仓, 避免 T+10 跨日持仓导致超杠杆。
+        self._state.open_exposure += float(kelly_pct or 0.0)
         # autodev-32 /loop session 6: total_trades was persisted but never
         # incremented (dead field → state file always showed 0). Now counts
         # each opened BUY so the operator sees cumulative trade volume.
@@ -331,6 +352,7 @@ class PaperTracker:
 
         closed: list[dict[str, Any]] = []
         portfolio_pnl = 0.0  # 本批累计组合层面 P&L (kelly 加权)
+        closed_exposure = 0.0  # C-PORTFOLIO-CAP: 本批平仓位的 kelly_pct 之和 (扣减 open_exposure)
         closed_count = 0
 
         for rec in matured:
@@ -390,6 +412,7 @@ class PaperTracker:
 
             # 组合层面 P&L: 单仓位收益 × kelly 权重 (e.g. +5% × 10% = +0.5% 组合贡献)
             portfolio_pnl += realized_pnl * kelly_pct
+            closed_exposure += kelly_pct
             closed_count += 1
             closed.append(
                 {
@@ -403,6 +426,8 @@ class PaperTracker:
 
         if closed_count > 0:
             self._state.open_positions = max(0, self._state.open_positions - closed_count)
+            # C-PORTFOLIO-CAP: 扣减已平仓位的敞口 (不低于 0, 防历史脏数据负穿).
+            self._state.open_exposure = max(0.0, self._state.open_exposure - closed_exposure)
             self._state.realized_pnl_pct += portfolio_pnl
             # 驱动 drawdown: 把本批组合 P&L 一次性喂给 update_pnl → nav/peak/drawdown 演进
             self.update_pnl(portfolio_pnl)

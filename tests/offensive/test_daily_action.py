@@ -68,6 +68,7 @@ def test_paper_tracker_record_buy_increments_total_trades(tmp_path):
     assert t.state.total_trades == 2, "幂等 BUY 不应重复计数 total_trades"
     # Persisted to state file
     import json as _json
+
     persisted = _json.loads((tmp_path / "portfolio_state.json").read_text())
     assert persisted["total_trades"] == 2
 
@@ -280,9 +281,18 @@ def test_close_matured_dedupes_historical_duplicate_buys(tmp_path):
     for _ in range(4):
         tracker.record_action(
             TradeAction(
-                date="20260601", ticker="300502", setup="btst_breakout", horizon=10,
-                action="BUY", kelly_pct=0.10, entry_price=100.0, soft_stop=85.0,
-                hard_stop=92.0, time_exit="T+10", invalidation_condition="跌破92", reasoning="dup",
+                date="20260601",
+                ticker="300502",
+                setup="btst_breakout",
+                horizon=10,
+                action="BUY",
+                kelly_pct=0.10,
+                entry_price=100.0,
+                soft_stop=85.0,
+                hard_stop=92.0,
+                time_exit="T+10",
+                invalidation_condition="跌破92",
+                reasoning="dup",
             )
         )
     fetcher_map = {"300502": _make_price_series("20260601", 100.0, 105.0)}
@@ -334,9 +344,7 @@ def test_close_matured_records_stop_would_trigger(tmp_path):
     fetcher_map = {"300502": fetcher_rows}
     fetcher = lambda ticker, start, end: fetcher_map.get(ticker, [])  # noqa: E731
 
-    closed = tracker.close_matured(
-        as_of="20260620", use_data_fetcher=fetcher, price_loader=price_loader
-    )
+    closed = tracker.close_matured(as_of="20260620", use_data_fetcher=fetcher, price_loader=price_loader)
     assert len(closed) == 1
     c = closed[0]
     assert c["stop_would_have_triggered"] is True, "期间 low=90 < hard_stop=92 应标记"
@@ -438,10 +446,7 @@ def test_generate_daily_action_closes_matured_before_new_buys(tmp_path, monkeypa
     actions = da.generate_daily_action(report_path=report_path, tracker=tracker, scan_mode="report")
 
     # close_matured 应已平掉过期仓位
-    assert tracker.state.open_positions == 0, (
-        f"generate_daily_action 未先平到期仓: open_positions={tracker.state.open_positions}. "
-        f"闭环接入失败 — drawdown 检查基于陈旧 nav."
-    )
+    assert tracker.state.open_positions == 0, f"generate_daily_action 未先平到期仓: open_positions={tracker.state.open_positions}. " f"闭环接入失败 — drawdown 检查基于陈旧 nav."
     assert tracker.state.nav > 1.0, "nav 未演进 → close_matured 未被调用"
 
 
@@ -469,9 +474,7 @@ def test_generate_daily_action_accepts_price_loader_and_fetcher(tmp_path, monkey
     price_loader = lambda ticker, rd: df.copy() if ticker == "300502" else pd.DataFrame()  # noqa: E731
 
     # 这两个参数必须被接受并传给 close_matured (否则 TypeError)
-    actions = da.generate_daily_action(
-        report_path=report_path, tracker=tracker, use_data_fetcher=fetcher, price_loader=price_loader
-    )
+    actions = da.generate_daily_action(report_path=report_path, tracker=tracker, use_data_fetcher=fetcher, price_loader=price_loader)
     assert tracker.state.open_positions == 0
 
 
@@ -555,9 +558,7 @@ def test_load_prices_for_ticker_truncates_cached_rows_to_report_date(tmp_path, m
     price_cache = tmp_path / "data" / "price_cache"
     price_cache.mkdir(parents=True)
     (price_cache / "000001.csv").write_text(
-        "date,close,open,high,low,pct_change\n"
-        "2026-07-07,10.0,9.8,10.2,9.7,1.0\n"
-        "2026-07-08,11.0,10.1,11.2,10.0,10.0\n",
+        "date,close,open,high,low,pct_change\n" "2026-07-07,10.0,9.8,10.2,9.7,1.0\n" "2026-07-08,11.0,10.1,11.2,10.0,10.0\n",
         encoding="utf-8",
     )
 
@@ -1282,6 +1283,7 @@ def test_verified_setups_includes_both_btst_and_oversold():
 
 # ---- regime 智能加仓 (countercyclical sizing, 按 setup 区分) ----
 
+
 def _run_daily_action_under_regime(tmp_path, monkeypatch, regime_gate_level: str, setup_name: str = "btst_breakout"):
     """在指定 regime 下跑一次 generate_daily_action, 返回 (actions, tracker).
 
@@ -1308,8 +1310,15 @@ def _run_daily_action_under_regime(tmp_path, monkeypatch, regime_gate_level: str
     # Distribution 让原始 Kelly 较大 (>1.0), 从而触顶 _MAX_POSITION_PCT=0.10,
     # 这样 regime_factor 的 1.2× 放大才能体现 (0.10 → 0.12).
     dist = Distribution(
-        n=100, winrate=0.60, avg_gain=0.12, avg_loss=-0.06,
-        convexity_ratio=2.0, expected_return=0.05, ci_low=0.02, ci_high=0.08, ic=0.10,
+        n=100,
+        winrate=0.60,
+        avg_gain=0.12,
+        avg_loss=-0.06,
+        convexity_ratio=2.0,
+        expected_return=0.05,
+        ci_low=0.02,
+        ci_high=0.08,
+        ic=0.10,
     )
     monkeypatch.setattr(da, "_VERIFIED_SETUPS", [(setup_name, FakeSetup, 10)])
     monkeypatch.setattr(da, "get_known_distribution", lambda name, horizon: dist)
@@ -1318,19 +1327,28 @@ def _run_daily_action_under_regime(tmp_path, monkeypatch, regime_gate_level: str
 
     report_path = tmp_path / "auto_screening_20260708.json"
     report_path.write_text(
-        json.dumps({
-            "date": "20260708",
-            "recommendations": [{"ticker": "000001"}],
-            "market_state": {"regime_gate_level": regime_gate_level},
-        }),
+        json.dumps(
+            {
+                "date": "20260708",
+                "recommendations": [{"ticker": "000001"}],
+                "market_state": {"regime_gate_level": regime_gate_level},
+            }
+        ),
         encoding="utf-8",
     )
-    prices = pd.DataFrame([{
-        "date": pd.Timestamp("2026-07-08"),
-        "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.0,
-        # BTST 预过滤要求 pct>=9.5 (涨停日); 用 setup 名决定 pct 避免 setup 名触发预过滤
-        "pct_change": 9.5 if setup_name == "btst_breakout" else 0.0,
-    }])
+    prices = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-07-08"),
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.5,
+                "close": 10.0,
+                # BTST 预过滤要求 pct>=9.5 (涨停日); 用 setup 名决定 pct 避免 setup 名触发预过滤
+                "pct_change": 9.5 if setup_name == "btst_breakout" else 0.0,
+            }
+        ]
+    )
     tracker = PaperTracker(journal_dir=tmp_path)
     actions = da.generate_daily_action(
         report_path=report_path,
@@ -1365,6 +1383,7 @@ def test_regime_size_factor_oversold_crisis_no_increase():
     (端到端测试需 31 行跌幅数据满足 OversoldBounce 预过滤, 此处用单元测试隔离 regime 逻辑.)
     """
     from src.screening.offensive.daily_action import _regime_size_factor
+
     assert _regime_size_factor("crisis", "oversold_bounce") == 1.0
     assert _regime_size_factor("risk_off", "oversold_bounce") == 1.0
     assert _regime_size_factor("normal", "oversold_bounce") == 1.0
@@ -1394,6 +1413,7 @@ def test_regime_factor_capped_at_hard_limit(tmp_path, monkeypatch):
     actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
     assert len(actions) == 1
     from src.screening.offensive.daily_action import _MAX_POSITION_PCT, _REGIME_POSITION_CAP_MULTIPLE
+
     hard_cap = _MAX_POSITION_PCT * _REGIME_POSITION_CAP_MULTIPLE
     assert actions[0].kelly_pct <= hard_cap + 1e-9
     assert abs(actions[0].kelly_pct - hard_cap) < 1e-6
@@ -1402,6 +1422,7 @@ def test_regime_factor_capped_at_hard_limit(tmp_path, monkeypatch):
 def test_regime_size_factor_per_setup_and_unknown_defaults():
     """按 setup 区分的 regime factor + 未知 setup/regime 默认 1.0."""
     from src.screening.offensive.daily_action import _regime_size_factor
+
     # BTST: crisis/risk_off 加仓
     assert _regime_size_factor("crisis", "btst_breakout") == 1.2
     assert _regime_size_factor("risk_off", "btst_breakout") == 1.1
@@ -1426,10 +1447,12 @@ def test_regime_sizing_recorded_in_buy_reasoning(tmp_path, monkeypatch):
 
 # ---- OversoldBounce 暂停 (DAILY_ACTION_DISABLED_SETUPS) ----
 
+
 def test_oversold_bounce_disabled_by_default(monkeypatch):
     """默认配置下 OversoldBounce 在禁用列表中 (2026 实测 E[r]≈0)."""
     monkeypatch.delenv("DAILY_ACTION_DISABLED_SETUPS", raising=False)
     from src.screening.offensive.daily_action import _env_setup_disable_list, _DEFAULT_DISABLED_SETUPS
+
     disabled = _env_setup_disable_list()
     assert "oversold_bounce" in disabled
     assert "oversold_bounce" in _DEFAULT_DISABLED_SETUPS
@@ -1439,6 +1462,7 @@ def test_oversold_bounce_reenabled_via_env_none(monkeypatch):
     """DAILY_ACTION_DISABLED_SETUPS=none 清空默认, 恢复全部 setup."""
     monkeypatch.setenv("DAILY_ACTION_DISABLED_SETUPS", "none")
     from src.screening.offensive.daily_action import _env_setup_disable_list
+
     assert _env_setup_disable_list() == set()
 
 
@@ -1446,6 +1470,7 @@ def test_disabled_setup_appended_via_env(monkeypatch):
     """DAILY_ACTION_DISABLED_SETUPS=btst_breakout 追加禁用 BTST (保留默认)."""
     monkeypatch.setenv("DAILY_ACTION_DISABLED_SETUPS", "btst_breakout")
     from src.screening.offensive.daily_action import _env_setup_disable_list
+
     disabled = _env_setup_disable_list()
     assert "btst_breakout" in disabled
     assert "oversold_bounce" in disabled  # 默认仍保留
@@ -1453,30 +1478,20 @@ def test_disabled_setup_appended_via_env(monkeypatch):
 
 # ---- paper_tracker 幂等自愈 ----
 
+
 def test_open_positions_self_heals_from_duplicated_buys(tmp_path):
     """历史 journal 含重复 BUY 时, open_positions 应从去重真值自愈."""
     journal = tmp_path / "journal.jsonl"
     # 模拟真实污染: 688629 重复 4 次 + 1 unique open + 1 closed (EXIT.date = buy_date 约定)
     import json as _json
+
     records = [
-        {"date": "20260706", "ticker": "688629", "action": "BUY", "setup": "btst_breakout",
-         "horizon": 10, "kelly_pct": 0.1, "entry_price": 50.0, "soft_stop": 45.0,
-         "hard_stop": 46.0, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "dupe1"},
-        {"date": "20260706", "ticker": "688629", "action": "BUY", "setup": "btst_breakout",
-         "horizon": 10, "kelly_pct": 0.1, "entry_price": 50.0, "soft_stop": 45.0,
-         "hard_stop": 46.0, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "dupe2"},
-        {"date": "20260706", "ticker": "688629", "action": "BUY", "setup": "btst_breakout",
-         "horizon": 10, "kelly_pct": 0.1, "entry_price": 50.0, "soft_stop": 45.0,
-         "hard_stop": 46.0, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "dupe3"},
-        {"date": "20260706", "ticker": "688629", "action": "BUY", "setup": "btst_breakout",
-         "horizon": 10, "kelly_pct": 0.1, "entry_price": 50.0, "soft_stop": 45.0,
-         "hard_stop": 46.0, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "dupe4"},
-        {"date": "20260706", "ticker": "000559", "action": "BUY", "setup": "btst_breakout",
-         "horizon": 10, "kelly_pct": 0.1, "entry_price": 10.0, "soft_stop": 9.0,
-         "hard_stop": 9.2, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "unique"},
-        {"date": "20260706", "ticker": "002217", "action": "BUY", "setup": "oversold_bounce",
-         "horizon": 5, "kelly_pct": 0.1, "entry_price": 3.0, "soft_stop": 2.7,
-         "hard_stop": 2.76, "time_exit": "T+5", "invalidation_condition": "", "reasoning": "open"},
+        {"date": "20260706", "ticker": "688629", "action": "BUY", "setup": "btst_breakout", "horizon": 10, "kelly_pct": 0.1, "entry_price": 50.0, "soft_stop": 45.0, "hard_stop": 46.0, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "dupe1"},
+        {"date": "20260706", "ticker": "688629", "action": "BUY", "setup": "btst_breakout", "horizon": 10, "kelly_pct": 0.1, "entry_price": 50.0, "soft_stop": 45.0, "hard_stop": 46.0, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "dupe2"},
+        {"date": "20260706", "ticker": "688629", "action": "BUY", "setup": "btst_breakout", "horizon": 10, "kelly_pct": 0.1, "entry_price": 50.0, "soft_stop": 45.0, "hard_stop": 46.0, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "dupe3"},
+        {"date": "20260706", "ticker": "688629", "action": "BUY", "setup": "btst_breakout", "horizon": 10, "kelly_pct": 0.1, "entry_price": 50.0, "soft_stop": 45.0, "hard_stop": 46.0, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "dupe4"},
+        {"date": "20260706", "ticker": "000559", "action": "BUY", "setup": "btst_breakout", "horizon": 10, "kelly_pct": 0.1, "entry_price": 10.0, "soft_stop": 9.0, "hard_stop": 9.2, "time_exit": "T+10", "invalidation_condition": "", "reasoning": "unique"},
+        {"date": "20260706", "ticker": "002217", "action": "BUY", "setup": "oversold_bounce", "horizon": 5, "kelly_pct": 0.1, "entry_price": 3.0, "soft_stop": 2.7, "hard_stop": 2.76, "time_exit": "T+5", "invalidation_condition": "", "reasoning": "open"},
     ]
     journal.write_text("\n".join(_json.dumps(r) for r in records) + "\n", encoding="utf-8")
 
@@ -1488,6 +1503,7 @@ def test_open_positions_self_heals_from_duplicated_buys(tmp_path):
 def test_open_positions_self_heal_subtracts_exits(tmp_path):
     """有 EXIT 的仓位不计入 open_positions (EXIT.date = buy_date 约定)."""
     import json as _json
+
     journal = tmp_path / "journal.jsonl"
     records = [
         {"date": "20260706", "ticker": "000001", "action": "BUY"},
@@ -1503,13 +1519,23 @@ def test_open_positions_self_heal_subtracts_exits(tmp_path):
 def test_open_positions_self_heal_persists_correction(tmp_path):
     """自愈后的正确计数应持久化到 portfolio_state.json."""
     import json as _json
+
     journal = tmp_path / "journal.jsonl"
     state = tmp_path / "portfolio_state.json"
     # 预置一个污染的 state (open_positions=99)
-    state.write_text(_json.dumps({
-        "nav": 1.0, "peak": 1.0, "drawdown_pct": 0.0,
-        "open_positions": 99, "total_trades": 0, "realized_pnl_pct": 0.0, "last_30d_pnl": [],
-    }))
+    state.write_text(
+        _json.dumps(
+            {
+                "nav": 1.0,
+                "peak": 1.0,
+                "drawdown_pct": 0.0,
+                "open_positions": 99,
+                "total_trades": 0,
+                "realized_pnl_pct": 0.0,
+                "last_30d_pnl": [],
+            }
+        )
+    )
     # journal 只有 1 条 BUY (真实持仓=1)
     journal.write_text(_json.dumps({"date": "20260706", "ticker": "000001", "action": "BUY"}) + "\n")
 
@@ -1527,6 +1553,7 @@ def test_record_buy_idempotent_across_instances(tmp_path):
     tracker2 = PaperTracker(journal_dir=tmp_path)
     tracker2.record_buy("20260706", "688629", "btst_breakout", 10, 50.0, 0.1, 45.0, 46.0, "dup")
     import json as _json
+
     lines = [line for line in (tmp_path / "journal.jsonl").read_text().strip().split("\n") if line.strip()]
     buys = [_json.loads(line) for line in lines if '"BUY"' in line]
     assert len(buys) == 1, f"expected 1 BUY, got {len(buys)}"
@@ -1543,10 +1570,7 @@ def test_compact_trade_date_invalid_logs_warning(caplog):
     caplog.set_level(logging.WARNING)
     result = _compact_trade_date(None)
     assert result == ""
-    assert any(
-        "daily_action" in r.name and "_compact_trade_date failed" in r.message
-        for r in caplog.records
-    ), f"Expected warning log, got: {[r.message for r in caplog.records]}"
+    assert any("daily_action" in r.name and "_compact_trade_date failed" in r.message for r in caplog.records), f"Expected warning log, got: {[r.message for r in caplog.records]}"
 
 
 def test_compact_trade_date_edge_cases():
@@ -1579,10 +1603,7 @@ def test_latest_fund_flow_date_corrupted_csv_logs_warning(caplog, tmp_path):
     caplog.set_level(logging.WARNING)
     result = _latest_fund_flow_date(cache_dir, "000001")
     assert result is None  # graceful degradation
-    assert any(
-        "cache_refresh" in r.name and "failed to read fund flow cache" in r.message
-        for r in caplog.records
-    ), f"Expected warning log, got: {[r.message for r in caplog.records]}"
+    assert any("cache_refresh" in r.name and "failed to read fund flow cache" in r.message for r in caplog.records), f"Expected warning log, got: {[r.message for r in caplog.records]}"
 
 
 def test_latest_fund_flow_date_missing_file_returns_none(tmp_path):
@@ -1606,3 +1627,298 @@ def test_latest_fund_flow_date_valid_csv_returns_date(tmp_path):
 
     result = _latest_fund_flow_date(cache_dir, "000001")
     assert result == "20260709"
+
+
+# ---------------------------------------------------------------------------
+# C-PORTFOLIO-CAP-IGNORES-OPEN-POSITIONS (empirical dogfood 20260710)
+# 真实 journal 峰值 26 仓 / 260% 敞口 (20260616), 61 天超 60% 上限.
+# 根因: generate_daily_action 的 portfolio_position_used 每次 run 重置为 0,
+# 忽略前序未平仓 (BTST T+10 持仓跨日) → "组合 ≤ 60%" 上限按 per-run 执行而非
+# per-portfolio → 超杠杆, paper nav (+110%) 不可达成, 风控形同虚设.
+# ---------------------------------------------------------------------------
+
+
+def test_record_buy_tracks_open_exposure(tmp_path):
+    """record_buy 必须累加 open_exposure (单仓 kelly_pct 之和), 供组合上限判断.
+
+    此前只数 open_positions (计数), 不追踪 open_exposure (敞口%) → 上限判断缺
+    "已用多少额度" 的输入. record_buy 累加, 幂等跳过的不加.
+    """
+    t = PaperTracker(journal_dir=tmp_path)
+    assert t.state.open_exposure == 0.0
+    t.record_buy("20260707", "300502", "btst_breakout", 10, 50.0, 0.05, 46.0, 45.0, "跌破45")
+    assert abs(t.state.open_exposure - 0.05) < 1e-9
+    t.record_buy("20260707", "688629", "btst_breakout", 10, 200.0, 0.10, 180.0, 184.0, "跌破184")
+    assert abs(t.state.open_exposure - 0.15) < 1e-9
+    # 幂等重复 BUY 不再加 open_exposure
+    t.record_buy("20260707", "300502", "btst_breakout", 10, 50.0, 0.05, 46.0, 45.0, "跌破45")
+    assert abs(t.state.open_exposure - 0.15) < 1e-9
+
+
+def test_open_exposure_self_heals_from_journal(tmp_path):
+    """新实例从 journal 重建 open_exposure (与 open_positions 同口径自愈).
+
+    历史 journal 可能含重复 BUY / 旧版无 open_exposure 字段. 重算口径:
+    open_exposure = sum(去重 BUY.kelly_pct) - 0 (EXIT 不减, 因 EXIT 时 close_matured
+    已减; 重建只数当前未平仓). 这里测纯 BUY 重建.
+    """
+    t1 = PaperTracker(journal_dir=tmp_path)
+    t1.record_buy("20260707", "300502", "btst_breakout", 10, 50.0, 0.10, 46.0, 45.0, "跌破45")
+    t1.record_buy("20260707", "688629", "btst_breakout", 10, 200.0, 0.10, 180.0, 184.0, "跌破184")
+
+    t2 = PaperTracker(journal_dir=tmp_path)
+    assert abs(t2.state.open_exposure - 0.20) < 1e-9, f"open_exposure 未从 journal 自愈: got {t2.state.open_exposure}"
+
+
+def test_close_matured_decrements_open_exposure(tmp_path):
+    """close_matured 平仓时 open_exposure 扣减已平仓位的 kelly_pct 之和."""
+    tracker = PaperTracker(journal_dir=tmp_path)
+    tracker.record_buy("20260601", "300502", "btst_breakout", 10, 100.0, 0.10, 85.0, 92.0, "跌破92")
+    tracker.record_buy("20260601", "688629", "btst_breakout", 10, 200.0, 0.10, 180.0, 184.0, "跌破184")
+    assert abs(tracker.state.open_exposure - 0.20) < 1e-9
+
+    fetcher_map = {
+        "300502": _make_price_series("20260601", 100.0, 105.0),
+        "688629": _make_price_series("20260601", 200.0, 210.0),
+    }
+    fetcher = lambda ticker, start, end: fetcher_map.get(ticker, [])  # noqa: E731
+    closed = tracker.close_matured(as_of="20260620", use_data_fetcher=fetcher)
+    assert len(closed) == 2
+    assert tracker.state.open_positions == 0
+    assert abs(tracker.state.open_exposure - 0.0) < 1e-9, f"平仓后 open_exposure 应归零: got {tracker.state.open_exposure}"
+
+
+def test_portfolio_cap_accounts_for_open_positions(tmp_path, monkeypatch):
+    """组合 60% 上限必须计入已开仓位, 不能每次 run 重置为 0.
+
+    Bug: generate_daily_action 的 portfolio_position_used 每次 reset 为 0, 忽略
+    前序未平仓. BTST T+10 持仓跨日 → 实际敞口常超 60% (真实 journal 峰值 260%).
+    预置 50% 已开仓 + 5 只新信号 → 应只追加 1 只 (10%) 到 60%, 不能 5 只全开 (会到 100%).
+    """
+    import pandas as pd
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.setups.base import DetectionResult
+    from src.screening.offensive.statistics import Distribution
+
+    class FakeSetup:
+        def detect(self, ticker, trade_date, context):
+            return DetectionResult(
+                hit=True,
+                ticker=ticker,
+                trade_date=trade_date,
+                trigger_strength=1.0,
+                invalidation_condition="fake",
+            )
+
+    dist = Distribution(
+        n=100,
+        winrate=0.60,
+        avg_gain=0.12,
+        avg_loss=-0.06,
+        convexity_ratio=2.0,
+        expected_return=0.05,
+        ci_low=0.02,
+        ci_high=0.08,
+        ic=0.10,
+    )
+    monkeypatch.setattr(da, "_VERIFIED_SETUPS", [("btst_breakout", FakeSetup, 10)])
+    monkeypatch.setattr(da, "get_known_distribution", lambda name, horizon: dist)
+    monkeypatch.setattr(da, "_env_setup_disable_list", lambda: set())
+    monkeypatch.delenv("DAILY_ACTION_ENFORCE_OPEN_CAP", raising=False)
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    # 预置 5 个已开仓 (前一日买入, T+10 未到期) = 50% 敞口
+    for tkr in ["100001", "100002", "100003", "100004", "100005"]:
+        tracker.record_buy("20260707", tkr, "btst_breakout", 10, 10.0, 0.10, 9.0, 9.2, "fake")
+    assert tracker.state.open_positions == 5
+    assert abs(tracker.state.open_exposure - 0.50) < 1e-9
+
+    # 今日 (20260708) 报告含 5 只新票, 全部 BTST 命中
+    report_path = tmp_path / "auto_screening_20260708.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "date": "20260708",
+                "recommendations": [{"ticker": t} for t in ["200001", "200002", "200003", "200004", "200005"]],
+                "market_state": {"regime_gate_level": "normal"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    prices = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-07-08"),
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.5,
+                "close": 10.0,
+                "pct_change": 9.5,
+            }
+        ]
+    )
+    actions = da.generate_daily_action(
+        report_path=report_path,
+        tracker=tracker,
+        scan_mode="report",
+        price_loader=lambda ticker, report_date: prices.copy(),
+    )
+
+    new_exposure = sum(a.kelly_pct for a in actions)
+    total_exposure = 0.50 + new_exposure
+    assert total_exposure <= 0.60 + 1e-9, f"组合敞口超 60% 上限: 已开 50% + 新 {new_exposure:.0%} = {total_exposure:.0%} " f"(应只追加 ≤10%, 实际追加 {len(actions)} 只)"
+    # 50% 已开 → 只能再追加 1 只 (10%) 到 60%; 不能 5 只全开
+    assert len(actions) == 1, f"应只追加 1 只新仓到 60%, 实际 {len(actions)} 只 ({new_exposure:.0%})"
+
+
+def test_portfolio_cap_escape_hatch_restores_old_behavior(tmp_path, monkeypatch):
+    """DAILY_ACTION_ENFORCE_OPEN_CAP=false 时恢复旧 per-run 行为 (逃生口).
+
+    默认 true (修复生效). owner 若要对比旧行为可设 false → portfolio_position_used
+    从 0 起算 (忽略已开仓), 与历史行为一致. 仅作逃生口, 不改变默认.
+    """
+    import pandas as pd
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.setups.base import DetectionResult
+    from src.screening.offensive.statistics import Distribution
+
+    class FakeSetup:
+        def detect(self, ticker, trade_date, context):
+            return DetectionResult(
+                hit=True,
+                ticker=ticker,
+                trade_date=trade_date,
+                trigger_strength=1.0,
+                invalidation_condition="fake",
+            )
+
+    dist = Distribution(
+        n=100,
+        winrate=0.60,
+        avg_gain=0.12,
+        avg_loss=-0.06,
+        convexity_ratio=2.0,
+        expected_return=0.05,
+        ci_low=0.02,
+        ci_high=0.08,
+        ic=0.10,
+    )
+    monkeypatch.setattr(da, "_VERIFIED_SETUPS", [("btst_breakout", FakeSetup, 10)])
+    monkeypatch.setattr(da, "get_known_distribution", lambda name, horizon: dist)
+    monkeypatch.setattr(da, "_env_setup_disable_list", lambda: set())
+    monkeypatch.setenv("DAILY_ACTION_ENFORCE_OPEN_CAP", "false")
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    for tkr in ["100001", "100002", "100003", "100004", "100005"]:
+        tracker.record_buy("20260707", tkr, "btst_breakout", 10, 10.0, 0.10, 9.0, 9.2, "fake")
+
+    report_path = tmp_path / "auto_screening_20260708.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "date": "20260708",
+                "recommendations": [{"ticker": t} for t in ["200001", "200002", "200003", "200004", "200005"]],
+                "market_state": {"regime_gate_level": "normal"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    prices = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-07-08"),
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.5,
+                "close": 10.0,
+                "pct_change": 9.5,
+            }
+        ]
+    )
+    actions = da.generate_daily_action(
+        report_path=report_path,
+        tracker=tracker,
+        scan_mode="report",
+        price_loader=lambda ticker, report_date: prices.copy(),
+    )
+    # 旧行为: 忽略已开仓, 5 只新票全开到 50% (per-run cap 60% 未触)
+    assert len(actions) == 5, f"逃生口=false 应恢复旧 per-run 行为 (全开), 实际 {len(actions)}"
+
+
+def test_portfolio_cap_blocked_count_reports_all_skipped(tmp_path, monkeypatch):
+    """cap_blocked_count 必须报告被跳过的全部信号数, 不只 1 个.
+
+    Bug (autodev-34 /loop, 自查 C-PORTFOLIO-CAP 修复): 上限耗尽时
+    ``cap_blocked_count += 1; break`` 只计 1, 但其后所有剩余信号都被跳过.
+    预置 50% 已开仓 + 10 只新信号 → 只追加 1 只, 跳过 9 只; disclose 应报 9 不报 1.
+    """
+    import pandas as pd
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.setups.base import DetectionResult
+    from src.screening.offensive.statistics import Distribution
+
+    class FakeSetup:
+        def detect(self, ticker, trade_date, context):
+            return DetectionResult(
+                hit=True,
+                ticker=ticker,
+                trade_date=trade_date,
+                trigger_strength=1.0,
+                invalidation_condition="fake",
+            )
+
+    dist = Distribution(
+        n=100,
+        winrate=0.60,
+        avg_gain=0.12,
+        avg_loss=-0.06,
+        convexity_ratio=2.0,
+        expected_return=0.05,
+        ci_low=0.02,
+        ci_high=0.08,
+        ic=0.10,
+    )
+    monkeypatch.setattr(da, "_VERIFIED_SETUPS", [("btst_breakout", FakeSetup, 10)])
+    monkeypatch.setattr(da, "get_known_distribution", lambda name, horizon: dist)
+    monkeypatch.setattr(da, "_env_setup_disable_list", lambda: set())
+    monkeypatch.delenv("DAILY_ACTION_ENFORCE_OPEN_CAP", raising=False)
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    # 50% 已开仓
+    for tkr in ["100001", "100002", "100003", "100004", "100005"]:
+        tracker.record_buy("20260707", tkr, "btst_breakout", 10, 10.0, 0.10, 9.0, 9.2, "fake")
+
+    # 10 只新信号: 50% 已开 + 只能再加 1 只 (10%) 到 60%, 其余 9 只被跳过
+    new_tickers = [f"20000{i}" for i in range(10)]
+    report_path = tmp_path / "auto_screening_20260708.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "date": "20260708",
+                "recommendations": [{"ticker": t} for t in new_tickers],
+                "market_state": {"regime_gate_level": "normal"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    prices = pd.DataFrame(
+        [
+            {
+                "date": pd.Timestamp("2026-07-08"),
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.5,
+                "close": 10.0,
+                "pct_change": 9.5,
+            }
+        ]
+    )
+    actions = da.generate_daily_action(
+        report_path=report_path,
+        tracker=tracker,
+        scan_mode="report",
+        price_loader=lambda ticker, report_date: prices.copy(),
+    )
+    assert len(actions) == 1, f"应只追加 1 只到 60%, 实际 {len(actions)}"
+    # 10 信号 - 1 录入 = 9 被跳过 (不是 1)
+    assert tracker.last_cap_blocked_count == 9, f"cap_blocked_count 应报 9 (10 信号 - 1 录入), 实际 {tracker.last_cap_blocked_count}"
