@@ -494,6 +494,7 @@ def _build_auto_screening_payload(
     industry_rotation_payload: list[dict],
     batch_fetcher_use_batch: bool,
     batch_fetcher_stats: dict,
+    optional_feature_quality: dict | None = None,
 ) -> dict:
     """Build the canonical ``--auto`` screening payload.
 
@@ -501,6 +502,8 @@ def _build_auto_screening_payload(
     and the in-memory return value of :func:`compute_auto_screening_results`,
     so the two cannot drift on field shape, ordering, or P*-tag annotations.
     """
+    data_quality = {"optional_features": {}}
+    data_quality.update(optional_feature_quality or {})
     return {
         "mode": "auto_screening",
         "date": trade_date,
@@ -526,6 +529,7 @@ def _build_auto_screening_payload(
         },
         # P1-2: 行业轮动信号
         "industry_rotation": industry_rotation_payload,
+        "data_quality": data_quality,
         # P1-10: 条件单建议 (基于 ATR 波动率) — 默认注入空数组,
         # 真实价格 provider 由调用方在 Web 端 / CLI 端注入
         "conditional_orders": [],
@@ -741,7 +745,14 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     # Step 2: 四策略评分
     progress.update_status("auto_screening", None, f"Step 2/4: 四策略评分 ({len(candidates)} 只)")
     logger.info("[Auto] Step 2/4: 四策略评分 — %d 只候选", len(candidates))
-    scored = score_batch(candidates, trade_date)
+    from src.screening.optional_feature_store import OptionalFeatureStore
+
+    optional_feature_store = OptionalFeatureStore()
+    scored = score_batch(candidates, trade_date, feature_store=optional_feature_store)
+    optional_feature_quality = optional_feature_store.build_quality_summary(
+        trade_date,
+        [candidate.ticker for candidate in candidates],
+    )
 
     # Step 3: 信号融合
     progress.update_status("auto_screening", None, "Step 3/4: 信号融合 + 冲突仲裁")
@@ -826,6 +837,7 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
             industry_rotation_payload=industry_rotation_payload,
             batch_fetcher_use_batch=batch_fetcher.use_batch,
             batch_fetcher_stats=batch_fetcher.stats(),
+            optional_feature_quality=optional_feature_quality,
         ),
     )
 
@@ -843,6 +855,7 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
         industry_rotation_payload=industry_rotation_payload,
         batch_fetcher_use_batch=batch_fetcher.use_batch,
         batch_fetcher_stats=batch_fetcher.stats(),
+        optional_feature_quality=optional_feature_quality,
     )
 
 
