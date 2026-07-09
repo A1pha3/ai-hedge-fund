@@ -536,11 +536,40 @@ def _build_auto_screening_payload(
     }
 
 
+def _close_from_price_cache(ticker: str, trade_date: str) -> float | None:
+    """C-TRACKING-PRICE-BACKFILL (20260710): price_cache fallback for recommended_price.
+
+    当 batch fetcher 缺某 ticker 当日行情时 (实测 20260709 Top-N 10 只中 4 只:
+    002049/300184/300308/600392 在 batch df 缺失但 price_cache 有), 回退到
+    ``data/price_cache/{ticker}.csv`` 读当日 close。避免 recommended_price 落到 0
+    → tracking_history 永久残留 0 (幂等 skip 不修正) → 入场价诊断/展示错误。
+
+    数据不可用 (文件缺失/无该日行/close<=0/解析异常) 返回 None, 绝不伪造价格。
+    """
+    cache_path = Path("data/price_cache") / f"{ticker}.csv"
+    if not cache_path.exists():
+        return None
+    try:
+        import pandas as pd
+
+        df = pd.read_csv(cache_path, dtype={"date": str})
+        df["date"] = pd.to_datetime(df["date"])
+        row = df[df["date"] == pd.to_datetime(trade_date)]
+        if len(row):
+            close_val = float(row.iloc[0]["close"])
+            return close_val if close_val > 0 else None
+    except Exception:
+        logger.debug("[Auto] price_cache fallback failed for %s %s", ticker, trade_date, exc_info=True)
+        return None
+    return None
+
+
 def _inject_recommended_prices(
     recommendations: list[dict],
     trade_date: str,
     *,
     price_frame_fetcher=None,
+    price_cache_loader=None,
 ) -> list[dict]:
     """NS-1: 注入推荐日收盘价作为 ``recommended_price``。
 
@@ -553,11 +582,17 @@ def _inject_recommended_prices(
     Fix: 从全市场当日 daily 行情 (batch fetcher, 与评分共用同一缓存) 取 close,
     按 ts_code → 6 位代码映射后注入每条缺少价格的 rec。
 
+    C-TRACKING-PRICE-BACKFILL: batch fetcher 缺某 ticker 时回退到 price_cache
+    (实测 4/10 的 20260709 Top-N 靠此 fallback 才拿到价)。
+
     - ``price_frame_fetcher``: 可注入 ``(trade_date) -> pd.DataFrame | None``
       (测试用); 默认走 ``BatchDataFetcher.fetch_daily_prices_batch``。
+    - ``price_cache_loader``: 可注入 ``(ticker, trade_date) -> float | None``
+      (测试用); 默认走 :func:`_close_from_price_cache`。
     - 数据不可用 (None / 空 / 缺列) 时不注入, 绝不伪造价格。
     - 已有非零 ``recommended_price`` 的 rec 不覆盖。
     """
+    close_by_ticker: dict[str, float] = {}
     if price_frame_fetcher is not None:
         df = price_frame_fetcher(trade_date)
     else:
@@ -565,23 +600,21 @@ def _inject_recommended_prices(
 
         df = get_global_batch_data_fetcher().fetch_daily_prices_batch(trade_date)
 
-    # 数据不可用 → 保持 recs 原样 (不注入假价)。没有价格数据时
-    # recommended_price 仍会落到 0.0, 但本函数绝不伪造。
-    if df is None or not hasattr(df, "columns") or df.empty:
-        return recommendations
-    if "ts_code" not in df.columns or "close" not in df.columns:
-        return recommendations
+    # batch fetcher 数据可用时建 ticker→close 映射; 不可用时 close_by_ticker 空,
+    # 下方仍走 price_cache fallback (此前 batch 不可用直接 return, 导致全量 price=0).
+    if df is not None and hasattr(df, "columns") and not df.empty and "ts_code" in df.columns and "close" in df.columns:
+        for ts_code, close in zip(df["ts_code"].tolist(), df["close"].tolist()):
+            code6 = str(ts_code).split(".")[0]  # "000001.SZ" → "000001"
+            try:
+                close_val = float(close)
+            except (TypeError, ValueError):
+                continue
+            if code6 and close_val > 0 and code6 not in close_by_ticker:
+                close_by_ticker[code6] = close_val
 
-    close_by_ticker: dict[str, float] = {}
-    for ts_code, close in zip(df["ts_code"].tolist(), df["close"].tolist()):
-        code6 = str(ts_code).split(".")[0]  # "000001.SZ" → "000001"
-        try:
-            close_val = float(close)
-        except (TypeError, ValueError):
-            continue
-        if code6 and close_val > 0 and code6 not in close_by_ticker:
-            close_by_ticker[code6] = close_val
+    cache_loader = price_cache_loader if price_cache_loader is not None else _close_from_price_cache
 
+    fallback_count = 0
     for rec in recommendations:
         existing = rec.get("recommended_price")
         try:
@@ -591,8 +624,16 @@ def _inject_recommended_prices(
             pass
         ticker = str(rec.get("ticker", "")).split(".")[0]
         close_val = close_by_ticker.get(ticker)
+        if not (close_val and close_val > 0):
+            # C-TRACKING-PRICE-BACKFILL: batch fetcher 缺该 ticker → 回退 price_cache
+            cached = cache_loader(ticker, trade_date)
+            if cached and cached > 0:
+                close_val = cached
+                fallback_count += 1
         if close_val and close_val > 0:
             rec["recommended_price"] = round(close_val, 4)
+    if fallback_count:
+        logger.info("[Auto] recommended_price price_cache fallback 注入 %d 只 (batch fetcher 缺失)", fallback_count)
     return recommendations
 
 
