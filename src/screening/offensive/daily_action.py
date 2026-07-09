@@ -933,7 +933,11 @@ def render_daily_action(
     all_hits = list(actions) + blocked
     converge_n = sum(1 for a in all_hits if a.ticker.split(".")[0] in auto_topn)
     if auto_topn and all_hits and converge_n:
-        lines.append(f"  {Fore.WHITE}⭐ 双信号收敛: {converge_n}/{len(all_hits)} 只 BTST 命中同日也在 --auto Top-N " f"(历史胜率 76% vs 66%, n=34 样本小未达显著, 仅供优先级参考){Style.RESET_ALL}")
+        # C-DUAL-SIGNAL-CONVERGENCE: bootstrap 验证 (20260710) — 观察到收敛子集胜率
+        # +10.8pp, 但 95% CI [-6.8%, +27.5%] 跨 0, P(无优势)=11.7% → 未达统计显著.
+        # 诚实披露: 标记事实 (同日在两系统), 但不宣称"已验证更优", 防止 operator
+        # 据噪声点估计加仓. 待样本累积 (n>100 收敛子集) 后重测.
+        lines.append(f"  {Fore.WHITE}⭐ 双信号: {converge_n}/{len(all_hits)} 只 BTST 命中同日也在 --auto Top-N (bootstrap 未达显著 CI[-7%,+28%], 可能是噪声, 勿据此加仓){Style.RESET_ALL}")
     if not actions and not blocked:
         lines.append(f"\n  {Fore.YELLOW}今日无凸性 setup 命中 (空仓等待){Style.RESET_ALL}")
         return "\n".join(lines)

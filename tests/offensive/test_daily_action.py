@@ -1994,5 +1994,6 @@ def test_render_badges_dual_signal_convergence(tmp_path, monkeypatch):
     # 300308 收敛 → 标 ⭐双信号; 688999 不收敛 → 无标记
     assert "300308" in out and "⭐双信号" in out, "收敛票应标 ⭐双信号"
     assert "688999" in out
-    # 收敛摘要行 (历史胜率 76% vs 66%)
-    assert "双信号收敛" in out and "76%" in out
+    # 双信号摘要行: bootstrap 验证未达显著 → 诚实披露 "未达显著/可能是噪声", 不宣称 76% vs 66%
+    assert "双信号" in out and "未达显著" in out, "应诚实披露 bootstrap 未验证"
+    assert "76%" not in out, "不应展示未达显著的点估计 (会误导 operator)"
