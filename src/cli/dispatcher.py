@@ -939,8 +939,13 @@ def _resolve_daily_action(argv: list[str]) -> int | None:
     from src.screening.offensive.daily_action import generate_daily_action, render_daily_action
     from src.screening.offensive.paper_tracker import PaperTracker
 
+    # --end-date YYYY-MM-DD (或 YYYYMMDD): 显式覆盖信号日, 跳过 price_cache 探测 + 17:00 guard.
+    # 支持 `--end-date=VALUE` 和 `--end-date VALUE` 两种形式. 默认 None → 走 17:00 规则.
+    end_date_raw = _get_kv(argv, "--end-date") or _next_arg(argv, "--end-date")
+    end_date = end_date_raw.strip().replace("-", "") if end_date_raw else None
+
     tracker = PaperTracker()
-    actions = generate_daily_action(tracker=tracker)
+    actions = generate_daily_action(tracker=tracker, end_date=end_date)
     # 用本次实际扫描日期渲染; fallback 仅兼容旧 tracker / 异常路径
     trade_date = getattr(tracker, "last_action_trade_date", "") or "????????"
     if trade_date != "????????":

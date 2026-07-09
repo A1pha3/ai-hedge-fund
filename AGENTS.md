@@ -30,12 +30,17 @@ uv run python src/main.py --daily-action   # 读缓存, ~3 秒, 输出次日 BUY
 
 ```
 BTST (n=133):           winrate=68%  E[r]=+8.15%   crisis=+16.93%/76%  risk_off=+8.87%/78%  normal=+6.29%/66%
-OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%(亏)  normal=+0.15%/51%
+OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0.15%/51%   risk_off=+13.11%/100%(n=3)
 ```
 
 - **BTST 三个 regime 都赚钱**，crisis 最强 → crisis 加仓有数据支持。
-- **OversoldBounce 整体几乎不赚钱，crisis 亏钱** → 已默认暂停（见下）。
+- **OversoldBounce 默认暂停**，但核心理由不是"crisis 亏钱"，而是统计证据不足：
+  - E[r]=+0.34% 但 95% CI `[-3.15%, +3.83%]` 跨 0（t=0.19, p≈0.85）→ **无法证明它赚钱**
+  - 尾部比 BTST 更毒：亏损>10% 占比 **20%** vs BTST 11%；亏损>15% 占比 **12%** vs 6%
+  - 机会成本：仓位受限时有统计显著的替代品（BTST E=+8.15%）
+  - crisis n=21 的 -1.15% **样本太小，不是独立决策依据**（risk_off n=3 反而 +13.11%，与 crisis 矛盾 → 分层不可靠）
 - ⚠️ 样本期仅 6 个月，可能有样本期偏差；补全历史数据重跑前，这些结论是"当前最佳依据"而非定论。
+- ✅ **已验证**：59 笔回测用的是完整版 setup（volume 列存在、量比条件3 生效），不是残缺版。git 证据：volume 列在 commit `7c51cef8`(07-07) 加入，回测在 07-08 跑，setup 代码当时已有完整过滤逻辑。
 
 ### price_cache（个股价格，回测/扫描数据源）
 
@@ -44,7 +49,7 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%(亏)  norma
 - **深度限制：只有 6 个月**（2026-01-12 → 2026-07-08，约 117 行/股）。
 - 这导致 `scripts/setup_research.py` 直接跑会 **n=0**（IS/OOS 切分按 2020-2026，但价格数据只有 2026）。
 - `data/reports/setup_research/phase0_report_20260708.md` 声称的 n=1762 **无法从本地数据复现**——它在别处（更深历史）生成。
-- ⚠️ **引用 Phase 0 报告的结论前，先与 paper_trading_backtest 真实数据交叉验证。** 曾因盲信 Phase 0 实现了有害的统一 regime 加仓（OversoldBounce crisis 实测亏钱，却加仓 1.2×）。
+- ⚠️ **引用 Phase 0 报告的结论前，先与 paper_trading_backtest 真实数据交叉验证。** 曾因盲信 Phase 0（声称 OB E=+3.42%/n=1113）对 OversoldBounce 统一加仓，但真实回测（n=59/E=+0.34%/CI 跨 0）显示无 alpha 可放大 → 有害。
 
 ### 其它历史数据（深度较全）
 
@@ -60,9 +65,10 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%(亏)  norma
 ### 凸性 setup（`--daily-action`）
 
 - **BTST 涨停突破（T+10）**：✅ 启用。crisis/risk_off 时加仓（`_regime_size_factor`，BTST crisis=1.2×）。
-- **OversoldBounce 超跌反弹（T+5）**：⏸️ **默认暂停**（2026 实测 E[r]≈0）。
+- **OversoldBounce 超跌反弹（T+5）**：⏸️ **默认暂停**（E[r]=+0.34% 统计不显著、CI 跨 0；尾部亏损比 BTST 厚）。
   - 控制：`DAILY_ACTION_DISABLED_SETUPS` env（默认含 `oversold_bounce`）。
   - 恢复：`DAILY_ACTION_DISABLED_SETUPS=none`（补全历史数据重跑后再决定去留）。
+  - ⚠️ 暂停理由不是"crisis 亏钱"（crisis n=21 太小不可靠），而是"无法证明赚钱 + 亏起来更狠 + 仓位有更好去处"。详见上文"2026 实测表现"。
 - Kelly 仓位：half-Kelly，单票上限 10%（regime 加仓后硬上限 12%），组合上限 60%。
 - 止损：⚠️ **当前是摆设**——`stop_would_have_triggered` 只进 reasoning 字符串，**不影响 realized P&L**（账面按 T+N close）。192 笔回测 0 笔触发（2026 行情好）。
 

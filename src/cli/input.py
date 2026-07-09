@@ -2,7 +2,7 @@ import argparse
 import os
 import sys
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import questionary
 from colorama import Fore, Style
@@ -100,17 +100,21 @@ def _resolve_default_end_date() -> str:
 
     阈值可通过环境变量 DATA_READY_HOUR 覆盖 (默认 17)。
 
+    本函数是 :func:`src.utils.date_utils.resolve_signal_date_iso` 的薄包装:
+    把"当前墙钟"显式传进去 (而非让 helper 内部读 ``datetime.now()``), 这样
+    测试 patch ``src.cli.input.datetime`` 时仍能控制行为 (详见
+    ``tests/cli/test_input_dates.py``)。env 解析同样在本地完成以保持契约。
+
     Returns:
         YYYY-MM-DD 格式的默认结束日期
     """
-    now = datetime.now()
+    from src.utils.date_utils import resolve_signal_date_iso
+
     try:
         ready_hour = int(os.environ.get("DATA_READY_HOUR", "17"))
     except ValueError:
         ready_hour = 17
-    if now.hour < ready_hour:
-        return (now - timedelta(days=1)).strftime("%Y-%m-%d")
-    return now.strftime("%Y-%m-%d")
+    return resolve_signal_date_iso(now=datetime.now(), ready_hour=ready_hour)
 
 
 def add_date_args(parser: argparse.ArgumentParser, *, default_months_back: int | None = None) -> argparse.ArgumentParser:

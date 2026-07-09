@@ -78,10 +78,12 @@ echo "[$(date -Iseconds)] [daily_auto] --auto OK"
 from dotenv import dotenv_values; import os
 for k,v in dotenv_values('$REPO/.env').items():
     v is not None and os.environ.setdefault(k,v)
-from datetime import datetime
+from src.utils.date_utils import resolve_signal_date
 from src.screening.consecutive_recommendation import resolve_report_dir
 from src.screening.recommendation_tracker import update_tracking_history
-n = update_tracking_history(reports_dir=resolve_report_dir(), trade_date=datetime.now().strftime('%Y%m%d'))
+# 与 --auto 用同一套 17:00 信号日规则, 保证 backfill 的 trade_date 和报告日期对齐
+today = resolve_signal_date()
+n = update_tracking_history(reports_dir=resolve_report_dir(), trade_date=today)
 print(f'[daily_auto] backfill pass updated {n} records')
 PYEOF
 

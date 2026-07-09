@@ -73,6 +73,16 @@ class TestResolveDefaultEndDate:
             mock_dt.strptime.side_effect = lambda *a, **kw: datetime.strptime(*a, **kw)
             assert _resolve_default_end_date() == "2026-07-08"
 
+    def test_delegate_returns_dashed_iso_format(self):
+        """_resolve_default_end_date 委托 helper 后仍返回 YYYY-MM-DD (不是 YYYYMMDD)."""
+        # 契约回归: 委托 resolve_signal_date_iso 后格式必须保持 YYYY-MM-DD,
+        # 下游 resolve_dates / argparse --end-date 依赖带横线格式.
+        with patch("src.cli.input.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 7, 9, 10, 30)
+            result = _resolve_default_end_date()
+        assert result == "2026-07-08"
+        assert "-" in result  # 必须带横线, 不能是紧凑 YYYYMMDD
+
 
 class TestResolveDatesExplicitOverride:
     """显式 --end-date 不受 17:00 阈值影响。"""

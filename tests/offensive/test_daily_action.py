@@ -581,11 +581,93 @@ def test_resolve_trade_date_normalizes_mixed_price_cache_date_formats(tmp_path, 
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
+    # Freeze the 17:00 signal date so the guard never rolls back 20260708
+    # regardless of when the test runs (cache max == signal_date → no rollback).
+    monkeypatch.setattr(da, "resolve_signal_date", lambda: "20260708")
 
     trade_date, regime = da._resolve_trade_date_and_regime()
 
     assert trade_date == "20260708"
     assert regime == "normal"
+
+
+def test_resolve_trade_date_applies_1700_guard(tmp_path, monkeypatch):
+    """17:00 guard: 盘前 price_cache 已有当日数据时, 回退到昨天的信号日.
+
+    当日资金流 ~17:00 才入库; 若 price_cache 最新日 = 今天但未过 17:00, 应回退到
+    规则信号日 (resolve_signal_date 返回昨天), 而非用不完整的当日数据出信号.
+    """
+    from src.screening.offensive import daily_action as da
+
+    price_cache = tmp_path / "data" / "price_cache"
+    price_cache.mkdir(parents=True)
+    # cache 含 20260709 (今天, 盘前注入), 应被 guard 回退到 20260708
+    (price_cache / "000001.csv").write_text(
+        "date,close\n20260708,10.0\n20260709,10.5\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(da, "resolve_signal_date", lambda: "20260708")
+
+    trade_date, regime = da._resolve_trade_date_and_regime()
+
+    assert trade_date == "20260708"
+
+
+def test_resolve_trade_date_no_rollback_after_cutoff(tmp_path, monkeypatch):
+    """过了 17:00 后, cache 最新日 = 今天不会被回退 (信号日 = 今天)."""
+    from src.screening.offensive import daily_action as da
+
+    price_cache = tmp_path / "data" / "price_cache"
+    price_cache.mkdir(parents=True)
+    (price_cache / "000001.csv").write_text(
+        "date,close\n20260708,10.0\n20260709,10.5\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(da, "resolve_signal_date", lambda: "20260709")
+
+    trade_date, _ = da._resolve_trade_date_and_regime()
+
+    assert trade_date == "20260709"
+
+
+def test_generate_daily_action_end_date_override_skips_cache(tmp_path, monkeypatch):
+    """显式 end_date 覆盖: 跳过 price_cache 探测, 直接用指定日期作信号日."""
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    # 即使没有 price_cache, end_date 也应直接生效 (不调用 _resolve_trade_date_and_regime)
+    called = {"resolve": False}
+    monkeypatch.setattr(
+        da,
+        "_resolve_trade_date_and_regime",
+        lambda: called.__setitem__("resolve", True) or ("20260101", "normal"),
+    )
+    monkeypatch.setattr(da, "_latest_auto_report_date", lambda: "", raising=False)
+    monkeypatch.setattr(da, "_missed_entry_window_reason", lambda td: "", raising=False)
+    monkeypatch.setattr(da, "_load_st_tickers", lambda: set())
+
+    da.generate_daily_action(tracker=tracker, scan_mode="full_market", end_date="20260706")
+
+    assert tracker.last_action_trade_date == "20260706"
+    assert called["resolve"] is False  # _resolve_trade_date_and_regime 被跳过
+
+
+def test_generate_daily_action_end_date_accepts_dashed(tmp_path, monkeypatch):
+    """end_date 接受 YYYY-MM-DD 带横线格式 (规范化成 YYYYMMDD)."""
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    monkeypatch.setattr(da, "_latest_auto_report_date", lambda: "", raising=False)
+    monkeypatch.setattr(da, "_missed_entry_window_reason", lambda td: "", raising=False)
+    monkeypatch.setattr(da, "_load_st_tickers", lambda: set())
+
+    da.generate_daily_action(tracker=tracker, scan_mode="full_market", end_date="2026-07-06")
+
+    assert tracker.last_action_trade_date == "20260706"
 
 
 def test_generate_daily_action_blocks_new_buys_when_price_cache_lags_auto_report(tmp_path, monkeypatch):
@@ -653,7 +735,8 @@ def test_generate_daily_action_blocks_new_buys_after_planned_open_window(tmp_pat
     monkeypatch.setattr(da, "_resolve_trade_date_and_regime", lambda: ("20260707", "normal"))
     monkeypatch.setattr(da, "_latest_auto_report_date", lambda: "", raising=False)
     monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260708")
-    monkeypatch.setattr(da, "_current_cn_datetime", lambda: datetime(2026, 7, 8, 12, 0), raising=False)
+    # 买入窗口 cutoff 已放宽到 17:00; 用 18:00 触发 "窗口已过"
+    monkeypatch.setattr(da, "_current_cn_datetime", lambda: datetime(2026, 7, 8, 18, 0), raising=False)
     monkeypatch.setattr(da, "_load_st_tickers", lambda: set())
     monkeypatch.setattr(da, "Path", lambda path: SimpleNamespace(glob=lambda pattern: [SimpleNamespace(stem="000001")]))
 
@@ -679,6 +762,33 @@ def test_entry_window_guard_allows_before_planned_open(monkeypatch):
     reason = da._missed_entry_window_reason("20260707", now=datetime(2026, 7, 8, 9, 0))
 
     assert reason == ""
+
+
+def test_entry_window_guard_allows_intraday_before_cutoff(monkeypatch):
+    """买入日盘中 (cutoff 17:00 之前) 仍可看计划: 12:00 < 17:00 → 不阻断.
+
+    17:00 是数据就绪/交易日切换的统一阈值; 盘中允许看 "昨日信号→今日买入" 的
+    计划用于研究盘面. paper trading 计划非实盘自动下单, 无盘中追单风险.
+    """
+    from datetime import datetime
+    from src.screening.offensive import daily_action as da
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260708")
+
+    reason = da._missed_entry_window_reason("20260707", now=datetime(2026, 7, 8, 12, 0))
+
+    assert reason == ""
+
+
+def test_entry_window_guard_1700_boundary(monkeypatch):
+    """cutoff 边界: 16:59 允许, 17:00 (含) 阻断."""
+    from datetime import datetime
+    from src.screening.offensive import daily_action as da
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260708")
+
+    assert da._missed_entry_window_reason("20260707", now=datetime(2026, 7, 8, 16, 59)) == ""
+    assert da._missed_entry_window_reason("20260707", now=datetime(2026, 7, 8, 17, 0)) != ""
 
 
 def test_generate_daily_action_ranks_hits_before_portfolio_cap(tmp_path, monkeypatch):
@@ -893,6 +1003,8 @@ def test_render_daily_action_labels_signal_and_execution_dates(tmp_path, monkeyp
     from src.screening.offensive.paper_tracker import PaperTracker
 
     monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    # 避免 get_stock_name 触发网络/tushare 调用 (测试不应依赖外部 API)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
     tracker = PaperTracker(journal_dir=tmp_path)
     actions = [
         DailyAction(
@@ -926,6 +1038,7 @@ def test_render_daily_action_explains_stops_prior_and_rule_execution(tmp_path, m
     from src.screening.offensive.paper_tracker import PaperTracker
 
     monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
     tracker = PaperTracker(journal_dir=tmp_path)
     actions = [
         DailyAction(
@@ -965,6 +1078,7 @@ def test_render_daily_action_does_not_claim_stop_loss_changes_paper_pnl(tmp_path
 
     monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
     monkeypatch.setattr(da, "_setup_policy_lines", lambda: [], raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
     tracker = PaperTracker(journal_dir=tmp_path)
     actions = [
         DailyAction(
@@ -1040,7 +1154,10 @@ def test_render_daily_action_discloses_setup_policy_from_backtest(tmp_path, monk
     assert "n=133" in out
     assert "E=+8.15%" in out
     assert "暂停 setup: oversold_bounce" in out
-    assert "crisis E=-1.15%" in out
+    # 暂停理由应反映统计不显著 (不是 crisis 分层; crisis n=21 太小不可靠)
+    assert "CI 跨 0 不显著" in out
+    assert "尾部亏损比 BTST 厚" in out
+    assert "crisis E=-1.15%" not in out  # 不再把小样本 crisis 分层当主因展示
 
 
 def test_render_daily_action_setup_policy_respects_env_none(tmp_path, monkeypatch):
@@ -1063,7 +1180,7 @@ def test_render_daily_action_setup_policy_respects_env_none(tmp_path, monkeypatc
 # ---------------------------------------------------------------------------
 
 
-def test_render_shows_closed_positions(tmp_path):
+def test_render_shows_closed_positions(tmp_path, monkeypatch):
     """render_daily_action 有平仓时, 必须显示平仓摘要 (ticker/realized_pnl/止损触发).
 
     诚实披露: 平仓是组合状态演进的核心, operator 必须能看到今日平了哪些仓、各仓
@@ -1071,6 +1188,8 @@ def test_render_shows_closed_positions(tmp_path):
     """
     from src.screening.offensive.daily_action import render_daily_action
 
+    # 避免 get_stock_name 触发网络/tushare 调用 (平仓摘要也要显示名字)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
     tracker = PaperTracker(journal_dir=tmp_path)
     closed = [
         {

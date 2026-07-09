@@ -29,6 +29,7 @@ from src.screening.offensive.paper_tracker import PaperTracker, TradeAction
 from src.screening.offensive.risk_framework import build_risk_plan
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
 from src.screening.offensive.setups.oversold_bounce import OversoldBounceSetup
+from src.utils.date_utils import resolve_signal_date
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,12 @@ _MAX_POSITION_PCT = 0.10  # 单票 ≤ 10%
 _MAX_PORTFOLO_PCT = 0.60  # 组合 ≤ 60%
 _USE_TUSHARE_PRICES = True  # akshare 在本 env 代理封了
 _CN_TZ = timezone(timedelta(hours=8), "Asia/Shanghai")
-_ENTRY_WINDOW_CUTOFF = time(9, 30)
+# 买入窗口截止: 信号日 S → 计划买入日 = S 下一交易日开盘. 在买入日当天, 超过此时刻
+# 即视为窗口已过, 不再输出新 BUY (避免事后补单/盘中追单).
+# 设为 17:00 (而非开盘 09:30): 与信号日 17:00 数据就绪规则统一 —— 只要当天未过 17:00,
+# 用户都能看到 "昨日信号 → 今日买入" 的完整计划用于研究盘面; 17:00 后切换到次日信号,
+# 旧信号的计划自动失效. paper trading 计划非实盘自动下单, 盘中可读无下单风险.
+_ENTRY_WINDOW_CUTOFF = time(17, 0)
 
 # 已验证的 setup 配置 (Phase 0 通过的 setup + 对应 known_distribution)
 # (setup_name, setup_class, horizon)
@@ -49,21 +55,27 @@ _VERIFIED_SETUPS = [
 # Countercyclical regime → 仓位放大系数 (按 setup 区分).
 # 第一性原理: 用 data/paper_trading_backtest (192 笔真实成交, 2026-01→07) 验证后:
 #   BTST:        crisis 76%/+16.93%  risk_off 78%/+8.87%  normal 66%/+6.29%  → crisis/risk_off 加仓
-#   OversoldBounce: crisis 48%/-1.15% (亏钱!)  normal 51%/+0.15%  → 不加仓 (整体 E[r]≈0)
+#   OversoldBounce: crisis 48%/-1.15%  normal 51%/+0.15%  → 不加仓
 # 注意: 第二轮曾基于不可复现的 Phase 0 报告对 OversoldBounce 统一加仓, 但真实回测
-# 显示 OversoldBounce 在 crisis 亏钱 → 放大仓位反而有害. 现按 setup 区分.
-# ⚠️ 样本期仅 6 个月 (OversoldBounce crisis n=21), 可能有样本期偏差; 补全历史数据
-# 重跑后应复核. 默认对 OversoldBounce 不加仓是保守选择.
+# 显示 OversoldBounce 整体 E[r]≈0 → 放大仓位无 alpha 可放大. 现按 setup 区分.
+#
+# ⚠️ OversoldBounce 不加仓的核心理由是统计证据不足, 不是 crisis 分层:
+#   1. 整体 E[r]=+0.34% 但 95% CI [-3.15%, +3.83] 跨 0 (p≈0.85) → 无法证明赚钱
+#   2. 尾部比 BTST 更毒: 亏损>10% 占比 20% vs BTST 11%; 亏损>15% 占比 12% vs 6%
+#   3. 机会成本: 仓位受限时有统计显著的替代品 (BTST E=+8.15%, p<<0.05)
+#   crisis n=21 的 -1.15% 分层样本太小, 不应作为独立决策依据 (risk_off n=3 反而
+#   +13.11%, 与 crisis 矛盾 → 分层在当前样本量下不可靠). 补全历史数据重跑后应复核.
 _REGIME_SIZE_FACTORS_BY_SETUP = {
     "btst_breakout": {"crisis": 1.2, "risk_off": 1.1, "normal": 1.0},
-    "oversold_bounce": {"crisis": 1.0, "risk_off": 1.0, "normal": 1.0},  # 实测无效, 不加仓
+    "oversold_bounce": {"crisis": 1.0, "risk_off": 1.0, "normal": 1.0},  # E[r] 统计不显著, 无 alpha 可放大
 }
 # regime 加仓的硬上限: 单票最多 _MAX_POSITION_PCT × 此倍数 (10% → 12%).
 # 即使 crisis 触发 1.2×, 防止仓位失控; 组合层 _MAX_PORTFOLO_PCT 仍兜底.
 _REGIME_POSITION_CAP_MULTIPLE = 1.2
 
 # 默认暂停的 setup (运行时不进 setup_configs, 不产生 BUY).
-# OversoldBounce: 2026 实测 E[r]≈0 (n=59), crisis 亏钱; 暂停避免占用仓位/资金流配额.
+# OversoldBounce: 2026 实测 E[r]=+0.34% (n=59) 统计上不异于 0 (95% CI 跨 0, p≈0.85),
+# 且尾部亏损比 BTST 更厚 (亏损>10% 占比 20% vs 11%); 暂停避免占用 BTST 的仓位配额.
 # 可通过 DAILY_ACTION_DISABLED_SETUPS=none 恢复 (补全历史数据重跑后再决定去留).
 _DEFAULT_DISABLED_SETUPS = {"oversold_bounce"}
 
@@ -132,13 +144,12 @@ def _setup_policy_lines(disabled_setups: set[str] | None = None) -> list[str]:
         part = f"{name}{_format_backtest_stats(stats)}"
         if name in disabled:
             if name == "oversold_bounce":
-                crisis = getattr(stats, "by_regime", {}).get("crisis") if stats is not None else None
-                crisis_note = (
-                    f"; crisis E={crisis.expected_return:+.2%}"
-                    if crisis is not None and getattr(crisis, "n", 0) > 0
-                    else ""
-                )
-                part = f"{part} — 默认暂停: 2026 实测 E≈0{crisis_note}"
+                # 暂停理由 = 统计不显著 + 尾部更厚 (不是 crisis 分层; n=21 太小不可靠).
+                # 只在能拿到 stats 时显示 E[r] 和 n, 让 operator 看到"证据不足"而非"亏钱".
+                n = getattr(stats, "n", 0) if stats is not None else 0
+                er = getattr(stats, "expected_return", None) if stats is not None else None
+                evidence_note = f" E={er:+.2%} (n={n}, CI 跨 0 不显著)" if er is not None and n > 0 else ""
+                part = f"{part} — 默认暂停: 实测{evidence_note}, 尾部亏损比 BTST 厚"
             paused_parts.append(part)
         else:
             active_parts.append(part)
@@ -213,17 +224,38 @@ def _compact_trade_date(value: object) -> str:
         return ""
 
 
+def _load_regime_history() -> dict[str, str]:
+    """读取 regime_history.json → {YYYYMMDD: regime_label} (缺失返回空 dict)."""
+    regime_path = Path("data/reports/regime_history.json")
+    if regime_path.exists():
+        try:
+            return {str(k): str(v) for k, v in json.loads(regime_path.read_text(encoding="utf-8")).items()}
+        except Exception:
+            logger.warning("daily_action: failed to parse %s, regime lookup disabled", regime_path, exc_info=True)
+    return {}
+
+
+def _regime_from_history(trade_date: str) -> str:
+    """从 regime_history.json 查 regime 标签; 缺失/无记录 → 'normal'."""
+    if not trade_date:
+        return "normal"
+    return _load_regime_history().get(trade_date, "normal")
+
+
 def _resolve_trade_date_and_regime() -> tuple[str, str]:
     """从 price_cache + regime_history 确定 trade_date 和 regime.
 
     不依赖 --auto 报告 (报告的候选池是 score_b 排序, 与凸性 setup 脱节).
     trade_date = price_cache 最新有数据的交易日; regime = regime_history.json 的标签.
+
+    17:00 guard: A 股资金流 ~17:00 才完成当日入库, 盘中 price_cache 可能已含当日
+    收盘价但资金流/其它信号未就绪. 若 price_cache 最新日 > 规则计算的信号日 (未过
+    17:00 取昨天), 回退到信号日, 避免用不完整的当日数据出信号. 这与 ``--auto`` 的
+    ``_resolve_default_end_date`` 用同一套 17:00 规则 (``resolve_signal_date``),
+    保证两个系统的信号日对齐, 不再触发 staleness 保护.
     """
     price_dir = Path("data/price_cache")
-    regime_path = Path("data/reports/regime_history.json")
-    regimes_by_date: dict[str, str] = {}
-    if regime_path.exists():
-        regimes_by_date = {str(k): str(v) for k, v in json.loads(regime_path.read_text(encoding="utf-8")).items()}
+    regimes_by_date = _load_regime_history()
 
     # 从任意一个 price_cache CSV 取最新日期
     latest_date = ""
@@ -237,7 +269,13 @@ def _resolve_trade_date_and_regime() -> tuple[str, str]:
         except Exception:
             continue
     if not latest_date:
-        latest_date = pd.Timestamp.now().strftime("%Y%m%d")
+        latest_date = datetime.now().strftime("%Y%m%d")
+
+    # 17:00 guard: price_cache 最新日若领先于规则信号日 (如盘前已注入当日), 回退到信号日
+    signal_date = resolve_signal_date()
+    if latest_date > signal_date:
+        latest_date = signal_date
+
     regime = regimes_by_date.get(latest_date, "normal")
     return latest_date, regime
 
@@ -381,9 +419,10 @@ def _missed_entry_window_reason(trade_date: str, *, now: datetime | None = None)
     if not window_has_passed:
         return ""
 
+    cutoff_label = f"{_ENTRY_WINDOW_CUTOFF.hour:02d}:{_ENTRY_WINDOW_CUTOFF.minute:02d}"
     return (
         f"信号日 {signal_date} 对应计划买入日 {next_trade_date} 开盘, "
-        f"当前时间 {now_cn.strftime('%Y%m%d %H:%M')} 已过 09:30 买入窗口已错过; "
+        f"当前时间 {now_cn.strftime('%Y%m%d %H:%M')} 已过 {cutoff_label} 买入窗口已错过; "
         "为避免盘中追单或事后补单, 本次不输出新 BUY. "
         f"请在 {next_trade_date} 收盘数据完成后刷新缓存, 再生成下一交易日计划"
     )
@@ -463,6 +502,7 @@ def generate_daily_action(
     use_data_fetcher: Any = None,
     price_loader: Any = None,
     scan_mode: str = "full_market",
+    end_date: str | None = None,
 ) -> list[DailyAction]:
     """生成今日机械动作。
 
@@ -482,6 +522,9 @@ def generate_daily_action(
             seam, 传给 close_matured 取 T+N 收益 (测试用, 对齐 recommendation_tracker)
         price_loader: ``(ticker, report_date) -> DataFrame`` 注入 seam, 传给
             close_matured 读 low 序列检测止损触发 (测试用)
+        end_date: 显式信号日覆盖 (YYYYMMDD 或 YYYY-MM-DD). 仅 full_market 模式生效;
+            非空时跳过 price_cache 探测, 直接用指定日期 + regime_history 标签.
+            传入已过买入窗口的旧日期会触发 _missed_entry_window_reason 保护 (设计如此).
     """
     if tracker is None:
         tracker = PaperTracker()
@@ -507,7 +550,12 @@ def generate_daily_action(
         regime = str(report.get("market_state", {}).get("regime_gate_level", "normal"))
     else:
         # full_market: 全市场扫描 (不依赖 --auto 报告的 score_b 候选池)
-        trade_date, regime = _resolve_trade_date_and_regime()
+        if end_date:
+            # 显式 --end-date 覆盖: 跳过 price_cache 探测 + 17:00 guard, 直接用指定日期
+            trade_date = _compact_trade_date(end_date)
+            regime = _regime_from_history(trade_date)
+        else:
+            trade_date, regime = _resolve_trade_date_and_regime()
         tracker.last_action_trade_date = trade_date
         latest_report_date = _latest_auto_report_date()
         if latest_report_date and trade_date and latest_report_date > trade_date:
@@ -746,6 +794,8 @@ def render_daily_action(
         lines.append(f"  {policy_line}")
 
     # 今日平仓摘要 (闭环核心: operator 看到 realized P&L 演进 + 止损触发披露)
+    from src.tools.tushare_api import get_stock_name
+
     if closed_positions:
         lines.append(f"\n  {Fore.WHITE}📤 今日到期平仓 ({len(closed_positions)} 只):{Style.RESET_ALL}")
         for c in closed_positions:
@@ -754,8 +804,11 @@ def render_daily_action(
             stop_flag = ""
             if c.get("stop_would_have_triggered"):
                 stop_flag = f"  {Fore.YELLOW}⚠ 期间触硬止损{Style.RESET_ALL}"
+            ticker = c.get("ticker", "")
+            name = get_stock_name(ticker) if ticker else ""
+            ticker_label = f"{ticker} {name}" if name and name != ticker else ticker
             lines.append(
-                f"  - {Fore.CYAN}{c.get('ticker', '')}{Style.RESET_ALL}  "
+                f"  - {Fore.CYAN}{ticker_label}{Style.RESET_ALL}  "
                 f"realized {pnl_color}{pnl:+.1%}{Style.RESET_ALL}  "
                 f"exit ~{c.get('exit_price', 0.0):.2f}{stop_flag}"
             )
@@ -776,8 +829,11 @@ def render_daily_action(
 
     lines.append(f"\n  {Fore.GREEN}计划 BUY ({len(actions)} 只, {buy_date_label} 开盘执行):{Style.RESET_ALL}\n")
     for i, a in enumerate(actions, 1):
+        # ticker + 中文名 (get_stock_name 解析失败时回退 ticker 本身, 不重复显示)
+        name = get_stock_name(a.ticker)
+        ticker_label = f"{a.ticker} {name}" if name and name != a.ticker else a.ticker
         lines.append(
-            f"  {Fore.WHITE}{i}. {Fore.CYAN}{a.ticker}{Style.RESET_ALL}  [{a.setup}]  "
+            f"  {Fore.WHITE}{i}. {Fore.CYAN}{ticker_label}{Style.RESET_ALL}  [{a.setup}]  "
             f"仓位 {a.kelly_pct:.1%}  参考价(信号日收盘) ~{a.entry_price:.2f}"
         )
         lines.append(
