@@ -215,6 +215,36 @@ def test_update_tracking_history_idempotent(tmp_path: Path):
     assert tickers == {"000001", "000002"}
 
 
+def test_update_tracking_history_backfills_zero_recommended_price(tmp_path: Path):
+    """C-TRACKING-PRICE-BACKFILL: 已存在记录 recommended_price=0 时, 若报告已有
+    有效价格, 重跑应补正 (而非幂等 skip 永久残留 0).
+
+    Bug (20260710 empirical dogfood): 首次写入时若 _inject_recommended_prices 价格
+    注入失败 (batch fetcher 当日行情未就绪), 记录以 price=0 落盘; 幂等 skip 令后续
+    重跑 (报告已有价) 不修正 → 524/8090 记录 price=0 永久残留, 含最新 20260709 报告
+    10 只 Top-N (中际旭创/澜起/中微等入场价显示 0). 修复: 旧 price=0 + 报告有有效价 → 补正.
+    """
+    # 首次: 报告无价格字段 (模拟 batch fetcher 未就绪, 价格注入失败)
+    _make_report(tmp_path, "20260607", [{"ticker": "000001", "name": "A", "score_b": 0.5}])
+    update_tracking_history(tmp_path, "20260607")
+    history = _load_history(tmp_path / HISTORY_FILENAME)
+    rec = next(r for r in history if r["ticker"] == "000001")
+    assert float(rec["recommended_price"]) == 0.0, "首次无价应落盘 0.0"
+
+    # 重跑: 报告现已有有效 recommended_price (模拟行情就绪后 _inject_recommended_prices)
+    _make_report(tmp_path, "20260607", [{"ticker": "000001", "name": "A", "score_b": 0.5, "recommended_price": 95.99}])
+    n = update_tracking_history(tmp_path, "20260607")
+    history = _load_history(tmp_path / HISTORY_FILENAME)
+    rec = next(r for r in history if r["ticker"] == "000001")
+    # 旧 bug: price 永远 0 (幂等 skip). 修复后: 补正为 95.99
+    assert float(rec["recommended_price"]) == 95.99, f"price=0 记录应被报告有效价补正, got {rec['recommended_price']}"
+    assert n == 1, f"补正应计 1 次更新, got {n}"
+
+    # 第三次重跑: price 已有效, 不再重复更新 (幂等)
+    n3 = update_tracking_history(tmp_path, "20260607")
+    assert n3 == 0, f"price 已有效应幂等跳过, got {n3}"
+
+
 def test_update_tracking_history_rerun_does_not_clobber_realized_return(tmp_path: Path):
     """BH-008: a re-run whose fetcher returns a shorter series must not clobber
     an already-realized return with None.

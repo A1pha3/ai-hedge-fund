@@ -519,7 +519,22 @@ def _update_tracking_history_locked(
             continue
         key = (ticker, trade_date)
         if key in history_index:
-            # 已存在 (例如用户重复运行) — 跳过
+            # C-TRACKING-PRICE-BACKFILL (20260710): 已存在记录若 recommended_price=0
+            # (首次写入时 _inject_recommended_prices 价格注入失败 — 如 batch fetcher
+            # 当日行情未就绪), 幂等 skip 会令 price=0 永久残留 → 下游诊断/校准/
+            # --explain 展示的入场价全为 0 (实测 524/8090 = 6% 记录 price=0, 含最新
+            # 20260709 报告 10 只 Top-N). 修正: 若旧记录 price=0 且当前报告已有有效
+            # 价格, 补正 recommended_price; 其余字段保留首次写入 (score_decomposition
+            # 等, 不重写). 正常情况 (price>0) 仍跳过, 保持幂等.
+            existing = history_index[key]
+            existing_price = _safe_float(existing.get("recommended_price"), default=0.0)
+            if existing_price > 0:
+                continue  # 已有有效价格, 跳过 (幂等)
+            new_price = _coerce_recommended_price(rec)
+            if new_price > 0:
+                existing["recommended_price"] = new_price
+                history_index[key] = existing
+                updated_count += 1
             continue
         price = _coerce_recommended_price(rec)
         score_b = _safe_float(rec.get("score_b"), default=0.0)
