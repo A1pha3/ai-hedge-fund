@@ -74,6 +74,22 @@ def test_load_fund_flow_metrics_maps_main_flow_ratio(tmp_path: Path) -> None:
     }
 
 
+def test_load_intraday_metrics_returns_empty_for_malformed_snapshot(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "feature_cache"
+    cache_dir.mkdir()
+    (cache_dir / "intraday_short_trade_metrics_20260708.csv").write_text(
+        'ticker,trade_date,flow_60\n000001,20260708,"unterminated\n',
+        encoding="utf-8",
+    )
+
+    result = OptionalFeatureStore(base_dir=cache_dir).load_intraday_metrics(
+        "20260708",
+        ["000001"],
+    )
+
+    assert result == {}
+
+
 def test_build_quality_summary_reports_coverage_and_manifest_failures(tmp_path: Path) -> None:
     cache_dir = tmp_path / "feature_cache"
     cache_dir.mkdir()

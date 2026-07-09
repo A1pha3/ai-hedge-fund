@@ -78,7 +78,10 @@ class OptionalFeatureStore:
         path = self.base_dir / f"{prefix}_{trade_date}.csv"
         if not path.exists():
             return {}
-        df = pd.read_csv(path, dtype={"ticker": str, "trade_date": str})
+        try:
+            df = pd.read_csv(path, dtype={"ticker": str, "trade_date": str})
+        except (OSError, UnicodeDecodeError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError):
+            return {}
         if df.empty or "ticker" not in df.columns:
             return {}
         df = df.copy()
