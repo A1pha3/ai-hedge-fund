@@ -1888,3 +1888,40 @@ def test_score_batch_uses_store_when_all_score_time_providers_are_forbidden(monk
     for ticker in ("000001", "000002"):
         assert results[ticker]["fundamental"].completeness > 0
         assert results[ticker]["event_sentiment"].completeness > 0
+
+
+# ---------------------------------------------------------------------------
+# AST guard: score_batch() must not contain direct provider calls.
+# ---------------------------------------------------------------------------
+
+
+def test_strategy_scorer_score_batch_has_no_direct_provider_calls() -> None:
+    import ast
+    from pathlib import Path
+
+    source = Path("src/screening/strategy_scorer.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    forbidden = {
+        "get_prices",
+        "get_financial_metrics",
+        "get_company_news",
+        "get_insider_trades",
+        "get_daily_basic_batch",
+        "get_all_stock_basic",
+        "get_sw_industry_classification",
+        "get_lhb_detail",
+        "get_lhb_institutional_stats",
+        "get_intraday_bars",
+        "get_intraday_ticks",
+        "get_money_flow",
+    }
+    score_batch_node = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "score_batch"
+    )
+    calls = {
+        node.func.id
+        for node in ast.walk(score_batch_node)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert calls.isdisjoint(forbidden)
