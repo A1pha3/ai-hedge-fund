@@ -16,8 +16,10 @@ import pandas as pd
 
 from src.screening.models import CandidateStock, StrategySignal
 from src.screening.optional_feature_store import OptionalFeatureStore
+from src.screening.scoring_feature_store import ScoringFeatureStore
 from src.screening.strategy_scorer_fundamental import (
     score_fundamental_strategy,
+    score_fundamental_strategy_from_metrics,
 )
 from src.screening.strategy_scorer_mean_reversion import (
     score_mean_reversion_strategy,
@@ -101,6 +103,7 @@ from src.screening.strategy_scorer_event_sentiment_helpers import (  # noqa: E40
     _empty_signal,
     _load_price_frame,
     score_event_sentiment_strategy,
+    score_event_sentiment_strategy_from_inputs,
 )
 
 
@@ -126,16 +129,8 @@ def _group_industry_pe_values(daily_df: pd.DataFrame, symbol_to_industry: dict[s
     return grouped
 
 
-def _build_industry_pe_medians(trade_date: str) -> dict[str, float]:
-    daily_df = get_daily_basic_batch(trade_date)
-    stock_basic = get_all_stock_basic()
-    sw_map = get_sw_industry_classification() or {}
-    if daily_df is None or daily_df.empty or stock_basic is None or stock_basic.empty:
-        return {}
-
-    symbol_to_industry = _build_symbol_to_industry_map(stock_basic, sw_map)
-    grouped = _group_industry_pe_values(daily_df, symbol_to_industry)
-    return {industry: median(values) for industry, values in grouped.items() if values}
+def _build_industry_pe_medians(trade_date: str, feature_store: ScoringFeatureStore) -> dict[str, float]:
+    return feature_store.load_industry_pe_medians(trade_date)
 
 
 def score_candidate(
@@ -143,19 +138,27 @@ def score_candidate(
     trade_date: str,
     industry_pe_medians: dict[str, float] | None = None,
     prices_df: pd.DataFrame | None = None,
+    feature_store: ScoringFeatureStore | None = None,
 ) -> dict[str, StrategySignal]:
-    prices_df = prices_df if prices_df is not None else _load_price_frame(candidate.ticker, trade_date)
-    industry_pe_medians = industry_pe_medians if industry_pe_medians is not None else {}
+    store = feature_store or ScoringFeatureStore()
+    prices_df = prices_df if prices_df is not None else store.load_price_frame(candidate.ticker, trade_date)
+    industry_pe_medians = industry_pe_medians if industry_pe_medians is not None else store.load_industry_pe_medians(trade_date)
+    metrics_list = store.load_financial_metrics(candidate.ticker, trade_date)
+    news_items, trades = store.load_event_inputs(candidate.ticker, trade_date)
     return {
         "trend": score_trend_strategy(prices_df, ticker=candidate.ticker),
         "mean_reversion": score_mean_reversion_strategy(prices_df),
-        "fundamental": score_fundamental_strategy(candidate.ticker, trade_date, candidate.industry_sw, industry_pe_medians),
-        "event_sentiment": score_event_sentiment_strategy(candidate.ticker, trade_date),
+        "fundamental": score_fundamental_strategy_from_metrics(metrics_list, candidate.industry_sw, industry_pe_medians),
+        "event_sentiment": score_event_sentiment_strategy_from_inputs(news_items, trades, trade_date),
     }
 
 
-def _compute_light_signals(candidate: CandidateStock, trade_date: str) -> tuple[dict[str, StrategySignal], pd.DataFrame]:
-    prices_df = _load_price_frame(candidate.ticker, trade_date)
+def _compute_light_signals(
+    candidate: CandidateStock,
+    trade_date: str,
+    feature_store: ScoringFeatureStore,
+) -> tuple[dict[str, StrategySignal], pd.DataFrame]:
+    prices_df = feature_store.load_price_frame(candidate.ticker, trade_date)
     return _build_light_signal_map(prices_df, ticker=candidate.ticker), prices_df
 
 
@@ -216,6 +219,7 @@ def _build_provisional_ranking(
     candidates: list[CandidateStock],
     trade_date: str,
     results: dict[str, dict[str, StrategySignal]],
+    feature_store: ScoringFeatureStore,
 ) -> list[tuple[float, CandidateStock]]:
     provisional_ranking: list[tuple[float, CandidateStock]] = []
     technical_candidates = _rank_candidates_for_technical_stage(candidates)[:TECHNICAL_SCORE_MAX_CANDIDATES]
@@ -225,14 +229,17 @@ def _build_provisional_ranking(
     max_workers = min(SCORE_BATCH_CONCURRENCY, len(technical_candidates)) if technical_candidates else 1
     if max_workers <= 1:
         for candidate in technical_candidates:
-            light_signals, price_frame = _compute_light_signals(candidate, trade_date)
+            light_signals, price_frame = _compute_light_signals(candidate, trade_date, feature_store)
             results[candidate.ticker] = light_signals
             if price_frame is not None:
                 price_frames_by_ticker[candidate.ticker] = price_frame
             provisional_ranking.append((_provisional_score(light_signals), candidate))
     else:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_candidate = {executor.submit(_compute_light_signals, candidate, trade_date): candidate for candidate in technical_candidates}
+            future_to_candidate = {
+                executor.submit(_compute_light_signals, candidate, trade_date, feature_store): candidate
+                for candidate in technical_candidates
+            }
             for future in concurrent.futures.as_completed(future_to_candidate):
                 candidate = future_to_candidate[future]
                 try:
@@ -373,36 +380,36 @@ def _populate_heavy_signals(
     fundamental_candidates: list[CandidateStock],
     trade_date: str,
     industry_pe_medians: dict[str, float],
-    feature_store: OptionalFeatureStore,
+    feature_store: ScoringFeatureStore,
 ) -> None:
     # Parallel IO: fundamental + event_sentiment scoring per candidate
     max_workers = min(SCORE_BATCH_CONCURRENCY, len(fundamental_candidates)) if fundamental_candidates else 1
     if max_workers <= 1:
         for candidate in fundamental_candidates:
-            results[candidate.ticker]["fundamental"] = score_fundamental_strategy(
-                candidate.ticker,
-                trade_date,
-                candidate.industry_sw,
-                industry_pe_medians,
+            results[candidate.ticker]["fundamental"] = _score_fundamental_from_store(
+                candidate, trade_date, industry_pe_medians, feature_store
             )
         for candidate in _select_event_sentiment_candidates(fundamental_candidates):
-            results[candidate.ticker]["event_sentiment"] = score_event_sentiment_strategy(candidate.ticker, trade_date)
+            results[candidate.ticker]["event_sentiment"] = _score_event_from_store(candidate, trade_date, feature_store)
     else:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all fundamental scoring tasks
             fundamental_futures = {
                 executor.submit(
-                    score_fundamental_strategy,
-                    candidate.ticker,
+                    _score_fundamental_from_store,
+                    candidate,
                     trade_date,
-                    candidate.industry_sw,
                     industry_pe_medians,
+                    feature_store,
                 ): candidate
                 for candidate in fundamental_candidates
             }
             # Submit event_sentiment scoring tasks for eligible candidates
             event_candidates = _select_event_sentiment_candidates(fundamental_candidates)
-            event_futures = {executor.submit(score_event_sentiment_strategy, candidate.ticker, trade_date): candidate for candidate in event_candidates}
+            event_futures = {
+                executor.submit(_score_event_from_store, candidate, trade_date, feature_store): candidate
+                for candidate in event_candidates
+            }
             # Collect fundamental results
             for future in concurrent.futures.as_completed(fundamental_futures):
                 candidate = fundamental_futures[future]
@@ -419,14 +426,36 @@ def _populate_heavy_signals(
                     logger.warning("Event-sentiment scoring failed for %s", candidate.ticker, exc_info=True)
 
     _populate_intraday_short_trade_metrics(results, fundamental_candidates, trade_date, feature_store)
-    _populate_dragon_tiger_bonus_metrics(results, fundamental_candidates, trade_date)
+    _populate_dragon_tiger_bonus_metrics(results, fundamental_candidates, trade_date, feature_store)
+
+
+def _score_fundamental_from_store(
+    candidate: CandidateStock,
+    trade_date: str,
+    industry_pe_medians: dict[str, float],
+    feature_store: ScoringFeatureStore,
+) -> StrategySignal:
+    return score_fundamental_strategy_from_metrics(
+        feature_store.load_financial_metrics(candidate.ticker, trade_date),
+        candidate.industry_sw,
+        industry_pe_medians,
+    )
+
+
+def _score_event_from_store(
+    candidate: CandidateStock,
+    trade_date: str,
+    feature_store: ScoringFeatureStore,
+) -> StrategySignal:
+    news_items, trades = feature_store.load_event_inputs(candidate.ticker, trade_date)
+    return score_event_sentiment_strategy_from_inputs(news_items, trades, trade_date)
 
 
 def _populate_intraday_short_trade_metrics(
     results: dict[str, dict[str, StrategySignal]],
     candidates: list[CandidateStock],
     trade_date: str,
-    feature_store: OptionalFeatureStore,
+    feature_store: ScoringFeatureStore,
 ) -> None:
     # Gather eligible candidates and their trend signals first (sequential, CPU-only)
     eligible: list[tuple[CandidateStock, StrategySignal]] = []
@@ -482,11 +511,12 @@ def _populate_dragon_tiger_bonus_metrics(
     results: dict[str, dict[str, StrategySignal]],
     candidates: list[CandidateStock],
     trade_date: str,
+    feature_store: ScoringFeatureStore,
 ) -> None:
     candidates_with_momentum = [candidate for candidate in candidates if _trend_signal_has_momentum_payload(results.get(candidate.ticker, {}).get("trend"))]
     if not candidates_with_momentum:
         return
-    bonus_map = _build_dragon_tiger_bonus_map([candidate.ticker for candidate in candidates_with_momentum], trade_date)
+    bonus_map = feature_store.load_dragon_tiger_bonus_map([candidate.ticker for candidate in candidates_with_momentum], trade_date)
     if not bonus_map:
         return
     for candidate in candidates_with_momentum:
@@ -524,7 +554,7 @@ def _build_dragon_tiger_bonus_map(tickers: list[str], trade_date: str) -> dict[s
 def _build_intraday_short_trade_metrics(
     ticker: str,
     trade_date: str,
-    feature_store: OptionalFeatureStore | None = None,
+    feature_store: ScoringFeatureStore | OptionalFeatureStore | None = None,
 ) -> dict[str, Any]:
     store = feature_store or OptionalFeatureStore()
     metrics = store.load_intraday_metrics(trade_date, [ticker]).get(str(ticker).zfill(6), {})
@@ -665,7 +695,7 @@ def _extract_intraday_tick_net_flows(
 def _load_daily_flow_proxy_ratio(
     ticker: str,
     trade_date: str | None = None,
-    feature_store: OptionalFeatureStore | None = None,
+    feature_store: ScoringFeatureStore | OptionalFeatureStore | None = None,
 ) -> float | None:
     if trade_date is None:
         return None
@@ -713,14 +743,14 @@ def _select_event_sentiment_candidates(fundamental_candidates: list[CandidateSto
 def score_batch(
     candidates: list[CandidateStock],
     trade_date: str,
-    feature_store: OptionalFeatureStore | None = None,
+    feature_store: ScoringFeatureStore | None = None,
 ) -> dict[str, dict[str, StrategySignal]]:
     started_at = perf_counter()
-    optional_feature_store = feature_store or OptionalFeatureStore()
-    industry_pe_medians = _build_industry_pe_medians(trade_date)
+    scoring_feature_store = feature_store or ScoringFeatureStore()
+    industry_pe_medians = _build_industry_pe_medians(trade_date, scoring_feature_store)
     results = _initialize_score_batch_results(candidates)
-    fundamental_candidates = _prepare_heavy_score_candidates(candidates, trade_date, results)
-    _populate_heavy_signals(results, fundamental_candidates, trade_date, industry_pe_medians, optional_feature_store)
+    fundamental_candidates = _prepare_heavy_score_candidates(candidates, trade_date, results, scoring_feature_store)
+    _populate_heavy_signals(results, fundamental_candidates, trade_date, industry_pe_medians, scoring_feature_store)
     elapsed = perf_counter() - started_at
     logger.info(
         "score_batch completed: %d candidates, %d heavy-scored, concurrency=%d, %.2fs",
@@ -736,7 +766,8 @@ def _prepare_heavy_score_candidates(
     candidates: list[CandidateStock],
     trade_date: str,
     results: dict[str, dict[str, StrategySignal]],
+    feature_store: ScoringFeatureStore,
 ) -> list[CandidateStock]:
-    provisional_ranking = _build_provisional_ranking(candidates, trade_date, results)
+    provisional_ranking = _build_provisional_ranking(candidates, trade_date, results, feature_store)
     ranked_candidates = _rank_candidates_for_heavy_scoring(provisional_ranking)
     return _select_fundamental_candidates(ranked_candidates, results)

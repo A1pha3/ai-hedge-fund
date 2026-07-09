@@ -86,6 +86,9 @@ class _IntradaySnapshotStore:
     def load_fund_flow_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, object]]:
         return {}
 
+    def load_dragon_tiger_bonus_map(self, tickers: list[str], trade_date: str) -> dict[str, float]:
+        return {ticker: 1.0 for ticker in tickers}
+
 
 class _DailyFlowOnlyFeatureStore:
     def __init__(self, ratio: object | None = None) -> None:
@@ -131,22 +134,22 @@ def test_score_batch_delays_heavy_signals_to_ranked_subset():
     fundamental_calls: list[str] = []
     event_calls: list[str] = []
 
-    def fake_light(candidate, trade_date):
+    def fake_light(candidate, trade_date, feature_store):
         return light_signals[candidate.ticker], None
 
-    def fake_fundamental(ticker, trade_date, industry_name, industry_pe_medians):
-        fundamental_calls.append(ticker)
+    def fake_fundamental(candidate, trade_date, industry_pe_medians, feature_store):
+        fundamental_calls.append(candidate.ticker)
         return _signal(1, 70)
 
-    def fake_event(ticker, trade_date):
-        event_calls.append(ticker)
+    def fake_event(candidate, trade_date, feature_store):
+        event_calls.append(candidate.ticker)
         return _signal(1, 65)
 
     with (
         patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}),
         patch("src.screening.strategy_scorer._compute_light_signals", side_effect=fake_light),
-        patch("src.screening.strategy_scorer.score_fundamental_strategy", side_effect=fake_fundamental),
-        patch("src.screening.strategy_scorer.score_event_sentiment_strategy", side_effect=fake_event),
+        patch("src.screening.strategy_scorer._score_fundamental_from_store", side_effect=fake_fundamental),
+        patch("src.screening.strategy_scorer._score_event_from_store", side_effect=fake_event),
         patch("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 2),
         patch("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 1),
         patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.05),
@@ -180,8 +183,8 @@ def test_score_batch_keeps_all_strategy_keys_when_heavy_signals_skipped():
                 None,
             ),
         ),
-        patch("src.screening.strategy_scorer.score_fundamental_strategy") as mock_fundamental,
-        patch("src.screening.strategy_scorer.score_event_sentiment_strategy") as mock_event,
+        patch("src.screening.strategy_scorer._score_fundamental_from_store") as mock_fundamental,
+        patch("src.screening.strategy_scorer._score_event_from_store") as mock_event,
         patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.2),
     ):
         results = score_batch(candidates, "20260305")
@@ -224,12 +227,12 @@ def test_score_batch_enriches_intraday_short_trade_metrics_for_heavy_candidates(
                 None,
             ),
         ),
-        patch("src.screening.strategy_scorer.score_fundamental_strategy", return_value=_signal(1, 65)),
-        patch("src.screening.strategy_scorer.score_event_sentiment_strategy", return_value=_signal(1, 60)),
+        patch("src.screening.strategy_scorer._score_fundamental_from_store", return_value=_signal(1, 65)),
+        patch("src.screening.strategy_scorer._score_event_from_store", return_value=_signal(1, 60)),
         patch("src.screening.strategy_scorer.get_intraday_bars", side_effect=AssertionError("network call forbidden")),
         patch("src.screening.strategy_scorer.get_intraday_ticks", side_effect=AssertionError("network call forbidden")),
-        patch("src.screening.strategy_scorer.get_lhb_detail", return_value=pd.DataFrame([{"代码": "000001"}])),
-        patch("src.screening.strategy_scorer.get_lhb_institutional_stats", return_value=pd.DataFrame([{"代码": "000001", "机构买入净额": 1.0}])),
+        patch("src.screening.strategy_scorer.get_lhb_detail", side_effect=AssertionError("network call forbidden")),
+        patch("src.screening.strategy_scorer.get_lhb_institutional_stats", side_effect=AssertionError("network call forbidden")),
         patch("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 1),
         patch("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 1),
         patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.01),
@@ -261,11 +264,11 @@ def test_score_batch_does_not_call_live_intraday_or_money_flow(monkeypatch):
     )
     neutral_signal = StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={})
 
-    monkeypatch.setattr(strategy_scorer_module, "_build_industry_pe_medians", lambda trade_date: {})
+    monkeypatch.setattr(strategy_scorer_module, "_build_industry_pe_medians", lambda trade_date, feature_store: {})
     monkeypatch.setattr(strategy_scorer_module, "_initialize_score_batch_results", lambda candidates: {candidate.ticker: {"trend": trend_signal}})
-    monkeypatch.setattr(strategy_scorer_module, "_prepare_heavy_score_candidates", lambda candidates, trade_date, results: candidates)
-    monkeypatch.setattr(strategy_scorer_module, "score_fundamental_strategy", lambda *_args, **_kwargs: neutral_signal)
-    monkeypatch.setattr(strategy_scorer_module, "score_event_sentiment_strategy", lambda *_args, **_kwargs: neutral_signal)
+    monkeypatch.setattr(strategy_scorer_module, "_prepare_heavy_score_candidates", lambda candidates, trade_date, results, feature_store: candidates)
+    monkeypatch.setattr(strategy_scorer_module, "_score_fundamental_from_store", lambda *_args, **_kwargs: neutral_signal)
+    monkeypatch.setattr(strategy_scorer_module, "_score_event_from_store", lambda *_args, **_kwargs: neutral_signal)
     monkeypatch.setattr(strategy_scorer_module, "_populate_dragon_tiger_bonus_metrics", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         strategy_scorer_module,
@@ -367,7 +370,7 @@ def test_score_batch_enriches_sector_diffusion_metrics_for_industry_peers() -> N
         "000003": pd.DataFrame({"close": [10.0, 9.9]}),
     }
 
-    def fake_light(candidate, trade_date):
+    def fake_light(candidate, trade_date, feature_store):
         return (
             {
                 "trend": _trend_with_momentum(),
@@ -381,8 +384,8 @@ def test_score_batch_enriches_sector_diffusion_metrics_for_industry_peers() -> N
     with (
         patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}),
         patch("src.screening.strategy_scorer._compute_light_signals", side_effect=fake_light),
-        patch("src.screening.strategy_scorer.score_fundamental_strategy", return_value=_signal(1, 65)),
-        patch("src.screening.strategy_scorer.score_event_sentiment_strategy", return_value=_signal(1, 60)),
+        patch("src.screening.strategy_scorer._score_fundamental_from_store", return_value=_signal(1, 65)),
+        patch("src.screening.strategy_scorer._score_event_from_store", return_value=_signal(1, 60)),
         patch("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 3),
         patch("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 3),
         patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.01),
@@ -426,7 +429,7 @@ def test_score_batch_enriches_sector_amount_share_metrics_for_industry_peers() -
         "000003": pd.DataFrame({"close": [10.0, 9.9], "amount": [300.0, 200.0]}),
     }
 
-    def fake_light(candidate, trade_date):
+    def fake_light(candidate, trade_date, feature_store):
         return (
             {
                 "trend": _trend_with_momentum(),
@@ -440,8 +443,8 @@ def test_score_batch_enriches_sector_amount_share_metrics_for_industry_peers() -
     with (
         patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}),
         patch("src.screening.strategy_scorer._compute_light_signals", side_effect=fake_light),
-        patch("src.screening.strategy_scorer.score_fundamental_strategy", return_value=_signal(1, 65)),
-        patch("src.screening.strategy_scorer.score_event_sentiment_strategy", return_value=_signal(1, 60)),
+        patch("src.screening.strategy_scorer._score_fundamental_from_store", return_value=_signal(1, 65)),
+        patch("src.screening.strategy_scorer._score_event_from_store", return_value=_signal(1, 60)),
         patch("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 3),
         patch("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 3),
         patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.01),
@@ -574,8 +577,8 @@ def test_score_batch_requires_positive_trend_confirmation_for_heavy_scoring():
                 None,
             ),
         ),
-        patch("src.screening.strategy_scorer.score_fundamental_strategy") as mock_fundamental,
-        patch("src.screening.strategy_scorer.score_event_sentiment_strategy") as mock_event,
+        patch("src.screening.strategy_scorer._score_fundamental_from_store") as mock_fundamental,
+        patch("src.screening.strategy_scorer._score_event_from_store") as mock_event,
         patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.05),
     ):
         results = score_batch(candidates, "20260305")
@@ -603,8 +606,8 @@ def test_score_batch_allows_heavy_scoring_with_sufficient_trend_confirmation():
                 None,
             ),
         ),
-        patch("src.screening.strategy_scorer.score_fundamental_strategy", return_value=_signal(1, 70)),
-        patch("src.screening.strategy_scorer.score_event_sentiment_strategy", return_value=_signal(1, 65)),
+        patch("src.screening.strategy_scorer._score_fundamental_from_store", return_value=_signal(1, 70)),
+        patch("src.screening.strategy_scorer._score_event_from_store", return_value=_signal(1, 65)),
         patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.05),
     ):
         results = score_batch(candidates, "20260305")
@@ -621,7 +624,7 @@ def test_score_batch_limits_technical_scoring_to_ranked_subset():
     ]
     technical_calls: list[str] = []
 
-    def fake_light(candidate, trade_date):
+    def fake_light(candidate, trade_date, feature_store):
         technical_calls.append(candidate.ticker)
         return {
             "trend": _signal(1, 70),
@@ -651,7 +654,7 @@ def test_score_batch_technical_stage_prefers_smaller_market_cap_within_same_liqu
     ]
     technical_calls: list[str] = []
 
-    def fake_light(candidate, trade_date):
+    def fake_light(candidate, trade_date, feature_store):
         technical_calls.append(candidate.ticker)
         return {
             "trend": _signal(1, 70),
@@ -1470,7 +1473,7 @@ def test_score_batch_parallel_produces_same_results_as_serial():
     ]
     trade_date = "20260305"
 
-    def fake_light(candidate, trade_date):
+    def fake_light(candidate, trade_date, feature_store):
         return {
             "trend": _signal(1, 70),
             "mean_reversion": _signal(0, 0, completeness=0.0),
@@ -1482,8 +1485,8 @@ def test_score_batch_parallel_produces_same_results_as_serial():
         with (
             patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}),
             patch("src.screening.strategy_scorer._compute_light_signals", side_effect=fake_light),
-            patch("src.screening.strategy_scorer.score_fundamental_strategy", return_value=_signal(1, 65)),
-            patch("src.screening.strategy_scorer.score_event_sentiment_strategy", return_value=_signal(1, 60)),
+            patch("src.screening.strategy_scorer._score_fundamental_from_store", return_value=_signal(1, 65)),
+            patch("src.screening.strategy_scorer._score_event_from_store", return_value=_signal(1, 60)),
             patch("src.screening.strategy_scorer.TECHNICAL_SCORE_MAX_CANDIDATES", 3),
             patch("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 3),
             patch("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 3),
@@ -1595,7 +1598,7 @@ def test_parallel_handles_individual_candidate_failure_gracefully():
         _candidate("000002", avg_volume_20d=20000.0, market_cap=200.0),
     ]
 
-    def fake_light(candidate, trade_date):
+    def fake_light(candidate, trade_date, feature_store):
         if candidate.ticker == "000001":
             raise RuntimeError("Simulated IO failure")
         return {
@@ -1782,3 +1785,106 @@ def test_score_event_sentiment_strategy_from_inputs_uses_supplied_news() -> None
     assert signal.completeness > 0
     assert "news_sentiment" in signal.sub_factors
     assert "event_freshness" in signal.sub_factors
+
+
+# ---------------------------------------------------------------------------
+# Provider-forbidden guard: score_batch runs with every public provider patched
+# to raise — proving Step 2 scoring is local-only.
+# ---------------------------------------------------------------------------
+
+
+class _LocalOnlyScoringStore:
+    def __init__(self) -> None:
+        self.price_requests: list[str] = []
+        self.fundamental_requests: list[str] = []
+        self.event_requests: list[str] = []
+        self.industry_pe_requests: int = 0
+        self.dragon_tiger_requests: int = 0
+
+    def load_price_frame(self, ticker: str, trade_date: str, lookback_days: int = 400) -> pd.DataFrame:
+        self.price_requests.append(ticker)
+        dates = pd.date_range("2026-01-01", periods=220, freq="D")
+        return pd.DataFrame(
+            {
+                "open": [10.0 + i * 0.01 for i in range(220)],
+                "high": [10.2 + i * 0.01 for i in range(220)],
+                "low": [9.8 + i * 0.01 for i in range(220)],
+                "close": [10.1 + i * 0.01 for i in range(220)],
+                "volume": [1000 + i for i in range(220)],
+            },
+            index=dates,
+        )
+
+    def load_financial_metrics(self, ticker: str, trade_date: str) -> list[FinancialMetrics]:
+        self.fundamental_requests.append(ticker)
+        return [_financial_metric(ticker, f"20260{i}01", revenue_growth=0.1 + i * 0.01) for i in range(1, 5)]
+
+    def load_event_inputs(self, ticker: str, trade_date: str):
+        self.event_requests.append(ticker)
+        return (
+            [
+                CompanyNews(
+                    ticker=ticker,
+                    title="公司回购股份并上调业绩预告",
+                    author="source",
+                    source="source",
+                    date="2026-07-08 10:00:00",
+                    url="https://example.test/news",
+                    sentiment="positive",
+                    content="公司回购股份并上调业绩预告",
+                )
+            ],
+            [],
+        )
+
+    def load_industry_pe_medians(self, trade_date: str) -> dict[str, float]:
+        self.industry_pe_requests += 1
+        return {"银行": 12.0}
+
+    def load_dragon_tiger_bonus_map(self, tickers: list[str], trade_date: str) -> dict[str, float]:
+        self.dragon_tiger_requests += 1
+        return {ticker: 1.0 for ticker in tickers}
+
+    def load_intraday_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict]:
+        return {ticker: {"flow_60": 0.1, "flow_60_source": "snapshot"} for ticker in tickers}
+
+    def load_fund_flow_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict]:
+        return {ticker: {"main_flow_ratio": 0.2, "main_flow_ratio_source": "snapshot"} for ticker in tickers}
+
+
+def test_score_batch_uses_store_when_all_score_time_providers_are_forbidden(monkeypatch) -> None:
+    monkeypatch.setattr("src.screening.strategy_scorer.SCORE_BATCH_CONCURRENCY", 1)
+    monkeypatch.setattr("src.screening.strategy_scorer.TECHNICAL_SCORE_MAX_CANDIDATES", 2)
+    monkeypatch.setattr("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 2)
+    monkeypatch.setattr("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 2)
+    monkeypatch.setattr("src.screening.strategy_scorer.INTRADAY_SCORE_MAX_CANDIDATES", 2)
+    candidates = [
+        CandidateStock(ticker="000001", name="A", industry_sw="银行", market_cap=100.0, avg_volume_20d=10000.0),
+        CandidateStock(ticker="000002", name="B", industry_sw="银行", market_cap=90.0, avg_volume_20d=9000.0),
+    ]
+    store = _LocalOnlyScoringStore()
+
+    with (
+        patch("src.screening.strategy_scorer_event_sentiment_helpers.get_prices", side_effect=AssertionError("price provider forbidden")),
+        patch("src.screening.strategy_scorer_fundamental.get_financial_metrics", side_effect=AssertionError("financial provider forbidden")),
+        patch("src.screening.strategy_scorer_event_sentiment_helpers.get_company_news", side_effect=AssertionError("news provider forbidden")),
+        patch("src.screening.strategy_scorer_event_sentiment_helpers.get_insider_trades", side_effect=AssertionError("insider provider forbidden")),
+        patch("src.screening.strategy_scorer.get_daily_basic_batch", side_effect=AssertionError("daily basic provider forbidden")),
+        patch("src.screening.strategy_scorer.get_all_stock_basic", side_effect=AssertionError("stock basic provider forbidden")),
+        patch("src.screening.strategy_scorer.get_sw_industry_classification", side_effect=AssertionError("industry provider forbidden")),
+        patch("src.screening.strategy_scorer.get_lhb_detail", side_effect=AssertionError("lhb detail provider forbidden")),
+        patch("src.screening.strategy_scorer.get_lhb_institutional_stats", side_effect=AssertionError("lhb institutional provider forbidden")),
+        patch("src.screening.strategy_scorer.get_intraday_bars", side_effect=AssertionError("intraday bars provider forbidden")),
+        patch("src.screening.strategy_scorer.get_intraday_ticks", side_effect=AssertionError("intraday ticks provider forbidden")),
+        patch("src.screening.strategy_scorer.get_money_flow", side_effect=AssertionError("money flow provider forbidden")),
+    ):
+        results = score_batch(candidates, "20260708", feature_store=store)
+
+    assert set(results) == {"000001", "000002"}
+    assert store.price_requests
+    assert store.fundamental_requests
+    assert store.industry_pe_requests >= 1
+    # Fundamental + event + dragon tiger must come from the store, not providers.
+    for ticker in ("000001", "000002"):
+        assert results[ticker]["fundamental"].completeness > 0
+        assert results[ticker]["event_sentiment"].completeness > 0
