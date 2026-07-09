@@ -1942,7 +1942,15 @@ def test_score_batch_fallback_path_is_provider_free_when_store_returns_empty(mon
         patch("src.screening.strategy_scorer._compute_light_signals", return_value=({"trend": momentum_signal, "mean_reversion": _signal(0, 0, completeness=0.0), "fundamental": _signal(0, 0, completeness=0.0), "event_sentiment": _signal(0, 0, completeness=0.0)}, None)),
         patch("src.screening.strategy_scorer._score_fundamental_from_store", return_value=_signal(1, 70)),
         patch("src.screening.strategy_scorer._score_event_from_store", return_value=_signal(1, 65)),
+        # All 12 score-time provider functions must raise, mirroring the main
+        # forbidden test so this fallback-coverage variant stays a complete guard.
+        patch("src.screening.strategy_scorer_event_sentiment_helpers.get_prices", side_effect=AssertionError("price provider forbidden")),
+        patch("src.screening.strategy_scorer_fundamental.get_financial_metrics", side_effect=AssertionError("financial provider forbidden")),
+        patch("src.screening.strategy_scorer_event_sentiment_helpers.get_company_news", side_effect=AssertionError("news provider forbidden")),
+        patch("src.screening.strategy_scorer_event_sentiment_helpers.get_insider_trades", side_effect=AssertionError("insider provider forbidden")),
         patch("src.tools.tushare_api.get_daily_basic_batch", side_effect=AssertionError("daily basic provider forbidden")),
+        patch("src.tools.tushare_api.get_all_stock_basic", side_effect=AssertionError("stock basic provider forbidden")),
+        patch("src.tools.tushare_api.get_sw_industry_classification", side_effect=AssertionError("industry provider forbidden")),
         patch("src.tools.akshare_api.get_lhb_detail", side_effect=AssertionError("lhb detail provider forbidden")),
         patch("src.tools.akshare_api.get_lhb_institutional_stats", side_effect=AssertionError("lhb institutional provider forbidden")),
         patch("src.screening.strategy_scorer.get_intraday_bars", side_effect=AssertionError("intraday bars provider forbidden")),
