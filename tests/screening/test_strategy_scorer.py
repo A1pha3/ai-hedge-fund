@@ -49,6 +49,61 @@ def _candidate(ticker: str, avg_volume_20d: float = 10000.0, market_cap: float =
     )
 
 
+class _FakeOptionalFeatureStore:
+    def __init__(self) -> None:
+        self.intraday_calls: list[tuple[str, list[str]]] = []
+        self.fund_flow_calls: list[tuple[str, list[str]]] = []
+
+    def load_intraday_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, object]]:
+        self.intraday_calls.append((trade_date, tickers))
+        return {
+            "000001": {
+                "flow_60": 0.21,
+                "flow_60_source": "snapshot",
+                "close_support_30": 0.11,
+                "close_support_30_source": "snapshot",
+            }
+        }
+
+    def load_fund_flow_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, object]]:
+        self.fund_flow_calls.append((trade_date, tickers))
+        return {"000001": {"main_flow_ratio": 0.13, "main_flow_ratio_source": "snapshot"}}
+
+
+class _IntradaySnapshotStore:
+    def load_intraday_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, object]]:
+        return {
+            "000001": {
+                "flow_60": 0.05,
+                "flow_60_source": "snapshot",
+                "persist_120": 0.025,
+                "persist_120_source": "snapshot",
+                "close_support_30": round(2500.0 / 30000.0, 4),
+                "close_support_30_source": "snapshot",
+            }
+        }
+
+    def load_fund_flow_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, object]]:
+        return {}
+
+
+class _DailyFlowOnlyFeatureStore:
+    def __init__(self, ratio: object | None = None) -> None:
+        self.ratio = ratio
+        self.intraday_calls: list[tuple[str, list[str]]] = []
+        self.fund_flow_calls: list[tuple[str, list[str]]] = []
+
+    def load_intraday_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, object]]:
+        self.intraday_calls.append((trade_date, tickers))
+        return {}
+
+    def load_fund_flow_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, object]]:
+        self.fund_flow_calls.append((trade_date, tickers))
+        if self.ratio is None:
+            return {}
+        return {"000001": {"main_flow_ratio": self.ratio, "main_flow_ratio_source": "snapshot"}}
+
+
 def test_score_batch_delays_heavy_signals_to_ranked_subset():
     candidates = [_candidate("000001"), _candidate("000002"), _candidate("000003")]
 
@@ -155,22 +210,6 @@ def test_score_batch_enriches_intraday_short_trade_metrics_for_heavy_candidates(
         },
     )
 
-    intraday_bars = pd.DataFrame(
-        {
-            "时间": pd.date_range("2026-03-05 13:01:00", periods=120, freq="min"),
-            "成交额": [1000.0] * 120,
-        }
-    )
-    intraday_ticks = pd.DataFrame(
-        [
-            {"ticktime": "14:10:00", "price": 10.0, "volume": 100.0, "kind": "U"},
-            {"ticktime": "14:20:00", "price": 10.0, "volume": 50.0, "kind": "D"},
-            {"ticktime": "14:40:00", "price": 10.0, "volume": 200.0, "kind": "U"},
-            {"ticktime": "14:50:00", "price": 10.0, "volume": 100.0, "kind": "D"},
-            {"ticktime": "14:58:00", "price": 10.0, "volume": 150.0, "kind": "U"},
-        ]
-    )
-
     with (
         patch("src.screening.strategy_scorer._build_industry_pe_medians", return_value={}),
         patch(
@@ -187,15 +226,15 @@ def test_score_batch_enriches_intraday_short_trade_metrics_for_heavy_candidates(
         ),
         patch("src.screening.strategy_scorer.score_fundamental_strategy", return_value=_signal(1, 65)),
         patch("src.screening.strategy_scorer.score_event_sentiment_strategy", return_value=_signal(1, 60)),
-        patch("src.screening.strategy_scorer.get_intraday_bars", return_value=intraday_bars),
-        patch("src.screening.strategy_scorer.get_intraday_ticks", return_value=intraday_ticks),
+        patch("src.screening.strategy_scorer.get_intraday_bars", side_effect=AssertionError("network call forbidden")),
+        patch("src.screening.strategy_scorer.get_intraday_ticks", side_effect=AssertionError("network call forbidden")),
         patch("src.screening.strategy_scorer.get_lhb_detail", return_value=pd.DataFrame([{"代码": "000001"}])),
         patch("src.screening.strategy_scorer.get_lhb_institutional_stats", return_value=pd.DataFrame([{"代码": "000001", "机构买入净额": 1.0}])),
         patch("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 1),
         patch("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 1),
         patch("src.screening.strategy_scorer.HEAVY_SCORE_MIN_PROVISIONAL_SCORE", 0.01),
     ):
-        results = score_batch(candidates, "20260305")
+        results = score_batch(candidates, "20260305", feature_store=_IntradaySnapshotStore())
 
     metrics = results["000001"]["trend"].sub_factors["momentum"]["metrics"]
     assert metrics["amount_ratio_5"] == pytest.approx(1.8)
@@ -231,7 +270,7 @@ def test_populate_intraday_short_trade_metrics_caps_candidate_count():
     }
     visited_tickers: list[str] = []
 
-    def _fake_build_intraday_metrics(ticker: str, trade_date: str) -> dict[str, float]:
+    def _fake_build_intraday_metrics(ticker: str, trade_date: str, feature_store=None) -> dict[str, float]:
         visited_tickers.append(ticker)
         return {"flow_60": 0.1}
 
@@ -239,7 +278,12 @@ def test_populate_intraday_short_trade_metrics_caps_candidate_count():
         patch("src.screening.strategy_scorer._build_intraday_short_trade_metrics", side_effect=_fake_build_intraday_metrics),
         patch("src.screening.strategy_scorer.INTRADAY_SCORE_MAX_CANDIDATES", 2),
     ):
-        strategy_scorer_module._populate_intraday_short_trade_metrics(results, candidates, "20260305")
+        strategy_scorer_module._populate_intraday_short_trade_metrics(
+            results,
+            candidates,
+            "20260305",
+            _FakeOptionalFeatureStore(),
+        )
 
     assert visited_tickers == ["000001", "000002"]
     assert results["000001"]["trend"].sub_factors["momentum"]["metrics"]["flow_60"] == pytest.approx(0.1)
@@ -363,13 +407,23 @@ def test_score_batch_enriches_sector_amount_share_metrics_for_industry_peers() -
     assert results["000003"]["trend"].sub_factors["momentum"]["metrics"]["sector_amt_share"] == pytest.approx(0.2, abs=1e-4)
 
 
-def test_build_intraday_short_trade_metrics_skips_ticks_when_bars_missing():
-    with (
-        patch("src.screening.strategy_scorer.get_intraday_bars", return_value=None),
-        patch("src.screening.strategy_scorer.get_intraday_ticks", side_effect=AssertionError("ticks should not be fetched without bars")),
-        patch("src.screening.strategy_scorer._load_daily_flow_proxy_ratio", return_value=0.12),
-    ):
-        metrics = strategy_scorer_module._build_intraday_short_trade_metrics("000001", "20260305")
+def test_build_intraday_short_trade_metrics_uses_daily_flow_proxy_when_intraday_snapshot_missing(monkeypatch):
+    monkeypatch.setattr(
+        strategy_scorer_module,
+        "get_intraday_bars",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network call forbidden")),
+    )
+    monkeypatch.setattr(
+        strategy_scorer_module,
+        "get_intraday_ticks",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network call forbidden")),
+    )
+
+    metrics = strategy_scorer_module._build_intraday_short_trade_metrics(
+        "000001",
+        "20260305",
+        feature_store=_DailyFlowOnlyFeatureStore(0.12),
+    )
 
     assert metrics == {
         "flow_60": pytest.approx(0.12),
@@ -391,12 +445,7 @@ def test_build_intraday_short_trade_metrics_uses_bar_proxy_without_fetching_tick
         }
     )
 
-    with (
-        patch("src.screening.strategy_scorer.get_intraday_bars", return_value=intraday_bars),
-        patch("src.screening.strategy_scorer.get_intraday_ticks", side_effect=AssertionError("ticks should not be fetched when bar proxy is available")),
-        patch("src.screening.strategy_scorer._load_daily_flow_proxy_ratio", return_value=None),
-    ):
-        metrics = strategy_scorer_module._build_intraday_short_trade_metrics("000001", "20260305")
+    metrics = strategy_scorer_module._build_intraday_short_trade_metrics_from_bars(intraday_bars)
 
     assert metrics == {
         "flow_60": pytest.approx(0.25),
@@ -406,6 +455,60 @@ def test_build_intraday_short_trade_metrics_uses_bar_proxy_without_fetching_tick
         "close_support_30_source": "bar_proxy",
         "persist_120_source": "bar_proxy",
     }
+
+
+def test_build_intraday_short_trade_metrics_from_frames_skips_ticks_when_bars_missing():
+    with (
+        patch("src.screening.strategy_scorer.get_intraday_ticks", side_effect=AssertionError("ticks should not be fetched when bar proxy is available")),
+    ):
+        metrics = strategy_scorer_module._build_intraday_short_trade_metrics_from_frames(
+            intraday_bars=None,
+            intraday_ticks=None,
+            trade_date="20260305",
+        )
+
+    assert metrics == {}
+
+
+def test_build_intraday_short_trade_metrics_reads_feature_store_without_network(monkeypatch):
+    store = _FakeOptionalFeatureStore()
+    monkeypatch.setattr(
+        strategy_scorer_module,
+        "get_intraday_bars",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network call forbidden")),
+    )
+
+    metrics = strategy_scorer_module._build_intraday_short_trade_metrics(
+        "000001",
+        "20260708",
+        feature_store=store,
+    )
+
+    assert metrics == {
+        "flow_60": 0.21,
+        "flow_60_source": "snapshot",
+        "close_support_30": 0.11,
+        "close_support_30_source": "snapshot",
+    }
+    assert store.intraday_calls == [("20260708", ["000001"])]
+
+
+def test_daily_flow_proxy_reads_feature_store_without_money_flow_network(monkeypatch):
+    store = _FakeOptionalFeatureStore()
+    monkeypatch.setattr(
+        strategy_scorer_module,
+        "get_money_flow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network call forbidden")),
+    )
+
+    result = strategy_scorer_module._load_daily_flow_proxy_ratio(
+        "000001",
+        trade_date="20260708",
+        feature_store=store,
+    )
+
+    assert result == 0.13
+    assert store.fund_flow_calls == [("20260708", ["000001"])]
 
 
 def test_score_batch_requires_positive_trend_confirmation_for_heavy_scoring():
@@ -1398,7 +1501,7 @@ def test_populate_intraday_parallel_produces_same_results_as_serial():
 
     call_order: list[str] = []
 
-    def fake_intraday(ticker, trade_date):
+    def fake_intraday(ticker, trade_date, feature_store=None):
         call_order.append(ticker)
         return {"flow_60": 0.1234}
 
@@ -1409,7 +1512,12 @@ def test_populate_intraday_parallel_produces_same_results_as_serial():
         patch("src.screening.strategy_scorer.INTRADAY_SCORE_MAX_CANDIDATES", 2),
         patch("src.screening.strategy_scorer.SCORE_BATCH_CONCURRENCY", 1),
     ):
-        strategy_scorer_module._populate_intraday_short_trade_metrics(serial_results, candidates, "20260305")
+        strategy_scorer_module._populate_intraday_short_trade_metrics(
+            serial_results,
+            candidates,
+            "20260305",
+            _FakeOptionalFeatureStore(),
+        )
     assert call_order == ["000001", "000002"]
 
     # Parallel
@@ -1420,7 +1528,12 @@ def test_populate_intraday_parallel_produces_same_results_as_serial():
         patch("src.screening.strategy_scorer.INTRADAY_SCORE_MAX_CANDIDATES", 2),
         patch("src.screening.strategy_scorer.SCORE_BATCH_CONCURRENCY", 4),
     ):
-        strategy_scorer_module._populate_intraday_short_trade_metrics(parallel_results, candidates, "20260305")
+        strategy_scorer_module._populate_intraday_short_trade_metrics(
+            parallel_results,
+            candidates,
+            "20260305",
+            _FakeOptionalFeatureStore(),
+        )
 
     # Results must be identical regardless of execution order
     for ticker in ("000001", "000002"):
@@ -1480,63 +1593,65 @@ def test_light_weights_trend_dominates_reversed_mr() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _load_daily_flow_proxy_ratio 重试测试 — akshare push2his 在 proxy 环境下偶发
-# ProxyError, get_money_flow 底层吞成 None. 重试避免资金流因子信号静默丢失.
+# _load_daily_flow_proxy_ratio 快照读取测试 — scoring 不再触达 get_money_flow.
 # ---------------------------------------------------------------------------
 
 
-def test_flow_proxy_retry_succeeds_after_empty(monkeypatch):
-    """前两次 get_money_flow 返回 None (proxy 抖动), 第三次成功 → 重试后返回有效值。"""
-    monkeypatch.setenv("AKSHARE_FLOW_MAX_RETRIES", "2")
-    monkeypatch.setenv("AKSHARE_FLOW_RETRY_BASE_DELAY", "0.01")
+def test_flow_proxy_returns_none_without_trade_date(monkeypatch):
+    monkeypatch.setattr(
+        strategy_scorer_module,
+        "get_money_flow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network call forbidden")),
+    )
 
-    fake_df = pd.DataFrame({"主力净流入占比": [15.0]})
-    calls = []
+    result = strategy_scorer_module._load_daily_flow_proxy_ratio("000021")
 
-    def mock_flow(ticker):
-        calls.append(ticker)
-        if len(calls) < 3:
-            return None  # 模拟 proxy 失败被吞成 None
-        return fake_df
-
-    with patch.object(strategy_scorer_module, "get_money_flow", side_effect=mock_flow):
-        result = strategy_scorer_module._load_daily_flow_proxy_ratio("000021")
-
-    assert len(calls) == 3  # 1 初试 + 2 重试
-    assert result == 0.15  # 15% → 0.15
-
-
-def test_flow_proxy_retry_exhausted_returns_none(monkeypatch):
-    """持续返回 None → 重试耗尽后返回 None (不无限重试)。"""
-    monkeypatch.setenv("AKSHARE_FLOW_MAX_RETRIES", "2")
-    monkeypatch.setenv("AKSHARE_FLOW_RETRY_BASE_DELAY", "0.01")
-
-    calls = []
-
-    def mock_flow(ticker):
-        calls.append(ticker)
-        return None
-
-    with patch.object(strategy_scorer_module, "get_money_flow", side_effect=mock_flow):
-        result = strategy_scorer_module._load_daily_flow_proxy_ratio("000021")
-
-    assert len(calls) == 3  # MAX_RETRIES=2 → 共 3 次
     assert result is None
 
 
-def test_flow_proxy_no_retry_on_first_success(monkeypatch):
-    """首次成功 → 不重试, 只调一次。"""
-    monkeypatch.setenv("AKSHARE_FLOW_MAX_RETRIES", "2")
+def test_flow_proxy_normalizes_percent_value_from_feature_store(monkeypatch):
+    monkeypatch.setattr(
+        strategy_scorer_module,
+        "get_money_flow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network call forbidden")),
+    )
 
-    fake_df = pd.DataFrame({"主力净流入占比": [-5.0]})
-    calls = []
+    result = strategy_scorer_module._load_daily_flow_proxy_ratio(
+        "000001",
+        trade_date="20260708",
+        feature_store=_DailyFlowOnlyFeatureStore(15.0),
+    )
 
-    def mock_flow(ticker):
-        calls.append(ticker)
-        return fake_df
+    assert result == 0.15
 
-    with patch.object(strategy_scorer_module, "get_money_flow", side_effect=mock_flow):
-        result = strategy_scorer_module._load_daily_flow_proxy_ratio("000021")
 
-    assert len(calls) == 1
-    assert result == -0.05  # -5% → -0.05
+def test_flow_proxy_returns_none_when_snapshot_missing(monkeypatch):
+    monkeypatch.setattr(
+        strategy_scorer_module,
+        "get_money_flow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network call forbidden")),
+    )
+
+    result = strategy_scorer_module._load_daily_flow_proxy_ratio(
+        "000001",
+        trade_date="20260708",
+        feature_store=_DailyFlowOnlyFeatureStore(),
+    )
+
+    assert result is None
+
+
+def test_flow_proxy_returns_none_for_invalid_snapshot_value(monkeypatch):
+    monkeypatch.setattr(
+        strategy_scorer_module,
+        "get_money_flow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("network call forbidden")),
+    )
+
+    result = strategy_scorer_module._load_daily_flow_proxy_ratio(
+        "000001",
+        trade_date="20260708",
+        feature_store=_DailyFlowOnlyFeatureStore("not-a-number"),
+    )
+
+    assert result is None

@@ -6,16 +6,16 @@ import concurrent.futures
 import logging
 import math
 import os
-import random
 from collections import defaultdict
 from datetime import datetime
 from statistics import median
-from time import perf_counter, sleep
+from time import perf_counter
 from typing import Any
 
 import pandas as pd
 
 from src.screening.models import CandidateStock, StrategySignal
+from src.screening.optional_feature_store import OptionalFeatureStore
 from src.screening.strategy_scorer_fundamental import (
     score_fundamental_strategy,
 )
@@ -29,12 +29,10 @@ from src.screening.strategy_scorer_utils import (
     aggregate_sub_factors,
     derive_completeness,
 )
+from src.tools import akshare_api as _akshare_api
 from src.tools.akshare_api import (
-    get_intraday_bars,
-    get_intraday_ticks,
     get_lhb_detail,
     get_lhb_institutional_stats,
-    get_money_flow,
 )
 from src.tools.tushare_api import (
     get_all_stock_basic,
@@ -43,6 +41,11 @@ from src.tools.tushare_api import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Provider aliases retained for tests that assert score-time helpers never call them.
+get_intraday_bars = _akshare_api.get_intraday_bars
+get_intraday_ticks = _akshare_api.get_intraday_ticks
+get_money_flow = _akshare_api.get_money_flow
 
 # Re-export for backward compatibility
 __all__ = [
@@ -370,6 +373,7 @@ def _populate_heavy_signals(
     fundamental_candidates: list[CandidateStock],
     trade_date: str,
     industry_pe_medians: dict[str, float],
+    feature_store: OptionalFeatureStore,
 ) -> None:
     # Parallel IO: fundamental + event_sentiment scoring per candidate
     max_workers = min(SCORE_BATCH_CONCURRENCY, len(fundamental_candidates)) if fundamental_candidates else 1
@@ -414,7 +418,7 @@ def _populate_heavy_signals(
                 except Exception:
                     logger.warning("Event-sentiment scoring failed for %s", candidate.ticker, exc_info=True)
 
-    _populate_intraday_short_trade_metrics(results, fundamental_candidates, trade_date)
+    _populate_intraday_short_trade_metrics(results, fundamental_candidates, trade_date, feature_store)
     _populate_dragon_tiger_bonus_metrics(results, fundamental_candidates, trade_date)
 
 
@@ -422,6 +426,7 @@ def _populate_intraday_short_trade_metrics(
     results: dict[str, dict[str, StrategySignal]],
     candidates: list[CandidateStock],
     trade_date: str,
+    feature_store: OptionalFeatureStore,
 ) -> None:
     # Gather eligible candidates and their trend signals first (sequential, CPU-only)
     eligible: list[tuple[CandidateStock, StrategySignal]] = []
@@ -438,13 +443,25 @@ def _populate_intraday_short_trade_metrics(
     max_workers = min(SCORE_BATCH_CONCURRENCY, len(eligible))
     if max_workers <= 1:
         for candidate, trend_signal in eligible:
-            intraday_metrics = _build_intraday_short_trade_metrics(candidate.ticker, trade_date)
+            intraday_metrics = _build_intraday_short_trade_metrics(
+                candidate.ticker,
+                trade_date,
+                feature_store=feature_store,
+            )
             if not intraday_metrics:
                 continue
             _merge_metrics_into_trend_momentum(trend_signal, intraday_metrics)
     else:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_pair = {executor.submit(_build_intraday_short_trade_metrics, candidate.ticker, trade_date): (candidate, trend_signal) for candidate, trend_signal in eligible}
+            future_to_pair = {
+                executor.submit(
+                    _build_intraday_short_trade_metrics,
+                    candidate.ticker,
+                    trade_date,
+                    feature_store=feature_store,
+                ): (candidate, trend_signal)
+                for candidate, trend_signal in eligible
+            }
             for future in concurrent.futures.as_completed(future_to_pair):
                 _candidate, trend_signal = future_to_pair[future]
                 try:
@@ -504,29 +521,20 @@ def _build_dragon_tiger_bonus_map(tickers: list[str], trade_date: str) -> dict[s
     return bonus_map
 
 
-def _build_intraday_short_trade_metrics(ticker: str, trade_date: str) -> dict[str, float]:
-    intraday_bars = get_intraday_bars(ticker, trade_date)
-    if intraday_bars is None or intraday_bars.empty:
-        fallback_flow = _load_daily_flow_proxy_ratio(ticker)
-        return {"flow_60": fallback_flow, "flow_60_source": "daily_flow_proxy"} if fallback_flow is not None else {}
-    proxy_metrics = _build_intraday_short_trade_metrics_from_bars(intraday_bars)
-    if proxy_metrics:
-        return proxy_metrics
-    intraday_ticks = get_intraday_ticks(ticker, trade_date)
-    metrics = _build_intraday_short_trade_metrics_from_frames(
-        intraday_bars=intraday_bars,
-        intraday_ticks=intraday_ticks,
-        trade_date=trade_date,
-    )
-    if "flow_60" not in metrics:
-        fallback_flow = _load_daily_flow_proxy_ratio(ticker)
-        if fallback_flow is not None:
-            metrics["flow_60"] = fallback_flow
-            metrics["flow_60_source"] = "daily_flow_proxy"
-    return metrics
+def _build_intraday_short_trade_metrics(
+    ticker: str,
+    trade_date: str,
+    feature_store: OptionalFeatureStore | None = None,
+) -> dict[str, Any]:
+    store = feature_store or OptionalFeatureStore()
+    metrics = store.load_intraday_metrics(trade_date, [ticker]).get(str(ticker).zfill(6), {})
+    if metrics:
+        return dict(metrics)
+    fallback_flow = _load_daily_flow_proxy_ratio(ticker, trade_date=trade_date, feature_store=store)
+    return {"flow_60": fallback_flow, "flow_60_source": "daily_flow_proxy"} if fallback_flow is not None else {}
 
 
-def build_intraday_short_trade_metrics(ticker: str, trade_date: str) -> dict[str, float]:
+def build_intraday_short_trade_metrics(ticker: str, trade_date: str) -> dict[str, Any]:
     """Expose the shared intraday short-trade metrics builder for downstream adapters."""
     return _build_intraday_short_trade_metrics(ticker, trade_date)
 
@@ -654,43 +662,25 @@ def _extract_intraday_tick_net_flows(
     }
 
 
-def _load_daily_flow_proxy_ratio(ticker: str) -> float | None:
-    # akshare stock_individual_fund_flow 走 push2his.eastmoney.com, 该 CDN 在
-    # Clash/proxy 环境下偶发 ProxyError/RemoteDisconnected. get_money_flow 底层的
-    # load_optional_market_dataframe 把网络错误吞成 None — 直接返回 None 会让资金流
-    # 因子信号静默丢失, 影响打分. 这里对 None 结果重试, 绝大多数瞬时抖动能自愈.
-    max_retries = int(os.environ.get("AKSHARE_FLOW_MAX_RETRIES", "2"))
-    base_delay = float(os.environ.get("AKSHARE_FLOW_RETRY_BASE_DELAY", "1.0"))
-
-    money_flow = None
-    for attempt in range(max_retries + 1):
-        money_flow = get_money_flow(ticker)
-        if money_flow is not None and not money_flow.empty:
-            break
-        if attempt < max_retries:
-            delay = base_delay * (2 ** attempt) * (1 + random.random() * 0.3)
-            logger.debug(
-                "[flow_proxy] %s 资金流为空 (尝试 %d/%d), %.1fs 后重试",
-                ticker, attempt + 1, max_retries + 1, delay,
-            )
-            sleep(delay)
-
-    if money_flow is None or money_flow.empty:
+def _load_daily_flow_proxy_ratio(
+    ticker: str,
+    trade_date: str | None = None,
+    feature_store: OptionalFeatureStore | None = None,
+) -> float | None:
+    if trade_date is None:
         return None
-    ratio_values = money_flow.get("主力净流入占比")
-    if ratio_values is None:
+    store = feature_store or OptionalFeatureStore()
+    metrics = store.load_fund_flow_metrics(trade_date, [ticker]).get(str(ticker).zfill(6), {})
+    ratio = metrics.get("main_flow_ratio")
+    if ratio is None:
         return None
-    if isinstance(ratio_values, pd.Series):
-        ratio_series = pd.to_numeric(ratio_values, errors="coerce")
-    else:
-        ratio_series = pd.Series([pd.to_numeric(ratio_values, errors="coerce")])
-    ratio_series = ratio_series.dropna()
-    if ratio_series.empty:
+    try:
+        value = float(ratio)
+    except (TypeError, ValueError):
         return None
-    latest_ratio = float(ratio_series.dropna().iloc[0])
-    if abs(latest_ratio) > 1.0:
-        latest_ratio /= 100.0
-    return round(latest_ratio, 4)
+    if abs(value) > 1.0:
+        value /= 100.0
+    return round(value, 4)
 
 
 def _trend_signal_has_momentum_payload(trend_signal: StrategySignal | None) -> bool:
@@ -720,12 +710,17 @@ def _select_event_sentiment_candidates(fundamental_candidates: list[CandidateSto
     return fundamental_candidates[:EVENT_SENTIMENT_MAX_CANDIDATES]
 
 
-def score_batch(candidates: list[CandidateStock], trade_date: str) -> dict[str, dict[str, StrategySignal]]:
+def score_batch(
+    candidates: list[CandidateStock],
+    trade_date: str,
+    feature_store: OptionalFeatureStore | None = None,
+) -> dict[str, dict[str, StrategySignal]]:
     started_at = perf_counter()
+    optional_feature_store = feature_store or OptionalFeatureStore()
     industry_pe_medians = _build_industry_pe_medians(trade_date)
     results = _initialize_score_batch_results(candidates)
     fundamental_candidates = _prepare_heavy_score_candidates(candidates, trade_date, results)
-    _populate_heavy_signals(results, fundamental_candidates, trade_date, industry_pe_medians)
+    _populate_heavy_signals(results, fundamental_candidates, trade_date, industry_pe_medians, optional_feature_store)
     elapsed = perf_counter() - started_at
     logger.info(
         "score_batch completed: %d candidates, %d heavy-scored, concurrency=%d, %.2fs",
