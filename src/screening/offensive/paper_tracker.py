@@ -76,6 +76,9 @@ class PaperTracker:
         # 上限被跳过的剩余信号数. 供 render_daily_action 披露 (不持久化, 仅本次运行可见).
         self.last_portfolio_exposure: float = float(self._state.open_exposure)
         self.last_cap_blocked_count: int = 0
+        # C-DAILY-ACTION-POSITION-VISIBILITY: 本次因敞口超限未录入的候选 (按强度排序),
+        # 供 render 列出"今日可交易但暂不买入"的票. 不持久化.
+        self.last_blocked_candidates: list = []
 
     # ---- portfolio state ----
 
@@ -250,6 +253,67 @@ class PaperTracker:
         )
 
     # ---- close matured positions (闭环核心) ----
+
+    def open_positions_detail(self, as_of: str = "") -> list[dict[str, Any]]:
+        """返回当前未平仓位明细 (供 render 披露"我买了什么 + 何时到期释放").
+
+        C-DAILY-ACTION-POSITION-VISIBILITY (20260710): 此前 render 只显示
+        ``持仓数: N`` (计数), operator 看不到自己持有哪些票、何时到期。本方法
+        从 journal 真值 (去重 BUY - EXIT, 与 close_matured 同口径) 重建未平仓
+        明细, 含每仓的到期日 (buy_date + horizon 日历日) 与距今天数。
+
+        Args:
+            as_of: 基准日 YYYYMMDD (通常为信号日), 用于算 days_to_maturity.
+                   空字符串则不算 days_to_maturity.
+
+        Returns:
+            list[dict] 每项含 ticker/buy_date/setup/horizon/entry_price/kelly_pct/
+            matures_on/days_to_maturity, 按 matures_on 升序 (最快到期的在前,
+            让 operator 第一眼看到"哪些仓位马上释放").
+        """
+        journal = self._load_journal()
+        exit_keys: set[tuple[str, str]] = set()
+        for rec in journal:
+            if rec.get("action") == "EXIT":
+                exit_keys.add((str(rec.get("date", "")), str(rec.get("ticker", ""))))
+        seen: set[tuple[str, str]] = set()
+        out: list[dict[str, Any]] = []
+        for rec in journal:
+            if rec.get("action") != "BUY":
+                continue
+            buy_date = str(rec.get("date", ""))
+            ticker = str(rec.get("ticker", ""))
+            key = (buy_date, ticker)
+            if key in exit_keys or key in seen:
+                continue
+            seen.add(key)
+            horizon = int(rec.get("horizon", 10) or 10)
+            matures_on = ""
+            try:
+                matures_dt = datetime.strptime(buy_date, "%Y%m%d").date() + timedelta(days=horizon)
+                matures_on = matures_dt.strftime("%Y%m%d")
+            except ValueError:
+                pass
+            days_to: int | None = None
+            if as_of and matures_on:
+                try:
+                    days_to = (datetime.strptime(matures_on, "%Y%m%d").date() - datetime.strptime(as_of, "%Y%m%d").date()).days
+                except ValueError:
+                    pass
+            out.append(
+                {
+                    "ticker": ticker,
+                    "buy_date": buy_date,
+                    "setup": str(rec.get("setup", "")),
+                    "horizon": horizon,
+                    "entry_price": float(rec.get("entry_price", 0.0) or 0.0),
+                    "kelly_pct": float(rec.get("kelly_pct", 0.0) or 0.0),
+                    "matures_on": matures_on,
+                    "days_to_maturity": days_to,
+                }
+            )
+        out.sort(key=lambda r: (r["matures_on"] or "99999999", r["ticker"]))
+        return out
 
     def _load_journal(self) -> list[dict[str, Any]]:
         """加载 journal.jsonl 全量记录 (损坏行跳过, 与 daily_brief._load_report 一致)."""
