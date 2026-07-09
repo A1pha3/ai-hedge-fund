@@ -53,6 +53,25 @@ def test_paper_tracker_record_buy(tmp_path):
     assert "BUY" in lines[0]
 
 
+def test_paper_tracker_record_buy_increments_total_trades(tmp_path):
+    """autodev-32 /loop session 6: total_trades was a dead field (persisted
+    but never incremented → state file always showed 0). Now each BUY
+    increments it so the operator sees cumulative trade volume."""
+    t = PaperTracker(journal_dir=tmp_path)
+    assert t.state.total_trades == 0  # starts at 0
+    t.record_buy("20260707", "300502", "btst_breakout", 10, 50.0, 0.05, 46.0, 45.0, "跌破45")
+    assert t.state.total_trades == 1
+    t.record_buy("20260707", "688629", "btst_breakout", 10, 200.0, 0.10, 180.0, 184.0, "跌破184")
+    assert t.state.total_trades == 2
+    # Idempotent: same (date, ticker) doesn't double-count
+    t.record_buy("20260707", "300502", "btst_breakout", 10, 50.0, 0.05, 46.0, 45.0, "跌破45")
+    assert t.state.total_trades == 2, "幂等 BUY 不应重复计数 total_trades"
+    # Persisted to state file
+    import json as _json
+    persisted = _json.loads((tmp_path / "portfolio_state.json").read_text())
+    assert persisted["total_trades"] == 2
+
+
 def test_record_buy_idempotent_same_date_ticker(tmp_path):
     """重复 record_buy 同一 (trade_date, ticker) → 只记一条, open_positions 不双计.
 

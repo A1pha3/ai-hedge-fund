@@ -195,6 +195,10 @@ class PaperTracker:
             )
         )
         self._state.open_positions += 1
+        # autodev-32 /loop session 6: total_trades was persisted but never
+        # incremented (dead field → state file always showed 0). Now counts
+        # each opened BUY so the operator sees cumulative trade volume.
+        self._state.total_trades += 1
         self._save_state()  # 持久化 open_positions (此前缺失 → 新进程读不到增量)
 
     def _existing_buy_keys(self) -> set[tuple[str, str]]:
