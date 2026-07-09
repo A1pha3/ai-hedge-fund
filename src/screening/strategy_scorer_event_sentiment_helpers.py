@@ -285,11 +285,17 @@ def _score_insider_conviction(trades: list[InsiderTrade]) -> SubFactor:
         return _make_sub_factor("insider_conviction", 0, 0.0, EVENT_SUBFACTOR_WEIGHTS["insider_conviction"], completeness=0.0)
     analysis = analyze_insider_conviction(trades)
     direction, confidence = _resolve_insider_conviction_direction_and_confidence(float(analysis["score"]))
+    # completeness must reflect usable directional signal, not mere data presence.
+    # When direction=0 and confidence=0 the sub-factor carries no information, so
+    # completeness=0.0 — otherwise it silently reserves event_sentiment's ~10%
+    # weight and dilutes T/MR/F in _normalize_active_weights (completeness>0 gate).
+    completeness = 0.0 if (direction == 0 and confidence == 0.0) else 1.0
     return _make_sub_factor(
         "insider_conviction",
         direction,
         confidence,
         EVENT_SUBFACTOR_WEIGHTS["insider_conviction"],
+        completeness=completeness,
         metrics=analysis,
     )
 
@@ -337,11 +343,16 @@ def _build_event_freshness_factor(snapshot: EventFreshnessSnapshot) -> SubFactor
         strength=snapshot.strength,
         freshness_weight=snapshot.freshness_weight,
     )
+    # freshness_weight<=0 means no usable event strength (neutral news), so the
+    # sub-factor carries zero directional information. completeness must be 0.0
+    # to avoid reserving event_sentiment's weight and diluting T/MR/F.
+    completeness = 0.0 if snapshot.freshness_weight <= 0 else 1.0
     return _make_sub_factor(
         "event_freshness",
         direction,
         snapshot.decay * snapshot.freshness_weight * 100.0,
         EVENT_SUBFACTOR_WEIGHTS["event_freshness"],
+        completeness=completeness,
         metrics=_build_event_freshness_metrics(snapshot),
     )
 

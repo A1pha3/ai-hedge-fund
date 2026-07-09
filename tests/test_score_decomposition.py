@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.main import _print_score_decomposition
+from src.main import _build_auto_screening_table_row, _print_score_decomposition
 from src.screening.models import FusedScore, StrategySignal
 
 
@@ -124,3 +124,27 @@ class TestPrintScoreDecomposition:
         _print_score_decomposition([item], {})
         output = capsys.readouterr().out
         assert "\x1b[31m" in output
+
+
+class TestAutoScreeningTableCompositeColumn:
+    """Bug 3: the --auto table must show a Composite column (the primary sort key)
+    so that a non-descending Score B column doesn't look like a sorting bug."""
+
+    def test_row_has_composite_value(self):
+        """The row list includes a composite_score cell when provided."""
+        item = _make_fused(ticker="000001", score_b=0.50)
+        row = _build_auto_screening_table_row(
+            idx=1, item=item, consecutive_lookup={}, decay_map=None, composite_score=0.4823
+        )
+        # The row now has 10 columns: #, Ticker, Industry, Score B, Composite, ...
+        assert len(row) == 10
+        # Composite is the 5th element (index 4)
+        assert "0.4823" in row[4]
+
+    def test_row_shows_dash_when_composite_missing(self):
+        """When composite_score is None, the Composite cell shows a dash."""
+        item = _make_fused(ticker="000001", score_b=0.50)
+        row = _build_auto_screening_table_row(
+            idx=1, item=item, consecutive_lookup={}, decay_map=None, composite_score=None
+        )
+        assert "—" in row[4]

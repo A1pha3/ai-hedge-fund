@@ -79,12 +79,19 @@ class TestComputeScoreDecomposition:
         assert decomp["consensus_bonus"] == 0.0
 
     def test_other_adjustments_is_residual(self):
-        """other_adjustments = score_b - sum(components)"""
-        # Construct a fused where the math will produce a residual
-        fused = _make_fused(score_b=0.9, attention=0.1)  # components sum to ~0.6, residual ~0.3
+        """other_adjustments = score_b - (base_sum + consensus_bonus).
+
+        attention and stability_bonus are non-additive metadata, NOT part of
+        score_b (they are never summed into compute_score_b), so they must NOT
+        be in the components_sum. other is the true residual — only non-zero
+        when compute_score_b's [-1,+1] clamp truncates the raw score."""
+        fused = _make_fused(score_b=0.9, attention=0.1)
         decomp = compute_score_decomposition(fused)
-        components_sum = sum(decomp["base_contributions"].values()) + decomp["attention_contribution"] + decomp["stability_bonus"] + decomp["consensus_bonus"]
-        assert decomp["other_adjustments"] == pytest.approx(fused.score_b - components_sum, rel=1e-6)
+        # attention IS extracted as metadata...
+        assert decomp["attention_contribution"] == pytest.approx(0.1)
+        # ...but NOT added into the residual's components_sum
+        additive_sum = sum(decomp["base_contributions"].values()) + decomp["consensus_bonus"]
+        assert decomp["other_adjustments"] == pytest.approx(fused.score_b - additive_sum, rel=1e-6)
 
     def test_total_equals_score_b(self):
         fused = _make_fused(score_b=0.42)
@@ -137,6 +144,55 @@ class TestComputeScoreDecomposition:
         fused = _make_fused(score_b=-0.3)
         decomp = compute_score_decomposition(fused)
         assert decomp["total"] == pytest.approx(-0.3)
+
+    # --- Regression tests for non-additive stability_bonus / attention (Bug 1 fix) ---
+
+    def test_stability_bonus_does_not_affect_other_adjustments(self):
+        """A large stability_bonus (0-10 scale) must NOT create a false residual.
+
+        Before the fix, stability_bonus was summed into components_sum, forcing
+        other_adjustments = score_b - (base + stab + ...) to absorb -10.0 and
+        making the "other" line a meaningless cancellation artifact. After the
+        fix, stability_bonus is metadata (non-additive), so other ≈ 0.
+        """
+        fused = _make_fused(score_b=0.40)
+        decomp = compute_score_decomposition(fused, {"consecutive_days": 3, "stability_bonus": 10.0})
+        assert decomp["stability_bonus"] == pytest.approx(10.0)
+        # other_adjustments should be near zero (only clamp residual), NOT -10.0
+        assert abs(decomp["other_adjustments"]) < 1e-6
+
+    def test_attention_does_not_affect_other_adjustments(self):
+        """attention_composite is metadata, NOT part of score_b.
+
+        Before the fix, a non-zero attention would inflate components_sum and
+        force a false negative other_adjustments. After the fix it is extracted
+        as metadata but excluded from the additive sum.
+        """
+        fused = _make_fused(score_b=0.40, attention=0.25)
+        decomp = compute_score_decomposition(fused)
+        assert decomp["attention_contribution"] == pytest.approx(0.25)
+        # other should be near zero, NOT -0.25
+        assert abs(decomp["other_adjustments"]) < 1e-6
+
+    def test_other_is_clamp_residual_only(self):
+        """other_adjustments is non-zero ONLY when the [-1,+1] clamp truncates.
+
+        With a score_b at 1.0 (clamp boundary) and base contributions that sum
+        beyond 1.0, the residual captures the truncated amount.
+        """
+        # Large positive contributions that would exceed +1.0 before clamping
+        fused = _make_fused(
+            score_b=1.0,  # clamped from a higher raw score
+            trend=(1.0, 100.0, 1.0),
+            mean_reversion=(1.0, 100.0, 1.0),
+            fundamental=(1.0, 100.0, 1.0),
+            event_sentiment=(1.0, 100.0, 1.0),
+        )
+        decomp = compute_score_decomposition(fused)
+        base_sum = sum(decomp["base_contributions"].values())
+        # base_sum = 0.25+0.25+0.30+0.20 = 1.0, clamped to 1.0 → residual ≈ 0
+        # But if weights sum > 1.0 the residual would capture the clamp.
+        assert decomp["other_adjustments"] == pytest.approx(fused.score_b - base_sum - decomp["consensus_bonus"], abs=1e-6)
 
 
 class TestWaterfallPrint:

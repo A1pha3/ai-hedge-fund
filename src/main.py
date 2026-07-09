@@ -666,6 +666,10 @@ def _inject_score_decomposition(
 ) -> int:
     """NS-6 (c266 observable): inject ``score_decomposition`` into each ranking_pool rec.
 
+    Reads ``stability_bonus`` from the rec dict itself (written by
+    ``enrich_recommendations_with_history``) so the decomposition captures the
+    real consecutive-day bonus. Must therefore be called AFTER enrichment.
+
     Best-effort: a failure for one rec logs a WARNING and continues (was a silent
     ``except Exception: pass`` before c266 — BH-017 silent-degradation family).
     Without this observability, a future ``signal_fusion`` refactor that breaks
@@ -687,7 +691,15 @@ def _inject_score_decomposition(
         if fused_item is None:
             continue
         try:
-            rec["score_decomposition"] = compute_score_decomposition(fused_item)
+            # Build consecutive_info from the rec's own enrichment fields so the
+            # saved decomposition matches what _print_score_waterfall computes
+            # (which reads stability_bonus from the enriched rec). Without this,
+            # the saved JSON's other_adjustments diverges from the printed one.
+            consecutive_info = {
+                "stability_bonus": rec.get("stability_bonus", 0.0),
+                "consecutive_days": rec.get("consecutive_days", 0),
+            }
+            rec["score_decomposition"] = compute_score_decomposition(fused_item, consecutive_info)
             injected += 1
         except Exception as exc:  # best-effort: never block the pipeline, but DO log
             logger.warning(
@@ -797,11 +809,16 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
         sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
         ranking_pool = [item.model_dump(mode="json") for item in sorted_results[:ranking_pool_size]]
 
-    # NS-6: 统一注入 score_decomposition (per-strategy T/MR/F/E 贡献 + attention +
-    # stability + consensus + other + total) 到 ranking_pool 每条 rec, 让
+    # NS-6: 注入 score_decomposition 到 ranking_pool 每条 rec (per-strategy
+    # T/MR/F/E 贡献 + attention + stability + consensus + other + total), 让
     # update_tracking_history 落盘后 factor_attribution 模块可按贡献分位检测
-    # 高低 winrate 倒挂。best-effort: 异常时不阻塞主流程 (rec 无 decomposition →
-    # factor_attribution 消费侧 isinstance 校验后返回 insufficient).
+    # 高低 winrate 倒挂。注意: 此处 stability_bonus 尚未 enrichment, 所以这一步
+    # 注入的 decomposition 里 stability_bonus=0 (历史报告的 factor_attribution
+    # 只需要 base 贡献, 不依赖 stability_bonus)。对 Top-N 的最终存盘/打印, 我们在
+    # enrichment 后会重新注入一次 (见下方 _inject_score_decomposition 对
+    # top_results_serializable 的调用), 确保存盘 JSON 与打印瀑布用同一份数据。
+    # best-effort: 异常时不阻塞主流程 (rec 无 decomposition → factor_attribution
+    # 消费侧 isinstance 校验后返回 insufficient).
     # c266: 抽成 _inject_score_decomposition helper — 失败时 logger.warning (was
     # silent except:pass), 让 factor_attribution insufficient 可诊断 (BH-017 drain).
     _injected = _inject_score_decomposition(ranking_pool, fused_by_ticker)
@@ -823,6 +840,11 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
         report_dir=consecutive_report_dir,
         end_date=trade_date,
     )
+    # 重新注入 score_decomposition 到 Top-N (此时 stability_bonus 已被 enrichment
+    # 写入), 确保存盘 JSON 的 decomposition 与 _print_score_waterfall 打印的
+    # 一致 (此前存盘用 stability_bonus=0 而打印用真实值, 造成 other_adjustments
+    # 在 JSON=0 但日志=-10 的不一致)。
+    _inject_score_decomposition(top_results_serializable, fused_by_ticker)
     # NS-1: 注入推荐日收盘价 → tracking_history recommended_price 不再落到 0.0。
     top_results_serializable = _inject_recommended_prices(top_results_serializable, trade_date)
     consecutive_highlight = sum(1 for rec in top_results_serializable if rec.get("consecutive_days", 0) >= 3)
@@ -830,9 +852,13 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     # P0-3 信号衰减检测 — 对比当前与历史 score_b
     decay_summary = _attach_signal_decay(top_results_serializable, consecutive_report_dir, trade_date)
 
-    # P1-2 行业轮动信号 — 申万一级行业动量 + 强度排名
+    # P1-2 行业轮动信号 — 申万一级行业动量 + 强度排名。
+    # 用全市场快筛 fused (~300 只) 而非仅 Top-10: 行业轮动的本质是全市场
+    # 横截面动量比较, 只看 Top-10 会导致强势/弱势行业列表坍缩为同一批
+    # (10 只集中在 1-2 个行业, min_candidates=2 过滤后无分化)。
+    fused_serializable = [item.model_dump(mode="json") for item in fused]
     industry_signals = calculate_industry_rotation(
-        recommendations=top_results_serializable,
+        recommendations=fused_serializable,
         trade_date=trade_date,
     )
     industry_rotation_payload = [sig.to_dict() for sig in industry_signals]
@@ -924,7 +950,7 @@ def _rebuild_cli_objects(report_payload: dict):
     从 ``compute_auto_screening_results`` 返回的 JSON payload 反序列化为
     ``_print_table_block`` 所需的 ``FusedScore`` / ``MarketState`` /
     ``IndustrySignal`` / ``DecayInfo`` 映射，返回
-    ``(top_results, market_state, industry_signals, decay_map)``。
+    ``(top_results, market_state, industry_signals, decay_map, composite_by_ticker)``。
     """
     from src.screening.market_state import MarketState
     from src.screening.signal_decay_detector import DecayInfo
@@ -948,6 +974,15 @@ def _rebuild_cli_objects(report_payload: dict):
         for item in report_payload.get("industry_rotation", [])
     ]
 
+    # composite_score 是主排序键 (investability 排序), 但不在 FusedScore 模型上
+    # (它在 rec dict 上, 由 investability.py 注入)。构建 ticker→composite 映射
+    # 供表格的 Composite 列显示, 让排序自解释 (避免 score_b 非降序的困惑)。
+    composite_by_ticker: dict[str, float] = {}
+    for rec in report_payload["recommendations"]:
+        ticker = rec.get("ticker", "")
+        if ticker and rec.get("composite_score") is not None:
+            composite_by_ticker[ticker] = float(rec["composite_score"])
+
     decay_map: dict = {}
     for rec in report_payload["recommendations"]:
         decay_payload = rec.get("decay") or {}
@@ -959,7 +994,7 @@ def _rebuild_cli_objects(report_payload: dict):
                 # make the skip observable at debug level for diagnosis.
                 logger.debug("[AutoScreening] decay parse skipped for %s: %s", rec.get("ticker"), exc)
 
-    return top_results, market_state, industry_signals, decay_map
+    return top_results, market_state, industry_signals, decay_map, composite_by_ticker
 
 
 _AUTO_PIPELINE_LOCK_PATH = Path(__file__).resolve().parents[1] / "logs" / ".auto_pipeline.lock"
@@ -1116,8 +1151,8 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         # P6-1 + F5: data freshness check — 报告新鲜度之外独立检查底层数据源 (缓存/资金流/新闻)
         _attach_freshness_check(trade_date, report_payload)
 
-        # 重建 CLI 展示所需的强类型对象 (top_results / market_state / industry_signals / decay_map)
-        top_results, market_state, industry_signals, decay_map = _rebuild_cli_objects(report_payload)
+        # 重建 CLI 展示所需的强类型对象 (top_results / market_state / industry_signals / decay_map / composite_by_ticker)
+        top_results, market_state, industry_signals, decay_map, composite_by_ticker = _rebuild_cli_objects(report_payload)
 
         # Save full report — 报告已由 compute_auto_screening_results 写入,
         # 这里复用同一路径返回给 _print_auto_screening_table 用于 UI 提示。
@@ -1148,6 +1183,7 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
             report_path=report_path,
             decay_map=decay_map,
             industry_signals=industry_signals,
+            composite_by_ticker=composite_by_ticker,
         )
 
         return 0
@@ -1354,6 +1390,7 @@ def _print_table_block(
     report_path: Path,
     decay_map: dict,
     industry_signals: list,
+    composite_by_ticker: dict[str, float] | None = None,
 ) -> None:
     """P0-1 + O-1: 输出 batch fetcher 统计 + CLI 表格。"""
     fetcher_stats = report_payload.get("batch_data_fetcher", {})
@@ -1379,6 +1416,7 @@ def _print_table_block(
         consecutive_recommendations=report_payload["recommendations"],
         decay_map=decay_map,
         industry_signals=industry_signals,
+        composite_by_ticker=composite_by_ticker,
     )
 
 
@@ -1539,7 +1577,7 @@ def _print_top_score_enhancements(recs: list[dict], top_n: int, report_path) -> 
 
     consecutive_lookup = {r.get("ticker", ""): r for r in recs}
     top_results: list = []
-    for r in recs[:5]:
+    for r in recs[:top_n]:
         try:
             top_results.append(FusedScore.model_validate(r))
         except Exception as exc:
@@ -1767,11 +1805,16 @@ def _print_score_waterfall(
 ) -> None:
     """R20.5 P1-3 扩展: 因子级瀑布 (factor-level waterfall)。
 
-    在 _print_score_decomposition 之上, 显示每个推荐的完整调整项:
-      base (各策略) + attention + stability_bonus + consensus_bonus + other = score_b
+    显示每个推荐的 score_b 构成:
+      score_b = clamp(base 各策略贡献 + consensus_bonus, -1, +1)
+      other = score_b - (base + consensus)  [仅 clamp 截断时有非零残差]
+
+    ``att`` (attention_composite) 和 ``stab`` (stability_bonus) 是正交元数据,
+    **不参与 score_b 求和** (非加性上下文), 仅作展示。这修正了此前把它们当
+    加性分量导致 other 被迫用 -stab 抵消的伪分解。
 
     让用户精确理解"为什么 A 排在 B 前面"——不仅看 4 个策略贡献, 还能看
-    市场状态调整 / 连续推荐加成 / 共识加成等所有项。
+    共识加成等真实调整项 + 非加性的注意力/连续推荐上下文。
     """
     from colorama import Fore, Style
 
@@ -1798,26 +1841,27 @@ def _print_score_waterfall(
             color = Fore.GREEN if contrib > 0 else Fore.RED
             print(f"    {Fore.WHITE}{label:<6s}{Style.RESET_ALL} {color}{arrow}{contrib:+.4f}{Style.RESET_ALL}")
 
-        # Attention
+        # Attention — non-additive metadata (not part of score_b)
         if abs(decomp["attention_contribution"]) > 1e-6:
             color = Fore.GREEN if decomp["attention_contribution"] > 0 else Fore.RED
-            print(f"    {Fore.WHITE}att   {Style.RESET_ALL} {color}{decomp['attention_contribution']:+.4f}{Style.RESET_ALL}  (cross-sectional attention)")
+            print(f"    {Fore.WHITE}att   {Style.RESET_ALL} {color}{decomp['attention_contribution']:+.4f}{Style.RESET_ALL}  (non-additive: cross-sectional attention)")
 
-        # Stability bonus
+        # Stability bonus — non-additive metadata (not part of score_b)
         if abs(decomp["stability_bonus"]) > 1e-6:
             consec_days = int(consecutive_info.get("consecutive_days", 0) or 0)
-            print(f"    {Fore.WHITE}stab  {Style.RESET_ALL} {Fore.GREEN}+{decomp['stability_bonus']:.4f}{Style.RESET_ALL}  (consecutive={consec_days}d)")
+            print(f"    {Fore.WHITE}stab  {Style.RESET_ALL} {Fore.GREEN}+{decomp['stability_bonus']:.4f}{Style.RESET_ALL}  (non-additive: consecutive={consec_days}d)")
 
-        # Consensus bonus
+        # Consensus bonus — additive component of score_b (±0.05)
         if abs(decomp["consensus_bonus"]) > 1e-6:
             label = "★bull" if decomp["consensus_bonus"] > 0 else "★bear"
             color = Fore.GREEN if decomp["consensus_bonus"] > 0 else Fore.RED
             print(f"    {Fore.WHITE}{label:<6s}{Style.RESET_ALL} {color}{decomp['consensus_bonus']:+.4f}{Style.RESET_ALL}")
 
-        # Other adjustments (residual)
+        # Other adjustments — residual = score_b - (base_sum + consensus_bonus).
+        # Non-zero only when compute_score_b's [-1, +1] clamp truncates the raw score.
         if abs(decomp["other_adjustments"]) > 1e-6:
             color = Fore.YELLOW
-            print(f"    {Fore.WHITE}other {Style.RESET_ALL} {color}{decomp['other_adjustments']:+.4f}{Style.RESET_ALL}  (market-state + residual)")
+            print(f"    {Fore.WHITE}other {Style.RESET_ALL} {color}{decomp['other_adjustments']:+.4f}{Style.RESET_ALL}  (clamp residual)")
 
         # Total
         total = decomp["total"]
@@ -1831,7 +1875,7 @@ def _print_score_waterfall(
         print(f"    {Fore.WHITE}score_b{Style.RESET_ALL}  {total_color}{total:+.4f}{Style.RESET_ALL}\n")
 
     print(f"{Fore.WHITE}{'━' * 64}{Style.RESET_ALL}")
-    print(f"  {Fore.WHITE}所有调整项相加应近似 score_b (差距 = other 残差){Style.RESET_ALL}\n")
+    print(f"  {Fore.WHITE}score_b = base(T+MR+F+E) + consensus ± other(clamp残差); att/stab 为非加性上下文{Style.RESET_ALL}\n")
 
 
 def _print_cache_hit_summary(fetcher_stats: dict[str, int]) -> None:
@@ -1863,6 +1907,7 @@ def _build_auto_screening_table_row(
     item,
     consecutive_lookup: dict[str, dict],
     decay_map: dict | None,
+    composite_score: float | None = None,
 ) -> list[str]:
     """Build one row of the ``--auto`` screening table.
 
@@ -1888,6 +1933,19 @@ def _build_auto_screening_table_row(
     else:
         decision_colored = f"{Fore.RED}{decision}{Style.RESET_ALL}"
         score_colored = f"{Fore.RED}{score_b:+.4f}{Style.RESET_ALL}"
+
+    # Composite score (主排序键) — 用 score_b 同款色阶, 让排序自解释。
+    # composite_score 是 investability 排序的第一级键, 而 score_b 只是第 5 级
+    # tie-breaker; 不显示 composite 会让 score_b 非降序显得像 bug。
+    if composite_score is not None:
+        if composite_score >= SCORE_B_GREEN_FLOOR:
+            composite_colored = f"{Fore.GREEN}{composite_score:+.4f}{Style.RESET_ALL}"
+        elif composite_score >= SCORE_B_YELLOW_FLOOR:
+            composite_colored = f"{Fore.YELLOW}{composite_score:+.4f}{Style.RESET_ALL}"
+        else:
+            composite_colored = f"{Fore.RED}{composite_score:+.4f}{Style.RESET_ALL}"
+    else:
+        composite_colored = f"{Fore.WHITE}—{Style.RESET_ALL}"
 
     # Signal summary: direction + confidence per strategy
     signals = item.strategy_signals
@@ -1942,6 +2000,7 @@ def _build_auto_screening_table_row(
         ticker_label,
         item.industry_sw or "—",
         score_colored,
+        composite_colored,
         decision_colored,
         signal_summary,
         consecutive_str,
@@ -1961,6 +2020,7 @@ def _print_auto_screening_table(
     consecutive_recommendations: list[dict] | None = None,
     decay_map: dict | None = None,
     industry_signals: list[IndustrySignal] | None = None,
+    composite_by_ticker: dict[str, float] | None = None,
 ) -> None:
     """打印格式化的自动筛选推荐表格。
 
@@ -1969,6 +2029,8 @@ def _print_auto_screening_table(
             (每个 dict 包含 ``consecutive_days`` / ``stability_bonus`` 等字段)。
         decay_map: P0-3 信号衰减映射 ``{ticker: DecayInfo}``，用于显示 Decay 列。
         industry_signals: P1-2 行业轮动信号列表 (已按 momentum_score 降序)。
+        composite_by_ticker: ticker→composite_score 映射 (主排序键), 用于显示
+            Composite 列让排序自解释。FusedScore 模型无此字段, 故从 rec dict 透传。
     """
     from colorama import Fore, Style
     from tabulate import tabulate
@@ -1994,6 +2056,7 @@ def _print_auto_screening_table(
         return
 
     table_data = []
+    composite_by_ticker = composite_by_ticker or {}
     for idx, item in enumerate(top_results, 1):
         table_data.append(
             _build_auto_screening_table_row(
@@ -2001,6 +2064,7 @@ def _print_auto_screening_table(
                 item=item,
                 consecutive_lookup=consecutive_lookup,
                 decay_map=decay_map,
+                composite_score=composite_by_ticker.get(item.ticker),
             )
         )
 
@@ -2009,13 +2073,14 @@ def _print_auto_screening_table(
         "Ticker",
         "Industry",
         "Score B",
+        "Composite",
         "Decision",
         "Signals (T MR F E)",
         "Consecutive",
         "Decay",
         "Arbitration",
     ]
-    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center", "center", "left")))
+    print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "right", "center", "center", "center", "center", "left")))
 
     print(f"\n  详细报告已保存: {Fore.CYAN}{report_path}{Style.RESET_ALL}")
 

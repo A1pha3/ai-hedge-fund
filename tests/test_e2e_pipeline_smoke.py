@@ -614,7 +614,7 @@ def test_run_auto_screening_integrates_freshness_check(tmp_path, monkeypatch) ->
     monkeypatch.setattr(main_mod, "_refresh_daily_action_caches_for_auto", lambda *a, **kw: None)
     monkeypatch.setattr(main_mod, "_enrich_recommendations_with_history", lambda *a, **kw: None)
     monkeypatch.setattr(main_mod, "_handle_post_screening_tasks", lambda *a, **kw: None)
-    monkeypatch.setattr(main_mod, "_rebuild_cli_objects", lambda p: ([], None, [], {}))
+    monkeypatch.setattr(main_mod, "_rebuild_cli_objects", lambda p: ([], None, [], {}, {}))
     monkeypatch.setattr(main_mod, "_print_table_block", lambda *a, **kw: None)
     monkeypatch.setattr(main_mod, "_save_json_report", lambda *a, **kw: None)
     monkeypatch.setattr(main_mod, "compute_auto_screening_results", lambda *a, **kw: {"date": "20260709", "recommendations": [], "market_state": {}})

@@ -753,3 +753,55 @@ def test_to_dict_includes_history_fields(tmp_path):
     assert "history_bonus" in d
     assert d["history_presence_ratio"] == 1.0
     assert d["history_avg_score_b"] > 0.7  # 历史平均 score_b 应该很高
+
+
+# ============================================================================
+# Bug 2 regression: broad input differentiates strong vs weak industries
+# ============================================================================
+
+
+def test_broad_input_differentiates_strong_and_weak_industries():
+    """Bug 2 regression: when given a broad set of recs across many industries
+    (e.g. the full fused ~300 set), strong and weak industry lists must NOT
+    be identical.
+
+    Before the fix, calculate_industry_rotation was fed only the Top-10 (which
+    cluster in 1-2 industries). After min_candidates=2 filtering, only 2
+    industries survived, so top_strong(n=5) and bottom_weak(n=3) returned the
+    SAME industries. This test uses a broad multi-industry input to confirm
+    the strong/weak lists properly diverge.
+    """
+    # Build a broad set: 3 stocks each across 6 industries (18 total),
+    # with clearly differentiated momentum (electronics strong, real estate weak)
+    recs = []
+    # 电子: strong momentum
+    for i in range(3):
+        recs.append(_make_rec(f"30{1:05d}", "电子", 0.8, trend_dir=1, trend_conf=85, fund_dir=1, fund_conf=80))
+    # 计算机: moderately strong
+    for i in range(3):
+        recs.append(_make_rec(f"30{2:05d}", "计算机", 0.6, trend_dir=1, trend_conf=60, fund_dir=1, fund_conf=55))
+    # 医药生物: neutral
+    for i in range(3):
+        recs.append(_make_rec(f"30{3:05d}", "医药生物", 0.4, trend_dir=0, trend_conf=0, fund_dir=1, fund_conf=40))
+    # 银行: weak
+    for i in range(3):
+        recs.append(_make_rec(f"30{4:05d}", "银行", 0.2, trend_dir=-1, trend_conf=50, fund_dir=0, fund_conf=0))
+    # 房地产: weakest
+    for i in range(3):
+        recs.append(_make_rec(f"30{5:05d}", "房地产", 0.1, trend_dir=-1, trend_conf=70, fund_dir=-1, fund_conf=50))
+    # 机械设备: moderately weak
+    for i in range(3):
+        recs.append(_make_rec(f"30{6:05d}", "机械设备", 0.3, trend_dir=-1, trend_conf=30, fund_dir=0, fund_conf=0))
+
+    signals = calculate_industry_rotation(recs, trade_date="20260709")
+    strong = top_strong_industries(signals, n=3)
+    weak = bottom_weak_industries(signals, n=3)
+
+    strong_names = {s.industry_name for s in strong}
+    weak_names = {s.industry_name for s in weak}
+
+    # Strong and weak must be DIFFERENT (the core Bug 2 assertion)
+    assert strong_names != weak_names, f"strong==weak: {strong_names} — Bug 2 regression"
+    # Strongest should be 电子 (highest momentum), weakest should include 房地产
+    assert strong[0].industry_name == "电子"
+    assert weak[0].industry_name == "房地产"

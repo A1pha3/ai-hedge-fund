@@ -37,7 +37,7 @@ def test_inject_score_decomposition_success_injects_and_counts() -> None:
     import src.screening.signal_fusion as sf
 
     original = sf.compute_score_decomposition
-    sf.compute_score_decomposition = lambda item: {"total": 0.5 if item is fused_a else 0.4}
+    sf.compute_score_decomposition = lambda item, ci=None: {"total": 0.5 if item is fused_a else 0.4}
     try:
         count = _inject_score_decomposition(recs, fused_by_ticker)
     finally:
@@ -60,7 +60,7 @@ def test_inject_score_decomposition_failure_logs_warning_and_continues(caplog: p
 
     original = sf.compute_score_decomposition
 
-    def _flaky(item: object) -> dict:
+    def _flaky(item: object, ci: dict | None = None) -> dict:
         if item is fused_a:
             raise ValueError("boom (simulated signal_fusion refactor regression)")
         return {"total": 0.4}
@@ -92,7 +92,7 @@ def test_inject_score_decomposition_skips_rec_not_in_fused_map() -> None:
     import src.screening.signal_fusion as sf
 
     original = sf.compute_score_decomposition
-    sf.compute_score_decomposition = lambda item: {"total": 0.5}
+    sf.compute_score_decomposition = lambda item, ci=None: {"total": 0.5}
     try:
         count = _inject_score_decomposition(recs, fused_by_ticker)
     finally:

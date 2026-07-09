@@ -584,17 +584,20 @@ def compute_score_decomposition(fused: FusedScore, consecutive_info: dict | None
     Returns a dict with the following keys, all floats:
       - base_contributions: dict[str, float] — per-strategy (T/MR/F/E) weighted
         contribution: ``weight * direction * (confidence/100) * completeness``
-      - attention_contribution: float — attention_composite cross-sectional boost
-      - stability_bonus: float — consecutive-day bonus (from consecutive_info)
-      - consensus_bonus: float — bullish/bearish consensus bonus indicator
-      - other_adjustments: float — market-state scaled adjustments that the
-        base contributions don't capture (currently a residual approximation)
-      - total: float — sum of all components (should approximate score_b)
+      - attention_contribution: float — attention_composite cross-sectional
+        percentile (METADATA: non-additive context, NOT part of score_b)
+      - stability_bonus: float — consecutive-day bonus (METADATA: non-additive
+        context, NOT part of score_b; lives on the rec dict, 0-10 scale)
+      - consensus_bonus: float — bullish/bearish consensus bonus (additive, ±0.05)
+      - other_adjustments: float — residual = score_b - (base_sum + consensus_bonus).
+        Only non-zero when compute_score_b's [-1, +1] clamp truncates the raw score.
+      - total: float — the canonical score_b
 
-    The decomposition is *informative*, not authoritative: the final score_b is
-    the canonical value, and the components explain *roughly* where the value
-    came from. Use it for transparency ("why is A ranked above B"), not for
-    reconstruction.
+    score_b composition (authoritative, see compute_score_b lines 359-385):
+        score_b = clamp(base_sum + consensus_bonus, -1, +1)
+    ``attention_contribution`` and ``stability_bonus`` are reported for
+    transparency but are NOT added into score_b (they are orthogonal metadata),
+    so they are excluded from the components_sum that defines other_adjustments.
     """
     consecutive_info = consecutive_info or {}
     weights = fused.weights_used or {}
@@ -626,7 +629,14 @@ def compute_score_decomposition(fused: FusedScore, consecutive_info: dict | None
         consensus_bonus = 0.05 if float(fused.score_b) > 0 else -0.05 if float(fused.score_b) < 0 else 0.0
 
     base_sum = sum(base_contributions.values())
-    components_sum = base_sum + attention + stability_bonus + consensus_bonus
+    # Only base_sum + consensus_bonus are genuinely additive components of
+    # score_b (see compute_score_b). ``attention`` (attention_composite) and
+    # ``stability_bonus`` are orthogonal metadata — they are NEVER summed into
+    # score_b — so they must NOT be in components_sum, otherwise
+    # other_adjustments would carry a false offset (e.g. stability_bonus=10.0
+    # on a ±1 score would force other=-10.0 to "cancel" it). other_adjustments
+    # is now the true residual, non-zero only when the [-1,+1] clamp truncates.
+    components_sum = base_sum + consensus_bonus
     other_adjustments = float(fused.score_b) - components_sum
 
     return {

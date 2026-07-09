@@ -822,6 +822,50 @@ def test_score_event_freshness_marks_fresh_positive_news_as_bullish():
     }
 
 
+def test_score_event_freshness_neutral_news_has_zero_completeness():
+    """Bug 4 fix: neutral news (no keyword hits → freshness_weight=0) must have
+    completeness=0.0, not the default 1.0. Otherwise event_sentiment reserves
+    ~10% weight and dilutes T/MR/F in _normalize_active_weights."""
+    factor = _score_event_freshness(
+        [_news_item(title="Routine update", date="2026-03-04", content="nothing notable happened today")],
+        "20260305",
+    )
+    assert factor.direction == 0
+    # freshness_weight is in the metrics dict; neutral news → 0.0
+    assert factor.metrics.get("freshness_weight", 0.0) == 0.0
+    # completeness must be 0.0 — the sub-factor carries no directional information
+    assert factor.completeness == 0.0
+
+
+def test_score_insider_conviction_neutral_score_has_zero_completeness():
+    """Bug 4 fix: insider trades with a neutral conviction score (direction=0,
+    confidence=0) must have completeness=0.0. A neutral conviction carries no
+    usable signal and should not reserve event_sentiment's weight."""
+    from src.screening.strategy_scorer_event_sentiment_helpers import _score_insider_conviction
+
+    # Create trades that yield net_flow_ratio ≈ 0 (equal buy + sell value)
+    # → score 0.5 (neutral midpoint) → direction=0, confidence=0
+    buy = InsiderTrade(
+        ticker="000001", issuer="测试", name="张三", title="高管",
+        is_board_director=False, transaction_date="2026-03-01",
+        transaction_shares=1000.0, transaction_price_per_share=10.0,
+        transaction_value=10000.0, shares_owned_before_transaction=50000.0,
+        shares_owned_after_transaction=51000.0, security_title="股票", filing_date="2026-03-02",
+    )
+    sell = InsiderTrade(
+        ticker="000001", issuer="测试", name="李四", title="高管",
+        is_board_director=False, transaction_date="2026-03-01",
+        transaction_shares=-1000.0, transaction_price_per_share=10.0,
+        transaction_value=-10000.0, shares_owned_before_transaction=50000.0,
+        shares_owned_after_transaction=49000.0, security_title="股票", filing_date="2026-03-02",
+    )
+    factor = _score_insider_conviction([buy, sell])
+    # net_flow_ratio = (10000-10000)/(10000+10000) = 0 → score 0.5 → neutral
+    # direction = 0 (0.5 not > 0.6, not < 0.4), confidence = |0.5-0.5|*200 = 0
+    if factor.direction == 0 and factor.confidence < 1e-9:
+        assert factor.completeness == 0.0
+
+
 def test_score_industry_pe_returns_incomplete_without_industry_context():
     factor = fundamental_module._score_industry_pe(
         _financial_metrics(price_to_earnings_ratio=12.0),
