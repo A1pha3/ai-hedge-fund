@@ -44,6 +44,7 @@ def test_build_auto_screening_payload_includes_optional_feature_quality(monkeypa
 def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatch):
     saved: list[tuple[str, dict]] = []
     score_feature_stores: list[object] = []
+    events: list[tuple[str, object]] = []
     candidates = [SimpleNamespace(ticker="000001"), SimpleNamespace(ticker="000002")]
 
     class FakeBatchFetcher:
@@ -88,14 +89,27 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
     def fake_score_batch(scoring_candidates, scoring_date, *, feature_store):
         assert scoring_candidates == candidates
         assert scoring_date == "20260708"
+        events.append(("score", feature_store))
         score_feature_stores.append(feature_store)
         return {"000001": {}}
+
+    def fake_refresh_optional_features(scoring_date, tickers, *, timeout_seconds):
+        events.append(("refresh", list(tickers)))
+        assert scoring_date == "20260708"
+        assert list(tickers) == ["000001", "000002"]
+        assert timeout_seconds == 0.25
+        return {"status": "skipped"}
 
     monkeypatch.setattr(
         "src.screening.batch_data_fetcher.get_global_batch_data_fetcher",
         lambda: FakeBatchFetcher(),
     )
     monkeypatch.setattr("src.screening.optional_feature_store.OptionalFeatureStore", FakeOptionalFeatureStore)
+    monkeypatch.setattr(
+        "src.screening.optional_feature_refresh.refresh_optional_features",
+        fake_refresh_optional_features,
+    )
+    monkeypatch.setenv("AUTO_OPTIONAL_FEATURE_REFRESH_TIMEOUT_SECONDS", "0.25")
     monkeypatch.setattr(main_module, "_compute_model_version", lambda: "test-sha")
     monkeypatch.setattr(main_module, "build_candidate_pool", lambda trade_date: candidates)
     monkeypatch.setattr(main_module, "score_batch", fake_score_batch)
@@ -129,6 +143,8 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
             }
         }
     }
+    assert events[0] == ("refresh", ["000001", "000002"])
+    assert events[1][0] == "score"
     assert score_feature_stores == FakeOptionalFeatureStore.instances
     assert FakeOptionalFeatureStore.instances[0].quality_calls == [
         ("20260708", ["000001", "000002"])
