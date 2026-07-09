@@ -1,165 +1,254 @@
-# Auto Feature Store Zero Network I/O Design
+# Auto Scoring Feature Store Zero Network I/O Design
 
 **Date:** 2026-07-09
 **Status:** Ready for owner review
 
 ## Goal
 
-Make `uv run python src/main.py --auto` deterministic and operationally stable by removing live third-party network calls from the scoring hot path. The scoring stage should consume local feature snapshots, compute rankings, and write the report. Online data acquisition remains supported, but it runs in a bounded refresh layer with explicit quality reporting.
+Make `score_batch()` a deterministic, local-only scoring stage. All public data acquisition must happen before scoring in a bounded refresh layer that writes local Feature Store snapshots. Scoring only consumes those snapshots and local caches. It never calls AKShare, Tushare, Eastmoney, or any other public provider directly or indirectly.
 
-## Current Problems
-
-`--auto` Step 2 currently computes trend and short-trade features while reaching out to optional online providers:
-
-1. `get_intraday_bars()` calls AKShare's Eastmoney minute-bar endpoint on `push2his.eastmoney.com`.
-2. `_load_daily_flow_proxy_ratio()` calls `get_money_flow()`, which also depends on `push2his.eastmoney.com`.
-3. These optional calls are executed while scoring hundreds of candidates, so one flaky endpoint can be multiplied across the candidate pool.
-4. Runtime warnings are currently correct but too late: the main scoring path has already spent time waiting on a provider that is not required for the core ranking.
-
-Recent debugging confirmed two separate failure modes:
-
-- macOS system proxy settings can leak into `requests` unless `NO_PROXY=*` is set during proxy-disabled calls.
-- After proxy bypass, Eastmoney can still close direct connections before returning a response (`RemoteDisconnected`). That is an external endpoint condition, not a local code bug.
+The immediate production objective is to stop the `--auto` Step 2 failure mode where hundreds of concurrent scoring candidates can trigger flaky provider calls, proxy leakage, endpoint throttling, or remote disconnects.
 
 ## First Principles
 
-Daily scoring should obey four invariants:
+1. Scoring is computation, not acquisition. Given the same candidate pool, trade date, and feature snapshot, `score_batch()` should produce the same signals without depending on network state.
+2. Public providers are unreliable inputs. Their failures should affect data quality metadata and snapshot coverage, not the control flow of scoring.
+3. Missing data is a first-class state. If a snapshot family is absent, scoring degrades to empty or incomplete sub-factors instead of trying a live fallback.
+4. The hot path must be auditable. A test should be able to monkeypatch every provider function to raise and still run `score_batch()` successfully.
+5. Refresh and scoring need different failure semantics. Refresh can retry, time out, skip, and record failures. Scoring should be fast, bounded, and local.
 
-1. **Scoring is pure computation.** Given the same candidate pool, prices, fundamentals, and feature snapshot, it should produce the same ranking without depending on live provider state.
-2. **Online providers are data preparation, not decision logic.** Provider failures should change data-quality metadata, not the control flow of scoring.
-3. **Optional features are optional.** Missing minute-flow or fund-flow proxies should lower feature confidence, not block or stall the report.
-4. **Every run should disclose data quality.** Coverage, staleness, provider failures, and fallback sources must be visible in the report.
+## Current Network-Capable Scoring Inputs
 
-## Recommended Architecture
+The previous optional feature work removed direct score-time calls for intraday bars and daily fund-flow proxy reads, but `score_batch()` still has other network-capable paths:
 
-Introduce a local feature snapshot layer between online data acquisition and scoring.
+- Price history: `_load_price_frame()` calls `src.tools.api.get_prices()`, which may hit providers on cache miss.
+- Fundamental metrics: `score_fundamental_strategy()` calls `get_financial_metrics()`.
+- Event sentiment: `score_event_sentiment_strategy()` calls `get_company_news()` and `get_insider_trades()`.
+- Industry PE medians: `_build_industry_pe_medians()` calls `get_daily_basic_batch()`, `get_all_stock_basic()`, and `get_sw_industry_classification()`.
+- Dragon tiger bonus: `_build_dragon_tiger_bonus_map()` calls `get_lhb_detail()` and `get_lhb_institutional_stats()`.
+- Optional short-trade metrics: existing snapshot reads cover intraday and daily fund-flow metrics, but the refresh implementation is still a manifest-only stub.
 
-### Feature Refresh Layer
+The root cause is not one provider endpoint. The root cause is an unclear data boundary: scoring functions can still decide to fetch public data when local inputs are missing.
 
-The refresh layer is responsible for best-effort online acquisition and snapshot writing. It may call AKShare, Tushare, or future providers, but it has a strict time budget and endpoint-level health tracking.
+## Design Decision
 
-Initial feature families:
+Extend the existing optional feature snapshot idea into a full `ScoringFeatureStore`.
 
-- `intraday_short_trade_metrics`: per ticker and trade date, containing `flow_60`, `close_support_30`, `persist_120`, source labels, and freshness metadata.
-- `daily_fund_flow_metrics`: per ticker and trade date, containing main-flow ratio and any normalized fund-flow fields already used by scoring.
+The store is the only data dependency passed into `score_batch()`. It exposes local read methods for every scoring input family and hides where each local snapshot came from. Provider calls are only allowed in refresh code that writes store snapshots.
 
-Suggested storage:
+This is intentionally an adapter-first design. It does not require rewriting all factor math. Existing trend, mean-reversion, fundamental, and event scoring logic should be preserved, but their orchestrators must accept already-loaded local inputs.
 
-- `data/feature_cache/intraday_short_trade_metrics_YYYYMMDD.parquet`
-- `data/feature_cache/daily_fund_flow_metrics_YYYYMMDD.parquet`
-- `data/feature_cache/feature_manifest_YYYYMMDD.json`
+## Feature Families
 
-If parquet dependencies are not already available in the runtime, use CSV for the first implementation and keep the API abstract so storage format is not part of the scorer contract.
+The store should support these families:
 
-### Feature Store Read Layer
+1. `price_history`
+   - Consumer: trend and mean-reversion scoring.
+   - Initial source: existing `data/price_cache/{ticker}.csv`.
+   - Contract: return a normalized `DataFrame` ending at or before `trade_date`; never call `get_prices()`.
 
-Add a small read API used by scoring:
+2. `financial_metrics`
+   - Consumer: fundamental scoring.
+   - Initial source: local financial snapshots under `data/snapshots/{ticker}/{date}/financials.json` where available, plus future Feature Store CSV or JSONL snapshots.
+   - Contract: return `list[FinancialMetrics]`; empty list means incomplete fundamental signal.
 
-- `FeatureStore.load_intraday_metrics(trade_date, tickers) -> dict[ticker, metrics]`
-- `FeatureStore.load_fund_flow_metrics(trade_date, tickers) -> dict[ticker, metrics]`
-- `FeatureStore.load_manifest(trade_date) -> FeatureManifest`
+3. `event_inputs`
+   - Consumer: event sentiment scoring.
+   - Initial source: future Feature Store snapshots for company news and insider trades.
+   - Contract: return `(list[CompanyNews], list[InsiderTrade])`; empty lists mean incomplete event signal.
 
-This read layer must not perform network I/O. It only reads local files and returns missing-feature markers when a snapshot is absent or stale.
+4. `industry_pe_medians`
+   - Consumer: fundamental industry PE sub-factor.
+   - Initial source: precomputed snapshot written by refresh from daily basic, stock basic, and SW industry classification.
+   - Contract: return `dict[industry_name, median_pe]`; empty dict disables only the industry PE sub-factor.
 
-### Scoring Layer
+5. `dragon_tiger_bonus`
+   - Consumer: trend momentum enrichment.
+   - Initial source: existing `data/lhb_cache/YYYYMMDD.csv` if present, plus future refresh snapshots.
+   - Contract: return `dict[ticker, bonus]`; empty dict means no bonus.
 
-`src/screening/strategy_scorer.py` should stop calling `get_intraday_bars()` and `get_money_flow()` directly during `score_batch()`.
+6. `intraday_short_trade_metrics`
+   - Consumer: trend momentum enrichment.
+   - Initial source: existing `data/feature_cache/intraday_short_trade_metrics_YYYYMMDD.csv`.
+   - Contract: return per-ticker optional metrics.
 
-Instead:
+7. `daily_fund_flow_metrics`
+   - Consumer: fallback flow proxy for short-trade metrics.
+   - Initial source: existing `data/fund_flow_cache/{ticker}.csv` and `data/feature_cache/daily_fund_flow_metrics_YYYYMMDD.csv`.
+   - Contract: return normalized per-ticker flow metrics.
 
-- `_build_intraday_short_trade_metrics()` reads precomputed metrics from the feature store.
-- `_load_daily_flow_proxy_ratio()` reads precomputed fund-flow metrics from the feature store.
-- Missing metrics are treated exactly as optional missing sub-factors.
-- The trend signal records feature source and missing reason where possible.
+## Public Interfaces
 
-The existing online AKShare wrappers can remain for refresh and tooling, but not for scoring hot-path use.
+Add or evolve a local read object with methods shaped for scoring:
+
+```python
+class ScoringFeatureStore:
+    def load_price_frame(self, ticker: str, trade_date: str, lookback_days: int = 400) -> pd.DataFrame: ...
+    def load_financial_metrics(self, ticker: str, trade_date: str) -> list[FinancialMetrics]: ...
+    def load_event_inputs(self, ticker: str, trade_date: str) -> tuple[list[CompanyNews], list[InsiderTrade]]: ...
+    def load_industry_pe_medians(self, trade_date: str) -> dict[str, float]: ...
+    def load_dragon_tiger_bonus_map(self, tickers: list[str], trade_date: str) -> dict[str, float]: ...
+    def load_intraday_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, Any]]: ...
+    def load_fund_flow_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, Any]]: ...
+    def build_quality_summary(self, trade_date: str, tickers: list[str]) -> dict[str, Any]: ...
+```
+
+`OptionalFeatureStore` can either be renamed or wrapped by `ScoringFeatureStore`. The low-risk path is to add `ScoringFeatureStore` and keep `OptionalFeatureStore` as a compatibility alias or delegate for current tests.
+
+## Scoring Changes
+
+`score_batch(candidates, trade_date, feature_store=None)` should construct a default `ScoringFeatureStore` when no store is supplied.
+
+Required changes:
+
+- `_build_industry_pe_medians(trade_date)` becomes a store read.
+- `_compute_light_signals()` loads prices from the store.
+- `score_candidate()` loads prices, financial metrics, event inputs, and enrichment maps through the store.
+- Fundamental orchestration splits into:
+  - pure input scorer: score from `list[FinancialMetrics]`
+  - provider-backed wrapper retained outside the `score_batch()` path if still needed elsewhere
+- Event sentiment orchestration splits into:
+  - pure input scorer: score from `news_items` and `trades`
+  - provider-backed wrapper retained outside the `score_batch()` path if still needed elsewhere
+- `_build_dragon_tiger_bonus_map()` becomes a store read in score-time code.
+- Provider aliases in `strategy_scorer.py` should not be needed for scoring once tests move to provider-forbidden guards.
+
+The behavior of factor math should not change. Only data acquisition boundaries change.
+
+## Refresh Layer
+
+Add or evolve `refresh_scoring_features(trade_date, tickers, timeout_seconds=...)`.
+
+This is the only `--auto` boundary that may perform public network I/O after the candidate pool is built. It should:
+
+- write a manifest for every attempted refresh run;
+- materialize snapshots for all supported feature families when data is available;
+- reuse existing local caches where they already contain the needed data;
+- record provider failures, rows written, missing tickers, and source labels;
+- return quickly under a hard budget;
+- never make `score_batch()` depend on refresh success.
+
+Initial implementation can prioritize hard isolation over complete provider coverage:
+
+- Use existing `data/price_cache` for price history.
+- Use existing `data/fund_flow_cache` for fund-flow snapshots where possible.
+- Use existing `data/lhb_cache` for dragon tiger snapshots where possible.
+- Read existing `data/snapshots/{ticker}/{date}/financials.json` for financial metrics where possible.
+- Write manifest entries for event inputs and industry PE even when snapshots are missing or not yet refreshed.
+
+This preserves the key invariant immediately: score-time provider calls are forbidden.
 
 ## Data Flow
 
 1. `uv run python src/main.py --auto`
-2. Build candidate pool as today.
-3. Optional feature refresh runs with a hard budget, default 20 seconds.
-4. Refresh writes local snapshots and a manifest. If refresh fails or times out, it preserves the last usable snapshot only if it is within a configured staleness window.
-5. `score_batch()` receives or constructs a local `FeatureStore` for the selected `trade_date`.
-6. Scoring consumes only candidate data, cached price/fundamental data, and feature snapshots.
-7. The final `auto_screening_YYYYMMDD.json` includes `data_quality.optional_features`.
+2. Layer A builds or loads the candidate pool as today.
+3. `refresh_scoring_features(trade_date, candidate_tickers)` runs with a bounded budget.
+4. Refresh writes local snapshots and `feature_manifest_YYYYMMDD.json`.
+5. `score_batch(candidates, trade_date, feature_store=ScoringFeatureStore(...))` runs.
+6. Scoring reads only local files through the store.
+7. Missing families produce incomplete sub-factors and quality metadata.
+8. The auto report includes `data_quality.scoring_features`.
 
 ## Data Quality Contract
 
-The report should expose enough detail to distinguish "feature genuinely absent" from "provider failed":
+The report should disclose scoring feature coverage by family. Keep `optional_features` backward-compatible during migration, but add the broader `scoring_features` block.
+
+Example:
 
 ```json
 {
   "data_quality": {
-    "optional_features": {
-      "intraday_short_trade_metrics": {
-        "coverage": 0.84,
-        "source": "snapshot",
+    "scoring_features": {
+      "price_history": {
+        "coverage": 0.97,
+        "source": "local_price_cache",
         "trade_date": "20260708",
         "stale": false,
-        "provider_failures": 2,
-        "missing_tickers": 48
+        "missing_tickers": 9,
+        "provider_failures": 0
       },
-      "daily_fund_flow_metrics": {
-        "coverage": 0.91,
+      "financial_metrics": {
+        "coverage": 0.41,
         "source": "snapshot",
         "trade_date": "20260708",
         "stale": false,
-        "provider_failures": 0,
-        "missing_tickers": 27
+        "missing_tickers": 177,
+        "provider_failures": 0
+      },
+      "event_inputs": {
+        "coverage": 0.0,
+        "source": "missing",
+        "trade_date": "20260708",
+        "stale": false,
+        "missing_tickers": 300,
+        "provider_failures": 0
       }
     }
   }
 }
 ```
 
-Coverage should be computed against the candidate set actually submitted to scoring.
+Coverage should be computed against the candidate set actually submitted to scoring. Empty feature families must be visible rather than silently neutral.
 
 ## Error Handling
 
-- Feature refresh is best-effort and bounded. It must not prevent `--auto` from finishing.
-- Scoring must not initiate provider calls when snapshots are missing. Missing snapshots produce missing optional features and data-quality warnings.
-- Endpoint circuit breakers remain in the provider layer to protect refresh jobs.
-- Existing proxy isolation remains in the provider layer because refresh still needs online calls.
-- If a feature snapshot is stale beyond its configured window, scoring treats it as absent unless an explicit environment flag allows stale optional features.
+- Store reads catch malformed files, missing files, parse failures, and bad schema. They return empty data and mark quality degraded.
+- Stale snapshots are rejected by default unless explicitly allowed through store configuration.
+- Future-dated snapshots are never used as stale fallbacks.
+- Refresh failures never abort scoring.
+- Score-time missing data never triggers a provider fallback.
+- Provider proxy isolation and endpoint breakers remain in provider and refresh code only.
 
-## Rollout Plan
+## Tests
 
-Phase 1 should be narrow and low-risk:
+Add tests that prove the boundary:
 
-1. Add the feature store read API and manifest model.
-2. Teach `score_batch()` to accept optional preloaded feature maps or a feature store.
-3. Keep existing AKShare online code available, but put it behind the refresh path.
-4. Default scoring to local-only mode.
-5. Preserve current output when feature snapshots exist; degrade cleanly when they do not.
+- `score_batch()` completes when all known provider functions are monkeypatched to raise.
+- Price frame loading uses `ScoringFeatureStore.load_price_frame()` and does not call `get_prices()`.
+- Fundamental scoring in `score_batch()` uses local metrics and does not call `get_financial_metrics()`.
+- Event sentiment scoring in `score_batch()` uses local event inputs and does not call `get_company_news()` or `get_insider_trades()`.
+- Industry PE medians come from the store and do not call Tushare batch/basic/classification functions.
+- Dragon tiger enrichment comes from the store and does not call AKShare LHB functions.
+- Missing snapshots produce incomplete signals and quality metadata, not exceptions.
+- Stale snapshots are rejected by default and accepted only when explicitly configured.
+- `--auto` report includes `data_quality.scoring_features`.
 
-Phase 2 can move current refresh logic into an explicit `refresh_optional_features()` function called before scoring.
+Regression tests for the existing optional intraday/fund-flow snapshots should remain.
 
-Phase 3 can optimize provider coverage and add alternative sources, but only behind the refresh layer.
+## Rollout
 
-## Testing
+Phase 1: hard isolation.
 
-Add focused tests for:
+- Add `ScoringFeatureStore`.
+- Route every `score_batch()` data read through it.
+- Split provider-backed fundamental and event wrappers from pure input scorers.
+- Add provider-forbidden tests.
+- Preserve existing ranking math.
 
-- `score_batch()` does not call `get_intraday_bars()` or `get_money_flow()` when local feature store is enabled.
-- Missing intraday snapshot results in missing optional metrics, not network calls.
-- Missing fund-flow snapshot results in missing flow proxy, not retries or sleeps.
-- Feature manifest coverage is written into the auto report.
-- Stale snapshots are rejected by default.
-- Provider refresh failures increment manifest failure counters without aborting the auto run.
-- Existing AKShare proxy isolation and endpoint breaker tests remain in place for refresh/provider code.
+Phase 2: snapshot coverage.
+
+- Expand refresh to write or assemble price, financial, event, industry PE, dragon tiger, intraday, and fund-flow snapshots.
+- Normalize manifests and quality reporting.
+- Keep refresh best-effort and bounded.
+
+Phase 3: operational polish.
+
+- Add commands or flags to run refresh separately from scoring.
+- Add coverage thresholds for selected high-value feature families if needed.
+- Add provider-specific refresh diagnostics without touching score-time code.
 
 ## Non-Goals
 
-- No change to core factor weights in this design.
-- No new stock-selection setups.
-- No replacement of AKShare or Tushare as provider libraries.
-- No automatic recalibration of historical factor distributions.
-- No change to `--daily-action` setup logic in this design.
+- No change to factor weights.
+- No change to `--daily-action` setup logic.
+- No change to paper trading state.
+- No live provider fallback inside `score_batch()`.
+- No requirement to achieve full feature coverage before hard isolation is merged.
 
 ## Acceptance Criteria
 
-- A normal `--auto` scoring run can be executed with network disabled after required local snapshots already exist.
-- With missing optional snapshots, `--auto` still finishes and reports reduced feature coverage.
-- Step 2 no longer logs provider network warnings from `get_intraday_bars()` or `get_money_flow()`.
-- Optional feature coverage and provider failure counts are visible in the JSON report.
+- `score_batch()` has zero public network I/O by construction.
+- A provider-forbidden test guards all known score-time provider functions.
+- `uv run python src/main.py --auto` Step 2 no longer logs AKShare, Tushare, Eastmoney, or provider fetch messages from scoring.
+- Missing feature snapshots degrade strategy completeness and are reported in `data_quality.scoring_features`.
+- Existing optional feature quality output remains compatible during migration.
