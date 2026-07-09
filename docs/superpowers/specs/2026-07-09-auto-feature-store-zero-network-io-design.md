@@ -5,9 +5,17 @@
 
 ## Goal
 
-Make `score_batch()` a deterministic, local-only scoring stage. All public data acquisition must happen before scoring in a bounded refresh layer that writes local Feature Store snapshots. Scoring only consumes those snapshots and local caches. It never calls AKShare, Tushare, Eastmoney, or any other public provider directly or indirectly.
+Make `score_batch()` a deterministic, local-only scoring stage. All public data acquisition used by `score_batch()` must happen before scoring in a bounded refresh layer that writes local Feature Store snapshots. Scoring only consumes those snapshots and local caches. It never calls AKShare, Tushare, Eastmoney, or any other public provider directly or indirectly.
 
 The immediate production objective is to stop the `--auto` Step 2 failure mode where hundreds of concurrent scoring candidates can trigger flaky provider calls, proxy leakage, endpoint throttling, or remote disconnects.
+
+## Scope Boundary
+
+This design covers `score_batch()` and functions called by `score_batch()` while producing Layer B strategy signals.
+
+It does not claim that the entire `--auto` command is network-free. Other `--auto` stages still have independent provider-capable paths, including Layer A candidate-pool construction, market-state detection, recommended-price injection, and any post-score ranking or tracking helpers. Those paths should be migrated behind the same Feature Store principle in later work, but they are outside this spec's hard acceptance boundary.
+
+The acceptance boundary for this spec is therefore precise: during Step 2, the strategy-scoring call graph must be able to run with all known public provider functions patched to raise.
 
 ## First Principles
 
@@ -54,7 +62,7 @@ The store should support these families:
 
 3. `event_inputs`
    - Consumer: event sentiment scoring.
-   - Initial source: future Feature Store snapshots for company news and insider trades.
+   - Initial source: existing `data/snapshots/{ticker}/{date}/company_news.json` files where available, any local insider-trade snapshots where available, plus future Feature Store snapshots for company news and insider trades.
    - Contract: return `(list[CompanyNews], list[InsiderTrade])`; empty lists mean incomplete event signal.
 
 4. `industry_pe_medians`
@@ -95,6 +103,28 @@ class ScoringFeatureStore:
 
 `OptionalFeatureStore` can either be renamed or wrapped by `ScoringFeatureStore`. The low-risk path is to add `ScoringFeatureStore` and keep `OptionalFeatureStore` as a compatibility alias or delegate for current tests.
 
+## Snapshot Resolution Contract
+
+Local snapshot resolution must be deterministic and date-safe:
+
+- Accept both `YYYYMMDD` and `YYYY-MM-DD` date directories when reading legacy `data/snapshots/{ticker}/{date}/...` files.
+- Prefer exact `trade_date` matches.
+- If stale reads are explicitly enabled, use only the latest snapshot date less than or equal to `trade_date` and within `max_stale_days`.
+- Never use a future-dated snapshot as a fallback.
+- Parse financial, news, and insider JSON through the existing Pydantic models (`FinancialMetrics`, `CompanyNews`, `InsiderTrade`) so schema drift degrades to empty inputs instead of partially trusted dicts.
+- Treat malformed files, unknown schemas, and unsupported encodings as missing data and surface them in quality metadata.
+
+Price history snapshots must normalize to the DataFrame shape already expected by trend and mean-reversion scoring:
+
+- required columns: `open`, `close`, `high`, `low`, `volume`;
+- date index or date column sorted ascending;
+- rows ending at or before `trade_date`;
+- no provider fallback when the file is missing or too short.
+
+Short local history is not an error. For example, the current `data/price_cache` has about six months of rows for many tickers, while long-trend alignment needs roughly 200 rows. The store should return the available rows and let existing factor completeness degrade naturally. Quality metadata should include `rows_loaded`, `latest_date`, and relevant `min_required_rows` when a family has known row requirements.
+
+Dragon tiger cache conversion must be explicit. Existing `data/lhb_cache/YYYYMMDD.csv` files use fields such as `ts_code` and `net_buy`, while the old score-time AKShare path used `代码` and `机构买入净额`. The first local converter should preserve only the reliable existing behavior: ticker presence in the LHB detail cache maps to `dragon_tiger_bonus=1.0`. It should not infer institutional net-buy bonus from brokerage rows unless a dedicated institutional snapshot with a reliable net-buy field exists.
+
 ## Scoring Changes
 
 `score_batch(candidates, trade_date, feature_store=None)` should construct a default `ScoringFeatureStore` when no store is supplied.
@@ -119,7 +149,7 @@ The behavior of factor math should not change. Only data acquisition boundaries 
 
 Add or evolve `refresh_scoring_features(trade_date, tickers, timeout_seconds=...)`.
 
-This is the only `--auto` boundary that may perform public network I/O after the candidate pool is built. It should:
+This is the only boundary in this spec that may perform public network I/O after the candidate pool is built. It should:
 
 - write a manifest for every attempted refresh run;
 - materialize snapshots for all supported feature families when data is available;
@@ -153,6 +183,15 @@ This preserves the key invariant immediately: score-time provider calls are forb
 
 The report should disclose scoring feature coverage by family. Keep `optional_features` backward-compatible during migration, but add the broader `scoring_features` block.
 
+Coverage must distinguish the full candidate set from the subset actually requested by a feature family. Some families are loaded for all candidates (`price_history` for the technical stage, depending on ranking limits), while others are only loaded for heavy-score or intraday subsets. Each family should report:
+
+- `candidate_count`: total candidates submitted to `score_batch()`;
+- `eligible_count`: candidates eligible for that feature family;
+- `requested_count`: tickers actually requested from the store;
+- `loaded_count`: tickers with usable local inputs;
+- `coverage`: `loaded_count / requested_count` when `requested_count > 0`, otherwise `0.0`;
+- `missing_tickers`: `requested_count - loaded_count`.
+
 Example:
 
 ```json
@@ -164,15 +203,25 @@ Example:
         "source": "local_price_cache",
         "trade_date": "20260708",
         "stale": false,
+        "candidate_count": 300,
+        "eligible_count": 225,
+        "requested_count": 225,
+        "loaded_count": 216,
         "missing_tickers": 9,
-        "provider_failures": 0
+        "provider_failures": 0,
+        "rows_loaded_min": 117,
+        "min_required_rows": 200
       },
       "financial_metrics": {
         "coverage": 0.41,
         "source": "snapshot",
         "trade_date": "20260708",
         "stale": false,
-        "missing_tickers": 177,
+        "candidate_count": 300,
+        "eligible_count": 141,
+        "requested_count": 141,
+        "loaded_count": 58,
+        "missing_tickers": 83,
         "provider_failures": 0
       },
       "event_inputs": {
@@ -180,7 +229,11 @@ Example:
         "source": "missing",
         "trade_date": "20260708",
         "stale": false,
-        "missing_tickers": 300,
+        "candidate_count": 300,
+        "eligible_count": 60,
+        "requested_count": 60,
+        "loaded_count": 0,
+        "missing_tickers": 60,
         "provider_failures": 0
       }
     }
@@ -188,7 +241,7 @@ Example:
 }
 ```
 
-Coverage should be computed against the candidate set actually submitted to scoring. Empty feature families must be visible rather than silently neutral.
+Empty feature families must be visible rather than silently neutral.
 
 ## Error Handling
 
@@ -204,11 +257,12 @@ Coverage should be computed against the candidate set actually submitted to scor
 Add tests that prove the boundary:
 
 - `score_batch()` completes when all known provider functions are monkeypatched to raise.
-- Price frame loading uses `ScoringFeatureStore.load_price_frame()` and does not call `get_prices()`.
-- Fundamental scoring in `score_batch()` uses local metrics and does not call `get_financial_metrics()`.
-- Event sentiment scoring in `score_batch()` uses local event inputs and does not call `get_company_news()` or `get_insider_trades()`.
-- Industry PE medians come from the store and do not call Tushare batch/basic/classification functions.
-- Dragon tiger enrichment comes from the store and does not call AKShare LHB functions.
+- Price frame loading uses `ScoringFeatureStore.load_price_frame()` and does not call the score-time import site `src.screening.strategy_scorer_event_sentiment_helpers.get_prices`.
+- Fundamental scoring in `score_batch()` uses local metrics and does not call `src.screening.strategy_scorer_fundamental.get_financial_metrics`.
+- Event sentiment scoring in `score_batch()` uses local event inputs and does not call `src.screening.strategy_scorer_event_sentiment_helpers.get_company_news` or `src.screening.strategy_scorer_event_sentiment_helpers.get_insider_trades`.
+- Industry PE medians come from the store and do not call `src.screening.strategy_scorer.get_daily_basic_batch`, `src.screening.strategy_scorer.get_all_stock_basic`, or `src.screening.strategy_scorer.get_sw_industry_classification`.
+- Dragon tiger enrichment comes from the store and does not call `src.screening.strategy_scorer.get_lhb_detail` or `src.screening.strategy_scorer.get_lhb_institutional_stats`.
+- Existing optional provider aliases in `src.screening.strategy_scorer` (`get_intraday_bars`, `get_intraday_ticks`, `get_money_flow`) are either removed from score-time code or patched to raise in the provider-forbidden test.
 - Missing snapshots produce incomplete signals and quality metadata, not exceptions.
 - Stale snapshots are rejected by default and accepted only when explicitly configured.
 - `--auto` report includes `data_quality.scoring_features`.
@@ -249,6 +303,6 @@ Phase 3: operational polish.
 
 - `score_batch()` has zero public network I/O by construction.
 - A provider-forbidden test guards all known score-time provider functions.
-- `uv run python src/main.py --auto` Step 2 no longer logs AKShare, Tushare, Eastmoney, or provider fetch messages from scoring.
+- `uv run python src/main.py --auto` Step 2 no longer logs AKShare, Tushare, Eastmoney, or provider fetch messages from scoring. Provider logs from other `--auto` stages are outside this spec unless they occur inside the Step 2 scoring call graph.
 - Missing feature snapshots degrade strategy completeness and are reported in `data_quality.scoring_features`.
 - Existing optional feature quality output remains compatible during migration.
