@@ -65,6 +65,7 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
             self.instances.append(self)
 
         def build_quality_summary(self, trade_date: str, tickers: list[str]) -> dict:
+            events.append(("quality", self))
             self.quality_calls.append((trade_date, tickers))
             return {
                 "scoring_features": {
@@ -165,6 +166,7 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
     }
     assert events[0] == ("refresh", ["000001", "000002"])
     assert events[1][0] == "score"
+    assert events[2][0] == "quality"
     assert score_feature_stores == FakeScoringFeatureStore.instances
     assert FakeScoringFeatureStore.instances[0].quality_calls == [
         ("20260708", ["000001", "000002"])
@@ -173,7 +175,7 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
     assert payload["data_quality"] == expected_quality
 
 
-def test_compute_auto_screening_results_falls_back_to_legacy_scoring_when_refresh_not_ready(monkeypatch):
+def test_compute_auto_screening_results_uses_store_even_when_refresh_not_ready(monkeypatch):
     saved: list[tuple[str, dict]] = []
     events: list[tuple[str, object]] = []
     candidates = [SimpleNamespace(ticker="000001"), SimpleNamespace(ticker="000002")]
@@ -195,10 +197,37 @@ def test_compute_auto_screening_results_falls_back_to_legacy_scoring_when_refres
         def model_dump(self, mode=None):
             return {"ticker": self.ticker, "name": "Fake", "score_b": self.score_b}
 
+    class FakeScoringFeatureStore:
+        instances: list["FakeScoringFeatureStore"] = []
+
+        def __init__(self):
+            self.scored = False
+            self.quality_calls: list[tuple[str, list[str]]] = []
+            self.instances.append(self)
+
+        def build_quality_summary(self, trade_date: str, tickers: list[str]) -> dict:
+            assert self.scored
+            events.append(("quality", self))
+            self.quality_calls.append((trade_date, tickers))
+            return {
+                "scoring_features": {
+                    "price_history": {
+                        "coverage": 0.5,
+                        "source": "local_price_cache",
+                        "trade_date": trade_date,
+                        "stale": False,
+                        "provider_failures": 0,
+                        "missing_tickers": 1,
+                    }
+                },
+                "optional_features": {},
+            }
+
     def fake_score_batch(scoring_candidates, scoring_date, *, feature_store):
         assert scoring_candidates == candidates
         assert scoring_date == "20260708"
-        assert feature_store is None
+        assert isinstance(feature_store, FakeScoringFeatureStore)
+        feature_store.scored = True
         events.append(("score", feature_store))
         return {"000001": {}}
 
@@ -213,10 +242,7 @@ def test_compute_auto_screening_results_falls_back_to_legacy_scoring_when_refres
         "src.screening.batch_data_fetcher.get_global_batch_data_fetcher",
         lambda: FakeBatchFetcher(),
     )
-    monkeypatch.setattr(
-        "src.screening.scoring_feature_store.ScoringFeatureStore",
-        lambda: (_ for _ in ()).throw(AssertionError("feature store should stay disabled")),
-    )
+    monkeypatch.setattr("src.screening.scoring_feature_store.ScoringFeatureStore", FakeScoringFeatureStore)
     monkeypatch.setattr(
         "src.screening.scoring_feature_refresh.refresh_scoring_features",
         fake_refresh_scoring_features,
@@ -244,6 +270,10 @@ def test_compute_auto_screening_results_falls_back_to_legacy_scoring_when_refres
     payload = main_module.compute_auto_screening_results("20260708", top_n=1)
 
     assert events[0] == ("refresh", ["000001", "000002"])
-    assert events[1] == ("score", None)
-    assert saved[0][1]["data_quality"] == {"optional_features": {}}
-    assert payload["data_quality"] == {"optional_features": {}}
+    assert events[1][0] == "score"
+    assert events[2][0] == "quality"
+    assert FakeScoringFeatureStore.instances[0].quality_calls == [
+        ("20260708", ["000001", "000002"])
+    ]
+    assert saved[0][1]["data_quality"]["scoring_features"]["price_history"]["coverage"] == 0.5
+    assert payload["data_quality"]["scoring_features"]["price_history"]["missing_tickers"] == 1

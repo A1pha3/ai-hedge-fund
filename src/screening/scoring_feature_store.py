@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 import pandas as pd
@@ -35,8 +36,14 @@ def _ticker6(ticker: str) -> str:
     return str(ticker).split(".")[0].zfill(6)
 
 
-def _parse_trade_date(value: str) -> datetime | None:
-    raw = str(value)
+def _parse_trade_date(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return datetime(value.year, value.month, value.day)
+    if isinstance(value, date):
+        return datetime.combine(value, datetime.min.time())
+    raw = str(value).strip()
+    if raw.endswith(".0") and raw[:-2].isdigit():
+        raw = raw[:-2]
     for fmt in ("%Y%m%d", "%Y-%m-%d"):
         try:
             return datetime.strptime(raw[:10], fmt)
@@ -45,14 +52,34 @@ def _parse_trade_date(value: str) -> datetime | None:
     return None
 
 
-def _compact_date(value: str) -> str:
+def _compact_date(value: Any) -> str:
     parsed = _parse_trade_date(value)
     return parsed.strftime("%Y%m%d") if parsed else str(value)
 
 
-def _dashed_date(value: str) -> str:
+def _dashed_date(value: Any) -> str:
     parsed = _parse_trade_date(value)
     return parsed.strftime("%Y-%m-%d") if parsed else str(value)
+
+
+def _is_on_or_before_trade_date(value: Any, trade_date: str) -> bool:
+    item_dt = _parse_trade_date(value)
+    trade_dt = _parse_trade_date(trade_date)
+    return item_dt is not None and trade_dt is not None and item_dt <= trade_dt
+
+
+def _row_matches_trade_date(value: Any, trade_date: str) -> bool:
+    return _compact_date(value) == _compact_date(trade_date)
+
+
+def _percent_to_ratio(value: Any) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(numeric):
+        return None
+    return round(numeric / 100.0, 4)
 
 
 @dataclass
@@ -63,18 +90,27 @@ class _QualityTracker:
     malformed: dict[str, int] = field(default_factory=dict)
     rows_loaded: dict[str, list[int]] = field(default_factory=dict)
     sources: dict[str, str] = field(default_factory=dict)
+    lock: Any = field(default_factory=RLock, repr=False)
+
+    def set_candidate_count(self, count: int) -> None:
+        with self.lock:
+            self.candidate_count = int(count)
 
     def note_requested(self, family: str, tickers: list[str]) -> None:
-        self.requested.setdefault(family, set()).update(_ticker6(ticker) for ticker in tickers)
+        with self.lock:
+            self.requested.setdefault(family, set()).update(_ticker6(ticker) for ticker in tickers)
 
     def note_loaded(self, family: str, ticker: str, *, rows: int | None = None, source: str = "snapshot") -> None:
-        self.loaded.setdefault(family, set()).add(_ticker6(ticker))
-        self.sources[family] = source
-        if rows is not None:
-            self.rows_loaded.setdefault(family, []).append(int(rows))
+        with self.lock:
+            self.loaded.setdefault(family, set()).add(_ticker6(ticker))
+            current_source = self.sources.get(family)
+            self.sources[family] = source if current_source in {None, source} else "mixed"
+            if rows is not None:
+                self.rows_loaded.setdefault(family, []).append(int(rows))
 
     def note_malformed(self, family: str) -> None:
-        self.malformed[family] = self.malformed.get(family, 0) + 1
+        with self.lock:
+            self.malformed[family] = self.malformed.get(family, 0) + 1
 
 
 @dataclass
@@ -83,6 +119,7 @@ class ScoringFeatureStore:
     price_cache_dir: Path | str = Path("data/price_cache")
     legacy_snapshot_dir: Path | str = Path("data/snapshots")
     lhb_cache_dir: Path | str = Path("data/lhb_cache")
+    fund_flow_cache_dir: Path | str = Path("data/fund_flow_cache")
     max_stale_days: int = 0
     allow_stale: bool = False
 
@@ -91,6 +128,7 @@ class ScoringFeatureStore:
         self.price_cache_dir = Path(self.price_cache_dir)
         self.legacy_snapshot_dir = Path(self.legacy_snapshot_dir)
         self.lhb_cache_dir = Path(self.lhb_cache_dir)
+        self.fund_flow_cache_dir = Path(self.fund_flow_cache_dir)
         self._optional_store = OptionalFeatureStore(
             base_dir=self.base_dir,
             max_stale_days=self.max_stale_days,
@@ -190,6 +228,8 @@ class ScoringFeatureStore:
         except (OSError, UnicodeDecodeError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError):
             self._quality.note_malformed("dragon_tiger_bonus")
             return {}
+        if "trade_date" in frame.columns:
+            frame = frame[frame["trade_date"].apply(lambda value: _row_matches_trade_date(value, trade_date))]
         code_column = "ts_code" if "ts_code" in frame.columns else "代码" if "代码" in frame.columns else ""
         if not code_column:
             self._quality.note_malformed("dragon_tiger_bonus")
@@ -212,15 +252,21 @@ class ScoringFeatureStore:
         rows = self._optional_store.load_fund_flow_metrics(trade_date, tickers)
         for ticker in rows:
             self._quality.note_loaded("daily_fund_flow_metrics", ticker, source="snapshot")
+        missing = sorted({_ticker6(ticker) for ticker in tickers} - set(rows))
+        legacy_rows = self._load_legacy_fund_flow_metrics(trade_date, missing)
+        for ticker in legacy_rows:
+            self._quality.note_loaded("daily_fund_flow_metrics", ticker, source="fund_flow_cache")
+        rows.update(legacy_rows)
         return rows
 
     def build_quality_summary(self, trade_date: str, tickers: list[str], requested: dict[str, set[str]] | None = None) -> dict[str, Any]:
-        self._quality.candidate_count = len({_ticker6(ticker) for ticker in tickers})
+        self._quality.set_candidate_count(len({_ticker6(ticker) for ticker in tickers}))
         if requested:
             for family, family_tickers in requested.items():
                 self._quality.note_requested(family, list(family_tickers))
+        manifest = self._load_manifest(trade_date)
         scoring_features = {
-            family: self._quality_for_family(family, trade_date)
+            family: self._quality_for_family(family, trade_date, manifest)
             for family in _FEATURE_FAMILIES
         }
         # Backward-compatible optional_features block: derive it from the same
@@ -281,10 +327,11 @@ class ScoringFeatureStore:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             rows = payload if isinstance(payload, list) else payload.get("news", []) if isinstance(payload, dict) else []
-            return [CompanyNews.model_validate(row) for row in rows if isinstance(row, dict)]
+            news = [CompanyNews.model_validate(row) for row in rows if isinstance(row, dict)]
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValidationError, TypeError):
             self._quality.note_malformed("event_inputs")
             return []
+        return [item for item in news if _is_on_or_before_trade_date(item.date, trade_date)]
 
     def _load_insider_trades(self, ticker: str, trade_date: str) -> list[InsiderTrade]:
         path = self._resolve_legacy_snapshot_path(ticker, trade_date, "insider_trades.json")
@@ -293,10 +340,43 @@ class ScoringFeatureStore:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             rows = payload if isinstance(payload, list) else payload.get("insider_trades", []) if isinstance(payload, dict) else []
-            return [InsiderTrade.model_validate(row) for row in rows if isinstance(row, dict)]
+            trades = [InsiderTrade.model_validate(row) for row in rows if isinstance(row, dict)]
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValidationError, TypeError):
             self._quality.note_malformed("event_inputs")
             return []
+        return [item for item in trades if self._insider_trade_is_not_future_dated(item, trade_date)]
+
+    def _insider_trade_is_not_future_dated(self, trade: InsiderTrade, trade_date: str) -> bool:
+        dated_fields = [trade.filing_date]
+        if trade.transaction_date:
+            dated_fields.append(trade.transaction_date)
+        return all(_is_on_or_before_trade_date(value, trade_date) for value in dated_fields)
+
+    def _load_legacy_fund_flow_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for ticker in tickers:
+            ticker6 = _ticker6(ticker)
+            path = self.fund_flow_cache_dir / f"{ticker6}.csv"
+            if not path.exists():
+                continue
+            try:
+                frame = pd.read_csv(path, dtype={"date": str, "ticker": str})
+            except (OSError, UnicodeDecodeError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError):
+                self._quality.note_malformed("daily_fund_flow_metrics")
+                continue
+            if frame.empty or "date" not in frame.columns or "main_net_pct" not in frame.columns:
+                continue
+            matched = frame[frame["date"].apply(lambda value: _row_matches_trade_date(value, trade_date))]
+            if matched.empty:
+                continue
+            ratio = _percent_to_ratio(matched.iloc[-1]["main_net_pct"])
+            if ratio is None:
+                continue
+            result[ticker6] = {
+                "main_flow_ratio": ratio,
+                "main_flow_ratio_source": "fund_flow_cache",
+            }
+        return result
 
     def _load_industry_pe_json(self, path: Path) -> dict[str, float]:
         try:
@@ -335,24 +415,35 @@ class ScoringFeatureStore:
                 result[industry] = numeric
         return result
 
-    def _quality_for_family(self, family: str, trade_date: str) -> dict[str, Any]:
-        requested = self._quality.requested.get(family, set())
-        loaded = self._quality.loaded.get(family, set())
-        rows = self._quality.rows_loaded.get(family, [])
-        source = self._quality.sources.get(family, "snapshot" if loaded else "missing")
+    def _load_manifest(self, trade_date: str) -> dict[str, Any]:
+        return self._optional_store.load_manifest(_compact_date(trade_date))
+
+    def _quality_for_family(self, family: str, trade_date: str, manifest: dict[str, Any]) -> dict[str, Any]:
+        with self._quality.lock:
+            requested = set(self._quality.requested.get(family, set()))
+            loaded = set(self._quality.loaded.get(family, set()))
+            rows = list(self._quality.rows_loaded.get(family, []))
+            live_source = self._quality.sources.get(family)
+            candidate_count = int(self._quality.candidate_count)
+            malformed_files = int(self._quality.malformed.get(family, 0))
+        feature_manifest = (manifest.get("features") or {}).get(family, {})
+        provider_failures = int(feature_manifest.get("provider_failures", 0) or 0)
+        source = live_source or str(feature_manifest.get("source") or ("snapshot" if loaded else "missing"))
         quality: dict[str, Any] = {
             "coverage": round(len(loaded) / len(requested), 4) if requested else 0.0,
             "source": source,
             "trade_date": _compact_date(trade_date),
             "stale": False,
-            "candidate_count": int(self._quality.candidate_count),
+            "candidate_count": candidate_count,
             "eligible_count": len(requested),
             "requested_count": len(requested),
             "loaded_count": len(loaded),
             "missing_tickers": max(len(requested) - len(loaded), 0),
-            "provider_failures": 0,
-            "malformed_files": int(self._quality.malformed.get(family, 0)),
+            "provider_failures": provider_failures,
+            "malformed_files": malformed_files,
         }
+        if "rows_written" in feature_manifest:
+            quality["rows_written"] = int(feature_manifest.get("rows_written", 0) or 0)
         if rows:
             quality["rows_loaded_min"] = min(rows)
         if family == "price_history":

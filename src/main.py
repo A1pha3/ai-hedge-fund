@@ -92,7 +92,6 @@ logger = get_logger(__name__)
 # 同一阈值在多处使用, 集中定义避免分叉; 修改时仅需调整此处。
 SCORE_B_GREEN_FLOOR = 0.35  # >= 此值 → 绿色 (看多) / high_pool 候选
 SCORE_B_YELLOW_FLOOR = 0.0  # >= 此值 (但 < 绿色) → 黄色 (中性); 低于此值 → 红色 (看空)
-_SCORING_FEATURE_STORE_READY_STATUSES = frozenset({"ready", "ok", "success", "completed"})
 
 
 def _compute_model_version() -> str:
@@ -537,13 +536,6 @@ def _build_auto_screening_payload(
     }
 
 
-def _refresh_summary_activates_scoring_feature_store(refresh_summary: dict | None) -> bool:
-    if not isinstance(refresh_summary, dict):
-        return False
-    status = str(refresh_summary.get("status", "")).strip().lower()
-    return status in _SCORING_FEATURE_STORE_READY_STATUSES
-
-
 def _inject_recommended_prices(
     recommendations: list[dict],
     trade_date: str,
@@ -759,20 +751,12 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
         candidate_tickers,
         timeout_seconds=float(os.environ.get("AUTO_OPTIONAL_FEATURE_REFRESH_TIMEOUT_SECONDS", "20")),
     )
-    scoring_feature_store = None
     optional_feature_quality = None
-    if _refresh_summary_activates_scoring_feature_store(refresh_summary):
-        scoring_feature_store = ScoringFeatureStore()
-        # Backward-compatible payload key: this summary now contains both
-        # data_quality.scoring_features and data_quality.optional_features.
-        optional_feature_quality = scoring_feature_store.build_quality_summary(
-            trade_date,
-            candidate_tickers,
-        )
-    else:
+    scoring_feature_store = ScoringFeatureStore()
+    if isinstance(refresh_summary, dict):
         logger.info(
-            "[Auto] Scoring feature store inactive; refresh status=%s",
-            refresh_summary.get("status", "unknown") if isinstance(refresh_summary, dict) else "unknown",
+            "[Auto] Scoring feature refresh status=%s; score_batch will consume local snapshots",
+            refresh_summary.get("status", "unknown"),
         )
 
     # Step 2: 四策略评分
@@ -780,6 +764,12 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     logger.info("[Auto] Step 2/4: 四策略评分 — %d 只候选", len(candidates))
 
     scored = score_batch(candidates, trade_date, feature_store=scoring_feature_store)
+    # Backward-compatible payload key: this summary now contains both
+    # data_quality.scoring_features and data_quality.optional_features.
+    optional_feature_quality = scoring_feature_store.build_quality_summary(
+        trade_date,
+        candidate_tickers,
+    )
 
     # Step 3: 信号融合
     progress.update_status("auto_screening", None, "Step 3/4: 信号融合 + 冲突仲裁")

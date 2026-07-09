@@ -139,6 +139,87 @@ def test_load_event_inputs_reads_existing_company_news_snapshot(tmp_path: Path) 
     assert trades == []
 
 
+def test_load_event_inputs_rejects_future_dated_rows(tmp_path: Path) -> None:
+    snapshot_dir = tmp_path / "snapshots"
+    event_dir = snapshot_dir / "603259" / "20260708"
+    event_dir.mkdir(parents=True)
+    (event_dir / "company_news.json").write_text(
+        json.dumps(
+            [
+                {
+                    "ticker": "603259",
+                    "title": "usable same-day news",
+                    "author": "source",
+                    "source": "source",
+                    "date": "2026-07-08 09:30:00",
+                    "url": "https://example.test/same-day",
+                    "sentiment": "positive",
+                    "content": "usable",
+                },
+                {
+                    "ticker": "603259",
+                    "title": "future news",
+                    "author": "source",
+                    "source": "source",
+                    "date": "2026-07-09 09:30:00",
+                    "url": "https://example.test/future",
+                    "sentiment": "positive",
+                    "content": "future",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    (event_dir / "insider_trades.json").write_text(
+        json.dumps(
+            [
+                {
+                    "ticker": "603259",
+                    "issuer": None,
+                    "name": "same-day",
+                    "title": None,
+                    "is_board_director": None,
+                    "transaction_date": "2026-07-08",
+                    "transaction_shares": 100.0,
+                    "transaction_price_per_share": 1.0,
+                    "transaction_value": 100.0,
+                    "shares_owned_before_transaction": None,
+                    "shares_owned_after_transaction": None,
+                    "security_title": None,
+                    "filing_date": "2026-07-08",
+                },
+                {
+                    "ticker": "603259",
+                    "issuer": None,
+                    "name": "future",
+                    "title": None,
+                    "is_board_director": None,
+                    "transaction_date": "2026-07-09",
+                    "transaction_shares": 100.0,
+                    "transaction_price_per_share": 1.0,
+                    "transaction_value": 100.0,
+                    "shares_owned_before_transaction": None,
+                    "shares_owned_after_transaction": None,
+                    "security_title": None,
+                    "filing_date": "2026-07-09",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache",
+        legacy_snapshot_dir=snapshot_dir,
+    )
+
+    news, trades = store.load_event_inputs("603259", "20260708")
+
+    assert [item.title for item in news] == ["usable same-day news"]
+    assert [item.name for item in trades] == ["same-day"]
+
+
 def test_load_dragon_tiger_bonus_uses_ticker_presence_only(tmp_path: Path) -> None:
     lhb_dir = tmp_path / "lhb_cache"
     lhb_dir.mkdir()
@@ -158,6 +239,49 @@ def test_load_dragon_tiger_bonus_uses_ticker_presence_only(tmp_path: Path) -> No
     bonus = store.load_dragon_tiger_bonus_map(["000001", "000002", "000003"], "20260708")
 
     assert bonus == {"000001": 1.0, "000002": 1.0}
+
+
+def test_load_dragon_tiger_bonus_filters_mixed_trade_date_rows(tmp_path: Path) -> None:
+    lhb_dir = tmp_path / "lhb_cache"
+    lhb_dir.mkdir()
+    pd.DataFrame(
+        [
+            {"trade_date": "20260708", "ts_code": "000001.SZ", "net_buy": -100.0},
+            {"trade_date": "20260709", "ts_code": "000002.SZ", "net_buy": 100.0},
+        ]
+    ).to_csv(lhb_dir / "20260708.csv", index=False)
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache",
+        lhb_cache_dir=lhb_dir,
+    )
+
+    bonus = store.load_dragon_tiger_bonus_map(["000001", "000002"], "20260708")
+
+    assert bonus == {"000001": 1.0}
+
+
+def test_load_fund_flow_metrics_reads_legacy_fund_flow_cache(tmp_path: Path) -> None:
+    fund_flow_dir = tmp_path / "fund_flow_cache"
+    fund_flow_dir.mkdir()
+    pd.DataFrame(
+        [
+            {"date": "20260708", "ticker": "000001", "main_net_pct": 2.5, "main_net_inflow": 1000.0},
+            {"date": "20260709", "ticker": "000001", "main_net_pct": 9.9, "main_net_inflow": 2000.0},
+        ]
+    ).to_csv(fund_flow_dir / "000001.csv", index=False)
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache",
+        fund_flow_cache_dir=fund_flow_dir,
+    )
+
+    rows = store.load_fund_flow_metrics("20260708", ["000001", "000002"])
+
+    assert rows == {
+        "000001": {
+            "main_flow_ratio": 0.025,
+            "main_flow_ratio_source": "fund_flow_cache",
+        }
+    }
 
 
 def test_load_price_frame_returns_empty_when_missing(tmp_path: Path) -> None:
@@ -305,3 +429,32 @@ def test_build_quality_summary_optional_block_matches_scoring_block(tmp_path: Pa
         assert of["coverage"] == sf["coverage"]
         assert of["missing_tickers"] == sf["missing_tickers"]
         assert of["source"] == sf["source"]
+
+
+def test_build_quality_summary_merges_refresh_manifest_failures(tmp_path: Path) -> None:
+    feature_dir = tmp_path / "feature_cache"
+    feature_dir.mkdir()
+    (feature_dir / "feature_manifest_20260708.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260708",
+                "features": {
+                    "daily_fund_flow_metrics": {
+                        "provider_failures": 3,
+                        "rows_written": 7,
+                        "source": "akshare_refresh",
+                    }
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    store = ScoringFeatureStore(base_dir=feature_dir)
+
+    summary = store.build_quality_summary("20260708", ["000001"])
+
+    quality = summary["scoring_features"]["daily_fund_flow_metrics"]
+    assert quality["provider_failures"] == 3
+    assert quality["rows_written"] == 7
+    assert quality["source"] == "akshare_refresh"
