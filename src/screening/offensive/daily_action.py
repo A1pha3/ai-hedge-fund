@@ -111,7 +111,12 @@ def _load_backtest_setup_performance() -> Any | None:
 def _format_backtest_stats(stats: Any | None) -> str:
     if stats is None or getattr(stats, "n", 0) <= 0:
         return ""
-    return f" (真实回测 n={stats.n} winrate={stats.winrate:.0%} E={stats.expected_return:+.2%})"
+    base = f" (真实回测 n={stats.n} winrate={stats.winrate:.0%} E={stats.expected_return:+.2%})"
+    # autodev-32 /loop session 6: small-n warning prevents operator from
+    # over-weighting a setup based on a few lucky trades.
+    if getattr(stats, "low_confidence", False):
+        base += " ⚠少样本"
+    return base
 
 
 def _setup_policy_lines(disabled_setups: set[str] | None = None) -> list[str]:

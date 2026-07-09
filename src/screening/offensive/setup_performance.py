@@ -15,6 +15,12 @@ from typing import Iterable
 
 _REALIZED_RE = re.compile(r"realized=([+-]?\d+(?:\.\d+)?)%")
 
+# autodev-32 /loop session 6: regimes with fewer than this many samples are
+# statistically unreliable for sizing decisions. Dogfood on real data found
+# oversold_bounce risk_off n=3 winrate=100% E=+13.11% — looks great but is
+# noise. Operators must not re-enable setups based on sub-threshold regimes.
+LOW_CONFIDENCE_N: int = 10
+
 
 @dataclass(frozen=True)
 class SetupPerformance:
@@ -26,6 +32,16 @@ class SetupPerformance:
     avg_gain: float
     avg_loss: float
     by_regime: dict[str, "SetupPerformance"] = field(default_factory=dict)
+
+    @property
+    def low_confidence(self) -> bool:
+        """True when n is too small for reliable winrate/E estimates.
+
+        Per-regime slices below ``LOW_CONFIDENCE_N`` (default 10) should NOT
+        drive sizing/re-enable decisions — small-n winrate is easily dominated
+        by a few lucky/unlucky trades (e.g. n=3 → 100% or 0% is pure noise).
+        """
+        return 0 < self.n < LOW_CONFIDENCE_N
 
 
 @dataclass(frozen=True)
