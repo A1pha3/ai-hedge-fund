@@ -1893,6 +1893,68 @@ def test_score_batch_uses_store_when_all_score_time_providers_are_forbidden(monk
         assert results[ticker]["event_sentiment"].completeness > 0
 
 
+def test_score_batch_fallback_path_is_provider_free_when_store_returns_empty(monkeypatch) -> None:
+    """The intraday/fund_flow fallback chain (store returns empty →
+    _load_daily_flow_proxy_ratio) must stay provider-free. The main forbidden
+    test gives the store data so it never hits the fallback; this variant forces
+    the fallback by returning empty intraday/fund_flow while still heavy-scoring
+    candidates, closing that coverage gap."""
+    monkeypatch.setattr("src.screening.strategy_scorer.SCORE_BATCH_CONCURRENCY", 1)
+    monkeypatch.setattr("src.screening.strategy_scorer.INTRADAY_SCORE_MAX_CANDIDATES", 2)
+    monkeypatch.setattr("src.screening.strategy_scorer.FUNDAMENTAL_SCORE_MAX_CANDIDATES", 2)
+    monkeypatch.setattr("src.screening.strategy_scorer.EVENT_SENTIMENT_MAX_CANDIDATES", 2)
+
+    # A trend signal with a momentum payload so _populate_intraday_short_trade_metrics
+    # and _populate_dragon_tiger_bonus_metrics consider this candidate eligible.
+    momentum_signal = StrategySignal(
+        direction=1,
+        confidence=80.0,
+        completeness=1.0,
+        sub_factors={"momentum": {"metrics": {"amount_ratio_5": 1.5}}},
+    )
+
+    class _EmptyIntradayStore:
+        def load_price_frame(self, ticker: str, trade_date: str, lookback_days: int = 400) -> pd.DataFrame:
+            return pd.DataFrame()
+
+        def load_financial_metrics(self, ticker: str, trade_date: str):
+            return []
+
+        def load_event_inputs(self, ticker: str, trade_date: str):
+            return [], []
+
+        def load_industry_pe_medians(self, trade_date: str) -> dict[str, float]:
+            return {}
+
+        def load_dragon_tiger_bonus_map(self, tickers: list[str], trade_date: str) -> dict[str, float]:
+            return {}
+
+        # Empty → forces _build_intraday_short_trade_metrics fallback chain.
+        def load_intraday_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict]:
+            return {}
+
+        def load_fund_flow_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict]:
+            return {}
+
+    candidate = CandidateStock(ticker="000001", name="A", industry_sw="银行", market_cap=100.0, avg_volume_20d=10000.0)
+
+    with (
+        patch("src.screening.strategy_scorer._compute_light_signals", return_value=({"trend": momentum_signal, "mean_reversion": _signal(0, 0, completeness=0.0), "fundamental": _signal(0, 0, completeness=0.0), "event_sentiment": _signal(0, 0, completeness=0.0)}, None)),
+        patch("src.screening.strategy_scorer._score_fundamental_from_store", return_value=_signal(1, 70)),
+        patch("src.screening.strategy_scorer._score_event_from_store", return_value=_signal(1, 65)),
+        patch("src.tools.tushare_api.get_daily_basic_batch", side_effect=AssertionError("daily basic provider forbidden")),
+        patch("src.tools.akshare_api.get_lhb_detail", side_effect=AssertionError("lhb detail provider forbidden")),
+        patch("src.tools.akshare_api.get_lhb_institutional_stats", side_effect=AssertionError("lhb institutional provider forbidden")),
+        patch("src.screening.strategy_scorer.get_intraday_bars", side_effect=AssertionError("intraday bars provider forbidden")),
+        patch("src.screening.strategy_scorer.get_intraday_ticks", side_effect=AssertionError("intraday ticks provider forbidden")),
+        patch("src.screening.strategy_scorer.get_money_flow", side_effect=AssertionError("money flow provider forbidden")),
+    ):
+        results = score_batch([candidate], "20260708", feature_store=_EmptyIntradayStore())
+
+    # Must complete without any provider call; flow_60 simply absent (no fallback data).
+    assert "000001" in results
+
+
 # ---------------------------------------------------------------------------
 # AST guard: score_batch() must not contain direct provider calls.
 # ---------------------------------------------------------------------------
