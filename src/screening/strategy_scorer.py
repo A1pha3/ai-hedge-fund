@@ -8,7 +8,6 @@ import math
 import os
 from collections import defaultdict
 from datetime import datetime
-from statistics import median
 from time import perf_counter
 from typing import Any
 
@@ -32,15 +31,6 @@ from src.screening.strategy_scorer_utils import (
     derive_completeness,
 )
 from src.tools import akshare_api as _akshare_api
-from src.tools.akshare_api import (
-    get_lhb_detail,
-    get_lhb_institutional_stats,
-)
-from src.tools.tushare_api import (
-    get_all_stock_basic,
-    get_daily_basic_batch,
-    get_sw_industry_classification,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -49,13 +39,15 @@ get_intraday_bars = _akshare_api.get_intraday_bars
 get_intraday_ticks = _akshare_api.get_intraday_ticks
 get_money_flow = _akshare_api.get_money_flow
 
-# Re-export for backward compatibility
+# Re-export for backward compatibility (kept out of the score_batch() call graph;
+# score_batch uses the *_from_inputs / *_from_metrics pure variants instead).
 __all__ = [
     "aggregate_sub_factors",
     "derive_completeness",
     "score_trend_strategy",
     "score_mean_reversion_strategy",
     "score_fundamental_strategy",
+    "score_event_sentiment_strategy",
 ]
 
 # Light stage weights: 全 universe 因子回测 (2026-06-25, n=8136) 证明 MR 是正向有效因子
@@ -101,32 +93,9 @@ SCORE_BATCH_CONCURRENCY = int(os.getenv("SCORE_BATCH_CONCURRENCY", "4"))
 # R20.2: Event sentiment helpers extracted for readability
 from src.screening.strategy_scorer_event_sentiment_helpers import (  # noqa: E402
     _empty_signal,
-    _load_price_frame,
     score_event_sentiment_strategy,
     score_event_sentiment_strategy_from_inputs,
 )
-
-
-def _build_symbol_to_industry_map(stock_basic: pd.DataFrame, sw_map: dict[str, str]) -> dict[str, str]:
-    symbol_to_industry: dict[str, str] = {}
-    for _, row in stock_basic.iterrows():
-        ts_code = str(row["ts_code"])
-        symbol = str(row["symbol"])
-        symbol_to_industry[symbol] = sw_map.get(ts_code, str(row.get("industry", "")))
-    return symbol_to_industry
-
-
-def _group_industry_pe_values(daily_df: pd.DataFrame, symbol_to_industry: dict[str, str]) -> dict[str, list[float]]:
-    grouped: dict[str, list[float]] = defaultdict(list)
-    for _, row in daily_df.iterrows():
-        pe_ttm = row.get("pe_ttm")
-        if pd.isna(pe_ttm) or pe_ttm is None or float(pe_ttm) <= 0:
-            continue
-        symbol = str(row["ts_code"]).split(".")[0]
-        industry = symbol_to_industry.get(symbol, "")
-        if industry:
-            grouped[industry].append(float(pe_ttm))
-    return grouped
 
 
 def _build_industry_pe_medians(trade_date: str, feature_store: ScoringFeatureStore) -> dict[str, float]:
@@ -525,30 +494,6 @@ def _populate_dragon_tiger_bonus_metrics(
             continue
         trend_signal = results.get(candidate.ticker, {}).get("trend")
         _merge_metrics_into_trend_momentum(trend_signal, {"dragon_tiger_bonus": round(float(bonus), 4)})
-
-
-def _build_dragon_tiger_bonus_map(tickers: list[str], trade_date: str) -> dict[str, float]:
-    if not tickers:
-        return {}
-    lhb_detail = get_lhb_detail(trade_date, trade_date)
-    institutional_stats = get_lhb_institutional_stats(trade_date, trade_date)
-    if (lhb_detail is None or lhb_detail.empty) and (institutional_stats is None or institutional_stats.empty):
-        return {}
-
-    normalized_tickers = {str(ticker).zfill(6) for ticker in tickers}
-    bonus_map = {ticker: 0.0 for ticker in normalized_tickers}
-    if lhb_detail is not None and not lhb_detail.empty and "代码" in lhb_detail.columns:
-        for code in lhb_detail["代码"].astype(str).str.zfill(6):
-            if code in bonus_map:
-                bonus_map[code] = 1.0
-    if institutional_stats is not None and not institutional_stats.empty and {"代码", "机构买入净额"}.issubset(institutional_stats.columns):
-        institutional_codes = institutional_stats.copy()
-        institutional_codes["代码"] = institutional_codes["代码"].astype(str).str.zfill(6)
-        institutional_codes["机构买入净额"] = pd.to_numeric(institutional_codes["机构买入净额"], errors="coerce").fillna(0.0)
-        for code in institutional_codes.loc[institutional_codes["机构买入净额"] > 0.0, "代码"]:
-            if code in bonus_map:
-                bonus_map[code] = 1.0
-    return bonus_map
 
 
 def _build_intraday_short_trade_metrics(

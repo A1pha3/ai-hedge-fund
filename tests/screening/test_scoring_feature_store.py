@@ -171,6 +171,31 @@ def test_load_price_frame_returns_empty_when_missing(tmp_path: Path) -> None:
     assert store.load_price_frame("999999", "20260708").empty
 
 
+def test_load_price_frame_preserves_optional_enrichment_columns(tmp_path: Path) -> None:
+    """Cache may carry amount/turnover_rate/pct_change. Store must forward them so
+    downstream scorers degrade naturally instead of silently losing columns the
+    cache may grow (parity with prices_to_df, which keeps all Price fields)."""
+    price_dir = tmp_path / "price_cache"
+    price_dir.mkdir()
+    pd.DataFrame(
+        [
+            {"date": "2026-07-07", "open": 10.0, "high": 11.0, "low": 9.8, "close": 10.5, "volume": 1000, "amount": 10500.0, "pct_change": 0.05, "turnover_rate": 1.2},
+            {"date": "2026-07-08", "open": 10.5, "high": 11.5, "low": 10.2, "close": 11.0, "volume": 1200, "amount": 13200.0, "pct_change": 0.048, "turnover_rate": 1.4},
+        ]
+    ).to_csv(price_dir / "000001.csv", index=False)
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache",
+        price_cache_dir=price_dir,
+        legacy_snapshot_dir=tmp_path / "snapshots",
+        lhb_cache_dir=tmp_path / "lhb_cache",
+    )
+
+    frame = store.load_price_frame("000001", "20260708")
+
+    assert {"open", "close", "high", "low", "volume", "amount", "pct_change", "turnover_rate"}.issubset(frame.columns)
+    assert "date" not in frame.columns  # internal helper column must not leak
+
+
 def _full_financial_payload(ticker: str, report_period: str = "20260630") -> dict:
     base = {field: None for field in FinancialMetrics.model_fields}
     base.update(
@@ -259,3 +284,24 @@ def test_build_quality_summary_reports_family_coverage(tmp_path: Path) -> None:
     assert scoring["price_history"]["loaded_count"] == 0  # no file, so not loaded
     assert scoring["price_history"]["min_required_rows"] == 200
     assert "optional_features" in summary
+
+
+def test_build_quality_summary_optional_block_matches_scoring_block(tmp_path: Path) -> None:
+    """Regression guard: intraday/fund_flow coverage reported in the backward-
+    compatible optional_features block must equal the scoring_features block.
+    Previously the optional block recomputed coverage over the full candidate set
+    (300) while scoring recorded only the requested subset (e.g. 12), producing
+    contradictory missing_tickers in the same report."""
+    store = ScoringFeatureStore(base_dir=tmp_path / "feature_cache")
+
+    # Simulate score_batch requesting intraday for only a 2-ticker subset while
+    # the candidate set is 5; only one ticker has a snapshot.
+    store.load_intraday_metrics("20260708", ["000001", "000002"])
+    summary = store.build_quality_summary("20260708", ["000001", "000002", "000003", "000004", "000005"])
+
+    for family in ("intraday_short_trade_metrics", "daily_fund_flow_metrics"):
+        sf = summary["scoring_features"][family]
+        of = summary["optional_features"][family]
+        assert of["coverage"] == sf["coverage"]
+        assert of["missing_tickers"] == sf["missing_tickers"]
+        assert of["source"] == sf["source"]

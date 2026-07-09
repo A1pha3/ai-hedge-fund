@@ -129,7 +129,14 @@ class ScoringFeatureStore:
             return pd.DataFrame()
         normalized = normalized.set_index("Date")
         self._quality.note_loaded("price_history", ticker6, rows=len(normalized), source="local_price_cache")
-        return normalized[["open", "close", "high", "low", "volume"]]
+        # Keep the required OHLCV columns plus any optional enrichment columns
+        # (amount, turnover_rate, pct_change, ...) so downstream scorers degrade
+        # naturally rather than silently losing data the cache may grow.
+        keep = ["open", "close", "high", "low", "volume"] + [
+            col for col in normalized.columns
+            if col not in {"open", "close", "high", "low", "volume", "date", "Date"}
+        ]
+        return normalized[keep]
 
     def load_financial_metrics(self, ticker: str, trade_date: str) -> list[FinancialMetrics]:
         ticker6 = _ticker6(ticker)
@@ -212,12 +219,25 @@ class ScoringFeatureStore:
         if requested:
             for family, family_tickers in requested.items():
                 self._quality.note_requested(family, list(family_tickers))
+        scoring_features = {
+            family: self._quality_for_family(family, trade_date)
+            for family in _FEATURE_FAMILIES
+        }
+        # Backward-compatible optional_features block: derive it from the same
+        # tracker so intraday/fund_flow numbers cannot diverge from scoring_features
+        # (the legacy optional_store path computed coverage over the full candidate
+        # set, which contradicted the actual requested subset recorded here).
+        optional_features = {
+            family: {
+                key: scoring_features[family][key]
+                for key in ("coverage", "source", "trade_date", "stale", "provider_failures", "missing_tickers")
+                if key in scoring_features[family]
+            }
+            for family in ("intraday_short_trade_metrics", "daily_fund_flow_metrics")
+        }
         return {
-            "scoring_features": {
-                family: self._quality_for_family(family, trade_date)
-                for family in _FEATURE_FAMILIES
-            },
-            **self._optional_store.build_quality_summary(trade_date, tickers),
+            "scoring_features": scoring_features,
+            "optional_features": optional_features,
         }
 
     def _resolve_legacy_snapshot_path(self, ticker: str, trade_date: str, filename: str) -> Path | None:
