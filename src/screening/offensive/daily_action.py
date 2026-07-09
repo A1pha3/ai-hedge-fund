@@ -314,6 +314,32 @@ def _latest_auto_report_date() -> str:
         return ""
 
 
+def _load_auto_topn_tickers(trade_date: str) -> set[str]:
+    """加载信号日 ``--auto`` 报告的 Top-N ticker 集合 (供双信号收敛标记).
+
+    C-DUAL-SIGNAL-CONVERGENCE (20260710): empirical dogfood 发现 BTST 命中里,
+    同日也在 ``--auto`` Top-N 的子集历史胜率更高 (76% vs 66%, n=34 vs 99,
+    median +7.35% vs +5.67%; ⚠ n 小未达统计显著, 仅供 operator 参考).
+    两个独立方法 (BTST 动量突破 + --auto 四策略评分) 同日收敛 = 更强信号.
+    本 helper 读 ``auto_screening_{trade_date}.json`` 的 recommendations ticker.
+
+    报告缺失/无信号日 → 空集合 (收敛标记降级为不显示, 不阻塞渲染).
+    """
+    if not trade_date:
+        return set()
+    try:
+        from src.screening.consecutive_recommendation import resolve_report_dir
+
+        path = resolve_report_dir() / f"auto_screening_{trade_date}.json"
+        if not path.exists():
+            return set()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {str(r.get("ticker", "")).split(".")[0] for r in payload.get("recommendations", []) if r.get("ticker")}
+    except Exception:
+        logger.debug("daily_action: --auto Top-N 加载失败, 收敛标记降级", exc_info=True)
+        return set()
+
+
 def _load_ticker_to_industry_from_snapshots(
     tickers: list[str],
     *,
@@ -779,20 +805,25 @@ def _render_candidate_list(
     buy_date_label: str,
     *,
     limit: int = 10,
+    auto_topn: set[str] | None = None,
 ) -> None:
     """渲染"今日候选"列表 (上限跳过的 BTST 命中), 让 operator 看到今天哪些票可交易.
 
     C-DAILY-ACTION-POSITION-VISIBILITY: 上限决定买什么, 不决定看什么. 候选按
     generate_daily_action 的强度排序 (ranked_candidates) 传入, 这里只做展示.
     超过 limit 个只显示前 limit 个 + 一行"其余 N 只略", 避免刷屏.
+    C-DUAL-SIGNAL-CONVERGENCE: auto_topn 非空时, 同日也在 --auto Top-N 的候选
+    标 ⭐双信号 (历史胜率更高, n 小仅供参考).
     """
     from colorama import Fore, Style
 
+    topn = auto_topn or set()
     shown = candidates[:limit]
     for i, a in enumerate(shown, 1):
         name = get_stock_name(a.ticker)
         label = f"{a.ticker} {name}" if name and name != a.ticker else a.ticker
-        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{label}{Style.RESET_ALL}  [{a.setup}]  " f"参考价 ~{a.entry_price:.2f}  先验 {a.distribution_summary}")
+        converge = " ⭐双信号" if a.ticker.split(".")[0] in topn else ""
+        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{label}{Style.RESET_ALL}  [{a.setup}]  " f"参考价 ~{a.entry_price:.2f}  先验 {a.distribution_summary}{converge}")
     rest = len(candidates) - len(shown)
     if rest > 0:
         lines.append(f"  {Fore.WHITE}...其余 {rest} 只略 (强度更低){Style.RESET_ALL}")
@@ -896,6 +927,13 @@ def render_daily_action(
         return "\n".join(lines)
 
     blocked = list(getattr(tracker, "last_blocked_candidates", []) or [])
+    # C-DUAL-SIGNAL-CONVERGENCE: 加载信号日 --auto Top-N, 标记 BTST 命中里同日
+    # 也在 --auto Top-N 的票 (双信号收敛, 历史胜率更高 76% vs 66%, n 小仅供参考).
+    auto_topn = _load_auto_topn_tickers(trade_date)
+    all_hits = list(actions) + blocked
+    converge_n = sum(1 for a in all_hits if a.ticker.split(".")[0] in auto_topn)
+    if auto_topn and all_hits and converge_n:
+        lines.append(f"  {Fore.WHITE}⭐ 双信号收敛: {converge_n}/{len(all_hits)} 只 BTST 命中同日也在 --auto Top-N " f"(历史胜率 76% vs 66%, n=34 样本小未达显著, 仅供优先级参考){Style.RESET_ALL}")
     if not actions and not blocked:
         lines.append(f"\n  {Fore.YELLOW}今日无凸性 setup 命中 (空仓等待){Style.RESET_ALL}")
         return "\n".join(lines)
@@ -904,7 +942,7 @@ def render_daily_action(
         # 有命中但因敞口超限全部未录入 — 必须列出候选, 否则 operator 误以为"无票可买"
         # (C-DAILY-ACTION-POSITION-VISIBILITY: 上限决定买什么, 不决定看什么).
         lines.append(f"\n  {Fore.YELLOW}今日 {len(blocked)} 个 setup 命中 — 因组合敞口 " f"{state.open_exposure:.0%} 超 {_MAX_PORTFOLO_PCT:.0%} 上限, 本次暂不买入. " f"仓位释放后按强度优先买以下候选:{Style.RESET_ALL}\n")
-        _render_candidate_list(lines, blocked, get_stock_name, buy_date_label, limit=12)
+        _render_candidate_list(lines, blocked, get_stock_name, buy_date_label, limit=12, auto_topn=auto_topn)
         lines.append(f"\n  {Fore.WHITE}(候选仅供参考; 上限保护期可不操作, 或用上限外资金自行决策){Style.RESET_ALL}")
         return "\n".join(lines)
 
@@ -913,7 +951,8 @@ def render_daily_action(
         # ticker + 中文名 (get_stock_name 解析失败时回退 ticker 本身, 不重复显示)
         name = get_stock_name(a.ticker)
         ticker_label = f"{a.ticker} {name}" if name and name != a.ticker else a.ticker
-        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{ticker_label}{Style.RESET_ALL}  [{a.setup}]  " f"仓位 {a.kelly_pct:.1%}  参考价(信号日收盘) ~{a.entry_price:.2f}")
+        converge = " ⭐双信号" if a.ticker.split(".")[0] in auto_topn else ""
+        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{ticker_label}{Style.RESET_ALL}  [{a.setup}]  " f"仓位 {a.kelly_pct:.1%}  参考价(信号日收盘) ~{a.entry_price:.2f}{converge}")
         lines.append(f"     风险价位: 软止损 {a.soft_stop:.2f} (观察) / " f"硬止损 {a.hard_stop:.2f} (披露/人工执行参考; paper P&L 不按止损出场)  " f"时间退出: {a.time_exit}")
         lines.append(f"     先验分布: {a.distribution_summary}")
         lines.append(f"     {Fore.YELLOW}失效: {a.invalidation_condition}{Style.RESET_ALL}\n")
@@ -922,7 +961,7 @@ def render_daily_action(
     # (operator 想知道"今天还有哪些票可交易", 上限只限买不限看).
     if blocked:
         lines.append(f"  {Fore.WHITE}其余 {len(blocked)} 个候选 (敞口超限暂不买入, 仓位释放后按强度优先):{Style.RESET_ALL}")
-        _render_candidate_list(lines, blocked, get_stock_name, buy_date_label, limit=8)
+        _render_candidate_list(lines, blocked, get_stock_name, buy_date_label, limit=8, auto_topn=auto_topn)
 
     lines.append(f"  {Fore.WHITE}术语说明:{Style.RESET_ALL}")
     lines.append(f"  - 软止损=历史平均亏损x1.5的观察线, 用于风险参考, 不是自动卖出触发")

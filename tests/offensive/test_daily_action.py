@@ -1922,3 +1922,77 @@ def test_portfolio_cap_blocked_count_reports_all_skipped(tmp_path, monkeypatch):
     assert len(actions) == 1, f"应只追加 1 只到 60%, 实际 {len(actions)}"
     # 10 信号 - 1 录入 = 9 被跳过 (不是 1)
     assert tracker.last_cap_blocked_count == 9, f"cap_blocked_count 应报 9 (10 信号 - 1 录入), 实际 {tracker.last_cap_blocked_count}"
+
+
+# ---------------------------------------------------------------------------
+# C-DUAL-SIGNAL-CONVERGENCE (20260710): --auto Top-N ∩ BTST 命中 双信号标记
+# empirical: BTST∩--auto 同日 n=34 win=76% med+7.35% vs BTST-only n=99 win=66% med+5.67%
+# (n 小未达显著, 仅供优先级参考)
+# ---------------------------------------------------------------------------
+
+
+def test_load_auto_topn_tickers_reads_report(tmp_path, monkeypatch):
+    """_load_auto_topn_tickers 从信号日 --auto 报告读 Top-N ticker 集合."""
+    import json as _json
+    from src.screening.offensive import daily_action as da
+
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "auto_screening_20260709.json").write_text(
+        _json.dumps({"date": "20260709", "recommendations": [{"ticker": "300308"}, {"ticker": "688008.SH"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("src.screening.consecutive_recommendation.resolve_report_dir", lambda: reports)
+    topn = da._load_auto_topn_tickers("20260709")
+    assert topn == {"300308", "688008"}, f"got {topn}"
+
+
+def test_load_auto_topn_tickers_missing_report_returns_empty(tmp_path, monkeypatch):
+    """报告缺失 → 空集合 (收敛标记降级, 不阻塞渲染)."""
+    from src.screening.offensive import daily_action as da
+
+    monkeypatch.setattr("src.screening.consecutive_recommendation.resolve_report_dir", lambda: tmp_path)
+    assert da._load_auto_topn_tickers("20260101") == set()
+    assert da._load_auto_topn_tickers("") == set()
+
+
+def test_render_badges_dual_signal_convergence(tmp_path, monkeypatch):
+    """BTST 命中里同日也在 --auto Top-N 的票, 渲染时标 ⭐双信号."""
+    import pandas as pd
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+    from src.screening.offensive.setups.base import DetectionResult
+    from src.screening.offensive.statistics import Distribution
+
+    class FakeSetup:
+        def detect(self, ticker, trade_date, context):
+            return DetectionResult(hit=True, ticker=ticker, trade_date=trade_date, trigger_strength=1.0, invalidation_condition="fake")
+
+    dist = Distribution(n=100, winrate=0.60, avg_gain=0.12, avg_loss=-0.06, convexity_ratio=2.0, expected_return=0.05, ci_low=0.02, ci_high=0.08, ic=0.10)
+    monkeypatch.setattr(da, "_VERIFIED_SETUPS", [("btst_breakout", FakeSetup, 10)])
+    monkeypatch.setattr(da, "get_known_distribution", lambda name, horizon: dist)
+    monkeypatch.setattr(da, "_env_setup_disable_list", lambda: set())
+    monkeypatch.delenv("DAILY_ACTION_ENFORCE_OPEN_CAP", raising=False)
+    # --auto Top-N 含 300308 (收敛), 不含 688999
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "auto_screening_20260709.json").write_text(
+        __import__("json").dumps({"date": "20260709", "recommendations": [{"ticker": "300308"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("src.screening.consecutive_recommendation.resolve_report_dir", lambda: reports)
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    report_path = tmp_path / "auto_screening_20260709.json"
+    report_path.write_text(
+        __import__("json").dumps({"date": "20260709", "recommendations": [{"ticker": "300308"}, {"ticker": "688999"}], "market_state": {"regime_gate_level": "normal"}}),
+        encoding="utf-8",
+    )
+    prices = pd.DataFrame([{"date": pd.Timestamp("2026-07-09"), "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.0, "pct_change": 9.5}])
+    actions = da.generate_daily_action(report_path=report_path, tracker=tracker, scan_mode="report", price_loader=lambda ticker, report_date: prices.copy())
+    out = da.render_daily_action(actions, "20260709", tracker)
+    # 300308 收敛 → 标 ⭐双信号; 688999 不收敛 → 无标记
+    assert "300308" in out and "⭐双信号" in out, "收敛票应标 ⭐双信号"
+    assert "688999" in out
+    # 收敛摘要行 (历史胜率 76% vs 66%)
+    assert "双信号收敛" in out and "76%" in out
