@@ -390,6 +390,14 @@ def _resolve_event_freshness_direction(*, pos_hits: int, neg_hits: int, strength
 def score_event_sentiment_strategy(ticker: str, trade_date: str) -> StrategySignal:
     start_date, end_date = _resolve_event_sentiment_date_window(trade_date)
     news_items, trades = _load_event_sentiment_inputs(ticker=ticker, start_date=start_date, end_date=end_date)
+    return score_event_sentiment_strategy_from_inputs(news_items=news_items, trades=trades, trade_date=trade_date)
+
+
+def score_event_sentiment_strategy_from_inputs(
+    news_items: list[CompanyNews],
+    trades: list[InsiderTrade],
+    trade_date: str,
+) -> StrategySignal:
     return _build_event_sentiment_strategy_signal(news_items=news_items, trades=trades, trade_date=trade_date)
 
 

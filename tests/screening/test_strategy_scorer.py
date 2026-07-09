@@ -1701,3 +1701,84 @@ def test_flow_proxy_returns_none_for_invalid_snapshot_value(monkeypatch):
     )
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Pure input scorers (no provider access)
+# ---------------------------------------------------------------------------
+
+
+def _financial_metric(ticker: str, report_period: str, revenue_growth: float = 0.1) -> FinancialMetrics:
+    payload = {field: None for field in FinancialMetrics.model_fields}
+    payload.update(
+        {
+            "ticker": ticker,
+            "report_period": report_period,
+            "period": "ttm",
+            "currency": "CNY",
+            "market_cap": 1.0,
+            "price_to_earnings_ratio": 10.0,
+            "operating_margin": 0.2,
+            "net_margin": 0.25,
+            "return_on_equity": 0.18,
+            "current_ratio": 2.0,
+            "quick_ratio": 1.5,
+            "debt_to_equity": 0.1,
+            "debt_to_assets": 0.1,
+            "interest_coverage": 20.0,
+            "revenue_growth": revenue_growth,
+            "earnings_growth": revenue_growth,
+            "free_cash_flow_growth": revenue_growth,
+        }
+    )
+    return FinancialMetrics.model_validate(payload)
+
+
+def test_score_fundamental_strategy_from_metrics_uses_supplied_metrics() -> None:
+    from src.screening.strategy_scorer_fundamental import score_fundamental_strategy_from_metrics
+
+    metrics = [_financial_metric("000001", f"20260{i}01", revenue_growth=0.1 + i * 0.01) for i in range(1, 5)]
+
+    signal = score_fundamental_strategy_from_metrics(
+        metrics,
+        industry_name="银行",
+        industry_pe_medians={"银行": 12.0},
+    )
+
+    assert signal.completeness > 0
+    assert "profitability" in signal.sub_factors
+    assert "industry_pe" in signal.sub_factors
+
+
+def test_score_fundamental_strategy_from_metrics_returns_empty_when_no_metrics() -> None:
+    from src.screening.strategy_scorer_fundamental import score_fundamental_strategy_from_metrics
+
+    signal = score_fundamental_strategy_from_metrics([])
+
+    assert signal.direction == 0
+    assert signal.confidence == 0.0
+    assert signal.completeness == 0.0
+    assert signal.sub_factors == {}
+
+
+def test_score_event_sentiment_strategy_from_inputs_uses_supplied_news() -> None:
+    from src.screening.strategy_scorer_event_sentiment_helpers import score_event_sentiment_strategy_from_inputs
+
+    news = [
+        CompanyNews(
+            ticker="000001",
+            title="公司回购股份并上调业绩预告",
+            author="source",
+            source="source",
+            date="2026-07-08 10:00:00",
+            url="https://example.test/news",
+            sentiment="positive",
+            content="公司回购股份并上调业绩预告",
+        )
+    ]
+
+    signal = score_event_sentiment_strategy_from_inputs(news, [], "20260708")
+
+    assert signal.completeness > 0
+    assert "news_sentiment" in signal.sub_factors
+    assert "event_freshness" in signal.sub_factors

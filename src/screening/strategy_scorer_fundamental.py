@@ -302,13 +302,11 @@ def _build_fundamental_quality_cap_payload(signal: StrategySignal) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def score_fundamental_strategy(
-    ticker: str,
-    trade_date: str,
+def score_fundamental_strategy_from_metrics(
+    metrics_list: list[FinancialMetrics],
     industry_name: str = "",
     industry_pe_medians: dict[str, float] | None = None,
 ) -> StrategySignal:
-    metrics_list = get_financial_metrics(ticker=ticker, end_date=trade_date, period="ttm", limit=8)
     if not metrics_list:
         return StrategySignal(direction=0, confidence=0.0, completeness=0.0, sub_factors={})
 
@@ -318,6 +316,20 @@ def score_fundamental_strategy(
         industry_pe_medians=industry_pe_medians,
     )
     return _apply_fundamental_quality_cap(aggregate_sub_factors(sub_factors))
+
+
+def score_fundamental_strategy(
+    ticker: str,
+    trade_date: str,
+    industry_name: str = "",
+    industry_pe_medians: dict[str, float] | None = None,
+) -> StrategySignal:
+    metrics_list = get_financial_metrics(ticker=ticker, end_date=trade_date, period="ttm", limit=8)
+    return score_fundamental_strategy_from_metrics(
+        metrics_list=metrics_list,
+        industry_name=industry_name,
+        industry_pe_medians=industry_pe_medians,
+    )
 
 
 def _build_fundamental_sub_factors(
