@@ -8,6 +8,8 @@ from collections.abc import Callable
 
 import pandas as pd
 
+from src.tools.akshare_runtime_helpers import run_without_system_proxies
+
 # NS-17 / BH-017 family sibling drain: 可选市场帧 (index/northbound) 拉取失败此前用
 # print, 在 cron 上下文不可见, 运维无法定位"为何市场数据缺失"。
 logger = logging.getLogger(__name__)
@@ -15,6 +17,9 @@ logger = logging.getLogger(__name__)
 # 同类网络错误去重计数器: 同一个 error_message 只打第一次 WARNING,
 # 后续静默计数, 最后汇总一次. 避免 --auto 跑 302 ticker 时打 48 条相同 ProxyError.
 _network_error_counts: dict[str, int] = {}
+_endpoint_failure_counts: dict[str, int] = {}
+_endpoint_circuit_open_until: dict[str, float] = {}
+_endpoint_circuit_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +63,68 @@ def _get_eastmoney_rate_limiter() -> _EastMoneyRateLimiter:
 _eastmoney_rate_limiter: _EastMoneyRateLimiter | None = None
 
 
+def _endpoint_key(error_message: str) -> str:
+    return error_message.split("(")[0].strip()
+
+
+def _breaker_threshold() -> int:
+    return max(0, int(os.environ.get("AKSHARE_EASTMONEY_FAILURE_BREAKER_THRESHOLD", "3")))
+
+
+def _breaker_cooldown_seconds() -> float:
+    return max(0.0, float(os.environ.get("AKSHARE_EASTMONEY_FAILURE_BREAKER_COOLDOWN_SECONDS", "900")))
+
+
+def _is_network_failure(error_name: str, error_str: str) -> bool:
+    lowered = error_str.lower()
+    return error_name in (
+        "ProxyError", "RemoteDisconnected", "ConnectionError",
+        "TimeoutError", "MaxRetryError", "ConnectTimeoutError",
+        "ReadTimeoutError", "SSLError",
+    ) or "proxy" in lowered or "timeout" in lowered or "remote end closed" in lowered or "connection aborted" in lowered
+
+
+def _is_expected_optional_failure(error_name: str, error_str: str) -> bool:
+    is_expected_failure = _is_network_failure(error_name, error_str) or error_name in (
+        # 数据空响应类 (akshare 内部解析空 JSON 触发, 非本仓库代码 bug):
+        "TypeError", "KeyError", "IndexError",
+    )
+    if error_name == "TypeError" and "NoneType" not in error_str:
+        return False
+    return is_expected_failure
+
+
+def _is_endpoint_circuit_open(key: str) -> bool:
+    with _endpoint_circuit_lock:
+        open_until = _endpoint_circuit_open_until.get(key, 0.0)
+        if open_until <= 0.0:
+            return False
+        if time.monotonic() < open_until:
+            return True
+        _endpoint_circuit_open_until.pop(key, None)
+        _endpoint_failure_counts.pop(key, None)
+        return False
+
+
+def _record_endpoint_success(key: str) -> None:
+    with _endpoint_circuit_lock:
+        _endpoint_failure_counts.pop(key, None)
+        _endpoint_circuit_open_until.pop(key, None)
+
+
+def _record_endpoint_network_failure(key: str) -> None:
+    threshold = _breaker_threshold()
+    if threshold <= 0:
+        return
+    with _endpoint_circuit_lock:
+        count = _endpoint_failure_counts.get(key, 0) + 1
+        _endpoint_failure_counts[key] = count
+        if count == threshold:
+            cooldown = _breaker_cooldown_seconds()
+            _endpoint_circuit_open_until[key] = time.monotonic() + cooldown
+            logger.info("%s 已连续 %d 次网络失败, 熔断 %.0fs (后续直接降级)", key, count, cooldown)
+
+
 def load_optional_market_dataframe(
     *,
     is_available: bool,
@@ -70,17 +137,24 @@ def load_optional_market_dataframe(
         logger.warning("%s", unavailable_message)
         return None
 
+    endpoint_key = _endpoint_key(error_message)
+    if _is_endpoint_circuit_open(endpoint_key):
+        return None
+
     # 东财反爬限速: 强制请求间隔, 避免 --auto 批量调用触发 RemoteDisconnected 封禁.
     _get_eastmoney_rate_limiter().acquire()
+    if _is_endpoint_circuit_open(endpoint_key):
+        return None
 
     try:
-        df = fetch_dataframe_fn()
+        df = run_without_system_proxies(fetch_dataframe_fn)
         if df is None or df.empty:
             return None
         if transform_fn is not None:
             df = transform_fn(df)
             if df is None or df.empty:
                 return None
+        _record_endpoint_success(endpoint_key)
         return df
     except Exception as error:
         # 可选数据降级路径 (非核心数据, 失败不阻断 --auto):
@@ -91,18 +165,10 @@ def load_optional_market_dataframe(
         # 指向本仓库代码) 时打完整栈帮助调试.
         error_name = type(error).__name__
         error_str = str(error)
-        is_expected_failure = error_name in (
-            "ProxyError", "RemoteDisconnected", "ConnectionError",
-            "TimeoutError", "MaxRetryError", "ConnectTimeoutError",
-            "ReadTimeoutError", "SSLError",
-            # 数据空响应类 (akshare 内部解析空 JSON 触发, 非本仓库代码 bug):
-            "TypeError", "KeyError", "IndexError",
-        ) or "proxy" in error_str.lower() or "timeout" in error_str.lower()
-        # 进一步区分: TypeError 的 "'NoneType' object is not subscriptable" 是数据空,
-        # 但其他 TypeError (如参数类型错) 可能是代码 bug → 看 error_str 区分
-        if error_name == "TypeError" and "NoneType" not in error_str:
-            is_expected_failure = False  # 非 NoneType 的 TypeError 可能是真 bug
+        is_expected_failure = _is_expected_optional_failure(error_name, error_str)
         if is_expected_failure:
+            if _is_network_failure(error_name, error_str):
+                _record_endpoint_network_failure(endpoint_key)
             # 去重: 同类错误只打第一次, 后续静默计数
             dedup_key = f"{error_name}:{error_message.split('(')[0]}"
             _network_error_counts[dedup_key] = _network_error_counts.get(dedup_key, 0) + 1

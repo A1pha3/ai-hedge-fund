@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import threading
+from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
@@ -18,7 +19,19 @@ SINA_QUOTE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Referer": "https://finance.sina.com.cn",
 }
-PROXY_ENV_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy", "SOCKS_PROXY", "socks_proxy")
+PROXY_ENV_VARS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "SOCKS_PROXY",
+    "socks_proxy",
+    "NO_PROXY",
+    "no_proxy",
+)
+BYPASS_ALL_PROXY_ENV_VARS = ("NO_PROXY", "no_proxy")
 
 
 def normalize_akshare_cache_value(value: Any) -> Any:
@@ -150,38 +163,63 @@ def create_session():
         return _SHARED_SESSION
 
 
-# Module-level lock to serialize proxy env mutations across threads.  Without
-# this, concurrent ``get_financial_metrics`` / ``search_stocks`` calls can
-# corrupt ``os.environ`` — thread A's restore fires while thread B's disable
-# reads, leaking proxy settings across threads.  BETA proxy-race fix (R20.5).
-_PROXY_LOCK = threading.Lock()
+# Module-level lock to serialize the whole proxy-disabled request window across
+# threads.  Deleting/restoring env vars alone is not enough: requests/AKShare
+# reads proxy env lazily during the HTTP call, so another thread restoring the
+# vars mid-call can leak proxies back into an in-flight request.
+_PROXY_LOCK = threading.RLock()
+
+
+def _disable_system_proxies_unlocked() -> dict[str, str]:
+    saved: dict[str, str] = {}
+    for var in PROXY_ENV_VARS:
+        if var in os.environ:
+            saved[var] = os.environ[var]
+            del os.environ[var]
+    # On macOS, requests/urllib can fall back to SystemConfiguration proxies
+    # when proxy env vars are absent.  NO_PROXY=* forces a real all-host bypass.
+    for var in BYPASS_ALL_PROXY_ENV_VARS:
+        os.environ[var] = "*"
+    return saved
+
+
+def _restore_proxies_unlocked(saved: dict[str, str]) -> None:
+    for var in PROXY_ENV_VARS:
+        if var in saved:
+            os.environ[var] = saved[var]
+        else:
+            os.environ.pop(var, None)
 
 
 def disable_system_proxies() -> dict[str, str]:
     with _PROXY_LOCK:
-        saved: dict[str, str] = {}
-        for var in PROXY_ENV_VARS:
-            if var in os.environ:
-                saved[var] = os.environ[var]
-                del os.environ[var]
-        return saved
+        return _disable_system_proxies_unlocked()
 
 
 def restore_proxies(saved: dict[str, str]) -> None:
     with _PROXY_LOCK:
-        for var, value in saved.items():
-            os.environ[var] = value
+        _restore_proxies_unlocked(saved)
+
+
+def run_without_system_proxies(run: Callable[[], Any]) -> Any:
+    with _PROXY_LOCK:
+        saved_proxies_env = _disable_system_proxies_unlocked()
+        try:
+            return run()
+        finally:
+            _restore_proxies_unlocked(saved_proxies_env)
 
 
 def disable_proxy_temporarily(disable_proxies, restore_saved_proxies):
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            saved_proxies_env = disable_proxies()
-            try:
-                return func(*args, **kwargs)
-            finally:
-                restore_saved_proxies(saved_proxies_env)
+            with _PROXY_LOCK:
+                saved_proxies_env = disable_proxies()
+                try:
+                    return func(*args, **kwargs)
+                finally:
+                    restore_saved_proxies(saved_proxies_env)
 
         return wrapper
 

@@ -17,6 +17,8 @@ Mirrors the BH-017 family drained across c280-c284.
 from __future__ import annotations
 
 import logging
+import os
+from types import SimpleNamespace
 
 from src.tools import (
     akshare_market_helpers,
@@ -119,3 +121,107 @@ class TestMarketHelpersObservability:
 
         assert result is None
         assert any("市场数据拉取失败" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records)
+
+    def test_fetch_runs_with_system_proxies_disabled(self, monkeypatch) -> None:
+        monkeypatch.setenv("HTTP_PROXY", "http://proxy.example")
+        observed = {}
+
+        def _fetch():
+            observed["during_fetch"] = os.environ.get("HTTP_PROXY")
+            return akshare_market_helpers.pd.DataFrame([{"value": 1}])
+
+        result = akshare_market_helpers.load_optional_market_dataframe(
+            is_available=True,
+            unavailable_message="不可用",
+            fetch_dataframe_fn=_fetch,
+            error_message="市场数据拉取失败",
+        )
+
+        assert result is not None
+        assert observed == {"during_fetch": None}
+        assert os.environ["HTTP_PROXY"] == "http://proxy.example"
+
+    def test_repeated_expected_failures_open_endpoint_circuit_breaker(self, monkeypatch) -> None:
+        monkeypatch.setenv("AKSHARE_EASTMONEY_FAILURE_BREAKER_THRESHOLD", "2")
+        monkeypatch.setenv("AKSHARE_EASTMONEY_FAILURE_BREAKER_COOLDOWN_SECONDS", "60")
+        monkeypatch.setattr(akshare_market_helpers, "_get_eastmoney_rate_limiter", lambda: SimpleNamespace(acquire=lambda: None))
+        akshare_market_helpers._network_error_counts.clear()
+        akshare_market_helpers._endpoint_failure_counts.clear()
+        akshare_market_helpers._endpoint_circuit_open_until.clear()
+
+        calls = []
+
+        def _boom():
+            calls.append("fetch")
+            raise ConnectionError("Remote end closed connection without response")
+
+        for _ in range(2):
+            result = akshare_market_helpers.load_optional_market_dataframe(
+                is_available=True,
+                unavailable_message="不可用",
+                fetch_dataframe_fn=_boom,
+                error_message="[AKShare] get_intraday_bars(688361, 20260708) 失败",
+            )
+            assert result is None
+
+        result = akshare_market_helpers.load_optional_market_dataframe(
+            is_available=True,
+            unavailable_message="不可用",
+            fetch_dataframe_fn=_boom,
+            error_message="[AKShare] get_intraday_bars(688082, 20260708) 失败",
+        )
+
+        assert result is None
+        assert calls == ["fetch", "fetch"]
+
+    def test_empty_data_failures_do_not_open_endpoint_circuit_breaker(self, monkeypatch) -> None:
+        monkeypatch.setenv("AKSHARE_EASTMONEY_FAILURE_BREAKER_THRESHOLD", "2")
+        monkeypatch.setattr(akshare_market_helpers, "_get_eastmoney_rate_limiter", lambda: SimpleNamespace(acquire=lambda: None))
+        akshare_market_helpers._network_error_counts.clear()
+        akshare_market_helpers._endpoint_failure_counts.clear()
+        akshare_market_helpers._endpoint_circuit_open_until.clear()
+
+        calls = []
+
+        def _empty_response():
+            calls.append("fetch")
+            raise TypeError("'NoneType' object is not subscriptable")
+
+        for _ in range(3):
+            result = akshare_market_helpers.load_optional_market_dataframe(
+                is_available=True,
+                unavailable_message="不可用",
+                fetch_dataframe_fn=_empty_response,
+                error_message="[AKShare] get_lhb_detail(20260708, 20260708) 失败",
+            )
+            assert result is None
+
+        assert calls == ["fetch", "fetch", "fetch"]
+        assert akshare_market_helpers._endpoint_circuit_open_until == {}
+
+    def test_circuit_breaker_is_rechecked_after_rate_limit_wait(self, monkeypatch) -> None:
+        key = "[AKShare] get_intraday_bars"
+        akshare_market_helpers._network_error_counts.clear()
+        akshare_market_helpers._endpoint_failure_counts.clear()
+        akshare_market_helpers._endpoint_circuit_open_until.clear()
+
+        class _Limiter:
+            def acquire(self) -> None:
+                akshare_market_helpers._endpoint_circuit_open_until[key] = akshare_market_helpers.time.monotonic() + 60
+
+        monkeypatch.setattr(akshare_market_helpers, "_get_eastmoney_rate_limiter", lambda: _Limiter())
+        calls = []
+
+        def _fetch():
+            calls.append("fetch")
+            return akshare_market_helpers.pd.DataFrame([{"value": 1}])
+
+        result = akshare_market_helpers.load_optional_market_dataframe(
+            is_available=True,
+            unavailable_message="不可用",
+            fetch_dataframe_fn=_fetch,
+            error_message="[AKShare] get_intraday_bars(688361, 20260708) 失败",
+        )
+
+        assert result is None
+        assert calls == []
