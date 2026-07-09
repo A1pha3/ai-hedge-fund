@@ -742,23 +742,25 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     if not candidates:
         raise ValueError(f"候选池为空 (trade_date={trade_date}), 请检查市场数据源是否可用")
 
-    from src.screening.optional_feature_refresh import refresh_optional_features
-    from src.screening.optional_feature_store import OptionalFeatureStore
+    from src.screening.scoring_feature_refresh import refresh_scoring_features
+    from src.screening.scoring_feature_store import ScoringFeatureStore
 
     candidate_tickers = [candidate.ticker for candidate in candidates]
-    refresh_optional_features(
+    refresh_scoring_features(
         trade_date,
         candidate_tickers,
         timeout_seconds=float(os.environ.get("AUTO_OPTIONAL_FEATURE_REFRESH_TIMEOUT_SECONDS", "20")),
     )
-    optional_feature_store = OptionalFeatureStore()
+    scoring_feature_store = ScoringFeatureStore()
 
     # Step 2: 四策略评分
     progress.update_status("auto_screening", None, f"Step 2/4: 四策略评分 ({len(candidates)} 只)")
     logger.info("[Auto] Step 2/4: 四策略评分 — %d 只候选", len(candidates))
 
-    scored = score_batch(candidates, trade_date, feature_store=optional_feature_store)
-    optional_feature_quality = optional_feature_store.build_quality_summary(
+    scored = score_batch(candidates, trade_date, feature_store=scoring_feature_store)
+    # Backward-compatible payload key: this summary now contains both
+    # data_quality.scoring_features and data_quality.optional_features.
+    optional_feature_quality = scoring_feature_store.build_quality_summary(
         trade_date,
         candidate_tickers,
     )

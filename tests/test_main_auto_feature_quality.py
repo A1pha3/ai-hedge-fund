@@ -57,8 +57,8 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
         def stats(self):
             return {"batch_calls": 0}
 
-    class FakeOptionalFeatureStore:
-        instances: list["FakeOptionalFeatureStore"] = []
+    class FakeScoringFeatureStore:
+        instances: list["FakeScoringFeatureStore"] = []
 
         def __init__(self):
             self.quality_calls: list[tuple[str, list[str]]] = []
@@ -67,6 +67,16 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
         def build_quality_summary(self, trade_date: str, tickers: list[str]) -> dict:
             self.quality_calls.append((trade_date, tickers))
             return {
+                "scoring_features": {
+                    "price_history": {
+                        "coverage": 1.0,
+                        "source": "local_price_cache",
+                        "trade_date": trade_date,
+                        "stale": False,
+                        "provider_failures": 0,
+                        "missing_tickers": 0,
+                    }
+                },
                 "optional_features": {
                     "intraday_short_trade_metrics": {
                         "coverage": 1.0,
@@ -76,7 +86,7 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
                         "provider_failures": 0,
                         "missing_tickers": 0,
                     }
-                }
+                },
             }
 
     class FakeFused:
@@ -93,7 +103,7 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
         score_feature_stores.append(feature_store)
         return {"000001": {}}
 
-    def fake_refresh_optional_features(scoring_date, tickers, *, timeout_seconds):
+    def fake_refresh_scoring_features(scoring_date, tickers, *, timeout_seconds):
         events.append(("refresh", list(tickers)))
         assert scoring_date == "20260708"
         assert list(tickers) == ["000001", "000002"]
@@ -104,10 +114,10 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
         "src.screening.batch_data_fetcher.get_global_batch_data_fetcher",
         lambda: FakeBatchFetcher(),
     )
-    monkeypatch.setattr("src.screening.optional_feature_store.OptionalFeatureStore", FakeOptionalFeatureStore)
+    monkeypatch.setattr("src.screening.scoring_feature_store.ScoringFeatureStore", FakeScoringFeatureStore)
     monkeypatch.setattr(
-        "src.screening.optional_feature_refresh.refresh_optional_features",
-        fake_refresh_optional_features,
+        "src.screening.scoring_feature_refresh.refresh_scoring_features",
+        fake_refresh_scoring_features,
     )
     monkeypatch.setenv("AUTO_OPTIONAL_FEATURE_REFRESH_TIMEOUT_SECONDS", "0.25")
     monkeypatch.setattr(main_module, "_compute_model_version", lambda: "test-sha")
@@ -132,6 +142,16 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
     payload = main_module.compute_auto_screening_results("20260708", top_n=1)
 
     expected_quality = {
+        "scoring_features": {
+            "price_history": {
+                "coverage": 1.0,
+                "source": "local_price_cache",
+                "trade_date": "20260708",
+                "stale": False,
+                "provider_failures": 0,
+                "missing_tickers": 0,
+            }
+        },
         "optional_features": {
             "intraday_short_trade_metrics": {
                 "coverage": 1.0,
@@ -141,12 +161,12 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
                 "provider_failures": 0,
                 "missing_tickers": 0,
             }
-        }
+        },
     }
     assert events[0] == ("refresh", ["000001", "000002"])
     assert events[1][0] == "score"
-    assert score_feature_stores == FakeOptionalFeatureStore.instances
-    assert FakeOptionalFeatureStore.instances[0].quality_calls == [
+    assert score_feature_stores == FakeScoringFeatureStore.instances
+    assert FakeScoringFeatureStore.instances[0].quality_calls == [
         ("20260708", ["000001", "000002"])
     ]
     assert saved[0][1]["data_quality"] == expected_quality
