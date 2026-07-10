@@ -476,6 +476,9 @@ class DailyAction:
     invalidation_condition: str
     distribution_summary: str  # "n=5374 winrate=51% cv=1.53 E=+2.6%"
     reasoning: str
+    # trigger_strength: setup detect 产出的 0-1 触发强度 (反转深度+涨停强度+主力流入).
+    # 决定同 setup 内候选的排序, render 需展示让排序可解释. 默认 0 兼容旧构造.
+    trigger_strength: float = 0.0
 
 
 def _load_prices_for_ticker(ticker: str, report_date: str) -> pd.DataFrame:
@@ -648,9 +651,16 @@ def generate_daily_action(
     needs_industry_day_pct = any(name == "btst_breakout" for name, *_rest in setup_configs)
     industry_day_pct_by_ticker = _load_industry_day_pct_by_ticker(trade_date, scan_tickers) if needs_industry_day_pct else {}
 
+    # C-HELD-DEDUP: 排除已开仓 ticker, 防止"仓位释放后买以下候选"里出现当前已持有的票
+    # (重复检测: 同一涨停日对已持仓票同样触发 setup, 不去重则 operator 看到候选即已持仓).
+    held_tickers: set[str] = {str(p["ticker"]) for p in tracker.open_positions_detail()} if tracker else set()
+
     ranked_candidates: list[tuple[float, float, float, int, DailyAction]] = []
     for ticker in scan_tickers:
         if not ticker:
+            continue
+        if ticker in held_tickers:
+            logger.debug("ticker %s 已持仓, 跳过候选检测 (去重)", ticker)
             continue
         prices = _load_prices(ticker, trade_date)
         if prices is None or len(prices) == 0:
@@ -724,6 +734,7 @@ def generate_daily_action(
                 invalidation_condition=result.invalidation_condition,
                 distribution_summary=dist_summary,
                 reasoning=f"{setup_name} T+{horizon} 命中; half-Kelly {kelly_pct:.1%}; regime={regime}×{regime_factor:.1f}; drawdown={dd_action}",
+                trigger_strength=float(result.trigger_strength),
             )
             ranked_candidates.append(
                 (
@@ -823,7 +834,9 @@ def _render_candidate_list(
         name = get_stock_name(a.ticker)
         label = f"{a.ticker} {name}" if name and name != a.ticker else a.ticker
         converge = " ⭐双信号" if a.ticker.split(".")[0] in topn else ""
-        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{label}{Style.RESET_ALL}  [{a.setup}]  " f"参考价 ~{a.entry_price:.2f}  先验 {a.distribution_summary}{converge}")
+        # 标注"先验(驱动Kelly)"区别于表头的"真实回测"——两套不可比的数字用用途标签区分.
+        # trigger_strength 是候选排序的真实依据 (反转深度+涨停强度+主力流入), 需展示让排序可解释.
+        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{label}{Style.RESET_ALL}  [{a.setup}]  " f"强度 {a.trigger_strength:.2f}  参考价 ~{a.entry_price:.2f}  先验(驱动Kelly) {a.distribution_summary}{converge}")
     rest = len(candidates) - len(shown)
     if rest > 0:
         lines.append(f"  {Fore.WHITE}...其余 {rest} 只略 (强度更低){Style.RESET_ALL}")
@@ -859,11 +872,15 @@ def render_daily_action(
     next_trade_date = _resolve_next_trade_date(trade_date)
     buy_date_label = next_trade_date or "下一交易日"
 
+    # 累计已实现盈亏的限定语: 0 笔 EXIT 时无信息含量, 用限定语区分"待结算"与"N笔已平仓".
+    closed_count = sum(1 for rec in tracker._load_journal() if rec.get("action") == "EXIT")
+    realized_qualifier = "(待到期结算)" if closed_count == 0 else f"({closed_count}笔已平仓)"
+
     lines = [
         f"\n{Fore.CYAN}{Style.BRIGHT}📋 机械交易计划 — 信号日: {trade_date} (Phase A paper trading){Style.RESET_ALL}",
         f"  计划买入日: {buy_date_label}  执行价口径: {buy_date_label} 开盘; 当前展示价为信号日收盘参考价",
         f"  组合净值: {state.nav:.3f}  回撤: {state.drawdown_pct:+.1%}  风控状态: {dd_tag}",
-        f"  持仓数: {state.open_positions}  累计已实现: {state.realized_pnl_pct:+.2%}",
+        f"  持仓数: {state.open_positions}  累计已实现: {state.realized_pnl_pct:+.2%} {realized_qualifier}",
         f"  组合敞口: {state.open_exposure:.0%} / {_MAX_PORTFOLO_PCT:.0%} 上限" + (" ⚠超配" if state.open_exposure > _MAX_PORTFOLO_PCT + 1e-9 else ""),
     ]
     # C-PORTFOLIO-CAP: 若历史超配 (open_exposure > 60%) 导致本次跳过新信号, 显式披露,
@@ -948,6 +965,9 @@ def render_daily_action(
         lines.append(f"\n  {Fore.YELLOW}今日 {len(blocked)} 个 setup 命中 — 因组合敞口 " f"{state.open_exposure:.0%} 超 {_MAX_PORTFOLO_PCT:.0%} 上限, 本次暂不买入. " f"仓位释放后按强度优先买以下候选:{Style.RESET_ALL}\n")
         _render_candidate_list(lines, blocked, get_stock_name, buy_date_label, limit=12, auto_topn=auto_topn)
         lines.append(f"\n  {Fore.WHITE}(候选仅供参考; 上限保护期可不操作, 或用上限外资金自行决策){Style.RESET_ALL}")
+        # 候选行含"先验(驱动Kelly)"和"强度", 与表头"真实回测"是两套独立统计 —
+        # 在候选后即时标注用途, 避免跨段对照时混淆 (术语完整版见 BUY 路径末尾).
+        lines.append(f"  {Fore.WHITE}说明: 先验(驱动Kelly)≠表头真实回测, 两套独立统计; 强度=排序依据; T+N=交易日, 剩N天=日历日, 未到期仓位浮动盈亏不计入{Style.RESET_ALL}")
         return "\n".join(lines)
 
     lines.append(f"\n  {Fore.GREEN}计划 BUY ({len(actions)} 只, {buy_date_label} 开盘执行):{Style.RESET_ALL}\n")
@@ -970,7 +990,9 @@ def render_daily_action(
     lines.append(f"  {Fore.WHITE}术语说明:{Style.RESET_ALL}")
     lines.append(f"  - 软止损=历史平均亏损x1.5的观察线, 用于风险参考, 不是自动卖出触发")
     lines.append(f"  - 硬止损=固定-8%的风控参考线; 止损触发只做披露, paper P&L 按 T+N 收盘回填")
-    lines.append(f"  - 先验分布: n=历史样本数, winrate=历史胜率, cv=凸性比, E=历史平均收益")
+    lines.append(f"  - 先验分布: n=历史样本数, winrate=历史胜率, cv=凸性比, E=历史平均收益 (与表头'真实回测'两套独立统计, 各自标注用途)")
+    lines.append(f"  - 强度=setup触发强度(反转深度40%+涨停强度30%+主力流入30%), 决定同setup内候选的排序")
+    lines.append(f"  - T+N=交易日; 剩N天=日历日(T+10≈14日历日); 到期按第N个交易日收盘结算P&L; 未到期仓位浮动盈亏不计入")
 
     lines.append(f"\n  {Fore.WHITE}执行规则 (按规则执行):{Style.RESET_ALL}")
     lines.append(f"  - {buy_date_label} 开盘买入 (不追涨, 涨停买不到就放弃)")

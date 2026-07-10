@@ -1384,7 +1384,9 @@ def _run_daily_action_under_regime(tmp_path, monkeypatch, regime_gate_level: str
             }
         ]
     )
-    tracker = PaperTracker(journal_dir=tmp_path)
+    # 每次调用用独立 journal 子目录, 避免同测试内多次调用时去重逻辑 (C-HELD-DEDUP)
+    # 把上一次买入的 ticker 当作"已持仓"跳过 (regime 对比测试需两次独立买入同一票).
+    tracker = PaperTracker(journal_dir=tmp_path / f"journal_{regime_gate_level}")
     actions = da.generate_daily_action(
         report_path=report_path,
         tracker=tracker,
@@ -2267,3 +2269,66 @@ def test_render_candidate_list_truncates_with_rest_count(tmp_path, monkeypatch):
     # limit=12, 14 候选 → 显示前 12 + "其余 2 只略"
     assert "其余" in out and "只略" in out, "候选超过 limit 应显示截断提示"
     assert "其余 2 只略" in out, f"14 - 12 = 2 只略, 实际:\n{out}"
+
+
+def test_held_ticker_excluded_from_candidates(tmp_path, monkeypatch):
+    """已持仓 ticker 不应出现在候选列表 (C-HELD-DEDUP).
+
+    回归: 此前 generate_daily_action 不排除已开仓 ticker, 同一涨停日对已持仓票
+    同样触发 setup → 候选列表 (敞口超限时的"仓位释放后买以下候选")出现当前已持有的
+    票, operator 误以为"释放后买这些"实为重复建仓. 修复: 扫描前从 open_positions_detail
+    取 held_tickers, 循环内 continue.
+    """
+    import json
+
+    import pandas as pd
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+    from src.screening.offensive.setups.base import DetectionResult
+    from src.screening.offensive.statistics import Distribution
+
+    class FakeSetup:
+        def detect(self, ticker, trade_date, context):
+            return DetectionResult(hit=True, ticker=ticker, trade_date=trade_date, trigger_strength=0.9, invalidation_condition="fake")
+
+    dist = Distribution(n=100, winrate=0.60, avg_gain=0.12, avg_loss=-0.06, convexity_ratio=2.0, expected_return=0.05, ci_low=0.02, ci_high=0.08, ic=0.10)
+    monkeypatch.setattr(da, "_VERIFIED_SETUPS", [("btst_breakout", FakeSetup, 10)])
+    monkeypatch.setattr(da, "get_known_distribution", lambda name, horizon: dist)
+    monkeypatch.setattr(da, "_env_setup_disable_list", lambda: set())
+    monkeypatch.delenv("DAILY_ACTION_ENFORCE_OPEN_CAP", raising=False)
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    monkeypatch.setattr(da, "_setup_policy_lines", lambda: [], raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"股{t[-2:]}")
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    # 已持仓 500001 (60% 单仓占满上限, 使后续信号全部进 blocked 候选列表)
+    held_ticker = "500001"
+    tracker.record_buy("20260707", held_ticker, "btst_breakout", 10, 10.0, 0.60, 9.0, 9.2, "fake")
+
+    # 扫描集 = [已持仓 500001, 新票 600001] — 已持仓的不应进候选
+    report_path = tmp_path / "auto_screening_20260709.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "date": "20260709",
+                "recommendations": [{"ticker": held_ticker}, {"ticker": "600001"}],
+                "market_state": {"regime_gate_level": "normal"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    prices = pd.DataFrame([{"date": pd.Timestamp("2026-07-09"), "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.0, "pct_change": 9.5}])
+
+    actions = da.generate_daily_action(report_path=report_path, tracker=tracker, scan_mode="report", price_loader=lambda ticker, report_date: prices.copy())
+    assert actions == [], "60% 已满 → 应无新 BUY (全部 blocked)"
+    out = da.render_daily_action(actions, "20260709", tracker)
+
+    # 去重生效: 命中数 = 1 (只含未持仓的 600001), 不含已持仓的 500001.
+    # 500001 合理出现在"当前持仓"段, 但不应出现在"候选"段 — 用分隔锚点切分两段检查.
+    candidate_section = out.split("按强度优先买以下候选")[-1] if "按强度优先买以下候选" in out else out
+    assert "1 个 setup 命中" in out, f"应报告 1 个候选 (不含已持仓的), 实际:\n{out}"
+    assert held_ticker not in candidate_section, f"已持仓 {held_ticker} 不应出现在候选段, 实际:\n{candidate_section}"
+    assert "600001" in candidate_section, f"未持仓 600001 应在候选段, 实际:\n{candidate_section}"
+    # trigger_strength 也应展示 (改动3: 排序依据可见)
+    assert "强度 0.90" in candidate_section, f"候选行应展示 trigger_strength, 实际:\n{candidate_section}"
+    assert "先验(驱动Kelly)" in candidate_section, f"候选行应标注'先验(驱动Kelly)'区分口径, 实际:\n{candidate_section}"
