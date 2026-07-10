@@ -347,6 +347,7 @@ def test_akshare_price_fallback_preserves_both_errors():
             cache_key="test_key",
             fetch_prices_from_akshare_fn=fetch_akshare,
             fetch_prices_from_tencent_fn=fetch_tencent,
+            fetch_prices_from_tushare_fn=None,
             cache_prices_fn=cache_prices,
             error_factory=error_factory,
         )

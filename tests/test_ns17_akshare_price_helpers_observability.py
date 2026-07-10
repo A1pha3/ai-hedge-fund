@@ -123,6 +123,7 @@ class TestLoadPricesWithFallbackObservability:
                 ak_module=None,
                 fetch_prices_from_akshare_fn=_boom_akshare,
                 fetch_prices_from_tencent_fn=_ok_tencent,
+                fetch_prices_from_tushare_fn=None,
                 cache_prices_fn=lambda key, p: p,
                 cache_key="test-key",
                 error_factory=RuntimeError,
@@ -130,3 +131,38 @@ class TestLoadPricesWithFallbackObservability:
 
         assert len(prices) == 1  # Tencent 回退成功
         assert any("AKShare" in r.getMessage() and r.levelno >= logging.WARNING for r in caplog.records), "AKShare 失败回退 Tencent 必须发 logger.warning"
+
+    def test_tencent_failure_emits_warning_and_falls_back_to_tushare(self, caplog) -> None:
+        """AKShare + 腾讯都失败时, 腾讯层须发 warning (此前无腾讯层日志, 是最大盲区),
+        且 Tushare 第 3 层兜底成功。"""
+
+        def _boom_akshare(ak_module, ticker, start, end, period):
+            raise RuntimeError("akshare failure")
+
+        def _boom_tencent(ticker, start, end):
+            raise RuntimeError("tencent failure")
+
+        def _ok_tushare(ticker, start, end, period="daily"):
+            from src.data.models import Price
+
+            return [Price(time="2026-01-01", open=1.0, high=1.0, low=1.0, close=1.0, volume=100)]
+
+        with caplog.at_level(logging.WARNING, logger="src.tools.akshare_price_helpers"):
+            prices = akshare_price_helpers.load_prices_with_fallback(
+                ticker="000001",
+                start_date="2026-01-01",
+                end_date="2026-01-02",
+                period="daily",
+                ak_module=None,
+                fetch_prices_from_akshare_fn=_boom_akshare,
+                fetch_prices_from_tencent_fn=_boom_tencent,
+                fetch_prices_from_tushare_fn=_ok_tushare,
+                cache_prices_fn=lambda key, p: p,
+                cache_key="test-key",
+                error_factory=RuntimeError,
+            )
+
+        assert len(prices) == 1  # Tushare 第 3 层兜底成功
+        msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("AKShare" in m for m in msgs), f"AKShare 失败须发 warning, 实际: {msgs}"
+        assert any("腾讯" in m for m in msgs), f"腾讯层失败须发 warning (补日志盲区), 实际: {msgs}"

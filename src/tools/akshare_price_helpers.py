@@ -7,7 +7,7 @@ from src.data.models import Price
 
 # NS-17 / BH-017 family sibling drain: 本模块持有 A 股多级价格回退链
 # (execute_robust_price_request: AKShare→新浪→Tushare/BaoStock→mock;
-# load_prices_with_fallback: AKShare→Tencent), 是 get_prices_robust /
+# load_prices_with_fallback: AKShare→腾讯→Tushare 三层), 是 get_prices_robust /
 # akshare_api.get_prices 的核心价格获取路径。此前无 logger, 8 处 print() 在
 # cron/launchd 上下文里不入结构化日志: 某级 tier 静默失败时运维无法定位"为何
 # 最终拿到 mock/空数据"。
@@ -175,6 +175,51 @@ def execute_robust_price_request(
     raise error_factory(f"所有数据源都失败: {'; '.join(errors)}")
 
 
+def _is_network_error(error: Exception) -> bool:
+    """Classify whether an exception is a network/proxy class error.
+
+    Network errors (ProxyError/Timeout/ConnectionError/SSLError) carry very long
+    URLs in their message; for log readability we dedupe them across a batch
+    rather than printing the full message per ticker.
+    """
+    error_name = type(error).__name__
+    return (
+        "proxy" in str(error).lower()
+        or "timeout" in str(error).lower()
+        or error_name in (
+            "ProxyError", "RemoteDisconnected", "ConnectionError", "MaxRetryError", "SSLError",
+        )
+    )
+
+
+def _log_price_tier_failure(tier: str, source: str, ticker: str, next_source: str | None, error: Exception) -> None:
+    """Log a price-tier failure with dedup for network-class errors.
+
+    Network errors (proxy/timeout/SSL/connection) are common across a full-market
+    batch and would flood the log if printed in full per ticker. We dedupe: the
+    first 3 print the ticker + error type + truncated message, then a single
+    summary line announces subsequent ones are silenced. Non-network errors are
+    always printed in full (they are rare and usually actionable).
+    """
+    if _is_network_error(error):
+        if not hasattr(_log_price_tier_failure, "_net_count"):
+            _log_price_tier_failure._net_count = 0  # type: ignore[attr-defined]
+        _log_price_tier_failure._net_count += 1  # type: ignore[attr-defined]
+        n = _log_price_tier_failure._net_count  # type: ignore[attr-defined]
+        # Truncate the error message: network errors embed very long proxy URLs.
+        msg = str(error)
+        if len(msg) > 120:
+            msg = msg[:120] + "..."
+        if n <= 3:
+            suffix = f", 尝试 {next_source}" if next_source else ""
+            logger.warning("%s %s %s 失败 (%s): %s%s", tier, source, ticker, type(error).__name__, msg, suffix)
+        elif n == 4:
+            logger.warning("%s 网络错误已累计 %d 次, 后续同类静默 (请检查代理/网络, 而非代码)", tier, n)
+    else:
+        suffix = f", 尝试 {next_source}" if next_source else ""
+        logger.warning("%s %s %s 失败 (%s): %s%s", tier, source, ticker, type(error).__name__, error, suffix)
+
+
 def load_prices_with_fallback(
     *,
     ticker: str,
@@ -187,43 +232,48 @@ def load_prices_with_fallback(
     cache_prices_fn: Callable[[str, list[Price]], list[Price]],
     cache_key: str,
     error_factory: Callable[[str], Exception],
+    fetch_prices_from_tushare_fn: Callable[..., list[Price]] | None = None,
 ) -> list[Price]:
-    akshare_error: Exception | None = None
-    tencent_error: Exception | None = None
+    # Three-tier A-share price fallback chain: AKShare → Tencent → Tushare.
+    # AKShare and Tencent share the eastmoney/tencent network egress and tend to
+    # fail together (proxy outage), so Tushare — which has an independent egress
+    # — is the third tier that rescues the chain when the first two go down.
+    errors: dict[str, str] = {}
+
+    # --- Tier 1/3: AKShare ---
     try:
         akshare_prices = fetch_prices_from_akshare_fn(ak_module, ticker, start_date, end_date, period)
         if akshare_prices:
             return cache_prices_fn(cache_key, akshare_prices)
+        errors["AKShare"] = "返回空数据"
     except Exception as error:
-        akshare_error = error
-        # 精简网络错误日志: ProxyError/Timeout 等含超长 URL, 只保留错误类型 + ticker.
-        # 同类去重 (302 ticker 同一 ProxyError → 只报前 3 个 + 汇总).
-        error_name = type(error).__name__
-        is_net = "proxy" in str(error).lower() or "timeout" in str(error).lower() or error_name in (
-            "ProxyError", "RemoteDisconnected", "ConnectionError", "MaxRetryError",
-        )
-        if is_net:
-            if not hasattr(load_prices_with_fallback, "_net_count"):
-                load_prices_with_fallback._net_count = 0  # type: ignore[attr-defined]
-            load_prices_with_fallback._net_count += 1  # type: ignore[attr-defined]
-            n = load_prices_with_fallback._net_count  # type: ignore[attr-defined]
-            if n <= 3:
-                logger.warning("AKShare 获取 %s 失败 (%s), 尝试腾讯接口", ticker, error_name)
-            elif n == 4:
-                logger.warning("AKShare 网络失败已连续 %d 次, 后续静默 (代理问题, 非代码bug)", n)
-        else:
-            logger.warning("AKShare 获取数据失败，尝试腾讯接口: %s", error)
+        errors["AKShare"] = f"{type(error).__name__}: {error}"
+        _log_price_tier_failure("[价格链 1/3]", "AKShare", ticker, "腾讯接口", error)
 
+    # --- Tier 2/3: Tencent ---
     try:
         prices = fetch_prices_from_tencent_fn(ticker, start_date, end_date)
         if prices:
             return cache_prices_fn(cache_key, prices)
+        errors["腾讯接口"] = "返回空数据"
+        logger.warning("[价格链 2/3] 腾讯接口 %s 返回空数据", ticker)
     except Exception as error:
-        tencent_error = error
+        errors["腾讯接口"] = f"{type(error).__name__}: {error}"
+        next_src = "Tushare" if fetch_prices_from_tushare_fn is not None else None
+        _log_price_tier_failure("[价格链 2/3]", "腾讯接口", ticker, next_src, error)
 
-    # If both failed, report the actual errors from each source. Use a chained
-    # exception (Tencent is the most-recent failure) so the traceback is preserved.
-    if akshare_error is not None and tencent_error is not None:
-        raise error_factory(f"无法获取股票 {ticker} 的历史数据（所有数据源都失败）。\n" f"AKShare 错误: {akshare_error}\n" f"腾讯接口错误: {tencent_error}\n" "请检查网络连接，或使用 use_mock=True 参数使用模拟数据。") from tencent_error
+    # --- Tier 3/3: Tushare (optional) ---
+    if fetch_prices_from_tushare_fn is not None:
+        try:
+            prices = fetch_prices_from_tushare_fn(ticker, start_date, end_date, period)
+            if prices:
+                return cache_prices_fn(cache_key, prices)
+            errors["Tushare"] = "返回空数据"
+            logger.warning("[价格链 3/3] Tushare %s 返回空数据", ticker)
+        except Exception as error:
+            errors["Tushare"] = f"{type(error).__name__}: {error}"
+            _log_price_tier_failure("[价格链 3/3]", "Tushare", ticker, None, error)
 
-    return []
+    # All tiers exhausted — report each source's real failure reason.
+    detail = "; ".join(f"{src}: {reason}" for src, reason in errors.items())
+    raise error_factory(f"无法获取股票 {ticker} 的历史数据（所有数据源都失败）。\n{detail}\n请检查网络连接，或使用 use_mock=True 参数使用模拟数据。")

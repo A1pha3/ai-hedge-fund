@@ -1,0 +1,10 @@
+{
+  "mcp": {
+    "servers": {
+      "tushareMcp": {
+        "type": "http",
+        "url": "https://api.tushare.pro/mcp/?token=4d03c60020f04c5fedfeca766ba69ea2e277b911bd3ca61e70459e70"
+      }
+    }
+  }
+}

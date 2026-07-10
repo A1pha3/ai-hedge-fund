@@ -256,6 +256,25 @@ def _get_prices_from_tencent(ticker: str, start_date: str, end_date: str) -> lis
     )
 
 
+def _get_prices_from_tushare(ticker: str, start_date: str, end_date: str, period: str = "daily") -> list[Price]:
+    """通过 Tushare 获取 A 股历史价格 (价格链第 3 层兜底)。
+
+    复用 ashare_data_sources.TushareDataSource.get_prices (pro.daily + adj_factor
+    前复权 qfq)。Tushare 与 AKShare/腾讯走独立网络出口, 当前两者同时因代理/
+    SSL 故障时, Tushare 是最后一层真实数据源。DataSourceError 转为
+    AShareDataError 以与上层 error_factory 一致; 空数据时返回空列表 (由
+    load_prices_with_fallback 的 ``if prices:`` 守卫判断)。
+    """
+    # Lazy import avoids a circular dependency: ashare_data_sources imports from
+    # akshare_api (get_sina_historical_data / get_mock_prices) at call time.
+    from src.tools.ashare_data_sources import DataSourceError, TushareDataSource
+
+    try:
+        return TushareDataSource.get_prices(ticker, start_date, end_date, period)
+    except DataSourceError as e:
+        raise AShareDataError(str(e)) from e
+
+
 def _fetch_prices_from_akshare(ak_module, ticker: str, start_date: str, end_date: str, period: str) -> list[Price] | None:
     ashare = AShareTicker.from_symbol(ticker)
     df = _cached_akshare_dataframe_call(
@@ -326,6 +345,7 @@ def get_prices(ticker: str, start_date: str, end_date: str, period: str = "daily
                 load_prices_fn=lambda **kwargs: load_prices_with_fallback(
                     fetch_prices_from_akshare_fn=_fetch_prices_from_akshare,
                     fetch_prices_from_tencent_fn=_get_prices_from_tencent,
+                    fetch_prices_from_tushare_fn=_get_prices_from_tushare,
                     cache_prices_fn=_cache_prices,
                     cache_key=cache_key,
                     error_factory=AShareDataError,

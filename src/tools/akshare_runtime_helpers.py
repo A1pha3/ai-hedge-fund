@@ -139,8 +139,12 @@ def create_session():
         # 配 HTTPAdapter：pool_connections=连接池数, pool_maxsize=每池最多 keep-alive 连接
         pool_size = int(os.environ.get("AKSHARE_SESSION_POOL_SIZE", "10"))
 
-        # R20.10 BETA: pool_block=True + 自定义 Adapter 传入 pool_timeout=30，
-        # 防止池耗尽时无上限新建 transient 连接。
+        # R20.10 BETA: pool_block=True 防止池耗尽时无上限新建 transient 连接。
+        # 注: 原实现还传了 pool_timeout=30, 但 urllib3 2.x 移除了 pool_timeout
+        # (PoolManager.__init__ 不再接受它, 请求时构造 PoolKey 会 crash:
+        # "PoolKey.__new__() got an unexpected keyword argument 'key_pool_timeout'").
+        # urllib3 2.x 下 pool_block=True 即阻塞等待连接释放, 无单独超时; pool_size
+        # 足够大时实际不会无限阻塞。故移除 pool_timeout, 保留 pool_block 防池耗尽语义。
         class _BoundedHTTPAdapter(HTTPAdapter):
             def init_poolmanager(self, *args, **kwargs):
                 # maxsize & block are already supplied positionally/keyword by
@@ -148,7 +152,6 @@ def create_session():
                 # re-adding maxsize to kwargs collides with the positional value
                 # on requests>=2.32 ("got multiple values for 'maxsize'"). R20.25.
                 kwargs["block"] = True
-                kwargs.setdefault("pool_timeout", 30)
                 return super().init_poolmanager(*args, **kwargs)
 
         adapter = _BoundedHTTPAdapter(

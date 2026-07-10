@@ -46,24 +46,32 @@ def fetch_individual_fund_flow(
     else:
         sources = [("akshare", _try_akshare), ("tushare", _try_tushare)]
 
+    # Track each source's real outcome so the final message distinguishes "empty
+    # data" from "fetch exception" — these have different root causes (data not
+    # covered/ready vs. network/SSL failure) and must not be conflated.
+    outcomes: dict[str, str] = {}
     for name, fetcher in sources:
         try:
             df = fetcher(ticker, start_date, end_date)
         except Exception as exc:
-            logger.warning("[%s] %s fetcher 异常: %s", ticker, name, exc)
+            outcomes[name] = f"异常 ({type(exc).__name__}: {exc})"
             df = pd.DataFrame()
         if df is not None and len(df) > 0:
             logger.debug("[%s] %s 命中 %d 行", ticker, name, len(df))
             return df
+        if name not in outcomes:
+            outcomes[name] = "返回空数据"
         logger.debug("[%s] %s 返回空, 尝试下一源", ticker, name)
 
-    # 双源均空去重: 北交所/新股批量触发时, 首次 WARNING (含原因), 后续静默计数。
+    # 双源均失败去重: 批量拉取时北交所/新股/网络抖动会大量触发, 首次 WARNING
+    # (含每源真实失败原因), 后续静默计数。
     _empty_source_counts["dual_empty"] = _empty_source_counts.get("dual_empty", 0) + 1
     count = _empty_source_counts["dual_empty"]
+    detail = "; ".join(f"{src}: {reason}" for src, reason in outcomes.items())
     if count == 1:
-        logger.warning("[%s] 资金流双源均空 — tushare+akshare 均无数据 (可能是北交所/新股等数据源未覆盖, 或当日数据未就绪; 后续同类将静默)", ticker)
+        logger.warning("[资金流] %s 双源均失败 — %s (后续同类将静默)", ticker, detail)
     elif count % 50 == 0:
-        logger.info("资金流双源均空已累计 %d 次 (静默中)", count)
+        logger.info("资金流双源均失败已累计 %d 次 (静默中)", count)
     return pd.DataFrame(columns=["date", "main_net_inflow"])
 
 
