@@ -99,3 +99,41 @@ def build_beijing_exchange_mask(stock_df: pd.DataFrame) -> pd.Series:
 
     normalized_market = market_series.fillna("").astype(str).str.strip()
     return normalized_market.str.upper().eq("BJ") | normalized_market.eq("北交所") | build_beijing_exchange_mask_from_series(ts_code_series) | symbol_series.fillna("").astype(str).str.strip().str.startswith(BEIJING_EXCHANGE_SYMBOL_PREFIXES)
+
+
+# A 股涨跌停幅度 (按板块). 用于判断「涨停」的 pct_change 阈值.
+# 主板 (沪 60/深 00) ±10%, 科创板 (688) / 创业板 (300/301) ±20%, 北交所 ±30%.
+# 返回的是「接近涨停」的保守下限 (真实涨停的 95%), 容忍浮点/四舍五入:
+#   主板 10% × 0.95 = 9.5%; 科创/创业 20% × 0.95 = 19.0% (取 19.5 容 19.0-19.4 的边界).
+_LIMIT_UP_PCT_MAIN = 9.5       # 主板 (60/00): 涨停 ≈ +10%, 下限 9.5%
+_LIMIT_UP_PCT_STAR = 19.5      # 科创板 (688) / 创业板 (300/301): 涨停 ≈ +20%, 下限 19.5%
+_LIMIT_UP_PCT_BJ = 29.0        # 北交所 (4/8/92/83): 涨停 ±30%, 下限 29.0%
+
+
+def _is_star_or_chinext_symbol(symbol: str) -> bool:
+    """688 (科创板) / 300 / 301 (创业板) → ±20% 涨跌停板."""
+    return symbol.startswith(("688", "300", "301"))
+
+
+def limit_up_pct_for_ticker(ticker: Any) -> float:
+    """返回该 ticker 的涨停 pct_change 判定下限 (保守, 真实涨停的 ~95%).
+
+    板块规则 (2026):
+        - 主板 (沪 60 / 深 00): ±10% → 9.5%
+        - 科创板 (688) / 创业板 (300/301): ±20% → 19.5%
+        - 北交所 (43/83/87/92 / 8/4 开头): ±30% → 29.0%
+        - 其它/未知: 保守用主板口径 9.5% (不误判非主板为涨停)
+
+    Args:
+        ticker: 6 位代码或带后缀 (如 "688037", "300903.SZ")
+
+    Returns:
+        涨停判定下限 pct (如 9.5 / 19.5 / 29.0). BTST setup 用 ``pct_change >=
+        limit_up_pct_for_ticker(ticker)`` 判涨停, 替代旧的固定 9.5 常量.
+    """
+    symbol = get_ashare_symbol(ticker)
+    if _is_star_or_chinext_symbol(symbol):
+        return _LIMIT_UP_PCT_STAR
+    if symbol.startswith(("43", "83", "87")) or is_beijing_exchange_stock(symbol=symbol):
+        return _LIMIT_UP_PCT_BJ
+    return _LIMIT_UP_PCT_MAIN

@@ -32,9 +32,12 @@ import pandas as pd
 from src.screening.offensive.data.fund_flow_store import FundFlowRecord
 from src.screening.offensive.setups.base import DetectionResult, Setup
 
-_LIMIT_UP_PCT = 9.5
+# 涨停判定: 板块自适应 (主板 9.5%, 科创/创业 19.5%, 北交所 29.0%).
+# 旧固定 9.5% 会把科创/创业的非涨停大涨日误判为涨停 → setup 语义被污染.
+# 通过 limit_up_pct_for_ticker(ticker) 按板块取阈值, 保持「涨停突破」语义.
 _INDUSTRY_PCT_MIN = 2.0
 _MAIN_FLOW_LOOKBACK_DAYS = 20
+_MAIN_FLOW_MIN_HISTORY_DAYS = 5  # 资金流历史 < 此值时无法判均值, degraded=True
 _PRE_RUNUP_LOOKBACK_DAYS = 5
 _PRE_RUNUP_MAX_PCT = 5.0  # 涨停前 5 日累计涨幅上限 (条件 4)
 
@@ -61,9 +64,13 @@ class BtstBreakoutSetup(Setup):
         trigger_idx = trigger_rows.index[0]
         trigger_row = prices.iloc[trigger_idx]
 
-        # 条件 1: 今日涨停
+        # 条件 1: 今日涨停 (板块自适应: 主板 ≥9.5%, 科创/创业 ≥19.5%, 北交所 ≥29.0%)
+        # 旧固定 9.5% 在 20% 板会把非涨停的大涨日 (如 +13.9%) 误判为涨停 → 语义污染.
+        from src.tools.ashare_board_utils import limit_up_pct_for_ticker
+
+        limit_up_pct = limit_up_pct_for_ticker(ticker)
         pct_change = float(trigger_row.get("pct_change", 0.0) or 0.0)
-        if pct_change < _LIMIT_UP_PCT:
+        if pct_change < limit_up_pct:
             return self._miss(ticker, trade_date)
 
         # 条件 2: 主力净流入 > 0 且 > 20 日均值
@@ -72,11 +79,22 @@ class BtstBreakoutSetup(Setup):
         if today_flow is None or today_flow <= 0:
             return self._miss(ticker, trade_date)
         historical = [r.main_net_inflow for r in records if r.date < trade_date]
-        if len(historical) >= 5:  # 至少 5 日历史才有均值意义
+        # 资金流历史不足时无法判均值 → 诚实降级 (degraded=True), 让下游知道
+        # 这个命中基于残缺的资金流过滤条件 (只验了 today_flow>0, 没验 >20d 均值).
+        # 当前 fund_flow_cache 普遍浅 (<5 天), 绝大多数命中会是 degraded — 这反映了
+        # 运行时检测口径比 known_distributions 的深历史回测更宽松的事实, 必须披露.
+        degraded = False
+        degradation_reason = ""
+        if len(historical) >= _MAIN_FLOW_MIN_HISTORY_DAYS:
             lookback = historical[-_MAIN_FLOW_LOOKBACK_DAYS:]
             hist_mean = sum(lookback) / len(lookback)
             if today_flow <= hist_mean:
                 return self._miss(ticker, trade_date)
+        else:
+            degraded = True
+            degradation_reason = (
+                f"条件2 (资金流>20d均值) 跳过: 历史数据不足 ({len(historical)}<{_MAIN_FLOW_MIN_HISTORY_DAYS}日)"
+            )
 
         # 条件 3: 行业板块效应
         industry_pct = float(context.get("industry_day_pct") or 0.0)
@@ -117,7 +135,10 @@ class BtstBreakoutSetup(Setup):
                 "main_net_inflow": today_flow,
                 "industry_pct": industry_pct,
                 "pre_5d_runup_pct": pre_runup_pct,
+                "limit_up_pct_threshold": limit_up_pct,
             },
+            degraded=degraded,
+            degradation_reason=degradation_reason,
         )
 
     @staticmethod

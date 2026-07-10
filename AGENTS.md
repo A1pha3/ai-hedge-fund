@@ -81,9 +81,11 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 
 1. **`data/paper_trading/` vs `data/paper_trading_backtest/`**：前者是运行时（0 EXIT），后者是回测（192 EXIT）。查成交数据用后者。
 2. **price_cache 只有 6 个月**：直接跑 `setup_research.py` 会 n=0。`phase0_report` 的数字不可复现。
-3. **止损是披露用的，不执行**：改风控逻辑时注意 `paper_tracker.py:308` 的 `stop_would_have_triggered` 不进 P&L。
+3. **止损默认是披露用的，不执行**：`stop_would_have_triggered` 不进 P&L。回测验证（2026-07-10，81 笔 BTST）显示**所有止损策略在当前牛市样本都会降低 E[r] 和 Sharpe**（均值回归 setup 的波动反而赚钱），故默认不执行。可用 `DAILY_ACTION_EXECUTION_STOP=atr_k2|atr_k3|fixed8` 在熊市/高波动期手动启用真实止损执行（改变 P&L 口径，启用前应跑 `scripts/backtest_exit_strategies.py` 确认当前行情有利）。
 4. **`known_distributions.py` 是硬编码常量**（n=1762 等），无自动刷新，引用前需交叉验证。
 5. **`--daily-action` 扫描空间 = price_cache 文件名集合**：曾因只含候选池"好股票"而漏掉涨停小盘股（已用涨停注入修复，见 `cache_refresh.py`）。
+6. **BTST 涨停判定是板块自适应的**（2026-07-10 修复）：`limit_up_pct_for_ticker` 按前缀取阈值——主板 9.5%，科创/创业 19.5%，北交所 29.0%。旧固定 9.5% 会把 20% 板的非涨停大涨日误判为涨停。`execution_adjuster.is_limit_up_unbuyable_next_day` 也同步修复。
+7. **BTST 资金流条件在浅数据下降级**（2026-07-10 修复）：`fund_flow_cache` 普遍浅（<5 天）时，BTST 的「资金流 >20d 均值」条件无法判定 → `degraded=True`，渲染时标 `⚠残缺`。运行时检测口径比回测分布更宽松，operator 须知晓。
 
 ## 关键文件速查
 
@@ -95,6 +97,9 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 | Kelly 仓位 | `src/screening/offensive/kelly.py` |
 | Paper tracker | `src/screening/offensive/paper_tracker.py`（成交记录、止损、drawdown） |
 | 缓存刷新 | `src/screening/offensive/cache_refresh.py`（`--auto` → `--daily-action` 桥梁） |
+| ATR 止损工具 | `src/screening/offensive/atr_utils.py`（Wilder ATR + 止损价计算） |
+| 涨停板块判定 | `src/tools/ashare_board_utils.py`（`limit_up_pct_for_ticker`：主板9.5%/科创创业19.5%/北交所29%） |
+| 止损策略回测 | `scripts/backtest_exit_strategies.py`（对比 no_stop/固定/ATR 止损的 E[r]/Sharpe） |
 | 回测框架 | `scripts/setup_research.py`（Phase 0，需深历史数据） |
 | 因子评分 | `src/screening/`（candidate_pool / strategy_scorer / signal_fusion / investability） |
 

@@ -428,6 +428,133 @@ def test_close_matured_uses_execution_adjusted_return_when_ohlc_available(tmp_pa
     assert tracker.state.nav == pytest.approx(1.0 + expected * 0.10, abs=1e-9)
 
 
+def test_execution_stop_mode_defaults_to_none(monkeypatch):
+    """DAILY_ACTION_EXECUTION_STOP 默认 none (止损只披露, 回测验证的当前最优口径)."""
+    from src.screening.offensive.paper_tracker import _execution_stop_mode
+
+    monkeypatch.delenv("DAILY_ACTION_EXECUTION_STOP", raising=False)
+    assert _execution_stop_mode() == "none"
+
+
+def test_execution_stop_mode_parses_valid_values(monkeypatch):
+    """env 接受 atr_k2/atr_k3/fixed8, 其它值回退 none."""
+    from src.screening.offensive.paper_tracker import _execution_stop_mode
+
+    for val, expected in [("atr_k2", "atr_k2"), ("atr_k3", "atr_k3"), ("fixed8", "fixed8"), ("garbage", "none"), ("", "none")]:
+        monkeypatch.setenv("DAILY_ACTION_EXECUTION_STOP", val)
+        assert _execution_stop_mode() == expected
+
+
+def test_close_matured_default_no_stop_execution(tmp_path):
+    """默认 (stop_mode=none): 即使期间触硬止损, 主 P&L 仍是 T+N 收盘 (不按止损价平).
+
+    回测验证: 当前牛市样本上止损会降低 E[r] (均值回归 setup 的波动赚钱).
+    默认行为尊重数据 — 止损只做披露, 不影响 P&L.
+    """
+    import pandas as pd
+    from datetime import datetime, timedelta
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    tracker.record_buy("20260601", "300502", "btst_breakout", 10, 100.0, 0.10, 85.0, 92.0, "跌破92")
+
+    base_dt = datetime.strptime("20260601", "%Y%m%d")
+    rows = []
+    for i in range(11):
+        # T+3 low=90 触硬止损 92, 但 T+10 回到 121
+        rows.append(
+            {
+                "date": base_dt + timedelta(days=i),
+                "open": 110.0 if i == 1 else 100.0,
+                "close": 121.0 if i == 10 else 100.0,
+                "high": 101.0,
+                "low": 90.0 if i == 3 else 99.0,
+                "pct_change": 0.0,
+            }
+        )
+    prices_df = pd.DataFrame(rows)
+    price_loader = lambda ticker, report_date: prices_df.copy() if ticker == "300502" else pd.DataFrame()  # noqa: E731
+    fetcher_rows = [{"time": r["date"].strftime("%Y-%m-%d"), "close": r["close"]} for r in rows]
+    fetcher = lambda ticker, start, end: fetcher_rows if ticker == "300502" else []  # noqa: E731
+
+    closed = tracker.close_matured("20260620", use_data_fetcher=fetcher, price_loader=price_loader)
+    assert len(closed) == 1
+    # 默认: P&L = T+10 收盘口径 (≈+9.34%), 不是止损价 (-8%)
+    assert closed[0]["realized_pnl"] > 0.05, "默认无止损执行, 应是 T+10 收盘正收益"
+
+
+def test_close_matured_fixed8_stop_executes_at_stop_price(tmp_path, monkeypatch):
+    """DAILY_ACTION_EXECUTION_STOP=fixed8: 触止损时按止损价平仓 (真实执行).
+
+    operator 在熊市/高波动期可手动启用. 回测验证牛市会降 E[r], 默认关.
+    """
+    import pandas as pd
+    from datetime import datetime, timedelta
+
+    monkeypatch.setenv("DAILY_ACTION_EXECUTION_STOP", "fixed8")
+    tracker = PaperTracker(journal_dir=tmp_path)
+    tracker.record_buy("20260601", "300502", "btst_breakout", 10, 100.0, 0.10, 85.0, 92.0, "跌破92")
+
+    base_dt = datetime.strptime("20260601", "%Y%m%d")
+    rows = []
+    for i in range(11):
+        # T+1 open=110 (entry), T+3 low=88 触发 -8% 止损 (entry*0.92≈101.2, low=88<101.2)
+        rows.append(
+            {
+                "date": base_dt + timedelta(days=i),
+                "open": 110.0 if i == 1 else 100.0,
+                "close": 121.0 if i == 10 else 100.0,
+                "high": 101.0,
+                "low": 88.0 if i == 3 else 99.0,
+                "pct_change": 0.0,
+            }
+        )
+    prices_df = pd.DataFrame(rows)
+    price_loader = lambda ticker, report_date: prices_df.copy() if ticker == "300502" else pd.DataFrame()  # noqa: E731
+    fetcher_rows = [{"time": r["date"].strftime("%Y-%m-%d"), "close": r["close"]} for r in rows]
+    fetcher = lambda ticker, start, end: fetcher_rows if ticker == "300502" else []  # noqa: E731
+
+    closed = tracker.close_matured("20260620", use_data_fetcher=fetcher, price_loader=price_loader)
+    assert len(closed) == 1
+    # fixed8 启用: P&L 应是止损价口径 (≈-8%), 不是 T+10 收盘 (+9%)
+    assert closed[0]["realized_pnl"] < -0.05, f"fixed8 启用应按止损价平仓 (负收益), got {closed[0]['realized_pnl']}"
+
+
+def test_close_matured_atr_stop_executes_when_triggered(tmp_path, monkeypatch):
+    """DAILY_ACTION_EXECUTION_STOP=atr_k2: ATR 止损触发时按 ATR 止损价平仓."""
+    import pandas as pd
+    from datetime import datetime, timedelta
+
+    monkeypatch.setenv("DAILY_ACTION_EXECUTION_STOP", "atr_k2")
+    tracker = PaperTracker(journal_dir=tmp_path)
+    tracker.record_buy("20260601", "300502", "btst_breakout", 10, 100.0, 0.10, 85.0, 92.0, "跌破92")
+
+    # buy_date=20260601 在索引 31, entry 在索引 32, exit 在索引 41.
+    # 前 31 行是 ATR 预热 (high-low=2 → ATR≈2), 保证 entry 前 ATR 可算.
+    warmup_start = datetime.strptime("20260501", "%Y%m%d")
+    rows = []
+    for i in range(42):
+        is_entry = i == 32  # T+1 (buy_date+1) open=110
+        rows.append(
+            {
+                "date": warmup_start + timedelta(days=i),
+                "open": 110.0 if is_entry else 100.0,
+                "close": 121.0 if i == 41 else 100.0,  # T+10 回到 121
+                "high": 101.0,
+                "low": 88.0 if i == 34 else 99.0,  # T+3 low=88 触止损
+                "pct_change": 0.0,
+            }
+        )
+    prices_df = pd.DataFrame(rows)
+    price_loader = lambda ticker, report_date: prices_df.copy() if ticker == "300502" else pd.DataFrame()  # noqa: E731
+    fetcher_rows = [{"time": r["date"].strftime("%Y-%m-%d"), "close": r["close"]} for r in rows]
+    fetcher = lambda ticker, start, end: fetcher_rows if ticker == "300502" else []  # noqa: E731
+
+    closed = tracker.close_matured("20260620", use_data_fetcher=fetcher, price_loader=price_loader)
+    assert len(closed) == 1
+    # ATR≈2, entry≈110.3, stop=110.3-2×2=106.3; T+3 low=88<106.3 → 触止损 (负收益)
+    assert closed[0]["realized_pnl"] < 0, f"ATR 止损触发应为负收益, got {closed[0]['realized_pnl']}"
+
+
 # ---------------------------------------------------------------------------
 # generate_daily_action — 接入 close_matured (出新仓前先平到期仓)
 # ---------------------------------------------------------------------------
@@ -1186,10 +1313,10 @@ def test_render_daily_action_discloses_setup_policy_from_backtest(tmp_path, monk
 
     out = da.render_daily_action([], "20260708", PaperTracker(journal_dir=tmp_path))
 
-    assert "启用 setup: btst_breakout" in out
+    assert "启用 setup: 涨停突破(btst_breakout)" in out
     assert "n=133" in out
     assert "E=+8.15%" in out
-    assert "暂停 setup: oversold_bounce" in out
+    assert "暂停 setup: 超跌反弹(oversold_bounce)" in out
     # 暂停理由应反映统计不显著 (不是 crisis 分层; crisis n=21 太小不可靠)
     assert "CI 跨 0 不显著" in out
     assert "尾部亏损比 BTST 厚" in out
@@ -1207,7 +1334,7 @@ def test_render_daily_action_setup_policy_respects_env_none(tmp_path, monkeypatc
 
     out = da.render_daily_action([], "20260708", PaperTracker(journal_dir=tmp_path))
 
-    assert "启用 setup: btst_breakout, oversold_bounce" in out
+    assert "启用 setup: 涨停突破(btst_breakout), 超跌反弹(oversold_bounce)" in out
     assert "暂停 setup:" not in out
 
 

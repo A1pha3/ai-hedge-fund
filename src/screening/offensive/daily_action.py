@@ -153,7 +153,7 @@ def _setup_policy_lines(disabled_setups: set[str] | None = None) -> list[str]:
     paused_parts: list[str] = []
     for name, _cls, _horizon in _VERIFIED_SETUPS:
         stats = by_setup.get(name)
-        part = f"{name}{_format_backtest_stats(stats)}"
+        part = f"{_setup_display_name(name)}{_format_backtest_stats(stats)}"
         if name in disabled:
             if name == "oversold_bounce":
                 # 暂停理由 = 统计不显著 + 尾部更厚 (不是 crisis 分层; n=21 太小不可靠).
@@ -191,6 +191,21 @@ def _regime_size_factor(regime: str, setup_name: str = "") -> float:
     setup_key = str(setup_name or "").strip()
     by_regime = _REGIME_SIZE_FACTORS_BY_SETUP.get(setup_key, {})
     return by_regime.get(regime_key, 1.0)
+
+
+def _setup_display_name(setup_name: str) -> str:
+    """setup 英文标识 → 中文显示名 (保留英文代号便于与文档/日志对照).
+
+    render 输出面向 operator 阅读, 纯英文 setup 名 (btst_breakout/oversold_bounce)
+    不直观. 映射为"中文名(英文代号)"格式, 既好看又能与 known_distributions / journal
+    里的英文键对上. 未知 setup 原样返回.
+    """
+    _NAMES = {
+        "btst_breakout": "涨停突破",
+        "oversold_bounce": "超跌反弹",
+    }
+    zh = _NAMES.get(str(setup_name or "").strip())
+    return f"{zh}({setup_name})" if zh else setup_name
 
 
 def _load_st_tickers() -> set[str]:
@@ -476,6 +491,11 @@ class DailyAction:
     invalidation_condition: str
     distribution_summary: str  # "n=5374 winrate=51% cv=1.53 E=+2.6%"
     reasoning: str
+    # Bug B (2026-07-10): 命中基于残缺条件 (如资金流历史 < 5 日无法判均值) 时为 True.
+    # 当前 fund_flow_cache 普遍浅, 绝大多数 BTST 命中是 degraded — 运行时检测口径
+    # 比 known_distributions 的深历史回测更宽松 (少了资金流均值过滤), 必须向 operator 披露.
+    degraded: bool = False
+    degradation_reason: str = ""
     # trigger_strength: setup detect 产出的 0-1 触发强度 (反转深度+涨停强度+主力流入).
     # 决定同 setup 内候选的排序, render 需展示让排序可解释. 默认 0 兼容旧构造.
     trigger_strength: float = 0.0
@@ -672,7 +692,10 @@ def generate_daily_action(
 
         # 对每个已验证 setup 跑 detect
         for setup_name, setup_obj, horizon, known_dist in setup_configs:
-            # 快速预过滤 (避免对全量 ticker 跑慢 detect)
+            # 快速预过滤 (避免对全量 ticker 跑慢 detect).
+            # 用主板下限 9.5% 故意宽松: 它是所有板块涨停的公共下限 (科创/创业 20%,
+            # 北交所 30% 都 ≥9.5%), 保证不漏任何潜在涨停股; 真正的板块自适应阈值
+            # (limit_up_pct_for_ticker) 在 setup.detect 里按 ticker 精确判定.
             if setup_name == "btst_breakout" and pct < 9.5:
                 continue  # BTST 只看涨停日
             if setup_name == "oversold_bounce":
@@ -735,6 +758,8 @@ def generate_daily_action(
                 distribution_summary=dist_summary,
                 reasoning=f"{setup_name} T+{horizon} 命中; half-Kelly {kelly_pct:.1%}; regime={regime}×{regime_factor:.1f}; drawdown={dd_action}",
                 trigger_strength=float(result.trigger_strength),
+                degraded=bool(getattr(result, "degraded", False)),
+                degradation_reason=str(getattr(result, "degradation_reason", "") or ""),
             )
             ranked_candidates.append(
                 (
@@ -834,9 +859,12 @@ def _render_candidate_list(
         name = get_stock_name(a.ticker)
         label = f"{a.ticker} {name}" if name and name != a.ticker else a.ticker
         converge = " ⭐双信号" if a.ticker.split(".")[0] in topn else ""
+        # Bug B: degraded 命中 (如资金流历史不足) 标 ⚠残缺, 让 operator 知道
+        # 这个命中未经完整 setup 条件验证 — 运行时检测口径比回测分布更宽松.
+        degraded_tag = " ⚠残缺" if getattr(a, "degraded", False) else ""
         # 标注"先验(驱动Kelly)"区别于表头的"真实回测"——两套不可比的数字用用途标签区分.
         # trigger_strength 是候选排序的真实依据 (反转深度+涨停强度+主力流入), 需展示让排序可解释.
-        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{label}{Style.RESET_ALL}  [{a.setup}]  " f"强度 {a.trigger_strength:.2f}  参考价 ~{a.entry_price:.2f}  先验(驱动Kelly) {a.distribution_summary}{converge}")
+        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{label}{Style.RESET_ALL}  [{_setup_display_name(a.setup)}]  " f"强度 {a.trigger_strength:.2f}  参考价 ~{a.entry_price:.2f}  先验(驱动Kelly) {a.distribution_summary}{converge}{degraded_tag}")
     rest = len(candidates) - len(shown)
     if rest > 0:
         lines.append(f"  {Fore.WHITE}...其余 {rest} 只略 (强度更低){Style.RESET_ALL}")
@@ -908,7 +936,7 @@ def render_daily_action(
                 maturity_label = f"{Fore.YELLOW}今日到期{Style.RESET_ALL}"
             else:
                 maturity_label = f"到期 {p['matures_on']} (剩{days}天)"
-            lines.append(f"  - {Fore.CYAN}{label}{Style.RESET_ALL}  [{p['setup']}]  " f"{p['buy_date']}买入 @{p['entry_price']:.2f} ({p['kelly_pct']:.0%})  T+{p['horizon']} {maturity_label}")
+            lines.append(f"  - {Fore.CYAN}{label}{Style.RESET_ALL}  [{_setup_display_name(p['setup'])}]  " f"{p['buy_date']}买入 @{p['entry_price']:.2f} ({p['kelly_pct']:.0%})  T+{p['horizon']} {maturity_label}")
         # 到期释放日程: operator 关心 "仓位何时释放 / 释放后敞口多少"
         soonest = next((p for p in open_details if p["days_to_maturity"] is not None and p["days_to_maturity"] > 0), None)
         if soonest:
@@ -976,7 +1004,11 @@ def render_daily_action(
         name = get_stock_name(a.ticker)
         ticker_label = f"{a.ticker} {name}" if name and name != a.ticker else a.ticker
         converge = " ⭐双信号" if a.ticker.split(".")[0] in auto_topn else ""
-        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{ticker_label}{Style.RESET_ALL}  [{a.setup}]  " f"仓位 {a.kelly_pct:.1%}  参考价(信号日收盘) ~{a.entry_price:.2f}{converge}")
+        # Bug B: degraded 命中标 ⚠残缺 + 披露原因, 让 operator 知道未经完整条件验证.
+        degraded_tag = ""
+        if getattr(a, "degraded", False):
+            degraded_tag = f"  {Fore.YELLOW}⚠残缺: {a.degradation_reason}{Style.RESET_ALL}"
+        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{ticker_label}{Style.RESET_ALL}  [{_setup_display_name(a.setup)}]  " f"仓位 {a.kelly_pct:.1%}  参考价(信号日收盘) ~{a.entry_price:.2f}{converge}{degraded_tag}")
         lines.append(f"     风险价位: 软止损 {a.soft_stop:.2f} (观察) / " f"硬止损 {a.hard_stop:.2f} (披露/人工执行参考; paper P&L 不按止损出场)  " f"时间退出: {a.time_exit}")
         lines.append(f"     先验分布: {a.distribution_summary}")
         lines.append(f"     {Fore.YELLOW}失效: {a.invalidation_condition}{Style.RESET_ALL}\n")
@@ -993,6 +1025,11 @@ def render_daily_action(
     lines.append(f"  - 先验分布: n=历史样本数, winrate=历史胜率, cv=凸性比, E=历史平均收益 (与表头'真实回测'两套独立统计, 各自标注用途)")
     lines.append(f"  - 强度=setup触发强度(反转深度40%+涨停强度30%+主力流入30%), 决定同setup内候选的排序")
     lines.append(f"  - T+N=交易日; 剩N天=日历日(T+10≈14日历日); 到期按第N个交易日收盘结算P&L; 未到期仓位浮动盈亏不计入")
+    # Bug B: 若本次有 degraded 命中, 集中披露让 operator 注意未经完整条件验证的信号.
+    all_hits = list(actions) + list(blocked)
+    degraded_hits = [a for a in all_hits if getattr(a, "degraded", False)]
+    if degraded_hits:
+        lines.append(f"  - {Fore.YELLOW}⚠残缺=命中缺资金流均值过滤条件 (fund_flow_cache 历史<5日), 运行时检测比回测分布更宽松; 本次 {len(degraded_hits)}/{len(all_hits)} 只命中为残缺, 补全资金流历史后复跑可收紧{Style.RESET_ALL}")
 
     lines.append(f"\n  {Fore.WHITE}执行规则 (按规则执行):{Style.RESET_ALL}")
     lines.append(f"  - {buy_date_label} 开盘买入 (不追涨, 涨停买不到就放弃)")

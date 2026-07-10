@@ -7,12 +7,35 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+
+def _execution_stop_mode() -> str:
+    """解析 DAILY_ACTION_EXECUTION_STOP → 止损执行模式.
+
+    回测验证 (2026-07-10, 81 笔 BTST) 显示: 在当前牛市样本上, 所有止损策略
+    (固定/ATR/封顶) 都会**降低** E[r] 和 Sharpe — 均值回归 setup 的波动反而赚钱.
+    故默认 ``none`` (止损只做披露 stop_would_have_triggered, 不影响 P&L, 与历史口径一致).
+
+    熊市/高波动期 operator 可手动启用:
+        DAILY_ACTION_EXECUTION_STOP=atr_k2   # ATR 2.0x 止损真正影响 P&L
+        DAILY_ACTION_EXECUTION_STOP=atr_k3   # ATR 3.0x (更宽, 少误杀)
+        DAILY_ACTION_EXECUTION_STOP=fixed8   # 固定 -8% 止损真正影响 P&L
+        DAILY_ACTION_EXECUTION_STOP=none     # 默认: 止损只披露 (回测最优)
+
+    ⚠ 启用止损会改变 paper P&L 口径, 使其与 known_distributions 的 T+N 收盘分布
+    不可比. 启用前应跑 scripts/backtest_exit_strategies.py 确认当前行情下止损有利.
+    """
+    raw = os.environ.get("DAILY_ACTION_EXECUTION_STOP", "").strip().lower()
+    if raw in {"atr_k2", "atr_k3", "fixed8"}:
+        return raw
+    return "none"  # 默认: 止损只披露 (回测验证的当前最优口径)
 
 _DEFAULT_JOURNAL_DIR = Path("data/paper_trading/")
 
@@ -473,12 +496,21 @@ class PaperTracker:
             # 止损触发检测: 期间 low <= hard_stop (披露用, 不影响主 P&L 口径)
             stop_would_have_triggered = False
             execution_result: tuple[float, float] | None = None
+            stop_executed = False  # DAILY_ACTION_EXECUTION_STOP 启用时是否真按止损价平仓
             if price_loader is not None:
                 try:
                     prices_df = price_loader(ticker, buy_date)
                     if hard_stop > 0:
                         stop_would_have_triggered = self._check_stop_hit(prices_df, buy_date, horizon, hard_stop)
                     execution_result = self._execution_adjusted_return(prices_df, buy_date, horizon)
+                    # 可选止损执行 (默认关): 启用时止损触发 → 按止损价平仓替代 T+N 收盘.
+                    # 回测验证当前牛市样本止损不优于 no_stop, 故默认 none (只披露).
+                    stop_mode = _execution_stop_mode()
+                    if stop_mode != "none" and execution_result is not None:
+                        stop_ret = self._stop_adjusted_return(prices_df, buy_date, horizon, stop_mode)
+                        if stop_ret is not None:
+                            execution_result = stop_ret  # 覆盖为止损价平仓
+                            stop_executed = True
                 except Exception:
                     logger.debug("close_matured: %s low 序列读取失败, 止损检测降级", ticker, exc_info=True)
 
@@ -502,7 +534,7 @@ class PaperTracker:
                     hard_stop=hard_stop,
                     time_exit=f"T+{horizon}",
                     invalidation_condition=str(rec.get("invalidation_condition", "")),
-                    reasoning=f"T+{horizon} 到期平仓; realized={realized_pnl:+.2%}; stop_would_trigger={stop_would_have_triggered}",
+                        reasoning=f"T+{horizon} 到期平仓; realized={realized_pnl:+.2%}; stop_would_trigger={stop_would_have_triggered}; stop_executed={stop_executed}",
                 )
             )
 
@@ -553,10 +585,9 @@ class PaperTracker:
         buy_dt = datetime.strptime(str(buy_date), "%Y%m%d").date()
         cal_days = _trading_horizon_to_calendar_days(horizon)
         end_dt = buy_dt + timedelta(days=cal_days)
-        # 过滤到 [buy_date, buy_date + T+N 交易日保守日历日下限] 区间
+        # 过滤到 [buy_date, buy_date + T+N 交易日保守日历日下限] 区间.
+        # date 列可能为 datetime64 或字符串 — 直接尝试 .dt.date, 失败时兜底用全量 low.
         df = prices_df.copy()
-        if not isinstance(df["date"].dtype, type(prices_df["date"].dtype)):
-            pass  # pandas dtype 比较不可靠, 直接尝试
         try:
             mask = (df["date"].dt.date >= buy_dt) & (df["date"].dt.date <= end_dt)
             window = df.loc[mask, "low"].dropna()
@@ -612,6 +643,86 @@ class PaperTracker:
         if entry_price <= 0:
             return None
         return (exit_price / entry_price) - 1.0, exit_price
+
+    @staticmethod
+    def _stop_adjusted_return(
+        prices_df: Any,
+        buy_date: str,
+        horizon: int,
+        mode: str,
+    ) -> tuple[float, float] | None:
+        """可选止损执行: 触止损时按止损价平仓 (替代 T+N 收盘).
+
+        仅当 DAILY_ACTION_EXECUTION_STOP != "none" 时由 close_matured 调用.
+        回测验证 (2026-07-10): 当前牛市样本上止损会降低 E[r], 故默认关闭.
+        此方法让 operator 在熊市/高波动期可手动启用真实止损执行.
+
+        入场价口径与 _execution_adjusted_return 一致: T+1 开盘 × (1+滑点).
+        止损价基于此 entry_price 计算, 保证与主 P&L 口径同源.
+
+        Args:
+            prices_df: 单 ticker 价格 DataFrame (date/open/high/low/close).
+            buy_date: 信号日 YYYYMMDD (T+0).
+            horizon: T+N 交易日.
+            mode: "atr_k2" / "atr_k3" / "fixed8".
+
+        Returns:
+            (realized_pnl, exit_price) 若止损触发; None 若未触发 (调用方用 T+N 收盘).
+        """
+        if prices_df is None or len(prices_df) == 0:
+            return None
+        required = {"date", "open", "high", "low"}
+        if not required.issubset(prices_df.columns if hasattr(prices_df, "columns") else set()):
+            return None
+
+        df = prices_df.copy()
+        try:
+            df["date_str"] = df["date"].dt.strftime("%Y%m%d")
+        except Exception:
+            df["date_str"] = df["date"].astype(str).str.replace("-", "", regex=False)
+        df = df.sort_values("date_str").reset_index(drop=True)
+
+        matches = df.index[df["date_str"] == str(buy_date)]
+        if len(matches) == 0:
+            return None
+        trigger_idx = int(matches[0])
+        entry_idx = trigger_idx + 1
+        exit_idx = trigger_idx + int(horizon)
+        if entry_idx >= len(df) or exit_idx >= len(df):
+            return None
+
+        from src.screening.offensive.execution_adjuster import ExecutionConfig
+
+        slippage = ExecutionConfig().slippage_bps / 10_000.0
+        # 入场价 = T+1 开盘 × (1+滑点), 与 _execution_adjusted_return 同口径
+        entry_price = float(df.iloc[entry_idx]["open"]) * (1 + slippage)
+        if entry_price <= 0:
+            return None
+
+        # 确定止损价
+        if mode == "fixed8":
+            stop_price = entry_price * 0.92
+        elif mode in ("atr_k2", "atr_k3"):
+            from src.screening.offensive.atr_utils import atr_stop_price, compute_atr
+
+            k = 2.0 if mode == "atr_k2" else 3.0
+            # 用 entry 前的数据算 ATR (避免未来函数)
+            atr = compute_atr(df, period=20, at_idx=entry_idx)
+            stop_price = atr_stop_price(entry_price, atr, k=k)
+        else:
+            return None
+
+        if stop_price is None or stop_price <= 0:
+            return None
+
+        # 扫描持仓期间每日 low; 触止损即出场.
+        holding = df.iloc[entry_idx : exit_idx + 1]
+        for _, row in holding.iterrows():
+            low = float(row.get("low", 0) or 0)
+            if low <= stop_price and low > 0:
+                exit_at_stop = stop_price * (1 - slippage)
+                return ((exit_at_stop / entry_price) - 1.0), exit_at_stop
+        return None  # 未触止损 → 调用方用 T+N 收盘
 
     # ---- drawdown check ----
 

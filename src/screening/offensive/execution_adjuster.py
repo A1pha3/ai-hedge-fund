@@ -26,28 +26,35 @@ class ExecutionConfig:
     t_plus_1_lock: bool = True  # T+1 交收约束
 
 
-def is_limit_up_unbuyable_next_day(prices: pd.DataFrame, trigger_idx: int) -> bool:
-    """判定: 触发日涨停 (pct_change ≥ 9.5%) 且 次日开盘相对触发日收盘继续涨停。
+def is_limit_up_unbuyable_next_day(prices: pd.DataFrame, trigger_idx: int, ticker: str = "") -> bool:
+    """判定: 触发日涨停 (pct_change ≥ 板块涨停阈值) 且 次日开盘相对触发日收盘继续涨停。
 
-    主板涨停 = +10%, 创业板/科创板 +20%; 用 9.5% 触发保守判定 (含 ST 5% 的极端
-    情况会在 trigger 阶段被 candidate_pool 过滤)。
+    板块自适应涨停阈值: 主板 9.5%, 科创板/创业板 19.5%, 北交所 29.0%.
+    旧固定 9.5% 在 20% 板会把次日开盘涨 9.5-19.5% (非涨停, 实际可买) 的样本
+    错误剔除 → 回测样本偏少. 按 ticker 前缀取正确阈值.
 
     Args:
         prices: 单 ticker 价格 DataFrame (date, close, open, pct_change)
         trigger_idx: 触发日在 prices 中的行号
+        ticker: 6 位代码 (用于按板块判涨停阈值; 空则回退主板 9.5%)
 
     Returns:
         True = 次日开盘买不到 (继续涨停)
     """
     if trigger_idx + 1 >= len(prices):
         return False  # 没有次日数据
+    # 板块自适应涨停阈值 (ticker 空时回退主板口径, 保持向后兼容)
+    from src.tools.ashare_board_utils import limit_up_pct_for_ticker
+
+    limit_up_pct = limit_up_pct_for_ticker(ticker) if ticker else _LIMIT_UP_PCT_THRESHOLD
     trigger_pct = float(prices.iloc[trigger_idx].get("pct_change", 0.0) or 0.0)
-    if trigger_pct < _LIMIT_UP_PCT_THRESHOLD:
+    if trigger_pct < limit_up_pct:
         return False  # 触发日没涨停
     trigger_close = float(prices.iloc[trigger_idx]["close"])
     next_open = float(prices.iloc[trigger_idx + 1]["open"])
-    # 次日开盘 = 触发日收盘 × 1.10 (再涨停) → 买不到
-    return next_open >= trigger_close * 1.095
+    # 次日开盘继续涨停 (相对触发日收盘再涨 ≥涨停幅度) → 买不到.
+    # limit_up_pct 是 pct 下限 (如 9.5/19.5), 转成倍数: 1 + 9.5/100 = 1.095.
+    return next_open >= trigger_close * (1 + limit_up_pct / 100.0)
 
 
 def _build_date_index(prices: pd.DataFrame) -> dict[str, int]:
@@ -103,8 +110,8 @@ def adjust_returns(
         if exit_idx >= len(prices):
             continue  # 数据不足
 
-        # 涨停不可买
-        if config.limit_up_unbuyable and is_limit_up_unbuyable_next_day(prices, trigger_idx):
+        # 涨停不可买 (板块自适应: 主板 +10%, 科创/创业 +20%, 北交所 +30%)
+        if config.limit_up_unbuyable and is_limit_up_unbuyable_next_day(prices, trigger_idx, ticker):
             continue  # NaN
 
         # 入口价 = 次日开盘 × (1 + slippage); 出口价 = T+horizon 收盘 × (1 - slippage)

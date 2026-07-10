@@ -166,3 +166,97 @@ def test_natural_horizon_is_10_not_3():
     使 FDR 误判 IS 段不显著.
     """
     assert BtstBreakoutSetup().natural_horizon == 10
+
+
+def _prices_with_20pct_limit_up_today():
+    """科创/创业 20% 板涨停: 今日 +20% (真涨停), 主力强, 行业涨 3%.
+
+    用与 _prices_with_limit_up_today 同结构, 但涨停幅度改成 20%.
+    """
+    dates = pd.bdate_range("2026-06-01", periods=22)
+    closes = [10.0] * 21 + [12.0]  # +20% (10→12)
+    closes[-6] = 11.5  # 5 日前 close=11.5, 今日 12.0 → 涨幅 4.35% (≤5% ✅)
+    pct = [0.0] * 20 + [0.0, 20.0]
+    return pd.DataFrame({"date": dates, "close": closes, "open": closes, "high": closes, "low": closes, "pct_change": pct})
+
+
+def test_hit_when_star_market_20pct_limit_up():
+    """科创板 (688) +20% 真涨停 → 命中 (板块自适应阈值 19.5%)."""
+    prices = _prices_with_20pct_limit_up_today()
+    today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+    recs_today = [FundFlowRecord(ticker="688037", date=today, close=12.0, pct_change=20.0, main_net_inflow=5_000_000, main_net_pct=8.0)]
+    old_recs = []
+    for i in range(1, 21):
+        d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
+        old_recs.append(FundFlowRecord(ticker="688037", date=d, close=10.0, pct_change=0.0, main_net_inflow=100_000, main_net_pct=0.5))
+    ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=3.0)
+    result = BtstBreakoutSetup().detect("688037", today, ctx)
+    assert result.hit is True
+
+
+def test_miss_when_star_market_15pct_not_limit_up():
+    """科创板 +15% 是大涨但非涨停 (20% 板涨停要 ≥19.5%) → 不命中.
+
+    Bug A 回归: 旧固定 _LIMIT_UP_PCT=9.5 会把这种非涨停大涨误判为涨停,
+    污染「涨停突破」语义. 板块自适应修复后必须正确 miss.
+    """
+    prices = _prices_with_limit_up_today()
+    # 改成 +15% (主板涨停, 但科创/创业非涨停)
+    prices.loc[prices.index[-1], "pct_change"] = 15.0
+    today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+    recs_today = [FundFlowRecord(ticker="688037", date=today, close=11.0, pct_change=15.0, main_net_inflow=5_000_000, main_net_pct=8.0)]
+    old_recs = []
+    for i in range(1, 21):
+        d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
+        old_recs.append(FundFlowRecord(ticker="688037", date=d, close=10.0, pct_change=0.0, main_net_inflow=100_000, main_net_pct=0.5))
+    ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=3.0)
+    result = BtstBreakoutSetup().detect("688037", today, ctx)
+    assert result.hit is False, "688 +15% 非涨停 (20% 板), 不应命中 BTST"
+
+
+def test_miss_when_chinext_15pct_not_limit_up():
+    """创业板 (300) +15% 非涨停 → 不命中 (同 test_miss_when_star_market_15pct_not_limit_up)."""
+    prices = _prices_with_limit_up_today()
+    prices.loc[prices.index[-1], "pct_change"] = 15.0
+    today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+    recs_today = [FundFlowRecord(ticker="300903", date=today, close=11.0, pct_change=15.0, main_net_inflow=5_000_000, main_net_pct=8.0)]
+    old_recs = []
+    for i in range(1, 21):
+        d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
+        old_recs.append(FundFlowRecord(ticker="300903", date=d, close=10.0, pct_change=0.0, main_net_inflow=100_000, main_net_pct=0.5))
+    ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=3.0)
+    result = BtstBreakoutSetup().detect("300903", today, ctx)
+    assert result.hit is False
+
+
+def test_degraded_when_fund_flow_history_insufficient():
+    """Bug B: 资金流历史 < 5 日 → 命中但 degraded=True (诚实降级).
+
+    当前 fund_flow_cache 普遍浅 (<5 天), 绝大多数 BTST 命中会是 degraded.
+    旧逻辑: 历史不足时静默跳过均值检查 (条件2 退化为只验 today_flow>0),
+    无任何标识 → 下游误以为命中了完整 4 条件 setup. 现在必须 degraded=True 披露.
+    """
+    prices = _prices_with_limit_up_today()
+    today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+    # 只有今日 1 条资金流记录 (历史 0 条 < 5)
+    recs_today = [FundFlowRecord(ticker="X", date=today, close=11.0, pct_change=10.0, main_net_inflow=5_000_000, main_net_pct=8.0)]
+    ctx = _ctx(prices, fund_flow_records=recs_today, industry_pct=3.0)
+    result = BtstBreakoutSetup().detect("X", today, ctx)
+    assert result.hit is True
+    assert result.degraded is True, "资金流历史 <5 日应标 degraded"
+    assert "历史数据不足" in result.degradation_reason
+
+
+def test_not_degraded_when_fund_flow_history_sufficient():
+    """资金流历史 ≥ 5 日且 today_flow > 均值 → degraded=False (完整 4 条件命中)."""
+    prices = _prices_with_limit_up_today()
+    today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+    recs_today = [FundFlowRecord(ticker="X", date=today, close=11.0, pct_change=10.0, main_net_inflow=5_000_000, main_net_pct=8.0)]
+    old_recs = []
+    for i in range(1, 21):  # 20 条历史
+        d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
+        old_recs.append(FundFlowRecord(ticker="X", date=d, close=10.0, pct_change=0.0, main_net_inflow=100_000, main_net_pct=0.5))
+    ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=3.0)
+    result = BtstBreakoutSetup().detect("X", today, ctx)
+    assert result.hit is True
+    assert result.degraded is False

@@ -77,3 +77,29 @@ def test_adjust_returns_skips_unbuyable():
     )
     assert len(result) == 1
     assert np.isnan(result[0])
+
+
+def test_star_market_20pct_limit_up_next_day_unbuyable():
+    """科创板 +20% 真涨停, 次日开盘继续涨停 (+20%) → 不可买.
+
+    Bug A 回归: 旧固定 9.5% 判涨停时, 次日开盘 +20% 当然 > trigger_close*1.095
+    所以能判对. 但板块自适应后涨停阈值是 19.5%, 需验证 20% 板的「真涨停」
+    次日继续涨停仍被正确识别为不可买 (倍数 = 1+19.5/100 = 1.195).
+    """
+    prices = _prices("688037", ["2026-07-01", "2026-07-02"], [10.0, 12.0])
+    prices.loc[0, "pct_change"] = 20.0  # T 日 20% 板涨停
+    prices.loc[1, "open"] = 14.4  # T+1 开盘 = 12.0 × 1.20 (继续涨停)
+    assert is_limit_up_unbuyable_next_day(prices, trigger_idx=0, ticker="688037") is True
+
+
+def test_star_market_15pct_not_limit_up_so_buyable():
+    """科创板 +15% 非涨停 (20% 板) → 不触发「涨停不可买」逻辑, 可买.
+
+    Bug A 回归: 旧固定 9.5% 会把 +15% 判为涨停 → 若次日开盘 +13% (>1.095)
+    会错误判为不可买, 剔除实际可买样本. 板块自适应后 +15% < 19.5% 阈值,
+    不进涨停判定 → 可买.
+    """
+    prices = _prices("688037", ["2026-07-01", "2026-07-02"], [10.0, 11.5])
+    prices.loc[0, "pct_change"] = 15.0  # T 日 +15% (非涨停)
+    prices.loc[1, "open"] = 13.0  # T+1 开盘 +13% (旧逻辑会判不可买)
+    assert is_limit_up_unbuyable_next_day(prices, trigger_idx=0, ticker="688037") is False

@@ -12,6 +12,7 @@ import pytest
 
 from src.tools.ashare_board_utils import (
     get_ashare_symbol,
+    limit_up_pct_for_ticker,
     split_ashare_exchange_prefix,
     to_prefixed_ashare_code,
 )
@@ -80,3 +81,45 @@ class TestToPrefixedAshareCode:
     def test_star_market_gets_sh_prefix(self) -> None:
         """68x is STAR market (Shanghai)."""
         assert to_prefixed_ashare_code("688981") == "sh688981"
+
+
+class TestLimitUpPctForTicker:
+    """Board-aware limit-up threshold: 主板 9.5%, 科创/创业 19.5%, 北交所 29.0%.
+
+    BTST setup 名为「涨停突破」, 必须按板块判涨停 — 旧固定 9.5% 会把科创/创业
+    的大涨日 (+9.5%~+19.5%, 非涨停) 误判为涨停. 这些测试锁定板块自适应口径.
+    """
+
+    def test_main_board_shanghai(self) -> None:
+        assert limit_up_pct_for_ticker("600519") == 9.5
+
+    def test_main_board_shenzhen(self) -> None:
+        assert limit_up_pct_for_ticker("000001") == 9.5
+
+    def test_star_market_688(self) -> None:
+        """科创板 ±20% → 19.5%."""
+        assert limit_up_pct_for_ticker("688981") == 19.5
+
+    def test_chinext_300(self) -> None:
+        """创业板 ±20% → 19.5%."""
+        assert limit_up_pct_for_ticker("300118") == 19.5
+
+    def test_chinext_301(self) -> None:
+        """创业板 301 前缀 ±20% → 19.5%."""
+        assert limit_up_pct_for_ticker("301308") == 19.5
+
+    def test_beijing_exchange(self) -> None:
+        """北交所 ±30% → 29.0%."""
+        assert limit_up_pct_for_ticker("830879") == 29.0
+
+    def test_suffix_stripped(self) -> None:
+        """带后缀的 ts_code 要正确提取 symbol 后判板块."""
+        assert limit_up_pct_for_ticker("688981.SH") == 19.5
+        assert limit_up_pct_for_ticker("300118.SZ") == 19.5
+        assert limit_up_pct_for_ticker("600519.SH") == 9.5
+
+    def test_main_board_big_move_not_limit_up(self) -> None:
+        """语义守卫: 主板 +9.5% 是涨停, 但科创/创业 +9.5% 不是涨停 (要 +19.5%)."""
+        assert 9.5 >= limit_up_pct_for_ticker("600519")  # 主板 +9.5% 触发
+        assert 9.5 < limit_up_pct_for_ticker("688981")  # 科创 +9.5% 不触发
+        assert 19.5 >= limit_up_pct_for_ticker("688981")  # 科创 +19.5% 才触发

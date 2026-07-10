@@ -27,9 +27,11 @@ _DEFAULT_SNAPSHOT_DIR = Path("data/snapshots")
 _DEFAULT_FUND_FLOW_RATE_LIMIT_SEC = 0.2
 _DEFAULT_PRICE_HISTORY_LOOKBACK_DAYS = 180
 _DEFAULT_MIN_PRICE_HISTORY_ROWS = 31
-# 与 btst_breakout._LIMIT_UP_PCT 一致: BTST setup 只看涨停日 (pct>=9.5%).
-# 涨停小盘股常被 --auto 候选池的流动性筛选排除, 但恰是 BTST 的目标标的,
-# 因此缓存刷新需主动把它们注入 price_cache, 否则 --daily-action 永远扫不到.
+# 涨停股注入 price_cache 的扫描阈值. 用主板下限 9.5% 故意宽松:
+# 它是所有板块涨停的公共下限 (主板 10%, 科创/创业 20%, 北交所 30% 都 ≥9.5%),
+# 用 9.5% 保证不漏任何真涨停股 (宁可多注入一些大涨股, 也不漏真涨停).
+# 真正的板块自适应涨停判定在 btst_breakout.detect / is_limit_up_unbuyable_next_day
+# 里按 ticker 前缀取阈值 (limit_up_pct_for_ticker), 这里只负责把候选注入缓存.
 _DEFAULT_LIMIT_UP_PCT = 9.5
 
 
