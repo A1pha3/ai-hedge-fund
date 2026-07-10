@@ -172,7 +172,7 @@ def test_refresh_price_cache_backfills_new_target_ticker_before_daily_row(tmp_pa
     )
 
     created = pd.read_csv(price_cache / "000002.csv", dtype={"date": str})
-    assert backfilled == [("000002", "20260110", "20260708")]
+    assert backfilled == [("000002", "20250604", "20260708")]  # 400-day lookback from 20260708
     assert len(created) == 36
     assert created.iloc[-1]["date"] == "2026-07-08"
     assert created.iloc[-1]["close"] == 20.0

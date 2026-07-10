@@ -1,4 +1,4 @@
-"""资金流双源 dispatcher 测试 — tushare 主源 + akshare fallback 逻辑。"""
+"""资金流多源 dispatcher 测试 — tushare → akshare → ftshare fallback 逻辑。"""
 
 from __future__ import annotations
 
@@ -19,17 +19,18 @@ def _fake_df(source_tag: str):
     )
 
 
-def test_dual_source_uses_tushare_when_available():
-    """tushare 返回数据 → 用 tushare, 不调 akshare。"""
-    with patch("src.tools.fund_flow._try_tushare", return_value=_fake_df("tushare")) as mock_t, patch("src.tools.fund_flow._try_akshare", return_value=_fake_df("akshare")) as mock_a:
+def test_multi_source_uses_tushare_when_available():
+    """tushare 返回数据 → 用 tushare, 不调 akshare/ftshare。"""
+    with patch("src.tools.fund_flow._try_tushare", return_value=_fake_df("tushare")) as mock_t, patch("src.tools.fund_flow._try_akshare", return_value=_fake_df("akshare")) as mock_a, patch("src.tools.fund_flow._try_ftshare", return_value=_fake_df("ftshare")) as mock_f:
         df = fetch_individual_fund_flow("300502")
     assert len(df) == 1
     assert df.iloc[0]["source"] == "tushare"
     mock_t.assert_called_once()
     mock_a.assert_not_called()  # tushare 命中, 没必要 fallback
+    mock_f.assert_not_called()
 
 
-def test_dual_source_falls_back_to_akshare_when_tushare_empty():
+def test_multi_source_falls_back_to_akshare_when_tushare_empty():
     """tushare 返回空 → fallback 到 akshare。"""
     with patch("src.tools.fund_flow._try_tushare", return_value=pd.DataFrame()), patch("src.tools.fund_flow._try_akshare", return_value=_fake_df("akshare")):
         df = fetch_individual_fund_flow("300502")
@@ -37,7 +38,15 @@ def test_dual_source_falls_back_to_akshare_when_tushare_empty():
     assert df.iloc[0]["source"] == "akshare"
 
 
-def test_dual_source_falls_back_on_tushare_exception():
+def test_multi_source_falls_back_to_ftshare_when_tushare_and_akshare_empty():
+    """tushare + akshare 均空 → fallback 到 ftshare (第 3 源)。"""
+    with patch("src.tools.fund_flow._try_tushare", return_value=pd.DataFrame()), patch("src.tools.fund_flow._try_akshare", return_value=pd.DataFrame()), patch("src.tools.fund_flow._try_ftshare", return_value=_fake_df("ftshare")):
+        df = fetch_individual_fund_flow("300502")
+    assert len(df) == 1
+    assert df.iloc[0]["source"] == "ftshare"
+
+
+def test_multi_source_falls_back_on_tushare_exception():
     """tushare 抛异常 → fallback 到 akshare, 不 crash。"""
     with patch("src.tools.fund_flow._try_tushare", side_effect=ConnectionError("tushare down")), patch("src.tools.fund_flow._try_akshare", return_value=_fake_df("akshare")):
         df = fetch_individual_fund_flow("300502")
@@ -45,20 +54,21 @@ def test_dual_source_falls_back_on_tushare_exception():
     assert df.iloc[0]["source"] == "akshare"
 
 
-def test_dual_source_both_fail_returns_empty():
-    """双源都空 → 返回空 DataFrame (不抛异常)。"""
-    with patch("src.tools.fund_flow._try_tushare", return_value=pd.DataFrame()), patch("src.tools.fund_flow._try_akshare", return_value=pd.DataFrame()):
+def test_multi_source_all_fail_returns_empty():
+    """三源都空 → 返回空 DataFrame (不抛异常)。"""
+    with patch("src.tools.fund_flow._try_tushare", return_value=pd.DataFrame()), patch("src.tools.fund_flow._try_akshare", return_value=pd.DataFrame()), patch("src.tools.fund_flow._try_ftshare", return_value=pd.DataFrame()):
         df = fetch_individual_fund_flow("300502")
     assert len(df) == 0
 
 
-def test_dual_source_primary_akshare_option():
+def test_multi_source_primary_akshare_option():
     """primary='akshare' → 优先 akshare。"""
-    with patch("src.tools.fund_flow._try_akshare", return_value=_fake_df("akshare")) as mock_a, patch("src.tools.fund_flow._try_tushare", return_value=_fake_df("tushare")) as mock_t:
+    with patch("src.tools.fund_flow._try_akshare", return_value=_fake_df("akshare")) as mock_a, patch("src.tools.fund_flow._try_tushare", return_value=_fake_df("tushare")) as mock_t, patch("src.tools.fund_flow._try_ftshare", return_value=_fake_df("ftshare")) as mock_f:
         df = fetch_individual_fund_flow("300502", primary="akshare")
     assert df.iloc[0]["source"] == "akshare"
     mock_a.assert_called_once()
     mock_t.assert_not_called()
+    mock_f.assert_not_called()
 
 
 def test_try_akshare_filters_by_date_range():

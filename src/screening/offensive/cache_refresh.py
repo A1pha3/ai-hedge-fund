@@ -25,7 +25,7 @@ _DEFAULT_PRICE_CACHE_DIR = Path("data/price_cache")
 _DEFAULT_FUND_FLOW_CACHE_DIR = Path("data/fund_flow_cache")
 _DEFAULT_SNAPSHOT_DIR = Path("data/snapshots")
 _DEFAULT_FUND_FLOW_RATE_LIMIT_SEC = 0.2
-_DEFAULT_PRICE_HISTORY_LOOKBACK_DAYS = 180
+_DEFAULT_PRICE_HISTORY_LOOKBACK_DAYS = 400
 _DEFAULT_MIN_PRICE_HISTORY_ROWS = 31
 # 涨停股注入 price_cache 的扫描阈值. 用主板下限 9.5% 故意宽松:
 # 它是所有板块涨停的公共下限 (主板 10%, 科创/创业 20%, 北交所 30% 都 ≥9.5%),
@@ -386,7 +386,9 @@ def refresh_price_cache_from_daily_batch(
             path = cache_dir / f"{ticker}.csv"
             if not path.exists():
                 if backfill_price_history_fn is None:
-                    backfill_price_history_fn = _fetch_price_history_with_tushare
+                    from src.tools.price import fetch_daily_ohlcv
+
+                    backfill_price_history_fn = fetch_daily_ohlcv
                 start_date = history_start_date or _history_start_date(trade_date)
                 history = _normalise_price_history(backfill_price_history_fn(ticker, start_date, trade_date))
                 if len(history) < min_history_rows:

@@ -104,42 +104,59 @@ def _extract_latest_from_df(df: pd.DataFrame | None, value_col: str, date_col: s
 def _extract_latest_pmi(df: pd.DataFrame | None) -> tuple[float | None, float | None]:
     """从 PMI DataFrame 中分别提取制造业和非制造业 PMI。
 
-    tushare cn_pmi 返回字段通常包含 ``pmi_make`` (制造业) 和 ``pmi_service`` (非制造业)。
-    如果字段名不同, 尝试备选名称。
+    tushare cn_pmi 返回 tushare PMI 编码列名:
+    - PMI010000 = 制造业 PMI
+    - PMI020100 = 非制造业 PMI (商务活动指数)
+    旧代码假设列名含 "make"/"service", 与实际编码列名不匹配 → 永远返回 None。
     """
     if df is None or df.empty:
         return None, None
 
-    # 常见字段名
-    mfg_col = None
-    non_mfg_col = None
-    for col in df.columns:
-        col_lower = col.lower()
-        if "make" in col_lower or "manufacturing" in col_lower or col_lower == "pmi":
-            mfg_col = col
-        if "service" in col_lower or "non" in col_lower:
-            non_mfg_col = col
+    # tushare cn_pmi 实际列名 (PMI 编码体系) + 兼容旧假设
+    mfg_candidates = ["PMI010000", "pmi_make", "manufacturing", "pmi"]
+    non_mfg_candidates = ["PMI020100", "pmi_service", "non_mfg", "non_manufacturing"]
+    cols_lower = {c.lower(): c for c in df.columns}
 
-    df_sorted = df.sort_values("month", ascending=False) if "month" in df.columns else df
+    def _find_col(candidates: list[str]) -> str | None:
+        # 先精确匹配 (PMI 编码大小写敏感), 再模糊匹配
+        for c in candidates:
+            if c in df.columns:
+                return c
+        for c in candidates:
+            if c.lower() in cols_lower:
+                return cols_lower[c.lower()]
+        return None
+
+    mfg_col = _find_col(mfg_candidates)
+    non_mfg_col = _find_col(non_mfg_candidates)
+
+    # cn_pmi 的日期列是大写 MONTH, 其他接口是小写 month
+    date_col = "MONTH" if "MONTH" in df.columns else ("month" if "month" in df.columns else None)
+    if date_col:
+        df_sorted = df.sort_values(date_col, ascending=False)
+    else:
+        df_sorted = df
     latest = df_sorted.iloc[0]
 
-    mfg_val = _safe_float(latest[mfg_col]) if mfg_col else None
-    non_mfg_val = _safe_float(latest[non_mfg_col]) if non_mfg_col else None
+    mfg_val = _safe_float(latest[mfg_col]) if mfg_col and mfg_col in df.columns else None
+    non_mfg_val = _safe_float(latest[non_mfg_col]) if non_mfg_col and non_mfg_col in df.columns else None
     return mfg_val, non_mfg_val
 
 
 def _extract_latest_lpr(df: pd.DataFrame | None) -> float | None:
-    """从 LPR/shibor_quote DataFrame 中提取 1 年期 LPR。
+    """从 shibor_lpr DataFrame 中提取 1 年期 LPR。
 
-    tushare shibor_quote 通常包含 ``lpr1y`` 或类似字段。
+    tushare shibor_lpr 返回 ``date``/``1y``/``5y`` 三列 (1 年期和 5 年期 LPR)。
+    旧代码用 shibor_quote 接口 (SHIBOR 银行间拆借报价, 不含 LPR), 且假设列名含
+    "lpr1y" → 永远返回 None。改为 shibor_lpr + 精确列名 ``1y``。
     """
     if df is None or df.empty:
         return None
 
     lpr_col = None
     for col in df.columns:
-        col_lower = col.lower()
-        if "lpr1" in col_lower or "lpr_1" in col_lower:
+        # shibor_lpr 的 1 年期列名就是 "1y"; 兼容旧 "lpr1y" 假设
+        if col.lower() in ("1y", "lpr1y", "lpr_1y"):
             lpr_col = col
             break
 
@@ -160,11 +177,11 @@ def _extract_latest_social_financing(df: pd.DataFrame | None) -> float | None:
     if df is None or df.empty:
         return None
 
-    # 常见字段名
+    # sf_month 接口返回 inc_month (当月增量), 兼容旧字段名 total/sf/y0 前缀
     sf_col = None
     for col in df.columns:
         col_lower = col.lower()
-        if "total" in col_lower or "sf" in col_lower or col_lower.startswith("y0"):
+        if "inc_month" in col_lower or "total" in col_lower or "sf" in col_lower or col_lower.startswith("y0"):
             sf_col = col
             break
 
@@ -203,16 +220,29 @@ def _as_of_month(as_of: str | None) -> str | None:
 
 
 def _filter_df_as_of(df: pd.DataFrame | None, as_of_month: str | None) -> pd.DataFrame | None:
-    """Point-in-time filter: keep only rows whose ``month`` (YYYYMM) is <= the
-    as_of anchor. R40 — prevents backtest/replay from reading macro readings
-    published after the simulated trade date. No-op when as_of_month is None."""
+    """Point-in-time filter: keep only rows whose date column is <= the as_of
+    anchor (YYYYMM). R40 — prevents backtest/replay from reading macro readings
+    published after the simulated trade date. No-op when as_of_month is None.
+
+    Handles heterogeneous date columns across tushare macro APIs:
+    - cn_cpi/cn_ppi/cn_m/sf_month: ``month`` column, YYYYMM format
+    - cn_pmi: ``MONTH`` column (uppercase), YYYYMM format
+    - shibor_lpr: ``date`` column, YYYYMMDD format (truncated to YYYYMM for compare)
+    """
     if df is None or df.empty or as_of_month is None:
         return df
-    month_col = "month" if "month" in df.columns else ("date" if "date" in df.columns else None)
-    if month_col is None:
+    # Find the date column (case-insensitive): month/MONTH for monthly, date for daily
+    date_col = None
+    for col in df.columns:
+        if col.lower() in ("month", "date"):
+            date_col = col
+            break
+    if date_col is None:
         return df
-    # Compare as strings: YYYYMM sorts chronologically for equal-length keys.
-    mask = df[month_col].astype(str) <= as_of_month
+    # Normalize to YYYYMM for comparison: monthly data is already YYYYMM (6 digits),
+    # daily data (shibor_lpr) is YYYYMMDD (8 digits) → truncate to first 6.
+    normalized = df[date_col].astype(str).str[:6]
+    mask = normalized <= as_of_month
     filtered = df[mask]
     return filtered if not filtered.empty else None
 
@@ -277,7 +307,7 @@ def fetch_macro_snapshot(*, use_cache: bool = True, as_of: str | None = None) ->
 
     # 4. M2
     try:
-        m2_df = _filter_df_as_of(_fetch_macro_frame(pro, "cn_m2"), as_of_m)
+        m2_df = _filter_df_as_of(_fetch_macro_frame(pro, "cn_m"), as_of_m)
         m2_val, _ = _extract_latest_from_df(m2_df, "m2_yoy")
         if m2_val is None:
             m2_val, _ = _extract_latest_from_df(m2_df, "yoy")
@@ -287,14 +317,14 @@ def fetch_macro_snapshot(*, use_cache: bool = True, as_of: str | None = None) ->
 
     # 5. 社融
     try:
-        sf_df = _filter_df_as_of(_fetch_macro_frame(pro, "cn_sf"), as_of_m)
+        sf_df = _filter_df_as_of(_fetch_macro_frame(pro, "sf_month"), as_of_m)
         snapshot.social_financing = _extract_latest_social_financing(sf_df)
     except Exception as exc:
         logger.debug("macro_data: 社融提取异常: %s", exc)
 
     # 6. LPR 1Y
     try:
-        lpr_df = _filter_df_as_of(_fetch_macro_frame(pro, "shibor_quote"), as_of_m)
+        lpr_df = _filter_df_as_of(_fetch_macro_frame(pro, "shibor_lpr"), as_of_m)
         snapshot.interest_rate_lpr_1y = _extract_latest_lpr(lpr_df)
     except Exception as exc:
         logger.debug("macro_data: LPR 提取异常: %s", exc)
