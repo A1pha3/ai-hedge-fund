@@ -1997,3 +1997,176 @@ def test_render_badges_dual_signal_convergence(tmp_path, monkeypatch):
     # 双信号摘要行: bootstrap 验证未达显著 → 诚实披露 "未达显著/可能是噪声", 不宣称 76% vs 66%
     assert "双信号" in out and "未达显著" in out, "应诚实披露 bootstrap 未验证"
     assert "76%" not in out, "不应展示未达显著的点估计 (会误导 operator)"
+
+
+# ---------------------------------------------------------------------------
+# C-DAILY-ACTION-POSITION-VISIBILITY (c85bfe50, 20260710): 持仓明细 + 到期释放日程
+# 渲染回归守卫. commit c85bfe50 加了 +147 行渲染逻辑 (open_positions_detail +
+# render 持仓块 + _render_candidate_list 截断) 却无直接测试 — 同期 cap 守卫加了
+# 434 行测试, 这块是发布前的验证盲区. 以下回归锁定 operator 能看到 "买了什么 /
+# 何时到期释放 / 上限跳过哪些候选", 防止未来重构悄悄删掉这些披露.
+# ---------------------------------------------------------------------------
+
+
+def test_open_positions_detail_returns_only_unexited_buys(tmp_path):
+    """open_positions_detail 必须从 journal 真值重建未平仓明细 (BUY - EXIT).
+
+    幂等语义关键点: EXIT 记录的 date 字段是 *买入日* (close_matured 用
+    ``date=buy_date`` 写 EXIT, 对齐 BUY natural-key), 不是平仓日. 本测试
+    锁定这一口径 — 如果未来有人误改成用平仓日写 EXIT, open_positions_detail
+    会把已平仓位算成未平仓 (exit_keys 永不命中), operator 看到幽灵持仓.
+    直接写 journal 原始记录 (与 test_open_positions_self_heal_subtracts_exits
+    同口径), 隔离 close_matured 的数据拉取复杂度, 聚焦被测函数.
+    """
+    import json as _json
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    journal = tmp_path / "journal.jsonl"
+    records = [
+        {"date": "20260701", "ticker": "300308", "setup": "btst_breakout", "horizon": 10, "action": "BUY", "kelly_pct": 0.10, "entry_price": 10.0},
+        {"date": "20260702", "ticker": "688999", "setup": "oversold_bounce", "horizon": 5, "action": "BUY", "kelly_pct": 0.05, "entry_price": 20.0},
+        # EXIT.date = buy_date 约定 (与 close_matured 写出口径一致) → 300308 已平仓
+        {"date": "20260701", "ticker": "300308", "action": "EXIT"},
+    ]
+    journal.write_text("\n".join(_json.dumps(r) for r in records) + "\n", encoding="utf-8")
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    details = tracker.open_positions_detail(as_of="20260710")
+
+    tickers = {d["ticker"] for d in details}
+    assert "300308" not in tickers, "已平仓的 300308 不应出现在未平仓明细"
+    assert "688999" in tickers, "未平仓的 688999 应出现"
+    # 第二笔的到期日 = 买入日 + horizon 日历日 = 20260702 + 5 = 20260707
+    row = next(d for d in details if d["ticker"] == "688999")
+    assert row["matures_on"] == "20260707", f"到期日应为 20260707, 实际 {row['matures_on']}"
+    assert row["days_to_maturity"] == -3, f"20260707 相对 20260710 应 -3 天 (已过期未平), 实际 {row['days_to_maturity']}"
+    assert row["setup"] == "oversold_bounce"
+    assert row["horizon"] == 5
+    assert row["kelly_pct"] == 0.05
+
+
+def test_open_positions_detail_sorted_by_maturity_ascending(tmp_path):
+    """多仓时应按 matures_on 升序, 让 operator 第一眼看到最快到期的仓位."""
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    # 故意以乱序买入: horizon 5 的后买, horizon 10 的先买
+    tracker.record_buy("20260701", "AAAAAA", "btst_breakout", 10, 10.0, 0.10, 9.0, 9.2, "fake")  # 到期 0711
+    tracker.record_buy("20260705", "BBBBBB", "oversold_bounce", 5, 10.0, 0.10, 9.0, 9.2, "fake")   # 到期 0710
+
+    details = tracker.open_positions_detail(as_of="20260706")
+
+    matures = [d["matures_on"] for d in details]
+    assert matures == sorted(matures), f"应按 matures_on 升序, 实际顺序 {matures}"
+    assert details[0]["ticker"] == "BBBBBB", "最快到期 (0710) 应排第一"
+
+
+def test_render_shows_held_positions_and_maturity_release_schedule(tmp_path, monkeypatch):
+    """render 持仓块必须列出每仓 + 最近到期释放日程 + 释放机制说明.
+
+    锁定 c85bfe50 加的三块披露: (1) 📌 每仓明细 (2) 💡 最近到期释放多少敞口
+    (3) 释放机制说明. 这些是 operator 理解 "仓位何时释放 / 释放后能否出新仓"
+    的唯一入口 — 删掉任何一块都是回退到 "只看到持仓数 N" 的盲区.
+    """
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    monkeypatch.setattr(da, "_setup_policy_lines", lambda: [], raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    # 一笔未到期 (剩 3 天), 50% 敞口占用
+    tracker.record_buy("20260706", "300308", "btst_breakout", 10, 10.0, 0.50, 9.0, 9.2, "fake")
+
+    out = da.render_daily_action([], "20260706", tracker)
+
+    # (1) 持仓明细: ticker + setup + 买入日 + 价格 + 到期日
+    assert "📌" in out and "当前持仓" in out, "应有持仓明细标题"
+    assert "300308" in out and "btst_breakout" in out, "应列出每仓 ticker + setup"
+    assert "20260706买入" in out, "应显示买入日"
+    assert "到期 20260716 (剩10天)" in out, f"应显示到期日 + 剩余天数, 实际:\n{out}"
+    # (2) 最近到期释放日程
+    assert "💡" in out and "最近到期" in out, "应有最近到期释放日程"
+    assert "释放" in out and "敞口" in out, "应说明释放多少敞口"
+    # (3) 释放机制说明 (operator 需要知道无需手动平仓)
+    assert "释放机制" in out, "应说明自动平仓机制"
+
+
+def test_render_release_schedule_says_cap_cleared_when_dropping_below_limit(tmp_path, monkeypatch):
+    """到期释放后敞口降回上限内时, 应明确告诉 operator "可恢复出新仓".
+
+    这是 c85bfe50 的关键行为: 释放日程不仅算数字, 还判断释放后是否仍超上限,
+    给出可执行结论 ("降回上限内, 可恢复出新仓" vs "仍超上限, 需继续等待").
+    """
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    monkeypatch.setattr(da, "_setup_policy_lines", lambda: [], raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    # 50% 敞口, T+5 即将到期 → 释放后敞口降到 0% (< 60% 上限) → 应说 "可恢复"
+    tracker.record_buy("20260701", "300308", "oversold_bounce", 5, 10.0, 0.50, 9.0, 9.2, "fake")
+
+    out = da.render_daily_action([], "20260704", tracker)
+
+    assert "可恢复出新仓" in out, f"释放后敞口降回上限内, 应告诉 operator 可恢复, 实际:\n{out}"
+    assert "仍超" not in out
+
+
+def test_render_candidate_list_truncates_with_rest_count(tmp_path, monkeypatch):
+    """候选超过 limit 时应显示前 limit 个 + '其余 N 只略', 避免刷屏.
+
+    锁定 _render_candidate_list (c85bfe50 新增) 的截断行为. 当敞口超限全部候选
+    被跳过 (not actions and blocked) 时, render 走 limit=12 列出候选 (daily_action.py:945-949),
+    operator 需要知道 "总共有几只", 不能只看到前 N 只以为就这么多.
+    """
+    import pandas as pd
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+    from src.screening.offensive.setups.base import DetectionResult
+    from src.screening.offensive.statistics import Distribution
+
+    class FakeSetup:
+        def detect(self, ticker, trade_date, context):
+            return DetectionResult(hit=True, ticker=ticker, trade_date=trade_date, trigger_strength=1.0, invalidation_condition="fake")
+
+    dist = Distribution(n=100, winrate=0.60, avg_gain=0.12, avg_loss=-0.06, convexity_ratio=2.0, expected_return=0.05, ci_low=0.02, ci_high=0.08, ic=0.10)
+    monkeypatch.setattr(da, "_VERIFIED_SETUPS", [("btst_breakout", FakeSetup, 10)])
+    monkeypatch.setattr(da, "get_known_distribution", lambda name, horizon: dist)
+    monkeypatch.setattr(da, "_env_setup_disable_list", lambda: set())
+    monkeypatch.delenv("DAILY_ACTION_ENFORCE_OPEN_CAP", raising=False)
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    monkeypatch.setattr(da, "_setup_policy_lines", lambda: [], raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"股{t[-2:]}")
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    (reports / "auto_screening_20260709.json").write_text(
+        __import__("json").dumps({"date": "20260709", "recommendations": []}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("src.screening.consecutive_recommendation.resolve_report_dir", lambda: reports)
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    # 60% 已开仓 → 上限满, 14 只新信号全部被跳过 (not actions, all blocked)
+    tracker.record_buy("20260707", "500001", "btst_breakout", 10, 10.0, 0.60, 9.0, 9.2, "fake")
+    new_tickers = [f"60000{i}" for i in range(14)]
+    report_path = tmp_path / "auto_screening_20260709.json"
+    report_path.write_text(
+        __import__("json").dumps({"date": "20260709", "recommendations": [{"ticker": t} for t in new_tickers], "market_state": {"regime_gate_level": "normal"}}),
+        encoding="utf-8",
+    )
+    prices = pd.DataFrame([{"date": pd.Timestamp("2026-07-09"), "open": 10.0, "high": 10.5, "low": 9.5, "close": 10.0, "pct_change": 9.5}])
+
+    actions = da.generate_daily_action(report_path=report_path, tracker=tracker, scan_mode="report", price_loader=lambda ticker, report_date: prices.copy())
+    assert actions == [], "60% 已满 + 60% 单仓 → 应无新 BUY (全部 blocked)"
+    out = da.render_daily_action(actions, "20260709", tracker)
+
+    # not actions + blocked → 走 limit=12 候选列出路径 (daily_action.py:945-949)
+    assert "14 个 setup 命中" in out, f"应报告 14 个被跳过的候选, 实际:\n{out}"
+    assert "暂不买入" in out, "应说明因敞口超限暂不买入"
+    # limit=12, 14 候选 → 显示前 12 + "其余 2 只略"
+    assert "其余" in out and "只略" in out, "候选超过 limit 应显示截断提示"
+    assert "其余 2 只略" in out, f"14 - 12 = 2 只略, 实际:\n{out}"
