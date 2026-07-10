@@ -46,6 +46,7 @@ class DailyActionCacheRefreshStats:
     fund_flow_total: int = 0
     fund_flow_saved: int = 0
     fund_flow_empty: int = 0
+    fund_flow_suspended: int = 0
     fund_flow_skipped_fresh: int = 0
     fund_flow_failed: int = 0
     industry_index_total: int = 0
@@ -67,6 +68,7 @@ class DailyActionCacheRefreshStats:
         self.fund_flow_total += other.fund_flow_total
         self.fund_flow_saved += other.fund_flow_saved
         self.fund_flow_empty += other.fund_flow_empty
+        self.fund_flow_suspended += other.fund_flow_suspended
         self.fund_flow_skipped_fresh += other.fund_flow_skipped_fresh
         self.fund_flow_failed += other.fund_flow_failed
         self.industry_index_total += other.industry_index_total
@@ -420,6 +422,25 @@ def _latest_fund_flow_date(cache_dir: Path, ticker: str) -> str | None:
     return max(_fund_flow_date(value) for value in df["date"].dropna())
 
 
+def _load_suspended_codes(trade_date: str) -> set[str]:
+    """拉取当日停牌股票的 6 位代码集合 (单次 API 调用).
+
+    用于 fund_flow 空返回时区分「停牌」(预期) 与「数据异常」(需排查).
+    失败时返回空集 — 不影响主流程, 但失去停牌区分能力 (所有空返回归为 fund_flow_empty).
+    """
+    try:
+        from src.tools.tushare_api import get_suspend_list
+
+        df = get_suspend_list(trade_date)
+        if df is None or len(df) == 0:
+            return set()
+        # ts_code 格式: "002677.SZ" → "002677"
+        return {str(code).split(".")[0] for code in df["ts_code"].dropna()}
+    except Exception:
+        logger.debug("[cache_refresh] 停牌列表获取失败, 资金流空返回将无法区分停牌", exc_info=True)
+        return set()
+
+
 def refresh_fund_flow_cache(
     tickers: list[str],
     trade_date: str,
@@ -443,6 +464,10 @@ def refresh_fund_flow_cache(
     store = FundFlowStore(cache_dir=cache_dir)
     stats = DailyActionCacheRefreshStats(fund_flow_total=len(queue))
 
+    # 一次性拉取当日停牌列表 (单次 API 调用, 不按 ticker 重复).
+    # 资金流为空时用此集合区分「停牌」(预期行为, DEBUG) 与「数据异常」(WARNING).
+    suspended_codes: set[str] = _load_suspended_codes(trade_date)
+
     for index, ticker in enumerate(queue, 1):
         try:
             latest = _latest_fund_flow_date(cache_dir, ticker)
@@ -452,7 +477,15 @@ def refresh_fund_flow_cache(
 
             df = fetch_fn(ticker, start_date=trade_date, end_date=trade_date)
             if df is None or len(df) == 0:
-                stats.fund_flow_empty += 1
+                if ticker in suspended_codes:
+                    stats.fund_flow_suspended += 1
+                    logger.debug("[资金流] %s 当日停牌, 跳过 (预期行为)", ticker)
+                else:
+                    stats.fund_flow_empty += 1
+                    logger.warning(
+                        "[资金流] %s 全源返回空且非停牌 — 疑似数据异常 (新上市/退市/源故障)",
+                        ticker,
+                    )
                 continue
 
             store.save(ticker, df)

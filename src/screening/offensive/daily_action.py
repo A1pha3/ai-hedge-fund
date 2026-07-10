@@ -217,17 +217,15 @@ def _load_st_tickers() -> set[str]:
 
     数据源: tushare stock_basic (name 含 ST). 失败时空集 (不阻塞).
     """
-    token = ""
-    if os.path.exists(".env"):
-        for line in Path(".env").read_text(encoding="utf-8").splitlines():
-            if line.startswith("TUSHARE_TOKEN="):
-                token = line.split("=", 1)[1].strip().strip("'\"")
+    from src.tools.tushare_api import get_tushare_token
+
+    token = get_tushare_token()
     if not token:
         return set()
     try:
         import tushare as ts
 
-        pro = ts.pro_api()
+        pro = ts.pro_api(token=token)
         basic = pro.stock_basic(exchange="", list_status="L", fields="ts_code,name")
         st_codes: set[str] = set()
         for _, row in basic.iterrows():
@@ -512,19 +510,14 @@ def _load_prices_for_ticker(ticker: str, report_date: str) -> pd.DataFrame:
             df = df[df["date"] <= cutoff]
         return df.sort_values("date").reset_index(drop=True)
     # 拉取 (tushare)
-    import os
+    from src.tools.tushare_api import get_tushare_token
 
-    token = ""
-    if os.path.exists(".env"):
-        for line in Path(".env").read_text(encoding="utf-8").splitlines():
-            if line.startswith("TUSHARE_TOKEN="):
-                token = line.split("=", 1)[1].strip().strip("'\"")
+    token = get_tushare_token()
     if not token:
         return pd.DataFrame()
     import tushare as ts
 
-    ts.set_token(token)
-    pro = ts.pro_api()
+    pro = ts.pro_api(token=token)
     suffix = ".SZ" if ticker.startswith(("0", "3")) else ".SH"
     raw = pro.daily(ts_code=f"{ticker}{suffix}", start_date="20200101", end_date=report_date)
     if raw is None or len(raw) == 0:

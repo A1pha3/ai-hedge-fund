@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import threading
+from pathlib import Path
 import time
 from datetime import datetime
 from typing import Any
@@ -318,6 +319,26 @@ def _cached_tushare_call(pro, api_name: str, ts_code: str, limit: int, dedupe: b
     return _cached_tushare_dataframe_call(pro, api_name, ts_code=ts_code, limit=limit, dedupe=dedupe)
 
 
+def get_tushare_token() -> str:
+    """返回 Tushare token (env 优先, .env 文件兜底). 永远不返回 None.
+
+    全代码库唯一的 token 加载入口 — 消除此前 9 处重复的 _load_token() /
+    _ensure_token_in_env() 实现。env 优先级高于 .env 文件, 与 python-dotenv 的
+    load_dotenv(override=True) 语义一致 (main.py 启动时已 load, 这里仅作 fallback)。
+
+    不依赖 python-dotenv, 避免 src.tools → src.project_env 的循环导入风险。
+    """
+    token = os.environ.get("TUSHARE_TOKEN", "").strip()
+    if token:
+        return token
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("TUSHARE_TOKEN="):
+                return line.split("=", 1)[1].strip().strip("'\"")
+    return ""
+
+
 def _get_pro():
     """初始化并返回 Tushare Pro 实例（线程安全）。"""
     global _pro
@@ -329,7 +350,7 @@ def _get_pro():
         if _pro is not None:
             return _pro
 
-        token = os.environ.get("TUSHARE_TOKEN")
+        token = get_tushare_token()
         if not token:
             return None
 

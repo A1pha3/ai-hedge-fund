@@ -16,10 +16,9 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 
 def main():
-    import tushare as ts
+    from src.tools.tushare_api import _get_pro
 
-    ts.set_token(os.getenv("TUSHARE_TOKEN"))
-    pro = ts.pro_api()
+    pro = _get_pro()
 
     # 分析最近的几个交易日
     cal = pro.trade_cal(exchange="SSE", start_date="20260401", end_date="20260414", is_open="1")

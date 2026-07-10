@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
 import sys
 import time
 from dataclasses import dataclass
@@ -50,6 +49,7 @@ from src.screening.strategy_scorer_utils import (
     MEAN_REVERSION_SUBFACTOR_WEIGHTS,
     TREND_SUBFACTOR_WEIGHTS_WITH_LONG_TREND,
 )
+from src.tools.tushare_api import _get_pro
 
 load_dotenv(_PROJECT_ROOT / ".env")
 
@@ -63,16 +63,6 @@ WEIGHTS_NEW = {"trend": 0.35, "mean_reversion": 0.65}  # 0e365cdc 之后
 # ---------------------------------------------------------------------------
 # 1. 数据获取
 # ---------------------------------------------------------------------------
-
-
-def _get_pro():
-    import tushare as ts
-
-    token = os.getenv("TUSHARE_TOKEN")
-    if not token:
-        raise RuntimeError("TUSHARE_TOKEN 未设置")
-    ts.set_token(token)
-    return ts.pro_api()
 
 
 def get_trading_dates(pro, n_days: int, end_date: str | None = None) -> list[str]:

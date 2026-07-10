@@ -10,9 +10,6 @@ fund_flow_store 数据, 跑真实 Setup-1 分布回测。
 """
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 
@@ -20,22 +17,12 @@ from src.screening.offensive.data.fund_flow_store import FundFlowStore
 from src.screening.offensive.distribution_builder import build_distribution
 from src.screening.offensive.execution_adjuster import ExecutionConfig
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
-
-
-def _load_token() -> str:
-    if os.path.exists(".env"):
-        for line in Path(".env").read_text(encoding="utf-8").splitlines():
-            if line.startswith("TUSHARE_TOKEN="):
-                return line.split("=", 1)[1].strip().strip("'\"")
-    return os.environ.get("TUSHARE_TOKEN", "")
+from src.tools.tushare_api import _get_pro
 
 
 def _load_prices_tushare(ticker: str) -> pd.DataFrame:
     """tushare daily → 标准化 DataFrame (date/close/open/pct_change)。"""
-    import tushare as ts
-
-    ts.set_token(_load_token())
-    pro = ts.pro_api()
+    pro = _get_pro()
     raw = pro.daily(ts_code=f"{ticker}.SZ" if ticker.startswith(("0", "3")) else f"{ticker}.SH",
                     start_date="20200101", end_date="20260706")
     df = raw.copy()

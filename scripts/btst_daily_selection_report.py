@@ -167,10 +167,9 @@ def compute_score(factors, weights):
 
 
 def main():
-    import tushare as ts
+    from src.tools.tushare_api import _get_pro
 
-    ts.set_token(os.getenv("TUSHARE_TOKEN"))
-    pro = ts.pro_api()
+    pro = _get_pro()
 
     # 确定交易日
     cal = pro.trade_cal(exchange="SSE", start_date="20260410", end_date="20260416", is_open="1")

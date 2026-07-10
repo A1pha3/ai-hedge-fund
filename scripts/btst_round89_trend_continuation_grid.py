@@ -126,10 +126,9 @@ def run_grid_search(data_cache: list[dict], param_grid: list[tuple[float, float]
 
 
 def main():
-    import tushare as ts
+    from src.tools.tushare_api import _get_pro
 
-    ts.set_token(os.getenv("TUSHARE_TOKEN"))
-    pro = ts.pro_api()
+    pro = _get_pro()
 
     print("=== Round 89: trend_continuation 权重网格搜索 ===")
     print("正在获取交易日历...")

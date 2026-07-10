@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pandas as pd
@@ -18,14 +17,7 @@ from src.screening.offensive.distribution_builder import build_distribution
 from src.screening.offensive.execution_adjuster import ExecutionConfig
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
 from src.screening.offensive.setups.base import Setup
-
-
-def _load_token() -> str:
-    if os.path.exists(".env"):
-        for line in Path(".env").read_text(encoding="utf-8").splitlines():
-            if line.startswith("TUSHARE_TOKEN="):
-                return line.split("=", 1)[1].strip().strip("'\"")
-    return os.environ.get("TUSHARE_TOKEN", "")
+from src.tools.tushare_api import _get_pro
 
 
 _PRICE_CACHE_DIR = Path("data/price_cache/")
@@ -40,10 +32,7 @@ def _load_prices_tushare(ticker: str) -> pd.DataFrame:
         df["date"] = pd.to_datetime(df["date"])
         return df
 
-    import tushare as ts
-
-    ts.set_token(_load_token())
-    pro = ts.pro_api()
+    pro = _get_pro()
     suffix = ".SZ" if ticker.startswith(("0", "3")) else ".SH"
     raw = pro.daily(ts_code=f"{ticker}{suffix}", start_date="20200101", end_date="20260706")
     if raw is None or len(raw) == 0:

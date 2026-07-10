@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 import time
 from datetime import datetime, timedelta
@@ -46,6 +45,7 @@ except ModuleNotFoundError:
     from btst_data_utils import build_beijing_exchange_mask  # type: ignore[redef]
 
 from src.agents.technicals import calculate_volatility_signals  # noqa: E402
+from src.tools.tushare_api import _get_pro
 
 load_dotenv(_PROJECT_ROOT / ".env")
 logger = logging.getLogger("vol_counterfactual")
@@ -88,16 +88,6 @@ def _dir_C_flip(r, z):
 
 
 VARIANTS = {"current_AND": _dir_current, "A_OR": _dir_A_or, "B_narrow": _dir_B_narrow, "C_flip": _dir_C_flip}
-
-
-def _get_pro():
-    import tushare as ts
-
-    token = os.getenv("TUSHARE_TOKEN")
-    if not token:
-        raise RuntimeError("TUSHARE_TOKEN 未设置")
-    ts.set_token(token)
-    return ts.pro_api()
 
 
 def get_trading_dates(pro, n_days, end_date=None):

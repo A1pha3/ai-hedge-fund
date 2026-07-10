@@ -9,27 +9,14 @@ API: pro.top_inst(trade_date='20260706') → 每日机构席位买卖明细。
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import pandas as pd
+
+from src.tools.tushare_api import get_tushare_token
 
 logger = logging.getLogger(__name__)
 
 _WAN_TO_YUAN = 10_000.0
-
-
-def _load_token() -> str:
-    import os
-
-    token = os.environ.get("TUSHARE_TOKEN", "")
-    if token:
-        return token
-    env_path = Path(".env")
-    if env_path.exists():
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.strip().startswith("TUSHARE_TOKEN="):
-                return line.split("=", 1)[1].strip().strip("'\"")
-    return ""
 
 
 def fetch_lhb_inst_detail(trade_date: str) -> pd.DataFrame:
@@ -42,15 +29,14 @@ def fetch_lhb_inst_detail(trade_date: str) -> pd.DataFrame:
         标准化 DataFrame, 列: date / ts_code / exalter / buy(元) / sell(元) / net_buy(元)
         异常时返回空 DataFrame.
     """
-    token = _load_token()
+    token = get_tushare_token()
     if not token:
         return pd.DataFrame()
 
     try:
         import tushare as ts
 
-        ts.set_token(token)
-        pro = ts.pro_api()
+        pro = ts.pro_api(token=token)
         raw = pro.top_inst(trade_date=trade_date)
     except Exception as exc:
         logger.warning("lhb inst fetch failed for %s: %s", trade_date, exc)

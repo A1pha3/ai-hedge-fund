@@ -21,31 +21,14 @@ _CACHE_DIR = Path("data/industry_index_cache")
 _START_DATE = "20200101"
 
 
-def _ensure_token_in_env() -> None:
-    """项目的 _get_pro() 只读 os.environ['TUSHARE_TOKEN'], 注入 .env token."""
-    import os
-
-    if os.environ.get("TUSHARE_TOKEN"):
-        return
-    env_path = Path(".env")
-    if env_path.exists():
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.startswith("TUSHARE_TOKEN="):
-                token = line.split("=", 1)[1].strip().strip("'\"")
-                if token:
-                    os.environ["TUSHARE_TOKEN"] = token
-                    return
-
-
 def _fetch_industry_codes() -> list[tuple[str, str]]:
     """拉 SW L1 行业列表 → [(index_code, industry_name), ...].
 
     industry_name 是中文 (如 '农林牧渔'), 与 get_sw_industry_classification 的映射值一致.
     """
-    _ensure_token_in_env()
-    import tushare as ts
+    from src.tools.tushare_api import _get_pro
 
-    pro = ts.pro_api()
+    pro = _get_pro()
     idx_df = pro.index_classify(level="L1", src="SW2021")
     if idx_df is None or len(idx_df) == 0:
         # 回退到旧版分类
@@ -74,10 +57,9 @@ def _cache_covers_end_date(path: Path, end_date: str) -> tuple[bool, int]:
 
 def _fetch_industry_daily(index_code: str, end_date: str | None = None) -> pd.DataFrame:
     """拉单个行业指数的全量日线 (含 pct_chg)."""
-    _ensure_token_in_env()
-    import tushare as ts
+    from src.tools.tushare_api import _get_pro
 
-    pro = ts.pro_api()
+    pro = _get_pro()
     df = pro.index_daily(ts_code=index_code, start_date=_START_DATE, end_date=_resolve_end_date(end_date))
     if df is None or len(df) == 0:
         return pd.DataFrame()

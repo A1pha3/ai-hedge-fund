@@ -36,7 +36,7 @@ import pandas as pd
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.tools.tushare_fund_flow import _load_token, _to_ts_code  # noqa: E402
+from src.tools.tushare_fund_flow import _to_ts_code  # noqa: E402
 from src.screening.offensive.data.fund_flow_store import FundFlowStore  # noqa: E402
 
 logging.basicConfig(
@@ -100,12 +100,10 @@ def _get_trading_days(start_date: str, end_date: str) -> list[str]:
 
     # 2. trade_cal 补 regime_history 之后的日子 (regime 可能滞后几天)
     try:
-        import tushare as ts
+        from src.tools.tushare_api import _get_pro
 
-        token = _load_token()
-        if token:
-            ts.set_token(token)
-            pro = ts.pro_api(timeout=30)
+        pro = _get_pro()
+        if pro is not None:
             cal_start = days[-1] if days else start_date
             cal = pro.trade_cal(exchange="SSE", start_date=cal_start, end_date=end_date, is_open="1")
             cal_days = sorted(cal["cal_date"].tolist())
@@ -148,15 +146,12 @@ def main():
     args = parser.parse_args()
 
     # --- 初始化 ---
-    token = _load_token()
-    if not token:
+    from src.tools.tushare_api import _get_pro
+
+    pro = _get_pro()
+    if pro is None:
         logger.error("TUSHARE_TOKEN 未配置 (.env 或环境变量), 无法回填")
         sys.exit(1)
-
-    import tushare as ts
-
-    ts.set_token(token)
-    pro = ts.pro_api(timeout=60)
 
     end_date = args.end or pd.Timestamp.now().strftime("%Y%m%d")
     if args.start:

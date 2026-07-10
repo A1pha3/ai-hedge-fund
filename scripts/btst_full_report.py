@@ -362,21 +362,10 @@ def _build_btst_regime_gate_enforcement_proxy(market_state_proxy: dict[str, Any]
 
 
 def main():
-    import tushare as ts
+    from src.tools.tushare_api import _get_pro
 
     args = parse_args()
-    ts.set_token(os.getenv("TUSHARE_TOKEN"))
-    _ts_timeout_raw = os.getenv("TUSHARE_TIMEOUT", "120")
-    try:
-        _ts_timeout = int(_ts_timeout_raw)
-    except (TypeError, ValueError):
-        _ts_timeout = 120
-    try:
-        pro = ts.pro_api(timeout=_ts_timeout)
-    except TypeError as error:
-        if "timeout" not in str(error):
-            raise
-        pro = ts.pro_api()
+    pro = _get_pro()
 
     trade_date, next_date, all_dates = resolve_trade_dates(pro, args.trade_date)
     next_map = {d: all_dates[i + 1] for i, d in enumerate(all_dates) if i + 1 < len(all_dates)}

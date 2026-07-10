@@ -40,11 +40,15 @@ class TushareProvider(BaseDataProvider):
         初始化 Tushare 提供商
 
         Args:
-            token: Tushare API Token（默认从环境变量获取）
+            token: Tushare API Token（默认从环境变量或 .env 获取）
             priority: 优先级（默认 5，高优先级）
         """
         super().__init__("tushare", priority)
-        self._token = token or os.environ.get("TUSHARE_TOKEN")
+        if not token:
+            from src.tools.tushare_api import get_tushare_token
+
+            token = get_tushare_token() or None
+        self._token = token
         self._pro = None
         # R6-BETA-003: avoid asyncio.get_event_loop() which raises RuntimeError
         # on Python 3.12+ when no loop is running. Use lazy lookup instead.

@@ -17,7 +17,6 @@ volatility / long_trend_alignment) 的 direction 判定把 trend 信号压制了
 from __future__ import annotations
 
 import logging
-import os
 import sys
 import time
 from collections import defaultdict
@@ -39,6 +38,7 @@ except ModuleNotFoundError:
     from btst_data_utils import build_beijing_exchange_mask  # type: ignore[no-redef]
 
 from src.screening.strategy_scorer import score_trend_strategy
+from src.tools.tushare_api import _get_pro
 
 load_dotenv(_PROJECT_ROOT / ".env")
 
@@ -57,16 +57,6 @@ TREND_SUBFACTORS = [
 # ---------------------------------------------------------------------------
 # 数据获取 (复用 _backtest_light_stage_universe.py 的逻辑)
 # ---------------------------------------------------------------------------
-
-
-def _get_pro():
-    import tushare as ts
-
-    token = os.getenv("TUSHARE_TOKEN")
-    if not token:
-        raise RuntimeError("TUSHARE_TOKEN 未设置")
-    ts.set_token(token)
-    return ts.pro_api()
 
 
 def get_trading_dates(pro, n_days: int, end_date: str | None = None) -> list[str]:

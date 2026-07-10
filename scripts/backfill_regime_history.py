@@ -50,32 +50,11 @@ def _load_existing_map() -> dict[str, str]:
     return merged
 
 
-def _ensure_token_in_env() -> None:
-    """项目的 _get_pro() 只读 os.environ['TUSHARE_TOKEN'], 不读 .env 文件.
-
-    backfill 脚本必须把 .env 的 token 注入 os.environ, 否则 detect_market_state
-    调用的 get_index_daily/get_daily_price_batch 等全返回空 → regime 全误判 normal.
-    """
-    import os
-
-    if os.environ.get("TUSHARE_TOKEN"):
-        return  # 已有
-    env_path = Path(".env")
-    if env_path.exists():
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.startswith("TUSHARE_TOKEN="):
-                token = line.split("=", 1)[1].strip().strip("'\"")
-                if token:
-                    os.environ["TUSHARE_TOKEN"] = token
-                    return
-
-
 def _fetch_trading_days() -> list[str]:
     """拉 2020-2026 交易日列表 (tushare trade_cal)."""
-    _ensure_token_in_env()
-    import tushare as ts
+    from src.tools.tushare_api import _get_pro
 
-    pro = ts.pro_api()
+    pro = _get_pro()
     df = pro.trade_cal(exchange="", start_date=_START_DATE, end_date=_END_DATE, is_open=1)
     if df is None or len(df) == 0:
         return []

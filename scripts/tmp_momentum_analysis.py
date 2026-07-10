@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 
 import pandas as pd
-import tushare as ts
 from dotenv import load_dotenv
 
 try:
@@ -14,9 +13,10 @@ try:
 except ModuleNotFoundError:
     from btst_data_utils import build_beijing_exchange_mask
 
+from src.tools.tushare_api import _get_pro
+
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
-ts.set_token(os.getenv("TUSHARE_TOKEN"))
-pro = ts.pro_api()
+pro = _get_pro()
 sb = pro.stock_basic(exchange="", list_status="L", fields="ts_code,name")
 
 for test_date, label in [("20260408", "Apr08"), ("20260410", "Apr10")]:

@@ -60,10 +60,9 @@ def compute_momentum_strength(prices):
 
 
 def main():
-    import tushare as ts
+    from src.tools.tushare_api import _get_pro
 
-    ts.set_token(os.getenv("TUSHARE_TOKEN"))
-    pro = ts.pro_api()
+    pro = _get_pro()
 
     # 获取测试日期范围: 最近20个交易日 (排除最后1天无次日数据)
     end_date = "20260414"

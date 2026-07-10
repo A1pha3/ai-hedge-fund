@@ -351,6 +351,59 @@ def test_refresh_fund_flow_cache_saves_each_existing_ticker(tmp_path):
     assert stats.fund_flow_failed == 0
 
 
+def test_refresh_fund_flow_cache_distinguishes_suspended_from_data_anomaly(tmp_path, monkeypatch):
+    """停牌的空返回归 fund_flow_suspended (DEBUG), 非停牌的空返回归 fund_flow_empty (WARNING)."""
+    from src.screening.offensive import cache_refresh as cr
+
+    # mock 停牌列表: 000001 停牌, 000002 未停牌
+    monkeypatch.setattr(
+        cr,
+        "_load_suspended_codes",
+        lambda trade_date: {"000001"},
+    )
+
+    def fake_fetch(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+        return pd.DataFrame()  # 两只都返回空
+
+    stats = cr.refresh_fund_flow_cache(
+        ["000001", "000002"],
+        "20260708",
+        fund_flow_cache_dir=tmp_path / "fund_flow_cache",
+        fetch_fn=fake_fetch,
+        rate_limit_sec=0,
+    )
+
+    assert stats.fund_flow_suspended == 1  # 000001 停牌
+    assert stats.fund_flow_empty == 1      # 000002 非停牌 (数据异常)
+    assert stats.fund_flow_saved == 0
+    assert stats.fund_flow_failed == 0
+
+
+def test_refresh_fund_flow_cache_suspension_check_failure_falls_back_to_empty(tmp_path, monkeypatch):
+    """停牌列表 API 失败时, 所有空返回归 fund_flow_empty (保守, 不静默)."""
+    from src.screening.offensive import cache_refresh as cr
+
+    monkeypatch.setattr(
+        cr,
+        "_load_suspended_codes",
+        lambda trade_date: set(),  # 模拟 API 失败返回空集
+    )
+
+    def fake_fetch(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+        return pd.DataFrame()
+
+    stats = cr.refresh_fund_flow_cache(
+        ["000001"],
+        "20260708",
+        fund_flow_cache_dir=tmp_path / "fund_flow_cache",
+        fetch_fn=fake_fetch,
+        rate_limit_sec=0,
+    )
+
+    assert stats.fund_flow_suspended == 0
+    assert stats.fund_flow_empty == 1
+
+
 def test_fund_flow_store_preserves_zero_padded_ticker(tmp_path):
     from src.screening.offensive.data.fund_flow_store import FundFlowStore
 

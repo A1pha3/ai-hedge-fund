@@ -172,10 +172,9 @@ ALL_FACTORS = [
 
 
 def main():
-    import tushare as ts
+    from src.tools.tushare_api import _get_pro
 
-    ts.set_token(os.getenv("TUSHARE_TOKEN"))
-    pro = ts.pro_api()
+    pro = _get_pro()
 
     # Get trading calendar - last 20 trading days
     cal_end = datetime.now().strftime("%Y%m%d")

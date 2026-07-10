@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 
@@ -16,14 +15,6 @@ import pandas as pd
 
 _PRICE_CACHE = Path("data/price_cache/")
 _CANDIDATE_POOL = Path("data/snapshots/candidate_pool_20260527_top300.json")
-
-
-def _load_token() -> str:
-    if os.path.exists(".env"):
-        for line in Path(".env").read_text(encoding="utf-8").splitlines():
-            if line.startswith("TUSHARE_TOKEN="):
-                return line.split("=", 1)[1].strip().strip("'\"")
-    return os.environ.get("TUSHARE_TOKEN", "")
 
 
 def _ts_suffix(ticker: str) -> str:
@@ -45,10 +36,9 @@ def backfill_volume(ticker: str, pro=None, sleep: float = 0.12) -> str:
 
     # 拉 tushare daily 全量 (含 vol)
     if pro is None:
-        import tushare as ts
+        from src.tools.tushare_api import _get_pro
 
-        ts.set_token(_load_token())
-        pro = ts.pro_api()
+        pro = _get_pro()
 
     try:
         suffix = _ts_suffix(ticker)
@@ -85,10 +75,9 @@ def main() -> None:
     tickers = [d["ticker"] for d in pool if isinstance(d, dict) and d.get("ticker")]
     print(f"候选池: {len(tickers)} ticker")
 
-    import tushare as ts
+    from src.tools.tushare_api import _get_pro
 
-    ts.set_token(_load_token())
-    pro = ts.pro_api()
+    pro = _get_pro()
 
     counts = {"added": 0, "skipped_exists": 0, "failed_no_cache": 0, "failed_fetch": 0, "failed_merge": 0}
     for i, t in enumerate(tickers, 1):

@@ -30,16 +30,9 @@ _LHB_CACHE_DIR = Path("data/lhb_cache/")
 
 def _ensure_lhb_backfill(entry_days: list[str]):
     """确保 entry_days 的龙虎榜数据已缓存。"""
-    import tushare as ts, os
-    from pathlib import Path
+    from src.tools.tushare_api import _get_pro
 
-    token = ""
-    if os.path.exists(".env"):
-        for l in open(".env").read().splitlines():
-            if l.startswith("TUSHARE_TOKEN="):
-                token = l.split("=", 1)[1].strip().strip("'\"")
-    ts.set_token(token)
-    pro = ts.pro_api()
+    pro = _get_pro()
 
     _LHB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     for d in entry_days:

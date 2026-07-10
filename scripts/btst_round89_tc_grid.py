@@ -208,10 +208,9 @@ def compute_summary(daily_stats: list[dict]) -> dict:
 def main():
     from datetime import datetime, timedelta
 
-    import tushare as ts
+    from src.tools.tushare_api import _get_pro
 
-    ts.set_token(os.getenv("TUSHARE_TOKEN"))
-    pro = ts.pro_api()
+    pro = _get_pro()
 
     cal_end = datetime.now().strftime("%Y%m%d")
     cal_start = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")

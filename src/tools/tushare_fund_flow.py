@@ -15,9 +15,10 @@ import logging
 import os
 import random
 import time
-from pathlib import Path
 
 import pandas as pd
+
+from src.tools.tushare_api import get_tushare_token
 
 logger = logging.getLogger(__name__)
 
@@ -34,19 +35,6 @@ def _is_rate_limit_error(exc: BaseException) -> bool:
         return True
     msg = str(exc).lower()
     return any(kw in msg for kw in ("rate limit", "too many", "限速", "频率", "429"))
-
-
-def _load_token() -> str:
-    """从 env 或 .env 文件加载 TUSHARE_TOKEN。"""
-    token = os.environ.get("TUSHARE_TOKEN", "")
-    if token:
-        return token
-    env_path = Path(".env")
-    if env_path.exists():
-        for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.strip().startswith("TUSHARE_TOKEN="):
-                return line.split("=", 1)[1].strip().strip("'\"")
-    return ""
 
 
 def _to_ts_code(ticker: str) -> str:
@@ -135,7 +123,7 @@ def fetch_individual_fund_flow_tushare(
         全部金额字段单位【元】(已从万元归一化)。
         tushare 异常或 token 缺失时返回空 DataFrame。
     """
-    token = _load_token()
+    token = get_tushare_token()
     if not token:
         logger.warning("tushare_fund_flow: TUSHARE_TOKEN 未配置, 返回空")
         return pd.DataFrame(columns=["date", "main_net_inflow"])
@@ -146,8 +134,7 @@ def fetch_individual_fund_flow_tushare(
     try:
         import tushare as ts
 
-        ts.set_token(token)
-        pro = ts.pro_api()
+        pro = ts.pro_api(token=token)
         raw = _moneyflow_with_retry(pro, ts_code=_to_ts_code(ticker), start_date=start_date, end_date=end_date, ticker=ticker)
     except Exception as exc:
         logger.warning("tushare moneyflow fetch failed for %s: %s", ticker, exc)

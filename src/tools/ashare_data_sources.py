@@ -56,11 +56,15 @@ class TushareDataSource(BaseDataSource):
         try:
             import tushare as ts
 
-            token = os.environ.get("TUSHARE_TOKEN")
+            from src.tools.tushare_api import get_tushare_token
+
+            token = get_tushare_token()
             if token:
-                ts.set_token(token)
                 _ts_timeout = int(os.environ.get("TUSHARE_TIMEOUT", "120"))
-                cls._pro = ts.pro_api(timeout=_ts_timeout)
+                try:
+                    cls._pro = ts.pro_api(token=token, timeout=_ts_timeout)
+                except TypeError:
+                    cls._pro = ts.pro_api(token=token)
                 cls.available = True
                 return True
             logger.warning("Tushare 不可用: TUSHARE_TOKEN 环境变量未设置")

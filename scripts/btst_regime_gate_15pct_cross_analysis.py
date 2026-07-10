@@ -12,7 +12,6 @@ Usage:
 from __future__ import annotations
 
 import json
-import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -175,13 +174,11 @@ def run_analysis(
     output_json: Path = DEFAULT_OUTPUT_JSON,
     output_md: Path = DEFAULT_OUTPUT_MD,
 ) -> dict[str, Any]:
-    import tushare as ts
+    from src.tools.tushare_api import _get_pro
 
-    token = os.getenv("TUSHARE_TOKEN")
-    if not token:
+    pro = _get_pro()
+    if pro is None:
         raise ValueError("TUSHARE_TOKEN not set in environment")
-    ts.set_token(token)
-    pro = ts.pro_api()
 
     backtest = _load_backtest_results(backtest_path)
 

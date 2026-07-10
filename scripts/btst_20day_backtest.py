@@ -760,7 +760,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main():
-    import tushare as ts
+    from src.tools.tushare_api import _get_pro
 
     args = parse_args()
     active_profile_names = _parse_profile_names(args.profiles)
@@ -769,8 +769,7 @@ def main():
         raise ValueError("--profile-overrides-json must be a JSON object")
     profiles = _build_profiles(active_profile_names, profile_overrides=profile_overrides)
 
-    ts.set_token(os.getenv("TUSHARE_TOKEN"))
-    pro = ts.pro_api()
+    pro = _get_pro()
 
     # 获取交易日历
     cal_end = datetime.now().strftime("%Y%m%d")
