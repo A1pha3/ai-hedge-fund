@@ -352,6 +352,41 @@ def test_close_matured_records_stop_would_trigger(tmp_path):
     assert abs(c["realized_pnl"] - 0.05) < 1e-6, f"主P&L应=T+10收盘, got {c['realized_pnl']}"
 
 
+def test_check_stop_hit_scans_full_trading_day_window_not_calendar_day():
+    """_check_stop_hit 扫描窗口必须用交易日口径 (T+N trading days), 不能用日历日.
+
+    C-DAILY-ACTION-MATURITY-CALENDAR-TRADING-MISMATCH (sibling, autodev-38 loop 178):
+    _check_stop_hit 用 ``end_dt = buy_dt + timedelta(days=horizon)`` (日历日) 截止
+    low 扫描窗口, 但 horizon 是 T+N 交易日 (与 _is_matured / _execution_adjusted_return
+    同参数). BTST h=10: 日历日窗口到 +10 天 (≈7 交易日), 真实 T+10 交易日 ≈ +14 日历日
+    → 第 8-10 交易日的 low 跌穿止损被漏掉 → stop_would_have_triggered 披露低计.
+    _execution_adjusted_return (同文件 line 589) 正确用 ``exit_idx = trigger_idx + horizon``
+    (交易日索引) → 同一 close_matured 循环内两套时间口径矛盾.
+    """
+    from datetime import datetime, timedelta
+
+    import pandas as pd
+
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    # BTST BUY 20260601, horizon=10, hard_stop=92 (entry 100 -8%)
+    # 构造 15 个日历日的价格序列 (含周末空隙模拟), low 跌穿止损发生在 day 12 (日历日),
+    # 即第 ~8 交易日 — 在日历日窗口 [0,10] 之外, 但在交易日窗口 [0,14] 之内.
+    base_dt = datetime.strptime("20260601", "%Y%m%d")
+    rows = []
+    for i in range(15):
+        d = (base_dt + timedelta(days=i)).strftime("%Y-%m-%d")
+        low = 90.0 if i == 12 else 95.0  # day 12 low=90 触发硬止损 (92)
+        rows.append({"time": d, "close": 100.0, "low": low})
+    df = pd.DataFrame(rows)
+    df["date"] = pd.to_datetime(df["time"])
+
+    # day 12 (cal) 在旧日历日窗口 [buy, buy+10]=[0601,0611] 之外 → 旧实现漏掉, 返回 False
+    # 在交易日窗口 [buy, buy+14]=[0601,0615] 之内 → 修复后应返回 True
+    result = PaperTracker._check_stop_hit(df, "20260601", horizon=10, hard_stop=92.0)
+    assert result is True, "day-12 low=90 < hard_stop=92 应触发止损, 但日历日窗口 [0601,0611] 漏掉了它 " "(真实 T+10 交易日 ≈ +14 日历日, 窗口应到 0615). _check_stop_hit 必须用交易日口径 " "与 _execution_adjusted_return (exit_idx=trigger_idx+horizon) 一致, 不能用日历日."
+
+
 def test_close_matured_uses_execution_adjusted_return_when_ohlc_available(tmp_path):
     """有 OHLC price_loader 时, close_matured 应按次日开盘买入 + 滑点算收益.
 

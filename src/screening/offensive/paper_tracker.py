@@ -534,18 +534,26 @@ class PaperTracker:
 
     @staticmethod
     def _check_stop_hit(prices_df: Any, buy_date: str, horizon: int, hard_stop: float) -> bool:
-        """检查 buy_date..buy_date+horizon 期间是否有 low <= hard_stop (盘中止损触发).
+        """检查 buy_date..T+N 交易日 期间是否有 low <= hard_stop (盘中止损触发).
 
         prices_df 来自 _load_prices_for_ticker, 含 'date' (datetime) + 'low' 列.
         任一日 low <= hard_stop 即视为触发 (保守: 当日盘中触及就当触发, 不要求收盘确认).
+
+        窗口语义 (autodev-38 loop 178): horizon 是 T+N 交易日 (与 _is_matured /
+        _execution_adjusted_return 同参数), 不能用 ``timedelta(days=horizon)`` (日历日)
+        —— BTST h=10 日历日窗口到 +10 天 (≈7 交易日), 真实 T+10 交易日 ≈ +14 日历日,
+        第 8-10 交易日的 low 跌穿会被漏掉 → stop_would_have_triggered 披露低计. 现用
+        保守日历日下限 (``_trading_horizon_to_calendar_days``), 与同文件
+        _execution_adjusted_return 的 ``exit_idx = trigger_idx + horizon`` (交易日索引) 一致.
         """
         if prices_df is None or len(prices_df) == 0:
             return False
         if "low" not in prices_df.columns:
             return False
         buy_dt = datetime.strptime(str(buy_date), "%Y%m%d").date()
-        end_dt = buy_dt + timedelta(days=horizon)
-        # 过滤到 [buy_date, buy_date+horizon] 区间
+        cal_days = _trading_horizon_to_calendar_days(horizon)
+        end_dt = buy_dt + timedelta(days=cal_days)
+        # 过滤到 [buy_date, buy_date + T+N 交易日保守日历日下限] 区间
         df = prices_df.copy()
         if not isinstance(df["date"].dtype, type(prices_df["date"].dtype)):
             pass  # pandas dtype 比较不可靠, 直接尝试
