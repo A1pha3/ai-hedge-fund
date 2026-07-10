@@ -17,6 +17,24 @@ logger = logging.getLogger(__name__)
 _DEFAULT_JOURNAL_DIR = Path("data/paper_trading/")
 
 
+def _trading_horizon_to_calendar_days(horizon: int) -> int:
+    """把 T+N 交易日换算为保守的日历日下限 (与 ``day_{horizon}`` P&L 同口径).
+
+    close_matured 的 realized P&L 用 ``fetch_actual_returns`` 的 ``closes[horizon]``
+    (索引 0 = 买入日, 第 N 个交易日收盘价). N 个交易日含 ``floor(N/5)`` 个完整周末
+    (每 5 交易日 +2 休息日) → 至少 N + 2*floor(N/5) 日历日. 节假日使其更长 (真实
+    backtest journal: BTST horizon=10 → BUY→T+10交易日 间距 14-22 日历日, mean 15.6).
+
+    本函数返回保守下限 (不会晚于真实 T+N 交易日), 用于 _is_matured 预过滤 + 显示
+    matures_on — 旧实现用 ``timedelta(days=horizon)`` (纯日历日) 比 T+N 交易日早
+    4-12 天, 导致 operator 看到 "今日到期" 但 day_N 收盘价尚未存在 → 4-12 天空窗.
+
+    horizon=5 → 7 日历日; horizon=10 → 14 日历日.
+    """
+    n = max(0, int(horizon))
+    return n + 2 * (n // 5)
+
+
 @dataclass
 class TradeAction:
     """单日交易动作。"""
@@ -260,7 +278,12 @@ class PaperTracker:
         C-DAILY-ACTION-POSITION-VISIBILITY (20260710): 此前 render 只显示
         ``持仓数: N`` (计数), operator 看不到自己持有哪些票、何时到期。本方法
         从 journal 真值 (去重 BUY - EXIT, 与 close_matured 同口径) 重建未平仓
-        明细, 含每仓的到期日 (buy_date + horizon 日历日) 与距今天数。
+        明细, 含每仓的到期日 (buy_date + T+N 交易日保守日历日下限) 与距今天数。
+
+        到期日语义 (autodev loop 177): 与 close_matured 的 P&L 口径一致 — realized
+        return 用 ``closes[horizon]`` (第 N 个交易日收盘价), 故 matures_on 也用交易日
+        (``_trading_horizon_to_calendar_days``), 不能用纯日历日 (旧实现早 4-12 天,
+        导致 "今日到期" 但 day_N 数据未成熟 → 4-12 天空窗).
 
         Args:
             as_of: 基准日 YYYYMMDD (通常为信号日), 用于算 days_to_maturity.
@@ -290,7 +313,8 @@ class PaperTracker:
             horizon = int(rec.get("horizon", 10) or 10)
             matures_on = ""
             try:
-                matures_dt = datetime.strptime(buy_date, "%Y%m%d").date() + timedelta(days=horizon)
+                cal_days = _trading_horizon_to_calendar_days(horizon)
+                matures_dt = datetime.strptime(buy_date, "%Y%m%d").date() + timedelta(days=cal_days)
                 matures_on = matures_dt.strftime("%Y%m%d")
             except ValueError:
                 pass
@@ -332,10 +356,18 @@ class PaperTracker:
 
     @staticmethod
     def _is_matured(buy_date: str, horizon: int, as_of: str) -> bool:
-        """到期判断: buy_date + horizon 日历日 <= as_of (日历日近似, 偏保守)."""
+        """到期判断: buy_date + T+N 交易日 (保守日历日下限) <= as_of.
+
+        与 close_matured 的 P&L 口径一致: realized return 用 ``closes[horizon]`` (第 N
+        个交易日收盘价), 故到期判断也用交易日而非纯日历日. 旧实现 ``timedelta(days=N)``
+        把 N 个交易日当 N 个日历日, 比 T+N 交易日 (≈ N + 2*floor(N/5) 日历日, 节假日更长)
+        早 4-12 天 → 过早触发 close_matured 但 day_N 收盘价未成熟 → 静默跳过 + 显示
+        "今日到期" 空窗. 现用保守日历日下限 (不晚于真实 T+N 交易日), 避免过早判到期.
+        """
         buy_dt = datetime.strptime(str(buy_date), "%Y%m%d").date()
         as_of_dt = datetime.strptime(str(as_of), "%Y%m%d").date()
-        return (buy_dt + timedelta(days=horizon)) <= as_of_dt
+        cal_days = _trading_horizon_to_calendar_days(horizon)
+        return (buy_dt + timedelta(days=cal_days)) <= as_of_dt
 
     def close_matured(
         self,

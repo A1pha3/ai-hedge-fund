@@ -2036,10 +2036,11 @@ def test_open_positions_detail_returns_only_unexited_buys(tmp_path):
     tickers = {d["ticker"] for d in details}
     assert "300308" not in tickers, "已平仓的 300308 不应出现在未平仓明细"
     assert "688999" in tickers, "未平仓的 688999 应出现"
-    # 第二笔的到期日 = 买入日 + horizon 日历日 = 20260702 + 5 = 20260707
+    # 第二笔的到期日 = 买入日 + T+5 交易日 (保守日历日下限 5 + 2*floor(5/5) = 7)
+    # = 20260702 + 7 = 20260709 (旧日历日口径 20260707 比真实 T+5 交易日早 2 天)
     row = next(d for d in details if d["ticker"] == "688999")
-    assert row["matures_on"] == "20260707", f"到期日应为 20260707, 实际 {row['matures_on']}"
-    assert row["days_to_maturity"] == -3, f"20260707 相对 20260710 应 -3 天 (已过期未平), 实际 {row['days_to_maturity']}"
+    assert row["matures_on"] == "20260709", f"到期日应为 20260709 (T+5 交易日口径), 实际 {row['matures_on']}"
+    assert row["days_to_maturity"] == -1, f"20260709 相对 20260710 应 -1 天 (已过期未平), 实际 {row['days_to_maturity']}"
     assert row["setup"] == "oversold_bounce"
     assert row["horizon"] == 5
     assert row["kelly_pct"] == 0.05
@@ -2051,14 +2052,73 @@ def test_open_positions_detail_sorted_by_maturity_ascending(tmp_path):
 
     tracker = PaperTracker(journal_dir=tmp_path)
     # 故意以乱序买入: horizon 5 的后买, horizon 10 的先买
-    tracker.record_buy("20260701", "AAAAAA", "btst_breakout", 10, 10.0, 0.10, 9.0, 9.2, "fake")  # 到期 0711
-    tracker.record_buy("20260705", "BBBBBB", "oversold_bounce", 5, 10.0, 0.10, 9.0, 9.2, "fake")   # 到期 0710
+    # (到期日 = 买入日 + T+N 交易日保守日历日下限: h10→+14, h5→+7)
+    tracker.record_buy("20260701", "AAAAAA", "btst_breakout", 10, 10.0, 0.10, 9.0, 9.2, "fake")  # 到期 0715
+    tracker.record_buy("20260705", "BBBBBB", "oversold_bounce", 5, 10.0, 0.10, 9.0, 9.2, "fake")  # 到期 0712
 
     details = tracker.open_positions_detail(as_of="20260706")
 
     matures = [d["matures_on"] for d in details]
     assert matures == sorted(matures), f"应按 matures_on 升序, 实际顺序 {matures}"
-    assert details[0]["ticker"] == "BBBBBB", "最快到期 (0710) 应排第一"
+    assert details[0]["ticker"] == "BBBBBB", "最快到期 (0712) 应排第一"
+
+
+# ---------------------------------------------------------------------------
+# C-DAILY-ACTION-MATURITY-CALENDAR-TRADING-MISMATCH (autodev loop 177):
+# _is_matured / open_positions_detail 用 ``timedelta(days=horizon)`` (日历日),
+# 但 close_matured 的 P&L 用 ``fetch_actual_returns`` 的 ``closes[horizon]`` (交易日,
+# 索引 0=买入日). BTST horizon=10: 10 日历日 ≈ 7 交易日, 而 10 交易日 ≈ 14-16 日历日
+# (真实 backtest journal: BUY→T+10交易日 间距 14-22 日历日, mean 15.6). → 显示的
+# matures_on 比真实 T+10 交易日早 4-12 天, operator 在 as_of=calendar-day-10 看到
+# "今日到期 (days_to_maturity=0)" 但 close_matured 拿不到 day_10 (收盘价尚未存在) →
+# 静默跳过, 持仓继续显示 "今日到期" 直到交易日-10 收盘价出现 (4-12 天空窗).
+# Fix: maturity 用交易日口径 (保守日历日近似 ``horizon + 2*floor(horizon/5)``,
+# 每 5 交易日加 2 个周末日), 与 day_{horizon} P&L 回填语义对齐.
+# ---------------------------------------------------------------------------
+
+
+def test_is_matured_uses_trading_day_not_calendar_day_btst():
+    """BTST horizon=10: 日历日 +10 天不应判到期 (真实 T+10 交易日 ≈ +14 日历日).
+
+    旧实现 ``timedelta(days=10)`` 在 as_of=buy+10 日历日就返回 True, 比 day_10 P&L
+    (closes[10] = 第 10 个交易日 ≈ +14 日历日) 早 4 天 → 触发 close_matured 但
+    day_10 数据未成熟 → 静默跳过, 渲染层却显示 "今日到期".
+    """
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    # BUY 20260601 (周一), horizon=10. 日历日 +10 = 20260611 (周四), 但 T+10 交易日
+    # 至少需 +14 日历日 (含 2 个周末). 0611 不应判到期.
+    assert not PaperTracker._is_matured("20260601", 10, "20260611"), "BTST horizon=10 在 +10 日历日 (0611) 不应判到期: 真实 T+10 交易日 ≈ +14 日历日, " "过早判到期会触发 close_matured 但 day_10 数据未成熟 → 静默跳过 + 显示'今日到期'空窗"
+    # +14 日历日 (20260615) 是保守下限 (真实分布 14-22), 应判到期
+    assert PaperTracker._is_matured("20260601", 10, "20260615"), "BTST horizon=10 在 +14 日历日 (0615, 保守交易日下限) 应判到期"
+
+
+def test_is_matured_oversold_horizon5_uses_trading_day():
+    """OversoldBounce horizon=5: 日历日 +5 不应判到期 (T+5 交易日 ≈ +7 日历日)."""
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    # BUY 20260601, horizon=5. 日历日 +5 = 20260606 (周六), T+5 交易日 ≈ +7 日历日.
+    assert not PaperTracker._is_matured("20260601", 5, "20260606"), "OversoldBounce horizon=5 在 +5 日历日不应判到期: T+5 交易日 ≈ +7 日历日"
+    assert PaperTracker._is_matured("20260601", 5, "20260608"), "OversoldBounce horizon=5 在 +7 日历日应判到期 (保守交易日下限)"
+
+
+def test_open_positions_detail_matures_on_uses_trading_day(tmp_path):
+    """matures_on 必须用交易日口径, 不能是 buy_date + horizon 日历日.
+
+    旧实现: BTST 0701 买入 → matures_on=0711 (0701+10 日历日), 比真实 T+10 交易日
+    (≈0715) 早 4 天. operator 看到 "到期 0711" 但 P&L 在 ~0715 才回填 → 0711-0715
+    显示 "今日到期" 却无平仓.
+    """
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    tracker.record_buy("20260701", "300308", "btst_breakout", 10, 10.0, 0.10, 9.0, 9.2, "fake")
+    details = tracker.open_positions_detail(as_of="20260701")
+    assert len(details) == 1
+    row = details[0]
+    # horizon=10 交易日 → 至少 +14 日历日 (20260715), 不能是 +10 日历日 (20260711)
+    assert row["matures_on"] >= "20260715", f"BTST horizon=10 matures_on 应 >= 20260715 (交易日口径 +14 日历日下限), " f"实际 {row['matures_on']} (旧日历日口径 20260711 比真实 T+10 早 4 天)"
+    assert row["matures_on"] != "20260711", "matures_on 不能是 buy_date + 10 日历日 (0711): 这比 day_10 P&L (closes[10], " "第 10 个交易日 ≈ 0715) 早 4 天, 导致 '今日到期' 却无平仓的空窗"
 
 
 def test_render_shows_held_positions_and_maturity_release_schedule(tmp_path, monkeypatch):
@@ -2085,7 +2145,9 @@ def test_render_shows_held_positions_and_maturity_release_schedule(tmp_path, mon
     assert "📌" in out and "当前持仓" in out, "应有持仓明细标题"
     assert "300308" in out and "btst_breakout" in out, "应列出每仓 ticker + setup"
     assert "20260706买入" in out, "应显示买入日"
-    assert "到期 20260716 (剩10天)" in out, f"应显示到期日 + 剩余天数, 实际:\n{out}"
+    # 到期日 = 买入日 + T+10 交易日 (保守日历日下限 10 + 2*floor(10/5) = 14)
+    # = 20260706 + 14 = 20260720 (旧日历日口径 20260716 比真实 T+10 交易日早 4 天)
+    assert "到期 20260720 (剩14天)" in out, f"应显示到期日 + 剩余天数, 实际:\n{out}"
     # (2) 最近到期释放日程
     assert "💡" in out and "最近到期" in out, "应有最近到期释放日程"
     assert "释放" in out and "敞口" in out, "应说明释放多少敞口"
