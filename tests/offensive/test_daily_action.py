@@ -123,10 +123,10 @@ def test_paper_tracker_state_persists(tmp_path):
 def test_btst_t10_distribution_exists():
     dist = get_known_distribution("btst_breakout", 10)
     assert dist is not None
-    assert dist.n == 1762  # 条件4 (涨停前5日涨幅≤5%, 不含涨停日) 过滤后
+    assert dist.n == 1458  # 2026-07-12 重新校准至 8% 涨停前涨幅门控 + 成交量过滤后
     assert dist.convexity_ratio > 1.5
     assert dist.winrate > 0.5
-    assert abs(dist.expected_return - 0.0338) < 0.001
+    assert abs(dist.expected_return - 0.0657) < 0.001
 
 
 def test_unknown_setup_returns_none():

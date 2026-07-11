@@ -46,17 +46,22 @@ BTST_BREAKOUT_T8 = Distribution(
     ic=0.15,
 )
 
-# BTST 突破 T+10 (旧 horizon, 保留供回测兼容)
+# BTST 突破 T+10 (2026-07-12 重新校准至当前过滤器链: 8% 涨停前涨幅门控 + 成交量回避区)
+# 用户明确要求 "未来10天" 持有周期. 626 只 A 股, 1458 个连续涨停样本回测:
+#   wr=58.78%, avg_gain=+18.48%, avg_loss=-10.41%, E[r]=+6.57%
+# 相较 T+8 (E[r]=+5.43%): 收益更高 (+1.14pp), 胜率相近 (58.8% vs 59.4%).
+# T+10 在 DEFAULT_HORIZONS 内 → close_matured 的 fetch_actual_returns 路径原生支持
+# (day_10 总是可用, 无需 price_loader workaround).
 BTST_BREAKOUT_T10 = Distribution(
-    n=1762,
-    winrate=0.5420,
-    avg_gain=0.1398,  # +13.98%
-    avg_loss=-0.0917,  # -9.17%
-    convexity_ratio=1.8056,
-    expected_return=0.0338,  # +3.38%
-    ci_low=0.0257,
-    ci_high=0.0415,
-    ic=0.1256,
+    n=1458,
+    winrate=0.5878,
+    avg_gain=0.1848,  # +18.48%
+    avg_loss=-0.1041,  # -10.41%
+    convexity_ratio=2.53,
+    expected_return=0.0657,  # +6.57%
+    ci_low=0.0530,
+    ci_high=0.0784,
+    ic=0.15,
 )
 
 # OversoldBounce 超跌反弹 T+5 — 用 paper_trading_backtest 真实成交重校准 (2026-07-11)

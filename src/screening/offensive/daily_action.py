@@ -62,7 +62,7 @@ _ENTRY_WINDOW_CUTOFF = time(17, 0)
 # 已验证的 setup 配置 (Phase 0 通过的 setup + 对应 known_distribution)
 # (setup_name, setup_class, horizon)
 _VERIFIED_SETUPS = [
-    ("btst_breakout", BtstBreakoutSetup, 8),  # T+8: mean 最优, 避免 T+10 收益回吐
+    ("btst_breakout", BtstBreakoutSetup, 10),  # T+10: 用户 "未来10天" 目标; E[r]+6.57% > T+8 +5.43%; 在 DEFAULT_HORIZONS 内
     ("oversold_bounce", OversoldBounceSetup, 5),
 ]
 
