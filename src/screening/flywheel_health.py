@@ -198,8 +198,9 @@ def run_daily_regime_refresh(
     rc != 0 is non-fatal (the daily job's value is the --auto + backfill; this is
     a best-effort refresh) so callers log and continue.
     """
-    from datetime import datetime
-
+    # R90 family (autodev-34-op3): 用模块级 ``datetime`` (line 26), 不在此局部
+    # re-import —— 局部 import 会遮蔽模块级 name, 使测试 patch 失效 (Op2 在
+    # daily_brief 已证同病致 staleness 测试随日历漂移变红).
     from src.screening.consecutive_recommendation import resolve_report_dir
 
     rd = Path(reports_dir) if reports_dir else resolve_report_dir()

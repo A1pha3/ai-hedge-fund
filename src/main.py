@@ -3462,9 +3462,10 @@ def run_weight_calibration(lookback_days: int = 30) -> int:
         return 1
 
     # 尝试从历史报告中提取因子面板
+    # R90 family (autodev-34-op3): 用模块级 ``datetime`` (line 10), 不在此局部
+    # re-import —— 局部 import 会遮蔽模块级 name 使测试 patch 失效 (Op2 在
+    # daily_brief 已证同病致 staleness 测试随日历漂移变红).
     try:
-        from datetime import datetime
-
         end_date = datetime.now().strftime("%Y%m%d")
         factor_panel, return_history = extract_factor_panel_from_history(
             reports_dir=report_dir,
