@@ -77,6 +77,39 @@ def _make_report(
     return report
 
 
+def test_run_explain_picks_trading_day_report_over_weekend(tmp_path, monkeypatch, capsys):
+    """R89 third sibling: run_explain 须用 shared _find_latest_report, 不内联 sorted(glob).
+
+    周六报告 (0711) 不含周五 Top 票 300604; 内联 sorted(glob) 按文件名取周六报告
+    → --explain 300604 误报 'not found'. shared data_quality_audit._find_latest_report
+    优选开市日报告 (周五 0710). 2026-07-12 实跑: 4/10 周五 Top 票 (300604/600206/
+    688017/688630) 在 --explain 中找不到 (内联 finder 是 R89/R54 第三 sibling, Op1
+    漏网).
+    """
+    fri = tmp_path / "auto_screening_20260710.json"  # 周五 (开市日)
+    sat = tmp_path / "auto_screening_20260711.json"  # 周六 (伪交易日)
+    fri_data = _make_report([_make_recommendation(ticker="300604", name="测试周五")])
+    fri_data["date"] = "20260710"
+    sat_data = _make_report([_make_recommendation(ticker="688629", name="测试周六")])
+    sat_data["date"] = "20260711"
+    fri.write_text(json.dumps(fri_data, ensure_ascii=False), encoding="utf-8")
+    sat.write_text(json.dumps(sat_data, ensure_ascii=False), encoding="utf-8")
+
+    # 重定向 shared helper 的 resolve_report_dir 到 tmp_path
+    import src.screening.data_quality_audit as dqa
+
+    monkeypatch.setattr(dqa, "resolve_report_dir", lambda: tmp_path)
+
+    from src.main import run_explain
+
+    rc = run_explain("300604")
+    out = capsys.readouterr().out
+
+    assert rc == 0, f"--explain 300604 应 rc=0 (在周五报告中找到), out: {out}"
+    assert "300604" in out
+    assert "未找到" not in out, f"不应误报 '未找到', out: {out}"
+
+
 def _run_explain_capture(report_data: dict, ticker: str = "000001", reports_dir_exists: bool = True) -> tuple[int, str]:
     """Run run_explain with mocked filesystem, capture stdout. Returns (return_code, output)."""
     from src.main import run_explain

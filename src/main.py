@@ -3596,18 +3596,17 @@ def run_explain(ticker: str) -> int:
 
     from colorama import Fore, Style
 
-    # Find the most recent auto_screening report
-    reports_dir = Path("data/reports")
-    if not reports_dir.exists():
-        print(f"{Fore.RED}未找到 reports 目录: {reports_dir}{Style.RESET_ALL}")
-        return 1
+    # R89/R54 third sibling: 复用 data_quality_audit._find_latest_report (优选开市日
+    # 报告 + 跳过 malformed 文件名). 此前的内联 sorted(glob) 是第三 sibling, 漏网
+    # 导致 --explain 看不到周五 Top 推荐 (2026-07-12: 300604/600206/688017/688630
+    # 在周六报告 0711 中找不到, 误报 "未在 Top 推荐中"). shared helper 已由 Op1
+    # 修复了周末 + malformed 双缺陷.
+    from src.screening.data_quality_audit import _find_latest_report
 
-    report_files = sorted(reports_dir.glob("auto_screening_*.json"), reverse=True)
-    if not report_files:
+    latest = _find_latest_report()
+    if latest is None:
         print(f"{Fore.RED}没有 auto_screening_*.json 报告, 请先运行 --auto{Style.RESET_ALL}")
         return 1
-
-    latest = report_files[0]
     try:
         with open(latest, encoding="utf-8") as f:
             data = _json.load(f)
