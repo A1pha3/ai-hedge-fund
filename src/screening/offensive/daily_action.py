@@ -958,11 +958,16 @@ def render_daily_action(
         f"  持仓数: {state.open_positions}  累计已实现: {state.realized_pnl_pct:+.2%} {realized_qualifier}",
         f"  组合敞口: {state.open_exposure:.0%} / {_MAX_PORTFOLO_PCT:.0%} 上限" + (" ⚠超配" if state.open_exposure > _MAX_PORTFOLO_PCT + 1e-9 else ""),
     ]
-    # C-PORTFOLIO-CAP: 若历史超配 (open_exposure > 60%) 导致本次跳过新信号, 显式披露,
-    # 让 operator 知道 "无新 BUY" 是上限保护而非无信号 (历史 26 仓/260% 超配自然消化期).
+    # C-PORTFOLIO-CAP: 若本次跳过新信号, 显式披露原因.
+    # cap_blocked 可能由多种原因触发: 强度不足/价格过低/行业集中/敞口上限.
+    # 需要区分显示, 不能一律归因于"敞口上限".
     cap_blocked = getattr(tracker, "last_cap_blocked_count", 0)
     if cap_blocked > 0 and not actions:
-        lines.append(f"  {Fore.YELLOW}⚠ 组合敞口已达 {_MAX_PORTFOLO_PCT:.0%} 上限 — {cap_blocked} 个新信号被跳过, 待 T+10 仓位释放后恢复{Style.RESET_ALL}")
+        at_cap = state.open_exposure >= _MAX_PORTFOLO_PCT - 1e-9
+        if at_cap:
+            lines.append(f"  {Fore.YELLOW}⚠ 组合敞口已达 {_MAX_PORTFOLO_PCT:.0%} 上限 — {cap_blocked} 个新信号被跳过, 待仓位释放后恢复{Style.RESET_ALL}")
+        else:
+            lines.append(f"  {Fore.YELLOW}ℹ {cap_blocked} 个信号未通过风控过滤 (强度不足/价格过低/行业集中) — 当前敞口 {state.open_exposure:.0%}{Style.RESET_ALL}")
     for policy_line in _setup_policy_lines():
         lines.append(f"  {policy_line}")
 
@@ -1035,9 +1040,14 @@ def render_daily_action(
         return "\n".join(lines)
 
     if not actions and blocked:
-        # 有命中但因敞口超限全部未录入 — 必须列出候选, 否则 operator 误以为"无票可买"
-        # (C-DAILY-ACTION-POSITION-VISIBILITY: 上限决定买什么, 不决定看什么).
-        lines.append(f"\n  {Fore.YELLOW}今日 {len(blocked)} 个 setup 命中 — 因组合敞口 " f"{state.open_exposure:.0%} 超 {_MAX_PORTFOLO_PCT:.0%} 上限, 本次暂不买入. " f"仓位释放后按强度优先买以下候选:{Style.RESET_ALL}\n")
+        # 有命中但全部未录入 — 列出候选, 让 operator 知道今天哪些票有信号.
+        # 原因可能是敞口上限 / 强度不足 / 价格过低 / 行业集中 — 按实际情况描述.
+        at_cap = state.open_exposure >= _MAX_PORTFOLO_PCT - 1e-9
+        if at_cap:
+            reason = f"组合敞口 {state.open_exposure:.0%} 达 {_MAX_PORTFOLO_PCT:.0%} 上限"
+        else:
+            reason = f"风控过滤 (强度不足/价格过低/行业集中)"
+        lines.append(f"\n  {Fore.YELLOW}今日 {len(blocked)} 个 setup 命中 — 因{reason}, 本次暂不买入. " f"仓位释放后按强度优先买以下候选:{Style.RESET_ALL}\n")
         _render_candidate_list(lines, blocked, get_stock_name, buy_date_label, limit=12, auto_topn=auto_topn)
         lines.append(f"\n  {Fore.WHITE}(候选仅供参考; 上限保护期可不操作, 或用上限外资金自行决策){Style.RESET_ALL}")
         # 候选行含"先验(驱动Kelly)"和"强度", 与表头"真实回测"是两套独立统计 —

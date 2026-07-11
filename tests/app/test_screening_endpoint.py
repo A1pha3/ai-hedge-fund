@@ -29,6 +29,7 @@ from app.backend.routes.screening import (
     _apply_score_threshold,
     _attach_explain,
     _normalize_trade_date,
+    _resolve_default_trade_date,
     _sanitize_nan,
     _validate_strategies,
     MAX_TOP_N,
@@ -197,14 +198,30 @@ def test_default_request_returns_full_payload() -> None:
     ):
         assert key in body, f"missing key: {key}"
 
-    # 默认 trade_date = 今日
-    expected_today = datetime.now().strftime("%Y%m%d")
-    assert body["trade_date"] == expected_today
+    # 默认 trade_date = 最新可用开市日 (与 CLI --auto 一致)
+    assert body["trade_date"] == _resolve_default_trade_date()
     # mock 应该被调用 (因 TUSHARE_TOKEN mock)
     assert mock_fn.called
     # meta 默认值
     assert body["meta"]["use_explain"] is True
     assert body["meta"]["score_threshold"] == 0.0
+
+
+def test_default_request_uses_market_ready_trade_date_on_weekend() -> None:
+    """周末默认请求也应落到最近开市日, 与 CLI --auto 语义一致。"""
+    client = _build_client()
+    with (
+        patch.dict(os.environ, {"TUSHARE_TOKEN": "test_token"}, clear=False),
+        patch("app.backend.routes.screening._resolve_default_trade_date", return_value="20260710"),
+        patch(
+            "app.backend.routes.screening.compute_auto_screening_results",
+            return_value=_make_payload(),
+        ),
+    ):
+        response = client.post("/api/screening/auto", json={})
+
+    assert response.status_code == 200
+    assert response.json()["trade_date"] == "20260710"
 
 
 # ---------------------------------------------------------------------------

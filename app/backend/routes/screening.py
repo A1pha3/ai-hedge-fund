@@ -118,13 +118,10 @@ def _normalize_trade_date(raw: str | None) -> str:
 
 
 def _resolve_default_trade_date() -> str:
-    """解析默认 trade_date — 取当前日期 YYYYMMDD。
+    """解析默认 trade_date — 取最新可用开市日 YYYYMMDD。"""
+    from src.utils.date_utils import resolve_market_ready_date
 
-    注意: 不查交易日历 (避免引入 akshare 依赖, 加重请求);
-    若当天为非交易日, 由 ``compute_auto_screening_results`` 内部
-    通过数据获取失败来体现。
-    """
-    return datetime.now().strftime("%Y%m%d")
+    return resolve_market_ready_date(now=datetime.now())
 
 
 def _check_tushare_token() -> None:
