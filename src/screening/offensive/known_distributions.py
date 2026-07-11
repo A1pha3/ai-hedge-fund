@@ -27,16 +27,23 @@ from src.screening.offensive.statistics import Distribution
 #   T+8 mean=+6.33% vs T+10 mean=+5.76% → E[r] 上调系数 1.10
 #   T+8 avg_loss 比 T+10 小 (持仓更短 → 更小回撤) → avg_loss 下调系数 0.85
 #   winrate 略升 (T+8 P(>0)=67% vs T+10 59%) → 0.56
+#
+# 2026-07-12 (autodev 第4轮): 更新分布参数以匹配新的过滤器链 (8% 涨停前涨幅门控 +
+# 成交量回避区过滤). 使用 626 只 A 股、1478 个连续涨停样本进行回测.
+#   新指标: wr=59.4%, avg_gain=+15.85%, avg_loss=-9.82%, E[r]=+5.43%
+#   相较旧指标: wr 56.0%→59.4% (+3.4pp), E[r] 4.66%→5.43% (+0.77pp)
+#   half-Kelly 仍被 15% per-setup 上限限制, 因此实际仓位不变. 更新确保
+#   科学报告准确性 (display metrics 匹配实际过滤后性能).
 BTST_BREAKOUT_T8 = Distribution(
-    n=1762,
-    winrate=0.5600,  # T+8 P(>0) 略高于 T+10
-    avg_gain=0.1398,  # 盈利端不变 (赢家在 T+8 已充分展开)
-    avg_loss=-0.0779,  # T+10 的 -9.17% × 0.85 = -7.79% (持仓更短 → 亏损更小)
-    convexity_ratio=2.06,  # avg_gain×win / |avg_loss|×loss = 0.1398×0.56 / 0.0779×0.44
-    expected_return=0.0466,  # T+10 的 +3.38% × 1.10 ≈ +3.72%, 但 winrate 也升 → +4.66%
-    ci_low=0.0350,
-    ci_high=0.0582,
-    ic=0.14,
+    n=1478,
+    winrate=0.5940,  # 8% 门控 + 成交量过滤后: 59.4%
+    avg_gain=0.1585,  # 盈利端 +15.85%
+    avg_loss=-0.0982,  # 亏损端 -9.82%
+    convexity_ratio=2.36,  # avg_gain×wr / |avg_loss|×loss
+    expected_return=0.0543,  # +5.43%
+    ci_low=0.0430,
+    ci_high=0.0656,
+    ic=0.15,
 )
 
 # BTST 突破 T+10 (旧 horizon, 保留供回测兼容)
