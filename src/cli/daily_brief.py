@@ -361,9 +361,11 @@ def _print_daily_brief(
 
     # autodev-29 loop 147: 报告时效性披露 (用于 --daily-brief 未跑 --auto 的场景).
     # 过时报 (≥2 日历天) 提示操作者; 与 --top loop-146 同类.
+    # R90 testability: 用模块级 ``datetime`` (line 16) 而非局部 re-import —— 局部
+    # ``from datetime import datetime`` 会遮蔽模块级 name, 使测试
+    # ``patch("src.cli.daily_brief.datetime")`` 失效, staleness 退化为用真实 today
+    # → 测试随日历漂移变红 (2026-07-12 实跑: TestDailyBriefStaleness 全红).
     try:
-        from datetime import datetime
-
         _report_date_str = report_path.stem.replace("auto_screening_", "")
         _report_dt = datetime.strptime(_report_date_str, "%Y%m%d")
         _age = (datetime.now() - _report_dt).days
