@@ -280,6 +280,65 @@ def test_refresh_daily_action_caches_refreshes_industry_index_for_trade_date(tmp
     assert stats.industry_index_failed == 0
 
 
+def test_refresh_daily_action_caches_rolls_back_non_trading_day_to_latest_open_date(tmp_path, monkeypatch):
+    from src.screening.offensive import cache_refresh as cr
+    from src.tools import tushare_api
+
+    monkeypatch.setattr(tushare_api, "get_open_trade_dates", lambda start_date, end_date: ["20260710"])
+
+    price_cache = tmp_path / "price_cache"
+    price_cache.mkdir()
+    (price_cache / "000001.csv").write_text(
+        "date,close,open,high,low,pct_change,volume\n2026-07-09,9.8,9.7,9.9,9.6,1.1,1000\n",
+        encoding="utf-8",
+    )
+
+    fund_flow_dates: list[tuple[str, str, str]] = []
+
+    def fund_flow_fetch(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+        fund_flow_dates.append((ticker, start_date, end_date))
+        return pd.DataFrame(
+            [
+                {
+                    "date": pd.Timestamp("2026-07-10"),
+                    "close": 10.2,
+                    "pct_change": 2.0,
+                    "main_net_inflow": 1000000.0,
+                    "main_net_pct": 3.5,
+                }
+            ]
+        )
+
+    stats = cr.refresh_daily_action_caches(
+        "20260711",
+        price_cache_dir=price_cache,
+        fund_flow_cache_dir=tmp_path / "fund_flow_cache",
+        snapshot_dir=tmp_path / "snapshots",
+        target_tickers=["000001"],
+        daily_prices_df=_daily_prices(
+            [
+                {
+                    "ts_code": "000001.SZ",
+                    "trade_date": "20260710",
+                    "close": 10.2,
+                    "pct_chg": 4.08,
+                    "vol": 2345.0,
+                }
+            ]
+        ),
+        fund_flow_fetch_fn=fund_flow_fetch,
+        refresh_industry_index=False,
+        fund_flow_rate_limit_sec=0,
+    )
+
+    updated = pd.read_csv(price_cache / "000001.csv", dtype={"date": str})
+    assert list(updated["date"])[-1] == "2026-07-10"
+    assert stats.price_updated == 1
+    assert stats.price_missing == 0
+    assert stats.fund_flow_saved == 1
+    assert fund_flow_dates == [("000001", "20260710", "20260710")]
+
+
 def test_refresh_price_cache_is_idempotent_for_same_trade_date(tmp_path):
     from src.screening.offensive.cache_refresh import refresh_price_cache_from_daily_batch
 

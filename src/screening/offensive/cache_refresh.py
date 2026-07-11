@@ -303,6 +303,44 @@ def _history_start_date(trade_date: str, lookback_days: int = _DEFAULT_PRICE_HIS
     return start.strftime("%Y%m%d")
 
 
+def _resolve_effective_market_date(trade_date: str, *, lookback_days: int = 14) -> str:
+    """Resolve the latest open A-share trading day on or before ``trade_date``.
+
+    ``--auto`` may run on weekends or holidays, while cache refresh needs the
+    latest market data date. Prefer ``trade_cal`` when available; fall back to
+    a weekend-only rollback when calendar data is unavailable.
+    """
+
+    requested = _fund_flow_date(trade_date)
+    requested_dt = pd.to_datetime(requested, format="%Y%m%d")
+    window_start = (requested_dt - pd.Timedelta(days=max(lookback_days - 1, 0))).strftime("%Y%m%d")
+
+    try:
+        from src.tools.tushare_api import get_open_trade_dates
+
+        open_dates = get_open_trade_dates(window_start, requested)
+    except Exception:
+        open_dates = []
+
+    if open_dates:
+        effective = open_dates[-1]
+        if effective != requested:
+            logger.info("[cache_refresh] %s 非交易日, 回退到最近开市日 %s 刷新缓存", requested, effective)
+        return effective
+
+    fallback_dt = requested_dt
+    while fallback_dt.weekday() >= 5:
+        fallback_dt -= pd.Timedelta(days=1)
+    fallback = fallback_dt.strftime("%Y%m%d")
+    if fallback != requested:
+        logger.info(
+            "[cache_refresh] trade_cal 不可用或为空, %s 使用工作日近似回退到 %s 刷新缓存",
+            requested,
+            fallback,
+        )
+    return fallback
+
+
 def _normalise_price_history(df: pd.DataFrame | None) -> pd.DataFrame:
     if df is None or len(df) == 0:
         return pd.DataFrame(columns=["date", "close", "open", "high", "low", "pct_change", "volume"])
@@ -556,6 +594,8 @@ def refresh_daily_action_caches(
 ) -> DailyActionCacheRefreshStats:
     """Refresh all cache files needed by the next ``--daily-action`` run."""
 
+    effective_trade_date = _resolve_effective_market_date(trade_date)
+
     tickers = (
         sorted({_code6(ticker) for ticker in target_tickers if _is_code6(_code6(ticker))})
         if target_tickers is not None
@@ -583,11 +623,11 @@ def refresh_daily_action_caches(
 
                 resolved_fetch = get_global_batch_data_fetcher().fetch_daily_prices_batch
             try:
-                resolved_df = resolved_fetch(trade_date)
+                resolved_df = resolved_fetch(effective_trade_date)
             except Exception as exc:  # noqa: BLE001 - 取数失败不应阻断缓存刷新主流程
                 logger.warning("[cache_refresh] 取 daily batch 提取涨停股失败: %s", exc)
                 resolved_df = None
-        limit_up_tickers = _extract_limit_up_tickers(resolved_df, trade_date)
+        limit_up_tickers = _extract_limit_up_tickers(resolved_df, effective_trade_date)
         if limit_up_tickers:
             # 用解析后的 df 覆盖, 让下游 refresh_price_cache_from_daily_batch 复用同一份数据
             daily_prices_df = resolved_df
@@ -605,10 +645,10 @@ def refresh_daily_action_caches(
     if refresh_industry_index is None:
         refresh_industry_index = _env_enabled("DAILY_ACTION_REFRESH_INDUSTRY_INDEX", default=True)
     if refresh_industry_index:
-        stats.merge(refresh_industry_index_cache(trade_date, backfill_fn=industry_index_backfill_fn))
+        stats.merge(refresh_industry_index_cache(effective_trade_date, backfill_fn=industry_index_backfill_fn))
 
     price_stats = refresh_price_cache_from_daily_batch(
-        trade_date,
+        effective_trade_date,
         price_cache_dir=price_cache_dir,
         daily_prices_df=daily_prices_df,
         fetch_daily_prices_batch=fetch_daily_prices_batch,
@@ -629,7 +669,7 @@ def refresh_daily_action_caches(
     fund_flow_queue = sorted(set(limit_up_tickers)) + [t for t in tickers if t not in set(limit_up_tickers)]
     fund_flow_stats = refresh_fund_flow_cache(
         fund_flow_queue,
-        trade_date,
+        effective_trade_date,
         fund_flow_cache_dir=fund_flow_cache_dir,
         fetch_fn=fund_flow_fetch_fn,
         rate_limit_sec=rate_limit,

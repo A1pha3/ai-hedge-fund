@@ -26,14 +26,8 @@ TREND_SUBFACTOR_WEIGHTS = {
     "ma_distance": 0.16,
 }
 
-TREND_SUBFACTOR_WEIGHTS_WITH_LONG_TREND = {
-    "ema_alignment": 0.22,
-    "adx_strength": 0.14,
-    "momentum": 0.20,
-    "volatility": 0.12,
-    "donchian_position": 0.16,
-    "ma_distance": 0.16,
-}
+# 兼容别名 (旧代码可能引用 WITH_LONG_TREND 变体; 现已统一)
+TREND_SUBFACTOR_WEIGHTS_WITH_LONG_TREND = TREND_SUBFACTOR_WEIGHTS
 
 MEAN_REVERSION_SUBFACTOR_WEIGHTS = {
     "zscore_bbands": 0.30,

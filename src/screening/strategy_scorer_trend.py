@@ -138,12 +138,12 @@ def _calculate_long_trend_alignment_confidence(ema_values: dict[str, float], clo
 
 
 def _score_donchian_position(prices_df: pd.DataFrame, weight: float, window: int = 20) -> SubFactor:
-    """价格在 N 日 Donchian 通道中的位置 (0=底部, 1=顶部).
+    """收盘价在 N 日 Donchian 通道中的位置 (0=底部, 1=顶部).
 
     趋势跟踪语义:
-    - 上半区 (>0.5): 价格在近期区间上半部 → 趋势已确立 → 看多 (direction=+1)
-    - 下半区 (<0.5): 价格在近期区间下半部 → 趋势未确立 → 看空 (direction=-1)
-    - 置信度 = position × 100 (越靠近顶部, 趋势越强)
+    - direction = +1 if position > 0.5 (上半区=多头), -1 if < 0.5 (下半区=空头)
+    - confidence: 距离中线的绝对距离 × 200, 对称映射到 0-100.
+      position=0.5 → confidence=0 (中性); position=0.0 或 1.0 → confidence=100 (极端).
 
     业界参考: arXiv 量化因子库 Distance from High/Low, Donchian Channel Percentage.
     数据需求: ≥ window 行 (默认 20), price_cache ~120 行可满足.
@@ -162,7 +162,8 @@ def _score_donchian_position(prices_df: pd.DataFrame, weight: float, window: int
                                      metrics={"donchian_pct": 0.5, "donchian_high": high_n, "donchian_low": low_n})
         position = (close - low_n) / channel_span
         direction = 1 if position > 0.5 else -1
-        confidence = _clip(position * 100, 0.0, 100.0)
+        # 置信度: 距离 0.5 中线的绝对距离 × 200, 对称映射 (0=中性, 100=极端)
+        confidence = _clip(abs(position - 0.5) * 200, 0.0, 100.0)
         return _make_sub_factor(
             "donchian_position", direction, confidence, weight, completeness=1.0,
             metrics={"donchian_pct": round(position, 4), "donchian_high": high_n, "donchian_low": low_n},
@@ -177,13 +178,11 @@ def _score_donchian_position(prices_df: pd.DataFrame, weight: float, window: int
 
 
 def _score_ma_distance(prices_df: pd.DataFrame, weight: float, ma_window: int = 50) -> SubFactor:
-    """收盘价到 EMA 的距离 (乖离率 / BIAS).
+    """收盘价到 EMA 的乖离率 (趋势方向 + 强度).
 
-    趋势健康度:
-    - 在均线上方 (distance > 0): 多头趋势 → direction=+1
-    - 在均线下方 (distance < 0): 空头趋势 → direction=-1
-    - 置信度: 距离适中 (2-8%) 时最高; 过热 (>10%) 或贴线 (<1%) 时降低
-      (过热=趋势可能回调; 贴线=趋势不够强)
+    方向: distance > 0 → 多头 (+1); distance < 0 → 空头 (-1).
+    置信度: |distance| 线性映射到 0-100, 5% 距离 = confidence 50.
+      (越远离均线, 趋势越强; 但过热 >10% 时封顶 100 不再增加).
 
     业界参考: Alpha Architect Moving Average Distance (MAD) 因子.
     数据需求: ≥ ma_window 行 (默认 50), price_cache ~120 行可满足.
@@ -198,9 +197,9 @@ def _score_ma_distance(prices_df: pd.DataFrame, weight: float, ma_window: int = 
         if ma_value <= 0:
             return _make_sub_factor("ma_distance", 0, 0.0, weight, completeness=0.0)
         distance_pct = (close - ma_value) / ma_value * 100
-        direction = 1 if distance_pct > 0 else -1
-        # 置信度: 5% 距离时满分, 线性衰减到 0 (过热或贴线)
-        confidence = _clip(100 - abs(distance_pct - 5) * 10, 0.0, 100.0)
+        direction = 1 if distance_pct > 0 else (-1 if distance_pct < 0 else 0)
+        # 置信度: |distance| × 10, 对称映射 (0%=中性, 10%=满分), 多空一致
+        confidence = _clip(abs(distance_pct) * 10, 0.0, 100.0)
         return _make_sub_factor(
             "ma_distance", direction, confidence, weight, completeness=1.0,
             metrics={"ma_distance_pct": round(distance_pct, 4), "ema_50": ma_value},
@@ -314,8 +313,6 @@ def _build_trend_sub_factors(
         sub_factors.append(_score_donchian_position(prices_df, trend_weights["donchian_position"]))
     if "ma_distance" in trend_weights:
         sub_factors.append(_score_ma_distance(prices_df, trend_weights["ma_distance"]))
-    if "long_trend_alignment" in trend_weights:
-        _append_long_trend_factor(sub_factors, prices_df, trend_weights["long_trend_alignment"])
     return sub_factors
 
 
