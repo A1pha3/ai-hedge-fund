@@ -816,7 +816,11 @@ def generate_daily_action(
     for idx, (_trigger_strength, horizon, action) in enumerate(ranked_candidates):
         # 最低 trigger_strength 过滤: 去掉 ranker 底部信号 (Mon+SZmain 等)
         if action.trigger_strength < _MIN_TRIGGER_STRENGTH:
-            cap_blocked_count += 1
+            # NaN guard: NaN < threshold 永远为 False (Python 特性). NaN 信号
+            # 会错误通过过滤导致无效信号进入组合. ts!=ts 在 NaN 时为 True.
+            ts = action.trigger_strength
+            if ts is None or ts != ts or ts < _MIN_TRIGGER_STRENGTH:
+                cap_blocked_count += 1
             if cap_break_idx is None:
                 cap_break_idx = idx
             continue

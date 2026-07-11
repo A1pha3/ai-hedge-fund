@@ -60,7 +60,7 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
     class FakeScoringFeatureStore:
         instances: list["FakeScoringFeatureStore"] = []
 
-        def __init__(self):
+        def __init__(self, **kwargs):
             self.quality_calls: list[tuple[str, list[str]]] = []
             self.instances.append(self)
 
@@ -200,7 +200,7 @@ def test_compute_auto_screening_results_uses_store_even_when_refresh_not_ready(m
     class FakeScoringFeatureStore:
         instances: list["FakeScoringFeatureStore"] = []
 
-        def __init__(self):
+        def __init__(self, **kwargs):
             self.scored = False
             self.quality_calls: list[tuple[str, list[str]]] = []
             self.instances.append(self)

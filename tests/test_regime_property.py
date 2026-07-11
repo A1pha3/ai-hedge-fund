@@ -23,6 +23,7 @@ SELF_RESOLVING = frozenset({
     "notification/weekly_report.py",      # 读 regime_gate_level
     "screening/compare_tool.py",          # 读 regime_gate_level (loop-106)
     "screening/conditional_order_advisor.py",  # 读 regime_gate_level
+    "screening/conditional_order_export.py",   # 读 regime_gate_level (2026-07-12 补编目)
     "screening/stock_detail.py",          # 读 regime_gate_level (loop-137 fix)
 })
 
