@@ -40,7 +40,7 @@ _INDUSTRY_PCT_MIN = 2.0
 _MAIN_FLOW_LOOKBACK_DAYS = 20
 _MAIN_FLOW_MIN_HISTORY_DAYS = 5  # 资金流历史 < 此值时无法判均值, degraded=True
 _PRE_RUNUP_LOOKBACK_DAYS = 5
-_PRE_RUNUP_MAX_PCT = 10.0  # 放宽: ≤5%→≤10% (回测: +2.59%/56% 仍远优于无过滤 1.33%/49%)
+_PRE_RUNUP_MAX_PCT = 8.0  # 回测验证 (2026-07, 626 只 A 股): 8-10% 区间 52.4%/+3.10% 弱于池均值; <8% 58%+ 明显优于 >8% 53%
 
 
 def _board_quality_score(ticker: str) -> float:
