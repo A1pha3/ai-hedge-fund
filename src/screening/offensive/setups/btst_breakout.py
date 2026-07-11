@@ -182,6 +182,40 @@ def _compute_absolute_low_vol_score(prices: pd.DataFrame, trigger_idx: int) -> f
         return 0.5
 
 
+def _compute_volume_ratio(prices: pd.DataFrame, trigger_idx: int) -> float | None:
+    """计算涨停日成交量 / 20 日均量 (成交量确认因子).
+
+    第一性原理: "量在价先" — 放量涨停 = 买盘共识, 缩量涨停 = 跟风盘不足.
+    放量 (ratio >= 1.5) → 强确认; 温和放量 (ratio 1.0~1.5) → 中性;
+    缩量 (ratio < 1.0) → 弱确认.
+
+    Returns:
+        成交量倍率, 如 2.0 = 涨停日成交量是 20 日均量的 2 倍; 数据不足时返回 None.
+    """
+    if prices is None or len(prices) < 2:
+        return None
+    try:
+        if "volume" not in prices.columns:
+            return None
+        volumes = prices["volume"].astype(float).values
+        if trigger_idx < 0 or trigger_idx >= len(volumes):
+            return None
+        today_vol = float(volumes[trigger_idx])
+        if today_vol <= 0:
+            return None
+        # 20 日均量 (不含涨停日本身)
+        lookback_start = max(0, trigger_idx - 20)
+        prior_volumes = volumes[lookback_start:trigger_idx]
+        if len(prior_volumes) < 5:
+            return None  # 数据不足
+        avg_vol = sum(prior_volumes) / len(prior_volumes)
+        if avg_vol <= 0:
+            return None
+        return today_vol / avg_vol
+    except Exception:
+        return None
+
+
 class BtstBreakoutSetup(Setup):
     name = "btst_breakout"
     # 数据驱动的 natural_horizon (全池回测 2020-2026, 新 detect 含条件4, execution-adjusted):
@@ -236,8 +270,9 @@ class BtstBreakoutSetup(Setup):
             degradation_reason = f"条件2 跳过: 历史不足 ({len(historical)}<{_MAIN_FLOW_MIN_HISTORY_DAYS}日)"
 
         # 条件 3: 行业板块效应
-        industry_pct = float(context.get("industry_day_pct") or 0.0)
-        if industry_pct < _INDUSTRY_PCT_MIN:
+        industry_pct = context.get("industry_day_pct") or 0.0
+        industry_pct = float(industry_pct) if isinstance(industry_pct, (int, float)) else 0.0
+        if industry_pct != industry_pct or industry_pct < _INDUSTRY_PCT_MIN:  # NaN guard: NaN != NaN → miss
             return self._miss(ticker, trade_date)
 
         # 条件 4: 涨停前 5 日累计涨幅 ≤ 10% (防追高; trigger_strength 的 trend 因子进一步区分).
@@ -283,6 +318,13 @@ class BtstBreakoutSetup(Setup):
         # 4 因子等权 + 能量耦合 bonus (position+squeeze 同时命中=完整弹簧释放)
         energy_bonus = 0.1 if position_score >= 0.5 and squeeze_score >= 0.5 else 0.0
         strength = min(1.0, 0.25 * weekday_score + 0.25 * board_score + 0.25 * position_score + 0.25 * squeeze_score + energy_bonus)
+
+        # ★ 成交量确认 bonus (第一性原理): 放量涨停 = 机构/游资买入确认.
+        # ratio = 涨停日成交量 / 20 日均量. > 1.0 = 放量 (买盘真实), < 1.0 = 缩量 (可疑).
+        # 作为 bonus 加入 (非独立因子): 放量时加分, 缩量时 0 (不减分).
+        volume_ratio = _compute_volume_ratio(prices, trigger_idx)
+        volume_bonus = 0.08 if volume_ratio is not None and volume_ratio >= 1.5 else 0.0
+        strength = min(1.0, strength + volume_bonus)
 
         return DetectionResult(
             hit=True,
