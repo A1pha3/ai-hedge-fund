@@ -10,7 +10,7 @@ from datetime import datetime
 
 import pytest
 
-from src.utils.date_utils import format_date, parse_date, resolve_signal_date, resolve_signal_date_iso
+from src.utils.date_utils import format_date, latest_open_trade_date_on_or_before, parse_date, resolve_market_ready_date, resolve_market_ready_date_iso, resolve_signal_date, resolve_signal_date_iso
 
 
 class TestFormatDate:
@@ -115,3 +115,27 @@ class TestResolveSignalDateIso:
 
     def test_after_cutoff_returns_today(self) -> None:
         assert resolve_signal_date_iso(now=datetime(2026, 7, 9, 17, 0)) == "2026-07-09"
+
+
+class TestLatestOpenTradeDateOnOrBefore:
+    def test_uses_trade_calendar_when_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("src.tools.tushare_api.get_open_trade_dates", lambda start_date, end_date: ["20260710"])
+        assert latest_open_trade_date_on_or_before("20260712") == "20260710"
+
+    def test_falls_back_to_weekday_when_trade_calendar_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("src.tools.tushare_api.get_open_trade_dates", lambda start_date, end_date: [])
+        assert latest_open_trade_date_on_or_before("20260712") == "20260710"
+
+
+class TestResolveMarketReadyDate:
+    def test_sunday_after_cutoff_rolls_back_to_friday(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("src.tools.tushare_api.get_open_trade_dates", lambda start_date, end_date: [])
+        assert resolve_market_ready_date(now=datetime(2026, 7, 12, 18, 0)) == "20260710"
+
+    def test_monday_morning_rolls_back_to_friday(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("src.tools.tushare_api.get_open_trade_dates", lambda start_date, end_date: [])
+        assert resolve_market_ready_date(now=datetime(2026, 7, 13, 8, 0)) == "20260710"
+
+    def test_iso_variant_returns_dashed_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("src.tools.tushare_api.get_open_trade_dates", lambda start_date, end_date: [])
+        assert resolve_market_ready_date_iso(now=datetime(2026, 7, 12, 18, 0)) == "2026-07-10"

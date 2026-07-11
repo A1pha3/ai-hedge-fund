@@ -633,3 +633,35 @@ def test_run_auto_screening_integrates_freshness_check(tmp_path, monkeypatch) ->
     exit_code = main_mod.run_auto_screening("20260709", top_n=3)
     assert exit_code == 0
     assert freshness_called, "run_auto_screening 未调用 _attach_freshness_check"
+
+
+def test_run_auto_screening_normalizes_weekend_trade_date_before_pipeline(tmp_path, monkeypatch):
+    """--auto 收到周末日期时, 入口层应先回退到最近开市日再进入筛选流水线。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TUSHARE_TOKEN", "test_token")
+    monkeypatch.setenv("DISABLE_RICH_LOGGING", "true")
+
+    from src import main as main_mod
+
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr(main_mod, "_try_acquire_pipeline_lock", lambda _path: 999)
+    monkeypatch.setattr(main_mod, "_refresh_daily_action_caches_for_auto", lambda *a, **kw: None)
+    monkeypatch.setattr(main_mod, "_enrich_recommendations_with_history", lambda *a, **kw: None)
+    monkeypatch.setattr(main_mod, "_handle_post_screening_tasks", lambda *a, **kw: None)
+    monkeypatch.setattr(main_mod, "_rebuild_cli_objects", lambda p: ([], None, [], {}, {}))
+    monkeypatch.setattr(main_mod, "_print_table_block", lambda *a, **kw: None)
+    monkeypatch.setattr(main_mod, "_save_json_report", lambda *a, **kw: None)
+    monkeypatch.setattr(main_mod, "_attach_freshness_check", lambda *a, **kw: None)
+    monkeypatch.setattr("src.tools.tushare_api.get_open_trade_dates", lambda start_date, end_date: ["20260710"])
+
+    def fake_compute(trade_date: str, top_n: int, selected_strategies=None):
+        seen["trade_date"] = trade_date
+        return {"date": trade_date, "recommendations": [], "market_state": {}}
+
+    monkeypatch.setattr(main_mod, "compute_auto_screening_results", fake_compute)
+
+    exit_code = main_mod.run_auto_screening("20260712", top_n=3)
+
+    assert exit_code == 0
+    assert seen["trade_date"] == "20260710"

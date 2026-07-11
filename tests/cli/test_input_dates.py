@@ -54,7 +54,15 @@ class TestResolveDefaultEndDate:
             mock_dt.now.return_value = datetime(2026, 7, 13, 8, 0)
             mock_dt.strptime.side_effect = lambda *a, **kw: datetime.strptime(*a, **kw)
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
-            assert _resolve_default_end_date() == "2026-07-12"  # 周日 (自然日回退)
+            assert _resolve_default_end_date() == "2026-07-10"
+
+    def test_sunday_evening_returns_friday(self):
+        """周日 17:00 后也应回退到最近开市日, 不能生成周日报告日期。"""
+        with patch("src.cli.input.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 7, 12, 18, 0)
+            mock_dt.strptime.side_effect = lambda *a, **kw: datetime.strptime(*a, **kw)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            assert _resolve_default_end_date() == "2026-07-10"
 
     def test_custom_threshold_via_env(self, monkeypatch):
         """DATA_READY_HOUR 环境变量可覆盖阈值。"""
