@@ -55,8 +55,10 @@ OVERSOLD_BOUNCE_T5 = Distribution(
 
 # 已知分布注册表: {(setup_name, horizon): Distribution}
 # --daily-action 查这个表拿先验分布
+# BTST horizon 从 10→8: T+8 mean 最优 (+6.33% vs T+10 +5.76%), 避免 T+9/T+10 回吐
 KNOWN_DISTRIBUTIONS: dict[tuple[str, int], Distribution] = {
-    ("btst_breakout", 10): BTST_BREAKOUT_T10,
+    ("btst_breakout", 8): BTST_BREAKOUT_T10,   # key 改 8, 分布仍用 T+10 校准值 (保守)
+    ("btst_breakout", 10): BTST_BREAKOUT_T10,   # 保留旧 key 供回测兼容
     ("oversold_bounce", 5): OVERSOLD_BOUNCE_T5,
 }
 

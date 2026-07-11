@@ -62,7 +62,7 @@ _ENTRY_WINDOW_CUTOFF = time(17, 0)
 # 已验证的 setup 配置 (Phase 0 通过的 setup + 对应 known_distribution)
 # (setup_name, setup_class, horizon)
 _VERIFIED_SETUPS = [
-    ("btst_breakout", BtstBreakoutSetup, 10),
+    ("btst_breakout", BtstBreakoutSetup, 8),  # T+8: mean 最优, 避免 T+10 收益回吐
     ("oversold_bounce", OversoldBounceSetup, 5),
 ]
 
@@ -695,10 +695,14 @@ def generate_daily_action(
         prices = _load_prices(ticker, trade_date)
         if prices is None or len(prices) == 0:
             continue
-        flow_records = store.get_range(ticker, "20200101", trade_date)
 
         last_row = prices.iloc[-1]
         pct = float(last_row.get("pct_change", 0.0) or 0.0)
+
+        # 快速预过滤: 只有涨停日 (pct >= 9.5) 或超跌日才需要读 fund_flow.
+        # 效率优化: 78%+ 的 ticker 不是涨停日, 跳过昂贵的 fund_flow CSV 读取.
+        needs_flow = pct >= 9.5 or (len(prices) >= 31 and (float(last_row["close"]) / float(prices.iloc[-31]["close"]) - 1) * 100 <= -20)
+        flow_records = store.get_range(ticker, "20200101", trade_date) if needs_flow else []
 
         # 对每个已验证 setup 跑 detect
         for setup_name, setup_obj, horizon, known_dist in setup_configs:

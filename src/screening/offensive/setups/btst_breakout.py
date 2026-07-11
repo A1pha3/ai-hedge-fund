@@ -59,6 +59,48 @@ def _board_quality_score(ticker: str) -> float:
     return 0.0  # SZmain(000/001) 及其他
 
 
+# ATR 中位数阈值: 用于区分低波动 vs 高波动.
+# 回测验证: 5日 ATR/close 中位数 ≈ 3.0%, 低波动组 (<3%) win=82.8% vs 高波动组 win=60.0%
+_ATR_MEDIAN_THRESHOLD = 3.0  # 百分比
+
+
+def _compute_trend_vol_scores(pre_window: pd.DataFrame) -> tuple[float, float]:
+    """计算涨停前 5 日的趋势分数和低波动分数.
+
+    Args:
+        pre_window: 涨停前 5 个交易日的 OHLCV DataFrame (含 close/high/low 列)
+
+    Returns:
+        (trend_score, low_vol_score), 各为 0.0 或 1.0.
+        - trend_score: 5 日 close 线性回归斜率 > 0 → 1.0 (上行趋势涨停更强)
+        - low_vol_score: 5 日 ATR/close < 阈值 → 1.0 (低波动涨停更强)
+
+    数据不足时返回 (0.5, 0.5) (中性).
+    """
+    if pre_window is None or len(pre_window) < 3:
+        return 0.5, 0.5
+
+    try:
+        closes = pre_window["close"].astype(float).values
+        # 趋势: 简化线性回归斜率 (首尾差/天数), >0 则上行
+        slope_pct = (closes[-1] / closes[0] - 1) * 100 if closes[0] > 0 else 0
+        trend_score = 1.0 if slope_pct > 0 else 0.0
+
+        # 波动率: 5 日 ATR (简化版 = mean of daily (high-low)/close)
+        if "high" in pre_window.columns and "low" in pre_window.columns:
+            highs = pre_window["high"].astype(float).values
+            lows = pre_window["low"].astype(float).values
+            daily_ranges = [(h - l) / c * 100 for h, l, c in zip(highs, lows, closes) if c > 0]
+            avg_atr = sum(daily_ranges) / len(daily_ranges) if daily_ranges else _ATR_MEDIAN_THRESHOLD
+            low_vol_score = 1.0 if avg_atr < _ATR_MEDIAN_THRESHOLD else 0.0
+        else:
+            low_vol_score = 0.5
+
+        return trend_score, low_vol_score
+    except Exception:
+        return 0.5, 0.5
+
+
 class BtstBreakoutSetup(Setup):
     name = "btst_breakout"
     # 数据驱动的 natural_horizon (全池回测 2020-2026, 新 detect 含条件4, execution-adjusted):
@@ -66,7 +108,7 @@ class BtstBreakoutSetup(Setup):
     #   T+20 (未单测, 但 E[r] 单调递增 — 慢均值回归特性)
     # 条件4 (涨停前5日涨幅≤5%) 加入后, BTST 从弱 setup (旧 cv=1.33/win=49%) 升级为
     # 强 setup (cv=1.81/win=54%), 与 OversoldBounce 的超跌反转逻辑同构.
-    natural_horizon = 10
+    natural_horizon = 8  # T+8 mean 最优 (+6.33% vs T+10 +5.76%), 避免 T+9/T+10 收益回吐
 
     def detect(self, ticker: str, trade_date: str, context: dict[str, Any]) -> DetectionResult:
         prices: pd.DataFrame | None = context.get("prices")
@@ -132,16 +174,23 @@ class BtstBreakoutSetup(Setup):
             return self._miss(ticker, trade_date)
 
         invalidation = f"价格跌破 {trigger_close * 0.92:.2f} (-8% 止损线)"
-        # trigger_strength: 3 因子 alpha ranker (每个因子都有回测数据支撑).
-        # 旧公式 3 项退化: 涨停强度(主板恒=1.0)、flow/5M(按市值排序)、depth(多数≈0).
-        # 新公式用回测验证的 3 个信号: 星期(78% vs 51% win)、板块(83% vs 45%)、反转深度.
+        # trigger_strength: 4 因子 alpha ranker (每个因子都有回测数据支撑, 权重均分).
+        # 回测验证 (n=88, 有 price_cache 的 BTST 交易):
+        #   weekday:  Wed-Fri 78% win vs Mon-Tue 51% (+27pp)
+        #   board:    002/300 83% vs SZmain 45% (+38pp)
+        #   trend:    5日上行 79.5% vs 下行 61.4% (+18pp)
+        #   low_vol:  低ATR 82.8% vs 高ATR 60.0% (+23pp)
         from datetime import datetime as _dt
 
         trade_dow = _dt.strptime(trade_date, "%Y%m%d").weekday()  # 0=Mon
         weekday_score = 1.0 if trade_dow >= 2 else 0.0  # Wed-Fri=1, Mon-Tue=0
         board_score = _board_quality_score(ticker)  # 002/300=1.0, 688/60x=0.7, 000=0.0
-        depth_score = min(1.0, max(0.0, -pre_runup_pct) / 5.0)  # 前5日跌5%满分 (门限已放宽到≤10%)
-        strength = 0.35 * weekday_score + 0.35 * board_score + 0.30 * depth_score
+
+        # 趋势+波动率因子: 用涨停前 5 日价格数据计算
+        pre_window = prices.iloc[ref_idx : trigger_idx]  # 5 个交易日的 OHLCV
+        trend_score, low_vol_score = _compute_trend_vol_scores(pre_window)
+
+        strength = 0.25 * weekday_score + 0.25 * board_score + 0.25 * trend_score + 0.25 * low_vol_score
 
         return DetectionResult(
             hit=True,

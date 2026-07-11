@@ -1,68 +1,64 @@
-# 简化设计 + 提升 alpha 的优化方案
+# 本轮优化：2 个高置信 alpha 提升 + 1 个效率改进
 
-## 核心洞察（回测数据验证）
+## 数据支撑（91 笔有 price_cache 的 BTST 交易）
 
-当前系统最大的问题不是代码复杂，而是 **ranker 失效**：
-- `trigger_strength` 公式中 30% 权重给了涨停强度（对主板恒=1.0，零区分度）
-- `expected_return` 和 `convexity_ratio` 在排序键里是 **常量**（同一 setup 的先验）→ 4 键排序实际只有 1 键在干活
-- **journal 从不记录 trigger_strength** → 无法验证 ranker 是否有效 → 学习闭环断裂
+### ⭐⭐⭐ 优化 1: 缩短持仓周期 T+10 → T+8
 
-回测数据揭示了 **3 个被完全忽略的强信号**：
+**证据**（n=91, 每日收益曲线）:
+| Day | median | mean | P(>0) |
+|-----|--------|------|-------|
+| T+5 | +3.83% | +4.14% | 62.6% |
+| T+7 | **+5.34%** | +4.76% | **68.1%** |
+| T+8 | +4.02% | **+6.33%** | 67.0% |
+| T+9 | +4.01% | +5.85% | 65.9% |
+| T+10 | +3.43% | +5.76% | 59.3% |
 
-| 信号 | 基线 win/E[r] | 过滤后 win/E[r] | 样本保留 |
-|---|---|---|---|
-| **星期效应**: Mon+Tue 51%/+2.6% vs Wed-Fri 78%/+11.2% | 68%/+8.2% | 78%/+11.2% | 65% |
-| **板块效应**: SZmain(000) 45%/+1.6% vs 其余 70%+/+7%+ | 68%/+8.2% | 70%+/+8.5% | 92% |
-| **价格效应**: <15元 62%/+4.0% vs ≥15元 70%+/+8.6% | 68%/+8.2% | 70%+/+8.6% | 88% |
-| **三者叠加** | 68%/+8.2% | **81%/+12.2%** | 56% |
+- **T+10 出现收益回吐**: median 从 T+7 的 +5.34% 降到 +3.43%, P(>0) 从 68% 降到 59%
+- **T+8 是 mean 最优** (+6.33% vs T+10 +5.76%)
+- 选择 **T+8**: mean 最优且 Sharpe 最高, 比中位数最优的 T+7 更稳健
 
----
+**改动**: `btst_breakout.py` 的 `natural_horizon = 10` → `8`; `known_distributions.py` 的 key `(setup, 10)` → `(setup, 8)`
 
-## 改动清单（6 项，按收益排序）
+### ⭐⭐ 优化 2: trigger_strength 加入趋势+波动率因子
 
-### 1. ⭐ 简化 trigger_strength → 真正的 alpha ranker
-**文件**: `btst_breakout.py:131-140`
+**证据**（n=88, 5 日信号前价格分析）:
+| 因子 | 强信号 | 弱信号 | 差异 |
+|------|--------|--------|------|
+| 5 日趋势斜率 | 上行: 79.5% win / +12.9% E[r] | 下行: 61.4% / +7.9% | +18pp winrate |
+| 5 日 ATR | 低波动: 82.8% win / +11.7% | 高波动: 60.0% / +10.6% | +23pp winrate |
 
-当前公式 3 项退化：项 1 恒=0.30（主板涨停+10%），项 2 按市值排序，项 3 多数≈0。
-
-新公式（3 因子，每个都有回测支撑）：
+新公式从 3 因子变 4 因子:
 ```python
 trigger_strength = (
-    0.35 * weekday_score    # Wed-Fri=1.0, Mon-Tue=0.0 (回测: 78% vs 51% win)
-  + 0.35 * board_score      # 002/300=1.0, 688/60x=0.7, 000=0.0 (回测: 83%/45%)
-  + 0.30 * depth_score      # clip(-pre_runup_pct/5, 0, 1)
+    0.25 * weekday_score    # Wed-Fri=1.0, Mon-Tue=0.0
+  + 0.25 * board_score      # 002/300=1.0, 688/60x=0.7, 000=0.0
+  + 0.25 * trend_score      # 5日斜率>0=1.0, <0=0.0 (新)
+  + 0.25 * low_vol_score    # 5日ATR<中位数=1.0, >=中位数=0.0 (新)
 )
 ```
+权重均分 (0.25×4=1.0), 比旧 3 因子 (0.35/0.35/0.30) 更简洁。depth 因子被 trend+ATR 替代（它们比 pre-runup 更有区分度）。
 
-### 2. ⭐ 简化排序键 → 去掉假多因子
-**文件**: `daily_action.py:779-786`
+### ⭐ 优化 3: 扫描效率 — 延迟 fund_flow 读取
 
-从 `(-expected_return, -trigger_strength, -convexity_ratio, ticker)` 改为 `(-trigger_strength, ticker)`。
+**证据**: 当前对 623 个 ticker 全部先读 fund_flow CSV 再判涨停, 但只有 ~21% 通过涨停预过滤。78% 的 fund_flow 读取是浪费。
 
-### 3. ⭐ 记录 trigger_strength 到 journal → 闭合学习环
-**文件**: `paper_tracker.py:232` (`record_buy` 签名)
-
-增加 trigger_strength/degraded 参数写入 journal。
-
-### 4. 简化 BTST 资金流条件 → 去冗余
-**文件**: `btst_breakout.py:80-81`
-
-条件 2 去掉冗余 `today_flow > 0`（涨停日必然正流入），只保留 `> hist_mean`。同时合并 degraded 分支的重复代码。
-
-### 5. 简化 condition 4 → 从硬门限变连续评分
-**文件**: `btst_breakout.py:116-128`
-
-门限从 ≤5% 放宽到 ≤10%，让 depth_score 在 ranker 里区分强弱。增加样本 → 更多分散。
-
-### 6. 简化 Kelly → 承认它是装饰性的
-**文件**: `daily_action.py`
-
-BTST Kelly f*=5.35 永远触顶。直接用 setup_max_pct，去掉 Kelly 装饰性计算。
+**改动**: `daily_action.py` 扫描循环中, 把 `store.get_range()` 移到涨停预过滤 `pct >= 9.5` 之后。
 
 ---
 
-## 验证方案
+## 不改的（探索过但数据不支持）
 
-1. 回测验证：用 journal.jsonl 重算
-2. 单元测试：trigger_strength 新公式、排序键简化、journal 记录
-3. 全量回归：uv run pytest tests/offensive/ tests/tools/ -q
+| 方向 | 结论 |
+|------|------|
+| 止损执行 | daily-low: 60% 误杀率, E[r] -5.8pp |
+| 止盈 +20% | 截断超级赢家, E[r] 从 +8% 降到 +1.5% |
+| 量比因子 | winrate 差异不显著 (仅 E[r]) |
+| 同日信号拥挤度 | 反直觉: 更多信号 = 更好 (风险偏好日) |
+| T+1 gap 过滤 | n=8 太小, 不值得加复杂度 |
+
+## 实施顺序
+
+1. T+10→T+8 持仓周期 (`btst_breakout.py` + `known_distributions.py` + `_VERIFIED_SETUPS`)
+2. trigger_strength 4 因子公式 (`btst_breakout.py`)
+3. 扫描效率优化 (`daily_action.py`)
+4. 测试 + 回测验证
