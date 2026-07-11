@@ -99,9 +99,9 @@ def backfill(end_date: str | None = None) -> dict[str, int]:
         tmp.replace(out_path)
         result[industry_name] = len(df)
         if i % 10 == 0:
-            print(f"  进度 {i}/{len(codes)}, 累计 {sum(result.values())} 行")
+            logger.debug("行业指数 backfill 进度: %d/%d, 累计 %d 行", i, len(codes), sum(result.values()))
 
-    print(f"\n完成: {len(result)} 行业, 总 {sum(result.values())} 行")
+    logger.debug("行业指数 backfill 完成: %d 行业, 总 %d 行", len(result), sum(result.values()))
     return result
 
 

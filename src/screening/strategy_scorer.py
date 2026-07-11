@@ -698,10 +698,9 @@ def score_batch(
     _populate_heavy_signals(results, fundamental_candidates, trade_date, industry_pe_medians, scoring_feature_store)
     elapsed = perf_counter() - started_at
     logger.info(
-        "score_batch completed: %d candidates, %d heavy-scored, concurrency=%d, %.2fs",
+        "评分: %d 只 · %d heavy · %.2fs",
         len(candidates),
         len(fundamental_candidates),
-        SCORE_BATCH_CONCURRENCY,
         elapsed,
     )
     return results

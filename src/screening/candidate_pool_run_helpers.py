@@ -33,7 +33,10 @@ def _try_load_cached_candidate_pool_with_shadow(
         try:
             shadow_payload = load_candidate_pool_shadow_snapshot_fn(shadow_snapshot_path)
             write_candidate_pool_snapshot_fn(legacy_snapshot_path, shadow_payload["selected_candidates"])
-            print(f"[CandidatePool] 从缓存加载 {len(shadow_payload['selected_candidates'])} 只候选标的 + {len(shadow_payload['shadow_candidates'])} 只 shadow 标的 ({trade_date}, top{max_candidate_pool_size}{focus_label})")
+            logger.debug("[CandidatePool] 从缓存加载 %d 只候选 + %d shadow (%s, top%d%s)",
+                         len(shadow_payload['selected_candidates']),
+                         len(shadow_payload['shadow_candidates']),
+                         trade_date, max_candidate_pool_size, focus_label)
             return shadow_payload["selected_candidates"], shadow_payload["shadow_candidates"], shadow_payload["shadow_summary"], cached_selected_candidates
         except Exception as e:
             logger.warning("[CandidatePool] shadow 缓存读取失败，重新计算: %s", e, exc_info=True)

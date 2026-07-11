@@ -20,16 +20,25 @@ def setup_logging(log_dir: Path = Path("logs"), level: str = "INFO", format: str
     """
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # 日志格式：时间 | 级别 | 模块:函数:行号 | 消息
-    log_format = format or ("%(asctime)s | %(levelname)-8s | " "%(name)s:%(funcName)s:%(lineno)d | %(message)s")
+    # 控制台: 精简格式 (时间 级别 消息) — 去掉模块名/行号, 最大化可读性
+    console_format = "%(asctime)s | %(levelname)-8s | %(message)s"
+    # 文件: 完整格式 (时间 级别 模块:函数:行号 消息) — 保留全部调试信息
+    file_format = "%(asctime)s | %(levelname)-8s | %(name)s:%(funcName)s:%(lineno)d | %(message)s"
+    # 兼容: 显式传 format 时控制台和文件统一使用该格式
+    if format:
+        console_format = file_format = format
 
     logging.config.dictConfig(
         {
             "version": 1,
             "disable_existing_loggers": False,
-            "formatters": {"standard": {"format": log_format, "datefmt": "%Y-%m-%d %H:%M:%S"}, "detailed": {"format": log_format, "datefmt": "%Y-%m-%d %H:%M:%S.%f"}},
+            "formatters": {
+                "console": {"format": console_format, "datefmt": "%Y-%m-%d %H:%M:%S"},
+                "standard": {"format": console_format, "datefmt": "%Y-%m-%d %H:%M:%S"},
+                "detailed": {"format": file_format, "datefmt": "%Y-%m-%d %H:%M:%S.%f"},
+            },
             "handlers": {
-                "console": {"class": "logging.StreamHandler", "formatter": "standard", "stream": "ext://sys.stdout", "level": level},
+                "console": {"class": "logging.StreamHandler", "formatter": "console", "stream": "ext://sys.stdout", "level": level},
                 "file": {"class": "logging.handlers.RotatingFileHandler", "filename": log_dir / "app.log", "formatter": "detailed", "level": level, "maxBytes": 10 * 1024 * 1024, "backupCount": 5},  # 10MB
                 "error_file": {"class": "logging.handlers.RotatingFileHandler", "filename": log_dir / "error.log", "formatter": "detailed", "level": "ERROR", "maxBytes": 10 * 1024 * 1024, "backupCount": 5},  # 10MB
             },

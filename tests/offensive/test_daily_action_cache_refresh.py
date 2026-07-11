@@ -352,7 +352,7 @@ def test_refresh_fund_flow_cache_saves_each_existing_ticker(tmp_path):
 
 
 def test_refresh_fund_flow_cache_distinguishes_suspended_from_data_anomaly(tmp_path, monkeypatch):
-    """停牌的空返回归 fund_flow_suspended (DEBUG), 非停牌的空返回归 fund_flow_empty (WARNING)."""
+    """停牌股票在 fetch 前跳过 (fund_flow_suspended), 非停牌空返回标 fund_flow_empty."""
     from src.screening.offensive import cache_refresh as cr
 
     # mock 停牌列表: 000001 停牌, 000002 未停牌
@@ -362,8 +362,11 @@ def test_refresh_fund_flow_cache_distinguishes_suspended_from_data_anomaly(tmp_p
         lambda trade_date: {"000001"},
     )
 
+    fetched: list[str] = []
+
     def fake_fetch(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-        return pd.DataFrame()  # 两只都返回空
+        fetched.append(ticker)
+        return pd.DataFrame()  # 000002 返回空 (数据异常)
 
     stats = cr.refresh_fund_flow_cache(
         ["000001", "000002"],
@@ -373,10 +376,11 @@ def test_refresh_fund_flow_cache_distinguishes_suspended_from_data_anomaly(tmp_p
         rate_limit_sec=0,
     )
 
-    assert stats.fund_flow_suspended == 1  # 000001 停牌
+    assert stats.fund_flow_suspended == 1  # 000001 停牌, 未 fetch
     assert stats.fund_flow_empty == 1      # 000002 非停牌 (数据异常)
     assert stats.fund_flow_saved == 0
     assert stats.fund_flow_failed == 0
+    assert fetched == ["000002"]  # 停牌股 000001 未被 fetch
 
 
 def test_refresh_fund_flow_cache_suspension_check_failure_falls_back_to_empty(tmp_path, monkeypatch):
@@ -402,6 +406,35 @@ def test_refresh_fund_flow_cache_suspension_check_failure_falls_back_to_empty(tm
 
     assert stats.fund_flow_suspended == 0
     assert stats.fund_flow_empty == 1
+
+
+def test_refresh_fund_flow_cache_skips_beijing_exchange_before_fetch(tmp_path, monkeypatch):
+    """北交所 (920xxx/8xxxxx/4xxxxx) 股票在 fetch 前跳过 — tushare/akshare/ftshare 均不覆盖."""
+    from src.screening.offensive import cache_refresh as cr
+
+    monkeypatch.setattr(cr, "_load_suspended_codes", lambda trade_date: set())
+
+    fetched: list[str] = []
+
+    def fake_fetch(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+        fetched.append(ticker)
+        return pd.DataFrame()
+
+    stats = cr.refresh_fund_flow_cache(
+        ["920088", "830879", "000001"],
+        "20260708",
+        fund_flow_cache_dir=tmp_path / "fund_flow_cache",
+        fetch_fn=fake_fetch,
+        rate_limit_sec=0,
+    )
+
+    # 920088 / 830879 是北交所, 跳过不 fetch; 000001 正常 fetch (但返回空)
+    assert fetched == ["000001"]
+    assert stats.fund_flow_bse_unsupported == 2  # 北交所单独计数
+    assert stats.fund_flow_empty == 1            # 000001 是真异常
+    assert "000001" in stats.fund_flow_empty_tickers
+    assert stats.fund_flow_suspended == 0
+    assert stats.fund_flow_failed == 0
 
 
 def test_fund_flow_store_preserves_zero_padded_ticker(tmp_path):

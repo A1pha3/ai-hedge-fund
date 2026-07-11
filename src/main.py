@@ -781,7 +781,7 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
 
     batch_fetcher = get_global_batch_data_fetcher()
     batch_fetcher.reset_stats()
-    logger.info(
+    logger.debug(
         "[Auto] P0-1 BatchDataFetcher: use_batch=%s, max_concurrency=%d",
         batch_fetcher.use_batch,
         batch_fetcher._max_concurrency,
@@ -789,9 +789,9 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
 
     # Step 1: Layer A 候选池快筛
     progress.update_status("auto_screening", None, "Step 1/4: 全市场快筛 (Layer A)")
-    logger.info("[Auto] Step 1/4: 全市场快筛 (Layer A) — trade_date=%s", trade_date)
+    logger.debug("[Auto] Step 1/4: trade_date=%s", trade_date)
     candidates = build_candidate_pool(trade_date)
-    logger.info("[Auto] Layer A 候选池: %d 只", len(candidates))
+    logger.info("[Auto] 候选池: %d 只", len(candidates))
     if not candidates:
         raise ValueError(f"候选池为空 (trade_date={trade_date}), 请检查市场数据源是否可用")
 
@@ -807,14 +807,13 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     optional_feature_quality = None
     scoring_feature_store = ScoringFeatureStore()
     if isinstance(refresh_summary, dict):
-        logger.info(
+        logger.debug(
             "[Auto] Scoring feature refresh status=%s; score_batch will consume local snapshots",
             refresh_summary.get("status", "unknown"),
         )
 
     # Step 2: 四策略评分
     progress.update_status("auto_screening", None, f"Step 2/4: 四策略评分 ({len(candidates)} 只)")
-    logger.info("[Auto] Step 2/4: 四策略评分 — %d 只候选", len(candidates))
 
     scored = score_batch(candidates, trade_date, feature_store=scoring_feature_store)
     # Backward-compatible payload key: this summary now contains both
@@ -826,12 +825,12 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
 
     # Step 3: 信号融合
     progress.update_status("auto_screening", None, "Step 3/4: 信号融合 + 冲突仲裁")
-    logger.info("[Auto] Step 3/4: 市场状态检测 + 信号融合")
     market_state = detect_market_state(trade_date)
     fused = fuse_batch(scored, market_state, trade_date, candidates=candidates)
 
     # Step 4: 排序输出 Top N
     progress.update_status("auto_screening", None, f"Step 4/4: 输出 Top {top_n} 推荐")
+    logger.debug("[Auto] Step 4/4: 排序 Top %d", top_n)
     ranking_pool_size = max(top_n * 3, top_n)
     # NS-6: fused_by_ticker 提前构建, 供 selected_strategies / default 两分支统一注入
     # score_decomposition (因子瀑布) — 避免 selected_strategies 分支漏注入导致
@@ -863,7 +862,7 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     # c266: 抽成 _inject_score_decomposition helper — 失败时 logger.warning (was
     # silent except:pass), 让 factor_attribution insufficient 可诊断 (BH-017 drain).
     _injected = _inject_score_decomposition(ranking_pool, fused_by_ticker)
-    logger.info("[Auto] score_decomposition injected for %d/%d ranking_pool recs", _injected, len(ranking_pool))
+    logger.debug("[Auto] score_decomposition injected for %d/%d ranking_pool recs", _injected, len(ranking_pool))
 
     ranked_pool = _rank_pool_by_investability(ranking_pool, trade_date)
 
@@ -1098,6 +1097,7 @@ def _refresh_daily_action_caches_for_auto(
     try:
         stats = refresh_fn(trade_date)
         summary = stats.to_dict() if hasattr(stats, "to_dict") else dict(stats)
+        _log_cache_refresh_summary(summary)
     except Exception as exc:  # pragma: no cover - cache refresh must not fail --auto
         logger.warning("[Auto] daily-action cache refresh failed: %s", exc)
         summary = {"status": "failed", "error": str(exc)}
@@ -1107,6 +1107,61 @@ def _refresh_daily_action_caches_for_auto(
         _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
     except Exception as exc:  # pragma: no cover
         logger.debug("[Auto] daily-action cache refresh summary save failed: %s", exc)
+
+
+def _log_cache_refresh_summary(s: dict) -> None:
+    """缓存刷新摘要 — 多行 INFO, 每行一个主题, 带人话标注."""
+    # 行业指数
+    ind_rows = s.get("industry_index_total", 0)
+    ind_failed = s.get("industry_index_failed", 0)
+    if ind_rows > 0 or ind_failed > 0:
+        status = "✓" if ind_failed == 0 else f"✗ ({ind_failed} 失败)"
+        logger.info("[Auto] 缓存刷新 · 行业指数: %d 行 %s", ind_rows, status)
+
+    # 涨停注入
+    injected = s.get("limit_up_injected", 0)
+    if injected > 0:
+        logger.info("[Auto] 缓存刷新 · 涨停注入: %d 只 (不在候选池的涨停股, BTST 目标)", injected)
+
+    # 资金流
+    ff_total = s.get("fund_flow_total", 0)
+    ff_saved = s.get("fund_flow_saved", 0)
+    ff_skipped = s.get("fund_flow_skipped_fresh", 0)
+    ff_suspended = s.get("fund_flow_suspended", 0)
+    ff_bse = s.get("fund_flow_bse_unsupported", 0)
+    ff_empty = s.get("fund_flow_empty", 0)
+    ff_failed = s.get("fund_flow_failed", 0)
+    empty_tickers = s.get("fund_flow_empty_tickers", [])
+    if ff_total > 0:
+        parts = [f"扫描 {ff_total} 只"]
+        if ff_saved > 0:
+            parts.append(f"新增 {ff_saved}")
+        if ff_skipped > 0:
+            parts.append(f"已是最新 {ff_skipped}")
+        if ff_suspended > 0:
+            parts.append(f"停牌 {ff_suspended}")
+        if ff_bse > 0:
+            parts.append(f"北交所不支持 {ff_bse}")
+        if ff_empty > 0:
+            parts.append(f"⚠异常 {ff_empty}")
+        if ff_failed > 0:
+            parts.append(f"报错 {ff_failed}")
+        logger.info("[Auto] 缓存刷新 · 资金流: %s", " · ".join(parts))
+        # 异常 ticker 逐只列出 (需排查的新上市/退市/源故障)
+        if empty_tickers:
+            logger.warning("[Auto] 缓存刷新 · 资金流异常 ticker: %s", ", ".join(empty_tickers))
+
+    # 价格
+    px_total = s.get("price_total", 0)
+    px_updated = s.get("price_updated", 0)
+    px_failed = s.get("price_failed", 0)
+    if px_total > 0 and (px_updated > 0 or px_failed > 0):
+        parts = [f"扫描 {px_total} 只"]
+        if px_updated > 0:
+            parts.append(f"更新 {px_updated}")
+        if px_failed > 0:
+            parts.append(f"失败 {px_failed}")
+        logger.info("[Auto] 缓存刷新 · 价格: %s", " · ".join(parts))
 
 
 def _attach_freshness_check(trade_date: str, report_payload: dict) -> None:
@@ -1255,7 +1310,8 @@ def _enrich_recommendations_with_history(
             reports_dir=tracking_dir,
             trade_date=trade_date,
         )
-        logger.info("[Auto] P1-3 追踪历史已更新: %d 条记录", updated_records)
+        if updated_records > 0:
+            logger.info("[Auto] 追踪历史: %d 条已更新", updated_records)
     except Exception as exc:  # pragma: no cover - 追踪失败不影响主流程
         logger.warning("[Auto] P1-3 追踪更新失败: %s", exc)
         updated_records = 0
@@ -1435,7 +1491,7 @@ def _print_table_block(
 ) -> None:
     """P0-1 + O-1: 输出 batch fetcher 统计 + CLI 表格。"""
     fetcher_stats = report_payload.get("batch_data_fetcher", {})
-    logger.info(
+    logger.debug(
         "[Auto] P0-1 BatchDataFetcher stats: batch_calls=%d, batch_failures=%d, " "single_ticker_calls=%d, cache_hits=%d",
         fetcher_stats.get("batch_calls", 0),
         fetcher_stats.get("batch_failures", 0),

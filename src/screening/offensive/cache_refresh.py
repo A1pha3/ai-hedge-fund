@@ -18,6 +18,7 @@ from typing import Callable
 import pandas as pd
 
 from src.tools.ashare_board_utils import build_beijing_exchange_mask_from_series
+from src.tools.ashare_board_utils import is_beijing_exchange_stock
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +46,9 @@ class DailyActionCacheRefreshStats:
     price_failed: int = 0
     fund_flow_total: int = 0
     fund_flow_saved: int = 0
-    fund_flow_empty: int = 0
-    fund_flow_suspended: int = 0
+    fund_flow_empty: int = 0          # 全源返回空 (真异常: 新上市/退市/源故障)
+    fund_flow_bse_unsupported: int = 0  # 北交所 (已知不支持)
+    fund_flow_suspended: int = 0      # 当日停牌
     fund_flow_skipped_fresh: int = 0
     fund_flow_failed: int = 0
     industry_index_total: int = 0
@@ -54,6 +56,7 @@ class DailyActionCacheRefreshStats:
     # 当日涨停股注入 price_cache 的数量 (BTST 目标标的, 常不在候选池内).
     limit_up_injected: int = 0
     failed_tickers: list[str] = field(default_factory=list)
+    fund_flow_empty_tickers: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -68,6 +71,7 @@ class DailyActionCacheRefreshStats:
         self.fund_flow_total += other.fund_flow_total
         self.fund_flow_saved += other.fund_flow_saved
         self.fund_flow_empty += other.fund_flow_empty
+        self.fund_flow_bse_unsupported += other.fund_flow_bse_unsupported
         self.fund_flow_suspended += other.fund_flow_suspended
         self.fund_flow_skipped_fresh += other.fund_flow_skipped_fresh
         self.fund_flow_failed += other.fund_flow_failed
@@ -75,6 +79,7 @@ class DailyActionCacheRefreshStats:
         self.industry_index_failed += other.industry_index_failed
         self.limit_up_injected += other.limit_up_injected
         self.failed_tickers.extend(other.failed_tickers)
+        self.fund_flow_empty_tickers.extend(other.fund_flow_empty_tickers)
         return self
 
 
@@ -475,17 +480,27 @@ def refresh_fund_flow_cache(
                 stats.fund_flow_skipped_fresh += 1
                 continue
 
+            # 北交所股票 tushare/akshare/ftshare 均不覆盖资金流,
+            # 在 fetch 前跳过以避免无谓 WARNING 和 rate-limit 等待.
+            if is_beijing_exchange_stock(symbol=ticker):
+                stats.fund_flow_bse_unsupported += 1
+                logger.debug("[资金流] %s 北交所股票, 资金流不支持, 跳过", ticker)
+                continue
+
+            # 停牌股票无资金流, 在 fetch 前跳过以避免 _multi_source 的全源 WARNING.
+            if ticker in suspended_codes:
+                stats.fund_flow_suspended += 1
+                logger.debug("[资金流] %s 当日停牌, 跳过 (预期行为)", ticker)
+                continue
+
             df = fetch_fn(ticker, start_date=trade_date, end_date=trade_date)
             if df is None or len(df) == 0:
-                if ticker in suspended_codes:
-                    stats.fund_flow_suspended += 1
-                    logger.debug("[资金流] %s 当日停牌, 跳过 (预期行为)", ticker)
-                else:
-                    stats.fund_flow_empty += 1
-                    logger.warning(
-                        "[资金流] %s 全源返回空且非停牌 — 疑似数据异常 (新上市/退市/源故障)",
-                        ticker,
-                    )
+                stats.fund_flow_empty += 1
+                stats.fund_flow_empty_tickers.append(ticker)
+                logger.warning(
+                    "[资金流] %s 全源返回空且非停牌非北交所 — 需排查 (新上市/退市/源故障)",
+                    ticker,
+                )
                 continue
 
             store.save(ticker, df)
@@ -582,10 +597,9 @@ def refresh_daily_action_caches(
                 tickers = sorted(set(tickers) | set(new_limit_ups))
                 stats.limit_up_injected = len(new_limit_ups)
                 logger.info(
-                    "[cache_refresh] 注入 %d 只当日涨停股 (pct>=%.1f%%): %s",
+                    "[cache_refresh] 涨停注入 %d 只: %s",
                     len(new_limit_ups),
-                    _DEFAULT_LIMIT_UP_PCT,
-                    new_limit_ups[:10],
+                    ", ".join(new_limit_ups[:5]),
                 )
 
     if refresh_industry_index is None:
