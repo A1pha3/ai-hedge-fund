@@ -1976,6 +1976,11 @@ def test_portfolio_cap_escape_hatch_restores_old_behavior(tmp_path, monkeypatch)
     monkeypatch.setattr(da, "_VERIFIED_SETUPS", [("btst_breakout", FakeSetup, 10)])
     monkeypatch.setattr(da, "get_known_distribution", lambda name, horizon: dist)
     monkeypatch.setattr(da, "_env_setup_disable_list", lambda: set())
+    # 行业集中度限制: 5 只票各分到不同行业, 避免被 2/行业 限制截断
+    monkeypatch.setattr(
+        da, "_load_ticker_to_industry_from_snapshots",
+        lambda tickers, **kw: {t: f"industry_{i}" for i, t in enumerate(tickers)},
+    )
     monkeypatch.setenv("DAILY_ACTION_ENFORCE_OPEN_CAP", "false")
 
     tracker = PaperTracker(journal_dir=tmp_path)

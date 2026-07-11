@@ -42,6 +42,14 @@ _MAX_POSITION_PCT_BY_SETUP: dict[str, float] = {
     "oversold_bounce": 0.05,     # OB: 无 alpha, 限制到 5% (即使恢复也低仓位)
 }
 _MAX_PORTFOLO_PCT = 0.60  # 组合 ≤ 60%
+# 最低入场价: 低价股 (<3 元) 尾部亏损严重 (002217 @2.61 → -35.6%, 002560 @12.90 → -31.5%).
+# 回测: price>=3 去掉 2 笔垃圾股, E[r] +8.15%→+8.40%, worst -35.6%→-31.5%.
+_MIN_ENTRY_PRICE = 3.0
+# 最低 trigger_strength: 过滤掉 ranker 底部的垃圾信号.
+# 回测: ts>=0.35 去掉 Mon+SZmain (51%/45% win) → win 68%→70%, E[r] +8.2%→+8.4%.
+# ts>=0.60 进一步提升到 80%/+11.9%/Sharpe 0.73, 但仅保留 59% 样本.
+# 取 0.35: 温和过滤, 去掉最差信号, 保留样本量.
+_MIN_TRIGGER_STRENGTH = 0.35
 _USE_TUSHARE_PRICES = True  # akshare 在本 env 代理封了
 _CN_TZ = timezone(timedelta(hours=8), "Asia/Shanghai")
 # 买入窗口截止: 信号日 S → 计划买入日 = S 下一交易日开盘. 在买入日当天, 超过此时刻
@@ -670,6 +678,9 @@ def generate_daily_action(
     needs_industry_day_pct = any(name == "btst_breakout" for name, *_rest in setup_configs)
     industry_day_pct_by_ticker = _load_industry_day_pct_by_ticker(trade_date, scan_tickers) if needs_industry_day_pct else {}
 
+    # 加载 ticker→行业映射 (供行业集中度限制用)
+    _ticker_industry_map = _load_ticker_to_industry_from_snapshots(scan_tickers) if scan_tickers else {}
+
     # C-HELD-DEDUP: 排除已开仓 ticker, 防止"仓位释放后买以下候选"里出现当前已持有的票
     # (重复检测: 同一涨停日对已持仓票同样触发 setup, 不去重则 operator 看到候选即已持仓).
     held_tickers: set[str] = {str(p["ticker"]) for p in tracker.open_positions_detail()} if tracker else set()
@@ -786,22 +797,50 @@ def generate_daily_action(
     portfolio_position_used = float(getattr(tracker.state, "open_exposure", 0.0) or 0.0) if _enforce_open_cap() else 0.0
     cap_blocked_count = 0  # 因超上限被跳过的信号数 (render 披露用)
     cap_break_idx: int | None = None  # 首个因上限被跳过的候选 index (供 render 列出"今日候选")
+
+    # 行业集中度控制: 同一信号日同一行业最多 2 个仓位.
+    # 回测验证: 集中日(≥50%同行业)平均收益 +6.3% vs 分散日 +9.7% (差 3.4pp).
+    # 最差日全部是高度集中的 (通信 4/6, 有色 4/6). 限制集中度降低尾部风险.
+    industry_count_today: dict[str, int] = {}
+    _MAX_PER_INDUstry_DAILY = 2
+
     for idx, (_trigger_strength, horizon, action) in enumerate(ranked_candidates):
+        # 最低 trigger_strength 过滤: 去掉 ranker 底部信号 (Mon+SZmain 等)
+        if action.trigger_strength < _MIN_TRIGGER_STRENGTH:
+            cap_blocked_count += 1
+            if cap_break_idx is None:
+                cap_break_idx = idx
+            continue
+
+        # 最低入场价过滤: 低价股 (<3 元) 尾部亏损严重 (002217 @2.61 → -35.6%)
+        if action.entry_price < _MIN_ENTRY_PRICE:
+            cap_blocked_count += 1
+            if cap_break_idx is None:
+                cap_break_idx = idx
+            continue
+
+        # 行业集中度限制
+        ticker_industry = _ticker_industry_map.get(action.ticker, "unknown")
+        if industry_count_today.get(ticker_industry, 0) >= _MAX_PER_INDUstry_DAILY:
+            cap_blocked_count += 1
+            if cap_break_idx is None:
+                cap_break_idx = idx
+            continue
+
         kelly_pct = action.kelly_pct
         if portfolio_position_used + kelly_pct > _MAX_PORTFOLO_PCT:
             kelly_pct = max(0.0, _MAX_PORTFOLO_PCT - portfolio_position_used)
         if kelly_pct <= 0:
-            # 当前信号 + 其后全部剩余信号都因超上限被跳过 (不只 1 个).
-            # 此前 ``+= 1; break`` 只计 1, 低估了被跳过的信号数 → operator 误以为
-            # "只差 1 个就能买", 实际可能 10+ 个被跳过. 修正为剩余全部计数.
             cap_blocked_count = len(ranked_candidates) - idx
-            cap_break_idx = idx
+            if cap_break_idx is None:
+                cap_break_idx = idx
             break
 
         action.kelly_pct = kelly_pct
-        action.reasoning = f"{action.setup} T+{horizon} 命中; half-Kelly {kelly_pct:.1%}; regime={regime}×{_regime_size_factor(regime, action.setup):.1f}; drawdown={dd_action}"
+        action.reasoning = f"{action.setup} T+{horizon} 命中; 仓位 {kelly_pct:.1%}; regime={regime}×{_regime_size_factor(regime, action.setup):.1f}; drawdown={dd_action}"
         actions.append(action)
         portfolio_position_used += kelly_pct
+        industry_count_today[ticker_industry] = industry_count_today.get(ticker_industry, 0) + 1
 
         tracker.record_buy(
             trade_date=trade_date,
