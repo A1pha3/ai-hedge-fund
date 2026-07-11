@@ -18,18 +18,21 @@ from src.utils.numeric import clip
 # ---------------------------------------------------------------------------
 
 TREND_SUBFACTOR_WEIGHTS = {
-    "ema_alignment": 0.35,
-    "adx_strength": 0.18,
-    "momentum": 0.30,
-    "volatility": 0.17,
+    "ema_alignment": 0.22,
+    "adx_strength": 0.14,
+    "momentum": 0.20,
+    "volatility": 0.12,
+    "donchian_position": 0.16,
+    "ma_distance": 0.16,
 }
 
 TREND_SUBFACTOR_WEIGHTS_WITH_LONG_TREND = {
-    "ema_alignment": 0.30,
-    "adx_strength": 0.16,
-    "momentum": 0.24,
-    "volatility": 0.15,
-    "long_trend_alignment": 0.15,
+    "ema_alignment": 0.22,
+    "adx_strength": 0.14,
+    "momentum": 0.20,
+    "volatility": 0.12,
+    "donchian_position": 0.16,
+    "ma_distance": 0.16,
 }
 
 MEAN_REVERSION_SUBFACTOR_WEIGHTS = {

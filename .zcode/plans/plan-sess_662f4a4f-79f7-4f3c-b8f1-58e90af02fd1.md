@@ -1,42 +1,71 @@
-# 本轮优化：修 3 个 operator-facing 谎言 + 2 个 alpha 提升 + 2 个简化
+# 两个系统，两套方案
 
-## 核心洞察
+## 1. `--daily-action` (BTST 均值回归): Donchian 位置因子
 
-审计发现 trigger_strength ≥0.35 **单独**就实现了 88.7% 胜率/+15.3% E[r]，而 weekday/board 预过滤在此基础上几乎没有增量。系统最大的问题不是缺 alpha，而是代码说的和做的不一致——3 处 operator-facing 文档/注释/渲染文本描述的公式与实际执行的不符。
+替换 `btst_breakout.py` 的 `trend_score` → `position_score`:
 
-## 改动清单（7 项）
+```python
+low_5d = min(closes); high_5d = max(closes)
+range_pct = (closes[-1] - low_5d) / (high_5d - low_5d) if (high_5d - low_5d) > 0 else 0.5
+position_score = 1.0 if range_pct < 0.5 else 0.0  # 下半区=新鲜突破=好
+```
 
-### 🔴 Bug 修复（3 个 operator-facing 谎言）
+语义："涨停是从低位拉起（新鲜=好）还是在高位追（衰竭=差）"——均值回归语义。
 
-**Bug 1**: `btst_breakout.py` docstrings 说 ≤5%，实际代码是 ≤10%
-- `:7, :14, :17, :109, :162` 全部更新为 ≤10%
+## 2. `--auto` (趋势+均值回归混合): 新增 2 个 trend 子因子
 
-**Bug 2**: `daily_action.py:1068` 渲染文本说 "反转深度40%+涨停强度30%+主力流入30%"，实际是 weekday/board/trend/low_vol 各 25%
-- 更新为正确的 4 因子描述
+在 `strategy_scorer_trend.py` 的 `_build_trend_sub_factors` 中新增：
 
-**Bug 3**: `known_distributions.py` T+8 key 用 T+10 分布数据
-- 创建真实的 `BTST_BREAKOUT_T8` 分布对象（用回测 T+8 数据：E[r]=+6.33%, winrate 从 T+10 的 54.2% 上调）
-- 修复 soft_stop 用 T+10 avg_loss 偏宽的问题
+### 子因子 A: Donchian 位置 (donchian_position)
+```python
+def _score_donchian_position(prices_df, window=20):
+    """价格在 N 日高低点区间的位置 (0=底部, 1=顶部).
+    趋势跟踪语义: 上半区=趋势已确立=看多; 下半区=趋势未确立=中性."""
+    high_N = prices_df["high"].rolling(window).max()
+    low_N = prices_df["low"].rolling(window).min()
+    position = (close - low_N) / (high_N - low_N)
+    direction = +1 if position > 0.5 else -1
+    confidence = position * 100  # 越靠近顶部, 置信度越高
+```
 
-### ⭐ Alpha 提升（2 项）
+### 子因子 B: MA 距离 (ma_distance)
+```python
+def _score_ma_distance(prices_df, ma_window=50):
+    """收盘价到均线的距离 (乖离率).
+    趋势健康度: 适中距离=健康趋势; 过大=过热; 过小=趋势弱."""
+    ma = prices_df["close"].ewm(span=ma_window).mean()
+    distance_pct = (close - ma) / ma * 100
+    direction = +1 if distance_pct > 0 else -1
+    # 置信度: 距离适中 (2-8%) 时最高; 过热 (>10%) 时降低
+    confidence = clip(100 - abs(distance_pct - 5) * 10, 0, 100)
+```
 
-**Alpha 1**: 简化预过滤 — 去掉 weekday/board OR 逻辑，只靠 trigger_strength
-- 数据：ts≥0.35 已实现 88.7% 胜率，OR 预过滤仅从 133→124 去掉 9 笔（E[r] +8.15%→+8.78%），但在 ts≥0.35 子集上无增量
-- 改动：保留 ts≥0.35 最低阈值（真正的 alpha 过滤器），简化 OR 逻辑
+### 权重重分配
+当前（死代码 long_trend 不计入）:
+- ema_alignment: 0.30, adx: 0.16, momentum: 0.24, volatility: 0.15
 
-**Alpha 2**: soft_stop 修复 — 用 T+8 avg_loss 替代 T+10
-- 当前 soft_stop = T+10 avg_loss × 1.5 = -13.76%，比 hard_stop -8% 还宽（不可达）
-- 修复后用 T+8 avg_loss，soft_stop 会比 hard_stop 窄，形成有效两级止损
+新权重:
+- ema_alignment: 0.22, adx: 0.14, momentum: 0.20, volatility: 0.12, **donchian: 0.16, ma_distance: 0.16**
 
-### 🔧 简化（2 项）
+去掉死代码 long_trend_alignment（需要 200 行但缓存只有 120 行，永远不会触发）。
 
-**Simp 1**: `risk_framework.py` 删除 `drawdown_action` 模块级函数（与 PaperTracker.drawdown_action 重复，从未调用）
+## 改动清单
 
-**Simp 2**: `btst_breakout.py` 把 `from datetime import datetime` 从 detect() 内部移到模块顶部
+### `--daily-action` 侧:
+1. `btst_breakout.py`: trend_score → position_score (Donchian 分位)
+2. `daily_action.py`: 渲染文本更新
+
+### `--auto` 侧:
+3. `strategy_scorer_trend.py`: 新增 `_score_donchian_position` + `_score_ma_distance` 函数
+4. `strategy_scorer_trend.py`: `_build_trend_sub_factors` 接入新因子
+5. `strategy_scorer_utils.py`: 更新 `TREND_SUBFACTOR_WEIGHTS`（去掉 long_trend，加入 donchian + ma_distance）
+6. 测试 + 回测验证
+
+## 数据可行性
+- price_cache ~120 行 OHLCV: 20/55 日 Donchian ✅, EMA20/50/60 ✅
+- 不使用 200/252 日窗口（缓存不足）
 
 ## 不改的
-
-- `_PRE_RUNUP_MAX_PCT = 10.0` 保持（放宽增加样本量，ts ranker 已覆盖深度信号）
-- `_ATR_MEDIAN_THRESHOLD = 3.0` 保持（回测验证效果最强，无需调整）
-- `_MIN_TRIGGER_STRENGTH = 0.35` 保持（88.7% 胜率的完美拐点）
-- 停损执行逻辑保持（BTST disclose_only, OB execute）
+- BTST 的 condition 1-4、T+8 持仓、止损策略
+- --auto 的 candidate_pool、signal_fusion 权重、investability 排序
+- regime 自适应权重（自动放大/缩小 trend 因子影响）
