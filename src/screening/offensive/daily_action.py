@@ -46,10 +46,13 @@ _MAX_PORTFOLO_PCT = 0.60  # 组合 ≤ 60%
 # 回测: price>=3 去掉 2 笔垃圾股, E[r] +8.15%→+8.40%, worst -35.6%→-31.5%.
 _MIN_ENTRY_PRICE = 3.0
 # 最低 trigger_strength: 过滤掉 ranker 底部的垃圾信号.
-# 回测: ts>=0.35 去掉 Mon+SZmain (51%/45% win) → win 68%→70%, E[r] +8.2%→+8.4%.
-# ts>=0.60 进一步提升到 80%/+11.9%/Sharpe 0.73, 但仅保留 59% 样本.
-# 取 0.35: 温和过滤, 去掉最差信号, 保留样本量.
-_MIN_TRIGGER_STRENGTH = 0.35
+# 2026-07-12 (5 因子 ranker + T+10) 阈值敏感性回测 (626 只 A 股, 1308 信号):
+#   ts>=0.35: n=1114, WR 61.0%, +7.16%, Sharpe 0.365 (旧值)
+#   ts>=0.50: n=777,  WR 62.8%, +7.54%, Sharpe 0.383 ← 取此 (平衡 WR/收益/样本量)
+#   ts>=0.55: n=634,  WR 64.0%, +7.33%, Sharpe 0.391 (Sharpe 最优但样本少)
+#   ts>=0.70: n=330,  WR 65.5%, +7.78%, Sharpe 0.397 (WR 最高但仅 25% 样本)
+# 0.50 在 WR (+1.8pp)、收益 (+0.38pp)、Sharpe 上均优于 0.35, 且保留 70% 样本.
+_MIN_TRIGGER_STRENGTH = 0.50
 _USE_TUSHARE_PRICES = True  # akshare 在本 env 代理封了
 _CN_TZ = timezone(timedelta(hours=8), "Asia/Shanghai")
 # 买入窗口截止: 信号日 S → 计划买入日 = S 下一交易日开盘. 在买入日当天, 超过此时刻
