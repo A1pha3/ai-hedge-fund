@@ -95,10 +95,10 @@ class MarketState(BaseModel):
 
 
 DEFAULT_STRATEGY_WEIGHTS: dict[str, float] = {
-    "trend": 0.30,
+    "trend": 0.40,
     "mean_reversion": 0.20,
-    "fundamental": 0.30,
-    "event_sentiment": 0.20,
+    "fundamental": 0.15,
+    "event_sentiment": 0.05,
 }
 
 

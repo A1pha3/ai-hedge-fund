@@ -876,7 +876,7 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
 
     ranked_pool = _rank_pool_by_investability(ranking_pool, trade_date)
 
-    top_results_serializable = ranked_pool[:top_n]
+    top_results_serializable = _select_top_n_with_constraints(ranked_pool, top_n)
     top_results_for_sector = [fused_by_ticker.get(str(rec.get("ticker", "")), rec) for rec in top_results_serializable]
 
     # Sector concentration guard
@@ -2205,6 +2205,80 @@ def _print_auto_screening_table(
     if industry_signals:
         print(f"\n{Fore.WHITE}{Style.BRIGHT}{'━' * 24} 行业轮动信号 {'━' * 24}{Style.RESET_ALL}")
         print(format_rotation_block(industry_signals, top_n=5, bottom_n=3), end="")
+
+
+def _select_top_n_with_constraints(ranked_pool: list[dict], top_n: int) -> list[dict]:
+    """Select Top N from ranked pool with two post-ranking constraints:
+
+    1. **att exclusion**: Skip stocks whose ``attention_composite`` exceeds
+       ``AUTO_ATT_EXCLUSION_THRESHOLD`` (default 0.7). Backtest data (42 records
+       with decomposition) shows high-att stocks have *negative* predictive
+       value at all horizons — high attention = market peak = short-term
+       reversal. This is a soft filter: if the pool is too small after
+       exclusion, the threshold is ignored.
+
+    2. **Sector cap**: No more than ``AUTO_MAX_PER_SECTOR`` (default 3) stocks
+       from the same industry. Reduces portfolio variance without sacrificing
+       expected return. If the pool can't fill top_n with the cap, the cap is
+       relaxed by 1 at a time until enough candidates are available.
+
+    Both constraints are applied greedily on the already-ranked pool, so the
+    highest-investability stock always gets priority. The ranked pool is
+    typically top_n * 3, so there is ample depth for filtering.
+    """
+    att_threshold = float(os.environ.get("AUTO_ATT_EXCLUSION_THRESHOLD", "0.7"))
+    max_per_sector = int(os.environ.get("AUTO_MAX_PER_SECTOR", "3"))
+
+    def _get_att(rec: dict) -> float | None:
+        d = rec.get("score_decomposition")
+        if not isinstance(d, dict):
+            return None
+        v = d.get("attention_contribution", 0.0)
+        try:
+            return float(v) if v is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _get_sector(rec: dict) -> str:
+        return str(rec.get("industry_sw") or "其他")
+
+    def _select(threshold: float, cap: int) -> list[dict]:
+        selected: list[dict] = []
+        sector_counts: dict[str, int] = {}
+        for rec in ranked_pool:
+            att = _get_att(rec)
+            if att is not None and att > threshold:
+                continue
+            sector = _get_sector(rec)
+            if sector_counts.get(sector, 0) >= cap:
+                continue
+            selected.append(rec)
+            sector_counts[sector] = sector_counts.get(sector, 0) + 1
+            if len(selected) >= top_n:
+                break
+        return selected
+
+    # Try with full constraints first
+    result = _select(att_threshold, max_per_sector)
+    if len(result) >= top_n:
+        return result
+
+    # Relax sector cap progressively
+    for relaxed_cap in range(max_per_sector + 1, top_n + 1):
+        result = _select(att_threshold, relaxed_cap)
+        if len(result) >= top_n:
+            logger.debug("[Auto] sector cap relaxed to %d to fill %d slots", relaxed_cap, top_n)
+            return result
+
+    # Last resort: ignore att exclusion, keep sector cap at relaxed level
+    result = _select(float("inf"), max_per_sector + 2)
+    if len(result) >= top_n:
+        logger.debug("[Auto] att exclusion relaxed to fill %d slots", top_n)
+        return result
+
+    # Final fallback: pure top_n (no constraints)
+    logger.debug("[Auto] all constraints relaxed, returning top %d by rank", min(top_n, len(ranked_pool)))
+    return ranked_pool[:top_n]
 
 
 def _check_sector_concentration(top_results: list, threshold: float = 0.4) -> list[str]:

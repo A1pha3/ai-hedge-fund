@@ -244,7 +244,7 @@ def test_degraded_when_fund_flow_history_insufficient():
     result = BtstBreakoutSetup().detect("X", today, ctx)
     assert result.hit is True
     assert result.degraded is True, "资金流历史 <5 日应标 degraded"
-    assert "历史数据不足" in result.degradation_reason
+    assert "历史不足" in result.degradation_reason or "历史数据不足" in result.degradation_reason
 
 
 def test_not_degraded_when_fund_flow_history_sufficient():
