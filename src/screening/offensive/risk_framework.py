@@ -43,12 +43,15 @@ def build_risk_plan(
 ) -> RiskPlan:
     """从 setup 失效条件 + 历史亏损 → 风险计划。
 
-    软止损 = avg_loss × 1.5 (给一点缓冲, 不在历史均值处就止损)。
+    软止损 = avg_loss × 1.2 (温和缓冲), 且 clamp 到比 hard_stop 更窄 (否则不可达)。
     硬止损 = -8% (绝对底线)。
     时间退出 = T+<natural_horizon>。
     止损策略 = per-setup (BTST disclose_only, OversoldBounce execute).
     """
-    soft_stop = avg_loss * 1.5  # 软止损 = 历史均值 × 1.5 (给缓冲); 与硬止损是两个独立层级
+    # Bug fix: 旧公式 avg_loss×1.5 对 BTST 产生 -13.8% soft_stop, 比 hard_stop -8% 更宽 → 不可达。
+    # 改为 avg_loss×1.2 + clamp 到 hard_stop 的 80% (确保 soft < hard).
+    raw_soft = avg_loss * 1.2
+    soft_stop = max(raw_soft, hard_stop_pct * 0.8)  # soft_stop 更靠近 0 (更窄)
     stop_policy = _DEFAULT_STOP_POLICY.get(setup_name, "disclose_only")
     return RiskPlan(
         invalidation_condition=invalidation_condition,

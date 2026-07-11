@@ -152,20 +152,16 @@ def test_hit_when_oversold_then_limit_up():
 
 
 def test_natural_horizon_is_10_not_3():
-    """回归: natural_horizon 必须是 10, 不是文档原假设的 3.
+    """回归: natural_horizon 必须是 8 (T+8 mean 最优, 避免 T+10 回吐).
 
     全池 execution-adjusted 回测 (2020-2026, n=5374) 显示 BTST 的 alpha 在长周期:
       T+1 凸性 0.91 (负凸性), T+3 凸性 1.17 (< 1.5 准入门槛),
       T+10 凸性 1.53 (首次过门槛), T+20 凸性 1.70.
-    文档 §3.1 "T+1~T+3 最强" 的预假设被数据推翻. known_distributions.BTST_BREAKOUT_T10
-    和 --daily-action 都用 T+10 口径; natural_horizon 与之一致才能让 evaluate_setup
-    的 FDR p-value (H0: expected_return=0) 算在正确的 horizon 上.
-
-    曾有 bug: natural_horizon=3 导致 evaluate_setup 算 T+3 收益 (均值 +0.53%, 弱)
-    却被当成 setup 的代表分布, 与 known_distributions 的 T+10 (均值 +2.57%) 矛盾,
-    使 FDR 误判 IS 段不显著.
+    paper_trading_backtest 91 笔 T+k 曲线 (2026) 显示:
+      T+7 median 最优 +5.34%, T+8 mean 最优 +6.33%, T+10 回吐到 median +3.43%.
+    从 T+10 缩短到 T+8: 避免 T+9/T+10 给回吐, 锁定更高 mean 和 Sharpe.
     """
-    assert BtstBreakoutSetup().natural_horizon == 10
+    assert BtstBreakoutSetup().natural_horizon == 8
 
 
 def _prices_with_20pct_limit_up_today():

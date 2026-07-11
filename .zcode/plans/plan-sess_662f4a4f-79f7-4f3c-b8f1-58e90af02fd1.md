@@ -1,64 +1,42 @@
-# 本轮优化：2 个高置信 alpha 提升 + 1 个效率改进
+# 本轮优化：修 3 个 operator-facing 谎言 + 2 个 alpha 提升 + 2 个简化
 
-## 数据支撑（91 笔有 price_cache 的 BTST 交易）
+## 核心洞察
 
-### ⭐⭐⭐ 优化 1: 缩短持仓周期 T+10 → T+8
+审计发现 trigger_strength ≥0.35 **单独**就实现了 88.7% 胜率/+15.3% E[r]，而 weekday/board 预过滤在此基础上几乎没有增量。系统最大的问题不是缺 alpha，而是代码说的和做的不一致——3 处 operator-facing 文档/注释/渲染文本描述的公式与实际执行的不符。
 
-**证据**（n=91, 每日收益曲线）:
-| Day | median | mean | P(>0) |
-|-----|--------|------|-------|
-| T+5 | +3.83% | +4.14% | 62.6% |
-| T+7 | **+5.34%** | +4.76% | **68.1%** |
-| T+8 | +4.02% | **+6.33%** | 67.0% |
-| T+9 | +4.01% | +5.85% | 65.9% |
-| T+10 | +3.43% | +5.76% | 59.3% |
+## 改动清单（7 项）
 
-- **T+10 出现收益回吐**: median 从 T+7 的 +5.34% 降到 +3.43%, P(>0) 从 68% 降到 59%
-- **T+8 是 mean 最优** (+6.33% vs T+10 +5.76%)
-- 选择 **T+8**: mean 最优且 Sharpe 最高, 比中位数最优的 T+7 更稳健
+### 🔴 Bug 修复（3 个 operator-facing 谎言）
 
-**改动**: `btst_breakout.py` 的 `natural_horizon = 10` → `8`; `known_distributions.py` 的 key `(setup, 10)` → `(setup, 8)`
+**Bug 1**: `btst_breakout.py` docstrings 说 ≤5%，实际代码是 ≤10%
+- `:7, :14, :17, :109, :162` 全部更新为 ≤10%
 
-### ⭐⭐ 优化 2: trigger_strength 加入趋势+波动率因子
+**Bug 2**: `daily_action.py:1068` 渲染文本说 "反转深度40%+涨停强度30%+主力流入30%"，实际是 weekday/board/trend/low_vol 各 25%
+- 更新为正确的 4 因子描述
 
-**证据**（n=88, 5 日信号前价格分析）:
-| 因子 | 强信号 | 弱信号 | 差异 |
-|------|--------|--------|------|
-| 5 日趋势斜率 | 上行: 79.5% win / +12.9% E[r] | 下行: 61.4% / +7.9% | +18pp winrate |
-| 5 日 ATR | 低波动: 82.8% win / +11.7% | 高波动: 60.0% / +10.6% | +23pp winrate |
+**Bug 3**: `known_distributions.py` T+8 key 用 T+10 分布数据
+- 创建真实的 `BTST_BREAKOUT_T8` 分布对象（用回测 T+8 数据：E[r]=+6.33%, winrate 从 T+10 的 54.2% 上调）
+- 修复 soft_stop 用 T+10 avg_loss 偏宽的问题
 
-新公式从 3 因子变 4 因子:
-```python
-trigger_strength = (
-    0.25 * weekday_score    # Wed-Fri=1.0, Mon-Tue=0.0
-  + 0.25 * board_score      # 002/300=1.0, 688/60x=0.7, 000=0.0
-  + 0.25 * trend_score      # 5日斜率>0=1.0, <0=0.0 (新)
-  + 0.25 * low_vol_score    # 5日ATR<中位数=1.0, >=中位数=0.0 (新)
-)
-```
-权重均分 (0.25×4=1.0), 比旧 3 因子 (0.35/0.35/0.30) 更简洁。depth 因子被 trend+ATR 替代（它们比 pre-runup 更有区分度）。
+### ⭐ Alpha 提升（2 项）
 
-### ⭐ 优化 3: 扫描效率 — 延迟 fund_flow 读取
+**Alpha 1**: 简化预过滤 — 去掉 weekday/board OR 逻辑，只靠 trigger_strength
+- 数据：ts≥0.35 已实现 88.7% 胜率，OR 预过滤仅从 133→124 去掉 9 笔（E[r] +8.15%→+8.78%），但在 ts≥0.35 子集上无增量
+- 改动：保留 ts≥0.35 最低阈值（真正的 alpha 过滤器），简化 OR 逻辑
 
-**证据**: 当前对 623 个 ticker 全部先读 fund_flow CSV 再判涨停, 但只有 ~21% 通过涨停预过滤。78% 的 fund_flow 读取是浪费。
+**Alpha 2**: soft_stop 修复 — 用 T+8 avg_loss 替代 T+10
+- 当前 soft_stop = T+10 avg_loss × 1.5 = -13.76%，比 hard_stop -8% 还宽（不可达）
+- 修复后用 T+8 avg_loss，soft_stop 会比 hard_stop 窄，形成有效两级止损
 
-**改动**: `daily_action.py` 扫描循环中, 把 `store.get_range()` 移到涨停预过滤 `pct >= 9.5` 之后。
+### 🔧 简化（2 项）
 
----
+**Simp 1**: `risk_framework.py` 删除 `drawdown_action` 模块级函数（与 PaperTracker.drawdown_action 重复，从未调用）
 
-## 不改的（探索过但数据不支持）
+**Simp 2**: `btst_breakout.py` 把 `from datetime import datetime` 从 detect() 内部移到模块顶部
 
-| 方向 | 结论 |
-|------|------|
-| 止损执行 | daily-low: 60% 误杀率, E[r] -5.8pp |
-| 止盈 +20% | 截断超级赢家, E[r] 从 +8% 降到 +1.5% |
-| 量比因子 | winrate 差异不显著 (仅 E[r]) |
-| 同日信号拥挤度 | 反直觉: 更多信号 = 更好 (风险偏好日) |
-| T+1 gap 过滤 | n=8 太小, 不值得加复杂度 |
+## 不改的
 
-## 实施顺序
-
-1. T+10→T+8 持仓周期 (`btst_breakout.py` + `known_distributions.py` + `_VERIFIED_SETUPS`)
-2. trigger_strength 4 因子公式 (`btst_breakout.py`)
-3. 扫描效率优化 (`daily_action.py`)
-4. 测试 + 回测验证
+- `_PRE_RUNUP_MAX_PCT = 10.0` 保持（放宽增加样本量，ts ranker 已覆盖深度信号）
+- `_ATR_MEDIAN_THRESHOLD = 3.0` 保持（回测验证效果最强，无需调整）
+- `_MIN_TRIGGER_STRENGTH = 0.35` 保持（88.7% 胜率的完美拐点）
+- 停损执行逻辑保持（BTST disclose_only, OB execute）

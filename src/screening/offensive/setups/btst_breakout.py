@@ -1,21 +1,21 @@
 """Setup-1: 涨停突破 (BTST Breakout)。
 
 触发条件 (设计文档 §3.1 + 数据驱动改进):
-1. 今日涨停 (pct_change ≥ 9.5%)
-2. 主力净流入 > 0 且 > 过去 20 日均值
+1. 今日涨停 (pct_change ≥ 板块自适应阈值)
+2. 主力净流入 > 过去 20 日均值
 3. 所属行业当日涨幅 > 2% (板块效应)
-4. 涨停前 5 日累计涨幅 ≤ 5% (防追高; 数据驱动条件, 见下方注释)
+4. 涨停前 5 日累计涨幅 ≤ 10% (防追高; 数据驱动条件, 见下方注释)
 
 失效条件: 价格跌破触发日收盘 × 0.92 (即 -8% 止损线)
 
 条件 4 的数据依据 (全池回测 2020-2026, 8825 涨停样本, T+5 execution-adjusted):
   涨停前5日涨幅  样本   E[r]    胜率   凸性
   ≤ 0%          553   +4.17%   61%   —     (超跌后首板, 最强)
-  ≤ 5%         1299   +3.20%   60%   2.17  ← 选此阈值 (样本/alpha 最优拐点)
-  ≤ 10%        2651   +2.59%   56%   1.90
+  ≤ 5%         1299   +3.20%   60%   2.17
+  ≤ 10%        2651   +2.59%   56%   1.90  ← 选此阈值 (样本量大 + trigger_strength ranker 补偿深度信号)
   无过滤        8825   +1.36%   49%   1.33  (不达凸性 1.5 门槛)
-单调递减: 涨停前涨幅越大后续越弱. ≤5% 把"超跌/平盘后首板"和"涨一波后的追高"
-分开, 保留前者 (与 OversoldBounce 的"超跌反转"逻辑同构).
+单调递减: 涨停前涨幅越大后续越弱. ≤10% 保留有基本面支撑的涨停 (非追高),
+trigger_strength 的 trend 因子进一步区分 ≤0% (最强) 和 0-10% 的差异.
 
 依赖:
 - context["prices"]: 单 ticker 价格 DataFrame
@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime as _dt
 from typing import Any
 
 import pandas as pd
@@ -159,9 +160,7 @@ class BtstBreakoutSetup(Setup):
         if industry_pct < _INDUSTRY_PCT_MIN:
             return self._miss(ticker, trade_date)
 
-        # 条件 4: 涨停前一交易日收盘 / 5 日前收盘 涨幅 ≤ 5% (防追高).
-        # 注意这里不包含涨停当天涨幅; 条件语义是"涨停前"是否已经涨过一波。
-        # 平盘后首板和超跌后首板保留, 涨一波后的涨停过滤。
+        # 条件 4: 涨停前 5 日累计涨幅 ≤ 10% (防追高; trigger_strength 的 trend 因子进一步区分).
         ref_idx = trigger_idx - _PRE_RUNUP_LOOKBACK_DAYS
         pre_trigger_idx = trigger_idx - 1
         if ref_idx < 0 or pre_trigger_idx < 0:
@@ -180,7 +179,6 @@ class BtstBreakoutSetup(Setup):
         #   board:    002/300 83% vs SZmain 45% (+38pp)
         #   trend:    5日上行 79.5% vs 下行 61.4% (+18pp)
         #   low_vol:  低ATR 82.8% vs 高ATR 60.0% (+23pp)
-        from datetime import datetime as _dt
 
         trade_dow = _dt.strptime(trade_date, "%Y%m%d").weekday()  # 0=Mon
         weekday_score = 1.0 if trade_dow >= 2 else 0.0  # Wed-Fri=1, Mon-Tue=0

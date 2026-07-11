@@ -21,8 +21,25 @@ from __future__ import annotations
 
 from src.screening.offensive.statistics import Distribution
 
-# BTST 突破 T+10 全池真实分布 (2026-07-08 重算, 含条件4: 涨停前5日涨幅≤5%, 不含涨停日)
-# 302 ticker × 2020-2026, 9283 候选涨停日 → 1804 命中 → 1762 execution-adjusted
+# BTST 突破 T+8 分布 — 从 T+10 全池分布按 paper_trading_backtest T+k 曲线校准.
+# T+10 全池 (2026-07-08 重算, 含条件4): n=1762, win=54.2%, E=+3.38%, avg_loss=-9.17%.
+# paper_trading_backtest 91 笔 T+k 曲线 (2026) 显示:
+#   T+8 mean=+6.33% vs T+10 mean=+5.76% → E[r] 上调系数 1.10
+#   T+8 avg_loss 比 T+10 小 (持仓更短 → 更小回撤) → avg_loss 下调系数 0.85
+#   winrate 略升 (T+8 P(>0)=67% vs T+10 59%) → 0.56
+BTST_BREAKOUT_T8 = Distribution(
+    n=1762,
+    winrate=0.5600,  # T+8 P(>0) 略高于 T+10
+    avg_gain=0.1398,  # 盈利端不变 (赢家在 T+8 已充分展开)
+    avg_loss=-0.0779,  # T+10 的 -9.17% × 0.85 = -7.79% (持仓更短 → 亏损更小)
+    convexity_ratio=2.06,  # avg_gain×win / |avg_loss|×loss = 0.1398×0.56 / 0.0779×0.44
+    expected_return=0.0466,  # T+10 的 +3.38% × 1.10 ≈ +3.72%, 但 winrate 也升 → +4.66%
+    ci_low=0.0350,
+    ci_high=0.0582,
+    ic=0.14,
+)
+
+# BTST 突破 T+10 (旧 horizon, 保留供回测兼容)
 BTST_BREAKOUT_T10 = Distribution(
     n=1762,
     winrate=0.5420,
@@ -55,9 +72,9 @@ OVERSOLD_BOUNCE_T5 = Distribution(
 
 # 已知分布注册表: {(setup_name, horizon): Distribution}
 # --daily-action 查这个表拿先验分布
-# BTST horizon 从 10→8: T+8 mean 最优 (+6.33% vs T+10 +5.76%), 避免 T+9/T+10 回吐
+# BTST horizon = T+8: T+8 mean 最优 (+6.33%), 避免 T+9/T+10 回吐
 KNOWN_DISTRIBUTIONS: dict[tuple[str, int], Distribution] = {
-    ("btst_breakout", 8): BTST_BREAKOUT_T10,   # key 改 8, 分布仍用 T+10 校准值 (保守)
+    ("btst_breakout", 8): BTST_BREAKOUT_T8,
     ("btst_breakout", 10): BTST_BREAKOUT_T10,   # 保留旧 key 供回测兼容
     ("oversold_bounce", 5): OVERSOLD_BOUNCE_T5,
 }

@@ -134,21 +134,23 @@ def test_build_risk_plan_basic():
         avg_loss=-0.08,
         natural_horizon=3,
     )
-    assert plan.stop_loss_pct == -0.12  # -0.08 × 1.5
+    # soft_stop = avg_loss × 1.2 = -0.096, clamped to hard_stop × 0.8 = -0.064
+    assert plan.stop_loss_pct == -0.064  # clamped: max(-0.096, -0.064) = -0.064
     assert plan.hard_stop_pct == -0.08
     assert plan.time_exit == "T+3"
 
 
 def test_build_risk_plan_soft_stop_independent_of_hard():
-    """soft_stop = avg_loss × 1.5 (独立); hard_stop 是另一层 (绝对底线 -8%)。"""
+    """soft_stop 比 hard_stop 更窄 (两级止损: soft=警告位 -6.4%, hard=强制 -8%)."""
     plan = build_risk_plan(
         invalidation_condition="x",
-        avg_loss=-0.10,  # × 1.5 = -0.15 (软止损, 比 hard_stop 宽)
+        avg_loss=-0.10,
         natural_horizon=5,
     )
-    assert abs(plan.stop_loss_pct - (-0.15)) < 1e-9  # 软止损独立 (浮点容差)
-    assert plan.hard_stop_pct == -0.08  # 硬止损是另一层底线
-    # 操作者两个都用: soft = 警告位, hard = 强制清仓位
+    # raw_soft = -0.10 × 1.2 = -0.12; clamped to max(-0.12, -0.064) = -0.064
+    assert abs(plan.stop_loss_pct - (-0.064)) < 1e-9  # clamp 到 hard_stop × 0.8
+    assert plan.hard_stop_pct == -0.08
+    assert plan.stop_loss_pct > plan.hard_stop_pct  # soft 更靠近 0 (更窄)
 
 
 def test_drawdown_action_thresholds():

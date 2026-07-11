@@ -508,7 +508,7 @@ class DailyAction:
     # 比 known_distributions 的深历史回测更宽松 (少了资金流均值过滤), 必须向 operator 披露.
     degraded: bool = False
     degradation_reason: str = ""
-    # trigger_strength: setup detect 产出的 0-1 触发强度 (反转深度+涨停强度+主力流入).
+    # trigger_strength: setup detect 产出的 0-1 触发强度 (星期+板块+趋势+低波动).
     # 决定同 setup 内候选的排序, render 需展示让排序可解释. 默认 0 兼容旧构造.
     trigger_strength: float = 0.0
 
@@ -905,7 +905,7 @@ def _render_candidate_list(
         # 这个命中未经完整 setup 条件验证 — 运行时检测口径比回测分布更宽松.
         degraded_tag = " ⚠残缺" if getattr(a, "degraded", False) else ""
         # 标注"先验(驱动Kelly)"区别于表头的"真实回测"——两套不可比的数字用用途标签区分.
-        # trigger_strength 是候选排序的真实依据 (反转深度+涨停强度+主力流入), 需展示让排序可解释.
+        # trigger_strength 是候选排序的真实依据 (星期+板块+趋势+低波动), 需展示让排序可解释.
         lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{label}{Style.RESET_ALL}  [{_setup_display_name(a.setup)}]  " f"强度 {a.trigger_strength:.2f}  参考价 ~{a.entry_price:.2f}  先验(驱动Kelly) {a.distribution_summary}{converge}{degraded_tag}")
     rest = len(candidates) - len(shown)
     if rest > 0:
@@ -1065,7 +1065,7 @@ def render_daily_action(
     lines.append(f"  - 软止损=历史平均亏损x1.5的观察线, 用于风险参考, 不是自动卖出触发")
     lines.append(f"  - 硬止损=固定-8%的风控参考线; 止损触发只做披露, paper P&L 按 T+N 收盘回填")
     lines.append(f"  - 先验分布: n=历史样本数, winrate=历史胜率, cv=凸性比, E=历史平均收益 (与表头'真实回测'两套独立统计, 各自标注用途)")
-    lines.append(f"  - 强度=setup触发强度(反转深度40%+涨停强度30%+主力流入30%), 决定同setup内候选的排序")
+    lines.append(f"  - 强度=trigger_strength(星期25%+板块25%+趋势25%+低波动25%), 决定候选排序和仓位大小")
     lines.append(f"  - T+N=交易日; 剩N天=日历日(T+10≈14日历日); 到期按第N个交易日收盘结算P&L; 未到期仓位浮动盈亏不计入")
     # Bug B: 若本次有 degraded 命中, 集中披露让 operator 注意未经完整条件验证的信号.
     all_hits = list(actions) + list(blocked)
