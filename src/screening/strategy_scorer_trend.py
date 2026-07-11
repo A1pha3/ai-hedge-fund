@@ -183,16 +183,22 @@ def _resolve_adx_strength_direction(adx_metrics: dict[str, float]) -> int:
 def score_trend_strategy(prices_df: pd.DataFrame, *, ticker: str | None = None) -> StrategySignal:
     trend_weights = _get_trend_subfactor_weights()
     momentum_signal = calculate_momentum_signals(prices_df) if len(prices_df) >= 126 else None
+    # Attention metrics (turnover_ratio_20, amount_ratio_5, ret_2d, ret_5d) only
+    # depend on prices_df, NOT on the momentum calculation. Previously they were
+    # nested inside `if momentum_signal is not None`, which meant price_cache <
+    # 126 rows silently dropped all four attention components → attention_composite
+    # never computed → att:— in the score waterfall. Compute them unconditionally.
+    short_trade_metrics = _build_short_trade_doc_metrics(prices_df, ticker=ticker) if not prices_df.empty else {}
     if momentum_signal is not None:
         momentum_signal = {
             **momentum_signal,
             "metrics": {
                 **dict(momentum_signal.get("metrics") or {}),
-                **_build_short_trade_doc_metrics(prices_df, ticker=ticker),
+                **short_trade_metrics,
             },
         }
     volatility_signal = calculate_volatility_signals(prices_df) if len(prices_df) >= 126 else None
-    return aggregate_sub_factors(
+    result = aggregate_sub_factors(
         _build_trend_sub_factors(
             prices_df=prices_df,
             trend_weights=trend_weights,
@@ -200,6 +206,18 @@ def score_trend_strategy(prices_df: pd.DataFrame, *, ticker: str | None = None) 
             volatility_signal=volatility_signal,
         )
     )
+    # When momentum_signal was None (price_cache < 126 rows), the momentum
+    # sub_factor's metrics dict is empty. Inject short_trade_metrics here so
+    # _collect_raw_metrics_from_signals can pick up attention components.
+    # This does NOT affect the score — direction/confidence/completeness are
+    # unchanged; only the metrics payload (used for cross-sectional attention
+    # ranking) is enriched.
+    if short_trade_metrics and momentum_signal is None:
+        momentum_dict = result.sub_factors.get("momentum")
+        if isinstance(momentum_dict, dict):
+            existing_metrics = momentum_dict.get("metrics") or {}
+            momentum_dict["metrics"] = {**existing_metrics, **short_trade_metrics}
+    return result
 
 
 def _build_trend_sub_factors(

@@ -807,10 +807,15 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     refresh_summary = refresh_scoring_features(
         trade_date,
         candidate_tickers,
-        timeout_seconds=float(os.environ.get("AUTO_OPTIONAL_FEATURE_REFRESH_TIMEOUT_SECONDS", "20")),
+        timeout_seconds=float(os.environ.get("AUTO_OPTIONAL_FEATURE_REFRESH_TIMEOUT_SECONDS", "180")),
     )
     optional_feature_quality = None
-    scoring_feature_store = ScoringFeatureStore()
+    # allow_stale: when today's snapshot is missing (e.g. tushare rate-limited),
+    # fall back to the most recent snapshot within 7 days. Financial data is
+    # quarterly and event inputs are relatively stable, so a few days of staleness
+    # is far better than returning empty signals (F:—, E:—) for every ticker.
+    _stale_days = int(os.environ.get("SCORING_FEATURE_MAX_STALE_DAYS", "7"))
+    scoring_feature_store = ScoringFeatureStore(allow_stale=_stale_days > 0, max_stale_days=_stale_days)
     if isinstance(refresh_summary, dict):
         logger.debug(
             "[Auto] Scoring feature refresh status=%s; score_batch will consume local snapshots",

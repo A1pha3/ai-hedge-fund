@@ -365,13 +365,16 @@ def get_insider_trades(
 
     if is_ashare(ticker):
         if cached_trades := load_cached_insider_trades(_cache, cache_key):
+            _get_snapshot().export_insider_trades(ticker, end_date, cached_trades, "cache")
             return cached_trades
         trades = get_ashare_insider_trades_with_tushare(ticker, end_date, start_date, limit)
         if trades:
             cache_insider_trades(_cache, cache_key, trades)
+            _get_snapshot().export_insider_trades(ticker, end_date, trades, "tushare")
         return trades
 
     if cached_trades := load_cached_insider_trades(_cache, cache_key):
+        _get_snapshot().export_insider_trades(ticker, end_date, cached_trades, "cache")
         return cached_trades
 
     all_trades = fetch_remote_insider_trades(
@@ -386,6 +389,7 @@ def get_insider_trades(
     if not all_trades:
         return []
 
+    _get_snapshot().export_insider_trades(ticker, end_date, all_trades, "financial_datasets")
     return cache_insider_trades(_cache, cache_key, all_trades)
 
 

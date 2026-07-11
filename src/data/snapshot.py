@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from src.data.models import CompanyNews, FinancialMetrics, LineItem, Price
+from src.data.models import CompanyNews, FinancialMetrics, InsiderTrade, LineItem, Price
 from src.tools.tushare_api import get_stock_name
 
 logger = logging.getLogger(__name__)
@@ -185,6 +185,29 @@ class DataSnapshotExporter:
                 logger.info("[Snapshot] 公司新闻快照已导出: %s/%s, %d 条", ticker, end_date, len(news_items))
         except Exception as e:
             logger.warning("[Snapshot] 公司新闻快照导出失败: %s/%s - %s", ticker, end_date, e)
+
+    def export_insider_trades(self, ticker: str, end_date: str, trades: list[InsiderTrade], data_source: str = "unknown") -> None:
+        """导出内部交易（高管增减持）快照"""
+        if not self.config.enabled or not trades:
+            return
+        try:
+            snapshot_dir = self._ensure_dir(ticker, end_date)
+            trades_file = snapshot_dir / "insider_trades.json"
+            serialized = [item.model_dump() for item in trades]
+
+            need_update = True
+            if trades_file.exists():
+                existing_data = self._read_json(trades_file, [])
+                if existing_data == serialized:
+                    need_update = False
+
+            if need_update:
+                self._write_json(trades_file, serialized)
+                self._regenerate_summary(ticker, end_date, snapshot_dir, data_source)
+                self._update_index(ticker, end_date, snapshot_dir, data_source)
+                logger.info("[Snapshot] 内部交易快照已导出: %s/%s, %d 条", ticker, end_date, len(trades))
+        except Exception as e:
+            logger.warning("[Snapshot] 内部交易快照导出失败: %s/%s - %s", ticker, end_date, e)
 
     # =========================================================================
     # 文件 I/O
