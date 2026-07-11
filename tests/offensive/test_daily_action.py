@@ -849,6 +849,46 @@ def test_generate_daily_action_blocks_new_buys_when_price_cache_lags_auto_report
     assert "20260708" in tracker.last_action_stale_reason
 
 
+def test_generate_daily_action_does_not_treat_weekend_auto_report_as_stale(tmp_path, monkeypatch):
+    """最新 --auto 报告若落在周末, stale guard 应按对应最近开市日比较."""
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    (tmp_path / "data" / "price_cache").mkdir(parents=True)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(da, "_resolve_trade_date_and_regime", lambda: ("20260710", "normal"))
+    monkeypatch.setattr(da, "_latest_auto_report_date", lambda: "20260711", raising=False)
+    monkeypatch.setattr(da, "_missed_entry_window_reason", lambda td: "", raising=False)
+    monkeypatch.setattr(da, "_load_st_tickers", lambda: set())
+    monkeypatch.setattr("src.tools.tushare_api.get_open_trade_dates", lambda start_date, end_date: ["20260710"])
+
+    da.generate_daily_action(tracker=tracker, scan_mode="full_market")
+
+    assert tracker.last_action_stale_reason == ""
+
+
+def test_generate_daily_action_weekend_auto_report_falls_back_to_weekday_without_trade_cal(tmp_path, monkeypatch):
+    """trade_cal 不可用时, 周末 auto 报告至少要回退到上一个工作日, 不能误判 stale."""
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    (tmp_path / "data" / "price_cache").mkdir(parents=True)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(da, "_resolve_trade_date_and_regime", lambda: ("20260710", "normal"))
+    monkeypatch.setattr(da, "_latest_auto_report_date", lambda: "20260712", raising=False)
+    monkeypatch.setattr(da, "_missed_entry_window_reason", lambda td: "", raising=False)
+    monkeypatch.setattr(da, "_load_st_tickers", lambda: set())
+    monkeypatch.setattr("src.tools.tushare_api.get_open_trade_dates", lambda start_date, end_date: [])
+
+    da.generate_daily_action(tracker=tracker, scan_mode="full_market")
+
+    assert tracker.last_action_stale_reason == ""
+
+
 def test_generate_daily_action_blocks_new_buys_after_planned_open_window(tmp_path, monkeypatch):
     """前一信号日的次日开盘窗口已过时, 不应再输出新 BUY."""
     import pandas as pd

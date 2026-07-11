@@ -341,6 +341,39 @@ def _latest_auto_report_date() -> str:
         return ""
 
 
+def _latest_open_trade_date_on_or_before(trade_date: str, *, lookback_days: int = 14) -> str:
+    """Normalize a natural date to the latest open A-share trading day on/before it.
+
+    ``--auto`` reports can be generated on weekends/holidays while still representing
+    the last completed trading session. Staleness checks must compare cache dates to
+    that effective market date, not the report's wall-clock date.
+    """
+
+    compact = str(trade_date or "").strip().replace("-", "")
+    if len(compact) != 8 or not compact.isdigit():
+        return compact
+
+    try:
+        requested_dt = datetime.strptime(compact, "%Y%m%d")
+    except ValueError:
+        return compact
+
+    try:
+        from src.tools.tushare_api import get_open_trade_dates
+
+        start_date = (requested_dt - timedelta(days=max(lookback_days - 1, 0))).strftime("%Y%m%d")
+        open_dates = get_open_trade_dates(start_date, compact)
+        if open_dates:
+            return open_dates[-1]
+    except Exception:
+        logger.debug("daily_action: latest auto report trade_cal normalization failed", exc_info=True)
+
+    # Fallback: when trade_cal is unavailable, at least strip weekend false positives.
+    while requested_dt.weekday() >= 5:
+        requested_dt -= timedelta(days=1)
+    return requested_dt.strftime("%Y%m%d")
+
+
 def _load_auto_topn_tickers(trade_date: str) -> set[str]:
     """加载信号日 ``--auto`` 报告的 Top-N ticker 集合 (供双信号收敛标记).
 
@@ -621,8 +654,9 @@ def generate_daily_action(
             trade_date, regime = _resolve_trade_date_and_regime()
         tracker.last_action_trade_date = trade_date
         latest_report_date = _latest_auto_report_date()
-        if latest_report_date and trade_date and latest_report_date > trade_date:
-            tracker.last_action_stale_reason = f"price_cache 最新交易日 {trade_date} 落后于最新 --auto 报告 {latest_report_date}; " "为避免使用过期信号, 本次不输出新 BUY"
+        latest_report_trade_date = _latest_open_trade_date_on_or_before(latest_report_date)
+        if latest_report_trade_date and trade_date and latest_report_trade_date > trade_date:
+            tracker.last_action_stale_reason = f"price_cache 最新交易日 {trade_date} 落后于最新 --auto 报告交易日 {latest_report_trade_date}; " "为避免使用过期信号, 本次不输出新 BUY"
             tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=_load_prices)
             return []
         missed_window_reason = _missed_entry_window_reason(trade_date)
