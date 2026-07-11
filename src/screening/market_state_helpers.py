@@ -362,7 +362,10 @@ def _apply_base_state_adjustments(*, metrics: MarketStateMetrics, adjusted: dict
 
 
 def _apply_limit_ratio_adjustments(*, metrics: MarketStateMetrics, adjusted: dict[str, float]) -> None:
-    if metrics.limit_down_count > 0 and metrics.limit_ratio >= 3.0 or metrics.limit_up_count > 0 and metrics.limit_ratio <= (1 / 3):
+    # Bug fix: 显式括号防 and/or 优先级歧义 (原来靠 Python 默认优先级碰巧正确)
+    if (metrics.limit_down_count > 0 and metrics.limit_ratio >= 3.0) or (
+        metrics.limit_up_count > 0 and metrics.limit_ratio <= (1 / 3)
+    ):
         adjusted["event_sentiment"] *= 0.5
         adjusted["fundamental"] *= 1.3
 

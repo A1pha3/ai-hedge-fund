@@ -93,6 +93,11 @@ logger = get_logger(__name__)
 SCORE_B_GREEN_FLOOR = 0.35  # >= 此值 → 绿色 (看多) / high_pool 候选
 SCORE_B_YELLOW_FLOOR = 0.0  # >= 此值 (但 < 绿色) → 黄色 (中性); 低于此值 → 红色 (看空)
 
+# Composite scoring lookback — 动量/板块/成交量维度计算窗口。
+# Bug fix: 原来误用 DEFAULT_LOOKBACK_DAYS=3 (连续推荐窗口), 但 signal_momentum/
+# sector_strength 设计默认值是 5 天。3 天太短, 噪声大, 导致排名次级键不稳定。
+COMPOSITE_SCORE_LOOKBACK_DAYS = 5
+
 
 def _compute_model_version() -> str:
     """NS-2: 返回当前打分模型的版本标识 (git short sha)。
@@ -684,7 +689,7 @@ def _rank_pool_by_investability(ranking_pool: list[dict], trade_date: str) -> li
         composite_report = compute_composite_scores_for_recommendations(
             recommendations=ranking_pool,
             trade_date=trade_date,
-            lookback_days=DEFAULT_LOOKBACK_DAYS,
+            lookback_days=COMPOSITE_SCORE_LOOKBACK_DAYS,
             reports_dir=_resolve_consecutive_report_dir(),
         )
         expected_report = compute_expected_returns(

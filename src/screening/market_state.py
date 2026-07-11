@@ -76,7 +76,17 @@ def detect_market_state(trade_date: str) -> MarketState:
     start_dt = (end_dt - timedelta(days=180)).strftime("%Y%m%d")
     index_df = get_index_daily("000300.SH", start_date=start_dt, end_date=trade_date, limit=180)
     if index_df is None or index_df.empty:
-        return MarketState()
+        # Bug fix: 原来返回默认 MarketState(position_scale=1.0, "normal") = 满仓推荐。
+        # 数据断网时这会导致在真实危机中按满仓操作。改为 fail-closed: 返回保守状态。
+        logger.warning(
+            "[market_state] 沪深300指数数据获取失败 (trade_date=%s), "
+            "返回保守 risk_off 状态 (position_scale=0.5)", trade_date,
+        )
+        return MarketState(
+            position_scale=0.5,
+            breadth_ratio=0.4,        # < 0.42 → 触发 risk_off 降权
+            regime_gate_level="risk_off",
+        )
 
     metrics = calculate_market_state_metrics(
         frame=prepare_market_frame(index_df),

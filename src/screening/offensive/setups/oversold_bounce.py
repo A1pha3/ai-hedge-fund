@@ -35,6 +35,7 @@ class OversoldBounceSetup(Setup):
             return self._miss(ticker, trade_date)
 
         prices = prices.copy()
+        prices = prices.reset_index(drop=True)  # Bug fix: 保证 index=0..n-1, 防 iloc 混用
         prices["date_str"] = pd.to_datetime(prices["date"]).dt.strftime("%Y%m%d")
         trigger_rows = prices[prices["date_str"] == trade_date]
         if len(trigger_rows) == 0:
@@ -51,10 +52,13 @@ class OversoldBounceSetup(Setup):
         if drop_pct > _DROP_THRESHOLD:  # drop_pct 是负数, > -20 表示没跌够
             return self._miss(ticker, trade_date)
 
-        # 条件 2: 近 3 日主力净流入累计 > 0 (转正)
+        # 条件 2: 近 3 日 (含触发日) 主力净流入累计 > 0 (转正)
+        # Bug fix: 原来窗口 range(1, N+1) = T-1/T-2/T-3 (排除触发日 T). 对于反弹 setup,
+        # 触发日当天的资金流入是最强反转信号, 排除它会让"今天大幅流出但前3天微流入"的
+        # 股票通过过滤. 改为 range(0, N) = T/T-1/T-2, 含触发日.
         records: list[FundFlowRecord] = context.get("fund_flow_records") or []
         recent_dates = set()
-        for i in range(1, _FLOW_LOOKBACK_DAYS + 1):
+        for i in range(0, _FLOW_LOOKBACK_DAYS):  # 0=触发日, 1=T-1, 2=T-2
             if trigger_idx - i >= 0:
                 recent_dates.add(prices.iloc[trigger_idx - i]["date_str"])
         recent_flow = sum(r.main_net_inflow for r in records if r.date in recent_dates and r.date <= trade_date)

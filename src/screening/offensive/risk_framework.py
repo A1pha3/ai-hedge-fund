@@ -1,6 +1,9 @@
 """风险框架 (v2 §C.6) — 每 setup 的失效条件 + 止损 + 时间退出 + 组合 drawdown 熔断。
 
 设计文档 §4.2 步骤 12: 每个入选票附风险计划。
+
+优化 (2026-07-11): per-setup 止损策略. BTST 止损只披露 (回测验证不执行更优);
+OversoldBounce 止损真正执行 -8% (无 alpha, 尾部亏损 20%, 执行止损截断尾部).
 """
 
 from __future__ import annotations
@@ -17,6 +20,18 @@ class RiskPlan:
     hard_stop_pct: float  # 硬止损 (绝对值, 默认 -8%)
     time_exit: str  # 时间退出 ("T+N")
     natural_horizon: int  # setup 自然 horizon
+    stop_policy: str = "disclose_only"  # "disclose_only" (只披露) / "execute" (真按止损平仓)
+
+
+# per-setup 默认止损策略
+# BTST: disclose_only — 回测验证 (2026-07-10, 91 笔): no_stop E=+5.55%/Sharpe 0.37
+#   优于所有止损变体. 均值回归 setup 的波动反而赚钱.
+# OversoldBounce: execute fixed8 — 无 alpha (E=+0.34%), 尾部亏损 20% (>-10%).
+#   执行止损截断尾部, 避免单笔大亏侵蚀组合.
+_DEFAULT_STOP_POLICY: dict[str, str] = {
+    "btst_breakout": "disclose_only",
+    "oversold_bounce": "execute",
+}
 
 
 def build_risk_plan(
@@ -24,20 +39,24 @@ def build_risk_plan(
     avg_loss: float,
     natural_horizon: int,
     hard_stop_pct: float = -0.08,
+    setup_name: str = "",
 ) -> RiskPlan:
     """从 setup 失效条件 + 历史亏损 → 风险计划。
 
     软止损 = avg_loss × 1.5 (给一点缓冲, 不在历史均值处就止损)。
     硬止损 = -8% (绝对底线)。
     时间退出 = T+<natural_horizon>。
+    止损策略 = per-setup (BTST disclose_only, OversoldBounce execute).
     """
     soft_stop = avg_loss * 1.5  # 软止损 = 历史均值 × 1.5 (给缓冲); 与硬止损是两个独立层级
+    stop_policy = _DEFAULT_STOP_POLICY.get(setup_name, "disclose_only")
     return RiskPlan(
         invalidation_condition=invalidation_condition,
         stop_loss_pct=soft_stop,
         hard_stop_pct=hard_stop_pct,
         time_exit=f"T+{natural_horizon}",
         natural_horizon=natural_horizon,
+        stop_policy=stop_policy,
     )
 
 

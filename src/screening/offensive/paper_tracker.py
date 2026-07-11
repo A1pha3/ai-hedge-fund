@@ -74,6 +74,8 @@ class TradeAction:
     time_exit: str  # "T+N"
     invalidation_condition: str
     reasoning: str = ""
+    trigger_strength: float = 0.0  # 闭合学习环: 记录 ranker 评分供回测验证
+    degraded: bool = False  # 是否基于残缺数据命中
 
 
 @dataclass
@@ -223,13 +225,15 @@ class PaperTracker:
                         "time_exit": action.time_exit,
                         "invalidation_condition": action.invalidation_condition,
                         "reasoning": action.reasoning,
+                        "trigger_strength": action.trigger_strength,
+                        "degraded": action.degraded,
                     },
                     ensure_ascii=False,
                 )
                 + "\n"
             )
 
-    def record_buy(self, trade_date: str, ticker: str, setup: str, horizon: int, entry_price: float, kelly_pct: float, soft_stop: float, hard_stop: float, invalidation: str, reasoning: str = ""):
+    def record_buy(self, trade_date: str, ticker: str, setup: str, horizon: int, entry_price: float, kelly_pct: float, soft_stop: float, hard_stop: float, invalidation: str, reasoning: str = "", trigger_strength: float = 0.0, degraded: bool = False):
         """便捷方法: 记录买入 + 更新组合.
 
         幂等: 同一 (trade_date, ticker) 的 BUY 已存在则跳过 (对齐
@@ -254,6 +258,8 @@ class PaperTracker:
                 time_exit=f"T+{horizon}",
                 invalidation_condition=invalidation,
                 reasoning=reasoning,
+                trigger_strength=trigger_strength,
+                degraded=degraded,
             )
         )
         self._state.open_positions += 1
@@ -503,9 +509,16 @@ class PaperTracker:
                     if hard_stop > 0:
                         stop_would_have_triggered = self._check_stop_hit(prices_df, buy_date, horizon, hard_stop)
                     execution_result = self._execution_adjusted_return(prices_df, buy_date, horizon)
-                    # 可选止损执行 (默认关): 启用时止损触发 → 按止损价平仓替代 T+N 收盘.
-                    # 回测验证当前牛市样本止损不优于 no_stop, 故默认 none (只披露).
+                    # 止损执行策略 (per-setup):
+                    # - env DAILY_ACTION_EXECUTION_STOP 覆盖全局 (最高优先级)
+                    # - 否则读 RiskPlan.stop_policy: BTST=disclose_only, OversoldBounce=execute(fixed8)
+                    # - OversoldBounce execute: 止损触发 → 按止损价平仓替代 T+N 收盘
                     stop_mode = _execution_stop_mode()
+                    if stop_mode == "none":
+                        # env 没覆盖 → 检查 per-setup policy
+                        setup_name = str(rec.get("setup", ""))
+                        if setup_name == "oversold_bounce":
+                            stop_mode = "fixed8"  # OB 默认执行 -8% 止损
                     if stop_mode != "none" and execution_result is not None:
                         stop_ret = self._stop_adjusted_return(prices_df, buy_date, horizon, stop_mode)
                         if stop_ret is not None:
@@ -517,8 +530,15 @@ class PaperTracker:
             if execution_result is not None:
                 realized_pnl, exit_price = execution_result
             else:
-                realized_pnl = ret_pct / 100.0  # 百分数 → 小数
-                exit_price = entry_price * (1 + realized_pnl)
+                # Bug fix: 原来用 ret_pct (来自 fetch_actual_returns, 以批次最早 buy_date
+                # 为锚 → 非 earliest 仓位的 P&L 错误). 现在优先用 price_loader 按本仓位
+                # 的 buy_date close-to-close 重算; 只有 price_loader 不可用时才回退到 ret_pct.
+                per_pos_ret = self._close_to_close_return(prices_df if price_loader is not None else None, buy_date, horizon)
+                if per_pos_ret is not None:
+                    realized_pnl, exit_price = per_pos_ret
+                else:
+                    realized_pnl = ret_pct / 100.0  # 百分数 → 小数 (last resort)
+                    exit_price = entry_price * (1 + realized_pnl)
 
             # 写 EXIT 记录 (幂等 key = (date, ticker) 与 BUY 对齐)
             self.record_action(
@@ -643,6 +663,46 @@ class PaperTracker:
         if entry_price <= 0:
             return None
         return (exit_price / entry_price) - 1.0, exit_price
+
+    @staticmethod
+    def _close_to_close_return(prices_df: Any, buy_date: str, horizon: int) -> tuple[float, float] | None:
+        """按本仓位的 buy_date close-to-close 计算 T+N 收益 (fallback for _execution_adjusted_return).
+
+        Bug fix: 当 _execution_adjusted_return 因缺 open 列或滑点配置失败返回 None 时,
+        原来用 fetch_actual_returns 的 ret_pct (以批次最早 buy_date 为锚 → 错误).
+        此方法用 price_loader 提供的 per-position 数据按 close[buy_date] → close[buy_date+N] 重算.
+
+        Returns:
+            (realized_pnl, exit_price) 或 None (数据不足时)
+        """
+        if prices_df is None or len(prices_df) == 0:
+            return None
+        if "date" not in prices_df.columns or "close" not in prices_df.columns:
+            return None
+
+        df = prices_df.copy()
+        try:
+            df["date_str"] = df["date"].dt.strftime("%Y%m%d")
+        except Exception:
+            df["date_str"] = df["date"].astype(str).str.replace("-", "", regex=False)
+        df = df.sort_values("date_str").reset_index(drop=True)
+
+        matches = df.index[df["date_str"] == str(buy_date)]
+        if len(matches) == 0:
+            return None
+        trigger_idx = int(matches[0])
+        exit_idx = trigger_idx + int(horizon)
+        if exit_idx >= len(df):
+            return None
+
+        try:
+            entry_close = float(df.iloc[trigger_idx]["close"])
+            exit_close = float(df.iloc[exit_idx]["close"])
+        except (TypeError, ValueError):
+            return None
+        if entry_close <= 0 or exit_close <= 0:
+            return None
+        return (exit_close / entry_close) - 1.0, exit_close
 
     @staticmethod
     def _stop_adjusted_return(

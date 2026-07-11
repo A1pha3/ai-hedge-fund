@@ -34,7 +34,13 @@ from src.utils.date_utils import resolve_signal_date
 logger = logging.getLogger(__name__)
 
 # Phase A: 多 setup (BTST T+10 + OversoldBounce T+5), 单仓位上限, 严格风控
-_MAX_POSITION_PCT = 0.10  # 单票 ≤ 10%
+# 优化: per-setup 仓位上限 — BTST 有统计显著的 alpha (E=+8.15%), 可分配更大仓位;
+# OversoldBounce 无可证明 alpha (E=+0.34%, CI 跨 0), 严格限制仓位.
+_MAX_POSITION_PCT = 0.10  # 默认单票上限
+_MAX_POSITION_PCT_BY_SETUP: dict[str, float] = {
+    "btst_breakout": 0.15,       # BTST: 有 alpha, 允许到 15% (regime 加仓后 18%)
+    "oversold_bounce": 0.05,     # OB: 无 alpha, 限制到 5% (即使恢复也低仓位)
+}
 _MAX_PORTFOLO_PCT = 0.60  # 组合 ≤ 60%
 _USE_TUSHARE_PRICES = True  # akshare 在本 env 代理封了
 _CN_TZ = timezone(timedelta(hours=8), "Asia/Shanghai")
@@ -712,26 +718,26 @@ def generate_daily_action(
                     tracker.record_skip(trade_date, ticker, setup_name, horizon, reasoning=f"未触发 (pct={pct:.1f}%)")
                 continue
 
-            # Kelly 仓位 (组合总上限稍后在排序后统一分配)
-            # countercyclical regime 加仓 (按 setup 区分): BTST 在 crisis/risk_off 加仓
-            # (2026 实测 E[r]=+16.93%/+8.87%); OversoldBounce 不加仓 (实测 crisis 亏钱).
-            # drawdown 降仓与之叠加, drawdown 优先 (0.5×1.2=0.6 实际降仓).
-            # 单票硬上限 _MAX_POSITION_PCT×1.2 防失控.
+            # 仓位计算: per-setup 上限 × regime 加仓 × drawdown 降仓 × trigger_strength 调节.
+            # 简化: BTST Kelly f*=5.35 永远触顶 → 直接用 setup_max_pct, 去掉装饰性 Kelly 计算.
+            # trigger_strength (新 alpha ranker: weekday+board+depth) 调节强弱信号仓位.
+            setup_max_pct = _MAX_POSITION_PCT_BY_SETUP.get(setup_name, _MAX_POSITION_PCT)
             regime_factor = _regime_size_factor(regime, setup_name)
-            kelly = compute_kelly_size(known_dist, max_pct=_MAX_POSITION_PCT)
             drawdown_factor = 0.5 if dd_action == "decrease" else 1.0
-            kelly_pct = kelly.position_pct * drawdown_factor * regime_factor
-            kelly_pct = min(kelly_pct, _MAX_POSITION_PCT * _REGIME_POSITION_CAP_MULTIPLE)
+            strength_factor = max(0.3, min(1.0, float(result.trigger_strength)))
+            kelly_pct = setup_max_pct * drawdown_factor * regime_factor * strength_factor
+            kelly_pct = min(kelly_pct, setup_max_pct * _REGIME_POSITION_CAP_MULTIPLE)
             if kelly_pct <= 0:
                 if scan_mode == "report":
-                    tracker.record_skip(trade_date, ticker, setup_name, horizon, reasoning="Kelly 仓位为 0")
+                    tracker.record_skip(trade_date, ticker, setup_name, horizon, reasoning="仓位为 0")
                 continue
 
-            # 风险计划
+            # 风险计划 (per-setup 止损策略)
             risk = build_risk_plan(
                 invalidation_condition=result.invalidation_condition,
                 avg_loss=known_dist.avg_loss,
                 natural_horizon=horizon,
+                setup_name=setup_name,
             )
             entry_price = float(last_row["close"])
             soft_stop_price = entry_price * (1 + risk.stop_loss_pct)
@@ -756,21 +762,19 @@ def generate_daily_action(
             )
             ranked_candidates.append(
                 (
-                    float(known_dist.expected_return),
                     float(result.trigger_strength),
-                    float(known_dist.convexity_ratio),
                     horizon,
                     action,
                 )
             )
             break  # 同票只取第一个命中的 setup (避免重复仓位)
 
+    # 简化排序: 只按 trigger_strength 降序 (旧 4 键排序中 expected_return/convexity
+    # 是同一 setup 的常量先验, 零区分度). trigger_strength 现在是真正的 alpha ranker.
     ranked_candidates.sort(
         key=lambda item: (
             -item[0],
-            -item[1],
-            -item[2],
-            item[4].ticker,
+            item[2].ticker,
         )
     )
 
@@ -782,7 +786,7 @@ def generate_daily_action(
     portfolio_position_used = float(getattr(tracker.state, "open_exposure", 0.0) or 0.0) if _enforce_open_cap() else 0.0
     cap_blocked_count = 0  # 因超上限被跳过的信号数 (render 披露用)
     cap_break_idx: int | None = None  # 首个因上限被跳过的候选 index (供 render 列出"今日候选")
-    for idx, (_expected_return, _trigger_strength, _convexity, horizon, action) in enumerate(ranked_candidates):
+    for idx, (_trigger_strength, horizon, action) in enumerate(ranked_candidates):
         kelly_pct = action.kelly_pct
         if portfolio_position_used + kelly_pct > _MAX_PORTFOLO_PCT:
             kelly_pct = max(0.0, _MAX_PORTFOLO_PCT - portfolio_position_used)
@@ -810,6 +814,8 @@ def generate_daily_action(
             hard_stop=action.hard_stop,
             invalidation=action.invalidation_condition,
             reasoning=action.reasoning,
+            trigger_strength=action.trigger_strength,
+            degraded=action.degraded,
         )
 
     # C-DAILY-ACTION-POSITION-VISIBILITY: 暴露被上限跳过的候选 (按强度已排序),
@@ -817,7 +823,7 @@ def generate_daily_action(
     # cap_break_idx 起的候选都是本次因敞口超限没录入的 (含部分被 trim 到 0 的那个).
     blocked_candidates: list[DailyAction] = []
     if cap_break_idx is not None:
-        blocked_candidates = [item[4] for item in ranked_candidates[cap_break_idx:]]
+        blocked_candidates = [item[2] for item in ranked_candidates[cap_break_idx:]]
 
     # C-PORTFOLIO-CAP: 暴露组合敞口状态供 render 披露 (operator 须看到为何不出新仓).
     # total_after = 已开仓敞口 (含历史超配) + 本次新仓; 若超 60% 上限, 剩余信号被跳过.

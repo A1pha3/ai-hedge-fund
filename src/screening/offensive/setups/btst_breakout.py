@@ -39,7 +39,24 @@ _INDUSTRY_PCT_MIN = 2.0
 _MAIN_FLOW_LOOKBACK_DAYS = 20
 _MAIN_FLOW_MIN_HISTORY_DAYS = 5  # 资金流历史 < 此值时无法判均值, degraded=True
 _PRE_RUNUP_LOOKBACK_DAYS = 5
-_PRE_RUNUP_MAX_PCT = 5.0  # 涨停前 5 日累计涨幅上限 (条件 4)
+_PRE_RUNUP_MAX_PCT = 10.0  # 放宽: ≤5%→≤10% (回测: +2.59%/56% 仍远优于无过滤 1.33%/49%)
+
+
+def _board_quality_score(ticker: str) -> float:
+    """板块质量评分 (回测验证: 002/ChiNext 最优, SZmain 最差).
+
+    数据来源: journal.jsonl 133 笔 BTST 回测
+      002:     win=83% E[r]=+10.71%  → 1.0
+      300/301: win=70% E[r]=+10.26%  → 1.0
+      60x:     win=69% E[r]=+7.46%   → 0.7
+      688:     win=61% E[r]=+6.09%   → 0.7
+      000/001: win=45% E[r]=+1.62%   → 0.0
+    """
+    if ticker.startswith(("002", "300", "301")):
+        return 1.0
+    if ticker.startswith(("688", "60")):
+        return 0.7
+    return 0.0  # SZmain(000/001) 及其他
 
 
 class BtstBreakoutSetup(Setup):
@@ -57,6 +74,7 @@ class BtstBreakoutSetup(Setup):
             return self._miss(ticker, trade_date)
 
         prices = prices.copy()
+        prices = prices.reset_index(drop=True)  # Bug fix: 保证 index=0..n-1, 防 iloc 混用
         prices["date_str"] = pd.to_datetime(prices["date"]).dt.strftime("%Y%m%d")
         trigger_rows = prices[prices["date_str"] == trade_date]
         if len(trigger_rows) == 0:
@@ -73,16 +91,13 @@ class BtstBreakoutSetup(Setup):
         if pct_change < limit_up_pct:
             return self._miss(ticker, trade_date)
 
-        # 条件 2: 主力净流入 > 0 且 > 20 日均值
+        # 条件 2: 主力净流入 > 20 日均值 (去掉冗余 >0 检查: 涨停日必然正流入)
         records: list[FundFlowRecord] = context.get("fund_flow_records") or []
         today_flow = next((r.main_net_inflow for r in records if r.date == trade_date), None)
-        if today_flow is None or today_flow <= 0:
+        if today_flow is None:
             return self._miss(ticker, trade_date)
         historical = [r.main_net_inflow for r in records if r.date < trade_date]
-        # 资金流历史不足时无法判均值 → 诚实降级 (degraded=True), 让下游知道
-        # 这个命中基于残缺的资金流过滤条件 (只验了 today_flow>0, 没验 >20d 均值).
-        # 当前 fund_flow_cache 普遍浅 (<5 天), 绝大多数命中会是 degraded — 这反映了
-        # 运行时检测口径比 known_distributions 的深历史回测更宽松的事实, 必须披露.
+        # 资金流历史不足 20d 时: 有 ≥5 天就算短窗口均值 (标 degraded), <5 天跳过
         degraded = False
         degradation_reason = ""
         if len(historical) >= _MAIN_FLOW_MIN_HISTORY_DAYS:
@@ -90,11 +105,12 @@ class BtstBreakoutSetup(Setup):
             hist_mean = sum(lookback) / len(lookback)
             if today_flow <= hist_mean:
                 return self._miss(ticker, trade_date)
+            if len(historical) < _MAIN_FLOW_LOOKBACK_DAYS:
+                degraded = True
+                degradation_reason = f"条件2 短窗口: 仅{len(historical)}天 (设计{_MAIN_FLOW_LOOKBACK_DAYS}d)"
         else:
             degraded = True
-            degradation_reason = (
-                f"条件2 (资金流>20d均值) 跳过: 历史数据不足 ({len(historical)}<{_MAIN_FLOW_MIN_HISTORY_DAYS}日)"
-            )
+            degradation_reason = f"条件2 跳过: 历史不足 ({len(historical)}<{_MAIN_FLOW_MIN_HISTORY_DAYS}日)"
 
         # 条件 3: 行业板块效应
         industry_pct = float(context.get("industry_day_pct") or 0.0)
@@ -116,13 +132,16 @@ class BtstBreakoutSetup(Setup):
             return self._miss(ticker, trade_date)
 
         invalidation = f"价格跌破 {trigger_close * 0.92:.2f} (-8% 止损线)"
-        # trigger_strength: 涨停强度 + 主力流入 + 反转深度 (前5日越跌, 今日涨停反转越强)
-        depth_score = min(1.0, max(0.0, -pre_runup_pct) / 20.0)  # 前5日跌20%满分
-        strength = (
-            min(1.0, (pct_change / 10.0)) * 0.3
-            + min(1.0, today_flow / 5_000_000) * 0.3
-            + depth_score * 0.4
-        )
+        # trigger_strength: 3 因子 alpha ranker (每个因子都有回测数据支撑).
+        # 旧公式 3 项退化: 涨停强度(主板恒=1.0)、flow/5M(按市值排序)、depth(多数≈0).
+        # 新公式用回测验证的 3 个信号: 星期(78% vs 51% win)、板块(83% vs 45%)、反转深度.
+        from datetime import datetime as _dt
+
+        trade_dow = _dt.strptime(trade_date, "%Y%m%d").weekday()  # 0=Mon
+        weekday_score = 1.0 if trade_dow >= 2 else 0.0  # Wed-Fri=1, Mon-Tue=0
+        board_score = _board_quality_score(ticker)  # 002/300=1.0, 688/60x=0.7, 000=0.0
+        depth_score = min(1.0, max(0.0, -pre_runup_pct) / 5.0)  # 前5日跌5%满分 (门限已放宽到≤10%)
+        strength = 0.35 * weekday_score + 0.35 * board_score + 0.30 * depth_score
 
         return DetectionResult(
             hit=True,

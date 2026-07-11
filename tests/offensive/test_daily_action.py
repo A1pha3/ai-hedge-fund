@@ -1033,10 +1033,15 @@ def test_generate_daily_action_ranks_hits_before_portfolio_cap(tmp_path, monkeyp
     )
 
     selected = [action.ticker for action in actions]
-    assert len(selected) == 6
-    assert "000007" in selected
-    assert "000001" not in selected
-    assert selected[0] == "000007"
+    # trigger_strength 调节仓位: 强信号 (0.9→9%) 大仓位, 弱信号 (0.1→3%) 小仓位.
+    # 核心验证: 按 trigger_strength 降序排列 (最强先选), 不是按 ticker 字典序.
+    assert "000007" in selected       # 最强信号必入选
+    assert selected[0] == "000007"    # 且排第一
+    assert selected[1] == "000006"    # 第二强排第二
+    # 验证按强度降序 (不是按 ticker 字典序)
+    strength_order = [strengths[t] for t in selected]
+    assert strength_order == sorted(strength_order, reverse=True), \
+        f"应按 trigger_strength 降序: {selected}"
 
 
 def test_generate_daily_action_uses_real_industry_day_pct_for_btst(tmp_path, monkeypatch):
@@ -1423,15 +1428,15 @@ def test_full_market_scan_does_not_require_report():
 
 
 def test_oversold_bounce_distribution_registered():
-    """OVERSOLD_BOUNCE_T5 已注册到 KNOWN_DISTRIBUTIONS."""
+    """OVERSOLD_BOUNCE_T5 已注册到 KNOWN_DISTRIBUTIONS (2026-07-11 真实回测校准版)."""
     from src.screening.offensive.known_distributions import get_known_distribution
 
     dist = get_known_distribution("oversold_bounce", 5)
     assert dist is not None
-    assert dist.n >= 1000
-    assert dist.convexity_ratio > 1.5
-    assert dist.winrate > 0.5
-    assert dist.expected_return > 0.02  # +2% 以上
+    assert dist.n >= 50  # 真实回测样本 (59 笔, 非旧全池 1113)
+    # 校准后 convexity <1.5 (avg_loss 2x 低估修正), CI 跨 0 → 无可证明 alpha
+    assert dist.convexity_ratio < 1.5
+    assert dist.winrate > 0.45
 
 
 def test_verified_setups_includes_both_btst_and_oversold():
@@ -1534,10 +1539,10 @@ def test_regime_size_factor_btst_crisis_increases_position(tmp_path, monkeypatch
     assert len(actions_normal) == 1
     normal_pct = actions_normal[0].kelly_pct
 
-    # BTST crisis 应放大 1.2×: normal=0.10 (触顶), crisis=0.12 (regime cap)
+    # BTST crisis 应放大 1.2×: normal=0.15 (per-setup cap), crisis=0.18 (regime cap)
     assert crisis_pct > normal_pct, f"crisis {crisis_pct} should exceed normal {normal_pct}"
-    assert abs(crisis_pct - 0.12) < 1e-6, f"crisis expected 0.12, got {crisis_pct}"
-    assert abs(normal_pct - 0.10) < 1e-6, f"normal expected 0.10, got {normal_pct}"
+    assert abs(crisis_pct - 0.18) < 1e-6, f"crisis expected 0.18, got {crisis_pct}"
+    assert abs(normal_pct - 0.15) < 1e-6, f"normal expected 0.15, got {normal_pct}"
 
 
 def test_regime_size_factor_oversold_crisis_no_increase():
@@ -1554,11 +1559,11 @@ def test_regime_size_factor_oversold_crisis_no_increase():
 
 
 def test_regime_size_factor_normal_no_change(tmp_path, monkeypatch):
-    """normal regime 下仓位不放大, 等于 _MAX_POSITION_PCT."""
+    """normal regime 下仓位不放大, 等于 BTST per-setup cap (0.15)."""
     monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
     actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "normal", "btst_breakout")
     assert len(actions) == 1
-    assert abs(actions[0].kelly_pct - 0.10) < 1e-6  # _MAX_POSITION_PCT, no regime boost
+    assert abs(actions[0].kelly_pct - 0.15) < 1e-6  # BTST per-setup cap, no regime boost
 
 
 def test_regime_sizing_disabled_via_env(tmp_path, monkeypatch):
@@ -1566,19 +1571,20 @@ def test_regime_sizing_disabled_via_env(tmp_path, monkeypatch):
     monkeypatch.setenv("DAILY_ACTION_REGIME_SIZING", "false")
     actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
     assert len(actions) == 1
-    # env 关闭 → regime_factor=1.0 → 仓位退回 _MAX_POSITION_PCT (0.10), 不放大到 0.12
-    assert abs(actions[0].kelly_pct - 0.10) < 1e-6, f"expected 0.10, got {actions[0].kelly_pct}"
+    # env 关闭 → regime_factor=1.0 → 仓位退回 BTST per-setup cap (0.15), 不放大到 0.18
+    assert abs(actions[0].kelly_pct - 0.15) < 1e-6, f"expected 0.15, got {actions[0].kelly_pct}"
 
 
 def test_regime_factor_capped_at_hard_limit(tmp_path, monkeypatch):
-    """regime 放大不超 _MAX_POSITION_PCT × 1.2 硬上限, 即使 factor 更大."""
+    """regime 放大不超 BTST per-setup cap × 1.2 硬上限, 即使 factor 更大."""
     monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
-    # BTST crisis factor=1.2 → 0.10×1.2=0.12, 正好等于硬上限, 不应突破
+    # BTST crisis factor=1.2 → 0.15×1.2=0.18, 正好等于硬上限, 不应突破
     actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
     assert len(actions) == 1
-    from src.screening.offensive.daily_action import _MAX_POSITION_PCT, _REGIME_POSITION_CAP_MULTIPLE
+    from src.screening.offensive.daily_action import _MAX_POSITION_PCT_BY_SETUP, _REGIME_POSITION_CAP_MULTIPLE
 
-    hard_cap = _MAX_POSITION_PCT * _REGIME_POSITION_CAP_MULTIPLE
+    btst_cap = _MAX_POSITION_PCT_BY_SETUP.get("btst_breakout", _MAX_POSITION_PCT_BY_SETUP.get("btst_breakout", 0.15))
+    hard_cap = btst_cap * _REGIME_POSITION_CAP_MULTIPLE
     assert actions[0].kelly_pct <= hard_cap + 1e-9
     assert abs(actions[0].kelly_pct - hard_cap) < 1e-6
 
@@ -2005,8 +2011,9 @@ def test_portfolio_cap_escape_hatch_restores_old_behavior(tmp_path, monkeypatch)
         scan_mode="report",
         price_loader=lambda ticker, report_date: prices.copy(),
     )
-    # 旧行为: 忽略已开仓, 5 只新票全开到 50% (per-run cap 60% 未触)
-    assert len(actions) == 5, f"逃生口=false 应恢复旧 per-run 行为 (全开), 实际 {len(actions)}"
+    # 旧行为: 忽略已开仓, BTST per-setup cap=15%, 5只×15%=75% > 60% → 只能开 4 只
+    # (4×15%=60%, 刚好触上限). 若用 fake_setup (默认 10%) 则可全开 5×10%=50% < 60%.
+    assert len(actions) == 4, f"逃生口=false: BTST 15%×4=60% 触上限, 实际 {len(actions)} 只"
 
 
 def test_portfolio_cap_blocked_count_reports_all_skipped(tmp_path, monkeypatch):
