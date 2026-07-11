@@ -218,6 +218,47 @@ def test_load_latest_recommendations_picks_most_recent(tmp_path: Path):
     assert date_str == "20260609"
 
 
+def test_find_latest_report_skips_weekend_report(tmp_path: Path):
+    """R89 cross-surface: 跳过周末伪交易日报告，选最近的开市日报告。
+
+    背景: pre-fix legacy 或未来 regression 可能留下周六/周日日期的报告（如
+    ``auto_screening_20260711.json``，07-11 是周六）。文件名排序 0711 > 0710，
+    但 ``--daily-action`` 把信号日归一到 20260710（周五）。本 finder 被 top_picks
+    / run_top / daily-action fallback / DQ block 共用，必须跳过周末报告以保持跨
+    surface 一致，否则 operator 在 ``--daily-brief`` 看到周六决策卡，与
+    ``--daily-action`` 的周五信号矛盾（2026-07-12 实跑发现）。
+    """
+    from src.screening.data_quality_audit import _find_latest_report
+
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    # 周五（开市日）+ 周六（伪交易日，文件名更新 → 排序更靠前）
+    (reports_dir / "auto_screening_20260710.json").write_text("{}", encoding="utf-8")  # Fri
+    (reports_dir / "auto_screening_20260711.json").write_text("{}", encoding="utf-8")  # Sat
+
+    latest = _find_latest_report(report_dir=reports_dir)
+
+    assert latest is not None
+    # 必须选周五（开市日），跳过文件名更新的周六伪交易日报告
+    assert latest.name == "auto_screening_20260710.json"
+
+
+def test_find_latest_report_all_weekend_falls_back_to_newest(tmp_path: Path):
+    """降级: 全部报告都是周末时，返回最新（不返回 None，让上层 stale 披露处理）。"""
+    from src.screening.data_quality_audit import _find_latest_report
+
+    reports_dir = tmp_path / "reports"
+    reports_dir.mkdir()
+    # 周六 + 周日（无任一开市日报告 → 无法优选，降级返回最新）
+    (reports_dir / "auto_screening_20260711.json").write_text("{}", encoding="utf-8")  # Sat
+    (reports_dir / "auto_screening_20260712.json").write_text("{}", encoding="utf-8")  # Sun
+
+    latest = _find_latest_report(report_dir=reports_dir)
+
+    assert latest is not None  # 降级返回，不 None
+    assert latest.name == "auto_screening_20260712.json"  # 最新
+
+
 # ---------------------------------------------------------------------------
 # render_audit_report
 # ---------------------------------------------------------------------------

@@ -64,10 +64,25 @@ def _find_latest_report(report_dir: Path | None = None) -> Path | None:
     非数字开头的 malformed 文件名（如 ``auto_screening_garbage.json``，字母在
     ASCII 数字之后）排到合法日期之前，误选为"最新"。校验 stem 能解析为
     ``%Y%m%d`` 后再排序，确保只从合法日期文件里选最新。
+
+    R89 cross-surface: 优选出落于开市 A 股交易日的报告。pre-fix legacy 或未来
+    regression 可能留下周六/周日日期的报告（文件名更新，排序更靠前），但
+    ``--daily-action`` 把信号日归一到最近开市日；本 finder 被 top_picks /
+    run_top / daily-action fallback / DQ block 共用，须跳过周末伪交易日报告
+    以保持跨 surface 一致（2026-07-12 实跑：daily-brief 展示 07-11 周六 vs
+    daily-action 07-10 周五）。全部报告都非开市日时，降级返回最新（让上层
+    stale 披露处理）。
     """
+    from src.utils.date_utils import latest_open_trade_date_on_or_before
+
     search_dir = report_dir or resolve_report_dir()
     candidates = [path for path in search_dir.glob("auto_screening_*.json") if _parses_as_report_date(path.stem.replace("auto_screening_", ""))]
     candidates.sort(reverse=True)
+    # R89: 从新到旧返回第一个落于开市交易日的报告（== 自身即开市日）。
+    for path in candidates:
+        date_str = path.stem.replace("auto_screening_", "")
+        if latest_open_trade_date_on_or_before(date_str) == date_str:
+            return path
     return candidates[0] if candidates else None
 
 

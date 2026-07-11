@@ -130,6 +130,33 @@ class TestDailyBriefBasic:
         assert "regime" in out
         assert "行业轮动" in out
 
+    def test_weekend_report_does_not_shadow_trading_day(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """R89 cross-surface: 周末报告不得遮蔽开市日报告。
+
+        ``auto_screening_20260711.json``（周六，pre-fix legacy）文件名 >
+        ``20260710``（周五），但 ``--daily-brief`` 必须展示周五决策卡（与
+        ``--daily-action`` 信号日 20260710 一致），不能展示周六伪交易日报告。
+        2026-07-12（周日）实跑发现：daily-brief 展示 07-11 周六，daily-action
+        展示 07-10 周五 — 跨 surface 矛盾。
+        """
+        fri_recs = [_make_recommendation("000001", "平安银行", "银行", score_b=0.60, consecutive_days=0)]
+        sat_recs = [_make_recommendation("600519", "贵州茅台", "食品饮料", score_b=0.55, consecutive_days=0)]
+        _write_report(tmp_path, _make_report(fri_recs, date="20260710"), filename="auto_screening_20260710.json")
+        _write_report(tmp_path, _make_report(sat_recs, date="20260711"), filename="auto_screening_20260711.json")
+
+        from src.cli.daily_brief import run_daily_brief
+
+        rc = run_daily_brief(report_dir=tmp_path)
+        out = capsys.readouterr().out
+
+        assert rc == 0
+        # 展示周五（开市日），不展示周六伪交易日
+        assert "2026-07-10" in out
+        assert "2026-07-11" not in out
+        # 用周五报告的推荐，非周六的
+        assert "000001" in out
+        assert "600519" not in out
+
     def test_no_tracking_history_graceful(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """无 tracking_history.json 时不崩溃, 跳过连续推荐字段。"""
         recs = [
