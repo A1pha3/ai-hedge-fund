@@ -268,6 +268,56 @@ def test_close_matured_skips_immature_positions(tmp_path):
     assert tracker.state.open_positions == 1
 
 
+def test_close_matured_price_loader_uses_asof_not_buydate(tmp_path):
+    """Regression (2026-07-12): close_matured 的 price_loader 必须用 as_of 作 cutoff, 非 buy_date.
+
+    Bug: ``_load_prices_for_ticker`` 按 report_date 过滤 ``df[date <= cutoff]``. close_matured
+    旧代码传 buy_date → 滤掉 buy_date 之后的 T+N 退出数据 → ``_execution_adjusted_return``
+    永远 None (exit_idx 越界) → 回退到 fetch_actual_returns 的批次最早 buy_date 锚
+    (非 earliest 仓位 P&L 错误). Fix: 传 as_of 保留完整窗口让 per-position 重算生效.
+
+    本测试注入两个数据源: use_data_fetcher 返回错误的 +50% (模拟批次锚偏),
+    price_loader 返回正确的 +10% per-position 数据. 旧代码 price_loader 路径失败 →
+    用 fetcher 的 +50% (错); 新代码 price_loader 路径生效 → 用 +10% (对).
+    """
+    import pandas as pd
+    from datetime import datetime, timedelta
+
+    tracker = PaperTracker(journal_dir=tmp_path)
+    tracker.record_buy("20260601", "TEST001", "btst_breakout", 8, 100.0, 0.10, 85.0, 92.0, "跌破92")
+
+    # fetcher 返回 WRONG 数据: T+8 = +50% (批次最早锚偏的典型表现)
+    base = datetime.strptime("20260601", "%Y%m%d")
+    fetcher_rows = [{"time": (base + timedelta(days=i)).strftime("%Y-%m-%d"), "close": 100.0} for i in range(8)]
+    fetcher_rows.append({"time": (base + timedelta(days=8)).strftime("%Y-%m-%d"), "close": 150.0})  # +50% WRONG
+    fetcher = lambda ticker, start, end: fetcher_rows  # noqa: E731
+
+    # price_loader 返回 CORRECT per-position 数据 (entry=100 open, T+8 close=110 → +10%)
+    rows = []
+    for i in range(15):
+        d = (base + timedelta(days=i)).strftime("%Y-%m-%d")
+        close = 110.0 if i >= 9 else 100.0  # T+8 (i=9 ≈ 8 trading days from buy at i=0)
+        rows.append({"date": d, "open": 100.0, "close": close, "high": close + 1, "low": close - 1})
+    full_prices = pd.DataFrame(rows)
+    full_prices["date"] = pd.to_datetime(full_prices["date"])
+
+    def price_loader(ticker: str, report_date: str):
+        cutoff = pd.to_datetime(str(report_date).replace("-", ""), format="%Y%m%d", errors="coerce")
+        df = full_prices.copy()
+        if pd.notna(cutoff):
+            df = df[df["date"] <= cutoff]
+        return df.sort_values("date").reset_index(drop=True)
+
+    closed = tracker.close_matured(as_of="20260615", use_data_fetcher=fetcher, price_loader=price_loader)
+
+    assert len(closed) == 1, f"应平仓 1 笔, 实际 {len(closed)}"
+    c = closed[0]
+    # 旧 bug: price_loader 路径失败 → 用 fetcher 的 +50% (错); 修复后用 price_loader 的正确值
+    assert c["realized_pnl"] < 0.30, (
+        f"price_loader 路径未生效 → 用了 fetcher 的错误 +50% (旧 bug). pnl={c['realized_pnl']}"
+    )
+
+
 def test_close_matured_dedupes_historical_duplicate_buys(tmp_path):
     """历史 journal 含重复 BUY (旧版 record_buy 无幂等导致) → close_matured 只平一次.
 

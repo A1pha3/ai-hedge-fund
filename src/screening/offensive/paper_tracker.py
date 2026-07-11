@@ -494,18 +494,20 @@ class PaperTracker:
             ticker_returns = returns_map.get(ticker, {})
             day_key = f"day_{horizon}"
             ret_pct = ticker_returns.get(day_key)  # 百分数, e.g. +5.0 = +5%
-            if ret_pct is None:
-                # 数据未成熟或拉取失败 — 诚实跳过, 不虚假平仓
-                logger.info("close_matured: %s %s 无 day_%d 收益数据, 跳过 (数据未成熟?)", buy_date, ticker, horizon)
-                continue
 
             # 止损触发检测: 期间 low <= hard_stop (披露用, 不影响主 P&L 口径)
             stop_would_have_triggered = False
             execution_result: tuple[float, float] | None = None
             stop_executed = False  # DAILY_ACTION_EXECUTION_STOP 启用时是否真按止损价平仓
+            prices_df = None
             if price_loader is not None:
                 try:
-                    prices_df = price_loader(ticker, buy_date)
+                    # Bug fix (2026-07-12): 用 as_of 而非 buy_date 作 cutoff. _load_prices_for_ticker
+                    # 按 report_date 过滤 df[date <= cutoff]; 传 buy_date 会滤掉 buy_date 之后的
+                    # T+N 退出数据 → _execution_adjusted_return 永远 None (exit_idx 越界) → 回退到
+                    # fetch_actual_returns 的批次最早 buy_date 锚 (非 earliest 仓位 P&L 错误).
+                    # 传 as_of 保留完整窗口让 per-position 重算生效.
+                    prices_df = price_loader(ticker, as_of)
                     if hard_stop > 0:
                         stop_would_have_triggered = self._check_stop_hit(prices_df, buy_date, horizon, hard_stop)
                     execution_result = self._execution_adjusted_return(prices_df, buy_date, horizon)
@@ -526,6 +528,14 @@ class PaperTracker:
                             stop_executed = True
                 except Exception:
                     logger.debug("close_matured: %s low 序列读取失败, 止损检测降级", ticker, exc_info=True)
+
+            # Bug fix (2026-07-12): DEFAULT_HORIZONS=(1,3,5,10,15,20,25,30) 不含 8 → BTST T+8 的
+            # fetch_actual_returns 永远无 day_8 → ret_pct=None. 旧代码此处直接 continue, 跳过
+            # price_loader 已算出的 execution_result → T+8 仓位永远无法平仓. 现仅在两个数据源
+            # 都无结果时才跳过 (price_loader 出 result 时正常平仓).
+            if execution_result is None and ret_pct is None:
+                logger.info("close_matured: %s %s 无 day_%d 收益数据且 price_loader 无结果, 跳过 (数据未成熟?)", buy_date, ticker, horizon)
+                continue
 
             if execution_result is not None:
                 realized_pnl, exit_price = execution_result
