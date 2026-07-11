@@ -29,7 +29,7 @@ from src.screening.offensive.paper_tracker import PaperTracker, TradeAction
 from src.screening.offensive.risk_framework import build_risk_plan
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
 from src.screening.offensive.setups.oversold_bounce import OversoldBounceSetup
-from src.utils.date_utils import resolve_signal_date
+from src.utils.date_utils import latest_open_trade_date_on_or_before, resolve_signal_date
 
 logger = logging.getLogger(__name__)
 
@@ -341,39 +341,6 @@ def _latest_auto_report_date() -> str:
         return ""
 
 
-def _latest_open_trade_date_on_or_before(trade_date: str, *, lookback_days: int = 14) -> str:
-    """Normalize a natural date to the latest open A-share trading day on/before it.
-
-    ``--auto`` reports can be generated on weekends/holidays while still representing
-    the last completed trading session. Staleness checks must compare cache dates to
-    that effective market date, not the report's wall-clock date.
-    """
-
-    compact = str(trade_date or "").strip().replace("-", "")
-    if len(compact) != 8 or not compact.isdigit():
-        return compact
-
-    try:
-        requested_dt = datetime.strptime(compact, "%Y%m%d")
-    except ValueError:
-        return compact
-
-    try:
-        from src.tools.tushare_api import get_open_trade_dates
-
-        start_date = (requested_dt - timedelta(days=max(lookback_days - 1, 0))).strftime("%Y%m%d")
-        open_dates = get_open_trade_dates(start_date, compact)
-        if open_dates:
-            return open_dates[-1]
-    except Exception:
-        logger.debug("daily_action: latest auto report trade_cal normalization failed", exc_info=True)
-
-    # Fallback: when trade_cal is unavailable, at least strip weekend false positives.
-    while requested_dt.weekday() >= 5:
-        requested_dt -= timedelta(days=1)
-    return requested_dt.strftime("%Y%m%d")
-
-
 def _load_auto_topn_tickers(trade_date: str) -> set[str]:
     """加载信号日 ``--auto`` 报告的 Top-N ticker 集合 (供双信号收敛标记).
 
@@ -541,7 +508,7 @@ class DailyAction:
     # 比 known_distributions 的深历史回测更宽松 (少了资金流均值过滤), 必须向 operator 披露.
     degraded: bool = False
     degradation_reason: str = ""
-    # trigger_strength: setup detect 产出的 0-1 触发强度 (星期+板块+区间位置+低波动).
+    # trigger_strength: setup detect 产出的 0-1 触发强度 (星期+板块+区间位置+波动率压缩).
     # 决定同 setup 内候选的排序, render 需展示让排序可解释. 默认 0 兼容旧构造.
     trigger_strength: float = 0.0
 
@@ -654,7 +621,7 @@ def generate_daily_action(
             trade_date, regime = _resolve_trade_date_and_regime()
         tracker.last_action_trade_date = trade_date
         latest_report_date = _latest_auto_report_date()
-        latest_report_trade_date = _latest_open_trade_date_on_or_before(latest_report_date)
+        latest_report_trade_date = latest_open_trade_date_on_or_before(latest_report_date)
         if latest_report_trade_date and trade_date and latest_report_trade_date > trade_date:
             tracker.last_action_stale_reason = f"price_cache 最新交易日 {trade_date} 落后于最新 --auto 报告交易日 {latest_report_trade_date}; " "为避免使用过期信号, 本次不输出新 BUY"
             tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=_load_prices)
@@ -781,12 +748,16 @@ def generate_daily_action(
                     tracker.record_skip(trade_date, ticker, setup_name, horizon, reasoning="仓位为 0")
                 continue
 
-            # 风险计划 (per-setup 止损策略)
+            # 风险计划 (止损基于盘整区底部, 物理结构自适应)
+            # btst_breakout 在 metadata 中传入 range_based_stop_pct (基于 20 日最低价)
+            range_stop = result.metadata.get("range_based_stop_pct") if result.metadata else None
+            hard_stop_override = range_stop if range_stop is not None else -0.08
             risk = build_risk_plan(
                 invalidation_condition=result.invalidation_condition,
                 avg_loss=known_dist.avg_loss,
                 natural_horizon=horizon,
                 setup_name=setup_name,
+                hard_stop_pct=hard_stop_override,
             )
             entry_price = float(last_row["close"])
             soft_stop_price = entry_price * (1 + risk.stop_loss_pct)
@@ -939,7 +910,7 @@ def _render_candidate_list(
         # 这个命中未经完整 setup 条件验证 — 运行时检测口径比回测分布更宽松.
         degraded_tag = " ⚠残缺" if getattr(a, "degraded", False) else ""
         # 标注"先验(驱动Kelly)"区别于表头的"真实回测"——两套不可比的数字用用途标签区分.
-        # trigger_strength 是候选排序的真实依据 (星期+板块+区间位置+低波动), 需展示让排序可解释.
+        # trigger_strength 是候选排序的真实依据 (星期+板块+区间位置+波动率压缩), 需展示让排序可解释.
         lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{label}{Style.RESET_ALL}  [{_setup_display_name(a.setup)}]  " f"强度 {a.trigger_strength:.2f}  参考价 ~{a.entry_price:.2f}  先验(驱动Kelly) {a.distribution_summary}{converge}{degraded_tag}")
     rest = len(candidates) - len(shown)
     if rest > 0:
@@ -1099,7 +1070,7 @@ def render_daily_action(
     lines.append(f"  - 软止损=历史平均亏损x1.5的观察线, 用于风险参考, 不是自动卖出触发")
     lines.append(f"  - 硬止损=固定-8%的风控参考线; 止损触发只做披露, paper P&L 按 T+N 收盘回填")
     lines.append(f"  - 先验分布: n=历史样本数, winrate=历史胜率, cv=凸性比, E=历史平均收益 (与表头'真实回测'两套独立统计, 各自标注用途)")
-    lines.append(f"  - 强度=trigger_strength(星期25%+板块25%+区间位置25%+低波动25%), 决定候选排序和仓位大小")
+    lines.append(f"  - 强度=trigger_strength(星期25%+板块25%+区间位置25%+波动率压缩25%), 决定候选排序和仓位大小")
     lines.append(f"  - T+N=交易日; 剩N天=日历日(T+10≈14日历日); 到期按第N个交易日收盘结算P&L; 未到期仓位浮动盈亏不计入")
     # Bug B: 若本次有 degraded 命中, 集中披露让 operator 注意未经完整条件验证的信号.
     all_hits = list(actions) + list(blocked)

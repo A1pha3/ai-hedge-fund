@@ -83,10 +83,10 @@ class TestResolveSignalDate:
     def test_after_cutoff_returns_today(self) -> None:
         assert resolve_signal_date(now=datetime(2026, 7, 9, 23, 59)) == "20260709"
 
-    def test_monday_morning_returns_sunday(self) -> None:
-        """Monday before cutoff → Sunday (natural-day rollback; no weekend skip)."""
+    def test_monday_morning_returns_friday(self) -> None:
+        """Monday before cutoff → previous Friday (交易日语义, 跳过周末)."""
         # 2026-07-13 is a Monday
-        assert resolve_signal_date(now=datetime(2026, 7, 13, 8, 0)) == "20260712"
+        assert resolve_signal_date(now=datetime(2026, 7, 13, 8, 0)) == "20260710"
 
     def test_explicit_ready_hour_overrides_default(self) -> None:
         """ready_hour arg takes precedence over the default 17."""

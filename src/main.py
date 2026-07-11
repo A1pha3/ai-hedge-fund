@@ -1218,6 +1218,12 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         退出码（0 = 成功）
     """
     from colorama import Fore, Style
+    from src.utils.date_utils import latest_open_trade_date_on_or_before
+
+    normalized_trade_date = latest_open_trade_date_on_or_before(trade_date)
+    if normalized_trade_date != trade_date:
+        logger.info("[Auto] %s 非交易日或未开市, 改用最近开市日 %s 运行筛选", trade_date, normalized_trade_date)
+        trade_date = normalized_trade_date
 
     # Concurrency guard (R88/R104 corrupt-report root cause): serialize overlapping
     # --auto invocations (cron launchd + manual + daily_accumulate subprocess + direct

@@ -63,35 +63,41 @@ def _board_quality_score(ticker: str) -> float:
 # ATR 中位数阈值: 用于区分低波动 vs 高波动.
 # 回测验证: 5日 ATR/close 中位数 ≈ 3.0%, 低波动组 (<3%) win=82.8% vs 高波动组 win=60.0%
 _ATR_MEDIAN_THRESHOLD = 3.0  # 百分比
+# 波动率压缩阈值: 近 3 日 ATR / 前 17 日 ATR < 此值 = 压缩 (弹簧压紧).
+# 文档 §1: "波动率从极低状态向极高水平回归" — 不是绝对低, 而是"被压缩"的过程.
+_SQUEEZE_RATIO_THRESHOLD = 0.8  # 近期波动率缩减 ≥20% = 能量积蓄
 
 
-def _compute_trend_vol_scores(pre_window: pd.DataFrame) -> tuple[float, float]:
-    """计算涨停前 5 日的区间位置分数和低波动分数.
+def _compute_trend_vol_scores(
+    pre_window: pd.DataFrame,
+    prices: pd.DataFrame,
+    trigger_idx: int,
+) -> tuple[float, float]:
+    """计算涨停前的区间位置分数和波动率压缩分数.
+
+    第一性原理: 交易的不是价格当前位置, 而是能量从积蓄到爆发的瞬时过程.
+    - position_score: 价格在 5 日区间中的位置 (Donchian 分位)
+    - squeeze_score: 波动率是否处于"被压缩"状态 (能量积蓄)
 
     Args:
-        pre_window: 涨停前 5 个交易日的 OHLCV DataFrame (含 close/high/low 列)
+        pre_window: 涨停前 5 个交易日的 OHLCV (用于 Donchian 位置)
+        prices: 完整价格 DataFrame (~120 行, 用于波动率压缩计算)
+        trigger_idx: 涨停日在 prices 中的 positional index
 
     Returns:
-        (position_score, low_vol_score), 各为 0.0 或 1.0.
-        - position_score: Donchian 位置 < 0.5 → 1.0 (从低位拉起的新鲜涨停=好)
-        - low_vol_score: 5 日 ATR/close < 阈值 → 1.0 (低波动涨停更强)
+        (position_score, squeeze_score), 各为 0.0 或 1.0.
+
+    position_score: Donchian 分位 < 0.5 → 1.0 (从低位拉起的新鲜涨停=好)
+    squeeze_score: 近 3 日 ATR / 前 17 日 ATR < 0.8 → 1.0 (波动率压缩=能量积蓄=爆发力强)
 
     数据不足时返回 (0.5, 0.5) (中性).
-
-    位置因子 (Donchian channel position) 是业界标准的趋势阶段检测方案:
-    - [arXiv 量化因子库](https://arxiv.org/html/2409.06289v2): Distance from High/Low
-    - [Alpha Architect](https://alphaarchitect.com/moving-average-distance/): MAD 因子
-    - [Allocate Smartly](https://allocatesmartly.com/...distance-from-1-year-high/)
-
-    BTST 均值回归语义: 涨停从低位拉起(分位<0.5)=超跌反弹=新鲜=好;
-    涨停在高位追(分位≥0.5)=追高=衰竭=差.
     """
     if pre_window is None or len(pre_window) < 3:
         return 0.5, 0.5
 
     try:
+        # === 位置因子 (Donchian 分位): 用 pre_window 5 日 close ===
         closes = pre_window["close"].astype(float).values
-        # Donchian 位置: 收盘价在 5 日高低点区间的分位 (0=底部, 1=顶部)
         high_5d = max(closes)
         low_5d = min(closes)
         range_span = high_5d - low_5d
@@ -101,19 +107,79 @@ def _compute_trend_vol_scores(pre_window: pd.DataFrame) -> tuple[float, float]:
             range_pct = 0.5
         position_score = 1.0 if range_pct < 0.5 else 0.0  # 下半区=新鲜突破
 
-        # 波动率: 5 日 ATR (简化版 = mean of daily (high-low)/close)
-        if "high" in pre_window.columns and "low" in pre_window.columns:
-            highs = pre_window["high"].astype(float).values
-            lows = pre_window["low"].astype(float).values
-            daily_ranges = [(h - l) / c * 100 for h, l, c in zip(highs, lows, closes) if c > 0]
-            avg_atr = sum(daily_ranges) / len(daily_ranges) if daily_ranges else _ATR_MEDIAN_THRESHOLD
-            low_vol_score = 1.0 if avg_atr < _ATR_MEDIAN_THRESHOLD else 0.0
-        else:
-            low_vol_score = 0.5
+        # === 波动率压缩因子: 用 prices 涨停前 20 日 high/low/close ===
+        squeeze_score = _compute_squeeze_score(prices, trigger_idx)
 
-        return position_score, low_vol_score
+        return position_score, squeeze_score
     except Exception:
         return 0.5, 0.5
+
+
+def _compute_squeeze_score(prices: pd.DataFrame, trigger_idx: int) -> float:
+    """计算波动率压缩分数.
+
+    第一性原理: "弹簧被压紧" = 近期波动率 (ATR) 显著小于前期波动率.
+    压缩后的涨停 = 弹簧释放 = 爆发力强.
+
+    计算: 取涨停前 20 日 (不含涨停日本身) 的日内波幅 (high-low)/close.
+    - recent_atr = 最近 3 日的平均波幅
+    - prior_atr = 之前 17 日的平均波幅
+    - squeeze_ratio = recent_atr / prior_atr (< 1.0 = 压缩中)
+
+    数据不足 (<20 日) 时回退到旧的绝对低波动逻辑 (ATR < 3%).
+    """
+    lookback_end = trigger_idx  # 不含涨停日本身
+    lookback_start = max(0, lookback_end - 20)
+
+    if lookback_end - lookback_start < 8:
+        # 数据不足, 回退到旧的绝对低波动逻辑
+        return _compute_absolute_low_vol_score(prices, lookback_end)
+
+    try:
+        window = prices.iloc[lookback_start:lookback_end]
+        if not all(c in window.columns for c in ["high", "low", "close"]):
+            return 0.5
+
+        highs = window["high"].astype(float).values
+        lows = window["low"].astype(float).values
+        closes = window["close"].astype(float).values
+        daily_ranges = [(h - l) / c * 100 for h, l, c in zip(highs, lows, closes) if c > 0]
+
+        if len(daily_ranges) < 8:
+            return _compute_absolute_low_vol_score(prices, lookback_end)
+
+        # 近 3 日 vs 前 N 日
+        recent = daily_ranges[-3:] if len(daily_ranges) >= 3 else daily_ranges[-1:]
+        prior = daily_ranges[:-3] if len(daily_ranges) > 3 else daily_ranges
+        recent_atr = sum(recent) / len(recent)
+        prior_atr = sum(prior) / len(prior)
+
+        if prior_atr <= 0:
+            return 0.5
+
+        squeeze_ratio = recent_atr / prior_atr
+        return 1.0 if squeeze_ratio < _SQUEEZE_RATIO_THRESHOLD else 0.0
+    except Exception:
+        return 0.5
+
+
+def _compute_absolute_low_vol_score(prices: pd.DataFrame, trigger_idx: int) -> float:
+    """回退: 涨停前 5 日绝对 ATR < 3% → 1.0 (旧的 low_vol_score 逻辑)."""
+    start = max(0, trigger_idx - 5)
+    window = prices.iloc[start:trigger_idx]
+    if len(window) < 3:
+        return 0.5
+    try:
+        closes = window["close"].astype(float).values
+        if not all(c in window.columns for c in ["high", "low"]):
+            return 0.5
+        highs = window["high"].astype(float).values
+        lows = window["low"].astype(float).values
+        daily_ranges = [(h - l) / c * 100 for h, l, c in zip(highs, lows, closes) if c > 0]
+        avg_atr = sum(daily_ranges) / len(daily_ranges) if daily_ranges else _ATR_MEDIAN_THRESHOLD
+        return 1.0 if avg_atr < _ATR_MEDIAN_THRESHOLD else 0.0
+    except Exception:
+        return 0.5
 
 
 class BtstBreakoutSetup(Setup):
@@ -186,22 +252,37 @@ class BtstBreakoutSetup(Setup):
         if pre_runup_pct > _PRE_RUNUP_MAX_PCT:
             return self._miss(ticker, trade_date)
 
-        invalidation = f"价格跌破 {trigger_close * 0.92:.2f} (-8% 止损线)"
-        # trigger_strength: 4 因子 alpha ranker (每个因子都有回测数据支撑, 权重均分).
-        #   weekday:    Wed-Fri 78% win vs Mon-Tue 51% (+27pp)
-        #   board:      002/300 83% vs SZmain 45% (+38pp)
-        #   position:   Donchian 下半区(新鲜突破) vs 上半区(追高) — 业界标准趋势阶段检测
-        #   low_vol:    低ATR 82.8% vs 高ATR 60.0% (+23pp)
+        # 止损: 基于盘整区底部 (物理结构自适应).
+        # 文档 §3.3: "初始止损设在 LL 下方一点" — 止损锚定压缩区间底部, 不是固定 -8%.
+        # 压缩越紧 → range_low 越接近 trigger_close → 止损越窄 → 盈亏比天然更大.
+        range_lookback = max(0, trigger_idx - 20)
+        range_low = float(prices.iloc[range_lookback:trigger_idx]["low"].min())
+        range_based_stop_pct = (range_low / trigger_close - 1)  # 负数, 如 -0.05 = -5%
+        # 安全下限: 止损不超过 -8% (如果盘整区底部太远, 用 -8% 兜底)
+        if range_based_stop_pct < -0.08:
+            range_based_stop_pct = -0.08
+        stop_price = trigger_close * (1 + range_based_stop_pct)
+        invalidation = f"价格跌破 {stop_price:.2f} (盘整区底部 {range_low:.2f}, {range_based_stop_pct:+.1%})"
+
+        # trigger_strength: 4 因子 alpha ranker + 能量耦合 bonus.
+        #   weekday:  Wed-Fri 78% win vs Mon-Tue 51% (+27pp)
+        #   board:    002/300 83% vs SZmain 45% (+38pp)
+        #   position: Donchian 下半区(新鲜突破) vs 上半区(追高)
+        #   squeeze:  波动率压缩(弹簧压紧) vs 未压缩
+        # 能量耦合: position+squeeze 同时=1 = 完整弹簧释放, 给 0.1 bonus.
 
         trade_dow = _dt.strptime(trade_date, "%Y%m%d").weekday()  # 0=Mon
         weekday_score = 1.0 if trade_dow >= 2 else 0.0  # Wed-Fri=1, Mon-Tue=0
         board_score = _board_quality_score(ticker)  # 002/300=1.0, 688/60x=0.7, 000=0.0
 
-        # 位置+波动率因子: 用涨停前 5 日价格数据计算
+        # 位置因子: 用涨停前 5 日 close 计算
+        # 压缩因子: 用涨停前 20 日 high/low/close 计算 (需要更长的历史窗口)
         pre_window = prices.iloc[ref_idx : trigger_idx]  # 5 个交易日的 OHLCV
-        position_score, low_vol_score = _compute_trend_vol_scores(pre_window)
+        position_score, squeeze_score = _compute_trend_vol_scores(pre_window, prices, trigger_idx)
 
-        strength = 0.25 * weekday_score + 0.25 * board_score + 0.25 * position_score + 0.25 * low_vol_score
+        # 4 因子等权 + 能量耦合 bonus (position+squeeze 同时命中=完整弹簧释放)
+        energy_bonus = 0.1 if position_score >= 0.5 and squeeze_score >= 0.5 else 0.0
+        strength = min(1.0, 0.25 * weekday_score + 0.25 * board_score + 0.25 * position_score + 0.25 * squeeze_score + energy_bonus)
 
         return DetectionResult(
             hit=True,
@@ -215,6 +296,8 @@ class BtstBreakoutSetup(Setup):
                 "industry_pct": industry_pct,
                 "pre_5d_runup_pct": pre_runup_pct,
                 "limit_up_pct_threshold": limit_up_pct,
+                "range_low": range_low,
+                "range_based_stop_pct": round(range_based_stop_pct, 4),
             },
             degraded=degraded,
             degradation_reason=degradation_reason,

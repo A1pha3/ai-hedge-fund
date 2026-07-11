@@ -1,71 +1,66 @@
-# 两个系统，两套方案
+# 从复杂系统到物理模型：压缩-爆发一体化方案
 
-## 1. `--daily-action` (BTST 均值回归): Donchian 位置因子
+## 核心洞察
 
-替换 `btst_breakout.py` 的 `trend_score` → `position_score`:
+当前系统的根本问题是：它把一个连续的物理过程（能量积蓄→爆发）**拆碎成 4 个独立的二元条件 + 4 个独立的二元因子**，每个条件/因子各自做是/否判断，然后用等权拼起来。这就像把弹簧的弹性系数、压缩距离、释放速度分别测量后投票——丢失了它们之间的**耦合关系**。
+
+文档的核心洞察"交易能量从积蓄到爆发的瞬时过程"指向一个完全不同的设计：**一个连续的复合信号，直接衡量压缩-爆发模式的强度**。
+
+## 具体发现的问题
+
+### 问题 1: 止损位置是固定的 -8%，没有利用物理结构
+
+当前止损：`trigger_close × 0.92`（固定 -8%）。
+
+文档原文：**"初始止损设在 LL 下方一点（如 LL - 0.5 × ATR）"**——止损应该设在压缩区间的底部。如果一个股票在 9.0-10.0 元盘整 20 天后涨停到 11.0 元，止损应该设在 9.0 元下方（盘整底部），而不是 11.0 × 0.92 = 10.12 元。
+
+这直接实现了用户的要求"止损更窄"——**当压缩区间很窄时（弹簧压得紧），止损天然很窄**。10.0 元盘整后涨停到 11.0 元，止损在 9.9 元 = 风险 1 元；如果固定 -8% 则止损在 10.12 = 风险 0.88 元。但如果盘整区间在 9.5-10.5 元（更宽的弹簧），止损在 9.4 元 = 风险 1.6 元，比固定 -8% 更宽。
+
+**关键**：止损宽度应该与压缩区间宽度耦合——压缩越紧，止损越窄，盈亏比越大。这正是"盈亏比天然更大"的物理来源。
+
+### 问题 2: 4 因子等权忽略了因子耦合
+
+当前 trigger_strength = 0.25×(weekday + board + position + squeeze)。
+
+但"压缩弹簧 + 新鲜位置"的组合（squeeze=1 + position=1）在物理上是一个完整的能量释放过程，其效果应该 > 两个独立因子的简单相加（0.25+0.25=0.5）。一个没有压缩的追高涨停（squeeze=0 + position=0）应该被强烈惩罚，而不仅仅是少 0.5 分。
+
+等权模型无法表达这种耦合——它把"压缩+新鲜=完美弹簧释放"和"不压缩+追高=假突破"视为对称的 0.5 分差异。
+
+## 改动
+
+### 改动 1: 止损位置从固定 -8% 改为压缩区间底部
 
 ```python
-low_5d = min(closes); high_5d = max(closes)
-range_pct = (closes[-1] - low_5d) / (high_5d - low_5d) if (high_5d - low_5d) > 0 else 0.5
-position_score = 1.0 if range_pct < 0.5 else 0.0  # 下半区=新鲜突破=好
+# btst_breakout.py detect() 中
+# 旧: invalidation = f"价格跌破 {trigger_close * 0.92:.2f} (-8% 止损线)"
+# 新: 用涨停前 20 日最低价作为止损基准
+lookback_start = max(0, trigger_idx - 20)
+range_low = float(prices.iloc[lookback_start:trigger_idx]["low"].min())
+invalidation = f"价格跌破 {range_low:.2f} (盘整区底部)"
+# hard_stop_pct 也基于 range_low 而非固定 -8%
 ```
 
-语义："涨停是从低位拉起（新鲜=好）还是在高位追（衰竭=差）"——均值回归语义。
+**效果**：压缩区间越窄 → range_low 越接近 trigger_close → 止损越窄 → 盈亏比越大。这是物理结构自动决定的，不需要人为设阈值。
 
-## 2. `--auto` (趋势+均值回归混合): 新增 2 个 trend 子因子
+### 改动 2: risk_framework 止损自适应
 
-在 `strategy_scorer_trend.py` 的 `_build_trend_sub_factors` 中新增：
+`build_risk_plan` 增加可选的 `range_based_stop` 参数。当 BTST 传入盘整区底部时，hard_stop 基于该底部而非固定 -8%。
 
-### 子因子 A: Donchian 位置 (donchian_position)
+### 改动 3: 简化 trigger_strength 为连续分数
+
+保留 4 因子，但把 position + squeeze 的耦合体现出来：
+
 ```python
-def _score_donchian_position(prices_df, window=20):
-    """价格在 N 日高低点区间的位置 (0=底部, 1=顶部).
-    趋势跟踪语义: 上半区=趋势已确立=看多; 下半区=趋势未确立=中性."""
-    high_N = prices_df["high"].rolling(window).max()
-    low_N = prices_df["low"].rolling(window).min()
-    position = (close - low_N) / (high_N - low_N)
-    direction = +1 if position > 0.5 else -1
-    confidence = position * 100  # 越靠近顶部, 置信度越高
+# 压缩+新鲜 = 完整弹簧释放 (bonus 0.1)
+energy_bonus = 0.1 if (position_score == 1.0 and squeeze_score == 1.0) else 0.0
+strength = 0.25*weekday + 0.25*board + 0.25*position + 0.25*squeeze + energy_bonus
+# clip 到 [0, 1]
 ```
 
-### 子因子 B: MA 距离 (ma_distance)
-```python
-def _score_ma_distance(prices_df, ma_window=50):
-    """收盘价到均线的距离 (乖离率).
-    趋势健康度: 适中距离=健康趋势; 过大=过热; 过小=趋势弱."""
-    ma = prices_df["close"].ewm(span=ma_window).mean()
-    distance_pct = (close - ma) / ma * 100
-    direction = +1 if distance_pct > 0 else -1
-    # 置信度: 距离适中 (2-8%) 时最高; 过热 (>10%) 时降低
-    confidence = clip(100 - abs(distance_pct - 5) * 10, 0, 100)
-```
-
-### 权重重分配
-当前（死代码 long_trend 不计入）:
-- ema_alignment: 0.30, adx: 0.16, momentum: 0.24, volatility: 0.15
-
-新权重:
-- ema_alignment: 0.22, adx: 0.14, momentum: 0.20, volatility: 0.12, **donchian: 0.16, ma_distance: 0.16**
-
-去掉死代码 long_trend_alignment（需要 200 行但缓存只有 120 行，永远不会触发）。
-
-## 改动清单
-
-### `--daily-action` 侧:
-1. `btst_breakout.py`: trend_score → position_score (Donchian 分位)
-2. `daily_action.py`: 渲染文本更新
-
-### `--auto` 侧:
-3. `strategy_scorer_trend.py`: 新增 `_score_donchian_position` + `_score_ma_distance` 函数
-4. `strategy_scorer_trend.py`: `_build_trend_sub_factors` 接入新因子
-5. `strategy_scorer_utils.py`: 更新 `TREND_SUBFACTOR_WEIGHTS`（去掉 long_trend，加入 donchian + ma_distance）
-6. 测试 + 回测验证
-
-## 数据可行性
-- price_cache ~120 行 OHLCV: 20/55 日 Donchian ✅, EMA20/50/60 ✅
-- 不使用 200/252 日窗口（缓存不足）
+这不是增加复杂度——它是 1 行代码表达物理耦合。
 
 ## 不改的
-- BTST 的 condition 1-4、T+8 持仓、止损策略
-- --auto 的 candidate_pool、signal_fusion 权重、investability 排序
-- regime 自适应权重（自动放大/缩小 trend 因子影响）
+- 4 个触发条件（涨停/资金流/行业/pre-runup）
+- 4 因子的独立计算逻辑
+- T+8 持仓、仓位计算、组合风控
+- _MIN_TRIGGER_STRENGTH = 0.35

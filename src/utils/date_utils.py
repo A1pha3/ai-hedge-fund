@@ -61,6 +61,60 @@ def _resolve_ready_hour(ready_hour: int | None) -> int:
         return _DEFAULT_READY_HOUR
 
 
+def latest_open_trade_date_on_or_before(date_str: str, *, lookback_days: int = 14) -> str:
+    """Return the latest open A-share trading day on or before ``date_str``.
+
+    Prefer ``trade_cal`` when available; when it is unavailable or returns no
+    data, fall back to a weekday-only rollback so weekend invocations still map
+    to Friday. This fallback cannot detect exchange holidays, but it avoids the
+    most harmful false positives in non-trading-time automation.
+    """
+
+    compact = str(date_str or "").strip().replace("-", "")
+    if len(compact) != 8 or not compact.isdigit():
+        return compact
+
+    try:
+        requested = datetime.strptime(compact, "%Y%m%d")
+    except ValueError:
+        return compact
+
+    try:
+        from src.tools.tushare_api import get_open_trade_dates
+
+        start_date = (requested - timedelta(days=max(lookback_days - 1, 0))).strftime("%Y%m%d")
+        open_dates = get_open_trade_dates(start_date, compact)
+        if open_dates:
+            return open_dates[-1]
+    except Exception:
+        pass
+
+    while requested.weekday() >= 5:
+        requested -= timedelta(days=1)
+    return requested.strftime("%Y%m%d")
+
+
+def resolve_market_ready_date(*, now: datetime | None = None, ready_hour: int | None = None) -> str:
+    """Return the effective trading date under the data-ready cutoff rule.
+
+    Before the cutoff, step back one calendar day first, then normalize to the
+    latest open trading day on or before that date. At/after the cutoff, use the
+    current day and normalize the same way.
+    """
+
+    now = now if now is not None else datetime.now()
+    cutoff = _resolve_ready_hour(ready_hour)
+    base = now - timedelta(days=1) if now.hour < cutoff else now
+    return latest_open_trade_date_on_or_before(base.strftime("%Y%m%d"))
+
+
+def resolve_market_ready_date_iso(*, now: datetime | None = None, ready_hour: int | None = None) -> str:
+    """Same rule as :func:`resolve_market_ready_date` but returns ``YYYY-MM-DD``."""
+
+    compact = resolve_market_ready_date(now=now, ready_hour=ready_hour)
+    return format_date(compact)
+
+
 def resolve_signal_date(*, now: datetime | None = None, ready_hour: int | None = None) -> str:
     """Return the default signal date under the data-ready time-of-day rule.
 
@@ -72,9 +126,9 @@ def resolve_signal_date(*, now: datetime | None = None, ready_hour: int | None =
     day so callers never operate on incomplete data; at/after the cutoff the
     current day is used.
 
-    Non-trading days (weekends/holidays) are NOT skipped here — downstream
-    ``build_candidate_pool`` / data queries naturally land on the nearest
-    trading day, so a one-day natural rollback is harmless.
+    Non-trading days are normalized to the latest open A-share trading day on
+    or before the cutoff-adjusted wall-clock date, so Sunday / Monday-morning
+    automation resolves to Friday rather than emitting weekend pseudo-dates.
 
     The cutoff is overridable via the ``DATA_READY_HOUR`` env var (default 17);
     an explicit ``ready_hour`` argument takes precedence over the env var.
@@ -87,10 +141,7 @@ def resolve_signal_date(*, now: datetime | None = None, ready_hour: int | None =
     Returns:
         Signal date in compact ``YYYYMMDD`` form.
     """
-    now = now if now is not None else datetime.now()
-    cutoff = _resolve_ready_hour(ready_hour)
-    base = now - timedelta(days=1) if now.hour < cutoff else now
-    return base.strftime("%Y%m%d")
+    return resolve_market_ready_date(now=now, ready_hour=ready_hour)
 
 
 def resolve_signal_date_iso(*, now: datetime | None = None, ready_hour: int | None = None) -> str:
@@ -99,7 +150,4 @@ def resolve_signal_date_iso(*, now: datetime | None = None, ready_hour: int | No
     Convenience for callers (e.g. ``--end-date`` CLI values) that use the
     dashed ISO form, avoiding a redundant ``format_date`` round-trip.
     """
-    now = now if now is not None else datetime.now()
-    cutoff = _resolve_ready_hour(ready_hour)
-    base = now - timedelta(days=1) if now.hour < cutoff else now
-    return base.strftime("%Y-%m-%d")
+    return resolve_market_ready_date_iso(now=now, ready_hour=ready_hour)

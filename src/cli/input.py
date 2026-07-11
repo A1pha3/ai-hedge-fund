@@ -88,19 +88,19 @@ def add_common_args(
 
 
 def _resolve_default_end_date() -> str:
-    """数据就绪阈值: 未过 17:00 时默认取前一天, 过了 17:00 取当天。
+    """数据就绪阈值 + 交易日归一化: 返回最新可用开市日。
 
     A 股资金流 (tushare moneyflow / akshare push2his) 通常在收盘后 ~2 小时
     (约 17:00) 才完成当日数据入库。在 17:00 之前查询当日数据会得到空结果,
     导致 cache_refresh 报 "双源均失败"、筛选缺当日资金流信号。
 
     当不显式指定 --end-date 时, 17:00 前自动回退一天, 避免查到不存在的当日数据;
-    17:00 后 (含) 取当天。非交易日 (周末/节假日) 回退一天不影响正确性 — 下游
-    build_candidate_pool / 数据查询会自然落到最近的交易日。
+    17:00 后 (含) 取当天。随后统一归一化到最近开市日, 这样周日/周一盘前都会
+    落到上周五, 不再生成周末 pseudo-date 报告。
 
     阈值可通过环境变量 DATA_READY_HOUR 覆盖 (默认 17)。
 
-    本函数是 :func:`src.utils.date_utils.resolve_signal_date_iso` 的薄包装:
+    本函数是 :func:`src.utils.date_utils.resolve_market_ready_date_iso` 的薄包装:
     把"当前墙钟"显式传进去 (而非让 helper 内部读 ``datetime.now()``), 这样
     测试 patch ``src.cli.input.datetime`` 时仍能控制行为 (详见
     ``tests/cli/test_input_dates.py``)。env 解析同样在本地完成以保持契约。
@@ -108,13 +108,13 @@ def _resolve_default_end_date() -> str:
     Returns:
         YYYY-MM-DD 格式的默认结束日期
     """
-    from src.utils.date_utils import resolve_signal_date_iso
+    from src.utils.date_utils import resolve_market_ready_date_iso
 
     try:
         ready_hour = int(os.environ.get("DATA_READY_HOUR", "17"))
     except ValueError:
         ready_hour = 17
-    return resolve_signal_date_iso(now=datetime.now(), ready_hour=ready_hour)
+    return resolve_market_ready_date_iso(now=datetime.now(), ready_hour=ready_hour)
 
 
 def add_date_args(parser: argparse.ArgumentParser, *, default_months_back: int | None = None) -> argparse.ArgumentParser:

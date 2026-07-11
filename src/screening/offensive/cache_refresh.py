@@ -19,6 +19,7 @@ import pandas as pd
 
 from src.tools.ashare_board_utils import build_beijing_exchange_mask_from_series
 from src.tools.ashare_board_utils import is_beijing_exchange_stock
+from src.utils.date_utils import latest_open_trade_date_on_or_before
 
 logger = logging.getLogger(__name__)
 
@@ -304,41 +305,11 @@ def _history_start_date(trade_date: str, lookback_days: int = _DEFAULT_PRICE_HIS
 
 
 def _resolve_effective_market_date(trade_date: str, *, lookback_days: int = 14) -> str:
-    """Resolve the latest open A-share trading day on or before ``trade_date``.
-
-    ``--auto`` may run on weekends or holidays, while cache refresh needs the
-    latest market data date. Prefer ``trade_cal`` when available; fall back to
-    a weekend-only rollback when calendar data is unavailable.
-    """
-
     requested = _fund_flow_date(trade_date)
-    requested_dt = pd.to_datetime(requested, format="%Y%m%d")
-    window_start = (requested_dt - pd.Timedelta(days=max(lookback_days - 1, 0))).strftime("%Y%m%d")
-
-    try:
-        from src.tools.tushare_api import get_open_trade_dates
-
-        open_dates = get_open_trade_dates(window_start, requested)
-    except Exception:
-        open_dates = []
-
-    if open_dates:
-        effective = open_dates[-1]
-        if effective != requested:
-            logger.info("[cache_refresh] %s 非交易日, 回退到最近开市日 %s 刷新缓存", requested, effective)
-        return effective
-
-    fallback_dt = requested_dt
-    while fallback_dt.weekday() >= 5:
-        fallback_dt -= pd.Timedelta(days=1)
-    fallback = fallback_dt.strftime("%Y%m%d")
-    if fallback != requested:
-        logger.info(
-            "[cache_refresh] trade_cal 不可用或为空, %s 使用工作日近似回退到 %s 刷新缓存",
-            requested,
-            fallback,
-        )
-    return fallback
+    effective = latest_open_trade_date_on_or_before(requested, lookback_days=lookback_days)
+    if effective != requested:
+        logger.info("[cache_refresh] %s 非交易日或未开市, 回退到最近开市日 %s 刷新缓存", requested, effective)
+    return effective
 
 
 def _normalise_price_history(df: pd.DataFrame | None) -> pd.DataFrame:
