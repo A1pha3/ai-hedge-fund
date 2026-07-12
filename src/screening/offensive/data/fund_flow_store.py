@@ -6,6 +6,7 @@ Phase 0a 用文件存储 (CSV per ticker); Phase 1+ 数据量上来后再迁 SQL
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -67,17 +68,26 @@ class FundFlowStore:
 
     @staticmethod
     def _row_to_record(row: pd.Series) -> FundFlowRecord:
+        # pandas NaN 是 truthy, `x or 0.0` 对 NaN 无效 → CSV 空值传播为 NaN.
+        # 先 float() 再 math.isnan() 统一处理 None/NaN/非法值, 兜底为 0.0.
+        def _f(key: str) -> float:
+            try:
+                f = float(row.get(key, 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+            return 0.0 if math.isnan(f) else f
+
         return FundFlowRecord(
             ticker=str(row["ticker"]),
             date=str(row["date"]),
-            close=float(row.get("close", 0.0) or 0.0),
-            pct_change=float(row.get("pct_change", 0.0) or 0.0),
-            main_net_inflow=float(row.get("main_net_inflow", 0.0) or 0.0),
-            main_net_pct=float(row.get("main_net_pct", 0.0) or 0.0),
-            big_net_inflow=float(row.get("big_net_inflow", 0.0) or 0.0),
-            super_big_net_inflow=float(row.get("super_big_net_inflow", 0.0) or 0.0),
-            medium_net_inflow=float(row.get("medium_net_inflow", 0.0) or 0.0),
-            small_net_inflow=float(row.get("small_net_inflow", 0.0) or 0.0),
+            close=_f("close"),
+            pct_change=_f("pct_change"),
+            main_net_inflow=_f("main_net_inflow"),
+            main_net_pct=_f("main_net_pct"),
+            big_net_inflow=_f("big_net_inflow"),
+            super_big_net_inflow=_f("super_big_net_inflow"),
+            medium_net_inflow=_f("medium_net_inflow"),
+            small_net_inflow=_f("small_net_inflow"),
         )
 
     def get(self, ticker: str, date: str) -> FundFlowRecord | None:

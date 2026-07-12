@@ -25,6 +25,7 @@ trigger_strength 的 trend 因子进一步区分 ≤0% (最强) 和 0-10% 的差
 
 from __future__ import annotations
 
+import math
 from datetime import datetime as _dt
 from typing import Any
 
@@ -262,16 +263,23 @@ class BtstBreakoutSetup(Setup):
         from src.tools.ashare_board_utils import limit_up_pct_for_ticker
 
         limit_up_pct = limit_up_pct_for_ticker(ticker)
-        pct_change = float(trigger_row.get("pct_change", 0.0) or 0.0)
-        if pct_change < limit_up_pct:
+        # NaN guard: `NaN or 0.0` 返回 NaN (NaN 是 truthy), `NaN < threshold` 永远 False.
+        # 先 float() 再 math.isnan() 统一处理, 数据缺失时保守 miss.
+        try:
+            pct_change = float(trigger_row.get("pct_change", 0.0))
+        except (TypeError, ValueError):
+            pct_change = float("nan")
+        if math.isnan(pct_change) or pct_change < limit_up_pct:
             return self._miss(ticker, trade_date)
 
         # 条件 2: 主力净流入 > 20 日均值 (去掉冗余 >0 检查: 涨停日必然正流入)
         records: list[FundFlowRecord] = context.get("fund_flow_records") or []
         today_flow = next((r.main_net_inflow for r in records if r.date == trade_date), None)
-        if today_flow is None:
+        # Bug fix (2026-07-12): NaN guard — fund_flow_store 已修复 `or 0.0` 对 NaN 无效,
+        # 但防御性检查 today_flow 的 NaN (上游数据源可能未修复或第三方传入异常数据).
+        if today_flow is None or math.isnan(today_flow):
             return self._miss(ticker, trade_date)
-        historical = [r.main_net_inflow for r in records if r.date < trade_date]
+        historical = [r.main_net_inflow for r in records if r.date < trade_date and not math.isnan(r.main_net_inflow)]
         # 资金流历史不足 20d 时: 有 ≥5 天就算短窗口均值 (标 degraded), <5 天跳过
         degraded = False
         degradation_reason = ""

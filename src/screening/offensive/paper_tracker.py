@@ -632,11 +632,13 @@ class PaperTracker:
         buy_dt = datetime.strptime(str(buy_date), "%Y%m%d").date()
         cal_days = _trading_horizon_to_calendar_days(horizon)
         end_dt = buy_dt + timedelta(days=cal_days)
-        # 过滤到 [buy_date, buy_date + T+N 交易日保守日历日下限] 区间.
+        # Bug fix (2026-07-12): 窗口排除 T+0 信号日 — 信号日当天用户尚未买入 (T+1 开盘才买),
+        # T+0 盘中 low 与止损无关. 旧代码 `>= buy_dt` 包含 T+0, 涨停日盘中波动会误报止损触发.
+        # 修正: `> buy_dt` 从 T+1 开始扫描, 与 _stop_adjusted_return 的 entry_idx = trigger_idx + 1 对齐.
         # date 列可能为 datetime64 或字符串 — 直接尝试 .dt.date, 失败时兜底用全量 low.
         df = prices_df.copy()
         try:
-            mask = (df["date"].dt.date >= buy_dt) & (df["date"].dt.date <= end_dt)
+            mask = (df["date"].dt.date > buy_dt) & (df["date"].dt.date <= end_dt)
             window = df.loc[mask, "low"].dropna()
         except Exception:
             window = df["low"].dropna()
