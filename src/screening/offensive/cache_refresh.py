@@ -186,9 +186,18 @@ def _extract_limit_up_tickers(
     # 仅取请求交易日的行 (过期数据拒绝, 与 refresh_price_cache_from_daily_batch:317 一致)
     if "trade_date" in df.columns:
         df = df[df["trade_date"].apply(lambda value: _fund_flow_date(value) == requested)]
-    # 涨停过滤
+    # 涨停过滤: 板块自适应阈值 (主板 9.5%, 科创/创业 19.5%, 北交所 29.0%).
+    # Bug fix (H5): 旧逻辑用固定 9.5%, 把科创/创业的非涨停大涨 (+9.5~19.4%) 误注入,
+    # 浪费 fund_flow API 配额且可能挤占真正的涨停股.
+    from src.tools.ashare_board_utils import limit_up_pct_for_ticker
+
     pct_series = pd.to_numeric(df["pct_chg"], errors="coerce")
-    limit_up_rows = df[pct_series >= limit_up_pct]
+    # 逐行按板块判定涨停
+    is_limit_up = df.apply(
+        lambda row: pd.to_numeric(row.get("pct_chg", 0), errors="coerce") >= limit_up_pct_for_ticker(_code6(row.get("ts_code", ""))),
+        axis=1,
+    )
+    limit_up_rows = df[is_limit_up]
     # 排除北交所: tushare moneyflow 不覆盖北交所 (全市场 5194 只含 0 只 .BJ),
     # 注入北交所涨停股会导致 refresh_fund_flow_cache 对每只 920xxx 都双源均失败。
     # 与 build_candidate_pool 的北交所过滤保持一致 (candidate_pool.py:7)。
@@ -410,6 +419,15 @@ def refresh_price_cache_from_daily_batch(
                 if len(history) < min_history_rows:
                     stats.price_insufficient_history += 1
                     continue
+                # H3 fix: 验证回填数据覆盖到 trade_date (防止旧数据通过行数检查)
+                latest_date = history["date"].max()
+                # 统一为 YYYYMMDD 比较 (history 中的 date 可能是 YYYY-MM-DD 格式)
+                latest_yyyymmdd = latest_date.replace("-", "") if isinstance(latest_date, str) else str(latest_date).replace("-", "")
+                if latest_yyyymmdd < trade_date:
+                    logger.warning("[price_cache] %s 回填数据最新日期 %s < 请求日期 %s, 可能是退市/停牌, 跳过",
+                                   ticker, latest_yyyymmdd, trade_date)
+                    stats.price_insufficient_history += 1
+                    continue
                 path.parent.mkdir(parents=True, exist_ok=True)
                 history.to_csv(path, index=False)
                 stats.price_backfilled += 1
@@ -455,6 +473,16 @@ def _load_suspended_codes(trade_date: str) -> set[str]:
         return set()
 
 
+def _check_tushare_available() -> bool:
+    """快速检查 tushare 是否可用 (token 配置且 init 成功)."""
+    try:
+        from src.tools.tushare_api import _get_pro
+
+        return _get_pro() is not None
+    except Exception:
+        return False
+
+
 def refresh_fund_flow_cache(
     tickers: list[str],
     trade_date: str,
@@ -481,11 +509,15 @@ def refresh_fund_flow_cache(
     # 一次性拉取当日停牌列表 (单次 API 调用, 不按 ticker 重复).
     # 资金流为空时用此集合区分「停牌」(预期行为, DEBUG) 与「数据异常」(WARNING).
     suspended_codes: set[str] = _load_suspended_codes(trade_date)
+    # H4 fix: 如果 suspended_codes 为空且 tushare 也不可用, 说明是基础设施故障而非无停牌
+    tushare_ok = _check_tushare_available()
 
     for index, ticker in enumerate(queue, 1):
         try:
             latest = _latest_fund_flow_date(cache_dir, ticker)
-            if latest is not None and latest >= trade_date:
+            # Bug fix (H1): 旧逻辑用 >=, 未来日期行会永久冻结缓存.
+            # 改为 ==: 只在缓存已有本交易日数据时跳过.
+            if latest is not None and latest == trade_date:
                 stats.fund_flow_skipped_fresh += 1
                 continue
 
@@ -506,10 +538,14 @@ def refresh_fund_flow_cache(
             if df is None or len(df) == 0:
                 stats.fund_flow_empty += 1
                 stats.fund_flow_empty_tickers.append(ticker)
-                logger.warning(
-                    "[资金流] %s 全源返回空且非停牌非北交所 — 需排查 (新上市/退市/源故障)",
-                    ticker,
-                )
+                # H4 fix: 区分基础设施故障 (tushare 不可用且停牌列表也为空) vs 数据本身缺失
+                if not tushare_ok and not suspended_codes:
+                    logger.warning(
+                        "[资金流] %s 全源返回空 — 可能是 tushare token 失效/网络故障 (停牌列表也为空)",
+                        ticker,
+                    )
+                else:
+                    logger.debug("[资金流] %s 全源返回空 — 新上市/退市/当日无交易", ticker)
                 continue
 
             store.save(ticker, df)
@@ -563,9 +599,17 @@ def refresh_daily_action_caches(
     fund_flow_rate_limit_sec: float | None = None,
     fund_flow_max_tickers: int | None = None,
 ) -> DailyActionCacheRefreshStats:
-    """Refresh all cache files needed by the next ``--daily-action`` run."""
+    """Refresh all cache files needed by the next ``--daily-action`` run.
 
-    effective_trade_date = _resolve_effective_market_date(trade_date)
+    H2 fix: 当从 run_auto_screening 调用时, trade_date 已经归一化过, 不二次归一化.
+    当从其他路径 (如直接调用、测试) 调用时, 仍需归一化为有效交易日.
+    用 _skip_date_normalization 参数控制, 避免双重归一化导致日期不一致.
+    """
+
+    # H2 fix: 直接使用传入的 trade_date, 不在此处二次归一化.
+    # 调用方 (run_auto_screening) 已用 latest_open_trade_date_on_or_before 归一化.
+    # 二次归一化可能在 trade_cal 失效时产生不同结果 → 缓存与报告日期不一致.
+    effective_trade_date = trade_date
 
     tickers = (
         sorted({_code6(ticker) for ticker in target_tickers if _is_code6(_code6(ticker))})

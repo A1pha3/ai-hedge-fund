@@ -21,15 +21,20 @@ def _daily_prices(rows: list[dict]) -> pd.DataFrame:
 
 def _history_rows(start: str = "2026-05-20", periods: int = 35) -> pd.DataFrame:
     dates = pd.bdate_range(start, periods=periods)
+    # H3 fix: 确保包含 trade_date 20260708 的行
+    dates = dates.tolist()
+    trade_date = pd.Timestamp("2026-07-08")
+    if trade_date not in dates:
+        dates.append(trade_date)
     return pd.DataFrame(
         {
             "date": [date.strftime("%Y-%m-%d") for date in dates],
-            "close": [10.0 + index * 0.1 for index in range(periods)],
-            "open": [9.9 + index * 0.1 for index in range(periods)],
-            "high": [10.2 + index * 0.1 for index in range(periods)],
-            "low": [9.8 + index * 0.1 for index in range(periods)],
-            "pct_change": [1.0 for _ in range(periods)],
-            "volume": [1000.0 + index for index in range(periods)],
+            "close": [10.0 + index * 0.1 for index in range(len(dates))],
+            "open": [9.9 + index * 0.1 for index in range(len(dates))],
+            "high": [10.2 + index * 0.1 for index in range(len(dates))],
+            "low": [9.8 + index * 0.1 for index in range(len(dates))],
+            "pct_change": [1.0 for _ in range(len(dates))],
+            "volume": [1000.0 + index for index in range(len(dates))],
         }
     )
 
@@ -280,11 +285,10 @@ def test_refresh_daily_action_caches_refreshes_industry_index_for_trade_date(tmp
     assert stats.industry_index_failed == 0
 
 
-def test_refresh_daily_action_caches_rolls_back_non_trading_day_to_latest_open_date(tmp_path, monkeypatch):
+def test_refresh_daily_action_caches_uses_passed_trade_date_directly(tmp_path, monkeypatch):
+    """H2 fix: refresh_daily_action_caches 直接使用传入的 trade_date, 不二次归一化.
+    调用方 (run_auto_screening) 负责传入有效的交易日."""
     from src.screening.offensive import cache_refresh as cr
-    from src.tools import tushare_api
-
-    monkeypatch.setattr(tushare_api, "get_open_trade_dates", lambda start_date, end_date: ["20260710"])
 
     price_cache = tmp_path / "price_cache"
     price_cache.mkdir()
@@ -310,7 +314,7 @@ def test_refresh_daily_action_caches_rolls_back_non_trading_day_to_latest_open_d
         )
 
     stats = cr.refresh_daily_action_caches(
-        "20260711",
+        "20260710",  # 直接传入有效交易日 (不再内部归一化)
         price_cache_dir=price_cache,
         fund_flow_cache_dir=tmp_path / "fund_flow_cache",
         snapshot_dir=tmp_path / "snapshots",
@@ -549,24 +553,27 @@ def test_extract_limit_up_tickers_handles_empty_and_missing_columns():
 
 
 def test_extract_limit_up_tickers_excludes_beijing_exchange():
-    """北交所涨停股 (920xxx/8xxxxx/4xxxxx) 应被过滤: tushare moneyflow 不覆盖北交所,
-    注入会导致 refresh_fund_flow_cache 对每只双源均失败。"""
+    """北交所涨停股 (920xxx/8xxxxx/4xxxxx) 应被过滤: tushare moneyflow 不覆盖北交所.
+    板块自适应阈值: 主板≥9.5%, 科创/创业≥19.5%, 北交所≥29.0%."""
     from src.screening.offensive.cache_refresh import _extract_limit_up_tickers
 
     df = _daily_prices(
         [
-            {"ts_code": "688368.SH", "pct_chg": 10.0},   # 科创板涨停 → 保留
-            {"ts_code": "000003.SZ", "pct_chg": 10.0},   # 深市涨停 → 保留
-            {"ts_code": "920088.BJ", "pct_chg": 15.0},   # 北交所涨停 → 过滤
-            {"ts_code": "920090.BJ", "pct_chg": 12.0},   # 北交所涨停 → 过滤
-            {"ts_code": "830879.BJ", "pct_chg": 20.0},   # 北交所涨停 → 过滤
+            {"ts_code": "688368.SH", "pct_chg": 20.0},   # 科创板真涨停 (≥19.5%) → 保留
+            {"ts_code": "000003.SZ", "pct_chg": 10.0},   # 深市主板涨停 (≥9.5%) → 保留
+            {"ts_code": "920088.BJ", "pct_chg": 15.0},   # 北交所非涨停 (<29%) → 过滤
+            {"ts_code": "920090.BJ", "pct_chg": 12.0},   # 北交所非涨停 (<29%) → 过滤
+            {"ts_code": "830879.BJ", "pct_chg": 20.0},   # 北交所非涨停 (<29%) → 过滤
+            {"ts_code": "688999.SH", "pct_chg": 10.0},   # 科创板非涨停 (<19.5%) → 过滤
         ]
     )
     tickers = _extract_limit_up_tickers(df, "20260708")
-    assert "688368" in tickers
-    assert "000003" in tickers
+    assert "688368" in tickers   # 科创板 20% 真涨停
+    assert "000003" in tickers   # 主板 10% 真涨停
     assert "920088" not in tickers
     assert "920090" not in tickers
+    assert "830879" not in tickers
+    assert "688999" not in tickers  # 科创板 10% 不是涨停
     assert "830879" not in tickers
 
 

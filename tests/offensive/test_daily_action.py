@@ -1314,7 +1314,7 @@ def test_render_daily_action_explains_stops_prior_and_rule_execution(tmp_path, m
         )
     ]
 
-    out = da.render_daily_action(actions, "20260708", tracker)
+    out = da.render_daily_action(actions, "20260708", tracker, explain=True)
 
     assert "软止损=历史平均亏损x1.5的观察线" in out
     assert "硬止损=固定-8%的风控参考线" in out
@@ -1335,7 +1335,7 @@ def test_render_daily_action_does_not_claim_stop_loss_changes_paper_pnl(tmp_path
     from src.screening.offensive.paper_tracker import PaperTracker
 
     monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
-    monkeypatch.setattr(da, "_setup_policy_lines", lambda: [], raising=False)
+    monkeypatch.setattr(da, "_setup_policy_lines", lambda **kw: [], raising=False)
     monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
     tracker = PaperTracker(journal_dir=tmp_path)
     actions = [
@@ -1354,12 +1354,53 @@ def test_render_daily_action_does_not_claim_stop_loss_changes_paper_pnl(tmp_path
         )
     ]
 
-    out = da.render_daily_action(actions, "20260708", tracker)
+    out = da.render_daily_action(actions, "20260708", tracker, explain=True)
 
     assert "止损触发只做披露" in out
     assert "paper P&L 按 T+N 收盘回填" in out
     assert "实际风控线" not in out
     assert "触硬止损或失效条件 → 当日收盘平" not in out
+
+
+def test_render_daily_action_hides_terminology_without_verbose(tmp_path, monkeypatch):
+    """默认输出不含术语说明/执行规则 (跑了一周以上已熟记); --verbose (explain=True) 才展开."""
+    from src.screening.offensive import daily_action as da
+    from src.screening.offensive.daily_action import DailyAction
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
+    monkeypatch.setattr(da, "_setup_policy_lines", lambda **kw: [], raising=False)
+    monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
+    tracker = PaperTracker(journal_dir=tmp_path)
+    actions = [
+        DailyAction(
+            ticker="603778",
+            setup="btst_breakout",
+            action="BUY",
+            kelly_pct=0.10,
+            entry_price=10.92,
+            soft_stop=10.01,
+            hard_stop=10.05,
+            time_exit="T+10",
+            invalidation_condition="价格跌破 10.05 (-8% 止损线)",
+            distribution_summary="n=1762 winrate=54% cv=1.81 E=+3.4%",
+            reasoning="test",
+        )
+    ]
+
+    # 默认: 术语说明 + 执行规则隐藏 (精简输出)
+    out = da.render_daily_action(actions, "20260708", tracker)
+    assert "术语说明" not in out
+    assert "执行规则" not in out
+    # BUY 计划仍在 (核心决策信息不丢)
+    assert "计划 BUY" in out
+    # journal 闭环确认仍在
+    assert "已写入 paper journal" in out
+
+    # --verbose: 展开
+    out_verbose = da.render_daily_action(actions, "20260708", tracker, explain=True)
+    assert "术语说明" in out_verbose
+    assert "执行规则" in out_verbose
 
 
 def test_render_daily_action_discloses_setup_policy_from_backtest(tmp_path, monkeypatch):
@@ -1406,7 +1447,7 @@ def test_render_daily_action_discloses_setup_policy_from_backtest(tmp_path, monk
         raising=False,
     )
 
-    out = da.render_daily_action([], "20260708", PaperTracker(journal_dir=tmp_path))
+    out = da.render_daily_action([], "20260708", PaperTracker(journal_dir=tmp_path), explain=True)
 
     assert "启用 setup: 涨停突破(btst_breakout)" in out
     assert "n=133" in out
@@ -2398,14 +2439,14 @@ def test_render_shows_held_positions_and_maturity_release_schedule(tmp_path, mon
     from src.screening.offensive.paper_tracker import PaperTracker
 
     monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
-    monkeypatch.setattr(da, "_setup_policy_lines", lambda: [], raising=False)
+    monkeypatch.setattr(da, "_setup_policy_lines", lambda **kw: [], raising=False)
     monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
 
     tracker = PaperTracker(journal_dir=tmp_path)
     # 一笔未到期 (剩 3 天), 50% 敞口占用
     tracker.record_buy("20260706", "300308", "btst_breakout", 10, 10.0, 0.50, 9.0, 9.2, "fake")
 
-    out = da.render_daily_action([], "20260706", tracker)
+    out = da.render_daily_action([], "20260706", tracker, explain=True)
 
     # (1) 持仓明细: ticker + setup + 买入日 + 价格 + 到期日
     assert "📌" in out and "当前持仓" in out, "应有持仓明细标题"
@@ -2413,7 +2454,8 @@ def test_render_shows_held_positions_and_maturity_release_schedule(tmp_path, mon
     assert "20260706买入" in out, "应显示买入日"
     # 到期日 = 买入日 + T+10 交易日 (保守日历日下限 10 + 2*floor(10/5) = 14)
     # = 20260706 + 14 = 20260720 (旧日历日口径 20260716 比真实 T+10 交易日早 4 天)
-    assert "到期 20260720 (剩14天)" in out, f"应显示到期日 + 剩余天数, 实际:\n{out}"
+    # 剩N天以今天为基准 (非信号日), 故只断言到期日存在, 不断言具体天数.
+    assert "到期 20260720" in out, f"应显示到期日, 实际:\n{out}"
     # (2) 最近到期释放日程
     assert "💡" in out and "最近到期" in out, "应有最近到期释放日程"
     assert "释放" in out and "敞口" in out, "应说明释放多少敞口"
@@ -2431,14 +2473,15 @@ def test_render_release_schedule_says_cap_cleared_when_dropping_below_limit(tmp_
     from src.screening.offensive.paper_tracker import PaperTracker
 
     monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
-    monkeypatch.setattr(da, "_setup_policy_lines", lambda: [], raising=False)
+    monkeypatch.setattr(da, "_setup_policy_lines", lambda **kw: [], raising=False)
     monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"测试股{t[-2:]}")
 
     tracker = PaperTracker(journal_dir=tmp_path)
-    # 50% 敞口, T+5 即将到期 → 释放后敞口降到 0% (< 60% 上限) → 应说 "可恢复"
-    tracker.record_buy("20260701", "300308", "oversold_bounce", 5, 10.0, 0.50, 9.0, 9.2, "fake")
+    # 50% 敞口, T+10 未来到期 → 释放后敞口降到 0% (< 60% 上限) → 应说 "可恢复"
+    # buy_date 用近期日期, 确保 days_to_maturity (以今天为基准) > 0.
+    tracker.record_buy("20260710", "300308", "btst_breakout", 10, 10.0, 0.50, 9.0, 9.2, "fake")
 
-    out = da.render_daily_action([], "20260704", tracker)
+    out = da.render_daily_action([], "20260710", tracker)
 
     assert "可恢复出新仓" in out, f"释放后敞口降回上限内, 应告诉 operator 可恢复, 实际:\n{out}"
     assert "仍超" not in out
@@ -2467,7 +2510,7 @@ def test_render_candidate_list_truncates_with_rest_count(tmp_path, monkeypatch):
     monkeypatch.setattr(da, "_env_setup_disable_list", lambda: set())
     monkeypatch.delenv("DAILY_ACTION_ENFORCE_OPEN_CAP", raising=False)
     monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
-    monkeypatch.setattr(da, "_setup_policy_lines", lambda: [], raising=False)
+    monkeypatch.setattr(da, "_setup_policy_lines", lambda **kw: [], raising=False)
     monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"股{t[-2:]}")
     reports = tmp_path / "reports"
     reports.mkdir()
@@ -2526,7 +2569,7 @@ def test_held_ticker_excluded_from_candidates(tmp_path, monkeypatch):
     monkeypatch.setattr(da, "_env_setup_disable_list", lambda: set())
     monkeypatch.delenv("DAILY_ACTION_ENFORCE_OPEN_CAP", raising=False)
     monkeypatch.setattr(da, "_resolve_next_trade_date", lambda trade_date: "20260709", raising=False)
-    monkeypatch.setattr(da, "_setup_policy_lines", lambda: [], raising=False)
+    monkeypatch.setattr(da, "_setup_policy_lines", lambda **kw: [], raising=False)
     monkeypatch.setattr("src.tools.tushare_api.get_stock_name", lambda t: f"股{t[-2:]}")
 
     tracker = PaperTracker(journal_dir=tmp_path)

@@ -25,7 +25,6 @@ from src.tools._multi_source import (
     safe_float_col,
     safe_scalar,
     select_and_sort,
-    wan_to_yuan_if_needed,
 )
 from src.tools.ftshare_client import _get_market
 
@@ -143,18 +142,15 @@ def _normalise_fund_flow(df: pd.DataFrame, ticker: str) -> pd.DataFrame:
     df["date"] = pd.to_datetime(df[date_col].astype(str).str.replace("-", ""), format="%Y%m%d", errors="coerce")
     df = df.dropna(subset=["date"])
 
-    # 金额字段: 查找 + 万元→元启发式
-    amount_fields = ["main_net_inflow", "big_net_inflow", "super_big_net_inflow",
-                     "medium_net_inflow", "small_net_inflow"]
+    # 金额字段: ftshare 东财源返回元 (非万元), 不需要 wan_to_yuan 启发式.
+    # Bug fix (C2): 旧启发式 median<1e4 误判小额资金流为万元 → 10000x 膨胀.
     for target, candidates in _FLOW_AMOUNT_FIELDS:
         col = find_col(df, candidates)
         if col:
-            series = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-            if target in amount_fields:
-                series = wan_to_yuan_if_needed(series)
-            df[target] = series
+            df[target] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
         elif target == "main_net_pct":
-            df[target] = 0.0
+            # Bug fix (M4): ftshare 不提供占比时用 NaN 而非 0.0, 避免伪造数据
+            df[target] = float("nan")
         else:
             df[target] = 0.0
 

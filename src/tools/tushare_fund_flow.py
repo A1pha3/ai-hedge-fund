@@ -154,8 +154,10 @@ def fetch_individual_fund_flow_tushare(
     # 中单 / 小单
     df["medium_net_inflow"] = (df["buy_md_amount"].astype(float) - df["sell_md_amount"].astype(float)) * _WAN_TO_YUAN
     df["small_net_inflow"] = (df["buy_sm_amount"].astype(float) - df["sell_sm_amount"].astype(float)) * _WAN_TO_YUAN
-    # 主力净流入占比 = net_mf_amount / (成交额) — tushare 不直接给, 用 net_mf_vol/总股本近似留空
-    df["main_net_pct"] = 0.0  # tushare 不提供占比, 留 0 (setup 主要用 net_inflow 绝对值)
+    # 主力净流入占比 = net_mf_amount / (成交额) — tushare 不直接给.
+    # Bug fix (C1): 旧代码硬编码 0.0, 下游评分器把 0 当真实值 → 信号失效.
+    # 改为 NaN: 让下游知道"此字段不可用", 跳过该信号而非用假数据.
+    df["main_net_pct"] = float("nan")
     # close / pct_change: tushare moneyflow 不含价格, 留 NaN (价格从 daily 行情另取)
     df["close"] = float("nan")
     df["pct_change"] = 0.0

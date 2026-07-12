@@ -143,7 +143,7 @@ class ScoringFeatureStore:
         if not path.exists():
             return pd.DataFrame()
         try:
-            frame = pd.read_csv(path)
+            frame = pd.read_csv(path, dtype={"date": str})  # M7: 统一 dtype
         except (OSError, UnicodeDecodeError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError):
             self._quality.note_malformed("price_history")
             return pd.DataFrame()

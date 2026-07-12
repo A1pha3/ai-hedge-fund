@@ -42,17 +42,27 @@ def _try_tushare(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
 
 
 def _try_akshare(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    """akshare: stock_zh_a_hist (前复权), 中文列名归一化。"""
+    """akshare: stock_zh_a_hist (前复权), 中文列名归一化.
+
+    M1 fix: 复用 akshare_runtime_helpers 的共享线程池加超时, 防止单次 akshare 调用挂起整个 --auto 运行.
+    """
     try:
         import akshare as ak
     except ImportError:
         return pd.DataFrame()
 
-    df = ak.stock_zh_a_hist(
-        symbol=ticker, period="daily",
-        start_date=start_date.replace("-", ""), end_date=end_date.replace("-", ""),
-        adjust="qfq",
-    )
+    from src.tools.akshare_runtime_helpers import _call_with_timeout
+
+    try:
+        df = _call_with_timeout(
+            ak.stock_zh_a_hist,
+            symbol=ticker, period="daily",
+            start_date=start_date.replace("-", ""), end_date=end_date.replace("-", ""),
+            adjust="qfq",
+        )
+    except TimeoutError:
+        logger.debug("[price] akshare stock_zh_a_hist %s 超时", ticker)
+        return pd.DataFrame()
     if df is None or len(df) == 0:
         return pd.DataFrame()
     return _normalise_akshare(df)

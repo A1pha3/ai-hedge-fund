@@ -160,7 +160,7 @@ def _format_backtest_stats(stats: Any | None) -> str:
     return base
 
 
-def _setup_policy_lines(disabled_setups: set[str] | None = None) -> list[str]:
+def _setup_policy_lines(disabled_setups: set[str] | None = None, *, explain: bool = False) -> list[str]:
     """Render active/paused setup policy with first-principles backtest evidence."""
     disabled = _env_setup_disable_list() if disabled_setups is None else set(disabled_setups)
     report = _load_backtest_setup_performance()
@@ -174,11 +174,14 @@ def _setup_policy_lines(disabled_setups: set[str] | None = None) -> list[str]:
         if name in disabled:
             if name == "oversold_bounce":
                 # 暂停理由 = 统计不显著 + 尾部更厚 (不是 crisis 分层; n=21 太小不可靠).
-                # 只在能拿到 stats 时显示 E[r] 和 n, 让 operator 看到"证据不足"而非"亏钱".
-                n = getattr(stats, "n", 0) if stats is not None else 0
-                er = getattr(stats, "expected_return", None) if stats is not None else None
-                evidence_note = f" E={er:+.2%} (n={n}, CI 跨 0 不显著)" if er is not None and n > 0 else ""
-                part = f"{part} — 默认暂停: 实测{evidence_note}, 尾部亏损比 BTST 厚"
+                # 默认只标 "默认暂停"; 完整理由 (CI 跨 0/尾部更厚) 进 --verbose.
+                if explain:
+                    n = getattr(stats, "n", 0) if stats is not None else 0
+                    er = getattr(stats, "expected_return", None) if stats is not None else None
+                    evidence_note = f" E={er:+.2%} (n={n}, CI 跨 0 不显著)" if er is not None and n > 0 else ""
+                    part = f"{part} — 默认暂停: 实测{evidence_note}, 尾部亏损比 BTST 厚"
+                else:
+                    part = f"{part} — 默认暂停"
             paused_parts.append(part)
         else:
             active_parts.append(part)
@@ -514,6 +517,9 @@ class DailyAction:
     # trigger_strength: setup detect 产出的 0-1 触发强度 (星期+板块+区间位置+波动率压缩).
     # 决定同 setup 内候选的排序, render 需展示让排序可解释. 默认 0 兼容旧构造.
     trigger_strength: float = 0.0
+    # block_reason: 候选被风控过滤的具体原因 (价格/强度/行业/敞口), render 展示让 operator 知道为何没买.
+    # 空字符串 = 未被过滤 (已录入或未进过滤循环).
+    block_reason: str = ""
 
 
 def _load_prices_for_ticker(ticker: str, report_date: str) -> pd.DataFrame:
@@ -824,6 +830,7 @@ def generate_daily_action(
             ts = action.trigger_strength
             if ts is None or ts != ts or ts < _MIN_TRIGGER_STRENGTH:
                 cap_blocked_count += 1
+                action.block_reason = f"强度 {ts:.2f} < {_MIN_TRIGGER_STRENGTH:.2f} 阈值"
             if cap_break_idx is None:
                 cap_break_idx = idx
             continue
@@ -831,6 +838,7 @@ def generate_daily_action(
         # 最低入场价过滤: 低价股 (<3 元) 尾部亏损严重 (002217 @2.61 → -35.6%)
         if action.entry_price < _MIN_ENTRY_PRICE:
             cap_blocked_count += 1
+            action.block_reason = f"价格 {action.entry_price:.2f} < {_MIN_ENTRY_PRICE:.1f} 元下限"
             if cap_break_idx is None:
                 cap_break_idx = idx
             continue
@@ -839,6 +847,7 @@ def generate_daily_action(
         ticker_industry = _ticker_industry_map.get(action.ticker, "unknown")
         if industry_count_today.get(ticker_industry, 0) >= _MAX_PER_INDUstry_DAILY:
             cap_blocked_count += 1
+            action.block_reason = f"行业集中 ({ticker_industry} 已 {_MAX_PER_INDUstry_DAILY} 仓)"
             if cap_break_idx is None:
                 cap_break_idx = idx
             continue
@@ -847,7 +856,11 @@ def generate_daily_action(
         if portfolio_position_used + kelly_pct > _MAX_PORTFOLO_PCT:
             kelly_pct = max(0.0, _MAX_PORTFOLO_PCT - portfolio_position_used)
         if kelly_pct <= 0:
-            cap_blocked_count = len(ranked_candidates) - idx
+            # 剩余敞口不够 → 本候选及之后全部因敞口上限被跳过.
+            remaining = ranked_candidates[idx:]
+            cap_blocked_count = len(remaining)
+            for _ts, _h, rem_action in remaining:
+                rem_action.block_reason = f"敞口 {portfolio_position_used:.0%} 达 {_MAX_PORTFOLO_PCT:.0%} 上限"
             if cap_break_idx is None:
                 cap_break_idx = idx
             break
@@ -916,9 +929,12 @@ def _render_candidate_list(
         # Bug B: degraded 命中 (如资金流历史不足) 标 ⚠残缺, 让 operator 知道
         # 这个命中未经完整 setup 条件验证 — 运行时检测口径比回测分布更宽松.
         degraded_tag = " ⚠残缺" if getattr(a, "degraded", False) else ""
+        # block_reason: 精确展示该候选被过滤的具体原因 (价格/强度/行业/敞口),
+        # 替代旧的笼统 "三者之一". operator 据此判断 "等价格涨上来" vs "这票废了".
+        block_tag = f"  {Fore.YELLOW}⚠ {a.block_reason}{Style.RESET_ALL}" if getattr(a, "block_reason", "") else ""
         # 标注"先验(驱动Kelly)"区别于表头的"真实回测"——两套不可比的数字用用途标签区分.
         # trigger_strength 是候选排序的真实依据 (星期+板块+区间位置+波动率压缩), 需展示让排序可解释.
-        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{label}{Style.RESET_ALL}  [{_setup_display_name(a.setup)}]  " f"强度 {a.trigger_strength:.2f}  参考价 ~{a.entry_price:.2f}  先验(驱动Kelly) {a.distribution_summary}{converge}{degraded_tag}")
+        lines.append(f"  {Fore.WHITE}{i}. {Fore.CYAN}{label}{Style.RESET_ALL}  [{_setup_display_name(a.setup)}]  " f"强度 {a.trigger_strength:.2f}  参考价 ~{a.entry_price:.2f}  先验(驱动Kelly) {a.distribution_summary}{converge}{degraded_tag}{block_tag}")
     rest = len(candidates) - len(shown)
     if rest > 0:
         lines.append(f"  {Fore.WHITE}...其余 {rest} 只略 (强度更低){Style.RESET_ALL}")
@@ -930,6 +946,7 @@ def render_daily_action(
     tracker: PaperTracker,
     *,
     closed_positions: list[dict[str, Any]] | None = None,
+    explain: bool = False,
 ) -> str:
     """渲染机械动作 (decision support, 移除情绪)。
 
@@ -937,6 +954,8 @@ def render_daily_action(
         closed_positions: close_matured 返回的平仓摘要 (今日到期平仓的仓位).
             若有, 在组合状态后渲染平仓段, 让 operator 看到 realized P&L 演进.
             默认从 tracker.last_closed_positions 读 (generate_daily_action 已缓存).
+        explain: 展开术语说明 + 执行规则 (默认隐藏, 用 --verbose 调出).
+            跑了一周以上的 operator 已熟记规则, 默认精简去掉每天重复的 11 行噪音.
     """
     from colorama import Fore, Style
 
@@ -959,30 +978,35 @@ def render_daily_action(
     realized_qualifier = "(待到期结算)" if closed_count == 0 else f"({closed_count}笔已平仓)"
 
     lines = [
-        f"\n{Fore.CYAN}{Style.BRIGHT}📋 机械交易计划 — 信号日: {trade_date} (Phase A paper trading){Style.RESET_ALL}",
-        f"  计划买入日: {buy_date_label}  执行价口径: {buy_date_label} 开盘; 当前展示价为信号日收盘参考价",
-        f"  组合净值: {state.nav:.3f}  回撤: {state.drawdown_pct:+.1%}  风控状态: {dd_tag}",
-        f"  持仓数: {state.open_positions}  累计已实现: {state.realized_pnl_pct:+.2%} {realized_qualifier}",
-        f"  组合敞口: {state.open_exposure:.0%} / {_MAX_PORTFOLO_PCT:.0%} 上限" + (" ⚠超配" if state.open_exposure > _MAX_PORTFOLO_PCT + 1e-9 else ""),
+        f"\n{Fore.CYAN}{Style.BRIGHT}📋 机械交易计划 — 信号日: {trade_date}{Style.RESET_ALL}",
+        f"  计划买入日: {buy_date_label}  组合敞口: {state.open_exposure:.0%} / {_MAX_PORTFOLO_PCT:.0%} 上限" + (" ⚠超配" if state.open_exposure > _MAX_PORTFOLO_PCT + 1e-9 else ""),
     ]
+    # 执行价口径 + 净值/回撤/持仓数 → --verbose (每次跑都一样的口径说明 + 初始状态无信息量).
+    if explain:
+        lines.append(f"  执行价口径: {buy_date_label} 开盘; 当前展示价为信号日收盘参考价")
+        lines.append(f"  组合净值: {state.nav:.3f}  回撤: {state.drawdown_pct:+.1%}  风控状态: {dd_tag}")
+        lines.append(f"  持仓数: {state.open_positions}  累计已实现: {state.realized_pnl_pct:+.2%} {realized_qualifier}")
     # C-PORTFOLIO-CAP: 若本次跳过新信号, 显式披露原因.
     # cap_blocked 可能由多种原因触发: 强度不足/价格过低/行业集中/敞口上限.
-    # 需要区分显示, 不能一律归因于"敞口上限".
+    # 每个候选的具体 block_reason 在候选列表里展示, 这里只做计数总述.
     cap_blocked = getattr(tracker, "last_cap_blocked_count", 0)
     if cap_blocked > 0 and not actions:
         at_cap = state.open_exposure >= _MAX_PORTFOLO_PCT - 1e-9
         if at_cap:
             lines.append(f"  {Fore.YELLOW}⚠ 组合敞口已达 {_MAX_PORTFOLO_PCT:.0%} 上限 — {cap_blocked} 个新信号被跳过, 待仓位释放后恢复{Style.RESET_ALL}")
         else:
-            lines.append(f"  {Fore.YELLOW}ℹ {cap_blocked} 个信号未通过风控过滤 (强度不足/价格过低/行业集中) — 当前敞口 {state.open_exposure:.0%}{Style.RESET_ALL}")
-    for policy_line in _setup_policy_lines():
+            lines.append(f"  {Fore.YELLOW}ℹ {cap_blocked} 个信号未通过风控过滤 (具体原因见候选行){Style.RESET_ALL}")
+    for policy_line in _setup_policy_lines(explain=explain):
         lines.append(f"  {policy_line}")
 
     # C-DAILY-ACTION-POSITION-VISIBILITY: 列出当前持仓 + 到期释放日程.
     # 此前只显示 "持仓数: N" (计数), operator 看不到自己买了什么、何时到期释放.
     from src.tools.tushare_api import get_stock_name
 
-    open_details = tracker.open_positions_detail(as_of=trade_date)
+    # as_of 用今天 (而非信号日 trade_date) — operator 关心 "从今天起还要等几天仓位释放",
+    # 不是 "从信号日起过了几天". 信号日做基准会让 "剩N天" 比直觉多 2-3 天.
+    today_str = datetime.now().strftime("%Y%m%d")
+    open_details = tracker.open_positions_detail(as_of=today_str, price_loader=_load_prices_for_ticker)
     if open_details:
         lines.append(f"\n  {Fore.WHITE}📌 当前持仓 ({len(open_details)} 只, 敞口 {state.open_exposure:.0%}):{Style.RESET_ALL}")
         for p in open_details:
@@ -995,7 +1019,15 @@ def render_daily_action(
                 maturity_label = f"{Fore.YELLOW}今日到期{Style.RESET_ALL}"
             else:
                 maturity_label = f"到期 {p['matures_on']} (剩{days}天)"
-            lines.append(f"  - {Fore.CYAN}{label}{Style.RESET_ALL}  [{_setup_display_name(p['setup'])}]  " f"{p['buy_date']}买入 @{p['entry_price']:.2f} ({p['kelly_pct']:.0%})  T+{p['horizon']} {maturity_label}")
+            # 浮动盈亏: operator 直觉需求 — "我的仓位现在赚了还是亏了".
+            # unrealized_pct 来自 price_cache latest close, 标 "浮" 与 realized P&L 区分.
+            upct = p.get("unrealized_pct")
+            if upct is not None:
+                upct_color = Fore.GREEN if upct >= 0 else Fore.RED
+                pnl_label = f"  {upct_color}浮 {upct:+.1%}{Style.RESET_ALL}"
+            else:
+                pnl_label = f"  浮 --"
+            lines.append(f"  - {Fore.CYAN}{label}{Style.RESET_ALL}  [{_setup_display_name(p['setup'])}]  " f"{p['buy_date']}买入 @{p['entry_price']:.2f} ({p['kelly_pct']:.0%}){pnl_label}  {maturity_label}")
         # 到期释放日程: operator 关心 "仓位何时释放 / 释放后敞口多少"
         soonest = next((p for p in open_details if p["days_to_maturity"] is not None and p["days_to_maturity"] > 0), None)
         if soonest:
@@ -1003,8 +1035,9 @@ def render_daily_action(
             release_n = sum(1 for p in open_details if p["matures_on"] == soonest_date)
             release_pct = sum(p["kelly_pct"] for p in open_details if p["matures_on"] == soonest_date)
             after_exposure = max(0.0, state.open_exposure - release_pct)
-            lines.append(f"  {Fore.WHITE}💡 最近到期 {soonest_date} (信号日后{soonest['days_to_maturity']}天): " f"释放 {release_n} 只/{release_pct:.0%}敞口 → 约 {after_exposure:.0%}" + (f" (仍超 {_MAX_PORTFOLO_PCT:.0%} 上限, 需继续等待)" if after_exposure > _MAX_PORTFOLO_PCT + 1e-9 else f" (降回上限内, 可恢复出新仓)") + f"{Style.RESET_ALL}")
-        lines.append(f"  {Fore.WHITE}释放机制: 每仓在买入日 + setup horizon 天后的下一次 --daily-action 自动平仓回填 P&L (无需手动){Style.RESET_ALL}")
+            lines.append(f"  {Fore.WHITE}💡 最近到期 {soonest_date}: " f"释放 {release_n} 只/{release_pct:.0%}敞口 → 约 {after_exposure:.0%}" + (f" (仍超 {_MAX_PORTFOLO_PCT:.0%} 上限, 需继续等待)" if after_exposure > _MAX_PORTFOLO_PCT + 1e-9 else f" (降回上限内, 可恢复出新仓)") + f"{Style.RESET_ALL}")
+        if explain:
+            lines.append(f"  {Fore.WHITE}释放机制: 每仓在买入日 + setup horizon 天后的下一次 --daily-action 自动平仓回填 P&L (无需手动){Style.RESET_ALL}")
 
     # 今日平仓摘要 (闭环核心: operator 看到 realized P&L 演进 + 止损触发披露)
     if closed_positions:
@@ -1048,18 +1081,20 @@ def render_daily_action(
 
     if not actions and blocked:
         # 有命中但全部未录入 — 列出候选, 让 operator 知道今天哪些票有信号.
-        # 原因可能是敞口上限 / 强度不足 / 价格过低 / 行业集中 — 按实际情况描述.
+        # 每个候选的 block_reason 在 _render_candidate_list 里精确展示 (价格/强度/行业/敞口),
+        # 这里只做总述, 不再笼统说 "三者之一".
         at_cap = state.open_exposure >= _MAX_PORTFOLO_PCT - 1e-9
         if at_cap:
             reason = f"组合敞口 {state.open_exposure:.0%} 达 {_MAX_PORTFOLO_PCT:.0%} 上限"
         else:
-            reason = f"风控过滤 (强度不足/价格过低/行业集中)"
-        lines.append(f"\n  {Fore.YELLOW}今日 {len(blocked)} 个 setup 命中 — 因{reason}, 本次暂不买入. " f"仓位释放后按强度优先买以下候选:{Style.RESET_ALL}\n")
+            reason = f"全部被风控过滤 (具体原因见每行)"
+        lines.append(f"\n  {Fore.YELLOW}今日 {len(blocked)} 个 setup 命中 — {reason}, 本次暂不买入. " f"仓位释放后按强度优先买以下候选:{Style.RESET_ALL}\n")
         _render_candidate_list(lines, blocked, get_stock_name, buy_date_label, limit=12, auto_topn=auto_topn)
         lines.append(f"\n  {Fore.WHITE}(候选仅供参考; 上限保护期可不操作, 或用上限外资金自行决策){Style.RESET_ALL}")
         # 候选行含"先验(驱动Kelly)"和"强度", 与表头"真实回测"是两套独立统计 —
-        # 在候选后即时标注用途, 避免跨段对照时混淆 (术语完整版见 BUY 路径末尾).
-        lines.append(f"  {Fore.WHITE}说明: 先验(驱动Kelly)≠表头真实回测, 两套独立统计; 强度=排序依据; T+N=交易日, 剩N天=日历日, 未到期仓位浮动盈亏不计入{Style.RESET_ALL}")
+        # 在候选后即时标注用途, 避免跨段对照时混淆 (术语完整版用 --verbose 查看).
+        if explain:
+            lines.append(f"  {Fore.WHITE}说明: 先验(驱动Kelly)≠表头真实回测, 两套独立统计; 强度=排序依据; T+N=交易日, 剩N天=日历日(以今天为基准), 未到期仓位浮动盈亏为参考{Style.RESET_ALL}")
         return "\n".join(lines)
 
     lines.append(f"\n  {Fore.GREEN}计划 BUY ({len(actions)} 只, {buy_date_label} 开盘执行):{Style.RESET_ALL}\n")
@@ -1083,24 +1118,25 @@ def render_daily_action(
         lines.append(f"  {Fore.WHITE}其余 {len(blocked)} 个候选 (敞口超限暂不买入, 仓位释放后按强度优先):{Style.RESET_ALL}")
         _render_candidate_list(lines, blocked, get_stock_name, buy_date_label, limit=8, auto_topn=auto_topn)
 
-    lines.append(f"  {Fore.WHITE}术语说明:{Style.RESET_ALL}")
-    lines.append(f"  - 软止损=历史平均亏损x1.5的观察线, 用于风险参考, 不是自动卖出触发")
-    lines.append(f"  - 硬止损=固定-8%的风控参考线; 止损触发只做披露, paper P&L 按 T+N 收盘回填")
-    lines.append(f"  - 先验分布: n=历史样本数, winrate=历史胜率, cv=凸性比, E=历史平均收益 (与表头'真实回测'两套独立统计, 各自标注用途)")
-    lines.append(f"  - 强度=trigger_strength(星期25%+板块25%+区间位置25%+波动率压缩25%), 决定候选排序和仓位大小")
-    lines.append(f"  - T+N=交易日; 剩N天=日历日(T+10≈14日历日); 到期按第N个交易日收盘结算P&L; 未到期仓位浮动盈亏不计入")
-    # Bug B: 若本次有 degraded 命中, 集中披露让 operator 注意未经完整条件验证的信号.
-    all_hits = list(actions) + list(blocked)
-    degraded_hits = [a for a in all_hits if getattr(a, "degraded", False)]
-    if degraded_hits:
-        lines.append(f"  - {Fore.YELLOW}⚠残缺=命中缺资金流均值过滤条件 (fund_flow_cache 历史<5日), 运行时检测比回测分布更宽松; 本次 {len(degraded_hits)}/{len(all_hits)} 只命中为残缺, 补全资金流历史后复跑可收紧{Style.RESET_ALL}")
+    if explain:
+        lines.append(f"  {Fore.WHITE}术语说明:{Style.RESET_ALL}")
+        lines.append(f"  - 软止损=历史平均亏损x1.5的观察线, 用于风险参考, 不是自动卖出触发")
+        lines.append(f"  - 硬止损=固定-8%的风控参考线; 止损触发只做披露, paper P&L 按 T+N 收盘回填")
+        lines.append(f"  - 先验分布: n=历史样本数, winrate=历史胜率, cv=凸性比, E=历史平均收益 (与表头'真实回测'两套独立统计, 各自标注用途)")
+        lines.append(f"  - 强度=trigger_strength(星期25%+板块25%+区间位置25%+波动率压缩25%), 决定候选排序和仓位大小")
+        lines.append(f"  - T+N=交易日; 剩N天=日历日(T+10≈14日历日); 到期按第N个交易日收盘结算P&L; 未到期仓位浮动盈亏不计入")
+        # Bug B: 若本次有 degraded 命中, 集中披露让 operator 注意未经完整条件验证的信号.
+        all_hits = list(actions) + list(blocked)
+        degraded_hits = [a for a in all_hits if getattr(a, "degraded", False)]
+        if degraded_hits:
+            lines.append(f"  - {Fore.YELLOW}⚠残缺=命中缺资金流均值过滤条件 (fund_flow_cache 历史<5日), 运行时检测比回测分布更宽松; 本次 {len(degraded_hits)}/{len(all_hits)} 只命中为残缺, 补全资金流历史后复跑可收紧{Style.RESET_ALL}")
 
-    lines.append(f"\n  {Fore.WHITE}执行规则 (按规则执行):{Style.RESET_ALL}")
-    lines.append(f"  - {buy_date_label} 开盘买入 (不追涨, 涨停买不到就放弃)")
-    lines.append(f"  - 只执行预先写好的买入/止损/到期规则, 不临盘主观加仓/扛单")
-    lines.append(f"  - 硬止损或失效条件触发 → 规则上应当日收盘处理; 当前 journal 只记录 stop_would_trigger")
-    lines.append(f"  - 到期 (setup horizon) → 无条件平 (不恋战)")
-    lines.append(f"  - 回撤 -15% 自动降仓 / -20% 清仓")
+        lines.append(f"\n  {Fore.WHITE}执行规则 (按规则执行):{Style.RESET_ALL}")
+        lines.append(f"  - {buy_date_label} 开盘买入 (不追涨, 涨停买不到就放弃)")
+        lines.append(f"  - 只执行预先写好的买入/止损/到期规则, 不临盘主观加仓/扛单")
+        lines.append(f"  - 硬止损或失效条件触发 → 规则上应当日收盘处理; 当前 journal 只记录 stop_would_trigger")
+        lines.append(f"  - 到期 (setup horizon) → 无条件平 (不恋战)")
+        lines.append(f"  - 回撤 -15% 自动降仓 / -20% 清仓")
     # 闭环已自动: close_matured 在 generate_daily_action 开头平到期仓并回填 P&L.
     # 此前写 "30 天后用 --paper-pnl 复盘" 是死承诺 (该命令从未实现).
     lines.append(f"\n  {Fore.WHITE}已写入 paper journal (按各 setup horizon 到期自动平仓 + 回填 realized P&L){Style.RESET_ALL}")

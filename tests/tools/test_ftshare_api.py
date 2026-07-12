@@ -119,12 +119,12 @@ def test_normalise_fund_flow_eastmoney_columns():
     assert df.iloc[0]["main_net_pct"] == 3.5  # 东财占比保留
 
 
-def test_normalise_fund_flow_wan_to_yuan_conversion():
-    """万元级数据 → 自动 ×10000 转元。"""
+def test_normalise_fund_flow_no_wan_conversion():
+    """ftshare 东财源返回元 (非万元), 不做 ×10000 转换 (C2 修复)."""
     raw = pd.DataFrame(
         {
             "日期": ["20260701"],
-            "主力净流入-净额": [500.0],  # 中位数 <1e4 → 判定为万元
+            "主力净流入-净额": [500.0],
             "超大单净流入-净额": [200.0],
             "大单净流入-净额": [100.0],
             "中单净流入-净额": [-50.0],
@@ -132,9 +132,9 @@ def test_normalise_fund_flow_wan_to_yuan_conversion():
         }
     )
     df = _normalise_fund_flow(raw, "000001")
-    assert df.iloc[0]["main_net_inflow"] == 5000000  # 500万 × 10000 = 500万元→5e6元... wait
-    # 500 (万元) × 10000 = 5,000,000 元
-    assert df.iloc[0]["super_big_net_inflow"] == 2000000
+    # ftshare 返回元, 直接使用不做转换 (旧启发式会 ×10000 = 5000000, 这是 bug)
+    assert df.iloc[0]["main_net_inflow"] == 500.0
+    assert df.iloc[0]["super_big_net_inflow"] == 200.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════

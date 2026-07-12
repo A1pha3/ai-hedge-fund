@@ -944,12 +944,15 @@ def _resolve_daily_action(argv: list[str]) -> int | None:
     end_date_raw = _get_kv(argv, "--end-date") or _next_arg(argv, "--end-date")
     end_date = end_date_raw.strip().replace("-", "") if end_date_raw else None
 
+    # --verbose: 展开术语说明 + 执行规则 (默认隐藏, 跑了一周以上的 operator 已熟记).
+    explain = "--verbose" in argv
+
     tracker = PaperTracker()
     actions = generate_daily_action(tracker=tracker, end_date=end_date)
     # 用本次实际扫描日期渲染; fallback 仅兼容旧 tracker / 异常路径
     trade_date = getattr(tracker, "last_action_trade_date", "") or "????????"
     if trade_date != "????????":
-        print(render_daily_action(actions, trade_date, tracker))
+        print(render_daily_action(actions, trade_date, tracker, explain=explain))
         return 0
 
     # 旧 fallback: 用最新报告日期渲染
@@ -962,7 +965,7 @@ def _resolve_daily_action(argv: list[str]) -> int | None:
 
         with open(latest, encoding="utf-8") as f:
             trade_date = str(json.load(f).get("date", "????????"))
-    print(render_daily_action(actions, trade_date, tracker))
+    print(render_daily_action(actions, trade_date, tracker, explain=explain))
     return 0
 
 

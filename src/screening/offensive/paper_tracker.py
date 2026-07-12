@@ -301,7 +301,7 @@ class PaperTracker:
 
     # ---- close matured positions (闭环核心) ----
 
-    def open_positions_detail(self, as_of: str = "") -> list[dict[str, Any]]:
+    def open_positions_detail(self, as_of: str = "", *, price_loader=None) -> list[dict[str, Any]]:
         """返回当前未平仓位明细 (供 render 披露"我买了什么 + 何时到期释放").
 
         C-DAILY-ACTION-POSITION-VISIBILITY (20260710): 此前 render 只显示
@@ -315,12 +315,15 @@ class PaperTracker:
         导致 "今日到期" 但 day_N 数据未成熟 → 4-12 天空窗).
 
         Args:
-            as_of: 基准日 YYYYMMDD (通常为信号日), 用于算 days_to_maturity.
+            as_of: 基准日 YYYYMMDD (通常为今天), 用于算 days_to_maturity.
                    空字符串则不算 days_to_maturity.
+            price_loader: 可选 ``price_loader(ticker, as_of) -> pd.DataFrame``,
+                          传入时为每仓查 latest close 算浮动盈亏 (unrealized_pct).
+                          与 close_matured 同源 (默认 _load_prices_for_ticker).
 
         Returns:
             list[dict] 每项含 ticker/buy_date/setup/horizon/entry_price/kelly_pct/
-            matures_on/days_to_maturity, 按 matures_on 升序 (最快到期的在前,
+            matures_on/days_to_maturity/unrealized_pct, 按 matures_on 升序 (最快到期的在前,
             让 operator 第一眼看到"哪些仓位马上释放").
         """
         journal = self._load_journal()
@@ -353,16 +356,30 @@ class PaperTracker:
                     days_to = (datetime.strptime(matures_on, "%Y%m%d").date() - datetime.strptime(as_of, "%Y%m%d").date()).days
                 except ValueError:
                     pass
+            entry_price = float(rec.get("entry_price", 0.0) or 0.0)
+            # 浮动盈亏: 从 price_cache 读 latest close (与 close_matured 同源),
+            # 算 (latest_close / entry_price - 1). 失败/无数据 → None (render 显示 "浮 --").
+            unrealized_pct: float | None = None
+            if price_loader is not None and entry_price > 0:
+                try:
+                    df = price_loader(ticker, as_of)
+                    if df is not None and len(df) > 0 and "close" in df.columns:
+                        latest_close = float(df.iloc[-1]["close"])
+                        if latest_close > 0:
+                            unrealized_pct = latest_close / entry_price - 1.0
+                except Exception:
+                    pass
             out.append(
                 {
                     "ticker": ticker,
                     "buy_date": buy_date,
                     "setup": str(rec.get("setup", "")),
                     "horizon": horizon,
-                    "entry_price": float(rec.get("entry_price", 0.0) or 0.0),
+                    "entry_price": entry_price,
                     "kelly_pct": float(rec.get("kelly_pct", 0.0) or 0.0),
                     "matures_on": matures_on,
                     "days_to_maturity": days_to,
+                    "unrealized_pct": unrealized_pct,
                 }
             )
         out.sort(key=lambda r: (r["matures_on"] or "99999999", r["ticker"]))
