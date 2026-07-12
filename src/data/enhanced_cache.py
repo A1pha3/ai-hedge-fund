@@ -277,10 +277,15 @@ class DiskCache:
         # same as the default branch above (which already uses expanduser).
         self._path = os.path.expanduser(cache_path)
 
-        # 长连接 + 写锁 + WAL：避免每次 get/set/delete 都新建 sqlite3 连接，
+        # 长连接 + 连接锁 + WAL：避免每次 get/set/delete 都新建 sqlite3 连接，
         # 启用 WAL 模式以降低并发读写时的 SQLITE_BUSY 风险（R20 修复）。
+        #
+        # check_same_thread=False 的 sqlite3 连接，SQLite 官方文档要求使用方
+        # 自行序列化所有访问。_conn_lock (RLock) 保护 _conn 的全部生命周期：
+        # 读、写、惰性删除、close、重建。RLock 允许 get→_ensure_conn→_is_alive
+        # 同线程重入，无需传递"已持锁"状态。
         self._conn: sqlite3.Connection | None = None
-        self._write_lock = threading.Lock()
+        self._conn_lock = threading.RLock()
         self._journal_mode: str | None = None
         try:
             os.makedirs(os.path.dirname(self._path), exist_ok=True)
@@ -333,48 +338,57 @@ class DiskCache:
         R20.10 BETA: 缓存检查结果，TTL 内跳过 SELECT 1。
         快速路径：_conn 非 None 且在 TTL 内 → 直接返回 True。
         仅 TTL 过期或连接异常时才执行 SELECT 1。
+
+        调用方通常已持有 _conn_lock（RLock 允许重入）；从外部上下文
+        直接调用时也自行获取锁，保证任何入口都安全。
         """
-        if self._conn is None:
-            return False
-        now = time.monotonic()
-        if (now - self._last_alive_check) < self._alive_cache_ttl:
-            return True
-        try:
-            self._conn.execute("SELECT 1").fetchone()
-            self._last_alive_check = now
-            return True
-        except Exception as e:
-            logger.debug(f"Disk cache connection dead, will recreate: {e}")
-            self._last_alive_check = 0.0  # 强制下次重建后立即重检
-            return False
+        with self._conn_lock:
+            if self._conn is None:
+                return False
+            now = time.monotonic()
+            if (now - self._last_alive_check) < self._alive_cache_ttl:
+                return True
+            try:
+                self._conn.execute("SELECT 1").fetchone()
+                self._last_alive_check = now
+                return True
+            except Exception as e:
+                logger.debug(f"Disk cache connection dead, will recreate: {e}")
+                self._last_alive_check = 0.0  # 强制下次重建后立即重检
+                return False
 
     def _ensure_conn(self) -> sqlite3.Connection | None:
-        """确保长连接可用；失效时尝试重建一次。"""
-        if not self.is_available():
-            return None
-        if self._is_alive():
-            return self._conn
-        # 重建
-        try:
+        """确保长连接可用；失效时尝试重建一次。
+
+        调用方通常已持有 _conn_lock（RLock 允许重入）；从外部上下文
+        直接调用时也自行获取锁，保证任何入口都安全。
+        """
+        with self._conn_lock:
+            if not self.is_available():
+                return None
+            if self._is_alive():
+                return self._conn
+            # 重建
             try:
-                if self._conn is not None:
-                    self._conn.close()
-            except Exception as exc:
-                # NS-17/BH-017 同族 (c278): 静默 pass 会让死连接关闭失败不可观测.
-                # 主错误 (reconnect 失败) 已在下方 logger.warning 记录, 此处仅
-                # debug 记录旧连接清理副作用. debug 级别 (温路径重连, 缓存层非决策链).
-                logger.debug(
-                    "DiskCache _ensure_conn: dead connection close error: %s",
-                    exc,
-                )
-            self._conn = self._open_connection()
-            self._last_alive_check = time.monotonic()  # R20.10: 重建后立即标记存活
-            return self._conn
-        except Exception as e:
-            logger.warning(f"Disk cache reconnect failed: {e}")
-            self._available = False
-            self._conn = None
-            return None
+                try:
+                    if self._conn is not None:
+                        self._conn.close()
+                except Exception as exc:
+                    # NS-17/BH-017 同族 (c278): 静默 pass 会让死连接关闭失败不可观测.
+                    # 主错误 (reconnect 失败) 已在下方 logger.warning 记录, 此处仅
+                    # debug 记录旧连接清理副作用. debug 级别 (温路径重连, 缓存层非决策链).
+                    logger.debug(
+                        "DiskCache _ensure_conn: dead connection close error: %s",
+                        exc,
+                    )
+                self._conn = self._open_connection()
+                self._last_alive_check = time.monotonic()  # R20.10: 重建后立即标记存活
+                return self._conn
+            except Exception as e:
+                logger.warning(f"Disk cache reconnect failed: {e}")
+                self._available = False
+                self._conn = None
+                return None
 
     def _get_conn(self):
         """获取底层 sqlite 连接。
@@ -392,7 +406,7 @@ class DiskCache:
         会因 is_available() 返回 True 而重建连接，从磁盘文件恢复已缓存的数据，
         导致 close() 无法真正切断后续读写。
         """
-        with self._write_lock:
+        with self._conn_lock:
             if self._conn is not None:
                 try:
                     self._conn.close()
@@ -444,12 +458,21 @@ class DiskCache:
         """
         if not self.is_available():
             return _sentinel
-        conn = self._ensure_conn()
-        if conn is None:
-            return _sentinel
-        try:
-            cursor = conn.execute("SELECT value, expires_at FROM cache WHERE key = ?", (key,))
-            row = cursor.fetchone()
+        # _conn_lock 序列化对长连接的全部访问（读、写、惰性删除、重建），
+        # 消除 check_same_thread=False 下并发 close/重建导致的 SQLITE_MISUSE。
+        with self._conn_lock:
+            conn = self._ensure_conn()
+            if conn is None:
+                return _sentinel
+
+            # --- SQL 查询段：连接级错误（SQLITE_MISUSE 等）记 WARNING ---
+            try:
+                cursor = conn.execute("SELECT value, expires_at FROM cache WHERE key = ?", (key,))
+                row = cursor.fetchone()
+            except Exception as e:
+                logger.warning(f"Disk cache get error: {e}")
+                return _sentinel
+
             if not row:
                 return _sentinel
             value, expires_at = row
@@ -461,15 +484,31 @@ class DiskCache:
                 # Thread A: 旧 delete（无条件 DELETE）会清掉 Thread B 的新值。
                 # 条件 DELETE 保证只清理仍处于过期状态的那条记录，新值不会被误删。
                 try:
-                    with self._write_lock:
-                        conn.execute("DELETE FROM cache WHERE key = ? AND expires_at <= ?", (key, int(self._now_ts())))
+                    conn.execute("DELETE FROM cache WHERE key = ? AND expires_at <= ?", (key, int(self._now_ts())))
                 except Exception as cleanup_err:
                     logger.debug(f"Disk cache lazy-delete cleanup error (non-fatal): {cleanup_err}")
                 return _sentinel
-            return pickle.loads(value)
-        except Exception as e:
-            logger.warning(f"Disk cache get error: {e}")
-            return _sentinel
+
+            # --- 数据完整性段：NULL 守卫 + 反序列化，数据级错误记 DEBUG ---
+            if value is None:
+                # value 列读到 NULL（历史写入失败或外部篡改）→ 清理脏行
+                logger.debug(f"Disk cache get: NULL value for key={key!r}, purging corrupted row")
+                try:
+                    conn.execute("DELETE FROM cache WHERE key = ?", (key,))
+                except Exception as cleanup_err:
+                    logger.debug(f"Disk cache NULL-purge cleanup error (non-fatal): {cleanup_err}")
+                return _sentinel
+
+            try:
+                return pickle.loads(value)
+            except Exception as e:
+                # BLOB 被截断/污染，pickle 反序列化失败 → 清理脏行避免重复报错
+                logger.debug(f"Disk cache get: unpicklable value for key={key!r}, purging corrupted row: {e}")
+                try:
+                    conn.execute("DELETE FROM cache WHERE key = ?", (key,))
+                except Exception as cleanup_err:
+                    logger.debug(f"Disk cache corrupt-purge cleanup error (non-fatal): {cleanup_err}")
+                return _sentinel
 
     def set(self, key: str, value: Any, ttl: int | None = None):
         """
@@ -482,17 +521,17 @@ class DiskCache:
         """
         if not self.is_available():
             return
-        conn = self._ensure_conn()
-        if conn is None:
-            return
-        try:
-            ttl_seconds = self.default_ttl if ttl is None else ttl
-            expires_at = 0 if ttl_seconds == 0 else self._now_ts() + ttl_seconds
-            data = pickle.dumps(value)
-            with self._write_lock:
+        with self._conn_lock:
+            conn = self._ensure_conn()
+            if conn is None:
+                return
+            try:
+                ttl_seconds = self.default_ttl if ttl is None else ttl
+                expires_at = 0 if ttl_seconds == 0 else self._now_ts() + ttl_seconds
+                data = pickle.dumps(value)
                 conn.execute("INSERT OR REPLACE INTO cache (key, value, expires_at) VALUES (?, ?, ?)", (key, data, expires_at))
-        except Exception as e:
-            logger.warning(f"Disk cache set error: {e}")
+            except Exception as e:
+                logger.warning(f"Disk cache set error: {e}")
 
     def delete(self, key: str):
         """
@@ -503,14 +542,14 @@ class DiskCache:
         """
         if not self.is_available():
             return
-        conn = self._ensure_conn()
-        if conn is None:
-            return
-        try:
-            with self._write_lock:
+        with self._conn_lock:
+            conn = self._ensure_conn()
+            if conn is None:
+                return
+            try:
                 conn.execute("DELETE FROM cache WHERE key = ?", (key,))
-        except Exception as e:
-            logger.warning(f"Disk cache delete error: {e}")
+            except Exception as e:
+                logger.warning(f"Disk cache delete error: {e}")
 
     def clear(self):
         """
@@ -521,29 +560,30 @@ class DiskCache:
         """
         if not self.is_available():
             return
-        conn = self._ensure_conn()
-        if conn is None:
-            return
-        try:
-            with self._write_lock:
+        with self._conn_lock:
+            conn = self._ensure_conn()
+            if conn is None:
+                return
+            try:
                 conn.execute("DELETE FROM cache")
-        except Exception as e:
-            logger.warning(f"Disk cache clear error: {e}")
+            except Exception as e:
+                logger.warning(f"Disk cache clear error: {e}")
 
     def count_entries(self) -> int:
         """返回当前磁盘缓存中的条目数。"""
         if not self.is_available():
             return 0
-        conn = self._ensure_conn()
-        if conn is None:
-            return 0
-        try:
-            cursor = conn.execute("SELECT COUNT(*) FROM cache")
-            row = cursor.fetchone()
-            return int(row[0]) if row else 0
-        except Exception as e:
-            logger.warning(f"Disk cache count error: {e}")
-            return 0
+        with self._conn_lock:
+            conn = self._ensure_conn()
+            if conn is None:
+                return 0
+            try:
+                cursor = conn.execute("SELECT COUNT(*) FROM cache")
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
+            except Exception as e:
+                logger.warning(f"Disk cache count error: {e}")
+                return 0
 
     def get_file_size_bytes(self) -> int:
         """返回 SQLite 缓存文件大小。"""

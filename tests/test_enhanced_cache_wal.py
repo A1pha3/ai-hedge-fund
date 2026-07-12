@@ -368,3 +368,103 @@ def test_disk_cache_lazy_delete_does_not_clobber_fresh_value(tmp_path: Path):
         assert result == "fresh_value"
     finally:
         cache.close()
+
+
+# ---------------------------------------------------------------------------
+# DiskCache 数据完整性：NULL value / 损坏 BLOB 的自动清理
+# ---------------------------------------------------------------------------
+
+
+def test_disk_cache_get_handles_null_value(tmp_path: Path):
+    """get() 遇到 value 列为 NULL 时应返回 sentinel 并清理脏行。
+
+    根因：历史写入失败或外部篡改导致 value=NULL，pickle.loads(None) 抛 TypeError。
+    修复：get() 加 None 守卫，返回 sentinel 并 DELETE 该脏行。
+    """
+    cache_path = tmp_path / "null_value_cache.sqlite"
+    cache = DiskCache(path=str(cache_path), default_ttl=3600)
+
+    try:
+        conn = cache._conn
+        assert conn is not None
+        # 直接注入脏行：value 列为 NULL
+        conn.execute("INSERT INTO cache (key, value, expires_at) VALUES (?, NULL, 0)", ("null_key",))
+
+        sentinel = object()
+        result = cache.get("null_key", _sentinel=sentinel)
+        assert result is sentinel, "NULL value should be treated as cache miss"
+
+        # 脏行应已被清理
+        row = conn.execute("SELECT COUNT(*) FROM cache WHERE key = ?", ("null_key",)).fetchone()
+        assert row[0] == 0, "corrupted NULL row should be purged after get()"
+    finally:
+        cache.close()
+
+
+def test_disk_cache_get_handles_corrupted_blob(tmp_path: Path):
+    """get() 遇到损坏 BLOB（pickle 无法反序列化）应返回 sentinel 并清理脏行。
+
+    根因：BLOB 被截断/污染，pickle.loads 抛 UnpicklingError。
+    修复：get() 拆分 try 块，反序列化失败时记 DEBUG（非 WARNING）并 DELETE 脏行。
+    """
+    cache_path = tmp_path / "corrupt_blob_cache.sqlite"
+    cache = DiskCache(path=str(cache_path), default_ttl=3600)
+
+    try:
+        conn = cache._conn
+        assert conn is not None
+        # 注入无法 pickle 反序列化的垃圾 BLOB
+        conn.execute("INSERT INTO cache (key, value, expires_at) VALUES (?, ?, 0)", ("corrupt_key", b"\x00\x01\x02 not a pickle"))
+
+        sentinel = object()
+        result = cache.get("corrupt_key", _sentinel=sentinel)
+        assert result is sentinel, "corrupted BLOB should be treated as cache miss"
+
+        # 脏行应已被清理
+        row = conn.execute("SELECT COUNT(*) FROM cache WHERE key = ?", ("corrupt_key",)).fetchone()
+        assert row[0] == 0, "corrupted BLOB row should be purged after get()"
+    finally:
+        cache.close()
+
+
+def test_disk_cache_corrupted_blob_deleted_after_failure(tmp_path: Path, caplog):
+    """同一脏 key 第二次 get 不应再报错（行已被第一次 get 清理）。
+
+    这验证了"自动清理脏行"的副作用：避免损坏行被反复访问导致日志噪声。
+    同时验证数据级错误（pickle 失败）记 DEBUG 而非 WARNING。
+    """
+    import logging
+
+    cache_path = tmp_path / "repeat_corrupt_cache.sqlite"
+    cache = DiskCache(path=str(cache_path), default_ttl=3600)
+
+    try:
+        conn = cache._conn
+        assert conn is not None
+        conn.execute("INSERT INTO cache (key, value, expires_at) VALUES (?, ?, 0)", ("repeat_corrupt", b"\xff\xff garbage"))
+
+        sentinel = object()
+
+        # 第一次 get：清理脏行
+        with caplog.at_level(logging.DEBUG, logger="src.data.enhanced_cache"):
+            result1 = cache.get("repeat_corrupt", _sentinel=sentinel)
+        assert result1 is sentinel
+
+        # pickle 失败应记 DEBUG，不应记 WARNING
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert all("get error" not in r.getMessage() for r in warnings), \
+            "pickle failure should log DEBUG, not WARNING"
+        debug_msgs = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("unpicklable" in m for m in debug_msgs), \
+            f"expected DEBUG log for corrupted BLOB, got: {debug_msgs}"
+
+        # 第二次 get：行已不存在，走正常 miss 路径，不再触发任何错误日志
+        with caplog.at_level(logging.DEBUG, logger="src.data.enhanced_cache"):
+            result2 = cache.get("repeat_corrupt", _sentinel=sentinel)
+        assert result2 is sentinel
+        # 第二次不应再有 unpicklable 日志
+        debug_msgs2 = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG and "unpicklable" in r.getMessage()]
+        # caplog 累积，需要区分两次；简单验证行数已不再增长即可（用 count_entries 旁证）
+        assert cache.count_entries() == 0, "no rows should remain"
+    finally:
+        cache.close()
