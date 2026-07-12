@@ -2153,10 +2153,10 @@ def test_portfolio_cap_escape_hatch_restores_old_behavior(tmp_path, monkeypatch)
 
 
 def test_portfolio_cap_blocked_count_reports_all_skipped(tmp_path, monkeypatch):
-    """cap_blocked_count 必须报告被跳过的全部信号数, 不只 1 个.
+    """len(blocked_candidates) 必须报告被跳过的全部信号数, 不只 1 个.
 
     Bug (autodev-34 /loop, 自查 C-PORTFOLIO-CAP 修复): 上限耗尽时
-    ``cap_blocked_count += 1; break`` 只计 1, 但其后所有剩余信号都被跳过.
+    旧实现 ``cap_blocked_count += 1; break`` 只计 1, 但其后所有剩余信号都被跳过.
     预置 50% 已开仓 + 10 只新信号 → 只追加 1 只, 跳过 9 只; disclose 应报 9 不报 1.
     """
     import pandas as pd
@@ -2228,7 +2228,7 @@ def test_portfolio_cap_blocked_count_reports_all_skipped(tmp_path, monkeypatch):
     )
     assert len(actions) == 1, f"应只追加 1 只到 60%, 实际 {len(actions)}"
     # 10 信号 - 1 录入 = 9 被跳过 (不是 1)
-    assert tracker.last_cap_blocked_count == 9, f"cap_blocked_count 应报 9 (10 信号 - 1 录入), 实际 {tracker.last_cap_blocked_count}"
+    assert len(tracker.last_blocked_candidates) == 9, f"blocked_candidates 应有 9 个 (10 信号 - 1 录入), 实际 {len(tracker.last_blocked_candidates)}"
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
@@ -813,8 +814,6 @@ def generate_daily_action(
     # 61 天超 60% 上限. 现从 open_exposure 起算 (默认), 让 "组合 ≤ 60%" 真正按组合执行.
     # DAILY_ACTION_ENFORCE_OPEN_CAP=false 时恢复旧 per-run 行为 (逃生口).
     portfolio_position_used = float(getattr(tracker.state, "open_exposure", 0.0) or 0.0) if _enforce_open_cap() else 0.0
-    cap_blocked_count = 0  # 因超上限被跳过的信号数 (render 披露用)
-    cap_break_idx: int | None = None  # 首个因上限被跳过的候选 index (供 render 列出"今日候选")
 
     # 行业集中度控制: 同一信号日同一行业最多 2 个仓位.
     # 回测验证: 集中日(≥50%同行业)平均收益 +6.3% vs 分散日 +9.7% (差 3.4pp).
@@ -822,34 +821,33 @@ def generate_daily_action(
     industry_count_today: dict[str, int] = {}
     _MAX_PER_INDUstry_DAILY = 2
 
+    # 被风控过滤的候选 (按强度已排序). 单一真相源:
+    #   - render 计数总述用 len(blocked_candidates)
+    #   - render 明细列表直接遍历 blocked_candidates
+    # 旧实现同时维护 cap_blocked_count (int) + blocked_candidates (list), 两者永远相等 → 冗余.
+    blocked_candidates: list[DailyAction] = []
+
     for idx, (_trigger_strength, horizon, action) in enumerate(ranked_candidates):
-        # 最低 trigger_strength 过滤: 去掉 ranker 底部信号 (Mon+SZmain 等)
-        if action.trigger_strength < _MIN_TRIGGER_STRENGTH:
-            # NaN guard: NaN < threshold 永远为 False (Python 特性). NaN 信号
-            # 会错误通过过滤导致无效信号进入组合. ts!=ts 在 NaN 时为 True.
-            ts = action.trigger_strength
-            if ts is None or ts != ts or ts < _MIN_TRIGGER_STRENGTH:
-                cap_blocked_count += 1
-                action.block_reason = f"强度 {ts:.2f} < {_MIN_TRIGGER_STRENGTH:.2f} 阈值"
-            if cap_break_idx is None:
-                cap_break_idx = idx
+        # 最低 trigger_strength 过滤: 去掉 ranker 底部信号 (Mon+SZmain 等).
+        # NaN guard: setup 契约返回 float, 但除零/log(0) 等可能产生 NaN.
+        # Python 中 NaN < threshold 永远为 False, 必须用 math.isnan 显式拦截.
+        ts = action.trigger_strength
+        if math.isnan(ts) or ts < _MIN_TRIGGER_STRENGTH:
+            action.block_reason = f"强度 {ts:.2f} < {_MIN_TRIGGER_STRENGTH:.2f} 阈值" if not math.isnan(ts) else f"强度 NaN (setup 计算异常), 阈值 {_MIN_TRIGGER_STRENGTH:.2f}"
+            blocked_candidates.append(action)
             continue
 
         # 最低入场价过滤: 低价股 (<3 元) 尾部亏损严重 (002217 @2.61 → -35.6%)
         if action.entry_price < _MIN_ENTRY_PRICE:
-            cap_blocked_count += 1
             action.block_reason = f"价格 {action.entry_price:.2f} < {_MIN_ENTRY_PRICE:.1f} 元下限"
-            if cap_break_idx is None:
-                cap_break_idx = idx
+            blocked_candidates.append(action)
             continue
 
         # 行业集中度限制
         ticker_industry = _ticker_industry_map.get(action.ticker, "unknown")
         if industry_count_today.get(ticker_industry, 0) >= _MAX_PER_INDUstry_DAILY:
-            cap_blocked_count += 1
             action.block_reason = f"行业集中 ({ticker_industry} 已 {_MAX_PER_INDUstry_DAILY} 仓)"
-            if cap_break_idx is None:
-                cap_break_idx = idx
+            blocked_candidates.append(action)
             continue
 
         kelly_pct = action.kelly_pct
@@ -857,12 +855,9 @@ def generate_daily_action(
             kelly_pct = max(0.0, _MAX_PORTFOLO_PCT - portfolio_position_used)
         if kelly_pct <= 0:
             # 剩余敞口不够 → 本候选及之后全部因敞口上限被跳过.
-            remaining = ranked_candidates[idx:]
-            cap_blocked_count = len(remaining)
-            for _ts, _h, rem_action in remaining:
+            for _ts, _h, rem_action in ranked_candidates[idx:]:
                 rem_action.block_reason = f"敞口 {portfolio_position_used:.0%} 达 {_MAX_PORTFOLO_PCT:.0%} 上限"
-            if cap_break_idx is None:
-                cap_break_idx = idx
+                blocked_candidates.append(rem_action)
             break
 
         action.kelly_pct = kelly_pct
@@ -886,17 +881,11 @@ def generate_daily_action(
             degraded=action.degraded,
         )
 
-    # C-DAILY-ACTION-POSITION-VISIBILITY: 暴露被上限跳过的候选 (按强度已排序),
+    # C-DAILY-ACTION-POSITION-VISIBILITY: 暴露被风控过滤的候选 (按强度已排序),
     # 让 operator 看到"今日哪些票可交易" — 上限决定买什么, 不决定看什么.
-    # cap_break_idx 起的候选都是本次因敞口超限没录入的 (含部分被 trim 到 0 的那个).
-    blocked_candidates: list[DailyAction] = []
-    if cap_break_idx is not None:
-        blocked_candidates = [item[2] for item in ranked_candidates[cap_break_idx:]]
-
+    # blocked_candidates 只含被过滤的候选 (未买入), 不含已录入 actions 的候选.
     # C-PORTFOLIO-CAP: 暴露组合敞口状态供 render 披露 (operator 须看到为何不出新仓).
-    # total_after = 已开仓敞口 (含历史超配) + 本次新仓; 若超 60% 上限, 剩余信号被跳过.
     tracker.last_portfolio_exposure = portfolio_position_used
-    tracker.last_cap_blocked_count = cap_blocked_count
     tracker.last_blocked_candidates = blocked_candidates
     return actions
 
@@ -989,7 +978,8 @@ def render_daily_action(
     # C-PORTFOLIO-CAP: 若本次跳过新信号, 显式披露原因.
     # cap_blocked 可能由多种原因触发: 强度不足/价格过低/行业集中/敞口上限.
     # 每个候选的具体 block_reason 在候选列表里展示, 这里只做计数总述.
-    cap_blocked = getattr(tracker, "last_cap_blocked_count", 0)
+    blocked = list(getattr(tracker, "last_blocked_candidates", []) or [])
+    cap_blocked = len(blocked)
     if cap_blocked > 0 and not actions:
         at_cap = state.open_exposure >= _MAX_PORTFOLO_PCT - 1e-9
         if at_cap:
@@ -1063,7 +1053,6 @@ def render_daily_action(
         lines.append(f"\n  {Fore.RED}⚠ DRAWDOWN 熔断 (-20%) — 不出新仓, 平掉所有持仓{Style.RESET_ALL}")
         return "\n".join(lines)
 
-    blocked = list(getattr(tracker, "last_blocked_candidates", []) or [])
     # C-DUAL-SIGNAL-CONVERGENCE: 加载信号日 --auto Top-N, 标记 BTST 命中里同日
     # 也在 --auto Top-N 的票 (双信号收敛, 历史胜率更高 76% vs 66%, n 小仅供参考).
     auto_topn = _load_auto_topn_tickers(trade_date)
@@ -1112,10 +1101,10 @@ def render_daily_action(
         lines.append(f"     先验分布: {a.distribution_summary}")
         lines.append(f"     {Fore.YELLOW}失效: {a.invalidation_condition}{Style.RESET_ALL}\n")
 
-    # C-DAILY-ACTION-POSITION-VISIBILITY: BUY 之后若还有被上限跳过的候选, 也列出来
+    # C-DAILY-ACTION-POSITION-VISIBILITY: BUY 之后若还有被风控过滤的候选, 也列出来
     # (operator 想知道"今天还有哪些票可交易", 上限只限买不限看).
     if blocked:
-        lines.append(f"  {Fore.WHITE}其余 {len(blocked)} 个候选 (敞口超限暂不买入, 仓位释放后按强度优先):{Style.RESET_ALL}")
+        lines.append(f"  {Fore.WHITE}其余 {len(blocked)} 个候选 (未通过风控过滤, 具体原因见每行):{Style.RESET_ALL}")
         _render_candidate_list(lines, blocked, get_stock_name, buy_date_label, limit=8, auto_topn=auto_topn)
 
     if explain:

@@ -317,23 +317,7 @@ class BtstBreakoutSetup(Setup):
         stop_price = trigger_close * (1 + range_based_stop_pct)
         invalidation = f"价格跌破 {stop_price:.2f} (盘整区底部 {range_low:.2f}, {range_based_stop_pct:+.1%})"
 
-        # trigger_strength: 4 因子 alpha ranker + 能量耦合 bonus.
-        #   weekday:  Wed-Fri 78% win vs Mon-Tue 51% (+27pp)
-        #   board:    002/300 83% vs SZmain 45% (+38pp)
-        #   position: Donchian 下半区(新鲜突破) vs 上半区(追高)
-        #   squeeze:  波动率压缩(弹簧压紧) vs 未压缩
-        # 能量耦合: position+squeeze 同时=1 = 完整弹簧释放, 给 0.1 bonus.
-
-        trade_dow = _dt.strptime(trade_date, "%Y%m%d").weekday()  # 0=Mon
-        weekday_score = 1.0 if trade_dow >= 2 else 0.0  # Wed-Fri=1, Mon-Tue=0
-        board_score = _board_quality_score(ticker)  # 002/300=1.0, 688/60x=0.7, 000=0.0
-
-        # 位置因子: 用涨停前 5 日 close 计算
-        # 压缩因子: 用涨停前 20 日 high/low/close 计算 (需要更长的历史窗口)
-        pre_window = prices.iloc[ref_idx : trigger_idx]  # 5 个交易日的 OHLCV
-        position_score, squeeze_score = _compute_trend_vol_scores(pre_window, prices, trigger_idx)
-
-        # 5 因子等权 + 能量耦合 bonus.
+        # trigger_strength: 5 因子等权 alpha ranker + 能量耦合 bonus.
         #   weekday:  Wed-Fri 78% win vs Mon-Tue 51% (+27pp)
         #   board:    002/300 83% vs SZmain 45% (+38pp)
         #   position: Donchian 下半区(新鲜突破) vs 上半区(追高)

@@ -115,12 +115,12 @@ class PaperTracker:
         self.last_action_trade_date: str = ""
         # generate_daily_action 数据滞后保护原因 (触发时不出新 BUY, 不持久化)
         self.last_action_stale_reason: str = ""
-        # C-PORTFOLIO-CAP (20260710): 本次 run 后组合总敞口 (已开+新仓) + 因超 60%
-        # 上限被跳过的剩余信号数. 供 render_daily_action 披露 (不持久化, 仅本次运行可见).
+        # C-PORTFOLIO-CAP (20260710): 本次 run 后组合总敞口 (已开+新仓).
+        # 供 render_daily_action 披露 (不持久化, 仅本次运行可见).
         self.last_portfolio_exposure: float = float(self._state.open_exposure)
-        self.last_cap_blocked_count: int = 0
-        # C-DAILY-ACTION-POSITION-VISIBILITY: 本次因敞口超限未录入的候选 (按强度排序),
-        # 供 render 列出"今日可交易但暂不买入"的票. 不持久化.
+        # C-DAILY-ACTION-POSITION-VISIBILITY: 本次因风控过滤未录入的候选 (按强度排序),
+        # 供 render 列出"今日可交易但暂不买入"的票 + 计数总述. 不持久化.
+        # 单一真相源: 计数用 len(last_blocked_candidates), 明细直接遍历.
         self.last_blocked_candidates: list = []
 
     # ---- portfolio state ----
