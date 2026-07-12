@@ -121,6 +121,11 @@ class CompanyNews(BaseModel):
     url: str
     sentiment: str | None = None
     content: str | None = None
+    # Bug 3 fix: deduplicate_news sets this to the size of the "same-event
+    # multi-source cluster" the article represents (default 1 = standalone).
+    # The event_sentiment scorer uses it as a consensus confidence boost:
+    # more independent sources covering the same event → stronger signal.
+    dedup_cluster_size: int = 1
 
 
 class CompanyNewsResponse(BaseModel):

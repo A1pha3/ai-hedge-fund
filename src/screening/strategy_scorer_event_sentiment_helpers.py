@@ -203,6 +203,17 @@ def _score_news_article(item: CompanyNews, trade_dt: datetime) -> dict:
     direction, strength = _resolve_news_direction_and_strength(pos_hits, neg_hits)
     effective_weight = decay * _event_weight_multiplier(days_old, strength)
     confidence = min(100.0, 45.0 + strength * 18.0) if strength > 0 else 0.0
+
+    # Bug 3 fix: multi-source consensus boost. When multiple independent outlets
+    # cover the same event (dedup_cluster_size > 1), the signal is more credible.
+    # Boost effective_weight so the article's directional vote counts more in the
+    # weighted aggregation. Capped at 1.5× to prevent a single viral story from
+    # dominating. Only applies to directional articles (strength > 0).
+    cluster_size = getattr(item, "dedup_cluster_size", 1)
+    if cluster_size > 1 and strength > 0:
+        consensus_multiplier = min(1.5, 1.0 + 0.1 * (cluster_size - 1))
+        effective_weight *= consensus_multiplier
+
     return _build_news_article_metrics(item.title, days_old, decay, direction, confidence, effective_weight)
 
 
@@ -286,10 +297,17 @@ def _score_insider_conviction(trades: list[InsiderTrade]) -> SubFactor:
     analysis = analyze_insider_conviction(trades)
     direction, confidence = _resolve_insider_conviction_direction_and_confidence(float(analysis["score"]))
     # completeness must reflect usable directional signal, not mere data presence.
-    # When direction=0 and confidence=0 the sub-factor carries no information, so
+    # direction=0 means the sub-factor carries no directional information, so
     # completeness=0.0 — otherwise it silently reserves event_sentiment's ~10%
-    # weight and dilutes T/MR/F in _normalize_active_weights (completeness>0 gate).
-    completeness = 0.0 if (direction == 0 and confidence == 0.0) else 1.0
+    # weight and dilutes news_sentiment in aggregate_sub_factors.
+    #
+    # Bug 4 fix: the original condition ``direction == 0 and confidence == 0``
+    # was too narrow. _resolve_insider_conviction_direction_and_confidence yields
+    # confidence > 0 for any score ≠ 0.5, so a direction=0 sub-factor with
+    # confidence=10 (score=0.45) still got completeness=1.0, diluting the
+    # news_sentiment sub-factor's effective weight by reserving the 25%
+    # insider slot for a non-directional signal.
+    completeness = 0.0 if direction == 0 else 1.0
     return _make_sub_factor(
         "insider_conviction",
         direction,
@@ -382,6 +400,25 @@ def _resolve_event_freshness_days_old(news_date: str, trade_date: str) -> int:
 
 
 def _count_event_keyword_hits(news_item: CompanyNews) -> tuple[int, int]:
+    """Count positive/negative keyword hits for a news article.
+
+    Bug 1 fix: The ingestion layer (classify_news_sentiment) already computed a
+    ``sentiment`` field using ~150 keywords. That result is authoritative —
+    re-computing with the smaller 36-word table was both redundant and lower
+    quality. We now trust ``sentiment`` for directional articles; only for
+    ``neutral``/missing do we fall back to keyword matching (which now uses the
+    expanded tables that cover A-share event vocabulary).
+    """
+    sentiment = (news_item.sentiment or "").strip().lower()
+    if sentiment == "positive":
+        # strength=2 ensures this article passes event_freshness's strength>=2
+        # gate (_resolve_event_freshness_direction L424-431). Without this, a
+        # sentiment-tagged article with no keyword hits in the small table would
+        # be scored as neutral (strength=0) by event_freshness.
+        return (2, 0)
+    if sentiment == "negative":
+        return (0, 2)
+    # neutral or missing → keyword fallback (expanded tables)
     text = f"{news_item.title or ''} {news_item.content or ''}".lower()
     pos_hits = sum(1 for word in POSITIVE_NEWS_KEYWORDS if word in text)
     neg_hits = sum(1 for word in NEGATIVE_NEWS_KEYWORDS if word in text)

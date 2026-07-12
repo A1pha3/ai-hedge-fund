@@ -270,20 +270,34 @@ def deduplicate_news(articles: list, similarity_threshold: float = 0.5) -> list:
 
     unique_articles = []
     seen_char_sets: list[set[str]] = []
+    # Bug 3 fix: track cluster sizes so the scorer can boost confidence for
+    # multi-source consensus. Each kept article records how many near-duplicate
+    # articles it absorbed (itself + N duplicates).
+    cluster_sizes: list[int] = []
 
     for article in articles:
         title = getattr(article, "title", "")
         char_set = _extract_key_chars(title)
 
         is_duplicate = False
-        for existing_set in seen_char_sets:
+        for i, existing_set in enumerate(seen_char_sets):
             if _jaccard_similarity(char_set, existing_set) >= similarity_threshold:
                 is_duplicate = True
+                cluster_sizes[i] += 1  # increment the kept article's cluster
                 break
 
         if not is_duplicate:
             unique_articles.append(article)
             seen_char_sets.append(char_set)
+            cluster_sizes.append(1)
+
+    # Write cluster_size onto each kept article (best-effort — works for
+    # CompanyNews/pydantic models with the field).
+    for article, size in zip(unique_articles, cluster_sizes):
+        try:
+            article.dedup_cluster_size = size
+        except (AttributeError, TypeError):
+            logger.debug("deduplicate_news: cannot set dedup_cluster_size on %s", type(article).__name__)
 
     dedup_count = len(articles) - len(unique_articles)
     if dedup_count > 0:
