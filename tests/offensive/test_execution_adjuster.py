@@ -5,12 +5,19 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.screening.offensive.execution_adjuster import (
     ExecutionConfig,
+    ExecutionCosts,
+    ExecutionStatus,
+    apply_execution_costs,
     adjust_returns,
+    classify_open_fill,
     is_limit_up_unbuyable_next_day,
 )
 
@@ -103,3 +110,49 @@ def test_star_market_15pct_not_limit_up_so_buyable():
     prices.loc[0, "pct_change"] = 15.0  # T 日 +15% (非涨停)
     prices.loc[1, "open"] = 13.0  # T+1 开盘 +13% (旧逻辑会判不可买)
     assert is_limit_up_unbuyable_next_day(prices, trigger_idx=0, ticker="688037") is False
+
+
+def test_open_inside_limits_is_executable_proxy():
+    result = classify_open_fill(open_price=10.5, limit_down=9.0, limit_up=11.0, suspended=False)
+    assert result is ExecutionStatus.EXECUTABLE_PROXY
+
+
+def test_open_on_limit_is_unknown_queue():
+    assert classify_open_fill(11.0, 9.0, 11.0, False) is ExecutionStatus.UNKNOWN_QUEUE
+
+
+def test_locked_board_is_conservative_unexecutable_proxy():
+    assert (
+        classify_open_fill(11.0, 9.0, 11.0, False, high=11.0, low=11.0)
+        is ExecutionStatus.UNEXECUTABLE_PROXY
+    )
+
+
+def test_missing_limit_or_suspension_state_fails_closed():
+    assert classify_open_fill(10.0, None, 11.0, False) is ExecutionStatus.UNKNOWN_QUEUE
+    assert classify_open_fill(10.0, 9.0, 11.0, None) is ExecutionStatus.UNKNOWN_QUEUE
+
+
+def test_costs_are_not_embedded_in_raw_fill_price():
+    fill = apply_execution_costs(
+        raw_fill_price=10.0,
+        quantity=1_000,
+        side="buy",
+        costs=ExecutionCosts(commission=5.0, tax_rate=0.0, slippage_bps=30),
+    )
+    assert fill.raw_fill_price == 10.0
+    assert fill.gross_notional == 10_000.0
+    assert fill.slippage_cost == 30.0
+    assert fill.net_cash_flow == -10_035.0
+
+
+def test_same_day_exit_is_rejected_by_t_plus_one():
+    with pytest.raises(ValueError, match="strictly after entry_date"):
+        apply_execution_costs(
+            raw_fill_price=10.0,
+            quantity=1_000,
+            side="sell",
+            costs=ExecutionCosts(),
+            entry_date=date(2026, 7, 13),
+            exit_date=date(2026, 7, 13),
+        )

@@ -11,12 +11,117 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
+from enum import Enum
 
 import numpy as np
 import pandas as pd
 
 # A 股涨跌停阈值 (主板 ±10%, 创业板/科创板 ±20%; 本期统一用 +9.5% 判定避免浮点)
 _LIMIT_UP_PCT_THRESHOLD = 9.5
+
+
+class ExecutionStatus(str, Enum):
+    """Conservative daily-bar execution classification."""
+
+    EXECUTABLE_PROXY = "executable_proxy"
+    UNEXECUTABLE_PROXY = "unexecutable_proxy"
+    UNKNOWN_QUEUE = "unknown_queue"
+
+
+@dataclass(frozen=True)
+class ExecutionCosts:
+    """Versioned, injectable cost assumptions for one fill."""
+
+    version: str = "v1"
+    commission: float = 0.0
+    tax_rate: float = 0.0
+    slippage_bps: float = 0.0
+    other_fee: float = 0.0
+
+
+@dataclass(frozen=True)
+class FillResult:
+    """Auditable fill economics with the observed price left unchanged."""
+
+    raw_fill_price: float
+    quantity: int
+    side: str
+    gross_notional: float
+    commission: float
+    tax: float
+    slippage_cost: float
+    other_fee: float
+    net_cash_flow: float
+    cost_version: str
+
+
+def classify_open_fill(
+    open_price: float | None,
+    limit_down: float | None,
+    limit_up: float | None,
+    suspended: bool | None,
+    *,
+    high: float | None = None,
+    low: float | None = None,
+) -> ExecutionStatus:
+    """Classify an open-price paper-fill proxy without guessing queue fills."""
+    if suspended is None or open_price is None or limit_down is None or limit_up is None:
+        return ExecutionStatus.UNKNOWN_QUEUE
+    if suspended:
+        return ExecutionStatus.UNEXECUTABLE_PROXY
+    if limit_down >= limit_up:
+        return ExecutionStatus.UNKNOWN_QUEUE
+
+    on_limit = open_price == limit_down or open_price == limit_up
+    locked_at_open = high == open_price and low == open_price
+    if on_limit and locked_at_open:
+        return ExecutionStatus.UNEXECUTABLE_PROXY
+    if on_limit:
+        return ExecutionStatus.UNKNOWN_QUEUE
+    if limit_down < open_price < limit_up:
+        return ExecutionStatus.EXECUTABLE_PROXY
+    return ExecutionStatus.UNEXECUTABLE_PROXY
+
+
+def apply_execution_costs(
+    raw_fill_price: float,
+    quantity: int,
+    side: str,
+    costs: ExecutionCosts,
+    *,
+    entry_date: date | None = None,
+    exit_date: date | None = None,
+) -> FillResult:
+    """Apply independently auditable costs while preserving the raw fill price."""
+    side = side.lower()
+    if side not in {"buy", "sell"}:
+        raise ValueError("side must be 'buy' or 'sell'")
+    if raw_fill_price <= 0 or quantity <= 0:
+        raise ValueError("raw_fill_price and quantity must be positive")
+    if min(costs.commission, costs.tax_rate, costs.slippage_bps, costs.other_fee) < 0:
+        raise ValueError("execution costs must be non-negative")
+    if side == "sell" and entry_date is not None:
+        if exit_date is None or exit_date <= entry_date:
+            raise ValueError("exit_date must be strictly after entry_date for T+1")
+
+    gross_notional = raw_fill_price * quantity
+    tax = gross_notional * costs.tax_rate
+    slippage_cost = gross_notional * costs.slippage_bps / 10_000.0
+    total_cost = costs.commission + tax + slippage_cost + costs.other_fee
+    net_cash_flow = -(gross_notional + total_cost) if side == "buy" else gross_notional - total_cost
+    return FillResult(
+        raw_fill_price=raw_fill_price,
+        quantity=quantity,
+        side=side,
+        gross_notional=gross_notional,
+        commission=costs.commission,
+        tax=tax,
+        slippage_cost=slippage_cost,
+        other_fee=costs.other_fee,
+        net_cash_flow=net_cash_flow,
+        cost_version=costs.version,
+    )
 
 
 @dataclass(frozen=True)
@@ -91,8 +196,8 @@ def adjust_returns(
         np.ndarray[float], 每个样本的调整后收益率; 不可买/数据不足 → NaN
     """
     assert len(trigger_dates) == len(tickers)
-    slippage = config.slippage_bps / 10_000.0
     out = np.full(len(trigger_dates), np.nan)
+    costs = ExecutionCosts(slippage_bps=config.slippage_bps)
 
     # 预建每个 ticker 的 date→idx 索引 (per ticker 只算一次, 后续 O(1) 查)
     date_idx_cache: dict[str, dict[str, int]] = {}
@@ -114,12 +219,18 @@ def adjust_returns(
         if config.limit_up_unbuyable and is_limit_up_unbuyable_next_day(prices, trigger_idx, ticker):
             continue  # NaN
 
-        # 入口价 = 次日开盘 × (1 + slippage); 出口价 = T+horizon 收盘 × (1 - slippage)
+        # 通过 v2 成本模型独立计算滑点，再还原 legacy 的每股有效价格。
         entry_idx = trigger_idx + 1  # 次日开盘买入 (T+1 settlement)
         if entry_idx >= len(prices):
             continue
-        entry_price = float(prices.iloc[entry_idx]["open"]) * (1 + slippage)
-        exit_price = float(prices.iloc[exit_idx]["close"]) * (1 - slippage)
+        raw_entry_price = float(prices.iloc[entry_idx]["open"])
+        raw_exit_price = float(prices.iloc[exit_idx]["close"])
+        if raw_entry_price <= 0 or raw_exit_price <= 0:
+            continue
+        entry_fill = apply_execution_costs(raw_entry_price, 1, "buy", costs)
+        exit_fill = apply_execution_costs(raw_exit_price, 1, "sell", costs)
+        entry_price = -entry_fill.net_cash_flow
+        exit_price = exit_fill.net_cash_flow
         if entry_price <= 0:
             continue
         out[i] = (exit_price / entry_price) - 1.0
