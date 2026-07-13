@@ -295,3 +295,58 @@ def test_same_day_rerun_does_not_render_or_record_duplicate_plan(service, sessio
         service.repository.count_events(first.new_plans[0].trade_id, "PLAN_CREATED")
         == 1
     )
+
+
+@pytest.mark.parametrize("calendar_dates", [(), (date(2026, 7, 13),)])
+def test_due_entry_fails_closed_when_as_of_is_not_exact_calendar_session(
+    tmp_path, sessions, calendar_dates
+):
+    repo = LedgerRepository(tmp_path / "closed-calendar.sqlite3", "closed", 100_000)
+    repo.initialize()
+    plan = repo.create_plan(
+        "000150", "btst_breakout", "v2", sessions[0], sessions[1], 0.1, 1
+    )
+    prices = FixedPrices(MarketBar(10, 10, 9, 11, False, 10.5, 9.5))
+    local = DailyActionService(
+        repo,
+        TradingSessionCalendar(calendar_dates),
+        prices,
+        ExecutionCosts(version="test"),
+    )
+    local.run(sessions[1], ())
+    assert repo.get_trade(plan.trade_id).state is TradeState.PLANNED
+    assert repo.count_events(plan.trade_id, "ENTRY_FILLED") == 0
+
+
+def test_invalid_entry_calendar_does_not_block_due_exit_retry(service, sessions):
+    trade = open_trade(service, "000152", sessions[1])
+    service.repository.mark_exit_pending(
+        trade.trade_id, sessions[1], forced_exit_target_date=sessions[2]
+    )
+    service.calendar = TradingSessionCalendar.from_dates([])
+    service.prices.values[(trade.ticker, sessions[2])] = None
+    run = service.run(sessions[2], ())
+    assert run.deferred_exits[0].trade_id == trade.trade_id
+    assert service.repository.count_events(trade.trade_id, "EXIT_DEFERRED") == 1
+
+
+def test_reentry_missing_close_does_not_inherit_closed_trade_mark(service, sessions):
+    old = open_trade(service, "000151", sessions[1])
+    service.prices.values[(old.ticker, sessions[2])] = MarketBar(
+        20, 20, 18, 22, False, 21, 19
+    )
+    service.run(sessions[2], ())
+    service.repository.mark_exit_pending(
+        old.trade_id, sessions[2], forced_exit_target_date=sessions[3]
+    )
+    service.prices.values[(old.ticker, sessions[3])] = MarketBar(
+        10, 10, 9, 11, False, 10.5, 9.5
+    )
+    service.run(sessions[3], ())
+    new = open_trade(service, old.ticker, sessions[4])
+    service.prices.values[(new.ticker, sessions[5])] = None
+    run = service.run(sessions[5], ())
+    assert run.valuation.market_value == pytest.approx(
+        new.raw_entry_price * new.quantity
+    )
+    assert new.ticker in run.valuation.stale_tickers

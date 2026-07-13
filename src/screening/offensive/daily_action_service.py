@@ -139,6 +139,8 @@ class DailyActionService:
         return self._build_view(as_of, valuation, exits, plans)
 
     def _settle_due_entry_plans(self, as_of: date) -> None:
+        if not self.calendar.contains_session(as_of):
+            return
         for plan in self.repository.planned_trades(as_of):
             current = self.repository.get_trade(plan.trade_id)
             if current.state is not TradeState.PLANNED:
@@ -363,11 +365,11 @@ class DailyActionService:
                 and bar.close > 0
             ):
                 price = bar.close
-                self.repository.record_position_mark(trade.ticker, as_of, price)
+                self.repository.record_position_mark(trade.trade_id, as_of, price)
             else:
                 stale.append(trade.ticker)
                 price = (
-                    self.repository.latest_position_mark(trade.ticker, as_of)
+                    self.repository.latest_position_mark(trade.trade_id, as_of)
                     or trade.raw_entry_price
                     or 0.0
                 )

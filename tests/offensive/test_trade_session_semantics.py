@@ -65,7 +65,9 @@ def test_session_distance_requires_both_endpoints(missing_endpoint: str) -> None
     tuesday = date(2026, 7, 14)
     missing = date(2026, 7, 15)
     cal = TradingSessionCalendar.from_dates([monday, tuesday])
-    start, end = (missing, tuesday) if missing_endpoint == "start" else (monday, missing)
+    start, end = (
+        (missing, tuesday) if missing_endpoint == "start" else (monday, missing)
+    )
 
     with pytest.raises(ValueError, match="absent from open-session data"):
         cal.session_distance(start, end)
@@ -88,3 +90,11 @@ def test_next_session_requires_future_calendar_coverage() -> None:
     cal = TradingSessionCalendar.from_dates([final_session])
     with pytest.raises(ValueError, match="open-session data unavailable"):
         cal.next_session(final_session)
+
+
+def test_contains_session_is_exact_and_empty_calendar_is_false() -> None:
+    monday = date(2026, 7, 13)
+    calendar = TradingSessionCalendar.from_dates([monday])
+    assert calendar.contains_session(monday) is True
+    assert calendar.contains_session(date(2026, 7, 14)) is False
+    assert TradingSessionCalendar.from_dates([]).contains_session(monday) is False

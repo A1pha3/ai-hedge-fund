@@ -367,9 +367,25 @@ def test_position_mark_round_trip_is_latest_and_ledger_scoped(tmp_path: Path) ->
     second = LedgerRepository(path, "second", 100_000)
     first.initialize()
     second.initialize()
-    first.record_position_mark("000001", date(2026, 7, 13), 10.0)
-    first.record_position_mark("000001", date(2026, 7, 14), 12.0)
-    second.record_position_mark("000001", date(2026, 7, 14), 99.0)
-    assert first.latest_position_mark("000001", date(2026, 7, 15)) == pytest.approx(
-        12.0
+    first_trade = _plan(first)
+    second_trade = _plan(second)
+    first.record_position_mark(first_trade.trade_id, date(2026, 7, 13), 10.0)
+    first.record_position_mark(first_trade.trade_id, date(2026, 7, 14), 12.0)
+    second.record_position_mark(second_trade.trade_id, date(2026, 7, 14), 99.0)
+    assert first.latest_position_mark(
+        first_trade.trade_id, date(2026, 7, 15)
+    ) == pytest.approx(12.0)
+
+
+def test_position_marks_do_not_leak_between_trade_epochs_for_same_ticker(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    old = repo.create_plan(
+        "000001", "btst", "v1", date(2026, 7, 10), date(2026, 7, 13), 0.1, 1
     )
+    new = repo.create_plan(
+        "000001", "btst", "v1", date(2026, 7, 14), date(2026, 7, 15), 0.1, 1
+    )
+    repo.record_position_mark(old.trade_id, date(2026, 7, 14), 20.0)
+    assert repo.latest_position_mark(new.trade_id, date(2026, 7, 16)) is None

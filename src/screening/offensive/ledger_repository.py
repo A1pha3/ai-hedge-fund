@@ -140,10 +140,10 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
 );
 CREATE TABLE IF NOT EXISTS position_marks (
   ledger_id TEXT NOT NULL REFERENCES ledger_meta(ledger_id),
-  ticker TEXT NOT NULL,
+  trade_id TEXT NOT NULL REFERENCES trades(trade_id),
   trade_date TEXT NOT NULL,
   close_price REAL NOT NULL CHECK(close_price > 0),
-  PRIMARY KEY(ledger_id, ticker, trade_date)
+  PRIMARY KEY(ledger_id, trade_id, trade_date)
 );
 """
             )
@@ -151,6 +151,19 @@ CREATE TABLE IF NOT EXISTS position_marks (
                 "INSERT OR IGNORE INTO ledger_meta VALUES (?, ?, ?, ?)",
                 (self.ledger_id, self.SCHEMA_VERSION, self.initial_cash, self._now()),
             )
+            mark_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(position_marks)")
+            }
+            if "ticker" in mark_columns:
+                conn.execute("DROP TABLE position_marks")
+                conn.execute(
+                    """CREATE TABLE position_marks (
+                    ledger_id TEXT NOT NULL REFERENCES ledger_meta(ledger_id),
+                    trade_id TEXT NOT NULL REFERENCES trades(trade_id),
+                    trade_date TEXT NOT NULL,
+                    close_price REAL NOT NULL CHECK(close_price > 0),
+                    PRIMARY KEY(ledger_id, trade_id, trade_date))"""
+                )
             meta = conn.execute(
                 "SELECT schema_version, initial_cash FROM ledger_meta WHERE ledger_id=?",
                 (self.ledger_id,),
@@ -554,24 +567,30 @@ CREATE TABLE IF NOT EXISTS position_marks (
             )
 
     def record_position_mark(
-        self, ticker: str, trade_date: date, close_price: float
+        self, trade_id: str, trade_date: date, close_price: float
     ) -> None:
         if not math.isfinite(close_price) or close_price <= 0:
             raise ValueError("close_price must be finite and positive")
         with self._connect() as conn:
             self._begin_write(conn)
+            owner = conn.execute(
+                "SELECT 1 FROM trades WHERE trade_id=? AND ledger_id=?",
+                (trade_id, self.ledger_id),
+            ).fetchone()
+            if owner is None:
+                raise KeyError(f"unknown trade: {trade_id}")
             conn.execute(
                 "INSERT INTO position_marks VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(ledger_id, ticker, trade_date) DO UPDATE SET close_price=excluded.close_price",
-                (self.ledger_id, ticker, trade_date.isoformat(), close_price),
+                "ON CONFLICT(ledger_id, trade_id, trade_date) DO UPDATE SET close_price=excluded.close_price",
+                (self.ledger_id, trade_id, trade_date.isoformat(), close_price),
             )
 
-    def latest_position_mark(self, ticker: str, on_or_before: date) -> float | None:
+    def latest_position_mark(self, trade_id: str, on_or_before: date) -> float | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT close_price FROM position_marks WHERE ledger_id=? AND ticker=? "
+                "SELECT close_price FROM position_marks WHERE ledger_id=? AND trade_id=? "
                 "AND trade_date<=? ORDER BY trade_date DESC LIMIT 1",
-                (self.ledger_id, ticker, on_or_before.isoformat()),
+                (self.ledger_id, trade_id, on_or_before.isoformat()),
             ).fetchone()
             return float(row["close_price"]) if row else None
 

@@ -1,11 +1,11 @@
 # Task 5 report
 
-## Status
+## Status (current)
 
-Complete. `DailyActionService.run()` executes due-entry settlement, due-exit settlement,
+Complete after three TDD loops. `DailyActionService.run()` executes due-entry settlement, due-exit settlement,
 mark-to-market, open-position evaluation, and capacity-safe planning in the fixed order.
 
-## TDD evidence
+## Initial TDD evidence (superseded verification counts retained for chronology)
 
 - RED (service): `uv run pytest tests/offensive/test_daily_action_service.py -v` collected
   zero tests and failed with `ModuleNotFoundError: ...daily_action_service`.
@@ -43,7 +43,7 @@ mark-to-market, open-position evaluation, and capacity-safe planning in the fixe
 - No unresolved correctness concern within Task 5 scope; scanner/CLI integration remains a
   later task, and OversoldBounce stays outside this service boundary.
 
-## Blocking-finding repair (2026-07-13)
+## First blocking-finding repair (superseded verification counts retained)
 
 - RED: focused collection failed because `RegimeAuthorization` was absent; repository
   regressions also specified missing creation-status and position-mark APIs. During GREEN,
@@ -68,3 +68,23 @@ mark-to-market, open-position evaluation, and capacity-safe planning in the fixe
 - `create_plan_if_absent` makes same-day reruns omit `new_plans` and retain one event.
 - Concern: additive `position_marks` uses schema version 1 intentionally so existing v1
   ledgers acquire the backward-compatible table through `CREATE TABLE IF NOT EXISTS`.
+
+## Final verification — third fix loop (authoritative)
+
+- RED: focused suite had **4 failures, 61 passed**. Empty and absent calendars filled due
+  entries, ticker-keyed marks valued a new trade at 20,000 instead of its 10,000 entry
+  epoch, and `contains_session` did not exist.
+- GREEN focused: `uv run pytest tests/offensive/test_daily_action_service.py
+  tests/offensive/test_ledger_repository.py tests/offensive/test_trade_session_semantics.py
+  -v` — **66 passed in 1.31s**.
+- GREEN baseline: `uv run pytest tests/offensive/ tests/test_main_auto_cache_refresh.py -q`
+  — **380 passed in 3.63s**.
+- Quality: Ruff check passed for touched calendar/service/tests; all six touched code/test
+  files are Ruff-formatted; compileall and `git diff --check` passed.
+- Entry settlement now calls public exact calendar membership and fails closed locally;
+  due exits still settle/defer independently in the fixed run order.
+- Position marks now use `(ledger_id, trade_id, trade_date)`, reference `trades`, validate
+  ledger ownership, and migrate the unpublished ticker-keyed table additively at initialize.
+  Closed ticker epochs cannot leak marks into a re-entry.
+- Final concern: migrating the unpublished ticker-keyed `position_marks` table drops only
+  those pre-release marks; lifecycle trades and legacy paper artifacts are untouched.
