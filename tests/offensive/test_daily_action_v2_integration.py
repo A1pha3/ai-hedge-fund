@@ -238,7 +238,7 @@ def test_actual_cli_is_idempotent_and_preserves_recursive_legacy_artifacts(tmp_p
         lambda **_kwargs: scan,
     )
     ledger = tmp_path / "isolated-v2/ledger.sqlite3"
-    sessions = (signal_date, signal_date + timedelta(days=1))
+    sessions = tuple(signal_date + timedelta(days=i) for i in range(11))
     dispatcher._resolve_daily_action(["--daily-action"], open_sessions=sessions, ledger_path=ledger)
     dispatcher._resolve_daily_action(["--daily-action"], open_sessions=sessions, ledger_path=ledger)
     after = {
@@ -261,5 +261,20 @@ def test_actual_cli_missing_calendar_renders_block_and_creates_no_plan(tmp_path,
     )
     ledger = tmp_path / "blocked.sqlite3"
     dispatcher._resolve_daily_action(["--daily-action"], open_sessions=(), ledger_path=ledger)
+    assert "calendar_unavailable" in capsys.readouterr().out
+    assert LedgerRepository(ledger, "daily-action-v2", 100_000).planned_trades() == []
+
+
+def test_actual_cli_two_session_calendar_blocks_btst_horizon(tmp_path, monkeypatch, signal_date, capsys):
+    monkeypatch.setattr(
+        "src.screening.offensive.daily_action.scan_daily_action_candidates",
+        lambda **_kwargs: _scan(signal_date),
+    )
+    ledger = tmp_path / "two-session.sqlite3"
+    dispatcher._resolve_daily_action(
+        ["--daily-action"],
+        open_sessions=(signal_date, signal_date + timedelta(days=1)),
+        ledger_path=ledger,
+    )
     assert "calendar_unavailable" in capsys.readouterr().out
     assert LedgerRepository(ledger, "daily-action-v2", 100_000).planned_trades() == []

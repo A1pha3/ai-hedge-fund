@@ -28,6 +28,7 @@ PORTFOLIO_CAP = 0.60
 NORMAL_STOCK_CAP = 0.10
 HARD_STOCK_CAP = 0.12
 LOT_SIZE = 100
+SETUP_HOLDING_SESSIONS = {"btst_breakout": 10}
 
 
 class RegimeAuthorization(StrEnum):
@@ -145,6 +146,9 @@ class DailyActionService:
         for plan in self.repository.planned_trades(as_of):
             current = self.repository.get_trade(plan.trade_id)
             if current.state is not TradeState.PLANNED:
+                continue
+            if not self._has_holding_horizon(plan.setup, plan.planned_entry_date):
+                self._block_reason = "calendar_unavailable"
                 continue
             nav, values, _ = self._snapshot(as_of)
             higher = [
@@ -274,6 +278,7 @@ class DailyActionService:
                 session_nine = self.calendar.nth_holding_session(trade.entry_date, 9)
                 target = self.calendar.nth_holding_session(trade.entry_date, 10)
             except ValueError:
+                self._block_reason = "calendar_unavailable"
                 continue
             if as_of >= session_nine:
                 self.repository.mark_exit_pending(
@@ -290,6 +295,13 @@ class DailyActionService:
         try:
             entry_date = self.calendar.next_session(as_of)
         except ValueError:
+            self._block_reason = "calendar_unavailable"
+            return ()
+        required_setups = {candidate.setup for candidate in candidates}
+        if any(
+            not self._has_holding_horizon(setup, entry_date)
+            for setup in required_setups
+        ):
             self._block_reason = "calendar_unavailable"
             return ()
         _, values, _ = self._snapshot(as_of)
@@ -380,6 +392,16 @@ class DailyActionService:
             )
         nav = self.repository.cash_balance() + sum(values.values())
         return nav, values, stale
+
+    def _has_holding_horizon(self, setup: str, entry_date: date) -> bool:
+        required = SETUP_HOLDING_SESSIONS.get(setup)
+        if required is None:
+            raise ValueError(f"missing holding-session policy for setup={setup}")
+        try:
+            self.calendar.nth_holding_session(entry_date, required)
+            return True
+        except ValueError:
+            return False
 
     def _affordable_quantity(self, weight: float, price: float, nav: float) -> int:
         target, cash = nav * weight, self.repository.cash_balance()

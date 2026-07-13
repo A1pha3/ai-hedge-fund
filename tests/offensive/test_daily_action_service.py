@@ -330,6 +330,40 @@ def test_invalid_entry_calendar_does_not_block_due_exit_retry(service, sessions)
     assert service.repository.count_events(trade.trade_id, "EXIT_DEFERRED") == 1
 
 
+def test_btst_plan_requires_full_entry_through_holding_session_ten(tmp_path):
+    signal = date(2026, 7, 10)
+    monday = date(2026, 7, 13)
+    repo = LedgerRepository(tmp_path / "short-calendar.sqlite3", "short", 100_000)
+    repo.initialize()
+    local = DailyActionService(
+        repo,
+        TradingSessionCalendar((signal, monday)),
+        FixedPrices(MarketBar(10, 10, 9, 11, False, 10.5, 9.5)),
+        ExecutionCosts(version="test"),
+    )
+    run = local.run(signal, (candidate("000160"),))
+    assert run.new_plans == ()
+    assert run.block_reason == "calendar_unavailable"
+    assert repo.planned_trades() == []
+
+
+def test_open_trade_with_incomplete_horizon_surfaces_calendar_warning(tmp_path):
+    entry = date(2026, 7, 13)
+    repo = LedgerRepository(tmp_path / "open-short.sqlite3", "open-short", 100_000)
+    repo.initialize()
+    third = entry + timedelta(days=2)
+    local = DailyActionService(
+        repo,
+        TradingSessionCalendar((entry, entry + timedelta(days=1), third)),
+        FixedPrices(MarketBar(10, 10, 9, 11, False, 10.5, 9.5)),
+        ExecutionCosts(version="test"),
+    )
+    trade = open_trade(local, "000161", entry)
+    run = local.run(entry + timedelta(days=1), ())
+    assert repo.get_trade(trade.trade_id).state is TradeState.OPEN
+    assert run.block_reason == "calendar_unavailable"
+
+
 def test_reentry_missing_close_does_not_inherit_closed_trade_mark(service, sessions):
     old = open_trade(service, "000151", sessions[1])
     service.prices.values[(old.ticker, sessions[2])] = MarketBar(
