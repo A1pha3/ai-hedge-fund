@@ -1,6 +1,7 @@
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from src.screening.offensive.daily_action_service import (
     DailyActionService,
     MarketBar,
     PlanCandidate,
+    TickerGateBlock,
     load_daily_action_manifest_gate,
 )
 from src.screening.offensive.execution_adjuster import ExecutionCosts
@@ -156,6 +158,14 @@ def test_ticker_fingerprint_mismatch_blocks_only_that_candidate(
     assert candidates[0].ticker in run.blocked_tickers
     assert candidates[1].ticker not in run.blocked_tickers
     assert tuple(plan.ticker for plan in run.new_plans) == (candidates[1].ticker,)
+    assert run.ticker_gate_blocks == (
+        TickerGateBlock(
+            candidates[0].ticker,
+            (
+                "fingerprint_mismatch:expected=sha256:stale,current=sha256:000001",
+            ),
+        ),
+    )
 
 
 def test_nonrecommended_layer_a_ticker_is_blocked_by_its_exact_readiness(
@@ -172,7 +182,101 @@ def test_nonrecommended_layer_a_ticker_is_blocked_by_its_exact_readiness(
     )
     run = service.run(SIGNAL_DATE, candidates, manifest=manifest)
     assert run.blocked_tickers == (candidates[1].ticker,)
+    assert run.ticker_gate_blocks == (
+        TickerGateBlock(candidates[1].ticker, ("fund_flow_history:4<20",)),
+    )
     assert tuple(plan.ticker for plan in run.new_plans) == (candidates[0].ticker,)
+
+
+def test_absent_ticker_and_missing_current_fingerprint_have_structured_reasons(
+    service, healthy_manifest, candidates
+):
+    manifest = replace(
+        healthy_manifest,
+        tickers={candidates[0].ticker: healthy_manifest.tickers[candidates[0].ticker]},
+        candidate_tickers=(candidates[0].ticker,),
+    )
+    service.cache_fingerprints = lambda ticker, _as_of: (
+        None if ticker == candidates[0].ticker else f"sha256:{ticker}"
+    )
+
+    run = service.run(SIGNAL_DATE, candidates, manifest=manifest)
+
+    assert run.ticker_gate_blocks == (
+        TickerGateBlock(candidates[0].ticker, ("current_fingerprint_missing",)),
+        TickerGateBlock(candidates[1].ticker, ("manifest_ticker_absent",)),
+    )
+
+
+def test_missing_manifest_fingerprint_has_structured_reason(
+    service, healthy_manifest, candidates
+):
+    missing = replace(
+        healthy_manifest.tickers[candidates[0].ticker],
+        cache_fingerprint=None,
+        trade_ready=False,
+        block_reasons=("cache_fingerprint:missing",),
+    )
+    manifest = replace(
+        healthy_manifest,
+        tickers={**healthy_manifest.tickers, candidates[0].ticker: missing},
+    )
+
+    run = service.run(SIGNAL_DATE, candidates, manifest=manifest)
+
+    assert run.ticker_gate_blocks[0] == TickerGateBlock(
+        candidates[0].ticker,
+        ("cache_fingerprint:missing", "manifest_fingerprint_missing"),
+    )
+
+
+def test_empty_in_memory_healthy_manifest_is_visibly_invalid(
+    service, healthy_manifest, candidates
+):
+    empty = replace(healthy_manifest, tickers={}, candidate_tickers=())
+
+    run = service.run(SIGNAL_DATE, candidates, manifest=empty)
+
+    assert run.block_reason == "manifest_invalid"
+    assert run.block_reasons == ("manifest_invalid",)
+    assert run.ticker_gate_blocks == tuple(
+        TickerGateBlock(candidate.ticker, ("manifest_invalid",))
+        for candidate in candidates
+    )
+
+
+def test_calendar_and_manifest_warnings_accumulate_and_render(
+    tmp_path: Path, candidates
+):
+    from src.screening.offensive.daily_action import (
+        DailyActionV2Run,
+        render_daily_action_v2,
+    )
+
+    repository = LedgerRepository(tmp_path / "warnings.sqlite3", "warnings", 100_000)
+    repository.initialize()
+    repository.create_plan(
+        "000099",
+        "btst_breakout",
+        "v2",
+        SIGNAL_DATE - timedelta(days=1),
+        SIGNAL_DATE,
+        0.1,
+        1,
+    )
+    local = DailyActionService(
+        repository,
+        TradingSessionCalendar((SIGNAL_DATE,)),
+        lambda _ticker, _as_of: MarketBar(10, 10, 9, 11, False, 10.5, 9.5),
+        ExecutionCosts(version="test"),
+    )
+
+    run = local.run(SIGNAL_DATE, candidates[:1], manifest=None)
+    rendered = render_daily_action_v2(DailyActionV2Run(run, (), (), (), ()))
+
+    assert run.block_reasons == ("calendar_unavailable", "healthy_manifest_missing")
+    assert run.block_reason == "calendar_unavailable;healthy_manifest_missing"
+    assert "block_reasons=calendar_unavailable,healthy_manifest_missing" in rendered
 
 
 def test_manifest_ticker_mapping_remains_immutable_after_candidate_gate(
@@ -202,21 +306,25 @@ def _canonical_payload(manifest: RunManifest) -> dict:
     }
 
 
+def _write_valid_canonical(reports: Path, manifest: RunManifest) -> Path:
+    from src.screening.auto_pipeline import _canonical_fingerprint
+
+    reports.mkdir(parents=True, exist_ok=True)
+    payload = _canonical_payload(manifest)
+    payload["manifest"]["candidate_set_fingerprint"] = _canonical_fingerprint(
+        list(manifest.candidate_tickers)
+    )
+    target = reports / f"auto_screening_{manifest.trade_date:%Y%m%d}.json"
+    target.write_text(json.dumps(payload), encoding="utf-8")
+    return target
+
+
 def test_canonical_manifest_round_trip_is_immutable(
     tmp_path: Path, healthy_manifest
 ):
     reports = tmp_path / "data" / "reports"
     reports.mkdir(parents=True)
-    payload = _canonical_payload(healthy_manifest)
-    # A serialized canonical must carry the exact candidate-set identity.
-    from src.screening.auto_pipeline import _canonical_fingerprint
-
-    payload["manifest"]["candidate_set_fingerprint"] = _canonical_fingerprint(
-        list(healthy_manifest.candidate_tickers)
-    )
-    (reports / "auto_screening_20260713.json").write_text(
-        json.dumps(payload), encoding="utf-8"
-    )
+    _write_valid_canonical(reports, healthy_manifest)
 
     manifest, _fingerprints = load_daily_action_manifest_gate(
         SIGNAL_DATE, reports_dir=reports
@@ -270,6 +378,106 @@ def test_stale_canonical_is_not_used_for_new_signal_date(
     reports.mkdir(parents=True)
     (reports / "auto_screening_20260712.json").write_text(
         json.dumps(_canonical_payload(healthy_manifest)), encoding="utf-8"
+    )
+
+    assert load_daily_action_manifest_gate(SIGNAL_DATE, reports_dir=reports) == (
+        None,
+        {},
+    )
+
+
+def test_canonical_symlink_is_rejected(tmp_path: Path, healthy_manifest):
+    reports = tmp_path / "data" / "reports"
+    real = _write_valid_canonical(reports, healthy_manifest)
+    payload = real.read_bytes()
+    real.unlink()
+    backing = reports / "backing.json"
+    backing.write_bytes(payload)
+    real.symlink_to(backing)
+
+    assert load_daily_action_manifest_gate(SIGNAL_DATE, reports_dir=reports) == (
+        None,
+        {},
+    )
+
+
+def test_canonical_fifo_is_rejected_without_path_read(
+    tmp_path: Path, healthy_manifest, monkeypatch
+):
+    reports = tmp_path / "data" / "reports"
+    reports.mkdir(parents=True)
+    target = reports / "auto_screening_20260713.json"
+    os.mkfifo(target)
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("FIFO must be opened nonblocking via descriptor")
+        ),
+    )
+
+    assert load_daily_action_manifest_gate(SIGNAL_DATE, reports_dir=reports) == (
+        None,
+        {},
+    )
+
+
+def test_canonical_directory_and_nonregular_entries_are_rejected(
+    tmp_path: Path,
+):
+    reports = tmp_path / "data" / "reports"
+    target = reports / "auto_screening_20260713.json"
+    target.mkdir(parents=True)
+
+    assert load_daily_action_manifest_gate(SIGNAL_DATE, reports_dir=reports) == (
+        None,
+        {},
+    )
+
+
+def test_canonical_replacement_identity_race_fails_closed(
+    tmp_path: Path, healthy_manifest, monkeypatch
+):
+    import src.screening.offensive.daily_action_service as service_module
+
+    reports = tmp_path / "data" / "reports"
+    target = _write_valid_canonical(reports, healthy_manifest)
+    replacement = reports / "replacement.json"
+    replacement.write_bytes(target.read_bytes())
+    real_stat = os.stat
+    target_stats = 0
+
+    def racing_stat(path, *args, **kwargs):
+        nonlocal target_stats
+        result = real_stat(path, *args, **kwargs)
+        if path == target.name and kwargs.get("dir_fd") is not None:
+            target_stats += 1
+            if target_stats == 2:
+                os.replace(replacement, target)
+                return real_stat(path, *args, **kwargs)
+        return result
+
+    monkeypatch.setattr(service_module.os, "stat", racing_stat)
+
+    assert load_daily_action_manifest_gate(SIGNAL_DATE, reports_dir=reports) == (
+        None,
+        {},
+    )
+
+
+def test_empty_healthy_manifest_domain_is_rejected(tmp_path: Path, healthy_manifest):
+    from src.screening.auto_pipeline import _canonical_fingerprint
+
+    reports = tmp_path / "data" / "reports"
+    reports.mkdir(parents=True)
+    payload = _canonical_payload(healthy_manifest)
+    payload["manifest"]["candidate_tickers"] = []
+    payload["manifest"]["tickers"] = {}
+    payload["manifest"]["candidate_set_fingerprint"] = _canonical_fingerprint([])
+    payload["candidate_pool_run"]["tickers"] = []
+    payload["candidate_pool_run"]["candidates"] = []
+    (reports / "auto_screening_20260713.json").write_text(
+        json.dumps(payload), encoding="utf-8"
     )
 
     assert load_daily_action_manifest_gate(SIGNAL_DATE, reports_dir=reports) == (

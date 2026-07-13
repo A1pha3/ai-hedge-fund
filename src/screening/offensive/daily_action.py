@@ -674,10 +674,16 @@ def render_daily_action_v2(run: DailyActionV2Run) -> str:
             )
     if run.service_run.block_reason:
         lines.append(f"block_reason={run.service_run.block_reason}")
+    if run.service_run.block_reasons:
+        lines.append("block_reasons=" + ",".join(run.service_run.block_reasons))
     if run.service_run.blocked_tickers:
         lines.append(
             "manifest_blocked_tickers=" + ",".join(run.service_run.blocked_tickers)
         )
+    if run.service_run.ticker_gate_blocks:
+        lines.append("manifest_gate_blocks:")
+        for block in run.service_run.ticker_gate_blocks:
+            lines.append(f"  {block.ticker} reasons={' | '.join(block.reasons)}")
     return "\n".join(lines)
 
 

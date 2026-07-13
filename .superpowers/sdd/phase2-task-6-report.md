@@ -62,3 +62,38 @@ The full-pool shadow calculation intentionally performs a second explicit
 composite/expected-return pass. This costs additional auto runtime but avoids
 sharing or mutating the canonical Top-30 ranking inputs. No unresolved
 correctness concern remains within Task 6 scope.
+
+## Review-hardening addendum (2026-07-13)
+
+Follow-up review findings were fixed test-first:
+
+- Canonical loading now anchors the reports directory and exact filename with
+  descriptor-relative `O_NOFOLLOW | O_CLOEXEC` opens. The file also uses
+  `O_NONBLOCK` so a FIFO cannot hang the command. `fstat` requires a regular
+  file, and pre/post-read no-follow stats must match the held device/inode;
+  symlinks, FIFOs, directories, other nonregular entries, and replacement
+  identity races fail closed.
+- A purported healthy manifest must contain a nonempty, exactly matching
+  candidate tuple and ticker mapping. Empty serialized or in-memory domains are
+  visibly rejected as unavailable/invalid.
+- `shadow_rank_status="complete"` now requires the original `score_b` and every
+  explicit composite/expected metric to be a finite JSON numeric value, never a
+  string or boolean. Complete shadow rows therefore cannot serialize a null
+  score caused by NaN/Inf.
+- Candidate rejection is preserved as structured `TickerGateBlock` data:
+  absent manifest row, validator block reasons, missing manifest/current
+  fingerprint, and expected/current fingerprint mismatch. Rendering exposes
+  those audit reasons and fingerprints without cache content.
+- Run-level warnings accumulate deterministically instead of overwriting one
+  another. `block_reason` remains a stable semicolon-joined compatibility view,
+  while `block_reasons` retains the structured ordered tuple. A due-plan calendar
+  warning and a missing manifest now both survive and render.
+
+Fresh verification after hardening:
+
+- Task 6 manifest/shadow tests: **38 passed**.
+- Task 6 + service + dispatcher integration: **79 passed**; dispatcher-focused
+  suite: **52 passed**.
+- Required offensive/cache baseline: **435 passed in 3.43s**.
+- Broader investability/publication/manifest/as-of/e2e regression set completed
+  with exit 0; Ruff, `py_compile`, and diff checks passed.

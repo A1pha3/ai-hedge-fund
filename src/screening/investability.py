@@ -33,6 +33,14 @@ _EXPLICIT_COMPOSITE_DIMENSIONS: tuple[str, ...] = (
 )
 
 
+def _is_explicit_finite_metric(value: Any) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+    )
+
+
 def _max_short_horizon_metric(metrics: dict[str, Any] | None) -> float | None:
     """Return max of short-horizon (T+5/T+10) metrics; ``None`` if all missing.
 
@@ -563,7 +571,15 @@ def compute_full_pool_shadow_ranking(
 
     insufficient = {"shadow_rank_status": "insufficient", "shadow_rank": []}
     tickers = [str(item.get("ticker") or "") for item in recommendations]
-    if not tickers or any(not ticker for ticker in tickers) or len(set(tickers)) != len(tickers):
+    if (
+        not tickers
+        or any(not ticker for ticker in tickers)
+        or len(set(tickers)) != len(tickers)
+        or any(
+            not _is_explicit_finite_metric(item.get("score_b"))
+            for item in recommendations
+        )
+    ):
         return insufficient
 
     composite_map = {item.ticker: item for item in composite_report.items}
@@ -573,7 +589,7 @@ def compute_full_pool_shadow_ranking(
     for ticker in tickers:
         composite = composite_map[ticker]
         if any(
-            not is_finite_number(getattr(composite, field))
+            not _is_explicit_finite_metric(getattr(composite, field))
             for field in _EXPLICIT_COMPOSITE_DIMENSIONS
         ):
             return insufficient
@@ -582,8 +598,10 @@ def compute_full_pool_shadow_ranking(
             type(expected.bucket_sample_count) is not int
             or expected.bucket_sample_count < 0
             or any(
-                not is_finite_number(expected.expected_returns.get(horizon))
-                or not is_finite_number(expected.win_rates.get(horizon))
+                not _is_explicit_finite_metric(
+                    expected.expected_returns.get(horizon)
+                )
+                or not _is_explicit_finite_metric(expected.win_rates.get(horizon))
                 for horizon in _SHORT_HORIZON_KEYS
             )
         ):

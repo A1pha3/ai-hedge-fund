@@ -1,6 +1,8 @@
 from copy import deepcopy
 from types import SimpleNamespace
 
+import pytest
+
 from src.screening.composite_score import CompositeEntry, CompositeReport
 from src.screening.expected_return import ExpectedReturn, ExpectedReturnReport
 from src.screening.investability import compute_full_pool_shadow_ranking
@@ -92,6 +94,40 @@ def test_missing_explicit_dimension_marks_shadow_insufficient():
     shadow = compute_full_pool_shadow_ranking(candidates, composite, expected)
 
     assert shadow == {"shadow_rank_status": "insufficient", "shadow_rank": []}
+
+
+@pytest.mark.parametrize("score_b", [float("nan"), float("inf"), float("-inf"), "0.5", True])
+def test_nonfinite_or_nonnumeric_original_score_b_marks_shadow_insufficient(score_b):
+    candidates = [{"ticker": "000001", "score_b": score_b}]
+    composite, expected = _reports(candidates, winner="000001")
+
+    shadow = compute_full_pool_shadow_ranking(candidates, composite, expected)
+
+    assert shadow == {"shadow_rank_status": "insufficient", "shadow_rank": []}
+
+
+@pytest.mark.parametrize("bad_metric", ["0.5", True])
+def test_nonnumeric_explicit_composite_dimension_is_insufficient(bad_metric):
+    candidates = [{"ticker": "000001", "score_b": 0.5}]
+    composite, expected = _reports(candidates, winner="000001")
+    composite.items[0].momentum_bonus = bad_metric
+
+    assert compute_full_pool_shadow_ranking(candidates, composite, expected) == {
+        "shadow_rank_status": "insufficient",
+        "shadow_rank": [],
+    }
+
+
+@pytest.mark.parametrize("bad_metric", ["0.6", True])
+def test_nonnumeric_explicit_expected_evidence_is_insufficient(bad_metric):
+    candidates = [{"ticker": "000001", "score_b": 0.5}]
+    composite, expected = _reports(candidates, winner="000001")
+    expected.items[0].win_rates["t5"] = bad_metric
+
+    assert compute_full_pool_shadow_ranking(candidates, composite, expected) == {
+        "shadow_rank_status": "insufficient",
+        "shadow_rank": [],
+    }
 
 
 def test_shadow_output_has_no_execution_or_weight_fields():

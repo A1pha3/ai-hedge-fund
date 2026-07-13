@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import math
 import json
+import math
+import os
+import stat
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
@@ -98,6 +100,12 @@ class ActionItem:
 
 
 @dataclass(frozen=True)
+class TickerGateBlock:
+    ticker: str
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class DailyActionRun:
     trade_date: date
     valuation: DailyValuation
@@ -111,10 +119,55 @@ class DailyActionRun:
     reserved_exposure: float
     block_reason: str | None = None
     blocked_tickers: tuple[str, ...] = ()
+    block_reasons: tuple[str, ...] = ()
+    ticker_gate_blocks: tuple[TickerGateBlock, ...] = ()
 
 
 PriceProvider = Callable[[str, date], MarketBar | None]
 CacheFingerprintProvider = Callable[[str, date], str | None]
+
+
+def _read_exact_regular_json(reports_dir: Path, filename: str) -> object:
+    """Read one stable regular file without following filesystem indirection."""
+    directory_fd: int | None = None
+    file_fd: int | None = None
+    try:
+        directory_fd = os.open(
+            reports_dir,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        file_fd = os.open(
+            filename,
+            os.O_RDONLY
+            | os.O_NONBLOCK
+            | os.O_NOFOLLOW
+            | os.O_CLOEXEC,
+            dir_fd=directory_fd,
+        )
+        held = os.fstat(file_fd)
+        if not stat.S_ISREG(held.st_mode):
+            raise ValueError("canonical target must be a regular file")
+
+        def entry_matches() -> bool:
+            entry = os.stat(filename, dir_fd=directory_fd, follow_symlinks=False)
+            return stat.S_ISREG(entry.st_mode) and (
+                entry.st_dev,
+                entry.st_ino,
+            ) == (held.st_dev, held.st_ino)
+
+        if not entry_matches():
+            raise ValueError("canonical target identity changed before read")
+        chunks: list[bytes] = []
+        while chunk := os.read(file_fd, 65536):
+            chunks.append(chunk)
+        if not entry_matches():
+            raise ValueError("canonical target identity changed during read")
+        return json.loads(b"".join(chunks).decode("utf-8"))
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if directory_fd is not None:
+            os.close(directory_fd)
 
 
 def _plain_date(value: object) -> date:
@@ -204,9 +257,11 @@ def _deserialize_canonical_manifest(payload: object, as_of: date) -> RunManifest
     ticker_values = embedded.get("tickers")
     if (
         not isinstance(candidate_tickers, list)
+        or not candidate_tickers
         or any(type(ticker) is not str or not ticker for ticker in candidate_tickers)
         or len(set(candidate_tickers)) != len(candidate_tickers)
         or not isinstance(ticker_values, Mapping)
+        or not ticker_values
         or set(candidate_tickers) != set(ticker_values)
         or embedded.get("candidate_set_fingerprint")
         != _canonical_fingerprint(list(candidate_tickers))
@@ -248,10 +303,9 @@ def load_daily_action_manifest_gate(
 ) -> tuple[RunManifest | None, Mapping[str, str | None]]:
     """Load only the exact-date healthy canonical and re-fingerprint its caches."""
     try:
-        payload = json.loads(
-            (reports_dir / f"auto_screening_{as_of:%Y%m%d}.json").read_text(
-                encoding="utf-8"
-            )
+        payload = _read_exact_regular_json(
+            reports_dir,
+            f"auto_screening_{as_of:%Y%m%d}.json",
         )
         manifest = _deserialize_canonical_manifest(payload, as_of)
         pool = payload["candidate_pool_run"]
@@ -319,7 +373,9 @@ class DailyActionService:
         self._exit_plans: list[ActionItem] = []
         self._deferred: list[ActionItem] = []
         self._block_reason: str | None = None
+        self._block_reasons: list[str] = []
         self._blocked_tickers: tuple[str, ...] = ()
+        self._ticker_gate_blocks: tuple[TickerGateBlock, ...] = ()
 
     def run(
         self,
@@ -334,6 +390,8 @@ class DailyActionService:
             None,
         )
         self._blocked_tickers = ()
+        self._block_reasons = []
+        self._ticker_gate_blocks = ()
         self._settle_due_entry_plans(as_of)
         exits = self._settle_due_exit_plans(as_of)
         valuation = self._mark_to_market(as_of)
@@ -357,41 +415,73 @@ class DailyActionService:
             return tuple(candidates)
         candidate_tickers = tuple(dict.fromkeys(item.ticker for item in candidates))
         if not isinstance(manifest, RunManifest) or not manifest.is_healthy:
-            self._block_reason = "healthy_manifest_missing"
-            self._blocked_tickers = candidate_tickers
+            self._block_all_candidates(candidate_tickers, "healthy_manifest_missing")
             return ()
         if (
             manifest.trade_date != as_of
             or not manifest.run_id
             or not manifest.input_fingerprint
         ):
-            self._block_reason = "manifest_identity_mismatch"
-            self._blocked_tickers = candidate_tickers
+            self._block_all_candidates(candidate_tickers, "manifest_identity_mismatch")
+            return ()
+        if (
+            not manifest.candidate_tickers
+            or not manifest.tickers
+            or set(manifest.candidate_tickers) != set(manifest.tickers)
+        ):
+            self._block_all_candidates(candidate_tickers, "manifest_invalid")
             return ()
 
         eligible: list[PlanCandidate] = []
-        blocked: list[str] = []
+        blocked: list[TickerGateBlock] = []
         for candidate in candidates:
             readiness = manifest.tickers.get(candidate.ticker)
-            current_fingerprint = (
-                self.cache_fingerprints(candidate.ticker, as_of)
-                if self.cache_fingerprints is not None
-                else None
-            )
-            if (
-                readiness is None
-                or readiness.ticker != candidate.ticker
-                or readiness.trade_date != as_of
-                or readiness.trade_ready is not True
-                or not readiness.cache_fingerprint
-                or current_fingerprint != readiness.cache_fingerprint
-            ):
-                if candidate.ticker not in blocked:
-                    blocked.append(candidate.ticker)
+            reasons: list[str] = []
+            if readiness is None:
+                reasons.append("manifest_ticker_absent")
+            else:
+                if readiness.ticker != candidate.ticker:
+                    reasons.append("manifest_ticker_identity_mismatch")
+                if readiness.trade_date != as_of:
+                    reasons.append("manifest_ticker_date_mismatch")
+                if readiness.trade_ready is not True:
+                    reasons.extend(
+                        readiness.block_reasons or ("readiness_not_trade_ready",)
+                    )
+                expected_fingerprint = readiness.cache_fingerprint
+                if not expected_fingerprint:
+                    reasons.append("manifest_fingerprint_missing")
+                current_fingerprint = (
+                    self.cache_fingerprints(candidate.ticker, as_of)
+                    if self.cache_fingerprints is not None
+                    else None
+                )
+                if not current_fingerprint:
+                    reasons.append("current_fingerprint_missing")
+                elif expected_fingerprint and current_fingerprint != expected_fingerprint:
+                    reasons.append(
+                        "fingerprint_mismatch:"
+                        f"expected={expected_fingerprint},current={current_fingerprint}"
+                    )
+            if reasons:
+                blocked.append(TickerGateBlock(candidate.ticker, tuple(dict.fromkeys(reasons))))
                 continue
             eligible.append(candidate)
-        self._blocked_tickers = tuple(blocked)
+        self._ticker_gate_blocks = tuple(blocked)
+        self._blocked_tickers = tuple(item.ticker for item in blocked)
         return tuple(eligible)
+
+    def _block_all_candidates(self, tickers: Sequence[str], reason: str) -> None:
+        self._add_block_reason(reason)
+        self._blocked_tickers = tuple(tickers)
+        self._ticker_gate_blocks = tuple(
+            TickerGateBlock(ticker, (reason,)) for ticker in tickers
+        )
+
+    def _add_block_reason(self, reason: str) -> None:
+        if reason not in self._block_reasons:
+            self._block_reasons.append(reason)
+        self._block_reason = ";".join(self._block_reasons) or None
 
     def _settle_due_entry_plans(self, as_of: date) -> None:
         if not self.calendar.contains_session(as_of):
@@ -401,7 +491,7 @@ class DailyActionService:
             if current.state is not TradeState.PLANNED:
                 continue
             if not self._has_holding_horizon(plan.setup, plan.planned_entry_date):
-                self._block_reason = "calendar_unavailable"
+                self._add_block_reason("calendar_unavailable")
                 continue
             nav, values, _ = self._snapshot(as_of)
             higher = [
@@ -531,7 +621,7 @@ class DailyActionService:
                 session_nine = self.calendar.nth_holding_session(trade.entry_date, 9)
                 target = self.calendar.nth_holding_session(trade.entry_date, 10)
             except ValueError:
-                self._block_reason = "calendar_unavailable"
+                self._add_block_reason("calendar_unavailable")
                 continue
             if as_of >= session_nine:
                 self.repository.mark_exit_pending(
@@ -548,14 +638,14 @@ class DailyActionService:
         try:
             entry_date = self.calendar.next_session(as_of)
         except ValueError:
-            self._block_reason = "calendar_unavailable"
+            self._add_block_reason("calendar_unavailable")
             return ()
         required_setups = {candidate.setup for candidate in candidates}
         if any(
             not self._has_holding_horizon(setup, entry_date)
             for setup in required_setups
         ):
-            self._block_reason = "calendar_unavailable"
+            self._add_block_reason("calendar_unavailable")
             return ()
         _, values, _ = self._snapshot(as_of)
         reserved = list(self.repository.planned_trades())
@@ -619,6 +709,8 @@ class DailyActionService:
             sum(p.planned_weight for p in self.repository.planned_trades()),
             self._block_reason,
             self._blocked_tickers,
+            tuple(self._block_reasons),
+            self._ticker_gate_blocks,
         )
 
     def _snapshot(self, as_of: date) -> tuple[float, dict[str, float], list[str]]:
