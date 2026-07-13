@@ -64,7 +64,7 @@ from src.screening.market_state import detect_market_state
 from src.screening.recommendation_tracker import (
     get_tracking_summary,
     render_tracking_summary,
-    update_tracking_history,
+    update_tracking_history_from_payload,
 )
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
@@ -1322,9 +1322,10 @@ def _enrich_recommendations_with_history(
 
     # P1-3 推荐标的自动追踪 — 记录本次 Top N, 并补全历史 T+1/T+3/T+5 收益
     try:
-        updated_records = update_tracking_history(
+        updated_records = update_tracking_history_from_payload(
             reports_dir=tracking_dir,
             trade_date=trade_date,
+            report_payload=report_payload,
         )
         if updated_records > 0:
             logger.info("[Auto] 追踪历史: %d 条已更新", updated_records)

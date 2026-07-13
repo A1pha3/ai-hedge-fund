@@ -479,6 +479,49 @@ def update_tracking_history(
     Returns:
         本次实际写入 / 更新的记录数 (新增 + 更新 T+1/T+3/T+5 收益的合计)
     """
+    pending, model_version = load_pending_recommendations_with_version(reports_dir, trade_date)
+    return _update_tracking_history(
+        reports_dir,
+        trade_date,
+        pending,
+        model_version,
+        history_filename=history_filename,
+        use_data_fetcher=use_data_fetcher,
+    )
+
+
+def update_tracking_history_from_payload(
+    reports_dir: Path,
+    trade_date: str,
+    report_payload: dict[str, Any],
+    *,
+    use_data_fetcher: Callable[[str, str, str], list[dict[str, Any]]] | None = None,
+) -> int:
+    """从本次运行的报告 payload 更新追踪历史，不回读当日报告文件。"""
+    payload_date = str(report_payload.get("date", "") or "")
+    if payload_date != trade_date:
+        raise ValueError(f"report payload date {payload_date!r} does not match trade_date {trade_date!r}")
+
+    pending = _extract_recommendations(report_payload)
+    model_version = str(report_payload.get("model_version", "") or "")
+    return _update_tracking_history(
+        reports_dir,
+        trade_date,
+        pending,
+        model_version,
+        use_data_fetcher=use_data_fetcher,
+    )
+
+
+def _update_tracking_history(
+    reports_dir: Path,
+    trade_date: str,
+    pending: list[dict[str, Any]],
+    model_version: str,
+    *,
+    history_filename: str = HISTORY_FILENAME,
+    use_data_fetcher: Callable[[str, str, str], list[dict[str, Any]]] | None = None,
+) -> int:
     history_path = reports_dir / history_filename
     # c292 精确化 (文件级 flock 纵深): 守 read-modify-write 临界区, 防止锁外 caller
     # (backfill 脚本 / launcher Step 2) 并发导致 lost-update (后写覆盖先写, 丢 Phase 2
@@ -488,7 +531,13 @@ def update_tracking_history(
     _lock_fd = os.open(history_path.with_suffix(".json.lock"), os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(_lock_fd, fcntl.LOCK_EX)  # 阻塞直到拿到排他锁
-        return _update_tracking_history_locked(history_path, trade_date, history_filename, use_data_fetcher)
+        return _update_tracking_history_locked(
+            history_path,
+            trade_date,
+            pending,
+            model_version,
+            use_data_fetcher,
+        )
     finally:
         # finally 释放: 正常返回 / 异常 / Ctrl-C 都释放 fd (flock 随 fd close 自动释放)
         try:
@@ -500,19 +549,17 @@ def update_tracking_history(
 def _update_tracking_history_locked(
     history_path: Path,
     trade_date: str,
-    history_filename: str,
+    pending: list[dict[str, Any]],
+    model_version: str,
     use_data_fetcher: Callable[[str, str, str], list[dict[str, Any]]] | None,
 ) -> int:
     """update_tracking_history 的临界区主体 (调用方已持 flock)。"""
-    reports_dir = history_path.parent
     history = _load_history(history_path)
     history_index: dict[tuple[str, str], dict[str, Any]] = {_record_key(r): r for r in history}
 
     updated_count = 0
 
     # ----- Phase 1: 处理 trade_date 当日报告, 加入新推荐 -----
-    # NS-2: 同时读 payload 顶层的 model_version, 注入每条 TrackingRecord
-    pending, model_version = load_pending_recommendations_with_version(reports_dir, trade_date)
     for rec in pending:
         ticker = str(rec.get("ticker", "") or "").strip()
         if not ticker:
