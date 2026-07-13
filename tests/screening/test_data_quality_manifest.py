@@ -220,3 +220,53 @@ def test_run_manifest_rejects_mutable_or_wrong_ticker_values() -> None:
             created_at=datetime(2026, 7, 10, 16),
             tickers={"000001": object()},  # type: ignore[dict-item]
         )
+
+
+@pytest.mark.parametrize("key", [None, 1, "", "   ", "000002"])
+def test_run_manifest_rejects_invalid_or_mismatched_ticker_keys(key: Any) -> None:
+    readiness = validate_ticker_readiness(**_valid_inputs())
+    with pytest.raises(ValueError, match="ticker key"):
+        RunManifest(
+            run_id="run-1",
+            trade_date=TRADE_DATE,
+            status="complete",
+            created_at=datetime(2026, 7, 10, 16),
+            tickers={key: readiness},
+        )
+
+
+def test_string_subclasses_fail_exact_type_validation() -> None:
+    class StringSubclass(str):
+        pass
+
+    inputs = _valid_inputs()
+    inputs["ticker"] = StringSubclass("000001")
+    with pytest.raises(ValueError, match="ticker must be a nonempty string"):
+        validate_ticker_readiness(**inputs)
+
+    inputs = _valid_inputs()
+    inputs.update(
+        security_status=StringSubclass("listed"),
+        board_rule_version=StringSubclass("sse-szse-202607"),
+        cache_fingerprint=StringSubclass("sha256:abc"),
+    )
+    assert validate_ticker_readiness(**inputs).block_reasons == (
+        "security_status:unknown",
+        "board_rule_version:unknown",
+        "cache_fingerprint:missing",
+    )
+
+
+def test_run_manifest_rejects_string_subclass_ticker_key() -> None:
+    class StringSubclass(str):
+        pass
+
+    readiness = validate_ticker_readiness(**_valid_inputs())
+    with pytest.raises(ValueError, match="ticker key"):
+        RunManifest(
+            run_id="run-1",
+            trade_date=TRADE_DATE,
+            status="complete",
+            created_at=datetime(2026, 7, 10, 16),
+            tickers={StringSubclass("000001"): readiness},
+        )

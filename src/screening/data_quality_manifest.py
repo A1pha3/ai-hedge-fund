@@ -35,8 +35,11 @@ class RunManifest:
 
     def __post_init__(self) -> None:
         snapshot = dict(self.tickers)
-        if not all(isinstance(readiness, TickerReadiness) for readiness in snapshot.values()):
-            raise TypeError("tickers values must be TickerReadiness instances")
+        for key, readiness in snapshot.items():
+            if not isinstance(readiness, TickerReadiness):
+                raise TypeError("tickers values must be TickerReadiness instances")
+            if type(key) is not str or not key.strip() or key != readiness.ticker:
+                raise ValueError("ticker key must be a nonempty string matching TickerReadiness.ticker")
         object.__setattr__(self, "tickers", MappingProxyType(snapshot))
 
 
@@ -55,7 +58,7 @@ def validate_ticker_readiness(
     cache_fingerprint: str | None,
 ) -> TickerReadiness:
     """Validate one ticker, failing closed when required evidence is absent."""
-    if not isinstance(ticker, str) or not ticker.strip():
+    if type(ticker) is not str or not ticker.strip():
         raise ValueError("ticker must be a nonempty string")
     if type(trade_date) is not date:
         raise ValueError("trade_date must be a plain date")
@@ -75,16 +78,16 @@ def validate_ticker_readiness(
         reasons.append(f"fund_flow_history:{fund_flow_history_days}<20")
     if type(industry_date) is not date or industry_date != trade_date:
         reasons.append(f"industry_date:{industry_date!s}!={trade_date!s}")
-    normalized_security_status = security_status.strip() if isinstance(security_status, str) else ""
+    normalized_security_status = security_status.strip() if type(security_status) is str else ""
     if normalized_security_status != "listed":
         reasons.append(f"security_status:{normalized_security_status or 'unknown'}")
     if type(st_status) is not bool:
         reasons.append("st_status:unknown")
     elif st_status:
         reasons.append("st_status:st")
-    if not isinstance(board_rule_version, str) or not board_rule_version.strip():
+    if type(board_rule_version) is not str or not board_rule_version.strip():
         reasons.append("board_rule_version:unknown")
-    if not isinstance(cache_fingerprint, str) or not cache_fingerprint.strip():
+    if type(cache_fingerprint) is not str or not cache_fingerprint.strip():
         reasons.append("cache_fingerprint:missing")
 
     block_reasons = tuple(reasons)
