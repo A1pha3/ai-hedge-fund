@@ -1,14 +1,59 @@
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Literal
+from datetime import date, datetime, timedelta
+from typing import Iterable, Literal
 
 import pandas as pd
 
 from src.tools.tushare_api import _cached_tushare_dataframe_call, _get_pro
 
 CalendarSource = Literal["tushare_trade_cal", "akshare_sina"]
+
+
+@dataclass(frozen=True)
+class TradingSessionCalendar:
+    open_sessions: tuple[date, ...]
+
+    @classmethod
+    def from_dates(cls, open_dates: Iterable[date]) -> TradingSessionCalendar:
+        return cls(tuple(sorted(set(open_dates))))
+
+    def _require_data(self) -> None:
+        if not self.open_sessions:
+            raise ValueError("open-session data unavailable")
+
+    def _exact_index(self, session: date) -> int:
+        self._require_data()
+        index = bisect_left(self.open_sessions, session)
+        if index >= len(self.open_sessions) or self.open_sessions[index] != session:
+            raise ValueError(f"date={session.isoformat()} is absent from open-session data")
+        return index
+
+    def next_session(self, current: date) -> date:
+        self._require_data()
+        index = bisect_right(self.open_sessions, current)
+        if index >= len(self.open_sessions):
+            raise ValueError(f"open-session data unavailable after {current.isoformat()}")
+        return self.open_sessions[index]
+
+    def nth_holding_session(self, entry_date: date, n: int) -> date:
+        if n < 1:
+            raise ValueError("holding-session number must be at least 1")
+        entry_index = self._exact_index(entry_date)
+        target_index = entry_index + n - 1
+        if target_index >= len(self.open_sessions):
+            raise ValueError(
+                f"open-session data unavailable for holding session {n} "
+                f"from {entry_date.isoformat()}"
+            )
+        return self.open_sessions[target_index]
+
+    def session_distance(self, start: date, end: date) -> int:
+        start_index = self._exact_index(start)
+        end_index = self._exact_index(end)
+        return end_index - start_index
 
 
 @dataclass(frozen=True)
@@ -103,11 +148,9 @@ def resolve_next_trade_date_cn_sse_strict(signal_date: str, lookahead_days: int 
     if signal_compact not in open_dates:
         raise ValueError(f"signal_date={signal_date_iso} is not an SSE open trading day")
 
-    cursor_index = open_dates.index(signal_compact)
-    if cursor_index + 1 >= len(open_dates):
-        raise ValueError(f"Unable to resolve next trade date after {signal_date_iso}")
-
-    next_compact = open_dates[cursor_index + 1]
+    calendar = TradingSessionCalendar.from_dates(datetime.strptime(value, "%Y%m%d").date() for value in open_dates)
+    next_date = calendar.next_session(datetime.strptime(signal_compact, "%Y%m%d").date())
+    next_compact = next_date.strftime("%Y%m%d")
     next_iso = f"{next_compact[:4]}-{next_compact[4:6]}-{next_compact[6:8]}"
     return NextTradeDateResolution(
         signal_date_iso=signal_date_iso,
