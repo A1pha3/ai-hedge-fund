@@ -16,9 +16,12 @@ CalendarSource = Literal["tushare_trade_cal", "akshare_sina"]
 class TradingSessionCalendar:
     open_sessions: tuple[date, ...]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "open_sessions", tuple(sorted(set(self.open_sessions))))
+
     @classmethod
     def from_dates(cls, open_dates: Iterable[date]) -> TradingSessionCalendar:
-        return cls(tuple(sorted(set(open_dates))))
+        return cls(tuple(open_dates))
 
     def _require_data(self) -> None:
         if not self.open_sessions:
@@ -149,7 +152,10 @@ def resolve_next_trade_date_cn_sse_strict(signal_date: str, lookahead_days: int 
         raise ValueError(f"signal_date={signal_date_iso} is not an SSE open trading day")
 
     calendar = TradingSessionCalendar.from_dates(datetime.strptime(value, "%Y%m%d").date() for value in open_dates)
-    next_date = calendar.next_session(datetime.strptime(signal_compact, "%Y%m%d").date())
+    try:
+        next_date = calendar.next_session(datetime.strptime(signal_compact, "%Y%m%d").date())
+    except ValueError as exc:
+        raise ValueError(f"Unable to resolve next trade date after {signal_date_iso}") from exc
     next_compact = next_date.strftime("%Y%m%d")
     next_iso = f"{next_compact[:4]}-{next_compact[4:6]}-{next_compact[6:8]}"
     return NextTradeDateResolution(

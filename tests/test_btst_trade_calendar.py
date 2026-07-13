@@ -27,6 +27,19 @@ def test_resolve_next_trade_date_strict_rejects_non_trading_day(monkeypatch):
         cal.resolve_next_trade_date_cn_sse_strict("2026-06-07")
 
 
+def test_resolve_next_trade_date_strict_retains_terminal_horizon_error(monkeypatch):
+    from src.paper_trading import btst_trade_calendar as cal
+
+    monkeypatch.setattr(
+        cal,
+        "_load_open_trade_dates_cn_sse",
+        lambda *_args, **_kwargs: (["20260605"], "tushare_trade_cal"),
+    )
+
+    with pytest.raises(ValueError, match="Unable to resolve next trade date after 2026-06-05"):
+        cal.resolve_next_trade_date_cn_sse_strict("2026-06-05")
+
+
 def test_load_open_trade_dates_falls_back_to_akshare(monkeypatch):
     from src.paper_trading import btst_trade_calendar as cal
 
