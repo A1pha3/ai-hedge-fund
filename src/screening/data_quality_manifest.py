@@ -32,6 +32,10 @@ class RunManifest:
     status: str
     created_at: datetime
     tickers: Mapping[str, TickerReadiness]
+    candidate_tickers: tuple[str, ...] = ()
+    candidate_set_fingerprint: str | None = None
+    candidate_snapshot_fingerprint: str | None = None
+    input_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         snapshot = dict(self.tickers)

@@ -82,3 +82,78 @@ Tracking history and the canonical JSON cannot be committed as one filesystem
 transaction. The pending-attempt protocol guarantees an audit/recovery anchor
 for the controller-mandated tracking-before-canonical window, but automated
 reconciliation of a process-kill remnant is outside Task 5.
+
+## External-review hardening addendum (2026-07-13)
+
+The earlier residual boundary above is now closed by a restart-safe state
+machine. Pending artifacts use schema version 1 and carry exact normalized
+payload, `run_id`, trade date, manifest fingerprint, finalized input
+fingerprint, payload checksum, state checksum, and durable phase:
+
+`prepared → exact tracking replacement → tracked → canonical → unlink`
+
+Every phase write uses the durable atomic JSON primitive. Recovery runs under
+the existing outer auto flock before preheat, cache refresh, or compute. It
+resumes and returns the interrupted run instead of starting a fresh run. A kill
+after tracking but before the `tracked` write repeats the exact replacement
+safely; a kill after canonical replacement but before phase persistence repeats
+the same canonical atomically; a `canonical` remnant verifies/republishes the
+exact payload before durable cleanup. Cleanup failures and recoveries are
+returned as structured diagnostics and logged by the CLI wrapper.
+
+Layer-A evidence is no longer inferred from `price_cache` or from a snapshot
+that existed before compute. `_build_auto_screening_payload` carries the exact
+candidate rows/ticker set returned by that compute call. After candidate_pool
+writes the exact-date legacy snapshot, the pipeline verifies its ticker set,
+then finalizes immutable `AutoInputs` for those tickers—including candidates
+with no price-cache file—and binds trade date, run identity, candidate-set
+fingerprint, snapshot fingerprint, and cache fingerprints into the manifest.
+Snapshot/cache mutation before adjudication fails closed.
+
+Payload-driven tracking now performs run-aware exact replacement for the run
+date and stores `source_run_id`. Same-date orphan rows from an interrupted or
+unpublished run are removed, score/model/price fields come from the recovered
+payload, and other dates remain intact. Realized labels are preserved only when
+the ticker/date/price/score/model identity is unchanged. History publication
+now uses `atomic_write_json` under the existing tracking flock, providing file
+fsync, atomic replace, directory fsync, permission preservation, and temp-file
+cleanup.
+
+Quality adjudication now requires `manifest.is_healthy is True` (plain bool),
+explicit exact-int-zero `provider_failures`, cache status exactly `success`, and
+explicit exact-int-zero values for `price_failed`, `price_missing`,
+`price_insufficient_history`, `fund_flow_failed`, `fund_flow_empty`, and
+`industry_index_failed`. Missing values, bools, strings, unsupported statuses,
+and partial results all fail closed.
+
+### Additional RED → GREEN evidence
+
+- Import/behavior REDs proved the absence of post-compute input finalization,
+  non-price-cache Layer-A coverage, stale-snapshot rejection, and run-id binding.
+- The quality matrix initially produced 18 expected failures for missing/default
+  provider failures, unsupported/missing statuses, and uncovered partial
+  counters.
+- Tracker REDs reproduced same-date orphan retention, stale scores/models,
+  unconditional label retention, missing `source_run_id`, and permission loss.
+- Six injected `BaseException` crash boundaries initially failed because no
+  restart reconciliation or durable phases existed; all now resume the same
+  payload without invoking new preparation.
+- A cleanup-failure RED established that a durable `canonical` remnant must be
+  surfaced rather than silently ignored.
+
+### Additional verification
+
+- Publication/recovery/tracker/cache/manifest/as-of/lock/e2e set:
+  **269 passed**.
+- Tracker-focused set: **82 passed**.
+- Offensive plus auto-cache baseline: **410 passed in 4.05s**.
+- Ruff passed for changed task files (`src/main.py` with only the same pre-existing
+  TYPE_CHECKING `F401` exclusions), `py_compile` passed, and `git diff --check`
+  was clean.
+
+### Remaining operational concern
+
+More than one checksum-valid pending run for the same trade date is treated as
+fatal and left untouched for operator resolution; automatically choosing one
+would risk publishing stale or unioned scores. This state should be impossible
+under the outer flock, but fail-closed handling is intentional.

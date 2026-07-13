@@ -14,11 +14,16 @@ from src.screening.auto_pipeline import (
     AutoRunStatus,
     _build_default_manifest,
     _capture_input_snapshot,
+    _finalize_inputs_after_compute,
     _input_snapshot_is_current,
     _quality_is_healthy,
     run_auto_pipeline,
 )
 from src.utils.atomic_files import atomic_write_json
+
+
+class _InjectedCrash(BaseException):
+    pass
 
 
 @dataclass(frozen=True)
@@ -176,6 +181,86 @@ def test_partial_or_ambiguous_cache_refresh_is_degraded(
     assert _quality_is_healthy(payload) is False
 
 
+def _strict_healthy_quality_payload() -> dict[str, Any]:
+    return {
+        "data_freshness": {"fresh": True},
+        "data_quality": {
+            "scoring_features": {
+                "price_history": {
+                    "coverage": 1.0,
+                    "stale": False,
+                    "provider_failures": 0,
+                }
+            }
+        },
+        "daily_action_cache_refresh": {
+            "status": "success",
+            "price_failed": 0,
+            "price_missing": 0,
+            "price_insufficient_history": 0,
+            "fund_flow_failed": 0,
+            "fund_flow_empty": 0,
+            "industry_index_failed": 0,
+        },
+    }
+
+
+@pytest.mark.parametrize("bad_value", [None, True, 0.0, "0"])
+def test_quality_requires_provider_failures_present_exact_int_zero(
+    bad_value: object,
+) -> None:
+    payload = _strict_healthy_quality_payload()
+    evidence = payload["data_quality"]["scoring_features"]["price_history"]
+    if bad_value is None:
+        evidence.pop("provider_failures")
+    else:
+        evidence["provider_failures"] = bad_value
+
+    assert _quality_is_healthy(payload) is False
+
+
+@pytest.mark.parametrize("bad_status", [None, "ready", "partial", True, 1])
+def test_quality_requires_exact_supported_cache_success_status(
+    bad_status: object,
+) -> None:
+    payload = _strict_healthy_quality_payload()
+    if bad_status is None:
+        payload["daily_action_cache_refresh"].pop("status")
+    else:
+        payload["daily_action_cache_refresh"]["status"] = bad_status
+
+    assert _quality_is_healthy(payload) is False
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "price_failed",
+        "price_missing",
+        "price_insufficient_history",
+        "fund_flow_failed",
+        "fund_flow_empty",
+        "industry_index_failed",
+    ],
+)
+@pytest.mark.parametrize("bad_value", [None, True, 1, "0"])
+def test_quality_requires_all_partial_and_missing_counters_exact_zero(
+    field: str,
+    bad_value: object,
+) -> None:
+    payload = _strict_healthy_quality_payload()
+    if bad_value is None:
+        payload["daily_action_cache_refresh"].pop(field)
+    else:
+        payload["daily_action_cache_refresh"][field] = bad_value
+
+    assert _quality_is_healthy(payload) is False
+
+
+def test_quality_accepts_complete_explicit_evidence() -> None:
+    assert _quality_is_healthy(_strict_healthy_quality_payload()) is True
+
+
 def test_default_manifest_uses_immutable_run_bound_cache_snapshot(
     tmp_path: Path,
 ) -> None:
@@ -208,15 +293,38 @@ def test_default_manifest_uses_immutable_run_bound_cache_snapshot(
         "ts_code,trade_date,close\n801780.SI,20260710,3800\n",
         encoding="utf-8",
     )
-
-    inputs = _capture_input_snapshot(
+    snapshots_dir = data_dir / "snapshots"
+    snapshots_dir.mkdir()
+    candidates = [
+        {"ticker": "000001", "industry": "银行"},
+        {"ticker": "000002", "industry": "电子"},
+    ]
+    (snapshots_dir / "candidate_pool_20260710.json").write_text(
+        json.dumps(candidates), encoding="utf-8"
+    )
+    prepared = _capture_input_snapshot(
         "20260710",
         reports_dir=reports_dir,
         cache_refresh_summary={
+            "status": "success",
             "price_failed": 0,
+            "price_missing": 0,
+            "price_insufficient_history": 0,
             "fund_flow_failed": 0,
+            "fund_flow_empty": 0,
             "industry_index_failed": 0,
         },
+    )
+    inputs = _finalize_inputs_after_compute(
+        prepared,
+        {
+            "candidate_pool_run": {
+                "trade_date": "20260710",
+                "tickers": ["000001", "000002"],
+                "candidates": candidates,
+            }
+        },
+        run_id="run-1",
     )
     payload = {
         "date": "20260710",
@@ -248,6 +356,137 @@ def test_default_manifest_uses_immutable_run_bound_cache_snapshot(
     assert manifest.tickers["000001"].trade_ready is True
     assert manifest.tickers["000001"].cache_fingerprint.startswith("sha256:")
     assert manifest.tickers["000002"].trade_ready is False
+    assert manifest.candidate_tickers == ("000001", "000002")
+    assert manifest.candidate_set_fingerprint == inputs.candidate_set_fingerprint
+    assert manifest.candidate_snapshot_fingerprint == inputs.candidate_snapshot_fingerprint
+    assert manifest.input_fingerprint.startswith("sha256:")
+
+    with pytest.raises(ValueError, match="manifest run_id does not match"):
+        _build_default_manifest(inputs, payload, run_id="different-run")
+
+
+def test_finalize_inputs_uses_exact_same_run_layer_a_tickers_not_price_cache(
+    tmp_path: Path,
+) -> None:
+    reports_dir = tmp_path / "data" / "reports"
+    snapshots_dir = tmp_path / "data" / "snapshots"
+    price_dir = tmp_path / "data" / "price_cache"
+    reports_dir.mkdir(parents=True)
+    snapshots_dir.mkdir()
+    price_dir.mkdir()
+    (price_dir / "000001.csv").write_text(
+        "date,open,high,low,close,volume\n2026-07-10,9,11,8,10,1000\n",
+        encoding="utf-8",
+    )
+    candidates = [
+        {"ticker": "000001", "industry": "银行"},
+        {"ticker": "300999", "industry": "电子"},
+    ]
+    (snapshots_dir / "candidate_pool_20260710.json").write_text(
+        json.dumps(candidates), encoding="utf-8"
+    )
+    prepared = _capture_input_snapshot(
+        "20260710", reports_dir=reports_dir, cache_refresh_summary={}
+    )
+    payload = {
+        "date": "20260710",
+        "candidate_pool_run": {
+            "trade_date": "20260710",
+            "tickers": ["000001", "300999"],
+            "candidates": candidates,
+        },
+    }
+
+    finalized = _finalize_inputs_after_compute(prepared, payload, run_id="run-1")
+
+    assert set(finalized.tickers) == {"000001", "300999"}
+    assert finalized.candidate_tickers == ("000001", "300999")
+    assert finalized.run_id == "run-1"
+    assert finalized.candidate_set_fingerprint.startswith("sha256:")
+    assert finalized.candidate_snapshot_fingerprint.startswith("sha256:")
+
+
+def test_stale_candidate_snapshot_cannot_substitute_for_current_compute(
+    tmp_path: Path,
+) -> None:
+    reports_dir = tmp_path / "data" / "reports"
+    snapshots_dir = tmp_path / "data" / "snapshots"
+    reports_dir.mkdir(parents=True)
+    snapshots_dir.mkdir()
+    (snapshots_dir / "candidate_pool_20260710.json").write_text(
+        json.dumps([{"ticker": "000999", "industry": "旧行业"}]),
+        encoding="utf-8",
+    )
+    prepared = _capture_input_snapshot(
+        "20260710", reports_dir=reports_dir, cache_refresh_summary={}
+    )
+    payload = {
+        "date": "20260710",
+        "candidate_pool_run": {
+            "trade_date": "20260710",
+            "tickers": ["000001"],
+            "candidates": [{"ticker": "000001", "industry": "银行"}],
+        },
+    }
+
+    with pytest.raises(ValueError, match="candidate snapshot does not match"):
+        _finalize_inputs_after_compute(prepared, payload, run_id="run-2")
+
+
+def test_pipeline_finalizes_layer_a_inputs_after_compute_writes_snapshot(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+) -> None:
+    reports_dir = tmp_path / "data" / "reports"
+    snapshots_dir = tmp_path / "data" / "snapshots"
+    reports_dir.mkdir(parents=True)
+    snapshots_dir.mkdir()
+    prepared = _capture_input_snapshot(
+        "20260710", reports_dir=reports_dir, cache_refresh_summary={}
+    )
+    dependencies = fake_auto_dependencies.healthy()
+
+    def compute(_inputs: object, _top_n: int) -> dict[str, Any]:
+        candidates = [{"ticker": "300999", "industry": "电子"}]
+        (snapshots_dir / "candidate_pool_20260710.json").write_text(
+            json.dumps(candidates), encoding="utf-8"
+        )
+        return {
+            "date": "20260710",
+            "candidate_pool_run": {
+                "trade_date": "20260710",
+                "tickers": ["300999"],
+                "candidates": candidates,
+            },
+            "recommendations": [{"ticker": "300999"}],
+        }
+
+    def build_manifest(inputs: object, _payload: dict[str, Any]) -> object:
+        assert isinstance(inputs, type(prepared))
+        assert inputs.candidate_tickers == ("300999",)
+        assert inputs.run_id
+        return SimpleNamespace(
+            run_id=inputs.run_id,
+            is_healthy=False,
+            tickers={
+                "300999": SimpleNamespace(
+                    trade_ready=False, cache_fingerprint=None
+                )
+            },
+        )
+
+    dependencies = replace(
+        dependencies,
+        prepare_inputs=lambda _date: prepared,
+        compute_report=compute,
+        build_manifest=build_manifest,
+    )
+
+    result = run_auto_pipeline(
+        "20260710", 10, reports_dir=reports_dir, dependencies=dependencies
+    )
+
+    assert result.status is AutoRunStatus.DEGRADED
 
 
 def test_default_manifest_records_missing_evidence_and_degrades(tmp_path: Path) -> None:
@@ -285,7 +524,7 @@ def test_default_manifest_records_missing_evidence_and_degrades(tmp_path: Path) 
     assert "cache_fingerprint:missing" in manifest.tickers["000001"].block_reasons
 
 
-def test_default_manifest_covers_full_price_cache_scan_space(tmp_path: Path) -> None:
+def test_default_manifest_covers_exact_layer_a_scan_space(tmp_path: Path) -> None:
     reports_dir = tmp_path / "data" / "reports"
     price_dir = tmp_path / "data" / "price_cache"
     reports_dir.mkdir(parents=True)
@@ -295,7 +534,13 @@ def test_default_manifest_covers_full_price_cache_scan_space(tmp_path: Path) -> 
             "date,close,open,high,low,volume\n2026-07-10,10,9,11,8,1000\n",
             encoding="utf-8",
         )
-    inputs = _capture_input_snapshot(
+    snapshots_dir = tmp_path / "data" / "snapshots"
+    snapshots_dir.mkdir()
+    candidates = [{"ticker": ticker} for ticker in ("000001", "000002")]
+    (snapshots_dir / "candidate_pool_20260710.json").write_text(
+        json.dumps(candidates), encoding="utf-8"
+    )
+    prepared = _capture_input_snapshot(
         "20260710",
         reports_dir=reports_dir,
         cache_refresh_summary={
@@ -303,6 +548,17 @@ def test_default_manifest_covers_full_price_cache_scan_space(tmp_path: Path) -> 
             "fund_flow_failed": 0,
             "industry_index_failed": 0,
         },
+    )
+    inputs = _finalize_inputs_after_compute(
+        prepared,
+        {
+            "candidate_pool_run": {
+                "trade_date": "20260710",
+                "tickers": ["000001", "000002"],
+                "candidates": candidates,
+            }
+        },
+        run_id="run-full-scan",
     )
     payload = {
         "date": "20260710",
@@ -340,8 +596,25 @@ def test_cache_mutation_during_compute_forces_manifest_degraded(tmp_path: Path) 
         "fund_flow_failed": 0,
         "industry_index_failed": 0,
     }
-    inputs = _capture_input_snapshot(
+    snapshots_dir = tmp_path / "data" / "snapshots"
+    snapshots_dir.mkdir()
+    candidates = [{"ticker": "000001"}]
+    (snapshots_dir / "candidate_pool_20260710.json").write_text(
+        json.dumps(candidates), encoding="utf-8"
+    )
+    prepared = _capture_input_snapshot(
         "20260710", reports_dir=reports_dir, cache_refresh_summary=summary
+    )
+    inputs = _finalize_inputs_after_compute(
+        prepared,
+        {
+            "candidate_pool_run": {
+                "trade_date": "20260710",
+                "tickers": ["000001"],
+                "candidates": candidates,
+            }
+        },
+        run_id="run-mutated",
     )
     price_path.write_text(
         "date,close,open,high,low,volume\n2026-07-10,99,9,100,8,1000\n",
@@ -367,6 +640,36 @@ def test_cache_mutation_during_compute_forces_manifest_degraded(tmp_path: Path) 
 
     assert _input_snapshot_is_current(inputs) is False
     assert manifest.is_healthy is False
+
+
+def test_candidate_snapshot_mutation_after_finalize_is_detected(tmp_path: Path) -> None:
+    reports_dir = tmp_path / "data" / "reports"
+    snapshots_dir = tmp_path / "data" / "snapshots"
+    reports_dir.mkdir(parents=True)
+    snapshots_dir.mkdir()
+    snapshot_path = snapshots_dir / "candidate_pool_20260710.json"
+    candidates = [{"ticker": "000001", "industry": "银行"}]
+    snapshot_path.write_text(json.dumps(candidates), encoding="utf-8")
+    prepared = _capture_input_snapshot(
+        "20260710", reports_dir=reports_dir, cache_refresh_summary={}
+    )
+    inputs = _finalize_inputs_after_compute(
+        prepared,
+        {
+            "candidate_pool_run": {
+                "trade_date": "20260710",
+                "tickers": ["000001"],
+                "candidates": candidates,
+            }
+        },
+        run_id="run-drift",
+    )
+    snapshot_path.write_text(
+        json.dumps([{"ticker": "000002", "industry": "电子"}]),
+        encoding="utf-8",
+    )
+
+    assert _input_snapshot_is_current(inputs) is False
 
 
 def test_future_cache_rows_do_not_change_past_snapshot_fingerprint(
@@ -395,7 +698,10 @@ def test_future_cache_rows_do_not_change_past_snapshot_fingerprint(
         "industry_index_failed": 0,
     }
     before = _capture_input_snapshot(
-        "20260710", reports_dir=reports_dir, cache_refresh_summary=summary
+        "20260710",
+        reports_dir=reports_dir,
+        cache_refresh_summary=summary,
+        candidate_tickers=("000001",),
     )
     price_path.write_text(
         price_path.read_text(encoding="utf-8") + "2026-07-11,20,19,21,18,2000\n",
@@ -406,7 +712,10 @@ def test_future_cache_rows_do_not_change_past_snapshot_fingerprint(
         encoding="utf-8",
     )
     after = _capture_input_snapshot(
-        "20260710", reports_dir=reports_dir, cache_refresh_summary=summary
+        "20260710",
+        reports_dir=reports_dir,
+        cache_refresh_summary=summary,
+        candidate_tickers=("000001",),
     )
 
     assert (
@@ -437,7 +746,7 @@ def test_candidate_admission_evidence_must_match_trade_date(tmp_path: Path) -> N
             encoding="utf-8",
         )
 
-    inputs = _capture_input_snapshot(
+    prepared = _capture_input_snapshot(
         "20260710",
         reports_dir=reports_dir,
         cache_refresh_summary={
@@ -446,8 +755,18 @@ def test_candidate_admission_evidence_must_match_trade_date(tmp_path: Path) -> N
             "industry_index_failed": 0,
         },
     )
-
-    assert dict(inputs.ticker_industries) == {}
+    with pytest.raises(ValueError, match="candidate snapshot is missing"):
+        _finalize_inputs_after_compute(
+            prepared,
+            {
+                "candidate_pool_run": {
+                    "trade_date": "20260710",
+                    "tickers": ["000001"],
+                    "candidates": [{"ticker": "000001", "industry": "银行"}],
+                }
+            },
+            run_id="run-admission",
+        )
 
 
 def test_candidate_admission_evidence_accepts_exact_trade_date(tmp_path: Path) -> None:
@@ -467,7 +786,7 @@ def test_candidate_admission_evidence_accepts_exact_trade_date(tmp_path: Path) -
         encoding="utf-8",
     )
 
-    inputs = _capture_input_snapshot(
+    prepared = _capture_input_snapshot(
         "20260710",
         reports_dir=reports_dir,
         cache_refresh_summary={
@@ -475,6 +794,17 @@ def test_candidate_admission_evidence_accepts_exact_trade_date(tmp_path: Path) -
             "fund_flow_failed": 0,
             "industry_index_failed": 0,
         },
+    )
+    inputs = _finalize_inputs_after_compute(
+        prepared,
+        {
+            "candidate_pool_run": {
+                "trade_date": "20260710",
+                "tickers": ["000001"],
+                "candidates": [{"ticker": "000001", "industry": "银行"}],
+            }
+        },
+        run_id="run-admission",
     )
 
     assert dict(inputs.ticker_industries) == {"000001": "银行"}
@@ -592,8 +922,32 @@ def test_claimed_healthy_manifest_without_ticker_evidence_fails_closed(
     )
 
     assert result.status is AutoRunStatus.DEGRADED
+
+
+def test_truthy_non_bool_manifest_health_fails_closed(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+) -> None:
+    dependencies = fake_auto_dependencies.healthy()
+    dependencies = replace(
+        dependencies,
+        build_manifest=lambda _inputs, _payload: SimpleNamespace(
+            run_id="truthy-run",
+            is_healthy="yes",
+            tickers={
+                "000001": SimpleNamespace(
+                    trade_ready=True, cache_fingerprint="sha256:test"
+                )
+            },
+        ),
+    )
+
+    result = run_auto_pipeline(
+        "20260710", 10, reports_dir=tmp_path, dependencies=dependencies
+    )
+
+    assert result.status is AutoRunStatus.DEGRADED
     assert not (tmp_path / "auto_screening_20260710.json").exists()
-    assert result.artifact_path.name == "auto_attempt_20260710_empty-run.json"
 
 
 def test_strict_quality_maps_degraded_to_nonzero(
@@ -708,8 +1062,10 @@ def test_tracking_failure_preserves_old_canonical_and_records_fatal_attempt(
     assert canonical["run_id"] == "old"
     attempt = json.loads(result.artifact_path.read_text(encoding="utf-8"))
     assert attempt["run_id"] == "healthy-run"
-    assert attempt["stage"] == "update_tracking"
-    assert attempt["status"] == "fatal"
+    assert attempt["phase"] == "prepared"
+    assert attempt["status"] == "pending"
+    assert attempt["last_error"]["stage"] == "advance_pending"
+    assert attempt["last_error"]["message"] == "tracking failed"
 
 
 def test_canonical_publication_failure_preserves_old_canonical_and_is_auditable(
@@ -735,8 +1091,10 @@ def test_canonical_publication_failure_preserves_old_canonical_and_is_auditable(
     assert result.status is AutoRunStatus.FATAL
     assert json.loads(old_canonical.read_text(encoding="utf-8"))["run_id"] == "old"
     attempt = json.loads(result.artifact_path.read_text(encoding="utf-8"))
-    assert attempt["stage"] == "publish_canonical"
-    assert attempt["error"]["message"] == "replace failed"
+    assert attempt["phase"] == "tracked"
+    assert attempt["status"] == "pending"
+    assert attempt["last_error"]["stage"] == "advance_pending"
+    assert attempt["last_error"]["message"] == "replace failed"
 
 
 def test_tracking_is_preceded_by_crash_durable_pending_attempt(
@@ -750,7 +1108,8 @@ def test_tracking_is_preceded_by_crash_durable_pending_attempt(
         assert len(attempts) == 1
         pending = json.loads(attempts[0].read_text(encoding="utf-8"))
         assert pending["status"] == "pending"
-        assert pending["intended_payload"] == payload
+        assert pending["phase"] == "prepared"
+        assert pending["payload"] == payload
         return 1
 
     dependencies = replace(dependencies, update_tracking=assert_pending_before_tracking)
@@ -764,3 +1123,116 @@ def test_tracking_is_preceded_by_crash_durable_pending_attempt(
 
     assert result.status is AutoRunStatus.HEALTHY
     assert list(tmp_path.glob("auto_attempt_20260710_*.json")) == []
+
+
+@pytest.mark.parametrize(
+    ("crash_boundary", "durable_phase"),
+    [
+        ("after_prepared_persist", "prepared"),
+        ("after_tracking", "prepared"),
+        ("after_tracked_persist", "tracked"),
+        ("after_canonical", "tracked"),
+        ("after_canonical_persist", "canonical"),
+        ("before_pending_remove", "canonical"),
+    ],
+)
+def test_restart_resumes_exact_pending_run_at_every_durable_boundary(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+    crash_boundary: str,
+    durable_phase: str,
+) -> None:
+    from src.screening.recommendation_tracker import (
+        update_tracking_history_from_payload,
+    )
+
+    def durable_tracking(payload: dict[str, Any]) -> int:
+        return update_tracking_history_from_payload(
+            tmp_path,
+            "20260710",
+            payload,
+            use_data_fetcher=lambda *args: [],
+        )
+
+    def crash_hook(boundary: str, _path: Path, _state: dict[str, Any]) -> None:
+        if boundary == crash_boundary:
+            raise _InjectedCrash(boundary)
+
+    dependencies = replace(
+        fake_auto_dependencies.healthy(),
+        update_tracking=durable_tracking,
+        state_hook=crash_hook,
+    )
+
+    with pytest.raises(_InjectedCrash, match=crash_boundary):
+        run_auto_pipeline(
+            "20260710", 10, reports_dir=tmp_path, dependencies=dependencies
+        )
+
+    pending_paths = list(tmp_path.glob("auto_attempt_20260710_*.json"))
+    assert len(pending_paths) == 1
+    pending = json.loads(pending_paths[0].read_text(encoding="utf-8"))
+    assert pending["schema_version"] == 1
+    assert pending["phase"] == durable_phase
+    assert pending["payload_checksum"].startswith("sha256:")
+    assert pending["manifest_fingerprint"].startswith("sha256:")
+    assert pending["input_fingerprint"].startswith("sha256:")
+    assert pending["state_checksum"].startswith("sha256:")
+
+    def no_new_run(_trade_date: str) -> object:
+        raise AssertionError("recovery must finish the existing run before new compute")
+
+    restart_dependencies = replace(
+        fake_auto_dependencies.healthy(),
+        prepare_inputs=no_new_run,
+        state_hook=None,
+    )
+    recovered = run_auto_pipeline(
+        "20260710", 10, reports_dir=tmp_path, dependencies=restart_dependencies
+    )
+
+    assert recovered.status is AutoRunStatus.HEALTHY
+    assert recovered.recovered is True
+    assert recovered.payload["run_id"] == "healthy-run"
+    assert recovered.recovery_diagnostics
+    assert list(tmp_path.glob("auto_attempt_20260710_*.json")) == []
+    canonical = json.loads(
+        (tmp_path / "auto_screening_20260710.json").read_text(encoding="utf-8")
+    )
+    assert canonical == recovered.payload
+    records = json.loads(
+        (tmp_path / "tracking_history.json").read_text(encoding="utf-8")
+    )["records"]
+    assert [(row["ticker"], row["recommendation_score"]) for row in records] == [
+        ("000001", 0.5)
+    ]
+    assert records[0]["source_run_id"] == "healthy-run"
+
+
+def test_pending_cleanup_failure_is_durable_and_surfaces_diagnostic(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "src.screening.auto_pipeline._remove_pending_attempt", lambda _path: False
+    )
+
+    result = run_auto_pipeline(
+        "20260710",
+        10,
+        reports_dir=tmp_path,
+        dependencies=fake_auto_dependencies.healthy(),
+    )
+
+    assert result.status is AutoRunStatus.HEALTHY
+    assert result.diagnostic_path is not None
+    pending = json.loads(result.diagnostic_path.read_text(encoding="utf-8"))
+    assert pending["phase"] == "canonical"
+    assert result.recovery_diagnostics == (
+        {
+            "action": "pending_cleanup_failed",
+            "run_id": "healthy-run",
+            "pending_path": str(result.diagnostic_path),
+        },
+    )

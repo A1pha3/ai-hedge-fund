@@ -26,7 +26,7 @@ def test_build_auto_screening_payload_includes_optional_feature_quality(monkeypa
         trade_date="20260708",
         top_n=10,
         market_state=market_state,
-        candidates=[object(), object()],
+        candidates=[SimpleNamespace(ticker="000001"), SimpleNamespace(ticker="300999")],
         fused=fused,
         top_results_serializable=[],
         sector_warnings=[],
@@ -39,6 +39,11 @@ def test_build_auto_screening_payload_includes_optional_feature_quality(monkeypa
     )
 
     assert payload["data_quality"]["optional_features"]["intraday_short_trade_metrics"]["coverage"] == 0.5
+    assert payload["candidate_pool_run"] == {
+        "trade_date": "20260708",
+        "tickers": ["000001", "300999"],
+        "candidates": [{"ticker": "000001"}, {"ticker": "300999"}],
+    }
 
 
 def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatch):

@@ -22,8 +22,11 @@ def test_auto_cli_accepts_strict_quality_flag():
 class _FakeRefreshStats:
     price_total: int = 3
     price_updated: int = 2
+    price_missing: int = 0
+    price_insufficient_history: int = 0
     fund_flow_total: int = 3
     fund_flow_saved: int = 1
+    fund_flow_empty: int = 0
     price_failed: int = 0
     fund_flow_failed: int = 0
     industry_index_failed: int = 0
@@ -32,8 +35,11 @@ class _FakeRefreshStats:
         return {
             "price_total": self.price_total,
             "price_updated": self.price_updated,
+            "price_missing": self.price_missing,
+            "price_insufficient_history": self.price_insufficient_history,
             "fund_flow_total": self.fund_flow_total,
             "fund_flow_saved": self.fund_flow_saved,
+            "fund_flow_empty": self.fund_flow_empty,
             "price_failed": self.price_failed,
             "fund_flow_failed": self.fund_flow_failed,
             "industry_index_failed": self.industry_index_failed,
@@ -56,10 +62,14 @@ def test_refresh_daily_action_caches_for_auto_attaches_summary_without_publishin
     )
 
     assert payload["daily_action_cache_refresh"] == {
+        "status": "success",
         "price_total": 3,
         "price_updated": 2,
+        "price_missing": 0,
+        "price_insufficient_history": 0,
         "fund_flow_total": 3,
         "fund_flow_saved": 1,
+        "fund_flow_empty": 0,
         "price_failed": 0,
         "fund_flow_failed": 0,
         "industry_index_failed": 0,
@@ -135,6 +145,44 @@ def test_run_auto_screening_closes_lock_fd_when_delegate_raises(monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         main_mod.run_auto_screening("20260710")
     assert closed == [654]
+
+
+def test_recovery_delegate_runs_before_any_preheat_or_new_input_work(monkeypatch):
+    from src import main as main_mod
+    from src.screening.auto_pipeline import AutoRunResult, AutoRunStatus
+
+    events: list[str] = []
+    fd = os.open("/dev/null", os.O_RDONLY)
+    monkeypatch.setenv("PREHEAT_BEFORE_AUTO", "true")
+    monkeypatch.setattr(main_mod, "_try_acquire_pipeline_lock", lambda _path: fd)
+    monkeypatch.setattr(
+        "src.utils.date_utils.latest_open_trade_date_on_or_before",
+        lambda value: value,
+    )
+    monkeypatch.setattr(
+        "src.data.cache_preheater.preheat_cache",
+        lambda *args, **kwargs: events.append("preheat"),
+    )
+
+    def recovered(*args, **kwargs):
+        events.append("pipeline")
+        return AutoRunResult(
+            AutoRunStatus.FATAL,
+            1,
+            Path("pending.json"),
+            None,
+            None,
+            recovered=True,
+            recovery_diagnostics=({"action": "recovery_failed"},),
+        )
+
+    monkeypatch.setattr(
+        "src.screening.auto_pipeline.run_auto_pipeline",
+        recovered,
+    )
+
+    assert main_mod.run_auto_screening("20260710") == 1
+    assert events == ["pipeline"]
 
 
 def test_run_auto_screening_closes_lock_fd_when_progress_start_raises(monkeypatch):

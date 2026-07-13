@@ -507,6 +507,18 @@ def _build_auto_screening_payload(
     """
     data_quality = {"optional_features": {}}
     data_quality.update(optional_feature_quality or {})
+    candidate_rows: list[dict] = []
+    for candidate in candidates:
+        if hasattr(candidate, "model_dump"):
+            row = candidate.model_dump(mode="json")
+        else:
+            row = dict(vars(candidate))
+        ticker = str(row.get("ticker", "") or "")[:6]
+        if not ticker:
+            raise ValueError("Layer-A candidate is missing ticker")
+        row["ticker"] = ticker
+        candidate_rows.append(row)
+    candidate_rows.sort(key=lambda row: row["ticker"])
     return {
         "mode": "auto_screening",
         "date": trade_date,
@@ -514,6 +526,14 @@ def _build_auto_screening_payload(
         "model_version": _compute_model_version(),
         "market_state": market_state.model_dump(),
         "layer_a_count": len(candidates),
+        # Direct output of this compute call. auto_pipeline verifies it against
+        # the exact-date snapshot written by build_candidate_pool, then binds it
+        # to the publication run before building the manifest.
+        "candidate_pool_run": {
+            "trade_date": trade_date,
+            "tickers": [row["ticker"] for row in candidate_rows],
+            "candidates": candidate_rows,
+        },
         "total_scored": len(fused),
         "high_pool_count": sum(1 for item in fused if item.score_b >= SCORE_B_GREEN_FLOOR),
         "top_n": top_n,
@@ -545,7 +565,7 @@ def _close_from_price_cache(ticker: str, trade_date: str) -> float | None:
     当 batch fetcher 缺某 ticker 当日行情时 (实测 20260709 Top-N 10 只中 4 只:
     002049/300184/300308/600392 在 batch df 缺失但 price_cache 有), 回退到
     ``data/price_cache/{ticker}.csv`` 读当日 close。避免 recommended_price 落到 0
-    → tracking_history 永久残留 0 (幂等 skip 不修正) → 入场价诊断/展示错误。
+    → legacy report-driven tracking 可能永久残留 0 → 入场价诊断/展示错误。
 
     数据不可用 (文件缺失/无该日行/close<=0/解析异常) 返回 None, 绝不伪造价格。
     """
@@ -1108,6 +1128,7 @@ def _refresh_daily_action_caches_for_auto(
     try:
         stats = refresh_fn(trade_date)
         summary = stats.to_dict() if hasattr(stats, "to_dict") else dict(stats)
+        summary["status"] = "success"
         _log_cache_refresh_summary(summary)
     except Exception as exc:  # pragma: no cover - cache refresh must not fail --auto
         logger.warning("[Auto] daily-action cache refresh failed: %s", exc)
@@ -1259,32 +1280,18 @@ def run_auto_screening(
     try:
         progress.start()
         try:
-            # Cache preparation, publication, and payload-driven tracking share
-            # one lock. Rendering/PDF/push run after release and cannot delay the
-            # next producer because they no longer rewrite canonical state.
-            if os.environ.get("PREHEAT_BEFORE_AUTO", "").strip().lower() in ("1", "true", "yes", "on"):
-                try:
-                    from src.data.cache_preheater import preheat_cache as _preheat
-
-                    _preheat_stats = _preheat(trade_date, concurrency=4)
-                    logger.info(
-                        "[Auto] P1-1 缓存预热完成: %d/%d 成功, %d 跳过, %.1fs",
-                        _preheat_stats.tasks_success,
-                        _preheat_stats.tasks_total,
-                        _preheat_stats.tasks_skipped,
-                        _preheat_stats.elapsed_seconds,
-                    )
-                except Exception as exc:  # pragma: no cover - 预热失败不阻塞主流程
-                    logger.warning("[Auto] P1-1 缓存预热失败: %s", exc)
-
             from src.screening.auto_pipeline import AutoRunStatus, run_auto_pipeline
 
+            # run_auto_pipeline reconciles any durable pending state before its
+            # default prepare_inputs performs preheat/cache work for a new run.
             result = run_auto_pipeline(
                 trade_date,
                 top_n,
                 strict_quality=strict_quality,
                 reports_dir=_resolve_consecutive_report_dir(),
             )
+            for diagnostic in result.recovery_diagnostics:
+                logger.warning("[Auto] recovery diagnostic: %s", diagnostic)
         finally:
             _close_auto_lock()
 
