@@ -138,6 +138,13 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
   stale_tickers_json TEXT NOT NULL,
   PRIMARY KEY(ledger_id, trade_date)
 );
+CREATE TABLE IF NOT EXISTS position_marks (
+  ledger_id TEXT NOT NULL REFERENCES ledger_meta(ledger_id),
+  ticker TEXT NOT NULL,
+  trade_date TEXT NOT NULL,
+  close_price REAL NOT NULL CHECK(close_price > 0),
+  PRIMARY KEY(ledger_id, ticker, trade_date)
+);
 """
             )
             conn.execute(
@@ -169,6 +176,26 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
         planned_weight: float,
         priority: int,
     ) -> LedgerTrade:
+        return self.create_plan_if_absent(
+            ticker,
+            setup,
+            setup_version,
+            signal_date,
+            planned_entry_date,
+            planned_weight,
+            priority,
+        )[0]
+
+    def create_plan_if_absent(
+        self,
+        ticker: str,
+        setup: str,
+        setup_version: str,
+        signal_date: date,
+        planned_entry_date: date,
+        planned_weight: float,
+        priority: int,
+    ) -> tuple[LedgerTrade, bool]:
         identity = TradeIdentity(
             self.ledger_id,
             setup,
@@ -198,7 +225,8 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
                     TradeState.PLANNED.value,
                 ),
             )
-            if cursor.rowcount:
+            created = bool(cursor.rowcount)
+            if created:
                 self._insert_event(
                     conn,
                     trade_id,
@@ -206,7 +234,7 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
                     signal_date,
                     payload={"priority": priority},
                 )
-            return self._get_trade(conn, trade_id)
+            return self._get_trade(conn, trade_id), created
 
     def fill_plan(
         self,
@@ -524,6 +552,28 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
                 drawdown=float(row["drawdown"]),
                 stale_tickers=tuple(json.loads(row["stale_tickers_json"])),
             )
+
+    def record_position_mark(
+        self, ticker: str, trade_date: date, close_price: float
+    ) -> None:
+        if not math.isfinite(close_price) or close_price <= 0:
+            raise ValueError("close_price must be finite and positive")
+        with self._connect() as conn:
+            self._begin_write(conn)
+            conn.execute(
+                "INSERT INTO position_marks VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(ledger_id, ticker, trade_date) DO UPDATE SET close_price=excluded.close_price",
+                (self.ledger_id, ticker, trade_date.isoformat(), close_price),
+            )
+
+    def latest_position_mark(self, ticker: str, on_or_before: date) -> float | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT close_price FROM position_marks WHERE ledger_id=? AND ticker=? "
+                "AND trade_date<=? ORDER BY trade_date DESC LIMIT 1",
+                (self.ledger_id, ticker, on_or_before.isoformat()),
+            ).fetchone()
+            return float(row["close_price"]) if row else None
 
     def cash_balance(self) -> float:
         with self._connect() as conn:

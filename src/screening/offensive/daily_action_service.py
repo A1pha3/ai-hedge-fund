@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date
+from enum import StrEnum
 from typing import Callable, Sequence
 
 from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
@@ -28,6 +30,18 @@ HARD_STOCK_CAP = 0.12
 LOT_SIZE = 100
 
 
+class RegimeAuthorization(StrEnum):
+    NORMAL = "normal"
+    BTST_CRISIS = "btst_crisis"
+    BTST_RISK_OFF = "btst_risk_off"
+
+    @property
+    def ticker_cap(self) -> float:
+        return (
+            NORMAL_STOCK_CAP if self is RegimeAuthorization.NORMAL else HARD_STOCK_CAP
+        )
+
+
 @dataclass(frozen=True)
 class MarketBar:
     open: float | None
@@ -46,8 +60,23 @@ class PlanCandidate:
     setup_version: str
     target_weight: float
     priority: int
-    simulation_label: str = "模拟盘"
-    regime_size_factor: float = 1.0
+    authorization: RegimeAuthorization = RegimeAuthorization.NORMAL
+
+    def __post_init__(self) -> None:
+        if self.setup != "btst_breakout":
+            raise ValueError("only btst_breakout candidates are enabled")
+        if not self.ticker or not self.setup_version:
+            raise ValueError("ticker and setup_version must be nonempty")
+        if not math.isfinite(self.target_weight) or self.target_weight <= 0:
+            raise ValueError("target_weight must be finite and positive")
+        if (
+            isinstance(self.priority, bool)
+            or not isinstance(self.priority, int)
+            or self.priority <= 0
+        ):
+            raise ValueError("priority must be a positive integer")
+        if not isinstance(self.authorization, RegimeAuthorization):
+            raise ValueError("authorization must be a RegimeAuthorization")
 
 
 @dataclass(frozen=True)
@@ -55,7 +84,8 @@ class ActionItem:
     trade_id: str
     ticker: str
     reason: str
-    simulation_label: str = "模拟盘"
+    execution_label: str
+    source_label: str
 
 
 @dataclass(frozen=True)
@@ -83,10 +113,12 @@ class DailyActionService:
         prices: PriceProvider,
         costs: ExecutionCosts,
     ) -> None:
-        self.repository = repository
-        self.calendar = calendar
-        self.prices = prices
-        self.costs = costs
+        self.repository, self.calendar, self.prices, self.costs = (
+            repository,
+            calendar,
+            prices,
+            costs,
+        )
         self._skipped: list[ActionItem] = []
         self._exit_plans: list[ActionItem] = []
         self._deferred: list[ActionItem] = []
@@ -107,31 +139,46 @@ class DailyActionService:
         return self._build_view(as_of, valuation, exits, plans)
 
     def _settle_due_entry_plans(self, as_of: date) -> None:
-        reserved = 0.0
-        for trade in self.repository.open_trades():
-            reserved += self._position_weight(trade, as_of)
         for plan in self.repository.planned_trades(as_of):
-            if reserved + plan.planned_weight > PORTFOLIO_CAP + 1e-12:
-                self.repository.skip_plan(plan.trade_id, as_of, "portfolio_capacity")
-                self._skipped.append(
-                    ActionItem(plan.trade_id, plan.ticker, "portfolio_capacity")
+            current = self.repository.get_trade(plan.trade_id)
+            if current.state is not TradeState.PLANNED:
+                continue
+            nav, values, _ = self._snapshot(as_of)
+            higher = [
+                p
+                for p in self.repository.planned_trades()
+                if (p.priority, p.trade_id) <= (plan.priority, plan.trade_id)
+            ]
+            reserved_through = sum(p.planned_weight for p in higher)
+            ticker_reserved = sum(
+                p.planned_weight for p in higher if p.ticker == plan.ticker
+            )
+            open_weight = sum(values.values()) / nav
+            ticker_weight = values.get(plan.ticker, 0.0) / nav
+            if open_weight + reserved_through > PORTFOLIO_CAP + 1e-12:
+                self._skip(plan, as_of, "portfolio_capacity")
+                continue
+            ticker_cap = (
+                HARD_STOCK_CAP
+                if any(
+                    p.ticker == plan.ticker and p.planned_weight > NORMAL_STOCK_CAP
+                    for p in higher
                 )
+                else NORMAL_STOCK_CAP
+            )
+            if ticker_weight + ticker_reserved > ticker_cap + 1e-12:
+                self._skip(plan, as_of, "ticker_capacity")
                 continue
             bar = self.prices(plan.ticker, as_of)
-            status = self._status(bar)
             if (
-                status is not ExecutionStatus.EXECUTABLE_PROXY
+                self._status(bar) is not ExecutionStatus.EXECUTABLE_PROXY
                 or bar is None
                 or bar.open is None
             ):
-                reserved += plan.planned_weight
                 continue
-            quantity = self._affordable_quantity(plan.planned_weight, bar.open)
+            quantity = self._affordable_quantity(plan.planned_weight, bar.open, nav)
             if quantity == 0:
-                self.repository.skip_plan(plan.trade_id, as_of, "cash_capacity")
-                self._skipped.append(
-                    ActionItem(plan.trade_id, plan.ticker, "cash_capacity")
-                )
+                self._skip(plan, as_of, "cash_capacity")
                 continue
             fill = apply_execution_costs(bar.open, quantity, "buy", self.costs)
             self.repository.fill_plan(
@@ -145,16 +192,12 @@ class DailyActionService:
                 fill.tax,
                 fill.slippage_cost,
             )
-            reserved += plan.planned_weight
 
     def _settle_due_exit_plans(self, as_of: date) -> tuple[ActionItem, ...]:
         settled: list[ActionItem] = []
         for trade in self.repository.open_trades():
-            if trade.state is not TradeState.EXIT_PENDING:
-                continue
-            if (
-                trade.forced_exit_target_date is not None
-                and as_of < trade.forced_exit_target_date
+            if trade.state is not TradeState.EXIT_PENDING or (
+                trade.forced_exit_target_date and as_of < trade.forced_exit_target_date
             ):
                 continue
             bar = self.prices(trade.ticker, as_of)
@@ -174,8 +217,7 @@ class DailyActionService:
                     as_of,
                     forced_exit_target_date=trade.forced_exit_target_date,
                 )
-                item = ActionItem(trade.trade_id, trade.ticker, reason)
-                self._deferred.append(item)
+                self._deferred.append(self._item(trade, reason))
                 continue
             fill = apply_execution_costs(
                 bar.open,
@@ -193,31 +235,33 @@ class DailyActionService:
                 fill.tax,
                 fill.slippage_cost,
             )
-            settled.append(ActionItem(trade.trade_id, trade.ticker, "exit_filled"))
+            settled.append(self._item(trade, "exit_filled"))
         return tuple(settled)
 
     def _mark_to_market(self, as_of: date) -> DailyValuation:
+        nav, values, stale = self._snapshot(as_of)
         cash = self.repository.cash_balance()
-        market_value = 0.0
-        stale: list[str] = []
         previous = self.repository.latest_valuation()
-        for trade in self.repository.open_trades():
-            bar = self.prices(trade.ticker, as_of)
-            if bar is None or bar.close is None or bar.close <= 0:
-                stale.append(trade.ticker)
-                price = trade.raw_entry_price or 0.0
-            else:
-                price = bar.close
-            market_value += price * trade.quantity
-        nav = cash + market_value
         peak = max(previous.peak if previous else self.repository.initial_cash, nav)
-        drawdown = nav / peak - 1.0
+        valuation = DailyValuation(
+            as_of,
+            cash,
+            sum(values.values()),
+            nav,
+            peak,
+            nav / peak - 1.0,
+            tuple(sorted(stale)),
+        )
         self.repository.record_valuation(
-            as_of, cash, market_value, nav, peak, drawdown, stale
+            as_of,
+            valuation.cash,
+            valuation.market_value,
+            valuation.nav,
+            valuation.peak,
+            valuation.drawdown,
+            valuation.stale_tickers,
         )
-        return DailyValuation(
-            as_of, cash, market_value, nav, peak, drawdown, tuple(sorted(stale))
-        )
+        return valuation
 
     def _evaluate_open_positions(self, as_of: date) -> None:
         for trade in self.repository.open_trades():
@@ -232,9 +276,7 @@ class DailyActionService:
                 self.repository.mark_exit_pending(
                     trade.trade_id, as_of, forced_exit_target_date=target
                 )
-                self._exit_plans.append(
-                    ActionItem(trade.trade_id, trade.ticker, "maximum_holding_session")
-                )
+                self._exit_plans.append(self._item(trade, "maximum_holding_session"))
 
     def _create_capacity_safe_plans(
         self,
@@ -247,21 +289,33 @@ class DailyActionService:
         except ValueError:
             self._block_reason = "calendar_unavailable"
             return ()
-        open_weight = (
-            self._open_market_value(as_of) / valuation.nav if valuation.nav else 0.0
-        )
-        reserved = sum(plan.planned_weight for plan in self.repository.planned_trades())
-        created: list[ActionItem] = []
+        _, values, _ = self._snapshot(as_of)
+        reserved = list(self.repository.planned_trades())
+        seen: set[str] = set()
+        created_items: list[ActionItem] = []
         for candidate in sorted(
             candidates, key=lambda item: (item.priority, item.ticker)
         ):
-            normal_weight = min(max(candidate.target_weight, 0.0), NORMAL_STOCK_CAP)
-            weight = min(
-                normal_weight * max(candidate.regime_size_factor, 0.0), HARD_STOCK_CAP
-            )
-            if weight <= 0 or open_weight + reserved + weight > PORTFOLIO_CAP + 1e-12:
+            if candidate.ticker in seen:
                 continue
-            trade = self.repository.create_plan(
+            seen.add(candidate.ticker)
+            weight = min(candidate.target_weight, candidate.authorization.ticker_cap)
+            open_weight = sum(values.values()) / valuation.nav
+            ticker_weight = values.get(candidate.ticker, 0.0) / valuation.nav
+            ticker_reserved = sum(
+                p.planned_weight for p in reserved if p.ticker == candidate.ticker
+            )
+            if (
+                open_weight + sum(p.planned_weight for p in reserved) + weight
+                > PORTFOLIO_CAP + 1e-12
+            ):
+                continue
+            if (
+                ticker_weight + ticker_reserved + weight
+                > candidate.authorization.ticker_cap + 1e-12
+            ):
+                continue
+            trade, created = self.repository.create_plan_if_absent(
                 candidate.ticker,
                 candidate.setup,
                 candidate.setup_version,
@@ -270,16 +324,10 @@ class DailyActionService:
                 weight,
                 candidate.priority,
             )
-            reserved += weight
-            created.append(
-                ActionItem(
-                    trade.trade_id,
-                    trade.ticker,
-                    "entry_planned",
-                    candidate.simulation_label,
-                )
-            )
-        return tuple(created)
+            if created:
+                reserved.append(trade)
+                created_items.append(self._item(trade, "entry_planned"))
+        return tuple(created_items)
 
     def _build_view(
         self,
@@ -289,10 +337,7 @@ class DailyActionService:
         plans: tuple[ActionItem, ...],
     ) -> DailyActionRun:
         positions = tuple(self.repository.open_trades())
-        open_exposure = (
-            self._open_market_value(as_of) / valuation.nav if valuation.nav else 0.0
-        )
-        reserved = sum(plan.planned_weight for plan in self.repository.planned_trades())
+        _, values, _ = self._snapshot(as_of)
         return DailyActionRun(
             as_of,
             valuation,
@@ -301,14 +346,39 @@ class DailyActionService:
             tuple(self._skipped),
             tuple(self._exit_plans),
             tuple(self._deferred),
-            open_exposure,
-            reserved,
+            sum(values.values()) / valuation.nav,
+            sum(p.planned_weight for p in self.repository.planned_trades()),
             self._block_reason,
         )
 
-    def _affordable_quantity(self, weight: float, price: float) -> int:
-        target = self.repository.initial_cash * weight
-        cash = self.repository.cash_balance()
+    def _snapshot(self, as_of: date) -> tuple[float, dict[str, float], list[str]]:
+        values: dict[str, float] = {}
+        stale: list[str] = []
+        for trade in self.repository.open_trades():
+            bar = self.prices(trade.ticker, as_of)
+            if (
+                bar is not None
+                and bar.close is not None
+                and math.isfinite(bar.close)
+                and bar.close > 0
+            ):
+                price = bar.close
+                self.repository.record_position_mark(trade.ticker, as_of, price)
+            else:
+                stale.append(trade.ticker)
+                price = (
+                    self.repository.latest_position_mark(trade.ticker, as_of)
+                    or trade.raw_entry_price
+                    or 0.0
+                )
+            values[trade.ticker] = (
+                values.get(trade.ticker, 0.0) + price * trade.quantity
+            )
+        nav = self.repository.cash_balance() + sum(values.values())
+        return nav, values, stale
+
+    def _affordable_quantity(self, weight: float, price: float, nav: float) -> int:
+        target, cash = nav * weight, self.repository.cash_balance()
         quantity = int(min(target, cash) // (price * LOT_SIZE)) * LOT_SIZE
         while quantity > 0:
             fill = apply_execution_costs(price, quantity, "buy", self.costs)
@@ -317,32 +387,15 @@ class DailyActionService:
             quantity -= LOT_SIZE
         return 0
 
-    def _open_market_value(self, as_of: date) -> float:
-        total = 0.0
-        for trade in self.repository.open_trades():
-            bar = self.prices(trade.ticker, as_of)
-            price = (
-                bar.close
-                if bar is not None and bar.close is not None
-                else trade.raw_entry_price
-            )
-            total += (price or 0.0) * trade.quantity
-        return total
+    def _skip(self, plan: LedgerTrade, as_of: date, reason: str) -> None:
+        self.repository.skip_plan(plan.trade_id, as_of, reason)
+        self._skipped.append(self._item(plan, reason))
 
-    def _position_weight(self, trade: LedgerTrade, as_of: date) -> float:
-        return (
-            self._open_market_value_for_trade(trade, as_of)
-            / self.repository.initial_cash
-        )
-
-    def _open_market_value_for_trade(self, trade: LedgerTrade, as_of: date) -> float:
-        bar = self.prices(trade.ticker, as_of)
-        price = (
-            bar.close
-            if bar is not None and bar.close is not None
-            else trade.raw_entry_price
-        )
-        return (price or 0.0) * trade.quantity
+    @staticmethod
+    def _item(trade: LedgerTrade, reason: str) -> ActionItem:
+        execution = trade.execution_mode.value if trade.execution_mode else "pending"
+        source = trade.fill_source.value if trade.fill_source else "pending"
+        return ActionItem(trade.trade_id, trade.ticker, reason, execution, source)
 
     @staticmethod
     def _status(bar: MarketBar | None) -> ExecutionStatus:

@@ -42,3 +42,29 @@ mark-to-market, open-position evaluation, and capacity-safe planning in the fixe
 - The frozen calendar required class-level monkeypatching in the unavailable-calendar test.
 - No unresolved correctness concern within Task 5 scope; scanner/CLI integration remains a
   later task, and OversoldBounce stays outside this service boundary.
+
+## Blocking-finding repair (2026-07-13)
+
+- RED: focused collection failed because `RegimeAuthorization` was absent; repository
+  regressions also specified missing creation-status and position-mark APIs. During GREEN,
+  the stale-mark regression initially failed (`60000 != 54000`), exposing an incorrect test
+  expectation for five manually seeded 1,000-share positions; the production mark was right.
+- GREEN: `uv run pytest tests/offensive/test_daily_action_service.py
+  tests/offensive/test_ledger_repository.py -v` — **46 passed in 1.13s**.
+- Baseline: `uv run pytest tests/offensive/ tests/test_main_auto_cache_refresh.py -q`
+  — **374 passed in 4.20s**.
+- Quality: focused Ruff check, Ruff format check for all changed files, compileall, and
+  `git diff --check` passed.
+- Capacity now uses one current-NAV snapshot and rechecks after each fill; a drawdown
+  regression proves open plus reserved exposure remains at or below 60%.
+- Last-known per-ticker marks are ledger-scoped and persisted; missing closes retain the
+  profitable prior mark, disclose stale tickers, and cannot invent plan headroom.
+- Ticker exposure aggregates OPEN/EXIT_PENDING/PLANNED; candidates are deterministically
+  deduplicated. Normal authorization caps at 10%; explicit BTST crisis/risk-off authorization
+  alone permits up to 12%.
+- Candidate construction rejects non-finite/non-positive values, forged authorization,
+  OversoldBounce, and unknown setups. Render labels come from persisted lifecycle fields,
+  with `pending` used when no execution/fill source exists.
+- `create_plan_if_absent` makes same-day reruns omit `new_plans` and retain one event.
+- Concern: additive `position_marks` uses schema version 1 intentionally so existing v1
+  ledgers acquire the backward-compatible table through `CREATE TABLE IF NOT EXISTS`.

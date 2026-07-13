@@ -7,6 +7,7 @@ from src.screening.offensive.daily_action_service import (
     DailyActionService,
     MarketBar,
     PlanCandidate,
+    RegimeAuthorization,
 )
 from src.screening.offensive.execution_adjuster import ExecutionCosts
 from src.screening.offensive.ledger_repository import LedgerRepository
@@ -58,7 +59,7 @@ def service(tmp_path, sessions) -> DailyActionService:
 
 
 def candidate(ticker: str, priority: int = 1, weight: float = 0.10) -> PlanCandidate:
-    return PlanCandidate(ticker, "btst_breakout", "v2", weight, priority, "模拟盘")
+    return PlanCandidate(ticker, "btst_breakout", "v2", weight, priority)
 
 
 def open_trade(service, ticker: str, entry_date: date, weight: float = 0.1):
@@ -93,7 +94,8 @@ def test_pending_plans_reserve_exposure_and_never_exceed_sixty_percent(
     assert run.open_exposure == 0.0
     assert run.reserved_exposure == pytest.approx(0.60)
     assert len(run.new_plans) == 6
-    assert all(plan.simulation_label == "模拟盘" for plan in run.new_plans)
+    assert all(plan.execution_label == "pending" for plan in run.new_plans)
+    assert all(plan.source_label == "pending" for plan in run.new_plans)
 
 
 def test_fill_rechecks_capacity_and_skips_lower_priority_plan(service, sessions):
@@ -191,3 +193,105 @@ def test_missing_calendar_blocks_new_plan_but_still_lists_open_trade(
     assert run.new_plans == ()
     assert run.open_positions[0].trade_id == trade.trade_id
     assert run.block_reason == "calendar_unavailable"
+
+
+def test_drawdown_fill_capacity_uses_current_nav_denominator(service, sessions):
+    trades = [open_trade(service, f"00011{i}", sessions[1]) for i in range(5)]
+    for trade in trades:
+        service.prices.values[(trade.ticker, sessions[2])] = MarketBar(
+            5, 5, 4, 6, False, 5.5, 4.5
+        )
+    for i in range(3):
+        service.repository.create_plan(
+            f"00012{i}", "btst_breakout", "v2", sessions[1], sessions[2], 0.1, i
+        )
+
+    run = service.run(sessions[2], ())
+
+    assert run.open_exposure + run.reserved_exposure <= 0.60
+    assert run.skipped_plans[-1].reason == "portfolio_capacity"
+
+
+def test_missing_close_retains_profitable_marks_and_does_not_invent_capacity(
+    service, sessions
+):
+    trades = [open_trade(service, f"00013{i}", sessions[1]) for i in range(5)]
+    for trade in trades:
+        service.prices.values[(trade.ticker, sessions[2])] = MarketBar(
+            12, 12, 10, 13, False, 12.5, 11.5
+        )
+    service.run(sessions[2], ())
+    for trade in trades:
+        service.prices.values[(trade.ticker, sessions[3])] = None
+
+    run = service.run(sessions[3], (candidate("000139"),))
+
+    assert run.new_plans == ()
+    assert set(run.valuation.stale_tickers) == {trade.ticker for trade in trades}
+    assert run.valuation.market_value == pytest.approx(60_000)
+
+
+def test_duplicate_ticker_candidates_are_deduplicated_and_capped(service, sessions):
+    run = service.run(sessions[0], (candidate("000140", 2), candidate("000140", 1)))
+    assert len(run.new_plans) == 1
+    assert service.repository.planned_trades()[0].planned_weight == pytest.approx(0.10)
+
+
+def test_held_ticker_cannot_receive_another_plan(service, sessions):
+    open_trade(service, "000141", sessions[1])
+    run = service.run(sessions[2], (candidate("000141"),))
+    assert run.new_plans == ()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"target_weight": float("nan")},
+        {"target_weight": 0},
+        {"priority": 0},
+        {"setup": "oversold_bounce"},
+        {"setup": "unknown"},
+        {"authorization": "crisis"},
+    ],
+)
+def test_invalid_or_disabled_candidate_is_rejected(kwargs):
+    values = dict(
+        ticker="000142",
+        setup="btst_breakout",
+        setup_version="v2",
+        target_weight=0.1,
+        priority=1,
+    )
+    values.update(kwargs)
+    with pytest.raises(ValueError):
+        PlanCandidate(**values)
+
+
+def test_candidate_cannot_forge_rendered_execution_label():
+    with pytest.raises(TypeError):
+        PlanCandidate("000142", "btst_breakout", "v2", 0.1, 1, simulation_label="实盘")
+
+
+def test_only_explicit_btst_regime_authorization_can_reach_twelve_percent(
+    service, sessions
+):
+    normal = PlanCandidate("000143", "btst_breakout", "v2", 0.12, 1)
+    crisis = PlanCandidate(
+        "000144", "btst_breakout", "v2", 0.12, 2, RegimeAuthorization.BTST_CRISIS
+    )
+    service.run(sessions[0], (normal, crisis))
+    weights = {
+        plan.ticker: plan.planned_weight for plan in service.repository.planned_trades()
+    }
+    assert weights == {"000143": pytest.approx(0.10), "000144": pytest.approx(0.12)}
+
+
+def test_same_day_rerun_does_not_render_or_record_duplicate_plan(service, sessions):
+    first = service.run(sessions[0], (candidate("000145"),))
+    second = service.run(sessions[0], (candidate("000145"),))
+    assert len(first.new_plans) == 1
+    assert second.new_plans == ()
+    assert (
+        service.repository.count_events(first.new_plans[0].trade_id, "PLAN_CREATED")
+        == 1
+    )

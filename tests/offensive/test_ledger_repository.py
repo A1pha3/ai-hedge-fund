@@ -346,3 +346,30 @@ def test_latest_valuation_is_ledger_scoped_and_peak_is_monotonic_input(
     assert valuation.trade_date == date(2026, 7, 14)
     assert valuation.peak == 1.0
     assert valuation.stale_tickers == ("000001",)
+
+
+def test_create_plan_if_absent_reports_creation_without_duplicate_event(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    args = ("000001", "btst", "v1", date(2026, 7, 10), date(2026, 7, 13), 0.1, 1)
+    first, first_created = repo.create_plan_if_absent(*args)
+    second, second_created = repo.create_plan_if_absent(*args)
+    assert first.trade_id == second.trade_id
+    assert first_created is True
+    assert second_created is False
+    assert repo.count_events(first.trade_id, "PLAN_CREATED") == 1
+
+
+def test_position_mark_round_trip_is_latest_and_ledger_scoped(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.sqlite3"
+    first = LedgerRepository(path, "first", 100_000)
+    second = LedgerRepository(path, "second", 100_000)
+    first.initialize()
+    second.initialize()
+    first.record_position_mark("000001", date(2026, 7, 13), 10.0)
+    first.record_position_mark("000001", date(2026, 7, 14), 12.0)
+    second.record_position_mark("000001", date(2026, 7, 14), 99.0)
+    assert first.latest_position_mark("000001", date(2026, 7, 15)) == pytest.approx(
+        12.0
+    )
