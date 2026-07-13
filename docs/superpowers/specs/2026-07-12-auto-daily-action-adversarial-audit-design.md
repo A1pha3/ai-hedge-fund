@@ -1,346 +1,415 @@
 # `--auto` 与 `--daily-action` 对抗性审计及 T+10 动态退出设计
 
-> 日期：2026-07-12
+> 初版：2026-07-12
 >
-> 状态：设计已确认，等待书面复核后进入实施计划
+> 对抗性复核修订：2026-07-13
 >
-> 目标读者：本项目的策略开发者、回测维护者和每日操作者
+> 状态：修订完成，可拆分编写实施计划
+>
+> 目标读者：策略开发者、回测维护者和每日操作者
 
 ## 1. 核心判断
 
-系统当前最需要修复的不是某个因子权重，而是信号、计划、成交、持仓和退出被压在同一条流程里。`--daily-action` 在信号日就把次日计划买入记成已成交；回测又混用了信号日收盘价、次日开盘价和固定 T+10 收盘价。继续在这套口径上调阈值，容易把记账偏差当成策略收益。
+系统当前最需要修复的不是因子权重，而是交易事实不够清楚：信号日计划被立即记成成交，信号日收盘价与次日开盘价混用，退出日期无法还原，组合状态又分散在 journal 与 state 两个文件里。在这些口径没有统一前继续调阈值，会把记账偏差或执行假设误认为策略收益。
 
-本轮改造先建立可执行的交易生命周期，再研究 T+10 内的动态退出。任何策略优化都必须通过无未来数据、扣除交易成本的时间顺序验证；验证不足时进入 shadow（影子）模式，不改变默认交易动作。
+本轮工作拆为三个独立阶段：
+
+1. 先保证交易计划、模拟成交、持仓和退出能被准确记录；
+2. 再保证 `--auto` 只使用严格 as-of 数据并发布一致报告；
+3. 最后实现一个固定参数的动态退出 challenger，只做 shadow 观察。
+
+当前本地数据不允许为动态退出选参，也不允许自动升级默认退出策略。策略转正必须等待当前 setup 的版本化全信号数据和更深历史。
 
 ## 2. 阅读目标
 
-读完本文后，维护者应能回答以下问题：
+维护者读完本文后，应能明确：
 
-- `--auto` 和 `--daily-action` 各自负责什么，在哪里交接数据；
-- 为什么 `BUY_PLAN` 不能直接写成 `BUY`；
-- 一笔交易如何从信号日走到实际成交和退出；
-- 动态退出如何避免事后最高价和其他未来数据；
-- 哪些统计结果允许改变默认策略，哪些只能作为研究线索；
-- 新旧 journal 如何共存，历史回测产物如何保持可审计。
+- `--auto` 和 `--daily-action` 的职责边界；
+- paper fill 与用户真实成交的区别；
+- 第 10 个持仓交易日采用什么可执行退出时点；
+- 组合敞口如何同时计算已成交仓位和待成交预留；
+- 哪个存储是交易真值，崩溃后如何恢复；
+- 现有回测数据能证明什么、不能证明什么；
+- 三个阶段各自的完成条件和停止条件。
 
-## 3. 系统地图
+## 3. 修订后的系统地图
 
 ```mermaid
 flowchart TD
-    A["收盘后运行 --auto"] --> B["归一化到最近已完成交易日"]
-    B --> C["获取并校验价格、资金流、行业和 ST 数据"]
-    C --> D["计算因子与研究候选"]
-    D --> E["生成数据质量 manifest"]
-    E --> F["原子发布最终 auto 报告"]
+    A["阶段一：交易正确性"] --> B["SQLite v2 ledger"]
+    B --> C["PLANNED / OPEN / EXIT_PENDING / CLOSED"]
+    C --> D["paper fill 与 broker-confirmed fill 分离"]
 
-    F --> G["运行 --daily-action"]
-    G --> H["结算昨日 BUY_PLAN"]
-    H --> I["更新真实或模拟持仓"]
-    I --> J["生成 SELL_PLAN / HOLD"]
-    J --> K["扫描当日完整 BTST 信号"]
-    K --> L["生成下一交易日 BUY_PLAN"]
+    E["阶段二：auto 数据正确性"] --> F["prepare inputs"]
+    F --> G["strict as-of compute"]
+    G --> H["发布 healthy canonical 或 degraded attempt"]
+    H --> I["tracking 从内存 payload 更新"]
 
-    M["walk-forward 研究"] --> N["动态退出 challenger"]
-    N --> O{"样本外准入通过？"}
-    O -- "否" --> P["保持 shadow"]
-    O -- "是" --> Q["成为默认退出策略"]
-    Q --> J
+    J["阶段三：退出研究"] --> K["固定参数 shadow challenger"]
+    K --> L["legacy sensitivity"]
+    L --> M{"更深、当前版本数据满足准入？"}
+    M -- "否" --> N["继续 shadow"]
+    M -- "是" --> O["重新设计正式 OOS 准入"]
 ```
 
-三条主线必须分开：
+三个阶段独立验收。阶段一失败时不开始阶段二；阶段三失败不影响前两个阶段已经交付的确定性修复。
 
-| 主线 | 输入 | 输出 | 是否允许改变持仓 |
-| --- | --- | --- | --- |
-| 数据与研究候选 | 当日市场数据、历史报告 | `auto_screening_YYYYMMDD.json` | 否 |
-| 交易生命周期 | 已发布缓存、计划和持仓 | BUY / HOLD / SELL 操作清单 | 是 |
-| 策略研究 | 历史 OHLCV、journal、成本模型 | challenger 评估报告 | 只有准入通过后 |
+## 4. 已确认的代码问题
 
-## 4. 已确认的问题
+### 4.1 交易生命周期
 
-### 4.1 交易生命周期与记账
+1. `generate_daily_action()` 在信号日生成次日计划，却立即调用 `record_buy()`，未成交计划因此占用敞口并进入收益统计。
+2. `daily_action.py` 用信号日收盘价生成 `entry_price` 与止损价；`paper_tracker.py` 的收益又优先使用次日开盘价，同一字段承担两种语义。
+3. EXIT 事件把 `date` 写成原买入信号日，没有实际退出日期。
+4. 到期日仍使用 `N + 2 * floor(N / 5)` 的日历日近似，长假会提前到期。
+5. `record_buy()` 的读、去重、append、state 写入不在同一事务里；顺序幂等测试不能覆盖并发竞态。
+6. 当前 `t_plus_1_lock` 配置没有真正参与 `adjust_returns()` 的执行分支。
 
-1. `generate_daily_action()` 在信号日生成下一交易日计划，却立即调用 `record_buy()`。次日一字涨停买不到时，journal 仍存在虚构持仓。
-2. `daily_action.py` 用信号日收盘价构造 `entry_price`、止损价和持仓展示；`paper_tracker.py` 的收益计算又优先使用次日开盘价。一个字段承载了两种价格语义。
-3. EXIT 记录把 `date` 写回买入信号日，以便复用旧的自然键，但丢失了真实退出日期，无法还原资金曲线和持仓天数。
-4. 到期判断采用交易日的日历日近似。它能避免部分提前到期，却不能正确处理春节、国庆等长假。
-5. `--daily-action` 没有覆盖整个“读取 journal → 去重 → 写 journal → 写 state”的进程级事务锁。两个进程并发时仍可能同时通过幂等检查。
+### 4.2 组合与风险
 
-### 4.2 风险与组合口径
+1. BTST 单票上限被提高到正常 15%、regime 放大后 18%，与项目约定的正常 10%、硬上限 12% 冲突。
+2. `open_exposure` 只累加计划权重，不按当前持仓市值和 NAV 重新计算。
+3. drawdown 只在平仓时更新已实现收益，没有每日 mark-to-market，风险状态会滞后。
+4. 现有 v1 journal 缺成交数量、名义金额、费用拆分和真实退出日期，不能无歧义地重建现金、NAV 与回撤。
 
-1. BTST 单票上限已被提高到正常 15%、regime 放大后 18%，与项目约定的正常 10%、硬上限 12% 不一致。
-2. `update_pnl()` 直接执行 `nav += portfolio_return`。当仓位百分比表示成交时的组合净值比例时，组合收益应作用于当时 NAV；现有算法把收益当成初始资本的绝对百分点。
-3. 旧 journal 没有成交日、退出日和真实名义金额，无法无歧义地重建严格复利 NAV。因此历史 `paper_trading_backtest/portfolio_state.json` 必须作为 legacy artifact（旧口径产物）保留，不能静默覆盖。
+### 4.3 数据与报告
 
-### 4.3 数据完整性
-
-1. BTST 资金流历史不足时仍可命中，只标记 `degraded=True`。这与完整版 setup 的先验分布不是同一策略。
-2. 全局缓存日期取所有股票中的最大值。虽然 BTST detector 会查找精确信号日，但数据质量结论仍缺少逐 ticker、逐字段的可交易声明。
-3. `compute_auto_screening_results()` 文档声明无 IO 副作用，函数内部却提前保存报告。后续缓存刷新失败时，磁盘上可能留下未附带最终质量状态的报告。
-4. 历史统计和部分复合维度没有统一的 `as_of=trade_date` 边界。历史日期重跑可能读取未来 tracking 记录或未来报告。
-5. 现有流程先按 `score_b` 截取约 `top_n * 3`，再计算 investability。被预截断的股票没有机会进入最终排序。
-
-### 4.4 统计证据与策略语义
-
-1. `data/paper_trading_backtest/journal.jsonl` 是当前 setup 成交研究的第一真值，共 403 条记录，其中 211 条 BUY、192 条 EXIT。它不能与运行时 `data/paper_trading/` 混用。
-2. `data/price_cache/` 只有约六个月深度。基于本地缓存无法复现 Phase 0 报告中跨 2020—2026 的样本量。
-3. `known_distributions.py` 含硬编码常量，且当前仓位计算已经直接触顶，所谓 Kelly 计算不再决定仓位。展示“half-Kelly”会让操作者误以为仓位来自持续更新的概率估计。
-4. `--auto` 当前模型版本尚无足够成熟的真实前向 T+10 样本。旧模型或批量历史记录不能直接证明当前排序有效。
+1. 资金流历史不足时 BTST 仍可命中，只标 `degraded=True`，但仓位展示使用完整版 setup 的历史先验。
+2. `compute_auto_screening_results()` 声明不做 IO，内部却提前保存报告。
+3. `update_tracking_history()` 又从磁盘读取本次报告，形成“先写报告才能追踪、追踪后再覆写报告”的自引用链。
+4. expected-return 与部分 composite 维度没有显式 `as_of` 和 `model_version` 隔离，历史重跑可能读到未来报告或未来标签。
+5. 当前流程先按 `score_b` 截断约 Top 30，再做 investability，完整候选池无法参加最终比较。
+6. `--auto` 锁 fd 没有在函数 finally 中明确关闭；busy 分支返回 0，会让监控误报成功。
 
 ## 5. 目标与非目标
 
 ### 5.1 目标
 
-- 最大化买入后 10 个持仓交易日内的样本外平均单笔净收益；
-- 在可执行价格、A 股 T+1、涨跌停、停牌、滑点和费用约束下计算收益；
-- 让每天的输出同时覆盖买入计划、已有持仓、卖出计划和禁止交易原因；
-- 保证所有默认行为都有可复现的测试或统计证据；
-- 保留历史数据，新增口径必须显式版本化。
+- 明确区分研究信号、paper 模拟成交和用户真实成交；
+- 用交易所开市日计算持仓日，周末和节假日不计数；
+- 第 9 日收盘生成强制退出计划，第 10 日开盘卖出；
+- 正常单票不超过 10%，regime 放大后不超过 12%，组合不超过 60%；
+- 组合 NAV 每个交易日按持仓市值 mark-to-market；
+- `--auto` 的历史特征严格使用交易日前已知数据；
+- 动态退出先以固定参数 shadow 运行，不用当前六个月数据选参。
 
 ### 5.2 非目标
 
-- 不承诺未来收益或固定胜率；
-- 不使用盘中 tick 数据拟合无法由本地数据验证的复杂模型；
-- 不在六个月样本上引入机器学习退出模型；
+- 不接入特定券商 API，也不假装能够确认用户账户成交；
+- 不在 v2 首阶段支持复杂部分成交路由或智能订单拆分；
 - 不重写 `--auto` 的四策略因子体系；
-- 不把 OversoldBounce 重新启用，除非取得新的独立证据；
-- 不修改用户工作区中与本设计无关的现有改动。
+- 不恢复 OversoldBounce；
+- 不修改 legacy backtest artifact；
+- 不在六个月数据上做两参数网格搜索、机器学习或生产策略转正。
 
-## 6. 交易生命周期 v2
+## 6. 阶段一：交易正确性
 
-### 6.1 状态
+### 6.1 唯一交易真值
 
-每笔计划使用独立 `trade_id`，状态机如下：
+冻结以下 v1 文件，不覆盖、不迁移改写：
 
 ```text
-BUY_PLAN
-  ├─ BUY_FILLED ── HOLD ── SELL_PLAN ── CLOSED
-  └─ BUY_SKIPPED
+data/paper_trading/journal.jsonl
+data/paper_trading/portfolio_state.json
+data/paper_trading_backtest/journal.jsonl
+data/paper_trading_backtest/portfolio_state.json
 ```
 
-状态含义：
+v2 使用 Python 标准库 `sqlite3`，数据库为 `data/paper_trading_v2/ledger.sqlite3`。SQLite 是唯一交易真值；不再让 JSONL 与 state 文件共同承担真值。
 
-- `BUY_PLAN`：信号日收盘后产生，计划在下一交易日执行；
-- `BUY_FILLED`：下一交易日取得行情后，按执行模型确认模拟成交；
-- `BUY_SKIPPED`：涨停不可买、停牌、数据缺失或计划过期；
-- `HOLD`：已经成交且尚未触发退出；
-- `SELL_PLAN`：收盘确认退出条件，计划下一交易日卖出，或已预提交第 10 日退出；
-- `CLOSED`：记录真实或模拟退出价格、日期、费用和净收益。
+数据库至少包含：
 
-### 6.2 日期字段
+- `ledger_meta`：`ledger_id`、schema version、初始现金、cutover 时间；
+- `trades`：当前交易状态、确定性 `trade_id`、策略版本、计划和成交字段；
+- `trade_events`：单调 `seq`、唯一 `event_id`、幂等键、状态转换和现金/持仓变化；
+- `daily_valuations`：每日现金、持仓市值、NAV、peak、drawdown；
+- `execution_configs`：成交代理、费用、涨跌停规则和日历版本。
 
-新 journal 记录必须区分：
+所有状态转换、事件写入和资金变化在一个 SQLite transaction 中提交。数据库损坏时 fail closed，不创建 NAV=1 的空状态继续交易。
 
-| 字段 | 含义 |
-| --- | --- |
-| `signal_date` | 收盘后产生 setup 的交易日 |
-| `planned_entry_date` | 信号后的下一开市日 |
-| `entry_date` | 实际或模拟买入成交日 |
-| `exit_trigger_date` | 退出条件首次成立的交易日 |
-| `exit_date` | 实际或模拟卖出成交日 |
+### 6.2 确定性身份与状态
 
-持仓第 1 日是 `entry_date`。A 股 T+1 约束下，第 1 日不能卖出；第 10 个持仓交易日是默认最晚退出日。交易日计算必须复用交易所日历，不再用 `N + 2 * floor(N / 5)` 近似。
-
-### 6.3 价格字段
-
-- `signal_close`：只用于解释信号；
-- `planned_entry_reference`：信号日展示参考价；
-- `entry_price`：确认成交后的开盘价加买入滑点和费用；
-- `exit_price`：实际可执行卖出价扣除滑点；
-- `gross_return` 与 `net_return`：分别记录成本前、成本后收益。
-
-没有确认成交前，仓位不得进入 `open_exposure`，也不得计算浮盈和止损线。
-
-### 6.4 一次周五信号的流转案例
-
-假设 2026-07-10 周五收盘后命中 BTST：
-
-1. `--daily-action` 写入 `BUY_PLAN`，`signal_date=20260710`，交易日历解析 `planned_entry_date=20260713`。
-2. 周末重复运行只返回同一计划，不增加敞口。
-3. 周一收盘更新数据后，系统检查周一 OHLC。若一字涨停且无法成交，写 `BUY_SKIPPED`；否则按周一开盘价和成本模型写 `BUY_FILLED`。
-4. 周一是持仓第 1 日，不能卖出。周二起可执行退出。
-5. 每个收盘后运行计算退出状态；若周四收盘跌破移动退出线，生成周五开盘 `SELL_PLAN`。
-6. 周五行情确认后写 `CLOSED`，保存退出日和净收益。若始终未触发退出，则在第 10 个持仓交易日执行预提交的强制退出。
-
-## 7. T+10 内动态退出
-
-### 7.1 两阶段策略
-
-动态退出只保留两个待验证参数：利润保护启动阈值 `activation_return` 和 ATR 倍数 `atr_multiple`。
-
-`UNARMED` 阶段允许 BTST 正常波动。浮盈没有达到 `activation_return` 前，不执行普通移动止盈。现有 2026 样本显示多种止损会降低收益，因此灾难性盘中止损默认关闭，只作为独立 challenger 研究。
-
-当收盘净浮盈首次达到 `activation_return`，状态切换为 `ARMED`。随后每天用当日及之前的数据更新退出线：
+`trade_id` 由以下自然键确定生成：
 
 ```text
-candidate_exit = highest_close_since_entry - atr_multiple * ATR_today
+ledger_id + setup + setup_version + ticker + signal_date + planned_entry_date
+```
+
+状态只保留：
+
+```text
+PLANNED → OPEN → EXIT_PENDING → CLOSED
+       └→ SKIPPED
+```
+
+`HOLD` 是每日输出视图，不写成持久状态。动态退出的 `armed_at`、`highest_close`、`exit_line`、`last_evaluated_date` 和 `forced_exit_target_date` 是 OPEN 交易的策略字段。
+
+跌停、停牌或队列不确定导致无法退出时，状态保持 `EXIT_PENDING`，追加带 `attempt` 和 `reason` 的 `EXIT_DEFERRED` 事件。
+
+### 6.3 真实与模拟成交
+
+每笔成交必须保存：
+
+- `execution_mode=paper|broker_confirmed`；
+- `fill_source=synthetic_open|manual_confirmation|broker_import`；
+- `raw_fill_price`、quantity、gross notional；
+- slippage、commission、tax、other fee；
+- net cash flow。
+
+paper 模式可以按版本化规则生成 synthetic fill，但输出必须明确标记“模拟成交”。真实 `broker_confirmed` fill 只能来自人工确认文件或未来券商回报接口；日线 OHLC 不能自动升级为用户真实成交。
+
+本阶段实现 paper 模式与人工确认数据接口，不实现特定券商适配器。paper 使用全额成交代理；broker-confirmed 模式允许按确认 quantity 更新持仓。
+
+### 6.4 订单协议
+
+`BUY_PLAN` 必须包含：计划日期、计划权重、稳定优先级、参考价、订单类型、限价规则和有效期。未在 `planned_entry_date` 确认或模拟成交的计划转为 `SKIPPED/EXPIRED`，不能顺延到另一日开盘。
+
+计划阶段同时计算：
+
+- `open_exposure`：已成交持仓当前市值 / NAV；
+- `reserved_exposure`：待成交计划预留权重；
+- `available_exposure = 60% - open_exposure - reserved_exposure`。
+
+fill transaction 再次检查现金、当前 NAV 和上限。若价格变化或其他计划先成交导致容量不足，按稳定优先级 resize 或 skip。
+
+### 6.5 交易日与 T+10
+
+交易日历提供三个 fail-closed 接口：
+
+```python
+next_session(date) -> date
+nth_holding_session(entry_date, n) -> date
+session_distance(start, end) -> int
+```
+
+`nth_holding_session(entry_date, 1)` 返回 entry date；第 10 个持仓交易日是 entry 后第 9 个开市日。
+
+系统只在收盘后运行，因此生产可执行基线固定为：
+
+1. 第 9 日收盘生成 `EXIT_PENDING`；
+2. 第 10 日开盘执行卖出代理；
+3. 第 10 日开盘在跌停队列、停牌或数据未知时追加 `EXIT_DEFERRED`；
+4. 后续第一个可执行交易日继续尝试。
+
+第 10 日收盘价只可用于旧口径对照，不能冒充真实可执行退出。
+
+### 6.6 涨跌停与停牌三态
+
+仅有日线数据时，成交代理返回：
+
+```text
+EXECUTABLE_PROXY
+UNEXECUTABLE_PROXY
+UNKNOWN_QUEUE
+```
+
+基本规则：
+
+- 非停牌且开盘严格位于涨跌停价之间，可按 open 生成 paper fill；
+- 开盘等于涨停或跌停价，标记 `UNKNOWN_QUEUE`，默认不成交；
+- OHLC 全部锁在板价可标 `UNEXECUTABLE_PROXY`，但文案仍称“保守代理”；
+- 停牌与行情缺失是不同状态，缺数据不能冒充停牌；
+- 队列真实成交只能由 broker-confirmed 数据证明。
+
+涨跌停价格不能只按代码前缀和 9.5%/19.5%/29% 近似。解析器输入至少包括 ticker、date、exchange、previous close、ST 状态、上市天数和当日规则版本；信息不足时返回 unknown 并禁止新 paper fill。
+
+个股停牌日仍推进组合持仓日，但不可成交。退市、长期停牌或公司行为无法自动判定时进入人工复核状态。
+
+### 6.7 组合估值
+
+组合保存现金和实际 quantity。每个开市日用可用收盘价计算：
+
+```text
+market_value = sum(quantity * close)
+nav = cash + market_value
+open_exposure = market_value / nav
+drawdown = nav / historical_peak - 1
+```
+
+行情缺失时不得把持仓估值归零；沿用最近可信估值并标记 stale valuation，禁止因此解除风险限制。
+
+## 7. 阶段二：`--auto` 数据正确性
+
+### 7.1 编排边界
+
+`src/main.py` 只保留 CLI 入口，auto 编排移动到独立 service：
+
+```text
+prepare_auto_inputs()        # IO、缓存刷新、strictly-before history snapshot
+compute_auto_report(inputs)  # 不发布 report
+publish_canonical_report()   # 单次原子发布 healthy canonical
+update_tracking_from_payload() # 可重试衍生产物
+```
+
+compute 阶段可以执行计算，但不得发布 report。tracking 改为接收内存 payload，不再通过“最新磁盘报告”获取本次推荐。tracking summary 不嵌回 canonical report，避免二次覆写。
+
+### 7.2 Healthy 与 degraded
+
+每次运行都有唯一 `run_id`：
+
+- healthy：原子保存 `auto_screening_YYYYMMDD.json`，成为该日 canonical；
+- degraded：保存 `auto_attempt_YYYYMMDD_RUNID.json`，不覆盖同日 healthy canonical；
+- fatal：保存最小失败诊断，不产生 canonical。
+
+`--daily-action` 只在存在信号日 healthy canonical 且逐 ticker validator 通过时生成新计划；无论新信号是否降级，已有持仓管理仍继续运行。
+
+默认退出码：
+
+- `0`：流程完成，healthy 或 degraded 状态从报告和控制台读取；
+- `1`：fatal，没有可用 attempt；
+- `2`：CLI usage；
+- busy 使用独立临时失败码。
+
+`--strict-quality` 供 CI 或监控使用，使 degraded 返回非零。现有 runner 不会因普通 degraded 跳过后续持仓管理。
+
+### 7.3 缓存与 manifest
+
+价格、资金流和行业 CSV 全部使用同目录 temporary file、flush、fsync、`os.replace()`。每次 healthy run 生成逐 ticker manifest，至少记录：
+
+- trade date 与 run id；
+- OHLCV 日期和有限性；
+- 当日及历史资金流覆盖；
+- 行业数据日期；
+- ST、上市状态和涨跌停规则版本；
+- cache hash 或可复验的行级指纹；
+- `trade_ready` 与精确阻断原因。
+
+report status 不是第二交易真值。`--daily-action` 读取 manifest 后仍复验缓存日期和关键字段。
+
+### 7.4 严格 as-of
+
+所有历史维度显式接收 `as_of`、`history_snapshot` 和 `model_version`：
+
+- 只读取日期严格早于 trade date 的报告；
+- 只使用在 trade date 前已经成熟的收益标签；
+- 训练标签的实际退出日必须早于 as-of；
+- 历史运行不能调用隐式 latest；
+- 不同 model/setup fingerprint 默认不池化。
+
+修改未来报告、future tracking 或未来 K 线后，过去日期的结果必须保持字节级或字段级一致。
+
+### 7.5 排序治理
+
+完整候选池 investability 先作为 shadow challenger。删除 Top 30 截断前，所有 composite 维度必须能够对显式 full pool 和 strictly-before snapshot 计算；否则“全池排序”只是大量缺失值排序。
+
+`profit_aware` 与 `--auto` / BTST 双信号保持 shadow，不显示诱导加仓的星标。当前模型积累足够成熟前向数据后，另立研究规格决定是否转正。
+
+## 8. 阶段三：固定参数退出 shadow
+
+### 8.1 当前数据的限制
+
+`data/paper_trading_backtest/journal.jsonl` 仍是 legacy backtest 成交真值，但不是当前 BTST detector 的生产 cohort：
+
+- 旧生成脚本绕过过行业条件；
+- journal 早于板块自适应涨停修复；
+- 当前可重建完整路径的 BTST 只有 94/133，覆盖率 70.7%；
+- 可重建组旧 T+10 均值约 +9.99%，缺失组约 +3.71%，完整案例明显上偏；
+- 94 笔只覆盖 45 个信号日，T+10 窗口高度重叠，互不重叠时间块约 9 个。
+
+因此当前数据只能回答“旧 cohort 对退出规则是否敏感”，不能为当前生产 setup 选择参数。
+
+### 8.2 固定 challenger
+
+实现一个预注册、不可在本地样本上调参的 shadow 策略：
+
+```text
+activation_return = +10%
+atr_multiple = 2.5
+maximum exit = 第 9 日收盘计划、第 10 日开盘执行
+```
+
+状态分两段：
+
+- `UNARMED`：收盘净浮盈未达到 +10%，不执行普通移动退出；
+- `ARMED`：首次达到 +10% 后维护只升不降的退出线。
+
+```text
+candidate_exit = highest_close_since_entry - 2.5 * ATR_today
 exit_line_today = max(exit_line_yesterday, candidate_exit)
 ```
 
-退出线只能上移。收盘价跌破退出线后，产生下一交易日开盘卖出计划。该规则不读取当天之后的数据，也不使用事后最高价决定卖点。
+收盘跌破退出线后，下一开市日开盘执行 paper exit proxy。买入当天不可卖出。盘中灾难止损不进入本 challenger。
 
-### 7.2 第 10 日退出
+### 8.3 Shadow 报告
 
-第 10 个持仓交易日的退出在成交时就预先计算。系统输出可执行的定时退出条件，回测按第 10 日可成交价格结算。若一字跌停无法卖出，持仓顺延到第一个可卖时点，并记录 `forced_exit_delayed_by_limit_down=true`。不能为了保持“T+10”表面整齐而假设跌停板上必然成交。
+当前报告只做 legacy sensitivity，并必须披露：
 
-### 7.3 成交模型
+- 旧 detector 与当前 detector 的差异；
+- signal → plan → fillable proxy → complete path 各层覆盖率；
+- covered 与 missing 的日期、板块和旧收益差异；
+- baseline 与 challenger 的共同 eligibility mask；
+- 平均单笔净收益、中位数、尾部、持仓日和退出原因；
+- 按至少 T+10 长度的时间块 bootstrap 敏感性；
+- 不报告能够误解为真实组合的 Sharpe 或 drawdown。
 
-- 买入日为信号后的下一开市日；
-- 买入当天禁止卖出；
-- 收盘触发的普通退出在下一交易日开盘执行；
-- 跳空越过退出线时按真实开盘价计算，不能按退出线乐观成交；
-- 盘中止损若进入 challenger，只能使用前一日已经确定的止损线；
-- 涨停不可买、跌停不可卖、停牌和缺失 OHLC 均显式建模；
-- 佣金、卖出税费和滑点使用版本化配置。实施时从项目配置或权威来源确认数值，不把易变费率散落在策略代码中。
+MFE 仅作诊断。捕获率只在正 MFE 且分母超过预设最小值时报告，同时报告 `give_up = MFE - net_return`；日线 high 不称为真实可实现卖价。
 
-### 7.4 评价指标
+### 8.4 未来正式准入的前置条件
 
-第一指标是平均单笔净收益。固定 T+3、T+5、T+7、T+8、T+10 和简单固定止盈均为基线。
+正式参数研究必须先得到当前版本的 point-in-time 全信号 ledger，保存：
 
-辅助指标包括：
+- 所有命中与未命中原因；
+- 排序分、阻断原因和容量结果；
+- setup、data、board-rule、execution 和 cost fingerprint；
+- 不可变 OHLCV/资金流/行业快照；
+- 每次计划、fill proxy 和退出路径。
 
-- 胜率、中位数收益和配对收益差；
-- 最差 10% 交易的平均收益；
-- 最大组合回撤；
-- 交易保留率和平均持仓天数；
-- 利润捕获率：`实际退出收益 / 窗口内最大可实现收益`。
+之后才允许制定 purged、embargoed walk-forward：训练交易的最晚退出日必须早于测试起点，折间隔离至少 T+10 加下一开盘延迟。参数选择后的区间估计必须重跑完整选参过程，并使用时间块或聚类方法处理同日多股和持仓窗口重叠。
 
-利润捕获率使用未来窗口最高价，只能用于事后诊断，不能进入当天决策或参数特征。
+用户选择的平均单笔净收益仍作为退出机制第一指标；生产准入还必须通过受 60% 敞口、现金、预留和资本释放约束的组合级 replay，确认 NAV 与尾部风险没有恶化。
 
-## 8. 研究与准入
+## 9. 文件职责
 
-### 8.1 数据来源优先级
+阶段一只新增或集中四个边界：
 
-1. 用 `data/paper_trading_backtest/journal.jsonl` 确定真实 setup 命中和交易身份；
-2. 用 `data/price_cache/*.csv` 重建能够覆盖完整持仓路径的 OHLCV；
-3. 缺少完整路径的交易不伪造，单独报告覆盖率；
-4. Phase 0 报告和 `known_distributions.py` 只作为历史参考，不作为本轮默认参数的独立依据。
-
-### 8.2 Walk-forward
-
-样本严格按 `signal_date` 排序。每轮只用过去窗口选择参数，在随后未参与选择的时间段评估，再向前滚动。参数网格保持粗粒度，避免在小样本上搜索大量近似组合。
-
-候选策略要成为默认行为，必须同时满足：
-
-- 相对固定 T+10 的样本外平均单笔净收益为正增益；
-- 配对 bootstrap 的收益差支持正向结论；
-- 结果不由一两笔极端交易主导；
-- 最差 10% 交易和最大回撤没有显著恶化；
-- 不同时间折、主要板块和 regime 下方向基本一致；
-- 数据覆盖率和有效样本量达到报告中预先声明的最低要求。
-
-只要关键区间跨 0、折间方向不稳或样本不足，策略就保持 shadow。系统可以输出它“本来会怎么卖”，但真实默认仍使用通过验证的基线。
-
-### 8.3 Benchmark 能证明什么
-
-这组 benchmark 测的是：在同一批可重建交易上，不同退出规则能否提高扣费后的可实现收益。它主要反映退出策略和成交模型，不证明 BTST 在未来市场仍有相同的入场 alpha。
-
-六个月样本无法证明跨牛熊周期稳定，也不能证明某个参数是全局最优。即使 challenger 通过本轮准入，仍需继续收集真实前向结果，并按模型版本监控衰减。
-
-## 9. `--auto` 数据与排序治理
-
-### 9.1 原子发布
-
-`compute_auto_screening_results()` 恢复为无磁盘副作用的计算函数。`run_auto_screening()` 负责完整编排：
-
-1. 归一化交易日；
-2. 获取和评分；
-3. 刷新 `--daily-action` 需要的缓存；
-4. 生成数据质量 manifest；
-5. 更新追踪信息；
-6. 原子保存一次最终报告。
-
-计算或核心缓存刷新异常时，不覆盖上一份有效报告。允许发布“完整但降级”的报告，但必须带 `status=degraded`、失败明细和非零退出码；`--daily-action` 据此逐项禁止新交易，而不是把降级当成功。
-
-### 9.2 逐 ticker 完整性
-
-可进入 BTST `BUY_PLAN` 的股票必须具备：
-
-- 信号日精确匹配的有限 OHLCV；
-- 信号日当日资金流；
-- setup 规定的足量历史资金流；
-- 信号日行业指数数据；
-- 可用的 ST 状态；
-- 正确板块涨停阈值。
-
-`--auto` 在取得当日大涨股票后优先补齐这些股票的资金流历史。仍不完整的股票可以展示为 `INCOMPLETE` 研究候选，但不能进入买入计划，也不使用完整版 setup 的收益分布计算仓位。
-
-### 9.3 严格 as-of
-
-所有历史特征接口增加 `as_of`：
-
-- 只读取日期严格早于 `trade_date` 的报告；
-- 只使用在 `trade_date` 前已经成熟的收益标签；
-- 统计按 `model_version` 隔离；
-- 历史重跑不得调用“最新报告”隐式选择未来文件。
-
-测试会通过修改未来报告和未来 K 线验证：过去日期的结果必须保持不变。
-
-### 9.4 排序准入
-
-完整候选池都应进入 investability 计算，不再先按 `score_b` 截取 Top 30。由于当前模型版本的成熟前向样本不足，新的全池排序先作为 challenger 保存，不直接声称提高收益。
-
-`profit_aware` 和 `--auto` / BTST 双信号均遵守同一准入规则。双信号不再显示会诱导加仓的星标，只记录 shadow 标签。只有在同模型版本、严格 as-of 的 walk-forward 中证明增量收益后，才允许影响最终排序或仓位。
-
-## 10. 仓位与组合状态
-
-- BTST 正常单票上限恢复为 10%；
-- crisis / risk_off 放大后单票硬上限为 12%；
-- 组合总敞口上限保持 60%；
-- 未成交 `BUY_PLAN` 不占敞口；
-- 被暂停或数据残缺的 setup 仓位为 0；
-- 在新的退出分布稳定前，不用硬编码先验包装成动态 Kelly。
-
-短期实现保留透明的固定上限和可验证的 drawdown 调整。若未来恢复 Kelly，输入分布必须与入场过滤、动态退出、成本模型和 regime 完全同口径，并按模型版本定期刷新。
-
-组合状态 v2 按成交时 NAV 计算仓位贡献和复利 NAV。旧的 `data/paper_trading_backtest/portfolio_state.json` 不迁移覆盖；报告中明确标注 legacy 口径。新 journal 从 v2 起保存足够字段，以便从事件流完整重建现金、持仓、NAV 和回撤。
-
-## 11. 文件边界
-
-实施计划应遵循以下职责拆分，具体文件名可在计划阶段依据现有模式微调：
-
-| 组件 | 职责 |
+| 文件 | 职责 |
 | --- | --- |
-| `daily_action.py` | 编排每日动作和渲染，不直接实现成交或退出公式 |
-| `trade_lifecycle.py` | 计划、成交、持仓和退出状态机 |
-| `execution_model.py` | 涨跌停、停牌、跳空、滑点和费用 |
-| `exit_policy.py` | 两阶段 ATR 移动退出的纯函数 |
-| `paper_tracker.py` | v1 兼容读取、v2 journal 和组合状态持久化 |
-| `exit_strategy_research.py` | walk-forward、基线比较和准入报告 |
-| `main.py` | `--auto` 编排和最终原子发布 |
-| `expected_return.py` 等历史特征模块 | 显式 `as_of` 和模型版本隔离 |
+| `trade_lifecycle.py` | 纯状态转换和确定性 identity |
+| `ledger_repository.py` | SQLite schema、事务、幂等和查询 |
+| `execution_adjuster.py` | 在现有文件中扩展成交三态、费用与 T+1，不新建重复 execution model |
+| `daily_action_service.py` | 单次编排、估值和输出模型 |
 
-纯策略函数不读环境变量、不访问文件；编排层负责注入配置和数据。这样同一退出规则可以被实时输出、paper tracker 和回测共用，避免三套实现逐渐漂移。
+`daily_action.py` 保留 setup 扫描与渲染兼容入口，逐步变薄；`paper_tracker.py` 仅保留 v1 兼容读取，不继续承载 v2 状态。
 
-## 12. 测试与验收
+阶段二新增 `auto_pipeline.py`，`main.py` 只调用 service。阶段三新增研究脚本与纯 `exit_policy.py`，生产和研究共用同一个纯退出函数。
 
-### 12.1 单元测试
+## 10. 测试与验收
 
-- 周五、周末、法定节假日和长假后的下一交易日；
-- `BUY_PLAN → BUY_FILLED / BUY_SKIPPED → HOLD → SELL_PLAN → CLOSED`；
-- 买入当天不可卖出；
-- ATR 只读取当日及之前数据；
-- 退出线只能上移；
-- 跳空越过退出线、涨停买不到、跌停卖不出和停牌；
-- 单票 10% / 12%、组合 60% 上限；
-- 重复运行和并发运行幂等；
-- v1 journal 只读兼容，v2 journal 可完整重建状态。
+### 10.1 阶段一
 
-### 12.2 集成测试
+- 确定性 trade id、重复计划和真正并发事务；
+- SQLite transaction 在故障注入下不产生半状态；
+- paper 与 broker-confirmed fill 不混合统计；
+- 周五、春节、国庆和日历不可用 fail closed；
+- 第 9 日计划、第 10 日开盘退出，无 off-by-one；
+- T+1 买入日不可卖；
+- 涨跌停 queue unknown、停牌和数据缺失三者分离；
+- reserved + open exposure 不超过 60%；
+- 单票正常 10%、硬上限 12%；
+- 每日 mark-to-market NAV 与 drawdown；
+- v1 文件保持字节不变。
 
-- `--auto` 缓存部分失败时只发布带降级状态的最终报告，并返回非零；
-- `--daily-action` 仍可管理已有持仓，但禁止依赖缺失数据的新买入；
-- 历史 `trade_date` 运行不读取未来报告和未来 tracking 数据；
-- 修改未来 K 线不改变过去的退出计划；
-- 周五信号在下周一结算，不把周末计入持仓天数。
+### 10.2 阶段二
 
-### 12.3 统计验收
+- compute 不发布 report；
+- healthy canonical 只写一次；
+- degraded attempt 不覆盖 healthy；
+- tracking 从内存 payload 更新，不读本次磁盘报告；
+- optional degraded 不阻断已有持仓管理；
+- future report、future label 和 future K 线不改变过去输出；
+- cache 原子写故障保留上一有效文件；
+- auto lock fd 在 finally 关闭，busy 有可辨状态。
 
-- 输出每条基线和 challenger 的样本数、覆盖率、平均值、中位数、尾部和配对差；
-- 参数选择与评估时间段完全分离；
-- 报告所有失败折，不只展示总样本最优结果；
-- 未通过准入时，默认行为保持基线，测试验证 shadow 不影响真实动作。
+### 10.3 阶段三
 
-### 12.4 回归命令
+- 固定 +10% / 2.5 ATR，不存在参数搜索代码路径；
+- 退出线只升不降，未来 K 线不改变过去决策；
+- 共同 eligibility mask 和覆盖率报告；
+- 时间块 bootstrap，不使用逐笔独立假设；
+- 报告明确 legacy sensitivity 与 shadow；
+- 任何当前样本结果都不能切换生产默认。
+
+### 10.4 基础回归
 
 ```bash
 uv run pytest tests/offensive/ -v
@@ -348,37 +417,38 @@ uv run pytest tests/test_main_auto_cache_refresh.py -v
 uv run pytest tests/offensive/test_daily_action_cache_refresh.py -v
 ```
 
-实施完成后还需运行新增的生命周期、退出研究、as-of 和并发测试，再按改动范围执行扩大回归。任何“完成”“通过”结论都以当次命令输出为准。
+新增测试通过后，再按每个阶段的修改范围运行扩大回归。完成结论以当次测试输出为准。
 
-## 13. 每日输出契约
+## 11. 每日输出契约
 
-`--daily-action` 的输出按执行优先级排列：
+输出按优先级排列：
 
-1. 明日卖出计划及原因；
-2. 盘中灾难止损条件（若已通过准入并启用）；
-3. 已有持仓的 HOLD、浮盈、退出线和剩余持仓交易日；
-4. 明日买入计划；
-5. 因涨停不可买、数据残缺、仓位上限或 setup 暂停而禁止交易的候选；
-6. 当日确认的模拟成交和组合敞口。
+1. broker-confirmed 持仓的退出建议；
+2. paper 持仓的模拟退出；
+3. `EXIT_PENDING` 与 deferred 原因；
+4. OPEN 持仓的 mark-to-market、退出线和剩余交易日；
+5. 下一交易日 `BUY_PLAN`；
+6. `UNKNOWN_QUEUE`、数据残缺、容量或规则不足导致的 SKIPPED；
+7. open exposure、reserved exposure、现金和 NAV。
 
-输出必须区分“参考价”“计划价”和“确认成交价”，并标明 paper fill 是模拟成交，不冒充用户券商账户的真实成交。
+所有价格必须标明 `reference`、`synthetic fill` 或 `broker-confirmed fill`。系统没有成交确认时，不使用“实际买入”“实际卖出”等措辞。
 
-## 14. 实施顺序与停止条件
+## 12. 实施顺序与停止条件
 
-实施按以下顺序推进：
+实施顺序固定：
 
-1. 先修日期、价格语义、交易状态机和并发持久化；
-2. 再修 `--auto` 原子发布、逐 ticker 数据门控和严格 as-of；
-3. 然后实现共用的动态退出纯函数与 shadow 输出；
-4. 最后运行 walk-forward，只有通过准入才切换默认退出策略；
-5. 排序和 Kelly 的进一步优化留到当前模型积累足够成熟前向样本之后。
+1. 交易 ledger、执行语义和组合估值；
+2. `--auto` as-of、原子缓存和报告发布；
+3. 固定参数退出 shadow；
+4. 收集当前版本全信号与前向成交数据；
+5. 数据满足功效要求后，另立正式参数研究规格。
 
-出现以下任一情况时停止策略升级，但继续交付确定性 bug 修复：
+以下情况会阻止策略转正，但不阻止确定性修复交付：
 
-- 可重建 BTST 样本不足；
-- 动态退出相对固定 T+10 的配对差没有可靠正增益；
-- 增益由少数极端交易驱动；
-- 尾部损失或最大回撤明显恶化；
-- 数据口径无法与实时执行保持一致。
+- 当前版本历史不足；
+- 完整路径覆盖存在明显选择偏差；
+- 有效独立时间块不足；
+- 成交代理与实时执行不一致；
+- 组合级 replay 显示 NAV 或尾部风险恶化。
 
-这套顺序先修复可执行性和审计性，再让收益优化接受证据门控。即使动态退出最终没有转正，系统仍会得到正确的交易日、成交状态、数据门控和组合记账，不会把研究失败变成生产风险。
+该设计优先把系统变成可恢复、可审计、能区分事实与代理的交易工具。动态退出是否提高收益由未来证据决定，不由当前设计预设结论。
