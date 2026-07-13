@@ -45,6 +45,7 @@ _RETURN_ROUNDING_TOLERANCE = 0.00005
 _FLOAT_COMPARISON_EPSILON = 1e-12
 _REQUIRED_PRICE_COLUMNS = frozenset({"date", "open", "high", "low", "close"})
 _REPLAY_ATR_PERIOD = 14
+MIN_POSITIVE_MFE_COUNT = 10
 
 PriceLoader = Callable[[str], object]
 NaturalKey = tuple[str, str, str]
@@ -166,6 +167,9 @@ class ExitReplayResult:
     exit_net_cash_flow: float
     net_return: float
     cost_version: str
+    holding_sessions: int
+    maximum_favorable_excursion: float | None
+    trading_session_dates: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -215,6 +219,93 @@ class PairedExitResult:
     excluded: tuple[PairedExitExclusion, ...]
     total_paths: int
     common_eligible: int
+
+
+@dataclass(frozen=True)
+class PairedReplayRow:
+    """One immutable common-key comparison row used by sensitivity statistics."""
+
+    baseline: ExitReplayResult
+    challenger: ExitReplayResult
+    legacy_return: float | None = None
+    trading_session_dates: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.baseline.trade_id != self.challenger.trade_id:
+            raise ValueError("paired replay rows must share one trade_id")
+        if self.baseline.signal_date != self.challenger.signal_date:
+            raise ValueError("paired replay rows must share one signal_date")
+        dates = set(self.trading_session_dates)
+        dates.update(self.baseline.trading_session_dates)
+        dates.update(self.challenger.trading_session_dates)
+        object.__setattr__(self, "trading_session_dates", tuple(sorted(dates)))
+
+    @property
+    def signal_date(self) -> str:
+        return self.baseline.signal_date
+
+
+@dataclass(frozen=True)
+class MovingBlockMeanDifference:
+    """Deterministic moving-block distribution over signal-day paired means."""
+
+    block_sessions: int
+    draws: int
+    seed: int
+    signal_day_count: int
+    trading_session_count: int
+    candidate_block_count: int
+    usable_block_count: int
+    empty_block_count: int
+    sampled_blocks_per_draw: int
+    mean_difference: float
+    ci_lower: float
+    ci_upper: float
+    distribution: tuple[float, ...]
+
+
+@dataclass(frozen=True)
+class ExitArmSensitivity:
+    """Trade-level sensitivity metrics; no portfolio interpretation is implied."""
+
+    mean_net_return: float
+    median_net_return: float
+    worst_decile_net_return: float
+    downside_decile_mean: float
+    mean_holding_sessions: float
+    median_holding_sessions: float
+    exit_reason_counts: tuple[tuple[str, int], ...]
+    mfe_observation_count: int
+    positive_mfe_count: int
+    mfe_capture_min_count: int
+    mfe_capture_mean: float | None
+    mean_give_up: float | None
+    mfe_is_diagnostic_not_executable: bool = True
+
+
+@dataclass(frozen=True)
+class PairedSensitivityStatistics:
+    """Legacy common-mask statistics with an immutable shadow-only gate."""
+
+    trade_count: int
+    signal_day_count: int
+    nonoverlapping_window_count: int
+    mean_difference: float
+    median_difference: float
+    worst_decile_difference: float
+    downside_decile_mean_difference: float
+    coverage: float
+    covered_group_legacy_mean: float | None
+    missing_group_legacy_mean: float | None
+    baseline: ExitArmSensitivity
+    challenger: ExitArmSensitivity
+    block_mean_difference: MovingBlockMeanDifference
+    shadow_only: bool = True
+    production_eligible: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.shadow_only or self.production_eligible:
+            raise ValueError("exit sensitivity statistics must remain shadow-only")
 
 
 def _ineligible(
@@ -931,6 +1022,9 @@ def _replay_result(
         scheduled_index=scheduled_index,
     )
     exit_date = _plain_date(exit_session.date)
+    exit_index = next(
+        index for index, session in enumerate(path.sessions) if session is exit_session
+    )
     exit_fill = apply_execution_costs(
         exit_session.open,
         1,
@@ -940,6 +1034,18 @@ def _replay_result(
         exit_date=exit_date,
     )
     net_return = exit_fill.net_cash_flow / -entry_fill.net_cash_flow - 1.0
+    diagnostic_highs = tuple(
+        float(session.high)
+        for session in path.sessions[: exit_index + 1]
+        if isinstance(session.high, Real)
+        and not isinstance(session.high, bool)
+        and math.isfinite(float(session.high))
+    )
+    maximum_favorable_excursion = (
+        max(diagnostic_highs) / entry_fill.raw_fill_price - 1.0
+        if len(diagnostic_highs) == exit_index + 1
+        else None
+    )
     return ExitReplayResult(
         trade_id=path.trade_id,
         signal_date=path.signal_date,
@@ -957,6 +1063,9 @@ def _replay_result(
         exit_net_cash_flow=exit_fill.net_cash_flow,
         net_return=net_return,
         cost_version=entry_fill.cost_version,
+        holding_sessions=exit_index + 1,
+        maximum_favorable_excursion=maximum_favorable_excursion,
+        trading_session_dates=tuple(session.date for session in path.sessions),
     )
 
 
@@ -1083,6 +1192,262 @@ def replay_paired(
     )
 
 
+def _stat_date(value: str) -> date:
+    try:
+        parsed = datetime.strptime(value, "%Y%m%d")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid statistics trading date: {value!r}") from exc
+    if parsed.strftime("%Y%m%d") != value:
+        raise ValueError(f"invalid statistics trading date: {value!r}")
+    return parsed.date()
+
+
+def _validated_paired_rows(
+    rows: Iterable[PairedReplayRow],
+) -> tuple[PairedReplayRow, ...]:
+    paired = tuple(rows)
+    if not paired:
+        raise ValueError("paired rows must not be empty")
+    trade_ids: set[str] = set()
+    for row in paired:
+        if not isinstance(row, PairedReplayRow):
+            raise TypeError("rows must contain PairedReplayRow values")
+        if row.baseline.trade_id in trade_ids:
+            raise ValueError("paired rows must have unique trade_ids")
+        trade_ids.add(row.baseline.trade_id)
+        _stat_date(row.signal_date)
+        for session_date in row.trading_session_dates:
+            _stat_date(session_date)
+        for result in (row.baseline, row.challenger):
+            if not math.isfinite(result.net_return):
+                raise ValueError("paired net returns must be finite")
+            if result.holding_sessions < 1:
+                raise ValueError("holding_sessions must be positive")
+    return paired
+
+
+def _signal_day_differences(
+    rows: tuple[PairedReplayRow, ...],
+) -> dict[str, float]:
+    grouped: defaultdict[str, list[float]] = defaultdict(list)
+    for row in rows:
+        grouped[row.signal_date].append(
+            row.challenger.net_return - row.baseline.net_return
+        )
+    return {
+        signal_date: float(np.mean(values)) for signal_date, values in grouped.items()
+    }
+
+
+def moving_block_mean_difference(
+    rows: Iterable[PairedReplayRow],
+    block_sessions: int = 10,
+    draws: int = 10_000,
+    seed: int = 0,
+) -> MovingBlockMeanDifference:
+    """Bootstrap paired mean differences on the supplied real-session calendar.
+
+    Trade differences are first collapsed to one equal-weighted observation per signal
+    date.  A block is exactly ``block_sessions`` consecutive entries from the sorted
+    union of signal dates and audited session dates carried by the common-mask rows.
+    """
+
+    if type(block_sessions) is not int or block_sessions < 10:
+        raise ValueError("block_sessions must be an integer of at least 10")
+    if type(draws) is not int or draws < 1:
+        raise ValueError("draws must be a positive integer")
+    if type(seed) is not int:
+        raise ValueError("seed must be an integer")
+    paired = _validated_paired_rows(rows)
+    signal_means = _signal_day_differences(paired)
+    if len(signal_means) < 2:
+        raise ValueError("at least two unique signal days are required")
+
+    calendar = sorted(
+        {row.signal_date for row in paired}.union(
+            *(set(row.trading_session_dates) for row in paired)
+        )
+    )
+    if len(calendar) < block_sessions:
+        raise ValueError("real trading-session calendar is shorter than one block")
+
+    blocks: list[tuple[float, ...]] = []
+    candidate_count = len(calendar) - block_sessions + 1
+    for start_index in range(candidate_count):
+        window = calendar[start_index : start_index + block_sessions]
+        values = [
+            signal_means[session_date]
+            for session_date in window
+            if session_date in signal_means
+        ]
+        if values:
+            blocks.append(tuple(values))
+    empty_count = candidate_count - len(blocks)
+    if len(blocks) < 2:
+        raise ValueError("fewer than two non-empty moving blocks are available")
+
+    sampled_blocks = math.ceil(len(calendar) / block_sessions)
+    generator = np.random.default_rng(seed)
+    selections = generator.integers(
+        0,
+        len(blocks),
+        size=(draws, sampled_blocks),
+    )
+    distribution_array = np.asarray(
+        [
+            np.mean(
+                [
+                    value
+                    for block_index in selected
+                    for value in blocks[int(block_index)]
+                ]
+            )
+            for selected in selections
+        ],
+        dtype=float,
+    )
+    observed_mean = float(np.mean(tuple(signal_means.values())))
+    ci_lower, ci_upper = np.quantile(distribution_array, (0.025, 0.975))
+    return MovingBlockMeanDifference(
+        block_sessions=block_sessions,
+        draws=draws,
+        seed=seed,
+        signal_day_count=len(signal_means),
+        trading_session_count=len(calendar),
+        candidate_block_count=candidate_count,
+        usable_block_count=len(blocks),
+        empty_block_count=empty_count,
+        sampled_blocks_per_draw=sampled_blocks,
+        mean_difference=observed_mean,
+        ci_lower=float(ci_lower),
+        ci_upper=float(ci_upper),
+        distribution=tuple(float(value) for value in distribution_array),
+    )
+
+
+def _downside_statistics(values: Iterable[float]) -> tuple[float, float, float, float]:
+    array = np.asarray(tuple(values), dtype=float)
+    mean = float(np.mean(array))
+    median = float(np.median(array))
+    decile = float(np.quantile(array, 0.10))
+    tail_mean = float(np.mean(array[array <= decile]))
+    return mean, median, decile, tail_mean
+
+
+def _arm_sensitivity(
+    results: tuple[ExitReplayResult, ...],
+) -> ExitArmSensitivity:
+    mean, median, decile, tail_mean = _downside_statistics(
+        result.net_return for result in results
+    )
+    holdings = np.asarray([result.holding_sessions for result in results], dtype=float)
+    valid_mfe = [
+        (float(result.maximum_favorable_excursion), result.net_return)
+        for result in results
+        if result.maximum_favorable_excursion is not None
+        and math.isfinite(float(result.maximum_favorable_excursion))
+    ]
+    positive_mfe = [(mfe, net_return) for mfe, net_return in valid_mfe if mfe > 0.0]
+    capture_mean = (
+        float(np.mean([net_return / mfe for mfe, net_return in positive_mfe]))
+        if len(positive_mfe) >= MIN_POSITIVE_MFE_COUNT
+        else None
+    )
+    give_up_mean = (
+        float(np.mean([mfe - net_return for mfe, net_return in valid_mfe]))
+        if valid_mfe
+        else None
+    )
+    return ExitArmSensitivity(
+        mean_net_return=mean,
+        median_net_return=median,
+        worst_decile_net_return=decile,
+        downside_decile_mean=tail_mean,
+        mean_holding_sessions=float(np.mean(holdings)),
+        median_holding_sessions=float(np.median(holdings)),
+        exit_reason_counts=tuple(
+            sorted(Counter(r.exit_reason for r in results).items())
+        ),
+        mfe_observation_count=len(valid_mfe),
+        positive_mfe_count=len(positive_mfe),
+        mfe_capture_min_count=MIN_POSITIVE_MFE_COUNT,
+        mfe_capture_mean=capture_mean,
+        mean_give_up=give_up_mean,
+    )
+
+
+def _greedy_nonoverlapping_window_count(
+    rows: tuple[PairedReplayRow, ...],
+) -> int:
+    interval_ends: dict[str, date] = {}
+    for row in rows:
+        start = _stat_date(row.signal_date)
+        end = max(
+            _stat_date(row.baseline.exit_date), _stat_date(row.challenger.exit_date)
+        )
+        if end < start:
+            raise ValueError("paired exit date cannot precede signal date")
+        interval_ends[row.signal_date] = max(
+            interval_ends.get(row.signal_date, end), end
+        )
+    count = 0
+    previous_end: date | None = None
+    for signal_date, end in sorted(interval_ends.items()):
+        start = _stat_date(signal_date)
+        if previous_end is None or start > previous_end:
+            count += 1
+            previous_end = end
+    return count
+
+
+def summarize_paired_results(
+    rows: Iterable[PairedReplayRow],
+    *,
+    total_trade_count: int | None = None,
+    missing_legacy_returns: Iterable[float] = (),
+    block_sessions: int = 10,
+    draws: int = 10_000,
+    seed: int = 0,
+) -> PairedSensitivityStatistics:
+    """Summarize approved common-mask rows as legacy sensitivity only."""
+
+    paired = _validated_paired_rows(rows)
+    total = len(paired) if total_trade_count is None else total_trade_count
+    if type(total) is not int or total < len(paired):
+        raise ValueError("total_trade_count cannot be smaller than paired trade count")
+    missing = _finite_returns(missing_legacy_returns)
+    if len(missing) > total - len(paired):
+        raise ValueError("missing legacy group exceeds uncovered trade count")
+    covered = _finite_returns(
+        row.legacy_return for row in paired if row.legacy_return is not None
+    )
+    differences = tuple(
+        row.challenger.net_return - row.baseline.net_return for row in paired
+    )
+    mean, median, decile, tail_mean = _downside_statistics(differences)
+    block = moving_block_mean_difference(
+        paired,
+        block_sessions=block_sessions,
+        draws=draws,
+        seed=seed,
+    )
+    return PairedSensitivityStatistics(
+        trade_count=len(paired),
+        signal_day_count=len({row.signal_date for row in paired}),
+        nonoverlapping_window_count=_greedy_nonoverlapping_window_count(paired),
+        mean_difference=mean,
+        median_difference=median,
+        worst_decile_difference=decile,
+        downside_decile_mean_difference=tail_mean,
+        coverage=len(paired) / total if total else 0.0,
+        covered_group_legacy_mean=float(np.mean(covered)) if covered else None,
+        missing_group_legacy_mean=float(np.mean(missing)) if missing else None,
+        baseline=_arm_sensitivity(tuple(row.baseline for row in paired)),
+        challenger=_arm_sensitivity(tuple(row.challenger for row in paired)),
+        block_mean_difference=block,
+    )
+
+
 __all__ = [
     "CohortExclusion",
     "CoverageAudit",
@@ -1090,13 +1455,20 @@ __all__ = [
     "LegacySession",
     "LegacyTradePath",
     "ExitReplayResult",
+    "ExitArmSensitivity",
+    "MIN_POSITIVE_MFE_COUNT",
+    "MovingBlockMeanDifference",
     "PairedExitExclusion",
     "PairedExitResult",
+    "PairedReplayRow",
+    "PairedSensitivityStatistics",
     "ReplayArmFailure",
     "ReplayIneligibleError",
     "audit_coverage",
     "build_legacy_cohort",
+    "moving_block_mean_difference",
     "replay_fixed_baseline",
     "replay_paired",
     "replay_shadow_challenger",
+    "summarize_paired_results",
 ]
