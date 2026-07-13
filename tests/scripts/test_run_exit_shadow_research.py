@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 import stat
+import subprocess
+import sys
 import threading
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -165,6 +167,57 @@ def test_cli_report_cannot_claim_production_readiness(
     assert "Why this cohort differs from current production" in markdown
     assert "six-month legacy backtest" in markdown
     assert "selected common executable mask" in markdown
+
+
+def test_real_cli_attempts_no_socket_connection(
+    tmp_path: Path, legacy_fixture_paths: LegacyFixturePaths
+) -> None:
+    instrumentation = tmp_path / "instrumentation"
+    instrumentation.mkdir()
+    attempt_log = tmp_path / "socket-attempts.jsonl"
+    (instrumentation / "sitecustomize.py").write_text(
+        f"""import json
+import socket
+from pathlib import Path
+
+ATTEMPT_LOG = Path({str(attempt_log)!r})
+
+def deny(name):
+    def blocked(*args, **kwargs):
+        attempt = {{"primitive": name, "address": repr(args[-1] if args else kwargs)}}
+        with ATTEMPT_LOG.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(attempt) + "\\n")
+        raise AssertionError("socket attempt: " + repr(attempt))
+    return blocked
+
+socket.socket.connect = deny("socket.connect")
+socket.socket.connect_ex = deny("socket.connect_ex")
+socket.create_connection = deny("socket.create_connection")
+""",
+        encoding="utf-8",
+    )
+    output = tmp_path / "reports"
+    project_root = Path(__file__).resolve().parents[2]
+    environment = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join((str(instrumentation), str(project_root))),
+    }
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/run_exit_shadow_research.py",
+            *_base_args(legacy_fixture_paths, output),
+        ],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=environment,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert not attempt_log.exists()
+    assert (output / "exit_shadow_20260713.commit.json").is_file()
 
 
 def test_report_semantic_and_artifact_hashes_are_independently_verifiable(
