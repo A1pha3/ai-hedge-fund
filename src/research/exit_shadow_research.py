@@ -13,6 +13,7 @@ import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -25,10 +26,11 @@ from src.tools.ashare_board_utils import limit_up_pct_for_ticker
 _BTST_SETUP = "btst_breakout"
 _LEGACY_LIMIT_UP_PCT = 9.5
 _REALIZED_RE = re.compile(r"(?:^|[;\s])realized=([+-]?\d+(?:\.\d+)?)%")
-_RETURN_ROUNDING_TOLERANCE = 0.00015
+_RETURN_ROUNDING_TOLERANCE = 0.00005
+_FLOAT_COMPARISON_EPSILON = 1e-12
 _REQUIRED_PRICE_COLUMNS = frozenset({"date", "open", "high", "low", "close"})
 
-PriceLoader = Callable[[str], pd.DataFrame | None]
+PriceLoader = Callable[[str], object]
 NaturalKey = tuple[str, str, str]
 
 
@@ -53,11 +55,14 @@ class LegacyTradePath:
     setup: str
     regime: str
     source: str
-    entry_price: float
+    buy_line_number: int
+    exit_line_number: int
+    recorded_entry_price: float | None
+    replay_entry_price: float
     sessions: tuple[LegacySession, ...]
     recorded_return: float
-    reconstructed_legacy_return: float
-    recorded_return_mismatch: bool
+    reconstructed_legacy_return: float | None
+    recorded_return_mismatch: bool | None
     current_board_rule_mismatch: bool
     board_rule_auditable: bool
     execution_proxy_eligible: bool = True
@@ -70,6 +75,18 @@ class CohortExclusion:
     key: str
     reason: str
     recorded_return: float | None = None
+    line_numbers: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class _JournalEvent:
+    line_number: int
+    record: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class _UnreadablePriceData:
+    """Internal marker: a cache file exists but could not be decoded or parsed."""
 
 
 @dataclass(frozen=True)
@@ -93,6 +110,7 @@ class CoverageAudit:
     current_board_rule_mismatches: int = 0
     board_rule_unauditable: int = 0
     recorded_return_mismatches: int = 0
+    recorded_return_unauditable: int = 0
     paired_by_setup: tuple[tuple[str, int], ...] = ()
     included_by_regime: tuple[tuple[str, int], ...] = ()
     included_by_source: tuple[tuple[str, int], ...] = ()
@@ -174,49 +192,84 @@ def _parse_recorded_return(record: Mapping[str, Any]) -> float | None:
 
 
 def _valid_key(record: Mapping[str, Any]) -> NaturalKey | None:
-    date = str(record.get("date") or "").strip().replace("-", "")
-    ticker = str(record.get("ticker") or "").strip().split(".", 1)[0]
+    date = str(record.get("date") or "")
+    ticker = str(record.get("ticker") or "")
     setup = str(record.get("setup") or "").strip()
-    if len(date) != 8 or not date.isdigit() or not ticker or not setup:
+    if (
+        re.fullmatch(r"[0-9]{8}", date) is None
+        or re.fullmatch(r"[0-9]{6}", ticker) is None
+        or not setup
+    ):
+        return None
+    try:
+        parsed = datetime.strptime(date, "%Y%m%d")
+    except ValueError:
+        return None
+    if parsed.strftime("%Y%m%d") != date:
         return None
     return date, ticker, setup
 
 
+def _compatible_btst_holding_period(record: Mapping[str, Any]) -> bool:
+    for field in ("horizon", "holding_period", "holding_sessions"):
+        if field in record and (type(record[field]) is not int or record[field] != 10):
+            return False
+    if "time_exit" in record and record["time_exit"] != "T+10":
+        return False
+    return True
+
+
 def _default_price_loader(price_cache_dir: Path) -> PriceLoader:
-    def load(ticker: str) -> pd.DataFrame | None:
+    def load(ticker: str) -> object:
         path = price_cache_dir / f"{ticker}.csv"
         if not path.is_file():
             return None
         try:
             return pd.read_csv(path)
         except (OSError, pd.errors.ParserError, UnicodeError):
-            return pd.DataFrame()
+            return _UnreadablePriceData()
 
     return load
 
 
-def _normalize_prices(value: object) -> pd.DataFrame | None:
-    if not isinstance(value, pd.DataFrame) or not _REQUIRED_PRICE_COLUMNS.issubset(value.columns):
-        return None
+def _normalize_prices(value: object) -> tuple[pd.DataFrame | None, str | None]:
+    if not isinstance(value, pd.DataFrame):
+        return None, "invalid_price_data"
     if value.empty:
-        return None
+        return None, "empty_price_data"
+    if not _REQUIRED_PRICE_COLUMNS.issubset(value.columns):
+        return None, "invalid_price_data"
 
     prices = value.copy()
-    parsed_dates = pd.to_datetime(prices["date"], errors="coerce")
-    if parsed_dates.isna().any():
-        return None
-    prices["date"] = parsed_dates
-    prices = prices.sort_values("date", kind="stable").reset_index(drop=True)
+    civil_dates: list[pd.Timestamp] = []
+    for raw_date in prices["date"]:
+        try:
+            civil_dates.append(pd.Timestamp(pd.Timestamp(raw_date).date()))
+        except (TypeError, ValueError, OverflowError):
+            return None, "invalid_session_date"
+    prices["date"] = civil_dates
     if prices["date"].duplicated().any():
-        return None
+        return None, "duplicate_session_date"
+    prices = prices.sort_values("date", kind="stable").reset_index(drop=True)
 
     for column in ("open", "high", "low", "close"):
         prices[column] = pd.to_numeric(prices[column], errors="coerce")
         if prices[column].isna().any():
-            return None
-        if not prices[column].map(lambda item: math.isfinite(float(item)) and float(item) > 0).all():
-            return None
-    return prices
+            return None, "invalid_price_data"
+        if (
+            not prices[column]
+            .map(lambda item: math.isfinite(float(item)) and float(item) > 0)
+            .all()
+        ):
+            return None, "invalid_price_data"
+    valid_bars = (
+        (prices["high"] >= prices["low"])
+        & (prices["low"] <= prices[["open", "close"]].min(axis=1))
+        & (prices[["open", "close"]].max(axis=1) <= prices["high"])
+    )
+    if not valid_bars.all():
+        return None, "invalid_ohlc_bar"
+    return prices, None
 
 
 def _signal_pct_change(prices: pd.DataFrame, signal_idx: int) -> float | None:
@@ -248,12 +301,14 @@ def _build_sessions(prices: pd.DataFrame, signal_idx: int) -> tuple[LegacySessio
     )
 
 
-def _positive_entry_price(buy: Mapping[str, Any], fallback: float) -> float:
-    try:
-        candidate = float(buy.get("entry_price"))
-    except (TypeError, ValueError):
-        return fallback
-    return candidate if math.isfinite(candidate) and candidate > 0 else fallback
+def _recorded_entry_price(buy: Mapping[str, Any]) -> float | None:
+    raw_entry_price = buy.get("entry_price")
+    if isinstance(raw_entry_price, bool) or not isinstance(
+        raw_entry_price, (int, float)
+    ):
+        return None
+    candidate = float(raw_entry_price)
+    return candidate if math.isfinite(candidate) and candidate > 0 else None
 
 
 def build_legacy_cohort(
@@ -278,7 +333,7 @@ def build_legacy_cohort(
     regimes = regimes_by_date or {}
 
     excluded: list[CohortExclusion] = []
-    grouped: dict[NaturalKey, dict[str, list[Mapping[str, Any]]]] = defaultdict(
+    grouped: dict[NaturalKey, dict[str, list[_JournalEvent]]] = defaultdict(
         lambda: {"BUY": [], "EXIT": []}
     )
     physical_rows = 0
@@ -296,80 +351,191 @@ def build_legacy_cohort(
             record = json.loads(raw_line)
         except json.JSONDecodeError:
             malformed_rows += 1
-            excluded.append(CohortExclusion(f"line:{line_number}", "malformed_json"))
+            excluded.append(
+                CohortExclusion(
+                    f"line:{line_number}", "malformed_json", line_numbers=(line_number,)
+                )
+            )
             continue
         if not isinstance(record, dict):
             malformed_rows += 1
-            excluded.append(CohortExclusion(f"line:{line_number}", "malformed_record"))
+            excluded.append(
+                CohortExclusion(
+                    f"line:{line_number}",
+                    "malformed_record",
+                    line_numbers=(line_number,),
+                )
+            )
             continue
 
         key = _valid_key(record)
-        action = str(record.get("action") or "").strip().upper()
+        action = record.get("action")
         if key is None:
             malformed_rows += 1
-            excluded.append(CohortExclusion(f"line:{line_number}", "malformed_natural_key"))
+            excluded.append(
+                CohortExclusion(
+                    f"line:{line_number}",
+                    "malformed_natural_key",
+                    line_numbers=(line_number,),
+                )
+            )
             continue
-        if key[2] != _BTST_SETUP or action not in {"BUY", "EXIT"}:
+        if key[2] != _BTST_SETUP:
             continue
-        grouped[key][action].append(record)
+        if action not in {"BUY", "EXIT"}:
+            malformed_rows += 1
+            excluded.append(
+                CohortExclusion(
+                    f"line:{line_number}",
+                    "unknown_btst_action",
+                    line_numbers=(line_number,),
+                )
+            )
+            continue
+        grouped[key][action].append(_JournalEvent(line_number, record))
 
-    paired: list[tuple[NaturalKey, Mapping[str, Any], Mapping[str, Any], float]] = []
+    paired: list[tuple[NaturalKey, _JournalEvent, _JournalEvent, float]] = []
     paired_key_count = 0
     for key in sorted(grouped):
         buys = grouped[key]["BUY"]
         exits = grouped[key]["EXIT"]
         key_string = _key_text(key)
         if len(buys) > 1:
-            excluded.append(CohortExclusion(key_string, "duplicate_buy"))
+            excluded.append(
+                CohortExclusion(
+                    key_string,
+                    "duplicate_buy",
+                    line_numbers=tuple(row.line_number for row in buys),
+                )
+            )
             continue
         if len(exits) > 1:
-            excluded.append(CohortExclusion(key_string, "duplicate_exit"))
+            excluded.append(
+                CohortExclusion(
+                    key_string,
+                    "duplicate_exit",
+                    line_numbers=tuple(row.line_number for row in exits),
+                )
+            )
             continue
         if not buys:
-            recorded = _parse_recorded_return(exits[0]) if exits else None
-            excluded.append(CohortExclusion(key_string, "unmatched_buy", recorded))
+            recorded = _parse_recorded_return(exits[0].record) if exits else None
+            excluded.append(
+                CohortExclusion(
+                    key_string,
+                    "unmatched_buy",
+                    recorded,
+                    tuple(row.line_number for row in exits),
+                )
+            )
             continue
         if not exits:
-            excluded.append(CohortExclusion(key_string, "unmatched_exit"))
+            excluded.append(
+                CohortExclusion(
+                    key_string, "unmatched_exit", line_numbers=(buys[0].line_number,)
+                )
+            )
             continue
         paired_key_count += 1
-        recorded = _parse_recorded_return(exits[0])
-        if recorded is None:
-            excluded.append(CohortExclusion(key_string, "invalid_recorded_return"))
+        buy = buys[0]
+        exit_event = exits[0]
+        pair_lines = (buy.line_number, exit_event.line_number)
+        if exit_event.line_number <= buy.line_number:
+            excluded.append(
+                CohortExclusion(
+                    key_string,
+                    "exit_not_after_buy",
+                    line_numbers=tuple(sorted(pair_lines)),
+                )
+            )
             continue
-        paired.append((key, buys[0], exits[0], recorded))
+        incompatible_events = [
+            event
+            for event in (buy, exit_event)
+            if not _compatible_btst_holding_period(event.record)
+        ]
+        if incompatible_events:
+            malformed_rows += len(incompatible_events)
+            excluded.append(
+                CohortExclusion(
+                    key_string,
+                    "incompatible_btst_holding_period",
+                    line_numbers=tuple(
+                        event.line_number for event in incompatible_events
+                    ),
+                )
+            )
+            continue
+        recorded = _parse_recorded_return(exit_event.record)
+        if recorded is None:
+            excluded.append(
+                CohortExclusion(
+                    key_string, "invalid_recorded_return", line_numbers=pair_lines
+                )
+            )
+            continue
+        paired.append((key, buy, exit_event, recorded))
 
     counts = Counter[str]()
     included: list[LegacyTradePath] = []
     missing_returns: list[float] = []
-    for key, buy, _exit, recorded in paired:
+    for key, buy_event, exit_event, recorded in paired:
+        buy = buy_event.record
+        pair_lines = (buy_event.line_number, exit_event.line_number)
         signal_date, ticker, setup = key
         key_string = _key_text(key)
         try:
             raw_prices = price_loader(ticker)
         except Exception:
-            raw_prices = None
-        if raw_prices is None or (isinstance(raw_prices, pd.DataFrame) and raw_prices.empty):
-            excluded.append(CohortExclusion(key_string, "price_file_missing", recorded))
+            excluded.append(
+                CohortExclusion(key_string, "price_loader_error", recorded, pair_lines)
+            )
+            missing_returns.append(recorded)
+            continue
+        if raw_prices is None:
+            excluded.append(
+                CohortExclusion(key_string, "price_file_missing", recorded, pair_lines)
+            )
             missing_returns.append(recorded)
             continue
         counts["price_file_present"] += 1
-        prices = _normalize_prices(raw_prices)
+        if isinstance(raw_prices, _UnreadablePriceData):
+            excluded.append(
+                CohortExclusion(
+                    key_string, "unreadable_price_data", recorded, pair_lines
+                )
+            )
+            missing_returns.append(recorded)
+            continue
+        prices, price_error = _normalize_prices(raw_prices)
         if prices is None:
-            excluded.append(CohortExclusion(key_string, "invalid_price_data", recorded))
+            excluded.append(
+                CohortExclusion(
+                    key_string,
+                    price_error or "invalid_price_data",
+                    recorded,
+                    pair_lines,
+                )
+            )
             missing_returns.append(recorded)
             continue
 
         normalized_dates = prices["date"].dt.strftime("%Y%m%d")
         matches = normalized_dates.index[normalized_dates == signal_date].tolist()
         if len(matches) != 1:
-            excluded.append(CohortExclusion(key_string, "signal_date_missing", recorded))
+            excluded.append(
+                CohortExclusion(key_string, "signal_date_missing", recorded, pair_lines)
+            )
             missing_returns.append(recorded)
             continue
         counts["signal_date_present"] += 1
         signal_idx = int(matches[0])
         if signal_idx + 10 >= len(prices):
-            excluded.append(CohortExclusion(key_string, "incomplete_session_10_window", recorded))
+            excluded.append(
+                CohortExclusion(
+                    key_string, "incomplete_session_10_window", recorded, pair_lines
+                )
+            )
             missing_returns.append(recorded)
             continue
         counts["complete_session_10_window"] += 1
@@ -377,27 +543,38 @@ def build_legacy_cohort(
         signal_pct = _signal_pct_change(prices, signal_idx)
         board_rule_auditable = signal_pct is not None
         current_board_rule_mismatch = bool(
-            signal_pct is not None and signal_pct < limit_up_pct_for_ticker(ticker)
+            signal_pct is not None
+            and (signal_pct >= _LEGACY_LIMIT_UP_PCT)
+            != (signal_pct >= limit_up_pct_for_ticker(ticker))
         )
         if signal_pct is not None:
             if "pct_change" not in prices.columns:
                 prices["pct_change"] = 0.0
             prices.at[signal_idx, "pct_change"] = signal_pct
         if is_limit_up_unbuyable_next_day(prices, signal_idx, ticker):
-            excluded.append(CohortExclusion(key_string, "execution_proxy_ineligible", recorded))
+            excluded.append(
+                CohortExclusion(
+                    key_string, "execution_proxy_ineligible", recorded, pair_lines
+                )
+            )
             missing_returns.append(recorded)
             continue
         counts["execution_proxy_eligible"] += 1
 
         sessions = _build_sessions(prices, signal_idx)
-        entry_price = _positive_entry_price(buy, sessions[0].open)
-        reconstructed = sessions[9].close / entry_price - 1.0
-        mismatch = not math.isclose(
-            reconstructed,
-            recorded,
-            rel_tol=0.0,
-            abs_tol=_RETURN_ROUNDING_TOLERANCE,
-        )
+        recorded_entry_price = _recorded_entry_price(buy)
+        replay_entry_price = sessions[0].open
+        if recorded_entry_price is None:
+            reconstructed = None
+            mismatch = None
+        else:
+            reconstructed = sessions[9].close / recorded_entry_price - 1.0
+            mismatch = not math.isclose(
+                reconstructed,
+                recorded,
+                rel_tol=0.0,
+                abs_tol=_RETURN_ROUNDING_TOLERANCE + _FLOAT_COMPARISON_EPSILON,
+            )
         included.append(
             LegacyTradePath(
                 trade_id=key_string,
@@ -406,10 +583,15 @@ def build_legacy_cohort(
                 setup=setup,
                 regime=str(regimes.get(signal_date) or "unknown"),
                 source=str(source or "unknown"),
-                entry_price=entry_price,
+                buy_line_number=buy_event.line_number,
+                exit_line_number=exit_event.line_number,
+                recorded_entry_price=recorded_entry_price,
+                replay_entry_price=replay_entry_price,
                 sessions=sessions,
                 recorded_return=recorded,
-                reconstructed_legacy_return=round(reconstructed, 12),
+                reconstructed_legacy_return=round(reconstructed, 12)
+                if reconstructed is not None
+                else None,
                 recorded_return_mismatch=mismatch,
                 current_board_rule_mismatch=current_board_rule_mismatch,
                 board_rule_auditable=board_rule_auditable,
@@ -433,9 +615,18 @@ def build_legacy_cohort(
         signal_date_present=counts["signal_date_present"],
         complete_session_10_window=counts["complete_session_10_window"],
         execution_proxy_eligible=counts["execution_proxy_eligible"],
-        current_board_rule_mismatches=sum(trade.current_board_rule_mismatch for trade in included),
-        board_rule_unauditable=sum(not trade.board_rule_auditable for trade in included),
-        recorded_return_mismatches=sum(trade.recorded_return_mismatch for trade in included),
+        current_board_rule_mismatches=sum(
+            trade.current_board_rule_mismatch for trade in included
+        ),
+        board_rule_unauditable=sum(
+            not trade.board_rule_auditable for trade in included
+        ),
+        recorded_return_mismatches=sum(
+            trade.recorded_return_mismatch is True for trade in included
+        ),
+        recorded_return_unauditable=sum(
+            trade.recorded_return_mismatch is None for trade in included
+        ),
         paired_by_setup=((_BTST_SETUP, paired_key_count),) if paired_key_count else (),
         included_by_regime=tuple(sorted(included_regimes.items())),
         included_by_source=tuple(sorted(included_sources.items())),

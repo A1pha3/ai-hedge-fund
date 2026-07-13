@@ -15,10 +15,19 @@ was modified.
 - Deterministic natural-key ordering and fail-closed exclusions for malformed JSON/records,
   invalid keys or returns, duplicate BUY/EXIT events, unmatched BUY/EXIT events, missing or
   invalid price data, missing signal dates, incomplete windows, and execution-proxy failures.
+- Physical journal line numbers survive pairing and every downstream exclusion. Unique pairing
+  fixes the denominator before checking that EXIT occurs strictly after BUY.
+- Natural keys require real `YYYYMMDD` dates and exactly six ASCII ticker digits. BTST actions
+  are exact `BUY`/`EXIT`, and any supplied horizon/time-exit field must represent T+10.
+- Price loading distinguishes absent, empty, unreadable, and invalid results. Session timestamps
+  become civil dates before duplicate detection/sorting, and impossible OHLC bars fail closed.
 - Setup, regime, and source labels/counters kept separate.
 - Current board-rule mismatch and board-rule auditability recorded independently; mismatches
-  remain in the legacy sensitivity cohort.
+  compare the legacy 9.5% detector with the current ticker-specific detector and remain in the
+  legacy sensitivity cohort.
 - Recorded journal return versus reconstructable legacy T+10 close return audited per trade.
+  Nullable `recorded_entry_price` is never replaced by session-1 open; `replay_entry_price`
+  separately and explicitly carries session-1 open for Task 3.
 - `audit_coverage()` preserves the paired denominator, compares covered and missing legacy
   groups, warns on selection bias, and permanently reports `production_eligible=False`.
 
@@ -33,13 +42,19 @@ was modified.
    return parsing.
 5. Staged-diff review added a missing-`pct_change` execution-proxy regression; it failed because
    a reconstructable signal return was not forwarded to the shared limit-up proxy. The proxy now
-   receives that reconstructed value and the focused suite passes 8/8.
+   receives that reconstructed value.
+6. Review remediation added separate RED→GREEN cycles for line ordering/positions (2 tests),
+   civil-date duplicates (2), loader/OHLC layers (7), natural/event/holding schema (9), exact
+   rounding boundary (2), and entry-price provenance (7, including bool/string schema cases). A
+   final self-review RED→GREEN also carried pair line numbers through downstream price/window
+   exclusions and verified detector-to-detector mismatch semantics. Focused total: 38 tests.
 
 ## Fresh verification
 
 - `git diff --check` — passed.
 - `uv run ruff check src/research/exit_shadow_research.py tests/research/test_exit_shadow_research.py` — passed.
-- `uv run pytest tests/research/ tests/offensive/ -q` — 647 passed.
+- `uv run ruff format --check src/research/exit_shadow_research.py tests/research/test_exit_shadow_research.py` — passed.
+- `uv run pytest tests/research/ tests/offensive/ -q` — 677 passed.
 
 ## Real-data read-only smoke audit
 
@@ -51,11 +66,14 @@ Using the 403-row backtest journal and the available 626-file parent price cache
 - unmatched BTST BUY keys: 13 (excluded outside the paired denominator);
 - current-board-rule mismatches among included paths: 47;
 - recorded-versus-reconstructable return mismatches: 55;
+- recorded-return unauditable paths: 0;
 - covered legacy mean: +9.9866%; missing legacy mean: +3.7110%;
 - selection-bias warning: true; production eligible: false.
 
 These mismatch counts are audit disclosures, not evidence for parameter selection or production
-promotion. The legacy sample remains sensitivity-only.
+promotion. Counts are unchanged from the pre-remediation smoke audit; the stricter validators did
+not silently remove any of the 94 reconstructable real paths. The legacy sample remains
+sensitivity-only.
 
 ## Self-review concerns
 
@@ -66,4 +84,6 @@ promotion. The legacy sample remains sensitivity-only.
   available. Such paths expose `board_rule_auditable=False` instead of inventing a mismatch.
 - The reconstructed legacy return uses the journal BUY `entry_price` when valid and session-10
   close, matching the historical paper-tracker P&L convention. The recorded value is rounded to
-  two percentage decimals, so comparison uses a 1.5 bp return-unit tolerance.
+  two percentage decimals, so comparison allows at most 0.005 percentage point (0.00005 return
+  units, 0.5 bp) plus a tiny floating-point epsilon. Missing/invalid journal entry prices are
+  explicitly unauditable and never substituted with the replay entry.
