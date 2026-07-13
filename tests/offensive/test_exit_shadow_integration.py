@@ -444,6 +444,133 @@ def test_default_shadow_uses_complete_read_only_history_loader(shadow_case):
     assert position.shadow_reason == "insufficient_data"
 
 
+def _shadow_fields(position):
+    return (
+        position.shadow_exit_line,
+        position.shadow_would_exit_next_open,
+        position.shadow_reason,
+    )
+
+
+def test_direct_mapping_discards_known_future_before_bar_validation(shadow_case):
+    service, _open_trade, prices, as_of = shadow_case
+    prefix = {key: value for key, value in prices.items() if key[1] <= as_of}
+    expected = service.run(as_of, candidates=(), shadow_prices=prefix).open_positions[0]
+    polluted = dict(prefix)
+    polluted[("000777", service.calendar.open_sessions[19])] = object()
+
+    actual = service.run(as_of, candidates=(), shadow_prices=polluted).open_positions[0]
+
+    assert _shadow_fields(actual) == _shadow_fields(expected)
+
+
+def test_nested_mapping_discards_known_future_before_bar_validation(shadow_case):
+    service, _open_trade, prices, as_of = shadow_case
+    prefix = {
+        session: bar
+        for (ticker, session), bar in prices.items()
+        if ticker == "000777" and session <= as_of
+    }
+    expected = service.run(
+        as_of, candidates=(), shadow_prices={"000777": prefix}
+    ).open_positions[0]
+    polluted = dict(prefix)
+    polluted[service.calendar.open_sessions[19]] = {"invalid": "future OHLC"}
+
+    actual = service.run(
+        as_of, candidates=(), shadow_prices={"000777": polluted}
+    ).open_positions[0]
+
+    assert _shadow_fields(actual) == _shadow_fields(expected)
+
+
+def test_dataframe_ignores_invalid_future_ohlc_and_malformed_suffix(shadow_case):
+    service, _open_trade, prices, as_of = shadow_case
+    frame = pd.DataFrame(
+        {"date": session, "high": bar.high, "low": bar.low, "close": bar.close}
+        for (_ticker, session), bar in prices.items()
+    )
+    expected = service.run(
+        as_of, candidates=(), shadow_prices=frame.loc[frame["date"] <= as_of]
+    ).open_positions[0]
+    frame = frame.astype({"high": "object", "low": "object", "close": "object"})
+    first_future = frame.index[frame["date"] > as_of][0]
+    frame.loc[first_future, ["high", "low", "close"]] = ["bad", -1, None]
+    frame = pd.concat(
+        [
+            frame.iloc[: first_future + 1],
+            pd.DataFrame(
+                [{"date": "malformed-future", "high": object(), "low": 0, "close": 0}]
+            ),
+        ],
+        ignore_index=True,
+    )
+
+    actual = service.run(as_of, candidates=(), shadow_prices=frame).open_positions[0]
+
+    assert _shadow_fields(actual) == _shadow_fields(expected)
+
+
+def test_local_history_loader_ignores_future_invalid_suffix(shadow_case):
+    service, _open_trade, prices, as_of = shadow_case
+    prefix = pd.DataFrame(
+        {"date": session, "high": bar.high, "low": bar.low, "close": bar.close}
+        for (_ticker, session), bar in prices.items()
+        if session <= as_of
+    )
+    baseline = DailyActionService(
+        service.repository,
+        service.calendar,
+        service.prices,
+        service.costs,
+        enforce_manifest_gate=False,
+        shadow_history=lambda _ticker: prefix,
+    )
+    expected = baseline.run(as_of, candidates=()).open_positions[0]
+    polluted = pd.concat(
+        [
+            prefix,
+            pd.DataFrame(
+                [
+                    {
+                        "date": service.calendar.open_sessions[19],
+                        "high": "invalid",
+                        "low": -1,
+                        "close": None,
+                    },
+                    {"date": "unparsed suffix", "high": object(), "low": 0, "close": 0},
+                ]
+            ),
+        ],
+        ignore_index=True,
+    )
+    local = DailyActionService(
+        service.repository,
+        service.calendar,
+        service.prices,
+        service.costs,
+        enforce_manifest_gate=False,
+        shadow_history=lambda _ticker: polluted,
+    )
+
+    actual = local.run(as_of, candidates=()).open_positions[0]
+
+    assert _shadow_fields(actual) == _shadow_fields(expected)
+
+
+def test_malformed_date_before_future_boundary_remains_fail_closed(shadow_case):
+    service, _open_trade, prices, as_of = shadow_case
+    frame = pd.DataFrame(
+        {"date": session, "high": bar.high, "low": bar.low, "close": bar.close}
+        for (_ticker, session), bar in prices.items()
+    )
+    frame.loc[10, "date"] = "not-a-causal-date"
+
+    position = service.run(as_of, candidates=(), shadow_prices=frame).open_positions[0]
+
+    assert position.shadow_reason == "insufficient_data"
+
+
 def _production_view(run):
     result = {
         field.name: getattr(run, field.name)

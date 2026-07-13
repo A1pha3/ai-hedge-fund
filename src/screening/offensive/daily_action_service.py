@@ -883,11 +883,14 @@ class DailyActionService:
                 for key, value in prices.items()
                 if isinstance(key, tuple) and len(key) == 2 and key[0] == ticker
             ]
-            items = keyed or [
-                (key, value) for key, value in prices.items() if isinstance(key, date)
-            ]
-        for session, bar in items:
-            if type(session) is not date or not isinstance(bar, MarketBar):
+            items = keyed or prices.items()
+        for raw_session, bar in items:
+            session = self._shadow_civil_date(raw_session)
+            if session is None:
+                return None
+            if session > as_of:
+                continue
+            if not isinstance(bar, MarketBar):
                 return None
             row = self._shadow_bar_row(session, bar)
             if row is None:
@@ -912,17 +915,23 @@ class DailyActionService:
     ) -> pd.DataFrame | None:
         if frame.empty or not {"date", "high", "low", "close"}.issubset(frame.columns):
             return None
-        parsed = pd.to_datetime(frame["date"], format="mixed", errors="coerce")
-        if parsed.isna().any():
-            return None
-        civil_dates = parsed.dt.date
-        prefix = frame.loc[civil_dates <= as_of, ["high", "low", "close"]].copy()
-        prefix.insert(0, "date", tuple(civil_dates[civil_dates <= as_of]))
+        civil_dates: list[date] = []
+        previous: date | None = None
+        for raw_date in frame["date"]:
+            civil_date = self._shadow_civil_date(raw_date)
+            if civil_date is None:
+                return None
+            if civil_date > as_of:
+                break
+            if previous is not None and civil_date <= previous:
+                return None
+            civil_dates.append(civil_date)
+            previous = civil_date
+        prefix = frame.iloc[: len(civil_dates)][["high", "low", "close"]].copy()
+        prefix.insert(0, "date", civil_dates)
         if prefix.empty:
             return None
         dates = tuple(prefix["date"])
-        if any(current <= previous for previous, current in zip(dates, dates[1:])):
-            return None
         calendar_prefix = tuple(
             session
             for session in self.calendar.open_sessions
@@ -948,6 +957,19 @@ class DailyActionService:
         ).all():
             return None
         return prefix.reset_index(drop=True)
+
+    @staticmethod
+    def _shadow_civil_date(value: object) -> date | None:
+        if isinstance(value, datetime):
+            return value.date()
+        if type(value) is date:
+            return value
+        if not isinstance(value, str) or not value.strip():
+            return None
+        parsed = pd.to_datetime(value, format="mixed", errors="coerce")
+        if pd.isna(parsed):
+            return None
+        return parsed.date()
 
     @staticmethod
     def _valid_shadow_bar(bar: MarketBar | None) -> bool:

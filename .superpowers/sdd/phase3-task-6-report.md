@@ -28,6 +28,12 @@ read-only `SHADOW ONLY` evidence. The view exposes `shadow_exit_line`,
 - Duplicate normalized civil dates, malformed/out-of-order paths, invalid OHLC, gaps, and
   insufficient prior-close context fail closed. The production cached-bar adapter also rejects
   exact and timestamp-normalized duplicate dates instead of choosing a row.
+- Every history adapter establishes the causal prefix before validating market data. Direct and
+  nested mappings classify dates first and discard known-future values without touching them.
+  DataFrame and local-loader inputs require chronological source order, but stop at the first
+  known date after `as_of`; invalid OHLC and malformed dates in that suffix cannot change the
+  prefix result. A malformed date before that boundary remains fail-closed because it cannot be
+  proven future.
 - Each OPEN trade has its own ordinary-`Exception` boundary after production orchestration.
   Provider, parser, ATR, and policy failures become a visible `insufficient_data` row; Python
   `BaseException` subclasses are deliberately not swallowed. EXIT_PENDING trades are omitted.
@@ -61,14 +67,17 @@ The focused suite asserts:
   including a prior-close gap and future-prefix invariance;
 - malformed provider/parser/ATR/policy inputs are isolated per trade, while `KeyboardInterrupt`
   propagates;
+- direct mappings, nested mappings, DataFrames, and the local CSV-history loader return an
+  identical shadow result when invalid future OHLC or a malformed post-boundary suffix is added;
+  malformed pre-boundary dates still return `insufficient_data`;
 - the exact `render_daily_action_v2` function used by the dispatcher labels the section
   `SHADOW ONLY` and `不改变默认退出`.
 
 ## Verification
 
-- Focused shadow + dispatcher integration: **36 passed**.
+- Focused shadow + dispatcher integration: **41 passed**.
 - Daily-action service/v2/manifest/shadow regression: **86 passed**.
-- Full offensive baseline: **491 passed**.
+- Full offensive baseline: **496 passed**.
 - Main auto-cache refresh regression: **15 passed**.
 - Ruff check on the new service/test surface: clean.
 - Ruff check on `daily_action.py` with its pre-existing `F401`/`F541` findings excluded: clean.
