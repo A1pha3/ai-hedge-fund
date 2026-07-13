@@ -21,6 +21,15 @@ def test_policy_arms_at_ten_percent_close_return() -> None:
     assert decision.should_exit_next_open is False
 
 
+def test_policy_arms_at_exact_decimal_ten_percent_boundary() -> None:
+    decision = evaluate_shadow_exit(
+        ExitPolicyState.unarmed(entry_price=0.1),
+        ExitObservation(date(2026, 7, 14), holding_session=2, close=0.11, atr=0.005),
+    )
+
+    assert decision.state.armed_at == date(2026, 7, 14)
+
+
 def test_exit_line_never_moves_down_when_atr_expands() -> None:
     state = ExitPolicyState(entry_price=10.0, armed_at=date(2026, 7, 14), highest_close=12.0, exit_line=11.0)
     decision = evaluate_shadow_exit(
@@ -65,6 +74,46 @@ def test_session_nine_reason_precedes_trailing_line_reason() -> None:
 
     assert decision.should_exit_next_open is True
     assert decision.reason == "maximum_holding_session"
+
+
+@pytest.mark.parametrize("holding_session", [9, 10])
+def test_maximum_holding_short_circuits_new_activation(
+    holding_session: int,
+) -> None:
+    decision = evaluate_shadow_exit(
+        ExitPolicyState.unarmed(entry_price=10.0),
+        ExitObservation(
+            date(2026, 7, 23),
+            holding_session=holding_session,
+            close=11.0,
+            atr=4.4,
+        ),
+    )
+
+    assert decision.should_exit_next_open is True
+    assert decision.reason == "maximum_holding_session"
+    assert decision.state.armed_at is None
+    assert decision.state.highest_close == 11.0
+    assert decision.state.exit_line is None
+
+
+def test_maximum_holding_preserves_armed_line_while_updating_peak() -> None:
+    state = ExitPolicyState(
+        entry_price=10.0,
+        armed_at=date(2026, 7, 14),
+        highest_close=12.0,
+        exit_line=11.0,
+    )
+
+    decision = evaluate_shadow_exit(
+        state,
+        ExitObservation(date(2026, 7, 23), holding_session=9, close=13.0, atr=0.01),
+    )
+
+    assert decision.should_exit_next_open is True
+    assert decision.reason == "maximum_holding_session"
+    assert decision.state.highest_close == 13.0
+    assert decision.state.exit_line == 11.0
 
 
 def test_entry_session_holds_without_arming() -> None:
@@ -268,6 +317,65 @@ def test_policy_rejects_armed_at_after_observation_trade_date() -> None:
         evaluate_shadow_exit(
             state,
             ExitObservation(date(2026, 7, 15), holding_session=3, close=12.1, atr=0.4),
+        )
+
+
+def test_policy_rejects_armed_peak_below_activation_threshold() -> None:
+    state = ExitPolicyState(
+        entry_price=10.0,
+        armed_at=date(2026, 7, 14),
+        highest_close=10.999999,
+        exit_line=10.0,
+    )
+
+    with pytest.raises(ValueError, match="highest_close.*activation"):
+        evaluate_shadow_exit(
+            state,
+            ExitObservation(date(2026, 7, 15), holding_session=3, close=10.5, atr=0.4),
+        )
+
+
+@pytest.mark.parametrize(
+    ("entry_price", "highest_close", "exit_line"),
+    [(10.0, 11.0, 10.0), (0.1, 0.11, 0.09)],
+)
+def test_policy_accepts_armed_peak_at_exact_activation_threshold(
+    entry_price: float,
+    highest_close: float,
+    exit_line: float,
+) -> None:
+    state = ExitPolicyState(
+        entry_price=entry_price,
+        armed_at=date(2026, 7, 14),
+        highest_close=highest_close,
+        exit_line=exit_line,
+    )
+
+    decision = evaluate_shadow_exit(
+        state,
+        ExitObservation(
+            date(2026, 7, 15),
+            holding_session=3,
+            close=highest_close,
+            atr=entry_price * 0.04,
+        ),
+    )
+
+    assert decision.state.highest_close == highest_close
+
+
+def test_invalid_armed_state_is_rejected_before_maximum_holding_force() -> None:
+    state = ExitPolicyState(
+        entry_price=10.0,
+        armed_at=date(2026, 7, 14),
+        highest_close=10.9,
+        exit_line=10.0,
+    )
+
+    with pytest.raises(ValueError, match="highest_close.*activation"):
+        evaluate_shadow_exit(
+            state,
+            ExitObservation(date(2026, 7, 23), holding_session=9, close=11.0, atr=100.0),
         )
 
 

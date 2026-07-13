@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 import math
 from numbers import Real
 
@@ -57,19 +58,24 @@ def evaluate_shadow_exit(
         observation.close,
         state.highest_close if state.highest_close is not None else observation.close,
     )
+    observed_state = ExitPolicyState(
+        entry_price=state.entry_price,
+        armed_at=state.armed_at,
+        highest_close=highest_close,
+        exit_line=state.exit_line,
+    )
 
     if observation.holding_session == 1:
-        return _hold(
-            ExitPolicyState(
-                entry_price=state.entry_price,
-                armed_at=None,
-                highest_close=highest_close,
-                exit_line=None,
-            )
-        )
+        return _hold(observed_state)
+
+    if observation.holding_session >= PLAN_EXIT_SESSION:
+        return ExitDecision(observed_state, True, "maximum_holding_session")
 
     next_state = state
-    if state.armed_at is None and observation.close / state.entry_price - 1.0 >= ACTIVATION_RETURN:
+    if state.armed_at is None and _meets_activation_threshold(
+        observation.close,
+        state.entry_price,
+    ):
         exit_line = highest_close - ATR_MULTIPLE * observation.atr
         _require_positive_finite("exit_line", exit_line)
         next_state = ExitPolicyState(
@@ -96,9 +102,6 @@ def evaluate_shadow_exit(
                 highest_close - ATR_MULTIPLE * observation.atr,
             ),
         )
-
-    if observation.holding_session == PLAN_EXIT_SESSION:
-        return ExitDecision(next_state, True, "maximum_holding_session")
 
     if (
         next_state.armed_at is not None
@@ -143,6 +146,8 @@ def _validate_inputs(state: ExitPolicyState, observation: ExitObservation) -> No
     _require_positive_finite("exit_line", state.exit_line)
     if state.exit_line >= state.highest_close:
         raise ValueError("exit_line must be strictly below highest_close")
+    if not _meets_activation_threshold(state.highest_close, state.entry_price):
+        raise ValueError("highest_close must meet the activation threshold")
     if state.armed_at > observation.trade_date:
         raise ValueError("armed_at cannot be after trade_date")
     if observation.holding_session == 1:
@@ -152,6 +157,13 @@ def _validate_inputs(state: ExitPolicyState, observation: ExitObservation) -> No
 def _require_positive_finite(name: str, value: object) -> None:
     if not _is_finite_number(value) or value <= 0:
         raise ValueError(f"{name} must be positive and finite")
+
+
+def _meets_activation_threshold(price: float, entry_price: float) -> bool:
+    threshold = Decimal(str(entry_price)) * (
+        Decimal(1) + Decimal(str(ACTIVATION_RETURN))
+    )
+    return Decimal(str(price)) >= threshold
 
 
 def _is_finite_number(value: object) -> bool:

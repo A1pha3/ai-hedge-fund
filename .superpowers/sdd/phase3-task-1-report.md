@@ -91,3 +91,28 @@ Neither `ExitPolicyState` nor `ExitObservation` carries an entry-date field, so
 an `armed_at >= entry_date` comparison is not expressible in the Task 1 API.
 The evaluator does not invent or infer an entry date from calendar arithmetic;
 the existing holding-session constraint remains the available entry boundary.
+
+## Second review follow-up
+
+The second Task 1 review was resolved with another test-first cycle:
+
+- Review baseline: complete offensive suite — **458 passed in 3.71s**.
+- RED: focused policy suite — **6 failed, 40 passed in 0.46s**. The failures
+  proved that session 9/10 attempted activation before forced exit, an armed
+  session-9 observation moved its trailing line, decimal +10% could miss the
+  exact boundary, and an armed peak below activation was accepted.
+- GREEN: focused policy suite — **46 passed in 0.76s**.
+- Full offensive regression — **466 passed in 3.25s**.
+- Ruff, `git diff --check`, and the no-production-import audit passed.
+
+For valid inputs, evaluation now validates the incoming state first, records
+the observed close in `highest_close`, and handles every holding session at or
+above 9 before any activation or trailing-line construction. The forced result
+keeps the previous armed/line fields and only advances the observed peak. An
+invalid incoming armed state is still rejected before the forced decision.
+
+Armed state now also requires `highest_close` to meet the fixed +10% activation
+threshold. The exact threshold is shared with ordinary activation through a
+single `Decimal(str(...))` comparison; no tolerance, tuning value, or search
+parameter was added. Tests cover a just-below peak, `10.0 -> 11.0`, and the
+floating-sensitive decimal boundary `0.1 -> 0.11`.
