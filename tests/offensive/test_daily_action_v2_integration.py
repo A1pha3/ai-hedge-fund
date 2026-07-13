@@ -37,7 +37,9 @@ def signal_date() -> date:
 
 @pytest.fixture
 def repository(tmp_path) -> LedgerRepository:
-    repo = LedgerRepository(tmp_path / "paper_trading_v2" / "ledger.sqlite3", "daily-action-v2", 100_000)
+    repo = LedgerRepository(
+        tmp_path / "paper_trading_v2" / "ledger.sqlite3", "daily-action-v2", 100_000
+    )
     repo.initialize()
     return repo
 
@@ -70,9 +72,7 @@ def _scan(signal_date, *, degraded=False, regime="normal") -> DailyActionScan:
         authorization=authorization,
     )
     blocked = (
-        (BlockedCandidate("000001", "incomplete_setup_data", 10.0),)
-        if degraded
-        else ()
+        (BlockedCandidate("000001", "incomplete_setup_data", 10.0),) if degraded else ()
     )
     candidates = () if degraded else (hit,)
     return DailyActionScan(signal_date, candidates, blocked, (("000001", 10.0),))
@@ -123,7 +123,9 @@ def test_degraded_btst_is_displayed_but_never_planned(service, signal_date):
     assert run.blocked_candidates[0].reason == "incomplete_setup_data"
 
 
-def test_btst_normal_cap_is_ten_percent_and_crisis_cap_is_twelve(service, repository, signal_date):
+def test_btst_normal_cap_is_ten_percent_and_crisis_cap_is_twelve(
+    service, repository, signal_date
+):
     normal_run = run_daily_action_v2(service, _scan(signal_date))
     normal_weight = repository.get_trade(normal_run.plans[0].trade_id).planned_weight
 
@@ -155,7 +157,9 @@ def test_repeat_cli_run_is_idempotent(service, repository, signal_date):
     assert repository.count_events(first.plans[0].trade_id, "PLAN_CREATED") == 1
 
 
-def test_v1_files_are_byte_identical_after_v2_run(service, signal_date, tmp_path, monkeypatch):
+def test_v1_files_are_byte_identical_after_v2_run(
+    service, signal_date, tmp_path, monkeypatch
+):
     monkeypatch.chdir(tmp_path)
     artifacts = {
         tmp_path / "data/paper_trading/journal.jsonl": b"runtime-v1\n",
@@ -170,7 +174,9 @@ def test_v1_files_are_byte_identical_after_v2_run(service, signal_date, tmp_path
     assert {path: path.read_bytes() for path in artifacts} == artifacts
 
 
-def test_output_distinguishes_reference_synthetic_and_confirmed_prices(service, signal_date):
+def test_output_distinguishes_reference_synthetic_and_confirmed_prices(
+    service, signal_date
+):
     pending = run_daily_action_v2(service, _scan(signal_date))
     # The renderer always discloses all three price/source states, even when a section is empty.
     rendered = render_daily_action_v2(pending)
@@ -199,12 +205,33 @@ def test_missing_authoritative_calendar_fails_closed(monkeypatch):
 
 def test_cached_market_bar_preserves_unknown_execution_fields(tmp_path):
     cache = tmp_path / "000001.csv"
-    cache.write_text("date,open,close,high,low\n2026-07-13,10,10,10.5,9.5\n", encoding="utf-8")
+    cache.write_text(
+        "date,open,close,high,low\n2026-07-13,10,10,10.5,9.5\n", encoding="utf-8"
+    )
     bar = _cached_daily_action_market_bar(cache, date(2026, 7, 13))
     assert bar is not None
     assert bar.suspended is None
     assert bar.limit_up is None
     assert bar.limit_down is None
+
+
+@pytest.mark.parametrize(
+    "dates",
+    [
+        ("2026-07-13", "2026-07-13"),
+        ("2026-07-13 00:00:00", "2026-07-13"),
+    ],
+)
+def test_cached_market_bar_rejects_duplicate_civil_dates(tmp_path, dates):
+    cache = tmp_path / "000001.csv"
+    cache.write_text(
+        "date,open,close,high,low\n"
+        f"{dates[0]},10,10,10.5,9.5\n"
+        f"{dates[1]},11,11,11.5,10.5\n",
+        encoding="utf-8",
+    )
+
+    assert _cached_daily_action_market_bar(cache, date(2026, 7, 13)) is None
 
 
 def test_renderer_includes_real_lifecycle_reasons(service, signal_date):
@@ -227,6 +254,7 @@ def test_ticker_terminal_bar_must_equal_authoritative_signal_session():
 def test_renderer_surfaces_every_lifecycle_collection(signal_date):
     def item(reason, execution, source):
         return ActionItem("t", "000001", reason, execution, source)
+
     view = DailyActionRun(
         signal_date,
         DailyValuation(signal_date, 100_000, 0, 100_000, 100_000, 0, ()),
@@ -253,7 +281,9 @@ def test_renderer_surfaces_every_lifecycle_collection(signal_date):
         assert expected in rendered
 
 
-def test_actual_cli_is_idempotent_and_preserves_recursive_legacy_artifacts(tmp_path, monkeypatch, signal_date):
+def test_actual_cli_is_idempotent_and_preserves_recursive_legacy_artifacts(
+    tmp_path, monkeypatch, signal_date
+):
     runtime = tmp_path / "data/paper_trading"
     backtest = tmp_path / "data/paper_trading_backtest"
     for root, payload in ((runtime, b"runtime"), (backtest, b"backtest")):
@@ -275,8 +305,12 @@ def test_actual_cli_is_idempotent_and_preserves_recursive_legacy_artifacts(tmp_p
     _install_healthy_manifest(monkeypatch, signal_date)
     ledger = tmp_path / "isolated-v2/ledger.sqlite3"
     sessions = tuple(signal_date + timedelta(days=i) for i in range(11))
-    dispatcher._resolve_daily_action(["--daily-action"], open_sessions=sessions, ledger_path=ledger)
-    dispatcher._resolve_daily_action(["--daily-action"], open_sessions=sessions, ledger_path=ledger)
+    dispatcher._resolve_daily_action(
+        ["--daily-action"], open_sessions=sessions, ledger_path=ledger
+    )
+    dispatcher._resolve_daily_action(
+        ["--daily-action"], open_sessions=sessions, ledger_path=ledger
+    )
     after = {
         path.relative_to(tmp_path): path.read_bytes()
         for root in (runtime, backtest)
@@ -290,19 +324,25 @@ def test_actual_cli_is_idempotent_and_preserves_recursive_legacy_artifacts(tmp_p
     assert repo.count_events(plans[0].trade_id, "PLAN_CREATED") == 1
 
 
-def test_actual_cli_missing_calendar_renders_block_and_creates_no_plan(tmp_path, monkeypatch, signal_date, capsys):
+def test_actual_cli_missing_calendar_renders_block_and_creates_no_plan(
+    tmp_path, monkeypatch, signal_date, capsys
+):
     monkeypatch.setattr(
         "src.screening.offensive.daily_action.scan_daily_action_candidates",
         lambda **_kwargs: _scan(signal_date),
     )
     _install_healthy_manifest(monkeypatch, signal_date)
     ledger = tmp_path / "blocked.sqlite3"
-    dispatcher._resolve_daily_action(["--daily-action"], open_sessions=(), ledger_path=ledger)
+    dispatcher._resolve_daily_action(
+        ["--daily-action"], open_sessions=(), ledger_path=ledger
+    )
     assert "calendar_unavailable" in capsys.readouterr().out
     assert LedgerRepository(ledger, "daily-action-v2", 100_000).planned_trades() == []
 
 
-def test_actual_cli_two_session_calendar_blocks_btst_horizon(tmp_path, monkeypatch, signal_date, capsys):
+def test_actual_cli_two_session_calendar_blocks_btst_horizon(
+    tmp_path, monkeypatch, signal_date, capsys
+):
     monkeypatch.setattr(
         "src.screening.offensive.daily_action.scan_daily_action_candidates",
         lambda **_kwargs: _scan(signal_date),

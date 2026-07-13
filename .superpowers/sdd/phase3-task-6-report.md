@@ -9,12 +9,14 @@ read-only `SHADOW ONLY` evidence. The view exposes `shadow_exit_line`,
 
 ## Implementation
 
-- `DailyActionService.run(..., shadow_prices=...)` accepts either the production cached-bar
+- `DailyActionService.run(..., shadow_prices=...)` accepts either a cached-bar
   provider, a keyed bar mapping, a per-ticker mapping/DataFrame, or a direct price-history
-  DataFrame. Without an override it uses the existing read-only production price provider.
-- Each OPEN trade is reconstructed only through `as_of`. The evaluator requires 13 prior
-  sessions for the first causal Wilder ATR(14), then feeds each completed holding session into
-  the already-fixed `exit_policy.evaluate_shadow_exit` state machine.
+  DataFrame. The real dispatcher supplies a read-once, local-only complete CSV history loader;
+  callers without one fall back to the existing read-only bar provider.
+- Each OPEN trade is reconstructed only through `as_of`, using the full available contiguous
+  ticker history rather than an entry-relative slice. The evaluator requires 14 prior bars so
+  the 14 true ranges have real prior-close context, calls the shared causal Wilder ATR(14) on
+  each full prefix, then feeds the observation into the fixed `exit_policy` state machine.
 - Missing calendar coverage, entry price, OHLC path, or ATR is visible as
   `shadow_reason=insufficient_data`, with no inferred exit.
 - The shadow projection is created after production entry settlement, exit settlement,
@@ -23,6 +25,12 @@ read-only `SHADOW ONLY` evidence. The view exposes `shadow_exit_line`,
   caps, or portfolio caps.
 - No environment variable, command-line switch, policy parameter, persistence method, or
   promotion path was added.
+- Duplicate normalized civil dates, malformed/out-of-order paths, invalid OHLC, gaps, and
+  insufficient prior-close context fail closed. The production cached-bar adapter also rejects
+  exact and timestamp-normalized duplicate dates instead of choosing a row.
+- Each OPEN trade has its own ordinary-`Exception` boundary after production orchestration.
+  Provider, parser, ATR, and policy failures become a visible `insufficient_data` row; Python
+  `BaseException` subclasses are deliberately not swallowed. EXIT_PENDING trades are omitted.
 
 ## TDD evidence
 
@@ -30,6 +38,12 @@ The first focused run failed all five original tests because `DailyActionService
 accept `shadow_prices`. After the minimal implementation, the focused contract passed. A sixth
 RED test then proved the project-standard price-history DataFrame was initially treated as
 missing; the read-only adapter made it GREEN.
+
+The findings-hardening cycle was also RED first: provider/parser/policy exceptions escaped the
+command, entry-relative ATR disagreed with a hand-calculated/research-normalized Wilder replay,
+session-9 EXIT_PENDING remained in the shadow list, the CSV provider selected a duplicate row,
+and the complete-history constructor seam was absent. Each failure was observed before its
+corresponding implementation change.
 
 The focused suite asserts:
 
@@ -39,14 +53,22 @@ The focused suite asserts:
 - repeated runs return identical shadow results;
 - canonical trade-row and event-row bytes, trade state, cash, exit-event counts, and production
   exit plans are unchanged by a shadow trigger;
+- two identically seeded ledgers produce byte-identical rows in `ledger_meta`, `trades`,
+  `trade_events`, `daily_valuations`, and `position_marks`, plus identical cash, valuation,
+  plans, exits, caps, exposures, and non-shadow view fields under triggering versus insufficient
+  shadow inputs, including repeated runs;
+- hand-calculated Wilder RMA, shared `compute_atr`, and research-normalized full prefixes agree,
+  including a prior-close gap and future-prefix invariance;
+- malformed provider/parser/ATR/policy inputs are isolated per trade, while `KeyboardInterrupt`
+  propagates;
 - the exact `render_daily_action_v2` function used by the dispatcher labels the section
   `SHADOW ONLY` and `不改变默认退出`.
 
 ## Verification
 
-- Focused shadow integration: **6 passed**.
-- Daily-action service/v2/manifest/shadow regression: **70 passed**.
-- Full offensive baseline: **476 passed**.
+- Focused shadow + dispatcher integration: **36 passed**.
+- Daily-action service/v2/manifest/shadow regression: **86 passed**.
+- Full offensive baseline: **491 passed**.
 - Main auto-cache refresh regression: **15 passed**.
 - Ruff check on the new service/test surface: clean.
 - Ruff check on `daily_action.py` with its pre-existing `F401`/`F541` findings excluded: clean.

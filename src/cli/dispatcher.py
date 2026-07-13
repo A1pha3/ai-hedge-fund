@@ -947,11 +947,11 @@ def _cached_daily_action_market_bar(cache, trade_date):
     if not cache.exists():
         return None
     frame = pd.read_csv(cache)
-    dates = pd.to_datetime(frame.get("date"), errors="coerce").dt.date
+    dates = pd.to_datetime(frame.get("date"), format="mixed", errors="coerce").dt.date
     rows = frame.loc[dates == trade_date]
-    if rows.empty:
+    if len(rows) != 1:
         return None
-    row = rows.iloc[-1]
+    row = rows.iloc[0]
 
     def positive(name):
         if name not in row or pd.isna(row[name]):
@@ -1020,6 +1020,14 @@ def _resolve_daily_action(
         cache = Path("data/price_cache") / f"{ticker}.csv"
         return _cached_daily_action_market_bar(cache, trade_date)
 
+    def cached_shadow_history(ticker):
+        import pandas as pd
+
+        cache = Path("data/price_cache") / f"{ticker}.csv"
+        if not cache.exists():
+            return None
+        return pd.read_csv(cache, dtype={"date": str})
+
     resolved_ledger_path = Path(ledger_path or "data/paper_trading_v2/ledger.sqlite3")
     with LedgerRepository(
         resolved_ledger_path, "daily-action-v2", 100_000.0
@@ -1032,6 +1040,7 @@ def _resolve_daily_action(
             cache_fingerprints=lambda ticker, _trade_date: current_fingerprints.get(
                 ticker
             ),
+            shadow_history=cached_shadow_history,
         )
         print(render_daily_action_v2(run_daily_action_v2(service, scan, manifest)))
     return 0
