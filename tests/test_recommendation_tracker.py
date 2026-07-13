@@ -303,6 +303,42 @@ def test_update_tracking_history_rerun_does_not_clobber_realized_return(tmp_path
     assert rec["next_day_return"] is not None
 
 
+def test_update_tracking_history_duplicate_replay_preserves_existing_valid_labels(
+    tmp_path: Path,
+):
+    _make_report(
+        tmp_path,
+        "20260520",
+        [{"ticker": "000001", "name": "A", "score_b": 0.5, "close": 10.0}],
+    )
+    _make_report(tmp_path, "20260601", [])
+    update_tracking_history(tmp_path, "20260520")
+
+    def valid_fetcher(ticker, _frm, _to):
+        return [
+            {"time": "20260520", "close": 10.0},
+            {"time": "20260521", "close": 11.0},
+        ]
+
+    update_tracking_history(tmp_path, "20260601", use_data_fetcher=valid_fetcher)
+    before = _load_history(tmp_path / HISTORY_FILENAME)[0]
+    assert before["next_day_return"] == 10.0
+    assert before["return_t1_date"] == "20260521"
+
+    def duplicate_fetcher(ticker, _frm, _to):
+        return [
+            {"time": "20260520", "close": 10.0},
+            {"time": "20260521", "close": 11.0},
+            {"time": "2026-05-21", "close": 99.0},
+        ]
+
+    update_tracking_history(tmp_path, "20260601", use_data_fetcher=duplicate_fetcher)
+    after = _load_history(tmp_path / HISTORY_FILENAME)[0]
+    assert after["next_day_return"] == 10.0
+    assert after["return_t1_date"] == "20260521"
+    assert after["tracking_status"] == "partial"
+
+
 # ---------------------------------------------------------------------------
 # 8. 跨日推荐合并
 # ---------------------------------------------------------------------------
@@ -728,12 +764,33 @@ def test_extract_sorted_closes_filters_and_sorts():
         {"time": "2026-06-07", "close": 10.0},  # base
         {"time": "2026-06-08", "close": 10.5},
         {"time": "invalid", "close": 99.0},  # invalid
-        {"time": "2026-06-08", "close": 0.0},  # zero close — filtered
+        {"time": "2026-06-10", "close": 0.0},  # zero close — filtered
         {"time": "2026-06-06", "close": 9.0},  # before base — filtered
     ]
     closes = _extract_sorted_closes(raw, base_date="20260607")
     assert [c[0] for c in closes] == ["20260607", "20260608", "20260609"]
     assert [c[1] for c in closes] == [10.0, 10.5, 11.0]
+
+
+@pytest.mark.parametrize(
+    "duplicate_rows",
+    [
+        [
+            {"time": "2026-06-07", "close": 10.0},
+            {"time": "20260607", "close": 10.0},
+        ],
+        [
+            {"time": "2026-06-07", "close": 10.0},
+            {"time": "20260607", "close": 99.0},
+        ],
+    ],
+)
+def test_extract_sorted_closes_rejects_duplicate_recommendation_day_in_any_order(
+    duplicate_rows,
+):
+    future = [{"time": "20260608", "close": 11.0}]
+    for rows in (duplicate_rows, list(reversed(duplicate_rows))):
+        assert _extract_sorted_closes(rows + future, base_date="20260607") == []
 
 
 def test_get_tracking_summary_empty(tmp_path: Path):

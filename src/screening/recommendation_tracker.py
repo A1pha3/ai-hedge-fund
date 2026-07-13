@@ -394,7 +394,14 @@ def fetch_actual_returns(
         except Exception as exc:  # pragma: no cover - 异常路径
             logger.debug("[Tracking] fetcher 异常 ticker=%s: %s", ticker, exc)
             continue
-        closes = _extract_sorted_closes(raw, base_date=cleaned_from)
+        duplicate_dates: set[str] = set()
+        closes = _extract_sorted_closes(
+            raw,
+            base_date=cleaned_from,
+            duplicate_dates_out=duplicate_dates,
+        )
+        if duplicate_dates:
+            continue
         if not closes:
             continue
         # 基准价: 推荐日当天或之后第一个交易日
@@ -417,6 +424,8 @@ def fetch_actual_returns(
 def _extract_sorted_closes(
     raw: list[dict[str, Any]],
     base_date: str,
+    *,
+    duplicate_dates_out: set[str] | None = None,
 ) -> list[tuple[str, float]]:
     """从 fetcher 原始数据中提取 (date, close) 列表, 按日期升序, 过滤非有限 / 零值。
 
@@ -425,13 +434,15 @@ def _extract_sorted_closes(
         base_date: 推荐日 (YYYYMMDD); 只保留 >= base_date 的数据点
 
     Returns:
-        按日期升序的 ``[(date_str_8, close), ...]``; 空值 / 0 / 非有限被剔除
+        按日期升序的 ``[(date_str_8, close), ...]``; 空值 / 0 / 非有限被剔除。
+        任一可用区间内的规范化日期重复时整段失败关闭并返回空列表。
     """
     base_dt = _parse_date(base_date)
     if base_dt is None:
         return []
 
     out: list[tuple[str, float]] = []
+    seen_dates: set[str] = set()
     for row in raw:
         time_str = str(row.get("time", "") or row.get("date", "") or "").strip()
         if not time_str:
@@ -439,10 +450,16 @@ def _extract_sorted_closes(
         row_dt = _parse_date(time_str)
         if row_dt is None or row_dt < base_dt:
             continue
+        normalized_date = _format_date(row_dt)
+        if normalized_date in seen_dates:
+            if duplicate_dates_out is not None:
+                duplicate_dates_out.add(normalized_date)
+            return []
+        seen_dates.add(normalized_date)
         close = _safe_float(row.get("close"), default=0.0)
         if close <= 0:
             continue
-        out.append((_format_date(row_dt), close))
+        out.append((normalized_date, close))
 
     out.sort(key=lambda x: x[0])
     return out

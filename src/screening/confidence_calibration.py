@@ -292,7 +292,11 @@ def _records_as_of(
         item["recommended_date"] = recommended.strftime("%Y%m%d")
         for field_name, realization_field in _RETURN_REALIZATION_DATES.items():
             realized_on = _normalize_trade_date(record.get(realization_field))
-            if realized_on is None or realized_on >= anchor:
+            if (
+                realized_on is None
+                or realized_on <= recommended
+                or realized_on >= anchor
+            ):
                 item.pop(field_name, None)
         snapshot.append(item)
     return snapshot

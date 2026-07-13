@@ -170,6 +170,44 @@ def test_realization_date_controls_label_admissibility_across_price_gaps() -> No
     assert after.items[0].expected_returns["t5"] == 8.0
 
 
+def test_strict_label_rejects_same_day_or_earlier_realization_date() -> None:
+    base_record = {
+        "ticker": "A",
+        "recommended_date": "20260105",
+        "model_version": "v2",
+        "recommendation_score": 0.5,
+        "next_day_return": 8.0,
+    }
+    for impossible_date in ("20260105", "20260104"):
+        report = compute_expected_returns(
+            recommendations=[{"ticker": "X", "score_b": 0.5}],
+            as_of="20260210",
+            model_version="v2",
+            history_records=[
+                {**base_record, "return_t1_date": impossible_date}
+            ],
+        )
+        assert report.items[0].expected_returns["t1"] is None
+
+
+def test_missing_recommended_date_excludes_strict_record() -> None:
+    report = compute_expected_returns(
+        recommendations=[{"ticker": "X", "score_b": 0.5}],
+        as_of="20260210",
+        model_version="v2",
+        history_records=[
+            {
+                "ticker": "A",
+                "model_version": "v2",
+                "recommendation_score": 0.5,
+                "next_day_return": 8.0,
+                "return_t1_date": "20260106",
+            }
+        ],
+    )
+    assert report.total_samples == 0
+
+
 def test_appending_post_cutoff_label_value_and_date_does_not_change_past() -> None:
     records = [
         {

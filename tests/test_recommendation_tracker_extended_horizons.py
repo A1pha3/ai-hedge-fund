@@ -98,6 +98,32 @@ def test_fetch_actual_returns_persists_actual_observation_date_across_gaps():
     assert result["000009"]["day_5_date"] == "20260212"
 
 
+@pytest.mark.parametrize(
+    "duplicate_rows",
+    [
+        [
+            ("2026-06-03", 10.2),
+            ("20260603", 10.2),
+        ],
+        [
+            ("2026-06-03", 10.2),
+            ("20260603", 99.0),
+        ],
+    ],
+)
+def test_fetch_actual_returns_rejects_duplicate_future_day_in_any_order(
+    duplicate_rows,
+):
+    base = [("20260601", 10.0), ("20260602", 10.1)]
+    tail = [("20260604", 10.3), ("20260605", 10.4)]
+    for rows in (duplicate_rows, list(reversed(duplicate_rows))):
+        fetcher = _mock_fetcher_map({"000008": base + rows + tail})
+        result = fetch_actual_returns(
+            ["000008"], "20260601", "20260610", use_data_fetcher=fetcher
+        )
+        assert "000008" not in result
+
+
 def test_fetch_actual_returns_computes_day20():
     """验证 fetch_actual_returns 计算 T+20 收益。"""
     prices = []
