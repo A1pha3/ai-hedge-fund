@@ -762,6 +762,31 @@ def test_generate_daily_action_uses_default_price_loader_for_matured_pnl(tmp_pat
     assert tracker.state.nav == pytest.approx(1.0 + expected * 0.10, abs=1e-9)
 
 
+def test_load_prices_for_ticker_publishes_download_with_atomic_writer(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    import pandas as pd
+    from src.screening.offensive import daily_action as da
+    from src.tools import tushare_api
+
+    raw = pd.DataFrame(
+        [{"trade_date": "20260710", "close": 10.0, "open": 9.8, "high": 10.2, "low": 9.7, "pct_chg": 2.0}]
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(tushare_api, "get_tushare_token", lambda: "token")
+    monkeypatch.setitem(sys.modules, "tushare", SimpleNamespace(pro_api=lambda token: SimpleNamespace(daily=lambda **kwargs: raw)))
+    published = []
+    monkeypatch.setattr(da, "atomic_write_csv", lambda path, frame: published.append((path, frame.copy())))
+
+    result = da._load_prices_for_ticker("000001", "20260710")
+
+    assert len(result) == 1
+    assert len(published) == 1
+    assert published[0][0] == Path("data/price_cache/000001.csv")
+    assert not published[0][0].exists()
+
+
 def test_load_prices_for_ticker_truncates_cached_rows_to_report_date(tmp_path, monkeypatch):
     """本地 price_cache 有未来行时, report 模式不能读取信号日之后的数据."""
     import pandas as pd

@@ -35,6 +35,7 @@ from src.screening.offensive.paper_tracker import PaperTracker, TradeAction
 from src.screening.offensive.risk_framework import build_risk_plan
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
 from src.screening.offensive.setups.oversold_bounce import OversoldBounceSetup
+from src.utils.atomic_files import atomic_write_csv
 
 logger = logging.getLogger(__name__)
 
@@ -710,7 +711,7 @@ def _load_prices_for_ticker(ticker: str, report_date: str) -> pd.DataFrame:
         .reset_index(drop=True)
     )
     cache.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(cache, index=False)
+    atomic_write_csv(cache, df)
     if pd.notna(cutoff):
         df = df[df["date"] <= cutoff]
     return df
