@@ -1670,10 +1670,10 @@ def test_regime_size_factor_btst_crisis_increases_position(tmp_path, monkeypatch
     assert len(actions_normal) == 1
     normal_pct = actions_normal[0].kelly_pct
 
-    # BTST crisis 应放大 1.2×: normal=0.15 (per-setup cap), crisis=0.18 (regime cap)
+    # BTST crisis 应放大 1.2×: normal=0.10 (per-setup cap), crisis=0.12 (regime cap)
     assert crisis_pct > normal_pct, f"crisis {crisis_pct} should exceed normal {normal_pct}"
-    assert abs(crisis_pct - 0.18) < 1e-6, f"crisis expected 0.18, got {crisis_pct}"
-    assert abs(normal_pct - 0.15) < 1e-6, f"normal expected 0.15, got {normal_pct}"
+    assert abs(crisis_pct - 0.12) < 1e-6, f"crisis expected 0.12, got {crisis_pct}"
+    assert abs(normal_pct - 0.10) < 1e-6, f"normal expected 0.10, got {normal_pct}"
 
 
 def test_regime_size_factor_oversold_crisis_no_increase():
@@ -1690,11 +1690,11 @@ def test_regime_size_factor_oversold_crisis_no_increase():
 
 
 def test_regime_size_factor_normal_no_change(tmp_path, monkeypatch):
-    """normal regime 下仓位不放大, 等于 BTST per-setup cap (0.15)."""
+    """normal regime 下仓位不放大, 等于 BTST per-setup cap (0.10)."""
     monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
     actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "normal", "btst_breakout")
     assert len(actions) == 1
-    assert abs(actions[0].kelly_pct - 0.15) < 1e-6  # BTST per-setup cap, no regime boost
+    assert abs(actions[0].kelly_pct - 0.10) < 1e-6  # BTST per-setup cap, no regime boost
 
 
 def test_regime_sizing_disabled_via_env(tmp_path, monkeypatch):
@@ -1702,19 +1702,19 @@ def test_regime_sizing_disabled_via_env(tmp_path, monkeypatch):
     monkeypatch.setenv("DAILY_ACTION_REGIME_SIZING", "false")
     actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
     assert len(actions) == 1
-    # env 关闭 → regime_factor=1.0 → 仓位退回 BTST per-setup cap (0.15), 不放大到 0.18
-    assert abs(actions[0].kelly_pct - 0.15) < 1e-6, f"expected 0.15, got {actions[0].kelly_pct}"
+    # env 关闭 → regime_factor=1.0 → 仓位退回 BTST per-setup cap (0.10), 不放大到 0.12
+    assert abs(actions[0].kelly_pct - 0.10) < 1e-6, f"expected 0.10, got {actions[0].kelly_pct}"
 
 
 def test_regime_factor_capped_at_hard_limit(tmp_path, monkeypatch):
     """regime 放大不超 BTST per-setup cap × 1.2 硬上限, 即使 factor 更大."""
     monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
-    # BTST crisis factor=1.2 → 0.15×1.2=0.18, 正好等于硬上限, 不应突破
+    # BTST crisis factor=1.2 → 0.10×1.2=0.12, 正好等于硬上限, 不应突破
     actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
     assert len(actions) == 1
     from src.screening.offensive.daily_action import _MAX_POSITION_PCT_BY_SETUP, _REGIME_POSITION_CAP_MULTIPLE
 
-    btst_cap = _MAX_POSITION_PCT_BY_SETUP.get("btst_breakout", _MAX_POSITION_PCT_BY_SETUP.get("btst_breakout", 0.15))
+    btst_cap = _MAX_POSITION_PCT_BY_SETUP.get("btst_breakout", _MAX_POSITION_PCT_BY_SETUP.get("btst_breakout", 0.10))
     hard_cap = btst_cap * _REGIME_POSITION_CAP_MULTIPLE
     assert actions[0].kelly_pct <= hard_cap + 1e-9
     assert abs(actions[0].kelly_pct - hard_cap) < 1e-6
@@ -2147,9 +2147,8 @@ def test_portfolio_cap_escape_hatch_restores_old_behavior(tmp_path, monkeypatch)
         scan_mode="report",
         price_loader=lambda ticker, report_date: prices.copy(),
     )
-    # 旧行为: 忽略已开仓, BTST per-setup cap=15%, 5只×15%=75% > 60% → 只能开 4 只
-    # (4×15%=60%, 刚好触上限). 若用 fake_setup (默认 10%) 则可全开 5×10%=50% < 60%.
-    assert len(actions) == 4, f"逃生口=false: BTST 15%×4=60% 触上限, 实际 {len(actions)} 只"
+    # 旧行为: 忽略已开仓, 5只×10%=50%, 全部可录入.
+    assert len(actions) == 5, f"逃生口=false: BTST 10%×5=50%, 实际 {len(actions)} 只"
 
 
 def test_portfolio_cap_blocked_count_reports_all_skipped(tmp_path, monkeypatch):

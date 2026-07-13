@@ -18,12 +18,17 @@ import logging
 import math
 import os
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 import pandas as pd
 
+from src.screening.offensive.daily_action_service import (
+    ActionItem,
+    PlanCandidate,
+    RegimeAuthorization,
+)
 from src.screening.offensive.kelly import compute_kelly_size
 from src.screening.offensive.known_distributions import get_known_distribution
 from src.screening.offensive.paper_tracker import PaperTracker, TradeAction
@@ -39,7 +44,7 @@ logger = logging.getLogger(__name__)
 # OversoldBounce 无可证明 alpha (E=+0.34%, CI 跨 0), 严格限制仓位.
 _MAX_POSITION_PCT = 0.10  # 默认单票上限
 _MAX_POSITION_PCT_BY_SETUP: dict[str, float] = {
-    "btst_breakout": 0.15,       # BTST: 有 alpha, 允许到 15% (regime 加仓后 18%)
+    "btst_breakout": 0.10,       # v2 normal cap 10%; explicit crisis authorization permits 12%
     "oversold_bounce": 0.05,     # OB: 无 alpha, 限制到 5% (即使恢复也低仓位)
 }
 _MAX_PORTFOLO_PCT = 0.60  # 组合 ≤ 60%
@@ -523,6 +528,101 @@ class DailyAction:
     block_reason: str = ""
 
 
+@dataclass(frozen=True)
+class BlockedCandidate:
+    ticker: str
+    reason: str
+    reference_price: float
+
+
+@dataclass(frozen=True)
+class DailyActionScan:
+    signal_date: date
+    candidates: tuple[PlanCandidate, ...]
+    blocked_candidates: tuple[BlockedCandidate, ...]
+    reference_prices: tuple[tuple[str, float], ...] = ()
+
+
+@dataclass(frozen=True)
+class DailyActionV2Run:
+    service_run: Any
+    plans: tuple[Any, ...]
+    open_positions: tuple[Any, ...]
+    blocked_candidates: tuple[BlockedCandidate, ...]
+    reference_prices: tuple[tuple[str, float], ...]
+
+
+class _ScannerCompatibilityState:
+    """In-memory seam for reusing legacy detection without legacy state I/O."""
+
+    def __init__(self) -> None:
+        self.last_action_stale_reason = ""
+        self.last_action_trade_date = ""
+        self.last_action_regime = "normal"
+        self.last_blocked_candidates: list[DailyAction] = []
+        self.last_portfolio_exposure = 0.0
+        self.state = type("ScannerPortfolio", (), {"open_exposure": 0.0})()
+
+    def close_matured(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+        return []
+
+    def drawdown_action(self) -> str:
+        return "normal"
+
+    def open_positions_detail(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+        return []
+
+    def record_skip(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+def run_daily_action_v2(service: Any, scan: DailyActionScan) -> DailyActionV2Run:
+    """Route pure scanner output through the auditable v2 lifecycle service."""
+    if not all(isinstance(candidate, PlanCandidate) for candidate in scan.candidates):
+        raise TypeError("DailyActionScan candidates must be PlanCandidate instances")
+    service_run = service.run(scan.signal_date, scan.candidates)
+    # Idempotent reruns still display the one persisted plan for this signal date.
+    displayed_tickers = {candidate.ticker for candidate in scan.candidates}
+    persisted = tuple(
+        ActionItem(plan.trade_id, plan.ticker, "entry_planned", "pending", "pending")
+        for plan in service.repository.planned_trades()
+        if plan.signal_date == scan.signal_date and plan.ticker in displayed_tickers
+    )
+    return DailyActionV2Run(
+        service_run,
+        persisted,
+        service_run.open_positions,
+        scan.blocked_candidates,
+        scan.reference_prices,
+    )
+
+
+def render_daily_action_v2(run: DailyActionV2Run) -> str:
+    """Render lifecycle/source labels without presenting reference prices as fills."""
+    from src.screening.offensive.trade_lifecycle import FillSource
+
+    references = dict(run.reference_prices)
+    lines = ["每日动作 v2（模拟台账）", "参考价（信号日收盘，仅供计划）:"]
+    for plan in run.plans:
+        lines.append(f"  {plan.ticker} 参考价 ~{references.get(plan.ticker, 0.0):.2f} 待成交")
+    lines.append("模拟成交（synthetic_open）:")
+    for trade in run.open_positions:
+        if trade.fill_source is FillSource.SYNTHETIC_OPEN:
+            lines.append(f"  {trade.ticker} 模拟成交 @{trade.raw_entry_price:.2f}")
+    lines.append("确认成交（broker_confirmed）:")
+    for trade in run.open_positions:
+        if trade.fill_source in {FillSource.MANUAL_CONFIRMATION, FillSource.BROKER_IMPORT}:
+            lines.append(f"  {trade.ticker} 确认成交 @{trade.raw_entry_price:.2f}")
+    if run.blocked_candidates:
+        lines.append("不可计划候选:")
+        for candidate in run.blocked_candidates:
+            lines.append(
+                f"  {candidate.ticker} 参考价 ~{candidate.reference_price:.2f} "
+                f"原因={candidate.reason}"
+            )
+    return "\n".join(lines)
+
+
 def _load_prices_for_ticker(ticker: str, report_date: str) -> pd.DataFrame:
     """加载 ticker 价格 (tushare 优先, 含报告日前的历史)。"""
     cutoff = pd.to_datetime(str(report_date).replace("-", ""), format="%Y%m%d", errors="coerce")
@@ -576,6 +676,8 @@ def generate_daily_action(
     price_loader: Any = None,
     scan_mode: str = "full_market",
     end_date: str | None = None,
+    legacy_persistence: bool = True,
+    legacy_capacity: bool = True,
 ) -> list[DailyAction]:
     """生成今日机械动作。
 
@@ -654,6 +756,7 @@ def generate_daily_action(
         recs = []  # report 模式专用
 
     tracker.last_action_trade_date = trade_date
+    tracker.last_action_regime = regime
 
     # 2. 先平到期仓位 + 回填 realized P&L → 驱动 drawdown (闭环核心)
     tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=_load_prices)
@@ -845,13 +948,13 @@ def generate_daily_action(
 
         # 行业集中度限制
         ticker_industry = _ticker_industry_map.get(action.ticker, "unknown")
-        if industry_count_today.get(ticker_industry, 0) >= _MAX_PER_INDUstry_DAILY:
+        if legacy_capacity and industry_count_today.get(ticker_industry, 0) >= _MAX_PER_INDUstry_DAILY:
             action.block_reason = f"行业集中 ({ticker_industry} 已 {_MAX_PER_INDUstry_DAILY} 仓)"
             blocked_candidates.append(action)
             continue
 
         kelly_pct = action.kelly_pct
-        if portfolio_position_used + kelly_pct > _MAX_PORTFOLO_PCT:
+        if legacy_capacity and portfolio_position_used + kelly_pct > _MAX_PORTFOLO_PCT:
             kelly_pct = max(0.0, _MAX_PORTFOLO_PCT - portfolio_position_used)
         if kelly_pct <= 0:
             # 剩余敞口不够 → 本候选及之后全部因敞口上限被跳过.
@@ -866,20 +969,21 @@ def generate_daily_action(
         portfolio_position_used += kelly_pct
         industry_count_today[ticker_industry] = industry_count_today.get(ticker_industry, 0) + 1
 
-        tracker.record_buy(
-            trade_date=trade_date,
-            ticker=action.ticker,
-            setup=action.setup,
-            horizon=horizon,
-            entry_price=action.entry_price,
-            kelly_pct=kelly_pct,
-            soft_stop=action.soft_stop,
-            hard_stop=action.hard_stop,
-            invalidation=action.invalidation_condition,
-            reasoning=action.reasoning,
-            trigger_strength=action.trigger_strength,
-            degraded=action.degraded,
-        )
+        if legacy_persistence:
+            tracker.record_buy(
+                trade_date=trade_date,
+                ticker=action.ticker,
+                setup=action.setup,
+                horizon=horizon,
+                entry_price=action.entry_price,
+                kelly_pct=kelly_pct,
+                soft_stop=action.soft_stop,
+                hard_stop=action.hard_stop,
+                invalidation=action.invalidation_condition,
+                reasoning=action.reasoning,
+                trigger_strength=action.trigger_strength,
+                degraded=action.degraded,
+            )
 
     # C-DAILY-ACTION-POSITION-VISIBILITY: 暴露被风控过滤的候选 (按强度已排序),
     # 让 operator 看到"今日哪些票可交易" — 上限决定买什么, 不决定看什么.
@@ -888,6 +992,65 @@ def generate_daily_action(
     tracker.last_portfolio_exposure = portfolio_position_used
     tracker.last_blocked_candidates = blocked_candidates
     return actions
+
+
+def scan_daily_action_candidates(
+    *,
+    report_path: Path | str | None = None,
+    tickers_to_scan: int = 30,
+    price_loader: Any = None,
+    scan_mode: str = "full_market",
+    end_date: str | None = None,
+) -> DailyActionScan:
+    """Scan cached market data without writing either legacy paper-trading store."""
+    tracker = _ScannerCompatibilityState()
+
+    actions = generate_daily_action(
+        report_path=report_path,
+        tracker=tracker,
+        tickers_to_scan=tickers_to_scan,
+        price_loader=price_loader,
+        scan_mode=scan_mode,
+        end_date=end_date,
+        legacy_persistence=False,
+        legacy_capacity=False,
+    )
+    signal_text = str(tracker.last_action_trade_date or end_date or "").replace("-", "")
+    if not signal_text:
+        signal_text = _current_cn_datetime().strftime("%Y%m%d")
+    signal_date = datetime.strptime(signal_text, "%Y%m%d").date()
+    regime = str(tracker.last_action_regime)
+    authorization = {
+        "crisis": RegimeAuthorization.BTST_CRISIS,
+        "risk_off": RegimeAuthorization.BTST_RISK_OFF,
+    }.get(regime, RegimeAuthorization.NORMAL)
+    tradable = tuple(action for action in actions if not action.degraded)
+    candidates = tuple(
+        PlanCandidate(
+            action.ticker,
+            action.setup,
+            "v2",
+            action.kelly_pct,
+            priority,
+            authorization,
+        )
+        for priority, action in enumerate(tradable, 1)
+    )
+    degraded = tuple(
+        BlockedCandidate(action.ticker, "incomplete_setup_data", action.entry_price)
+        for action in actions
+        if action.degraded
+    )
+    blocked = degraded + tuple(
+        BlockedCandidate(
+            action.ticker,
+            action.block_reason or "scanner_policy",
+            action.entry_price,
+        )
+        for action in tracker.last_blocked_candidates
+    )
+    references = tuple((action.ticker, action.entry_price) for action in actions)
+    return DailyActionScan(signal_date, candidates, blocked, references)
 
 
 def _render_candidate_list(
