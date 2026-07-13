@@ -265,6 +265,8 @@ def _load_st_tickers() -> set[str]:
 
 def _compact_trade_date(value: object) -> str:
     text = str(value or "").strip()
+    if not text:
+        return ""
     if len(text) == 8 and text.isdigit():
         return text
     try:

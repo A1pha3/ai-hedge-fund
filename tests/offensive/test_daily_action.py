@@ -1875,15 +1875,36 @@ def test_record_buy_idempotent_across_instances(tmp_path):
 # ---- NS-17 silent-except regression guards (autodev-32) ----
 
 
+def test_load_st_tickers_does_not_import_tushare_without_token(monkeypatch):
+    from src.screening.offensive.daily_action import _load_st_tickers
+    from src.tools import tushare_api
+
+    monkeypatch.setattr(tushare_api, "get_tushare_token", lambda: "")
+
+    class ForbiddenTushare:
+        def __getattr__(self, name):
+            raise AssertionError(f"Tushare must not be used without credentials: {name}")
+
+    monkeypatch.setitem(__import__("sys").modules, "tushare", ForbiddenTushare())
+    assert _load_st_tickers() == set()
+
+
 def test_compact_trade_date_invalid_logs_warning(caplog):
     """_compact_trade_date with unparseable input logs warning (not silent)."""
     from src.screening.offensive.daily_action import _compact_trade_date
-    import logging
-
-    caplog.set_level(logging.WARNING)
-    result = _compact_trade_date(None)
+    result = _compact_trade_date("not-a-date")
     assert result == ""
-    assert any("daily_action" in r.name and "_compact_trade_date failed" in r.message for r in caplog.records), f"Expected warning log, got: {[r.message for r in caplog.records]}"
+    assert any("_compact_trade_date failed" in record.message for record in caplog.records)
+
+
+def test_compact_trade_date_absent_value_is_quiet(caplog):
+    """Absent auto-report dates are expected and must not emit warning tracebacks."""
+    from src.screening.offensive.daily_action import _compact_trade_date
+
+    caplog.set_level("WARNING")
+    for value in (None, "", "   "):
+        assert _compact_trade_date(value) == ""
+    assert not caplog.records
 
 
 def test_compact_trade_date_edge_cases():
