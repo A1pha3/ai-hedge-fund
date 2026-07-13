@@ -169,13 +169,41 @@ class ExitReplayResult:
 
 
 @dataclass(frozen=True)
+class ReplayArmFailure:
+    """One replay arm's structured failure, including every attempted open."""
+
+    reason: str
+    deferred_exits: tuple[tuple[str, str], ...] = ()
+
+
+class ReplayIneligibleError(ValueError):
+    """Public replay failure that preserves structured arm audit evidence."""
+
+    def __init__(self, failure: ReplayArmFailure) -> None:
+        super().__init__(failure.reason)
+        self.failure = failure
+
+    @property
+    def reason(self) -> str:
+        return self.failure.reason
+
+
+@dataclass(frozen=True)
 class PairedExitExclusion:
-    """A common-mask removal with independently auditable leg failures."""
+    """A common-mask removal with independently auditable arm failures."""
 
     trade_id: str
     reason: str
-    baseline_reason: str | None = None
-    challenger_reason: str | None = None
+    baseline_failure: ReplayArmFailure | None = None
+    challenger_failure: ReplayArmFailure | None = None
+
+    @property
+    def baseline_reason(self) -> str | None:
+        return self.baseline_failure.reason if self.baseline_failure else None
+
+    @property
+    def challenger_reason(self) -> str | None:
+        return self.challenger_failure.reason if self.challenger_failure else None
 
 
 @dataclass(frozen=True)
@@ -189,10 +217,11 @@ class PairedExitResult:
     common_eligible: int
 
 
-class _ReplayIneligible(ValueError):
-    def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
+def _ineligible(
+    reason: str,
+    deferred_exits: tuple[tuple[str, str], ...] = (),
+) -> ReplayIneligibleError:
+    return ReplayIneligibleError(ReplayArmFailure(reason, deferred_exits))
 
 
 def _finite_returns(values: Iterable[float]) -> tuple[float, ...]:
@@ -818,7 +847,7 @@ def _plain_date(value: str) -> date:
     try:
         return datetime.strptime(value, "%Y%m%d").date()
     except (TypeError, ValueError) as exc:
-        raise _ReplayIneligible("invalid_session_date") from exc
+        raise _ineligible("invalid_session_date") from exc
 
 
 def _session_execution_status(session: LegacySession) -> ExecutionStatus:
@@ -838,19 +867,19 @@ def _session_execution_status(session: LegacySession) -> ExecutionStatus:
 
 def _validate_replay_path(path: LegacyTradePath) -> None:
     if len(path.sessions) < 10:
-        raise _ReplayIneligible("incomplete_session_10_window")
+        raise _ineligible("incomplete_session_10_window")
     dates = tuple(_plain_date(session.date) for session in path.sessions)
     if any(current <= previous for previous, current in zip(dates, dates[1:])):
-        raise _ReplayIneligible("nonincreasing_session_dates")
+        raise _ineligible("nonincreasing_session_dates")
     for session in path.sessions[:9]:
         if _optional_positive_number(session.atr) is None:
-            raise _ReplayIneligible("causal_atr_unavailable")
+            raise _ineligible("causal_atr_unavailable")
     entry = path.sessions[0]
     entry_status = _session_execution_status(entry)
     if entry_status is ExecutionStatus.UNKNOWN_QUEUE:
-        raise _ReplayIneligible("entry_unknown_queue")
+        raise _ineligible("entry_unknown_queue")
     if entry_status is ExecutionStatus.UNEXECUTABLE_PROXY:
-        raise _ReplayIneligible("entry_unexecutable_proxy")
+        raise _ineligible("entry_unexecutable_proxy")
 
 
 def _entry_fill(
@@ -882,7 +911,7 @@ def _find_executable_exit(
             else "unexecutable_proxy"
         )
         deferred.append((session.date, reason))
-    raise _ReplayIneligible("exit_path_exhausted")
+    raise _ineligible("exit_path_exhausted", tuple(deferred))
 
 
 def _replay_result(
@@ -896,7 +925,7 @@ def _replay_result(
 ) -> ExitReplayResult:
     scheduled_index = trigger_index + 1
     if scheduled_index >= len(path.sessions):
-        raise _ReplayIneligible("exit_path_exhausted")
+        raise _ineligible("exit_path_exhausted")
     exit_session, deferred = _find_executable_exit(
         path,
         scheduled_index=scheduled_index,
@@ -951,7 +980,7 @@ def replay_fixed_baseline(
         ),
     )
     if not decision.should_exit_next_open:
-        raise _ReplayIneligible("baseline_trigger_missing")
+        raise _ineligible("baseline_trigger_missing")
     return _replay_result(
         path,
         trigger_index=trigger_index,
@@ -991,7 +1020,7 @@ def replay_shadow_challenger(
                 entry_fill=entry_fill,
                 entry_date=entry_date,
             )
-    raise _ReplayIneligible("challenger_trigger_missing")
+    raise _ineligible("challenger_trigger_missing")
 
 
 def replay_paired(
@@ -1009,27 +1038,27 @@ def replay_paired(
         total_paths += 1
         try:
             _validate_replay_path(path)
-        except _ReplayIneligible as exc:
+        except ReplayIneligibleError as exc:
             excluded.append(PairedExitExclusion(path.trade_id, exc.reason))
             continue
 
         baseline_row: ExitReplayResult | None = None
         challenger_row: ExitReplayResult | None = None
-        baseline_reason: str | None = None
-        challenger_reason: str | None = None
+        baseline_failure: ReplayArmFailure | None = None
+        challenger_failure: ReplayArmFailure | None = None
         try:
             baseline_row = replay_fixed_baseline(path, costs=costs)
-        except _ReplayIneligible as exc:
-            baseline_reason = exc.reason
+        except ReplayIneligibleError as exc:
+            baseline_failure = exc.failure
         try:
             challenger_row = replay_shadow_challenger(path, costs=costs)
-        except _ReplayIneligible as exc:
-            challenger_reason = exc.reason
+        except ReplayIneligibleError as exc:
+            challenger_failure = exc.failure
 
         if baseline_row is None or challenger_row is None:
-            if baseline_reason and challenger_reason:
+            if baseline_failure and challenger_failure:
                 reason = "both_exits_not_executable"
-            elif baseline_reason:
+            elif baseline_failure:
                 reason = "baseline_exit_not_executable"
             else:
                 reason = "challenger_exit_not_executable"
@@ -1037,8 +1066,8 @@ def replay_paired(
                 PairedExitExclusion(
                     path.trade_id,
                     reason,
-                    baseline_reason,
-                    challenger_reason,
+                    baseline_failure,
+                    challenger_failure,
                 )
             )
             continue
@@ -1063,6 +1092,8 @@ __all__ = [
     "ExitReplayResult",
     "PairedExitExclusion",
     "PairedExitResult",
+    "ReplayArmFailure",
+    "ReplayIneligibleError",
     "audit_coverage",
     "build_legacy_cohort",
     "replay_fixed_baseline",

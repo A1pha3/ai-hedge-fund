@@ -11,6 +11,7 @@ import pytest
 from src.research.exit_shadow_research import (
     LegacySession,
     LegacyTradePath,
+    ReplayIneligibleError,
     audit_coverage,
     build_legacy_cohort,
     replay_fixed_baseline,
@@ -987,6 +988,37 @@ def test_common_mask_excludes_both_arms_when_only_baseline_cannot_execute(
     assert result.excluded[0].reason == "baseline_exit_not_executable"
     assert result.excluded[0].baseline_reason == "exit_path_exhausted"
     assert result.excluded[0].challenger_reason is None
+
+
+def test_exhausted_baseline_preserves_mixed_deferral_trace(
+    single_trade_path: LegacyTradePath,
+) -> None:
+    sessions = list(single_trade_path.sessions)
+    sessions[9] = replace(
+        sessions[9],
+        open=sessions[9].limit_up,
+        high=sessions[9].limit_up,
+        low=sessions[9].limit_up - 0.2,
+        close=sessions[9].limit_up - 0.1,
+    )
+    sessions[10] = replace(sessions[10], suspended=True)
+    sessions[11] = replace(sessions[11], volume=None, suspended=False)
+    path = replace(single_trade_path, sessions=tuple(sessions))
+
+    with pytest.raises(ReplayIneligibleError) as raised:
+        replay_fixed_baseline(path, costs=FIXED_TEST_COSTS)
+
+    assert raised.value.failure.reason == "exit_path_exhausted"
+    assert raised.value.failure.deferred_exits == (
+        (sessions[9].date, "unknown_queue"),
+        (sessions[10].date, "unexecutable_proxy"),
+        (sessions[11].date, "unknown_queue"),
+    )
+
+    paired = replay_paired((path,), costs=FIXED_TEST_COSTS)
+    exclusion = paired.excluded[0]
+    assert exclusion.baseline_failure == raised.value.failure
+    assert exclusion.challenger_failure is None
 
 
 def test_common_mask_excludes_missing_causal_atr_with_explicit_reason(
