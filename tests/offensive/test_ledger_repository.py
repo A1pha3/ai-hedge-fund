@@ -7,11 +7,17 @@ import sqlite3
 import pytest
 
 from src.screening.offensive.ledger_repository import LedgerRepository
-from src.screening.offensive.trade_lifecycle import ExecutionMode, FillSource, TradeState
+from src.screening.offensive.trade_lifecycle import (
+    ExecutionMode,
+    FillSource,
+    TradeState,
+)
 
 
 def _repo(tmp_path: Path) -> LedgerRepository:
-    repo = LedgerRepository(tmp_path / "ledger.sqlite3", ledger_id="test", initial_cash=100_000)
+    repo = LedgerRepository(
+        tmp_path / "ledger.sqlite3", ledger_id="test", initial_cash=100_000
+    )
     repo.initialize()
     return repo
 
@@ -153,7 +159,10 @@ def test_concurrent_exit_pending_is_one_transition(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("schema_version", "initial_cash", "message"),
-    [(99, 100_000, "unsupported schema version"), (1, 200_000, "initial_cash mismatch")],
+    [
+        (99, 100_000, "unsupported schema version"),
+        (1, 200_000, "initial_cash mismatch"),
+    ],
 )
 def test_initialize_rejects_incompatible_existing_metadata(
     tmp_path: Path, schema_version: int, initial_cash: float, message: str
@@ -239,7 +248,9 @@ def test_exit_defer_close_updates_state_events_and_cash(tmp_path: Path) -> None:
     opened = _opened(repo)
     pending = repo.mark_exit_pending(opened.trade_id, date(2026, 7, 20))
     deferred = repo.defer_exit(pending.trade_id, date(2026, 7, 21), exit_line=9.5)
-    closed = repo.close_trade(deferred.trade_id, date(2026, 7, 22), 11.0, 5.0, 11.0, 20.0)
+    closed = repo.close_trade(
+        deferred.trade_id, date(2026, 7, 22), 11.0, 5.0, 11.0, 20.0
+    )
 
     assert closed.state is TradeState.CLOSED
     assert repo.open_trades() == []
@@ -255,7 +266,9 @@ def test_valuation_upsert_is_ledger_isolated(tmp_path: Path) -> None:
     second = LedgerRepository(path, ledger_id="second", initial_cash=200_000)
     first.initialize()
     second.initialize()
-    first.record_valuation(date(2026, 7, 13), 90_000, 11_000, 1.01, 1.02, -0.01, ["000001"])
+    first.record_valuation(
+        date(2026, 7, 13), 90_000, 11_000, 1.01, 1.02, -0.01, ["000001"]
+    )
     first.record_valuation(date(2026, 7, 13), 91_000, 10_000, 1.01, 1.02, -0.01, [])
     second.record_valuation(date(2026, 7, 13), 200_000, 0, 1.0, 1.0, 0.0, [])
 
@@ -276,3 +289,60 @@ def test_repository_does_not_touch_legacy_paper_directories(tmp_path: Path) -> N
     repo.record_valuation(date(2026, 7, 13), 90_000, 10_000, 1.0, 1.0, 0.0, [])
 
     assert {path: _tree_snapshot(path) for path in protected} == before
+
+
+def test_planned_trades_filters_due_date_and_orders_by_priority(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    later = repo.create_plan(
+        "000003", "btst", "v1", date(2026, 7, 10), date(2026, 7, 14), 0.1, 1
+    )
+    low = repo.create_plan(
+        "000002", "btst", "v1", date(2026, 7, 10), date(2026, 7, 13), 0.1, 2
+    )
+    high = repo.create_plan(
+        "000001", "btst", "v1", date(2026, 7, 10), date(2026, 7, 13), 0.1, 1
+    )
+
+    assert [trade.trade_id for trade in repo.planned_trades(date(2026, 7, 13))] == [
+        high.trade_id,
+        low.trade_id,
+    ]
+    assert later.trade_id not in {
+        trade.trade_id for trade in repo.planned_trades(date(2026, 7, 13))
+    }
+
+
+def test_skip_plan_is_idempotent_and_conflicting_reason_rolls_back(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    plan = _plan(repo)
+    skipped = repo.skip_plan(plan.trade_id, date(2026, 7, 13), "portfolio_capacity")
+    repeated = repo.skip_plan(plan.trade_id, date(2026, 7, 13), "portfolio_capacity")
+
+    assert skipped.state is repeated.state is TradeState.SKIPPED
+    assert repo.count_events(plan.trade_id, "PLAN_SKIPPED") == 1
+    with pytest.raises(ValueError, match="conflicting idempotent event"):
+        repo.skip_plan(plan.trade_id, date(2026, 7, 13), "cash_capacity")
+    assert repo.count_events(plan.trade_id, "PLAN_SKIPPED") == 1
+
+
+def test_latest_valuation_is_ledger_scoped_and_peak_is_monotonic_input(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "ledger.sqlite3"
+    first = LedgerRepository(path, "first", 100_000)
+    second = LedgerRepository(path, "second", 200_000)
+    first.initialize()
+    second.initialize()
+    first.record_valuation(date(2026, 7, 13), 90_000, 10_000, 1.0, 1.0, 0.0, [])
+    first.record_valuation(
+        date(2026, 7, 14), 89_000, 10_000, 0.99, 1.0, -0.01, ["000001"]
+    )
+    second.record_valuation(date(2026, 7, 14), 200_000, 0, 1.0, 1.2, 0.0, [])
+
+    valuation = first.latest_valuation()
+    assert valuation is not None
+    assert valuation.trade_date == date(2026, 7, 14)
+    assert valuation.peak == 1.0
+    assert valuation.stale_tickers == ("000001",)

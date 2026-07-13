@@ -44,6 +44,17 @@ class LedgerTrade:
     forced_exit_target_date: date | None
 
 
+@dataclass(frozen=True)
+class DailyValuation:
+    trade_date: date
+    cash: float
+    market_value: float
+    nav: float
+    peak: float
+    drawdown: float
+    stale_tickers: tuple[str, ...]
+
+
 class LedgerRepository:
     SCHEMA_VERSION = 1
 
@@ -159,7 +170,12 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
         priority: int,
     ) -> LedgerTrade:
         identity = TradeIdentity(
-            self.ledger_id, setup, setup_version, ticker, signal_date, planned_entry_date
+            self.ledger_id,
+            setup,
+            setup_version,
+            ticker,
+            signal_date,
+            planned_entry_date,
         )
         trade_id = deterministic_trade_id(identity)
         with self._connect() as conn:
@@ -184,7 +200,11 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
             )
             if cursor.rowcount:
                 self._insert_event(
-                    conn, trade_id, "PLAN_CREATED", signal_date, payload={"priority": priority}
+                    conn,
+                    trade_id,
+                    "PLAN_CREATED",
+                    signal_date,
+                    payload={"priority": priority},
                 )
             return self._get_trade(conn, trade_id)
 
@@ -294,7 +314,9 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
                     armed_at.isoformat() if armed_at else None,
                     highest_close,
                     exit_line,
-                    forced_exit_target_date.isoformat() if forced_exit_target_date else None,
+                    forced_exit_target_date.isoformat()
+                    if forced_exit_target_date
+                    else None,
                     trade_id,
                 ),
             )
@@ -323,7 +345,9 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
             self._begin_write(conn)
             current = self._get_trade(conn, trade_id)
             if current.state is not TradeState.EXIT_PENDING:
-                raise ValueError(f"cannot defer exit for trade in state {current.state}")
+                raise ValueError(
+                    f"cannot defer exit for trade in state {current.state}"
+                )
             conn.execute(
                 """UPDATE trades SET last_evaluated_date=?, highest_close=COALESCE(?, highest_close),
                    exit_line=COALESCE(?, exit_line),
@@ -332,7 +356,9 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
                     evaluation_date.isoformat(),
                     highest_close,
                     exit_line,
-                    forced_exit_target_date.isoformat() if forced_exit_target_date else None,
+                    forced_exit_target_date.isoformat()
+                    if forced_exit_target_date
+                    else None,
                     trade_id,
                 ),
             )
@@ -365,7 +391,9 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
         with self._connect() as conn:
             self._begin_write(conn)
             current = self._get_trade(conn, trade_id)
-            cash_delta = raw_fill_price * current.quantity - commission - tax - slippage_cost
+            cash_delta = (
+                raw_fill_price * current.quantity - commission - tax - slippage_cost
+            )
             if current.state is TradeState.CLOSED:
                 self._insert_event(
                     conn,
@@ -410,6 +438,42 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
             ).fetchall()
             return [self._row_to_trade(row) for row in rows]
 
+    def planned_trades(self, due_on_or_before: date | None = None) -> list[LedgerTrade]:
+        with self._connect() as conn:
+            sql = "SELECT * FROM trades WHERE ledger_id=? AND state=?"
+            params: list[Any] = [self.ledger_id, TradeState.PLANNED.value]
+            if due_on_or_before is not None:
+                sql += " AND planned_entry_date<=?"
+                params.append(due_on_or_before.isoformat())
+            sql += " ORDER BY priority, trade_id"
+            return [
+                self._row_to_trade(row) for row in conn.execute(sql, params).fetchall()
+            ]
+
+    def skip_plan(
+        self, trade_id: str, effective_date: date, reason: str
+    ) -> LedgerTrade:
+        if not reason:
+            raise ValueError("reason must be nonempty")
+        with self._connect() as conn:
+            self._begin_write(conn)
+            current = self._get_trade(conn, trade_id)
+            payload = {"reason": reason}
+            if current.state is TradeState.SKIPPED:
+                self._insert_event(
+                    conn, trade_id, "PLAN_SKIPPED", effective_date, payload=payload
+                )
+                return current
+            assert_transition(current.state, TradeState.SKIPPED)
+            conn.execute(
+                "UPDATE trades SET state=? WHERE trade_id=?",
+                (TradeState.SKIPPED.value, trade_id),
+            )
+            self._insert_event(
+                conn, trade_id, "PLAN_SKIPPED", effective_date, payload=payload
+            )
+            return self._get_trade(conn, trade_id)
+
     def record_valuation(
         self,
         trade_date: date,
@@ -443,6 +507,24 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
         with self._connect() as conn:
             return self._get_trade(conn, trade_id)
 
+    def latest_valuation(self) -> DailyValuation | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM daily_valuations WHERE ledger_id=? ORDER BY trade_date DESC LIMIT 1",
+                (self.ledger_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return DailyValuation(
+                trade_date=date.fromisoformat(row["trade_date"]),
+                cash=float(row["cash"]),
+                market_value=float(row["market_value"]),
+                nav=float(row["nav"]),
+                peak=float(row["peak"]),
+                drawdown=float(row["drawdown"]),
+                stale_tickers=tuple(json.loads(row["stale_tickers_json"])),
+            )
+
     def cash_balance(self) -> float:
         with self._connect() as conn:
             row = conn.execute(
@@ -464,7 +546,8 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
     def count_trades(self) -> int:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) AS count FROM trades WHERE ledger_id=?", (self.ledger_id,)
+                "SELECT COUNT(*) AS count FROM trades WHERE ledger_id=?",
+                (self.ledger_id,),
             ).fetchone()
             return int(row["count"])
 
@@ -513,7 +596,8 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
 
     def _get_trade(self, conn: sqlite3.Connection, trade_id: str) -> LedgerTrade:
         row = conn.execute(
-            "SELECT * FROM trades WHERE trade_id=? AND ledger_id=?", (trade_id, self.ledger_id)
+            "SELECT * FROM trades WHERE trade_id=? AND ledger_id=?",
+            (trade_id, self.ledger_id),
         ).fetchone()
         if row is None:
             raise KeyError(f"unknown trade: {trade_id}")
@@ -532,7 +616,9 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
             planned_weight=row["planned_weight"],
             priority=row["priority"],
             state=TradeState(row["state"]),
-            execution_mode=ExecutionMode(row["execution_mode"]) if row["execution_mode"] else None,
+            execution_mode=ExecutionMode(row["execution_mode"])
+            if row["execution_mode"]
+            else None,
             fill_source=FillSource(row["fill_source"]) if row["fill_source"] else None,
             entry_date=as_date(row["entry_date"]),
             raw_entry_price=row["raw_entry_price"],
