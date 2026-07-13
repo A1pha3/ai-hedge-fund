@@ -32,7 +32,7 @@ class ExitPolicyState:
 
 @dataclass(frozen=True)
 class ExitObservation:
-    session_date: date
+    trade_date: date
     holding_session: int
     close: float
     atr: float
@@ -70,11 +70,13 @@ def evaluate_shadow_exit(
 
     next_state = state
     if state.armed_at is None and observation.close / state.entry_price - 1.0 >= ACTIVATION_RETURN:
+        exit_line = highest_close - ATR_MULTIPLE * observation.atr
+        _require_positive_finite("exit_line", exit_line)
         next_state = ExitPolicyState(
             entry_price=state.entry_price,
-            armed_at=observation.session_date,
+            armed_at=observation.trade_date,
             highest_close=highest_close,
-            exit_line=highest_close - ATR_MULTIPLE * observation.atr,
+            exit_line=exit_line,
         )
     elif state.armed_at is None:
         next_state = ExitPolicyState(
@@ -117,8 +119,8 @@ def _validate_inputs(state: ExitPolicyState, observation: ExitObservation) -> No
     _require_positive_finite("close", observation.close)
     _require_positive_finite("atr", observation.atr)
 
-    if not isinstance(observation.session_date, date):
-        raise ValueError("session_date must be present")
+    if type(observation.trade_date) is not date:
+        raise ValueError("trade_date must be a date")
     if (
         isinstance(observation.holding_session, bool)
         or not isinstance(observation.holding_session, int)
@@ -126,19 +128,25 @@ def _validate_inputs(state: ExitPolicyState, observation: ExitObservation) -> No
     ):
         raise ValueError("holding_session must be an integer at least 1")
 
-    if state.highest_close is not None:
-        _require_positive_finite("highest_close", state.highest_close)
-    if state.exit_line is not None and not _is_finite_number(state.exit_line):
-        raise ValueError("exit_line must be finite")
+    if state.armed_at is None:
+        if state.exit_line is not None:
+            raise ValueError("unarmed state cannot have an exit_line")
+        if state.highest_close is not None:
+            _require_positive_finite("highest_close", state.highest_close)
+        return
 
-    armed_values = (state.armed_at, state.highest_close, state.exit_line)
-    if state.armed_at is None and state.exit_line is not None:
-        raise ValueError("unarmed state cannot have an exit_line")
-    if state.armed_at is not None:
-        if not isinstance(state.armed_at, date):
-            raise ValueError("armed_at must be a date")
-        if any(value is None for value in armed_values):
-            raise ValueError("armed state requires armed_at, highest_close, and exit_line")
+    if type(state.armed_at) is not date:
+        raise ValueError("armed_at must be a date")
+    if state.highest_close is None or state.exit_line is None:
+        raise ValueError("armed state requires armed_at, highest_close, and exit_line")
+    _require_positive_finite("highest_close", state.highest_close)
+    _require_positive_finite("exit_line", state.exit_line)
+    if state.exit_line >= state.highest_close:
+        raise ValueError("exit_line must be strictly below highest_close")
+    if state.armed_at > observation.trade_date:
+        raise ValueError("armed_at cannot be after trade_date")
+    if observation.holding_session == 1:
+        raise ValueError("armed state cannot be evaluated on holding_session 1")
 
 
 def _require_positive_finite(name: str, value: object) -> None:

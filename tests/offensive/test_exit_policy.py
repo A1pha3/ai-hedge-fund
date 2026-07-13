@@ -1,5 +1,5 @@
 from dataclasses import FrozenInstanceError
-from datetime import date
+from datetime import date, datetime
 import math
 
 import pytest
@@ -50,6 +50,23 @@ def test_session_nine_forces_session_ten_open_plan() -> None:
     assert decision.reason == "maximum_holding_session"
 
 
+def test_session_nine_reason_precedes_trailing_line_reason() -> None:
+    state = ExitPolicyState(
+        entry_price=10.0,
+        armed_at=date(2026, 7, 14),
+        highest_close=12.0,
+        exit_line=11.0,
+    )
+
+    decision = evaluate_shadow_exit(
+        state,
+        ExitObservation(date(2026, 7, 23), holding_session=9, close=10.9, atr=0.4),
+    )
+
+    assert decision.should_exit_next_open is True
+    assert decision.reason == "maximum_holding_session"
+
+
 def test_entry_session_holds_without_arming() -> None:
     state = ExitPolicyState.unarmed(entry_price=10.0)
 
@@ -61,6 +78,32 @@ def test_entry_session_holds_without_arming() -> None:
     assert decision.state.armed_at is None
     assert decision.should_exit_next_open is False
     assert decision.reason == "hold"
+
+
+def test_armed_state_cannot_be_evaluated_on_entry_session() -> None:
+    state = ExitPolicyState(
+        entry_price=10.0,
+        armed_at=date(2026, 7, 13),
+        highest_close=12.0,
+        exit_line=11.0,
+    )
+
+    with pytest.raises(ValueError, match="armed state.*holding_session 1"):
+        evaluate_shadow_exit(
+            state,
+            ExitObservation(date(2026, 7, 13), holding_session=1, close=12.0, atr=0.4),
+        )
+
+
+def test_observation_exposes_trade_date() -> None:
+    observation = ExitObservation(
+        trade_date=date(2026, 7, 14),
+        holding_session=2,
+        close=11.0,
+        atr=0.4,
+    )
+
+    assert observation.trade_date == date(2026, 7, 14)
 
 
 def test_trailing_line_uses_only_observed_close_and_fixed_atr_multiple() -> None:
@@ -106,6 +149,14 @@ def test_arming_close_below_line_requests_next_open_exit() -> None:
     assert decision.reason == "close_below_trailing_line"
 
 
+def test_policy_rejects_activation_with_nonpositive_exit_line() -> None:
+    with pytest.raises(ValueError, match="exit_line.*positive"):
+        evaluate_shadow_exit(
+            ExitPolicyState.unarmed(entry_price=10.0),
+            ExitObservation(date(2026, 7, 14), holding_session=2, close=11.0, atr=4.4),
+        )
+
+
 def test_policy_values_are_immutable() -> None:
     state = ExitPolicyState.unarmed(entry_price=10.0)
     observation = ExitObservation(date(2026, 7, 14), holding_session=2, close=11.0, atr=0.4)
@@ -138,6 +189,85 @@ def test_policy_rejects_invalid_observed_prices(field: str, value: float) -> Non
         evaluate_shadow_exit(
             ExitPolicyState.unarmed(entry_price=10.0),
             ExitObservation(date(2026, 7, 14), holding_session=2, **values),
+        )
+
+
+@pytest.mark.parametrize(
+    ("state", "message"),
+    [
+        (
+            ExitPolicyState(10.0, date(2026, 7, 14), None, 9.0),
+            "armed state requires",
+        ),
+        (
+            ExitPolicyState(10.0, date(2026, 7, 14), 12.0, None),
+            "armed state requires",
+        ),
+        (
+            ExitPolicyState(10.0, date(2026, 7, 14), math.nan, 9.0),
+            "highest_close",
+        ),
+        (
+            ExitPolicyState(10.0, date(2026, 7, 14), math.inf, 9.0),
+            "highest_close",
+        ),
+        (
+            ExitPolicyState(10.0, date(2026, 7, 14), 12.0, 0.0),
+            "exit_line.*positive",
+        ),
+        (
+            ExitPolicyState(10.0, date(2026, 7, 14), 12.0, -1.0),
+            "exit_line.*positive",
+        ),
+        (
+            ExitPolicyState(10.0, date(2026, 7, 14), 12.0, math.nan),
+            "exit_line.*positive",
+        ),
+        (
+            ExitPolicyState(10.0, date(2026, 7, 14), 12.0, math.inf),
+            "exit_line.*positive",
+        ),
+        (
+            ExitPolicyState(10.0, date(2026, 7, 14), 12.0, 12.0),
+            "exit_line.*below highest_close",
+        ),
+        (
+            ExitPolicyState(10.0, date(2026, 7, 14), 12.0, 12.1),
+            "exit_line.*below highest_close",
+        ),
+        (
+            ExitPolicyState(10.0, "2026-07-14", 12.0, 11.0),  # type: ignore[arg-type]
+            "armed_at.*date",
+        ),
+        (
+            ExitPolicyState(10.0, datetime(2026, 7, 14, 16, 0), 12.0, 11.0),  # type: ignore[arg-type]
+            "armed_at.*date",
+        ),
+    ],
+)
+def test_policy_rejects_inconsistent_armed_state(
+    state: ExitPolicyState,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        evaluate_shadow_exit(
+            state,
+            ExitObservation(date(2026, 7, 15), holding_session=3, close=12.1, atr=0.4),
+        )
+
+
+def test_policy_rejects_armed_at_after_observation_trade_date() -> None:
+    state = ExitPolicyState(
+        entry_price=10.0,
+        armed_at=date(2026, 7, 16),
+        highest_close=12.0,
+        exit_line=11.0,
+    )
+
+    with pytest.raises(ValueError, match="armed_at.*after trade_date"):
+        evaluate_shadow_exit(
+            state,
+            ExitObservation(date(2026, 7, 15), holding_session=3, close=12.1, atr=0.4),
         )
 
 

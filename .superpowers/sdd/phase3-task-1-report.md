@@ -63,3 +63,31 @@ None blocking. This task intentionally provides only pure policy logic. Later
 phase-three tasks must preserve the shadow-only boundary when wiring replay and
 display code, and must supply trading-session observations rather than infer
 sessions from calendar-day arithmetic.
+
+## Review follow-up
+
+Task 1 review findings were resolved in a second strict TDD cycle:
+
+- Review baseline: `uv run pytest tests/offensive/ -q` — **441 passed in
+  3.28s**, exit 0.
+- RED: expanded focused suite — **10 failed, 27 passed in 0.80s**. Failures
+  demonstrated entry-session armed-state normalization, absent `trade_date`
+  naming, non-positive/nonfinite exit lines, line/peak ordering violations, and
+  future `armed_at` acceptance.
+- A separate date-type RED demonstrated that a `datetime` armed value leaked a
+  `TypeError` instead of a controlled `ValueError` — **1 failed in 0.46s**.
+- Final GREEN: focused policy suite — **38 passed in 0.38s**, exit 0.
+- Final full offensive regression — **458 passed in 3.24s**, exit 0.
+- Ruff and `git diff --check` both passed.
+
+The policy now rejects an armed state on holding session 1 rather than silently
+disarming it. Armed state requires pure `date` chronology, finite positive
+`highest_close` and `exit_line`, a line strictly below the peak, and
+`armed_at <= observation.trade_date`. Newly armed states are also prevented
+from emitting a non-positive line. Session 9 retains precedence over an
+otherwise simultaneous trailing-line reason.
+
+Neither `ExitPolicyState` nor `ExitObservation` carries an entry-date field, so
+an `armed_at >= entry_date` comparison is not expressible in the Task 1 API.
+The evaluator does not invent or infer an entry date from calendar arithmetic;
+the existing holding-session constraint remains the available entry boundary.
