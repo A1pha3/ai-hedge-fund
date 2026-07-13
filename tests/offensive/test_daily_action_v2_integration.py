@@ -297,6 +297,13 @@ def test_actual_cli_is_idempotent_and_preserves_recursive_legacy_artifacts(
         if path.is_file()
     }
     scan = _scan(signal_date)
+    price_cache = tmp_path / "data/price_cache"
+    price_cache.mkdir(parents=True)
+    (price_cache / "000001.csv").write_text(
+        "date,open,high,low,close,limit_down,limit_up,suspended\n"
+        "2026-07-13,10,10.5,9.5,10,9,11,False\n",
+        encoding="utf-8",
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "src.screening.offensive.daily_action.scan_daily_action_candidates",

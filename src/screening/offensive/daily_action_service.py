@@ -36,6 +36,7 @@ from src.screening.offensive.ledger_repository import (
     DailyValuation,
     LedgerRepository,
     LedgerTrade,
+    PlanProvenance,
 )
 from src.screening.offensive.trade_lifecycle import (
     ExecutionMode,
@@ -390,6 +391,7 @@ class DailyActionService:
         )
         self.cache_fingerprints = cache_fingerprints
         self.enforce_manifest_gate = enforce_manifest_gate
+        self._active_manifest: RunManifest | None = None
         self.shadow_history = shadow_history
         self._skipped: list[ActionItem] = []
         self._exit_plans: list[ActionItem] = []
@@ -421,6 +423,7 @@ class DailyActionService:
         valuation = self._mark_to_market(as_of)
         self._evaluate_open_positions(as_of)
         eligible = self._manifest_eligible_candidates(as_of, candidates, manifest)
+        self._active_manifest = manifest if self.enforce_manifest_gate else None
         if self.enforce_manifest_gate and not eligible:
             plans = ()
         else:
@@ -532,58 +535,28 @@ class DailyActionService:
             current = self.repository.get_trade(plan.trade_id)
             if current.state is not TradeState.PLANNED:
                 continue
+            if as_of != plan.planned_entry_date:
+                settled, reason = self.repository.settle_plan_at_open(
+                    plan.trade_id, as_of, ExecutionStatus.UNKNOWN_QUEUE.value, None, self.costs
+                )
+                if settled.state is TradeState.SKIPPED:
+                    self._skipped.append(self._item(settled, reason))
+                continue
             if not self._has_holding_horizon(plan.setup, plan.planned_entry_date):
                 self._add_block_reason("calendar_unavailable")
                 continue
-            nav, values, _ = self._snapshot(as_of)
-            higher = [
-                p
-                for p in self.repository.planned_trades()
-                if (p.priority, p.trade_id) <= (plan.priority, plan.trade_id)
-            ]
-            reserved_through = sum(p.planned_weight for p in higher)
-            ticker_reserved = sum(
-                p.planned_weight for p in higher if p.ticker == plan.ticker
-            )
-            open_weight = sum(values.values()) / nav
-            ticker_weight = values.get(plan.ticker, 0.0) / nav
-            if open_weight + reserved_through > PORTFOLIO_CAP + 1e-12:
-                self._skip(plan, as_of, "portfolio_capacity")
-                continue
-            ticker_cap = (
-                HARD_STOCK_CAP
-                if any(
-                    p.ticker == plan.ticker and p.planned_weight > NORMAL_STOCK_CAP
-                    for p in higher
-                )
-                else NORMAL_STOCK_CAP
-            )
-            if ticker_weight + ticker_reserved > ticker_cap + 1e-12:
-                self._skip(plan, as_of, "ticker_capacity")
-                continue
+            self._snapshot(as_of)
             bar = self.prices(plan.ticker, as_of)
-            if (
-                self._status(bar) is not ExecutionStatus.EXECUTABLE_PROXY
-                or bar is None
-                or bar.open is None
-            ):
-                continue
-            quantity = self._affordable_quantity(plan.planned_weight, bar.open, nav)
-            if quantity == 0:
-                self._skip(plan, as_of, "cash_capacity")
-                continue
-            fill = apply_execution_costs(bar.open, quantity, "buy", self.costs)
-            self.repository.fill_plan(
+            status = self._status(bar)
+            settled, reason = self.repository.settle_plan_at_open(
                 plan.trade_id,
-                ExecutionMode.PAPER,
-                FillSource.SYNTHETIC_OPEN,
                 as_of,
-                fill.raw_fill_price,
-                quantity,
-                fill.commission + fill.other_fee,
-                fill.tax,
-                fill.slippage_cost,
+                status.value,
+                bar.open if bar is not None else None,
+                self.costs,
             )
+            if settled.state is TradeState.SKIPPED:
+                self._skipped.append(self._item(settled, reason))
 
     def _settle_due_exit_plans(self, as_of: date) -> tuple[ActionItem, ...]:
         settled: list[ActionItem] = []
@@ -723,11 +696,47 @@ class DailyActionService:
                 entry_date,
                 weight,
                 candidate.priority,
+                provenance=self._plan_provenance(candidate, as_of, entry_date),
             )
             if created:
                 reserved.append(trade)
                 created_items.append(self._item(trade, "entry_planned"))
         return tuple(created_items)
+
+    def _plan_provenance(
+        self, candidate: PlanCandidate, signal_date: date, entry_date: date
+    ) -> PlanProvenance:
+        manifest = self._active_manifest
+        if manifest is None:
+            return PlanProvenance.legacy_unverified()
+        readiness = manifest.tickers.get(candidate.ticker)
+        reference = self.prices(candidate.ticker, signal_date)
+        if readiness is None or reference is None or reference.close is None:
+            raise ValueError("verified plan provenance is incomplete")
+        manifest_identity = json.dumps(
+            {
+                "run_id": manifest.run_id,
+                "trade_date": manifest.trade_date.isoformat(),
+                "input_fingerprint": manifest.input_fingerprint,
+                "candidate_set_fingerprint": manifest.candidate_set_fingerprint,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        import hashlib
+        return PlanProvenance(
+            verification_status="verified",
+            source_run_id=manifest.run_id,
+            manifest_fingerprint=hashlib.sha256(manifest_identity.encode()).hexdigest(),
+            input_fingerprint=manifest.input_fingerprint,
+            ticker_cache_fingerprint=readiness.cache_fingerprint,
+            reference_price=float(reference.close),
+            order_type="next_session_open_proxy",
+            board_rule_version=readiness.board_rule_version,
+            valid_on=entry_date,
+            execution_cost_version=self.costs.version,
+            authorization=candidate.authorization.value,
+        )
 
     def _build_view(
         self,

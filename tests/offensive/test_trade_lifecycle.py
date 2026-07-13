@@ -40,11 +40,27 @@ def test_legal_transitions(before: TradeState, after: TradeState) -> None:
     assert_transition(before, after)
 
 
-def test_open_cannot_jump_directly_to_closed() -> None:
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [
+        (before, after)
+        for before in TradeState
+        for after in TradeState
+        if after not in {
+            TradeState.PLANNED: {TradeState.OPEN, TradeState.SKIPPED},
+            TradeState.OPEN: {TradeState.EXIT_PENDING},
+            TradeState.EXIT_PENDING: {TradeState.CLOSED},
+            TradeState.CLOSED: set(),
+            TradeState.SKIPPED: set(),
+        }[before]
+    ],
+)
+def test_illegal_lifecycle_transition_matrix(before, after) -> None:
     with pytest.raises(ValueError, match="illegal transition"):
-        assert_transition(TradeState.OPEN, TradeState.CLOSED)
+        assert_transition(before, after)
 
 
 def test_fill_source_matches_execution_mode() -> None:
     assert FillSource.SYNTHETIC_OPEN.allowed_mode is ExecutionMode.PAPER
     assert FillSource.MANUAL_CONFIRMATION.allowed_mode is ExecutionMode.BROKER_CONFIRMED
+    assert FillSource.BROKER_IMPORT.allowed_mode is ExecutionMode.BROKER_CONFIRMED

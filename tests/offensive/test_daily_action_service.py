@@ -1,4 +1,6 @@
 from datetime import date, timedelta
+import json
+import sqlite3
 
 import pytest
 
@@ -112,7 +114,7 @@ def test_fill_rechecks_capacity_and_skips_lower_priority_plan(service, sessions)
     assert service.repository.cash_balance() >= 0
 
 
-def test_unknown_higher_priority_entry_keeps_its_capacity_reserved(service, sessions):
+def test_unknown_higher_priority_entry_expires_and_releases_capacity(service, sessions):
     unknown = [
         service.repository.create_plan(
             f"00002{i}", "btst_breakout", "v2", sessions[0], sessions[1], 0.10, i
@@ -130,13 +132,48 @@ def test_unknown_higher_priority_entry_keeps_its_capacity_reserved(service, sess
 
     run = service.run(sessions[1], ())
 
-    assert all(
-        service.repository.get_trade(plan.trade_id).state is TradeState.PLANNED
-        for plan in unknown
-    )
+    assert all(service.repository.get_trade(plan.trade_id).state is TradeState.SKIPPED for plan in unknown)
     assert service.repository.get_trade(filled.trade_id).state is TradeState.OPEN
-    assert service.repository.get_trade(skipped.trade_id).state is TradeState.SKIPPED
+    assert service.repository.get_trade(skipped.trade_id).state is TradeState.OPEN
     assert run.open_exposure + run.reserved_exposure <= 0.60
+
+
+def test_entry_plan_run_after_exact_date_is_atomically_expired(service, sessions):
+    plan = service.repository.create_plan(
+        "000027", "btst_breakout", "v2", sessions[0], sessions[1], 0.10, 1
+    )
+    service.run(sessions[2], ())
+    assert service.repository.get_trade(plan.trade_id).state is TradeState.SKIPPED
+    with sqlite3.connect(service.repository.path) as conn:
+        payload = json.loads(conn.execute(
+            "SELECT payload_json FROM trade_events WHERE trade_id=? AND event_type='PLAN_SKIPPED'",
+            (plan.trade_id,),
+        ).fetchone()[0])
+    assert payload["reason"] == "entry_expired"
+
+
+@pytest.mark.parametrize(
+    ("bar", "reason"),
+    [
+        (None, "entry_queue_unknown"),
+        (MarketBar(9, 9, 9, 11, False, 9, 9), "entry_unexecutable"),
+    ],
+)
+def test_single_observed_open_failure_expires_without_next_day_fill(service, sessions, bar, reason):
+    plan = service.repository.create_plan(
+        "000028", "btst_breakout", "v2", sessions[0], sessions[1], 0.10, 1
+    )
+    service.prices.values[(plan.ticker, sessions[1])] = bar
+    service.run(sessions[1], ())
+    service.run(sessions[2], ())
+    assert service.repository.get_trade(plan.trade_id).state is TradeState.SKIPPED
+    with sqlite3.connect(service.repository.path) as conn:
+        payload = json.loads(conn.execute(
+            "SELECT payload_json FROM trade_events WHERE trade_id=? AND event_type='PLAN_SKIPPED'",
+            (plan.trade_id,),
+        ).fetchone()[0])
+    assert payload["reason"] == reason
+    assert service.repository.count_events(plan.trade_id, "ENTRY_FILLED") == 0
 
 
 def test_mark_to_market_updates_nav_and_drawdown_before_new_plans(service, sessions):

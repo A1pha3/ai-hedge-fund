@@ -20,6 +20,64 @@ from src.screening.offensive.trade_lifecycle import (
 
 
 @dataclass(frozen=True)
+class PlanProvenance:
+    verification_status: str
+    source_run_id: str | None = None
+    manifest_fingerprint: str | None = None
+    input_fingerprint: str | None = None
+    ticker_cache_fingerprint: str | None = None
+    reference_price: float | None = None
+    order_type: str | None = None
+    board_rule_version: str | None = None
+    valid_on: date | None = None
+    execution_cost_version: str | None = None
+    authorization: str | None = None
+
+    @classmethod
+    def legacy_unverified(cls) -> PlanProvenance:
+        return cls("legacy_unverified")
+
+    def validate(self, planned_entry_date: date) -> None:
+        if self.verification_status == "legacy_unverified":
+            return
+        required = (
+            self.source_run_id, self.manifest_fingerprint, self.input_fingerprint,
+            self.ticker_cache_fingerprint, self.order_type, self.board_rule_version,
+            self.execution_cost_version,
+            self.authorization,
+        )
+        if self.verification_status != "verified" or any(not value for value in required):
+            raise ValueError("verified plan provenance is incomplete")
+        if self.valid_on != planned_entry_date:
+            raise ValueError("plan provenance valid_on mismatch")
+        if self.order_type != "next_session_open_proxy":
+            raise ValueError("unsupported plan provenance order_type")
+        if self.reference_price is None or not math.isfinite(self.reference_price) or self.reference_price <= 0:
+            raise ValueError("plan provenance reference_price must be positive")
+
+    def as_json(self) -> dict[str, Any]:
+        return {
+            "verification_status": self.verification_status,
+            "source_run_id": self.source_run_id,
+            "manifest_fingerprint": self.manifest_fingerprint,
+            "input_fingerprint": self.input_fingerprint,
+            "ticker_cache_fingerprint": self.ticker_cache_fingerprint,
+            "reference_price": self.reference_price,
+            "order_type": self.order_type,
+            "board_rule_version": self.board_rule_version,
+            "valid_on": self.valid_on.isoformat() if self.valid_on else None,
+            "execution_cost_version": self.execution_cost_version,
+            "authorization": self.authorization,
+        }
+
+    @classmethod
+    def from_json(cls, raw: str) -> PlanProvenance:
+        value = json.loads(raw)
+        valid_on = value.get("valid_on")
+        return cls(**{**value, "valid_on": date.fromisoformat(valid_on) if valid_on else None})
+
+
+@dataclass(frozen=True)
 class LedgerTrade:
     trade_id: str
     ticker: str
@@ -42,6 +100,7 @@ class LedgerTrade:
     exit_line: float | None
     last_evaluated_date: date | None
     forced_exit_target_date: date | None
+    provenance: PlanProvenance
 
 
 @dataclass(frozen=True)
@@ -56,7 +115,7 @@ class DailyValuation:
 
 
 class LedgerRepository:
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(self, path: Path | str, ledger_id: str, initial_cash: float) -> None:
         self.path = Path(path)
@@ -121,6 +180,7 @@ CREATE TABLE IF NOT EXISTS trades (
   exit_line REAL,
   last_evaluated_date TEXT,
   forced_exit_target_date TEXT,
+  provenance_json TEXT NOT NULL,
   UNIQUE(ledger_id, setup, setup_version, ticker, signal_date, planned_entry_date)
 );
 CREATE TABLE IF NOT EXISTS trade_events (
@@ -155,23 +215,16 @@ CREATE TABLE IF NOT EXISTS position_marks (
 );
 """
             )
-            conn.execute(
-                "INSERT OR IGNORE INTO ledger_meta VALUES (?, ?, ?, ?)",
-                (self.ledger_id, self.SCHEMA_VERSION, self.initial_cash, self._now()),
-            )
-            mark_columns = {
-                row["name"] for row in conn.execute("PRAGMA table_info(position_marks)")
-            }
-            if "ticker" in mark_columns:
-                conn.execute("DROP TABLE position_marks")
+            existing = conn.execute(
+                "SELECT schema_version FROM ledger_meta WHERE ledger_id=?", (self.ledger_id,)
+            ).fetchone()
+            if existing is None:
                 conn.execute(
-                    """CREATE TABLE position_marks (
-                    ledger_id TEXT NOT NULL REFERENCES ledger_meta(ledger_id),
-                    trade_id TEXT NOT NULL REFERENCES trades(trade_id),
-                    trade_date TEXT NOT NULL,
-                    close_price REAL NOT NULL CHECK(close_price > 0),
-                    PRIMARY KEY(ledger_id, trade_id, trade_date))"""
+                    "INSERT INTO ledger_meta VALUES (?, ?, ?, ?)",
+                    (self.ledger_id, self.SCHEMA_VERSION, self.initial_cash, self._now()),
                 )
+            elif existing["schema_version"] == 1:
+                self._migrate_v1_to_v2(conn)
             meta = conn.execute(
                 "SELECT schema_version, initial_cash FROM ledger_meta WHERE ledger_id=?",
                 (self.ledger_id,),
@@ -187,6 +240,48 @@ CREATE TABLE IF NOT EXISTS position_marks (
                     f"requested {self.initial_cash}"
                 )
 
+    def _migrate_v1_to_v2(self, conn: sqlite3.Connection) -> None:
+        """Migrate in the caller transaction; ambiguity raises and rolls everything back."""
+        trade_columns = {row["name"] for row in conn.execute("PRAGMA table_info(trades)")}
+        if "provenance_json" not in trade_columns:
+            legacy_json = json.dumps(
+                PlanProvenance.legacy_unverified().as_json(), sort_keys=True, separators=(",", ":")
+            )
+            conn.execute("ALTER TABLE trades ADD COLUMN provenance_json TEXT")
+            conn.execute("UPDATE trades SET provenance_json=? WHERE provenance_json IS NULL", (legacy_json,))
+        mark_columns = {row["name"] for row in conn.execute("PRAGMA table_info(position_marks)")}
+        if "ticker" in mark_columns:
+            legacy_rows = conn.execute(
+                "SELECT ledger_id,ticker,trade_date,close_price FROM position_marks"
+            ).fetchall()
+            mapped: list[tuple[str, str, str, float]] = []
+            for row in legacy_rows:
+                owners = conn.execute(
+                    """SELECT trade_id FROM trades WHERE ledger_id=? AND ticker=?
+                       AND signal_date<=? AND (exit_date IS NULL OR exit_date>=?)""",
+                    (row["ledger_id"], row["ticker"], row["trade_date"], row["trade_date"]),
+                ).fetchall()
+                if len(owners) != 1:
+                    raise ValueError(
+                        f"ambiguous legacy position mark: {row['ledger_id']}/{row['ticker']}/{row['trade_date']}"
+                    )
+                mapped.append((row["ledger_id"], owners[0]["trade_id"], row["trade_date"], row["close_price"]))
+            conn.execute("ALTER TABLE position_marks RENAME TO position_marks_v1_archive")
+            conn.execute(
+                """CREATE TABLE position_marks (
+                ledger_id TEXT NOT NULL REFERENCES ledger_meta(ledger_id),
+                trade_id TEXT NOT NULL REFERENCES trades(trade_id),
+                trade_date TEXT NOT NULL, close_price REAL NOT NULL CHECK(close_price > 0),
+                PRIMARY KEY(ledger_id,trade_id,trade_date))"""
+            )
+            conn.executemany("INSERT INTO position_marks VALUES (?,?,?,?)", mapped)
+        elif "trade_id" not in mark_columns:
+            raise ValueError("invalid v1 position_marks metadata")
+        conn.execute(
+            "UPDATE ledger_meta SET schema_version=? WHERE ledger_id=?",
+            (self.SCHEMA_VERSION, self.ledger_id),
+        )
+
     def create_plan(
         self,
         ticker: str,
@@ -196,6 +291,8 @@ CREATE TABLE IF NOT EXISTS position_marks (
         planned_entry_date: date,
         planned_weight: float,
         priority: int,
+        *,
+        provenance: PlanProvenance | None = None,
     ) -> LedgerTrade:
         return self.create_plan_if_absent(
             ticker,
@@ -205,6 +302,7 @@ CREATE TABLE IF NOT EXISTS position_marks (
             planned_entry_date,
             planned_weight,
             priority,
+            provenance=provenance,
         )[0]
 
     def create_plan_if_absent(
@@ -216,7 +314,12 @@ CREATE TABLE IF NOT EXISTS position_marks (
         planned_entry_date: date,
         planned_weight: float,
         priority: int,
+        *,
+        provenance: PlanProvenance | None = None,
     ) -> tuple[LedgerTrade, bool]:
+        provenance = provenance or PlanProvenance.legacy_unverified()
+        provenance.validate(planned_entry_date)
+        provenance_json = json.dumps(provenance.as_json(), sort_keys=True, separators=(",", ":"))
         identity = TradeIdentity(
             self.ledger_id,
             setup,
@@ -229,10 +332,12 @@ CREATE TABLE IF NOT EXISTS position_marks (
         with self._connect() as conn:
             self._begin_write(conn)
             cursor = conn.execute(
-                """INSERT OR IGNORE INTO trades
+                """INSERT INTO trades
                    (trade_id, ledger_id, ticker, setup, setup_version, signal_date,
-                    planned_entry_date, planned_weight, priority, state)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    planned_entry_date, planned_weight, priority, state, provenance_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(ledger_id, setup, setup_version, ticker, signal_date, planned_entry_date)
+                   DO NOTHING""",
                 (
                     trade_id,
                     self.ledger_id,
@@ -244,6 +349,7 @@ CREATE TABLE IF NOT EXISTS position_marks (
                     planned_weight,
                     priority,
                     TradeState.PLANNED.value,
+                    provenance_json,
                 ),
             )
             created = bool(cursor.rowcount)
@@ -253,9 +359,16 @@ CREATE TABLE IF NOT EXISTS position_marks (
                     trade_id,
                     "PLAN_CREATED",
                     signal_date,
-                    payload={"priority": priority},
+                    payload={"priority": priority, "planned_weight": planned_weight, "provenance": provenance.as_json()},
                 )
-            return self._get_trade(conn, trade_id), created
+            stored = self._get_trade(conn, trade_id)
+            if not created and (
+                stored.planned_weight != planned_weight
+                or stored.priority != priority
+                or stored.provenance != provenance
+            ):
+                raise ValueError(f"conflicting idempotent plan: {trade_id}")
+            return stored, created
 
     def fill_plan(
         self,
@@ -326,6 +439,120 @@ CREATE TABLE IF NOT EXISTS position_marks (
                 payload=payload,
             )
             return self._get_trade(conn, trade_id)
+
+    def settle_plan_at_open(
+        self,
+        trade_id: str,
+        entry_date: date,
+        execution_status: str,
+        raw_open_price: float | None,
+        costs: Any,
+        *,
+        lot_size: int = 100,
+        portfolio_cap: float = 0.60,
+        normal_ticker_cap: float = 0.10,
+        hard_ticker_cap: float = 0.12,
+    ) -> tuple[LedgerTrade, str]:
+        """Serialize expiry, execution evidence, capacity, sizing, costs and fill."""
+        from src.screening.offensive.execution_adjuster import apply_execution_costs
+
+        with self._connect() as conn:
+            self._begin_write(conn)
+            current = self._get_trade(conn, trade_id)
+            if current.state is not TradeState.PLANNED:
+                return current, "already_settled"
+            if entry_date != current.planned_entry_date:
+                reason = "entry_expired" if entry_date > current.planned_entry_date else "entry_not_due"
+                if reason == "entry_not_due":
+                    return current, reason
+                return self._skip_plan_in_transaction(conn, current, entry_date, reason), reason
+            if execution_status != "executable_proxy" or raw_open_price is None:
+                reason = (
+                    "entry_queue_unknown"
+                    if execution_status == "unknown_queue"
+                    else "entry_unexecutable"
+                )
+                return self._skip_plan_in_transaction(conn, current, entry_date, reason), reason
+
+            higher = conn.execute(
+                """SELECT trade_id FROM trades WHERE ledger_id=? AND state='planned'
+                   AND (priority<? OR (priority=? AND trade_id<?))""",
+                (self.ledger_id, current.priority, current.priority, current.trade_id),
+            ).fetchone()
+            if higher is not None:
+                return current, "higher_priority_pending"
+            cash = float(conn.execute(
+                """SELECT m.initial_cash+COALESCE(SUM(e.cash_delta),0) FROM ledger_meta m
+                   LEFT JOIN trades t ON t.ledger_id=m.ledger_id LEFT JOIN trade_events e ON e.trade_id=t.trade_id
+                   WHERE m.ledger_id=?""", (self.ledger_id,)
+            ).fetchone()[0])
+            active = conn.execute(
+                "SELECT * FROM trades WHERE ledger_id=? AND state IN ('open','exit_pending')",
+                (self.ledger_id,),
+            ).fetchall()
+            market_value = 0.0
+            ticker_value = 0.0
+            for row in active:
+                mark = conn.execute(
+                    """SELECT close_price FROM position_marks WHERE ledger_id=? AND trade_id=?
+                       AND trade_date<=? ORDER BY trade_date DESC LIMIT 1""",
+                    (self.ledger_id, row["trade_id"], entry_date.isoformat()),
+                ).fetchone()
+                price = float(mark[0]) if mark else float(row["raw_entry_price"] or 0)
+                value = price * int(row["quantity"])
+                market_value += value
+                if row["ticker"] == current.ticker:
+                    ticker_value += value
+            nav = cash + market_value
+            if not math.isfinite(nav) or nav <= 0:
+                return self._skip_plan_in_transaction(conn, current, entry_date, "cash_capacity"), "cash_capacity"
+            reservations = conn.execute(
+                """SELECT ticker,planned_weight FROM trades WHERE ledger_id=? AND state='planned'
+                   AND (priority<? OR (priority=? AND trade_id<=?))""",
+                (self.ledger_id, current.priority, current.priority, current.trade_id),
+            ).fetchall()
+            reserved_weight = sum(float(row["planned_weight"]) for row in reservations)
+            ticker_reserved = sum(float(row["planned_weight"]) for row in reservations if row["ticker"] == current.ticker)
+            if market_value / nav + reserved_weight > portfolio_cap + 1e-12:
+                return self._skip_plan_in_transaction(conn, current, entry_date, "portfolio_capacity"), "portfolio_capacity"
+            ticker_cap = hard_ticker_cap if current.planned_weight > normal_ticker_cap + 1e-12 else normal_ticker_cap
+            if ticker_value / nav + ticker_reserved > ticker_cap + 1e-12:
+                return self._skip_plan_in_transaction(conn, current, entry_date, "ticker_capacity"), "ticker_capacity"
+            target = min(nav * current.planned_weight, cash)
+            quantity = int(target // (raw_open_price * lot_size)) * lot_size
+            fill = None
+            while quantity > 0:
+                candidate = apply_execution_costs(raw_open_price, quantity, "buy", costs)
+                if -candidate.net_cash_flow <= cash + 1e-9 and -candidate.net_cash_flow <= target + 1e-9:
+                    fill = candidate
+                    break
+                quantity -= lot_size
+            if fill is None:
+                return self._skip_plan_in_transaction(conn, current, entry_date, "cash_capacity"), "cash_capacity"
+            conn.execute(
+                """UPDATE trades SET state='open',execution_mode=?,fill_source=?,entry_date=?,
+                   raw_entry_price=?,quantity=?,entry_commission=?,entry_tax=?,entry_slippage=? WHERE trade_id=?""",
+                (ExecutionMode.PAPER.value, FillSource.SYNTHETIC_OPEN.value, entry_date.isoformat(),
+                 fill.raw_fill_price, quantity, fill.commission + fill.other_fee, fill.tax,
+                 fill.slippage_cost, trade_id),
+            )
+            self._insert_event(
+                conn, trade_id, "ENTRY_FILLED", entry_date,
+                cash_delta=fill.net_cash_flow, position_delta=quantity,
+                payload={"raw_fill_price": fill.raw_fill_price, "execution_mode": ExecutionMode.PAPER.value,
+                         "fill_source": FillSource.SYNTHETIC_OPEN.value, "quantity": quantity,
+                         "commission": fill.commission + fill.other_fee, "tax": fill.tax,
+                         "slippage_cost": fill.slippage_cost, "cost_version": fill.cost_version},
+            )
+            return self._get_trade(conn, trade_id), "entry_filled"
+
+    def _skip_plan_in_transaction(
+        self, conn: sqlite3.Connection, current: LedgerTrade, effective_date: date, reason: str
+    ) -> LedgerTrade:
+        assert_transition(current.state, TradeState.SKIPPED)
+        conn.execute("UPDATE trades SET state=? WHERE trade_id=?", (TradeState.SKIPPED.value, current.trade_id))
+        self._insert_event(conn, current.trade_id, "PLAN_SKIPPED", effective_date, payload={"reason": reason})
+        return self._get_trade(conn, current.trade_id)
 
     def mark_exit_pending(
         self,
@@ -707,6 +934,7 @@ CREATE TABLE IF NOT EXISTS position_marks (
             exit_line=row["exit_line"],
             last_evaluated_date=as_date(row["last_evaluated_date"]),
             forced_exit_target_date=as_date(row["forced_exit_target_date"]),
+            provenance=PlanProvenance.from_json(row["provenance_json"]),
         )
 
     @staticmethod

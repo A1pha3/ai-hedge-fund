@@ -137,6 +137,8 @@ class CoverageAudit:
     paired_by_setup: tuple[tuple[str, int], ...] = ()
     included_by_regime: tuple[tuple[str, int], ...] = ()
     included_by_source: tuple[tuple[str, int], ...] = ()
+    cutoff_excluded_journal_rows: int = 0
+    cutoff_excluded_price_sessions: int = 0
 
 
 @dataclass(frozen=True)
@@ -651,6 +653,7 @@ def build_legacy_cohort(
     price_cache_dir: Path | str = Path("data/price_cache"),
     regimes_by_date: Mapping[str, str] | None = None,
     source: str = "paper_trading_backtest",
+    as_of: str | date | None = None,
 ) -> LegacyCohort:
     """Build the deterministic paired-BTST common cohort from a legacy journal.
 
@@ -664,6 +667,14 @@ def build_legacy_cohort(
     if price_loader is None:
         price_loader = _default_price_loader(Path(price_cache_dir))
     regimes = regimes_by_date or {}
+    cutoff = as_of.strftime("%Y%m%d") if isinstance(as_of, date) else (
+        str(as_of).replace("-", "") if as_of is not None else None
+    )
+    if cutoff is not None:
+        try:
+            datetime.strptime(cutoff, "%Y%m%d")
+        except ValueError as exc:
+            raise ValueError("as_of must be YYYYMMDD") from exc
 
     excluded: list[CohortExclusion] = []
     grouped: dict[NaturalKey, dict[str, list[_JournalEvent]]] = defaultdict(
@@ -671,6 +682,8 @@ def build_legacy_cohort(
     )
     physical_rows = 0
     malformed_rows = 0
+    cutoff_journal = 0
+    cutoff_prices = 0
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError):
@@ -700,6 +713,15 @@ def build_legacy_cohort(
                 )
             )
             continue
+
+        if cutoff is not None:
+            evidence_date = record.get("date")
+            if type(evidence_date) is not str or not re.fullmatch(r"\d{8}", evidence_date):
+                raise ValueError(f"journal evidence date is unavailable at line {line_number}")
+            if evidence_date > cutoff:
+                physical_rows -= 1
+                cutoff_journal += 1
+                continue
 
         key = _valid_key(record)
         action = record.get("action")
@@ -859,6 +881,12 @@ def build_legacy_cohort(
             )
             missing_returns.append(recorded)
             continue
+        if cutoff is not None:
+            before_cutoff = len(prices)
+            prices = prices.loc[
+                prices["date"].dt.strftime("%Y%m%d") <= cutoff
+            ].reset_index(drop=True)
+            cutoff_prices += before_cutoff - len(prices)
 
         normalized_dates = prices["date"].dt.strftime("%Y%m%d")
         matches = normalized_dates.index[normalized_dates == signal_date].tolist()
@@ -970,6 +998,8 @@ def build_legacy_cohort(
         paired_by_setup=((_BTST_SETUP, paired_key_count),) if paired_key_count else (),
         included_by_regime=tuple(sorted(included_regimes.items())),
         included_by_source=tuple(sorted(included_sources.items())),
+        cutoff_excluded_journal_rows=cutoff_journal,
+        cutoff_excluded_price_sessions=cutoff_prices,
     )
     return LegacyCohort(
         included=tuple(included),

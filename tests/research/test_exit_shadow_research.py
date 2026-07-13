@@ -240,6 +240,23 @@ def test_builder_uses_only_paired_btst_exits_and_common_complete_paths(
     assert cohort.audit.execution_proxy_eligible == 1
 
 
+def test_as_of_excludes_future_journal_and_price_evidence(tmp_path: Path) -> None:
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text(
+        '\n'.join((
+            '{"date":"20260105","ticker":"000001","setup":"btst_breakout","action":"BUY"}',
+            '{"date":"20260105","ticker":"000001","setup":"btst_breakout","action":"EXIT","reasoning":"realized=+5.00%"}',
+        )), encoding="utf-8",
+    )
+    prices = _prices()
+    early = build_legacy_cohort(journal, price_loader=lambda _: prices, as_of="20260114")
+    assert early.included == ()
+    assert early.audit.cutoff_excluded_journal_rows == 0
+    assert early.audit.cutoff_excluded_price_sessions == 1
+    current = build_legacy_cohort(journal, price_loader=lambda _: prices, as_of="20260115")
+    assert len(current.included) == 1
+
+
 def test_coverage_audit_blocks_promotion_when_missing_group_differs() -> None:
     audit = audit_coverage(
         covered_legacy_returns=[0.10, 0.12, 0.08],

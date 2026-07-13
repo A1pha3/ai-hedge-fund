@@ -130,6 +130,28 @@ def test_cli_report_cannot_claim_production_readiness(
         marker["semantic_payload_sha256"]
         == payload["artifact_identity"]["semantic_payload_sha256"]
     )
+
+
+def test_cli_bundle_bytes_are_invariant_to_strictly_future_evidence(
+    tmp_path: Path, legacy_fixture_paths: LegacyFixturePaths
+) -> None:
+    output = tmp_path / "cutoff-reports"
+    args = _base_args(legacy_fixture_paths, output)
+    assert main(args) == 0
+    before = {path.name: path.read_bytes() for path in output.iterdir()}
+    with legacy_fixture_paths.journal.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({
+            "date": "20260714", "ticker": "000001", "setup": "btst_breakout", "action": "BUY"
+        }) + "\n")
+    cache = legacy_fixture_paths.price_cache / "000001.csv"
+    with cache.open("a", encoding="utf-8") as stream:
+        stream.write("2026-07-14,99,99,99,99,1000\n")
+    assert main(args) == 0
+    assert {path.name: path.read_bytes() for path in output.iterdir()} == before
+    json_path = output / "exit_shadow_20260713.json"
+    markdown_path = output / "exit_shadow_20260713.md"
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    marker = json.loads((output / "exit_shadow_20260713.commit.json").read_text(encoding="utf-8"))
     assert marker["artifacts"]["json"]["filename"] == json_path.name
     assert (
         marker["artifacts"]["json"]["sha256"]
@@ -158,7 +180,7 @@ def test_cli_report_cannot_claim_production_readiness(
     assert payload["common_mask"]["eligible"] == 2
     assert payload["statistics"]["coverage"] == 1.0
     assert payload["statistics"]["block_mean_difference"]["draws"] == 100
-    assert payload["statistics"]["block_mean_difference"]["seed"] == 7
+    assert payload["statistics"]["block_mean_difference"]["seed"] == 0
     assert payload["statistics"]["challenger"]["mfe_is_diagnostic_not_executable"]
 
     markdown = (output / "exit_shadow_20260713.md").read_text(encoding="utf-8")
@@ -462,7 +484,7 @@ def test_partial_identical_report_is_recovered_without_rewriting_existing_file(
     assert marker_path.is_file()
 
 
-def test_input_change_during_run_prevents_report_publication(
+def test_irrelevant_blank_input_change_during_run_does_not_poison_cutoff_report(
     tmp_path: Path,
     legacy_fixture_paths: LegacyFixturePaths,
     monkeypatch: pytest.MonkeyPatch,
@@ -478,7 +500,7 @@ def test_input_change_during_run_prevents_report_publication(
     monkeypatch.setattr(exit_shadow_cli, "build_legacy_cohort", build_then_mutate)
     output = tmp_path / "reports"
 
-    with pytest.raises(RuntimeError, match="inputs changed during report run"):
+    assert (
         main(
             [
                 "--journal",
@@ -492,9 +514,25 @@ def test_input_change_during_run_prevents_report_publication(
                 "--bootstrap-draws",
                 "100",
             ]
-        )
+        ) == 0
+    )
+    assert (output / "exit_shadow_20260713.json").is_file()
 
-    assert not output.exists()
+
+def test_consumed_pre_cutoff_mutation_during_run_blocks_publication(
+    tmp_path: Path, legacy_fixture_paths: LegacyFixturePaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_builder = exit_shadow_cli.build_legacy_cohort
+
+    def build_then_mutate(*args, **kwargs):
+        cohort = original_builder(*args, **kwargs)
+        content = legacy_fixture_paths.journal.read_text(encoding="utf-8")
+        legacy_fixture_paths.journal.write_text(content.replace('"entry_price": 10.0', '"entry_price": 10.5', 1), encoding="utf-8")
+        return cohort
+
+    monkeypatch.setattr(exit_shadow_cli, "build_legacy_cohort", build_then_mutate)
+    with pytest.raises(RuntimeError, match="inputs changed during report run"):
+        main(_base_args(legacy_fixture_paths, tmp_path / "reports"))
 
 
 def test_single_line_holding_exclusion_retains_missing_group_return(
@@ -1069,7 +1107,7 @@ def test_analysis_runs_only_from_single_read_snapshot(
     assert not observed["cache"].exists()
 
 
-def test_aba_input_change_is_detected_even_when_bytes_are_restored(
+def test_semantically_empty_aba_does_not_change_consumed_fingerprint(
     tmp_path: Path,
     legacy_fixture_paths: LegacyFixturePaths,
     monkeypatch: pytest.MonkeyPatch,
@@ -1087,12 +1125,10 @@ def test_aba_input_change_is_detected_even_when_bytes_are_restored(
     )
     output = tmp_path / "reports"
 
-    with pytest.raises(RuntimeError, match="inputs changed during report run"):
-        main(_base_args(legacy_fixture_paths, output))
-    assert not output.exists()
+    assert main(_base_args(legacy_fixture_paths, output)) == 0
 
 
-def test_cache_membership_aba_is_detected(
+def test_unconsumed_cache_membership_aba_is_ignored(
     tmp_path: Path,
     legacy_fixture_paths: LegacyFixturePaths,
     monkeypatch: pytest.MonkeyPatch,
@@ -1107,11 +1143,10 @@ def test_cache_membership_aba_is_detected(
 
     monkeypatch.setattr(exit_shadow_cli, "build_legacy_cohort", add_remove_then_build)
 
-    with pytest.raises(RuntimeError, match="inputs changed during report run"):
-        main(_base_args(legacy_fixture_paths, tmp_path / "reports"))
+    assert main(_base_args(legacy_fixture_paths, tmp_path / "reports")) == 0
 
 
-def test_input_is_rechecked_after_render_immediately_before_commit(
+def test_irrelevant_blank_append_after_render_does_not_poison_commit(
     tmp_path: Path,
     legacy_fixture_paths: LegacyFixturePaths,
     monkeypatch: pytest.MonkeyPatch,
@@ -1127,6 +1162,4 @@ def test_input_is_rechecked_after_render_immediately_before_commit(
     monkeypatch.setattr(exit_shadow_cli, "_render_markdown", render_then_mutate)
     output = tmp_path / "reports"
 
-    with pytest.raises(RuntimeError, match="inputs changed during report run"):
-        main(_base_args(legacy_fixture_paths, output))
-    assert not output.exists()
+    assert main(_base_args(legacy_fixture_paths, output)) == 0

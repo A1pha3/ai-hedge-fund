@@ -1,17 +1,20 @@
 from concurrent.futures import ThreadPoolExecutor
+import dataclasses
 from datetime import date
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 
 import pytest
 
-from src.screening.offensive.ledger_repository import LedgerRepository
+from src.screening.offensive.ledger_repository import LedgerRepository, PlanProvenance
 from src.screening.offensive.trade_lifecycle import (
     ExecutionMode,
     FillSource,
     TradeState,
 )
+from src.screening.offensive.execution_adjuster import ExecutionCosts
 
 
 def test_repository_context_manager_initializes_and_returns_repository(tmp_path):
@@ -32,6 +35,22 @@ def _repo(tmp_path: Path) -> LedgerRepository:
 def _plan(repo: LedgerRepository):
     return repo.create_plan(
         "000001", "btst_breakout", "v1", date(2026, 7, 10), date(2026, 7, 13), 0.10, 1
+    )
+
+
+def _provenance(ticker: str = "000001") -> PlanProvenance:
+    return PlanProvenance(
+        verification_status="verified",
+        source_run_id="run-20260710",
+        manifest_fingerprint="manifest-fp",
+        input_fingerprint="input-fp",
+        ticker_cache_fingerprint=f"cache-{ticker}",
+        reference_price=10.0,
+        order_type="next_session_open_proxy",
+        board_rule_version="ashare-board-v1",
+        valid_on=date(2026, 7, 13),
+        execution_cost_version="test",
+        authorization="normal",
     )
 
 
@@ -396,3 +415,105 @@ def test_position_marks_do_not_leak_between_trade_epochs_for_same_ticker(
     )
     repo.record_position_mark(old.trade_id, date(2026, 7, 14), 20.0)
     assert repo.latest_position_mark(new.trade_id, date(2026, 7, 16)) is None
+
+
+def test_same_natural_key_with_different_plan_contract_is_conflict(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    args = ("000001", "btst", "v1", date(2026, 7, 10), date(2026, 7, 13))
+    repo.create_plan_if_absent(*args, 0.1, 1, provenance=_provenance())
+    with pytest.raises(ValueError, match="conflicting idempotent plan"):
+        repo.create_plan_if_absent(*args, 0.09, 2, provenance=_provenance())
+
+
+def test_verified_plan_provenance_round_trips_and_is_in_plan_event(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    provenance = _provenance()
+    trade = repo.create_plan(
+        "000001", "btst", "v1", date(2026, 7, 10), date(2026, 7, 13),
+        0.1, 1, provenance=provenance,
+    )
+    assert trade.provenance == provenance
+    with sqlite3.connect(repo.path) as conn:
+        payload = json.loads(conn.execute(
+            "SELECT payload_json FROM trade_events WHERE trade_id=? AND event_type='PLAN_CREATED'",
+            (trade.trade_id,),
+        ).fetchone()[0])
+    assert payload["provenance"]["source_run_id"] == "run-20260710"
+    assert payload["provenance"]["order_type"] == "next_session_open_proxy"
+
+
+def test_verified_plan_rejects_incomplete_or_mismatched_provenance(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    bad = dataclasses.replace(_provenance(), valid_on=date(2026, 7, 14))
+    with pytest.raises(ValueError, match="provenance"):
+        repo.create_plan(
+            "000001", "btst", "v1", date(2026, 7, 10), date(2026, 7, 13),
+            0.1, 1, provenance=bad,
+        )
+
+
+def test_v1_ticker_mark_migration_preserves_unique_active_owner(tmp_path: Path) -> None:
+    path = tmp_path / "v1.sqlite3"
+    repo = LedgerRepository(path, "test", 100_000)
+    repo.initialize()
+    trade = _plan(repo)
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE ledger_meta SET schema_version=1")
+        conn.execute("ALTER TABLE position_marks RENAME TO position_marks_v2")
+        conn.execute("CREATE TABLE position_marks (ledger_id TEXT, ticker TEXT, trade_date TEXT, close_price REAL)")
+        conn.execute("INSERT INTO position_marks VALUES ('test','000001','2026-07-13',12.5)")
+        conn.execute("DROP TABLE position_marks_v2")
+    repo.initialize()
+    assert repo.latest_position_mark(trade.trade_id, date(2026, 7, 14)) == pytest.approx(12.5)
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT schema_version FROM ledger_meta").fetchone()[0] == 2
+
+
+def test_ambiguous_v1_ticker_mark_migration_rolls_back_intact(tmp_path: Path) -> None:
+    path = tmp_path / "ambiguous.sqlite3"
+    repo = LedgerRepository(path, "test", 100_000)
+    repo.initialize()
+    _plan(repo)
+    repo.create_plan("000001", "btst", "v1", date(2026, 7, 11), date(2026, 7, 13), 0.1, 2)
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE ledger_meta SET schema_version=1")
+        conn.execute("ALTER TABLE position_marks RENAME TO position_marks_v2")
+        conn.execute("CREATE TABLE position_marks (ledger_id TEXT, ticker TEXT, trade_date TEXT, close_price REAL)")
+        conn.execute("INSERT INTO position_marks VALUES ('test','000001','2026-07-13',12.5)")
+        conn.execute("DROP TABLE position_marks_v2")
+    with pytest.raises(ValueError, match="ambiguous legacy position mark"):
+        repo.initialize()
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT schema_version FROM ledger_meta").fetchone()[0] == 1
+        assert {row[1] for row in conn.execute("PRAGMA table_info(position_marks)")} == {"ledger_id", "ticker", "trade_date", "close_price"}
+        assert conn.execute("SELECT COUNT(*) FROM position_marks").fetchone()[0] == 1
+
+
+def test_concurrent_transactional_settlement_serializes_priority_and_caps(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    plans = [repo.create_plan(
+        f"0001{i:02d}", "btst", "v1", date(2026, 7, 10), date(2026, 7, 13), 0.1, i + 1
+    ) for i in range(7)]
+    costs = ExecutionCosts(version="concurrency", commission=5, slippage_bps=10)
+
+    def settle(plan):
+        result = None
+        for _ in range(8):
+            result = repo.settle_plan_at_open(
+                plan.trade_id, date(2026, 7, 13), "executable_proxy", 10.0, costs
+            )
+            if result[1] != "higher_priority_pending":
+                break
+        return result
+
+    with ThreadPoolExecutor(max_workers=7) as pool:
+        list(pool.map(settle, reversed(plans)))
+    # A deterministic ordered retry settles any thread that observed a pending predecessor.
+    for plan in plans:
+        settle(plan)
+    opened = repo.open_trades()
+    assert len(opened) == 6
+    assert [trade.priority for trade in opened] == [1, 2, 3, 4, 5, 6]
+    assert repo.get_trade(plans[-1].trade_id).state is TradeState.SKIPPED
+    assert repo.cash_balance() >= 0
+    assert sum(trade.raw_entry_price * trade.quantity for trade in opened) <= 60_000

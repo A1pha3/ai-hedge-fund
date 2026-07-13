@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import ctypes
 import errno
 import fcntl
 import hashlib
+import io
 import json
 import math
 import os
@@ -231,18 +233,59 @@ def _read_stable_descriptor(
     return content, before
 
 
+def _cutoff_journal(content: bytes, as_of: str) -> tuple[bytes, set[str]]:
+    kept: list[str] = []
+    tickers: set[str] = set()
+    for line_number, raw in enumerate(content.decode("utf-8").splitlines(), 1):
+        if not raw.strip():
+            continue
+        try:
+            record = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"journal evidence cannot be dated at line {line_number}") from exc
+        evidence_date = record.get("date") if isinstance(record, dict) else None
+        if type(evidence_date) is not str or len(evidence_date) != 8 or not evidence_date.isdigit():
+            raise ValueError(f"journal evidence cannot be dated at line {line_number}")
+        if evidence_date <= as_of:
+            kept.append(raw)
+            if record.get("setup") == "btst_breakout" and type(record.get("ticker")) is str:
+                tickers.add(record["ticker"])
+    return (("\n".join(kept) + ("\n" if kept else "")).encode("utf-8"), tickers)
+
+
+def _cutoff_csv(content: bytes, as_of: str, name: str) -> bytes:
+    text = content.decode("utf-8")
+    rows = list(csv.reader(text.splitlines()))
+    if not rows or "date" not in rows[0]:
+        raise ValueError(f"cache entry {name} has no date column")
+    date_index = rows[0].index("date")
+    kept = [rows[0]]
+    for row in rows[1:]:
+        if len(row) <= date_index:
+            raise ValueError(f"cache entry {name} has undated evidence")
+        compact = row[date_index].replace("-", "")
+        if len(compact) != 8 or not compact.isdigit():
+            raise ValueError(f"cache entry {name} has undated evidence")
+        if compact <= as_of:
+            kept.append(row)
+    output = io.StringIO(newline="")
+    csv.writer(output, lineterminator="\n").writerows(kept)
+    return output.getvalue().encode("utf-8")
+
+
 def _read_live_inputs(
-    journal: Path, price_cache: Path
+    journal: Path, price_cache: Path, *, as_of: str = "99991231"
 ) -> tuple[dict[str, Any], bytes, dict[str, bytes]]:
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     nonblock = getattr(os, "O_NONBLOCK", 0)
     journal_fd = _open_existing_nofollow(journal, os.O_RDONLY | nonblock)
     try:
-        journal_bytes, journal_stat = _read_stable_descriptor(
+        raw_journal_bytes, _journal_stat = _read_stable_descriptor(
             journal_fd, label="journal"
         )
     finally:
         os.close(journal_fd)
+    journal_bytes, consumed_tickers = _cutoff_journal(raw_journal_bytes, as_of)
 
     cache_fd = _open_existing_nofollow(
         price_cache,
@@ -258,6 +301,8 @@ def _read_live_inputs(
                 raise ValueError(
                     f"cache entries must be nofollow regular files: {price_cache / name}"
                 )
+            if Path(name).stem not in consumed_tickers:
+                continue
             file_fd = os.open(name, os.O_RDONLY | nofollow | nonblock, dir_fd=cache_fd)
             try:
                 content, stable_stat = _read_stable_descriptor(
@@ -265,12 +310,12 @@ def _read_live_inputs(
                 )
             finally:
                 os.close(file_fd)
+            content = _cutoff_csv(content, as_of, name)
             cache_bytes[name] = content
             cache_manifest.append(
                 {
                     "path": name,
                     **_content_fingerprint(content),
-                    "source_identity": _source_identity(stable_stat),
                 }
             )
         cache_dir_after = os.fstat(cache_fd)
@@ -289,12 +334,8 @@ def _read_live_inputs(
         os.close(cache_fd)
 
     cache_fingerprint = _manifest_fingerprint(cache_manifest)
-    cache_fingerprint["source_identity"] = _source_identity(cache_dir_before)
     fingerprint = {
-        "journal": {
-            **_content_fingerprint(journal_bytes),
-            "source_identity": _source_identity(journal_stat),
-        },
+        "journal": _content_fingerprint(journal_bytes),
         "price_cache": cache_fingerprint,
     }
     return fingerprint, journal_bytes, cache_bytes
@@ -334,8 +375,8 @@ class _InputSnapshot:
 
 
 @contextmanager
-def _stable_input_snapshot(journal: Path, price_cache: Path):
-    fingerprints, journal_bytes, cache_bytes = _read_live_inputs(journal, price_cache)
+def _stable_input_snapshot(journal: Path, price_cache: Path, *, as_of: str):
+    fingerprints, journal_bytes, cache_bytes = _read_live_inputs(journal, price_cache, as_of=as_of)
     temporary = tempfile.TemporaryDirectory(prefix="exit-shadow-snapshot-")
     root = Path(temporary.name)
     snapshot_journal = root / "journal.jsonl"
@@ -402,7 +443,7 @@ def _build_payload(
     bootstrap_seed: int,
     bootstrap_draws: int,
 ) -> dict[str, Any]:
-    cohort = build_legacy_cohort(journal, price_cache_dir=price_cache)
+    cohort = build_legacy_cohort(journal, price_cache_dir=price_cache, as_of=as_of)
     replay = replay_paired(cohort.included, costs=FIXED_COSTS)
     paired = _paired_rows(cohort, replay)
     statistics = summarize_paired_results(
@@ -413,7 +454,7 @@ def _build_payload(
         draws=bootstrap_draws,
         seed=bootstrap_seed,
     )
-    fingerprints_after, _, _ = _read_live_inputs(live_journal, live_price_cache)
+    fingerprints_after, _, _ = _read_live_inputs(live_journal, live_price_cache, as_of=as_of)
     if fingerprints_after != fingerprints_before:
         raise RuntimeError("inputs changed during report run; refusing publication")
     audit = asdict(cohort.audit)
@@ -920,7 +961,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     _validate_args(args, parser)
-    with _stable_input_snapshot(args.journal, args.price_cache) as snapshot:
+    with _stable_input_snapshot(args.journal, args.price_cache, as_of=args.as_of) as snapshot:
         payload = _build_payload(
             journal=snapshot.journal,
             price_cache=snapshot.price_cache,
@@ -953,7 +994,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         + "\n"
     ).encode("utf-8")
-    final_fingerprints, _, _ = _read_live_inputs(args.journal, args.price_cache)
+    final_fingerprints, _, _ = _read_live_inputs(args.journal, args.price_cache, as_of=args.as_of)
     if final_fingerprints != payload["input_fingerprints_after"]:
         raise RuntimeError("inputs changed during report run; refusing publication")
     _commit_report_bundle(
