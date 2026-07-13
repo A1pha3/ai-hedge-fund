@@ -22,6 +22,7 @@ from typing import Any, Callable
 from src.screening.consecutive_recommendation import resolve_report_dir
 from src.screening.recommendation_tracker import (
     _load_history,
+    _optional_date_string,
     _record_key,
     fetch_actual_returns,
     HISTORY_FILENAME,
@@ -123,6 +124,14 @@ def backfill_btst_realized(
             "next_20day_return": None,
             "next_25day_return": None,
             "next_30day_return": None,
+            "return_t1_date": None,
+            "return_t3_date": None,
+            "return_t5_date": None,
+            "return_t10_date": None,
+            "return_t15_date": None,
+            "return_t20_date": None,
+            "return_t25_date": None,
+            "return_t30_date": None,
             "tracking_status": "pending",
             "source": "btst",
         }
@@ -166,8 +175,22 @@ def backfill_btst_realized(
                 ("next_30day_return", "day_30"),
             ):
                 fetched = returns.get(day_key)
-                if fetched is not None and target.get(field_key) is None:
+                if fetched is None:
+                    continue
+                existing = target.get(field_key)
+                wrote_return = existing is None
+                if wrote_return:
                     target[field_key] = fetched
+                realization_date = _optional_date_string(
+                    returns.get(f"{day_key}_date")
+                )
+                if realization_date is not None:
+                    horizon = day_key.removeprefix("day_")
+                    date_key = f"return_t{horizon}_date"
+                    if wrote_return or (
+                        existing == fetched and target.get(date_key) is None
+                    ):
+                        target[date_key] = realization_date
 
     # Persist
     search_dir.mkdir(parents=True, exist_ok=True)

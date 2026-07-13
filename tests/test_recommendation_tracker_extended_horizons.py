@@ -79,6 +79,23 @@ def test_fetch_actual_returns_computes_day10():
     assert "000001" in result
     assert "day_10" in result["000001"]
     assert result["000001"]["day_10"] == pytest.approx(20.0, rel=1e-4)
+    assert result["000001"]["day_10_date"] == "20260611"
+
+
+def test_fetch_actual_returns_persists_actual_observation_date_across_gaps():
+    prices = [
+        ("2026-01-05", 10.0),
+        ("2026-01-06", 10.1),
+        ("2026-01-20", 10.2),
+        ("2026-02-10", 10.3),
+        ("2026-02-11", 10.4),
+        ("2026-02-12", 11.0),
+    ]
+    fetcher = _mock_fetcher_map({"000009": prices})
+    result = fetch_actual_returns(
+        ["000009"], "20260105", "20260212", use_data_fetcher=fetcher
+    )
+    assert result["000009"]["day_5_date"] == "20260212"
 
 
 def test_fetch_actual_returns_computes_day20():
@@ -188,6 +205,7 @@ def test_update_tracking_history_populates_day10_day20_day30(tmp_path: Path):
     assert rec["ticker"] == "000888"
     assert rec["next_10day_return"] is not None
     assert rec["next_10day_return"] == pytest.approx(10.0, rel=1e-4)
+    assert rec["return_t10_date"] == "20260611"
     assert rec["next_20day_return"] is not None
     assert rec["next_20day_return"] == pytest.approx(20.0, rel=1e-4)
     assert rec["next_30day_return"] is not None

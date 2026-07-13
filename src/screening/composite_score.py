@@ -260,8 +260,8 @@ def _strict_history_snapshot(
     if anchor is None or current is None or current > anchor:
         return [], False
 
-    cutoff = anchor - timedelta(days=max_lookback_days - 1)
-    snapshot: list[tuple[Any, list[dict[str, Any]]]] = []
+    cutoff = current - timedelta(days=max_lookback_days - 1)
+    by_date: dict[Any, list[list[dict[str, Any]]]] = {}
     for report in history_reports:
         if not isinstance(report, Mapping):
             continue
@@ -272,7 +272,14 @@ def _strict_history_snapshot(
         # duplicated from a persisted same-day report.
         if report_date >= current or report_date > anchor or report_date < cutoff:
             continue
-        snapshot.append((report_date, _report_recommendations(report)))
+        by_date.setdefault(report_date, []).append(_report_recommendations(report))
+    # A date with multiple snapshots has no unique immutable identity.  Drop
+    # every candidate for that date so input ordering cannot select a winner.
+    snapshot = [
+        (report_date, candidates[0])
+        for report_date, candidates in by_date.items()
+        if len(candidates) == 1
+    ]
     snapshot.sort(key=lambda item: item[0])
     return snapshot, True
 
@@ -309,9 +316,9 @@ def _snapshot_dimension_maps(
     if not valid:
         return {}, {}, {}, {}
 
-    anchor = _normalize_trade_date(as_of)
-    assert anchor is not None
-    short_cutoff = anchor - timedelta(days=max(1, lookback_days) - 1)
+    current = _normalize_trade_date(trade_date)
+    assert current is not None
+    short_cutoff = current - timedelta(days=max(1, lookback_days) - 1)
     short_history = [item for item in history if item[0] >= short_cutoff]
 
     momentum_map: dict[str, float] = {}
@@ -422,13 +429,19 @@ def compute_composite_scores_for_recommendations(
 ) -> CompositeReport:
     """Compute composite scores for an explicit recommendation list."""
     recs = list(recommendations)
+    strict_requested = as_of is not None or history_reports is not None
+    metadata_trade_date = trade_date
+    if strict_requested:
+        anchor = _normalize_trade_date(as_of)
+        current = _normalize_trade_date(trade_date)
+        if anchor is None or current is None or current > anchor:
+            metadata_trade_date = ""
     if not recs:
-        return CompositeReport(trade_date=trade_date)
+        return CompositeReport(trade_date=metadata_trade_date)
 
     # Explicit PIT path: all history-backed dimensions consume the same caller-
     # supplied snapshot and never resolve a "latest" report internally.
     top_n = len(recs)
-    strict_requested = as_of is not None or history_reports is not None
     if strict_requested:
         momentum_map, sector_map, volume_map, trend_map = _snapshot_dimension_maps(
             recs,
@@ -525,7 +538,7 @@ def compute_composite_scores_for_recommendations(
     # input order, which is not contractually sorted).
     items.sort(key=lambda x: (-x.composite_score, -x.base_score, x.ticker))
 
-    return CompositeReport(trade_date=trade_date, items=items)
+    return CompositeReport(trade_date=metadata_trade_date, items=items)
 
 
 # ---------------------------------------------------------------------------

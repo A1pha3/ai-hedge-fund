@@ -293,7 +293,7 @@ def compute_expected_returns(
     for rec in recommendations:
         ticker = str(rec.get("ticker", ""))
         score_b = safe_float(rec.get("score_b", 0.0))  # NS-13: NaN is truthy, `float(x or 0.0)` passed NaN through → NaN bucket lookup
-        if not trade_date:
+        if not strict_requested and not trade_date:
             trade_date = str(rec.get("trade_date", ""))
 
         bucket_info = _find_bucket(score_b)

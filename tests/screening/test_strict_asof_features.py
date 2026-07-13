@@ -128,6 +128,80 @@ def test_label_maturity_fails_closed_across_exchange_holidays() -> None:
     assert report.items[0].expected_returns["t5"] is None
 
 
+def test_strict_label_requires_persisted_realization_date() -> None:
+    report = compute_expected_returns(
+        recommendations=[{"ticker": "X", "score_b": 0.5}],
+        as_of="20261231",
+        model_version="v2",
+        history_records=[
+            {
+                "ticker": "A",
+                "recommended_date": "20260101",
+                "model_version": "v2",
+                "recommendation_score": 0.5,
+                "next_5day_return": 100.0,
+            }
+        ],
+    )
+    assert report.items[0].expected_returns["t5"] is None
+
+
+def test_realization_date_controls_label_admissibility_across_price_gaps() -> None:
+    base_record = {
+        "ticker": "A",
+        "recommended_date": "20260101",
+        "model_version": "v2",
+        "recommendation_score": 0.5,
+        "next_5day_return": 8.0,
+    }
+    before = compute_expected_returns(
+        recommendations=[{"ticker": "X", "score_b": 0.5}],
+        as_of="20260210",
+        model_version="v2",
+        history_records=[{**base_record, "return_t5_date": "20260210"}],
+    )
+    after = compute_expected_returns(
+        recommendations=[{"ticker": "X", "score_b": 0.5}],
+        as_of="20260210",
+        model_version="v2",
+        history_records=[{**base_record, "return_t5_date": "20260209"}],
+    )
+    assert before.items[0].expected_returns["t5"] is None
+    assert after.items[0].expected_returns["t5"] == 8.0
+
+
+def test_appending_post_cutoff_label_value_and_date_does_not_change_past() -> None:
+    records = [
+        {
+            "ticker": "A",
+            "recommended_date": "20260101",
+            "model_version": "v2",
+            "recommendation_score": 0.5,
+            "next_5day_return": 2.0,
+            "return_t5_date": "20260112",
+        },
+        {
+            "ticker": "B",
+            "recommended_date": "20260115",
+            "model_version": "v2",
+            "recommendation_score": 0.5,
+        },
+    ]
+    kwargs = dict(
+        recommendations=[{"ticker": "X", "score_b": 0.5}],
+        as_of="20260201",
+        model_version="v2",
+    )
+    before = compute_expected_returns(**kwargs, history_records=records).to_dict()
+    appended = deepcopy(records)
+    appended[1].update(
+        next_5day_return=999.0,
+        return_t5_date="20260202",
+    )
+    after = compute_expected_returns(**kwargs, history_records=appended).to_dict()
+    assert before == after
+
+
 def test_compact_timestamp_as_of_is_normalized_without_utc_date_shift() -> None:
     report = compute_expected_returns(
         recommendations=[{"ticker": "X", "score_b": 0.5}],
@@ -174,6 +248,18 @@ def test_date_with_arbitrary_suffix_fails_closed() -> None:
     )
     assert report.trade_date == ""
     assert report.total_samples == 0
+
+
+def test_malformed_strict_as_of_cannot_be_masked_by_recommendation_date() -> None:
+    report = compute_expected_returns(
+        recommendations=[
+            {"ticker": "X", "score_b": 0.5, "trade_date": "20260710"}
+        ],
+        as_of="malformed",
+        model_version="v2",
+        history_records=[],
+    )
+    assert report.trade_date == ""
 
 
 def test_partial_strict_expected_return_arguments_do_not_read_latest() -> None:
@@ -252,6 +338,17 @@ def test_malformed_composite_history_date_fails_closed() -> None:
     assert item.trend_resonance_factor == 0.0
 
 
+def test_malformed_composite_as_of_keeps_failure_visible_in_metadata() -> None:
+    report = compute_composite_scores_for_recommendations(
+        recommendations=[{"ticker": "X", "score_b": 0.5}],
+        trade_date="20260710",
+        as_of="malformed",
+        history_reports=[],
+    )
+    assert report.trade_date == ""
+    assert report.items[0].momentum_bonus == 0.0
+
+
 def test_missing_current_volume_does_not_reuse_last_historical_volume() -> None:
     report = compute_composite_scores_for_recommendations(
         recommendations=[{"ticker": "X", "score_b": 0.5}],
@@ -273,3 +370,59 @@ def test_missing_current_volume_does_not_reuse_last_historical_volume() -> None:
         ],
     )
     assert report.items[0].volume_factor == 0.0
+
+
+def test_conflicting_duplicate_report_dates_are_excluded_order_independently() -> None:
+    duplicates = [
+        {
+            "date": "20260709",
+            "recommendations": [
+                {"ticker": "X", "score_b": 0.0, "volume": 1.0}
+            ],
+        },
+        {
+            "date": "20260709",
+            "recommendations": [
+                {"ticker": "X", "score_b": 1.0, "volume": 1_000_000.0}
+            ],
+        },
+    ]
+    kwargs = dict(
+        recommendations=[{"ticker": "X", "score_b": 0.5, "volume": 100.0}],
+        trade_date="20260710",
+        as_of="20260710",
+    )
+    forward = compute_composite_scores_for_recommendations(
+        **kwargs, history_reports=duplicates
+    ).to_dict()
+    reversed_result = compute_composite_scores_for_recommendations(
+        **kwargs, history_reports=list(reversed(duplicates))
+    ).to_dict()
+    assert forward == reversed_result
+    item = forward["items"][0]
+    assert item["momentum_bonus"] == 0.0
+    assert item["volume_factor"] == 0.0
+
+
+def test_composite_lookback_is_anchored_to_trade_date_not_later_as_of() -> None:
+    history = [
+        {
+            "date": "20260709",
+            "recommendations": [
+                {"ticker": "X", "score_b": 0.4, "volume": 100.0}
+            ],
+        }
+    ]
+    kwargs = dict(
+        recommendations=[{"ticker": "X", "score_b": 0.5, "volume": 130.0}],
+        trade_date="20260710",
+        history_reports=history,
+        lookback_days=5,
+    )
+    at_trade_date = compute_composite_scores_for_recommendations(
+        **kwargs, as_of="20260710"
+    ).to_dict()
+    replayed_later = compute_composite_scores_for_recommendations(
+        **kwargs, as_of="20260720"
+    ).to_dict()
+    assert at_trade_date == replayed_later

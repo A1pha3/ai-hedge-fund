@@ -131,6 +131,53 @@ class TestBackfillBtstRealized:
         )
         assert n == 0
 
+    def test_preserved_return_keeps_its_matching_realization_date(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        outputs_dir = tmp_path / "outputs"
+        reports_dir = tmp_path / "reports"
+        reports_dir.mkdir()
+        _seed_btst_report(
+            outputs_dir,
+            "20260618_scheme_a",
+            "20260618",
+            ["300395 蓝色光标"],
+        )
+        (reports_dir / "tracking_history.json").write_text(
+            json.dumps(
+                {
+                    "records": [
+                        {
+                            "ticker": "300395",
+                            "recommended_date": "20260618",
+                            "next_day_return": 10.0,
+                            "return_t1_date": "20260619",
+                            "tracking_status": "partial",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "src.screening.btst_realized_bridge.fetch_actual_returns",
+            lambda **kwargs: {
+                "300395": {"day_1": 20.0, "day_1_date": "20260622"}
+            },
+        )
+
+        backfill_btst_realized(
+            outputs_dir=outputs_dir,
+            reports_dir=reports_dir,
+            as_of_date="20260623",
+        )
+
+        record = json.loads(
+            (reports_dir / "tracking_history.json").read_text(encoding="utf-8")
+        )["records"][0]
+        assert record["next_day_return"] == 10.0
+        assert record["return_t1_date"] == "20260619"
+
 
 # ---------------------------------------------------------------------------
 # Task 4: T+15 / T+25 horizon support (multi-horizon diagnosis plan)
@@ -195,3 +242,5 @@ class TestTask4T15T25Horizons:
         assert rec.get("next_15day_return") > 0
         assert rec.get("next_25day_return") is not None
         assert rec.get("next_25day_return") > 0
+        assert rec.get("return_t15_date") == "20260703"
+        assert rec.get("return_t25_date") == "20260713"

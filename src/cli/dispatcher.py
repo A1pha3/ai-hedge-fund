@@ -743,10 +743,8 @@ def _resolve_expected_returns(argv: list[str]) -> int | None:
     top_n = _parse_int(_get_kv(argv, "--top-n"), 20)
     lookback = _parse_int(_get_kv(argv, "--lookback"), 60)
     from src.screening.consecutive_recommendation import resolve_report_dir
-    from src.screening.data_quality_audit import (
-        _find_latest_report,
-        load_latest_recommendations,
-    )
+    from src.screening.consecutive_recommendation import load_tracking_history
+    from src.screening.data_quality_audit import _find_latest_report
     from src.screening.expected_return import (
         compute_expected_returns,
         render_expected_returns,
@@ -758,11 +756,27 @@ def _resolve_expected_returns(argv: list[str]) -> int | None:
     if report_path is None:
         print(f"{Fore.RED}No auto_screening report found. Run --auto first.{Style.RESET_ALL}")
         return 1
-    recs = load_latest_recommendations(reports_dir, top_n=top_n)
+    import json
+
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        print(f"{Fore.RED}Latest auto_screening report is unreadable.{Style.RESET_ALL}")
+        return 1
+    recs = list(payload.get("recommendations") or [])[:top_n]
     if not recs:
         print(f"{Fore.RED}No recommendations found.{Style.RESET_ALL}")
         return 1
-    report = compute_expected_returns(recommendations=recs, lookback_days=lookback, reports_dir=reports_dir)
+    trade_date = str(payload.get("date") or "")
+    model_version = str(payload.get("model_version") or "")
+    history_records = load_tracking_history(reports_dir)
+    report = compute_expected_returns(
+        recommendations=recs,
+        as_of=trade_date,
+        model_version=model_version,
+        history_records=history_records,
+        lookback_days=lookback,
+    )
     print(render_expected_returns(report))
     return 0
 

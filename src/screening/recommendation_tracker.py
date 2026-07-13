@@ -107,6 +107,17 @@ class TrackingRecord:
     next_20day_return: float | None = None
     next_25day_return: float | None = None
     next_30day_return: float | None = None
+    # Exact close dates that made each T+N label observable.  Strict PIT
+    # calibration requires these; legacy records without them remain readable
+    # but their undated labels are inadmissible in strict mode.
+    return_t1_date: str | None = None
+    return_t3_date: str | None = None
+    return_t5_date: str | None = None
+    return_t10_date: str | None = None
+    return_t15_date: str | None = None
+    return_t20_date: str | None = None
+    return_t25_date: str | None = None
+    return_t30_date: str | None = None
     tracking_status: str = "pending"
     # NS-2: 模型版本标识 (来自 auto_screening payload 顶层), 让诊断模块按版本
     # 分组区分老/新模型效果。旧 tracking_history 记录无此字段 → 默认 ""。
@@ -152,6 +163,14 @@ class TrackingRecord:
             next_20day_return=_optional_float(payload.get("next_20day_return")),
             next_25day_return=_optional_float(payload.get("next_25day_return")),
             next_30day_return=_optional_float(payload.get("next_30day_return")),
+            return_t1_date=_optional_date_string(payload.get("return_t1_date")),
+            return_t3_date=_optional_date_string(payload.get("return_t3_date")),
+            return_t5_date=_optional_date_string(payload.get("return_t5_date")),
+            return_t10_date=_optional_date_string(payload.get("return_t10_date")),
+            return_t15_date=_optional_date_string(payload.get("return_t15_date")),
+            return_t20_date=_optional_date_string(payload.get("return_t20_date")),
+            return_t25_date=_optional_date_string(payload.get("return_t25_date")),
+            return_t30_date=_optional_date_string(payload.get("return_t30_date")),
             tracking_status=str(payload.get("tracking_status", "pending") or "pending"),
             model_version=str(payload.get("model_version", "") or ""),
             score_decomposition=payload.get("score_decomposition"),
@@ -183,6 +202,11 @@ def _parse_date(date_str: str) -> datetime | None:
 def _format_date(dt: datetime) -> str:
     """``datetime`` → YYYYMMDD。"""
     return dt.strftime("%Y%m%d")
+
+
+def _optional_date_string(value: Any) -> str | None:
+    parsed = _parse_date(str(value or ""))
+    return _format_date(parsed) if parsed is not None else None
 
 
 def _coerce_recommended_price(rec: dict[str, Any]) -> float:
@@ -335,7 +359,7 @@ def fetch_actual_returns(
     to_date: str,
     *,
     use_data_fetcher: Callable[[str, str, str], list[dict[str, Any]]] | None = None,
-) -> dict[str, dict[str, float]]:
+) -> dict[str, dict[str, float | str]]:
     """从 tushare/akshare 拉取指定区间每日收盘价，计算 T+1/T+3/T+5 收益。
 
     Args:
@@ -361,7 +385,7 @@ def fetch_actual_returns(
     to_dt_extended = to_dt + timedelta(days=45)
     extended_to = _format_date(to_dt_extended)
 
-    result: dict[str, dict[str, float]] = {}
+    result: dict[str, dict[str, float | str]] = {}
     for ticker in tickers:
         if not ticker:
             continue
@@ -377,13 +401,14 @@ def fetch_actual_returns(
         base_close = closes[0][1]
         if base_close <= 0:
             continue
-        ticker_returns: dict[str, float] = {}
+        ticker_returns: dict[str, float | str] = {}
         for horizon in DEFAULT_HORIZONS:
             if len(closes) > horizon:
-                future_close = closes[horizon][1]
+                observation_date, future_close = closes[horizon]
                 if future_close > 0:
                     ret_pct = (future_close - base_close) / base_close * 100.0
                     ticker_returns[f"day_{horizon}"] = round(ret_pct, 4)
+                    ticker_returns[f"day_{horizon}_date"] = observation_date
         if ticker_returns:
             result[ticker] = ticker_returns
     return result
@@ -676,6 +701,13 @@ def _update_tracking_history_locked(
                         if fetched is not None:
                             if target.get(field_key) != fetched:
                                 target[field_key] = fetched
+                                changed = True
+                            horizon = day_key.removeprefix("day_")
+                            date_key = f"return_t{horizon}_date"
+                            fetched_date = returns.get(f"{day_key}_date")
+                            normalized_date = _optional_date_string(fetched_date)
+                            if normalized_date is not None and target.get(date_key) != normalized_date:
+                                target[date_key] = normalized_date
                                 changed = True
                         # If fetched is None, keep the existing value (no clobber).
                     # 同步未来价字段 — 来自 fetcher 的隐含信息 (非 T+1)

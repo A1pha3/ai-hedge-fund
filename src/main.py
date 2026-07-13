@@ -681,21 +681,36 @@ def _rank_pool_by_investability(ranking_pool: list[dict], trade_date: str) -> li
     报告构建与 ``rank_recommendations_by_investability`` 调用集中在容错 helper 中。
     """
     try:
+        from src.screening.consecutive_recommendation import (
+            load_auto_screening_history,
+            load_tracking_history,
+        )
         from src.screening.composite_score import (
             compute_composite_scores_for_recommendations,
         )
         from src.screening.expected_return import compute_expected_returns
 
+        reports_dir = _resolve_consecutive_report_dir()
+        history_records = load_tracking_history(reports_dir)
+        history_reports = load_auto_screening_history(
+            lookback_days=max(60, COMPOSITE_SCORE_LOOKBACK_DAYS),
+            report_dir=reports_dir,
+            end_date=trade_date,
+        )
+        model_version = _compute_model_version()
         composite_report = compute_composite_scores_for_recommendations(
             recommendations=ranking_pool,
             trade_date=trade_date,
+            as_of=trade_date,
+            history_reports=history_reports,
             lookback_days=COMPOSITE_SCORE_LOOKBACK_DAYS,
-            reports_dir=_resolve_consecutive_report_dir(),
         )
         expected_report = compute_expected_returns(
             recommendations=ranking_pool,
+            as_of=trade_date,
+            model_version=model_version,
+            history_records=history_records,
             lookback_days=60,
-            reports_dir=_resolve_consecutive_report_dir(),
         )
         return rank_recommendations_by_investability(ranking_pool, composite_report, expected_report)
     except Exception as exc:
@@ -1679,7 +1694,15 @@ def _build_top_table_row(*, idx: int, rec: dict, market_regime: str = "normal") 
     return [idx, ticker_label, industry, score_colored, decision_colored, front_door_colored, cons_str, decay_str]
 
 
-def _print_top_score_enhancements(recs: list[dict], top_n: int, report_path) -> None:
+def _print_top_score_enhancements(
+    recs: list[dict],
+    top_n: int,
+    report_path,
+    *,
+    trade_date: str | None = None,
+    model_version: str | None = None,
+    history_records: list[dict] | None = None,
+) -> None:
     """打印 Top N 的评分构成、因子瀑布和预期收益增强信息。
 
     Extracted from :func:`run_top` — 将 score decomposition / waterfall /
@@ -1717,11 +1740,20 @@ def _print_top_score_enhancements(recs: list[dict], top_n: int, report_path) -> 
 
         _reports_dir = _Path(report_path).parent if report_path else None
         if _reports_dir:
-            er_report = compute_expected_returns(
-                recommendations=recs[:top_n],
-                lookback_days=60,
-                reports_dir=_reports_dir,
-            )
+            if trade_date is not None or history_records is not None:
+                er_report = compute_expected_returns(
+                    recommendations=recs[:top_n],
+                    as_of=trade_date,
+                    model_version=model_version,
+                    history_records=history_records or [],
+                    lookback_days=60,
+                )
+            else:
+                er_report = compute_expected_returns(
+                    recommendations=recs[:top_n],
+                    lookback_days=60,
+                    reports_dir=_reports_dir,
+                )
             if er_report.total_samples > 0:
                 print(f"\n{Fore.WHITE}{Style.BRIGHT}{'━' * 22} 预期收益 (P9-1) {'━' * 22}{Style.RESET_ALL}")
                 print(render_expected_returns_compact(er_report))
@@ -1820,7 +1852,16 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
     print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center", "center")))
 
     # Score decomposition + waterfall + expected returns for top 5 (skip on validation failure)
-    _print_top_score_enhancements(recs, top_n, report_path)
+    from src.screening.consecutive_recommendation import load_tracking_history
+
+    _print_top_score_enhancements(
+        recs,
+        top_n,
+        report_path,
+        trade_date=str(trade_date),
+        model_version=str(payload.get("model_version") or ""),
+        history_records=load_tracking_history(report_dir),
+    )
 
     # Cache stats if available
     fetcher_stats = payload.get("batch_data_fetcher", {})

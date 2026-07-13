@@ -17,7 +17,7 @@ CLI:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -43,15 +43,15 @@ SCORE_BUCKETS: tuple[tuple[str, float, float], ...] = (
 
 DEFAULT_LOOKBACK_DAYS: int = 60
 
-_RETURN_HORIZONS: dict[str, int] = {
-    "next_day_return": 1,
-    "next_3day_return": 3,
-    "next_5day_return": 5,
-    "next_10day_return": 10,
-    "next_15day_return": 15,
-    "next_20day_return": 20,
-    "next_25day_return": 25,
-    "next_30day_return": 30,
+_RETURN_REALIZATION_DATES: dict[str, str] = {
+    "next_day_return": "return_t1_date",
+    "next_3day_return": "return_t3_date",
+    "next_5day_return": "return_t5_date",
+    "next_10day_return": "return_t10_date",
+    "next_15day_return": "return_t15_date",
+    "next_20day_return": "return_t20_date",
+    "next_25day_return": "return_t25_date",
+    "next_30day_return": "return_t30_date",
 }
 
 
@@ -263,19 +263,6 @@ def _normalize_trade_date(value: Any) -> date | None:
             return None
 
 
-def _conservative_label_maturity(start: date, sessions: int) -> date:
-    """Return a late, offline-safe bound for a T+N trading-session label.
-
-    Tracking history does not persist the exact exchange session that produced
-    each label, and strict snapshot computation must not fetch a live calendar.
-    Two calendar days per session plus a 14-day closure buffer is later than
-    normal weekday maturity and covers A-share scheduled holiday closures.  It
-    intentionally delays calibration rather than admitting a possibly future
-    label when exact calendar evidence is unavailable.
-    """
-    return start + timedelta(days=sessions * 2 + 14)
-
-
 def _records_as_of(
     records: Sequence[Mapping[str, Any]],
     *,
@@ -303,8 +290,9 @@ def _records_as_of(
             continue
         item = dict(record)
         item["recommended_date"] = recommended.strftime("%Y%m%d")
-        for field_name, horizon_days in _RETURN_HORIZONS.items():
-            if _conservative_label_maturity(recommended, horizon_days) >= anchor:
+        for field_name, realization_field in _RETURN_REALIZATION_DATES.items():
+            realized_on = _normalize_trade_date(record.get(realization_field))
+            if realized_on is None or realized_on >= anchor:
                 item.pop(field_name, None)
         snapshot.append(item)
     return snapshot

@@ -28,6 +28,7 @@ from pathlib import Path
 from src.screening.composite_score import (
     _composite_grade,
     compute_composite_scores,
+    compute_composite_scores_for_recommendations,
 )
 from src.screening.conditional_order_advisor import (
     compute_conditional_advice,
@@ -1316,18 +1317,38 @@ def _build_ranked_candidates(
     lookback_days: int,
     *,
     profit_aware: bool = False,
+    trade_date: str | None = None,
+    model_version: str | None = None,
+    history_records: list[dict] | None = None,
+    history_reports: list[dict] | None = None,
 ) -> list[dict]:
     """Compute ranked candidates with expected returns and consecutive bonus."""
-    composite = compute_composite_scores(
-        top_n=len(recommendations),
-        lookback_days=lookback_days,
-        reports_dir=report_dir,
-    )
-    expected = compute_expected_returns(
-        recommendations=recommendations,
-        lookback_days=max(60, lookback_days),
-        reports_dir=report_dir,
-    )
+    if trade_date is not None or history_reports is not None:
+        composite = compute_composite_scores_for_recommendations(
+            recommendations=recommendations,
+            trade_date=trade_date or "",
+            as_of=trade_date or "",
+            history_reports=history_reports or [],
+            lookback_days=lookback_days,
+        )
+        expected = compute_expected_returns(
+            recommendations=recommendations,
+            as_of=trade_date,
+            model_version=model_version,
+            history_records=history_records or [],
+            lookback_days=max(60, lookback_days),
+        )
+    else:
+        composite = compute_composite_scores(
+            top_n=len(recommendations),
+            lookback_days=lookback_days,
+            reports_dir=report_dir,
+        )
+        expected = compute_expected_returns(
+            recommendations=recommendations,
+            lookback_days=max(60, lookback_days),
+            reports_dir=report_dir,
+        )
     if not composite.items:
         return []
 
@@ -2326,11 +2347,26 @@ def run_top_picks(
         print(f"{Fore.YELLOW}No recommendations in latest report.{Style.RESET_ALL}")
         return 0
 
+    from src.screening.consecutive_recommendation import (
+        load_auto_screening_history,
+        load_tracking_history,
+    )
+
+    history_records = load_tracking_history(search_dir)
+    history_reports = load_auto_screening_history(
+        lookback_days=max(60, lookback_days),
+        report_dir=search_dir,
+        end_date=trade_date,
+    )
     ranked = _build_ranked_candidates(
         recs,
         search_dir,
         lookback_days,
         profit_aware=profit_aware,
+        trade_date=trade_date,
+        model_version=str(report_data.get("model_version") or ""),
+        history_records=history_records,
+        history_reports=history_reports,
     )
     if not ranked:
         print(f"{Fore.YELLOW}Unable to compute composite scores.{Style.RESET_ALL}")
