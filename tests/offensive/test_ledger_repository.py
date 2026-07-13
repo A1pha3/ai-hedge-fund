@@ -14,6 +14,13 @@ from src.screening.offensive.trade_lifecycle import (
 )
 
 
+def test_repository_context_manager_initializes_and_returns_repository(tmp_path):
+    path = tmp_path / "context.sqlite3"
+    with LedgerRepository(path, "context", 100_000) as repository:
+        assert repository.path == path
+        assert path.exists()
+
+
 def _repo(tmp_path: Path) -> LedgerRepository:
     repo = LedgerRepository(
         tmp_path / "ledger.sqlite3", ledger_id="test", initial_cash=100_000

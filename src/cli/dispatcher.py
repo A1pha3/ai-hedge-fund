@@ -924,15 +924,50 @@ def _resolve_top_setups(argv: list[str]) -> int | None:
     return 0
 
 
-def _resolve_daily_action(argv: list[str]) -> int | None:
+def _cached_daily_action_market_bar(cache, trade_date):
+    """Read an exact cached bar without inventing execution-state fields."""
+    import pandas as pd
+
+    from src.screening.offensive.daily_action_service import MarketBar
+
+    if not cache.exists():
+        return None
+    frame = pd.read_csv(cache)
+    dates = pd.to_datetime(frame.get("date"), errors="coerce").dt.date
+    rows = frame.loc[dates == trade_date]
+    if rows.empty:
+        return None
+    row = rows.iloc[-1]
+
+    def positive(name):
+        if name not in row or pd.isna(row[name]):
+            return None
+        value = float(row[name])
+        return value if value > 0 else None
+
+    suspended = None
+    if "suspended" in row and pd.notna(row["suspended"]):
+        raw = row["suspended"]
+        if isinstance(raw, bool) or raw in (0, 1):
+            suspended = bool(raw)
+    return MarketBar(
+        positive("open"),
+        positive("close"),
+        positive("limit_down"),
+        positive("limit_up"),
+        suspended,
+        positive("high"),
+        positive("low"),
+    )
+
+
+def _resolve_daily_action(
+    argv: list[str], *, open_sessions=None, ledger_path=None
+) -> int | None:
     """Run cached setup scanning through the auditable v2 simulation ledger."""
     if "--daily-action" not in argv:
         return None
-    import os
-    from datetime import timedelta
     from pathlib import Path
-
-    import pandas as pd
 
     from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
     from src.screening.offensive.daily_action import (
@@ -940,7 +975,7 @@ def _resolve_daily_action(argv: list[str]) -> int | None:
         run_daily_action_v2,
         scan_daily_action_candidates,
     )
-    from src.screening.offensive.daily_action_service import DailyActionService, MarketBar
+    from src.screening.offensive.daily_action_service import DailyActionService
     from src.screening.offensive.execution_adjuster import ExecutionCosts
     from src.screening.offensive.ledger_repository import LedgerRepository
 
@@ -949,52 +984,30 @@ def _resolve_daily_action(argv: list[str]) -> int | None:
     end_date_raw = _get_kv(argv, "--end-date") or _next_arg(argv, "--end-date")
     end_date = end_date_raw.strip().replace("-", "") if end_date_raw else None
 
-    scan = scan_daily_action_candidates(end_date=end_date)
-    start = scan.signal_date - timedelta(days=30)
-    sessions = tuple(
-        start + timedelta(days=offset)
-        for offset in range(80)
-        if (start + timedelta(days=offset)).weekday() < 5
+    if open_sessions is None:
+        from src.screening.offensive.daily_action import _load_authoritative_session_dates
+
+        open_sessions = _load_authoritative_session_dates()
+    open_sessions = tuple(open_sessions)
+    scan = scan_daily_action_candidates(
+        end_date=end_date, authoritative_sessions=open_sessions
     )
 
     def cached_prices(ticker, trade_date):
         cache = Path("data/price_cache") / f"{ticker}.csv"
-        if not cache.exists():
-            return None
-        frame = pd.read_csv(cache)
-        dates = pd.to_datetime(frame.get("date"), errors="coerce").dt.date
-        rows = frame.loc[dates == trade_date]
-        if rows.empty:
-            return None
-        row = rows.iloc[-1]
+        return _cached_daily_action_market_bar(cache, trade_date)
 
-        def value(name):
-            return float(row[name]) if name in row and pd.notna(row[name]) else None
-
-        return MarketBar(
-            value("open"),
-            value("close"),
-            value("limit_down"),
-            value("limit_up"),
-            False,
-            value("high"),
-            value("low"),
+    resolved_ledger_path = Path(ledger_path or "data/paper_trading_v2/ledger.sqlite3")
+    with LedgerRepository(
+        resolved_ledger_path, "daily-action-v2", 100_000.0
+    ) as repository:
+        service = DailyActionService(
+            repository,
+            TradingSessionCalendar(open_sessions),
+            cached_prices,
+            ExecutionCosts(version="daily-action-v2"),
         )
-
-    ledger_path = Path(
-        os.environ.get(
-            "DAILY_ACTION_V2_LEDGER", "data/paper_trading_v2/ledger.sqlite3"
-        )
-    )
-    repository = LedgerRepository(ledger_path, "daily-action-v2", 100_000.0)
-    repository.initialize()
-    service = DailyActionService(
-        repository,
-        TradingSessionCalendar(sessions),
-        cached_prices,
-        ExecutionCosts(version="daily-action-v2"),
-    )
-    print(render_daily_action_v2(run_daily_action_v2(service, scan)))
+        print(render_daily_action_v2(run_daily_action_v2(service, scan)))
     return 0
 
 

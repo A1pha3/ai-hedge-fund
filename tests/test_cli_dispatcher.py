@@ -242,104 +242,78 @@ class TestDispatchEarlyFlags(unittest.TestCase):
         mock.assert_called_once()
 
     def test_daily_action_renders_actual_scan_trade_date(self) -> None:
-        """--daily-action 渲染日期应来自 generate_daily_action 的实际扫描日期."""
-
-        class DummyTracker:
-            last_action_trade_date = ""
-
-        tracker = DummyTracker()
-
-        def fake_generate_daily_action(*, tracker, **_kwargs):
-            tracker.last_action_trade_date = "20260706"
-            return []
-
+        """--daily-action uses an injected authoritative session calendar."""
+        from datetime import date
+        from src.screening.offensive.daily_action import DailyActionScan
         with tempfile.TemporaryDirectory() as tmp:
-            report_path = Path(tmp) / "auto_screening_20260708.json"
-            report_path.write_text('{"date": "20260708", "recommendations": []}', encoding="utf-8")
-
             with (
-                patch("src.screening.offensive.paper_tracker.PaperTracker", return_value=tracker),
-                patch("src.screening.offensive.daily_action.generate_daily_action", side_effect=fake_generate_daily_action),
-                patch("src.screening.offensive.daily_action.render_daily_action", return_value="rendered") as mock_render,
-                patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=Path(tmp)),
-                patch("src.screening.data_quality_audit._find_latest_report", return_value=report_path),
-                patch("builtins.print"),
+                patch("src.screening.offensive.daily_action.scan_daily_action_candidates", return_value=DailyActionScan(date(2026, 7, 10), (), ())),
+                patch("builtins.print") as output,
             ):
-                rc = dispatcher._resolve_daily_action(["--daily-action"])
+                rc = dispatcher._resolve_daily_action(
+                    ["--daily-action"],
+                    open_sessions=(date(2026, 7, 10), date(2026, 7, 13)),
+                    ledger_path=Path(tmp) / "v2.sqlite3",
+                )
 
         self.assertEqual(rc, 0)
-        self.assertEqual(mock_render.call_args.args[1], "20260706")
+        self.assertIn("模拟台账", output.call_args.args[0])
 
     def test_daily_action_passes_end_date_override(self) -> None:
         """--daily-action --end-date=YYYY-MM-DD 应规范化成 YYYYMMDD 传给 generate_daily_action."""
 
-        class DummyTracker:
-            last_action_trade_date = ""
-
-        tracker = DummyTracker()
-
-        def fake_generate_daily_action(*, tracker, **_kwargs):
-            tracker.last_action_trade_date = _kwargs.get("end_date") or ""
-            return []
-
-        with (
-            patch("src.screening.offensive.paper_tracker.PaperTracker", return_value=tracker),
-            patch("src.screening.offensive.daily_action.generate_daily_action", side_effect=fake_generate_daily_action) as mock_gen,
-            patch("src.screening.offensive.daily_action.render_daily_action", return_value="rendered"),
-            patch("builtins.print"),
-        ):
-            rc = dispatcher._resolve_daily_action(["--daily-action", "--end-date=2026-07-06"])
+        from datetime import date
+        from src.screening.offensive.daily_action import DailyActionScan
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "src.screening.offensive.daily_action.scan_daily_action_candidates",
+            return_value=DailyActionScan(date(2026, 7, 6), (), ()),
+        ) as scanner, patch("builtins.print"):
+            rc = dispatcher._resolve_daily_action(
+                ["--daily-action", "--end-date=2026-07-06"],
+                open_sessions=(date(2026, 7, 6), date(2026, 7, 7)),
+                ledger_path=Path(tmp) / "v2.sqlite3",
+            )
 
         self.assertEqual(rc, 0)
         # 带横线的 YYYY-MM-DD 应规范化成 YYYYMMDD
-        self.assertEqual(mock_gen.call_args.kwargs.get("end_date"), "20260706")
-        self.assertEqual(tracker.last_action_trade_date, "20260706")
+        self.assertEqual(scanner.call_args.kwargs.get("end_date"), "20260706")
 
     def test_daily_action_passes_end_date_space_form(self) -> None:
         """--daily-action --end-date YYYY-MM-DD (空格分隔) 也应解析."""
 
-        class DummyTracker:
-            last_action_trade_date = ""
-
-        tracker = DummyTracker()
-
-        def fake_generate_daily_action(*, tracker, **_kwargs):
-            tracker.last_action_trade_date = _kwargs.get("end_date") or ""
-            return []
-
-        with (
-            patch("src.screening.offensive.paper_tracker.PaperTracker", return_value=tracker),
-            patch("src.screening.offensive.daily_action.generate_daily_action", side_effect=fake_generate_daily_action) as mock_gen,
-            patch("src.screening.offensive.daily_action.render_daily_action", return_value="rendered"),
-            patch("builtins.print"),
-        ):
-            rc = dispatcher._resolve_daily_action(["--daily-action", "--end-date", "20260706"])
+        from datetime import date
+        from src.screening.offensive.daily_action import DailyActionScan
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "src.screening.offensive.daily_action.scan_daily_action_candidates",
+            return_value=DailyActionScan(date(2026, 7, 6), (), ()),
+        ) as scanner, patch("builtins.print"):
+            rc = dispatcher._resolve_daily_action(
+                ["--daily-action", "--end-date", "20260706"],
+                open_sessions=(date(2026, 7, 6), date(2026, 7, 7)),
+                ledger_path=Path(tmp) / "v2.sqlite3",
+            )
 
         self.assertEqual(rc, 0)
         # YYYYMMDD (无横线) 保持不变
-        self.assertEqual(mock_gen.call_args.kwargs.get("end_date"), "20260706")
+        self.assertEqual(scanner.call_args.kwargs.get("end_date"), "20260706")
 
     def test_daily_action_no_end_date_passes_none(self) -> None:
         """不带 --end-date 时 end_date 应为 None (走 17:00 规则)."""
 
-        class DummyTracker:
-            last_action_trade_date = ""
-
-        tracker = DummyTracker()
-
-        def fake_generate_daily_action(*, tracker, **_kwargs):
-            return []
-
-        with (
-            patch("src.screening.offensive.paper_tracker.PaperTracker", return_value=tracker),
-            patch("src.screening.offensive.daily_action.generate_daily_action", side_effect=fake_generate_daily_action) as mock_gen,
-            patch("src.screening.offensive.daily_action.render_daily_action", return_value="rendered"),
-            patch("builtins.print"),
-        ):
-            rc = dispatcher._resolve_daily_action(["--daily-action"])
+        from datetime import date
+        from src.screening.offensive.daily_action import DailyActionScan
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "src.screening.offensive.daily_action.scan_daily_action_candidates",
+            return_value=DailyActionScan(date(2026, 7, 6), (), ()),
+        ) as scanner, patch("builtins.print"):
+            rc = dispatcher._resolve_daily_action(
+                ["--daily-action"],
+                open_sessions=(date(2026, 7, 6), date(2026, 7, 7)),
+                ledger_path=Path(tmp) / "v2.sqlite3",
+            )
 
         self.assertEqual(rc, 0)
-        self.assertIsNone(mock_gen.call_args.kwargs.get("end_date"))
+        self.assertIsNone(scanner.call_args.kwargs.get("end_date"))
 
     def test_market_status_flag_recognized(self) -> None:
         with patch("src.main.run_market_status", return_value=0) as mock:

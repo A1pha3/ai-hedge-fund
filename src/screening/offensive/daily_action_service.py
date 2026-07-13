@@ -97,6 +97,7 @@ class DailyActionRun:
     skipped_plans: tuple[ActionItem, ...]
     exit_plans: tuple[ActionItem, ...]
     deferred_exits: tuple[ActionItem, ...]
+    completed_exits: tuple[ActionItem, ...]
     open_exposure: float
     reserved_exposure: float
     block_reason: str | None = None
@@ -348,6 +349,7 @@ class DailyActionService:
             tuple(self._skipped),
             tuple(self._exit_plans),
             tuple(self._deferred),
+            exits,
             sum(values.values()) / valuation.nav,
             sum(p.planned_weight for p in self.repository.planned_trades()),
             self._block_reason,

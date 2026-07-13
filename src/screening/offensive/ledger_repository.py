@@ -63,6 +63,14 @@ class LedgerRepository:
         self.ledger_id = ledger_id
         self.initial_cash = initial_cash
 
+    def __enter__(self) -> LedgerRepository:
+        self.initialize()
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        # Connections are deliberately per-operation and already context-managed.
+        return None
+
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=5.0)
         conn.row_factory = sqlite3.Row

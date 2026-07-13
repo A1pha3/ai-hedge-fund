@@ -10,8 +10,13 @@ from src.screening.offensive.daily_action import (
     BlockedCandidate,
     render_daily_action_v2,
     run_daily_action_v2,
+    _resolve_next_trade_date,
+    _price_frame_is_fresh,
+    DailyActionV2Run,
 )
 from src.screening.offensive.daily_action_service import (
+    ActionItem,
+    DailyActionRun,
     DailyActionService,
     MarketBar,
     PlanCandidate,
@@ -19,6 +24,9 @@ from src.screening.offensive.daily_action_service import (
 )
 from src.screening.offensive.execution_adjuster import ExecutionCosts
 from src.screening.offensive.ledger_repository import LedgerRepository
+from src.cli.dispatcher import _cached_daily_action_market_bar
+from src.cli import dispatcher
+from src.screening.offensive.ledger_repository import DailyValuation
 
 
 @pytest.fixture
@@ -134,3 +142,124 @@ def test_output_distinguishes_reference_synthetic_and_confirmed_prices(service, 
     assert "参考价" in rendered
     assert "模拟成交" in rendered
     assert "确认成交" in rendered
+
+
+def test_authoritative_sessions_handle_weekend_and_exchange_holiday(monkeypatch):
+    sessions = (date(2026, 9, 25), date(2026, 9, 28), date(2026, 10, 9))
+    monkeypatch.setattr(
+        "src.screening.offensive.daily_action._load_authoritative_session_dates",
+        lambda: sessions,
+    )
+    assert _resolve_next_trade_date("20260925") == "20260928"
+    assert _resolve_next_trade_date("20260928") == "20261009"
+
+
+def test_missing_authoritative_calendar_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        "src.screening.offensive.daily_action._load_authoritative_session_dates",
+        lambda: (),
+    )
+    assert _resolve_next_trade_date("20260925") == ""
+
+
+def test_cached_market_bar_preserves_unknown_execution_fields(tmp_path):
+    cache = tmp_path / "000001.csv"
+    cache.write_text("date,open,close,high,low\n2026-07-13,10,10,10.5,9.5\n", encoding="utf-8")
+    bar = _cached_daily_action_market_bar(cache, date(2026, 7, 13))
+    assert bar is not None
+    assert bar.suspended is None
+    assert bar.limit_up is None
+    assert bar.limit_down is None
+
+
+def test_renderer_includes_real_lifecycle_reasons(service, signal_date):
+    run = run_daily_action_v2(service, _scan(signal_date))
+    rendered = render_daily_action_v2(run)
+    assert "entry_planned" in rendered
+    assert "execution=pending" in rendered
+    assert "source=pending" in rendered
+
+
+def test_ticker_terminal_bar_must_equal_authoritative_signal_session():
+    import pandas as pd
+
+    fresh = pd.DataFrame([{"date": "2026-07-13", "close": 10.0}])
+    stale = pd.DataFrame([{"date": "2026-07-10", "close": 10.0}])
+    assert _price_frame_is_fresh(fresh, "20260713")
+    assert not _price_frame_is_fresh(stale, "20260713")
+
+
+def test_renderer_surfaces_every_lifecycle_collection(signal_date):
+    def item(reason, execution, source):
+        return ActionItem("t", "000001", reason, execution, source)
+    view = DailyActionRun(
+        signal_date,
+        DailyValuation(signal_date, 100_000, 0, 100_000, 100_000, 0, ()),
+        (),
+        (),
+        (item("portfolio_capacity", "pending", "pending"),),
+        (item("maximum_holding_session", "paper", "synthetic_open"),),
+        (item("unknown_queue", "paper", "synthetic_open"),),
+        (item("exit_filled", "paper", "synthetic_open"),),
+        0,
+        0,
+        "calendar_unavailable",
+    )
+    rendered = render_daily_action_v2(DailyActionV2Run(view, (), (), (), ()))
+    for expected in (
+        "portfolio_capacity",
+        "maximum_holding_session",
+        "unknown_queue",
+        "exit_filled",
+        "calendar_unavailable",
+        "execution=paper",
+        "source=synthetic_open",
+    ):
+        assert expected in rendered
+
+
+def test_actual_cli_is_idempotent_and_preserves_recursive_legacy_artifacts(tmp_path, monkeypatch, signal_date):
+    runtime = tmp_path / "data/paper_trading"
+    backtest = tmp_path / "data/paper_trading_backtest"
+    for root, payload in ((runtime, b"runtime"), (backtest, b"backtest")):
+        (root / "nested").mkdir(parents=True)
+        (root / "journal.jsonl").write_bytes(payload)
+        (root / "nested/state.bin").write_bytes(payload + b"-state")
+    snapshot = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for root in (runtime, backtest)
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    scan = _scan(signal_date)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "src.screening.offensive.daily_action.scan_daily_action_candidates",
+        lambda **_kwargs: scan,
+    )
+    ledger = tmp_path / "isolated-v2/ledger.sqlite3"
+    sessions = (signal_date, signal_date + timedelta(days=1))
+    dispatcher._resolve_daily_action(["--daily-action"], open_sessions=sessions, ledger_path=ledger)
+    dispatcher._resolve_daily_action(["--daily-action"], open_sessions=sessions, ledger_path=ledger)
+    after = {
+        path.relative_to(tmp_path): path.read_bytes()
+        for root in (runtime, backtest)
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    assert after == snapshot
+    repo = LedgerRepository(ledger, "daily-action-v2", 100_000)
+    plans = repo.planned_trades()
+    assert len(plans) == 1
+    assert repo.count_events(plans[0].trade_id, "PLAN_CREATED") == 1
+
+
+def test_actual_cli_missing_calendar_renders_block_and_creates_no_plan(tmp_path, monkeypatch, signal_date, capsys):
+    monkeypatch.setattr(
+        "src.screening.offensive.daily_action.scan_daily_action_candidates",
+        lambda **_kwargs: _scan(signal_date),
+    )
+    ledger = tmp_path / "blocked.sqlite3"
+    dispatcher._resolve_daily_action(["--daily-action"], open_sessions=(), ledger_path=ledger)
+    assert "calendar_unavailable" in capsys.readouterr().out
+    assert LedgerRepository(ledger, "daily-action-v2", 100_000).planned_trades() == []

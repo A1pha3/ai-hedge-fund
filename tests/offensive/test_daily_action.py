@@ -794,9 +794,9 @@ def test_resolve_trade_date_normalizes_mixed_price_cache_date_formats(tmp_path, 
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    # Freeze the 17:00 signal date so the guard never rolls back 20260708
-    # regardless of when the test runs (cache max == signal_date → no rollback).
-    monkeypatch.setattr(da, "resolve_signal_date", lambda: "20260708")
+    from datetime import date, datetime
+    monkeypatch.setattr(da, "_current_cn_datetime", lambda: datetime(2026, 7, 8, 18))
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: (date(2026, 7, 8),))
 
     trade_date, regime = da._resolve_trade_date_and_regime()
 
@@ -820,7 +820,9 @@ def test_resolve_trade_date_applies_1700_guard(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(da, "resolve_signal_date", lambda: "20260708")
+    from datetime import date, datetime
+    monkeypatch.setattr(da, "_current_cn_datetime", lambda: datetime(2026, 7, 9, 16))
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: (date(2026, 7, 8), date(2026, 7, 9)))
 
     trade_date, regime = da._resolve_trade_date_and_regime()
 
@@ -838,7 +840,9 @@ def test_resolve_trade_date_no_rollback_after_cutoff(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(da, "resolve_signal_date", lambda: "20260709")
+    from datetime import date, datetime
+    monkeypatch.setattr(da, "_current_cn_datetime", lambda: datetime(2026, 7, 9, 18))
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: (date(2026, 7, 8), date(2026, 7, 9)))
 
     trade_date, _ = da._resolve_trade_date_and_regime()
 
@@ -891,6 +895,8 @@ def test_generate_daily_action_blocks_new_buys_when_price_cache_lags_auto_report
     tracker = PaperTracker(journal_dir=tmp_path)
     monkeypatch.setattr(da, "_resolve_trade_date_and_regime", lambda: ("20260706", "normal"))
     monkeypatch.setattr(da, "_latest_auto_report_date", lambda: "20260708", raising=False)
+    from datetime import date
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: tuple(date(2026, 7, day) for day in (6, 7, 8, 9)))
 
     actions = da.generate_daily_action(tracker=tracker, scan_mode="full_market")
 
@@ -903,6 +909,7 @@ def test_generate_daily_action_does_not_treat_weekend_auto_report_as_stale(tmp_p
     """最新 --auto 报告若落在周末, stale guard 应按对应最近开市日比较."""
     from src.screening.offensive import daily_action as da
     from src.screening.offensive.paper_tracker import PaperTracker
+    from datetime import date
 
     tracker = PaperTracker(journal_dir=tmp_path)
     (tmp_path / "data" / "price_cache").mkdir(parents=True)
@@ -912,15 +919,20 @@ def test_generate_daily_action_does_not_treat_weekend_auto_report_as_stale(tmp_p
     monkeypatch.setattr(da, "_latest_auto_report_date", lambda: "20260711", raising=False)
     monkeypatch.setattr(da, "_missed_entry_window_reason", lambda td: "", raising=False)
     monkeypatch.setattr(da, "_load_st_tickers", lambda: set())
-    monkeypatch.setattr("src.tools.tushare_api.get_open_trade_dates", lambda start_date, end_date: ["20260710"])
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: ())
+    monkeypatch.setattr(
+        da,
+        "_load_authoritative_session_dates",
+        lambda: (date(2026, 7, 10), date(2026, 7, 13)),
+    )
 
     da.generate_daily_action(tracker=tracker, scan_mode="full_market")
 
     assert tracker.last_action_stale_reason == ""
 
 
-def test_generate_daily_action_weekend_auto_report_falls_back_to_weekday_without_trade_cal(tmp_path, monkeypatch):
-    """trade_cal 不可用时, 周末 auto 报告至少要回退到上一个工作日, 不能误判 stale."""
+def test_generate_daily_action_weekend_auto_report_requires_authoritative_session(tmp_path, monkeypatch):
+    """周末报告只可回退到本地权威 session，不能按 weekday 猜测。"""
     from src.screening.offensive import daily_action as da
     from src.screening.offensive.paper_tracker import PaperTracker
 
@@ -930,13 +942,12 @@ def test_generate_daily_action_weekend_auto_report_falls_back_to_weekday_without
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(da, "_resolve_trade_date_and_regime", lambda: ("20260710", "normal"))
     monkeypatch.setattr(da, "_latest_auto_report_date", lambda: "20260712", raising=False)
-    monkeypatch.setattr(da, "_missed_entry_window_reason", lambda td: "", raising=False)
     monkeypatch.setattr(da, "_load_st_tickers", lambda: set())
-    monkeypatch.setattr("src.tools.tushare_api.get_open_trade_dates", lambda start_date, end_date: [])
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: ())
 
     da.generate_daily_action(tracker=tracker, scan_mode="full_market")
 
-    assert tracker.last_action_stale_reason == ""
+    assert "calendar_unavailable" in tracker.last_action_stale_reason
 
 
 def test_generate_daily_action_blocks_new_buys_after_planned_open_window(tmp_path, monkeypatch):
@@ -991,6 +1002,7 @@ def test_generate_daily_action_blocks_new_buys_after_planned_open_window(tmp_pat
     # 买入窗口 cutoff 已放宽到 17:00; 用 18:00 触发 "窗口已过"
     monkeypatch.setattr(da, "_current_cn_datetime", lambda: datetime(2026, 7, 8, 18, 0), raising=False)
     monkeypatch.setattr(da, "_load_st_tickers", lambda: set())
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: ())
     monkeypatch.setattr(da, "Path", lambda path: SimpleNamespace(glob=lambda pattern: [SimpleNamespace(stem="000001")]))
 
     actions = da.generate_daily_action(
