@@ -1898,3 +1898,161 @@ def test_missing_descriptor_primitives_fail_closed_with_explicit_diagnostic(
 
     assert result.status is AutoRunStatus.FATAL
     assert "descriptor-relative" in result.recovery_diagnostics[0]["error"]
+
+
+def test_new_pending_directories_are_parent_fsynced_in_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.screening import auto_pipeline as pipeline_mod
+
+    events: list[str] = []
+    labels: dict[int, str] = {}
+    real_open = pipeline_mod.os.open
+    real_mkdir = pipeline_mod.os.mkdir
+    real_fsync = pipeline_mod.os.fsync
+
+    def observed_open(path, flags, mode=0o777, *, dir_fd=None):
+        fd = real_open(path, flags, mode, dir_fd=dir_fd)
+        if path == tmp_path:
+            labels[fd] = "reports"
+        elif path == ".auto_pending":
+            labels[fd] = "root"
+            events.append("open_root")
+        elif path == "20260710":
+            labels[fd] = "date"
+            events.append("open_date")
+        return fd
+
+    def observed_mkdir(path, mode=0o777, *, dir_fd=None):
+        if path == ".auto_pending":
+            events.append("mkdir_root")
+        elif path == "20260710":
+            events.append("mkdir_date")
+        return real_mkdir(path, mode, dir_fd=dir_fd)
+
+    def observed_fsync(fd):
+        if labels.get(fd) in {"reports", "root"}:
+            events.append(f"fsync_{labels[fd]}")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(pipeline_mod.os, "open", observed_open)
+    monkeypatch.setattr(pipeline_mod.os, "mkdir", observed_mkdir)
+    monkeypatch.setattr(pipeline_mod.os, "fsync", observed_fsync)
+
+    handle = pipeline_mod._open_pending_handle(
+        tmp_path,
+        "20260710",
+        "ordered-run",
+        create=True,
+    )
+    handle.close()
+
+    assert events == [
+        "mkdir_root",
+        "open_root",
+        "fsync_reports",
+        "mkdir_date",
+        "open_date",
+        "fsync_root",
+    ]
+
+
+@pytest.mark.parametrize("failed_parent", ["reports", "root"])
+def test_parent_directory_fsync_failure_is_fatal_before_tracking(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_parent: str,
+) -> None:
+    from src.screening import auto_pipeline as pipeline_mod
+
+    labels: dict[int, str] = {}
+    opened: list[int] = []
+    real_open = pipeline_mod.os.open
+    real_fsync = pipeline_mod.os.fsync
+
+    def observed_open(path, flags, mode=0o777, *, dir_fd=None):
+        fd = real_open(path, flags, mode, dir_fd=dir_fd)
+        if path == tmp_path:
+            labels[fd] = "reports"
+            opened.append(fd)
+        elif path == ".auto_pending":
+            labels[fd] = "root"
+            opened.append(fd)
+        elif path == "20260710":
+            labels[fd] = "date"
+            opened.append(fd)
+        return fd
+
+    def fail_selected_parent(fd):
+        if labels.get(fd) == failed_parent:
+            raise OSError(f"{failed_parent} fsync failed")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(pipeline_mod.os, "open", observed_open)
+    monkeypatch.setattr(pipeline_mod.os, "fsync", fail_selected_parent)
+
+    result = run_auto_pipeline(
+        "20260710",
+        10,
+        reports_dir=tmp_path,
+        dependencies=fake_auto_dependencies.healthy(),
+    )
+
+    assert result.status is AutoRunStatus.FATAL
+    assert not any(
+        event in {"tracking", "canonical"}
+        for event, _value in fake_auto_dependencies.events
+    )
+    assert list((tmp_path / ".auto_pending").rglob("*.json")) == []
+    for fd in opened:
+        with pytest.raises(OSError):
+            pipeline_mod.os.fstat(fd)
+
+
+def test_temp_exclusive_create_failure_never_unlinks_preexisting_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.screening import auto_pipeline as pipeline_mod
+
+    handle = pipeline_mod._open_pending_handle(
+        tmp_path,
+        "20260710",
+        "collision-run",
+        create=True,
+    )
+    temp_name = ".collision-run.json.collision.tmp"
+    temp_fd = pipeline_mod.os.open(
+        temp_name,
+        pipeline_mod.os.O_WRONLY
+        | pipeline_mod.os.O_CREAT
+        | pipeline_mod.os.O_EXCL
+        | pipeline_mod._PENDING_FILE_FLAGS,
+        0o600,
+        dir_fd=handle.date_fd,
+    )
+    pipeline_mod.os.write(temp_fd, b"owned by someone else")
+    pipeline_mod.os.close(temp_fd)
+    monkeypatch.setattr(
+        pipeline_mod.uuid,
+        "uuid4",
+        lambda: SimpleNamespace(hex="collision"),
+    )
+
+    try:
+        with pytest.raises(FileExistsError):
+            pipeline_mod._write_pending_json(handle, {"state": "new"})
+        existing_fd = pipeline_mod.os.open(
+            temp_name,
+            pipeline_mod.os.O_RDONLY | pipeline_mod._PENDING_FILE_FLAGS,
+            dir_fd=handle.date_fd,
+        )
+        try:
+            assert pipeline_mod.os.read(existing_fd, 64) == b"owned by someone else"
+        finally:
+            pipeline_mod.os.close(existing_fd)
+    finally:
+        pipeline_mod.os.unlink(temp_name, dir_fd=handle.date_fd)
+        handle.close()

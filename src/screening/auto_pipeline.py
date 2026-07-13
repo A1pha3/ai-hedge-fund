@@ -1062,22 +1062,30 @@ def _open_pending_handle(
     reports_fd = _open_reports_fd(reports_dir)
     root_fd: int | None = None
     date_fd: int | None = None
+    root_created = False
+    date_created = False
     try:
         if create:
             try:
                 os.mkdir(_PENDING_DIRNAME, 0o700, dir_fd=reports_fd)
+                root_created = True
             except FileExistsError:
                 pass
         try:
             root_fd = _open_dir_at(_PENDING_DIRNAME, reports_fd)
         except OSError as exc:
             raise ValueError("pending root must be a real directory") from exc
+        if root_created:
+            os.fsync(reports_fd)
         if create:
             try:
                 os.mkdir(safe_date, 0o700, dir_fd=root_fd)
+                date_created = True
             except FileExistsError:
                 pass
         date_fd = _open_dir_at(safe_date, root_fd)
+        if date_created:
+            os.fsync(root_fd)
         return _PendingStateHandle(
             reports_dir=reports_dir,
             reports_fd=reports_fd,
@@ -1153,6 +1161,7 @@ def _write_pending_json(handle: _PendingStateHandle, payload: Mapping[str, Any])
     mode = _pending_target_mode(handle)
     temp_name = f".{handle.state_name}.{uuid.uuid4().hex}.tmp"
     temp_fd: int | None = None
+    temp_created = False
     try:
         temp_fd = os.open(
             temp_name,
@@ -1160,6 +1169,7 @@ def _write_pending_json(handle: _PendingStateHandle, payload: Mapping[str, Any])
             0o666,
             dir_fd=handle.date_fd,
         )
+        temp_created = True
         if mode is not None:
             os.fchmod(temp_fd, mode)
         view = memoryview(encoded)
@@ -1185,10 +1195,11 @@ def _write_pending_json(handle: _PendingStateHandle, payload: Mapping[str, Any])
         os.fsync(handle.date_fd)
     except BaseException:
         _close_fd(temp_fd)
-        try:
-            os.unlink(temp_name, dir_fd=handle.date_fd)
-        except OSError:
-            pass
+        if temp_created:
+            try:
+                os.unlink(temp_name, dir_fd=handle.date_fd)
+            except OSError:
+                pass
         raise
 
 

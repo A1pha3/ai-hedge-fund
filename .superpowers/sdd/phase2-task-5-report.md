@@ -279,3 +279,31 @@ explicit capability failure.
 - Publication/manifest/as-of/tracker/cache/feature/lock suite:
   **275 passed**.
 - Offensive plus auto-cache baseline: **411 passed in 3.58s**.
+
+## Pending directory-link durability addendum (2026-07-13)
+
+Pending namespace creation now distinguishes newly created directories from
+pre-existing ones. After creating and securely opening `.auto_pending`, the
+reports directory fd is fsynced before the date directory is created. After
+creating and securely opening the date directory, the pending-root fd is
+fsynced before any state JSON write or tracking side effect. Existing directory
+entries are not redundantly fsynced. Either parent fsync failure closes all
+opened descriptors and returns fatal before pending publication, tracking, or
+canonical replacement.
+
+Temp-file cleanup now records ownership only after the `O_EXCL` open succeeds.
+If exclusive creation fails because the candidate basename already exists, the
+error path never unlinks that unrelated file. Owned temps are still removed on
+all subsequent write/fsync/replace failures.
+
+Fault-injection tests verify the exact ordering
+`mkdir root → open root → fsync reports → mkdir date → open date → fsync root`,
+both parent-fsync failure points, fd closure with no downstream side effects,
+and preservation of a pre-existing colliding temp basename.
+
+### Directory-link durability verification
+
+- Publication/recovery suite: **110 passed**.
+- Publication/manifest/as-of/tracker/cache/feature/lock suite:
+  **279 passed**.
+- Offensive plus auto-cache baseline: **411 passed in 3.52s**.
