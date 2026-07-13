@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import stat
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -37,6 +38,7 @@ class AutoRunStatus(str, Enum):
 
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _TRADE_DATE_PATTERN = re.compile(r"^\d{8}$")
+_TICKER_PATTERN = re.compile(r"^[0-9]{6}$")
 _PENDING_DIRNAME = ".auto_pending"
 
 
@@ -72,6 +74,7 @@ class AutoRunResult:
     diagnostic_path: Path | None = None
     recovered: bool = False
     recovery_diagnostics: tuple[dict[str, Any], ...] = ()
+    effective_trade_date: str | None = None
 
 
 @dataclass(frozen=True)
@@ -257,7 +260,7 @@ def _capture_input_snapshot(
         path.stem
         for directory in (price_dir, fund_dir)
         for path in directory.glob("*.csv")
-        if path.stem.isdigit() and len(path.stem) == 6
+        if _TICKER_PATTERN.fullmatch(path.stem)
     }
     names_to_capture = ticker_names | (
         all_cache_tickers if baseline_tickers is None else set()
@@ -392,9 +395,12 @@ def _candidate_records(value: object) -> list[dict[str, Any]]:
         if not isinstance(item, Mapping):
             raise ValueError("candidate evidence rows must be mappings")
         row = dict(item)
-        ticker = str(row.get("ticker") or row.get("ts_code") or "")[:6]
-        if not ticker or ticker in seen:
-            raise ValueError("candidate evidence tickers must be unique and nonempty")
+        raw_ticker = row.get("ticker") if "ticker" in row else row.get("ts_code")
+        if type(raw_ticker) is not str or not _TICKER_PATTERN.fullmatch(raw_ticker):
+            raise ValueError("candidate evidence ticker must be exact six ASCII digits")
+        ticker = raw_ticker
+        if ticker in seen:
+            raise ValueError("candidate evidence tickers must be unique")
         row["ticker"] = ticker
         records.append(row)
         seen.add(ticker)
@@ -435,7 +441,14 @@ def _finalize_inputs_after_compute(
     direct_records = _candidate_records(evidence.get("candidates"))
     direct_tickers = tuple(sorted(row["ticker"] for row in direct_records))
     declared = evidence.get("tickers")
-    if not isinstance(declared, list) or tuple(sorted(map(str, declared))) != direct_tickers:
+    if (
+        not isinstance(declared, list)
+        or any(
+            type(ticker) is not str or not _TICKER_PATTERN.fullmatch(ticker)
+            for ticker in declared
+        )
+        or tuple(sorted(declared)) != direct_tickers
+    ):
         raise ValueError("candidate ticker declaration does not match compute output")
 
     snapshot_path = (
@@ -698,6 +711,7 @@ def _manifest_payload(manifest: object) -> dict[str, Any]:
             "run_id": manifest.run_id,
             "trade_date": manifest.trade_date.strftime("%Y%m%d"),
             "status": manifest.status,
+            "is_healthy": manifest.is_healthy,
             "created_at": manifest.created_at.isoformat(),
             "candidate_tickers": list(manifest.candidate_tickers),
             "candidate_set_fingerprint": manifest.candidate_set_fingerprint,
@@ -718,6 +732,7 @@ def _manifest_payload(manifest: object) -> dict[str, Any]:
             if getattr(manifest, "is_healthy", None) is True
             else "degraded"
         ),
+        "is_healthy": getattr(manifest, "is_healthy", None),
     }
 
 
@@ -934,6 +949,25 @@ _PENDING_SCHEMA_VERSION = 1
 _PENDING_PHASES = ("prepared", "tracked", "canonical")
 
 
+def _validated_pending_root(reports_dir: Path, *, create: bool) -> Path | None:
+    """Return a non-symlink pending directory, creating it without following links."""
+    root = reports_dir / _PENDING_DIRNAME
+    try:
+        root_stat = root.lstat()
+    except FileNotFoundError:
+        if not create:
+            return None
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            os.mkdir(root)
+        except FileExistsError:
+            pass
+        root_stat = root.lstat()
+    if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+        raise ValueError(f"pending root must be a real directory: {root}")
+    return root
+
+
 def _pending_state_checksum(state: Mapping[str, Any]) -> str:
     return _canonical_fingerprint(
         {
@@ -1025,6 +1059,10 @@ def _validate_pending_state(
         or payload.get("run_id") != state_run_id
     ):
         raise ValueError(f"pending payload run_id mismatch in {path}")
+    if payload.get("status") != AutoRunStatus.HEALTHY.value:
+        raise ValueError(f"pending payload status must be healthy in {path}")
+    if payload.get("mode") != "auto_screening":
+        raise ValueError(f"pending payload mode must be auto_screening in {path}")
     if _canonical_fingerprint(payload) != state.get("payload_checksum"):
         raise ValueError(f"pending payload checksum mismatch in {path}")
     manifest = payload.get("manifest")
@@ -1035,6 +1073,10 @@ def _validate_pending_state(
         or manifest.get("run_id") != state_run_id
     ):
         raise ValueError(f"pending manifest run_id mismatch in {path}")
+    if manifest.get("status") != AutoRunStatus.HEALTHY.value:
+        raise ValueError(f"pending manifest status must be healthy in {path}")
+    if manifest.get("is_healthy") is not True:
+        raise ValueError(f"pending manifest health must be plain true in {path}")
     if _canonical_fingerprint(manifest) != state.get("manifest_fingerprint"):
         raise ValueError(f"pending manifest checksum mismatch in {path}")
     expected_input = str(
@@ -1077,7 +1119,30 @@ def _publish_pending_attempt(
 ) -> Path:
     safe_date = _validate_trade_date(trade_date)
     safe_run_id = _validate_run_id(run_id)
-    target = reports_dir / _PENDING_DIRNAME / safe_date / f"{safe_run_id}.json"
+    pending_root = _validated_pending_root(reports_dir, create=True)
+    assert pending_root is not None
+    root_identity = pending_root.lstat()
+    date_dir = pending_root / safe_date
+    try:
+        os.mkdir(date_dir)
+    except FileExistsError:
+        pass
+    date_stat = date_dir.lstat()
+    if stat.S_ISLNK(date_stat.st_mode) or not stat.S_ISDIR(date_stat.st_mode):
+        raise ValueError(f"pending date directory must be real: {date_dir}")
+    # Re-check the root immediately before the durable write to narrow rename races.
+    _validated_pending_root(reports_dir, create=False)
+    current_root = pending_root.lstat()
+    current_date_dir = date_dir.lstat()
+    if (current_root.st_dev, current_root.st_ino) != (
+        root_identity.st_dev,
+        root_identity.st_ino,
+    ) or (current_date_dir.st_dev, current_date_dir.st_ino) != (
+        date_stat.st_dev,
+        date_stat.st_ino,
+    ):
+        raise ValueError("pending namespace changed during publication")
+    target = date_dir / f"{safe_run_id}.json"
     atomic_write_json(target, _build_pending_state(trade_date, run_id, payload, manifest))
     return target
 
@@ -1173,8 +1238,27 @@ def _reconcile_pending_run(
     reports_dir: Path,
     requested_trade_date: str,
 ) -> AutoRunResult | None:
-    pending_root = reports_dir / _PENDING_DIRNAME
-    if not pending_root.exists():
+    try:
+        pending_root = _validated_pending_root(reports_dir, create=False)
+    except ValueError as exc:
+        diagnostic = _publish_failure_attempt(
+            reports_dir,
+            requested_trade_date,
+            _new_run_id(requested_trade_date),
+            "discover_pending",
+            exc,
+        )
+        return AutoRunResult(
+            AutoRunStatus.FATAL,
+            1,
+            diagnostic,
+            None,
+            None,
+            diagnostic,
+            True,
+            ({"action": "recovery_failed", "error": str(exc)},),
+        )
+    if pending_root is None:
         return None
     pending: list[tuple[Path, dict[str, Any]]] = []
     discovery_error: Exception | None = None
@@ -1277,6 +1361,10 @@ def _reconcile_pending_run(
                 "final_phase": final_state["phase"],
                 "pending_removed": removed,
                 "pending_path": str(path),
+                "requested_trade_date": requested_trade_date,
+                "effective_trade_date": bound_trade_date,
+                "requested_date_executed": requested_trade_date
+                == bound_trade_date,
             },
         )
         return AutoRunResult(
@@ -1288,6 +1376,7 @@ def _reconcile_pending_run(
             None if removed else path,
             True,
             diagnostics,
+            effective_trade_date=bound_trade_date,
         )
     except Exception as exc:
         _record_pending_error(path, "reconcile_pending", exc)
@@ -1404,6 +1493,7 @@ def run_auto_pipeline(
                 )
                 if not pending_removed
                 else (),
+                effective_trade_date=trade_date,
             )
         stage = "publish_attempt"
         attempt = resolved_dependencies.publish_attempt(payload, manifest)
@@ -1414,6 +1504,7 @@ def run_auto_pipeline(
             attempt,
             payload,
             manifest,
+            effective_trade_date=trade_date,
         )
     except Exception as exc:
         failure_run_id = str(getattr(manifest, "run_id", run_id))

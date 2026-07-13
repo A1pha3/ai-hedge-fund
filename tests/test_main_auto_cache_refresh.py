@@ -285,6 +285,84 @@ def test_run_auto_screening_releases_pipeline_lock_before_post_processing(monkey
     assert closed == [777]
 
 
+def test_cross_date_recovery_uses_effective_date_for_every_downstream_action(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    from src import main as main_mod
+    from src.screening.auto_pipeline import AutoRunResult, AutoRunStatus
+
+    payload = {
+        "date": "20260709",
+        "mode": "auto_screening",
+        "recommendations": [],
+        "market_state": {},
+        "batch_data_fetcher": {},
+        "layer_a_count": 0,
+        "sector_concentration_warnings": [],
+    }
+    report_path = tmp_path / "auto_screening_20260709.json"
+    report_path.write_text("{}", encoding="utf-8")
+    fd = os.open("/dev/null", os.O_RDONLY)
+    downstream_dates: dict[str, str] = {}
+    monkeypatch.setattr(main_mod, "_try_acquire_pipeline_lock", lambda _path: fd)
+    monkeypatch.setattr(
+        "src.utils.date_utils.latest_open_trade_date_on_or_before",
+        lambda value: value,
+    )
+    monkeypatch.setattr(
+        "src.screening.auto_pipeline.run_auto_pipeline",
+        lambda *args, **kwargs: AutoRunResult(
+            AutoRunStatus.HEALTHY,
+            0,
+            report_path,
+            payload,
+            object(),
+            recovered=True,
+            recovery_diagnostics=(
+                {
+                    "action": "recovered_pending",
+                    "requested_trade_date": "20260710",
+                    "effective_trade_date": "20260709",
+                    "requested_date_executed": False,
+                },
+            ),
+            effective_trade_date="20260709",
+        ),
+    )
+    monkeypatch.setattr(
+        main_mod,
+        "_rebuild_cli_objects",
+        lambda _payload: ([], object(), [], {}, {}),
+    )
+
+    def capture_enrichment(**kwargs):
+        downstream_dates["watchlist_pdf"] = kwargs["trade_date"]
+        return None
+
+    def capture_post_processing(**kwargs):
+        downstream_dates["attribution_rebalance_push"] = kwargs["trade_date"]
+
+    def capture_display(**kwargs):
+        downstream_dates["display"] = kwargs["trade_date"]
+
+    monkeypatch.setattr(main_mod, "_enrich_recommendations_with_history", capture_enrichment)
+    monkeypatch.setattr(main_mod, "_handle_post_screening_tasks", capture_post_processing)
+    monkeypatch.setattr(main_mod, "_print_table_block", capture_display)
+
+    assert main_mod.run_auto_screening("20260710") == 0
+    assert downstream_dates == {
+        "watchlist_pdf": "20260709",
+        "attribution_rebalance_push": "20260709",
+        "display": "20260709",
+    }
+    output = capsys.readouterr().out
+    assert "20260710" in output
+    assert "20260709" in output
+    assert "未执行" in output
+
+
 def test_refresh_daily_action_caches_for_auto_respects_env_kill_switch(monkeypatch):
     from src import main as main_mod
 

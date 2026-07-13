@@ -1303,6 +1303,32 @@ def run_auto_screening(
             return result.exit_code
 
         report_payload = result.payload
+        payload_trade_date = report_payload.get("date")
+        effective_trade_date = result.effective_trade_date or payload_trade_date
+        try:
+            if type(effective_trade_date) is not str:
+                raise ValueError("effective trade date must be a string")
+            parsed_effective_date = datetime.strptime(effective_trade_date, "%Y%m%d")
+            if parsed_effective_date.strftime("%Y%m%d") != effective_trade_date:
+                raise ValueError("effective trade date must be exact YYYYMMDD")
+            if payload_trade_date != effective_trade_date:
+                raise ValueError("result and payload trade dates differ")
+        except (TypeError, ValueError) as exc:
+            logger.error("[Auto] 无效的 pipeline 有效日期: %s", exc)
+            print(f"{Fore.RED}[Auto] pipeline 返回的有效交易日无效，停止下游处理。{Style.RESET_ALL}")
+            return 1
+
+        if result.recovered and effective_trade_date != trade_date:
+            print(
+                f"{Fore.YELLOW}[Auto] 已恢复 {effective_trade_date} 的未完成发布；"
+                f"本次请求日期 {trade_date} 未执行。{Style.RESET_ALL}"
+            )
+            logger.warning(
+                "[Auto] recovered effective_trade_date=%s; requested_trade_date=%s was not executed",
+                effective_trade_date,
+                trade_date,
+            )
+        trade_date = effective_trade_date
 
         # 重建 CLI 展示所需的强类型对象 (top_results / market_state / industry_signals / decay_map / composite_by_ticker)
         top_results, market_state, industry_signals, decay_map, composite_by_ticker = _rebuild_cli_objects(report_payload)

@@ -200,3 +200,43 @@ safe identifier, so they cannot influence filesystem paths.
   **257 passed**.
 - Offensive plus auto-cache baseline: **410 passed in 3.90s**.
 - Ruff, `py_compile`, and `git diff --check` passed for all changed task files.
+
+## Final closure addendum (2026-07-13)
+
+`AutoRunResult` now exposes `effective_trade_date`. New runs bind it to the
+validated requested date; recovery binds it to the validated pending-state
+date. Recovery diagnostics include requested/effective dates and an explicit
+`requested_date_executed` flag. The CLI independently validates that the result
+date and payload date are exact and identical before any downstream work. A
+July 10 invocation that finishes a July 9 recovery prints that July 10 was not
+executed and uses July 9 for display, PDF/watchlist enrichment, attribution,
+rebalance, and push handling.
+
+Checksum validity is no longer sufficient to authorize canonical recovery.
+Pending payloads must have exact `healthy` status and `auto_screening` mode;
+their manifest must have exact `healthy` status and a plain-boolean `true`
+health field, in addition to the existing date/run/filename/checksum bindings.
+Tests recompute every affected checksum after semantic tampering and still
+verify fail-closed behavior.
+
+Candidate evidence no longer truncates or coerces ticker values. Both candidate
+rows and their declared ticker list require exactly six ASCII digits before a
+ticker can participate in cache-path construction. Full-width Unicode digits,
+overlong values, symbols, path-like strings, and non-strings are rejected.
+
+The `.auto_pending` root is inspected with `lstat` and must be a real,
+non-symlink directory. This check runs before discovery and again during
+publication; date directories receive the same non-symlink check, and root/date
+device+inode identities are rechecked immediately before the durable write to
+narrow replacement races. File and symlink roots fail closed before new
+compute.
+
+### Final closure RED → GREEN and verification
+
+- The focused closure matrix initially produced **14 expected failures** for
+  missing effective-date propagation, semantic checksum substitution,
+  ticker coercion/truncation, and unsafe pending roots; it is now green.
+- Publication plus main downstream suite: **116 passed**.
+- Publication/manifest/as-of/tracker/cache/feature/lock suite:
+  **270 passed**.
+- Offensive plus auto-cache baseline: **411 passed in 3.50s**.

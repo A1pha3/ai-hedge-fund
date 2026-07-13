@@ -15,6 +15,7 @@ from src.screening.auto_pipeline import (
     AutoRunStatus,
     _build_default_manifest,
     _canonical_fingerprint,
+    _candidate_records,
     _capture_input_snapshot,
     _finalize_inputs_after_compute,
     _input_snapshot_is_current,
@@ -53,6 +54,7 @@ class _FakeAutoDependenciesFactory:
     ) -> AutoPipelineDependencies:
         payload = {
             "date": "20260710",
+            "mode": "auto_screening",
             "recommendations": [{"ticker": "000001", "score_b": 0.5}],
         }
         manifest = SimpleNamespace(
@@ -1005,6 +1007,7 @@ def test_tracking_receives_same_json_normalization_as_canonical(
     dependencies = fake_auto_dependencies.healthy()
     payload = {
         "date": "20260710",
+        "mode": "auto_screening",
         "recommendations": [{"ticker": "000001", "score_b": math.nan}],
     }
     dependencies = replace(dependencies, compute_report=lambda _inputs, _top_n: payload)
@@ -1394,6 +1397,7 @@ def _crash_prepared_pending(
 ) -> Path:
     payload = {
         "date": trade_date,
+        "mode": "auto_screening",
         "recommendations": [{"ticker": "000001", "score_b": 0.5}],
     }
     manifest = SimpleNamespace(
@@ -1449,10 +1453,14 @@ def test_next_date_invocation_recovers_prior_date_before_new_compute(
     )
 
     assert recovered.recovered is True
+    assert recovered.effective_trade_date == "20260709"
     assert recovered.payload["date"] == "20260709"
     assert recovered.payload["run_id"] == "prior-run"
     assert (tmp_path / "auto_screening_20260709.json").exists()
     assert not (tmp_path / "auto_screening_20260710.json").exists()
+    assert recovered.recovery_diagnostics[0]["requested_trade_date"] == "20260710"
+    assert recovered.recovery_diagnostics[0]["effective_trade_date"] == "20260709"
+    assert recovered.recovery_diagnostics[0]["requested_date_executed"] is False
 
 
 @pytest.mark.parametrize(
@@ -1632,3 +1640,91 @@ def test_multiple_cross_date_pending_states_fail_closed(
 
     assert result.status is AutoRunStatus.FATAL
     assert "multiple pending" in result.recovery_diagnostics[0]["error"]
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_error"),
+    [
+        (lambda state: state["payload"].update(status="degraded"), "payload status"),
+        (lambda state: state["payload"].update(mode="daily_action"), "payload mode"),
+        (
+            lambda state: state["payload"]["manifest"].update(status="degraded"),
+            "manifest status",
+        ),
+        (
+            lambda state: state["payload"]["manifest"].update(is_healthy=1),
+            "manifest health",
+        ),
+        (
+            lambda state: state["payload"]["manifest"].update(is_healthy=False),
+            "manifest health",
+        ),
+    ],
+)
+def test_recomputed_checksums_cannot_bless_noncanonical_pending_semantics(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+    mutate: Any,
+    expected_error: str,
+) -> None:
+    pending_path = _crash_prepared_pending(
+        tmp_path,
+        fake_auto_dependencies.healthy(),
+        trade_date="20260709",
+        run_id="semantic-run",
+    )
+    state = json.loads(pending_path.read_text(encoding="utf-8"))
+    mutate(state)
+    state["payload_checksum"] = _canonical_fingerprint(state["payload"])
+    state["manifest_fingerprint"] = _canonical_fingerprint(
+        state["payload"]["manifest"]
+    )
+    state["input_fingerprint"] = state["manifest_fingerprint"]
+    state["state_checksum"] = _pending_state_checksum(state)
+    pending_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = run_auto_pipeline("20260710", 10, reports_dir=tmp_path)
+
+    assert result.status is AutoRunStatus.FATAL
+    assert expected_error in result.recovery_diagnostics[0]["error"]
+
+
+@pytest.mark.parametrize(
+    "ticker",
+    ["１２３４５６", "0000017", "000/01", "../001", 1],
+)
+def test_candidate_evidence_ticker_must_be_exact_six_ascii_digits(
+    ticker: object,
+) -> None:
+    with pytest.raises(ValueError, match="six ASCII digits"):
+        _candidate_records([{"ticker": ticker}])
+
+
+@pytest.mark.parametrize("root_kind", ["file", "symlink"])
+def test_pending_root_must_be_real_directory_before_discovery(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+    root_kind: str,
+) -> None:
+    pending_root = tmp_path / ".auto_pending"
+    if root_kind == "file":
+        pending_root.write_text("not a directory", encoding="utf-8")
+    else:
+        target = tmp_path / "outside"
+        target.mkdir()
+        pending_root.symlink_to(target, target_is_directory=True)
+
+    result = run_auto_pipeline(
+        "20260710",
+        10,
+        reports_dir=tmp_path,
+        dependencies=replace(
+            fake_auto_dependencies.healthy(),
+            prepare_inputs=lambda _date: (_ for _ in ()).throw(
+                AssertionError("unsafe pending root must block new compute")
+            ),
+        ),
+    )
+
+    assert result.status is AutoRunStatus.FATAL
+    assert "pending root" in result.recovery_diagnostics[0]["error"]
