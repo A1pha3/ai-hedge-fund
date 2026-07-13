@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,9 +14,11 @@ from src.screening.auto_pipeline import (
     AutoPipelineDependencies,
     AutoRunStatus,
     _build_default_manifest,
+    _canonical_fingerprint,
     _capture_input_snapshot,
     _finalize_inputs_after_compute,
     _input_snapshot_is_current,
+    _pending_state_checksum,
     _quality_is_healthy,
     run_auto_pipeline,
 )
@@ -286,11 +289,19 @@ def test_default_manifest_uses_immutable_run_bound_cache_snapshot(
         "date,ticker,main_net_pct\n" + fund_rows + "2026-07-10,000001,1\n",
         encoding="utf-8",
     )
+    (fund_dir / "000002.csv").write_text(
+        "date,ticker,main_net_pct\n2026-07-10,000002,1\n",
+        encoding="utf-8",
+    )
     (industry_dir / "_industry_codes.json").write_text(
-        '{"801780.SI":"银行"}', encoding="utf-8"
+        '{"801780.SI":"银行","801080.SI":"电子"}', encoding="utf-8"
     )
     (industry_dir / "801780.SI.csv").write_text(
         "ts_code,trade_date,close\n801780.SI,20260710,3800\n",
+        encoding="utf-8",
+    )
+    (industry_dir / "801080.SI.csv").write_text(
+        "ts_code,trade_date,close\n801080.SI,20260710,2800\n",
         encoding="utf-8",
     )
     snapshots_dir = data_dir / "snapshots"
@@ -431,6 +442,140 @@ def test_stale_candidate_snapshot_cannot_substitute_for_current_compute(
 
     with pytest.raises(ValueError, match="candidate snapshot does not match"):
         _finalize_inputs_after_compute(prepared, payload, run_id="run-2")
+
+
+@pytest.mark.parametrize("cache_existed_before", [True, False])
+def test_candidate_cache_must_exist_unchanged_in_precompute_baseline(
+    tmp_path: Path,
+    cache_existed_before: bool,
+) -> None:
+    data_dir = tmp_path / "data"
+    reports_dir = data_dir / "reports"
+    price_dir = data_dir / "price_cache"
+    snapshots_dir = data_dir / "snapshots"
+    reports_dir.mkdir(parents=True)
+    price_dir.mkdir()
+    snapshots_dir.mkdir()
+    price_path = price_dir / "000001.csv"
+    if cache_existed_before:
+        price_path.write_text(
+            "date,open,high,low,close,volume\n2026-07-10,9,11,8,10,1000\n",
+            encoding="utf-8",
+        )
+    prepared = _capture_input_snapshot(
+        "20260710", reports_dir=reports_dir, cache_refresh_summary={}
+    )
+    price_path.write_text(
+        "date,open,high,low,close,volume\n2026-07-10,9,12,8,11,2000\n",
+        encoding="utf-8",
+    )
+    candidates = [{"ticker": "000001", "industry_sw": "银行"}]
+    (snapshots_dir / "candidate_pool_20260710.json").write_text(
+        json.dumps(candidates), encoding="utf-8"
+    )
+
+    finalized = _finalize_inputs_after_compute(
+        prepared,
+        {
+            "candidate_pool_run": {
+                "trade_date": "20260710",
+                "tickers": ["000001"],
+                "candidates": candidates,
+            }
+        },
+        run_id="baseline-run",
+    )
+
+    assert finalized.baseline_consistent is False
+
+
+def test_industry_content_mutation_changes_bound_input_identity(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    reports_dir = data_dir / "reports"
+    industry_dir = data_dir / "industry_index_cache"
+    snapshots_dir = data_dir / "snapshots"
+    reports_dir.mkdir(parents=True)
+    industry_dir.mkdir()
+    snapshots_dir.mkdir()
+    (industry_dir / "_industry_codes.json").write_text(
+        '{"801780.SI":"银行"}', encoding="utf-8"
+    )
+    industry_path = industry_dir / "801780.SI.csv"
+    industry_path.write_text(
+        "ts_code,trade_date,close\n801780.SI,20260710,3800\n",
+        encoding="utf-8",
+    )
+    prepared = _capture_input_snapshot(
+        "20260710", reports_dir=reports_dir, cache_refresh_summary={}
+    )
+    industry_path.write_text(
+        "ts_code,trade_date,close\n801780.SI,20260710,3900\n",
+        encoding="utf-8",
+    )
+    candidates = [{"ticker": "000001", "industry_sw": "银行"}]
+    (snapshots_dir / "candidate_pool_20260710.json").write_text(
+        json.dumps(candidates), encoding="utf-8"
+    )
+
+    finalized = _finalize_inputs_after_compute(
+        prepared,
+        {
+            "candidate_pool_run": {
+                "trade_date": "20260710",
+                "tickers": ["000001"],
+                "candidates": candidates,
+            }
+        },
+        run_id="industry-run",
+    )
+
+    assert finalized.baseline_consistent is False
+    assert finalized.industry_content_fingerprint.startswith("sha256:")
+
+
+def test_same_tickers_with_different_admission_metadata_are_rejected(
+    tmp_path: Path,
+) -> None:
+    reports_dir = tmp_path / "data" / "reports"
+    snapshots_dir = tmp_path / "data" / "snapshots"
+    reports_dir.mkdir(parents=True)
+    snapshots_dir.mkdir()
+    (snapshots_dir / "candidate_pool_20260710.json").write_text(
+        json.dumps(
+            [
+                {
+                    "ticker": "000001",
+                    "name": "*ST旧名",
+                    "industry_sw": "旧行业",
+                    "listing_date": "20200101",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    prepared = _capture_input_snapshot(
+        "20260710", reports_dir=reports_dir, cache_refresh_summary={}
+    )
+
+    with pytest.raises(ValueError, match="admission evidence does not match"):
+        _finalize_inputs_after_compute(
+            prepared,
+            {
+                "candidate_pool_run": {
+                    "trade_date": "20260710",
+                    "tickers": ["000001"],
+                    "candidates": [
+                        {
+                            "ticker": "000001",
+                            "name": "平安银行",
+                            "industry_sw": "银行",
+                            "listing_date": "19910403",
+                        }
+                    ],
+                }
+            },
+            run_id="metadata-run",
+        )
 
 
 def test_pipeline_finalizes_layer_a_inputs_after_compute_writes_snapshot(
@@ -1104,7 +1249,7 @@ def test_tracking_is_preceded_by_crash_durable_pending_attempt(
     dependencies = fake_auto_dependencies.healthy()
 
     def assert_pending_before_tracking(payload: dict[str, Any]) -> int:
-        attempts = list(tmp_path.glob("auto_attempt_20260710_*.json"))
+        attempts = list((tmp_path / ".auto_pending" / "20260710").glob("*.json"))
         assert len(attempts) == 1
         pending = json.loads(attempts[0].read_text(encoding="utf-8"))
         assert pending["status"] == "pending"
@@ -1122,7 +1267,7 @@ def test_tracking_is_preceded_by_crash_durable_pending_attempt(
     )
 
     assert result.status is AutoRunStatus.HEALTHY
-    assert list(tmp_path.glob("auto_attempt_20260710_*.json")) == []
+    assert list((tmp_path / ".auto_pending").rglob("*.json")) == []
 
 
 @pytest.mark.parametrize(
@@ -1169,7 +1314,9 @@ def test_restart_resumes_exact_pending_run_at_every_durable_boundary(
             "20260710", 10, reports_dir=tmp_path, dependencies=dependencies
         )
 
-    pending_paths = list(tmp_path.glob("auto_attempt_20260710_*.json"))
+    pending_paths = list(
+        (tmp_path / ".auto_pending" / "20260710").glob("*.json")
+    )
     assert len(pending_paths) == 1
     pending = json.loads(pending_paths[0].read_text(encoding="utf-8"))
     assert pending["schema_version"] == 1
@@ -1195,7 +1342,7 @@ def test_restart_resumes_exact_pending_run_at_every_durable_boundary(
     assert recovered.recovered is True
     assert recovered.payload["run_id"] == "healthy-run"
     assert recovered.recovery_diagnostics
-    assert list(tmp_path.glob("auto_attempt_20260710_*.json")) == []
+    assert list((tmp_path / ".auto_pending").rglob("*.json")) == []
     canonical = json.loads(
         (tmp_path / "auto_screening_20260710.json").read_text(encoding="utf-8")
     )
@@ -1236,3 +1383,252 @@ def test_pending_cleanup_failure_is_durable_and_surfaces_diagnostic(
             "pending_path": str(result.diagnostic_path),
         },
     )
+
+
+def _crash_prepared_pending(
+    reports_dir: Path,
+    dependencies: AutoPipelineDependencies,
+    *,
+    trade_date: str,
+    run_id: str,
+) -> Path:
+    payload = {
+        "date": trade_date,
+        "recommendations": [{"ticker": "000001", "score_b": 0.5}],
+    }
+    manifest = SimpleNamespace(
+        run_id=run_id,
+        is_healthy=True,
+        tickers={
+            "000001": SimpleNamespace(
+                trade_ready=True, cache_fingerprint="sha256:test"
+            )
+        },
+    )
+
+    def crash(boundary: str, _path: Path, _state: dict[str, Any]) -> None:
+        if boundary == "after_prepared_persist":
+            raise _InjectedCrash(boundary)
+
+    dependencies = replace(
+        dependencies,
+        compute_report=lambda _inputs, _top_n: payload,
+        build_manifest=lambda _inputs, _payload: manifest,
+        state_hook=crash,
+    )
+    with pytest.raises(_InjectedCrash):
+        run_auto_pipeline(
+            trade_date, 10, reports_dir=reports_dir, dependencies=dependencies
+        )
+    pending = list((reports_dir / ".auto_pending").rglob("*.json"))
+    assert len(pending) == 1
+    return pending[0]
+
+
+def test_next_date_invocation_recovers_prior_date_before_new_compute(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+) -> None:
+    _crash_prepared_pending(
+        tmp_path,
+        fake_auto_dependencies.healthy(),
+        trade_date="20260709",
+        run_id="prior-run",
+    )
+
+    recovered = run_auto_pipeline(
+        "20260710",
+        10,
+        reports_dir=tmp_path,
+        dependencies=replace(
+            fake_auto_dependencies.healthy(),
+            prepare_inputs=lambda _date: (_ for _ in ()).throw(
+                AssertionError("new date must not compute before prior recovery")
+            ),
+        ),
+    )
+
+    assert recovered.recovered is True
+    assert recovered.payload["date"] == "20260709"
+    assert recovered.payload["run_id"] == "prior-run"
+    assert (tmp_path / "auto_screening_20260709.json").exists()
+    assert not (tmp_path / "auto_screening_20260710.json").exists()
+
+
+@pytest.mark.parametrize(
+    "bad_content",
+    [
+        "{not-json",
+        json.dumps({"schema_version": 1, "status": "fatal"}),
+    ],
+)
+def test_any_corrupt_or_disguised_file_in_pending_namespace_fails_closed(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+    bad_content: str,
+) -> None:
+    pending_dir = tmp_path / ".auto_pending" / "20260709"
+    pending_dir.mkdir(parents=True)
+    (pending_dir / "bad-run.json").write_text(bad_content, encoding="utf-8")
+
+    result = run_auto_pipeline(
+        "20260710",
+        10,
+        reports_dir=tmp_path,
+        dependencies=replace(
+            fake_auto_dependencies.healthy(),
+            prepare_inputs=lambda _date: (_ for _ in ()).throw(
+                AssertionError("corrupt pending namespace must block new compute")
+            ),
+        ),
+    )
+
+    assert result.status is AutoRunStatus.FATAL
+    assert result.recovered is True
+    assert result.recovery_diagnostics[0]["action"] == "recovery_failed"
+
+
+@pytest.mark.parametrize("bad_schema", [True, 1.0])
+def test_pending_schema_version_must_be_plain_int(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+    bad_schema: object,
+) -> None:
+    pending_path = _crash_prepared_pending(
+        tmp_path,
+        fake_auto_dependencies.healthy(),
+        trade_date="20260709",
+        run_id="schema-run",
+    )
+    state = json.loads(pending_path.read_text(encoding="utf-8"))
+    state["schema_version"] = bad_schema
+    pending_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = run_auto_pipeline("20260710", 10, reports_dir=tmp_path)
+
+    assert result.status is AutoRunStatus.FATAL
+    assert "schema" in result.recovery_diagnostics[0]["error"]
+
+
+def test_renamed_pending_file_identity_mismatch_fails_closed(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+) -> None:
+    pending_path = _crash_prepared_pending(
+        tmp_path,
+        fake_auto_dependencies.healthy(),
+        trade_date="20260709",
+        run_id="original-run",
+    )
+    renamed = pending_path.with_name("renamed-run.json")
+    pending_path.rename(renamed)
+
+    result = run_auto_pipeline("20260710", 10, reports_dir=tmp_path)
+
+    assert result.status is AutoRunStatus.FATAL
+    assert "filename" in result.recovery_diagnostics[0]["error"]
+
+
+def test_pending_date_must_be_exact_string_even_with_valid_checksums(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+) -> None:
+    pending_path = _crash_prepared_pending(
+        tmp_path,
+        fake_auto_dependencies.healthy(),
+        trade_date="20260709",
+        run_id="date-run",
+    )
+    state = json.loads(pending_path.read_text(encoding="utf-8"))
+    state["date"] = 20260709
+    state["state_checksum"] = _pending_state_checksum(state)
+    pending_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = run_auto_pipeline("20260710", 10, reports_dir=tmp_path)
+
+    assert result.status is AutoRunStatus.FATAL
+    assert "trade_date" in result.recovery_diagnostics[0]["error"]
+
+
+def test_pending_manifest_run_id_must_match_filename_identity(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+) -> None:
+    pending_path = _crash_prepared_pending(
+        tmp_path,
+        fake_auto_dependencies.healthy(),
+        trade_date="20260709",
+        run_id="bound-run",
+    )
+    state = json.loads(pending_path.read_text(encoding="utf-8"))
+    state["payload"]["manifest"]["run_id"] = "other-run"
+    state["payload_checksum"] = _canonical_fingerprint(state["payload"])
+    state["manifest_fingerprint"] = _canonical_fingerprint(
+        state["payload"]["manifest"]
+    )
+    state["input_fingerprint"] = state["manifest_fingerprint"]
+    state["state_checksum"] = _pending_state_checksum(state)
+    pending_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = run_auto_pipeline("20260710", 10, reports_dir=tmp_path)
+
+    assert result.status is AutoRunStatus.FATAL
+    assert "manifest run_id" in result.recovery_diagnostics[0]["error"]
+
+
+def test_unsafe_dependency_run_id_cannot_escape_attempt_or_pending_paths(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+) -> None:
+    unsafe_manifest = SimpleNamespace(
+        run_id="../../escape",
+        is_healthy=False,
+        tickers={},
+    )
+    dependencies = replace(
+        fake_auto_dependencies.degraded(),
+        build_manifest=lambda _inputs, _payload: unsafe_manifest,
+    )
+
+    result = run_auto_pipeline(
+        "20260710", 10, reports_dir=tmp_path, dependencies=dependencies
+    )
+
+    assert result.status is AutoRunStatus.FATAL
+    assert result.artifact_path is not None
+    assert result.artifact_path.parent == tmp_path
+    assert not (tmp_path.parent / "escape.json").exists()
+    assert not (tmp_path / ".auto_pending").exists()
+
+
+def test_multiple_cross_date_pending_states_fail_closed(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+) -> None:
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+    _crash_prepared_pending(
+        first_root,
+        fake_auto_dependencies.healthy(),
+        trade_date="20260708",
+        run_id="first-run",
+    )
+    _crash_prepared_pending(
+        second_root,
+        fake_auto_dependencies.healthy(),
+        trade_date="20260709",
+        run_id="second-run",
+    )
+    shutil.copytree(first_root / ".auto_pending", tmp_path / ".auto_pending")
+    shutil.copytree(
+        second_root / ".auto_pending",
+        tmp_path / ".auto_pending",
+        dirs_exist_ok=True,
+    )
+
+    result = run_auto_pipeline("20260710", 10, reports_dir=tmp_path)
+
+    assert result.status is AutoRunStatus.FATAL
+    assert "multiple pending" in result.recovery_diagnostics[0]["error"]

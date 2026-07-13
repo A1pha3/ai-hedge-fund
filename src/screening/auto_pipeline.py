@@ -8,6 +8,7 @@ import io
 import json
 import math
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -32,6 +33,33 @@ class AutoRunStatus(str, Enum):
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     FATAL = "fatal"
+
+
+_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_TRADE_DATE_PATTERN = re.compile(r"^\d{8}$")
+_PENDING_DIRNAME = ".auto_pending"
+
+
+def _validate_trade_date(value: object) -> str:
+    if type(value) is not str:
+        raise ValueError("trade_date must be an exact YYYYMMDD string")
+    text = value
+    if not _TRADE_DATE_PATTERN.fullmatch(text):
+        raise ValueError("trade_date must be exact YYYYMMDD")
+    try:
+        datetime.strptime(text, "%Y%m%d")
+    except ValueError as exc:
+        raise ValueError("trade_date must be a valid YYYYMMDD date") from exc
+    return text
+
+
+def _validate_run_id(value: object) -> str:
+    if type(value) is not str:
+        raise ValueError("run_id must be a string")
+    text = value
+    if not _RUN_ID_PATTERN.fullmatch(text):
+        raise ValueError("run_id contains unsafe characters or invalid length")
+    return text
 
 
 @dataclass(frozen=True)
@@ -82,10 +110,16 @@ class AutoInputs:
     industries: Mapping[str, IndustryInputSnapshot]
     ticker_industries: Mapping[str, str]
     cache_refresh_summary: Mapping[str, Any]
+    baseline_tickers: Mapping[str, TickerInputSnapshot]
+    baseline_industries: Mapping[str, IndustryInputSnapshot]
+    baseline_fingerprint: str
+    baseline_consistent: bool
+    industry_content_fingerprint: str
     run_id: str = ""
     candidate_tickers: tuple[str, ...] = ()
     candidate_set_fingerprint: str | None = None
     candidate_snapshot_fingerprint: str | None = None
+    admission_projection_fingerprint: str | None = None
 
 
 def _new_run_id(trade_date: str) -> str:
@@ -128,6 +162,73 @@ def _fingerprint_rows(rows: list[dict[str, str]]) -> str | None:
     return f"sha256:{hashlib.sha256(raw).hexdigest()}"
 
 
+def _capture_ticker_snapshot(
+    ticker: str,
+    *,
+    target_date: date,
+    price_dir: Path,
+    fund_dir: Path,
+) -> TickerInputSnapshot:
+    price_rows, _ = _read_csv_snapshot(price_dir / f"{ticker}.csv")
+    fund_rows, _ = _read_csv_snapshot(fund_dir / f"{ticker}.csv")
+    pit_price_rows = [
+        row
+        for row in price_rows
+        if (
+            parsed := _parse_evidence_date(row.get("date") or row.get("trade_date"))
+        )
+        is not None
+        and parsed <= target_date
+    ]
+    pit_fund_rows = [
+        row
+        for row in fund_rows
+        if (
+            parsed := _parse_evidence_date(row.get("date") or row.get("trade_date"))
+        )
+        is not None
+        and parsed <= target_date
+    ]
+    price_row = next(
+        (
+            row
+            for row in reversed(pit_price_rows)
+            if _parse_evidence_date(row.get("date") or row.get("trade_date"))
+            == target_date
+        ),
+        None,
+    )
+    ohlcv_finite = False
+    if price_row is not None:
+        try:
+            ohlcv_finite = all(
+                math.isfinite(float(price_row[field]))
+                for field in ("open", "high", "low", "close", "volume")
+            )
+        except (KeyError, TypeError, ValueError):
+            pass
+    fund_dates = sorted(
+        {
+            parsed
+            for row in pit_fund_rows
+            if (
+                parsed := _parse_evidence_date(
+                    row.get("date") or row.get("trade_date")
+                )
+            )
+            is not None
+        }
+    )
+    return TickerInputSnapshot(
+        ohlcv_date=target_date if price_row is not None else None,
+        ohlcv_finite=ohlcv_finite,
+        fund_flow_date=fund_dates[-1] if fund_dates else None,
+        fund_flow_history_days=len(fund_dates),
+        price_fingerprint=_fingerprint_rows(pit_price_rows),
+        fund_flow_fingerprint=_fingerprint_rows(pit_fund_rows),
+    )
+
+
 def _capture_input_snapshot(
     trade_date: str,
     *,
@@ -138,6 +239,11 @@ def _capture_input_snapshot(
     run_id: str = "",
     candidate_set_fingerprint: str | None = None,
     candidate_snapshot_fingerprint: str | None = None,
+    admission_projection_fingerprint: str | None = None,
+    baseline_tickers: Mapping[str, TickerInputSnapshot] | None = None,
+    baseline_industries: Mapping[str, IndustryInputSnapshot] | None = None,
+    baseline_fingerprint: str | None = None,
+    baseline_consistent: bool = True,
 ) -> AutoInputs:
     """Freeze cache evidence before report computation can observe later writes."""
     target_date = datetime.strptime(trade_date, "%Y%m%d").date()
@@ -146,73 +252,26 @@ def _capture_input_snapshot(
     fund_dir = data_dir / "fund_flow_cache"
     industry_dir = data_dir / "industry_index_cache"
 
-    ticker_snapshots: dict[str, TickerInputSnapshot] = {}
     ticker_names = set(candidate_tickers)
-    for ticker in sorted(ticker_names):
-        price_rows, _ = _read_csv_snapshot(price_dir / f"{ticker}.csv")
-        fund_rows, _ = _read_csv_snapshot(fund_dir / f"{ticker}.csv")
-
-        pit_price_rows = [
-            row
-            for row in price_rows
-            if (
-                parsed := _parse_evidence_date(row.get("date") or row.get("trade_date"))
-            )
-            is not None
-            and parsed <= target_date
-        ]
-        pit_fund_rows = [
-            row
-            for row in fund_rows
-            if (
-                parsed := _parse_evidence_date(row.get("date") or row.get("trade_date"))
-            )
-            is not None
-            and parsed <= target_date
-        ]
-        price_hash = _fingerprint_rows(pit_price_rows)
-        fund_hash = _fingerprint_rows(pit_fund_rows)
-
-        price_row = next(
-            (
-                row
-                for row in reversed(pit_price_rows)
-                if _parse_evidence_date(row.get("date") or row.get("trade_date"))
-                == target_date
-            ),
-            None,
+    all_cache_tickers = {
+        path.stem
+        for directory in (price_dir, fund_dir)
+        for path in directory.glob("*.csv")
+        if path.stem.isdigit() and len(path.stem) == 6
+    }
+    names_to_capture = ticker_names | (
+        all_cache_tickers if baseline_tickers is None else set()
+    )
+    captured = {
+        ticker: _capture_ticker_snapshot(
+            ticker,
+            target_date=target_date,
+            price_dir=price_dir,
+            fund_dir=fund_dir,
         )
-        required_ohlcv = ("open", "high", "low", "close", "volume")
-        ohlcv_finite = False
-        if price_row is not None:
-            try:
-                ohlcv_finite = all(
-                    math.isfinite(float(price_row[field])) for field in required_ohlcv
-                )
-            except (KeyError, TypeError, ValueError):
-                ohlcv_finite = False
-
-        fund_dates = sorted(
-            {
-                parsed
-                for row in pit_fund_rows
-                if (
-                    parsed := _parse_evidence_date(
-                        row.get("date") or row.get("trade_date")
-                    )
-                )
-                is not None
-                and parsed <= target_date
-            }
-        )
-        ticker_snapshots[ticker] = TickerInputSnapshot(
-            ohlcv_date=target_date if price_row is not None else None,
-            ohlcv_finite=ohlcv_finite,
-            fund_flow_date=fund_dates[-1] if fund_dates else None,
-            fund_flow_history_days=len(fund_dates),
-            price_fingerprint=price_hash,
-            fund_flow_fingerprint=fund_hash,
-        )
+        for ticker in sorted(names_to_capture)
+    }
+    ticker_snapshots = {ticker: captured[ticker] for ticker in ticker_names}
 
     industry_names: dict[str, str] = {}
     try:
@@ -254,6 +313,38 @@ def _capture_input_snapshot(
             fingerprint=fingerprint,
         )
 
+    frozen_baseline_tickers = (
+        dict(baseline_tickers)
+        if baseline_tickers is not None
+        else {ticker: captured[ticker] for ticker in sorted(all_cache_tickers)}
+    )
+    frozen_baseline_industries = (
+        dict(baseline_industries)
+        if baseline_industries is not None
+        else dict(industry_snapshots)
+    )
+    computed_baseline_fingerprint = baseline_fingerprint or _canonical_fingerprint(
+        {
+            "tickers": {
+                ticker: {
+                    "price": snapshot.price_fingerprint,
+                    "fund_flow": snapshot.fund_flow_fingerprint,
+                }
+                for ticker, snapshot in sorted(frozen_baseline_tickers.items())
+            },
+            "industries": {
+                name: snapshot.fingerprint
+                for name, snapshot in sorted(frozen_baseline_industries.items())
+            },
+        }
+    )
+    industry_content_fingerprint = _canonical_fingerprint(
+        {
+            name: snapshot.fingerprint
+            for name, snapshot in sorted(industry_snapshots.items())
+        }
+    )
+
     bound_industries = {
         ticker: str(industry).strip()
         for ticker, industry in (ticker_industries or {}).items()
@@ -268,10 +359,16 @@ def _capture_input_snapshot(
         industries=MappingProxyType(industry_snapshots),
         ticker_industries=MappingProxyType(bound_industries),
         cache_refresh_summary=MappingProxyType(dict(cache_refresh_summary)),
+        baseline_tickers=MappingProxyType(frozen_baseline_tickers),
+        baseline_industries=MappingProxyType(frozen_baseline_industries),
+        baseline_fingerprint=computed_baseline_fingerprint,
+        baseline_consistent=baseline_consistent,
+        industry_content_fingerprint=industry_content_fingerprint,
         run_id=run_id,
         candidate_tickers=tuple(sorted(ticker_names)),
         candidate_set_fingerprint=candidate_set_fingerprint,
         candidate_snapshot_fingerprint=candidate_snapshot_fingerprint,
+        admission_projection_fingerprint=admission_projection_fingerprint,
     )
 
 
@@ -302,6 +399,25 @@ def _candidate_records(value: object) -> list[dict[str, Any]]:
         records.append(row)
         seen.add(ticker)
     return records
+
+
+def _admission_projection(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    projection: list[dict[str, Any]] = []
+    for row in records:
+        projection.append(
+            {
+                "ticker": row["ticker"],
+                "name": str(row.get("name") or ""),
+                "industry_sw": str(
+                    row.get("industry_sw") or row.get("industry") or ""
+                ),
+                "listing_date": str(row.get("listing_date") or ""),
+                "security_status": row.get("security_status"),
+                "st_status": row.get("st_status"),
+                "board_rule_version": row.get("board_rule_version"),
+            }
+        )
+    return sorted(projection, key=lambda row: row["ticker"])
 
 
 def _finalize_inputs_after_compute(
@@ -336,6 +452,10 @@ def _finalize_inputs_after_compute(
     snapshot_tickers = tuple(sorted(row["ticker"] for row in snapshot_records))
     if snapshot_tickers != direct_tickers:
         raise ValueError("candidate snapshot does not match current compute output")
+    direct_projection = _admission_projection(direct_records)
+    snapshot_projection = _admission_projection(snapshot_records)
+    if snapshot_projection != direct_projection:
+        raise ValueError("candidate admission evidence does not match current compute output")
 
     industries = {
         row["ticker"]: str(row.get("industry_sw") or row.get("industry") or "").strip()
@@ -343,6 +463,35 @@ def _finalize_inputs_after_compute(
     }
     candidate_set_fingerprint = _canonical_fingerprint(list(direct_tickers))
     snapshot_fingerprint = _canonical_fingerprint(snapshot_records)
+    admission_projection_fingerprint = _canonical_fingerprint(direct_projection)
+    finalized = _capture_input_snapshot(
+        prepared.trade_date,
+        reports_dir=prepared.reports_dir,
+        cache_refresh_summary=prepared.cache_refresh_summary,
+        candidate_tickers=direct_tickers,
+        ticker_industries=industries,
+        run_id=run_id,
+        candidate_set_fingerprint=candidate_set_fingerprint,
+        candidate_snapshot_fingerprint=snapshot_fingerprint,
+        admission_projection_fingerprint=admission_projection_fingerprint,
+        baseline_tickers=prepared.baseline_tickers,
+        baseline_industries=prepared.baseline_industries,
+        baseline_fingerprint=prepared.baseline_fingerprint,
+    )
+    candidate_cache_consistent = all(
+        ticker in prepared.baseline_tickers
+        and prepared.baseline_tickers[ticker] == finalized.tickers[ticker]
+        and prepared.baseline_tickers[ticker].price_fingerprint is not None
+        and prepared.baseline_tickers[ticker].fund_flow_fingerprint is not None
+        for ticker in direct_tickers
+    )
+    industry_consistent = all(
+        bool(industry := industries.get(ticker))
+        and industry in prepared.baseline_industries
+        and prepared.baseline_industries[industry] == finalized.industries.get(industry)
+        and prepared.baseline_industries[industry].fingerprint is not None
+        for ticker in direct_tickers
+    )
     return _capture_input_snapshot(
         prepared.trade_date,
         reports_dir=prepared.reports_dir,
@@ -352,6 +501,11 @@ def _finalize_inputs_after_compute(
         run_id=run_id,
         candidate_set_fingerprint=candidate_set_fingerprint,
         candidate_snapshot_fingerprint=snapshot_fingerprint,
+        admission_projection_fingerprint=admission_projection_fingerprint,
+        baseline_tickers=prepared.baseline_tickers,
+        baseline_industries=prepared.baseline_industries,
+        baseline_fingerprint=prepared.baseline_fingerprint,
+        baseline_consistent=candidate_cache_consistent and industry_consistent,
     )
 
 
@@ -378,6 +532,11 @@ def _input_snapshot_is_current(inputs: AutoInputs) -> bool:
         run_id=inputs.run_id,
         candidate_set_fingerprint=inputs.candidate_set_fingerprint,
         candidate_snapshot_fingerprint=inputs.candidate_snapshot_fingerprint,
+        admission_projection_fingerprint=inputs.admission_projection_fingerprint,
+        baseline_tickers=inputs.baseline_tickers,
+        baseline_industries=inputs.baseline_industries,
+        baseline_fingerprint=inputs.baseline_fingerprint,
+        baseline_consistent=inputs.baseline_consistent,
     )
     return (
         inputs.tickers == current.tickers
@@ -464,6 +623,7 @@ def _build_default_manifest(
     required_tickers = set(recommendation_by_ticker)
     is_healthy = (
         _quality_is_healthy(payload)
+        and inputs.baseline_consistent
         and _input_snapshot_is_current(inputs)
         and bool(readiness_by_ticker)
         and bool(required_tickers)
@@ -477,6 +637,9 @@ def _build_default_manifest(
             "candidate_tickers": list(inputs.candidate_tickers),
             "candidate_set_fingerprint": inputs.candidate_set_fingerprint,
             "candidate_snapshot_fingerprint": inputs.candidate_snapshot_fingerprint,
+            "admission_projection_fingerprint": inputs.admission_projection_fingerprint,
+            "baseline_fingerprint": inputs.baseline_fingerprint,
+            "industry_content_fingerprint": inputs.industry_content_fingerprint,
             "ticker_inputs": {
                 ticker: {
                     "price": snapshot.price_fingerprint,
@@ -498,6 +661,9 @@ def _build_default_manifest(
         candidate_tickers=inputs.candidate_tickers,
         candidate_set_fingerprint=inputs.candidate_set_fingerprint,
         candidate_snapshot_fingerprint=inputs.candidate_snapshot_fingerprint,
+        admission_projection_fingerprint=inputs.admission_projection_fingerprint,
+        baseline_fingerprint=inputs.baseline_fingerprint,
+        industry_content_fingerprint=inputs.industry_content_fingerprint,
         input_fingerprint=input_fingerprint,
     )
 
@@ -530,12 +696,15 @@ def _manifest_payload(manifest: object) -> dict[str, Any]:
     if isinstance(manifest, RunManifest):
         return {
             "run_id": manifest.run_id,
-            "trade_date": manifest.trade_date.isoformat(),
+            "trade_date": manifest.trade_date.strftime("%Y%m%d"),
             "status": manifest.status,
             "created_at": manifest.created_at.isoformat(),
             "candidate_tickers": list(manifest.candidate_tickers),
             "candidate_set_fingerprint": manifest.candidate_set_fingerprint,
             "candidate_snapshot_fingerprint": manifest.candidate_snapshot_fingerprint,
+            "admission_projection_fingerprint": manifest.admission_projection_fingerprint,
+            "baseline_fingerprint": manifest.baseline_fingerprint,
+            "industry_content_fingerprint": manifest.industry_content_fingerprint,
             "input_fingerprint": manifest.input_fingerprint,
             "tickers": {
                 ticker: _readiness_payload(readiness)
@@ -559,6 +728,7 @@ def _publication_payload(
     status: AutoRunStatus,
 ) -> dict[str, Any]:
     manifest_payload = _manifest_payload(manifest)
+    manifest_payload.setdefault("trade_date", str(payload.get("date") or ""))
     payload["run_id"] = manifest_payload["run_id"]
     payload["status"] = status.value
     payload["manifest"] = manifest_payload
@@ -736,13 +906,18 @@ def _publish_failure_attempt(
     status: str = AutoRunStatus.FATAL.value,
     payload: Mapping[str, Any] | None = None,
 ) -> Path | None:
-    target = reports_dir / f"auto_attempt_{trade_date}_{run_id}.json"
+    safe_date = _validate_trade_date(trade_date)
+    try:
+        safe_run_id = _validate_run_id(run_id)
+    except ValueError:
+        safe_run_id = _new_run_id(safe_date)
+    target = reports_dir / f"auto_attempt_{safe_date}_{safe_run_id}.json"
     try:
         atomic_write_json(
             target,
             {
-                "run_id": run_id,
-                "date": trade_date,
+                "run_id": safe_run_id,
+                "date": safe_date,
                 "status": status,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "stage": stage,
@@ -769,6 +944,7 @@ def _pending_state_checksum(state: Mapping[str, Any]) -> str:
             "payload_checksum": state.get("payload_checksum"),
             "manifest_fingerprint": state.get("manifest_fingerprint"),
             "input_fingerprint": state.get("input_fingerprint"),
+            "canonical_filename": state.get("canonical_filename"),
         }
     )
 
@@ -779,7 +955,11 @@ def _build_pending_state(
     payload: Mapping[str, Any],
     manifest: object,
 ) -> dict[str, Any]:
-    manifest_payload = _manifest_payload(manifest)
+    safe_date = _validate_trade_date(trade_date)
+    safe_run_id = _validate_run_id(run_id)
+    manifest_payload = payload.get("manifest")
+    if not isinstance(manifest_payload, Mapping):
+        raise ValueError("healthy payload must contain serialized manifest")
     manifest_fingerprint = _canonical_fingerprint(manifest_payload)
     input_fingerprint = str(
         manifest_payload.get("input_fingerprint") or manifest_fingerprint
@@ -787,8 +967,8 @@ def _build_pending_state(
     now = datetime.now(timezone.utc).isoformat()
     state: dict[str, Any] = {
         "schema_version": _PENDING_SCHEMA_VERSION,
-        "run_id": run_id,
-        "date": trade_date,
+        "run_id": safe_run_id,
+        "date": safe_date,
         "status": "pending",
         "phase": "prepared",
         "created_at": now,
@@ -797,28 +977,64 @@ def _build_pending_state(
         "payload_checksum": _canonical_fingerprint(payload),
         "manifest_fingerprint": manifest_fingerprint,
         "input_fingerprint": input_fingerprint,
+        "canonical_filename": f"auto_screening_{safe_date}.json",
     }
     state["state_checksum"] = _pending_state_checksum(state)
     return state
 
 
-def _validate_pending_state(state: Mapping[str, Any], *, path: Path) -> None:
-    if state.get("schema_version") != _PENDING_SCHEMA_VERSION:
+def _pending_identity(path: Path, reports_dir: Path) -> tuple[str, str]:
+    root = reports_dir / _PENDING_DIRNAME
+    try:
+        relative = path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"pending path outside namespace: {path}") from exc
+    if len(relative.parts) != 2 or path.suffix != ".json":
+        raise ValueError(f"invalid pending filename layout: {path}")
+    return _validate_trade_date(relative.parts[0]), _validate_run_id(path.stem)
+
+
+def _validate_pending_state(
+    state: Mapping[str, Any],
+    *,
+    path: Path,
+    reports_dir: Path,
+) -> None:
+    filename_date, filename_run_id = _pending_identity(path, reports_dir)
+    if type(state.get("schema_version")) is not int or state.get(
+        "schema_version"
+    ) != _PENDING_SCHEMA_VERSION:
         raise ValueError(f"unsupported pending schema in {path}")
-    if state.get("status") != "pending" or state.get("phase") not in _PENDING_PHASES:
+    if (
+        state.get("status") != "pending"
+        or type(state.get("phase")) is not str
+        or state.get("phase") not in _PENDING_PHASES
+    ):
         raise ValueError(f"invalid pending status/phase in {path}")
+    state_date = _validate_trade_date(state.get("date"))
+    state_run_id = _validate_run_id(state.get("run_id"))
+    if state_date != filename_date or state_run_id != filename_run_id:
+        raise ValueError(f"pending filename identity mismatch in {path}")
     payload = state.get("payload")
     if not isinstance(payload, Mapping):
         raise ValueError(f"pending payload missing in {path}")
-    if str(payload.get("date") or "") != str(state.get("date") or ""):
+    if type(payload.get("date")) is not str or payload.get("date") != state_date:
         raise ValueError(f"pending payload date mismatch in {path}")
-    if str(payload.get("run_id") or "") != str(state.get("run_id") or ""):
+    if (
+        type(payload.get("run_id")) is not str
+        or payload.get("run_id") != state_run_id
+    ):
         raise ValueError(f"pending payload run_id mismatch in {path}")
     if _canonical_fingerprint(payload) != state.get("payload_checksum"):
         raise ValueError(f"pending payload checksum mismatch in {path}")
     manifest = payload.get("manifest")
     if not isinstance(manifest, Mapping):
         raise ValueError(f"pending manifest missing in {path}")
+    if (
+        type(manifest.get("run_id")) is not str
+        or manifest.get("run_id") != state_run_id
+    ):
+        raise ValueError(f"pending manifest run_id mismatch in {path}")
     if _canonical_fingerprint(manifest) != state.get("manifest_fingerprint"):
         raise ValueError(f"pending manifest checksum mismatch in {path}")
     expected_input = str(
@@ -826,6 +1042,13 @@ def _validate_pending_state(state: Mapping[str, Any], *, path: Path) -> None:
     )
     if expected_input != state.get("input_fingerprint"):
         raise ValueError(f"pending input fingerprint mismatch in {path}")
+    if (
+        type(manifest.get("trade_date")) is not str
+        or manifest.get("trade_date") != state_date
+    ):
+        raise ValueError(f"pending manifest trade_date mismatch in {path}")
+    if state.get("canonical_filename") != f"auto_screening_{state_date}.json":
+        raise ValueError(f"pending canonical binding mismatch in {path}")
     if _pending_state_checksum(state) != state.get("state_checksum"):
         raise ValueError(f"pending state checksum mismatch in {path}")
 
@@ -852,7 +1075,9 @@ def _publish_pending_attempt(
     payload: Mapping[str, Any],
     manifest: object,
 ) -> Path:
-    target = reports_dir / f"auto_attempt_{trade_date}_{run_id}.json"
+    safe_date = _validate_trade_date(trade_date)
+    safe_run_id = _validate_run_id(run_id)
+    target = reports_dir / _PENDING_DIRNAME / safe_date / f"{safe_run_id}.json"
     atomic_write_json(target, _build_pending_state(trade_date, run_id, payload, manifest))
     return target
 
@@ -861,6 +1086,15 @@ def _remove_pending_attempt(path: Path) -> bool:
     try:
         path.unlink()
         _fsync_directory(path.parent)
+        try:
+            date_dir = path.parent
+            pending_root = date_dir.parent
+            date_dir.rmdir()
+            _fsync_directory(pending_root)
+            pending_root.rmdir()
+            _fsync_directory(pending_root.parent)
+        except OSError:
+            pass
     except OSError:
         return False
     return True
@@ -887,7 +1121,8 @@ def _advance_pending_state(
 ) -> tuple[Path, dict[str, Any], bool]:
     """Idempotently advance one checksum-verified pending publication."""
     current = dict(state)
-    _validate_pending_state(current, path=path)
+    reports_dir = path.parents[2]
+    _validate_pending_state(current, path=path, reports_dir=reports_dir)
     payload = runtime_payload if runtime_payload is not None else dict(current["payload"])
     if _canonical_fingerprint(payload) != current["payload_checksum"]:
         raise ValueError("runtime payload does not match durable pending payload")
@@ -898,7 +1133,7 @@ def _advance_pending_state(
         current = _persist_pending_phase(path, current, "tracked")
         _call_state_hook(state_hook, "after_tracked_persist", path, current)
 
-    canonical_path = path.parent / f"auto_screening_{current['date']}.json"
+    canonical_path = reports_dir / str(current["canonical_filename"])
     if current["phase"] == "tracked":
         canonical_path = publish_canonical(payload)
         _call_state_hook(state_hook, "after_canonical", path, current)
@@ -921,7 +1156,7 @@ def _advance_pending_state(
 def _record_pending_error(path: Path, stage: str, exc: Exception) -> Path:
     try:
         state = json.loads(path.read_text(encoding="utf-8"))
-        _validate_pending_state(state, path=path)
+        _validate_pending_state(state, path=path, reports_dir=path.parents[2])
         state["last_error"] = {
             "stage": stage,
             "type": type(exc).__name__,
@@ -936,24 +1171,61 @@ def _record_pending_error(path: Path, stage: str, exc: Exception) -> Path:
 
 def _reconcile_pending_run(
     reports_dir: Path,
-    trade_date: str,
+    requested_trade_date: str,
 ) -> AutoRunResult | None:
+    pending_root = reports_dir / _PENDING_DIRNAME
+    if not pending_root.exists():
+        return None
     pending: list[tuple[Path, dict[str, Any]]] = []
-    for path in sorted(reports_dir.glob(f"auto_attempt_{trade_date}_*.json")):
-        try:
-            state = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+    discovery_error: Exception | None = None
+    discovery_path: Path | None = None
+    for path in sorted(pending_root.rglob("*")):
+        if path.is_dir() and not path.is_symlink():
             continue
-        if isinstance(state, dict) and state.get("status") == "pending":
+        discovery_path = path
+        try:
+            if path.is_symlink() or not path.is_file():
+                raise ValueError(f"unsafe pending namespace entry: {path}")
+            state = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict):
+                raise ValueError(f"pending state must be an object: {path}")
+            _validate_pending_state(state, path=path, reports_dir=reports_dir)
             pending.append((path, state))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            discovery_error = exc
+            break
+    if discovery_error is not None:
+        diagnostic = _publish_failure_attempt(
+            reports_dir,
+            requested_trade_date,
+            _new_run_id(requested_trade_date),
+            "discover_pending",
+            discovery_error,
+        )
+        return AutoRunResult(
+            AutoRunStatus.FATAL,
+            1,
+            diagnostic,
+            None,
+            None,
+            diagnostic,
+            True,
+            (
+                {
+                    "action": "recovery_failed",
+                    "error": str(discovery_error),
+                    "path": str(discovery_path),
+                },
+            ),
+        )
     if not pending:
         return None
     if len(pending) != 1:
-        exc = RuntimeError(f"multiple pending auto runs for {trade_date}")
+        exc = RuntimeError("multiple pending auto runs across dates")
         diagnostic = _publish_failure_attempt(
             reports_dir,
-            trade_date,
-            _new_run_id(trade_date),
+            requested_trade_date,
+            _new_run_id(requested_trade_date),
             "reconcile_pending",
             exc,
         )
@@ -970,8 +1242,9 @@ def _reconcile_pending_run(
 
     path, state = pending[0]
     try:
-        _validate_pending_state(state, path=path)
+        _validate_pending_state(state, path=path, reports_dir=reports_dir)
         payload = dict(state["payload"])
+        bound_trade_date = str(state["date"])
 
         def durable_tracking(exact_payload: dict[str, Any]) -> object:
             from src.screening.recommendation_tracker import (
@@ -980,12 +1253,12 @@ def _reconcile_pending_run(
 
             return update_tracking_history_from_payload(
                 reports_dir,
-                trade_date,
+                bound_trade_date,
                 exact_payload,
             )
 
         def durable_canonical(exact_payload: dict[str, Any]) -> Path:
-            target = reports_dir / f"auto_screening_{trade_date}.json"
+            target = reports_dir / str(state["canonical_filename"])
             atomic_write_json(target, exact_payload)
             return target
 
@@ -1039,6 +1312,7 @@ def run_auto_pipeline(
     dependencies: AutoPipelineDependencies | None = None,
 ) -> AutoRunResult:
     """Recover an interrupted publication or compute one new auto run."""
+    trade_date = _validate_trade_date(trade_date)
     resolved_reports_dir = (
         Path(reports_dir)
         if reports_dir is not None
@@ -1082,6 +1356,7 @@ def run_auto_pipeline(
             inputs = _finalize_inputs_after_compute(inputs, payload, run_id=run_id)
         stage = "build_manifest"
         manifest = resolved_dependencies.build_manifest(inputs, payload)
+        manifest_run_id = _validate_run_id(getattr(manifest, "run_id", ""))
         if getattr(manifest, "is_healthy", None) is True and _manifest_has_auditable_evidence(
             manifest, payload
         ):
@@ -1090,7 +1365,7 @@ def run_auto_pipeline(
             pending_attempt = _publish_pending_attempt(
                 resolved_reports_dir,
                 trade_date,
-                str(getattr(manifest, "run_id", run_id)),
+                manifest_run_id,
                 payload,
                 manifest,
             )
@@ -1123,7 +1398,7 @@ def run_auto_pipeline(
                 (
                     {
                         "action": "pending_cleanup_failed",
-                        "run_id": str(getattr(manifest, "run_id", run_id)),
+                        "run_id": manifest_run_id,
                         "pending_path": str(pending_attempt),
                     },
                 )

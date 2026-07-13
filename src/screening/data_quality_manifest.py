@@ -35,6 +35,9 @@ class RunManifest:
     candidate_tickers: tuple[str, ...] = ()
     candidate_set_fingerprint: str | None = None
     candidate_snapshot_fingerprint: str | None = None
+    admission_projection_fingerprint: str | None = None
+    baseline_fingerprint: str | None = None
+    industry_content_fingerprint: str | None = None
     input_fingerprint: str | None = None
 
     def __post_init__(self) -> None:

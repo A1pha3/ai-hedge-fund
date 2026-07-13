@@ -157,3 +157,46 @@ More than one checksum-valid pending run for the same trade date is treated as
 fatal and left untouched for operator resolution; automatically choosing one
 would risk publishing stale or unioned scores. This state should be impossible
 under the outer flock, but fail-closed handling is intentional.
+
+## Cross-date and immutable-input hardening addendum (2026-07-13)
+
+The pre-compute snapshot is now a full immutable cache baseline across every
+six-digit price/fund-flow cache name and every mapped industry-index series.
+Healthy adjudication requires every exact Layer-A candidate to have existed in
+that baseline with non-null price, fund-flow, and industry content, all
+unchanged after compute. The manifest binds the full baseline fingerprint and
+industry-content fingerprint. Candidate admission is compared as a canonical
+projection—not merely a ticker set—covering name, industry, listing date,
+security/ST state, and board-rule version, with its own run-bound fingerprint.
+
+Pending recovery now uses the dedicated
+`.auto_pending/YYYYMMDD/RUN_ID.json` namespace and discovers all dates before
+any new compute. Exactly one valid state resumes its own bound date and
+canonical filename; multiple states, corrupt JSON, disguised non-pending
+files, unexpected namespace entries, renamed files, and checksum/identity
+mismatches fail closed. Validation requires exact string dates and run IDs,
+plain-int schema version, exact phase, state/payload/manifest/filename identity,
+safe run IDs, and exact payload/manifest/input/state checksums. Unsafe injected
+dependency run IDs are rejected and the diagnostic fallback generates a fresh
+safe identifier, so they cannot influence filesystem paths.
+
+### Third-pass RED → GREEN evidence
+
+- Candidate files absent before compute, price/fund mutations during compute,
+  industry-content mutation, and identical ticker sets with changed admission
+  metadata all failed before the immutable-baseline/projection binding changes.
+- Next-date invocation initially started a new run instead of recovering the
+  older bound date. Cross-date discovery and bound canonical publication now
+  recover only that older payload.
+- Corrupt/disguised namespace files, bool/float schema versions, renamed state
+  files, multiple cross-date states, unsafe dependency run IDs, non-string
+  dates, and recomputed-checksum manifest identity substitution now all fail
+  closed.
+
+### Third-pass verification
+
+- Publication and restart-hardening suite: **89 passed**.
+- Publication/manifest/as-of/tracker/cache/feature/lock suite:
+  **257 passed**.
+- Offensive plus auto-cache baseline: **410 passed in 3.90s**.
+- Ruff, `py_compile`, and `git diff --check` passed for all changed task files.
