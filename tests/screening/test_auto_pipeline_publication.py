@@ -2056,3 +2056,48 @@ def test_temp_exclusive_create_failure_never_unlinks_preexisting_name(
     finally:
         pipeline_mod.os.unlink(temp_name, dir_fd=handle.date_fd)
         handle.close()
+
+
+@pytest.mark.parametrize("failed_parent", ["reports", "root"])
+def test_retry_cannot_bypass_parent_fsync_after_first_failure_left_directories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_parent: str,
+) -> None:
+    from src.screening import auto_pipeline as pipeline_mod
+
+    labels: dict[int, str] = {}
+    failure_count = 0
+    real_open = pipeline_mod.os.open
+    real_fsync = pipeline_mod.os.fsync
+
+    def observed_open(path, flags, mode=0o777, *, dir_fd=None):
+        fd = real_open(path, flags, mode, dir_fd=dir_fd)
+        if path == tmp_path:
+            labels[fd] = "reports"
+        elif path == ".auto_pending":
+            labels[fd] = "root"
+        elif path == "20260710":
+            labels[fd] = "date"
+        return fd
+
+    def fail_selected_parent(fd):
+        nonlocal failure_count
+        if labels.get(fd) == failed_parent:
+            failure_count += 1
+            raise OSError(f"{failed_parent} fsync failed")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(pipeline_mod.os, "open", observed_open)
+    monkeypatch.setattr(pipeline_mod.os, "fsync", fail_selected_parent)
+
+    for run_id in ("first-run", "retry-run"):
+        with pytest.raises(OSError, match=f"{failed_parent} fsync failed"):
+            pipeline_mod._open_pending_handle(
+                tmp_path,
+                "20260710",
+                run_id,
+                create=True,
+            )
+
+    assert failure_count == 2

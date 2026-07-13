@@ -1062,29 +1062,25 @@ def _open_pending_handle(
     reports_fd = _open_reports_fd(reports_dir)
     root_fd: int | None = None
     date_fd: int | None = None
-    root_created = False
-    date_created = False
     try:
         if create:
             try:
                 os.mkdir(_PENDING_DIRNAME, 0o700, dir_fd=reports_fd)
-                root_created = True
             except FileExistsError:
                 pass
         try:
             root_fd = _open_dir_at(_PENDING_DIRNAME, reports_fd)
         except OSError as exc:
             raise ValueError("pending root must be a real directory") from exc
-        if root_created:
+        if create:
             os.fsync(reports_fd)
         if create:
             try:
                 os.mkdir(safe_date, 0o700, dir_fd=root_fd)
-                date_created = True
             except FileExistsError:
                 pass
         date_fd = _open_dir_at(safe_date, root_fd)
-        if date_created:
+        if create:
             os.fsync(root_fd)
         return _PendingStateHandle(
             reports_dir=reports_dir,

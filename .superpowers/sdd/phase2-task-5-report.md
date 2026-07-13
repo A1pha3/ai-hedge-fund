@@ -307,3 +307,24 @@ and preservation of a pre-existing colliding temp basename.
 - Publication/manifest/as-of/tracker/cache/feature/lock suite:
   **279 passed**.
 - Offensive plus auto-cache baseline: **411 passed in 3.52s**.
+
+## Retry durability-barrier addendum (2026-07-13)
+
+Every `create=True` pending-handle open now executes both parent durability
+barriers even when the root or date directory already existed: after securely
+opening `.auto_pending`, it fsyncs `reports_fd`; after securely opening the date
+directory, it fsyncs `root_fd`. This prevents a failed first attempt—which may
+leave newly linked directories present but not durably linked—from causing a
+retry to mistake existence for completed durability and bypass the barrier.
+
+Parameterized regression tests inject persistent fsync failure at each parent.
+The first call leaves the relevant directory entries behind; the second call
+must attempt the same parent fsync again and fail rather than returning a usable
+handle. Both failures occur before pending JSON, tracking, or canonical effects.
+
+### Retry durability verification
+
+- Publication/recovery suite: **112 passed**.
+- Publication/manifest/as-of/tracker/cache/feature/lock suite:
+  **281 passed**.
+- Offensive plus auto-cache baseline: **411 passed in 3.32s**.
