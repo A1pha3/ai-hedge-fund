@@ -1,13 +1,107 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from src.research.exit_shadow_research import audit_coverage, build_legacy_cohort
+from src.research.exit_shadow_research import (
+    LegacySession,
+    LegacyTradePath,
+    audit_coverage,
+    build_legacy_cohort,
+    replay_fixed_baseline,
+    replay_paired,
+    replay_shadow_challenger,
+)
+from src.screening.offensive.execution_adjuster import ExecutionCosts
+
+
+FIXED_TEST_COSTS = ExecutionCosts(
+    version="exit-shadow-test-v1",
+    commission=0.01,
+    tax_rate=0.001,
+    slippage_bps=10,
+    other_fee=0.005,
+)
+
+
+def _session(
+    offset: int,
+    *,
+    open_price: float,
+    close: float,
+    high: float | None = None,
+    low: float | None = None,
+    atr: float | None = 0.4,
+    volume: float | None = 1_000.0,
+    suspended: bool | None = False,
+    limit_down: float | None = 8.0,
+    limit_up: float | None = 14.0,
+) -> LegacySession:
+    return LegacySession(
+        date=f"202607{14 + offset:02d}",
+        open=open_price,
+        high=high if high is not None else max(open_price, close) + 0.2,
+        low=low if low is not None else min(open_price, close) - 0.2,
+        close=close,
+        atr=atr,
+        volume=volume,
+        suspended=suspended,
+        limit_down=limit_down,
+        limit_up=limit_up,
+    )
+
+
+def _trade_path(
+    trade_id: str = "20260713:000001:btst_breakout",
+    *,
+    sessions: tuple[LegacySession, ...] | None = None,
+) -> LegacyTradePath:
+    path_sessions = sessions or tuple(
+        _session(
+            offset,
+            open_price=10.0 + offset * 0.1,
+            close=(11.5 if offset == 1 else 10.1 + offset * 0.1),
+        )
+        for offset in range(12)
+    )
+    return LegacyTradePath(
+        trade_id=trade_id,
+        signal_date="20260713",
+        ticker=trade_id.split(":")[1],
+        setup="btst_breakout",
+        regime="normal",
+        source="test",
+        buy_line_number=1,
+        exit_line_number=2,
+        recorded_entry_price=10.0,
+        replay_entry_price=path_sessions[0].open,
+        sessions=path_sessions,
+        recorded_return=0.05,
+        reconstructed_legacy_return=0.05,
+        recorded_return_mismatch=False,
+        current_board_rule_mismatch=False,
+        board_rule_auditable=True,
+    )
+
+
+@pytest.fixture
+def single_trade_path() -> LegacyTradePath:
+    return _trade_path()
+
+
+@pytest.fixture
+def complete_trade_paths(
+    single_trade_path: LegacyTradePath,
+) -> tuple[LegacyTradePath, ...]:
+    return (
+        single_trade_path,
+        _trade_path("20260714:000002:btst_breakout"),
+    )
 
 
 def _prices(
@@ -782,3 +876,247 @@ def test_missing_or_invalid_recorded_entry_is_unauditable_not_replaced_by_replay
     assert trade.reconstructed_legacy_return is None
     assert trade.recorded_return_mismatch is None
     assert cohort.audit.recorded_return_unauditable == 1
+
+
+def test_baseline_and_challenger_share_exact_trade_keys(
+    complete_trade_paths: tuple[LegacyTradePath, ...],
+) -> None:
+    result = replay_paired(complete_trade_paths, costs=FIXED_TEST_COSTS)
+
+    assert [row.trade_id for row in result.baseline] == [
+        row.trade_id for row in result.challenger
+    ]
+    assert result.total_paths == 2
+    assert result.common_eligible == 2
+
+
+def test_baseline_exits_session_ten_open_not_close(
+    single_trade_path: LegacyTradePath,
+) -> None:
+    result = replay_fixed_baseline(single_trade_path, costs=FIXED_TEST_COSTS)
+
+    assert result.exit_date == single_trade_path.sessions[9].date
+    assert result.raw_exit_price == single_trade_path.sessions[9].open
+    assert result.exit_trigger_date == single_trade_path.sessions[8].date
+    assert result.exit_reason == "maximum_holding_session"
+
+
+def test_challenger_uses_only_prior_close_information(
+    single_trade_path: LegacyTradePath,
+) -> None:
+    original = replay_shadow_challenger(
+        single_trade_path,
+        costs=FIXED_TEST_COSTS,
+    )
+    mutated_sessions = tuple(
+        session
+        if session.date <= original.exit_trigger_date
+        else replace(
+            session,
+            close=session.close + 40.0,
+        )
+        for session in single_trade_path.sessions
+    )
+    mutated = replace(single_trade_path, sessions=mutated_sessions)
+
+    assert (
+        replay_shadow_challenger(mutated, costs=FIXED_TEST_COSTS).exit_trigger_date
+        == original.exit_trigger_date
+    )
+
+
+def test_replay_applies_shared_cost_model_to_entry_and_exit(
+    single_trade_path: LegacyTradePath,
+) -> None:
+    result = replay_fixed_baseline(single_trade_path, costs=FIXED_TEST_COSTS)
+    entry = single_trade_path.sessions[0]
+    exit_session = single_trade_path.sessions[9]
+    expected_entry_cash = -(
+        entry.open * 1.001 + FIXED_TEST_COSTS.commission + FIXED_TEST_COSTS.other_fee
+    )
+    expected_exit_cash = (
+        exit_session.open * (1.0 - 0.001 - 0.001)
+        - FIXED_TEST_COSTS.commission
+        - FIXED_TEST_COSTS.other_fee
+    )
+
+    assert result.entry_net_cash_flow == pytest.approx(expected_entry_cash)
+    assert result.exit_net_cash_flow == pytest.approx(expected_exit_cash)
+    assert result.net_return == pytest.approx(
+        expected_exit_cash / -expected_entry_cash - 1.0
+    )
+    assert result.cost_version == FIXED_TEST_COSTS.version
+
+
+def test_unknown_queue_exit_is_deferred_to_next_executable_open(
+    single_trade_path: LegacyTradePath,
+) -> None:
+    sessions = list(single_trade_path.sessions)
+    sessions[3] = replace(
+        sessions[3],
+        open=sessions[3].limit_up,
+        high=sessions[3].limit_up,
+        low=sessions[3].limit_up - 0.2,
+        close=sessions[3].limit_up - 0.1,
+        suspended=None,
+    )
+    path = replace(single_trade_path, sessions=tuple(sessions))
+
+    result = replay_shadow_challenger(path, costs=FIXED_TEST_COSTS)
+
+    assert result.exit_trigger_date == sessions[2].date
+    assert result.exit_date == sessions[4].date
+    assert result.deferred_exits == ((sessions[3].date, "unknown_queue"),)
+
+
+def test_common_mask_excludes_both_arms_when_only_baseline_cannot_execute(
+    single_trade_path: LegacyTradePath,
+) -> None:
+    sessions = list(single_trade_path.sessions)
+    for index in range(9, len(sessions)):
+        sessions[index] = replace(sessions[index], suspended=True)
+    path = replace(single_trade_path, sessions=tuple(sessions))
+
+    result = replay_paired((path,), costs=FIXED_TEST_COSTS)
+
+    assert result.baseline == ()
+    assert result.challenger == ()
+    assert result.total_paths == 1
+    assert result.common_eligible == 0
+    assert result.excluded[0].trade_id == path.trade_id
+    assert result.excluded[0].reason == "baseline_exit_not_executable"
+    assert result.excluded[0].baseline_reason == "exit_path_exhausted"
+    assert result.excluded[0].challenger_reason is None
+
+
+def test_common_mask_excludes_missing_causal_atr_with_explicit_reason(
+    single_trade_path: LegacyTradePath,
+) -> None:
+    sessions = list(single_trade_path.sessions)
+    sessions[4] = replace(sessions[4], atr=None)
+    path = replace(single_trade_path, sessions=tuple(sessions))
+
+    result = replay_paired((path,), costs=FIXED_TEST_COSTS)
+
+    assert result.baseline == result.challenger == ()
+    assert result.excluded[0].reason == "causal_atr_unavailable"
+
+
+def test_common_mask_treats_missing_volume_as_unknown_suspension(
+    single_trade_path: LegacyTradePath,
+) -> None:
+    sessions = list(single_trade_path.sessions)
+    sessions[0] = replace(sessions[0], volume=None, suspended=False)
+    path = replace(single_trade_path, sessions=tuple(sessions))
+
+    result = replay_paired((path,), costs=FIXED_TEST_COSTS)
+
+    assert result.baseline == result.challenger == ()
+    assert result.excluded[0].reason == "entry_unknown_queue"
+
+
+def test_builder_carries_causal_atr_execution_metadata_and_deferral_tail(
+    tmp_path: Path,
+) -> None:
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text(
+        "\n".join(
+            (
+                '{"date":"20260120","ticker":"000001","setup":"btst_breakout","action":"BUY","entry_price":10.0}',
+                '{"date":"20260120","ticker":"000001","setup":"btst_breakout","action":"EXIT","reasoning":"realized=+5.00%"}',
+            )
+        ),
+        encoding="utf-8",
+    )
+    prices = pd.DataFrame(
+        [
+            {
+                "date": f"2026-01-{day:02d}",
+                "open": 10.0 + day * 0.01,
+                "high": 10.5 + day * 0.01,
+                "low": 9.5 + day * 0.01,
+                "close": 10.1 + day * 0.01,
+                "volume": 1_000.0,
+            }
+            for day in range(1, 32)
+        ]
+    )
+
+    trade = build_legacy_cohort(journal, price_loader=lambda _: prices).included[0]
+
+    assert len(trade.sessions) == 11
+    assert trade.sessions[0].atr == pytest.approx(1.0)
+    assert trade.sessions[0].volume == 1_000.0
+    assert trade.sessions[0].suspended is False
+    assert trade.sessions[0].limit_down == pytest.approx(
+        prices.loc[19, "close"] * (1.0 - 0.095)
+    )
+    assert trade.sessions[0].limit_up == pytest.approx(
+        prices.loc[19, "close"] * (1.0 + 0.095)
+    )
+
+
+def test_builder_preserves_explicit_numpy_suspension_over_positive_volume(
+    tmp_path: Path,
+) -> None:
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text(
+        "\n".join(
+            (
+                '{"date":"20260120","ticker":"000001","setup":"btst_breakout","action":"BUY"}',
+                '{"date":"20260120","ticker":"000001","setup":"btst_breakout","action":"EXIT","reasoning":"realized=+1.00%"}',
+            )
+        ),
+        encoding="utf-8",
+    )
+    prices = pd.DataFrame(
+        [
+            {
+                "date": f"2026-01-{day:02d}",
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.5,
+                "close": 10.1,
+                "volume": 1_000.0,
+                "suspended": day == 21,
+            }
+            for day in range(1, 32)
+        ]
+    )
+
+    trade = build_legacy_cohort(journal, price_loader=lambda _: prices).included[0]
+
+    assert trade.sessions[0].suspended is True
+
+
+def test_builder_does_not_replace_invalid_explicit_limit_with_derived_value(
+    tmp_path: Path,
+) -> None:
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text(
+        "\n".join(
+            (
+                '{"date":"20260120","ticker":"000001","setup":"btst_breakout","action":"BUY"}',
+                '{"date":"20260120","ticker":"000001","setup":"btst_breakout","action":"EXIT","reasoning":"realized=+1.00%"}',
+            )
+        ),
+        encoding="utf-8",
+    )
+    prices = pd.DataFrame(
+        [
+            {
+                "date": f"2026-01-{day:02d}",
+                "open": 10.0,
+                "high": 10.5,
+                "low": 9.5,
+                "close": 10.1,
+                "volume": 1_000.0,
+                "limit_up": "unknown" if day == 21 else 11.0,
+            }
+            for day in range(1, 32)
+        ]
+    )
+
+    trade = build_legacy_cohort(journal, price_loader=lambda _: prices).included[0]
+
+    assert trade.sessions[0].limit_up is None

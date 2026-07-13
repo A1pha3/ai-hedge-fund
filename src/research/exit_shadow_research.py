@@ -14,12 +14,27 @@ from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from datetime import date, datetime
+from numbers import Real
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import numpy as np
 
-from src.screening.offensive.execution_adjuster import is_limit_up_unbuyable_next_day
+from src.screening.offensive.atr_utils import compute_atr
+from src.screening.offensive.execution_adjuster import (
+    ExecutionCosts,
+    ExecutionStatus,
+    FillResult,
+    apply_execution_costs,
+    classify_open_fill,
+    is_limit_up_unbuyable_next_day,
+)
+from src.screening.offensive.exit_policy import (
+    ExitObservation,
+    ExitPolicyState,
+    evaluate_shadow_exit,
+)
 from src.tools.ashare_board_utils import limit_up_pct_for_ticker
 
 
@@ -29,6 +44,7 @@ _REALIZED_RE = re.compile(r"(?:^|[;\s])realized=([+-]?\d+(?:\.\d+)?)%")
 _RETURN_ROUNDING_TOLERANCE = 0.00005
 _FLOAT_COMPARISON_EPSILON = 1e-12
 _REQUIRED_PRICE_COLUMNS = frozenset({"date", "open", "high", "low", "close"})
+_REPLAY_ATR_PERIOD = 14
 
 PriceLoader = Callable[[str], object]
 NaturalKey = tuple[str, str, str]
@@ -43,6 +59,11 @@ class LegacySession:
     high: float
     low: float
     close: float
+    atr: float | None = None
+    volume: float | None = None
+    suspended: bool | None = None
+    limit_down: float | None = None
+    limit_up: float | None = None
 
 
 @dataclass(frozen=True)
@@ -123,6 +144,55 @@ class LegacyCohort:
     included: tuple[LegacyTradePath, ...]
     excluded: tuple[CohortExclusion, ...]
     audit: CoverageAudit
+
+
+@dataclass(frozen=True)
+class ExitReplayResult:
+    """One executable replay leg with raw prices and net economics separated."""
+
+    trade_id: str
+    signal_date: str
+    ticker: str
+    regime: str
+    source: str
+    entry_date: str
+    raw_entry_price: float
+    exit_trigger_date: str
+    exit_date: str
+    raw_exit_price: float
+    exit_reason: str
+    deferred_exits: tuple[tuple[str, str], ...]
+    entry_net_cash_flow: float
+    exit_net_cash_flow: float
+    net_return: float
+    cost_version: str
+
+
+@dataclass(frozen=True)
+class PairedExitExclusion:
+    """A common-mask removal with independently auditable leg failures."""
+
+    trade_id: str
+    reason: str
+    baseline_reason: str | None = None
+    challenger_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class PairedExitResult:
+    """Identically keyed executable baseline and challenger replay rows."""
+
+    baseline: tuple[ExitReplayResult, ...]
+    challenger: tuple[ExitReplayResult, ...]
+    excluded: tuple[PairedExitExclusion, ...]
+    total_paths: int
+    common_eligible: int
+
+
+class _ReplayIneligible(ValueError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _finite_returns(values: Iterable[float]) -> tuple[float, ...]:
@@ -316,18 +386,88 @@ def _signal_pct_change(prices: pd.DataFrame, signal_idx: int) -> float | None:
     return (signal_close / previous_close - 1.0) * 100.0
 
 
-def _build_sessions(prices: pd.DataFrame, signal_idx: int) -> tuple[LegacySession, ...]:
-    rows = prices.iloc[signal_idx + 1 : signal_idx + 11]
-    return tuple(
-        LegacySession(
-            date=pd.Timestamp(row["date"]).strftime("%Y%m%d"),
-            open=float(row["open"]),
-            high=float(row["high"]),
-            low=float(row["low"]),
-            close=float(row["close"]),
+def _optional_positive_number(value: object) -> float | None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, Real)
+        or not math.isfinite(float(value))
+        or float(value) <= 0
+    ):
+        return None
+    return float(value)
+
+
+def _optional_bool(value: object) -> bool | None:
+    return bool(value) if isinstance(value, (bool, np.bool_)) else None
+
+
+def _build_sessions(
+    prices: pd.DataFrame,
+    signal_idx: int,
+    ticker: str,
+) -> tuple[LegacySession, ...]:
+    sessions: list[LegacySession] = []
+    limit_pct = limit_up_pct_for_ticker(ticker) / 100.0
+    for row_idx in range(signal_idx + 1, len(prices)):
+        row = prices.iloc[row_idx]
+        prior_close = _optional_positive_number(prices.iloc[row_idx - 1]["close"])
+        explicit_limit_down = (
+            _optional_positive_number(row.get("limit_down"))
+            if "limit_down" in prices.columns
+            else None
         )
-        for _, row in rows.iterrows()
-    )
+        explicit_limit_up = (
+            _optional_positive_number(row.get("limit_up"))
+            if "limit_up" in prices.columns
+            else None
+        )
+        limit_down = (
+            explicit_limit_down
+            if "limit_down" in prices.columns
+            else prior_close * (1.0 - limit_pct)
+            if prior_close is not None
+            else None
+        )
+        limit_up = (
+            explicit_limit_up
+            if "limit_up" in prices.columns
+            else prior_close * (1.0 + limit_pct)
+            if prior_close is not None
+            else None
+        )
+        volume = (
+            _optional_positive_number(row.get("volume"))
+            if "volume" in prices.columns
+            else None
+        )
+        explicit_suspended = (
+            _optional_bool(row.get("suspended"))
+            if "suspended" in prices.columns
+            else None
+        )
+        suspended = (
+            explicit_suspended
+            if explicit_suspended is not None
+            else False
+            if volume is not None
+            else None
+        )
+        atr = compute_atr(prices, period=_REPLAY_ATR_PERIOD, at_idx=row_idx + 1)
+        sessions.append(
+            LegacySession(
+                date=pd.Timestamp(row["date"]).strftime("%Y%m%d"),
+                open=float(row["open"]),
+                high=float(row["high"]),
+                low=float(row["low"]),
+                close=float(row["close"]),
+                atr=_optional_positive_number(atr),
+                volume=volume,
+                suspended=suspended,
+                limit_down=limit_down,
+                limit_up=limit_up,
+            )
+        )
+    return tuple(sessions)
 
 
 def _recorded_entry_price(buy: Mapping[str, Any]) -> float | None:
@@ -597,7 +737,7 @@ def build_legacy_cohort(
             continue
         counts["execution_proxy_eligible"] += 1
 
-        sessions = _build_sessions(prices, signal_idx)
+        sessions = _build_sessions(prices, signal_idx, ticker)
         recorded_entry_price = _recorded_entry_price(buy)
         replay_entry_price = sessions[0].open
         if recorded_entry_price is None:
@@ -674,12 +814,258 @@ def build_legacy_cohort(
     )
 
 
+def _plain_date(value: str) -> date:
+    try:
+        return datetime.strptime(value, "%Y%m%d").date()
+    except (TypeError, ValueError) as exc:
+        raise _ReplayIneligible("invalid_session_date") from exc
+
+
+def _session_execution_status(session: LegacySession) -> ExecutionStatus:
+    volume = _optional_positive_number(session.volume)
+    suspended = (
+        True if session.suspended is True else False if volume is not None else None
+    )
+    return classify_open_fill(
+        session.open,
+        session.limit_down,
+        session.limit_up,
+        suspended,
+        high=session.high,
+        low=session.low,
+    )
+
+
+def _validate_replay_path(path: LegacyTradePath) -> None:
+    if len(path.sessions) < 10:
+        raise _ReplayIneligible("incomplete_session_10_window")
+    dates = tuple(_plain_date(session.date) for session in path.sessions)
+    if any(current <= previous for previous, current in zip(dates, dates[1:])):
+        raise _ReplayIneligible("nonincreasing_session_dates")
+    for session in path.sessions[:9]:
+        if _optional_positive_number(session.atr) is None:
+            raise _ReplayIneligible("causal_atr_unavailable")
+    entry = path.sessions[0]
+    entry_status = _session_execution_status(entry)
+    if entry_status is ExecutionStatus.UNKNOWN_QUEUE:
+        raise _ReplayIneligible("entry_unknown_queue")
+    if entry_status is ExecutionStatus.UNEXECUTABLE_PROXY:
+        raise _ReplayIneligible("entry_unexecutable_proxy")
+
+
+def _entry_fill(
+    path: LegacyTradePath,
+    costs: ExecutionCosts,
+) -> tuple[FillResult, date]:
+    _validate_replay_path(path)
+    entry_session = path.sessions[0]
+    entry_date = _plain_date(entry_session.date)
+    return (
+        apply_execution_costs(entry_session.open, 1, "buy", costs),
+        entry_date,
+    )
+
+
+def _find_executable_exit(
+    path: LegacyTradePath,
+    *,
+    scheduled_index: int,
+) -> tuple[LegacySession, tuple[tuple[str, str], ...]]:
+    deferred: list[tuple[str, str]] = []
+    for session in path.sessions[scheduled_index:]:
+        status = _session_execution_status(session)
+        if status is ExecutionStatus.EXECUTABLE_PROXY:
+            return session, tuple(deferred)
+        reason = (
+            "unknown_queue"
+            if status is ExecutionStatus.UNKNOWN_QUEUE
+            else "unexecutable_proxy"
+        )
+        deferred.append((session.date, reason))
+    raise _ReplayIneligible("exit_path_exhausted")
+
+
+def _replay_result(
+    path: LegacyTradePath,
+    *,
+    trigger_index: int,
+    reason: str,
+    costs: ExecutionCosts,
+    entry_fill: FillResult,
+    entry_date: date,
+) -> ExitReplayResult:
+    scheduled_index = trigger_index + 1
+    if scheduled_index >= len(path.sessions):
+        raise _ReplayIneligible("exit_path_exhausted")
+    exit_session, deferred = _find_executable_exit(
+        path,
+        scheduled_index=scheduled_index,
+    )
+    exit_date = _plain_date(exit_session.date)
+    exit_fill = apply_execution_costs(
+        exit_session.open,
+        1,
+        "sell",
+        costs,
+        entry_date=entry_date,
+        exit_date=exit_date,
+    )
+    net_return = exit_fill.net_cash_flow / -entry_fill.net_cash_flow - 1.0
+    return ExitReplayResult(
+        trade_id=path.trade_id,
+        signal_date=path.signal_date,
+        ticker=path.ticker,
+        regime=path.regime,
+        source=path.source,
+        entry_date=path.sessions[0].date,
+        raw_entry_price=entry_fill.raw_fill_price,
+        exit_trigger_date=path.sessions[trigger_index].date,
+        exit_date=exit_session.date,
+        raw_exit_price=exit_fill.raw_fill_price,
+        exit_reason=reason,
+        deferred_exits=deferred,
+        entry_net_cash_flow=entry_fill.net_cash_flow,
+        exit_net_cash_flow=exit_fill.net_cash_flow,
+        net_return=net_return,
+        cost_version=entry_fill.cost_version,
+    )
+
+
+def replay_fixed_baseline(
+    path: LegacyTradePath,
+    *,
+    costs: ExecutionCosts,
+) -> ExitReplayResult:
+    """Replay the executable fixed session-10-open baseline."""
+
+    entry_fill, entry_date = _entry_fill(path, costs)
+    trigger_index = 8
+    trigger = path.sessions[trigger_index]
+    decision = evaluate_shadow_exit(
+        ExitPolicyState.unarmed(entry_price=path.sessions[0].open),
+        ExitObservation(
+            trade_date=_plain_date(trigger.date),
+            holding_session=9,
+            close=trigger.close,
+            atr=float(trigger.atr),
+        ),
+    )
+    if not decision.should_exit_next_open:
+        raise _ReplayIneligible("baseline_trigger_missing")
+    return _replay_result(
+        path,
+        trigger_index=trigger_index,
+        reason=decision.reason,
+        costs=costs,
+        entry_fill=entry_fill,
+        entry_date=entry_date,
+    )
+
+
+def replay_shadow_challenger(
+    path: LegacyTradePath,
+    *,
+    costs: ExecutionCosts,
+) -> ExitReplayResult:
+    """Replay the fixed challenger using only each completed session close."""
+
+    entry_fill, entry_date = _entry_fill(path, costs)
+    state = ExitPolicyState.unarmed(entry_price=path.sessions[0].open)
+    for index, session in enumerate(path.sessions[:9]):
+        decision = evaluate_shadow_exit(
+            state,
+            ExitObservation(
+                trade_date=_plain_date(session.date),
+                holding_session=index + 1,
+                close=session.close,
+                atr=float(session.atr),
+            ),
+        )
+        state = decision.state
+        if decision.should_exit_next_open:
+            return _replay_result(
+                path,
+                trigger_index=index,
+                reason=decision.reason,
+                costs=costs,
+                entry_fill=entry_fill,
+                entry_date=entry_date,
+            )
+    raise _ReplayIneligible("challenger_trigger_missing")
+
+
+def replay_paired(
+    paths: Iterable[LegacyTradePath],
+    *,
+    costs: ExecutionCosts,
+) -> PairedExitResult:
+    """Replay both arms and retain only their identical executable common mask."""
+
+    baseline: list[ExitReplayResult] = []
+    challenger: list[ExitReplayResult] = []
+    excluded: list[PairedExitExclusion] = []
+    total_paths = 0
+    for path in paths:
+        total_paths += 1
+        try:
+            _validate_replay_path(path)
+        except _ReplayIneligible as exc:
+            excluded.append(PairedExitExclusion(path.trade_id, exc.reason))
+            continue
+
+        baseline_row: ExitReplayResult | None = None
+        challenger_row: ExitReplayResult | None = None
+        baseline_reason: str | None = None
+        challenger_reason: str | None = None
+        try:
+            baseline_row = replay_fixed_baseline(path, costs=costs)
+        except _ReplayIneligible as exc:
+            baseline_reason = exc.reason
+        try:
+            challenger_row = replay_shadow_challenger(path, costs=costs)
+        except _ReplayIneligible as exc:
+            challenger_reason = exc.reason
+
+        if baseline_row is None or challenger_row is None:
+            if baseline_reason and challenger_reason:
+                reason = "both_exits_not_executable"
+            elif baseline_reason:
+                reason = "baseline_exit_not_executable"
+            else:
+                reason = "challenger_exit_not_executable"
+            excluded.append(
+                PairedExitExclusion(
+                    path.trade_id,
+                    reason,
+                    baseline_reason,
+                    challenger_reason,
+                )
+            )
+            continue
+        baseline.append(baseline_row)
+        challenger.append(challenger_row)
+
+    return PairedExitResult(
+        baseline=tuple(baseline),
+        challenger=tuple(challenger),
+        excluded=tuple(excluded),
+        total_paths=total_paths,
+        common_eligible=len(baseline),
+    )
+
+
 __all__ = [
     "CohortExclusion",
     "CoverageAudit",
     "LegacyCohort",
     "LegacySession",
     "LegacyTradePath",
+    "ExitReplayResult",
+    "PairedExitExclusion",
+    "PairedExitResult",
     "audit_coverage",
     "build_legacy_cohort",
+    "replay_fixed_baseline",
+    "replay_paired",
+    "replay_shadow_challenger",
 ]
