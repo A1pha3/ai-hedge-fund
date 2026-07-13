@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import inspect
 import io
 import json
 import math
@@ -24,7 +25,6 @@ from src.screening.data_quality_manifest import (
     validate_ticker_readiness,
 )
 from src.utils.atomic_files import (
-    _fsync_directory,
     _sanitize_nonfinite,
     atomic_write_json,
 )
@@ -949,23 +949,259 @@ _PENDING_SCHEMA_VERSION = 1
 _PENDING_PHASES = ("prepared", "tracked", "canonical")
 
 
-def _validated_pending_root(reports_dir: Path, *, create: bool) -> Path | None:
-    """Return a non-symlink pending directory, creating it without following links."""
-    root = reports_dir / _PENDING_DIRNAME
+_PENDING_DIR_FLAGS = (
+    os.O_RDONLY
+    | getattr(os, "O_DIRECTORY", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_CLOEXEC", 0)
+)
+_PENDING_FILE_FLAGS = getattr(os, "O_NOFOLLOW", 0) | getattr(
+    os, "O_CLOEXEC", 0
+)
+_PENDING_DIR_FD_SUPPORTED = all(
+    function in os.supports_dir_fd
+    for function in (os.open, os.mkdir, os.stat, os.unlink, os.rmdir)
+) and os.listdir in os.supports_fd
+try:
+    _replace_parameters = inspect.signature(os.replace).parameters
+    _PENDING_REPLACE_DIR_FD_SUPPORTED = {
+        "src_dir_fd",
+        "dst_dir_fd",
+    }.issubset(_replace_parameters)
+except (TypeError, ValueError):
+    _PENDING_REPLACE_DIR_FD_SUPPORTED = False
+_PENDING_NOFOLLOW_STAT_SUPPORTED = os.stat in os.supports_follow_symlinks
+
+
+def _require_pending_fd_primitives() -> None:
+    missing = [
+        name
+        for name in ("O_DIRECTORY", "O_NOFOLLOW")
+        if not hasattr(os, name)
+    ]
+    if (
+        missing
+        or not _PENDING_DIR_FD_SUPPORTED
+        or not _PENDING_REPLACE_DIR_FD_SUPPORTED
+        or not _PENDING_NOFOLLOW_STAT_SUPPORTED
+    ):
+        detail = ", ".join(missing) or "dir_fd operations"
+        raise RuntimeError(
+            f"descriptor-relative pending operations unavailable: {detail}"
+        )
+
+
+def _close_fd(fd: int | None) -> None:
+    if fd is None:
+        return
     try:
-        root_stat = root.lstat()
-    except FileNotFoundError:
-        if not create:
-            return None
-        reports_dir.mkdir(parents=True, exist_ok=True)
+        os.close(fd)
+    except OSError:
+        pass
+
+
+@dataclass
+class _PendingStateHandle:
+    reports_dir: Path
+    reports_fd: int
+    root_fd: int
+    date_fd: int
+    date_name: str
+    state_name: str
+    closed: bool = False
+
+    @property
+    def path(self) -> Path:
+        return (
+            self.reports_dir
+            / _PENDING_DIRNAME
+            / self.date_name
+            / self.state_name
+        )
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        _close_fd(self.date_fd)
+        _close_fd(self.root_fd)
+        _close_fd(self.reports_fd)
+
+
+def _open_dir_at(name: str, parent_fd: int) -> int:
+    try:
+        fd = os.open(name, _PENDING_DIR_FLAGS, dir_fd=parent_fd)
+    except (NotImplementedError, TypeError) as exc:
+        raise RuntimeError(
+            "descriptor-relative pending directory open unavailable"
+        ) from exc
+    if not stat.S_ISDIR(os.fstat(fd).st_mode):
+        _close_fd(fd)
+        raise ValueError(f"pending namespace entry is not a directory: {name}")
+    return fd
+
+
+def _open_reports_fd(reports_dir: Path) -> int:
+    _require_pending_fd_primitives()
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        return os.open(reports_dir, _PENDING_DIR_FLAGS)
+    except (NotImplementedError, TypeError) as exc:
+        raise RuntimeError("secure reports directory open unavailable") from exc
+
+
+def _open_pending_handle(
+    reports_dir: Path,
+    trade_date: str,
+    run_id: str,
+    *,
+    create: bool,
+) -> _PendingStateHandle:
+    safe_date = _validate_trade_date(trade_date)
+    safe_run_id = _validate_run_id(run_id)
+    reports_fd = _open_reports_fd(reports_dir)
+    root_fd: int | None = None
+    date_fd: int | None = None
+    try:
+        if create:
+            try:
+                os.mkdir(_PENDING_DIRNAME, 0o700, dir_fd=reports_fd)
+            except FileExistsError:
+                pass
         try:
-            os.mkdir(root)
-        except FileExistsError:
+            root_fd = _open_dir_at(_PENDING_DIRNAME, reports_fd)
+        except OSError as exc:
+            raise ValueError("pending root must be a real directory") from exc
+        if create:
+            try:
+                os.mkdir(safe_date, 0o700, dir_fd=root_fd)
+            except FileExistsError:
+                pass
+        date_fd = _open_dir_at(safe_date, root_fd)
+        return _PendingStateHandle(
+            reports_dir=reports_dir,
+            reports_fd=reports_fd,
+            root_fd=root_fd,
+            date_fd=date_fd,
+            date_name=safe_date,
+            state_name=f"{safe_run_id}.json",
+        )
+    except BaseException:
+        _close_fd(date_fd)
+        _close_fd(root_fd)
+        _close_fd(reports_fd)
+        raise
+
+
+def _listdir_fd(directory_fd: int) -> list[str]:
+    try:
+        names = os.listdir(directory_fd)
+    except (NotImplementedError, TypeError) as exc:
+        raise RuntimeError(
+            "descriptor-relative pending discovery unavailable"
+        ) from exc
+    if not all(type(name) is str and name not in (".", "..") for name in names):
+        raise ValueError("pending namespace returned unsafe entry names")
+    return sorted(names)
+
+
+def _read_pending_json(handle: _PendingStateHandle) -> dict[str, Any]:
+    fd: int | None = None
+    try:
+        fd = os.open(
+            handle.state_name,
+            os.O_RDONLY | _PENDING_FILE_FLAGS,
+            dir_fd=handle.date_fd,
+        )
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError(f"pending state is not a regular file: {handle.path}")
+        chunks: list[bytes] = []
+        while chunk := os.read(fd, 65536):
+            chunks.append(chunk)
+        state = json.loads(b"".join(chunks).decode("utf-8"))
+    except (NotImplementedError, TypeError) as exc:
+        raise RuntimeError("descriptor-relative pending read unavailable") from exc
+    finally:
+        _close_fd(fd)
+    if not isinstance(state, dict):
+        raise ValueError(f"pending state must be an object: {handle.path}")
+    return state
+
+
+def _pending_target_mode(handle: _PendingStateHandle) -> int | None:
+    try:
+        target_stat = os.stat(
+            handle.state_name,
+            dir_fd=handle.date_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(target_stat.st_mode):
+        raise ValueError(f"pending state target is not regular: {handle.path}")
+    return stat.S_IMODE(target_stat.st_mode)
+
+
+def _write_pending_json(handle: _PendingStateHandle, payload: Mapping[str, Any]) -> None:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        indent=2,
+        default=str,
+        allow_nan=False,
+    ).encode("utf-8")
+    mode = _pending_target_mode(handle)
+    temp_name = f".{handle.state_name}.{uuid.uuid4().hex}.tmp"
+    temp_fd: int | None = None
+    try:
+        temp_fd = os.open(
+            temp_name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | _PENDING_FILE_FLAGS,
+            0o666,
+            dir_fd=handle.date_fd,
+        )
+        if mode is not None:
+            os.fchmod(temp_fd, mode)
+        view = memoryview(encoded)
+        while view:
+            written = os.write(temp_fd, view)
+            if written <= 0:
+                raise OSError("short pending state write")
+            view = view[written:]
+        os.fsync(temp_fd)
+        os.close(temp_fd)
+        temp_fd = None
+        try:
+            os.replace(
+                temp_name,
+                handle.state_name,
+                src_dir_fd=handle.date_fd,
+                dst_dir_fd=handle.date_fd,
+            )
+        except (NotImplementedError, TypeError) as exc:
+            raise RuntimeError(
+                "descriptor-relative pending replace unavailable"
+            ) from exc
+        os.fsync(handle.date_fd)
+    except BaseException:
+        _close_fd(temp_fd)
+        try:
+            os.unlink(temp_name, dir_fd=handle.date_fd)
+        except OSError:
             pass
-        root_stat = root.lstat()
-    if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
-        raise ValueError(f"pending root must be a real directory: {root}")
-    return root
+        raise
+
+
+def _entry_matches_fd(name: str, parent_fd: int, child_fd: int) -> bool:
+    try:
+        entry = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError:
+        return False
+    held = os.fstat(child_fd)
+    return stat.S_ISDIR(entry.st_mode) and (entry.st_dev, entry.st_ino) == (
+        held.st_dev,
+        held.st_ino,
+    )
 
 
 def _pending_state_checksum(state: Mapping[str, Any]) -> str:
@@ -1017,24 +1253,21 @@ def _build_pending_state(
     return state
 
 
-def _pending_identity(path: Path, reports_dir: Path) -> tuple[str, str]:
-    root = reports_dir / _PENDING_DIRNAME
-    try:
-        relative = path.relative_to(root)
-    except ValueError as exc:
-        raise ValueError(f"pending path outside namespace: {path}") from exc
-    if len(relative.parts) != 2 or path.suffix != ".json":
-        raise ValueError(f"invalid pending filename layout: {path}")
-    return _validate_trade_date(relative.parts[0]), _validate_run_id(path.stem)
+def _pending_identity(handle: _PendingStateHandle) -> tuple[str, str]:
+    if not handle.state_name.endswith(".json"):
+        raise ValueError(f"invalid pending filename: {handle.path}")
+    return _validate_trade_date(handle.date_name), _validate_run_id(
+        handle.state_name.removesuffix(".json")
+    )
 
 
 def _validate_pending_state(
     state: Mapping[str, Any],
     *,
-    path: Path,
-    reports_dir: Path,
+    handle: _PendingStateHandle,
 ) -> None:
-    filename_date, filename_run_id = _pending_identity(path, reports_dir)
+    path = handle.path
+    filename_date, filename_run_id = _pending_identity(handle)
     if type(state.get("schema_version")) is not int or state.get(
         "schema_version"
     ) != _PENDING_SCHEMA_VERSION:
@@ -1096,7 +1329,7 @@ def _validate_pending_state(
 
 
 def _persist_pending_phase(
-    path: Path,
+    handle: _PendingStateHandle,
     state: Mapping[str, Any],
     phase: str,
 ) -> dict[str, Any]:
@@ -1106,7 +1339,7 @@ def _persist_pending_phase(
     updated["phase"] = phase
     updated["updated_at"] = datetime.now(timezone.utc).isoformat()
     updated["state_checksum"] = _pending_state_checksum(updated)
-    atomic_write_json(path, updated)
+    _write_pending_json(handle, updated)
     return updated
 
 
@@ -1116,48 +1349,37 @@ def _publish_pending_attempt(
     run_id: str,
     payload: Mapping[str, Any],
     manifest: object,
-) -> Path:
+) -> _PendingStateHandle:
     safe_date = _validate_trade_date(trade_date)
     safe_run_id = _validate_run_id(run_id)
-    pending_root = _validated_pending_root(reports_dir, create=True)
-    assert pending_root is not None
-    root_identity = pending_root.lstat()
-    date_dir = pending_root / safe_date
+    handle = _open_pending_handle(
+        reports_dir,
+        safe_date,
+        safe_run_id,
+        create=True,
+    )
     try:
-        os.mkdir(date_dir)
-    except FileExistsError:
-        pass
-    date_stat = date_dir.lstat()
-    if stat.S_ISLNK(date_stat.st_mode) or not stat.S_ISDIR(date_stat.st_mode):
-        raise ValueError(f"pending date directory must be real: {date_dir}")
-    # Re-check the root immediately before the durable write to narrow rename races.
-    _validated_pending_root(reports_dir, create=False)
-    current_root = pending_root.lstat()
-    current_date_dir = date_dir.lstat()
-    if (current_root.st_dev, current_root.st_ino) != (
-        root_identity.st_dev,
-        root_identity.st_ino,
-    ) or (current_date_dir.st_dev, current_date_dir.st_ino) != (
-        date_stat.st_dev,
-        date_stat.st_ino,
-    ):
-        raise ValueError("pending namespace changed during publication")
-    target = date_dir / f"{safe_run_id}.json"
-    atomic_write_json(target, _build_pending_state(trade_date, run_id, payload, manifest))
-    return target
+        _write_pending_json(
+            handle,
+            _build_pending_state(trade_date, run_id, payload, manifest),
+        )
+        return handle
+    except BaseException:
+        handle.close()
+        raise
 
 
-def _remove_pending_attempt(path: Path) -> bool:
+def _remove_pending_attempt(handle: _PendingStateHandle) -> bool:
     try:
-        path.unlink()
-        _fsync_directory(path.parent)
+        os.unlink(handle.state_name, dir_fd=handle.date_fd)
+        os.fsync(handle.date_fd)
         try:
-            date_dir = path.parent
-            pending_root = date_dir.parent
-            date_dir.rmdir()
-            _fsync_directory(pending_root)
-            pending_root.rmdir()
-            _fsync_directory(pending_root.parent)
+            if _entry_matches_fd(handle.date_name, handle.root_fd, handle.date_fd):
+                os.rmdir(handle.date_name, dir_fd=handle.root_fd)
+                os.fsync(handle.root_fd)
+            if _entry_matches_fd(_PENDING_DIRNAME, handle.reports_fd, handle.root_fd):
+                os.rmdir(_PENDING_DIRNAME, dir_fd=handle.reports_fd)
+                os.fsync(handle.reports_fd)
         except OSError:
             pass
     except OSError:
@@ -1176,7 +1398,7 @@ def _call_state_hook(
 
 
 def _advance_pending_state(
-    path: Path,
+    handle: _PendingStateHandle,
     state: Mapping[str, Any],
     *,
     update_tracking: Callable[[dict[str, Any]], object],
@@ -1185,9 +1407,10 @@ def _advance_pending_state(
     runtime_payload: dict[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any], bool]:
     """Idempotently advance one checksum-verified pending publication."""
+    path = handle.path
     current = dict(state)
-    reports_dir = path.parents[2]
-    _validate_pending_state(current, path=path, reports_dir=reports_dir)
+    reports_dir = handle.reports_dir
+    _validate_pending_state(current, handle=handle)
     payload = runtime_payload if runtime_payload is not None else dict(current["payload"])
     if _canonical_fingerprint(payload) != current["payload_checksum"]:
         raise ValueError("runtime payload does not match durable pending payload")
@@ -1195,14 +1418,14 @@ def _advance_pending_state(
     if current["phase"] == "prepared":
         update_tracking(payload)
         _call_state_hook(state_hook, "after_tracking", path, current)
-        current = _persist_pending_phase(path, current, "tracked")
+        current = _persist_pending_phase(handle, current, "tracked")
         _call_state_hook(state_hook, "after_tracked_persist", path, current)
 
     canonical_path = reports_dir / str(current["canonical_filename"])
     if current["phase"] == "tracked":
         canonical_path = publish_canonical(payload)
         _call_state_hook(state_hook, "after_canonical", path, current)
-        current = _persist_pending_phase(path, current, "canonical")
+        current = _persist_pending_phase(handle, current, "canonical")
         _call_state_hook(state_hook, "after_canonical_persist", path, current)
 
     if current["phase"] == "canonical":
@@ -1213,25 +1436,80 @@ def _advance_pending_state(
         if canonical_payload != payload:
             canonical_path = publish_canonical(payload)
         _call_state_hook(state_hook, "before_pending_remove", path, current)
-        removed = _remove_pending_attempt(path)
+        removed = _remove_pending_attempt(handle)
         return canonical_path, current, removed
     raise ValueError(f"pending state did not reach canonical phase: {path}")
 
 
-def _record_pending_error(path: Path, stage: str, exc: Exception) -> Path:
+def _record_pending_error(
+    handle: _PendingStateHandle,
+    stage: str,
+    exc: Exception,
+) -> Path:
+    path = handle.path
     try:
-        state = json.loads(path.read_text(encoding="utf-8"))
-        _validate_pending_state(state, path=path, reports_dir=path.parents[2])
+        state = _read_pending_json(handle)
+        _validate_pending_state(state, handle=handle)
         state["last_error"] = {
             "stage": stage,
             "type": type(exc).__name__,
             "message": str(exc),
             "recorded_at": datetime.now(timezone.utc).isoformat(),
         }
-        atomic_write_json(path, state)
+        _write_pending_json(handle, state)
     except Exception:
         pass
     return path
+
+
+def _discover_pending_states(
+    reports_dir: Path,
+) -> list[tuple[_PendingStateHandle, dict[str, Any]]]:
+    reports_fd = _open_reports_fd(reports_dir)
+    root_fd: int | None = None
+    discovered: list[tuple[_PendingStateHandle, dict[str, Any]]] = []
+    try:
+        try:
+            root_fd = _open_dir_at(_PENDING_DIRNAME, reports_fd)
+        except FileNotFoundError:
+            return []
+        except OSError as exc:
+            raise ValueError("pending root must be a real directory") from exc
+        for date_name in _listdir_fd(root_fd):
+            _validate_trade_date(date_name)
+            date_fd = _open_dir_at(date_name, root_fd)
+            try:
+                for state_name in _listdir_fd(date_fd):
+                    if not state_name.endswith(".json"):
+                        raise ValueError(
+                            f"invalid pending filename: {date_name}/{state_name}"
+                        )
+                    _validate_run_id(state_name.removesuffix(".json"))
+                    handle = _PendingStateHandle(
+                        reports_dir=reports_dir,
+                        reports_fd=os.dup(reports_fd),
+                        root_fd=os.dup(root_fd),
+                        date_fd=os.dup(date_fd),
+                        date_name=date_name,
+                        state_name=state_name,
+                    )
+                    try:
+                        state = _read_pending_json(handle)
+                        _validate_pending_state(state, handle=handle)
+                        discovered.append((handle, state))
+                    except BaseException:
+                        handle.close()
+                        raise
+            finally:
+                _close_fd(date_fd)
+        return discovered
+    except BaseException:
+        for handle, _state in discovered:
+            handle.close()
+        raise
+    finally:
+        _close_fd(root_fd)
+        _close_fd(reports_fd)
 
 
 def _reconcile_pending_run(
@@ -1239,8 +1517,8 @@ def _reconcile_pending_run(
     requested_trade_date: str,
 ) -> AutoRunResult | None:
     try:
-        pending_root = _validated_pending_root(reports_dir, create=False)
-    except ValueError as exc:
+        pending = _discover_pending_states(reports_dir)
+    except Exception as exc:
         diagnostic = _publish_failure_attempt(
             reports_dir,
             requested_trade_date,
@@ -1258,53 +1536,11 @@ def _reconcile_pending_run(
             True,
             ({"action": "recovery_failed", "error": str(exc)},),
         )
-    if pending_root is None:
-        return None
-    pending: list[tuple[Path, dict[str, Any]]] = []
-    discovery_error: Exception | None = None
-    discovery_path: Path | None = None
-    for path in sorted(pending_root.rglob("*")):
-        if path.is_dir() and not path.is_symlink():
-            continue
-        discovery_path = path
-        try:
-            if path.is_symlink() or not path.is_file():
-                raise ValueError(f"unsafe pending namespace entry: {path}")
-            state = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(state, dict):
-                raise ValueError(f"pending state must be an object: {path}")
-            _validate_pending_state(state, path=path, reports_dir=reports_dir)
-            pending.append((path, state))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            discovery_error = exc
-            break
-    if discovery_error is not None:
-        diagnostic = _publish_failure_attempt(
-            reports_dir,
-            requested_trade_date,
-            _new_run_id(requested_trade_date),
-            "discover_pending",
-            discovery_error,
-        )
-        return AutoRunResult(
-            AutoRunStatus.FATAL,
-            1,
-            diagnostic,
-            None,
-            None,
-            diagnostic,
-            True,
-            (
-                {
-                    "action": "recovery_failed",
-                    "error": str(discovery_error),
-                    "path": str(discovery_path),
-                },
-            ),
-        )
     if not pending:
         return None
     if len(pending) != 1:
+        for pending_handle, _pending_state in pending:
+            pending_handle.close()
         exc = RuntimeError("multiple pending auto runs across dates")
         diagnostic = _publish_failure_attempt(
             reports_dir,
@@ -1324,9 +1560,10 @@ def _reconcile_pending_run(
             ({"action": "recovery_failed", "error": str(exc)},),
         )
 
-    path, state = pending[0]
+    handle, state = pending[0]
+    path = handle.path
     try:
-        _validate_pending_state(state, path=path, reports_dir=reports_dir)
+        _validate_pending_state(state, handle=handle)
         payload = dict(state["payload"])
         bound_trade_date = str(state["date"])
 
@@ -1348,7 +1585,7 @@ def _reconcile_pending_run(
 
         from_phase = str(state["phase"])
         canonical, final_state, removed = _advance_pending_state(
-            path,
+            handle,
             state,
             update_tracking=durable_tracking,
             publish_canonical=durable_canonical,
@@ -1379,7 +1616,7 @@ def _reconcile_pending_run(
             effective_trade_date=bound_trade_date,
         )
     except Exception as exc:
-        _record_pending_error(path, "reconcile_pending", exc)
+        _record_pending_error(handle, "reconcile_pending", exc)
         return AutoRunResult(
             AutoRunStatus.FATAL,
             1,
@@ -1390,6 +1627,8 @@ def _reconcile_pending_run(
             True,
             ({"action": "recovery_failed", "error": str(exc), "path": str(path)},),
         )
+    finally:
+        handle.close()
 
 
 def run_auto_pipeline(
@@ -1416,6 +1655,7 @@ def run_auto_pipeline(
     )
     payload: dict[str, Any] | None = None
     manifest: object | None = None
+    pending_handle: _PendingStateHandle | None = None
     pending_attempt: Path | None = None
     stage = "prepare_inputs"
     try:
@@ -1451,14 +1691,15 @@ def run_auto_pipeline(
         ):
             _publication_payload(payload, manifest, status=AutoRunStatus.HEALTHY)
             stage = "publish_pending_attempt"
-            pending_attempt = _publish_pending_attempt(
+            pending_handle = _publish_pending_attempt(
                 resolved_reports_dir,
                 trade_date,
                 manifest_run_id,
                 payload,
                 manifest,
             )
-            pending_state = json.loads(pending_attempt.read_text(encoding="utf-8"))
+            pending_attempt = pending_handle.path
+            pending_state = _read_pending_json(pending_handle)
             _call_state_hook(
                 resolved_dependencies.state_hook,
                 "after_prepared_persist",
@@ -1467,7 +1708,7 @@ def run_auto_pipeline(
             )
             stage = "advance_pending"
             canonical, _final_state, pending_removed = _advance_pending_state(
-                pending_attempt,
+                pending_handle,
                 pending_state,
                 update_tracking=resolved_dependencies.update_tracking,
                 publish_canonical=lambda exact_payload: resolved_dependencies.publish_canonical(
@@ -1508,8 +1749,8 @@ def run_auto_pipeline(
         )
     except Exception as exc:
         failure_run_id = str(getattr(manifest, "run_id", run_id))
-        if pending_attempt is not None and pending_attempt.exists():
-            attempt = _record_pending_error(pending_attempt, stage, exc)
+        if pending_handle is not None:
+            attempt = _record_pending_error(pending_handle, stage, exc)
         else:
             attempt = _publish_failure_attempt(
                 resolved_reports_dir,
@@ -1526,3 +1767,6 @@ def run_auto_pipeline(
             payload,
             manifest,
         )
+    finally:
+        if pending_handle is not None:
+            pending_handle.close()

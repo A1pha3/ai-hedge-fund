@@ -240,3 +240,42 @@ compute.
 - Publication/manifest/as-of/tracker/cache/feature/lock suite:
   **270 passed**.
 - Offensive plus auto-cache baseline: **411 passed in 3.50s**.
+
+## Descriptor-relative pending namespace addendum (2026-07-13)
+
+The hostile pending namespace no longer uses path-based state I/O. Reports,
+`.auto_pending`, and the bound date directory are opened with
+`O_DIRECTORY|O_NOFOLLOW` (plus `O_CLOEXEC` where available), and their directory
+descriptors remain live across discovery, state reads, phase transitions,
+recovery, and unlink. Directory enumeration uses `listdir(fd)`; child
+directories and state files are opened relative to their held parent fd with
+non-following flags.
+
+Pending JSON publication now creates a safe random basename relative to the
+held date fd with `O_NOFOLLOW|O_CREAT|O_EXCL`, writes all bytes, fsyncs the file,
+and calls `os.replace` with both source and destination dir fds before fsyncing
+the directory. Existing state permissions are copied to phase/error
+replacements. Error paths close file/directory descriptors and unlink temp
+files relative to the same held fd. State removal is descriptor-relative;
+optional empty-directory cleanup occurs only if the current parent entry still
+matches the held child device/inode, so it cannot remove a substituted path.
+
+Capability checks require dir-fd open/mkdir/stat/unlink/rmdir, fd-based
+enumeration, non-following stat, and source/destination-dir-fd replace. Missing
+support produces an explicit fatal recovery diagnostic; there is no path-based
+fallback. Canonical reports and ordinary attempt artifacts retain their prior
+publication implementation, as this hardening is scoped only to pending state.
+
+Deterministic tests replace `.auto_pending` with an attacker-controlled symlink
+immediately after its directory descriptor is opened. Both new writes and
+cross-date discovery/recovery continue exclusively in the originally opened
+directory; the substitute remains untouched. Additional tests cover descriptor
+closure after replace errors, temp cleanup, phase permission preservation, and
+explicit capability failure.
+
+### Descriptor-relative verification
+
+- Publication/recovery suite: **106 passed**.
+- Publication/manifest/as-of/tracker/cache/feature/lock suite:
+  **275 passed**.
+- Offensive plus auto-cache baseline: **411 passed in 3.58s**.

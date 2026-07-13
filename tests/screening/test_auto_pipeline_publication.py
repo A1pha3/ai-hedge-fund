@@ -1728,3 +1728,173 @@ def test_pending_root_must_be_real_directory_before_discovery(
 
     assert result.status is AutoRunStatus.FATAL
     assert "pending root" in result.recovery_diagnostics[0]["error"]
+
+
+def _replace_pending_root_after_descriptor_open(
+    monkeypatch: pytest.MonkeyPatch,
+    reports_dir: Path,
+) -> tuple[Path, Path]:
+    from src.screening import auto_pipeline as pipeline_mod
+
+    held_root = reports_dir / ".auto_pending.held"
+    attacker_root = reports_dir / "attacker"
+    attacker_root.mkdir()
+    (attacker_root / "marker.txt").write_text("untouched", encoding="utf-8")
+    real_open = pipeline_mod.os.open
+    replaced = False
+
+    def replacing_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal replaced
+        fd = real_open(path, flags, mode, dir_fd=dir_fd)
+        if path == ".auto_pending" and dir_fd is not None and not replaced:
+            replaced = True
+            (reports_dir / ".auto_pending").rename(held_root)
+            (reports_dir / ".auto_pending").symlink_to(
+                attacker_root,
+                target_is_directory=True,
+            )
+        return fd
+
+    monkeypatch.setattr(pipeline_mod.os, "open", replacing_open)
+    return held_root, attacker_root
+
+
+def test_pending_write_stays_on_opened_directory_after_path_replacement(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    held_root, attacker_root = _replace_pending_root_after_descriptor_open(
+        monkeypatch,
+        tmp_path,
+    )
+
+    result = run_auto_pipeline(
+        "20260710",
+        10,
+        reports_dir=tmp_path,
+        dependencies=fake_auto_dependencies.healthy(),
+    )
+
+    assert result.status is AutoRunStatus.HEALTHY
+    assert (attacker_root / "marker.txt").read_text(encoding="utf-8") == "untouched"
+    assert list(attacker_root.rglob("*.json")) == []
+    assert held_root.is_dir()
+    assert list(held_root.rglob("*.json")) == []
+
+
+def test_pending_discovery_stays_on_opened_directory_after_path_replacement(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _crash_prepared_pending(
+        tmp_path,
+        fake_auto_dependencies.healthy(),
+        trade_date="20260709",
+        run_id="held-discovery",
+    )
+    held_root, attacker_root = _replace_pending_root_after_descriptor_open(
+        monkeypatch,
+        tmp_path,
+    )
+
+    recovered = run_auto_pipeline("20260710", 10, reports_dir=tmp_path)
+
+    assert recovered.status is AutoRunStatus.HEALTHY
+    assert recovered.effective_trade_date == "20260709"
+    assert (tmp_path / "auto_screening_20260709.json").exists()
+    assert (attacker_root / "marker.txt").read_text(encoding="utf-8") == "untouched"
+    assert list(attacker_root.rglob("*.json")) == []
+    assert held_root.is_dir()
+    assert list(held_root.rglob("*.json")) == []
+
+
+def test_pending_phase_replace_preserves_permissions(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+) -> None:
+    def permission_hook(boundary: str, path: Path, _state: dict[str, Any]) -> None:
+        if boundary == "after_prepared_persist":
+            path.chmod(0o640)
+        if boundary == "after_tracked_persist":
+            raise _InjectedCrash(boundary)
+
+    dependencies = replace(
+        fake_auto_dependencies.healthy(),
+        state_hook=permission_hook,
+    )
+    with pytest.raises(_InjectedCrash):
+        run_auto_pipeline(
+            "20260710",
+            10,
+            reports_dir=tmp_path,
+            dependencies=dependencies,
+        )
+
+    pending = next((tmp_path / ".auto_pending").rglob("*.json"))
+    assert pending.stat().st_mode & 0o777 == 0o640
+
+
+def test_pending_replace_error_closes_fds_and_cleans_temp_files(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.screening import auto_pipeline as pipeline_mod
+
+    opened_fds: list[int] = []
+    real_open_handle = pipeline_mod._open_pending_handle
+    real_replace = pipeline_mod.os.replace
+
+    def capture_handle(*args, **kwargs):
+        handle = real_open_handle(*args, **kwargs)
+        opened_fds.extend([handle.reports_fd, handle.root_fd, handle.date_fd])
+        return handle
+
+    def fail_pending_replace(src, dst, **kwargs):
+        if kwargs.get("src_dir_fd") is not None:
+            raise OSError("descriptor replace failed")
+        return real_replace(src, dst, **kwargs)
+
+    monkeypatch.setattr(pipeline_mod, "_open_pending_handle", capture_handle)
+    monkeypatch.setattr(pipeline_mod.os, "replace", fail_pending_replace)
+
+    result = run_auto_pipeline(
+        "20260710",
+        10,
+        reports_dir=tmp_path,
+        dependencies=fake_auto_dependencies.healthy(),
+    )
+
+    assert result.status is AutoRunStatus.FATAL
+    for fd in opened_fds:
+        with pytest.raises(OSError):
+            pipeline_mod.os.fstat(fd)
+    assert list((tmp_path / ".auto_pending").rglob("*.tmp")) == []
+
+
+def test_missing_descriptor_primitives_fail_closed_with_explicit_diagnostic(
+    tmp_path: Path,
+    fake_auto_dependencies: _FakeAutoDependenciesFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.screening import auto_pipeline as pipeline_mod
+
+    monkeypatch.setattr(
+        pipeline_mod,
+        "_require_pending_fd_primitives",
+        lambda: (_ for _ in ()).throw(
+            RuntimeError("descriptor-relative pending operations unavailable")
+        ),
+    )
+
+    result = run_auto_pipeline(
+        "20260710",
+        10,
+        reports_dir=tmp_path,
+        dependencies=fake_auto_dependencies.healthy(),
+    )
+
+    assert result.status is AutoRunStatus.FATAL
+    assert "descriptor-relative" in result.recovery_diagnostics[0]["error"]
