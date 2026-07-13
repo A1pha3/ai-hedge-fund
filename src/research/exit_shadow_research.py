@@ -221,6 +221,33 @@ class PairedExitResult:
     common_eligible: int
 
 
+def _validate_session_calendar(
+    values: tuple[str, ...],
+    *,
+    label: str,
+) -> tuple[str, ...]:
+    if not isinstance(values, tuple):
+        raise ValueError(f"{label} trading-session calendar must be an immutable tuple")
+    if not values:
+        raise ValueError(f"{label} trading-session calendar must not be empty")
+    parsed: list[date] = []
+    for value in values:
+        try:
+            current = datetime.strptime(value, "%Y%m%d")
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"invalid {label} trading-session date: {value!r}"
+            ) from exc
+        if current.strftime("%Y%m%d") != value:
+            raise ValueError(f"invalid {label} trading-session date: {value!r}")
+        parsed.append(current.date())
+    if any(current <= previous for previous, current in zip(parsed, parsed[1:])):
+        raise ValueError(
+            f"{label} trading-session calendar must be strictly increasing and unique"
+        )
+    return values
+
+
 @dataclass(frozen=True)
 class PairedReplayRow:
     """One immutable common-key comparison row used by sensitivity statistics."""
@@ -235,10 +262,25 @@ class PairedReplayRow:
             raise ValueError("paired replay rows must share one trade_id")
         if self.baseline.signal_date != self.challenger.signal_date:
             raise ValueError("paired replay rows must share one signal_date")
-        dates = set(self.trading_session_dates)
-        dates.update(self.baseline.trading_session_dates)
-        dates.update(self.challenger.trading_session_dates)
-        object.__setattr__(self, "trading_session_dates", tuple(sorted(dates)))
+        baseline_dates = _validate_session_calendar(
+            self.baseline.trading_session_dates,
+            label="baseline",
+        )
+        challenger_dates = _validate_session_calendar(
+            self.challenger.trading_session_dates,
+            label="challenger",
+        )
+        if baseline_dates != challenger_dates:
+            raise ValueError("paired replay arm calendars must match exactly")
+        if self.trading_session_dates:
+            path_dates = _validate_session_calendar(
+                self.trading_session_dates,
+                label="paired path",
+            )
+            if path_dates != baseline_dates:
+                raise ValueError("paired path calendar must match both replay arms")
+        else:
+            object.__setattr__(self, "trading_session_dates", baseline_dates)
 
     @property
     def signal_date(self) -> str:
@@ -257,7 +299,8 @@ class MovingBlockMeanDifference:
     candidate_block_count: int
     usable_block_count: int
     empty_block_count: int
-    sampled_blocks_per_draw: int
+    sampled_block_counts: tuple[int, ...]
+    effective_sample_counts: tuple[int, ...]
     mean_difference: float
     ci_lower: float
     ci_upper: float
@@ -1034,16 +1077,17 @@ def _replay_result(
         exit_date=exit_date,
     )
     net_return = exit_fill.net_cash_flow / -entry_fill.net_cash_flow - 1.0
-    diagnostic_highs = tuple(
+    pre_exit_highs = tuple(
         float(session.high)
-        for session in path.sessions[: exit_index + 1]
+        for session in path.sessions[:exit_index]
         if isinstance(session.high, Real)
         and not isinstance(session.high, bool)
         and math.isfinite(float(session.high))
     )
+    exit_open = _optional_positive_number(exit_session.open)
     maximum_favorable_excursion = (
-        max(diagnostic_highs) / entry_fill.raw_fill_price - 1.0
-        if len(diagnostic_highs) == exit_index + 1
+        max((*pre_exit_highs, exit_open)) / entry_fill.raw_fill_price - 1.0
+        if len(pre_exit_highs) == exit_index and exit_open is not None
         else None
     )
     return ExitReplayResult(
@@ -1286,26 +1330,23 @@ def moving_block_mean_difference(
     if len(blocks) < 2:
         raise ValueError("fewer than two non-empty moving blocks are available")
 
-    sampled_blocks = math.ceil(len(calendar) / block_sessions)
     generator = np.random.default_rng(seed)
-    selections = generator.integers(
-        0,
-        len(blocks),
-        size=(draws, sampled_blocks),
-    )
-    distribution_array = np.asarray(
-        [
-            np.mean(
-                [
-                    value
-                    for block_index in selected
-                    for value in blocks[int(block_index)]
-                ]
-            )
-            for selected in selections
-        ],
-        dtype=float,
-    )
+    target_count = len(signal_means)
+    distribution: list[float] = []
+    sampled_block_counts: list[int] = []
+    effective_sample_counts: list[int] = []
+    for _ in range(draws):
+        sampled_values: list[float] = []
+        block_count = 0
+        while len(sampled_values) < target_count:
+            block_index = int(generator.integers(0, len(blocks)))
+            sampled_values.extend(blocks[block_index])
+            block_count += 1
+        effective_values = sampled_values[:target_count]
+        distribution.append(float(np.mean(effective_values)))
+        sampled_block_counts.append(block_count)
+        effective_sample_counts.append(len(effective_values))
+    distribution_array = np.asarray(distribution, dtype=float)
     observed_mean = float(np.mean(tuple(signal_means.values())))
     ci_lower, ci_upper = np.quantile(distribution_array, (0.025, 0.975))
     return MovingBlockMeanDifference(
@@ -1317,7 +1358,8 @@ def moving_block_mean_difference(
         candidate_block_count=candidate_count,
         usable_block_count=len(blocks),
         empty_block_count=empty_count,
-        sampled_blocks_per_draw=sampled_blocks,
+        sampled_block_counts=tuple(sampled_block_counts),
+        effective_sample_counts=tuple(effective_sample_counts),
         mean_difference=observed_mean,
         ci_lower=float(ci_lower),
         ci_upper=float(ci_upper),
@@ -1390,10 +1432,13 @@ def _greedy_nonoverlapping_window_count(
         interval_ends[row.signal_date] = max(
             interval_ends.get(row.signal_date, end), end
         )
+    intervals = [
+        (end, _stat_date(signal_date), signal_date)
+        for signal_date, end in interval_ends.items()
+    ]
     count = 0
     previous_end: date | None = None
-    for signal_date, end in sorted(interval_ends.items()):
-        start = _stat_date(signal_date)
+    for end, start, _ in sorted(intervals):
         if previous_end is None or start > previous_end:
             count += 1
             previous_end = end
@@ -1421,9 +1466,7 @@ def summarize_paired_results(
     covered = _finite_returns(
         row.legacy_return for row in paired if row.legacy_return is not None
     )
-    differences = tuple(
-        row.challenger.net_return - row.baseline.net_return for row in paired
-    )
+    differences = tuple(_signal_day_differences(paired).values())
     mean, median, decile, tail_mean = _downside_statistics(differences)
     block = moving_block_mean_difference(
         paired,

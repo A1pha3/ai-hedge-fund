@@ -153,6 +153,7 @@ def _replay_row(
             cost_version=f"{arm}-test",
             holding_sessions=holding_sessions,
             maximum_favorable_excursion=mfe,
+            trading_session_dates=trading_session_dates,
         )
 
     return PairedReplayRow(
@@ -1069,13 +1070,61 @@ def test_replay_mfe_uses_audited_daily_highs_as_nonexecutable_diagnostic(
         if session.date == result.exit_date
     )
     expected_mfe = (
-        max(session.high for session in single_trade_path.sessions[: exit_index + 1])
+        max(
+            *(session.high for session in single_trade_path.sessions[:exit_index]),
+            single_trade_path.sessions[exit_index].open,
+        )
         / result.raw_entry_price
         - 1.0
     )
 
     assert result.holding_sessions == exit_index + 1
     assert result.maximum_favorable_excursion == pytest.approx(expected_mfe)
+
+
+def test_replay_mfe_never_uses_exit_session_high_low_or_close(
+    single_trade_path: LegacyTradePath,
+) -> None:
+    original = replay_shadow_challenger(single_trade_path, costs=FIXED_TEST_COSTS)
+    exit_index = next(
+        index
+        for index, session in enumerate(single_trade_path.sessions)
+        if session.date == original.exit_date
+    )
+    sessions = list(single_trade_path.sessions)
+    exit_session = sessions[exit_index]
+    sessions[exit_index] = replace(
+        exit_session,
+        high=min(float(exit_session.limit_up) - 0.1, exit_session.high + 1.0),
+        low=max(float(exit_session.limit_down) + 0.1, exit_session.low - 0.5),
+        close=exit_session.high + 0.5,
+    )
+
+    mutated = replay_shadow_challenger(
+        replace(single_trade_path, sessions=tuple(sessions)),
+        costs=FIXED_TEST_COSTS,
+    )
+
+    assert mutated.exit_date == original.exit_date
+    assert mutated.maximum_favorable_excursion == pytest.approx(
+        original.maximum_favorable_excursion
+    )
+
+
+def test_session_ten_open_mfe_uses_sessions_one_to_nine_highs_and_exit_open(
+    single_trade_path: LegacyTradePath,
+) -> None:
+    result = replay_fixed_baseline(single_trade_path, costs=FIXED_TEST_COSTS)
+    exit_index = 9
+    attainable_proxy = max(
+        *(session.high for session in single_trade_path.sessions[:exit_index]),
+        single_trade_path.sessions[exit_index].open,
+    )
+
+    assert result.exit_date == single_trade_path.sessions[exit_index].date
+    assert result.maximum_favorable_excursion == pytest.approx(
+        attainable_proxy / result.raw_entry_price - 1.0
+    )
 
 
 def test_common_mask_excludes_both_arms_when_only_baseline_cannot_execute(
@@ -1276,6 +1325,7 @@ def test_block_resampling_is_deterministic(
     assert first.draws == 1_000
     assert first.block_sessions == 10
     assert first.trading_session_count > first.signal_day_count
+    assert first.effective_sample_counts == (first.signal_day_count,) * first.draws
     assert first.ci_lower <= first.mean_difference <= first.ci_upper
 
 
@@ -1310,6 +1360,24 @@ def test_block_resampling_reports_sparse_empty_calendar_windows() -> None:
     assert result.usable_block_count + result.empty_block_count == (
         result.candidate_block_count
     )
+    assert set(result.effective_sample_counts) == {result.signal_day_count}
+
+
+def test_block_resampling_dense_and_sparse_blocks_use_same_effective_n() -> None:
+    rows = tuple(
+        _replay_row(
+            index,
+            baseline_return=0.0,
+            challenger_return=float(index >= 20),
+        )
+        for index in (0, 1, 2, 20, 40)
+    )
+
+    result = moving_block_mean_difference(rows, draws=250, seed=11)
+
+    assert result.empty_block_count > 0
+    assert len(result.effective_sample_counts) == 250
+    assert all(count == len(rows) for count in result.effective_sample_counts)
 
 
 def test_statistics_count_signal_days_and_nonoverlapping_blocks(
@@ -1345,6 +1413,25 @@ def test_paired_statistics_report_returns_tails_holding_and_reasons(
     assert stats.missing_group_legacy_mean == pytest.approx(0.0)
 
 
+def test_headline_paired_statistics_equal_weight_signal_days() -> None:
+    first = _replay_row(0, baseline_return=0.0, challenger_return=0.0)
+    same_day_raw = _replay_row(1, baseline_return=0.0, challenger_return=0.20)
+    same_day = PairedReplayRow(
+        baseline=replace(same_day_raw.baseline, signal_date=first.signal_date),
+        challenger=replace(same_day_raw.challenger, signal_date=first.signal_date),
+        legacy_return=same_day_raw.legacy_return,
+        trading_session_dates=same_day_raw.trading_session_dates,
+    )
+    second_day = _replay_row(2, baseline_return=0.0, challenger_return=0.0)
+
+    stats = summarize_paired_results((first, same_day, second_day), draws=100)
+
+    assert stats.mean_difference == pytest.approx(0.05)
+    assert stats.median_difference == pytest.approx(0.05)
+    assert stats.worst_decile_difference == pytest.approx(0.01)
+    assert stats.downside_decile_mean_difference == pytest.approx(0.0)
+
+
 def test_mfe_capture_fails_closed_below_fixed_positive_denominator() -> None:
     too_small = tuple(_replay_row(index) for index in range(9))
     enough = tuple(_replay_row(index) for index in range(10))
@@ -1365,16 +1452,7 @@ def test_mfe_capture_fails_closed_below_fixed_positive_denominator() -> None:
     ("rows", "block_sessions", "draws"),
     [
         ((), 10, 100),
-        (
-            (
-                replace(
-                    _replay_row(0),
-                    trading_session_dates=("20260106", "20260107"),
-                ),
-            ),
-            10,
-            100,
-        ),
+        ((_replay_row(0),), 10, 100),
         (tuple(_replay_row(index) for index in range(10)), 9, 100),
         (tuple(_replay_row(index) for index in range(10)), 10, 0),
     ],
@@ -1400,3 +1478,61 @@ def test_report_is_never_production_eligible(
 
     assert stats.shadow_only is True
     assert stats.production_eligible is False
+
+
+@pytest.mark.parametrize(
+    "calendar",
+    [
+        ("20260106", "20260106"),
+        ("20260107", "20260106"),
+        ("20260106", "20260230"),
+    ],
+)
+def test_paired_row_rejects_duplicate_reversed_or_invalid_calendars(
+    calendar: tuple[str, ...],
+) -> None:
+    raw = _replay_row(0)
+
+    with pytest.raises(ValueError):
+        PairedReplayRow(
+            baseline=replace(raw.baseline, trading_session_dates=calendar),
+            challenger=replace(raw.challenger, trading_session_dates=calendar),
+            trading_session_dates=calendar,
+        )
+
+
+def test_paired_row_rejects_arm_or_explicit_path_calendar_mismatch() -> None:
+    raw = _replay_row(0)
+    shorter = raw.trading_session_dates[:-1]
+
+    with pytest.raises(ValueError):
+        PairedReplayRow(
+            baseline=raw.baseline,
+            challenger=replace(raw.challenger, trading_session_dates=shorter),
+        )
+    with pytest.raises(ValueError):
+        PairedReplayRow(
+            baseline=raw.baseline,
+            challenger=raw.challenger,
+            trading_session_dates=shorter,
+        )
+
+
+def test_nonoverlap_count_uses_maximum_interval_schedule() -> None:
+    early_long = _replay_row(0)
+    short_one_raw = _replay_row(1)
+    short_one = PairedReplayRow(
+        baseline=replace(short_one_raw.baseline, exit_date="20260108"),
+        challenger=replace(short_one_raw.challenger, exit_date="20260108"),
+        trading_session_dates=short_one_raw.trading_session_dates,
+    )
+    short_two_raw = _replay_row(4)
+    short_two = PairedReplayRow(
+        baseline=replace(short_two_raw.baseline, exit_date="20260113"),
+        challenger=replace(short_two_raw.challenger, exit_date="20260113"),
+        trading_session_dates=short_two_raw.trading_session_dates,
+    )
+
+    stats = summarize_paired_results((early_long, short_one, short_two), draws=100)
+
+    assert stats.nonoverlapping_window_count == 2
