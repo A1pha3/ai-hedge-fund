@@ -44,7 +44,8 @@ _REALIZED_RE = re.compile(r"(?:^|[;\s])realized=([+-]?\d+(?:\.\d+)?)%")
 _RETURN_ROUNDING_TOLERANCE = 0.00005
 _FLOAT_COMPARISON_EPSILON = 1e-12
 _REQUIRED_PRICE_COLUMNS = frozenset({"date", "open", "high", "low", "close"})
-_REPLAY_ATR_PERIOD = 14
+REPLAY_ATR_PERIOD = 14
+ATR_METHOD = "Wilder"
 MIN_POSITIVE_MFE_COUNT = 10
 
 PriceLoader = Callable[[str], object]
@@ -615,7 +616,7 @@ def _build_sessions(
             if volume is not None
             else None
         )
-        atr = compute_atr(prices, period=_REPLAY_ATR_PERIOD, at_idx=row_idx + 1)
+        atr = compute_atr(prices, period=REPLAY_ATR_PERIOD, at_idx=row_idx + 1)
         sessions.append(
             LegacySession(
                 date=pd.Timestamp(row["date"]).strftime("%Y%m%d"),
@@ -1492,6 +1493,7 @@ def summarize_paired_results(
 
 
 __all__ = [
+    "ATR_METHOD",
     "CohortExclusion",
     "CoverageAudit",
     "LegacyCohort",
@@ -1507,6 +1509,7 @@ __all__ = [
     "PairedSensitivityStatistics",
     "ReplayArmFailure",
     "ReplayIneligibleError",
+    "REPLAY_ATR_PERIOD",
     "audit_coverage",
     "build_legacy_cohort",
     "moving_block_mean_difference",
