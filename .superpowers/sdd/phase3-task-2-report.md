@@ -21,6 +21,9 @@ was modified.
   are exact `BUY`/`EXIT`, and any supplied horizon/time-exit field must represent T+10.
 - Price loading distinguishes absent, empty, unreadable, and invalid results. Session timestamps
   become civil dates before duplicate detection/sorting, and impossible OHLC bars fail closed.
+  The date parser accepts only compact `YYYYMMDD`, ISO civil date/timestamp strings, and actual
+  `date`/`datetime` objects; nulls, NaT/NaN, bools, numerics, and malformed strings are rejected
+  as `price_data_invalid` without escaping exceptions.
 - Setup, regime, and source labels/counters kept separate.
 - Current board-rule mismatch and board-rule auditability recorded independently; mismatches
   compare the legacy 9.5% detector with the current ticker-specific detector and remain in the
@@ -29,7 +32,9 @@ was modified.
   Nullable `recorded_entry_price` is never replaced by session-1 open; `replay_entry_price`
   separately and explicitly carries session-1 open for Task 3.
 - `audit_coverage()` preserves the paired denominator, compares covered and missing legacy
-  groups, warns on selection bias, and permanently reports `production_eligible=False`.
+  groups, warns on selection bias, and permanently reports `production_eligible=False`. A valid
+  recorded return is parsed immediately after unique pairing and remains attached to order or
+  horizon exclusions; invalid returns stay unclassified without shrinking the denominator.
 
 ## TDD evidence
 
@@ -47,14 +52,17 @@ was modified.
    civil-date duplicates (2), loader/OHLC layers (7), natural/event/holding schema (9), exact
    rounding boundary (2), and entry-price provenance (7, including bool/string schema cases). A
    final self-review RED→GREEN also carried pair line numbers through downstream price/window
-   exclusions and verified detector-to-detector mismatch semantics. Focused total: 38 tests.
+   exclusions and verified detector-to-detector mismatch semantics.
+7. Final remediation added an explicit price-date allowlist cycle (18 parameter cases) and a
+   paired-return/missing-group cycle covering valid/invalid returns across order and horizon
+   exclusions plus covered/missing means. Focused total: 59 tests.
 
 ## Fresh verification
 
 - `git diff --check` — passed.
 - `uv run ruff check src/research/exit_shadow_research.py tests/research/test_exit_shadow_research.py` — passed.
 - `uv run ruff format --check src/research/exit_shadow_research.py tests/research/test_exit_shadow_research.py` — passed.
-- `uv run pytest tests/research/ tests/offensive/ -q` — 677 passed.
+- `uv run pytest tests/research/ tests/offensive/ -q` — 698 passed.
 
 ## Real-data read-only smoke audit
 

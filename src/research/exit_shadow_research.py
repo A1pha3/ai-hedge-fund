@@ -13,7 +13,7 @@ import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -232,6 +232,35 @@ def _default_price_loader(price_cache_dir: Path) -> PriceLoader:
     return load
 
 
+def _parse_price_civil_date(raw_date: object) -> pd.Timestamp | None:
+    if raw_date is None or isinstance(raw_date, bool):
+        return None
+    if isinstance(raw_date, datetime):
+        if pd.isna(raw_date):
+            return None
+        return pd.Timestamp(raw_date.date())
+    if isinstance(raw_date, date):
+        return pd.Timestamp(raw_date)
+    if not isinstance(raw_date, str):
+        return None
+
+    try:
+        if re.fullmatch(r"[0-9]{8}", raw_date):
+            parsed = datetime.strptime(raw_date, "%Y%m%d")
+        elif re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", raw_date):
+            parsed = datetime.strptime(raw_date, "%Y-%m-%d")
+        elif re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?",
+            raw_date,
+        ):
+            parsed = datetime.fromisoformat(raw_date)
+        else:
+            return None
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return pd.Timestamp(parsed.date())
+
+
 def _normalize_prices(value: object) -> tuple[pd.DataFrame | None, str | None]:
     if not isinstance(value, pd.DataFrame):
         return None, "invalid_price_data"
@@ -243,10 +272,10 @@ def _normalize_prices(value: object) -> tuple[pd.DataFrame | None, str | None]:
     prices = value.copy()
     civil_dates: list[pd.Timestamp] = []
     for raw_date in prices["date"]:
-        try:
-            civil_dates.append(pd.Timestamp(pd.Timestamp(raw_date).date()))
-        except (TypeError, ValueError, OverflowError):
-            return None, "invalid_session_date"
+        civil_date = _parse_price_civil_date(raw_date)
+        if civil_date is None:
+            return None, "price_data_invalid"
+        civil_dates.append(civil_date)
     prices["date"] = civil_dates
     if prices["date"].duplicated().any():
         return None, "duplicate_session_date"
@@ -396,6 +425,7 @@ def build_legacy_cohort(
 
     paired: list[tuple[NaturalKey, _JournalEvent, _JournalEvent, float]] = []
     paired_key_count = 0
+    pre_price_missing_returns: list[float] = []
     for key in sorted(grouped):
         buys = grouped[key]["BUY"]
         exits = grouped[key]["EXIT"]
@@ -440,14 +470,18 @@ def build_legacy_cohort(
         buy = buys[0]
         exit_event = exits[0]
         pair_lines = (buy.line_number, exit_event.line_number)
+        recorded = _parse_recorded_return(exit_event.record)
         if exit_event.line_number <= buy.line_number:
             excluded.append(
                 CohortExclusion(
                     key_string,
                     "exit_not_after_buy",
+                    recorded,
                     line_numbers=tuple(sorted(pair_lines)),
                 )
             )
+            if recorded is not None:
+                pre_price_missing_returns.append(recorded)
             continue
         incompatible_events = [
             event
@@ -460,13 +494,15 @@ def build_legacy_cohort(
                 CohortExclusion(
                     key_string,
                     "incompatible_btst_holding_period",
+                    recorded,
                     line_numbers=tuple(
                         event.line_number for event in incompatible_events
                     ),
                 )
             )
+            if recorded is not None:
+                pre_price_missing_returns.append(recorded)
             continue
-        recorded = _parse_recorded_return(exit_event.record)
         if recorded is None:
             excluded.append(
                 CohortExclusion(
@@ -478,7 +514,7 @@ def build_legacy_cohort(
 
     counts = Counter[str]()
     included: list[LegacyTradePath] = []
-    missing_returns: list[float] = []
+    missing_returns: list[float] = list(pre_price_missing_returns)
     for key, buy_event, exit_event, recorded in paired:
         buy = buy_event.record
         pair_lines = (buy_event.line_number, exit_event.line_number)

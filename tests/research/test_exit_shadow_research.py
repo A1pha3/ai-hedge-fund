@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -304,7 +305,33 @@ def test_exit_before_buy_is_excluded_after_pairing_without_shrinking_denominator
     assert cohort.audit.total_paired_btst == 1
     assert cohort.audit.total == 1
     assert cohort.excluded[0].reason == "exit_not_after_buy"
+    assert cohort.excluded[0].recorded_return == 0.01
     assert cohort.excluded[0].line_numbers == (1, 2)
+    assert cohort.audit.missing_legacy_mean == 0.01
+
+
+def test_exit_before_buy_with_invalid_return_is_unclassified_but_stays_in_denominator(
+    tmp_path: Path,
+) -> None:
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text(
+        "\n".join(
+            (
+                '{"date":"20260105","ticker":"000001","setup":"btst_breakout","action":"EXIT","reasoning":"missing realized"}',
+                '{"date":"20260105","ticker":"000001","setup":"btst_breakout","action":"BUY"}',
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    cohort = build_legacy_cohort(journal, price_loader=lambda _: _prices())
+
+    assert cohort.audit.total_paired_btst == 1
+    assert cohort.excluded[0].reason == "exit_not_after_buy"
+    assert cohort.excluded[0].recorded_return is None
+    assert cohort.audit.coverage == 0.0
+    assert cohort.audit.missing_legacy_mean is None
+    assert cohort.audit.selection_bias_warning is True
 
 
 def test_included_trade_preserves_buy_and_exit_line_numbers(tmp_path: Path) -> None:
@@ -353,6 +380,81 @@ def test_price_normalization_rejects_duplicate_civil_session_dates(
     assert cohort.included == ()
     assert cohort.audit.price_file_present == 1
     assert cohort.excluded[0].reason == "duplicate_session_date"
+
+
+@pytest.mark.parametrize(
+    "raw_date",
+    [
+        None,
+        "",
+        " ",
+        float("nan"),
+        pd.NaT,
+        20260105,
+        20260105.0,
+        True,
+        False,
+        "2026/01/05",
+        "2026-13-01",
+        "not-a-date",
+    ],
+)
+def test_price_date_parser_rejects_unsupported_values_without_throwing(
+    tmp_path: Path,
+    raw_date: object,
+) -> None:
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text(
+        "\n".join(
+            (
+                '{"date":"20260105","ticker":"000001","setup":"btst_breakout","action":"BUY"}',
+                '{"date":"20260105","ticker":"000001","setup":"btst_breakout","action":"EXIT","reasoning":"realized=+1.00%"}',
+            )
+        ),
+        encoding="utf-8",
+    )
+    prices = _prices()
+    prices["date"] = prices["date"].astype(object)
+    prices.loc[0, "date"] = raw_date
+
+    cohort = build_legacy_cohort(journal, price_loader=lambda _: prices)
+
+    assert cohort.included == ()
+    assert cohort.excluded[0].reason == "price_data_invalid"
+
+
+@pytest.mark.parametrize(
+    "raw_date",
+    [
+        "20260105",
+        "2026-01-05",
+        "2026-01-05 09:30:00",
+        "2026-01-05T15:00:00",
+        date(2026, 1, 5),
+        datetime(2026, 1, 5, 15, 0, 0),
+    ],
+)
+def test_price_date_parser_accepts_only_declared_civil_date_formats(
+    tmp_path: Path,
+    raw_date: object,
+) -> None:
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text(
+        "\n".join(
+            (
+                '{"date":"20260105","ticker":"000001","setup":"btst_breakout","action":"BUY"}',
+                '{"date":"20260105","ticker":"000001","setup":"btst_breakout","action":"EXIT","reasoning":"realized=+1.00%"}',
+            )
+        ),
+        encoding="utf-8",
+    )
+    prices = _prices()
+    prices["date"] = prices["date"].astype(object)
+    prices.loc[0, "date"] = raw_date
+
+    cohort = build_legacy_cohort(journal, price_loader=lambda _: prices)
+
+    assert len(cohort.included) == 1
 
 
 @pytest.mark.parametrize(
@@ -533,6 +635,64 @@ def test_incompatible_btst_holding_fields_fail_closed_after_pairing(
     assert cohort.audit.total_paired_btst == 1
     assert cohort.audit.malformed_rows == 1
     assert cohort.excluded[0].reason == "incompatible_btst_holding_period"
+    assert cohort.excluded[0].recorded_return == 0.01
+    assert cohort.audit.missing_legacy_mean == 0.01
+
+
+def test_wrong_horizon_with_invalid_return_is_unclassified_but_stays_in_denominator(
+    tmp_path: Path,
+) -> None:
+    journal = tmp_path / "journal.jsonl"
+    base = {"date": "20260105", "ticker": "000001", "setup": "btst_breakout"}
+    journal.write_text(
+        "\n".join(
+            (
+                json.dumps(base | {"action": "BUY", "horizon": 5}),
+                json.dumps(
+                    base
+                    | {
+                        "action": "EXIT",
+                        "horizon": 10,
+                        "reasoning": "missing realized",
+                    }
+                ),
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    cohort = build_legacy_cohort(journal, price_loader=lambda _: _prices())
+
+    assert cohort.audit.total_paired_btst == 1
+    assert cohort.excluded[0].reason == "incompatible_btst_holding_period"
+    assert cohort.excluded[0].recorded_return is None
+    assert cohort.audit.missing_legacy_mean is None
+    assert cohort.audit.selection_bias_warning is True
+
+
+def test_coverage_means_include_valid_returns_excluded_before_price_layers(
+    tmp_path: Path,
+) -> None:
+    journal = tmp_path / "journal.jsonl"
+    journal.write_text(
+        "\n".join(
+            (
+                '{"date":"20260105","ticker":"000001","setup":"btst_breakout","action":"BUY","entry_price":10.0}',
+                '{"date":"20260105","ticker":"000001","setup":"btst_breakout","action":"EXIT","reasoning":"realized=+10.00%"}',
+                '{"date":"20260105","ticker":"000002","setup":"btst_breakout","action":"EXIT","reasoning":"realized=+1.00%"}',
+                '{"date":"20260105","ticker":"000002","setup":"btst_breakout","action":"BUY","entry_price":10.0}',
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    cohort = build_legacy_cohort(journal, price_loader=lambda _: _prices())
+
+    assert cohort.audit.total_paired_btst == 2
+    assert cohort.audit.coverage == 0.5
+    assert cohort.audit.covered_legacy_mean == 0.10
+    assert cohort.audit.missing_legacy_mean == 0.01
+    assert cohort.audit.selection_bias_warning is True
 
 
 @pytest.mark.parametrize(
