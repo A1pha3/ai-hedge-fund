@@ -1,6 +1,8 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+import hashlib
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -18,6 +20,34 @@ def _plan(repo: LedgerRepository):
     return repo.create_plan(
         "000001", "btst_breakout", "v1", date(2026, 7, 10), date(2026, 7, 13), 0.10, 1
     )
+
+
+def _opened(repo: LedgerRepository):
+    trade = _plan(repo)
+    return repo.fill_plan(
+        trade.trade_id,
+        ExecutionMode.PAPER,
+        FillSource.SYNTHETIC_OPEN,
+        date(2026, 7, 13),
+        10.0,
+        1_000,
+        5.0,
+        0.0,
+        30.0,
+    )
+
+
+def _tree_snapshot(path: Path) -> list[tuple[str, int, int, str]]:
+    return [
+        (
+            str(item.relative_to(path)),
+            item.stat().st_size,
+            item.stat().st_mtime_ns,
+            hashlib.sha256(item.read_bytes()).hexdigest(),
+        )
+        for item in sorted(path.rglob("*"))
+        if item.is_file()
+    ]
 
 
 def test_duplicate_plan_is_idempotent(tmp_path: Path) -> None:
@@ -80,3 +110,169 @@ def test_concurrent_duplicate_plan_creates_one_trade_and_event(tmp_path: Path) -
     assert len({trade.trade_id for trade in trades}) == 1
     assert repo.count_trades() == 1
     assert repo.count_events(trades[0].trade_id, "PLAN_CREATED") == 1
+
+
+def test_conflicting_duplicate_defer_rolls_back_field_changes(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    opened = _opened(repo)
+    repo.mark_exit_pending(opened.trade_id, date(2026, 7, 20))
+    first = repo.defer_exit(
+        opened.trade_id, date(2026, 7, 21), highest_close=12.0, exit_line=11.0
+    )
+
+    with pytest.raises(ValueError, match="conflicting idempotent event"):
+        repo.defer_exit(
+            opened.trade_id, date(2026, 7, 21), highest_close=13.0, exit_line=12.0
+        )
+
+    unchanged = repo.get_trade(opened.trade_id)
+    assert unchanged.highest_close == first.highest_close == 12.0
+    assert unchanged.exit_line == first.exit_line == 11.0
+    assert repo.count_events(opened.trade_id, "EXIT_DEFERRED") == 1
+
+
+def test_concurrent_exit_pending_is_one_transition(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    opened = _opened(repo)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(
+            pool.map(
+                lambda _: repo.mark_exit_pending(
+                    opened.trade_id,
+                    date(2026, 7, 20),
+                    highest_close=12.0,
+                    exit_line=11.0,
+                ),
+                range(8),
+            )
+        )
+
+    assert {result.state for result in results} == {TradeState.EXIT_PENDING}
+    assert repo.count_events(opened.trade_id, "EXIT_PENDING") == 1
+
+
+@pytest.mark.parametrize(
+    ("schema_version", "initial_cash", "message"),
+    [(99, 100_000, "unsupported schema version"), (1, 200_000, "initial_cash mismatch")],
+)
+def test_initialize_rejects_incompatible_existing_metadata(
+    tmp_path: Path, schema_version: int, initial_cash: float, message: str
+) -> None:
+    path = tmp_path / "ledger.sqlite3"
+    repo = LedgerRepository(path, ledger_id="test", initial_cash=100_000)
+    repo.initialize()
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE ledger_meta SET schema_version=?, initial_cash=? WHERE ledger_id='test'",
+            (schema_version, initial_cash),
+        )
+
+    with pytest.raises(ValueError, match=message):
+        repo.initialize()
+
+
+@pytest.mark.parametrize(
+    ("price", "quantity", "commission", "tax", "slippage"),
+    [
+        (0.0, 1, 0.0, 0.0, 0.0),
+        (float("inf"), 1, 0.0, 0.0, 0.0),
+        (10.0, 0, 0.0, 0.0, 0.0),
+        (10.0, 1, -1.0, 0.0, 0.0),
+        (10.0, 1, 0.0, float("nan"), 0.0),
+        (10.0, 1, 0.0, 0.0, float("inf")),
+    ],
+)
+def test_fill_rejects_invalid_money_or_quantity(
+    tmp_path: Path,
+    price: float,
+    quantity: int,
+    commission: float,
+    tax: float,
+    slippage: float,
+) -> None:
+    repo = _repo(tmp_path)
+    trade = _plan(repo)
+    with pytest.raises(ValueError):
+        repo.fill_plan(
+            trade.trade_id,
+            ExecutionMode.PAPER,
+            FillSource.SYNTHETIC_OPEN,
+            date(2026, 7, 13),
+            price,
+            quantity,
+            commission,
+            tax,
+            slippage,
+        )
+    assert repo.get_trade(trade.trade_id).state is TradeState.PLANNED
+
+
+@pytest.mark.parametrize("price", [0.0, float("nan"), float("inf")])
+def test_close_rejects_invalid_price(tmp_path: Path, price: float) -> None:
+    repo = _repo(tmp_path)
+    opened = _opened(repo)
+    repo.mark_exit_pending(opened.trade_id, date(2026, 7, 20))
+    with pytest.raises(ValueError):
+        repo.close_trade(opened.trade_id, date(2026, 7, 21), price, 0.0, 0.0, 0.0)
+    assert repo.get_trade(opened.trade_id).state is TradeState.EXIT_PENDING
+
+
+def test_fill_source_must_match_execution_mode(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    trade = _plan(repo)
+    with pytest.raises(ValueError, match="not allowed"):
+        repo.fill_plan(
+            trade.trade_id,
+            ExecutionMode.BROKER_CONFIRMED,
+            FillSource.SYNTHETIC_OPEN,
+            date(2026, 7, 13),
+            10.0,
+            1,
+            0.0,
+            0.0,
+            0.0,
+        )
+
+
+def test_exit_defer_close_updates_state_events_and_cash(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    opened = _opened(repo)
+    pending = repo.mark_exit_pending(opened.trade_id, date(2026, 7, 20))
+    deferred = repo.defer_exit(pending.trade_id, date(2026, 7, 21), exit_line=9.5)
+    closed = repo.close_trade(deferred.trade_id, date(2026, 7, 22), 11.0, 5.0, 11.0, 20.0)
+
+    assert closed.state is TradeState.CLOSED
+    assert repo.open_trades() == []
+    assert repo.cash_balance() == pytest.approx(100_929.0)
+    assert repo.count_events(closed.trade_id, "EXIT_PENDING") == 1
+    assert repo.count_events(closed.trade_id, "EXIT_DEFERRED") == 1
+    assert repo.count_events(closed.trade_id, "EXIT_FILLED") == 1
+
+
+def test_valuation_upsert_is_ledger_isolated(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.sqlite3"
+    first = LedgerRepository(path, ledger_id="first", initial_cash=100_000)
+    second = LedgerRepository(path, ledger_id="second", initial_cash=200_000)
+    first.initialize()
+    second.initialize()
+    first.record_valuation(date(2026, 7, 13), 90_000, 11_000, 1.01, 1.02, -0.01, ["000001"])
+    first.record_valuation(date(2026, 7, 13), 91_000, 10_000, 1.01, 1.02, -0.01, [])
+    second.record_valuation(date(2026, 7, 13), 200_000, 0, 1.0, 1.0, 0.0, [])
+
+    with sqlite3.connect(path) as conn:
+        rows = conn.execute(
+            "SELECT ledger_id, cash, stale_tickers_json FROM daily_valuations ORDER BY ledger_id"
+        ).fetchall()
+    assert rows == [("first", 91_000.0, "[]"), ("second", 200_000.0, "[]")]
+
+
+def test_repository_does_not_touch_legacy_paper_directories(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[2]
+    protected = [root / "data/paper_trading", root / "data/paper_trading_backtest"]
+    before = {path: _tree_snapshot(path) for path in protected}
+
+    repo = _repo(tmp_path)
+    _opened(repo)
+    repo.record_valuation(date(2026, 7, 13), 90_000, 10_000, 1.0, 1.0, 0.0, [])
+
+    assert {path: _tree_snapshot(path) for path in protected} == before

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -37,6 +38,10 @@ class LedgerTrade:
     exit_trigger_date: date | None
     exit_date: date | None
     raw_exit_price: float | None
+    highest_close: float | None
+    exit_line: float | None
+    last_evaluated_date: date | None
+    forced_exit_target_date: date | None
 
 
 class LedgerRepository:
@@ -128,6 +133,20 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
                 "INSERT OR IGNORE INTO ledger_meta VALUES (?, ?, ?, ?)",
                 (self.ledger_id, self.SCHEMA_VERSION, self.initial_cash, self._now()),
             )
+            meta = conn.execute(
+                "SELECT schema_version, initial_cash FROM ledger_meta WHERE ledger_id=?",
+                (self.ledger_id,),
+            ).fetchone()
+            if meta["schema_version"] != self.SCHEMA_VERSION:
+                raise ValueError(
+                    f"unsupported schema version: {meta['schema_version']} "
+                    f"(expected {self.SCHEMA_VERSION})"
+                )
+            if meta["initial_cash"] != self.initial_cash:
+                raise ValueError(
+                    f"initial_cash mismatch: stored {meta['initial_cash']}, "
+                    f"requested {self.initial_cash}"
+                )
 
     def create_plan(
         self,
@@ -144,6 +163,7 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
         )
         trade_id = deterministic_trade_id(identity)
         with self._connect() as conn:
+            self._begin_write(conn)
             cursor = conn.execute(
                 """INSERT OR IGNORE INTO trades
                    (trade_id, ledger_id, ticker, setup, setup_version, signal_date,
@@ -182,11 +202,32 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
     ) -> LedgerTrade:
         execution_mode = ExecutionMode(execution_mode)
         fill_source = FillSource(fill_source)
+        self._validate_fill(raw_fill_price, quantity, commission, tax, slippage_cost)
         if fill_source.allowed_mode is not execution_mode:
             raise ValueError(f"{fill_source} is not allowed for {execution_mode}")
+        payload = {
+            "raw_fill_price": raw_fill_price,
+            "execution_mode": execution_mode.value,
+            "fill_source": fill_source.value,
+            "quantity": quantity,
+            "commission": commission,
+            "tax": tax,
+            "slippage_cost": slippage_cost,
+        }
+        cash_delta = -(raw_fill_price * quantity + commission + tax + slippage_cost)
         with self._connect() as conn:
+            self._begin_write(conn)
             current = self._get_trade(conn, trade_id)
             if current.state is TradeState.OPEN:
+                self._insert_event(
+                    conn,
+                    trade_id,
+                    "ENTRY_FILLED",
+                    entry_date,
+                    cash_delta=cash_delta,
+                    position_delta=quantity,
+                    payload=payload,
+                )
                 return current
             assert_transition(current.state, TradeState.OPEN)
             conn.execute(
@@ -206,7 +247,6 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
                     trade_id,
                 ),
             )
-            cash_delta = -(raw_fill_price * quantity + commission + tax + slippage_cost)
             self._insert_event(
                 conn,
                 trade_id,
@@ -214,7 +254,7 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
                 entry_date,
                 cash_delta=cash_delta,
                 position_delta=quantity,
-                payload={"raw_fill_price": raw_fill_price, "fill_source": fill_source.value},
+                payload=payload,
             )
             return self._get_trade(conn, trade_id)
 
@@ -228,9 +268,21 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
         exit_line: float | None = None,
         forced_exit_target_date: date | None = None,
     ) -> LedgerTrade:
+        payload = {
+            "armed_at": armed_at.isoformat() if armed_at else None,
+            "highest_close": highest_close,
+            "exit_line": exit_line,
+            "forced_exit_target_date": (
+                forced_exit_target_date.isoformat() if forced_exit_target_date else None
+            ),
+        }
         with self._connect() as conn:
+            self._begin_write(conn)
             current = self._get_trade(conn, trade_id)
             if current.state is TradeState.EXIT_PENDING:
+                self._insert_event(
+                    conn, trade_id, "EXIT_PENDING", exit_trigger_date, payload=payload
+                )
                 return current
             assert_transition(current.state, TradeState.EXIT_PENDING)
             conn.execute(
@@ -246,7 +298,9 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
                     trade_id,
                 ),
             )
-            self._insert_event(conn, trade_id, "EXIT_PENDING", exit_trigger_date)
+            self._insert_event(
+                conn, trade_id, "EXIT_PENDING", exit_trigger_date, payload=payload
+            )
             return self._get_trade(conn, trade_id)
 
     def defer_exit(
@@ -258,7 +312,15 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
         exit_line: float | None = None,
         forced_exit_target_date: date | None = None,
     ) -> LedgerTrade:
+        payload = {
+            "highest_close": highest_close,
+            "exit_line": exit_line,
+            "forced_exit_target_date": (
+                forced_exit_target_date.isoformat() if forced_exit_target_date else None
+            ),
+        }
         with self._connect() as conn:
+            self._begin_write(conn)
             current = self._get_trade(conn, trade_id)
             if current.state is not TradeState.EXIT_PENDING:
                 raise ValueError(f"cannot defer exit for trade in state {current.state}")
@@ -275,7 +337,12 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
                 ),
             )
             self._insert_event(
-                conn, trade_id, "EXIT_DEFERRED", evaluation_date, attempt=evaluation_date.isoformat()
+                conn,
+                trade_id,
+                "EXIT_DEFERRED",
+                evaluation_date,
+                attempt=evaluation_date.isoformat(),
+                payload=payload,
             )
             return self._get_trade(conn, trade_id)
 
@@ -288,9 +355,27 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
         tax: float,
         slippage_cost: float,
     ) -> LedgerTrade:
+        self._validate_price_and_costs(raw_fill_price, commission, tax, slippage_cost)
+        payload = {
+            "raw_fill_price": raw_fill_price,
+            "commission": commission,
+            "tax": tax,
+            "slippage_cost": slippage_cost,
+        }
         with self._connect() as conn:
+            self._begin_write(conn)
             current = self._get_trade(conn, trade_id)
+            cash_delta = raw_fill_price * current.quantity - commission - tax - slippage_cost
             if current.state is TradeState.CLOSED:
+                self._insert_event(
+                    conn,
+                    trade_id,
+                    "EXIT_FILLED",
+                    exit_date,
+                    cash_delta=cash_delta,
+                    position_delta=-current.quantity,
+                    payload=payload,
+                )
                 return current
             assert_transition(current.state, TradeState.CLOSED)
             conn.execute(
@@ -306,7 +391,6 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
                     trade_id,
                 ),
             )
-            cash_delta = raw_fill_price * current.quantity - commission - tax - slippage_cost
             self._insert_event(
                 conn,
                 trade_id,
@@ -314,7 +398,7 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
                 exit_date,
                 cash_delta=cash_delta,
                 position_delta=-current.quantity,
-                payload={"raw_fill_price": raw_fill_price},
+                payload=payload,
             )
             return self._get_trade(conn, trade_id)
 
@@ -337,6 +421,7 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
         stale_tickers: list[str] | tuple[str, ...],
     ) -> None:
         with self._connect() as conn:
+            self._begin_write(conn)
             conn.execute(
                 """INSERT INTO daily_valuations VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(ledger_id, trade_date) DO UPDATE SET cash=excluded.cash,
@@ -397,22 +482,34 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
     ) -> None:
         key = f"{trade_id}|{event_type}|{attempt}"
         event_id = hashlib.sha256(key.encode("utf-8")).hexdigest()[:24]
-        conn.execute(
-            """INSERT OR IGNORE INTO trade_events
+        values = (
+            event_id,
+            key,
+            trade_id,
+            event_type,
+            effective_date.isoformat(),
+            self._now(),
+            cash_delta,
+            position_delta,
+            json.dumps(payload or {}, sort_keys=True, separators=(",", ":")),
+        )
+        try:
+            conn.execute(
+                """INSERT INTO trade_events
                (event_id, idempotency_key, trade_id, event_type, effective_date, occurred_at,
                 cash_delta, position_delta, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                event_id,
-                key,
-                trade_id,
-                event_type,
-                effective_date.isoformat(),
-                self._now(),
-                cash_delta,
-                position_delta,
-                json.dumps(payload or {}, sort_keys=True, separators=(",", ":")),
-            ),
-        )
+                values,
+            )
+        except sqlite3.IntegrityError:
+            existing = conn.execute(
+                """SELECT event_id, idempotency_key, trade_id, event_type, effective_date,
+                   cash_delta, position_delta, payload_json FROM trade_events
+                   WHERE idempotency_key=?""",
+                (key,),
+            ).fetchone()
+            expected = values[:5] + values[6:]
+            if existing is None or tuple(existing) != expected:
+                raise ValueError(f"conflicting idempotent event: {key}") from None
 
     def _get_trade(self, conn: sqlite3.Connection, trade_id: str) -> LedgerTrade:
         row = conn.execute(
@@ -443,7 +540,42 @@ CREATE TABLE IF NOT EXISTS daily_valuations (
             exit_trigger_date=as_date(row["exit_trigger_date"]),
             exit_date=as_date(row["exit_date"]),
             raw_exit_price=row["raw_exit_price"],
+            highest_close=row["highest_close"],
+            exit_line=row["exit_line"],
+            last_evaluated_date=as_date(row["last_evaluated_date"]),
+            forced_exit_target_date=as_date(row["forced_exit_target_date"]),
         )
+
+    @staticmethod
+    def _begin_write(conn: sqlite3.Connection) -> None:
+        conn.execute("BEGIN IMMEDIATE")
+
+    @classmethod
+    def _validate_fill(
+        cls,
+        price: float,
+        quantity: int,
+        commission: float,
+        tax: float,
+        slippage: float,
+    ) -> None:
+        if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
+            raise ValueError("quantity must be a positive integer")
+        cls._validate_price_and_costs(price, commission, tax, slippage)
+
+    @staticmethod
+    def _validate_price_and_costs(
+        price: float, commission: float, tax: float, slippage: float
+    ) -> None:
+        if not math.isfinite(price) or price <= 0:
+            raise ValueError("fill price must be finite and positive")
+        for name, value in (
+            ("commission", commission),
+            ("tax", tax),
+            ("slippage", slippage),
+        ):
+            if not math.isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and nonnegative")
 
     @staticmethod
     def _now() -> str:
