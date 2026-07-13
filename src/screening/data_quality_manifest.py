@@ -42,6 +42,10 @@ class RunManifest:
                 raise ValueError("ticker key must be a nonempty string matching TickerReadiness.ticker")
         object.__setattr__(self, "tickers", MappingProxyType(snapshot))
 
+    @property
+    def is_healthy(self) -> bool:
+        return self.status == "healthy"
+
 
 def validate_ticker_readiness(
     *,

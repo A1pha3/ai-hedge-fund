@@ -171,8 +171,8 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
     assert FakeScoringFeatureStore.instances[0].quality_calls == [
         ("20260708", ["000001", "000002"])
     ]
-    assert saved[0][1]["data_quality"] == expected_quality
     assert payload["data_quality"] == expected_quality
+    assert saved == []
 
 
 def test_compute_auto_screening_results_uses_store_even_when_refresh_not_ready(monkeypatch):
@@ -275,5 +275,6 @@ def test_compute_auto_screening_results_uses_store_even_when_refresh_not_ready(m
     assert FakeScoringFeatureStore.instances[0].quality_calls == [
         ("20260708", ["000001", "000002"])
     ]
-    assert saved[0][1]["data_quality"]["scoring_features"]["price_history"]["coverage"] == 0.5
+    assert payload["data_quality"]["scoring_features"]["price_history"]["coverage"] == 0.5
+    assert saved == []
     assert payload["data_quality"]["scoring_features"]["price_history"]["missing_tickers"] == 1

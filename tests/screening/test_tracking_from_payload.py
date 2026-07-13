@@ -19,29 +19,18 @@ def test_tracking_accepts_payload_without_report_file(tmp_path: Path) -> None:
     assert list(tmp_path.glob("auto_screening_*.json")) == []
 
 
-def test_auto_enrichment_tracks_the_exact_in_memory_payload(tmp_path: Path, monkeypatch) -> None:
+def test_post_publication_enrichment_does_not_track_or_republish(tmp_path: Path, monkeypatch) -> None:
     import src.main as main
 
     payload = {"date": "20260710", "recommendations": []}
-    received: dict = {}
-
-    def track_from_payload(reports_dir, trade_date, report_payload):
-        received.update(
-            reports_dir=reports_dir,
-            trade_date=trade_date,
-            report_payload=report_payload,
-        )
-        return 0
-
-    monkeypatch.setattr(main, "update_tracking_history_from_payload", track_from_payload)
+    monkeypatch.setattr(
+        main,
+        "_save_json_report",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("canonical must not be republished")),
+    )
     monkeypatch.setattr(main, "get_tracking_summary", lambda **kwargs: {"total_recommendations": 0})
     monkeypatch.setattr(main, "update_watchlist_from_screening", lambda report: {"scored_count": 0})
 
     main._enrich_recommendations_with_history(payload, "20260710", tmp_path)
 
-    assert received == {
-        "reports_dir": tmp_path,
-        "trade_date": "20260710",
-        "report_payload": payload,
-    }
     assert list(tmp_path.glob("auto_screening_*.json")) == []
