@@ -59,7 +59,10 @@ from src.screening.industry_rotation import (
     format_rotation_block,
     IndustrySignal,
 )
-from src.screening.investability import rank_recommendations_by_investability
+from src.screening.investability import (
+    compute_full_pool_shadow_ranking,
+    rank_recommendations_by_investability,
+)
 from src.screening.market_state import detect_market_state
 from src.screening.recommendation_tracker import (
     get_tracking_summary,
@@ -499,6 +502,8 @@ def _build_auto_screening_payload(
     batch_fetcher_use_batch: bool,
     batch_fetcher_stats: dict,
     optional_feature_quality: dict | None = None,
+    shadow_rank_status: str = "insufficient",
+    shadow_rank: list[dict] | None = None,
 ) -> dict:
     """Build the canonical ``--auto`` screening payload.
 
@@ -538,6 +543,10 @@ def _build_auto_screening_payload(
         "high_pool_count": sum(1 for item in fused if item.score_b >= SCORE_B_GREEN_FLOOR),
         "top_n": top_n,
         "recommendations": top_results_serializable,
+        # Research-only full Layer-A challenger.  It is deliberately separate
+        # from recommendations and contains no position/execution instruction.
+        "shadow_rank_status": shadow_rank_status,
+        "shadow_rank": list(shadow_rank or []),
         "sector_concentration_warnings": sector_warnings,
         "consecutive_recommendation": {
             "lookback_days": DEFAULT_LOOKBACK_DAYS,
@@ -739,6 +748,53 @@ def _rank_pool_by_investability(ranking_pool: list[dict], trade_date: str) -> li
         return ranking_pool
 
 
+def _rank_full_pool_shadow(
+    full_pool: list[dict], trade_date: str
+) -> dict[str, object]:
+    """Compute the explicit full-pool challenger without influencing Top-N."""
+    insufficient: dict[str, object] = {
+        "shadow_rank_status": "insufficient",
+        "shadow_rank": [],
+    }
+    try:
+        from src.screening.consecutive_recommendation import (
+            load_auto_screening_history,
+            load_tracking_history,
+        )
+        from src.screening.composite_score import (
+            compute_composite_scores_for_recommendations,
+        )
+        from src.screening.expected_return import compute_expected_returns
+
+        reports_dir = _resolve_consecutive_report_dir()
+        history_records = load_tracking_history(reports_dir)
+        history_reports = load_auto_screening_history(
+            lookback_days=max(60, COMPOSITE_SCORE_LOOKBACK_DAYS),
+            report_dir=reports_dir,
+            end_date=trade_date,
+        )
+        composite_report = compute_composite_scores_for_recommendations(
+            recommendations=full_pool,
+            trade_date=trade_date,
+            as_of=trade_date,
+            history_reports=history_reports,
+            lookback_days=COMPOSITE_SCORE_LOOKBACK_DAYS,
+        )
+        expected_report = compute_expected_returns(
+            recommendations=full_pool,
+            as_of=trade_date,
+            model_version=_compute_model_version(),
+            history_records=history_records,
+            lookback_days=60,
+        )
+        return compute_full_pool_shadow_ranking(
+            full_pool, composite_report, expected_report
+        )
+    except Exception as exc:
+        logger.warning("[AutoScreening] full-pool shadow ranking insufficient: %s", exc)
+        return insufficient
+
+
 def _inject_score_decomposition(
     ranking_pool: list[dict],
     fused_by_ticker: dict[str, object],
@@ -887,9 +943,11 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
             [item.model_dump(mode="json") for item in fused],
             selected_weights,
         )
+        full_shadow_pool = [dict(item) for item in reweighted_results]
         ranking_pool = reweighted_results[:ranking_pool_size]
     else:
         sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
+        full_shadow_pool = [item.model_dump(mode="json") for item in sorted_results]
         ranking_pool = [item.model_dump(mode="json") for item in sorted_results[:ranking_pool_size]]
 
     # NS-6: 注入 score_decomposition 到 ranking_pool 每条 rec (per-strategy
@@ -908,6 +966,11 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     logger.debug("[Auto] score_decomposition injected for %d/%d ranking_pool recs", _injected, len(ranking_pool))
 
     ranked_pool = _rank_pool_by_investability(ranking_pool, trade_date)
+
+    # Keep the Top-30 production preselection intact.  The full-pool result is
+    # an independently computed research challenger and cannot feed selection,
+    # sizing, ledger plans, or recommendation order.
+    shadow_ranking = _rank_full_pool_shadow(full_shadow_pool, trade_date)
 
     top_results_serializable = _select_top_n_with_constraints(ranked_pool, top_n)
     top_results_for_sector = [fused_by_ticker.get(str(rec.get("ticker", "")), rec) for rec in top_results_serializable]
@@ -970,6 +1033,10 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
         batch_fetcher_use_batch=batch_fetcher.use_batch,
         batch_fetcher_stats=batch_fetcher.stats(),
         optional_feature_quality=optional_feature_quality,
+        shadow_rank_status=str(
+            shadow_ranking.get("shadow_rank_status", "insufficient")
+        ),
+        shadow_rank=list(shadow_ranking.get("shadow_rank", [])),
     )
 
 

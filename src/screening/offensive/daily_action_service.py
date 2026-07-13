@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import math
+import json
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
-from typing import Callable, Sequence
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any, Callable, Mapping, Sequence
 
 from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
+from src.screening.data_quality_manifest import (
+    RunManifest,
+    TickerReadiness,
+    validate_ticker_readiness,
+)
 from src.screening.offensive.execution_adjuster import (
     ExecutionCosts,
     ExecutionStatus,
@@ -102,9 +110,190 @@ class DailyActionRun:
     open_exposure: float
     reserved_exposure: float
     block_reason: str | None = None
+    blocked_tickers: tuple[str, ...] = ()
 
 
 PriceProvider = Callable[[str, date], MarketBar | None]
+CacheFingerprintProvider = Callable[[str, date], str | None]
+
+
+def _plain_date(value: object) -> date:
+    if type(value) is not str:
+        raise ValueError("manifest date must be a string")
+    return datetime.strptime(value, "%Y-%m-%d").date()
+
+
+def _deserialize_readiness(ticker: str, value: object) -> TickerReadiness:
+    if not isinstance(value, Mapping) or value.get("ticker") != ticker:
+        raise ValueError("manifest ticker mapping is invalid")
+    history_days = value.get("fund_flow_history_days")
+    trade_ready = value.get("trade_ready")
+    block_reasons = value.get("block_reasons")
+    if (
+        type(history_days) is not int
+        or type(trade_ready) is not bool
+        or not isinstance(block_reasons, list)
+        or any(type(reason) is not str for reason in block_reasons)
+    ):
+        raise ValueError("manifest readiness types are invalid")
+
+    def optional_date(field: str) -> date | None:
+        raw = value.get(field)
+        return None if raw is None else _plain_date(raw)
+
+    readiness = TickerReadiness(
+        ticker=ticker,
+        trade_date=_plain_date(value.get("trade_date")),
+        ohlcv_date=optional_date("ohlcv_date"),
+        ohlcv_finite=value.get("ohlcv_finite"),
+        fund_flow_date=optional_date("fund_flow_date"),
+        fund_flow_history_days=history_days,
+        industry_date=optional_date("industry_date"),
+        security_status=value.get("security_status"),
+        st_status=value.get("st_status"),
+        board_rule_version=value.get("board_rule_version"),
+        cache_fingerprint=value.get("cache_fingerprint"),
+        trade_ready=trade_ready,
+        block_reasons=tuple(block_reasons),
+    )
+    validated = validate_ticker_readiness(
+        ticker=readiness.ticker,
+        trade_date=readiness.trade_date,
+        ohlcv_date=readiness.ohlcv_date,
+        ohlcv_finite=readiness.ohlcv_finite,
+        fund_flow_date=readiness.fund_flow_date,
+        fund_flow_history_days=readiness.fund_flow_history_days,
+        industry_date=readiness.industry_date,
+        security_status=readiness.security_status,
+        st_status=readiness.st_status,
+        board_rule_version=readiness.board_rule_version,
+        cache_fingerprint=readiness.cache_fingerprint,
+    )
+    if (
+        readiness.trade_ready != validated.trade_ready
+        or readiness.block_reasons != validated.block_reasons
+    ):
+        raise ValueError("serialized readiness does not match validator")
+    return readiness
+
+
+def _deserialize_canonical_manifest(payload: object, as_of: date) -> RunManifest:
+    from src.screening.auto_pipeline import _canonical_fingerprint
+
+    if not isinstance(payload, Mapping):
+        raise ValueError("canonical payload must be an object")
+    compact_date = as_of.strftime("%Y%m%d")
+    embedded = payload.get("manifest")
+    if (
+        payload.get("date") != compact_date
+        or payload.get("status") != "healthy"
+        or type(payload.get("run_id")) is not str
+        or not isinstance(embedded, Mapping)
+        or embedded.get("run_id") != payload.get("run_id")
+        or embedded.get("trade_date") != compact_date
+        or embedded.get("status") != "healthy"
+        or embedded.get("is_healthy") is not True
+        or type(embedded.get("input_fingerprint")) is not str
+        or not embedded.get("input_fingerprint")
+    ):
+        raise ValueError("canonical manifest identity mismatch")
+    created_at = datetime.fromisoformat(str(embedded.get("created_at") or ""))
+    if created_at.tzinfo is None:
+        raise ValueError("manifest created_at must be timezone-aware")
+    candidate_tickers = embedded.get("candidate_tickers")
+    ticker_values = embedded.get("tickers")
+    if (
+        not isinstance(candidate_tickers, list)
+        or any(type(ticker) is not str or not ticker for ticker in candidate_tickers)
+        or len(set(candidate_tickers)) != len(candidate_tickers)
+        or not isinstance(ticker_values, Mapping)
+        or set(candidate_tickers) != set(ticker_values)
+        or embedded.get("candidate_set_fingerprint")
+        != _canonical_fingerprint(list(candidate_tickers))
+    ):
+        raise ValueError("canonical candidate identity mismatch")
+    pool = payload.get("candidate_pool_run")
+    if (
+        not isinstance(pool, Mapping)
+        or pool.get("trade_date") != compact_date
+        or pool.get("tickers") != candidate_tickers
+    ):
+        raise ValueError("canonical candidate pool mismatch")
+    tickers = {
+        ticker: _deserialize_readiness(ticker, ticker_values[ticker])
+        for ticker in candidate_tickers
+    }
+    if any(readiness.trade_date != as_of for readiness in tickers.values()):
+        raise ValueError("ticker readiness date mismatch")
+    return RunManifest(
+        run_id=str(embedded["run_id"]),
+        trade_date=as_of,
+        status="healthy",
+        created_at=created_at,
+        tickers=tickers,
+        candidate_tickers=tuple(candidate_tickers),
+        candidate_set_fingerprint=str(embedded["candidate_set_fingerprint"]),
+        candidate_snapshot_fingerprint=embedded.get("candidate_snapshot_fingerprint"),
+        admission_projection_fingerprint=embedded.get("admission_projection_fingerprint"),
+        baseline_fingerprint=embedded.get("baseline_fingerprint"),
+        industry_content_fingerprint=embedded.get("industry_content_fingerprint"),
+        input_fingerprint=str(embedded["input_fingerprint"]),
+    )
+
+
+def load_daily_action_manifest_gate(
+    as_of: date,
+    *,
+    reports_dir: Path = Path("data/reports"),
+) -> tuple[RunManifest | None, Mapping[str, str | None]]:
+    """Load only the exact-date healthy canonical and re-fingerprint its caches."""
+    try:
+        payload = json.loads(
+            (reports_dir / f"auto_screening_{as_of:%Y%m%d}.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        manifest = _deserialize_canonical_manifest(payload, as_of)
+        pool = payload["candidate_pool_run"]
+        candidates = pool.get("candidates")
+        if (
+            not isinstance(candidates, list)
+            or any(not isinstance(row, Mapping) for row in candidates)
+            or [row.get("ticker") for row in candidates]
+            != list(manifest.candidate_tickers)
+        ):
+            raise ValueError("candidate rows missing")
+        industries = {
+            str(row.get("ticker") or ""): str(
+                row.get("industry_sw") or row.get("industry") or ""
+            ).strip()
+            for row in candidates
+            if isinstance(row, Mapping)
+        }
+        from src.screening.auto_pipeline import (
+            _capture_input_snapshot,
+            _combined_fingerprint,
+        )
+
+        snapshot = _capture_input_snapshot(
+            as_of.strftime("%Y%m%d"),
+            reports_dir=reports_dir,
+            cache_refresh_summary={},
+            candidate_tickers=manifest.candidate_tickers,
+            ticker_industries=industries,
+        )
+        fingerprints: dict[str, str | None] = {}
+        for ticker in manifest.candidate_tickers:
+            ticker_snapshot = snapshot.tickers.get(ticker)
+            industry_snapshot = snapshot.industries.get(industries.get(ticker, ""))
+            fingerprints[ticker] = _combined_fingerprint(
+                ticker_snapshot.price_fingerprint if ticker_snapshot else None,
+                ticker_snapshot.fund_flow_fingerprint if ticker_snapshot else None,
+                industry_snapshot.fingerprint if industry_snapshot else None,
+            )
+        return manifest, MappingProxyType(fingerprints)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        return None, {}
 
 
 class DailyActionService:
@@ -114,6 +303,9 @@ class DailyActionService:
         calendar: TradingSessionCalendar,
         prices: PriceProvider,
         costs: ExecutionCosts,
+        cache_fingerprints: CacheFingerprintProvider | None = None,
+        *,
+        enforce_manifest_gate: bool = True,
     ) -> None:
         self.repository, self.calendar, self.prices, self.costs = (
             repository,
@@ -121,24 +313,85 @@ class DailyActionService:
             prices,
             costs,
         )
+        self.cache_fingerprints = cache_fingerprints
+        self.enforce_manifest_gate = enforce_manifest_gate
         self._skipped: list[ActionItem] = []
         self._exit_plans: list[ActionItem] = []
         self._deferred: list[ActionItem] = []
         self._block_reason: str | None = None
+        self._blocked_tickers: tuple[str, ...] = ()
 
-    def run(self, as_of: date, candidates: Sequence[PlanCandidate]) -> DailyActionRun:
+    def run(
+        self,
+        as_of: date,
+        candidates: Sequence[PlanCandidate],
+        manifest: RunManifest | None = None,
+    ) -> DailyActionRun:
         self._skipped, self._exit_plans, self._deferred, self._block_reason = (
             [],
             [],
             [],
             None,
         )
+        self._blocked_tickers = ()
         self._settle_due_entry_plans(as_of)
         exits = self._settle_due_exit_plans(as_of)
         valuation = self._mark_to_market(as_of)
         self._evaluate_open_positions(as_of)
-        plans = self._create_capacity_safe_plans(as_of, candidates, valuation)
+        eligible = self._manifest_eligible_candidates(as_of, candidates, manifest)
+        if self.enforce_manifest_gate and not eligible:
+            plans = ()
+        else:
+            plans = self._create_capacity_safe_plans(as_of, eligible, valuation)
         return self._build_view(as_of, valuation, exits, plans)
+
+    def _manifest_eligible_candidates(
+        self,
+        as_of: date,
+        candidates: Sequence[PlanCandidate],
+        manifest: RunManifest | None,
+    ) -> tuple[PlanCandidate, ...]:
+        # Lifecycle-only tests may disable admission enforcement explicitly;
+        # production defaults to the fail-closed path.
+        if not self.enforce_manifest_gate:
+            return tuple(candidates)
+        candidate_tickers = tuple(dict.fromkeys(item.ticker for item in candidates))
+        if not isinstance(manifest, RunManifest) or not manifest.is_healthy:
+            self._block_reason = "healthy_manifest_missing"
+            self._blocked_tickers = candidate_tickers
+            return ()
+        if (
+            manifest.trade_date != as_of
+            or not manifest.run_id
+            or not manifest.input_fingerprint
+        ):
+            self._block_reason = "manifest_identity_mismatch"
+            self._blocked_tickers = candidate_tickers
+            return ()
+
+        eligible: list[PlanCandidate] = []
+        blocked: list[str] = []
+        for candidate in candidates:
+            readiness = manifest.tickers.get(candidate.ticker)
+            current_fingerprint = (
+                self.cache_fingerprints(candidate.ticker, as_of)
+                if self.cache_fingerprints is not None
+                else None
+            )
+            if (
+                readiness is None
+                or readiness.ticker != candidate.ticker
+                or readiness.trade_date != as_of
+                or readiness.trade_ready is not True
+                or not readiness.cache_fingerprint
+                or current_fingerprint != readiness.cache_fingerprint
+            ):
+                if candidate.ticker not in blocked:
+                    blocked.append(candidate.ticker)
+                continue
+            eligible.append(candidate)
+        self._blocked_tickers = tuple(blocked)
+        return tuple(eligible)
 
     def _settle_due_entry_plans(self, as_of: date) -> None:
         if not self.calendar.contains_session(as_of):
@@ -365,6 +618,7 @@ class DailyActionService:
             sum(values.values()) / valuation.nav,
             sum(p.planned_weight for p in self.repository.planned_trades()),
             self._block_reason,
+            self._blocked_tickers,
         )
 
     def _snapshot(self, as_of: date) -> tuple[float, dict[str, float], list[str]]:

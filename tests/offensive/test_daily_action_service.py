@@ -55,6 +55,7 @@ def service(tmp_path, sessions) -> DailyActionService:
         ExecutionCosts(
             version="test", commission=5.0, tax_rate=0.001, slippage_bps=10.0
         ),
+        enforce_manifest_gate=False,
     )
 
 
@@ -312,6 +313,7 @@ def test_due_entry_fails_closed_when_as_of_is_not_exact_calendar_session(
         TradingSessionCalendar(calendar_dates),
         prices,
         ExecutionCosts(version="test"),
+        enforce_manifest_gate=False,
     )
     local.run(sessions[1], ())
     assert repo.get_trade(plan.trade_id).state is TradeState.PLANNED
@@ -340,6 +342,7 @@ def test_btst_plan_requires_full_entry_through_holding_session_ten(tmp_path):
         TradingSessionCalendar((signal, monday)),
         FixedPrices(MarketBar(10, 10, 9, 11, False, 10.5, 9.5)),
         ExecutionCosts(version="test"),
+        enforce_manifest_gate=False,
     )
     run = local.run(signal, (candidate("000160"),))
     assert run.new_plans == ()
@@ -357,6 +360,7 @@ def test_open_trade_with_incomplete_horizon_surfaces_calendar_warning(tmp_path):
         TradingSessionCalendar((entry, entry + timedelta(days=1), third)),
         FixedPrices(MarketBar(10, 10, 9, 11, False, 10.5, 9.5)),
         ExecutionCosts(version="test"),
+        enforce_manifest_gate=False,
     )
     trade = open_trade(local, "000161", entry)
     run = local.run(entry + timedelta(days=1), ())

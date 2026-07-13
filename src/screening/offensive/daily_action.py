@@ -607,11 +607,15 @@ def _price_frame_is_fresh(prices: pd.DataFrame, signal_date: str) -> bool:
     )
 
 
-def run_daily_action_v2(service: Any, scan: DailyActionScan) -> DailyActionV2Run:
+def run_daily_action_v2(
+    service: Any,
+    scan: DailyActionScan,
+    manifest: Any = None,
+) -> DailyActionV2Run:
     """Route pure scanner output through the auditable v2 lifecycle service."""
     if not all(isinstance(candidate, PlanCandidate) for candidate in scan.candidates):
         raise TypeError("DailyActionScan candidates must be PlanCandidate instances")
-    service_run = service.run(scan.signal_date, scan.candidates)
+    service_run = service.run(scan.signal_date, scan.candidates, manifest=manifest)
     # Idempotent reruns still display the one persisted plan for this signal date.
     displayed_tickers = {candidate.ticker for candidate in scan.candidates}
     persisted = tuple(
@@ -670,6 +674,10 @@ def render_daily_action_v2(run: DailyActionV2Run) -> str:
             )
     if run.service_run.block_reason:
         lines.append(f"block_reason={run.service_run.block_reason}")
+    if run.service_run.blocked_tickers:
+        lines.append(
+            "manifest_blocked_tickers=" + ",".join(run.service_run.blocked_tickers)
+        )
     return "\n".join(lines)
 
 

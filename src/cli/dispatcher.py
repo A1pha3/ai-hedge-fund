@@ -989,7 +989,10 @@ def _resolve_daily_action(
         run_daily_action_v2,
         scan_daily_action_candidates,
     )
-    from src.screening.offensive.daily_action_service import DailyActionService
+    from src.screening.offensive.daily_action_service import (
+        DailyActionService,
+        load_daily_action_manifest_gate,
+    )
     from src.screening.offensive.execution_adjuster import ExecutionCosts
     from src.screening.offensive.ledger_repository import LedgerRepository
 
@@ -1006,6 +1009,12 @@ def _resolve_daily_action(
     scan = scan_daily_action_candidates(
         end_date=end_date, authoritative_sessions=open_sessions
     )
+    from src.screening.consecutive_recommendation import resolve_report_dir
+
+    manifest, current_fingerprints = load_daily_action_manifest_gate(
+        scan.signal_date,
+        reports_dir=resolve_report_dir(),
+    )
 
     def cached_prices(ticker, trade_date):
         cache = Path("data/price_cache") / f"{ticker}.csv"
@@ -1020,8 +1029,11 @@ def _resolve_daily_action(
             TradingSessionCalendar(open_sessions),
             cached_prices,
             ExecutionCosts(version="daily-action-v2"),
+            cache_fingerprints=lambda ticker, _trade_date: current_fingerprints.get(
+                ticker
+            ),
         )
-        print(render_daily_action_v2(run_daily_action_v2(service, scan)))
+        print(render_daily_action_v2(run_daily_action_v2(service, scan, manifest)))
     return 0
 
 

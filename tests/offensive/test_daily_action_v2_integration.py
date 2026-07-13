@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -27,6 +27,7 @@ from src.screening.offensive.ledger_repository import LedgerRepository
 from src.cli.dispatcher import _cached_daily_action_market_bar
 from src.cli import dispatcher
 from src.screening.offensive.ledger_repository import DailyValuation
+from src.screening.data_quality_manifest import RunManifest, TickerReadiness
 
 
 @pytest.fixture
@@ -50,6 +51,7 @@ def service(repository, signal_date) -> DailyActionService:
         TradingSessionCalendar(sessions),
         lambda _ticker, _date: bar,
         ExecutionCosts(version="test"),
+        enforce_manifest_gate=False,
     )
 
 
@@ -74,6 +76,39 @@ def _scan(signal_date, *, degraded=False, regime="normal") -> DailyActionScan:
     )
     candidates = () if degraded else (hit,)
     return DailyActionScan(signal_date, candidates, blocked, (("000001", 10.0),))
+
+
+def _install_healthy_manifest(monkeypatch, signal_date: date) -> None:
+    fingerprint = "sha256:current"
+    readiness = TickerReadiness(
+        "000001",
+        signal_date,
+        signal_date,
+        True,
+        signal_date,
+        20,
+        signal_date,
+        "listed",
+        False,
+        "ashare-board-prefix-v1",
+        fingerprint,
+        True,
+        (),
+    )
+    manifest = RunManifest(
+        "run-test",
+        signal_date,
+        "healthy",
+        datetime.now(timezone.utc),
+        {"000001": readiness},
+        candidate_tickers=("000001",),
+        candidate_set_fingerprint="sha256:candidates",
+        input_fingerprint="sha256:inputs",
+    )
+    monkeypatch.setattr(
+        "src.screening.offensive.daily_action_service.load_daily_action_manifest_gate",
+        lambda *_args, **_kwargs: (manifest, {"000001": fingerprint}),
+    )
 
 
 def test_signal_date_creates_plan_not_open_position(service, signal_date):
@@ -237,6 +272,7 @@ def test_actual_cli_is_idempotent_and_preserves_recursive_legacy_artifacts(tmp_p
         "src.screening.offensive.daily_action.scan_daily_action_candidates",
         lambda **_kwargs: scan,
     )
+    _install_healthy_manifest(monkeypatch, signal_date)
     ledger = tmp_path / "isolated-v2/ledger.sqlite3"
     sessions = tuple(signal_date + timedelta(days=i) for i in range(11))
     dispatcher._resolve_daily_action(["--daily-action"], open_sessions=sessions, ledger_path=ledger)
@@ -259,6 +295,7 @@ def test_actual_cli_missing_calendar_renders_block_and_creates_no_plan(tmp_path,
         "src.screening.offensive.daily_action.scan_daily_action_candidates",
         lambda **_kwargs: _scan(signal_date),
     )
+    _install_healthy_manifest(monkeypatch, signal_date)
     ledger = tmp_path / "blocked.sqlite3"
     dispatcher._resolve_daily_action(["--daily-action"], open_sessions=(), ledger_path=ledger)
     assert "calendar_unavailable" in capsys.readouterr().out
@@ -270,6 +307,7 @@ def test_actual_cli_two_session_calendar_blocks_btst_horizon(tmp_path, monkeypat
         "src.screening.offensive.daily_action.scan_daily_action_candidates",
         lambda **_kwargs: _scan(signal_date),
     )
+    _install_healthy_manifest(monkeypatch, signal_date)
     ledger = tmp_path / "two-session.sqlite3"
     dispatcher._resolve_daily_action(
         ["--daily-action"],
