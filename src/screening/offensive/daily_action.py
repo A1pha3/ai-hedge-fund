@@ -24,7 +24,6 @@ from typing import Any, Callable
 
 import pandas as pd
 
-from src.screening.offensive.kelly import compute_kelly_size
 from src.screening.offensive.known_distributions import get_known_distribution
 from src.screening.offensive.paper_tracker import PaperTracker, TradeAction
 from src.screening.offensive.risk_framework import build_risk_plan
@@ -422,8 +421,8 @@ def _load_industry_day_pct_by_ticker(trade_date: str, tickers: list[str]) -> dic
 
         ticker_to_industry = _load_ticker_to_industry_from_snapshots(tickers)
         industry_day_pct = load_industry_day_pct()
-    except Exception as exc:  # noqa: BLE001 - missing context should block BTST, not crash daily action
-        logger.warning("加载行业日涨幅失败, BTST 行业过滤将按 0%% 处理: %s", exc)
+    except Exception as exc:  # noqa: BLE001 - missing context should degrade BTST, not crash daily action
+        logger.warning("加载行业日涨幅失败, BTST 行业条件将降级 (degraded=True, 不再静默全杀): %s", exc)
         return {}
 
     result: dict[str, float] = {}
@@ -731,7 +730,7 @@ def generate_daily_action(
                 if drop30 > -20:
                     continue
 
-            industry_pct = float(industry_day_pct_by_ticker.get(ticker, 0.0) or 0.0) if setup_name == "btst_breakout" else 0.0
+            industry_pct = industry_day_pct_by_ticker.get(ticker) if setup_name == "btst_breakout" else 0.0
             ctx = {
                 "prices": prices,
                 "fund_flow_records": flow_records,
@@ -785,7 +784,7 @@ def generate_daily_action(
                 time_exit=risk.time_exit,
                 invalidation_condition=result.invalidation_condition,
                 distribution_summary=dist_summary,
-                reasoning=f"{setup_name} T+{horizon} 命中; half-Kelly {kelly_pct:.1%}; regime={regime}×{regime_factor:.1f}; drawdown={dd_action}",
+                reasoning=f"{setup_name} T+{horizon} 命中; 仓位 {kelly_pct:.1%}; regime={regime}×{regime_factor:.1f}; drawdown={dd_action}",
                 trigger_strength=float(result.trigger_strength),
                 degraded=bool(getattr(result, "degraded", False)),
                 degradation_reason=str(getattr(result, "degradation_reason", "") or ""),

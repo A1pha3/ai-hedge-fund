@@ -4,7 +4,7 @@
 1. 今日涨停 (pct_change ≥ 板块自适应阈值)
 2. 主力净流入 > 过去 20 日均值
 3. 所属行业当日涨幅 > 2% (板块效应)
-4. 涨停前 5 日累计涨幅 ≤ 10% (防追高; 数据驱动条件, 见下方注释)
+4. 涨停前 5 日累计涨幅 ≤ 8% (防追高; 数据驱动条件, 见下方注释)
 
 失效条件: 价格跌破触发日收盘 × 0.92 (即 -8% 止损线)
 
@@ -12,10 +12,10 @@
   涨停前5日涨幅  样本   E[r]    胜率   凸性
   ≤ 0%          553   +4.17%   61%   —     (超跌后首板, 最强)
   ≤ 5%         1299   +3.20%   60%   2.17
-  ≤ 10%        2651   +2.59%   56%   1.90  ← 选此阈值 (样本量大 + trigger_strength ranker 补偿深度信号)
+  ≤ 10%        2651   +2.59%   56%   1.90  (旧阈值, 样本量大 + trigger_strength ranker 补偿深度信号)
   无过滤        8825   +1.36%   49%   1.33  (不达凸性 1.5 门槛)
-单调递减: 涨停前涨幅越大后续越弱. ≤10% 保留有基本面支撑的涨停 (非追高),
-trigger_strength 的 trend 因子进一步区分 ≤0% (最强) 和 0-10% 的差异.
+单调递减: 涨停前涨幅越大后续越弱. 2026-07 回测后从 10% 收紧到 8%
+(_PRE_RUNUP_MAX_PCT): 8-10% 区间 52.4%/+3.10% 弱于池均值, <8% 58%+ 明显优于 >8% 53%.
 
 依赖:
 - context["prices"]: 单 ticker 价格 DataFrame
@@ -296,10 +296,24 @@ class BtstBreakoutSetup(Setup):
             degradation_reason = f"条件2 跳过: 历史不足 ({len(historical)}<{_MAIN_FLOW_MIN_HISTORY_DAYS}日)"
 
         # 条件 3: 行业板块效应
-        industry_pct = context.get("industry_day_pct") or 0.0
-        industry_pct = float(industry_pct) if isinstance(industry_pct, (int, float)) else 0.0
-        if industry_pct != industry_pct or industry_pct < _INDUSTRY_PCT_MIN:  # NaN guard: NaN != NaN → miss
-            return self._miss(ticker, trade_date)
+        # Bug fix (2026-07-12): industry_day_pct=None 表示行业数据管道断裂 (缓存缺失/import 失败).
+        # 旧实现: daily_action 把加载失败映射为 industry_pct=0.0 → 0.0 < 2.0 → 全部 BTST miss.
+        # 用户看到"今日无信号", 实际是数据管道断了. 修正: None 时跳过行业过滤但标 degraded,
+        # 与资金流浅数据降级同模式. 有行业数据 (含 0.0) 时正常过滤.
+        industry_pct: float | None = None
+        industry_pct_raw = context.get("industry_day_pct")
+        if industry_pct_raw is None:
+            # 数据缺失: 不过滤但标记残缺, 让 operator 知道行业条件未验证
+            if not degraded:
+                degraded = True
+                degradation_reason = "条件3 (行业涨幅≥2%) 跳过: 行业数据未加载"
+        else:
+            try:
+                industry_pct = float(industry_pct_raw)
+            except (TypeError, ValueError):
+                industry_pct = float("nan")
+            if industry_pct != industry_pct or industry_pct < _INDUSTRY_PCT_MIN:  # NaN guard
+                return self._miss(ticker, trade_date)
 
         # 条件 4: 涨停前 5 日累计涨幅 ≤ 10% (防追高; trigger_strength 的 trend 因子进一步区分).
         ref_idx = trigger_idx - _PRE_RUNUP_LOOKBACK_DAYS

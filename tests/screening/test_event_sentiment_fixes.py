@@ -178,45 +178,46 @@ class TestBug3ClusterConsensus:
 
 
 class TestBug4InsiderDeadZone:
-    def test_neutral_with_nonzero_confidence_has_zero_completeness(self):
-        """direction=0 但 confidence>0（score=0.45）时 completeness 应为 0。
+    def test_neutral_score_has_zero_completeness(self):
+        """direction=0 (score=0.5, 死区) 时 completeness 必须为 0.
 
-        修复前：completeness = 0.0 if (direction==0 and confidence==0.0) else 1.0
-                  → score=0.45 → confidence=10 → completeness=1.0 ← BUG
-        修复后：completeness = 0.0 if direction == 0 else 1.0
-                  → direction=0 → completeness=0.0 ✓
+        Bug 3 fix: 旧测试用 buy=5500/sell=9000 → net_flow_ratio≈-0.241 → score=0.2
+        → direction=-1 (NOT 0!) → ``if factor.direction == 0`` 永远 False → 断言被跳过,
+        测试虚假通过. 这正是 Bug 4 要防止的: 修复 completeness 逻辑但测试根本没覆盖到.
+
+        修正: 构造确定性死区输入 (等额买卖 → ratio=0 → score=0.5 → direction=0),
+        并用无条件断言 (先 assert direction==0, 再 assert completeness==0).
         """
-        # score=0.45: direction=0 (not >0.6, not <0.4), confidence=|0.45-0.5|*200=10
-        # 需要 net_flow_ratio 让 analyze_insider_conviction 返回 score≈0.45
-        # buy_value=5500, sell_value=9000 → ratio=(5500-9000)/(5500+9000)≈-0.241
-        # 这会产生一个偏 sell 的 score，但仍在 [0.4,0.6] 死区内
+        # buy_value == sell_value → net_flow_ratio = 0 → score = 0.5 → direction = 0
         buy = InsiderTrade(
             ticker="000001", issuer="测试", name="张三", title="高管",
             is_board_director=False, transaction_date="2026-03-01",
-            transaction_shares=550.0, transaction_price_per_share=10.0,
-            transaction_value=5500.0, shares_owned_before_transaction=50000.0,
-            shares_owned_after_transaction=50550.0, security_title="股票", filing_date="2026-03-02",
+            transaction_shares=500.0, transaction_price_per_share=10.0,
+            transaction_value=5000.0, shares_owned_before_transaction=50000.0,
+            shares_owned_after_transaction=50500.0, security_title="股票", filing_date="2026-03-02",
         )
         sell = InsiderTrade(
             ticker="000001", issuer="测试", name="李四", title="高管",
             is_board_director=False, transaction_date="2026-03-01",
-            transaction_shares=-900.0, transaction_price_per_share=10.0,
-            transaction_value=-9000.0, shares_owned_before_transaction=50000.0,
-            shares_owned_after_transaction=49100.0, security_title="股票", filing_date="2026-03-02",
+            transaction_shares=-500.0, transaction_price_per_share=10.0,
+            transaction_value=-5000.0, shares_owned_before_transaction=50000.0,
+            shares_owned_after_transaction=49500.0, security_title="股票", filing_date="2026-03-02",
         )
         factor = _score_insider_conviction([buy, sell])
 
-        # 核心断言：direction=0 时无论 confidence 多少，completeness 都应为 0
-        if factor.direction == 0:
-            assert factor.completeness == 0.0, (
-                f"direction=0 must yield completeness=0 regardless of confidence, "
-                f"got direction={factor.direction}, confidence={factor.confidence}, "
-                f"completeness={factor.completeness}"
-            )
+        # 无条件断言: 先确认确实落在死区, 再断言 completeness
+        assert factor.direction == 0, (
+            f"测试前提: 等额买卖应产生 direction=0 (死区), got direction={factor.direction}"
+        )
+        assert factor.completeness == 0.0, (
+            f"direction=0 must yield completeness=0 regardless of confidence, "
+            f"got direction={factor.direction}, confidence={factor.confidence}, "
+            f"completeness={factor.completeness}"
+        )
 
     def test_directional_insider_retains_completeness(self):
         """direction≠0（score>0.6 或 <0.4）时 completeness 应为 1.0。"""
-        # 强买入：buy_value=20000, sell_value=0 → ratio=1.0 → score 偏高 → direction=+1
+        # 强买入：buy_value=20000, sell_value=0 → ratio=1.0 → score=1.0 → direction=+1
         buy = InsiderTrade(
             ticker="000001", issuer="测试", name="张三", title="高管",
             is_board_director=False, transaction_date="2026-03-01",
@@ -225,5 +226,8 @@ class TestBug4InsiderDeadZone:
             shares_owned_after_transaction=52000.0, security_title="股票", filing_date="2026-03-02",
         )
         factor = _score_insider_conviction([buy])
-        if factor.direction != 0:
-            assert factor.completeness == 1.0
+        # 无条件断言
+        assert factor.direction == 1, (
+            f"测试前提: 纯买入应产生 direction=+1, got direction={factor.direction}"
+        )
+        assert factor.completeness == 1.0

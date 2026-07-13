@@ -437,6 +437,37 @@ def test_check_stop_hit_scans_full_trading_day_window_not_calendar_day():
     assert result is True, "day-12 low=90 < hard_stop=92 应触发止损, 但日历日窗口 [0601,0611] 漏掉了它 " "(真实 T+10 交易日 ≈ +14 日历日, 窗口应到 0615). _check_stop_hit 必须用交易日口径 " "与 _execution_adjusted_return (exit_idx=trigger_idx+horizon) 一致, 不能用日历日."
 
 
+def test_check_stop_hit_date_parse_failure_returns_false_not_whole_history():
+    """Bug fix: except 兜底不应退化为扫描全历史 (look-ahead bias).
+
+    旧实现: ``except Exception: window = df["low"].dropna()`` 扫描整个价格历史,
+    包含 T+0 信号日 (用户还没买入) 和 T+N 之后的未来日期 (look-ahead).
+    主路径 date 解析失败时 (格式异常/字符串日期), 保守 return False 而非猜测.
+
+    构造: date 列为非标准格式 (纯字符串, .dt.date 会 AttributeError),
+    历史中有 low < hard_stop 的行 — 旧实现会误返回 True (扫描全历史),
+    修复后应返回 False (保守不触发).
+    """
+    import pandas as pd
+
+    from src.screening.offensive.paper_tracker import PaperTracker
+
+    # date 列用纯字符串 "not-a-date" — pd.Series.dt 属性不存在或失败
+    df = pd.DataFrame(
+        {
+            "date": ["garbage", "values", "here"],  # 非 datetime, .dt.date 会失败
+            "low": [80.0, 85.0, 90.0],  # 全部 < hard_stop=92
+        }
+    )
+    # 旧实现: except → window = df["low"].dropna() → (80<=92).any() → True (错误!)
+    # 修复后: except → return False (保守不触发)
+    result = PaperTracker._check_stop_hit(df, "20260601", horizon=10, hard_stop=92.0)
+    assert result is False, (
+        "date 解析失败时应保守 return False, 不应扫描全历史 (look-ahead bias). "
+        "旧实现退化为 df['low'].dropna() 会把 T+0 和 T+N 之后的 low 纳入判定."
+    )
+
+
 def test_close_matured_uses_execution_adjusted_return_when_ohlc_available(tmp_path):
     """有 OHLC price_loader 时, close_matured 应按次日开盘买入 + 滑点算收益.
 

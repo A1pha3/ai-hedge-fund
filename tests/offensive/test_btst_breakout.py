@@ -12,7 +12,7 @@ def _ctx(prices, fund_flow_records=None, industry_pct=3.0, regime="normal"):
     return {
         "prices": prices,
         "fund_flow_records": fund_flow_records or [],
-        "industry_day_pct": industry_pct,  # 行业当日涨幅
+        "industry_day_pct": industry_pct,  # 行业当日涨幅 (None = 数据未加载)
         "regime": regime,
     }
 
@@ -256,3 +256,45 @@ def test_not_degraded_when_fund_flow_history_sufficient():
     result = BtstBreakoutSetup().detect("X", today, ctx)
     assert result.hit is True
     assert result.degraded is False
+
+
+def test_industry_data_none_degrades_not_kills():
+    """Bug fix: industry_day_pct=None (数据管道断裂) 时应 degraded, 不应静默 miss.
+
+    旧实现: daily_action 把加载失败映射为 industry_pct=0.0 → 0.0 < 2.0 → 全部 BTST miss.
+    用户看到"今日无信号", 实际是行业缓存缺失/import 失败. 修正后: None 时跳过行业
+    过滤但标 degraded=True, 让 operator 知道行业条件未验证.
+
+    场景: 涨停 + 主力强 + 前5日涨幅 OK, 但行业数据未加载 (industry_day_pct=None).
+    """
+    prices = _prices_with_limit_up_today()
+    today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+    recs_today = [FundFlowRecord(ticker="X", date=today, close=11.0, pct_change=10.0, main_net_inflow=5_000_000, main_net_pct=8.0)]
+    old_recs = []
+    for i in range(1, 21):
+        d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
+        old_recs.append(FundFlowRecord(ticker="X", date=d, close=10.0, pct_change=0.0, main_net_inflow=100_000, main_net_pct=0.5))
+    # industry_day_pct=None: 模拟 _load_industry_day_pct_by_ticker 返回空字典
+    ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=None)
+    result = BtstBreakoutSetup().detect("X", today, ctx)
+    assert result.hit is True, "行业数据缺失时 BTST 仍应命中 (降级, 不静默全杀)"
+    assert result.degraded is True, "行业数据缺失应标 degraded"
+    assert "行业" in result.degradation_reason or "条件3" in result.degradation_reason
+
+
+def test_industry_data_zero_still_misses():
+    """有行业数据但涨幅为 0.0 → 正常 miss (行业未涨 = 无板块效应).
+
+    区分: industry_day_pct=0.0 (有数据, 行业没涨) vs industry_day_pct=None (无数据).
+    前者应正常 miss, 后者应 degraded hit. 这保证降级只发生在数据缺失时, 不放宽过滤.
+    """
+    prices = _prices_with_limit_up_today()
+    today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+    recs_today = [FundFlowRecord(ticker="X", date=today, close=11.0, pct_change=10.0, main_net_inflow=5_000_000, main_net_pct=8.0)]
+    old_recs = []
+    for i in range(1, 21):
+        d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
+        old_recs.append(FundFlowRecord(ticker="X", date=d, close=10.0, pct_change=0.0, main_net_inflow=100_000, main_net_pct=0.5))
+    ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=0.0)
+    result = BtstBreakoutSetup().detect("X", today, ctx)
+    assert result.hit is False, "行业涨幅 0.0 < 2.0 应正常 miss (非降级)"

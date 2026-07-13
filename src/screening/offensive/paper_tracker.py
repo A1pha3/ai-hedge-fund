@@ -635,13 +635,18 @@ class PaperTracker:
         # Bug fix (2026-07-12): 窗口排除 T+0 信号日 — 信号日当天用户尚未买入 (T+1 开盘才买),
         # T+0 盘中 low 与止损无关. 旧代码 `>= buy_dt` 包含 T+0, 涨停日盘中波动会误报止损触发.
         # 修正: `> buy_dt` 从 T+1 开始扫描, 与 _stop_adjusted_return 的 entry_idx = trigger_idx + 1 对齐.
-        # date 列可能为 datetime64 或字符串 — 直接尝试 .dt.date, 失败时兜底用全量 low.
+        #
+        # Bug fix (2026-07-12, #2): except 兜底曾退化为 ``df["low"].dropna()`` (扫描全历史),
+        # 这会引入 T+0 和 T+N 之后的未来 low (look-ahead bias) — 旧兜底只在 date 列解析失败
+        # 时触发, 但一旦触发就会误报止损. 主路径无法判定窗口时, 保守不触发 (return False)
+        # 与函数开头 ``prices_df is None → return False`` 同语义: 不猜测.
         df = prices_df.copy()
         try:
             mask = (df["date"].dt.date > buy_dt) & (df["date"].dt.date <= end_dt)
             window = df.loc[mask, "low"].dropna()
         except Exception:
-            window = df["low"].dropna()
+            logger.debug("_check_stop_hit: date 解析失败, 保守不触发 (不扫描全历史)")
+            return False
         if len(window) == 0:
             return False
         return bool((window <= hard_stop).any())
