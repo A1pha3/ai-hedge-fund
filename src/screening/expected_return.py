@@ -20,11 +20,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from src.screening.confidence_calibration import (
     _find_bucket,
     _load_tracking_records,
+    _normalize_trade_date,
     CalibrationSummary,
     compute_calibration,
 )
@@ -235,6 +236,9 @@ def _build_bucket_t30_median_map(calibration: CalibrationSummary) -> dict[str, f
 def compute_expected_returns(
     *,
     recommendations: list[dict[str, Any]],
+    as_of: str | None = None,
+    model_version: str | None = None,
+    history_records: Sequence[Mapping[str, Any]] | None = None,
     lookback_days: int = 60,
     reports_dir: Path | None = None,
 ) -> ExpectedReturnReport:
@@ -242,15 +246,34 @@ def compute_expected_returns(
 
     Args:
         recommendations: List of recommendation dicts (must have ``ticker`` and ``score_b``)
-        lookback_days: How many days of history to use for calibration
-        reports_dir: Reports directory for tracking history
+        as_of: Exact point-in-time trade date for an explicit snapshot.
+        model_version: Model version whose calibration evidence is admissible.
+        history_records: Caller-supplied tracking snapshot.  When supplied,
+            this function performs no filesystem reads.
+        lookback_days: How many days of history to use for calibration.
+        reports_dir: Legacy boundary used only when ``history_records`` is not
+            supplied.
 
     Returns:
         :class:`ExpectedReturnReport`
     """
-    search_dir = reports_dir or resolve_report_dir()
-    records = _load_tracking_records(search_dir)
-    calibration = compute_calibration(records, lookback_days=lookback_days)
+    strict_requested = (
+        as_of is not None
+        or model_version is not None
+        or history_records is not None
+    )
+    if strict_requested:
+        records = history_records or []
+        calibration = compute_calibration(
+            records,
+            lookback_days=lookback_days,
+            as_of=as_of,
+            model_version=model_version,
+        )
+    else:
+        search_dir = reports_dir or resolve_report_dir()
+        records = _load_tracking_records(search_dir)
+        calibration = compute_calibration(records, lookback_days=lookback_days)
     return_map = _build_bucket_return_map(calibration)
     winrate_map = _build_bucket_winrate_map(calibration)
     sample_map = _build_bucket_sample_map(calibration)
@@ -260,7 +283,12 @@ def compute_expected_returns(
     p5_t30_map = _build_bucket_t30_p5_map(calibration)
     median_t30_map = _build_bucket_t30_median_map(calibration)
 
-    trade_date = ""
+    normalized_as_of = _normalize_trade_date(as_of)
+    trade_date = (
+        normalized_as_of.strftime("%Y%m%d")
+        if strict_requested and normalized_as_of is not None
+        else ""
+    )
     items: list[ExpectedReturn] = []
     for rec in recommendations:
         ticker = str(rec.get("ticker", ""))

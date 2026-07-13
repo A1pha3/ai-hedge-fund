@@ -28,16 +28,44 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Sequence
 
-from src.screening.consecutive_recommendation import resolve_report_dir
+from src.screening.confidence_calibration import _normalize_trade_date
+from src.screening.consecutive_recommendation import (
+    load_auto_screening_history,
+    resolve_report_dir,
+)
 from src.screening.data_quality_audit import _find_latest_report
+from src.screening.industry_rotation import (
+    MIN_CANDIDATES_PER_INDUSTRY,
+    UNKNOWN_INDUSTRY,
+    _aggregate_momentum,
+    _resolve_industry_name,
+    _safe_score_b,
+)
 from src.screening.sector_strength import compute_sector_strength
 from src.screening.signal_consistency import check_signal_consistency
-from src.screening.signal_momentum import compute_signal_momentum
-from src.screening.trend_resonance import compute_trend_resonance
-from src.screening.volume_confirmation import compute_volume_confirmation
+from src.screening.signal_momentum import (
+    _classify_momentum,
+    _simple_slope as _momentum_slope,
+    compute_signal_momentum,
+)
+from src.screening.trend_resonance import (
+    _classify_direction,
+    _classify_resonance,
+    _simple_slope as _trend_slope,
+    compute_trend_resonance,
+)
+from src.screening.volume_confirmation import (
+    _CONFIRMED_BONUS,
+    _CONFIRMED_THRESHOLD,
+    _DIVERGENCE_PENALTY,
+    _DIVERGENCE_THRESHOLD,
+    _extract_volume_from_rec,
+    compute_volume_confirmation,
+)
 from colorama import Fore, Style
 from src.utils.numeric import coerce_score_b
 
@@ -168,6 +196,12 @@ def compute_composite_scores(
     return compute_composite_scores_for_recommendations(
         recommendations=recs,
         trade_date=trade_date,
+        as_of=trade_date,
+        history_reports=load_auto_screening_history(
+            lookback_days=max(60, lookback_days),
+            report_dir=search_dir,
+            end_date=trade_date,
+        ),
         lookback_days=lookback_days,
         reports_dir=search_dir,
     )
@@ -204,10 +238,185 @@ def _compute_dimension_bonus_map(
         return {}
 
 
+def _report_recommendations(report: Mapping[str, Any]) -> list[dict[str, Any]]:
+    payload = report.get("payload")
+    source = payload if isinstance(payload, Mapping) else report
+    recommendations = source.get("recommendations")
+    if not isinstance(recommendations, list):
+        return []
+    return [dict(rec) for rec in recommendations if isinstance(rec, Mapping)]
+
+
+def _strict_history_snapshot(
+    history_reports: Sequence[Mapping[str, Any]],
+    *,
+    as_of: str,
+    trade_date: str,
+    max_lookback_days: int,
+) -> tuple[list[tuple[Any, list[dict[str, Any]]]], bool]:
+    """Normalize caller-supplied reports without consulting latest files."""
+    anchor = _normalize_trade_date(as_of)
+    current = _normalize_trade_date(trade_date)
+    if anchor is None or current is None or current > anchor:
+        return [], False
+
+    cutoff = anchor - timedelta(days=max_lookback_days - 1)
+    snapshot: list[tuple[Any, list[dict[str, Any]]]] = []
+    for report in history_reports:
+        if not isinstance(report, Mapping):
+            continue
+        report_date = _normalize_trade_date(report.get("date"))
+        if report_date is None:
+            continue
+        # Current recommendations are supplied explicitly and must not be
+        # duplicated from a persisted same-day report.
+        if report_date >= current or report_date > anchor or report_date < cutoff:
+            continue
+        snapshot.append((report_date, _report_recommendations(report)))
+    snapshot.sort(key=lambda item: item[0])
+    return snapshot, True
+
+
+def _ticker_history(
+    ticker: str,
+    history: Sequence[tuple[Any, list[dict[str, Any]]]],
+    field: str,
+) -> list[Any]:
+    values: list[Any] = []
+    for _, recommendations in history:
+        for recommendation in recommendations:
+            if str(recommendation.get("ticker", "")) == ticker:
+                values.append(recommendation.get(field))
+                break
+    return values
+
+
+def _snapshot_dimension_maps(
+    recommendations: list[dict[str, Any]],
+    *,
+    trade_date: str,
+    as_of: str,
+    history_reports: Sequence[Mapping[str, Any]],
+    lookback_days: int,
+) -> tuple[dict[str, float], dict[str, float], dict[str, float], dict[str, float]]:
+    """Compute history-backed dimensions from one immutable PIT snapshot."""
+    history, valid = _strict_history_snapshot(
+        history_reports,
+        as_of=as_of,
+        trade_date=trade_date,
+        max_lookback_days=60,
+    )
+    if not valid:
+        return {}, {}, {}, {}
+
+    anchor = _normalize_trade_date(as_of)
+    assert anchor is not None
+    short_cutoff = anchor - timedelta(days=max(1, lookback_days) - 1)
+    short_history = [item for item in history if item[0] >= short_cutoff]
+
+    momentum_map: dict[str, float] = {}
+    volume_map: dict[str, float] = {}
+    trend_map: dict[str, float] = {}
+    for recommendation in recommendations:
+        ticker = str(recommendation.get("ticker", ""))
+        scores = [coerce_score_b(value) for value in _ticker_history(ticker, short_history, "score_b")]
+        scores.append(coerce_score_b(recommendation.get("score_b", 0.0)))
+        _, momentum_map[ticker] = _classify_momentum(_momentum_slope(scores))
+
+        volumes = []
+        for _, report_recommendations in short_history:
+            for prior in report_recommendations:
+                if str(prior.get("ticker", "")) == ticker:
+                    volume = _extract_volume_from_rec(prior)
+                    if math.isfinite(volume) and volume > 0:
+                        volumes.append(volume)
+                    break
+        current_volume = _extract_volume_from_rec(recommendation)
+        if not math.isfinite(current_volume) or current_volume <= 0:
+            volume_map[ticker] = 0.0
+        else:
+            volumes.append(current_volume)
+            if len(volumes) < 2:
+                volume_map[ticker] = 0.0
+            else:
+                average = sum(volumes[:-1]) / len(volumes[:-1])
+                ratio = volumes[-1] / average if average > 0 else 1.0
+                if ratio >= _CONFIRMED_THRESHOLD:
+                    volume_map[ticker] = _CONFIRMED_BONUS
+                elif ratio <= _DIVERGENCE_THRESHOLD:
+                    volume_map[ticker] = _DIVERGENCE_PENALTY
+                else:
+                    volume_map[ticker] = 0.0
+
+        trend_scores = [coerce_score_b(value) for value in _ticker_history(ticker, history, "score_b")]
+        trend_scores.append(coerce_score_b(recommendation.get("score_b", 0.0)))
+        if len(trend_scores) < 5:
+            trend_map[ticker] = 0.0
+        else:
+            slopes = (
+                _trend_slope(trend_scores[-5:]),
+                _trend_slope(trend_scores[-20:]),
+                _trend_slope(trend_scores[-60:]),
+            )
+            directions = tuple(_classify_direction(slope) for slope in slopes)
+            _, trend_map[ticker] = _classify_resonance(directions)  # type: ignore[arg-type]
+
+    sector_map = _snapshot_sector_map(recommendations, short_history)
+    return momentum_map, sector_map, volume_map, trend_map
+
+
+def _snapshot_sector_map(
+    recommendations: list[dict[str, Any]],
+    history: Sequence[tuple[Any, list[dict[str, Any]]]],
+) -> dict[str, float]:
+    """Preserve sector-strength ranking while sourcing history explicitly."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for recommendation in recommendations:
+        industry = _resolve_industry_name(recommendation) or UNKNOWN_INDUSTRY
+        groups.setdefault(industry, []).append(recommendation)
+
+    history_stats: dict[str, list[float]] = {}
+    presence: dict[str, int] = {}
+    for _, prior_recommendations in history:
+        daily: dict[str, list[float]] = {}
+        for recommendation in prior_recommendations:
+            industry = _resolve_industry_name(recommendation)
+            if industry and industry != UNKNOWN_INDUSTRY:
+                daily.setdefault(industry, []).append(_safe_score_b(recommendation.get("score_b")))
+        for industry, scores in daily.items():
+            presence[industry] = presence.get(industry, 0) + 1
+            history_stats.setdefault(industry, []).append(sum(scores) / len(scores))
+
+    ranked: list[tuple[float, float, int, str]] = []
+    for industry, members in groups.items():
+        if industry == UNKNOWN_INDUSTRY or len(members) < MIN_CANDIDATES_PER_INDUSTRY:
+            continue
+        average_momentum = sum(_aggregate_momentum(item) for item in members) / len(members)
+        average_score = sum(_safe_score_b(item.get("score_b")) for item in members) / len(members)
+        history_bonus = 0.0
+        if history and industry in presence:
+            history_bonus = presence[industry] / len(history) * 10.0
+            scores = history_stats.get(industry, [])
+            if scores:
+                history_bonus += sum(scores) / len(scores) * 10.0
+        ranked.append((average_momentum + history_bonus, average_score, len(members), industry))
+    ranked.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3]))
+    strong = {item[3] for item in ranked[:3]}
+    weak = {item[3] for item in ranked[-3:]} - strong
+    result: dict[str, float] = {}
+    for recommendation in recommendations:
+        ticker = str(recommendation.get("ticker", ""))
+        industry = _resolve_industry_name(recommendation)
+        result[ticker] = 0.05 if industry in strong else -0.05 if industry in weak else 0.0
+    return result
+
+
 def compute_composite_scores_for_recommendations(
     *,
     recommendations: list[dict[str, Any]],
     trade_date: str = "",
+    as_of: str | None = None,
+    history_reports: Sequence[Mapping[str, Any]] | None = None,
     lookback_days: int = 5,
     reports_dir: Path | None = None,
 ) -> CompositeReport:
@@ -216,33 +425,36 @@ def compute_composite_scores_for_recommendations(
     if not recs:
         return CompositeReport(trade_date=trade_date)
 
-    # Compute momentum / sector / volume dimensions (shared P10-1/P10-2/P11-2 shape).
+    # Explicit PIT path: all history-backed dimensions consume the same caller-
+    # supplied snapshot and never resolve a "latest" report internally.
     top_n = len(recs)
-    search_dir = reports_dir or resolve_report_dir()
-    momentum_map = _compute_dimension_bonus_map(
-        "momentum",
-        compute_signal_momentum,
-        "momentum_bonus",
-        top_n=top_n,
-        lookback_days=lookback_days,
-        search_dir=search_dir,
-    )
-    sector_map = _compute_dimension_bonus_map(
-        "sector",
-        compute_sector_strength,
-        "strength_bonus",
-        top_n=top_n,
-        lookback_days=lookback_days,
-        search_dir=search_dir,
-    )
-    volume_map = _compute_dimension_bonus_map(
-        "volume",
-        compute_volume_confirmation,
-        "volume_factor",
-        top_n=top_n,
-        lookback_days=lookback_days,
-        search_dir=search_dir,
-    )
+    strict_requested = as_of is not None or history_reports is not None
+    if strict_requested:
+        momentum_map, sector_map, volume_map, trend_map = _snapshot_dimension_maps(
+            recs,
+            trade_date=trade_date,
+            as_of=as_of or "",
+            history_reports=history_reports or [],
+            lookback_days=lookback_days,
+        )
+    else:
+        search_dir = reports_dir or resolve_report_dir()
+        momentum_map = _compute_dimension_bonus_map(
+            "momentum", compute_signal_momentum, "momentum_bonus",
+            top_n=top_n, lookback_days=lookback_days, search_dir=search_dir,
+        )
+        sector_map = _compute_dimension_bonus_map(
+            "sector", compute_sector_strength, "strength_bonus",
+            top_n=top_n, lookback_days=lookback_days, search_dir=search_dir,
+        )
+        volume_map = _compute_dimension_bonus_map(
+            "volume", compute_volume_confirmation, "volume_factor",
+            top_n=top_n, lookback_days=lookback_days, search_dir=search_dir,
+        )
+        trend_map = _compute_dimension_bonus_map(
+            "trend", compute_trend_resonance, "resonance_factor",
+            top_n=top_n, search_dir=search_dir,
+        )
 
     # Compute signal consistency (P7-1) — distinct shape (dict comprehension), not shared.
     try:
@@ -252,16 +464,6 @@ def compute_composite_scores_for_recommendations(
         # BH-021 / R48 BH-017 同族: consistency 维度降级 → consistency_adj 全部 0。
         logger.debug("composite consistency dimension degraded to {}: %s", exc)
         consistency_map = {}
-
-    # Compute trend resonance (P14-1) — uses _compute_dimension_bonus_map with
-    # lookback_days=None (trend only takes top_n + reports_dir).
-    trend_map = _compute_dimension_bonus_map(
-        "trend",
-        compute_trend_resonance,
-        "resonance_factor",
-        top_n=top_n,
-        search_dir=search_dir,
-    )
 
     # Build composite entries
     items: list[CompositeEntry] = []
