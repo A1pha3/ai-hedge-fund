@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 import numpy as np
 import pandas as pd
@@ -172,6 +172,22 @@ def test_missing_limit_or_suspension_state_fails_closed():
     assert classify_open_fill(10.0, 9.0, 11.0, None) is ExecutionStatus.UNKNOWN_QUEUE
 
 
+@pytest.mark.parametrize("suspended", [0, 1, "", "false", float("nan")])
+def test_suspension_status_rejects_falsey_and_truthy_impostors(suspended):
+    assert classify_open_fill(10.0, 9.0, 11.0, suspended) is ExecutionStatus.UNKNOWN_QUEUE
+
+
+def test_numpy_boolean_suspension_status_is_supported():
+    assert (
+        classify_open_fill(10.0, 9.0, 11.0, np.bool_(False))
+        is ExecutionStatus.EXECUTABLE_PROXY
+    )
+    assert (
+        classify_open_fill(10.0, 9.0, 11.0, np.bool_(True))
+        is ExecutionStatus.UNEXECUTABLE_PROXY
+    )
+
+
 def test_costs_are_not_embedded_in_raw_fill_price():
     fill = apply_execution_costs(
         raw_fill_price=10.0,
@@ -213,6 +229,29 @@ def test_sell_requires_complete_strictly_ordered_dates(entry_date, exit_date):
             quantity=1_000,
             side="sell",
             costs=ExecutionCosts(),
+            entry_date=entry_date,
+            exit_date=exit_date,
+        )
+
+
+@pytest.mark.parametrize(
+    ("entry_date", "exit_date"),
+    [
+        ("2026-07-13", date(2026, 7, 14)),
+        (date(2026, 7, 13), "2026-07-14"),
+        (1, date(2026, 7, 14)),
+        (date(2026, 7, 13), 2),
+        (datetime(2026, 7, 13, 9, 30), date(2026, 7, 14)),
+        (date(2026, 7, 13), datetime(2026, 7, 14, 9, 30)),
+    ],
+)
+def test_sell_dates_must_be_plain_date_values(entry_date, exit_date):
+    with pytest.raises(ValueError, match="datetime.date"):
+        apply_execution_costs(
+            10.0,
+            1_000,
+            "sell",
+            ExecutionCosts(),
             entry_date=entry_date,
             exit_date=exit_date,
         )
@@ -260,3 +299,8 @@ def test_stamp_tax_applies_only_to_sell():
     assert buy.net_cash_flow == -10_000.0
     assert sell.tax == 10.0
     assert sell.net_cash_flow == 9_990.0
+
+
+def test_computed_fill_fields_must_not_overflow():
+    with pytest.raises(ValueError, match="finite audit fields"):
+        apply_execution_costs(1e308, 2, "buy", ExecutionCosts())

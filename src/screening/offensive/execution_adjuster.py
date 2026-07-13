@@ -70,7 +70,9 @@ def classify_open_fill(
     low: float | None = None,
 ) -> ExecutionStatus:
     """Classify an open-price proxy using half of the A-share ¥0.01 tick as tolerance."""
-    if suspended is None or open_price is None or limit_down is None or limit_up is None:
+    if not isinstance(suspended, (bool, np.bool_)):
+        return ExecutionStatus.UNKNOWN_QUEUE
+    if open_price is None or limit_down is None or limit_up is None:
         return ExecutionStatus.UNKNOWN_QUEUE
 
     supplied_prices = [open_price, limit_down, limit_up]
@@ -83,7 +85,7 @@ def classify_open_fill(
         for price in supplied_prices
     ):
         return ExecutionStatus.UNKNOWN_QUEUE
-    if suspended:
+    if bool(suspended):
         return ExecutionStatus.UNEXECUTABLE_PROXY
     if limit_down >= limit_up or (high is not None and low is not None and high < low):
         return ExecutionStatus.UNKNOWN_QUEUE
@@ -153,16 +155,24 @@ def apply_execution_costs(
         raise ValueError("execution costs must be finite and non-negative")
     if not isinstance(costs.version, str) or not costs.version.strip():
         raise ValueError("cost version must be a nonempty string")
-    if side == "sell" and (
-        entry_date is None or exit_date is None or exit_date <= entry_date
-    ):
-        raise ValueError("exit_date must be strictly after entry_date for T+1")
+    if side == "sell":
+        if entry_date is None or exit_date is None:
+            raise ValueError("exit_date must be strictly after entry_date for T+1")
+        if type(entry_date) is not date or type(exit_date) is not date:
+            raise ValueError("entry_date and exit_date must be plain datetime.date values")
+        if exit_date <= entry_date:
+            raise ValueError("exit_date must be strictly after entry_date for T+1")
 
     gross_notional = raw_fill_price * quantity
     tax = gross_notional * costs.tax_rate if side == "sell" else 0.0
     slippage_cost = gross_notional * costs.slippage_bps / 10_000.0
     total_cost = costs.commission + tax + slippage_cost + costs.other_fee
     net_cash_flow = -(gross_notional + total_cost) if side == "buy" else gross_notional - total_cost
+    if not all(
+        math.isfinite(value)
+        for value in (gross_notional, tax, slippage_cost, total_cost, net_cash_flow)
+    ):
+        raise ValueError("execution cost calculation must produce finite audit fields")
     return FillResult(
         raw_fill_price=raw_fill_price,
         quantity=quantity,
