@@ -127,3 +127,57 @@ def test_directory_close_failure_after_replace_is_best_effort(tmp_path: Path, mo
     target = tmp_path / "report.json"
     atomic_write_json(target, {"ok": True})
     assert json.loads(target.read_text(encoding="utf-8")) == {"ok": True}
+
+
+def test_prepare_failure_attempts_close_and_unlink_without_masking_original(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "report.json"
+    target.write_text("{}", encoding="utf-8")
+    real_close = os.close
+    real_unlink = os.unlink
+    cleanup: list[str] = []
+
+    monkeypatch.setattr(atomic_files.os, "fchmod", lambda *_args: (_ for _ in ()).throw(OSError("fchmod failed")))
+
+    def fail_close(fd: int) -> None:
+        cleanup.append("close")
+        real_close(fd)
+        raise OSError("close failed")
+
+    def observe_unlink(path: str) -> None:
+        cleanup.append("unlink")
+        real_unlink(path)
+
+    monkeypatch.setattr(atomic_files.os, "close", fail_close)
+    monkeypatch.setattr(atomic_files.os, "unlink", observe_unlink)
+
+    with pytest.raises(OSError, match="fchmod failed"):
+        atomic_write_json(target, {})
+    assert cleanup == ["close", "unlink"]
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_prepare_unlink_failure_does_not_mask_fchmod_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "report.json"
+    target.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(atomic_files.os, "fchmod", lambda *_args: (_ for _ in ()).throw(OSError("fchmod failed")))
+    monkeypatch.setattr(atomic_files.os, "unlink", lambda *_args: (_ for _ in ()).throw(OSError("unlink failed")))
+
+    with pytest.raises(OSError, match="fchmod failed"):
+        atomic_write_json(target, {})
+
+
+def test_existing_symlink_target_is_rejected_without_changing_link_or_referent(tmp_path: Path) -> None:
+    referent = tmp_path / "actual.json"
+    referent.write_text('{"version": 1}', encoding="utf-8")
+    target = tmp_path / "report.json"
+    target.symlink_to(referent.name)
+
+    with pytest.raises(ValueError, match="symlink"):
+        atomic_write_json(target, {"version": 2})
+
+    assert target.is_symlink()
+    assert target.readlink() == Path(referent.name)
+    assert json.loads(referent.read_text(encoding="utf-8")) == {"version": 1}
+    assert list(tmp_path.glob(".*.tmp")) == []

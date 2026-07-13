@@ -67,10 +67,21 @@ def _prepare_temp(target: Path) -> tuple[int, str]:
     try:
         os.fchmod(fd, mode)
     except BaseException:
-        os.close(fd)
-        os.unlink(temp_name)
+        try:
+            os.close(fd)
+        except BaseException:
+            pass
+        try:
+            os.unlink(temp_name)
+        except BaseException:
+            pass
         raise
     return fd, temp_name
+
+
+def _reject_symlink(target: Path) -> None:
+    if target.is_symlink():
+        raise ValueError(f"refusing atomic write to symlink target: {target}")
 
 
 def _open_temp(fd: int, temp_name: str, *, newline: str | None = None):
@@ -91,6 +102,7 @@ def atomic_write_json(path: Path | str, payload: Any) -> None:
     """Write strict UTF-8 JSON and atomically publish it at *path*."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    _reject_symlink(target)
     fd, temp_name = _prepare_temp(target)
     try:
         with _open_temp(fd, temp_name) as file:
@@ -104,6 +116,7 @@ def atomic_write_json(path: Path | str, payload: Any) -> None:
             )
             file.flush()
             os.fsync(file.fileno())
+        _reject_symlink(target)
         os.replace(temp_name, target)
         _fsync_directory(target.parent)
     except BaseException:
@@ -118,12 +131,14 @@ def atomic_write_csv(path: Path | str, frame: pd.DataFrame) -> None:
     """Write a pandas frame and atomically publish it at *path*."""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    _reject_symlink(target)
     fd, temp_name = _prepare_temp(target)
     try:
         with _open_temp(fd, temp_name, newline="") as file:
             frame.to_csv(file, index=False)
             file.flush()
             os.fsync(file.fileno())
+        _reject_symlink(target)
         os.replace(temp_name, target)
         _fsync_directory(target.parent)
     except BaseException:
