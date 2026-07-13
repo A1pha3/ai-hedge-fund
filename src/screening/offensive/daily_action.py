@@ -651,6 +651,18 @@ def render_daily_action_v2(run: DailyActionV2Run) -> str:
     for trade in run.open_positions:
         if trade.fill_source in {FillSource.MANUAL_CONFIRMATION, FillSource.BROKER_IMPORT}:
             lines.append(f"  {trade.ticker} 确认成交 @{trade.raw_entry_price:.2f}")
+    lines.append("退出挑战者（SHADOW ONLY，不改变默认退出；不触发交易、仓位或组合上限）:")
+    for trade in run.open_positions:
+        shadow_line = (
+            f"{trade.shadow_exit_line:.2f}"
+            if trade.shadow_exit_line is not None
+            else "unavailable"
+        )
+        lines.append(
+            f"  {trade.ticker} shadow_exit_line={shadow_line} "
+            f"shadow_would_exit_next_open={str(trade.shadow_would_exit_next_open).lower()} "
+            f"shadow_reason={trade.shadow_reason}"
+        )
     if run.blocked_candidates:
         lines.append("不可计划候选:")
         for candidate in run.blocked_candidates:

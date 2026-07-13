@@ -7,9 +7,12 @@ import stat
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
+from numbers import Real
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, Mapping, Sequence
+from typing import Callable, Mapping, Sequence
+
+import pandas as pd
 
 from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
 from src.screening.data_quality_manifest import (
@@ -17,11 +20,17 @@ from src.screening.data_quality_manifest import (
     TickerReadiness,
     validate_ticker_readiness,
 )
+from src.screening.offensive.atr_utils import compute_atr
 from src.screening.offensive.execution_adjuster import (
     ExecutionCosts,
     ExecutionStatus,
     apply_execution_costs,
     classify_open_fill,
+)
+from src.screening.offensive.exit_policy import (
+    ExitObservation,
+    ExitPolicyState,
+    evaluate_shadow_exit,
 )
 from src.screening.offensive.ledger_repository import (
     DailyValuation,
@@ -100,6 +109,15 @@ class ActionItem:
 
 
 @dataclass(frozen=True)
+class OpenPositionView(LedgerTrade):
+    """Read-only ledger projection with fixed-policy shadow observations."""
+
+    shadow_exit_line: float | None
+    shadow_would_exit_next_open: bool
+    shadow_reason: str
+
+
+@dataclass(frozen=True)
 class TickerGateBlock:
     ticker: str
     reasons: tuple[str, ...]
@@ -109,7 +127,7 @@ class TickerGateBlock:
 class DailyActionRun:
     trade_date: date
     valuation: DailyValuation
-    open_positions: tuple[LedgerTrade, ...]
+    open_positions: tuple[OpenPositionView, ...]
     new_plans: tuple[ActionItem, ...]
     skipped_plans: tuple[ActionItem, ...]
     exit_plans: tuple[ActionItem, ...]
@@ -125,6 +143,7 @@ class DailyActionRun:
 
 PriceProvider = Callable[[str, date], MarketBar | None]
 CacheFingerprintProvider = Callable[[str, date], str | None]
+ShadowPriceSource = PriceProvider | Mapping[object, object] | pd.DataFrame
 
 
 def _read_exact_regular_json(reports_dir: Path, filename: str) -> object:
@@ -382,6 +401,8 @@ class DailyActionService:
         as_of: date,
         candidates: Sequence[PlanCandidate],
         manifest: RunManifest | None = None,
+        *,
+        shadow_prices: ShadowPriceSource | None = None,
     ) -> DailyActionRun:
         self._skipped, self._exit_plans, self._deferred, self._block_reason = (
             [],
@@ -401,7 +422,25 @@ class DailyActionService:
             plans = ()
         else:
             plans = self._create_capacity_safe_plans(as_of, eligible, valuation)
-        return self._build_view(as_of, valuation, exits, plans)
+        return self._build_view(
+            as_of,
+            valuation,
+            exits,
+            plans,
+            shadow_prices=self.prices if shadow_prices is None else shadow_prices,
+        )
+
+    @staticmethod
+    def render(run: DailyActionRun) -> str:
+        """Render the same operator view used by the daily-action dispatcher."""
+        from src.screening.offensive.daily_action import (
+            DailyActionV2Run,
+            render_daily_action_v2,
+        )
+
+        return render_daily_action_v2(
+            DailyActionV2Run(run, (), run.open_positions, (), ())
+        )
 
     def _manifest_eligible_candidates(
         self,
@@ -693,8 +732,13 @@ class DailyActionService:
         valuation: DailyValuation,
         exits: tuple[ActionItem, ...],
         plans: tuple[ActionItem, ...],
+        *,
+        shadow_prices: ShadowPriceSource,
     ) -> DailyActionRun:
-        positions = tuple(self.repository.open_trades())
+        positions = tuple(
+            self._shadow_position_view(trade, as_of, shadow_prices)
+            for trade in self.repository.open_trades()
+        )
         _, values, _ = self._snapshot(as_of)
         return DailyActionRun(
             as_of,
@@ -711,6 +755,158 @@ class DailyActionService:
             self._blocked_tickers,
             tuple(self._block_reasons),
             self._ticker_gate_blocks,
+        )
+
+    def _shadow_position_view(
+        self,
+        trade: LedgerTrade,
+        as_of: date,
+        prices: ShadowPriceSource,
+    ) -> OpenPositionView:
+        """Project one trade through the challenger without writing ledger state."""
+        result = self._evaluate_shadow_path(trade, as_of, prices)
+        return OpenPositionView(
+            **vars(trade),
+            shadow_exit_line=result[0],
+            shadow_would_exit_next_open=result[1],
+            shadow_reason=result[2],
+        )
+
+    def _evaluate_shadow_path(
+        self,
+        trade: LedgerTrade,
+        as_of: date,
+        prices: ShadowPriceSource,
+    ) -> tuple[float | None, bool, str]:
+        if (
+            trade.state is not TradeState.OPEN
+            or trade.entry_date is None
+            or trade.raw_entry_price is None
+            or not math.isfinite(trade.raw_entry_price)
+            or trade.raw_entry_price <= 0
+        ):
+            return None, False, "insufficient_data"
+
+        sessions = self.calendar.open_sessions
+        try:
+            entry_index = sessions.index(trade.entry_date)
+            as_of_index = sessions.index(as_of)
+        except ValueError:
+            return None, False, "insufficient_data"
+        if as_of_index < entry_index:
+            return None, False, "insufficient_data"
+
+        history_start = entry_index - 13
+        if history_start < 0:
+            return None, False, "insufficient_data"
+
+        rows: list[dict[str, object]] = []
+        bars: dict[date, MarketBar] = {}
+        for session in sessions[history_start : as_of_index + 1]:
+            bar = self._shadow_bar(prices, trade.ticker, session)
+            if not self._valid_shadow_bar(bar):
+                return None, False, "insufficient_data"
+            assert bar is not None and bar.high is not None and bar.low is not None
+            assert bar.close is not None
+            bars[session] = bar
+            rows.append(
+                {
+                    "date": session,
+                    "high": bar.high,
+                    "low": bar.low,
+                    "close": bar.close,
+                }
+            )
+
+        frame = pd.DataFrame(rows)
+        state = ExitPolicyState.unarmed(entry_price=trade.raw_entry_price)
+        decision_reason = "hold"
+        should_exit = False
+        for index in range(entry_index, as_of_index + 1):
+            session = sessions[index]
+            prefix_length = index - history_start + 1
+            atr = compute_atr(frame, period=14, at_idx=prefix_length)
+            if atr is None:
+                return None, False, "insufficient_data"
+            close = bars[session].close
+            assert close is not None
+            decision = evaluate_shadow_exit(
+                state,
+                ExitObservation(
+                    trade_date=session,
+                    holding_session=index - entry_index + 1,
+                    close=close,
+                    atr=atr,
+                ),
+            )
+            state = decision.state
+            decision_reason = decision.reason
+            should_exit = decision.should_exit_next_open
+            if should_exit:
+                break
+        return state.exit_line, should_exit, decision_reason
+
+    @staticmethod
+    def _shadow_bar(
+        prices: ShadowPriceSource,
+        ticker: str,
+        trade_date: date,
+    ) -> MarketBar | None:
+        if isinstance(prices, pd.DataFrame):
+            return DailyActionService._shadow_frame_bar(prices, trade_date)
+        if callable(prices):
+            return prices(ticker, trade_date)
+        direct = prices.get((ticker, trade_date))
+        if (
+            isinstance(direct, MarketBar)
+            or direct is None
+            and (ticker, trade_date) in prices
+        ):
+            return direct
+        nested = prices.get(ticker)
+        if isinstance(nested, pd.DataFrame):
+            return DailyActionService._shadow_frame_bar(nested, trade_date)
+        if isinstance(nested, Mapping):
+            value = nested.get(trade_date)
+            return value if isinstance(value, MarketBar) else None
+        value = prices.get(trade_date)
+        return value if isinstance(value, MarketBar) else None
+
+    @staticmethod
+    def _shadow_frame_bar(frame: pd.DataFrame, trade_date: date) -> MarketBar | None:
+        if frame.empty or not {"date", "high", "low", "close"}.issubset(frame.columns):
+            return None
+        dates = pd.to_datetime(frame["date"], errors="coerce").dt.date
+        rows = frame.loc[dates == trade_date]
+        if len(rows) != 1:
+            return None
+        row = rows.iloc[0]
+
+        def finite_value(column: str) -> float | None:
+            value = row.get(column)
+            if isinstance(value, bool) or not isinstance(value, Real):
+                return None
+            number = float(value)
+            return number if math.isfinite(number) and number > 0 else None
+
+        return MarketBar(
+            open=finite_value("open"),
+            close=finite_value("close"),
+            limit_down=None,
+            limit_up=None,
+            suspended=None,
+            high=finite_value("high"),
+            low=finite_value("low"),
+        )
+
+    @staticmethod
+    def _valid_shadow_bar(bar: MarketBar | None) -> bool:
+        if bar is None or bar.close is None or bar.high is None or bar.low is None:
+            return False
+        values = (bar.close, bar.high, bar.low)
+        return (
+            all(math.isfinite(value) and value > 0 for value in values)
+            and bar.high >= bar.low
         )
 
     def _snapshot(self, as_of: date) -> tuple[float, dict[str, float], list[str]]:
