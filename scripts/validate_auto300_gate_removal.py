@@ -111,6 +111,7 @@ def collect_events(
 ) -> list[dict]:
     """One event per (ticker, signal-day limit-up) that has an auto report that day."""
     report_days = set(membership)
+    regimes = _load_regimes()
     events: list[dict] = []
     for ticker, df in series.items():
         threshold = limit_up_pct_for_ticker(ticker)
@@ -133,10 +134,19 @@ def collect_events(
                     "ticker": ticker,
                     "day": day,
                     "inside": ticker in membership[day],
+                    "regime": regimes.get(day, "unknown"),
                     **{f"r{h}": rets[h] for h in HORIZONS},
                 }
             )
     return events
+
+
+def _load_regimes() -> dict[str, str]:
+    try:
+        payload = json.loads((REPORTS / "regime_history.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {_compact(k): str(v) for k, v in payload.items()} if isinstance(payload, dict) else {}
 
 
 def _summarize(values: list[float]) -> dict:
@@ -202,6 +212,18 @@ def main() -> None:
             t = diff / se_diff if se_diff else 0.0
             print(f"  外-内 E[r] 差 = {diff:+.2f}%  (t≈{t:+.2f}; |t|<2 视为无显著差异)")
         print()
+
+    # Cross-regime robustness at the BTST horizon (T+10): does "外 >= 内" hold in
+    # the crisis / risk_off regimes too, not just normal?
+    print("=== 跨 regime 稳健性 (T+10) ===")
+    for regime in ("normal", "crisis", "risk_off"):
+        reg_events = [e for e in events if e["regime"] == regime]
+        inside = [e["r10"] for e in reg_events if e["inside"] and e["r10"] is not None]
+        outside = [e["r10"] for e in reg_events if not e["inside"] and e["r10"] is not None]
+        print(f"--- {regime} (信号日事件 {len(reg_events)}) ---")
+        print(f"  内 : {_fmt(_summarize(inside))}")
+        print(f"  外 : {_fmt(_summarize(outside))}")
+    print()
 
 
 if __name__ == "__main__":
