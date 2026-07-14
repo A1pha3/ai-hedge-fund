@@ -35,6 +35,9 @@ def collect_setup_events(series, regimes) -> list[dict]:
         threshold = limit_up_pct_for_ticker(ticker)
         df = df.reset_index(drop=True)
         closes = df["close"].astype(float).values
+        highs = df["high"].astype(float).values
+        lows = df["low"].astype(float).values
+        vols = df["volume"].astype(float).values if "volume" in df.columns else None
         for idx in df.index[df["pct_change"] >= threshold].tolist():
             if idx + 1 >= len(df):
                 continue
@@ -48,6 +51,23 @@ def collect_setup_events(series, regimes) -> list[dict]:
                 pre_runup = (closes[idx - 1] / closes[idx - 5] - 1) * 100
             else:
                 pre_runup = 999.0
+            # ATR-squeeze 代理: trigger 前 5 日 (high-low)/close 均值 < 3% = 低波动盘整
+            # (btst_breakout: 低波动组 win 82.8% vs 高波动 60%). 数据不足则视为不通过.
+            if idx - 5 >= 0:
+                rngs = [
+                    (highs[j] - lows[j]) / closes[j] * 100
+                    for j in range(idx - 5, idx)
+                    if closes[j] > 0
+                ]
+                atr_pct = sum(rngs) / len(rngs) if rngs else 999.0
+            else:
+                atr_pct = 999.0
+            # 量比: today_vol / 前 20 日均量 (setup 偏好 1.0–2.0x 的温和放量).
+            vol_ratio = 0.0
+            if vols is not None and idx - 20 >= 0:
+                prior = [v for v in vols[idx - 20:idx] if v > 0]
+                if prior and vols[idx] > 0:
+                    vol_ratio = vols[idx] / (sum(prior) / len(prior))
             day = str(df.iloc[idx]["compact"])
             events.append(
                 {
@@ -55,6 +75,8 @@ def collect_setup_events(series, regimes) -> list[dict]:
                     "year": day[:4],
                     "regime": regimes.get(day, "unknown"),
                     "breakout": pre_runup <= 8.0,
+                    "low_atr": atr_pct < 3.0,
+                    "vol_band": 1.0 <= vol_ratio <= 2.0,
                     **{f"r{h}": _forward_return(df, idx, h) for h in HORIZONS},
                 }
             )
@@ -107,6 +129,20 @@ def main() -> None:
         fr[e["regime"]].append(e)
     _report("按年份 · breakout过滤", fy)
     _report("按 regime · breakout过滤", fr)
+
+    # Price-based selectivity proxy: breakout(≤8%) + 低波动盘整(ATR<3%). 逼近真实
+    # setup 里贡献最大的 squeeze 过滤 (btst_breakout: 低波动 82.8% vs 高波动 60%),
+    # 但缺资金流/行业/强度 ranker (无法从价量忠实复刻). 若熊市 E[r] 被拉正, 说明
+    # setup 的价量选择性具备跨周期稳健性.
+    full = [e for e in events if e["breakout"] and e["low_atr"]]
+    print(f"=== 价量选择 (breakout≤8% + ATR<3%): {len(full)}/{len(events)} 事件 ===")
+    gy: dict[str, list[dict]] = defaultdict(list)
+    gr: dict[str, list[dict]] = defaultdict(list)
+    for e in full:
+        gy[e["year"]].append(e)
+        gr[e["regime"]].append(e)
+    _report("按年份 · 价量选择", gy)
+    _report("按 regime · 价量选择", gr)
 
 
 if __name__ == "__main__":
