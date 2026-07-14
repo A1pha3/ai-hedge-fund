@@ -26,7 +26,8 @@ def test_repository_context_manager_initializes_and_returns_repository(tmp_path)
 
 def _repo(tmp_path: Path) -> LedgerRepository:
     repo = LedgerRepository(
-        tmp_path / "ledger.sqlite3", ledger_id="test", initial_cash=100_000
+        tmp_path / "ledger.sqlite3", ledger_id="test", initial_cash=100_000,
+        execution_costs=ExecutionCosts(version="test", commission=5.0, other_fee=30.0),
     )
     repo.initialize()
     return repo
@@ -56,17 +57,9 @@ def _provenance(ticker: str = "000001") -> PlanProvenance:
 
 def _opened(repo: LedgerRepository):
     trade = _plan(repo)
-    return repo.fill_plan(
-        trade.trade_id,
-        ExecutionMode.PAPER,
-        FillSource.SYNTHETIC_OPEN,
-        date(2026, 7, 13),
-        10.0,
-        900,
-        5.0,
-        0.0,
-        30.0,
-    )
+    return repo.settle_plan_at_open(
+        trade.trade_id, date(2026, 7, 13), 10.0, 9.0, 11.0, False, 10.5, 9.5,
+    )[0]
 
 
 def _tree_snapshot(path: Path) -> list[tuple[str, int, int, str]]:
@@ -95,8 +88,8 @@ def test_fill_and_event_commit_together(tmp_path: Path) -> None:
     trade = _plan(repo)
     opened = repo.fill_plan(
         trade.trade_id,
-        execution_mode=ExecutionMode.PAPER,
-        fill_source=FillSource.SYNTHETIC_OPEN,
+        execution_mode=ExecutionMode.BROKER_CONFIRMED,
+        fill_source=FillSource.BROKER_IMPORT,
         entry_date=date(2026, 7, 13),
         raw_fill_price=10.0,
         quantity=900,
@@ -122,8 +115,8 @@ def test_failed_transition_rolls_back_trade_and_event(
     with pytest.raises(RuntimeError, match="boom"):
         repo.fill_plan(
             trade.trade_id,
-            ExecutionMode.PAPER,
-            FillSource.SYNTHETIC_OPEN,
+            ExecutionMode.BROKER_CONFIRMED,
+            FillSource.BROKER_IMPORT,
             date(2026, 7, 13),
             10.0,
             900,
@@ -230,8 +223,8 @@ def test_fill_rejects_invalid_money_or_quantity(
     with pytest.raises(ValueError):
         repo.fill_plan(
             trade.trade_id,
-            ExecutionMode.PAPER,
-            FillSource.SYNTHETIC_OPEN,
+            ExecutionMode.BROKER_CONFIRMED,
+            FillSource.BROKER_IMPORT,
             date(2026, 7, 13),
             price,
             quantity,
@@ -255,7 +248,7 @@ def test_close_rejects_invalid_price(tmp_path: Path, price: float) -> None:
 def test_fill_source_must_match_execution_mode(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     trade = _plan(repo)
-    with pytest.raises(ValueError, match="not allowed"):
+    with pytest.raises(ValueError, match="broker-confirmed"):
         repo.fill_plan(
             trade.trade_id,
             ExecutionMode.BROKER_CONFIRMED,
@@ -457,8 +450,8 @@ def test_verified_plan_rejects_incomplete_or_mismatched_provenance(tmp_path: Pat
     [
         (PlanProvenance.legacy_unverified(), 0.12, False),
         (_provenance(), 0.12, False),
-        (dataclasses.replace(_provenance(), authorization="btst_crisis"), 0.12, True),
-        (dataclasses.replace(_provenance(), authorization="btst_risk_off"), 0.12, True),
+        (dataclasses.replace(_provenance(), authorization="btst_crisis"), 0.12, False),
+        (dataclasses.replace(_provenance(), authorization="btst_risk_off"), 0.12, False),
     ],
 )
 def test_twelve_percent_plan_requires_verified_btst_risk_authorization(
@@ -472,7 +465,7 @@ def test_twelve_percent_plan_requires_verified_btst_risk_authorization(
     if allowed:
         assert create().planned_weight == pytest.approx(0.12)
     else:
-        with pytest.raises(ValueError, match="authorization cap"):
+        with pytest.raises(ValueError, match="authorization evidence"):
             create()
 
 
@@ -485,8 +478,8 @@ def test_public_fill_plan_cannot_bypass_cash_and_target_weight_caps(
 
     result = repo.fill_plan(
         trade.trade_id,
-        ExecutionMode.PAPER,
-        FillSource.SYNTHETIC_OPEN,
+        ExecutionMode.BROKER_CONFIRMED,
+        FillSource.BROKER_IMPORT,
         date(2026, 7, 13),
         10.0,
         quantity,
@@ -558,13 +551,12 @@ def test_concurrent_transactional_settlement_serializes_priority_and_caps(tmp_pa
     plans = [repo.create_plan(
         f"0001{i:02d}", "btst", "v1", date(2026, 7, 10), date(2026, 7, 13), 0.1, i + 1
     ) for i in range(7)]
-    costs = ExecutionCosts(version="concurrency", commission=5, slippage_bps=10)
-
     def settle(plan):
         result = None
         for _ in range(8):
             result = repo.settle_plan_at_open(
-                plan.trade_id, date(2026, 7, 13), "executable_proxy", 10.0, costs
+                plan.trade_id, date(2026, 7, 13), 10.0, 9.0, 11.0, False,
+                10.5, 9.5,
             )
             if result[1] != "higher_priority_pending":
                 break
@@ -581,3 +573,66 @@ def test_concurrent_transactional_settlement_serializes_priority_and_caps(tmp_pa
     assert repo.get_trade(plans[-1].trade_id).state is TradeState.SKIPPED
     assert repo.cash_balance() >= 0
     assert sum(trade.raw_entry_price * trade.quantity for trade in opened) <= 60_000
+
+
+def test_public_synthetic_fill_and_policy_overrides_are_rejected(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    plan = _plan(repo)
+    with pytest.raises(ValueError, match="broker-confirmed"):
+        repo.fill_plan(
+            plan.trade_id, ExecutionMode.PAPER, FillSource.SYNTHETIC_OPEN,
+            date(2026, 7, 13), 10.0, 900, 0.0, 0.0, 0.0,
+        )
+    with pytest.raises(TypeError):
+        repo.settle_plan_at_open(
+            plan.trade_id, date(2026, 7, 13), 10.0, 9.0, 11.0, False,
+            10.5, 9.5, ExecutionCosts(version="test"),
+            lot_size=1, portfolio_cap=1.0,
+        )
+
+
+def test_verified_synthetic_fill_requires_provenance_cost_version(tmp_path: Path) -> None:
+    repo = LedgerRepository(
+        tmp_path / "mismatch.sqlite3", "test", 100_000,
+        execution_costs=ExecutionCosts(version="forged-zero-cost"),
+    )
+    repo.initialize()
+    plan = repo.create_plan(
+        "000001", "btst_breakout", "v1", date(2026, 7, 10), date(2026, 7, 13),
+        0.10, 1, provenance=_provenance(),
+    )
+    with pytest.raises(ValueError, match="cost version"):
+        repo.settle_plan_at_open(
+            plan.trade_id, date(2026, 7, 13), 10.0, 9.0, 11.0, False,
+            10.5, 9.5,
+        )
+
+
+def test_forged_crisis_provenance_cannot_authorize_twelve_percent(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    forged = dataclasses.replace(_provenance(), authorization="btst_crisis")
+    with pytest.raises(ValueError, match="authorization evidence"):
+        repo.create_plan(
+            "000001", "btst_breakout", "v1", date(2026, 7, 10), date(2026, 7, 13),
+            0.12, 1, provenance=forged,
+        )
+
+
+def test_future_priority_and_reservations_do_not_block_due_session(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    repo.create_plan(
+        "000002", "btst_breakout", "v1", date(2026, 7, 10), date(2026, 7, 14),
+        0.10, 1,
+    )
+    due = repo.create_plan(
+        "000001", "btst_breakout", "v1", date(2026, 7, 10), date(2026, 7, 13),
+        0.10, 2,
+    )
+
+    opened, reason = repo.settle_plan_at_open(
+        due.trade_id, date(2026, 7, 13), 10.0, 9.0, 11.0, False,
+        10.5, 9.5,
+    )
+
+    assert reason == "entry_filled"
+    assert opened.state is TradeState.OPEN

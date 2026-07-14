@@ -152,6 +152,10 @@ def test_future_evidence_changes_only_truthful_cutoff_audit_and_bundle_identity(
     cache = legacy_fixture_paths.price_cache / "000001.csv"
     with cache.open("a", encoding="utf-8") as stream:
         stream.write("2026-07-15,99,99,99,99,1000\n")
+    (legacy_fixture_paths.price_cache / "999999.csv").write_text(
+        "date,open,high,low,close,volume\n2026-07-15,9,10,8,9,1000\n",
+        encoding="utf-8",
+    )
     output = tmp_path / "cutoff-reports-after"
     assert main(_base_args(legacy_fixture_paths, output)) == 0
     json_path = output / "exit_shadow_20260714.json"
@@ -185,8 +189,10 @@ def test_future_evidence_changes_only_truthful_cutoff_audit_and_bundle_identity(
     assert payload["policy_identity"] == before["policy_identity"]
     assert payload["statistics"] == before["statistics"]
     assert payload["cutoff_audit"]["future_journal_rows"] == 1
-    assert payload["cutoff_audit"]["future_price_rows"] == 1
-    assert payload["cutoff_audit"]["future_price_tickers"] == 1
+    assert payload["cutoff_audit"]["future_price_rows"] == 2
+    assert payload["cutoff_audit"]["future_price_affected_files"] == 2
+    assert payload["cutoff_audit"]["future_only_price_files"] == 1
+    assert payload["cutoff_audit"]["future_price_tickers"] == 2
     assert before["cutoff_audit"]["future_journal_rows"] == 0
     assert payload["cohort"]["counts"]["total_paired_btst"] == 2
     assert payload["cohort"]["exclusions"] == []
@@ -203,6 +209,9 @@ def test_future_evidence_changes_only_truthful_cutoff_audit_and_bundle_identity(
     assert "Why this cohort differs from current production" in markdown
     assert "six-month legacy backtest" in markdown
     assert "selected common executable mask" in markdown
+    assert "price files containing future rows: 2" in markdown
+    assert "future-only price files: 1" in markdown
+    assert "tickers with future price rows: 2" in markdown
 
 
 def test_historical_analysis_rejects_empty_marker_bypass(
@@ -218,16 +227,15 @@ def test_historical_analysis_rejects_empty_marker_bypass(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("reanalyzed")),
     )
 
-    with pytest.raises(FileExistsError, match="invalid committed bundle"):
+    with pytest.raises(SystemExit):
         main(_base_args(legacy_fixture_paths, output))
 
 
-def test_historical_rerun_reuses_verified_bundle_without_new_analysis(
+def test_historical_rerun_is_forbidden_even_for_self_consistent_bundle(
     tmp_path: Path, legacy_fixture_paths: LegacyFixturePaths, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output = tmp_path / "committed"
     assert main(_base_args(legacy_fixture_paths, output)) == 0
-    before = {path.name: path.read_bytes() for path in output.iterdir()}
     monkeypatch.setattr(exit_shadow_cli, "_civil_today", lambda: date(2026, 7, 15))
     monkeypatch.setattr(
         exit_shadow_cli,
@@ -235,8 +243,8 @@ def test_historical_rerun_reuses_verified_bundle_without_new_analysis(
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("reanalyzed")),
     )
 
-    assert main(_base_args(legacy_fixture_paths, output)) == 0
-    assert {path.name: path.read_bytes() for path in output.iterdir()} == before
+    with pytest.raises(SystemExit):
+        main(_base_args(legacy_fixture_paths, output))
 
 
 def test_real_cli_attempts_no_socket_connection(

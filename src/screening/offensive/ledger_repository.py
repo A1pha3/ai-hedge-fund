@@ -54,16 +54,14 @@ class PlanProvenance:
             raise ValueError("unsupported plan provenance order_type")
         if self.reference_price is None or not math.isfinite(self.reference_price) or self.reference_price <= 0:
             raise ValueError("plan provenance reference_price must be positive")
-        if type(self.authorization) is not str or self.authorization not in {
-            "normal", "btst_crisis", "btst_risk_off"
-        }:
-            raise ValueError("plan provenance authorization is invalid")
+        if self.authorization != "normal":
+            raise ValueError(
+                "repository-verified regime authorization evidence is unavailable"
+            )
 
     def ticker_cap(self, setup: str) -> float:
-        if self.verification_status == "legacy_unverified":
-            return 0.10
-        if setup == "btst_breakout" and self.authorization in {"btst_crisis", "btst_risk_off"}:
-            return 0.12
+        # The canonical run manifest currently has no regime authorization
+        # evidence. Until it does, no caller-supplied label may raise this cap.
         return 0.10
 
     def as_json(self) -> dict[str, Any]:
@@ -128,10 +126,22 @@ class DailyValuation:
 class LedgerRepository:
     SCHEMA_VERSION = 2
 
-    def __init__(self, path: Path | str, ledger_id: str, initial_cash: float) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        ledger_id: str,
+        initial_cash: float,
+        *,
+        execution_costs: Any | None = None,
+    ) -> None:
+        from src.screening.offensive.execution_adjuster import ExecutionCosts
+
         self.path = Path(path)
         self.ledger_id = ledger_id
         self.initial_cash = initial_cash
+        self.execution_costs = execution_costs or ExecutionCosts(
+            version="daily-action-v2"
+        )
 
     def __enter__(self) -> LedgerRepository:
         self.initialize()
@@ -347,7 +357,9 @@ CREATE TABLE IF NOT EXISTS position_marks (
             or planned_weight <= 0
             or planned_weight > provenance.ticker_cap(setup) + 1e-12
         ):
-            raise ValueError("planned_weight exceeds provenance authorization cap")
+            raise ValueError(
+                "planned_weight exceeds repository-verified authorization evidence cap"
+            )
         provenance_json = json.dumps(provenance.as_json(), sort_keys=True, separators=(",", ":"))
         identity = TradeIdentity(
             self.ledger_id,
@@ -414,10 +426,15 @@ CREATE TABLE IF NOT EXISTS position_marks (
         execution_mode = ExecutionMode(execution_mode)
         fill_source = FillSource(fill_source)
         self._validate_fill(raw_fill_price, quantity, commission, tax, slippage_cost)
+        if execution_mode is not ExecutionMode.BROKER_CONFIRMED or fill_source not in {
+            FillSource.MANUAL_CONFIRMATION,
+            FillSource.BROKER_IMPORT,
+        }:
+            raise ValueError("fill_plan is reserved for broker-confirmed imports")
         if fill_source.allowed_mode is not execution_mode:
             raise ValueError(f"{fill_source} is not allowed for {execution_mode}")
-        trade, _reason = self.settle_plan_at_open(
-            trade_id, entry_date, "executable_proxy", raw_fill_price, None,
+        trade, _reason = self._settle_plan_at_open(
+            trade_id, entry_date, "broker_confirmed", raw_fill_price, None,
             requested_quantity=quantity, execution_mode=execution_mode,
             fill_source=fill_source,
             explicit_costs=(commission, tax, slippage_cost),
@@ -428,14 +445,37 @@ CREATE TABLE IF NOT EXISTS position_marks (
         self,
         trade_id: str,
         entry_date: date,
+        raw_open_price: float | None,
+        limit_down: float | None,
+        limit_up: float | None,
+        suspended: bool | None,
+        high: float | None,
+        low: float | None,
+    ) -> tuple[LedgerTrade, str]:
+        """Classify supplied market evidence, then apply repository-owned policy."""
+        from src.screening.offensive.execution_adjuster import classify_open_fill
+
+        status = classify_open_fill(
+            raw_open_price, limit_down, limit_up, suspended, high=high, low=low
+        )
+        return self._settle_plan_at_open(
+            trade_id,
+            entry_date,
+            status.value,
+            raw_open_price,
+            self.execution_costs,
+            execution_mode=ExecutionMode.PAPER,
+            fill_source=FillSource.SYNTHETIC_OPEN,
+        )
+
+    def _settle_plan_at_open(
+        self,
+        trade_id: str,
+        entry_date: date,
         execution_status: str,
         raw_open_price: float | None,
         costs: Any | None,
         *,
-        lot_size: int = 100,
-        portfolio_cap: float = 0.60,
-        normal_ticker_cap: float = 0.10,
-        hard_ticker_cap: float = 0.12,
         requested_quantity: int | None = None,
         execution_mode: ExecutionMode = ExecutionMode.PAPER,
         fill_source: FillSource = FillSource.SYNTHETIC_OPEN,
@@ -454,7 +494,7 @@ CREATE TABLE IF NOT EXISTS position_marks (
                 if reason == "entry_not_due":
                     return current, reason
                 return self._skip_plan_in_transaction(conn, current, entry_date, reason), reason
-            if execution_status != "executable_proxy" or raw_open_price is None:
+            if execution_status not in {"executable_proxy", "broker_confirmed"} or raw_open_price is None:
                 reason = (
                     "entry_queue_unknown"
                     if execution_status == "unknown_queue"
@@ -466,11 +506,18 @@ CREATE TABLE IF NOT EXISTS position_marks (
             fill_source = FillSource(fill_source)
             if fill_source.allowed_mode is not execution_mode:
                 raise ValueError(f"{fill_source} is not allowed for {execution_mode}")
+            if (
+                execution_mode is ExecutionMode.PAPER
+                and current.provenance.verification_status == "verified"
+                and current.provenance.execution_cost_version != getattr(costs, "version", None)
+            ):
+                raise ValueError("execution cost version does not match plan provenance")
 
             higher = conn.execute(
                 """SELECT trade_id FROM trades WHERE ledger_id=? AND state='planned'
+                   AND planned_entry_date=?
                    AND (priority<? OR (priority=? AND trade_id<?))""",
-                (self.ledger_id, current.priority, current.priority, current.trade_id),
+                (self.ledger_id, entry_date.isoformat(), current.priority, current.priority, current.trade_id),
             ).fetchone()
             if higher is not None:
                 return current, "higher_priority_pending"
@@ -501,26 +548,24 @@ CREATE TABLE IF NOT EXISTS position_marks (
                 return self._skip_plan_in_transaction(conn, current, entry_date, "cash_capacity"), "cash_capacity"
             reservations = conn.execute(
                 """SELECT ticker,planned_weight FROM trades WHERE ledger_id=? AND state='planned'
+                   AND planned_entry_date=?
                    AND (priority<? OR (priority=? AND trade_id<=?))""",
-                (self.ledger_id, current.priority, current.priority, current.trade_id),
+                (self.ledger_id, entry_date.isoformat(), current.priority, current.priority, current.trade_id),
             ).fetchall()
             reserved_weight = sum(float(row["planned_weight"]) for row in reservations)
             ticker_reserved = sum(float(row["planned_weight"]) for row in reservations if row["ticker"] == current.ticker)
-            if market_value / nav + reserved_weight > portfolio_cap + 1e-12:
+            if market_value / nav + reserved_weight > 0.60 + 1e-12:
                 return self._skip_plan_in_transaction(conn, current, entry_date, "portfolio_capacity"), "portfolio_capacity"
-            ticker_cap = min(
-                current.provenance.ticker_cap(current.setup),
-                hard_ticker_cap if current.provenance.ticker_cap(current.setup) > normal_ticker_cap else normal_ticker_cap,
-            )
+            ticker_cap = current.provenance.ticker_cap(current.setup)
             if ticker_value / nav + ticker_reserved > ticker_cap + 1e-12:
                 return self._skip_plan_in_transaction(conn, current, entry_date, "ticker_capacity"), "ticker_capacity"
             target = min(nav * current.planned_weight, cash)
             if requested_quantity is not None:
-                if isinstance(requested_quantity, bool) or not isinstance(requested_quantity, int) or requested_quantity <= 0 or requested_quantity % lot_size:
+                if isinstance(requested_quantity, bool) or not isinstance(requested_quantity, int) or requested_quantity <= 0 or requested_quantity % 100:
                     raise ValueError("quantity must be a positive A-share lot multiple")
                 quantity = requested_quantity
             else:
-                quantity = int(target // (raw_open_price * lot_size)) * lot_size
+                quantity = int(target // (raw_open_price * 100)) * 100
             fill = None
             while quantity > 0:
                 if explicit_costs is None:
@@ -542,7 +587,7 @@ CREATE TABLE IF NOT EXISTS position_marks (
                     break
                 if requested_quantity is not None:
                     break
-                quantity -= lot_size
+                quantity -= 100
             if fill is None:
                 return self._skip_plan_in_transaction(conn, current, entry_date, "cash_capacity"), "cash_capacity"
             conn.execute(

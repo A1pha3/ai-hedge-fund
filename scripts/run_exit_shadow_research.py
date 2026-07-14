@@ -299,7 +299,8 @@ def _read_live_inputs(
         os.close(journal_fd)
     journal_bytes, consumed_tickers, future_journal = _cutoff_journal(raw_journal_bytes, as_of)
     future_price_rows = 0
-    future_price_files = 0
+    future_price_affected_files = 0
+    future_only_price_files = 0
     future_price_tickers: set[str] = set()
 
     cache_fd = _open_existing_nofollow(
@@ -327,8 +328,9 @@ def _read_live_inputs(
             future_price_rows += future_rows
             if future_rows:
                 future_price_tickers.add(Path(name).stem)
+                future_price_affected_files += 1
             if future_rows and content.count(b"\n") <= 1:
-                future_price_files += 1
+                future_only_price_files += 1
             if Path(name).stem not in consumed_tickers:
                 continue
             cache_bytes[name] = content
@@ -362,7 +364,8 @@ def _read_live_inputs(
         cutoff_audit.update(
             future_journal_rows=future_journal,
             future_price_rows=future_price_rows,
-            future_price_files=future_price_files,
+            future_price_affected_files=future_price_affected_files,
+            future_only_price_files=future_only_price_files,
             future_price_tickers=len(future_price_tickers),
         )
     return fingerprint, journal_bytes, cache_bytes
@@ -618,6 +621,9 @@ def _render_markdown(payload: dict[str, Any]) -> str:
         "- as_of semantics: source snapshot observation date (not historical event availability)",
         f"- future journal rows excluded: {payload['cutoff_audit']['future_journal_rows']}",
         f"- future price rows excluded: {payload['cutoff_audit']['future_price_rows']}",
+        f"- price files containing future rows: {payload['cutoff_audit']['future_price_affected_files']}",
+        f"- future-only price files: {payload['cutoff_audit']['future_only_price_files']}",
+        f"- tickers with future price rows: {payload['cutoff_audit']['future_price_tickers']}",
         f"- contract identity: {artifact.get('contract_identity', REPORT_CONTRACT_IDENTITY)}",
         f"- semantic payload SHA-256: {artifact.get('semantic_payload_sha256', 'pending')}",
         "",
@@ -924,61 +930,6 @@ def _semantic_payload_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
-def _verified_committed_bundle(output_dir: Path, stem: str) -> bool:
-    """Return true only for a complete, internally consistent immutable bundle."""
-    directory_fd = _open_output_directory(output_dir)
-    try:
-        marker_name = f"{stem}.commit.json"
-        marker_content = _read_regular_at(directory_fd, marker_name)
-        if marker_content is None:
-            return False
-        try:
-            marker = json.loads(marker_content)
-            if marker.get("schema_version") != 1 or marker.get("report_id") != stem:
-                raise ValueError("invalid marker identity")
-            if marker.get("contract_identity") != REPORT_CONTRACT_IDENTITY:
-                raise ValueError("invalid marker contract")
-            artifacts = marker["artifacts"]
-            json_name = f"{stem}.json"
-            markdown_name = f"{stem}.md"
-            if artifacts["json"]["filename"] != json_name:
-                raise ValueError("invalid JSON artifact filename")
-            if artifacts["markdown"]["filename"] != markdown_name:
-                raise ValueError("invalid markdown artifact filename")
-            json_content = _read_regular_at(directory_fd, json_name)
-            markdown_content = _read_regular_at(directory_fd, markdown_name)
-            if json_content is None or markdown_content is None:
-                raise ValueError("committed artifact is missing")
-            if _content_fingerprint(json_content) != {
-                "sha256": artifacts["json"]["sha256"],
-                "size_bytes": artifacts["json"]["size_bytes"],
-            }:
-                raise ValueError("JSON artifact fingerprint mismatch")
-            if _content_fingerprint(markdown_content) != {
-                "sha256": artifacts["markdown"]["sha256"],
-                "size_bytes": artifacts["markdown"]["size_bytes"],
-            }:
-                raise ValueError("markdown artifact fingerprint mismatch")
-            payload = json.loads(json_content)
-            identity = payload.pop("artifact_identity")
-            semantic_hash = _semantic_payload_hash(payload)
-            if semantic_hash != marker["semantic_payload_sha256"]:
-                raise ValueError("semantic payload fingerprint mismatch")
-            if identity["semantic_payload_sha256"] != semantic_hash:
-                raise ValueError("JSON semantic identity mismatch")
-            if identity["markdown_sha256"] != hashlib.sha256(markdown_content).hexdigest():
-                raise ValueError("JSON markdown identity mismatch")
-            if identity["commit_marker_filename"] != marker_name:
-                raise ValueError("JSON marker identity mismatch")
-        except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise FileExistsError(
-                f"immutable report conflict: invalid committed bundle {stem}"
-            ) from exc
-        return True
-    finally:
-        os.close(directory_fd)
-
-
 def _commit_report_bundle(
     output_dir: Path,
     stem: str,
@@ -1061,8 +1012,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     _validate_args(args, parser)
     stem = f"exit_shadow_{args.as_of}"
     if args.as_of != _civil_today().strftime("%Y%m%d"):
-        if _verified_committed_bundle(args.output_dir, stem):
-            return 0
         parser.error(
             "historical --as-of is not PIT-eligible because journal event availability is unverifiable"
         )

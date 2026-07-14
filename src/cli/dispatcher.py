@@ -1029,14 +1029,18 @@ def _resolve_daily_action(
         return pd.read_csv(cache, dtype={"date": str})
 
     resolved_ledger_path = Path(ledger_path or "data/paper_trading_v2/ledger.sqlite3")
+    execution_costs = ExecutionCosts(version="daily-action-v2")
     with LedgerRepository(
-        resolved_ledger_path, "daily-action-v2", 100_000.0
+        resolved_ledger_path,
+        "daily-action-v2",
+        100_000.0,
+        execution_costs=execution_costs,
     ) as repository:
         service = DailyActionService(
             repository,
             TradingSessionCalendar(open_sessions),
             cached_prices,
-            ExecutionCosts(version="daily-action-v2"),
+            execution_costs,
             cache_fingerprints=lambda ticker, _trade_date: current_fingerprints.get(
                 ticker
             ),

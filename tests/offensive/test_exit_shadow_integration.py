@@ -63,7 +63,10 @@ def shadow_case(tmp_path):
     prices[(ticker, sessions[17])] = _bar(12.0)
     prices[(ticker, as_of)] = _bar(10.5)
 
-    repository = LedgerRepository(tmp_path / "ledger.sqlite3", "shadow", 100_000)
+    costs = ExecutionCosts(version="test", commission=5.0, other_fee=10.0)
+    repository = LedgerRepository(
+        tmp_path / "ledger.sqlite3", "shadow", 100_000, execution_costs=costs
+    )
     repository.initialize()
     plan = repository.create_plan(
         ticker,
@@ -74,22 +77,14 @@ def shadow_case(tmp_path):
         0.10,
         1,
     )
-    trade = repository.fill_plan(
-        plan.trade_id,
-        ExecutionMode.PAPER,
-        FillSource.SYNTHETIC_OPEN,
-        entry_date,
-        10.0,
-        900,
-        5.0,
-        0.0,
-        10.0,
-    )
+    trade = repository.settle_plan_at_open(
+        plan.trade_id, entry_date, 10.0, 9.0, 11.0, False, 10.2, 9.8,
+    )[0]
     service = DailyActionService(
         repository,
         TradingSessionCalendar(sessions),
         lambda symbol, session: prices.get((symbol, session)),
-        ExecutionCosts(version="test"),
+        costs,
         enforce_manifest_gate=False,
     )
     return service, trade, prices, as_of
@@ -604,27 +599,22 @@ def test_triggering_shadow_is_differentially_zero_effect_and_idempotent(
     prices[("000777", as_of)] = _bar(10.5)
 
     def build(path):
-        repository = LedgerRepository(path, "differential", 100_000)
+        costs = ExecutionCosts(version="test", commission=5.0, other_fee=10.0)
+        repository = LedgerRepository(
+            path, "differential", 100_000, execution_costs=costs
+        )
         repository.initialize()
         plan = repository.create_plan(
             "000777", "btst_breakout", "v2", sessions[14], entry_date, 0.10, 1
         )
-        repository.fill_plan(
-            plan.trade_id,
-            ExecutionMode.PAPER,
-            FillSource.SYNTHETIC_OPEN,
-            entry_date,
-            10.0,
-            900,
-            5.0,
-            0.0,
-            10.0,
+        repository.settle_plan_at_open(
+            plan.trade_id, entry_date, 10.0, 9.0, 11.0, False, 10.2, 9.8,
         )
         return DailyActionService(
             repository,
             TradingSessionCalendar(sessions),
             lambda ticker, session: prices.get((ticker, session), _bar(10.0)),
-            ExecutionCosts(version="test"),
+            costs,
             enforce_manifest_gate=False,
         )
 

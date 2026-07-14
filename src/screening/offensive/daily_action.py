@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # OversoldBounce 无可证明 alpha (E=+0.34%, CI 跨 0), 严格限制仓位.
 _MAX_POSITION_PCT = 0.10  # 默认单票上限
 _MAX_POSITION_PCT_BY_SETUP: dict[str, float] = {
-    "btst_breakout": 0.10,       # v2 normal cap 10%; explicit crisis authorization permits 12%
+    "btst_breakout": 0.10,       # v2 ledger stays at 10% until canonical regime evidence is bound
     "oversold_bounce": 0.05,     # OB: 无 alpha, 限制到 5% (即使恢复也低仓位)
 }
 _MAX_PORTFOLO_PCT = 0.60  # 组合 ≤ 60%

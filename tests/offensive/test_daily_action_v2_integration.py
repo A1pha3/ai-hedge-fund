@@ -38,7 +38,8 @@ def signal_date() -> date:
 @pytest.fixture
 def repository(tmp_path) -> LedgerRepository:
     repo = LedgerRepository(
-        tmp_path / "paper_trading_v2" / "ledger.sqlite3", "daily-action-v2", 100_000
+        tmp_path / "paper_trading_v2" / "ledger.sqlite3", "daily-action-v2", 100_000,
+        execution_costs=ExecutionCosts(version="test"),
     )
     repo.initialize()
     return repo

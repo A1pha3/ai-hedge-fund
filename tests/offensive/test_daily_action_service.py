@@ -37,7 +37,12 @@ def sessions() -> tuple[date, ...]:
 
 @pytest.fixture
 def service(tmp_path, sessions) -> DailyActionService:
-    repo = LedgerRepository(tmp_path / "ledger.sqlite3", "service", 100_000)
+    costs = ExecutionCosts(
+        version="test", commission=5.0, tax_rate=0.001, slippage_bps=10.0
+    )
+    repo = LedgerRepository(
+        tmp_path / "ledger.sqlite3", "service", 100_000, execution_costs=costs
+    )
     repo.initialize()
     prices = FixedPrices(
         MarketBar(
@@ -54,9 +59,7 @@ def service(tmp_path, sessions) -> DailyActionService:
         repo,
         TradingSessionCalendar(sessions),
         prices,
-        ExecutionCosts(
-            version="test", commission=5.0, tax_rate=0.001, slippage_bps=10.0
-        ),
+        costs,
         enforce_manifest_gate=False,
     )
 
@@ -75,17 +78,9 @@ def open_trade(service, ticker: str, entry_date: date, weight: float = 0.1):
         weight,
         1,
     )
-    return service.repository.fill_plan(
-        plan.trade_id,
-        ExecutionMode.PAPER,
-        FillSource.SYNTHETIC_OPEN,
-        entry_date,
-        10.0,
-        900,
-        5.0,
-        0.0,
-        10.0,
-    )
+    return service.repository.settle_plan_at_open(
+        plan.trade_id, entry_date, 10.0, 9.0, 11.0, False, 10.5, 9.5,
+    )[0]
 
 
 def test_pending_plans_reserve_exposure_and_never_exceed_sixty_percent(
@@ -339,7 +334,10 @@ def test_same_day_rerun_does_not_render_or_record_duplicate_plan(service, sessio
 def test_due_entry_fails_closed_when_as_of_is_not_exact_calendar_session(
     tmp_path, sessions, calendar_dates
 ):
-    repo = LedgerRepository(tmp_path / "closed-calendar.sqlite3", "closed", 100_000)
+    repo = LedgerRepository(
+        tmp_path / "closed-calendar.sqlite3", "closed", 100_000,
+        execution_costs=ExecutionCosts(version="test"),
+    )
     repo.initialize()
     plan = repo.create_plan(
         "000150", "btst_breakout", "v2", sessions[0], sessions[1], 0.1, 1
@@ -373,7 +371,10 @@ def test_invalid_entry_calendar_does_not_block_due_exit_retry(service, sessions)
 def test_btst_plan_requires_full_entry_through_holding_session_ten(tmp_path):
     signal = date(2026, 7, 10)
     monday = date(2026, 7, 13)
-    repo = LedgerRepository(tmp_path / "short-calendar.sqlite3", "short", 100_000)
+    repo = LedgerRepository(
+        tmp_path / "short-calendar.sqlite3", "short", 100_000,
+        execution_costs=ExecutionCosts(version="test"),
+    )
     repo.initialize()
     local = DailyActionService(
         repo,
@@ -390,7 +391,10 @@ def test_btst_plan_requires_full_entry_through_holding_session_ten(tmp_path):
 
 def test_open_trade_with_incomplete_horizon_surfaces_calendar_warning(tmp_path):
     entry = date(2026, 7, 13)
-    repo = LedgerRepository(tmp_path / "open-short.sqlite3", "open-short", 100_000)
+    repo = LedgerRepository(
+        tmp_path / "open-short.sqlite3", "open-short", 100_000,
+        execution_costs=ExecutionCosts(version="test"),
+    )
     repo.initialize()
     third = entry + timedelta(days=2)
     local = DailyActionService(

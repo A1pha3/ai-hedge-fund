@@ -389,6 +389,8 @@ class DailyActionService:
             prices,
             costs,
         )
+        if costs != repository.execution_costs:
+            raise ValueError("service execution costs must match repository-owned policy")
         self.cache_fingerprints = cache_fingerprints
         self.enforce_manifest_gate = enforce_manifest_gate
         self._active_manifest: RunManifest | None = None
@@ -535,7 +537,7 @@ class DailyActionService:
                 continue
             if as_of != plan.planned_entry_date:
                 settled, reason = self.repository.settle_plan_at_open(
-                    plan.trade_id, as_of, ExecutionStatus.UNKNOWN_QUEUE.value, None, self.costs
+                    plan.trade_id, as_of, None, None, None, None, None, None
                 )
                 if settled.state is TradeState.SKIPPED:
                     self._skipped.append(self._item(settled, reason))
@@ -550,13 +552,15 @@ class DailyActionService:
                 continue
             self._snapshot(as_of)
             bar = self.prices(plan.ticker, as_of)
-            status = self._status(bar)
             settled, reason = self.repository.settle_plan_at_open(
                 plan.trade_id,
                 as_of,
-                status.value,
                 bar.open if bar is not None else None,
-                self.costs,
+                bar.limit_down if bar is not None else None,
+                bar.limit_up if bar is not None else None,
+                bar.suspended if bar is not None else None,
+                bar.high if bar is not None else None,
+                bar.low if bar is not None else None,
             )
             if settled.state is TradeState.SKIPPED:
                 self._skipped.append(self._item(settled, reason))
@@ -675,6 +679,8 @@ class DailyActionService:
             if candidate.ticker in seen:
                 continue
             seen.add(candidate.ticker)
+            if candidate.authorization is not RegimeAuthorization.NORMAL:
+                self._add_block_reason("regime_authorization_evidence_unavailable")
             provenance = self._plan_provenance(candidate, as_of, entry_date)
             weight = min(
                 candidate.target_weight,
@@ -743,7 +749,9 @@ class DailyActionService:
             board_rule_version=readiness.board_rule_version,
             valid_on=entry_date,
             execution_cost_version=self.costs.version,
-            authorization=candidate.authorization.value,
+            # The canonical auto manifest does not yet carry regime evidence.
+            # Fail closed at 10% instead of persisting a caller-derived label.
+            authorization=RegimeAuthorization.NORMAL.value,
         )
 
     def _build_view(

@@ -70,7 +70,10 @@ def healthy_manifest(candidates) -> RunManifest:
 
 @pytest.fixture
 def service(tmp_path, candidates) -> DailyActionService:
-    repository = LedgerRepository(tmp_path / "ledger.sqlite3", "manifest-gate", 100_000)
+    repository = LedgerRepository(
+        tmp_path / "ledger.sqlite3", "manifest-gate", 100_000,
+        execution_costs=ExecutionCosts(version="test"),
+    )
     repository.initialize()
     sessions = tuple(SIGNAL_DATE + timedelta(days=offset) for offset in range(12))
     fingerprints = {
@@ -90,17 +93,9 @@ def open_trade(service):
     plan = service.repository.create_plan(
         "000099", "btst_breakout", "v2", SIGNAL_DATE - timedelta(days=1), SIGNAL_DATE, 0.1, 1
     )
-    return service.repository.fill_plan(
-        plan.trade_id,
-        ExecutionMode.PAPER,
-        FillSource.SYNTHETIC_OPEN,
-        SIGNAL_DATE,
-        10.0,
-        900,
-        5.0,
-        0.0,
-        0.0,
-    )
+    return service.repository.settle_plan_at_open(
+        plan.trade_id, SIGNAL_DATE, 10.0, 9.0, 11.0, False, 10.5, 9.5,
+    )[0]
 
 
 def test_missing_healthy_manifest_blocks_new_plan_but_keeps_open_positions(
@@ -170,7 +165,7 @@ def test_ticker_fingerprint_mismatch_blocks_only_that_candidate(
     )
 
 
-def test_verified_crisis_authorization_permits_twelve_percent(
+def test_manifest_without_canonical_regime_evidence_caps_crisis_claim_at_ten_percent(
     service, healthy_manifest
 ) -> None:
     candidate = PlanCandidate(
@@ -185,8 +180,9 @@ def test_verified_crisis_authorization_permits_twelve_percent(
     run = service.run(SIGNAL_DATE, (candidate,), manifest=healthy_manifest)
 
     trade = service.repository.get_trade(run.new_plans[0].trade_id)
-    assert trade.planned_weight == pytest.approx(0.12)
-    assert trade.provenance.authorization == "btst_crisis"
+    assert trade.planned_weight == pytest.approx(0.10)
+    assert trade.provenance.authorization == "normal"
+    assert "regime_authorization_evidence_unavailable" in run.block_reasons
 
 
 def test_nonrecommended_layer_a_ticker_is_blocked_by_its_exact_readiness(
@@ -274,7 +270,10 @@ def test_calendar_and_manifest_warnings_accumulate_and_render(
         render_daily_action_v2,
     )
 
-    repository = LedgerRepository(tmp_path / "warnings.sqlite3", "warnings", 100_000)
+    repository = LedgerRepository(
+        tmp_path / "warnings.sqlite3", "warnings", 100_000,
+        execution_costs=ExecutionCosts(version="test"),
+    )
     repository.initialize()
     repository.create_plan(
         "000099",

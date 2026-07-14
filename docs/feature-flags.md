@@ -22,7 +22,7 @@
 | Flag | 默认 | 效果 |
 |------|------|------|
 | `DAILY_ACTION_CACHE_REFRESH` | on (设 `false` 关闭) | `--auto` 结束后刷新 daily-action 缓存 (price/fund_flow/industry). 设 `false` 跳过. |
-| `DAILY_ACTION_REGIME_SIZING` | on (设 `false` 关闭) | BTST 在 crisis/risk_off regime 加仓 (1.2×/1.1×). 设 `false` 退化为全部 1.0. |
+| `DAILY_ACTION_REGIME_SIZING` | 安全降级 | 扫描器仍计算 crisis/risk_off 的 1.2×/1.1× 请求，但当前 canonical auto manifest 尚未携带可重算的 regime 授权证据，v2 ledger 会 fail-closed 到单票 10%，并输出 `regime_authorization_evidence_unavailable`。在 manifest 完成 regime evidence 绑定前，本 flag **不会产生实际加仓**；设 `false` 可关闭请求侧 regime sizing。 |
 | `DAILY_ACTION_DISABLED_SETUPS` | `oversold_bounce` | 暂停的 setup 名 (逗号分隔). 特殊值 `none` 清空默认, 恢复全部 setup. |
 
 ## 使用示例
