@@ -10,13 +10,181 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from datetime import date
+from enum import Enum
+from numbers import Integral, Real
 
 import numpy as np
 import pandas as pd
 
 # A 股涨跌停阈值 (主板 ±10%, 创业板/科创板 ±20%; 本期统一用 +9.5% 判定避免浮点)
 _LIMIT_UP_PCT_THRESHOLD = 9.5
+_A_SHARE_TICK = 0.01
+_LIMIT_PRICE_TOLERANCE = _A_SHARE_TICK / 2
+
+
+class ExecutionStatus(str, Enum):
+    """Conservative daily-bar execution classification."""
+
+    EXECUTABLE_PROXY = "executable_proxy"
+    UNEXECUTABLE_PROXY = "unexecutable_proxy"
+    UNKNOWN_QUEUE = "unknown_queue"
+
+
+@dataclass(frozen=True)
+class ExecutionCosts:
+    """Versioned, injectable cost assumptions for one fill."""
+
+    version: str = "v1"
+    commission: float = 0.0
+    tax_rate: float = 0.0
+    slippage_bps: float = 0.0
+    other_fee: float = 0.0
+
+
+@dataclass(frozen=True)
+class FillResult:
+    """Auditable fill economics with the observed price left unchanged."""
+
+    raw_fill_price: float
+    quantity: int
+    side: str
+    gross_notional: float
+    commission: float
+    tax: float
+    slippage_cost: float
+    other_fee: float
+    net_cash_flow: float
+    cost_version: str
+
+
+def classify_open_fill(
+    open_price: float | None,
+    limit_down: float | None,
+    limit_up: float | None,
+    suspended: bool | None,
+    *,
+    high: float | None = None,
+    low: float | None = None,
+) -> ExecutionStatus:
+    """Classify an open-price proxy using half of the A-share ¥0.01 tick as tolerance."""
+    if not isinstance(suspended, (bool, np.bool_)):
+        return ExecutionStatus.UNKNOWN_QUEUE
+    if open_price is None or limit_down is None or limit_up is None:
+        return ExecutionStatus.UNKNOWN_QUEUE
+
+    supplied_prices = [open_price, limit_down, limit_up]
+    supplied_prices.extend(price for price in (high, low) if price is not None)
+    if any(
+        isinstance(price, bool)
+        or not isinstance(price, Real)
+        or not math.isfinite(price)
+        or price <= 0
+        for price in supplied_prices
+    ):
+        return ExecutionStatus.UNKNOWN_QUEUE
+    if bool(suspended):
+        return ExecutionStatus.UNEXECUTABLE_PROXY
+    if limit_down >= limit_up or (high is not None and low is not None and high < low):
+        return ExecutionStatus.UNKNOWN_QUEUE
+    if high is not None and open_price > high + _LIMIT_PRICE_TOLERANCE:
+        return ExecutionStatus.UNKNOWN_QUEUE
+    if low is not None and open_price < low - _LIMIT_PRICE_TOLERANCE:
+        return ExecutionStatus.UNKNOWN_QUEUE
+    if high is not None and high > limit_up + _LIMIT_PRICE_TOLERANCE:
+        return ExecutionStatus.UNKNOWN_QUEUE
+    if low is not None and low < limit_down - _LIMIT_PRICE_TOLERANCE:
+        return ExecutionStatus.UNKNOWN_QUEUE
+
+    def at_price(price: float, reference: float) -> bool:
+        return abs(price - reference) <= _LIMIT_PRICE_TOLERANCE + 1e-12
+
+    at_lower_limit = at_price(open_price, limit_down)
+    at_upper_limit = at_price(open_price, limit_up)
+    on_limit = at_lower_limit or at_upper_limit
+    matched_limit = limit_down if at_lower_limit else limit_up
+    locked_at_open = (
+        high is not None
+        and low is not None
+        and at_price(high, matched_limit)
+        and at_price(low, matched_limit)
+    )
+    if on_limit and locked_at_open:
+        return ExecutionStatus.UNEXECUTABLE_PROXY
+    if on_limit:
+        return ExecutionStatus.UNKNOWN_QUEUE
+    if limit_down < open_price < limit_up:
+        return ExecutionStatus.EXECUTABLE_PROXY
+    return ExecutionStatus.UNKNOWN_QUEUE
+
+
+def apply_execution_costs(
+    raw_fill_price: float,
+    quantity: int,
+    side: str,
+    costs: ExecutionCosts,
+    *,
+    entry_date: date | None = None,
+    exit_date: date | None = None,
+) -> FillResult:
+    """Apply independently auditable costs while preserving the raw fill price."""
+    if not isinstance(side, str):
+        raise ValueError("side must be 'buy' or 'sell'")
+    side = side.lower()
+    if side not in {"buy", "sell"}:
+        raise ValueError("side must be 'buy' or 'sell'")
+    if (
+        isinstance(raw_fill_price, bool)
+        or not isinstance(raw_fill_price, Real)
+        or not math.isfinite(raw_fill_price)
+        or raw_fill_price <= 0
+    ):
+        raise ValueError("raw_fill_price must be finite and positive")
+    if isinstance(quantity, bool) or not isinstance(quantity, Integral) or quantity <= 0:
+        raise ValueError("quantity must be a positive integer")
+    cost_values = (costs.commission, costs.tax_rate, costs.slippage_bps, costs.other_fee)
+    if any(
+        isinstance(value, bool)
+        or not isinstance(value, Real)
+        or not math.isfinite(value)
+        or value < 0
+        for value in cost_values
+    ):
+        raise ValueError("execution costs must be finite and non-negative")
+    if not isinstance(costs.version, str) or not costs.version.strip():
+        raise ValueError("cost version must be a nonempty string")
+    if side == "sell":
+        if entry_date is None or exit_date is None:
+            raise ValueError("exit_date must be strictly after entry_date for T+1")
+        if type(entry_date) is not date or type(exit_date) is not date:
+            raise ValueError("entry_date and exit_date must be plain datetime.date values")
+        if exit_date <= entry_date:
+            raise ValueError("exit_date must be strictly after entry_date for T+1")
+
+    gross_notional = raw_fill_price * quantity
+    tax = gross_notional * costs.tax_rate if side == "sell" else 0.0
+    slippage_cost = gross_notional * costs.slippage_bps / 10_000.0
+    total_cost = costs.commission + tax + slippage_cost + costs.other_fee
+    net_cash_flow = -(gross_notional + total_cost) if side == "buy" else gross_notional - total_cost
+    if not all(
+        math.isfinite(value)
+        for value in (gross_notional, tax, slippage_cost, total_cost, net_cash_flow)
+    ):
+        raise ValueError("execution cost calculation must produce finite audit fields")
+    return FillResult(
+        raw_fill_price=raw_fill_price,
+        quantity=quantity,
+        side=side,
+        gross_notional=gross_notional,
+        commission=costs.commission,
+        tax=tax,
+        slippage_cost=slippage_cost,
+        other_fee=costs.other_fee,
+        net_cash_flow=net_cash_flow,
+        cost_version=costs.version,
+    )
 
 
 @dataclass(frozen=True)
@@ -91,8 +259,8 @@ def adjust_returns(
         np.ndarray[float], 每个样本的调整后收益率; 不可买/数据不足 → NaN
     """
     assert len(trigger_dates) == len(tickers)
-    slippage = config.slippage_bps / 10_000.0
     out = np.full(len(trigger_dates), np.nan)
+    costs = ExecutionCosts(slippage_bps=config.slippage_bps)
 
     # 预建每个 ticker 的 date→idx 索引 (per ticker 只算一次, 后续 O(1) 查)
     date_idx_cache: dict[str, dict[str, int]] = {}
@@ -106,7 +274,10 @@ def adjust_returns(
         trigger_idx = date_idx_cache[ticker].get(date_str)
         if trigger_idx is None:
             continue
+        entry_idx = trigger_idx + 1  # 次日开盘买入 (T+1 settlement)
         exit_idx = trigger_idx + horizon
+        if exit_idx <= entry_idx:
+            exit_idx = entry_idx + 1  # T+1: 最早下一交易日退出
         if exit_idx >= len(prices):
             continue  # 数据不足
 
@@ -114,12 +285,33 @@ def adjust_returns(
         if config.limit_up_unbuyable and is_limit_up_unbuyable_next_day(prices, trigger_idx, ticker):
             continue  # NaN
 
-        # 入口价 = 次日开盘 × (1 + slippage); 出口价 = T+horizon 收盘 × (1 - slippage)
-        entry_idx = trigger_idx + 1  # 次日开盘买入 (T+1 settlement)
+        # 通过 v2 成本模型独立计算滑点，再还原 legacy 的每股有效价格。
         if entry_idx >= len(prices):
             continue
-        entry_price = float(prices.iloc[entry_idx]["open"]) * (1 + slippage)
-        exit_price = float(prices.iloc[exit_idx]["close"]) * (1 - slippage)
+        raw_entry_price = float(prices.iloc[entry_idx]["open"])
+        raw_exit_price = float(prices.iloc[exit_idx]["close"])
+        if (
+            not math.isfinite(raw_entry_price)
+            or not math.isfinite(raw_exit_price)
+            or raw_entry_price <= 0
+            or raw_exit_price <= 0
+        ):
+            continue
+        entry_fill = apply_execution_costs(raw_entry_price, 1, "buy", costs)
+        entry_date = pd.Timestamp(prices.iloc[entry_idx]["date"]).date()
+        exit_date = pd.Timestamp(prices.iloc[exit_idx]["date"]).date()
+        if exit_date <= entry_date:
+            continue
+        exit_fill = apply_execution_costs(
+            raw_exit_price,
+            1,
+            "sell",
+            costs,
+            entry_date=entry_date,
+            exit_date=exit_date,
+        )
+        entry_price = -entry_fill.net_cash_flow
+        exit_price = exit_fill.net_cash_flow
         if entry_price <= 0:
             continue
         out[i] = (exit_price / entry_price) - 1.0

@@ -1,0 +1,170 @@
+"""Pure fixed-parameter exit policy for research and shadow evaluation only."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
+import math
+from numbers import Real
+
+
+ACTIVATION_RETURN = 0.10
+ATR_MULTIPLE = 2.5
+PLAN_EXIT_SESSION = 9
+
+
+@dataclass(frozen=True)
+class ExitPolicyState:
+    entry_price: float
+    armed_at: date | None
+    highest_close: float | None
+    exit_line: float | None
+
+    @classmethod
+    def unarmed(cls, *, entry_price: float) -> ExitPolicyState:
+        return cls(
+            entry_price=entry_price,
+            armed_at=None,
+            highest_close=None,
+            exit_line=None,
+        )
+
+
+@dataclass(frozen=True)
+class ExitObservation:
+    trade_date: date
+    holding_session: int
+    close: float
+    atr: float
+
+
+@dataclass(frozen=True)
+class ExitDecision:
+    state: ExitPolicyState
+    should_exit_next_open: bool
+    reason: str
+
+
+def evaluate_shadow_exit(
+    state: ExitPolicyState,
+    observation: ExitObservation,
+) -> ExitDecision:
+    """Evaluate one completed A-share session without execution side effects."""
+
+    _validate_inputs(state, observation)
+
+    highest_close = max(
+        observation.close,
+        state.highest_close if state.highest_close is not None else observation.close,
+    )
+    observed_state = ExitPolicyState(
+        entry_price=state.entry_price,
+        armed_at=state.armed_at,
+        highest_close=highest_close,
+        exit_line=state.exit_line,
+    )
+
+    if observation.holding_session == 1:
+        return _hold(observed_state)
+
+    if observation.holding_session >= PLAN_EXIT_SESSION:
+        return ExitDecision(observed_state, True, "maximum_holding_session")
+
+    next_state = state
+    if state.armed_at is None and _meets_activation_threshold(
+        observation.close,
+        state.entry_price,
+    ):
+        exit_line = highest_close - ATR_MULTIPLE * observation.atr
+        _require_positive_finite("exit_line", exit_line)
+        next_state = ExitPolicyState(
+            entry_price=state.entry_price,
+            armed_at=observation.trade_date,
+            highest_close=highest_close,
+            exit_line=exit_line,
+        )
+    elif state.armed_at is None:
+        next_state = ExitPolicyState(
+            entry_price=state.entry_price,
+            armed_at=None,
+            highest_close=highest_close,
+            exit_line=None,
+        )
+    else:
+        assert state.exit_line is not None
+        next_state = ExitPolicyState(
+            entry_price=state.entry_price,
+            armed_at=state.armed_at,
+            highest_close=highest_close,
+            exit_line=max(
+                state.exit_line,
+                highest_close - ATR_MULTIPLE * observation.atr,
+            ),
+        )
+
+    if (
+        next_state.armed_at is not None
+        and next_state.exit_line is not None
+        and observation.close < next_state.exit_line
+    ):
+        return ExitDecision(next_state, True, "close_below_trailing_line")
+
+    return _hold(next_state)
+
+
+def _hold(state: ExitPolicyState) -> ExitDecision:
+    return ExitDecision(state, False, "hold")
+
+
+def _validate_inputs(state: ExitPolicyState, observation: ExitObservation) -> None:
+    _require_positive_finite("entry_price", state.entry_price)
+    _require_positive_finite("close", observation.close)
+    _require_positive_finite("atr", observation.atr)
+
+    if type(observation.trade_date) is not date:
+        raise ValueError("trade_date must be a date")
+    if (
+        isinstance(observation.holding_session, bool)
+        or not isinstance(observation.holding_session, int)
+        or observation.holding_session < 1
+    ):
+        raise ValueError("holding_session must be an integer at least 1")
+
+    if state.armed_at is None:
+        if state.exit_line is not None:
+            raise ValueError("unarmed state cannot have an exit_line")
+        if state.highest_close is not None:
+            _require_positive_finite("highest_close", state.highest_close)
+        return
+
+    if type(state.armed_at) is not date:
+        raise ValueError("armed_at must be a date")
+    if state.highest_close is None or state.exit_line is None:
+        raise ValueError("armed state requires armed_at, highest_close, and exit_line")
+    _require_positive_finite("highest_close", state.highest_close)
+    _require_positive_finite("exit_line", state.exit_line)
+    if state.exit_line >= state.highest_close:
+        raise ValueError("exit_line must be strictly below highest_close")
+    if not _meets_activation_threshold(state.highest_close, state.entry_price):
+        raise ValueError("highest_close must meet the activation threshold")
+    if state.armed_at > observation.trade_date:
+        raise ValueError("armed_at cannot be after trade_date")
+    if observation.holding_session == 1:
+        raise ValueError("armed state cannot be evaluated on holding_session 1")
+
+
+def _require_positive_finite(name: str, value: object) -> None:
+    if not _is_finite_number(value) or value <= 0:
+        raise ValueError(f"{name} must be positive and finite")
+
+
+def _meets_activation_threshold(price: float, entry_price: float) -> bool:
+    threshold = Decimal(str(entry_price)) * (
+        Decimal(1) + Decimal(str(ACTIVATION_RETURN))
+    )
+    return Decimal(str(price)) >= threshold
+
+
+def _is_finite_number(value: object) -> bool:
+    return isinstance(value, Real) and not isinstance(value, bool) and math.isfinite(value)

@@ -59,12 +59,14 @@ from src.screening.industry_rotation import (
     format_rotation_block,
     IndustrySignal,
 )
-from src.screening.investability import rank_recommendations_by_investability
+from src.screening.investability import (
+    compute_full_pool_shadow_ranking,
+    rank_recommendations_by_investability,
+)
 from src.screening.market_state import detect_market_state
 from src.screening.recommendation_tracker import (
     get_tracking_summary,
     render_tracking_summary,
-    update_tracking_history,
 )
 from src.screening.signal_fusion import fuse_batch
 from src.screening.strategy_scorer import score_batch
@@ -500,15 +502,28 @@ def _build_auto_screening_payload(
     batch_fetcher_use_batch: bool,
     batch_fetcher_stats: dict,
     optional_feature_quality: dict | None = None,
+    shadow_rank_status: str = "insufficient",
+    shadow_rank: list[dict] | None = None,
 ) -> dict:
     """Build the canonical ``--auto`` screening payload.
 
-    Single source of truth shared by the on-disk report (``_save_json_report``)
-    and the in-memory return value of :func:`compute_auto_screening_results`,
-    so the two cannot drift on field shape, ordering, or P*-tag annotations.
+    Single source of truth consumed by :mod:`src.screening.auto_pipeline` for
+    canonical/attempt publication and by the in-memory caller.
     """
     data_quality = {"optional_features": {}}
     data_quality.update(optional_feature_quality or {})
+    candidate_rows: list[dict] = []
+    for candidate in candidates:
+        if hasattr(candidate, "model_dump"):
+            row = candidate.model_dump(mode="json")
+        else:
+            row = dict(vars(candidate))
+        ticker = str(row.get("ticker", "") or "")[:6]
+        if not ticker:
+            raise ValueError("Layer-A candidate is missing ticker")
+        row["ticker"] = ticker
+        candidate_rows.append(row)
+    candidate_rows.sort(key=lambda row: row["ticker"])
     return {
         "mode": "auto_screening",
         "date": trade_date,
@@ -516,10 +531,22 @@ def _build_auto_screening_payload(
         "model_version": _compute_model_version(),
         "market_state": market_state.model_dump(),
         "layer_a_count": len(candidates),
+        # Direct output of this compute call. auto_pipeline verifies it against
+        # the exact-date snapshot written by build_candidate_pool, then binds it
+        # to the publication run before building the manifest.
+        "candidate_pool_run": {
+            "trade_date": trade_date,
+            "tickers": [row["ticker"] for row in candidate_rows],
+            "candidates": candidate_rows,
+        },
         "total_scored": len(fused),
         "high_pool_count": sum(1 for item in fused if item.score_b >= SCORE_B_GREEN_FLOOR),
         "top_n": top_n,
         "recommendations": top_results_serializable,
+        # Research-only full Layer-A challenger.  It is deliberately separate
+        # from recommendations and contains no position/execution instruction.
+        "shadow_rank_status": shadow_rank_status,
+        "shadow_rank": list(shadow_rank or []),
         "sector_concentration_warnings": sector_warnings,
         "consecutive_recommendation": {
             "lookback_days": DEFAULT_LOOKBACK_DAYS,
@@ -547,7 +574,7 @@ def _close_from_price_cache(ticker: str, trade_date: str) -> float | None:
     当 batch fetcher 缺某 ticker 当日行情时 (实测 20260709 Top-N 10 只中 4 只:
     002049/300184/300308/600392 在 batch df 缺失但 price_cache 有), 回退到
     ``data/price_cache/{ticker}.csv`` 读当日 close。避免 recommended_price 落到 0
-    → tracking_history 永久残留 0 (幂等 skip 不修正) → 入场价诊断/展示错误。
+    → legacy report-driven tracking 可能永久残留 0 → 入场价诊断/展示错误。
 
     数据不可用 (文件缺失/无该日行/close<=0/解析异常) 返回 None, 绝不伪造价格。
     """
@@ -681,21 +708,36 @@ def _rank_pool_by_investability(ranking_pool: list[dict], trade_date: str) -> li
     报告构建与 ``rank_recommendations_by_investability`` 调用集中在容错 helper 中。
     """
     try:
+        from src.screening.consecutive_recommendation import (
+            load_auto_screening_history,
+            load_tracking_history,
+        )
         from src.screening.composite_score import (
             compute_composite_scores_for_recommendations,
         )
         from src.screening.expected_return import compute_expected_returns
 
+        reports_dir = _resolve_consecutive_report_dir()
+        history_records = load_tracking_history(reports_dir)
+        history_reports = load_auto_screening_history(
+            lookback_days=max(60, COMPOSITE_SCORE_LOOKBACK_DAYS),
+            report_dir=reports_dir,
+            end_date=trade_date,
+        )
+        model_version = _compute_model_version()
         composite_report = compute_composite_scores_for_recommendations(
             recommendations=ranking_pool,
             trade_date=trade_date,
+            as_of=trade_date,
+            history_reports=history_reports,
             lookback_days=COMPOSITE_SCORE_LOOKBACK_DAYS,
-            reports_dir=_resolve_consecutive_report_dir(),
         )
         expected_report = compute_expected_returns(
             recommendations=ranking_pool,
+            as_of=trade_date,
+            model_version=model_version,
+            history_records=history_records,
             lookback_days=60,
-            reports_dir=_resolve_consecutive_report_dir(),
         )
         return rank_recommendations_by_investability(ranking_pool, composite_report, expected_report)
     except Exception as exc:
@@ -704,6 +746,53 @@ def _rank_pool_by_investability(ranking_pool: list[dict], trade_date: str) -> li
         # with no signal that investability ranking degraded.
         logger.warning("[AutoScreening] investability ranking failed, returning unranked pool: %s", exc)
         return ranking_pool
+
+
+def _rank_full_pool_shadow(
+    full_pool: list[dict], trade_date: str
+) -> dict[str, object]:
+    """Compute the explicit full-pool challenger without influencing Top-N."""
+    insufficient: dict[str, object] = {
+        "shadow_rank_status": "insufficient",
+        "shadow_rank": [],
+    }
+    try:
+        from src.screening.consecutive_recommendation import (
+            load_auto_screening_history,
+            load_tracking_history,
+        )
+        from src.screening.composite_score import (
+            compute_composite_scores_for_recommendations,
+        )
+        from src.screening.expected_return import compute_expected_returns
+
+        reports_dir = _resolve_consecutive_report_dir()
+        history_records = load_tracking_history(reports_dir)
+        history_reports = load_auto_screening_history(
+            lookback_days=max(60, COMPOSITE_SCORE_LOOKBACK_DAYS),
+            report_dir=reports_dir,
+            end_date=trade_date,
+        )
+        composite_report = compute_composite_scores_for_recommendations(
+            recommendations=full_pool,
+            trade_date=trade_date,
+            as_of=trade_date,
+            history_reports=history_reports,
+            lookback_days=COMPOSITE_SCORE_LOOKBACK_DAYS,
+        )
+        expected_report = compute_expected_returns(
+            recommendations=full_pool,
+            as_of=trade_date,
+            model_version=_compute_model_version(),
+            history_records=history_records,
+            lookback_days=60,
+        )
+        return compute_full_pool_shadow_ranking(
+            full_pool, composite_report, expected_report
+        )
+    except Exception as exc:
+        logger.warning("[AutoScreening] full-pool shadow ranking insufficient: %s", exc)
+        return insufficient
 
 
 def _inject_score_decomposition(
@@ -854,9 +943,11 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
             [item.model_dump(mode="json") for item in fused],
             selected_weights,
         )
+        full_shadow_pool = [dict(item) for item in reweighted_results]
         ranking_pool = reweighted_results[:ranking_pool_size]
     else:
         sorted_results = sorted(fused, key=lambda item: item.score_b, reverse=True)
+        full_shadow_pool = [item.model_dump(mode="json") for item in sorted_results]
         ranking_pool = [item.model_dump(mode="json") for item in sorted_results[:ranking_pool_size]]
 
     # NS-6: 注入 score_decomposition 到 ranking_pool 每条 rec (per-strategy
@@ -875,6 +966,11 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     logger.debug("[Auto] score_decomposition injected for %d/%d ranking_pool recs", _injected, len(ranking_pool))
 
     ranked_pool = _rank_pool_by_investability(ranking_pool, trade_date)
+
+    # Keep the Top-30 production preselection intact.  The full-pool result is
+    # an independently computed research challenger and cannot feed selection,
+    # sizing, ledger plans, or recommendation order.
+    shadow_ranking = _rank_full_pool_shadow(full_shadow_pool, trade_date)
 
     top_results_serializable = _select_top_n_with_constraints(ranked_pool, top_n)
     top_results_for_sector = [fused_by_ticker.get(str(rec.get("ticker", "")), rec) for rec in top_results_serializable]
@@ -897,6 +993,14 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     _inject_score_decomposition(top_results_serializable, fused_by_ticker)
     # NS-1: 注入推荐日收盘价 → tracking_history recommended_price 不再落到 0.0。
     top_results_serializable = _inject_recommended_prices(top_results_serializable, trade_date)
+    # Candidate-pool admission is the explicit source for these control fields:
+    # build_candidate_pool only returns currently listed, non-ST names. Persist
+    # that decision plus the exact board-rule implementation version so the
+    # run-bound manifest need not infer them later from ticker/name strings.
+    for recommendation in top_results_serializable:
+        recommendation["security_status"] = "listed"
+        recommendation["st_status"] = False
+        recommendation["board_rule_version"] = "ashare-board-prefix-v1"
     consecutive_highlight = sum(1 for rec in top_results_serializable if rec.get("consecutive_days", 0) >= 3)
 
     # P0-3 信号衰减检测 — 对比当前与历史 score_b
@@ -913,28 +1017,8 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     )
     industry_rotation_payload = [sig.to_dict() for sig in industry_signals]
 
-    # 落盘当前报告 — 让后续 P1-3 追踪 / P0-6 连续推荐 / P0-3 信号衰减
-    # 等跨日模块能读到最新文件。
-    _save_json_report(
-        f"auto_screening_{trade_date}.json",
-        _build_auto_screening_payload(
-            trade_date=trade_date,
-            top_n=top_n,
-            market_state=market_state,
-            candidates=candidates,
-            fused=fused,
-            top_results_serializable=top_results_serializable,
-            sector_warnings=sector_warnings,
-            consecutive_highlight=consecutive_highlight,
-            decay_summary=decay_summary,
-            industry_rotation_payload=industry_rotation_payload,
-            batch_fetcher_use_batch=batch_fetcher.use_batch,
-            batch_fetcher_stats=batch_fetcher.stats(),
-            optional_feature_quality=optional_feature_quality,
-        ),
-    )
-
-    # 构建 payload (不再包含 market_state.model_dump() 自身 — caller 单独获取)
+    # Compute is deliberately publication-free. ``auto_pipeline`` is the only
+    # owner of canonical/attempt publication and tracking order.
     return _build_auto_screening_payload(
         trade_date=trade_date,
         top_n=top_n,
@@ -949,6 +1033,10 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
         batch_fetcher_use_batch=batch_fetcher.use_batch,
         batch_fetcher_stats=batch_fetcher.stats(),
         optional_feature_quality=optional_feature_quality,
+        shadow_rank_status=str(
+            shadow_ranking.get("shadow_rank_status", "insufficient")
+        ),
+        shadow_rank=list(shadow_ranking.get("shadow_rank", [])),
     )
 
 
@@ -1107,16 +1195,13 @@ def _refresh_daily_action_caches_for_auto(
     try:
         stats = refresh_fn(trade_date)
         summary = stats.to_dict() if hasattr(stats, "to_dict") else dict(stats)
+        summary["status"] = "success"
         _log_cache_refresh_summary(summary)
     except Exception as exc:  # pragma: no cover - cache refresh must not fail --auto
         logger.warning("[Auto] daily-action cache refresh failed: %s", exc)
         summary = {"status": "failed", "error": str(exc)}
 
     report_payload["daily_action_cache_refresh"] = summary
-    try:
-        _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
-    except Exception as exc:  # pragma: no cover
-        logger.debug("[Auto] daily-action cache refresh summary save failed: %s", exc)
 
 
 def _log_cache_refresh_summary(s: dict) -> None:
@@ -1201,7 +1286,15 @@ def _attach_freshness_check(trade_date: str, report_payload: dict) -> None:
             print(f"  {Fore.YELLOW}⚠ 数据源新鲜度:{Style.RESET_ALL} {summary}")
 
 
-def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
+AUTO_BUSY_EXIT_CODE = 75
+
+
+def run_auto_screening(
+    trade_date: str,
+    top_n: int = 10,
+    *,
+    strict_quality: bool = False,
+) -> int:
     """一键跑全流程：全市场筛选 -> 因子评分 -> 信号融合 -> Top N 推荐。
 
     仅支持 A 股市场。流程：
@@ -1215,7 +1308,8 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
         top_n: 返回 Top N 推荐（默认 10）
 
     Returns:
-        退出码（0 = 成功）
+        退出码（0 = 完成，1 = fatal，3 = strict-quality degraded，
+        75 = 临时失败/已有实例持锁）
     """
     from colorama import Fore, Style
     from src.utils.date_utils import latest_open_trade_date_on_or_before
@@ -1236,54 +1330,99 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
             "--auto skipped: another instance holds the pipeline lock (%s) — " "concurrent run would corrupt auto_screening report / tracking_history",
             _AUTO_PIPELINE_LOCK_PATH,
         )
-        return 0
+        return AUTO_BUSY_EXIT_CODE
 
-    progress.start()
+    _lock_closed = False
+
+    def _close_auto_lock() -> None:
+        nonlocal _lock_closed
+        if _lock_closed:
+            return
+        _lock_closed = True
+        try:
+            os.close(_auto_lock_fd)
+        except OSError:
+            logger.warning("[Auto] pipeline lock fd close failed", exc_info=True)
+
     try:
-        # P1-1: PREHEAT_BEFORE_AUTO=true 时在 auto 开始前预热缓存
-        if os.environ.get("PREHEAT_BEFORE_AUTO", "").strip().lower() in ("1", "true", "yes", "on"):
-            try:
-                from src.data.cache_preheater import preheat_cache as _preheat
+        progress.start()
+        try:
+            from src.screening.auto_pipeline import AutoRunStatus, run_auto_pipeline
 
-                _preheat_stats = _preheat(trade_date, concurrency=4)
-                logger.info(
-                    "[Auto] P1-1 缓存预热完成: %d/%d 成功, %d 跳过, %.1fs",
-                    _preheat_stats.tasks_success,
-                    _preheat_stats.tasks_total,
-                    _preheat_stats.tasks_skipped,
-                    _preheat_stats.elapsed_seconds,
-                )
-            except Exception as exc:  # pragma: no cover - 预热失败不阻塞主流程
-                logger.warning("[Auto] P1-1 缓存预热失败: %s", exc)
+            # run_auto_pipeline reconciles any durable pending state before its
+            # default prepare_inputs performs preheat/cache work for a new run.
+            result = run_auto_pipeline(
+                trade_date,
+                top_n,
+                strict_quality=strict_quality,
+                reports_dir=_resolve_consecutive_report_dir(),
+            )
+            for diagnostic in result.recovery_diagnostics:
+                logger.warning("[Auto] recovery diagnostic: %s", diagnostic)
+        finally:
+            _close_auto_lock()
 
-        # 调用纯函数 — 复用 Web 端点的核心逻辑
-        report_payload = compute_auto_screening_results(trade_date, top_n)
-        _refresh_daily_action_caches_for_auto(trade_date, report_payload)
+        if result.status is AutoRunStatus.FATAL or result.payload is None:
+            print(
+                f"{Fore.RED}[Auto] 运行失败；诊断已保存到 "
+                f"{result.artifact_path or '不可用'}{Style.RESET_ALL}"
+            )
+            return result.exit_code
 
-        # P6-1 + F5: data freshness check — 报告新鲜度之外独立检查底层数据源 (缓存/资金流/新闻)
-        _attach_freshness_check(trade_date, report_payload)
+        report_payload = result.payload
+        payload_trade_date = report_payload.get("date")
+        effective_trade_date = result.effective_trade_date or payload_trade_date
+        try:
+            if type(effective_trade_date) is not str:
+                raise ValueError("effective trade date must be a string")
+            parsed_effective_date = datetime.strptime(effective_trade_date, "%Y%m%d")
+            if parsed_effective_date.strftime("%Y%m%d") != effective_trade_date:
+                raise ValueError("effective trade date must be exact YYYYMMDD")
+            if payload_trade_date != effective_trade_date:
+                raise ValueError("result and payload trade dates differ")
+        except (TypeError, ValueError) as exc:
+            logger.error("[Auto] 无效的 pipeline 有效日期: %s", exc)
+            print(f"{Fore.RED}[Auto] pipeline 返回的有效交易日无效，停止下游处理。{Style.RESET_ALL}")
+            return 1
+
+        if result.recovered and effective_trade_date != trade_date:
+            print(
+                f"{Fore.YELLOW}[Auto] 已恢复 {effective_trade_date} 的未完成发布；"
+                f"本次请求日期 {trade_date} 未执行。{Style.RESET_ALL}"
+            )
+            logger.warning(
+                "[Auto] recovered effective_trade_date=%s; requested_trade_date=%s was not executed",
+                effective_trade_date,
+                trade_date,
+            )
+        trade_date = effective_trade_date
 
         # 重建 CLI 展示所需的强类型对象 (top_results / market_state / industry_signals / decay_map / composite_by_ticker)
         top_results, market_state, industry_signals, decay_map, composite_by_ticker = _rebuild_cli_objects(report_payload)
 
-        # Save full report — 报告已由 compute_auto_screening_results 写入,
-        # 这里复用同一路径返回给 _print_auto_screening_table 用于 UI 提示。
-        report_path = _resolve_consecutive_report_dir() / f"auto_screening_{trade_date}.json"
+        report_path = result.artifact_path
+        if report_path is None:  # defensive: successful publication always returns a path
+            return 1
 
-        # P1-3 + P0-5: tracking history + watchlist update (lightweight side effects)
-        pdf_path = _enrich_recommendations_with_history(
-            report_payload=report_payload,
-            trade_date=trade_date,
-            tracking_dir=report_path.parent,
-        )
-
-        # P1-11 + P1-12 + P2-3: post-screening analytics (attribution, rebalance, push)
-        _handle_post_screening_tasks(
-            report_payload=report_payload,
-            trade_date=trade_date,
-            report_path=report_path,
-            pdf_path=pdf_path,
-        )
+        if result.status is AutoRunStatus.HEALTHY:
+            # Only canonical healthy output may feed watchlists, PDFs, rebalance,
+            # or external push channels. A degraded attempt remains diagnostic.
+            pdf_path = _enrich_recommendations_with_history(
+                report_payload=report_payload,
+                trade_date=trade_date,
+                tracking_dir=report_path.parent,
+            )
+            _handle_post_screening_tasks(
+                report_payload=report_payload,
+                trade_date=trade_date,
+                report_path=report_path,
+                pdf_path=pdf_path,
+            )
+        else:
+            logger.warning(
+                "[Auto] degraded attempt %s is display-only; downstream side effects skipped",
+                report_path,
+            )
 
         # P0-1 + O-1: output batch fetcher stats + formatted table
         _print_table_block(
@@ -1298,13 +1437,12 @@ def run_auto_screening(trade_date: str, top_n: int = 10) -> int:
             composite_by_ticker=composite_by_ticker,
         )
 
-        return 0
-    except ValueError as exc:
-        # 候选池为空 — 纯函数明确抛出的 ValueError
-        print(f"{Fore.YELLOW}[Auto] {exc}{Style.RESET_ALL}")
-        return 1
+        return result.exit_code
     finally:
-        progress.stop()
+        try:
+            progress.stop()
+        finally:
+            _close_auto_lock()
 
 
 def _enrich_recommendations_with_history(
@@ -1320,28 +1458,14 @@ def _enrich_recommendations_with_history(
     """
     from colorama import Fore, Style
 
-    # P1-3 推荐标的自动追踪 — 记录本次 Top N, 并补全历史 T+1/T+3/T+5 收益
-    try:
-        updated_records = update_tracking_history(
-            reports_dir=tracking_dir,
-            trade_date=trade_date,
-        )
-        if updated_records > 0:
-            logger.info("[Auto] 追踪历史: %d 条已更新", updated_records)
-    except Exception as exc:  # pragma: no cover - 追踪失败不影响主流程
-        logger.warning("[Auto] P1-3 追踪更新失败: %s", exc)
-        updated_records = 0
+    # Tracking is performed exactly once by ``auto_pipeline`` immediately after
+    # canonical publication, from this same in-memory payload.
     tracking_summary = get_tracking_summary(
         history_path=tracking_dir / "tracking_history.json",
         lookback_days=30,
     )
     if tracking_summary.get("total_recommendations", 0) > 0:
         report_payload["tracking_summary"] = tracking_summary
-        # 重新落盘 — 让 tracking_summary 出现在 JSON 中
-        try:
-            _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
-        except Exception as exc:  # pragma: no cover
-            logger.debug("[Auto] tracking_summary 二次落盘失败: %s", exc)
 
     # P0-5: 智能自选池 — 更新 watchlist 中标的的评分和信号
     try:
@@ -1355,10 +1479,6 @@ def _enrich_recommendations_with_history(
             "[Auto] P0-5 Watchlist: %d 只自选标的已更新评分",
             watchlist_update["scored_count"],
         )
-        try:
-            _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
-        except Exception as exc:  # pragma: no cover
-            logger.debug("[Auto] watchlist_update 二次落盘失败: %s", exc)
 
     # P1-7: 可选 — 自动导出 PDF 报告 (环境变量 AUTO_EXPORT_PDF=true)
     pdf_path: Path | None = None
@@ -1418,10 +1538,6 @@ def _attach_strategy_attribution(report_payload: dict, trade_date: str) -> None:
                     len(attributions),
                     attr_total_pnl,
                 )
-                try:
-                    _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
-                except Exception as exc:  # pragma: no cover
-                    logger.debug("[Auto] strategy_attribution_daily 二次落盘失败: %s", exc)
     except Exception as exc:  # pragma: no cover - 归因失败不影响主流程
         logger.warning("[Auto] P1-11 策略归因日报附加失败: %s", exc)
 
@@ -1456,10 +1572,6 @@ def _handle_post_screening_tasks(
                     len(reb_actions),
                     sum(1 for a in reb_actions if a.priority == 1),
                 )
-            try:
-                _save_json_report(f"auto_screening_{trade_date}.json", report_payload)
-            except Exception as exc:  # pragma: no cover
-                logger.debug("[Auto] rebalance_actions 二次落盘失败: %s", exc)
     except Exception as exc:  # pragma: no cover - 再平衡失败不影响主流程
         logger.warning("[Auto] P1-12 组合再平衡附加失败: %s", exc)
 
@@ -1678,7 +1790,15 @@ def _build_top_table_row(*, idx: int, rec: dict, market_regime: str = "normal") 
     return [idx, ticker_label, industry, score_colored, decision_colored, front_door_colored, cons_str, decay_str]
 
 
-def _print_top_score_enhancements(recs: list[dict], top_n: int, report_path) -> None:
+def _print_top_score_enhancements(
+    recs: list[dict],
+    top_n: int,
+    report_path,
+    *,
+    trade_date: str | None = None,
+    model_version: str | None = None,
+    history_records: list[dict] | None = None,
+) -> None:
     """打印 Top N 的评分构成、因子瀑布和预期收益增强信息。
 
     Extracted from :func:`run_top` — 将 score decomposition / waterfall /
@@ -1716,11 +1836,20 @@ def _print_top_score_enhancements(recs: list[dict], top_n: int, report_path) -> 
 
         _reports_dir = _Path(report_path).parent if report_path else None
         if _reports_dir:
-            er_report = compute_expected_returns(
-                recommendations=recs[:top_n],
-                lookback_days=60,
-                reports_dir=_reports_dir,
-            )
+            if trade_date is not None or history_records is not None:
+                er_report = compute_expected_returns(
+                    recommendations=recs[:top_n],
+                    as_of=trade_date,
+                    model_version=model_version,
+                    history_records=history_records or [],
+                    lookback_days=60,
+                )
+            else:
+                er_report = compute_expected_returns(
+                    recommendations=recs[:top_n],
+                    lookback_days=60,
+                    reports_dir=_reports_dir,
+                )
             if er_report.total_samples > 0:
                 print(f"\n{Fore.WHITE}{Style.BRIGHT}{'━' * 22} 预期收益 (P9-1) {'━' * 22}{Style.RESET_ALL}")
                 print(render_expected_returns_compact(er_report))
@@ -1819,7 +1948,16 @@ def run_top(top_n: int = 10, filters: dict | None = None) -> int:
     print(tabulate(table_data, headers=headers, tablefmt="grid", colalign=("right", "left", "left", "right", "center", "center", "center", "center")))
 
     # Score decomposition + waterfall + expected returns for top 5 (skip on validation failure)
-    _print_top_score_enhancements(recs, top_n, report_path)
+    from src.screening.consecutive_recommendation import load_tracking_history
+
+    _print_top_score_enhancements(
+        recs,
+        top_n,
+        report_path,
+        trade_date=str(trade_date),
+        model_version=str(payload.get("model_version") or ""),
+        history_records=load_tracking_history(report_dir),
+    )
 
     # Cache stats if available
     fetcher_stats = payload.get("batch_data_fetcher", {})
@@ -3741,7 +3879,13 @@ if __name__ == "__main__":
     # --auto mode: run the full screening pipeline
     if inputs.auto:
         trade_date = inputs.end_date.replace("-", "")
-        raise SystemExit(run_auto_screening(trade_date, top_n=inputs.top_n))
+        raise SystemExit(
+            run_auto_screening(
+                trade_date,
+                top_n=inputs.top_n,
+                strict_quality=inputs.strict_quality,
+            )
+        )
 
     # --explain mode: read the latest auto-screening report and explain a ticker
     if inputs.explain:

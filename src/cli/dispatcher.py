@@ -743,10 +743,8 @@ def _resolve_expected_returns(argv: list[str]) -> int | None:
     top_n = _parse_int(_get_kv(argv, "--top-n"), 20)
     lookback = _parse_int(_get_kv(argv, "--lookback"), 60)
     from src.screening.consecutive_recommendation import resolve_report_dir
-    from src.screening.data_quality_audit import (
-        _find_latest_report,
-        load_latest_recommendations,
-    )
+    from src.screening.consecutive_recommendation import load_tracking_history
+    from src.screening.data_quality_audit import _find_latest_report
     from src.screening.expected_return import (
         compute_expected_returns,
         render_expected_returns,
@@ -758,11 +756,27 @@ def _resolve_expected_returns(argv: list[str]) -> int | None:
     if report_path is None:
         print(f"{Fore.RED}No auto_screening report found. Run --auto first.{Style.RESET_ALL}")
         return 1
-    recs = load_latest_recommendations(reports_dir, top_n=top_n)
+    import json
+
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        print(f"{Fore.RED}Latest auto_screening report is unreadable.{Style.RESET_ALL}")
+        return 1
+    recs = list(payload.get("recommendations") or [])[:top_n]
     if not recs:
         print(f"{Fore.RED}No recommendations found.{Style.RESET_ALL}")
         return 1
-    report = compute_expected_returns(recommendations=recs, lookback_days=lookback, reports_dir=reports_dir)
+    trade_date = str(payload.get("date") or "")
+    model_version = str(payload.get("model_version") or "")
+    history_records = load_tracking_history(reports_dir)
+    report = compute_expected_returns(
+        recommendations=recs,
+        as_of=trade_date,
+        model_version=model_version,
+        history_records=history_records,
+        lookback_days=lookback,
+    )
     print(render_expected_returns(report))
     return 0
 
@@ -924,48 +938,115 @@ def _resolve_top_setups(argv: list[str]) -> int | None:
     return 0
 
 
-def _resolve_daily_action(argv: list[str]) -> int | None:
-    """Phase A 每日机械交易动作 (BTST T+10, paper trading, 移除情绪决策)。
+def _cached_daily_action_market_bar(cache, trade_date):
+    """Read an exact cached bar without inventing execution-state fields."""
+    import pandas as pd
 
-    用验证过的 BTST T+10 分布 (cv=1.53, n=5374) 作 Kelly 先验,
-    产出今日 BUY/SKIP + 止损 + 仓位 + 时间退出 + 失效条件,
-    写入 paper_trading journal, drawdown 熔断自动降仓/清仓。
+    from src.screening.offensive.daily_action_service import MarketBar
 
-    闭环: 每次运行先平到期仓位 (T+10 收盘口径) + 回填 realized P&L → 驱动 drawdown,
-    再决定是否出新仓。无需手动复盘命令 — 平仓摘要直接在输出里披露。
-    """
+    if not cache.exists():
+        return None
+    frame = pd.read_csv(cache)
+    dates = pd.to_datetime(frame.get("date"), format="mixed", errors="coerce").dt.date
+    rows = frame.loc[dates == trade_date]
+    if len(rows) != 1:
+        return None
+    row = rows.iloc[0]
+
+    def positive(name):
+        if name not in row or pd.isna(row[name]):
+            return None
+        value = float(row[name])
+        return value if value > 0 else None
+
+    suspended = None
+    if "suspended" in row and pd.notna(row["suspended"]):
+        raw = row["suspended"]
+        if isinstance(raw, bool) or raw in (0, 1):
+            suspended = bool(raw)
+    return MarketBar(
+        positive("open"),
+        positive("close"),
+        positive("limit_down"),
+        positive("limit_up"),
+        suspended,
+        positive("high"),
+        positive("low"),
+    )
+
+
+def _resolve_daily_action(
+    argv: list[str], *, open_sessions=None, ledger_path=None
+) -> int | None:
+    """Run cached setup scanning through the auditable v2 simulation ledger."""
     if "--daily-action" not in argv:
         return None
-    from src.screening.offensive.daily_action import generate_daily_action, render_daily_action
-    from src.screening.offensive.paper_tracker import PaperTracker
+    from pathlib import Path
+
+    from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
+    from src.screening.offensive.daily_action import (
+        render_daily_action_v2,
+        run_daily_action_v2,
+        scan_daily_action_candidates,
+    )
+    from src.screening.offensive.daily_action_service import (
+        DailyActionService,
+        load_daily_action_manifest_gate,
+    )
+    from src.screening.offensive.execution_adjuster import ExecutionCosts
+    from src.screening.offensive.ledger_repository import LedgerRepository
 
     # --end-date YYYY-MM-DD (或 YYYYMMDD): 显式覆盖信号日, 跳过 price_cache 探测 + 17:00 guard.
     # 支持 `--end-date=VALUE` 和 `--end-date VALUE` 两种形式. 默认 None → 走 17:00 规则.
     end_date_raw = _get_kv(argv, "--end-date") or _next_arg(argv, "--end-date")
     end_date = end_date_raw.strip().replace("-", "") if end_date_raw else None
 
-    # --verbose: 展开术语说明 + 执行规则 (默认隐藏, 跑了一周以上的 operator 已熟记).
-    explain = "--verbose" in argv
+    if open_sessions is None:
+        from src.screening.offensive.daily_action import _load_authoritative_session_dates
 
-    tracker = PaperTracker()
-    actions = generate_daily_action(tracker=tracker, end_date=end_date)
-    # 用本次实际扫描日期渲染; fallback 仅兼容旧 tracker / 异常路径
-    trade_date = getattr(tracker, "last_action_trade_date", "") or "????????"
-    if trade_date != "????????":
-        print(render_daily_action(actions, trade_date, tracker, explain=explain))
-        return 0
-
-    # 旧 fallback: 用最新报告日期渲染
+        open_sessions = _load_authoritative_session_dates()
+    open_sessions = tuple(open_sessions)
+    scan = scan_daily_action_candidates(
+        end_date=end_date, authoritative_sessions=open_sessions
+    )
     from src.screening.consecutive_recommendation import resolve_report_dir
-    from src.screening.data_quality_audit import _find_latest_report
 
-    latest = _find_latest_report(resolve_report_dir())
-    if latest is not None:
-        import json
+    manifest, current_fingerprints = load_daily_action_manifest_gate(
+        scan.signal_date,
+        reports_dir=resolve_report_dir(),
+    )
 
-        with open(latest, encoding="utf-8") as f:
-            trade_date = str(json.load(f).get("date", "????????"))
-    print(render_daily_action(actions, trade_date, tracker, explain=explain))
+    def cached_prices(ticker, trade_date):
+        cache = Path("data/price_cache") / f"{ticker}.csv"
+        return _cached_daily_action_market_bar(cache, trade_date)
+
+    def cached_shadow_history(ticker):
+        import pandas as pd
+
+        cache = Path("data/price_cache") / f"{ticker}.csv"
+        if not cache.exists():
+            return None
+        return pd.read_csv(cache, dtype={"date": str})
+
+    resolved_ledger_path = Path(ledger_path or "data/paper_trading_v2/ledger.sqlite3")
+    execution_costs = ExecutionCosts(version="daily-action-v2")
+    with LedgerRepository(
+        resolved_ledger_path,
+        "daily-action-v2",
+        100_000.0,
+        execution_costs=execution_costs,
+    ) as repository:
+        service = DailyActionService(
+            repository,
+            TradingSessionCalendar(open_sessions),
+            cached_prices,
+            execution_costs,
+            cache_fingerprints=lambda ticker, _trade_date: current_fingerprints.get(
+                ticker
+            ),
+            shadow_history=cached_shadow_history,
+        )
+        print(render_daily_action_v2(run_daily_action_v2(service, scan, manifest)))
     return 0
 
 

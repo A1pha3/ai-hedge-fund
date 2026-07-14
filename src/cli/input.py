@@ -66,6 +66,11 @@ def add_common_args(
         help="Return top N recommendations in --auto mode (default: 10)",
     )
     parser.add_argument(
+        "--strict-quality",
+        action="store_true",
+        help="Return exit code 3 when --auto completes with degraded data quality",
+    )
+    parser.add_argument(
         "--explain",
         type=str,
         default=None,
@@ -271,6 +276,7 @@ class CLIInputs:
     show_agent_graph: bool = False
     auto: bool = False
     top_n: int = 10
+    strict_quality: bool = False
     explain: str = ""
     why_not: str = ""
     raw_args: argparse.Namespace | None = None
@@ -354,6 +360,7 @@ def parse_cli_inputs(
         show_agent_graph=getattr(args, "show_agent_graph", False),
         auto=is_auto,
         top_n=getattr(args, "top_n", 10),
+        strict_quality=getattr(args, "strict_quality", False),
         explain=getattr(args, "explain", None) or "",
         why_not=getattr(args, "why_not", None) or "",
         raw_args=args,

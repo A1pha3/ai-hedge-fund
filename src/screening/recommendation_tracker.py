@@ -2,7 +2,8 @@
 
 设计目标:
 - **零配置** — 用户跑 ``--auto`` 后自动累积追踪数据，无需手动触发 lookback audit
-- **轻量存储** — 追加式 JSON 历史 (``tracking_history.json``)，按 ``(ticker, recommended_date)`` 幂等
+- **轻量存储** — JSON 历史；payload 路径对当日做 run-aware exact replacement，
+  其它日期保留；legacy report 路径按 ``(ticker, recommended_date)`` 幂等
 - **可插拔价格源** — ``fetch_actual_returns`` 接受可注入的 ``use_data_fetcher`` 回调，便于测试
 - **优雅降级** — 历史文件损坏 / 报告缺失 / 价格缺失一律返回 ``None`` 或空列表，不抛出
 
@@ -35,6 +36,7 @@ from typing import Any, Callable
 
 from src.utils.numeric import optional_float as _optional_float
 from src.utils.numeric import safe_float as _safe_float
+from src.utils.atomic_files import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +109,19 @@ class TrackingRecord:
     next_20day_return: float | None = None
     next_25day_return: float | None = None
     next_30day_return: float | None = None
+    # Exact close dates that made each T+N label observable.  Strict PIT
+    # calibration requires these; legacy records without them remain readable
+    # but their undated labels are inadmissible in strict mode.
+    return_t1_date: str | None = None
+    return_t3_date: str | None = None
+    return_t5_date: str | None = None
+    return_t10_date: str | None = None
+    return_t15_date: str | None = None
+    return_t20_date: str | None = None
+    return_t25_date: str | None = None
+    return_t30_date: str | None = None
     tracking_status: str = "pending"
+    source_run_id: str = ""
     # NS-2: 模型版本标识 (来自 auto_screening payload 顶层), 让诊断模块按版本
     # 分组区分老/新模型效果。旧 tracking_history 记录无此字段 → 默认 ""。
     model_version: str = ""
@@ -152,7 +166,16 @@ class TrackingRecord:
             next_20day_return=_optional_float(payload.get("next_20day_return")),
             next_25day_return=_optional_float(payload.get("next_25day_return")),
             next_30day_return=_optional_float(payload.get("next_30day_return")),
+            return_t1_date=_optional_date_string(payload.get("return_t1_date")),
+            return_t3_date=_optional_date_string(payload.get("return_t3_date")),
+            return_t5_date=_optional_date_string(payload.get("return_t5_date")),
+            return_t10_date=_optional_date_string(payload.get("return_t10_date")),
+            return_t15_date=_optional_date_string(payload.get("return_t15_date")),
+            return_t20_date=_optional_date_string(payload.get("return_t20_date")),
+            return_t25_date=_optional_date_string(payload.get("return_t25_date")),
+            return_t30_date=_optional_date_string(payload.get("return_t30_date")),
             tracking_status=str(payload.get("tracking_status", "pending") or "pending"),
+            source_run_id=str(payload.get("source_run_id", "") or ""),
             model_version=str(payload.get("model_version", "") or ""),
             score_decomposition=payload.get("score_decomposition"),
             composite_score=_optional_float(payload.get("composite_score")),
@@ -183,6 +206,11 @@ def _parse_date(date_str: str) -> datetime | None:
 def _format_date(dt: datetime) -> str:
     """``datetime`` → YYYYMMDD。"""
     return dt.strftime("%Y%m%d")
+
+
+def _optional_date_string(value: Any) -> str | None:
+    parsed = _parse_date(str(value or ""))
+    return _format_date(parsed) if parsed is not None else None
 
 
 def _coerce_recommended_price(rec: dict[str, Any]) -> float:
@@ -335,7 +363,7 @@ def fetch_actual_returns(
     to_date: str,
     *,
     use_data_fetcher: Callable[[str, str, str], list[dict[str, Any]]] | None = None,
-) -> dict[str, dict[str, float]]:
+) -> dict[str, dict[str, float | str]]:
     """从 tushare/akshare 拉取指定区间每日收盘价，计算 T+1/T+3/T+5 收益。
 
     Args:
@@ -361,7 +389,7 @@ def fetch_actual_returns(
     to_dt_extended = to_dt + timedelta(days=45)
     extended_to = _format_date(to_dt_extended)
 
-    result: dict[str, dict[str, float]] = {}
+    result: dict[str, dict[str, float | str]] = {}
     for ticker in tickers:
         if not ticker:
             continue
@@ -370,20 +398,28 @@ def fetch_actual_returns(
         except Exception as exc:  # pragma: no cover - 异常路径
             logger.debug("[Tracking] fetcher 异常 ticker=%s: %s", ticker, exc)
             continue
-        closes = _extract_sorted_closes(raw, base_date=cleaned_from)
+        duplicate_dates: set[str] = set()
+        closes = _extract_sorted_closes(
+            raw,
+            base_date=cleaned_from,
+            duplicate_dates_out=duplicate_dates,
+        )
+        if duplicate_dates:
+            continue
         if not closes:
             continue
         # 基准价: 推荐日当天或之后第一个交易日
         base_close = closes[0][1]
         if base_close <= 0:
             continue
-        ticker_returns: dict[str, float] = {}
+        ticker_returns: dict[str, float | str] = {}
         for horizon in DEFAULT_HORIZONS:
             if len(closes) > horizon:
-                future_close = closes[horizon][1]
+                observation_date, future_close = closes[horizon]
                 if future_close > 0:
                     ret_pct = (future_close - base_close) / base_close * 100.0
                     ticker_returns[f"day_{horizon}"] = round(ret_pct, 4)
+                    ticker_returns[f"day_{horizon}_date"] = observation_date
         if ticker_returns:
             result[ticker] = ticker_returns
     return result
@@ -392,6 +428,8 @@ def fetch_actual_returns(
 def _extract_sorted_closes(
     raw: list[dict[str, Any]],
     base_date: str,
+    *,
+    duplicate_dates_out: set[str] | None = None,
 ) -> list[tuple[str, float]]:
     """从 fetcher 原始数据中提取 (date, close) 列表, 按日期升序, 过滤非有限 / 零值。
 
@@ -400,13 +438,15 @@ def _extract_sorted_closes(
         base_date: 推荐日 (YYYYMMDD); 只保留 >= base_date 的数据点
 
     Returns:
-        按日期升序的 ``[(date_str_8, close), ...]``; 空值 / 0 / 非有限被剔除
+        按日期升序的 ``[(date_str_8, close), ...]``; 空值 / 0 / 非有限被剔除。
+        任一可用区间内的规范化日期重复时整段失败关闭并返回空列表。
     """
     base_dt = _parse_date(base_date)
     if base_dt is None:
         return []
 
     out: list[tuple[str, float]] = []
+    seen_dates: set[str] = set()
     for row in raw:
         time_str = str(row.get("time", "") or row.get("date", "") or "").strip()
         if not time_str:
@@ -414,10 +454,16 @@ def _extract_sorted_closes(
         row_dt = _parse_date(time_str)
         if row_dt is None or row_dt < base_dt:
             continue
+        normalized_date = _format_date(row_dt)
+        if normalized_date in seen_dates:
+            if duplicate_dates_out is not None:
+                duplicate_dates_out.add(normalized_date)
+            return []
+        seen_dates.add(normalized_date)
         close = _safe_float(row.get("close"), default=0.0)
         if close <= 0:
             continue
-        out.append((_format_date(row_dt), close))
+        out.append((normalized_date, close))
 
     out.sort(key=lambda x: x[0])
     return out
@@ -445,13 +491,9 @@ def _load_history(history_path: Path) -> list[dict[str, Any]]:
 
 
 def _save_history(history_path: Path, records: list[dict[str, Any]]) -> None:
-    """写入 tracking_history.json (原子写: 写临时文件后 rename)。"""
-    history_path.parent.mkdir(parents=True, exist_ok=True)
+    """Durably replace tracking history using the approved atomic primitive."""
     payload = {"records": records, "updated_at": datetime.now().strftime("%Y%m%d%H%M%S")}
-    tmp_path = history_path.with_suffix(".json.tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
-    tmp_path.replace(history_path)
+    atomic_write_json(history_path, payload)
 
 
 def _record_key(rec: dict[str, Any]) -> tuple[str, str]:
@@ -479,6 +521,55 @@ def update_tracking_history(
     Returns:
         本次实际写入 / 更新的记录数 (新增 + 更新 T+1/T+3/T+5 收益的合计)
     """
+    pending, model_version = load_pending_recommendations_with_version(reports_dir, trade_date)
+    return _update_tracking_history(
+        reports_dir,
+        trade_date,
+        pending,
+        model_version,
+        source_run_id=None,
+        history_filename=history_filename,
+        use_data_fetcher=use_data_fetcher,
+    )
+
+
+def update_tracking_history_from_payload(
+    reports_dir: Path,
+    trade_date: str,
+    report_payload: dict[str, Any],
+    *,
+    use_data_fetcher: Callable[[str, str, str], list[dict[str, Any]]] | None = None,
+) -> int:
+    """用本次 run 的精确 payload 替换当日追踪集合，不回读报告文件。"""
+    payload_date = str(report_payload.get("date", "") or "")
+    if payload_date != trade_date:
+        raise ValueError(f"report payload date {payload_date!r} does not match trade_date {trade_date!r}")
+
+    pending = _extract_recommendations(report_payload)
+    model_version = str(report_payload.get("model_version", "") or "")
+    source_run_id = str(report_payload.get("run_id", "") or "")
+    if not source_run_id:
+        raise ValueError("report payload run_id is required for exact tracking replacement")
+    return _update_tracking_history(
+        reports_dir,
+        trade_date,
+        pending,
+        model_version,
+        source_run_id=source_run_id,
+        use_data_fetcher=use_data_fetcher,
+    )
+
+
+def _update_tracking_history(
+    reports_dir: Path,
+    trade_date: str,
+    pending: list[dict[str, Any]],
+    model_version: str,
+    *,
+    source_run_id: str | None,
+    history_filename: str = HISTORY_FILENAME,
+    use_data_fetcher: Callable[[str, str, str], list[dict[str, Any]]] | None = None,
+) -> int:
     history_path = reports_dir / history_filename
     # c292 精确化 (文件级 flock 纵深): 守 read-modify-write 临界区, 防止锁外 caller
     # (backfill 脚本 / launcher Step 2) 并发导致 lost-update (后写覆盖先写, 丢 Phase 2
@@ -488,7 +579,14 @@ def update_tracking_history(
     _lock_fd = os.open(history_path.with_suffix(".json.lock"), os.O_CREAT | os.O_RDWR, 0o644)
     try:
         fcntl.flock(_lock_fd, fcntl.LOCK_EX)  # 阻塞直到拿到排他锁
-        return _update_tracking_history_locked(history_path, trade_date, history_filename, use_data_fetcher)
+        return _update_tracking_history_locked(
+            history_path,
+            trade_date,
+            pending,
+            model_version,
+            source_run_id,
+            use_data_fetcher,
+        )
     finally:
         # finally 释放: 正常返回 / 异常 / Ctrl-C 都释放 fd (flock 随 fd close 自动释放)
         try:
@@ -500,25 +598,33 @@ def update_tracking_history(
 def _update_tracking_history_locked(
     history_path: Path,
     trade_date: str,
-    history_filename: str,
+    pending: list[dict[str, Any]],
+    model_version: str,
+    source_run_id: str | None,
     use_data_fetcher: Callable[[str, str, str], list[dict[str, Any]]] | None,
 ) -> int:
     """update_tracking_history 的临界区主体 (调用方已持 flock)。"""
-    reports_dir = history_path.parent
     history = _load_history(history_path)
     history_index: dict[tuple[str, str], dict[str, Any]] = {_record_key(r): r for r in history}
+    previous_same_date = {
+        key: dict(record)
+        for key, record in history_index.items()
+        if key[1] == trade_date
+    }
+    if source_run_id is not None:
+        history_index = {
+            key: record for key, record in history_index.items() if key[1] != trade_date
+        }
 
     updated_count = 0
 
     # ----- Phase 1: 处理 trade_date 当日报告, 加入新推荐 -----
-    # NS-2: 同时读 payload 顶层的 model_version, 注入每条 TrackingRecord
-    pending, model_version = load_pending_recommendations_with_version(reports_dir, trade_date)
     for rec in pending:
         ticker = str(rec.get("ticker", "") or "").strip()
         if not ticker:
             continue
         key = (ticker, trade_date)
-        if key in history_index:
+        if source_run_id is None and key in history_index:
             # C-TRACKING-PRICE-BACKFILL (20260710): 已存在记录若 recommended_price=0
             # (首次写入时 _inject_recommended_prices 价格注入失败 — 如 batch fetcher
             # 当日行情未就绪), 幂等 skip 会令 price=0 永久残留 → 下游诊断/校准/
@@ -559,6 +665,7 @@ def _update_tracking_history_locked(
             recommended_price=price,
             recommendation_score=score_b,
             tracking_status="pending",
+            source_run_id=source_run_id or "",
             model_version=model_version,
             score_decomposition=decomp,
             composite_score=_optional_float(rec.get("composite_score")),
@@ -566,8 +673,55 @@ def _update_tracking_history_locked(
             expected_returns=_er if isinstance(_er, dict) else None,
             bucket_sample_count=int(_bsc) if isinstance(_bsc, (int, float)) and not isinstance(_bsc, bool) else None,
         )
-        history_index[key] = record.to_dict()
-        updated_count += 1
+        record_payload = record.to_dict()
+        previous = previous_same_date.get(key)
+        if source_run_id is not None and previous is not None:
+            previous_identity = (
+                str(previous.get("ticker", "") or ""),
+                str(previous.get("recommended_date", "") or ""),
+                _safe_float(previous.get("recommended_price"), default=0.0),
+                _safe_float(previous.get("recommendation_score"), default=0.0),
+                str(previous.get("model_version", "") or ""),
+            )
+            current_identity = (
+                ticker,
+                trade_date,
+                price,
+                score_b,
+                model_version,
+            )
+            if previous_identity == current_identity:
+                for label_field in (
+                    "next_day_price",
+                    "next_day_return",
+                    "next_3day_return",
+                    "next_5day_return",
+                    "next_10day_return",
+                    "next_15day_return",
+                    "next_20day_return",
+                    "next_25day_return",
+                    "next_30day_return",
+                    "return_t1_date",
+                    "return_t3_date",
+                    "return_t5_date",
+                    "return_t10_date",
+                    "return_t15_date",
+                    "return_t20_date",
+                    "return_t25_date",
+                    "return_t30_date",
+                    "tracking_status",
+                ):
+                    if label_field in previous:
+                        record_payload[label_field] = previous[label_field]
+        history_index[key] = record_payload
+        if previous != record_payload:
+            updated_count += 1
+
+    if source_run_id is not None:
+        current_keys = {
+            key for key in history_index if key[1] == trade_date
+        }
+        updated_count += len(set(previous_same_date) - current_keys)
 
     # ----- Phase 2: 对历史 pending / partial 记录尝试拉取收益 -----
     today_dt = _parse_date(trade_date)
@@ -629,6 +783,13 @@ def _update_tracking_history_locked(
                         if fetched is not None:
                             if target.get(field_key) != fetched:
                                 target[field_key] = fetched
+                                changed = True
+                            horizon = day_key.removeprefix("day_")
+                            date_key = f"return_t{horizon}_date"
+                            fetched_date = returns.get(f"{day_key}_date")
+                            normalized_date = _optional_date_string(fetched_date)
+                            if normalized_date is not None and target.get(date_key) != normalized_date:
+                                target[date_key] = normalized_date
                                 changed = True
                         # If fetched is None, keep the existing value (no clobber).
                     # 同步未来价字段 — 来自 fetcher 的隐含信息 (非 T+1)

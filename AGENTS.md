@@ -64,12 +64,12 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 
 ### 凸性 setup（`--daily-action`）
 
-- **BTST 涨停突破（T+10）**：✅ 启用。crisis/risk_off 时加仓（`_regime_size_factor`，BTST crisis=1.2×）。
+- **BTST 涨停突破（T+10）**：✅ 启用。扫描器会请求 crisis/risk_off 加仓，但 v2 ledger 当前因 canonical manifest 缺少可重算的 regime 授权证据而安全降级到 10%，并披露 `regime_authorization_evidence_unavailable`；在证据完成绑定前不实际加仓。
 - **OversoldBounce 超跌反弹（T+5）**：⏸️ **默认暂停**（E[r]=+0.34% 统计不显著、CI 跨 0；尾部亏损比 BTST 厚）。
   - 控制：`DAILY_ACTION_DISABLED_SETUPS` env（默认含 `oversold_bounce`）。
   - 恢复：`DAILY_ACTION_DISABLED_SETUPS=none`（补全历史数据重跑后再决定去留）。
   - ⚠️ 暂停理由不是"crisis 亏钱"（crisis n=21 太小不可靠），而是"无法证明赚钱 + 亏起来更狠 + 仓位有更好去处"。详见上文"2026 实测表现"。
-- Kelly 仓位：half-Kelly，单票上限 10%（regime 加仓后硬上限 12%），组合上限 60%。
+- Kelly 仓位：half-Kelly，当前 v2 ledger 单票硬上限 10%，组合上限 60%；12% regime 例外暂停，待 canonical regime evidence 可由 repository 重验后恢复。
 - 止损：⚠️ **当前是摆设**——`stop_would_have_triggered` 只进 reasoning 字符串，**不影响 realized P&L**（账面按 T+N close）。192 笔回测 0 笔触发（2026 行情好）。
 
 ### 因子评分（`--auto`）

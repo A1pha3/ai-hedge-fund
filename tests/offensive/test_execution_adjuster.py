@@ -5,12 +5,19 @@
 
 from __future__ import annotations
 
+from datetime import date, datetime
+
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.screening.offensive.execution_adjuster import (
     ExecutionConfig,
+    ExecutionCosts,
+    ExecutionStatus,
+    apply_execution_costs,
     adjust_returns,
+    classify_open_fill,
     is_limit_up_unbuyable_next_day,
 )
 
@@ -103,3 +110,197 @@ def test_star_market_15pct_not_limit_up_so_buyable():
     prices.loc[0, "pct_change"] = 15.0  # T 日 +15% (非涨停)
     prices.loc[1, "open"] = 13.0  # T+1 开盘 +13% (旧逻辑会判不可买)
     assert is_limit_up_unbuyable_next_day(prices, trigger_idx=0, ticker="688037") is False
+
+
+def test_open_inside_limits_is_executable_proxy():
+    result = classify_open_fill(open_price=10.5, limit_down=9.0, limit_up=11.0, suspended=False)
+    assert result is ExecutionStatus.EXECUTABLE_PROXY
+
+
+def test_open_on_limit_is_unknown_queue():
+    assert classify_open_fill(11.0, 9.0, 11.0, False) is ExecutionStatus.UNKNOWN_QUEUE
+
+
+def test_locked_board_is_conservative_unexecutable_proxy():
+    assert (
+        classify_open_fill(11.0, 9.0, 11.0, False, high=11.0, low=11.0)
+        is ExecutionStatus.UNEXECUTABLE_PROXY
+    )
+
+
+@pytest.mark.parametrize(
+    ("open_price", "limit_down", "limit_up", "high", "low"),
+    [
+        (float("nan"), 9.0, 11.0, None, None),
+        (10.0, float("inf"), 11.0, None, None),
+        (10.0, 9.0, 0.0, None, None),
+        (10.0, 11.0, 9.0, None, None),
+        (10.0, 9.0, 11.0, float("nan"), 9.5),
+        (10.0, 9.0, 11.0, 9.5, -1.0),
+        (10.0, 9.0, 11.0, 12.0, 9.5),
+        (10.0, 9.0, 11.0, 10.5, 8.0),
+    ],
+)
+def test_invalid_open_or_band_data_is_unknown_queue(open_price, limit_down, limit_up, high, low):
+    assert (
+        classify_open_fill(open_price, limit_down, limit_up, False, high=high, low=low)
+        is ExecutionStatus.UNKNOWN_QUEUE
+    )
+
+
+def test_known_suspension_does_not_override_invalid_price_data():
+    assert (
+        classify_open_fill(float("nan"), 9.0, 11.0, True)
+        is ExecutionStatus.UNKNOWN_QUEUE
+    )
+
+
+def test_limit_comparison_uses_half_tick_tolerance():
+    assert classify_open_fill(10.996, 9.0, 11.0, False) is ExecutionStatus.UNKNOWN_QUEUE
+    assert classify_open_fill(10.994, 9.0, 11.0, False) is ExecutionStatus.EXECUTABLE_PROXY
+
+
+def test_locked_board_uses_half_tick_tolerance():
+    assert (
+        classify_open_fill(10.996, 9.0, 11.0, False, high=11.004, low=10.995)
+        is ExecutionStatus.UNEXECUTABLE_PROXY
+    )
+
+
+def test_missing_limit_or_suspension_state_fails_closed():
+    assert classify_open_fill(10.0, None, 11.0, False) is ExecutionStatus.UNKNOWN_QUEUE
+    assert classify_open_fill(10.0, 9.0, 11.0, None) is ExecutionStatus.UNKNOWN_QUEUE
+
+
+@pytest.mark.parametrize("suspended", [0, 1, "", "false", float("nan")])
+def test_suspension_status_rejects_falsey_and_truthy_impostors(suspended):
+    assert classify_open_fill(10.0, 9.0, 11.0, suspended) is ExecutionStatus.UNKNOWN_QUEUE
+
+
+def test_numpy_boolean_suspension_status_is_supported():
+    assert (
+        classify_open_fill(10.0, 9.0, 11.0, np.bool_(False))
+        is ExecutionStatus.EXECUTABLE_PROXY
+    )
+    assert (
+        classify_open_fill(10.0, 9.0, 11.0, np.bool_(True))
+        is ExecutionStatus.UNEXECUTABLE_PROXY
+    )
+
+
+def test_costs_are_not_embedded_in_raw_fill_price():
+    fill = apply_execution_costs(
+        raw_fill_price=10.0,
+        quantity=1_000,
+        side="buy",
+        costs=ExecutionCosts(commission=5.0, tax_rate=0.0, slippage_bps=30),
+    )
+    assert fill.raw_fill_price == 10.0
+    assert fill.gross_notional == 10_000.0
+    assert fill.slippage_cost == 30.0
+    assert fill.net_cash_flow == -10_035.0
+
+
+def test_same_day_exit_is_rejected_by_t_plus_one():
+    with pytest.raises(ValueError, match="strictly after entry_date"):
+        apply_execution_costs(
+            raw_fill_price=10.0,
+            quantity=1_000,
+            side="sell",
+            costs=ExecutionCosts(),
+            entry_date=date(2026, 7, 13),
+            exit_date=date(2026, 7, 13),
+        )
+
+
+@pytest.mark.parametrize(
+    ("entry_date", "exit_date"),
+    [
+        (None, None),
+        (date(2026, 7, 13), None),
+        (None, date(2026, 7, 14)),
+        (date(2026, 7, 14), date(2026, 7, 13)),
+    ],
+)
+def test_sell_requires_complete_strictly_ordered_dates(entry_date, exit_date):
+    with pytest.raises(ValueError, match="strictly after entry_date"):
+        apply_execution_costs(
+            raw_fill_price=10.0,
+            quantity=1_000,
+            side="sell",
+            costs=ExecutionCosts(),
+            entry_date=entry_date,
+            exit_date=exit_date,
+        )
+
+
+@pytest.mark.parametrize(
+    ("entry_date", "exit_date"),
+    [
+        ("2026-07-13", date(2026, 7, 14)),
+        (date(2026, 7, 13), "2026-07-14"),
+        (1, date(2026, 7, 14)),
+        (date(2026, 7, 13), 2),
+        (datetime(2026, 7, 13, 9, 30), date(2026, 7, 14)),
+        (date(2026, 7, 13), datetime(2026, 7, 14, 9, 30)),
+    ],
+)
+def test_sell_dates_must_be_plain_date_values(entry_date, exit_date):
+    with pytest.raises(ValueError, match="datetime.date"):
+        apply_execution_costs(
+            10.0,
+            1_000,
+            "sell",
+            ExecutionCosts(),
+            entry_date=entry_date,
+            exit_date=exit_date,
+        )
+
+
+@pytest.mark.parametrize("raw_fill_price", [0.0, -1.0, float("nan"), float("inf")])
+def test_raw_fill_price_must_be_finite_and_positive(raw_fill_price):
+    with pytest.raises(ValueError, match="raw_fill_price"):
+        apply_execution_costs(raw_fill_price, 1_000, "buy", ExecutionCosts())
+
+
+@pytest.mark.parametrize("quantity", [0, -1, True, 1.5])
+def test_quantity_must_be_a_positive_integer(quantity):
+    with pytest.raises(ValueError, match="quantity"):
+        apply_execution_costs(10.0, quantity, "buy", ExecutionCosts())
+
+
+@pytest.mark.parametrize(
+    "costs",
+    [
+        ExecutionCosts(commission=float("nan")),
+        ExecutionCosts(tax_rate=float("inf")),
+        ExecutionCosts(slippage_bps=-1.0),
+        ExecutionCosts(other_fee=-1.0),
+        ExecutionCosts(version=""),
+    ],
+)
+def test_cost_configuration_must_be_finite_nonnegative_and_versioned(costs):
+    with pytest.raises(ValueError, match="cost|version"):
+        apply_execution_costs(10.0, 1_000, "buy", costs)
+
+
+def test_stamp_tax_applies_only_to_sell():
+    costs = ExecutionCosts(tax_rate=0.001)
+    buy = apply_execution_costs(10.0, 1_000, "buy", costs)
+    sell = apply_execution_costs(
+        10.0,
+        1_000,
+        "sell",
+        costs,
+        entry_date=date(2026, 7, 13),
+        exit_date=date(2026, 7, 14),
+    )
+    assert buy.tax == 0.0
+    assert buy.net_cash_flow == -10_000.0
+    assert sell.tax == 10.0
+    assert sell.net_cash_flow == 9_990.0
+
+
+def test_computed_fill_fields_must_not_overflow():
+    with pytest.raises(ValueError, match="finite audit fields"):
+        apply_execution_costs(1e308, 2, "buy", ExecutionCosts())

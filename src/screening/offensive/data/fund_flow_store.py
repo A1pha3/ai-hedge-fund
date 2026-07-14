@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.utils.atomic_files import atomic_write_csv
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,7 +59,7 @@ class FundFlowStore:
             combined = combined.sort_values("date").reset_index(drop=True)
         else:
             combined = df.sort_values("date").reset_index(drop=True)
-        combined.to_csv(path, index=False)
+        atomic_write_csv(path, combined)
         return len(combined)
 
     def _load_all(self, ticker: str) -> pd.DataFrame:

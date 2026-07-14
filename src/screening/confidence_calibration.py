@@ -17,8 +17,9 @@ CLI:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from src.screening.consecutive_recommendation import (
     load_tracking_history,
@@ -41,6 +42,17 @@ SCORE_BUCKETS: tuple[tuple[str, float, float], ...] = (
 )
 
 DEFAULT_LOOKBACK_DAYS: int = 60
+
+_RETURN_REALIZATION_DATES: dict[str, str] = {
+    "next_day_return": "return_t1_date",
+    "next_3day_return": "return_t3_date",
+    "next_5day_return": "return_t5_date",
+    "next_10day_return": "return_t10_date",
+    "next_15day_return": "return_t15_date",
+    "next_20day_return": "return_t20_date",
+    "next_25day_return": "return_t25_date",
+    "next_30day_return": "return_t30_date",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +231,77 @@ def _load_tracking_records(report_dir: Path | None = None) -> list[dict[str, Any
     return load_tracking_history(search_dir)
 
 
+def _normalize_trade_date(value: Any) -> date | None:
+    """Normalize supported date/datetime/string values to a calendar date.
+
+    Persisted reports use both compact dates and ISO timestamps.  The date
+    prefix is the authoritative trading date; timezone conversion must not
+    move a report into an adjacent UTC day.
+    """
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    if len(raw) == 8 and raw.isdigit():
+        try:
+            return datetime.strptime(raw, "%Y%m%d").date()
+        except ValueError:
+            return None
+    try:
+        # ``fromisoformat`` accepts both extended and compact ISO timestamps,
+        # while rejecting arbitrary suffixes such as ``20260710future``.
+        return datetime.fromisoformat(raw.replace("Z", "+00:00")).date()
+    except ValueError:
+        try:
+            return date.fromisoformat(raw)
+        except ValueError:
+            return None
+
+
+def _records_as_of(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    as_of: Any,
+    model_version: str,
+) -> list[dict[str, Any]]:
+    """Return a point-in-time tracking snapshot, failing closed on bad dates.
+
+    A realized label is admissible only after its nominal maturity date is
+    strictly before ``as_of``.  Immature fields are removed from a copy so the
+    caller's history snapshot is never mutated.
+    """
+    anchor = _normalize_trade_date(as_of)
+    if anchor is None or not isinstance(model_version, str) or not model_version:
+        return []
+
+    snapshot: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        recommended = _normalize_trade_date(record.get("recommended_date"))
+        if recommended is None or recommended >= anchor:
+            continue
+        if record.get("model_version") != model_version:
+            continue
+        item = dict(record)
+        item["recommended_date"] = recommended.strftime("%Y%m%d")
+        for field_name, realization_field in _RETURN_REALIZATION_DATES.items():
+            realized_on = _normalize_trade_date(record.get(realization_field))
+            if (
+                realized_on is None
+                or realized_on <= recommended
+                or realized_on >= anchor
+            ):
+                item.pop(field_name, None)
+        snapshot.append(item)
+    return snapshot
+
+
 def _optional_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -330,7 +413,13 @@ def _find_bucket(score: float) -> tuple[str, float, float] | None:
     return None
 
 
-def compute_calibration(records: list[dict[str, Any]], lookback_days: int = DEFAULT_LOOKBACK_DAYS) -> CalibrationSummary:
+def compute_calibration(
+    records: Sequence[Mapping[str, Any]],
+    lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+    *,
+    as_of: Any | None = None,
+    model_version: str | None = None,
+) -> CalibrationSummary:
     """计算 score 分桶校准。
 
     Args:
@@ -340,6 +429,16 @@ def compute_calibration(records: list[dict[str, Any]], lookback_days: int = DEFA
     Returns:
         :class:`CalibrationSummary`
     """
+    if as_of is not None or model_version is not None:
+        if as_of is None or model_version is None:
+            records = []
+        else:
+            records = _records_as_of(
+                records,
+                as_of=as_of,
+                model_version=model_version,
+            )
+
     # 按日期倒序, 截取 lookback_days 天
     sorted_records = sorted(
         records,

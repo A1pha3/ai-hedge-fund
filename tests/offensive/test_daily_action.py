@@ -793,6 +793,31 @@ def test_generate_daily_action_uses_default_price_loader_for_matured_pnl(tmp_pat
     assert tracker.state.nav == pytest.approx(1.0 + expected * 0.10, abs=1e-9)
 
 
+def test_load_prices_for_ticker_publishes_download_with_atomic_writer(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    import pandas as pd
+    from src.screening.offensive import daily_action as da
+    from src.tools import tushare_api
+
+    raw = pd.DataFrame(
+        [{"trade_date": "20260710", "close": 10.0, "open": 9.8, "high": 10.2, "low": 9.7, "pct_chg": 2.0}]
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(tushare_api, "get_tushare_token", lambda: "token")
+    monkeypatch.setitem(sys.modules, "tushare", SimpleNamespace(pro_api=lambda token: SimpleNamespace(daily=lambda **kwargs: raw)))
+    published = []
+    monkeypatch.setattr(da, "atomic_write_csv", lambda path, frame: published.append((path, frame.copy())))
+
+    result = da._load_prices_for_ticker("000001", "20260710")
+
+    assert len(result) == 1
+    assert len(published) == 1
+    assert published[0][0] == Path("data/price_cache/000001.csv")
+    assert not published[0][0].exists()
+
+
 def test_load_prices_for_ticker_truncates_cached_rows_to_report_date(tmp_path, monkeypatch):
     """本地 price_cache 有未来行时, report 模式不能读取信号日之后的数据."""
     import pandas as pd
@@ -825,9 +850,9 @@ def test_resolve_trade_date_normalizes_mixed_price_cache_date_formats(tmp_path, 
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    # Freeze the 17:00 signal date so the guard never rolls back 20260708
-    # regardless of when the test runs (cache max == signal_date → no rollback).
-    monkeypatch.setattr(da, "resolve_signal_date", lambda: "20260708")
+    from datetime import date, datetime
+    monkeypatch.setattr(da, "_current_cn_datetime", lambda: datetime(2026, 7, 8, 18))
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: (date(2026, 7, 8),))
 
     trade_date, regime = da._resolve_trade_date_and_regime()
 
@@ -851,7 +876,9 @@ def test_resolve_trade_date_applies_1700_guard(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(da, "resolve_signal_date", lambda: "20260708")
+    from datetime import date, datetime
+    monkeypatch.setattr(da, "_current_cn_datetime", lambda: datetime(2026, 7, 9, 16))
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: (date(2026, 7, 8), date(2026, 7, 9)))
 
     trade_date, regime = da._resolve_trade_date_and_regime()
 
@@ -869,7 +896,9 @@ def test_resolve_trade_date_no_rollback_after_cutoff(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(da, "resolve_signal_date", lambda: "20260709")
+    from datetime import date, datetime
+    monkeypatch.setattr(da, "_current_cn_datetime", lambda: datetime(2026, 7, 9, 18))
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: (date(2026, 7, 8), date(2026, 7, 9)))
 
     trade_date, _ = da._resolve_trade_date_and_regime()
 
@@ -922,6 +951,8 @@ def test_generate_daily_action_blocks_new_buys_when_price_cache_lags_auto_report
     tracker = PaperTracker(journal_dir=tmp_path)
     monkeypatch.setattr(da, "_resolve_trade_date_and_regime", lambda: ("20260706", "normal"))
     monkeypatch.setattr(da, "_latest_auto_report_date", lambda: "20260708", raising=False)
+    from datetime import date
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: tuple(date(2026, 7, day) for day in (6, 7, 8, 9)))
 
     actions = da.generate_daily_action(tracker=tracker, scan_mode="full_market")
 
@@ -934,6 +965,7 @@ def test_generate_daily_action_does_not_treat_weekend_auto_report_as_stale(tmp_p
     """最新 --auto 报告若落在周末, stale guard 应按对应最近开市日比较."""
     from src.screening.offensive import daily_action as da
     from src.screening.offensive.paper_tracker import PaperTracker
+    from datetime import date
 
     tracker = PaperTracker(journal_dir=tmp_path)
     (tmp_path / "data" / "price_cache").mkdir(parents=True)
@@ -943,15 +975,20 @@ def test_generate_daily_action_does_not_treat_weekend_auto_report_as_stale(tmp_p
     monkeypatch.setattr(da, "_latest_auto_report_date", lambda: "20260711", raising=False)
     monkeypatch.setattr(da, "_missed_entry_window_reason", lambda td: "", raising=False)
     monkeypatch.setattr(da, "_load_st_tickers", lambda: set())
-    monkeypatch.setattr("src.tools.tushare_api.get_open_trade_dates", lambda start_date, end_date: ["20260710"])
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: ())
+    monkeypatch.setattr(
+        da,
+        "_load_authoritative_session_dates",
+        lambda: (date(2026, 7, 10), date(2026, 7, 13)),
+    )
 
     da.generate_daily_action(tracker=tracker, scan_mode="full_market")
 
     assert tracker.last_action_stale_reason == ""
 
 
-def test_generate_daily_action_weekend_auto_report_falls_back_to_weekday_without_trade_cal(tmp_path, monkeypatch):
-    """trade_cal 不可用时, 周末 auto 报告至少要回退到上一个工作日, 不能误判 stale."""
+def test_generate_daily_action_weekend_auto_report_requires_authoritative_session(tmp_path, monkeypatch):
+    """周末报告只可回退到本地权威 session，不能按 weekday 猜测。"""
     from src.screening.offensive import daily_action as da
     from src.screening.offensive.paper_tracker import PaperTracker
 
@@ -961,13 +998,12 @@ def test_generate_daily_action_weekend_auto_report_falls_back_to_weekday_without
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(da, "_resolve_trade_date_and_regime", lambda: ("20260710", "normal"))
     monkeypatch.setattr(da, "_latest_auto_report_date", lambda: "20260712", raising=False)
-    monkeypatch.setattr(da, "_missed_entry_window_reason", lambda td: "", raising=False)
     monkeypatch.setattr(da, "_load_st_tickers", lambda: set())
-    monkeypatch.setattr("src.tools.tushare_api.get_open_trade_dates", lambda start_date, end_date: [])
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: ())
 
     da.generate_daily_action(tracker=tracker, scan_mode="full_market")
 
-    assert tracker.last_action_stale_reason == ""
+    assert "calendar_unavailable" in tracker.last_action_stale_reason
 
 
 def test_generate_daily_action_blocks_new_buys_after_planned_open_window(tmp_path, monkeypatch):
@@ -1022,6 +1058,7 @@ def test_generate_daily_action_blocks_new_buys_after_planned_open_window(tmp_pat
     # 买入窗口 cutoff 已放宽到 17:00; 用 18:00 触发 "窗口已过"
     monkeypatch.setattr(da, "_current_cn_datetime", lambda: datetime(2026, 7, 8, 18, 0), raising=False)
     monkeypatch.setattr(da, "_load_st_tickers", lambda: set())
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", lambda: ())
     monkeypatch.setattr(da, "Path", lambda path: SimpleNamespace(glob=lambda pattern: [SimpleNamespace(stem="000001")]))
 
     actions = da.generate_daily_action(
@@ -1701,10 +1738,10 @@ def test_regime_size_factor_btst_crisis_increases_position(tmp_path, monkeypatch
     assert len(actions_normal) == 1
     normal_pct = actions_normal[0].kelly_pct
 
-    # BTST crisis 应放大 1.2×: normal=0.15 (per-setup cap), crisis=0.18 (regime cap)
+    # BTST crisis 应放大 1.2×: normal=0.10 (per-setup cap), crisis=0.12 (regime cap)
     assert crisis_pct > normal_pct, f"crisis {crisis_pct} should exceed normal {normal_pct}"
-    assert abs(crisis_pct - 0.18) < 1e-6, f"crisis expected 0.18, got {crisis_pct}"
-    assert abs(normal_pct - 0.15) < 1e-6, f"normal expected 0.15, got {normal_pct}"
+    assert abs(crisis_pct - 0.12) < 1e-6, f"crisis expected 0.12, got {crisis_pct}"
+    assert abs(normal_pct - 0.10) < 1e-6, f"normal expected 0.10, got {normal_pct}"
 
 
 def test_regime_size_factor_oversold_crisis_no_increase():
@@ -1721,11 +1758,11 @@ def test_regime_size_factor_oversold_crisis_no_increase():
 
 
 def test_regime_size_factor_normal_no_change(tmp_path, monkeypatch):
-    """normal regime 下仓位不放大, 等于 BTST per-setup cap (0.15)."""
+    """normal regime 下仓位不放大, 等于 BTST per-setup cap (0.10)."""
     monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
     actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "normal", "btst_breakout")
     assert len(actions) == 1
-    assert abs(actions[0].kelly_pct - 0.15) < 1e-6  # BTST per-setup cap, no regime boost
+    assert abs(actions[0].kelly_pct - 0.10) < 1e-6  # BTST per-setup cap, no regime boost
 
 
 def test_regime_sizing_disabled_via_env(tmp_path, monkeypatch):
@@ -1733,19 +1770,19 @@ def test_regime_sizing_disabled_via_env(tmp_path, monkeypatch):
     monkeypatch.setenv("DAILY_ACTION_REGIME_SIZING", "false")
     actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
     assert len(actions) == 1
-    # env 关闭 → regime_factor=1.0 → 仓位退回 BTST per-setup cap (0.15), 不放大到 0.18
-    assert abs(actions[0].kelly_pct - 0.15) < 1e-6, f"expected 0.15, got {actions[0].kelly_pct}"
+    # env 关闭 → regime_factor=1.0 → 仓位退回 BTST per-setup cap (0.10), 不放大到 0.12
+    assert abs(actions[0].kelly_pct - 0.10) < 1e-6, f"expected 0.10, got {actions[0].kelly_pct}"
 
 
 def test_regime_factor_capped_at_hard_limit(tmp_path, monkeypatch):
     """regime 放大不超 BTST per-setup cap × 1.2 硬上限, 即使 factor 更大."""
     monkeypatch.delenv("DAILY_ACTION_REGIME_SIZING", raising=False)
-    # BTST crisis factor=1.2 → 0.15×1.2=0.18, 正好等于硬上限, 不应突破
+    # BTST crisis factor=1.2 → 0.10×1.2=0.12, 正好等于硬上限, 不应突破
     actions, _ = _run_daily_action_under_regime(tmp_path, monkeypatch, "crisis", "btst_breakout")
     assert len(actions) == 1
     from src.screening.offensive.daily_action import _MAX_POSITION_PCT_BY_SETUP, _REGIME_POSITION_CAP_MULTIPLE
 
-    btst_cap = _MAX_POSITION_PCT_BY_SETUP.get("btst_breakout", _MAX_POSITION_PCT_BY_SETUP.get("btst_breakout", 0.15))
+    btst_cap = _MAX_POSITION_PCT_BY_SETUP.get("btst_breakout", _MAX_POSITION_PCT_BY_SETUP.get("btst_breakout", 0.10))
     hard_cap = btst_cap * _REGIME_POSITION_CAP_MULTIPLE
     assert actions[0].kelly_pct <= hard_cap + 1e-9
     assert abs(actions[0].kelly_pct - hard_cap) < 1e-6
@@ -1894,15 +1931,36 @@ def test_record_buy_idempotent_across_instances(tmp_path):
 # ---- NS-17 silent-except regression guards (autodev-32) ----
 
 
+def test_load_st_tickers_does_not_import_tushare_without_token(monkeypatch):
+    from src.screening.offensive.daily_action import _load_st_tickers
+    from src.tools import tushare_api
+
+    monkeypatch.setattr(tushare_api, "get_tushare_token", lambda: "")
+
+    class ForbiddenTushare:
+        def __getattr__(self, name):
+            raise AssertionError(f"Tushare must not be used without credentials: {name}")
+
+    monkeypatch.setitem(__import__("sys").modules, "tushare", ForbiddenTushare())
+    assert _load_st_tickers() == set()
+
+
 def test_compact_trade_date_invalid_logs_warning(caplog):
     """_compact_trade_date with unparseable input logs warning (not silent)."""
     from src.screening.offensive.daily_action import _compact_trade_date
-    import logging
-
-    caplog.set_level(logging.WARNING)
-    result = _compact_trade_date(None)
+    result = _compact_trade_date("not-a-date")
     assert result == ""
-    assert any("daily_action" in r.name and "_compact_trade_date failed" in r.message for r in caplog.records), f"Expected warning log, got: {[r.message for r in caplog.records]}"
+    assert any("_compact_trade_date failed" in record.message for record in caplog.records)
+
+
+def test_compact_trade_date_absent_value_is_quiet(caplog):
+    """Absent auto-report dates are expected and must not emit warning tracebacks."""
+    from src.screening.offensive.daily_action import _compact_trade_date
+
+    caplog.set_level("WARNING")
+    for value in (None, "", "   "):
+        assert _compact_trade_date(value) == ""
+    assert not caplog.records
 
 
 def test_compact_trade_date_edge_cases():
@@ -2178,9 +2236,8 @@ def test_portfolio_cap_escape_hatch_restores_old_behavior(tmp_path, monkeypatch)
         scan_mode="report",
         price_loader=lambda ticker, report_date: prices.copy(),
     )
-    # 旧行为: 忽略已开仓, BTST per-setup cap=15%, 5只×15%=75% > 60% → 只能开 4 只
-    # (4×15%=60%, 刚好触上限). 若用 fake_setup (默认 10%) 则可全开 5×10%=50% < 60%.
-    assert len(actions) == 4, f"逃生口=false: BTST 15%×4=60% 触上限, 实际 {len(actions)} 只"
+    # 旧行为: 忽略已开仓, 5只×10%=50%, 全部可录入.
+    assert len(actions) == 5, f"逃生口=false: BTST 10%×5=50%, 实际 {len(actions)} 只"
 
 
 def test_portfolio_cap_blocked_count_reports_all_skipped(tmp_path, monkeypatch):

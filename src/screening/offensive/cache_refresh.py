@@ -19,6 +19,7 @@ import pandas as pd
 
 from src.tools.ashare_board_utils import build_beijing_exchange_mask_from_series
 from src.tools.ashare_board_utils import is_beijing_exchange_stock
+from src.utils.atomic_files import atomic_write_csv
 from src.utils.date_utils import latest_open_trade_date_on_or_before
 
 logger = logging.getLogger(__name__)
@@ -231,7 +232,7 @@ def _write_price_cache_row(path: Path, row: dict) -> None:
     combined["date"] = combined["date"].map(_price_date)
     combined = combined.drop_duplicates(subset=["date"], keep="last")
     combined = combined.sort_values("date").reset_index(drop=True)
-    combined.to_csv(path, index=False)
+    atomic_write_csv(path, combined)
 
 
 def _snapshot_records(payload: object, *, include_shadow: bool) -> list[object]:
@@ -429,7 +430,7 @@ def refresh_price_cache_from_daily_batch(
                     stats.price_insufficient_history += 1
                     continue
                 path.parent.mkdir(parents=True, exist_ok=True)
-                history.to_csv(path, index=False)
+                atomic_write_csv(path, history)
                 stats.price_backfilled += 1
             _write_price_cache_row(cache_dir / f"{ticker}.csv", _build_price_row(row, trade_date))
             stats.price_updated += 1

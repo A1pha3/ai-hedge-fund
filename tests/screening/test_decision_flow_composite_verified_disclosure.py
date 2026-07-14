@@ -49,7 +49,7 @@ def test_fallback_top_investable_discloses_estimate_marker(tmp_path: Path, capsy
     # path fires (investability.py:282 composite_verified=False).
     empty_composite = CompositeReport(trade_date="20260611", items=[])
     with patch(
-        "src.screening.composite_score.compute_composite_scores",
+        "src.screening.composite_score.compute_composite_scores_for_recommendations",
         return_value=empty_composite,
     ):
         result = run_decision_flow(top_n=10, reports_dir=reports_dir)

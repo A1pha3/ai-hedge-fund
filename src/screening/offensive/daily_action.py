@@ -18,18 +18,23 @@ import logging
 import math
 import os
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 import pandas as pd
 
+from src.screening.offensive.daily_action_service import (
+    ActionItem,
+    PlanCandidate,
+    RegimeAuthorization,
+)
 from src.screening.offensive.known_distributions import get_known_distribution
 from src.screening.offensive.paper_tracker import PaperTracker, TradeAction
 from src.screening.offensive.risk_framework import build_risk_plan
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
 from src.screening.offensive.setups.oversold_bounce import OversoldBounceSetup
-from src.utils.date_utils import latest_open_trade_date_on_or_before, resolve_signal_date
+from src.utils.atomic_files import atomic_write_csv
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +43,7 @@ logger = logging.getLogger(__name__)
 # OversoldBounce 无可证明 alpha (E=+0.34%, CI 跨 0), 严格限制仓位.
 _MAX_POSITION_PCT = 0.10  # 默认单票上限
 _MAX_POSITION_PCT_BY_SETUP: dict[str, float] = {
-    "btst_breakout": 0.15,       # BTST: 有 alpha, 允许到 15% (regime 加仓后 18%)
+    "btst_breakout": 0.10,       # v2 ledger stays at 10% until canonical regime evidence is bound
     "oversold_bounce": 0.05,     # OB: 无 alpha, 限制到 5% (即使恢复也低仓位)
 }
 _MAX_PORTFOLO_PCT = 0.60  # 组合 ≤ 60%
@@ -260,6 +265,8 @@ def _load_st_tickers() -> set[str]:
 
 def _compact_trade_date(value: object) -> str:
     text = str(value or "").strip()
+    if not text:
+        return ""
     if len(text) == 8 and text.isdigit():
         return text
     try:
@@ -287,7 +294,7 @@ def _regime_from_history(trade_date: str) -> str:
     return _load_regime_history().get(trade_date, "normal")
 
 
-def _resolve_trade_date_and_regime() -> tuple[str, str]:
+def _resolve_trade_date_and_regime(*, wall_clock_guard: bool = True) -> tuple[str, str]:
     """从 price_cache + regime_history 确定 trade_date 和 regime.
 
     不依赖 --auto 报告 (报告的候选池是 score_b 排序, 与凸性 setup 脱节).
@@ -317,9 +324,12 @@ def _resolve_trade_date_and_regime() -> tuple[str, str]:
         latest_date = datetime.now().strftime("%Y%m%d")
 
     # 17:00 guard: price_cache 最新日若领先于规则信号日 (如盘前已注入当日), 回退到信号日
-    signal_date = resolve_signal_date()
-    if latest_date > signal_date:
-        latest_date = signal_date
+    if wall_clock_guard:
+        now = _current_cn_datetime()
+        cutoff = now.date() if now.time() >= _ENTRY_WINDOW_CUTOFF else now.date() - timedelta(days=1)
+        eligible = [session for session in _load_authoritative_session_dates() if session <= cutoff]
+        if eligible:
+            latest_date = min(latest_date, max(eligible).strftime("%Y%m%d"))
 
     regime = regimes_by_date.get(latest_date, "normal")
     return latest_date, regime
@@ -433,34 +443,42 @@ def _load_industry_day_pct_by_ticker(trade_date: str, tickers: list[str]) -> dic
     return result
 
 
-def _weekday_next_trade_date(trade_date: str) -> str:
-    """Fallback next open day: weekday-only approximation, compact YYYYMMDD."""
-    text = str(trade_date or "").strip().replace("-", "")
-    if len(text) != 8 or not text.isdigit():
-        return ""
+def _load_authoritative_session_dates() -> tuple[date, ...]:
+    """Load explicit local open sessions; never fetch or infer calendar dates."""
+    configured = os.environ.get("DAILY_ACTION_CALENDAR_PATH", "").strip()
+    path = Path(configured) if configured else Path("data/reports/regime_history.json")
+    if not path.exists():
+        return ()
     try:
-        day = datetime.strptime(text, "%Y%m%d")
-    except ValueError:
-        return ""
-    while True:
-        day += timedelta(days=1)
-        if day.weekday() < 5:
-            return day.strftime("%Y%m%d")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        raw_dates = payload.keys() if isinstance(payload, dict) else payload
+        sessions = []
+        for raw in raw_dates:
+            compact = _compact_trade_date(raw)
+            if compact:
+                sessions.append(datetime.strptime(compact, "%Y%m%d").date())
+        return tuple(sorted(set(sessions)))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        logger.warning("invalid local daily-action calendar: %s", path, exc_info=True)
+        return ()
 
 
-def _resolve_next_trade_date(trade_date: str) -> str:
-    """Resolve the next A-share trading day after ``trade_date``.
-
-    Prefer the shared BTST SSE calendar resolver, then fall back to weekday-only
-    approximation so the CLI can still render when calendar APIs are unavailable.
-    """
+def _resolve_next_trade_date(
+    trade_date: str, sessions: tuple[date, ...] | None = None
+) -> str:
+    """Resolve from local authoritative sessions, failing closed on missing coverage."""
     try:
-        from src.paper_trading.btst_trade_calendar import resolve_next_trade_date_cn_sse_strict
+        from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
 
-        return resolve_next_trade_date_cn_sse_strict(trade_date).next_trade_date_compact
-    except Exception:
-        logger.debug("next trade date calendar resolution failed for %s; using weekday fallback", trade_date, exc_info=True)
-        return _weekday_next_trade_date(trade_date)
+        signal = datetime.strptime(_compact_trade_date(trade_date), "%Y%m%d").date()
+        calendar = TradingSessionCalendar(
+            _load_authoritative_session_dates() if sessions is None else sessions
+        )
+        if not calendar.contains_session(signal):
+            return ""
+        return calendar.next_session(signal).strftime("%Y%m%d")
+    except (TypeError, ValueError):
+        return ""
 
 
 def _current_cn_datetime() -> datetime:
@@ -474,15 +492,24 @@ def _normalize_now_to_cn(now: datetime) -> datetime:
     return now.astimezone(_CN_TZ)
 
 
-def _missed_entry_window_reason(trade_date: str, *, now: datetime | None = None) -> str:
+def _missed_entry_window_reason(
+    trade_date: str,
+    *,
+    now: datetime | None = None,
+    sessions: tuple[date, ...] | None = None,
+) -> str:
     """Return a blocking reason when the signal's next-open entry window has passed."""
     signal_date = str(trade_date or "").strip().replace("-", "")
     if len(signal_date) != 8 or not signal_date.isdigit():
         return ""
 
-    next_trade_date = _resolve_next_trade_date(signal_date)
+    next_trade_date = (
+        _resolve_next_trade_date(signal_date)
+        if sessions is None
+        else _resolve_next_trade_date(signal_date, sessions)
+    )
     if len(next_trade_date) != 8 or not next_trade_date.isdigit():
-        return ""
+        return "calendar_unavailable: 本地权威交易日历缺少信号日或下一开市日覆盖"
 
     now_cn = _normalize_now_to_cn(now or _current_cn_datetime())
     now_date = now_cn.strftime("%Y%m%d")
@@ -520,6 +547,155 @@ class DailyAction:
     # block_reason: 候选被风控过滤的具体原因 (价格/强度/行业/敞口), render 展示让 operator 知道为何没买.
     # 空字符串 = 未被过滤 (已录入或未进过滤循环).
     block_reason: str = ""
+
+
+@dataclass(frozen=True)
+class BlockedCandidate:
+    ticker: str
+    reason: str
+    reference_price: float
+
+
+@dataclass(frozen=True)
+class DailyActionScan:
+    signal_date: date
+    candidates: tuple[PlanCandidate, ...]
+    blocked_candidates: tuple[BlockedCandidate, ...]
+    reference_prices: tuple[tuple[str, float], ...] = ()
+
+
+@dataclass(frozen=True)
+class DailyActionV2Run:
+    service_run: Any
+    plans: tuple[Any, ...]
+    open_positions: tuple[Any, ...]
+    blocked_candidates: tuple[BlockedCandidate, ...]
+    reference_prices: tuple[tuple[str, float], ...]
+
+
+class _ScannerCompatibilityState:
+    """In-memory seam for reusing legacy detection without legacy state I/O."""
+
+    def __init__(self) -> None:
+        self.last_action_stale_reason = ""
+        self.last_action_trade_date = ""
+        self.last_action_regime = "normal"
+        self.last_blocked_candidates: list[DailyAction] = []
+        self.last_scanner_blocks: list[BlockedCandidate] = []
+        self.last_portfolio_exposure = 0.0
+        self.state = type("ScannerPortfolio", (), {"open_exposure": 0.0})()
+
+    def close_matured(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+        return []
+
+    def drawdown_action(self) -> str:
+        return "normal"
+
+    def open_positions_detail(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+        return []
+
+    def record_skip(self, *_args: Any, **_kwargs: Any) -> None:
+        return None
+
+
+def _price_frame_is_fresh(prices: pd.DataFrame, signal_date: str) -> bool:
+    """Require an exact terminal bar for the authoritative signal session."""
+    return bool(
+        len(prices)
+        and _compact_trade_date(prices.iloc[-1].get("date", "")) == signal_date
+    )
+
+
+def run_daily_action_v2(
+    service: Any,
+    scan: DailyActionScan,
+    manifest: Any = None,
+) -> DailyActionV2Run:
+    """Route pure scanner output through the auditable v2 lifecycle service."""
+    if not all(isinstance(candidate, PlanCandidate) for candidate in scan.candidates):
+        raise TypeError("DailyActionScan candidates must be PlanCandidate instances")
+    service_run = service.run(scan.signal_date, scan.candidates, manifest=manifest)
+    # Idempotent reruns still display the one persisted plan for this signal date.
+    displayed_tickers = {candidate.ticker for candidate in scan.candidates}
+    persisted = tuple(
+        ActionItem(plan.trade_id, plan.ticker, "entry_planned", "pending", "pending")
+        for plan in service.repository.planned_trades()
+        if plan.signal_date == scan.signal_date and plan.ticker in displayed_tickers
+    )
+    return DailyActionV2Run(
+        service_run,
+        persisted,
+        service_run.open_positions,
+        scan.blocked_candidates,
+        scan.reference_prices,
+    )
+
+
+def render_daily_action_v2(run: DailyActionV2Run) -> str:
+    """Render lifecycle/source labels without presenting reference prices as fills."""
+    from src.screening.offensive.trade_lifecycle import FillSource
+
+    references = dict(run.reference_prices)
+    lines = ["每日动作 v2（模拟台账）", "参考价（信号日收盘，仅供计划）:"]
+    for plan in run.plans:
+        lines.append(
+            f"  {plan.ticker} 参考价 ~{references.get(plan.ticker, 0.0):.2f} "
+            f"reason={plan.reason} execution={plan.execution_label} source={plan.source_label}"
+        )
+    lines.append("模拟成交（synthetic_open）:")
+    for trade in run.open_positions:
+        if trade.fill_source is FillSource.SYNTHETIC_OPEN:
+            lines.append(f"  {trade.ticker} 模拟成交 @{trade.raw_entry_price:.2f}")
+    lines.append("确认成交（broker_confirmed）:")
+    for trade in run.open_positions:
+        if trade.fill_source in {FillSource.MANUAL_CONFIRMATION, FillSource.BROKER_IMPORT}:
+            lines.append(f"  {trade.ticker} 确认成交 @{trade.raw_entry_price:.2f}")
+    lines.append("退出挑战者（SHADOW ONLY，不改变默认退出；不触发交易、仓位或组合上限）:")
+    for trade in run.open_positions:
+        shadow_line = (
+            f"{trade.shadow_exit_line:.2f}"
+            if trade.shadow_exit_line is not None
+            else "unavailable"
+        )
+        lines.append(
+            f"  {trade.ticker} shadow_exit_line={shadow_line} "
+            f"shadow_would_exit_next_open={str(trade.shadow_would_exit_next_open).lower()} "
+            f"shadow_reason={trade.shadow_reason}"
+        )
+    if run.blocked_candidates:
+        lines.append("不可计划候选:")
+        for candidate in run.blocked_candidates:
+            lines.append(
+                f"  {candidate.ticker} 参考价 ~{candidate.reference_price:.2f} "
+                f"原因={candidate.reason}"
+            )
+    lifecycle_sections = (
+        ("跳过计划", run.service_run.skipped_plans),
+        ("退出计划", run.service_run.exit_plans),
+        ("延迟退出", run.service_run.deferred_exits),
+        ("完成退出", run.service_run.completed_exits),
+    )
+    for title, items in lifecycle_sections:
+        if items:
+            lines.append(f"{title}:")
+        for item in items:
+            lines.append(
+                f"  {item.ticker} reason={item.reason} "
+                f"execution={item.execution_label} source={item.source_label}"
+            )
+    if run.service_run.block_reason:
+        lines.append(f"block_reason={run.service_run.block_reason}")
+    if run.service_run.block_reasons:
+        lines.append("block_reasons=" + ",".join(run.service_run.block_reasons))
+    if run.service_run.blocked_tickers:
+        lines.append(
+            "manifest_blocked_tickers=" + ",".join(run.service_run.blocked_tickers)
+        )
+    if run.service_run.ticker_gate_blocks:
+        lines.append("manifest_gate_blocks:")
+        for block in run.service_run.ticker_gate_blocks:
+            lines.append(f"  {block.ticker} reasons={' | '.join(block.reasons)}")
+    return "\n".join(lines)
 
 
 def _load_prices_for_ticker(ticker: str, report_date: str) -> pd.DataFrame:
@@ -560,7 +736,7 @@ def _load_prices_for_ticker(ticker: str, report_date: str) -> pd.DataFrame:
         .reset_index(drop=True)
     )
     cache.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(cache, index=False)
+    atomic_write_csv(cache, df)
     if pd.notna(cutoff):
         df = df[df["date"] <= cutoff]
     return df
@@ -575,6 +751,9 @@ def generate_daily_action(
     price_loader: Any = None,
     scan_mode: str = "full_market",
     end_date: str | None = None,
+    legacy_persistence: bool = True,
+    legacy_capacity: bool = True,
+    authoritative_sessions: tuple[date, ...] | None = None,
 ) -> list[DailyAction]:
     """生成今日机械动作。
 
@@ -627,15 +806,42 @@ def generate_daily_action(
             trade_date = _compact_trade_date(end_date)
             regime = _regime_from_history(trade_date)
         else:
-            trade_date, regime = _resolve_trade_date_and_regime()
+            if legacy_persistence:
+                trade_date, regime = _resolve_trade_date_and_regime()
+            else:
+                trade_date, regime = _resolve_trade_date_and_regime(
+                    wall_clock_guard=False
+                )
         tracker.last_action_trade_date = trade_date
         latest_report_date = _latest_auto_report_date()
-        latest_report_trade_date = latest_open_trade_date_on_or_before(latest_report_date)
+        sessions = authoritative_sessions or _load_authoritative_session_dates()
+        report_compact = _compact_trade_date(latest_report_date)
+        report_date_value = (
+            datetime.strptime(report_compact, "%Y%m%d").date()
+            if report_compact
+            else None
+        )
+        eligible_report_sessions = (
+            [session for session in sessions if session <= report_date_value]
+            if report_date_value
+            else []
+        )
+        latest_report_trade_date = (
+            max(eligible_report_sessions).strftime("%Y%m%d")
+            if eligible_report_sessions
+            else ""
+        )
         if latest_report_trade_date and trade_date and latest_report_trade_date > trade_date:
             tracker.last_action_stale_reason = f"price_cache 最新交易日 {trade_date} 落后于最新 --auto 报告交易日 {latest_report_trade_date}; " "为避免使用过期信号, 本次不输出新 BUY"
             tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=_load_prices)
             return []
-        missed_window_reason = _missed_entry_window_reason(trade_date)
+        missed_window_reason = (
+            _missed_entry_window_reason(trade_date)
+            if legacy_persistence
+            else _missed_entry_window_reason(
+                trade_date, sessions=authoritative_sessions
+            )
+        )
         if missed_window_reason:
             tracker.last_action_stale_reason = missed_window_reason
             tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=_load_prices)
@@ -653,6 +859,7 @@ def generate_daily_action(
         recs = []  # report 模式专用
 
     tracker.last_action_trade_date = trade_date
+    tracker.last_action_regime = regime
 
     # 2. 先平到期仓位 + 回填 realized P&L → 驱动 drawdown (闭环核心)
     tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=_load_prices)
@@ -704,6 +911,16 @@ def generate_daily_action(
             continue
         prices = _load_prices(ticker, trade_date)
         if prices is None or len(prices) == 0:
+            continue
+
+        if not legacy_persistence and not _price_frame_is_fresh(prices, trade_date):
+            terminal_close = prices.iloc[-1].get("close", 0.0)
+            reference_price = (
+                float(terminal_close) if pd.notna(terminal_close) else 0.0
+            )
+            tracker.last_scanner_blocks.append(
+                BlockedCandidate(ticker, "stale_price_cache", reference_price)
+            )
             continue
 
         last_row = prices.iloc[-1]
@@ -844,13 +1061,13 @@ def generate_daily_action(
 
         # 行业集中度限制
         ticker_industry = _ticker_industry_map.get(action.ticker, "unknown")
-        if industry_count_today.get(ticker_industry, 0) >= _MAX_PER_INDUstry_DAILY:
+        if legacy_capacity and industry_count_today.get(ticker_industry, 0) >= _MAX_PER_INDUstry_DAILY:
             action.block_reason = f"行业集中 ({ticker_industry} 已 {_MAX_PER_INDUstry_DAILY} 仓)"
             blocked_candidates.append(action)
             continue
 
         kelly_pct = action.kelly_pct
-        if portfolio_position_used + kelly_pct > _MAX_PORTFOLO_PCT:
+        if legacy_capacity and portfolio_position_used + kelly_pct > _MAX_PORTFOLO_PCT:
             kelly_pct = max(0.0, _MAX_PORTFOLO_PCT - portfolio_position_used)
         if kelly_pct <= 0:
             # 剩余敞口不够 → 本候选及之后全部因敞口上限被跳过.
@@ -865,20 +1082,21 @@ def generate_daily_action(
         portfolio_position_used += kelly_pct
         industry_count_today[ticker_industry] = industry_count_today.get(ticker_industry, 0) + 1
 
-        tracker.record_buy(
-            trade_date=trade_date,
-            ticker=action.ticker,
-            setup=action.setup,
-            horizon=horizon,
-            entry_price=action.entry_price,
-            kelly_pct=kelly_pct,
-            soft_stop=action.soft_stop,
-            hard_stop=action.hard_stop,
-            invalidation=action.invalidation_condition,
-            reasoning=action.reasoning,
-            trigger_strength=action.trigger_strength,
-            degraded=action.degraded,
-        )
+        if legacy_persistence:
+            tracker.record_buy(
+                trade_date=trade_date,
+                ticker=action.ticker,
+                setup=action.setup,
+                horizon=horizon,
+                entry_price=action.entry_price,
+                kelly_pct=kelly_pct,
+                soft_stop=action.soft_stop,
+                hard_stop=action.hard_stop,
+                invalidation=action.invalidation_condition,
+                reasoning=action.reasoning,
+                trigger_strength=action.trigger_strength,
+                degraded=action.degraded,
+            )
 
     # C-DAILY-ACTION-POSITION-VISIBILITY: 暴露被风控过滤的候选 (按强度已排序),
     # 让 operator 看到"今日哪些票可交易" — 上限决定买什么, 不决定看什么.
@@ -887,6 +1105,67 @@ def generate_daily_action(
     tracker.last_portfolio_exposure = portfolio_position_used
     tracker.last_blocked_candidates = blocked_candidates
     return actions
+
+
+def scan_daily_action_candidates(
+    *,
+    report_path: Path | str | None = None,
+    tickers_to_scan: int = 30,
+    price_loader: Any = None,
+    scan_mode: str = "full_market",
+    end_date: str | None = None,
+    authoritative_sessions: tuple[date, ...] | None = None,
+) -> DailyActionScan:
+    """Scan cached market data without writing either legacy paper-trading store."""
+    tracker = _ScannerCompatibilityState()
+
+    actions = generate_daily_action(
+        report_path=report_path,
+        tracker=tracker,
+        tickers_to_scan=tickers_to_scan,
+        price_loader=price_loader,
+        scan_mode=scan_mode,
+        end_date=end_date,
+        legacy_persistence=False,
+        legacy_capacity=False,
+        authoritative_sessions=authoritative_sessions,
+    )
+    signal_text = str(tracker.last_action_trade_date or end_date or "").replace("-", "")
+    if not signal_text:
+        signal_text = _current_cn_datetime().strftime("%Y%m%d")
+    signal_date = datetime.strptime(signal_text, "%Y%m%d").date()
+    regime = str(tracker.last_action_regime)
+    authorization = {
+        "crisis": RegimeAuthorization.BTST_CRISIS,
+        "risk_off": RegimeAuthorization.BTST_RISK_OFF,
+    }.get(regime, RegimeAuthorization.NORMAL)
+    tradable = tuple(action for action in actions if not action.degraded)
+    candidates = tuple(
+        PlanCandidate(
+            action.ticker,
+            action.setup,
+            "v2",
+            action.kelly_pct,
+            priority,
+            authorization,
+        )
+        for priority, action in enumerate(tradable, 1)
+    )
+    degraded = tuple(
+        BlockedCandidate(action.ticker, "incomplete_setup_data", action.entry_price)
+        for action in actions
+        if action.degraded
+    )
+    blocked = degraded + tuple(tracker.last_scanner_blocks) + tuple(
+        BlockedCandidate(
+            action.ticker,
+            action.block_reason or "scanner_policy",
+            action.entry_price,
+        )
+        for action in tracker.last_blocked_candidates
+    )
+    references = tuple((action.ticker, action.entry_price) for action in actions)
+    return DailyActionScan(signal_date, candidates, blocked, references)
 
 
 def _render_candidate_list(

@@ -139,7 +139,21 @@ def run_decision_flow(
         print(f"  {Fore.RED}✗ 最新报告 {report_path.name} 损坏或不可读 ({exc}); " f"请重新运行 --auto 生成.{Style.RESET_ALL}")
         return {**flow_result, "error": "corrupt_report"}
     recs = (report.get("recommendations") or [])[:top_n]
-    trade_date = report.get("date", date.today().strftime("%Y%m%d"))
+    # Preserve missing/malformed snapshot identity.  Strict downstream scorers
+    # must fail neutral instead of silently treating an undated report as today.
+    trade_date = str(report.get("date") or "")
+    model_version = str(report.get("model_version") or "")
+    from src.screening.consecutive_recommendation import (
+        load_auto_screening_history,
+        load_tracking_history,
+    )
+
+    history_records = load_tracking_history(search_dir)
+    history_reports = load_auto_screening_history(
+        lookback_days=max(60, lookback_days),
+        report_dir=search_dir,
+        end_date=str(trade_date),
+    )
     print(f"  {Fore.GREEN}✓{Style.RESET_ALL} Loaded {len(recs)} recommendations (date: {trade_date})")
     flow_result["trade_date"] = trade_date
     flow_result["recommendation_count"] = len(recs)
@@ -223,8 +237,10 @@ def run_decision_flow(
 
     expected = compute_expected_returns(
         recommendations=recs,
+        as_of=str(trade_date),
+        model_version=model_version,
+        history_records=history_records,
         lookback_days=lookback_days,
-        reports_dir=search_dir,
     )
     print(render_expected_returns_compact(expected))
     flow_result["expected_returns"] = expected.to_dict()
@@ -264,11 +280,17 @@ def run_decision_flow(
     # Step 10: Composite confidence score (P11-1)
     print(f"\n{Fore.WHITE}Step 10/{total_steps}: Computing composite confidence scores...{Style.RESET_ALL}")
     from src.screening.composite_score import (
-        compute_composite_scores,
+        compute_composite_scores_for_recommendations,
         render_composite_scores,
     )
 
-    composite = compute_composite_scores(top_n=top_n, lookback_days=lookback_days, reports_dir=search_dir)
+    composite = compute_composite_scores_for_recommendations(
+        recommendations=recs,
+        trade_date=str(trade_date),
+        as_of=str(trade_date),
+        history_reports=history_reports,
+        lookback_days=lookback_days,
+    )
     print(render_composite_scores(composite))
     flow_result["composite_scores"] = composite.to_dict()
     investability = rank_recommendations_by_investability(recs, composite, expected)

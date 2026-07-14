@@ -22,6 +22,23 @@ from src.utils.numeric import is_finite_number
 #: 排序键 (保留为 long-term invalidation 信号, 见 ``invalidation_reasons`` 字段),
 #: 与产品目标"未来 T+5 或 T+10 天"对齐.
 _SHORT_HORIZON_KEYS: tuple[str, ...] = ("t5", "t10")
+_EXPLICIT_COMPOSITE_DIMENSIONS: tuple[str, ...] = (
+    "base_score",
+    "momentum_bonus",
+    "sector_bonus",
+    "consistency_adj",
+    "volume_factor",
+    "trend_resonance_factor",
+    "composite_score",
+)
+
+
+def _is_explicit_finite_metric(value: Any) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+    )
 
 
 def _max_short_horizon_metric(metrics: dict[str, Any] | None) -> float | None:
@@ -537,3 +554,76 @@ def rank_recommendations_by_investability(
             ),
         )
     return ranked
+
+
+def compute_full_pool_shadow_ranking(
+    recommendations: list[dict[str, Any]],
+    composite_report: CompositeReport,
+    expected_report: ExpectedReturnReport,
+) -> dict[str, Any]:
+    """Rank an explicitly scored full pool without creating execution inputs.
+
+    The challenger is intentionally all-or-nothing.  A fallback ``score_b`` or
+    partially populated expected-return row would make the nominal full-pool
+    comparison mostly a missing-data sort, so any absent/non-finite dimension
+    returns an auditable ``insufficient`` result instead.
+    """
+
+    insufficient = {"shadow_rank_status": "insufficient", "shadow_rank": []}
+    tickers = [str(item.get("ticker") or "") for item in recommendations]
+    if (
+        not tickers
+        or any(not ticker for ticker in tickers)
+        or len(set(tickers)) != len(tickers)
+        or any(
+            not _is_explicit_finite_metric(item.get("score_b"))
+            for item in recommendations
+        )
+    ):
+        return insufficient
+
+    composite_map = {item.ticker: item for item in composite_report.items}
+    expected_map = {item.ticker: item for item in expected_report.items}
+    if set(composite_map) != set(tickers) or set(expected_map) != set(tickers):
+        return insufficient
+    for ticker in tickers:
+        composite = composite_map[ticker]
+        if any(
+            not _is_explicit_finite_metric(getattr(composite, field))
+            for field in _EXPLICIT_COMPOSITE_DIMENSIONS
+        ):
+            return insufficient
+        expected = expected_map[ticker]
+        if (
+            type(expected.bucket_sample_count) is not int
+            or expected.bucket_sample_count < 0
+            or any(
+                not _is_explicit_finite_metric(
+                    expected.expected_returns.get(horizon)
+                )
+                or not _is_explicit_finite_metric(expected.win_rates.get(horizon))
+                for horizon in _SHORT_HORIZON_KEYS
+            )
+        ):
+            return insufficient
+
+    ranked = rank_recommendations_by_investability(
+        recommendations,
+        composite_report,
+        expected_report,
+    )
+    return {
+        "shadow_rank_status": "complete",
+        "shadow_rank": [
+            {
+                "rank": index,
+                "ticker": row["ticker"],
+                "composite_score": row["composite_score"],
+                "score_b": row.get("score_b"),
+                "expected_returns": dict(row["expected_returns"]),
+                "win_rates": dict(row["win_rates"]),
+                "bucket_sample_count": row["bucket_sample_count"],
+            }
+            for index, row in enumerate(ranked, start=1)
+        ],
+    }
