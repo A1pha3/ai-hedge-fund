@@ -27,10 +27,29 @@ def _sanitize_nonfinite(value: Any) -> Any:
 
 def _open_parent(target: Path) -> int:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(target.parent, flags)
-    if not stat.S_ISDIR(os.fstat(fd).st_mode):
+    parts = target.parts
+    if ".." in parts:
+        raise ValueError("atomic write path must not contain '..'")
+    if target.is_absolute():
+        fd = os.open(os.path.sep, flags)
+        components = parts[1:-1]
+    else:
+        fd = os.open(".", flags)
+        components = parts[:-1]
+    for component in components:
+        if component in {"", "."}:
+            continue
+        try:
+            child = os.open(component, flags, dir_fd=fd)
+        except FileNotFoundError:
+            os.mkdir(component, 0o777, dir_fd=fd)
+            os.fsync(fd)
+            child = os.open(component, flags, dir_fd=fd)
+        except BaseException:
+            os.close(fd)
+            raise
         os.close(fd)
-        raise ValueError(f"atomic write parent is not a directory: {target.parent}")
+        fd = child
     return fd
 
 
@@ -75,7 +94,8 @@ def _create_temp(parent_fd: int, target_name: str, requested_mode: int) -> tuple
 
 def _atomic_write(path: Path | str, writer: Callable[[Any], None], *, newline: str | None = None) -> None:
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.name or target.name in {".", ".."}:
+        raise ValueError("atomic write target filename is invalid")
     parent_fd = _open_parent(target)
     temp_name: str | None = None
     published = False

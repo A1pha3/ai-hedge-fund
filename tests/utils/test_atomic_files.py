@@ -86,18 +86,19 @@ def test_csv_serialization_failure_preserves_old_target_and_cleans_temp(tmp_path
 def test_fdopen_failure_closes_raw_fd_and_cleans_temp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     target = tmp_path / "report.json"
     target.write_text("{}", encoding="utf-8")
-    closed: list[int] = []
+    closed_modes: list[int] = []
     real_close = os.close
 
     def observe_close(fd: int) -> None:
-        closed.append(fd)
+        closed_modes.append(os.fstat(fd).st_mode)
         real_close(fd)
 
     monkeypatch.setattr(atomic_files.os, "close", observe_close)
     monkeypatch.setattr(atomic_files.os, "fdopen", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("fdopen failed")))
     with pytest.raises(OSError, match="fdopen failed"):
         atomic_write_json(target, {})
-    assert len(closed) == 2  # owned temp fd and held parent directory fd
+    assert any(stat.S_ISREG(mode) for mode in closed_modes)  # owned temp fd
+    assert any(stat.S_ISDIR(mode) for mode in closed_modes)  # walked/final parent fds
     assert list(tmp_path.glob(".*.tmp")) == []
 
 
@@ -118,13 +119,20 @@ def test_directory_fsync_failure_after_replace_is_propagated(tmp_path: Path, mon
 
 def test_directory_close_failure_after_replace_is_propagated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     real_close = os.close
+    real_open_parent = atomic_files._open_parent
+    final_parent_fd: list[int] = []
+
+    def remember_final_parent(target: Path) -> int:
+        fd = real_open_parent(target)
+        final_parent_fd.append(fd)
+        return fd
 
     def fail_after_close(fd: int) -> None:
-        is_directory = stat.S_ISDIR(os.fstat(fd).st_mode)
         real_close(fd)
-        if is_directory:
+        if final_parent_fd and fd == final_parent_fd[-1]:
             raise OSError("directory close failed")
 
+    monkeypatch.setattr(atomic_files, "_open_parent", remember_final_parent)
     monkeypatch.setattr(atomic_files.os, "close", fail_after_close)
     target = tmp_path / "report.json"
     with pytest.raises(OSError, match="directory close failed"):
@@ -144,9 +152,11 @@ def test_prepare_failure_attempts_close_and_unlink_without_masking_original(
     monkeypatch.setattr(atomic_files.os, "fchmod", lambda *_args: (_ for _ in ()).throw(OSError("fchmod failed")))
 
     def fail_close(fd: int) -> None:
-        cleanup.append("close")
+        is_regular = stat.S_ISREG(os.fstat(fd).st_mode)
         real_close(fd)
-        raise OSError("close failed")
+        if is_regular:
+            cleanup.append("close")
+            raise OSError("close failed")
 
     def observe_unlink(path: str, **kwargs) -> None:
         cleanup.append("unlink")
@@ -197,6 +207,18 @@ def test_symlink_parent_and_nonregular_target_are_rejected(tmp_path: Path) -> No
     os.mkfifo(fifo)
     with pytest.raises(ValueError, match="non-regular"):
         atomic_write_json(fifo, {})
+
+
+def test_symlink_in_nonfinal_ancestor_is_rejected(tmp_path: Path) -> None:
+    actual = tmp_path / "actual"
+    (actual / "nested").mkdir(parents=True)
+    linked = tmp_path / "linked"
+    linked.symlink_to(actual, target_is_directory=True)
+
+    with pytest.raises(OSError):
+        atomic_write_json(linked / "nested" / "report.json", {"ok": True})
+
+    assert not (actual / "nested" / "report.json").exists()
 
 
 def test_replace_is_descriptor_relative_to_held_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

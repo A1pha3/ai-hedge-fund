@@ -529,8 +529,6 @@ class DailyActionService:
         self._block_reason = ";".join(self._block_reasons) or None
 
     def _settle_due_entry_plans(self, as_of: date) -> None:
-        if not self.calendar.contains_session(as_of):
-            return
         for plan in self.repository.planned_trades(as_of):
             current = self.repository.get_trade(plan.trade_id)
             if current.state is not TradeState.PLANNED:
@@ -542,8 +540,13 @@ class DailyActionService:
                 if settled.state is TradeState.SKIPPED:
                     self._skipped.append(self._item(settled, reason))
                 continue
+            if not self.calendar.contains_session(as_of):
+                self._skip(plan, as_of, "entry_calendar_unavailable")
+                self._add_block_reason("calendar_unavailable")
+                continue
             if not self._has_holding_horizon(plan.setup, plan.planned_entry_date):
                 self._add_block_reason("calendar_unavailable")
+                self._skip(plan, as_of, "entry_calendar_unavailable")
                 continue
             self._snapshot(as_of)
             bar = self.prices(plan.ticker, as_of)
@@ -672,7 +675,12 @@ class DailyActionService:
             if candidate.ticker in seen:
                 continue
             seen.add(candidate.ticker)
-            weight = min(candidate.target_weight, candidate.authorization.ticker_cap)
+            provenance = self._plan_provenance(candidate, as_of, entry_date)
+            weight = min(
+                candidate.target_weight,
+                candidate.authorization.ticker_cap,
+                provenance.ticker_cap(candidate.setup),
+            )
             open_weight = sum(values.values()) / valuation.nav
             ticker_weight = values.get(candidate.ticker, 0.0) / valuation.nav
             ticker_reserved = sum(
@@ -696,7 +704,7 @@ class DailyActionService:
                 entry_date,
                 weight,
                 candidate.priority,
-                provenance=self._plan_provenance(candidate, as_of, entry_date),
+                provenance=provenance,
             )
             if created:
                 reserved.append(trade)

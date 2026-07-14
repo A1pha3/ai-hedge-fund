@@ -12,6 +12,7 @@ from src.screening.offensive.daily_action_service import (
     DailyActionService,
     MarketBar,
     PlanCandidate,
+    RegimeAuthorization,
     TickerGateBlock,
     load_daily_action_manifest_gate,
 )
@@ -95,7 +96,7 @@ def open_trade(service):
         FillSource.SYNTHETIC_OPEN,
         SIGNAL_DATE,
         10.0,
-        1_000,
+        900,
         5.0,
         0.0,
         0.0,
@@ -146,6 +147,7 @@ def test_ticker_fingerprint_mismatch_blocks_only_that_candidate(
         healthy_manifest.tickers[candidates[0].ticker],
         cache_fingerprint="sha256:stale",
     )
+
     manifest = replace(
         healthy_manifest,
         tickers={**healthy_manifest.tickers, candidates[0].ticker: stale},
@@ -166,6 +168,25 @@ def test_ticker_fingerprint_mismatch_blocks_only_that_candidate(
             ),
         ),
     )
+
+
+def test_verified_crisis_authorization_permits_twelve_percent(
+    service, healthy_manifest
+) -> None:
+    candidate = PlanCandidate(
+        "000001",
+        "btst_breakout",
+        "v2",
+        0.12,
+        1,
+        RegimeAuthorization.BTST_CRISIS,
+    )
+
+    run = service.run(SIGNAL_DATE, (candidate,), manifest=healthy_manifest)
+
+    trade = service.repository.get_trade(run.new_plans[0].trade_id)
+    assert trade.planned_weight == pytest.approx(0.12)
+    assert trade.provenance.authorization == "btst_crisis"
 
 
 def test_nonrecommended_layer_a_ticker_is_blocked_by_its_exact_readiness(

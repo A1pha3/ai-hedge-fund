@@ -81,7 +81,7 @@ def open_trade(service, ticker: str, entry_date: date, weight: float = 0.1):
         FillSource.SYNTHETIC_OPEN,
         entry_date,
         10.0,
-        1_000,
+        900,
         5.0,
         0.0,
         10.0,
@@ -239,7 +239,7 @@ def test_drawdown_fill_capacity_uses_current_nav_denominator(service, sessions):
         service.prices.values[(trade.ticker, sessions[2])] = MarketBar(
             5, 5, 4, 6, False, 5.5, 4.5
         )
-    for i in range(3):
+    for i in range(4):
         service.repository.create_plan(
             f"00012{i}", "btst_breakout", "v2", sessions[1], sessions[2], 0.1, i
         )
@@ -266,7 +266,7 @@ def test_missing_close_retains_profitable_marks_and_does_not_invent_capacity(
 
     assert run.new_plans == ()
     assert set(run.valuation.stale_tickers) == {trade.ticker for trade in trades}
-    assert run.valuation.market_value == pytest.approx(60_000)
+    assert run.valuation.market_value == pytest.approx(54_000)
 
 
 def test_duplicate_ticker_candidates_are_deduplicated_and_capped(service, sessions):
@@ -310,7 +310,7 @@ def test_candidate_cannot_forge_rendered_execution_label():
         PlanCandidate("000142", "btst_breakout", "v2", 0.1, 1, simulation_label="实盘")
 
 
-def test_only_explicit_btst_regime_authorization_can_reach_twelve_percent(
+def test_legacy_unverified_cannot_claim_regime_twelve_percent(
     service, sessions
 ):
     normal = PlanCandidate("000143", "btst_breakout", "v2", 0.12, 1)
@@ -321,7 +321,7 @@ def test_only_explicit_btst_regime_authorization_can_reach_twelve_percent(
     weights = {
         plan.ticker: plan.planned_weight for plan in service.repository.planned_trades()
     }
-    assert weights == {"000143": pytest.approx(0.10), "000144": pytest.approx(0.12)}
+    assert weights == {"000143": pytest.approx(0.10), "000144": pytest.approx(0.10)}
 
 
 def test_same_day_rerun_does_not_render_or_record_duplicate_plan(service, sessions):
@@ -352,8 +352,9 @@ def test_due_entry_fails_closed_when_as_of_is_not_exact_calendar_session(
         ExecutionCosts(version="test"),
         enforce_manifest_gate=False,
     )
-    local.run(sessions[1], ())
-    assert repo.get_trade(plan.trade_id).state is TradeState.PLANNED
+    run = local.run(sessions[1], ())
+    assert repo.get_trade(plan.trade_id).state is TradeState.SKIPPED
+    assert run.skipped_plans[-1].reason == "entry_calendar_unavailable"
     assert repo.count_events(plan.trade_id, "ENTRY_FILLED") == 0
 
 

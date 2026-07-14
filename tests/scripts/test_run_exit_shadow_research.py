@@ -25,6 +25,11 @@ class LegacyFixturePaths:
     price_cache: Path
 
 
+@pytest.fixture(autouse=True)
+def fixed_policy_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(exit_shadow_cli, "_civil_today", lambda: date(2026, 7, 14))
+
+
 def _business_dates(start: date, count: int) -> list[date]:
     result: list[date] = []
     current = start
@@ -109,7 +114,7 @@ def test_cli_report_cannot_claim_production_readiness(
             "--output-dir",
             str(output),
             "--as-of",
-            "20260713",
+            "20260714",
             "--bootstrap-draws",
             "100",
             "--bootstrap-seed",
@@ -119,11 +124,11 @@ def test_cli_report_cannot_claim_production_readiness(
 
     assert rc == 0
     payload = json.loads(
-        (output / "exit_shadow_20260713.json").read_text(encoding="utf-8")
+        (output / "exit_shadow_20260714.json").read_text(encoding="utf-8")
     )
-    json_path = output / "exit_shadow_20260713.json"
-    markdown_path = output / "exit_shadow_20260713.md"
-    marker_path = output / "exit_shadow_20260713.commit.json"
+    json_path = output / "exit_shadow_20260714.json"
+    markdown_path = output / "exit_shadow_20260714.md"
+    marker_path = output / "exit_shadow_20260714.commit.json"
     marker = json.loads(marker_path.read_text(encoding="utf-8"))
     assert marker["schema_version"] == 1
     assert (
@@ -132,26 +137,27 @@ def test_cli_report_cannot_claim_production_readiness(
     )
 
 
-def test_cli_bundle_bytes_are_invariant_to_strictly_future_evidence(
+def test_future_evidence_changes_only_truthful_cutoff_audit_and_bundle_identity(
     tmp_path: Path, legacy_fixture_paths: LegacyFixturePaths
 ) -> None:
-    output = tmp_path / "cutoff-reports"
-    args = _base_args(legacy_fixture_paths, output)
-    assert main(args) == 0
-    before = {path.name: path.read_bytes() for path in output.iterdir()}
+    before_output = tmp_path / "cutoff-reports-before"
+    assert main(_base_args(legacy_fixture_paths, before_output)) == 0
+    before = json.loads(
+        (before_output / "exit_shadow_20260714.json").read_text(encoding="utf-8")
+    )
     with legacy_fixture_paths.journal.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps({
-            "date": "20260714", "ticker": "000001", "setup": "btst_breakout", "action": "BUY"
+            "date": "20260715", "ticker": "000001", "setup": "btst_breakout", "action": "BUY"
         }) + "\n")
     cache = legacy_fixture_paths.price_cache / "000001.csv"
     with cache.open("a", encoding="utf-8") as stream:
-        stream.write("2026-07-14,99,99,99,99,1000\n")
-    assert main(args) == 0
-    assert {path.name: path.read_bytes() for path in output.iterdir()} == before
-    json_path = output / "exit_shadow_20260713.json"
-    markdown_path = output / "exit_shadow_20260713.md"
+        stream.write("2026-07-15,99,99,99,99,1000\n")
+    output = tmp_path / "cutoff-reports-after"
+    assert main(_base_args(legacy_fixture_paths, output)) == 0
+    json_path = output / "exit_shadow_20260714.json"
+    markdown_path = output / "exit_shadow_20260714.md"
     payload = json.loads(json_path.read_text(encoding="utf-8"))
-    marker = json.loads((output / "exit_shadow_20260713.commit.json").read_text(encoding="utf-8"))
+    marker = json.loads((output / "exit_shadow_20260714.commit.json").read_text(encoding="utf-8"))
     assert marker["artifacts"]["json"]["filename"] == json_path.name
     assert (
         marker["artifacts"]["json"]["sha256"]
@@ -174,6 +180,14 @@ def test_cli_bundle_bytes_are_invariant_to_strictly_future_evidence(
     assert payload["policy_identity"]["planned_execution"] == "next_executable_open"
     assert payload["input_fingerprints"]["journal"]["sha256"]
     assert payload["input_fingerprints"]["price_cache"]["sha256"]
+    assert payload["input_fingerprints"] == before["input_fingerprints"]
+    assert payload["analysis_snapshot_fingerprint"] == before["analysis_snapshot_fingerprint"]
+    assert payload["policy_identity"] == before["policy_identity"]
+    assert payload["statistics"] == before["statistics"]
+    assert payload["cutoff_audit"]["future_journal_rows"] == 1
+    assert payload["cutoff_audit"]["future_price_rows"] == 1
+    assert payload["cutoff_audit"]["future_price_tickers"] == 1
+    assert before["cutoff_audit"]["future_journal_rows"] == 0
     assert payload["cohort"]["counts"]["total_paired_btst"] == 2
     assert payload["cohort"]["exclusions"] == []
     assert payload["common_mask"]["total_paths"] == 2
@@ -183,12 +197,46 @@ def test_cli_bundle_bytes_are_invariant_to_strictly_future_evidence(
     assert payload["statistics"]["block_mean_difference"]["seed"] == 0
     assert payload["statistics"]["challenger"]["mfe_is_diagnostic_not_executable"]
 
-    markdown = (output / "exit_shadow_20260713.md").read_text(encoding="utf-8")
+    markdown = (output / "exit_shadow_20260714.md").read_text(encoding="utf-8")
     assert markdown.startswith("# Legacy sensitivity / shadow only")
     assert "production_eligible: false" in markdown
     assert "Why this cohort differs from current production" in markdown
     assert "six-month legacy backtest" in markdown
     assert "selected common executable mask" in markdown
+
+
+def test_historical_analysis_rejects_empty_marker_bypass(
+    tmp_path: Path, legacy_fixture_paths: LegacyFixturePaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "historical"
+    output.mkdir()
+    (output / "exit_shadow_20260714.commit.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(exit_shadow_cli, "_civil_today", lambda: date(2026, 7, 15))
+    monkeypatch.setattr(
+        exit_shadow_cli,
+        "build_legacy_cohort",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("reanalyzed")),
+    )
+
+    with pytest.raises(FileExistsError, match="invalid committed bundle"):
+        main(_base_args(legacy_fixture_paths, output))
+
+
+def test_historical_rerun_reuses_verified_bundle_without_new_analysis(
+    tmp_path: Path, legacy_fixture_paths: LegacyFixturePaths, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "committed"
+    assert main(_base_args(legacy_fixture_paths, output)) == 0
+    before = {path.name: path.read_bytes() for path in output.iterdir()}
+    monkeypatch.setattr(exit_shadow_cli, "_civil_today", lambda: date(2026, 7, 15))
+    monkeypatch.setattr(
+        exit_shadow_cli,
+        "build_legacy_cohort",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("reanalyzed")),
+    )
+
+    assert main(_base_args(legacy_fixture_paths, output)) == 0
+    assert {path.name: path.read_bytes() for path in output.iterdir()} == before
 
 
 def test_real_cli_attempts_no_socket_connection(
@@ -224,11 +272,14 @@ socket.create_connection = deny("socket.create_connection")
         **os.environ,
         "PYTHONPATH": os.pathsep.join((str(instrumentation), str(project_root))),
     }
+    subprocess_args = _base_args(legacy_fixture_paths, output)
+    live_as_of = date.today().strftime("%Y%m%d")
+    subprocess_args[subprocess_args.index("--as-of") + 1] = live_as_of
     completed = subprocess.run(
         [
             sys.executable,
             "scripts/run_exit_shadow_research.py",
-            *_base_args(legacy_fixture_paths, output),
+            *subprocess_args,
         ],
         cwd=project_root,
         capture_output=True,
@@ -239,7 +290,7 @@ socket.create_connection = deny("socket.create_connection")
 
     assert completed.returncode == 0, completed.stderr
     assert not attempt_log.exists()
-    assert (output / "exit_shadow_20260713.commit.json").is_file()
+    assert (output / f"exit_shadow_{live_as_of}.commit.json").is_file()
 
 
 def test_report_semantic_and_artifact_hashes_are_independently_verifiable(
@@ -247,8 +298,8 @@ def test_report_semantic_and_artifact_hashes_are_independently_verifiable(
 ) -> None:
     output = tmp_path / "reports"
     assert main(_base_args(legacy_fixture_paths, output)) == 0
-    json_path = output / "exit_shadow_20260713.json"
-    markdown_path = output / "exit_shadow_20260713.md"
+    json_path = output / "exit_shadow_20260714.json"
+    markdown_path = output / "exit_shadow_20260714.md"
     payload = json.loads(json_path.read_text(encoding="utf-8"))
     identity = payload["artifact_identity"]
     semantic_payload = dict(payload)
@@ -267,7 +318,7 @@ def test_report_semantic_and_artifact_hashes_are_independently_verifiable(
         identity["markdown_sha256"]
         == hashlib.sha256(markdown_path.read_bytes()).hexdigest()
     )
-    assert identity["commit_marker_filename"] == "exit_shadow_20260713.commit.json"
+    assert identity["commit_marker_filename"] == "exit_shadow_20260714.commit.json"
 
 
 def test_fixed_policy_identity_and_markdown_are_complete(
@@ -276,7 +327,7 @@ def test_fixed_policy_identity_and_markdown_are_complete(
     output = tmp_path / "reports"
     assert main(_base_args(legacy_fixture_paths, output)) == 0
     payload = json.loads(
-        (output / "exit_shadow_20260713.json").read_text(encoding="utf-8")
+        (output / "exit_shadow_20260714.json").read_text(encoding="utf-8")
     )
     policy = payload["policy_identity"]
 
@@ -304,7 +355,7 @@ def test_fixed_policy_identity_and_markdown_are_complete(
         "other_fee": 0.0,
     }
 
-    markdown = (output / "exit_shadow_20260713.md").read_text(encoding="utf-8")
+    markdown = (output / "exit_shadow_20260714.md").read_text(encoding="utf-8")
     for disclosure in (
         "activation return: 10.00%",
         "ATR: Wilder period 14, multiple 2.5",
@@ -324,7 +375,7 @@ def test_markdown_separates_reconstruction_and_common_mask_denominators(
 ) -> None:
     output = tmp_path / "reports"
     assert main(_base_args(legacy_fixture_paths, output)) == 0
-    markdown = (output / "exit_shadow_20260713.md").read_text(encoding="utf-8")
+    markdown = (output / "exit_shadow_20260714.md").read_text(encoding="utf-8")
 
     assert "reconstruction coverage: 2/2 (100.0000%)" in markdown
     assert "reconstruction covered legacy mean:" in markdown
@@ -353,7 +404,7 @@ def test_cli_rejects_policy_search_arguments(
                 "--price-cache",
                 str(legacy_fixture_paths.price_cache),
                 "--as-of",
-                "20260713",
+                "20260714",
                 "--activation-return",
                 "0.2",
             ]
@@ -372,13 +423,13 @@ def test_cli_never_overwrites_mismatched_same_as_of_report(
         "--output-dir",
         str(output),
         "--as-of",
-        "20260713",
+        "20260714",
         "--bootstrap-draws",
         "100",
     ]
     assert main(args) == 0
-    json_path = output / "exit_shadow_20260713.json"
-    md_path = output / "exit_shadow_20260713.md"
+    json_path = output / "exit_shadow_20260714.json"
+    md_path = output / "exit_shadow_20260714.md"
     original_json = json_path.read_bytes()
     original_md = md_path.read_bytes()
 
@@ -401,7 +452,7 @@ def test_cli_same_inputs_are_idempotent(
         "--output-dir",
         str(output),
         "--as-of",
-        "20260713",
+        "20260714",
         "--bootstrap-draws",
         "100",
     ]
@@ -438,7 +489,7 @@ def test_unmatched_exit_is_reported_without_entering_paired_denominator(
                 "--output-dir",
                 str(output),
                 "--as-of",
-                "20260713",
+                "20260714",
                 "--bootstrap-draws",
                 "100",
             ]
@@ -446,7 +497,7 @@ def test_unmatched_exit_is_reported_without_entering_paired_denominator(
         == 0
     )
     payload = json.loads(
-        (output / "exit_shadow_20260713.json").read_text(encoding="utf-8")
+        (output / "exit_shadow_20260714.json").read_text(encoding="utf-8")
     )
     assert payload["cohort"]["denominator"] == 2
     assert payload["statistics"]["coverage"] == 1.0
@@ -465,16 +516,16 @@ def test_partial_identical_report_is_recovered_without_rewriting_existing_file(
         "--output-dir",
         str(output),
         "--as-of",
-        "20260713",
+        "20260714",
         "--bootstrap-draws",
         "100",
     ]
     assert main(args) == 0
-    json_path = output / "exit_shadow_20260713.json"
-    md_path = output / "exit_shadow_20260713.md"
+    json_path = output / "exit_shadow_20260714.json"
+    md_path = output / "exit_shadow_20260714.md"
     original_json = json_path.read_bytes()
     md_path.unlink()
-    marker_path = output / "exit_shadow_20260713.commit.json"
+    marker_path = output / "exit_shadow_20260714.commit.json"
     marker_path.unlink(missing_ok=True)
 
     assert main(args) == 0
@@ -510,13 +561,13 @@ def test_irrelevant_blank_input_change_during_run_does_not_poison_cutoff_report(
                 "--output-dir",
                 str(output),
                 "--as-of",
-                "20260713",
+                "20260714",
                 "--bootstrap-draws",
                 "100",
             ]
         ) == 0
     )
-    assert (output / "exit_shadow_20260713.json").is_file()
+    assert (output / "exit_shadow_20260714.json").is_file()
 
 
 def test_consumed_pre_cutoff_mutation_during_run_blocks_publication(
@@ -582,7 +633,7 @@ def test_single_line_holding_exclusion_retains_missing_group_return(
                 "--output-dir",
                 str(output),
                 "--as-of",
-                "20260713",
+                "20260714",
                 "--bootstrap-draws",
                 "100",
             ]
@@ -590,7 +641,7 @@ def test_single_line_holding_exclusion_retains_missing_group_return(
         == 0
     )
     payload = json.loads(
-        (output / "exit_shadow_20260713.json").read_text(encoding="utf-8")
+        (output / "exit_shadow_20260714.json").read_text(encoding="utf-8")
     )
     assert payload["cohort"]["denominator"] == 3
     assert payload["statistics"]["coverage"] == pytest.approx(2 / 3)
@@ -620,14 +671,14 @@ def test_concurrent_identical_completion_is_never_rolled_back(
 
     exit_shadow_cli._commit_report_bundle(output, *_commit_fixture(output))
 
-    assert (output / "exit_shadow_20260713.json").read_bytes() == b'{"report":"json"}\n'
-    assert (output / "exit_shadow_20260713.md").read_bytes() == b"# report\n"
-    assert (output / "exit_shadow_20260713.commit.json").is_file()
+    assert (output / "exit_shadow_20260714.json").read_bytes() == b'{"report":"json"}\n'
+    assert (output / "exit_shadow_20260714.md").read_bytes() == b"# report\n"
+    assert (output / "exit_shadow_20260714.commit.json").is_file()
 
 
 def _commit_fixture(output: Path) -> tuple[str, bytes, bytes, str]:
     return (
-        "exit_shadow_20260713",
+        "exit_shadow_20260714",
         b'{"report":"json"}\n',
         b"# report\n",
         hashlib.sha256(b"semantic payload").hexdigest(),
@@ -655,15 +706,15 @@ def test_commit_protocol_recovers_from_every_publish_boundary(
     monkeypatch.setattr(exit_shadow_cli, "_publish_exclusive", publish_then_crash)
     with pytest.raises(RuntimeError, match="simulated crash boundary"):
         exit_shadow_cli._commit_report_bundle(output, *_commit_fixture(output))
-    marker_exists = (output / "exit_shadow_20260713.commit.json").exists()
+    marker_exists = (output / "exit_shadow_20260714.commit.json").exists()
     assert marker_exists is (fail_after_publish == 3)
 
     monkeypatch.setattr(exit_shadow_cli, "_publish_exclusive", original_publish)
     exit_shadow_cli._commit_report_bundle(output, *_commit_fixture(output))
 
-    assert (output / "exit_shadow_20260713.json").is_file()
-    assert (output / "exit_shadow_20260713.md").is_file()
-    assert (output / "exit_shadow_20260713.commit.json").is_file()
+    assert (output / "exit_shadow_20260714.json").is_file()
+    assert (output / "exit_shadow_20260714.md").is_file()
+    assert (output / "exit_shadow_20260714.commit.json").is_file()
     assert not list(output.glob(".*.tmp-*"))
 
 
@@ -686,7 +737,7 @@ def test_commit_protocol_fsyncs_directory_and_uses_normal_file_modes(
 
     assert directory_fsyncs >= 2
     for suffix in ("json", "md", "commit.json"):
-        mode = stat.S_IMODE((output / f"exit_shadow_20260713.{suffix}").stat().st_mode)
+        mode = stat.S_IMODE((output / f"exit_shadow_20260714.{suffix}").stat().st_mode)
         assert mode == 0o644
 
 
@@ -784,12 +835,12 @@ def test_fallback_never_overwrites_target_created_after_last_check(
 
 
 def test_commit_does_not_delete_another_publishers_live_stage(tmp_path: Path) -> None:
-    live_stage = tmp_path / ".exit_shadow_20260713.json.tmp-other-publisher"
+    live_stage = tmp_path / ".exit_shadow_20260714.json.tmp-other-publisher"
     live_stage.write_bytes(b"still in use")
 
     exit_shadow_cli._commit_report_bundle(
         tmp_path,
-        "exit_shadow_20260713",
+        "exit_shadow_20260714",
         b'{"payload": true}\n',
         b"# report\n",
         "0" * 64,
@@ -810,7 +861,7 @@ def test_commit_protocol_falls_back_when_hardlinks_are_unsupported(
     monkeypatch.setattr(exit_shadow_cli.os, "link", unsupported_link)
     exit_shadow_cli._commit_report_bundle(output, *_commit_fixture(output))
 
-    assert (output / "exit_shadow_20260713.commit.json").is_file()
+    assert (output / "exit_shadow_20260714.commit.json").is_file()
 
 
 @pytest.mark.parametrize("existing_kind", ["symlink", "fifo"])
@@ -819,7 +870,7 @@ def test_commit_protocol_rejects_nonregular_existing_artifact(
 ) -> None:
     output = tmp_path / "reports"
     output.mkdir()
-    target = output / "exit_shadow_20260713.json"
+    target = output / "exit_shadow_20260714.json"
     if existing_kind == "symlink":
         outside = tmp_path / "outside"
         outside.write_text("outside", encoding="utf-8")
@@ -856,7 +907,7 @@ def test_commit_protocol_recovers_and_cleans_temps_after_every_stage_boundary(
 
     monkeypatch.setattr(exit_shadow_cli, "_stage_at", original_stage)
     exit_shadow_cli._commit_report_bundle(output, *_commit_fixture(output))
-    assert (output / "exit_shadow_20260713.commit.json").is_file()
+    assert (output / "exit_shadow_20260714.commit.json").is_file()
     assert not list(output.glob(".*.tmp-*"))
 
 
@@ -885,7 +936,7 @@ def test_commit_protocol_recovers_from_each_directory_fsync_boundary(
 
     monkeypatch.setattr(exit_shadow_cli.os, "fsync", original_fsync)
     exit_shadow_cli._commit_report_bundle(output, *_commit_fixture(output))
-    assert (output / "exit_shadow_20260713.commit.json").is_file()
+    assert (output / "exit_shadow_20260714.commit.json").is_file()
 
 
 def test_rerun_rejects_corrupt_marker_or_marker_artifact_mismatch(
@@ -894,8 +945,8 @@ def test_rerun_rejects_corrupt_marker_or_marker_artifact_mismatch(
     output = tmp_path / "reports"
     args = _base_args(legacy_fixture_paths, output)
     assert main(args) == 0
-    marker = output / "exit_shadow_20260713.commit.json"
-    json_path = output / "exit_shadow_20260713.json"
+    marker = output / "exit_shadow_20260714.commit.json"
+    json_path = output / "exit_shadow_20260714.json"
     original_marker = marker.read_bytes()
     original_json = json_path.read_bytes()
 
@@ -919,7 +970,7 @@ def _base_args(paths: LegacyFixturePaths, output: Path) -> list[str]:
         "--output-dir",
         str(output),
         "--as-of",
-        "20260713",
+        "20260714",
         "--bootstrap-draws",
         "100",
     ]
@@ -1099,7 +1150,7 @@ def test_analysis_runs_only_from_single_read_snapshot(
 
     assert main(_base_args(legacy_fixture_paths, output)) == 0
     payload = json.loads(
-        (output / "exit_shadow_20260713.json").read_text(encoding="utf-8")
+        (output / "exit_shadow_20260714.json").read_text(encoding="utf-8")
     )
     assert payload["input_fingerprints_before"] == payload["input_fingerprints_after"]
     assert payload["analysis_snapshot_fingerprint"]["journal"]["sha256"]

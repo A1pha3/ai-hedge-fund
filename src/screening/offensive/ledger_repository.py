@@ -54,6 +54,17 @@ class PlanProvenance:
             raise ValueError("unsupported plan provenance order_type")
         if self.reference_price is None or not math.isfinite(self.reference_price) or self.reference_price <= 0:
             raise ValueError("plan provenance reference_price must be positive")
+        if type(self.authorization) is not str or self.authorization not in {
+            "normal", "btst_crisis", "btst_risk_off"
+        }:
+            raise ValueError("plan provenance authorization is invalid")
+
+    def ticker_cap(self, setup: str) -> float:
+        if self.verification_status == "legacy_unverified":
+            return 0.10
+        if setup == "btst_breakout" and self.authorization in {"btst_crisis", "btst_risk_off"}:
+            return 0.12
+        return 0.10
 
     def as_json(self) -> dict[str, Any]:
         return {
@@ -278,6 +289,16 @@ CREATE TABLE IF NOT EXISTS position_marks (
         elif "trade_id" not in mark_columns:
             raise ValueError("invalid v1 position_marks metadata")
         conn.execute(
+            """CREATE TRIGGER IF NOT EXISTS trades_provenance_not_null_insert
+               BEFORE INSERT ON trades WHEN NEW.provenance_json IS NULL
+               BEGIN SELECT RAISE(ABORT, 'provenance_json must not be null'); END"""
+        )
+        conn.execute(
+            """CREATE TRIGGER IF NOT EXISTS trades_provenance_not_null_update
+               BEFORE UPDATE OF provenance_json ON trades WHEN NEW.provenance_json IS NULL
+               BEGIN SELECT RAISE(ABORT, 'provenance_json must not be null'); END"""
+        )
+        conn.execute(
             "UPDATE ledger_meta SET schema_version=? WHERE ledger_id=?",
             (self.SCHEMA_VERSION, self.ledger_id),
         )
@@ -319,6 +340,14 @@ CREATE TABLE IF NOT EXISTS position_marks (
     ) -> tuple[LedgerTrade, bool]:
         provenance = provenance or PlanProvenance.legacy_unverified()
         provenance.validate(planned_entry_date)
+        if (
+            isinstance(planned_weight, bool)
+            or not isinstance(planned_weight, (int, float))
+            or not math.isfinite(planned_weight)
+            or planned_weight <= 0
+            or planned_weight > provenance.ticker_cap(setup) + 1e-12
+        ):
+            raise ValueError("planned_weight exceeds provenance authorization cap")
         provenance_json = json.dumps(provenance.as_json(), sort_keys=True, separators=(",", ":"))
         identity = TradeIdentity(
             self.ledger_id,
@@ -387,58 +416,13 @@ CREATE TABLE IF NOT EXISTS position_marks (
         self._validate_fill(raw_fill_price, quantity, commission, tax, slippage_cost)
         if fill_source.allowed_mode is not execution_mode:
             raise ValueError(f"{fill_source} is not allowed for {execution_mode}")
-        payload = {
-            "raw_fill_price": raw_fill_price,
-            "execution_mode": execution_mode.value,
-            "fill_source": fill_source.value,
-            "quantity": quantity,
-            "commission": commission,
-            "tax": tax,
-            "slippage_cost": slippage_cost,
-        }
-        cash_delta = -(raw_fill_price * quantity + commission + tax + slippage_cost)
-        with self._connect() as conn:
-            self._begin_write(conn)
-            current = self._get_trade(conn, trade_id)
-            if current.state is TradeState.OPEN:
-                self._insert_event(
-                    conn,
-                    trade_id,
-                    "ENTRY_FILLED",
-                    entry_date,
-                    cash_delta=cash_delta,
-                    position_delta=quantity,
-                    payload=payload,
-                )
-                return current
-            assert_transition(current.state, TradeState.OPEN)
-            conn.execute(
-                """UPDATE trades SET state=?, execution_mode=?, fill_source=?, entry_date=?,
-                   raw_entry_price=?, quantity=?, entry_commission=?, entry_tax=?, entry_slippage=?
-                   WHERE trade_id=?""",
-                (
-                    TradeState.OPEN.value,
-                    execution_mode.value,
-                    fill_source.value,
-                    entry_date.isoformat(),
-                    raw_fill_price,
-                    quantity,
-                    commission,
-                    tax,
-                    slippage_cost,
-                    trade_id,
-                ),
-            )
-            self._insert_event(
-                conn,
-                trade_id,
-                "ENTRY_FILLED",
-                entry_date,
-                cash_delta=cash_delta,
-                position_delta=quantity,
-                payload=payload,
-            )
-            return self._get_trade(conn, trade_id)
+        trade, _reason = self.settle_plan_at_open(
+            trade_id, entry_date, "executable_proxy", raw_fill_price, None,
+            requested_quantity=quantity, execution_mode=execution_mode,
+            fill_source=fill_source,
+            explicit_costs=(commission, tax, slippage_cost),
+        )
+        return trade
 
     def settle_plan_at_open(
         self,
@@ -446,12 +430,16 @@ CREATE TABLE IF NOT EXISTS position_marks (
         entry_date: date,
         execution_status: str,
         raw_open_price: float | None,
-        costs: Any,
+        costs: Any | None,
         *,
         lot_size: int = 100,
         portfolio_cap: float = 0.60,
         normal_ticker_cap: float = 0.10,
         hard_ticker_cap: float = 0.12,
+        requested_quantity: int | None = None,
+        execution_mode: ExecutionMode = ExecutionMode.PAPER,
+        fill_source: FillSource = FillSource.SYNTHETIC_OPEN,
+        explicit_costs: tuple[float, float, float] | None = None,
     ) -> tuple[LedgerTrade, str]:
         """Serialize expiry, execution evidence, capacity, sizing, costs and fill."""
         from src.screening.offensive.execution_adjuster import apply_execution_costs
@@ -473,6 +461,11 @@ CREATE TABLE IF NOT EXISTS position_marks (
                     else "entry_unexecutable"
                 )
                 return self._skip_plan_in_transaction(conn, current, entry_date, reason), reason
+            current.provenance.validate(current.planned_entry_date)
+            execution_mode = ExecutionMode(execution_mode)
+            fill_source = FillSource(fill_source)
+            if fill_source.allowed_mode is not execution_mode:
+                raise ValueError(f"{fill_source} is not allowed for {execution_mode}")
 
             higher = conn.execute(
                 """SELECT trade_id FROM trades WHERE ledger_id=? AND state='planned'
@@ -515,16 +508,39 @@ CREATE TABLE IF NOT EXISTS position_marks (
             ticker_reserved = sum(float(row["planned_weight"]) for row in reservations if row["ticker"] == current.ticker)
             if market_value / nav + reserved_weight > portfolio_cap + 1e-12:
                 return self._skip_plan_in_transaction(conn, current, entry_date, "portfolio_capacity"), "portfolio_capacity"
-            ticker_cap = hard_ticker_cap if current.planned_weight > normal_ticker_cap + 1e-12 else normal_ticker_cap
+            ticker_cap = min(
+                current.provenance.ticker_cap(current.setup),
+                hard_ticker_cap if current.provenance.ticker_cap(current.setup) > normal_ticker_cap else normal_ticker_cap,
+            )
             if ticker_value / nav + ticker_reserved > ticker_cap + 1e-12:
                 return self._skip_plan_in_transaction(conn, current, entry_date, "ticker_capacity"), "ticker_capacity"
             target = min(nav * current.planned_weight, cash)
-            quantity = int(target // (raw_open_price * lot_size)) * lot_size
+            if requested_quantity is not None:
+                if isinstance(requested_quantity, bool) or not isinstance(requested_quantity, int) or requested_quantity <= 0 or requested_quantity % lot_size:
+                    raise ValueError("quantity must be a positive A-share lot multiple")
+                quantity = requested_quantity
+            else:
+                quantity = int(target // (raw_open_price * lot_size)) * lot_size
             fill = None
             while quantity > 0:
-                candidate = apply_execution_costs(raw_open_price, quantity, "buy", costs)
-                if -candidate.net_cash_flow <= cash + 1e-9 and -candidate.net_cash_flow <= target + 1e-9:
+                if explicit_costs is None:
+                    candidate = apply_execution_costs(raw_open_price, quantity, "buy", costs)
+                else:
+                    commission, tax, slippage = explicit_costs
+                    self._validate_price_and_costs(raw_open_price, commission, tax, slippage)
+                    from types import SimpleNamespace
+                    candidate = SimpleNamespace(
+                        raw_fill_price=raw_open_price, quantity=quantity,
+                        commission=commission, other_fee=0.0, tax=tax,
+                        slippage_cost=slippage,
+                        net_cash_flow=-(raw_open_price * quantity + commission + tax + slippage),
+                        cost_version="externally_confirmed",
+                    )
+                within_target = -candidate.net_cash_flow <= target + 1e-9
+                if -candidate.net_cash_flow <= cash + 1e-9 and within_target:
                     fill = candidate
+                    break
+                if requested_quantity is not None:
                     break
                 quantity -= lot_size
             if fill is None:
@@ -532,15 +548,15 @@ CREATE TABLE IF NOT EXISTS position_marks (
             conn.execute(
                 """UPDATE trades SET state='open',execution_mode=?,fill_source=?,entry_date=?,
                    raw_entry_price=?,quantity=?,entry_commission=?,entry_tax=?,entry_slippage=? WHERE trade_id=?""",
-                (ExecutionMode.PAPER.value, FillSource.SYNTHETIC_OPEN.value, entry_date.isoformat(),
+                (execution_mode.value, fill_source.value, entry_date.isoformat(),
                  fill.raw_fill_price, quantity, fill.commission + fill.other_fee, fill.tax,
                  fill.slippage_cost, trade_id),
             )
             self._insert_event(
                 conn, trade_id, "ENTRY_FILLED", entry_date,
                 cash_delta=fill.net_cash_flow, position_delta=quantity,
-                payload={"raw_fill_price": fill.raw_fill_price, "execution_mode": ExecutionMode.PAPER.value,
-                         "fill_source": FillSource.SYNTHETIC_OPEN.value, "quantity": quantity,
+                payload={"raw_fill_price": fill.raw_fill_price, "execution_mode": execution_mode.value,
+                         "fill_source": fill_source.value, "quantity": quantity,
                          "commission": fill.commission + fill.other_fee, "tax": fill.tax,
                          "slippage_cost": fill.slippage_cost, "cost_version": fill.cost_version},
             )

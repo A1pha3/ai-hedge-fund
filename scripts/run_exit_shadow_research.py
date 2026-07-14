@@ -19,7 +19,7 @@ import tempfile
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -50,6 +50,11 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _PRE_DENOMINATOR_EXCLUSION_REASONS = frozenset(
     {"duplicate_buy", "duplicate_exit", "unmatched_buy", "unmatched_exit"}
 )
+
+
+def _civil_today() -> date:
+    """Injectable clock for policy tests; intentionally not a CLI option."""
+    return date.today()
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -233,9 +238,10 @@ def _read_stable_descriptor(
     return content, before
 
 
-def _cutoff_journal(content: bytes, as_of: str) -> tuple[bytes, set[str]]:
+def _cutoff_journal(content: bytes, as_of: str) -> tuple[bytes, set[str], int]:
     kept: list[str] = []
     tickers: set[str] = set()
+    excluded = 0
     for line_number, raw in enumerate(content.decode("utf-8").splitlines(), 1):
         if not raw.strip():
             continue
@@ -250,16 +256,19 @@ def _cutoff_journal(content: bytes, as_of: str) -> tuple[bytes, set[str]]:
             kept.append(raw)
             if record.get("setup") == "btst_breakout" and type(record.get("ticker")) is str:
                 tickers.add(record["ticker"])
-    return (("\n".join(kept) + ("\n" if kept else "")).encode("utf-8"), tickers)
+        else:
+            excluded += 1
+    return (("\n".join(kept) + ("\n" if kept else "")).encode("utf-8"), tickers, excluded)
 
 
-def _cutoff_csv(content: bytes, as_of: str, name: str) -> bytes:
+def _cutoff_csv(content: bytes, as_of: str, name: str) -> tuple[bytes, int]:
     text = content.decode("utf-8")
     rows = list(csv.reader(text.splitlines()))
     if not rows or "date" not in rows[0]:
         raise ValueError(f"cache entry {name} has no date column")
     date_index = rows[0].index("date")
     kept = [rows[0]]
+    excluded = 0
     for row in rows[1:]:
         if len(row) <= date_index:
             raise ValueError(f"cache entry {name} has undated evidence")
@@ -268,13 +277,16 @@ def _cutoff_csv(content: bytes, as_of: str, name: str) -> bytes:
             raise ValueError(f"cache entry {name} has undated evidence")
         if compact <= as_of:
             kept.append(row)
+        else:
+            excluded += 1
     output = io.StringIO(newline="")
     csv.writer(output, lineterminator="\n").writerows(kept)
-    return output.getvalue().encode("utf-8")
+    return output.getvalue().encode("utf-8"), excluded
 
 
 def _read_live_inputs(
-    journal: Path, price_cache: Path, *, as_of: str = "99991231"
+    journal: Path, price_cache: Path, *, as_of: str = "99991231",
+    cutoff_audit: dict[str, int] | None = None,
 ) -> tuple[dict[str, Any], bytes, dict[str, bytes]]:
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     nonblock = getattr(os, "O_NONBLOCK", 0)
@@ -285,7 +297,10 @@ def _read_live_inputs(
         )
     finally:
         os.close(journal_fd)
-    journal_bytes, consumed_tickers = _cutoff_journal(raw_journal_bytes, as_of)
+    journal_bytes, consumed_tickers, future_journal = _cutoff_journal(raw_journal_bytes, as_of)
+    future_price_rows = 0
+    future_price_files = 0
+    future_price_tickers: set[str] = set()
 
     cache_fd = _open_existing_nofollow(
         price_cache,
@@ -301,8 +316,6 @@ def _read_live_inputs(
                 raise ValueError(
                     f"cache entries must be nofollow regular files: {price_cache / name}"
                 )
-            if Path(name).stem not in consumed_tickers:
-                continue
             file_fd = os.open(name, os.O_RDONLY | nofollow | nonblock, dir_fd=cache_fd)
             try:
                 content, stable_stat = _read_stable_descriptor(
@@ -310,7 +323,14 @@ def _read_live_inputs(
                 )
             finally:
                 os.close(file_fd)
-            content = _cutoff_csv(content, as_of, name)
+            content, future_rows = _cutoff_csv(content, as_of, name)
+            future_price_rows += future_rows
+            if future_rows:
+                future_price_tickers.add(Path(name).stem)
+            if future_rows and content.count(b"\n") <= 1:
+                future_price_files += 1
+            if Path(name).stem not in consumed_tickers:
+                continue
             cache_bytes[name] = content
             cache_manifest.append(
                 {
@@ -338,6 +358,13 @@ def _read_live_inputs(
         "journal": _content_fingerprint(journal_bytes),
         "price_cache": cache_fingerprint,
     }
+    if cutoff_audit is not None:
+        cutoff_audit.update(
+            future_journal_rows=future_journal,
+            future_price_rows=future_price_rows,
+            future_price_files=future_price_files,
+            future_price_tickers=len(future_price_tickers),
+        )
     return fingerprint, journal_bytes, cache_bytes
 
 
@@ -372,11 +399,15 @@ class _InputSnapshot:
     price_cache: Path
     fingerprints_before: dict[str, Any]
     snapshot_fingerprint: dict[str, Any]
+    cutoff_audit: dict[str, int]
 
 
 @contextmanager
 def _stable_input_snapshot(journal: Path, price_cache: Path, *, as_of: str):
-    fingerprints, journal_bytes, cache_bytes = _read_live_inputs(journal, price_cache, as_of=as_of)
+    cutoff_audit: dict[str, int] = {}
+    fingerprints, journal_bytes, cache_bytes = _read_live_inputs(
+        journal, price_cache, as_of=as_of, cutoff_audit=cutoff_audit
+    )
     temporary = tempfile.TemporaryDirectory(prefix="exit-shadow-snapshot-")
     root = Path(temporary.name)
     snapshot_journal = root / "journal.jsonl"
@@ -391,6 +422,7 @@ def _stable_input_snapshot(journal: Path, price_cache: Path, *, as_of: str):
             price_cache=snapshot_cache,
             fingerprints_before=fingerprints,
             snapshot_fingerprint=_snapshot_fingerprint(journal_bytes, cache_bytes),
+            cutoff_audit=cutoff_audit,
         )
     finally:
         temporary.cleanup()
@@ -439,6 +471,7 @@ def _build_payload(
     live_price_cache: Path,
     fingerprints_before: dict[str, Any],
     snapshot_fingerprint: dict[str, Any],
+    cutoff_audit: dict[str, int],
     as_of: str,
     bootstrap_seed: int,
     bootstrap_draws: int,
@@ -465,6 +498,10 @@ def _build_payload(
         "mode": REPORT_MODE,
         "shadow_only": True,
         "production_eligible": False,
+        "historical_pit_eligible": False,
+        "journal_event_availability": "unverifiable",
+        "as_of_semantics": "source_snapshot_observation_date",
+        "cutoff_audit": dict(cutoff_audit),
         "parameters": {
             "activation_return": ACTIVATION_RETURN,
             "atr_multiple": ATR_MULTIPLE,
@@ -576,6 +613,11 @@ def _render_markdown(payload: dict[str, Any]) -> str:
         "- mode: legacy_sensitivity",
         "- shadow_only: true",
         "- production_eligible: false",
+        "- historical_pit_eligible: false",
+        "- journal_event_availability: unverifiable",
+        "- as_of semantics: source snapshot observation date (not historical event availability)",
+        f"- future journal rows excluded: {payload['cutoff_audit']['future_journal_rows']}",
+        f"- future price rows excluded: {payload['cutoff_audit']['future_price_rows']}",
         f"- contract identity: {artifact.get('contract_identity', REPORT_CONTRACT_IDENTITY)}",
         f"- semantic payload SHA-256: {artifact.get('semantic_payload_sha256', 'pending')}",
         "",
@@ -597,6 +639,7 @@ def _render_markdown(payload: dict[str, Any]) -> str:
         "## Why this cohort differs from current production",
         "",
         "- It is a retrospective six-month legacy backtest, not a live forward sample.",
+        "- Journal EXIT dates repeat signal dates and do not prove when outcomes became available; historical PIT claims are prohibited.",
         "- It includes paired BTST exits only, not the current production opportunity set.",
         "- Results use a selected common executable mask after reconstruction exclusions.",
         "- Current board-rule mismatches are disclosed rather than silently filtered.",
@@ -881,6 +924,61 @@ def _semantic_payload_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def _verified_committed_bundle(output_dir: Path, stem: str) -> bool:
+    """Return true only for a complete, internally consistent immutable bundle."""
+    directory_fd = _open_output_directory(output_dir)
+    try:
+        marker_name = f"{stem}.commit.json"
+        marker_content = _read_regular_at(directory_fd, marker_name)
+        if marker_content is None:
+            return False
+        try:
+            marker = json.loads(marker_content)
+            if marker.get("schema_version") != 1 or marker.get("report_id") != stem:
+                raise ValueError("invalid marker identity")
+            if marker.get("contract_identity") != REPORT_CONTRACT_IDENTITY:
+                raise ValueError("invalid marker contract")
+            artifacts = marker["artifacts"]
+            json_name = f"{stem}.json"
+            markdown_name = f"{stem}.md"
+            if artifacts["json"]["filename"] != json_name:
+                raise ValueError("invalid JSON artifact filename")
+            if artifacts["markdown"]["filename"] != markdown_name:
+                raise ValueError("invalid markdown artifact filename")
+            json_content = _read_regular_at(directory_fd, json_name)
+            markdown_content = _read_regular_at(directory_fd, markdown_name)
+            if json_content is None or markdown_content is None:
+                raise ValueError("committed artifact is missing")
+            if _content_fingerprint(json_content) != {
+                "sha256": artifacts["json"]["sha256"],
+                "size_bytes": artifacts["json"]["size_bytes"],
+            }:
+                raise ValueError("JSON artifact fingerprint mismatch")
+            if _content_fingerprint(markdown_content) != {
+                "sha256": artifacts["markdown"]["sha256"],
+                "size_bytes": artifacts["markdown"]["size_bytes"],
+            }:
+                raise ValueError("markdown artifact fingerprint mismatch")
+            payload = json.loads(json_content)
+            identity = payload.pop("artifact_identity")
+            semantic_hash = _semantic_payload_hash(payload)
+            if semantic_hash != marker["semantic_payload_sha256"]:
+                raise ValueError("semantic payload fingerprint mismatch")
+            if identity["semantic_payload_sha256"] != semantic_hash:
+                raise ValueError("JSON semantic identity mismatch")
+            if identity["markdown_sha256"] != hashlib.sha256(markdown_content).hexdigest():
+                raise ValueError("JSON markdown identity mismatch")
+            if identity["commit_marker_filename"] != marker_name:
+                raise ValueError("JSON marker identity mismatch")
+        except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise FileExistsError(
+                f"immutable report conflict: invalid committed bundle {stem}"
+            ) from exc
+        return True
+    finally:
+        os.close(directory_fd)
+
+
 def _commit_report_bundle(
     output_dir: Path,
     stem: str,
@@ -961,6 +1059,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     _validate_args(args, parser)
+    stem = f"exit_shadow_{args.as_of}"
+    if args.as_of != _civil_today().strftime("%Y%m%d"):
+        if _verified_committed_bundle(args.output_dir, stem):
+            return 0
+        parser.error(
+            "historical --as-of is not PIT-eligible because journal event availability is unverifiable"
+        )
     with _stable_input_snapshot(args.journal, args.price_cache, as_of=args.as_of) as snapshot:
         payload = _build_payload(
             journal=snapshot.journal,
@@ -969,11 +1074,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             live_price_cache=args.price_cache,
             fingerprints_before=snapshot.fingerprints_before,
             snapshot_fingerprint=snapshot.snapshot_fingerprint,
+            cutoff_audit=snapshot.cutoff_audit,
             as_of=args.as_of,
             bootstrap_seed=args.bootstrap_seed,
             bootstrap_draws=args.bootstrap_draws,
         )
-    stem = f"exit_shadow_{args.as_of}"
     semantic_hash = _semantic_payload_hash(payload)
     payload["artifact_identity"] = {
         "contract_identity": REPORT_CONTRACT_IDENTITY,

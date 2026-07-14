@@ -123,7 +123,7 @@ def test_degraded_btst_is_displayed_but_never_planned(service, signal_date):
     assert run.blocked_candidates[0].reason == "incomplete_setup_data"
 
 
-def test_btst_normal_cap_is_ten_percent_and_crisis_cap_is_twelve(
+def test_unverified_btst_normal_and_claimed_crisis_are_both_capped_at_ten_percent(
     service, repository, signal_date
 ):
     normal_run = run_daily_action_v2(service, _scan(signal_date))
@@ -147,7 +147,7 @@ def test_btst_normal_cap_is_ten_percent_and_crisis_cap_is_twelve(
     crisis_run = run_daily_action_v2(service, crisis_scan)
     crisis_weight = repository.get_trade(crisis_run.plans[0].trade_id).planned_weight
     assert normal_weight == pytest.approx(0.10)
-    assert crisis_weight == pytest.approx(0.12)
+    assert crisis_weight == pytest.approx(0.10)
 
 
 def test_repeat_cli_run_is_idempotent(service, repository, signal_date):

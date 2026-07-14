@@ -62,7 +62,7 @@ def _opened(repo: LedgerRepository):
         FillSource.SYNTHETIC_OPEN,
         date(2026, 7, 13),
         10.0,
-        1_000,
+        900,
         5.0,
         0.0,
         30.0,
@@ -99,13 +99,13 @@ def test_fill_and_event_commit_together(tmp_path: Path) -> None:
         fill_source=FillSource.SYNTHETIC_OPEN,
         entry_date=date(2026, 7, 13),
         raw_fill_price=10.0,
-        quantity=1_000,
+        quantity=900,
         commission=5.0,
         tax=0.0,
         slippage_cost=30.0,
     )
     assert opened.state is TradeState.OPEN
-    assert repo.cash_balance() == pytest.approx(89_965.0)
+    assert repo.cash_balance() == pytest.approx(90_965.0)
     assert repo.count_events(trade.trade_id, "ENTRY_FILLED") == 1
 
 
@@ -126,7 +126,7 @@ def test_failed_transition_rolls_back_trade_and_event(
             FillSource.SYNTHETIC_OPEN,
             date(2026, 7, 13),
             10.0,
-            1_000,
+            900,
             5.0,
             0.0,
             30.0,
@@ -280,7 +280,7 @@ def test_exit_defer_close_updates_state_events_and_cash(tmp_path: Path) -> None:
 
     assert closed.state is TradeState.CLOSED
     assert repo.open_trades() == []
-    assert repo.cash_balance() == pytest.approx(100_929.0)
+    assert repo.cash_balance() == pytest.approx(100_829.0)
     assert repo.count_events(closed.trade_id, "EXIT_PENDING") == 1
     assert repo.count_events(closed.trade_id, "EXIT_DEFERRED") == 1
     assert repo.count_events(closed.trade_id, "EXIT_FILLED") == 1
@@ -452,6 +452,54 @@ def test_verified_plan_rejects_incomplete_or_mismatched_provenance(tmp_path: Pat
         )
 
 
+@pytest.mark.parametrize(
+    ("provenance", "weight", "allowed"),
+    [
+        (PlanProvenance.legacy_unverified(), 0.12, False),
+        (_provenance(), 0.12, False),
+        (dataclasses.replace(_provenance(), authorization="btst_crisis"), 0.12, True),
+        (dataclasses.replace(_provenance(), authorization="btst_risk_off"), 0.12, True),
+    ],
+)
+def test_twelve_percent_plan_requires_verified_btst_risk_authorization(
+    tmp_path: Path, provenance: PlanProvenance, weight: float, allowed: bool
+) -> None:
+    repo = _repo(tmp_path)
+    create = lambda: repo.create_plan(
+        "000001", "btst_breakout", "v1", date(2026, 7, 10), date(2026, 7, 13),
+        weight, 1, provenance=provenance,
+    )
+    if allowed:
+        assert create().planned_weight == pytest.approx(0.12)
+    else:
+        with pytest.raises(ValueError, match="authorization cap"):
+            create()
+
+
+@pytest.mark.parametrize("quantity", [1_000, 10_000])
+def test_public_fill_plan_cannot_bypass_cash_and_target_weight_caps(
+    tmp_path: Path, quantity: int
+) -> None:
+    repo = _repo(tmp_path)
+    trade = _plan(repo)
+
+    result = repo.fill_plan(
+        trade.trade_id,
+        ExecutionMode.PAPER,
+        FillSource.SYNTHETIC_OPEN,
+        date(2026, 7, 13),
+        10.0,
+        quantity,
+        5.0,
+        0.0,
+        30.0,
+    )
+
+    assert result.state is TradeState.SKIPPED
+    assert repo.cash_balance() == pytest.approx(100_000)
+    assert repo.count_events(trade.trade_id, "ENTRY_FILLED") == 0
+
+
 def test_v1_ticker_mark_migration_preserves_unique_active_owner(tmp_path: Path) -> None:
     path = tmp_path / "v1.sqlite3"
     repo = LedgerRepository(path, "test", 100_000)
@@ -467,6 +515,22 @@ def test_v1_ticker_mark_migration_preserves_unique_active_owner(tmp_path: Path) 
     assert repo.latest_position_mark(trade.trade_id, date(2026, 7, 14)) == pytest.approx(12.5)
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT schema_version FROM ledger_meta").fetchone()[0] == 2
+
+
+def test_v1_migration_backfills_and_enforces_nonnull_provenance(tmp_path: Path) -> None:
+    path = tmp_path / "v1-provenance.sqlite3"
+    repo = LedgerRepository(path, "test", 100_000)
+    repo.initialize()
+    trade = _plan(repo)
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE ledger_meta SET schema_version=1")
+        conn.execute("ALTER TABLE trades DROP COLUMN provenance_json")
+
+    repo.initialize()
+
+    assert repo.get_trade(trade.trade_id).provenance == PlanProvenance.legacy_unverified()
+    with sqlite3.connect(path) as conn, pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE trades SET provenance_json=NULL WHERE trade_id=?", (trade.trade_id,))
 
 
 def test_ambiguous_v1_ticker_mark_migration_rolls_back_intact(tmp_path: Path) -> None:
