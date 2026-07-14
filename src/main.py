@@ -1181,7 +1181,12 @@ def _refresh_daily_action_caches_for_auto(
     *,
     refresh_fn=None,
 ) -> None:
-    """Best-effort cache refresh for the next ``--daily-action`` run."""
+    """Best-effort cache refresh + readiness manifest publication for the next ``--daily-action`` run.
+
+    After refreshing caches, builds and publishes a ``daily_action_readiness_YYYYMMDD.json``
+    manifest covering the full scan universe. This is the bridge that lets
+    ``--daily-action`` verify its snapshot before scanning.
+    """
 
     if not _daily_action_cache_refresh_enabled():
         logger.info("[Auto] daily-action cache refresh skipped by DAILY_ACTION_CACHE_REFRESH")
@@ -1202,6 +1207,145 @@ def _refresh_daily_action_caches_for_auto(
         summary = {"status": "failed", "error": str(exc)}
 
     report_payload["daily_action_cache_refresh"] = summary
+
+    # Publish Daily Action readiness manifest (independent domain).
+    # This does NOT affect Auto canonical health — it's a separate publication.
+    try:
+        _publish_daily_action_readiness_for_auto(trade_date, summary)
+    except Exception as exc:  # pragma: no cover - readiness must not fail --auto
+        logger.warning("[Auto] daily-action readiness publication failed: %s", exc)
+
+
+def _publish_daily_action_readiness_for_auto(trade_date: str, cache_summary: dict) -> None:
+    """Build and publish the Daily Action readiness manifest from refreshed caches.
+
+    Constructs a minimal readiness manifest covering the full scan universe
+    (existing price_cache tickers). Each ticker's capability is evaluated from
+    the actual cache state. This is an independent publication domain — it does
+    not read or mutate Auto canonical.
+    """
+    import hashlib
+    import json
+    from datetime import date, datetime, timezone
+    from pathlib import Path
+
+    from src.screening.offensive.cache_readiness import (
+        FundFlowStatus,
+        PriceStatus,
+        TickerRefreshOutcome,
+        derive_stats_from_outcomes,
+        universe_fingerprint,
+    )
+    from src.screening.offensive.daily_action_readiness import (
+        SharedReadinessEvidence,
+        build_ticker_readiness,
+        publish_daily_action_readiness,
+        build_daily_action_readiness,
+    )
+    from src.screening.offensive.cache_refresh import existing_price_cache_tickers
+
+    # Determine the scan universe from existing price_cache files.
+    price_cache_dir = Path("data/price_cache")
+    universe = tuple(sorted(existing_price_cache_tickers(price_cache_dir)))
+    if not universe:
+        logger.info("[Auto] daily-action readiness: empty universe, skipping publication")
+        return
+
+    # Build per-ticker outcomes from cache state.
+    fund_flow_dir = Path("data/fund_flow_cache")
+    outcomes: dict[str, TickerRefreshOutcome] = {}
+    trade_date_dt = date(
+        int(trade_date[:4]), int(trade_date[4:6]), int(trade_date[6:8])
+    )
+
+    for ticker in universe:
+        price_path = price_cache_dir / f"{ticker}.csv"
+        price_rows = 0
+        price_status = PriceStatus.NOT_ATTEMPTED
+        if price_path.exists():
+            try:
+                import pandas as pd
+
+                df = pd.read_csv(price_path, dtype={"date": str}, usecols=["date"])
+                price_rows = len(df)
+                price_status = PriceStatus.CURRENT if price_rows > 0 else PriceStatus.MISSING_UNEXPLAINED
+            except Exception:
+                price_status = PriceStatus.FAILED
+
+        flow_path = fund_flow_dir / f"{ticker}.csv"
+        flow_rows = 0
+        flow_status = FundFlowStatus.NOT_ATTEMPTED
+        if flow_path.exists():
+            try:
+                import pandas as pd
+
+                df = pd.read_csv(flow_path, dtype=str)
+                flow_rows = len(df)
+                flow_status = FundFlowStatus.CURRENT if flow_rows > 0 else FundFlowStatus.MISSING_UNEXPLAINED
+            except Exception:
+                flow_status = FundFlowStatus.FAILED
+        elif ticker.startswith(("43", "83", "87", "8", "4", "92")):
+            flow_status = FundFlowStatus.UNSUPPORTED
+
+        outcomes[ticker] = TickerRefreshOutcome(
+            ticker=ticker,
+            price_status=price_status,
+            price_history_rows=price_rows,
+            fund_flow_status=flow_status,
+            fund_flow_history_rows=flow_rows,
+        )
+
+    # Build a lightweight refresh result for the manifest builder.
+    from src.screening.offensive.cache_readiness import DailyActionRefreshResult
+
+    stats = derive_stats_from_outcomes(
+        outcomes,
+        industry_index_total=cache_summary.get("industry_index_total", 0),
+        industry_index_failed=cache_summary.get("industry_index_failed", 0),
+        limit_up_injected=cache_summary.get("limit_up_injected", 0),
+    )
+    refresh_result = DailyActionRefreshResult(
+        trade_date=trade_date_dt,
+        universe_tickers=universe,
+        universe_fingerprint=universe_fingerprint(universe),
+        daily_batch_fingerprint=None,
+        suspension_evidence=__import__(
+            "src.screening.offensive.cache_readiness", fromlist=["SuspensionEvidence"]
+        ).SuspensionEvidence.available(trade_date_dt, set()),
+        outcomes=outcomes,
+        stats=stats,
+    )
+
+    shared_evidence = SharedReadinessEvidence(
+        regime_row={},
+        regime_fingerprint=None,
+        industry_mapping_fingerprint=None,
+        security_status_fingerprint=None,
+        board_rule_version="ashare-board-prefix-v1",
+        normalization_version="pit-canonical-v1",
+        signal_session_policy_version="ashare-cn-1700-v1",
+    )
+
+    run_id = hashlib.sha256(
+        f"{trade_date}-{datetime.now(timezone.utc).isoformat()}".encode()
+    ).hexdigest()[:16]
+
+    manifest = build_daily_action_readiness(
+        refresh_result,
+        shared_evidence,
+        run_id=run_id,
+        oversold_bounce_enabled=False,
+    )
+
+    reports_dir = Path("data/reports")
+    publication = publish_daily_action_readiness(manifest, reports_dir)
+    logger.info(
+        "[Auto] Daily Action 就绪清单已发布: %s (%d 只, scannable=%d, plan_eligible=%d)",
+        publication.artifact_path.name,
+        len(manifest.universe_tickers),
+        manifest.scannable_count,
+        manifest.plan_eligible_count,
+    )
 
 
 def _log_cache_refresh_summary(s: dict) -> None:

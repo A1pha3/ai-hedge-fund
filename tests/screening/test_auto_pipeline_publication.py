@@ -123,7 +123,8 @@ def fake_auto_dependencies(tmp_path: Path) -> _FakeAutoDependenciesFactory:
     return _FakeAutoDependenciesFactory(tmp_path, [])
 
 
-def test_default_quality_requires_positive_freshness_evidence() -> None:
+def test_default_quality_requires_scoring_features_block() -> None:
+    """A payload without scoring_features evidence cannot publish canonical."""
     assert _quality_is_healthy({"data_quality": {}}) is False
     assert (
         _quality_is_healthy({"data_freshness": {"fresh": None}, "data_quality": {}})
@@ -149,53 +150,51 @@ def test_default_quality_rejects_empty_or_malformed_evidence(quality: object) ->
     )
 
 
-def test_failed_cache_refresh_is_degraded() -> None:
-    payload = {
-        "data_freshness": {"fresh": True},
-        "data_quality": {},
-        "daily_action_cache_refresh": {"status": "failed"},
+def _required_success_evidence(nonempty: int = 5) -> dict[str, Any]:
+    """A required family with a fully successful observation.
+
+    Matches the schema produced by ``ScoringFeatureStore.build_quality_summary``
+    and consumed by ``FeatureEvidence.from_mapping``. The three ticker
+    fingerprints are equal so counts bind to the same ticker set.
+    """
+    fingerprint = "sha256:" + "a" * 64
+    return {
+        "observation_status": "success",
+        "attempted_count": 3,
+        "requested_count": 3,
+        "eligible_count": 3,
+        "observed_count": 3,
+        "usable_count": 3,
+        "nonempty_count": nonempty,
+        "stale_count": 0,
+        "refresh_failed_count": 0,
+        "consumption_failed_count": 0,
+        "usable_rows_min": 250,
+        "full_factor_target_rows": 400,
+        "requested_tickers_fingerprint": fingerprint,
+        "observed_tickers_fingerprint": fingerprint,
+        "usable_tickers_fingerprint": fingerprint,
+        "input_fingerprint": "sha256:input",
+        "as_of_max": "20260713",
     }
-    assert _quality_is_healthy(payload) is False
 
 
-@pytest.mark.parametrize(
-    "cache_refresh",
-    [
-        {"price_failed": 1, "fund_flow_failed": 0, "industry_index_failed": 0},
-        {"price_failed": 0, "fund_flow_failed": 1, "industry_index_failed": 0},
-        {"price_failed": 0, "fund_flow_failed": 0, "industry_index_failed": 1},
-        {"price_failed": 0, "fund_flow_failed": 0},
-    ],
-)
-def test_partial_or_ambiguous_cache_refresh_is_degraded(
-    cache_refresh: dict[str, int],
-) -> None:
-    payload = {
-        "data_freshness": {"fresh": True},
-        "data_quality": {
-            "scoring_features": {
-                "price_history": {
-                    "coverage": 1.0,
-                    "stale": False,
-                    "provider_failures": 0,
-                }
-            }
-        },
-        "daily_action_cache_refresh": cache_refresh,
-    }
-    assert _quality_is_healthy(payload) is False
+def strict_required_quality_payload() -> dict[str, Any]:
+    """Build a payload whose required scoring features all succeed.
 
-
-def _strict_healthy_quality_payload() -> dict[str, Any]:
+    Optional families are intentionally omitted: per the spec they only ever
+    warn and must not gate the Auto verdict. The daily_action_cache_refresh
+    block is populated with clean success stats but, per Task 4, it must NOT
+    affect health — callers mutate it to verify domain isolation.
+    """
     return {
         "data_freshness": {"fresh": True},
         "data_quality": {
             "scoring_features": {
-                "price_history": {
-                    "coverage": 1.0,
-                    "stale": False,
-                    "provider_failures": 0,
-                }
+                "price_history": _required_success_evidence(),
+                "financial_metrics": _required_success_evidence(),
+                # event_inputs allows legal-empty observations.
+                "event_inputs": _required_success_evidence(nonempty=0),
             }
         },
         "daily_action_cache_refresh": {
@@ -210,60 +209,104 @@ def _strict_healthy_quality_payload() -> dict[str, Any]:
     }
 
 
-@pytest.mark.parametrize("bad_value", [None, True, 0.0, "0"])
-def test_quality_requires_provider_failures_present_exact_int_zero(
-    bad_value: object,
-) -> None:
-    payload = _strict_healthy_quality_payload()
-    evidence = payload["data_quality"]["scoring_features"]["price_history"]
-    if bad_value is None:
-        evidence.pop("provider_failures")
-    else:
-        evidence["provider_failures"] = bad_value
-
-    assert _quality_is_healthy(payload) is False
+def test_quality_accepts_complete_required_evidence() -> None:
+    assert _quality_is_healthy(strict_required_quality_payload()) is True
 
 
-@pytest.mark.parametrize("bad_status", [None, "ready", "partial", True, 1])
-def test_quality_requires_exact_supported_cache_success_status(
-    bad_status: object,
-) -> None:
-    payload = _strict_healthy_quality_payload()
-    if bad_status is None:
-        payload["daily_action_cache_refresh"].pop("status")
-    else:
-        payload["daily_action_cache_refresh"]["status"] = bad_status
+def test_auto_health_ignores_daily_action_single_ticker_outcomes() -> None:
+    """Two suspended stocks in cache refresh should NOT degrade Auto.
 
-    assert _quality_is_healthy(payload) is False
+    Spec (Task 4): the Auto canonical health authority is
+    ``data_quality.scoring_features``. A suspended stock or missing optional
+    feature in ``daily_action_cache_refresh`` must not flip a healthy Auto
+    verdict to degraded. The cache refresh block is still recorded in the
+    payload for diagnostics, but it no longer gates publication.
+    """
+    payload = strict_required_quality_payload()
+    payload["daily_action_cache_refresh"] = {
+        "status": "success",
+        "price_missing": 2,
+        "fund_flow_suspended": 3,
+        "fund_flow_bse_unsupported": 7,
+    }
+    assert _quality_is_healthy(payload) is True
+
+
+def test_auto_health_ignores_failed_daily_action_cache_refresh() -> None:
+    """A fully failed cache refresh must not degrade Auto on its own.
+
+    The scoring_features evidence is authoritative: if required features
+    were consumed successfully, Auto is healthy regardless of cache refresh
+    status. Diagnostics remain in the payload via ``quality_decision``.
+    """
+    payload = strict_required_quality_payload()
+    payload["daily_action_cache_refresh"] = {
+        "status": "failed",
+        "price_failed": 5,
+        "price_missing": 9,
+        "fund_flow_failed": 4,
+        "industry_index_failed": 2,
+    }
+    assert _quality_is_healthy(payload) is True
 
 
 @pytest.mark.parametrize(
-    "field",
+    "cache_refresh",
     [
-        "price_failed",
-        "price_missing",
-        "price_insufficient_history",
-        "fund_flow_failed",
-        "fund_flow_empty",
-        "industry_index_failed",
+        {"price_failed": 1, "fund_flow_failed": 0, "industry_index_failed": 0},
+        {"price_failed": 0, "fund_flow_failed": 1, "industry_index_failed": 0},
+        {"price_failed": 0, "fund_flow_failed": 0, "industry_index_failed": 1},
+        {"price_failed": 0, "fund_flow_failed": 0},
+        {"status": "partial"},
     ],
 )
-@pytest.mark.parametrize("bad_value", [None, True, 1, "0"])
-def test_quality_requires_all_partial_and_missing_counters_exact_zero(
-    field: str,
-    bad_value: object,
+def test_cache_refresh_partial_counters_do_not_degrade_auto(
+    cache_refresh: dict[str, int],
 ) -> None:
-    payload = _strict_healthy_quality_payload()
-    if bad_value is None:
-        payload["daily_action_cache_refresh"].pop(field)
-    else:
-        payload["daily_action_cache_refresh"][field] = bad_value
+    """Old behavior coupled cache refresh counters to Auto health; Task 4
+    removes that coupling. Any combination of cache refresh counters must
+    leave a payload with complete required scoring evidence healthy."""
+    payload = strict_required_quality_payload()
+    payload["daily_action_cache_refresh"] = cache_refresh
+    assert _quality_is_healthy(payload) is True
 
+
+@pytest.mark.parametrize(
+    "missing_family",
+    ["price_history", "financial_metrics", "event_inputs"],
+)
+def test_quality_blocks_when_required_scoring_feature_missing(
+    missing_family: str,
+) -> None:
+    payload = strict_required_quality_payload()
+    del payload["data_quality"]["scoring_features"][missing_family]
     assert _quality_is_healthy(payload) is False
 
 
-def test_quality_accepts_complete_explicit_evidence() -> None:
-    assert _quality_is_healthy(_strict_healthy_quality_payload()) is True
+@pytest.mark.parametrize("bad_status", ["partial", "failed", "unavailable"])
+def test_quality_blocks_when_required_observation_not_success(
+    bad_status: str,
+) -> None:
+    payload = strict_required_quality_payload()
+    payload["data_quality"]["scoring_features"]["price_history"][
+        "observation_status"
+    ] = bad_status
+    assert _quality_is_healthy(payload) is False
+
+
+def test_quality_blocks_when_required_ticker_fingerprints_mismatch() -> None:
+    payload = strict_required_quality_payload()
+    other = "sha256:" + "b" * 64
+    evidence = payload["data_quality"]["scoring_features"]["financial_metrics"]
+    evidence["observed_tickers_fingerprint"] = other
+    evidence["usable_tickers_fingerprint"] = other
+    assert _quality_is_healthy(payload) is False
+
+
+def test_quality_blocks_when_required_family_fell_back_to_stale() -> None:
+    payload = strict_required_quality_payload()
+    payload["data_quality"]["scoring_features"]["price_history"]["stale_count"] = 1
+    assert _quality_is_healthy(payload) is False
 
 
 def test_default_manifest_uses_immutable_run_bound_cache_snapshot(
@@ -344,11 +387,9 @@ def test_default_manifest_uses_immutable_run_bound_cache_snapshot(
         "data_freshness": {"fresh": True},
         "data_quality": {
             "scoring_features": {
-                "price_history": {
-                    "coverage": 1.0,
-                    "stale": False,
-                    "provider_failures": 0,
-                }
+                "price_history": _required_success_evidence(),
+                "financial_metrics": _required_success_evidence(),
+                "event_inputs": _required_success_evidence(nonempty=0),
             }
         },
         "daily_action_cache_refresh": dict(inputs.cache_refresh_summary),
@@ -373,6 +414,9 @@ def test_default_manifest_uses_immutable_run_bound_cache_snapshot(
     assert manifest.candidate_set_fingerprint == inputs.candidate_set_fingerprint
     assert manifest.candidate_snapshot_fingerprint == inputs.candidate_snapshot_fingerprint
     assert manifest.input_fingerprint.startswith("sha256:")
+    # Task 4: structured quality decision is serialized into the payload.
+    assert payload["quality_decision"]["healthy"] is True
+    assert payload["quality_decision"]["blockers"] == []
 
     with pytest.raises(ValueError, match="manifest run_id does not match"):
         _build_default_manifest(inputs, payload, run_id="different-run")
@@ -669,6 +713,9 @@ def test_default_manifest_records_missing_evidence_and_degrades(tmp_path: Path) 
     assert manifest.is_healthy is False
     assert manifest.tickers["000001"].trade_ready is False
     assert "cache_fingerprint:missing" in manifest.tickers["000001"].block_reasons
+    # Task 4: structured quality decision is serialized even when blocked.
+    assert payload["quality_decision"]["healthy"] is False
+    assert payload["quality_decision"]["blockers"]  # non-empty
 
 
 def test_default_manifest_covers_exact_layer_a_scan_space(tmp_path: Path) -> None:

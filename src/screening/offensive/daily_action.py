@@ -29,6 +29,7 @@ from src.screening.offensive.daily_action_service import (
     PlanCandidate,
     RegimeAuthorization,
 )
+from src.screening.offensive.daily_action_snapshot import VerifiedDailyActionSnapshot
 from src.screening.offensive.known_distributions import get_known_distribution
 from src.screening.offensive.paper_tracker import PaperTracker, TradeAction
 from src.screening.offensive.risk_framework import build_risk_plan
@@ -637,31 +638,45 @@ def render_daily_action_v2(run: DailyActionV2Run) -> str:
 
     references = dict(run.reference_prices)
     lines = ["每日动作 v2（模拟台账）", "参考价（信号日收盘，仅供计划）:"]
-    for plan in run.plans:
-        lines.append(
-            f"  {plan.ticker} 参考价 ~{references.get(plan.ticker, 0.0):.2f} "
-            f"reason={plan.reason} execution={plan.execution_label} source={plan.source_label}"
-        )
+    if run.plans:
+        for plan in run.plans:
+            lines.append(
+                f"  {plan.ticker} 参考价 ~{references.get(plan.ticker, 0.0):.2f} "
+                f"reason={plan.reason} execution={plan.execution_label} source={plan.source_label}"
+            )
+    else:
+        lines.append("  无")
+
+    synthetic_trades = [t for t in run.open_positions if t.fill_source is FillSource.SYNTHETIC_OPEN]
     lines.append("模拟成交（synthetic_open）:")
-    for trade in run.open_positions:
-        if trade.fill_source is FillSource.SYNTHETIC_OPEN:
+    if synthetic_trades:
+        for trade in synthetic_trades:
             lines.append(f"  {trade.ticker} 模拟成交 @{trade.raw_entry_price:.2f}")
+    else:
+        lines.append("  无")
+
+    confirmed_trades = [t for t in run.open_positions if t.fill_source in {FillSource.MANUAL_CONFIRMATION, FillSource.BROKER_IMPORT}]
     lines.append("确认成交（broker_confirmed）:")
-    for trade in run.open_positions:
-        if trade.fill_source in {FillSource.MANUAL_CONFIRMATION, FillSource.BROKER_IMPORT}:
+    if confirmed_trades:
+        for trade in confirmed_trades:
             lines.append(f"  {trade.ticker} 确认成交 @{trade.raw_entry_price:.2f}")
+    else:
+        lines.append("  无")
     lines.append("退出挑战者（SHADOW ONLY，不改变默认退出；不触发交易、仓位或组合上限）:")
-    for trade in run.open_positions:
-        shadow_line = (
-            f"{trade.shadow_exit_line:.2f}"
-            if trade.shadow_exit_line is not None
-            else "unavailable"
-        )
-        lines.append(
-            f"  {trade.ticker} shadow_exit_line={shadow_line} "
-            f"shadow_would_exit_next_open={str(trade.shadow_would_exit_next_open).lower()} "
-            f"shadow_reason={trade.shadow_reason}"
-        )
+    if run.open_positions:
+        for trade in run.open_positions:
+            shadow_line = (
+                f"{trade.shadow_exit_line:.2f}"
+                if trade.shadow_exit_line is not None
+                else "unavailable"
+            )
+            lines.append(
+                f"  {trade.ticker} shadow_exit_line={shadow_line} "
+                f"shadow_would_exit_next_open={str(trade.shadow_would_exit_next_open).lower()} "
+                f"shadow_reason={trade.shadow_reason}"
+            )
+    else:
+        lines.append("  无")
     if run.blocked_candidates:
         lines.append("不可计划候选:")
         for candidate in run.blocked_candidates:
@@ -1105,6 +1120,226 @@ def generate_daily_action(
     tracker.last_portfolio_exposure = portfolio_position_used
     tracker.last_blocked_candidates = blocked_candidates
     return actions
+
+
+def scan_from_verified_snapshot(
+    snapshot: VerifiedDailyActionSnapshot,
+) -> tuple[list[DailyAction], list[DailyAction]]:
+    """Scan setups using a verified PIT snapshot instead of cache files.
+
+    Returns ``(candidates, blocked_candidates)`` — same shape as ``generate_daily_action``
+    output but reads only from the immutable snapshot. The scanner never reopens cache
+    files; all price/fund_flow/industry data comes from ``snapshot.setup_context(ticker)``.
+
+    Lifecycle/capacity/portfolio cap filtering is intentionally NOT applied here — this
+    function produces the raw ranked candidate list. The dispatcher/service layer is
+    responsible for capacity filtering. What this function DOES filter:
+
+    - Tickers with ``plan_eligible=False`` capability are excluded BEFORE ranking so
+      degraded candidates (e.g. shallow fund flow history) cannot compete with
+      well-supported ones for capacity. They still appear in ``blocked_candidates``
+      so the operator can see them.
+
+    Each emitted candidate carries the snapshot_id + consumed_fingerprint in its
+    reasoning string, so the audit trail can always trace back to the verified input.
+    """
+    # Reuse the verified setup config the same way generate_daily_action does.
+    disabled_setups = _env_setup_disable_list()
+    setup_configs: list[tuple[str, Any, int, Any]] = []
+    for name, cls, horizon in _VERIFIED_SETUPS:
+        if name in disabled_setups:
+            logger.info(
+                "scan_from_verified_snapshot: setup %s paused via env, skipping",
+                name,
+            )
+            continue
+        dist = get_known_distribution(name, horizon)
+        if dist is None:
+            logger.warning(
+                "scan_from_verified_snapshot: no known distribution for %s T+%d",
+                name,
+                horizon,
+            )
+            continue
+        setup_configs.append((name, cls(), horizon, dist))
+    if not setup_configs:
+        logger.warning(
+            "scan_from_verified_snapshot: no verified setup configs, returning empty"
+        )
+        return [], []
+
+    trade_date = snapshot.signal_date.strftime("%Y%m%d")
+    regime = snapshot.regime
+    snapshot_id = snapshot.snapshot_id
+
+    ranked: list[tuple[float, int, DailyAction]] = []
+    blocked: list[DailyAction] = []
+
+    for ticker in snapshot.scannable_tickers:
+        ctx = snapshot.setup_context(ticker)
+        if ctx is None:
+            # No scannable capability — nothing to do.
+            continue
+
+        # Filter degraded / non-plan-eligible BEFORE ranking. These candidates
+        # had incomplete data conditions per the readiness manifest; they must
+        # not compete with fully-supported candidates for capacity. The operator
+        # still sees them in blocked_candidates with the manifest-derived reason.
+        if not ctx.capability.plan_eligible:
+            warnings_text = ";".join(ctx.capability.warnings) or (
+                "capability_not_plan_eligible"
+            )
+            degraded_action = DailyAction(
+                ticker=ticker,
+                setup=ctx.setup_name,
+                action="SKIP",
+                kelly_pct=0.0,
+                entry_price=0.0,
+                soft_stop=0.0,
+                hard_stop=0.0,
+                time_exit="",
+                invalidation_condition="",
+                distribution_summary="",
+                reasoning=(
+                    f"{ctx.setup_name} capability degraded per readiness manifest; "
+                    f"snapshot={snapshot_id}; reason={warnings_text}"
+                ),
+                degraded=True,
+                degradation_reason=warnings_text,
+                block_reason=f"readiness degraded: {warnings_text}",
+            )
+            blocked.append(degraded_action)
+            continue
+
+        prices = ctx.prices
+        if prices is None or len(prices) == 0:
+            continue
+
+        last_row = prices.iloc[-1]
+        pct = float(last_row.get("pct_change", 0.0) or 0.0)
+
+        # Find the setup_config matching ctx.setup_name (only one config per ticker
+        # by design; first scannable setup wins in snapshot.setup_context).
+        matching = [
+            (name, obj, horizon, dist)
+            for name, obj, horizon, dist in setup_configs
+            if name == ctx.setup_name
+        ]
+        if not matching:
+            # Setup is enabled in capability but disabled by env — skip silently.
+            continue
+
+        setup_name, setup_obj, horizon, known_dist = matching[0]
+
+        # Mirror the prefilter used in generate_daily_action so we don't run slow
+        # detect on tickers that obviously won't hit.
+        if setup_name == "btst_breakout" and pct < 9.5:
+            continue
+        if setup_name == "oversold_bounce":
+            if len(prices) < 31:
+                continue
+            drop30 = (
+                float(last_row["close"]) / float(prices.iloc[-31]["close"]) - 1
+            ) * 100
+            if drop30 > -20:
+                continue
+
+        industry_pct = (
+            ctx.industry_day_pct if setup_name == "btst_breakout" else 0.0
+        )
+        detect_ctx = {
+            "prices": prices,
+            "fund_flow_records": list(ctx.fund_flow_records),
+            "industry_day_pct": industry_pct,
+            "regime": regime,
+        }
+        result = setup_obj.detect(ticker, trade_date, detect_ctx)
+        if not result.hit:
+            continue
+
+        # Kelly / position sizing: same formula as generate_daily_action, but
+        # with drawdown=normal (lifecycle drawdown handled by the service layer).
+        setup_max_pct = _MAX_POSITION_PCT_BY_SETUP.get(setup_name, _MAX_POSITION_PCT)
+        regime_factor = _regime_size_factor(regime, setup_name)
+        strength_factor = max(0.3, min(1.0, float(result.trigger_strength)))
+        kelly_pct = setup_max_pct * regime_factor * strength_factor
+        kelly_pct = min(kelly_pct, setup_max_pct * _REGIME_POSITION_CAP_MULTIPLE)
+        if kelly_pct <= 0:
+            continue
+
+        range_stop = (
+            result.metadata.get("range_based_stop_pct")
+            if result.metadata
+            else None
+        )
+        hard_stop_override = range_stop if range_stop is not None else -0.08
+        risk = build_risk_plan(
+            invalidation_condition=result.invalidation_condition,
+            avg_loss=known_dist.avg_loss,
+            natural_horizon=horizon,
+            setup_name=setup_name,
+            hard_stop_pct=hard_stop_override,
+        )
+        entry_price = float(last_row["close"])
+        soft_stop_price = entry_price * (1 + risk.stop_loss_pct)
+        hard_stop_price = entry_price * (1 + risk.hard_stop_pct)
+        dist_summary = (
+            f"n={known_dist.n} winrate={known_dist.winrate:.0%} "
+            f"cv={known_dist.convexity_ratio:.2f} E=+{known_dist.expected_return:.1%}"
+        )
+
+        # consumed_fingerprint: tie the action back to the snapshot fingerprint
+        # so the audit trail can always recover exactly what was consumed.
+        consumed_fp = ctx.capability.consumed_fingerprint or snapshot_id
+
+        action = DailyAction(
+            ticker=ticker,
+            setup=setup_name,
+            action="BUY",
+            kelly_pct=kelly_pct,
+            entry_price=entry_price,
+            soft_stop=soft_stop_price,
+            hard_stop=hard_stop_price,
+            time_exit=risk.time_exit,
+            invalidation_condition=result.invalidation_condition,
+            distribution_summary=dist_summary,
+            reasoning=(
+                f"{setup_name} T+{horizon} hit; size {kelly_pct:.1%}; "
+                f"regime={regime}×{regime_factor:.1f}; snapshot={snapshot_id}; "
+                f"consumed_fingerprint={consumed_fp}"
+            ),
+            trigger_strength=float(result.trigger_strength),
+            degraded=bool(getattr(result, "degraded", False)),
+            degradation_reason=str(getattr(result, "degradation_reason", "") or ""),
+        )
+        ranked.append((float(result.trigger_strength), horizon, action))
+
+    # Sort by trigger_strength desc, ticker asc — deterministic ordering.
+    ranked.sort(key=lambda item: (-item[0], item[2].ticker))
+
+    # Apply minimum entry-price and trigger-strength thresholds (same as the
+    # legacy scanner's blocked_candidates path) so the returned list matches the
+    # shape operators expect: actionable candidates + filtered-out candidates.
+    candidates: list[DailyAction] = []
+    for trigger_strength, horizon, action in ranked:
+        ts = action.trigger_strength
+        if math.isnan(ts) or ts < _MIN_TRIGGER_STRENGTH:
+            action.block_reason = (
+                f"强度 {ts:.2f} < {_MIN_TRIGGER_STRENGTH:.2f} 阈值"
+                if not math.isnan(ts)
+                else f"强度 NaN (setup 计算异常), 阈值 {_MIN_TRIGGER_STRENGTH:.2f}"
+            )
+            blocked.append(action)
+            continue
+        if action.entry_price < _MIN_ENTRY_PRICE:
+            action.block_reason = (
+                f"价格 {action.entry_price:.2f} < {_MIN_ENTRY_PRICE:.1f} 元下限"
+            )
+            blocked.append(action)
+            continue
+        candidates.append(action)
+
+    return candidates, blocked
 
 
 def scan_daily_action_candidates(

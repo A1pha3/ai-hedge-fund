@@ -458,3 +458,140 @@ def test_build_quality_summary_merges_refresh_manifest_failures(tmp_path: Path) 
     assert quality["provider_failures"] == 3
     assert quality["rows_written"] == 7
     assert quality["source"] == "akshare_refresh"
+
+
+# ---------------------------------------------------------------------------
+# Task 3: per-family observation evidence (FeatureEvidence format)
+# ---------------------------------------------------------------------------
+
+
+def test_build_quality_summary_reports_stale_count_when_stale_fallback_used(tmp_path: Path) -> None:
+    """A stale financial snapshot must surface stale_count=1 honestly.
+
+    When allow_stale falls back to an older snapshot, the consumer tracker
+    must record that the scorer actually consumed stale data — not silently
+    mask it as fresh. ``assess_auto_quality`` blocks required features with
+    stale_count > 0.
+    """
+    snapshot_dir = tmp_path / "snapshots"
+    stale_dir = snapshot_dir / "000001" / "20260701"
+    stale_dir.mkdir(parents=True)
+    (stale_dir / "financials.json").write_text(
+        json.dumps(_full_financial_payload("000001")), encoding="utf-8"
+    )
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache",
+        legacy_snapshot_dir=snapshot_dir,
+        max_stale_days=10,
+        allow_stale=True,
+    )
+
+    # Consume: this falls back to the 20260701 snapshot (stale).
+    store.load_financial_metrics("000001", "20260708")
+    summary = store.build_quality_summary("20260708", ["000001"])
+
+    fin = summary["scoring_features"]["financial_metrics"]
+    assert fin["stale_count"] == 1
+    assert fin["stale"] is True
+    # Observed + usable because the snapshot was reachable, parseable, nonempty.
+    assert fin["observed_count"] == 1
+    assert fin["usable_count"] == 1
+    assert fin["nonempty_count"] == 1
+
+
+def test_build_quality_summary_reports_legal_empty_event_observation(tmp_path: Path) -> None:
+    """event_inputs with a reachable-but-empty snapshot → observed_count=1, nonempty=0.
+
+    event_inputs has legal-when-observed empty semantics: a snapshot that
+    exists and parses cleanly but contains zero rows is an authoritative
+    observation, not a failure. The summary must record observed_count=1
+    and nonempty_count=0 so ``assess_auto_quality`` can accept the legal
+    empty rather than blocking on a phantom missing-feature.
+    """
+    snapshot_dir = tmp_path / "snapshots"
+    event_dir = snapshot_dir / "000001" / "20260708"
+    event_dir.mkdir(parents=True)
+    # Empty news + trades snapshots — both reachable, both parseable, both empty.
+    (event_dir / "company_news.json").write_text("[]", encoding="utf-8")
+    (event_dir / "insider_trades.json").write_text("[]", encoding="utf-8")
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache",
+        legacy_snapshot_dir=snapshot_dir,
+    )
+
+    store.load_event_inputs("000001", "20260708")
+    summary = store.build_quality_summary("20260708", ["000001"])
+
+    events = summary["scoring_features"]["event_inputs"]
+    assert events["observed_count"] == 1
+    assert events["nonempty_count"] == 0
+    # Legal empty observation is still a SUCCESS — no stale, no consumption failure.
+    assert events["stale_count"] == 0
+    assert events["consumption_failed_count"] == 0
+    assert events["observation_status"] == "success"
+
+
+def test_build_quality_summary_emits_feature_evidence_schema(tmp_path: Path) -> None:
+    """Each scoring_features family entry must parse via FeatureEvidence.from_mapping.
+
+    This is the contract ``assess_auto_quality`` relies on: every family the
+    scorer consumed must produce a mapping that ``FeatureEvidence.from_mapping``
+    accepts without raising. Validates that observation_status, the integer
+    counts, and the fingerprints are all well-formed.
+    """
+    from src.screening.scoring_feature_quality import FeatureEvidence
+
+    snapshot_dir = tmp_path / "snapshots"
+    fin_dir = snapshot_dir / "000001" / "20260708"
+    fin_dir.mkdir(parents=True)
+    (fin_dir / "financials.json").write_text(
+        json.dumps(_full_financial_payload("000001")), encoding="utf-8"
+    )
+    (fin_dir / "company_news.json").write_text("[]", encoding="utf-8")
+    (fin_dir / "insider_trades.json").write_text("[]", encoding="utf-8")
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache",
+        legacy_snapshot_dir=snapshot_dir,
+    )
+
+    store.load_financial_metrics("000001", "20260708")
+    store.load_event_inputs("000001", "20260708")
+    summary = store.build_quality_summary("20260708", ["000001"])
+
+    scoring = summary["scoring_features"]
+    for family, raw in scoring.items():
+        # Every family must be parseable by the evidence schema. This guards
+        # against regressions where a family is missing observation_status or
+        # carries a bool/negative count.
+        evidence = FeatureEvidence.from_mapping(family, raw)
+        assert evidence.family == family
+
+
+def test_build_quality_summary_financial_metrics_partial_when_one_of_two_requested_missing(
+    tmp_path: Path,
+) -> None:
+    """Requested 2 tickers, only 1 has a snapshot → observation_status=partial.
+
+    Conservation: partial means a strict subset of requested tickers received
+    an authoritative answer. The missing ticker is a consumption failure.
+    """
+    snapshot_dir = tmp_path / "snapshots"
+    fin_dir = snapshot_dir / "000001" / "20260708"
+    fin_dir.mkdir(parents=True)
+    (fin_dir / "financials.json").write_text(
+        json.dumps(_full_financial_payload("000001")), encoding="utf-8"
+    )
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache",
+        legacy_snapshot_dir=snapshot_dir,
+    )
+
+    store.load_financial_metrics("000001", "20260708")
+    store.load_financial_metrics("000002", "20260708")  # no snapshot → failure
+    summary = store.build_quality_summary("20260708", ["000001", "000002"])
+
+    fin = summary["scoring_features"]["financial_metrics"]
+    assert fin["observation_status"] == "partial"
+    assert fin["observed_count"] == 1
+    assert fin["requested_count"] == 2
+    assert fin["consumption_failed_count"] == 1

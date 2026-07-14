@@ -6,11 +6,22 @@ across date-handling paths. Tests lock down the YYYYMMDD ↔ YYYY-MM-DD contract
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 
-from src.utils.date_utils import format_date, latest_open_trade_date_on_or_before, parse_date, resolve_market_ready_date, resolve_market_ready_date_iso, resolve_signal_date, resolve_signal_date_iso
+from src.utils.date_utils import (
+    SIGNAL_SESSION_POLICY_VERSION,
+    SignalSessionUnavailable,
+    format_date,
+    latest_open_trade_date_on_or_before,
+    parse_date,
+    resolve_market_ready_date,
+    resolve_market_ready_date_iso,
+    resolve_signal_date,
+    resolve_signal_date_iso,
+    resolve_signal_session,
+)
 
 
 class TestFormatDate:
@@ -139,3 +150,36 @@ class TestResolveMarketReadyDate:
     def test_iso_variant_returns_dashed_format(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("src.tools.tushare_api.get_open_trade_dates", lambda start_date, end_date: [])
         assert resolve_market_ready_date_iso(now=datetime(2026, 7, 12, 18, 0)) == "2026-07-10"
+
+
+def test_resolve_signal_session_uses_same_1700_policy_for_weekday_and_weekend():
+    sessions = (date(2026, 7, 10), date(2026, 7, 13), date(2026, 7, 14))
+    assert resolve_signal_session(
+        now_cn=datetime(2026, 7, 13, 16, 59), open_sessions=sessions
+    ) == date(2026, 7, 10)
+    assert resolve_signal_session(
+        now_cn=datetime(2026, 7, 13, 17, 0), open_sessions=sessions
+    ) == date(2026, 7, 13)
+    assert resolve_signal_session(
+        now_cn=datetime(2026, 7, 12, 18, 0), open_sessions=sessions
+    ) == date(2026, 7, 10)
+
+
+def test_resolve_signal_session_fails_without_explicit_calendar():
+    with pytest.raises(SignalSessionUnavailable):
+        resolve_signal_session(
+            now_cn=datetime(2026, 7, 13, 18, 0), open_sessions=()
+        )
+
+
+def test_override_must_be_an_open_session():
+    with pytest.raises(SignalSessionUnavailable):
+        resolve_signal_session(
+            now_cn=datetime(2026, 7, 13, 18, 0),
+            open_sessions=(date(2026, 7, 10),),
+            override="20260711",
+        )
+
+
+def test_signal_session_policy_version_exists():
+    assert SIGNAL_SESSION_POLICY_VERSION == "ashare-cn-1700-v1"

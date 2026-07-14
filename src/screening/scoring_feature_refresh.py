@@ -20,9 +20,12 @@ import importlib
 import json
 import logging
 import os
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from src.screening.scoring_feature_quality import ObservationStatus
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,26 @@ _FEATURE_FAMILIES = (
 )
 
 _MAX_WORKERS = int(os.environ.get("SCORING_REFRESH_CONCURRENCY", "4"))
+
+
+@dataclass(frozen=True)
+class TickerFeatureObservation:
+    """Per-ticker, per-family producer observation evidence.
+
+    Produced by ``_fetch_ticker_data`` for each data family it attempts.
+    Captures the truthful outcome (success / partial / failed) and the
+    authoritative non-empty row count so the manifest can distinguish a
+    legal empty observation (e.g. no insider trades filed today) from a
+    silent failure (exception swallowed with count zero).
+    """
+
+    ticker: str
+    family: str
+    status: ObservationStatus
+    nonempty_count: int
+    source_parts_succeeded: int
+    source_parts_total: int
+    failure_code: str | None = None
 
 
 def _refresh_enabled() -> bool:
@@ -60,45 +83,102 @@ def _enable_snapshots() -> None:
         pass
 
 
-def _fetch_ticker_data(ticker: str, trade_date: str) -> dict[str, int]:
+def _fetch_ticker_data(ticker: str, trade_date: str) -> list[TickerFeatureObservation]:
     """Fetch financial metrics, company news, and insider trades for one ticker.
 
-    Returns counts per family.  Each call is independent — a failure in one
-    family does not block the others.  All exceptions are swallowed (debug-logged)
-    so the pool never loses a worker to an unhandled exception.
+    Returns one :class:`TickerFeatureObservation` per data family.  Each call is
+    independent — a failure in one family does not block the others.  All
+    exceptions are swallowed (debug-logged) so the pool never loses a worker to
+    an unhandled exception, but the observation status truthfully records
+    success / partial / failed so the manifest can distinguish a legal empty
+    observation (e.g. no insider trades filed today) from a silent failure.
     """
     from src.tools.api import get_company_news, get_financial_metrics, get_insider_trades
     from src.data.snapshot import get_snapshot_exporter
 
-    counts = {"financial_metrics": 0, "company_news": 0, "insider_trades": 0}
+    observations: list[TickerFeatureObservation] = []
 
-    # Financial metrics (tushare fina_indicator) — auto-writes financials.json.
+    # Financial metrics (tushare fina_indicator) — single source, auto-writes
+    # financials.json. SUCCESS even on legal empty.
     try:
         metrics = get_financial_metrics(ticker, trade_date, period="ttm", limit=10)
-        counts["financial_metrics"] = len(metrics) if metrics else 0
+        nonempty = len(metrics) if metrics else 0
+        observations.append(
+            TickerFeatureObservation(
+                ticker=ticker,
+                family="financial_metrics",
+                status=ObservationStatus.SUCCESS,
+                nonempty_count=nonempty,
+                source_parts_succeeded=1,
+                source_parts_total=1,
+            )
+        )
     except Exception as exc:
         logger.debug("[Refresh] financial_metrics failed for %s: %s", ticker, exc)
+        observations.append(
+            TickerFeatureObservation(
+                ticker=ticker,
+                family="financial_metrics",
+                status=ObservationStatus.FAILED,
+                nonempty_count=0,
+                source_parts_succeeded=0,
+                source_parts_total=1,
+                failure_code=type(exc).__name__,
+            )
+        )
 
-    # Company news (akshare for A-shares) — auto-writes company_news.json.
+    # Event inputs has two independent sources: company_news + insider_trades.
+    # Both must be reachable to call the family SUCCESS; one failure → PARTIAL;
+    # both failing → FAILED. Empty results from a reachable source are still
+    # SUCCESS-shaped (event_inputs has legal-when-observed empty semantics).
+    news_nonempty = 0
+    news_succeeded = False
+    news_error: str | None = None
     try:
         news = get_company_news(ticker, trade_date, limit=200)
-        counts["company_news"] = len(news) if news else 0
+        news_nonempty = len(news) if news else 0
+        news_succeeded = True
     except Exception as exc:
         logger.debug("[Refresh] company_news failed for %s: %s", ticker, exc)
+        news_error = type(exc).__name__
 
-    # Insider trades (tushare stk_holdertrade) — api.py does NOT auto-write
-    # this snapshot, so we export manually via the new export_insider_trades.
+    trades_nonempty = 0
+    trades_succeeded = False
+    trades_error: str | None = None
     try:
         trades = get_insider_trades(ticker, trade_date, limit=200)
         if trades:
-            counts["insider_trades"] = len(trades)
+            trades_nonempty = len(trades)
+            # api.py does NOT auto-write this snapshot, so export manually.
             get_snapshot_exporter().export_insider_trades(
                 ticker, trade_date, trades, "tushare"
             )
+        trades_succeeded = True
     except Exception as exc:
         logger.debug("[Refresh] insider_trades failed for %s: %s", ticker, exc)
+        trades_error = type(exc).__name__
 
-    return counts
+    succeeded_parts = int(news_succeeded) + int(trades_succeeded)
+    if succeeded_parts == 2:
+        event_status = ObservationStatus.SUCCESS
+    elif succeeded_parts == 1:
+        event_status = ObservationStatus.PARTIAL
+    else:
+        event_status = ObservationStatus.FAILED
+    failure_code = news_error or trades_error if succeeded_parts < 2 else None
+    observations.append(
+        TickerFeatureObservation(
+            ticker=ticker,
+            family="event_inputs",
+            status=event_status,
+            nonempty_count=news_nonempty + trades_nonempty,
+            source_parts_succeeded=succeeded_parts,
+            source_parts_total=2,
+            failure_code=failure_code,
+        )
+    )
+
+    return observations
 
 
 def refresh_scoring_features(
@@ -128,7 +208,11 @@ def refresh_scoring_features(
 
     _enable_snapshots()
 
-    total_counts: dict[str, int] = {"financial_metrics": 0, "company_news": 0, "insider_trades": 0}
+    # Per-family aggregate observation bookkeeping.
+    per_family_observations: dict[str, list[TickerFeatureObservation]] = {
+        "financial_metrics": [],
+        "event_inputs": [],
+    }
     success_tickers: set[str] = set()
     failure_count = 0
 
@@ -143,11 +227,21 @@ def refresh_scoring_features(
                 for future in concurrent.futures.as_completed(future_map, timeout=timeout_seconds):
                     ticker = future_map[future]
                     try:
-                        counts = future.result()
-                        if any(v > 0 for v in counts.values()):
+                        observations = future.result()
+                        for observation in observations:
+                            per_family_observations.setdefault(
+                                observation.family, []
+                            ).append(observation)
+                        # A ticker counts as refresh-successful if every family
+                        # it produced reached at least PARTIAL (some source was
+                        # reachable). FAILED-only tickers are failure_count.
+                        if observations and all(
+                            obs.status is not ObservationStatus.FAILED
+                            for obs in observations
+                        ):
                             success_tickers.add(ticker)
-                        for key, val in counts.items():
-                            total_counts[key] += val
+                        else:
+                            failure_count += 1
                     except Exception:
                         failure_count += 1
             except concurrent.futures.TimeoutError:
@@ -157,18 +251,19 @@ def refresh_scoring_features(
                     timeout_seconds, len(success_tickers), len(unique_tickers), pending,
                 )
 
-    event_rows = total_counts["company_news"] + total_counts["insider_trades"]
     manifest = _build_manifest(
         trade_date, unique_tickers, timeout_seconds, "completed", "tushare+akshare",
         success_count=len(success_tickers), failure_count=failure_count,
-        fin_rows=total_counts["financial_metrics"], event_rows=event_rows,
+        per_family_observations=per_family_observations,
     )
     manifest_path = _write_manifest(cache_path, trade_date, manifest)
 
+    fin_rows = sum(obs.nonempty_count for obs in per_family_observations.get("financial_metrics", []))
+    event_rows = sum(obs.nonempty_count for obs in per_family_observations.get("event_inputs", []))
     logger.info(
-        "[Refresh] trade_date=%s tickers=%d ok=%d fail=%d fin_metrics=%d news=%d trades=%d",
+        "[Refresh] trade_date=%s tickers=%d ok=%d fail=%d fin_metrics=%d event_rows=%d",
         trade_date, len(unique_tickers), len(success_tickers), failure_count,
-        total_counts["financial_metrics"], total_counts["company_news"], total_counts["insider_trades"],
+        fin_rows, event_rows,
     )
 
     return {
@@ -192,8 +287,73 @@ def _build_manifest(
     failure_count: int = 0,
     fin_rows: int = 0,
     event_rows: int = 0,
+    per_family_observations: dict[str, list[TickerFeatureObservation]] | None = None,
 ) -> dict[str, Any]:
-    return {
+    """Build the refresh manifest.
+
+    The ``features`` block keeps the legacy fields (``provider_failures``,
+    ``rows_written``, ``source``) for backward compatibility and adds the new
+    additive observation evidence fields (``observed_count`` /
+    ``nonempty_count`` / ``failed_count`` / ``source_parts_succeeded`` /
+    ``source_parts_total`` / ``observations``).
+    """
+    observations_by_family = per_family_observations or {}
+
+    features: dict[str, Any] = {}
+    for family in _FEATURE_FAMILIES:
+        family_observations = observations_by_family.get(family, [])
+        # Tickers that received at least a partial answer (source reachable).
+        observed_count = sum(
+            1
+            for obs in family_observations
+            if obs.status in (ObservationStatus.SUCCESS, ObservationStatus.PARTIAL)
+        )
+        # Authoritative nonempty rows across observed tickers.
+        nonempty_count = sum(obs.nonempty_count for obs in family_observations)
+        # Tickers whose every source part failed.
+        failed_count = sum(
+            1 for obs in family_observations if obs.status is ObservationStatus.FAILED
+        )
+        source_parts_succeeded = sum(obs.source_parts_succeeded for obs in family_observations)
+        source_parts_total = sum(obs.source_parts_total for obs in family_observations)
+
+        # Backward-compatible legacy fields. For families we actually refreshed
+        # (financial_metrics, event_inputs) we derive rows_written from the
+        # observation nonempty_count so the legacy field stays truthful. Other
+        # families are local-cache only at score time, so their legacy fields
+        # remain 0 / "local_cache".
+        if family == "financial_metrics":
+            legacy_rows = nonempty_count if family_observations else fin_rows
+            legacy_failures = failed_count
+            legacy_source = source
+        elif family == "event_inputs":
+            legacy_rows = nonempty_count if family_observations else event_rows
+            legacy_failures = failed_count
+            legacy_source = source
+        else:
+            legacy_rows = 0
+            legacy_failures = 0
+            legacy_source = "local_cache"
+
+        family_entry: dict[str, Any] = {
+            # Legacy fields — preserved for backward compatibility with
+            # ScoringFeatureStore._quality_for_family and any external reader
+            # that still consumes the flat counters.
+            "provider_failures": legacy_failures,
+            "rows_written": legacy_rows,
+            "source": legacy_source,
+            # New additive observation evidence. Downstream consumers
+            # (assess_auto_quality via build_quality_summary) prefer these; the
+            # legacy fields are kept only for compatibility.
+            "observed_count": observed_count,
+            "nonempty_count": nonempty_count,
+            "failed_count": failed_count,
+            "source_parts_succeeded": source_parts_succeeded,
+            "source_parts_total": source_parts_total,
+        }
+        features[family] = family_entry
+
+    manifest: dict[str, Any] = {
         "trade_date": str(trade_date),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "candidate_count": len(tickers),
@@ -201,19 +361,9 @@ def _build_manifest(
         "status": status,
         "success_count": success_count,
         "failure_count": failure_count,
-        "features": {
-            family: {
-                "provider_failures": failure_count if family in ("financial_metrics", "event_inputs") else 0,
-                "rows_written": (
-                    fin_rows if family == "financial_metrics"
-                    else event_rows if family == "event_inputs"
-                    else 0
-                ),
-                "source": source if family in ("financial_metrics", "event_inputs") else "local_cache",
-            }
-            for family in _FEATURE_FAMILIES
-        },
+        "features": features,
     }
+    return manifest
 
 
 def _write_manifest(cache_path: Path, trade_date: str, manifest: dict[str, Any]) -> Path:

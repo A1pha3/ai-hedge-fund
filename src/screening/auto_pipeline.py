@@ -634,8 +634,28 @@ def _build_default_manifest(
         )
 
     required_tickers = set(recommendation_by_ticker)
+    # Authoritative Auto quality verdict comes from the pure assessor that
+    # reads only ``data_quality.scoring_features``. We serialize the
+    # structured decision (blockers + warnings) into the payload so consumers
+    # can inspect WHY Auto is healthy or degraded without re-running the
+    # assessor. The wrapper ``_quality_is_healthy`` exists only for backward
+    # compatibility with callers that expect a boolean.
+    from src.screening.scoring_feature_quality import assess_auto_quality
+
+    quality_decision = assess_auto_quality(payload)
+    payload["quality_decision"] = {
+        "healthy": quality_decision.healthy,
+        "blockers": [
+            {"family": blocker.family, "code": blocker.code, "detail": blocker.detail}
+            for blocker in quality_decision.blockers
+        ],
+        "warnings": [
+            {"family": warning.family, "code": warning.code, "detail": warning.detail}
+            for warning in quality_decision.warnings
+        ],
+    }
     is_healthy = (
-        _quality_is_healthy(payload)
+        quality_decision.healthy
         and inputs.baseline_consistent
         and _input_snapshot_is_current(inputs)
         and bool(readiness_by_ticker)
@@ -751,52 +771,23 @@ def _publication_payload(
 
 
 def _quality_is_healthy(payload: Mapping[str, Any]) -> bool:
-    freshness = payload.get("data_freshness")
-    if not isinstance(freshness, Mapping) or freshness.get("fresh") is not True:
-        return False
+    """Compatibility wrapper. Returns only the healthy boolean.
 
-    cache_refresh = payload.get("daily_action_cache_refresh")
-    if (
-        not isinstance(cache_refresh, Mapping)
-        or cache_refresh.get("status") != "success"
-    ):
-        return False
-    for field in (
-        "price_failed",
-        "price_missing",
-        "price_insufficient_history",
-        "fund_flow_failed",
-        "fund_flow_empty",
-        "industry_index_failed",
-    ):
-        value = cache_refresh.get(field)
-        if type(value) is not int or value != 0:
-            return False
+    Full structured decision (blockers, warnings) is available via
+    ``assess_auto_quality(payload)`` from :mod:`scoring_feature_quality`.
 
-    quality = payload.get("data_quality")
-    if not isinstance(quality, Mapping) or not quality:
-        return False
-    evidence_count = 0
-    for group in quality.values():
-        if not isinstance(group, Mapping):
-            return False
-        for evidence in group.values():
-            if not isinstance(evidence, Mapping):
-                return False
-            evidence_count += 1
-            if evidence.get("stale") is not False:
-                return False
-            provider_failures = evidence.get("provider_failures")
-            if type(provider_failures) is not int or provider_failures != 0:
-                return False
-            coverage = evidence.get("coverage")
-            if (
-                not isinstance(coverage, (int, float))
-                or isinstance(coverage, bool)
-                or coverage != 1.0
-            ):
-                return False
-    return evidence_count > 0
+    The Auto canonical health authority is ``payload["data_quality"]
+    ["scoring_features"]``. The legacy ``daily_action_cache_refresh`` block
+    and the ``optional_features`` compatibility projection are intentionally
+    ignored here: per spec sections 4 and 10, those belong to other domains
+    and must not gate the Auto verdict. The structured verdict is serialized
+    into the payload as ``payload["quality_decision"]`` by
+    :func:`_build_default_manifest` so consumers can inspect blockers and
+    warnings without re-running the assessor.
+    """
+    from src.screening.scoring_feature_quality import assess_auto_quality
+
+    return assess_auto_quality(payload).healthy
 
 
 def _manifest_has_auditable_evidence(

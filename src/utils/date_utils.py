@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from collections.abc import Sequence
+from datetime import date, datetime, time, timedelta
 
 
 def format_date(date_str: str) -> str:
@@ -151,3 +152,78 @@ def resolve_signal_date_iso(*, now: datetime | None = None, ready_hour: int | No
     dashed ISO form, avoiding a redundant ``format_date`` round-trip.
     """
     return resolve_market_ready_date_iso(now=now, ready_hour=ready_hour)
+
+
+# ---------------------------------------------------------------------------
+# Unified 17:00 signal-session policy (ashare-cn-1700-v1)
+# ---------------------------------------------------------------------------
+#
+# Three call sites (``_resolve_default_end_date`` in ``src/cli/input.py``,
+# the ``--auto`` factor-scoring path, and ``daily_action``'s signal
+# resolution) each re-implemented the 17:00 cutoff independently. The
+# constants + function below are the single source of truth for that rule.
+# A caller passes in the authoritative set of open A-share sessions and an
+# optional override; the function returns the canonical signal date.
+# Migration of the three call sites to this function happens in later tasks.
+
+SIGNAL_SESSION_POLICY_VERSION = "ashare-cn-1700-v1"
+_SIGNAL_READY_CUTOFF = time(17, 0)
+
+
+class SignalSessionUnavailable(ValueError):
+    """Raised when no authoritative signal session can be resolved."""
+
+
+def resolve_signal_session(
+    *,
+    now_cn: datetime,
+    open_sessions: Sequence[date],
+    override: str | date | None = None,
+) -> date:
+    """Return the canonical signal date under the 17:00 session policy.
+
+    The rule is the single source of truth for the data-ready cutoff: at or
+    after 17:00 Asia/Shanghai, same-day data is treated as ready; before the
+    cutoff the previous day is used. Weekday vs. weekend is handled by the
+    same rule because callers must pass an authoritative open-session
+    calendar, which is the only thing that can correctly skip exchange
+    holidays.
+
+    Args:
+        now_cn: Reference wall-clock in Asia/Shanghai.
+        open_sessions: Authoritative set of open A-share trading sessions.
+            Duplicates and ordering are tolerated (the function sorts and
+            dedupes). An empty sequence is a hard error — without an
+            explicit calendar, a silent fallback would mask data issues.
+        override: Optional explicit session. May be a :class:`date` or a
+            ``YYYYMMDD``/``YYYY-MM-DD`` string. Must be a member of
+            ``open_sessions``; otherwise a :class:`SignalSessionUnavailable`
+            is raised.
+
+    Returns:
+        The resolved signal date (a :class:`date`).
+
+    Raises:
+        SignalSessionUnavailable: ``open_sessions`` is empty, ``override``
+            is not a member of ``open_sessions``, or no session exists at or
+            before the cutoff-adjusted date.
+    """
+    sessions = tuple(sorted(set(open_sessions)))
+    if not sessions:
+        raise SignalSessionUnavailable("authoritative open sessions unavailable")
+    if override is not None:
+        selected = (
+            override
+            if isinstance(override, date) and not isinstance(override, datetime)
+            else datetime.strptime(str(override).replace("-", ""), "%Y%m%d").date()
+        )
+        if selected not in sessions:
+            raise SignalSessionUnavailable("override is not an authoritative open session")
+        return selected
+    cutoff_date = (
+        now_cn.date() if now_cn.time() >= _SIGNAL_READY_CUTOFF else now_cn.date() - timedelta(days=1)
+    )
+    eligible = tuple(session for session in sessions if session <= cutoff_date)
+    if not eligible:
+        raise SignalSessionUnavailable("calendar has no session at or before cutoff")
+    return eligible[-1]

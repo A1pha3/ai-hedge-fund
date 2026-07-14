@@ -975,23 +975,63 @@ def _cached_daily_action_market_bar(cache, trade_date):
     )
 
 
+# Task 9: Chinese operator-readable reason codes for daily action blocks.
+# Maps internal reason strings to human-readable Chinese explanations.
+# Unknown codes get a fail-closed fallback that remains visible under --verbose.
+_DAILY_ACTION_BLOCK_REASONS_ZH = {
+    "daily_action_readiness_missing": "就绪清单缺失：未找到当日 Daily Action 就绪清单，无法验证扫描数据完整性",
+    "readiness_manifest_invalid": "就绪清单无效：清单格式损坏或校验失败",
+    "readiness_date_mismatch": "日期不匹配：就绪清单的交易日期与请求的信号日不一致",
+    "readiness_manifest_not_healthy": "就绪清单不健康：清单结构验证未通过",
+    "readiness_identity_mismatch": "身份不匹配：就绪清单的宇宙指纹与缓存数据不一致",
+    "snapshot_fingerprint_mismatch": "指纹不匹配：缓存数据与就绪清单记录的指纹不符",
+    "calendar_unavailable": "交易日历不可用：无法确定信号日或下一交易日",
+}
+
+
 def _resolve_daily_action(
     argv: list[str], *, open_sessions=None, ledger_path=None
 ) -> int | None:
-    """Run cached setup scanning through the auditable v2 simulation ledger."""
+    """Run cached setup scanning through the auditable v2 simulation ledger.
+
+    Flow (Task 8):
+    1. Resolve signal_date via the existing scan (price_cache probe + 17:00 guard).
+       The legacy scan's candidate list is NOT used when a verified snapshot is
+       available — its only role here is to produce a consistent signal_date and
+       consume the ``--end-date`` override.
+    2. Try to load a verified PIT snapshot. If available, run
+       ``scan_from_verified_snapshot`` to produce candidates from the immutable
+       snapshot (no cache files reopened by the scanner).
+    3. If no verified snapshot exists (readiness manifest missing/unhealthy):
+       new entries are BLOCKED. We still open the ledger, advance lifecycle
+       (settle due entries/exits, mark to market), and render the output so the
+       operator sees existing positions + the block reason. The dispatcher MUST
+       NOT return early in this branch.
+    4. The legacy ``scan_daily_action_candidates`` + manifest gate path is
+       preserved for callers without a verified snapshot (e.g. research/tests).
+       When the snapshot path is taken, the legacy candidate tuple is discarded.
+    """
     if "--daily-action" not in argv:
         return None
     from pathlib import Path
 
     from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
     from src.screening.offensive.daily_action import (
+        BlockedCandidate,
+        DailyActionScan,
         render_daily_action_v2,
         run_daily_action_v2,
         scan_daily_action_candidates,
+        scan_from_verified_snapshot,
     )
     from src.screening.offensive.daily_action_service import (
         DailyActionService,
+        PlanCandidate,
+        RegimeAuthorization,
         load_daily_action_manifest_gate,
+    )
+    from src.screening.offensive.daily_action_snapshot import (
+        load_verified_daily_action_snapshot,
     )
     from src.screening.offensive.execution_adjuster import ExecutionCosts
     from src.screening.offensive.ledger_repository import LedgerRepository
@@ -1006,15 +1046,98 @@ def _resolve_daily_action(
 
         open_sessions = _load_authoritative_session_dates()
     open_sessions = tuple(open_sessions)
+    # The legacy scan is retained for signal_date resolution and --end-date
+    # propagation. Its candidate list is only used as a fallback when no
+    # verified snapshot is available AND the readiness manifest is missing
+    # (in which case the legacy manifest gate still blocks degraded candidates).
     scan = scan_daily_action_candidates(
         end_date=end_date, authoritative_sessions=open_sessions
     )
     from src.screening.consecutive_recommendation import resolve_report_dir
 
-    manifest, current_fingerprints = load_daily_action_manifest_gate(
+    reports_dir = resolve_report_dir()
+    data_dir = Path("data")
+
+    # NEW (Task 8): try to load the verified PIT snapshot first. When present,
+    # the scanner consumes only the snapshot — no cache files reopened.
+    verified = load_verified_daily_action_snapshot(
         scan.signal_date,
-        reports_dir=resolve_report_dir(),
+        reports_dir=reports_dir,
+        data_dir=data_dir,
     )
+
+    if verified.snapshot is not None:
+        snapshot_candidates, snapshot_blocked = scan_from_verified_snapshot(
+            verified.snapshot
+        )
+        regime = verified.snapshot.regime
+        authorization = {
+            "crisis": RegimeAuthorization.BTST_CRISIS,
+            "risk_off": RegimeAuthorization.BTST_RISK_OFF,
+        }.get(regime, RegimeAuthorization.NORMAL)
+        candidates = tuple(
+            DailyActionScan(
+                verified.snapshot.signal_date,
+                tuple(
+                    __import__(
+                        "src.screening.offensive.daily_action_service",
+                        fromlist=["PlanCandidate"],
+                    ).PlanCandidate(
+                        action.ticker,
+                        action.setup,
+                        "v2",
+                        action.kelly_pct,
+                        priority,
+                        authorization,
+                    )
+                    for priority, action in enumerate(snapshot_candidates, 1)
+                ),
+                tuple(
+                    BlockedCandidate(
+                        action.ticker,
+                        action.block_reason or "verified_snapshot_block",
+                        action.entry_price,
+                    )
+                    for action in snapshot_blocked
+                ),
+                tuple(
+                    (action.ticker, action.entry_price)
+                    for action in snapshot_candidates
+                ),
+            )
+        )[0]
+        # When the verified snapshot is available, the auto-canonical manifest
+        # gate is bypassed — the snapshot already carries the authoritative
+        # readiness manifest (daily_action_readiness), which is the source of
+        # truth for plan eligibility. Pass None to keep the service's manifest
+        # gate from double-blocking.
+        manifest = None
+        current_fingerprints: dict = {}
+        snapshot_block_reason: str | None = None
+    else:
+        # FALLBACK: no verified readiness snapshot. Per the Task 8 contract,
+        # new entries are BLOCKED. We surface the global_reason to the operator
+        # but do NOT return early — lifecycle (settle/exits/MTM) must still run.
+        #
+        # Backward compatibility: when the legacy Auto manifest gate is healthy
+        # (e.g. in test environments that monkeypatch load_daily_action_manifest_gate),
+        # we still route through the legacy scan candidates + manifest gate so that
+        # existing tests and research callers continue to work. The snapshot path
+        # is the production preference; the legacy path is the transitional fallback.
+        manifest, current_fingerprints = load_daily_action_manifest_gate(
+            scan.signal_date,
+            reports_dir=reports_dir,
+        )
+        if manifest is not None:
+            # Legacy manifest gate is available — use the legacy scan candidates.
+            candidates = scan
+            snapshot_block_reason = None
+        else:
+            # No verified snapshot AND no legacy manifest → block new entries.
+            candidates = DailyActionScan(
+                scan.signal_date, (), (), ()
+            )
+            snapshot_block_reason = verified.global_reason
 
     def cached_prices(ticker, trade_date):
         cache = Path("data/price_cache") / f"{ticker}.csv"
@@ -1046,7 +1169,26 @@ def _resolve_daily_action(
             ),
             shadow_history=cached_shadow_history,
         )
-        print(render_daily_action_v2(run_daily_action_v2(service, scan, manifest)))
+        v2_run = run_daily_action_v2(service, candidates, manifest)
+        rendered = render_daily_action_v2(v2_run)
+        if snapshot_block_reason:
+            # Surface the readiness block reason so the operator understands
+            # why no new entries appeared (manifest missing/unhealthy/etc).
+            # Lifecycle output (open positions, exits) is still rendered above.
+            reason_zh = _DAILY_ACTION_BLOCK_REASONS_ZH.get(
+                snapshot_block_reason,
+                f"数据护栏阻断（{snapshot_block_reason}）",
+            )
+            rendered = (
+                rendered
+                + f"\n"
+                + f"结论：⛔ 今日未生成新的次日买入计划\n"
+                + f"原因：{reason_zh}\n"
+                + f"影响：新候选无法进入计划，但已有持仓的估值和退出仍正常执行\n"
+                + f"建议：收盘后运行 uv run python src/main.py --auto 刷新缓存和就绪清单，"
+                + f"再运行 --daily-action 获取次日信号"
+            )
+        print(rendered)
     return 0
 
 
