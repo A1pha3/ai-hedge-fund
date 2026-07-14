@@ -69,9 +69,20 @@ class FundFlowStore:
         return pd.read_csv(path, dtype={"date": str, "ticker": str})
 
     @staticmethod
-    def _row_to_record(row: pd.Series) -> FundFlowRecord:
-        # pandas NaN 是 truthy, `x or 0.0` 对 NaN 无效 → CSV 空值传播为 NaN.
-        # 先 float() 再 math.isnan() 统一处理 None/NaN/非法值, 兜底为 0.0.
+    def row_to_record(row: pd.Series, ticker: str | None = None) -> FundFlowRecord:
+        """Convert a pandas Series row to a FundFlowRecord.
+
+        NaN-safe: missing/invalid numeric fields default to 0.0
+        (pandas NaN is truthy, so `x or 0.0` does not work; we float()
+        then math.isnan() to normalize None/NaN/illegal values).
+
+        Args:
+            row: pandas Series with columns matching FundFlowRecord fields.
+            ticker: optional ticker override (used by snapshot loader which
+                knows the ticker from the filename and may load CSVs that
+                lack a ``ticker`` column). When ``None``, falls back to
+                ``row["ticker"]``.
+        """
         def _f(key: str) -> float:
             try:
                 f = float(row.get(key, 0.0))
@@ -79,8 +90,9 @@ class FundFlowStore:
                 return 0.0
             return 0.0 if math.isnan(f) else f
 
+        ticker_value = ticker if ticker is not None else str(row["ticker"])
         return FundFlowRecord(
-            ticker=str(row["ticker"]),
+            ticker=ticker_value,
             date=str(row["date"]),
             close=_f("close"),
             pct_change=_f("pct_change"),
@@ -100,7 +112,7 @@ class FundFlowStore:
         match = df[df["date"] == date]
         if len(match) == 0:
             return None
-        return self._row_to_record(match.iloc[0])
+        return self.row_to_record(match.iloc[0])
 
     def get_range(self, ticker: str, start_date: str, end_date: str) -> list[FundFlowRecord]:
         """闭区间 [start_date, end_date], YYYYMMDD。"""
@@ -108,4 +120,4 @@ class FundFlowStore:
         if len(df) == 0:
             return []
         mask = (df["date"] >= start_date) & (df["date"] <= end_date)
-        return [self._row_to_record(row) for _, row in df[mask].iterrows()]
+        return [self.row_to_record(row) for _, row in df[mask].iterrows()]

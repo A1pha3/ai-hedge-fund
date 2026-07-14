@@ -27,6 +27,7 @@ from src.screening.offensive.daily_action_snapshot import (
     load_verified_daily_action_snapshot,
     _pit_fingerprint,
 )
+from src.screening.offensive.data.fund_flow_store import FundFlowRecord
 from src.screening.offensive.setup_data_contracts import SetupCapability
 
 
@@ -355,6 +356,35 @@ class TestHappyPath:
         assert result.snapshot is not None
         assert result.snapshot.setup_context("999999") is None
 
+    def test_fund_flow_records_are_fund_flow_record_objects(self, tmp_path: Path):
+        """Regression: snapshot must emit FundFlowRecord objects (not raw dicts).
+
+        Setup detectors (btst_breakout.py, oversold_bounce.py) access
+        ``r.date`` and ``r.main_net_inflow`` as attributes. The legacy scan
+        path returns ``list[FundFlowRecord]`` from ``FundFlowStore.get_range``;
+        the snapshot path previously produced plain dicts via
+        ``df.to_dict(orient="records")``, breaking attribute access with
+        ``'dict' object has no attribute 'date'``.
+        """
+        reports_dir, data_dir = _build_full_fixture(tmp_path)
+        result = load_verified_daily_action_snapshot(
+            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
+        )
+        assert result.snapshot is not None
+        ctx = result.snapshot.setup_context("000001")
+        assert ctx is not None
+        assert len(ctx.fund_flow_records) > 0
+        # Type contract: each record must be a FundFlowRecord (not dict)
+        for record in ctx.fund_flow_records:
+            assert isinstance(record, FundFlowRecord), (
+                f"expected FundFlowRecord, got {type(record).__name__}"
+            )
+        # Attribute access used by setup detectors must work
+        first = ctx.fund_flow_records[0]
+        assert isinstance(first.date, str)
+        assert first.date <= SIGNAL_DATE.strftime("%Y%m%d")
+        assert isinstance(first.main_net_inflow, float)
+
 
 # ---------------------------------------------------------------------------
 # PIT normalization & fingerprint stability
@@ -612,7 +642,7 @@ class TestFundFlowLoading:
         records = result.snapshot.fund_flow_by_ticker["000001"]
         # Only 20260713 should remain; 14 and 15 are post-signal
         assert len(records) == 1
-        assert str(records[0].get("date")).startswith("20260713")
+        assert records[0].date == "20260713"
 
     def test_missing_fund_flow_does_not_block_ticker(self, tmp_path: Path):
         """Absence of fund_flow cache is non-fatal; ticker still loads with prices."""

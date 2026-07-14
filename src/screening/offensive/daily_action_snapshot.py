@@ -23,6 +23,7 @@ from src.screening.offensive.daily_action_readiness import (
     DailyActionReadinessManifest,
     validate_manifest,
 )
+from src.screening.offensive.data.fund_flow_store import FundFlowRecord, FundFlowStore
 from src.screening.offensive.setup_data_contracts import SetupCapability
 from src.utils.secure_files import SecureReadError, read_regular_bytes
 
@@ -45,7 +46,7 @@ class VerifiedSetupContext:
     setup_name: str
     capability: SetupCapability
     prices: pd.DataFrame  # defensive copy on access
-    fund_flow_records: tuple[dict, ...]
+    fund_flow_records: tuple[FundFlowRecord, ...]
     industry_day_pct: float | None
     regime: str
 
@@ -63,7 +64,7 @@ class VerifiedDailyActionSnapshot:
     manifest: DailyActionReadinessManifest
     universe_tickers: tuple[str, ...]
     prices_by_ticker: Mapping[str, pd.DataFrame]
-    fund_flow_by_ticker: Mapping[str, tuple[dict, ...]]
+    fund_flow_by_ticker: Mapping[str, tuple[FundFlowRecord, ...]]
     industry_day_pct_by_ticker: Mapping[str, float]
     regime: str
     board_rule_version: str
@@ -243,7 +244,7 @@ def load_verified_daily_action_snapshot(
     fund_flow_dir = data_dir / "fund_flow_cache"
 
     prices_by_ticker: dict[str, pd.DataFrame] = {}
-    fund_flow_by_ticker: dict[str, tuple[dict, ...]] = {}
+    fund_flow_by_ticker: dict[str, tuple[FundFlowRecord, ...]] = {}
     ticker_blocks: dict[str, list[str]] = {}
 
     signal_ts = pd.Timestamp(signal_date)
@@ -285,23 +286,30 @@ def load_verified_daily_action_snapshot(
 
         # Load fund flow
         flow_path = fund_flow_dir / f"{ticker}.csv"
-        flow_records: list[dict] = []
+        flow_records: list[FundFlowRecord] = []
         if flow_path.exists():
             try:
                 raw = read_regular_bytes(
                     flow_path, max_bytes=MAX_CACHE_FILE_BYTES
                 )
                 flow_df = pd.read_csv(io.BytesIO(raw), dtype=str)
-                # PIT filter on date column
+                # PIT filter + normalize date to YYYYMMDD in-place (handles
+                # both YYYYMMDD and YYYY-MM-DD upstream formats). Setup
+                # detectors compare r.date against trade_date (YYYYMMDD).
                 if "date" in flow_df.columns:
                     flow_df = flow_df.copy()
-                    flow_df["date_norm"] = (
-                        flow_df["date"].str.replace("-", "").str[:8]
-                    )
+                    flow_df["date"] = flow_df["date"].str.replace("-", "").str[:8]
                     flow_df = flow_df[
-                        flow_df["date_norm"] <= signal_date.strftime("%Y%m%d")
+                        flow_df["date"] <= signal_date.strftime("%Y%m%d")
                     ]
-                flow_records = flow_df.to_dict(orient="records")
+                # Convert rows to FundFlowRecord (the type contract that
+                # btst_breakout/oversold_bounce detectors expect). Snapshot
+                # loader passes ticker explicitly (it knows it from the
+                # filename) so CSVs without a `ticker` column are tolerated.
+                flow_records = [
+                    FundFlowStore.row_to_record(row, ticker=ticker)
+                    for _, row in flow_df.iterrows()
+                ]
             except (SecureReadError, Exception) as exc:
                 logger.debug(
                     "snapshot: failed to load fund flow for %s: %s",
