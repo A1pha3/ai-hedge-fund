@@ -1028,7 +1028,6 @@ def _resolve_daily_action(
         DailyActionService,
         PlanCandidate,
         RegimeAuthorization,
-        load_daily_action_manifest_gate,
     )
     from src.screening.offensive.daily_action_snapshot import (
         load_verified_daily_action_snapshot,
@@ -1102,25 +1101,17 @@ def _resolve_daily_action(
                 for action in snapshot_candidates
             ),
         )
-        # When the verified snapshot is available, we still load the Auto
-        # manifest for the service's lifecycle/fingerprint checks. The snapshot
-        # is the authority for readiness; the Auto manifest is used for
-        # per-ticker cache_fingerprint validation in the service layer.
-        manifest, current_fingerprints = load_daily_action_manifest_gate(
-            verified.snapshot.signal_date,
-            reports_dir=reports_dir,
-        )
+        # Task 8 (deep): the service gates on the verified snapshot itself
+        # (per-ticker plan_eligible + consumed fingerprint), NOT the Auto
+        # data-quality manifest. This admits valid BTST tickers outside Auto's
+        # 300 scoring pool (spec 12.3.2) instead of blocking them as
+        # manifest_ticker_absent.
         snapshot_block_reason: str | None = None
     else:
         # FALLBACK: no verified readiness snapshot. Per spec section 10 and
         # invariant 8, new entries are BLOCKED. The legacy Auto manifest MUST
         # NOT be used as a substitute (spec: "不把旧 Auto manifest 自动升级为新域").
-        # We still load it for lifecycle/fingerprint diagnostics only, but
-        # candidates are empty — no new BUY_PLAN can be generated.
-        manifest, current_fingerprints = load_daily_action_manifest_gate(
-            signal_date,
-            reports_dir=reports_dir,
-        )
+        # Candidates are empty — no new BUY_PLAN can be generated.
         candidates = DailyActionScan(signal_date, (), (), ())
         snapshot_block_reason = verified.global_reason or "daily_action_readiness_missing"
 
@@ -1149,12 +1140,11 @@ def _resolve_daily_action(
             TradingSessionCalendar(open_sessions),
             cached_prices,
             execution_costs,
-            cache_fingerprints=lambda ticker, _trade_date: current_fingerprints.get(
-                ticker
-            ),
             shadow_history=cached_shadow_history,
         )
-        v2_run = run_daily_action_v2(service, candidates, manifest)
+        v2_run = run_daily_action_v2(
+            service, candidates, verified_snapshot=verified.snapshot
+        )
         verbose = "--verbose" in argv
         rendered = render_daily_action_v2(v2_run, verbose=verbose)
         if snapshot_block_reason:

@@ -307,6 +307,126 @@ def test_manifest_ticker_mapping_remains_immutable_after_candidate_gate(
         healthy_manifest.tickers["000003"] = _readiness("000003", "sha256:000003")
 
 
+def _verified_snapshot_with(
+    ticker: str,
+    *,
+    plan_eligible: bool = True,
+    signal_date: date = SIGNAL_DATE,
+    snapshot_id: str = "sha256:snap",
+):
+    """Minimal VerifiedDailyActionSnapshot exposing one ticker's BTST capability."""
+    from types import MappingProxyType
+
+    import pandas as pd
+
+    from src.screening.offensive.daily_action_readiness import (
+        DailyActionReadinessManifest,
+        DailyActionTickerReadiness,
+        SharedReadinessEvidence,
+    )
+    from src.screening.offensive.daily_action_snapshot import (
+        VerifiedDailyActionSnapshot,
+    )
+    from src.screening.offensive.setup_data_contracts import SetupCapability
+
+    cap = SetupCapability(
+        enabled=True,
+        scannable=True,
+        plan_eligible=plan_eligible,
+        degraded=not plan_eligible,
+        block_reasons=() if plan_eligible else ("incomplete_setup_data",),
+        warnings=(),
+        consumed_fingerprint=None,
+    )
+    manifest = DailyActionReadinessManifest(
+        schema_version=1,
+        domain="daily_action",
+        run_id="snap-run",
+        trade_date=signal_date,
+        created_at="2026-07-13T12:00:00Z",
+        status="healthy",
+        universe_kind="resolved_refresh_universe",
+        universe_tickers=(ticker,),
+        universe_fingerprint="sha256:u",
+        input_fingerprint="sha256:i",
+        ticker_readiness=MappingProxyType(
+            {
+                ticker: DailyActionTickerReadiness(
+                    evidence_status="verified",
+                    capabilities=MappingProxyType({"btst_breakout": cap}),
+                )
+            }
+        ),
+        warnings=(),
+        shared_evidence=SharedReadinessEvidence(
+            regime_row={},
+            regime_fingerprint=None,
+            industry_mapping_fingerprint=None,
+            security_status_fingerprint=None,
+            board_rule_version="ashare-board-prefix-v1",
+            normalization_version="pit-canonical-v1",
+            signal_session_policy_version="ashare-cn-1700-v1",
+        ),
+        policy_versions=MappingProxyType(
+            {"readiness_policy": "daily-action-readiness-v1"}
+        ),
+    )
+    prices = pd.DataFrame({"date": ["2026-07-13"], "close": [10.0]})
+    return VerifiedDailyActionSnapshot(
+        signal_date=signal_date,
+        snapshot_id=snapshot_id,
+        manifest=manifest,
+        universe_tickers=(ticker,),
+        prices_by_ticker=MappingProxyType({ticker: prices}),
+        fund_flow_by_ticker=MappingProxyType({}),
+        industry_day_pct_by_ticker=MappingProxyType({}),
+        regime="normal",
+        board_rule_version="ashare-board-prefix-v1",
+        normalization_version="pit-canonical-v1",
+        setup_requirements_version="daily-action-setups-v1",
+        ticker_blocks=MappingProxyType({}),
+    )
+
+
+def test_service_snapshot_gate_admits_ticker_outside_auto_manifest(service):
+    """Task 8: the service gates on the verified snapshot, not the Auto manifest.
+
+    A candidate that is plan_eligible in the verified snapshot must be admitted
+    even with NO Auto manifest at all — Auto-300 membership must not block a
+    valid BTST ticker (spec section 12.3.2).
+    """
+    snapshot = _verified_snapshot_with("000999")
+    candidate = PlanCandidate("000999", "btst_breakout", "v2", 0.10, 1)
+
+    run = service.run(SIGNAL_DATE, [candidate], verified_snapshot=snapshot)
+
+    assert run.ticker_gate_blocks == ()
+    assert "manifest_ticker_absent" not in (run.block_reason or "")
+    assert any(plan.ticker == "000999" for plan in run.new_plans)
+
+
+def test_service_snapshot_gate_blocks_non_plan_eligible_candidate(service):
+    """A candidate that is not plan_eligible in the snapshot is blocked."""
+    snapshot = _verified_snapshot_with("000999", plan_eligible=False)
+    candidate = PlanCandidate("000999", "btst_breakout", "v2", 0.10, 1)
+
+    run = service.run(SIGNAL_DATE, [candidate], verified_snapshot=snapshot)
+
+    assert run.new_plans == ()
+    assert any(block.ticker == "000999" for block in run.ticker_gate_blocks)
+
+
+def test_service_snapshot_gate_blocks_date_mismatch(service):
+    """A snapshot whose signal_date differs from as_of blocks all candidates."""
+    snapshot = _verified_snapshot_with("000999", signal_date=SIGNAL_DATE - timedelta(days=1))
+    candidate = PlanCandidate("000999", "btst_breakout", "v2", 0.10, 1)
+
+    run = service.run(SIGNAL_DATE, [candidate], verified_snapshot=snapshot)
+
+    assert run.new_plans == ()
+    assert run.block_reason is not None
+
+
 def _canonical_payload(manifest: RunManifest) -> dict:
     from src.screening.auto_pipeline import _manifest_payload
 

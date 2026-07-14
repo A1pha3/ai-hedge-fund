@@ -619,11 +619,18 @@ def run_daily_action_v2(
     service: Any,
     scan: DailyActionScan,
     manifest: Any = None,
+    *,
+    verified_snapshot: VerifiedDailyActionSnapshot | None = None,
 ) -> DailyActionV2Run:
     """Route pure scanner output through the auditable v2 lifecycle service."""
     if not all(isinstance(candidate, PlanCandidate) for candidate in scan.candidates):
         raise TypeError("DailyActionScan candidates must be PlanCandidate instances")
-    service_run = service.run(scan.signal_date, scan.candidates, manifest=manifest)
+    service_run = service.run(
+        scan.signal_date,
+        scan.candidates,
+        manifest=manifest,
+        verified_snapshot=verified_snapshot,
+    )
     # Idempotent reruns still display the one persisted plan for this signal date.
     displayed_tickers = {candidate.ticker for candidate in scan.candidates}
     persisted = tuple(

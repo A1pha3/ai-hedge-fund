@@ -10,9 +10,14 @@ from enum import StrEnum
 from numbers import Real
 from pathlib import Path
 from types import MappingProxyType
-from typing import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Callable, Mapping, Sequence
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from src.screening.offensive.daily_action_snapshot import (
+        VerifiedDailyActionSnapshot,
+    )
 
 from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
 from src.screening.data_quality_manifest import (
@@ -410,6 +415,7 @@ class DailyActionService:
         manifest: RunManifest | None = None,
         *,
         shadow_prices: ShadowPriceSource | None = None,
+        verified_snapshot: "VerifiedDailyActionSnapshot | None" = None,
     ) -> DailyActionRun:
         self._skipped, self._exit_plans, self._deferred, self._block_reason = (
             [],
@@ -424,8 +430,17 @@ class DailyActionService:
         exits = self._settle_due_exit_plans(as_of)
         valuation = self._mark_to_market(as_of)
         self._evaluate_open_positions(as_of)
-        eligible = self._manifest_eligible_candidates(as_of, candidates, manifest)
-        self._active_manifest = manifest if self.enforce_manifest_gate else None
+        if verified_snapshot is not None:
+            # Daily Action readiness authority: gate on the verified snapshot,
+            # NOT the Auto data-quality manifest (which is scoped to Auto's 300
+            # scoring candidates and would block valid BTST tickers outside it).
+            eligible = self._snapshot_eligible_candidates(
+                as_of, candidates, verified_snapshot
+            )
+            self._active_manifest = None
+        else:
+            eligible = self._manifest_eligible_candidates(as_of, candidates, manifest)
+            self._active_manifest = manifest if self.enforce_manifest_gate else None
         if self.enforce_manifest_gate and not eligible:
             plans = ()
         else:
@@ -512,6 +527,59 @@ class DailyActionService:
                     )
             if reasons:
                 blocked.append(TickerGateBlock(candidate.ticker, tuple(dict.fromkeys(reasons))))
+                continue
+            eligible.append(candidate)
+        self._ticker_gate_blocks = tuple(blocked)
+        self._blocked_tickers = tuple(item.ticker for item in blocked)
+        return tuple(eligible)
+
+    def _snapshot_eligible_candidates(
+        self,
+        as_of: date,
+        candidates: Sequence[PlanCandidate],
+        snapshot: "VerifiedDailyActionSnapshot",
+    ) -> tuple[PlanCandidate, ...]:
+        """Gate candidates on the verified Daily Action snapshot itself.
+
+        The verified snapshot is the readiness authority for Daily Action.
+        Unlike the Auto data-quality manifest it is NOT scoped to Auto's 300
+        scoring candidates, so a valid BTST ticker outside that pool is admitted
+        here. Each candidate is re-verified for correspondence with the snapshot
+        (exact signal date, snapshot identity, a plan-eligible capability, and a
+        consumed fingerprint) as TOCTOU protection against any candidate that
+        does not belong to the verified input.
+        """
+        if not self.enforce_manifest_gate:
+            return tuple(candidates)
+        candidate_tickers = tuple(dict.fromkeys(item.ticker for item in candidates))
+        if snapshot.signal_date != as_of:
+            self._block_all_candidates(candidate_tickers, "snapshot_date_mismatch")
+            return ()
+        if not snapshot.snapshot_id:
+            self._block_all_candidates(candidate_tickers, "snapshot_identity_missing")
+            return ()
+
+        eligible: list[PlanCandidate] = []
+        blocked: list[TickerGateBlock] = []
+        for candidate in candidates:
+            context = snapshot.setup_context(candidate.ticker)
+            reasons: list[str] = []
+            if context is None:
+                # Not scannable in the snapshot. Because the snapshot loader
+                # already PIT-verified every per-ticker fingerprint (mismatches
+                # land in ``ticker_blocks`` and drop out of ``scannable_tickers``),
+                # a ticker missing here has no verified, plan-eligible evidence.
+                reasons.append("snapshot_ticker_absent")
+            else:
+                capability = context.capability
+                if not capability.plan_eligible:
+                    reasons.extend(
+                        capability.block_reasons or ("not_plan_eligible",)
+                    )
+            if reasons:
+                blocked.append(
+                    TickerGateBlock(candidate.ticker, tuple(dict.fromkeys(reasons)))
+                )
                 continue
             eligible.append(candidate)
         self._ticker_gate_blocks = tuple(blocked)
