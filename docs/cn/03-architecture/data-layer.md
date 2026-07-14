@@ -4,7 +4,7 @@
 预计时间: 16 分钟
 前置知识:
   - [系统架构总览](./overview.md) ⭐⭐⭐
-  - [日常使用](../02-user-manual/daily-workflow.md) ⭐⭐
+  - [每日工作流](../02-user-manual/daily-workflow.md) ⭐⭐
 ---
 
 # 数据层与缓存
@@ -129,4 +129,4 @@ R20 后 `_fetch_single_ticker_prices_sync` 先检查 BatchDataCache 是否已缓
 
 - [凸性 setup 系统](./daily-action-system.md):setup 如何读 fund_flow_cache 并降级
 - [LLM 多 provider 系统](./llm-system.md):LLM 调用如何复用三级缓存
-- [数据基建设计](../04-design/README.md):数据路由的 provider 选择
+- [候选池设计](../04-design/candidate-pool-design.md):Layer A 数据获取与流动性筛选

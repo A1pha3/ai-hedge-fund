@@ -115,3 +115,11 @@ uv run python src/main.py --check-freshness
 - [每日工作流](daily-workflow.md) — 学习两条管线的协作时序,建立交易日例行流程
 - [CLI 参考](cli-reference.md) — 浏览全部命令与参数
 - [报告解读](interpreting-reports.md) — 读懂 JSON 报告的每个字段
+
+跑完 `--auto` 后,还需要跑 `--daily-action` 获取次日 BUY 信号:
+
+```bash
+uv run python src/main.py --daily-action
+```
+
+该命令读缓存扫描凸性 setup(涨停突破),输出次日 BUY 信号 + Kelly 仓位 + 止损计划,耗时约 3 秒。两条管线的协作时序详见 [每日工作流](daily-workflow.md)。

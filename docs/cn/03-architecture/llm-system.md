@@ -4,7 +4,7 @@
 预计时间: 14 分钟
 前置知识:
   - [系统架构总览](./overview.md) ⭐⭐⭐
-  - [日常使用](../02-user-manual/daily-workflow.md) ⭐⭐
+  - [每日工作流](../02-user-manual/daily-workflow.md) ⭐⭐
 ---
 
 # LLM 多 provider 系统
@@ -142,5 +142,4 @@ ANALYST_CONCURRENCY_LIMIT=5
 ## 深入阅读
 
 - [数据层与缓存](./data-layer.md):LLM 调用如何复用三级缓存去重
-- [Agent 系统](../04-design/README.md):18 个 agent 的设计
-- [LLM 系统功能](../product/features/llm-system.md):旧版功能清单
+- [设计原则与权衡](../04-design/principles.md):gate-ranking 解耦等设计原则

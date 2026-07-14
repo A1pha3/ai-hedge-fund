@@ -3,8 +3,8 @@
 类型: 进阶分析
 预计时间: 8 分钟
 前置知识:
-  - [项目概览](../01-introduction/overview.md) ⭐⭐
-  - [日常使用](../02-user-manual/daily-workflow.md) ⭐⭐
+  - [项目总览](../01-introduction/overview.md) ⭐⭐
+  - [每日工作流](../02-user-manual/daily-workflow.md) ⭐⭐
 ---
 
 # 架构文档索引

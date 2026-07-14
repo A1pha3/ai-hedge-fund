@@ -3,7 +3,7 @@
 类型: 专家设计
 预计时间: 20 分钟
 前置知识:
-  - [设计原则](principles.md) ⭐⭐⭐⭐
+  - [设计原则与权衡](principles.md) ⭐⭐⭐⭐
   - [候选池设计](candidate-pool-design.md) ⭐⭐⭐
 ---
 
@@ -123,7 +123,7 @@ OVERSOLD_BOUNCE_T5 = Distribution(
 
 IC（Information Coefficient）是 setup 信号与未来收益的 Spearman 相关。IC > 0.05 有排序信息，IC > 0.1 较强。BTST `ic=0.15` 是有效 ranker；OversoldBounce `ic=0.003` 几乎无排序信息，与 `E[r]` 统计不显著一致。
 
-**因子诊断必须用全 universe**（详见 [设计原则](principles.md) §7）。MR 因子反转问题就是反例：推荐池诊断显示 MR 反向 → 全 universe 诊断显示 MR 正向 → 推荐池选择偏差导致误判。
+**因子诊断必须用全 universe**（详见 [设计原则与权衡](principles.md) §7）。MR 因子反转问题就是反例：推荐池诊断显示 MR 反向 → 全 universe 诊断显示 MR 正向 → 推荐池选择偏差导致误判。
 
 ## factor_attribution horizon 对齐（C231）
 
@@ -180,3 +180,9 @@ _SHORT_HORIZON_KEYS: tuple[str, ...] = ("t5", "t10")
 ## 与 BTST 的边界
 
 `--daily-action` 的 BTST setup 不读 `score_b`，直扫 `price_cache` 全市场。两个系统独立运行，只共享缓存数据。`C-DUAL-SIGNAL-CONVERGENCE` 是个例外：`--daily-action` 会读 `--auto` 报告的 Top-N，标记同日也在 `--auto` Top-N 的 BTST 命中为「⭐双信号」。但 bootstrap 验证显示这个收敛子集 95% CI 跨 0（`[-7%, +28%]`），未达统计显著，只能标记事实不能宣称更优。
+
+## 深入阅读
+
+- [候选池设计](candidate-pool-design.md):Layer A 如何预筛全市场
+- [设计原则与权衡](principles.md):§6 gate-ranking 解耦、§7 全 universe 诊断
+- [三层管线架构](../03-architecture/three-layer-pipeline.md):Layer B 在管线中的位置

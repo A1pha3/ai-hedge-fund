@@ -4,7 +4,7 @@
 预计时间: 18 分钟
 前置知识:
   - [系统架构总览](./overview.md) ⭐⭐⭐
-  - [日常使用](../02-user-manual/daily-workflow.md) ⭐⭐
+  - [每日工作流](../02-user-manual/daily-workflow.md) ⭐⭐
 ---
 
 # 三层管线架构
@@ -20,7 +20,7 @@ flowchart LR
     subgraph LA["Layer A 候选池"]
         direction TB
         LA1[全市场 ~5000 只] --> LA2[ST/北交所/次新/停牌/涨停/低流动 过滤]
-        LA2 --> LA3[1500-2500 只可投标的<br/>+ shadow 影子池]
+        LA2 --> LA3[约 300 只可投标的<br/>+ shadow 影子池]
     end
 
     subgraph LB["Layer B 四策略独立评分"]
@@ -66,7 +66,7 @@ flowchart LR
 | 低流动排除 | 近 20 日均成交额 <5000 万 | 滑点过大 |
 | 冷却期排除 | 冲突仲裁标记后 15 日 | 避免重复触发 |
 
-边界候选(流动性刚低于阈值)进 shadow 影子池,不参与排序但保留观察。这一步把全市场压到 1500-2500 只可投标的,后续 Layer B/C 只处理这一集合。
+边界候选(流动性刚低于阈值)进 shadow 影子池,不参与排序但保留观察。这一步把全市场压到约 300 只可投标的(`MAX_CANDIDATE_POOL_SIZE=300`),后续 Layer B/C 只处理这一集合。
 
 **为什么过滤涨停股**:`--auto` 的目标是挑"可买入"的票,涨停日排队买不到。但 `--daily-action` 的 BTST setup 需要涨停股——`cache_refresh.py` 会在 `--auto` 收尾时把涨停股注入 `price_cache`,供 `--daily-action` 全市场直扫。这是两条管线的握手点,见 [overview.md](./overview.md)。
 

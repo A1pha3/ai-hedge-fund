@@ -1,10 +1,9 @@
 ---
-title: 术语表
-difficulty: 1⭐
-type: 参考手册
-estimated_time: 10 分钟
-prerequisites:
-  - 无（纯参考用）
+难度: ⭐
+类型: 入门教程
+预计时间: 10 分钟
+前置知识:
+  - 无
 ---
 
 # 术语表
@@ -19,7 +18,7 @@ prerequisites:
 
 ## B
 
-**BTST（Breakout To Strong Close）**：涨停突破 setup，主力策略。今日涨停 + 涨停前 5 日涨幅 ≤ 5%（防追高）+ 主力资金净流入 > 20 日均值 + 行业当日涨 > 2%，持有 T+10。首次出现：[输出报告解读](./interpreting-reports.md)。
+**BTST（Breakout To Strong Close）**：涨停突破 setup，主力策略。今日涨停 + 涨停前 5 日累计涨幅 ≤ 8%（防追高，`_PRE_RUNUP_MAX_PCT=8.0`）+ 主力资金净流入 > 20 日均值 + 行业当日涨 > 2%，持有 T+10。首次出现：[输出报告解读](./interpreting-reports.md)。
 
 **BUY**：决策标记，表示 score_b 进入 Top N 且 investability 达标，可纳入次日开盘计划。首次出现：[输出报告解读](./interpreting-reports.md)。
 
@@ -33,7 +32,7 @@ prerequisites:
 
 **crisis**：市场状态之一，危机环境。BTST 历史最强（胜率 76%，E +16.93%），触发 1.2× 加仓。首次出现：[输出报告解读](./interpreting-reports.md)。
 
-**candidate pool（候选池）**：Layer A 通过的股票集合，约 3000 只，作为后续评分的输入。首次出现：[CLI 完整参考](./cli-reference.md)。
+**candidate pool（候选池）**：Layer A 通过的股票集合，约 300 只（`MAX_CANDIDATE_POOL_SIZE=300`），作为后续评分的输入。首次出现：[CLI 完整参考](./cli-reference.md)。
 
 **consecutive recommendation（连续推荐）**：同一只票连续多日进入 Top N，作为信心排名的输入维度之一。首次出现：[CLI 完整参考](./cli-reference.md)。
 
@@ -89,7 +88,7 @@ prerequisites:
 
 ## P
 
-**paper trading（纸面交易）**：Phase-A 模拟追踪，P&L 在 T+N 收盘回填，不按止损出场。首次出现：[输出报告解读](./interpreting-reports.md)。
+**纸面交易（paper trading）**：Phase-A 模拟追踪，P&L 在 T+N 收盘回填，不按止损出场。首次出现：[输出报告解读](./interpreting-reports.md)。
 
 **position_pct（仓位百分比）**：daily-action 输出字段，half-Kelly × regime 因子 × 回撤因子 × trigger_strength，受单票 10% 与组合 60% 约束。首次出现：[输出报告解读](./interpreting-reports.md)。
 

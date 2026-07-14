@@ -3,15 +3,15 @@
 类型: 进阶分析
 预计时间: 15 分钟
 前置知识:
-  - [项目概览](../01-introduction/overview.md) ⭐⭐
-  - [日常使用](../02-user-manual/daily-workflow.md) ⭐⭐
+  - [项目总览](../01-introduction/overview.md) ⭐⭐
+  - [每日工作流](../02-user-manual/daily-workflow.md) ⭐⭐
 ---
 
 # 系统架构总览
 
 ## 核心判断
 
-这套系统真正解决的不是"如何选股",而是"如何让两个目标冲突的决策流程不互相污染"。`--auto` 想从全市场挑出 1500-2500 只可投标的,按四策略打分排序;`--daily-action` 想从全市场挑出今日涨停的极端股票,用 Kelly 仓位下注。前者的候选池是"好股票",后者要的是"极端股票"——如果把 `--auto` 的 Top N 当成 `--daily-action` 的输入,涨停 setup 会因为候选池里没有涨停股而集体失效。
+这套系统真正解决的不是"如何选股",而是"如何让两个目标冲突的决策流程不互相污染"。`--auto` 想从全市场挑出约 300 只可投标的(`MAX_CANDIDATE_POOL_SIZE=300`),按四策略打分排序;`--daily-action` 想从全市场挑出今日涨停的极端股票,用 Kelly 仓位下注。前者的候选池是"好股票",后者要的是"极端股票"——如果把 `--auto` 的 Top N 当成 `--daily-action` 的输入,涨停 setup 会因为候选池里没有涨停股而集体失效。
 
 两条管线只在缓存层握手:`--auto` 跑完会刷新 `data/price_cache/`、`data/fund_flow_cache/`,供 `--daily-action` 读;除此之外它们各自独立运行、各自落盘、各自有退出条件。
 
@@ -20,7 +20,7 @@
 ```mermaid
 flowchart TB
     subgraph PIPE1["管线 1: --auto 全市场筛选"]
-        A1[Layer A 候选池<br/>~5000 → 1500-2500 只]
+        A1[Layer A 候选池<br/>~5000 → 约 300 只]
         A2[Layer B 四策略评分<br/>trend / mean_reversion<br/>fundamental / event_sentiment]
         A3[Layer C 信号融合<br/>score_b + Hurst 仲裁<br/>+ investability 排序]
         A4[auto_screening_YYYYMMDD.json]
@@ -80,7 +80,7 @@ uv run python src/main.py --auto
 `run_auto` 进入 `src/screening/candidate_pool.py::build_candidate_pool` 执行 Layer A:
 - 从 tushare 拉全市场 ~5000 只股票
 - 过滤 ST/*ST、北交所、次新 (<60 交易日)、停牌、当日涨停、低流动 (<5000 万成交额)
-- 输出 1500-2500 只可投标的
+- 输出约 300 只可投标的
 
 接着 `src/screening/strategy_scorer.py::score_batch` 对每只票跑四策略评分,输出 trend_score、mean_reversion_score、fundamental_score、event_sentiment_score 四个子分。
 

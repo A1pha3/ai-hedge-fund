@@ -22,7 +22,7 @@ uv run python src/main.py --daily-action   # 读缓存, 约 3 秒, 输出次日 
 | 类别 | 索引 | 回答什么问题 |
 |---|---|---|
 | 01 项目介绍 | [01-introduction/README.md](01-introduction/README.md) | 系统是什么、与上游差异、设计哲学 |
-| 02 用户手册 | [02-user-manual/README.md](02-user-manual/README.md) | 安装、第一次运行、解读报告、故障排查 |
+| 02 用户手册 | [02-user-manual/README.md](02-user-manual/README.md) | 安装、第一次运行、解读报告、故障排除 |
 | 03 架构 | [03-architecture/README.md](03-architecture/README.md) | 三层管线、daily-action 系统、数据层、LLM 系统 |
 | 04 设计 | [04-design/README.md](04-design/README.md) | 候选池、因子评分、BTST setup、Kelly 仓位、风险框架 |
 
@@ -37,7 +37,7 @@ uv run python src/main.py --daily-action   # 读缓存, 约 3 秒, 输出次日 
 **研究者（理解 setup 有效性的依据）**
 
 1. [项目总览](01-introduction/overview.md)
-2. [设计哲学与原则](01-introduction/design-philosophy.md)：六条原则如何约束决策
+2. [设计哲学与原则](01-introduction/design-philosophy.md)：七条原则如何约束决策
 3. [项目定位与边界](01-introduction/positioning.md)：研究语义边界
 4. [凸性 setup 系统](03-architecture/daily-action-system.md)
 5. [BTST 涨停突破设计](04-design/btst-breakout-design.md)

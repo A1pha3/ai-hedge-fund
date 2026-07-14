@@ -17,7 +17,7 @@
 | 新用户 | 15 分钟跑通第一次筛选 | [快速开始](getting-started.md) → [每日工作流](daily-workflow.md) |
 | 运维/部署 | 完成安装与 API 配置 | [安装与配置](installation.md) → [CLI 参考](cli-reference.md) |
 | 日常使用者 | 每个交易日稳定拿到 BUY 信号 | [每日工作流](daily-workflow.md) → [报告解读](interpreting-reports.md) |
-| 排障者 | 定位命令失败或数据缺失 | [故障排查](troubleshooting.md) → [术语表](glossary.md) |
+| 排障者 | 定位命令失败或数据缺失 | [故障排除](troubleshooting.md) → [术语表](glossary.md) |
 
 ## 学习路径
 
@@ -34,8 +34,8 @@
 
 ### 路径 C:深入理解
 
-1. [架构总览](../03-architecture/overview.md)⭐⭐⭐
-2. [设计原则](../04-design/principles.md)⭐⭐⭐
+1. [系统架构总览](../03-architecture/overview.md)⭐⭐⭐
+2. [设计原则与权衡](../04-design/principles.md)⭐⭐⭐
 
 ## 文档索引
 
@@ -46,7 +46,7 @@
 | [每日工作流](daily-workflow.md) | ⭐⭐ | 交易日时间线、两条管线协作 |
 | [CLI 参考](cli-reference.md) | ⭐⭐ | 全部命令与参数详解 |
 | [报告解读](interpreting-reports.md) | ⭐⭐ | JSON/PDF 字段含义 |
-| [故障排查](troubleshooting.md) | ⭐⭐ | 常见错误与修复 |
+| [故障排除](troubleshooting.md) | ⭐⭐ | 常见错误与修复 |
 | [术语表](glossary.md) | ⭐ | 名词解释 |
 
 ## 两条管线速览

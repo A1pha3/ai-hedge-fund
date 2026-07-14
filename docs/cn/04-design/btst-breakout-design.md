@@ -3,7 +3,7 @@
 类型: 专家设计
 预计时间: 30 分钟
 前置知识:
-  - [设计原则](principles.md) ⭐⭐⭐⭐
+  - [设计原则与权衡](principles.md) ⭐⭐⭐⭐
   - [Kelly 仓位](kelly-position-sizing.md) ⭐⭐⭐
   - [风险框架](risk-framework.md) ⭐⭐⭐⭐
   - [纸面交易设计](paper-trading-design.md) ⭐⭐⭐
@@ -11,7 +11,7 @@
 
 # BTST 涨停突破深度
 
-BTST（Breakout To The Sky，涨停突破）是 `--daily-action` 当前唯一启用的 setup。代码在 `src/screening/offensive/setups/btst_breakout.py`，~400 行。本文档拆解到每个触发条件的常量、5 因子 ranker 的权重、板块质量评分的回测依据，以及 crisis 加仓的数据来源。
+BTST（Breakout To Strong Close，涨停突破）是 `--daily-action` 当前唯一启用的 setup。代码在 `src/screening/offensive/setups/btst_breakout.py`，~400 行。本文档拆解到每个触发条件的常量、5 因子 ranker 的权重、板块质量评分的回测依据，以及 crisis 加仓的数据来源。
 
 ## setup 的第一性原理
 
@@ -345,3 +345,9 @@ BTST 的核心设计是「不追高 + 板块共振 + 主力流入 + 能量释放
 最终触发样本量 ~1300，足以统计但不足以做 regime 分层（crisis n=21 太小）。这是 setup 设计的内在张力：过滤越严，信号越纯，但样本量越小，分层越不可靠。
 
 `_MIN_TRIGGER_STRENGTH = 0.50` 是这个张力的平衡点：保留 70% 样本（777/1114），WR/收益/Sharpe 都优于旧值 0.35。如果未来样本累积到 n>5000，可以考虑提到 0.55 或 0.70 进一步收紧。
+
+## 深入阅读
+
+- [Kelly 仓位设计](kelly-position-sizing.md):trigger_strength 如何影响仓位大小
+- [风险框架](risk-framework.md):BTST 的止损策略与 range_based_stop
+- [纸面交易设计](paper-trading-design.md):known_distributions 先验分布的回测口径

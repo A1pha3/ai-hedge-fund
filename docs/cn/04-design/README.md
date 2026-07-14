@@ -3,13 +3,13 @@
 类型: 专家设计
 预计时间: 8 分钟
 前置知识:
-  - [架构总览](../03-architecture/overview.md) ⭐⭐⭐
-  - [设计哲学](../01-introduction/design-philosophy.md) ⭐⭐⭐
+  - [系统架构总览](../03-architecture/overview.md) ⭐⭐⭐
+  - [设计哲学与原则](../01-introduction/design-philosophy.md) ⭐⭐⭐
 ---
 
 # 设计文档索引
 
-本目录沉淀 A 股每日选股系统的「为什么这样设计」与「代码如何实现」。文档不堆功能清单，而是把每个模块的设计意图、关键常量、回测依据和已知陷阱写到可被复核的程度。
+本目录记录 A 股每日选股系统的「为什么这样设计」与「代码如何实现」。文档不堆功能清单，而是把每个模块的设计意图、关键常量、回测依据和已知陷阱写到可被复核的程度。
 
 ## 文档地图
 
@@ -25,7 +25,7 @@
 
 ## 阅读路径
 
-- 想理解整套系统为何这么做 → 从 [设计原则](principles.md) 入手，再读 [BTST 深度](btst-breakout-design.md)。
+- 想理解整套系统为何这么做 → 从 [设计原则与权衡](principles.md) 入手，再读 [BTST 深度](btst-breakout-design.md)。
 - 想知道信号从哪来 → [候选池](candidate-pool-design.md) → [因子评分](factor-scoring-design.md) → [BTST](btst-breakout-design.md)。
 - 想知道仓位与风控怎么算 → [Kelly 仓位](kelly-position-sizing.md) → [风险框架](risk-framework.md) → [纸面交易](paper-trading-design.md)。
 - 想验证回测结论 → 直接看 [纸面交易设计](paper-trading-design.md) 的口径与陷阱章节。

@@ -3,7 +3,7 @@
 类型: 专家设计
 预计时间: 16 分钟
 前置知识:
-  - [设计原则](principles.md) ⭐⭐⭐⭐
+  - [设计原则与权衡](principles.md) ⭐⭐⭐⭐
   - [Kelly 仓位](kelly-position-sizing.md) ⭐⭐⭐
 ---
 
@@ -213,3 +213,9 @@ Bug fix 注释说明旧实现 `timedelta(days=horizon)` 把 N 个交易日当 N 
 2. **`open_exposure` 口径**：`_enforce_open_cap` 默认 true，T+10 跨日持仓计入 60% 上限。此前 per-run 从 0 起算导致真实敞口峰值 260%（26 仓），61 天超 60% 上限。
 3. **样本期偏差**：所有止损回测都基于 2026 上半年牛市。BTST 的"no_stop 最优"结论在熊市/震荡市下可能反转。`scripts/backtest_exit_strategies.py` 是为切换行情时重测预留的工具。
 4. **`_check_stop_hit` 窗口排除 T+0**：信号日 T+0 当天用户尚未买入（T+1 开盘才买），T+0 盘中 low 与止损无关。Bug fix 把 `>= buy_dt` 改为 `> buy_dt`，避免涨停日盘中波动误报止损触发。
+
+## 深入阅读
+
+- [Kelly 仓位设计](kelly-position-sizing.md):仓位上限如何与止损配合
+- [BTST 涨停突破设计](btst-breakout-design.md):BTST 的 range_based_stop 物理结构止损
+- [纸面交易设计](paper-trading-design.md):T+N close 口径与 P&L 回填机制

@@ -5,7 +5,7 @@
 前置知识:
   - [系统架构总览](./overview.md) ⭐⭐⭐
   - [三层管线架构](./three-layer-pipeline.md) ⭐⭐⭐
-  - [日常使用](../02-user-manual/daily-workflow.md) ⭐⭐
+  - [每日工作流](../02-user-manual/daily-workflow.md) ⭐⭐
 ---
 
 # 凸性 setup 系统
@@ -81,7 +81,7 @@ flowchart TB
 | 因子 | 取值 | 权重 | 数据依据 |
 |---|---|---|---|
 | weekday | Wed-Fri=1.0 / Mon-Tue=0.0 | 0.20 | Wed-Fri 78% win vs Mon-Tue 51% |
-| board | 002/300=1.0 / 688/60x=0.95 / 000=0.0 | 0.20 | 002/300 83% vs SZmain 45% |
+| board | 002/300=1.0 / 688/60x=0.95 / 000=0.0 | 0.20 | 002/300 61.1% vs SZmain 44.9%(626 只全 universe 回测) |
 | position | Donchian 下半区=1.0 / 上半区=0.0 | 0.20 | 新鲜突破 vs 追高 |
 | squeeze | 近 3 日 ATR / 前 17 日 ATR <0.8 = 1.0 | 0.20 | 波动率压缩=弹簧释放 |
 | volume | 1.0-1.2x=1.0 / 0.5-0.8x=0.0 / 噪讯区=0.4 | 0.20 | 2409 涨停样本实测 |
@@ -159,15 +159,17 @@ half-Kelly(非 full):牺牲 25% 长期收益换大幅降低破产概率和方差
 
 **第四步:`DailyActionService` 算 Kelly 仓位**
 
-读 `known_distributions["btst_breakout"]`(Phase 0 常量),假设 winrate=0.68、avg_gain=+0.12、avg_loss=-0.08:
+读 `known_distributions["btst_breakout"]`(Phase 0 常量,非实测):winrate=0.5878、avg_gain=+0.1848、avg_loss=-0.1041:
 
 ```python
-kelly_raw = 0.68/0.08 - 0.32/0.12 = 8.5 - 2.67 = 5.83
-half_kelly = 0.5 × 5.83 = 2.92
-adjusted = 2.92 × 1.0 (corr) × regime_factor
+kelly_raw = 0.5878/0.1041 - 0.4122/0.1848 = 5.65 - 2.23 = 3.42
+half_kelly = 0.5 × 3.42 = 1.71
+adjusted = 1.71 × 1.0 (corr) × regime_factor
 ```
 
-读 `regime_history.json["20260713"]` → 假设 "normal" → regime_factor=1.0。但 v2 ledger 当前安全降级,position_pct = min(2.92, 0.10) = 0.10 = 10%。
+读 `regime_history.json["20260713"]` → 假设 "normal" → regime_factor=1.0。但 v2 ledger 当前安全降级,position_pct = min(1.71, 0.10) = 0.10 = 10%。
+
+> 注意:`known_distributions` 是 Phase 0 先验(n=1458, winrate=58.78%),与 `paper_trading_backtest` 实测(n=133, winrate=68%)是两个数据源。Kelly 计算读的是先验,不是实测——防过拟合。
 
 **第五步:写 v2 ledger + render**
 

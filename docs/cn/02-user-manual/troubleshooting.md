@@ -1,11 +1,10 @@
 ---
-title: 故障排除
-difficulty: 1⭐
-type: 入门教程
-estimated_time: 20 分钟
-prerequisites:
+难度: ⭐
+类型: 入门教程
+预计时间: 20 分钟
+前置知识:
   - 已按 [安装指南](./installation.md) 配置环境
-  - 跑过至少一次 [日常流程](./daily-workflow.md)
+  - 跑过至少一次 [每日工作流](./daily-workflow.md)
 ---
 
 # 故障排除
@@ -236,4 +235,4 @@ A：`scripts/manage_data_cache.py clear --yes` 只清运行时缓存，不影响
 - 读懂输出字段后看 [输出报告解读](./interpreting-reports.md) 了解字段细节
 - 命令完整用法查 [CLI 完整参考](./cli-reference.md)
 - 术语含义查 [术语表](./glossary.md)
-- 系统设计原理查 [架构总览](../03-architecture/overview.md)
+- 系统设计原理查 [系统架构总览](../03-architecture/overview.md)

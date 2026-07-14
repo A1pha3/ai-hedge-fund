@@ -1,11 +1,10 @@
 ---
-title: 输出报告解读
-difficulty: 2⭐⭐
-type: 参考手册
-estimated_time: 15 分钟
-prerequisites:
+难度: ⭐⭐
+类型: 参考手册
+预计时间: 15 分钟
+前置知识:
   - 跑过至少一次 [CLI 命令](./cli-reference.md)
-  - 了解 [日常运行流程](./daily-workflow.md)
+  - 了解 [每日工作流](./daily-workflow.md)
 ---
 
 # 输出报告解读

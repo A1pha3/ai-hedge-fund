@@ -3,7 +3,7 @@
 类型: 进阶分析
 预计时间: 14 分钟
 前置知识:
-  - [设计原则](principles.md) ⭐⭐⭐⭐
+  - [设计原则与权衡](principles.md) ⭐⭐⭐⭐
   - [风险框架](risk-framework.md) ⭐⭐⭐⭐
 ---
 
@@ -168,3 +168,9 @@ hard_stop_price = entry_price * (1 + risk.hard_stop_pct)
 1. **Kelly 公式假设二元结果**：实际收益分布有厚尾，`avg_loss` 会被极端值拉大。`known_distributions.py` 用 `paper_trading_backtest` 真实成交重校准 `OVERSOLD_BOUNCE_T5.avg_loss` 从 -5.57% 修正到 -11.15%（2x 低估），就是修正这个偏差。
 2. **组合上限口径**：`_enforce_open_cap` 默认 true，把 T+10 跨日持仓计入 60% 上限。此前 per-run 从 0 起算导致真实敞口峰值 260%（26 仓），61 天超 60% 上限。逃生口 `DAILY_ACTION_ENFORCE_OPEN_CAP=false` 仅供对比，不是正确口径。
 3. **regime 加仓暂停**：当前 v2 ledger 单票硬上限 10%，12% regime 例外暂停。`_REGIME_POSITION_CAP_MULTIPLE = 1.2` 在代码里仍计算，但被 ledger 层 cap 到 10%。这是审计口径的安全降级，待 canonical regime evidence 完成绑定后恢复。
+
+## 深入阅读
+
+- [风险框架](risk-framework.md):止损策略与 drawdown 熔断
+- [BTST 涨停突破设计](btst-breakout-design.md):trigger_strength 如何调节仓位强弱
+- [纸面交易设计](paper-trading-design.md):portfolio_state 的 open_exposure 字段

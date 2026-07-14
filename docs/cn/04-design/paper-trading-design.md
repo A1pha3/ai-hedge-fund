@@ -3,7 +3,7 @@
 类型: 进阶分析
 预计时间: 14 分钟
 前置知识:
-  - [设计原则](principles.md) ⭐⭐⭐⭐
+  - [设计原则与权衡](principles.md) ⭐⭐⭐⭐
   - [风险框架](risk-framework.md) ⭐⭐⭐⭐
 ---
 
@@ -70,7 +70,7 @@ def record_action(self, action: TradeAction):
 - `EXIT`：平仓（T+N 到期或止损触发）。
 - `SKIP`：未触发 setup 或被风控过滤（仅 report 模式写入）。
 
-`trigger_strength` 是闭环学习环的关键：记录 ranker 评分供回测验证（详见 [BTST 深度](btst-breakout-design.md)）。
+`trigger_strength` 供回测验证使用：记录 ranker 评分（详见 [BTST 深度](btst-breakout-design.md)）。
 
 ## portfolio_state.json 字段
 
@@ -105,7 +105,7 @@ open_exposure  = sum(去重未平仓 BUY.kelly_pct)
 
 ## T+N close 口径
 
-`close_matured` 是闭环核心：每次 `--daily-action` 运行开头平掉到期仓位，回填 realized P&L，驱动 drawdown 熔断。docstring 说明 P&L 口径：
+`close_matured` 是 P&L 回填的核心步骤：每次 `--daily-action` 运行开头平掉到期仓位，回填 realized P&L，驱动 drawdown 熔断。docstring 说明 P&L 口径：
 
 > P&L 口径: T+10 收盘价 (close[D+horizon]/entry_price - 1), 与 BTST 先验分布
 > (E=+2.57%) 和 north-star next_Nday_return 同口径, 保证 paper-pnl 可与先验
@@ -185,7 +185,7 @@ def record_buy(self, trade_date: str, ticker: str, ...):
 
 `close_matured` 同样用 `(date, ticker)` 去重 EXIT：已有 EXIT 记录的仓位不重复平仓。`_reconcile_open_positions` 在初始化时从 journal 真值重算 open_positions，自愈历史重复 BUY。
 
-## 闭环已自动
+## 到期平仓已自动化
 
 `render_daily_action` 末尾有一行：
 
@@ -195,15 +195,21 @@ lines.append(f"\n  {Fore.WHITE}已写入 paper journal (按各 setup horizon 到
 
 注释说明：
 
-> 闭环已自动: close_matured 在 generate_daily_action 开头平到期仓并回填 P&L.
+> 到期平仓已自动: close_matured 在 generate_daily_action 开头平到期仓并回填 P&L.
 > 此前写 "30 天后用 --paper-pnl 复盘" 是死承诺 (该命令从未实现).
 
-`close_matured` 在 `generate_daily_action` 第 866 行调用（步骤 2），在扫描新信号前先平到期仓。这是闭环核心：drawdown 熔断基于最新 nav，如果不先平仓回填 P&L，nav 永远是 1.0，熔断永远不触发。
+`close_matured` 在 `generate_daily_action` 第 866 行调用（步骤 2），在扫描新信号前先平到期仓。这一步不可省略：drawdown 熔断基于最新 nav，如果不先平仓回填 P&L，nav 永远是 1.0，熔断永远不触发。
 
 ## 已知陷阱
 
 1. **`paper_trading` 不是 `paper_trading_backtest`**：运行时实例 0 EXIT，回测实例 192 EXIT。查成交数据必须读后者。
 2. **`realized_pnl_pct` 口径**：是组合层面的累计贡献（`sum of realized × kelly`），不是单笔收益率。`update_pnl` 用加法累加 nav（非复利）。
 3. **`last_30d_pnl` 滑动窗口**：只保留最近 30 天的 P&L 列表，用于短期波动监测。不是 30 天累计收益。
-4. **`trigger_strength` 闭环学习**：每笔 BUY 记录 ranker 评分，回测时可按 strength 分桶验证 ranker 有效性。`_MIN_TRIGGER_STRENGTH = 0.50` 的阈值回测就是用这个字段做的（详见 [BTST 深度](btst-breakout-design.md)）。
+4. **`trigger_strength` 回测验证：每笔 BUY 记录 ranker 评分，回测时可按 strength 分桶验证 ranker 有效性。`_MIN_TRIGGER_STRENGTH = 0.50` 的阈值回测就是用这个字段做的（详见 [BTST 深度](btst-breakout-design.md)）。
 5. **`matures_on` 用交易日保守下限**：`_trading_horizon_to_calendar_days` 把 T+N 交易日换算为 `N + 2*floor(N/5)` 日历日，不是纯日历日。旧实现 `timedelta(days=N)` 比 T+N 交易日早 4-12 天，导致"今日到期"但 day_N 数据未成熟。
+
+## 深入阅读
+
+- [BTST 涨停突破设计](btst-breakout-design.md):trigger_strength ranker 的回测验证
+- [风险框架](risk-framework.md):止损为何默认不执行的数据依据
+- [Kelly 仓位设计](kelly-position-sizing.md):open_exposure 与组合上限口径

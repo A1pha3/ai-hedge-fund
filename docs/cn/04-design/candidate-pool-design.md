@@ -3,8 +3,8 @@
 类型: 进阶分析
 预计时间: 12 分钟
 前置知识:
-  - [架构总览](../03-architecture/overview.md) ⭐⭐⭐
-  - [设计原则](principles.md) ⭐⭐⭐⭐
+  - [系统架构总览](../03-architecture/overview.md) ⭐⭐⭐
+  - [设计原则与权衡](principles.md) ⭐⭐⭐⭐
 ---
 
 # 候选池设计
@@ -15,7 +15,7 @@
 
 `--auto` 的 Layer B 评分（trend / mean_reversion / fundamental / event_sentiment）需要拉价格序列、财务指标、事件新闻，每只票都要做 IO + CPU。如果不预筛，全市场跑一遍要数十分钟。Layer A 的目标是：用便宜的数据（基本信息 + 成交额）排除明显不可交易的票，把评分空间压到 300 只以内。
 
-`--daily-action` 不依赖这个候选池 — 它直扫 `price_cache` 全市场。两个系统的设计原则不同：`--auto` 要"好股票"，`--daily-action` 要"极端股票"（详见 [设计原则](principles.md) §1）。
+`--daily-action` 不依赖这个候选池 — 它直扫 `price_cache` 全市场。两个系统的设计原则不同：`--auto` 要"好股票"，`--daily-action` 要"极端股票"（详见 [设计原则与权衡](principles.md) §1）。
 
 ## 过滤规则与代码实现
 
@@ -105,3 +105,9 @@ _MAX_PER_INDUstry_DAILY = 2
 ## 与 `--daily-action` 的边界
 
 `--daily-action` 不读 `candidate_pool` 的 snapshot，直扫 `price_cache` 文件名集合。这是设计选择 — 凸性 setup 要极端股票，候选池的流动性过滤会漏掉小盘涨停股。但 ST 过滤仍要做，所以 `_load_st_tickers` 独立实现一次。两个系统的 ST 集合来自同一数据源（tushare `stock_basic`），口径一致。
+
+## 深入阅读
+
+- [因子评分设计](factor-scoring-design.md):Layer B 如何处理 Layer A 输出的候选集
+- [三层管线架构](../03-architecture/three-layer-pipeline.md):Layer A/B/C 的职责分离与数据流
+- [凸性 setup 系统](../03-architecture/daily-action-system.md):为什么 `--daily-action` 不用候选池

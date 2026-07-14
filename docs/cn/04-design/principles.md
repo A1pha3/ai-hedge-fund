@@ -3,8 +3,8 @@
 类型: 专家设计
 预计时间: 22 分钟
 前置知识:
-  - [架构总览](../03-architecture/overview.md) ⭐⭐⭐
-  - [设计哲学](../01-introduction/design-philosophy.md) ⭐⭐⭐
+  - [系统架构总览](../03-architecture/overview.md) ⭐⭐⭐
+  - [设计哲学与原则](../01-introduction/design-philosophy.md) ⭐⭐⭐
 ---
 
 # 设计原则与权衡
@@ -125,3 +125,9 @@ C232 NS-11 修复：ranking 用 boosted score（含 consecutive bonus），gate 
 七条原则并非线性叠加。凸性优先要求全市场扫描，但全 universe 诊断要求完整数据 — 当 `price_cache` 只有 6 个月深度时（AGENTS.md 明示），两个原则同时受挫。诚实披露 stale 数据是兜底：数据不全时显式标注 `degraded`，让 operator 自己判断信号可信度，而不是让系统假装数据完整。
 
 这套设计的最大风险是「样本期偏差」：所有回测都基于 2026 上半年牛市样本，BTST 三个 regime 都赚钱，crisis 最强。一旦市场切换到熊市或震荡市，crisis 加仓系数 1.2× 可能从「捕获 alpha」变成「放大亏损」。`DAILY_ACTION_EXECUTION_STOP` env 和 `DAILY_ACTION_REGIME_SIZING=false` 是为这种情况预留的逃生口。
+
+## 深入阅读
+
+- [设计哲学与原则](../01-introduction/design-philosophy.md):入门版七条原则概述
+- [系统架构总览](../03-architecture/overview.md):两条管线的边界与共享约定
+- [BTST 涨停突破设计](btst-breakout-design.md):凸性优先与统计显著性纪律的具体实例
