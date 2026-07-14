@@ -118,7 +118,15 @@ def existing_price_cache_tickers(price_cache_dir: Path | str = _DEFAULT_PRICE_CA
     cache_dir = Path(price_cache_dir)
     if not cache_dir.exists():
         return []
-    return sorted(p.stem for p in cache_dir.glob("*.csv") if p.stem.isdigit() and len(p.stem) == 6)
+    # 北交所 (4xx/8xx/92xx) 全面排除: 系统不交易北交所, 且 tushare moneyflow 不覆盖
+    # 北交所 → 扫它们只会浪费 CPU/内存并制造 degraded 噪声 (与 candidate_pool 一致)。
+    return sorted(
+        p.stem
+        for p in cache_dir.glob("*.csv")
+        if p.stem.isdigit()
+        and len(p.stem) == 6
+        and not is_beijing_exchange_stock(symbol=p.stem)
+    )
 
 
 def _is_code6(value: str) -> bool:
@@ -305,7 +313,12 @@ def resolve_daily_action_refresh_tickers(
             if "shadow" in path.name and not include_shadow:
                 continue
             tickers.update(_load_candidate_pool_tickers(path, include_shadow=include_shadow))
-    return sorted(ticker for ticker in tickers if _is_code6(ticker))
+    # 北交所全面排除 (数据获取 + 选股): 覆盖 price_cache 已有文件与候选池残留。
+    return sorted(
+        ticker
+        for ticker in tickers
+        if _is_code6(ticker) and not is_beijing_exchange_stock(symbol=ticker)
+    )
 
 
 def _history_start_date(trade_date: str, lookback_days: int = _DEFAULT_PRICE_HISTORY_LOOKBACK_DAYS) -> str:

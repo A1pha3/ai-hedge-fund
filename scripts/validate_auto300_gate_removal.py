@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.tools.ashare_board_utils import is_beijing_exchange_stock
 from src.tools.ashare_board_utils import limit_up_pct_for_ticker
 
 REPORTS = Path("data/reports")
@@ -76,6 +77,8 @@ def load_price_series() -> dict[str, pd.DataFrame]:
     for path in glob.glob(str(PRICE_CACHE / "*.csv")):
         ticker = Path(path).stem
         if not (ticker.isdigit() and len(ticker) == 6):
+            continue
+        if is_beijing_exchange_stock(symbol=ticker):  # 北交所全面排除
             continue
         try:
             df = pd.read_csv(path)

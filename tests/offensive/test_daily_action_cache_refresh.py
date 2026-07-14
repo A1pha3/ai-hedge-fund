@@ -68,6 +68,31 @@ def test_resolve_daily_action_refresh_tickers_includes_candidate_pool(tmp_path):
     assert tickers == ["000001", "000002", "000003"]
 
 
+def test_resolve_daily_action_refresh_tickers_excludes_beijing_exchange(tmp_path):
+    """北交所 (4xx/8xx/92xx) 不进 --daily-action 宇宙: 不刷缓存、不扫描、不选股。"""
+    from src.screening.offensive.cache_refresh import resolve_daily_action_refresh_tickers
+
+    price_cache = tmp_path / "price_cache"
+    price_cache.mkdir()
+    for code in ("000001", "920088", "830799", "430418"):
+        (price_cache / f"{code}.csv").write_text("date,close\n2026-07-08,10\n", encoding="utf-8")
+
+    snapshot_dir = tmp_path / "snapshots"
+    snapshot_dir.mkdir()
+    (snapshot_dir / "candidate_pool_20260708.json").write_text(
+        json.dumps([{"ticker": "000002"}, {"ticker": "920123"}]),
+        encoding="utf-8",
+    )
+
+    tickers = resolve_daily_action_refresh_tickers(
+        "20260708",
+        price_cache_dir=price_cache,
+        snapshot_dir=snapshot_dir,
+    )
+
+    assert tickers == ["000001", "000002"]
+
+
 def test_refresh_price_cache_updates_existing_tickers_only(tmp_path):
     from src.screening.offensive.cache_refresh import refresh_price_cache_from_daily_batch
 

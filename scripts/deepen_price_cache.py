@@ -31,6 +31,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from src.tools.tushare_api import get_tushare_token  # noqa: E402
+from src.tools.ashare_board_utils import is_beijing_exchange_stock  # noqa: E402
 from src.utils.atomic_files import atomic_write_csv  # noqa: E402
 
 START = "20200101"
@@ -96,7 +97,13 @@ def main() -> None:
     pro = ts.pro_api(token=token)
     end = date.today().strftime("%Y%m%d")
     files = sorted(glob.glob("data/price_cache/*.csv"))
-    tickers = [p for p in files if Path(p).stem.isdigit() and len(Path(p).stem) == 6]
+    tickers = [
+        p
+        for p in files
+        if Path(p).stem.isdigit()
+        and len(Path(p).stem) == 6
+        and not is_beijing_exchange_stock(symbol=Path(p).stem)
+    ]
 
     counts = {"deepen": 0, "skip": 0, "fail": 0}
     for i, path in enumerate(tickers, 1):
