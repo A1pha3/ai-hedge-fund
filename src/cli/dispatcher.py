@@ -1160,7 +1160,8 @@ def _resolve_daily_action(
             shadow_history=cached_shadow_history,
         )
         v2_run = run_daily_action_v2(service, candidates, manifest)
-        rendered = render_daily_action_v2(v2_run)
+        verbose = "--verbose" in argv
+        rendered = render_daily_action_v2(v2_run, verbose=verbose)
         if snapshot_block_reason:
             # Surface the readiness block reason so the operator understands
             # why no new entries appeared (manifest missing/unhealthy/etc).
@@ -1178,6 +1179,18 @@ def _resolve_daily_action(
                 + f"建议：收盘后运行 uv run python src/main.py --auto 刷新缓存和就绪清单，"
                 + f"再运行 --daily-action 获取次日信号"
             )
+        elif not v2_run.plans:
+            # Readiness is healthy but produced no plan-eligible candidate.
+            # Distinguish "healthy but no signal" from "diagnostic-only degraded
+            # setups exist" so the operator never reads a data block as a normal
+            # no-signal day (spec section 9).
+            if v2_run.blocked_candidates:
+                rendered = rendered + "\n结论：ℹ️ 存在仅供诊断的残缺 setup，无可交易候选"
+            else:
+                rendered = (
+                    rendered
+                    + "\n结论：ℹ️ 今日无符合条件的次日买入信号（系统运行正常）"
+                )
         print(rendered)
     return 0
 

@@ -292,7 +292,7 @@ def test_calendar_and_manifest_warnings_accumulate_and_render(
     )
 
     run = local.run(SIGNAL_DATE, candidates[:1], manifest=None)
-    rendered = render_daily_action_v2(DailyActionV2Run(run, (), (), (), ()))
+    rendered = render_daily_action_v2(DailyActionV2Run(run, (), (), (), ()), verbose=True)
 
     assert run.block_reasons == ("calendar_unavailable", "healthy_manifest_missing")
     assert run.block_reason == "calendar_unavailable;healthy_manifest_missing"

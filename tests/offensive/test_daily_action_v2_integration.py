@@ -21,6 +21,7 @@ from src.screening.offensive.daily_action_service import (
     MarketBar,
     PlanCandidate,
     RegimeAuthorization,
+    TickerGateBlock,
 )
 from src.screening.offensive.execution_adjuster import ExecutionCosts
 from src.screening.offensive.ledger_repository import LedgerRepository
@@ -310,6 +311,42 @@ def test_renderer_includes_real_lifecycle_reasons(service, signal_date):
     assert "source=pending" in rendered
 
 
+def test_render_gates_manifest_diagnostic_codes_behind_verbose(signal_date):
+    """Task 9: default operator output hides raw readiness/gate codes; --verbose reveals them."""
+    view = DailyActionRun(
+        signal_date,
+        DailyValuation(signal_date, 100_000, 0, 100_000, 100_000, 0, ()),
+        (),  # open_positions
+        (),  # new_plans
+        (),  # skipped_plans
+        (),  # exit_plans
+        (),  # deferred_exits
+        (),  # completed_exits
+        0,
+        0,
+        block_reason="daily_action_readiness_missing",
+        blocked_tickers=("000002",),
+        block_reasons=("daily_action_readiness_missing",),
+        ticker_gate_blocks=(TickerGateBlock("000003", ("candidate_snapshot_mismatch",)),),
+    )
+    run = DailyActionV2Run(view, (), (), (), ())
+
+    default_text = render_daily_action_v2(run)
+    verbose_text = render_daily_action_v2(run, verbose=True)
+
+    for raw in (
+        "block_reasons=",
+        "block_reason=",
+        "manifest_blocked_tickers=",
+        "manifest_gate_blocks",
+        "candidate_snapshot_mismatch",
+    ):
+        assert raw not in default_text, f"raw code leaked into default output: {raw}"
+    assert "block_reasons=daily_action_readiness_missing" in verbose_text
+    assert "manifest_blocked_tickers=000002" in verbose_text
+    assert "candidate_snapshot_mismatch" in verbose_text
+
+
 def test_ticker_terminal_bar_must_equal_authoritative_signal_session():
     import pandas as pd
 
@@ -336,7 +373,7 @@ def test_renderer_surfaces_every_lifecycle_collection(signal_date):
         0,
         "calendar_unavailable",
     )
-    rendered = render_daily_action_v2(DailyActionV2Run(view, (), (), (), ()))
+    rendered = render_daily_action_v2(DailyActionV2Run(view, (), (), (), ()), verbose=True)
     for expected in (
         "portfolio_capacity",
         "maximum_holding_session",

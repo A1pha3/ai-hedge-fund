@@ -632,8 +632,18 @@ def run_daily_action_v2(
     )
 
 
-def render_daily_action_v2(run: DailyActionV2Run) -> str:
-    """Render lifecycle/source labels without presenting reference prices as fills."""
+def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> str:
+    """Render lifecycle/source labels without presenting reference prices as fills.
+
+    Args:
+        run: The v2 run view (lifecycle service run + display collections).
+        verbose: When ``False`` (default operator view), the raw readiness /
+            manifest / gate diagnostic tail (``block_reason=``,
+            ``block_reasons=``, ``manifest_blocked_tickers=``,
+            ``manifest_gate_blocks``) is suppressed so the operator sees the
+            clean Chinese conclusion the dispatcher appends. When ``True``
+            (``--verbose``) the raw audit codes are shown for debugging.
+    """
     from src.screening.offensive.trade_lifecycle import FillSource
 
     references = dict(run.reference_prices)
@@ -699,17 +709,21 @@ def render_daily_action_v2(run: DailyActionV2Run) -> str:
                 f"execution={item.execution_label} source={item.source_label}"
             )
     if run.service_run.block_reason:
-        lines.append(f"block_reason={run.service_run.block_reason}")
+        if verbose:
+            lines.append(f"block_reason={run.service_run.block_reason}")
     if run.service_run.block_reasons:
-        lines.append("block_reasons=" + ",".join(run.service_run.block_reasons))
+        if verbose:
+            lines.append("block_reasons=" + ",".join(run.service_run.block_reasons))
     if run.service_run.blocked_tickers:
-        lines.append(
-            "manifest_blocked_tickers=" + ",".join(run.service_run.blocked_tickers)
-        )
+        if verbose:
+            lines.append(
+                "manifest_blocked_tickers=" + ",".join(run.service_run.blocked_tickers)
+            )
     if run.service_run.ticker_gate_blocks:
-        lines.append("manifest_gate_blocks:")
-        for block in run.service_run.ticker_gate_blocks:
-            lines.append(f"  {block.ticker} reasons={' | '.join(block.reasons)}")
+        if verbose:
+            lines.append("manifest_gate_blocks:")
+            for block in run.service_run.ticker_gate_blocks:
+                lines.append(f"  {block.ticker} reasons={' | '.join(block.reasons)}")
     return "\n".join(lines)
 
 
