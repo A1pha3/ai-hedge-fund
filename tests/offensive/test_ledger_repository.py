@@ -618,6 +618,20 @@ def test_forged_crisis_provenance_cannot_authorize_twelve_percent(tmp_path: Path
         )
 
 
+@pytest.mark.parametrize("authorization", ["btst_crisis", "btst_risk_off", "normal"])
+def test_legacy_provenance_rejects_every_noncanonical_authorization(
+    tmp_path: Path, authorization: str
+) -> None:
+    repo = _repo(tmp_path)
+    forged = PlanProvenance("legacy_unverified", authorization=authorization)
+
+    with pytest.raises(ValueError, match="canonical legacy provenance"):
+        repo.create_plan(
+            "000001", "btst_breakout", "v1", date(2026, 7, 10), date(2026, 7, 13),
+            0.10, 1, provenance=forged,
+        )
+
+
 def test_future_priority_and_reservations_do_not_block_due_session(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     repo.create_plan(

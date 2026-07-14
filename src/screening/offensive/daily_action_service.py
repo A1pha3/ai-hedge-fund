@@ -670,7 +670,11 @@ class DailyActionService:
             self._add_block_reason("calendar_unavailable")
             return ()
         _, values, _ = self._snapshot(as_of)
-        reserved = list(self.repository.planned_trades())
+        reserved = [
+            plan
+            for plan in self.repository.planned_trades()
+            if plan.planned_entry_date == entry_date
+        ]
         seen: set[str] = set()
         created_items: list[ActionItem] = []
         for candidate in sorted(

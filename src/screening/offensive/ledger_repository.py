@@ -39,6 +39,8 @@ class PlanProvenance:
 
     def validate(self, planned_entry_date: date) -> None:
         if self.verification_status == "legacy_unverified":
+            if self != PlanProvenance.legacy_unverified():
+                raise ValueError("legacy_unverified must use canonical legacy provenance")
             return
         required = (
             self.source_run_id, self.manifest_fingerprint, self.input_fingerprint,

@@ -267,6 +267,38 @@ def test_missing_close_retains_profitable_marks_and_does_not_invent_capacity(
 def test_duplicate_ticker_candidates_are_deduplicated_and_capped(service, sessions):
     run = service.run(sessions[0], (candidate("000140", 2), candidate("000140", 1)))
     assert len(run.new_plans) == 1
+
+
+def test_future_session_reservations_do_not_block_next_session_plan(service, sessions):
+    for index in range(6):
+        service.repository.create_plan(
+            "000299" if index == 0 else f"0002{index:02d}",
+            "btst_breakout", "v2", sessions[0], sessions[2],
+            0.10, index + 1,
+        )
+
+    run = service.run(sessions[0], (candidate("000299", priority=7),))
+
+    assert tuple(item.ticker for item in run.new_plans) == ("000299",)
+    created = service.repository.get_trade(run.new_plans[0].trade_id)
+    assert created.planned_entry_date == sessions[1]
+
+
+def test_same_session_reservations_still_enforce_sixty_percent(service, sessions):
+    for index in range(6):
+        service.repository.create_plan(
+            f"0003{index:02d}", "btst_breakout", "v2", sessions[0], sessions[1],
+            0.10, index + 1,
+        )
+
+    run = service.run(sessions[0], (candidate("000399", priority=7),))
+
+    assert run.new_plans == ()
+    assert sum(
+        plan.planned_weight
+        for plan in service.repository.planned_trades()
+        if plan.planned_entry_date == sessions[1]
+    ) == pytest.approx(0.60)
     assert service.repository.planned_trades()[0].planned_weight == pytest.approx(0.10)
 
 
