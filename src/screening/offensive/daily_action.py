@@ -710,12 +710,13 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
 
     Args:
         run: The v2 run view (lifecycle service run + display collections).
-        verbose: When ``False`` (default operator view), the raw readiness /
-            manifest / gate diagnostic tail (``block_reason=``,
-            ``block_reasons=``, ``manifest_blocked_tickers=``,
-            ``manifest_gate_blocks``) is suppressed so the operator sees the
-            clean Chinese conclusion the dispatcher appends. When ``True``
-            (``--verbose``) the raw audit codes are shown for debugging.
+        verbose: When ``False`` (default operator view), raw internal codes are
+            suppressed everywhere — plan/lifecycle ``reason=/execution=/source=``
+            labels, the SHADOW ONLY ``shadow_exit_line=``/``shadow_reason=``
+            fields, and the readiness/manifest/gate diagnostic tail
+            (``block_reason(s)=``, ``manifest_*``) — so the operator sees clean
+            Chinese lines plus the conclusion the dispatcher appends. When
+            ``True`` (``--verbose``) every raw audit code is shown for debugging.
     """
     from src.screening.offensive.trade_lifecycle import FillSource
 
@@ -723,10 +724,16 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     lines = ["每日动作 v2（模拟台账）", "参考价（信号日收盘，仅供计划）:"]
     if run.plans:
         for plan in run.plans:
-            lines.append(
-                f"  {plan.ticker} 参考价 ~{references.get(plan.ticker, 0.0):.2f} "
-                f"reason={plan.reason} execution={plan.execution_label} source={plan.source_label}"
-            )
+            reference = references.get(plan.ticker, 0.0)
+            if verbose:
+                lines.append(
+                    f"  {plan.ticker} 参考价 ~{reference:.2f} "
+                    f"reason={plan.reason} execution={plan.execution_label} source={plan.source_label}"
+                )
+            else:
+                lines.append(
+                    f"  {plan.ticker} 参考价 ~{reference:.2f}（次日计划买入）"
+                )
     else:
         lines.append("  无")
 
@@ -748,16 +755,20 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     lines.append("退出挑战者（SHADOW ONLY，不改变默认退出；不触发交易、仓位或组合上限）:")
     if run.open_positions:
         for trade in run.open_positions:
-            shadow_line = (
-                f"{trade.shadow_exit_line:.2f}"
-                if trade.shadow_exit_line is not None
-                else "unavailable"
-            )
-            lines.append(
-                f"  {trade.ticker} shadow_exit_line={shadow_line} "
-                f"shadow_would_exit_next_open={str(trade.shadow_would_exit_next_open).lower()} "
-                f"shadow_reason={trade.shadow_reason}"
-            )
+            if verbose:
+                shadow_line = (
+                    f"{trade.shadow_exit_line:.2f}"
+                    if trade.shadow_exit_line is not None
+                    else "unavailable"
+                )
+                lines.append(
+                    f"  {trade.ticker} shadow_exit_line={shadow_line} "
+                    f"shadow_would_exit_next_open={str(trade.shadow_would_exit_next_open).lower()} "
+                    f"shadow_reason={trade.shadow_reason}"
+                )
+            else:
+                advice = "建议次日退出" if trade.shadow_would_exit_next_open else "维持持有"
+                lines.append(f"  {trade.ticker} 影子建议：{advice}")
     else:
         lines.append("  无")
     if run.blocked_candidates:
@@ -777,10 +788,13 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
         if items:
             lines.append(f"{title}:")
         for item in items:
-            lines.append(
-                f"  {item.ticker} reason={item.reason} "
-                f"execution={item.execution_label} source={item.source_label}"
-            )
+            if verbose:
+                lines.append(
+                    f"  {item.ticker} reason={item.reason} "
+                    f"execution={item.execution_label} source={item.source_label}"
+                )
+            else:
+                lines.append(f"  {item.ticker}")
     if run.service_run.block_reason:
         if verbose:
             lines.append(f"block_reason={run.service_run.block_reason}")

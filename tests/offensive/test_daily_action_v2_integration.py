@@ -305,10 +305,17 @@ def test_cached_market_bar_rejects_duplicate_civil_dates(tmp_path, dates):
 
 def test_renderer_includes_real_lifecycle_reasons(service, signal_date):
     run = run_daily_action_v2(service, _scan(signal_date))
-    rendered = render_daily_action_v2(run)
-    assert "entry_planned" in rendered
-    assert "execution=pending" in rendered
-    assert "source=pending" in rendered
+    default_text = render_daily_action_v2(run)
+    verbose_text = render_daily_action_v2(run, verbose=True)
+    # Default operator view is clean: no raw codes, plan still shown.
+    assert "reason=entry_planned" not in default_text
+    assert "execution=pending" not in default_text
+    assert "source=pending" not in default_text
+    assert "参考价" in default_text
+    # Verbose retains the raw audit detail.
+    assert "entry_planned" in verbose_text
+    assert "execution=pending" in verbose_text
+    assert "source=pending" in verbose_text
 
 
 def test_render_gates_manifest_diagnostic_codes_behind_verbose(signal_date):

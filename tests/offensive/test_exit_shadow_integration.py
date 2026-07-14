@@ -136,12 +136,19 @@ def test_render_labels_shadow_as_non_executable_advice(shadow_case):
     service, _open_trade, prices, as_of = shadow_case
     run = service.run(as_of, candidates=(), shadow_prices=prices)
 
-    text = render_daily_action_v2(DailyActionV2Run(run, (), run.open_positions, (), ()))
+    view = DailyActionV2Run(run, (), run.open_positions, (), ())
+    text = render_daily_action_v2(view)
+    verbose_text = render_daily_action_v2(view, verbose=True)
 
+    # Default operator view keeps the SHADOW ONLY framing but hides raw fields.
     assert "shadow only" in text.lower()
     assert "不改变默认退出" in text
-    assert "close_below_trailing_line" in text
-    assert "shadow_exit_line=" in text
+    assert "shadow_exit_line=" not in text
+    assert "close_below_trailing_line" not in text
+    # Verbose exposes the raw shadow evidence for auditing.
+    assert "close_below_trailing_line" in verbose_text
+    assert "shadow_exit_line=" in verbose_text
+    # service.render mirrors the default (non-verbose) operator view.
     assert text == service.render(run)
 
 
