@@ -1364,6 +1364,31 @@ def scan_from_verified_snapshot(
     return candidates, blocked
 
 
+def resolve_daily_action_signal(*, end_date: str | None = None) -> tuple[date, str]:
+    """Resolve the --daily-action signal date + regime WITHOUT a full market scan.
+
+    Replaces the previous pattern of running the whole
+    ``scan_daily_action_candidates`` full-market scan (which reopens cache files
+    for up to ``tickers_to_scan`` tickers) purely to read the resolved signal
+    date. Behaviour is kept identical to that path:
+
+    - explicit ``--end-date`` overrides the price-cache probe and 17:00 guard;
+    - otherwise the signal date is the latest ``price_cache`` session
+      (``wall_clock_guard=False``, matching ``generate_daily_action``'s
+      ``legacy_persistence=False`` scan);
+    - regime comes from ``regime_history.json`` for that date.
+
+    The verified snapshot remains the authority for readiness and sizing; this
+    only produces the date/regime needed to *load* that snapshot.
+    """
+    if end_date:
+        compact = _compact_trade_date(end_date)
+        regime = _regime_from_history(compact)
+    else:
+        compact, regime = _resolve_trade_date_and_regime(wall_clock_guard=False)
+    return datetime.strptime(compact, "%Y%m%d").date(), regime
+
+
 def scan_daily_action_candidates(
     *,
     report_path: Path | str | None = None,

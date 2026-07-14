@@ -443,9 +443,17 @@ def test_actual_cli_is_idempotent_and_preserves_recursive_legacy_artifacts(
 def test_actual_cli_missing_calendar_renders_block_and_creates_no_plan(
     tmp_path, monkeypatch, signal_date, capsys
 ):
+    monkeypatch.chdir(tmp_path)
+    price_cache = tmp_path / "data/price_cache"
+    price_cache.mkdir(parents=True)
+    (price_cache / "000001.csv").write_text(
+        "date,open,high,low,close,limit_down,limit_up,suspended\n"
+        "2026-07-13,10,10.5,9.5,10,9,11,False\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
-        "src.screening.offensive.daily_action.scan_daily_action_candidates",
-        lambda **_kwargs: _scan(signal_date),
+        "src.screening.offensive.daily_action.resolve_daily_action_signal",
+        lambda **_kwargs: (signal_date, "normal"),
     )
     _install_healthy_manifest(monkeypatch, signal_date)
     _install_readiness_manifest(monkeypatch, signal_date)
@@ -462,9 +470,17 @@ def test_actual_cli_missing_calendar_renders_block_and_creates_no_plan(
 def test_actual_cli_two_session_calendar_blocks_btst_horizon(
     tmp_path, monkeypatch, signal_date, capsys
 ):
+    monkeypatch.chdir(tmp_path)
+    price_cache = tmp_path / "data/price_cache"
+    price_cache.mkdir(parents=True)
+    (price_cache / "000001.csv").write_text(
+        "date,open,high,low,close,limit_down,limit_up,suspended\n"
+        "2026-07-13,10,10.5,9.5,10,9,11,False\n",
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
-        "src.screening.offensive.daily_action.scan_daily_action_candidates",
-        lambda **_kwargs: _scan(signal_date),
+        "src.screening.offensive.daily_action.resolve_daily_action_signal",
+        lambda **_kwargs: (signal_date, "normal"),
     )
     _install_healthy_manifest(monkeypatch, signal_date)
     _install_readiness_manifest(monkeypatch, signal_date)

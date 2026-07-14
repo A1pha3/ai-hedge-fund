@@ -242,12 +242,17 @@ class TestDispatchEarlyFlags(unittest.TestCase):
         mock.assert_called_once()
 
     def test_daily_action_renders_actual_scan_trade_date(self) -> None:
-        """--daily-action uses an injected authoritative session calendar."""
+        """--daily-action resolves the signal date via the lightweight resolver."""
         from datetime import date
-        from src.screening.offensive.daily_action import DailyActionScan
         with tempfile.TemporaryDirectory() as tmp:
             with (
-                patch("src.screening.offensive.daily_action.scan_daily_action_candidates", return_value=DailyActionScan(date(2026, 7, 10), (), ())),
+                patch(
+                    "src.screening.offensive.daily_action.resolve_daily_action_signal",
+                    return_value=(date(2026, 7, 10), "normal"),
+                ),
+                patch(
+                    "src.screening.offensive.daily_action.scan_daily_action_candidates"
+                ) as legacy_scan,
                 patch("builtins.print") as output,
             ):
                 rc = dispatcher._resolve_daily_action(
@@ -258,16 +263,18 @@ class TestDispatchEarlyFlags(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertIn("模拟台账", output.call_args.args[0])
+        # Task 8: the production path must NOT run the legacy full-market scan
+        # that reopens cache files just to derive the signal date.
+        legacy_scan.assert_not_called()
 
     def test_daily_action_passes_end_date_override(self) -> None:
-        """--daily-action --end-date=YYYY-MM-DD 应规范化成 YYYYMMDD 传给 generate_daily_action."""
+        """--daily-action --end-date=YYYY-MM-DD 应规范化成 YYYYMMDD 传给 signal 解析."""
 
         from datetime import date
-        from src.screening.offensive.daily_action import DailyActionScan
         with tempfile.TemporaryDirectory() as tmp, patch(
-            "src.screening.offensive.daily_action.scan_daily_action_candidates",
-            return_value=DailyActionScan(date(2026, 7, 6), (), ()),
-        ) as scanner, patch("builtins.print"):
+            "src.screening.offensive.daily_action.resolve_daily_action_signal",
+            return_value=(date(2026, 7, 6), "normal"),
+        ) as resolver, patch("builtins.print"):
             rc = dispatcher._resolve_daily_action(
                 ["--daily-action", "--end-date=2026-07-06"],
                 open_sessions=(date(2026, 7, 6), date(2026, 7, 7)),
@@ -276,17 +283,16 @@ class TestDispatchEarlyFlags(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         # 带横线的 YYYY-MM-DD 应规范化成 YYYYMMDD
-        self.assertEqual(scanner.call_args.kwargs.get("end_date"), "20260706")
+        self.assertEqual(resolver.call_args.kwargs.get("end_date"), "20260706")
 
     def test_daily_action_passes_end_date_space_form(self) -> None:
         """--daily-action --end-date YYYY-MM-DD (空格分隔) 也应解析."""
 
         from datetime import date
-        from src.screening.offensive.daily_action import DailyActionScan
         with tempfile.TemporaryDirectory() as tmp, patch(
-            "src.screening.offensive.daily_action.scan_daily_action_candidates",
-            return_value=DailyActionScan(date(2026, 7, 6), (), ()),
-        ) as scanner, patch("builtins.print"):
+            "src.screening.offensive.daily_action.resolve_daily_action_signal",
+            return_value=(date(2026, 7, 6), "normal"),
+        ) as resolver, patch("builtins.print"):
             rc = dispatcher._resolve_daily_action(
                 ["--daily-action", "--end-date", "20260706"],
                 open_sessions=(date(2026, 7, 6), date(2026, 7, 7)),
@@ -295,17 +301,16 @@ class TestDispatchEarlyFlags(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         # YYYYMMDD (无横线) 保持不变
-        self.assertEqual(scanner.call_args.kwargs.get("end_date"), "20260706")
+        self.assertEqual(resolver.call_args.kwargs.get("end_date"), "20260706")
 
     def test_daily_action_no_end_date_passes_none(self) -> None:
         """不带 --end-date 时 end_date 应为 None (走 17:00 规则)."""
 
         from datetime import date
-        from src.screening.offensive.daily_action import DailyActionScan
         with tempfile.TemporaryDirectory() as tmp, patch(
-            "src.screening.offensive.daily_action.scan_daily_action_candidates",
-            return_value=DailyActionScan(date(2026, 7, 6), (), ()),
-        ) as scanner, patch("builtins.print"):
+            "src.screening.offensive.daily_action.resolve_daily_action_signal",
+            return_value=(date(2026, 7, 6), "normal"),
+        ) as resolver, patch("builtins.print"):
             rc = dispatcher._resolve_daily_action(
                 ["--daily-action"],
                 open_sessions=(date(2026, 7, 6), date(2026, 7, 7)),
@@ -313,7 +318,7 @@ class TestDispatchEarlyFlags(unittest.TestCase):
             )
 
         self.assertEqual(rc, 0)
-        self.assertIsNone(scanner.call_args.kwargs.get("end_date"))
+        self.assertIsNone(resolver.call_args.kwargs.get("end_date"))
 
     def test_market_status_flag_recognized(self) -> None:
         with patch("src.main.run_market_status", return_value=0) as mock:

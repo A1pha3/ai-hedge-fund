@@ -1020,8 +1020,8 @@ def _resolve_daily_action(
         BlockedCandidate,
         DailyActionScan,
         render_daily_action_v2,
+        resolve_daily_action_signal,
         run_daily_action_v2,
-        scan_daily_action_candidates,
         scan_from_verified_snapshot,
     )
     from src.screening.offensive.daily_action_service import (
@@ -1046,27 +1046,22 @@ def _resolve_daily_action(
 
         open_sessions = _load_authoritative_session_dates()
     open_sessions = tuple(open_sessions)
-    # The legacy scan is retained for signal_date resolution and --end-date
-    # propagation. Its candidate list is only used as a fallback when no
-    # verified snapshot is available AND the readiness manifest is missing
-    # (in which case the legacy manifest gate still blocks degraded candidates).
-    scan = scan_daily_action_candidates(
-        end_date=end_date, authoritative_sessions=open_sessions
-    )
+    # Task 8: resolve the signal date + regime with the lightweight resolver
+    # instead of running the legacy full-market scan (which reopened cache files
+    # for up to 30 tickers just to read the resolved date). Candidates now come
+    # exclusively from the verified PIT snapshot below.
+    signal_date, regime = resolve_daily_action_signal(end_date=end_date)
     from src.screening.consecutive_recommendation import resolve_report_dir
 
     reports_dir = resolve_report_dir()
     data_dir = Path("data")
 
-    # NEW (Task 8): try to load the verified PIT snapshot first. When present,
-    # the scanner consumes only the snapshot — no cache files reopened.
-    # Pass the real regime from regime_history.json so crisis/risk_off sizing
-    # is applied in the verified path (spec 8.3).
-    from src.screening.offensive.daily_action import _regime_from_history
-
-    regime = _regime_from_history(scan.signal_date.strftime("%Y%m%d"))
+    # NEW (Task 8): load the verified PIT snapshot. When present, the scanner
+    # consumes only the snapshot — no cache files reopened. The resolved regime
+    # from regime_history.json seeds crisis/risk_off sizing (spec 8.3); the
+    # snapshot's own regime is authoritative once loaded.
     verified = load_verified_daily_action_snapshot(
-        scan.signal_date,
+        signal_date,
         reports_dir=reports_dir,
         data_dir=data_dir,
         regime=regime,
@@ -1123,10 +1118,10 @@ def _resolve_daily_action(
         # We still load it for lifecycle/fingerprint diagnostics only, but
         # candidates are empty — no new BUY_PLAN can be generated.
         manifest, current_fingerprints = load_daily_action_manifest_gate(
-            scan.signal_date,
+            signal_date,
             reports_dir=reports_dir,
         )
-        candidates = DailyActionScan(scan.signal_date, (), (), ())
+        candidates = DailyActionScan(signal_date, (), (), ())
         snapshot_block_reason = verified.global_reason or "daily_action_readiness_missing"
 
     def cached_prices(ticker, trade_date):
