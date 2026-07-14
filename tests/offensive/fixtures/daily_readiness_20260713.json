@@ -1,0 +1,15 @@
+{
+  "signal_date": "20260713",
+  "universe_total": 652,
+  "price_status_counts": {
+    "current": 650,
+    "suspended": 2
+  },
+  "fund_flow_status_counts": {
+    "current": 642,
+    "suspended": 3,
+    "unsupported": 7
+  },
+  "known_suspended": ["002677", "300567"],
+  "known_unsupported": ["830799", "832000", "833171", "834682", "835185", "836221", "838402"]
+}
