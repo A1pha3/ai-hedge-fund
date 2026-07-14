@@ -35,7 +35,7 @@ from src.screening.offensive.paper_tracker import PaperTracker, TradeAction
 from src.screening.offensive.risk_framework import build_risk_plan
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
 from src.screening.offensive.setups.oversold_bounce import OversoldBounceSetup
-from src.utils.atomic_files import atomic_write_csv
+from src.utils.atomic_files import atomic_write_csv, atomic_write_json
 from src.utils.date_utils import SignalSessionUnavailable, resolve_signal_session
 
 logger = logging.getLogger(__name__)
@@ -453,9 +453,25 @@ def _load_industry_day_pct_by_ticker(trade_date: str, tickers: list[str]) -> dic
 
 
 def _load_authoritative_session_dates() -> tuple[date, ...]:
-    """Load explicit local open sessions; never fetch or infer calendar dates."""
+    """Load explicit local open sessions (forward-inclusive); never fetch here.
+
+    Prefers ``trade_calendar.json`` — the real A-share open-session calendar
+    (including future sessions), refreshed by ``--auto`` via
+    :func:`refresh_authoritative_trade_calendar`. This is what lets the service
+    compute the next-day entry and the T+10 BTST horizon.
+
+    Falls back to ``regime_history.json`` (a *historical* regime record that can
+    never contain future sessions) only when the forward calendar is absent, so
+    behaviour degrades gracefully instead of crashing. ``DAILY_ACTION_CALENDAR_PATH``
+    overrides both. Reading stays local and deterministic at ``--daily-action``
+    time.
+    """
     configured = os.environ.get("DAILY_ACTION_CALENDAR_PATH", "").strip()
-    path = Path(configured) if configured else Path("data/reports/regime_history.json")
+    if configured:
+        path = Path(configured)
+    else:
+        forward = Path("data/reports/trade_calendar.json")
+        path = forward if forward.exists() else Path("data/reports/regime_history.json")
     if not path.exists():
         return ()
     try:
@@ -470,6 +486,48 @@ def _load_authoritative_session_dates() -> tuple[date, ...]:
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         logger.warning("invalid local daily-action calendar: %s", path, exc_info=True)
         return ()
+
+
+def refresh_authoritative_trade_calendar(
+    reports_dir: Path | str | None = None,
+    *,
+    start: str = "20200101",
+    forward_days: int = 90,
+    fetch: Callable[[str, str], list[str]] | None = None,
+) -> Path | None:
+    """Fetch and persist a forward-inclusive A-share open-session calendar.
+
+    ``regime_history.json`` is historical only, so ``--daily-action`` could not
+    resolve the next-day entry or the T+10 horizon and returned
+    ``calendar_unavailable`` with zero plans. This writes
+    ``trade_calendar.json`` spanning ``start`` .. today+``forward_days`` using
+    the authoritative exchange calendar (tushare ``trade_cal``), giving the
+    deterministic daily-action loader real forward sessions.
+
+    Never overwrites an existing calendar with an empty result (a provider
+    failure must not blind the next run). Returns the written path, or ``None``
+    when the authoritative source produced nothing.
+    """
+    if fetch is None:
+        from src.tools.tushare_api import get_open_trade_dates as fetch
+
+    reports = Path(reports_dir) if reports_dir is not None else Path("data/reports")
+    end = (_current_cn_datetime().date() + timedelta(days=forward_days)).strftime("%Y%m%d")
+    try:
+        raw_sessions = fetch(start, end)
+    except Exception:
+        logger.warning("trade calendar fetch failed for %s-%s", start, end, exc_info=True)
+        return None
+    normalized = sorted(
+        {_compact_trade_date(value) for value in (raw_sessions or []) if _compact_trade_date(value)}
+    )
+    if not normalized:
+        # Fail closed: never clobber a previously-good calendar with nothing.
+        return None
+    reports.mkdir(parents=True, exist_ok=True)
+    target = reports / "trade_calendar.json"
+    atomic_write_json(target, normalized)
+    return target
 
 
 def _resolve_next_trade_date(

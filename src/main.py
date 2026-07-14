@@ -1208,6 +1208,18 @@ def _refresh_daily_action_caches_for_auto(
 
     report_payload["daily_action_cache_refresh"] = summary
 
+    # Refresh the forward-inclusive trading calendar so the next --daily-action
+    # can resolve the next-day entry and the T+10 horizon (regime_history is
+    # historical-only and would leave the service at calendar_unavailable).
+    try:
+        from src.screening.offensive.daily_action import (
+            refresh_authoritative_trade_calendar,
+        )
+
+        refresh_authoritative_trade_calendar()
+    except Exception as exc:  # pragma: no cover - calendar refresh must not fail --auto
+        logger.warning("[Auto] trade calendar refresh failed: %s", exc)
+
     # Publish Daily Action readiness manifest (independent domain).
     # This does NOT affect Auto canonical health — it's a separate publication.
     try:
