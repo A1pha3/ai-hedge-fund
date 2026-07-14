@@ -162,7 +162,8 @@ observed_count
 usable_count
 nonempty_count
 stale_count
-failed_count
+refresh_failed_count
+consumption_failed_count
 usable_rows_min
 full_factor_target_rows
 partial_capabilities
@@ -185,7 +186,7 @@ observation_status: success | partial | failed | unavailable
 
 门控按数据族契约解释这些字段，不能用一条通用的 `nonempty > 0` 规则：价格历史以满足字段、时间点和消费组件所需行数为 usable；财务指标缺失时不可用；事件输入在 `observation_status=success` 且结果合法为空时可用，并按中性事件处理；龙虎榜完整日榜成功获取但没有目标 ticker 时同样是可用的空观察。三个 ticker 集合指纹用来证明计数对应的是正确股票集合，而不是数量相同的另一批股票。
 
-`observation_status` 的守恒语义固定为：`success` 表示 `observed_count == requested_count` 且 `failed_count == 0`；`partial` 表示来源可用但只有部分 requested ticker 得到权威回答；`failed` 表示已经尝试但没有得到任何可验证回答；`unavailable` 表示来源、schema 或调用能力整体不可用，无法形成权威尝试。必需数据族的 `partial/failed/unavailable` 均阻断，optional 数据族则 warning 并关闭相应增强。
+`refresh_failed_count` 只描述当次 provider 刷新尝试，已有当前且完整的本地消费快照时只产生 warning；`consumption_failed_count` 才描述无法形成可验证消费证据的 ticker。`observation_status` 的守恒语义固定为：`success` 表示 `observed_count == requested_count` 且 `consumption_failed_count == 0`；`partial` 表示来源可用但只有部分 requested ticker 得到权威回答；`failed` 表示已经尝试但没有得到任何可验证回答；`unavailable` 表示来源、schema 或调用能力整体不可用，无法形成权威尝试。必需数据族的 `partial/failed/unavailable` 均阻断，optional 数据族则 warning 并关闭相应增强。
 
 价格历史中的“最低可执行行数”和“完整因子目标行数”必须分开命名。健康判断落到实际评分组件：每个被评分 ticker 的每个 required score component 都必须拥有存在、有限且 PIT 合法的输入与输出；历史不足时只能关闭注册表中明确标为 optional 的组件。系统不能把“有一行非空”报告为完整，也不能未经组件依赖审计就把 200 行设成全局硬门槛。
 
