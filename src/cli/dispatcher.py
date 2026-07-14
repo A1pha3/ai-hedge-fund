@@ -1060,10 +1060,16 @@ def _resolve_daily_action(
 
     # NEW (Task 8): try to load the verified PIT snapshot first. When present,
     # the scanner consumes only the snapshot — no cache files reopened.
+    # Pass the real regime from regime_history.json so crisis/risk_off sizing
+    # is applied in the verified path (spec 8.3).
+    from src.screening.offensive.daily_action import _regime_from_history
+
+    regime = _regime_from_history(scan.signal_date.strftime("%Y%m%d"))
     verified = load_verified_daily_action_snapshot(
         scan.signal_date,
         reports_dir=reports_dir,
         data_dir=data_dir,
+        regime=regime,
     )
 
     if verified.snapshot is not None:
@@ -1075,69 +1081,53 @@ def _resolve_daily_action(
             "crisis": RegimeAuthorization.BTST_CRISIS,
             "risk_off": RegimeAuthorization.BTST_RISK_OFF,
         }.get(regime, RegimeAuthorization.NORMAL)
-        candidates = tuple(
-            DailyActionScan(
-                verified.snapshot.signal_date,
-                tuple(
-                    __import__(
-                        "src.screening.offensive.daily_action_service",
-                        fromlist=["PlanCandidate"],
-                    ).PlanCandidate(
-                        action.ticker,
-                        action.setup,
-                        "v2",
-                        action.kelly_pct,
-                        priority,
-                        authorization,
-                    )
-                    for priority, action in enumerate(snapshot_candidates, 1)
-                ),
-                tuple(
-                    BlockedCandidate(
-                        action.ticker,
-                        action.block_reason or "verified_snapshot_block",
-                        action.entry_price,
-                    )
-                    for action in snapshot_blocked
-                ),
-                tuple(
-                    (action.ticker, action.entry_price)
-                    for action in snapshot_candidates
-                ),
-            )
-        )[0]
-        # When the verified snapshot is available, the auto-canonical manifest
-        # gate is bypassed — the snapshot already carries the authoritative
-        # readiness manifest (daily_action_readiness), which is the source of
-        # truth for plan eligibility. Pass None to keep the service's manifest
-        # gate from double-blocking.
-        manifest = None
-        current_fingerprints: dict = {}
+        candidates = DailyActionScan(
+            verified.snapshot.signal_date,
+            tuple(
+                PlanCandidate(
+                    action.ticker,
+                    action.setup,
+                    "v2",
+                    action.kelly_pct,
+                    priority,
+                    authorization,
+                )
+                for priority, action in enumerate(snapshot_candidates, 1)
+            ),
+            tuple(
+                BlockedCandidate(
+                    action.ticker,
+                    action.block_reason or "verified_snapshot_block",
+                    action.entry_price,
+                )
+                for action in snapshot_blocked
+            ),
+            tuple(
+                (action.ticker, action.entry_price)
+                for action in snapshot_candidates
+            ),
+        )
+        # When the verified snapshot is available, we still load the Auto
+        # manifest for the service's lifecycle/fingerprint checks. The snapshot
+        # is the authority for readiness; the Auto manifest is used for
+        # per-ticker cache_fingerprint validation in the service layer.
+        manifest, current_fingerprints = load_daily_action_manifest_gate(
+            verified.snapshot.signal_date,
+            reports_dir=reports_dir,
+        )
         snapshot_block_reason: str | None = None
     else:
-        # FALLBACK: no verified readiness snapshot. Per the Task 8 contract,
-        # new entries are BLOCKED. We surface the global_reason to the operator
-        # but do NOT return early — lifecycle (settle/exits/MTM) must still run.
-        #
-        # Backward compatibility: when the legacy Auto manifest gate is healthy
-        # (e.g. in test environments that monkeypatch load_daily_action_manifest_gate),
-        # we still route through the legacy scan candidates + manifest gate so that
-        # existing tests and research callers continue to work. The snapshot path
-        # is the production preference; the legacy path is the transitional fallback.
+        # FALLBACK: no verified readiness snapshot. Per spec section 10 and
+        # invariant 8, new entries are BLOCKED. The legacy Auto manifest MUST
+        # NOT be used as a substitute (spec: "不把旧 Auto manifest 自动升级为新域").
+        # We still load it for lifecycle/fingerprint diagnostics only, but
+        # candidates are empty — no new BUY_PLAN can be generated.
         manifest, current_fingerprints = load_daily_action_manifest_gate(
             scan.signal_date,
             reports_dir=reports_dir,
         )
-        if manifest is not None:
-            # Legacy manifest gate is available — use the legacy scan candidates.
-            candidates = scan
-            snapshot_block_reason = None
-        else:
-            # No verified snapshot AND no legacy manifest → block new entries.
-            candidates = DailyActionScan(
-                scan.signal_date, (), (), ()
-            )
-            snapshot_block_reason = verified.global_reason
+        candidates = DailyActionScan(scan.signal_date, (), (), ())
+        snapshot_block_reason = verified.global_reason or "daily_action_readiness_missing"
 
     def cached_prices(ticker, trade_date):
         cache = Path("data/price_cache") / f"{ticker}.csv"

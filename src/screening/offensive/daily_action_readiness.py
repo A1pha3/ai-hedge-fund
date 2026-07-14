@@ -298,6 +298,21 @@ def validate_manifest(
 
         trade_date = date.fromisoformat(manifest_data["trade_date"])
 
+        # Security: validate universe_tickers format to prevent path injection.
+        # Tickers must be exactly 6 digits — no separators, no path traversal.
+        universe_tickers_raw = manifest_data.get("universe_tickers", [])
+        if not isinstance(universe_tickers_raw, list):
+            raise ValueError("universe_tickers must be a list")
+        for ticker in universe_tickers_raw:
+            if not isinstance(ticker, str) or not ticker.isdigit() or len(ticker) != 6:
+                raise ValueError(
+                    f"universe_tickers contains invalid entry: {ticker!r} "
+                    "(must be exactly 6 digits)"
+                )
+        # Check for duplicates
+        if len(set(universe_tickers_raw)) != len(universe_tickers_raw):
+            raise ValueError("universe_tickers contains duplicates")
+
         # Rebuild shared evidence
         se_raw = manifest_data.get("shared_evidence", {})
         shared_evidence = SharedReadinessEvidence(
