@@ -617,7 +617,29 @@ def test_run_auto_screening_integrates_freshness_check(tmp_path, monkeypatch) ->
     monkeypatch.setattr(main_mod, "_rebuild_cli_objects", lambda p: ([], None, [], {}, {}))
     monkeypatch.setattr(main_mod, "_print_table_block", lambda *a, **kw: None)
     monkeypatch.setattr(main_mod, "_save_json_report", lambda *a, **kw: None)
-    monkeypatch.setattr(main_mod, "compute_auto_screening_results", lambda *a, **kw: {"date": "20260709", "recommendations": [], "market_state": {}})
+    monkeypatch.setattr(
+        main_mod,
+        "compute_auto_screening_results",
+        lambda *a, **kw: {
+            "date": "20260709",
+            "recommendations": [],
+            "market_state": {},
+            # Auditable-ledger evidence the pipeline now requires (one candidate;
+            # missing local cache just yields a degraded, non-fatal run).
+            "candidate_pool_run": {
+                "trade_date": "20260709",
+                "tickers": ["000001"],
+                "candidates": [{"ticker": "000001", "industry": "银行"}],
+            },
+        },
+    )
+    # The finalize step re-verifies the candidate snapshot against the compute
+    # output; the snapshot must match the candidate_pool_run above.
+    snapshots = tmp_path / "data" / "snapshots"
+    snapshots.mkdir(parents=True, exist_ok=True)
+    (snapshots / "candidate_pool_20260709.json").write_text(
+        '[{"ticker": "000001", "industry": "银行"}]', encoding="utf-8"
+    )
 
     # Spy on _attach_freshness_check
     freshness_called = False
@@ -657,9 +679,25 @@ def test_run_auto_screening_normalizes_weekend_trade_date_before_pipeline(tmp_pa
 
     def fake_compute(trade_date: str, top_n: int, selected_strategies=None):
         seen["trade_date"] = trade_date
-        return {"date": trade_date, "recommendations": [], "market_state": {}}
+        return {
+            "date": trade_date,
+            "recommendations": [],
+            "market_state": {},
+            "candidate_pool_run": {
+                "trade_date": trade_date,
+                "tickers": ["000001"],
+                "candidates": [{"ticker": "000001", "industry": "银行"}],
+            },
+        }
 
     monkeypatch.setattr(main_mod, "compute_auto_screening_results", fake_compute)
+    # Candidate snapshot matching the candidate_pool_run above so the pipeline's
+    # finalize step passes (normalized trade date 20260710).
+    snapshots = tmp_path / "data" / "snapshots"
+    snapshots.mkdir(parents=True, exist_ok=True)
+    (snapshots / "candidate_pool_20260710.json").write_text(
+        '[{"ticker": "000001", "industry": "银行"}]', encoding="utf-8"
+    )
 
     exit_code = main_mod.run_auto_screening("20260712", top_n=3)
 
