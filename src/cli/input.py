@@ -113,13 +113,45 @@ def _resolve_default_end_date() -> str:
     Returns:
         YYYY-MM-DD 格式的默认结束日期
     """
-    from src.utils.date_utils import resolve_market_ready_date_iso
+    from datetime import time as _time
+
+    from src.utils.date_utils import (
+        SignalSessionUnavailable,
+        format_date,
+        resolve_market_ready_date_iso,
+        resolve_signal_session,
+    )
 
     try:
         ready_hour = int(os.environ.get("DATA_READY_HOUR", "17"))
     except ValueError:
         ready_hour = 17
-    return resolve_market_ready_date_iso(now=datetime.now(), ready_hour=ready_hour)
+    now = datetime.now()
+    # Spec 8.1: prefer the single shared signal-session resolver with the real
+    # forward-inclusive A-share calendar, passing DATA_READY_HOUR through as the
+    # cutoff so both commands share one policy. Fall back to the market-ready
+    # helper (tushare + weekday rollback) when no authoritative calendar is
+    # available, preserving the previous offline behaviour.
+    sessions: tuple = ()
+    try:
+        from src.screening.offensive.daily_action import (
+            _load_authoritative_session_dates,
+        )
+
+        sessions = _load_authoritative_session_dates()
+    except Exception:
+        sessions = ()
+    if sessions and 0 <= ready_hour <= 23:
+        try:
+            resolved = resolve_signal_session(
+                now_cn=now,
+                open_sessions=sessions,
+                ready_cutoff=_time(ready_hour, 0),
+            )
+            return format_date(resolved.strftime("%Y%m%d"))
+        except SignalSessionUnavailable:
+            pass
+    return resolve_market_ready_date_iso(now=now, ready_hour=ready_hour)
 
 
 def add_date_args(parser: argparse.ArgumentParser, *, default_months_back: int | None = None) -> argparse.ArgumentParser:

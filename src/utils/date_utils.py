@@ -179,15 +179,16 @@ def resolve_signal_session(
     now_cn: datetime,
     open_sessions: Sequence[date],
     override: str | date | None = None,
+    ready_cutoff: time = _SIGNAL_READY_CUTOFF,
 ) -> date:
-    """Return the canonical signal date under the 17:00 session policy.
+    """Return the canonical signal date under the data-ready session policy.
 
     The rule is the single source of truth for the data-ready cutoff: at or
-    after 17:00 Asia/Shanghai, same-day data is treated as ready; before the
-    cutoff the previous day is used. Weekday vs. weekend is handled by the
-    same rule because callers must pass an authoritative open-session
-    calendar, which is the only thing that can correctly skip exchange
-    holidays.
+    after ``ready_cutoff`` (default 17:00 Asia/Shanghai), same-day data is
+    treated as ready; before the cutoff the previous day is used. Weekday vs.
+    weekend is handled by the same rule because callers must pass an
+    authoritative open-session calendar, which is the only thing that can
+    correctly skip exchange holidays.
 
     Args:
         now_cn: Reference wall-clock in Asia/Shanghai.
@@ -199,6 +200,10 @@ def resolve_signal_session(
             ``YYYYMMDD``/``YYYY-MM-DD`` string. Must be a member of
             ``open_sessions``; otherwise a :class:`SignalSessionUnavailable`
             is raised.
+        ready_cutoff: Wall-clock time of day at/after which same-day data is
+            considered ready. Defaults to the versioned 17:00 policy; the
+            ``--auto`` default-end-date path passes the ``DATA_READY_HOUR``
+            override through here so both commands share one resolver.
 
     Returns:
         The resolved signal date (a :class:`date`).
@@ -221,7 +226,7 @@ def resolve_signal_session(
             raise SignalSessionUnavailable("override is not an authoritative open session")
         return selected
     cutoff_date = (
-        now_cn.date() if now_cn.time() >= _SIGNAL_READY_CUTOFF else now_cn.date() - timedelta(days=1)
+        now_cn.date() if now_cn.time() >= ready_cutoff else now_cn.date() - timedelta(days=1)
     )
     eligible = tuple(session for session in sessions if session <= cutoff_date)
     if not eligible:

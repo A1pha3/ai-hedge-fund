@@ -18,6 +18,23 @@ from src.cli.input import _resolve_default_end_date, resolve_dates
 class TestResolveDefaultEndDate:
     """_resolve_default_end_date 的 17:00 阈值逻辑。"""
 
+    @pytest.fixture(autouse=True)
+    def _authoritative_calendar(self, monkeypatch):
+        """Hermetic forward calendar so these tests exercise the shared
+        ``resolve_signal_session`` resolver (spec 8.1) deterministically,
+        without depending on the real ``data/reports`` calendar files."""
+        from datetime import date
+
+        monkeypatch.setattr(
+            "src.screening.offensive.daily_action._load_authoritative_session_dates",
+            lambda: (
+                date(2026, 7, 8),
+                date(2026, 7, 9),
+                date(2026, 7, 10),
+                date(2026, 7, 13),
+            ),
+        )
+
     def test_before_1700_returns_previous_day(self):
         """17:00 前 → 前一天。"""
         with patch("src.cli.input.datetime") as mock_dt:

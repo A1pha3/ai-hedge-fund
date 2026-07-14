@@ -6,7 +6,7 @@ across date-handling paths. Tests lock down the YYYYMMDD ↔ YYYY-MM-DD contract
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 
 import pytest
 
@@ -179,6 +179,21 @@ def test_override_must_be_an_open_session():
             open_sessions=(date(2026, 7, 10),),
             override="20260711",
         )
+
+
+def test_resolve_signal_session_honors_custom_ready_cutoff():
+    """A custom cutoff (DATA_READY_HOUR) shifts the same-day/previous boundary."""
+    sessions = (date(2026, 7, 8), date(2026, 7, 9))
+    # 18:00 with the default 17:00 cutoff → same day (07-09).
+    assert resolve_signal_session(
+        now_cn=datetime(2026, 7, 9, 18, 0), open_sessions=sessions
+    ) == date(2026, 7, 9)
+    # 18:00 with a 20:00 cutoff → previous session (07-08).
+    assert resolve_signal_session(
+        now_cn=datetime(2026, 7, 9, 18, 0),
+        open_sessions=sessions,
+        ready_cutoff=time(20, 0),
+    ) == date(2026, 7, 8)
 
 
 def test_signal_session_policy_version_exists():
