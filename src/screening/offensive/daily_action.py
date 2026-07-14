@@ -36,6 +36,7 @@ from src.screening.offensive.risk_framework import build_risk_plan
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
 from src.screening.offensive.setups.oversold_bounce import OversoldBounceSetup
 from src.utils.atomic_files import atomic_write_csv
+from src.utils.date_utils import SignalSessionUnavailable, resolve_signal_session
 
 logger = logging.getLogger(__name__)
 
@@ -324,13 +325,20 @@ def _resolve_trade_date_and_regime(*, wall_clock_guard: bool = True) -> tuple[st
     if not latest_date:
         latest_date = datetime.now().strftime("%Y%m%d")
 
-    # 17:00 guard: price_cache 最新日若领先于规则信号日 (如盘前已注入当日), 回退到信号日
+    # 17:00 guard: price_cache 最新日若领先于规则信号日 (如盘前已注入当日), 回退到信号日.
+    # 用统一的 resolve_signal_session (spec 8.1) 计算规则信号日, 不再内联重复 17:00 逻辑;
+    # 无权威日历时 (SignalSessionUnavailable) 保持 price_cache 最新日 (与旧的空 eligible 分支一致).
     if wall_clock_guard:
         now = _current_cn_datetime()
-        cutoff = now.date() if now.time() >= _ENTRY_WINDOW_CUTOFF else now.date() - timedelta(days=1)
-        eligible = [session for session in _load_authoritative_session_dates() if session <= cutoff]
-        if eligible:
-            latest_date = min(latest_date, max(eligible).strftime("%Y%m%d"))
+        try:
+            rule_signal = resolve_signal_session(
+                now_cn=now,
+                open_sessions=_load_authoritative_session_dates(),
+            )
+        except SignalSessionUnavailable:
+            rule_signal = None
+        if rule_signal is not None:
+            latest_date = min(latest_date, rule_signal.strftime("%Y%m%d"))
 
     regime = regimes_by_date.get(latest_date, "normal")
     return latest_date, regime

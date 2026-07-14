@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
@@ -98,3 +98,44 @@ def test_contains_session_is_exact_and_empty_calendar_is_false() -> None:
     assert calendar.contains_session(monday) is True
     assert calendar.contains_session(date(2026, 7, 14)) is False
     assert TradingSessionCalendar.from_dates([]).contains_session(monday) is False
+
+
+def test_daily_action_signal_resolution_delegates_to_shared_resolver(
+    tmp_path, monkeypatch
+) -> None:
+    """Task 1 (spec 8.1): --daily-action resolves its signal session through the
+    single shared ``resolve_signal_session`` rather than a duplicated inline
+    17:00 rule, so both commands share one authoritative cutoff policy."""
+    import src.screening.offensive.daily_action as da
+
+    monkeypatch.chdir(tmp_path)
+    cache = tmp_path / "data" / "price_cache"
+    cache.mkdir(parents=True)
+    # price_cache already contains the not-yet-ready session (pre-17:00 injection).
+    (cache / "000001.csv").write_text("date,close\n20260714,10.0\n")
+
+    monkeypatch.setattr(
+        da,
+        "_current_cn_datetime",
+        lambda: datetime(2026, 7, 13, 16, 0, tzinfo=da._CN_TZ),
+    )
+    monkeypatch.setattr(
+        da,
+        "_load_authoritative_session_dates",
+        lambda: (date(2026, 7, 10), date(2026, 7, 13), date(2026, 7, 14)),
+    )
+
+    calls: dict[str, object] = {}
+    real = da.resolve_signal_session
+
+    def spy(**kwargs):
+        calls["kwargs"] = kwargs
+        return real(**kwargs)
+
+    monkeypatch.setattr(da, "resolve_signal_session", spy)
+
+    signal_date, _regime = da._resolve_trade_date_and_regime()
+
+    assert "kwargs" in calls, "daily action did not delegate to resolve_signal_session"
+    # Monday 16:00 (before 17:00) → cutoff Sunday → latest session <= Sunday = Friday.
+    assert signal_date == "20260710"
