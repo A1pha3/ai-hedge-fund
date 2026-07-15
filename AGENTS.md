@@ -77,6 +77,22 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 - 四策略 → score_b → composite_score → investability 排序。
 - `profit_aware` 排序模式默认关闭（代码注释称 composite_score 有负预测值，但未经本环境验证）。
 
+### 样本外验证闭环（logger → backfill → panel）
+
+**为什么存在**：完整 setup（全过滤 + composite 强度排序）**无法在 2020–2026 重放**——历史 `fund_flow_cache`/`industry_index_cache` 太浅、强度排序依赖 composite 特征，回放不出真实候选。跨周期裸涨停信号验证显示 2026 的 68% 胜率是 **regime-favorable（顺行情）而非 cycle-robust**（2022/2024 熊年 E[r] 转负）。所以：**唯一诚实的做法是从今往后逐日累积样本外证据**，而不是盲信不可复现的 Phase 0 回测。
+
+**数据流**（两条命令天然衔接，无需人工干预）：
+
+```
+--daily-action  →  log_setup_outputs()   →  data/reports/setup_output_log/YYYYMMDD.jsonl   （当日每票信号快照, 幂等覆盖）
+--auto          →  backfill_panel()       →  data/reports/setup_output_panel.jsonl          （新 bar 到位即回填 T+1..T+10）
+```
+
+- **logger**（`setup_output_log.py`）：`--daily-action` 每跑一次，把当日所有候选（含被过滤的）连同 `plan_eligible`/`degraded`/`trigger_strength`/`entry_price`/`kelly_pct`/`regime`/`block_reason` + 扁平化 metadata（pct_change / main_net_inflow / industry_pct / pre_5d_runup_pct / limit_up_pct_threshold）写成当日 JSONL。原子覆盖 = 幂等。
+- **backfill**（`join_setup_outputs_with_returns.py` 的 `backfill_panel()`）：`--auto` 末尾 best-effort 调用（`try/except`，永不拖垮 `--auto`）。只加载**已记录票**的价格序列（不是全 700+ 只），join 出 T+1/T+3/T+5/T+10 前向收益，写 panel。到期才标 `realized=True`。
+- **面板按 `plan_eligible`(过全过滤) vs `filtered` 分层**：这是判断「全过滤是否真的挑出 alpha」的样本外依据。样本够大前不要据此改策略参数。
+- ⚠️ **panel 是样本外累积，不是回测**：`data/paper_trading_backtest/` 才是历史回测（192 EXIT）。两者别混。刚上线时 panel 里多数 `realized=False`（前向窗口未到期）属正常。
+
 ## 已知数据/逻辑陷阱（避坑）
 
 1. **`data/paper_trading/` vs `data/paper_trading_backtest/`**：前者是运行时（0 EXIT），后者是回测（192 EXIT）。查成交数据用后者。
@@ -86,6 +102,8 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 5. **`--daily-action` 扫描空间 = price_cache 文件名集合**：曾因只含候选池"好股票"而漏掉涨停小盘股（已用涨停注入修复，见 `cache_refresh.py`）。
 6. **BTST 涨停判定是板块自适应的**（2026-07-10 修复）：`limit_up_pct_for_ticker` 按前缀取阈值——主板 9.5%，科创/创业 19.5%，北交所 29.0%。旧固定 9.5% 会把 20% 板的非涨停大涨日误判为涨停。`execution_adjuster.is_limit_up_unbuyable_next_day` 也同步修复。
 7. **BTST 资金流条件在浅数据下降级**（2026-07-10 修复）：`fund_flow_cache` 普遍浅（<5 天）时，BTST 的「资金流 >20d 均值」条件无法判定 → `degraded=True`，渲染时标 `⚠残缺`。运行时检测口径比回测分布更宽松，operator 须知晓。
+8. **setup-output panel 是样本外累积、不是回测**（2026-07-15 新增）：`data/reports/setup_output_panel.jsonl` 由 `--daily-action` 逐日记录 + `--auto` 回填前向收益生成，用于验证「全过滤挑 alpha」是否成立。别和 `data/paper_trading_backtest/` 的历史回测混淆。样本够大前**不要据此改策略参数**；刚上线多数 `realized=False` 属正常。跨周期裸信号已证明 2026 胜率是顺行情、非周期稳健。
+9. **完整 setup 无法在 2020–2026 重放**（2026-07-15 记录）：历史 fund_flow/industry 数据太浅 + composite 强度排序不可回放。引用「跨周期回测」结论前先确认它用的是裸信号还是全 setup；全 setup 的跨周期数字目前拿不到，只能靠 panel 前向累积。
 
 ## 关键文件速查
 
@@ -96,7 +114,10 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 | Setup 定义 | `src/screening/offensive/setups/btst_breakout.py`、`oversold_bounce.py` |
 | Kelly 仓位 | `src/screening/offensive/kelly.py` |
 | Paper tracker | `src/screening/offensive/paper_tracker.py`（成交记录、止损、drawdown） |
-| 缓存刷新 | `src/screening/offensive/cache_refresh.py`（`--auto` → `--daily-action` 桥梁） |
+| 缓存刷新 | `src/screening/offensive/cache_refresh.py`（`--auto` → `--daily-action` 桥梁；已排除北交所） |
+| 样本外 logger | `src/screening/offensive/setup_output_log.py`（`--daily-action` 逐日写信号快照） |
+| 样本外 backfill | `scripts/join_setup_outputs_with_returns.py`（`backfill_panel()`；`--auto` 末尾回填前向收益 → panel） |
+| 跨周期裸信号验证 | `scripts/validate_btst_setup_cross_cycle.py`、`scripts/validate_auto300_gate_removal.py` |
 | ATR 止损工具 | `src/screening/offensive/atr_utils.py`（Wilder ATR + 止损价计算） |
 | 涨停板块判定 | `src/tools/ashare_board_utils.py`（`limit_up_pct_for_ticker`：主板9.5%/科创创业19.5%/北交所29%） |
 | 止损策略回测 | `scripts/backtest_exit_strategies.py`（对比 no_stop/固定/ATR 止损的 E[r]/Sharpe） |
