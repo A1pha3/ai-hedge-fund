@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from src.screening.offensive.cache_readiness import (
+    DailyActionCacheRefreshStats,
     DailyActionRefreshResult,
     FundFlowStatus,
     PriceStatus,
@@ -57,6 +58,8 @@ def test_suspension_failure_is_unavailable_not_empty():
         pd.DataFrame({"other": []}),
         pd.DataFrame({"ts_code": ["bad"]}),
         pd.DataFrame({"ts_code": [123]}),
+        pd.DataFrame({"ts_code": [None]}),
+        pd.DataFrame({"ts_code": [pd.NA]}),
     ),
 )
 def test_malformed_suspension_payload_is_unavailable(payload):
@@ -154,6 +157,78 @@ def test_refresh_result_copies_universe_suspensions_and_nested_counters():
         result.nested["forged"] = True
 
 
+def test_ticker_outcome_copies_reason_and_warning_lists():
+    fingerprints = {"price": "captured"}
+    block_reasons = ["blocked"]
+    warnings = ["warning"]
+
+    outcome = TickerRefreshOutcome(
+        ticker="000001",
+        price_status=PriceStatus.CURRENT,
+        price_history_rows=1,
+        fund_flow_status=FundFlowStatus.CURRENT,
+        fund_flow_history_rows=1,
+        evidence_fingerprints=fingerprints,
+        block_reasons=block_reasons,
+        warnings=warnings,
+    )
+    fingerprints["price"] = "forged"
+    block_reasons.append("forged")
+    warnings.append("forged")
+
+    assert outcome.evidence_fingerprints == {"price": "captured"}
+    assert outcome.block_reasons == ("blocked",)
+    assert outcome.warnings == ("warning",)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    (
+        {"evidence_fingerprints": {"price": object()}},
+        {"block_reasons": ("blocked", 1)},
+        {"warnings": ([],)},
+        {"price_history_rows": True},
+        {"fund_flow_history_rows": 1.5},
+    ),
+)
+def test_ticker_outcome_rejects_invalid_nested_values_and_counts(overrides):
+    values = {
+        "ticker": "000001",
+        "price_status": PriceStatus.CURRENT,
+        "price_history_rows": 1,
+        "fund_flow_status": FundFlowStatus.CURRENT,
+        "fund_flow_history_rows": 1,
+        **overrides,
+    }
+
+    with pytest.raises(ValueError):
+        TickerRefreshOutcome(**values)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    (
+        {"price_status_counts": {"current": True}},
+        {"fund_flow_status_counts": {"current": 1.5}},
+        {"industry_index_total": False},
+        {"industry_index_failed": -1},
+        {"limit_up_injected": "1"},
+    ),
+)
+def test_refresh_stats_rejects_non_integer_or_negative_counts(overrides):
+    values = {
+        "price_status_counts": {"current": 1},
+        "fund_flow_status_counts": {"current": 1},
+        "industry_index_total": 0,
+        "industry_index_failed": 0,
+        "limit_up_injected": 0,
+        **overrides,
+    }
+
+    with pytest.raises(ValueError):
+        DailyActionCacheRefreshStats(**values)
+
+
 class TestSuspensionEvidence:
     def test_available_with_tickers(self):
         ev = SuspensionEvidence.available(date(2026, 7, 13), {"000001", "000002"})
@@ -184,6 +259,7 @@ class TestSuspensionEvidence:
             ),
             (SuspensionEvidenceStatus.AVAILABLE_NONEMPTY, {"bad"}, None),
             (SuspensionEvidenceStatus.AVAILABLE_EMPTY, set(), ""),
+            (SuspensionEvidenceStatus.AVAILABLE_EMPTY, set(), 123),
             (SuspensionEvidenceStatus.AVAILABLE_EMPTY, None, None),
         ),
     )
@@ -198,6 +274,32 @@ class TestSuspensionEvidence:
 
 
 class TestConservation:
+    @pytest.mark.parametrize(
+        "overrides",
+        (
+            {"universe_fingerprint": object()},
+            {"daily_batch_fingerprint": object()},
+        ),
+    )
+    def test_result_rejects_non_string_fingerprint_fields(self, overrides):
+        tickers = ("000001",)
+        outcomes = {"000001": _outcome("000001")}
+        values = {
+            "trade_date": date(2026, 7, 13),
+            "universe_tickers": tickers,
+            "universe_fingerprint": universe_fingerprint(tickers),
+            "daily_batch_fingerprint": None,
+            "suspension_evidence": SuspensionEvidence.available(
+                date(2026, 7, 13), set()
+            ),
+            "outcomes": outcomes,
+            "stats": derive_stats_from_outcomes(outcomes),
+            **overrides,
+        }
+
+        with pytest.raises(ValueError):
+            DailyActionRefreshResult(**values)
+
     def test_price_status_counts_sum_to_universe(self):
         outcomes = {
             "000001": _outcome("000001"),

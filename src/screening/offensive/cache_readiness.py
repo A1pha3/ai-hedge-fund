@@ -28,11 +28,32 @@ def _deep_freeze(value: object) -> object:
     return value
 
 
-def _valid_sha256(value: str) -> bool:
-    if not value.startswith("sha256:"):
+def _valid_sha256(value: object) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
         return False
     digest = value.removeprefix("sha256:")
     return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
+
+
+def _validated_count(value: object, *, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field_name} must be a non-negative integer")
+    return value
+
+
+def _validated_count_mapping(
+    value: object,
+    *,
+    field_name: str,
+) -> MappingProxyType:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} must be a mapping")
+    copied = dict(value)
+    if any(not isinstance(key, str) for key in copied):
+        raise ValueError(f"{field_name} keys must be strings")
+    for key, count in copied.items():
+        _validated_count(count, field_name=f"{field_name}[{key!r}]")
+    return MappingProxyType(copied)
 
 
 class PriceStatus(StrEnum):
@@ -141,10 +162,41 @@ class TickerRefreshOutcome:
     warnings: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.ticker, str)
+            or len(self.ticker) != 6
+            or not self.ticker.isdigit()
+        ):
+            raise ValueError("outcome ticker must be exactly six digits")
+        if not isinstance(self.price_status, PriceStatus):
+            raise ValueError("invalid price status")
+        if not isinstance(self.fund_flow_status, FundFlowStatus):
+            raise ValueError("invalid fund-flow status")
+        _validated_count(self.price_history_rows, field_name="price_history_rows")
+        _validated_count(
+            self.fund_flow_history_rows,
+            field_name="fund_flow_history_rows",
+        )
+        if not isinstance(self.evidence_fingerprints, Mapping):
+            raise ValueError("evidence_fingerprints must be a mapping")
+        fingerprints = dict(self.evidence_fingerprints)
+        if any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in fingerprints.items()
+        ):
+            raise ValueError("evidence fingerprint keys and values must be strings")
+        if not isinstance(self.block_reasons, (list, tuple)) or any(
+            not isinstance(reason, str) for reason in self.block_reasons
+        ):
+            raise ValueError("block_reasons must contain only strings")
+        if not isinstance(self.warnings, (list, tuple)) or any(
+            not isinstance(warning, str) for warning in self.warnings
+        ):
+            raise ValueError("warnings must contain only strings")
         object.__setattr__(
             self,
             "evidence_fingerprints",
-            MappingProxyType(dict(self.evidence_fingerprints)),
+            MappingProxyType(fingerprints),
         )
         object.__setattr__(self, "block_reasons", tuple(self.block_reasons))
         object.__setattr__(self, "warnings", tuple(self.warnings))
@@ -164,13 +216,25 @@ class DailyActionCacheRefreshStats:
         object.__setattr__(
             self,
             "price_status_counts",
-            MappingProxyType(dict(self.price_status_counts)),
+            _validated_count_mapping(
+                self.price_status_counts,
+                field_name="price_status_counts",
+            ),
         )
         object.__setattr__(
             self,
             "fund_flow_status_counts",
-            MappingProxyType(dict(self.fund_flow_status_counts)),
+            _validated_count_mapping(
+                self.fund_flow_status_counts,
+                field_name="fund_flow_status_counts",
+            ),
         )
+        _validated_count(self.industry_index_total, field_name="industry_index_total")
+        _validated_count(
+            self.industry_index_failed,
+            field_name="industry_index_failed",
+        )
+        _validated_count(self.limit_up_injected, field_name="limit_up_injected")
 
     def to_dict(self) -> dict:
         return {
@@ -198,6 +262,13 @@ class DailyActionRefreshResult:
     )
 
     def __post_init__(self):
+        if not isinstance(self.universe_fingerprint, str):
+            raise ValueError("universe_fingerprint must be a string")
+        if self.daily_batch_fingerprint is not None and not isinstance(
+            self.daily_batch_fingerprint,
+            str,
+        ):
+            raise ValueError("daily_batch_fingerprint must be a string or None")
         object.__setattr__(self, "universe_tickers", tuple(self.universe_tickers))
         # Validate: no duplicate tickers in universe
         if len(set(self.universe_tickers)) != len(self.universe_tickers):

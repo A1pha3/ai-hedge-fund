@@ -11,6 +11,29 @@ def _pit_evidence():
     return import_module("src.screening.offensive.pit_evidence")
 
 
+def test_fingerprint_rejects_object_that_only_stringifies_as_numeric():
+    class NumericImpostor:
+        def __str__(self) -> str:
+            return "10"
+
+    frame = pd.DataFrame(
+        [
+            {
+                "date": "2026-07-13",
+                "open": NumericImpostor(),
+                "high": 11,
+                "low": 9,
+                "close": 10.5,
+                "pct_change": 5,
+                "volume": 1000,
+            }
+        ]
+    )
+
+    with pytest.raises(_pit_evidence().PITEvidenceError):
+        _pit_evidence().canonical_price_fingerprint(frame, "000001", "20260713")
+
+
 def test_price_fingerprint_ignores_rows_after_signal_date():
     frame = pd.DataFrame(
         [

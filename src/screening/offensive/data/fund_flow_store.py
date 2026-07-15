@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.screening.offensive.pit_evidence import validate_flow_artifact
 from src.utils.atomic_files import atomic_write_csv
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,7 @@ class FundFlowStore:
             combined = combined.sort_values("date").reset_index(drop=True)
         else:
             combined = df.sort_values("date").reset_index(drop=True)
+        validate_flow_artifact(combined, ticker)
         if artifact_sink is not None:
             artifact_sink(combined.copy(deep=True))
         atomic_write_csv(path, combined)

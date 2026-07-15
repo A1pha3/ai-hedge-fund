@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal
 
+import numpy as np
 import pandas as pd
 
 _PRICE_FIELDS = ("date", "open", "high", "low", "close", "pct_change", "volume")
@@ -55,11 +56,25 @@ def _canonical_date(value: object) -> str:
 
 
 def _canonical_decimal(value: object) -> str:
-    if isinstance(value, bool) or _is_missing(value):
+    if isinstance(value, (bool, np.bool_)) or _is_missing(value):
         raise PITEvidenceError(f"invalid PIT numeric: {value!r}")
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise PITEvidenceError("invalid PIT numeric string")
+    elif type(value) in (int, float, Decimal):
+        text = str(value)
+    elif isinstance(value, np.integer):
+        text = str(int(value))
+    elif isinstance(value, np.floating):
+        text = str(value)
+    else:
+        raise PITEvidenceError(
+            f"unsupported PIT numeric scalar: {type(value).__name__}"
+        )
     try:
-        decimal_value = Decimal(str(value))
-    except Exception as exc:  # noqa: BLE001 - arbitrary provider scalars fail closed
+        decimal_value = Decimal(text)
+    except Exception as exc:  # noqa: BLE001 - invalid provider scalars fail closed
         raise PITEvidenceError("invalid PIT numeric") from exc
     if not decimal_value.is_finite():
         raise PITEvidenceError(f"non-finite PIT numeric: {value!r}")
@@ -83,6 +98,46 @@ def _canonical_row(
             _canonical_date(value) if field == "date" else _canonical_decimal(value)
         )
     return normalized
+
+
+def _validate_ticker(ticker: object, *, kind: str) -> str:
+    if not isinstance(ticker, str) or len(ticker) != 6 or not ticker.isdigit():
+        raise PITEvidenceError(f"{kind} evidence ticker must be exactly six digits")
+    return ticker
+
+
+def validate_price_artifact(frame: pd.DataFrame, ticker: object) -> None:
+    """Validate every row in a complete price artifact before persistence."""
+
+    _validate_ticker(ticker, kind="price")
+    if not isinstance(frame, pd.DataFrame):
+        raise PITEvidenceError("price evidence must be a DataFrame")
+    missing_columns = set(_PRICE_FIELDS) - set(frame.columns)
+    if missing_columns:
+        raise PITEvidenceError(
+            "missing required price columns: " + ", ".join(sorted(missing_columns))
+        )
+    for record in frame.to_dict(orient="records"):
+        _canonical_row(record, _PRICE_FIELDS)
+
+
+def validate_flow_artifact(frame: pd.DataFrame, ticker: object) -> None:
+    """Validate every row and identity in a complete flow artifact before persistence."""
+
+    if not isinstance(ticker, str) or not ticker:
+        raise PITEvidenceError("fund-flow artifact ticker must be a non-empty string")
+    expected_ticker = ticker
+    if not isinstance(frame, pd.DataFrame):
+        raise PITEvidenceError("fund-flow evidence must be a DataFrame")
+    missing_columns = set(_FLOW_FIELDS) - set(frame.columns)
+    if missing_columns:
+        raise PITEvidenceError(
+            "missing required flow columns: " + ", ".join(sorted(missing_columns))
+        )
+    for record in frame.to_dict(orient="records"):
+        _canonical_row(record, _FLOW_FIELDS)
+        if "ticker" in record and record["ticker"] != expected_ticker:
+            raise PITEvidenceError("fund-flow artifact ticker identity mismatch")
 
 
 def canonical_fingerprint(
@@ -124,8 +179,7 @@ def canonical_price_fingerprint(
 ) -> str:
     """Fingerprint price rows visible at or before ``signal_date``."""
 
-    if not isinstance(ticker, str) or len(ticker) != 6 or not ticker.isdigit():
-        raise PITEvidenceError("price evidence ticker must be exactly six digits")
+    _validate_ticker(ticker, kind="price")
     if not isinstance(frame, pd.DataFrame):
         raise PITEvidenceError("price evidence must be a DataFrame")
     missing_columns = set(_PRICE_FIELDS) - set(frame.columns)
@@ -151,8 +205,7 @@ def canonical_flow_fingerprint(
 ) -> str:
     """Fingerprint fund-flow rows visible at or before ``signal_date``."""
 
-    if not isinstance(ticker, str) or len(ticker) != 6 or not ticker.isdigit():
-        raise PITEvidenceError("fund-flow evidence ticker must be exactly six digits")
+    _validate_ticker(ticker, kind="fund-flow")
     cutoff = _canonical_date(signal_date)
     if records is None:
         raise PITEvidenceError("fund-flow evidence must not be None")

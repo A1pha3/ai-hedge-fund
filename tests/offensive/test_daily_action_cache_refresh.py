@@ -199,6 +199,104 @@ def test_price_evidence_is_copied_before_writer_mutates_input_frame(
     )
 
 
+def test_price_refresh_preserves_rows_after_requested_trade_date(tmp_path):
+    from datetime import date
+
+    from src.screening.offensive.cache_readiness import SuspensionEvidence
+    from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+
+    price_cache = tmp_path / "price"
+    price_cache.mkdir()
+    path = price_cache / "000001.csv"
+    path.write_text(
+        "date,close,open,high,low,pct_change,volume\n"
+        "2026-07-10,10,9.9,10.2,9.8,1,1000\n"
+        "2026-07-14,14,13.9,14.2,13.8,4,1400\n",
+        encoding="utf-8",
+    )
+
+    result = refresh_daily_action_caches(
+        "20260713",
+        price_cache_dir=price_cache,
+        fund_flow_cache_dir=tmp_path / "flow",
+        snapshot_dir=tmp_path / "snapshots",
+        target_tickers=["000001"],
+        daily_prices_df=_daily_prices(
+            [{"ts_code": "000001.SZ", "trade_date": "20260713", "close": 13}]
+        ),
+        suspension_loader=lambda _trade_date: SuspensionEvidence.available(
+            date(2026, 7, 13), set()
+        ),
+        refresh_industry_index=False,
+        refresh_fund_flow=False,
+    )
+
+    persisted = pd.read_csv(path, dtype={"date": str})
+    assert persisted["date"].tolist() == [
+        "2026-07-10",
+        "2026-07-13",
+        "2026-07-14",
+    ]
+    assert persisted.loc[persisted["date"] == "2026-07-14", "close"].item() == 14
+    assert result.outcomes["000001"].price_history_rows == 2
+
+
+def test_flow_refresh_preserves_rows_after_requested_trade_date(tmp_path):
+    from datetime import date
+
+    from src.screening.offensive.cache_readiness import SuspensionEvidence
+    from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+
+    price_cache = tmp_path / "price"
+    flow_cache = tmp_path / "flow"
+    price_cache.mkdir()
+    flow_cache.mkdir()
+    (price_cache / "000001.csv").write_text(
+        "date,close,open,high,low,pct_change,volume\n"
+        "2026-07-10,10,9.9,10.2,9.8,1,1000\n",
+        encoding="utf-8",
+    )
+    flow_path = flow_cache / "000001.csv"
+    flow_path.write_text(
+        "date,ticker,close,pct_change,main_net_inflow,main_net_pct\n"
+        "20260710,000001,10,1,1000,2\n"
+        "20260714,000001,14,4,1400,5\n",
+        encoding="utf-8",
+    )
+
+    result = refresh_daily_action_caches(
+        "20260713",
+        price_cache_dir=price_cache,
+        fund_flow_cache_dir=flow_cache,
+        snapshot_dir=tmp_path / "snapshots",
+        target_tickers=["000001"],
+        daily_prices_df=_daily_prices(
+            [{"ts_code": "000001.SZ", "trade_date": "20260713", "close": 13}]
+        ),
+        fund_flow_fetch_fn=lambda *_args, **_kwargs: pd.DataFrame(
+            [
+                {
+                    "date": "20260713",
+                    "close": 13,
+                    "pct_change": 3,
+                    "main_net_inflow": 1300,
+                    "main_net_pct": 4,
+                }
+            ]
+        ),
+        suspension_loader=lambda _trade_date: SuspensionEvidence.available(
+            date(2026, 7, 13), set()
+        ),
+        refresh_industry_index=False,
+        fund_flow_rate_limit_sec=0,
+    )
+
+    persisted = pd.read_csv(flow_path, dtype={"date": str, "ticker": str})
+    assert persisted["date"].tolist() == ["20260710", "20260713", "20260714"]
+    assert persisted.loc[persisted["date"] == "20260714", "close"].item() == 14
+    assert result.outcomes["000001"].fund_flow_history_rows == 2
+
+
 def test_flow_evidence_is_bound_to_frame_captured_before_post_write_replacement(
     tmp_path,
     monkeypatch,
@@ -300,6 +398,93 @@ def test_failed_price_write_does_not_retain_baseline_fingerprint(tmp_path, monke
 
     assert result.outcomes["000001"].price_status is PriceStatus.FAILED
     assert "price" not in result.outcomes["000001"].evidence_fingerprints
+
+
+def test_malformed_price_baseline_is_rejected_before_atomic_write(tmp_path):
+    from datetime import date
+
+    from src.screening.offensive.cache_readiness import PriceStatus, SuspensionEvidence
+    from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+
+    price_cache = tmp_path / "price"
+    price_cache.mkdir()
+    path = price_cache / "000001.csv"
+    path.write_text(
+        "date,close,open,low,pct_change,volume\n"
+        "2026-07-10,10,9.9,9.8,1,1000\n",
+        encoding="utf-8",
+    )
+    before = path.read_bytes()
+
+    result = refresh_daily_action_caches(
+        "20260713",
+        price_cache_dir=price_cache,
+        fund_flow_cache_dir=tmp_path / "flow",
+        snapshot_dir=tmp_path / "snapshots",
+        target_tickers=["000001"],
+        daily_prices_df=_daily_prices(
+            [{"ts_code": "000001.SZ", "trade_date": "20260713"}]
+        ),
+        suspension_loader=lambda _trade_date: SuspensionEvidence.available(
+            date(2026, 7, 13), set()
+        ),
+        refresh_industry_index=False,
+        refresh_fund_flow=False,
+    )
+
+    assert path.read_bytes() == before
+    assert result.outcomes["000001"].price_status is PriceStatus.FAILED
+    assert "price" not in result.outcomes["000001"].evidence_fingerprints
+
+
+def test_malformed_flow_provider_is_rejected_before_atomic_write(tmp_path):
+    from datetime import date
+
+    from src.screening.offensive.cache_readiness import (
+        FundFlowStatus,
+        SuspensionEvidence,
+    )
+    from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+
+    price_cache = tmp_path / "price"
+    flow_cache = tmp_path / "flow"
+    price_cache.mkdir()
+    flow_cache.mkdir()
+    (price_cache / "000001.csv").write_text(
+        "date,close,open,high,low,pct_change,volume\n"
+        "2026-07-10,10,9.9,10.2,9.8,1,1000\n",
+        encoding="utf-8",
+    )
+    flow_path = flow_cache / "000001.csv"
+    flow_path.write_text(
+        "date,ticker,close,pct_change,main_net_inflow,main_net_pct\n"
+        "20260710,000001,10,1,1000,2\n",
+        encoding="utf-8",
+    )
+    before = flow_path.read_bytes()
+
+    result = refresh_daily_action_caches(
+        "20260713",
+        price_cache_dir=price_cache,
+        fund_flow_cache_dir=flow_cache,
+        snapshot_dir=tmp_path / "snapshots",
+        target_tickers=["000001"],
+        daily_prices_df=_daily_prices(
+            [{"ts_code": "000001.SZ", "trade_date": "20260713"}]
+        ),
+        fund_flow_fetch_fn=lambda *_args, **_kwargs: pd.DataFrame(
+            [{"date": "20260713"}]
+        ),
+        suspension_loader=lambda _trade_date: SuspensionEvidence.available(
+            date(2026, 7, 13), set()
+        ),
+        refresh_industry_index=False,
+        fund_flow_rate_limit_sec=0,
+    )
+
+    assert flow_path.read_bytes() == before
+    assert result.outcomes["000001"].fund_flow_status is FundFlowStatus.FAILED
+    assert "fund_flow" not in result.outcomes["000001"].evidence_fingerprints
 
 
 def test_refresh_fetches_daily_batch_once_when_there_are_no_limit_ups(tmp_path):

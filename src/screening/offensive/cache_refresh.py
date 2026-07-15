@@ -35,6 +35,7 @@ from src.screening.offensive.pit_evidence import (
     canonical_fingerprint,
     canonical_flow_fingerprint,
     canonical_price_fingerprint,
+    validate_price_artifact,
 )
 from src.utils.atomic_files import atomic_write_csv
 from src.utils.date_utils import latest_open_trade_date_on_or_before
@@ -330,6 +331,7 @@ def _write_price_cache_row(
     combined["date"] = combined["date"].map(_price_date)
     combined = combined.drop_duplicates(subset=["date"], keep="last")
     combined = combined.sort_values("date").reset_index(drop=True)
+    validate_price_artifact(combined, path.stem)
     if artifact_sink is not None:
         artifact_sink(combined.copy(deep=True))
     atomic_write_csv(path, combined)
@@ -616,7 +618,7 @@ def load_suspension_evidence(
         tickers: set[str] = set()
         for code in df["ts_code"]:
             if pd.isna(code):
-                continue
+                raise ValueError("suspension snapshot contains null ticker identity")
             tickers.add(_provider_code6(code))
         rows = [
             {"date": trade_date_dt.isoformat(), "ticker": ticker}
@@ -809,22 +811,49 @@ def _daily_batch_evidence_fingerprint(
     return canonical_fingerprint("daily_price_batch", "*", rows)
 
 
-def _read_pit_cache(path: Path, trade_date: str) -> tuple[pd.DataFrame, bool, bool]:
-    """Return PIT rows, exact-date presence, and whether the cache read failed."""
+def _project_pit_frame(frame: pd.DataFrame, trade_date: str) -> pd.DataFrame:
+    """Return a detached point-in-time projection without changing the baseline."""
+
+    if "date" not in frame.columns:
+        raise ValueError("cache frame must contain date")
+    requested = _fund_flow_date(trade_date)
+    normalized_dates = frame["date"].map(_fund_flow_date)
+    return frame[normalized_dates <= requested].copy(deep=True).reset_index(drop=True)
+
+
+def _read_cache_baseline(
+    path: Path,
+    trade_date: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, bool, bool]:
+    """Return full baseline, PIT projection, current presence, and read failure."""
 
     if not path.exists():
-        return pd.DataFrame(), False, False
+        empty = pd.DataFrame()
+        return empty, empty.copy(), False, False
     try:
-        frame = pd.read_csv(path, dtype={"date": str, "ticker": str})
-        if "date" not in frame.columns:
-            return frame.iloc[0:0], False, True
+        full_frame = pd.read_csv(path, dtype={"date": str, "ticker": str})
+        if "date" not in full_frame.columns:
+            return full_frame, full_frame.iloc[0:0], False, True
         requested = _fund_flow_date(trade_date)
-        normalized_dates = frame["date"].map(_fund_flow_date)
-        pit_frame = frame[normalized_dates <= requested].copy().reset_index(drop=True)
-        return pit_frame, bool((normalized_dates == requested).any()), False
+        normalized_dates = full_frame["date"].map(_fund_flow_date)
+        pit_frame = _project_pit_frame(full_frame, trade_date)
+        return (
+            full_frame.copy(deep=True),
+            pit_frame,
+            bool((normalized_dates == requested).any()),
+            False,
+        )
     except Exception:  # noqa: BLE001 - failed evidence is represented in the outcome
         logger.debug("[cache_refresh] failed to read PIT cache %s", path, exc_info=True)
-        return pd.DataFrame(), False, True
+        empty = pd.DataFrame()
+        return empty, empty.copy(), False, True
+
+
+def _read_pit_cache(path: Path, trade_date: str) -> tuple[pd.DataFrame, bool, bool]:
+    """Backward-compatible PIT-only cache reader."""
+
+    _, pit_frame, is_current, failed = _read_cache_baseline(path, trade_date)
+    return pit_frame, is_current, failed
 
 
 def _frame_has_current_row(frame: pd.DataFrame, trade_date: str) -> bool:
@@ -941,6 +970,8 @@ def refresh_daily_action_caches(
     flow_dir = Path(fund_flow_cache_dir)
     price_frames: dict[str, pd.DataFrame] = {}
     flow_frames: dict[str, pd.DataFrame] = {}
+    price_full_frames: dict[str, pd.DataFrame] = {}
+    flow_full_frames: dict[str, pd.DataFrame] = {}
     price_current: dict[str, bool] = {}
     flow_current: dict[str, bool] = {}
     price_read_failures: set[str] = set()
@@ -951,11 +982,11 @@ def refresh_daily_action_caches(
         flow_path = flow_dir / f"{ticker}.csv"
         if price_path.exists():
             existing_price_tickers.add(ticker)
-        captured_price, is_price_current, price_failed = _read_pit_cache(
+        full_price, captured_price, is_price_current, price_failed = _read_cache_baseline(
             price_path,
             effective_trade_date,
         )
-        captured_flow, is_flow_current, flow_failed = _read_pit_cache(
+        full_flow, captured_flow, is_flow_current, flow_failed = _read_cache_baseline(
             flow_path,
             effective_trade_date,
         )
@@ -964,10 +995,12 @@ def refresh_daily_action_caches(
         if price_failed:
             price_read_failures.add(ticker)
         else:
+            price_full_frames[ticker] = full_price.copy(deep=True)
             price_frames[ticker] = captured_price.copy(deep=True)
         if flow_failed:
             flow_read_failures.add(ticker)
         else:
+            flow_full_frames[ticker] = full_flow.copy(deep=True)
             flow_frames[ticker] = captured_flow.copy(deep=True)
     if injected:
         logger.info(
@@ -1002,14 +1035,16 @@ def refresh_daily_action_caches(
         daily_prices_df=resolved_daily_prices,
         target_tickers=frozen_universe,
         backfill_price_history_fn=backfill_price_history_fn,
-        initial_frames=price_frames,
+        initial_frames=price_full_frames,
         initial_existing_tickers=existing_price_tickers,
         unreadable_tickers=price_read_failures,
         evidence_collector=written_price_frames,
     )
-    price_frames.update(written_price_frames)
     for ticker, frame in written_price_frames.items():
-        price_current[ticker] = _frame_has_current_row(frame, effective_trade_date)
+        price_frames[ticker] = _project_pit_frame(frame, effective_trade_date)
+        price_current[ticker] = _frame_has_current_row(
+            price_frames[ticker], effective_trade_date
+        )
     for ticker in price_stats.failed_tickers:
         price_frames.pop(ticker, None)
         price_current[ticker] = False
@@ -1058,13 +1093,15 @@ def refresh_daily_action_caches(
             rate_limit_sec=rate_limit,
             max_tickers=0,
             suspension_evidence=suspension_evidence,
-            initial_frames=flow_frames,
+            initial_frames=flow_full_frames,
             unreadable_tickers=flow_read_failures,
             evidence_collector=written_flow_frames,
         )
-    flow_frames.update(written_flow_frames)
     for ticker, frame in written_flow_frames.items():
-        flow_current[ticker] = _frame_has_current_row(frame, effective_trade_date)
+        flow_frames[ticker] = _project_pit_frame(frame, effective_trade_date)
+        flow_current[ticker] = _frame_has_current_row(
+            flow_frames[ticker], effective_trade_date
+        )
     for ticker in fund_flow_stats.failed_tickers:
         flow_frames.pop(ticker, None)
         flow_current[ticker] = False
