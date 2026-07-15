@@ -7,13 +7,14 @@
 
 from __future__ import annotations
 
+import argparse
 from datetime import date, datetime
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from src.cli.input import _resolve_default_end_date, resolve_dates
+from src.cli.input import add_date_args, _resolve_default_end_date, resolve_dates
 from src.utils.date_utils import SignalSessionUnavailable
 
 
@@ -220,6 +221,29 @@ class TestResolveDatesExplicitOverride:
         )
 
         assert end == "2026-07-12"
+
+
+def test_explicit_research_end_date_avoids_eager_calendar_resolution(monkeypatch):
+    def unavailable_calendar():
+        raise SignalSessionUnavailable("authoritative calendar unavailable")
+
+    monkeypatch.setattr(
+        "src.cli.input._resolve_default_end_date", unavailable_calendar
+    )
+    parser = add_date_args(
+        argparse.ArgumentParser(),
+        default_months_back=3,
+    )
+
+    args = parser.parse_args(["--end-date", "2026-07-12"])
+    start, end = resolve_dates(
+        args.start_date,
+        args.end_date,
+        default_months_back=3,
+    )
+
+    assert start == "2026-04-12"
+    assert end == "2026-07-12"
 
 
 def test_parse_cli_inputs_routes_auto_to_production_strict(monkeypatch):

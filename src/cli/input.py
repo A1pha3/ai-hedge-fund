@@ -123,19 +123,19 @@ def add_date_args(parser: argparse.ArgumentParser, *, default_months_back: int |
         parser.add_argument("--start-date", type=str, help="Start date (YYYY-MM-DD)")
         parser.add_argument("--end-date", type=str, help="End date (YYYY-MM-DD). Default: previous day if before 17:00, else today")
     else:
-        # end-date 无 argparse default → resolve_dates 里动态计算 (17:00 阈值)。
-        # 这样用户显式传 --end-date 时完全不受影响, 不传时走 _resolve_default_end_date。
+        # Dates remain unset until resolve_dates sees the final explicit/default
+        # end date. This avoids loading the production calendar while argparse
+        # is still parsing a research/backtest override.
         parser.add_argument(
             "--end-date",
             type=str,
             default=None,
             help="End date in YYYY-MM-DD format. Default: previous day if before 17:00, else today",
         )
-        default_end_for_start = _resolve_default_end_date()
         parser.add_argument(
             "--start-date",
             type=str,
-            default=(datetime.strptime(default_end_for_start, "%Y-%m-%d") - relativedelta(months=default_months_back)).strftime("%Y-%m-%d"),
+            default=None,
             help="Start date in YYYY-MM-DD format",
         )
     return parser
