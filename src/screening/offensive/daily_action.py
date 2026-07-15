@@ -1455,7 +1455,11 @@ def resolve_daily_action_signal(
     open_sessions: Sequence[date] | None = None,
 ) -> tuple[date, str]:
     """Resolve the authoritative --daily-action signal session and regime."""
-    sessions = tuple(open_sessions or _load_authoritative_session_dates())
+    sessions = tuple(
+        _load_authoritative_session_dates()
+        if open_sessions is None
+        else open_sessions
+    )
     selected = resolve_signal_session(
         now_cn=now_cn or _current_cn_datetime(),
         open_sessions=sessions,

@@ -7,8 +7,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -121,6 +122,40 @@ class TestResolveDefaultEndDate:
             with pytest.raises(SignalSessionUnavailable):
                 _resolve_default_end_date()
 
+    def test_auto_adapter_uses_aware_shanghai_clock(self, monkeypatch):
+        observed = {}
+
+        def capture_clock(**kwargs):
+            observed["now_cn"] = kwargs["now_cn"]
+            return date(2026, 7, 13)
+
+        monkeypatch.setattr(
+            "src.utils.date_utils.resolve_signal_session", capture_clock
+        )
+
+        assert _resolve_default_end_date() == "2026-07-13"
+        assert observed["now_cn"].tzinfo is not None
+        assert observed["now_cn"].tzinfo.key == "Asia/Shanghai"
+
+    def test_auto_and_daily_action_adapters_share_cutoff(self):
+        from src.screening.offensive.daily_action import resolve_daily_action_signal
+
+        sessions = (date(2026, 7, 10), date(2026, 7, 13))
+        before_cutoff = datetime(
+            2026, 7, 13, 16, 59, tzinfo=ZoneInfo("Asia/Shanghai")
+        )
+
+        with patch("src.cli.input.datetime") as mock_dt:
+            mock_dt.now.return_value = before_cutoff
+            auto_date = _resolve_default_end_date()
+        daily_date, _ = resolve_daily_action_signal(
+            now_cn=before_cutoff,
+            open_sessions=sessions,
+        )
+
+        assert auto_date == "2026-07-10"
+        assert daily_date == date(2026, 7, 10)
+
 
 class TestResolveDatesExplicitOverride:
     """显式 --end-date 不受 17:00 阈值影响。"""
@@ -162,3 +197,59 @@ class TestResolveDatesExplicitOverride:
         """显式指定非法日期格式 → 报错。"""
         with pytest.raises(ValueError, match="End date must be"):
             resolve_dates(None, "2026/07/09", default_months_back=3)
+
+    def test_auto_strict_override_rejects_non_session(self):
+        with patch(
+            "src.screening.offensive.daily_action._load_authoritative_session_dates",
+            return_value=(date(2026, 7, 10), date(2026, 7, 13)),
+        ):
+            with pytest.raises(SignalSessionUnavailable):
+                resolve_dates(
+                    None,
+                    "2026-07-12",
+                    default_months_back=3,
+                    production_strict=True,
+                )
+
+    def test_research_override_remains_unrestricted(self):
+        _, end = resolve_dates(
+            None,
+            "2026-07-12",
+            default_months_back=3,
+            production_strict=False,
+        )
+
+        assert end == "2026-07-12"
+
+
+def test_parse_cli_inputs_routes_auto_to_production_strict(monkeypatch):
+    from src.cli.input import parse_cli_inputs
+
+    observed = {}
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["main.py", "--auto", "--end-date", "2026-07-13"],
+    )
+    monkeypatch.setattr(
+        "src.cli.input._resolve_default_end_date", lambda: "2026-07-13"
+    )
+    monkeypatch.setattr(
+        "src.cli.input.resolve_dates",
+        lambda start, end, **kwargs: (
+            observed.update(kwargs) or "2026-04-13",
+            end,
+        ),
+    )
+    monkeypatch.setattr(
+        "src.cli.input.get_default_model_config",
+        lambda: ("test-model", "test-provider"),
+    )
+
+    parse_cli_inputs(
+        description="test",
+        require_tickers=False,
+        default_months_back=3,
+    )
+
+    assert observed["production_strict"] is True

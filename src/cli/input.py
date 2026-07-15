@@ -2,6 +2,7 @@ import argparse
 import sys
 from dataclasses import dataclass
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import questionary
 from colorama import Fore, Style
@@ -111,7 +112,7 @@ def _resolve_default_end_date() -> str:
     )
 
     resolved = resolve_signal_session(
-        now_cn=datetime.now(),
+        now_cn=datetime.now(ZoneInfo("Asia/Shanghai")),
         open_sessions=_load_authoritative_session_dates(),
     )
     return format_date(resolved.strftime("%Y%m%d"))
@@ -233,7 +234,13 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
     return model_name, model_provider or ""
 
 
-def resolve_dates(start_date: str | None, end_date: str | None, *, default_months_back: int | None = None) -> tuple[str, str]:
+def resolve_dates(
+    start_date: str | None,
+    end_date: str | None,
+    *,
+    default_months_back: int | None = None,
+    production_strict: bool = False,
+) -> tuple[str, str]:
     if start_date:
         try:
             datetime.strptime(start_date, "%Y-%m-%d")
@@ -245,9 +252,21 @@ def resolve_dates(start_date: str | None, end_date: str | None, *, default_month
         except ValueError as e:
             raise ValueError("End date must be in YYYY-MM-DD format") from e
 
-    # 17:00 阈值: 不传 --end-date 时, 未过 17:00 取前一天 (当日资金流数据未就绪)。
-    # 显式传 --end-date 时 end_date 非空, 完全尊重用户指定。
-    final_end = end_date or _resolve_default_end_date()
+    final_end = end_date
+    if end_date and production_strict:
+        from src.screening.offensive.daily_action import (
+            _load_authoritative_session_dates,
+        )
+        from src.utils.date_utils import resolve_signal_session
+
+        selected = resolve_signal_session(
+            now_cn=datetime.now(ZoneInfo("Asia/Shanghai")),
+            open_sessions=_load_authoritative_session_dates(),
+            override=end_date,
+        )
+        final_end = selected.strftime("%Y-%m-%d")
+    if final_end is None:
+        final_end = _resolve_default_end_date()
     if start_date:
         final_start = start_date
     else:
@@ -340,7 +359,12 @@ def parse_cli_inputs(
             }
         )
         model_name, model_provider = select_model(getattr(args, "ollama", False), getattr(args, "model", None))
-    start_date, end_date = resolve_dates(getattr(args, "start_date", None), getattr(args, "end_date", None), default_months_back=default_months_back)
+    start_date, end_date = resolve_dates(
+        getattr(args, "start_date", None),
+        getattr(args, "end_date", None),
+        default_months_back=default_months_back,
+        production_strict=is_auto,
+    )
 
     return CLIInputs(
         tickers=tickers,

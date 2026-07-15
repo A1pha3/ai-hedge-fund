@@ -166,3 +166,20 @@ def test_daily_action_rejects_weekend_override() -> None:
             ),
             open_sessions=(date(2026, 7, 10), date(2026, 7, 13)),
         )
+
+
+def test_daily_action_explicit_empty_calendar_does_not_reload(monkeypatch) -> None:
+    import src.screening.offensive.daily_action as da
+
+    def unexpected_reload():
+        raise AssertionError("explicit empty calendar must fail closed")
+
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", unexpected_reload)
+
+    with pytest.raises(SignalSessionUnavailable):
+        da.resolve_daily_action_signal(
+            now_cn=datetime(
+                2026, 7, 13, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")
+            ),
+            open_sessions=(),
+        )
