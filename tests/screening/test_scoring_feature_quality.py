@@ -32,7 +32,7 @@ _FINGERPRINT = ticker_set_fingerprint(_TICKERS)
 _OTHER_FINGERPRINT = ticker_set_fingerprint(["300001", "300002", "688001"])
 
 
-def _required_success_evidence(nonempty: int = 5) -> dict[str, Any]:
+def _required_success_evidence(nonempty: int = 3) -> dict[str, Any]:
     """A required family with a fully successful observation."""
     return {
         "observation_status": "success",
@@ -69,6 +69,29 @@ def _optional_unavailable_evidence() -> dict[str, Any]:
         "refresh_failed_count": 0,
         "consumption_failed_count": 0,
     }
+
+
+def test_required_success_rejects_inconsistent_counts():
+    evidence = _required_success_evidence()
+    evidence.update(
+        eligible_count=300,
+        requested_count=1,
+        observed_count=1,
+        usable_count=1,
+    )
+    with pytest.raises(ValueError, match="count conservation"):
+        FeatureEvidence.from_mapping(
+            "price_history", evidence, trade_date="20260713"
+        )
+
+
+def test_required_success_rejects_missing_input_fingerprint():
+    evidence = _required_success_evidence()
+    evidence["input_fingerprint"] = None
+    with pytest.raises(ValueError, match="input_fingerprint"):
+        FeatureEvidence.from_mapping(
+            "financial_metrics", evidence, trade_date="20260713"
+        )
 
 
 def quality_payload(
@@ -119,6 +142,7 @@ def quality_payload(
         scoring_features.update(deepcopy(extra_scoring_features))
 
     return {
+        "date": "20260713",
         "data_quality": {
             "scoring_features": scoring_features,
             # Compatibility projection: must NOT affect the verdict.
@@ -401,6 +425,7 @@ def test_optional_refresh_failed_is_warning() -> None:
             "daily_fund_flow_metrics": {
                 **_optional_unavailable_evidence(),
                 "observation_status": "success",
+                "eligible_count": 3,
                 "requested_count": 3,
                 "observed_count": 3,
                 "usable_count": 3,
@@ -525,13 +550,17 @@ def test_missing_scoring_features_block_blocks() -> None:
 
 def test_evidence_rejects_unknown_family() -> None:
     with pytest.raises(ValueError, match="unknown scoring feature family"):
-        FeatureEvidence.from_mapping("not_a_family", {"observation_status": "success"})
+        FeatureEvidence.from_mapping(
+            "not_a_family", {"observation_status": "success"}, trade_date="20260713"
+        )
 
 
 def test_evidence_rejects_invalid_status() -> None:
     with pytest.raises(ValueError, match="invalid observation_status"):
         FeatureEvidence.from_mapping(
-            "price_history", {"observation_status": "kinda_ok"}
+            "price_history",
+            {"observation_status": "kinda_ok"},
+            trade_date="20260713",
         )
 
 
@@ -540,45 +569,44 @@ def test_evidence_rejects_bool_count() -> None:
     raw = _required_success_evidence()
     raw["requested_count"] = True
     with pytest.raises(ValueError, match="requested_count must be int, got bool"):
-        FeatureEvidence.from_mapping("price_history", raw)
+        FeatureEvidence.from_mapping("price_history", raw, trade_date="20260713")
 
 
 def test_evidence_rejects_negative_count() -> None:
     raw = _required_success_evidence()
     raw["observed_count"] = -1
     with pytest.raises(ValueError, match="observed_count=-1 is negative"):
-        FeatureEvidence.from_mapping("price_history", raw)
+        FeatureEvidence.from_mapping("price_history", raw, trade_date="20260713")
 
 
 def test_evidence_rejects_non_int_count() -> None:
     raw = _required_success_evidence()
     raw["usable_count"] = 3.5
     with pytest.raises(ValueError, match="usable_count must be int"):
-        FeatureEvidence.from_mapping("price_history", raw)
+        FeatureEvidence.from_mapping("price_history", raw, trade_date="20260713")
 
 
 def test_evidence_rejects_non_string_fingerprint() -> None:
     raw = _required_success_evidence()
     raw["requested_tickers_fingerprint"] = 12345
     with pytest.raises(ValueError, match="requested_tickers_fingerprint must be str or None"):
-        FeatureEvidence.from_mapping("price_history", raw)
+        FeatureEvidence.from_mapping("price_history", raw, trade_date="20260713")
 
 
 def test_evidence_accepts_none_fingerprints() -> None:
-    raw = _required_success_evidence()
-    raw["requested_tickers_fingerprint"] = None
-    raw["observed_tickers_fingerprint"] = None
-    raw["usable_tickers_fingerprint"] = None
-    raw["input_fingerprint"] = None
-    raw["as_of_max"] = None
-    evidence = FeatureEvidence.from_mapping("price_history", raw)
+    raw = _optional_unavailable_evidence()
+    evidence = FeatureEvidence.from_mapping(
+        "industry_pe_medians", raw, trade_date="20260713"
+    )
     assert evidence.requested_tickers_fingerprint is None
     assert evidence.as_of_max is None
 
 
 def test_evidence_defaults_counts_to_zero() -> None:
     evidence = FeatureEvidence.from_mapping(
-        "industry_pe_medians", {"observation_status": "unavailable"}
+        "industry_pe_medians",
+        {"observation_status": "unavailable"},
+        trade_date="20260713",
     )
     assert evidence.requested_count == 0
     assert evidence.usable_count == 0
@@ -587,7 +615,9 @@ def test_evidence_defaults_counts_to_zero() -> None:
 
 def test_evidence_status_is_coerced_to_enum() -> None:
     evidence = FeatureEvidence.from_mapping(
-        "price_history", {"observation_status": "success"}
+        "price_history",
+        _required_success_evidence(),
+        trade_date="20260713",
     )
     assert evidence.observation_status is ObservationStatus.SUCCESS
 

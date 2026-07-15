@@ -78,6 +78,8 @@ class FeaturePolicy:
     consumer_component: str
     empty_semantics: str  # "illegal" | "legal_when_observed" | "always_legal"
     freshness_rule: str = "exact_trade_date"
+    min_usable_rows: int = 0
+    required_score_components: tuple[str, ...] = ()
 
 
 # 集中式策略注册表：新增/删除特征必须先在此登记。
@@ -88,6 +90,8 @@ FEATURE_POLICY_TABLE: Mapping[str, FeaturePolicy] = {
         consumer_component="score_batch.price_history",
         empty_semantics="illegal",
         freshness_rule="exact_trade_date",
+        min_usable_rows=200,
+        required_score_components=("trend", "mean_reversion"),
     ),
     "financial_metrics": FeaturePolicy(
         name="financial_metrics",
@@ -95,6 +99,7 @@ FEATURE_POLICY_TABLE: Mapping[str, FeaturePolicy] = {
         consumer_component="score_batch.financial_metrics",
         empty_semantics="illegal",
         freshness_rule="exact_trade_date",
+        required_score_components=("fundamental",),
     ),
     "event_inputs": FeaturePolicy(
         name="event_inputs",
@@ -102,6 +107,7 @@ FEATURE_POLICY_TABLE: Mapping[str, FeaturePolicy] = {
         consumer_component="score_batch.event_inputs",
         empty_semantics="legal_when_observed",
         freshness_rule="exact_trade_date",
+        required_score_components=("event_sentiment",),
     ),
     "industry_pe_medians": FeaturePolicy(
         name="industry_pe_medians",
@@ -216,7 +222,13 @@ class FeatureEvidence:
     as_of_max: str | None = None
 
     @classmethod
-    def from_mapping(cls, family: str, raw: Mapping[str, Any]) -> FeatureEvidence:
+    def from_mapping(
+        cls,
+        family: str,
+        raw: Mapping[str, Any],
+        *,
+        trade_date: str,
+    ) -> FeatureEvidence:
         """Parse and validate a feature family evidence mapping.
 
         Raises :class:`ValueError` on any schema violation: unknown family,
@@ -279,6 +291,54 @@ class FeatureEvidence:
                 )
             kwargs[field_name] = value
 
+        policy = FEATURE_POLICY_TABLE[family]
+        nonempty = kwargs["nonempty_count"]
+        usable = kwargs["usable_count"]
+        observed = kwargs["observed_count"]
+        requested = kwargs["requested_count"]
+        eligible = kwargs["eligible_count"]
+        if not (0 <= nonempty <= usable <= observed <= requested <= eligible):
+            raise ValueError(f"evidence for {family!r}: count conservation failed")
+
+        if status is ObservationStatus.SUCCESS:
+            if not (requested == observed == usable):
+                raise ValueError(
+                    f"evidence for {family!r}: success requires full coverage"
+                )
+            if kwargs["stale_count"] or kwargs["consumption_failed_count"]:
+                raise ValueError(
+                    f"evidence for {family!r}: success cannot consume stale or failed rows"
+                )
+            if (
+                policy.min_usable_rows > 0
+                and kwargs["usable_rows_min"] < policy.min_usable_rows
+            ):
+                raise ValueError(
+                    f"evidence for {family!r}: usable_rows_min must be at least "
+                    f"{policy.min_usable_rows}"
+                )
+
+        if policy.required:
+            if not kwargs["input_fingerprint"]:
+                raise ValueError(
+                    f"evidence for {family!r}: input_fingerprint is required"
+                )
+            if _compact_date(kwargs["as_of_max"]) != _compact_date(trade_date):
+                raise ValueError(
+                    f"evidence for {family!r}: as_of_max must equal trade_date"
+                )
+            requested_fp = kwargs["requested_tickers_fingerprint"]
+            observed_fp = kwargs["observed_tickers_fingerprint"]
+            usable_fp = kwargs["usable_tickers_fingerprint"]
+            if (
+                not requested_fp
+                or requested_fp != observed_fp
+                or observed_fp != usable_fp
+            ):
+                raise ValueError(
+                    f"evidence for {family!r}: ticker identity mismatch"
+                )
+
         return cls(**kwargs)
 
 
@@ -296,6 +356,14 @@ def ticker_set_fingerprint(tickers: Sequence[str]) -> str:
     """
     canonical = json.dumps(sorted(set(tickers)), separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _compact_date(value: Any) -> str | None:
+    if value is None:
+        return None
+    raw = str(value).strip()
+    compact = raw.replace("-", "")
+    return compact if len(compact) == 8 and compact.isdigit() else None
 
 
 # ---------------------------------------------------------------------------
@@ -343,6 +411,7 @@ def assess_auto_quality(payload: Mapping[str, Any]) -> QualityDecision:
             ),
         )
 
+    trade_date = payload.get("date")
     blockers: list[QualityIssue] = []
     warnings: list[QualityIssue] = []
 
@@ -356,11 +425,11 @@ def assess_auto_quality(payload: Mapping[str, Any]) -> QualityDecision:
             )
             continue
         try:
-            evidence = FeatureEvidence.from_mapping(family, raw)
-        except ValueError as exc:
-            blockers.append(
-                QualityIssue(family, "evidence_schema_invalid", detail=str(exc))
+            evidence = FeatureEvidence.from_mapping(
+                family, raw, trade_date=str(trade_date or "")
             )
+        except ValueError as exc:
+            blockers.extend(_required_schema_issues(family, raw, exc))
             continue
 
         _assess_required_family(policy, evidence, blockers, warnings)
@@ -375,7 +444,9 @@ def assess_auto_quality(payload: Mapping[str, Any]) -> QualityDecision:
             )
             continue
         try:
-            evidence = FeatureEvidence.from_mapping(family, raw)
+            evidence = FeatureEvidence.from_mapping(
+                family, raw, trade_date=str(trade_date or "")
+            )
         except ValueError as exc:
             warnings.append(
                 QualityIssue(
@@ -391,6 +462,50 @@ def assess_auto_quality(payload: Mapping[str, Any]) -> QualityDecision:
         blockers=tuple(blockers),
         warnings=tuple(warnings),
     )
+
+
+def _required_schema_issues(
+    family: str, raw: object, error: ValueError
+) -> list[QualityIssue]:
+    """Preserve stable diagnostic codes while validation fails at the boundary."""
+    detail = str(error)
+    if not isinstance(raw, Mapping):
+        return [QualityIssue(family, "evidence_schema_invalid", detail=detail)]
+    if "ticker identity mismatch" in detail:
+        fingerprints = (
+            raw.get("requested_tickers_fingerprint"),
+            raw.get("observed_tickers_fingerprint"),
+            raw.get("usable_tickers_fingerprint"),
+        )
+        code = (
+            "required_ticker_fingerprint_missing"
+            if any(not fingerprint for fingerprint in fingerprints)
+            else "required_ticker_fingerprint_mismatch"
+        )
+        return [QualityIssue(family, code, detail=detail)]
+    if "success cannot consume stale or failed rows" in detail:
+        issues: list[QualityIssue] = []
+        stale_count = raw.get("stale_count")
+        failed_count = raw.get("consumption_failed_count")
+        if (
+            isinstance(stale_count, int)
+            and not isinstance(stale_count, bool)
+            and stale_count > 0
+        ):
+            issues.append(
+                QualityIssue(family, "required_stale_fallback", detail=detail)
+            )
+        if (
+            isinstance(failed_count, int)
+            and not isinstance(failed_count, bool)
+            and failed_count > 0
+        ):
+            issues.append(
+                QualityIssue(family, "required_consumption_failed", detail=detail)
+            )
+        if issues:
+            return issues
+    return [QualityIssue(family, "evidence_schema_invalid", detail=detail)]
 
 
 def _assess_required_family(

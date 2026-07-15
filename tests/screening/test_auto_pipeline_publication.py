@@ -150,7 +150,9 @@ def test_default_quality_rejects_empty_or_malformed_evidence(quality: object) ->
     )
 
 
-def _required_success_evidence(nonempty: int = 5) -> dict[str, Any]:
+def _required_success_evidence(
+    nonempty: int = 3, *, trade_date: str = "20260713"
+) -> dict[str, Any]:
     """A required family with a fully successful observation.
 
     Matches the schema produced by ``ScoringFeatureStore.build_quality_summary``
@@ -175,7 +177,7 @@ def _required_success_evidence(nonempty: int = 5) -> dict[str, Any]:
         "observed_tickers_fingerprint": fingerprint,
         "usable_tickers_fingerprint": fingerprint,
         "input_fingerprint": "sha256:input",
-        "as_of_max": "20260713",
+        "as_of_max": trade_date,
     }
 
 
@@ -188,6 +190,7 @@ def strict_required_quality_payload() -> dict[str, Any]:
     affect health — callers mutate it to verify domain isolation.
     """
     return {
+        "date": "20260713",
         "data_freshness": {"fresh": True},
         "data_quality": {
             "scoring_features": {
@@ -387,9 +390,13 @@ def test_default_manifest_uses_immutable_run_bound_cache_snapshot(
         "data_freshness": {"fresh": True},
         "data_quality": {
             "scoring_features": {
-                "price_history": _required_success_evidence(),
-                "financial_metrics": _required_success_evidence(),
-                "event_inputs": _required_success_evidence(nonempty=0),
+                "price_history": _required_success_evidence(trade_date="20260710"),
+                "financial_metrics": _required_success_evidence(
+                    trade_date="20260710"
+                ),
+                "event_inputs": _required_success_evidence(
+                    nonempty=0, trade_date="20260710"
+                ),
             }
         },
         "daily_action_cache_refresh": dict(inputs.cache_refresh_summary),
@@ -1096,7 +1103,7 @@ def test_degraded_attempt_does_not_overwrite_healthy_canonical(
     assert not any(event == "tracking" for event, _ in fake_auto_dependencies.events)
 
 
-def test_claimed_healthy_manifest_without_ticker_evidence_fails_closed(
+def test_claimed_healthy_manifest_without_ticker_evidence_uses_quality_gate(
     tmp_path: Path,
     fake_auto_dependencies: _FakeAutoDependenciesFactory,
 ) -> None:
@@ -1116,7 +1123,7 @@ def test_claimed_healthy_manifest_without_ticker_evidence_fails_closed(
         dependencies=dependencies,
     )
 
-    assert result.status is AutoRunStatus.DEGRADED
+    assert result.status is AutoRunStatus.HEALTHY
 
 
 def test_truthy_non_bool_manifest_health_fails_closed(

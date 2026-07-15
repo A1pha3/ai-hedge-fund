@@ -6,7 +6,10 @@ CSV/JSON snapshots and returns empty inputs when data is missing or malformed.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -19,6 +22,7 @@ from pydantic import ValidationError
 from src.data.models import CompanyNews, FinancialMetrics, InsiderTrade
 from src.screening.optional_feature_store import OptionalFeatureStore
 from src.screening.scoring_feature_quality import (
+    FEATURE_POLICY_TABLE,
     ObservationStatus,
     ticker_set_fingerprint,
 )
@@ -84,6 +88,91 @@ def _percent_to_ratio(value: Any) -> float | None:
     if pd.isna(numeric):
         return None
     return round(numeric / 100.0, 4)
+
+
+def _canonical_fingerprint(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+        default=str,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _score_component_value(output: object, component: str) -> object:
+    if isinstance(output, Mapping):
+        return output.get(component)
+    return getattr(output, component, None)
+
+
+def _finite_score_component_payload(value: object) -> object | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if math.isfinite(float(value)) else None
+    fields = ("direction", "confidence", "completeness")
+    if isinstance(value, Mapping):
+        values = [value.get(field) for field in fields]
+    else:
+        values = [getattr(value, field, None) for field in fields]
+    if not all(
+        not isinstance(item, bool)
+        and isinstance(item, (int, float))
+        and math.isfinite(float(item))
+        for item in values
+    ):
+        return None
+    return {field: float(item) for field, item in zip(fields, values, strict=True)}
+
+
+def _validate_score_outputs(
+    tickers: list[str], score_outputs: Mapping[str, object]
+) -> dict[str, dict[str, object]]:
+    if not isinstance(score_outputs, Mapping):
+        raise ValueError("score output must be a ticker mapping")
+    expected_sequence = [str(ticker) for ticker in tickers]
+    expected = set(expected_sequence)
+    if len(expected) != len(expected_sequence):
+        raise ValueError("score output requested ticker set contains duplicates")
+    actual = set(score_outputs)
+    if any(not isinstance(ticker, str) for ticker in actual) or actual != expected:
+        actual_strings = {str(ticker) for ticker in actual}
+        missing = sorted(expected - actual_strings)
+        extra = sorted(actual_strings - expected)
+        raise ValueError(
+            f"score output ticker coverage mismatch: missing={missing}, extra={extra}"
+        )
+
+    evidence: dict[str, dict[str, object]] = {}
+    for family, policy in FEATURE_POLICY_TABLE.items():
+        if not policy.required_score_components:
+            continue
+        family_outputs: dict[str, dict[str, object]] = {}
+        for ticker in sorted(expected):
+            output = score_outputs[ticker]
+            components: dict[str, object] = {}
+            for component in policy.required_score_components:
+                value = _score_component_value(output, component)
+                component_payload = _finite_score_component_payload(value)
+                if component_payload is None:
+                    raise ValueError(
+                        f"score output for {ticker} has missing or nonfinite "
+                        f"component {component!r}"
+                    )
+                components[component] = component_payload
+            family_outputs[ticker] = components
+        evidence[family] = {
+            "score_output_count": len(family_outputs),
+            "score_output_tickers_fingerprint": ticker_set_fingerprint(
+                sorted(family_outputs)
+            ),
+            "score_output_fingerprint": _canonical_fingerprint(family_outputs),
+            "required_score_components": list(policy.required_score_components),
+        }
+    return evidence
 
 
 @dataclass
@@ -417,7 +506,14 @@ class ScoringFeatureStore:
         rows.update(legacy_rows)
         return rows
 
-    def build_quality_summary(self, trade_date: str, tickers: list[str], requested: dict[str, set[str]] | None = None) -> dict[str, Any]:
+    def build_quality_summary(
+        self,
+        trade_date: str,
+        tickers: list[str],
+        score_outputs: Mapping[str, object],
+        requested: dict[str, set[str]] | None = None,
+    ) -> dict[str, Any]:
+        score_output_evidence = _validate_score_outputs(tickers, score_outputs)
         self._quality.set_candidate_count(len({_ticker6(ticker) for ticker in tickers}))
         if requested:
             for family, family_tickers in requested.items():
@@ -427,6 +523,8 @@ class ScoringFeatureStore:
             family: self._quality_for_family(family, trade_date, manifest)
             for family in _FEATURE_FAMILIES
         }
+        for family, evidence in score_output_evidence.items():
+            scoring_features[family].update(evidence)
         # Backward-compatible optional_features block: derive it from the same
         # tracker so intraday/fund_flow numbers cannot diverge from scoring_features
         # (the legacy optional_store path computed coverage over the full candidate
@@ -686,7 +784,7 @@ class ScoringFeatureStore:
             "trade_date": _compact_date(trade_date),
             "stale": stale_count > 0,
             "candidate_count": candidate_count,
-            "eligible_count": requested_count,
+            "eligible_count": candidate_count,
             "requested_count": requested_count,
             "loaded_count": len(loaded),
             "missing_tickers": max(requested_count - len(loaded), 0),
@@ -706,6 +804,18 @@ class ScoringFeatureStore:
             "usable_tickers_fingerprint": usable_fingerprint,
             "as_of_max": as_of_max,
         }
+        quality["input_fingerprint"] = _canonical_fingerprint(
+            {
+                "family": family,
+                "trade_date": _compact_date(trade_date),
+                "requested_tickers": sorted(requested),
+                "observed_tickers": sorted(observed),
+                "usable_tickers": sorted(usable),
+                "rows_loaded": rows,
+                "as_of_max": as_of_max,
+                "source": source,
+            }
+        )
         if "rows_written" in feature_manifest:
             quality["rows_written"] = int(feature_manifest.get("rows_written", 0) or 0)
         if rows:

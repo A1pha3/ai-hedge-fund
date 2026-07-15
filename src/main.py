@@ -920,6 +920,7 @@ def compute_auto_screening_results(trade_date: str, top_n: int = 10, selected_st
     optional_feature_quality = scoring_feature_store.build_quality_summary(
         trade_date,
         candidate_tickers,
+        scored,
     )
 
     # Step 3: 信号融合

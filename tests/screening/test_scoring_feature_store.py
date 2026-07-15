@@ -4,9 +4,38 @@ import json
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from src.data.models import FinancialMetrics
 from src.screening.scoring_feature_store import ScoringFeatureStore
+
+
+def finite_score_outputs(tickers: list[str]) -> dict[str, dict[str, float]]:
+    return {
+        ticker: {
+            "trend": 0.0,
+            "mean_reversion": 0.0,
+            "fundamental": 0.0,
+            "event_sentiment": 0.0,
+        }
+        for ticker in tickers
+    }
+
+
+def test_quality_summary_rejects_missing_or_nonfinite_score_output(tmp_path):
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache",
+        price_cache_dir=tmp_path / "price_cache",
+        legacy_snapshot_dir=tmp_path / "snapshots",
+        lhb_cache_dir=tmp_path / "lhb_cache",
+        fund_flow_cache_dir=tmp_path / "fund_flow_cache",
+    )
+    with pytest.raises(ValueError, match="score output"):
+        store.build_quality_summary(
+            "20260713",
+            ["000001"],
+            {"000001": {"trend": float("nan")}},
+        )
 
 
 def test_load_price_frame_reads_local_price_cache_without_provider(tmp_path: Path) -> None:
@@ -399,7 +428,11 @@ def test_build_quality_summary_reports_family_coverage(tmp_path: Path) -> None:
     )
 
     store.load_price_frame("000001", "20260708")
-    summary = store.build_quality_summary("20260708", ["000001", "000002"])
+    summary = store.build_quality_summary(
+        "20260708",
+        ["000001", "000002"],
+        finite_score_outputs(["000001", "000002"]),
+    )
 
     scoring = summary["scoring_features"]
     assert "price_history" in scoring
@@ -421,7 +454,10 @@ def test_build_quality_summary_optional_block_matches_scoring_block(tmp_path: Pa
     # Simulate score_batch requesting intraday for only a 2-ticker subset while
     # the candidate set is 5; only one ticker has a snapshot.
     store.load_intraday_metrics("20260708", ["000001", "000002"])
-    summary = store.build_quality_summary("20260708", ["000001", "000002", "000003", "000004", "000005"])
+    tickers = ["000001", "000002", "000003", "000004", "000005"]
+    summary = store.build_quality_summary(
+        "20260708", tickers, finite_score_outputs(tickers)
+    )
 
     for family in ("intraday_short_trade_metrics", "daily_fund_flow_metrics"):
         sf = summary["scoring_features"][family]
@@ -452,7 +488,9 @@ def test_build_quality_summary_merges_refresh_manifest_failures(tmp_path: Path) 
     )
     store = ScoringFeatureStore(base_dir=feature_dir)
 
-    summary = store.build_quality_summary("20260708", ["000001"])
+    summary = store.build_quality_summary(
+        "20260708", ["000001"], finite_score_outputs(["000001"])
+    )
 
     quality = summary["scoring_features"]["daily_fund_flow_metrics"]
     assert quality["provider_failures"] == 3
@@ -488,7 +526,9 @@ def test_build_quality_summary_reports_stale_count_when_stale_fallback_used(tmp_
 
     # Consume: this falls back to the 20260701 snapshot (stale).
     store.load_financial_metrics("000001", "20260708")
-    summary = store.build_quality_summary("20260708", ["000001"])
+    summary = store.build_quality_summary(
+        "20260708", ["000001"], finite_score_outputs(["000001"])
+    )
 
     fin = summary["scoring_features"]["financial_metrics"]
     assert fin["stale_count"] == 1
@@ -520,7 +560,9 @@ def test_build_quality_summary_reports_legal_empty_event_observation(tmp_path: P
     )
 
     store.load_event_inputs("000001", "20260708")
-    summary = store.build_quality_summary("20260708", ["000001"])
+    summary = store.build_quality_summary(
+        "20260708", ["000001"], finite_score_outputs(["000001"])
+    )
 
     events = summary["scoring_features"]["event_inputs"]
     assert events["observed_count"] == 1
@@ -551,19 +593,39 @@ def test_build_quality_summary_emits_feature_evidence_schema(tmp_path: Path) -> 
     (fin_dir / "insider_trades.json").write_text("[]", encoding="utf-8")
     store = ScoringFeatureStore(
         base_dir=tmp_path / "feature_cache",
+        price_cache_dir=tmp_path / "price_cache",
         legacy_snapshot_dir=snapshot_dir,
     )
 
+    price_dir = tmp_path / "price_cache"
+    price_dir.mkdir()
+    dates = pd.date_range(end="2026-07-08", periods=200, freq="D")
+    pd.DataFrame(
+        {
+            "date": dates.strftime("%Y-%m-%d"),
+            "open": 10.0,
+            "high": 11.0,
+            "low": 9.0,
+            "close": 10.5,
+            "volume": 1000.0,
+        }
+    ).to_csv(price_dir / "000001.csv", index=False)
+
+    store.load_price_frame("000001", "20260708")
     store.load_financial_metrics("000001", "20260708")
     store.load_event_inputs("000001", "20260708")
-    summary = store.build_quality_summary("20260708", ["000001"])
+    summary = store.build_quality_summary(
+        "20260708", ["000001"], finite_score_outputs(["000001"])
+    )
 
     scoring = summary["scoring_features"]
     for family, raw in scoring.items():
         # Every family must be parseable by the evidence schema. This guards
         # against regressions where a family is missing observation_status or
         # carries a bool/negative count.
-        evidence = FeatureEvidence.from_mapping(family, raw)
+        evidence = FeatureEvidence.from_mapping(
+            family, raw, trade_date="20260708"
+        )
         assert evidence.family == family
 
 
@@ -588,7 +650,11 @@ def test_build_quality_summary_financial_metrics_partial_when_one_of_two_request
 
     store.load_financial_metrics("000001", "20260708")
     store.load_financial_metrics("000002", "20260708")  # no snapshot → failure
-    summary = store.build_quality_summary("20260708", ["000001", "000002"])
+    summary = store.build_quality_summary(
+        "20260708",
+        ["000001", "000002"],
+        finite_score_outputs(["000001", "000002"]),
+    )
 
     fin = summary["scoring_features"]["financial_metrics"]
     assert fin["observation_status"] == "partial"
