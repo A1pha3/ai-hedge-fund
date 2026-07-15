@@ -1227,6 +1227,21 @@ def _refresh_daily_action_caches_for_auto(
     except Exception as exc:  # pragma: no cover - readiness must not fail --auto
         logger.warning("[Auto] daily-action readiness publication failed: %s", exc)
 
+    # Fresh bars just landed → backfill the setup-output panel so past logged
+    # signals whose forward window has elapsed get their realized T+1..T+10
+    # returns joined. Best-effort out-of-sample accumulation; never fails --auto.
+    try:
+        from scripts.join_setup_outputs_with_returns import backfill_panel
+
+        _joined, panel_stats = backfill_panel()
+        logger.info(
+            "[Auto] setup-output panel: %d records, %d realized",
+            panel_stats["records"],
+            panel_stats["realized"],
+        )
+    except Exception as exc:  # pragma: no cover - panel backfill must not fail --auto
+        logger.warning("[Auto] setup-output panel backfill failed: %s", exc)
+
 
 def _publish_daily_action_readiness_for_auto(trade_date: str, cache_summary: dict) -> None:
     """Build and publish the Daily Action readiness manifest from refreshed caches.

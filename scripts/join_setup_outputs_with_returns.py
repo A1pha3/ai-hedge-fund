@@ -29,7 +29,6 @@ from scripts.validate_auto300_gate_removal import (
     _fmt,
     _forward_return,
     _summarize,
-    load_price_series,
 )
 
 LOG_DIR = Path("data/reports/setup_output_log")
@@ -83,6 +82,43 @@ def join_records(records: list[dict], series: dict[str, pd.DataFrame]) -> list[d
     return joined
 
 
+def _load_series_for_tickers(tickers: set[str], price_cache_dir: Path = Path("data/price_cache")) -> dict[str, pd.DataFrame]:
+    """Load only the price series we need (the logged tickers) — cheap for --auto."""
+    series: dict[str, pd.DataFrame] = {}
+    for ticker in tickers:
+        path = price_cache_dir / f"{ticker}.csv"
+        if not path.exists():
+            continue
+        try:
+            df = pd.read_csv(path)
+        except Exception:
+            continue
+        if "date" not in df.columns:
+            continue
+        df["compact"] = df["date"].astype(str).str.replace("-", "", regex=False).str[:8]
+        series[ticker] = df.sort_values("compact").reset_index(drop=True)
+    return series
+
+
+def backfill_panel(log_dir: Path = LOG_DIR, panel: Path = PANEL) -> tuple[list[dict], dict]:
+    """Join logged outputs with any now-available forward returns; write the panel.
+
+    Loads only the logged tickers' price series (not the whole universe), so it is
+    cheap enough to run at the end of every ``--auto``. Returns ``(joined, stats)``.
+    """
+    records = load_logged_records(log_dir)
+    if not records:
+        return [], {"records": 0, "realized": 0}
+    tickers = {str(r.get("ticker", "")) for r in records if r.get("ticker")}
+    series = _load_series_for_tickers(tickers)
+    joined = join_records(records, series)
+    _write_panel(joined, panel)
+    return joined, {
+        "records": len(joined),
+        "realized": sum(1 for j in joined if j["realized"]),
+    }
+
+
 def _write_panel(joined: list[dict], panel: Path = PANEL) -> None:
     panel.parent.mkdir(parents=True, exist_ok=True)
     payload = "\n".join(json.dumps(r, ensure_ascii=False, allow_nan=False, sort_keys=True) for r in joined)
@@ -104,13 +140,10 @@ def _write_panel(joined: list[dict], panel: Path = PANEL) -> None:
 
 
 def main() -> None:
-    records = load_logged_records()
-    if not records:
+    joined, stats = backfill_panel()
+    if not joined:
         print("no logged setup outputs yet (run --daily-action to accumulate)")
         return
-    series = load_price_series()
-    joined = join_records(records, series)
-    _write_panel(joined)
 
     realized = [j for j in joined if j["realized"]]
     days = sorted({j["signal_date"] for j in joined})
