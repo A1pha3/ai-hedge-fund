@@ -1,7 +1,7 @@
 # Auto / Daily Action Readiness v2 修复设计
 
 日期：2026-07-15  
-状态：已获用户口头确认，待文档复核  
+状态：用户已确认
 修复依据：`2026-07-14-auto-daily-readiness-separation.md` 的对抗审查结果
 
 ## 1. 目标
@@ -28,6 +28,7 @@
 - 单票上限继续强制为 10%；没有 repository-owned regime 授权证据时不得恢复 12%。
 - 不修改 `data/paper_trading_backtest/`、旧回测结果或历史报告。
 - Auto 300 与 Daily Action 全市场 universe 保持独立，不恢复 membership 耦合。
+- 保留当前北交所排除策略；本修复不改变已支持交易市场的范围。
 - 旧 readiness schema、测试清单、缺失指纹或不可重算的清单保留只读，但一律没有交易授权。
 
 ## 3. 设计选择
