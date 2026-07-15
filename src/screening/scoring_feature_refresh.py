@@ -351,8 +351,7 @@ def _ticker_outcome_payload(
 
 def _refresh_succeeded(observations: list[TickerFeatureObservation]) -> bool:
     return bool(observations) and all(
-        observation.status
-        not in (ObservationStatus.FAILED, ObservationStatus.UNAVAILABLE)
+        observation.status is ObservationStatus.SUCCESS
         for observation in observations
     )
 
@@ -395,6 +394,8 @@ def refresh_scoring_features(
             timeout_seconds,
             status,
             "not_refreshed",
+            success_count=0,
+            failure_count=len(unique_tickers),
             ticker_outcomes=ticker_outcomes,
         )
         manifest_path = _write_manifest(cache_path, trade_date, manifest)
@@ -402,6 +403,8 @@ def refresh_scoring_features(
             "status": status,
             "trade_date": str(trade_date),
             "candidate_count": len(unique_tickers),
+            "success_count": 0,
+            "failure_count": len(unique_tickers),
             "ticker_outcomes": ticker_outcomes,
             "manifest_path": str(manifest_path),
         }

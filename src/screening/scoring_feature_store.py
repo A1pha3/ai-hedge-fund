@@ -737,10 +737,16 @@ class ScoringFeatureStore:
                 return ObservationStatus.FAILED
 
             raw_sources = family_entry.get("sources")
+            expected_sources = _PRODUCER_SOURCES.get(family, ())
+            if (
+                canonical_families is not None
+                and expected_sources
+                and raw_sources is None
+            ):
+                return ObservationStatus.FAILED
             if raw_sources is not None:
                 if not isinstance(raw_sources, Mapping):
                     return ObservationStatus.FAILED
-                expected_sources = _PRODUCER_SOURCES.get(family, ())
                 if any(source not in raw_sources for source in expected_sources):
                     return ObservationStatus.FAILED
                 source_statuses = [

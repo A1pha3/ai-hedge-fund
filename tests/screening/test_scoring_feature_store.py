@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from src.data.models import FinancialMetrics
+from src.screening.scoring_feature_quality import ObservationStatus
 from src.screening.scoring_feature_store import ScoringFeatureStore
 
 
@@ -792,3 +793,26 @@ def test_event_family_aggregate_partial_cannot_promote_to_success(tmp_path):
     )
 
     assert quality["scoring_features"]["event_inputs"]["observation_status"] == "partial"
+
+
+@pytest.mark.parametrize("family", ["financial_metrics", "event_inputs"])
+def test_canonical_producer_success_requires_source_evidence(tmp_path, family):
+    store = ScoringFeatureStore(base_dir=tmp_path / "feature_cache")
+    manifest = {
+        "candidate_count": 1,
+        "ticker_outcomes": {
+            "000001": {
+                "observation_status": "success",
+                "families": {
+                    family: {
+                        "observation_status": "success",
+                    }
+                },
+            }
+        },
+    }
+
+    assert (
+        store._producer_family_status(manifest, "000001", family)
+        is ObservationStatus.FAILED
+    )

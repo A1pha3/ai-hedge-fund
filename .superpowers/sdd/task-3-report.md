@@ -131,3 +131,39 @@ Additional verification:
 - Python cannot cancel a provider function once its thread is already running;
   the non-waiting timeout contract therefore isolates immutable manifest state
   rather than promising provider-call termination.
+
+## Adversarial review follow-up
+
+Three counterexamples were added test-first after the initial Task 3 commit:
+
+- canonical financial/event `success` evidence with no per-source outcomes;
+- a ticker with one `SUCCESS` family and one `PARTIAL` family counted as a
+  top-level refresh success;
+- disabled/skipped refreshes that omitted return counters and emitted `0/0`
+  manifest counters for a non-empty requested ticker set.
+
+Focused RED:
+
+```bash
+uv run pytest tests/screening/test_scoring_feature_refresh.py \
+  tests/screening/test_scoring_feature_store.py \
+  -k 'partial_ticker_counts or skipped_refresh_emits or canonical_producer_success_requires' -q
+```
+
+Result before the follow-up fix: `5 failed, 29 deselected`.
+
+Focused GREEN after the minimal contract changes: `5 passed, 29 deselected`.
+
+The canonical reader now requires a complete, mapping-shaped, valid `sources`
+entry for every family in `_PRODUCER_SOURCES`; the migration-era flat reader
+remains unchanged. Top-level `success_count` now means every refreshed family
+is exactly `SUCCESS`. Every other terminal ticker outcome contributes to
+`failure_count`, including `PARTIAL` and skipped `UNAVAILABLE` outcomes.
+Skipped empty input emits explicit `0/0`; skipped non-empty input emits
+`0/candidate_count` in both the return payload and manifest.
+
+Fresh follow-up verification:
+
+- Task 3 suites: `45 passed`.
+- Task 2 regression suites: `174 passed`.
+- Strategy scorer intraday/fund-flow targeted regression: `9 passed, 64 deselected`.

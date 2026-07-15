@@ -22,6 +22,7 @@ import pytest
 
 from src.screening import scoring_feature_refresh
 from src.screening.scoring_feature_refresh import (
+    SourceObservation,
     TickerFeatureObservation,
     _fetch_ticker_data,
     refresh_scoring_features,
@@ -252,3 +253,86 @@ def test_timeout_conserves_every_requested_ticker(monkeypatch, tmp_path):
     assert manifest["ticker_outcomes"] == result["ticker_outcomes"]
     assert manifest["features"]["financial_metrics"]["failed_count"] == 1
     assert manifest["features"]["event_inputs"]["failed_count"] == 1
+
+
+def test_partial_ticker_counts_as_top_level_failure(monkeypatch, tmp_path):
+    def _partial_fetch(ticker, trade_date):
+        return [
+            TickerFeatureObservation(
+                ticker=ticker,
+                family="financial_metrics",
+                status=ObservationStatus.SUCCESS,
+                nonempty_count=1,
+                source_parts_succeeded=1,
+                source_parts_total=1,
+                sources=(
+                    SourceObservation(
+                        source="financial_metrics",
+                        status=ObservationStatus.SUCCESS,
+                        nonempty_count=1,
+                    ),
+                ),
+            ),
+            TickerFeatureObservation(
+                ticker=ticker,
+                family="event_inputs",
+                status=ObservationStatus.PARTIAL,
+                nonempty_count=0,
+                source_parts_succeeded=1,
+                source_parts_total=2,
+                failure_code="RuntimeError",
+                sources=(
+                    SourceObservation(
+                        source="company_news",
+                        status=ObservationStatus.SUCCESS,
+                        nonempty_count=0,
+                    ),
+                    SourceObservation(
+                        source="insider_trades",
+                        status=ObservationStatus.FAILED,
+                        nonempty_count=0,
+                        failure_code="RuntimeError",
+                    ),
+                ),
+            ),
+        ]
+
+    monkeypatch.setenv("AUTO_OPTIONAL_FEATURE_REFRESH", "1")
+    monkeypatch.setattr(scoring_feature_refresh, "_enable_snapshots", lambda: None)
+    monkeypatch.setattr(scoring_feature_refresh, "_fetch_ticker_data", _partial_fetch)
+
+    result = refresh_scoring_features(
+        "20260713", ["000001"], timeout_seconds=1.0, cache_dir=tmp_path
+    )
+
+    assert result["success_count"] == 0
+    assert result["failure_count"] == 1
+    ticker_outcome = result["ticker_outcomes"]["000001"]
+    assert ticker_outcome["observation_status"] == "partial"
+    assert (
+        ticker_outcome["families"]["event_inputs"]["observation_status"]
+        == "partial"
+    )
+
+
+@pytest.mark.parametrize(
+    ("tickers", "expected_failures"),
+    [(["000001", "000002"], 2), ([], 0)],
+)
+def test_skipped_refresh_emits_conserved_explicit_counters(
+    monkeypatch, tmp_path, tickers, expected_failures
+):
+    monkeypatch.setenv("AUTO_OPTIONAL_FEATURE_REFRESH", "0")
+
+    result = refresh_scoring_features(
+        "20260713", tickers, timeout_seconds=1.0, cache_dir=tmp_path
+    )
+
+    assert result["success_count"] == 0
+    assert result["failure_count"] == expected_failures
+    assert result["success_count"] + result["failure_count"] == len(tickers)
+    manifest = json.loads(
+        (tmp_path / "feature_manifest_20260713.json").read_text(encoding="utf-8")
+    )
+    assert manifest["success_count"] == result["success_count"]
+    assert manifest["failure_count"] == result["failure_count"]
