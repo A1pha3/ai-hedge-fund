@@ -1526,6 +1526,9 @@ def run_auto_screening(
 
     try:
         progress.start()
+        from colorama import Fore, Style
+        print(f"{Fore.CYAN}[Auto] 正在初始化...{Style.RESET_ALL}")
+        logger.info("[Auto] 开始运行全市场筛选（trade_date=%s, top_n=%d）", trade_date, top_n)
         try:
             from src.screening.auto_pipeline import AutoRunStatus, run_auto_pipeline
 
