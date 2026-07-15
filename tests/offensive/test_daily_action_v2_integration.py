@@ -534,3 +534,30 @@ def test_actual_cli_two_session_calendar_blocks_btst_horizon(
     output = capsys.readouterr().out
     # Two-session calendar can't hold a T+10 BTST position. No plans created.
     assert LedgerRepository(ledger, "daily-action-v2", 100_000).planned_trades() == []
+
+# ---------------------------------------------------------------------------
+# Task 9 readiness v2 production path integration
+# ---------------------------------------------------------------------------
+
+from tests.offensive.readiness_v2_testkit import (
+    run_full_injected_pipeline,
+    run_pipeline_without_readiness_with_due_exit,
+)
+
+
+def test_outside_auto_pool_ticker_reaches_verified_plan(tmp_path) -> None:
+    result = run_full_injected_pipeline(
+        tmp_path,
+        auto_tickers={"000001"},
+        daily_tickers={"000001", "002999"},
+        btst_hit="002999",
+    )
+    assert [plan.ticker for plan in result.new_plans] == ["002999"]
+    assert result.ledger_trade is not None
+    assert result.ledger_trade.provenance.verification_status == "verified"
+
+
+def test_lifecycle_without_readiness_still_completes_exit(tmp_path) -> None:
+    result = run_pipeline_without_readiness_with_due_exit(tmp_path)
+    assert len(result.completed_exits) == 1
+    assert result.new_plans == ()

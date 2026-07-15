@@ -35,7 +35,7 @@ from src.screening.offensive.daily_action_readiness import (
 from src.screening.offensive.pit_evidence import canonical_fingerprint
 from src.utils.date_utils import SIGNAL_SESSION_POLICY_VERSION
 
-_FIXTURE = Path(__file__).parent / "fixtures" / "daily_readiness_20260713.json"
+_FIXTURE = Path(__file__).parent / "fixtures" / "daily_readiness_20260713_compact_v1.json"
 _SIGNAL_DATE = date(2026, 7, 13)
 
 

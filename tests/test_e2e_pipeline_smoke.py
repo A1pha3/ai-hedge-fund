@@ -703,3 +703,26 @@ def test_run_auto_screening_normalizes_weekend_trade_date_before_pipeline(tmp_pa
 
     assert exit_code == 0
     assert seen["trade_date"] == "20260710"
+
+# ---------------------------------------------------------------------------
+# Task 9 readiness v2 production path smoke
+# ---------------------------------------------------------------------------
+
+from datetime import date as _task9_date
+
+from tests.offensive.readiness_v2_testkit import run_injected_auto_refresh_for_20260713
+from src.screening.offensive.daily_action_snapshot import load_verified_daily_action_snapshot
+
+
+def test_20260713_production_readiness_v2_round_trip(tmp_path) -> None:
+    publication = run_injected_auto_refresh_for_20260713(tmp_path)
+    loaded = load_verified_daily_action_snapshot(
+        _task9_date(2026, 7, 13),
+        reports_dir=publication.artifact_path.parent,
+        data_dir=tmp_path / "data",
+    )
+    assert loaded.snapshot is not None
+
+    fixture_path = Path(__file__).parent / "offensive" / "fixtures" / "daily_readiness_20260713.json"
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    assert loaded.snapshot.universe_tickers == tuple(fixture["universe_tickers"])
