@@ -78,11 +78,28 @@ def test_required_success_rejects_inconsistent_counts():
         requested_count=1,
         observed_count=1,
         usable_count=1,
+        nonempty_count=1,
     )
-    with pytest.raises(ValueError, match="count conservation"):
+    with pytest.raises(ValueError, match="full eligible coverage"):
         FeatureEvidence.from_mapping(
             "price_history", evidence, trade_date="20260713"
         )
+
+
+@pytest.mark.parametrize("family", ["financial_metrics", "event_inputs"])
+def test_heavy_required_success_allows_eligible_subset(family):
+    evidence = _required_success_evidence(nonempty=1)
+    evidence.update(
+        eligible_count=300,
+        requested_count=1,
+        observed_count=1,
+        usable_count=1,
+        attempted_count=1,
+    )
+    parsed = FeatureEvidence.from_mapping(
+        family, evidence, trade_date="20260713"
+    )
+    assert parsed.requested_count == 1
 
 
 def test_required_success_rejects_missing_input_fingerprint():
@@ -92,6 +109,122 @@ def test_required_success_rejects_missing_input_fingerprint():
         FeatureEvidence.from_mapping(
             "financial_metrics", evidence, trade_date="20260713"
         )
+
+
+@pytest.mark.parametrize("as_of_max", [None, "not-a-date", "20261340"])
+def test_required_success_rejects_missing_or_invalid_as_of(as_of_max):
+    evidence = _required_success_evidence()
+    evidence["as_of_max"] = as_of_max
+    with pytest.raises(ValueError, match="as_of_max"):
+        FeatureEvidence.from_mapping(
+            "financial_metrics", evidence, trade_date="20260713"
+        )
+
+
+@pytest.mark.parametrize("trade_date", ["not-a-date", "20261340"])
+def test_required_success_rejects_invalid_trade_date(trade_date):
+    evidence = _required_success_evidence()
+    evidence["as_of_max"] = trade_date
+    with pytest.raises(ValueError, match="trade_date"):
+        FeatureEvidence.from_mapping(
+            "financial_metrics", evidence, trade_date=trade_date
+        )
+
+
+@pytest.mark.parametrize("trade_date", [None, "not-a-date", "20261340"])
+def test_assess_auto_quality_rejects_missing_or_invalid_trade_date(trade_date):
+    payload = quality_payload()
+    if trade_date is None:
+        payload.pop("date")
+    else:
+        payload["date"] = trade_date
+    for evidence in payload["data_quality"]["scoring_features"].values():
+        if evidence.get("input_fingerprint"):
+            evidence["as_of_max"] = trade_date
+
+    decision = assess_auto_quality(payload)
+
+    assert decision.healthy is False
+    assert any(issue.code == "evidence_schema_invalid" for issue in decision.blockers)
+
+
+def test_success_rejects_empty_request():
+    evidence = _optional_unavailable_evidence()
+    evidence["observation_status"] = "success"
+    with pytest.raises(ValueError, match="success requires a nonempty request"):
+        FeatureEvidence.from_mapping(
+            "dragon_tiger_bonus", evidence, trade_date="20260713"
+        )
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "attempted_count": 1,
+            "requested_count": 1,
+            "eligible_count": 1,
+            "observed_count": 1,
+            "usable_count": 1,
+        },
+        {"attempted_count": 1, "eligible_count": 1},
+    ],
+)
+def test_partial_rejects_non_partial_state(updates):
+    evidence = _optional_unavailable_evidence()
+    evidence.update(observation_status="partial", **updates)
+    with pytest.raises(ValueError, match="partial requires"):
+        FeatureEvidence.from_mapping(
+            "dragon_tiger_bonus", evidence, trade_date="20260713"
+        )
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {
+            "attempted_count": 1,
+            "requested_count": 1,
+            "eligible_count": 1,
+        },
+        {
+            "attempted_count": 1,
+            "requested_count": 1,
+            "eligible_count": 1,
+            "observed_count": 1,
+            "usable_count": 1,
+            "nonempty_count": 1,
+            "consumption_failed_count": 1,
+        },
+    ],
+)
+def test_failed_rejects_contradictory_state(updates):
+    evidence = _optional_unavailable_evidence()
+    evidence.update(observation_status="failed", **updates)
+    with pytest.raises(ValueError, match="failed requires"):
+        FeatureEvidence.from_mapping(
+            "dragon_tiger_bonus", evidence, trade_date="20260713"
+        )
+
+
+@pytest.mark.parametrize("active_field", ["attempted_count", "requested_count"])
+def test_unavailable_rejects_activity(active_field):
+    evidence = _optional_unavailable_evidence()
+    evidence["eligible_count"] = 3
+    evidence[active_field] = 1
+    with pytest.raises(ValueError, match="unavailable requires zero activity"):
+        FeatureEvidence.from_mapping(
+            "dragon_tiger_bonus", evidence, trade_date="20260713"
+        )
+
+
+def test_unavailable_allows_nonzero_eligible_scope():
+    evidence = _optional_unavailable_evidence()
+    evidence["eligible_count"] = 3
+    parsed = FeatureEvidence.from_mapping(
+        "dragon_tiger_bonus", evidence, trade_date="20260713"
+    )
+    assert parsed.observation_status is ObservationStatus.UNAVAILABLE
 
 
 def quality_payload(
@@ -244,7 +377,11 @@ def test_partial_observation_blocks_required() -> None:
             "price_history": {
                 **_required_success_evidence(),
                 "observation_status": "partial",
-            }
+                "observed_count": 2,
+                "usable_count": 2,
+                "nonempty_count": 2,
+                "consumption_failed_count": 1,
+            },
         },
     )
     decision = assess_auto_quality(payload)
@@ -260,6 +397,10 @@ def test_failed_observation_blocks_required() -> None:
             "financial_metrics": {
                 **_required_success_evidence(),
                 "observation_status": "failed",
+                "observed_count": 0,
+                "usable_count": 0,
+                "nonempty_count": 0,
+                "consumption_failed_count": 3,
             }
         },
     )
@@ -274,6 +415,10 @@ def test_unavailable_observation_blocks_required() -> None:
             "event_inputs": {
                 **_required_success_evidence(nonempty=0),
                 "observation_status": "unavailable",
+                "attempted_count": 0,
+                "requested_count": 0,
+                "observed_count": 0,
+                "usable_count": 0,
             }
         },
     )
@@ -406,7 +551,11 @@ def test_optional_partial_is_warning_not_blocker() -> None:
             "dragon_tiger_bonus": {
                 **_optional_unavailable_evidence(),
                 "observation_status": "partial",
-            }
+                "attempted_count": 1,
+                "requested_count": 1,
+                "eligible_count": 1,
+                "consumption_failed_count": 1,
+            },
         },
     )
     decision = assess_auto_quality(payload)
@@ -425,6 +574,7 @@ def test_optional_refresh_failed_is_warning() -> None:
             "daily_fund_flow_metrics": {
                 **_optional_unavailable_evidence(),
                 "observation_status": "success",
+                "attempted_count": 3,
                 "eligible_count": 3,
                 "requested_count": 3,
                 "observed_count": 3,

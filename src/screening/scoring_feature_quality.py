@@ -23,6 +23,7 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -80,6 +81,7 @@ class FeaturePolicy:
     freshness_rule: str = "exact_trade_date"
     min_usable_rows: int = 0
     required_score_components: tuple[str, ...] = ()
+    requires_full_eligible_coverage: bool = False
 
 
 # 集中式策略注册表：新增/删除特征必须先在此登记。
@@ -92,6 +94,7 @@ FEATURE_POLICY_TABLE: Mapping[str, FeaturePolicy] = {
         freshness_rule="exact_trade_date",
         min_usable_rows=200,
         required_score_components=("trend", "mean_reversion"),
+        requires_full_eligible_coverage=True,
     ),
     "financial_metrics": FeaturePolicy(
         name="financial_metrics",
@@ -300,15 +303,14 @@ class FeatureEvidence:
         if not (0 <= nonempty <= usable <= observed <= requested <= eligible):
             raise ValueError(f"evidence for {family!r}: count conservation failed")
 
+        _validate_status_matrix(family, status, kwargs)
+
+        if policy.requires_full_eligible_coverage and requested != eligible:
+            raise ValueError(
+                f"evidence for {family!r}: full eligible coverage is required"
+            )
+
         if status is ObservationStatus.SUCCESS:
-            if not (requested == observed == usable):
-                raise ValueError(
-                    f"evidence for {family!r}: success requires full coverage"
-                )
-            if kwargs["stale_count"] or kwargs["consumption_failed_count"]:
-                raise ValueError(
-                    f"evidence for {family!r}: success cannot consume stale or failed rows"
-                )
             if (
                 policy.min_usable_rows > 0
                 and kwargs["usable_rows_min"] < policy.min_usable_rows
@@ -323,7 +325,17 @@ class FeatureEvidence:
                 raise ValueError(
                     f"evidence for {family!r}: input_fingerprint is required"
                 )
-            if _compact_date(kwargs["as_of_max"]) != _compact_date(trade_date):
+            compact_trade_date = _compact_date(trade_date)
+            if compact_trade_date is None:
+                raise ValueError(
+                    f"evidence for {family!r}: trade_date must be a valid YYYYMMDD date"
+                )
+            compact_as_of = _compact_date(kwargs["as_of_max"])
+            if compact_as_of is None:
+                raise ValueError(
+                    f"evidence for {family!r}: as_of_max must be a valid YYYYMMDD date"
+                )
+            if compact_as_of != compact_trade_date:
                 raise ValueError(
                     f"evidence for {family!r}: as_of_max must equal trade_date"
                 )
@@ -363,7 +375,78 @@ def _compact_date(value: Any) -> str | None:
         return None
     raw = str(value).strip()
     compact = raw.replace("-", "")
-    return compact if len(compact) == 8 and compact.isdigit() else None
+    if len(compact) != 8 or not compact.isdigit():
+        return None
+    try:
+        datetime.strptime(compact, "%Y%m%d")
+    except ValueError:
+        return None
+    return compact
+
+
+def _validate_status_matrix(
+    family: str,
+    status: ObservationStatus,
+    evidence: Mapping[str, Any],
+) -> None:
+    attempted = evidence["attempted_count"]
+    requested = evidence["requested_count"]
+    observed = evidence["observed_count"]
+    usable = evidence["usable_count"]
+    nonempty = evidence["nonempty_count"]
+    stale = evidence["stale_count"]
+    refresh_failed = evidence["refresh_failed_count"]
+    consumption_failed = evidence["consumption_failed_count"]
+
+    if status is ObservationStatus.SUCCESS:
+        if attempted <= 0 or requested <= 0:
+            raise ValueError(
+                f"evidence for {family!r}: success requires a nonempty request"
+            )
+        if not (requested == observed == usable):
+            raise ValueError(
+                f"evidence for {family!r}: success requires full coverage"
+            )
+        if stale or consumption_failed:
+            raise ValueError(
+                f"evidence for {family!r}: success cannot consume stale or failed rows"
+            )
+        return
+
+    if status is ObservationStatus.PARTIAL:
+        incomplete = (
+            observed < requested
+            or usable < requested
+            or consumption_failed > 0
+        )
+        if attempted <= 0 or requested <= 0 or not incomplete:
+            raise ValueError(
+                f"evidence for {family!r}: partial requires an attempted, "
+                "nonempty, incomplete request"
+            )
+        return
+
+    if status is ObservationStatus.FAILED:
+        explicit_failure = refresh_failed > 0 or consumption_failed > 0
+        if (
+            attempted <= 0
+            or requested <= 0
+            or observed != 0
+            or usable != 0
+            or nonempty != 0
+            or stale != 0
+            or not explicit_failure
+        ):
+            raise ValueError(
+                f"evidence for {family!r}: failed requires an attempted request, "
+                "zero observed rows, and an explicit failure"
+            )
+        return
+
+    if any((attempted, requested, observed, usable, nonempty, stale, consumption_failed)):
+        raise ValueError(
+            f"evidence for {family!r}: unavailable requires zero activity"
+        )
 
 
 # ---------------------------------------------------------------------------
