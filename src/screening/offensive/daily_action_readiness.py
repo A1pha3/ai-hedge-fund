@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 
 from src.screening.offensive.cache_readiness import (
     DailyActionRefreshResult,
@@ -582,6 +582,39 @@ def _setup_consumed_fingerprint(
         "signal_session_policy_version": shared_evidence.signal_session_policy_version,
     }
     return _fingerprint(payload)
+
+
+def recompute_setup_consumed_fingerprint(
+    *,
+    ticker: str,
+    setup_name: str,
+    price_fingerprint: str | None,
+    flow_fingerprint: str | None,
+    trade_date: date,
+    shared_evidence: SharedReadinessEvidence,
+    suspension_evidence: SuspensionReadinessEvidence,
+) -> str | None:
+    """Recompute a setup's consumed fingerprint from explicit PIT fingerprints.
+
+    The verified-snapshot loader calls this with fingerprints recomputed from the
+    on-disk caches so it can compare against the manifest's authorized value using
+    the exact same algorithm the manifest builder used.
+    """
+
+    outcome = SimpleNamespace(
+        evidence_fingerprints={
+            "price": price_fingerprint,
+            "fund_flow": flow_fingerprint,
+        }
+    )
+    return _setup_consumed_fingerprint(
+        ticker=ticker,
+        setup_name=setup_name,
+        outcome=outcome,
+        trade_date=trade_date,
+        shared_evidence=shared_evidence,
+        suspension_evidence=suspension_evidence,
+    )
 
 
 def build_ticker_readiness(

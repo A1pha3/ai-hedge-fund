@@ -1,306 +1,324 @@
-"""Tests for VerifiedDailyActionSnapshot: PIT normalization, immutability, verification.
+"""Tests for the verified immutable Daily Action PIT snapshot (schema v2).
 
-Covers:
-- Manifest missing / invalid / date-mismatch rejection
-- Happy-path snapshot loading with prices + fund flow
-- PIT fingerprint stability (future appends don't change fingerprint)
-- Setup context extraction + defensive copies
-- Scannable tickers exclude blocked ones
+The fixture builds a self-consistent evidence chain through the production
+manifest builder: it writes price/fund-flow caches, fingerprints them with the
+same canonical PIT functions the refresh uses, feeds those fingerprints into
+``build_daily_action_readiness``, and publishes the canonical manifest. The
+loader then re-reads the caches, recomputes the fingerprints, and verifies them
+against the manifest — so a historical mutation blocks the ticker while a
+future-dated append leaves the verified snapshot identical.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+from dataclasses import FrozenInstanceError
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 
 import pandas as pd
 import pytest
 
+from src.screening.offensive.cache_readiness import (
+    DailyActionRefreshResult,
+    FundFlowStatus,
+    PriceStatus,
+    SuspensionEvidence,
+    TickerRefreshOutcome,
+    derive_stats_from_outcomes,
+    universe_fingerprint,
+)
 from src.screening.offensive.daily_action_readiness import (
-    DAILY_ACTION_READINESS_SCHEMA_VERSION,
     SharedReadinessEvidence,
+    _fingerprint as _manifest_fingerprint,
+    build_daily_action_readiness,
+    publish_daily_action_readiness,
 )
 from src.screening.offensive.daily_action_snapshot import (
-    NORMALIZATION_VERSION,
+    FrozenFlowRow,
+    FrozenPriceRow,
+    VerifiedDailyActionSnapshot,
     load_verified_daily_action_snapshot,
-    _pit_fingerprint,
 )
-from src.screening.offensive.data.fund_flow_store import FundFlowRecord
-from src.screening.offensive.setup_data_contracts import SetupCapability
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _scannable_capability() -> SetupCapability:
-    return SetupCapability(
-        enabled=True,
-        scannable=True,
-        plan_eligible=True,
-        degraded=False,
-        block_reasons=(),
-        warnings=(),
-    )
-
-
-def _blocked_capability(reason: str = "price_data_missing") -> SetupCapability:
-    return SetupCapability(
-        enabled=True,
-        scannable=False,
-        plan_eligible=False,
-        degraded=False,
-        block_reasons=(reason,),
-    )
-
-
-def _shared_evidence() -> SharedReadinessEvidence:
-    return SharedReadinessEvidence(
-        regime_row=MappingProxyType({"trend": "up"}),
-        regime_fingerprint="sha256:regime",
-        industry_mapping_fingerprint="sha256:industry",
-        security_status_fingerprint="sha256:sec",
-        board_rule_version="ashare-board-prefix-v1",
-        normalization_version=NORMALIZATION_VERSION,
-        signal_session_policy_version="signal-session-v1",
-    )
-
-
-def _manifest_dict(
-    *,
-    trade_date: date = date(2026, 7, 13),
-    tickers: tuple[str, ...] = ("000001", "000002"),
-    ticker_readiness: dict | None = None,
-    schema_version: int = DAILY_ACTION_READINESS_SCHEMA_VERSION,
-    status: str = "healthy",
-) -> dict:
-    """Build a serializable manifest dict for testing."""
-    if ticker_readiness is None:
-        # Default: every ticker is fully scannable
-        ticker_readiness = {
-            t: {
-                "evidence_status": "verified",
-                "capabilities": {
-                    "btst_breakout": {
-                        "enabled": True,
-                        "scannable": True,
-                        "plan_eligible": True,
-                        "degraded": False,
-                        "block_reasons": [],
-                        "warnings": [],
-                    }
-                },
-            }
-            for t in tickers
-        }
-
-    return {
-        "schema_version": schema_version,
-        "domain": "daily_action",
-        "run_id": "run-test-001",
-        "trade_date": trade_date.isoformat(),
-        "created_at": "2026-07-13T10:00:00Z",
-        "status": status,
-        "universe_kind": "resolved_refresh_universe",
-        "universe_tickers": list(tickers),
-        "universe_fingerprint": "sha256:universe",
-        "input_fingerprint": "sha256:input",
-        "ticker_readiness": ticker_readiness,
-        "warnings": [],
-        "shared_evidence": {
-            "regime_fingerprint": "sha256:regime",
-            "industry_mapping_fingerprint": "sha256:industry",
-            "security_status_fingerprint": "sha256:sec",
-            "board_rule_version": "ashare-board-prefix-v1",
-            "normalization_version": NORMALIZATION_VERSION,
-            "signal_session_policy_version": "signal-session-v1",
-        },
-        "policy_versions": {
-            "readiness_policy": "daily-action-readiness-v1",
-            "normalization": NORMALIZATION_VERSION,
-            "board_rule": "ashare-board-prefix-v1",
-            "setup_requirements": "daily-action-setups-v1",
-            "signal_session_cutoff": "signal-session-v1",
-        },
-    }
-
-
-def _write_price_cache(
-    data_dir: Path,
-    ticker: str,
-    *,
-    rows: list[dict] | None = None,
-) -> Path:
-    """Write a price_cache CSV for a ticker. Dates as YYYY-MM-DD strings."""
-    price_dir = data_dir / "price_cache"
-    price_dir.mkdir(parents=True, exist_ok=True)
-    path = price_dir / f"{ticker}.csv"
-    if rows is None:
-        rows = [
-            {"date": "2026-07-08", "open": 10.0, "high": 10.5, "low": 9.8, "close": 10.2, "volume": 1000.0, "pct_change": 1.0},
-            {"date": "2026-07-09", "open": 10.2, "high": 10.6, "low": 10.0, "close": 10.4, "volume": 1100.0, "pct_change": 1.96},
-            {"date": "2026-07-10", "open": 10.4, "high": 10.8, "low": 10.2, "close": 10.6, "volume": 1200.0, "pct_change": 1.92},
-            {"date": "2026-07-11", "open": 10.6, "high": 11.0, "low": 10.4, "close": 10.8, "volume": 1300.0, "pct_change": 1.89},
-            {"date": "2026-07-12", "open": 10.8, "high": 11.2, "low": 10.6, "close": 11.0, "volume": 1400.0, "pct_change": 1.85},
-            {"date": "2026-07-13", "open": 11.0, "high": 11.4, "low": 10.8, "close": 11.2, "volume": 1500.0, "pct_change": 1.82},
-        ]
-    df = pd.DataFrame(rows)
-    df.to_csv(path, index=False)
-    return path
-
-
-def _write_fund_flow_cache(
-    data_dir: Path,
-    ticker: str,
-    *,
-    rows: list[dict] | None = None,
-) -> Path:
-    """Write a fund_flow_cache CSV for a ticker. Dates as YYYYMMDD strings."""
-    flow_dir = data_dir / "fund_flow_cache"
-    flow_dir.mkdir(parents=True, exist_ok=True)
-    path = flow_dir / f"{ticker}.csv"
-    if rows is None:
-        rows = [
-            {"date": "20260711", "close": "10.8", "pct_change": "1.89", "main_net_inflow": "1000.0", "ticker": ticker},
-            {"date": "20260712", "close": "11.0", "pct_change": "1.85", "main_net_inflow": "2000.0", "ticker": ticker},
-            {"date": "20260713", "close": "11.2", "pct_change": "1.82", "main_net_inflow": "3000.0", "ticker": ticker},
-        ]
-    df = pd.DataFrame(rows)
-    df.to_csv(path, index=False)
-    return path
-
-
-def _write_manifest(reports_dir: Path, manifest: dict, *, trade_date: date) -> Path:
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    path = reports_dir / f"daily_action_readiness_{trade_date.strftime('%Y%m%d')}.json"
-    path.write_text(json.dumps(manifest), encoding="utf-8")
-    return path
-
-
-def _build_full_fixture(
-    tmp_path: Path,
-    *,
-    signal_date: date = date(2026, 7, 13),
-    tickers: tuple[str, ...] = ("000001", "000002"),
-    manifest_override: dict | None = None,
-    write_prices: bool = True,
-    write_fund_flow: bool = True,
-) -> tuple[Path, Path]:
-    """Create reports_dir + data_dir with manifest, price cache, fund flow cache."""
-    reports_dir = tmp_path / "reports"
-    data_dir = tmp_path / "data"
-
-    manifest = manifest_override or _manifest_dict(
-        trade_date=signal_date, tickers=tickers
-    )
-    _write_manifest(reports_dir, manifest, trade_date=signal_date)
-
-    if write_prices:
-        for t in tickers:
-            _write_price_cache(data_dir, t)
-    if write_fund_flow:
-        for t in tickers:
-            _write_fund_flow_cache(data_dir, t)
-
-    return reports_dir, data_dir
-
+from src.screening.offensive.pit_evidence import (
+    canonical_fingerprint,
+    canonical_flow_fingerprint,
+    canonical_price_fingerprint,
+)
+from src.utils.date_utils import SIGNAL_SESSION_POLICY_VERSION
 
 SIGNAL_DATE = date(2026, 7, 13)
+_MANIFEST_NAME = "daily_action_readiness_20260713.json"
 
 
 # ---------------------------------------------------------------------------
-# Manifest rejection tests
+# Deterministic evidence helpers
 # ---------------------------------------------------------------------------
 
 
-class TestManifestRejection:
-    def test_missing_manifest_returns_global_reason(self, tmp_path: Path):
-        """No manifest file -> snapshot None, reason daily_action_readiness_missing."""
-        reports_dir = tmp_path / "reports"
-        data_dir = tmp_path / "data"
-        reports_dir.mkdir(parents=True)
-        data_dir.mkdir(parents=True)
+def _fingerprint(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
+
+def _price_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "date": "2026-07-09",
+                "open": "9.80",
+                "high": "10.10",
+                "low": "9.70",
+                "close": "10.00",
+                "pct_change": "1.00",
+                "volume": "900",
+            },
+            {
+                "date": "2026-07-10",
+                "open": "10.00",
+                "high": "10.50",
+                "low": "9.90",
+                "close": "10.20",
+                "pct_change": "2.00",
+                "volume": "1000",
+            },
+            {
+                "date": "2026-07-13",
+                "open": "10.20",
+                "high": "11.00",
+                "low": "10.10",
+                "close": "10.90",
+                "pct_change": "6.86",
+                "volume": "1500",
+            },
+        ]
+    )
+
+
+def _flow_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "date": "2026-07-10",
+                "close": "10.20",
+                "pct_change": "2.00",
+                "main_net_inflow": "120000",
+                "main_net_pct": "3.10",
+            },
+            {
+                "date": "2026-07-13",
+                "close": "10.90",
+                "pct_change": "6.86",
+                "main_net_inflow": "185000",
+                "main_net_pct": "4.20",
+            },
+        ]
+    )
+
+
+def _shared_evidence(universe: tuple[str, ...]) -> SharedReadinessEvidence:
+    regime_row = {"regime": "normal"}
+    industry_by_ticker = {ticker: "银行" for ticker in universe}
+    industry_day_pct = {ticker: 1.5 for ticker in universe}
+    security_status_by_ticker = {ticker: "listed" for ticker in universe}
+    return SharedReadinessEvidence(
+        regime_row=regime_row,
+        industry_by_ticker=industry_by_ticker,
+        industry_day_pct=industry_day_pct,
+        security_status_by_ticker=security_status_by_ticker,
+        regime_fingerprint=_fingerprint({"regime_row": regime_row}),
+        industry_fingerprint=_fingerprint(
+            {
+                "industry_by_ticker": industry_by_ticker,
+                "industry_day_pct": industry_day_pct,
+            }
+        ),
+        security_fingerprint=_fingerprint(
+            {"security_status_by_ticker": security_status_by_ticker}
+        ),
+        board_rule_version="ashare-board-prefix-v1",
+        normalization_version="pit-canonical-v1",
+        signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,
+    )
+
+
+def _write_cache(path: Path, frame: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(path, index=False)
+
+
+def _build_and_publish(
+    root: Path,
+    *,
+    tickers: tuple[str, ...] = ("000001",),
+    price_frames: dict[str, pd.DataFrame] | None = None,
+    flow_frames: dict[str, pd.DataFrame] | None = None,
+) -> SimpleNamespace:
+    data_dir = root / "data"
+    reports_dir = data_dir / "reports"
+    price_dir = data_dir / "price_cache"
+    flow_dir = data_dir / "fund_flow_cache"
+    price_frames = price_frames or {t: _price_frame() for t in tickers}
+    flow_frames = flow_frames or {t: _flow_frame() for t in tickers}
+
+    outcomes: dict[str, TickerRefreshOutcome] = {}
+    for ticker in tickers:
+        pframe = price_frames[ticker]
+        fframe = flow_frames[ticker]
+        _write_cache(price_dir / f"{ticker}.csv", pframe)
+        _write_cache(flow_dir / f"{ticker}.csv", fframe)
+        outcomes[ticker] = TickerRefreshOutcome(
+            ticker=ticker,
+            price_status=PriceStatus.CURRENT,
+            price_history_rows=100,
+            fund_flow_status=FundFlowStatus.CURRENT,
+            fund_flow_history_rows=25,
+            evidence_fingerprints={
+                "price": canonical_price_fingerprint(pframe, ticker, SIGNAL_DATE),
+                "fund_flow": canonical_flow_fingerprint(fframe, ticker, SIGNAL_DATE),
+            },
         )
 
+    universe = tuple(sorted(outcomes))
+    refresh = DailyActionRefreshResult(
+        trade_date=SIGNAL_DATE,
+        universe_tickers=universe,
+        universe_fingerprint=universe_fingerprint(universe),
+        daily_batch_fingerprint=_fingerprint({"batch": SIGNAL_DATE.isoformat()}),
+        suspension_evidence=SuspensionEvidence.available(
+            SIGNAL_DATE,
+            set(),
+            source_fingerprint=canonical_fingerprint("suspension", "*", []),
+        ),
+        outcomes=outcomes,
+        stats=derive_stats_from_outcomes(outcomes),
+    )
+    manifest = build_daily_action_readiness(
+        refresh,
+        _shared_evidence(universe),
+        run_id="fixture-snapshot-v2",
+        oversold_bounce_enabled=False,
+    )
+    publish_daily_action_readiness(manifest, reports_dir)
+
+    return SimpleNamespace(
+        data_dir=data_dir,
+        reports_dir=reports_dir,
+        price_path=price_dir / f"{tickers[0]}.csv",
+        flow_path=flow_dir / f"{tickers[0]}.csv",
+        manifest_path=reports_dir / _MANIFEST_NAME,
+        loader_args={
+            "signal_date": SIGNAL_DATE,
+            "reports_dir": reports_dir,
+            "data_dir": data_dir,
+        },
+    )
+
+
+def mutate_price_close(price_path: Path, target_date: date, new_close: float) -> None:
+    frame = pd.read_csv(price_path, dtype=str)
+    stamp = target_date.strftime("%Y%m%d")
+    mask = frame["date"].str.replace("-", "", regex=False).str[:8] == stamp
+    frame.loc[mask, "close"] = str(new_close)
+    frame.to_csv(price_path, index=False)
+
+
+def append_future_price(price_path: Path, future_date: date, close: float) -> None:
+    frame = pd.read_csv(price_path, dtype=str)
+    row = {
+        "date": future_date.isoformat(),
+        "open": str(close),
+        "high": str(close),
+        "low": str(close),
+        "close": str(close),
+        "pct_change": "0.00",
+        "volume": "2000",
+    }
+    frame = pd.concat([frame, pd.DataFrame([row])], ignore_index=True)
+    frame.to_csv(price_path, index=False)
+
+
+@pytest.fixture
+def v2_snapshot_fixture(tmp_path: Path) -> SimpleNamespace:
+    return _build_and_publish(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Manifest state handling
+# ---------------------------------------------------------------------------
+
+
+class TestManifestStates:
+    def test_missing_manifest_is_fail_closed(self, tmp_path):
+        result = load_verified_daily_action_snapshot(
+            SIGNAL_DATE, reports_dir=tmp_path, data_dir=tmp_path
+        )
         assert result.snapshot is None
         assert result.global_reason == "daily_action_readiness_missing"
 
-    def test_wrong_schema_rejected(self, tmp_path: Path):
-        """Manifest with wrong schema_version -> readiness_manifest_invalid."""
-        manifest = _manifest_dict(schema_version=99)
-        reports_dir, data_dir = _build_full_fixture(
-            tmp_path, manifest_override=manifest
-        )
-
+    def test_invalid_utf8_manifest_is_rejected(self, tmp_path):
+        (tmp_path / _MANIFEST_NAME).write_bytes(b"\xff\xfe")
         result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
+            SIGNAL_DATE, reports_dir=tmp_path, data_dir=tmp_path
         )
-
         assert result.snapshot is None
         assert result.global_reason == "readiness_manifest_invalid"
 
-    def test_date_mismatch_rejected(self, tmp_path: Path):
-        """Manifest trade_date != signal_date -> readiness_date_mismatch."""
-        manifest = _manifest_dict(trade_date=date(2026, 7, 12))
-        reports_dir, data_dir = _build_full_fixture(
-            tmp_path, manifest_override=manifest
-        )
-
+    def test_invalid_json_manifest_is_rejected(self, tmp_path):
+        (tmp_path / _MANIFEST_NAME).write_text("{not json", encoding="utf-8")
         result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
+            SIGNAL_DATE, reports_dir=tmp_path, data_dir=tmp_path
         )
+        assert result.snapshot is None
+        assert result.global_reason == "readiness_manifest_invalid"
 
+    def test_schema_v1_has_no_new_entry_authority(self, v2_snapshot_fixture):
+        raw = json.loads(v2_snapshot_fixture.manifest_path.read_text(encoding="utf-8"))
+        raw["schema_version"] = 1
+        v2_snapshot_fixture.manifest_path.write_text(
+            json.dumps(raw), encoding="utf-8"
+        )
+        result = load_verified_daily_action_snapshot(
+            **v2_snapshot_fixture.loader_args
+        )
+        assert result.snapshot is None
+        assert result.global_reason == "readiness_schema_unsupported"
+
+    def test_date_mismatch_is_rejected(self, v2_snapshot_fixture):
+        other_name = "daily_action_readiness_20260714.json"
+        (v2_snapshot_fixture.reports_dir / other_name).write_bytes(
+            v2_snapshot_fixture.manifest_path.read_bytes()
+        )
+        result = load_verified_daily_action_snapshot(
+            date(2026, 7, 14),
+            reports_dir=v2_snapshot_fixture.reports_dir,
+            data_dir=v2_snapshot_fixture.data_dir,
+        )
         assert result.snapshot is None
         assert result.global_reason == "readiness_date_mismatch"
 
-    def test_wrong_domain_rejected(self, tmp_path: Path):
-        manifest = _manifest_dict()
-        manifest["domain"] = "auto_canonical"
-        reports_dir, data_dir = _build_full_fixture(
-            tmp_path, manifest_override=manifest
+    def test_not_healthy_manifest_is_rejected(self, v2_snapshot_fixture):
+        raw = json.loads(v2_snapshot_fixture.manifest_path.read_text(encoding="utf-8"))
+        raw["status"] = "degraded"
+        body = {k: v for k, v in raw.items() if k != "content_fingerprint"}
+        raw["content_fingerprint"] = _manifest_fingerprint(body)
+        v2_snapshot_fixture.manifest_path.write_text(
+            json.dumps(raw), encoding="utf-8"
         )
-
         result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
+            **v2_snapshot_fixture.loader_args
         )
-
-        assert result.snapshot is None
-        assert result.global_reason == "readiness_manifest_invalid"
-
-    def test_unhealthy_status_rejected(self, tmp_path: Path):
-        manifest = _manifest_dict(status="degraded")
-        reports_dir, data_dir = _build_full_fixture(
-            tmp_path, manifest_override=manifest
-        )
-
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-
         assert result.snapshot is None
         assert result.global_reason == "readiness_manifest_not_healthy"
-
-    def test_corrupt_manifest_rejected(self, tmp_path: Path):
-        reports_dir = tmp_path / "reports"
-        data_dir = tmp_path / "data"
-        reports_dir.mkdir(parents=True)
-        data_dir.mkdir(parents=True)
-
-        path = reports_dir / f"daily_action_readiness_{SIGNAL_DATE.strftime('%Y%m%d')}.json"
-        path.write_text("{ not valid json ", encoding="utf-8")
-
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-
-        assert result.snapshot is None
-        assert result.global_reason == "readiness_manifest_invalid"
 
 
 # ---------------------------------------------------------------------------
@@ -309,355 +327,139 @@ class TestManifestRejection:
 
 
 class TestHappyPath:
-    def test_valid_manifest_loads_snapshot(self, tmp_path: Path):
-        reports_dir, data_dir = _build_full_fixture(tmp_path)
-
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-
+    def test_valid_manifest_loads_snapshot(self, v2_snapshot_fixture):
+        result = load_verified_daily_action_snapshot(**v2_snapshot_fixture.loader_args)
         assert result.snapshot is not None
-        assert result.global_reason is None
-        snap = result.snapshot
-        assert snap.signal_date == SIGNAL_DATE
-        assert set(snap.universe_tickers) == {"000001", "000002"}
-        assert snap.normalization_version == NORMALIZATION_VERSION
-        assert snap.snapshot_id.startswith("sha256:")
-        assert snap.regime == "normal"
-        assert snap.board_rule_version == "ashare-board-prefix-v1"
-        assert snap.setup_requirements_version == "daily-action-setups-v1"
+        assert result.snapshot.universe_tickers == ("000001",)
+        assert result.snapshot.ticker_blocks == {}
 
-    def test_snapshot_provides_setup_context(self, tmp_path: Path):
-        reports_dir, data_dir = _build_full_fixture(tmp_path)
+    def test_prices_and_flows_are_frozen_records(self, v2_snapshot_fixture):
+        snapshot = load_verified_daily_action_snapshot(
+            **v2_snapshot_fixture.loader_args
+        ).snapshot
+        assert snapshot is not None
+        prices = snapshot.prices_by_ticker["000001"]
+        flows = snapshot.fund_flow_by_ticker["000001"]
+        assert isinstance(prices, tuple)
+        assert all(isinstance(row, FrozenPriceRow) for row in prices)
+        assert isinstance(flows, tuple)
+        assert all(isinstance(row, FrozenFlowRow) for row in flows)
 
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
+    def test_reference_price_returns_final_close(self, v2_snapshot_fixture):
+        snapshot = load_verified_daily_action_snapshot(
+            **v2_snapshot_fixture.loader_args
+        ).snapshot
+        assert snapshot is not None
+        assert snapshot.reference_price("000001") == pytest.approx(10.90)
+
+    def test_reference_price_raises_for_unknown_ticker(self, v2_snapshot_fixture):
+        snapshot = load_verified_daily_action_snapshot(
+            **v2_snapshot_fixture.loader_args
+        ).snapshot
+        assert snapshot is not None
+        with pytest.raises(KeyError):
+            snapshot.reference_price("999999")
+
+    def test_setup_context_carries_consumed_fingerprint(self, v2_snapshot_fixture):
+        snapshot = load_verified_daily_action_snapshot(
+            **v2_snapshot_fixture.loader_args
+        ).snapshot
+        assert snapshot is not None
+        context = snapshot.setup_context("000001", "btst_breakout")
+        assert context is not None
+        assert context.setup_name == "btst_breakout"
+        assert context.consumed_fingerprint == (
+            snapshot.manifest.ticker_readiness["000001"]
+            .capabilities["btst_breakout"]
+            .consumed_fingerprint
         )
-        assert result.snapshot is not None
-        snap = result.snapshot
+        assert context.regime == "normal"
+        assert context.industry_day_pct == pytest.approx(1.5)
 
-        ctx = snap.setup_context("000001")
-        assert ctx is not None
-        assert ctx.ticker == "000001"
-        assert ctx.setup_name == "btst_breakout"
-        assert ctx.capability.scannable is True
-        # Prices loaded and PIT-filtered (should have rows up to 2026-07-13)
-        assert len(ctx.prices) > 0
-        assert ctx.prices["date"].max() <= pd.Timestamp(SIGNAL_DATE)
-        # Fund flow loaded
-        assert len(ctx.fund_flow_records) > 0
-        assert ctx.regime == "normal"
+    def test_pit_projection_excludes_future_rows(self, v2_snapshot_fixture):
+        append_future_price(v2_snapshot_fixture.price_path, date(2026, 7, 14), 20.0)
+        snapshot = load_verified_daily_action_snapshot(
+            **v2_snapshot_fixture.loader_args
+        ).snapshot
+        assert snapshot is not None
+        latest = snapshot.prices_by_ticker["000001"][-1]
+        assert latest.trade_date == date(2026, 7, 13)
 
-    def test_setup_context_returns_none_for_unknown_ticker(self, tmp_path: Path):
-        reports_dir, data_dir = _build_full_fixture(tmp_path)
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-        assert result.snapshot is not None
-        assert result.snapshot.setup_context("999999") is None
-
-    def test_fund_flow_records_are_fund_flow_record_objects(self, tmp_path: Path):
-        """Regression: snapshot must emit FundFlowRecord objects (not raw dicts).
-
-        Setup detectors (btst_breakout.py, oversold_bounce.py) access
-        ``r.date`` and ``r.main_net_inflow`` as attributes. The legacy scan
-        path returns ``list[FundFlowRecord]`` from ``FundFlowStore.get_range``;
-        the snapshot path previously produced plain dicts via
-        ``df.to_dict(orient="records")``, breaking attribute access with
-        ``'dict' object has no attribute 'date'``.
-        """
-        reports_dir, data_dir = _build_full_fixture(tmp_path)
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-        assert result.snapshot is not None
-        ctx = result.snapshot.setup_context("000001")
-        assert ctx is not None
-        assert len(ctx.fund_flow_records) > 0
-        # Type contract: each record must be a FundFlowRecord (not dict)
-        for record in ctx.fund_flow_records:
-            assert isinstance(record, FundFlowRecord), (
-                f"expected FundFlowRecord, got {type(record).__name__}"
-            )
-        # Attribute access used by setup detectors must work
-        first = ctx.fund_flow_records[0]
-        assert isinstance(first.date, str)
-        assert first.date <= SIGNAL_DATE.strftime("%Y%m%d")
-        assert isinstance(first.main_net_inflow, float)
+    def test_scannable_tickers_reflect_plan_eligibility(self, v2_snapshot_fixture):
+        snapshot = load_verified_daily_action_snapshot(
+            **v2_snapshot_fixture.loader_args
+        ).snapshot
+        assert snapshot is not None
+        assert snapshot.scannable_tickers == ("000001",)
 
 
 # ---------------------------------------------------------------------------
-# PIT normalization & fingerprint stability
-# ---------------------------------------------------------------------------
-
-
-class TestPitNormalization:
-    def test_future_append_does_not_change_pit_projection(self, tmp_path: Path):
-        """Adding a row dated AFTER signal_date must not change the PIT fingerprint."""
-        df_before = pd.DataFrame(
-            [
-                {"date": "2026-07-12", "open": 10.8, "high": 11.2, "low": 10.6, "close": 11.0, "volume": 1400.0, "pct_change": 1.85},
-                {"date": "2026-07-13", "open": 11.0, "high": 11.4, "low": 10.8, "close": 11.2, "volume": 1500.0, "pct_change": 1.82},
-            ]
-        )
-        df_before["date"] = pd.to_datetime(df_before["date"])
-
-        df_after = df_before.copy()
-        df_after = pd.concat(
-            [
-                df_after,
-                pd.DataFrame(
-                    [
-                        {"date": pd.Timestamp("2026-07-14"), "open": 11.2, "high": 11.6, "low": 11.0, "close": 11.4, "volume": 1600.0, "pct_change": 1.79},
-                        {"date": pd.Timestamp("2026-07-15"), "open": 11.4, "high": 11.8, "low": 11.2, "close": 11.6, "volume": 1700.0, "pct_change": 1.75},
-                    ]
-                ),
-            ],
-            ignore_index=True,
-        )
-
-        fp_before = _pit_fingerprint(df_before, "000001", SIGNAL_DATE)
-        fp_after = _pit_fingerprint(df_after, "000001", SIGNAL_DATE)
-
-        assert fp_before == fp_after
-        assert fp_before.startswith("sha256:")
-
-    def test_pit_filter_excludes_future_rows_in_loaded_snapshot(
-        self, tmp_path: Path
-    ):
-        """Loaded snapshot must not contain price rows past signal_date."""
-        rows = [
-            {"date": "2026-07-12", "open": 10.8, "high": 11.2, "low": 10.6, "close": 11.0, "volume": 1400.0, "pct_change": 1.85},
-            {"date": "2026-07-13", "open": 11.0, "high": 11.4, "low": 10.8, "close": 11.2, "volume": 1500.0, "pct_change": 1.82},
-            # Future rows that must be excluded by PIT filter
-            {"date": "2026-07-14", "open": 11.2, "high": 11.6, "low": 11.0, "close": 11.4, "volume": 1600.0, "pct_change": 1.79},
-            {"date": "2026-07-15", "open": 11.4, "high": 11.8, "low": 11.2, "close": 11.6, "volume": 1700.0, "pct_change": 1.75},
-        ]
-        reports_dir = tmp_path / "reports"
-        data_dir = tmp_path / "data"
-        _write_manifest(reports_dir, _manifest_dict(), trade_date=SIGNAL_DATE)
-        _write_price_cache(data_dir, "000001", rows=rows)
-        _write_price_cache(data_dir, "000002", rows=rows)
-        _write_fund_flow_cache(data_dir, "000001")
-        _write_fund_flow_cache(data_dir, "000002")
-
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-        assert result.snapshot is not None
-        for ticker in ("000001", "000002"):
-            df = result.snapshot.prices_by_ticker[ticker]
-            assert df["date"].max() == pd.Timestamp(SIGNAL_DATE)
-            assert len(df) == 2  # only 2026-07-12 and 2026-07-13
-
-    def test_empty_df_fingerprint_is_ticker_hash(self):
-        empty = pd.DataFrame()
-        fp = _pit_fingerprint(empty, "000001", SIGNAL_DATE)
-        assert fp.startswith("sha256:")
-        # Stable for the same ticker
-        assert fp == _pit_fingerprint(None, "000001", SIGNAL_DATE)
-
-
-# ---------------------------------------------------------------------------
-# Immutability & defensive copies
+# Immutability
 # ---------------------------------------------------------------------------
 
 
 class TestImmutability:
-    def test_snapshot_is_frozen(self, tmp_path: Path):
-        reports_dir, data_dir = _build_full_fixture(tmp_path)
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-        assert result.snapshot is not None
-        with pytest.raises(Exception):
-            result.snapshot.regime = "changed"  # type: ignore[misc]
+    def test_snapshot_is_frozen(self, v2_snapshot_fixture):
+        snapshot = load_verified_daily_action_snapshot(
+            **v2_snapshot_fixture.loader_args
+        ).snapshot
+        assert snapshot is not None
+        with pytest.raises(FrozenInstanceError):
+            snapshot.regime = "crisis"  # type: ignore[misc]
 
-    def test_price_frame_returns_defensive_copy(self, tmp_path: Path):
-        """Modifying the df returned by price_frame() must not affect the snapshot."""
-        reports_dir, data_dir = _build_full_fixture(tmp_path)
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-        assert result.snapshot is not None
-        snap = result.snapshot
-
-        df1 = snap.price_frame("000001")
-        assert df1 is not None
-        original_close = df1["close"].iloc[0]
-        # Mutate the returned copy
-        df1.loc[0, "close"] = 99999.0
-
-        # Snapshot's internal frame is unchanged
-        df2 = snap.price_frame("000001")
-        assert df2 is not None
-        assert df2["close"].iloc[0] == original_close
-
-    def test_setup_context_returns_defensive_copy(self, tmp_path: Path):
-        """Modifying prices returned via setup_context must not affect the snapshot."""
-        reports_dir, data_dir = _build_full_fixture(tmp_path)
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-        assert result.snapshot is not None
-        snap = result.snapshot
-
-        ctx = snap.setup_context("000001")
-        assert ctx is not None
-        original = ctx.prices["close"].iloc[0]
-        ctx.prices.loc[0, "close"] = -1.0
-
-        ctx2 = snap.setup_context("000001")
-        assert ctx2 is not None
-        assert ctx2.prices["close"].iloc[0] == original
-
-    def test_prices_mapping_is_immutable(self, tmp_path: Path):
-        reports_dir, data_dir = _build_full_fixture(tmp_path)
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-        assert result.snapshot is not None
+    def test_prices_mapping_is_immutable(self, v2_snapshot_fixture):
+        snapshot = load_verified_daily_action_snapshot(
+            **v2_snapshot_fixture.loader_args
+        ).snapshot
+        assert snapshot is not None
+        assert isinstance(snapshot.prices_by_ticker, MappingProxyType)
         with pytest.raises(TypeError):
-            result.snapshot.prices_by_ticker["999999"] = pd.DataFrame()  # type: ignore[index]
+            snapshot.prices_by_ticker["000001"] = ()  # type: ignore[index]
+
+    def test_frozen_price_row_is_immutable(self, v2_snapshot_fixture):
+        snapshot = load_verified_daily_action_snapshot(
+            **v2_snapshot_fixture.loader_args
+        ).snapshot
+        assert snapshot is not None
+        row = snapshot.prices_by_ticker["000001"][0]
+        assert isinstance(row.close, Decimal)
+        with pytest.raises(FrozenInstanceError):
+            row.close = Decimal("1")  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
-# Scannable tickers & block propagation
+# PIT verification (mutation detection)
 # ---------------------------------------------------------------------------
 
 
-class TestScannableTickers:
-    def test_scannable_tickers_excludes_blocked(self, tmp_path: Path):
-        """Tickers whose capability is not scannable must not appear in scannable_tickers."""
-        ticker_readiness = {
-            "000001": {
-                "evidence_status": "verified",
-                "capabilities": {
-                    "btst_breakout": {
-                        "enabled": True,
-                        "scannable": True,
-                        "plan_eligible": True,
-                        "degraded": False,
-                        "block_reasons": [],
-                        "warnings": [],
-                    }
-                },
-            },
-            "000002": {
-                "evidence_status": "blocked",
-                "capabilities": {
-                    "btst_breakout": {
-                        "enabled": True,
-                        "scannable": False,
-                        "plan_eligible": False,
-                        "degraded": False,
-                        "block_reasons": ["suspended"],
-                        "warnings": [],
-                    }
-                },
-            },
-        }
-        manifest = _manifest_dict(
-            tickers=("000001", "000002"), ticker_readiness=ticker_readiness
-        )
-        reports_dir, data_dir = _build_full_fixture(
-            tmp_path, manifest_override=manifest
-        )
+class TestPitVerification:
+    def test_historical_price_mutation_blocks_ticker(self, v2_snapshot_fixture):
+        first = load_verified_daily_action_snapshot(**v2_snapshot_fixture.loader_args)
+        assert first.snapshot is not None
+        mutate_price_close(v2_snapshot_fixture.price_path, date(2026, 7, 10), 999.0)
+        second = load_verified_daily_action_snapshot(**v2_snapshot_fixture.loader_args)
+        assert second.ticker_blocks["000001"] == ("pit_fingerprint_mismatch",)
+        assert "000001" not in second.snapshot.scannable_tickers
 
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-        assert result.snapshot is not None
-        snap = result.snapshot
+    def test_future_append_does_not_change_verified_snapshot(
+        self, v2_snapshot_fixture
+    ):
+        first = load_verified_daily_action_snapshot(**v2_snapshot_fixture.loader_args)
+        append_future_price(v2_snapshot_fixture.price_path, date(2026, 7, 14), 20.0)
+        second = load_verified_daily_action_snapshot(**v2_snapshot_fixture.loader_args)
+        assert first.snapshot is not None
+        assert second.snapshot is not None
+        assert first.snapshot.snapshot_id == second.snapshot.snapshot_id
+        assert second.ticker_blocks == {}
 
-        assert "000001" in snap.scannable_tickers
-        assert "000002" not in snap.scannable_tickers
+    def test_deleting_historical_row_blocks_ticker(self, v2_snapshot_fixture):
+        frame = pd.read_csv(v2_snapshot_fixture.price_path, dtype=str)
+        frame = frame[frame["date"].str.replace("-", "", regex=False) != "20260710"]
+        frame.to_csv(v2_snapshot_fixture.price_path, index=False)
+        result = load_verified_daily_action_snapshot(**v2_snapshot_fixture.loader_args)
+        assert result.ticker_blocks["000001"] == ("pit_fingerprint_mismatch",)
 
-    def test_price_data_missing_blocks_ticker(self, tmp_path: Path):
-        """A ticker with no price cache file gets a price_data_missing block reason."""
-        manifest = _manifest_dict(tickers=("000001", "000002"))
-        reports_dir, data_dir = _build_full_fixture(
-            tmp_path, manifest_override=manifest, write_prices=False
-        )
-        # Manually remove price cache to ensure missing
-        # (write_prices=False above already skips it)
-
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-        assert result.snapshot is not None
-        for ticker in ("000001", "000002"):
-            assert "price_data_missing" in result.snapshot.ticker_blocks.get(
-                ticker, ()
-            )
-            assert ticker not in result.snapshot.scannable_tickers or (
-                ticker in result.snapshot.manifest.ticker_readiness
-                and any(
-                    c.scannable
-                    for c in result.snapshot.manifest.ticker_readiness[
-                        ticker
-                    ].capabilities.values()
-                )
-            )
-
-    def test_ticker_blocks_propagate_to_result(self, tmp_path: Path):
-        """ticker_blocks mapping is exposed on both snapshot and result."""
-        manifest = _manifest_dict(tickers=("000001", "000002"))
-        reports_dir, data_dir = _build_full_fixture(
-            tmp_path, manifest_override=manifest, write_prices=False
-        )
-
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-        assert result.snapshot is not None
-        # Both surfaces carry the same block info
-        assert "000001" in result.ticker_blocks
-        assert "000001" in result.snapshot.ticker_blocks
-        assert result.ticker_blocks["000001"] == result.snapshot.ticker_blocks["000001"]
-
-
-# ---------------------------------------------------------------------------
-# Fund flow loading
-# ---------------------------------------------------------------------------
-
-
-class TestFundFlowLoading:
-    def test_fund_flow_pit_filtered(self, tmp_path: Path):
-        """Fund flow records dated after signal_date are excluded."""
-        reports_dir, data_dir = _build_full_fixture(tmp_path)
-        # Overwrite fund flow with future-dated rows
-        future_rows = [
-            {"date": "20260713", "close": "11.2", "pct_change": "1.82", "main_net_inflow": "3000.0", "ticker": "000001"},
-            {"date": "20260714", "close": "11.4", "pct_change": "1.79", "main_net_inflow": "4000.0", "ticker": "000001"},
-            {"date": "20260715", "close": "11.6", "pct_change": "1.75", "main_net_inflow": "5000.0", "ticker": "000001"},
-        ]
-        _write_fund_flow_cache(data_dir, "000001", rows=future_rows)
-        _write_fund_flow_cache(data_dir, "000002", rows=future_rows)
-
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-        assert result.snapshot is not None
-        records = result.snapshot.fund_flow_by_ticker["000001"]
-        # Only 20260713 should remain; 14 and 15 are post-signal
-        assert len(records) == 1
-        assert records[0].date == "20260713"
-
-    def test_missing_fund_flow_does_not_block_ticker(self, tmp_path: Path):
-        """Absence of fund_flow cache is non-fatal; ticker still loads with prices."""
-        reports_dir, data_dir = _build_full_fixture(
-            tmp_path, write_fund_flow=False
-        )
-        result = load_verified_daily_action_snapshot(
-            SIGNAL_DATE, reports_dir=reports_dir, data_dir=data_dir
-        )
-        assert result.snapshot is not None
-        snap = result.snapshot
-        # Prices present, fund flow empty tuple
-        for ticker in ("000001", "000002"):
-            assert snap.prices_by_ticker[ticker] is not None
-            assert len(snap.prices_by_ticker[ticker]) > 0
-            assert snap.fund_flow_by_ticker[ticker] == ()
-            # No price_data_missing block — only fund flow absence
-            assert "price_data_missing" not in snap.ticker_blocks.get(ticker, ())
+    def test_missing_price_cache_blocks_scannable_ticker(self, v2_snapshot_fixture):
+        v2_snapshot_fixture.price_path.unlink()
+        result = load_verified_daily_action_snapshot(**v2_snapshot_fixture.loader_args)
+        assert "price_data_missing" in result.ticker_blocks["000001"]

@@ -63,3 +63,22 @@ class TestLargeFileRejection:
         f = _write_file(tmp_path / "large.bin", b"0" * 10000)
         with pytest.raises(SecureReadError, match="exceeds max_bytes"):
             read_regular_bytes(f, max_bytes=100)
+
+
+class TestAncestorSymlinkRejection:
+    def test_read_regular_bytes_rejects_ancestor_symlink(self, tmp_path):
+        real = tmp_path / "real"
+        real.mkdir()
+        (real / "manifest.json").write_text("{}", encoding="utf-8")
+        linked = tmp_path / "linked"
+        linked.symlink_to(real, target_is_directory=True)
+        with pytest.raises(SecureReadError):
+            read_regular_bytes(linked / "manifest.json", max_bytes=1024)
+
+    def test_reads_through_real_directory_chain(self, tmp_path):
+        nested = tmp_path / "a" / "b"
+        nested.mkdir(parents=True)
+        target = nested / "data.json"
+        target.write_text('{"ok": true}', encoding="utf-8")
+        assert read_regular_bytes(target, max_bytes=1024) == b'{"ok": true}'
+
