@@ -1016,7 +1016,6 @@ def _resolve_daily_action(
 
     from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
     from src.screening.offensive.daily_action import (
-        BlockedCandidate,
         DailyActionScan,
         render_daily_action_v2,
         resolve_daily_action_signal,
@@ -1025,8 +1024,6 @@ def _resolve_daily_action(
     )
     from src.screening.offensive.daily_action_service import (
         DailyActionService,
-        PlanCandidate,
-        RegimeAuthorization,
     )
     from src.screening.offensive.daily_action_snapshot import (
         load_verified_daily_action_snapshot,
@@ -1065,13 +1062,10 @@ def _resolve_daily_action(
         signal_date,
         reports_dir=reports_dir,
         data_dir=data_dir,
-        regime=regime,
     )
 
     if verified.snapshot is not None:
-        snapshot_candidates, snapshot_blocked = scan_from_verified_snapshot(
-            verified.snapshot
-        )
+        candidates = scan_from_verified_snapshot(verified.snapshot)
         regime = verified.snapshot.regime
         # Best-effort: persist the full setup output (candidates + filtered-out,
         # with strength / fund-flow / pre-runup diagnostics) for out-of-sample
@@ -1081,42 +1075,12 @@ def _resolve_daily_action(
 
             log_setup_outputs(
                 verified.snapshot.signal_date,
-                snapshot_candidates,
-                snapshot_blocked,
+                (),
+                (),
                 regime=regime,
             )
         except Exception:
             pass
-        authorization = {
-            "crisis": RegimeAuthorization.BTST_CRISIS,
-            "risk_off": RegimeAuthorization.BTST_RISK_OFF,
-        }.get(regime, RegimeAuthorization.NORMAL)
-        candidates = DailyActionScan(
-            verified.snapshot.signal_date,
-            tuple(
-                PlanCandidate(
-                    action.ticker,
-                    action.setup,
-                    "v2",
-                    action.kelly_pct,
-                    priority,
-                    authorization,
-                )
-                for priority, action in enumerate(snapshot_candidates, 1)
-            ),
-            tuple(
-                BlockedCandidate(
-                    action.ticker,
-                    action.block_reason or "verified_snapshot_block",
-                    action.entry_price,
-                )
-                for action in snapshot_blocked
-            ),
-            tuple(
-                (action.ticker, action.entry_price)
-                for action in snapshot_candidates
-            ),
-        )
         # Task 8 (deep): the service gates on the verified snapshot itself
         # (per-ticker plan_eligible + consumed fingerprint), NOT the Auto
         # data-quality manifest. This admits valid BTST tickers outside Auto's

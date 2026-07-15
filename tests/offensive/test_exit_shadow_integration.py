@@ -230,7 +230,7 @@ def test_shadow_provider_exception_is_visible_after_normal_work(shadow_case):
 
     run = service.run(
         as_of,
-        candidates=(PlanCandidate("000999", "btst_breakout", "v2", 0.10, 2),),
+        candidates=(PlanCandidate("000999", "btst_breakout", "v2", as_of, 0.10, 2, "sha256:" + "0" * 64, "sha256:" + "0" * 64),),
         shadow_prices=broken_provider,
     )
 
@@ -627,7 +627,7 @@ def test_triggering_shadow_is_differentially_zero_effect_and_idempotent(
 
     trigger_service = build(tmp_path / "trigger.sqlite3")
     control_service = build(tmp_path / "control.sqlite3")
-    candidates = (PlanCandidate("000888", "btst_breakout", "v2", 0.10, 2),)
+    candidates = (PlanCandidate("000888", "btst_breakout", "v2", as_of, 0.10, 2, "sha256:" + "0" * 64, "sha256:" + "0" * 64),)
 
     trigger_run = trigger_service.run(as_of, candidates, shadow_prices=prices)
     control_run = control_service.run(as_of, candidates, shadow_prices={})

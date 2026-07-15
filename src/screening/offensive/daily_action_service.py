@@ -63,9 +63,7 @@ class RegimeAuthorization(StrEnum):
 
     @property
     def ticker_cap(self) -> float:
-        return (
-            NORMAL_STOCK_CAP if self is RegimeAuthorization.NORMAL else HARD_STOCK_CAP
-        )
+        return NORMAL_STOCK_CAP
 
 
 @dataclass(frozen=True)
@@ -84,8 +82,12 @@ class PlanCandidate:
     ticker: str
     setup: str
     setup_version: str
+    signal_date: date
     target_weight: float
     priority: int
+    snapshot_id: str
+    setup_consumed_fingerprint: str
+    detector_degraded: bool = False
     authorization: RegimeAuthorization = RegimeAuthorization.NORMAL
 
     def __post_init__(self) -> None:
@@ -93,6 +95,14 @@ class PlanCandidate:
             raise ValueError("only btst_breakout candidates are enabled")
         if not self.ticker or not self.setup_version:
             raise ValueError("ticker and setup_version must be nonempty")
+        if type(self.signal_date) is not date:
+            raise ValueError("signal_date must be a date")
+        if not isinstance(self.snapshot_id, str) or not self.snapshot_id:
+            raise ValueError("snapshot_id must be nonempty")
+        if not isinstance(self.setup_consumed_fingerprint, str) or not self.setup_consumed_fingerprint:
+            raise ValueError("setup_consumed_fingerprint must be nonempty")
+        if type(self.detector_degraded) is not bool:
+            raise ValueError("detector_degraded must be bool")
         if not math.isfinite(self.target_weight) or self.target_weight <= 0:
             raise ValueError("target_weight must be finite and positive")
         if (
@@ -407,6 +417,7 @@ class DailyActionService:
         self._block_reasons: list[str] = []
         self._blocked_tickers: tuple[str, ...] = ()
         self._ticker_gate_blocks: tuple[TickerGateBlock, ...] = ()
+        self._active_snapshot: VerifiedDailyActionSnapshot | None = None
 
     def run(
         self,
@@ -438,9 +449,11 @@ class DailyActionService:
                 as_of, candidates, verified_snapshot
             )
             self._active_manifest = None
+            self._active_snapshot = verified_snapshot
         else:
             eligible = self._manifest_eligible_candidates(as_of, candidates, manifest)
             self._active_manifest = manifest if self.enforce_manifest_gate else None
+            self._active_snapshot = None
         if self.enforce_manifest_gate and not eligible:
             plans = ()
         else:
@@ -450,6 +463,20 @@ class DailyActionService:
             valuation,
             exits,
             plans,
+            shadow_prices=shadow_prices,
+        )
+
+    def run_from_snapshot(
+        self,
+        snapshot: "VerifiedDailyActionSnapshot",
+        candidates: Sequence[PlanCandidate],
+        *,
+        shadow_prices: ShadowPriceSource | None = None,
+    ) -> DailyActionRun:
+        return self.run(
+            snapshot.signal_date,
+            candidates,
+            verified_snapshot=snapshot,
             shadow_prices=shadow_prices,
         )
 
@@ -562,20 +589,26 @@ class DailyActionService:
         eligible: list[PlanCandidate] = []
         blocked: list[TickerGateBlock] = []
         for candidate in candidates:
-            context = snapshot.setup_context(candidate.ticker)
+            context = snapshot.setup_context(candidate.ticker, candidate.setup)
             reasons: list[str] = []
+            if candidate.signal_date != snapshot.signal_date:
+                reasons.append("candidate_date_mismatch")
+            if candidate.snapshot_id != snapshot.snapshot_id:
+                reasons.append("candidate_snapshot_mismatch")
             if context is None:
-                # Not scannable in the snapshot. Because the snapshot loader
-                # already PIT-verified every per-ticker fingerprint (mismatches
-                # land in ``ticker_blocks`` and drop out of ``scannable_tickers``),
-                # a ticker missing here has no verified, plan-eligible evidence.
-                reasons.append("snapshot_ticker_absent")
+                default_context = snapshot.setup_context(candidate.ticker)
+                if default_context is not None and candidate.setup != default_context.setup_name:
+                    reasons.append("candidate_setup_mismatch")
+                else:
+                    reasons.append("candidate_not_plan_eligible")
             else:
                 capability = context.capability
-                if not capability.plan_eligible:
-                    reasons.extend(
-                        capability.block_reasons or ("not_plan_eligible",)
-                    )
+                if candidate.setup != context.setup_name:
+                    reasons.append("candidate_setup_mismatch")
+                if candidate.setup_consumed_fingerprint != context.consumed_fingerprint:
+                    reasons.append("candidate_consumed_fingerprint_mismatch")
+                if candidate.detector_degraded or not capability.plan_eligible:
+                    reasons.append("candidate_not_plan_eligible")
             if reasons:
                 blocked.append(
                     TickerGateBlock(candidate.ticker, tuple(dict.fromkeys(reasons)))
@@ -793,6 +826,23 @@ class DailyActionService:
         self, candidate: PlanCandidate, signal_date: date, entry_date: date
     ) -> PlanProvenance:
         manifest = self._active_manifest
+        snapshot = self._active_snapshot
+        if snapshot is not None:
+            return PlanProvenance(
+                verification_status="verified",
+                source_run_id=snapshot.manifest.run_id,
+                manifest_fingerprint=snapshot.manifest.content_fingerprint,
+                input_fingerprint=snapshot.manifest.input_fingerprint,
+                ticker_cache_fingerprint=candidate.setup_consumed_fingerprint,
+                snapshot_id=snapshot.snapshot_id,
+                setup_consumed_fingerprint=candidate.setup_consumed_fingerprint,
+                reference_price=snapshot.reference_price(candidate.ticker),
+                order_type="next_session_open_proxy",
+                board_rule_version=snapshot.board_rule_version,
+                valid_on=entry_date,
+                execution_cost_version=self.costs.version,
+                authorization=RegimeAuthorization.NORMAL.value,
+            )
         if manifest is None:
             return PlanProvenance.legacy_unverified()
         readiness = manifest.tickers.get(candidate.ticker)

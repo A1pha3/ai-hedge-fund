@@ -45,8 +45,8 @@ def _readiness(ticker: str, fingerprint: str, *, trade_ready: bool = True) -> Ti
 @pytest.fixture
 def candidates() -> tuple[PlanCandidate, PlanCandidate]:
     return (
-        PlanCandidate("000001", "btst_breakout", "v2", 0.10, 1),
-        PlanCandidate("000002", "btst_breakout", "v2", 0.10, 2),
+        PlanCandidate("000001", "btst_breakout", "v2", SIGNAL_DATE, 0.10, 1, "sha256:" + "0" * 64, "sha256:" + "0" * 64),
+        PlanCandidate("000002", "btst_breakout", "v2", SIGNAL_DATE, 0.10, 2, "sha256:" + "0" * 64, "sha256:" + "0" * 64),
     )
 
 
@@ -169,12 +169,15 @@ def test_manifest_without_canonical_regime_evidence_caps_crisis_claim_at_ten_per
     service, healthy_manifest
 ) -> None:
     candidate = PlanCandidate(
-        "000001",
-        "btst_breakout",
-        "v2",
-        0.12,
-        1,
-        RegimeAuthorization.BTST_CRISIS,
+        ticker="000001",
+        setup="btst_breakout",
+        setup_version="v2",
+        signal_date=SIGNAL_DATE,
+        target_weight=0.12,
+        priority=1,
+        snapshot_id="sha256:" + "0" * 64,
+        setup_consumed_fingerprint="sha256:" + "0" * 64,
+        authorization=RegimeAuthorization.BTST_CRISIS,
     )
 
     run = service.run(SIGNAL_DATE, (candidate,), manifest=healthy_manifest)
@@ -312,23 +315,21 @@ def _verified_snapshot_with(
     *,
     plan_eligible: bool = True,
     signal_date: date = SIGNAL_DATE,
-    snapshot_id: str = "sha256:snap",
+    snapshot_id: str = "sha256:" + "0" * 64,
 ):
     """Minimal VerifiedDailyActionSnapshot exposing one ticker's BTST capability."""
+    from datetime import timedelta
+    from decimal import Decimal
+    from types import SimpleNamespace
     from types import MappingProxyType
 
-    import pandas as pd
-
-    from src.screening.offensive.daily_action_readiness import (
-        DailyActionReadinessManifest,
-        DailyActionTickerReadiness,
-        SharedReadinessEvidence,
-    )
     from src.screening.offensive.daily_action_snapshot import (
+        FrozenPriceRow,
         VerifiedDailyActionSnapshot,
     )
     from src.screening.offensive.setup_data_contracts import SetupCapability
 
+    consumed_fingerprint = "sha256:" + "0" * 64
     cap = SetupCapability(
         enabled=True,
         scannable=True,
@@ -336,42 +337,42 @@ def _verified_snapshot_with(
         degraded=not plan_eligible,
         block_reasons=() if plan_eligible else ("incomplete_setup_data",),
         warnings=(),
-        consumed_fingerprint=None,
+        consumed_fingerprint=consumed_fingerprint,
     )
-    manifest = DailyActionReadinessManifest(
-        schema_version=1,
-        domain="daily_action",
+    manifest = SimpleNamespace(
         run_id="snap-run",
         trade_date=signal_date,
-        created_at="2026-07-13T12:00:00Z",
-        status="healthy",
-        universe_kind="resolved_refresh_universe",
-        universe_tickers=(ticker,),
-        universe_fingerprint="sha256:u",
-        input_fingerprint="sha256:i",
+        content_fingerprint="sha256:" + "1" * 64,
+        input_fingerprint="sha256:" + "2" * 64,
         ticker_readiness=MappingProxyType(
             {
-                ticker: DailyActionTickerReadiness(
+                ticker: SimpleNamespace(
                     evidence_status="verified",
                     capabilities=MappingProxyType({"btst_breakout": cap}),
                 )
             }
         ),
-        warnings=(),
-        shared_evidence=SharedReadinessEvidence(
-            regime_row={},
-            regime_fingerprint=None,
-            industry_mapping_fingerprint=None,
-            security_status_fingerprint=None,
-            board_rule_version="ashare-board-prefix-v1",
-            normalization_version="pit-canonical-v1",
-            signal_session_policy_version="ashare-cn-1700-v1",
+    )
+    prices = (
+        FrozenPriceRow(
+            trade_date=signal_date - timedelta(days=1),
+            open=Decimal("10"),
+            high=Decimal("10"),
+            low=Decimal("10"),
+            close=Decimal("10"),
+            volume=Decimal("1"),
+            pct_change=Decimal("0"),
         ),
-        policy_versions=MappingProxyType(
-            {"readiness_policy": "daily-action-readiness-v1"}
+        FrozenPriceRow(
+            trade_date=signal_date,
+            open=Decimal("10"),
+            high=Decimal("10"),
+            low=Decimal("10"),
+            close=Decimal("10"),
+            volume=Decimal("1"),
+            pct_change=Decimal("0"),
         ),
     )
-    prices = pd.DataFrame({"date": ["2026-07-13"], "close": [10.0]})
     return VerifiedDailyActionSnapshot(
         signal_date=signal_date,
         snapshot_id=snapshot_id,
@@ -385,6 +386,7 @@ def _verified_snapshot_with(
         normalization_version="pit-canonical-v1",
         setup_requirements_version="daily-action-setups-v1",
         ticker_blocks=MappingProxyType({}),
+        consumed_fingerprint_by_ticker=MappingProxyType({ticker: MappingProxyType({"btst_breakout": consumed_fingerprint})}),
     )
 
 
@@ -396,7 +398,7 @@ def test_service_snapshot_gate_admits_ticker_outside_auto_manifest(service):
     valid BTST ticker (spec section 12.3.2).
     """
     snapshot = _verified_snapshot_with("000999")
-    candidate = PlanCandidate("000999", "btst_breakout", "v2", 0.10, 1)
+    candidate = PlanCandidate("000999", "btst_breakout", "v2", SIGNAL_DATE, 0.10, 1, "sha256:" + "0" * 64, "sha256:" + "0" * 64)
 
     run = service.run(SIGNAL_DATE, [candidate], verified_snapshot=snapshot)
 
@@ -408,7 +410,7 @@ def test_service_snapshot_gate_admits_ticker_outside_auto_manifest(service):
 def test_service_snapshot_gate_blocks_non_plan_eligible_candidate(service):
     """A candidate that is not plan_eligible in the snapshot is blocked."""
     snapshot = _verified_snapshot_with("000999", plan_eligible=False)
-    candidate = PlanCandidate("000999", "btst_breakout", "v2", 0.10, 1)
+    candidate = PlanCandidate("000999", "btst_breakout", "v2", SIGNAL_DATE, 0.10, 1, "sha256:" + "0" * 64, "sha256:" + "0" * 64)
 
     run = service.run(SIGNAL_DATE, [candidate], verified_snapshot=snapshot)
 
@@ -419,7 +421,7 @@ def test_service_snapshot_gate_blocks_non_plan_eligible_candidate(service):
 def test_service_snapshot_gate_blocks_date_mismatch(service):
     """A snapshot whose signal_date differs from as_of blocks all candidates."""
     snapshot = _verified_snapshot_with("000999", signal_date=SIGNAL_DATE - timedelta(days=1))
-    candidate = PlanCandidate("000999", "btst_breakout", "v2", 0.10, 1)
+    candidate = PlanCandidate("000999", "btst_breakout", "v2", SIGNAL_DATE, 0.10, 1, "sha256:" + "0" * 64, "sha256:" + "0" * 64)
 
     run = service.run(SIGNAL_DATE, [candidate], verified_snapshot=snapshot)
 
