@@ -1181,6 +1181,8 @@ def _refresh_daily_action_caches_for_auto(
     report_payload: dict,
     *,
     refresh_fn=None,
+    shared_evidence=None,
+    reports_dir: Path | str = Path("data/reports"),
 ) -> object | None:
     """Best-effort cache refresh + readiness manifest publication for the next ``--daily-action`` run.
 
@@ -1235,9 +1237,37 @@ def _refresh_daily_action_caches_for_auto(
     # This does NOT affect Auto canonical health — it's a separate publication.
     if refresh_result is not None:
         try:
-            _publish_daily_action_readiness_for_auto(trade_date, refresh_result)
+            _publish_daily_action_readiness_for_auto(
+                refresh_result,
+                reports_dir=Path(reports_dir),
+                shared_evidence=shared_evidence,
+            )
         except Exception as exc:  # pragma: no cover - readiness must not fail --auto
             logger.warning("[Auto] daily-action readiness publication failed: %s", exc)
+    else:
+        try:
+            import hashlib
+            import uuid
+            from datetime import date
+
+            from src.screening.offensive.daily_action_readiness import (
+                publish_daily_action_attempt,
+            )
+
+            attempt_date = date.fromisoformat(
+                f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
+            )
+            run_id = hashlib.sha256(
+                f"{trade_date}|refresh-unavailable|{uuid.uuid4().hex}".encode()
+            ).hexdigest()[:32]
+            publish_daily_action_attempt(
+                trade_date=attempt_date,
+                run_id=run_id,
+                reports_dir=Path(reports_dir),
+                reasons=("refresh_result_unavailable",),
+            )
+        except Exception as exc:  # pragma: no cover - attempt is best-effort for --auto
+            logger.warning("[Auto] daily-action readiness attempt publication failed: %s", exc)
 
     # Fresh bars just landed → backfill the setup-output panel so past logged
     # signals whose forward window has elapsed get their realized T+1..T+10
@@ -1267,52 +1297,50 @@ def _refresh_daily_action_caches_for_auto(
 
 
 def _publish_daily_action_readiness_for_auto(
-    trade_date: str,
     refresh_result: object,
-) -> None:
+    *,
+    reports_dir: Path,
+    shared_evidence: object | None,
+):
     """Publish readiness from the exact immutable refresh result."""
-    import hashlib
-    from datetime import datetime, timezone
-    from pathlib import Path
 
     from src.screening.offensive.cache_readiness import DailyActionRefreshResult
     from src.screening.offensive.daily_action_readiness import (
         SharedReadinessEvidence,
-        publish_daily_action_readiness,
         build_daily_action_readiness,
+        new_readiness_run_id,
+        publish_daily_action_attempt,
+        publish_daily_action_readiness,
     )
 
-    if not isinstance(refresh_result, DailyActionRefreshResult):
-        raise TypeError("readiness publication requires DailyActionRefreshResult")
-    if refresh_result.trade_date.strftime("%Y%m%d") != trade_date:
-        raise ValueError("refresh result trade date does not match publication date")
-    if not refresh_result.universe_tickers:
-        logger.info("[Auto] daily-action readiness: empty universe, skipping publication")
-        return
+    if type(refresh_result) is not DailyActionRefreshResult:
+        raise TypeError("readiness publication requires exact DailyActionRefreshResult")
+    run_id = new_readiness_run_id(refresh_result)
+    if type(shared_evidence) is not SharedReadinessEvidence:
+        publication = publish_daily_action_attempt(
+            trade_date=refresh_result.trade_date,
+            run_id=run_id,
+            reports_dir=Path(reports_dir),
+            reasons=("shared_evidence_unavailable",),
+        )
+        logger.warning(
+            "[Auto] Daily Action 共享证据不完整，仅保存 attempt: %s",
+            publication.artifact_path.name,
+        )
+        return publication
 
-    shared_evidence = SharedReadinessEvidence(
-        regime_row={},
-        regime_fingerprint=None,
-        industry_mapping_fingerprint=None,
-        security_status_fingerprint=None,
-        board_rule_version="ashare-board-prefix-v1",
-        normalization_version="pit-canonical-v1",
-        signal_session_policy_version="ashare-cn-1700-v1",
-    )
-
-    run_id = hashlib.sha256(
-        f"{trade_date}-{datetime.now(timezone.utc).isoformat()}".encode()
-    ).hexdigest()[:16]
+    from src.screening.offensive.daily_action import _env_setup_disable_list
 
     manifest = build_daily_action_readiness(
         refresh_result,
         shared_evidence,
         run_id=run_id,
-        oversold_bounce_enabled=False,
+        oversold_bounce_enabled=(
+            "oversold_bounce" not in _env_setup_disable_list()
+        ),
     )
 
-    reports_dir = Path("data/reports")
-    publication = publish_daily_action_readiness(manifest, reports_dir)
+    publication = publish_daily_action_readiness(manifest, Path(reports_dir))
     logger.info(
         "[Auto] Daily Action 就绪清单已发布: %s (%d 只, scannable=%d, plan_eligible=%d)",
         publication.artifact_path.name,
@@ -1320,6 +1348,7 @@ def _publish_daily_action_readiness_for_auto(
         manifest.scannable_count,
         manifest.plan_eligible_count,
     )
+    return publication
 
 
 def _log_cache_refresh_summary(s: dict) -> None:

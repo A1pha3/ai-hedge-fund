@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import date
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from src.screening.offensive.daily_action_readiness import (
     publish_daily_action_readiness,
     validate_manifest,
 )
+from src.screening.offensive.pit_evidence import canonical_fingerprint
 from src.screening.offensive.setup_data_contracts import SetupCapability
 from src.utils.date_utils import SIGNAL_SESSION_POLICY_VERSION
 
@@ -50,18 +52,47 @@ def _outcome(
         price_history_rows=price_rows,
         fund_flow_status=flow,
         fund_flow_history_rows=flow_rows,
+        evidence_fingerprints={
+            "price": _fingerprint({"price": ticker}),
+            "fund_flow": _fingerprint({"fund_flow": ticker}),
+        },
         warnings=warnings,
     )
 
 
-def _shared_evidence() -> SharedReadinessEvidence:
+def _fingerprint(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _shared_evidence(tickers: tuple[str, ...]) -> SharedReadinessEvidence:
+    regime_row = {"regime": "normal"}
+    industry_by_ticker = {ticker: "银行" for ticker in tickers}
+    industry_day_pct = {ticker: 1.0 for ticker in tickers}
+    security_status_by_ticker = {ticker: "listed" for ticker in tickers}
     return SharedReadinessEvidence(
-        regime_row={"trend": "up"},
-        regime_fingerprint="sha256:regime",
-        industry_mapping_fingerprint="sha256:industry",
-        security_status_fingerprint="sha256:sec",
-        board_rule_version="board-rule-v1",
-        normalization_version="norm-v1",
+        regime_row=regime_row,
+        industry_by_ticker=industry_by_ticker,
+        industry_day_pct=industry_day_pct,
+        security_status_by_ticker=security_status_by_ticker,
+        regime_fingerprint=_fingerprint({"regime_row": regime_row}),
+        industry_fingerprint=_fingerprint(
+            {
+                "industry_by_ticker": industry_by_ticker,
+                "industry_day_pct": industry_day_pct,
+            }
+        ),
+        security_fingerprint=_fingerprint(
+            {"security_status_by_ticker": security_status_by_ticker}
+        ),
+        board_rule_version="ashare-board-prefix-v1",
+        normalization_version="pit-canonical-v1",
         signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,
     )
 
@@ -77,8 +108,12 @@ def _refresh_result(
         trade_date=trade_date,
         universe_tickers=universe,
         universe_fingerprint=universe_fingerprint(universe),
-        daily_batch_fingerprint="sha256:batch",
-        suspension_evidence=SuspensionEvidence.available(trade_date, set()),
+        daily_batch_fingerprint=_fingerprint({"batch": trade_date.isoformat()}),
+        suspension_evidence=SuspensionEvidence.available(
+            trade_date,
+            set(),
+            source_fingerprint=canonical_fingerprint("suspension", "*", []),
+        ),
         outcomes=tickers_with_outcomes,
         stats=stats,
     )
@@ -101,7 +136,7 @@ def _manifest(
     refresh = _refresh_result(tickers)
     return build_daily_action_readiness(
         refresh,
-        _shared_evidence(),
+        _shared_evidence(refresh.universe_tickers),
         run_id="run-test-001",
         oversold_bounce_enabled=oversold_bounce_enabled,
         st_tickers=st_tickers,
@@ -133,7 +168,9 @@ class TestUniverseIsRefreshUniverse:
 
     def test_manifest_carries_input_fingerprint(self):
         manifest = _manifest()
-        assert manifest.input_fingerprint == "sha256:batch"
+        assert manifest.input_fingerprint == _fingerprint(
+            {"batch": date(2026, 7, 13).isoformat()}
+        )
 
 
 class TestStructuralHealth:
@@ -167,7 +204,7 @@ class TestStructuralHealth:
                 assert cap.plan_eligible is False
 
     def test_schema_version_constant(self):
-        assert DAILY_ACTION_READINESS_SCHEMA_VERSION == 1
+        assert DAILY_ACTION_READINESS_SCHEMA_VERSION == 2
 
     def test_domain_is_daily_action(self):
         manifest = _manifest()
@@ -224,11 +261,29 @@ class TestCapabilityEvaluation:
 
     def test_industry_warning_marks_btst_degraded(self):
         tickers = {
-            "000001": _outcome(
-                "000001", warnings=("industry_index_missing",)
-            )
+            "000001": _outcome("000001")
         }
-        manifest = _manifest(tickers)
+        regime_row = {"regime": "normal"}
+        security = {"000001": "listed"}
+        shared = SharedReadinessEvidence(
+            regime_row=regime_row,
+            industry_by_ticker={},
+            industry_day_pct={},
+            security_status_by_ticker=security,
+            regime_fingerprint=_fingerprint({"regime_row": regime_row}),
+            industry_fingerprint=_fingerprint(
+                {"industry_by_ticker": {}, "industry_day_pct": {}}
+            ),
+            security_fingerprint=_fingerprint(
+                {"security_status_by_ticker": security}
+            ),
+            board_rule_version="ashare-board-prefix-v1",
+            normalization_version="pit-canonical-v1",
+            signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,
+        )
+        manifest = build_daily_action_readiness(
+            _refresh_result(tickers), shared, run_id="missing-industry"
+        )
         btst = manifest.ticker_readiness["000001"].capabilities["btst_breakout"]
         # Industry missing → degraded, not plan_eligible
         assert btst.degraded is True
@@ -419,7 +474,7 @@ class TestPublication:
         manifest2 = _manifest(tickers)
         manifest2 = build_daily_action_readiness(
             _refresh_result(tickers),
-            _shared_evidence(),
+            _shared_evidence(tuple(tickers)),
             run_id="run-test-002",
         )
         publication = publish_daily_action_readiness(manifest2, tmp_path)
