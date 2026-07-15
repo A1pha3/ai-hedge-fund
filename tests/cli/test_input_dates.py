@@ -13,6 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from src.cli.input import _resolve_default_end_date, resolve_dates
+from src.utils.date_utils import SignalSessionUnavailable
 
 
 class TestResolveDefaultEndDate:
@@ -81,17 +82,17 @@ class TestResolveDefaultEndDate:
             mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
             assert _resolve_default_end_date() == "2026-07-10"
 
-    def test_custom_threshold_via_env(self, monkeypatch):
-        """DATA_READY_HOUR 环境变量可覆盖阈值。"""
+    def test_signal_session_cutoff_is_fixed_at_1700(self, monkeypatch):
+        """Production signal-session policy is fixed at 17:00."""
         monkeypatch.setenv("DATA_READY_HOUR", "20")
         with patch("src.cli.input.datetime") as mock_dt:
-            # 18:00 在默认 17:00 之后, 但自定义阈值 20:00 之前 → 前一天
+            # Environment configuration must not split Auto and Daily Action.
             mock_dt.now.return_value = datetime(2026, 7, 9, 18, 0)
             mock_dt.strptime.side_effect = lambda *a, **kw: datetime.strptime(*a, **kw)
-            assert _resolve_default_end_date() == "2026-07-08"
+            assert _resolve_default_end_date() == "2026-07-09"
 
-    def test_invalid_env_falls_back_to_17(self, monkeypatch):
-        """DATA_READY_HOUR 非法值 → 回退默认 17。"""
+    def test_invalid_env_does_not_change_fixed_cutoff(self, monkeypatch):
+        """Invalid legacy configuration cannot change the fixed policy."""
         monkeypatch.setenv("DATA_READY_HOUR", "not_a_number")
         with patch("src.cli.input.datetime") as mock_dt:
             mock_dt.now.return_value = datetime(2026, 7, 9, 16, 0)
@@ -107,6 +108,18 @@ class TestResolveDefaultEndDate:
             result = _resolve_default_end_date()
         assert result == "2026-07-08"
         assert "-" in result  # 必须带横线, 不能是紧凑 YYYYMMDD
+
+    def test_signal_session_unavailable_propagates_without_authoritative_calendar(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "src.screening.offensive.daily_action._load_authoritative_session_dates",
+            lambda: (),
+        )
+        with patch("src.cli.input.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2026, 7, 13, 18, 0)
+            with pytest.raises(SignalSessionUnavailable):
+                _resolve_default_end_date()
 
 
 class TestResolveDatesExplicitOverride:

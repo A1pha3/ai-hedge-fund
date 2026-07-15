@@ -319,6 +319,10 @@ class TestDispatchEarlyFlags(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertIsNone(resolver.call_args.kwargs.get("end_date"))
+        self.assertEqual(
+            resolver.call_args.kwargs.get("open_sessions"),
+            (date(2026, 7, 6), date(2026, 7, 7)),
+        )
 
     def test_market_status_flag_recognized(self) -> None:
         with patch("src.main.run_market_status", return_value=0) as mock:

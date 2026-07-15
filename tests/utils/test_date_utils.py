@@ -165,6 +165,15 @@ def test_resolve_signal_session_uses_same_1700_policy_for_weekday_and_weekend():
     ) == date(2026, 7, 10)
 
 
+def test_auto_and_daily_action_share_the_same_cutoff() -> None:
+    now = datetime(2026, 7, 13, 16, 59)
+    sessions = (date(2026, 7, 10), date(2026, 7, 13))
+
+    assert resolve_signal_session(
+        now_cn=now, open_sessions=sessions
+    ) == date(2026, 7, 10)
+
+
 def test_resolve_signal_session_fails_without_explicit_calendar():
     with pytest.raises(SignalSessionUnavailable):
         resolve_signal_session(

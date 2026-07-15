@@ -995,10 +995,9 @@ def _resolve_daily_action(
     """Run cached setup scanning through the auditable v2 simulation ledger.
 
     Flow (Task 8):
-    1. Resolve signal_date via the existing scan (price_cache probe + 17:00 guard).
-       The legacy scan's candidate list is NOT used when a verified snapshot is
-       available — its only role here is to produce a consistent signal_date and
-       consume the ``--end-date`` override.
+    1. Resolve signal_date from the authoritative open-session calendar and the
+       shared fixed 17:00 policy. An ``--end-date`` override must be a member of
+       that same calendar.
     2. Try to load a verified PIT snapshot. If available, run
        ``scan_from_verified_snapshot`` to produce candidates from the immutable
        snapshot (no cache files reopened by the scanner).
@@ -1035,7 +1034,7 @@ def _resolve_daily_action(
     from src.screening.offensive.execution_adjuster import ExecutionCosts
     from src.screening.offensive.ledger_repository import LedgerRepository
 
-    # --end-date YYYY-MM-DD (或 YYYYMMDD): 显式覆盖信号日, 跳过 price_cache 探测 + 17:00 guard.
+    # --end-date YYYY-MM-DD (或 YYYYMMDD): 显式信号日仍必须属于权威开市日集合。
     # 支持 `--end-date=VALUE` 和 `--end-date VALUE` 两种形式. 默认 None → 走 17:00 规则.
     end_date_raw = _get_kv(argv, "--end-date") or _next_arg(argv, "--end-date")
     end_date = end_date_raw.strip().replace("-", "") if end_date_raw else None
@@ -1049,7 +1048,10 @@ def _resolve_daily_action(
     # instead of running the legacy full-market scan (which reopened cache files
     # for up to 30 tickers just to read the resolved date). Candidates now come
     # exclusively from the verified PIT snapshot below.
-    signal_date, regime = resolve_daily_action_signal(end_date=end_date)
+    signal_date, regime = resolve_daily_action_signal(
+        end_date=end_date,
+        open_sessions=open_sessions,
+    )
     from src.screening.consecutive_recommendation import resolve_report_dir
 
     reports_dir = resolve_report_dir()

@@ -17,6 +17,7 @@ import json
 import logging
 import math
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
@@ -1447,29 +1448,21 @@ def scan_from_verified_snapshot(
     return candidates, blocked
 
 
-def resolve_daily_action_signal(*, end_date: str | None = None) -> tuple[date, str]:
-    """Resolve the --daily-action signal date + regime WITHOUT a full market scan.
-
-    Replaces the previous pattern of running the whole
-    ``scan_daily_action_candidates`` full-market scan (which reopens cache files
-    for up to ``tickers_to_scan`` tickers) purely to read the resolved signal
-    date. Behaviour is kept identical to that path:
-
-    - explicit ``--end-date`` overrides the price-cache probe and 17:00 guard;
-    - otherwise the signal date is the latest ``price_cache`` session
-      (``wall_clock_guard=False``, matching ``generate_daily_action``'s
-      ``legacy_persistence=False`` scan);
-    - regime comes from ``regime_history.json`` for that date.
-
-    The verified snapshot remains the authority for readiness and sizing; this
-    only produces the date/regime needed to *load* that snapshot.
-    """
-    if end_date:
-        compact = _compact_trade_date(end_date)
-        regime = _regime_from_history(compact)
-    else:
-        compact, regime = _resolve_trade_date_and_regime(wall_clock_guard=False)
-    return datetime.strptime(compact, "%Y%m%d").date(), regime
+def resolve_daily_action_signal(
+    *,
+    end_date: str | None = None,
+    now_cn: datetime | None = None,
+    open_sessions: Sequence[date] | None = None,
+) -> tuple[date, str]:
+    """Resolve the authoritative --daily-action signal session and regime."""
+    sessions = tuple(open_sessions or _load_authoritative_session_dates())
+    selected = resolve_signal_session(
+        now_cn=now_cn or _current_cn_datetime(),
+        open_sessions=sessions,
+        override=end_date,
+    )
+    compact = selected.strftime("%Y%m%d")
+    return selected, _regime_from_history(compact)
 
 
 def scan_daily_action_candidates(

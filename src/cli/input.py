@@ -1,5 +1,4 @@
 import argparse
-import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime
@@ -93,65 +92,29 @@ def add_common_args(
 
 
 def _resolve_default_end_date() -> str:
-    """数据就绪阈值 + 交易日归一化: 返回最新可用开市日。
+    """Return the authoritative open session allowed by the 17:00 policy.
 
-    A 股资金流 (tushare moneyflow / akshare push2his) 通常在收盘后 ~2 小时
-    (约 17:00) 才完成当日数据入库。在 17:00 之前查询当日数据会得到空结果,
-    导致 cache_refresh 报 "双源均失败"、筛选缺当日资金流信号。
-
-    当不显式指定 --end-date 时, 17:00 前自动回退一天, 避免查到不存在的当日数据;
-    17:00 后 (含) 取当天。随后统一归一化到最近开市日, 这样周日/周一盘前都会
-    落到上周五, 不再生成周末 pseudo-date 报告。
-
-    阈值可通过环境变量 DATA_READY_HOUR 覆盖 (默认 17)。
-
-    本函数是 :func:`src.utils.date_utils.resolve_market_ready_date_iso` 的薄包装:
-    把"当前墙钟"显式传进去 (而非让 helper 内部读 ``datetime.now()``), 这样
-    测试 patch ``src.cli.input.datetime`` 时仍能控制行为 (详见
-    ``tests/cli/test_input_dates.py``)。env 解析同样在本地完成以保持契约。
+    Auto and Daily Action use the same explicit open-session calendar. Missing
+    calendar data is a hard error: production must not infer sessions from
+    weekdays or cached price rows.
 
     Returns:
         YYYY-MM-DD 格式的默认结束日期
     """
-    from datetime import time as _time
-
     from src.utils.date_utils import (
-        SignalSessionUnavailable,
         format_date,
-        resolve_market_ready_date_iso,
         resolve_signal_session,
     )
 
-    try:
-        ready_hour = int(os.environ.get("DATA_READY_HOUR", "17"))
-    except ValueError:
-        ready_hour = 17
-    now = datetime.now()
-    # Spec 8.1: prefer the single shared signal-session resolver with the real
-    # forward-inclusive A-share calendar, passing DATA_READY_HOUR through as the
-    # cutoff so both commands share one policy. Fall back to the market-ready
-    # helper (tushare + weekday rollback) when no authoritative calendar is
-    # available, preserving the previous offline behaviour.
-    sessions: tuple = ()
-    try:
-        from src.screening.offensive.daily_action import (
-            _load_authoritative_session_dates,
-        )
+    from src.screening.offensive.daily_action import (
+        _load_authoritative_session_dates,
+    )
 
-        sessions = _load_authoritative_session_dates()
-    except Exception:
-        sessions = ()
-    if sessions and 0 <= ready_hour <= 23:
-        try:
-            resolved = resolve_signal_session(
-                now_cn=now,
-                open_sessions=sessions,
-                ready_cutoff=_time(ready_hour, 0),
-            )
-            return format_date(resolved.strftime("%Y%m%d"))
-        except SignalSessionUnavailable:
-            pass
-    return resolve_market_ready_date_iso(now=now, ready_hour=ready_hour)
+    resolved = resolve_signal_session(
+        now_cn=datetime.now(),
+        open_sessions=_load_authoritative_session_dates(),
+    )
+    return format_date(resolved.strftime("%Y%m%d"))
 
 
 def add_date_args(parser: argparse.ArgumentParser, *, default_months_back: int | None = None) -> argparse.ArgumentParser:
