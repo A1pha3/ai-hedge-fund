@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,7 +42,14 @@ class FundFlowStore:
     def _path(self, ticker: str) -> Path:
         return self.cache_dir / f"{ticker}.csv"
 
-    def save(self, ticker: str, df: pd.DataFrame) -> int:
+    def save(
+        self,
+        ticker: str,
+        df: pd.DataFrame,
+        *,
+        existing_frame: pd.DataFrame | None = None,
+        artifact_sink: Callable[[pd.DataFrame], None] | None = None,
+    ) -> int:
         """存入 ticker 资金流数据。同 ticker 已有数据时 merge + 去重 (按 date)。"""
         if df is None or len(df) == 0:
             return 0
@@ -52,13 +60,20 @@ class FundFlowStore:
         df["ticker"] = ticker
 
         path = self._path(ticker)
-        if path.exists():
+        if existing_frame is not None:
+            old = existing_frame.copy(deep=True)
+            combined = pd.concat([old, df], ignore_index=True)
+            combined = combined.drop_duplicates(subset=["date"], keep="last")
+            combined = combined.sort_values("date").reset_index(drop=True)
+        elif path.exists():
             old = pd.read_csv(path, dtype={"date": str, "ticker": str})
             combined = pd.concat([old, df], ignore_index=True)
             combined = combined.drop_duplicates(subset=["date"], keep="last")
             combined = combined.sort_values("date").reset_index(drop=True)
         else:
             combined = df.sort_values("date").reset_index(drop=True)
+        if artifact_sink is not None:
+            artifact_sink(combined.copy(deep=True))
         atomic_write_csv(path, combined)
         return len(combined)
 

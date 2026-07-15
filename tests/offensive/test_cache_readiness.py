@@ -1,7 +1,9 @@
 """Tests for per-ticker cache refresh outcome model and conservation."""
 
 from datetime import date
+from unittest.mock import Mock
 
+import pandas as pd
 import pytest
 
 from src.screening.offensive.cache_readiness import (
@@ -33,8 +35,6 @@ def _outcome(
 
 
 def test_suspension_failure_is_unavailable_not_empty():
-    from unittest.mock import Mock
-
     from src.screening.offensive import cache_refresh
 
     load_suspension_evidence = getattr(cache_refresh, "load_suspension_evidence", None)
@@ -45,6 +45,43 @@ def test_suspension_failure_is_unavailable_not_empty():
         fetch_fn=Mock(side_effect=RuntimeError("down")),
     )
     assert evidence.status is SuspensionEvidenceStatus.UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        None,
+        [],
+        {},
+        pd.DataFrame(),
+        pd.DataFrame({"other": []}),
+        pd.DataFrame({"ts_code": ["bad"]}),
+        pd.DataFrame({"ts_code": [123]}),
+    ),
+)
+def test_malformed_suspension_payload_is_unavailable(payload):
+    from src.screening.offensive.cache_refresh import load_suspension_evidence
+
+    evidence = load_suspension_evidence(
+        "20260713",
+        fetch_fn=Mock(return_value=payload),
+    )
+
+    assert evidence.status is SuspensionEvidenceStatus.UNAVAILABLE
+    assert evidence.tickers == frozenset()
+    assert evidence.source_fingerprint is None
+
+
+def test_empty_suspension_dataframe_with_schema_is_authoritative_empty():
+    from src.screening.offensive.cache_refresh import load_suspension_evidence
+
+    evidence = load_suspension_evidence(
+        "20260713",
+        fetch_fn=Mock(return_value=pd.DataFrame({"ts_code": pd.Series(dtype=str)})),
+    )
+
+    assert evidence.status is SuspensionEvidenceStatus.AVAILABLE_EMPTY
+    assert evidence.source_fingerprint is not None
 
 
 def test_refresh_result_freezes_nested_mappings():
@@ -76,6 +113,47 @@ def test_refresh_result_freezes_nested_mappings():
         result.outcomes["000001"].evidence_fingerprints["price"] = "forged"
 
 
+def test_refresh_result_copies_universe_suspensions_and_nested_counters():
+    universe = ["000001"]
+    suspended = {"000001"}
+    counters = {"nested": {"values": [1], "labels": {"captured"}}}
+    evidence = SuspensionEvidence(
+        trade_date=date(2026, 7, 13),
+        status=SuspensionEvidenceStatus.AVAILABLE_NONEMPTY,
+        tickers=suspended,
+        source_fingerprint="sha256:" + "a" * 64,
+    )
+    outcomes = {
+        "000001": _outcome(
+            "000001",
+            price=PriceStatus.SUSPENDED,
+            flow=FundFlowStatus.SUSPENDED,
+        )
+    }
+
+    result = DailyActionRefreshResult(
+        trade_date=date(2026, 7, 13),
+        universe_tickers=universe,
+        universe_fingerprint=universe_fingerprint(tuple(universe)),
+        daily_batch_fingerprint=None,
+        suspension_evidence=evidence,
+        outcomes=outcomes,
+        stats=derive_stats_from_outcomes(outcomes),
+        _refresh_counters=counters,
+    )
+    universe.append("000002")
+    suspended.add("000002")
+    counters["nested"]["values"].append(2)
+    counters["nested"]["labels"].add("forged")
+
+    assert result.universe_tickers == ("000001",)
+    assert result.suspension_evidence.tickers == frozenset({"000001"})
+    assert result.nested["values"] == (1,)
+    assert result.nested["labels"] == frozenset({"captured"})
+    with pytest.raises(TypeError):
+        result.nested["forged"] = True
+
+
 class TestSuspensionEvidence:
     def test_available_with_tickers(self):
         ev = SuspensionEvidence.available(date(2026, 7, 13), {"000001", "000002"})
@@ -92,6 +170,31 @@ class TestSuspensionEvidence:
         ev = SuspensionEvidence.available(date(2026, 7, 13), set())
         assert ev.status is SuspensionEvidenceStatus.AVAILABLE_EMPTY
         assert len(ev.tickers) == 0
+
+    @pytest.mark.parametrize(
+        ("status", "tickers", "source_fingerprint"),
+        (
+            (SuspensionEvidenceStatus.AVAILABLE_EMPTY, {"000001"}, None),
+            (SuspensionEvidenceStatus.AVAILABLE_NONEMPTY, set(), None),
+            (SuspensionEvidenceStatus.UNAVAILABLE, {"000001"}, None),
+            (
+                SuspensionEvidenceStatus.UNAVAILABLE,
+                set(),
+                "sha256:" + "a" * 64,
+            ),
+            (SuspensionEvidenceStatus.AVAILABLE_NONEMPTY, {"bad"}, None),
+            (SuspensionEvidenceStatus.AVAILABLE_EMPTY, set(), ""),
+            (SuspensionEvidenceStatus.AVAILABLE_EMPTY, None, None),
+        ),
+    )
+    def test_rejects_inconsistent_state(self, status, tickers, source_fingerprint):
+        with pytest.raises(ValueError):
+            SuspensionEvidence(
+                trade_date=date(2026, 7, 13),
+                status=status,
+                tickers=tickers,
+                source_fingerprint=source_fingerprint,
+            )
 
 
 class TestConservation:

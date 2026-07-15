@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
@@ -30,6 +31,7 @@ from src.screening.offensive.cache_readiness import (
     universe_fingerprint,
 )
 from src.screening.offensive.pit_evidence import (
+    PITEvidenceError,
     canonical_fingerprint,
     canonical_flow_fingerprint,
     canonical_price_fingerprint,
@@ -51,6 +53,16 @@ _DEFAULT_MIN_PRICE_HISTORY_ROWS = 31
 # 真正的板块自适应涨停判定在 btst_breakout.detect / is_limit_up_unbuyable_next_day
 # 里按 ticker 前缀取阈值 (limit_up_pct_for_ticker), 这里只负责把候选注入缓存.
 _DEFAULT_LIMIT_UP_PCT = 9.5
+_DAILY_BATCH_COLUMNS = (
+    "ts_code",
+    "trade_date",
+    "open",
+    "high",
+    "low",
+    "close",
+    "pct_chg",
+    "vol",
+)
 
 
 @dataclass
@@ -155,6 +167,19 @@ def _code6(ts_code: object) -> str:
     return text.zfill(6) if text.isdigit() else text
 
 
+def _provider_code6(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("provider ticker must be a string")
+    text = value.strip()
+    parts = text.split(".")
+    if len(parts) > 2 or (len(parts) == 2 and parts[1] not in {"SZ", "SH", "BJ"}):
+        raise ValueError("invalid provider ticker suffix")
+    ticker = parts[0]
+    if len(ticker) != 6 or not ticker.isdigit():
+        raise ValueError("invalid provider ticker identity")
+    return ticker
+
+
 def _price_date(value: object) -> str:
     text = str(value or "").strip()
     if len(text) == 8 and text.isdigit():
@@ -171,6 +196,39 @@ def _fund_flow_date(value: object) -> str:
 
 def _trade_date_value(value: object) -> date:
     return pd.to_datetime(_fund_flow_date(value), format="%Y%m%d").date()
+
+
+def _normalize_daily_batch(payload: object) -> pd.DataFrame:
+    """Validate and detach one provider batch before any downstream use."""
+
+    if not isinstance(payload, pd.DataFrame):
+        raise PITEvidenceError("daily batch must be a DataFrame")
+    missing = set(_DAILY_BATCH_COLUMNS) - set(payload.columns)
+    if missing:
+        raise PITEvidenceError(
+            "daily batch missing required columns: " + ", ".join(sorted(missing))
+        )
+    normalized = payload.copy(deep=True)
+    for _, row in normalized.iterrows():
+        ticker = _provider_code6(row["ts_code"])
+        canonical_price_fingerprint(
+            pd.DataFrame(
+                [
+                    {
+                        "date": row["trade_date"],
+                        "open": row["open"],
+                        "high": row["high"],
+                        "low": row["low"],
+                        "close": row["close"],
+                        "pct_change": row["pct_chg"],
+                        "volume": row["vol"],
+                    }
+                ]
+            ),
+            ticker,
+            row["trade_date"],
+        )
+    return normalized
 
 
 def _row_value(row: pd.Series, *names: str, default: float | None = None) -> float | None:
@@ -219,7 +277,6 @@ def _extract_limit_up_tickers(
     # 浪费 fund_flow API 配额且可能挤占真正的涨停股.
     from src.tools.ashare_board_utils import limit_up_pct_for_ticker
 
-    pct_series = pd.to_numeric(df["pct_chg"], errors="coerce")
     # 逐行按板块判定涨停
     is_limit_up = df.apply(
         lambda row: pd.to_numeric(row.get("pct_chg", 0), errors="coerce") >= limit_up_pct_for_ticker(_code6(row.get("ts_code", ""))),
@@ -253,13 +310,30 @@ def _build_price_row(row: pd.Series, trade_date: str) -> dict:
     }
 
 
-def _write_price_cache_row(path: Path, row: dict) -> None:
-    old = pd.read_csv(path, dtype={"date": str}) if path.exists() else pd.DataFrame()
+def _write_price_cache_row(
+    path: Path,
+    row: dict,
+    *,
+    existing_frame: pd.DataFrame | None = None,
+    artifact_sink: Callable[[pd.DataFrame], None] | None = None,
+) -> pd.DataFrame:
+    old = (
+        existing_frame.copy(deep=True)
+        if existing_frame is not None
+        else (
+            pd.read_csv(path, dtype={"date": str})
+            if path.exists()
+            else pd.DataFrame()
+        )
+    )
     combined = pd.concat([old, pd.DataFrame([row])], ignore_index=True)
     combined["date"] = combined["date"].map(_price_date)
     combined = combined.drop_duplicates(subset=["date"], keep="last")
     combined = combined.sort_values("date").reset_index(drop=True)
+    if artifact_sink is not None:
+        artifact_sink(combined.copy(deep=True))
     atomic_write_csv(path, combined)
+    return combined.copy(deep=True)
 
 
 def _snapshot_records(payload: object, *, include_shadow: bool) -> list[object]:
@@ -402,6 +476,10 @@ def refresh_price_cache_from_daily_batch(
     backfill_price_history_fn: Callable[[str, str, str], pd.DataFrame | None] | None = None,
     min_history_rows: int = _DEFAULT_MIN_PRICE_HISTORY_ROWS,
     history_start_date: str | None = None,
+    initial_frames: Mapping[str, pd.DataFrame] | None = None,
+    initial_existing_tickers: frozenset[str] | set[str] | None = None,
+    unreadable_tickers: frozenset[str] | set[str] = frozenset(),
+    evidence_collector: dict[str, pd.DataFrame] | None = None,
 ) -> DailyActionCacheRefreshStats:
     """Append or replace one daily OHLCV row for tickers consumed by ``--daily-action``."""
 
@@ -436,13 +514,29 @@ def refresh_price_cache_from_daily_batch(
             by_ticker[ticker] = row
 
     for ticker in tickers:
+        if ticker in unreadable_tickers:
+            stats.price_failed += 1
+            stats.failed_tickers.append(ticker)
+            if evidence_collector is not None:
+                evidence_collector.pop(ticker, None)
+            continue
         row = by_ticker.get(ticker)
         if row is None:
             stats.price_missing += 1
             continue
         try:
             path = cache_dir / f"{ticker}.csv"
-            if not path.exists():
+            existed_at_capture = (
+                ticker in initial_existing_tickers
+                if initial_existing_tickers is not None
+                else path.exists()
+            )
+            base_frame = (
+                initial_frames[ticker].copy(deep=True)
+                if initial_frames is not None and ticker in initial_frames
+                else None
+            )
+            if not existed_at_capture:
                 if backfill_price_history_fn is None:
                     from src.tools.price import fetch_daily_ohlcv
 
@@ -455,15 +549,27 @@ def refresh_price_cache_from_daily_batch(
                 # The retained daily batch row itself proves current-session
                 # coverage. History is expected to end on the prior session and
                 # is appended with that row below.
-                path.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_csv(path, history)
+                base_frame = history
                 stats.price_backfilled += 1
-            _write_price_cache_row(cache_dir / f"{ticker}.csv", _build_price_row(row, trade_date))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            captured: list[pd.DataFrame] = []
+            _write_price_cache_row(
+                path,
+                _build_price_row(row, trade_date),
+                existing_frame=base_frame,
+                artifact_sink=lambda frame: captured.append(frame),
+            )
+            if not captured:
+                raise RuntimeError("price cache writer did not expose written artifact")
+            if evidence_collector is not None:
+                evidence_collector[ticker] = captured[-1].copy(deep=True)
             stats.price_updated += 1
         except Exception as exc:  # noqa: BLE001 - one bad CSV must not stop the batch
             logger.warning("Failed to refresh price_cache for %s: %s", ticker, exc)
             stats.price_failed += 1
             stats.failed_tickers.append(ticker)
+            if evidence_collector is not None:
+                evidence_collector.pop(ticker, None)
     return stats
 
 
@@ -495,7 +601,9 @@ def load_suspension_evidence(
         fetch_fn = get_suspend_list
     try:
         df = fetch_fn(trade_date)
-        if df is None or len(df) == 0:
+        if not isinstance(df, pd.DataFrame) or "ts_code" not in df.columns:
+            raise ValueError("suspension snapshot must be a DataFrame with ts_code")
+        if len(df) == 0:
             return SuspensionEvidence.available(
                 trade_date_dt,
                 set(),
@@ -505,13 +613,11 @@ def load_suspension_evidence(
                     (),
                 ),
             )
-        if not isinstance(df, pd.DataFrame) or "ts_code" not in df.columns:
-            raise ValueError("suspension snapshot lacks ts_code")
-        tickers = {
-            _code6(code)
-            for code in df["ts_code"].dropna()
-            if _is_code6(_code6(code))
-        }
+        tickers: set[str] = set()
+        for code in df["ts_code"]:
+            if pd.isna(code):
+                continue
+            tickers.add(_provider_code6(code))
         rows = [
             {"date": trade_date_dt.isoformat(), "ticker": ticker}
             for ticker in sorted(tickers)
@@ -551,6 +657,9 @@ def refresh_fund_flow_cache(
     rate_limit_sec: float = _DEFAULT_FUND_FLOW_RATE_LIMIT_SEC,
     max_tickers: int = 0,
     suspension_evidence: SuspensionEvidence | None = None,
+    initial_frames: Mapping[str, pd.DataFrame] | None = None,
+    unreadable_tickers: frozenset[str] | set[str] = frozenset(),
+    evidence_collector: dict[str, pd.DataFrame] | None = None,
 ) -> DailyActionCacheRefreshStats:
     """Fetch one trade date of fund-flow data and merge it into per-ticker CSVs."""
 
@@ -577,8 +686,23 @@ def refresh_fund_flow_cache(
     tushare_ok = _check_tushare_available()
 
     for index, ticker in enumerate(queue, 1):
+        if ticker in unreadable_tickers:
+            stats.fund_flow_failed += 1
+            stats.failed_tickers.append(ticker)
+            if evidence_collector is not None:
+                evidence_collector.pop(ticker, None)
+            continue
         try:
-            latest = _latest_fund_flow_date(cache_dir, ticker)
+            if initial_frames is not None and ticker in initial_frames:
+                initial_frame = initial_frames[ticker]
+                latest = (
+                    max(_fund_flow_date(value) for value in initial_frame["date"])
+                    if not initial_frame.empty and "date" in initial_frame.columns
+                    else None
+                )
+            else:
+                initial_frame = None
+                latest = _latest_fund_flow_date(cache_dir, ticker)
             # Bug fix (H1): 旧逻辑用 >=, 未来日期行会永久冻结缓存.
             # 改为 ==: 只在缓存已有本交易日数据时跳过.
             if latest is not None and latest == trade_date:
@@ -612,12 +736,24 @@ def refresh_fund_flow_cache(
                     logger.debug("[资金流] %s 全源返回空 — 新上市/退市/当日无交易", ticker)
                 continue
 
-            store.save(ticker, df)
+            captured: list[pd.DataFrame] = []
+            store.save(
+                ticker,
+                df,
+                existing_frame=initial_frame,
+                artifact_sink=lambda frame: captured.append(frame),
+            )
+            if not captured:
+                raise RuntimeError("fund-flow store did not expose written artifact")
+            if evidence_collector is not None:
+                evidence_collector[ticker] = captured[-1].copy(deep=True)
             stats.fund_flow_saved += 1
         except Exception as exc:  # noqa: BLE001 - isolate one ticker failure
             logger.warning("Failed to refresh fund_flow_cache for %s: %s", ticker, exc)
             stats.fund_flow_failed += 1
             stats.failed_tickers.append(ticker)
+            if evidence_collector is not None:
+                evidence_collector.pop(ticker, None)
 
         if rate_limit_sec > 0 and index < len(queue):
             time.sleep(rate_limit_sec)
@@ -691,6 +827,13 @@ def _read_pit_cache(path: Path, trade_date: str) -> tuple[pd.DataFrame, bool, bo
         return pd.DataFrame(), False, True
 
 
+def _frame_has_current_row(frame: pd.DataFrame, trade_date: str) -> bool:
+    if frame.empty or "date" not in frame.columns:
+        return False
+    requested = _fund_flow_date(trade_date)
+    return any(_fund_flow_date(value) == requested for value in frame["date"])
+
+
 def refresh_daily_action_caches(
     trade_date: str,
     *,
@@ -734,32 +877,98 @@ def refresh_daily_action_caches(
 
     # Resolve the full-market batch exactly once and retain that same object for
     # limit-up extraction, price writes, and the result fingerprint.
-    resolved_daily_prices = daily_prices_df
-    daily_batch_available = resolved_daily_prices is not None
-    if resolved_daily_prices is None:
+    raw_daily_prices: object = daily_prices_df
+    daily_batch_fetch_failed = False
+    if raw_daily_prices is None:
         resolved_fetch = fetch_daily_prices_batch
         if resolved_fetch is None:
             from src.screening.batch_data_fetcher import get_global_batch_data_fetcher
 
             resolved_fetch = get_global_batch_data_fetcher().fetch_daily_prices_batch
         try:
-            resolved_daily_prices = resolved_fetch(effective_trade_date)
-            daily_batch_available = resolved_daily_prices is not None
+            raw_daily_prices = resolved_fetch(effective_trade_date)
         except Exception as exc:  # noqa: BLE001 - absence is represented in outcomes
             logger.warning("[cache_refresh] daily batch unavailable: %s", exc)
-            resolved_daily_prices = None
+            raw_daily_prices = None
+            daily_batch_fetch_failed = True
+
+    daily_batch_malformed = False
+    try:
+        if daily_batch_fetch_failed:
+            raise PITEvidenceError("daily batch fetch failed")
+        resolved_daily_prices = _normalize_daily_batch(raw_daily_prices)
+        daily_batch_available = True
+    except Exception as exc:  # noqa: BLE001 - malformed provider batches fail closed
+        if not daily_batch_fetch_failed:
+            logger.warning("[cache_refresh] malformed daily batch: %s", exc)
+            daily_batch_malformed = True
+        resolved_daily_prices = pd.DataFrame(columns=_DAILY_BATCH_COLUMNS)
+        daily_batch_available = False
+
+    daily_batch_fingerprint: str | None = None
+    if daily_batch_available:
+        try:
+            daily_batch_fingerprint = _daily_batch_evidence_fingerprint(
+                resolved_daily_prices,
+                effective_trade_date,
+            )
+        except Exception as exc:  # noqa: BLE001 - malformed evidence must fail closed
+            logger.warning("[cache_refresh] daily batch fingerprint failed: %s", exc)
+            daily_batch_malformed = True
             daily_batch_available = False
-    if resolved_daily_prices is None:
-        resolved_daily_prices = pd.DataFrame()
+            resolved_daily_prices = pd.DataFrame(columns=_DAILY_BATCH_COLUMNS)
 
     limit_up_tickers: list[str] = []
     if _env_enabled("DAILY_ACTION_INCLUDE_LIMIT_UPS", default=True):
-        limit_up_tickers = _extract_limit_up_tickers(
-            resolved_daily_prices,
-            effective_trade_date,
-        )
+        try:
+            limit_up_tickers = _extract_limit_up_tickers(
+                resolved_daily_prices,
+                effective_trade_date,
+            )
+        except Exception as exc:  # noqa: BLE001 - conserve result on bad provider rows
+            logger.warning("[cache_refresh] limit-up extraction failed: %s", exc)
+            daily_batch_malformed = True
+            daily_batch_available = False
+            daily_batch_fingerprint = None
+            resolved_daily_prices = pd.DataFrame(columns=_DAILY_BATCH_COLUMNS)
     injected = sorted(set(limit_up_tickers) - set(base_tickers))
     frozen_universe = tuple(sorted(set(base_tickers) | set(limit_up_tickers)))
+
+    # Capture every baseline once after the universe is frozen and before any
+    # cache write. These detached frames are the only baseline evidence used by
+    # the result and by refresh writers in this run.
+    price_dir = Path(price_cache_dir)
+    flow_dir = Path(fund_flow_cache_dir)
+    price_frames: dict[str, pd.DataFrame] = {}
+    flow_frames: dict[str, pd.DataFrame] = {}
+    price_current: dict[str, bool] = {}
+    flow_current: dict[str, bool] = {}
+    price_read_failures: set[str] = set()
+    flow_read_failures: set[str] = set()
+    existing_price_tickers: set[str] = set()
+    for ticker in frozen_universe:
+        price_path = price_dir / f"{ticker}.csv"
+        flow_path = flow_dir / f"{ticker}.csv"
+        if price_path.exists():
+            existing_price_tickers.add(ticker)
+        captured_price, is_price_current, price_failed = _read_pit_cache(
+            price_path,
+            effective_trade_date,
+        )
+        captured_flow, is_flow_current, flow_failed = _read_pit_cache(
+            flow_path,
+            effective_trade_date,
+        )
+        price_current[ticker] = is_price_current
+        flow_current[ticker] = is_flow_current
+        if price_failed:
+            price_read_failures.add(ticker)
+        else:
+            price_frames[ticker] = captured_price.copy(deep=True)
+        if flow_failed:
+            flow_read_failures.add(ticker)
+        else:
+            flow_frames[ticker] = captured_flow.copy(deep=True)
     if injected:
         logger.info(
             "[cache_refresh] 涨停注入 %d 只: %s",
@@ -786,13 +995,24 @@ def refresh_daily_action_caches(
             backfill_fn=industry_index_backfill_fn,
         )
 
+    written_price_frames: dict[str, pd.DataFrame] = {}
     price_stats = refresh_price_cache_from_daily_batch(
         effective_trade_date,
         price_cache_dir=price_cache_dir,
         daily_prices_df=resolved_daily_prices,
         target_tickers=frozen_universe,
         backfill_price_history_fn=backfill_price_history_fn,
+        initial_frames=price_frames,
+        initial_existing_tickers=existing_price_tickers,
+        unreadable_tickers=price_read_failures,
+        evidence_collector=written_price_frames,
     )
+    price_frames.update(written_price_frames)
+    for ticker, frame in written_price_frames.items():
+        price_current[ticker] = _frame_has_current_row(frame, effective_trade_date)
+    for ticker in price_stats.failed_tickers:
+        price_frames.pop(ticker, None)
+        price_current[ticker] = False
 
     if refresh_fund_flow is None:
         refresh_fund_flow = _env_enabled("DAILY_ACTION_REFRESH_FUND_FLOW", default=True)
@@ -810,18 +1030,15 @@ def refresh_daily_action_caches(
         else _env_int("DAILY_ACTION_FUND_FLOW_MAX_TICKERS", default=0)
     )
 
-    flow_dir = Path(fund_flow_cache_dir)
     priority = [ticker for ticker in sorted(set(limit_up_tickers)) if ticker in frozen_universe]
     priority.extend(ticker for ticker in frozen_universe if ticker not in set(priority))
     stale_flow_tickers: list[str] = []
     for ticker in priority:
         if ticker in suspension_evidence.tickers:
             continue
-        _, is_current, _ = _read_pit_cache(
-            flow_dir / f"{ticker}.csv",
-            effective_trade_date,
-        )
-        if not is_current:
+        if ticker in flow_read_failures:
+            continue
+        if not flow_current[ticker]:
             stale_flow_tickers.append(ticker)
 
     selected_flow_tickers = list(stale_flow_tickers)
@@ -831,6 +1048,7 @@ def refresh_daily_action_caches(
         quota_omitted = set(stale_flow_tickers[max_tickers:])
 
     fund_flow_stats = DailyActionCacheRefreshStats()
+    written_flow_frames: dict[str, pd.DataFrame] = {}
     if refresh_fund_flow and selected_flow_tickers:
         fund_flow_stats = refresh_fund_flow_cache(
             selected_flow_tickers,
@@ -840,10 +1058,18 @@ def refresh_daily_action_caches(
             rate_limit_sec=rate_limit,
             max_tickers=0,
             suspension_evidence=suspension_evidence,
+            initial_frames=flow_frames,
+            unreadable_tickers=flow_read_failures,
+            evidence_collector=written_flow_frames,
         )
+    flow_frames.update(written_flow_frames)
+    for ticker, frame in written_flow_frames.items():
+        flow_current[ticker] = _frame_has_current_row(frame, effective_trade_date)
+    for ticker in fund_flow_stats.failed_tickers:
+        flow_frames.pop(ticker, None)
+        flow_current[ticker] = False
 
     outcomes: dict[str, TickerRefreshOutcome] = {}
-    price_dir = Path(price_cache_dir)
     price_failed = set(price_stats.failed_tickers)
     flow_failed = set(fund_flow_stats.failed_tickers)
     suspension_warning = (
@@ -852,47 +1078,64 @@ def refresh_daily_action_caches(
         else ()
     )
     for ticker in frozen_universe:
-        price_frame, price_current, price_read_failed = _read_pit_cache(
-            price_dir / f"{ticker}.csv",
-            effective_trade_date,
-        )
-        flow_frame, flow_current, flow_read_failed = _read_pit_cache(
-            flow_dir / f"{ticker}.csv",
-            effective_trade_date,
-        )
+        price_frame = price_frames.get(ticker, pd.DataFrame())
+        flow_frame = flow_frames.get(ticker, pd.DataFrame())
+        price_evidence_invalid = False
+        flow_evidence_invalid = False
         evidence_fingerprints: dict[str, str] = {}
         if not price_frame.empty:
-            evidence_fingerprints["price"] = canonical_price_fingerprint(
-                price_frame,
-                ticker,
-                effective_trade_date,
-            )
+            try:
+                evidence_fingerprints["price"] = canonical_price_fingerprint(
+                    price_frame,
+                    ticker,
+                    effective_trade_date,
+                )
+            except PITEvidenceError:
+                price_evidence_invalid = True
         if not flow_frame.empty:
-            evidence_fingerprints["fund_flow"] = canonical_flow_fingerprint(
-                flow_frame,
-                ticker,
-                effective_trade_date,
-            )
+            try:
+                evidence_fingerprints["fund_flow"] = canonical_flow_fingerprint(
+                    flow_frame,
+                    ticker,
+                    effective_trade_date,
+                )
+            except PITEvidenceError:
+                flow_evidence_invalid = True
 
         if ticker in suspension_evidence.tickers:
             price_status = PriceStatus.SUSPENDED
             flow_status = FundFlowStatus.SUSPENDED
         else:
-            if price_read_failed or ticker in price_failed:
+            if daily_batch_malformed:
                 price_status = PriceStatus.FAILED
-            elif price_current:
+            elif (
+                ticker in price_read_failures
+                or ticker in price_failed
+                or price_evidence_invalid
+            ):
+                price_status = PriceStatus.FAILED
+            elif price_current[ticker]:
                 price_status = PriceStatus.CURRENT
             else:
                 price_status = PriceStatus.MISSING_UNEXPLAINED
 
-            if flow_read_failed or ticker in flow_failed:
+            if (
+                ticker in flow_read_failures
+                or ticker in flow_failed
+                or flow_evidence_invalid
+            ):
                 flow_status = FundFlowStatus.FAILED
-            elif flow_current:
+            elif flow_current[ticker]:
                 flow_status = FundFlowStatus.CURRENT
             elif not refresh_fund_flow or ticker in quota_omitted:
                 flow_status = FundFlowStatus.NOT_ATTEMPTED
             else:
                 flow_status = FundFlowStatus.MISSING_UNEXPLAINED
+
+        if price_status is PriceStatus.FAILED:
+            evidence_fingerprints.pop("price", None)
+        if flow_status is FundFlowStatus.FAILED:
+            evidence_fingerprints.pop("fund_flow", None)
 
         outcomes[ticker] = TickerRefreshOutcome(
             ticker=ticker,
@@ -906,14 +1149,6 @@ def refresh_daily_action_caches(
 
     legacy_stats = DailyActionCacheRefreshStats(limit_up_injected=len(injected))
     legacy_stats.merge(industry_stats).merge(price_stats).merge(fund_flow_stats)
-    daily_batch_fingerprint = (
-        _daily_batch_evidence_fingerprint(
-            resolved_daily_prices,
-            effective_trade_date,
-        )
-        if daily_batch_available
-        else None
-    )
     return DailyActionRefreshResult(
         trade_date=trade_date_dt,
         universe_tickers=frozen_universe,

@@ -16,6 +16,25 @@ from enum import StrEnum
 from types import MappingProxyType
 
 
+def _deep_freeze(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: _deep_freeze(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_deep_freeze(item) for item in value)
+    return value
+
+
+def _valid_sha256(value: str) -> bool:
+    if not value.startswith("sha256:"):
+        return False
+    digest = value.removeprefix("sha256:")
+    return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
+
+
 class PriceStatus(StrEnum):
     CURRENT = "current"
     SUSPENDED = "suspended"
@@ -45,6 +64,36 @@ class SuspensionEvidence:
     status: SuspensionEvidenceStatus
     tickers: frozenset[str]
     source_fingerprint: str | None = None
+
+    def __post_init__(self) -> None:
+        try:
+            frozen_tickers = frozenset(self.tickers)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("suspension evidence tickers must be iterable") from exc
+        object.__setattr__(self, "tickers", frozen_tickers)
+        if not isinstance(self.trade_date, date):
+            raise ValueError("suspension evidence trade_date must be a date")
+        if not isinstance(self.status, SuspensionEvidenceStatus):
+            raise ValueError("invalid suspension evidence status")
+        if any(
+            not isinstance(ticker, str)
+            or len(ticker) != 6
+            or not ticker.isdigit()
+            for ticker in frozen_tickers
+        ):
+            raise ValueError("suspension evidence contains invalid ticker identity")
+        if self.status is SuspensionEvidenceStatus.AVAILABLE_NONEMPTY:
+            if not frozen_tickers:
+                raise ValueError("available_nonempty suspension evidence needs tickers")
+        elif self.status is SuspensionEvidenceStatus.AVAILABLE_EMPTY:
+            if frozen_tickers:
+                raise ValueError("available_empty suspension evidence cannot have tickers")
+        elif frozen_tickers or self.source_fingerprint is not None:
+            raise ValueError("unavailable suspension evidence cannot carry evidence")
+        if self.source_fingerprint is not None and not _valid_sha256(
+            self.source_fingerprint
+        ):
+            raise ValueError("invalid suspension source fingerprint")
 
     @classmethod
     def available(
@@ -149,6 +198,7 @@ class DailyActionRefreshResult:
     )
 
     def __post_init__(self):
+        object.__setattr__(self, "universe_tickers", tuple(self.universe_tickers))
         # Validate: no duplicate tickers in universe
         if len(set(self.universe_tickers)) != len(self.universe_tickers):
             raise ValueError("universe_tickers contains duplicates")
@@ -182,12 +232,7 @@ class DailyActionRefreshResult:
         object.__setattr__(
             self,
             "_refresh_counters",
-            MappingProxyType(
-                {
-                    key: tuple(value) if isinstance(value, list) else value
-                    for key, value in self._refresh_counters.items()
-                }
-            ),
+            _deep_freeze(self._refresh_counters),
         )
         # Validate: conservation — sum of price statuses == universe total
         price_counts: dict[str, int] = {}

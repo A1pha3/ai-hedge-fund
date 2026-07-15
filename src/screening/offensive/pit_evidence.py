@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 import pandas as pd
 
@@ -15,26 +14,55 @@ _PRICE_FIELDS = ("date", "open", "high", "low", "close", "pct_change", "volume")
 _FLOW_FIELDS = ("date", "close", "pct_change", "main_net_inflow", "main_net_pct")
 
 
+class PITEvidenceError(ValueError):
+    """Raised when point-in-time evidence cannot be canonicalized exactly."""
+
+
+def _is_missing(value: object) -> bool:
+    if value is None or value is pd.NA or value is pd.NaT:
+        return True
+    try:
+        missing = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    return bool(missing) if isinstance(missing, bool) else False
+
+
 def _canonical_date(value: object) -> str:
-    if isinstance(value, (date, datetime, pd.Timestamp)):
-        return pd.Timestamp(value).strftime("%Y-%m-%d")
-    text = str(value).strip()
-    if len(text) == 8 and text.isdigit():
-        return datetime.strptime(text, "%Y%m%d").strftime("%Y-%m-%d")
-    return pd.Timestamp(text).strftime("%Y-%m-%d")
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (str, date, datetime, pd.Timestamp))
+        or _is_missing(value)
+    ):
+        raise PITEvidenceError(f"invalid PIT date: {value!r}")
+    try:
+        if isinstance(value, (date, datetime, pd.Timestamp)):
+            parsed = pd.Timestamp(value)
+        else:
+            text = str(value).strip()
+            if not text:
+                raise ValueError("empty date")
+            parsed = (
+                pd.Timestamp(datetime.strptime(text, "%Y%m%d"))
+                if len(text) == 8 and text.isdigit()
+                else pd.Timestamp(text)
+            )
+        if pd.isna(parsed):
+            raise ValueError("missing date")
+        return parsed.strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise PITEvidenceError(f"invalid PIT date: {value!r}") from exc
 
 
-def _canonical_decimal(value: object) -> str | None:
-    if value is None or value is pd.NA:
-        return None
-    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
-        return None
+def _canonical_decimal(value: object) -> str:
+    if isinstance(value, bool) or _is_missing(value):
+        raise PITEvidenceError(f"invalid PIT numeric: {value!r}")
     try:
         decimal_value = Decimal(str(value))
-    except (InvalidOperation, ValueError):
-        return str(value)
+    except Exception as exc:  # noqa: BLE001 - arbitrary provider scalars fail closed
+        raise PITEvidenceError("invalid PIT numeric") from exc
     if not decimal_value.is_finite():
-        return None
+        raise PITEvidenceError(f"non-finite PIT numeric: {value!r}")
     if decimal_value == 0:
         return "0"
     return format(decimal_value.normalize(), "f")
@@ -43,10 +71,13 @@ def _canonical_decimal(value: object) -> str | None:
 def _canonical_row(
     row: Mapping[str, object], fields: Sequence[str]
 ) -> dict[str, object]:
+    missing = [field for field in fields if field not in row]
+    if missing:
+        raise PITEvidenceError(
+            "missing required PIT fields: " + ", ".join(sorted(missing))
+        )
     normalized: dict[str, object] = {}
     for field in fields:
-        if field not in row:
-            continue
         value = row[field]
         normalized[field] = (
             _canonical_date(value) if field == "date" else _canonical_decimal(value)
@@ -61,6 +92,12 @@ def canonical_fingerprint(
 ) -> str:
     """Hash already normalized PIT rows using stable canonical JSON."""
 
+    if not isinstance(kind, str) or not kind:
+        raise PITEvidenceError("fingerprint kind must be a non-empty string")
+    if not isinstance(ticker, str) or not ticker:
+        raise PITEvidenceError("fingerprint ticker must be a non-empty string")
+    if any(not isinstance(row, Mapping) for row in rows):
+        raise PITEvidenceError("fingerprint rows must be mappings")
     canonical_rows = [dict(sorted(row.items())) for row in rows]
     canonical_rows.sort(
         key=lambda row: json.dumps(
@@ -87,15 +124,23 @@ def canonical_price_fingerprint(
 ) -> str:
     """Fingerprint price rows visible at or before ``signal_date``."""
 
+    if not isinstance(ticker, str) or len(ticker) != 6 or not ticker.isdigit():
+        raise PITEvidenceError("price evidence ticker must be exactly six digits")
+    if not isinstance(frame, pd.DataFrame):
+        raise PITEvidenceError("price evidence must be a DataFrame")
+    missing_columns = set(_PRICE_FIELDS) - set(frame.columns)
+    if missing_columns:
+        raise PITEvidenceError(
+            "missing required price columns: " + ", ".join(sorted(missing_columns))
+        )
     cutoff = _canonical_date(signal_date)
     rows: list[dict[str, object]] = []
-    if frame is not None and not frame.empty:
+    if not frame.empty:
         for record in frame.to_dict(orient="records"):
-            if "date" not in record:
+            row_date = _canonical_date(record["date"])
+            if row_date > cutoff:
                 continue
-            normalized = _canonical_row(record, _PRICE_FIELDS)
-            if str(normalized["date"]) <= cutoff:
-                rows.append(normalized)
+            rows.append(_canonical_row(record, _PRICE_FIELDS))
     return canonical_fingerprint("price", ticker, rows)
 
 
@@ -106,16 +151,29 @@ def canonical_flow_fingerprint(
 ) -> str:
     """Fingerprint fund-flow rows visible at or before ``signal_date``."""
 
+    if not isinstance(ticker, str) or len(ticker) != 6 or not ticker.isdigit():
+        raise PITEvidenceError("fund-flow evidence ticker must be exactly six digits")
     cutoff = _canonical_date(signal_date)
+    if records is None:
+        raise PITEvidenceError("fund-flow evidence must not be None")
     if isinstance(records, pd.DataFrame):
+        missing_columns = set(_FLOW_FIELDS) - set(records.columns)
+        if missing_columns:
+            raise PITEvidenceError(
+                "missing required flow columns: "
+                + ", ".join(sorted(missing_columns))
+            )
         source_rows: Sequence[Mapping[str, object]] = records.to_dict(orient="records")
     else:
-        source_rows = records or ()
+        source_rows = records
     rows: list[dict[str, object]] = []
     for record in source_rows:
+        if not isinstance(record, Mapping):
+            raise PITEvidenceError("fund-flow evidence rows must be mappings")
         if "date" not in record:
+            raise PITEvidenceError("missing required PIT fields: date")
+        row_date = _canonical_date(record["date"])
+        if row_date > cutoff:
             continue
-        normalized = _canonical_row(record, _FLOW_FIELDS)
-        if str(normalized["date"]) <= cutoff:
-            rows.append(normalized)
+        rows.append(_canonical_row(record, _FLOW_FIELDS))
     return canonical_fingerprint("fund_flow", ticker, rows)
