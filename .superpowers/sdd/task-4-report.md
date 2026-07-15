@@ -58,6 +58,20 @@ publication without re-globbing or reconstructing cache truth.
   detached, while invalid nested or boolean/non-integer count values are
   rejected at construction.
 
+## Third independent-review hardening
+
+- `DailyActionRefreshResult` now accepts only the exact frozen
+  `SuspensionEvidence` and `DailyActionCacheRefreshStats` types. After outcomes
+  are detached, price and fund-flow counts are re-derived from those frozen
+  outcomes and must exactly equal the corresponding stats mappings. Industry
+  index and limit-up metadata remain carried by the supplied immutable stats
+  object unchanged.
+- `FundFlowStore` now supports legacy CSVs whose `ticker` column is wholly
+  absent by imputing the requested storage identity before concat and
+  validation. This retains generic backfill identifiers such as `X`. Any
+  explicit mismatched, mixed, or partially null identity still fails before
+  persistence.
+
 ## TDD evidence
 
 The independent-review fixes were implemented through explicit RED/GREEN
@@ -84,8 +98,13 @@ cycles:
 - Full-suite integration exposed 6 generic backfill identifier regressions;
   the storage validator was narrowed without weakening six-digit Daily Action
   evidence identity, and all 14 backfill tests then passed.
+- Aggregate type/count contract RED: 6 failures; GREEN: exact frozen types,
+  exact outcome-derived price/flow counts, and preserved auxiliary stats.
+- Legacy flow identity RED: 1 missing-column failure while the mismatch guard
+  already passed; GREEN: 6 store tests and 20 combined generic flow tests.
 
 Final verification:
 
-- `uv run pytest tests/offensive/test_pit_evidence.py tests/offensive/test_cache_readiness.py tests/offensive/test_daily_action_cache_refresh.py tests/test_main_auto_cache_refresh.py -q` — **142 passed**.
-- `uv run pytest tests/offensive/ tests/test_main_auto_cache_refresh.py -q` — **768 passed**.
+- `uv run pytest tests/offensive/test_pit_evidence.py tests/offensive/test_cache_readiness.py tests/offensive/test_daily_action_cache_refresh.py tests/test_main_auto_cache_refresh.py -q` — **148 passed**.
+- `uv run pytest tests/offensive/test_fund_flow_store.py tests/offensive/test_backfill_fund_flow.py -q` — **20 passed**.
+- `uv run pytest tests/offensive/ tests/test_main_auto_cache_refresh.py -q` — **776 passed**.

@@ -262,6 +262,10 @@ class DailyActionRefreshResult:
     )
 
     def __post_init__(self):
+        if type(self.suspension_evidence) is not SuspensionEvidence:
+            raise ValueError("suspension_evidence must be SuspensionEvidence")
+        if type(self.stats) is not DailyActionCacheRefreshStats:
+            raise ValueError("stats must be DailyActionCacheRefreshStats")
         if not isinstance(self.universe_fingerprint, str):
             raise ValueError("universe_fingerprint must be a string")
         if self.daily_batch_fingerprint is not None and not isinstance(
@@ -315,6 +319,8 @@ class DailyActionRefreshResult:
             raise ValueError(
                 f"price status counts ({sum(price_counts.values())}) != universe ({len(self.universe_tickers)})"
             )
+        if dict(self.stats.price_status_counts) != price_counts:
+            raise ValueError("stats price status counts do not match frozen outcomes")
         # Validate: conservation — sum of fund_flow statuses == universe total
         flow_counts: dict[str, int] = {}
         for outcome in self.outcomes.values():
@@ -325,6 +331,8 @@ class DailyActionRefreshResult:
             raise ValueError(
                 f"fund_flow status counts ({sum(flow_counts.values())}) != universe ({len(self.universe_tickers)})"
             )
+        if dict(self.stats.fund_flow_status_counts) != flow_counts:
+            raise ValueError("stats fund_flow status counts do not match frozen outcomes")
 
     def __getattr__(self, name: str) -> object:
         """Keep legacy display-counter reads working during the v2 migration."""

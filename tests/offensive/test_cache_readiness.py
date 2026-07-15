@@ -1,6 +1,7 @@
 """Tests for per-ticker cache refresh outcome model and conservation."""
 
 from datetime import date
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pandas as pd
@@ -277,6 +278,78 @@ class TestConservation:
     @pytest.mark.parametrize(
         "overrides",
         (
+            {"suspension_evidence": {}},
+            {
+                "suspension_evidence": SimpleNamespace(
+                    trade_date=date(2026, 7, 13),
+                    tickers=frozenset(),
+                )
+            },
+            {"stats": {}},
+            {
+                "stats": SimpleNamespace(
+                    price_status_counts={"current": 1},
+                    fund_flow_status_counts={"current": 1},
+                )
+            },
+        ),
+    )
+    def test_result_rejects_mutable_or_duck_typed_aggregate_fields(self, overrides):
+        tickers = ("000001",)
+        outcomes = {"000001": _outcome("000001")}
+        values = {
+            "trade_date": date(2026, 7, 13),
+            "universe_tickers": tickers,
+            "universe_fingerprint": universe_fingerprint(tickers),
+            "daily_batch_fingerprint": None,
+            "suspension_evidence": SuspensionEvidence.available(
+                date(2026, 7, 13), set()
+            ),
+            "outcomes": outcomes,
+            "stats": derive_stats_from_outcomes(outcomes),
+            **overrides,
+        }
+
+        with pytest.raises(ValueError):
+            DailyActionRefreshResult(**values)
+
+    @pytest.mark.parametrize("forged_dimension", ("price", "fund_flow"))
+    def test_result_rejects_stats_that_contradict_frozen_outcomes(
+        self,
+        forged_dimension,
+    ):
+        tickers = ("000001",)
+        outcomes = {"000001": _outcome("000001")}
+        price_counts = {"current": 1}
+        flow_counts = {"current": 1}
+        if forged_dimension == "price":
+            price_counts = {"failed": 1}
+        else:
+            flow_counts = {"failed": 1}
+        forged_stats = DailyActionCacheRefreshStats(
+            price_status_counts=price_counts,
+            fund_flow_status_counts=flow_counts,
+            industry_index_total=7,
+            industry_index_failed=1,
+            limit_up_injected=2,
+        )
+
+        with pytest.raises(ValueError, match="stats .* status counts"):
+            DailyActionRefreshResult(
+                trade_date=date(2026, 7, 13),
+                universe_tickers=tickers,
+                universe_fingerprint=universe_fingerprint(tickers),
+                daily_batch_fingerprint=None,
+                suspension_evidence=SuspensionEvidence.available(
+                    date(2026, 7, 13), set()
+                ),
+                outcomes=outcomes,
+                stats=forged_stats,
+            )
+
+    @pytest.mark.parametrize(
+        "overrides",
+        (
             {"universe_fingerprint": object()},
             {"daily_batch_fingerprint": object()},
         ),
@@ -377,7 +450,12 @@ class TestConservation:
                 flow=FundFlowStatus.SUSPENDED,
             ),
         }
-        stats = derive_stats_from_outcomes(outcomes)
+        stats = derive_stats_from_outcomes(
+            outcomes,
+            industry_index_total=7,
+            industry_index_failed=1,
+            limit_up_injected=2,
+        )
         result = DailyActionRefreshResult(
             trade_date=date(2026, 7, 13),
             universe_tickers=tickers,
@@ -388,6 +466,10 @@ class TestConservation:
             stats=stats,
         )
         assert len(result.outcomes) == 2
+        assert result.stats is stats
+        assert result.stats.industry_index_total == 7
+        assert result.stats.industry_index_failed == 1
+        assert result.stats.limit_up_injected == 2
 
     def test_not_attempted_preserves_ticker_in_counts(self):
         """Quota-exceeded tickers must be NOT_ATTEMPTED, not disappear from denominator."""

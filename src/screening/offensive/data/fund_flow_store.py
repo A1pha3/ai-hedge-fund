@@ -63,11 +63,15 @@ class FundFlowStore:
         path = self._path(ticker)
         if existing_frame is not None:
             old = existing_frame.copy(deep=True)
+            if "ticker" not in old.columns:
+                old["ticker"] = ticker
             combined = pd.concat([old, df], ignore_index=True)
             combined = combined.drop_duplicates(subset=["date"], keep="last")
             combined = combined.sort_values("date").reset_index(drop=True)
         elif path.exists():
             old = pd.read_csv(path, dtype={"date": str, "ticker": str})
+            if "ticker" not in old.columns:
+                old["ticker"] = ticker
             combined = pd.concat([old, df], ignore_index=True)
             combined = combined.drop_duplicates(subset=["date"], keep="last")
             combined = combined.sort_values("date").reset_index(drop=True)
