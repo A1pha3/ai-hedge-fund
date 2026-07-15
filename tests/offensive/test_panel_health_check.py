@@ -10,6 +10,7 @@ from scripts.panel_health_check import (
     _verdict,
     check_horizon,
     load_panel,
+    panel_health_oneline,
 )
 
 
@@ -87,3 +88,31 @@ def test_verdict_thresholds() -> None:
 def test_cohens_d_sign_and_small_group() -> None:
     assert _cohens_d([3.0, 4.0, 5.0], [-1.0, -2.0, -3.0]) > 0
     assert math.isnan(_cohens_d([1.0], [2.0]))  # n<2 in a group -> NaN
+
+
+def test_oneline_empty_panel(tmp_path) -> None:
+    assert panel_health_oneline(tmp_path / "nope.jsonl") == "面板为空"
+
+
+def test_oneline_below_threshold(tmp_path) -> None:
+    import json
+
+    rows = _rows([3.0, 4.0], [-1.0, -2.0])  # total=4
+    p = tmp_path / "panel.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    out = panel_health_oneline(p, min_n=30, min_group=5)
+    assert "未达检验门槛" in out
+    assert "已实现" in out
+
+
+def test_oneline_reports_alpha(tmp_path) -> None:
+    import json
+
+    elig = [3.0, 4.0, 5.0, 3.5, 4.5, 5.5, 3.2, 4.2]
+    filt = [-2.0, -1.0, 0.0, -1.5, -0.5, -2.5, -1.2, -0.8]
+    rows = [dict(r, realized=True) for r in _rows(elig, filt)]
+    p = tmp_path / "panel.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    out = panel_health_oneline(p, min_n=10, min_group=5)
+    assert "✅" in out
+    assert "T+1" in out

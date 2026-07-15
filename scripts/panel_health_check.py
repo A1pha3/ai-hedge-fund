@@ -93,6 +93,25 @@ def _verdict(p: float, delta_mean: float, alpha: float = 0.05) -> str:
     return "◻️ 不显著：无法证明全过滤挑出 alpha（eligible 与 filtered 无统计差异）"
 
 
+def _test_horizon(rows: list[dict], horizon: int, min_n: int, min_group: int) -> dict | None:
+    """Welch t-test stats for one horizon, or None if too few realized samples."""
+    elig = _returns(rows, horizon, True)
+    filt = _returns(rows, horizon, False)
+    if len(elig) + len(filt) < min_n or len(elig) < min_group or len(filt) < min_group:
+        return None
+    res = stats.ttest_ind(elig, filt, equal_var=False)
+    df_attr = getattr(res, "df", None)
+    return {
+        "p": float(res.pvalue),
+        "t": float(res.statistic),
+        "df": float(df_attr) if df_attr is not None else _welch_df(elig, filt),
+        "delta_mean": float(np.mean(elig)) - float(np.mean(filt)),
+        "d": _cohens_d(elig, filt),
+        "n_elig": len(elig),
+        "n_filt": len(filt),
+    }
+
+
 def check_horizon(rows: list[dict], horizon: int, min_n: int, min_group: int) -> tuple[str, bool | None]:
     """Return (rendered_block, verdict). verdict: True=alpha, False=tested-no-alpha, None=untestable."""
     elig = _returns(rows, horizon, True)
@@ -103,26 +122,45 @@ def check_horizon(rows: list[dict], horizon: int, min_n: int, min_group: int) ->
         f"  plan_eligible: {_fmt(_summarize(elig))}",
         f"  filtered     : {_fmt(_summarize(filt))}",
     ]
-    if total < min_n:
-        lines.append(f"  ⏳ 样本不足（已实现 {total} < {min_n}）——继续用 --daily-action + --auto 累积")
+    stat = _test_horizon(rows, horizon, min_n, min_group)
+    if stat is None:
+        if total < min_n:
+            lines.append(f"  ⏳ 样本不足（已实现 {total} < {min_n}）——继续用 --daily-action + --auto 累积")
+        else:
+            lines.append(f"  ⏳ 某组样本过小（eligible={len(elig)}, filtered={len(filt)}, 需各 ≥{min_group}）")
         return "\n".join(lines), None
-    if len(elig) < min_group or len(filt) < min_group:
-        lines.append(f"  ⏳ 某组样本过小（eligible={len(elig)}, filtered={len(filt)}, 需各 ≥{min_group}）")
-        return "\n".join(lines), None
-
-    res = stats.ttest_ind(elig, filt, equal_var=False)
-    t_stat = float(res.statistic)
-    p_val = float(res.pvalue)
-    df_attr = getattr(res, "df", None)
-    df = float(df_attr) if df_attr is not None else _welch_df(elig, filt)
-    delta_mean = float(np.mean(elig)) - float(np.mean(filt))
-    d = _cohens_d(elig, filt)
     lines.append(
-        f"  Welch t-test: t={t_stat:+.2f}  df={df:.1f}  p={p_val:.4f}  "
-        f"Δmean={delta_mean:+.2f}%  Cohen's d={d:+.2f}"
+        f"  Welch t-test: t={stat['t']:+.2f}  df={stat['df']:.1f}  p={stat['p']:.4f}  "
+        f"Δmean={stat['delta_mean']:+.2f}%  Cohen's d={stat['d']:+.2f}"
     )
-    lines.append("  " + _verdict(p_val, delta_mean))
-    return "\n".join(lines), bool(p_val < 0.05 and delta_mean > 0)
+    lines.append("  " + _verdict(stat["p"], stat["delta_mean"]))
+    return "\n".join(lines), bool(stat["p"] < 0.05 and stat["delta_mean"] > 0)
+
+
+def panel_health_oneline(panel: Path = PANEL, min_n: int = 30, min_group: int = 5) -> str:
+    """One-line panel-health summary for --auto logs (best-effort, read-only)."""
+    rows = load_panel(panel)
+    if not rows:
+        return "面板为空"
+    realized = sum(1 for r in rows if r.get("realized"))
+    prefix = f"{len(rows)}条/已实现{realized}"
+    tags: list[str] = []
+    testable = False
+    for horizon in HORIZONS:
+        stat = _test_horizon(rows, horizon, min_n, min_group)
+        if stat is None:
+            tags.append(f"T+{horizon}:⏳")
+            continue
+        testable = True
+        if stat["p"] < 0.05 and stat["delta_mean"] > 0:
+            tags.append(f"T+{horizon}:✅p={stat['p']:.3f}")
+        elif stat["p"] < 0.05 and stat["delta_mean"] < 0:
+            tags.append(f"T+{horizon}:⚠️反向p={stat['p']:.3f}")
+        else:
+            tags.append(f"T+{horizon}:◻️p={stat['p']:.3f}")
+    if not testable:
+        return f"{prefix} 未达检验门槛(需某 horizon 已实现≥{min_n}/组≥{min_group})"
+    return f"{prefix}  " + " ".join(tags)
 
 
 def main() -> None:

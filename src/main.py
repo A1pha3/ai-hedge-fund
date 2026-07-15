@@ -1242,6 +1242,15 @@ def _refresh_daily_action_caches_for_auto(
     except Exception as exc:  # pragma: no cover - panel backfill must not fail --auto
         logger.warning("[Auto] setup-output panel backfill failed: %s", exc)
 
+    # One-line panel-health readout (plan_eligible vs filtered Welch t-test) once
+    # a horizon has enough realized samples. Read-only; best-effort.
+    try:
+        from scripts.panel_health_check import panel_health_oneline
+
+        logger.info("[Auto] 面板体检: %s", panel_health_oneline())
+    except Exception as exc:  # pragma: no cover - health readout must not fail --auto
+        logger.warning("[Auto] 面板体检失败: %s", exc)
+
 
 def _publish_daily_action_readiness_for_auto(trade_date: str, cache_summary: dict) -> None:
     """Build and publish the Daily Action readiness manifest from refreshed caches.
