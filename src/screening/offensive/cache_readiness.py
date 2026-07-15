@@ -10,10 +10,50 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from enum import StrEnum
 from types import MappingProxyType
+
+
+def _deep_freeze(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {key: _deep_freeze(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_deep_freeze(item) for item in value)
+    return value
+
+
+def _valid_sha256(value: object) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        return False
+    digest = value.removeprefix("sha256:")
+    return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
+
+
+def _validated_count(value: object, *, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field_name} must be a non-negative integer")
+    return value
+
+
+def _validated_count_mapping(
+    value: object,
+    *,
+    field_name: str,
+) -> MappingProxyType:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{field_name} must be a mapping")
+    copied = dict(value)
+    if any(not isinstance(key, str) for key in copied):
+        raise ValueError(f"{field_name} keys must be strings")
+    for key, count in copied.items():
+        _validated_count(count, field_name=f"{field_name}[{key!r}]")
+    return MappingProxyType(copied)
 
 
 class PriceStatus(StrEnum):
@@ -34,7 +74,8 @@ class FundFlowStatus(StrEnum):
 
 
 class SuspensionEvidenceStatus(StrEnum):
-    AVAILABLE = "available"
+    AVAILABLE_NONEMPTY = "available_nonempty"
+    AVAILABLE_EMPTY = "available_empty"
     UNAVAILABLE = "unavailable"
 
 
@@ -44,6 +85,36 @@ class SuspensionEvidence:
     status: SuspensionEvidenceStatus
     tickers: frozenset[str]
     source_fingerprint: str | None = None
+
+    def __post_init__(self) -> None:
+        try:
+            frozen_tickers = frozenset(self.tickers)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("suspension evidence tickers must be iterable") from exc
+        object.__setattr__(self, "tickers", frozen_tickers)
+        if not isinstance(self.trade_date, date):
+            raise ValueError("suspension evidence trade_date must be a date")
+        if not isinstance(self.status, SuspensionEvidenceStatus):
+            raise ValueError("invalid suspension evidence status")
+        if any(
+            not isinstance(ticker, str)
+            or len(ticker) != 6
+            or not ticker.isdigit()
+            for ticker in frozen_tickers
+        ):
+            raise ValueError("suspension evidence contains invalid ticker identity")
+        if self.status is SuspensionEvidenceStatus.AVAILABLE_NONEMPTY:
+            if not frozen_tickers:
+                raise ValueError("available_nonempty suspension evidence needs tickers")
+        elif self.status is SuspensionEvidenceStatus.AVAILABLE_EMPTY:
+            if frozen_tickers:
+                raise ValueError("available_empty suspension evidence cannot have tickers")
+        elif frozen_tickers or self.source_fingerprint is not None:
+            raise ValueError("unavailable suspension evidence cannot carry evidence")
+        if self.source_fingerprint is not None and not _valid_sha256(
+            self.source_fingerprint
+        ):
+            raise ValueError("invalid suspension source fingerprint")
 
     @classmethod
     def available(
@@ -55,7 +126,11 @@ class SuspensionEvidence:
     ) -> SuspensionEvidence:
         return cls(
             trade_date=trade_date,
-            status=SuspensionEvidenceStatus.AVAILABLE,
+            status=(
+                SuspensionEvidenceStatus.AVAILABLE_NONEMPTY
+                if tickers
+                else SuspensionEvidenceStatus.AVAILABLE_EMPTY
+            ),
             tickers=frozenset(tickers),
             source_fingerprint=source_fingerprint,
         )
@@ -86,6 +161,46 @@ class TickerRefreshOutcome:
     block_reasons: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.ticker, str)
+            or len(self.ticker) != 6
+            or not self.ticker.isdigit()
+        ):
+            raise ValueError("outcome ticker must be exactly six digits")
+        if not isinstance(self.price_status, PriceStatus):
+            raise ValueError("invalid price status")
+        if not isinstance(self.fund_flow_status, FundFlowStatus):
+            raise ValueError("invalid fund-flow status")
+        _validated_count(self.price_history_rows, field_name="price_history_rows")
+        _validated_count(
+            self.fund_flow_history_rows,
+            field_name="fund_flow_history_rows",
+        )
+        if not isinstance(self.evidence_fingerprints, Mapping):
+            raise ValueError("evidence_fingerprints must be a mapping")
+        fingerprints = dict(self.evidence_fingerprints)
+        if any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in fingerprints.items()
+        ):
+            raise ValueError("evidence fingerprint keys and values must be strings")
+        if not isinstance(self.block_reasons, (list, tuple)) or any(
+            not isinstance(reason, str) for reason in self.block_reasons
+        ):
+            raise ValueError("block_reasons must contain only strings")
+        if not isinstance(self.warnings, (list, tuple)) or any(
+            not isinstance(warning, str) for warning in self.warnings
+        ):
+            raise ValueError("warnings must contain only strings")
+        object.__setattr__(
+            self,
+            "evidence_fingerprints",
+            MappingProxyType(fingerprints),
+        )
+        object.__setattr__(self, "block_reasons", tuple(self.block_reasons))
+        object.__setattr__(self, "warnings", tuple(self.warnings))
+
 
 @dataclass(frozen=True)
 class DailyActionCacheRefreshStats:
@@ -96,6 +211,30 @@ class DailyActionCacheRefreshStats:
     industry_index_total: int
     industry_index_failed: int
     limit_up_injected: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "price_status_counts",
+            _validated_count_mapping(
+                self.price_status_counts,
+                field_name="price_status_counts",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "fund_flow_status_counts",
+            _validated_count_mapping(
+                self.fund_flow_status_counts,
+                field_name="fund_flow_status_counts",
+            ),
+        )
+        _validated_count(self.industry_index_total, field_name="industry_index_total")
+        _validated_count(
+            self.industry_index_failed,
+            field_name="industry_index_failed",
+        )
+        _validated_count(self.limit_up_injected, field_name="limit_up_injected")
 
     def to_dict(self) -> dict:
         return {
@@ -116,32 +255,92 @@ class DailyActionRefreshResult:
     suspension_evidence: SuspensionEvidence
     outcomes: Mapping[str, TickerRefreshOutcome]
     stats: DailyActionCacheRefreshStats
+    _refresh_counters: Mapping[str, object] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self):
+        if type(self.suspension_evidence) is not SuspensionEvidence:
+            raise ValueError("suspension_evidence must be SuspensionEvidence")
+        if type(self.stats) is not DailyActionCacheRefreshStats:
+            raise ValueError("stats must be DailyActionCacheRefreshStats")
+        if not isinstance(self.universe_fingerprint, str):
+            raise ValueError("universe_fingerprint must be a string")
+        if self.daily_batch_fingerprint is not None and not isinstance(
+            self.daily_batch_fingerprint,
+            str,
+        ):
+            raise ValueError("daily_batch_fingerprint must be a string or None")
+        object.__setattr__(self, "universe_tickers", tuple(self.universe_tickers))
         # Validate: no duplicate tickers in universe
         if len(set(self.universe_tickers)) != len(self.universe_tickers):
             raise ValueError("universe_tickers contains duplicates")
-        # Validate: all outcomes have a ticker in universe
         outcome_tickers = set(self.outcomes.keys())
         universe_set = set(self.universe_tickers)
-        if not outcome_tickers.issubset(universe_set):
-            raise ValueError("outcomes reference tickers not in universe")
+        if outcome_tickers != universe_set:
+            if outcome_tickers.issubset(universe_set):
+                # Retain the more specific conservation diagnostic for legacy
+                # callers that only omit outcomes.
+                raise ValueError(
+                    f"price status counts ({len(outcome_tickers)}) != universe "
+                    f"({len(self.universe_tickers)}); outcomes must exactly cover "
+                    "the frozen universe"
+                )
+            raise ValueError("outcomes must exactly cover the frozen universe")
+
+        frozen_outcomes: dict[str, TickerRefreshOutcome] = {}
+        for ticker in self.universe_tickers:
+            outcome = self.outcomes[ticker]
+            if outcome.ticker != ticker:
+                raise ValueError("outcome ticker identity must match its mapping key")
+            frozen_outcomes[ticker] = replace(
+                outcome,
+                evidence_fingerprints=MappingProxyType(
+                    dict(outcome.evidence_fingerprints)
+                ),
+                block_reasons=tuple(outcome.block_reasons),
+                warnings=tuple(outcome.warnings),
+            )
+        object.__setattr__(self, "outcomes", MappingProxyType(frozen_outcomes))
+        object.__setattr__(
+            self,
+            "_refresh_counters",
+            _deep_freeze(self._refresh_counters),
+        )
         # Validate: conservation — sum of price statuses == universe total
         price_counts: dict[str, int] = {}
         for outcome in self.outcomes.values():
-            price_counts[outcome.price_status.value] = price_counts.get(outcome.price_status.value, 0) + 1
+            price_counts[outcome.price_status.value] = (
+                price_counts.get(outcome.price_status.value, 0) + 1
+            )
         if sum(price_counts.values()) != len(self.universe_tickers):
             raise ValueError(
                 f"price status counts ({sum(price_counts.values())}) != universe ({len(self.universe_tickers)})"
             )
+        if dict(self.stats.price_status_counts) != price_counts:
+            raise ValueError("stats price status counts do not match frozen outcomes")
         # Validate: conservation — sum of fund_flow statuses == universe total
         flow_counts: dict[str, int] = {}
         for outcome in self.outcomes.values():
-            flow_counts[outcome.fund_flow_status.value] = flow_counts.get(outcome.fund_flow_status.value, 0) + 1
+            flow_counts[outcome.fund_flow_status.value] = (
+                flow_counts.get(outcome.fund_flow_status.value, 0) + 1
+            )
         if sum(flow_counts.values()) != len(self.universe_tickers):
             raise ValueError(
                 f"fund_flow status counts ({sum(flow_counts.values())}) != universe ({len(self.universe_tickers)})"
             )
+        if dict(self.stats.fund_flow_status_counts) != flow_counts:
+            raise ValueError("stats fund_flow status counts do not match frozen outcomes")
+
+    def __getattr__(self, name: str) -> object:
+        """Keep legacy display-counter reads working during the v2 migration."""
+
+        counters = object.__getattribute__(self, "_refresh_counters")
+        if name in counters:
+            return counters[name]
+        raise AttributeError(name)
 
     def to_dict(self) -> dict:
         return {
@@ -152,6 +351,7 @@ class DailyActionRefreshResult:
             "suspension_evidence": {
                 "status": self.suspension_evidence.status.value,
                 "tickers": sorted(self.suspension_evidence.tickers),
+                "source_fingerprint": self.suspension_evidence.source_fingerprint,
             },
             "outcomes": {
                 ticker: {
@@ -159,6 +359,7 @@ class DailyActionRefreshResult:
                     "price_history_rows": o.price_history_rows,
                     "fund_flow_status": o.fund_flow_status.value,
                     "fund_flow_history_rows": o.fund_flow_history_rows,
+                    "evidence_fingerprints": dict(o.evidence_fingerprints),
                     "block_reasons": list(o.block_reasons),
                     "warnings": list(o.warnings),
                 }
@@ -178,8 +379,12 @@ def derive_stats_from_outcomes(
     price_counts: dict[str, int] = {}
     flow_counts: dict[str, int] = {}
     for outcome in outcomes.values():
-        price_counts[outcome.price_status.value] = price_counts.get(outcome.price_status.value, 0) + 1
-        flow_counts[outcome.fund_flow_status.value] = flow_counts.get(outcome.fund_flow_status.value, 0) + 1
+        price_counts[outcome.price_status.value] = (
+            price_counts.get(outcome.price_status.value, 0) + 1
+        )
+        flow_counts[outcome.fund_flow_status.value] = (
+            flow_counts.get(outcome.fund_flow_status.value, 0) + 1
+        )
     return DailyActionCacheRefreshStats(
         price_status_counts=MappingProxyType(price_counts),
         fund_flow_status_counts=MappingProxyType(flow_counts),

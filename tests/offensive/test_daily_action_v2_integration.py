@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import builtins
+import json
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
@@ -36,6 +39,31 @@ def signal_date() -> date:
     return date(2026, 7, 13)
 
 
+@pytest.fixture(autouse=True)
+def _fail_workspace_reports_writes(monkeypatch):
+    repo_reports = (Path(__file__).resolve().parents[2] / "data" / "reports").resolve()
+    original_open = builtins.open
+    original_path_open = Path.open
+
+    def _is_write_mode(mode: str) -> bool:
+        return any(flag in mode for flag in ("w", "a", "x", "+"))
+
+    def guarded_open(file, mode="r", *args, **kwargs):
+        path = Path(file).resolve() if isinstance(file, (str, Path)) else None
+        if path is not None and _is_write_mode(str(mode)) and (path == repo_reports or repo_reports in path.parents):
+            raise AssertionError(f"test attempted to write workspace data/reports: {path}")
+        return original_open(file, mode, *args, **kwargs)
+
+    def guarded_path_open(self, mode="r", *args, **kwargs):
+        path = self.resolve()
+        if _is_write_mode(str(mode)) and (path == repo_reports or repo_reports in path.parents):
+            raise AssertionError(f"test attempted to write workspace data/reports: {path}")
+        return original_path_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
+    monkeypatch.setattr(Path, "open", guarded_path_open)
+
+
 @pytest.fixture
 def repository(tmp_path) -> LedgerRepository:
     repo = LedgerRepository(
@@ -69,8 +97,12 @@ def _scan(signal_date, *, degraded=False, regime="normal") -> DailyActionScan:
         ticker="000001",
         setup="btst_breakout",
         setup_version="v2",
+        signal_date=signal_date,
         target_weight=0.12,
         priority=1,
+        snapshot_id="legacy_unverified",
+        setup_consumed_fingerprint="legacy_unverified",
+        detector_degraded=False,
         authorization=authorization,
     )
     blocked = (
@@ -113,20 +145,18 @@ def _install_healthy_manifest(monkeypatch, signal_date: date) -> None:
     )
 
 
-def _install_readiness_manifest(monkeypatch, signal_date: date) -> None:
+def _install_readiness_manifest(monkeypatch, signal_date: date, *, reports_dir: Path, data_dir: Path) -> None:
     """Create a daily_action_readiness manifest so the snapshot path activates.
 
     Spec 10: --daily-action requires its own readiness canonical, not the Auto
     manifest. This helper writes a minimal readiness manifest file so the
     verified snapshot loader can find it.
     """
-    import json
-    from pathlib import Path
-
-    from src.screening.offensive.setup_data_contracts import SetupCapability
-    from types import MappingProxyType
-
-    reports_dir = Path("data/reports")
+    repo_reports = (Path(__file__).resolve().parents[2] / "data" / "reports").resolve()
+    reports_dir = Path(reports_dir).resolve()
+    data_dir = Path(data_dir).resolve()
+    assert reports_dir != repo_reports and repo_reports not in reports_dir.parents
+    assert data_dir != Path(__file__).resolve().parents[2] / "data"
     reports_dir.mkdir(parents=True, exist_ok=True)
     manifest_data = {
         "schema_version": 1,
@@ -202,12 +232,16 @@ def test_unverified_btst_normal_and_claimed_crisis_are_both_capped_at_ten_percen
         signal_date,
         (
             PlanCandidate(
-                "000002",
-                "btst_breakout",
-                "v2",
-                0.12,
-                2,
-                RegimeAuthorization.BTST_CRISIS,
+                ticker="000002",
+                setup="btst_breakout",
+                setup_version="v2",
+                signal_date=signal_date,
+                target_weight=0.12,
+                priority=2,
+                snapshot_id="legacy_unverified",
+                setup_consumed_fingerprint="legacy_unverified",
+                detector_degraded=False,
+                authorization=RegimeAuthorization.BTST_CRISIS,
             ),
         ),
         (),
@@ -422,7 +456,7 @@ def test_actual_cli_is_idempotent_and_preserves_recursive_legacy_artifacts(
         lambda **_kwargs: scan,
     )
     _install_healthy_manifest(monkeypatch, signal_date)
-    _install_readiness_manifest(monkeypatch, signal_date)
+    _install_readiness_manifest(monkeypatch, signal_date, reports_dir=tmp_path / "data" / "reports", data_dir=tmp_path / "data")
     ledger = tmp_path / "isolated-v2/ledger.sqlite3"
     sessions = tuple(signal_date + timedelta(days=i) for i in range(11))
     dispatcher._resolve_daily_action(
@@ -463,7 +497,7 @@ def test_actual_cli_missing_calendar_renders_block_and_creates_no_plan(
         lambda **_kwargs: (signal_date, "normal"),
     )
     _install_healthy_manifest(monkeypatch, signal_date)
-    _install_readiness_manifest(monkeypatch, signal_date)
+    _install_readiness_manifest(monkeypatch, signal_date, reports_dir=tmp_path / "data" / "reports", data_dir=tmp_path / "data")
     ledger = tmp_path / "blocked.sqlite3"
     dispatcher._resolve_daily_action(
         ["--daily-action"], open_sessions=(), ledger_path=ledger
@@ -490,7 +524,7 @@ def test_actual_cli_two_session_calendar_blocks_btst_horizon(
         lambda **_kwargs: (signal_date, "normal"),
     )
     _install_healthy_manifest(monkeypatch, signal_date)
-    _install_readiness_manifest(monkeypatch, signal_date)
+    _install_readiness_manifest(monkeypatch, signal_date, reports_dir=tmp_path / "data" / "reports", data_dir=tmp_path / "data")
     ledger = tmp_path / "two-session.sqlite3"
     dispatcher._resolve_daily_action(
         ["--daily-action"],
@@ -500,3 +534,30 @@ def test_actual_cli_two_session_calendar_blocks_btst_horizon(
     output = capsys.readouterr().out
     # Two-session calendar can't hold a T+10 BTST position. No plans created.
     assert LedgerRepository(ledger, "daily-action-v2", 100_000).planned_trades() == []
+
+# ---------------------------------------------------------------------------
+# Task 9 readiness v2 production path integration
+# ---------------------------------------------------------------------------
+
+from tests.offensive.readiness_v2_testkit import (
+    run_full_injected_pipeline,
+    run_pipeline_without_readiness_with_due_exit,
+)
+
+
+def test_outside_auto_pool_ticker_reaches_verified_plan(tmp_path) -> None:
+    result = run_full_injected_pipeline(
+        tmp_path,
+        auto_tickers={"000001"},
+        daily_tickers={"000001", "002999"},
+        btst_hit="002999",
+    )
+    assert [plan.ticker for plan in result.new_plans] == ["002999"]
+    assert result.ledger_trade is not None
+    assert result.ledger_trade.provenance.verification_status == "verified"
+
+
+def test_lifecycle_without_readiness_still_completes_exit(tmp_path) -> None:
+    result = run_pipeline_without_readiness_with_due_exit(tmp_path)
+    assert len(result.completed_exits) == 1
+    assert result.new_plans == ()

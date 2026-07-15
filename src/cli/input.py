@@ -1,8 +1,8 @@
 import argparse
-import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import questionary
 from colorama import Fore, Style
@@ -93,65 +93,29 @@ def add_common_args(
 
 
 def _resolve_default_end_date() -> str:
-    """数据就绪阈值 + 交易日归一化: 返回最新可用开市日。
+    """Return the authoritative open session allowed by the 17:00 policy.
 
-    A 股资金流 (tushare moneyflow / akshare push2his) 通常在收盘后 ~2 小时
-    (约 17:00) 才完成当日数据入库。在 17:00 之前查询当日数据会得到空结果,
-    导致 cache_refresh 报 "双源均失败"、筛选缺当日资金流信号。
-
-    当不显式指定 --end-date 时, 17:00 前自动回退一天, 避免查到不存在的当日数据;
-    17:00 后 (含) 取当天。随后统一归一化到最近开市日, 这样周日/周一盘前都会
-    落到上周五, 不再生成周末 pseudo-date 报告。
-
-    阈值可通过环境变量 DATA_READY_HOUR 覆盖 (默认 17)。
-
-    本函数是 :func:`src.utils.date_utils.resolve_market_ready_date_iso` 的薄包装:
-    把"当前墙钟"显式传进去 (而非让 helper 内部读 ``datetime.now()``), 这样
-    测试 patch ``src.cli.input.datetime`` 时仍能控制行为 (详见
-    ``tests/cli/test_input_dates.py``)。env 解析同样在本地完成以保持契约。
+    Auto and Daily Action use the same explicit open-session calendar. Missing
+    calendar data is a hard error: production must not infer sessions from
+    weekdays or cached price rows.
 
     Returns:
         YYYY-MM-DD 格式的默认结束日期
     """
-    from datetime import time as _time
-
     from src.utils.date_utils import (
-        SignalSessionUnavailable,
         format_date,
-        resolve_market_ready_date_iso,
         resolve_signal_session,
     )
 
-    try:
-        ready_hour = int(os.environ.get("DATA_READY_HOUR", "17"))
-    except ValueError:
-        ready_hour = 17
-    now = datetime.now()
-    # Spec 8.1: prefer the single shared signal-session resolver with the real
-    # forward-inclusive A-share calendar, passing DATA_READY_HOUR through as the
-    # cutoff so both commands share one policy. Fall back to the market-ready
-    # helper (tushare + weekday rollback) when no authoritative calendar is
-    # available, preserving the previous offline behaviour.
-    sessions: tuple = ()
-    try:
-        from src.screening.offensive.daily_action import (
-            _load_authoritative_session_dates,
-        )
+    from src.screening.offensive.daily_action import (
+        _load_authoritative_session_dates,
+    )
 
-        sessions = _load_authoritative_session_dates()
-    except Exception:
-        sessions = ()
-    if sessions and 0 <= ready_hour <= 23:
-        try:
-            resolved = resolve_signal_session(
-                now_cn=now,
-                open_sessions=sessions,
-                ready_cutoff=_time(ready_hour, 0),
-            )
-            return format_date(resolved.strftime("%Y%m%d"))
-        except SignalSessionUnavailable:
-            pass
-    return resolve_market_ready_date_iso(now=now, ready_hour=ready_hour)
+    resolved = resolve_signal_session(
+        now_cn=datetime.now(ZoneInfo("Asia/Shanghai")),
+        open_sessions=_load_authoritative_session_dates(),
+    )
+    return format_date(resolved.strftime("%Y%m%d"))
 
 
 def add_date_args(parser: argparse.ArgumentParser, *, default_months_back: int | None = None) -> argparse.ArgumentParser:
@@ -159,19 +123,19 @@ def add_date_args(parser: argparse.ArgumentParser, *, default_months_back: int |
         parser.add_argument("--start-date", type=str, help="Start date (YYYY-MM-DD)")
         parser.add_argument("--end-date", type=str, help="End date (YYYY-MM-DD). Default: previous day if before 17:00, else today")
     else:
-        # end-date 无 argparse default → resolve_dates 里动态计算 (17:00 阈值)。
-        # 这样用户显式传 --end-date 时完全不受影响, 不传时走 _resolve_default_end_date。
+        # Dates remain unset until resolve_dates sees the final explicit/default
+        # end date. This avoids loading the production calendar while argparse
+        # is still parsing a research/backtest override.
         parser.add_argument(
             "--end-date",
             type=str,
             default=None,
             help="End date in YYYY-MM-DD format. Default: previous day if before 17:00, else today",
         )
-        default_end_for_start = _resolve_default_end_date()
         parser.add_argument(
             "--start-date",
             type=str,
-            default=(datetime.strptime(default_end_for_start, "%Y-%m-%d") - relativedelta(months=default_months_back)).strftime("%Y-%m-%d"),
+            default=None,
             help="Start date in YYYY-MM-DD format",
         )
     return parser
@@ -270,7 +234,13 @@ def select_model(use_ollama: bool, model_flag: str | None = None) -> tuple[str, 
     return model_name, model_provider or ""
 
 
-def resolve_dates(start_date: str | None, end_date: str | None, *, default_months_back: int | None = None) -> tuple[str, str]:
+def resolve_dates(
+    start_date: str | None,
+    end_date: str | None,
+    *,
+    default_months_back: int | None = None,
+    production_strict: bool = False,
+) -> tuple[str, str]:
     if start_date:
         try:
             datetime.strptime(start_date, "%Y-%m-%d")
@@ -282,9 +252,21 @@ def resolve_dates(start_date: str | None, end_date: str | None, *, default_month
         except ValueError as e:
             raise ValueError("End date must be in YYYY-MM-DD format") from e
 
-    # 17:00 阈值: 不传 --end-date 时, 未过 17:00 取前一天 (当日资金流数据未就绪)。
-    # 显式传 --end-date 时 end_date 非空, 完全尊重用户指定。
-    final_end = end_date or _resolve_default_end_date()
+    final_end = end_date
+    if end_date and production_strict:
+        from src.screening.offensive.daily_action import (
+            _load_authoritative_session_dates,
+        )
+        from src.utils.date_utils import resolve_signal_session
+
+        selected = resolve_signal_session(
+            now_cn=datetime.now(ZoneInfo("Asia/Shanghai")),
+            open_sessions=_load_authoritative_session_dates(),
+            override=end_date,
+        )
+        final_end = selected.strftime("%Y-%m-%d")
+    if final_end is None:
+        final_end = _resolve_default_end_date()
     if start_date:
         final_start = start_date
     else:
@@ -377,7 +359,12 @@ def parse_cli_inputs(
             }
         )
         model_name, model_provider = select_model(getattr(args, "ollama", False), getattr(args, "model", None))
-    start_date, end_date = resolve_dates(getattr(args, "start_date", None), getattr(args, "end_date", None), default_months_back=default_months_back)
+    start_date, end_date = resolve_dates(
+        getattr(args, "start_date", None),
+        getattr(args, "end_date", None),
+        default_months_back=default_months_back,
+        production_strict=is_auto,
+    )
 
     return CLIInputs(
         tickers=tickers,

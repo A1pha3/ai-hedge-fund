@@ -63,9 +63,7 @@ class RegimeAuthorization(StrEnum):
 
     @property
     def ticker_cap(self) -> float:
-        return (
-            NORMAL_STOCK_CAP if self is RegimeAuthorization.NORMAL else HARD_STOCK_CAP
-        )
+        return NORMAL_STOCK_CAP
 
 
 @dataclass(frozen=True)
@@ -84,8 +82,12 @@ class PlanCandidate:
     ticker: str
     setup: str
     setup_version: str
+    signal_date: date
     target_weight: float
     priority: int
+    snapshot_id: str
+    setup_consumed_fingerprint: str
+    detector_degraded: bool = False
     authorization: RegimeAuthorization = RegimeAuthorization.NORMAL
 
     def __post_init__(self) -> None:
@@ -93,6 +95,14 @@ class PlanCandidate:
             raise ValueError("only btst_breakout candidates are enabled")
         if not self.ticker or not self.setup_version:
             raise ValueError("ticker and setup_version must be nonempty")
+        if type(self.signal_date) is not date:
+            raise ValueError("signal_date must be a date")
+        if not isinstance(self.snapshot_id, str) or not self.snapshot_id:
+            raise ValueError("snapshot_id must be nonempty")
+        if not isinstance(self.setup_consumed_fingerprint, str) or not self.setup_consumed_fingerprint:
+            raise ValueError("setup_consumed_fingerprint must be nonempty")
+        if type(self.detector_degraded) is not bool:
+            raise ValueError("detector_degraded must be bool")
         if not math.isfinite(self.target_weight) or self.target_weight <= 0:
             raise ValueError("target_weight must be finite and positive")
         if (
@@ -145,6 +155,21 @@ class DailyActionRun:
     blocked_tickers: tuple[str, ...] = ()
     block_reasons: tuple[str, ...] = ()
     ticker_gate_blocks: tuple[TickerGateBlock, ...] = ()
+
+
+@dataclass(frozen=True)
+class LifecycleContext:
+    """Settled ledger lifecycle output produced before any new-entry work.
+
+    Settlement, valuation, and open-position evaluation run in
+    ``advance_lifecycle`` so due exits always complete even when readiness,
+    snapshot loading, or scanning fails. ``complete_run`` consumes this to build
+    the final view without re-touching the ledger lifecycle.
+    """
+
+    as_of: date
+    valuation: DailyValuation
+    completed_exits: tuple[ActionItem, ...]
 
 
 PriceProvider = Callable[[str, date], MarketBar | None]
@@ -407,6 +432,7 @@ class DailyActionService:
         self._block_reasons: list[str] = []
         self._blocked_tickers: tuple[str, ...] = ()
         self._ticker_gate_blocks: tuple[TickerGateBlock, ...] = ()
+        self._active_snapshot: VerifiedDailyActionSnapshot | None = None
 
     def run(
         self,
@@ -417,6 +443,29 @@ class DailyActionService:
         shadow_prices: ShadowPriceSource | None = None,
         verified_snapshot: "VerifiedDailyActionSnapshot | None" = None,
     ) -> DailyActionRun:
+        """Compatibility wrapper: advance the lifecycle, then complete the run."""
+        context = self.advance_lifecycle(as_of)
+        if verified_snapshot is not None:
+            return self.complete_run(
+                context,
+                snapshot=verified_snapshot,
+                candidates=candidates,
+                shadow_prices=shadow_prices,
+            )
+        return self.complete_run(
+            context,
+            snapshot=None,
+            candidates=candidates,
+            manifest=manifest,
+            shadow_prices=shadow_prices,
+        )
+
+    def advance_lifecycle(self, as_of: date) -> LifecycleContext:
+        """Settle due entries/exits, mark to market, and evaluate open positions.
+
+        This runs BEFORE any readiness/snapshot/scanner work so due exits always
+        complete, even when new-entry evidence is missing or fails to load.
+        """
         self._skipped, self._exit_plans, self._deferred, self._block_reason = (
             [],
             [],
@@ -426,30 +475,71 @@ class DailyActionService:
         self._blocked_tickers = ()
         self._block_reasons = []
         self._ticker_gate_blocks = ()
+        self._active_manifest = None
+        self._active_snapshot = None
         self._settle_due_entry_plans(as_of)
         exits = self._settle_due_exit_plans(as_of)
         valuation = self._mark_to_market(as_of)
         self._evaluate_open_positions(as_of)
-        if verified_snapshot is not None:
-            # Daily Action readiness authority: gate on the verified snapshot,
-            # NOT the Auto data-quality manifest (which is scoped to Auto's 300
-            # scoring candidates and would block valid BTST tickers outside it).
-            eligible = self._snapshot_eligible_candidates(
-                as_of, candidates, verified_snapshot
-            )
+        return LifecycleContext(
+            as_of=as_of, valuation=valuation, completed_exits=exits
+        )
+
+    def complete_run(
+        self,
+        context: LifecycleContext,
+        *,
+        snapshot: "VerifiedDailyActionSnapshot | None" = None,
+        candidates: Sequence[PlanCandidate] = (),
+        new_entry_block: str | None = None,
+        manifest: RunManifest | None = None,
+        shadow_prices: ShadowPriceSource | None = None,
+    ) -> DailyActionRun:
+        """Gate candidates and build the view from an already-advanced lifecycle.
+
+        ``new_entry_block`` records a fail-closed reason (e.g. an invalid readiness
+        manifest or a scanner failure); when set, no new plans are created but the
+        settled lifecycle (exits, valuation, open positions) is still rendered.
+        """
+        as_of = context.as_of
+        valuation = context.valuation
+        if new_entry_block is not None:
+            self._add_block_reason(new_entry_block)
             self._active_manifest = None
+            self._active_snapshot = None
+            plans: tuple[ActionItem, ...] = ()
+        elif snapshot is not None:
+            eligible = self._snapshot_eligible_candidates(as_of, candidates, snapshot)
+            self._active_manifest = None
+            self._active_snapshot = snapshot
+            plans = self._create_capacity_safe_plans(as_of, eligible, valuation)
         else:
             eligible = self._manifest_eligible_candidates(as_of, candidates, manifest)
             self._active_manifest = manifest if self.enforce_manifest_gate else None
-        if self.enforce_manifest_gate and not eligible:
-            plans = ()
-        else:
-            plans = self._create_capacity_safe_plans(as_of, eligible, valuation)
+            self._active_snapshot = None
+            if self.enforce_manifest_gate and not eligible:
+                plans = ()
+            else:
+                plans = self._create_capacity_safe_plans(as_of, eligible, valuation)
         return self._build_view(
             as_of,
             valuation,
-            exits,
+            context.completed_exits,
             plans,
+            shadow_prices=shadow_prices,
+        )
+
+    def run_from_snapshot(
+        self,
+        snapshot: "VerifiedDailyActionSnapshot",
+        candidates: Sequence[PlanCandidate],
+        *,
+        shadow_prices: ShadowPriceSource | None = None,
+    ) -> DailyActionRun:
+        return self.run(
+            snapshot.signal_date,
+            candidates,
+            verified_snapshot=snapshot,
             shadow_prices=shadow_prices,
         )
 
@@ -562,20 +652,26 @@ class DailyActionService:
         eligible: list[PlanCandidate] = []
         blocked: list[TickerGateBlock] = []
         for candidate in candidates:
-            context = snapshot.setup_context(candidate.ticker)
+            context = snapshot.setup_context(candidate.ticker, candidate.setup)
             reasons: list[str] = []
+            if candidate.signal_date != snapshot.signal_date:
+                reasons.append("candidate_date_mismatch")
+            if candidate.snapshot_id != snapshot.snapshot_id:
+                reasons.append("candidate_snapshot_mismatch")
             if context is None:
-                # Not scannable in the snapshot. Because the snapshot loader
-                # already PIT-verified every per-ticker fingerprint (mismatches
-                # land in ``ticker_blocks`` and drop out of ``scannable_tickers``),
-                # a ticker missing here has no verified, plan-eligible evidence.
-                reasons.append("snapshot_ticker_absent")
+                default_context = snapshot.setup_context(candidate.ticker)
+                if default_context is not None and candidate.setup != default_context.setup_name:
+                    reasons.append("candidate_setup_mismatch")
+                else:
+                    reasons.append("candidate_not_plan_eligible")
             else:
                 capability = context.capability
-                if not capability.plan_eligible:
-                    reasons.extend(
-                        capability.block_reasons or ("not_plan_eligible",)
-                    )
+                if candidate.setup != context.setup_name:
+                    reasons.append("candidate_setup_mismatch")
+                if candidate.setup_consumed_fingerprint != context.consumed_fingerprint:
+                    reasons.append("candidate_consumed_fingerprint_mismatch")
+                if candidate.detector_degraded or not capability.plan_eligible:
+                    reasons.append("candidate_not_plan_eligible")
             if reasons:
                 blocked.append(
                     TickerGateBlock(candidate.ticker, tuple(dict.fromkeys(reasons)))
@@ -793,6 +889,23 @@ class DailyActionService:
         self, candidate: PlanCandidate, signal_date: date, entry_date: date
     ) -> PlanProvenance:
         manifest = self._active_manifest
+        snapshot = self._active_snapshot
+        if snapshot is not None:
+            return PlanProvenance(
+                verification_status="verified",
+                source_run_id=snapshot.manifest.run_id,
+                manifest_fingerprint=snapshot.manifest.content_fingerprint,
+                input_fingerprint=snapshot.manifest.input_fingerprint,
+                ticker_cache_fingerprint=candidate.setup_consumed_fingerprint,
+                snapshot_id=snapshot.snapshot_id,
+                setup_consumed_fingerprint=candidate.setup_consumed_fingerprint,
+                reference_price=snapshot.reference_price(candidate.ticker),
+                order_type="next_session_open_proxy",
+                board_rule_version=snapshot.board_rule_version,
+                valid_on=entry_date,
+                execution_cost_version=self.costs.version,
+                authorization=RegimeAuthorization.NORMAL.value,
+            )
         if manifest is None:
             return PlanProvenance.legacy_unverified()
         readiness = manifest.tickers.get(candidate.ticker)

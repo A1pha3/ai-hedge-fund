@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
-from src.screening.offensive.data.fund_flow_store import FundFlowStore, FundFlowRecord
+from src.screening.offensive.data.fund_flow_store import FundFlowStore
+from src.screening.offensive.pit_evidence import PITEvidenceError
 
 
 def _sample_df():
@@ -53,3 +55,59 @@ def test_save_overwrites_idempotent(tmp_path):
     assert n2 == 3
     rng = store.get_range("300054", "20260701", "20260703")
     assert len(rng) == 3  # 不重复
+
+
+def test_save_imputes_wholly_absent_ticker_for_legacy_generic_cache(tmp_path):
+    path = tmp_path / "X.csv"
+    path.write_text(
+        "date,close,pct_change,main_net_inflow,main_net_pct\n"
+        "20260701,10,1,1000,2\n",
+        encoding="utf-8",
+    )
+    store = FundFlowStore(cache_dir=tmp_path)
+
+    count = store.save(
+        "X",
+        pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2026-07-02"]),
+                "close": [11],
+                "pct_change": [2],
+                "main_net_inflow": [2000],
+                "main_net_pct": [3],
+            }
+        ),
+    )
+
+    persisted = pd.read_csv(path, dtype={"date": str, "ticker": str})
+    assert count == 2
+    assert persisted["date"].tolist() == ["20260701", "20260702"]
+    assert persisted["ticker"].tolist() == ["X", "X"]
+    assert persisted["main_net_inflow"].tolist() == [1000, 2000]
+
+
+def test_save_rejects_explicit_legacy_ticker_mismatch_without_write(tmp_path):
+    path = tmp_path / "X.csv"
+    path.write_text(
+        "date,ticker,close,pct_change,main_net_inflow,main_net_pct\n"
+        "20260701,Y,10,1,1000,2\n",
+        encoding="utf-8",
+    )
+    before = path.read_bytes()
+    store = FundFlowStore(cache_dir=tmp_path)
+
+    with pytest.raises(PITEvidenceError, match="ticker identity mismatch"):
+        store.save(
+            "X",
+            pd.DataFrame(
+                {
+                    "date": pd.to_datetime(["2026-07-02"]),
+                    "close": [11],
+                    "pct_change": [2],
+                    "main_net_inflow": [2000],
+                    "main_net_pct": [3],
+                }
+            ),
+        )
+
+    assert path.read_bytes() == before

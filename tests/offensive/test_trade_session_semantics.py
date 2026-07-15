@@ -1,8 +1,11 @@
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
+from src.screening.offensive.daily_action import resolve_daily_action_signal
+from src.utils.date_utils import SignalSessionUnavailable
 
 
 def test_friday_entry_plan_resolves_to_monday() -> None:
@@ -139,3 +142,44 @@ def test_daily_action_signal_resolution_delegates_to_shared_resolver(
     assert "kwargs" in calls, "daily action did not delegate to resolve_signal_session"
     # Monday 16:00 (before 17:00) → cutoff Sunday → latest session <= Sunday = Friday.
     assert signal_date == "20260710"
+
+
+def test_daily_action_uses_previous_session_before_1700() -> None:
+    sessions = (date(2026, 7, 10), date(2026, 7, 13))
+
+    signal_date, _ = resolve_daily_action_signal(
+        now_cn=datetime(
+            2026, 7, 13, 16, 0, tzinfo=ZoneInfo("Asia/Shanghai")
+        ),
+        open_sessions=sessions,
+    )
+
+    assert signal_date == date(2026, 7, 10)
+
+
+def test_daily_action_rejects_weekend_override() -> None:
+    with pytest.raises(SignalSessionUnavailable):
+        resolve_daily_action_signal(
+            end_date="2026-07-12",
+            now_cn=datetime(
+                2026, 7, 13, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")
+            ),
+            open_sessions=(date(2026, 7, 10), date(2026, 7, 13)),
+        )
+
+
+def test_daily_action_explicit_empty_calendar_does_not_reload(monkeypatch) -> None:
+    import src.screening.offensive.daily_action as da
+
+    def unexpected_reload():
+        raise AssertionError("explicit empty calendar must fail closed")
+
+    monkeypatch.setattr(da, "_load_authoritative_session_dates", unexpected_reload)
+
+    with pytest.raises(SignalSessionUnavailable):
+        da.resolve_daily_action_signal(
+            now_cn=datetime(
+                2026, 7, 13, 18, 0, tzinfo=ZoneInfo("Asia/Shanghai")
+            ),
+            open_sessions=(),
+        )

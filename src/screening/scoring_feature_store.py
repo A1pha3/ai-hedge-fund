@@ -6,7 +6,10 @@ CSV/JSON snapshots and returns empty inputs when data is missing or malformed.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -19,6 +22,7 @@ from pydantic import ValidationError
 from src.data.models import CompanyNews, FinancialMetrics, InsiderTrade
 from src.screening.optional_feature_store import OptionalFeatureStore
 from src.screening.scoring_feature_quality import (
+    FEATURE_POLICY_TABLE,
     ObservationStatus,
     ticker_set_fingerprint,
 )
@@ -34,6 +38,10 @@ _FEATURE_FAMILIES = (
     "intraday_short_trade_metrics",
     "daily_fund_flow_metrics",
 )
+_PRODUCER_SOURCES = {
+    "financial_metrics": ("financial_metrics",),
+    "event_inputs": ("company_news", "insider_trades"),
+}
 
 
 def _ticker6(ticker: str) -> str:
@@ -86,6 +94,145 @@ def _percent_to_ratio(value: Any) -> float | None:
     return round(numeric / 100.0, 4)
 
 
+def _canonical_fingerprint(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+        default=str,
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _status_from_mapping(value: object) -> ObservationStatus | None:
+    if not isinstance(value, Mapping):
+        return None
+    raw = value.get("observation_status")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return ObservationStatus(raw)
+    except ValueError:
+        return None
+
+
+def _event_source_status(statuses: list[ObservationStatus]) -> ObservationStatus:
+    if statuses and all(status is ObservationStatus.SUCCESS for status in statuses):
+        return ObservationStatus.SUCCESS
+    if any(
+        status in {ObservationStatus.SUCCESS, ObservationStatus.PARTIAL}
+        for status in statuses
+    ):
+        return ObservationStatus.PARTIAL
+    if any(status is ObservationStatus.FAILED for status in statuses):
+        return ObservationStatus.FAILED
+    return ObservationStatus.UNAVAILABLE
+
+
+def _requested_status(statuses: list[ObservationStatus]) -> ObservationStatus:
+    """Conservatively aggregate per-ticker consumption outcomes."""
+
+    if statuses and all(status is ObservationStatus.SUCCESS for status in statuses):
+        return ObservationStatus.SUCCESS
+    if any(status is ObservationStatus.FAILED for status in statuses):
+        return ObservationStatus.FAILED
+    if statuses and all(
+        status is ObservationStatus.UNAVAILABLE for status in statuses
+    ):
+        return ObservationStatus.UNAVAILABLE
+    return ObservationStatus.PARTIAL
+
+
+def _restrict_consumed_status(
+    consumed: ObservationStatus,
+    producer: ObservationStatus | None,
+) -> ObservationStatus:
+    """Producer evidence may downgrade consumed evidence, never promote it."""
+
+    if consumed in {ObservationStatus.FAILED, ObservationStatus.UNAVAILABLE}:
+        return consumed
+    if producer is None or producer is ObservationStatus.SUCCESS:
+        return consumed
+    if producer is ObservationStatus.PARTIAL:
+        return ObservationStatus.PARTIAL
+    return ObservationStatus.FAILED
+
+
+def _score_component_value(output: object, component: str) -> object:
+    if isinstance(output, Mapping):
+        return output.get(component)
+    return getattr(output, component, None)
+
+
+def _finite_score_component_payload(value: object) -> object | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value) if math.isfinite(float(value)) else None
+    fields = ("direction", "confidence", "completeness")
+    if isinstance(value, Mapping):
+        values = [value.get(field) for field in fields]
+    else:
+        values = [getattr(value, field, None) for field in fields]
+    if not all(
+        not isinstance(item, bool)
+        and isinstance(item, (int, float))
+        and math.isfinite(float(item))
+        for item in values
+    ):
+        return None
+    return {field: float(item) for field, item in zip(fields, values, strict=True)}
+
+
+def _validate_score_outputs(
+    tickers: list[str], score_outputs: Mapping[str, object]
+) -> dict[str, dict[str, object]]:
+    if not isinstance(score_outputs, Mapping):
+        raise ValueError("score output must be a ticker mapping")
+    expected_sequence = [str(ticker) for ticker in tickers]
+    expected = set(expected_sequence)
+    if len(expected) != len(expected_sequence):
+        raise ValueError("score output requested ticker set contains duplicates")
+    actual = set(score_outputs)
+    if any(not isinstance(ticker, str) for ticker in actual) or actual != expected:
+        actual_strings = {str(ticker) for ticker in actual}
+        missing = sorted(expected - actual_strings)
+        extra = sorted(actual_strings - expected)
+        raise ValueError(
+            f"score output ticker coverage mismatch: missing={missing}, extra={extra}"
+        )
+
+    evidence: dict[str, dict[str, object]] = {}
+    for family, policy in FEATURE_POLICY_TABLE.items():
+        if not policy.required_score_components:
+            continue
+        family_outputs: dict[str, dict[str, object]] = {}
+        for ticker in sorted(expected):
+            output = score_outputs[ticker]
+            components: dict[str, object] = {}
+            for component in policy.required_score_components:
+                value = _score_component_value(output, component)
+                component_payload = _finite_score_component_payload(value)
+                if component_payload is None:
+                    raise ValueError(
+                        f"score output for {ticker} has missing or nonfinite "
+                        f"component {component!r}"
+                    )
+                components[component] = component_payload
+            family_outputs[ticker] = components
+        evidence[family] = {
+            "score_output_count": len(family_outputs),
+            "score_output_tickers_fingerprint": ticker_set_fingerprint(
+                sorted(family_outputs)
+            ),
+            "score_output_fingerprint": _canonical_fingerprint(family_outputs),
+            "required_score_components": list(policy.required_score_components),
+        }
+    return evidence
+
+
 @dataclass
 class _QualityTracker:
     candidate_count: int = 0
@@ -103,6 +250,10 @@ class _QualityTracker:
     nonempty: dict[str, set[str]] = field(default_factory=dict)
     stale: dict[str, set[str]] = field(default_factory=dict)
     consumption_failed: dict[str, dict[str, str]] = field(default_factory=dict)
+    observation_statuses: dict[str, dict[str, ObservationStatus]] = field(
+        default_factory=dict
+    )
+    source_fingerprints: dict[str, dict[str, str]] = field(default_factory=dict)
     as_of_max: dict[str, str] = field(default_factory=dict)
     lock: Any = field(default_factory=RLock, repr=False)
 
@@ -136,6 +287,22 @@ class _QualityTracker:
         with self.lock:
             self.observed.setdefault(family, set()).add(_ticker6(ticker))
 
+    def note_observation_status(
+        self, family: str, ticker: str, status: ObservationStatus
+    ) -> None:
+        with self.lock:
+            self.observation_statuses.setdefault(family, {})[
+                _ticker6(ticker)
+            ] = status
+
+    def note_source_fingerprint(
+        self, family: str, ticker: str, source_fingerprint: str
+    ) -> None:
+        with self.lock:
+            self.source_fingerprints.setdefault(family, {})[
+                _ticker6(ticker)
+            ] = source_fingerprint
+
     def note_usable(self, family: str, ticker: str) -> None:
         """Record that ``ticker``'s observation for ``family`` was usable for scoring.
 
@@ -163,6 +330,10 @@ class _QualityTracker:
         """
         with self.lock:
             self.consumption_failed.setdefault(family, {})[_ticker6(ticker)] = reason
+
+    def clear_consumption_failure(self, family: str, ticker: str) -> None:
+        with self.lock:
+            self.consumption_failed.get(family, {}).pop(_ticker6(ticker), None)
 
     def note_as_of_max(self, family: str, as_of: str) -> None:
         """Record the max date seen in consumed data for ``family``."""
@@ -303,29 +474,45 @@ class ScoringFeatureStore:
     def load_event_inputs(self, ticker: str, trade_date: str) -> tuple[list[CompanyNews], list[InsiderTrade]]:
         ticker6 = _ticker6(ticker)
         self._quality.note_requested("event_inputs", [ticker6])
-        news, news_observed, news_stale, news_snapshot_date = self._load_company_news(ticker6, trade_date)
-        trades, trades_observed, trades_stale, trades_snapshot_date = self._load_insider_trades(ticker6, trade_date)
-        # event_inputs is observed when at least one of the two sources produced
-        # an authoritative answer (snapshot reachable + parseable, even if empty).
-        if news_observed or trades_observed:
+        news, news_status, news_stale, news_snapshot_date = self._load_company_news(
+            ticker6, trade_date
+        )
+        trades, trades_status, trades_stale, trades_snapshot_date = (
+            self._load_insider_trades(ticker6, trade_date)
+        )
+        consumed_status = _event_source_status([news_status, trades_status])
+        producer_status = self._producer_family_status(
+            self._load_manifest(trade_date), ticker6, "event_inputs"
+        )
+        observation_status = _restrict_consumed_status(
+            consumed_status, producer_status
+        )
+        self._quality.note_observation_status(
+            "event_inputs", ticker6, observation_status
+        )
+        # A family-level observation is authoritative only when every required
+        # event source succeeded and the producer manifest agrees. A partial
+        # source result may still be returned to the scorer, but it cannot be
+        # promoted into observed/usable evidence.
+        if observation_status is ObservationStatus.SUCCESS:
             self._quality.note_observed("event_inputs", ticker6)
-        # The family is usable for scoring when at least one source parsed
-        # cleanly — scorers can consume an empty list legally here.
-        if news_observed or trades_observed:
             self._quality.note_usable("event_inputs", ticker6)
+        else:
+            self._quality.note_consumption_failure(
+                "event_inputs",
+                ticker6,
+                f"event_inputs_{observation_status.value}",
+            )
         if news or trades:
             self._quality.note_loaded("event_inputs", ticker6, rows=len(news) + len(trades), source="snapshot")
-            self._quality.note_nonempty("event_inputs", ticker6)
+            if observation_status is ObservationStatus.SUCCESS:
+                self._quality.note_nonempty("event_inputs", ticker6)
         # Stale flag: honest when either source fell back.
         if news_stale or trades_stale:
             self._quality.note_stale("event_inputs", ticker6)
         for candidate_date in (news_snapshot_date, trades_snapshot_date):
             if candidate_date:
                 self._quality.note_as_of_max("event_inputs", candidate_date)
-        if not news_observed and not trades_observed:
-            self._quality.note_consumption_failure(
-                "event_inputs", ticker6, "missing_snapshot"
-            )
         return news, trades
 
     def load_industry_pe_medians(self, trade_date: str) -> dict[str, float]:
@@ -384,15 +571,35 @@ class ScoringFeatureStore:
 
     def load_intraday_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, Any]]:
         self._quality.note_requested("intraday_short_trade_metrics", tickers)
-        rows = self._optional_store.load_intraday_metrics(trade_date, tickers)
+        observation = self._optional_store.load_intraday_metrics(trade_date, tickers)
+        rows = dict(observation.values)
         wanted = {_ticker6(ticker) for ticker in tickers}
         for ticker in wanted:
-            # Intraday/fund_flow optional store is always "observed" when called:
-            # it returned an answer (possibly empty). We don't have file-level
-            # visibility here, so we treat the call itself as the observation.
-            self._quality.note_observed("intraday_short_trade_metrics", ticker)
-            self._quality.note_usable("intraday_short_trade_metrics", ticker)
-        self._quality.note_as_of_max("intraday_short_trade_metrics", trade_date)
+            if observation.status is ObservationStatus.SUCCESS:
+                self._quality.note_observation_status(
+                    "intraday_short_trade_metrics", ticker, ObservationStatus.SUCCESS
+                )
+                self._quality.note_observed("intraday_short_trade_metrics", ticker)
+                self._quality.note_usable("intraday_short_trade_metrics", ticker)
+                if observation.source_fingerprint is not None:
+                    self._quality.note_source_fingerprint(
+                        "intraday_short_trade_metrics",
+                        ticker,
+                        observation.source_fingerprint,
+                    )
+            else:
+                self._quality.note_observation_status(
+                    "intraday_short_trade_metrics", ticker, observation.status
+                )
+                self._quality.note_consumption_failure(
+                    "intraday_short_trade_metrics",
+                    ticker,
+                    f"optional_snapshot_{observation.status.value}",
+                )
+        if observation.status is ObservationStatus.SUCCESS:
+            self._quality.note_as_of_max("intraday_short_trade_metrics", trade_date)
+        elif observation.status is ObservationStatus.FAILED:
+            self._quality.note_malformed("intraday_short_trade_metrics")
         for ticker in rows:
             self._quality.note_loaded("intraday_short_trade_metrics", ticker, source="snapshot")
             self._quality.note_nonempty("intraday_short_trade_metrics", ticker)
@@ -400,24 +607,64 @@ class ScoringFeatureStore:
 
     def load_fund_flow_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, Any]]:
         self._quality.note_requested("daily_fund_flow_metrics", tickers)
-        rows = self._optional_store.load_fund_flow_metrics(trade_date, tickers)
+        observation = self._optional_store.load_fund_flow_metrics(trade_date, tickers)
+        rows = dict(observation.values)
         wanted = {_ticker6(ticker) for ticker in tickers}
         for ticker in wanted:
-            self._quality.note_observed("daily_fund_flow_metrics", ticker)
-            self._quality.note_usable("daily_fund_flow_metrics", ticker)
-        self._quality.note_as_of_max("daily_fund_flow_metrics", trade_date)
+            if observation.status is ObservationStatus.SUCCESS:
+                self._quality.note_observation_status(
+                    "daily_fund_flow_metrics", ticker, ObservationStatus.SUCCESS
+                )
+                self._quality.note_observed("daily_fund_flow_metrics", ticker)
+                self._quality.note_usable("daily_fund_flow_metrics", ticker)
+                if observation.source_fingerprint is not None:
+                    self._quality.note_source_fingerprint(
+                        "daily_fund_flow_metrics",
+                        ticker,
+                        observation.source_fingerprint,
+                    )
+            else:
+                self._quality.note_observation_status(
+                    "daily_fund_flow_metrics", ticker, observation.status
+                )
+                self._quality.note_consumption_failure(
+                    "daily_fund_flow_metrics",
+                    ticker,
+                    f"optional_snapshot_{observation.status.value}",
+                )
+        if observation.status is ObservationStatus.SUCCESS:
+            self._quality.note_as_of_max("daily_fund_flow_metrics", trade_date)
+        elif observation.status is ObservationStatus.FAILED:
+            self._quality.note_malformed("daily_fund_flow_metrics")
         for ticker in rows:
             self._quality.note_loaded("daily_fund_flow_metrics", ticker, source="snapshot")
             self._quality.note_nonempty("daily_fund_flow_metrics", ticker)
         missing = sorted(wanted - set(rows))
         legacy_rows = self._load_legacy_fund_flow_metrics(trade_date, missing)
         for ticker in legacy_rows:
+            self._quality.note_observation_status(
+                "daily_fund_flow_metrics", ticker, ObservationStatus.SUCCESS
+            )
+            self._quality.note_observed("daily_fund_flow_metrics", ticker)
+            self._quality.note_usable("daily_fund_flow_metrics", ticker)
+            self._quality.clear_consumption_failure(
+                "daily_fund_flow_metrics", ticker
+            )
             self._quality.note_loaded("daily_fund_flow_metrics", ticker, source="fund_flow_cache")
             self._quality.note_nonempty("daily_fund_flow_metrics", ticker)
+        if legacy_rows:
+            self._quality.note_as_of_max("daily_fund_flow_metrics", trade_date)
         rows.update(legacy_rows)
         return rows
 
-    def build_quality_summary(self, trade_date: str, tickers: list[str], requested: dict[str, set[str]] | None = None) -> dict[str, Any]:
+    def build_quality_summary(
+        self,
+        trade_date: str,
+        tickers: list[str],
+        score_outputs: Mapping[str, object],
+        requested: dict[str, set[str]] | None = None,
+    ) -> dict[str, Any]:
+        score_output_evidence = _validate_score_outputs(tickers, score_outputs)
         self._quality.set_candidate_count(len({_ticker6(ticker) for ticker in tickers}))
         if requested:
             for family, family_tickers in requested.items():
@@ -427,6 +674,8 @@ class ScoringFeatureStore:
             family: self._quality_for_family(family, trade_date, manifest)
             for family in _FEATURE_FAMILIES
         }
+        for family, evidence in score_output_evidence.items():
+            scoring_features[family].update(evidence)
         # Backward-compatible optional_features block: derive it from the same
         # tracker so intraday/fund_flow numbers cannot diverge from scoring_features
         # (the legacy optional_store path computed coverage over the full candidate
@@ -434,7 +683,15 @@ class ScoringFeatureStore:
         optional_features = {
             family: {
                 key: scoring_features[family][key]
-                for key in ("coverage", "source", "trade_date", "stale", "provider_failures", "missing_tickers")
+                for key in (
+                    "coverage",
+                    "source",
+                    "trade_date",
+                    "stale",
+                    "provider_failures",
+                    "missing_tickers",
+                    "observation_status",
+                )
                 if key in scoring_features[family]
             }
             for family in ("intraday_short_trade_metrics", "daily_fund_flow_metrics")
@@ -443,6 +700,93 @@ class ScoringFeatureStore:
             "scoring_features": scoring_features,
             "optional_features": optional_features,
         }
+
+    def _producer_family_status(
+        self,
+        manifest: Mapping[str, object],
+        ticker: str,
+        family: str,
+    ) -> ObservationStatus | None:
+        """Return the most conservative producer status recorded for a family.
+
+        The canonical shape is ``ticker_outcomes[ticker]["families"][family]``.
+        A flat ``ticker_outcomes[ticker][family]`` entry is accepted only as a
+        read-only compatibility path for manifests written during migration.
+        Per-ticker evidence always outranks the family aggregate.
+        """
+
+        ticker_outcomes = manifest.get("ticker_outcomes")
+        if isinstance(ticker_outcomes, Mapping) and ticker in ticker_outcomes:
+            ticker_entry = ticker_outcomes[ticker]
+            if not isinstance(ticker_entry, Mapping):
+                return ObservationStatus.FAILED
+
+            canonical_families = ticker_entry.get("families")
+            if canonical_families is not None:
+                if not isinstance(canonical_families, Mapping):
+                    return ObservationStatus.FAILED
+                family_entry = canonical_families.get(family)
+            else:
+                # Legacy flat shape: read only; new manifests never write it.
+                family_entry = ticker_entry.get(family)
+            if not isinstance(family_entry, Mapping):
+                return ObservationStatus.FAILED
+
+            ticker_status = _status_from_mapping(family_entry)
+            if ticker_status is None:
+                return ObservationStatus.FAILED
+
+            raw_sources = family_entry.get("sources")
+            expected_sources = _PRODUCER_SOURCES.get(family, ())
+            if (
+                canonical_families is not None
+                and expected_sources
+                and raw_sources is None
+            ):
+                return ObservationStatus.FAILED
+            if raw_sources is not None:
+                if not isinstance(raw_sources, Mapping):
+                    return ObservationStatus.FAILED
+                if any(source not in raw_sources for source in expected_sources):
+                    return ObservationStatus.FAILED
+                source_statuses = [
+                    _status_from_mapping(raw_sources[source])
+                    for source in expected_sources
+                ]
+                if any(status is None for status in source_statuses):
+                    return ObservationStatus.FAILED
+                source_status = _event_source_status(
+                    [status for status in source_statuses if status is not None]
+                )
+                ticker_status = _restrict_consumed_status(
+                    ticker_status, source_status
+                )
+            return ticker_status
+
+        if isinstance(ticker_outcomes, Mapping) and (
+            ticker_outcomes or int(manifest.get("candidate_count", 0) or 0) > 0
+        ):
+            # A manifest that claims per-ticker evidence but omits this ticker is
+            # malformed; a family aggregate cannot repair the conservation gap.
+            return ObservationStatus.FAILED
+
+        features = manifest.get("features")
+        aggregate_entry = features.get(family) if isinstance(features, Mapping) else None
+        aggregate_status = _status_from_mapping(aggregate_entry)
+        if aggregate_status is None and isinstance(aggregate_entry, Mapping):
+            parts_total = int(aggregate_entry.get("source_parts_total", 0) or 0)
+            parts_succeeded = int(
+                aggregate_entry.get("source_parts_succeeded", 0) or 0
+            )
+            if parts_total > 0:
+                if parts_succeeded == parts_total:
+                    aggregate_status = ObservationStatus.SUCCESS
+                elif parts_succeeded > 0:
+                    aggregate_status = ObservationStatus.PARTIAL
+                else:
+                    aggregate_status = ObservationStatus.FAILED
+
+        return aggregate_status
 
     def _resolve_legacy_snapshot_path(
         self, ticker: str, trade_date: str, filename: str
@@ -492,16 +836,15 @@ class ScoringFeatureStore:
 
     def _load_company_news(
         self, ticker: str, trade_date: str
-    ) -> tuple[list[CompanyNews], bool, bool, str | None]:
-        """Returns ``(news, observed, stale, snapshot_date)``.
+    ) -> tuple[list[CompanyNews], ObservationStatus, bool, str | None]:
+        """Returns ``(news, status, stale, snapshot_date)``.
 
-        ``observed`` is True when the snapshot was reachable and parseable
-        (authoritative answer, even if empty). ``stale`` is True only when the
-        snapshot came from the stale-fallback search.
+        ``status`` distinguishes a missing source from a malformed source and
+        a valid authoritative empty observation.
         """
         resolved = self._resolve_legacy_snapshot_path(ticker, trade_date, "company_news.json")
         if resolved is None:
-            return [], False, False, None
+            return [], ObservationStatus.UNAVAILABLE, False, None
         path, snapshot_date, stale = resolved
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -509,24 +852,24 @@ class ScoringFeatureStore:
             news = [CompanyNews.model_validate(row) for row in rows if isinstance(row, dict)]
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValidationError, TypeError):
             self._quality.note_malformed("event_inputs")
-            return [], False, stale, snapshot_date
+            return [], ObservationStatus.FAILED, stale, snapshot_date
         return (
             [item for item in news if _is_on_or_before_trade_date(item.date, trade_date)],
-            True,
+            ObservationStatus.SUCCESS,
             stale,
             snapshot_date,
         )
 
     def _load_insider_trades(
         self, ticker: str, trade_date: str
-    ) -> tuple[list[InsiderTrade], bool, bool, str | None]:
-        """Returns ``(trades, observed, stale, snapshot_date)``.
+    ) -> tuple[list[InsiderTrade], ObservationStatus, bool, str | None]:
+        """Returns ``(trades, status, stale, snapshot_date)``.
 
         See :meth:`_load_company_news` for the tuple semantics.
         """
         resolved = self._resolve_legacy_snapshot_path(ticker, trade_date, "insider_trades.json")
         if resolved is None:
-            return [], False, False, None
+            return [], ObservationStatus.UNAVAILABLE, False, None
         path, snapshot_date, stale = resolved
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -534,10 +877,10 @@ class ScoringFeatureStore:
             trades = [InsiderTrade.model_validate(row) for row in rows if isinstance(row, dict)]
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValidationError, TypeError):
             self._quality.note_malformed("event_inputs")
-            return [], False, stale, snapshot_date
+            return [], ObservationStatus.FAILED, stale, snapshot_date
         return (
             [item for item in trades if self._insider_trade_is_not_future_dated(item, trade_date)],
-            True,
+            ObservationStatus.SUCCESS,
             stale,
             snapshot_date,
         )
@@ -623,20 +966,19 @@ class ScoringFeatureStore:
             nonempty = set(self._quality.nonempty.get(family, set()))
             stale_tickers = set(self._quality.stale.get(family, set()))
             consumption_failed = dict(self._quality.consumption_failed.get(family, {}))
+            tracked_statuses = dict(
+                self._quality.observation_statuses.get(family, {})
+            )
+            source_fingerprints = dict(
+                self._quality.source_fingerprints.get(family, {})
+            )
             rows = list(self._quality.rows_loaded.get(family, []))
             live_source = self._quality.sources.get(family)
             candidate_count = int(self._quality.candidate_count)
             malformed_files = int(self._quality.malformed.get(family, 0))
             as_of_max = self._quality.as_of_max.get(family)
         feature_manifest = (manifest.get("features") or {}).get(family, {})
-        # Refresh-manifest observation evidence (additive; may be 0 when the
-        # refresh did not touch this family — e.g. industry_pe_medians is
-        # produced by a different pipeline).
-        manifest_observed = int(feature_manifest.get("observed_count", 0) or 0)
-        manifest_nonempty = int(feature_manifest.get("nonempty_count", 0) or 0)
         manifest_failed = int(feature_manifest.get("failed_count", 0) or 0)
-        manifest_parts_succeeded = int(feature_manifest.get("source_parts_succeeded", 0) or 0)
-        manifest_parts_total = int(feature_manifest.get("source_parts_total", 0) or 0)
         provider_failures = int(feature_manifest.get("provider_failures", 0) or 0)
 
         source = live_source or str(feature_manifest.get("source") or ("snapshot" if loaded else "missing"))
@@ -653,9 +995,19 @@ class ScoringFeatureStore:
         # Derive observation_status from the consumption-side evidence.
         # Conservation: success requires every requested ticker to have been
         # observed AND usable with no consumption failures.
+        requested_statuses = [tracked_statuses[ticker] for ticker in requested if ticker in tracked_statuses]
         if requested_count == 0:
             # No scorer asked for this family during this run.
             observation_status = ObservationStatus.UNAVAILABLE
+        elif requested_statuses:
+            # Explicit loader outcomes outrank generic observed/usable counters.
+            # Missing status entries are unavailable, never implicit success.
+            observation_status = _requested_status(
+                [
+                    tracked_statuses.get(ticker, ObservationStatus.UNAVAILABLE)
+                    for ticker in requested
+                ]
+            )
         elif (
             observed_count == requested_count
             and usable_count == requested_count
@@ -686,7 +1038,7 @@ class ScoringFeatureStore:
             "trade_date": _compact_date(trade_date),
             "stale": stale_count > 0,
             "candidate_count": candidate_count,
-            "eligible_count": requested_count,
+            "eligible_count": candidate_count,
             "requested_count": requested_count,
             "loaded_count": len(loaded),
             "missing_tickers": max(requested_count - len(loaded), 0),
@@ -706,6 +1058,23 @@ class ScoringFeatureStore:
             "usable_tickers_fingerprint": usable_fingerprint,
             "as_of_max": as_of_max,
         }
+        quality["input_fingerprint"] = _canonical_fingerprint(
+            {
+                "family": family,
+                "trade_date": _compact_date(trade_date),
+                "requested_tickers": sorted(requested),
+                "observed_tickers": sorted(observed),
+                "usable_tickers": sorted(usable),
+                "rows_loaded": rows,
+                "as_of_max": as_of_max,
+                "source": source,
+                "source_fingerprints": {
+                    ticker: source_fingerprints[ticker]
+                    for ticker in sorted(requested)
+                    if ticker in source_fingerprints
+                },
+            }
+        )
         if "rows_written" in feature_manifest:
             quality["rows_written"] = int(feature_manifest.get("rows_written", 0) or 0)
         if rows:

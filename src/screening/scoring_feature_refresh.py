@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import importlib
-import json
 import logging
 import os
 from dataclasses import dataclass
@@ -26,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from src.screening.scoring_feature_quality import ObservationStatus
+from src.utils.atomic_files import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,21 @@ _FEATURE_FAMILIES = (
 )
 
 _MAX_WORKERS = int(os.environ.get("SCORING_REFRESH_CONCURRENCY", "4"))
+
+_REFRESH_SOURCE_NAMES = {
+    "financial_metrics": ("financial_metrics",),
+    "event_inputs": ("company_news", "insider_trades"),
+}
+
+
+@dataclass(frozen=True)
+class SourceObservation:
+    """Truthful result from one provider subsource for one ticker."""
+
+    source: str
+    status: ObservationStatus
+    nonempty_count: int
+    failure_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +75,7 @@ class TickerFeatureObservation:
     source_parts_succeeded: int
     source_parts_total: int
     failure_code: str | None = None
+    sources: tuple[SourceObservation, ...] = ()
 
 
 def _refresh_enabled() -> bool:
@@ -83,6 +99,20 @@ def _enable_snapshots() -> None:
         pass
 
 
+def _aggregate_status(statuses: tuple[ObservationStatus, ...]) -> ObservationStatus:
+    """Aggregate required parts without promoting a partial answer to success."""
+    if statuses and all(status is ObservationStatus.SUCCESS for status in statuses):
+        return ObservationStatus.SUCCESS
+    if any(
+        status in (ObservationStatus.SUCCESS, ObservationStatus.PARTIAL)
+        for status in statuses
+    ):
+        return ObservationStatus.PARTIAL
+    if any(status is ObservationStatus.FAILED for status in statuses):
+        return ObservationStatus.FAILED
+    return ObservationStatus.UNAVAILABLE
+
+
 def _fetch_ticker_data(ticker: str, trade_date: str) -> list[TickerFeatureObservation]:
     """Fetch financial metrics, company news, and insider trades for one ticker.
 
@@ -93,7 +123,11 @@ def _fetch_ticker_data(ticker: str, trade_date: str) -> list[TickerFeatureObserv
     success / partial / failed so the manifest can distinguish a legal empty
     observation (e.g. no insider trades filed today) from a silent failure.
     """
-    from src.tools.api import get_company_news, get_financial_metrics, get_insider_trades
+    from src.tools.api import (
+        get_company_news,
+        get_financial_metrics,
+        get_insider_trades,
+    )
     from src.data.snapshot import get_snapshot_exporter
 
     observations: list[TickerFeatureObservation] = []
@@ -103,6 +137,11 @@ def _fetch_ticker_data(ticker: str, trade_date: str) -> list[TickerFeatureObserv
     try:
         metrics = get_financial_metrics(ticker, trade_date, period="ttm", limit=10)
         nonempty = len(metrics) if metrics else 0
+        source_observation = SourceObservation(
+            source="financial_metrics",
+            status=ObservationStatus.SUCCESS,
+            nonempty_count=nonempty,
+        )
         observations.append(
             TickerFeatureObservation(
                 ticker=ticker,
@@ -111,10 +150,17 @@ def _fetch_ticker_data(ticker: str, trade_date: str) -> list[TickerFeatureObserv
                 nonempty_count=nonempty,
                 source_parts_succeeded=1,
                 source_parts_total=1,
+                sources=(source_observation,),
             )
         )
     except Exception as exc:
         logger.debug("[Refresh] financial_metrics failed for %s: %s", ticker, exc)
+        source_observation = SourceObservation(
+            source="financial_metrics",
+            status=ObservationStatus.FAILED,
+            nonempty_count=0,
+            failure_code=type(exc).__name__,
+        )
         observations.append(
             TickerFeatureObservation(
                 ticker=ticker,
@@ -124,6 +170,7 @@ def _fetch_ticker_data(ticker: str, trade_date: str) -> list[TickerFeatureObserv
                 source_parts_succeeded=0,
                 source_parts_total=1,
                 failure_code=type(exc).__name__,
+                sources=(source_observation,),
             )
         )
 
@@ -131,54 +178,182 @@ def _fetch_ticker_data(ticker: str, trade_date: str) -> list[TickerFeatureObserv
     # Both must be reachable to call the family SUCCESS; one failure → PARTIAL;
     # both failing → FAILED. Empty results from a reachable source are still
     # SUCCESS-shaped (event_inputs has legal-when-observed empty semantics).
-    news_nonempty = 0
-    news_succeeded = False
-    news_error: str | None = None
     try:
         news = get_company_news(ticker, trade_date, limit=200)
-        news_nonempty = len(news) if news else 0
-        news_succeeded = True
+        news_observation = SourceObservation(
+            source="company_news",
+            status=ObservationStatus.SUCCESS,
+            nonempty_count=len(news) if news else 0,
+        )
     except Exception as exc:
         logger.debug("[Refresh] company_news failed for %s: %s", ticker, exc)
-        news_error = type(exc).__name__
+        news_observation = SourceObservation(
+            source="company_news",
+            status=ObservationStatus.FAILED,
+            nonempty_count=0,
+            failure_code=type(exc).__name__,
+        )
 
-    trades_nonempty = 0
-    trades_succeeded = False
-    trades_error: str | None = None
     try:
         trades = get_insider_trades(ticker, trade_date, limit=200)
         if trades:
-            trades_nonempty = len(trades)
             # api.py does NOT auto-write this snapshot, so export manually.
             get_snapshot_exporter().export_insider_trades(
                 ticker, trade_date, trades, "tushare"
             )
-        trades_succeeded = True
+        trades_observation = SourceObservation(
+            source="insider_trades",
+            status=ObservationStatus.SUCCESS,
+            nonempty_count=len(trades) if trades else 0,
+        )
     except Exception as exc:
         logger.debug("[Refresh] insider_trades failed for %s: %s", ticker, exc)
-        trades_error = type(exc).__name__
+        trades_observation = SourceObservation(
+            source="insider_trades",
+            status=ObservationStatus.FAILED,
+            nonempty_count=0,
+            failure_code=type(exc).__name__,
+        )
 
-    succeeded_parts = int(news_succeeded) + int(trades_succeeded)
-    if succeeded_parts == 2:
-        event_status = ObservationStatus.SUCCESS
-    elif succeeded_parts == 1:
-        event_status = ObservationStatus.PARTIAL
-    else:
-        event_status = ObservationStatus.FAILED
-    failure_code = news_error or trades_error if succeeded_parts < 2 else None
+    event_sources = (news_observation, trades_observation)
+    event_status = _aggregate_status(tuple(source.status for source in event_sources))
+    succeeded_parts = sum(
+        source.status is ObservationStatus.SUCCESS for source in event_sources
+    )
+    failure_code = next(
+        (
+            source.failure_code
+            for source in event_sources
+            if source.failure_code is not None
+        ),
+        None,
+    )
     observations.append(
         TickerFeatureObservation(
             ticker=ticker,
             family="event_inputs",
             status=event_status,
-            nonempty_count=news_nonempty + trades_nonempty,
+            nonempty_count=sum(source.nonempty_count for source in event_sources),
             source_parts_succeeded=succeeded_parts,
             source_parts_total=2,
             failure_code=failure_code,
+            sources=event_sources,
         )
     )
 
     return observations
+
+
+def _terminal_ticker_observations(
+    ticker: str,
+    status: ObservationStatus,
+    failure_code: str,
+) -> list[TickerFeatureObservation]:
+    """Build complete synthetic family evidence for a terminal worker outcome."""
+    observations: list[TickerFeatureObservation] = []
+    for family, source_names in _REFRESH_SOURCE_NAMES.items():
+        sources = tuple(
+            SourceObservation(
+                source=source_name,
+                status=status,
+                nonempty_count=0,
+                failure_code=failure_code,
+            )
+            for source_name in source_names
+        )
+        observations.append(
+            TickerFeatureObservation(
+                ticker=ticker,
+                family=family,
+                status=status,
+                nonempty_count=0,
+                source_parts_succeeded=0,
+                source_parts_total=len(source_names),
+                failure_code=failure_code,
+                sources=sources,
+            )
+        )
+    return observations
+
+
+def _normalize_ticker_observations(
+    ticker: str,
+    observations: list[TickerFeatureObservation],
+) -> list[TickerFeatureObservation]:
+    """Ensure a worker result contains one observation for every refreshed family."""
+    by_family = {
+        observation.family: observation
+        for observation in observations
+        if observation.ticker == ticker and observation.family in _REFRESH_SOURCE_NAMES
+    }
+    for family, source_names in _REFRESH_SOURCE_NAMES.items():
+        if family in by_family:
+            continue
+        sources = tuple(
+            SourceObservation(
+                source=source_name,
+                status=ObservationStatus.FAILED,
+                nonempty_count=0,
+                failure_code="producer_missing_family",
+            )
+            for source_name in source_names
+        )
+        by_family[family] = TickerFeatureObservation(
+            ticker=ticker,
+            family=family,
+            status=ObservationStatus.FAILED,
+            nonempty_count=0,
+            source_parts_succeeded=0,
+            source_parts_total=len(source_names),
+            failure_code="producer_missing_family",
+            sources=sources,
+        )
+    return [by_family[family] for family in _REFRESH_SOURCE_NAMES]
+
+
+def _observation_payload(observation: TickerFeatureObservation) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "observation_status": observation.status.value,
+        "nonempty_count": observation.nonempty_count,
+        "source_parts_succeeded": observation.source_parts_succeeded,
+        "source_parts_total": observation.source_parts_total,
+        "sources": {
+            source.source: {
+                "observation_status": source.status.value,
+                "nonempty_count": source.nonempty_count,
+                **(
+                    {"failure_code": source.failure_code}
+                    if source.failure_code is not None
+                    else {}
+                ),
+            }
+            for source in observation.sources
+        },
+    }
+    if observation.failure_code is not None:
+        payload["failure_code"] = observation.failure_code
+    return payload
+
+
+def _ticker_outcome_payload(
+    observations: list[TickerFeatureObservation],
+) -> dict[str, Any]:
+    return {
+        "observation_status": _aggregate_status(
+            tuple(observation.status for observation in observations)
+        ).value,
+        "families": {
+            observation.family: _observation_payload(observation)
+            for observation in observations
+        },
+    }
+
+
+def _refresh_succeeded(observations: list[TickerFeatureObservation]) -> bool:
+    return bool(observations) and all(
+        observation.status is ObservationStatus.SUCCESS
+        for observation in observations
+    )
 
 
 def refresh_scoring_features(
@@ -201,10 +376,38 @@ def refresh_scoring_features(
 
     if not _refresh_enabled() or not unique_tickers:
         status = "skipped"
-        manifest = _build_manifest(trade_date, unique_tickers, timeout_seconds, status, "not_refreshed")
+        skipped_observations = {
+            ticker: _terminal_ticker_observations(
+                ticker,
+                ObservationStatus.UNAVAILABLE,
+                "not_refreshed",
+            )
+            for ticker in unique_tickers
+        }
+        ticker_outcomes = {
+            ticker: _ticker_outcome_payload(observations)
+            for ticker, observations in skipped_observations.items()
+        }
+        manifest = _build_manifest(
+            trade_date,
+            unique_tickers,
+            timeout_seconds,
+            status,
+            "not_refreshed",
+            success_count=0,
+            failure_count=len(unique_tickers),
+            ticker_outcomes=ticker_outcomes,
+        )
         manifest_path = _write_manifest(cache_path, trade_date, manifest)
-        return {"status": status, "trade_date": str(trade_date),
-                "candidate_count": len(unique_tickers), "manifest_path": str(manifest_path)}
+        return {
+            "status": status,
+            "trade_date": str(trade_date),
+            "candidate_count": len(unique_tickers),
+            "success_count": 0,
+            "failure_count": len(unique_tickers),
+            "ticker_outcomes": ticker_outcomes,
+            "manifest_path": str(manifest_path),
+        }
 
     _enable_snapshots()
 
@@ -213,57 +416,128 @@ def refresh_scoring_features(
         "financial_metrics": [],
         "event_inputs": [],
     }
-    success_tickers: set[str] = set()
-    failure_count = 0
+    observations_by_ticker: dict[str, list[TickerFeatureObservation]] = {}
+
+    def record_observations(
+        ticker: str,
+        observations: list[TickerFeatureObservation],
+    ) -> None:
+        normalized = _normalize_ticker_observations(ticker, observations)
+        observations_by_ticker[ticker] = normalized
+        for observation in normalized:
+            per_family_observations[observation.family].append(observation)
+
+    def collect_future(
+        future: concurrent.futures.Future[list[TickerFeatureObservation]],
+        ticker: str,
+    ) -> None:
+        try:
+            record_observations(ticker, future.result())
+        except Exception as exc:
+            logger.debug("[Refresh] worker failed for %s: %s", ticker, exc)
+            record_observations(
+                ticker,
+                _terminal_ticker_observations(
+                    ticker,
+                    ObservationStatus.FAILED,
+                    type(exc).__name__,
+                ),
+            )
 
     max_workers = min(_MAX_WORKERS, len(unique_tickers))
     if max_workers > 0:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_map = {
-                executor.submit(_fetch_ticker_data, t, str(trade_date)): t
-                for t in unique_tickers
-            }
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+        future_map: dict[
+            concurrent.futures.Future[list[TickerFeatureObservation]], str
+        ] = {}
+        try:
+            for ticker in unique_tickers:
+                try:
+                    future_map[
+                        executor.submit(_fetch_ticker_data, ticker, str(trade_date))
+                    ] = ticker
+                except Exception as exc:
+                    record_observations(
+                        ticker,
+                        _terminal_ticker_observations(
+                            ticker,
+                            ObservationStatus.FAILED,
+                            type(exc).__name__,
+                        ),
+                    )
             try:
-                for future in concurrent.futures.as_completed(future_map, timeout=timeout_seconds):
+                for future in concurrent.futures.as_completed(
+                    future_map, timeout=timeout_seconds
+                ):
                     ticker = future_map[future]
-                    try:
-                        observations = future.result()
-                        for observation in observations:
-                            per_family_observations.setdefault(
-                                observation.family, []
-                            ).append(observation)
-                        # A ticker counts as refresh-successful if every family
-                        # it produced reached at least PARTIAL (some source was
-                        # reachable). FAILED-only tickers are failure_count.
-                        if observations and all(
-                            obs.status is not ObservationStatus.FAILED
-                            for obs in observations
-                        ):
-                            success_tickers.add(ticker)
-                        else:
-                            failure_count += 1
-                    except Exception:
-                        failure_count += 1
+                    collect_future(future, ticker)
             except concurrent.futures.TimeoutError:
-                pending = sum(1 for f in future_map if not f.done())
+                pending = 0
+                for future, ticker in future_map.items():
+                    if ticker in observations_by_ticker:
+                        continue
+                    if future.done():
+                        collect_future(future, ticker)
+                        continue
+                    pending += 1
+                    future.cancel()
+                    record_observations(
+                        ticker,
+                        _terminal_ticker_observations(
+                            ticker,
+                            ObservationStatus.FAILED,
+                            "provider_timeout",
+                        ),
+                    )
                 logger.warning(
                     "[Refresh] Timeout after %ss — %d/%d tickers done, %d pending",
-                    timeout_seconds, len(success_tickers), len(unique_tickers), pending,
+                    timeout_seconds,
+                    len(unique_tickers) - pending,
+                    len(unique_tickers),
+                    pending,
                 )
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    success_tickers = {
+        ticker
+        for ticker, observations in observations_by_ticker.items()
+        if _refresh_succeeded(observations)
+    }
+    failure_count = len(unique_tickers) - len(success_tickers)
+    ticker_outcomes = {
+        ticker: _ticker_outcome_payload(observations_by_ticker[ticker])
+        for ticker in unique_tickers
+    }
 
     manifest = _build_manifest(
-        trade_date, unique_tickers, timeout_seconds, "completed", "tushare+akshare",
-        success_count=len(success_tickers), failure_count=failure_count,
+        trade_date,
+        unique_tickers,
+        timeout_seconds,
+        "completed",
+        "tushare+akshare",
+        success_count=len(success_tickers),
+        failure_count=failure_count,
         per_family_observations=per_family_observations,
+        ticker_outcomes=ticker_outcomes,
     )
     manifest_path = _write_manifest(cache_path, trade_date, manifest)
 
-    fin_rows = sum(obs.nonempty_count for obs in per_family_observations.get("financial_metrics", []))
-    event_rows = sum(obs.nonempty_count for obs in per_family_observations.get("event_inputs", []))
+    fin_rows = sum(
+        obs.nonempty_count
+        for obs in per_family_observations.get("financial_metrics", [])
+    )
+    event_rows = sum(
+        obs.nonempty_count for obs in per_family_observations.get("event_inputs", [])
+    )
     logger.info(
         "[Refresh] trade_date=%s tickers=%d ok=%d fail=%d fin_metrics=%d event_rows=%d",
-        trade_date, len(unique_tickers), len(success_tickers), failure_count,
-        fin_rows, event_rows,
+        trade_date,
+        len(unique_tickers),
+        len(success_tickers),
+        failure_count,
+        fin_rows,
+        event_rows,
     )
 
     return {
@@ -272,6 +546,7 @@ def refresh_scoring_features(
         "candidate_count": len(unique_tickers),
         "success_count": len(success_tickers),
         "failure_count": failure_count,
+        "ticker_outcomes": ticker_outcomes,
         "manifest_path": str(manifest_path),
     }
 
@@ -288,6 +563,7 @@ def _build_manifest(
     fin_rows: int = 0,
     event_rows: int = 0,
     per_family_observations: dict[str, list[TickerFeatureObservation]] | None = None,
+    ticker_outcomes: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the refresh manifest.
 
@@ -314,7 +590,9 @@ def _build_manifest(
         failed_count = sum(
             1 for obs in family_observations if obs.status is ObservationStatus.FAILED
         )
-        source_parts_succeeded = sum(obs.source_parts_succeeded for obs in family_observations)
+        source_parts_succeeded = sum(
+            obs.source_parts_succeeded for obs in family_observations
+        )
         source_parts_total = sum(obs.source_parts_total for obs in family_observations)
 
         # Backward-compatible legacy fields. For families we actually refreshed
@@ -345,6 +623,9 @@ def _build_manifest(
             # New additive observation evidence. Downstream consumers
             # (assess_auto_quality via build_quality_summary) prefer these; the
             # legacy fields are kept only for compatibility.
+            "observation_status": _aggregate_status(
+                tuple(observation.status for observation in family_observations)
+            ).value,
             "observed_count": observed_count,
             "nonempty_count": nonempty_count,
             "failed_count": failed_count,
@@ -361,15 +642,15 @@ def _build_manifest(
         "status": status,
         "success_count": success_count,
         "failure_count": failure_count,
+        "ticker_outcomes": ticker_outcomes or {},
         "features": features,
     }
     return manifest
 
 
-def _write_manifest(cache_path: Path, trade_date: str, manifest: dict[str, Any]) -> Path:
+def _write_manifest(
+    cache_path: Path, trade_date: str, manifest: dict[str, Any]
+) -> Path:
     manifest_path = cache_path / f"feature_manifest_{trade_date}.json"
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    atomic_write_json(manifest_path, manifest)
     return manifest_path

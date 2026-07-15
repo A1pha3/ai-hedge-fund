@@ -20,6 +20,9 @@ from src.screening.offensive.trade_lifecycle import (
 )
 
 
+SIGNAL_DATE = date(2026, 7, 13)
+
+
 class FixedPrices:
     def __init__(self, default: MarketBar) -> None:
         self.default = default
@@ -65,7 +68,16 @@ def service(tmp_path, sessions) -> DailyActionService:
 
 
 def candidate(ticker: str, priority: int = 1, weight: float = 0.10) -> PlanCandidate:
-    return PlanCandidate(ticker, "btst_breakout", "v2", weight, priority)
+    return PlanCandidate(
+        ticker=ticker,
+        setup="btst_breakout",
+        setup_version="v2",
+        signal_date=SIGNAL_DATE,
+        target_weight=weight,
+        priority=priority,
+        snapshot_id="sha256:" + "0" * 64,
+        setup_consumed_fingerprint="sha256:" + "0" * 64,
+    )
 
 
 def open_trade(service, ticker: str, entry_date: date, weight: float = 0.1):
@@ -324,8 +336,11 @@ def test_invalid_or_disabled_candidate_is_rejected(kwargs):
         ticker="000142",
         setup="btst_breakout",
         setup_version="v2",
+        signal_date=SIGNAL_DATE,
         target_weight=0.1,
         priority=1,
+        snapshot_id="sha256:" + "0" * 64,
+        setup_consumed_fingerprint="sha256:" + "0" * 64,
     )
     values.update(kwargs)
     with pytest.raises(ValueError):
@@ -334,15 +349,42 @@ def test_invalid_or_disabled_candidate_is_rejected(kwargs):
 
 def test_candidate_cannot_forge_rendered_execution_label():
     with pytest.raises(TypeError):
-        PlanCandidate("000142", "btst_breakout", "v2", 0.1, 1, simulation_label="实盘")
+        PlanCandidate(
+            ticker="000142",
+            setup="btst_breakout",
+            setup_version="v2",
+            signal_date=SIGNAL_DATE,
+            target_weight=0.1,
+            priority=1,
+            snapshot_id="sha256:" + "0" * 64,
+            setup_consumed_fingerprint="sha256:" + "0" * 64,
+            simulation_label="实盘",
+        )
 
 
 def test_legacy_unverified_cannot_claim_regime_twelve_percent(
     service, sessions
 ):
-    normal = PlanCandidate("000143", "btst_breakout", "v2", 0.12, 1)
+    normal = PlanCandidate(
+        ticker="000143",
+        setup="btst_breakout",
+        setup_version="v2",
+        signal_date=sessions[0],
+        target_weight=0.12,
+        priority=1,
+        snapshot_id="sha256:" + "0" * 64,
+        setup_consumed_fingerprint="sha256:" + "0" * 64,
+    )
     crisis = PlanCandidate(
-        "000144", "btst_breakout", "v2", 0.12, 2, RegimeAuthorization.BTST_CRISIS
+        ticker="000144",
+        setup="btst_breakout",
+        setup_version="v2",
+        signal_date=sessions[0],
+        target_weight=0.12,
+        priority=2,
+        snapshot_id="sha256:" + "0" * 64,
+        setup_consumed_fingerprint="sha256:" + "0" * 64,
+        authorization=RegimeAuthorization.BTST_CRISIS,
     )
     service.run(sessions[0], (normal, crisis))
     weights = {

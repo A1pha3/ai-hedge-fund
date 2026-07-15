@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -46,7 +49,161 @@ class _FakeRefreshStats:
         }
 
 
-def test_refresh_daily_action_caches_for_auto_attaches_summary_without_publishing(monkeypatch):
+def _fake_refresh_result():
+    from src.screening.offensive.cache_readiness import (
+        DailyActionRefreshResult,
+        FundFlowStatus,
+        PriceStatus,
+        SuspensionEvidence,
+        TickerRefreshOutcome,
+        derive_stats_from_outcomes,
+        universe_fingerprint,
+    )
+
+    tickers = ("000001",)
+    def fingerprint(value: object) -> str:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+    outcomes = {
+        "000001": TickerRefreshOutcome(
+            ticker="000001",
+            price_status=PriceStatus.CURRENT,
+            price_history_rows=35,
+            fund_flow_status=FundFlowStatus.CURRENT,
+            fund_flow_history_rows=20,
+            evidence_fingerprints={
+                "price": fingerprint({"price": "000001"}),
+                "fund_flow": fingerprint({"fund_flow": "000001"}),
+            },
+        )
+    }
+    from src.screening.offensive.pit_evidence import canonical_fingerprint
+
+    return DailyActionRefreshResult(
+        trade_date=date(2026, 7, 8),
+        universe_tickers=tickers,
+        universe_fingerprint=universe_fingerprint(tickers),
+        daily_batch_fingerprint=fingerprint({"batch": "20260708"}),
+        suspension_evidence=SuspensionEvidence.available(
+            date(2026, 7, 8),
+            set(),
+            source_fingerprint=canonical_fingerprint("suspension", "*", []),
+        ),
+        outcomes=outcomes,
+        stats=derive_stats_from_outcomes(outcomes),
+    )
+
+
+def _fake_shared_evidence():
+    from src.screening.offensive.daily_action_readiness import SharedReadinessEvidence
+    from src.utils.date_utils import SIGNAL_SESSION_POLICY_VERSION
+
+    def fingerprint(value: object) -> str:
+        encoded = json.dumps(
+            value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+        return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+    regime = {"regime": "normal"}
+    industries = {"000001": "银行"}
+    pct = {"000001": 1.0}
+    security = {"000001": "listed"}
+    return SharedReadinessEvidence(
+        regime_row=regime,
+        industry_by_ticker=industries,
+        industry_day_pct=pct,
+        security_status_by_ticker=security,
+        regime_fingerprint=fingerprint({"regime_row": regime}),
+        industry_fingerprint=fingerprint(
+            {"industry_by_ticker": industries, "industry_day_pct": pct}
+        ),
+        security_fingerprint=fingerprint(
+            {"security_status_by_ticker": security}
+        ),
+        board_rule_version="ashare-board-prefix-v1",
+        normalization_version="pit-canonical-v1",
+        signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,
+    )
+
+
+def test_main_retains_and_passes_the_frozen_refresh_result(monkeypatch):
+    from src import main as main_mod
+
+    result = _fake_refresh_result()
+    published: list[object] = []
+    payload: dict = {"date": "20260708", "recommendations": []}
+
+    monkeypatch.delenv("DAILY_ACTION_CACHE_REFRESH", raising=False)
+    monkeypatch.setattr(
+        main_mod,
+        "_publish_daily_action_readiness_for_auto",
+        lambda refresh_result, **_kwargs: published.append(refresh_result),
+    )
+    monkeypatch.setattr(
+        "src.screening.offensive.daily_action.refresh_authoritative_trade_calendar",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "scripts.join_setup_outputs_with_returns.backfill_panel",
+        lambda: ([], {"records": 0, "realized": 0}),
+    )
+    monkeypatch.setattr("scripts.panel_health_check.panel_health_oneline", lambda: "insufficient")
+
+    returned = main_mod._refresh_daily_action_caches_for_auto(
+        "20260708",
+        payload,
+        refresh_fn=lambda _trade_date: result,
+    )
+
+    assert returned is result
+    assert published == [result]
+
+
+def test_main_publishes_only_from_exact_frozen_result(tmp_path: Path, monkeypatch):
+    from src import main as main_mod
+    import src.screening.offensive.daily_action_readiness as readiness
+
+    result = _fake_refresh_result()
+    captured: list[object] = []
+    real_build = readiness.build_daily_action_readiness
+
+    def capture(refresh_result, *args, **kwargs):
+        captured.append(refresh_result)
+        return real_build(refresh_result, *args, **kwargs)
+
+    monkeypatch.setattr(readiness, "build_daily_action_readiness", capture)
+    publication = main_mod._publish_daily_action_readiness_for_auto(
+        result,
+        reports_dir=tmp_path,
+        shared_evidence=_fake_shared_evidence(),
+    )
+    assert captured == [result]
+    assert publication.status == "healthy"
+    assert publication.artifact_path.name == "daily_action_readiness_20260708.json"
+
+
+def test_missing_shared_evidence_writes_attempt_and_preserves_canonical(
+    tmp_path: Path,
+):
+    from src import main as main_mod
+
+    canonical = tmp_path / "daily_action_readiness_20260708.json"
+    canonical.write_bytes(b'{"existing":true}')
+    publication = main_mod._publish_daily_action_readiness_for_auto(
+        _fake_refresh_result(),
+        reports_dir=tmp_path,
+        shared_evidence=None,
+    )
+    assert publication.status == "degraded"
+    assert "attempt" in publication.artifact_path.name
+    assert canonical.read_bytes() == b'{"existing":true}'
+
+
+def test_refresh_daily_action_caches_for_auto_attaches_summary_without_publishing(
+    monkeypatch,
+    tmp_path: Path,
+):
     from src import main as main_mod
 
     saved: list[tuple[str, dict]] = []
@@ -59,6 +216,7 @@ def test_refresh_daily_action_caches_for_auto_attaches_summary_without_publishin
         "20260708",
         payload,
         refresh_fn=lambda trade_date: _FakeRefreshStats(),
+        reports_dir=tmp_path,
     )
 
     assert payload["daily_action_cache_refresh"] == {

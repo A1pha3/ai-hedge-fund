@@ -66,12 +66,14 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
         instances: list["FakeScoringFeatureStore"] = []
 
         def __init__(self, **kwargs):
-            self.quality_calls: list[tuple[str, list[str]]] = []
+            self.quality_calls: list[tuple[str, list[str], dict]] = []
             self.instances.append(self)
 
-        def build_quality_summary(self, trade_date: str, tickers: list[str]) -> dict:
+        def build_quality_summary(
+            self, trade_date: str, tickers: list[str], score_outputs: dict
+        ) -> dict:
             events.append(("quality", self))
-            self.quality_calls.append((trade_date, tickers))
+            self.quality_calls.append((trade_date, tickers, score_outputs))
             return {
                 "scoring_features": {
                     "price_history": {
@@ -174,7 +176,7 @@ def test_compute_auto_screening_results_reports_feature_store_quality(monkeypatc
     assert events[2][0] == "quality"
     assert score_feature_stores == FakeScoringFeatureStore.instances
     assert FakeScoringFeatureStore.instances[0].quality_calls == [
-        ("20260708", ["000001", "000002"])
+        ("20260708", ["000001", "000002"], {"000001": {}})
     ]
     assert payload["data_quality"] == expected_quality
     assert saved == []
@@ -207,13 +209,15 @@ def test_compute_auto_screening_results_uses_store_even_when_refresh_not_ready(m
 
         def __init__(self, **kwargs):
             self.scored = False
-            self.quality_calls: list[tuple[str, list[str]]] = []
+            self.quality_calls: list[tuple[str, list[str], dict]] = []
             self.instances.append(self)
 
-        def build_quality_summary(self, trade_date: str, tickers: list[str]) -> dict:
+        def build_quality_summary(
+            self, trade_date: str, tickers: list[str], score_outputs: dict
+        ) -> dict:
             assert self.scored
             events.append(("quality", self))
-            self.quality_calls.append((trade_date, tickers))
+            self.quality_calls.append((trade_date, tickers, score_outputs))
             return {
                 "scoring_features": {
                     "price_history": {
@@ -278,7 +282,7 @@ def test_compute_auto_screening_results_uses_store_even_when_refresh_not_ready(m
     assert events[1][0] == "score"
     assert events[2][0] == "quality"
     assert FakeScoringFeatureStore.instances[0].quality_calls == [
-        ("20260708", ["000001", "000002"])
+        ("20260708", ["000001", "000002"], {"000001": {}})
     ]
     assert payload["data_quality"]["scoring_features"]["price_history"]["coverage"] == 0.5
     assert saved == []

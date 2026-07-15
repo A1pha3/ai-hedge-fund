@@ -164,7 +164,7 @@ def resolve_signal_date_iso(*, now: datetime | None = None, ready_hour: int | No
 # constants + function below are the single source of truth for that rule.
 # A caller passes in the authoritative set of open A-share sessions and an
 # optional override; the function returns the canonical signal date.
-# Migration of the three call sites to this function happens in later tasks.
+# Production Auto and Daily Action call sites both route through this resolver.
 
 SIGNAL_SESSION_POLICY_VERSION = "ashare-cn-1700-v1"
 _SIGNAL_READY_CUTOFF = time(17, 0)
@@ -200,10 +200,9 @@ def resolve_signal_session(
             ``YYYYMMDD``/``YYYY-MM-DD`` string. Must be a member of
             ``open_sessions``; otherwise a :class:`SignalSessionUnavailable`
             is raised.
-        ready_cutoff: Wall-clock time of day at/after which same-day data is
-            considered ready. Defaults to the versioned 17:00 policy; the
-            ``--auto`` default-end-date path passes the ``DATA_READY_HOUR``
-            override through here so both commands share one resolver.
+        ready_cutoff: Injectable policy seam for direct resolver tests. Both
+            production command paths omit it and therefore use the fixed,
+            versioned 17:00 cutoff.
 
     Returns:
         The resolved signal date (a :class:`date`).
