@@ -1406,6 +1406,62 @@ def _log_cache_refresh_summary(s: dict) -> None:
         logger.info("[Auto] 缓存刷新 · 价格: %s", " · ".join(parts))
 
 
+def _count_from_mapping(value: object) -> int:
+    if isinstance(value, dict):
+        return sum(parsed for parsed in (_safe_int(v, 0) for v in value.values()) if parsed > 0)
+    return _safe_int(value, 0)
+
+
+def _daily_readiness_counts(daily_readiness: dict | None) -> dict[str, int]:
+    source = dict(daily_readiness or {})
+    conserved = source.get("conserved_stats")
+    if isinstance(conserved, dict):
+        source = {**conserved, **source}
+    price_counts = source.get("price_status_counts")
+    fund_counts = source.get("fund_flow_status_counts")
+    universe = _safe_int(source.get("universe_count"), 0) or _safe_int(source.get("universe_tickers"), 0) or _count_from_mapping(price_counts) or _safe_int(source.get("price_total"), 0)
+    scannable = _safe_int(source.get("scannable_count"), 0) or _safe_int(source.get("price_updated"), 0) or _count_from_mapping(price_counts)
+    plan_eligible = _safe_int(source.get("plan_eligible_count"), 0)
+    degraded = _safe_int(source.get("degraded_count"), 0) or _safe_int(source.get("price_insufficient_history"), 0) + _safe_int(source.get("fund_flow_empty"), 0)
+    failed = _safe_int(source.get("failed_count"), 0) or _safe_int(source.get("price_failed"), 0) + _safe_int(source.get("fund_flow_failed"), 0) + _safe_int(source.get("industry_index_failed"), 0)
+    return {
+        "universe": universe,
+        "scannable": scannable,
+        "plan_eligible": plan_eligible,
+        "degraded": degraded,
+        "failed": failed,
+        "fund_flow": _count_from_mapping(fund_counts) or _safe_int(source.get("fund_flow_total"), 0),
+    }
+
+
+def render_auto_daily_domain_summary(
+    *,
+    auto_status: str,
+    layer_a_count: int,
+    recommendation_count: int,
+    daily_readiness: dict | None,
+    verbose: bool = False,
+) -> str:
+    """Render Auto scoring and Daily Action readiness as independent domains."""
+    counts = _daily_readiness_counts(daily_readiness)
+    daily = dict(daily_readiness or {})
+    raw_reasons = tuple(str(reason) for reason in daily.get("block_reasons", ()) if reason)
+    fatal_reasons = tuple(reason for reason in raw_reasons if reason != "regime_authorization_evidence_unavailable")
+    disclosures = tuple(reason for reason in raw_reasons if reason == "regime_authorization_evidence_unavailable")
+    status = str(daily.get("status") or ("blocked" if fatal_reasons else "healthy")).strip() or "unknown"
+    lines = [
+        f"Auto 评分状态：{auto_status}（候选池={_safe_int(layer_a_count, 0)}，推荐={_safe_int(recommendation_count, 0)}）",
+        f"Daily Action 就绪状态：{status}（全域={counts['universe']}，可扫描={counts['scannable']}，可计划={counts['plan_eligible']}，残缺诊断={counts['degraded']}，失败={counts['failed']}）",
+    ]
+    if disclosures:
+        lines.append("Daily Action 仓位披露：regime 加仓证据暂不可验，单票按 10% 仓位披露，非阻断")
+    if fatal_reasons:
+        lines.append("Daily Action 阻断：数据护栏未通过，阻断新计划")
+    if verbose and raw_reasons:
+        lines.append("Daily Action raw reasons: " + ",".join(raw_reasons))
+    return "\n".join(lines)
+
+
 def _attach_freshness_check(trade_date: str, report_payload: dict) -> None:
     """P6-1 + F5: 在 auto_screening 报告中附加数据源新鲜度信息.
 
@@ -1775,6 +1831,16 @@ def _print_table_block(
     )
     # O-1: 缓存命中率可观测性 — CLI 表格底部增加一行摘要
     _print_cache_hit_summary(fetcher_stats)
+    quality = report_payload.get("quality_decision") or {}
+    auto_status = str(quality.get("status") or report_payload.get("status") or "healthy")
+    print(
+        render_auto_daily_domain_summary(
+            auto_status=auto_status,
+            layer_a_count=_safe_int(report_payload.get("layer_a_count"), 0),
+            recommendation_count=len(report_payload.get("recommendations") or ()),
+            daily_readiness=report_payload.get("daily_action_readiness") or report_payload.get("daily_action_cache_refresh") or {},
+        )
+    )
 
     # Print formatted table
     _print_auto_screening_table(

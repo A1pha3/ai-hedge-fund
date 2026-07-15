@@ -157,6 +157,21 @@ class DailyActionRun:
     ticker_gate_blocks: tuple[TickerGateBlock, ...] = ()
 
 
+@dataclass(frozen=True)
+class LifecycleContext:
+    """Settled ledger lifecycle output produced before any new-entry work.
+
+    Settlement, valuation, and open-position evaluation run in
+    ``advance_lifecycle`` so due exits always complete even when readiness,
+    snapshot loading, or scanning fails. ``complete_run`` consumes this to build
+    the final view without re-touching the ledger lifecycle.
+    """
+
+    as_of: date
+    valuation: DailyValuation
+    completed_exits: tuple[ActionItem, ...]
+
+
 PriceProvider = Callable[[str, date], MarketBar | None]
 CacheFingerprintProvider = Callable[[str, date], str | None]
 ShadowPriceSource = PriceProvider | Mapping[object, object] | pd.DataFrame
@@ -428,6 +443,29 @@ class DailyActionService:
         shadow_prices: ShadowPriceSource | None = None,
         verified_snapshot: "VerifiedDailyActionSnapshot | None" = None,
     ) -> DailyActionRun:
+        """Compatibility wrapper: advance the lifecycle, then complete the run."""
+        context = self.advance_lifecycle(as_of)
+        if verified_snapshot is not None:
+            return self.complete_run(
+                context,
+                snapshot=verified_snapshot,
+                candidates=candidates,
+                shadow_prices=shadow_prices,
+            )
+        return self.complete_run(
+            context,
+            snapshot=None,
+            candidates=candidates,
+            manifest=manifest,
+            shadow_prices=shadow_prices,
+        )
+
+    def advance_lifecycle(self, as_of: date) -> LifecycleContext:
+        """Settle due entries/exits, mark to market, and evaluate open positions.
+
+        This runs BEFORE any readiness/snapshot/scanner work so due exits always
+        complete, even when new-entry evidence is missing or fails to load.
+        """
         self._skipped, self._exit_plans, self._deferred, self._block_reason = (
             [],
             [],
@@ -437,31 +475,56 @@ class DailyActionService:
         self._blocked_tickers = ()
         self._block_reasons = []
         self._ticker_gate_blocks = ()
+        self._active_manifest = None
+        self._active_snapshot = None
         self._settle_due_entry_plans(as_of)
         exits = self._settle_due_exit_plans(as_of)
         valuation = self._mark_to_market(as_of)
         self._evaluate_open_positions(as_of)
-        if verified_snapshot is not None:
-            # Daily Action readiness authority: gate on the verified snapshot,
-            # NOT the Auto data-quality manifest (which is scoped to Auto's 300
-            # scoring candidates and would block valid BTST tickers outside it).
-            eligible = self._snapshot_eligible_candidates(
-                as_of, candidates, verified_snapshot
-            )
+        return LifecycleContext(
+            as_of=as_of, valuation=valuation, completed_exits=exits
+        )
+
+    def complete_run(
+        self,
+        context: LifecycleContext,
+        *,
+        snapshot: "VerifiedDailyActionSnapshot | None" = None,
+        candidates: Sequence[PlanCandidate] = (),
+        new_entry_block: str | None = None,
+        manifest: RunManifest | None = None,
+        shadow_prices: ShadowPriceSource | None = None,
+    ) -> DailyActionRun:
+        """Gate candidates and build the view from an already-advanced lifecycle.
+
+        ``new_entry_block`` records a fail-closed reason (e.g. an invalid readiness
+        manifest or a scanner failure); when set, no new plans are created but the
+        settled lifecycle (exits, valuation, open positions) is still rendered.
+        """
+        as_of = context.as_of
+        valuation = context.valuation
+        if new_entry_block is not None:
+            self._add_block_reason(new_entry_block)
             self._active_manifest = None
-            self._active_snapshot = verified_snapshot
+            self._active_snapshot = None
+            plans: tuple[ActionItem, ...] = ()
+        elif snapshot is not None:
+            eligible = self._snapshot_eligible_candidates(as_of, candidates, snapshot)
+            self._active_manifest = None
+            self._active_snapshot = snapshot
+            plans = self._create_capacity_safe_plans(as_of, eligible, valuation)
         else:
             eligible = self._manifest_eligible_candidates(as_of, candidates, manifest)
             self._active_manifest = manifest if self.enforce_manifest_gate else None
             self._active_snapshot = None
-        if self.enforce_manifest_gate and not eligible:
-            plans = ()
-        else:
-            plans = self._create_capacity_safe_plans(as_of, eligible, valuation)
+            if self.enforce_manifest_gate and not eligible:
+                plans = ()
+            else:
+                plans = self._create_capacity_safe_plans(as_of, eligible, valuation)
         return self._build_view(
             as_of,
             valuation,
-            exits,
+            context.completed_exits,
             plans,
             shadow_prices=shadow_prices,
         )

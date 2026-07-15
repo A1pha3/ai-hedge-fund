@@ -646,6 +646,45 @@ class DailyActionV2Run:
     reference_prices: tuple[tuple[str, float], ...]
 
 
+_BLOCK_REASON_ZH = {
+    "daily_action_readiness_missing": "就绪清单缺失",
+    "readiness_snapshot_load_failed": "就绪快照加载失败",
+    "readiness_manifest_invalid": "就绪清单无效",
+    "readiness_schema_unsupported": "就绪清单版本不支持",
+    "readiness_date_mismatch": "就绪清单日期不匹配",
+    "readiness_manifest_not_healthy": "就绪清单不健康",
+    "readiness_identity_mismatch": "就绪身份不匹配",
+    "snapshot_fingerprint_mismatch": "快照指纹不匹配",
+    "readiness_scan_failed": "就绪快照扫描失败",
+    "calendar_unavailable": "交易日历不可用",
+    "incomplete_setup_data": "setup 数据不完整",
+    "setup_disabled_by_default": "setup 默认暂停",
+    "detector_degraded": "检测器降级",
+    "regime_authorization_evidence_unavailable": "regime 加仓证据暂不可验，按 10% 单票上限披露",
+}
+
+
+def _block_reason_zh(reason: str | None, *, verbose: bool = False) -> str:
+    if not reason:
+        return "未知数据护栏"
+    label = _BLOCK_REASON_ZH.get(str(reason), "数据护栏未通过")
+    return f"{label}（{reason}）" if verbose else label
+
+
+def render_no_signal() -> str:
+    return "结论：ℹ️ 系统健康，今日无信号\n影响：无新的次日买入计划；已有持仓生命周期仍正常处理"
+
+
+def render_degraded_only(count: int | None = None) -> str:
+    suffix = f"（{count} 个）" if count is not None else ""
+    return f"结论：ℹ️ 仅供诊断的残缺 setup{suffix}，未生成可交易计划\n影响：残缺/降级命中不进入 BUY 计划，仅用于样本外诊断"
+
+
+def render_readiness_block(reason: str | None = None, *, verbose: bool = False) -> str:
+    detail = _block_reason_zh(reason, verbose=verbose)
+    return f"结论：⛔ 数据护栏阻断新计划\n原因：{detail}\n影响：新候选无法进入计划，但已有持仓的估值和退出仍正常执行\n建议：收盘后运行 uv run python src/main.py --auto 刷新缓存和就绪清单，再运行 --daily-action 获取次日信号"
+
+
 class _ScannerCompatibilityState:
     """In-memory seam for reusing legacy detection without legacy state I/O."""
 
@@ -687,13 +726,36 @@ def run_daily_action_v2(
     verified_snapshot: VerifiedDailyActionSnapshot | None = None,
 ) -> DailyActionV2Run:
     """Route pure scanner output through the auditable v2 lifecycle service."""
-    if not all(isinstance(candidate, PlanCandidate) for candidate in scan.candidates):
-        raise TypeError("DailyActionScan candidates must be PlanCandidate instances")
-    service_run = service.run(
-        scan.signal_date,
-        scan.candidates,
+    context = service.advance_lifecycle(scan.signal_date)
+    return complete_daily_action_v2(
+        service,
+        context,
+        scan,
         manifest=manifest,
         verified_snapshot=verified_snapshot,
+    )
+
+
+def complete_daily_action_v2(
+    service: Any,
+    context: Any,
+    scan: DailyActionScan,
+    manifest: Any = None,
+    *,
+    verified_snapshot: VerifiedDailyActionSnapshot | None = None,
+    new_entry_block: str | None = None,
+    shadow_prices: Any | None = None,
+) -> DailyActionV2Run:
+    """Build the v2 display view after lifecycle has already advanced."""
+    if not all(isinstance(candidate, PlanCandidate) for candidate in scan.candidates):
+        raise TypeError("DailyActionScan candidates must be PlanCandidate instances")
+    service_run = service.complete_run(
+        context,
+        snapshot=verified_snapshot,
+        candidates=scan.candidates,
+        new_entry_block=new_entry_block,
+        manifest=manifest,
+        shadow_prices=shadow_prices,
     )
     # Idempotent reruns still display the one persisted plan for this signal date.
     displayed_tickers = {candidate.ticker for candidate in scan.candidates}
@@ -780,10 +842,8 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     if run.blocked_candidates:
         lines.append("不可计划候选:")
         for candidate in run.blocked_candidates:
-            lines.append(
-                f"  {candidate.ticker} 参考价 ~{candidate.reference_price:.2f} "
-                f"原因={candidate.reason}"
-            )
+            reason = candidate.reason if verbose else _block_reason_zh(candidate.reason)
+            lines.append(f"  {candidate.ticker} 参考价 ~{candidate.reference_price:.2f} 原因={reason}")
     lifecycle_sections = (
         ("跳过计划", run.service_run.skipped_plans),
         ("退出计划", run.service_run.exit_plans),
