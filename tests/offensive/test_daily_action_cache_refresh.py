@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import Mock
 
 import pandas as pd
 
@@ -37,6 +38,160 @@ def _history_rows(start: str = "2026-05-20", periods: int = 35) -> pd.DataFrame:
             "volume": [1000.0 + index for index in range(len(dates))],
         }
     )
+
+
+def test_refresh_fetches_daily_batch_once_when_there_are_no_limit_ups(tmp_path):
+    from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+
+    fetch = Mock(
+        return_value=_daily_prices(
+            [{"ts_code": "000001.SZ", "trade_date": "20260713", "pct_chg": 1.0}]
+        )
+    )
+
+    result = refresh_daily_action_caches(
+        "20260713",
+        price_cache_dir=tmp_path / "price",
+        fund_flow_cache_dir=tmp_path / "flow",
+        snapshot_dir=tmp_path / "snapshots",
+        fetch_daily_prices_batch=fetch,
+        target_tickers=["000001"],
+        backfill_price_history_fn=lambda *_args: _history_rows(),
+        refresh_industry_index=False,
+        refresh_fund_flow=False,
+    )
+
+    assert fetch.call_count == 1
+    assert result.universe_tickers == ("000001",)
+
+
+def test_refresh_classifies_suspensions_without_calling_them_missing(tmp_path):
+    from datetime import date
+
+    from src.screening.offensive.cache_readiness import (
+        FundFlowStatus,
+        PriceStatus,
+        SuspensionEvidence,
+    )
+    from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+
+    result = refresh_daily_action_caches(
+        "20260713",
+        price_cache_dir=tmp_path / "price",
+        fund_flow_cache_dir=tmp_path / "flow",
+        snapshot_dir=tmp_path / "snapshots",
+        daily_prices_df=_daily_prices(
+            [{"ts_code": "000001.SZ", "trade_date": "20260713", "pct_chg": 1.0}]
+        ),
+        target_tickers=["000001", "002677"],
+        backfill_price_history_fn=lambda *_args: _history_rows(
+            start="2026-05-26", periods=34
+        ),
+        suspension_loader=lambda _trade_date: SuspensionEvidence.available(
+            date(2026, 7, 13), {"002677"}
+        ),
+        refresh_industry_index=False,
+        refresh_fund_flow=False,
+    )
+
+    assert result.outcomes["000001"].price_status is PriceStatus.CURRENT
+    assert result.outcomes["002677"].price_status is PriceStatus.SUSPENDED
+    assert result.outcomes["002677"].fund_flow_status is FundFlowStatus.SUSPENDED
+    assert sum(result.stats.price_status_counts.values()) == 2
+    assert sum(result.stats.fund_flow_status_counts.values()) == 2
+
+
+def test_refresh_marks_stale_tickers_beyond_fund_flow_quota_not_attempted(tmp_path):
+    from datetime import date
+
+    from src.screening.offensive.cache_readiness import FundFlowStatus, SuspensionEvidence
+    from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+
+    price_cache = tmp_path / "price"
+    flow_cache = tmp_path / "flow"
+    price_cache.mkdir()
+    flow_cache.mkdir()
+    for ticker in ("000001", "000002", "000003"):
+        (price_cache / f"{ticker}.csv").write_text(
+            "date,close,open,high,low,pct_change,volume\n"
+            "2026-07-10,10,10,10,10,0,1000\n",
+            encoding="utf-8",
+        )
+    (flow_cache / "000001.csv").write_text(
+        "date,ticker,close,pct_change,main_net_inflow,main_net_pct\n"
+        "20260713,000001,10,1,1000,2\n",
+        encoding="utf-8",
+    )
+    fetched: list[str] = []
+
+    def fetch_flow(ticker: str, **_kwargs) -> pd.DataFrame:
+        fetched.append(ticker)
+        return pd.DataFrame(
+            [{"date": "20260713", "close": 10, "pct_change": 1, "main_net_inflow": 1, "main_net_pct": 1}]
+        )
+
+    result = refresh_daily_action_caches(
+        "20260713",
+        price_cache_dir=price_cache,
+        fund_flow_cache_dir=flow_cache,
+        snapshot_dir=tmp_path / "snapshots",
+        daily_prices_df=_daily_prices(
+            [
+                {"ts_code": f"{ticker}.SZ", "trade_date": "20260713", "pct_chg": 1.0}
+                for ticker in ("000001", "000002", "000003")
+            ]
+        ),
+        suspension_loader=lambda _trade_date: SuspensionEvidence.available(
+            date(2026, 7, 13), set()
+        ),
+        refresh_industry_index=False,
+        fund_flow_fetch_fn=fetch_flow,
+        fund_flow_rate_limit_sec=0,
+        fund_flow_max_tickers=1,
+    )
+
+    assert fetched == ["000002"]
+    assert result.outcomes["000001"].fund_flow_status is FundFlowStatus.CURRENT
+    assert result.outcomes["000002"].fund_flow_status is FundFlowStatus.CURRENT
+    assert result.outcomes["000003"].fund_flow_status is FundFlowStatus.NOT_ATTEMPTED
+    assert sum(result.stats.fund_flow_status_counts.values()) == 3
+
+
+def test_refresh_freezes_universe_before_cache_writes_and_keeps_bse_excluded(tmp_path):
+    from datetime import date
+
+    from src.screening.offensive.cache_readiness import SuspensionEvidence
+    from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+
+    price_cache = tmp_path / "price"
+
+    def mutate_directory(*_args) -> pd.DataFrame:
+        price_cache.mkdir(parents=True, exist_ok=True)
+        (price_cache / "000999.csv").write_text(
+            "date,close\n2026-07-13,99\n",
+            encoding="utf-8",
+        )
+        return _history_rows(start="2026-05-26", periods=34)
+
+    result = refresh_daily_action_caches(
+        "20260713",
+        price_cache_dir=price_cache,
+        fund_flow_cache_dir=tmp_path / "flow",
+        snapshot_dir=tmp_path / "snapshots",
+        target_tickers=["000001", "920088"],
+        daily_prices_df=_daily_prices(
+            [{"ts_code": "000001.SZ", "trade_date": "20260713", "pct_chg": 1.0}]
+        ),
+        backfill_price_history_fn=mutate_directory,
+        suspension_loader=lambda _trade_date: SuspensionEvidence.available(
+            date(2026, 7, 13), set()
+        ),
+        refresh_industry_index=False,
+        refresh_fund_flow=False,
+    )
+
+    assert result.universe_tickers == ("000001",)
+    assert tuple(result.outcomes) == ("000001",)
 
 
 def test_resolve_daily_action_refresh_tickers_includes_candidate_pool(tmp_path):

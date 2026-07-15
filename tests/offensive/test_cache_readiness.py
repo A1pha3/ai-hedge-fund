@@ -32,10 +32,54 @@ def _outcome(
     )
 
 
+def test_suspension_failure_is_unavailable_not_empty():
+    from unittest.mock import Mock
+
+    from src.screening.offensive import cache_refresh
+
+    load_suspension_evidence = getattr(cache_refresh, "load_suspension_evidence", None)
+    assert load_suspension_evidence is not None
+
+    evidence = load_suspension_evidence(
+        "20260713",
+        fetch_fn=Mock(side_effect=RuntimeError("down")),
+    )
+    assert evidence.status is SuspensionEvidenceStatus.UNAVAILABLE
+
+
+def test_refresh_result_freezes_nested_mappings():
+    tickers = ("000001", "000002")
+    outcomes = {
+        ticker: TickerRefreshOutcome(
+            ticker=ticker,
+            price_status=PriceStatus.CURRENT,
+            price_history_rows=1,
+            fund_flow_status=FundFlowStatus.CURRENT,
+            fund_flow_history_rows=1,
+            evidence_fingerprints={"price": f"sha256:{ticker}"},
+        )
+        for ticker in tickers
+    }
+    result = DailyActionRefreshResult(
+        trade_date=date(2026, 7, 13),
+        universe_tickers=tickers,
+        universe_fingerprint=universe_fingerprint(tickers),
+        daily_batch_fingerprint=None,
+        suspension_evidence=SuspensionEvidence.available(date(2026, 7, 13), set()),
+        outcomes=outcomes,
+        stats=derive_stats_from_outcomes(outcomes),
+    )
+
+    with pytest.raises(TypeError):
+        result.outcomes["000002"] = result.outcomes["000001"]
+    with pytest.raises(TypeError):
+        result.outcomes["000001"].evidence_fingerprints["price"] = "forged"
+
+
 class TestSuspensionEvidence:
     def test_available_with_tickers(self):
         ev = SuspensionEvidence.available(date(2026, 7, 13), {"000001", "000002"})
-        assert ev.status is SuspensionEvidenceStatus.AVAILABLE
+        assert ev.status is SuspensionEvidenceStatus.AVAILABLE_NONEMPTY
         assert ev.tickers == frozenset({"000001", "000002"})
 
     def test_unavailable_has_empty_tickers(self):
@@ -46,7 +90,7 @@ class TestSuspensionEvidence:
     def test_available_empty_list_means_no_suspensions(self):
         """Empty list = authority confirms no suspensions (distinct from unavailable)."""
         ev = SuspensionEvidence.available(date(2026, 7, 13), set())
-        assert ev.status is SuspensionEvidenceStatus.AVAILABLE
+        assert ev.status is SuspensionEvidenceStatus.AVAILABLE_EMPTY
         assert len(ev.tickers) == 0
 
 
@@ -99,6 +143,23 @@ class TestConservation:
                 suspension_evidence=SuspensionEvidence.available(date(2026, 7, 13), set()),
                 outcomes=outcomes,
                 stats=stats,
+            )
+
+    def test_result_post_init_requires_exact_outcome_keys(self):
+        tickers = ("000001", "000002")
+        outcomes = {
+            "000001": _outcome("000001"),
+            "000003": _outcome("000003"),
+        }
+        with pytest.raises(ValueError, match="exactly cover"):
+            DailyActionRefreshResult(
+                trade_date=date(2026, 7, 13),
+                universe_tickers=tickers,
+                universe_fingerprint=universe_fingerprint(tickers),
+                daily_batch_fingerprint=None,
+                suspension_evidence=SuspensionEvidence.available(date(2026, 7, 13), set()),
+                outcomes=outcomes,
+                stats=derive_stats_from_outcomes(outcomes),
             )
 
     def test_valid_result_passes_post_init(self):

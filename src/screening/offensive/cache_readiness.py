@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from enum import StrEnum
 from types import MappingProxyType
@@ -34,7 +34,8 @@ class FundFlowStatus(StrEnum):
 
 
 class SuspensionEvidenceStatus(StrEnum):
-    AVAILABLE = "available"
+    AVAILABLE_NONEMPTY = "available_nonempty"
+    AVAILABLE_EMPTY = "available_empty"
     UNAVAILABLE = "unavailable"
 
 
@@ -55,7 +56,11 @@ class SuspensionEvidence:
     ) -> SuspensionEvidence:
         return cls(
             trade_date=trade_date,
-            status=SuspensionEvidenceStatus.AVAILABLE,
+            status=(
+                SuspensionEvidenceStatus.AVAILABLE_NONEMPTY
+                if tickers
+                else SuspensionEvidenceStatus.AVAILABLE_EMPTY
+            ),
             tickers=frozenset(tickers),
             source_fingerprint=source_fingerprint,
         )
@@ -86,6 +91,15 @@ class TickerRefreshOutcome:
     block_reasons: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "evidence_fingerprints",
+            MappingProxyType(dict(self.evidence_fingerprints)),
+        )
+        object.__setattr__(self, "block_reasons", tuple(self.block_reasons))
+        object.__setattr__(self, "warnings", tuple(self.warnings))
+
 
 @dataclass(frozen=True)
 class DailyActionCacheRefreshStats:
@@ -96,6 +110,18 @@ class DailyActionCacheRefreshStats:
     industry_index_total: int
     industry_index_failed: int
     limit_up_injected: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "price_status_counts",
+            MappingProxyType(dict(self.price_status_counts)),
+        )
+        object.__setattr__(
+            self,
+            "fund_flow_status_counts",
+            MappingProxyType(dict(self.fund_flow_status_counts)),
+        )
 
     def to_dict(self) -> dict:
         return {
@@ -116,20 +142,59 @@ class DailyActionRefreshResult:
     suspension_evidence: SuspensionEvidence
     outcomes: Mapping[str, TickerRefreshOutcome]
     stats: DailyActionCacheRefreshStats
+    _refresh_counters: Mapping[str, object] = field(
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self):
         # Validate: no duplicate tickers in universe
         if len(set(self.universe_tickers)) != len(self.universe_tickers):
             raise ValueError("universe_tickers contains duplicates")
-        # Validate: all outcomes have a ticker in universe
         outcome_tickers = set(self.outcomes.keys())
         universe_set = set(self.universe_tickers)
-        if not outcome_tickers.issubset(universe_set):
-            raise ValueError("outcomes reference tickers not in universe")
+        if outcome_tickers != universe_set:
+            if outcome_tickers.issubset(universe_set):
+                # Retain the more specific conservation diagnostic for legacy
+                # callers that only omit outcomes.
+                raise ValueError(
+                    f"price status counts ({len(outcome_tickers)}) != universe "
+                    f"({len(self.universe_tickers)}); outcomes must exactly cover "
+                    "the frozen universe"
+                )
+            raise ValueError("outcomes must exactly cover the frozen universe")
+
+        frozen_outcomes: dict[str, TickerRefreshOutcome] = {}
+        for ticker in self.universe_tickers:
+            outcome = self.outcomes[ticker]
+            if outcome.ticker != ticker:
+                raise ValueError("outcome ticker identity must match its mapping key")
+            frozen_outcomes[ticker] = replace(
+                outcome,
+                evidence_fingerprints=MappingProxyType(
+                    dict(outcome.evidence_fingerprints)
+                ),
+                block_reasons=tuple(outcome.block_reasons),
+                warnings=tuple(outcome.warnings),
+            )
+        object.__setattr__(self, "outcomes", MappingProxyType(frozen_outcomes))
+        object.__setattr__(
+            self,
+            "_refresh_counters",
+            MappingProxyType(
+                {
+                    key: tuple(value) if isinstance(value, list) else value
+                    for key, value in self._refresh_counters.items()
+                }
+            ),
+        )
         # Validate: conservation — sum of price statuses == universe total
         price_counts: dict[str, int] = {}
         for outcome in self.outcomes.values():
-            price_counts[outcome.price_status.value] = price_counts.get(outcome.price_status.value, 0) + 1
+            price_counts[outcome.price_status.value] = (
+                price_counts.get(outcome.price_status.value, 0) + 1
+            )
         if sum(price_counts.values()) != len(self.universe_tickers):
             raise ValueError(
                 f"price status counts ({sum(price_counts.values())}) != universe ({len(self.universe_tickers)})"
@@ -137,11 +202,21 @@ class DailyActionRefreshResult:
         # Validate: conservation — sum of fund_flow statuses == universe total
         flow_counts: dict[str, int] = {}
         for outcome in self.outcomes.values():
-            flow_counts[outcome.fund_flow_status.value] = flow_counts.get(outcome.fund_flow_status.value, 0) + 1
+            flow_counts[outcome.fund_flow_status.value] = (
+                flow_counts.get(outcome.fund_flow_status.value, 0) + 1
+            )
         if sum(flow_counts.values()) != len(self.universe_tickers):
             raise ValueError(
                 f"fund_flow status counts ({sum(flow_counts.values())}) != universe ({len(self.universe_tickers)})"
             )
+
+    def __getattr__(self, name: str) -> object:
+        """Keep legacy display-counter reads working during the v2 migration."""
+
+        counters = object.__getattribute__(self, "_refresh_counters")
+        if name in counters:
+            return counters[name]
+        raise AttributeError(name)
 
     def to_dict(self) -> dict:
         return {
@@ -152,6 +227,7 @@ class DailyActionRefreshResult:
             "suspension_evidence": {
                 "status": self.suspension_evidence.status.value,
                 "tickers": sorted(self.suspension_evidence.tickers),
+                "source_fingerprint": self.suspension_evidence.source_fingerprint,
             },
             "outcomes": {
                 ticker: {
@@ -159,6 +235,7 @@ class DailyActionRefreshResult:
                     "price_history_rows": o.price_history_rows,
                     "fund_flow_status": o.fund_flow_status.value,
                     "fund_flow_history_rows": o.fund_flow_history_rows,
+                    "evidence_fingerprints": dict(o.evidence_fingerprints),
                     "block_reasons": list(o.block_reasons),
                     "warnings": list(o.warnings),
                 }
@@ -178,8 +255,12 @@ def derive_stats_from_outcomes(
     price_counts: dict[str, int] = {}
     flow_counts: dict[str, int] = {}
     for outcome in outcomes.values():
-        price_counts[outcome.price_status.value] = price_counts.get(outcome.price_status.value, 0) + 1
-        flow_counts[outcome.fund_flow_status.value] = flow_counts.get(outcome.fund_flow_status.value, 0) + 1
+        price_counts[outcome.price_status.value] = (
+            price_counts.get(outcome.price_status.value, 0) + 1
+        )
+        flow_counts[outcome.fund_flow_status.value] = (
+            flow_counts.get(outcome.fund_flow_status.value, 0) + 1
+        )
     return DailyActionCacheRefreshStats(
         price_status_counts=MappingProxyType(price_counts),
         fund_flow_status_counts=MappingProxyType(flow_counts),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -44,6 +45,71 @@ class _FakeRefreshStats:
             "fund_flow_failed": self.fund_flow_failed,
             "industry_index_failed": self.industry_index_failed,
         }
+
+
+def _fake_refresh_result():
+    from src.screening.offensive.cache_readiness import (
+        DailyActionRefreshResult,
+        FundFlowStatus,
+        PriceStatus,
+        SuspensionEvidence,
+        TickerRefreshOutcome,
+        derive_stats_from_outcomes,
+        universe_fingerprint,
+    )
+
+    tickers = ("000001",)
+    outcomes = {
+        "000001": TickerRefreshOutcome(
+            ticker="000001",
+            price_status=PriceStatus.CURRENT,
+            price_history_rows=35,
+            fund_flow_status=FundFlowStatus.CURRENT,
+            fund_flow_history_rows=20,
+        )
+    }
+    return DailyActionRefreshResult(
+        trade_date=date(2026, 7, 8),
+        universe_tickers=tickers,
+        universe_fingerprint=universe_fingerprint(tickers),
+        daily_batch_fingerprint="sha256:batch",
+        suspension_evidence=SuspensionEvidence.available(date(2026, 7, 8), set()),
+        outcomes=outcomes,
+        stats=derive_stats_from_outcomes(outcomes),
+    )
+
+
+def test_main_retains_and_passes_the_frozen_refresh_result(monkeypatch):
+    from src import main as main_mod
+
+    result = _fake_refresh_result()
+    published: list[object] = []
+    payload: dict = {"date": "20260708", "recommendations": []}
+
+    monkeypatch.delenv("DAILY_ACTION_CACHE_REFRESH", raising=False)
+    monkeypatch.setattr(
+        main_mod,
+        "_publish_daily_action_readiness_for_auto",
+        lambda _trade_date, refresh_result: published.append(refresh_result),
+    )
+    monkeypatch.setattr(
+        "src.screening.offensive.daily_action.refresh_authoritative_trade_calendar",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "scripts.join_setup_outputs_with_returns.backfill_panel",
+        lambda: ([], {"records": 0, "realized": 0}),
+    )
+    monkeypatch.setattr("scripts.panel_health_check.panel_health_oneline", lambda: "insufficient")
+
+    returned = main_mod._refresh_daily_action_caches_for_auto(
+        "20260708",
+        payload,
+        refresh_fn=lambda _trade_date: result,
+    )
+
+    assert returned is result
+    assert published == [result]
 
 
 def test_refresh_daily_action_caches_for_auto_attaches_summary_without_publishing(monkeypatch):
