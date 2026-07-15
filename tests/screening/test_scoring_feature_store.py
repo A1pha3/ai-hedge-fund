@@ -467,6 +467,32 @@ def test_build_quality_summary_optional_block_matches_scoring_block(tmp_path: Pa
         assert of["source"] == sf["source"]
 
 
+def test_missing_optional_snapshot_stays_unavailable_in_scoring_summary(
+    tmp_path: Path,
+) -> None:
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache",
+        fund_flow_cache_dir=tmp_path / "fund_flow_cache",
+    )
+
+    store.load_intraday_metrics("20260713", ["000001"])
+    store.load_fund_flow_metrics("20260713", ["000001"])
+    summary = store.build_quality_summary(
+        "20260713", ["000001"], finite_score_outputs(["000001"])
+    )
+
+    for family in (
+        "intraday_short_trade_metrics",
+        "daily_fund_flow_metrics",
+    ):
+        assert summary["scoring_features"][family]["observation_status"] == (
+            "unavailable"
+        )
+        assert summary["optional_features"][family]["observation_status"] == (
+            "unavailable"
+        )
+
+
 def test_build_quality_summary_merges_refresh_manifest_failures(tmp_path: Path) -> None:
     feature_dir = tmp_path / "feature_cache"
     feature_dir.mkdir()
@@ -661,3 +687,108 @@ def test_build_quality_summary_financial_metrics_partial_when_one_of_two_request
     assert fin["observed_count"] == 1
     assert fin["requested_count"] == 2
     assert fin["consumption_failed_count"] == 1
+
+
+def test_one_failed_event_source_remains_partial_through_quality_summary(tmp_path):
+    feature_dir = tmp_path / "feature_cache"
+    event_dir = tmp_path / "snapshots" / "000001" / "20260713"
+    feature_dir.mkdir()
+    event_dir.mkdir(parents=True)
+    (event_dir / "company_news.json").write_text("[]", encoding="utf-8")
+    (feature_dir / "feature_manifest_20260713.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260713",
+                "ticker_outcomes": {
+                    "000001": {
+                        "observation_status": "partial",
+                        "families": {
+                            "event_inputs": {
+                                "observation_status": "partial",
+                                "nonempty_count": 0,
+                                "source_parts_succeeded": 1,
+                                "source_parts_total": 2,
+                                "failure_code": "RuntimeError",
+                                "sources": {
+                                    "company_news": {
+                                        "observation_status": "success",
+                                        "nonempty_count": 0,
+                                    },
+                                    "insider_trades": {
+                                        "observation_status": "failed",
+                                        "nonempty_count": 0,
+                                        "failure_code": "RuntimeError",
+                                    },
+                                },
+                            }
+                        },
+                        # Conflicting migration-era flat evidence must not
+                        # overwrite the canonical per-family partial outcome.
+                        "event_inputs": {"observation_status": "success"},
+                    }
+                },
+                "features": {
+                    "event_inputs": {
+                        "observation_status": "success",
+                        "observed_count": 1,
+                        "failed_count": 0,
+                        "source_parts_succeeded": 1,
+                        "source_parts_total": 2,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = ScoringFeatureStore(
+        base_dir=feature_dir,
+        legacy_snapshot_dir=tmp_path / "snapshots",
+    )
+
+    store.load_event_inputs("000001", "20260713")
+    quality = store.build_quality_summary(
+        "20260713",
+        ["000001"],
+        finite_score_outputs(["000001"]),
+    )
+
+    assert quality["scoring_features"]["event_inputs"]["observation_status"] == "partial"
+    assert quality["scoring_features"]["event_inputs"]["observed_count"] == 0
+    assert quality["scoring_features"]["event_inputs"]["consumption_failed_count"] == 1
+
+
+def test_event_family_aggregate_partial_cannot_promote_to_success(tmp_path):
+    feature_dir = tmp_path / "feature_cache"
+    event_dir = tmp_path / "snapshots" / "000001" / "20260713"
+    feature_dir.mkdir()
+    event_dir.mkdir(parents=True)
+    (event_dir / "company_news.json").write_text("[]", encoding="utf-8")
+    (event_dir / "insider_trades.json").write_text("[]", encoding="utf-8")
+    (feature_dir / "feature_manifest_20260713.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260713",
+                "features": {
+                    "event_inputs": {
+                        "observation_status": "partial",
+                        "observed_count": 1,
+                        "failed_count": 0,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = ScoringFeatureStore(
+        base_dir=feature_dir,
+        legacy_snapshot_dir=tmp_path / "snapshots",
+    )
+
+    store.load_event_inputs("000001", "20260713")
+    quality = store.build_quality_summary(
+        "20260713",
+        ["000001"],
+        finite_score_outputs(["000001"]),
+    )
+
+    assert quality["scoring_features"]["event_inputs"]["observation_status"] == "partial"

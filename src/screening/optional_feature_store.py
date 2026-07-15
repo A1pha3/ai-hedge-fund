@@ -6,13 +6,19 @@ network calls belong in refresh code, not in score_batch().
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import pandas as pd
+
+from src.screening.scoring_feature_quality import ObservationStatus
 
 
 _INTRADAY_PREFIX = "intraday_short_trade_metrics"
@@ -31,6 +37,27 @@ _METRIC_COLUMNS = {
 
 
 @dataclass(frozen=True)
+class OptionalObservation(Mapping[str, object]):
+    """One snapshot observation with read-only mapping compatibility."""
+
+    status: ObservationStatus
+    values: Mapping[str, object] = field()
+    source_fingerprint: str | None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
+
+    def __getitem__(self, key: str) -> object:
+        return self.values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.values)
+
+    def __len__(self) -> int:
+        return len(self.values)
+
+
+@dataclass(frozen=True)
 class OptionalFeatureStore:
     base_dir: Path | str = Path("data/feature_cache")
     max_stale_days: int = 0
@@ -39,10 +66,14 @@ class OptionalFeatureStore:
     def __post_init__(self) -> None:
         object.__setattr__(self, "base_dir", Path(self.base_dir))
 
-    def load_intraday_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, Any]]:
+    def load_intraday_metrics(
+        self, trade_date: str, tickers: list[str]
+    ) -> OptionalObservation:
         return self._load_metrics(_INTRADAY_PREFIX, trade_date, tickers)
 
-    def load_fund_flow_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, Any]]:
+    def load_fund_flow_metrics(
+        self, trade_date: str, tickers: list[str]
+    ) -> OptionalObservation:
         return self._load_metrics(_FUND_FLOW_PREFIX, trade_date, tickers)
 
     def load_manifest(self, trade_date: str) -> dict[str, Any]:
@@ -78,7 +109,9 @@ class OptionalFeatureStore:
             }
         }
 
-    def _load_metrics(self, prefix: str, trade_date: str, tickers: list[str]) -> dict[str, dict[str, Any]]:
+    def _load_metrics(
+        self, prefix: str, trade_date: str, tickers: list[str]
+    ) -> OptionalObservation:
         return self._load_metrics_with_meta(prefix, trade_date, tickers)[0]
 
     def _load_metrics_with_meta(
@@ -86,17 +119,43 @@ class OptionalFeatureStore:
         prefix: str,
         trade_date: str,
         tickers: list[str],
-    ) -> tuple[dict[str, dict[str, Any]], str | None, bool]:
+    ) -> tuple[OptionalObservation, str | None, bool]:
         resolved = self._resolve_snapshot_path(prefix, trade_date)
         if resolved is None:
-            return {}, None, False
+            return (
+                OptionalObservation(ObservationStatus.UNAVAILABLE, {}, None),
+                None,
+                False,
+            )
         path, snapshot_date, is_stale = resolved
+        source_fingerprint: str | None = None
         try:
-            df = pd.read_csv(path, dtype={"ticker": str, "trade_date": str})
+            source_bytes = path.read_bytes()
+            source_fingerprint = "sha256:" + hashlib.sha256(source_bytes).hexdigest()
+            df = pd.read_csv(
+                io.BytesIO(source_bytes),
+                dtype={"ticker": str, "trade_date": str},
+            )
         except (OSError, UnicodeDecodeError, ValueError, pd.errors.ParserError, pd.errors.EmptyDataError):
-            return {}, snapshot_date, is_stale
-        if df.empty or "ticker" not in df.columns:
-            return {}, snapshot_date, is_stale
+            return (
+                OptionalObservation(
+                    ObservationStatus.FAILED,
+                    {},
+                    source_fingerprint,
+                ),
+                snapshot_date,
+                is_stale,
+            )
+        if "ticker" not in df.columns:
+            return (
+                OptionalObservation(
+                    ObservationStatus.FAILED,
+                    {},
+                    source_fingerprint,
+                ),
+                snapshot_date,
+                is_stale,
+            )
         df = df.copy()
         df["ticker"] = df["ticker"].astype(str).str.zfill(6)
         if "trade_date" in df.columns:
@@ -115,7 +174,15 @@ class OptionalFeatureStore:
                 metrics[column] = value.item() if hasattr(value, "item") else value
             if metrics:
                 result[str(row["ticker"]).zfill(6)] = metrics
-        return result, snapshot_date, is_stale
+        return (
+            OptionalObservation(
+                ObservationStatus.SUCCESS,
+                result,
+                source_fingerprint,
+            ),
+            snapshot_date,
+            is_stale,
+        )
 
     def _resolve_snapshot_path(self, prefix: str, trade_date: str) -> tuple[Path, str, bool] | None:
         exact_path = self.base_dir / f"{prefix}_{trade_date}.csv"
@@ -155,18 +222,26 @@ class OptionalFeatureStore:
         tickers: list[str],
         manifest: dict[str, Any],
     ) -> dict[str, Any]:
-        rows, snapshot_date, is_stale = self._load_metrics_with_meta(prefix, trade_date, tickers)
+        observation, snapshot_date, is_stale = self._load_metrics_with_meta(
+            prefix, trade_date, tickers
+        )
+        rows = observation.values
         total = len(tickers)
         feature_manifest = (manifest.get("features") or {}).get(family, {})
         provider_failures = int(feature_manifest.get("provider_failures", 0) or 0)
         missing = total - len(rows)
         quality = {
             "coverage": round((len(rows) / total), 4) if total else 0.0,
-            "source": "snapshot" if rows else "missing",
+            "source": (
+                "missing"
+                if observation.status is ObservationStatus.UNAVAILABLE
+                else "snapshot"
+            ),
             "trade_date": trade_date,
             "stale": is_stale,
             "provider_failures": provider_failures,
             "missing_tickers": missing,
+            "observation_status": observation.status.value,
         }
         if is_stale and snapshot_date is not None:
             quality["snapshot_date"] = snapshot_date

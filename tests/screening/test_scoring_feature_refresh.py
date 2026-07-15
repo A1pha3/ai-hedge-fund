@@ -13,15 +13,26 @@ thread-pool wrapper around it.
 
 from __future__ import annotations
 
+import concurrent.futures
+import json
+import threading
+import time
+
 import pytest
 
-from src.screening.scoring_feature_refresh import _fetch_ticker_data
+from src.screening import scoring_feature_refresh
+from src.screening.scoring_feature_refresh import (
+    TickerFeatureObservation,
+    _fetch_ticker_data,
+    refresh_scoring_features,
+)
 from src.screening.scoring_feature_quality import ObservationStatus
 
 
 @pytest.fixture
 def stub_snapshot_exporter(monkeypatch):
     """Stub ``get_snapshot_exporter`` so export_insider_trades is a no-op."""
+
     class _StubExporter:
         def export_insider_trades(self, *args, **kwargs):
             return None
@@ -36,7 +47,9 @@ def _observation_for(observations, family):
     return next(obs for obs in observations if obs.family == family)
 
 
-def test_successful_empty_events_are_observed_empty(monkeypatch, stub_snapshot_exporter):
+def test_successful_empty_events_are_observed_empty(
+    monkeypatch, stub_snapshot_exporter
+):
     """get_company_news returns [], get_insider_trades returns [] → SUCCESS, nonempty=0.
 
     event_inputs has legal-when-observed empty semantics: a reachable source
@@ -67,6 +80,7 @@ def test_event_is_partial_when_one_source_fails(monkeypatch, stub_snapshot_expor
     the other raises — the family is PARTIAL because only a strict subset of
     sources produced an authoritative answer.
     """
+
     def _raise(*args, **kwargs):
         raise RuntimeError("tushare unreachable")
 
@@ -88,6 +102,13 @@ def test_event_is_partial_when_one_source_fails(monkeypatch, stub_snapshot_expor
     assert event_obs.source_parts_total == 2
     assert event_obs.nonempty_count == 1  # only news rows counted
     assert event_obs.failure_code == "RuntimeError"
+    sources = {source.source: source for source in event_obs.sources}
+    assert sources["company_news"].status is ObservationStatus.SUCCESS
+    assert sources["company_news"].nonempty_count == 1
+    assert sources["company_news"].failure_code is None
+    assert sources["insider_trades"].status is ObservationStatus.FAILED
+    assert sources["insider_trades"].nonempty_count == 0
+    assert sources["insider_trades"].failure_code == "RuntimeError"
 
 
 def test_all_sources_fail_is_failed(monkeypatch, stub_snapshot_exporter):
@@ -97,6 +118,7 @@ def test_all_sources_fail_is_failed(monkeypatch, stub_snapshot_exporter):
     manifest must record this honestly rather than masking it as an empty
     SUCCESS.
     """
+
     def _raise(*args, **kwargs):
         raise ConnectionError("network down")
 
@@ -137,6 +159,7 @@ def test_financial_metrics_success_on_nonempty(monkeypatch, stub_snapshot_export
 
 def test_financial_metrics_failed_on_exception(monkeypatch, stub_snapshot_exporter):
     """financial_metrics raising → FAILED with the exception class recorded."""
+
     def _raise(*args, **kwargs):
         raise TimeoutError("tushare timeout")
 
@@ -151,3 +174,81 @@ def test_financial_metrics_failed_on_exception(monkeypatch, stub_snapshot_export
     assert fin_obs.source_parts_succeeded == 0
     assert fin_obs.source_parts_total == 1
     assert fin_obs.failure_code == "TimeoutError"
+
+
+def test_timeout_conserves_every_requested_ticker(monkeypatch, tmp_path):
+    release_slow_provider = threading.Event()
+    shutdown_calls = []
+
+    class _RecordingExecutor(concurrent.futures.ThreadPoolExecutor):
+        def shutdown(self, wait=True, *, cancel_futures=False):
+            shutdown_calls.append((wait, cancel_futures))
+            return super().shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    def _fake_fetch(ticker, trade_date):
+        if ticker == "000002":
+            release_slow_provider.wait(timeout=1.0)
+        return [
+            TickerFeatureObservation(
+                ticker=ticker,
+                family="financial_metrics",
+                status=ObservationStatus.SUCCESS,
+                nonempty_count=1,
+                source_parts_succeeded=1,
+                source_parts_total=1,
+            ),
+            TickerFeatureObservation(
+                ticker=ticker,
+                family="event_inputs",
+                status=ObservationStatus.SUCCESS,
+                nonempty_count=0,
+                source_parts_succeeded=2,
+                source_parts_total=2,
+            ),
+        ]
+
+    monkeypatch.delenv("AUTO_OPTIONAL_FEATURE_REFRESH", raising=False)
+    monkeypatch.setattr(scoring_feature_refresh, "_enable_snapshots", lambda: None)
+    monkeypatch.setattr(scoring_feature_refresh, "_fetch_ticker_data", _fake_fetch)
+    monkeypatch.setattr(scoring_feature_refresh, "_MAX_WORKERS", 2)
+    monkeypatch.setattr(
+        scoring_feature_refresh.concurrent.futures,
+        "ThreadPoolExecutor",
+        _RecordingExecutor,
+    )
+    release_timer = threading.Timer(0.5, release_slow_provider.set)
+    release_timer.daemon = True
+    release_timer.start()
+    started = time.monotonic()
+    try:
+        result = refresh_scoring_features(
+            "20260713",
+            ["000001", "000002"],
+            timeout_seconds=0.05,
+            cache_dir=tmp_path,
+        )
+    finally:
+        elapsed = time.monotonic() - started
+        release_slow_provider.set()
+        release_timer.cancel()
+
+    assert elapsed < 0.25
+    assert set(result["ticker_outcomes"]) == {"000001", "000002"}
+    assert result["success_count"] + result["failure_count"] == 2
+    assert result["failure_count"] == 1
+    assert shutdown_calls == [(False, True)]
+
+    completed = result["ticker_outcomes"]["000001"]
+    assert completed["observation_status"] == "success"
+    timed_out = result["ticker_outcomes"]["000002"]
+    assert timed_out["observation_status"] == "failed"
+    assert {family["failure_code"] for family in timed_out["families"].values()} == {
+        "provider_timeout"
+    }
+
+    manifest = json.loads(
+        (tmp_path / "feature_manifest_20260713.json").read_text(encoding="utf-8")
+    )
+    assert manifest["ticker_outcomes"] == result["ticker_outcomes"]
+    assert manifest["features"]["financial_metrics"]["failed_count"] == 1
+    assert manifest["features"]["event_inputs"]["failed_count"] == 1
