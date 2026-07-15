@@ -17,7 +17,7 @@ import json
 import logging
 import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -614,6 +614,9 @@ class DailyAction:
     # block_reason: 候选被风控过滤的具体原因 (价格/强度/行业/敞口), render 展示让 operator 知道为何没买.
     # 空字符串 = 未被过滤 (已录入或未进过滤循环).
     block_reason: str = ""
+    # metadata: setup detect 产出的结构化诊断 (fund flow / pre_runup / industry / 阈值等),
+    # 供 live setup 输出记录器落盘, 为将来跨周期验证攒样本外数据. 默认空 dict.
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1412,6 +1415,7 @@ def scan_from_verified_snapshot(
             trigger_strength=float(result.trigger_strength),
             degraded=bool(getattr(result, "degraded", False)),
             degradation_reason=str(getattr(result, "degradation_reason", "") or ""),
+            metadata=dict(getattr(result, "metadata", None) or {}),
         )
         ranked.append((float(result.trigger_strength), horizon, action))
 

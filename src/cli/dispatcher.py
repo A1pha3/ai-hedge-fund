@@ -1071,6 +1071,20 @@ def _resolve_daily_action(
             verified.snapshot
         )
         regime = verified.snapshot.regime
+        # Best-effort: persist the full setup output (candidates + filtered-out,
+        # with strength / fund-flow / pre-runup diagnostics) for out-of-sample
+        # accumulation. Never breaks the trading path.
+        try:
+            from src.screening.offensive.setup_output_log import log_setup_outputs
+
+            log_setup_outputs(
+                verified.snapshot.signal_date,
+                snapshot_candidates,
+                snapshot_blocked,
+                regime=regime,
+            )
+        except Exception:
+            pass
         authorization = {
             "crisis": RegimeAuthorization.BTST_CRISIS,
             "risk_off": RegimeAuthorization.BTST_RISK_OFF,
