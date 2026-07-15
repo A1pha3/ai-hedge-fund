@@ -167,3 +167,65 @@ def fetch_individual_fund_flow_tushare(
 
     keep = ["date", "close", "pct_change", "main_net_inflow", "main_net_pct", "big_net_inflow", "super_big_net_inflow", "medium_net_inflow", "small_net_inflow"]
     return df[[c for c in keep if c in df.columns]]
+
+
+def fetch_batch_fund_flow_tushare(trade_date: str) -> dict[str, pd.DataFrame]:
+    """批量拉取全市场当日资金流 (单次 API 调用).
+
+    用 pro.moneyflow(trade_date=...) 一次拉取全市场所有股票当日资金流,
+    替代逐票 pro.moneyflow(ts_code=...) + 0.2s sleep 的串行循环.
+
+    Returns:
+        {ticker_6digit: DataFrame} — 每个 DataFrame 同 fetch_individual_fund_flow_tushare schema.
+        空字典表示 API 失败或无数据.
+    """
+    token = get_tushare_token()
+    if not token:
+        logger.debug("tushare_fund_flow: TUSHARE_TOKEN 未配置, batch 跳过")
+        return {}
+
+    try:
+        import tushare as ts
+
+        pro = ts.pro_api(token=token)
+    except Exception as exc:
+        logger.warning("tushare batch moneyflow: 初始化失败: %s", exc)
+        return {}
+
+    # tushare moneyflow 支持 trade_date 参数, 返回全市场当日数据 (~5000 行)
+    try:
+        raw = pro.moneyflow(trade_date=trade_date)
+    except Exception as exc:
+        logger.warning("tushare batch moneyflow(%s) 失败: %s", trade_date, exc)
+        return {}
+
+    if raw is None or len(raw) == 0:
+        logger.debug("tushare batch moneyflow(%s): 无数据", trade_date)
+        return {}
+
+    # 归一化 (同 fetch_individual_fund_flow_tushare 的逻辑)
+    df = raw.copy()
+    df["main_net_inflow"] = df["net_mf_amount"].astype(float) * _WAN_TO_YUAN
+    df["big_net_inflow"] = (df["buy_lg_amount"].astype(float) - df["sell_lg_amount"].astype(float)) * _WAN_TO_YUAN
+    df["super_big_net_inflow"] = (df["buy_elg_amount"].astype(float) - df["sell_elg_amount"].astype(float)) * _WAN_TO_YUAN
+    df["medium_net_inflow"] = (df["buy_md_amount"].astype(float) - df["sell_md_amount"].astype(float)) * _WAN_TO_YUAN
+    df["small_net_inflow"] = (df["buy_sm_amount"].astype(float) - df["sell_sm_amount"].astype(float)) * _WAN_TO_YUAN
+    df["main_net_pct"] = float("nan")
+    df["close"] = float("nan")
+    df["pct_change"] = 0.0
+    df["date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d", errors="coerce")
+    df = df.dropna(subset=["date"])
+
+    keep = ["date", "close", "pct_change", "main_net_inflow", "main_net_pct",
+            "big_net_inflow", "super_big_net_inflow", "medium_net_inflow", "small_net_inflow", "ts_code"]
+    df = df[[c for c in keep if c in df.columns]]
+
+    # Split by ticker
+    result: dict[str, pd.DataFrame] = {}
+    for _, row in df.iterrows():
+        ticker = str(row.get("ts_code", ""))[:6]
+        if ticker and ticker.isdigit():
+            result[ticker] = pd.DataFrame([row.drop("ts_code")])
+
+    logger.info("tushare batch moneyflow(%s): %d tickers", trade_date, len(result))
+    return result

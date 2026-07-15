@@ -1268,6 +1268,7 @@ def _publish_daily_action_readiness_for_auto(trade_date: str, cache_summary: dic
     from src.screening.offensive.cache_readiness import (
         FundFlowStatus,
         PriceStatus,
+        SuspensionEvidence,
         TickerRefreshOutcome,
         derive_stats_from_outcomes,
         universe_fingerprint,
@@ -1293,6 +1294,22 @@ def _publish_daily_action_readiness_for_auto(trade_date: str, cache_summary: dic
     trade_date_dt = date(
         int(trade_date[:4]), int(trade_date[4:6]), int(trade_date[6:8])
     )
+
+    # Pre-load industry day-pct data to check which tickers have industry coverage.
+    industry_coverage: set[str] = set()
+    try:
+        from src.screening.offensive.daily_action import (
+            _load_ticker_to_industry_from_snapshots,
+        )
+        from scripts.setup_research import load_industry_day_pct
+
+        ticker_to_industry = _load_ticker_to_industry_from_snapshots(list(universe))
+        industry_day_pct = load_industry_day_pct()
+        for ticker, industry in ticker_to_industry.items():
+            if industry_day_pct.get((industry, trade_date)) is not None:
+                industry_coverage.add(ticker)
+    except Exception:
+        logger.debug("[Auto] readiness: industry coverage check failed, all tickers degraded")
 
     for ticker in universe:
         price_path = price_cache_dir / f"{ticker}.csv"
@@ -1323,12 +1340,19 @@ def _publish_daily_action_readiness_for_auto(trade_date: str, cache_summary: dic
         elif ticker.startswith(("43", "83", "87", "8", "4", "92")):
             flow_status = FundFlowStatus.UNSUPPORTED
 
+        # Industry warning: if ticker has no industry day-pct for this trade_date,
+        # the BTST industry condition can't be verified → must be degraded.
+        outcome_warnings: list[str] = []
+        if ticker not in industry_coverage:
+            outcome_warnings.append("industry_data_missing")
+
         outcomes[ticker] = TickerRefreshOutcome(
             ticker=ticker,
             price_status=price_status,
             price_history_rows=price_rows,
             fund_flow_status=flow_status,
             fund_flow_history_rows=flow_rows,
+            warnings=tuple(outcome_warnings),
         )
 
     # Build a lightweight refresh result for the manifest builder.
@@ -1345,9 +1369,7 @@ def _publish_daily_action_readiness_for_auto(trade_date: str, cache_summary: dic
         universe_tickers=universe,
         universe_fingerprint=universe_fingerprint(universe),
         daily_batch_fingerprint=None,
-        suspension_evidence=__import__(
-            "src.screening.offensive.cache_readiness", fromlist=["SuspensionEvidence"]
-        ).SuspensionEvidence.available(trade_date_dt, set()),
+        suspension_evidence=SuspensionEvidence.available(trade_date_dt, set()),
         outcomes=outcomes,
         stats=stats,
     )
@@ -1526,6 +1548,9 @@ def run_auto_screening(
 
     try:
         progress.start()
+        from colorama import Fore, Style
+        print(f"{Fore.CYAN}[Auto] 正在初始化...{Style.RESET_ALL}")
+        logger.info("[Auto] 开始运行全市场筛选（trade_date=%s, top_n=%d）", trade_date, top_n)
         try:
             from src.screening.auto_pipeline import AutoRunStatus, run_auto_pipeline
 
