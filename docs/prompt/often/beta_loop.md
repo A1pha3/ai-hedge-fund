@@ -21,14 +21,12 @@ uv run python src/main.py --daily-action
 
 ### find bug
 
-1. 收盘后更新数据
 uv run python src/main.py --auto
 
-2. 获取今日选股信号（从缓存读）
 uv run python src/main.py --daily-action
 
 我每天通过这两个命令，更新数据，选出一些值得投资的股票，能让我次日买入后，未来10天中大概率可以获取非常大的收益。
-你通过对抗性审查，认真仔细的审查这两个命令的代码逻辑，找到软件中隐藏的bug
+你们作为顶级量化交易专家团队从第一性原理出发, 通过对抗性审查，认真仔细的审查这两个命令的代码逻辑，找到软件中隐藏的bug，优化选股胜率和赔率
 
 ### fix bug
 
