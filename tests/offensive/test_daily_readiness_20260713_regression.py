@@ -11,6 +11,7 @@ to 652 synthetic six-digit tickers with a conserving status distribution.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import date
 from pathlib import Path
@@ -31,14 +32,35 @@ from src.screening.offensive.daily_action_readiness import (
 from src.screening.offensive.daily_action_readiness import (
     SharedReadinessEvidence,
 )
+from src.screening.offensive.pit_evidence import canonical_fingerprint
 from src.utils.date_utils import SIGNAL_SESSION_POLICY_VERSION
 
-_FIXTURE = Path(__file__).parent / "fixtures" / "daily_readiness_20260713.json"
+_FIXTURE = Path(__file__).parent / "fixtures" / "daily_readiness_20260713_compact_v1.json"
 _SIGNAL_DATE = date(2026, 7, 13)
 
 
 def _load_fixture() -> dict:
     return json.loads(_FIXTURE.read_text(encoding="utf-8"))
+
+
+def _fingerprint(value: object) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _evidence_fps(ticker: str, *, price: bool, flow: bool) -> dict[str, str]:
+    fps: dict[str, str] = {}
+    if price:
+        fps["price"] = _fingerprint({"price": ticker})
+    if flow:
+        fps["fund_flow"] = _fingerprint({"fund_flow": ticker})
+    return fps
 
 
 def _expand_to_universe(fixture: dict) -> dict[str, TickerRefreshOutcome]:
@@ -89,6 +111,7 @@ def _expand_to_universe(fixture: dict) -> dict[str, TickerRefreshOutcome]:
             price_history_rows=100,
             fund_flow_status=FundFlowStatus.UNSUPPORTED,
             fund_flow_history_rows=0,
+            evidence_fingerprints=_evidence_fps(ticker, price=True, flow=False),
         )
 
     # One additional confirmed fund-flow suspension (price still current) to
@@ -103,6 +126,7 @@ def _expand_to_universe(fixture: dict) -> dict[str, TickerRefreshOutcome]:
             price_history_rows=100,
             fund_flow_status=FundFlowStatus.SUSPENDED,
             fund_flow_history_rows=0,
+            evidence_fingerprints=_evidence_fps(ticker, price=True, flow=False),
         )
 
     # Remaining fillers: fully current, plan-eligible depth.
@@ -113,33 +137,54 @@ def _expand_to_universe(fixture: dict) -> dict[str, TickerRefreshOutcome]:
             price_history_rows=100,
             fund_flow_status=FundFlowStatus.CURRENT,
             fund_flow_history_rows=25,
+            evidence_fingerprints=_evidence_fps(ticker, price=True, flow=True),
         )
 
     assert len(outcomes) == total
     return outcomes
 
 
-def _shared_evidence() -> SharedReadinessEvidence:
+def _shared_evidence(universe: tuple[str, ...]) -> SharedReadinessEvidence:
+    regime_row = {"regime": "normal"}
+    industry_by_ticker = {ticker: "银行" for ticker in universe}
+    industry_day_pct = {ticker: 1.0 for ticker in universe}
+    security_status_by_ticker = {ticker: "listed" for ticker in universe}
     return SharedReadinessEvidence(
-        regime_row={"trend": "up"},
-        regime_fingerprint="sha256:regime",
-        industry_mapping_fingerprint="sha256:industry",
-        security_status_fingerprint="sha256:sec",
-        board_rule_version="board-rule-v1",
-        normalization_version="norm-v1",
+        regime_row=regime_row,
+        industry_by_ticker=industry_by_ticker,
+        industry_day_pct=industry_day_pct,
+        security_status_by_ticker=security_status_by_ticker,
+        regime_fingerprint=_fingerprint({"regime_row": regime_row}),
+        industry_fingerprint=_fingerprint(
+            {
+                "industry_by_ticker": industry_by_ticker,
+                "industry_day_pct": industry_day_pct,
+            }
+        ),
+        security_fingerprint=_fingerprint(
+            {"security_status_by_ticker": security_status_by_ticker}
+        ),
+        board_rule_version="ashare-board-prefix-v1",
+        normalization_version="pit-canonical-v1",
         signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,
     )
 
 
 def _refresh_result(outcomes: dict[str, TickerRefreshOutcome]) -> DailyActionRefreshResult:
-    universe = tuple(outcomes.keys())
+    universe = tuple(sorted(outcomes.keys()))
+    suspended = sorted(_load_fixture()["known_suspended"])
+    suspension_rows = [
+        {"date": _SIGNAL_DATE.isoformat(), "ticker": ticker} for ticker in suspended
+    ]
     return DailyActionRefreshResult(
         trade_date=_SIGNAL_DATE,
         universe_tickers=universe,
         universe_fingerprint=universe_fingerprint(universe),
-        daily_batch_fingerprint="sha256:batch",
+        daily_batch_fingerprint=_fingerprint({"batch": _SIGNAL_DATE.isoformat()}),
         suspension_evidence=SuspensionEvidence.available(
-            _SIGNAL_DATE, set(_load_fixture()["known_suspended"])
+            _SIGNAL_DATE,
+            set(suspended),
+            source_fingerprint=canonical_fingerprint("suspension", "*", suspension_rows),
         ),
         outcomes=outcomes,
         stats=derive_stats_from_outcomes(outcomes),
@@ -172,8 +217,9 @@ def test_20260713_readiness_is_healthy_despite_suspensions_and_unsupported(tmp_p
 
     manifest = build_daily_action_readiness(
         refresh,
-        _shared_evidence(),
+        _shared_evidence(refresh.universe_tickers),
         run_id="run-20260713-regression",
+        oversold_bounce_enabled=False,
     )
 
     assert manifest.domain == "daily_action"

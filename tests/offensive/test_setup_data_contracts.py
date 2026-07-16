@@ -14,12 +14,16 @@ from src.screening.offensive.setup_data_contracts import (
 )
 
 
+_CONSUMED_FP = "sha256:" + "a" * 64
+
+
 class TestBTSTCapability:
     def test_full_data_is_scannable_and_eligible(self):
         cap = evaluate_btst_capability(
             price_status="current", price_history_days=120,
             fund_flow_status="current", fund_flow_history_days=25,
             industry_current=True,
+            consumed_fingerprint=_CONSUMED_FP,
         )
         assert cap.scannable is True
         assert cap.plan_eligible is True
@@ -106,9 +110,30 @@ class TestOversoldBounceCapability:
         cap = evaluate_oversold_bounce_capability(
             price_status="current", price_history_days=120,
             fund_flow_status="current", enabled=True,
+            consumed_fingerprint=_CONSUMED_FP,
         )
         assert cap.scannable is True
         assert cap.plan_eligible is True
+
+
+class TestSetupCapabilityInvariant:
+    def test_plan_eligible_requires_consumed_fingerprint(self):
+        with pytest.raises(ValueError, match="consumed_fingerprint"):
+            SetupCapability(
+                enabled=True,
+                scannable=True,
+                plan_eligible=True,
+                degraded=False,
+            )
+
+    def test_string_boolean_is_rejected(self):
+        with pytest.raises(ValueError, match="enabled"):
+            SetupCapability(
+                enabled="true",  # type: ignore[arg-type]
+                scannable=True,
+                plan_eligible=False,
+                degraded=False,
+            )
 
 
 class TestContracts:

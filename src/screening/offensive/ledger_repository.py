@@ -26,6 +26,8 @@ class PlanProvenance:
     manifest_fingerprint: str | None = None
     input_fingerprint: str | None = None
     ticker_cache_fingerprint: str | None = None
+    snapshot_id: str | None = None
+    setup_consumed_fingerprint: str | None = None
     reference_price: float | None = None
     order_type: str | None = None
     board_rule_version: str | None = None
@@ -50,6 +52,8 @@ class PlanProvenance:
         )
         if self.verification_status != "verified" or any(not value for value in required):
             raise ValueError("verified plan provenance is incomplete")
+        if bool(self.snapshot_id) != bool(self.setup_consumed_fingerprint):
+            raise ValueError("snapshot provenance requires both snapshot_id and setup_consumed_fingerprint")
         if self.valid_on != planned_entry_date:
             raise ValueError("plan provenance valid_on mismatch")
         if self.order_type != "next_session_open_proxy":
@@ -73,6 +77,8 @@ class PlanProvenance:
             "manifest_fingerprint": self.manifest_fingerprint,
             "input_fingerprint": self.input_fingerprint,
             "ticker_cache_fingerprint": self.ticker_cache_fingerprint,
+            "snapshot_id": self.snapshot_id,
+            "setup_consumed_fingerprint": self.setup_consumed_fingerprint,
             "reference_price": self.reference_price,
             "order_type": self.order_type,
             "board_rule_version": self.board_rule_version,

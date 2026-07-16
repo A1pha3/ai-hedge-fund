@@ -18,6 +18,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -32,6 +33,22 @@ from src.cli.dispatcher import (
     COMMAND_REGISTRY,
     dispatch,
 )
+
+
+def run_daily_action_cli_fixture(*, reports_dir: Path) -> int | None:
+    reports_dir = Path(reports_dir)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    signal_date = date(2026, 7, 13)
+    with (
+        patch("src.screening.consecutive_recommendation.resolve_report_dir", return_value=reports_dir),
+        patch("src.screening.offensive.daily_action.resolve_daily_action_signal", return_value=(signal_date, "normal")),
+        patch("builtins.print"),
+    ):
+        return dispatcher._resolve_daily_action(
+            ["--daily-action"],
+            open_sessions=(signal_date, signal_date + timedelta(days=1)),
+            ledger_path=reports_dir.parent / "ledger.sqlite3",
+        )
 
 
 class TestDispatcherHelpers(unittest.TestCase):
@@ -319,6 +336,10 @@ class TestDispatchEarlyFlags(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertIsNone(resolver.call_args.kwargs.get("end_date"))
+        self.assertEqual(
+            resolver.call_args.kwargs.get("open_sessions"),
+            (date(2026, 7, 6), date(2026, 7, 7)),
+        )
 
     def test_market_status_flag_recognized(self) -> None:
         with patch("src.main.run_market_status", return_value=0) as mock:
@@ -388,6 +409,13 @@ class TestDispatchEarlyFlags(unittest.TestCase):
         self.assertAlmostEqual(kwargs["fundamental"], 0.3)
         self.assertAlmostEqual(kwargs["event_sentiment"], 0.1)
         self.assertEqual(kwargs["top_n"], 5)
+
+
+def test_cli_test_fixture_never_writes_workspace_reports(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    reports_dir = tmp_path / "reports"
+    assert run_daily_action_cli_fixture(reports_dir=reports_dir) == 0
+    assert not Path("data/reports").exists()
 
 
 if __name__ == "__main__":

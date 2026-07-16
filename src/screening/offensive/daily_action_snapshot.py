@@ -1,8 +1,16 @@
-"""Canonical PIT normalization and VerifiedDailyActionSnapshot loading.
+"""Security-hardened immutable verified PIT snapshot for Daily Action.
 
-Reads readiness manifest + cache files ONCE, normalizes to PIT (date <= signal_date),
-computes fingerprints, and returns an immutable snapshot. Scanner and service
-receive no cache paths — they only consume this snapshot.
+The loader accepts only a schema-v2 readiness manifest, reads each price/fund-flow
+cache file exactly once through symlink-resistant secure reads, recomputes the
+point-in-time (``date <= signal_date``) fingerprints, and compares the recomputed
+per-setup consumed fingerprint against the manifest's authorized value. Any
+historical row mutation, deletion, or replacement changes the recomputed
+fingerprint and blocks the affected ticker; a future-dated append is filtered out
+and leaves the verified snapshot identical.
+
+The snapshot exposes only immutable frozen records. It never re-opens cache files
+after verification and never falls back to legacy cache helpers: industry,
+security, regime, and policy evidence are all taken from the validated manifest.
 """
 
 from __future__ import annotations
@@ -13,18 +21,25 @@ import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import MappingProxyType
 
 import pandas as pd
 
 from src.screening.offensive.daily_action_readiness import (
+    DAILY_ACTION_READINESS_SCHEMA_VERSION,
     DailyActionReadinessManifest,
-    validate_manifest,
+    parse_manifest_v2,
+    recompute_setup_consumed_fingerprint,
 )
-from src.screening.offensive.data.fund_flow_store import FundFlowRecord, FundFlowStore
-from src.screening.offensive.setup_data_contracts import SetupCapability
+from src.screening.offensive.pit_evidence import (
+    PITEvidenceError,
+    canonical_flow_fingerprint,
+    canonical_price_fingerprint,
+)
+from src.screening.offensive.setup_data_contracts import SETUP_CONTRACTS, SetupCapability
 from src.utils.secure_files import SecureReadError, read_regular_bytes
 
 logger = logging.getLogger(__name__)
@@ -38,6 +53,30 @@ class SnapshotLoadError(Exception):
     """Raised when a verified snapshot cannot be loaded."""
 
 
+# ---------------------------------------------------------------------------
+# Immutable verified records
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FrozenPriceRow:
+    trade_date: date
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal | None
+    pct_change: Decimal | None
+
+
+@dataclass(frozen=True)
+class FrozenFlowRow:
+    trade_date: date
+    close: Decimal | None
+    pct_change: Decimal | None
+    main_net_inflow: Decimal
+
+
 @dataclass(frozen=True)
 class VerifiedSetupContext:
     """Per-ticker, per-setup context extracted from the verified snapshot."""
@@ -45,82 +84,109 @@ class VerifiedSetupContext:
     ticker: str
     setup_name: str
     capability: SetupCapability
-    prices: pd.DataFrame  # defensive copy on access
-    fund_flow_records: tuple[FundFlowRecord, ...]
+    prices: tuple[FrozenPriceRow, ...]
+    fund_flow_records: tuple[FrozenFlowRow, ...]
     industry_day_pct: float | None
     regime: str
+    consumed_fingerprint: str
 
 
 @dataclass(frozen=True)
 class VerifiedDailyActionSnapshot:
-    """Immutable, security-hardened PIT snapshot for Daily Action scanning.
-
-    Contains all data the scanner needs, verified against the readiness manifest.
-    Scanner and service never reopen cache files after this is constructed.
-    """
+    """Immutable, security-hardened PIT snapshot for Daily Action scanning."""
 
     signal_date: date
-    snapshot_id: str  # SHA-256 of manifest identity + normalization version
+    snapshot_id: str
     manifest: DailyActionReadinessManifest
     universe_tickers: tuple[str, ...]
-    prices_by_ticker: Mapping[str, pd.DataFrame]
-    fund_flow_by_ticker: Mapping[str, tuple[FundFlowRecord, ...]]
+    prices_by_ticker: Mapping[str, tuple[FrozenPriceRow, ...]]
+    fund_flow_by_ticker: Mapping[str, tuple[FrozenFlowRow, ...]]
     industry_day_pct_by_ticker: Mapping[str, float]
     regime: str
     board_rule_version: str
     normalization_version: str
     setup_requirements_version: str
-    ticker_blocks: Mapping[str, tuple[str, ...]]  # per-ticker block reasons
+    ticker_blocks: Mapping[str, tuple[str, ...]]
+    consumed_fingerprint_by_ticker: Mapping[str, Mapping[str, str]]
+
+    @property
+    def content_fingerprint(self) -> str:
+        return self.manifest.content_fingerprint
+
+    @property
+    def input_fingerprint(self) -> str:
+        return self.manifest.input_fingerprint
 
     @property
     def scannable_tickers(self) -> tuple[str, ...]:
-        """Tickers with at least one scannable setup capability."""
+        """Tickers with a scannable capability and no verification block."""
         return tuple(
             ticker
             for ticker in self.universe_tickers
-            if ticker in self.manifest.ticker_readiness
+            if ticker not in self.ticker_blocks
+            and ticker in self.manifest.ticker_readiness
             and any(
                 cap.scannable
                 for cap in self.manifest.ticker_readiness[ticker].capabilities.values()
             )
         )
 
-    def setup_context(self, ticker: str) -> VerifiedSetupContext | None:
-        """Get verified context for a ticker. Returns None if not available."""
+    def setup_context(
+        self, ticker: str, setup_name: str | None = None
+    ) -> VerifiedSetupContext | None:
+        """Return verified context for a ticker's setup.
+
+        With ``setup_name`` omitted the first scannable, plan-eligible setup is
+        returned. Returns ``None`` when the ticker is blocked, lacks verified
+        price rows, or the setup is not plan-eligible.
+        """
+        if ticker in self.ticker_blocks:
+            return None
         if ticker not in self.manifest.ticker_readiness:
             return None
-        tr = self.manifest.ticker_readiness[ticker]
-        # Find first scannable setup
-        for setup_name, cap in tr.capabilities.items():
-            if cap.scannable:
-                prices = self.prices_by_ticker.get(ticker)
-                if prices is None or len(prices) == 0:
-                    continue
-                # Defensive copy
-                return VerifiedSetupContext(
-                    ticker=ticker,
-                    setup_name=setup_name,
-                    capability=cap,
-                    prices=prices.copy(),
-                    fund_flow_records=self.fund_flow_by_ticker.get(ticker, ()),
-                    industry_day_pct=self.industry_day_pct_by_ticker.get(ticker),
-                    regime=self.regime,
-                )
+        readiness = self.manifest.ticker_readiness[ticker]
+        consumed_for_ticker = self.consumed_fingerprint_by_ticker.get(ticker, {})
+        candidate_setups = (
+            [setup_name] if setup_name is not None else list(readiness.capabilities)
+        )
+        prices = self.prices_by_ticker.get(ticker, ())
+        if not prices:
+            return None
+        for name in candidate_setups:
+            cap = readiness.capabilities.get(name)
+            if cap is None or not cap.scannable:
+                continue
+            consumed = consumed_for_ticker.get(name)
+            if not consumed:
+                continue
+            return VerifiedSetupContext(
+                ticker=ticker,
+                setup_name=name,
+                capability=cap,
+                prices=prices,
+                fund_flow_records=self.fund_flow_by_ticker.get(ticker, ()),
+                industry_day_pct=self.industry_day_pct_by_ticker.get(ticker),
+                regime=self.regime,
+                consumed_fingerprint=consumed,
+            )
         return None
 
-    def price_frame(self, ticker: str) -> pd.DataFrame | None:
-        """Get a defensive copy of the price frame for a ticker."""
-        df = self.prices_by_ticker.get(ticker)
-        return df.copy() if df is not None else None
+    def reference_price(self, ticker: str) -> float:
+        """Final verified close as float; KeyError when no verified rows exist."""
+        rows = self.prices_by_ticker.get(ticker)
+        if not rows:
+            raise KeyError(ticker)
+        return float(rows[-1].close)
 
 
 @dataclass(frozen=True)
 class VerifiedSnapshotResult:
     """Result of loading a verified snapshot.
 
-    snapshot: the verified snapshot if successful, None otherwise.
-    global_reason: blocking reason if snapshot is None (e.g. 'readiness_manifest_missing').
-    ticker_blocks: per-ticker block reasons from fingerprint mismatch.
+    snapshot: the verified snapshot if the manifest is valid, healthy, and dated,
+        otherwise None.
+    global_reason: fail-closed blocking reason when snapshot is None.
+    ticker_blocks: per-ticker block reasons (fingerprint mismatch, missing data).
     """
 
     snapshot: VerifiedDailyActionSnapshot | None
@@ -130,40 +196,147 @@ class VerifiedSnapshotResult:
     )
 
 
-def _pit_fingerprint(df: pd.DataFrame, ticker: str, signal_date: date) -> str:
-    """Compute SHA-256 fingerprint of PIT-normalized price data.
+# ---------------------------------------------------------------------------
+# Parsing helpers
+# ---------------------------------------------------------------------------
 
-    Normalization: filter date <= signal_date, select canonical columns,
-    dates as YYYY-MM-DD strings, sort by date, stable JSON -> SHA-256.
-    """
-    if df is None or len(df) == 0:
-        return "sha256:" + hashlib.sha256(ticker.encode()).hexdigest()
 
-    pit = (
-        df[df["date"] <= pd.Timestamp(signal_date)].copy()
-        if "date" in df.columns
-        else df.copy()
+def _row_date(value: object) -> date | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    compact = text.replace("-", "")
+    if len(compact) >= 8 and compact[:8].isdigit():
+        try:
+            return datetime.strptime(compact[:8], "%Y%m%d").date()
+        except ValueError:
+            return None
+    try:
+        parsed = pd.Timestamp(text)
+    except (ValueError, TypeError):
+        return None
+    if pd.isna(parsed):
+        return None
+    return parsed.date()
+
+
+def _decimal_or_none(value: object) -> Decimal | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "nat"}:
+        return None
+    try:
+        parsed = Decimal(text)
+    except (InvalidOperation, ValueError):
+        return None
+    return parsed if parsed.is_finite() else None
+
+
+def _frozen_price_rows(
+    frame: pd.DataFrame, signal_date: date
+) -> tuple[FrozenPriceRow, ...]:
+    rows: list[FrozenPriceRow] = []
+    for record in frame.to_dict(orient="records"):
+        row_date = _row_date(record.get("date"))
+        if row_date is None or row_date > signal_date:
+            continue
+        close = _decimal_or_none(record.get("close"))
+        if close is None:
+            continue
+        rows.append(
+            FrozenPriceRow(
+                trade_date=row_date,
+                open=_decimal_or_none(record.get("open")) or close,
+                high=_decimal_or_none(record.get("high")) or close,
+                low=_decimal_or_none(record.get("low")) or close,
+                close=close,
+                volume=_decimal_or_none(record.get("volume")),
+                pct_change=_decimal_or_none(record.get("pct_change")),
+            )
+        )
+    rows.sort(key=lambda row: row.trade_date)
+    return tuple(rows)
+
+
+def _frozen_flow_rows(
+    frame: pd.DataFrame, signal_date: date
+) -> tuple[FrozenFlowRow, ...]:
+    rows: list[FrozenFlowRow] = []
+    for record in frame.to_dict(orient="records"):
+        row_date = _row_date(record.get("date"))
+        if row_date is None or row_date > signal_date:
+            continue
+        main_net_inflow = _decimal_or_none(record.get("main_net_inflow"))
+        if main_net_inflow is None:
+            continue
+        rows.append(
+            FrozenFlowRow(
+                trade_date=row_date,
+                close=_decimal_or_none(record.get("close")),
+                pct_change=_decimal_or_none(record.get("pct_change")),
+                main_net_inflow=main_net_inflow,
+            )
+        )
+    rows.sort(key=lambda row: row.trade_date)
+    return tuple(rows)
+
+
+def _read_csv_frame(path: Path) -> pd.DataFrame | None:
+    """Securely read a cache CSV into a string-typed frame, or None if absent."""
+    if not path.exists():
+        return None
+    raw = read_regular_bytes(path, max_bytes=MAX_CACHE_FILE_BYTES)
+    if not raw.strip():
+        return pd.DataFrame()
+    return pd.read_csv(io.BytesIO(raw), dtype=str)
+
+
+def _extract_regime(regime_row: Mapping[str, object]) -> str:
+    for key in ("regime", "regime_label", "label", "state"):
+        value = regime_row.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return "normal"
+
+
+# ---------------------------------------------------------------------------
+# Loader
+# ---------------------------------------------------------------------------
+
+
+def _load_manifest(
+    reports_dir: Path, signal_date: date
+) -> tuple[DailyActionReadinessManifest | None, str | None]:
+    manifest_path = reports_dir / (
+        f"daily_action_readiness_{signal_date.strftime('%Y%m%d')}.json"
     )
-    if len(pit) == 0:
-        return "sha256:" + hashlib.sha256(ticker.encode()).hexdigest()
-
-    # Select canonical columns
-    cols = [
-        c
-        for c in ["date", "open", "high", "low", "close", "volume", "pct_change"]
-        if c in pit.columns
-    ]
-    pit = pit[cols].sort_values("date") if "date" in cols else pit
-
-    # Normalize date to string
-    if "date" in pit.columns:
-        pit = pit.copy()
-        pit["date"] = pd.to_datetime(pit["date"]).dt.strftime("%Y-%m-%d")
-
-    # Stable serialization
-    records = pit.to_dict(orient="records")
-    canonical = json.dumps(records, sort_keys=True, default=str, allow_nan=False)
-    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+    if not manifest_path.exists():
+        return None, "daily_action_readiness_missing"
+    try:
+        raw_bytes = read_regular_bytes(manifest_path, max_bytes=MAX_MANIFEST_BYTES)
+        manifest_data = json.loads(raw_bytes.decode("utf-8"))
+    except (SecureReadError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        logger.warning("snapshot: failed to read manifest %s: %s", manifest_path, exc)
+        return None, "readiness_manifest_invalid"
+    except FileNotFoundError:
+        return None, "daily_action_readiness_missing"
+    if not isinstance(manifest_data, Mapping):
+        return None, "readiness_manifest_invalid"
+    if manifest_data.get("schema_version") != DAILY_ACTION_READINESS_SCHEMA_VERSION:
+        return None, "readiness_schema_unsupported"
+    try:
+        manifest = parse_manifest_v2(manifest_data)
+    except (ValueError, TypeError) as exc:
+        logger.warning("snapshot: manifest validation failed: %s", exc)
+        return None, "readiness_manifest_invalid"
+    if manifest.trade_date != signal_date:
+        return None, "readiness_date_mismatch"
+    if not manifest.is_healthy:
+        return None, "readiness_manifest_not_healthy"
+    return manifest, None
 
 
 def load_verified_daily_action_snapshot(
@@ -171,217 +344,134 @@ def load_verified_daily_action_snapshot(
     *,
     reports_dir: Path,
     data_dir: Path,
-    regime: str = "normal",
-    board_rule_version: str = "ashare-board-prefix-v1",
 ) -> VerifiedSnapshotResult:
-    """Load and verify the Daily Action snapshot for a signal date.
+    """Load and verify the immutable Daily Action snapshot for a signal date."""
 
-    Steps:
-    1. Read readiness manifest via secure file read
-    2. Validate manifest (schema, domain, date match)
-    3. For each ticker in universe, load PIT price/fund_flow data
-    4. Compute PIT fingerprints and compare to manifest (if available)
-    5. Return immutable snapshot
-
-    Returns VerifiedSnapshotResult with snapshot=None and global_reason set on failure.
-    """
     reports_dir = Path(reports_dir)
     data_dir = Path(data_dir)
 
-    # 1. Read manifest
-    manifest_filename = (
-        f"daily_action_readiness_{signal_date.strftime('%Y%m%d')}.json"
-    )
-    manifest_path = reports_dir / manifest_filename
-
-    if not manifest_path.exists():
-        return VerifiedSnapshotResult(
-            snapshot=None,
-            global_reason="daily_action_readiness_missing",
-        )
-
-    try:
-        raw_bytes = read_regular_bytes(manifest_path, max_bytes=MAX_MANIFEST_BYTES)
-        manifest_data = json.loads(raw_bytes.decode("utf-8"))
-    except (SecureReadError, json.JSONDecodeError, FileNotFoundError) as exc:
-        logger.warning(
-            "snapshot: failed to read manifest %s: %s", manifest_path, exc
-        )
-        return VerifiedSnapshotResult(
-            snapshot=None,
-            global_reason="readiness_manifest_invalid",
-        )
-
-    # 2. Validate manifest
-    manifest = validate_manifest(manifest_data)
+    manifest, global_reason = _load_manifest(reports_dir, signal_date)
     if manifest is None:
-        return VerifiedSnapshotResult(
-            snapshot=None,
-            global_reason="readiness_manifest_invalid",
-        )
+        return VerifiedSnapshotResult(snapshot=None, global_reason=global_reason)
 
-    # Check exact date match
-    if manifest.trade_date != signal_date:
-        logger.warning(
-            "snapshot: manifest trade_date %s != requested signal_date %s",
-            manifest.trade_date,
-            signal_date,
-        )
-        return VerifiedSnapshotResult(
-            snapshot=None,
-            global_reason="readiness_date_mismatch",
-        )
-
-    # Check manifest health
-    if not manifest.is_healthy:
-        return VerifiedSnapshotResult(
-            snapshot=None,
-            global_reason="readiness_manifest_not_healthy",
-        )
-
-    # 3. Load PIT data for each ticker
+    shared = manifest.shared_evidence
+    suspension = manifest.suspension_evidence
     price_cache_dir = data_dir / "price_cache"
     fund_flow_dir = data_dir / "fund_flow_cache"
 
-    prices_by_ticker: dict[str, pd.DataFrame] = {}
-    fund_flow_by_ticker: dict[str, tuple[FundFlowRecord, ...]] = {}
-    ticker_blocks: dict[str, list[str]] = {}
-
-    signal_ts = pd.Timestamp(signal_date)
+    prices_by_ticker: dict[str, tuple[FrozenPriceRow, ...]] = {}
+    fund_flow_by_ticker: dict[str, tuple[FrozenFlowRow, ...]] = {}
+    ticker_blocks: dict[str, tuple[str, ...]] = {}
+    consumed_by_ticker: dict[str, dict[str, str]] = {}
 
     for ticker in manifest.universe_tickers:
+        readiness = manifest.ticker_readiness.get(ticker)
         block_reasons: list[str] = []
+        prices: tuple[FrozenPriceRow, ...] = ()
+        flows: tuple[FrozenFlowRow, ...] = ()
+        price_fp: str | None = None
+        flow_fp: str | None = None
 
-        # Load prices
-        price_path = price_cache_dir / f"{ticker}.csv"
-        prices_df: pd.DataFrame | None = None
-        if price_path.exists():
+        scannable = readiness is not None and any(
+            cap.scannable for cap in readiness.capabilities.values()
+        )
+
+        try:
+            price_frame = _read_csv_frame(price_cache_dir / f"{ticker}.csv")
+        except SecureReadError as exc:
+            logger.debug("snapshot: price read failed for %s: %s", ticker, exc)
+            block_reasons.append("price_read_failed")
+            price_frame = None
+
+        if price_frame is not None and not price_frame.empty:
+            prices = _frozen_price_rows(price_frame, signal_date)
             try:
-                raw = read_regular_bytes(
-                    price_path, max_bytes=MAX_CACHE_FILE_BYTES
+                price_fp = canonical_price_fingerprint(
+                    price_frame, ticker, signal_date
                 )
-                df = pd.read_csv(io.BytesIO(raw), dtype={"date": str})
-                # PIT filter — accept both YYYYMMDD and YYYY-MM-DD
-                if "date" in df.columns:
-                    df["date"] = pd.to_datetime(
-                        df["date"].str.replace("-", ""),
-                        format="%Y%m%d",
-                        errors="coerce",
-                    )
-                    df = df[df["date"] <= signal_ts].sort_values("date").reset_index(
-                        drop=True
-                    )
-                if len(df) > 0:
-                    prices_df = df
-            except (SecureReadError, Exception) as exc:
-                logger.debug(
-                    "snapshot: failed to load prices for %s: %s", ticker, exc
-                )
-                block_reasons.append("price_load_failed")
+            except PITEvidenceError as exc:
+                logger.debug("snapshot: price fingerprint failed %s: %s", ticker, exc)
+                block_reasons.append("price_evidence_invalid")
 
-        if prices_df is None:
+        try:
+            flow_frame = _read_csv_frame(fund_flow_dir / f"{ticker}.csv")
+        except SecureReadError as exc:
+            logger.debug("snapshot: flow read failed for %s: %s", ticker, exc)
+            flow_frame = None
+
+        if flow_frame is not None and not flow_frame.empty:
+            flows = _frozen_flow_rows(flow_frame, signal_date)
+            try:
+                flow_fp = canonical_flow_fingerprint(flow_frame, ticker, signal_date)
+            except PITEvidenceError as exc:
+                logger.debug("snapshot: flow fingerprint failed %s: %s", ticker, exc)
+
+        if scannable and not prices:
             block_reasons.append("price_data_missing")
 
-        prices_by_ticker[ticker] = prices_df  # type: ignore[assignment]
-
-        # Load fund flow
-        flow_path = fund_flow_dir / f"{ticker}.csv"
-        flow_records: list[FundFlowRecord] = []
-        if flow_path.exists():
-            try:
-                raw = read_regular_bytes(
-                    flow_path, max_bytes=MAX_CACHE_FILE_BYTES
+        # Verify every plan-eligible setup's authorized consumed fingerprint.
+        verified_setups: dict[str, str] = {}
+        if readiness is not None and not block_reasons:
+            for setup_name in SETUP_CONTRACTS:
+                capability = readiness.capabilities.get(setup_name)
+                if capability is None or capability.consumed_fingerprint is None:
+                    continue
+                recomputed = recompute_setup_consumed_fingerprint(
+                    ticker=ticker,
+                    setup_name=setup_name,
+                    price_fingerprint=price_fp,
+                    flow_fingerprint=flow_fp,
+                    trade_date=manifest.trade_date,
+                    shared_evidence=shared,
+                    suspension_evidence=suspension,
                 )
-                flow_df = pd.read_csv(io.BytesIO(raw), dtype=str)
-                # PIT filter + normalize date to YYYYMMDD in-place (handles
-                # both YYYYMMDD and YYYY-MM-DD upstream formats). Setup
-                # detectors compare r.date against trade_date (YYYYMMDD).
-                if "date" in flow_df.columns:
-                    flow_df = flow_df.copy()
-                    flow_df["date"] = flow_df["date"].str.replace("-", "").str[:8]
-                    flow_df = flow_df[
-                        flow_df["date"] <= signal_date.strftime("%Y%m%d")
-                    ]
-                # Convert rows to FundFlowRecord (the type contract that
-                # btst_breakout/oversold_bounce detectors expect). Snapshot
-                # loader passes ticker explicitly (it knows it from the
-                # filename) so CSVs without a `ticker` column are tolerated.
-                flow_records = [
-                    FundFlowStore.row_to_record(row, ticker=ticker)
-                    for _, row in flow_df.iterrows()
-                ]
-            except (SecureReadError, Exception) as exc:
-                logger.debug(
-                    "snapshot: failed to load fund flow for %s: %s",
-                    ticker,
-                    exc,
-                )
+                if recomputed != capability.consumed_fingerprint:
+                    block_reasons.append("pit_fingerprint_mismatch")
+                    break
+                verified_setups[setup_name] = recomputed
 
-        fund_flow_by_ticker[ticker] = tuple(flow_records)
-
+        prices_by_ticker[ticker] = prices
+        fund_flow_by_ticker[ticker] = flows
         if block_reasons:
-            ticker_blocks[ticker] = block_reasons
+            # De-duplicate while preserving order.
+            ticker_blocks[ticker] = tuple(dict.fromkeys(block_reasons))
+        elif verified_setups:
+            consumed_by_ticker[ticker] = verified_setups
 
-    # 4. Compute snapshot ID
-    snapshot_id_input = json.dumps(
-        {
-            "manifest_run_id": manifest.run_id,
-            "trade_date": manifest.trade_date.isoformat(),
-            "universe_fingerprint": manifest.universe_fingerprint,
-            "normalization_version": NORMALIZATION_VERSION,
-        },
-        sort_keys=True,
+    all_consumed = sorted(
+        fingerprint
+        for setups in consumed_by_ticker.values()
+        for fingerprint in setups.values()
     )
-    snapshot_id = "sha256:" + hashlib.sha256(snapshot_id_input.encode()).hexdigest()
+    snapshot_seed = manifest.content_fingerprint + "\n" + "\n".join(all_consumed)
+    snapshot_id = "sha256:" + hashlib.sha256(snapshot_seed.encode("utf-8")).hexdigest()
 
-    # 4b. Load industry day-pct data from industry_index_cache
-    industry_day_pct_by_ticker: dict[str, float] = {}
-    industry_cache_dir = data_dir / "industry_index_cache"
-    trade_date_str = signal_date.strftime("%Y%m%d")
-    if industry_cache_dir.exists():
-        try:
-            from src.screening.offensive.daily_action import (
-                _load_industry_day_pct_by_ticker,
-                _load_ticker_to_industry_from_snapshots,
-            )
+    industry_day_pct = {
+        ticker: float(value)
+        for ticker, value in shared.industry_day_pct.items()
+    }
 
-            ticker_to_industry = _load_ticker_to_industry_from_snapshots(
-                list(manifest.universe_tickers)
-            )
-            if ticker_to_industry:
-                from scripts.setup_research import load_industry_day_pct
-
-                industry_day_pct_raw = load_industry_day_pct()
-                for ticker, industry in ticker_to_industry.items():
-                    value = industry_day_pct_raw.get((industry, trade_date_str))
-                    if value is not None:
-                        industry_day_pct_by_ticker[ticker] = float(value)
-        except Exception as exc:
-            logger.debug("snapshot: industry day-pct load failed: %s", exc)
-
-    # 5. Build immutable snapshot
     snapshot = VerifiedDailyActionSnapshot(
         signal_date=signal_date,
         snapshot_id=snapshot_id,
         manifest=manifest,
-        universe_tickers=manifest.universe_tickers,
+        universe_tickers=tuple(manifest.universe_tickers),
         prices_by_ticker=MappingProxyType(prices_by_ticker),
         fund_flow_by_ticker=MappingProxyType(fund_flow_by_ticker),
-        industry_day_pct_by_ticker=MappingProxyType(industry_day_pct_by_ticker),
-        regime=regime,
-        board_rule_version=board_rule_version,
-        normalization_version=NORMALIZATION_VERSION,
+        industry_day_pct_by_ticker=MappingProxyType(industry_day_pct),
+        regime=_extract_regime(shared.regime_row),
+        board_rule_version=shared.board_rule_version,
+        normalization_version=shared.normalization_version,
         setup_requirements_version=manifest.policy_versions.get(
             "setup_requirements", ""
         ),
-        ticker_blocks=MappingProxyType(
-            {k: tuple(v) for k, v in ticker_blocks.items()}
+        ticker_blocks=MappingProxyType(dict(ticker_blocks)),
+        consumed_fingerprint_by_ticker=MappingProxyType(
+            {t: MappingProxyType(dict(s)) for t, s in consumed_by_ticker.items()}
         ),
     )
 
     return VerifiedSnapshotResult(
         snapshot=snapshot,
-        ticker_blocks=MappingProxyType(
-            {k: tuple(v) for k, v in ticker_blocks.items()}
-        ),
+        ticker_blocks=MappingProxyType(dict(ticker_blocks)),
     )

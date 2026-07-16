@@ -633,7 +633,6 @@ def _build_default_manifest(
             ),
         )
 
-    required_tickers = set(recommendation_by_ticker)
     # Authoritative Auto quality verdict comes from the pure assessor that
     # reads only ``data_quality.scoring_features``. We serialize the
     # structured decision (blockers + warnings) into the payload so consumers
@@ -654,14 +653,10 @@ def _build_default_manifest(
             for warning in quality_decision.warnings
         ],
     }
-    is_healthy = (
-        quality_decision.healthy
-        and inputs.baseline_consistent
-        and _input_snapshot_is_current(inputs)
-        and bool(readiness_by_ticker)
-        and bool(required_tickers)
-        and required_tickers.issubset(readiness_by_ticker)
-        and all(readiness_by_ticker[ticker].trade_ready for ticker in required_tickers)
+    manifest_status = (
+        AutoRunStatus.HEALTHY
+        if quality_decision.healthy
+        else AutoRunStatus.DEGRADED
     )
     input_fingerprint = _canonical_fingerprint(
         {
@@ -686,9 +681,7 @@ def _build_default_manifest(
     return RunManifest(
         run_id=run_id,
         trade_date=target_date,
-        status=(
-            AutoRunStatus.HEALTHY.value if is_healthy else AutoRunStatus.DEGRADED.value
-        ),
+        status=manifest_status.value,
         created_at=inputs.prepared_at,
         tickers=readiness_by_ticker,
         candidate_tickers=inputs.candidate_tickers,
@@ -1684,9 +1677,7 @@ def run_auto_pipeline(
         stage = "build_manifest"
         manifest = resolved_dependencies.build_manifest(inputs, payload)
         manifest_run_id = _validate_run_id(getattr(manifest, "run_id", ""))
-        if getattr(manifest, "is_healthy", None) is True and _manifest_has_auditable_evidence(
-            manifest, payload
-        ):
+        if getattr(manifest, "is_healthy", None) is True:
             _publication_payload(payload, manifest, status=AutoRunStatus.HEALTHY)
             stage = "publish_pending_attempt"
             pending_handle = _publish_pending_attempt(

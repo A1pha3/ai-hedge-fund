@@ -995,10 +995,9 @@ def _resolve_daily_action(
     """Run cached setup scanning through the auditable v2 simulation ledger.
 
     Flow (Task 8):
-    1. Resolve signal_date via the existing scan (price_cache probe + 17:00 guard).
-       The legacy scan's candidate list is NOT used when a verified snapshot is
-       available — its only role here is to produce a consistent signal_date and
-       consume the ``--end-date`` override.
+    1. Resolve signal_date from the authoritative open-session calendar and the
+       shared fixed 17:00 policy. An ``--end-date`` override must be a member of
+       that same calendar.
     2. Try to load a verified PIT snapshot. If available, run
        ``scan_from_verified_snapshot`` to produce candidates from the immutable
        snapshot (no cache files reopened by the scanner).
@@ -1017,17 +1016,17 @@ def _resolve_daily_action(
 
     from src.paper_trading.btst_trade_calendar import TradingSessionCalendar
     from src.screening.offensive.daily_action import (
-        BlockedCandidate,
         DailyActionScan,
+        complete_daily_action_v2,
         render_daily_action_v2,
+        render_degraded_only,
+        render_no_signal,
+        render_readiness_block,
         resolve_daily_action_signal,
-        run_daily_action_v2,
         scan_from_verified_snapshot,
     )
     from src.screening.offensive.daily_action_service import (
         DailyActionService,
-        PlanCandidate,
-        RegimeAuthorization,
     )
     from src.screening.offensive.daily_action_snapshot import (
         load_verified_daily_action_snapshot,
@@ -1035,7 +1034,7 @@ def _resolve_daily_action(
     from src.screening.offensive.execution_adjuster import ExecutionCosts
     from src.screening.offensive.ledger_repository import LedgerRepository
 
-    # --end-date YYYY-MM-DD (或 YYYYMMDD): 显式覆盖信号日, 跳过 price_cache 探测 + 17:00 guard.
+    # --end-date YYYY-MM-DD (或 YYYYMMDD): 显式信号日仍必须属于权威开市日集合。
     # 支持 `--end-date=VALUE` 和 `--end-date VALUE` 两种形式. 默认 None → 走 17:00 规则.
     end_date_raw = _get_kv(argv, "--end-date") or _next_arg(argv, "--end-date")
     end_date = end_date_raw.strip().replace("-", "") if end_date_raw else None
@@ -1049,85 +1048,14 @@ def _resolve_daily_action(
     # instead of running the legacy full-market scan (which reopened cache files
     # for up to 30 tickers just to read the resolved date). Candidates now come
     # exclusively from the verified PIT snapshot below.
-    signal_date, regime = resolve_daily_action_signal(end_date=end_date)
+    signal_date, regime = resolve_daily_action_signal(
+        end_date=end_date,
+        open_sessions=open_sessions,
+    )
     from src.screening.consecutive_recommendation import resolve_report_dir
 
     reports_dir = resolve_report_dir()
     data_dir = Path("data")
-
-    # NEW (Task 8): load the verified PIT snapshot. When present, the scanner
-    # consumes only the snapshot — no cache files reopened. The resolved regime
-    # from regime_history.json seeds crisis/risk_off sizing (spec 8.3); the
-    # snapshot's own regime is authoritative once loaded.
-    verified = load_verified_daily_action_snapshot(
-        signal_date,
-        reports_dir=reports_dir,
-        data_dir=data_dir,
-        regime=regime,
-    )
-
-    if verified.snapshot is not None:
-        snapshot_candidates, snapshot_blocked = scan_from_verified_snapshot(
-            verified.snapshot
-        )
-        regime = verified.snapshot.regime
-        # Best-effort: persist the full setup output (candidates + filtered-out,
-        # with strength / fund-flow / pre-runup diagnostics) for out-of-sample
-        # accumulation. Never breaks the trading path.
-        try:
-            from src.screening.offensive.setup_output_log import log_setup_outputs
-
-            log_setup_outputs(
-                verified.snapshot.signal_date,
-                snapshot_candidates,
-                snapshot_blocked,
-                regime=regime,
-            )
-        except Exception:
-            pass
-        authorization = {
-            "crisis": RegimeAuthorization.BTST_CRISIS,
-            "risk_off": RegimeAuthorization.BTST_RISK_OFF,
-        }.get(regime, RegimeAuthorization.NORMAL)
-        candidates = DailyActionScan(
-            verified.snapshot.signal_date,
-            tuple(
-                PlanCandidate(
-                    action.ticker,
-                    action.setup,
-                    "v2",
-                    action.kelly_pct,
-                    priority,
-                    authorization,
-                )
-                for priority, action in enumerate(snapshot_candidates, 1)
-            ),
-            tuple(
-                BlockedCandidate(
-                    action.ticker,
-                    action.block_reason or "verified_snapshot_block",
-                    action.entry_price,
-                )
-                for action in snapshot_blocked
-            ),
-            tuple(
-                (action.ticker, action.entry_price)
-                for action in snapshot_candidates
-            ),
-        )
-        # Task 8 (deep): the service gates on the verified snapshot itself
-        # (per-ticker plan_eligible + consumed fingerprint), NOT the Auto
-        # data-quality manifest. This admits valid BTST tickers outside Auto's
-        # 300 scoring pool (spec 12.3.2) instead of blocking them as
-        # manifest_ticker_absent.
-        snapshot_block_reason: str | None = None
-    else:
-        # FALLBACK: no verified readiness snapshot. Per spec section 10 and
-        # invariant 8, new entries are BLOCKED. The legacy Auto manifest MUST
-        # NOT be used as a substitute (spec: "不把旧 Auto manifest 自动升级为新域").
-        # Candidates are empty — no new BUY_PLAN can be generated.
-        candidates = DailyActionScan(signal_date, (), (), ())
-        snapshot_block_reason = verified.global_reason or "daily_action_readiness_missing"
 
     def cached_prices(ticker, trade_date):
         cache = Path("data/price_cache") / f"{ticker}.csv"
@@ -1156,40 +1084,68 @@ def _resolve_daily_action(
             execution_costs,
             shadow_history=cached_shadow_history,
         )
-        v2_run = run_daily_action_v2(
-            service, candidates, verified_snapshot=verified.snapshot
-        )
+        context = service.advance_lifecycle(signal_date)
+        verified = None
+        snapshot_block_reason: str | None = None
+        try:
+            verified = load_verified_daily_action_snapshot(
+                signal_date,
+                reports_dir=reports_dir,
+                data_dir=data_dir,
+            )
+        except Exception:
+            logger.warning("daily-action readiness snapshot load failed", exc_info=True)
+        if verified is None or verified.snapshot is None:
+            snapshot_block_reason = (
+                verified.global_reason if verified is not None else "readiness_snapshot_load_failed"
+            ) or "daily_action_readiness_missing"
+            scan = DailyActionScan(signal_date, (), (), ())
+            v2_run = complete_daily_action_v2(
+                service,
+                context,
+                scan,
+                new_entry_block=snapshot_block_reason,
+            )
+        else:
+            try:
+                scan = scan_from_verified_snapshot(verified.snapshot)
+                regime = verified.snapshot.regime
+                try:
+                    from src.screening.offensive.setup_output_log import log_setup_outputs
+
+                    log_setup_outputs(
+                        verified.snapshot.signal_date,
+                        scan.candidates,
+                        scan.blocked_candidates,
+                        regime=regime,
+                    )
+                except Exception:
+                    logger.debug("daily-action setup output log failed", exc_info=True)
+                v2_run = complete_daily_action_v2(
+                    service,
+                    context,
+                    scan,
+                    verified_snapshot=verified.snapshot,
+                )
+            except Exception:
+                logger.warning("daily-action readiness snapshot scan failed", exc_info=True)
+                snapshot_block_reason = "readiness_scan_failed"
+                scan = DailyActionScan(signal_date, (), (), ())
+                v2_run = complete_daily_action_v2(
+                    service,
+                    context,
+                    scan,
+                    new_entry_block=snapshot_block_reason,
+                )
         verbose = "--verbose" in argv
         rendered = render_daily_action_v2(v2_run, verbose=verbose)
         if snapshot_block_reason:
-            # Surface the readiness block reason so the operator understands
-            # why no new entries appeared (manifest missing/unhealthy/etc).
-            # Lifecycle output (open positions, exits) is still rendered above.
-            reason_zh = _DAILY_ACTION_BLOCK_REASONS_ZH.get(
-                snapshot_block_reason,
-                f"数据护栏阻断（{snapshot_block_reason}）",
-            )
-            rendered = (
-                rendered
-                + f"\n"
-                + f"结论：⛔ 今日未生成新的次日买入计划\n"
-                + f"原因：{reason_zh}\n"
-                + f"影响：新候选无法进入计划，但已有持仓的估值和退出仍正常执行\n"
-                + f"建议：收盘后运行 uv run python src/main.py --auto 刷新缓存和就绪清单，"
-                + f"再运行 --daily-action 获取次日信号"
-            )
+            rendered = rendered + "\n" + render_readiness_block(snapshot_block_reason, verbose=verbose)
         elif not v2_run.plans:
-            # Readiness is healthy but produced no plan-eligible candidate.
-            # Distinguish "healthy but no signal" from "diagnostic-only degraded
-            # setups exist" so the operator never reads a data block as a normal
-            # no-signal day (spec section 9).
             if v2_run.blocked_candidates:
-                rendered = rendered + "\n结论：ℹ️ 存在仅供诊断的残缺 setup，无可交易候选"
+                rendered = rendered + "\n" + render_degraded_only(len(v2_run.blocked_candidates))
             else:
-                rendered = (
-                    rendered
-                    + "\n结论：ℹ️ 今日无符合条件的次日买入信号（系统运行正常）"
-                )
+                rendered = rendered + "\n" + render_no_signal()
         print(rendered)
     return 0
 

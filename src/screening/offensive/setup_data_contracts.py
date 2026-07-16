@@ -53,6 +53,46 @@ class SetupCapability:
     warnings: tuple[str, ...] = ()
     consumed_fingerprint: str | None = None
 
+    def __post_init__(self) -> None:
+        for field_name in ("enabled", "scannable", "plan_eligible", "degraded"):
+            if type(getattr(self, field_name)) is not bool:
+                raise ValueError(f"{field_name} must be bool")
+        if not isinstance(self.block_reasons, (list, tuple)) or any(
+            not isinstance(reason, str) for reason in self.block_reasons
+        ):
+            raise ValueError("block_reasons must contain only strings")
+        if not isinstance(self.warnings, (list, tuple)) or any(
+            not isinstance(warning, str) for warning in self.warnings
+        ):
+            raise ValueError("warnings must contain only strings")
+        object.__setattr__(self, "block_reasons", tuple(self.block_reasons))
+        object.__setattr__(self, "warnings", tuple(self.warnings))
+        if self.consumed_fingerprint is not None and not _is_sha256(
+            self.consumed_fingerprint
+        ):
+            raise ValueError("consumed_fingerprint must be a sha256 fingerprint")
+        if self.scannable and not self.enabled:
+            raise ValueError("scannable capability must be enabled")
+        if self.degraded and (not self.enabled or not self.scannable):
+            raise ValueError("degraded capability must be enabled and scannable")
+        if self.plan_eligible and (
+            not self.enabled
+            or not self.scannable
+            or self.degraded
+            or self.consumed_fingerprint is None
+        ):
+            raise ValueError(
+                "plan_eligible requires enabled, scannable, non-degraded, "
+                "and consumed_fingerprint"
+            )
+
+
+def _is_sha256(value: object) -> bool:
+    if not isinstance(value, str) or not value.startswith("sha256:"):
+        return False
+    digest = value.removeprefix("sha256:")
+    return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
+
 
 @dataclass(frozen=True)
 class SetupDataRequirements:
@@ -105,6 +145,7 @@ def evaluate_btst_capability(
     industry_current: bool,
     is_suspended: bool = False,
     is_st: bool = False,
+    consumed_fingerprint: str | None = None,
 ) -> SetupCapability:
     """Evaluate BTST setup capability for a single ticker.
 
@@ -164,6 +205,18 @@ def evaluate_btst_capability(
         degraded = True
         degradation_reasons.append("industry_data_missing")
 
+    if not degraded and consumed_fingerprint is None:
+        degraded = True
+        degradation_reasons.append("consumed_fingerprint_unavailable")
+
+    if consumed_fingerprint is None:
+        return SetupCapability(
+            enabled=True,
+            scannable=True,
+            plan_eligible=False,
+            degraded=True,
+            warnings=tuple(degradation_reasons),
+        )
     return SetupCapability(
         enabled=True,
         scannable=True,
@@ -171,6 +224,7 @@ def evaluate_btst_capability(
         degraded=degraded,
         block_reasons=tuple(block_reasons),
         warnings=tuple(degradation_reasons) if degraded else (),
+        consumed_fingerprint=consumed_fingerprint if not degraded else None,
     )
 
 
@@ -182,6 +236,7 @@ def evaluate_oversold_bounce_capability(
     is_suspended: bool = False,
     is_st: bool = False,
     enabled: bool = False,
+    consumed_fingerprint: str | None = None,
 ) -> SetupCapability:
     """Evaluate OversoldBounce capability. Default disabled unless explicitly enabled."""
     if not enabled:
@@ -209,8 +264,20 @@ def evaluate_oversold_bounce_capability(
             enabled=True, scannable=False, plan_eligible=False, degraded=False,
             block_reasons=(f"fund_flow_{fund_flow_status}",),
         )
+    if consumed_fingerprint is None:
+        return SetupCapability(
+            enabled=True,
+            scannable=True,
+            plan_eligible=False,
+            degraded=True,
+            warnings=("consumed_fingerprint_unavailable",),
+        )
     return SetupCapability(
-        enabled=True, scannable=True, plan_eligible=True, degraded=False,
+        enabled=True,
+        scannable=True,
+        plan_eligible=True,
+        degraded=False,
+        consumed_fingerprint=consumed_fingerprint,
     )
 
 

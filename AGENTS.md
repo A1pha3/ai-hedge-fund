@@ -93,6 +93,14 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 - **面板按 `plan_eligible`(过全过滤) vs `filtered` 分层**：这是判断「全过滤是否真的挑出 alpha」的样本外依据。样本够大前不要据此改策略参数。
 - ⚠️ **panel 是样本外累积，不是回测**：`data/paper_trading_backtest/` 才是历史回测（192 EXIT）。两者别混。刚上线时 panel 里多数 `realized=False`（前向窗口未到期）属正常。
 
+### Daily Action readiness v2 迁移与证据链
+
+- **唯一可信新仓证据路径**：`--auto` 刷新 Daily Action 缓存 → `DailyActionRefreshResult` 冻结结果 → readiness schema v2 manifest → `load_verified_daily_action_snapshot()` 重算 PIT 指纹 → `scan_from_verified_snapshot()` → `DailyActionService.complete_run()` → ledger 写入 `verification_status="verified"`、`snapshot_id`、`setup_consumed_fingerprint`。
+- **schema v1 只读迁移行为**：旧 `schema_version=1` readiness 文件没有新仓授权；loader 必须返回 `readiness_schema_unsupported`，生命周期仍可先结算到期退出，但不得创建新计划。
+- **fail closed**：空/未知策略版本、伪造或空 fingerprint、字符串布尔值、manifest / candidate / ledger provenance 不匹配，都没有新仓权限。
+- **部署后必须重跑 `uv run python src/main.py --auto`**，让 schema v2 manifest 与最新缓存证据重新发布；不要用旧 v1 readiness 文件授权 `--daily-action` 新仓。
+- **测试隔离规则**：readiness v2 / ledger 集成测试必须把 `data/`、`data/reports/`、ledger sqlite 都建在 `tmp_path`（或测试专用生成目录）下，禁止写工作区运行时 `data/reports`、生产 ledger、`data/paper_trading_backtest/`、历史报告或 legacy ledgers。
+
 ## 已知数据/逻辑陷阱（避坑）
 
 1. **`data/paper_trading/` vs `data/paper_trading_backtest/`**：前者是运行时（0 EXIT），后者是回测（192 EXIT）。查成交数据用后者。

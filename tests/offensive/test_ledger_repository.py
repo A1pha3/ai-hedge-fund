@@ -46,6 +46,8 @@ def _provenance(ticker: str = "000001") -> PlanProvenance:
         manifest_fingerprint="manifest-fp",
         input_fingerprint="input-fp",
         ticker_cache_fingerprint=f"cache-{ticker}",
+        snapshot_id="sha256:" + "7" * 64,
+        setup_consumed_fingerprint=f"cache-{ticker}",
         reference_price=10.0,
         order_type="next_session_open_proxy",
         board_rule_version="ashare-board-v1",
@@ -433,6 +435,41 @@ def test_verified_plan_provenance_round_trips_and_is_in_plan_event(tmp_path: Pat
         ).fetchone()[0])
     assert payload["provenance"]["source_run_id"] == "run-20260710"
     assert payload["provenance"]["order_type"] == "next_session_open_proxy"
+
+
+def test_verified_plan_provenance_round_trips_snapshot_identity(tmp_path: Path) -> None:
+    repo = _repo(tmp_path)
+    provenance = PlanProvenance(
+        verification_status="verified",
+        source_run_id="run-20260710",
+        manifest_fingerprint="manifest-fp",
+        input_fingerprint="input-fp",
+        ticker_cache_fingerprint="sha256:" + "8" * 64,
+        snapshot_id="sha256:" + "7" * 64,
+        setup_consumed_fingerprint="sha256:" + "8" * 64,
+        reference_price=10.0,
+        order_type="next_session_open_proxy",
+        board_rule_version="ashare-board-v1",
+        valid_on=date(2026, 7, 13),
+        execution_cost_version="test",
+        authorization="normal",
+    )
+    trade = repo.create_plan(
+        "000001", "btst", "v1", date(2026, 7, 10), date(2026, 7, 13),
+        0.1, 1, provenance=provenance,
+    )
+
+    stored = repo.get_trade(trade.trade_id).provenance
+
+    assert stored.snapshot_id == provenance.snapshot_id
+    assert stored.setup_consumed_fingerprint == provenance.setup_consumed_fingerprint
+    with sqlite3.connect(repo.path) as conn:
+        payload = json.loads(conn.execute(
+            "SELECT payload_json FROM trade_events WHERE trade_id=? AND event_type='PLAN_CREATED'",
+            (trade.trade_id,),
+        ).fetchone()[0])
+    assert payload["provenance"]["snapshot_id"] == provenance.snapshot_id
+    assert payload["provenance"]["setup_consumed_fingerprint"] == provenance.setup_consumed_fingerprint
 
 
 def test_verified_plan_rejects_incomplete_or_mismatched_provenance(tmp_path: Path) -> None:

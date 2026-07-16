@@ -1,10 +1,14 @@
 """Tests for per-ticker cache refresh outcome model and conservation."""
 
 from datetime import date
+from types import SimpleNamespace
+from unittest.mock import Mock
 
+import pandas as pd
 import pytest
 
 from src.screening.offensive.cache_readiness import (
+    DailyActionCacheRefreshStats,
     DailyActionRefreshResult,
     FundFlowStatus,
     PriceStatus,
@@ -32,10 +36,204 @@ def _outcome(
     )
 
 
+def test_suspension_failure_is_unavailable_not_empty():
+    from src.screening.offensive import cache_refresh
+
+    load_suspension_evidence = getattr(cache_refresh, "load_suspension_evidence", None)
+    assert load_suspension_evidence is not None
+
+    evidence = load_suspension_evidence(
+        "20260713",
+        fetch_fn=Mock(side_effect=RuntimeError("down")),
+    )
+    assert evidence.status is SuspensionEvidenceStatus.UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        None,
+        [],
+        {},
+        pd.DataFrame(),
+        pd.DataFrame({"other": []}),
+        pd.DataFrame({"ts_code": ["bad"]}),
+        pd.DataFrame({"ts_code": [123]}),
+        pd.DataFrame({"ts_code": [None]}),
+        pd.DataFrame({"ts_code": [pd.NA]}),
+    ),
+)
+def test_malformed_suspension_payload_is_unavailable(payload):
+    from src.screening.offensive.cache_refresh import load_suspension_evidence
+
+    evidence = load_suspension_evidence(
+        "20260713",
+        fetch_fn=Mock(return_value=payload),
+    )
+
+    assert evidence.status is SuspensionEvidenceStatus.UNAVAILABLE
+    assert evidence.tickers == frozenset()
+    assert evidence.source_fingerprint is None
+
+
+def test_empty_suspension_dataframe_with_schema_is_authoritative_empty():
+    from src.screening.offensive.cache_refresh import load_suspension_evidence
+
+    evidence = load_suspension_evidence(
+        "20260713",
+        fetch_fn=Mock(return_value=pd.DataFrame({"ts_code": pd.Series(dtype=str)})),
+    )
+
+    assert evidence.status is SuspensionEvidenceStatus.AVAILABLE_EMPTY
+    assert evidence.source_fingerprint is not None
+
+
+def test_refresh_result_freezes_nested_mappings():
+    tickers = ("000001", "000002")
+    outcomes = {
+        ticker: TickerRefreshOutcome(
+            ticker=ticker,
+            price_status=PriceStatus.CURRENT,
+            price_history_rows=1,
+            fund_flow_status=FundFlowStatus.CURRENT,
+            fund_flow_history_rows=1,
+            evidence_fingerprints={"price": f"sha256:{ticker}"},
+        )
+        for ticker in tickers
+    }
+    result = DailyActionRefreshResult(
+        trade_date=date(2026, 7, 13),
+        universe_tickers=tickers,
+        universe_fingerprint=universe_fingerprint(tickers),
+        daily_batch_fingerprint=None,
+        suspension_evidence=SuspensionEvidence.available(date(2026, 7, 13), set()),
+        outcomes=outcomes,
+        stats=derive_stats_from_outcomes(outcomes),
+    )
+
+    with pytest.raises(TypeError):
+        result.outcomes["000002"] = result.outcomes["000001"]
+    with pytest.raises(TypeError):
+        result.outcomes["000001"].evidence_fingerprints["price"] = "forged"
+
+
+def test_refresh_result_copies_universe_suspensions_and_nested_counters():
+    universe = ["000001"]
+    suspended = {"000001"}
+    counters = {"nested": {"values": [1], "labels": {"captured"}}}
+    evidence = SuspensionEvidence(
+        trade_date=date(2026, 7, 13),
+        status=SuspensionEvidenceStatus.AVAILABLE_NONEMPTY,
+        tickers=suspended,
+        source_fingerprint="sha256:" + "a" * 64,
+    )
+    outcomes = {
+        "000001": _outcome(
+            "000001",
+            price=PriceStatus.SUSPENDED,
+            flow=FundFlowStatus.SUSPENDED,
+        )
+    }
+
+    result = DailyActionRefreshResult(
+        trade_date=date(2026, 7, 13),
+        universe_tickers=universe,
+        universe_fingerprint=universe_fingerprint(tuple(universe)),
+        daily_batch_fingerprint=None,
+        suspension_evidence=evidence,
+        outcomes=outcomes,
+        stats=derive_stats_from_outcomes(outcomes),
+        _refresh_counters=counters,
+    )
+    universe.append("000002")
+    suspended.add("000002")
+    counters["nested"]["values"].append(2)
+    counters["nested"]["labels"].add("forged")
+
+    assert result.universe_tickers == ("000001",)
+    assert result.suspension_evidence.tickers == frozenset({"000001"})
+    assert result.nested["values"] == (1,)
+    assert result.nested["labels"] == frozenset({"captured"})
+    with pytest.raises(TypeError):
+        result.nested["forged"] = True
+
+
+def test_ticker_outcome_copies_reason_and_warning_lists():
+    fingerprints = {"price": "captured"}
+    block_reasons = ["blocked"]
+    warnings = ["warning"]
+
+    outcome = TickerRefreshOutcome(
+        ticker="000001",
+        price_status=PriceStatus.CURRENT,
+        price_history_rows=1,
+        fund_flow_status=FundFlowStatus.CURRENT,
+        fund_flow_history_rows=1,
+        evidence_fingerprints=fingerprints,
+        block_reasons=block_reasons,
+        warnings=warnings,
+    )
+    fingerprints["price"] = "forged"
+    block_reasons.append("forged")
+    warnings.append("forged")
+
+    assert outcome.evidence_fingerprints == {"price": "captured"}
+    assert outcome.block_reasons == ("blocked",)
+    assert outcome.warnings == ("warning",)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    (
+        {"evidence_fingerprints": {"price": object()}},
+        {"block_reasons": ("blocked", 1)},
+        {"warnings": ([],)},
+        {"price_history_rows": True},
+        {"fund_flow_history_rows": 1.5},
+    ),
+)
+def test_ticker_outcome_rejects_invalid_nested_values_and_counts(overrides):
+    values = {
+        "ticker": "000001",
+        "price_status": PriceStatus.CURRENT,
+        "price_history_rows": 1,
+        "fund_flow_status": FundFlowStatus.CURRENT,
+        "fund_flow_history_rows": 1,
+        **overrides,
+    }
+
+    with pytest.raises(ValueError):
+        TickerRefreshOutcome(**values)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    (
+        {"price_status_counts": {"current": True}},
+        {"fund_flow_status_counts": {"current": 1.5}},
+        {"industry_index_total": False},
+        {"industry_index_failed": -1},
+        {"limit_up_injected": "1"},
+    ),
+)
+def test_refresh_stats_rejects_non_integer_or_negative_counts(overrides):
+    values = {
+        "price_status_counts": {"current": 1},
+        "fund_flow_status_counts": {"current": 1},
+        "industry_index_total": 0,
+        "industry_index_failed": 0,
+        "limit_up_injected": 0,
+        **overrides,
+    }
+
+    with pytest.raises(ValueError):
+        DailyActionCacheRefreshStats(**values)
+
+
 class TestSuspensionEvidence:
     def test_available_with_tickers(self):
         ev = SuspensionEvidence.available(date(2026, 7, 13), {"000001", "000002"})
-        assert ev.status is SuspensionEvidenceStatus.AVAILABLE
+        assert ev.status is SuspensionEvidenceStatus.AVAILABLE_NONEMPTY
         assert ev.tickers == frozenset({"000001", "000002"})
 
     def test_unavailable_has_empty_tickers(self):
@@ -46,11 +244,135 @@ class TestSuspensionEvidence:
     def test_available_empty_list_means_no_suspensions(self):
         """Empty list = authority confirms no suspensions (distinct from unavailable)."""
         ev = SuspensionEvidence.available(date(2026, 7, 13), set())
-        assert ev.status is SuspensionEvidenceStatus.AVAILABLE
+        assert ev.status is SuspensionEvidenceStatus.AVAILABLE_EMPTY
         assert len(ev.tickers) == 0
+
+    @pytest.mark.parametrize(
+        ("status", "tickers", "source_fingerprint"),
+        (
+            (SuspensionEvidenceStatus.AVAILABLE_EMPTY, {"000001"}, None),
+            (SuspensionEvidenceStatus.AVAILABLE_NONEMPTY, set(), None),
+            (SuspensionEvidenceStatus.UNAVAILABLE, {"000001"}, None),
+            (
+                SuspensionEvidenceStatus.UNAVAILABLE,
+                set(),
+                "sha256:" + "a" * 64,
+            ),
+            (SuspensionEvidenceStatus.AVAILABLE_NONEMPTY, {"bad"}, None),
+            (SuspensionEvidenceStatus.AVAILABLE_EMPTY, set(), ""),
+            (SuspensionEvidenceStatus.AVAILABLE_EMPTY, set(), 123),
+            (SuspensionEvidenceStatus.AVAILABLE_EMPTY, None, None),
+        ),
+    )
+    def test_rejects_inconsistent_state(self, status, tickers, source_fingerprint):
+        with pytest.raises(ValueError):
+            SuspensionEvidence(
+                trade_date=date(2026, 7, 13),
+                status=status,
+                tickers=tickers,
+                source_fingerprint=source_fingerprint,
+            )
 
 
 class TestConservation:
+    @pytest.mark.parametrize(
+        "overrides",
+        (
+            {"suspension_evidence": {}},
+            {
+                "suspension_evidence": SimpleNamespace(
+                    trade_date=date(2026, 7, 13),
+                    tickers=frozenset(),
+                )
+            },
+            {"stats": {}},
+            {
+                "stats": SimpleNamespace(
+                    price_status_counts={"current": 1},
+                    fund_flow_status_counts={"current": 1},
+                )
+            },
+        ),
+    )
+    def test_result_rejects_mutable_or_duck_typed_aggregate_fields(self, overrides):
+        tickers = ("000001",)
+        outcomes = {"000001": _outcome("000001")}
+        values = {
+            "trade_date": date(2026, 7, 13),
+            "universe_tickers": tickers,
+            "universe_fingerprint": universe_fingerprint(tickers),
+            "daily_batch_fingerprint": None,
+            "suspension_evidence": SuspensionEvidence.available(
+                date(2026, 7, 13), set()
+            ),
+            "outcomes": outcomes,
+            "stats": derive_stats_from_outcomes(outcomes),
+            **overrides,
+        }
+
+        with pytest.raises(ValueError):
+            DailyActionRefreshResult(**values)
+
+    @pytest.mark.parametrize("forged_dimension", ("price", "fund_flow"))
+    def test_result_rejects_stats_that_contradict_frozen_outcomes(
+        self,
+        forged_dimension,
+    ):
+        tickers = ("000001",)
+        outcomes = {"000001": _outcome("000001")}
+        price_counts = {"current": 1}
+        flow_counts = {"current": 1}
+        if forged_dimension == "price":
+            price_counts = {"failed": 1}
+        else:
+            flow_counts = {"failed": 1}
+        forged_stats = DailyActionCacheRefreshStats(
+            price_status_counts=price_counts,
+            fund_flow_status_counts=flow_counts,
+            industry_index_total=7,
+            industry_index_failed=1,
+            limit_up_injected=2,
+        )
+
+        with pytest.raises(ValueError, match="stats .* status counts"):
+            DailyActionRefreshResult(
+                trade_date=date(2026, 7, 13),
+                universe_tickers=tickers,
+                universe_fingerprint=universe_fingerprint(tickers),
+                daily_batch_fingerprint=None,
+                suspension_evidence=SuspensionEvidence.available(
+                    date(2026, 7, 13), set()
+                ),
+                outcomes=outcomes,
+                stats=forged_stats,
+            )
+
+    @pytest.mark.parametrize(
+        "overrides",
+        (
+            {"universe_fingerprint": object()},
+            {"daily_batch_fingerprint": object()},
+        ),
+    )
+    def test_result_rejects_non_string_fingerprint_fields(self, overrides):
+        tickers = ("000001",)
+        outcomes = {"000001": _outcome("000001")}
+        values = {
+            "trade_date": date(2026, 7, 13),
+            "universe_tickers": tickers,
+            "universe_fingerprint": universe_fingerprint(tickers),
+            "daily_batch_fingerprint": None,
+            "suspension_evidence": SuspensionEvidence.available(
+                date(2026, 7, 13), set()
+            ),
+            "outcomes": outcomes,
+            "stats": derive_stats_from_outcomes(outcomes),
+            **overrides,
+        }
+
+        with pytest.raises(ValueError):
+            DailyActionRefreshResult(**values)
+
     def test_price_status_counts_sum_to_universe(self):
         outcomes = {
             "000001": _outcome("000001"),
@@ -101,6 +423,23 @@ class TestConservation:
                 stats=stats,
             )
 
+    def test_result_post_init_requires_exact_outcome_keys(self):
+        tickers = ("000001", "000002")
+        outcomes = {
+            "000001": _outcome("000001"),
+            "000003": _outcome("000003"),
+        }
+        with pytest.raises(ValueError, match="exactly cover"):
+            DailyActionRefreshResult(
+                trade_date=date(2026, 7, 13),
+                universe_tickers=tickers,
+                universe_fingerprint=universe_fingerprint(tickers),
+                daily_batch_fingerprint=None,
+                suspension_evidence=SuspensionEvidence.available(date(2026, 7, 13), set()),
+                outcomes=outcomes,
+                stats=derive_stats_from_outcomes(outcomes),
+            )
+
     def test_valid_result_passes_post_init(self):
         tickers = ("000001", "000002")
         outcomes = {
@@ -111,7 +450,12 @@ class TestConservation:
                 flow=FundFlowStatus.SUSPENDED,
             ),
         }
-        stats = derive_stats_from_outcomes(outcomes)
+        stats = derive_stats_from_outcomes(
+            outcomes,
+            industry_index_total=7,
+            industry_index_failed=1,
+            limit_up_injected=2,
+        )
         result = DailyActionRefreshResult(
             trade_date=date(2026, 7, 13),
             universe_tickers=tickers,
@@ -122,6 +466,10 @@ class TestConservation:
             stats=stats,
         )
         assert len(result.outcomes) == 2
+        assert result.stats is stats
+        assert result.stats.industry_index_total == 7
+        assert result.stats.industry_index_failed == 1
+        assert result.stats.limit_up_injected == 2
 
     def test_not_attempted_preserves_ticker_in_counts(self):
         """Quota-exceeded tickers must be NOT_ATTEMPTED, not disappear from denominator."""
