@@ -98,6 +98,97 @@ git diff --check
 exit 0
 ```
 
+> Follow-up remediation rounds are listed newest first.
+
+## Third-round RED — rooted writes and dated references
+
+The next adversarial review found two remaining authority gaps:
+
+- the Auto bridge rooted price, fund-flow, snapshots, reports, and panel data,
+  but industry refresh still delegated to `backfill_industry_index` without a
+  cache root; optional preheat also remained an implicit global DiskCache write
+  inside default dependencies;
+- stock-basic/security and SW reference values were detached, but their tuple
+  adapter carried no observation date, effective window, source version, or
+  provenance fingerprint. An old cache could therefore be relabeled with the
+  signal date.
+
+The third-round tests were RED before implementation:
+
+```text
+uv run pytest tests/offensive/test_backfill_industry_index.py \
+  tests/offensive/test_auto_readiness_production.py \
+  tests/test_main_auto_cache_refresh.py -q
+collection error: make_daily_readiness_reference_snapshot was absent
+
+uv run pytest tests/offensive/ -q
+1 failed, 818 passed
+
+Failure: the industry backfill callback received no explicit cache_dir.
+```
+
+## Third-round GREEN implementation
+
+- Threaded `industry_index_cache_dir` through the Auto bridge,
+  `refresh_daily_action_caches`, `refresh_industry_index_cache`, and
+  `backfill(cache_dir=...)`. The real temporary-root orchestration keeps
+  industry refresh enabled and proves its provider/backfill writes only below
+  the injected root.
+- Removed `PREHEAT_BEFORE_AUTO` discovery and global DiskCache mutation from
+  `_default_dependencies`. The production CLI now passes an explicit optional
+  preheat callback to `run_auto_pipeline`; it runs only after pending-run
+  reconciliation. Isolated/default temp-root dependencies never preheat.
+- Replaced the undated tuple with `DailyReadinessReferenceSnapshot` and
+  `ReferenceProvenance`. Security and SW sources now carry exact observation
+  dates, effective windows, provider names, versions, content fingerprints,
+  and source fingerprints.
+- Bound both provenance objects and their source fingerprints into
+  `FrozenSharedReadinessSource` and its canonical fingerprint. Authorization
+  requires `observed_on == signal_date` and an effective window covering that
+  date; no bounded-age, persisted-cache, or undated fallback exists.
+- Added provider-owned capture around the actual Auto compute. During that
+  boundary, stock-basic is fetched uncached and SW membership is projected
+  as-of the signal date from uncached `index_classify`/`index_member` data. The
+  public adapter only returns the completed typed snapshot and performs no
+  network or cache lookup.
+- Added cross-date undated rejection, stale security rejection, stale SW
+  rejection, valid dated provenance, later-mutation immunity, and a cold-start
+  subprocess proof. The subprocess sets `DISK_CACHE_PATH` below `tmp_path`
+  before imports, exercises the actual refresh/reference capture, and leaves
+  every workspace `data/**/*` file—including SQLite/WAL/SHM—unchanged.
+
+## Third-round verification
+
+```text
+uv run pytest tests/offensive/test_auto_readiness_production.py \
+  tests/offensive/test_daily_readiness_v2_security.py \
+  tests/offensive/test_backfill_industry_index.py \
+  tests/test_main_auto_cache_refresh.py \
+  tests/test_operator_output_domains.py -q
+65 passed
+
+uv run pytest tests/offensive/ -q
+819 passed
+
+uv run pytest tests/test_main_auto_cache_refresh.py \
+  tests/test_operator_output_domains.py \
+  tests/screening/test_auto_pipeline_publication.py \
+  tests/test_e2e_pipeline_smoke.py -q
+126 passed
+
+uv run ruff check <all changed files except src/main.py>
+All checks passed
+
+uv run ruff check --ignore F401 src/main.py
+All checks passed
+
+uv run python -m compileall -q <changed production modules>
+exit 0
+
+git diff --check
+exit 0
+```
+
 ## Second-round RED — source-freeze review
 
 The review of base commit `9f17fb2b` rejected the first remediation because

@@ -35,6 +35,178 @@ def _fingerprint(value: object) -> str:
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
+def _is_sha256(value: object) -> bool:
+    return (
+        type(value) is str
+        and len(value) == 71
+        and value.startswith("sha256:")
+        and all(ch in "0123456789abcdef" for ch in value[7:])
+    )
+
+
+@dataclass(frozen=True)
+class ReferenceProvenance:
+    """Dated source identity whose effective window is explicit and auditable."""
+
+    observed_on: date
+    effective_from: date
+    effective_through: date
+    source: str
+    version: str
+    content_fingerprint: str
+    source_fingerprint: str
+
+    def __post_init__(self) -> None:
+        if any(
+            type(value) is not date
+            for value in (self.observed_on, self.effective_from, self.effective_through)
+        ):
+            raise ManifestValidationError("reference provenance dates must be exact")
+        if self.effective_from > self.effective_through:
+            raise ManifestValidationError("reference effective window is inverted")
+        if type(self.source) is not str or not self.source.strip():
+            raise ManifestValidationError("reference source must be nonempty")
+        if type(self.version) is not str or not self.version.strip():
+            raise ManifestValidationError("reference version must be nonempty")
+        if not _is_sha256(self.content_fingerprint):
+            raise ManifestValidationError("reference content fingerprint is invalid")
+        if self.source_fingerprint != _fingerprint(self._identity_payload()):
+            raise ManifestValidationError("reference source fingerprint mismatch")
+
+    def _identity_payload(self) -> dict[str, str]:
+        return {
+            "observed_on": self.observed_on.isoformat(),
+            "effective_from": self.effective_from.isoformat(),
+            "effective_through": self.effective_through.isoformat(),
+            "source": self.source,
+            "version": self.version,
+            "content_fingerprint": self.content_fingerprint,
+        }
+
+    def to_dict(self) -> dict[str, str]:
+        return {**self._identity_payload(), "source_fingerprint": self.source_fingerprint}
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        observed_on: date,
+        effective_from: date,
+        effective_through: date,
+        source: str,
+        version: str,
+        content_fingerprint: str,
+    ) -> "ReferenceProvenance":
+        identity = {
+            "observed_on": observed_on.isoformat(),
+            "effective_from": effective_from.isoformat(),
+            "effective_through": effective_through.isoformat(),
+            "source": source,
+            "version": version,
+            "content_fingerprint": content_fingerprint,
+        }
+        return cls(
+            observed_on=observed_on,
+            effective_from=effective_from,
+            effective_through=effective_through,
+            source=source,
+            version=version,
+            content_fingerprint=content_fingerprint,
+            source_fingerprint=_fingerprint(identity),
+        )
+
+
+@dataclass(frozen=True)
+class DailyReadinessReferenceSnapshot:
+    """Detached stock/security and SW observations with dated provenance."""
+
+    stock_basic_rows: tuple[Mapping[str, str], ...]
+    sw_industry_by_ticker: Mapping[str, str]
+    security_reference: ReferenceProvenance
+    sw_reference: ReferenceProvenance
+
+    def __post_init__(self) -> None:
+        rows = tuple(
+            MappingProxyType(dict(row)) for row in tuple(self.stock_basic_rows)
+        )
+        sw = dict(self.sw_industry_by_ticker)
+        if self.security_reference.content_fingerprint != _fingerprint(
+            [dict(row) for row in rows]
+        ):
+            raise ManifestValidationError("security reference content mismatch")
+        if self.sw_reference.content_fingerprint != _fingerprint(sw):
+            raise ManifestValidationError("SW reference content mismatch")
+        object.__setattr__(self, "stock_basic_rows", rows)
+        object.__setattr__(self, "sw_industry_by_ticker", MappingProxyType(sw))
+
+
+def make_daily_readiness_reference_snapshot(
+    *,
+    stock_basic: object,
+    sw_industry_by_ticker: object,
+    security_observed_on: date,
+    security_effective_from: date,
+    security_effective_through: date,
+    security_source: str,
+    security_version: str,
+    sw_observed_on: date,
+    sw_effective_from: date,
+    sw_effective_through: date,
+    sw_source: str,
+    sw_version: str,
+) -> DailyReadinessReferenceSnapshot:
+    """Normalize provider-owned observations into one immutable typed snapshot."""
+
+    if isinstance(stock_basic, pd.DataFrame):
+        raw_rows = stock_basic.copy(deep=True).to_dict("records")
+    elif isinstance(stock_basic, (list, tuple)):
+        raw_rows = list(stock_basic)
+    else:
+        raise ManifestValidationError("stock_basic reference must be tabular")
+    rows: list[dict[str, str]] = []
+    for raw in raw_rows:
+        if not isinstance(raw, Mapping):
+            raise ManifestValidationError("stock_basic reference row is malformed")
+        projected = {
+            key: raw.get(key) for key in ("ts_code", "name", "list_status")
+        }
+        if any(type(value) is not str for value in projected.values()):
+            raise ManifestValidationError("stock_basic reference row is malformed")
+        rows.append(projected)  # type: ignore[arg-type]
+    rows.sort(key=lambda row: row["ts_code"])
+    if not isinstance(sw_industry_by_ticker, Mapping):
+        raise ManifestValidationError("SW reference must be a mapping")
+    sw = {
+        str(code): str(industry)
+        for code, industry in sorted(sw_industry_by_ticker.items())
+        if type(code) is str and type(industry) is str
+    }
+    if len(sw) != len(sw_industry_by_ticker):
+        raise ManifestValidationError("SW reference mapping is malformed")
+    security_content = _fingerprint(rows)
+    sw_content = _fingerprint(sw)
+    return DailyReadinessReferenceSnapshot(
+        stock_basic_rows=tuple(rows),
+        sw_industry_by_ticker=sw,
+        security_reference=ReferenceProvenance.create(
+            observed_on=security_observed_on,
+            effective_from=security_effective_from,
+            effective_through=security_effective_through,
+            source=security_source,
+            version=security_version,
+            content_fingerprint=security_content,
+        ),
+        sw_reference=ReferenceProvenance.create(
+            observed_on=sw_observed_on,
+            effective_from=sw_effective_from,
+            effective_through=sw_effective_through,
+            source=sw_source,
+            version=sw_version,
+            content_fingerprint=sw_content,
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class FrozenSecurityRow:
     ticker: str
@@ -51,6 +223,8 @@ class FrozenSharedReadinessSource:
     security_rows: tuple[FrozenSecurityRow, ...]
     sw_industry_by_ticker: Mapping[str, str]
     industry_day_pct: Mapping[str, float]
+    security_reference: ReferenceProvenance
+    sw_reference: ReferenceProvenance
     source_fingerprints: Mapping[str, str]
     source_fingerprint: str
 
@@ -76,6 +250,10 @@ class FrozenSharedReadinessSource:
         fingerprints = dict(self.source_fingerprints)
         if set(fingerprints) != {"stock_basic", "sw_industry", "industry_day_pct"}:
             raise ManifestValidationError("frozen source fingerprints are incomplete")
+        if fingerprints["stock_basic"] != self.security_reference.source_fingerprint:
+            raise ManifestValidationError("security source fingerprint is not bound")
+        if fingerprints["sw_industry"] != self.sw_reference.source_fingerprint:
+            raise ManifestValidationError("SW source fingerprint is not bound")
         canonical = {
             "signal_date": self.signal_date.isoformat(),
             "universe_tickers": list(universe),
@@ -85,6 +263,8 @@ class FrozenSharedReadinessSource:
             ],
             "sw_industry_by_ticker": sw,
             "industry_day_pct": pct,
+            "security_reference": self.security_reference.to_dict(),
+            "sw_reference": self.sw_reference.to_dict(),
             "source_fingerprints": fingerprints,
         }
         if self.source_fingerprint != _fingerprint(canonical):
@@ -139,38 +319,57 @@ def _load_exact_industry_pct(
     return result
 
 
-def _default_reference_loaders() -> tuple[object, object]:
+def _default_reference_loader() -> object:
     from src.tools.tushare_api import get_daily_readiness_reference_snapshot
 
     return get_daily_readiness_reference_snapshot()
+
+
+def _validate_reference_for_signal_date(
+    reference: ReferenceProvenance,
+    signal_date: date,
+    label: str,
+) -> None:
+    if reference.observed_on != signal_date:
+        raise ManifestValidationError(
+            f"{label} reference observed_on must equal signal date"
+        )
+    if not (reference.effective_from <= signal_date <= reference.effective_through):
+        raise ManifestValidationError(
+            f"{label} reference effective window does not cover signal date"
+        )
 
 
 def capture_shared_readiness_evidence_source(
     refresh_result: DailyActionRefreshResult,
     *,
     data_dir: Path,
-    stock_basic_loader: Callable[[], object] | None = None,
-    sw_industry_loader: Callable[[], object] | None = None,
+    reference_snapshot_loader: Callable[[], object] | None = None,
     industry_day_pct_loader: Callable[[date, tuple[str, ...]], object] | None = None,
 ) -> FrozenSharedReadinessSource:
     """Capture and detach every repository source exactly once; never uses network."""
 
     if type(refresh_result) is not DailyActionRefreshResult:
         raise ManifestValidationError("frozen source requires exact refresh result")
-    default_stock: object | None = None
-    default_sw: object | None = None
-    if stock_basic_loader is None or sw_industry_loader is None:
-        default_stock, default_sw = _default_reference_loaders()
-    stock_raw = stock_basic_loader() if stock_basic_loader else default_stock
-    sw_raw = sw_industry_loader() if sw_industry_loader else default_sw
-    if isinstance(stock_raw, pd.DataFrame):
-        stock_records = stock_raw.copy(deep=True).to_dict("records")
-    elif isinstance(stock_raw, (list, tuple)):
-        stock_records = [dict(row) if isinstance(row, Mapping) else row for row in stock_raw]
-    else:
-        raise ManifestValidationError("repository stock_basic evidence unavailable")
-    if not isinstance(sw_raw, Mapping):
-        raise ManifestValidationError("repository SW industry evidence unavailable")
+    raw_snapshot = (
+        reference_snapshot_loader()
+        if reference_snapshot_loader is not None
+        else _default_reference_loader()
+    )
+    if type(raw_snapshot) is not DailyReadinessReferenceSnapshot:
+        raise ManifestValidationError("typed dated reference snapshot is required")
+    _validate_reference_for_signal_date(
+        raw_snapshot.security_reference,
+        refresh_result.trade_date,
+        "security",
+    )
+    _validate_reference_for_signal_date(
+        raw_snapshot.sw_reference,
+        refresh_result.trade_date,
+        "SW",
+    )
+    stock_records = [dict(row) for row in raw_snapshot.stock_basic_rows]
+    sw_raw = raw_snapshot.sw_industry_by_ticker
 
     universe = refresh_result.universe_tickers
     rows_by_ticker: dict[str, FrozenSecurityRow] = {}
@@ -222,8 +421,8 @@ def capture_shared_readiness_evidence_source(
 
     rows = tuple(rows_by_ticker[ticker] for ticker in universe)
     fingerprints = {
-        "stock_basic": _fingerprint([row.__dict__ for row in rows]),
-        "sw_industry": _fingerprint(sw),
+        "stock_basic": raw_snapshot.security_reference.source_fingerprint,
+        "sw_industry": raw_snapshot.sw_reference.source_fingerprint,
         "industry_day_pct": _fingerprint(
             {"trade_date": refresh_result.trade_date.isoformat(), "values": pct}
         ),
@@ -234,6 +433,8 @@ def capture_shared_readiness_evidence_source(
         "security_rows": [row.__dict__ for row in rows],
         "sw_industry_by_ticker": sw,
         "industry_day_pct": pct,
+        "security_reference": raw_snapshot.security_reference.to_dict(),
+        "sw_reference": raw_snapshot.sw_reference.to_dict(),
         "source_fingerprints": fingerprints,
     }
     return FrozenSharedReadinessSource(
@@ -242,6 +443,8 @@ def capture_shared_readiness_evidence_source(
         security_rows=rows,
         sw_industry_by_ticker=sw,
         industry_day_pct=pct,
+        security_reference=raw_snapshot.security_reference,
+        sw_reference=raw_snapshot.sw_reference,
         source_fingerprints=fingerprints,
         source_fingerprint=_fingerprint(canonical),
     )

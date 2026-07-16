@@ -66,21 +66,26 @@ def _fetch_industry_daily(index_code: str, end_date: str | None = None) -> pd.Da
     return df
 
 
-def backfill(end_date: str | None = None) -> dict[str, int]:
+def backfill(
+    end_date: str | None = None,
+    *,
+    cache_dir: Path = _CACHE_DIR,
+) -> dict[str, int]:
     """backfill 全部 SW L1 行业指数. 返回 {industry_name: 行数}."""
     resolved_end_date = _resolve_end_date(end_date)
     codes = _fetch_industry_codes()
-    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
     # 保存 index_code → industry_name 映射 (供 load_industry_2d_pct 用)
     mapping = {code: name for code, name in codes}
-    (_CACHE_DIR / "_industry_codes.json").write_text(
+    (cache_dir / "_industry_codes.json").write_text(
         json.dumps(mapping, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     result: dict[str, int] = {}
     for i, (index_code, industry_name) in enumerate(codes, 1):
-        out_path = _CACHE_DIR / f"{index_code}.csv"
+        out_path = cache_dir / f"{index_code}.csv"
         if out_path.exists():
             covers_end_date, row_count = _cache_covers_end_date(out_path, resolved_end_date)
             if covers_end_date:

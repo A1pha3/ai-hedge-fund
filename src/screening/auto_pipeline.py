@@ -821,6 +821,7 @@ def _default_dependencies(
     calendar_refresh_fn: Callable[..., object] | None = None,
     panel_backfill_fn: Callable[..., object] | None = None,
     panel_health_fn: Callable[..., object] | None = None,
+    reference_snapshot_loader: Callable[[], object] | None = None,
 ) -> AutoPipelineDependencies:
     from src.screening.offensive.daily_action import _env_setup_disable_list
 
@@ -837,26 +838,6 @@ def _default_dependencies(
 
     def prepare_inputs(trade_date: str) -> AutoInputs:
         from src import main
-
-        if os.environ.get("PREHEAT_BEFORE_AUTO", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
-            try:
-                from src.data.cache_preheater import preheat_cache
-
-                stats = preheat_cache(trade_date, concurrency=4)
-                main.logger.info(
-                    "[Auto] P1-1 缓存预热完成: %d/%d 成功, %d 跳过, %.1fs",
-                    stats.tasks_success,
-                    stats.tasks_total,
-                    stats.tasks_skipped,
-                    stats.elapsed_seconds,
-                )
-            except Exception as exc:
-                main.logger.warning("[Auto] P1-1 缓存预热失败: %s", exc)
         refresh_payload: dict[str, Any] = {}
         readiness_state["refresh_result"] = main._refresh_daily_action_caches_for_auto(
             trade_date,
@@ -878,7 +859,19 @@ def _default_dependencies(
         from src import main
 
         assert isinstance(inputs, AutoInputs)
-        payload = main.compute_auto_screening_results(inputs.trade_date, top_n)
+        if reference_snapshot_loader is None:
+            from src.tools.tushare_api import (
+                begin_daily_readiness_reference_capture,
+                end_daily_readiness_reference_capture,
+            )
+
+            begin_daily_readiness_reference_capture(inputs.trade_date)
+            try:
+                payload = main.compute_auto_screening_results(inputs.trade_date, top_n)
+            finally:
+                end_daily_readiness_reference_capture()
+        else:
+            payload = main.compute_auto_screening_results(inputs.trade_date, top_n)
         if inputs.cache_refresh_summary:
             payload["daily_action_cache_refresh"] = dict(inputs.cache_refresh_summary)
         main._attach_freshness_check(inputs.trade_date, payload)
@@ -893,6 +886,7 @@ def _default_dependencies(
                 frozen_source = main._capture_shared_readiness_evidence_source_for_auto(
                     refresh_result,
                     data_dir=data_dir,
+                    reference_snapshot_loader=reference_snapshot_loader,
                 )
                 publication = main._complete_daily_action_readiness_for_auto(
                     refresh_result,
@@ -1752,6 +1746,7 @@ def run_auto_pipeline(
     reports_dir: Path | None = None,
     data_dir: Path | None = None,
     dependencies: AutoPipelineDependencies | None = None,
+    preheat_fn: Callable[[str], object] | None = None,
 ) -> AutoRunResult:
     """Recover an interrupted publication or compute one new auto run."""
     trade_date = _validate_trade_date(trade_date)
@@ -1763,6 +1758,8 @@ def run_auto_pipeline(
     recovered = _reconcile_pending_run(resolved_reports_dir, trade_date)
     if recovered is not None:
         return recovered
+    if preheat_fn is not None:
+        preheat_fn(trade_date)
     run_id = _new_run_id(trade_date)
     if dependencies is None:
         if data_dir is None:

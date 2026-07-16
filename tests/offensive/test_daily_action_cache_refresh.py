@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import Mock
 
 import pandas as pd
@@ -895,19 +896,24 @@ def test_refresh_daily_action_caches_uses_candidate_pool_for_price_and_fund_flow
 def test_refresh_daily_action_caches_refreshes_industry_index_for_trade_date(tmp_path):
     from src.screening.offensive.cache_refresh import refresh_daily_action_caches
 
-    calls: list[str] = []
+    calls: list[tuple[str, Path]] = []
+    industry_dir = tmp_path / "industry_index_cache"
 
     stats = refresh_daily_action_caches(
         "20260708",
         price_cache_dir=tmp_path / "price_cache",
         fund_flow_cache_dir=tmp_path / "fund_flow_cache",
+        industry_index_cache_dir=industry_dir,
         snapshot_dir=tmp_path / "snapshots",
         daily_prices_df=pd.DataFrame(),
         refresh_fund_flow=False,
-        industry_index_backfill_fn=lambda *, end_date: calls.append(end_date) or {"农林牧渔": 1502},
+        industry_index_backfill_fn=lambda *, end_date, cache_dir: calls.append(
+            (end_date, cache_dir)
+        )
+        or {"农林牧渔": 1502},
     )
 
-    assert calls == ["20260708"]
+    assert calls == [("20260708", industry_dir)]
     assert stats.industry_index_total == 1502
     assert stats.industry_index_failed == 0
 

@@ -1176,6 +1176,31 @@ def _daily_action_cache_refresh_enabled() -> bool:
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _run_optional_auto_preheat(trade_date: str) -> None:
+    """Run the legacy global cache preheat only at the production CLI boundary."""
+
+    if os.environ.get("PREHEAT_BEFORE_AUTO", "").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        return
+    try:
+        from src.data.cache_preheater import preheat_cache
+
+        stats = preheat_cache(trade_date, concurrency=4)
+        logger.info(
+            "[Auto] P1-1 缓存预热完成: %d/%d 成功, %d 跳过, %.1fs",
+            stats.tasks_success,
+            stats.tasks_total,
+            stats.tasks_skipped,
+            stats.elapsed_seconds,
+        )
+    except Exception as exc:  # pragma: no cover - optional production warm-up
+        logger.warning("[Auto] P1-1 缓存预热失败: %s", exc)
+
+
 def _refresh_daily_action_caches_for_auto(
     trade_date: str,
     report_payload: dict,
@@ -1210,6 +1235,7 @@ def _refresh_daily_action_caches_for_auto(
             trade_date,
             price_cache_dir=data_root / "price_cache",
             fund_flow_cache_dir=data_root / "fund_flow_cache",
+            industry_index_cache_dir=data_root / "industry_index_cache",
             snapshot_dir=data_root / "snapshots",
         )
         from src.screening.offensive.cache_readiness import DailyActionRefreshResult
@@ -1630,6 +1656,7 @@ def run_auto_screening(
                 strict_quality=strict_quality,
                 reports_dir=auto_reports_dir,
                 data_dir=auto_reports_dir.parent,
+                preheat_fn=_run_optional_auto_preheat,
             )
             for diagnostic in result.recovery_diagnostics:
                 logger.warning("[Auto] recovery diagnostic: %s", diagnostic)

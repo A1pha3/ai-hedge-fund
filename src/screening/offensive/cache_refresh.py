@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_PRICE_CACHE_DIR = Path("data/price_cache")
 _DEFAULT_FUND_FLOW_CACHE_DIR = Path("data/fund_flow_cache")
+_DEFAULT_INDUSTRY_INDEX_CACHE_DIR = Path("data/industry_index_cache")
 _DEFAULT_SNAPSHOT_DIR = Path("data/snapshots")
 _DEFAULT_FUND_FLOW_RATE_LIMIT_SEC = 0.2
 _DEFAULT_PRICE_HISTORY_LOOKBACK_DAYS = 400
@@ -772,6 +773,7 @@ def refresh_fund_flow_cache(
 def refresh_industry_index_cache(
     trade_date: str,
     *,
+    cache_dir: Path | str,
     backfill_fn: Callable[..., dict[str, int]] | None = None,
 ) -> DailyActionCacheRefreshStats:
     """Refresh SW L1 industry index cache used by BTST industry confirmation."""
@@ -782,7 +784,7 @@ def refresh_industry_index_cache(
 
         backfill_fn = backfill
     try:
-        result = backfill_fn(end_date=trade_date)
+        result = backfill_fn(end_date=trade_date, cache_dir=Path(cache_dir))
         stats.industry_index_total = sum(int(count) for count in (result or {}).values())
     except Exception as exc:  # noqa: BLE001 - industry cache must not abort --auto
         logger.warning("Failed to refresh industry_index_cache for %s: %s", trade_date, exc)
@@ -874,6 +876,7 @@ def refresh_daily_action_caches(
     *,
     price_cache_dir: Path | str = _DEFAULT_PRICE_CACHE_DIR,
     fund_flow_cache_dir: Path | str = _DEFAULT_FUND_FLOW_CACHE_DIR,
+    industry_index_cache_dir: Path | str = _DEFAULT_INDUSTRY_INDEX_CACHE_DIR,
     snapshot_dir: Path | str = _DEFAULT_SNAPSHOT_DIR,
     daily_prices_df: pd.DataFrame | None = None,
     fetch_daily_prices_batch: Callable[[str], pd.DataFrame | None] | None = None,
@@ -1031,6 +1034,7 @@ def refresh_daily_action_caches(
     if refresh_industry_index:
         industry_stats = refresh_industry_index_cache(
             effective_trade_date,
+            cache_dir=industry_index_cache_dir,
             backfill_fn=industry_index_backfill_fn,
         )
 

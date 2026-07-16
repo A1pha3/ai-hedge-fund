@@ -3,6 +3,9 @@ from __future__ import annotations
 import inspect
 import hashlib
 import json
+import subprocess
+import sys
+import textwrap
 from datetime import date
 from functools import partial
 from pathlib import Path
@@ -22,6 +25,7 @@ from src.screening.offensive.daily_action_readiness import ManifestValidationErr
 from src.screening.offensive.shared_readiness_evidence import (
     build_shared_readiness_evidence_for_auto,
     capture_shared_readiness_evidence_source,
+    make_daily_readiness_reference_snapshot,
 )
 
 from tests.test_main_auto_cache_refresh import (
@@ -44,6 +48,40 @@ def _runtime_tree_state() -> dict[str, tuple[int, int, str | None]]:
             )
             state[str(path)] = (stat.st_mtime_ns, stat.st_size, digest)
     return state
+
+
+def _reference_snapshot(
+    signal_date: date,
+    *,
+    stock_rows: object | None = None,
+    sw_mapping: object | None = None,
+    security_observed_on: date | None = None,
+    security_effective_from: date | None = None,
+    security_effective_through: date | None = None,
+    sw_observed_on: date | None = None,
+    sw_effective_from: date | None = None,
+    sw_effective_through: date | None = None,
+):
+    return make_daily_readiness_reference_snapshot(
+        stock_basic=(
+            stock_rows
+            if stock_rows is not None
+            else [{"ts_code": "000001.SZ", "name": "平安银行", "list_status": "L"}]
+        ),
+        sw_industry_by_ticker=(
+            sw_mapping if sw_mapping is not None else {"000001.SZ": "银行"}
+        ),
+        security_observed_on=security_observed_on or signal_date,
+        security_effective_from=security_effective_from or signal_date,
+        security_effective_through=security_effective_through or signal_date,
+        security_source="tushare.stock_basic",
+        security_version="stock-basic-v1",
+        sw_observed_on=sw_observed_on or signal_date,
+        sw_effective_from=sw_effective_from or signal_date,
+        sw_effective_through=sw_effective_through or signal_date,
+        sw_source="tushare.sw2021.index_member",
+        sw_version="sw2021-v1",
+    )
 
 
 def test_auto_refresh_bridge_requires_explicit_reports_dir() -> None:
@@ -79,8 +117,11 @@ def test_frozen_shared_source_is_immune_to_later_repository_mutation(
     frozen = capture_shared_readiness_evidence_source(
         refresh_result,
         data_dir=tmp_path,
-        stock_basic_loader=lambda: stock_rows,
-        sw_industry_loader=lambda: sw_mapping,
+        reference_snapshot_loader=lambda: _reference_snapshot(
+            refresh_result.trade_date,
+            stock_rows=stock_rows,
+            sw_mapping=sw_mapping,
+        ),
         industry_day_pct_loader=lambda _date, _industries: industry_values,
     )
     payload = {
@@ -154,10 +195,7 @@ def test_shared_builder_requires_exact_frozen_universe(tmp_path: Path) -> None:
     frozen = capture_shared_readiness_evidence_source(
         refresh_result,
         data_dir=tmp_path,
-        stock_basic_loader=lambda: [
-            {"ts_code": "000001.SZ", "name": "平安银行", "list_status": "L"}
-        ],
-        sw_industry_loader=lambda: {"000001.SZ": "银行"},
+        reference_snapshot_loader=lambda: _reference_snapshot(refresh_result.trade_date),
         industry_day_pct_loader=lambda _date, _industries: {"银行": 1.25},
     )
     original = refresh_result.outcomes["000001"]
@@ -229,8 +267,11 @@ def test_shared_evidence_builder_covers_frozen_ticker_outside_auto_pool() -> Non
     frozen = capture_shared_readiness_evidence_source(
         outside_pool_result,
         data_dir=Path("unused"),
-        stock_basic_loader=lambda: stock_basic,
-        sw_industry_loader=lambda: {"000001.SZ": "银行", "600000.SH": "银行"},
+        reference_snapshot_loader=lambda: _reference_snapshot(
+            outside_pool_result.trade_date,
+            stock_rows=stock_basic,
+            sw_mapping={"000001.SZ": "银行", "600000.SH": "银行"},
+        ),
         industry_day_pct_loader=lambda _date, _industries: {"银行": 1.25},
     )
     shared = main_mod._build_shared_readiness_evidence_for_auto(
@@ -252,10 +293,7 @@ def test_shared_evidence_builder_rejects_noncanonical_regime(regime: object) -> 
     frozen = capture_shared_readiness_evidence_source(
         refresh_result,
         data_dir=Path("unused"),
-        stock_basic_loader=lambda: [
-            {"ts_code": "000001.SZ", "name": "平安银行", "list_status": "L"}
-        ],
-        sw_industry_loader=lambda: {"000001.SZ": "银行"},
+        reference_snapshot_loader=lambda: _reference_snapshot(refresh_result.trade_date),
         industry_day_pct_loader=lambda _date, _industries: {"银行": 1.25},
     )
     with pytest.raises(ManifestValidationError, match="regime"):
@@ -281,14 +319,12 @@ def test_repository_shared_evidence_uses_only_loaded_and_local_sources(
     pd.DataFrame([{"trade_date": "20260708", "pct_chg": 1.25}]).to_csv(
         industry_dir / "801780.SI.csv", index=False
     )
+    snapshot = _reference_snapshot(date(2026, 7, 8))
     monkeypatch.setattr(
         tushare_api,
-        "_stock_basic_cache",
-        pd.DataFrame(
-            [{"ts_code": "000001.SZ", "name": "平安银行", "list_status": "L"}]
-        ),
+        "get_daily_readiness_reference_snapshot",
+        lambda: snapshot,
     )
-    monkeypatch.setattr(tushare_api, "_sw_industry_cache", {"000001.SZ": "银行"})
     monkeypatch.setattr(
         tushare_api,
         "_call_tushare_dataframe_api",
@@ -312,6 +348,65 @@ def test_repository_shared_evidence_uses_only_loaded_and_local_sources(
     assert shared.industry_day_pct == {"000001": 1.25}
 
 
+@pytest.mark.parametrize("signal_date", [date(2026, 7, 8), date(2026, 7, 9)])
+def test_undated_reference_tuple_never_authorizes_any_signal_date(
+    tmp_path: Path,
+    signal_date: date,
+) -> None:
+    refresh_result = _fake_refresh_result(trade_date=signal_date)
+    with pytest.raises(ManifestValidationError, match="typed|dated|reference"):
+        capture_shared_readiness_evidence_source(
+            refresh_result,
+            data_dir=tmp_path,
+            reference_snapshot_loader=lambda: (
+                pd.DataFrame(
+                    [{"ts_code": "000001.SZ", "name": "平安银行", "list_status": "L"}]
+                ),
+                {"000001.SZ": "银行"},
+            ),
+            industry_day_pct_loader=lambda _date, _industries: {"银行": 1.25},
+        )
+
+
+@pytest.mark.parametrize("stale_source", ["security", "sw"])
+def test_stale_reference_provenance_fails_closed(
+    tmp_path: Path,
+    stale_source: str,
+) -> None:
+    signal_date = date(2026, 7, 8)
+    kwargs = (
+        {"security_observed_on": date(2026, 7, 7)}
+        if stale_source == "security"
+        else {"sw_observed_on": date(2026, 7, 7)}
+    )
+    with pytest.raises(ManifestValidationError, match="observed|signal date"):
+        capture_shared_readiness_evidence_source(
+            _fake_refresh_result(),
+            data_dir=tmp_path,
+            reference_snapshot_loader=lambda: _reference_snapshot(signal_date, **kwargs),
+            industry_day_pct_loader=lambda _date, _industries: {"银行": 1.25},
+        )
+
+
+def test_valid_dated_reference_provenance_is_bound_into_frozen_fingerprint(
+    tmp_path: Path,
+) -> None:
+    refresh_result = _fake_refresh_result()
+    snapshot = _reference_snapshot(refresh_result.trade_date)
+    frozen = capture_shared_readiness_evidence_source(
+        refresh_result,
+        data_dir=tmp_path,
+        reference_snapshot_loader=lambda: snapshot,
+        industry_day_pct_loader=lambda _date, _industries: {"银行": 1.25},
+    )
+
+    assert frozen.security_reference.observed_on == refresh_result.trade_date
+    assert frozen.sw_reference.effective_from <= refresh_result.trade_date
+    assert frozen.sw_reference.effective_through >= refresh_result.trade_date
+    assert frozen.security_reference.source_fingerprint.startswith("sha256:")
+    assert frozen.sw_reference.source_fingerprint.startswith("sha256:")
+
+
 def test_default_auto_orchestration_publishes_and_captures_real_readiness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -319,7 +414,6 @@ def test_default_auto_orchestration_publishes_and_captures_real_readiness(
     from src.screening.offensive.cache_readiness import SuspensionEvidence
     from src.screening.offensive.cache_refresh import refresh_daily_action_caches
     from src.screening.offensive.pit_evidence import canonical_fingerprint
-    from src.tools import tushare_api
     from tests.offensive.readiness_v2_testkit import (
         SIGNAL_DATE,
         SIGNAL_DATE_TEXT,
@@ -339,21 +433,18 @@ def test_default_auto_orchestration_publishes_and_captures_real_readiness(
         "[]", encoding="utf-8"
     )
     industry_dir = data_dir / "industry_index_cache"
-    industry_dir.mkdir()
-    (industry_dir / "_industry_codes.json").write_text(
-        json.dumps({"801780.SI": "银行"}, ensure_ascii=False), encoding="utf-8"
-    )
-    pd.DataFrame([{"trade_date": SIGNAL_DATE_TEXT, "pct_chg": 1.25}]).to_csv(
-        industry_dir / "801780.SI.csv", index=False
-    )
-    monkeypatch.setattr(
-        tushare_api,
-        "_stock_basic_cache",
-        pd.DataFrame(
-            [{"ts_code": "000001.SZ", "name": "平安银行", "list_status": "L"}]
-        ),
-    )
-    monkeypatch.setattr(tushare_api, "_sw_industry_cache", {"000001.SZ": "银行"})
+
+    def temp_industry_backfill(*, end_date: str, cache_dir: Path) -> dict[str, int]:
+        assert end_date == SIGNAL_DATE_TEXT
+        assert cache_dir == industry_dir
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (cache_dir / "_industry_codes.json").write_text(
+            json.dumps({"801780.SI": "银行"}, ensure_ascii=False), encoding="utf-8"
+        )
+        pd.DataFrame([{"trade_date": end_date, "pct_chg": 1.25}]).to_csv(
+            cache_dir / "801780.SI.csv", index=False
+        )
+        return {"银行": 1}
     payload = {
         "date": SIGNAL_DATE_TEXT,
         "market_state": {"regime_gate_level": "normal"},
@@ -371,8 +462,9 @@ def test_default_auto_orchestration_publishes_and_captures_real_readiness(
         daily_prices_df=fixture_daily_batch_20260713(("000001",)),
         target_tickers=("000001",),
         backfill_price_history_fn=fixture_price_history,
+        industry_index_backfill_fn=temp_industry_backfill,
         fund_flow_fetch_fn=fixture_fund_flow,
-        refresh_industry_index=False,
+        refresh_industry_index=True,
         refresh_fund_flow=True,
         fund_flow_rate_limit_sec=0.0,
         suspension_loader=lambda _trade_date: SuspensionEvidence.available(
@@ -382,6 +474,13 @@ def test_default_auto_orchestration_publishes_and_captures_real_readiness(
         ),
     )
     monkeypatch.setenv("DAILY_ACTION_DISABLED_SETUPS", "none")
+    monkeypatch.setenv("PREHEAT_BEFORE_AUTO", "true")
+    monkeypatch.setattr(
+        "src.data.cache_preheater.preheat_cache",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("default temp-root dependencies must not preheat global cache")
+        ),
+    )
     dependencies = auto_pipeline._default_dependencies(
         reports_dir,
         data_dir,
@@ -390,6 +489,7 @@ def test_default_auto_orchestration_publishes_and_captures_real_readiness(
         calendar_refresh_fn=lambda **_kwargs: None,
         panel_backfill_fn=lambda **_kwargs: ([], {"records": 0, "realized": 0}),
         panel_health_fn=lambda *_args: "insufficient",
+        reference_snapshot_loader=lambda: _reference_snapshot(SIGNAL_DATE),
     )
     # Runtime policy is part of the orchestration snapshot. A later mutation
     # must not change what the publisher authorizes for this run.
@@ -413,6 +513,158 @@ def test_default_auto_orchestration_publishes_and_captures_real_readiness(
         cache_file = str(workspace_data / "cache" / f"cache.sqlite{suffix}")
         assert workspace_after.get(cache_file) == workspace_before.get(cache_file)
     assert workspace_after == workspace_before
+
+
+def test_cold_start_default_reference_capture_is_rooted_under_tmp(
+    tmp_path: Path,
+) -> None:
+    workspace_before = _runtime_tree_state()
+    script = textwrap.dedent(
+        """
+        import json
+        import os
+        import sys
+        from datetime import date
+        from functools import partial
+        from pathlib import Path
+
+        root = Path(sys.argv[1])
+        data_dir = root / "data"
+        reports_dir = data_dir / "reports"
+        os.environ["DISK_CACHE_PATH"] = str(data_dir / "cache" / "cache.sqlite")
+        os.environ["PREHEAT_BEFORE_AUTO"] = "true"
+
+        import pandas as pd
+        from src import main
+        from src.screening import auto_pipeline
+        from src.screening.offensive.cache_readiness import SuspensionEvidence
+        from src.screening.offensive.cache_refresh import refresh_daily_action_caches
+        from src.screening.offensive.pit_evidence import canonical_fingerprint
+        from src.tools import tushare_api
+
+        signal = date.today()
+        signal_text = signal.strftime("%Y%m%d")
+        reports_dir.mkdir(parents=True)
+        (data_dir / "snapshots").mkdir()
+        dates = pd.date_range(end=signal, periods=40, freq="D")
+        price = pd.DataFrame({
+            "ticker": ["000001"] * len(dates),
+            "date": dates.strftime("%Y-%m-%d"),
+            "open": [10.0] * len(dates),
+            "high": [11.0] * len(dates),
+            "low": [9.8] * len(dates),
+            "close": [10.5] * len(dates),
+            "pct_change": [1.0] * len(dates),
+            "volume": [1000000.0] * len(dates),
+        })
+        flow = pd.DataFrame({
+            "ticker": ["000001"] * 20,
+            "date": dates[-20:].strftime("%Y-%m-%d"),
+            "close": [10.5] * 20,
+            "pct_change": [1.0] * 20,
+            "main_net_inflow": [1000.0] * 20,
+            "main_net_pct": [1.0] * 20,
+        })
+        for directory, frame in (
+            (data_dir / "price_cache", price),
+            (data_dir / "fund_flow_cache", flow),
+        ):
+            directory.mkdir(parents=True)
+            frame.to_csv(directory / "000001.csv", index=False)
+
+        daily = pd.DataFrame([{
+            "ts_code": "000001.SZ", "trade_date": signal_text,
+            "open": 10.0, "high": 11.0, "low": 9.8, "close": 10.5,
+            "pct_chg": 1.0, "vol": 1000000.0,
+        }])
+
+        def industry_backfill(*, end_date, cache_dir):
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "_industry_codes.json").write_text(
+                json.dumps({"801780.SI": "银行"}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            pd.DataFrame([{"trade_date": end_date, "pct_chg": 1.25}]).to_csv(
+                cache_dir / "801780.SI.csv", index=False
+            )
+            return {"银行": 1}
+
+        actual_refresh = partial(
+            refresh_daily_action_caches,
+            daily_prices_df=daily,
+            target_tickers=("000001",),
+            backfill_price_history_fn=lambda *_args: price,
+            industry_index_backfill_fn=industry_backfill,
+            fund_flow_fetch_fn=lambda *_args, **_kwargs: flow.tail(1),
+            refresh_industry_index=True,
+            refresh_fund_flow=True,
+            fund_flow_rate_limit_sec=0.0,
+            suspension_loader=lambda _trade_date: SuspensionEvidence.available(
+                signal, set(),
+                source_fingerprint=canonical_fingerprint("suspension", "*", ()),
+            ),
+        )
+
+        tushare_api._get_pro = lambda: object()
+        def provider(_pro, api_name, **_kwargs):
+            if api_name == "stock_basic":
+                return pd.DataFrame([{
+                    "ts_code": "000001.SZ", "name": "平安银行", "list_status": "L"
+                }])
+            if api_name == "index_classify":
+                return pd.DataFrame([{
+                    "index_code": "801780.SI", "industry_name": "银行"
+                }])
+            if api_name == "index_member":
+                return pd.DataFrame([{
+                    "con_code": "000001.SZ", "in_date": "20000101", "out_date": None
+                }])
+            raise AssertionError(api_name)
+        tushare_api._call_tushare_dataframe_api = provider
+
+        def compute(_trade_date, _top_n):
+            assert tushare_api.get_all_stock_basic() is not None
+            assert tushare_api.get_sw_industry_classification() == {"000001.SZ": "银行"}
+            return {
+                "date": signal_text,
+                "market_state": {"regime_gate_level": "normal"},
+                "candidate_pool_run": {
+                    "trade_date": signal_text, "tickers": [], "candidates": []
+                },
+                "recommendations": [],
+            }
+        main.compute_auto_screening_results = compute
+        main._attach_freshness_check = lambda *_args: None
+
+        dependencies = auto_pipeline._default_dependencies(
+            reports_dir,
+            data_dir,
+            "cold-start",
+            refresh_fn=actual_refresh,
+            calendar_refresh_fn=lambda **_kwargs: None,
+            panel_backfill_fn=lambda **_kwargs: ([], {"records": 0, "realized": 0}),
+            panel_health_fn=lambda *_args: "insufficient",
+        )
+        inputs = dependencies.prepare_inputs(signal_text)
+        payload = dependencies.compute_report(inputs, 10)
+        publication = dependencies.get_daily_readiness_publication()
+        assert publication.status == "healthy"
+        assert payload["daily_action_readiness"]["status"] == "healthy"
+        assert publication.manifest.universe_tickers == ("000001",)
+        print(json.dumps({"status": publication.status}))
+        """
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        cwd=Path(__file__).resolve().parents[2],
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=120,
+    )
+    assert completed.returncode == 0, completed.stderr + completed.stdout
+    assert json.loads(completed.stdout.splitlines()[-1]) == {"status": "healthy"}
+    assert _runtime_tree_state() == workspace_before
 
 
 def test_shared_evidence_build_failure_writes_attempt_and_preserves_canonical(

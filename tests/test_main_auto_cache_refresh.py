@@ -49,7 +49,7 @@ class _FakeRefreshStats:
         }
 
 
-def _fake_refresh_result():
+def _fake_refresh_result(trade_date: date = date(2026, 7, 8)):
     from src.screening.offensive.cache_readiness import (
         DailyActionRefreshResult,
         FundFlowStatus,
@@ -81,12 +81,12 @@ def _fake_refresh_result():
     from src.screening.offensive.pit_evidence import canonical_fingerprint
 
     return DailyActionRefreshResult(
-        trade_date=date(2026, 7, 8),
+        trade_date=trade_date,
         universe_tickers=tickers,
         universe_fingerprint=universe_fingerprint(tickers),
-        daily_batch_fingerprint=fingerprint({"batch": "20260708"}),
+        daily_batch_fingerprint=fingerprint({"batch": trade_date.isoformat()}),
         suspension_evidence=SuspensionEvidence.available(
-            date(2026, 7, 8),
+            trade_date,
             set(),
             source_fingerprint=canonical_fingerprint("suspension", "*", []),
         ),
@@ -134,6 +134,7 @@ def test_main_retains_frozen_refresh_result_until_auto_regime_exists(monkeypatch
 
     result = _fake_refresh_result()
     published: list[object] = []
+    refresh_kwargs: dict[str, object] = {}
     payload: dict = {"date": "20260708", "recommendations": []}
 
     monkeypatch.delenv("DAILY_ACTION_CACHE_REFRESH", raising=False)
@@ -152,16 +153,21 @@ def test_main_retains_frozen_refresh_result_until_auto_regime_exists(monkeypatch
     )
     monkeypatch.setattr("scripts.panel_health_check.panel_health_oneline", lambda *_args: "insufficient")
 
+    def refresh(_trade_date: str, **kwargs: object):
+        refresh_kwargs.update(kwargs)
+        return result
+
     returned = main_mod._refresh_daily_action_caches_for_auto(
         "20260708",
         payload,
-        refresh_fn=lambda _trade_date, **_kwargs: result,
+        refresh_fn=refresh,
         reports_dir=tmp_path,
         data_dir=tmp_path,
     )
 
     assert returned is result
     assert published == []
+    assert refresh_kwargs["industry_index_cache_dir"] == tmp_path / "industry_index_cache"
 
 
 def test_main_publishes_only_from_exact_frozen_result(tmp_path: Path, monkeypatch):

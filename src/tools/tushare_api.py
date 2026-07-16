@@ -5,10 +5,15 @@ import os
 import threading
 from pathlib import Path
 import time
-from datetime import datetime
-from typing import Any
+from datetime import date, datetime
+from typing import Any, TYPE_CHECKING
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from src.screening.offensive.shared_readiness_evidence import (
+        DailyReadinessReferenceSnapshot,
+    )
 
 from src.data.enhanced_cache import get_enhanced_cache
 from src.data.models import FinancialMetrics, InsiderTrade, LineItem, Price
@@ -941,40 +946,67 @@ _stock_basic_cache_lock = threading.Lock()
 _sw_industry_cache: dict[str, str] | None = None
 _sw_industry_cache_lock = threading.Lock()
 
+_daily_readiness_reference_lock = threading.Lock()
+_daily_readiness_capture_date: date | None = None
+_daily_readiness_security_observation: tuple[pd.DataFrame, date] | None = None
+_daily_readiness_sw_observation: tuple[dict[str, str], date, str] | None = None
 
-def get_daily_readiness_reference_snapshot(
-) -> tuple[pd.DataFrame | None, dict[str, str] | None]:
-    """Return detached, cache-only reference data for readiness publication.
 
-    This adapter is the sole owner of the module's private cache representation.
-    It never invokes a provider; missing evidence is reported as ``None`` so the
-    readiness publisher can fail closed into an attempt artifact.
-    """
+def begin_daily_readiness_reference_capture(signal_date: str) -> None:
+    """Begin one provider-owned, exact-signal reference capture."""
 
-    with _stock_basic_cache_lock:
-        stock_basic = (
-            None if _stock_basic_cache is None else _stock_basic_cache.copy(deep=True)
-        )
-    with _sw_industry_cache_lock:
-        sw_mapping = (
-            None if _sw_industry_cache is None else dict(_sw_industry_cache)
-        )
-    if stock_basic is None:
-        cache_key = _make_tushare_query_cache_key(
-            "stock_basic",
-            exchange="",
-            list_status="L",
-            fields=(
-                "ts_code,symbol,name,area,industry,market,list_date,"
-                "list_status,is_hs"
-            ),
-        )
-        stock_basic = _get_tushare_cached_df(cache_key)
-        if stock_basic is None:
-            stock_basic = _get_persisted_tushare_cached_df(cache_key)
-    return (
-        None if stock_basic is None else stock_basic.copy(deep=True),
-        None if sw_mapping is None else dict(sw_mapping),
+    parsed = datetime.strptime(signal_date, "%Y%m%d").date()
+    if parsed.strftime("%Y%m%d") != signal_date:
+        raise ValueError("signal_date must be exact YYYYMMDD")
+    global _daily_readiness_capture_date
+    global _daily_readiness_security_observation
+    global _daily_readiness_sw_observation
+    with _daily_readiness_reference_lock:
+        _daily_readiness_capture_date = parsed
+        _daily_readiness_security_observation = None
+        _daily_readiness_sw_observation = None
+
+
+def end_daily_readiness_reference_capture() -> None:
+    """Close provider capture while retaining its detached result for publication."""
+
+    global _daily_readiness_capture_date
+    with _daily_readiness_reference_lock:
+        _daily_readiness_capture_date = None
+
+
+def _active_daily_readiness_capture_date() -> date | None:
+    with _daily_readiness_reference_lock:
+        return _daily_readiness_capture_date
+
+
+def get_daily_readiness_reference_snapshot() -> "DailyReadinessReferenceSnapshot | None":
+    """Return the completed typed capture; never reads cache or calls a provider."""
+
+    with _daily_readiness_reference_lock:
+        security = _daily_readiness_security_observation
+        sw = _daily_readiness_sw_observation
+    if security is None or sw is None:
+        return None
+    stock_basic, security_observed_on = security
+    sw_mapping, sw_observed_on, sw_version = sw
+    from src.screening.offensive.shared_readiness_evidence import (
+        make_daily_readiness_reference_snapshot,
+    )
+
+    return make_daily_readiness_reference_snapshot(
+        stock_basic=stock_basic.copy(deep=True),
+        sw_industry_by_ticker=dict(sw_mapping),
+        security_observed_on=security_observed_on,
+        security_effective_from=security_observed_on,
+        security_effective_through=security_observed_on,
+        security_source="tushare.stock_basic",
+        security_version="stock-basic-list-status-l-v1",
+        sw_observed_on=sw_observed_on,
+        sw_effective_from=sw_observed_on,
+        sw_effective_through=sw_observed_on,
+        sw_source="tushare.index_classify+index_member",
+        sw_version=sw_version,
     )
 
 
@@ -1002,6 +1034,36 @@ def get_all_stock_basic() -> pd.DataFrame | None:
     pro = _get_pro()
     if pro is None:
         return None
+
+    capture_date = _active_daily_readiness_capture_date()
+    if capture_date is not None:
+        try:
+            df = _call_tushare_dataframe_api(
+                pro,
+                "stock_basic",
+                exchange="",
+                list_status="L",
+                fields=(
+                    "ts_code,symbol,name,area,industry,market,list_date,"
+                    "list_status,is_hs"
+                ),
+            )
+            if df is None or df.empty:
+                return None
+            observed_on = datetime.now().date()
+            global _daily_readiness_security_observation
+            with _daily_readiness_reference_lock:
+                if _daily_readiness_capture_date == capture_date:
+                    _daily_readiness_security_observation = (
+                        df.copy(deep=True),
+                        observed_on,
+                    )
+            with _stock_basic_cache_lock:
+                _stock_basic_cache = df.copy(deep=True)
+            return df.copy(deep=True)
+        except Exception as e:
+            logger.error("[Tushare] readiness stock_basic capture failed: %s", e)
+            return None
 
     # Double-checked locking: fast path (read lock) + slow path (write lock)
     with _stock_basic_cache_lock:
@@ -1288,6 +1350,53 @@ def _resolve_tushare_sw_industry_mapping(pro, cached_mapping: dict[str, str] | N
     )
 
 
+def _capture_sw_industry_mapping_as_of(
+    pro: object,
+    signal_date: date,
+) -> tuple[dict[str, str], str] | None:
+    """Fetch an uncached SW membership projection effective on ``signal_date``."""
+
+    source_version = "SW2021"
+    index_df = _call_tushare_dataframe_api(
+        pro, "index_classify", level="L1", src=source_version
+    )
+    if index_df is None or index_df.empty:
+        source_version = "SW2014"
+        index_df = _call_tushare_dataframe_api(
+            pro, "index_classify", level="L1", src=source_version
+        )
+    if index_df is None or index_df.empty:
+        return None
+    compact = signal_date.strftime("%Y%m%d")
+    mapping: dict[str, str] = {}
+    for index, (_, row) in enumerate(index_df.iterrows()):
+        index_code = str(row.get("index_code") or "")
+        industry_name = str(row.get("industry_name") or "").strip()
+        if not index_code or not industry_name:
+            return None
+        if index:
+            time.sleep(0.35)
+        member_df = _call_tushare_dataframe_api(
+            pro, "index_member", index_code=index_code
+        )
+        if member_df is None or member_df.empty:
+            continue
+        for _, member in member_df.iterrows():
+            ticker = str(member.get("con_code") or "")
+            in_date = _normalize_compact_date(member.get("in_date"))
+            out_date = _normalize_compact_date(member.get("out_date"))
+            if not ticker or in_date is None:
+                continue
+            if in_date <= compact and (out_date is None or out_date > compact):
+                previous = mapping.get(ticker)
+                if previous is not None and previous != industry_name:
+                    return None
+                mapping[ticker] = industry_name
+    if not mapping:
+        return None
+    return mapping, f"{source_version}-asof-membership-v1"
+
+
 def get_sw_industry_classification() -> dict[str, str] | None:
     """
     获取申万一级行业分类映射：{ts_code -> 行业名称}。
@@ -1299,6 +1408,28 @@ def get_sw_industry_classification() -> dict[str, str] | None:
     pro = _get_pro()
     if pro is None:
         return None
+
+    capture_date = _active_daily_readiness_capture_date()
+    if capture_date is not None:
+        try:
+            captured = _capture_sw_industry_mapping_as_of(pro, capture_date)
+            if captured is None:
+                return None
+            mapping, version = captured
+            observed_on = datetime.now().date()
+            global _daily_readiness_sw_observation
+            with _daily_readiness_reference_lock:
+                if _daily_readiness_capture_date == capture_date:
+                    _daily_readiness_sw_observation = (
+                        dict(mapping),
+                        observed_on,
+                        version,
+                    )
+            _cache_sw_industry_mapping(mapping)
+            return dict(mapping)
+        except Exception as e:
+            logger.error("[Tushare] readiness SW capture failed: %s", e)
+            return None
 
     # Fast path: return cached copy under the lock.
     with _sw_industry_cache_lock:
