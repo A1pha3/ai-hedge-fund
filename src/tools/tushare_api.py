@@ -1020,6 +1020,18 @@ def _active_daily_readiness_capture_token() -> DailyReadinessCaptureToken | None
 
 
 def _reference_observation_date() -> date:
+    """The calendar date a reference dataset was observed for a capture.
+
+    Inside an active capture, the observation is a PIT projection built for
+    that capture's signal session, so it binds to the signal date — not the
+    process wall-clock. Binding to ``datetime.now().date()`` leaked the next
+    calendar day when ``--auto`` ran across midnight (signal T, wall-clock
+    T+1), which the strict v2 evidence capture rejects (``observed_on`` must
+    equal the signal date) and fail-closed into a degraded attempt.
+    """
+    capture_date = _active_daily_readiness_capture_date()
+    if capture_date is not None:
+        return capture_date
     return datetime.now().date()
 
 
