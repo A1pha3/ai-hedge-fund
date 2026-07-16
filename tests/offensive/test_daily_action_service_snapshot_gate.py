@@ -25,6 +25,7 @@ from src.screening.offensive.execution_adjuster import ExecutionCosts
 from src.screening.offensive.ledger_repository import LedgerRepository
 from src.screening.offensive.setup_data_contracts import SETUP_REQUIREMENTS_VERSION, SetupCapability
 from src.utils.date_utils import SIGNAL_SESSION_POLICY_VERSION
+from tests.offensive.readiness_reference_testkit import shared_reference_fields
 
 SIGNAL_DATE = date(2026, 7, 13)
 CONSUMED_FP = "sha256:" + "1" * 64
@@ -63,6 +64,7 @@ def _shared() -> SharedReadinessEvidence:
         regime_fingerprint=_fingerprint({"as_of_date": SIGNAL_DATE.isoformat(), "regime_row": regime_row}),
         industry_fingerprint=_fingerprint({"as_of_date": SIGNAL_DATE.isoformat(), "industry_by_ticker": industry_by_ticker, "industry_day_pct": industry_day_pct}),
         security_fingerprint=_fingerprint({"as_of_date": SIGNAL_DATE.isoformat(), "security_status_by_ticker": security_status_by_ticker}),
+        **shared_reference_fields(SIGNAL_DATE, "300001"),
         board_rule_version=BOARD_RULE_VERSION,
         normalization_version=NORMALIZATION_VERSION,
         signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,

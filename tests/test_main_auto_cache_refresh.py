@@ -10,6 +10,9 @@ from pathlib import Path
 
 import pytest
 
+from src.utils.date_utils import SIGNAL_SESSION_POLICY_VERSION
+from tests.offensive.readiness_reference_testkit import shared_reference_fields
+
 
 def test_auto_cli_accepts_strict_quality_flag():
     from src.cli.input import add_common_args
@@ -97,7 +100,6 @@ def _fake_refresh_result(trade_date: date = date(2026, 7, 8)):
 
 def _fake_shared_evidence():
     from src.screening.offensive.daily_action_readiness import SharedReadinessEvidence
-    from src.utils.date_utils import SIGNAL_SESSION_POLICY_VERSION
 
     def fingerprint(value: object) -> str:
         encoded = json.dumps(
@@ -123,6 +125,7 @@ def _fake_shared_evidence():
         security_fingerprint=fingerprint(
             {"as_of_date": as_of.isoformat(), "security_status_by_ticker": security}
         ),
+        **shared_reference_fields(as_of, "main-auto-cache-refresh"),
         board_rule_version="ashare-board-prefix-v1",
         normalization_version="pit-canonical-v1",
         signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,

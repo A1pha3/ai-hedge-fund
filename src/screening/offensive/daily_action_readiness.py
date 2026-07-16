@@ -27,6 +27,12 @@ from src.screening.offensive.cache_readiness import (
     universe_fingerprint,
 )
 from src.screening.offensive.pit_evidence import canonical_fingerprint
+from src.screening.offensive.readiness_reference import (
+    SECURITY_REFERENCE_SOURCES,
+    SW_REFERENCE_SOURCES,
+    ReferenceProvenance,
+    validate_reference_for_session,
+)
 from src.screening.offensive.setup_data_contracts import (
     SETUP_CONTRACTS,
     SETUP_REQUIREMENTS_VERSION,
@@ -90,10 +96,24 @@ _SHARED_KEYS = frozenset(
         "regime_fingerprint",
         "industry_fingerprint",
         "security_fingerprint",
+        "security_reference",
+        "sw_reference",
+        "frozen_source_fingerprint",
         "evidence_fingerprint",
         "board_rule_version",
         "normalization_version",
         "signal_session_policy_version",
+    }
+)
+_REFERENCE_KEYS = frozenset(
+    {
+        "observed_on",
+        "effective_from",
+        "effective_through",
+        "source",
+        "version",
+        "content_fingerprint",
+        "source_fingerprint",
     }
 )
 _TICKER_READINESS_KEYS = frozenset({"evidence_status", "capabilities"})
@@ -260,6 +280,9 @@ class SharedReadinessEvidence:
     regime_fingerprint: str
     industry_fingerprint: str
     security_fingerprint: str
+    security_reference: ReferenceProvenance
+    sw_reference: ReferenceProvenance
+    frozen_source_fingerprint: str
     board_rule_version: str
     normalization_version: str
     signal_session_policy_version: str
@@ -268,6 +291,24 @@ class SharedReadinessEvidence:
     def __post_init__(self) -> None:
         if type(self.as_of_date) is not date:
             raise ManifestValidationError("as_of_date must be an exact date")
+        try:
+            validate_reference_for_session(
+                self.security_reference,
+                self.as_of_date,
+                label="security",
+                known_sources=SECURITY_REFERENCE_SOURCES,
+            )
+            validate_reference_for_session(
+                self.sw_reference,
+                self.as_of_date,
+                label="SW",
+                known_sources=SW_REFERENCE_SOURCES,
+            )
+        except ValueError as exc:
+            raise ManifestValidationError(str(exc)) from exc
+        _require_sha256(
+            self.frozen_source_fingerprint, "frozen_source_fingerprint"
+        )
         regime_raw = _require_mapping(self.regime_row, "regime_row")
         if set(regime_raw) != {"trade_date", "regime"}:
             raise ManifestValidationError(
@@ -399,6 +440,9 @@ class SharedReadinessEvidence:
             "regime_fingerprint": self.regime_fingerprint,
             "industry_fingerprint": self.industry_fingerprint,
             "security_fingerprint": self.security_fingerprint,
+            "security_reference": self.security_reference.to_dict(),
+            "sw_reference": self.sw_reference.to_dict(),
+            "frozen_source_fingerprint": self.frozen_source_fingerprint,
             "board_rule_version": self.board_rule_version,
             "normalization_version": self.normalization_version,
             "signal_session_policy_version": self.signal_session_policy_version,
@@ -596,6 +640,8 @@ def _setup_consumed_fingerprint(
             else None
         ),
         "security_fingerprint": shared_evidence.security_fingerprint,
+        "shared_evidence_fingerprint": shared_evidence.evidence_fingerprint,
+        "frozen_source_fingerprint": shared_evidence.frozen_source_fingerprint,
         "suspension_fingerprint": suspension_evidence.source_fingerprint,
         "board_rule_version": shared_evidence.board_rule_version,
         "normalization_version": shared_evidence.normalization_version,
@@ -848,6 +894,44 @@ def _parse_created_at(value: object) -> str:
     return text
 
 
+def _parse_reference_provenance(
+    raw_value: object, scope: str
+) -> ReferenceProvenance:
+    raw = _require_mapping(raw_value, scope)
+    _require_exact_keys(raw, _REFERENCE_KEYS, scope)
+
+    def parsed_date(key: str) -> date:
+        text = _require_str(raw[key], f"{scope}.{key}")
+        try:
+            value = date.fromisoformat(text)
+        except ValueError as exc:
+            raise ManifestValidationError(
+                f"{scope}.{key} must be an ISO date"
+            ) from exc
+        if value.isoformat() != text:
+            raise ManifestValidationError(
+                f"{scope}.{key} must be a canonical ISO date"
+            )
+        return value
+
+    try:
+        return ReferenceProvenance(
+            observed_on=parsed_date("observed_on"),
+            effective_from=parsed_date("effective_from"),
+            effective_through=parsed_date("effective_through"),
+            source=_require_str(raw["source"], f"{scope}.source"),
+            version=_require_str(raw["version"], f"{scope}.version"),
+            content_fingerprint=_require_str(
+                raw["content_fingerprint"], f"{scope}.content_fingerprint"
+            ),
+            source_fingerprint=_require_str(
+                raw["source_fingerprint"], f"{scope}.source_fingerprint"
+            ),
+        )
+    except ValueError as exc:
+        raise ManifestValidationError(str(exc)) from exc
+
+
 def _parse_shared_evidence(raw_value: object) -> SharedReadinessEvidence:
     raw = _require_mapping(raw_value, "shared_evidence")
     _require_exact_keys(raw, _SHARED_KEYS, "shared_evidence")
@@ -882,6 +966,15 @@ def _parse_shared_evidence(raw_value: object) -> SharedReadinessEvidence:
         ),
         security_fingerprint=_require_str(
             raw["security_fingerprint"], "security_fingerprint"
+        ),
+        security_reference=_parse_reference_provenance(
+            raw["security_reference"], "security_reference"
+        ),
+        sw_reference=_parse_reference_provenance(
+            raw["sw_reference"], "sw_reference"
+        ),
+        frozen_source_fingerprint=_require_str(
+            raw["frozen_source_fingerprint"], "frozen_source_fingerprint"
         ),
         board_rule_version=_require_str(
             raw["board_rule_version"], "board_rule_version"

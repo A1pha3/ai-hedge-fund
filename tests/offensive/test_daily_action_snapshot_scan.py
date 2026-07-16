@@ -20,6 +20,7 @@ from src.screening.offensive.daily_action_readiness import (
     _fingerprint,
 )
 from src.screening.offensive.daily_action_snapshot import FrozenFlowRow, FrozenPriceRow, VerifiedDailyActionSnapshot
+from src.screening.offensive.readiness_reference import ReferenceProvenance
 from src.screening.offensive.setups.base import DetectionResult
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
 from src.screening.offensive.setup_data_contracts import SETUP_REQUIREMENTS_VERSION, SetupCapability
@@ -39,6 +40,22 @@ def _shared_evidence(ticker: str = "300001") -> SharedReadinessEvidence:
     industry_by_ticker = {ticker: "software"}
     industry_day_pct = {ticker: 3.2}
     security_status_by_ticker = {ticker: "listed"}
+    security_reference = ReferenceProvenance.create(
+        observed_on=SIGNAL_DATE,
+        effective_from=SIGNAL_DATE,
+        effective_through=SIGNAL_DATE,
+        source="tushare.stock_basic",
+        version="test-stock-basic-v1",
+        content_fingerprint=_fingerprint({"security": ticker}),
+    )
+    sw_reference = ReferenceProvenance.create(
+        observed_on=SIGNAL_DATE,
+        effective_from=SIGNAL_DATE,
+        effective_through=SIGNAL_DATE,
+        source="tushare.index_classify+index_member",
+        version="test-sw-v1",
+        content_fingerprint=_fingerprint({"sw": ticker}),
+    )
     return SharedReadinessEvidence(
         as_of_date=SIGNAL_DATE,
         regime_row=regime_row,
@@ -48,6 +65,9 @@ def _shared_evidence(ticker: str = "300001") -> SharedReadinessEvidence:
         regime_fingerprint=_fingerprint({"as_of_date": SIGNAL_DATE.isoformat(), "regime_row": regime_row}),
         industry_fingerprint=_fingerprint({"as_of_date": SIGNAL_DATE.isoformat(), "industry_by_ticker": industry_by_ticker, "industry_day_pct": industry_day_pct}),
         security_fingerprint=_fingerprint({"as_of_date": SIGNAL_DATE.isoformat(), "security_status_by_ticker": security_status_by_ticker}),
+        security_reference=security_reference,
+        sw_reference=sw_reference,
+        frozen_source_fingerprint=_fingerprint({"frozen": ticker}),
         board_rule_version=BOARD_RULE_VERSION,
         normalization_version=NORMALIZATION_VERSION,
         signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,
@@ -245,3 +265,20 @@ def test_scanner_never_reopens_cache_files(monkeypatch) -> None:
     scan = scan_from_verified_snapshot(_snapshot())
 
     assert len(scan.candidates) == 1
+
+
+def test_scanner_is_deterministic_after_runtime_setup_env_changes(monkeypatch) -> None:
+    monkeypatch.setattr(
+        BtstBreakoutSetup,
+        "detect",
+        lambda self, ticker, trade_date, context: hit_result(),
+    )
+    snapshot = _snapshot()
+
+    monkeypatch.setenv("DAILY_ACTION_DISABLED_SETUPS", "btst_breakout")
+    disabled_scan = scan_from_verified_snapshot(snapshot)
+    monkeypatch.setenv("DAILY_ACTION_DISABLED_SETUPS", "none")
+    enabled_scan = scan_from_verified_snapshot(snapshot)
+
+    assert disabled_scan == enabled_scan
+    assert len(disabled_scan.candidates) == 1

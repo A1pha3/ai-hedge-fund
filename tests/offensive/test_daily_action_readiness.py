@@ -26,6 +26,7 @@ from src.screening.offensive.daily_action_readiness import (
 )
 from src.screening.offensive.pit_evidence import canonical_fingerprint
 from src.utils.date_utils import SIGNAL_SESSION_POLICY_VERSION
+from tests.offensive.readiness_reference_testkit import shared_reference_fields
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +90,7 @@ def _shared_evidence(tickers: tuple[str, ...]) -> SharedReadinessEvidence:
         security_fingerprint=_fingerprint(
             {"as_of_date": as_of.isoformat(), "security_status_by_ticker": security_status_by_ticker}
         ),
+        **shared_reference_fields(as_of, tickers),
         board_rule_version="ashare-board-prefix-v1",
         normalization_version="pit-canonical-v1",
         signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,
@@ -276,6 +278,7 @@ class TestCapabilityEvaluation:
             security_fingerprint=_fingerprint(
                 {"as_of_date": "2026-07-13", "security_status_by_ticker": security}
             ),
+            **shared_reference_fields(date(2026, 7, 13), "missing-industry"),
             board_rule_version="ashare-board-prefix-v1",
             normalization_version="pit-canonical-v1",
             signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,

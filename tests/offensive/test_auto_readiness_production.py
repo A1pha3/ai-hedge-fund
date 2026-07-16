@@ -79,7 +79,7 @@ def _reference_snapshot(
         sw_observed_on=sw_observed_on or signal_date,
         sw_effective_from=sw_effective_from or signal_date,
         sw_effective_through=sw_effective_through or signal_date,
-        sw_source="tushare.sw2021.index_member",
+        sw_source="tushare.index_classify+index_member",
         sw_version="sw2021-v1",
     )
 
@@ -405,6 +405,66 @@ def test_valid_dated_reference_provenance_is_bound_into_frozen_fingerprint(
     assert frozen.sw_reference.effective_through >= refresh_result.trade_date
     assert frozen.security_reference.source_fingerprint.startswith("sha256:")
     assert frozen.sw_reference.source_fingerprint.startswith("sha256:")
+
+
+def test_reference_version_changes_shared_and_manifest_fingerprints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refresh_result = _fake_refresh_result()
+    payload = {
+        "date": "20260708",
+        "market_state": {"regime_gate_level": "normal"},
+    }
+
+    def build(version: str, output_dir: Path):
+        snapshot = make_daily_readiness_reference_snapshot(
+            stock_basic=[
+                {"ts_code": "000001.SZ", "name": "平安银行", "list_status": "L"}
+            ],
+            sw_industry_by_ticker={"000001.SZ": "银行"},
+            security_observed_on=refresh_result.trade_date,
+            security_effective_from=refresh_result.trade_date,
+            security_effective_through=refresh_result.trade_date,
+            security_source="tushare.stock_basic",
+            security_version=version,
+            sw_observed_on=refresh_result.trade_date,
+            sw_effective_from=refresh_result.trade_date,
+            sw_effective_through=refresh_result.trade_date,
+            sw_source="tushare.index_classify+index_member",
+            sw_version="sw2021-v1",
+        )
+        frozen = capture_shared_readiness_evidence_source(
+            refresh_result,
+            data_dir=tmp_path,
+            reference_snapshot_loader=lambda: snapshot,
+            industry_day_pct_loader=lambda _date, _industries: {"银行": 1.25},
+        )
+        shared = build_shared_readiness_evidence_for_auto(
+            refresh_result, payload, frozen_source=frozen
+        )
+        monkeypatch.setattr(
+            "src.screening.offensive.daily_action_readiness.new_readiness_run_id",
+            lambda _result: "reference-version-test",
+        )
+        publication = main_mod._publish_daily_action_readiness_for_auto(
+            refresh_result,
+            reports_dir=output_dir,
+            shared_evidence=shared,
+        )
+        return shared, publication.manifest
+
+    first_shared, first_manifest = build("stock-basic-v1", tmp_path / "first")
+    second_shared, second_manifest = build("stock-basic-v2", tmp_path / "second")
+
+    assert first_shared.security_reference.version == "stock-basic-v1"
+    assert second_shared.security_reference.version == "stock-basic-v2"
+    assert first_shared.evidence_fingerprint != second_shared.evidence_fingerprint
+    assert first_manifest.content_fingerprint != second_manifest.content_fingerprint
+    assert (
+        first_manifest.to_dict()["shared_evidence"]["security_reference"]
+        != second_manifest.to_dict()["shared_evidence"]["security_reference"]
+    )
 
 
 def test_default_auto_orchestration_publishes_and_captures_real_readiness(

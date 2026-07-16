@@ -22,6 +22,7 @@ from src.screening.offensive.setups.base import DetectionResult
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
 from src.screening.offensive.trade_lifecycle import TradeState
 from src.utils.date_utils import SIGNAL_SESSION_POLICY_VERSION
+from tests.offensive.readiness_reference_testkit import shared_reference_fields
 
 SIGNAL_DATE = date(2026, 7, 13)
 SIGNAL_DATE_TEXT = "20260713"
@@ -159,6 +160,7 @@ def fixture_shared_evidence(universe: tuple[str, ...]) -> SharedReadinessEvidenc
         regime_fingerprint=_fingerprint({"as_of_date": SIGNAL_DATE.isoformat(), "regime_row": regime_row}),
         industry_fingerprint=_fingerprint({"as_of_date": SIGNAL_DATE.isoformat(), "industry_by_ticker": industry_by_ticker, "industry_day_pct": industry_day_pct}),
         security_fingerprint=_fingerprint({"as_of_date": SIGNAL_DATE.isoformat(), "security_status_by_ticker": security_status_by_ticker}),
+        **shared_reference_fields(SIGNAL_DATE, universe),
         board_rule_version="ashare-board-prefix-v1",
         normalization_version="pit-canonical-v1",
         signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,

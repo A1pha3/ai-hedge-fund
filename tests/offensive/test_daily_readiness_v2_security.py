@@ -29,7 +29,9 @@ from src.screening.offensive.daily_action_readiness import (
     publish_daily_action_readiness,
 )
 from src.screening.offensive.pit_evidence import canonical_fingerprint
+from src.screening.offensive.readiness_reference import ReferenceProvenance
 from src.utils.date_utils import SIGNAL_SESSION_POLICY_VERSION
+from tests.offensive.readiness_reference_testkit import shared_reference_fields
 
 
 SIGNAL_DATE = date(2026, 7, 13)
@@ -74,6 +76,7 @@ def _shared_evidence(tickers: tuple[str, ...]) -> SharedReadinessEvidence:
         security_fingerprint=_fingerprint(
             {"as_of_date": SIGNAL_DATE.isoformat(), "security_status_by_ticker": security_status_by_ticker}
         ),
+        **shared_reference_fields(SIGNAL_DATE, tickers),
         board_rule_version="ashare-board-prefix-v1",
         normalization_version="pit-canonical-v1",
         signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,
@@ -157,6 +160,41 @@ def test_v2_rejects_shared_evidence_from_different_signal_date(valid_manifest_di
 
     with pytest.raises(ManifestValidationError, match="fingerprint|date.*match"):
         parse_manifest_v2(raw)
+
+
+def test_shared_evidence_direct_constructor_rejects_stale_reference(
+    valid_manifest,
+) -> None:
+    shared = valid_manifest.shared_evidence
+    stale = ReferenceProvenance.create(
+        observed_on=date(2026, 7, 12),
+        effective_from=date(2026, 7, 12),
+        effective_through=date(2026, 7, 12),
+        source="tushare.stock_basic",
+        version="test-stock-basic-v1",
+        content_fingerprint=shared.security_reference.content_fingerprint,
+    )
+
+    with pytest.raises(ManifestValidationError, match="signal date mismatch"):
+        replace(shared, security_reference=stale)
+
+
+def test_v2_rejects_unknown_or_forged_reference_provenance(
+    valid_manifest_dict,
+) -> None:
+    unknown = copy.deepcopy(valid_manifest_dict)
+    unknown["shared_evidence"]["security_reference"]["extra"] = "authority"  # type: ignore[index]
+    _resign(unknown)
+    with pytest.raises(ManifestValidationError, match="unknown fields"):
+        parse_manifest_v2(unknown)
+
+    forged = copy.deepcopy(valid_manifest_dict)
+    forged["shared_evidence"]["sw_reference"][  # type: ignore[index]
+        "source_fingerprint"
+    ] = "sha256:" + "0" * 64
+    _resign(forged)
+    with pytest.raises(ManifestValidationError, match="source fingerprint mismatch"):
+        parse_manifest_v2(forged)
 
 
 @pytest.mark.parametrize(

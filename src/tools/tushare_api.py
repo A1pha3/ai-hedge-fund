@@ -3,6 +3,9 @@ import json
 import logging
 import os
 import threading
+import uuid
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 import time
 from datetime import date, datetime
@@ -11,7 +14,7 @@ from typing import Any, TYPE_CHECKING
 import pandas as pd
 
 if TYPE_CHECKING:
-    from src.screening.offensive.shared_readiness_evidence import (
+    from src.screening.offensive.readiness_reference import (
         DailyReadinessReferenceSnapshot,
     )
 
@@ -946,51 +949,90 @@ _stock_basic_cache_lock = threading.Lock()
 _sw_industry_cache: dict[str, str] | None = None
 _sw_industry_cache_lock = threading.Lock()
 
+@dataclass(frozen=True)
+class DailyReadinessCaptureToken:
+    capture_id: str
+    signal_date: date
+
+
+@dataclass
+class _DailyReadinessCaptureState:
+    token: DailyReadinessCaptureToken
+    security_observation: tuple[pd.DataFrame, date] | None = None
+    sw_observation: tuple[dict[str, str], date, date, str] | None = None
+
+
 _daily_readiness_reference_lock = threading.Lock()
-_daily_readiness_capture_date: date | None = None
-_daily_readiness_security_observation: tuple[pd.DataFrame, date] | None = None
-_daily_readiness_sw_observation: tuple[dict[str, str], date, str] | None = None
+_daily_readiness_capture_states: dict[str, _DailyReadinessCaptureState] = {}
+_daily_readiness_capture_token: ContextVar[DailyReadinessCaptureToken | None] = (
+    ContextVar("daily_readiness_capture_token", default=None)
+)
 
 
-def begin_daily_readiness_reference_capture(signal_date: str) -> None:
+def begin_daily_readiness_reference_capture(
+    signal_date: str,
+) -> DailyReadinessCaptureToken:
     """Begin one provider-owned, exact-signal reference capture."""
 
     parsed = datetime.strptime(signal_date, "%Y%m%d").date()
     if parsed.strftime("%Y%m%d") != signal_date:
         raise ValueError("signal_date must be exact YYYYMMDD")
-    global _daily_readiness_capture_date
-    global _daily_readiness_security_observation
-    global _daily_readiness_sw_observation
+    if _daily_readiness_capture_token.get() is not None:
+        raise RuntimeError("daily readiness capture already active in this context")
+    token = DailyReadinessCaptureToken(uuid.uuid4().hex, parsed)
     with _daily_readiness_reference_lock:
-        _daily_readiness_capture_date = parsed
-        _daily_readiness_security_observation = None
-        _daily_readiness_sw_observation = None
+        _daily_readiness_capture_states[token.capture_id] = (
+            _DailyReadinessCaptureState(token)
+        )
+    _daily_readiness_capture_token.set(token)
+    return token
 
 
-def end_daily_readiness_reference_capture() -> None:
-    """Close provider capture while retaining its detached result for publication."""
+def end_daily_readiness_reference_capture(
+    token: DailyReadinessCaptureToken,
+) -> "DailyReadinessReferenceSnapshot | None":
+    """Close exactly ``token`` and return only that run's detached snapshot."""
 
-    global _daily_readiness_capture_date
+    if type(token) is not DailyReadinessCaptureToken:
+        raise ValueError("daily readiness capture token is invalid")
+    if _daily_readiness_capture_token.get() != token:
+        raise ValueError("daily readiness capture token does not own this context")
     with _daily_readiness_reference_lock:
-        _daily_readiness_capture_date = None
+        state = _daily_readiness_capture_states.pop(token.capture_id, None)
+    _daily_readiness_capture_token.set(None)
+    if state is None or state.token != token:
+        raise ValueError("daily readiness capture token is no longer active")
+    return _snapshot_from_capture_state(state)
 
 
 def _active_daily_readiness_capture_date() -> date | None:
+    token = _active_daily_readiness_capture_token()
+    return token.signal_date if token is not None else None
+
+
+def _active_daily_readiness_capture_token() -> DailyReadinessCaptureToken | None:
+    token = _daily_readiness_capture_token.get()
+    if token is None:
+        return None
     with _daily_readiness_reference_lock:
-        return _daily_readiness_capture_date
+        state = _daily_readiness_capture_states.get(token.capture_id)
+    return token if state is not None and state.token == token else None
 
 
-def get_daily_readiness_reference_snapshot() -> "DailyReadinessReferenceSnapshot | None":
-    """Return the completed typed capture; never reads cache or calls a provider."""
+def _reference_observation_date() -> date:
+    return datetime.now().date()
 
-    with _daily_readiness_reference_lock:
-        security = _daily_readiness_security_observation
-        sw = _daily_readiness_sw_observation
+
+def _snapshot_from_capture_state(
+    state: _DailyReadinessCaptureState,
+) -> "DailyReadinessReferenceSnapshot | None":
+    security = state.security_observation
+    sw = state.sw_observation
     if security is None or sw is None:
         return None
     stock_basic, security_observed_on = security
-    sw_mapping, sw_observed_on, sw_version = sw
-    from src.screening.offensive.shared_readiness_evidence import (
+    sw_mapping, sw_observed_on, sw_effective_as_of, sw_version = sw
+    from src.screening.offensive.readiness_reference import (
         make_daily_readiness_reference_snapshot,
     )
 
@@ -998,16 +1040,33 @@ def get_daily_readiness_reference_snapshot() -> "DailyReadinessReferenceSnapshot
         stock_basic=stock_basic.copy(deep=True),
         sw_industry_by_ticker=dict(sw_mapping),
         security_observed_on=security_observed_on,
-        security_effective_from=security_observed_on,
-        security_effective_through=security_observed_on,
+        security_effective_from=state.token.signal_date,
+        security_effective_through=state.token.signal_date,
         security_source="tushare.stock_basic",
         security_version="stock-basic-list-status-l-v1",
         sw_observed_on=sw_observed_on,
-        sw_effective_from=sw_observed_on,
-        sw_effective_through=sw_observed_on,
+        sw_effective_from=sw_effective_as_of,
+        sw_effective_through=sw_effective_as_of,
         sw_source="tushare.index_classify+index_member",
         sw_version=sw_version,
+        effective_as_of=sw_effective_as_of,
     )
+
+
+def get_daily_readiness_reference_snapshot(
+    token: DailyReadinessCaptureToken | None = None,
+) -> "DailyReadinessReferenceSnapshot | None":
+    """Read one active token's detached state without provider/cache access."""
+
+    selected = token or _active_daily_readiness_capture_token()
+    if selected is None:
+        return None
+
+    with _daily_readiness_reference_lock:
+        state = _daily_readiness_capture_states.get(selected.capture_id)
+    if state is None or state.token != selected:
+        return None
+    return _snapshot_from_capture_state(state)
 
 
 def _fetch_tushare_all_stock_basic(pro) -> pd.DataFrame | None:
@@ -1035,8 +1094,8 @@ def get_all_stock_basic() -> pd.DataFrame | None:
     if pro is None:
         return None
 
-    capture_date = _active_daily_readiness_capture_date()
-    if capture_date is not None:
+    capture_token = _active_daily_readiness_capture_token()
+    if capture_token is not None:
         try:
             df = _call_tushare_dataframe_api(
                 pro,
@@ -1050,11 +1109,13 @@ def get_all_stock_basic() -> pd.DataFrame | None:
             )
             if df is None or df.empty:
                 return None
-            observed_on = datetime.now().date()
-            global _daily_readiness_security_observation
+            observed_on = _reference_observation_date()
             with _daily_readiness_reference_lock:
-                if _daily_readiness_capture_date == capture_date:
-                    _daily_readiness_security_observation = (
+                state = _daily_readiness_capture_states.get(
+                    capture_token.capture_id
+                )
+                if state is not None and state.token == capture_token:
+                    state.security_observation = (
                         df.copy(deep=True),
                         observed_on,
                     )
@@ -1409,20 +1470,25 @@ def get_sw_industry_classification() -> dict[str, str] | None:
     if pro is None:
         return None
 
-    capture_date = _active_daily_readiness_capture_date()
-    if capture_date is not None:
+    capture_token = _active_daily_readiness_capture_token()
+    if capture_token is not None:
         try:
-            captured = _capture_sw_industry_mapping_as_of(pro, capture_date)
+            captured = _capture_sw_industry_mapping_as_of(
+                pro, capture_token.signal_date
+            )
             if captured is None:
                 return None
             mapping, version = captured
-            observed_on = datetime.now().date()
-            global _daily_readiness_sw_observation
+            observed_on = _reference_observation_date()
             with _daily_readiness_reference_lock:
-                if _daily_readiness_capture_date == capture_date:
-                    _daily_readiness_sw_observation = (
+                state = _daily_readiness_capture_states.get(
+                    capture_token.capture_id
+                )
+                if state is not None and state.token == capture_token:
+                    state.sw_observation = (
                         dict(mapping),
                         observed_on,
+                        capture_token.signal_date,
                         version,
                     )
             _cache_sw_industry_mapping(mapping)

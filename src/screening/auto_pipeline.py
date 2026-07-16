@@ -859,17 +859,22 @@ def _default_dependencies(
         from src import main
 
         assert isinstance(inputs, AutoInputs)
+        captured_reference_snapshot: object | None = None
         if reference_snapshot_loader is None:
             from src.tools.tushare_api import (
                 begin_daily_readiness_reference_capture,
                 end_daily_readiness_reference_capture,
             )
 
-            begin_daily_readiness_reference_capture(inputs.trade_date)
+            capture_token = begin_daily_readiness_reference_capture(
+                inputs.trade_date
+            )
             try:
                 payload = main.compute_auto_screening_results(inputs.trade_date, top_n)
             finally:
-                end_daily_readiness_reference_capture()
+                captured_reference_snapshot = (
+                    end_daily_readiness_reference_capture(capture_token)
+                )
         else:
             payload = main.compute_auto_screening_results(inputs.trade_date, top_n)
         if inputs.cache_refresh_summary:
@@ -886,7 +891,11 @@ def _default_dependencies(
                 frozen_source = main._capture_shared_readiness_evidence_source_for_auto(
                     refresh_result,
                     data_dir=data_dir,
-                    reference_snapshot_loader=reference_snapshot_loader,
+                    reference_snapshot_loader=(
+                        reference_snapshot_loader
+                        if reference_snapshot_loader is not None
+                        else lambda: captured_reference_snapshot
+                    ),
                 )
                 publication = main._complete_daily_action_readiness_for_auto(
                     refresh_result,

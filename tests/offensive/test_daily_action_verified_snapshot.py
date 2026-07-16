@@ -48,6 +48,7 @@ from src.screening.offensive.pit_evidence import (
     canonical_price_fingerprint,
 )
 from src.utils.date_utils import SIGNAL_SESSION_POLICY_VERSION
+from tests.offensive.readiness_reference_testkit import shared_reference_fields
 
 SIGNAL_DATE = date(2026, 7, 13)
 _MANIFEST_NAME = "daily_action_readiness_20260713.json"
@@ -146,6 +147,7 @@ def _shared_evidence(universe: tuple[str, ...]) -> SharedReadinessEvidence:
         security_fingerprint=_fingerprint(
             {"as_of_date": SIGNAL_DATE.isoformat(), "security_status_by_ticker": security_status_by_ticker}
         ),
+        **shared_reference_fields(SIGNAL_DATE, universe),
         board_rule_version="ashare-board-prefix-v1",
         normalization_version="pit-canonical-v1",
         signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,

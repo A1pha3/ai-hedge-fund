@@ -1329,15 +1329,17 @@ def scan_from_verified_snapshot(
     before detection, filters detector-degraded hits after detection, and emits
     only structured ``PlanCandidate`` provenance for actionable hits.
     """
-    # Reuse the verified setup config the same way generate_daily_action does.
-    disabled_setups = _env_setup_disable_list()
+    # Setup policy is frozen in the verified manifest. Runtime environment
+    # changes after publication must not alter the authorized scan.
+    enabled_setups = {
+        setup_name
+        for readiness in snapshot.manifest.ticker_readiness.values()
+        for setup_name, capability in readiness.capabilities.items()
+        if capability.enabled
+    }
     setup_configs: list[tuple[str, Any, int, Any]] = []
     for name, cls, horizon in _VERIFIED_SETUPS:
-        if name in disabled_setups:
-            logger.info(
-                "scan_from_verified_snapshot: setup %s paused via env, skipping",
-                name,
-            )
+        if name not in enabled_setups:
             continue
         dist = get_known_distribution(name, horizon)
         if dist is None:
