@@ -365,7 +365,13 @@ class BtstBreakoutSetup(Setup):
         # <0.5 或 >5.0: 样本少, 中性处理
         volume_score = _compute_volume_score(prices, trigger_idx)
 
-        energy_bonus = 0.08 if position_score >= 0.5 and squeeze_score >= 0.5 else 0.0
+        # energy_bonus 仅在 position+squeeze 同时=1.0 (完整弹簧释放) 时发放.
+        # Finding A (2026-07-16): 旧阈值 ``>= 0.5`` 把 squeeze/position=0.5
+        # (中性/数据不足: _compute_trend_vol_scores 与 _compute_squeeze_score 在
+        # 数据不足/前段波动率为 0 时回退 0.5) 也算"完整弹簧释放" → 发未赚取的 +0.08,
+        # 与 docstring "同时=1" 矛盾, 并把阶段证据不足的票抬过 _MIN_TRIGGER_STRENGTH.
+        # 两 score 取值集合 {0.0, 0.5, 1.0}; ``>= 1.0`` == "都到满正值" 即文档意图.
+        energy_bonus = 0.08 if position_score >= 1.0 and squeeze_score >= 1.0 else 0.0
         strength = min(1.0, 0.20 * weekday_score + 0.20 * board_score + 0.20 * position_score + 0.20 * squeeze_score + 0.20 * volume_score + energy_bonus)
 
         return DetectionResult(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime as _dt
+
 import pandas as pd
 
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
@@ -298,3 +300,65 @@ def test_industry_data_zero_still_misses():
     ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=0.0)
     result = BtstBreakoutSetup().detect("X", today, ctx)
     assert result.hit is False, "行业涨幅 0.0 < 2.0 应正常 miss (非降级)"
+
+
+def test_energy_bonus_not_granted_when_squeeze_neutral():
+    """Finding A 回归: energy_bonus 只在 position+squeeze 同时=1.0 (完整弹簧释放) 时发放.
+
+    docstring(:348) 明确 "position+squeeze 同时=1". 旧代码 ``>= 0.5`` 把 squeeze=0.5
+    (中性/数据不足: 前段波动率为 0 → prior_atr<=0 → _compute_squeeze_score 回退 0.5)
+    的票也算"完整弹簧释放"而发 +0.08 奖金 → 与文档矛盾, 且把阶段证据不足的票抬过
+    ``_MIN_TRIGGER_STRENGTH=0.50`` 选股门.
+
+    构造 (22 日): 前 18 日全平 10.0; 第 18/19 日 12.0; 第 20 日 close=10/high=12
+    (制造一根 range bar); 第 21 日涨停 11.0. 由此得:
+      - position_score = 1.0  (T-1 close=10 在 5 日 [10,10,12,12,10] 下半区)
+      - squeeze_score  = 0.5  (前 17 日全平 → prior_atr=0 → 回退 0.5)
+    断言 trigger_strength 不含 +0.08 bonus (即等于无 bonus 的公式值).
+    """
+    from src.screening.offensive.setups.btst_breakout import (
+        _board_quality_score,
+        _compute_trend_vol_scores,
+        _compute_volume_score,
+    )
+
+    dates = pd.bdate_range("2026-06-01", periods=22)
+    close = [10.0] * 18 + [12.0, 12.0, 10.0, 11.0]  # idx18,19=12; idx20=10; idx21=11 涨停
+    high = [10.0] * 18 + [12.0, 12.0, 12.0, 11.0]  # idx20 high=12 制造 range bar
+    low = [10.0] * 18 + [12.0, 12.0, 10.0, 11.0]  # idx20 low=10
+    pct = [0.0] * 21 + [10.0]
+    vol = [1000.0] * 22
+    prices = pd.DataFrame(
+        {"date": dates, "close": close, "high": high, "low": low, "open": list(close), "pct_change": pct, "volume": vol}
+    )
+
+    today = prices.iloc[-1]["date"].strftime("%Y%m%d")
+    recs_today = [FundFlowRecord(ticker="X", date=today, close=11.0, pct_change=10.0, main_net_inflow=5_000_000, main_net_pct=8.0)]
+    old_recs = []
+    for i in range(1, 21):
+        d = (prices.iloc[-1 - i]["date"]).strftime("%Y%m%d")
+        old_recs.append(FundFlowRecord(ticker="X", date=d, close=10.0, pct_change=0.0, main_net_inflow=100_000, main_net_pct=0.5))
+    ctx = _ctx(prices, fund_flow_records=recs_today + old_recs, industry_pct=3.0)
+
+    result = BtstBreakoutSetup().detect("X", today, ctx)
+    assert result.hit is True
+
+    # 复现数据构造达到的因子值 (sanity) + strength 公式 (不含 bonus).
+    trigger_idx = len(prices) - 1
+    pre_window = prices.iloc[trigger_idx - 5 : trigger_idx]
+    position_score, squeeze_score = _compute_trend_vol_scores(pre_window, prices, trigger_idx)
+    assert position_score == 1.0, "构造应使 position=1.0 (T-1 在 5 日下半区)"
+    assert squeeze_score == 0.5, "构造应使 squeeze=0.5 (前段全平 prior_atr=0 回退)"
+
+    weekday_score = 1.0 if _dt.strptime(today, "%Y%m%d").weekday() >= 2 else 0.0
+    board_score = _board_quality_score("X")
+    volume_score = _compute_volume_score(prices, trigger_idx)
+    expected_no_bonus = min(
+        1.0,
+        0.20 * weekday_score + 0.20 * board_score + 0.20 * position_score + 0.20 * squeeze_score + 0.20 * volume_score,
+    )
+    # squeeze=0.5 (中性) 绝不可触发 "完整弹簧释放" bonus.
+    assert abs(result.trigger_strength - expected_no_bonus) < 1e-9, (
+        f"squeeze=0.5 时不应发 energy_bonus: got {result.trigger_strength}, "
+        f"expected(no bonus) {expected_no_bonus}"
+    )
