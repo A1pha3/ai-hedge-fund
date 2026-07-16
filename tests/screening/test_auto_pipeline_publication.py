@@ -30,6 +30,26 @@ class _InjectedCrash(BaseException):
     pass
 
 
+def test_auto_run_result_captures_actual_daily_readiness_publication(
+    tmp_path: Path,
+    fake_auto_dependencies: "_FakeAutoDependenciesFactory",
+) -> None:
+    publication = object()
+    dependencies = replace(
+        fake_auto_dependencies.healthy(),
+        get_daily_readiness_publication=lambda: publication,
+    )
+
+    result = run_auto_pipeline(
+        "20260710",
+        10,
+        reports_dir=tmp_path,
+        dependencies=dependencies,
+    )
+
+    assert result.daily_action_readiness_publication is publication
+
+
 @dataclass(frozen=True)
 class _FakeAutoDependenciesFactory:
     reports_dir: Path

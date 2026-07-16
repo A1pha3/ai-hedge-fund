@@ -35,3 +35,39 @@ def test_auto_default_output_separates_auto_and_daily_readiness_and_treats_regim
     assert "10% 仓位披露" in text
     assert "致命阻断" not in text
     assert "regime_authorization_evidence_unavailable" not in text
+
+
+def test_auto_attempt_output_is_clear_chinese_and_does_not_infer_cache_counts():
+    text = render_auto_daily_domain_summary(
+        auto_status="healthy",
+        layer_a_count=300,
+        recommendation_count=10,
+        daily_readiness={
+            "status": "blocked",
+            "price_total": 652,
+            "price_updated": 650,
+            "block_reasons": ("readiness_attempt",),
+        },
+    )
+
+    assert "Auto 评分状态：健康" in text
+    assert "Daily Action 就绪状态：未就绪" in text
+    assert "数据护栏阻断新计划" in text
+    assert "全域=0" in text
+    assert "可扫描=0" in text
+    assert "readiness_attempt" not in text
+
+
+def test_auto_verbose_output_may_include_raw_readiness_codes():
+    text = render_auto_daily_domain_summary(
+        auto_status="healthy",
+        layer_a_count=300,
+        recommendation_count=10,
+        daily_readiness={
+            "status": "blocked",
+            "block_reasons": ("readiness_attempt",),
+        },
+        verbose=True,
+    )
+
+    assert "readiness_attempt" in text

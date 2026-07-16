@@ -72,24 +72,27 @@ def _fingerprint(value: object) -> str:
 
 
 def _shared_evidence(tickers: tuple[str, ...]) -> SharedReadinessEvidence:
+    as_of = date(2026, 7, 13)
     regime_row = {"regime": "normal"}
     industry_by_ticker = {ticker: "银行" for ticker in tickers}
     industry_day_pct = {ticker: 1.0 for ticker in tickers}
     security_status_by_ticker = {ticker: "listed" for ticker in tickers}
     return SharedReadinessEvidence(
+        as_of_date=as_of,
         regime_row=regime_row,
         industry_by_ticker=industry_by_ticker,
         industry_day_pct=industry_day_pct,
         security_status_by_ticker=security_status_by_ticker,
-        regime_fingerprint=_fingerprint({"regime_row": regime_row}),
+        regime_fingerprint=_fingerprint({"as_of_date": as_of.isoformat(), "regime_row": regime_row}),
         industry_fingerprint=_fingerprint(
             {
+                "as_of_date": as_of.isoformat(),
                 "industry_by_ticker": industry_by_ticker,
                 "industry_day_pct": industry_day_pct,
             }
         ),
         security_fingerprint=_fingerprint(
-            {"security_status_by_ticker": security_status_by_ticker}
+            {"as_of_date": as_of.isoformat(), "security_status_by_ticker": security_status_by_ticker}
         ),
         board_rule_version="ashare-board-prefix-v1",
         normalization_version="pit-canonical-v1",
@@ -266,16 +269,17 @@ class TestCapabilityEvaluation:
         regime_row = {"regime": "normal"}
         security = {"000001": "listed"}
         shared = SharedReadinessEvidence(
+            as_of_date=date(2026, 7, 13),
             regime_row=regime_row,
             industry_by_ticker={},
             industry_day_pct={},
             security_status_by_ticker=security,
-            regime_fingerprint=_fingerprint({"regime_row": regime_row}),
+            regime_fingerprint=_fingerprint({"as_of_date": "2026-07-13", "regime_row": regime_row}),
             industry_fingerprint=_fingerprint(
-                {"industry_by_ticker": {}, "industry_day_pct": {}}
+                {"as_of_date": "2026-07-13", "industry_by_ticker": {}, "industry_day_pct": {}}
             ),
             security_fingerprint=_fingerprint(
-                {"security_status_by_ticker": security}
+                {"as_of_date": "2026-07-13", "security_status_by_ticker": security}
             ),
             board_rule_version="ashare-board-prefix-v1",
             normalization_version="pit-canonical-v1",

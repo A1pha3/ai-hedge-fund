@@ -75,6 +75,7 @@ class AutoRunResult:
     recovered: bool = False
     recovery_diagnostics: tuple[dict[str, Any], ...] = ()
     effective_trade_date: str | None = None
+    daily_action_readiness_publication: object | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +87,7 @@ class AutoPipelineDependencies:
     publish_attempt: Callable[[dict[str, Any], object], Path]
     update_tracking: Callable[[dict[str, Any]], object]
     state_hook: Callable[[str, Path, dict[str, Any]], None] | None = None
+    get_daily_readiness_publication: Callable[[], object | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -811,6 +813,11 @@ def _manifest_has_auditable_evidence(
 
 
 def _default_dependencies(reports_dir: Path, run_id: str) -> AutoPipelineDependencies:
+    readiness_state: dict[str, object | None] = {
+        "refresh_result": None,
+        "publication": None,
+    }
+
     def prepare_inputs(trade_date: str) -> AutoInputs:
         from src import main
 
@@ -834,7 +841,11 @@ def _default_dependencies(reports_dir: Path, run_id: str) -> AutoPipelineDepende
             except Exception as exc:
                 main.logger.warning("[Auto] P1-1 缓存预热失败: %s", exc)
         refresh_payload: dict[str, Any] = {}
-        main._refresh_daily_action_caches_for_auto(trade_date, refresh_payload)
+        readiness_state["refresh_result"] = main._refresh_daily_action_caches_for_auto(
+            trade_date,
+            refresh_payload,
+            reports_dir=reports_dir,
+        )
         return _capture_input_snapshot(
             trade_date,
             reports_dir=reports_dir,
@@ -849,6 +860,33 @@ def _default_dependencies(reports_dir: Path, run_id: str) -> AutoPipelineDepende
         if inputs.cache_refresh_summary:
             payload["daily_action_cache_refresh"] = dict(inputs.cache_refresh_summary)
         main._attach_freshness_check(inputs.trade_date, payload)
+        refresh_result = readiness_state["refresh_result"]
+        from src.screening.offensive.cache_readiness import DailyActionRefreshResult
+        from src.screening.offensive.daily_action_readiness import (
+            publish_daily_action_attempt,
+        )
+
+        if type(refresh_result) is DailyActionRefreshResult:
+            publication = main._complete_daily_action_readiness_for_auto(
+                refresh_result,
+                payload,
+                reports_dir=reports_dir,
+                data_dir=reports_dir.parent,
+            )
+        else:
+            attempt_run_id = hashlib.sha256(
+                f"{inputs.trade_date}|{run_id}|refresh-unavailable".encode("utf-8")
+            ).hexdigest()[:32]
+            publication = publish_daily_action_attempt(
+                trade_date=datetime.strptime(inputs.trade_date, "%Y%m%d").date(),
+                run_id=attempt_run_id,
+                reports_dir=reports_dir,
+                reasons=("refresh_result_unavailable",),
+            )
+        readiness_state["publication"] = publication
+        payload["daily_action_readiness"] = _daily_readiness_publication_payload(
+            publication
+        )
         return payload
 
     def build_manifest(inputs: object, payload: dict[str, Any]) -> RunManifest:
@@ -892,7 +930,53 @@ def _default_dependencies(reports_dir: Path, run_id: str) -> AutoPipelineDepende
         publish_canonical=publish_canonical,
         publish_attempt=publish_attempt,
         update_tracking=update_tracking,
+        get_daily_readiness_publication=lambda: readiness_state["publication"],
     )
+
+
+def _daily_readiness_publication_payload(publication: object) -> dict[str, Any]:
+    """Serialize operator-facing readiness facts from the actual publication."""
+
+    manifest = getattr(publication, "manifest", None)
+    if manifest is None:
+        return {
+            "status": "blocked",
+            "publication_status": str(
+                getattr(publication, "status", "degraded") or "degraded"
+            ),
+            "universe_count": 0,
+            "scannable_count": 0,
+            "plan_eligible_count": 0,
+            "degraded_count": 0,
+            "failed_count": 0,
+            "block_reasons": ["readiness_attempt"],
+        }
+
+    readiness_values = tuple(manifest.ticker_readiness.values())
+    return {
+        "status": "healthy",
+        "publication_status": str(getattr(publication, "status", "healthy")),
+        "universe_count": len(manifest.universe_tickers),
+        "scannable_count": sum(
+            any(capability.scannable for capability in item.capabilities.values())
+            for item in readiness_values
+        ),
+        "plan_eligible_count": sum(
+            any(
+                capability.plan_eligible
+                for capability in item.capabilities.values()
+            )
+            for item in readiness_values
+        ),
+        "degraded_count": sum(
+            any(capability.degraded for capability in item.capabilities.values())
+            for item in readiness_values
+        ),
+        "failed_count": sum(
+            item.evidence_status != "verified" for item in readiness_values
+        ),
+        "block_reasons": [],
+    }
 
 
 def _publish_failure_attempt(
@@ -1644,6 +1728,10 @@ def run_auto_pipeline(
     resolved_dependencies = dependencies or _default_dependencies(
         resolved_reports_dir, run_id
     )
+
+    def readiness_publication() -> object | None:
+        getter = resolved_dependencies.get_daily_readiness_publication
+        return getter() if getter is not None else None
     payload: dict[str, Any] | None = None
     manifest: object | None = None
     pending_handle: _PendingStateHandle | None = None
@@ -1724,6 +1812,7 @@ def run_auto_pipeline(
                 if not pending_removed
                 else (),
                 effective_trade_date=trade_date,
+                daily_action_readiness_publication=readiness_publication(),
             )
         stage = "publish_attempt"
         attempt = resolved_dependencies.publish_attempt(payload, manifest)
@@ -1735,6 +1824,7 @@ def run_auto_pipeline(
             payload,
             manifest,
             effective_trade_date=trade_date,
+            daily_action_readiness_publication=readiness_publication(),
         )
     except Exception as exc:
         failure_run_id = str(getattr(manifest, "run_id", run_id))
@@ -1755,6 +1845,7 @@ def run_auto_pipeline(
             attempt,
             payload,
             manifest,
+            daily_action_readiness_publication=readiness_publication(),
         )
     finally:
         if pending_handle is not None:

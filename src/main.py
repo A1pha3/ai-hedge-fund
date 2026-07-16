@@ -1180,15 +1180,14 @@ def _refresh_daily_action_caches_for_auto(
     trade_date: str,
     report_payload: dict,
     *,
+    reports_dir: Path | str,
     refresh_fn=None,
-    shared_evidence=None,
-    reports_dir: Path | str = Path("data/reports"),
 ) -> object | None:
-    """Best-effort cache refresh + readiness manifest publication for the next ``--daily-action`` run.
+    """Refresh Daily Action inputs and retain the exact immutable result.
 
-    After refreshing caches, builds and publishes a ``daily_action_readiness_YYYYMMDD.json``
-    manifest covering the full scan universe. This is the bridge that lets
-    ``--daily-action`` verify its snapshot before scanning.
+    Readiness is completed only after Auto has computed the same-date regime.
+    ``reports_dir`` is mandatory so injected runs cannot fall through to the
+    repository's runtime report directory.
     """
 
     if not _daily_action_cache_refresh_enabled():
@@ -1229,45 +1228,9 @@ def _refresh_daily_action_caches_for_auto(
             refresh_authoritative_trade_calendar,
         )
 
-        refresh_authoritative_trade_calendar()
+        refresh_authoritative_trade_calendar(reports_dir=Path(reports_dir))
     except Exception as exc:  # pragma: no cover - calendar refresh must not fail --auto
         logger.warning("[Auto] trade calendar refresh failed: %s", exc)
-
-    # Publish Daily Action readiness manifest (independent domain).
-    # This does NOT affect Auto canonical health — it's a separate publication.
-    if refresh_result is not None:
-        try:
-            _publish_daily_action_readiness_for_auto(
-                refresh_result,
-                reports_dir=Path(reports_dir),
-                shared_evidence=shared_evidence,
-            )
-        except Exception as exc:  # pragma: no cover - readiness must not fail --auto
-            logger.warning("[Auto] daily-action readiness publication failed: %s", exc)
-    else:
-        try:
-            import hashlib
-            import uuid
-            from datetime import date
-
-            from src.screening.offensive.daily_action_readiness import (
-                publish_daily_action_attempt,
-            )
-
-            attempt_date = date.fromisoformat(
-                f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
-            )
-            run_id = hashlib.sha256(
-                f"{trade_date}|refresh-unavailable|{uuid.uuid4().hex}".encode()
-            ).hexdigest()[:32]
-            publish_daily_action_attempt(
-                trade_date=attempt_date,
-                run_id=run_id,
-                reports_dir=Path(reports_dir),
-                reasons=("refresh_result_unavailable",),
-            )
-        except Exception as exc:  # pragma: no cover - attempt is best-effort for --auto
-            logger.warning("[Auto] daily-action readiness attempt publication failed: %s", exc)
 
     # Fresh bars just landed → backfill the setup-output panel so past logged
     # signals whose forward window has elapsed get their realized T+1..T+10
@@ -1275,7 +1238,11 @@ def _refresh_daily_action_caches_for_auto(
     try:
         from scripts.join_setup_outputs_with_returns import backfill_panel
 
-        _joined, panel_stats = backfill_panel()
+        report_root = Path(reports_dir)
+        _joined, panel_stats = backfill_panel(
+            log_dir=report_root / "setup_output_log",
+            panel=report_root / "setup_output_panel.jsonl",
+        )
         logger.info(
             "[Auto] setup-output panel: %d records, %d realized",
             panel_stats["records"],
@@ -1289,11 +1256,72 @@ def _refresh_daily_action_caches_for_auto(
     try:
         from scripts.panel_health_check import panel_health_oneline
 
-        logger.info("[Auto] 面板体检: %s", panel_health_oneline())
+        logger.info(
+            "[Auto] 面板体检: %s",
+            panel_health_oneline(Path(reports_dir) / "setup_output_panel.jsonl"),
+        )
     except Exception as exc:  # pragma: no cover - health readout must not fail --auto
         logger.warning("[Auto] 面板体检失败: %s", exc)
 
     return refresh_result
+
+
+def _build_shared_readiness_evidence_for_auto(
+    refresh_result: object, report_payload: dict, **kwargs
+):
+    from src.screening.offensive.shared_readiness_evidence import (
+        build_shared_readiness_evidence_for_auto,
+    )
+
+    return build_shared_readiness_evidence_for_auto(
+        refresh_result, report_payload, **kwargs
+    )
+
+
+def _publish_daily_action_attempt_for_auto(
+    *, refresh_result: object, reports_dir: Path, reason: str
+):
+    from src.screening.offensive.cache_readiness import DailyActionRefreshResult
+    from src.screening.offensive.daily_action_readiness import (
+        new_readiness_run_id,
+        publish_daily_action_attempt,
+    )
+
+    if type(refresh_result) is not DailyActionRefreshResult:
+        raise TypeError("attempt publication requires exact refresh result")
+    return publish_daily_action_attempt(
+        trade_date=refresh_result.trade_date,
+        run_id=new_readiness_run_id(refresh_result),
+        reports_dir=Path(reports_dir),
+        reasons=(reason,),
+    )
+
+
+def _complete_daily_action_readiness_for_auto(
+    refresh_result: object,
+    report_payload: dict,
+    *,
+    reports_dir: Path,
+    data_dir: Path | None = None,
+    shared_evidence_builder=None,
+):
+    """Build and publish readiness; every non-authoritative path is an attempt."""
+
+    builder = shared_evidence_builder or _build_shared_readiness_evidence_for_auto
+    try:
+        shared = builder(refresh_result, report_payload, data_dir=data_dir)
+        return _publish_daily_action_readiness_for_auto(
+            refresh_result,
+            reports_dir=Path(reports_dir),
+            shared_evidence=shared,
+        )
+    except Exception as exc:  # noqa: BLE001 - fail closed into a durable attempt
+        logger.warning("[Auto] Daily Action readiness blocked: %s", exc)
+        return _publish_daily_action_attempt_for_auto(
+            refresh_result=refresh_result,
+            reports_dir=Path(reports_dir),
+            reason=f"shared_evidence_or_publication_failed:{type(exc).__name__}",
+        )
 
 
 def _publish_daily_action_readiness_for_auto(
@@ -1406,31 +1434,14 @@ def _log_cache_refresh_summary(s: dict) -> None:
         logger.info("[Auto] 缓存刷新 · 价格: %s", " · ".join(parts))
 
 
-def _count_from_mapping(value: object) -> int:
-    if isinstance(value, dict):
-        return sum(parsed for parsed in (_safe_int(v, 0) for v in value.values()) if parsed > 0)
-    return _safe_int(value, 0)
-
-
 def _daily_readiness_counts(daily_readiness: dict | None) -> dict[str, int]:
     source = dict(daily_readiness or {})
-    conserved = source.get("conserved_stats")
-    if isinstance(conserved, dict):
-        source = {**conserved, **source}
-    price_counts = source.get("price_status_counts")
-    fund_counts = source.get("fund_flow_status_counts")
-    universe = _safe_int(source.get("universe_count"), 0) or _safe_int(source.get("universe_tickers"), 0) or _count_from_mapping(price_counts) or _safe_int(source.get("price_total"), 0)
-    scannable = _safe_int(source.get("scannable_count"), 0) or _safe_int(source.get("price_updated"), 0) or _count_from_mapping(price_counts)
-    plan_eligible = _safe_int(source.get("plan_eligible_count"), 0)
-    degraded = _safe_int(source.get("degraded_count"), 0) or _safe_int(source.get("price_insufficient_history"), 0) + _safe_int(source.get("fund_flow_empty"), 0)
-    failed = _safe_int(source.get("failed_count"), 0) or _safe_int(source.get("price_failed"), 0) + _safe_int(source.get("fund_flow_failed"), 0) + _safe_int(source.get("industry_index_failed"), 0)
     return {
-        "universe": universe,
-        "scannable": scannable,
-        "plan_eligible": plan_eligible,
-        "degraded": degraded,
-        "failed": failed,
-        "fund_flow": _count_from_mapping(fund_counts) or _safe_int(source.get("fund_flow_total"), 0),
+        "universe": _safe_int(source.get("universe_count"), 0),
+        "scannable": _safe_int(source.get("scannable_count"), 0),
+        "plan_eligible": _safe_int(source.get("plan_eligible_count"), 0),
+        "degraded": _safe_int(source.get("degraded_count"), 0),
+        "failed": _safe_int(source.get("failed_count"), 0),
     }
 
 
@@ -1448,15 +1459,21 @@ def render_auto_daily_domain_summary(
     raw_reasons = tuple(str(reason) for reason in daily.get("block_reasons", ()) if reason)
     fatal_reasons = tuple(reason for reason in raw_reasons if reason != "regime_authorization_evidence_unavailable")
     disclosures = tuple(reason for reason in raw_reasons if reason == "regime_authorization_evidence_unavailable")
-    status = str(daily.get("status") or ("blocked" if fatal_reasons else "healthy")).strip() or "unknown"
+    status = str(daily.get("status") or "blocked").strip() or "blocked"
+    auto_label = {
+        "healthy": "健康",
+        "degraded": "降级",
+        "fatal": "失败",
+    }.get(auto_status, auto_status)
+    daily_label = "健康" if status == "healthy" else "未就绪"
     lines = [
-        f"Auto 评分状态：{auto_status}（候选池={_safe_int(layer_a_count, 0)}，推荐={_safe_int(recommendation_count, 0)}）",
-        f"Daily Action 就绪状态：{status}（全域={counts['universe']}，可扫描={counts['scannable']}，可计划={counts['plan_eligible']}，残缺诊断={counts['degraded']}，失败={counts['failed']}）",
+        f"Auto 评分状态：{auto_label}（候选池={_safe_int(layer_a_count, 0)}，推荐={_safe_int(recommendation_count, 0)}）",
+        f"Daily Action 就绪状态：{daily_label}（全域={counts['universe']}，可扫描={counts['scannable']}，可计划={counts['plan_eligible']}，残缺诊断={counts['degraded']}，失败={counts['failed']}）",
     ]
     if disclosures:
         lines.append("Daily Action 仓位披露：regime 加仓证据暂不可验，单票按 10% 仓位披露，非阻断")
     if fatal_reasons:
-        lines.append("Daily Action 阻断：数据护栏未通过，阻断新计划")
+        lines.append("Daily Action：数据护栏阻断新计划")
     if verbose and raw_reasons:
         lines.append("Daily Action raw reasons: " + ",".join(raw_reasons))
     return "\n".join(lines)
@@ -1841,7 +1858,7 @@ def _print_table_block(
             auto_status=auto_status,
             layer_a_count=_safe_int(report_payload.get("layer_a_count"), 0),
             recommendation_count=len(report_payload.get("recommendations") or ()),
-            daily_readiness=report_payload.get("daily_action_readiness") or report_payload.get("daily_action_cache_refresh") or {},
+            daily_readiness=report_payload.get("daily_action_readiness") or {},
         )
     )
 

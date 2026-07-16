@@ -109,17 +109,19 @@ def _fake_shared_evidence():
     industries = {"000001": "银行"}
     pct = {"000001": 1.0}
     security = {"000001": "listed"}
+    as_of = date(2026, 7, 8)
     return SharedReadinessEvidence(
+        as_of_date=as_of,
         regime_row=regime,
         industry_by_ticker=industries,
         industry_day_pct=pct,
         security_status_by_ticker=security,
-        regime_fingerprint=fingerprint({"regime_row": regime}),
+        regime_fingerprint=fingerprint({"as_of_date": as_of.isoformat(), "regime_row": regime}),
         industry_fingerprint=fingerprint(
-            {"industry_by_ticker": industries, "industry_day_pct": pct}
+            {"as_of_date": as_of.isoformat(), "industry_by_ticker": industries, "industry_day_pct": pct}
         ),
         security_fingerprint=fingerprint(
-            {"security_status_by_ticker": security}
+            {"as_of_date": as_of.isoformat(), "security_status_by_ticker": security}
         ),
         board_rule_version="ashare-board-prefix-v1",
         normalization_version="pit-canonical-v1",
@@ -127,7 +129,7 @@ def _fake_shared_evidence():
     )
 
 
-def test_main_retains_and_passes_the_frozen_refresh_result(monkeypatch):
+def test_main_retains_frozen_refresh_result_until_auto_regime_exists(monkeypatch, tmp_path):
     from src import main as main_mod
 
     result = _fake_refresh_result()
@@ -142,22 +144,23 @@ def test_main_retains_and_passes_the_frozen_refresh_result(monkeypatch):
     )
     monkeypatch.setattr(
         "src.screening.offensive.daily_action.refresh_authoritative_trade_calendar",
-        lambda: None,
+        lambda **_kwargs: None,
     )
     monkeypatch.setattr(
         "scripts.join_setup_outputs_with_returns.backfill_panel",
-        lambda: ([], {"records": 0, "realized": 0}),
+        lambda **_kwargs: ([], {"records": 0, "realized": 0}),
     )
-    monkeypatch.setattr("scripts.panel_health_check.panel_health_oneline", lambda: "insufficient")
+    monkeypatch.setattr("scripts.panel_health_check.panel_health_oneline", lambda *_args: "insufficient")
 
     returned = main_mod._refresh_daily_action_caches_for_auto(
         "20260708",
         payload,
         refresh_fn=lambda _trade_date: result,
+        reports_dir=tmp_path,
     )
 
     assert returned is result
-    assert published == [result]
+    assert published == []
 
 
 def test_main_publishes_only_from_exact_frozen_result(tmp_path: Path, monkeypatch):
@@ -521,7 +524,7 @@ def test_cross_date_recovery_uses_effective_date_for_every_downstream_action(
     assert "未执行" in output
 
 
-def test_refresh_daily_action_caches_for_auto_respects_env_kill_switch(monkeypatch):
+def test_refresh_daily_action_caches_for_auto_respects_env_kill_switch(monkeypatch, tmp_path):
     from src import main as main_mod
 
     called = False
@@ -535,7 +538,9 @@ def test_refresh_daily_action_caches_for_auto_respects_env_kill_switch(monkeypat
     monkeypatch.setenv("DAILY_ACTION_CACHE_REFRESH", "false")
     monkeypatch.setattr(main_mod, "_save_json_report", lambda *_args, **_kwargs: None)
 
-    main_mod._refresh_daily_action_caches_for_auto("20260708", payload, refresh_fn=refresh_fn)
+    main_mod._refresh_daily_action_caches_for_auto(
+        "20260708", payload, refresh_fn=refresh_fn, reports_dir=tmp_path
+    )
 
     assert called is False
     assert "daily_action_cache_refresh" not in payload

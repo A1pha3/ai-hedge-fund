@@ -58,19 +58,21 @@ def _shared_evidence(tickers: tuple[str, ...]) -> SharedReadinessEvidence:
     industry_day_pct = {ticker: 1.25 for ticker in tickers}
     security_status_by_ticker = {ticker: "listed" for ticker in tickers}
     return SharedReadinessEvidence(
+        as_of_date=SIGNAL_DATE,
         regime_row=regime_row,
         industry_by_ticker=industry_by_ticker,
         industry_day_pct=industry_day_pct,
         security_status_by_ticker=security_status_by_ticker,
-        regime_fingerprint=_fingerprint({"regime_row": regime_row}),
+        regime_fingerprint=_fingerprint({"as_of_date": SIGNAL_DATE.isoformat(), "regime_row": regime_row}),
         industry_fingerprint=_fingerprint(
             {
+                "as_of_date": SIGNAL_DATE.isoformat(),
                 "industry_by_ticker": industry_by_ticker,
                 "industry_day_pct": industry_day_pct,
             }
         ),
         security_fingerprint=_fingerprint(
-            {"security_status_by_ticker": security_status_by_ticker}
+            {"as_of_date": SIGNAL_DATE.isoformat(), "security_status_by_ticker": security_status_by_ticker}
         ),
         board_rule_version="ashare-board-prefix-v1",
         normalization_version="pit-canonical-v1",
@@ -146,6 +148,15 @@ def test_v2_rejects_unknown_policy_and_forged_universe(valid_manifest_dict):
     _resign(forged_universe)
     with pytest.raises(ManifestValidationError, match="universe_fingerprint"):
         parse_manifest_v2(forged_universe)
+
+
+def test_v2_rejects_shared_evidence_from_different_signal_date(valid_manifest_dict):
+    raw = copy.deepcopy(valid_manifest_dict)
+    raw["shared_evidence"]["as_of_date"] = "2026-07-12"  # type: ignore[index]
+    _resign(raw)
+
+    with pytest.raises(ManifestValidationError, match="fingerprint|date mismatch"):
+        parse_manifest_v2(raw)
 
 
 def test_v2_rejects_unknown_fields_and_capabilities(valid_manifest_dict):

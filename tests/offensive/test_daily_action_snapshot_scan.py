@@ -40,13 +40,14 @@ def _shared_evidence(ticker: str = "300001") -> SharedReadinessEvidence:
     industry_day_pct = {ticker: 3.2}
     security_status_by_ticker = {ticker: "listed"}
     return SharedReadinessEvidence(
+        as_of_date=SIGNAL_DATE,
         regime_row=regime_row,
         industry_by_ticker=industry_by_ticker,
         industry_day_pct=industry_day_pct,
         security_status_by_ticker=security_status_by_ticker,
-        regime_fingerprint=_fingerprint({"regime_row": regime_row}),
-        industry_fingerprint=_fingerprint({"industry_by_ticker": industry_by_ticker, "industry_day_pct": industry_day_pct}),
-        security_fingerprint=_fingerprint({"security_status_by_ticker": security_status_by_ticker}),
+        regime_fingerprint=_fingerprint({"as_of_date": SIGNAL_DATE.isoformat(), "regime_row": regime_row}),
+        industry_fingerprint=_fingerprint({"as_of_date": SIGNAL_DATE.isoformat(), "industry_by_ticker": industry_by_ticker, "industry_day_pct": industry_day_pct}),
+        security_fingerprint=_fingerprint({"as_of_date": SIGNAL_DATE.isoformat(), "security_status_by_ticker": security_status_by_ticker}),
         board_rule_version=BOARD_RULE_VERSION,
         normalization_version=NORMALIZATION_VERSION,
         signal_session_policy_version=SIGNAL_SESSION_POLICY_VERSION,

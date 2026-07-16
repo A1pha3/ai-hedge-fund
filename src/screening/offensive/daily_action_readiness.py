@@ -48,6 +48,7 @@ _UNIVERSE_KIND = "resolved_refresh_universe"
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _SHA256_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SECURITY_STATUSES = frozenset({"listed", "st"})
+DAILY_ACTION_REGIMES = frozenset({"normal", "risk_off", "crisis"})
 _EVIDENCE_STATUSES = frozenset({"verified", "blocked"})
 _MANIFEST_STATUSES = frozenset({"healthy", "degraded"})
 _POLICY_KEYS = frozenset(
@@ -81,6 +82,7 @@ _TOP_LEVEL_KEYS = frozenset(
 )
 _SHARED_KEYS = frozenset(
     {
+        "as_of_date",
         "regime_row",
         "industry_by_ticker",
         "industry_day_pct",
@@ -250,6 +252,7 @@ def _expected_policy_versions(shared: SharedReadinessEvidence) -> dict[str, str]
 class SharedReadinessEvidence:
     """Complete serialized shared evidence, with recomputable fingerprints."""
 
+    as_of_date: date
     regime_row: Mapping[str, object]
     industry_by_ticker: Mapping[str, str]
     industry_day_pct: Mapping[str, float]
@@ -263,10 +266,15 @@ class SharedReadinessEvidence:
     evidence_fingerprint: str = ""
 
     def __post_init__(self) -> None:
+        if type(self.as_of_date) is not date:
+            raise ManifestValidationError("as_of_date must be an exact date")
         regime_raw = _require_mapping(self.regime_row, "regime_row")
         if not regime_raw:
             raise ManifestValidationError("regime_row must not be empty")
         regime_row = _normalize_json(regime_raw, "regime_row")
+        regime = regime_row.get("regime")
+        if regime not in DAILY_ACTION_REGIMES:
+            raise ManifestValidationError("regime_row.regime is unknown")
 
         industry_raw = _require_mapping(
             self.industry_by_ticker, "industry_by_ticker"
@@ -322,15 +330,22 @@ class SharedReadinessEvidence:
         if self.signal_session_policy_version != SIGNAL_SESSION_POLICY_VERSION:
             raise ManifestValidationError("unknown signal_session_policy_version")
 
-        expected_regime = _fingerprint({"regime_row": regime_row})
+        as_of = self.as_of_date.isoformat()
+        expected_regime = _fingerprint(
+            {"as_of_date": as_of, "regime_row": regime_row}
+        )
         expected_industry = _fingerprint(
             {
+                "as_of_date": as_of,
                 "industry_by_ticker": industry_by_ticker,
                 "industry_day_pct": industry_day_pct,
             }
         )
         expected_security = _fingerprint(
-            {"security_status_by_ticker": security_status}
+            {
+                "as_of_date": as_of,
+                "security_status_by_ticker": security_status,
+            }
         )
         if self.regime_fingerprint != expected_regime:
             raise ManifestValidationError("regime_fingerprint mismatch")
@@ -371,6 +386,7 @@ class SharedReadinessEvidence:
 
     def _payload(self, *, include_evidence_fingerprint: bool) -> dict[str, object]:
         payload: dict[str, object] = {
+            "as_of_date": self.as_of_date.isoformat(),
             "regime_row": _plain_json(self.regime_row),
             "industry_by_ticker": dict(self.industry_by_ticker),
             "industry_day_pct": dict(self.industry_day_pct),
@@ -747,6 +763,8 @@ def build_daily_action_readiness(
         raise ManifestValidationError(
             "readiness build requires exact SharedReadinessEvidence"
         )
+    if shared_evidence.as_of_date != refresh_result.trade_date:
+        raise ManifestValidationError("shared evidence date mismatch")
     _validate_run_id(run_id)
     universe = tuple(refresh_result.universe_tickers)
     if not universe:
@@ -828,7 +846,19 @@ def _parse_created_at(value: object) -> str:
 def _parse_shared_evidence(raw_value: object) -> SharedReadinessEvidence:
     raw = _require_mapping(raw_value, "shared_evidence")
     _require_exact_keys(raw, _SHARED_KEYS, "shared_evidence")
+    as_of_text = _require_str(raw["as_of_date"], "shared_evidence.as_of_date")
+    try:
+        as_of_date = date.fromisoformat(as_of_text)
+    except ValueError as exc:
+        raise ManifestValidationError(
+            "shared_evidence.as_of_date must be ISO date"
+        ) from exc
+    if as_of_date.isoformat() != as_of_text:
+        raise ManifestValidationError(
+            "shared_evidence.as_of_date must be canonical ISO date"
+        )
     return SharedReadinessEvidence(
+        as_of_date=as_of_date,
         regime_row=_require_mapping(raw["regime_row"], "regime_row"),
         industry_by_ticker=_require_mapping(
             raw["industry_by_ticker"], "industry_by_ticker"
@@ -978,6 +1008,8 @@ def parse_manifest_v2(
     input_fingerprint = _require_sha256(raw["input_fingerprint"], "input_fingerprint")
 
     shared = _parse_shared_evidence(raw["shared_evidence"])
+    if shared.as_of_date != trade_date_value:
+        raise ManifestValidationError("shared evidence date mismatch")
     if set(shared.security_status_by_ticker) != set(universe):
         raise ManifestValidationError(
             "security_status_by_ticker must exactly cover universe"
