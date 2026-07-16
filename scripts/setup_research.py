@@ -577,10 +577,22 @@ def load_industry_2d_pct(
     return result
 
 
+_industry_day_pct_cache: dict[str, dict[tuple[str, str], float]] = {}
+
+
 def load_industry_day_pct(
     cache_dir: Path = _INDUSTRY_INDEX_CACHE_DIR,
 ) -> dict[tuple[str, str], float]:
     """加载行业指数单日涨幅 → {(industry_name, YYYYMMDD): pct%}."""
+
+    # Process-level cache: avoid re-reading 31 CSVs on every call.
+    # In a single --daily-action run, this is called 2-3 times (legacy scan +
+    # snapshot loader + readiness producer), each costing ~0.5s.
+    # Use resolve() so tests with different cwd get different cache keys.
+    cache_key = str(cache_dir.resolve())
+    cached = _industry_day_pct_cache.get(cache_key)
+    if cached is not None:
+        return cached
 
     codes_path = cache_dir / "_industry_codes.json"
     if not codes_path.exists():
@@ -601,6 +613,7 @@ def load_industry_day_pct(
             if pd.notna(value):
                 result[(industry_name, str(row["trade_date"]).replace("-", ""))] = float(value)
     logger.info("load_industry_day_pct: %d (industry, date) 条", len(result))
+    _industry_day_pct_cache[cache_key] = result
     return result
 
 

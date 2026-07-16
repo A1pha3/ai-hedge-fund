@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import pandas as pd
@@ -87,6 +88,34 @@ def build_beijing_exchange_mask_from_series(series: pd.Series) -> pd.Series:
     normalized = series.fillna("").astype(str).str.strip().str.upper()
     symbol = normalized.str.split(".").str[0]
     return normalized.str.endswith(".BJ") | symbol.str.startswith(BEIJING_EXCHANGE_SYMBOL_PREFIXES)
+
+
+# 永久排除的 6 位代码: 已退市 / 长期数据残缺 / tushare moneyflow 持续报错.
+# 这些票残留在 price_cache/fund_flow_cache 里会被 scanner 拾起, 每天制造 degraded 噪声.
+# 000004.SZ: 2023-12-31 退市 (tests/tools/test_tushare_stock_basic_pit.py:48),
+#   industry/资金流/快照均停更 → 每天以 industry_data_missing 进"不可计划候选".
+_EXCLUDED_TICKERS: frozenset[str] = frozenset({"000004"})
+
+
+def excluded_tickers() -> frozenset[str]:
+    """当前生效的永久排除代码集.
+
+    默认返回内置 ``_EXCLUDED_TICKERS``. 可用 ``EXTRA_EXCLUDED_TICKERS=000004,000999``
+    追加 (逗号分隔, 仅追加不覆盖), 便于临时屏蔽新发现的问题票而无需改代码.
+    """
+    extra_raw = os.environ.get("EXTRA_EXCLUDED_TICKERS", "")
+    if not extra_raw.strip():
+        return _EXCLUDED_TICKERS
+    extra = {tok.strip() for tok in extra_raw.split(",") if tok.strip()}
+    return _EXCLUDED_TICKERS | extra
+
+
+def is_excluded_ticker(ticker: Any) -> bool:
+    """永久排除股票判定 (退市 / 数据残缺). 与 ``is_beijing_exchange_stock`` 同族."""
+    symbol = get_ashare_symbol(ticker)
+    if not symbol:
+        return False
+    return symbol in excluded_tickers()
 
 
 def build_beijing_exchange_mask(stock_df: pd.DataFrame) -> pd.Series:

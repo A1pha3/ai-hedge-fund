@@ -37,6 +37,7 @@ from src.screening.offensive.paper_tracker import PaperTracker, TradeAction
 from src.screening.offensive.risk_framework import build_risk_plan
 from src.screening.offensive.setups.btst_breakout import BtstBreakoutSetup
 from src.screening.offensive.setups.oversold_bounce import OversoldBounceSetup
+from src.tools.ashare_board_utils import is_excluded_ticker
 from src.utils.atomic_files import atomic_write_csv, atomic_write_json
 from src.utils.date_utils import SignalSessionUnavailable, resolve_signal_session
 
@@ -318,10 +319,27 @@ def _resolve_trade_date_and_regime(*, wall_clock_guard: bool = True) -> tuple[st
     for csv in price_dir.glob("*.csv"):
         try:
             df = pd.read_csv(csv, dtype={"date": str}, usecols=["date"])
-            dates = [_compact_trade_date(value) for value in df["date"].dropna()]
-            d = max((value for value in dates if value), default="")
-            if d > latest_date:
-                latest_date = d
+            # Vectorized date normalization — per-row _compact_trade_date calls
+            # pd.to_datetime individually (~0.1ms each), costing 1541 rows × 777
+            # files = 88s. Vectorized pd.to_datetime processes the entire column
+            # at once, giving ~100x speedup.
+            raw_dates = df["date"].dropna().astype(str).str.strip()
+            # Filter out empty strings early (they become NaN via to_datetime)
+            raw_dates = raw_dates[raw_dates.str.len() > 0]
+            if len(raw_dates) == 0:
+                continue
+            mask_compact = raw_dates.str.len().eq(8) & raw_dates.str.isdigit()
+            compact_dates = raw_dates[mask_compact]
+            non_compact = raw_dates[~mask_compact]
+            if len(non_compact) > 0:
+                # errors='coerce' turns unparseable dates into NaT → drop them
+                converted = pd.to_datetime(non_compact, errors="coerce").dt.strftime("%Y%m%d")
+                converted = converted.dropna()
+                converted = converted[converted != ""]  # drop empty results
+                compact_dates = pd.concat([compact_dates, converted])
+            d = compact_dates.max() if len(compact_dates) > 0 else ""
+            if d and str(d) > latest_date:
+                latest_date = str(d)
         except Exception:
             continue
     if not latest_date:
@@ -787,20 +805,27 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
             ``True`` (``--verbose``) every raw audit code is shown for debugging.
     """
     from src.screening.offensive.trade_lifecycle import FillSource
+    from src.tools.tushare_api import get_stock_name
+
+    def _label(ticker: str) -> str:
+        # 与 v1 render_daily_action (本文件 ~1664) 同款: 查不到名就退回纯代码.
+        name = get_stock_name(ticker)
+        return f"{ticker} {name}" if name and name != ticker else ticker
 
     references = dict(run.reference_prices)
     lines = ["每日动作 v2（模拟台账）", "参考价（信号日收盘，仅供计划）:"]
     if run.plans:
         for plan in run.plans:
             reference = references.get(plan.ticker, 0.0)
+            label = _label(plan.ticker)
             if verbose:
                 lines.append(
-                    f"  {plan.ticker} 参考价 ~{reference:.2f} "
+                    f"  {label} 参考价 ~{reference:.2f} "
                     f"reason={plan.reason} execution={plan.execution_label} source={plan.source_label}"
                 )
             else:
                 lines.append(
-                    f"  {plan.ticker} 参考价 ~{reference:.2f}（次日计划买入）"
+                    f"  {label} 参考价 ~{reference:.2f}（次日计划买入）"
                 )
     else:
         lines.append("  无")
@@ -809,7 +834,7 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     lines.append("模拟成交（synthetic_open）:")
     if synthetic_trades:
         for trade in synthetic_trades:
-            lines.append(f"  {trade.ticker} 模拟成交 @{trade.raw_entry_price:.2f}")
+            lines.append(f"  {_label(trade.ticker)} 模拟成交 @{trade.raw_entry_price:.2f}")
     else:
         lines.append("  无")
 
@@ -817,12 +842,13 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
     lines.append("确认成交（broker_confirmed）:")
     if confirmed_trades:
         for trade in confirmed_trades:
-            lines.append(f"  {trade.ticker} 确认成交 @{trade.raw_entry_price:.2f}")
+            lines.append(f"  {_label(trade.ticker)} 确认成交 @{trade.raw_entry_price:.2f}")
     else:
         lines.append("  无")
     lines.append("退出挑战者（SHADOW ONLY，不改变默认退出；不触发交易、仓位或组合上限）:")
     if run.open_positions:
         for trade in run.open_positions:
+            label = _label(trade.ticker)
             if verbose:
                 shadow_line = (
                     f"{trade.shadow_exit_line:.2f}"
@@ -830,20 +856,20 @@ def render_daily_action_v2(run: DailyActionV2Run, *, verbose: bool = False) -> s
                     else "unavailable"
                 )
                 lines.append(
-                    f"  {trade.ticker} shadow_exit_line={shadow_line} "
+                    f"  {label} shadow_exit_line={shadow_line} "
                     f"shadow_would_exit_next_open={str(trade.shadow_would_exit_next_open).lower()} "
                     f"shadow_reason={trade.shadow_reason}"
                 )
             else:
                 advice = "建议次日退出" if trade.shadow_would_exit_next_open else "维持持有"
-                lines.append(f"  {trade.ticker} 影子建议：{advice}")
+                lines.append(f"  {label} 影子建议：{advice}")
     else:
         lines.append("  无")
     if run.blocked_candidates:
         lines.append("不可计划候选:")
         for candidate in run.blocked_candidates:
             reason = candidate.reason if verbose else _block_reason_zh(candidate.reason)
-            lines.append(f"  {candidate.ticker} 参考价 ~{candidate.reference_price:.2f} 原因={reason}")
+            lines.append(f"  {_label(candidate.ticker)} 参考价 ~{candidate.reference_price:.2f} 原因={reason}")
     lifecycle_sections = (
         ("跳过计划", run.service_run.skipped_plans),
         ("退出计划", run.service_run.exit_plans),
@@ -1029,6 +1055,10 @@ def generate_daily_action(
             tracker.close_matured(trade_date, use_data_fetcher=use_data_fetcher, price_loader=_load_prices)
             return []
         all_cache_tickers = sorted(p.stem for p in Path("data/price_cache").glob("*.csv"))
+        # 永久排除票 (退市/数据残缺, 如 000004): 残留 csv 会被 glob 拾起,
+        # 每天以 industry_data_missing 进"不可计划候选"制造噪声. 在此根除.
+        if any(is_excluded_ticker(t) for t in all_cache_tickers):
+            all_cache_tickers = [t for t in all_cache_tickers if not is_excluded_ticker(t)]
         # ST 过滤 (安全: --auto 候选池在 Layer A 过滤 ST, full_market 直扫需独立过滤)
         st_tickers = _load_st_tickers()
         if st_tickers:
@@ -1362,6 +1392,9 @@ def scan_from_verified_snapshot(
         ]
 
     for ticker in snapshot.scannable_tickers:
+        # 永久排除票 (退市/数据残缺): 不进任何路径, 连 degraded 噪声都不产生.
+        if is_excluded_ticker(ticker):
+            continue
         for setup_name, setup_obj, horizon, known_dist in setup_configs:
             ctx = snapshot.setup_context(ticker, setup_name)
             if ctx is None:

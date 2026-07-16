@@ -12,6 +12,7 @@ import pytest
 
 from src.tools.ashare_board_utils import (
     get_ashare_symbol,
+    is_excluded_ticker,
     limit_up_pct_for_ticker,
     split_ashare_exchange_prefix,
     to_prefixed_ashare_code,
@@ -123,3 +124,36 @@ class TestLimitUpPctForTicker:
         assert 9.5 >= limit_up_pct_for_ticker("600519")  # 主板 +9.5% 触发
         assert 9.5 < limit_up_pct_for_ticker("688981")  # 科创 +9.5% 不触发
         assert 19.5 >= limit_up_pct_for_ticker("688981")  # 科创 +19.5% 才触发
+
+
+class TestExcludedTicker:
+    """永久排除票 (退市/数据残缺) 判定 — 锁死核心契约, 防回归."""
+
+    def test_delisted_000004_excluded(self) -> None:
+        """000004.SZ 2023-12-31 退市, 必须永久排除."""
+        assert is_excluded_ticker("000004") is True
+        assert is_excluded_ticker("000004.SZ") is True
+
+    def test_normal_ticker_not_excluded(self) -> None:
+        """正常票不受影响."""
+        assert is_excluded_ticker("600519") is False
+        assert is_excluded_ticker("000001") is False
+        assert is_excluded_ticker("300750") is False
+
+    def test_empty_or_none_not_excluded(self) -> None:
+        """空输入安全降级, 不判排除 (避免误伤)."""
+        assert is_excluded_ticker("") is False
+        assert is_excluded_ticker(None) is False
+
+    def test_env_extra_appends_not_replaces(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """EXTRA_EXCLUDED_TICKERS 只追加, 不覆盖内置 denylist."""
+        monkeypatch.setenv("EXTRA_EXCLUDED_TICKERS", "000999,  600001")
+        assert is_excluded_ticker("000004") is True  # 内置仍在
+        assert is_excluded_ticker("000999") is True  # 追加生效
+        assert is_excluded_ticker("600001") is True  # 追加生效 (含空格)
+        assert is_excluded_ticker("000001") is False  # 正常票仍通过
+
+    def test_env_empty_does_not_clear_builtin(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """空 env 值不误清内置 denylist."""
+        monkeypatch.setenv("EXTRA_EXCLUDED_TICKERS", "")
+        assert is_excluded_ticker("000004") is True

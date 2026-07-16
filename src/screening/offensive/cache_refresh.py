@@ -37,6 +37,7 @@ from src.screening.offensive.pit_evidence import (
     canonical_price_fingerprint,
     validate_price_artifact,
 )
+from src.tools.ashare_board_utils import is_excluded_ticker
 from src.utils.atomic_files import atomic_write_csv
 from src.utils.date_utils import latest_open_trade_date_on_or_before
 
@@ -148,12 +149,14 @@ def existing_price_cache_tickers(price_cache_dir: Path | str = _DEFAULT_PRICE_CA
         return []
     # 北交所 (4xx/8xx/92xx) 全面排除: 系统不交易北交所, 且 tushare moneyflow 不覆盖
     # 北交所 → 扫它们只会浪费 CPU/内存并制造 degraded 噪声 (与 candidate_pool 一致)。
+    # 永久排除票 (退市/数据残缺): 残留 csv 会被 glob 拾起, 在此一并剔除。
     return sorted(
         p.stem
         for p in cache_dir.glob("*.csv")
         if p.stem.isdigit()
         and len(p.stem) == 6
         and not is_beijing_exchange_stock(symbol=p.stem)
+        and not is_excluded_ticker(p.stem)
     )
 
 
@@ -409,10 +412,13 @@ def resolve_daily_action_refresh_tickers(
                 continue
             tickers.update(_load_candidate_pool_tickers(path, include_shadow=include_shadow))
     # 北交所全面排除 (数据获取 + 选股): 覆盖 price_cache 已有文件与候选池残留。
+    # 永久排除票 (退市/数据残缺) 同步剔除。
     return sorted(
         ticker
         for ticker in tickers
-        if _is_code6(ticker) and not is_beijing_exchange_stock(symbol=ticker)
+        if _is_code6(ticker)
+        and not is_beijing_exchange_stock(symbol=ticker)
+        and not is_excluded_ticker(ticker)
     )
 
 
