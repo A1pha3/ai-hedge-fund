@@ -105,7 +105,7 @@ def _fake_shared_evidence():
         ).encode("utf-8")
         return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
-    regime = {"regime": "normal"}
+    regime = {"trade_date": "2026-07-08", "regime": "normal"}
     industries = {"000001": "银行"}
     pct = {"000001": 1.0}
     security = {"000001": "listed"}
@@ -155,8 +155,9 @@ def test_main_retains_frozen_refresh_result_until_auto_regime_exists(monkeypatch
     returned = main_mod._refresh_daily_action_caches_for_auto(
         "20260708",
         payload,
-        refresh_fn=lambda _trade_date: result,
+        refresh_fn=lambda _trade_date, **_kwargs: result,
         reports_dir=tmp_path,
+        data_dir=tmp_path,
     )
 
     assert returned is result
@@ -218,8 +219,9 @@ def test_refresh_daily_action_caches_for_auto_attaches_summary_without_publishin
     main_mod._refresh_daily_action_caches_for_auto(
         "20260708",
         payload,
-        refresh_fn=lambda trade_date: _FakeRefreshStats(),
+        refresh_fn=lambda trade_date, **_kwargs: _FakeRefreshStats(),
         reports_dir=tmp_path,
+        data_dir=tmp_path,
     )
 
     assert payload["daily_action_cache_refresh"] == {
@@ -539,7 +541,11 @@ def test_refresh_daily_action_caches_for_auto_respects_env_kill_switch(monkeypat
     monkeypatch.setattr(main_mod, "_save_json_report", lambda *_args, **_kwargs: None)
 
     main_mod._refresh_daily_action_caches_for_auto(
-        "20260708", payload, refresh_fn=refresh_fn, reports_dir=tmp_path
+        "20260708",
+        payload,
+        refresh_fn=refresh_fn,
+        reports_dir=tmp_path,
+        data_dir=tmp_path,
     )
 
     assert called is False

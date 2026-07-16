@@ -1181,7 +1181,11 @@ def _refresh_daily_action_caches_for_auto(
     report_payload: dict,
     *,
     reports_dir: Path | str,
+    data_dir: Path | str,
     refresh_fn=None,
+    calendar_refresh_fn=None,
+    panel_backfill_fn=None,
+    panel_health_fn=None,
 ) -> object | None:
     """Refresh Daily Action inputs and retain the exact immutable result.
 
@@ -1201,7 +1205,13 @@ def _refresh_daily_action_caches_for_auto(
 
     refresh_result = None
     try:
-        candidate = refresh_fn(trade_date)
+        data_root = Path(data_dir)
+        candidate = refresh_fn(
+            trade_date,
+            price_cache_dir=data_root / "price_cache",
+            fund_flow_cache_dir=data_root / "fund_flow_cache",
+            snapshot_dir=data_root / "snapshots",
+        )
         from src.screening.offensive.cache_readiness import DailyActionRefreshResult
 
         if isinstance(candidate, DailyActionRefreshResult):
@@ -1224,11 +1234,13 @@ def _refresh_daily_action_caches_for_auto(
     # can resolve the next-day entry and the T+10 horizon (regime_history is
     # historical-only and would leave the service at calendar_unavailable).
     try:
-        from src.screening.offensive.daily_action import (
-            refresh_authoritative_trade_calendar,
-        )
+        if calendar_refresh_fn is None:
+            from src.screening.offensive.daily_action import (
+                refresh_authoritative_trade_calendar,
+            )
 
-        refresh_authoritative_trade_calendar(reports_dir=Path(reports_dir))
+            calendar_refresh_fn = refresh_authoritative_trade_calendar
+        calendar_refresh_fn(reports_dir=Path(reports_dir))
     except Exception as exc:  # pragma: no cover - calendar refresh must not fail --auto
         logger.warning("[Auto] trade calendar refresh failed: %s", exc)
 
@@ -1236,12 +1248,16 @@ def _refresh_daily_action_caches_for_auto(
     # signals whose forward window has elapsed get their realized T+1..T+10
     # returns joined. Best-effort out-of-sample accumulation; never fails --auto.
     try:
-        from scripts.join_setup_outputs_with_returns import backfill_panel
+        if panel_backfill_fn is None:
+            from scripts.join_setup_outputs_with_returns import backfill_panel
+
+            panel_backfill_fn = backfill_panel
 
         report_root = Path(reports_dir)
-        _joined, panel_stats = backfill_panel(
+        _joined, panel_stats = panel_backfill_fn(
             log_dir=report_root / "setup_output_log",
             panel=report_root / "setup_output_panel.jsonl",
+            price_cache_dir=Path(data_dir) / "price_cache",
         )
         logger.info(
             "[Auto] setup-output panel: %d records, %d realized",
@@ -1254,11 +1270,14 @@ def _refresh_daily_action_caches_for_auto(
     # One-line panel-health readout (plan_eligible vs filtered Welch t-test) once
     # a horizon has enough realized samples. Read-only; best-effort.
     try:
-        from scripts.panel_health_check import panel_health_oneline
+        if panel_health_fn is None:
+            from scripts.panel_health_check import panel_health_oneline
+
+            panel_health_fn = panel_health_oneline
 
         logger.info(
             "[Auto] 面板体检: %s",
-            panel_health_oneline(Path(reports_dir) / "setup_output_panel.jsonl"),
+            panel_health_fn(Path(reports_dir) / "setup_output_panel.jsonl"),
         )
     except Exception as exc:  # pragma: no cover - health readout must not fail --auto
         logger.warning("[Auto] 面板体检失败: %s", exc)
@@ -1275,6 +1294,18 @@ def _build_shared_readiness_evidence_for_auto(
 
     return build_shared_readiness_evidence_for_auto(
         refresh_result, report_payload, **kwargs
+    )
+
+
+def _capture_shared_readiness_evidence_source_for_auto(
+    refresh_result: object, *, data_dir: Path, **kwargs
+):
+    from src.screening.offensive.shared_readiness_evidence import (
+        capture_shared_readiness_evidence_source,
+    )
+
+    return capture_shared_readiness_evidence_source(
+        refresh_result, data_dir=Path(data_dir), **kwargs
     )
 
 
@@ -1302,18 +1333,20 @@ def _complete_daily_action_readiness_for_auto(
     report_payload: dict,
     *,
     reports_dir: Path,
-    data_dir: Path | None = None,
+    frozen_source: object,
+    oversold_bounce_enabled: bool = False,
     shared_evidence_builder=None,
 ):
     """Build and publish readiness; every non-authoritative path is an attempt."""
 
     builder = shared_evidence_builder or _build_shared_readiness_evidence_for_auto
     try:
-        shared = builder(refresh_result, report_payload, data_dir=data_dir)
+        shared = builder(refresh_result, report_payload, frozen_source=frozen_source)
         return _publish_daily_action_readiness_for_auto(
             refresh_result,
             reports_dir=Path(reports_dir),
             shared_evidence=shared,
+            oversold_bounce_enabled=oversold_bounce_enabled,
         )
     except Exception as exc:  # noqa: BLE001 - fail closed into a durable attempt
         logger.warning("[Auto] Daily Action readiness blocked: %s", exc)
@@ -1329,6 +1362,7 @@ def _publish_daily_action_readiness_for_auto(
     *,
     reports_dir: Path,
     shared_evidence: object | None,
+    oversold_bounce_enabled: bool = False,
 ):
     """Publish readiness from the exact immutable refresh result."""
 
@@ -1343,6 +1377,8 @@ def _publish_daily_action_readiness_for_auto(
 
     if type(refresh_result) is not DailyActionRefreshResult:
         raise TypeError("readiness publication requires exact DailyActionRefreshResult")
+    if type(oversold_bounce_enabled) is not bool:
+        raise TypeError("oversold_bounce_enabled must be an exact bool")
     run_id = new_readiness_run_id(refresh_result)
     if type(shared_evidence) is not SharedReadinessEvidence:
         publication = publish_daily_action_attempt(
@@ -1357,25 +1393,28 @@ def _publish_daily_action_readiness_for_auto(
         )
         return publication
 
-    from src.screening.offensive.daily_action import _env_setup_disable_list
-
     manifest = build_daily_action_readiness(
         refresh_result,
         shared_evidence,
         run_id=run_id,
-        oversold_bounce_enabled=(
-            "oversold_bounce" not in _env_setup_disable_list()
-        ),
+        oversold_bounce_enabled=oversold_bounce_enabled,
     )
 
     publication = publish_daily_action_readiness(manifest, Path(reports_dir))
-    logger.info(
-        "[Auto] Daily Action 就绪清单已发布: %s (%d 只, scannable=%d, plan_eligible=%d)",
-        publication.artifact_path.name,
-        len(manifest.universe_tickers),
-        manifest.scannable_count,
-        manifest.plan_eligible_count,
-    )
+    published = publication.manifest
+    if publication.status == "healthy" and published is not None:
+        logger.info(
+            "[Auto] Daily Action 就绪清单已发布: %s (%d 只, scannable=%d, plan_eligible=%d)",
+            publication.artifact_path.name,
+            len(published.universe_tickers),
+            published.scannable_count,
+            published.plan_eligible_count,
+        )
+    else:
+        logger.warning(
+            "[Auto] Daily Action 未就绪，仅保存 attempt: %s",
+            publication.artifact_path.name,
+        )
     return publication
 
 
@@ -1434,14 +1473,20 @@ def _log_cache_refresh_summary(s: dict) -> None:
         logger.info("[Auto] 缓存刷新 · 价格: %s", " · ".join(parts))
 
 
-def _daily_readiness_counts(daily_readiness: dict | None) -> dict[str, int]:
+def _daily_readiness_counts(
+    daily_readiness: dict | None,
+) -> dict[str, int | None]:
     source = dict(daily_readiness or {})
+    def optional_count(key: str) -> int | None:
+        value = source.get(key)
+        return value if type(value) is int and value >= 0 else None
+
     return {
-        "universe": _safe_int(source.get("universe_count"), 0),
-        "scannable": _safe_int(source.get("scannable_count"), 0),
-        "plan_eligible": _safe_int(source.get("plan_eligible_count"), 0),
-        "degraded": _safe_int(source.get("degraded_count"), 0),
-        "failed": _safe_int(source.get("failed_count"), 0),
+        "universe": optional_count("universe_count"),
+        "scannable": optional_count("scannable_count"),
+        "plan_eligible": optional_count("plan_eligible_count"),
+        "degraded": optional_count("degraded_count"),
+        "failed": optional_count("failed_count"),
     }
 
 
@@ -1466,9 +1511,13 @@ def render_auto_daily_domain_summary(
         "fatal": "失败",
     }.get(auto_status, auto_status)
     daily_label = "健康" if status == "healthy" else "未就绪"
+
+    def display_count(value: int | None) -> str:
+        return "未知" if value is None else str(value)
+
     lines = [
         f"Auto 评分状态：{auto_label}（候选池={_safe_int(layer_a_count, 0)}，推荐={_safe_int(recommendation_count, 0)}）",
-        f"Daily Action 就绪状态：{daily_label}（全域={counts['universe']}，可扫描={counts['scannable']}，可计划={counts['plan_eligible']}，残缺诊断={counts['degraded']}，失败={counts['failed']}）",
+        f"Daily Action 就绪状态：{daily_label}（全域={display_count(counts['universe'])}，可扫描={display_count(counts['scannable'])}，可计划={display_count(counts['plan_eligible'])}，残缺诊断={display_count(counts['degraded'])}，失败={display_count(counts['failed'])}）",
     ]
     if disclosures:
         lines.append("Daily Action 仓位披露：regime 加仓证据暂不可验，单票按 10% 仓位披露，非阻断")
@@ -1574,11 +1623,13 @@ def run_auto_screening(
 
             # run_auto_pipeline reconciles any durable pending state before its
             # default prepare_inputs performs preheat/cache work for a new run.
+            auto_reports_dir = _resolve_consecutive_report_dir()
             result = run_auto_pipeline(
                 trade_date,
                 top_n,
                 strict_quality=strict_quality,
-                reports_dir=_resolve_consecutive_report_dir(),
+                reports_dir=auto_reports_dir,
+                data_dir=auto_reports_dir.parent,
             )
             for diagnostic in result.recovery_diagnostics:
                 logger.warning("[Auto] recovery diagnostic: %s", diagnostic)

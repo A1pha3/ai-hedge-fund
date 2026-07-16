@@ -40,7 +40,6 @@ from src.screening.offensive.daily_action_readiness import (
 from src.screening.offensive.daily_action_snapshot import (
     FrozenFlowRow,
     FrozenPriceRow,
-    VerifiedDailyActionSnapshot,
     load_verified_daily_action_snapshot,
 )
 from src.screening.offensive.pit_evidence import (
@@ -126,7 +125,7 @@ def _flow_frame() -> pd.DataFrame:
 
 
 def _shared_evidence(universe: tuple[str, ...]) -> SharedReadinessEvidence:
-    regime_row = {"regime": "normal"}
+    regime_row = {"trade_date": SIGNAL_DATE.isoformat(), "regime": "normal"}
     industry_by_ticker = {ticker: "银行" for ticker in universe}
     industry_day_pct = {ticker: 1.5 for ticker in universe}
     security_status_by_ticker = {ticker: "listed" for ticker in universe}

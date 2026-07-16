@@ -942,6 +942,42 @@ _sw_industry_cache: dict[str, str] | None = None
 _sw_industry_cache_lock = threading.Lock()
 
 
+def get_daily_readiness_reference_snapshot(
+) -> tuple[pd.DataFrame | None, dict[str, str] | None]:
+    """Return detached, cache-only reference data for readiness publication.
+
+    This adapter is the sole owner of the module's private cache representation.
+    It never invokes a provider; missing evidence is reported as ``None`` so the
+    readiness publisher can fail closed into an attempt artifact.
+    """
+
+    with _stock_basic_cache_lock:
+        stock_basic = (
+            None if _stock_basic_cache is None else _stock_basic_cache.copy(deep=True)
+        )
+    with _sw_industry_cache_lock:
+        sw_mapping = (
+            None if _sw_industry_cache is None else dict(_sw_industry_cache)
+        )
+    if stock_basic is None:
+        cache_key = _make_tushare_query_cache_key(
+            "stock_basic",
+            exchange="",
+            list_status="L",
+            fields=(
+                "ts_code,symbol,name,area,industry,market,list_date,"
+                "list_status,is_hs"
+            ),
+        )
+        stock_basic = _get_tushare_cached_df(cache_key)
+        if stock_basic is None:
+            stock_basic = _get_persisted_tushare_cached_df(cache_key)
+    return (
+        None if stock_basic is None else stock_basic.copy(deep=True),
+        None if sw_mapping is None else dict(sw_mapping),
+    )
+
+
 def _fetch_tushare_all_stock_basic(pro) -> pd.DataFrame | None:
     return _cached_tushare_dataframe_call(
         pro,

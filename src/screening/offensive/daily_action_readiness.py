@@ -269,11 +269,16 @@ class SharedReadinessEvidence:
         if type(self.as_of_date) is not date:
             raise ManifestValidationError("as_of_date must be an exact date")
         regime_raw = _require_mapping(self.regime_row, "regime_row")
-        if not regime_raw:
-            raise ManifestValidationError("regime_row must not be empty")
+        if set(regime_raw) != {"trade_date", "regime"}:
+            raise ManifestValidationError(
+                "regime_row must contain exactly trade_date and regime"
+            )
         regime_row = _normalize_json(regime_raw, "regime_row")
+        trade_date = regime_row.get("trade_date")
+        if type(trade_date) is not str or trade_date != self.as_of_date.isoformat():
+            raise ManifestValidationError("regime_row.trade_date must match as_of_date")
         regime = regime_row.get("regime")
-        if regime not in DAILY_ACTION_REGIMES:
+        if type(regime) is not str or regime not in DAILY_ACTION_REGIMES:
             raise ManifestValidationError("regime_row.regime is unknown")
 
         industry_raw = _require_mapping(

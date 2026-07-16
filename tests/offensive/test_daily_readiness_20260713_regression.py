@@ -145,7 +145,7 @@ def _expand_to_universe(fixture: dict) -> dict[str, TickerRefreshOutcome]:
 
 
 def _shared_evidence(universe: tuple[str, ...]) -> SharedReadinessEvidence:
-    regime_row = {"regime": "normal"}
+    regime_row = {"trade_date": _SIGNAL_DATE.isoformat(), "regime": "normal"}
     industry_by_ticker = {ticker: "银行" for ticker in universe}
     industry_day_pct = {ticker: 1.0 for ticker in universe}
     security_status_by_ticker = {ticker: "listed" for ticker in universe}

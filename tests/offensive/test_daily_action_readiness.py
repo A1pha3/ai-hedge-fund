@@ -7,8 +7,6 @@ import hashlib
 from datetime import date
 from pathlib import Path
 
-import pytest
-
 from src.screening.offensive.cache_readiness import (
     DailyActionRefreshResult,
     FundFlowStatus,
@@ -21,15 +19,12 @@ from src.screening.offensive.cache_readiness import (
 from src.screening.offensive.daily_action_readiness import (
     DAILY_ACTION_READINESS_SCHEMA_VERSION,
     DailyActionReadinessManifest,
-    DailyActionTickerReadiness,
     SharedReadinessEvidence,
     build_daily_action_readiness,
-    build_ticker_readiness,
     publish_daily_action_readiness,
     validate_manifest,
 )
 from src.screening.offensive.pit_evidence import canonical_fingerprint
-from src.screening.offensive.setup_data_contracts import SetupCapability
 from src.utils.date_utils import SIGNAL_SESSION_POLICY_VERSION
 
 
@@ -73,7 +68,7 @@ def _fingerprint(value: object) -> str:
 
 def _shared_evidence(tickers: tuple[str, ...]) -> SharedReadinessEvidence:
     as_of = date(2026, 7, 13)
-    regime_row = {"regime": "normal"}
+    regime_row = {"trade_date": as_of.isoformat(), "regime": "normal"}
     industry_by_ticker = {ticker: "银行" for ticker in tickers}
     industry_day_pct = {ticker: 1.0 for ticker in tickers}
     security_status_by_ticker = {ticker: "listed" for ticker in tickers}
@@ -266,7 +261,7 @@ class TestCapabilityEvaluation:
         tickers = {
             "000001": _outcome("000001")
         }
-        regime_row = {"regime": "normal"}
+        regime_row = {"trade_date": "2026-07-13", "regime": "normal"}
         security = {"000001": "listed"}
         shared = SharedReadinessEvidence(
             as_of_date=date(2026, 7, 13),

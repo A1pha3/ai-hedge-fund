@@ -53,9 +53,10 @@ def test_auto_attempt_output_is_clear_chinese_and_does_not_infer_cache_counts():
     assert "Auto 评分状态：健康" in text
     assert "Daily Action 就绪状态：未就绪" in text
     assert "数据护栏阻断新计划" in text
-    assert "全域=0" in text
-    assert "可扫描=0" in text
+    assert "全域=未知" in text
+    assert "可扫描=未知" in text
     assert "readiness_attempt" not in text
+    assert "未知" in text
 
 
 def test_auto_verbose_output_may_include_raw_readiness_codes():

@@ -812,7 +812,24 @@ def _manifest_has_auditable_evidence(
     )
 
 
-def _default_dependencies(reports_dir: Path, run_id: str) -> AutoPipelineDependencies:
+def _default_dependencies(
+    reports_dir: Path,
+    data_dir: Path,
+    run_id: str,
+    *,
+    refresh_fn: Callable[..., object] | None = None,
+    calendar_refresh_fn: Callable[..., object] | None = None,
+    panel_backfill_fn: Callable[..., object] | None = None,
+    panel_health_fn: Callable[..., object] | None = None,
+) -> AutoPipelineDependencies:
+    from src.screening.offensive.daily_action import _env_setup_disable_list
+
+    # Environment policy is mutable process-global state. Freeze it once when
+    # the default run dependencies are created; builders and publishers must
+    # consume only this run-bound value.
+    oversold_bounce_enabled = (
+        "oversold_bounce" not in _env_setup_disable_list()
+    )
     readiness_state: dict[str, object | None] = {
         "refresh_result": None,
         "publication": None,
@@ -845,6 +862,11 @@ def _default_dependencies(reports_dir: Path, run_id: str) -> AutoPipelineDepende
             trade_date,
             refresh_payload,
             reports_dir=reports_dir,
+            data_dir=data_dir,
+            refresh_fn=refresh_fn,
+            calendar_refresh_fn=calendar_refresh_fn,
+            panel_backfill_fn=panel_backfill_fn,
+            panel_health_fn=panel_health_fn,
         )
         return _capture_input_snapshot(
             trade_date,
@@ -867,12 +889,27 @@ def _default_dependencies(reports_dir: Path, run_id: str) -> AutoPipelineDepende
         )
 
         if type(refresh_result) is DailyActionRefreshResult:
-            publication = main._complete_daily_action_readiness_for_auto(
-                refresh_result,
-                payload,
-                reports_dir=reports_dir,
-                data_dir=reports_dir.parent,
-            )
+            try:
+                frozen_source = main._capture_shared_readiness_evidence_source_for_auto(
+                    refresh_result,
+                    data_dir=data_dir,
+                )
+                publication = main._complete_daily_action_readiness_for_auto(
+                    refresh_result,
+                    payload,
+                    reports_dir=reports_dir,
+                    frozen_source=frozen_source,
+                    oversold_bounce_enabled=oversold_bounce_enabled,
+                )
+            except Exception as exc:  # noqa: BLE001 - fail closed into attempt
+                main.logger.warning(
+                    "[Auto] Daily Action 证据冻结失败，未就绪: %s", exc
+                )
+                publication = main._publish_daily_action_attempt_for_auto(
+                    refresh_result=refresh_result,
+                    reports_dir=reports_dir,
+                    reason=f"shared_source_capture_failed:{type(exc).__name__}",
+                )
         else:
             attempt_run_id = hashlib.sha256(
                 f"{inputs.trade_date}|{run_id}|refresh-unavailable".encode("utf-8")
@@ -938,24 +975,25 @@ def _daily_readiness_publication_payload(publication: object) -> dict[str, Any]:
     """Serialize operator-facing readiness facts from the actual publication."""
 
     manifest = getattr(publication, "manifest", None)
-    if manifest is None:
+    publication_status = str(
+        getattr(publication, "status", "degraded") or "degraded"
+    )
+    if manifest is None or publication_status != "healthy":
         return {
             "status": "blocked",
-            "publication_status": str(
-                getattr(publication, "status", "degraded") or "degraded"
-            ),
-            "universe_count": 0,
-            "scannable_count": 0,
-            "plan_eligible_count": 0,
-            "degraded_count": 0,
-            "failed_count": 0,
+            "publication_status": publication_status,
+            "universe_count": None,
+            "scannable_count": None,
+            "plan_eligible_count": None,
+            "degraded_count": None,
+            "failed_count": None,
             "block_reasons": ["readiness_attempt"],
         }
 
     readiness_values = tuple(manifest.ticker_readiness.values())
     return {
         "status": "healthy",
-        "publication_status": str(getattr(publication, "status", "healthy")),
+        "publication_status": publication_status,
         "universe_count": len(manifest.universe_tickers),
         "scannable_count": sum(
             any(capability.scannable for capability in item.capabilities.values())
@@ -1712,6 +1750,7 @@ def run_auto_pipeline(
     strict_quality: bool = False,
     *,
     reports_dir: Path | None = None,
+    data_dir: Path | None = None,
     dependencies: AutoPipelineDependencies | None = None,
 ) -> AutoRunResult:
     """Recover an interrupted publication or compute one new auto run."""
@@ -1725,9 +1764,14 @@ def run_auto_pipeline(
     if recovered is not None:
         return recovered
     run_id = _new_run_id(trade_date)
-    resolved_dependencies = dependencies or _default_dependencies(
-        resolved_reports_dir, run_id
-    )
+    if dependencies is None:
+        if data_dir is None:
+            raise ValueError("data_dir is required for default Auto dependencies")
+        resolved_dependencies = _default_dependencies(
+            resolved_reports_dir, Path(data_dir), run_id
+        )
+    else:
+        resolved_dependencies = dependencies
 
     def readiness_publication() -> object | None:
         getter = resolved_dependencies.get_daily_readiness_publication

@@ -53,7 +53,7 @@ def _resign(raw: dict[str, object]) -> None:
 
 
 def _shared_evidence(tickers: tuple[str, ...]) -> SharedReadinessEvidence:
-    regime_row = {"regime": "normal", "source_date": SIGNAL_DATE.isoformat()}
+    regime_row = {"trade_date": SIGNAL_DATE.isoformat(), "regime": "normal"}
     industry_by_ticker = {ticker: "银行" for ticker in tickers}
     industry_day_pct = {ticker: 1.25 for ticker in tickers}
     security_status_by_ticker = {ticker: "listed" for ticker in tickers}
@@ -155,8 +155,29 @@ def test_v2_rejects_shared_evidence_from_different_signal_date(valid_manifest_di
     raw["shared_evidence"]["as_of_date"] = "2026-07-12"  # type: ignore[index]
     _resign(raw)
 
-    with pytest.raises(ManifestValidationError, match="fingerprint|date mismatch"):
+    with pytest.raises(ManifestValidationError, match="fingerprint|date.*match"):
         parse_manifest_v2(raw)
+
+
+@pytest.mark.parametrize(
+    "regime_row",
+    [
+        {"trade_date": SIGNAL_DATE.isoformat(), "regime": "normal", "extra": True},
+        {"regime": "normal"},
+        {"trade_date": "2026-07-12", "regime": "normal"},
+        {"trade_date": "2026-7-13", "regime": "normal"},
+    ],
+)
+def test_shared_evidence_rejects_non_exact_regime_row(valid_manifest, regime_row):
+    shared = valid_manifest.shared_evidence
+    with pytest.raises(ManifestValidationError, match="regime_row|trade_date"):
+        replace(
+            shared,
+            regime_row=regime_row,
+            regime_fingerprint=_fingerprint(
+                {"as_of_date": SIGNAL_DATE.isoformat(), "regime_row": regime_row}
+            ),
+        )
 
 
 def test_v2_rejects_unknown_fields_and_capabilities(valid_manifest_dict):

@@ -100,7 +100,11 @@ def _load_series_for_tickers(tickers: set[str], price_cache_dir: Path = Path("da
     return series
 
 
-def backfill_panel(log_dir: Path = LOG_DIR, panel: Path = PANEL) -> tuple[list[dict], dict]:
+def backfill_panel(
+    log_dir: Path = LOG_DIR,
+    panel: Path = PANEL,
+    price_cache_dir: Path = Path("data/price_cache"),
+) -> tuple[list[dict], dict]:
     """Join logged outputs with any now-available forward returns; write the panel.
 
     Loads only the logged tickers' price series (not the whole universe), so it is
@@ -110,7 +114,7 @@ def backfill_panel(log_dir: Path = LOG_DIR, panel: Path = PANEL) -> tuple[list[d
     if not records:
         return [], {"records": 0, "realized": 0}
     tickers = {str(r.get("ticker", "")) for r in records if r.get("ticker")}
-    series = _load_series_for_tickers(tickers)
+    series = _load_series_for_tickers(tickers, price_cache_dir=price_cache_dir)
     joined = join_records(records, series)
     _write_panel(joined, panel)
     return joined, {
