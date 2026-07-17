@@ -816,3 +816,142 @@ def test_canonical_producer_success_requires_source_evidence(tmp_path, family):
         store._producer_family_status(manifest, "000001", family)
         is ObservationStatus.FAILED
     )
+
+
+def test_note_eligible_overrides_candidate_pool_for_full_coverage_check(tmp_path: Path) -> None:
+    """price_history 的设计消费集由 scorer 声明 (技术阶段子集); eligible_count
+    必须采用声明集而不是全池 candidate_count — 否则 required 的
+    full-eligible-coverage 校验按全池恒失败."""
+    from src.screening.scoring_feature_quality import FeatureEvidence
+
+    price_dir = tmp_path / "price_cache"
+    price_dir.mkdir()
+    dates = pd.date_range(end="2026-07-08", periods=250, freq="D").strftime("%Y-%m-%d")
+    pd.DataFrame(
+        {
+            "date": dates,
+            "open": [10.0] * 250,
+            "close": [10.1] * 250,
+            "high": [10.2] * 250,
+            "low": [9.9] * 250,
+            "volume": [1000] * 250,
+        }
+    ).to_csv(price_dir / "000001.csv", index=False)
+
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache", price_cache_dir=price_dir
+    )
+    store.load_price_frame("000001", "20260708")
+    store.note_eligible_tickers("price_history", ["000001"])
+
+    summary = store.build_quality_summary(
+        "20260708", ["000001", "000002"], finite_score_outputs(["000001", "000002"])
+    )
+
+    evidence = summary["scoring_features"]["price_history"]
+    assert evidence["candidate_count"] == 2
+    assert evidence["eligible_count"] == 1
+    assert evidence["requested_count"] == 1
+    # requested == eligible → full-eligible-coverage 校验通过 (不 raise).
+    FeatureEvidence.from_mapping("price_history", evidence, trade_date="20260708")
+
+
+def test_full_coverage_check_fails_without_declared_eligible(tmp_path: Path) -> None:
+    """未声明 eligible 时回落为全池 candidate_count; requested != eligible
+    必须仍然触发 full-eligible-coverage 失败 (校验的牙齿还在)."""
+    from src.screening.scoring_feature_quality import FeatureEvidence
+
+    price_dir = tmp_path / "price_cache"
+    price_dir.mkdir()
+    dates = pd.date_range(end="2026-07-08", periods=250, freq="D").strftime("%Y-%m-%d")
+    pd.DataFrame(
+        {
+            "date": dates,
+            "open": [10.0] * 250,
+            "close": [10.1] * 250,
+            "high": [10.2] * 250,
+            "low": [9.9] * 250,
+            "volume": [1000] * 250,
+        }
+    ).to_csv(price_dir / "000001.csv", index=False)
+
+    store = ScoringFeatureStore(
+        base_dir=tmp_path / "feature_cache", price_cache_dir=price_dir
+    )
+    store.load_price_frame("000001", "20260708")
+
+    summary = store.build_quality_summary(
+        "20260708", ["000001", "000002"], finite_score_outputs(["000001", "000002"])
+    )
+
+    evidence = summary["scoring_features"]["price_history"]
+    assert evidence["eligible_count"] == 2
+    with pytest.raises(ValueError, match="full eligible coverage is required"):
+        FeatureEvidence.from_mapping("price_history", evidence, trade_date="20260708")
+
+
+def _seed_event_manifest(feature_dir: Path, news_status: str) -> None:
+    feature_dir.mkdir()
+    (feature_dir / "feature_manifest_20260708.json").write_text(
+        json.dumps(
+            {
+                "trade_date": "20260708",
+                "candidate_count": 1,
+                "ticker_outcomes": {
+                    "000001": {
+                        "observation_status": "success",
+                        "families": {
+                            "event_inputs": {
+                                "observation_status": "success",
+                                "nonempty_count": 0,
+                                "source_parts_succeeded": 2,
+                                "source_parts_total": 2,
+                                "sources": {
+                                    "company_news": {
+                                        "observation_status": news_status,
+                                        "nonempty_count": 0,
+                                    },
+                                    "insider_trades": {
+                                        "observation_status": "success",
+                                        "nonempty_count": 0,
+                                    },
+                                },
+                            }
+                        },
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_load_event_inputs_promotes_producer_observed_empty_sources(tmp_path: Path) -> None:
+    """生产端成功观测 0 行 (合法空) 不落盘空快照时, 消费端必须依据生产端
+    逐源证据把 UNAVAILABLE 提升回 SUCCESS, 而不是误判为缺证据."""
+    feature_dir = tmp_path / "feature_cache"
+    _seed_event_manifest(feature_dir, "success")
+    store = ScoringFeatureStore(
+        base_dir=feature_dir, legacy_snapshot_dir=tmp_path / "snapshots"
+    )
+
+    news, trades = store.load_event_inputs("000001", "20260708")
+
+    assert news == [] and trades == []
+    statuses = store._quality.observation_statuses["event_inputs"]
+    assert statuses["000001"] is ObservationStatus.SUCCESS
+    assert "000001" in store._quality.observed["event_inputs"]
+    assert "000001" not in store._quality.consumption_failed.get("event_inputs", {})
+
+
+def test_load_event_inputs_does_not_promote_when_producer_source_failed(tmp_path: Path) -> None:
+    """生产端源级失败必须保持缺证据语义: 不提升, 不计入 observed (校验的牙齿)."""
+    feature_dir = tmp_path / "feature_cache"
+    _seed_event_manifest(feature_dir, "failed")
+    store = ScoringFeatureStore(
+        base_dir=feature_dir, legacy_snapshot_dir=tmp_path / "snapshots"
+    )
+
+    store.load_event_inputs("000001", "20260708")
+
+    assert "000001" not in store._quality.observed.get("event_inputs", set())

@@ -237,6 +237,10 @@ def _validate_score_outputs(
 class _QualityTracker:
     candidate_count: int = 0
     requested: dict[str, set[str]] = field(default_factory=dict)
+    # eligible: 管线按设计应消费某 family 的标的集合 (由 scorer 显式声明).
+    # 例如技术阶段只对流动性排名前 75% 的候选消费 price_history —— 设计消费集
+    # 是 225 而不是全池 300. 未声明时 eligible_count 回落为 candidate_count.
+    eligible: dict[str, set[str]] = field(default_factory=dict)
     loaded: dict[str, set[str]] = field(default_factory=dict)
     malformed: dict[str, int] = field(default_factory=dict)
     rows_loaded: dict[str, list[int]] = field(default_factory=dict)
@@ -260,6 +264,20 @@ class _QualityTracker:
     def set_candidate_count(self, count: int) -> None:
         with self.lock:
             self.candidate_count = int(count)
+
+    def note_eligible(self, family: str, tickers: list[str]) -> None:
+        """Record the ticker set the pipeline is designed to consume for ``family``.
+
+        Eligibility is a pipeline-design fact owned by the scorer, not an
+        assumption the store may bake in: the technical stage consumes
+        ``price_history`` only for its ranked subset of the pool, so requiring
+        ``requested == candidate_count`` would fail every run by construction.
+        """
+
+        with self.lock:
+            self.eligible.setdefault(family, set()).update(
+                _ticker6(ticker) for ticker in tickers
+            )
 
     def note_requested(self, family: str, tickers: list[str]) -> None:
         with self.lock:
@@ -365,6 +383,16 @@ class ScoringFeatureStore:
             allow_stale=self.allow_stale,
         )
         self._quality = _QualityTracker()
+
+    def note_eligible_tickers(self, family: str, tickers: list[str]) -> None:
+        """Declare the designed consumption set for ``family``.
+
+        The scorer owns this fact (see ``_QualityTracker.note_eligible``); the
+        emitted evidence uses it as ``eligible_count`` instead of the raw
+        candidate-pool size.
+        """
+
+        self._quality.note_eligible(family, tickers)
 
     def load_price_frame(self, ticker: str, trade_date: str, lookback_days: int = 400) -> pd.DataFrame:
         ticker6 = _ticker6(ticker)
@@ -480,9 +508,21 @@ class ScoringFeatureStore:
         trades, trades_status, trades_stale, trades_snapshot_date = (
             self._load_insider_trades(ticker6, trade_date)
         )
+        manifest = self._load_manifest(trade_date)
+        # 生产端"成功观测到 0 行"(合法空)不会落盘空快照, 消费端因此把缺失误报为
+        # UNAVAILABLE → 家族降格 PARTIAL → required 指纹守恒校验全局阻断. 用生产端
+        # 逐源证据把"缺失但已被权威观测为空"的源提升回 SUCCESS (仅状态, 不改数据).
+        if news_status is ObservationStatus.UNAVAILABLE and self._producer_source_observed_empty(
+            manifest, ticker6, "event_inputs", "company_news"
+        ):
+            news_status = ObservationStatus.SUCCESS
+        if trades_status is ObservationStatus.UNAVAILABLE and self._producer_source_observed_empty(
+            manifest, ticker6, "event_inputs", "insider_trades"
+        ):
+            trades_status = ObservationStatus.SUCCESS
         consumed_status = _event_source_status([news_status, trades_status])
         producer_status = self._producer_family_status(
-            self._load_manifest(trade_date), ticker6, "event_inputs"
+            manifest, ticker6, "event_inputs"
         )
         observation_status = _restrict_consumed_status(
             consumed_status, producer_status
@@ -788,6 +828,45 @@ class ScoringFeatureStore:
 
         return aggregate_status
 
+    def _producer_source_observed_empty(
+        self,
+        manifest: Mapping[str, object],
+        ticker: str,
+        family: str,
+        source: str,
+    ) -> bool:
+        """True when the producer manifest records ``source`` for ``ticker`` as a
+        successful observation carrying zero rows — an authoritative legal empty.
+
+        The snapshot store is sparse: producers do not materialize empty
+        artifacts, so a legally-empty source looks "missing" (UNAVAILABLE) to
+        the consumer. The producer's per-source outcome is the only truthful
+        authority distinguishing "not fetched" from "fetched, was empty".
+        """
+
+        ticker_outcomes = manifest.get("ticker_outcomes")
+        if not isinstance(ticker_outcomes, Mapping):
+            return False
+        ticker_entry = ticker_outcomes.get(ticker)
+        if not isinstance(ticker_entry, Mapping):
+            return False
+        families = ticker_entry.get("families")
+        if not isinstance(families, Mapping):
+            return False
+        family_entry = families.get(family)
+        if not isinstance(family_entry, Mapping):
+            return False
+        sources = family_entry.get("sources")
+        if not isinstance(sources, Mapping):
+            return False
+        source_entry = sources.get(source)
+        if not isinstance(source_entry, Mapping):
+            return False
+        return (
+            _status_from_mapping(source_entry) is ObservationStatus.SUCCESS
+            and source_entry.get("nonempty_count") == 0
+        )
+
     def _resolve_legacy_snapshot_path(
         self, ticker: str, trade_date: str, filename: str
     ) -> tuple[Path, str, bool] | None:
@@ -960,6 +1039,8 @@ class ScoringFeatureStore:
     def _quality_for_family(self, family: str, trade_date: str, manifest: dict[str, Any]) -> dict[str, Any]:
         with self._quality.lock:
             requested = set(self._quality.requested.get(family, set()))
+            eligible_recorded = family in self._quality.eligible
+            eligible_set = set(self._quality.eligible.get(family, set()))
             loaded = set(self._quality.loaded.get(family, set()))
             observed = set(self._quality.observed.get(family, set()))
             usable = set(self._quality.usable.get(family, set()))
@@ -986,6 +1067,9 @@ class ScoringFeatureStore:
         # Consumption-side authoritative counts (preferred over manifest counts
         # because they reflect what the scorer actually consumed).
         requested_count = len(requested)
+        # Eligible defaults to the full candidate pool; the scorer may declare a
+        # smaller designed consumption set (e.g. price_history's technical stage).
+        eligible_count = len(eligible_set) if eligible_recorded else candidate_count
         observed_count = len(observed)
         usable_count = len(usable)
         nonempty_count = len(nonempty)
@@ -1038,7 +1122,7 @@ class ScoringFeatureStore:
             "trade_date": _compact_date(trade_date),
             "stale": stale_count > 0,
             "candidate_count": candidate_count,
-            "eligible_count": candidate_count,
+            "eligible_count": eligible_count,
             "requested_count": requested_count,
             "loaded_count": len(loaded),
             "missing_tickers": max(requested_count - len(loaded), 0),

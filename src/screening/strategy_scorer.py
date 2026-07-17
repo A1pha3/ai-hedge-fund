@@ -192,6 +192,11 @@ def _build_provisional_ranking(
 ) -> list[tuple[float, CandidateStock]]:
     provisional_ranking: list[tuple[float, CandidateStock]] = []
     technical_candidates = _rank_candidates_for_technical_stage(candidates)[:TECHNICAL_SCORE_MAX_CANDIDATES]
+    # price_history 的设计消费集是技术阶段子集 (池的 ~75%), 不是全池:
+    # 向质量门显式声明 eligible, 否则 full-eligible-coverage 校验按全池恒失败.
+    feature_store.note_eligible_tickers(
+        "price_history", [candidate.ticker for candidate in technical_candidates]
+    )
     price_frames_by_ticker: dict[str, pd.DataFrame] = {}
 
     # Parallel IO: load price frames and compute light signals concurrently

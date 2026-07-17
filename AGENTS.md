@@ -129,6 +129,7 @@ OversoldBounce (n=59):  winrate=53%  E[r]=+0.34%   crisis=-1.15%/48%   normal=+0
 11. **东财 `main_net_pct` 口径 ≠ 主力净流入/成交额**（2026-07-17 实测）：000504 2026-07-16 tushare 推导 -13.76%（net_mf/成交额，成交额与 daily amount 吻合）vs 东财缓存 -2.83%（分母疑为流通市值）。且 2026-07-16 批次东财行 pct 与 main_net_inflow **符号大量不一致**（如 000014 inflow=-2164万 却 pct=+26.45），该列数据质量存疑。**下游 setup（BTST/OB）只消费 `main_net_inflow` 金额，不消费 pct**，影响为零；但任何新逻辑引用 pct 前必须重新核对口径。资金流批量预取路径因此 pct 留 NaN（落盘补 0.0，同逐票 tushare 惯例）。
 12. **缓存目录不能放在 symlink 路径下**（2026-07-17 实测）：`atomic_write_csv` 的 `_open_parent` 用 `O_NOFOLLOW` 逐层打开目录组件，macOS 的 `/var`、`/tmp`（→ `/private/*`）会报 `[Errno 20] Not a directory: 'var'`。`tempfile.TemporaryDirectory()` 创建的目录就在其下——测试/bench 里构造缓存目录要用项目内路径或 pytest `tmp_path`（本仓库 basetemp 在工作区内）。生产 `data/` 用相对路径不受影响。
 13. **readiness v2 精确覆盖 vs 现实数据滞后**（2026-07-17 记录）：v2 要求宇宙内每票都有 stock_basic(L) + 申万行业成员证据，缺一票全局 fail-closed。退市票由宇宙构建时的 stock_basic(L) 过滤解决（见"宇宙退市过滤"）；残留风险是**新上市/次新股尚未纳入申万行业指数**（stock_basic 有、SW 成员没有）——若此类票经涨停注入进入宇宙，SW 覆盖校验仍会阻断当日清单。出现时把该票加入 `EXTRA_EXCLUDED_TICKERS` 临时屏蔽，或等申万收录后自愈。
+14. **质量门常量必须与管线设计对齐**（2026-07-18 定位）：`quality_decision` 曾长期 degraded，三根同类的"门与设计矛盾"：① `price_history` 的 eligible 误用全池 300，而技术阶段按设计只消费流动性前 75%（225）→ 现由 scorer 用 `note_eligible_tickers` 显式声明设计消费集；② 生产端"成功观测 0 行"（合法空）不落盘空快照，消费端误报 UNAVAILABLE → `load_event_inputs` 现依据生产端逐源证据把合法空提升回 SUCCESS；③ `min_usable_rows=200` 与候选池 `MIN_LISTING_DAYS=60` 矛盾（次新票按设计只有 ~60 根 bar）→ 硬门槛改为 60，200 保留为 informational 的 full-factor 目标。**改质量门常量前，先确认它约束的是"异常"还是"设计状态"。**
 
 
 ## 关键文件速查

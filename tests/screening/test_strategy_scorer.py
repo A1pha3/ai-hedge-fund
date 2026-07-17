@@ -71,6 +71,9 @@ class _FakeOptionalFeatureStore:
 
 
 class _IntradaySnapshotStore:
+    def note_eligible_tickers(self, family: str, tickers: list[str]) -> None:
+        pass
+
     def load_intraday_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, object]]:
         return {
             "000001": {
@@ -95,6 +98,9 @@ class _DailyFlowOnlyFeatureStore:
         self.ratio = ratio
         self.intraday_calls: list[tuple[str, list[str]]] = []
         self.fund_flow_calls: list[tuple[str, list[str]]] = []
+
+    def note_eligible_tickers(self, family: str, tickers: list[str]) -> None:
+        pass
 
     def load_intraday_metrics(self, trade_date: str, tickers: list[str]) -> dict[str, dict[str, object]]:
         self.intraday_calls.append((trade_date, tickers))
@@ -282,6 +288,9 @@ def test_score_batch_does_not_call_live_intraday_or_money_flow(monkeypatch):
     )
 
     class _Store:
+        def note_eligible_tickers(self, family, tickers):
+            pass
+
         def load_intraday_metrics(self, trade_date, tickers):
             return {"000001": {"flow_60": 0.1, "flow_60_source": "snapshot"}}
 
@@ -1845,6 +1854,9 @@ class _LocalOnlyScoringStore:
         self.industry_pe_requests: int = 0
         self.dragon_tiger_requests: int = 0
 
+    def note_eligible_tickers(self, family: str, tickers: list[str]) -> None:
+        pass
+
     def load_price_frame(self, ticker: str, trade_date: str, lookback_days: int = 400) -> pd.DataFrame:
         self.price_requests.append(ticker)
         dates = pd.date_range("2026-01-01", periods=220, freq="D")
@@ -1958,6 +1970,9 @@ def test_score_batch_fallback_path_is_provider_free_when_store_returns_empty(mon
     )
 
     class _EmptyIntradayStore:
+        def note_eligible_tickers(self, family: str, tickers: list[str]) -> None:
+            pass
+
         def load_price_frame(self, ticker: str, trade_date: str, lookback_days: int = 400) -> pd.DataFrame:
             return pd.DataFrame()
 

@@ -92,7 +92,11 @@ FEATURE_POLICY_TABLE: Mapping[str, FeaturePolicy] = {
         consumer_component="score_batch.price_history",
         empty_semantics="illegal",
         freshness_rule="exact_trade_date",
-        min_usable_rows=200,
+        # 硬门槛 = 候选池设计准入下限 (candidate_pool.MIN_LISTING_DAYS=60 个交易日,
+        # 次新票按设计只有 ~60 根 bar, 信号以 completeness 自然降格). 200 是
+        # full-factor 可计算目标 (EMA200 等), 已在 store 的 informational
+        # metadata 单独披露, 不应作为阻断门槛 — 否则每只次新票都误报数据饥饿.
+        min_usable_rows=60,
         required_score_components=("trend", "mean_reversion"),
         requires_full_eligible_coverage=True,
     ),
