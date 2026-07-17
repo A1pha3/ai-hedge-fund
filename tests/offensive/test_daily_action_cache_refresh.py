@@ -1722,3 +1722,62 @@ def test_refresh_daily_action_caches_fund_flow_batch_end_to_end(tmp_path):
         second.outcomes["000001"].evidence_fingerprints["fund_flow"]
         == outcome.evidence_fingerprints["fund_flow"]
     )
+
+
+def test_fund_flow_rate_limit_survives_fetch_exception(tmp_path, monkeypatch):
+    """对抗性审查回归: fetch_fn 抛异常也算发起网络请求, rate-limit 退避必须生效。
+
+    修复前 fetched_via_network 在 fetch_fn 返回后才置位 — 异常路径丢失退避,
+    持续故障时重试循环会全速 hammer API。
+    """
+    from src.screening.offensive import cache_refresh as cr
+    from src.screening.offensive.cache_refresh import refresh_fund_flow_cache
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(cr.time, "sleep", lambda sec: sleeps.append(sec))
+
+    def raising_fetch(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+        raise ConnectionError("api down")
+
+    stats = refresh_fund_flow_cache(
+        ["000001", "000002", "000003"],
+        "20260713",
+        fund_flow_cache_dir=tmp_path / "flow",
+        fetch_fn=raising_fetch,
+        rate_limit_sec=5.0,
+    )
+
+    assert stats.fund_flow_failed == 3
+    # 非末票的两次异常拉取后都必须退避 (末票不 sleep 是既有语义)
+    assert sleeps == [5.0, 5.0]
+
+
+def test_write_price_cache_row_skip_path_evidence_is_detached(tmp_path):
+    """对抗性审查回归: 幂等跳写路径的证据必须是独立副本, 与写盘路径防御对称。"""
+    from src.screening.offensive import cache_refresh as cr
+
+    path = tmp_path / "000001.csv"
+    row = {
+        "date": "2026-07-13",
+        "close": 10.5,
+        "open": 10.0,
+        "high": 10.6,
+        "low": 9.9,
+        "pct_change": 1.0,
+        "volume": 1000.0,
+    }
+    # 首轮: 写盘, 建立缓存
+    cr._write_price_cache_row(path, row)
+    # 次轮: 相同行 → 幂等跳写
+    captured: list[pd.DataFrame] = []
+    combined, wrote = cr._write_price_cache_row(
+        path, dict(row), artifact_sink=lambda frame: captured.append(frame)
+    )
+    assert wrote is False
+    assert len(captured) == 1
+    evidence = captured[0]
+    assert evidence is not combined  # 独立副本
+    # 调用方后续原地修改 combined 不得污染已采集证据
+    original_close = float(evidence.iloc[-1]["close"])
+    combined.loc[combined.index[-1], "close"] = -999.0
+    assert float(evidence.iloc[-1]["close"]) == original_close

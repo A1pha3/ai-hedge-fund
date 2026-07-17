@@ -398,9 +398,11 @@ def _write_price_cache_row(
     combined = combined.drop_duplicates(subset=["date"], keep="last")
     combined = combined.sort_values("date").reset_index(drop=True)
     if _price_frame_unchanged(combined, old):
-        # 跳过写盘: combined 不会再交给 writer, 无下游变异源, 直接作为证据。
+        # 与写盘路径防御对称: 证据一律隔离副本。跳写省的是全量校验+IO (~90s/轮),
+        # 一次 1580 行 deep copy (~1ms) 不在省钱的刀刃上 — 不留"无下游变异"的
+        # 隐性约定给未来代码踩。
         if artifact_sink is not None:
-            artifact_sink(combined)
+            artifact_sink(combined.copy(deep=True))
         return combined, False
     validate_price_artifact(combined, path.stem)
     if artifact_sink is not None:
@@ -817,8 +819,10 @@ def refresh_fund_flow_cache(
             if prefetched is not None:
                 df = prefetched
             else:
-                df = fetch_fn(ticker, start_date=trade_date, end_date=trade_date)
+                # 先置位再调用: fetch 抛异常也算发起了网络请求, rate-limit
+                # 退避必须生效 (否则持续故障时重试循环全速 hammer API)
                 fetched_via_network = True
+                df = fetch_fn(ticker, start_date=trade_date, end_date=trade_date)
             if df is None or len(df) == 0:
                 stats.fund_flow_empty += 1
                 stats.fund_flow_empty_tickers.append(ticker)

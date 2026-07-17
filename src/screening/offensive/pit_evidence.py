@@ -42,8 +42,11 @@ def _canonical_date(value: object) -> str:
         # datetime(y, m, d) 构造与 pd.Timestamp 一样拒绝 13 月/45 日等非法值;
         # year>=1000 时 strftime("%Y-%m-%d") 的输出必然逐位等于零填充输入 — 等价
         # (year<1000 时 strftime %Y 在部分平台不零填充, 落慢路径保持原行为)。
+        # isascii 必须: 全角数字 isdigit()=True 且 int() 可解析, 但慢路
+        # pd.Timestamp 会把它们规范化成 ASCII — 快路必须拒绝以保逐位一致。
         if (
             len(text) == 10
+            and text.isascii()
             and text[4] == "-"
             and text[7] == "-"
             and text[0] != "0"
@@ -139,8 +142,12 @@ def _iter_field_rows(frame: pd.DataFrame, fields: Sequence[str]):
     替代 frame.to_dict(orient="records"): 逐列 box 语义一致 (float64→float,
     int64→int, datetime64→Timestamp, object 原样), 但 1580 行帧上快 ~3-5 倍。
     调用方须先确认 fields 全部存在 (missing 检查), 值顺序与 fields 一致。
+    重复列名两 API 取值不同 (to_dict 后者覆盖, itertuples zip 截断取前者)
+    — 无法静默对齐, 显式拒绝 (fail-closed)。
     """
 
+    if not frame.columns.is_unique:
+        raise PITEvidenceError("PIT evidence frame must not have duplicate columns")
     return frame.loc[:, list(fields)].itertuples(index=False, name=None)
 
 

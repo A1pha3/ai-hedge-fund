@@ -239,3 +239,29 @@ def test_flow_fingerprint_rejects_invalid_numeric(bad_value):
             "000001",
             "20260713",
         )
+
+
+def test_canonical_date_fullwidth_digits_fall_to_slow_path():
+    """对抗性审查回归: 全角数字必须落慢路 (pd.Timestamp 规范化), 与慢路逐位一致。
+
+    全角 '２０２６' isdigit()=True 且 int() 可解析 — 快速路径若不加 isascii
+    会原样返回全角串, 而慢路规范化为 ASCII '2026-07-13' → 指纹分歧。
+    """
+    pe = _pit_evidence()
+    assert pe._canonical_date("２０２６-07-13") == "2026-07-13"
+    # ASCII 零填充仍走快速路径, 结果不变
+    assert pe._canonical_date("2026-07-13") == "2026-07-13"
+
+
+def test_iter_field_rows_rejects_duplicate_columns():
+    """重复列名 to_dict (后者覆盖) 与 itertuples (截断取前者) 取值不同 — 显式拒绝。"""
+    pe = _pit_evidence()
+    # 全字段 + 一个重复列: missing 检查通过后, duplicate 检查必须拒绝
+    frame = pd.DataFrame(
+        [["2026-07-13", 10.0, 11.0, 9.0, 10.0, 10.0, 1.0, 1000.0]],
+        columns=["date", "open", "high", "low", "close", "close", "pct_change", "volume"],
+    )
+    with pytest.raises(pe.PITEvidenceError, match="duplicate columns"):
+        pe.validate_price_artifact(frame, "000001")
+    with pytest.raises(pe.PITEvidenceError, match="duplicate columns"):
+        list(pe._iter_field_rows(frame, ["close"]))
